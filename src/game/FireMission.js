@@ -233,6 +233,25 @@ export const DEPTH_NEAR = 70, DEPTH_FAR = 140;
  * body, exactly as the `fell` log holds a name and not an Enemy.
  */
 export const HIGH_COMMAND = Object.freeze({ type: 'your own fire mission' });
+/**
+ * …AND THEIRS, WHICH WAS WEARING YOUR NAME.
+ *
+ * `theirBarrage` is the enemy battery — `Objectives._pay` calls it when a
+ * battery the other side holds comes round on its clock — and it went through
+ * the same `_release` and the same `_impact`, so every man their shells killed
+ * was logged `killer: 'your own fire mission'`. The after-action report then
+ * counted those deaths against YOUR OWN SIDE and told the player to stop
+ * calling artillery he had never called, which is the exact opposite of what
+ * §4.9 exists to do: "no death is mysterious, so no death is the AI's fault"
+ * cuts both ways, and blaming the player for the enemy's guns is the same
+ * defect wearing the other face.
+ *
+ * A separate frozen source and not a flag on the shell's blast options: the
+ * only thing `killerName` can read is `type`, and the report has to be able to
+ * say the words. Still nobody's SIDE, so `installTeamDamage` cannot blunt it on
+ * whoever is standing under it — that half was always right.
+ */
+export const THEIR_BATTERY = Object.freeze({ type: 'their battery' });
 
 /** The three states an order is ever in. */
 export const STANDING = 'standing', FIRED = 'fired', LAPSED = 'lapsed';
@@ -626,7 +645,11 @@ export class FireMissionDirector {
       const c = Math.cos(m.bearing), s = Math.sin(m.bearing);
       const at = new THREE.Vector3(
         m.centre.x + u * s + v * c, m.centre.y, m.centre.z + u * c - v * s);
-      this._shells.push({ t: (i / SHELLS) * SHELL_SPREAD, at });
+      /* WHOSE GUNS, carried on the shell rather than read at impact: three
+       * seconds pass between release and landing and `this.mission` is long
+       * since cleared by then, so the shell is the only thing that still knows.
+       * See THEIR_BATTERY. */
+      this._shells.push({ t: (i / SHELLS) * SHELL_SPREAD, at, src: m.theirs ? THEIR_BATTERY : HIGH_COMMAND });
     }
   }
 
@@ -641,20 +664,21 @@ export class FireMissionDirector {
        * `World._frameCtx` is rebuilt every frame and carries the enemies, the
        * terrain and the physics as they are NOW, which is the only honest
        * thing for a blast to ask. */
-      this._impact(sh.at, ctx);
+      this._impact(sh.at, ctx, sh.src);
     }
     this._shells = live;
   }
 
-  _impact(at, ctx) {
+  _impact(at, ctx, src) {
     const S = this.world?.player?.stratagems;
     if (!S?.blast) return;
     S.blast(ctx || {}, at, SHELL_R, SHELL_FORCE, SHELL_DAMAGE, {
       core: 0.25, shake: 0.30, size: 1.7, crater: 0.9,
       sparkShare: 1 / Math.sqrt(SHELLS),
       /* NOBODY'S, so it pays full through `installTeamDamage`, and named, so
-       * the report can say what it was. See HIGH_COMMAND. */
-      source: HIGH_COMMAND,
+       * the report can say what it was — and named ACCURATELY, which is the
+       * half that was wrong. See HIGH_COMMAND and THEIR_BATTERY. */
+      source: src || HIGH_COMMAND,
     });
   }
 
@@ -692,6 +716,9 @@ export class FireMissionDirector {
     if (!spot) return false;
     const from = this.world?.player?.position || spot;
     const m = new FireMission(spot, Math.atan2(spot.x - from.x, spot.z - from.z));
+    /* THEIRS. Read by `_release` and carried to the report on every shell — see
+     * THEIR_BATTERY, which is the whole reason this line exists. */
+    m.theirs = true;
     this._release(m);
     this.world?.notify?.('INCOMING', 'their battery is firing on your rear');
     return true;

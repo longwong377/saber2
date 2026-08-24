@@ -3133,27 +3133,44 @@ export async function run({ check, assert }) {
     const raised = new Set([...bare(blade).matchAll(/\bctx\.(on[A-Z]\w*)/g)].map((m) => m[1]));
     assert(raised.size >= 3, `only ${raised.size} hooks found in the blade — the scan is not scanning`);
 
-    /* The suppliers are the ctx OBJECT LITERALS handed to applyInput, and
-     * nothing else: a key written anywhere in Player.js would match `onSpin` in
-     * the note that explains it. */
-    const supplied = new Set();
+    /**
+     * THE SUPPLIERS ARE THE ctx OBJECT LITERALS handed to `applyInput`, and
+     * nothing else: a key written anywhere else in Player.js would match
+     * `onSpin` in the note that explains it.
+     *
+     * AND EACH CALLER ANSWERS FOR ITSELF. The first cut took the UNION of the
+     * two call sites, which is not the rule — Player calls `applyInput` twice,
+     * and the driving-a-vehicle one supplies no hooks at all, so the union
+     * passed while one of the two callers was exactly the shape being
+     * forbidden. The blade does not know which caller it has.
+     *
+     * A caller that reaches none of the hooked verbs is exempt and has to SAY
+     * so, which is what the `bladeHeld: false` half of the driving ctx already
+     * means: no blade in the hand, no attack, no price. Anything else pays.
+     */
     const src = bare(player);
-    for (const m of src.matchAll(/applyInput\(input, dt, \{/g)) {
-      let depth = 0, i = src.indexOf('{', m.index);
+    const sites = [];
+    for (const m of src.matchAll(/applyInput\([^)]*?,\s*dt\s*,\s*\{/g)) {
+      let depth = 0, i = src.indexOf('{', m.index + m[0].length - 1);
       for (let j = i; j < src.length; j++) {
         if (src[j] === '{') depth++;
-        else if (src[j] === '}' && --depth === 0) {
-          for (const k of src.slice(i, j).matchAll(/\b(on[A-Z]\w*)\s*:/g)) supplied.add(k[1]);
-          break;
-        }
+        else if (src[j] === '}' && --depth === 0) { sites.push(src.slice(i, j)); break; }
       }
     }
-    assert(supplied.size >= 2, `only ${supplied.size} hooks supplied — the ctx literals were not found`);
+    assert(sites.length >= 2, `only ${sites.length} applyInput ctx literal(s) found — the scan is wrong`);
 
-    const unpaid = [...raised].filter((n) => !supplied.has(n)).sort();
+    const unpaid = [];
+    for (const [i, body] of sites.entries()) {
+      /* A caller with no blade in the hand cannot reach an attack, and says it
+       * in the ctx itself. `grounded: true, moving: 0` is that literal today. */
+      const supplied = new Set([...body.matchAll(/\b(on[A-Z]\w*)\s*:/g)].map((m) => m[1]));
+      if (!supplied.size && /\bgrounded:\s*true/.test(body)) continue;
+      for (const n of raised) if (!supplied.has(n)) unpaid.push(`site ${i + 1}: ${n}`);
+    }
     assert(!unpaid.length,
-      `the blade raises ${unpaid.join(', ')} and no caller supplies ${unpaid.length === 1 ? 'it' : 'them'} — `
+      `the blade raises ${unpaid.join(', ')} and that caller supplies nothing for it — `
       + 'that is what made the spin and the chambered heavy free');
-    return `${raised.size} hooks raised, every one paid: ${[...raised].sort().join(', ')}`;
+    return `${raised.size} hooks raised, ${sites.length} callers, every one paid or exempt: `
+      + `${[...raised].sort().join(', ')}`;
   });
 }

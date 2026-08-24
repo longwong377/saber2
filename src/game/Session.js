@@ -559,14 +559,37 @@ export function interludeBeats(log, since, area, tally = {}) {
 export function runReport(log) {
   const entries = Array.isArray(log) ? log : [];
 
-  /* WHO IS ONE OF YOURS, over the whole run and before any area is read: a man
-   * can be killed in area two by a trooper who is not enlisted until area
-   * three's muster, and a single forward pass would call that a droid. */
+  /**
+   * WHOSE MEN THIS REPORT IS ABOUT.
+   *
+   * `CommandDirector.onDeath` routes EVERY commander's dead into one log, and
+   * `formUp` builds a second commander for the other army — so in a meeting the
+   * ledger holds both rolls. Entries written by the local commander carry
+   * `mine: true`; anything from before that field existed carries nothing and
+   * is read as ours, which is right for every mode with one army in it.
+   */
+  const mineEntry = (e) => e?.mine !== false;
+
+  /**
+   * WHO IS ONE OF YOURS, over the whole run and before any area is read.
+   *
+   * TWO REASONS IT IS A WHOLE-LOG PASS. A man can be killed in area two by a
+   * trooper who is not enlisted until area three's muster, so a single forward
+   * pass would call his killer a droid — and `muster` names the roll a campaign
+   * is HANDED, which is written once at the top and would otherwise not be
+   * consulted until somebody on it died.
+   */
   const ours = new Set();
   for (const e of entries) {
+    if (!mineEntry(e)) continue;
     if (e?.name && (e.t === 'enlist' || e.t === 'fell' || e.t === 'promote'
                     || e.t === 'commend' || e.t === 'steps-up' || e.t === 'broke')) ours.add(e.name);
     if (e?.t === 'steps-up' && e.after) ours.add(e.after);
+    /* THE OPENING TEN, AND A JOINING PLAYER'S SQUAD. `recruit` logs an `enlist`
+     * and is the only thing that did, so the men a campaign is handed were on
+     * nobody's list until one of them died — and the first friendly-fire death
+     * of a run was therefore filed among the droids. See `_logRoll`. */
+    if (e?.t === 'muster' && Array.isArray(e.names)) for (const n of e.names) ours.add(n);
     if (e?.t === 'mission' && Array.isArray(e.names)) for (const n of e.names) ours.add(n);
   }
   /** Did your own side do this? `killerName`'s two constants, or a man on the roll. */
@@ -585,22 +608,33 @@ export function runReport(log) {
   const areas = [];
   let cur = null;
   const open = () => (cur = { n: null, name: '', held: null, strength: null, fallen: null,
-                              fell: [], up: [], missions: [], why: '' });
+                              fell: [], up: [], missions: [], why: '', saw: false });
   open();
   for (const e of entries) {
     if (!e || !e.t) continue;
+    /* AN ENTRY IS AN ENGAGEMENT HAPPENING, whether or not this report draws it.
+     * `saw` is what lets an area the player is standing in — orders given, a
+     * position dug, nobody dead yet — be reported as in progress instead of
+     * silently dropped, which is the state the pause card is opened in most. */
+    cur.saw = true;
     if (cur.n == null && Number.isFinite(e.area)) cur.n = e.area | 0;
-    if (e.t === 'fell') cur.fell.push(e);
-    else if (e.t === 'steps-up' || e.t === 'promote' || e.t === 'commend') cur.up.push(e);
-    else if (e.t === 'mission') cur.missions.push(e);
-    else if (e.t === 'area' || e.t === 'lost') {
+    if (e.t === 'fell') { if (mineEntry(e)) cur.fell.push(e); }
+    else if (e.t === 'steps-up' || e.t === 'promote' || e.t === 'commend') {
+      if (mineEntry(e)) cur.up.push(e);
+    } else if (e.t === 'mission') cur.missions.push(e);
+    else if (e.t === 'area' || e.t === 'lost' || e.t === 'won') {
       cur.n = Number.isFinite(e.area) ? e.area | 0 : cur.n;
       cur.name = e.name || cur.name;
-      cur.held = e.t === 'area';
+      /* `won` and `lost` from `_endCampaign` close the RUN, and it pushes one
+       * the instant after `_areaClear` has already pushed the area's own entry
+       * — so the bucket they close is usually empty and unnamed, and pushing it
+       * would put a nameless row on the end of every finished campaign. A
+       * bucket earns a row by having a name or something in it. */
+      cur.held = e.t !== 'lost';
       cur.strength = Number.isFinite(e.strength) ? e.strength | 0 : null;
       cur.fallen = Number.isFinite(e.fallen) ? e.fallen | 0 : null;
       cur.why = e.why || '';
-      areas.push(cur);
+      if (cur.name || cur.fell.length || cur.up.length || cur.missions.length) areas.push(cur);
       open();
     }
   }
@@ -608,8 +642,7 @@ export function runReport(log) {
    * report raised from the pause card mid-area is the case this exists for:
    * `held` stays null, which is a third state and not a lost area, and the
    * screen says "in progress" rather than inventing an outcome. */
-  const openArea = cur.fell.length || cur.up.length || cur.missions.length;
-  if (openArea) areas.push(cur);
+  if (cur.saw) areas.push(cur);
 
   const fell = [];
   for (const a of areas) for (const e of a.fell) fell.push({ ...e, areaName: a.name });

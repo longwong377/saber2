@@ -3391,6 +3391,9 @@ export class CommandDirector extends WaveDirector {
      * replacement should be. It is the roster's, so it grows with the roster. */
     c.lineup = c.roster.living.map((t) => t.type);
     for (const p of this.peersOn(c.roster)) p.lineup = c.lineup;
+    /* The squad a joining player brings is enlisted here and nowhere else, so
+     * this is the only place their names can reach the ledger. See `_logRoll`. */
+    this._logRoll(c);
     return n;
   }
 
@@ -3748,6 +3751,31 @@ export class CommandDirector extends WaveDirector {
     return n;
   }
 
+  /**
+   * THE ROLL, ONTO THE LEDGER — one entry, all the names.
+   *
+   * `recruit` logs an `enlist` and it is the only thing that does, so the men
+   * BOUGHT between areas were on the ledger and the ten a campaign is HANDED
+   * were not: `_musterOpening` calls `roster.enlist` directly, `_musterVeterans`
+   * logs a count and no names, and `_musterJoin` enlists a squad in silence.
+   *
+   * That is invisible until something asks the ledger who is on your side, and
+   * `Session.runReport` does: an opening trooper who kills his own mate in area
+   * one was not on any entry yet, so the census filed the death among the
+   * droids and reported nought by your own side. It is the one death §4.9 is
+   * sharpest about, missed for the first man to do it.
+   *
+   * ONE ENTRY AND NOT TEN, because it is one event — a company handed to you —
+   * and ten would read as ten purchases in a report that already distinguishes
+   * those. `mine` for the reason the `fell` entry carries it: in a meeting both
+   * armies muster into this same log.
+   */
+  _logRoll(c) {
+    if (!c?.roster) return;
+    this.log.push({ t: 'muster', area: this.areaNumber, mine: c === this.commander,
+                    names: c.roster.living.map((t) => t.name) });
+  }
+
   _musterOpening(c = this.commander) {
     const tiers = c.army.tiers;
     const cheapest = tiers[0].type;
@@ -3761,6 +3789,7 @@ export class CommandDirector extends WaveDirector {
       for (let i = vets; i < this.opening; i++) c.roster.enlist(cheapest);
       c.roster.points = this.stages[0].muster;
       c.lineup = c.roster.living.map((t) => t.type);
+      this._logRoll(c);
       return;
     }
     /**
@@ -3855,6 +3884,7 @@ export class CommandDirector extends WaveDirector {
      * bought is what a replacement is measured against.
      */
     c.lineup = c.roster.living.map((t) => t.type);
+    this._logRoll(c);
   }
 
   /**
@@ -6340,6 +6370,17 @@ export class CommandDirector extends WaveDirector {
         this.log.push({ t: 'fell', name: t.name, unit: t.label, rank: t.rankRec.short,
                         area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills,
                         killer: killerName(source), bearing,
+                        /**
+                         * AND WHOSE MAN HE WAS. `onDeath` routes EVERY
+                         * commander's dead into this one log, and `formUp`
+                         * builds a second commander for the other army — so in
+                         * a meeting the ledger holds both rolls, and a report
+                         * reading it flat counts the enemy's dead as yours and
+                         * calls an enemy trooper who kills one of your men
+                         * "your own side". One boolean, written where the death
+                         * happens, because only here is `c` still in hand.
+                         */
+                        mine: c === this.commander,
                         at: Math.round((this.world?.time || 0) * 10) / 10 });
         /**
          * …AND THE GROUND KEEPS HIM — PLAN.md §4.7.

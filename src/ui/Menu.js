@@ -7885,8 +7885,15 @@ export class Menu {
      * Deaths with nothing to name are said LAST and said plainly: inventing a
      * killer for them is exactly the mystery this screen removes. */
     if (this.el.reportCensus) {
+      /* THE SUFFIX IS FOR THE ROW THAT NEEDS IT. "by you" and "by your own
+       * fire mission" already say whose they were; adding "— your own side" to
+       * them is the sentence twice. A TROOPER'S DESIGNATION does not say it —
+       * `CT-4471` reads exactly like a droid to anybody who has not memorised
+       * the roll — and that is the row the suffix was written for. */
       const rows = report.census.map((r) => `<div class="rc${r.own ? ' own' : ''}">`
-        + `<b>${r.n}</b><span>${r.own ? `by ${r.killer} — your own side` : `by ${r.killer}`}</span></div>`);
+        + `<b>${r.n}</b><span>by ${r.killer}`
+        + `${r.own && r.killer !== 'you' && !/^your own/.test(r.killer) ? ' — one of yours' : ''}`
+        + '</span></div>');
       if (report.unknown) {
         rows.push(`<div class="rc none"><b>${report.unknown}</b>`
           + '<span>with nothing near enough to name</span></div>');
@@ -8029,9 +8036,19 @@ export class Menu {
          * log that produced the rows below it, so the sentence and the list
          * cannot disagree about who is on it.
          */
-        const top = report?.census?.length
-          ? `<p class="rl none">${report.census.slice(0, 3).map((r) => `${r.n} to ${r.killer}`).join(' · ')}`
-            + `${report.own ? ` — ${report.own} of them by your own side` : ''}</p>`
+        /* "OF THEM" MEANS THE ROWS IT JUST PRINTED. `report.own` is the whole
+         * census, and this sentence is the top three — so a run whose own-side
+         * deaths were all below the fold read "8 to B2 · 6 to B1 · 5 to
+         * Droideka — 3 of them by your own side" about nineteen deaths, none of
+         * which were yours. Counted over the same slice, and said as a separate
+         * clause when the rest of them are not on screen. */
+        const shown = report?.census?.slice(0, 3) || [];
+        const shownOwn = shown.reduce((n, r) => n + (r.own ? r.n : 0), 0);
+        const rest = (report?.own || 0) - shownOwn;
+        const top = shown.length
+          ? `<p class="rl none">${shown.map((r) => `${r.n} to ${r.killer}`).join(' · ')}`
+            + `${shownOwn ? ` — ${shownOwn} of them by your own side` : ''}`
+            + `${rest > 0 ? `${shownOwn ? ',' : ' —'} ${rest} more further down the roll` : ''}</p>`
           : '';
         host.innerHTML = rows.length
           ? `<h3>The roll</h3>${top}${rows.map((e) => `<div class="rl"><b>${e.name}</b>`

@@ -40,7 +40,7 @@ import {
   FireMission, FireMissionDirector, gridName,
   WINDOW, READ_SECONDS, SENSE_RATE, READ_REACH, ELLIPSE_A, ELLIPSE_B,
   PRIZE, PRIZE_FLOOR, TRUST_LOSS, TRUST_MIN, SHELLS, SHELL_DAMAGE,
-  DEPTH_NEAR, DEPTH_FAR, HIGH_COMMAND, STANDING, FIRED, LAPSED,
+  DEPTH_NEAR, DEPTH_FAR, HIGH_COMMAND, THEIR_BATTERY, STANDING, FIRED, LAPSED,
 } from '../../src/game/FireMission.js';
 import { MODES } from '../../src/game/Waves.js';
 import { killerName } from '../../src/game/Command.js';
@@ -377,6 +377,31 @@ export async function run({ check, assert }) {
     assert(off < ELLIPSE_A,
       `their barrage landed at (${cx.toFixed(0)},${cz.toFixed(0)}) against a reserve at (42,60) — `
       + 'the Battery\'s "lost: it fires for them" row is what this is for');
+
+    /**
+     * …AND THE REPORT SAYS WHOSE GUNS THEY WERE.
+     *
+     * `theirBarrage` went through the same `_release` and the same `_impact` as
+     * `authorise`, and `_impact` passed `HIGH_COMMAND` unconditionally — so
+     * every man the ENEMY's battery killed was logged
+     * `killer: 'your own fire mission'`, and PLAN §4.9's census counted those
+     * deaths against YOUR OWN SIDE, in the colour reserved for a mistake, and
+     * told the player to stop calling artillery he had never called.
+     *
+     * That is the same defect as a mysterious death wearing the other face:
+     * "no death is the AI's fault" cannot be bought by blaming the player for
+     * the AI's guns. Both sources are still on NOBODY's side, which is the half
+     * that was always right — `installTeamDamage` may not blunt either.
+     */
+    assert(w.shells.every((sh) => sh.o?.source === THEIR_BATTERY),
+      'their battery\'s shells carry your own fire mission\'s source — every man they kill enters '
+      + 'the after-action report as a death the player caused');
+    assert(killerName(THEIR_BATTERY) === 'their battery',
+      `killerName reads "${killerName(THEIR_BATTERY)}" off their shells`);
+    assert(THEIR_BATTERY !== HIGH_COMMAND && THEIR_BATTERY.type !== HIGH_COMMAND.type,
+      'the two batteries are the same source again, so the report cannot tell them apart');
+    assert(!('team' in THEIR_BATTERY) && !('side' in THEIR_BATTERY),
+      'their battery took a side — `installTeamDamage` would blunt it on somebody');
 
     /**
      * …AND NOW THEIR OWN ASSAULT IS STANDING IN IT.

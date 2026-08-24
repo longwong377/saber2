@@ -397,8 +397,27 @@ export async function run({ check, assert }) {
                                  area(1, 'The Foundry', 8, 2)]);
       menu.showPause(stats, false, ownGuns);
       const dirty = doc.getElementById('report-census').innerHTML;
-      assert(/rc own/.test(dirty) && /your own side/.test(dirty),
+      assert(/rc own/.test(dirty),
         `the same two deaths by your own guns read identically to two by a droid: ${dirty}`);
+
+      /**
+       * AND A DESIGNATION IS THE ROW THAT NEEDS THE WORDS.
+       *
+       * "your own fire mission" and "you" say whose they were in the killer's
+       * own name, and repeating it is the sentence twice — but `CT-4471` reads
+       * exactly like a droid to anybody who has not memorised the roll, and
+       * that is the row the suffix exists for. Both must carry the class; only
+       * the designation must carry the words.
+       */
+      const mate = runReport([{ t: 'muster', area: 1, names: ['CT-1', 'CT-2', 'CT-4471'] },
+                              fell('CT-1', 'CT-4471', 60), area(1, 'The Foundry', 8, 1)]);
+      assert(mate.own === 1, 'a man on the roll killing his own mate is not counted as your side');
+      menu.showPause(stats, false, mate);
+      const byMate = doc.getElementById('report-census').innerHTML;
+      assert(/rc own/.test(byMate) && /one of yours/.test(byMate),
+        `a death by one of your own troopers reads as a droid kill: ${byMate}`);
+      assert(!/one of yours/.test(dirty),
+        `"by your own fire mission" is told it is yours twice: ${dirty}`);
 
       /* AND OUTSIDE COMMAND THERE IS NOTHING TO REPORT, so the button goes with
        * it: a control that opens an empty screen is worse than no control. */
@@ -430,12 +449,138 @@ export async function run({ check, assert }) {
       assert(/1 of them by your own side/.test(html), 'the card does not say how many you killed yourself');
       assert(/CT-1/.test(html) && /CT-2/.test(html), 'the names went with it');
 
+      /**
+       * …AND "OF THEM" MEANS THE ROWS IT PRINTED.
+       *
+       * The sentence is the top THREE of the census and `report.own` is the
+       * whole of it, so a run whose own-side deaths were all below the fold
+       * read "8 to B2 · 6 to B1 · 5 to Droideka — 3 of them by your own side"
+       * about nineteen deaths, not one of which was yours. There is only one
+       * line of room here, so the rest are counted separately rather than
+       * silently folded into a number about three rows.
+       */
+      const many = runReport([
+        { t: 'muster', area: 1, names: ['CT-9'] },
+        ...Array.from({ length: 8 }, (_, i) => fell(`A${i}`, 'B2 Super Battle Droid', 60 + i)),
+        ...Array.from({ length: 6 }, (_, i) => fell(`B${i}`, 'B1 Battle Droid', 80 + i)),
+        ...Array.from({ length: 5 }, (_, i) => fell(`C${i}`, 'Droideka', 100 + i)),
+        fell('D0', 'CT-9', 130), fell('D1', 'CT-9', 131), fell('D2', 'your own fire mission', 132),
+        area(1, 'The Foundry', 0, 22),
+      ]);
+      assert(many.own === 3, `${many.own} by your own side in a run with three`);
+      menu.showDeath([['Waves', '9']], undefined, many.fell, many);
+      const deep = host.innerHTML;
+      assert(!/3 of them by your own side/.test(deep),
+        `the card claims three of the three rows it printed were yours, and none were: ${deep}`);
+      assert(/3 more further down the roll/.test(deep),
+        `the card does not say the own-side deaths are below the fold: ${deep}`);
+
       /* A run with no army sends null on both and the block stays hidden — the
        * distinction `runStats` reports null rather than [] to preserve. */
       menu.showDeath([['Waves', '9']], undefined, null, null);
       assert(host.classList.contains('hidden'), 'a mode with no army draws a roll anyway');
       return 'census sentence over the roll, and neither without the other';
     } finally { restore(); }
+  });
+
+  check('report: the men a campaign is HANDED are on the roll the report reads', () => {
+    /**
+     * `recruit` logs an `enlist` and it was the ONLY thing that did — so the
+     * men bought between areas were on the ledger and the ten a campaign opens
+     * with were not: `_musterOpening` calls `roster.enlist` directly,
+     * `_musterVeterans` logs a count with no names, `_musterJoin` enlists a
+     * squad in silence.
+     *
+     * The cost was the first friendly-fire death of every run. An opening
+     * trooper who kills his own mate in area one is on nobody's list yet, so
+     * the census filed him among the droids and reported nought by your own
+     * side — the one death §4.9 is sharpest about, missed for exactly the man
+     * most likely to cause it.
+     */
+    const before = runReport([fell('CT-2', 'CT-1', 60), area(1, 'The Foundry', 9, 1)]);
+    assert(before.own === 0,
+      'a killer nothing in the log has ever named is being counted as yours on a guess');
+    const after = runReport([{ t: 'muster', area: 1, names: ['CT-1', 'CT-2'] },
+                             fell('CT-2', 'CT-1', 60), area(1, 'The Foundry', 9, 1)]);
+    assert(after.own === 1,
+      'the opening roll is on the ledger and the report still does not know CT-1 is one of yours');
+    assert(after.census[0].own === true, 'the row is not marked');
+    return 'without the roll: 0 by your own side; with it: 1';
+  });
+
+  check('report: in a meeting it is YOUR dead, and their trooper is not one of yours', () => {
+    /**
+     * `onDeath` routes EVERY commander's dead into one log — `commanderOf(e)`
+     * — and `formUp` builds a second commander for the other army. So in a
+     * meeting the ledger holds both rolls, and a report reading it flat counts
+     * the enemy's casualties as yours and marks an enemy trooper who kills one
+     * of your men as YOUR OWN SIDE, in red, on the line that exists to say the
+     * player did it to himself.
+     *
+     * `mine` is written where the death happens, because only there is the
+     * commander still in hand. Absent — every mode with one army, and every
+     * log written before the field existed — reads as ours, which is right.
+     */
+    const log = [
+      { t: 'muster', area: 1, mine: true, names: ['CT-1', 'CT-2'] },
+      { t: 'muster', area: 1, mine: false, names: ['BX-9'] },
+      fell('CT-1', 'BX-9', 60, 1, { mine: true }),
+      fell('BX-9', 'you', 61, 1, { mine: false }),
+      area(1, 'The Ridge', 1, 1),
+    ];
+    const r = runReport(log);
+    assert(r.lost === 1, `${r.lost} on your roll, and exactly one of your men died`);
+    assert(r.own === 0, 'an enemy trooper is being counted against your own side');
+    assert(r.census.length === 1 && r.census[0].killer === 'BX-9' && r.census[0].own === false,
+      `the census reads ${JSON.stringify(r.census)}`);
+    /* AND A LOG WITH NO SUCH FIELD IS ALL YOURS, which is every one-army mode. */
+    const plain = runReport([{ t: 'muster', area: 1, names: ['CT-1'] },
+                             fell('CT-2', 'CT-1', 60), area(1, 'The Foundry', 9, 1)]);
+    assert(plain.own === 1, 'a log with no `mine` field stopped being read as your own army');
+    return 'both rolls in one ledger: 1 of yours lost, 0 by your own side';
+  });
+
+  check('report: the engagement being fought shows before anybody has died in it', () => {
+    /**
+     * The pause card is opened DURING an area far more often than between them,
+     * and for the first minute of one there is nothing on the ledger but orders
+     * and a dug position — none of which this report draws. Keyed on the drawn
+     * lists, that whole row vanished: the ledger stopped at the last area HELD
+     * and the "in progress" state written three paragraphs above it could never
+     * appear. `saw` is set by any entry at all, drawn or not.
+     */
+    const r = runReport([fell('CT-1', 'B1 Battle Droid', 60), area(1, 'The Foundry', 9, 1),
+                         { t: 'order', formation: 'line', area: 2, wave: 1 },
+                         { t: 'dug', squad: 0, area: 2, wave: 1 }]);
+    assert(r.areas.length === 2, `${r.areas.length} areas — the engagement being fought was dropped`);
+    assert(r.areas[1].held === null && r.areas[1].n === 2,
+      `the open engagement reads held=${r.areas[1]?.held}, area ${r.areas[1]?.n}`);
+    assert(r.ended === null, `a run still being fought reports it ended "${r.ended}"`);
+    /* AND AN EMPTY LOG STILL REPORTS NOTHING, rather than one blank row. */
+    assert(runReport([]).areas.length === 0, 'an empty run grew an area');
+    return '1 held + 1 in progress off a log whose second area has only orders in it';
+  });
+
+  check('report: the run ending does not add a nameless area to the end of it', () => {
+    /**
+     * `_endCampaign` pushes `{t:'won'}` or `{t:'lost'}` the instant after
+     * `_areaClear` has pushed the last area's own entry, and both carry an area
+     * number and no name. Cut on naively they open and close a second bucket
+     * over the same ground, and every finished campaign ends with a blank row.
+     * `won` was not a terminator at all, which was the other half: with the fix
+     * above it it would have left one open instead.
+     */
+    const won = runReport([fell('CT-1', 'B2 Super Battle Droid', 60),
+                           area(1, 'The Foundry', 9, 1),
+                           { t: 'won', area: 1, strength: 9, fallen: 1 }]);
+    assert(won.areas.length === 1,
+      `${won.areas.length} areas off one engagement — ${JSON.stringify(won.areas.map((a) => a.name))}`);
+    assert(won.ended === 'held', `a won campaign reports "${won.ended}"`);
+    const lost = runReport([area(1, 'The Foundry', 9, 1),
+                            { t: 'lost', area: 1, strength: 0, fallen: 10,
+                              why: 'the line did not survive the crossing' }]);
+    assert(lost.areas.length === 1, `${lost.areas.length} areas off one lost crossing`);
+    return 'won and lost both close the run without opening a row over ground already reported';
   });
 
   check('report: the shape the director actually writes is the shape this reads', async () => {
@@ -453,14 +598,52 @@ export async function run({ check, assert }) {
     for (const f of ['name', 'unit', 'rank', 'area', 'killer', 'bearing', 'at']) {
       assert(new RegExp(`\\b${f}\\b`).test(body), `the \`fell\` entry no longer carries \`${f}\``);
     }
+    /* WHOSE MAN HE WAS, written where the death happens — the projection above
+     * reads it and cannot derive it, because by the time the log is read the
+     * commander is long gone. */
+    assert(/mine:\s*c === this\.commander/.test(body),
+      'the `fell` entry no longer says whose commander lost the man, so a meeting counts the '
+      + "enemy's dead as yours and marks their trooper as your own side");
+
+    /**
+     * AND THE ROLL IS ON THE LEDGER AT ALL. `recruit` logs an `enlist`; the men
+     * a campaign is HANDED go through `roster.enlist` directly and used to log
+     * nothing, so the report could not tell an opening trooper from a droid
+     * until he died. Every place a body joins the roll without being bought has
+     * to reach `_logRoll`.
+     */
+    assert(/_logRoll\(c\)\s*\{[\s\S]{0,400}?t: 'muster'[\s\S]{0,200}?names:/.test(cmd)
+           || /t: 'muster'[\s\S]{0,200}?names: c\.roster\.living/.test(cmd),
+      '`_logRoll` no longer writes the roll\'s names onto the ledger');
+    assert(/mine: c === this\.commander/.test(cmd.slice(cmd.indexOf("t: 'muster'") - 200,
+                                                         cmd.indexOf("t: 'muster'") + 200)),
+      'the muster entry does not say whose roll it is');
+    const rolls = [...cmd.matchAll(/this\._logRoll\(c\)/g)].length;
+    assert(rolls >= 3,
+      `only ${rolls} call(s) to _logRoll — the campaign's opening, the contingent's and a joining `
+      + 'player\'s squad are three separate doors onto the roll and each has to say so');
     const fm = await read('src/game/FireMission.js');
     const fmPush = fm.slice(fm.indexOf("t: 'mission'"));
     const fmBody = fmPush.slice(0, fmPush.indexOf('});'));
     for (const f of ['grid', 'lapsed', 'told', 'hostiles', 'friendlies', 'names']) {
       assert(new RegExp(`\\b${f}\\b`).test(fmBody), `the \`mission\` entry no longer carries \`${f}\``);
     }
-    assert(!/\barea\b\s*:/.test(fmBody),
-      'a fire mission carries an area number now — the cut-on-terminators reading can be simplified');
-    return '7 fields on `fell`, 6 on `mission`, and `mission` still carries no area';
+    /**
+     * AND THE ONE ENTRY WITH NO AREA ON IT STAYS ACCOUNTED FOR — as a PAIR,
+     * because the first cut of this asserted `mission` carries no area, which
+     * goes red the day somebody ADDS one. A check that fails on an improvement
+     * is the check people delete. So: either the entry has no area and
+     * `runReport` cuts on terminators, or it grows one and `runReport` is
+     * allowed to use it — what may not happen is the field appearing while the
+     * projection still ignores it.
+     */
+    const projection = await read('src/game/Session.js');
+    const hasArea = /\barea\b\s*:/.test(fmBody);
+    const cutsOnTerminators = /e\.t === 'area' \|\| e\.t === 'lost'/.test(projection);
+    assert(hasArea || cutsOnTerminators,
+      'a fire mission carries no area number and `runReport` no longer cuts on terminators — '
+      + 'every fire mission has just dropped out of the report');
+    return `7 fields on \`fell\`, 6 on \`mission\`; mission ${hasArea ? 'carries' : 'carries no'} area, `
+      + `and runReport ${cutsOnTerminators ? 'cuts on terminators' : 'groups on the field'}`;
   });
 }

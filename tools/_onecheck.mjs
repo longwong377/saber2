@@ -42,21 +42,43 @@ if (typeof mod.run !== 'function') {
 }
 
 let ran = 0, failed = 0;
+/**
+ * EVERY CHECK'S PROMISE, KEPT — and this was wrong in the first cut of this
+ * file, in the direction that reports success.
+ *
+ * A suite's `run()` calls `check(name, fn)` and DOES NOT AWAIT IT: menu.mjs's
+ * own header says so out loud ("the runner starts every check as soon as the
+ * one before it suspends"). So `await mod.run(...)` returns while an async
+ * check body is still inside its first `await` — `ran` has already been
+ * incremented, the `try` has not reached its `catch`, and the `process.exit`
+ * at the foot of this file then killed the process before either could happen.
+ *
+ * Measured: an assertion made to fail on purpose printed "1 ran, 0 failed" and
+ * no verdict line at all. A tool for proving a check goes red that reports
+ * GREEN on a red check is worse than no tool, and it is the same "0 passed, 0
+ * failed reads as success" defect this repo has been bitten by before.
+ */
+const pending = [];
 /* The runner's own `assert`, in the one shape every suite is written against. */
 const assert = (cond, msg) => { if (!cond) throw new Error(msg || 'assertion failed'); };
-const check = async (name, fn) => {
+const check = (name, fn) => {
   if (!String(name).includes(needle)) return;
   ran++;
-  try {
-    const out = await fn();
-    console.log('✓', name, out ? `— ${out}` : '');
-  } catch (e) {
-    failed++;
-    console.log('✗', name, `\n    ${e && e.message}`);
-  }
+  const p = (async () => {
+    try {
+      const out = await fn();
+      console.log('✓', name, out ? `— ${out}` : '');
+    } catch (e) {
+      failed++;
+      console.log('✗', name, `\n    ${e && e.message}`);
+    }
+  })();
+  pending.push(p);
+  return p;
 };
 
 await mod.run({ check, assert });
+await Promise.all(pending);
 /* A substring that matches nothing is the "0 passed, 0 failed" defect this
  * repo has already been bitten by — it reads as success. It is not. */
 if (!ran) {

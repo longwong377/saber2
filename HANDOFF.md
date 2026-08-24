@@ -742,6 +742,24 @@ on PROSE, and its claim had quietly stopped being true: the anchor is scaled by
 signature that is the definition and not a mention of it.** `'_updateBlade('`
 finds the call site 1300 lines earlier; `'\n  _updateBlade('` finds the method.
 
+### 2.3e A HARNESS THAT DOES NOT AWAIT ITS CHECKS REPORTS GREEN ON A RED ONE
+
+`tools/_onecheck.mjs` was written to run ONE check out of one suite, because
+proving a `theline.mjs` guard red costs twenty-five minutes otherwise. Its first
+cut reported **"1 ran, 0 failed" on a check whose assertion had been broken on
+purpose, and printed no verdict line at all.**
+
+A suite's `run()` calls `check(name, fn)` and DOES NOT AWAIT IT — menu.mjs's own
+header says so ("the runner starts every check as soon as the one before it
+suspends"). So `await mod.run(...)` returned while the async body was still
+inside its first `await`: the counter had been incremented, the `try` had not
+reached its `catch`, and `process.exit()` at the foot of the file killed the
+process before either happened. Collect the promises and await them.
+
+It is the "0 passed, 0 failed reads as success" defect (§2.3) in a new place,
+and the worst possible place for it: a tool whose only job is telling you
+whether a check can fail.
+
 ### 2.4 Never restate a rule; call it
 
 `tools/trace.mjs` reimplemented `isDraftWave` as `w % DRAFT_EVERY === 0`. The
