@@ -88,7 +88,25 @@ export async function run({ check, assert }) {
       settings: { order: 'jedi', species: 'human' },
     });
 
-    assert(!world.run, 'a Run is back: this check is about the dedupe that has to work without one');
+    /**
+     * A RUN IS AN OBJECT WITH A LADDER IN IT, NOT A FIELD CALLED `run`.
+     *
+     * This read `!world.run`, and it went stale the day `World`'s constructor
+     * gained `this.run = run || {}` — run-scoped inputs, "never persisted",
+     * which is a bag of settings and not the `Run.js` that was deleted with
+     * the Descent. An empty object is truthy, so the check had been red on a
+     * tree where nothing was wrong, and the sentence it failed with sent every
+     * reader looking for a resurrection that had not happened.
+     *
+     * What the dedupe actually has to work without is the LADDER: `_setPiece`
+     * is the one reader of a real one and it asks for `run.rung.boss` and
+     * `run.done`, so those two are what "a Run is back" means. Asked of the
+     * shape rather than of the name, which is also what makes this survive the
+     * next field somebody hangs there.
+     */
+    assert(!world.run?.rung && world.run?.done === undefined,
+      'a Run with a ladder in it is back: this check is about the dedupe that has to work '
+      + 'without one, and `_setPiece` is what reads `rung`/`done`');
 
     // gameOver's call, then the death card's "Return to the Temple" → quitToMenu.
     record({ wave: 3, score: 4200, kills: 11 });
