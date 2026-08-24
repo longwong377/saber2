@@ -144,6 +144,10 @@ export const RANK_STEP = 3;
  *     roguelite   23.3 of 46 facets held (51%)   5.9 bought   42% overlap
  *     Trial        4.9 of 46 facets held (11%)   5.0 bought   14% overlap
  *
+ *     (The table was taken when FACETS had 46 entries. It has 52 — the six
+ *     rule facets of PLAN §4.6 — so the SHARES above are of the old roster and
+ *     the counts bought are the figures that still transfer.)
+ *
  * and the cause is arithmetic rather than tuning. All six roots are `epic` at 9
  * against `insightAfter(w) = w + 2·floor(w/5)`, so a Trial player buys their
  * first facet at wave 7, the second at 15, the third at 25 and the fourth at

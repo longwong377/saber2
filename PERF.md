@@ -2,7 +2,7 @@
 
 **Superseded.** The numbers that were here were taken headless, at quality
 `low`, in wall-clock, with no load average recorded, in `waves` — a mode where
-the O(bodies²) cross-army pass at `World.js:2743` does not run — and by a
+the O(bodies²) cross-army pass at `World.js:2989` does not run — and by a
 harness that was never committed. They reported 198 µs a body and a ceiling of
 63, and a scale plan was written on them.
 
@@ -25,18 +25,28 @@ quality `high` in `command`, which is a mode with two armies in it. Run it:
     marginal at the bottom 167 µs · at the top 275 µs · bend x1.65
       <-- NOT LINEAR; the straight-line ceiling above is optimistic
 
-Three findings, and the third is the one that matters.
+**EVERY FIGURE IN THE BLOCK ABOVE IS RETRACTED, BY THE INSTRUMENT THAT PRINTED
+IT.** `tools/scale.mjs`'s own header now records why: the run warmed for 90
+frames and **fifty-two dressing props were still coming to rest**, so the "fixed
+overhead" was somebody else's crates settling and every per-body figure carried a
+share of it. The settled empty world is **about 2.5 ms and still falling**, not
+10.98, and `WARM` is 1200 frames now. There is no 23-body ceiling.
 
-**The fixed overhead is 10.98 ms, not 4.2.** Two thirds of a 16.7 ms frame is
-gone before a single soldier is placed. That is quality `high` against the old
-figure's `low`, and it is the tier a player uses.
+What has been measured since, and what should be quoted instead: the ladder runs
+to **160 bodies in the two-army front layout, 120 of them at 16.60 ms**, and
+`tools/_frame.mjs` reports the browser split (see below). The three findings
+that follow this line are kept because the third one is still true and is the
+reason the first two were wrong.
 
-**The marginal cost is 238 µs, not 198**, and the ceiling on simulation alone is
-**23 bodies** — against `Levy` making `alive` **66** in the flagship modes.
+**The fixed overhead was reported as 10.98 ms, not 4.2** — retracted; it was
+unsettled dressing.
+
+**The marginal cost was reported as 238 µs, not 198**, with a ceiling of **23
+bodies** — retracted for the same reason.
 
 **It is not linear, and the old claim that it was is an artefact of the mode it
 was measured in.** 167 µs at the bottom of the sweep and 275 µs at the top, a
-bend of ×1.65 across a 3× population. `World.js:2743` is O(bodies²) and gated on
+bend of ×1.65 across a 3× population. `World.js:2989` is O(bodies²) and gated on
 `this.command`, so a benchmark run in `waves` never executes it. The plan built
 on that benchmark called the simulation linear and derived a ceiling from a
 slope that does not exist.
