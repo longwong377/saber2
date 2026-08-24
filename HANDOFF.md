@@ -170,9 +170,26 @@ Playable two ways:
 >   sharper than the softer reading allowed. What it does not yet say is WHY —
 >   "a Jedi costs the line men" and "a Jedi drags the fight out and the men near
 >   him stand in fire aimed at him" are indistinguishable from three arms. The
->   control that separates them is `standOff`, which `_flagship.mjs` has carried
+>   control that separates them is `standOff`, which `_flagship.mjs` had carried
 >   with its whole argument since it was written and which nothing had ever
->   driven; `_linehold.mjs` reaches it now as the `far` arm.
+>   driven. **It has now**, as `_linehold.mjs`'s `far` arm, and it answers:
+>
+>       none   6.7/10   cleared 18/20   67 s a wave
+>       blade  4.7/10   cleared 11/20   79 s      (with the line)
+>       far    3.8/10   cleared 12/20   83 s      (100 m off)
+>       idle   1.0/10   cleared  3/20   67 s
+>
+>   **A Jedi a hundred metres away still costs the line 2.9 men.** He is near
+>   nobody, so the men are not dying in fire aimed at him — presence is not what
+>   kills them. What moves with the cost is the LENGTH of the engagement (67 s a
+>   wave with nobody, 79 with a Jedi in the line, 83 with one standing off), and
+>   the extra minute is paid by the men. Being WITH the line is worth about one
+>   man over standing off, so the presence term does pay — just not enough to
+>   beat absence. **§1's promise is not met as measured**: the line is standing
+>   more often when nobody comes. It is a BALANCE finding, not a broken
+>   mechanism — every part works and the arithmetic comes out negative — and the
+>   length is correlated, not yet explained. Naming the mechanism is the next
+>   measurement.
 > · **M7** is STRUCK, because `tools/scale.mjs` withdrew the number it chased.
 >
 > **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on

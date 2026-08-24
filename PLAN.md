@@ -744,14 +744,38 @@ NOW — measurements
       already IS a Jedi who stays with his men and fights from among them, and
       the result is sharper than the softer reading allowed.
 
-      **WHAT IT DOES NOT YET SAY IS WHY**, and `_flagship.mjs` has carried the
-      argument since it was written: nothing in these three arms tells "a Jedi
-      COSTS the line men" apart from "a Jedi drags the fight out, and the men
-      standing near him are standing in fire that was aimed at him". The
-      control that separates them is `standOff` — the same script, the same
-      guard, the same keep-alive, holding station a hundred metres off. It
-      existed and had never been driven; `_linehold.mjs` could not reach it.
-      It can now (`far`), and that reading is the next line of this entry.
+      **AND THE CONTROL HAS NOW RUN, AND IT ANSWERS THE WHY.** `standOff` — the
+      same script, the same guard, the same keep-alive, holding station a
+      hundred metres off — existed in `_flagship.mjs` with this exact argument
+      attached and had never been driven. Twenty seeds:
+
+          none   6.7/10   cleared 18/20   67 s a wave
+          blade  4.7/10   cleared 11/20   79 s      (with the line)
+          far    3.8/10   cleared 12/20   83 s      (100 m off)
+          idle   1.0/10   cleared  3/20   67 s
+
+      **A Jedi a hundred metres away still costs the line 2.9 men.** He is not
+      near anybody, so the men are not dying in fire aimed at him: PRESENCE IS
+      NOT WHAT KILLS THEM, and the other explanation is the one left standing.
+      What moves with the cost is the LENGTH of the engagement — 67 s a wave
+      with no Jedi, 79 with one in the line, 83 with one standing off — and the
+      extra minute is paid by the men. A Jedi makes the fight longer and the
+      line pays for the time.
+
+      **Being WITH the line is worth about one man** over standing off (4.7
+      against 3.8), so `MORALE.JEDI_NEAR` and the rest of the presence term do
+      pay — they simply do not pay enough to beat not being there at all.
+
+      SO §1's PROMISE IS NOT MET AS MEASURED. "Your job is to be the reason the
+      line is still standing when it takes the ridge" — and the line is still
+      standing more often when nobody comes. That is the sharpest thing this
+      document now contains, and it is a BALANCE finding rather than a broken
+      mechanism: every part works, and the arithmetic of what a Jedi is worth
+      against what his presence costs comes out negative. The mechanism behind
+      the length is not proven, only correlated, and naming it is the next
+      measurement: whether the director paces on a player, whether the levy
+      walks at him, or whether a wave simply survives longer with one blade
+      pulling bodies off the line's guns.
   M2  teamDamage bound ................... ANSWERED, and this document quotes
       the answer four hundred lines above the question — §2's dealer census
       reads "bolt 99.3%, friendly fire 0.7%". 0.7% IS the ceiling on any
