@@ -153,8 +153,24 @@ Playable two ways:
 >   editable field appears. The muster card promotes a survivor now
 >   (`commend`, priced at `muster / XP_PER_AREA`), and banking always worked:
 >   closing without spending keeps the purse.
-> · **M1** is unrun and licenses nothing; **M7** should be STRUCK, because
->   `tools/scale.mjs` withdrew the number it was written to chase.
+> · **M1 HAS REPORTED**, and it is the most important number in the project.
+>   Twenty seeds, three arms, engagement 1 on geonosis:
+>   **none 6.7/10 survivors (18/20 cleared) · idle 1.0/10 (3/20) · blade 4.7/10
+>   (11/20)**. Read against §5's target — "no help from the Jedi should cost
+>   roughly half a ten-man line, about 5 of 10" — **the floor is a third
+>   cheaper than asked**: it costs 3.3. An idle Jedi is not "a corpse with a
+>   delay", he is a catastrophe (1.0 against an empty field's 6.7, 17 wipes in
+>   20) because he pulls a wave onto a line and does not fight it. **And a Jedi
+>   who only fights leaves the line WORSE than no Jedi at all.** Before reading
+>   that as a defect: `dutyInput` is "a SCRIPT, not a person" that walks at the
+>   nearest enemy, which is exactly what M5 measured as the bad behaviour
+>   (34.1% of a leaving player's ground against 8.2% of a staying one). So the
+>   mode may be saying precisely what §1 says. **It is not proven, because the
+>   fourth arm does not exist** — nothing measures a Jedi who stays WITH his
+>   line and fights from it. That arm is now the most valuable measurement left,
+>   and until it runs the honest statement is that every scripted way of being
+>   on this field is worse than not being on it.
+> · **M7** is STRUCK, because `tools/scale.mjs` withdrew the number it chased.
 >
 > **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on
 > M4": `src/engine/Profiler.js` has been the browser frame instrument all along,

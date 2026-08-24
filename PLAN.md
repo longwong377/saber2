@@ -710,9 +710,44 @@ NOW — measurements
   M5  does lineIsUp change play? ......... REPORTED — see §2. 34.1% of a
       leaving player's ground against 8.2% of a staying one. The gate is
       open and the chain below is licensed.
-  M1  twenty-seed reference arm ........... STILL UNRUN, and it no longer
-      licenses anything: the deepest reading anywhere is six seeds, and the
-      whole chain below was licensed by M5 and then built.
+  M1  twenty-seed reference arm ........... **REPORTED.** `tools/_linehold.mjs`,
+      theline on geonosis, engagement 1, twenty seeds, three arms:
+
+          none   survivors 6.7/10   cleared 18/20   median 202 s
+          idle   survivors 1.0/10   cleared  3/20   median 185 s
+          blade  survivors 4.7/10   cleared 11/20   median 239 s
+
+      THREE READINGS, AND TWO OF THEM ARE UNCOMFORTABLE.
+
+      **The floor is easier than the target.** §5's own words are "an
+      engagement fought with no help from the Jedi should cost roughly HALF a
+      ten-man line — about 5 of 10". It costs 3.3. The line alone clears 18 of
+      20 engagements, so the ground the mode is built on is about a third
+      cheaper than it was asked to be.
+
+      **An idle Jedi is far worse than the phrase for him.** `Levy.js` says "an
+      idle Jedi is not a Jedi; it is a corpse with a delay" — measured, he is a
+      catastrophe: 1.0 survivor against the empty field's 6.7, and 17 wipes in
+      20. He is a body the levy walks at, so he pulls a wave onto a line and
+      then does not fight it. That is the mode's own thesis about presence,
+      and it is much sharper than anyone had written down.
+
+      **AND A JEDI WHO ONLY FIGHTS IS A NET NEGATIVE.** 4.7 against 6.7: the
+      line does BETTER with nobody there than with a blade on the field.
+      Before that is read as a balance defect, read what the arm is:
+      `dutyInput` is "a SCRIPT, not a person" in its own words, and it "walks
+      at the nearest enemy" — which is precisely the behaviour **M5 measured as
+      the bad one** (34.1% of a leaving player's ground against 8.2% of a
+      staying one). So BLADE is a player who fights and never commands, and the
+      mode is telling us that such a player is worse than absent. That is
+      arguably §1 working exactly as written — "your job is not to kill
+      everything" — but it is not proven, because:
+
+      **THE FOURTH ARM DOES NOT EXIST.** Nothing measures a Jedi who STAYS WITH
+      HIS LINE and fights from it. Until it does, the claim "a good player
+      beats 6.7" is untested, and the honest statement is that every scripted
+      way of being on this field is worse than not being on it. That arm is the
+      most valuable measurement left in this document.
   M2  teamDamage bound ................... ANSWERED, and this document quotes
       the answer four hundred lines above the question — §2's dealer census
       reads "bolt 99.3%, friendly fire 0.7%". 0.7% IS the ceiling on any
