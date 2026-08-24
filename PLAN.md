@@ -792,10 +792,40 @@ defect §4.7 carried when it called weather "entirely unbuilt, five systems" on 
 tree that had shipped a full `Weather` and seven authored squalls. A plan is
 read to set the scope of a session; an entry that describes work already done
 buys a session of rediscovery, and one that describes the code wrongly buys
-worse. The one that is genuinely unbuilt is **M4's reader** — B3's audio bed
-was the other, and it is built and measured above — and M4 being built is what
-unblocks 9 below, which HANDOFF has been carrying as "gated hard on M4" since
-before the profiler existed.
+worse. Both of the entries that were genuinely unbuilt when this block was
+rewritten have since been built: B3's audio bed, and M4's reader
+(`tools/_frame.mjs`), which is what unblocks 9 below — HANDOFF had been carrying
+that rung as "gated hard on M4" since before the profiler existed.
+
+**AND THE SAME AUDIT WAS THEN RUN OVER §0-§4, WHERE IT FOUND TWENTY-SIX MORE.**
+66 claims about the codebase checked, 40 true. §4.7 still said weather was
+"entirely unbuilt" — the very sentence this block retracts — because a
+retraction lives where nobody looks and the claim lives where everybody does.
+§0's physics table is retracted by `scale.mjs` itself (fifty-two dressing props
+were still settling after its 90-frame warm-up; the empty world is ~2.5 ms, not
+5.74, and `WARM` is 1200 now), so **M7 chases a number that no longer exists and
+should be struck.** §3's whole building list and much of §4's prose describe
+shipped systems as unbuilt. Each has been corrected in place.
+
+**WHAT IS ACTUALLY LEFT, after both audits**, and it is short:
+
+  · **B1b** — ragdoll pooling, and retiring a settled corpse into `Fallen`,
+    which `Front.js` is still the only importer of. Not a precondition for
+    anything any more.
+  · **§4.8's first two bullets** — contested telekinesis, and squadmates
+    grabbing the man you have gripped. No shared-constraint grip contest and no
+    grab joint exists anywhere in `src/`; this is the largest genuinely unbuilt
+    design in the document.
+  · **A SCREEN for the after-action report.** The record is complete — every
+    entry carries `killerName`, a bearing and a minute — and nothing draws it
+    end to end.
+  · **The Company tab cannot change a man's kit** out of `COMMAND_UNITS`, which
+    is the one part of §4.4's card still owed.
+  · **The muster card cannot promote a survivor or bank the purse** — it offers
+    replacements and §4.6's road, and those two options are what is left of that
+    bullet.
+  · **M1**, unrun, and it licenses nothing now.
+  · **M7**, to be struck rather than run.
 
 AFTER M5 — the chain, in dependency order
   1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each
