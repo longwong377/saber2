@@ -17,7 +17,7 @@
  */
 
 import * as THREE from 'three';
-import { clamp, makeRng } from './MathUtil.js';
+import { clamp, damp, makeRng } from './MathUtil.js';
 import { utterance, peakGain, contourFor, nextForceLine, forcePool } from './Voice.js';
 import { Score } from './Score.js';
 
@@ -390,6 +390,130 @@ const DRONE_SWELL = 0.09;
 const STORM_GAIN = 0.8;
 const STORM_BRIGHT = 0.5;
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE BATTLE THAT IS NOT NEAR YOU                                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * TWO WEAPON LEVELS, NAMED, because the mixer below has to know them.
+ *
+ * Both were literals inside `blaster()` and `explosion()`, and the distance
+ * bands are derived from them — the range at which a weapon stops being
+ * audible ON ITS OWN is the only honest place to put a band edge, and a band
+ * edge derived from a number typed somewhere else is a band edge that drifts
+ * the day somebody turns a rifle down.
+ */
+const RIFLE_GAIN = 0.20;
+const BLAST_GAIN = 0.5;
+
+/**
+ * How far a sound of this level carries before `_reach` refuses it, in metres.
+ *
+ * The inverse of `attenuation` at HEARING_FLOOR, clamped at MAX_RANGE because
+ * past that nothing is built at any level. Measured through this engine's own
+ * curve: a rifle round dies at 82.0 m, a detonation outlives MAX_RANGE and is
+ * therefore cut by it at 190 m.
+ */
+const audibleTo = (gain) =>
+  Math.min(MAX_RANGE, REF_DIST + (REF_DIST * gain / HEARING_FLOOR - REF_DIST) / ROLLOFF);
+
+/**
+ * THE DISTANCE BED — the sound of a fight that is NOT where you are.
+ *
+ * The only bed this file had was the ambience: wind, and a drone that swells
+ * with `intensity`. Both of those are the PLACE. Neither of them is the
+ * battle, and the battle is the thing this game is named for: everything the
+ * horde does at range arrives as individual positional one-shots or as
+ * nothing at all, and past about 82 m it is nothing at all. A player who walks
+ * a hundred metres off the line — which §4.1 says is the correct play — hears
+ * the firefight they left go completely silent while they can still see the
+ * muzzle flashes in it.
+ *
+ * THREE LAYERS, MIXED BY DISTANCE, and the bands are this file's own numbers
+ * and not the visual ones. `Scenery`'s parallax ranges stand at 170/250/340 m
+ * and `Battlefield.addFallen` strews its horizon dead at ±150; those are where
+ * the LAND is drawn, and two of the three would sit past MAX_RANGE where the
+ * tap below can never fire, so two of three layers would be dead constants.
+ * The EAR's horizon is set by the inverse law and by this engine's own cull:
+ *
+ *   near  0 – 82 m    every shot in it is already heard one at a time, so
+ *                     this layer is the fire the POOL turned away: PRIO's own
+ *                     measurement is nine straight seconds of a full pool
+ *                     throwing away 37 bolt impacts, 14 blaster shots and 12
+ *                     deflections. That is a firefight thinning out as it gets
+ *                     bigger, and it is the one band where the bed's job is to
+ *                     hold the floor rather than to carry the whole event.
+ *   mid   82 – 190 m  a rifle round is under HEARING_FLOOR and a detonation
+ *                     is not: you hear the artillery and none of the
+ *                     small-arms that is actually deciding the fight.
+ *   far   190 m +     `_reach` returns 0 unconditionally. Nothing from out
+ *                     here has ever made a sound in this game.
+ *
+ * The far band has no outer edge, and does not need one: the heightfield is
+ * 460–560 m across, so the level's own extent is the bound, and a weapon that
+ * is not on the ground is not a weapon. Bounding it at `Scenery`'s farthest
+ * drawn range instead would make an engine file depend on a world file to
+ * answer a question about air.
+ *
+ * SO THE CEILINGS RISE WITH DISTANCE, which looks backwards and is not: the
+ * bed is the RESIDUE — what the per-source path did not deliver — and that
+ * residue is none of the near band, most of the mid and all of the far.
+ * `per` rises with it for the second half of the same reason: a body firing
+ * at 200 m is a SAMPLE of an army that is not simulated out there, so one
+ * distant shot buys five and a half events of bed where a shot at your elbow
+ * buys one. That is the whole of "scale at zero frame cost" — no body is
+ * added, no draw call is spent, and the field sounds as wide as it looks.
+ *
+ * `tau` is how long a band keeps ringing without a new event: a firefight at
+ * the horizon is a continuous roll of many arrivals plus whatever the terrain
+ * sends back, and a firefight at your feet is punctuated. `freq` falls with
+ * distance because air eats the top end — the same reason `Scenery`'s far
+ * range is the palest of the three, arrived at by the same mechanism.
+ *
+ * COST: O(1) per weapon event (three subtractions, three multiplies, up to two
+ * compares against SQUARED edges — no sqrt, no allocation) and O(3) per frame.
+ * It counts the calls the frame ALREADY MAKES, so there is no second census:
+ * `World`'s two `enemies.filter` sweeps answer "how many bodies are alive and
+ * how many are within 20 m", which is not "how much fighting, and how far
+ * away", and this does not add a third sweep to find out.
+ */
+/* Exported so tools/checks/audio.mjs measures the bands the mixer actually
+ * uses. A check that typed 82 and 190 into itself would be the second copy of
+ * a derivation whose whole point is that there is only one. */
+export const BATTLE_BANDS = [
+  { key: 'near', edge: audibleTo(RIFLE_GAIN), freq: 1700, q: 0.70, rate: 0.95, per: 1.0, tau: 0.8, ceil: 0.045 },
+  { key: 'mid',  edge: audibleTo(BLAST_GAIN), freq:  620, q: 0.50, rate: 0.72, per: 2.4, tau: 1.8, ceil: 0.070 },
+  { key: 'far',  edge: Infinity,              freq:  190, q: 0.40, rate: 0.55, per: 5.5, tau: 3.0, ceil: 0.095 },
+];
+/** Squared once, here, so the tap never takes a square root. */
+const BATTLE_EDGE2 = BATTLE_BANDS.map((b) => b.edge * b.edge);
+/**
+ * Weighted events in flight for HALF of a layer's ceiling.
+ *
+ * The map is `ceil × e/(e+KNEE)` and not a linear ramp, because the thing
+ * being modelled saturates: the twentieth rifle in a firefight adds far less
+ * to what it sounds like than the second does. Six is about two seconds of a
+ * four-body exchange in the near band.
+ */
+const BATTLE_KNEE = 6;
+/**
+ * …and a ceiling on the accumulator itself, at eight knees.
+ *
+ * The GAIN saturates long before this, so the cap costs nothing audible; what
+ * it bounds is the TAIL. Without it a five-minute siege leaves the far band
+ * ringing for a minute after the last shot, and `_battleHeard` is also the one
+ * thing here that runs before a context exists (see the constructor), so
+ * something has to stop it counting a whole level's worth of loading.
+ */
+const BATTLE_CAP = BATTLE_KNEE * 8;
+/**
+ * Deadband, for the reason `_bed` has one — setTargetAtTime at 60 Hz is a ramp
+ * that never arrives. A fifth of the drone's 0.004, because these ceilings are
+ * a fifth of the drone's range and the drone's deadband would be a quarter of
+ * the whole travel of a layer.
+ */
+const BATTLE_STEP = 0.0008;
+
 /** Footstep timbre by ground, before the body standing on it is considered. */
 const SURFACES = {
   sand:  { freq: 1500, q: 0.7, gain: 0.09 },
@@ -484,6 +608,19 @@ export class AudioEngine {
      * its first, which is the class of defect that file exists for.
      */
     this._forceSaid = {};
+    /**
+     * WEIGHTED WEAPON EVENTS IN FLIGHT, PER DISTANCE BAND, and what each
+     * layer's gain was last COMMANDED to. See _battleHeard and _battleBed.
+     *
+     * On the object and not on the graph, for the reason `_timePitch` three
+     * fields up is: `blaster()` is reachable before a context exists — a level
+     * that loads before the first gesture fires its opening volley into an
+     * engine with `ready` false — and a `_battleE` that is `undefined` there
+     * turns `+=` into NaN, which is the one value this file has proved it can
+     * carry silently all the way to an AudioParam that throws on it.
+     */
+    this._battleE = BATTLE_BANDS.map(() => 0);
+    this._battleAt = BATTLE_BANDS.map(() => 0);
   }
 
   /** How many lines are being spoken right now. */
@@ -2028,20 +2165,29 @@ export class AudioEngine {
 
   blaster(pos, big = false) {
     const f = big ? 1500 : 2600, P = PRIO.combat;
-    this.tone({ freq: f, freqEnd: f * 0.16, dur: big ? 0.24 : 0.14, gain: big ? 0.3 : 0.20,
+    // A cannon is two rifles to the bed. RIFLE_GAIN is named up top because
+    // the near/mid band edge IS the range this level dies at — see audibleTo.
+    this._battleHeard(pos, big ? 2 : 1);
+    this.tone({ freq: f, freqEnd: f * 0.16, dur: big ? 0.24 : 0.14, gain: big ? 0.3 : RIFLE_GAIN,
       type: 'sawtooth', pos, filter: { type: 'lowpass', freq: 5200, q: 3 }, prio: P });
     this.noise({ dur: 0.09, gain: 0.12, type: 'highpass', freq: 2400, pos, prio: P });
   }
 
   boltHit(pos) {
     const P = PRIO.combat;
+    // Half: the round and its impact are one exchange arriving twice.
+    this._battleHeard(pos, 0.5);
     this.noise({ dur: 0.16, gain: 0.2, type: 'bandpass', freq: 1400, freqEnd: 260, q: 0.9, pos, prio: P });
     this.tone({ freq: 130, freqEnd: 52, dur: 0.18, gain: 0.2, type: 'sine', pos, prio: P });
   }
 
   explosion(pos, size = 1) {
     const P = PRIO.critical;
-    this.noise({ dur: 0.9 * size, gain: 0.5, type: 'lowpass', freq: 1800, freqEnd: 120, q: 0.6, pos, pink: true, prio: P });
+    // Four rifles' worth at unit size, and it scales: the mid band's edge is
+    // the range BLAST_GAIN carries to, so a detonation is the one weapon that
+    // is still individually audible everywhere the bed's middle layer reaches.
+    this._battleHeard(pos, 4 * num(size, 1));
+    this.noise({ dur: 0.9 * size, gain: BLAST_GAIN, type: 'lowpass', freq: 1800, freqEnd: 120, q: 0.6, pos, pink: true, prio: P });
     this.tone({ freq: 90, freqEnd: 28, dur: 0.85 * size, gain: 0.45, type: 'sine', pos, prio: P });
     this.tone({ freq: 220, freqEnd: 60, dur: 0.4 * size, gain: 0.22, type: 'triangle', pos, prio: P });
     /**
@@ -2741,6 +2887,37 @@ export class AudioEngine {
       o.connect(og); og.connect(this.droneGain); o.start();
       this.droneOsc.push(o);
     }
+    /**
+     * THE DISTANCE BED'S THREE LAYERS. See BATTLE_BANDS.
+     *
+     * One looping pink source, one bandpass and one gain each, started here and
+     * never rebuilt — the same argument the score's eleven oscillators are
+     * built in `init()` for: a layer constructed at the moment a fight opens
+     * arrives a frame late every time, and that frame is the one the feature
+     * exists for. Nine nodes, total, for the whole of the rest of the war.
+     *
+     * ON `sfxBus` AND NOT ON `ambBus`, which is the one routing decision in
+     * here. Wind and drone are the room; this is WEAPONS, so it belongs where
+     * every other weapon goes: under `timeLP` (a battle heard through a dilated
+     * moment has to go dark with everything else — see setTimeScale), under the
+     * duck that clears room for a voice line, and under the master compressor.
+     * On the ambience bus a Force Sense would have left the distant firefight
+     * bright and undilated over a mix that had gone underwater.
+     *
+     * The three playbackRates are deliberately incommensurate: three copies of
+     * one 2 s buffer at one rate lock into a single audible 2 s period, and the
+     * slower rate on the far band is also the cheapest air absorption there is.
+     */
+    this.battleGain = BATTLE_BANDS.map((b) => {
+      const bs = ctx.createBufferSource();
+      bs.buffer = this._pinkBuf; bs.loop = true; bs.playbackRate.value = b.rate;
+      const bp = ctx.createBiquadFilter();
+      bp.type = 'bandpass'; bp.frequency.value = b.freq; bp.Q.value = b.q;
+      const bg = ctx.createGain(); bg.gain.value = 0;
+      bs.connect(bp); bp.connect(bg); bg.connect(this.sfxBus);
+      bs.start();
+      return bg;
+    });
     this._pulseTimer = 0;
     this.intensity = 0;
     // What the level asked for, and what is currently commanded. _bed() moves
@@ -2834,6 +3011,14 @@ export class AudioEngine {
      */
     this.intensity = 0;
     this.score?.reset();
+    /* …AND THE DISTANCE BED, for exactly the argument above about `intensity`.
+     * Its far layer rings for about twenty seconds off a heavy engagement, so
+     * without this a player who quits a siege from the death card arrives on
+     * the next level — or under the main menu — with the last one's artillery
+     * still rolling behind it. One call at dt=0 is what commands the layers
+     * down as well as clearing what feeds them. */
+    for (let i = 0; i < this._battleE.length; i++) this._battleE[i] = 0;
+    this._battleBed(0);
   }
 
   /**
@@ -2887,6 +3072,96 @@ export class AudioEngine {
   }
 
   /**
+   * A WEAPON WENT OFF, THAT FAR AWAY — the whole of the bed's input.
+   *
+   * There is no census here and there deliberately is not one: the frame
+   * already calls `blaster` / `boltHit` / `explosion` once per event, from
+   * every body on the field, with the position in hand — so the cheapest
+   * possible measure of "how much fighting is happening at each distance" is
+   * the calls that are being made anyway. Counting bodies instead would be
+   * O(bodies) and would also be the wrong quantity: a hundred droids standing
+   * in a line are not a battle until they fire.
+   *
+   * THE THREE SOUNDS IT TAPS, and not the saber ones. `clash`, `deflect` and
+   * `sever` only ever happen where the player's own blade is, so they are
+   * never the fight that is elsewhere; these three are what the horde makes at
+   * range. `boltHit` counts half, because a round and its impact are the SAME
+   * exchange arriving twice and a full weight each would make every firefight
+   * read as twice the men.
+   *
+   * IT IS TAPPED BEFORE THE AUDIBILITY TEST, which is the point. `_reach`
+   * throws away every rifle round past 82 m and everything whatever past
+   * MAX_RANGE, and the pool throws away most of the rest while it is full;
+   * those are exactly the events the per-source path cannot carry, and they
+   * are the ones this bed exists to turn into sound.
+   *
+   * Cost: three subtractions, three multiplies and at most two compares
+   * against squared edges. No square root, no allocation, no branch on band
+   * count that a fourth band would not get for free.
+   */
+  _battleHeard(pos, weight = 1) {
+    /* THE TAP RUNS BEFORE THE VOICE IS TAKEN, so anything it throws takes the
+     * whole sound with it — a bookkeeping array must never be the reason a
+     * rifle makes no noise. The constructor is the only thing that builds the
+     * accumulator, and this file already has a caller that does not run it:
+     * `audio: a voice is judged on the curve it is actually built on` weighs
+     * the shipped `blaster` against the shipped scream by calling it on a bare
+     * prototype with four fields on it. That is a fair way to measure a mix
+     * and it must not become a way to break one. */
+    if (!pos || !this._battleE) return;
+    const l = this._listenerPos;
+    const dx = pos.x - l.x, dy = pos.y - l.y, dz = pos.z - l.z;
+    const d2 = dx * dx + dy * dy + dz * dz;
+    // A NaN distance fails this and is dropped, rather than poisoning an
+    // accumulator that is read every frame for the rest of the session.
+    if (!(d2 >= 0)) return;
+    let i = 0;
+    while (i < BATTLE_EDGE2.length - 1 && d2 > BATTLE_EDGE2[i]) i++;
+    this._battleE[i] = Math.min(BATTLE_CAP,
+      this._battleE[i] + BATTLE_BANDS[i].per * num(weight, 1));
+  }
+
+  /**
+   * …AND WHAT THAT SOUNDS LIKE, once a frame. See BATTLE_BANDS.
+   *
+   * Three exponential decays and three saturating maps, and that is the entire
+   * per-frame cost of the feature — O(bands), independent of how many bodies
+   * are on the field or how many of them are shooting. `damp` is the engine's
+   * own helper rather than a second exponential written out here.
+   *
+   * The write down to silence is UNCONDITIONAL where every other write is
+   * deadbanded, because a bed that stops a deadband short of zero is a bed
+   * that never actually turns off — the same defect in miniature as an
+   * `intensity` that a level change does not clear.
+   */
+  _battleBed(dt) {
+    if (!this.battleGain) return;
+    // `num` before the decay and not after it: one NaN dt turns an accumulator
+    // that is read every frame for the rest of the session into a NaN, and the
+    // param it reaches throws — see the constructor's note on `_timePitch`.
+    dt = num(dt, 1 / 60);
+    const t = this.ctx.currentTime;
+    for (let i = 0; i < BATTLE_BANDS.length; i++) {
+      const b = BATTLE_BANDS[i];
+      const e = (this._battleE[i] = damp(this._battleE[i], 0, 1 / b.tau, dt));
+      let g = b.ceil * (e / (e + BATTLE_KNEE));
+      // Under the deadband is silence anyway, and saying so is what lets the
+      // tail actually reach zero in a bounded number of seconds instead of
+      // asymptotically.
+      if (g < BATTLE_STEP) g = 0;
+      const settling = g === 0 && this._battleAt[i] !== 0;
+      if (!settling && Math.abs(g - this._battleAt[i]) < BATTLE_STEP) continue;
+      this._battleAt[i] = g;
+      // Half the band's own ring time as the time constant: a layer must not
+      // arrive faster than the thing it is standing in for could.
+      this.battleGain[i].gain.setTargetAtTime(g, t, b.tau * 0.5);
+    }
+  }
+
+  /** What each distance layer is being HELD at, for the same reason `duckLevel` exists. */
+  battleLevel() { return this._battleAt.slice(); }
+
+  /**
    * The bed under everything, and the fight the score is answering.
    *
    * WHAT USED TO BE HERE was the whole of this game's "adaptive music": one
@@ -2912,6 +3187,10 @@ export class AudioEngine {
     // the fight ends, and the storm is weather rather than combat — it blows
     // through a level with nothing alive on it.
     this._bed(clamp(num(storm, 0), 0, 1));
+    // …and so does the battle that is not near you, before the same early
+    // return and for the same reason: a bed that only ran while something was
+    // shooting could rise and never fall. See _battleBed.
+    this._battleBed(dt);
     // …and so does the score, for the same reason. It is a state machine with
     // an `explore` state; a score that only ran while something was on the
     // field would have nothing to leave.

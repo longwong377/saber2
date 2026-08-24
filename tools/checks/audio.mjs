@@ -22,7 +22,7 @@
 import * as THREE from 'three';
 import { readFileSync, readdirSync } from 'node:fs';
 import { functionBody } from './_source.mjs';
-import { AudioEngine, PRIO, MUSIC_TRACKS } from '../../src/engine/Audio.js';
+import { AudioEngine, PRIO, MUSIC_TRACKS, BATTLE_BANDS } from '../../src/engine/Audio.js';
 import { ENEMY_POWERS } from '../../src/game/Enemy.js';
 import { ENEMY_VOICES } from '../../src/engine/Voice.js';
 import { SCORE_STATES, CHORDS, ROOT, hz } from '../../src/engine/Score.js';
@@ -1429,6 +1429,136 @@ export async function run({ check, assert }) {
     assert(Math.abs(a.windFilter.frequency.last('tgt') - f0) < 7,
       `the wind's band never came back down: ${a.windFilter.frequency.last('tgt').toFixed(0)} Hz`);
     return `wind ${w0} → ${w1.toFixed(3)} and ${f0} → ${f1.toFixed(0)} Hz at peak squall, both back after`;
+  });
+
+  /**
+   * THE BATTLE THAT IS NOT NEAR YOU DID NOT EXIST.
+   *
+   * PLAN §6 B3 is "audio distance bed, horizon, haze", and the two visual
+   * thirds shipped: `Scenery`'s haze and its 170/250/340 m parallax ranges,
+   * and `Battlefield.addFallen`'s horizon dead. The audio third was the one
+   * wholly unbuilt entry in either NOW list. Everything the horde did at range
+   * arrived as an individual positional one-shot or as nothing at all, and
+   * `_reach` makes it nothing at all past 82 m for a rifle round and past
+   * MAX_RANGE for anything whatever — so a player who walked a hundred metres
+   * off the line, which is the play §4.1 asks for, watched the firefight they
+   * had just left carry on in total silence.
+   *
+   * The decision this check exists to see change is the MIX: the same rate of
+   * fire, at three distances, has to put its weight in three different places.
+   * A layer that moved with all three would be decoration.
+   */
+  check('audio: the same fight sounds different at 20 m, 120 m and 240 m', () => {
+    const { a, ctx } = engine();
+    const bed = () => a.battleLevel();
+    // Ten seconds of six rounds a second, from one place, and nothing else.
+    const fight = (x) => {
+      a.setAmbience({ wind: 0.2, windFreq: 190, drone: 0.26 });   // clears the bed
+      for (let f = 0; f < 600; f++) {
+        if (f % 10 === 0) a.blaster(V(x, 0, 0), false);
+        a.updateScore(1 / 60, 0.3, 0); ctx.advance(1 / 60);
+      }
+      return bed();
+    };
+    const near = fight(20), mid = fight(120), far = fight(240);
+    const at = (v) => v.map((g) => g.toFixed(4)).join(' / ');
+
+    // Each fight lands in ONE band and leaves the other two at rest. This is
+    // the whole claim: the mixer is answering distance, not volume of fire.
+    for (const [i, row, where] of [[0, near, '20 m'], [1, mid, '120 m'], [2, far, '240 m']]) {
+      assert(row[i] > 0.005, `a firefight at ${where} left its own layer at ${row[i].toFixed(4)}`);
+      for (let j = 0; j < row.length; j++) {
+        if (j === i) continue;
+        assert(row[j] === 0,
+          `a firefight at ${where} raised the ${BATTLE_BANDS[j].key} layer to ${row[j].toFixed(4)} as well `
+          + '— the layers are one layer wearing three names');
+      }
+    }
+    // …and they are not the same layer at three volumes: the far band is the
+    // one nothing else can carry, so it has to be the loudest of the three off
+    // the same rate of fire. The near band sits UNDER shots you already hear.
+    assert(far[2] > near[0] * 2,
+      `the same rate of fire reads ${near[0].toFixed(4)} at 20 m and ${far[2].toFixed(4)} at 240 m `
+      + '— the residue the per-source path leaves is not being made up');
+    assert(mid[1] > near[0], `mid ${mid[1].toFixed(4)} is no louder than near ${near[0].toFixed(4)}`);
+
+    /* AND THE BAND EDGE IS THE CULL, not a number somebody liked. The near/mid
+     * edge is derived from HEARING_FLOOR and the rifle's own level, so a round
+     * fired a metre inside it still earns a voice and one fired a metre outside
+     * it does not — measured on `stats.culled` through the shipped engine. */
+    const edge = BATTLE_BANDS[0].edge;
+    const cull = (x) => { const c = a.stats.culled; a.blaster(V(x, 0, 0), false); return a.stats.culled - c; };
+    const inside = cull(edge - 1), outside = cull(edge + 1);
+    assert(inside === 1 && outside === 2,
+      `at the ${edge.toFixed(1)} m band edge a rifle round culls ${inside} layers inside and ${outside} outside `
+      + '— the edge is not where the engine stops carrying the shot');
+
+    return `6 rounds/s for 10 s: at 20 m ${at(near)}, at 120 m ${at(mid)}, at 240 m ${at(far)} `
+      + `(near/mid/far); the near edge is ${edge.toFixed(1)} m and it is where the cull is`;
+  });
+
+  /**
+   * …AND IT COSTS NOTHING, WHICH IS THE OTHER HALF OF THE LABEL.
+   *
+   * "Scale at zero frame cost" is a claim about the per-frame work, so this
+   * measures it: the bed is three decays and three saturating maps a frame
+   * whatever is happening, so ten times the fire must not cost ten times the
+   * automations, and an empty field must cost none at all. It also has to turn
+   * OFF — a layer that settles a deadband short of zero is a layer that rings
+   * under the main menu for the rest of the session.
+   */
+  check('audio: the distance bed is silent on an empty field, and stops when the shooting does', () => {
+    const { a, ctx } = engine();
+    const moves = () => a.battleGain.map((g) => g.gain.moves());
+    const sum = (v) => v.reduce((x, y) => x + y, 0);
+
+    // 1 — an empty field. Not "quiet": no automation at all, ever.
+    for (let f = 0; f < 1200; f++) { a.updateScore(1 / 60, 0, 0); ctx.advance(1 / 60); }
+    assert(sum(moves()) === 0,
+      `twenty seconds of an empty field moved the bed ${sum(moves())} times — it is not event-driven`);
+    assert(a.battleLevel().every((g) => g === 0), `an empty field is holding a bed at ${a.battleLevel()}`);
+
+    // 2 — a heavy engagement, then nothing. The tail is real, and it ends.
+    const m0 = sum(moves());
+    for (let f = 0; f < 900; f++) {
+      if (f % 3 === 0) { a.blaster(V(150, 0, 0), true); a.boltHit(V(150, 4, 20)); }
+      if (f % 60 === 0) a.explosion(V(210, 0, 40), 1.2);
+      a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60);
+    }
+    const hot = a.battleLevel();
+    const busy = sum(moves()) - m0;
+    assert(hot[1] > 0.02 && hot[2] > 0.02,
+      `a two-front engagement at 150 m and 210 m holds ${hot.map((g) => g.toFixed(4)).join('/')}`);
+    for (let f = 0; f < 1800; f++) { a.updateScore(1 / 60, 0, 0); ctx.advance(1 / 60); }
+    const cold = a.battleLevel();
+    assert(cold.every((g) => g === 0),
+      `thirty seconds after the last shot the bed is still at ${cold.map((g) => g.toFixed(4)).join('/')}`);
+    // `?? 0` and not `=== 0`: the near layer never rose at all here — nothing
+    // was fired inside 82 m — so it was never commanded anywhere, which is the
+    // correct answer for a band with no fight in it and not a missing write.
+    assert(a.battleGain.every((g) => (g.gain.last('tgt') ?? 0) === 0),
+      'a layer was left holding a level after the field went quiet');
+
+    // 3 — the cost. Ten times the fire is not ten times the work: the per-frame
+    // term is O(bands) and the per-event term is a compare and an add.
+    const m1 = sum(moves());
+    for (let f = 0; f < 900; f++) {
+      for (let k = 0; k < 10; k++) a.blaster(V(150 + k, 0, 0), true);
+      a.updateScore(1 / 60, 1, 0); ctx.advance(1 / 60);
+    }
+    const heavy = sum(moves()) - m1;
+    assert(heavy < busy * 2,
+      `ten times the rate of fire cost ${heavy} automations against ${busy} — the bed is per-event work`);
+    assert(heavy < 900, `${heavy} automations over 900 frames — a ramp per frame arrives nowhere`);
+
+    // …and none of that fire built a single node. Nine, from init, for good.
+    const nodes = ctx.edges.filter(([, to]) => a.battleGain.includes(to)).length;
+    assert(nodes === BATTLE_BANDS.length,
+      `${nodes} sources are feeding ${BATTLE_BANDS.length} layers — the bed is building per event`);
+
+    return `empty field 0 automations; a 150/210 m engagement holds `
+      + `${hot.map((g) => g.toFixed(4)).join('/')} in ${busy} automations and is back to 0 within 30 s; `
+      + `9,000 more weapon events on top of it cost ${heavy}, on ${nodes} layers built once at init`;
   });
 
   /**

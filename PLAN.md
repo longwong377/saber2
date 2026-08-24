@@ -698,12 +698,21 @@ NOW — building, licensed by measurements already taken
       importer of, so no corpse has ever been retired into it.
   B2  attack tokens ...................... BUILT. `src/game/Tokens.js`, a
       `TokenPool` on the World, consumed by `Enemy`.
-  B3  audio distance bed, horizon, haze ... PARTLY. The two visual thirds
-      ship — `Scenery.Haze` and the 170/250/340 m parallaxing bands, and
-      `Battlefield.addFallen`'s horizon dead. THE AUDIO THIRD DOES NOT EXIST:
-      `Audio.js`'s only bed is the ambience drone, and there is no near/mid/far
-      weapons layer mixed by distance anywhere. It is the one wholly unbuilt
-      feature in either list, and it is still scale at zero frame cost.
+  B3  audio distance bed, horizon, haze ... BUILT, all three thirds. The two
+      visual ones already shipped — `Scenery.Haze` and the 170/250/340 m
+      parallaxing bands, and `Battlefield.addFallen`'s horizon dead. THE AUDIO
+      THIRD IS `Audio.js`'s `BATTLE_BANDS`: three sustained layers at near /
+      mid / far, gains driven by the weapon events the frame ALREADY raises
+      (`blaster`, `boltHit`, `explosion`) binned by distance to the listener.
+      The band edges are derived, not chosen — 82 m is where a rifle round
+      drops under HEARING_FLOOR and 190 m is MAX_RANGE, so the bands are
+      exactly the three regimes the per-source path already has, and the bed
+      carries the two it throws away. Measured through the shipped engine
+      (`tools/checks/audio.mjs`): six rounds a second holds 0.019/0/0 at 20 m,
+      0/0.056/0 at 120 m and 0/0/0.084 at 240 m; an empty field costs zero
+      automations; 9,000 weapon events on top of a live engagement cost one.
+      Nine nodes, built at init. It is still scale at zero frame cost, and now
+      it is measured as such.
   B4  extraction boarding ................. BUILT and measured. The "0-2 of ten
       men reaching the ramp" in this line is the PROBLEM STATEMENT, kept in
       `Extraction.js` beside the three fixes for it; the manifest is 10 of 10
@@ -721,9 +730,10 @@ defect §4.7 carried when it called weather "entirely unbuilt, five systems" on 
 tree that had shipped a full `Weather` and seven authored squalls. A plan is
 read to set the scope of a session; an entry that describes work already done
 buys a session of rediscovery, and one that describes the code wrongly buys
-worse. The two that are genuinely unbuilt are **M4's reader** and **B3's audio
-bed** — and M4 being built is what unblocks 9 below, which HANDOFF has been
-carrying as "gated hard on M4" since before the profiler existed.
+worse. The one that is genuinely unbuilt is **M4's reader** — B3's audio bed
+was the other, and it is built and measured above — and M4 being built is what
+unblocks 9 below, which HANDOFF has been carrying as "gated hard on M4" since
+before the profiler existed.
 
 AFTER M5 — the chain, in dependency order
   1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each
