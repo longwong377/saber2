@@ -39,6 +39,22 @@ const RULES = [
 ];
 
 export async function run({ check, assert }) {
+  /**
+   * THE STREAM THIS FILE DRAWS FROM, PINNED — `determinism.mjs`'s own clause.
+   *
+   * Every check below builds real `Enemy` bodies, and an Enemy draws from
+   * `enemyRng` for its modifier, its strafe side and its spawn jitter. Left
+   * unseeded, the numbers this suite reports are a fact about whatever ran
+   * before it in the process rather than about the thing being measured — and
+   * a bar tightened against one of those readings goes red on an unrelated
+   * change. Seeded here rather than taking `clocked` for the whole file,
+   * because nothing in here touches shared module state; it only needs the
+   * draw to be the same draw twice.
+   */
+  const { enemyRng } = await import('../../src/game/Enemy.js');
+  const { seedWaves } = await import('../../src/game/Waves.js');
+  enemyRng.seed(20260824); seedWaves(20260824);
+
 
   check('variance: six facets change a rule, and every rule they change is declared', () => {
     const mods = defaultBoonMods();
