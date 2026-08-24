@@ -249,6 +249,31 @@ Playable two ways:
 >   after the tune, not carried across it.
 > · **M7** is STRUCK, because `tools/scale.mjs` withdrew the number it chased.
 >
+> **AND THE SUITE WAS AUDITED AGAINST ITS OWN STANDARD** — §7's "an element
+> earns its place by changing a decision, and its check has to demonstrate the
+> decision changing" — by asking which checks would still pass with the feature
+> DELETED. The headline is that the suite is far better than that question
+> assumes: the sweeps for swallowed throws, aliased before/after pairs,
+> never-entered assertions and loose tolerances came back essentially clean, and
+> the two-arm measurement discipline is real. Ten exceptions, all now fixed and
+> all with the deletion that used to pass written into the check:
+>
+>       theline.16   `world.notes` does not exist — undefined !== false
+>       barrier      `world.notices` likewise
+>       balance      `.fireRate` matched the ARCHETYPE's field on the same line
+>       forms        bare word match; `tell` was dead and nobody could see it
+>       characters   a 4000-char window that started inside a doc comment
+>       cloth-cost   a 3000-char window over a 2569-char function
+>       keyart       "a `catch` within 900 characters", of eight in the file
+>       command      `ORDERS[id] === FORMATIONS[id]`, true by construction
+>       downed       a constant compared to the only line that writes it
+>       wiring       a check with no assertion in it at all
+>
+> The three that generalise are written up as traps §2.3b, §2.3c and §2.3d. Two
+> of them found live game defects rather than only check defects —
+> `killerName`/the Foundry banner printing spawn keys, and the form `tell` that
+> the dojo never said.
+>
 > **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on
 > M4": `src/engine/Profiler.js` has been the browser frame instrument all along,
 > reporting real GPU time through `EXT_disjoint_timer_query_webgl2`, and
@@ -648,6 +673,74 @@ A close relative: a missing thing answered with a plausible default instead of
 an error (`PEAK.get(tex) ?? 3`, `_one.mjs` printing "0 passed, 0 failed", a
 12-slot record against a 13-slot packer). `determinism.mjs` has tripwires for
 both.
+
+### 2.3b A CHECK THAT READS A FIELD NOTHING WRITES IS A CHECK THAT CANNOT FAIL
+
+Two shapes, both found by audit, both of which had been green for a long time.
+
+**A property nobody writes, swallowed by `?.`.** `killerName` ended
+`source.A?.name || source.type`, and an archetype has no `name` — the field is
+`label`. So the first half was ALWAYS undefined, the `||` was the only path, and
+every after-action report and every grave in the ground said `b2` and
+`droideka` instead of "B2 Super Battle Droid" and "Droideka". The Foundry's
+banner had the same line and told a player "the next one up is a arc". Optional
+chaining does not fail; it degrades into a plausible wrong answer.
+
+**The same thing in a CHECK, where it also disables the assertion.**
+
+    assert(world.notes?.some?.(([t]) => /LINE/i.test(t)) !== false, '…')
+    assert(b.world.notices?.some?.(s => /BARRIER DOWN/.test(s)) !== false, '…')
+
+There is no `world.notes` and no `world.notices` — the only notification path is
+`World.notify` → `this.onNotify?.(…)`, and `world.notifications` was a queue
+nobody read and was deleted. So both expressions are `undefined`, `undefined
+!== false` is true, and both assertions were unfailable. One of them sits inside
+`theline.16`, guarding the flagship rule's ONLY on-screen explanation of why an
+advance has stalled. **Record notices with `world.onNotify = (t, sub) => …`;
+`coop.mjs` and `command-pvp.mjs` have always done it that way.**
+
+The generalisation, and it is the same sentence as §2.3: a reader that cannot
+see its subject reports the fallback and calls it a measurement.
+
+### 2.3c A READER TEST THAT GREPS THE WHOLE TREE FINDS SOMEBODY ELSE'S FIELD
+
+Three checks asked "does this table's column have a reader" by matching the
+column NAME against every `.js` file in `src/` concatenated. The names are
+ordinary words and the tree is eight megabytes:
+
+  · `balance.mjs` matched `.fireRate` — which is `A.fireRate`, the ARCHETYPE's
+    field, **on the same line as** the difficulty read. Deleting
+    `(diff.fireRate ?? 1)` from both of Enemy's attack timers left it green over
+    a difficulty column that had stopped meaning anything. Same for `assist`,
+    covered by `this.assist = 0` in SaberController.
+  · `forms.mjs` matched bare words: `strength` 137 times outside the table,
+    `strike` 38, `moves` 26, `tell` 22. Deleting the feint left it green on
+    `DUEL_PHASES`'s own `'feint'` string.
+
+**The reader has to be a member access off the thing that holds the table** —
+`difficulty|diff`, `F|form|FORMS[…]`. Tightening `forms.mjs` immediately found a
+real dead field: `tell`, the one sentence per lightsaber form describing how to
+read it, authored five times and rendered nowhere — in a game with a training
+mode.
+
+### 2.3d A FIXED-LENGTH SOURCE WINDOW, SPELLED AS A REGEX
+
+`determinism.mjs` forbids `src.slice(i, i + N)` for reading a function, with the
+whole story above it. It forbade ONE SPELLING: `/_spinBody[\s\S]{0,3000}?…/` is
+the same guess with different punctuation, and twelve were live while that check
+was green. Two mattered — `Player._spinBody` is 2569 characters against a 3000
+window, so it already ran 431 past the end of the function.
+
+**And the overshoot direction is the one that hides.** `characters.mjs` read
+`/_updateBlade[\s\S]{0,4000}/`, and the first `_updateBlade` in Player.js is at
+line 365 — inside a doc comment, 4384 lines above the method. The check
+"nothing multiplies the blade anchor by the figure's stature" had been passing
+on PROSE, and its claim had quietly stopped being true: the anchor is scaled by
+`limbs.stand` now, for reasons the code explains at length.
+
+`functionBody(src, sig)` from `_source.mjs` is the answer — **and give it a
+signature that is the definition and not a mention of it.** `'_updateBlade('`
+finds the call site 1300 lines earlier; `'\n  _updateBlade('` finds the method.
 
 ### 2.4 Never restate a rule; call it
 

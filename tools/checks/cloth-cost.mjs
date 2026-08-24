@@ -54,6 +54,7 @@
 
 import { snapshotShared, restoreShared } from './_shared.mjs';
 import { cpuMs, loadPhrase } from './_cpuclock.mjs';
+import { functionBody } from './_source.mjs';
 
 function stubEngine(THREE) {
   const scene = new THREE.Scene();
@@ -640,7 +641,12 @@ export async function run({ check, assert, THREE }) {
       assert(callers(player) === 2,
         `Player carries its garments from ${callers(player)} sites, not the cape-and-skirt pair in `
         + '`_spinBody`. Every extra site is another population paying CARRY_ITERS.');
-      assert(/_spinBody[\s\S]{0,3000}?cloak\?\.carry\(/.test(player),
+      /* INSIDE THE FUNCTION, counted rather than guessed. `_spinBody` is 2569
+       * characters against the 3000 this used to allow, so the window already
+       * ran 431 characters PAST the end of it — the overshoot direction, where
+       * a check passes on a line belonging to a different method and nobody
+       * investigates a green check. */
+      assert(/cloak\?\.carry\(/.test(functionBody(player, '\n  _spinBody(')),
         'the carry no longer happens inside `_spinBody`, so it is no longer bounded by a flip');
       return `${plain} link-solves a frame, ${carried} on a carried one (${ratio.toFixed(2)}x, `
         + `+${extra} iterations on ${iters}); one caller, and it is a somersault`;

@@ -245,6 +245,11 @@ const menu = new Menu(settings, {
   // once per world in buildWorld and read `settings` live; this only exists so
   // that unticking a box also kills the shake or the hitstop already in flight.
   onFeel: () => applyFeelSettings(world, settings),
+  /* THE HOOK THE NAME FIELD HAS ALWAYS RAISED INTO NOTHING. `Menu` has called
+   * `hooks.onName` on every keystroke since the field was added and this
+   * literal had no such key, so `net.name` kept whatever `host()`/`join()` read
+   * at the moment the session opened. See `Net.setName`. */
+  onName: () => net.setName(playerName()),
   onHost: () => hostSession(),
   onJoin: (code) => joinSession(code),
   onLeave: () => { leaveSession(); menu.netSession(null); },

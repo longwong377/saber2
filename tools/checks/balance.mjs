@@ -135,17 +135,31 @@ export async function run({ check, assert }) {
     const dead = [];
     for (const col of Object.keys(DIFFICULTY.knight)) {
       if (col === 'name' || col === 'blurb') continue;
+      /**
+       * READ OFF A DIFFICULTY RECORD, and not merely somewhere in the tree.
+       *
+       * This was `(\.|\?\.)${col}` against every .js file in `src/`
+       * concatenated, which asks "does the string `.fireRate` appear anywhere"
+       * — and it does, as `A.fireRate`, the ARCHETYPE's own field, ON THE SAME
+       * LINE as the difficulty read. So deleting `(diff.fireRate ?? 1)` from
+       * both of Enemy's attack timers left this green over a column that had
+       * stopped meaning anything, which is precisely the lie the check exists
+       * to catch. `assist` was the same: `this.assist = 0` in SaberController
+       * satisfied the column that `Player` reads.
+       *
+       * `difficulty` and `diff` are the only two names the tree binds one of
+       * these records to, so a read has to be off one of them. A third name
+       * would fail here, loudly, which is the right way round: a check that
+       * cannot see the reader says so instead of finding one somewhere else.
+       */
       const uses = (src.match(new RegExp(`\\b${col}\\b`, 'g')) || []).length;
-      // 4 rows of the table + the doc comment mentions; a real reader pushes it
-      // clear of that. Checked as "appears somewhere that is not the table",
-      // which is what a reader means.
-      const outsideTable = new RegExp(`(\\.|\\?\\.)${col}\\b|\\[['"\`]${col}['"\`]\\]`).test(src);
-      if (!outsideTable) dead.push(`${col} (${uses} mentions, none of them a read)`);
+      const reads = (src.match(new RegExp(`\\b(difficulty|diff)\\s*\\??\\.\\s*${col}\\b`, 'g')) || []).length;
+      if (!reads) dead.push(`${col} (${uses} mentions, none of them a read off a difficulty record)`);
     }
     assert(!dead.length,
       `difficulty columns with no reader anywhere in src/: ${dead.join(', ')}. `
       + 'Wire it or delete it — a tier that differs on paper and not in the code is a lie.');
-    return `${Object.keys(DIFFICULTY.knight).length - 2} columns, all read`;
+    return `${Object.keys(DIFFICULTY.knight).length - 2} columns, every one read off a difficulty record`;
   });
 
   /* ══ 2. the gate that outran the blade ═════════════════════════════════ */

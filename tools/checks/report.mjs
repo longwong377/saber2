@@ -44,6 +44,16 @@ import { ARCHETYPES } from '../../src/game/Enemy.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
+/** Every .js under src/, so "does anybody still do this" is a whole-tree question. */
+async function srcFiles(dir = 'src', out = []) {
+  const { readdir } = await import('node:fs/promises');
+  for (const e of await readdir(new URL('../../' + dir, import.meta.url), { withFileTypes: true })) {
+    if (e.isDirectory()) await srcFiles(`${dir}/${e.name}`, out);
+    else if (e.name.endsWith('.js')) out.push(`${dir}/${e.name}`);
+  }
+  return out;
+}
+
 /** One `fell` entry, in the shape `_deathOf` writes. */
 const fell = (name, killer, at, area = 1, extra = {}) => ({
   t: 'fell', name, unit: 'A Company', rank: 'CT', area, wave: 1,
@@ -203,7 +213,7 @@ export async function run({ check, assert }) {
     return 'four empty inputs, four empty runs';
   });
 
-  check('report: the killer is the name the game says out loud, not the key it files it under', () => {
+  check('report: the killer is the name the game says out loud, not the key it files it under', async () => {
     /**
      * THE DEFECT THIS FOUND. `killerName` ended `source.A?.name || source.type`,
      * and an archetype has no `name` — the field is `label` — so the first half
@@ -225,7 +235,28 @@ export async function run({ check, assert }) {
     assert(killerName({ type: 'gunship' }) === 'gunship', 'a body outside the table reports nothing at all');
     assert(killerName(null) === null && killerName({ isPlayer: true }) === 'you',
       'the two constants moved');
-    return `A.label → "${ARCHETYPES.b2.label}", bare key → "${ARCHETYPES.droideka.label}"`;
+
+    /**
+     * AND NOWHERE ELSE IN THE TREE EITHER. `killerName` was not the only one:
+     * the Foundry's own banner read `ARCHETYPES[up]?.name || up` and told a
+     * player who had just held a building that "the next one up is a arc". One
+     * `.name` on this table is always this defect, because the field does not
+     * exist — so the rule is asserted over `src/` rather than over the two
+     * lines that happened to have it.
+     */
+    const bad = [];
+    for (const f of await srcFiles()) {
+      const text = (await read(f)).replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+      for (const m of text.matchAll(/ARCHETYPES\s*\[[^\]]+\]\s*\??\.?\s*\??\.\s*(\w+)/g)) {
+        if (m[1] === 'name') bad.push(`${f}: ${m[0]}`);
+      }
+      for (const m of text.matchAll(/\bA\s*\?\.\s*(\w+)/g)) if (m[1] === 'name') bad.push(`${f}: ${m[0]}`);
+    }
+    assert(!bad.length,
+      `an archetype has no \`name\` — the field is \`label\` — so these read undefined and fall through `
+      + `to the spawn key: ${bad.join(', ')}`);
+    return `A.label → "${ARCHETYPES.b2.label}", bare key → "${ARCHETYPES.droideka.label}", `
+      + 'and no `.name` on that table anywhere in src/';
   });
 
   check('report: nothing in the tree renders the census twice', async () => {

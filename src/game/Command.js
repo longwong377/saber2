@@ -7845,7 +7845,13 @@ export class CommandDirector extends WaveDirector {
           wanted.unshift(up);
           this.log.push({ t: 'foundry', from: tiers[i], to: up, area: this.areaNumber, wave: this.wave });
           if (c === this.commander) {
-            this.world?.notify?.('THE FOUNDRY', `the next one up is a ${ARCHETYPES[up]?.name || up}`);
+            /* `.label` AND NOT `.name`, which is the same defect `killerName`
+             * carried: an archetype has no `name`, so this banner had always
+             * fallen through to the spawn table's internal key and told the
+             * player who had just held a building that "the next one up is a
+             * arc". Every other read of this table in the tree asks for
+             * `.threat` or `.label`; this was the one `.name` in `src/`. */
+            this.world?.notify?.('THE FOUNDRY', `the next one up is a ${ARCHETYPES[up]?.label || up}`);
           }
         }
       }

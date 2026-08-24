@@ -1039,6 +1039,16 @@ shipped systems as unbuilt. Each has been corrected in place.
     the developer's call, and every M1 magnitude is provisional until it is
     made.
   · **M7 is struck** — §4.3 says so where the number it chased used to be.
+  · **NOT A FEATURE, BUT IT BELONGS ON THIS LIST: ten checks were not meeting
+    §7's own standard**, and two of them were covering live defects. Audited by
+    asking which checks would still pass with the feature deleted; the answer
+    was ten out of ~1900, which is the real headline, and all ten are fixed with
+    the passing deletion written into the check. The three shapes are traps
+    §2.3b–d in HANDOFF: a read of a field nothing writes (`world.notes`,
+    `world.notices`, `A?.name`), a reader test that greps the whole tree and
+    finds somebody else's field (`.fireRate` off an ARCHETYPE), and a
+    fixed-length source window spelled as a regex (one of which had been reading
+    four thousand characters of doc comment).
 
 AFTER M5 — the chain, in dependency order
   1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each

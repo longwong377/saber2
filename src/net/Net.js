@@ -348,6 +348,42 @@ export class Net {
     return this.roster;
   }
 
+  /**
+   * A NEW NAME, MID-SESSION — and the field that types it had been wired to
+   * nothing since it was added.
+   *
+   * `Menu` raises `hooks.onName` on every keystroke in the co-op name box and
+   * NO CALLER HAS EVER SUPPLIED ONE: grep `onName` across `src/` and the only
+   * hit is the line that raises it. `net.name` is read exactly twice, by
+   * `host()` and `join()`, so a player who types a name, hosts, and then
+   * changes their mind is listed under the old one for the rest of the session
+   * — on the roster, in the status line and in the kill feed. That is the same
+   * defect the name field was added to end, one step later in the story.
+   *
+   * NO NEW MESSAGE ON THE WIRE. A client says `hello` again, which is the join
+   * handshake's own packet and whose handler already does exactly the right
+   * thing — set the sender's name and refresh — and the host refreshes its own
+   * roster, which broadcasts. `toHost` rather than `broadcast` because a name
+   * is the sender's to state and the HOST is the only node that may publish a
+   * roster; a client that broadcast one would be the forgery `_sender`'s note
+   * describes.
+   *
+   * @returns {boolean} did the name actually change
+   */
+  setName(n) {
+    /* `|| 'Jedi'` AND NOTHING ELSE, which is exactly what `host()` and `join()`
+     * do to the same argument. The trim and the 18-character cap live in
+     * `main.js`'s `playerName()`, which is the one place that turns a settings
+     * field into a name; a second copy of that rule here is the twin-table
+     * defect, and the day the cap moved they would disagree about the player. */
+    const name = n || 'Jedi';
+    if (name === this.name) return false;
+    this.name = name;
+    if (this.isHost) this._refreshRoster();
+    else this.toHost({ t: 'hello', name: this.name, look: this.look });
+    return true;
+  }
+
   /** Everybody's side, as the roster currently states it. id → team. */
   get teams() {
     const out = new Map();

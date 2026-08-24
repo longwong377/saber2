@@ -2620,7 +2620,14 @@ export class HUD {
       ? `${state.index + 1}/${state.total}`
       : `${state.progress}/${state.need}`;
     el.coachBrief.textContent = state.brief;
-    el.coachHint.textContent = state.form ? `${state.hint}  ·  sparring: ${state.form}` : state.hint;
+    /* THE FORM'S NAME AND THE FORM'S TELL. The name alone is a label a student
+     * cannot act on; the tell is the sentence that says what to watch for, and
+     * `FORMS` has authored one per form since the table was written with
+     * nothing anywhere drawing it. Appended rather than given a line of its own
+     * because it is the second half of the same statement — see `Dojo.report`. */
+    el.coachHint.textContent = state.form
+      ? `${state.hint}  ·  sparring: ${state.form}${state.formTell ? ` · ${state.formTell}` : ''}`
+      : state.hint;
     const frac = state.need === Infinity ? 1 : clamp(state.progress / state.need, 0, 1);
     el.coachFill.style.width = `${frac * 100}%`;
   }

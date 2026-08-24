@@ -666,6 +666,22 @@ export class DojoDirector {
       hint: typeof L.hint === 'function' ? L.hint(s) : L.hint,
       progress: this.progress, need: L.need,
       form: this.spar ? this.spar.formName : null,
+      /**
+       * …AND HOW TO READ IT, which `FORMS` has authored five times and nothing
+       * has ever drawn.
+       *
+       * "Makashi II" is a label. `tell` is the sentence — "economical,
+       * blade-tip precise — it fights at the end of the blade and lunges the
+       * moment you overcommit" — and it is the only thing in the game that
+       * teaches a player what a form LOOKS like from the other side. It was
+       * dead in the one room whose entire job is teaching, which is where a
+       * dead field costs the most.
+       *
+       * Read off the live form rather than off `formName`, because
+       * `Dojo.setSparForm` swaps `duel.form` mid-lesson and a copy taken at
+       * spawn would describe the last opponent.
+       */
+      formTell: this.spar?.duel?.form?.tell || null,
     };
     if (L.setup?.sandbox) {
       // The coach panel is the only place the player sees the room described,

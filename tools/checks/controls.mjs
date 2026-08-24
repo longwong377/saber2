@@ -3100,4 +3100,60 @@ export async function run({ check, assert }) {
     assert(new SaberController().holdPosition === false, 'the controller no longer starts off');
     return 'bladeHold: default off, checkbox #opt-bladehold, pushed live onto every player by applyFeelSettings';
   });
+
+  check('controls: every price the blade raises is a price somebody pays', async () => {
+    /**
+     * TWO BALANCE HOLES HID IN THE SAME SHAPE, and the shape is `if (ctx.onX)`.
+     *
+     * `SaberController.applyInput` raises a hook where an attack costs
+     * something and lets the CALLER decide what the cost is, which is right:
+     * stamina belongs to the Player and the controller is not allowed to know
+     * about it. But an unsupplied hook is not a cost of zero that somebody
+     * chose — it is a promise nobody keeps, and it fails silently, forever.
+     *
+     * `ctx.onSpin` and `ctx.onStrain` were both raised and never supplied.
+     * Player.js's own notes record what that was worth: a full-revolution spin
+     * that does about eight times an overhead's work was FREE and therefore the
+     * answer to every fight in the game, and a chambered heavy was a state you
+     * entered once and swung out of forever. Both are wired now, both with the
+     * arithmetic beside them — and `onSwing` and `onChamber` were still raised
+     * and still unsupplied, which is the same loaded gun with nothing in it
+     * yet.
+     *
+     * So the rule, rather than the two lines: a hook the blade raises must be a
+     * hook a caller supplies. Either it costs something and somebody pays, or
+     * it does not exist. The check is a source read for the reason menu.mjs's
+     * own header gives — the ctx literals are the fact, and constructing a
+     * Player to observe an absence would only tell you the absence is quiet.
+     */
+    const blade = await read('src/game/SaberController.js');
+    const player = await read('src/game/Player.js');
+    const bare = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+    const raised = new Set([...bare(blade).matchAll(/\bctx\.(on[A-Z]\w*)/g)].map((m) => m[1]));
+    assert(raised.size >= 3, `only ${raised.size} hooks found in the blade — the scan is not scanning`);
+
+    /* The suppliers are the ctx OBJECT LITERALS handed to applyInput, and
+     * nothing else: a key written anywhere in Player.js would match `onSpin` in
+     * the note that explains it. */
+    const supplied = new Set();
+    const src = bare(player);
+    for (const m of src.matchAll(/applyInput\(input, dt, \{/g)) {
+      let depth = 0, i = src.indexOf('{', m.index);
+      for (let j = i; j < src.length; j++) {
+        if (src[j] === '{') depth++;
+        else if (src[j] === '}' && --depth === 0) {
+          for (const k of src.slice(i, j).matchAll(/\b(on[A-Z]\w*)\s*:/g)) supplied.add(k[1]);
+          break;
+        }
+      }
+    }
+    assert(supplied.size >= 2, `only ${supplied.size} hooks supplied — the ctx literals were not found`);
+
+    const unpaid = [...raised].filter((n) => !supplied.has(n)).sort();
+    assert(!unpaid.length,
+      `the blade raises ${unpaid.join(', ')} and no caller supplies ${unpaid.length === 1 ? 'it' : 'them'} — `
+      + 'that is what made the spin and the chambered heavy free');
+    return `${raised.size} hooks raised, every one paid: ${[...raised].sort().join(', ')}`;
+  });
 }

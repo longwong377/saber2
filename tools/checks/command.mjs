@@ -2706,8 +2706,15 @@ export async function run({ check, assert }) {
     const me = forceful();
     w.players.push(me); w.player = me; d.commander.player = me;
     d.deploy();
-    assert(Cmd.FORMATION_IDS.every((id) => Cmd.ORDERS[id] === Cmd.FORMATIONS[id]),
-      'ORDERS is not a superset of FORMATIONS');
+    /* `ORDERS = { ...FORMATIONS, ...COMMAND_FORCE }`, so "ORDERS is a superset
+     * of FORMATIONS" is true by construction and cannot fail for the reason it
+     * used to give. The ONE thing that spread can do wrong is shadow: a Force
+     * verb sharing an id with a formation silently replaces it, and the wheel
+     * then shows a slot that casts instead of forming up. That is the claim. */
+    const shadowed = Object.keys(Cmd.COMMAND_FORCE).filter((id) => id in Cmd.FORMATIONS);
+    assert(!shadowed.length,
+      `${shadowed.join(', ')} is both a formation and a Force verb — the spread that builds ORDERS `
+      + 'drops the formation, so the wheel shows a slot that casts instead of forming up');
     const names = Object.values(Cmd.ORDERS).map((o) => o.name);
     assert(new Set(names).size === names.length, `two orders share a name: ${names.join(', ')}`);
     /* A key, where one is claimed, is claimed once — the wheel is not a reason

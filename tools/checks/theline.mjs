@@ -656,6 +656,23 @@ export async function run({ check, assert }) {
     d.areaWaves = d.area.waves;
     for (const e of world.enemies) if (!e.dead && e.team !== 0) { e.hp = 0; e.dead = true; }
     const taken = () => d.log.some((r) => r.t === 'area');
+    /**
+     * WHAT THE GAME SAYS, RECORDED THROUGH THE ONE PATH IT HAS.
+     *
+     * This read `world.notes?.some?.(…) !== false`, and THERE IS NO
+     * `world.notes`: `World.notify` calls `this.onNotify?.(…)` and nothing else
+     * — `world.notifications` was a queue nobody read and was deleted, with the
+     * note above `notify` recording why. So the expression was `undefined`,
+     * `undefined !== false` is true, and the assertion could not fail. Delete
+     * `_awaitLine`'s notice, which is the flagship rule's ONLY on-screen
+     * explanation of why an advance has stalled, and this arm stayed green.
+     *
+     * `onNotify` is the recorder every other suite uses for this
+     * (`coop.mjs`, `command-pvp.mjs`), and it is installed BEFORE the wave is
+     * paid because that is the frame the notice is raised on.
+     */
+    const notes = [];
+    world.onNotify = (title, sub) => notes.push([String(title), String(sub ?? '')]);
     d.payWave(d.wave + 1);
     /**
      * HELD OUT, EVERY FRAME, and the note twenty lines below is why this had
@@ -687,8 +704,15 @@ export async function run({ check, assert }) {
     assert(!taken(),
       'the area was taken with the whole line four times NEAR away — killing still advances the run');
     assert(d.awaitingLine, 'the run is not waiting for the line, it simply did not clear');
-    const said = world.notes?.some?.(([t]) => /LINE/i.test(String(t)));
-    assert(said !== false, 'nothing on screen says why the ground has not been taken');
+    const said = notes.filter(([t]) => /LINE/i.test(t));
+    assert(said.length,
+      `nothing on screen says why the ground has not been taken — ${notes.length} notices, `
+      + `${notes.map(([t]) => t).join(' / ') || 'none at all'}`);
+    assert(said.length === 1,
+      `the same notice was raised ${said.length} times — \`_awaitLine\` guards on \`awaitingLine\` `
+      + 'precisely so a stalled advance is announced once and not every frame');
+    assert(/your men/i.test(said[0][1]),
+      `the notice says "${said[0][1]}" and never mentions the men, which is the whole reason it is raised`);
 
     /**
      * …AND THE MOMENT THEY ARRIVE. Not at the next wave — `payWave` is the only

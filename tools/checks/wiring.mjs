@@ -162,12 +162,23 @@ export async function run({ check, assert }) {
   check('wiring: what this suite cannot see is counted, not hidden', () => {
     /**
      * A computed `import(expr)` is unresolvable by construction. Reporting the
-     * number is the point: it is the exact size of the uncovered residue, and
-     * a silent zero here would be the same lie as a hand-maintained list that
-     * has drifted from its twin.
+     * number is the point: it is the exact size of the uncovered residue, and a
+     * silent zero here would be the same lie as a hand-maintained list that has
+     * drifted from its twin.
+     *
+     * AND IT IS ASSERTED, NOT ONLY PRINTED. This check had no assertion in it
+     * at all — it could not fail under any change to the game, which made it a
+     * report line occupying a slot in the count and a slot in the gate. The
+     * number is zero today: every specifier in the tree is a literal, so the
+     * walk above genuinely covers the whole graph, and the sibling check's
+     * "every module resolves" means what it says. The first computed import
+     * added is a hole in that coverage and has to be an explicit decision —
+     * this is what makes somebody make it.
      */
-    return g.computed === 0
-      ? 'no computed dynamic imports — the static walk covers the whole graph'
-      : `${g.computed} computed dynamic import(s) are outside this walk by construction`;
+    assert(g.computed === 0,
+      `${g.computed} computed dynamic import(s) are outside this walk by construction, so `
+      + '"every specifier resolves" no longer covers the whole graph. If one is genuinely needed, '
+      + 'raise this ceiling deliberately and say here what is behind it');
+    return 'no computed dynamic imports — the static walk covers the whole graph';
   });
 }

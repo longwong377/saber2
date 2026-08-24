@@ -475,8 +475,13 @@ export async function run({ check, assert }) {
       hud.setBindings(b);
       const legend = hud.el.mapKey?.innerHTML || '';
       assert(/F13/.test(legend), `the map's legend says "${legend}" with sense rebound to F13`);
-      assert(new RegExp(`${Math.round(POWER_COST.sense)}`).test(legend),
-        `the legend does not price the power: "${legend}"`);
+      /* ANCHORED TO THE PRICE AS THE LEGEND WRITES IT — `N Force` — and not a
+       * bare number anywhere in the string. The string it is searched in
+       * already contains the keycap this check just rebound to `F13`, so an
+       * unanchored price satisfies itself the day the price contains the digits
+       * of a key label or of any other number beside it. */
+      assert(new RegExp(`\\b${Math.round(POWER_COST.sense)} Force\\b`).test(legend),
+        `the legend does not price the power at ${Math.round(POWER_COST.sense)} Force: "${legend}"`);
     } finally { restore(); }
     return `cold 0 repaints · sensing ${lit} in a second · ${MINIMAP.linger}s linger fading to `
       + `${canvas.style.opacity || 1} · always-on still one box away`;

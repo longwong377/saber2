@@ -2775,4 +2775,72 @@ export async function run({ check, assert }) {
     world.unload(); world.dispose?.();
     return line;
   });
+
+  check('co-op: a player who retypes their name is renamed on everybody\'s roster', async () => {
+    /**
+     * THE NAME FIELD WAS WIRED TO A HOOK NOBODY SUPPLIED.
+     *
+     * `Menu` raises `hooks.onName` on every keystroke in the co-op name box —
+     * it has done since the box was added, and `grep onName src/` returned
+     * exactly that one line. `net.name` is read twice, by `host()` and
+     * `join()`, so a player who typed a name, hosted, and then changed their
+     * mind was listed under the old one for the whole session: on the roster,
+     * in the status line, over every nameplate and in the kill feed. That is
+     * the SAME defect the field was added to end — the note in index.html
+     * beside `#opt-name` tells the first half of the story — arriving one step
+     * later in it.
+     *
+     * DRIVEN FROM BOTH ENDS, because the two directions are different code:
+     * the host publishes a roster and a client cannot, so a client renames by
+     * saying `hello` again and the host is the one that republishes. A fix that
+     * only worked for the host would leave three players out of four stuck.
+     */
+    const s = await session();
+    const nameOn = (net, id) => net.roster.find((r) => r.id === id)?.name ?? null;
+    const hostId = s.host.peer?.id;
+    const alphaId = s.clients[0].peer?.id;
+    assert(hostId && alphaId, 'the stub broker handed out no ids');
+    assert(nameOn(s.host, hostId) === 'HOST' && nameOn(s.clients[1], alphaId) === 'ALPHA',
+      'the session did not start under the names it was opened with');
+
+    /* THE HOST RENAMES ITSELF, and everybody is told. */
+    assert(s.host.setName('GENERAL') === true, 'the host refused its own new name');
+    await s.settle();
+    for (const [who, net] of [['host', s.host], ['alpha', s.clients[0]], ['bravo', s.clients[1]]]) {
+      assert(nameOn(net, hostId) === 'GENERAL',
+        `${who} still lists the host as "${nameOn(net, hostId)}" — the rename never reached it`);
+    }
+
+    /* A CLIENT RENAMES ITSELF, and the HOST is what republishes. */
+    assert(s.clients[0].setName('SCOUT') === true, 'the client refused its own new name');
+    await s.settle();
+    assert(nameOn(s.host, alphaId) === 'SCOUT',
+      `the host still lists that client as "${nameOn(s.host, alphaId)}"`);
+    assert(nameOn(s.clients[1], alphaId) === 'SCOUT',
+      `the other client still lists them as "${nameOn(s.clients[1], alphaId)}" — the roster was not re-broadcast`);
+
+    /* AND THE SAME NAME IS NOT A MESSAGE. A keystroke that changes nothing —
+     * every arrow key in that box raises `onName` too — must not put a packet
+     * on the wire, or holding a key down is a roster broadcast a frame. */
+    assert(s.host.setName('GENERAL') === false, 'renaming to the same name is still an event');
+    /* AND AN EMPTY BOX IS THE PLACEHOLDER, not an empty name — the same
+     * `|| 'Jedi'` `host()` and `join()` have always applied to the same
+     * argument, so clearing the field leaves you called what you would be
+     * called if you opened the session now. */
+    assert(s.host.setName('') === true && s.host.name === 'Jedi',
+      `clearing the box left the player called "${s.host.name}"`);
+    s.close();
+
+    /* AND THE HOOK IS SUPPLIED, which is the half that was missing: the menu
+     * has always raised it and this is the only thing that can say somebody is
+     * listening. Read, because main.js cannot be imported under Node. */
+    const main = strip(await readFile(new URL('../../src/main.js', import.meta.url), 'utf8'));
+    assert(/onName\s*:/.test(main), 'main.js supplies no onName, so the field types into nothing again');
+    assert(/onName\s*:\s*\(\)\s*=>\s*net\.setName\(playerName\(\)\)/.test(main),
+      'main.js supplies onName but not `net.setName(playerName())` — the roster is the thing that has to '
+      + 'change, and `playerName` is the one place that owns the trim, the cap and the placeholder');
+    const menu = strip(await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8'));
+    assert(/hooks\.onName\?\.\(/.test(menu), 'the name field no longer raises onName at all');
+    return 'host GENERAL and client SCOUT on all three rosters; an unchanged name sends nothing';
+  });
 }
