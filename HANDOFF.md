@@ -137,7 +137,8 @@ Playable two ways:
 > **Still owed, after auditing every claim in PLAN §0-§6 against the code.** §4.6
 > is complete — all six bullets, the branching route and the 40% armour floor
 > included — and so are §4.7, §4.9, §4.5's kill, §4.2's acceptance, B0-B5 and
-> M2-M4. What is genuinely left is short, and none of it is in the chain:
+> M2-M4. **PLAN NOW HAS NO UNBUILT DESIGN LEFT IN IT** — everything below is
+> struck, decided, or a measurement rather than a feature:
 >
 > · **B1b** — ragdoll pooling, and retiring a settled corpse into `Fallen`, which
 >   `Front.js` is still the only importer of.
