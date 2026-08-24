@@ -574,6 +574,14 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
           d.recruit(type);
           return { offer: d.musterOffer(), refused: d.refused };
         },
+        /* A COMMENDATION — PLAN §4.4's "promote a survivor", through the same
+         * door and asking for the offer again rather than editing a copy of it.
+         * `commend` pays experience into `Trooper.award`, so a promotion still
+         * arrives the one way every other promotion in the game does. */
+        commend: (name) => {
+          d.commend(name);
+          return { offer: d.musterOffer(), refused: d.refused };
+        },
         /* THE ROAD — PLAN.md §4.6's branching route, through the identical
          * door and for the identical reason. `takeRoute` re-plans the tail so
          * the run stays the length the deploy card promised, and the screen

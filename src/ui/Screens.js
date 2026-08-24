@@ -225,7 +225,8 @@ export class Screens {
    * the caller cannot forget to.
    *
    * @param {object} offer `CommandDirector.musterOffer()`
-   * @param {{recruit:(t:string)=>object, route:(id:string)=>object, done:()=>void}} io
+   * @param {{recruit:(t:string)=>object, route:(id:string)=>object,
+   *          commend:(name:string)=>object, done:()=>void}} io
    */
   muster(offer, io = {}) {
     const menu = this.io.menu;
@@ -240,6 +241,9 @@ export class Screens {
          * supplies and this method does not name is a callback the screen never
          * sees, and a fork whose buttons do nothing is worse than no fork. */
         route: this.guarded('choosing a road', (id) => io.route?.(id)),
+        /* Forwarded for the reason `route` is: `guarded` REBUILDS this object,
+         * so a callback that is not named here is a dead button on the card. */
+        commend: this.guarded('commending', (name) => io.commend?.(name)),
         done: this.guarded('closing the muster', () => io.done?.()),
       }) !== false;
     });

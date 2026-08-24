@@ -2359,3 +2359,24 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
  * killer and a bearing set at the same weight would turn ten rows into a wall. */
 .death-roll .rl span { font-size: 11px; opacity: .58; }
 .death-roll .rl.none { opacity: .55; font-size: 12px; }
+
+
+/* ── COMMEND — PLAN §4.4's third muster option ─────────────────────────────
+ *
+ * A LIST, not the shelf's card grid. A unit card is a thing you buy any number
+ * of; a man is one row that either can be promoted or cannot, and setting the
+ * two the same way would say the roll is a second shop. `.poor` is the shelf's
+ * own word for priced-out, reused rather than renamed so one rule dims both. */
+.muster-commend { margin: 8px 0 2px; }
+.muster-commend h4 { margin: 0 0 5px; font-size: 11px; letter-spacing: .13em;
+  text-transform: uppercase; opacity: .55; font-weight: 600; }
+.muster-commend .cm { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; padding: 4px 7px; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 3px; margin-bottom: 3px; cursor: pointer; }
+.muster-commend .cm:hover { border-color: rgba(255,255,255,.22); }
+.muster-commend .cm b { font-size: 12px; }
+.muster-commend .cm span { font-size: 10.5px; opacity: .6; }
+/* Priced out keeps its place and stops being a button — a row that vanished
+ * would read as a roster that forgot the man. */
+.muster-commend .cm.poor { opacity: .42; cursor: default; }
+.muster-commend .cm.poor:hover { border-color: rgba(255,255,255,.08); }

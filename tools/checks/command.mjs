@@ -945,9 +945,32 @@ export async function run({ check, assert }) {
     for (const k of a) {
       if (wipe[k] === null) {
         if (!printed.has(k)) {
-          /* Not a row, so nothing below applies. It still may not DIFFER in
+          /**
+           * Not a row, so nothing below applies. It still may not DIFFER in
            * kind between the two endings — that is the drift this check is
-           * for — and both being null is the agreement it wants. */
+           * for — and both being null is the agreement it wants.
+           *
+           * ── EXCEPT WHERE IT IS THE NAMES BEHIND A ROW THAT IS ITSELF NULL ──
+           *
+           * `roll` is §4.9's after-action list, and it is not a row: the card
+           * prints "Troops lost" as a count and hands the NAMES to `showDeath`
+           * separately. So it is null in exactly the runs where `fallen` is
+           * null — a mode with no company — and an array in exactly the runs
+           * where `fallen` is a number, including `[]` for an army that lost
+           * nobody, which is a different and true statement.
+           *
+           * That is a stronger claim than "the two endings agree", so it is
+           * asserted as the PAIRING rather than excused: whenever a non-row
+           * field goes null with `fallen`, it must go non-null with `fallen`
+           * too. A `roll` that stayed null on a run that lost six men would
+           * fail this, which is the defect worth catching — the count saying
+           * six and the list saying nothing.
+           */
+          if (wipe.fallen === null && win.fallen !== null && win[k] !== null) {
+            assert(Array.isArray(win[k]),
+              `${k} follows \`fallen\` and came back as ${JSON.stringify(win[k])} rather than a list`);
+            continue;
+          }
           assert(win[k] === null,
             `${k} is not a row on the card, is null after a wipe and ${JSON.stringify(win[k])} `
             + 'after a victory — two endings disagree about a field neither prints');

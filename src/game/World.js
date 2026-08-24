@@ -6396,6 +6396,20 @@ export class World {
   }
 
   /**
+   * ASK THE HOST TO COMMEND A MAN — PLAN §4.4's third muster option.
+   *
+   * The twin of `requestMuster` and it exists for the same reason: a client's
+   * director is a shell, so the request carries the DESIGNATION and nothing
+   * else. Not the cost, not the balance, not the rank — every one of those is
+   * derived on the host from the roster it actually keeps, so there is no claim
+   * a peer can make about its own purse that anything reads.
+   */
+  requestCommend(name) {
+    if (this.netMode === 'client') { this.net?.toHost?.({ t: 'muster', cm: name }); return; }
+    this.command?.commend?.(name);
+  }
+
+  /**
    * …AND A JOINING COMMANDER CHOSE A ROAD.
    *
    * The third thing a peer can say on the muster wire, beside a unit and the
@@ -6460,6 +6474,15 @@ export class World {
      * offer they still have. */
     if (msg.r !== undefined) {
       if (d.takeRoute(msg.r)) return true;
+      this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
+      return false;
+    }
+    /* A COMMENDATION, under the same rule as the road above and for the same
+     * reason: one army, one purse, so any commander sharing it may spend on any
+     * man on the roll. `commend` publishes on success; a refusal goes back to
+     * the peer that asked. */
+    if (msg.cm !== undefined) {
+      if (d.commend(msg.cm, c)) return true;
       this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
       return false;
     }

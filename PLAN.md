@@ -491,12 +491,17 @@ the battle in the brief, and calling the shortfall atmosphere would be this
 document pre-authorising itself not to deliver its centrepiece.
 
 **And that kill may already have fired.** `scale.mjs` reads over budget between
-16 and 30 bodies. It also runs a five-second frame with no corpses in it, while
-`frame-ledger` blames 47% of a real frame on 288 rigid bodies against 39 living —
-so the 120 bar is set against a benchmark that excludes the dead and is
-optimistic in a direction worth stating. If M3 and M6 confirm 120 is unreachable,
-the honest answer is that the floor and the cross-army pass are fixed first
-(M7, B1a) — not that the battle shrinks.
+16 and 30 bodies — **and that reading is retracted; see §0.** The instrument
+warmed for 90 frames while fifty-two dressing props were still settling, so the
+floor it found was somebody else's crates; the settled empty world is about
+2.5 ms and `WARM` is 1200 frames now. **M7 IS STRUCK**: it existed to chase that
+floor, and there is no floor. B1a is done (`ArmyIndex`), and the ladder has since
+run to 160 bodies with 120 of them at 16.60 ms — so 120 is not unreachable, it is
+measured. What remains true and worth stating is the direction of the bias:
+`frame-ledger` blames 47% of a real frame on 288 rigid bodies against 39 living,
+so a bar set on a benchmark that excludes the dead is optimistic — which is
+exactly why B1b's corpse retirement was worth building and its ragdoll pool was
+not.
 
 ### 4.4 The company — and it must work on a losing run
 
@@ -882,7 +887,7 @@ shipped systems as unbuilt. Each has been corrected in place.
     replacements and §4.6's road, and those two options are what is left of that
     bullet.
   · **M1**, unrun, and it licenses nothing now.
-  · **M7**, to be struck rather than run.
+  · **M7 is struck** — §4.3 says so where the number it chased used to be.
 
 AFTER M5 — the chain, in dependency order
   1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each

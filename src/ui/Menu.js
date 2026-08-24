@@ -7254,6 +7254,7 @@ export class Menu {
       brief: document.getElementById('muster-brief'),
       route: document.getElementById('muster-route'),
       units: document.getElementById('muster-units'),
+      commend: document.getElementById('muster-commend'),
       refused: document.getElementById('muster-refused'),
       rollHead: document.getElementById('muster-roll-head'),
       list: document.getElementById('muster-list'),
@@ -7325,6 +7326,46 @@ export class Menu {
           el.units.appendChild(card);
         }
       }
+
+      /**
+       * PROMOTE A SURVIVOR — PLAN §4.4's third option, and the one that was
+       * missing. "Replacements, or promote a survivor, or bank the purse."
+       *
+       * Banking has always worked: closing the muster without spending keeps
+       * the points, because the purse is never cleared. Replacements are the
+       * shelf above. This is the third, and it is the shape of the decision
+       * `MAX_STRENGTH` creates — at a full line every card above is priced out
+       * and this is the only thing left to spend on.
+       *
+       * A MAN AT THE TOP OF THE LADDER IS SHOWN AND NOT OFFERED, which is
+       * `_syncRules`' rule: a row that vanished would read as a roster that
+       * forgot him, and a row that took the click and was refused reads as the
+       * picker being broken. He keeps his place and says what he holds.
+       */
+      if (el.commend) {
+        const cm = o.commend;
+        el.commend.innerHTML = '';
+        el.commend.classList.toggle('hidden', !cm || !(cm.men || []).length);
+        if (cm && (cm.men || []).length) {
+          const head = document.createElement('h4');
+          head.textContent = `Commend — ${cm.cost} points`;
+          el.commend.appendChild(head);
+          for (const m of cm.men) {
+            const row = document.createElement('div');
+            row.className = m.afford ? 'cm' : 'cm poor';
+            /* WHAT THE POINTS WOULD BUY, not only what they cost: the rung he
+             * is on, the one above it, and how much experience is still between
+             * them — so a player can spend on the man who is one short rather
+             * than the man who is five. */
+            const to = m.to
+              ? `${m.rank} → ${escKey(m.to)} · ${m.need} more`
+              : `${m.rank} · nothing above it`;
+            row.innerHTML = `<b>${escKey(m.name)}</b><span>${escKey(to)}</span>`;
+            if (m.afford) this._activate(row, () => commend(m.name), `${m.name} — ${cm.cost} points`);
+            el.commend.appendChild(row);
+          }
+        }
+      }
     };
 
     /**
@@ -7379,6 +7420,18 @@ export class Menu {
       // The quiet takes no input. See `_runInterlude`.
       if (this._interludeLive) { audio.ui('bad'); return; }
       const res = this._musterIo?.recruit?.(type);
+      if (el.refused) el.refused.textContent = res?.refused || '';
+      audio.ui(res?.refused ? 'bad' : 'click');
+      draw(res?.offer || this._muster);
+    };
+
+    /* A COMMENDATION IS THE SAME SHAPE AS BUYING A BODY and goes through the
+     * same door, for the same reason: ask the director, print what it refuses,
+     * redraw from the offer it hands back. The screen keeps no copy of a rank
+     * for the same reason it keeps no copy of the points. */
+    const commend = (name) => {
+      if (this._interludeLive) { audio.ui('bad'); return; }
+      const res = this._musterIo?.commend?.(name);
       if (el.refused) el.refused.textContent = res?.refused || '';
       audio.ui(res?.refused ? 'bad' : 'click');
       draw(res?.offer || this._muster);
@@ -7477,7 +7530,7 @@ export class Menu {
      * decision that happens to be interesting. Same class, same flag, same
      * moment it lifts. */
     const list = el.interlude, go = el.done;
-    const gated = [el.units, el.route].filter(Boolean);
+    const gated = [el.units, el.route, el.commend].filter(Boolean);
     const wait = (on) => gated.forEach((n) => n.classList.toggle('waiting', on));
     if (!list) return 0;
     list.innerHTML = '';

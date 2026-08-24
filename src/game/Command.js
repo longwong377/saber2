@@ -2113,6 +2113,21 @@ export const TRIAGE_REACH = 3;
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
 /** The most bodies the mode will ever field for you at once. See `_muster`. */
+/**
+ * WHAT SURVIVING SOMETHING IS WORTH, IN EXPERIENCE — and both numbers were
+ * typed at the one site that awards them.
+ *
+ * A man who was on the field when a wave cleared earns one; a man who was there
+ * when a whole area was held earns two. They are named here because a THIRD
+ * thing now pays experience — §4.4's commendation, bought out of the muster
+ * purse — and its price is derived from this rate rather than chosen. A number
+ * that decides both what fighting is worth and what buying it costs cannot be
+ * typed twice: the day one moves without the other, a commendation is either
+ * free or unaffordable and nothing says which.
+ */
+export const XP_PER_WAVE = 1;
+export const XP_PER_AREA = 2;
+
 export const MAX_STRENGTH = 24;
 /** What you march in with. Two squads. */
 export const OPENING_STRENGTH = 10;
@@ -4166,6 +4181,28 @@ export class CommandDirector extends WaveDirector {
        * every purchase, and a reveal that restarted itself each time you bought
        * a trooper would never finish. */
       interlude: this._interlude,
+      /**
+       * WHO CAN BE COMMENDED, AND WHAT IT COSTS — PLAN §4.4's third option.
+       *
+       * The living, with the rank each holds and how far off the next one is,
+       * so the card can show what the points would BUY rather than only what
+       * they cost. `to` is null for a man already at the top of the ladder,
+       * which is what `commend` refuses on — a row that offered it and then was
+       * refused is the picker being randomly broken (see `_syncRules`).
+       *
+       * `afford` is computed here beside the purse and not in the screen, for
+       * the reason at the head of this method: a client that worked out its own
+       * affordability would offer every man at zero points.
+       */
+      commend: {
+        cost: this.commendCost(),
+        men: c.roster.living.map((t) => ({
+          name: t.name, unit: t.label, rank: RANKS[t.rank].short, title: RANKS[t.rank].title,
+          xp: t.xp, to: t.rank < RANKS.length - 1 ? RANKS[t.rank + 1].title : null,
+          need: t.rank < RANKS.length - 1 ? RANKS[t.rank + 1].xp - t.xp : null,
+          afford: c.roster.points >= this.commendCost() && t.rank < RANKS.length - 1,
+        })),
+      },
       units: c.army.tiers
         // The AREA NUMBER, not a second column beside it. See AREAS — and see
         // `unlockAt`, which is where a contingent's answer to the same question
@@ -4225,6 +4262,79 @@ export class CommandDirector extends WaveDirector {
      * one. No-op outside a session; `_bulk` is the fallback's own suppression. */
     if (this.mustering && !this._bulk) this.world?.publishMuster?.(c);
     return t;
+  }
+
+  /**
+   * WHAT ONE COMMENDATION COSTS — PLAN §4.4, and the rate is the run's own.
+   *
+   * §4.4 asks the muster to be "a decision at the Company screen:
+   * **replacements, or promote a survivor, or bank the purse.**" Two of those
+   * three already worked: `recruit` buys replacements, and banking is what
+   * closing the muster without spending has always done — the purse is never
+   * cleared, so points survive to the next ground. Promotion was the missing
+   * one.
+   *
+   * ── AND IT BUYS EXPERIENCE, NOT RANK ─────────────────────────────────────
+   *
+   * A rank in this mode is a fact about `xp` crossing a gate in `RANKS`, and
+   * `Trooper.award` is the one door it comes through — every promotion in the
+   * game is announced by that method returning a record. So a commendation pays
+   * `XP_PER_WAVE` into the same door rather than writing a rank, and a man is
+   * promoted only if that carries him over his gate. Nothing about promotion is
+   * bypassed; what the purse buys is the fighting he did not have to do.
+   *
+   * ── THE PRICE IS DERIVED AND NOT CHOSEN ──────────────────────────────────
+   *
+   * Holding an area awards `XP_PER_AREA` and pays `area.muster` points — that
+   * pair IS the run's exchange rate between blood and money, stated by the two
+   * lines that hand them out. So a commendation costs what the ground that
+   * would have earned it pays: `muster / XP_PER_AREA`. The landing zone pays 11
+   * and charges 6; the Core Ship pays 30 and charges 15. The price rising with
+   * the purse is the point — a flat price would be free by area five, and the
+   * DECISION has to stay live at every boundary.
+   *
+   * Against a body at 5 points that is roughly one replacement per commendation,
+   * which is the trade §4.4 wants put to the player: another man, or one of the
+   * men you already have made better. And at `MAX_STRENGTH` the shelf refuses
+   * every body, so this is the only thing left to spend on — a full line is
+   * where a purse used to have nowhere to go.
+   */
+  commendCost() { return Math.max(1, Math.ceil((this.area?.muster ?? 0) / XP_PER_AREA)); }
+
+  /**
+   * Commend one man by name. Returns the RANKS record if it promoted him, or
+   * `true` if the experience landed without crossing a gate; null on refusal
+   * with the reason on `this.refused`.
+   *
+   * BY NAME AND NOT BY INDEX, for `recruit`'s reason: the same call is made by
+   * a screen the host owns and by a peer over the wire, and a roster index
+   * means two different men the moment somebody dies between the click and the
+   * arrival. A designation is unique on the roll by construction — see
+   * `designate`.
+   */
+  commend(name, c = this.commander) {
+    /* A COMMANDER WHO IS NOT HOLDING THE PURSE CAN ONLY ASK. Same shape as
+     * `recruit` and for the same reason: nothing is written locally, the host
+     * runs this against the roster it actually keeps, and the screen's numbers
+     * move when the answer arrives. */
+    if (this._netShell) { this.refused = null; this.world?.requestCommend?.(name); return null; }
+    this.refused = null;
+    const t = (c.roster?.living || []).find((x) => x.name === name);
+    if (!t) { this.refused = `${name} is not standing on this roll`; return null; }
+    const cost = this.commendCost();
+    if (c.roster.points < cost) { this.refused = `${cost} points needed, you have ${c.roster.points}`; return null; }
+    if (t.rank >= RANKS.length - 1) { this.refused = `${t.name} already holds ${RANKS[t.rank].title}`; return null; }
+    c.roster.points -= cost;
+    const rose = t.award(XP_PER_WAVE);
+    if (rose) this._promoteTrooper(t, t.body);
+    /* The log carries it for the same reason it carries an enlistment: the
+     * interlude and the after-action report read this ledger and nothing else,
+     * so a promotion the player PAID for has to be in it or the report is a
+     * story about a different run. */
+    this.log.push({ t: 'commend', name: t.name, unit: t.label, rank: RANKS[t.rank].short,
+                    area: this.areaNumber, cost });
+    if (this.mustering && !this._bulk) this.world?.publishMuster?.(c);
+    return rose || true;
   }
 
   /**
@@ -7269,7 +7379,7 @@ export class CommandDirector extends WaveDirector {
     // Experience for living through it: a body that was on the field when the
     // wave cleared earned something even if it never fired.
     for (const t of this.roster.living) {
-      const p = t.award(1);
+      const p = t.award(XP_PER_WAVE);
       if (p) this._promoteTrooper(t, t.body);
     }
     /**
@@ -7756,7 +7866,7 @@ export class CommandDirector extends WaveDirector {
     this.awaitingLine = false;
     for (const t of this.roster.living) {
       t.areas++;
-      const p = t.award(2);
+      const p = t.award(XP_PER_AREA);
       if (p) this._promoteTrooper(t, t.body);
     }
     // Holding a whole area is the biggest thing that happens to a line's nerve.
