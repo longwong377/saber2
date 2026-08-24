@@ -30,7 +30,8 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { GUARD } from './SaberController.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, teamOf, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP, paysOut } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease,
+         IMPULSE_AS_HP, paysOut } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
@@ -7028,8 +7029,36 @@ export class World {
     const lift = e.gripped && e.liftTarget ? e.liftTarget : null;
     if (lift) {
       e._netGripAt = true;
+      /**
+       * ── AND WHAT IT IS BEING PULLED WITH, BECAUSE THE HOST CANNOT SEE IT ──
+       *
+       * A lift point alone was enough while exactly one person could ever own a
+       * body. It is not enough for a contest: `gripClaim` weighs a pull against
+       * an opposing POOL through `forceResistance`, and this machine's Force is
+       * the one thing about a guest that the protocol deliberately does not
+       * replicate — `applyClaim`'s own note says so, and until now that was
+       * correct, because the host only ever needed the guest's Force to resist
+       * blows that had already been priced here.
+       *
+       * So a grip claim carries the three numbers the arithmetic needs and
+       * nothing else: `w` what this hand pulls with, `f` the pool behind it,
+       * `b` whether this hand's guard is already broken. Without them the host
+       * would resolve a two-sided contest from one side — which is not a
+       * conservative guess, it is a different game on each screen.
+       *
+       * Guarded on the local player actually being the one holding THIS body:
+       * `e.gripped` is also true of a body the host is holding and this machine
+       * is only mirroring, and quoting somebody else's pull as our own would
+       * make a guest the loudest voice in a fight it is not in.
+       */
+      const p = this.player;
+      const mine = p && (p.gripEnemy === e);
+      const m = e.A ? e.A.mass : 80;
       this._claim({ t: 'claim', k: 'grip', id: e.id, g: 1,
-        p: [r2(lift.x), r2(lift.y), r2(lift.z)] });
+        p: [r2(lift.x), r2(lift.y), r2(lift.z)],
+        w: mine ? r2(p._gripPull(m, true)) : 0,
+        f: mine ? r2(p.force) : 0,
+        b: mine && p._guardOpen() ? 1 : 0 });
     } else if (e._netGripAt) {
       e._netGripAt = false;
       this._claim({ t: 'claim', k: 'grip', id: e.id, g: 0 });
@@ -7445,7 +7474,33 @@ export class World {
          * gone quiet; this stops a body being stranded in the window where a
          * host's own copy of the gripper goes away underneath it. */
         e.hold(NET_GRIP_LEASE * 2);
-        e.liftTarget = (e._netLift ||= new THREE.Vector3()).copy(at);
+        /**
+         * ── THE HOST IS WHERE A CONTEST IS SETTLED ───────────────────────
+         *
+         * Straight into `liftTarget` is the last-writer-wins this whole change
+         * exists to end: with the host's own player also gripping, whichever of
+         * `_updateGrip` and this handler ran later that frame owned the body
+         * outright and the other one paid for nothing. Through `gripClaim` the
+         * peer becomes one claimant among however many there are, and BOTH
+         * sides read the same resolution, because the resolution is a pure
+         * function of the ledger and the clock rather than of iteration order.
+         *
+         * It is settled HERE and only here. The host is the one machine that
+         * can see both pulls — the guest is told what its hand is doing and is
+         * never told what the host's is — so a guest's own copy resolves as
+         * though it were alone and is corrected by the next snapshot, exactly
+         * as every other optimistic claim on this wire already is.
+         *
+         * The claim's lease is `NET_GRIP_LEASE`, the same clock `_netGripUntil`
+         * runs on two lines down, so a peer that goes quiet leaves the contest
+         * and the hold on the same tick rather than on two.
+         */
+        gripClaim(e, by, at, Number(msg.w) || 0, {
+          time: this.time, pool: Number(msg.f) || 0, beaten: !!msg.b,
+          radius: e.radius ?? 0.55, lease: NET_GRIP_LEASE,
+          out: (e._netLift ||= new THREE.Vector3()),
+        });
+        e.liftTarget = e._netLift;
         /**
          * A LEASE, because a held body is the one state a lost connection can
          * strand. Every other claim is an event that happened; this one is a
@@ -7457,7 +7512,9 @@ export class World {
          */
         e._netGripUntil = this.time + NET_GRIP_LEASE;
       } else {
-        e.releaseHold();
+        /* HIS HAND OFF IT, NOT EVERY HAND. The host's own player may still be
+         * holding this body, and a peer letting go used to drop it for both. */
+        if (gripRelease(e, by, this.time) === 0) e.releaseHold();
         e._netGripUntil = 0;
       }
     }
@@ -7476,7 +7533,12 @@ export class World {
     for (const e of this.enemies) {
       if (!e._netGripUntil || this.time < e._netGripUntil) continue;
       e._netGripUntil = 0;
-      e.releaseHold();
+      /* AND THE SAME RULE AS AN EXPLICIT RELEASE: the silence is the peer's,
+       * not the host's, and the host may have a hand on this body too.
+       * `gripRelease` with no claimant prunes the lapsed rows and answers how
+       * many live ones are left — the peer's row lapses on this same tick
+       * because `applyClaim` leases it on `NET_GRIP_LEASE`. */
+      if (gripRelease(e, null, this.time) === 0) e.releaseHold();
     }
   }
 

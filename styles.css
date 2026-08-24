@@ -2349,7 +2349,13 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
  * loses its whole company has ten of these and the two buttons under it are the
  * only exits from this screen — a list that pushed them off the bottom would
  * strand a player on their own casualty list. */
-.death-roll { margin: 14px 0 4px; max-height: 34vh; overflow-y: auto; text-align: left; }
+/* `scrollbar-gutter: stable` is not decoration and front-screen.mjs holds every
+ * scroller to it: a column that reserves no track jumps a scrollbar's width the
+ * moment it overflows, so a FULL page reads as a cut one. A roll of ten names
+ * overflows and a roll of two does not, which is exactly the case that would
+ * shift under the reader. */
+.death-roll { margin: 14px 0 4px; max-height: 34vh; overflow-y: auto;
+  scrollbar-gutter: stable; text-align: left; }
 .death-roll h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .14em;
   text-transform: uppercase; opacity: .6; font-weight: 600; }
 .death-roll .rl { display: flex; flex-direction: column; gap: 1px;

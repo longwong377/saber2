@@ -38,6 +38,16 @@ import { clocked } from './_shared.mjs';
  * off, and this suite's whole subject is what `damage` does to `hp` — with the
  * real subtraction in the path or not at all. It reads `alive`, `force` and
  * `staggerTimer`, which is why `force` is here now.
+ *
+ * AND THE PREDICATE IT CALLS COMES WITH IT. `resistForce` asked
+ * `this.staggerTimer > 0` inline until the grip contest needed the same
+ * question — "is this guard already beaten" now has two readers and therefore
+ * one home, `Player._guardOpen`, exactly as `Enemy._guardOpen` already had. A
+ * borrowed method that calls a sibling needs the sibling: this fixture met the
+ * new one as `this._guardOpen is not a function`, which is the SAME defect this
+ * note is about, one method further down. Borrowed rather than replaced with
+ * `() => false` for the same reason `resistForce` is: a stand-in that always
+ * answers "guard intact" has quietly turned the beaten-guard discount off.
  */
 function victim(hp = 100) {
   return {
@@ -51,6 +61,7 @@ function victim(hp = 100) {
      * `SHIELD` there. */
     shield: { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 },
     resistForce: Player.prototype.resistForce,
+    _guardOpen: Player.prototype._guardOpen,
     /* …and the disarm, for the same reason. `damage` asks whether this blow
      * knocks the weapon out of the hand; the real method is borrowed rather
      * than stubbed out, so a stand-in cannot answer a question the shipped one
