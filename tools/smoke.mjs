@@ -417,6 +417,25 @@ await step('force a spawn wave and cut something', async () => {
     };
   });
   console.log('   ', JSON.stringify(res));
+  /**
+   * WHAT MUST BE TRUE, AND WHAT MAY LEGITIMATELY BE ZERO.
+   *
+   * This step also printed zeros and passed — `severed: 0, pieces: 0` — and
+   * unlike the volley below, two of those are fine. A B1 has 28 hp and a blade
+   * kills it well before a blind swing happens to cross a limb with the speed
+   * and the angle a sever wants; `tools/checks/severance.mjs` is where severing
+   * is held to its own rules, with a fixture that aims. Asserting a limb here
+   * would be a combat test on a boot probe, and a flaky one.
+   *
+   * What this step is FOR is that the blade reaches a real body in the real
+   * page, and that is the assertion: a droid put inside the blade's reach and
+   * swung through for a second and a half must take damage. It caught nothing
+   * before because nothing could fail.
+   */
+  if (!(res.hpAfter < res.before.hp)) {
+    throw new Error(`a droid stood 1.1 m inside the blade for 1.5 s and took no damage — `
+      + `hp ${res.before.hp} → ${res.hpAfter}. The blade is not reaching bodies in the shipped page`);
+  }
 });
 
 /**

@@ -224,9 +224,14 @@ Playable two ways:
 > left alone and written down. The other was that bodies on the field were
 > absorbing the volley — they were cleared, and nothing changed.
 >
-> **AND THE CUT STEP'S `severed: 0, pieces: 0` IS STILL UNEXPLAINED.** It kills
-> the body (`hpAfter: -11, dead: true`) and severs nothing, and it is the other
-> probe that prints zeros and passes. Not looked at.
+> **THE CUT STEP'S `severed: 0, pieces: 0` IS FINE, AND THE STEP STILL NEEDED AN
+> ASSERTION.** A B1 has 28 hp and the blade kills it well before a blind swing
+> happens to cross a limb at the speed and angle a sever wants — `hpAfter: -11,
+> dead: true` is the blade working. Severing is held to its own rules in
+> `severance.mjs`, with a fixture that aims; asserting a limb on a boot probe
+> would be a flaky combat test. So the assertion is what that step is actually
+> FOR: a droid put 1.1 m inside the blade for 1.5 s must take damage. It caught
+> nothing before because nothing could fail.
 >
 > **TWO THINGS FOUND WHILE FIXING A CHECK, NEITHER FIXED, BOTH WORTH MORE THAN
 > THE CHECK.** `suppression.mjs` drives ten troopers up a Geonosis slope, and in
