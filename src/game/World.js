@@ -190,6 +190,7 @@ import { ObjectiveField } from './Objectives.js';
 import { FireMissionDirector } from './FireMission.js';
 import { CraterLog, SESSION_MEMORY } from '../world/CraterLog.js';
 import { GraveField } from '../world/Graves.js';
+import { FallenField } from '../world/Fallen.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -1091,6 +1092,24 @@ export class World {
       this.graves?.detach();
       this.graves = null;
     }
+    /**
+     * …AND THE ANONYMOUS DEAD, WHICH ARE EVERYBODY ELSE.
+     *
+     * `GraveField` above is one marker per NAME and it outlives the ground it
+     * was planted on. This is the opposite object on both counts, which is why
+     * it is not gated the way that one is: it holds no record, nobody in it has
+     * a name, and it belongs to THIS ground — a corpse from the last engagement
+     * lying on the next one's dirt would be a body that never fell there. So
+     * `attach` resets it, `unload` detaches it, and every mode gets one because
+     * a duel and a sandbox leave bodies on the floor exactly as a battle does.
+     *
+     * What fills it is `Corpses.js`'s SINK step, which until now deleted the
+     * body it had chosen to spend. See `FallenField`.
+     *
+     * NOT `roster.fallen`, which is a list of NAMES and is the thing `graves`
+     * draws. Same word, opposite object: this one is the men nobody counted.
+     */
+    this.fallen = (this.fallen || new FallenField()).attach(this.scene, this.terrain);
     this.fireMissions?.dispose?.();
     this.fireMissions = null;
     if (leadsArmy && MODES[mode]?.fireMissions) {
@@ -1596,6 +1615,9 @@ export class World {
     /* The markers come out of the scene and the names stay on the record —
      * `detach`, never `dispose`. See GraveField. */
     this.graves?.detach();
+    /* The retired dead have no record to keep: they fell on THIS ground and the
+     * instances were the whole of them. See FallenField. */
+    this.fallen?.detach();
     /* The corpse ledger holds references to bodies that have just been
      * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
      * level exactly as the World does, and what must not survive is its
@@ -7169,6 +7191,10 @@ export class World {
      * leaves the other reader wrong.
      */
     this.corpses?.clear();
+    /* …and the dead those corpses were retired into, for the same reason: a
+     * restart is `unload` with the ground left standing, and the men who fell
+     * in the attempt that failed did not fall in this one. */
+    this.fallen?.clear();
     this.locks.length = 0;
     /**
      * …AND WHAT IS STILL IN THE AIR, which this did not touch.

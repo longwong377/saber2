@@ -121,6 +121,195 @@ export async function run({ check, assert }) {
       + `${world.corpses.list.length} corpses held`;
   });
 
+  check('undertaker: a corpse the budget spends is laid down, not deleted', async () => {
+    /**
+     * THE STEP THAT USED TO END IN NOTHING.
+     *
+     * `Corpses.js` grades retirement: SETTLE takes the simulation off every
+     * corpse for free, and SINK — the only step that removes anything — fades
+     * the least worthy past the budget and disposes them. So a fight that kills
+     * two hundred men left `CORPSE_BUDGET` of them on the ground and the rest
+     * simply stopped having existed, which is the one thing about the dead a
+     * player can watch happen.
+     *
+     * The reason the budget is that tight is a draw-call reason and it is
+     * measured — `tools/_farcorpse.mjs`, a B1 on geonosis: 4 meshes alive at
+     * 100 m and 44 dead, 0 alive at 163 m and 44 dead, because `MergedSkin`'s
+     * staleness drops the L2 bake on `actor.ragdolled` and `Enemy.update`
+     * returns on `dead` above the line that re-asks for the cohort. There is no
+     * rung below a corpse.
+     *
+     * `FallenField` is that rung, and this is the property that says the SINK
+     * step now uses it: every corpse the budget spends is a prone instance
+     * where it fell, and the whole field of them costs two draw calls however
+     * many there are. Asserted as `instanced === retired` rather than as
+     * `instanced > 0`, because a build that laid down SOME of them would be a
+     * field that quietly loses the rest — which is the defect being fixed.
+     */
+    const { world } = await bootWorld({
+      level: 'colosseum', settings: { mode: 'sandbox', level: 'colosseum', quality: 'low' }, runSeed: 7,
+    });
+    const input = idleInput();
+    const field = world.fallen;
+    assert(field && field.meshes,
+      'no FallenField is attached to the world, so nothing here is measuring anything');
+    assert(field.count === 0, `the field already holds ${field.count} before anybody has died`);
+
+    /**
+     * OVER THE BUDGET BY DESIGN — a run that stayed inside it never reaches the
+     * SINK step and this check would pass against a build with no field at all.
+     *
+     * The population is lowered to the room rather than the room raised to the
+     * population: `WaveDirector._sandboxUpdate` decides what STAYS every frame
+     * and disposes the rest, so a check that spawned ten here would have five
+     * torn down on the first step and never exceed anything. `budget` is a
+     * constructor option on `Corpses` (`World` reads it off the quality tier),
+     * so setting it is the same lever `CORPSE_BUDGET.low` is — and it is set
+     * from what the room actually kept, not from a number typed here.
+     */
+    const made = [];
+    for (let i = 0; i < 5; i++) {
+      const e = stand(world, 'b1', 6 + i * 2.4, -6);
+      if (e) made.push(e);
+    }
+    drive(world, 0.5, input);
+    const kept = made.filter((e) => !e.disposed);
+    const over = 2;
+    assert(kept.length > over,
+      `the sandbox room kept only ${kept.length} of ${made.length} bodies, which is not enough to `
+      + 'exceed any budget at all');
+    const budget = kept.length - over;
+    world.corpses.budget = budget;
+    for (const e of kept) { e.hp = 0; e.die?.(null, 'check'); }
+    drive(world, 1.5, input);
+
+    /* WHAT THEY WERE DRAWING, counted while they are all still bodies — the
+     * number the two draw calls below are being weighed against. */
+    const vis = (o) => { let p = o; while (p) { if (!p.visible) return false; p = p.parent; } return true; };
+    let corpseMeshes = 0;
+    for (const e of kept) {
+      for (const h of (e.actor?.holders?.values?.() || [])) {
+        h.traverse((o) => { if (o.isMesh && vis(o)) corpseMeshes++; });
+      }
+    }
+    assert(corpseMeshes > 0, 'the dead are drawing nothing at all, so this check has no subject');
+
+    /* DRIVEN UNTIL IT HAS HAPPENED, not for a fixed wall of frames — the same
+     * trap the check above this one names: `World` scales `dt` for hitstop, so
+     * a fixed number of steps is not a fixed number of seconds. */
+    let stepped = 0;
+    while (stepped < 60 && world.corpses.retired < over) { drive(world, 2, input); stepped += 2; }
+
+    assert(world.corpses.retired >= over,
+      `the budget spent only ${world.corpses.retired} of ${kept.length} corpses in ${stepped} s with a `
+      + `budget of ${budget} — nothing reached the SINK step, so this check is measuring nothing`);
+    assert(world.corpses.instanced === world.corpses.retired,
+      `${world.corpses.retired - world.corpses.instanced} of ${world.corpses.retired} spent corpses were `
+      + 'deleted without being laid down — those men are simply gone from the field');
+    assert(field.count === world.corpses.instanced,
+      `the ledger says ${world.corpses.instanced} were retired and the field is drawing ${field.count}`);
+    /* THE TRADE, AS THE TWO COUNTS IT IS — and read here, before the teardown
+     * at the bottom detaches the field. A first draft composed this line after
+     * `world.dispose()` and reported ZERO draw calls for a field it had just
+     * asserted was drawing something, which is a check quoting its own
+     * teardown. */
+    const drawn = field.meshes.filter((im) => im.count > 0).length;
+    const perCorpse = corpseMeshes / kept.length;
+    assert(drawn <= field.calls && field.calls === 2,
+      `the field draws ${drawn} of ${field.calls} buffers; Fallen.js is two geometries and one `
+      + 'material and cannot honestly cost more');
+    assert(drawn < perCorpse,
+      `the whole retired field costs ${drawn} draw calls against ${perCorpse.toFixed(0)} meshes for ONE `
+      + 'corpse — the demotion is not a trade');
+
+    /* AND THEY ARE LYING WHERE THEY FELL. A field that took the count and put
+     * every figure at the origin would satisfy everything above it. */
+    const m = new THREE.Matrix4(), p = new THREE.Vector3();
+    const q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    let placed = 0, offGround = 0;
+    for (const im of field.meshes) {
+      for (let i = 0; i < im.count; i++) {
+        im.getMatrixAt(i, m);
+        m.decompose(p, q, sc);
+        placed++;
+        const g = world.terrain?.height?.(p.x, p.z) ?? 0;
+        /* Lying ON the ground: `LIE_SINK` is 4.5 cm and this allows twice it
+         * either way rather than restating the constant. */
+        if (Math.abs(p.y - g) > 0.1) offGround++;
+        const near = kept.some((e) => Math.hypot(p.x - e.position.x, p.z - e.position.z) < 6);
+        assert(near, `a retired body was laid down at ${p.x.toFixed(1)},${p.z.toFixed(1)} — nowhere `
+          + 'near any body that died');
+      }
+    }
+    assert(placed === field.count, `${placed} instances are drawn and the field says ${field.count}`);
+    assert(offGround === 0, `${offGround} of ${placed} retired bodies are not lying on the ground`);
+
+    const line = `${kept.length} bodies died against a budget of ${budget}; ${world.corpses.retired} were `
+      + `spent and all ${world.corpses.instanced} laid down — ${corpseMeshes} corpse meshes across `
+      + `${kept.length} bodies traded for ${drawn} instanced draw call(s)`;
+    world.dispose?.();
+    return line;
+  });
+
+  check('undertaker: the field of the retired dead is bounded and has no holes in it', async () => {
+    /**
+     * THE ONE FAILURE MODE AN INSTANCED FIELD HAS, and it is invisible from the
+     * count. A slot that is inside `InstancedMesh.count` and was never written
+     * carries the identity matrix — which is a man lying at the world origin, at
+     * full size, in the middle of the level. `FallenField` draws out of TWO
+     * buffers because there are two poses, so a ring that recycled slots by
+     * pose would leave exactly that hole in whichever buffer lost one.
+     *
+     * Driven at a deliberately tiny capacity rather than at 520, because the
+     * property is about the WRAP and 521 real corpses is a ten-minute drive to
+     * assert something arithmetic. The poses are alternated across the split
+     * the field measured off its own geometry, so both buffers are in play —
+     * a run that only ever used one would pass a broken ring.
+     */
+    const { FallenField } = await import('../../src/world/Fallen.js');
+    const scene = new THREE.Scene();
+    const ground = { height: (x, z) => (x + z) * 0.01, normalAt: (x, z, o) => o.set(0, 1, 0) };
+    const CAP = 8;
+    const f = new FallenField(CAP).attach(scene, ground);
+    assert(f.split > 0, 'the pose split was never measured off the geometries');
+
+    const put = (k) => f.lay(20 + k, -30 - k, (k % 7) * 0.9,
+      /* Straddle the split so both buffers fill. */
+      (k % 2) ? f.split * 2 : 0, null, 1);
+    for (let k = 0; k < CAP * 3 + 1; k++) {
+      assert(put(k), `the field refused body ${k}`);
+    }
+    assert(f.laid === CAP * 3 + 1, `laid says ${f.laid}`);
+    assert(f.count === CAP, `${CAP * 3 + 1} bodies were laid into a field of ${CAP} and it draws ${f.count}`);
+    assert(f.calls === 2, `${f.calls} draw calls for the whole field`);
+    const used = f.meshes.map((im) => im.count);
+    assert(used.reduce((a, b) => a + b, 0) === CAP,
+      `the two buffers draw ${used.join('+')} instances against a cap of ${CAP}`);
+    assert(used.every((n) => n > 0),
+      `only one pose was ever used (${used.join('/')}), so the ring across two buffers is untested`);
+
+    const m = new THREE.Matrix4(), p = new THREE.Vector3();
+    const q = new THREE.Quaternion(), sc = new THREE.Vector3();
+    let holes = 0;
+    for (const im of f.meshes) {
+      for (let i = 0; i < im.count; i++) {
+        im.getMatrixAt(i, m);
+        m.decompose(p, q, sc);
+        if (p.lengthSq() < 1e-9) holes++;
+      }
+    }
+    assert(holes === 0,
+      `${holes} of ${f.count} drawn instances are an unwritten slot — a body lying at the world origin`);
+
+    f.clear();
+    assert(f.count === 0 && f.meshes.every((im) => im.count === 0),
+      'clear() left instances drawn');
+    f.detach();
+    assert(!scene.children.some((o) => o.name === 'fallen'), 'detach() left the field in the scene');
+    return `${CAP * 3 + 1} bodies through a field of ${CAP}: ${used.join(' + ')} drawn across `
+      + '2 calls, no holes, and clear/detach put the scene back';
+  });
+
   check('undertaker: disposing a body twice is not an error, and the second one is free', async () => {
     /**
      * The sink path ends in `e.dispose?.()` inside a bare `catch {}`, and a

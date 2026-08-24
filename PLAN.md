@@ -323,11 +323,12 @@ So it splits:
   consumed by `World.js`'s cross-army pass (which is at `World.js:2989-3018`
   now, not the 2743 this bullet cites), and held by
   `tools/checks/army-index.mjs`.
-- **B1b — ragdoll pooling and `Fallen` retirement.** Still genuinely unbuilt, and
-  the only part of B1 that is: `Fallen` is imported only by `Front.js` and
-  nothing retires a corpse into it. No longer a precondition for scale, though —
-  the index and `Corpses.js`'s settle/cap/budget are why 120 bodies fit a
-  16.60 ms frame.
+- **B1b — ragdoll pooling and `Fallen` retirement.** SPLIT BY MEASUREMENT, and
+  only one half survived it. **Retirement is built** — `Fallen.js` grew a
+  `FallenField` and `Corpses.js`'s SINK step lays a prone instance where the
+  body lies instead of deleting it, so the budget demotes the dead rather than
+  losing them. **Pooling is struck**, and the measurement that strikes it is
+  the deliverable; see §6's B1 entry for both sets of numbers.
 
 **B2 — attack tokens. BUILT.** *This bullet was licensed by absence — "no
 crowd-attack limiter exists in `src/`" — and `src/game/Tokens.js` is one:*
@@ -752,12 +753,68 @@ NOW — building, licensed by measurements already taken
       answered true for both sides and made the gathered test dead — pushes a
       shared `front` scalar, and ends the meeting through `World._endMeeting`
       at a baseline. The scalar is on the wire and drawn (see 8 below).
-  B1  pooled ragdolls, instanced corpses .. PARTLY, and no longer a
-      precondition for anything: `ArmyIndex` is the broad phase and
-      `Corpses.js` bounds settle, cap and budget, which is why 120 bodies fit
-      a 16.60 ms frame. What is left is ragdoll POOLING, and retiring a
-      settled corpse into `Fallen` — which `Front.js` is still the only
-      importer of, so no corpse has ever been retired into it.
+  B1  pooled ragdolls, instanced corpses .. CLOSED, and half of it by
+      DELETION. `ArmyIndex` is the broad phase and `Corpses.js` bounds settle,
+      cap and budget, which is why 120 bodies fit a 16.60 ms frame. The two
+      halves left were priced separately and only one of them was worth
+      building.
+
+      RETIREMENT — BUILT. `src/world/Fallen.js` grew a `FallenField` (a
+      preallocated pair of `InstancedMesh`, `GraveField`'s shape) and
+      `Corpses.js`'s SINK step now lays a prone instance where the body lies —
+      under a settled corpse as the fade STARTS, so it dissolves off a figure
+      already there, and on the last frame for one the cap ended while it was
+      still travelling. The budget stops deleting the dead and starts demoting
+      them. Licensed by a draw-call reading nobody had taken —
+      `tools/_farcorpse.mjs`, a B1 on geonosis, shipped build:
+
+          100 m   alive  4 meshes (the L2 merged skin)   dead  44
+          163 m   alive  0 meshes (the L3 cohort)        dead  44
+
+      A body gets CHEAPER as it walks away and eleven times DEARER the moment it
+      falls, because `MergedSkin`'s staleness drops the L2 bake on
+      `actor.ragdolled` — correctly — and `Enemy.update` returns on `dead` above
+      the line that would re-ask for the cohort. There was no rung below a
+      corpse, so everything past `CORPSE_BUDGET.high` — twenty — had to be
+      deleted. There is a rung now, at two draw calls for the whole field
+      however many are in it. `undertaker.mjs` holds the property
+      and reports the trade it measured: five B1 corpses drawing 225 meshes
+      against one instanced draw call.
+
+      POOLING — STRUCK, and the measurement is the deliverable.
+      `tools/_ragdollcost.mjs` on `lifecycle.mjs`'s own fixture, 30
+      build/ragdoll/dispose cycles after 6 warm-up, CPU (three runs, load
+      4.7-5.9 on 4 cores — the contention is why these are a range):
+
+          one ragdoll        19 rapier rigid bodies, 19 colliders, 18 joints
+          goRagdoll()        1.78 - 2.76 ms median
+            physics.add      0.72 - 0.77   (the WASM: createRigidBody + collider)
+            addJoint         0.12 - 0.13
+            three.js         0.82 - 0.83   (holders, reparenting, matrices)
+          dispose()          0.34 - 0.40 ms
+            physics.remove   0.16 - 0.19
+          end to end         2.17 - 3.10 ms per death
+
+      **Nothing leaks.** Rapier's own counters — `world.bodies.len()`,
+      `colliders.len()`, `impulseJoints.len()` — come back to exactly where they
+      started over all 30 cycles, and so do the wrapper's arrays.
+
+      A death is an EVENT and not a load, so the figure has to be multiplied by
+      a rate before it can be compared to a frame, and §2's M5 table is five
+      real minutes a cell: 19.7-56.0 kills and 7.0-8.7 own fallen, so
+      **0.1-0.25 deaths a second**. At that rate the whole of construction and
+      teardown is **0.02-0.08% of every frame** — and at ten a second, forty
+      to a hundred times the measured rate, it is 2-3%. A pool's ceiling is the 0.90-0.92 ms
+      that crosses into WASM, so **0.009-0.023%** of a frame, and that ceiling
+      is generous: it assumes a pooled body needs no re-seating at all.
+
+      And it could not return even that. `Body._unbind` is
+      `world.removeRigidBody` — taking a body out of the Rapier world DESTROYS
+      it — so a pooled ragdoll has to keep its nineteen bodies IN the world,
+      which is exactly the **573 → 33** bodies `Corpses`' SETTLE step exists to
+      remove and the 47%-of-`world.update` physics line that step bought back.
+      A pool would pay that to save 0.01-0.02% of a frame. It is not a small
+      win, it is a negative one.
   B2  attack tokens ...................... BUILT. `src/game/Tokens.js`, a
       `TokenPool` on the World, consumed by `Enemy`.
   B3  audio distance bed, horizon, haze ... BUILT, all three thirds. The two
