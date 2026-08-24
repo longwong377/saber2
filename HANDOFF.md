@@ -134,12 +134,27 @@ Playable two ways:
 > wave 15, unchanged at wave 70 where the wave is already at its heavy limit.
 > Repriced 0.26 → 0.16, so the `hazardPay` payout moved with it.
 >
-> **Still owed**, in PLAN.md §6's order: §4.6's branching route; and
-> §4.3's animated instanced rung, which is NOT "gated hard on M4" and has not
-> been for some time — `src/engine/Profiler.js` is the browser frame instrument,
-> always on, reporting real GPU time through `EXT_disjoint_timer_query_webgl2`
-> beside the JS and the 1% low. What that rung waits on is a READER: nothing in
-> `tools/` starts a browser, plays for two minutes and prints the split.
+> **Still owed, after auditing every claim in PLAN §0-§6 against the code.** §4.6
+> is complete — all six bullets, the branching route and the 40% armour floor
+> included — and so are §4.7, §4.9, §4.5's kill, §4.2's acceptance, B0-B5 and
+> M2-M4. What is genuinely left is short, and none of it is in the chain:
+>
+> · **B1b** — ragdoll pooling, and retiring a settled corpse into `Fallen`, which
+>   `Front.js` is still the only importer of.
+> · **§4.8's first two bullets** — contested telekinesis, and squadmates grabbing
+>   the man you have gripped. No shared-constraint grip contest and no grab joint
+>   exists in `src/`; this is the largest unbuilt design left in the document.
+> · **A screen for the after-action report.** The record is complete — every entry
+>   carries `killerName`, a bearing and a minute — and nothing draws it.
+> · **The Company tab cannot change a man's kit**, and **the muster card cannot
+>   promote a survivor or bank the purse**.
+> · **M1** is unrun and licenses nothing; **M7** should be STRUCK, because
+>   `tools/scale.mjs` withdrew the number it was written to chase.
+>
+> **§4.3's animated instanced rung is NOT "gated hard on M4"** and has not been
+> for some time: `src/engine/Profiler.js` is the browser frame instrument, always
+> on, reporting real GPU time through `EXT_disjoint_timer_query_webgl2` beside
+> the JS and the 1% low — and `tools/_frame.mjs` is now the reader it lacked.
 >
 > **AND SEVEN OF THE NINE ENTRIES IN PLAN §6's NOW LISTS WERE STALE OR WRONG**,
 > which is the defect that made §4.7 claim weather was unbuilt on a tree that had
