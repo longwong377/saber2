@@ -730,10 +730,48 @@ AFTER M5 — the chain, in dependency order
      (the one thing allowed to break the sight model's symmetry) and
      Salvage (§4.6's own example — breaking cover pays Insight). Each is
      measured A/B on the same bodies in the same places in
-     `tools/checks/variance.mjs`. STILL OWED from this section: the
-     holocron offering three of the legal facets rather than all of them,
-     the branching route, player-authored difficulty, composition
-     constraints, and the modifier caps.
+     `tools/checks/variance.mjs`.
+     THE HOLOCRON OFFERS THREE of the currently-legal facets and not all
+     fifty-two: `offerNow` draws off the run's own seed XOR how much has
+     been bought, so a solved build order is a found one, and
+     `LOCKED.offer` is why a facet you can afford is not on the table.
+     PLAYER-AUTHORED DIFFICULTY AND THE CAPS ARE ONE DECISION, and both
+     are built. The rules panel paid nothing, and the exchange rate for
+     fixing that was already in the source: `conditionCost` charges a
+     DEALT condition `worth · budget` and explicitly skips a RULE, which
+     is the game's own statement that a wave under a rule is `worth` more
+     fight. So `hazardPay(rules) = 1 + Σ worth`, the Insight a wave pays
+     is multiplied by exactly that, and repricing a condition moves the
+     payout with it rather than leaving a second table behind.
+     **Measured, forty waves under DELUGE+SILENCE: 56 Insight becomes 82,
+     and 5 facets bought become 6** — the raise arrives early enough to
+     buy something, which is the difference between a decision and a
+     bigger number. `Communion.earn` carries the fraction so the purse
+     stays whole. AND THE CAP IS TWO: `CONDITION_MAX` was answering two
+     questions at once — what the COMPOSER may carry (still 4, still the
+     stranding measurement at waves 100/140/200) and what the PANEL may
+     sell. `RULE_MAX` is 2, because with seven rules and a cap of four
+     you tick four and stop reading. "At most one beneficial" is
+     deliberately NOT built: every entry in `CONDITIONS` is a handicap,
+     so the clause would be a branch no input can take.
+     COMPOSITION CONSTRAINTS, four of the five named, and none of them
+     costs a new field: `ARCHETYPES[*].toughness` has been the game's
+     material classification all along. ARMOUR COLUMN (everything plated),
+     ONE MATERIAL (one kin a wave, a different one next wave), DROID HOST
+     and BEAST DRIVE. *bladed* is not among them because `silence` already
+     filters to `!ranged`, which IS the bladed roster. All four are
+     RULE-ONLY and that is measured rather than tidy: a roster narrowing
+     DEALT at depth is what strands a budget — the two already dealt push
+     the Colosseum to 51–59% unspent at wave 100, and four more stopped
+     the body cap binding at all. THEY FOUND A REAL BUG: `_setPiece` built
+     its ladder from the LEVEL's pool rather than the wave's narrowed
+     roster, so a boss wave under ARMOUR COLUMN fielded an acolyte and a
+     master; NO GUNS had the same hole and passed on luck.
+     STILL OWED from this section: the branching route, and §4.6's
+     "40% must be vehicles" as a genuine FLOOR — which is a reservation in
+     `_composeUnder` beside the head and the set-piece, and is the one
+     part of this section that is composer surgery rather than a hook that
+     already exists.
   8  §4.5 co-op and versus ................. THE SECOND HUMAN IS IN IT, and
      was before this line was written: `seatAlly`, `beginVersus`,
      `formUp`, four commanders as two sides, orders, musters and purses

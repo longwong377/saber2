@@ -97,18 +97,76 @@ Playable two ways:
 > every arm lost its roster, and a metric that reads 0.000 in three cells cannot
 > carry an interaction.
 >
-> **Still owed**, in PLAN.md §6's order: §4.6's remaining bullets (the branching
-> route, player-authored difficulty, composition constraints, the modifier caps —
-> though `legalRuleSet` already carries a cap and a pairwise blacklist); and
+> **§4.6's rules became a wager.** The panel was a list of handicaps that paid
+> nothing. The exchange rate for fixing that was already in the source:
+> `conditionCost` charges a DEALT condition `worth · budget` and explicitly
+> skips a RULE, which is the game's own statement that a wave under a rule is
+> `worth` more fight. So `hazardPay(rules) = 1 + Σ worth` and the Insight a wave
+> pays is multiplied by exactly that — nothing typed twice, and repricing a
+> condition moves the payout. **Forty waves under DELUGE+SILENCE: 56 Insight
+> becomes 82, and 5 facets bought become 6.** `Communion.earn` carries the
+> fraction so the purse stays whole (40 waves at 1.08 is 43, not 40) and every
+> existing caller is byte-identical. AND THE CAP IS TWO. `CONDITION_MAX` was
+> answering two questions: what the COMPOSER may carry (still 4, still the
+> stranding measurement) and what the PANEL may sell. `RULE_MAX` is 2 — with
+> seven rules and a cap of four you tick four and stop reading. "At most one
+> beneficial" is deliberately not built: every `CONDITIONS` entry is a handicap,
+> so the clause would be a branch no input can take.
+>
+> **§4.6's composition constraints, four of five, and no new field.**
+> `ARCHETYPES[*].toughness` has been the material classification all along —
+> flesh, plastoid, droid, armour, heavy — so ARMOUR COLUMN, ONE MATERIAL, DROID
+> HOST and BEAST DRIVE are derived. *bladed* is not among them because `silence`
+> already filters to `!ranged`, which IS the bladed roster. All four are
+> RULE-ONLY, measured: a roster narrowing DEALT at depth strands a budget, and
+> four more of them stopped the body cap binding at all. **They found a real
+> bug**: `_setPiece` built its ladder from the LEVEL's pool instead of the
+> wave's narrowed roster, so a boss wave under ARMOUR COLUMN fielded an acolyte
+> and a master — NO GUNS has had the same hole and passed on luck, because
+> `SET_PIECE`'s bodies happen to be melee.
+>
+> **Still owed**, in PLAN.md §6's order: §4.6's branching route and its "40% must
+> be vehicles" as a genuine FLOOR (a reservation in `_composeUnder`, the one part
+> of that section that is composer surgery rather than a hook that exists); and
 > §4.3's animated instanced rung, still gated hard on M4.
 >
-> **TWO REDS THAT WERE RED BEFORE THIS SESSION.** `blast-door.mjs`'s "a held
-> blade opens a blast door in about twenty seconds" fails identically at this
-> session's own starting commit (`657594b`): the natural loop burns **0 of the
-> 515 texels** in 75 s and never opens the door, while the swing arm scores 217
-> and the shipped-default-scheme arm finishes in 19.4 s. So the mechanism works
-> and the `free`-scheme loop drive is what is not reaching the plate. Untouched
-> here, and named so the next session does not rediscover it.
+> **THE RED THAT WAS RED BEFORE THIS SESSION IS GREEN, AND IT WAS THE FIXTURE.**
+> `blast-door.mjs`'s "a held blade opens a blast door in about twenty seconds"
+> burned **0 of the 515 texels** on the middle door of the magazine. `rearm`
+> cleared `door.warded` before each loop; `GunPit._wards` runs from the world's
+> own tick and ends with `door.warded = warded && !taken`, so the flag was back
+> on the first frame and every frame after it — the check had been red on a door
+> that could not be cut at all. The pit owns that state and `silence()` is the
+> door in it. Which is also the only shape that could be right: a fixture that
+> unwarded a door by assignment would be measuring a plate the game never
+> presents. With the plate live it reports what DESIGN.md claims — **tight 13.7 s,
+> natural 18.8 s, wide 21.7 s, and a tidier loop is a faster breach.**
+>
+> **AND `cloth-cost`'s 6 ms ceiling was set below its own error bar.** Quiet it
+> reads 5.32 ms; inside a full gate at load 4.7 it read 6.41 and went red.
+> `_cpuclock.mjs`'s own header measures the cache-pressure residual a shared box
+> leaves on a CPU reading at about 25%, and 5.32 × 1.25 = 6.65. The band is 7 ms:
+> a 7.5 ms population still fails it, which is the only claim the check exists to
+> defend.
+>
+> **AND `controls`'s boon-reader check named five source files by hand** — the
+> five that happened to read a boon when it was written. It went stale the moment
+> the line modes answered six of them in `Command.js` and `Enemy.js`, and called
+> all six a lie. It walks `src/` now, still minus the BOONS table itself, which
+> is the whole point of the word "elsewhere".
+>
+> **ONE RED IS OPEN AND IT IS AN ORDER DEFECT, ISOLATED TO ONE SENTENCE.**
+> `breach.mjs`'s "the shield is the gate" passes when its suite runs FIRST in a
+> process and fails when anything at all ran before it — measured three ways:
+> alone 5/5 (25.0 s after the pulse opens the plate, 96.5% of frames in
+> contact); `breach → blast-door` 5/5 and 9/9; `bolts → breach` and
+> `blast-door → breach` both fail it identically (436 of 515 texels in 70 s, so
+> the deflector comes back before the breach lands). The predecessor does not
+> matter, which rules out anything blast-door does to a door. Both suites
+> already pin `destruction.prepareBudgetMs`, which is the cause `blast-door`'s
+> own header documents for this exact symptom, so it is something else
+> `_shared.mjs` does not restore — `ground` (Scenery.js) and Engine's once-only
+> ShaderChunk flags are what that file names as still shared.
 >
 > **AND ONE THAT WAS RED BEFORE THIS SESSION AND IS NOT ANY MORE, WITH THE
 > REASON.** `balance.mjs`'s melee-opener check drove all four difficulty tiers
