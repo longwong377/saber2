@@ -82,6 +82,10 @@ export class Screens {
    * @param {object} io.menu               needs a show/hide pair per overlay
    * @param {() => Array} io.pauseStats    rows for the pause card
    * @param {() => boolean} [io.sandboxLive]
+   * @param {() => object|null} [io.report]  the after-action report for the
+   *   pause card, or null where the mode has no army — PLAN.md §4.9. Asked for
+   *   at the moment of the pause and never held: a report cached when the run
+   *   started would be a report of the run's first minute.
    * @param {(what: string, e: Error) => void} [io.onError]
    */
   constructor(io) {
@@ -340,7 +344,7 @@ export class Screens {
     this.io.world().paused = true;
     this.io.input.enabled = false;
     this.io.input.exitLock?.();
-    this.io.menu.showPause(this.io.pauseStats(), this.io.sandboxLive?.());
+    this.io.menu.showPause(this.io.pauseStats(), this.io.sandboxLive?.(), this.io.report?.() ?? null);
     return true;
   }
 

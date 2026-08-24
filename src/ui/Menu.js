@@ -3230,6 +3230,10 @@ export class Menu {
       draftCards: document.getElementById('draft-cards'),
       pause: document.getElementById('pause'),
       pauseStats: document.getElementById('pause-stats'),
+      reportBtn: document.getElementById('btn-pause-report'),
+      reportHead: document.getElementById('report-head'),
+      reportCensus: document.getElementById('report-census'),
+      reportAreas: document.getElementById('report-areas'),
       death: document.getElementById('death'),
       deathStats: document.getElementById('death-stats'),
       deathTitle: document.getElementById('death-title'),
@@ -6208,16 +6212,7 @@ export class Menu {
      * closed on every pause — a card that remembers being open is a card that
      * hides Resume behind a list you opened once, twenty minutes ago.
      */
-    const toggle = document.getElementById('btn-pause-bind');
-    const box = document.getElementById('pause-bind-box');
-    if (toggle && box && !toggle._wired) {
-      toggle._wired = true;
-      toggle.addEventListener('click', () => {
-        audio.ui('click');
-        const open = box.classList.toggle('hidden');
-        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
-      });
-    }
+    this._wirePauseToggle('btn-pause-bind', 'pause-bind-box');
     render();
   }
 
@@ -7673,6 +7668,39 @@ export class Menu {
   hideDeploy() { document.getElementById('deploy-card')?.classList.add('hidden'); }
 
   /**
+   * ONE DISCLOSURE ON THE PAUSE CARD, wired once.
+   *
+   * `.pause-wrap` is a 400 px card and each of these panels is longer than it,
+   * so every one of them is a button that says what is behind it and a box that
+   * starts closed — a card that remembers being open is a card that hides
+   * Resume behind a list you opened once, twenty minutes ago. Written here
+   * rather than three times because it WAS three times: the third copy is what
+   * made it worth extracting, and `showPause` folds all three away by the same
+   * table it uses to reset their `aria-expanded`.
+   */
+  _wirePauseToggle(btnId, boxId) {
+    const toggle = document.getElementById(btnId);
+    const box = document.getElementById(boxId);
+    if (!toggle || !box || toggle._wired) return box || null;
+    toggle._wired = true;
+    toggle.addEventListener('click', () => {
+      audio.ui('click');
+      const open = !box.classList.toggle('hidden');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      /* AND THE PANEL YOU JUST OPENED IS ON SCREEN. `#pause .pause-wrap` is a
+       * 92vh scroller and every one of these panels is longer than what is left
+       * below the button that opens it — measured, the card is 1051 px with the
+       * report open in an 800 px window — so a button pressed at the bottom of
+       * the card opened a panel entirely below the fold and looked like a button
+       * that did nothing. Same argument and same fix as the deploy card's mode
+       * list, which front-screen.mjs already holds. `block: 'nearest'` so an
+       * already-visible panel does not jump. */
+      if (open) box.scrollIntoView?.({ block: 'nearest' });
+    });
+    return box;
+  }
+
+  /**
    * THE SETTINGS THE RUN CAN REACH — and until this existed there were none.
    *
    * THE HOLE. `#pause` carried Resume, Restart wave, Abandon run, Copy frame
@@ -7755,15 +7783,7 @@ export class Menu {
     if (mirror(row('opt-invert'))) this._check('opt-pause-invert', 'invertY');
     if (mirror(row('opt-shake'))) this._check('opt-pause-shake', 'shake');
 
-    const toggle = document.getElementById('btn-pause-opts');
-    if (toggle && !toggle._wired) {
-      toggle._wired = true;
-      toggle.addEventListener('click', () => {
-        audio.ui('click');
-        const open = box.classList.toggle('hidden');
-        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
-      });
-    }
+    this._wirePauseToggle('btn-pause-opts', 'pause-opts-box');
     this._pauseOpts = box;
     return box;
   }
@@ -7825,7 +7845,88 @@ export class Menu {
    *   pause with no world) it falls back to the settings, which is the best
    *   guess available and no worse than what this used to do.
    */
-  showPause(stats, sandboxLive) {
+  /**
+   * THE AFTER-ACTION REPORT, DRAWN — PLAN.md §4.9.
+   *
+   * `Session.runReport` did the reading; this does nothing but say it. The
+   * split is the same one `fellLine` is under and for the same reason: the
+   * projection is a pure function of the director's log and is driven by
+   * `tools/checks/report.mjs` under Node, and if the counting lived in here it
+   * could only ever be checked through a DOM.
+   *
+   * TWO BLOCKS, AND THE ORDER IS THE ARGUMENT. The census first, because it is
+   * the half that changes a decision — the muster's next purchase and whether
+   * to keep calling shells onto ground your own line is walking into. The
+   * ledger second, because it is the half that lets a player ARGUE with the
+   * census, and nobody argues with a number they have not read yet.
+   *
+   * `null` takes the whole thing off the card rather than drawing an empty one:
+   * outside Command there is no army, no log and nothing to report, and a
+   * heading over nothing reads as a screen that failed.
+   */
+  _drawReport(report) {
+    const btn = this.el.reportBtn;
+    const box = document.getElementById('pause-report-box');
+    if (!btn || !box) return false;
+    if (!report) { btn.classList.add('hidden'); box.classList.add('hidden'); return false; }
+    btn.classList.remove('hidden');
+
+    const men = (n) => `${n} ${n === 1 ? 'man' : 'men'}`;
+    const areas = (n) => `${n} ${n === 1 ? 'area' : 'areas'}`;
+    if (this.el.reportHead) {
+      this.el.reportHead.textContent = report.lost
+        ? `${men(report.lost)} lost over ${areas(report.held)} held.`
+        : `Nobody on the list, over ${areas(report.held)} held.`;
+    }
+
+    /* THE CENSUS. `own` is the row the report exists to make unmissable, so it
+     * carries its own class and its own sentence rather than sitting in the
+     * list as one more line of prose — see the note on `.rc.own` in styles.css.
+     * Deaths with nothing to name are said LAST and said plainly: inventing a
+     * killer for them is exactly the mystery this screen removes. */
+    if (this.el.reportCensus) {
+      const rows = report.census.map((r) => `<div class="rc${r.own ? ' own' : ''}">`
+        + `<b>${r.n}</b><span>${r.own ? `by ${r.killer} — your own side` : `by ${r.killer}`}</span></div>`);
+      if (report.unknown) {
+        rows.push(`<div class="rc none"><b>${report.unknown}</b>`
+          + '<span>with nothing near enough to name</span></div>');
+      }
+      this.el.reportCensus.innerHTML = rows.length ? rows.join('')
+        : '<div class="rc none">Nothing has killed one of yours yet</div>';
+    }
+
+    /* THE LEDGER, area by area, in the order they were fought. An engagement
+     * still being fought is the case the pause card is opened in most often, so
+     * it is a state of its own — "in progress" — and not a lost area. */
+    if (this.el.reportAreas) {
+      this.el.reportAreas.innerHTML = report.areas.map((a) => {
+        const state = a.held === true ? 'held' : a.held === false ? (a.why || 'lost') : 'in progress';
+        const head = `<h4>${a.n != null ? `${a.n}. ` : ''}${a.name || 'The ground'} — <em>${state}</em></h4>`;
+        const dead = a.fell.map((e) => `<div class="rl${e.killer === 'your own fire mission' || e.killer === 'you' ? ' own' : ''}">`
+          + `<b>${e.name}</b><span>${fellLine(e)}</span></div>`);
+        const up = a.up.map((e) => `<div class="rl quiet"><b>${e.name}</b><span>`
+          + `${e.t === 'steps-up' ? `takes the squad after ${e.after}`
+             : e.t === 'commend' ? `commended in the field — ${e.rank}`
+             : `promoted — ${e.rank}`}</span></div>`);
+        const fire = a.missions.map((e) => `<div class="rl${e.friendlies > 0 ? ' own' : ''}">`
+          + `<b>GRID ${e.grid} — ${e.lapsed ? 'WAVED OFF' : 'CLEARED'}</b><span>`
+          + `${e.lapsed ? `${e.told} estimated · you let the window close`
+             : e.friendlies > 0 ? `${e.friendlies} of yours inside it${e.names?.length ? ` — ${e.names.join(', ')}` : ''}`
+             : `${e.hostiles | 0} hostiles, none of yours`}</span></div>`);
+        const body = [...dead, ...fire, ...up];
+        return `<div class="ra${body.length ? '' : ' empty'}">${head}`
+          + (body.length ? body.join('') : '<div class="rl quiet"><b>Nothing to report</b></div>')
+          + '</div>';
+      }).join('');
+    }
+    return true;
+  }
+
+  /**
+   * @param {object|null} [report] `Session.runReport(director.log)`, or null in
+   *   every mode that has no army — see `_drawReport`.
+   */
+  showPause(stats, sandboxLive, report = null) {
     this.el.pauseStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     // Only where the numbers actually bite; everywhere else they would be two
     // sliders that do nothing, which is worse than no sliders at all.
@@ -7854,8 +7955,13 @@ export class Menu {
     // card that remembers being open hides Resume behind a list you opened
     // once, twenty minutes ago.
     this._buildPauseOptions();
+    /* Same fold, same rule, and the report is the one of the three that most
+     * needs it: it is the longest panel on the card and it would otherwise
+     * push Resume off the bottom of a run four areas deep. */
+    this._drawReport(report);
+    this._wirePauseToggle('btn-pause-report', 'pause-report-box');
     for (const [btn, panel] of [['btn-pause-bind', 'pause-bind-box'],
-      ['btn-pause-opts', 'pause-opts-box']]) {
+      ['btn-pause-opts', 'pause-opts-box'], ['btn-pause-report', 'pause-report-box']]) {
       document.getElementById(panel)?.classList.add('hidden');
       document.getElementById(btn)?.setAttribute('aria-expanded', 'false');
     }
@@ -7879,8 +7985,10 @@ export class Menu {
    * @param {string} [title]
    * @param {Array|null} [roll] `World.runStats().roll` — the run's fallen, in
    *        the order they fell. Null in every mode that has no army.
+   * @param {object|null} [report] `World.runStats().report` — the same fallen,
+   *        counted. Null on the same terms as `roll`.
    */
-  showDeath(stats, title, roll = null) {
+  showDeath(stats, title, roll = null, report = null) {
     this.el.deathTitle.textContent = title || DEATH_TITLE;
     this.el.deathStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     /**
@@ -7909,8 +8017,24 @@ export class Menu {
       const rows = Array.isArray(roll) ? roll : null;
       host.classList.toggle('hidden', !rows);
       if (rows) {
+        /**
+         * …AND THE CENSUS OVER IT — PLAN §4.9, the same one the pause card's
+         * report leads with, because this is the one screen that card cannot
+         * reach: the run is over and there is nothing left to pause. One line
+         * and not a panel — "seven of them to Super Battle Droids, three to
+         * your own fire missions" is the whole of what a player can still act
+         * on here, and it is what he will carry into the next run.
+         *
+         * Rendered off `runStats().report`, which is the SAME projection of the
+         * log that produced the rows below it, so the sentence and the list
+         * cannot disagree about who is on it.
+         */
+        const top = report?.census?.length
+          ? `<p class="rl none">${report.census.slice(0, 3).map((r) => `${r.n} to ${r.killer}`).join(' · ')}`
+            + `${report.own ? ` — ${report.own} of them by your own side` : ''}</p>`
+          : '';
         host.innerHTML = rows.length
-          ? `<h3>The roll</h3>${rows.map((e) => `<div class="rl"><b>${e.name}</b>`
+          ? `<h3>The roll</h3>${top}${rows.map((e) => `<div class="rl"><b>${e.name}</b>`
             + `<span>${fellLine(e)}</span></div>`).join('')}`
           : '<h3>The roll</h3><div class="rl none">Everyone who landed came home</div>';
       }

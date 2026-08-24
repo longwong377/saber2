@@ -208,6 +208,7 @@ const _contactList = [];
 /** Scratch for the one ground-colour read in `loadLevel`. */
 const _groundCol = new THREE.Color();
 import { ExtractionDirector, WITHDRAW_HOLD } from './Extraction.js';
+import { runReport } from './Session.js';
 
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
  * this stream from being the same sequence as MathUtil's `rand`. */
@@ -2803,6 +2804,10 @@ export class World {
   runStats(extra = null) {
     const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
     const c = this.campaign, sk = this.skirmish, d = this.command;
+    /* ONE PROJECTION OF THE LOG, read twice. `roll` and `report` are the same
+     * `fell` entries seen at two magnifications, and the day they were two
+     * filters was the day they could disagree about who is on the list. */
+    const rep = d?.log ? runReport(d.log) : null;
     return {
       ...(extra || {}),
       wave: this.director?.wave ?? 0,
@@ -2840,10 +2845,19 @@ export class World {
        * a key that is present and null lets a check ask "did this ending send
        * the field", and an empty array would mean "an army that lost nobody".
        */
-      roll: d?.log ? d.log.filter((e) => e.t === 'fell').map((e) => ({
+      roll: rep ? rep.fell.map((e) => ({
         name: e.name, rank: e.rank, unit: e.unit, area: e.area, wave: e.wave,
         killer: e.killer ?? null, bearing: e.bearing ?? null, at: e.at ?? null,
       })) : null,
+      /**
+       * …AND THE SAME LIST COUNTED — PLAN.md §4.9's census, which is the half
+       * of the report that changes a decision rather than the half that is
+       * owed. Its whole argument is written over `Session.runReport`; what it
+       * is doing HERE is being available to the one screen the pause card
+       * cannot reach, because the run is over and there is nothing to pause.
+       * Null on the same terms as `roll`, and for the same stated reason.
+       */
+      report: rep,
       /**
        * HOW a run ended, where "you died" is not the answer — see `main.js`'s
        * `gameOver`, which picks a third card off it.

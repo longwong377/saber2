@@ -140,13 +140,31 @@ Playable two ways:
 > M2-M4. **PLAN NOW HAS NO UNBUILT DESIGN LEFT IN IT** — everything below is
 > struck, decided, or a measurement rather than a feature:
 >
-> · **B1b** — ragdoll pooling, and retiring a settled corpse into `Fallen`, which
->   `Front.js` is still the only importer of.
+> · ~~**B1b**~~ — **STALE, and PLAN §3 says so in the same document.** Retirement
+>   is BUILT (`Fallen.FallenField`, `Corpses.js`'s SINK step laying a prone
+>   instance where the body lies, both seated by `LIE_SINK`); pooling is STRUCK
+>   by measurement. Nothing owed.
 > · **§4.8's first two bullets** — contested telekinesis, and squadmates grabbing
 >   the man you have gripped. No shared-constraint grip contest and no grab joint
 >   exists in `src/`; this is the largest unbuilt design left in the document.
-> · **A screen for the after-action report.** The record is complete — every entry
->   carries `killerName`, a bearing and a minute — and nothing draws it.
+> · ~~**A screen for the after-action report**~~ — **BUILT.** `Session.runReport`
+>   projects `director.log` into the run: areas in the order they were fought,
+>   each with its dead, its fire missions and who came up behind them, and the
+>   CENSUS over the top of it — *"eleven men lost, seven to Super Battle Droids,
+>   three to your own fire missions"*. The census is what earns the screen: it
+>   is the muster's next purchase and the next order in one line, and it is not
+>   derivable anywhere else, because the interlude never aggregates and the roll
+>   never counts. A PANEL ON THE PAUSE CARD, not a state of its own — `Screens`
+>   exists because of an overlay a player could be stranded in, and the card's
+>   two existing disclosures are the shape for "more, here" with no new state,
+>   no new Escape rule and no new hider. One line of it on the death card too,
+>   which is the screen the pause card cannot reach.
+>   **AND `killerName` HAD NEVER NAMED ANYTHING**: it ended `source.A?.name ||
+>   source.type`, an archetype's field is `label`, so the first half was always
+>   undefined and every report the game has ever drawn — and every grave in the
+>   ground — said `b2` and `droideka` instead of Super Battle Droid and
+>   Droideka. `tools/checks/report.mjs` is 13 checks, each written to go red on
+>   a report that lists without counting.
 > · The Company tab's refusal to change a man's kit is a DECISION and not an
 >   omission — `Menu.js` argues it where it makes it, names the rank ladder as
 >   the way to make a man better, and `company.mjs` fails the day a fourth
@@ -251,8 +269,13 @@ Playable two ways:
 > shipped it. B0, B2, B4 and all four of B5 are built; M2's answer is quoted in
 > PLAN itself four hundred lines above the question; M3's one-liner contradicted
 > §2's own conclusion; M4 is the profiler. The block is rewritten with the
-> evidence. The two genuinely unbuilt things left in it are M4's reader and B3's
-> three-layer distance audio bed.
+> evidence. **AND THE TWO THINGS THAT PARAGRAPH THEN NAMED AS UNBUILT ARE BUILT
+> TOO** — the same defect one layer down. M4's reader is `tools/_frame.mjs`,
+> which this very handoff describes four paragraphs later; B3's three-layer
+> distance audio bed is `Audio.BATTLE_BANDS`, near/mid/far, fed by the weapon
+> events the frame already raises and tapped BEFORE the audibility test, with
+> its band edges derived from `HEARING_FLOOR` and `MAX_RANGE`. Nothing in §6's
+> NOW lists is unbuilt.
 >
 > **THE RED THAT WAS RED BEFORE THIS SESSION IS GREEN, AND IT WAS THE FIXTURE.**
 > `blast-door.mjs`'s "a held blade opens a blast door in about twenty seconds"

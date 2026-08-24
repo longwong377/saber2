@@ -488,3 +488,160 @@ export function interludeBeats(log, since, area, tally = {}) {
   for (const b of beats) { b.hold = Math.round(b.hold * scale * 1000) / 1000; b.at = Math.round(t * 1000) / 1000; t += b.hold; }
   return { beats, seconds: Math.round(t * 1000) / 1000 };
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The after-action report — PLAN.md §4.9                                */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE THING §4.9 ASKED FOR AND THE ONE PART OF IT NOTHING DREW.
+ *
+ * "The after-action report — who killed whom, from what direction, at what
+ * minute. No death is mysterious, so no death is the AI's fault."
+ *
+ * The RECORD has been complete for a while: `_deathOf` writes a killer, a
+ * bearing and a minute at the moment it happens, `fellLine` renders one man,
+ * and two screens already say some of it. Neither says the run.
+ *
+ *   THE INTERLUDE says ONE ENGAGEMENT, at the muster, once. It is a reveal —
+ *   it holds each beat for a second and a half and then it is gone, and by
+ *   area four the three men you lost in area one are not on any screen in the
+ *   game.
+ *   THE DEATH CARD says the NAMES, over the whole run, and only the names: a
+ *   flat roll with no ground under it, drawn at the one moment the player is
+ *   least able to use it, because the run is over.
+ *
+ * So what is missing is not a renderer, it is the WHOLE: the run in areas, the
+ * areas with their dead in them, and — the part no other screen in this game
+ * can say at all — WHAT HAS BEEN KILLING THEM.
+ *
+ * ── WHY THE CENSUS IS THE HEAD OF IT ────────────────────────────────────
+ *
+ * §7 says an element earns its place by changing a decision. A list of the
+ * dead does not; it is owed to the player and it is already paid twice over.
+ * The census does, and it is the reason this is a screen rather than a longer
+ * roll:
+ *
+ *   "Eleven of your men are dead. Seven of them to B2s, and three to your own
+ *   fire missions."
+ *
+ * That is the muster's next purchase and the next order both, in one line, and
+ * it is not derivable from anything else on screen — the interlude never
+ * aggregates, the roll never counts, and the man who reads "by a B2" six times
+ * across four musters twenty minutes apart does not add them up. Reading it is
+ * what makes a player buy the heavy he has been skipping, or stop calling
+ * artillery onto ground his own line is walking into.
+ *
+ * ── AND YOUR OWN SIDE IS COUNTED SEPARATELY ─────────────────────────────
+ *
+ * §4.9's sentence is about the AI's fault. Its sharp end is the deaths that are
+ * NOT the AI's: `killerName` already returns "you" for the player, "your own
+ * fire mission" for High Command's shells, and a trooper's own name for the
+ * man who shot his mate. Those are the entries a report exists to make
+ * unmissable, so they are split out rather than sorted in among the droids
+ * where a long list would bury them.
+ *
+ * A trooper is recognised by being ON THIS RUN'S ROLL — every name the log has
+ * ever mentioned as one of yours — and not by a name pattern. Designations come
+ * off the army table and a match on "CT-" would be a rule about one army.
+ *
+ * ── IT READS THE LOG AND NOTHING ELSE ───────────────────────────────────
+ *
+ * The same discipline `interludeBeats` is written under, for the same reason: a
+ * report that consults the live roster would disagree with itself the moment a
+ * man is bought after the area he is being reported on. Everything below is a
+ * projection of entries the director already wrote, so a beat cannot be shown
+ * for something that did not happen, and a run with an empty log reports an
+ * empty run rather than throwing.
+ *
+ * @param {Array} log `director.log`.
+ */
+export function runReport(log) {
+  const entries = Array.isArray(log) ? log : [];
+
+  /* WHO IS ONE OF YOURS, over the whole run and before any area is read: a man
+   * can be killed in area two by a trooper who is not enlisted until area
+   * three's muster, and a single forward pass would call that a droid. */
+  const ours = new Set();
+  for (const e of entries) {
+    if (e?.name && (e.t === 'enlist' || e.t === 'fell' || e.t === 'promote'
+                    || e.t === 'commend' || e.t === 'steps-up' || e.t === 'broke')) ours.add(e.name);
+    if (e?.t === 'steps-up' && e.after) ours.add(e.after);
+    if (e?.t === 'mission' && Array.isArray(e.names)) for (const n of e.names) ours.add(n);
+  }
+  /** Did your own side do this? `killerName`'s two constants, or a man on the roll. */
+  const mine = (killer) => !!killer && (killer === 'you' || killer === 'your own fire mission' || ours.has(killer));
+
+  /**
+   * THE AREAS, CUT ON THE LOG'S OWN TERMINATORS rather than on the `area`
+   * field. `mission` is the one entry in the ledger with no area number on it —
+   * `FireMission._log` writes what was in the mark and nothing about where the
+   * run had got to — and grouping on the field would drop every fire mission
+   * out of the report, which is precisely the entry §4.9 is sharpest about.
+   * `_areaClear` and `_checkLine` both close an area with one entry, so cutting
+   * on those two puts every entry in the engagement it happened in, numbered or
+   * not.
+   */
+  const areas = [];
+  let cur = null;
+  const open = () => (cur = { n: null, name: '', held: null, strength: null, fallen: null,
+                              fell: [], up: [], missions: [], why: '' });
+  open();
+  for (const e of entries) {
+    if (!e || !e.t) continue;
+    if (cur.n == null && Number.isFinite(e.area)) cur.n = e.area | 0;
+    if (e.t === 'fell') cur.fell.push(e);
+    else if (e.t === 'steps-up' || e.t === 'promote' || e.t === 'commend') cur.up.push(e);
+    else if (e.t === 'mission') cur.missions.push(e);
+    else if (e.t === 'area' || e.t === 'lost') {
+      cur.n = Number.isFinite(e.area) ? e.area | 0 : cur.n;
+      cur.name = e.name || cur.name;
+      cur.held = e.t === 'area';
+      cur.strength = Number.isFinite(e.strength) ? e.strength | 0 : null;
+      cur.fallen = Number.isFinite(e.fallen) ? e.fallen | 0 : null;
+      cur.why = e.why || '';
+      areas.push(cur);
+      open();
+    }
+  }
+  /* THE ENGAGEMENT THE PLAYER IS STANDING IN counts, and is not closed. A
+   * report raised from the pause card mid-area is the case this exists for:
+   * `held` stays null, which is a third state and not a lost area, and the
+   * screen says "in progress" rather than inventing an outcome. */
+  const openArea = cur.fell.length || cur.up.length || cur.missions.length;
+  if (openArea) areas.push(cur);
+
+  const fell = [];
+  for (const a of areas) for (const e of a.fell) fell.push({ ...e, areaName: a.name });
+
+  /**
+   * THE CENSUS. Sorted by count and then by name, so the same run always
+   * reports the same order — a table that reshuffles between two openings of
+   * the same screen is a table the player stops trusting.
+   */
+  const by = new Map();
+  let unknown = 0;
+  for (const e of fell) {
+    const k = e.killer;
+    if (!k) { unknown++; continue; }
+    const row = by.get(k) || { killer: k, n: 0, own: mine(k) };
+    row.n++;
+    by.set(k, row);
+  }
+  const census = [...by.values()].sort((a, b) => b.n - a.n || (a.killer < b.killer ? -1 : 1));
+
+  return {
+    areas,
+    fell,
+    census,
+    /** Deaths with no source at all — a fall, a bleed-out with nothing near. */
+    unknown,
+    /** How many of your own you killed, all three ways, added up. */
+    own: census.reduce((n, r) => n + (r.own ? r.n : 0), 0),
+    lost: fell.length,
+    held: areas.filter((a) => a.held === true).length,
+    /** Null while the run is still being fought — see the open area above. */
+    ended: areas.length ? (areas[areas.length - 1].held === false ? 'lost'
+                          : areas[areas.length - 1].held === true ? 'held' : null) : null,
+  };
+}

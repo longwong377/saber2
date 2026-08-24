@@ -22,7 +22,7 @@ import { theatreFor, LEVELS } from './game/Levels.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
  * game's, so the deploy card can be assembled here without this file reaching
  * into the director for anything but the record it already publishes. */
-import { deployCard } from './game/Session.js';
+import { deployCard, runReport } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, loadProgress } from './game/Progress.js';
@@ -856,6 +856,11 @@ const screens = new Screens({
   input,
   menu,
   sandboxLive: () => sandboxRoomLive(),
+  /* PLAN §4.9's report, off the director's own log and nothing else. Null
+   * everywhere there is no army: `runReport` would happily project an empty
+   * run, and a card offering "After-action report" in Survival would open onto
+   * a screen with nothing on it. */
+  report: () => (world?.command?.log ? runReport(world.command.log) : null),
   pauseStats: () => {
     const p = world?.player;
     return [
@@ -1437,7 +1442,7 @@ function gameOver(stats) {
    * which is exactly why it lives there and not in `extra`, so there is nothing
    * for a default to cover. */
   const card = () => menu.showDeath(rows,
-    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined), stats.roll);
+    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined), stats.roll, stats.report);
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.

@@ -1339,6 +1339,24 @@
       <div id="pause-bind-list" class="bindlist"></div>
       <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
     </div>
+    <!-- THE AFTER-ACTION REPORT, MID-RUN — PLAN §4.9.
+         A PANEL ON THIS CARD AND NOT A SCREEN OF ITS OWN, deliberately. An
+         overlay that stops the world is a state you can be stranded in, and
+         src/ui/Screens.js exists because of one; the two boxes directly above
+         are the shape this game already uses for "more, on the card you are
+         already looking at", and they cost no new state, no new Escape rule
+         and no new hider. The report is exactly that kind of thing — something
+         you open, read and fold away — and the pause card is the only place in
+         a run where the player is not being shot at.
+         Empty markup: every row comes off `Session.runReport(director.log)`.
+         Hidden entirely outside Command, where there is no army and no log. -->
+    <button id="btn-pause-report" class="ghost hidden" aria-expanded="false"
+            aria-controls="pause-report-box">After-action report</button>
+    <div id="pause-report-box" class="pause-binds hidden">
+      <p class="hint" id="report-head"></p>
+      <div id="report-census" class="report-census"></div>
+      <div id="report-areas" class="report-areas"></div>
+    </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
          (main.js pauses off a raw keydown so it survives a broken binding), so

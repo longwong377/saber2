@@ -2366,6 +2366,43 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .death-roll .rl span { font-size: 11px; opacity: .58; }
 .death-roll .rl.none { opacity: .55; font-size: 12px; }
 
+/* ── THE AFTER-ACTION REPORT — PLAN §4.9 ───────────────────────────────────
+ *
+ * THE CENSUS IS THE LOUD HALF AND THE LEDGER IS THE QUIET ONE, and the type
+ * sizes are the whole argument: "seven of them to B2s" is the line that moves a
+ * purchase, and the twenty rows of names under it are what a player goes to
+ * only when he wants to argue with it. Set at one weight it would be a wall of
+ * text with the actionable line hidden at the top of it.
+ *
+ * `.own` is the only colour in here and it is the accent the palette already
+ * names for "damage, a boss, a mistake" (`--danger`), not a new one: a row that says YOUR OWN SIDE DID THIS
+ * must not read at the same weight as a row that says a droid did.
+ *
+ * `scrollbar-gutter: stable` for the reason front-screen.mjs holds every
+ * scroller to it — a run four areas long overflows and a run one area long does
+ * not, so a track that is only reserved sometimes shifts the whole column under
+ * the reader between two openings of the same card. */
+.report-census { display: flex; flex-direction: column; gap: 2px; margin: 0 0 12px; }
+.report-census .rc { display: flex; align-items: baseline; gap: 8px;
+  padding: 3px 0; border-top: 1px solid rgba(255,255,255,.07); font-size: 12.5px; }
+.report-census .rc b { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.report-census .rc span { flex: 1; min-width: 0; opacity: .78; }
+.report-census .rc.own span { opacity: 1; color: var(--danger); }
+.report-census .rc.none { opacity: .5; border-top: 0; }
+.report-areas { max-height: 34vh; overflow-y: auto; scrollbar-gutter: stable; }
+.report-areas .ra { margin: 0 0 10px; }
+.report-areas .ra > h4 { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .12em;
+  text-transform: uppercase; opacity: .62; font-weight: 600; }
+.report-areas .ra > h4 em { font-style: normal; opacity: .7; letter-spacing: .04em;
+  text-transform: none; }
+.report-areas .rl { display: flex; flex-direction: column; gap: 1px;
+  padding: 4px 0; border-top: 1px solid rgba(255,255,255,.07); }
+.report-areas .rl b { font-size: 12.5px; letter-spacing: .02em; }
+.report-areas .rl span { font-size: 11px; opacity: .58; }
+.report-areas .rl.quiet b { font-weight: 500; opacity: .72; }
+.report-areas .rl.own span { color: var(--danger); opacity: .85; }
+.report-areas .ra.empty { opacity: .55; font-size: 12px; }
+
 
 /* ── COMMEND — PLAN §4.4's third muster option ─────────────────────────────
  *

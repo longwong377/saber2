@@ -1313,12 +1313,12 @@ export async function run({ check, assert }) {
      * level cards compare the selected key to each card's key to mark one
      * selected, and that is exactly what they should do. A guard that fails on
      * the correct code teaches people to delete the guard. */
-    const body = menu.slice(menu.indexOf('showPause(stats, sandboxLive)'));
+    const body = menu.slice(menu.indexOf('showPause(stats, sandboxLive,'));
     const showPause = body.slice(0, body.indexOf('\n  }\n'));
     assert(showPause.length > 200 && showPause.length < 4000,
       `showPause could not be isolated (${showPause.length} chars) — the scan is not scanning`);
     assert(!/\bthis\.s\.level\s*===/.test(showPause), 'showPause is gated on the level name again');
-    assert(/showPause\(stats, sandboxLive\)/.test(menu), 'showPause no longer takes the live answer');
+    assert(/showPause\(stats, sandboxLive,/.test(menu), 'showPause no longer takes the live answer');
 
     // And the predicate main.js computes has to agree with the director on
     // every lesson, not just on the name of the level.

@@ -987,9 +987,11 @@ shipped systems as unbuilt. Each has been corrected in place.
 
 **WHAT IS ACTUALLY LEFT, after both audits**, and it is short:
 
-  · **B1b** — ragdoll pooling, and retiring a settled corpse into `Fallen`,
-    which `Front.js` is still the only importer of. Not a precondition for
-    anything any more.
+  · ~~**B1b**~~ — **STALE, and §3 says so six hundred lines above this list.**
+    Retirement is BUILT: `Fallen.js` has a `FallenField`, `Corpses.js`'s SINK
+    step lays a prone instance where the body lies instead of deleting it, and
+    `LIE_SINK` is the seat both use. Pooling is STRUCK by measurement, and the
+    measurement is §6's B1 entry. Nothing is owed here.
   · ~~**§4.8's first two bullets**~~ — **both are built.** The contest is
     `gripClaim`/`gripRelease`/`gripSeize` in Enemy.js, resolved by
     `forceResistance` itself so there is no second rulebook; the grab is
@@ -998,9 +1000,29 @@ shipped systems as unbuilt. Each has been corrected in place.
     combined mass — `Enemy.heldMass` — that the cap gate, `_heft`, `_holdRate`
     and the throw all already read. `tools/checks/grip.mjs` holds both.
     Struck from this list.
-  · **A SCREEN for the after-action report.** The record is complete — every
-    entry carries `killerName`, a bearing and a minute — and nothing draws it
-    end to end.
+  · ~~**A SCREEN for the after-action report**~~ — **BUILT, and building it
+    found a defect in the record it draws.** `Session.runReport` projects the
+    director's log into the run: areas in the order they were fought, each with
+    its dead, its fire missions and who came up behind them, and — the half
+    that earns the screen — THE CENSUS. "Eleven men lost. Seven to Super Battle
+    Droids, three to your own fire missions" is the muster's next purchase and
+    the next order both, it is not derivable from anything else on screen (the
+    interlude never aggregates, the roll never counts), and a player who reads
+    "by a B2" six times across four musters twenty minutes apart does not add
+    them up.
+    A PANEL ON THE PAUSE CARD and not a state of its own: `src/ui/Screens.js`
+    exists because of an overlay a player could be stranded in, and the two
+    disclosures already on that card are the shape this game uses for "more, on
+    the card you are already looking at" — no new state, no new Escape rule, no
+    new hider. Said again in one line on the death card, which is the one
+    screen the pause card cannot reach.
+    **AND `killerName` HAD NEVER NAMED ANYTHING.** It ended `source.A?.name ||
+    source.type`, an archetype has no `name` — the field is `label` — so the
+    first half was always undefined and every death in every report this game
+    has ever drawn was attributed to `b2` and `droideka` rather than to a Super
+    Battle Droid and a Droideka. The graves in `Terrain` carried the same keys.
+    `tools/checks/report.mjs`, 13 checks, every one written to go red on a
+    report that lists without counting.
   · The Company tab's refusal to change a man's kit is **a decision, not an
     omission** — `Menu.js` argues it where it makes it ("a roster screen that
     could edit them would be a cheat panel with a casualty list on it"), the

@@ -952,12 +952,13 @@ export async function run({ check, assert }) {
            *
            * ── EXCEPT WHERE IT IS THE NAMES BEHIND A ROW THAT IS ITSELF NULL ──
            *
-           * `roll` is §4.9's after-action list, and it is not a row: the card
-           * prints "Troops lost" as a count and hands the NAMES to `showDeath`
-           * separately. So it is null in exactly the runs where `fallen` is
-           * null — a mode with no company — and an array in exactly the runs
-           * where `fallen` is a number, including `[]` for an army that lost
-           * nobody, which is a different and true statement.
+           * `roll` is §4.9's after-action list and `report` is the same list
+           * counted, and neither is a row: the card prints "Troops lost" as a
+           * count and hands the NAMES and the CENSUS to `showDeath` separately.
+           * So both are null in exactly the runs where `fallen` is null — a
+           * mode with no company — and present in exactly the runs where
+           * `fallen` is a number, including on an army that lost nobody, which
+           * is a different and true statement.
            *
            * That is a stronger claim than "the two endings agree", so it is
            * asserted as the PAIRING rather than excused: whenever a non-row
@@ -965,10 +966,17 @@ export async function run({ check, assert }) {
            * too. A `roll` that stayed null on a run that lost six men would
            * fail this, which is the defect worth catching — the count saying
            * six and the list saying nothing.
+           *
+           * WHAT IT MAY COME BACK AS is a projection of the log and not a
+           * scalar: a list of the fallen, or a record with those lists inside
+           * it. A number here would be a third count of the dead beside
+           * `fallen` and the roll's own length, which is how three answers to
+           * one question get into one card.
            */
           if (wipe.fallen === null && win.fallen !== null && win[k] !== null) {
-            assert(Array.isArray(win[k]),
-              `${k} follows \`fallen\` and came back as ${JSON.stringify(win[k])} rather than a list`);
+            assert(Array.isArray(win[k]) || typeof win[k] === 'object',
+              `${k} follows \`fallen\` and came back as ${JSON.stringify(win[k])} — `
+              + 'a field that pairs with the roll is the log projected, not a number');
             continue;
           }
           assert(win[k] === null,

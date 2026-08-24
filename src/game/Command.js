@@ -2053,7 +2053,21 @@ export function killerName(source) {
   if (typeof source === 'string') return source;
   if (source.trooper?.name) return source.trooper.name;
   if (source.isPlayer || source.aimDir) return 'you';
-  return source.A?.name || source.type || null;
+  /**
+   * AND THE NAME IS THE ONE THE GAME SAYS OUT LOUD, not the key it files it
+   * under. This read `source.A?.name`, and an archetype has no `name` — the
+   * field is `label`, which is what the sandbox picker, the databank and the
+   * HUD all print — so the expression was ALWAYS undefined and every death in
+   * every report in the game has been attributed to `b2` and `droideka`
+   * instead of to a Super Battle Droid and a Droideka. A report written in the
+   * spawn table's internal keys is a report that reads as debug output, which
+   * is a different way of being the mystery §4.9 exists to remove.
+   *
+   * `type` survives as the fallback for a body with no archetype record (the
+   * flight modes build their own), and it is the only thing that can be said
+   * about one.
+   */
+  return source.A?.label || ARCHETYPES[source.type]?.label || source.type || null;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
