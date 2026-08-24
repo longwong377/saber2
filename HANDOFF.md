@@ -179,18 +179,28 @@ Playable two ways:
 > `spawnQueue` leaves the emplaced gun firing, and it kills 2 of 10 within 26
 > frames with no hostile body anywhere on the field.
 >
-> **THE BROWSER SUITES CANNOT RUN IN A CONTAINER WITH NO `node_modules`, AND
-> THIS REPO HAS NONE.** `tools/three-resolver.mjs` maps `three`,
+> **THE BROWSER SUITES NEED ONE SYMLINK ON A BOX WITH NO `node_modules`, AND
+> THAT IS THE WHOLE FIX.** `tools/three-resolver.mjs` maps `three`,
 > `three/addons/*` and `rapier`; everything else falls through to Node's own
-> resolution, and `vendor/` holds only `peerjs`, `rapier` and `three`. So
-> `import('playwright-core')` is `ERR_MODULE_NOT_FOUND` and `frontdoor`,
-> `front-screen`, `lineseen`, `packed` and one check in `lighting` fail here for
-> that reason and no other — six of the thirteen reds in a full gate on this
-> box. A copy of the package does exist at
-> `/opt/node22/lib/node_modules/playwright/node_modules/playwright-core` and the
-> Chromium binaries are at `/opt/pw-browsers/`, but the global tree is not on
-> this project's resolution path, so the bare specifier cannot reach it. Nothing
-> in the tree is wrong; the box is.
+> resolution, and `vendor/` holds only `peerjs`, `rapier` and `three`. So on a
+> fresh container `import('playwright-core')` is `ERR_MODULE_NOT_FOUND`, and
+> `frontdoor`, `front-screen`, `lineseen`, `packed` and one check in `lighting`
+> all fail for that reason and no other — **six of the thirteen reds in a full
+> gate, none of them a fact about the tree.** The package IS on disk, and so are
+> the Chromium binaries; the global tree simply is not on this project's
+> resolution path. One line puts it there:
+>
+> ```bash
+> mkdir -p node_modules && ln -sfn \
+>   /opt/node22/lib/node_modules/playwright/node_modules/playwright-core \
+>   node_modules/playwright-core
+> ```
+>
+> `node_modules` is in `.gitignore`, so this is an environment fix and not a
+> change to the project. With it, `frontdoor` is 1/1 and `lineseen` 2/2 on this
+> box. **Do this first in any new container** — otherwise a sixth of the gate's
+> failures are noise, and the noise is exactly where the browser-only claims
+> live.
 >
 > **THE OLD ORDER-DEFECT NOTE, KEPT BECAUSE THE ANSWER IS WORTH MORE THAN THE
 > BUG.**
