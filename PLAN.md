@@ -45,6 +45,12 @@ worth about +1.0 against a 4.5 baseline; M1 decides whether that is real.** If M
 returns +1.0, that is the expected result and not a regression — draft 3 would
 have read it as one.
 
+**M1 HAS SINCE RETURNED, AND THE SIGN IS NEGATIVE: −2.0, not +1.0.** See M1 in
+§6. Read that with its own caveat: the baseline it is measured against is
+propped up by `_watchdog`, which retires the wave when no player is on the
+field, so the magnitude is not yet trustworthy even though the sign has held
+across four arms.
+
 The mechanism, which is the part that has held across readings: with the Jedi
 present, fire arriving on the line **halves** — 0.94–1.72 hp/s down to
 0.43–0.97. *He is removing bodies before they fire.*
@@ -776,6 +782,53 @@ NOW — measurements
       measurement: whether the director paces on a player, whether the levy
       walks at him, or whether a wave simply survives longer with one blade
       pulling bodies off the line's guns.
+
+      **AND THE FIRST OF THOSE THREE IS THE ANSWER — WITH A COST.** The
+      director DOES pace on a player. `WaveDirector._watchdog` scores a body's
+      progress as its distance to the nearest live PLAYER, which was the whole
+      question when the only thing on your side of the field was you. In
+      Command it is not: the horde's fight is your ARMY. So on the `none` arm —
+      no player on the field, the CONTROL every other arm here is read against
+      — every living enemy reads stalled and the director retires it.
+      `tools/_whywave.mjs`, theline/geonosis, engagement 1, five seeds, fifteen
+      cleared waves:
+
+          236 rescues and 118 RETIREMENTS a run — 39.4 a wave, against
+          10.5 bodies the line actually shot. Of the wave's 8.4 paying
+          regulars the line killed 3.2 and the watchdog DELETED 5.2.
+
+      **The unaided line was not winning. The clock was deleting 62% of the
+      wave standing in front of it.** The fix is 52 lines: let a body also
+      count progress toward `e.target`, which `Enemy._think` writes every frame
+      off `World.pickTarget` — the game's one statement of who a body is
+      fighting, already aware of the other army, the team gate and the leash.
+      It is written, measured and NOT IN THE TREE, at
+      `tools/_watchdog.patch`. It fires wherever the player is not: a
+      bench arm, a Jedi a hundred metres off his line, **and every frame after
+      the commander goes down in shipped play.**
+
+      IT IS OUT BECAUSE IT IS A BALANCE DECISION, NOT A CODE ONE. Same mode,
+      same ground, same seeds:
+
+          stock       3, 4, 5, 9, 8 of ten left · 5 of 5 areas cleared
+          honest      0 of ten, every seed      · 0 of 7 cleared
+
+      — and `theline.12`, *"an engagement fought without the Jedi costs about
+      half the line"*, a check already in the gate asserting §5's own target,
+      goes red at **0.0 of 10 standing: the muster is never reached and the
+      mode cannot be won.** Landing the fix lands a difficulty re-tune with it,
+      and which knob gives — wave budget, `RULE_MAX`, morale, or §5's target
+      itself — is the developer's call.
+
+      **SO EVERY NUMBER IN THIS ENTRY IS MEASURED AGAINST A PROPPED FLOOR.**
+      `none 6.7/10` is not what an unaided line does; it is what an unaided
+      line does while the director kills five men a wave on its behalf. The
+      three readings above are RELATIVE to that floor and survive as
+      directions, not magnitudes: idle is a catastrophe, a blade in the line
+      still costs men, and LENGTH is what moves the cost. All of them must be
+      re-run after the tune rather than carried across it. The length finding
+      in particular is now suspect from both ends: a longer engagement is also
+      one the watchdog has had longer to prune.
   M2  teamDamage bound ................... ANSWERED, and this document quotes
       the answer four hundred lines above the question — §2's dealer census
       reads "bolt 99.3%, friendly fire 0.7%". 0.7% IS the ceiling on any
@@ -956,7 +1009,13 @@ shipped systems as unbuilt. Each has been corrected in place.
   · **The muster card cannot promote a survivor or bank the purse** — it offers
     replacements and §4.6's road, and those two options are what is left of that
     bullet.
-  · **M1**, unrun, and it licenses nothing now.
+  · ~~**M1**, unrun~~ — **reported, four arms, and it is the sharpest finding
+    in this document.** See the entry above. What is left of it is a
+    DECISION and not a measurement: `_watchdog` paces on a player, deletes
+    62% of the wave when there is none, and the fix that makes it honest
+    wipes the unaided line and turns `theline.12` red. Which knob gives is
+    the developer's call, and every M1 magnitude is provisional until it is
+    made.
   · **M7 is struck** — §4.3 says so where the number it chased used to be.
 
 AFTER M5 — the chain, in dependency order

@@ -190,6 +190,45 @@ Playable two ways:
 >   mechanism — every part works and the arithmetic comes out negative — and the
 >   length is correlated, not yet explained. Naming the mechanism is the next
 >   measurement.
+> · **AND THE FLOOR THOSE FOUR ARMS ARE READ AGAINST IS PROPPED UP BY A BUG.**
+>   `WaveDirector._watchdog` measures a body's progress as its distance to the
+>   nearest live **player**. In Command the horde's fight is your ARMY, so with
+>   no player on the field — which is exactly `_linehold.mjs`'s `none` arm, the
+>   control every other arm is scored against — every enemy alive reads stalled
+>   and the director retires it. Measured on theline/geonosis, engagement 1,
+>   five seeds, fifteen cleared waves: **236 rescues and 118 RETIREMENTS a run,
+>   39.4 a wave, against 10.5 bodies the line actually shot.** Of the wave's 8.4
+>   paying regulars the line killed 3.2 and the watchdog deleted 5.2. **The
+>   unaided line was not winning; the clock was deleting 62% of the wave in
+>   front of it.**
+>
+>   The fix is 52 lines in `_watchdog` — also let a body count progress toward
+>   `e.target`, which `Enemy._think` already writes every frame off
+>   `World.pickTarget`, the game's one statement of who a body is fighting. It
+>   is at `tools/_watchdog.patch`, and the instrument that
+>   produced the census is `tools/_whywave.mjs`. It is correct, it costs nothing,
+>   and it fires **wherever the player is not**: a bench arm, a Jedi a hundred
+>   metres off his line, and every frame after the commander goes down in
+>   shipped play.
+>
+>   **IT IS NOT IN THE TREE, AND THAT IS A BALANCE CALL, NOT A CODE ONE.** With
+>   the watchdog honest, same mode, same ground, same seeds:
+>
+>       stock       3, 4, 5, 9, 8 of ten left · 5 of 5 areas cleared
+>       honest      0 of ten, every seed      · 0 of 7 cleared
+>
+>   which turns `theline.12` — *"an engagement fought without the Jedi costs
+>   about half the line"*, a check already shipped in the gate, asserting §5's
+>   own target — red: **0.0 of 10 standing, so the muster is never reached and
+>   the mode cannot be won**. Landing the fix therefore lands a difficulty
+>   re-tune with it (wave budget, `RULE_MAX`, morale, or the target itself), and
+>   which of those gives is the developer's decision. **Until it is made, every
+>   M1 number above is measured against a propped floor: `none 6.7/10` is not
+>   what an unaided line does, it is what an unaided line does while the
+>   director kills five men a wave for it.** The three RELATIVE readings — idle
+>   is a catastrophe, a Jedi in the line costs men, length is what moves the
+>   cost — are all taken against that same propped floor and must be re-run
+>   after the tune, not carried across it.
 > · **M7** is STRUCK, because `tools/scale.mjs` withdrew the number it chased.
 >
 > **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on

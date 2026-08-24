@@ -1,0 +1,63 @@
+diff --git a/src/game/Waves.js b/src/game/Waves.js
+index 57d3f85..d0581b6 100644
+--- a/src/game/Waves.js
++++ b/src/game/Waves.js
+@@ -4303,6 +4303,58 @@ export class WaveDirector {
+         const dd = p.position.distanceToSquared(e.position);
+         if (dd < d) d = dd;
+       }
++      /**
++       * …AND WHATEVER THIS BODY IS ACTUALLY FIGHTING, WHICH IN COMMAND IS NOT
++       * A PLAYER AT ALL.
++       *
++       * The loop above asks "how far is this body from YOU", and that was the
++       * whole question when the only thing on your side of the field was you.
++       * In Command it is not: the horde's fight is your ARMY, and a droid
++       * closing on a trooper eleven metres away is making progress toward the
++       * only fight it has. The clock could not see that, so the only thing that
++       * ever reset it was taking damage.
++       *
++       * MEASURED, `tools/_whywave.mjs` on theline/geonosis, engagement 1, five
++       * seeds, fifteen cleared waves, NO player on the field — which is
++       * `_linehold.mjs`'s NONE arm, the floor every other arm is read against:
++       *
++       *     236 rescues and 118 RETIREMENTS a run — 39.4 retirements a wave
++       *     against 10.5 bodies the line actually shot. Of the wave's 8.4
++       *     paying regulars the line killed 3.2 and the watchdog DELETED 5.2.
++       *
++       * That is the watchdog fighting the wave, not surviving it, and it is
++       * worth the whole engagement: `tools/_linehold.mjs`, same mode, same
++       * ground, same seeds —
++       *
++       *     stock          3, 4, 5, 9, 8 of ten men left, 5 of 5 areas cleared
++       *     with this      0 of ten, every seed, 0 of 7 cleared
++       *
++       * — so "the line survives better with nobody on the field" was a
++       * statement about this clock. It is the same defect the `blocksWaveEnd`
++       * note above describes happening to your own troops — "the clock measures
++       * distance to a PLAYER" — one array over, and it fires wherever the
++       * player is not: a bench arm with nobody on the field, a Jedi a hundred
++       * metres off his line, and every frame after the commander goes down.
++       *
++       * ASKED RATHER THAN RESTATED (HANDOFF §2.4). `Enemy._think` writes
++       * `target` every frame off `World.pickTarget`, which is the game's one
++       * statement of "who is this body fighting" and already knows about the
++       * other army, the team gate and the leash. A second copy of it here —
++       * a loop over the party's bodies — would be O(bodies²) and would
++       * eventually disagree with the thing it describes.
++       *
++       * It cannot rescue a genuinely stuck body from its own clock: a target
++       * it is not closing on leaves `closed` false exactly as before, and the
++       * `d <= reach` exemption below already says a body that can fight from
++       * where it stands is not stalled. A body with nothing to fight — under
++       * the terrain, outside the heightfield, morale-refused — has no target
++       * and reads Infinity, which is the state this watchdog exists for.
++       */
++      const tgt = e.target;
++      if (tgt && tgt !== e && !tgt.dead && tgt.alive !== false && tgt.position) {
++        const dd = tgt.position.distanceToSquared(e.position);
++        if (dd < d) d = dd;
++      }
+       d = Math.sqrt(d);
+       const closed = d < r.best - STALL_PROGRESS;
+       const hurt = e.hp !== r.hp;
