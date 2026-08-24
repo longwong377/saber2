@@ -202,6 +202,32 @@ Playable two ways:
 > **Edit check files between gates, never during one**, and when a gate's red
 > disagrees with a fresh `_one`, believe the `_one`.
 >
+> **THE SMOKE PROBE'S ZEROS WERE A SIMULTANEOUS VOLLEY MEETING AN I-FRAME.**
+> `Player.damage` opens `this.invuln = 0.18` on every hit and `_boltHitTest`
+> skips a player with `invuln > 0`; `World.update` clamps `dt` to 1/24, so that
+> is about four frames. The probe fired **twelve bolts in one frame from one
+> radius**, so they all arrived inside the same four and eleven were skipped BY
+> CONSTRUCTION — the volley could never register more than one bolt however well
+> it was aimed. Measured headless on a real World with nothing else on the field:
+> **fired one at a time all twelve land, 4.25 hp each; fired together, exactly
+> one lands.** The step now sends ONE round and asserts the weakest thing that
+> would have caught the zeros — a bolt must be felt or turned, never ignored.
+>
+> Two explanations were tried and disproved on the way, and both are worth
+> knowing. `p.chest` — "the point every aim assist and every centre-of-mass query
+> in the game reads" — **is not the centre of the body's collision hull**: on a
+> posed player who has walked, the hull spans 0.55 x 0.54 m and its centre sits
+> 0.24-0.52 m from the chest point, about the hull's own half-width. Aiming at
+> the hull's centre instead changes nothing here, so it is not this defect; but
+> every shooter in the game leads on that point, and moving it would change how
+> often they connect. That is a difficulty decision, not a probe fix, and it is
+> left alone and written down. The other was that bodies on the field were
+> absorbing the volley — they were cleared, and nothing changed.
+>
+> **AND THE CUT STEP'S `severed: 0, pieces: 0` IS STILL UNEXPLAINED.** It kills
+> the body (`hpAfter: -11, dead: true`) and severs nothing, and it is the other
+> probe that prints zeros and passes. Not looked at.
+>
 > **TWO THINGS FOUND WHILE FIXING A CHECK, NEITHER FIXED, BOTH WORTH MORE THAN
 > THE CHECK.** `suppression.mjs` drives ten troopers up a Geonosis slope, and in
 > every one of the eight arms measured a man ends the walk **stuck on the
@@ -265,7 +291,7 @@ Playable two ways:
 |---|---|
 | Suite | **2024 passed, 0 failed** — all **156** suites in `tools/checks/`, 84 min of suite time on a box that was also carrying agent lanes. The row before this one read 1517 over 111 suites, which is the drift §2.3 is about: run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` and read the gate's own last line rather than believing a table. Getting here took thirteen reds down to none — six of them one missing `playwright-core` symlink (see §1), and the other seven each a check that had gone stale against a tree that moved under it. Not one was a defect in the game |
 | Fast tier | **363 passed, 0 failed — 17 suites in ~80 s**, `npm run verify:fast`. The mechanical contract only: the blade, the bolt, the cut, the guard, and the tables that move them. `tools/tiers.mjs` names what it leaves out (`footwork` 52.9 s, `powers` 18.2 s, `force` 19.3 s, every browser suite, every level/wave/net/UI suite). **It going green is not the gate going green.** It exists because §2.6d is real: a gate nobody can finish is a gate whose reds nobody triages, and `.github/workflows/verify.yml` now runs this one on every push — the first thing in this repo's CI that has ever run a check |
-| Smoke | **11/11 clean**, and verified in THIS container for the first time once `playwright-core` was symlinked (see §1) — no console errors, no page errors, no failed requests, boot diagnostics 668 draw calls / 139 728 triangles / 188 statics. Its timeouts are wall-clock, so on a loaded box the last four fail and mean nothing — §2.6. **And "clean" is a weaker claim than it looks**: `step()` fails only on a thrown exception, so two probes print diagnostics that are entirely zero and are still called ok — the deflection step fires twelve bolts at the player from 7 m and reports `deflects: 0, hpLost: 0`, and the cut step reports `severed: 0, pieces: 0`. Neither is a frame-rate artefact: `World.update` clamps `dt` to 1/24 so the volley gets ~29 frames to cross 7 m. A probe that can be all zeros and pass certifies nothing |
+| Smoke | **11/11 clean**, and verified in THIS container for the first time once `playwright-core` was symlinked (see §1) — no console errors, no page errors, no failed requests, boot diagnostics 668 draw calls / 139 728 triangles / 188 statics. Its timeouts are wall-clock, so on a loaded box the later steps fail and mean nothing — §2.6, and it is why the rewritten deflection step below could not be re-run while two agents were working. **`step()` FAILS ONLY ON A THROWN EXCEPTION**, so a probe that prints all zeros is still called ok. The deflection step did: `{fired: 12, deflects: 0, hpLost: 0}`. It asserts now, and the twelve bolts were the defect rather than the measurement — see §1 |
 | Packed | `node tools/pack.mjs out.html` — **105 modules, 15.95 MB** (the row said 79 and 12.8 MB; measured this session), boots from `file://`, and `tools/checks/packed.mjs` proves it every run — which it could not do in this container until `playwright-core` was symlinked |
 | Levels | **7** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis`. The Boarding Bay and the Providence were deleted on the player's word — "I just tried the boarding bay and the providence and hated them… just remove them. your outside work is much better" |
 | Modes | **9** — `waves, roguelite, duel, sandbox, training, command, theline, skirmish, campaign` |

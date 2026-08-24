@@ -419,30 +419,68 @@ await step('force a spawn wave and cut something', async () => {
   console.log('   ', JSON.stringify(res));
 });
 
+/**
+ * ── ONE BOLT, AND A STEP THAT CAN FAIL ────────────────────────────────────
+ *
+ * THIS PROBE REPORTED `{"fired":12,"deflects":0,"hpLost":0,"flow":0}` AND WAS
+ * CALLED OK. `step()` fails only on a thrown exception, so twelve bolts at a
+ * standing player from seven metres could do nothing whatsoever and the run
+ * still printed "clean". A diagnostic that can be all zeros and pass certifies
+ * nothing, and this is the boot probe — the last place that should be quiet.
+ *
+ * ── AND THE TWELVE WERE THE DEFECT, NOT THE MEASUREMENT ───────────────────
+ *
+ * `Player.damage` opens `this.invuln = 0.18` on every hit, and `_boltHitTest`
+ * skips a player with `invuln > 0`. `World.update` clamps `dt` to 1/24, so that
+ * window is about four frames. Twelve bolts fired in ONE frame from ONE radius
+ * all arrive in the same four, so eleven of them are skipped by construction:
+ * the volley could never register more than one bolt however well it was aimed.
+ *
+ * Measured headless on a real World with nothing else on the field, to be sure
+ * the aim was not also wrong: fired one at a time, **all twelve land, 4.25 hp
+ * each**; fired together, exactly one lands. Two other explanations were tried
+ * and disproved on the way — that the aim point `p.chest` sits off the body's
+ * collision hull (it does, by 0.24-0.52 m depending on pose, and aiming at the
+ * hull's own centre changes nothing), and that the bodies on the field were
+ * absorbing the volley (they were cleared; nothing changed).
+ *
+ * So the probe asks for one bolt, which is the most this path can answer for,
+ * and it ASSERTS. What it asserts is the weakest thing that would have caught
+ * the zeros: a bolt sent at the player must be ANSWERED — felt as damage, or
+ * turned — and never ignored. Not a damage figure and not a deflection count,
+ * because the blade is being waved blind here and demanding a particular split
+ * would make a combat balance test out of a boot probe.
+ *
+ * Stated in GAME time, so a slow machine cannot fail it for being slow:
+ * `__play` counts `world.time`, and 0.8 game-seconds is ~19 clamped frames
+ * whatever the wall clock is doing.
+ */
 await step('bolts and deflection path', async () => {
   const res = await page.evaluate(async () => {
     const w = window.SABER.world;
     const p = w.player;
-    const dir = p.chest.clone().sub(p.chest.clone()).set(0, 0, 0);
-    // fire a volley straight at the player from a few metres out
-    let fired = 0;
-    for (let i = 0; i < 12; i++) {
-      const from = p.chest.clone();
-      from.x += Math.cos(i) * 7;
-      from.z += Math.sin(i) * 7;
-      const d = p.chest.clone().sub(from).normalize();
-      if (w.bolts.fire(from, d, { speed: 26, damage: 5, team: 1 })) fired++;
-    }
-    const hp0 = p.hp;
-    // A bolt fired from 7 m at 26 m/s arrives in 0.27 s, so 1.2 s is the whole
-    // volley plus the swing that answers it.
-    await window.__play(1.2, (i) => {
+    /* ONE ROUND, from the player's left, at the height the body is. */
+    const aim = p.chest.clone();
+    const from = aim.clone(); from.x += 7;
+    const d = aim.clone().sub(from).normalize();
+    const fired = w.bolts.fire(from, d, { speed: 26, damage: 5, team: 1 }) ? 1 : 0;
+    const hp0 = p.hp, defl0 = p.deflects;
+    /* 7 m at 26 m/s arrives in 0.27 s; 0.8 s is the shot plus the swing that
+     * answers it, and comfortably inside the 0.18 s i-frame either way. */
+    await window.__play(0.8, (i) => {
       window.SABER.input.mouse.dx += 55 * Math.sin(i * 0.5);
       window.SABER.input.mouse.dy += 45 * Math.cos(i * 0.37);
     });
-    return { fired, deflects: p.deflects, hpLost: +(hp0 - p.hp).toFixed(1), flow: +p.flow.toFixed(2) };
+    return { fired, deflects: p.deflects - defl0, hpLost: +(hp0 - p.hp).toFixed(1),
+             flow: +p.flow.toFixed(2), invuln: +p.invuln.toFixed(2) };
   });
   console.log('   ', JSON.stringify(res));
+  if (res.fired !== 1) throw new Error('the bolt pool refused a single round');
+  if (!(res.hpLost > 0 || res.deflects > 0)) {
+    throw new Error('a bolt sent at the player from 7 m was neither felt nor turned — '
+      + `hpLost ${res.hpLost}, deflects ${res.deflects}. Either it is not arriving or nothing `
+      + 'answers it, and both are the defect this step exists to see');
+  }
 });
 
 await step('perf sample', async () => {
