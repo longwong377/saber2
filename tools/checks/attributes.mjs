@@ -429,8 +429,14 @@ export async function run({ check, assert, near }) {
     const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
     assert(/ORDER_LAG \* \(t\.scale/.test(src),
       'the order clock does not scale by the man — it is a flat delay');
-    assert(/FORMATIONS\[e\.cmdOrder\]/.test(src) && /FORMATIONS\[e\?\.cmdOrder\]/.test(src),
-      'the adopted order is stamped and nothing reads it');
+    /* THE LAG IS IN THE MAN, NOT IN THE SLOT. `slotFor` still answers where the
+     * order says he belongs — every other reader wants that truth — and what
+     * waits is him acting on it. Both readers are asserted because the stamp
+     * with nothing reading it is the silent failure. */
+    assert(/e\.cmdOrder !== this\.formationFor\(/.test(src),
+      'nothing holds a body in its old shape — the order lands on every man at once');
+    assert(/FORMATIONS\[e\.cmdOrder\] \|\| Fk/.test(src),
+      'the gun ignores the adopted order — HOLD FIRE is still instantaneous');
     /* THE SPREAD IS REAL AND IS UNDER A SECOND AT BOTH ENDS. A lag the player
      * waits on is a bug; a lag they feel is the mechanic. */
     const slow = ORDER_LAG * attrScale('reflex', 0);
@@ -442,15 +448,33 @@ export async function run({ check, assert, near }) {
 
   await check('hold fire is an order a poor man can break', async () => {
     const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
-    assert(/HOLD_BREAK \* \(1 - disc\)/.test(src), 'the break does not read discipline');
+    assert(/\(1 - disc\) \* HOLD_BREAK/.test(src), 'the break does not read discipline');
+    /* AND NO DICE ANYWHERE IN THE DIRECTOR. A roll per frame is a divergence
+     * between a host and a guest running the same second — `command-pvp.mjs`
+     * caught that exact shape in the muster, where an unseeded profile gave
+     * every mirrored trooper a different cone on the guest's machine.
+     * `commandRng` is the file's own seeded stream and exists for this.
+     *
+     * Comments stripped first, or the note explaining the rule fails it. */
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '')
+      .split('\n').filter((l) => !/^\s*(\/\/|\*)/.test(l)).join('\n');
+    assert(!/Math\.random\s*\(/.test(code),
+      'Command.js rolls dice of its own — co-op cannot agree with itself');
     assert(/e\.cmdBreak > 0/.test(src), 'a break is rolled and never held for any time');
+    /* UNDER FIRE, AND ONLY UNDER FIRE. A break at empty air would ruin the one
+     * thing HOLD FIRE is for and the player could neither see it nor prevent
+     * it; a man returning rounds that are landing on him is a fact about where
+     * you put him. `command.mjs` counts a pinned line's bolts at zero on the
+     * strength of this gate. */
+    assert(/if \(disc < 1 && e\.underFire > 0\)/.test(src),
+      'a man breaks the hold at empty air — an ambush cannot be silent');
     assert(HOLD_BREAK > 0, 'the break rate is zero — hold fire is a switch again');
     /* AND A DISCIPLINED MAN NEVER BREAKS. `disc < 1` gates it, so the whole
      * upper half of the scale holds absolutely — the attribute buys certainty
      * rather than a smaller dice roll, which is what discipline is. */
     assert(attrScale('discipline', 50) >= 1 && attrScale('discipline', 100) > 1,
       'the middle of the discipline scale is below 1 — everyone breaks');
-    const worst = HOLD_BREAK * (1 - attrScale('discipline', 0)) / 0.28;
+    const worst = (1 - attrScale('discipline', 0)) * HOLD_BREAK / 0.28;
     assert(worst > 0.15 && worst < 1.0,
       `${worst.toFixed(2)} breaks/s at zero Discipline is a mutiny, not a lapse`);
     return `${worst.toFixed(2)} breaks/s at the bottom, none from 50 up`;

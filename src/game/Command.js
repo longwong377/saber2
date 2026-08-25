@@ -1821,7 +1821,14 @@ export class Trooper {
       this.attrs = { ...shed.attrs };
       this.traits = shed.traits.slice();
     } else {
-      const rolled = rollSoldier(opts.rng || Math.random, this.kind,
+      /* `commandRng`, NEVER `Math.random`. It was the latter for one build and
+       * `command-pvp.mjs` caught the consequence: a guest mirrors the host's
+       * troopers, rolled its own profiles for them, and every bolt in its local
+       * sim left a different cone — so it resolved the HOST's fire a second
+       * time with different answers and billed the difference back. This is
+       * also the rng `seedCommand` reseeds, which is what makes an army
+       * reproducible from a run seed at all (see its own note). */
+      const rolled = rollSoldier(opts.rng || rng, this.kind,
         { bias: ARCHETYPE_BIAS[this.type] || null });
       this.attrs = rolled.attrs;
       this.traits = rolled.traits;
@@ -5691,12 +5698,7 @@ export class CommandDirector extends WaveDirector {
     /* The squad's OWN order if it has been given one, else the army's. See
      * `formationFor` and the note in `order`. `cmdSquad` is the index into
      * `squadsOf`, refreshed once a frame in the same loop that stamps it. */
-    /* THE ORDER HE HAS ACTUALLY TAKEN, not the one that was given. `cmdOrder`
-     * is stamped once a frame in `_troops` and lags the order by his own
-     * Reflex — see `ORDER_LAG`. Falling back to the squad's order covers
-     * the first frame of a body's life, before the loop has reached it. */
-    const F = FORMATIONS[e.cmdOrder]
-      || FORMATIONS[this.formationFor(cmdr, e.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.formationFor(cmdr, e.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     const idx = e.cmdIndex | 0, n = e.cmdCount || 1, k = e.cmdSquad | 0;
     if (!F.slot(idx, n, k, out)) return null;
     const A = this._anchorFor(F, cmdr, e.cmdSquad);
@@ -5872,8 +5874,7 @@ export class CommandDirector extends WaveDirector {
     /* The squad's OWN order if it has been given one, else the army's. See
      * `formationFor` and the note in `order`. `cmdSquad` is the index into
      * `squadsOf`, refreshed once a frame in the same loop that stamps it. */
-    const F = FORMATIONS[e?.cmdOrder]
-      || FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
     const A = this._anchorFor(F, c);
     const T = this._threatBearing(A);
     /* He watches the thing he is frightened of. `Enemy._move` turns a body to
@@ -6262,6 +6263,26 @@ export class CommandDirector extends WaveDirector {
        * the frames in every standing formation. See `_holdPost`. */
       if (fighting) { e.idleT = 0; this._crouch(e, dt, 0); }
       else this._holdPost(e, dt);
+      return;
+    }
+    /**
+     * …AND HE HAS TO HAVE TAKEN THE ORDER IN. See `ORDER_LAG`.
+     *
+     * THE SLOT IS NOT WHAT LAGS — `slotFor` still answers where the order says
+     * he belongs, because that is a fact about the order and every other
+     * reader of it wants the truth. What lags is HIM: for the first beat after
+     * a new order he is still standing where the old one put him, and the
+     * sharp men in the line move before the slow ones do. An order used to
+     * pivot twenty-four bodies on a single frame, which is a spreadsheet
+     * moving rather than an army.
+     *
+     * A man with something in front of him is exempt: he is already fighting,
+     * and freezing him mid-firefight because the formation changed would be a
+     * worse picture than the one this is here to fix.
+     */
+    if (!fighting && e.cmdOrder != null
+      && e.cmdOrder !== this.formationFor(this.commanderOf(e), e.cmdSquad)) {
+      this._holdPost(e, dt);
       return;
     }
     e.idleT = 0;
@@ -7450,17 +7471,43 @@ export class CommandDirector extends WaveDirector {
            * break is on the BODY and not on the order, so a squad told to hold
            * still holds — it is one man in it who did not, which is what the
            * player is being asked to notice about him. */
+          /* THE ORDER HE HAS TAKEN IN, which for the gun is the whole point:
+           * you call HOLD FIRE and the slow men in the line are still firing
+           * for a beat. `Fk` is what the squad was told; `e.cmdOrder` is what
+           * this man is doing about it yet. */
           const Fe = FORMATIONS[e.cmdOrder] || Fk;
           if ((Fe.fire <= 0 || digging) && !this._closing) {
+            /**
+             * …AND A POORLY DISCIPLINED MAN BREAKS IT WHEN HE IS BEING SHOT AT.
+             *
+             * `underFire` gates it, and that gate is the design rather than a
+             * softening. A break at empty air would ruin the one thing HOLD
+             * FIRE is for — walking a line into position without giving it
+             * away — and the player could neither see who did it nor do
+             * anything about it. Under fire it is the opposite: a man with
+             * rounds landing on him returns them, you can see exactly which
+             * man, and where you put him was your decision. An ambush is still
+             * silent; a poor line pinned in the open is not.
+             */
+            /* NO DICE. A per-body accumulator rather than a roll per frame:
+             * `Math.random()` in the update loop is a divergence between a
+             * host and a guest running the same second (`command-pvp.mjs`
+             * caught exactly that in the muster), and drawing from
+             * `commandRng` here would advance the army's shared stream at
+             * frame rate and make everything else that reads it depend on the
+             * frame time. A man can take so much and then he answers: the poor
+             * one breaks first, every time, which is also the more legible
+             * rule. */
             const disc = t.scale ? t.scale('discipline') : 1;
             if (e.cmdBreak > 0) e.cmdBreak -= dt;
             else {
-              if (disc < 1 && Math.random() < HOLD_BREAK * (1 - disc) / 0.28 * dt) {
-                e.cmdBreak = BREAK_FOR;
+              if (disc < 1 && e.underFire > 0) {
+                e.cmdHold = (e.cmdHold || 0) + dt * (1 - disc) * HOLD_BREAK / 0.28;
+                if (e.cmdHold >= 1) { e.cmdHold = 0; e.cmdBreak = BREAK_FOR; }
               }
               holdFire(e);
             }
-          } else e.cmdBreak = 0;
+          } else { e.cmdBreak = 0; e.cmdHold = 0; }
           this._clearBlade(e, c, dt);
         }
       }
