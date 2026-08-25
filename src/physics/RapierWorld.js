@@ -52,6 +52,12 @@ const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
 const _box = new THREE.Box3();
 const _ra = new THREE.Vector3(), _rb = new THREE.Vector3(), _js = new THREE.Vector3();
+const _ZERO = new THREE.Vector3();
+/** The scratch contact handed to every `Body.onContact`. See _dispatchContacts. */
+const _contact = {
+  self: null, other: null, speed: 0, mass: 0, impulse: 0, world: false,
+  normal: new THREE.Vector3(), point: new THREE.Vector3(),
+};
 
 let _bodyId = 1;
 
@@ -401,6 +407,20 @@ export class Body {
     /** One bit from `selfGroup(i)`, or 0. See SELF_GROUPS. */
     this.selfGroup = opts.selfGroup ?? 0;
     this.userData = opts.userData || {};
+    /**
+     * WHAT THIS BODY HITS — and it is an ACCESSOR, not a field, because the
+     * opt-in has to reach the collider.
+     *
+     * Rapier only reports a contact for a pair where at least one collider was
+     * built asking for it, so "does anyone care about this body's contacts" is
+     * a question the physics engine has to be told the answer to rather than
+     * one the game can keep to itself. Measured on the vendored build: a
+     * flagged box falling onto an UNFLAGGED ground still reports its contact,
+     * so one side is enough — which is the whole reason this can be an opt-in
+     * at all. Architecture and terrain never carry the flag and a level's
+     * thousands of static colliders therefore cost nothing.
+     */
+    this._onContact = null;
     this.onContact = opts.onContact || null;
 
     /**
@@ -460,7 +480,38 @@ export class Body {
     this._sv = new THREE.Vector3();
     this._sw = new THREE.Vector3();
     this._sg = this.gravityScale;
+    /**
+     * The velocity this body carried INTO the current step.
+     *
+     * Contact damage is a question about the exchange, and the exchange is
+     * exactly `mass × (v_after − v_before)`. See RapierWorld._dispatchContacts
+     * for why the closing speed on its own is not good enough.
+     */
+    this._pv = new THREE.Vector3();
     this._impulses = null;
+  }
+
+  /* ── contacts ────────────────────────────────────────────────────── */
+
+  get onContact() { return this._onContact; }
+
+  /**
+   * Setting a handler arms the body; clearing it disarms. The flag is pushed
+   * down to the live colliders, so a handler attached after the body is in the
+   * world takes effect on the next step rather than on the next rebuild.
+   */
+  set onContact(fn) {
+    const had = !!this._onContact;
+    this._onContact = fn || null;
+    if (!!this._onContact !== had) this._syncContactEvents();
+  }
+
+  _syncContactEvents() {
+    const w = this._world;
+    if (!w || !this.colliders || w.dead) return;
+    const flags = this._onContact ? w.R.ActiveEvents.COLLISION_EVENTS : w.R.ActiveEvents.NONE;
+    for (const c of this.colliders) c.setActiveEvents(flags);
+    if (this._onContact) w._armContacts();
   }
 
   /* ── impulses ────────────────────────────────────────────────────── */
@@ -570,6 +621,10 @@ export class Body {
     for (const cd of descsFor(R, this.shape)) {
       cd.setFriction(this.friction).setRestitution(this.restitution)
         .setCollisionGroups(groups).setDensity(1);
+      // The opt-in, set on the DESC rather than on the collider afterwards, so
+      // a rebuilt shape (`setShape`, which every cut limb goes through) comes
+      // back armed without anybody remembering to re-arm it.
+      if (this._onContact) cd.setActiveEvents(R.ActiveEvents.COLLISION_EVENTS);
       const c = world.world.createCollider(cd, this.rb);
       this.colliders.push(c);
       world._byCollider.set(c.handle, { body: this });
@@ -942,6 +997,58 @@ export class RapierWorld {
 
     this._byCollider = new Map();    // Rapier collider handle → { body } | { box }
 
+    /**
+     * CONTACT DISPATCH — the channel the Rapier migration dropped.
+     *
+     * `Body.onContact` has been stored on this class since the migration and
+     * delivered nowhere: the retired sphere solver in Physics.js dispatched it
+     * at five sites and its consumers went with it, so for as long as Rapier
+     * has been the engine, NOTHING in the game has learned that two things
+     * touched. Every system that needed the fact built its own sweep instead —
+     * the thrower's in Player, the forest's raycast, the blast sphere in World
+     * — which is why only the player's own throws ever hurt anything.
+     *
+     * ── why STARTED events and not contact forces ──────────────────────
+     *
+     * Rapier offers both. Measured on the vendored build, one 20 kg box
+     * dropped onto flat ground:
+     *
+     *     CONTACT_FORCE_EVENTS, threshold 1 N     85 events in 120 steps
+     *     COLLISION_EVENTS, started only           1 event  in 300 steps
+     *
+     * A resting body presses on the ground with its own weight forever, so a
+     * force threshold cannot tell "landed on a droid" from "sitting on sand"
+     * without being tuned per mass — and every settled crate in a level would
+     * bill a callback a frame. A contact START fires once, when two things
+     * that were apart become touching, which is exactly the event the game
+     * means by "hit". This is the difference between a channel that costs
+     * nothing at rest and the frame-budget disaster ROADMAP item 4 warns about.
+     *
+     * The queue is built only when something first opts in, so a level that
+     * wants no contacts allocates nothing.
+     */
+    this._events = null;
+    /**
+     * Pairs that BEGAN touching in the previous step, flat as [h1, h2, …].
+     *
+     * Rapier reports a contact start one step before it resolves it: measured
+     * on the vendored build, a 22 kg crate driven into an 80 kg body reports
+     * the start at frame 13 and changes velocity at frame 14, at 30 m/s and at
+     * 90 m/s alike. So the pair is held for a step and priced on the next one,
+     * when the impulse has actually landed. See _dispatchContacts.
+     */
+    this._contactPending = [];
+    /**
+     * How fast the two have to be closing before anyone is told, in m/s.
+     *
+     * Debris settling against debris generates real contact starts at a
+     * hundredth of a metre a second, and waking gameplay code for those is
+     * paying for an event nothing can act on. The floor is on the RELATIVE
+     * speed, so two things drifting together at the same velocity are silent
+     * however fast the pair is travelling.
+     */
+    this.contactFloor = opts.contactFloor ?? 1.0;
+
     this.maxBodies = opts.maxBodies ?? 1400;
     this.killY = opts.killY ?? -180;
     this.stats = { bodies: 0, contacts: 0, awake: 0, ms: 0, colliders: 0, rapier: 0, joints: 0, substeps: 1, overBudget: 0 };
@@ -1059,6 +1166,12 @@ export class RapierWorld {
    * remember to clear a flag the world set is the same defect waiting for the
    * next caller.
    */
+  /** Build the event queue the first time anything asks for contacts. */
+  _armContacts() {
+    if (this._events || this.dead || !this.world) return;
+    this._events = new this.R.EventQueue(true);
+  }
+
   add(body) {
     if (this.dead) { if (body) body.dead = true; return body; }
     if (!body.isRapier) throw new Error('RapierWorld.add: not a Rapier body — pass a `shape:`.');
@@ -1066,6 +1179,7 @@ export class RapierWorld {
     this.bodies.push(body);
     body.dead = false;
     body._bind(this);
+    if (body._onContact) this._armContacts();
     return body;
   }
 
@@ -1411,9 +1525,10 @@ export class RapierWorld {
     dt = Math.min(dt, MAX_FRAME);
     const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(dt / MAX_STEP)));
     const h = dt / n;
-    let ms = 0;
-    for (let s = 0; s < n; s++) { this._stepOnce(h); ms += this.stats.ms; }
+    let ms = 0, contacts = 0;
+    for (let s = 0; s < n; s++) { this._stepOnce(h); ms += this.stats.ms; contacts += this.stats.contacts; }
     this.stats.ms = ms;
+    this.stats.contacts = contacts;
     this.stats.substeps = n;
   }
 
@@ -1432,11 +1547,14 @@ export class RapierWorld {
         _v1.set(0, 1, 0).applyQuaternion(b.quaternion);       // the capsule's own axis
         b.angularVelocity.addScaledVector(_v1, -b.angularVelocity.dot(_v1) * (1 - Math.exp(-b.spinFriction * dt)));
       }
+      // What it was doing before Rapier touched it — one copy per body per
+      // step, and the only thing that makes a contact's impulse knowable.
+      b._pv.copy(b.velocity);
       b._push();
     }
 
     this.world.timestep = dt;
-    this.world.step();
+    this.world.step(this._events || undefined);
 
     let awake = 0;
     for (let i = 0; i < bodies.length; i++) {
@@ -1472,6 +1590,15 @@ export class RapierWorld {
         b._rp.copy(b.position); b._rq.copy(b.quaternion);
       }
     }
+
+    /**
+     * DISPATCHED HERE, AFTER THE PULL, SO HANDLERS SEE A COHERENT WORLD.
+     *
+     * Every body's `.position` and `.velocity` are the post-step values a
+     * handler would expect to read, and `._pv` still holds what it was doing
+     * on the way in — which is the pair the impulse is computed from.
+     */
+    if (this._events) this._dispatchContacts();
 
     // A jointed body may only go down with the rest of its ragdoll: sleeping
     // one limb of a corpse whose other arm is still moving just gets it woken
@@ -1510,6 +1637,162 @@ export class RapierWorld {
     this.stats.colliders = this.world.colliders.len();
     this.stats.awake = awake;
     this.stats.ms = performance.now() - t0;
+  }
+
+  /**
+   * Tell both sides of every new contact, once.
+   *
+   * WHAT THIS CANNOT GIVE YOU, said plainly rather than guessed at: a contact
+   * START carries only the two collider handles. Rapier's manifold — the true
+   * normal and the true contact point — is not populated for the pair at the
+   * moment the start is reported (probed on the vendored build: the
+   * `contactPair` callback does not fire), so `normal` here is the direction
+   * of the RELATIVE VELOCITY and `point` is the midpoint between the two
+   * bodies. That is an approximation, and it is the same approximation the
+   * three hand-rolled sweeps this replaces were already making — Player's
+   * hurl sweep drives its knockback off the thrown thing's velocity and places
+   * its effects at the thrown thing's position. Nothing loses fidelity by
+   * coming through here; several things gain a contact they never had.
+   *
+   * The payload is a SCRATCH object, reused for every contact in the frame.
+   * Handlers run synchronously inside the drain and must not keep it.
+   */
+  _dispatchContacts() {
+    const q = this._events;
+    /**
+     * COLLECTED FIRST, PRICED A STEP LATER, DISPATCHED AFTER THE DRAIN.
+     *
+     * Two separate reasons, and they compose into one buffer.
+     *
+     * The drain callback runs inside Rapier's own iteration over its event
+     * buffer, on the WASM side. A handler is game code, and game code kills
+     * things: `Enemy.die` removes bodies, a shattering prop replaces its own
+     * collider. Calling `removeRigidBody` from inside that callback mutates
+     * the world Rust is mid-way through walking. So the drain does nothing but
+     * copy handles into a flat list, and every handler runs after it has
+     * returned — by which time removing a body is the ordinary, safe act it is
+     * everywhere else in this file.
+     *
+     * And the pair is priced one step after it is reported, because that is
+     * when Rapier resolves it — see `_contactPending`. A start whose impulse
+     * never arrives (a speculative contact that separated again, a graze) then
+     * prices at zero and is dropped by `contactFloor`, which is the graze
+     * rejection working rather than a case being missed.
+     *
+     * Handles are safe to hold across the gap because `remove` deletes a
+     * body's colliders from `_byCollider`: a pair whose body died earlier in
+     * the same frame resolves to nothing and is skipped, rather than
+     * resolving to a stale body through a handle Rapier has reissued.
+     */
+    const pairs = this._contactPending;
+    let n = 0;
+    for (let i = 0; i < pairs.length; i += 2) {
+      const r1 = this._byCollider.get(pairs[i]), r2 = this._byCollider.get(pairs[i + 1]);
+      const a = r1 ? r1.body : null, b = r2 ? r2.body : null;
+      // Neither side is a body — two static boxes cannot begin to touch, but a
+      // handle we have no record of is a collider somebody else owns.
+      if (!a && !b) continue;
+      if (a && a.dead) continue;
+      if (b && b.dead) continue;
+      const ah = a && a._onContact, bh = b && b._onContact;
+      if (!ah && !bh) continue;
+
+      /**
+       * THE MASS THAT MEETS THE OTHER THING — the reduced mass.
+       *
+       * Two free bodies share the exchange, so a 22 kg crate hitting an 80 kg
+       * trooper delivers as 17.3 kg and not as 22; a body meeting the
+       * architecture, a wall or the ground meets something that cannot recoil,
+       * so it delivers all of itself. Standard two-body result, computed here
+       * rather than in the consumers so every consumer prices a hit the same.
+       */
+      const ma = a && !a.static ? a.mass : 0, mb = b && !b.static ? b.mass : 0;
+      const mass = (ma > 0 && mb > 0) ? (ma * mb) / (ma + mb) : (ma > 0 ? ma : mb);
+      if (!(mass > 0)) continue;
+
+      /**
+       * HOW HARD, AND WHY IT IS NOT THE CLOSING SPEED.
+       *
+       * The obvious reading — how fast were these two approaching — is wrong
+       * in a way a sandbox notices immediately: it cannot tell a hit from a
+       * GRAZE. Measured with the first version of this dispatcher, a crate
+       * skidding along flat ground at 30 m/s reported a 30 m/s impact with the
+       * world every time the contact restarted, because almost all of that
+       * speed was tangential and none of it was being exchanged.
+       *
+       * Rapier already knows the true answer and states it as a change of
+       * velocity: the impulse it applied to resolve the contact is
+       * `mass × (v_after − v_before)`, which is zero for a graze and maximal
+       * for a head-on hit, with every angle in between handled for free and no
+       * contact normal required — which matters, because a contact START does
+       * not carry a usable manifold (see the note above).
+       *
+       * `speed` is then that impulse expressed back as a closing speed,
+       * `J / μ`, so it is in the same units the hand-rolled sweeps used and
+       * `impactDamage(mass, speed)` prices a contact identically to the throw
+       * it replaces. Sanity: two equal masses meeting head-on at ±15 m/s each
+       * take Δv = 15, giving J/μ = 30 — the closing speed, as it should be.
+       *
+       * Two residues, stated rather than hidden. About `g·dt` of the reading
+       * is gravity rather than the other body — 0.5 m/s at a 1/60 s step,
+       * which is what `contactFloor` sits above. And a very fast hit is
+       * resolved over more than one step: measured at 90 m/s the exchange came
+       * as Δv of 60 and then 10.65, so a single step's reading is 85% of it.
+       * Only the first step is counted, so the number is a FLOOR on the hit
+       * and never an over-read — which is the safe direction for a thing that
+       * decides damage.
+       */
+      let J = 0;
+      if (ma > 0) J = ma * _v4.copy(a.velocity).sub(a._pv).length();
+      else if (mb > 0) J = mb * _v4.copy(b.velocity).sub(b._pv).length();
+      const speed = J / mass;
+      if (speed < this.contactFloor) continue;
+
+      const c = _contact;
+      c.speed = speed;
+      c.mass = mass;
+      c.impulse = J;
+      /**
+       * The direction the exchange pushed, which is the direction a consumer
+       * wants for knockback. It is the Δv of whichever side was measured —
+       * for the struck body that is the way it was shoved, and for the
+       * striking body it is the reverse, so it is flipped per handler below.
+       */
+      c.normal.copy(_v4).multiplyScalar(1 / Math.max(1e-6, _v4.length()));
+      if (a && b) c.point.copy(a.position).add(b.position).multiplyScalar(0.5);
+      else c.point.copy(a ? a.position : b.position);
+      // Neither side is a body: the other party is the world — a static box,
+      // a wall, the heightfield. `null` is what the retired solver passed for
+      // exactly this and the contract is kept.
+      c.world = !a || !b;
+
+      n++;
+      const measuredA = ma > 0;
+      if (ah) {
+        c.other = b; c.self = a;
+        if (!measuredA) c.normal.negate();
+        ah.call(a, b, c);
+        if (!measuredA) c.normal.negate();
+      }
+      // The second handler is re-checked: the first may have killed the body.
+      if (bh && !b.dead) {
+        c.other = a; c.self = b;
+        if (measuredA) c.normal.negate();
+        bh.call(b, a, c);
+        if (measuredA) c.normal.negate();
+      }
+    }
+
+    /**
+     * Only now are this step's new starts collected, to be priced on the next
+     * one. Processing the old list before refilling it is what makes the
+     * one-step deferral a single buffer rather than two.
+     */
+    pairs.length = 0;
+    q.drainCollisionEvents((h1, h2, started) => {
+      if (started) pairs.push(h1, h2);
+    });
+    this.stats.contacts = n;
   }
 
   /* ── queries ─────────────────────────────────────────────────────── */
@@ -1602,6 +1885,9 @@ export class RapierWorld {
     this._hfSeq = -1;
     // A fresh Rapier world is cheaper and far safer than unpicking every
     // collider, joint and island by hand.
+    this._events?.free?.();
+    this._events = null;
+    this._contactPending.length = 0;
     this.world?.free?.();
     this.world = realloc ? new this.R.World({ x: 0, y: this.gravity.y, z: 0 }) : null;
     if (this.world) this.world.numSolverIterations = this._iterations;
