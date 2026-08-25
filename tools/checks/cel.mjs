@@ -235,7 +235,8 @@ export function run({ check, assert, near }) {
      * standing on. Four properties, and the second is the one the finding turns
      * on.
      */
-    const { ContactShadows, BASE_R, MIN_PX, REACH } = await import('../../src/world/Contact.js');
+    const { ContactShadows, BASE_R, MIN_PX, REACH, NEAR_FREE, HELP_AT } =
+      await import('../../src/world/Contact.js');
     const { INK } = await import('../../src/toon/Ink.js');
     const scene = new THREE.Scene();
     const cs = new ContactShadows(scene);
@@ -251,17 +252,38 @@ export function run({ check, assert, near }) {
       return s.x;
     };
 
-    // 1 — a mark is drawn at every distance a body is fought at
-    assert(cs.update(at(10), cam, flat, 1080) === 1, 'no mark at 10 m');
+    /**
+     * 1 — A MARK IS DRAWN THROUGH THE BAND THAT NEEDS ONE, AND NOT UNDER YOUR
+     *     OWN FEET. This clause used to assert a mark at 10 m, and that was the
+     *     old behaviour rather than the intended one: alpha was
+     *     `NEAR_A + (farA − NEAR_A)·min(1, d/90)`, which is 0.34 at d = 0, so a
+     *     hard-edged 34%-dark oval sat under the player and under every enemy in
+     *     melee range — at exactly the distance where the renderer already draws
+     *     them a real soft shadow. The player: "all enemies and also the player
+     *     literally everyone has a solid black circle underneath them, it's
+     *     almost like a broken shadow effect but it's really annoying".
+     *
+     *     Every argument in this check and in Contact.js's header is about the
+     *     band past ~55 m where the ink outline has gone and the cascade has
+     *     stopped. None of them was ever an argument for a mark at 10 m. So the
+     *     near end is asserted CLEAR and the far end is asserted unchanged.
+     */
+    assert(cs.update(at(4), cam, flat, 1080) === 0,
+      'a mark is drawn 4 m from the camera, on top of the real shadow the renderer is already casting — '
+      + 'this is the solid black circle under everybody');
+    assert(cs.update(at(NEAR_FREE - 1), cam, flat, 1080) === 0,
+      `a mark is drawn inside NEAR_FREE (${NEAR_FREE} m)`);
+    assert(cs.update(at(HELP_AT + 5), cam, flat, 1080) === 1,
+      `no mark just past HELP_AT (${HELP_AT} m) — it has to be at full strength before the outline fades`);
     assert(cs.update(at(120), cam, flat, 1080) === 1, 'no mark at 120 m');
     assert(cs.update(at(REACH + 40), cam, flat, 1080) === 0,
       `a mark is still drawn past REACH (${REACH} m), where a body is dressing`);
 
     // 2 — IT SURVIVES THE BAND WHERE EVERYTHING ELSE STOPS. A disc scaled to a
     //     man's feet is sub-pixel exactly where it is needed most, so it grows.
-    const near = radiusAt(10), far = radiusAt(INK.edgeFade[1]);
+    const near = radiusAt(HELP_AT + 5), far = radiusAt(INK.edgeFade[1]);
     assert(far > near,
-      `the mark is ${far.toFixed(2)} m at ${INK.edgeFade[1]} m against ${near.toFixed(2)} at 10 — `
+      `the mark is ${far.toFixed(2)} m at ${INK.edgeFade[1]} m against ${near.toFixed(2)} at ${HELP_AT + 5} — `
       + 'it shrinks into nothing in the band where the outline and the shadow have both gone');
     const tan = Math.tan(60 * Math.PI / 360);
     const px = (r, d) => (r / (d * tan)) * (1080 / 2);
@@ -276,8 +298,16 @@ export function run({ check, assert, near }) {
       const c = new THREE.Color(); cs.mesh.getColorAt(0, c);
       return 1 - c.r;                                   // stored as a multiplier
     };
-    assert(alphaAt(120) > alphaAt(8),
-      `the far mark (${alphaAt(120).toFixed(2)}) is no darker than the near one (${alphaAt(8).toFixed(2)})`);
+    /* COMPARED INSIDE THE DRAWN BAND. This read 8 m, which is now inside
+     * `NEAR_FREE` and draws nothing — and `getColorAt(0)` on an instanced mesh
+     * whose `count` is 0 hands back the STALE colour from the last frame that
+     * did draw, not a zero. So the old form did not fail loudly when the near
+     * mark went away; it silently compared the far mark against a leftover. */
+    const lo = HELP_AT + 5;
+    assert(alphaAt(120) > alphaAt(lo),
+      `the far mark (${alphaAt(120).toFixed(2)}) is no darker than the near one (${alphaAt(lo).toFixed(2)})`);
+    assert(cs.update(at(4), cam, flat, 1080) === 0 && cs.mesh.count === 0,
+      'the mesh still draws instances 4 m from the camera');
 
     // 4 — and the outline pass must not draw a ring around it
     const { inkSkips } = await import('../../src/toon/Ink.js');
