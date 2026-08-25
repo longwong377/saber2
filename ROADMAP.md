@@ -25,12 +25,58 @@ list that only ever grows teaches nobody which of its arguments won.
 | 1 | a thrown body did no damage | **closed** — the enemy branch calls `_trackHurl(e, speed, { body: true })`, with the separate coefficient item 1 asks for |
 | 2 | a released grip walked forever, ragdolled | **closed** — `Actor.recover()` exists and is the recovery ending, not the cheap one |
 | 3 | `Destruction.explosion()` had no caller | **closed** — `Destruction`'s constructor wraps `world.onExplosion`, so the blast reaches the destructible world through the door that already existed |
-| 4 | contact dispatch lost in the Rapier migration | **open**, and still the structural one — but no longer the urgent one. `RapierWorld` stores `onContact` at `:403` and `:1258` (it was `:338`/`:1084`; re-checked) and dispatches it nowhere, and only the retired sphere solver in `Physics.js` ever did. What changed is that the visible consequence has an owner: `Player._trackHurl`/`_updateHurled` make the THROWER carry the damage, which is documented at both sites and is why a hurled crate hurts a droid today. Build the contact system when something needs a contact the thrower cannot know about; do not build it believing three defects are waiting on it |
+| 4 | contact dispatch lost in the Rapier migration | **closed** — `RapierWorld._dispatchContacts` delivers `Body.onContact` from Rapier's own collision events, and `src/game/Impact.js` is the consumer. `tools/checks/contacts.mjs`, 8 checks. The shape it took is below |
 | 5 | features that exist and cannot be reached | **largely closed**, and by a different route than this section imagined. A full adversarial audit went after exactly this shape and found it everywhere: a Grass slider that could not move anything, `A.simSkirt` and `grenades: true` with no reader, `userData.keep` with no writer, `MODES.fixedRules`, an `AudioEngine.musicMissing` two comments named as live, nine instance fields written every frame and read by nobody. `tools/deadfields.mjs` is the standing detector for the last of those. Read the section for the ones still open |
 
 Items 1–3 were the ones item 4 was blamed for. It is worth knowing that they
-were each fixable without it: the contact system is still worth building, but it
-is no longer holding three visible defects hostage.
+were each fixable without it: the contact system was still worth building, but
+it was not holding three visible defects hostage.
+
+### How item 4 was actually built, and the two things it warned about
+
+The section below still says "highest-risk item here… unfiltered, it is a
+frame-budget disaster". That was the right worry and it turned out to have a
+cheap answer, and the answer is not the one this file proposed.
+
+**Contact STARTS, not contact forces.** Rapier will report either. Measured on
+the vendored build with one 20 kg box dropped on flat ground: `CONTACT_FORCE_EVENTS`
+at a 1 N threshold fires **85 times in 120 steps**, because a resting body
+presses on the ground with its own weight forever and no threshold tells "landed
+on a droid" from "sitting on sand" without being tuned per mass. `COLLISION_EVENTS`,
+started only, fires **once in 300**. A settled pile of 40 crates bills 63 contacts
+while it settles and **0** over the next seven seconds.
+
+**The per-body opt-in this file asked for exists, and it is not what saved the
+budget.** One side of a pair carrying the flag is enough, so architecture and
+terrain never carry it. Measured honestly — one world, alternating blocks,
+physics time only, nine repeats — arming all 50 of Geonosis' props costs nothing
+measurable, and neither does arming 500 settled bodies. A first reading claimed
++12.6% and was JIT warmup from comparing two freshly booted worlds; §2.5's rule
+about an instrument that reports catastrophe, wearing its benchmark hat.
+
+**What a contact start does NOT carry is a usable manifold**, so the hit is
+priced from Rapier's own Δv rather than from the closing speed. That is not a
+detail: the closing speed cannot tell a hit from a graze, and a crate skidding
+along flat ground reported a 30.31 m/s impact with the world every time the
+contact restarted. Two corrections came out of the checks rather than out of
+reading — Rapier reports a start one step **before** it resolves it, and the
+**larger** of the two Δv readings is the honest one because a struck body braced
+against the ground puts the load into the floor and barely moves.
+
+**Retirement went half as far as this file expected, and the other half must not
+be finished blindly.** The prop branch of `_updateHurled` is gone — a prop's mask
+names ENEMY, so a thrown crate meets a droid through the real narrowphase now.
+The **body** branch stays: `Ragdoll`'s mask does not name ENEMY and `Enemy`'s
+does not name RAGDOLL, so a corpse and a living droid are not a collider pair at
+all and no contact between them can ever be raised. Retiring it means changing
+those masks first, which changes how every corpse in the game behaves.
+
+**One regression, caught by a suite that has nothing to do with contacts.** The
+first version billed every armed body a share of what it dealt, including
+against the world; `dropped.mjs` failed at once, because a dropped lightsaber is
+a `Prop`, landing is a contact with the world, and the blade on the floor
+shattered on arrival. Breaking props on impact is a balance decision and is
+opt-in now.
 
 ---
 
@@ -92,6 +138,11 @@ particles, audio, knockback, damage and a terrain crater, and never touches
 system (`Player.js:4203` → `Destruction.forceBlast`), so the pattern exists.
 
 ## 4. Contact dispatch was lost in the Rapier migration — the structural one
+
+> **BUILT.** Kept in full because the reasoning is the record, and because the
+> *order* it proposes is the order that was followed. Two of its specifics are
+> now wrong and the summary above says how: the frame-budget disaster did not
+> materialise, and `_updateHurled` was only half retired.
 
 The retired bespoke solver dispatches `onContact` at five sites
 (`src/physics/Physics.js:524, 525, 551, 596, 597`). The current engine only

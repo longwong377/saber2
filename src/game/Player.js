@@ -3039,11 +3039,15 @@ export class Player {
       centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
     };
     /**
-     * Things we threw, and what they have already hit. RapierWorld stores
-     * Body.onContact and never dispatches it — only the retired sphere solver
-     * ever did — so nothing in the game reads `userData.hurledBy`, and a hurled
-     * crate passed straight through a droid. Until contacts come back the
-     * thrower owns the consequence.
+     * Things we threw, and what they have already hit.
+     *
+     * This used to be the ONLY reason a thrown thing hurt anything: RapierWorld
+     * stored `Body.onContact` and dispatched it nowhere, so the thrower had to
+     * carry the consequence itself. Contacts are dispatched now
+     * (`RapierWorld._dispatchContacts`) and a thrown PROP is hurt by the world
+     * rather than by this list — see `_trackHurl`. What is left here is a
+     * thrown BODY, which no contact can reach because a ragdoll and a living
+     * enemy are not a collider pair, plus the attribution both kinds need.
      */
     this.hurled = [];
     this._wheel = 0;
@@ -7304,11 +7308,11 @@ export class Player {
   /**
    * Remember what we threw, so it can hurt what it hits.
    *
-   * `userData.hurledBy` has been set here since the beginning and is read by
-   * nobody: RapierWorld stores Body.onContact and never dispatches it — only
-   * the retired sphere solver ever did — so a hurled crate passed through a
-   * droid without touching it. Until contacts come back the thrower owns the
-   * consequence, which is also the only place that knows it was a throw.
+   * `userData.hurledBy` was set here since the beginning and read by nobody,
+   * because RapierWorld stored Body.onContact and dispatched it nowhere. It is
+   * read now — `Impact.kineticContact` uses it to decide whose kill a crate is
+   * — so this is the field that makes a throw yours, and the timer below is
+   * what makes the claim expire.
    *
    * IT TAKES A PROP *OR* A BODY. The two are different objects with different
    * shapes — a `Prop` has `mass`, `boundingRadius` and a live `velocity`; an
