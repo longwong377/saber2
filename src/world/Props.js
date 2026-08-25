@@ -1811,6 +1811,20 @@ export class Prop {
      */
     const geo = this.mesh?.geometry;
     if (!geo) { this.destroy(true); return; }
+    /**
+     * …AND A HOST THAT CANNOT MAKE DEBRIS STILL BREAKS THE PROP.
+     *
+     * A `Prop`'s contract with the thing holding it is `scene`, `physics` and
+     * `addProp`; the debris pool is a `World` nicety and several real hosts do
+     * not have one. It never mattered while nothing could break a crate on its
+     * own — the only caller was the player's own throw, which only exists in a
+     * full World. The contact channel changed that: a corpse shoulders a crate
+     * now, and `verify.mjs`'s ragdoll fixture went red with
+     * `this.world.spawnDebris is not a function` on a crate a falling body
+     * knocked over. Breaking without chunks is the right answer; not breaking,
+     * or throwing, is not.
+     */
+    if (typeof this.world?.spawnDebris !== 'function') { this.destroy(true); return; }
     geo.computeBoundingBox();
     const size = new THREE.Vector3(); geo.boundingBox.getSize(size);
     for (let i = 0; i < n; i++) {
@@ -2808,10 +2822,12 @@ export class BlastDoor {
     }
     // the slug falls out
     const M = propMaterials();
-    const slug = new THREE.Mesh(plateGeo(this.width * 0.5, this.height * 0.45, this.thickness * 0.9, 0.05, 1), M.darkSteel);
-    this.world.spawnDebris(slug, this.mesh.position.clone(),
-      new THREE.Vector3((rng() - 0.5) * 2, 1, (rng() - 0.5) * 2 - 2),
-      new THREE.Vector3(this.width * 0.5, this.height * 0.45, this.thickness));
+    if (typeof this.world?.spawnDebris === 'function') {   // see `shatter`
+      const slug = new THREE.Mesh(plateGeo(this.width * 0.5, this.height * 0.45, this.thickness * 0.9, 0.05, 1), M.darkSteel);
+      this.world.spawnDebris(slug, this.mesh.position.clone(),
+        new THREE.Vector3((rng() - 0.5) * 2, 1, (rng() - 0.5) * 2 - 2),
+        new THREE.Vector3(this.width * 0.5, this.height * 0.45, this.thickness));
+    }
     if (this.onBreach) this.onBreach(this);
   }
 
