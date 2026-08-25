@@ -175,6 +175,14 @@ import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_O
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
 import { ARCHETYPES } from '../game/Enemy.js';
+/* THE ATTRIBUTE TABLE IS THE ONLY TABLE. Names, blurbs, swings and the trait
+ * list are all read off it here — this page prints them and owns none of them,
+ * so retuning a soldier retunes the screen and `tools/checks/attributes.mjs`
+ * can hold the two together without parsing HTML. */
+import {
+  ATTRS as ATTR_TABLE, attrName, attrBlurb, attrOf, standout as attrStandout,
+  traitById as attrTraitById, kindOfArmy,
+} from '../game/Attributes.js';
 import { DATABANK, FACTIONS, entryFor } from '../game/Databank.js';
 
 /**
@@ -5568,10 +5576,19 @@ export class Menu {
         const flash = mark.color == null ? ''
           : `<em class="company-mark" style="background:#${mark.color.toString(16).padStart(6, '0')}"
                title="${escKey(mark.name)}"></em>`;
+        /* THE TWO THINGS THAT MAKE HIM HIM, on the row, because eight bars on
+         * sixty men is a wall nobody reads and one number per man is a ladder.
+         * `standout` picks the two furthest from the middle and the chip says
+         * which way — so scanning the roll reads as a set of shapes rather
+         * than a ranking, which is the whole argument of Attributes.js. */
+        const chips = attrStandout(m, kindOfArmy(c.army)).map((o) =>
+          `<em class="attr-chip ${o.high ? 'hi' : 'lo'}" title="${escKey(attrBlurb(o.id, kindOfArmy(c.army)) || '')}">`
+          + `${escKey(o.name)}</em>`).join('');
         d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
           + `<b>${escKey(companyNameOf(m))}${flash}</b>`
           + `<span>${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
-          + `${m.kills | 0} down</span></div>`;
+          + `${m.kills | 0} down</span>`
+          + `<span class="man-chips">${chips}</span></div>`;
         this._activate(d, () => {
           audio.ui('click');
           this._showCompany(d.dataset.man);
@@ -5668,6 +5685,75 @@ export class Menu {
       </div>`;
   }
 
+  /**
+   * WHAT HE IS: eight attributes and the traits that bent them.
+   *
+   * ── THE MIDDLE IS MARKED, AND THAT IS THE WHOLE PAGE ────────────────
+   *
+   * Every bar here grows out of a pegged 50 rather than filling from the left.
+   * A left-filling bar says "more is more", and eight of them stacked turn a
+   * set of eight two-sided numbers back into the one ladder this whole system
+   * exists to not be. Grown from the middle, a glance answers the only two
+   * questions worth asking about a man — which way does he lean, and how far —
+   * and a squad reads as a shape instead of a score.
+   *
+   * ── AND THE NAMES CHANGE WITH THE ARMY ──────────────────────────────
+   *
+   * Marksmanship on a clone is Targeting on a droid, Loyalty is Uplink, and
+   * the bond blurb is a different sentence entirely: a man fights above himself
+   * because his General is beside him, a droid because the node is still up.
+   * `kindOfArmy` decides, `attrName`/`attrBlurb` answer, and this file types
+   * neither of them.
+   *
+   * ── A TRAIT PRINTS BOTH HALVES ──────────────────────────────────────
+   *
+   * Never the upside alone. `Attributes.js` guarantees every trait gives and
+   * takes, and a page that showed only the give would read as an upgrade list
+   * — which is the cross-run power `Company.js` refuses at the top of its own
+   * file. Deadeye is +16 Marksmanship AND −14 Cadence, on one line, in the
+   * same weight.
+   */
+  _companyProfileHtml(roll, m) {
+    const kind = kindOfArmy(roll.army);
+    const swing = (o, sign) => Object.keys(o || {})
+      .map((k) => `${sign}${o[k]} ${escKey(attrName(k, kind))}`).join(', ');
+
+    const bars = ATTR_TABLE.map((a) => {
+      const v = attrOf(m, a.id);
+      const lean = v >= 50 ? 'hi' : 'lo';
+      const half = Math.abs(v - 50);            // 0..50, in per-cent of the bar
+      return `<div class="attr-row" title="${escKey(attrBlurb(a.id, kind) || '')}">`
+        + `<span class="attr-name">${escKey(attrName(a.id, kind))}</span>`
+        + `<span class="attr-bar"><i class="mid"></i>`
+        + `<i class="fill ${lean}" style="left:${v >= 50 ? 50 : 50 - half}%;width:${half}%"></i>`
+        + `</span><span class="attr-val ${lean}">${v}</span></div>`;
+    }).join('');
+
+    const traits = (m.traits || []).map((id) => {
+      const t = attrTraitById(id);
+      if (!t) return '';
+      const up = swing(t.up, '+');
+      const down = swing(t.down, '−');
+      return `<div class="trait"><b>${escKey(t.name)}</b>`
+        + `<span class="trait-line">${escKey(t.line)}</span>`
+        + `<span class="trait-swing"><i class="up">${up}</i><i class="down">${down}</i>`
+        + `${t.flag ? `<i class="flag">${escKey(t.flag === 'pushes'
+          ? 'closes the range on his own' : 'will not leave cover for a bad shot')}</i>` : ''}`
+        + `${t.temporary ? '<i class="flag">wears off</i>' : ''}</span></div>`;
+    }).filter(Boolean).join('');
+
+    return `<h4 class="codex-head">What he is</h4>
+      <p class="hint">Rolled the day he was mustered and his for good. The spread between
+        the best and worst man on this roll is the difference between a line that holds
+        and one that does not — never the difference between one man and a squad.</p>
+      <div class="attr-list">${bars}</div>
+      <h4 class="codex-head">Traits</h4>
+      ${traits
+        ? `<div class="trait-list">${traits}</div>`
+        : '<p class="hint">Nothing marked about him. An unremarkable soldier is the '
+          + 'commonest kind and there is no penalty in it.</p>'}`;
+  }
+
   /** One man: what he is, what he has done, and the two things you may change. */
   _companyManHtml(roll, m) {
     const rows = companyDossier(m, roll.army);
@@ -5678,6 +5764,7 @@ export class Menu {
       <div class="databank-stats company-stats">
         ${rows.map(([k, v]) => `<div><b>${escKey(k)}</b><span>${escKey(v)}</span></div>`).join('')}
       </div>
+      ${this._companyProfileHtml(roll, m)}
       <h4 class="codex-head">What he has done</h4>
       ${m.story?.length
         ? `<div class="company-story">${m.story.map((line) =>

@@ -38,6 +38,7 @@ import { MORALE } from './Morale.js';
  * anything this file imports may not reach Command. */
 import { NERVE, nerveAim, nerveBroken, nerveRefusing } from './Nerve.js';
 import { POWER_COST } from './Powers.js';
+import { scaleOf } from './Attributes.js';
 /* `findCasualty` and `startDrag` are NOT imported here: the drag is a
  * commander's decision and `CommandDirector.steer` is where it is taken. They
  * were on this line for a while and called by nothing in the file, which is the
@@ -4957,6 +4958,17 @@ export class Enemy {
     // ── skill: the rank ladder, and elites
     const r = this.trooper ? this.trooper.rank : 0;
     q *= AIM_BY_RANK[Math.min(r, AIM_BY_RANK.length - 1)];
+    /**
+     * …AND THE MAN'S OWN EYE, on top of the rank he has climbed.
+     *
+     * `q` is a CONE — bigger is worse — so a poor shot multiplies it up and a
+     * marksman pulls it in. This is the second of the two places Marksmanship
+     * is read: `enlistBody` widens the archetype's own `spread` at the muster,
+     * and this widens the firing solution in the moment. Both, because the
+     * first is what the weapon does and the second is what the man does with
+     * it, and a soldier who is bad at one is usually bad at both.
+     */
+    if (this.trooper) q *= scaleOf(this.trooper, 'aim');
     /* `A.elite`, NOT `this.elite`, AND THAT ONE WORD WAS THE WHOLE TERM.
      * `applyModifier` writes the promotion onto the CLONED archetype
      * (`A.elite = key`) and onto the body as `e.mod`; nothing anywhere in the

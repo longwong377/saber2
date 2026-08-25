@@ -49,6 +49,26 @@
  */
 
 import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById } from './Command.js';
+import { ATTR_IDS, traitById } from './Attributes.js';
+
+/**
+ * An attribute block off disk, clamped and complete.
+ *
+ * Returns null for anything unrecognisable rather than a half-filled object, so
+ * `Trooper` rolls the man fresh instead of fielding one with three of his eight
+ * numbers missing — a soldier who is 50 at everything he was not saved with is
+ * a soldier the save has quietly changed.
+ */
+function saneAttrs(a) {
+  if (!a || typeof a !== 'object') return null;
+  const out = {};
+  for (const id of ATTR_IDS) {
+    const v = Number(a[id]);
+    if (!Number.isFinite(v)) return null;
+    out[id] = Math.max(0, Math.min(100, Math.round(v)));
+  }
+  return out;
+}
 
 /** Where it lives. Versioned like every other store in the tree. */
 export const KEY = 'saber.company.v1';
@@ -69,6 +89,10 @@ export const CAP = 60;
 const MAN_FIELDS = [
   'id', 'army', 'type', 'designation', 'nickname', 'squad',
   'xp', 'kills', 'wounds', 'morale', 'areas', 'joined',
+  /* WHO HE IS, and it has to persist or he is a different man every run. The
+   * rank is what he has earned; these are what he was rolled as. See
+   * src/game/Attributes.js. */
+  'kind', 'attrs', 'traits',
   /* THE CAMPAIGN HISTORY, and it only exists once a man has one. `runs` is
    * withdrawals survived and `since` is the run he first walked up a ramp on,
    * so the tab can say "nine runs, since Geonosis" rather than a bare number.
@@ -139,6 +163,18 @@ function readMan(m, army) {
     type: m.type,
     designation: m.designation,
     nickname: typeof m.nickname === 'string' ? m.nickname : null,
+    /**
+     * SANITISED ON THE WAY IN, because this comes off disk and a save from an
+     * older build has none of it. An absent profile is rolled fresh by
+     * `Trooper`; a present one is clamped, because a hand-edited save that
+     * hands a man 5 000 Grit is a save that hands him an unkillable body and
+     * the file that reads it is where that has to stop.
+     */
+    kind: m.kind === 'steel' ? 'steel' : 'flesh',
+    attrs: saneAttrs(m.attrs),
+    traits: Array.isArray(m.traits)
+      ? m.traits.filter((t) => typeof t === 'string' && traitById(t)).slice(0, 4)
+      : [],
     squad: Number.isInteger(m.squad) ? m.squad : null,
     xp: Math.max(0, num(m.xp, 0)),
     kills: Math.max(0, num(m.kills, 0)),
@@ -238,6 +274,9 @@ export function manOf(t, meta = {}) {
     type: t.type,
     designation: t.designation,
     nickname: t.nickname ?? null,
+    kind: t.kind || 'flesh',
+    attrs: t.attrs ? { ...t.attrs } : null,
+    traits: Array.isArray(t.traits) ? t.traits.slice() : [],
     squad: Number.isInteger(t.squad) ? t.squad : null,
     xp: Math.max(0, t.xp | 0),
     kills: Math.max(0, t.kills | 0),
