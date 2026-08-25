@@ -321,6 +321,41 @@ export async function run({ check, assert, near }) {
     return `mean aim ${mean.toFixed(1)}, ${(poor / N * 100).toFixed(1)}% below the middle`;
   });
 
+  await check('the same man is the same man however he was built', async () => {
+    /**
+     * THE PROPERTY CO-OP NEEDS, and the one a stream cannot give.
+     *
+     * `command-pvp.mjs` caught this as a guest holding an idle input billing
+     * the host 0.4 hp: two machines built the same army in different orders,
+     * a mirror's maxHp came out a point apart, its copy went down on a round
+     * the host's survived, and the kill clause claimed the body. It came and
+     * went with machine load, because the suite's async checks interleave at
+     * their awaits and the interleave was deciding the draw order.
+     *
+     * Asserted three ways, and all three are needed: order-independent, still
+     * different between two men, and still different between two runs. Drop
+     * the last and every campaign hands you the same twelve soldiers.
+     */
+    const { Trooper, seedCommand } = await import('../../src/game/Command.js');
+    seedCommand(20250825);
+    const a = new Trooper(ARMIES.republic, 'trooper', 'CT-1234', {});
+    new Trooper(ARMIES.republic, 'heavy', 'CT-5150', {});   // …and somebody in between
+    const again = new Trooper(ARMIES.republic, 'trooper', 'CT-1234', {});
+    for (const id of ATTR_IDS) {
+      assert(a.attr(id) === again.attr(id),
+        `${id} depends on the order he was mustered in: ${a.attr(id)} vs ${again.attr(id)}`);
+    }
+    assert(a.traits.join() === again.traits.join(), 'his traits depend on the muster order');
+    const other = new Trooper(ARMIES.republic, 'trooper', 'CT-8888', {});
+    assert(ATTR_IDS.some((id) => other.attr(id) !== a.attr(id)),
+      'two different men came out identical — the hash ignores who he is');
+    seedCommand(20250826);
+    const nextRun = new Trooper(ARMIES.republic, 'trooper', 'CT-1234', {});
+    assert(ATTR_IDS.some((id) => nextRun.attr(id) !== a.attr(id)),
+      'the same designation is the same soldier in every campaign ever played');
+    return 'order-free, man-specific, run-specific';
+  });
+
   await check('two men off the same table are two different men', () => {
     const r = rng(9);
     const a = rollSoldier(r, 'flesh');

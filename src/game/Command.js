@@ -137,7 +137,36 @@ const rng = commandRng;
 export function seedCommand(seed) {
   const s = (Math.imul((seed | 0) ^ 0x2545F491, 0x9E3779B1) >>> 0) || 1;
   rng.seed(s);
+  musterSalt = s;
   return s;
+}
+
+/**
+ * ── WHY A MAN'S PROFILE IS HASHED AND NOT DRAWN ─────────────────────────
+ *
+ * `rollSoldier` needs randomness and the obvious source is `commandRng`. It is
+ * the wrong one, and `command-pvp.mjs` is where that shows: a stream gives the
+ * SAME man different numbers depending on when he was mustered, so two machines
+ * building the same army in a different order build two different armies. The
+ * client's mirror of a trooper then has a different maxHp from the host's, its
+ * copy goes down on a round the host's survives, and `_reconcileClaims` bills
+ * the host for a body that is still standing. Measured before this: 0.4 hp
+ * across 2 claims from a guest holding an idle input — and it came and went
+ * with machine LOAD, because the suite's async checks interleave at their
+ * awaits and the interleave decided the draw order.
+ *
+ * A hash of who he is has none of that. The same designation in the same army
+ * on the same run is the same soldier on every machine, in any order, however
+ * many times he is built — and `musterSalt` moves with the run seed, so two
+ * campaigns do not hand you the same twelve men.
+ */
+let musterSalt = 0x5EED0C7;
+
+function musterRng(army, type, designation) {
+  let h = musterSalt >>> 0;
+  const key = `${army || ''}/${type || ''}/${designation || ''}`;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+  return makeRng(h || 1);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1821,14 +1850,11 @@ export class Trooper {
       this.attrs = { ...shed.attrs };
       this.traits = shed.traits.slice();
     } else {
-      /* `commandRng`, NEVER `Math.random`. It was the latter for one build and
-       * `command-pvp.mjs` caught the consequence: a guest mirrors the host's
-       * troopers, rolled its own profiles for them, and every bolt in its local
-       * sim left a different cone — so it resolved the HOST's fire a second
-       * time with different answers and billed the difference back. This is
-       * also the rng `seedCommand` reseeds, which is what makes an army
-       * reproducible from a run seed at all (see its own note). */
-      const rolled = rollSoldier(opts.rng || rng, this.kind,
+      /* HASHED FROM WHO HE IS, never drawn from a stream. See `musterRng` — a
+       * stream makes the same man depend on the order he was built in, and two
+       * machines building one army in different orders build two armies. */
+      const rolled = rollSoldier(
+        opts.rng || musterRng(this.army?.id ?? this.army, this.type, this.designation), this.kind,
         { bias: ARCHETYPE_BIAS[this.type] || null });
       this.attrs = rolled.attrs;
       this.traits = rolled.traits;
