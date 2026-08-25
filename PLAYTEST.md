@@ -9,6 +9,71 @@ measurement taken without a person at the controls.
 
 ---
 
+## 25 Aug — SABER GAME NOTES AND IMPROVEMENTS V7
+
+Handed over with: *"You will finish everything on this list to perfection, every
+single thing I talked about. You've missed many things I've listed in the past
+but you will not repeat the mistake, this list is not in order but a stream of
+consciousness so you will finish/group it in whatever order makes most sense for
+you"*.
+
+> **Logged BEFORE the work this time.** V6's own entry records that it was
+> written up afterwards and that this broke the rule at the top of this file.
+> Taken against the build as it stood at `20556c3`, before the contact-dispatch
+> work on this branch.
+
+### The bugs
+
+> *"all enemies and also the player literally everyone has a solid black circle
+> underneath them, it's almost like a broken shadow effect but it's really
+> annoying"*
+>
+> *"command mode never has any enemies show up?"*
+>
+> *"one handed grip doesn't really work because you have to hold the button the
+> entire time for some reason"*
+
+### The balance note
+
+> *"the lightsaber throw (R) needs a longer cooldown, it's a crazy effective
+> move with no significant cooldown so it makes sense to just spam it rather
+> than anything else"*
+
+### The things asked for before and still wrong
+
+> *"hoods still look like helmets idk what to tell you, this is the millionth
+> time, the hoods should be actual cloth laid over the person's actual head, it
+> should move like it's fucking fabric not goddamn helmet idk why you keep
+> missing this, also the person's head like on certain races clip out of the
+> hoods as well"*
+>
+> *"since I've asked you 10000000 times and it still looks like shit I want you
+> to scrap the current preview images for the theater maps and instead use a
+> real attractive cinematic unique screenshot emblematic of the map from the
+> actual map and use that as the placeholder preview images instead of the bare
+> garbage you have now"*
+>
+> *"preview images for the jedi hilts all show the same image, also I thnk most
+> of them look the same in the preview too, also make the hilt designs much more
+> creative and detailed and imaginative than what they are now, you can look
+> online for references too"*
+
+### The two questions, which are the most important lines in the list
+
+> *"explain to me what campaine mode is? the only map is colosseum I'm just
+> confused what it is"*
+>
+> *"What the fuck have we been building the last couple days where the fuck is
+> it? where are the giant epic battles one army vs another giant scale the
+> literal shit I asked for, did I miss it or just not get far enough?"*
+
+**Read the second one as a finding, not as a mood.** The player cannot find the
+thing the last several days of work were about. Whether THE LINE is unfinished,
+unreachable from the menu, or finished and not recognisable when played, all
+three are failures and only the first is the one anybody has been tracking.
+
+---
+
 ## 23 Aug — SABER GAME NOTES AND IMPROVEMENTS V6
 
 Handed over with: *"You will finish everything on this list to perfection, every
