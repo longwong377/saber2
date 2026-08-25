@@ -656,6 +656,23 @@ export async function run({ check, assert }) {
     d.areaWaves = d.area.waves;
     for (const e of world.enemies) if (!e.dead && e.team !== 0) { e.hp = 0; e.dead = true; }
     const taken = () => d.log.some((r) => r.t === 'area');
+    /**
+     * WHAT THE GAME SAYS, RECORDED THROUGH THE ONE PATH IT HAS.
+     *
+     * This read `world.notes?.some?.(…) !== false`, and THERE IS NO
+     * `world.notes`: `World.notify` calls `this.onNotify?.(…)` and nothing else
+     * — `world.notifications` was a queue nobody read and was deleted, with the
+     * note above `notify` recording why. So the expression was `undefined`,
+     * `undefined !== false` is true, and the assertion could not fail. Delete
+     * `_awaitLine`'s notice, which is the flagship rule's ONLY on-screen
+     * explanation of why an advance has stalled, and this arm stayed green.
+     *
+     * `onNotify` is the recorder every other suite uses for this
+     * (`coop.mjs`, `command-pvp.mjs`), and it is installed BEFORE the wave is
+     * paid because that is the frame the notice is raised on.
+     */
+    const notes = [];
+    world.onNotify = (title, sub) => notes.push([String(title), String(sub ?? '')]);
     d.payWave(d.wave + 1);
     /**
      * HELD OUT, EVERY FRAME, and the note twenty lines below is why this had
@@ -687,8 +704,15 @@ export async function run({ check, assert }) {
     assert(!taken(),
       'the area was taken with the whole line four times NEAR away — killing still advances the run');
     assert(d.awaitingLine, 'the run is not waiting for the line, it simply did not clear');
-    const said = world.notes?.some?.(([t]) => /LINE/i.test(String(t)));
-    assert(said !== false, 'nothing on screen says why the ground has not been taken');
+    const said = notes.filter(([t]) => /LINE/i.test(t));
+    assert(said.length,
+      `nothing on screen says why the ground has not been taken — ${notes.length} notices, `
+      + `${notes.map(([t]) => t).join(' / ') || 'none at all'}`);
+    assert(said.length === 1,
+      `the same notice was raised ${said.length} times — \`_awaitLine\` guards on \`awaitingLine\` `
+      + 'precisely so a stalled advance is announced once and not every frame');
+    assert(/your men/i.test(said[0][1]),
+      `the notice says "${said[0][1]}" and never mentions the men, which is the whole reason it is raised`);
 
     /**
      * …AND THE MOMENT THEY ARRIVE. Not at the next wave — `payWave` is the only
@@ -702,9 +726,55 @@ export async function run({ check, assert }) {
      * added to is not a restore, and the check reported "the line is back and
      * still does not read as up" about a line that was not back.
      */
+    /**
+     * …AND IT IS THE MEN STILL STANDING, ASKED AGAIN — not the list taken nine
+     * seconds ago.
+     *
+     * `living` was filtered before the hold and a record does not keep its body
+     * across a death: `Roster.fall` IS `t.body = null` ("Kill a record"). So a
+     * held list can carry a record with no body, and `t.body.position.set` on
+     * one of those is `Cannot read properties of null (reading 'position')` —
+     * a CRASH where this arm has a measurement to make, and it reports the
+     * message and no line number.
+     *
+     * AND A DEATH HERE IS NOT A HARNESS ACCIDENT, which is why this is a
+     * re-read and not a `?.`. Two things are shooting at these men and the arm
+     * silences neither:
+     *
+     *   THE EMPLACEMENT. `Levels.js` hangs a `GunPit` behind the ground's
+     *     second blast door; it reaches 120 m and `_acquire` lays it on the
+     *     ROSTER by preference — "leaving it standing costs you names". The
+     *     loop above kills every hostile in `world.enemies`; the gun is not in
+     *     that list and goes on firing at a line that is standing still.
+     *   THE DROP. The displacement writes `position.x` and leaves `y` where it
+     *     was, so each man falls onto whatever the ground is 56 m away, and
+     *     `Enemy._move` charges fall damage past 20 m/s.
+     *
+     * MEASURED, this fixture held for 30 s instead of 6, from full health at
+     * 46 hp: with the gun live the ten read 0 · 21 · 46 · 46 · 37 · 46 · 46 ·
+     * 18 · 46 · 46 off one three-round burst, and with it silenced they still
+     * read 37 · 46 · 29 · 46 · 46 · 29 · 46 · 46 · 46 · 35 off the fall alone.
+     * One burst is enough to take a man to nothing, and held for 120 s the
+     * line is gone entirely. Whether any of it lands inside the six seconds
+     * this arm actually runs turns on `GUN.spread`, drawn from `MathUtil`'s
+     * module-scope `rand` — one of the streams `restoreShared` deliberately
+     * does NOT put back, so it is decided by everything that ran before this
+     * suite rather than by the order it ran in. It is a PHASE and not an
+     * order, which is why it does not bisect: alone all ten came through
+     * (measured, ten `ok`), two full gates run while fixing this brought all
+     * ten through as well, and the gate that found it printed the message
+     * above and nothing else.
+     *
+     * The re-read is also the honest fixture: the arm below is about a line
+     * coming back, and the line that comes back is the line that is left.
+     */
+    const back = d.roster.living.filter((t) => t.body && !t.body.dead);
+    assert(back.length >= 4,
+      `only ${back.length} of the line lived through the hold — there is no line left to bring back, `
+      + 'so what follows would measure an empty roster rather than the rule');
     const p = world.player.position;
-    living.forEach((t, i) => {
-      const a = (i / living.length) * Math.PI * 2;
+    back.forEach((t, i) => {
+      const a = (i / back.length) * Math.PI * 2;
       t.body.position.set(p.x + Math.cos(a) * 2.5, p.y, p.z + Math.sin(a) * 2.5);
     });
     assert(d.lineIsUp(), 'the line is back and still does not read as up');
@@ -712,7 +782,8 @@ export async function run({ check, assert }) {
     assert(taken(), 'the line came up and the ground was still not taken — the rule is a dead end');
     assert(!d.awaitingLine, 'the run is still waiting for a line that is standing on the ground');
     world.unload();
-    return `refused with the line ${away} m off, taken within 3 s of its return`;
+    return `refused with the line ${away} m off, taken within 3 s of its return `
+      + `(${back.length} of ${living.length} lived through the hold)`;
   });
 
   check('theline.17 …and Command still takes ground by clearing it', async () => {

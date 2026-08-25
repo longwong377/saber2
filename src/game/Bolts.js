@@ -37,6 +37,14 @@ export const BOLT_COLORS = {
   white: 0xf0f4ff,
 };
 
+/**
+ * How far a bolt may fly before it is culled whatever its life says — the
+ * backstop in `update`, and it is deliberately far outside a level: every
+ * shipped ground is about 460 m across, and `life` at the default speed stops a
+ * round at 281 m long before this. See the note at the cull.
+ */
+const BOLT_RANGE = 900;
+
 export class BoltPool {
   constructor(scene, max = 420) {
     this.max = max;
@@ -44,6 +52,10 @@ export class BoltPool {
     for (let i = 0; i < max; i++) {
       this.bolts.push({
         active: false, pos: new THREE.Vector3(), prev: new THREE.Vector3(),
+        /* WHERE IT WAS FIRED FROM — see the cull in `update`. Allocated once
+         * with the pool, like `prev`, so this is three floats per SLOT and
+         * nothing per frame. */
+        from: new THREE.Vector3(),
         vel: new THREE.Vector3(), color: new THREE.Color(), life: 0, damage: 10,
         owner: null, team: 1, deflected: false, turned: false, deflector: null, speed: 90,
         // Fired off the wire rather than by anything on this machine. See
@@ -120,7 +132,7 @@ export class BoltPool {
     if (!b) return null;
     b.active = true;
     b.smokeDepth = 0;
-    b.pos.copy(origin); b.prev.copy(origin);
+    b.pos.copy(origin); b.prev.copy(origin); b.from.copy(origin);
     b.speed = opts.speed ?? 88;
     b.vel.copy(dir).normalize().multiplyScalar(b.speed);
     b.color.set(opts.color ?? BOLT_COLORS.red);
@@ -405,7 +417,26 @@ export class BoltPool {
       }
 
       if (!b.active) continue;
-      if (b.pos.lengthSq() > 900 * 900) { b.active = false; continue; }
+      /**
+       * THE RANGE BACKSTOP, AND IT MEASURED FROM THE WRONG POINT.
+       *
+       * This read `b.pos.lengthSq() > 900 * 900` — the distance from the WORLD
+       * ORIGIN, not the distance the bolt had flown. Every level is about 460 m
+       * across so it never fired in play, and it stayed invisible for exactly
+       * that reason; what found it was the boot probe firing a round while the
+       * player was still 2 400 m up in the insertion bay, where the bolt was
+       * deleted one frame after it left the muzzle with 5.49 m still to run.
+       * `ORBIT_ALT` is 2 400 and `Extraction.beginInsertion` is the shipped
+       * opening, so that altitude is a place the game really goes.
+       *
+       * It is a BACKSTOP and not the bound: `life` is 3.2 s by default and is
+       * decremented and culled two hundred lines up, which at the default 88
+       * m/s stops a bolt at 281 m — inside a level either way. This exists for
+       * the bolt whose life somehow never runs out, so the question it means to
+       * ask is "has this thing flown absurdly far", and that is a fact about
+       * the muzzle rather than about where the level's zero happens to be.
+       */
+      if (b.pos.distanceToSquared(b.from) > BOLT_RANGE * BOLT_RANGE) { b.active = false; continue; }
 
       // ── draw
       if (n < this.max) {

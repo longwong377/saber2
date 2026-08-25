@@ -26,7 +26,17 @@
  * So this one does the only thing that could have caught it: pack the tree as
  * it stands and open the result the way a player does.
  */
-import { chromium } from 'playwright-core';
+/* `playwright-core` IS IMPORTED IN THE BODY, not here, and that is not a style
+ * preference — it is what the other five browser-driving suites already do
+ * (`frontdoor`, `lighting`, `lineseen`, `front-screen`, and every `tools/_*`
+ * shot tool), and this file was the one that did not.
+ *
+ * A static import makes the MODULE unloadable on a machine with no browser
+ * package, and `determinism.mjs`'s "every suite file in tools/checks/ exports a
+ * run()" imports every file to ask that question — so one absent dependency
+ * failed a structural check about a completely unrelated property, on a tree
+ * where nothing was wrong. A suite that cannot RUN here should fail when it is
+ * run, not when it is looked at. */
 import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -51,6 +61,7 @@ export async function run({ check, assert }) {
       const size = statSync(out).size;
       assert(size > 2e6, `the packed page is ${(size / 1e6).toFixed(2)} MB — that is not the whole game`);
 
+      const { chromium } = await import('playwright-core');
       const browser = await chromium.launch({ executablePath: exe, args: CHROME_ARGS });
       try {
         const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });

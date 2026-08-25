@@ -164,6 +164,59 @@ export async function run({ check, assert }) {
       + `CPU 1% low ${sa.cpu.low1.toFixed(1)} vs ${sb.cpu.low1.toFixed(1)} — ${gap.toFixed(1)} ms apart`;
   });
 
+  check('profiler: a zeroed window reads back clean and in order — what tools/_frame.mjs takes out of the browser', () => {
+    /**
+     * THE ONE THING THE BROWSER READER DEPENDS ON THAT NOTHING ELSE DOES.
+     *
+     * `tools/_frame.mjs` measures several rungs on ONE deploy — the boot is
+     * minutes on a box with no GPU, so paying it per rung is not affordable —
+     * and it separates them by zeroing this ring between them: `n`, `i`,
+     * `last` and the three arrays. Two properties of `stats()` make that
+     * legal, and neither is stated anywhere in the file:
+     *
+     *   · the window is `min(n - 3, HISTORY)` samples read from INDEX 0, so a
+     *     zeroed ring reports the new frames and none of the old ones;
+     *   · below HISTORY samples, index order IS time order, which is what lets
+     *     the reader print the raw series and see whether a rung was still
+     *     drifting — the check that invalidated its own first ladder.
+     *
+     * If `stats()` ever starts reading from the write cursor instead, both go,
+     * and the browser tool would go on printing a table in which one rung's
+     * frames are quietly mixed with the previous rung's. That is the failure
+     * this check exists to make loud, and it costs microseconds.
+     */
+    const p = feed(headless(), Array(300).fill(40));
+    const before = p.stats().mean;
+
+    p.n = 0; p.i = 0; p.last = 0;
+    p.frames.fill(0); p.cpus.fill(0); p.gpus.fill(0);
+
+    // Strictly decreasing, so "did it come back in the order it went in" is a
+    // question about the values and not about a timestamp we would have to keep.
+    const ramp = Array.from({ length: 20 }, (_, i) => 30 - i * 0.5);
+    feed(p, ramp);
+    const s = p.stats();
+
+    // The three the `n > 2` gate drops after any reset — which is also why the
+    // reader runs `frames + 3` and calls the rest a window of `frames`.
+    assert(s.frames === ramp.length - 3,
+      `a ${ramp.length}-frame window after a reset reports ${s.frames} samples, not ${ramp.length - 3}`);
+    /* Exactly the frames fed after the reset and no others — not "smaller than
+     * before", which a window half full of the old rung would also satisfy. */
+    const kept = ramp.slice(3);
+    const want = kept.reduce((a, b) => a + b, 0) / kept.length;
+    assert(Math.abs(s.mean - want) < 1e-6,
+      `the window reads ${s.mean.toFixed(4)} ms where the frames fed after the reset average `
+      + `${want.toFixed(4)} (the history behind it was ${before.toFixed(2)} ms) — a rung of `
+      + 'tools/_frame.mjs would be carrying part of the rung above it');
+    const got = Array.from(p.frames.subarray(0, s.frames));
+    assert(got.every((v, i) => i === 0 || v < got[i - 1]),
+      `the window does not read back in the order the frames arrived: ${got.slice(0, 6).join(', ')} — `
+      + 'the browser reader prints this series to decide whether a rung had settled');
+    return `${s.frames} samples of ${ramp.length} after a reset, in order, mean `
+      + `${s.mean.toFixed(2)} ms with a ${before.toFixed(0)} ms history behind it`;
+  });
+
   check('profiler: the window is bounded, so a long session cannot grow it', () => {
     // The complaint is specifically that it degrades over time, so this thing
     // will be left running for a long time. Its own history must not be the

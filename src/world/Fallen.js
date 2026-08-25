@@ -64,6 +64,17 @@ import { mergeGeos } from './Props.js';
 const LEN = 1.80;
 
 /**
+ * HOW FAR INTO THE GROUND A BODY LIES, in metres.
+ *
+ * A man on sand is IN it by a few centimetres and — more to the point — a prone
+ * box sitting exactly on a heightfield reads as furniture. The sink is what
+ * makes it read as lying rather than as placed. Named because `FallenField`
+ * below seats a body the same way and a second copy of it would be a second
+ * answer to "how does a body lie on this ground".
+ */
+const LIE_SINK = 0.045;
+
+/**
  * The two poses, in a frame where +Z is head-to-foot and the body lies in the
  * XZ plane. Both are built from boxes: a prone body at 27 px has no curve on
  * it that a six-sided cylinder would buy back.
@@ -229,10 +240,8 @@ export function addFallen(world, opts = {}) {
     const x = site ? site.x : o.x + d.x * across + ax * along;
     const z = site ? site.z : o.z + d.z * across + az * along;
     if (T?.inBounds && !T.inBounds(x, z)) continue;
-    /* SUNK. A body on sand is IN it by a few centimetres, and — more to the
-     * point — a prone box sitting exactly on a heightfield reads as furniture.
-     * The sink is what makes it read as lying rather than as placed. */
-    const y = (T ? T.height(x, z) : 0) - 0.045;
+    /* SUNK — see LIE_SINK, which `FallenField.lay` seats a retired body by too. */
+    const y = (T ? T.height(x, z) : 0) - LIE_SINK;
     /* NOT UNDER THE SHEET. A level's sea is a number in the same metres this
      * height is, and nothing here knew about it: on the Ember Shelf the
      * marching front's engagement 1 stands 180 m out over ground 45 m BELOW a
@@ -291,3 +300,233 @@ export function addFallen(world, opts = {}) {
 
 /** Exported so a check cannot keep a second copy of how long a man is. */
 export const FALLEN_LENGTH = LEN;
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE FIELD A FIGHT FILLS — where a corpse goes when the budget is done  */
+/*  with it                                                               */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * `addFallen` above is DRESSING: a level lays a band of men nobody was ever
+ * alive in, once, at load. This is the same object filled from the other end —
+ * by `Corpses.js`, one instance at a time, as the field's own dead are retired.
+ *
+ * ── WHY RETIRE AND NOT DELETE, AND IT IS A DRAW-CALL ARGUMENT ───────────
+ *
+ * `Corpses.js`'s own header calls SINK "the only step that removes anything
+ * visible, and it is deliberately last" — and what it removes is the body,
+ * permanently. So a fight that kills two hundred men leaves at most
+ * `CORPSE_BUDGET` of them on the ground and the rest simply stop having
+ * existed. That is the one thing about the dead a player can see happening.
+ *
+ * The reason the budget is that tight is measured, and it is not triangles.
+ * `tools/_farcorpse.mjs`, a B1 on geonosis, the shipped build:
+ *
+ *     100 m   alive  4 meshes (the L2 merged skin)   dead  44
+ *     163 m   alive  0 meshes (the L3 cohort)        dead  44
+ *
+ * A body gets CHEAPER as it walks away and then costs eleven times as much the
+ * moment it falls, because `MergedSkin`'s staleness drops the L2 bake on
+ * `actor.ragdolled` — correctly, a bake of a standing pose cannot follow a
+ * ragdoll — and `Enemy.update` returns on `dead` above the line that would
+ * re-ask for the cohort. There is no rung below a corpse. This is that rung:
+ * one instance in a shared buffer, at the far end of the fade the budget was
+ * already running, for two draw calls however many of them there are.
+ *
+ * ── AND THE BODY IT REPLACES IS THE ONE NOBODY IS LOOKING AT ────────────
+ *
+ * `Corpses.worth` already ranks the field by near, recent and in-front and
+ * spends the loser. So the body handed over here is by construction far, old
+ * and behind — which is 27 px and under, the reading this file's figure was
+ * built for and checked at (see the table at the top). Retirement does not
+ * choose a distance; it inherits the choice the budget already made.
+ */
+
+/**
+ * HOW MANY THE FIELD DRAWS, and it is a cap on the DRAWING, not on the dying.
+ *
+ * §12.4 verbatim in this file's first paragraph — "520 prone instanced figures
+ * in a 26 m band" — is the size this object was built to, so it is the size the
+ * buffers are allocated at. Fixed and not grown for `GraveField`'s reason: an
+ * `InstancedMesh` cannot grow, and a field that reallocated itself per casualty
+ * would be a reallocation per death, which is the cost this exists to remove.
+ * Past it the oldest retired body's slot is taken back — the ring below —
+ * because a wrap is the one failure mode that keeps the NEWEST dead on screen,
+ * and the newest are the ones the fight just made.
+ */
+export const FALLEN_MAX = 520;
+
+/* One set of scratch objects for `lay`, which runs once per retired body. */
+const _up = new THREE.Vector3(0, 1, 0);
+const _nrm = new THREE.Vector3();
+const _q = new THREE.Quaternion(), _qy = new THREE.Quaternion();
+const _m = new THREE.Matrix4(), _p = new THREE.Vector3(), _s = new THREE.Vector3();
+
+export class FallenField {
+  constructor(cap = FALLEN_MAX) {
+    this.cap = Math.max(1, cap | 0);
+    /** How many have been laid down, ever. Counts past `cap` — see the ring. */
+    this.laid = 0;
+    this.scene = null;
+    this.terrain = null;
+    this.meshes = null;
+    /** Above this chest height the body reads as curled rather than sprawled. */
+    this.split = 0;
+    /**
+     * THE RING, AND WHY IT IS ONE LIST AND NOT ONE PER POSE.
+     *
+     * `cap` is a bound on the whole field, but a body is drawn out of one of
+     * TWO buffers and an instance cannot move between them — recycling the
+     * oldest slot by pose would leave a hole in whichever buffer lost it, and
+     * a hole in an `InstancedMesh` is an identity matrix, which is a man lying
+     * at the world origin.
+     *
+     * So the ring records the slot each body went into, `[buffer, index]`, in
+     * the order they were laid; past `cap` the oldest of those slots is
+     * overwritten wherever it lives, and the new body inherits the pose of the
+     * man it replaces. That is the one compromise in this object and it is
+     * bounded to the 521st casualty of a single engagement.
+     */
+    this._ring = [];
+    /** How many slots of each buffer are in use. */
+    this._used = [];
+  }
+
+  /** Draw calls this field costs, whatever is in it. */
+  get calls() { return this.meshes ? this.meshes.length : 0; }
+  /** Instances actually drawn. */
+  get count() { return Math.min(this.laid, this.cap); }
+
+  /**
+   * PUT THE FIELD ON THIS GROUND.
+   *
+   * Geometry per attach and the material for the process — the rule two
+   * hundred lines up, for the same two reasons, and this is the second caller
+   * that would leak either way if it got them the wrong way round.
+   */
+  attach(scene, terrain = null) {
+    this.detach();
+    if (!scene) return this;
+    this.scene = scene;
+    this.terrain = terrain;
+    const geos = fallenGeometry();
+    /**
+     * THE POSE TEST, READ OFF THE POSES.
+     *
+     * `sprawled()` is a body flat on its face and `curled()` is one on its side
+     * with its knees up, and the whole difference between them is how tall the
+     * blob is. So the question "which of these two is this corpse" is answered
+     * by measuring both geometries and asking which side of halfway the real
+     * body's chest is standing on — rather than by a coin toss, and rather than
+     * by a threshold typed here that would drift from the boxes above the
+     * moment either pose is re-authored.
+     */
+    let sum = 0;
+    for (const g of geos) { g.computeBoundingBox(); sum += g.boundingBox.max.y; }
+    this.split = sum / (geos.length * 2);
+    this._ring = [];
+    this._used = geos.map(() => 0);
+    /* EVERY BUFFER IS ALLOCATED AT THE WHOLE `cap`, not at a share of it: which
+     * pose a body takes is read off the body, so a fight whose dead all fall
+     * the same way would run one buffer out while the other stood empty. */
+    this.meshes = geos.map((g) => {
+      const im = new THREE.InstancedMesh(g, fallenMaterial(), this.cap);
+      im.count = 0;
+      /* The same two answers `addFallen` gives and for the same reasons: a
+       * prone body's own shadow is a few centimetres long and 520 casters in a
+       * shadow map sized for a fight is the crowd's trade made twice; but it
+       * must RECEIVE or the field stays lit under the smoke. */
+      im.castShadow = false;
+      im.receiveShadow = true;
+      im.name = 'fallen';
+      /* NOT `frustumCulled = false`. `GraveField` turns culling off because its
+       * markers stand where the run has been and a bounding sphere computed
+       * once at the origin would cull the lot; this field is filled a body at a
+       * time, so the sphere is recomputed as it grows and culling is worth
+       * having on 520 instances that are mostly behind you. */
+      scene.add(im);
+      return im;
+    });
+    return this;
+  }
+
+  detach() {
+    if (this.meshes) {
+      for (const im of this.meshes) {
+        im.removeFromParent();
+        /* GEOMETRY yes, MATERIAL no — `fallenMaterial` is the process's. */
+        im.geometry?.dispose?.();
+      }
+    }
+    this.meshes = null;
+    this.scene = null;
+    this.terrain = null;
+    this.laid = 0;
+    this._ring = [];
+    this._used = [];
+    return this;
+  }
+
+  /**
+   * LAY ONE BODY DOWN WHERE IT LIES.
+   *
+   * @param x,z     where the corpse came to rest
+   * @param yaw     the bearing from its feet to its head, radians
+   * @param chestY  how high its chest is off the ground — picks the pose
+   * @param tone    a THREE.Color, the body's own; `instanceColor` multiplies
+   *                the white base, so this IS the colour it is drawn in
+   * @param scale   the body's own scale, so a heavy does not retire man-sized
+   * @returns whether it was taken
+   */
+  lay(x, z, yaw, chestY, tone, scale = 1) {
+    if (!this.meshes) return false;
+    if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(yaw)) return false;
+    let v, i;
+    if (this.laid < this.cap) {
+      v = (chestY > this.split) ? 1 : 0;
+      i = this._used[v]++;
+      this._ring.push([v, i]);
+    } else {
+      /* Full: take back the oldest slot, wherever it lies. See `_ring`. */
+      [v, i] = this._ring[this.laid % this.cap];
+    }
+    const im = this.meshes[v];
+    if (!im) return false;
+    this.laid++;
+    const T = this.terrain;
+    /* Exactly `addFallen`'s own seating: sunk by LIE_SINK so it reads as lying
+     * rather than as placed, and turned onto the ground's normal. */
+    const y = (T?.height ? T.height(x, z) : 0) - LIE_SINK;
+    if (T?.normalAt) T.normalAt(x, z, _nrm); else _nrm.set(0, 1, 0);
+    _q.setFromUnitVectors(_up, _nrm);
+    _qy.setFromAxisAngle(_up, yaw);
+    _q.multiply(_qy);
+    _p.set(x, y, z);
+    _s.setScalar(Number.isFinite(scale) && scale > 0 ? scale : 1);
+    im.setMatrixAt(i, _m.compose(_p, _q, _s));
+    if (tone) im.setColorAt(i, tone);
+    im.count = Math.max(im.count, i + 1);
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.computeBoundingSphere?.();
+    return true;
+  }
+
+  /**
+   * EMPTY IT WITHOUT GIVING THE BUFFERS BACK.
+   *
+   * `World.restartWave` is `unload` with the ground left standing: the bodies
+   * of the attempt that failed are gone from `world.enemies` and from the
+   * corpse ledger, and the men they retired into must go with them or a fourth
+   * attempt is fought over the dead of the first three.
+   */
+  clear() {
+    this.laid = 0;
+    this._ring = [];
+    if (this.meshes) for (const im of this.meshes) im.count = 0;
+    for (let i = 0; i < this._used.length; i++) this._used[i] = 0;
+    return this;
+  }
+
+  dispose() { this.detach(); }
+}

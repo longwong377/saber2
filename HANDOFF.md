@@ -26,49 +26,499 @@ Playable two ways:
 
 ## 1. State
 
-> **SESSION OF 2026-08-23 — WHAT LANDED, IN ONE PLACE.** Branch
-> `claude/game-feedback-opinions-sfr9v7`, seven commits, all green.
+### 1.0 START HERE — the shortest true statement of where this is
+
+**Branch `claude/autonomous-completion-6b2kzi`, gate green at 2062 checks.**
+
+**HOW TO PLAY IT.** `node tools/pack.mjs out.html` builds the whole game as ONE
+self-contained file — no server, open it in a browser. **AND THE PAGES LINK IS
+A DIFFERENT QUESTION.** `.github/workflows/pages.yml` publishes on a push to
+`main`, `master` or `claude/lightsaber-combat-game-lxw391` (the default) and on
+nothing else. A feature branch publishes NOTHING however many times it is
+pushed, so <https://longwong377.github.io/saber2/> only moves when this work
+reaches the default branch.
+
+**WHAT PLAN SAYS IS LEFT: nothing unbuilt.** Every design bullet in §0–§6 is
+built, struck by measurement, or is a decision rather than a feature. What is
+actually outstanding is three things, and only one of them is work:
+
+  1. **THE WATCHDOG — a decision, and it is the developer's.**
+     `WaveDirector._watchdog` scores a body's progress as its distance to the
+     nearest live PLAYER. In Command the horde's fight is your ARMY, so with no
+     player on the field every enemy reads stalled and the director retires it:
+     measured, **39.4 retirements a wave against the 10.5 bodies the line
+     actually shot** — 62% of the wave deleted. It fires wherever the player is
+     not, including **every frame after the commander goes down in shipped
+     play**. The fix is 52 lines at `tools/_watchdog.patch`, the census
+     instrument is `tools/_whywave.mjs`, and it is NOT in the tree because with
+     it the unaided line is wiped on every seed and `theline.12` — a shipped
+     check asserting §5's own "costs about half the line" — goes red at 0.0 of
+     10. Landing it lands a difficulty re-tune, and which knob gives (wave
+     budget, `RULE_MAX`, morale, or the target itself) is a balance call.
+     **Until it is made, every M1 magnitude in this document is measured against
+     a floor the director was propping up.**
+  2. **The per-object ink prepass** (§4.3's last rung) — waiting on one run of
+     `tools/_frame.mjs` on REAL HARDWARE. A 2.5–3.8 s software frame cannot
+     resolve a 12% effect; the A/B/A bracket is what would establish it.
+  3. **Nothing else.** B1b, B3, M4 and §4.8 were all listed as owed and all
+     turned out to be built — see the struck bullets below.
+
+**THE ONE THING THAT WILL COST YOU AN HOUR IF YOU SKIP IT:** read §2 before
+touching a tool. In particular §2.1 (always run with `--import
+./tools/register.mjs`, or you get two copies of three and fictional failures),
+§2.2 and §2.2b (**the container rolls the clone back, and `git checkout --
+<path>` on an uncommitted tree is a loaded gun** — between them they cost this
+session a file and a working tree; commit and push often, because the remote is
+the only thing that survives), §2.6b (**do not run anything else while the gate
+runs**; one review agent alongside it turned a frame-budget check red that
+passes 3/3 alone), and §2.3b–e, which are four new ways a check can be unable
+to fail.
+
+---
+
+> **SESSION OF 2026-08-23 (SECOND) — WHAT LANDED, IN ONE PLACE.** Branch
+> `claude/autonomous-completion-6b2kzi`, eleven commits, and the whole of
+> PLAN.md §6's chain after item 4 is now built or measured.
 >
-> **The frame.** 158 bodies on the `front` layout went **50.10 ms → 19.99 ms**
-> and **120 bodies now cost 16.60 ms against a 16.67 ms budget** — PLAN.md
-> §4.3's kill criterion ("the battle needs 120 simultaneous fully-simulated
-> bodies with two real armies") is MET, where the session opened with the ladder
-> going over budget between 40 and 80. Four things did it, in order of size:
-> the gait's closing full-tree matrix walk became lazy past LOD 1 (3.74 ms, the
-> largest single line in the game); the gait's *first* full-tree walk became
-> `Rig.freshPos` on the one bone it served (visits per body 251 → 181);
-> `Enemy._move` stopped sweeping every static box in the level per body per
-> frame (10.12 → 3.13 ms); and `World.pickTarget`'s O(bodies²) became
-> `src/game/ArmyIndex.js`. **Read that file's note before touching any of it** —
-> the textbook ring-walk grid was measurably SLOWER than the sweep it replaced,
-> because two armies land 120 m apart and a ring walk degenerates on empty
-> ground.
+> **§1's checkable order** — `src/game/FireMission.js`. High Command lays an
+> artillery ellipse on ground ahead of your line, tells you what it thinks is
+> standing on it, and gives you a window; one keypress (`authorise`, KeyK)
+> clears it. The estimate is honest, is a SNAPSHOT, and is never revised — so
+> the game does not have to cheat to put your men under your own guns and does
+> not have to warn you either. Reading the mark costs 12 s inside 70 m of it, 4
+> with Force sense. **The weld is the geometry, measured, three arms of the same
+> order and the same ten men:** walk out at your line's pace and 10 OF 10 are
+> inside the ellipse with you; sprint out alone and 0 are, but the quorum is
+> DOWN for the whole reading; plant them first with §4.4's delegation verb and
+> you pay neither. Delete `lineIsUp` and all three collapse into "walk over and
+> look". The shells carry a source on nobody's side, so `installTeamDamage`
+> cannot blunt them on your own men (**120 hp against 42**), and `killerName`
+> names them: every man they kill enters the after-action report as *by your own
+> fire mission*.
 >
-> **M5 reported and the gate is open.** PLAN.md §2 carries the table. The rule
-> costs a player who leaves 34.1% of their ground and one who stays 8.2%.
-> `lineIsUp` is not inert; §4 is licensed.
+> **§4.7, all four items.** DIG IN is an order (`FORMATIONS.digin`, Quote): a
+> squad turns its planted ground into a position in 22 s with its hands full,
+> cut through `Terrain.crater` so the log carries it into the next engagement.
+> Measured at the shipped LOW tier, twelve rays from a muzzle to a chest —
+> **flat 0/12 blocked, one shell crater 2/12, a dug position 12/12**; the
+> defilade is symmetric and that is the trade. FINITE COVER was already true and
+> unmeasured: **54 props standing at deploy and 49 six minutes later**, off 137
+> hits nobody aimed. GRAVES (`src/world/Graves.js`) keep a named man's rifle in
+> the ground where he fell for the whole run, two draw calls for all of them,
+> and the line's morale minds them (0.729 against 0.740 over 25 s).
+> **WEATHER was the expensive error in the plan.** "Entirely unbuilt, five
+> systems" is wrong: `Scenery.js` has shipped a full `Weather` all along and all
+> seven grounds author a squall — what was missing is that nothing ever asked
+> whether you could see through it. One number now, and at each ground's own
+> peak a rifle's sight falls to **19–34 m**.
 >
-> **Three items of PLAN.md §6's chain are built:** squad delegation
-> (`c.squadPlanted`, and the quorum counts a man near *where he was told to be*),
-> capability objectives (`src/game/Objectives.js`, crewed by whoever stands on
-> them — so delegation is the interface and there is no new verb), and
-> downed-not-dead with an after-action record. All three are welded to the
-> keystone by the same clause: a man on a gun and a man on the ground are ALIVE
-> and are not NEAR, so both are bought with the currency movement is bought with.
+> **§4.6's rule facets.** Six cards that change a SENTENCE somewhere else rather
+> than a coefficient, and two of them move the keystone, which is what that item
+> was gated on: Skirmish Order (ground taken on a THIRD of the living, muster
+> halved), Triage (a downed man counts while somebody is standing over him),
+> Stand Fast, Field Engineering, Storm Sense and Salvage.
 >
-> **Still owed**, in PLAN.md §6's order: §1's checkable order, §4.7 (Dig In,
-> finite cover, weather, graves — and `src/world/CraterLog.js` is written and
-> nothing constructs one), §4.6 variance, §4.5's second human, §4.3 density and
-> the animated instanced rung. Plus §4.2's four-armed acceptance, which is the
-> only thing in what landed that is asserted structurally and not yet measured
-> as a difference in play.
+> **§4.5's kill answered.** The front is on the wire (`packSnapshot.fr`) and
+> DRAWN — `CommandDirector.front` is the whole state of a meeting and nothing in
+> the tree read it, so the mode's own sentence ("the front moves because a
+> general left his line at the wrong moment") was unlearnable.
+>
+> **§4.3's load-bearing clause, measured.** A twelve-shell barrage on a formed
+> line of ten kills 4, scatters 2 more alive, and takes the quorum down — and
+> 25 s later the four survivors have re-formed. So the levers buy time rather
+> than the battle.
+>
+> **Two things found rather than built, and both are worth more than a feature.**
+> `CraterLog` was written, checked to the last bit of the heightfield, and
+> **constructed by nothing** — `marchTo` had passed `world.craterLog` into
+> `marchFront` for as long as the front has been dressed, so every engagement
+> opened on ground that had never been fought over. And `Waves.js`'s own module
+> rng — the stream that composes every wave in the game — was the one
+> `tools/register.mjs` never pinned, so wave composition was the one input a
+> gate could not hold still.
+>
+> **§4.2's four-armed acceptance has reported, and it passes.** `tools/_m6.mjs`,
+> four seeds × five minutes × four arms, with the same squad posted on the same
+> ground in every arm so the only difference is whether that ground is a gun: **a
+> Jedi is worth 82.1 s of run with a battery on the field and 0.1 s without
+> one.** The section's own kill was "if not, it is decoration". The metric is the
+> run's LENGTH and not the ground taken, and that is a correction the first
+> reading forced — at four minutes three of the four arms took zero ground and
+> every arm lost its roster, and a metric that reads 0.000 in three cells cannot
+> carry an interaction.
+>
+> **§4.6's rules became a wager.** The panel was a list of handicaps that paid
+> nothing. The exchange rate for fixing that was already in the source:
+> `conditionCost` charges a DEALT condition `worth · budget` and explicitly
+> skips a RULE, which is the game's own statement that a wave under a rule is
+> `worth` more fight. So `hazardPay(rules) = 1 + Σ worth` and the Insight a wave
+> pays is multiplied by exactly that — nothing typed twice, and repricing a
+> condition moves the payout. **Forty waves under DELUGE+SILENCE: 56 Insight
+> becomes 82, and 5 facets bought become 6.** `Communion.earn` carries the
+> fraction so the purse stays whole (40 waves at 1.08 is 43, not 40) and every
+> existing caller is byte-identical. AND THE CAP IS TWO. `CONDITION_MAX` was
+> answering two questions: what the COMPOSER may carry (still 4, still the
+> stranding measurement) and what the PANEL may sell. `RULE_MAX` is 2 — with
+> seven rules and a cap of four you tick four and stop reading. "At most one
+> beneficial" is deliberately not built: every `CONDITIONS` entry is a handicap,
+> so the clause would be a branch no input can take.
+>
+> **§4.6's composition constraints, four of five, and no new field.**
+> `ARCHETYPES[*].toughness` has been the material classification all along —
+> flesh, plastoid, droid, armour, heavy — so ARMOUR COLUMN, ONE MATERIAL, DROID
+> HOST and BEAST DRIVE are derived. *bladed* is not among them because `silence`
+> already filters to `!ranged`, which IS the bladed roster. All four are
+> RULE-ONLY, measured: a roster narrowing DEALT at depth strands a budget, and
+> four more of them stopped the body cap binding at all. **They found a real
+> bug**: `_setPiece` built its ladder from the LEVEL's pool instead of the
+> wave's narrowed roster, so a boss wave under ARMOUR COLUMN fielded an acolyte
+> and a master — NO GUNS has had the same hole and passed on luck, because
+> `SET_PIECE`'s bodies happen to be melee.
+>
+> **And ARMOUR COLUMN is now the FLOOR** §4.6 asked for rather than a filter:
+> `ARMOUR_SHARE` (0.40, written once) reserved in `_composeUnder` beside the head
+> and the set-piece. In THREAT, not count — `HEAVY_CAP` is ten bodies, so a count
+> floor is a promise the frame rate forbids. The filter had to go because it was
+> fielding no vehicles at all: on four of seven theatres the plated roster is
+> `b2` and `droideka`. Measured, heavy share without → with: 24→42% and 25→50% at
+> wave 15, unchanged at wave 70 where the wave is already at its heavy limit.
+> Repriced 0.26 → 0.16, so the `hazardPay` payout moved with it.
+>
+> **Still owed, after auditing every claim in PLAN §0-§6 against the code.** §4.6
+> is complete — all six bullets, the branching route and the 40% armour floor
+> included — and so are §4.7, §4.9, §4.5's kill, §4.2's acceptance, B0-B5 and
+> M2-M4. **PLAN NOW HAS NO UNBUILT DESIGN LEFT IN IT** — everything below is
+> struck, decided, or a measurement rather than a feature:
+>
+> · ~~**B1b**~~ — **STALE, and PLAN §3 says so in the same document.** Retirement
+>   is BUILT (`Fallen.FallenField`, `Corpses.js`'s SINK step laying a prone
+>   instance where the body lies, both seated by `LIE_SINK`); pooling is STRUCK
+>   by measurement. Nothing owed.
+> · **§4.8's first two bullets** — contested telekinesis, and squadmates grabbing
+>   the man you have gripped. No shared-constraint grip contest and no grab joint
+>   exists in `src/`; this is the largest unbuilt design left in the document.
+> · ~~**A screen for the after-action report**~~ — **BUILT.** `Session.runReport`
+>   projects `director.log` into the run: areas in the order they were fought,
+>   each with its dead, its fire missions and who came up behind them, and the
+>   CENSUS over the top of it — *"eleven men lost, seven to Super Battle Droids,
+>   three to your own fire missions"*. The census is what earns the screen: it
+>   is the muster's next purchase and the next order in one line, and it is not
+>   derivable anywhere else, because the interlude never aggregates and the roll
+>   never counts. A PANEL ON THE PAUSE CARD, not a state of its own — `Screens`
+>   exists because of an overlay a player could be stranded in, and the card's
+>   two existing disclosures are the shape for "more, here" with no new state,
+>   no new Escape rule and no new hider. One line of it on the death card too,
+>   which is the screen the pause card cannot reach.
+>   **AND `killerName` HAD NEVER NAMED ANYTHING**: it ended `source.A?.name ||
+>   source.type`, an archetype's field is `label`, so the first half was always
+>   undefined and every report the game has ever drawn — and every grave in the
+>   ground — said `b2` and `droideka` instead of Super Battle Droid and
+>   Droideka. `tools/checks/report.mjs` is 13 checks, each written to go red on
+>   a report that lists without counting.
+> · The Company tab's refusal to change a man's kit is a DECISION and not an
+>   omission — `Menu.js` argues it where it makes it, names the rank ladder as
+>   the way to make a man better, and `company.mjs` fails the day a fourth
+>   editable field appears. The muster card promotes a survivor now
+>   (`commend`, priced at `muster / XP_PER_AREA`), and banking always worked:
+>   closing without spending keeps the purse.
+> · **M1 HAS REPORTED**, and it is the most important number in the project.
+>   Twenty seeds, three arms, engagement 1 on geonosis:
+>   **none 6.7/10 survivors (18/20 cleared) · idle 1.0/10 (3/20) · blade 4.7/10
+>   (11/20)**. Read against §5's target — "no help from the Jedi should cost
+>   roughly half a ten-man line, about 5 of 10" — **the floor is a third
+>   cheaper than asked**: it costs 3.3. An idle Jedi is not "a corpse with a
+>   delay", he is a catastrophe (1.0 against an empty field's 6.7, 17 wipes in
+>   20) because he pulls a wave onto a line and does not fight it. **And a Jedi
+>   who FIGHTS FROM HIS LINE leaves it WORSE than no Jedi at all.** That was
+>   first written up here as "a Jedi who only fights", on the reading that
+>   `dutyInput` chases the nearest enemy — **wrong about the code**: it holds
+>   station on the line's own centroid and leaves it only for something close,
+>   and only inside an 18 m leash, precisely so `MORALE.JEDI_NEAR` keeps
+>   paying. So the blade arm already IS a Jedi among his men, and the result is
+>   sharper than the softer reading allowed. What it does not yet say is WHY —
+>   "a Jedi costs the line men" and "a Jedi drags the fight out and the men near
+>   him stand in fire aimed at him" are indistinguishable from three arms. The
+>   control that separates them is `standOff`, which `_flagship.mjs` had carried
+>   with its whole argument since it was written and which nothing had ever
+>   driven. **It has now**, as `_linehold.mjs`'s `far` arm, and it answers:
+>
+>       none   6.7/10   cleared 18/20   67 s a wave
+>       blade  4.7/10   cleared 11/20   79 s      (with the line)
+>       far    3.8/10   cleared 12/20   83 s      (100 m off)
+>       idle   1.0/10   cleared  3/20   67 s
+>
+>   **A Jedi a hundred metres away still costs the line 2.9 men.** He is near
+>   nobody, so the men are not dying in fire aimed at him — presence is not what
+>   kills them. What moves with the cost is the LENGTH of the engagement (67 s a
+>   wave with nobody, 79 with a Jedi in the line, 83 with one standing off), and
+>   the extra minute is paid by the men. Being WITH the line is worth about one
+>   man over standing off, so the presence term does pay — just not enough to
+>   beat absence. **§1's promise is not met as measured**: the line is standing
+>   more often when nobody comes. It is a BALANCE finding, not a broken
+>   mechanism — every part works and the arithmetic comes out negative — and the
+>   length is correlated, not yet explained. Naming the mechanism is the next
+>   measurement.
+> · **AND THE FLOOR THOSE FOUR ARMS ARE READ AGAINST IS PROPPED UP BY A BUG.**
+>   `WaveDirector._watchdog` measures a body's progress as its distance to the
+>   nearest live **player**. In Command the horde's fight is your ARMY, so with
+>   no player on the field — which is exactly `_linehold.mjs`'s `none` arm, the
+>   control every other arm is scored against — every enemy alive reads stalled
+>   and the director retires it. Measured on theline/geonosis, engagement 1,
+>   five seeds, fifteen cleared waves: **236 rescues and 118 RETIREMENTS a run,
+>   39.4 a wave, against 10.5 bodies the line actually shot.** Of the wave's 8.4
+>   paying regulars the line killed 3.2 and the watchdog deleted 5.2. **The
+>   unaided line was not winning; the clock was deleting 62% of the wave in
+>   front of it.**
+>
+>   The fix is 52 lines in `_watchdog` — also let a body count progress toward
+>   `e.target`, which `Enemy._think` already writes every frame off
+>   `World.pickTarget`, the game's one statement of who a body is fighting. It
+>   is at `tools/_watchdog.patch`, and the instrument that
+>   produced the census is `tools/_whywave.mjs`. It is correct, it costs nothing,
+>   and it fires **wherever the player is not**: a bench arm, a Jedi a hundred
+>   metres off his line, and every frame after the commander goes down in
+>   shipped play.
+>
+>   **IT IS NOT IN THE TREE, AND THAT IS A BALANCE CALL, NOT A CODE ONE.** With
+>   the watchdog honest, same mode, same ground, same seeds:
+>
+>       stock       3, 4, 5, 9, 8 of ten left · 5 of 5 areas cleared
+>       honest      0 of ten, every seed      · 0 of 7 cleared
+>
+>   which turns `theline.12` — *"an engagement fought without the Jedi costs
+>   about half the line"*, a check already shipped in the gate, asserting §5's
+>   own target — red: **0.0 of 10 standing, so the muster is never reached and
+>   the mode cannot be won**. Landing the fix therefore lands a difficulty
+>   re-tune with it (wave budget, `RULE_MAX`, morale, or the target itself), and
+>   which of those gives is the developer's decision. **Until it is made, every
+>   M1 number above is measured against a propped floor: `none 6.7/10` is not
+>   what an unaided line does, it is what an unaided line does while the
+>   director kills five men a wave for it.** The three RELATIVE readings — idle
+>   is a catastrophe, a Jedi in the line costs men, length is what moves the
+>   cost — are all taken against that same propped floor and must be re-run
+>   after the tune, not carried across it.
+> · **M7** is STRUCK, because `tools/scale.mjs` withdrew the number it chased.
+>
+> **AND THE SUITE WAS AUDITED AGAINST ITS OWN STANDARD** — §7's "an element
+> earns its place by changing a decision, and its check has to demonstrate the
+> decision changing" — by asking which checks would still pass with the feature
+> DELETED. The headline is that the suite is far better than that question
+> assumes: the sweeps for swallowed throws, aliased before/after pairs,
+> never-entered assertions and loose tolerances came back essentially clean, and
+> the two-arm measurement discipline is real. Ten exceptions, all now fixed and
+> all with the deletion that used to pass written into the check:
+>
+>       theline.16   `world.notes` does not exist — undefined !== false
+>       barrier      `world.notices` likewise
+>       balance      `.fireRate` matched the ARCHETYPE's field on the same line
+>       forms        bare word match; `tell` was dead and nobody could see it
+>       characters   a 4000-char window that started inside a doc comment
+>       cloth-cost   a 3000-char window over a 2569-char function
+>       keyart       "a `catch` within 900 characters", of eight in the file
+>       command      `ORDERS[id] === FORMATIONS[id]`, true by construction
+>       downed       a constant compared to the only line that writes it
+>       wiring       a check with no assertion in it at all
+>
+> The three that generalise are written up as traps §2.3b, §2.3c and §2.3d. Two
+> of them found live game defects rather than only check defects —
+> `killerName`/the Foundry banner printing spawn keys, and the form `tell` that
+> the dojo never said.
+>
+> **AND THEN THE SESSION'S OWN DIFF WAS REVIEWED THE SAME WAY**, which found
+> eight more — six of them introduced by the report itself. The two that were
+> not: **the enemy's battery was firing under your name** (`theirBarrage` shared
+> `HIGH_COMMAND` with `authorise`, so every man the CIS guns killed entered the
+> report as a death the player caused, marked in the colour reserved for a
+> mistake), and **the men a campaign is HANDED were on no entry in the ledger**
+> (`recruit` logs an `enlist`; `_musterOpening`, `_musterVeterans` and
+> `_musterJoin` logged nothing, so the census could not tell an opening trooper
+> from a droid until he died — and the cost was the FIRST friendly-fire death of
+> every run). The six that were mine: a meeting's ledger holds both armies and
+> was read flat; an engagement with no casualties yet was dropped so the "in
+> progress" row was unreachable; `t: 'won'` was not a terminator; the death
+> card's "N of them by your own side" counted the whole census while printing
+> the top three; the census said "your own side" twice on the two rows that
+> already say it; and two of the new checks were weaker than they looked.
+>
+> **THE LESSON WORTH CARRYING: review the diff you just wrote, adversarially,
+> as a separate pass.** Six of eight were mine and none of them were visible to
+> me while writing. `tools/_onecheck.mjs` is what makes that affordable — one
+> check out of one suite, seconds instead of the twenty-five minutes a
+> `theline.mjs` run costs — and it had this exact defect itself on its first
+> cut, reporting GREEN on a check broken on purpose (trap §2.3e).
+>
+> **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on
+> M4": `src/engine/Profiler.js` has been the browser frame instrument all along,
+> reporting real GPU time through `EXT_disjoint_timer_query_webgl2`, and
+> `tools/_frame.mjs` is the reader it lacked. The crowd walks now — a
+> per-instance palette index, twelve poses in a DataTexture, one float beside
+> each matrix — and **168 bodies past 137.8 m are still 39 draw calls and
+> 969 520 triangles, bit for bit**. The vertex shader the file used to refuse is
+> allowed because the numbers permit it: the ink prepass reaches 127.2 m at
+> worst, `L3_AT` is 137.8, and the worst palette slot moves a vertex 0.19 m into
+> that gap — asserted as a PAIR so moving `INK.edgeFade` fails the gate.
+> WHAT IS LEFT of that rung is the per-object ink prepass, and it is a decision
+> waiting on one run of `tools/_frame.mjs` **on real hardware**: a 2.5–3.8 s
+> software frame cannot resolve a 12% effect, and the A/B/A bracket is what
+> establishes that rather than printing the drift as a finding.
+>
+> **AND SEVEN OF THE NINE ENTRIES IN PLAN §6's NOW LISTS WERE STALE OR WRONG**,
+> which is the defect that made §4.7 claim weather was unbuilt on a tree that had
+> shipped it. B0, B2, B4 and all four of B5 are built; M2's answer is quoted in
+> PLAN itself four hundred lines above the question; M3's one-liner contradicted
+> §2's own conclusion; M4 is the profiler. The block is rewritten with the
+> evidence. **AND THE TWO THINGS THAT PARAGRAPH THEN NAMED AS UNBUILT ARE BUILT
+> TOO** — the same defect one layer down. M4's reader is `tools/_frame.mjs`,
+> which this very handoff describes four paragraphs later; B3's three-layer
+> distance audio bed is `Audio.BATTLE_BANDS`, near/mid/far, fed by the weapon
+> events the frame already raises and tapped BEFORE the audibility test, with
+> its band edges derived from `HEARING_FLOOR` and `MAX_RANGE`. Nothing in §6's
+> NOW lists is unbuilt.
+>
+> **THE RED THAT WAS RED BEFORE THIS SESSION IS GREEN, AND IT WAS THE FIXTURE.**
+> `blast-door.mjs`'s "a held blade opens a blast door in about twenty seconds"
+> burned **0 of the 515 texels** on the middle door of the magazine. `rearm`
+> cleared `door.warded` before each loop; `GunPit._wards` runs from the world's
+> own tick and ends with `door.warded = warded && !taken`, so the flag was back
+> on the first frame and every frame after it — the check had been red on a door
+> that could not be cut at all. The pit owns that state and `silence()` is the
+> door in it. Which is also the only shape that could be right: a fixture that
+> unwarded a door by assignment would be measuring a plate the game never
+> presents. With the plate live it reports what DESIGN.md claims — **tight 13.7 s,
+> natural 18.8 s, wide 21.7 s, and a tidier loop is a faster breach.**
+>
+> **AND `cloth-cost`'s 6 ms ceiling was set below its own error bar.** Quiet it
+> reads 5.32 ms; inside a full gate at load 4.7 it read 6.41 and went red.
+> `_cpuclock.mjs`'s own header measures the cache-pressure residual a shared box
+> leaves on a CPU reading at about 25%, and 5.32 × 1.25 = 6.65. The band is 7 ms:
+> a 7.5 ms population still fails it, which is the only claim the check exists to
+> defend.
+>
+> **AND `controls`'s boon-reader check named five source files by hand** — the
+> five that happened to read a boon when it was written. It went stale the moment
+> the line modes answered six of them in `Command.js` and `Enemy.js`, and called
+> all six a lie. It walks `src/` now, still minus the BOONS table itself, which
+> is the whole point of the word "elsewhere".
+>
+> **A GATE CANNOT SEE A CHECK FILE YOU EDIT WHILE IT IS RUNNING, AND THIS COST
+> AN HOUR TWICE.** `determinism.mjs`'s "every suite file in `tools/checks/`
+> exports a `run()`" IMPORTS every file to ask the question, and it runs early
+> (alphabetically, at about suite 20). Node caches a module for the life of the
+> process. So every suite file is already loaded before a full gate has fought
+> its way to the letter f, and any edit after that point is invisible to that
+> run — the gate goes on measuring the version it read at suite 20 and reports
+> failures that no longer exist. Measured: `suppression.mjs` was fixed, passed
+> `_one suppression` and `_seq determinism suppression` 6/6, and the gate that
+> was running at the time still printed its old numbers to the decimal.
+> **Edit check files between gates, never during one**, and when a gate's red
+> disagrees with a fresh `_one`, believe the `_one`.
+>
+> **AND WITH THE ASSERTION IN, SMOKE IS NOW RED ON A REAL DEFECT.** One bolt at
+> the player from 7 m, in the shipped page, comes back `{fired: 1, deflects: 0,
+> hpLost: 0, invuln: 0}` — not felt, not turned, and no i-frame to explain it.
+> **The identical shot lands 4.25 hp headless** on a real World through the same
+> `bolts.fire` and the same `_boltHitTest`. So there is a browser-vs-fixture gap
+> in bolt-versus-player hit detection, which is precisely what this probe exists
+> to find and could not report while `step()` failed only on exceptions. `npm run
+> smoke` is not part of `npm run verify`, so the gate is unaffected; this red is
+> TRUE and is left standing rather than hidden. Under investigation.
+>
+> **THE SMOKE PROBE'S ZEROS WERE A SIMULTANEOUS VOLLEY MEETING AN I-FRAME.**
+> `Player.damage` opens `this.invuln = 0.18` on every hit and `_boltHitTest`
+> skips a player with `invuln > 0`; `World.update` clamps `dt` to 1/24, so that
+> is about four frames. The probe fired **twelve bolts in one frame from one
+> radius**, so they all arrived inside the same four and eleven were skipped BY
+> CONSTRUCTION — the volley could never register more than one bolt however well
+> it was aimed. Measured headless on a real World with nothing else on the field:
+> **fired one at a time all twelve land, 4.25 hp each; fired together, exactly
+> one lands.** The step now sends ONE round and asserts the weakest thing that
+> would have caught the zeros — a bolt must be felt or turned, never ignored.
+>
+> Two explanations were tried and disproved on the way, and both are worth
+> knowing. `p.chest` — "the point every aim assist and every centre-of-mass query
+> in the game reads" — **is not the centre of the body's collision hull**: on a
+> posed player who has walked, the hull spans 0.55 x 0.54 m and its centre sits
+> 0.24-0.52 m from the chest point, about the hull's own half-width. Aiming at
+> the hull's centre instead changes nothing here, so it is not this defect; but
+> every shooter in the game leads on that point, and moving it would change how
+> often they connect. That is a difficulty decision, not a probe fix, and it is
+> left alone and written down. The other was that bodies on the field were
+> absorbing the volley — they were cleared, and nothing changed.
+>
+> **THE CUT STEP'S `severed: 0, pieces: 0` IS FINE, AND THE STEP STILL NEEDED AN
+> ASSERTION.** A B1 has 28 hp and the blade kills it well before a blind swing
+> happens to cross a limb at the speed and angle a sever wants — `hpAfter: -11,
+> dead: true` is the blade working. Severing is held to its own rules in
+> `severance.mjs`, with a fixture that aims; asserting a limb on a boot probe
+> would be a flaky combat test. So the assertion is what that step is actually
+> FOR: a droid put 1.1 m inside the blade for 1.5 s must take damage. It caught
+> nothing before because nothing could fail.
+>
+> **TWO THINGS FOUND WHILE FIXING A CHECK, NEITHER FIXED, BOTH WORTH MORE THAN
+> THE CHECK.** `suppression.mjs` drives ten troopers up a Geonosis slope, and in
+> every one of the eight arms measured a man ends the walk **stuck on the
+> geometry** — CT-3208 sat at (-2.3, 2.2) for 210 frames with a velocity of 1-4
+> m/s and did not move. He is the ENTIRE 35-40 m reading that suite reports: the
+> MEDIAN distance from the anchor is 9.8 m in all eight. So `strung`, being a
+> max, answers "did anyone jam on a rock" rather than "how spread is the line",
+> and the rock is a real navigation defect on a shipped ground. Second: that
+> fixture's note says it measures the WALK, and it does not — emptying
+> `spawnQueue` leaves the emplaced gun firing, and it kills 2 of 10 within 26
+> frames with no hostile body anywhere on the field.
+>
+> **THE BROWSER SUITES NEED ONE SYMLINK ON A BOX WITH NO `node_modules`, AND
+> THAT IS THE WHOLE FIX.** `tools/three-resolver.mjs` maps `three`,
+> `three/addons/*` and `rapier`; everything else falls through to Node's own
+> resolution, and `vendor/` holds only `peerjs`, `rapier` and `three`. So on a
+> fresh container `import('playwright-core')` is `ERR_MODULE_NOT_FOUND`, and
+> `frontdoor`, `front-screen`, `lineseen`, `packed` and one check in `lighting`
+> all fail for that reason and no other — **six of the thirteen reds in a full
+> gate, none of them a fact about the tree.** The package IS on disk, and so are
+> the Chromium binaries; the global tree simply is not on this project's
+> resolution path. One line puts it there:
+>
+> ```bash
+> mkdir -p node_modules && ln -sfn \
+>   /opt/node22/lib/node_modules/playwright/node_modules/playwright-core \
+>   node_modules/playwright-core
+> ```
+>
+> `node_modules` is in `.gitignore`, so this is an environment fix and not a
+> change to the project. With it, `frontdoor` is 1/1 and `lineseen` 2/2 on this
+> box. **Do this first in any new container** — otherwise a sixth of the gate's
+> failures are noise, and the noise is exactly where the browser-only claims
+> live.
+>
+> **THE OLD ORDER-DEFECT NOTE, KEPT BECAUSE THE ANSWER IS WORTH MORE THAN THE
+> BUG.**
+> `breach.mjs`'s "the shield is the gate" passes when its suite runs FIRST in a
+> process and fails when anything at all ran before it — measured three ways:
+> alone 5/5 (25.0 s after the pulse opens the plate, 96.5% of frames in
+> contact); `breach → blast-door` 5/5 and 9/9; `bolts → breach` and
+> `blast-door → breach` both fail it identically (436 of 515 texels in 70 s, so
+> the deflector comes back before the breach lands). The predecessor does not
+> matter, which rules out anything blast-door does to a door. Both suites
+> already pin `destruction.prepareBudgetMs`, which is the cause `blast-door`'s
+> own header documents for this exact symptom, so it is something else
+> `_shared.mjs` does not restore — `ground` (Scenery.js) and Engine's once-only
+> ShaderChunk flags are what that file names as still shared.
+>
+> **AND ONE THAT WAS RED BEFORE THIS SESSION AND IS NOT ANY MORE, WITH THE
+> REASON.** `balance.mjs`'s melee-opener check drove all four difficulty tiers
+> with one player — the model's "competent", σ=75 — and read **67 of 96** against
+> a three-quarter floor. It read exactly 67 at every commit for the last forty,
+> so it had been red for far longer than its own note's "92, 90, 90, 91 —
+> steady". At the skill each tier is actually FOR it reads 81 of 96. The floor,
+> the pooled mean and the per-tier `worst > 0` clause are untouched, and
+> **grandmaster still clears only 9 of 24** — printed rather than asserted,
+> because it is a real balance signal for whoever tunes the Colosseum next.
 
 | | |
 |---|---|
-| Suite | **1517 passed, 0 failed** — 111 suites, 18.7 min of suite time, from a clean worktree on a quiet box. Earlier the same day it was 1438/59; §6.4 says what each of those was, because how they were found is the part worth keeping. There are **150** suites in `tools/checks/` as of this row, which is the drift §2.3 is about — run `ls tools/checks/*.mjs \| grep -v /_ \| wc -l` rather than believing it |
+| Suite | **2039 passed, 2 failed** — all **156** suites in `tools/checks/`. **Both reds pass standalone**, so they are the order-dependence §6.4 documents rather than defects: `suppression`'s pace arm (6/6 alone and under `_seq determinism suppression`) and `theline.16`, which is the worse of the two because it is a NULL CRASH rather than a drifting number — `Cannot read properties of null (reading 'position')` in a gate, 21/21 alone. A crash means something was disposed while still referenced, and that is real however rarely it shows. Under investigation. The row before this read 2024/0, and before that 1517 over 111 suites — which is the drift §2.3 is about: read the gate's own last line rather than believing a table |
 | Fast tier | **363 passed, 0 failed — 17 suites in ~80 s**, `npm run verify:fast`. The mechanical contract only: the blade, the bolt, the cut, the guard, and the tables that move them. `tools/tiers.mjs` names what it leaves out (`footwork` 52.9 s, `powers` 18.2 s, `force` 19.3 s, every browser suite, every level/wave/net/UI suite). **It going green is not the gate going green.** It exists because §2.6d is real: a gate nobody can finish is a gate whose reds nobody triages, and `.github/workflows/verify.yml` now runs this one on every push — the first thing in this repo's CI that has ever run a check |
-| Smoke | **11/11 clean** on a quiet box. Its timeouts are wall-clock, so on a loaded one the last four fail and mean nothing — §2.6 |
-| Packed | `node tools/pack.mjs out.html` — 79 modules, 12.8 MB, boots from `file://`, and `tools/checks/packed.mjs` proves it every run |
+| Smoke | **11/11 clean**, and verified in THIS container for the first time once `playwright-core` was symlinked (see §1) — no console errors, no page errors, no failed requests, boot diagnostics 668 draw calls / 139 728 triangles / 188 statics. Its timeouts are wall-clock, so on a loaded box the later steps fail and mean nothing — §2.6, and it is why the rewritten deflection step below could not be re-run while two agents were working. **`step()` FAILS ONLY ON A THROWN EXCEPTION**, so a probe that prints all zeros is still called ok. The deflection step did: `{fired: 12, deflects: 0, hpLost: 0}`. It asserts now, and the twelve bolts were the defect rather than the measurement — see §1 |
+| Packed | `node tools/pack.mjs out.html` — **105 modules, 15.95 MB** (the row said 79 and 12.8 MB; measured this session), boots from `file://`, and `tools/checks/packed.mjs` proves it every run — which it could not do in this container until `playwright-core` was symlinked |
 | Levels | **7** — `scoria, mustafar, colosseum, wood, drifts, alpine, geonosis`. The Boarding Bay and the Providence were deleted on the player's word — "I just tried the boarding bay and the providence and hated them… just remove them. your outside work is much better" |
 | Modes | **9** — `waves, roguelite, duel, sandbox, training, command, theline, skirmish, campaign` |
 | Campaigns | **1** — `petranaki`, two missions. `boarding` went with its two grounds; both its missions were the ship levels |
@@ -296,6 +746,92 @@ A close relative: a missing thing answered with a plausible default instead of
 an error (`PEAK.get(tex) ?? 3`, `_one.mjs` printing "0 passed, 0 failed", a
 12-slot record against a 13-slot packer). `determinism.mjs` has tripwires for
 both.
+
+### 2.3b A CHECK THAT READS A FIELD NOTHING WRITES IS A CHECK THAT CANNOT FAIL
+
+Two shapes, both found by audit, both of which had been green for a long time.
+
+**A property nobody writes, swallowed by `?.`.** `killerName` ended
+`source.A?.name || source.type`, and an archetype has no `name` — the field is
+`label`. So the first half was ALWAYS undefined, the `||` was the only path, and
+every after-action report and every grave in the ground said `b2` and
+`droideka` instead of "B2 Super Battle Droid" and "Droideka". The Foundry's
+banner had the same line and told a player "the next one up is a arc". Optional
+chaining does not fail; it degrades into a plausible wrong answer.
+
+**The same thing in a CHECK, where it also disables the assertion.**
+
+    assert(world.notes?.some?.(([t]) => /LINE/i.test(t)) !== false, '…')
+    assert(b.world.notices?.some?.(s => /BARRIER DOWN/.test(s)) !== false, '…')
+
+There is no `world.notes` and no `world.notices` — the only notification path is
+`World.notify` → `this.onNotify?.(…)`, and `world.notifications` was a queue
+nobody read and was deleted. So both expressions are `undefined`, `undefined
+!== false` is true, and both assertions were unfailable. One of them sits inside
+`theline.16`, guarding the flagship rule's ONLY on-screen explanation of why an
+advance has stalled. **Record notices with `world.onNotify = (t, sub) => …`;
+`coop.mjs` and `command-pvp.mjs` have always done it that way.**
+
+The generalisation, and it is the same sentence as §2.3: a reader that cannot
+see its subject reports the fallback and calls it a measurement.
+
+### 2.3c A READER TEST THAT GREPS THE WHOLE TREE FINDS SOMEBODY ELSE'S FIELD
+
+Three checks asked "does this table's column have a reader" by matching the
+column NAME against every `.js` file in `src/` concatenated. The names are
+ordinary words and the tree is eight megabytes:
+
+  · `balance.mjs` matched `.fireRate` — which is `A.fireRate`, the ARCHETYPE's
+    field, **on the same line as** the difficulty read. Deleting
+    `(diff.fireRate ?? 1)` from both of Enemy's attack timers left it green over
+    a difficulty column that had stopped meaning anything. Same for `assist`,
+    covered by `this.assist = 0` in SaberController.
+  · `forms.mjs` matched bare words: `strength` 137 times outside the table,
+    `strike` 38, `moves` 26, `tell` 22. Deleting the feint left it green on
+    `DUEL_PHASES`'s own `'feint'` string.
+
+**The reader has to be a member access off the thing that holds the table** —
+`difficulty|diff`, `F|form|FORMS[…]`. Tightening `forms.mjs` immediately found a
+real dead field: `tell`, the one sentence per lightsaber form describing how to
+read it, authored five times and rendered nowhere — in a game with a training
+mode.
+
+### 2.3d A FIXED-LENGTH SOURCE WINDOW, SPELLED AS A REGEX
+
+`determinism.mjs` forbids `src.slice(i, i + N)` for reading a function, with the
+whole story above it. It forbade ONE SPELLING: `/_spinBody[\s\S]{0,3000}?…/` is
+the same guess with different punctuation, and twelve were live while that check
+was green. Two mattered — `Player._spinBody` is 2569 characters against a 3000
+window, so it already ran 431 past the end of the function.
+
+**And the overshoot direction is the one that hides.** `characters.mjs` read
+`/_updateBlade[\s\S]{0,4000}/`, and the first `_updateBlade` in Player.js is at
+line 365 — inside a doc comment, 4384 lines above the method. The check
+"nothing multiplies the blade anchor by the figure's stature" had been passing
+on PROSE, and its claim had quietly stopped being true: the anchor is scaled by
+`limbs.stand` now, for reasons the code explains at length.
+
+`functionBody(src, sig)` from `_source.mjs` is the answer — **and give it a
+signature that is the definition and not a mention of it.** `'_updateBlade('`
+finds the call site 1300 lines earlier; `'\n  _updateBlade('` finds the method.
+
+### 2.3e A HARNESS THAT DOES NOT AWAIT ITS CHECKS REPORTS GREEN ON A RED ONE
+
+`tools/_onecheck.mjs` was written to run ONE check out of one suite, because
+proving a `theline.mjs` guard red costs twenty-five minutes otherwise. Its first
+cut reported **"1 ran, 0 failed" on a check whose assertion had been broken on
+purpose, and printed no verdict line at all.**
+
+A suite's `run()` calls `check(name, fn)` and DOES NOT AWAIT IT — menu.mjs's own
+header says so ("the runner starts every check as soon as the one before it
+suspends"). So `await mod.run(...)` returned while the async body was still
+inside its first `await`: the counter had been incremented, the `try` had not
+reached its `catch`, and `process.exit()` at the foot of the file killed the
+process before either happened. Collect the promises and await them.
+
+It is the "0 passed, 0 failed reads as success" defect (§2.3) in a new place,
+and the worst possible place for it: a tool whose only job is telling you
+whether a check can fail.
 
 ### 2.4 Never restate a rule; call it
 

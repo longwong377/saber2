@@ -1768,6 +1768,10 @@ export class Prop {
   shatter(dir, point) {
     if (this.dead) return;
     const centre = this.body.position.clone();
+    /* SOMETHING WAS BROKEN — the one door, so a rule about breaking things has
+     * one place to listen. PLAN.md §4.6's Salvage is the first caller and it
+     * pays Insight for it; the prop does not know that and must not. */
+    this.world?.onPropBroken?.(this, centre);
     if (this.explosive && this.world.onExplosion) {
       this.world.onExplosion(centre, 1.35);
     } else if (this.world.particles) {

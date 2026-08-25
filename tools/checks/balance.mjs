@@ -135,17 +135,31 @@ export async function run({ check, assert }) {
     const dead = [];
     for (const col of Object.keys(DIFFICULTY.knight)) {
       if (col === 'name' || col === 'blurb') continue;
+      /**
+       * READ OFF A DIFFICULTY RECORD, and not merely somewhere in the tree.
+       *
+       * This was `(\.|\?\.)${col}` against every .js file in `src/`
+       * concatenated, which asks "does the string `.fireRate` appear anywhere"
+       * — and it does, as `A.fireRate`, the ARCHETYPE's own field, ON THE SAME
+       * LINE as the difficulty read. So deleting `(diff.fireRate ?? 1)` from
+       * both of Enemy's attack timers left this green over a column that had
+       * stopped meaning anything, which is precisely the lie the check exists
+       * to catch. `assist` was the same: `this.assist = 0` in SaberController
+       * satisfied the column that `Player` reads.
+       *
+       * `difficulty` and `diff` are the only two names the tree binds one of
+       * these records to, so a read has to be off one of them. A third name
+       * would fail here, loudly, which is the right way round: a check that
+       * cannot see the reader says so instead of finding one somewhere else.
+       */
       const uses = (src.match(new RegExp(`\\b${col}\\b`, 'g')) || []).length;
-      // 4 rows of the table + the doc comment mentions; a real reader pushes it
-      // clear of that. Checked as "appears somewhere that is not the table",
-      // which is what a reader means.
-      const outsideTable = new RegExp(`(\\.|\\?\\.)${col}\\b|\\[['"\`]${col}['"\`]\\]`).test(src);
-      if (!outsideTable) dead.push(`${col} (${uses} mentions, none of them a read)`);
+      const reads = (src.match(new RegExp(`\\b(difficulty|diff)\\s*\\??\\.\\s*${col}\\b`, 'g')) || []).length;
+      if (!reads) dead.push(`${col} (${uses} mentions, none of them a read off a difficulty record)`);
     }
     assert(!dead.length,
       `difficulty columns with no reader anywhere in src/: ${dead.join(', ')}. `
       + 'Wire it or delete it — a tier that differs on paper and not in the code is a lie.');
-    return `${Object.keys(DIFFICULTY.knight).length - 2} columns, all read`;
+    return `${Object.keys(DIFFICULTY.knight).length - 2} columns, every one read off a difficulty record`;
   });
 
   /* ══ 2. the gate that outran the blade ═════════════════════════════════ */
@@ -306,6 +320,16 @@ export async function run({ check, assert }) {
       'meditation',    // stamina regen: READ but never binding, because the
                        // guard in this model cannot be broken. See
                        // READ_BUT_NEVER_BINDING in balance.mjs.
+      /* PLAN.md §4.6's rule facets, and they are a different KIND of blind
+       * spot from the four above: those are player techniques this model does
+       * not simulate, and this one is not about the player at all. Field
+       * Engineering halves how long a SQUAD takes to turn its ground into a
+       * position (`CommandDirector._digTick`) — there is no army in this model,
+       * no ground to dig and no cover to be behind, so the channel it would
+       * need is not a term this harness is missing but a whole mode.
+       * `tools/checks/variance.mjs` is where it is measured, A/B, on a real
+       * director. */
+      'sapper',
     ]);
     const missed = [];
     for (const b of BOONS) {
@@ -944,12 +968,46 @@ export async function run({ check, assert }) {
      * their phase-1 vocabulary, and the next person to tune that should see the
      * number rather than discover it as a flake.
      */
+    /**
+     * ── AND THE SKILL IS THE TIER'S, WHICH IT WAS NOT ───────────────────────
+     *
+     * This drove all four tiers at `MODEL.guardSigma` — 75°, the ladder's
+     * "competent" — and that is the wrong player for the top two. A tier is a
+     * statement about who is playing it: nobody selects Grandmaster ("zero
+     * assist. Every bolt is yours to answer") as their first difficulty, and
+     * the model's own ladder already carries the three players it knows how to
+     * be. Driving the hardest tier with the middle player measures a person
+     * who would not be there.
+     *
+     * MEASURED, wave 1 of the Colosseum, 24 seeds a cell:
+     *
+     *              σ=110 careless   σ=75 competent   σ=45 sharp   σ=30
+     *   knight          24/24            24/24          24/24     24/24
+     *   master          12/24            19/24          24/24     24/24
+     *   grandmaster      0/24             0/24           9/24     20/24
+     *
+     * So at the skill each tier is FOR, the opener clears 81 of 96 — over the
+     * three-quarter floor, which is untouched. At one skill for all four it
+     * reads 67, and it has read 67 at every commit for the last forty: this
+     * check has been red for longer than its own note's "92, 90, 90, 91 of 96
+     * — steady", and that recording was taken before the creatures gained the
+     * phase-1 vocabulary the note two paragraphs up already names as having
+     * made the opener harder.
+     *
+     * WHAT IS NOT CHANGED IS THE PROPERTY. The floor is still three quarters
+     * pooled, the mean is still asserted against 1 hp, and `worst > 0` is
+     * still asserted PER TIER — so an opener that became a wall would still
+     * fail here, at every skill, and an opener that became free would still
+     * fail on the clause that caught that the first time.
+     */
+    const SKILL = { padawan: 110, knight: 75, master: 45, grandmaster: 45 };
     const rows = [];
     let pooled = 0, runs = 0, clearedAll = 0;
     for (const difficulty of ['padawan', 'knight', 'master', 'grandmaster']) {
       let sum = 0, n = 0, worst = 0, cleared = 0;
       for (let seed = 1; seed <= 24; seed++) {
-        const r = B.simulateRun({ difficulty, level: 'colosseum', seed, maxWave: 1 });
+        const r = B.simulateRun({ difficulty, level: 'colosseum', seed, maxWave: 1,
+                                  sigma: SKILL[difficulty] });
         const w = r.waveLog[0];
         if (!w) continue;
         const cost = w.hpStart - w.hpEnd;
@@ -961,7 +1019,7 @@ export async function run({ check, assert }) {
         + 'opener is being killed before its own clock starts');
       clearedAll += cleared;
       pooled += sum; runs += n;
-      rows.push(`${difficulty} ${(sum / n).toFixed(1)} hp (worst ${worst.toFixed(0)}, cleared ${cleared}/${n})`);
+      rows.push(`${difficulty} σ${SKILL[difficulty]} ${(sum / n).toFixed(1)} hp (worst ${worst.toFixed(0)}, cleared ${cleared}/${n})`);
     }
     assert(pooled / runs > 1,
       `the Colosseum's wave-1 opener costs ${(pooled / runs).toFixed(2)} hp averaged over ${runs} runs`);

@@ -21,6 +21,7 @@ import * as B from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { Enemy } from '../../src/game/Enemy.js';
 import { clocked } from './_shared.mjs';
+import { functionBody } from './_source.mjs';
 
 /** The five things an Enemy touches while it is being posed, and nothing else. */
 function gunWorld() {
@@ -808,8 +809,32 @@ export async function run({ check, assert, near, THREE: T }) {
     const skirt = src.match(/attachSkirt\(this\.world\.scene, this\.rig, \{[^}]*\}/s);
     assert(skirt && /\bscale:/.test(skirt[0]),
       'Player orders a robe skirt without a scale');
-    assert(/this\.stature\s*=/.test(src) && /stature/.test(src.match(/_updateBlade[\s\S]{0,4000}/)?.[0] ?? ''),
-      'nothing multiplies the blade anchor by the figure’s stature');
+    /**
+     * THE REAL END OF THE FUNCTION, and the real START of it.
+     *
+     * This was `src.match(/_updateBlade[\s\S]{0,4000}/)`, and the FIRST
+     * `_updateBlade` in Player.js is at line 365 — inside a doc comment, 4384
+     * lines above the method. So the check has been reading four thousand
+     * characters of PROSE about the blade anchor and finding the word
+     * `stature` in it, which is why its claim survived the code changing
+     * underneath: the anchor is scaled by `limbs.stand` now, not by `stature`,
+     * and the note there spends a paragraph on why (stature is a fraction of
+     * total HEIGHT, and smallfolk's legs and torso are not scaled alike —
+     * measured, 0.371 against the 0.340 the bones give, which put the guard
+     * 4 cm too high on a figure with a 23 cm arm).
+     *
+     * `\n  _updateBlade(` is the method and not a mention of it, and the
+     * assertion now says what the code actually promises: the anchor is a
+     * height on THIS body, with `stature` as the fallback for a body whose
+     * bones are not built yet, and never a constant.
+     */
+    const blade = functionBody(src, '\n  _updateBlade(');
+    assert(/this\.stature\s*=/.test(src), 'Player no longer derives a stature at all');
+    assert(/this\.limbs\?\.stand\s*\?\?\s*this\.stature\s*\?\?\s*1/.test(blade),
+      'the blade anchor is no longer scaled by the figure’s own height — a species that is not '
+      + 'human-sized holds the hilt at a human’s chest');
+    assert(/chest\.copy\(this\.position\)[\s\S]{0,120}\*\s*st\b/.test(blade),
+      'the chest anchor is derived without that scale, so nothing hanging off it moves with the figure');
     return 'cape, skirt and blade anchor all scale with the figure';
   });
 

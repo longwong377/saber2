@@ -531,13 +531,76 @@ export async function run({ check, assert }) {
     }
     corpus = corpus.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
+    /**
+     * READ OFF A FORM, and not merely present as a word.
+     *
+     * This was `\b${key}\b` against every .js file in `src/` with only the
+     * table itself cut out — a bare word-boundary match over eight megabytes of
+     * source, and the words are ordinary English. Measured outside the table:
+     * `strength` 137 times, `strike` 38, `moves` 26, `tell` 22, `windup` 20.
+     * So deleting `if (rng() < F.feint) this._beginFeint(sp)` — feints stop
+     * existing — left this green on `DUEL_PHASES`'s own `'feint'` string, and
+     * `F.chain` was covered by `SLASH.chain` in a different file entirely.
+     * Roughly half the table was unguardable.
+     *
+     * A form is bound to `F`, `form` or `this.form` and to nothing else in the
+     * tree, so a reader has to be a member access off one of those. It found a
+     * real dead field the moment it was tightened: `tell`, five authored
+     * sentences on how to READ each form, rendered nowhere at all.
+     */
     const dead = [];
     for (const key of new Set(FORM_KEYS.flatMap((k) => Object.keys(FORMS[k])))) {
-      if (!new RegExp(`\\b${key}\\b`).test(corpus)) dead.push(key);
+      if (!new RegExp(`\\b(F|form|forms|FORMS\\[[^\\]]*\\])\\s*\\??\\.\\s*${key}\\b`).test(corpus)) dead.push(key);
     }
     assert(dead.length === 0,
       `FORMS authors ${dead.join(', ')} and nothing outside the table reads ${dead.length === 1 ? 'it' : 'them'} — `
       + 'either wire it to something or take it out');
-    return `all ${new Set(FORM_KEYS.flatMap((k) => Object.keys(FORMS[k]))).size} authored form fields have a reader`;
+    return `all ${new Set(FORM_KEYS.flatMap((k) => Object.keys(FORMS[k]))).size} authored form fields are read off a form`;
+  });
+
+  check('forms: the tell is five different sentences, and the dojo says the one it is sparring', async () => {
+    /**
+     * WHAT THE FIELD ABOVE FOUND. `tell` is the one sentence per form that says
+     * what it LOOKS like from the other side — "erratic — the rhythm is the
+     * trap" — and it was authored five times and rendered nowhere, in a game
+     * whose training mode exists to teach exactly that. The old reader test
+     * could not see it: `tell` is an ordinary English word and appears
+     * twenty-two times in `src/` outside the table.
+     *
+     * FIVE DIFFERENT ONES, first, because that is the `saberColour: 4` defect
+     * this suite was written for — a field authored identically on every form
+     * teaches nothing even once it is drawn.
+     */
+    const tells = FORM_KEYS.map((k) => FORMS[k].tell);
+    for (const [i, t] of tells.entries()) {
+      assert(typeof t === 'string' && t.length > 12,
+        `${FORM_KEYS[i]} has no tell worth reading: ${JSON.stringify(t)}`);
+    }
+    assert(new Set(tells).size === tells.length,
+      `${tells.length} forms share ${new Set(tells).size} tells — a field with one value teaches nothing`);
+
+    /* AND IT REACHES THE PANEL. The coach line is the only surface in the game
+     * that names a form at all, so it is the only place this can be true. */
+    const { makeDocument } = await import('./_page.mjs');
+    const { HUD } = await import('../../src/ui/HUD.js');
+    const { readFile } = await import('node:fs/promises');
+    const doc = makeDocument(await readFile(new URL('../../index.html', import.meta.url), 'utf8'));
+    const restore = doc.install();
+    try {
+      const hud = new HUD(doc);
+      const state = { title: 'The bind', need: 3, progress: 1, index: 2, total: 11,
+                      brief: 'b', hint: 'push through it', form: 'Juyo VII', formTell: FORMS.juyo.tell };
+      hud.setCoach(state);
+      const line = doc.getElementById('coach-hint').textContent;
+      assert(line.includes('Juyo VII'), `the coach line lost the form: "${line}"`);
+      assert(line.includes(FORMS.juyo.tell),
+        `the coach line names the form and never says how to read it: "${line}"`);
+      /* …and a lesson with nobody to spar leaves both off rather than printing
+       * a dangling dash, which is what an unguarded append would do. */
+      hud.setCoach({ ...state, form: null, formTell: null });
+      assert(doc.getElementById('coach-hint').textContent === 'push through it',
+        'a lesson with no sparring partner still prints a form line');
+      return `5 distinct tells; the panel reads "${line.slice(0, 64)}…"`;
+    } finally { restore(); }
   });
 }

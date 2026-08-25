@@ -141,6 +141,42 @@ await page.addInitScript(() => {
     }
     return { frames: n, played: +(w.time - t0).toFixed(2) };
   };
+
+  /**
+   * A SWING, MADE THE WAY THE BROWSER MAKES ONE — and neither probe below had
+   * ever made one.
+   *
+   * `input.buttons[i]` is the HOLD and `input.buttonPressed[i]` is the DOWN
+   * EDGE: the mousedown handler raises both and `Input.end()` clears the edge
+   * at the end of every frame (src/engine/Input.js). Every attack in
+   * `SaberController` is read through `actHit`, which is the edge — so a
+   * synthetic button that is merely left `true` has been pressed by nobody.
+   * The blade hangs at the hip and the mouse turns the camera, which is exactly
+   * what these probes have been measuring.
+   *
+   * Measured on the ground, a droid pinned 1.1 m in front, 1.5 s of play:
+   *
+   *     buttons[0] held, as this file did   0 of 36 frames swinging, tip 0.16 m
+   *     pressed on alternate frames        35 of 36 frames swinging, tip 1.10 m
+   *
+   * (`tip` is the furthest the blade's point travelled in one frame — the thing
+   * a body has to be crossed by.) Neither arm took the droid's health off on
+   * its own, because a swing also has to be AIMED; see the spawn in the cut
+   * step, which is what the tip figure above is measured against.
+   *
+   * Index 0 is `Mouse1` and index 2 is `Mouse2` — `MOUSE` in
+   * src/engine/Bindings.js — so this is the ATTACK, and the guard, which the
+   * old comment here believed it was holding, is the other one. Released on
+   * the odd frames because a press needs an edge to be, and one press is one
+   * attack however long it is held.
+   */
+  window.__swing = (i) => {
+    const input = window.SABER?.input;
+    if (!input) return;
+    const down = i % 2 === 0;
+    input.buttons[0] = down;
+    if (down) input.buttonPressed[0] = true;
+  };
 });
 
 const errors = [];
@@ -210,6 +246,37 @@ await step('preset settings', async () => {
   const level = LEVEL || ROSTER[0];
   await page.evaluate(([level, quality, mode]) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
+      /**
+       * ── THIS RUN OPENS ON THE GROUND, AND WITHOUT THIS LINE IT DID NOT ────
+       *
+       * `ExtractionDirector.beginInsertion` is the shipped opening — "you
+       * arrive, you do not appear" — and it lifts the commander into a sealed
+       * bay `ORBIT_ALT` metres over the LZ before the HUD is up. Every step
+       * below this one thinks it is measuring a player standing on a level.
+       * Measured on the deploy frame of a stock roguelite run, Ember Shelf:
+       *
+       *     player   (-282.18, 2412.56, -115.18)   riding true, grounded true
+       *     LZ       (-22, 13.15, 68)              318 m out, 2 400 m up
+       *     terrain  height here -33.32, inBounds false
+       *
+       * The bolt step is what found it. `Bolts.update` retires any bolt whose
+       * position is more than 900 m from the WORLD ORIGIN (Bolts.js:408), and
+       * a bay 2 432 m out is past that line by a factor of 2.7 — so the single
+       * round fired at the player was hit-tested exactly ONCE, over the 1.09 m
+       * of its first frame, and then deleted with 5.49 m still to run to a body
+       * it was always going to reach. `{"fired":1,"deflects":0,"hpLost":0}` was
+       * a true report about a world nobody plays in.
+       *
+       * `instantSpawn` is the shipped setting that declines the flight
+       * (Extraction.js:504) — the Options tab's "instant arrivals", which
+       * `tools/checks/lineseen.mjs` ticks for this exact reason: thirty
+       * game-seconds of insertion is three hundred rendered frames on this box.
+       * The flight itself is not going unmeasured; `tools/checks/frontdoor.mjs`
+       * asserts a stock deploy DOES fly, which is the other half of this and
+       * the reason it can be turned off here. These frames belong to the
+       * ground.
+       */
+      instantSpawn: true,
       level, quality, resolutionScale: 0.6, difficulty: 'knight', mode,
       volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6,
     }));
@@ -318,6 +385,50 @@ await step('drop in', async () => {
   return took;
 }, FRAME_CEIL_MS * 3 + 20000);
 
+/**
+ * ── AND THE GROUND UNDER THE PLAYER, ASSERTED, BEFORE ANYTHING SWINGS ──────
+ *
+ * The HUD coming up is not the same fact as the player being on a level, and
+ * for the whole of this tool's life it had been read as though it were. The
+ * shipped opening flies the commander in from orbit (see the settings step),
+ * so `#hud:not(.hidden)` was true 2 412 m over the Ember Shelf with the level
+ * out of reach below — and the four steps under this line went on to spawn a
+ * droid in the transport's bay, cut it, watch it fall out of the sky, and fire
+ * a bolt that the 900 m cull deleted before it had crossed two metres.
+ *
+ * Not one of them said anything was wrong. That is the failure mode this tool
+ * exists to not have: every step measured something real, and every one of
+ * them measured it somewhere the game is never played.
+ *
+ * So the precondition every step below shares is stated once, here, where it
+ * fails by name. Two facts and both are cheap: nobody is riding anything, and
+ * the body is standing on the height the terrain reports under it. The
+ * tolerance is a metre and a half because a player can legitimately be stood on
+ * a rock or a step that the heightfield does not know about, and no legitimate
+ * deploy is further off the ground than that.
+ */
+await step('the player is on the ground, not in the bay', async () => {
+  const g = await page.evaluate(() => {
+    const w = window.SABER.world, p = w.player;
+    return {
+      riding: !!p.riding, aboard: !!w.extraction?.aboard,
+      y: +p.position.y.toFixed(2),
+      ground: +(w.terrain ? w.terrain.height(p.position.x, p.position.z) : p.position.y).toFixed(2),
+      fromOrigin: +p.position.length().toFixed(0),
+    };
+  });
+  console.log('   ', JSON.stringify(g));
+  if (g.riding || g.aboard) {
+    throw new Error('the HUD is up but the player is still aboard the insertion '
+      + `transport, ${g.fromOrigin} m from the origin — every step below this `
+      + 'measures a flight, not a level');
+  }
+  if (!(Math.abs(g.y - g.ground) <= 1.5)) {
+    throw new Error(`the player stands at y ${g.y} over ground at ${g.ground} — `
+      + 'they are not on the level the steps below are about to measure');
+  }
+});
+
 await step('report boot diagnostics', async () => {
   const info = await page.evaluate(() => {
     const w = window.SABER?.world;
@@ -337,6 +448,49 @@ await step('report boot diagnostics', async () => {
   console.log('   ', JSON.stringify(info));
 });
 
+/**
+ * WHAT THE SIM LOOP IS ALLOWED TO COST, stated once and read twice.
+ *
+ * `SIM_FRAME_MS` is the per-frame budget: a frame in which the blade is
+ * actually being SWUNG costs more than one in which the mouse only turns the
+ * camera — the contact solver, the sparks and the hit reactions all run — and
+ * the 90 s the step deadline gives by default is under two seconds a frame on
+ * a box that renders at one. Forty swung frames went past it and were reported
+ * as a hang, which is §2.5's failure exactly: the probe that exists to catch a
+ * stopped render loop, firing because the loop is busy.
+ *
+ * `SIM_SLACK_MS` is the round trips either side of the loop. The bound that
+ * means something is the inner one, because it is sized off the frames this
+ * step actually asks for; the outer `step` deadline is that same sum plus the
+ * slack again, so it can only ever be the backstop — which is the rule the
+ * deploy step above already follows.
+ */
+const SIM_FRAME_MS = 3000;
+const SIM_SLACK_MS = 20000;
+const SIM_MS = FRAMES * SIM_FRAME_MS + SIM_SLACK_MS;
+
+/**
+ * …AND THE SAME SUM FOR A STEP THAT PLAYS GAME TIME RATHER THAN FRAMES.
+ *
+ * `World.update` clamps dt to 1/24 s (src/game/World.js), so N game-seconds is
+ * at least N × `DT_CLAMP_HZ` rendered frames however slow the box is — which is
+ * what makes a game-time step's cost predictable in wall clock at all.
+ *
+ * The cut step needed it for the same reason the sim loop did: a swung blade
+ * costs more than a turned camera. Measured, it took 85 s of the 90 s default
+ * and then reported `timed out after 90000 ms` on the same run in which its own
+ * numbers say it took a droid from 28 hp to -28 and severed a limb. A deadline
+ * that fires beside a passing assertion is the harness calling its own success
+ * a failure.
+ */
+const DT_CLAMP_HZ = 24;
+const playMs = (gameSeconds) =>
+  Math.ceil(gameSeconds * DT_CLAMP_HZ) * SIM_FRAME_MS + SIM_SLACK_MS;
+
+/** How long the cut step swings for, in game time. Read in both places it has
+ *  to agree: the play call inside the page, and the deadline outside it. */
+const CUT_PLAY_S = 1.5;
+
 await step('simulate combat', async () => {
   // The page is not pointer-locked in headless, so drive the sim directly:
   // feed the input layer synthetic mouse deltas and keys the way the browser would.
@@ -352,9 +506,10 @@ await step('simulate combat', async () => {
       try {
         window.__SMOKE_FRAMES = (window.__SMOKE_FRAMES || 0) + 1;
         const t = (window.__SMOKE_T += 1 / 60);
-        // hold-to-blade is the shipped scheme: without the button down the
-        // mouse only turns the camera and the blade is never exercised
-        S.input.buttons[0] = (t % 1.7) < 1.1;
+        // The blade, actually swung. This line held the button and believed
+        // that was the scheme; an attack is a PRESS and holds nothing — see
+        // `__swing`, which is the same driver the cut step uses.
+        window.__swing(window.__SMOKE_FRAMES);
         S.input.mouse.dx += Math.sin(t * 5.1) * 26;
         S.input.mouse.dy += Math.sin(t * 3.3 + 1) * 16;
         if (Math.floor(t * 2) % 3 === 0) S.input.keys.add('KeyW'); else S.input.keys.delete('KeyW');
@@ -376,7 +531,7 @@ await step('simulate combat', async () => {
     // NB: waitForFunction is (fn, arg, options) — passing options second makes
     // them the argument and silently leaves the 30s default in place.
     await page.waitForFunction(() => window.__SMOKE_DONE === true, null,
-      { timeout: FRAMES * 3000 + 20000 });
+      { timeout: SIM_MS });
   } catch (e) {
     const diag = await page.evaluate(() => ({
       frames: window.__SMOKE_FRAMES, err: window.__SMOKE_ERR, done: window.__SMOKE_DONE,
@@ -386,27 +541,48 @@ await step('simulate combat', async () => {
   }
   const err = await page.evaluate(() => window.__SMOKE_ERR);
   if (err) throw new Error('inside the sim loop: ' + err);
-});
+}, SIM_MS + SIM_SLACK_MS);
 
 if (has('shots')) await page.screenshot({ path: join(OUT, '04-combat.png') });
 
 await step('force a spawn wave and cut something', async () => {
-  const res = await page.evaluate(async () => {
+  const res = await page.evaluate(async (playFor) => {
     const w = window.SABER.world;
     const p = w.player;
-    const THREE = w.player.position.constructor;
-    // put a droid inside the blade's reach and swing through it
-    const spawn = p.position.clone();
-    spawn.x += 1.1;
+    /**
+     * IN FRONT OF THE PLAYER, AND IT STAYS THERE.
+     *
+     * `spawn.x += 1.1` is 1.1 m EAST, which is wherever the last step happened
+     * to leave the camera pointing — and a blade sweeps in front of the body,
+     * not around it. `aimDir` is where the player is actually looking, so the
+     * droid is now in the arc rather than at a bearing nobody chose.
+     *
+     * And it is held there. A B1 is a rifleman: its brain opens the range the
+     * moment something with a blade is inside it, measured 1.1 m → 3.42 m
+     * within the same 1.5 s, which is a metre and a half outside anything the
+     * blade can reach. `stunTimer` is the field every "can this act" reader in
+     * Enemy.js already consults, re-armed each frame — so what this step
+     * measures is the blade against a body, which is what it says it measures,
+     * rather than a footrace it always loses.
+     */
+    const fwd = p.aimDir.clone().setY(0).normalize();
+    const spawn = p.position.clone().addScaledVector(fwd, 1.1);
     const e = w.spawnEnemy('b1', spawn);
     await new Promise(r => setTimeout(r, 60));
     const before = { hp: e.hp, severed: e.actor?.severedCount ?? 0 };
-    // drive the blade physically across the target for a second
-    // 1.5 s of blade across the target — the same play the 90-frame loop meant
-    // on a GPU, expressed in the unit that survives not having one.
-    await window.__play(1.5, (i) => {
-      window.SABER.input.mouse.dx += 60 * Math.sin(i * 0.4);
-      window.SABER.input.mouse.dy += 40 * Math.cos(i * 0.31);
+    // Blade across the target for as long as `CUT_PLAY_S` says — the same play
+    // the 90-frame loop meant on a GPU, expressed in the unit that survives not
+    // having one.
+    //
+    // The sway is a twentieth of what it was. At 60 a frame the player SPUN,
+    // so the body 1.1 m in front of them spent most of the step behind them;
+    // what a swing needs is a small variation in where it lands, not a search
+    // for the target.
+    await window.__play(playFor, (i) => {
+      e.stunTimer = 1;
+      window.__swing(i);
+      window.SABER.input.mouse.dx += 3 * Math.sin(i * 0.4);
+      window.SABER.input.mouse.dy += 2 * Math.cos(i * 0.31);
     });
     return {
       before, hpAfter: e.hp, dead: e.dead,
@@ -415,34 +591,91 @@ await step('force a spawn wave and cut something', async () => {
       ragdolled: !!e.actor?.ragdolled,
       bodies: w.physics.bodies.length,
     };
-  });
+  }, CUT_PLAY_S);
   console.log('   ', JSON.stringify(res));
-});
+  /**
+   * WHAT MUST BE TRUE, AND WHAT MAY LEGITIMATELY BE ZERO.
+   *
+   * This step also printed zeros and passed — `severed: 0, pieces: 0` — and
+   * unlike the volley below, two of those are fine. A B1 has 28 hp and a blade
+   * kills it well before a blind swing happens to cross a limb with the speed
+   * and the angle a sever wants; `tools/checks/severance.mjs` is where severing
+   * is held to its own rules, with a fixture that aims. Asserting a limb here
+   * would be a combat test on a boot probe, and a flaky one.
+   *
+   * What this step is FOR is that the blade reaches a real body in the real
+   * page, and that is the assertion: a droid put inside the blade's reach and
+   * swung through for a second and a half must take damage. It caught nothing
+   * before because nothing could fail.
+   */
+  if (!(res.hpAfter < res.before.hp)) {
+    throw new Error(`a droid stood inside the blade for ${CUT_PLAY_S} s and took no damage — `
+      + `hp ${res.before.hp} → ${res.hpAfter}. The blade is not reaching bodies in the shipped page`);
+  }
+}, playMs(CUT_PLAY_S));
 
+/**
+ * ── ONE BOLT, AND A STEP THAT CAN FAIL ────────────────────────────────────
+ *
+ * THIS PROBE REPORTED `{"fired":12,"deflects":0,"hpLost":0,"flow":0}` AND WAS
+ * CALLED OK. `step()` fails only on a thrown exception, so twelve bolts at a
+ * standing player from seven metres could do nothing whatsoever and the run
+ * still printed "clean". A diagnostic that can be all zeros and pass certifies
+ * nothing, and this is the boot probe — the last place that should be quiet.
+ *
+ * ── AND THE TWELVE WERE THE DEFECT, NOT THE MEASUREMENT ───────────────────
+ *
+ * `Player.damage` opens `this.invuln = 0.18` on every hit, and `_boltHitTest`
+ * skips a player with `invuln > 0`. `World.update` clamps `dt` to 1/24, so that
+ * window is about four frames. Twelve bolts fired in ONE frame from ONE radius
+ * all arrive in the same four, so eleven of them are skipped by construction:
+ * the volley could never register more than one bolt however well it was aimed.
+ *
+ * Measured headless on a real World with nothing else on the field, to be sure
+ * the aim was not also wrong: fired one at a time, **all twelve land, 4.25 hp
+ * each**; fired together, exactly one lands. Two other explanations were tried
+ * and disproved on the way — that the aim point `p.chest` sits off the body's
+ * collision hull (it does, by 0.24-0.52 m depending on pose, and aiming at the
+ * hull's own centre changes nothing), and that the bodies on the field were
+ * absorbing the volley (they were cleared; nothing changed).
+ *
+ * So the probe asks for one bolt, which is the most this path can answer for,
+ * and it ASSERTS. What it asserts is the weakest thing that would have caught
+ * the zeros: a bolt sent at the player must be ANSWERED — felt as damage, or
+ * turned — and never ignored. Not a damage figure and not a deflection count,
+ * because the blade is being waved blind here and demanding a particular split
+ * would make a combat balance test out of a boot probe.
+ *
+ * Stated in GAME time, so a slow machine cannot fail it for being slow:
+ * `__play` counts `world.time`, and 0.8 game-seconds is ~19 clamped frames
+ * whatever the wall clock is doing.
+ */
 await step('bolts and deflection path', async () => {
   const res = await page.evaluate(async () => {
     const w = window.SABER.world;
     const p = w.player;
-    const dir = p.chest.clone().sub(p.chest.clone()).set(0, 0, 0);
-    // fire a volley straight at the player from a few metres out
-    let fired = 0;
-    for (let i = 0; i < 12; i++) {
-      const from = p.chest.clone();
-      from.x += Math.cos(i) * 7;
-      from.z += Math.sin(i) * 7;
-      const d = p.chest.clone().sub(from).normalize();
-      if (w.bolts.fire(from, d, { speed: 26, damage: 5, team: 1 })) fired++;
-    }
-    const hp0 = p.hp;
-    // A bolt fired from 7 m at 26 m/s arrives in 0.27 s, so 1.2 s is the whole
-    // volley plus the swing that answers it.
-    await window.__play(1.2, (i) => {
+    /* ONE ROUND, from the player's left, at the height the body is. */
+    const aim = p.chest.clone();
+    const from = aim.clone(); from.x += 7;
+    const d = aim.clone().sub(from).normalize();
+    const fired = w.bolts.fire(from, d, { speed: 26, damage: 5, team: 1 }) ? 1 : 0;
+    const hp0 = p.hp, defl0 = p.deflects;
+    /* 7 m at 26 m/s arrives in 0.27 s; 0.8 s is the shot plus the swing that
+     * answers it, and comfortably inside the 0.18 s i-frame either way. */
+    await window.__play(0.8, (i) => {
       window.SABER.input.mouse.dx += 55 * Math.sin(i * 0.5);
       window.SABER.input.mouse.dy += 45 * Math.cos(i * 0.37);
     });
-    return { fired, deflects: p.deflects, hpLost: +(hp0 - p.hp).toFixed(1), flow: +p.flow.toFixed(2) };
+    return { fired, deflects: p.deflects - defl0, hpLost: +(hp0 - p.hp).toFixed(1),
+             flow: +p.flow.toFixed(2), invuln: +p.invuln.toFixed(2) };
   });
   console.log('   ', JSON.stringify(res));
+  if (res.fired !== 1) throw new Error('the bolt pool refused a single round');
+  if (!(res.hpLost > 0 || res.deflects > 0)) {
+    throw new Error('a bolt sent at the player from 7 m was neither felt nor turned — '
+      + `hpLost ${res.hpLost}, deflects ${res.deflects}. Either it is not arriving or nothing `
+      + 'answers it, and both are the defect this step exists to see');
+  }
 });
 
 await step('perf sample', async () => {

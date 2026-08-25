@@ -95,6 +95,42 @@ export async function run({ check, assert }) {
       settings: { mode: 'command', level: 'geonosis', ...settings },
     });
     LIVE.world.destruction.prepareBudgetMs = Infinity;
+    /**
+     * ── AND THE RUBBLE THE DRIVE KNOCKS LOOSE IS RETIRED AS IT COMES FREE,
+     *    WHICH IS THE OTHER HALF OF TAKING THE MACHINE OUT OF THE DRIVE ────
+     *
+     * Pinning the budget above takes the pre-fracture SCHEDULE off the wall
+     * clock, and it is not enough here, because this file holds a blade
+     * against duracrete for ninety seconds where `blast-door.mjs` holds one
+     * for twenty. Measured frame by frame, the same commit, `_one breach`
+     * against `_seq bolts breach`: the two runs are BIT-IDENTICAL for 995
+     * frames — same guard, same tip to seventeen digits, same kerf — and on
+     * frame 995 the blade brings the revetment down. Fifteen cells of the
+     * magazine go dynamic in one frame, several of them 900 kg with a 5–7 m
+     * collider, and after ONE Rapier step their positions already disagree
+     * between the two processes by 1e-7 to 1e-3 m. Rapier is a WASM module
+     * shared by every World the process builds, and its step is not
+     * bit-reproducible across them; nothing on the game side differs, and
+     * nothing seeded here can make it.
+     *
+     * That difference would be beneath notice if it stayed in the rubble. It
+     * does not, because the Jedi is PINNED. `Player._collide` pushes the body
+     * out of every DEBRIS body within 2.6 m, every frame, and a player bolted
+     * to one spot cannot step out from under a collapsing revetment the way a
+     * player would — so the pile decides where the blade is, the kerf lands on
+     * different texels, and the run that opened the plate in 25.0 s saturates
+     * at 321. Measured: 154 texels, 321 texels and two clean opens off the
+     * same code, on whether some other suite had built a World first.
+     *
+     * So the loose blocks are retired the moment they come free. It is the
+     * manager's OWN retire stage with the cap at zero — not a new rule — and
+     * it removes the one thing in this drive that is not a fact about the
+     * door: a pile of rubble resting against a body that is not allowed to
+     * move. What the plate is made of, what the blade does to it, and what the
+     * deflector refuses are all untouched.
+     */
+    LIVE.world.destruction.maxLive = 0;
+    LIVE.world.destruction.maxChunks = 0;
     return LIVE;
   };
 

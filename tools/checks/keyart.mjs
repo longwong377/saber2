@@ -54,6 +54,7 @@ import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { webpInfo } from '../_png.mjs';
 import { bands, HEAD, MAX_ASPECT, MIN_ASPECT, REF_W, REF_H } from '../_bands.mjs';
+import { functionBody } from './_source.mjs';
 import { handler } from '../serve.mjs';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -537,9 +538,32 @@ export async function run({ check, assert }) {
     const writes = [...code.matchAll(/getElementById\('menu-record'\)/g)].length;
     assert(writes === 1,
       `#menu-record has ${writes} writers in main.js — it is the failed-deploy notice and nothing else now`);
-    assert(/catch[\s\S]{0,900}?getElementById\('menu-record'\)/.test(code),
-      "the one remaining #menu-record writer is not in deploy()'s catch — see tools/checks/session.mjs, which "
-      + 'requires a failed deploy to say so somewhere the player can read it');
+    /**
+     * INSIDE `deploy()`'s CATCH, ESTABLISHED BY BRACE COUNTING and not by "a
+     * `catch` token appears within nine hundred characters".
+     *
+     * `main.js` has eight `catch` sites; the old regex asked only whether one
+     * of them happened to sit nearby, so moving the write out of the catch onto
+     * any unconditional path that follows one — turning the failed-deploy
+     * notice into a permanent line under the title of the game, which is the
+     * exact defect this check was written to end — left it green.
+     */
+    const body = functionBody(code, 'function deploy(');
+    const at = body.indexOf("getElementById('menu-record')");
+    assert(at > 0, "deploy() no longer writes #menu-record at all — the failed-deploy notice is gone");
+    /* BACKWARDS TO THE BLOCK THAT ENCLOSES IT, which is the only direction that
+     * survives the `try { world.dispose(); } catch {}` nested inside this very
+     * catch — a forward scan for "the last catch seen" loses the outer one the
+     * moment the inner one closes. */
+    let depth = 0, open = -1;
+    for (let i = at; i >= 0; i--) {
+      if (body[i] === '}') depth++;
+      else if (body[i] === '{') { if (depth === 0) { open = i; break; } depth--; }
+    }
+    assert(open > 0, 'the #menu-record write is not inside any block of deploy()');
+    assert(/catch\s*(\([^)]*\))?\s*$/.test(body.slice(Math.max(0, open - 80), open)),
+      "the one remaining #menu-record writer is not inside deploy()'s catch — see tools/checks/session.mjs, "
+      + 'which requires a failed deploy to say so somewhere the player can read it, and only a failed one');
     /* …and the thing it stopped displaying is still there to display. */
     const prog = await read('src/game/Progress.js');
     assert(/export function progressLines\b/.test(prog),

@@ -45,6 +45,12 @@ worth about +1.0 against a 4.5 baseline; M1 decides whether that is real.** If M
 returns +1.0, that is the expected result and not a regression — draft 3 would
 have read it as one.
 
+**M1 HAS SINCE RETURNED, AND THE SIGN IS NEGATIVE: −2.0, not +1.0.** See M1 in
+§6. Read that with its own caveat: the baseline it is measured against is
+propped up by `_watchdog`, which retires the wave when no player is on the
+field, so the magnitude is not yet trustworthy even though the sign has held
+across four arms.
+
 The mechanism, which is the part that has held across readings: with the Jedi
 present, fire arriving on the line **halves** — 0.94–1.72 hp/s down to
 0.43–0.97. *He is removing bodies before they fire.*
@@ -86,25 +92,34 @@ it, and nothing in §4 may be built before M5 reports.**
 **And one live defect that outranks the plan.** `tools/scale.mjs`, quality high,
 in `command` so the cross-army pass runs, medians of repeated takes:
 
-     0 alive      5.74 ms CPU   [4.79–5.74]
-    16 alive     13.27 ms CPU   [12.12–13.27]
-    30 alive     18.11 ms CPU   [13.42–18.11]
-    54 alive     25.49 ms CPU   [23.71–25.49]
+     0 alive      5.74 ms CPU   [4.79–5.74]      ← RETRACTED
+    16 alive     13.27 ms CPU   [12.12–13.27]     ← RETRACTED
+    30 alive     18.11 ms CPU   [13.42–18.11]     ← RETRACTED
+    54 alive     25.49 ms CPU   [23.71–25.49]     ← RETRACTED
 
-**THE EMPTY WORLD COSTS 5.74 ms — 34% of a 16.67 ms frame with no soldier in
-it**, and the simulation goes over budget **between 16 and 30 bodies**. `Levy`
-makes `alive` 66 in the flagship modes.
+**THE INSTRUMENT WITHDREW THIS TABLE ITSELF, and the paragraph that stood here
+is void.** It read "the empty world costs 5.74 ms — 34% of a 16.67 ms frame with
+no soldier in it, and the simulation goes over budget between 16 and 30 bodies",
+and `tools/scale.mjs`'s own header now says why that was wrong: the run sampled
+after 90 warm-up frames, and fifty-two dressing props were still coming to rest.
+**The settled empty world is about 2.5 ms and still falling, and every per-body
+number the old table printed carried a share of somebody else's crates settling.**
+`WARM` is 1200 frames now.
 
-The floor is the finding nobody owns. Every scale ambition in §4.3 is downstream
-of it, no section of this plan aims at it, and it is the largest single line in
-the instrument's own output. **M7 exists for it.**
+So there is no 34% floor, there is no 16-30 body knee, and **M7 exists to chase a
+number its own instrument has withdrawn.** `PERF.md` was still publishing the
+same retracted run as a 23-body ceiling. What §4.3 is actually downstream of is
+the measured ladder: 160 bodies in the two-army front layout, 120 of them at
+16.60 ms.
 
 **What already ships and both drafts failed to name:** `Cohorts.js` — **168
 bodies at 27 draw calls** past 137.8 m. `MergedSkin.js` at ~4.6 calls/body.
 `Levy.js`, forty free bodies off the threat budget. `Battlefield.js`, ground
 generated around a seeded bezier front. `Front.js`, that front drawn, with a
 measured ordering test. `Fallen.js`, 520 prone figures at two draw calls.
-`Extraction.js`, nine phases. `Morale.js`/`Nerve.js`. 37 archetypes, 20 vehicles,
+`Extraction.js`, thirteen phases across two legs (the withdrawal reuses nine).
+`Morale.js`/`Nerve.js`. 37 archetypes, 8 vehicle archetypes across 14 hull
+builders — the "20 vehicles" this line carried is in no table anywhere —
 7 grounds, 9 modes.
 
 ---
@@ -309,35 +324,46 @@ So it splits:
 
 - **M6 — re-measure physics against the post-`06df3ee` tree** before any of this
   is scoped.
-- **B1a — index the cross-army pass.** `World.js:2743`'s own comment says its
-  cost "is only affordable because `_hostilesFor` is the path Command actually
-  takes", and `src/physics/BoxIndex.js` is the precedent for exactly this fix.
-  Contained, measured, and the biggest simulation win available.
-- **B1b — ragdoll pooling and `Fallen` retirement.** Neither exists: `Fallen` is
-  imported only by `Front.js`, and nothing retires a corpse into it. Real, and
-  smaller than draft 3 claimed.
+- **B1a — index the cross-army pass. BUILT.** `src/game/ArmyIndex.js` is the
+  broad phase, built on `BoxIndex`'s contract exactly as this line predicted,
+  consumed by `World.js`'s cross-army pass (which is at `World.js:2989-3018`
+  now, not the 2743 this bullet cites), and held by
+  `tools/checks/army-index.mjs`.
+- **B1b — ragdoll pooling and `Fallen` retirement.** SPLIT BY MEASUREMENT, and
+  only one half survived it. **Retirement is built** — `Fallen.js` grew a
+  `FallenField` and `Corpses.js`'s SINK step lays a prone instance where the
+  body lies instead of deleting it, so the budget demotes the dead rather than
+  losing them. **Pooling is struck**, and the measurement that strikes it is
+  the deliverable; see §6's B1 entry for both sets of numbers.
 
-**B2 — attack tokens.** *Licensed by absence:* no crowd-attack limiter exists in
-`src/`. Sum of active attack weights against a target may not exceed its
-capacity; FIFO queue; cooldown multiplier. A Jedi in forty bodies faces three or
-four live attacks instead of forty. Cheap, well-documented, and legibility only
-gets worse as density rises.
+**B2 — attack tokens. BUILT.** *This bullet was licensed by absence — "no
+crowd-attack limiter exists in `src/`" — and `src/game/Tokens.js` is one:*
+`TokenPool`, `WEIGHT` per attack kind, `capacityFor`, a FIFO queue and a cooldown,
+constructed on the `World` and consumed by `Enemy`. A Jedi in forty bodies faces
+three or four live attacks instead of forty, which is what this asked for.
 
-**B3 — scale that costs no draw calls.** *Licensed by nothing needing
-measurement.* A three-layer distance audio bed (weapons at near/mid/far, mixed by
-distance) is the single biggest perceived-scale win available and this engine
-synthesises every sound already. Plus `Fallen` fields on the horizon,
-atmospheric perspective tuned per ground so the far plane reads as far, and
-foreground silhouettes that parallax faster than the field. This is "truly
-immense sense of scale" for weeks of work and zero frame cost, and draft 2
-deleted it for no reason.
+**B3 — scale that costs no draw calls. ALL THREE BUILT.** The three-layer
+distance audio bed is `Audio.BATTLE_BANDS` — near / mid / far, fed by the weapon
+events the frame already raises and TAPPED BEFORE the audibility test, so the
+rounds past 82 m that the per-source path throws away become the bed instead of
+nothing; band edges derived from `HEARING_FLOOR` and `MAX_RANGE` rather than
+chosen; O(bands) a frame on nine nodes. `Fallen` fields on the horizon are
+`Battlefield.addFallen`'s ±150 m band; atmospheric perspective per ground is
+`Scenery.Haze`; the parallaxing foreground is the 170/250/340 m ranges. "Truly
+immense sense of scale" at zero frame cost, and now measured as such.
 
-**B4 — extraction boarding**, currently 0–2 of ten men reaching the ramp. It
-gates the company, and it is the same problem class as any crowd convergence.
+**B4 — extraction boarding. BUILT.** The "0–2 of ten men reaching the ramp" in
+this line is the PROBLEM STATEMENT and it is kept in `Extraction.js` beside the
+three fixes for it. The manifest is 10 of 10 on the drifts, the Colosseum and
+alpine, and 6 on geonosis, whose spawn ring is 58–96 m against everybody else's
+26–60. `Company.js` consumes it, so the gate it was meant to open is wired.
 
-**B5 — the four open playtest defects**, which the developer has already seen:
-enemies illegible at range; characters with no value separation or contact
-shadow; Command discarding the chosen theatre; the camera inside tree trunks.
+**B5 — the four open playtest defects. ALL FOUR FIXED**, each with a check.
+Illegibility at range and the missing value separation are one file,
+`src/world/Contact.js`, held by `cel.mjs` against WCAG contrast on seven
+theatres; Command's theatre is declared (`fixedTheatre`) and honoured; the camera
+in trunks is `Trees.js`'s `EYE_CLEAR`, which thins the DRAWN trunk and leaves the
+collider where it was.
 
 ---
 
@@ -433,7 +459,8 @@ put both commanders under the same rule; this is what that produces at scale.
   "near" that moves: men riding it are near each other and near you, so armour
   becomes how a line crosses open ground under fire — and losing it strands the
   quorum mid-field. `Riders.js` already makes a rider an ordinary body whose
-  position is taken over by its mount, so one rule welds twenty shipped vehicles
+  position is taken over by its mount, so one rule welds the eight shipped vehicle
+  archetypes
   to the keystone. This is the answer to "make use of vehicles", which every
   previous draft left as a noun.
 - **Transports arriving are the reinforcement pool made visible.** Both sides
@@ -442,9 +469,18 @@ put both commanders under the same rule; this is what that produces at scale.
 *Route to it:* density is M3 — one constant. The rendering ladder ships
 (`Cohorts` 168-at-27 past 137.8 m, `MergedSkin` nearer); the missing piece is
 named in `Cohorts.js` itself — *"every instance of one cohort wears one pose"* —
-and animating that rung **is gated hard on M4**, because the honest ink fix is
+and animating that rung **was gated hard on M4**, because the honest ink fix is
 per-object prepass materials and the prepass is already 118 of the meadow's 214
-draws. Do not touch it before the browser instrument exists.
+draws. THE INSTRUMENT EXISTS AND IS NOW READ — `src/engine/Profiler.js` reports
+frame, JS and real GPU time with p99 and the 1% low, always on, and
+`tools/_frame.mjs` pulls it out of a real Chromium and prints the split. The
+first move on this rung has been taken: the frame here is 93–99% draw and 1.3–3%
+our JS, and the reader carries an A/B/A rung that switches `OutlinePass.prepass`
+off and back on to price the second rasterisation directly. On THIS box that
+bracket lands inside its own noise band — a 2.5–3.8 s software frame cannot
+resolve a 12% effect — so the prepass has a tool and still has no price, and
+getting one means running `tools/_frame.mjs` where there is a GPU. The pose is
+the second move and is not blocked on it.
 
 **The front already exists.** `Battlefield.js` generates ground around a seeded
 bezier front; `Front.js` draws it. Do not build a second front model.
@@ -461,12 +497,17 @@ the battle in the brief, and calling the shortfall atmosphere would be this
 document pre-authorising itself not to deliver its centrepiece.
 
 **And that kill may already have fired.** `scale.mjs` reads over budget between
-16 and 30 bodies. It also runs a five-second frame with no corpses in it, while
-`frame-ledger` blames 47% of a real frame on 288 rigid bodies against 39 living —
-so the 120 bar is set against a benchmark that excludes the dead and is
-optimistic in a direction worth stating. If M3 and M6 confirm 120 is unreachable,
-the honest answer is that the floor and the cross-army pass are fixed first
-(M7, B1a) — not that the battle shrinks.
+16 and 30 bodies — **and that reading is retracted; see §0.** The instrument
+warmed for 90 frames while fifty-two dressing props were still settling, so the
+floor it found was somebody else's crates; the settled empty world is about
+2.5 ms and `WARM` is 1200 frames now. **M7 IS STRUCK**: it existed to chase that
+floor, and there is no floor. B1a is done (`ArmyIndex`), and the ladder has since
+run to 160 bodies with 120 of them at 16.60 ms — so 120 is not unreachable, it is
+measured. What remains true and worth stating is the direction of the bias:
+`frame-ledger` blames 47% of a real frame on 288 rigid bodies against 39 living,
+so a bar set on a benchmark that excludes the dead is optimistic — which is
+exactly why B1b's corpse retirement was worth building and its ragdoll pool was
+not.
 
 ### 4.4 The company — and it must work on a losing run
 
@@ -497,26 +538,36 @@ that earned it.
 
 **And the between-run layer is the MUSTER, which already exists with the choice
 taken out of it.** The developer asked for "a whole new minigame, like keeping
-track of companions" and every draft so far answered with a screen. `autoMuster`
-spends a purse of 22 points at 5 a trooper, automatically, at every area
-boundary. Make it a decision at the Company screen: **replacements, or promote a
-survivor, or bank the purse.** That is the companion layer, it is §5's roster-cost
-question given an interface instead of a constant, and it is a function that
-ships today with its decision removed.
+track of companions" and every draft so far answered with a screen. *This paragraph
+described a screen that now exists.* `Screens.muster` raises a real card with
+`recruit` AND `route` callbacks on it, `main.js` wires `d.onMuster` to it, and
+`autoMuster` is the documented FALLBACK for when no card can be raised. The purse
+is per-area and runs 11 / 14 / 17 / 26 / 30 across the five grounds — the "22
+points" here is no rung of that ladder; the 5 a trooper is right. What the card
+does NOT yet offer is promoting a survivor or banking the purse, and those two
+are what is left of this bullet.
 
 *Kill:* if players take the same option every time, it is a dialog and not a
 decision, and `autoMuster` should keep it.
 
 *Licence:* `Command.js` ships designations, five ranks, promotions and nicknames;
-`Progress.js` ships the localStorage record; `Extraction.js` ships nine phases.
-**The wire between them does not exist.** *Kill:* B4 — if boarding cannot be
-fixed, the gate does not exist and persistence has to be gated some other way.
+`Progress.js` ships the localStorage record; `Extraction.js` ships thirteen
+phases. **The wire between them exists now**: `Company.js` consumes
+`Extraction.manifest` through `World._endWithdrawal`, and `Menu.js` ships a full
+Company tab — the roll, the fallen rows, a per-man dossier, a mark and a
+callsign — held by `tools/checks/company.mjs`. What that tab does not let you
+change is his KIT out of `COMMAND_UNITS`, and that is the only part of this card
+still owed.
 
 ### 4.5 Co-op and versus, first class
 
 **Two generals is the path to X-vs-X, and X starts at 2.** `Net.js` already runs
-a second commander with an army; `assignArmies` already exists and already has a
-documented defect (it ignores the peer's chosen side).
+a second commander with an army; `assignArmies` already exists, and what this
+line called "a documented defect (it ignores the peer's chosen side)" is a
+documented and MEASURED omission: it gives the first commander what they ask for
+and resolves every conflict after that against what is already taken, and with
+only two armies on the field the peer's real order changes the assignment in **0
+of 28** cases. It becomes worth sending the day there is a third army.
 
 A Sith general who is *also* directing a line, who leaves his line for exactly
 the reasons you leave yours, makes the battle turn on **who was somewhere else at
@@ -535,8 +586,10 @@ delta, not trajectory). *Kill:* if two commanders cannot be kept in agreement on
 Licensed by nothing needing measurement, and it is the developer's most repeated
 request:
 
-- **The holocron offers three of the currently-legal facets, not all 46.** Same
-  46 nodes, same adjacency; only the *offer* changes. A solved build order
+- **The holocron offers three of the currently-legal facets, not all 52.** Same
+  52 nodes, same adjacency; only the *offer* changes. (Written as 46 when the
+  table had 46; it has 52, and two comments inside `LivingForce.js` still say 46
+  as well.) A solved build order
   becomes a found one.
 - **Eight facets that change rules rather than numbers.** *Push ragdolls allies
   too. The saber absorbs instead of deflecting. Shattering a prop refunds
@@ -574,13 +627,20 @@ because the AI ignored the ground the player sculpted.
 **Cover is finite.** Pre-fractured props degrade over a long battle, so a late
 act is more lethal than an early one with no number changing.
 
-**Weather disables one verb and enables another.** *Draft 3 licensed this with
-"`Hazard.js` ships". `Hazard.js`'s first line is "the water that is not water" —
-it is lethal liquid volumes and wade depth. There is no `Weather.js`; snow is
-level dressing. **Weather is entirely unbuilt**, five systems each of which
-rewrites sight tests on both sides, and it is priced here at nothing. It moves to
-the back of the graph and it is the section most likely to be cut.* The design,
-when it is paid for: sandstorm
+**Weather disables one verb and enables another.** *This paragraph used to read
+"there is no `Weather.js`; snow is level dressing. **Weather is entirely
+unbuilt**, five systems… it moves to the back of the graph and it is the section
+most likely to be cut", and every clause of that was false when it was written.*
+`src/world/Scenery.js` exports a full `Weather` class and a `weather` singleton;
+all seven grounds author a squall; snow FALLS at its own terminal speed with the
+wind raking it over. The one thing genuinely missing was that nothing ever asked
+whether you could SEE through it, and that is built too: `Smoke.setAir` puts what
+the storm adds to the level's own fog into the optical-depth model that
+`Enemy._canSee` and `_aimedShot` already read, and at each ground's own peak a
+rifle's sight falls to 19-34 m. §6 retracted this sentence and this section kept
+it, which is the whole failure mode in one place — the retraction is where a
+reader is not looking, and the section is where they set their scope. What is
+still owed is the OTHER verbs below. The design: sandstorm
 kills ranged fire both ways and leaves Force sense working, so you become your
 army's eyes; blizzard costs sightlines but carries sound; ash grounds air and
 speeds fire; rain conducts lightning between men in contact. **No dark maps** —
@@ -597,7 +657,7 @@ than dressed up:
 
 - **Contested telekinesis.** Two Force users gripping one rigid body as a shared
   constraint, both spending pool, the object shuddering between them. Break his
-  guard and the resistance cap collapses from a half to a third — *already in the
+  guard and the resistance cap collapses from a half to a FIFTH — *already in the
   code* — and it becomes a projectile with his name on it. In Psi-Ops, Half-Life
   2, The Force Unleashed and Control, exactly one entity owns an object.
 - **Squadmates grab the man you are gripping.** One joint, one break force: a
@@ -653,23 +713,342 @@ This is a graph.
 
 ```
 NOW — measurements
-  M1  twenty-seed reference arm ........... running · licenses everything
   M5  does lineIsUp change play? ......... REPORTED — see §2. 34.1% of a
       leaving player's ground against 8.2% of a staying one. The gate is
       open and the chain below is licensed.
-  M2  teamDamage bound (1 hour)
-  M3  density: LEVY_STRENGTH + drop the cross-army gate
-  M4  browser frame instrument ............ gate on every rendering decision
+  M1  twenty-seed reference arm ........... **REPORTED.** `tools/_linehold.mjs`,
+      theline on geonosis, engagement 1, twenty seeds, three arms:
+
+          none   survivors 6.7/10   cleared 18/20   median 202 s
+          idle   survivors 1.0/10   cleared  3/20   median 185 s
+          blade  survivors 4.7/10   cleared 11/20   median 239 s
+
+      THREE READINGS, AND TWO OF THEM ARE UNCOMFORTABLE.
+
+      **The floor is easier than the target.** §5's own words are "an
+      engagement fought with no help from the Jedi should cost roughly HALF a
+      ten-man line — about 5 of 10". It costs 3.3. The line alone clears 18 of
+      20 engagements, so the ground the mode is built on is about a third
+      cheaper than it was asked to be.
+
+      **An idle Jedi is far worse than the phrase for him.** `Levy.js` says "an
+      idle Jedi is not a Jedi; it is a corpse with a delay" — measured, he is a
+      catastrophe: 1.0 survivor against the empty field's 6.7, and 17 wipes in
+      20. He is a body the levy walks at, so he pulls a wave onto a line and
+      then does not fight it. That is the mode's own thesis about presence,
+      and it is much sharper than anyone had written down.
+
+      **AND A JEDI WHO FIGHTS FROM HIS LINE IS STILL A NET NEGATIVE.** 4.7
+      against 6.7: the line does BETTER with nobody there than with a blade on
+      the field. This was first written up here as "a Jedi who ONLY FIGHTS",
+      on the reading that `dutyInput` chases the nearest enemy and is therefore
+      M5's bad player — **and that was wrong about the code.** The script holds
+      station on the line's own CENTROID and leaves it only for something
+      inside `ENGAGE`, and only while he is inside an 18 m `LEASH`; its own
+      note says it holds station there "so when the formation advances the
+      Jedi advances with it and `MORALE.JEDI_NEAR` keeps paying". So BLADE
+      already IS a Jedi who stays with his men and fights from among them, and
+      the result is sharper than the softer reading allowed.
+
+      **AND THE CONTROL HAS NOW RUN, AND IT ANSWERS THE WHY.** `standOff` — the
+      same script, the same guard, the same keep-alive, holding station a
+      hundred metres off — existed in `_flagship.mjs` with this exact argument
+      attached and had never been driven. Twenty seeds:
+
+          none   6.7/10   cleared 18/20   67 s a wave
+          blade  4.7/10   cleared 11/20   79 s      (with the line)
+          far    3.8/10   cleared 12/20   83 s      (100 m off)
+          idle   1.0/10   cleared  3/20   67 s
+
+      **A Jedi a hundred metres away still costs the line 2.9 men.** He is not
+      near anybody, so the men are not dying in fire aimed at him: PRESENCE IS
+      NOT WHAT KILLS THEM, and the other explanation is the one left standing.
+      What moves with the cost is the LENGTH of the engagement — 67 s a wave
+      with no Jedi, 79 with one in the line, 83 with one standing off — and the
+      extra minute is paid by the men. A Jedi makes the fight longer and the
+      line pays for the time.
+
+      **Being WITH the line is worth about one man** over standing off (4.7
+      against 3.8), so `MORALE.JEDI_NEAR` and the rest of the presence term do
+      pay — they simply do not pay enough to beat not being there at all.
+
+      SO §1's PROMISE IS NOT MET AS MEASURED. "Your job is to be the reason the
+      line is still standing when it takes the ridge" — and the line is still
+      standing more often when nobody comes. That is the sharpest thing this
+      document now contains, and it is a BALANCE finding rather than a broken
+      mechanism: every part works, and the arithmetic of what a Jedi is worth
+      against what his presence costs comes out negative. The mechanism behind
+      the length is not proven, only correlated, and naming it is the next
+      measurement: whether the director paces on a player, whether the levy
+      walks at him, or whether a wave simply survives longer with one blade
+      pulling bodies off the line's guns.
+
+      **AND THE FIRST OF THOSE THREE IS THE ANSWER — WITH A COST.** The
+      director DOES pace on a player. `WaveDirector._watchdog` scores a body's
+      progress as its distance to the nearest live PLAYER, which was the whole
+      question when the only thing on your side of the field was you. In
+      Command it is not: the horde's fight is your ARMY. So on the `none` arm —
+      no player on the field, the CONTROL every other arm here is read against
+      — every living enemy reads stalled and the director retires it.
+      `tools/_whywave.mjs`, theline/geonosis, engagement 1, five seeds, fifteen
+      cleared waves:
+
+          236 rescues and 118 RETIREMENTS a run — 39.4 a wave, against
+          10.5 bodies the line actually shot. Of the wave's 8.4 paying
+          regulars the line killed 3.2 and the watchdog DELETED 5.2.
+
+      **The unaided line was not winning. The clock was deleting 62% of the
+      wave standing in front of it.** The fix is 52 lines: let a body also
+      count progress toward `e.target`, which `Enemy._think` writes every frame
+      off `World.pickTarget` — the game's one statement of who a body is
+      fighting, already aware of the other army, the team gate and the leash.
+      It is written, measured and NOT IN THE TREE, at
+      `tools/_watchdog.patch`. It fires wherever the player is not: a
+      bench arm, a Jedi a hundred metres off his line, **and every frame after
+      the commander goes down in shipped play.**
+
+      IT IS OUT BECAUSE IT IS A BALANCE DECISION, NOT A CODE ONE. Same mode,
+      same ground, same seeds:
+
+          stock       3, 4, 5, 9, 8 of ten left · 5 of 5 areas cleared
+          honest      0 of ten, every seed      · 0 of 7 cleared
+
+      — and `theline.12`, *"an engagement fought without the Jedi costs about
+      half the line"*, a check already in the gate asserting §5's own target,
+      goes red at **0.0 of 10 standing: the muster is never reached and the
+      mode cannot be won.** Landing the fix lands a difficulty re-tune with it,
+      and which knob gives — wave budget, `RULE_MAX`, morale, or §5's target
+      itself — is the developer's call.
+
+      **SO EVERY NUMBER IN THIS ENTRY IS MEASURED AGAINST A PROPPED FLOOR.**
+      `none 6.7/10` is not what an unaided line does; it is what an unaided
+      line does while the director kills five men a wave on its behalf. The
+      three readings above are RELATIVE to that floor and survive as
+      directions, not magnitudes: idle is a catastrophe, a blade in the line
+      still costs men, and LENGTH is what moves the cost. All of them must be
+      re-run after the tune rather than carried across it. The length finding
+      in particular is now suspect from both ends: a longer engagement is also
+      one the watchdog has had longer to prune.
+  M2  teamDamage bound ................... ANSWERED, and this document quotes
+      the answer four hundred lines above the question — §2's dealer census
+      reads "bolt 99.3%, friendly fire 0.7%". 0.7% IS the ceiling on any
+      friendly-fire work, and `command.mjs` already drives `teamDamage: 0`
+      and asserts it is exactly nothing.
+  M3  density ............................ RUN, and the one-liner contradicted
+      §2's own conclusion. §2 says "leave the gate alone" and `World.js`'s
+      cross-army pass carries that decision in writing; `tools/scale.mjs` has
+      since run the ladder in the two-army front layout to 160 bodies, 120 of
+      them at 16.60 ms. AND `LEVY_STRENGTH` IS ALSO ALREADY DECIDED, against
+      raising it, in `Levy.js`'s own note and with the arithmetic beside it:
+      a levy's cost is linear in bodies at every rung of the ladder — no levy
+      is 18 bodies and 767 body draw calls, levy 40 is 64 bodies and 1 415,
+      which is 14 calls a body against the 45 a contact body costs because
+      most of the mass is still crossing at L1 and L2 — so eighty is 2 830
+      calls at the same peak and there is nothing in the ladder that bends.
+      Both halves of this entry are decisions with numbers under them, not
+      omissions, which is why the label read as work and was not.
+  M4  browser frame instrument ........... BUILT AND NOW READ.
+      `src/engine/Profiler.js` reports frame, our own JS, REAL GPU time through
+      `EXT_disjoint_timer_query_webgl2`, p99 and the 1% low; it is always-on,
+      `Engine` constructs it, the HUD reads it and `tools/checks/profiler.mjs`
+      holds it. The reader it never had is `tools/_frame.mjs`: boots the shipped
+      page in Chromium, deploys into `theline` on geonosis, plays a stated
+      number of frames and prints the split, on a ladder of rungs that share one
+      boot. FIRST RESULT, and the one that unblocks 9 below: THE TIMER QUERY
+      RESOLVES here — ANGLE on SwiftShader-Vulkan answers it on every frame — so
+      §4.3's "GPU-bound or JS-bound" is answerable by tool rather than by
+      argument, on this box and on any player's. What it answers HERE is that
+      our JS is 1.3–3.0% of the frame and the draw is 93–99% of it, at 2.5–3.8 s
+      a frame, which is a software rasteriser being a software rasteriser: the
+      SHARE is a real reading of this machine and is not a prediction of anyone
+      else's. The counts are: 12 living men on geonosis draw ~2400 calls and
+      ~1.9 M triangles a frame at quality high, and 40 more men add ~2430 calls
+      and ~618k triangles. The millisecond deltas resolved at load 5 on four
+      cores (+400 ms for those 40 men, 10 ms a body) and did NOT at load 8; the
+      tool prints its own noise band and says which.
 
 NOW — building, licensed by measurements already taken
-  B0  TWO LINES MAKE THE FRONT ............ delete Command.js:5721's early
-      return, run areas for both sides, lineIsUp(a) vs lineIsUp(b).
-      The largest missing piece of the brief, and smaller than M3.
-  B1  pooled ragdolls, instanced corpses .. precondition for ALL scale
-  B2  attack tokens
-  B3  audio distance bed, horizon, haze ... scale at zero frame cost
-  B4  extraction boarding ................. gate on the company
-  B5  four open playtest defects
+  B0  TWO LINES MAKE THE FRONT ............ BUILT. `CommandDirector._front`
+      reads BOTH commanders, gates each on `lineGathered(c)` — which is the
+      split that fixed the real bug, since `lineIsUp` opens with a clause that
+      answered true for both sides and made the gathered test dead — pushes a
+      shared `front` scalar, and ends the meeting through `World._endMeeting`
+      at a baseline. The scalar is on the wire and drawn (see 8 below).
+  B1  pooled ragdolls, instanced corpses .. CLOSED, and half of it by
+      DELETION. `ArmyIndex` is the broad phase and `Corpses.js` bounds settle,
+      cap and budget, which is why 120 bodies fit a 16.60 ms frame. The two
+      halves left were priced separately and only one of them was worth
+      building.
+
+      RETIREMENT — BUILT. `src/world/Fallen.js` grew a `FallenField` (a
+      preallocated pair of `InstancedMesh`, `GraveField`'s shape) and
+      `Corpses.js`'s SINK step now lays a prone instance where the body lies —
+      under a settled corpse as the fade STARTS, so it dissolves off a figure
+      already there, and on the last frame for one the cap ended while it was
+      still travelling. The budget stops deleting the dead and starts demoting
+      them. Licensed by a draw-call reading nobody had taken —
+      `tools/_farcorpse.mjs`, a B1 on geonosis, shipped build:
+
+          100 m   alive  4 meshes (the L2 merged skin)   dead  44
+          163 m   alive  0 meshes (the L3 cohort)        dead  44
+
+      A body gets CHEAPER as it walks away and eleven times DEARER the moment it
+      falls, because `MergedSkin`'s staleness drops the L2 bake on
+      `actor.ragdolled` — correctly — and `Enemy.update` returns on `dead` above
+      the line that would re-ask for the cohort. There was no rung below a
+      corpse, so everything past `CORPSE_BUDGET.high` — twenty — had to be
+      deleted. There is a rung now, at two draw calls for the whole field
+      however many are in it. `undertaker.mjs` holds the property
+      and reports the trade it measured: five B1 corpses drawing 225 meshes
+      against one instanced draw call.
+
+      POOLING — STRUCK, and the measurement is the deliverable.
+      `tools/_ragdollcost.mjs` on `lifecycle.mjs`'s own fixture, 30
+      build/ragdoll/dispose cycles after 6 warm-up, CPU (three runs, load
+      4.7-5.9 on 4 cores — the contention is why these are a range):
+
+          one ragdoll        19 rapier rigid bodies, 19 colliders, 18 joints
+          goRagdoll()        1.78 - 2.76 ms median
+            physics.add      0.72 - 0.77   (the WASM: createRigidBody + collider)
+            addJoint         0.12 - 0.13
+            three.js         0.82 - 0.83   (holders, reparenting, matrices)
+          dispose()          0.34 - 0.40 ms
+            physics.remove   0.16 - 0.19
+          end to end         2.17 - 3.10 ms per death
+
+      **Nothing leaks.** Rapier's own counters — `world.bodies.len()`,
+      `colliders.len()`, `impulseJoints.len()` — come back to exactly where they
+      started over all 30 cycles, and so do the wrapper's arrays.
+
+      A death is an EVENT and not a load, so the figure has to be multiplied by
+      a rate before it can be compared to a frame, and §2's M5 table is five
+      real minutes a cell: 19.7-56.0 kills and 7.0-8.7 own fallen, so
+      **0.1-0.25 deaths a second**. At that rate the whole of construction and
+      teardown is **0.02-0.08% of every frame** — and at ten a second, forty
+      to a hundred times the measured rate, it is 2-3%. A pool's ceiling is the 0.90-0.92 ms
+      that crosses into WASM, so **0.009-0.023%** of a frame, and that ceiling
+      is generous: it assumes a pooled body needs no re-seating at all.
+
+      And it could not return even that. `Body._unbind` is
+      `world.removeRigidBody` — taking a body out of the Rapier world DESTROYS
+      it — so a pooled ragdoll has to keep its nineteen bodies IN the world,
+      which is exactly the **573 → 33** bodies `Corpses`' SETTLE step exists to
+      remove and the 47%-of-`world.update` physics line that step bought back.
+      A pool would pay that to save 0.01-0.02% of a frame. It is not a small
+      win, it is a negative one.
+  B2  attack tokens ...................... BUILT. `src/game/Tokens.js`, a
+      `TokenPool` on the World, consumed by `Enemy`.
+  B3  audio distance bed, horizon, haze ... BUILT, all three thirds. The two
+      visual ones already shipped — `Scenery.Haze` and the 170/250/340 m
+      parallaxing bands, and `Battlefield.addFallen`'s horizon dead. THE AUDIO
+      THIRD IS `Audio.js`'s `BATTLE_BANDS`: three sustained layers at near /
+      mid / far, gains driven by the weapon events the frame ALREADY raises
+      (`blaster`, `boltHit`, `explosion`) binned by distance to the listener.
+      The band edges are derived, not chosen — 82 m is where a rifle round
+      drops under HEARING_FLOOR and 190 m is MAX_RANGE, so the bands are
+      exactly the three regimes the per-source path already has, and the bed
+      carries the two it throws away. Measured through the shipped engine
+      (`tools/checks/audio.mjs`): six rounds a second holds 0.019/0/0 at 20 m,
+      0/0.056/0 at 120 m and 0/0/0.084 at 240 m; an empty field costs zero
+      automations; 9,000 weapon events on top of a live engagement cost one.
+      Nine nodes, built at init. It is still scale at zero frame cost, and now
+      it is measured as such.
+  B4  extraction boarding ................. BUILT and measured. The "0-2 of ten
+      men reaching the ramp" in this line is the PROBLEM STATEMENT, kept in
+      `Extraction.js` beside the three fixes for it; the manifest is 10 of 10
+      on the drifts, the Colosseum and alpine, and 6 on geonosis, whose spawn
+      ring is 58-96 m against everybody else's 26-60. `Company.js` already
+      consumes it, so the gate this was supposed to open is wired.
+  B5  four open playtest defects .......... ALL FOUR FIXED, each with a check.
+      Illegibility at range and the missing value separation are one file,
+      `src/world/Contact.js`, held by `cel.mjs`; Command's theatre is declared
+      (`fixedTheatre`) and honoured; the camera in trunks is `Trees.js`'s
+      `EYE_CLEAR`, which thins the drawn trunk and leaves the collider alone.
+
+**SEVEN OF THE NINE ENTRIES ABOVE WERE STALE OR WRONG**, and that is the same
+defect §4.7 carried when it called weather "entirely unbuilt, five systems" on a
+tree that had shipped a full `Weather` and seven authored squalls. A plan is
+read to set the scope of a session; an entry that describes work already done
+buys a session of rediscovery, and one that describes the code wrongly buys
+worse. Both of the entries that were genuinely unbuilt when this block was
+rewritten have since been built: B3's audio bed, and M4's reader
+(`tools/_frame.mjs`), which is what unblocks 9 below — HANDOFF had been carrying
+that rung as "gated hard on M4" since before the profiler existed.
+
+**AND THE SAME AUDIT WAS THEN RUN OVER §0-§4, WHERE IT FOUND TWENTY-SIX MORE.**
+66 claims about the codebase checked, 40 true. §4.7 still said weather was
+"entirely unbuilt" — the very sentence this block retracts — because a
+retraction lives where nobody looks and the claim lives where everybody does.
+§0's physics table is retracted by `scale.mjs` itself (fifty-two dressing props
+were still settling after its 90-frame warm-up; the empty world is ~2.5 ms, not
+5.74, and `WARM` is 1200 now), so **M7 chases a number that no longer exists and
+should be struck.** §3's whole building list and much of §4's prose describe
+shipped systems as unbuilt. Each has been corrected in place.
+
+**WHAT IS ACTUALLY LEFT, after both audits**, and it is short:
+
+  · ~~**B1b**~~ — **STALE, and §3 says so six hundred lines above this list.**
+    Retirement is BUILT: `Fallen.js` has a `FallenField`, `Corpses.js`'s SINK
+    step lays a prone instance where the body lies instead of deleting it, and
+    `LIE_SINK` is the seat both use. Pooling is STRUCK by measurement, and the
+    measurement is §6's B1 entry. Nothing is owed here.
+  · ~~**§4.8's first two bullets**~~ — **both are built.** The contest is
+    `gripClaim`/`gripRelease`/`gripSeize` in Enemy.js, resolved by
+    `forceResistance` itself so there is no second rulebook; the grab is
+    `Reactions.reachForHelp`/`stepGrab`, one joint driven at `DRAG.haul` from
+    `DRAG.reach` away with a break force of `DRAG.haul × DRAG.reach`, and one
+    combined mass — `Enemy.heldMass` — that the cap gate, `_heft`, `_holdRate`
+    and the throw all already read. `tools/checks/grip.mjs` holds both.
+    Struck from this list.
+  · ~~**A SCREEN for the after-action report**~~ — **BUILT, and building it
+    found a defect in the record it draws.** `Session.runReport` projects the
+    director's log into the run: areas in the order they were fought, each with
+    its dead, its fire missions and who came up behind them, and — the half
+    that earns the screen — THE CENSUS. "Eleven men lost. Seven to Super Battle
+    Droids, three to your own fire missions" is the muster's next purchase and
+    the next order both, it is not derivable from anything else on screen (the
+    interlude never aggregates, the roll never counts), and a player who reads
+    "by a B2" six times across four musters twenty minutes apart does not add
+    them up.
+    A PANEL ON THE PAUSE CARD and not a state of its own: `src/ui/Screens.js`
+    exists because of an overlay a player could be stranded in, and the two
+    disclosures already on that card are the shape this game uses for "more, on
+    the card you are already looking at" — no new state, no new Escape rule, no
+    new hider. Said again in one line on the death card, which is the one
+    screen the pause card cannot reach.
+    **AND `killerName` HAD NEVER NAMED ANYTHING.** It ended `source.A?.name ||
+    source.type`, an archetype has no `name` — the field is `label` — so the
+    first half was always undefined and every death in every report this game
+    has ever drawn was attributed to `b2` and `droideka` rather than to a Super
+    Battle Droid and a Droideka. The graves in `Terrain` carried the same keys.
+    `tools/checks/report.mjs`, 13 checks, every one written to go red on a
+    report that lists without counting.
+  · The Company tab's refusal to change a man's kit is **a decision, not an
+    omission** — `Menu.js` argues it where it makes it ("a roster screen that
+    could edit them would be a cheat panel with a casualty list on it"), the
+    alternative it names is the rank ladder he can EARN, and `company.mjs` fails
+    the day a fourth editable field appears. Struck from this list.
+  · **The muster card cannot promote a survivor or bank the purse** — it offers
+    replacements and §4.6's road, and those two options are what is left of that
+    bullet.
+  · ~~**M1**, unrun~~ — **reported, four arms, and it is the sharpest finding
+    in this document.** See the entry above. What is left of it is a
+    DECISION and not a measurement: `_watchdog` paces on a player, deletes
+    62% of the wave when there is none, and the fix that makes it honest
+    wipes the unaided line and turns `theline.12` red. Which knob gives is
+    the developer's call, and every M1 magnitude is provisional until it is
+    made.
+  · **M7 is struck** — §4.3 says so where the number it chased used to be.
+  · **NOT A FEATURE, BUT IT BELONGS ON THIS LIST: ten checks were not meeting
+    §7's own standard**, and two of them were covering live defects. Audited by
+    asking which checks would still pass with the feature deleted; the answer
+    was ten out of ~1900, which is the real headline, and all ten are fixed with
+    the passing deletion written into the check. The three shapes are traps
+    §2.3b–d in HANDOFF: a read of a field nothing writes (`world.notes`,
+    `world.notices`, `A?.name`), a reader test that greps the whole tree and
+    finds somebody else's field (`.fireRate` off an ARCHETYPE), and a
+    fixed-length source window spelled as a regex (one of which had been reading
+    four thousand characters of doc comment).
 
 AFTER M5 — the chain, in dependency order
   1  §4.4 squad delegation + sergeants ..... BUILT. `c.squadPlanted` gives each
@@ -679,17 +1058,182 @@ AFTER M5 — the chain, in dependency order
      sites, crewed by whoever stands on them — so the interface is (1)'s
      delegation and there is no new verb. The weld holds: a crewed gun's men
      are out of the quorum, asserted A/B on the same men in the same places.
-     Still owed: the four-armed acceptance (does the Jedi arm beat the
-     no-player arm MORE with a Battery on the field?).
-  3  §4.9 downed-not-dead + after-action ... the quorum's other half
+     AND THE FOUR-ARMED ACCEPTANCE HAS REPORTED — `tools/_m6.mjs`, four
+     seeds × five minutes × four arms, the same squad posted on the same
+     ground in every arm so the only thing that differs is whether that
+     ground is a gun. **A Jedi is worth 82.1 s of run with a battery on
+     the field and 0.1 s without one** (225.4 s against 143.3 with;
+     177.8 against 177.8 without). This section's own kill was "if not,
+     it is decoration".
+  3  §4.9 downed-not-dead + after-action ... BUILT, and it has been for longer
+     than this line has said otherwise. `Enemy.goDown` and `MODES[*].downed` are
+     the state; the quorum's other half is `lineGathered` excluding the downed,
+     quoting §4.9 verbatim where it does it; and the after-action record is
+     `killerName(source)` plus a bearing and a minute on every entry. Triage
+     (§4.6) is the counter-rule that pays a man for standing over one. What is
+     NOT built is a SCREEN for the report — the record exists and nothing draws
+     it end-to-end.
   4  §4.4 company + Company screen ......... needs B4, 1 and 3
-  5  §1 the order you can check ............ needs 2 (Spire), 3 (AAR), 4 (cards)
-  6  §4.7 Dig In, finite cover, weather, graves
-  7  §4.6 variance ......................... two facets must move the quorum
-  8  §4.5 co-op and versus ................. B0 already built the mode; this
-     is the second human in it
+  5  §1 the order you can check ............ BUILT. src/game/FireMission.js.
+     High Command lays an ellipse, an honest estimate that is never revised,
+     and a window; one keypress clears it. Reading it costs 12 s inside 70 m
+     of the mark (4 s with Force sense), and the weld is the geometry rather
+     than a clause — measured, three arms, same order and same ten men: walk
+     out at your line's pace and 10 OF 10 are inside the ellipse; sprint out
+     alone and none are, but the quorum is DOWN for the whole reading; plant
+     them first with §4.4's delegation verb and you pay neither. The shells
+     carry a source on nobody's side, so `installTeamDamage` cannot blunt them
+     on your own men (120 hp against 42) and `killerName` names them: every
+     man they kill enters the after-action report as "by your own fire
+     mission".
+  6  §4.7 Dig In, finite cover, weather, graves ... BUILT, all four.
+     DIG IN is `FORMATIONS.digin` and `CommandDirector._digTick`: a squad
+     turns its own planted ground into a position in 22 s with its hands
+     full (a digging squad holds its fire), cut through `Terrain.crater`
+     so `CraterLog` carries it into the next engagement. Measured on a
+     real world at the shipped LOW tier, twelve rays from a shooter's
+     muzzle to a chest — flat 0/12 blocked, one shell crater 2/12, a dug
+     position 12/12. The defilade is SYMMETRIC and that is the trade: a
+     chest and a muzzle are 2 cm apart on every body in this game.
+     FINITE COVER was already true and nobody had measured it: a real
+     sitting stood 54 props at deploy and 49 six minutes later, off 137
+     hits nobody aimed at cover.
+     GRAVES are `src/world/Graves.js` — a named man leaves his rifle in
+     the dirt where he fell, for the run, two draw calls for all of them.
+     WEATHER was the expensive error in this section. "Entirely unbuilt,
+     five systems" is wrong: `Scenery.js` ships a full `Weather` and all
+     seven grounds author a squall. What was missing was that nothing
+     ever asked whether you could see through it. One number now — what
+     the storm ADDS to the level's own fog — reaches the model that
+     already decides what a shooter can see, and at each ground's own
+     peak a rifle's sight falls to 19–34 m.
+  7  §4.6 variance ......................... SIX RULE FACETS BUILT, and two
+     of them move the quorum, which is what this item was gated on.
+     Skirmish Order takes the ground on a THIRD of the living and halves
+     the muster; Triage counts a man on the ground while somebody is
+     standing over him. Beside them: Stand Fast (a rout becomes a place),
+     Field Engineering (§4.7's positions in half the time), Storm Sense
+     (the one thing allowed to break the sight model's symmetry) and
+     Salvage (§4.6's own example — breaking cover pays Insight). Each is
+     measured A/B on the same bodies in the same places in
+     `tools/checks/variance.mjs`.
+     THE HOLOCRON OFFERS THREE of the currently-legal facets and not all
+     fifty-two: `offerNow` draws off the run's own seed XOR how much has
+     been bought, so a solved build order is a found one, and
+     `LOCKED.offer` is why a facet you can afford is not on the table.
+     PLAYER-AUTHORED DIFFICULTY AND THE CAPS ARE ONE DECISION, and both
+     are built. The rules panel paid nothing, and the exchange rate for
+     fixing that was already in the source: `conditionCost` charges a
+     DEALT condition `worth · budget` and explicitly skips a RULE, which
+     is the game's own statement that a wave under a rule is `worth` more
+     fight. So `hazardPay(rules) = 1 + Σ worth`, the Insight a wave pays
+     is multiplied by exactly that, and repricing a condition moves the
+     payout with it rather than leaving a second table behind.
+     **Measured, forty waves under DELUGE+SILENCE: 56 Insight becomes 82,
+     and 5 facets bought become 6** — the raise arrives early enough to
+     buy something, which is the difference between a decision and a
+     bigger number. `Communion.earn` carries the fraction so the purse
+     stays whole. AND THE CAP IS TWO: `CONDITION_MAX` was answering two
+     questions at once — what the COMPOSER may carry (still 4, still the
+     stranding measurement at waves 100/140/200) and what the PANEL may
+     sell. `RULE_MAX` is 2, because with seven rules and a cap of four
+     you tick four and stop reading. "At most one beneficial" is
+     deliberately NOT built: every entry in `CONDITIONS` is a handicap,
+     so the clause would be a branch no input can take.
+     COMPOSITION CONSTRAINTS, four of the five named, and none of them
+     costs a new field: `ARCHETYPES[*].toughness` has been the game's
+     material classification all along. ARMOUR COLUMN (everything plated),
+     ONE MATERIAL (one kin a wave, a different one next wave), DROID HOST
+     and BEAST DRIVE. *bladed* is not among them because `silence` already
+     filters to `!ranged`, which IS the bladed roster. All four are
+     RULE-ONLY and that is measured rather than tidy: a roster narrowing
+     DEALT at depth is what strands a budget — the two already dealt push
+     the Colosseum to 51–59% unspent at wave 100, and four more stopped
+     the body cap binding at all. THEY FOUND A REAL BUG: `_setPiece` built
+     its ladder from the LEVEL's pool rather than the wave's narrowed
+     roster, so a boss wave under ARMOUR COLUMN fielded an acolyte and a
+     master; NO GUNS had the same hole and passed on luck.
+     THE BRANCHING ROUTE IS BUILT. `stages` keeps the length the seed
+     rolled and the player picks which grounds fill it: at each boundary
+     the legal window is one rung past the ground just held, up to the
+     last rung that still leaves room for the slots after it, so the
+     route is always forward, always ends on the Core Ship, and always
+     runs the promised number of engagements. What is shown is the
+     ground, its waves and a garrison BAND — `garrisonBand` ranks
+     `budget × (1 + heavy)` against every area's rather than thresholding
+     it, so a retune re-deals the words with no second table. What is
+     hidden is the composition, and the check asserts the offer's exact
+     key set to keep it that way. Measured, one Push seed forked two
+     ways: ground, rung, muster (17 against 26), band and total payout
+     all move; the engagement count and both ends do not.
+     Three limits, stated rather than papered over. **Only a Push forks,
+     and only once** — pinned ends plus strictly increasing rungs means a
+     fork also needs a non-end slot, and a Grind is five over five while
+     a Raid is two ends. That is arithmetic; the lever for more is a
+     sixth ground. **Per-area weather does not exist** and was left out
+     rather than faked: `Scenery`'s squall is configured once per LEVEL
+     and a crossing is one level, so both candidates would carry the
+     identical weather, which is an element that changes no decision.
+     **A branch moves the run's total wave count** by one on a Push, and
+     nothing asserts on that sum.
+     AND THE FLOOR IS BUILT, which was the last of it. ARMOUR COLUMN was
+     a FILTER — everything plated — and the measurement killed it: on four
+     of the seven theatres the whole plated roster is `b2` and `droideka`,
+     so the card fielded 0% enormous bodies at every depth while its own
+     tell said "some of it drives". It is now `ARMOUR_SHARE`, one named
+     constant carrying §4.6's own 40%, reserved in `_composeUnder` beside
+     the head and the set-piece and for the head's own reason: `_upgrade`
+     spends the budget to nothing, so armour bought after the fill can
+     never be afforded. **Measured in THREAT and not in count** — count
+     cannot be reserved, because `HEAVY_CAP` is ten bodies and 40% of a
+     wave-100 field of ninety is thirty-six walkers. Measured across the
+     four theatres that can field it, heavy share of the wave without the
+     floor → with it: **24→42% and 25→50% at wave 15, 27→43% and 52→63%
+     at wave 30**, and unchanged at wave 70 — where the frame-rate ceiling
+     has already bound and the plain wave is carrying the same armour the
+     rule would buy. Three theatres lose the card (`needs` now asks for
+     something enormous rather than something plated, and scoria, the wood
+     and the alpine station nothing enormous at all) and the four that keep
+     it get a column that actually has vehicles in it. Repriced 0.26 → 0.16, and
+     because `worth` is also the Insight rate the payout moved with it:
+     1.26x → 1.16x, which is the direction a card that no longer deletes
+     half the roster should move.
+  8  §4.5 co-op and versus ................. THE SECOND HUMAN IS IN IT, and
+     was before this line was written: `seatAlly`, `beginVersus`,
+     `formUp`, four commanders as two sides, orders, musters and purses
+     across the wire, all held by `command-pvp.mjs`. What was owed was
+     this section's own KILL — "if two commanders cannot be kept in
+     agreement on `lineIsUp`, the mode's win condition desyncs and it
+     needs a host authority". It has one: `_front` runs in the director's
+     own update and a client's director is a shell that never steps. The
+     scalar is on the wire now (`packSnapshot.fr`), so both machines read
+     the number the host computed — and it is DRAWN, which it never was:
+     the whole state of a meeting was a field nothing in the tree read.
   9  §4.3 density → animate the instanced rung → per-object ink prepass
-     ....................................... needs M3, M4, B1, and 1
+     ....................................... THE RUNG IS ANIMATED. M3, M4 and
+     B1 were never the blockers they were written as — the ladder ran to 160
+     bodies, the profiler ships, `tools/_frame.mjs` reads it, and the index and
+     corpse budget landed. `Cohorts.js`'s own "every instance of one cohort
+     wears one pose" is answered by a per-instance PALETTE INDEX: twelve slots
+     of rigid 4×4s in a DataTexture, one float per instance beside the matrix,
+     three fetches in the vertex shader — viable only because `MergedSkin`
+     gives every vertex exactly one bone at weight 1.0, so a pose is
+     bones-many matrices and not a vertex field. **The count did not move**:
+     168 bodies past 137.8 m are 39 draw calls, 168 instances and 969 520
+     triangles before and after, bit for bit, and the palette fills 48 of 48
+     slots with 18 distinct poses over 24 instances. The two alternatives
+     delete the rung and were priced: a baked cohort per pose is twelve times
+     the bins (42 bodies → 456 calls against the merge's 196), and per-object
+     CPU skinning counts bodies again.
+     THE INK OBJECTION WAS SETTLED BY MEASUREMENT. This file refused a vertex
+     shader because the prepass uses `scene.overrideMaterial` and a cohort
+     would be outlined un-walked; the prepass's furthest reach over every level
+     and tier is 127.2 m, `L3_AT` is 137.8, and the worst palette slot moves a
+     vertex 0.19 m into that 10.6 m gap. The check asserts the PAIR, so moving
+     `INK.edgeFade` fails the gate rather than quietly outlining a statue.
+     STILL OPEN: the per-object ink prepass itself, which is a decision waiting
+     on one run of `tools/_frame.mjs` on real hardware — a 2.5–3.8 s software
+     frame cannot resolve a 12% effect, and the A/B/A bracket is what says so.
 ```
 
 **Nothing after M5 starts before M5 reports.** That is the gate draft 3 lacked.

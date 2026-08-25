@@ -22,7 +22,7 @@ import { theatreFor, LEVELS } from './game/Levels.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
  * game's, so the deploy card can be assembled here without this file reaching
  * into the director for anything but the record it already publishes. */
-import { deployCard } from './game/Session.js';
+import { deployCard, runReport } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, loadProgress } from './game/Progress.js';
@@ -245,6 +245,11 @@ const menu = new Menu(settings, {
   // once per world in buildWorld and read `settings` live; this only exists so
   // that unticking a box also kills the shake or the hitstop already in flight.
   onFeel: () => applyFeelSettings(world, settings),
+  /* THE HOOK THE NAME FIELD HAS ALWAYS RAISED INTO NOTHING. `Menu` has called
+   * `hooks.onName` on every keystroke since the field was added and this
+   * literal had no such key, so `net.name` kept whatever `host()`/`join()` read
+   * at the moment the session opened. See `Net.setName`. */
+  onName: () => net.setName(playerName()),
   onHost: () => hostSession(),
   onJoin: (code) => joinSession(code),
   onLeave: () => { leaveSession(); menu.netSession(null); },
@@ -574,6 +579,25 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
           d.recruit(type);
           return { offer: d.musterOffer(), refused: d.refused };
         },
+        /* A COMMENDATION — PLAN §4.4's "promote a survivor", through the same
+         * door and asking for the offer again rather than editing a copy of it.
+         * `commend` pays experience into `Trooper.award`, so a promotion still
+         * arrives the one way every other promotion in the game does. */
+        commend: (name) => {
+          d.commend(name);
+          return { offer: d.musterOffer(), refused: d.refused };
+        },
+        /* THE ROAD — PLAN.md §4.6's branching route, through the identical
+         * door and for the identical reason. `takeRoute` re-plans the tail so
+         * the run stays the length the deploy card promised, and the screen
+         * asks for the offer again rather than editing its own copy of it: the
+         * ground you are walking into, what it pays and how heavy it is all
+         * move together, and a card that patched one of them would print a
+         * garrison band beside the wrong brief. */
+        route: (id) => {
+          d.takeRoute(id);
+          return { offer: d.musterOffer(), refused: d.refused };
+        },
         done: () => {
           /* The overlay is forgotten FIRST — `resume()` would otherwise put the
            * muster the player has just finished straight back on the screen.
@@ -837,6 +861,11 @@ const screens = new Screens({
   input,
   menu,
   sandboxLive: () => sandboxRoomLive(),
+  /* PLAN §4.9's report, off the director's own log and nothing else. Null
+   * everywhere there is no army: `runReport` would happily project an empty
+   * run, and a card offering "After-action report" in Survival would open onto
+   * a screen with nothing on it. */
+  report: () => (world?.command?.log ? runReport(world.command.log) : null),
   pauseStats: () => {
     const p = world?.player;
     return [
@@ -1405,8 +1434,20 @@ function gameOver(stats) {
       ['Perfect returns', stats.perfects],
       ['Limbs taken', stats.limbs],
     ];
+  /* AND THE ROLL — PLAN §4.9. `stats.roll` is the run's fallen in the order they
+   * fell, reported by `World.runStats()` beside the COUNT the card has always
+   * printed; null in every mode with no army, and the card leaves the block off
+   * rather than drawing a heading over nothing. Passed straight through, for
+   * `runStats`' own stated reason: this decides what a card SAYS and that
+   * decides what is true.
+   *
+   * NO `?? null` ON IT, and `skirmish.mjs` is right to forbid one: `?? 5` on an
+   * absent field is what printed "Areas taken 5" on every won run ever played.
+   * `runStats` reports `roll` on EVERY ending — null where there is no army —
+   * which is exactly why it lives there and not in `extra`, so there is nothing
+   * for a default to cover. */
   const card = () => menu.showDeath(rows,
-    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined));
+    won ? VICTORY_TITLE : (lostLine ? LINE_LOST_TITLE : undefined), stats.roll, stats.report);
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.
@@ -2003,6 +2044,28 @@ function orderKeys() {
 }
 
 /**
+ * CLEARED TO FIRE — the one keypress PLAN.md §1 is about.
+ *
+ * Beside the order keys and not inside them: those are orders you give your own
+ * men and this is an order somebody else gave you, and the two lists must not
+ * share a loop that breaks after the first hit — a formation change and an
+ * authorisation are not competing for the same frame.
+ *
+ * Everything it can refuse — no order standing, one already fired, no army —
+ * is refused inside `FireMissionDirector.authorise`, which returns false and
+ * says nothing. The HUD panel is what tells the player there is an order to
+ * answer; a key that shouted "no fire mission" every time it was pressed would
+ * be a key that punishes learning where it is.
+ */
+function missionKey() {
+  if (screens.state !== 'playing') return;
+  const fm = world?.fireMissions;
+  if (!fm) return;
+  if (!input.actHit('authorise')) return;
+  fm.authorise();
+}
+
+/**
  * The coach panel's key legend, from the bindings rather than from the markup.
  *
  * index.html shipped `N next / B back / R etry with Y` baked in, which was
@@ -2152,6 +2215,7 @@ function frame(now) {
     && input.act('scoreboard'));
   lessonKeys();
   orderKeys();
+  missionKey();
   communeTick(dt);
   setCommuneEntry(screens.state === 'menu' && !tree.open);
 

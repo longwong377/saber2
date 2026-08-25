@@ -49,12 +49,24 @@
 import * as THREE from 'three';
 import { GUARD_COST, GRADE, GRADE_NAME, GRADE_DAMAGE, guardCost, CATCH } from '../../src/game/Combat.js';
 import { DIVE_STAMINA } from '../../src/game/Player.js';
-import { clocked } from './_shared.mjs';
+import { clocked, snapshotShared, restoreShared } from './_shared.mjs';
 
 /** The regen a player in combat gets back, read off Player's own `_regen`. */
 const REGEN = 16;
 
 export async function run({ check, assert }) {
+  /**
+   * THE SAME PHASE `clocked` PUTS BACK, REACHABLE FROM INSIDE ONE BODY.
+   *
+   * `clocked` restores the module-scope streams before a check body and after
+   * it — that is the boundary BETWEEN checks. The pace check below is an A/B
+   * INSIDE one body: it boots two Worlds back to back and compares them, and
+   * there is no such boundary between the two boots. So the second one drew
+   * from streams the first had already advanced and mustered a different army.
+   * Its own note says why that is fatal; holding the suite's quiescent phase
+   * here is what lets it re-seat both arms onto the same deal.
+   */
+  const phase = await snapshotShared();
   check = await clocked(check);
 
   /* ══════════════════════════════════════════════════════════════════ */
@@ -267,11 +279,43 @@ export async function run({ check, assert }) {
      * and the other has it stubbed to `Infinity`, which IS the old behaviour
      * exactly — an unlimited chase is a chase that arrives every frame. So the
      * two arms differ by one number and nothing else.
+     *
+     * ── AND THEY DID NOT, WHICH COST THIS CHECK A GATE ──────────────────
+     *
+     * "The same seed" is a statement about `settings.seed`, and the muster is
+     * not built out of it. `Command.js`'s `commandRng` deals every designation
+     * and `Enemy.js`'s `enemyRng` deals the ±10% speed jitter every body is
+     * built with, both at module scope, and `clocked` puts them back BETWEEN
+     * checks — not between two boots inside one. So arm 1 got the seeded army
+     * and arm 2 got whatever phase arm 1 left, and the arms differed by an
+     * army as well as by the number under test:
+     *
+     *     arm 1   CT-1500 CT-2794 CT-5111 …   slowest 3.93 m/s
+     *     arm 2   CT-7688 CT-4443 CT-1109 …   slowest 3.83 m/s
+     *
+     * That is not a small difference in a derived number. `strung` came out at
+     * whatever the arm that booted FIRST read, and the second arm read about
+     * 14 m whatever it was — measured on this tree, off identical code, the
+     * only difference being which arm ran first:
+     *
+     *     paced first     paced 34.9 m   ·  unpaced 14.2 m   → the bound below FAILS
+     *     unpaced first   unpaced 37.1 m ·  paced   14.1 m   → it passes
+     *
+     * The reading was a fact about the process, not about the pace anchor.
+     *
+     * `restoreShared` at the top of each arm is the fix, and it is the same
+     * call `clocked` makes: both arms now muster the identical army and the
+     * sentence above is true. Re-measured with it in, both orders, paced
+     * against unpaced: 34.9 against 40.3 and 35.7 against 37.1 — the paced
+     * line is the tighter one either way round.
      */
     const { bootWorld } = await import('./_coop.mjs');
     const { MORALE } = await import('../../src/game/Morale.js');
 
     const walk = async (unlimited) => {
+      /* THE DEAL, NOT JUST THE SEED. See the note above: without this the two
+       * arms are two different armies and the comparison is meaningless. */
+      restoreShared(phase);
       const { world } = await bootWorld({
         level: 'geonosis',
         settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7, difficulty: 'knight' },
@@ -295,6 +339,44 @@ export async function run({ check, assert }) {
          */
         world.director.start(1);
         d.spawnQueue.length = 0;
+        /**
+         * ── AND THE EMPLACEMENT IS SILENCED, WHICH IS THE OTHER HALF OF THAT
+         *    SENTENCE AND THE HALF THAT WAS MISSING ────────────────────────
+         *
+         * Emptying the queue stops bodies ARRIVING. It does nothing about the
+         * gun that is already standing on the ground: `Levels.js` hangs a
+         * `GunPit` behind the level's second blast door, and `GunPit._acquire`
+         * shoots the ROSTER by preference — "the whole content of the
+         * emplacement is that leaving it standing costs you names". So this
+         * check's 35 m walk was a walk under fire, and the casualties it took
+         * are what the reading below is made of: `strung` is the furthest
+         * LIVING man, so a straggler who dies does not lengthen the line, he
+         * shortens it.
+         *
+         * MEASURED on this tree, the two arms back to back with the gun live:
+         *
+         *     paced     8 of 10 standing   CT-6702 at 2.8 s, CT-2794 at 2.9 s,
+         *                                  both `kind=bolt`, source GunPit
+         *     unpaced  10 of 10 standing   nobody hit
+         *
+         * — two different armies at the moment of measurement, which is the
+         * same defect `restoreShared` above was added to fix, arriving through
+         * a door no stream could close. The arm that loses its two rearmost men
+         * reads 12.0 m strung out against the other's 14.2, and WHICH arm loses
+         * them depends on where the men happen to be standing when the gun
+         * traverses — so it moves with anything that moves the walk, and the
+         * VERDICT moves with it. Alone the pair read 12.0 / 14.2 and passed; a
+         * full gate reported 22.5 / 12.0 and red; two more full gates here read
+         * 9 of 10 in BOTH arms, 14.2 / 14.2, and green. Three answers to one
+         * question, none of them about pacing.
+         *
+         * Silenced, both arms end 10 of 10 standing and 14.2 m strung out, on
+         * a lag of 5.1 m against 0.0 — the rule's own effect, measured on one
+         * army instead of two. `silence()` is the gun's own door path
+         * (`emplaceGun` wraps `door.onBreach` with it) and not a flag poked
+         * from here; `breach.mjs` already A/Bs the emplacement through it.
+         */
+        for (const g of world.gunPits || []) g.silence?.();
         for (let i = 0; i < 60; i++) world.update(1 / 30, { act: () => false, actHit: () => false,
           actDown: () => false, moveAxis: (o) => (o ? (o.x = 0, o.y = 0, o) : { x: 0, y: 0 }),
           mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
@@ -348,19 +430,42 @@ export async function run({ check, assert }) {
       `walking ${paced.walked} m, the formation's anchor never fell more than ${paced.worstLag} m `
       + 'behind the commander — the line is still being dragged at whatever pace the player chooses');
     /**
+     * THE TWO ARMS ARE ONE ARMY, ASSERTED RATHER THAN ASSUMED.
+     *
+     * Everything above — the shared phase, the silenced gun — exists to make
+     * this sentence true, and `strung` is only a statement about dispersal
+     * while it is. Measured with the gun still firing, the arms ended 8 and 10
+     * men standing and the check compared the spread of eight survivors with
+     * the spread of ten; the number moved with the casualties and read as the
+     * pace rule dispersing the line. One line here says so in the failure
+     * instead, which is the difference between a red that names its cause and
+     * a red that sends the next reader into `_advanceAnchor`.
+     */
+    assert(paced.standing === old.standing,
+      `the arms ended with ${paced.standing} and ${old.standing} men standing — they are not the `
+      + 'same line, so comparing how far each is strung out compares two different armies');
+    /**
      * AND IT MUST NOT MAKE THE STRINGING-OUT WORSE, which is the weaker claim
-     * and the honest one to bind. Measured on this seed: 36.8 m against 39.4 m,
-     * a 7% difference, and a 7% difference between two 35 m walks is not a
-     * number to hang a gate on. The rule's direct effect is the LAG asserted
-     * above — 3.9 m against 0.0 — and how much of the formation's dispersal
-     * that saves depends on the deploy pattern, the terrain and how far the men
-     * started from their slots, none of which this rule touches. So the bound
-     * here is one-sided: pacing the anchor may not cost the line its cohesion.
+     * and the honest one to bind. Measured on this seed once both arms walk the
+     * same ground with the same ten men: 14.2 m against 14.2 m — one formation,
+     * translated, which is the honest shape of the claim. Pacing decides WHERE
+     * the line stands, not how tightly, so a bound tighter than "no worse"
+     * would be a bound on the deploy pattern. (It read 36.8 against 39.4 when
+     * this was written, and 12.0 against 14.2 the day the gun was found: the
+     * spread was the casualty list, not the rule.) The rule's direct effect is
+     * the LAG asserted above — 5.1 m against 0.0 — and how much of the
+     * formation's dispersal that saves depends on the deploy pattern, the
+     * terrain and how far the men started from their slots, none of which this
+     * rule touches. So the bound here is one-sided: pacing the anchor may not
+     * cost the line its cohesion.
      */
     assert(paced.strung <= old.strung + 1,
       `the line ended ${paced.strung} m strung out with the rule and ${old.strung} m without it — `
       + 'pacing the anchor has made the formation MORE dispersed, which is the opposite of §6');
-    /* AND THE RULE'S OWN TWO EDGES, asked of the function rather than the walk. */
+    /* AND THE RULE'S OWN TWO EDGES, asked of the function rather than the walk.
+     * Re-seated for the same reason the two arms are: this is the third boot in
+     * one body, and it reads the roster's own slowest speed. */
+    restoreShared(phase);
     const { world } = await bootWorld({
       level: 'geonosis',
       settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7 },

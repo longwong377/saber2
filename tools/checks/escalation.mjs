@@ -855,6 +855,22 @@ export async function run({ check, assert }) {
         Waves.seedWaves(500 + i, 0);
         for (const e of d._composeUnder(w, [key]).queue) { all++; if (isElite(e)) elite++; }
       }
+      /**
+       * HOW MANY KINDS THE NARROWED ROSTER STILL OFFERS — asked of the shape,
+       * not of what one seed spawned.
+       *
+       * `silence`'s own note is the reason a two-kind floor exists at all: "a
+       * one-type gate turned NO GUNS into six identical acolytes". But that is
+       * a claim about the ROSTER the gate leaves, and the FILL is a separate
+       * machine that converges on the heaviest body it can afford when the
+       * roster is small — measured on the Colosseum at depth, NO GUNS offers
+       * five kinds and fields exactly one (seven brutes), and so does BEAST
+       * DRIVE. Asserting on what was fielded would hold a new condition to a
+       * bar a shipped one fails, and would be measuring `_upgrade` rather than
+       * the gate. The convergence is real and it is noted here rather than
+       * asserted, because it is the composer's and it predates all of this.
+       */
+      const roster = new Set(shape.types);
       switch (key) {
         case 'silence':
           assert(!ranged.length, `NO GUNS fielded ${ranged.join(', ')}, which shoot`);
@@ -911,6 +927,160 @@ export async function run({ check, assert }) {
           assert(!shape.allowed.includes('leader'),
             'the fill can still promote its own leaders, so the wave has more than one head');
           break;
+        /* ── PLAN.md §4.6's composition constraints ────────────────────
+         * Each narrows the ROSTER rather than the wave's shape, so what each
+         * of these asserts is the same thing in a different currency: what
+         * came, and nothing else came. */
+        case 'armour': {
+          /**
+           * THE ONE CARD HERE THAT IS A FLOOR AND NOT A FILTER, so what is
+           * asserted is a SHARE and not a roster: PLAN.md §4.6, "*armour
+           * column* (40% must be vehicles)". `ARMOUR_SHARE` is read off the
+           * source rather than typed, so repricing the promise moves the bar.
+           *
+           * Measured in THREAT, which is the currency the reservation is made
+           * in — see ARMOUR_SHARE for why a count floor is a promise the frame
+           * rate forbids at every depth.
+           *
+           * TWO PROPERTIES, AND THE SECOND IS THE ONE §7 ASKS FOR: the floor
+           * must hold, and it must be seen to MOVE a wave that would not
+           * otherwise have been armoured — the same seeds, the same depth,
+           * with the rule and without it.
+           *
+           * ── AND THE FLOOR IS ALLOWED TO STOP SHORT IN EXACTLY TWO WAYS ─────
+           *
+           * Both are the wave being honest rather than the rule failing, and
+           * both are asserted as alternatives rather than excused:
+           *
+           *   THE WAVE IS ALREADY AT ITS HEAVY LIMIT. Ten enormous bodies is
+           *   `HEAVY_CAP` and a walker is 66 meshes, while the budget curve is
+           *   exponential — so past about wave 45 no reservation can reach 40%
+           *   and the wave is carrying every heavy it may. Measured on the
+           *   four theatres that can field the rule: 42-63% at wave 30, 16-42%
+           *   at wave 70, 5-13% at wave 140, and AT THE LIMIT in every one of
+           *   those compositions.
+           *
+           *   THERE IS NOTHING ENORMOUS TO BUY. Wave 5 on mustafar has not
+           *   unlocked the walker, so the rule composes the wave it would
+           *   otherwise have had — which is what `_shapeUnder`'s fallback says
+           *   about every other condition in this table.
+           */
+          const SHARE = Waves.ARMOUR_SHARE;
+          assert(SHARE > 0 && SHARE < 1, `ARMOUR_SHARE is ${SHARE}, which is not a share`);
+          const sweep = (dd, ww, ks) => {
+            let heavy = 0, all = 0, short = 0, moved = 0;
+            for (let i = 0; i < n; i++) {
+              Waves.seedWaves(500 + i, 0);
+              const o = dd._composeUnder(ww, ks);
+              let h = 0, a = 0, big = 0;
+              for (const e of o.queue) {
+                const c = Waves.spawnCost(e); a += c;
+                if (Waves.isHeavy(Waves.spawnType(e))) { h += c; big++; }
+              }
+              heavy += h; all += a; moved++;
+              /* Per COMPOSITION and not against the mean, because "the wave is
+               * at its limit" is a property of one wave and an average of
+               * limits is a wave nobody fights. */
+              const saturated = big >= o.shape.heavy;
+              const barren = !o.shape.types.some((t) => Waves.isHeavy(t));
+              if (h < SHARE * a - 1e-9 && !saturated && !barren) short++;
+            }
+            return { share: heavy / Math.max(1e-9, all), short, n: moved };
+          };
+          let lifts = 0;
+          for (const home of homes) {
+            const dd = new Waves.WaveDirector(tableWorld(),
+              { mode: 'roguelite', pool: LEVELS[home].pool });
+            for (const ww of [5, 15, 30, 70]) {
+              const on = sweep(dd, ww, [key]), off = sweep(dd, ww, []);
+              assert(!on.short,
+                `ARMOUR COLUMN on ${home} at wave ${ww}: ${on.short} of ${on.n} waves came in under `
+                + `${(SHARE * 100).toFixed(0)}% enormous by threat with the heavy allowance still `
+                + 'unspent — the floor stopped short of its own promise');
+              assert(on.share >= off.share - 1e-9,
+                `ARMOUR COLUMN on ${home} at wave ${ww} fields ${(on.share * 100).toFixed(0)}% armour `
+                + `against ${(off.share * 100).toFixed(0)}% on the same seeds with no rule at all — `
+                + 'a floor that lowers the floor');
+              if (ww === 15) {
+                /* THE DEPTH WHERE THE DECISION IS VISIBLE, and it is asserted on
+                 * EVERY theatre rather than on one lucky one. Shallower than
+                 * this the ladder has not opened a heavy on two of the four;
+                 * deeper, the frame-rate ceiling has already bound and the
+                 * plain wave is carrying the same armour the rule would buy —
+                 * which is the floor being satisfied, not the floor doing
+                 * nothing, and the assertion above is what holds it. */
+                assert(on.share > off.share + 0.05,
+                  `ARMOUR COLUMN on ${home} at wave 15 moved the armour share from `
+                  + `${(off.share * 100).toFixed(0)}% to only ${(on.share * 100).toFixed(0)}% — `
+                  + 'the rule is a banner over the wave the player would have had anyway');
+                lifts++;
+              }
+            }
+          }
+          assert(lifts === homes.length,
+            `the floor was demonstrated on ${lifts} of ${homes.length} theatres that can field it`);
+          break;
+        }
+        case 'monokin': {
+          /**
+           * ONE wave is one material — which is what `seen` reads, because
+           * every one of the twelve compositions above is at the same depth
+           * and the kin is keyed on the depth.
+           */
+          const kinds = new Set([...seen].map((t) => ARCHETYPES[t].toughness));
+          assert(kinds.size === 1,
+            `ONE MATERIAL fielded ${kinds.size} materials in one wave: ${[...seen].join(', ')}`);
+          assert(roster.size >= 2,
+            `ONE MATERIAL leaves a roster of one (${[...roster][0]}) — one KIN is not one `
+            + 'archetype, and that is the monotony NO GUNS was measured into avoiding');
+          /* …AND THE NEXT ONE IS A DIFFERENT MATERIAL, which is the half of
+           * the card that makes it a rotation rather than a permanent
+           * narrowing. Composed at the neighbouring depth on the same seed, so
+           * the only thing that differs is the wave number the hook reads. */
+          const at = (ww) => {
+            const got = new Set();
+            for (let i = 0; i < 4; i++) {
+              Waves.seedWaves(500 + i, 0);
+              for (const e of d._composeUnder(ww, [key]).queue) {
+                got.add(ARCHETYPES[Waves.spawnType(e)].toughness);
+              }
+            }
+            return [...got];
+          };
+          const here = at(w), next = at(w + 1);
+          assert(here.length === 1 && next.length === 1,
+            `a single wave carried ${here.length}/${next.length} materials`);
+          assert(here[0] !== next[0],
+            `waves ${w} and ${w + 1} are both material ${here[0]} — "never the same kind twice `
+            + 'running" is what the card says, and the rotation is not turning');
+          break;
+        }
+        case 'host': {
+          const notDroid = [...seen].filter((t) => ARCHETYPES[t].toughness !== TOUGHNESS.droid);
+          assert(!notDroid.length, `DROID HOST fielded ${notDroid.join(', ')}, which are not droids`);
+          /* AND IT IS A HORDE. The card says "there is a great deal of it", and
+           * the mechanism is the budget: the same threat spent on the cheapest
+           * bodies the ground stations arrives as more of them. Asserted
+           * against the ordinary wave at the same depth, not against a number. */
+          let plainBodies = 0;
+          for (let i = 0; i < n; i++) {
+            Waves.seedWaves(500 + i, 0);
+            plainBodies += d._composeUnder(w, []).queue.length;
+          }
+          plainBodies /= n;
+          assert(bodies > plainBodies,
+            `DROID HOST fields ${bodies.toFixed(1)} bodies against an ordinary wave's `
+            + `${plainBodies.toFixed(1)} — the card promises a great deal of it`);
+          break;
+        }
+        case 'beasts': {
+          assert(!ranged.length, `BEAST DRIVE fielded ${ranged.join(', ')}, which shoot`);
+          const bladed = [...seen].filter((t) => ARCHETYPES[t].saber);
+          assert(!bladed.length, `BEAST DRIVE fielded ${bladed.join(', ')}, which carry a blade`);
+          assert(roster.size >= 2,
+            `BEAST DRIVE leaves a roster of one (${[...roster][0]}) — see NO GUNS on one-type gates`);
+          break;
+        }
         default:
           throw new Error(`condition "${key}" has no behavioural check — add one`);
       }
@@ -1010,7 +1180,11 @@ export async function run({ check, assert }) {
         const want = Waves.CONDITION_KEYS.filter((_, i) => m & (1 << i));
         const got = new Waves.WaveDirector(tableWorld(),
           { mode: 'roguelite', pool: LEVELS[key].pool, rules: want }).rules;
-        const clean = want.every((k) => legal.includes(k)) && want.length <= Waves.CONDITION_MAX
+        /* `RULE_MAX` AND NOT `CONDITION_MAX`, which is §4.6's cap arriving:
+         * what the panel may sell is two, what the composer may carry is four,
+         * and this loop is about the panel. Read off the constant rather than
+         * typed, so the day the cap moves this moves with it. */
+        const clean = want.every((k) => legal.includes(k)) && want.length <= Waves.RULE_MAX
           && want.every((a, i) => want.every((b, j) => i >= j || !Waves.rulesConflict(a, b)));
         if (clean) {
           assert(got.join(',') === want.join(','),
@@ -1021,7 +1195,7 @@ export async function run({ check, assert }) {
             `${key} accepted ${want.join('+')}, which its roster or the exclusions forbid`);
           assert(got.every((k) => legal.includes(k)),
             `${key} kept a vetoed rule: ${got.join('+')}`);
-          assert(got.length <= Waves.CONDITION_MAX, `${key} kept ${got.length} rules over the cap`);
+          assert(got.length <= Waves.RULE_MAX, `${key} kept ${got.length} rules over the cap`);
           for (let i = 0; i < got.length; i++) {
             for (let j = i + 1; j < got.length; j++) {
               assert(!Waves.rulesConflict(got[i], got[j]),
@@ -1045,16 +1219,146 @@ export async function run({ check, assert }) {
       + `worst (${worstAt}), and never less than the same condition dealt`;
   });
 
-  check('rules: four of them from wave 1 composes a wave that spends its budget', () => {
+  check('rules: the terms you author are what the run pays you, and two is the most you may author', async () => {
+    /**
+     * PLAN.md §4.6, two bullets, and they are one decision:
+     *
+     *     **Player-authored difficulty** driving Insight income — pick which
+     *     axes get harder, get paid for it. Not Easy/Normal/Hard.
+     *
+     *     **Modifiers with caps**: at most two, at most one beneficial, one
+     *     guaranteed clean battle per rotation, pairwise blacklist.
+     *
+     * A handicap that pays nothing is a punishment screen, and a handicap with
+     * no cap is a checklist — you tick every box once and the panel is over.
+     * Together they are a wager: which two axes of this run do you want moved,
+     * and is the deeper Holocron worth the harder wave.
+     *
+     * ── WHAT IS ASSERTED, AND WHY IT IS NOT JUST "THE NUMBER WENT UP" ────────
+     *
+     * The rate is not allowed to be a second table. `conditionCost` charges a
+     * DEALT condition `worth · budget` and explicitly skips a RULE — that line
+     * is the game's own statement of what a rule is worth, and `hazardPay` is
+     * required to be exactly it. So the bar here is an IDENTITY against the
+     * composer's own pricing, taken off a real director at a real wave, and it
+     * would fail on a payout invented beside the price rather than derived
+     * from it.
+     *
+     * And then the half that makes it a decision: the extra Insight has to buy
+     * something. A 48% raise that arrives after the last facet a run could
+     * afford is a bigger number and the same build, so the last clause spends
+     * both purses through the shipped `Communion` and asserts the harder run
+     * ends up holding MORE of the Holocron.
+     */
+    const Tree = await import('../../src/game/LivingForce.js');
+
+    /* ── 1. the rate IS the price, and not a number beside it ───────────── */
+    const d = director({ rules: [] });
+    const WAVE = 20;
+    const budget = d.budgetFor(WAVE);
+    const pairs = [];
+    for (let i = 0; i < Waves.CONDITION_KEYS.length; i++) {
+      for (let j = i + 1; j < Waves.CONDITION_KEYS.length; j++) {
+        const a = Waves.CONDITION_KEYS[i], b = Waves.CONDITION_KEYS[j];
+        if (Waves.rulesConflict(a, b)) continue;
+        pairs.push([a, b]);
+      }
+    }
+    assert(pairs.length >= 6, `only ${pairs.length} legal pairs of rules exist — nothing to choose between`);
+    for (const [a, b] of pairs) {
+      /* What the DIRECTOR would have charged itself to deal these two, as a
+       * share of the wave. `conditionCost` skips anything in `this.rules`, so
+       * it is asked of a director holding none — which is the whole point: the
+       * share the player is not charged is the share they are paid for. */
+      const share = d.conditionCost(WAVE, [a, b]) / budget;
+      const pay = Waves.hazardPay([a, b]) - 1;
+      assert(Math.abs(share - pay) < 1e-9,
+        `${a}+${b} costs the director ${(share * 100).toFixed(1)}% of a wave to deal and pays the `
+        + `player ${(pay * 100).toFixed(1)}% — the payout has become a second table, and the day one `
+        + 'of them is repriced the other will not move');
+    }
+
+    /* ── 2. and it reaches the ledger, whole ────────────────────────────── */
+    const RULES = ['deluge', 'silence'];
+    const hard = director({ rules: RULES });
+    assert(hard.rules.length === 2, `the fixture's own rule set did not survive: ${hard.rules.join('+')}`);
+    const easy = director({ rules: [] });
+    assert(easy.hazard === 1, `a run under no rules pays x${easy.hazard}`);
+
+    const run = (dir) => {
+      const c = new Tree.Communion({});
+      const rate = Tree.insightRate(dir.drafts !== false, dir.hazard);
+      for (let w = 1; w <= 40; w++) c.earn(w, !!dir.isBossWave?.(w), rate);
+      return c;
+    };
+    const rich = run(hard), poor = run(easy);
+    assert(Number.isInteger(rich.insight) && Number.isInteger(poor.insight),
+      `the purse is fractional — ${rich.insight} and ${poor.insight}. Three screens print it as a `
+      + 'whole number and every price in COST is one');
+    assert(rich.insight > poor.insight,
+      `40 waves under ${RULES.join('+')} paid ${rich.insight} Insight against ${poor.insight} with no `
+      + 'rules at all — the axes the player chose to make harder pay nothing for it');
+    /* The exact rate, over the run, and not merely "more": a carry that dropped
+     * the remainder would read as a raise and quietly pay 40 instead of 59. */
+    const want = Math.floor(poor.earned * hard.hazard + 1e-9);
+    assert(Math.abs(rich.earned - want) <= 1,
+      `${rich.earned} Insight over 40 waves against ${want} at the stated x${hard.hazard.toFixed(2)} — `
+      + 'the fraction is being dropped rather than carried');
+
+    /* ── 3. and the extra buys more of the Holocron ─────────────────────── */
+    const spend = (c) => {
+      /* Buy whatever is legal and affordable, deepest-first, until nothing is
+       * — the shipped `canBuy`/`buy` pair, so the price escalator and the
+       * offer are the run's own and not this fixture's idea of them. */
+      const taken = new Set();
+      for (let guard = 0; guard < 200; guard++) {
+        const id = Tree.FACETS.map((f) => f.id).find((k) => c.canBuy(k, taken, 40));
+        if (!id) break;
+        c.buy(id, taken, 40);
+        taken.add(id);
+      }
+      return c.bought.length;
+    };
+    /* READ BEFORE SPENDING — `buy` decrements the purse, so a report that
+     * quoted `insight` after this line would print what was left over rather
+     * than what the run was paid. */
+    const paid = { rich: rich.earned, poor: poor.earned };
+    const deep = spend(rich), shallow = spend(poor);
+    assert(deep > shallow,
+      `both purses bought ${deep} facets — the raise arrives after the last thing a run could afford, `
+      + 'so it is a bigger number and the same build, which is not a decision');
+
+    return `${pairs.length} legal pairs, every one paying exactly what the director is charged to deal it; `
+      + `40 waves paid ${paid.poor} → ${paid.rich} Insight under ${RULES.join('+')} `
+      + `(x${hard.hazard.toFixed(2)}), and ${shallow} → ${deep} facets bought with it; `
+      + `the panel sells at most ${Waves.RULE_MAX}`;
+  });
+
+  check('rules: CONDITION_MAX of them from wave 1 composes a wave that spends its budget', () => {
     /**
      * THE UNTESTED CORNER, AND IT WAS UNTESTED FOR A STRUCTURAL REASON.
      *
      * `CONDITION_MAX` is 4 and the note above it prices three against four at
      * waves 100, 140 and 200 — because four are only ever reached through the
      * surplus loop, which cannot fire until the roster stops absorbing the
-     * budget, measured at about wave 92. A run rule puts four on wave 1, where
-     * nothing has ever composed under more than one, and the shallow waves are
-     * exactly where a narrowed roster meets a budget of seven.
+     * budget, measured at about wave 92. Four on wave 1 is a shape nothing has
+     * ever composed under, and the shallow waves are exactly where a narrowed
+     * roster meets a budget of seven.
+     *
+     * ── AND IT NO LONGER ARRIVES THROUGH THE PANEL ───────────────────────────
+     *
+     * It used to hand four rules to the constructor, which is now impossible:
+     * `RULE_MAX` is 2 and `legalRuleSet` drops the rest, because §4.6's cap is
+     * a statement about the CHOICE and `CONDITION_MAX` is a statement about the
+     * COMPOSER. Two different questions that were one number.
+     *
+     * So the set is written onto `_rules` directly. That is reaching past the
+     * panel into the composer on purpose and it is the honest way to ask this
+     * particular question: the wave still reaches four in the shipped game —
+     * two authored plus two dealt by `_pickCondition` — and what has to hold is
+     * that the COMPOSER can spend a budget under four of them from wave 1,
+     * whichever door they came in by. A fixture that could only reach three
+     * would have stopped testing the corner the day the cap moved.
      *
      * ── THE BAR IS IN THREAT AND NOT IN PERCENT, and that is not a softening ──
      *
@@ -1082,10 +1386,11 @@ export async function run({ check, assert }) {
         }
       };
       walk(0, []);
-      assert(sets.length, `${key} cannot offer ${Waves.CONDITION_MAX} rules at once`);
+      assert(sets.length, `${key} cannot field ${Waves.CONDITION_MAX} conditions at once`);
       for (const rules of sets) {
         const d = new Waves.WaveDirector(tableWorld(),
-          { mode: 'roguelite', pool: LEVELS[key].pool, rules });
+          { mode: 'roguelite', pool: LEVELS[key].pool });
+        d.rules = rules;
         assert(d.rules.length === Waves.CONDITION_MAX,
           `${key} accepted only ${d.rules.length} of ${rules.join('+')}`);
         for (const w of [1, 2, 3, 5, 10, 18, 30]) {

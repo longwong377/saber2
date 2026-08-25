@@ -28,6 +28,11 @@ import { grassSprite, litterSprite, smokeSprite } from '../engine/Textures.js';
  * which would close the loop this file's own note at line 566 is about. */
 import { celTone, celBand, CEL } from '../toon/Cel.js';
 import { makeRng, clamp, lerp, fbm2, ridged2, TAU } from '../engine/MathUtil.js';
+/* THE SIGHT MODEL, WHICH THE STORM WRITES INTO — see `_applyWeather`. It is a
+ * leaf (THREE and MathUtil) and this is the only edge from the scenery into
+ * it, deliberately in this direction: the alternative is `Smoke.js` importing
+ * this file, which would drag the whole scenery into the graph of every bolt. */
+import { setAir } from '../game/Smoke.js';
 
 const rng = makeRng(70707);
 const _v1 = new THREE.Vector3();
@@ -5025,7 +5030,26 @@ export class Atmosphere {
       const base = this._fogBase * (this.fogScale ?? 1);
       this._fog.density = Math.max(base,
         Math.min(FOG_STORM_LIMIT, base * (1 + W.fogGain * I)));
-    }
+      /**
+       * …AND THE SHOOTERS FIND OUT — PLAN.md §4.7's weather, which is one line
+       * because the storm was already here.
+       *
+       * The frame has gone brown since the day the squall shipped and nothing
+       * in the game ever asked whether you could see through it: rifles went on
+       * acquiring at ninety metres while the visibility number went from 198 m
+       * to 43. `setAir` hands the sight model what the storm has ADDED to the
+       * level's own fog — see that function for why it is the addition and not
+       * the fog, and for the curve change — and from there one model answers
+       * both "can this shooter see that body" and "what is this bolt worth when
+       * it arrives", on both sides, for the smoke screen and the weather alike.
+       *
+       * Here rather than anywhere else because this is the one place that
+       * already knows both densities, and pushing the number is what keeps
+       * `Smoke.js` a leaf: a sight model that imported the scenery would put
+       * five thousand lines of grass in the bolt path's static graph.
+       */
+      setAir(this._fog.density - base);
+    } else setAir(0);
     // ── light. A dust storm is not a dimmer, it is a converter: it takes the
     // sun's beam apart and hands it back as sky. Direct falls, fill rises, and
     // what is left of the sun takes the colour of what it is coming through.

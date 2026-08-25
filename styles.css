@@ -1165,6 +1165,72 @@ button{font-family:inherit}
   font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
 .rp-foot b{margin-left:auto;color:var(--accent-warm)}
 
+/* THE STANDING ORDER. Same four laws as every other surface in this HUD —
+   panel field, ink outline, hard stamp shadow, cut corner — and the same
+   column as the roster, so the two can never be drawn through each other.
+
+   THE COLOUR IS THE READOUT. Amber while the order is unverified (which is
+   what High Command told you and nothing more), the accent once it has been
+   read and the ground is clear, and danger red once it has been read and your
+   own men are standing in it. That last state is the only place in the game
+   that says so and it exists only because the player went and looked — so it
+   is the loudest thing this panel can draw. */
+.fm{width:248px;margin-bottom:18px;border:2px solid var(--stroke);background:var(--panel);
+  clip-path:var(--cut-sm);box-shadow:var(--stamp);text-shadow:none}
+.fm.hidden{display:none}
+.fm-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
+  padding:7px 11px 6px;background:var(--panel-2);border-bottom:2px solid var(--stroke);
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.22em;text-transform:uppercase;color:var(--ink)}
+.fm-head b{flex:none;color:var(--accent-warm);font-variant-numeric:tabular-nums;letter-spacing:.1em}
+/* The last ten seconds. The ring on the ground pulses at the same moment and
+   for the same reason: a window that closes while you are looking somewhere
+   else is a refusal you did not choose. */
+.fm.late .fm-head b{color:var(--danger);animation:fmPulse .7s steps(2,end) infinite}
+@keyframes fmPulse{50%{opacity:.35}}
+.fm-told{padding:8px 11px 6px;font:var(--display);font-size:12.5px;letter-spacing:.1em;
+  text-transform:uppercase;color:var(--ink)}
+/* THE READING, AS A BAR. Twelve seconds on foot and four with the Force, and
+   the only honest way to draw "how much longer do I have to stand here". */
+.fm-read{height:5px;margin:0 11px 8px;background:var(--void);border:2px solid var(--stroke)}
+.fm-read i{display:block;height:100%;width:0;background:var(--accent-warm)}
+.fm.read .fm-read i{background:var(--accent)}
+.fm.own .fm-read i{background:var(--danger)}
+.fm-verdict{padding:0 11px 8px;font:var(--mono);font-size:10px;letter-spacing:.06em;color:var(--dim)}
+.fm.read .fm-verdict{color:var(--ink)}
+.fm.own .fm-verdict{color:var(--danger);font-weight:800}
+.fm-foot{display:flex;align-items:baseline;gap:8px;padding:6px 11px 7px;
+  border-top:2px solid var(--stroke);background:var(--panel-2);
+  font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+.fm-foot b{margin-left:auto;color:var(--accent-warm);font-variant-numeric:tabular-nums}
+.fm-foot kbd{padding:1px 5px;border:2px solid var(--stroke);border-bottom-width:3px;
+  background:var(--void);font:var(--mono);font-size:9px;font-weight:800;color:var(--ink)}
+
+/* THE FRONT, under the wave. A track with a mark on it and a filled span from
+   the middle to the mark — the fill is the ground the front has been driven
+   across, so the eye reads WHO IS WINNING before it reads where the mark is.
+   Same ink/panel/stamp laws as every other surface; the mark is the accent when
+   the ground is yours and danger when it is theirs, which is the only colour
+   decision on it. */
+.fr{width:214px;margin-top:9px}
+.fr.hidden{display:none}
+.fr-track{position:relative;height:9px;border:2px solid var(--stroke);background:var(--void);
+  clip-path:var(--cut-sm)}
+/* The middle of the field, drawn, so a front that has not moved reads as a
+   front that has not moved rather than as an empty bar. */
+.fr-track::before{content:'';position:absolute;left:50%;top:0;bottom:0;width:2px;
+  margin-left:-1px;background:var(--panel-hi)}
+.fr-track u{position:absolute;top:0;bottom:0;left:50%;width:0;background:var(--accent);opacity:.42}
+.fr.theirs .fr-track u{background:var(--danger)}
+.fr-track i{position:absolute;top:-3px;width:4px;height:15px;margin-left:-2px;
+  background:var(--accent);border:2px solid var(--stroke);left:50%}
+.fr.theirs .fr-track i{background:var(--danger)}
+.fr-caps{display:flex;align-items:baseline;gap:6px;padding-top:4px;
+  font:var(--mono);font-size:8.5px;font-weight:800;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dimmer)}
+.fr-caps em{flex:1;text-align:center;font-style:normal;letter-spacing:.1em;color:var(--dim)}
+.fr.pushing .fr-caps em{color:var(--accent)}
+.fr.losing .fr-caps em{color:var(--danger)}
+
 .hud-bl{position:absolute;left:32px;bottom:28px;animation:riseIn .4s both}
 .bars{display:flex;flex-direction:column;gap:14px}
 /* THE CAPTION LIVES OUTSIDE THE SOCKET, and that is the whole of the fix.
@@ -1616,6 +1682,31 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    are saving for. */
 .mu.poor{cursor:not-allowed;opacity:.42;box-shadow:none}
 .mu.poor:hover{transform:none;background:var(--panel);box-shadow:none}
+/* ── THE FORK (PLAN.md §4.6) ──
+   Two roads, above the shelf and below the brief, because the ground you are
+   walking onto is the frame the shopping happens inside: what you buy depends
+   on where you are taking it. Built on `.mu` for the reason `.mu` is built on
+   `.dc` — same field, same stamp, same cut — so a road reads as a thing you
+   choose rather than as a paragraph. The one you are on carries `.on`. */
+.muster-route{display:flex;flex-wrap:wrap;gap:12px;margin-top:14px}
+.muster-route .rd{position:relative;width:264px;padding:14px 15px 12px;border:2px solid var(--stroke);
+  background:var(--panel);cursor:pointer;transition:.16s cubic-bezier(.22,1,.36,1);
+  clip-path:var(--cut);box-shadow:var(--stamp)}
+.muster-route .rd:hover{transform:translate(-3px,-3px);background:var(--panel-2);
+  box-shadow:7px 7px 0 var(--stroke),0 0 30px -12px var(--accent)}
+.muster-route .rd b{display:block;font-size:13.5px;font-weight:800;letter-spacing:.04em;
+  text-transform:uppercase}
+.muster-route .rd .rd-brief{display:block;margin-top:7px;font-size:11.5px;line-height:1.45;color:var(--dim)}
+.muster-route .rd .rd-facts{display:block;margin-top:9px;font:var(--mono);font-size:10px;font-weight:800;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--accent-warm)}
+.muster-route .rd .rd-weight{display:block;margin-top:5px;font:var(--mono);font-size:9px;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--dim)}
+/* The road you are on. Not a "selected" tint — the whole card takes the warm
+   ink, because at a glance the question is which of the two is live. */
+.muster-route .rd.on{background:var(--panel-2);border-color:var(--accent-warm);cursor:default}
+.muster-route .rd.on:hover{transform:none;box-shadow:var(--stamp)}
+.muster-route-head{font:var(--mono);font-size:10px;font-weight:800;letter-spacing:.18em;
+  text-transform:uppercase;color:var(--dim);width:100%;margin:0 0 -2px}
 .muster-refused{color:var(--danger);min-height:1.4em;margin-top:10px}
 .muster-refused:empty{min-height:0}
 /* The roll, at full length, and it scrolls here because a mouse exists on this
@@ -1665,10 +1756,19 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    promotion is something the army did and this is something the PLAYER did, and
    the header — the only other beat about a decision — already wears it. */
 .muster-interlude li.b-delegate b{color:var(--accent-warm)}
+/* AN ORDER FROM ABOVE. Warm accent like the delegation, because it is the other
+   beat about a thing the player decided — and the danger red when the mark had
+   his own men in it, because at that point it is a casualty beat wearing a grid
+   reference. `b-mission own` is set by the report, not guessed from the text. */
+.muster-interlude li.b-mission b{color:var(--accent-warm)}
+.muster-interlude li.b-mission.own b{color:var(--danger)}
 @keyframes beatIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
 /* Inert while the report is running. `pointer-events:none` is the half that
    makes "no input" true; the dimming is the half that says so. */
 .muster-units.waiting{opacity:.3;pointer-events:none;filter:saturate(.3)}
+/* …and so is the fork. The road is a decision like a purchase is, so it is
+   under the same gate: the quiet takes no input and that includes this. */
+.muster-route.waiting{opacity:.3;pointer-events:none;filter:saturate(.3)}
 .muster-foot .primary[disabled]{opacity:.35;cursor:default;pointer-events:none}
 
 /* ══════════════════ the deploy card ══════════════════
@@ -2238,3 +2338,88 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .company-marks .swatch:hover{transform:translate(-1px,-1px)}
 .company-marks .swatch.sel{outline:2px solid var(--accent);outline-offset:3px;
   transform:translate(-2px,-2px);box-shadow:var(--stamp-lg)}
+
+
+/* ── THE ROLL ON THE DEATH CARD — PLAN §4.9's after-action report ──────────
+ *
+ * A LIST AND NOT A TABLE. The stat rows above it are label/value pairs because
+ * each is one number; a casualty is a NAME with a sentence after it, and giving
+ * it a second column would set the names in a narrow gutter and wrap every
+ * sentence twice. It scrolls rather than growing the card: a crossing that
+ * loses its whole company has ten of these and the two buttons under it are the
+ * only exits from this screen — a list that pushed them off the bottom would
+ * strand a player on their own casualty list. */
+/* `scrollbar-gutter: stable` is not decoration and front-screen.mjs holds every
+ * scroller to it: a column that reserves no track jumps a scrollbar's width the
+ * moment it overflows, so a FULL page reads as a cut one. A roll of ten names
+ * overflows and a roll of two does not, which is exactly the case that would
+ * shift under the reader. */
+.death-roll { margin: 14px 0 4px; max-height: 34vh; overflow-y: auto;
+  scrollbar-gutter: stable; text-align: left; }
+.death-roll h3 { margin: 0 0 6px; font-size: 12px; letter-spacing: .14em;
+  text-transform: uppercase; opacity: .6; font-weight: 600; }
+.death-roll .rl { display: flex; flex-direction: column; gap: 1px;
+  padding: 5px 0; border-top: 1px solid rgba(255,255,255,.07); }
+.death-roll .rl b { font-size: 13px; letter-spacing: .02em; }
+/* The sentence is the quiet half: the NAME is what a player scans for, and a
+ * killer and a bearing set at the same weight would turn ten rows into a wall. */
+.death-roll .rl span { font-size: 11px; opacity: .58; }
+.death-roll .rl.none { opacity: .55; font-size: 12px; }
+
+/* ── THE AFTER-ACTION REPORT — PLAN §4.9 ───────────────────────────────────
+ *
+ * THE CENSUS IS THE LOUD HALF AND THE LEDGER IS THE QUIET ONE, and the type
+ * sizes are the whole argument: "seven of them to B2s" is the line that moves a
+ * purchase, and the twenty rows of names under it are what a player goes to
+ * only when he wants to argue with it. Set at one weight it would be a wall of
+ * text with the actionable line hidden at the top of it.
+ *
+ * `.own` is the only colour in here and it is the accent the palette already
+ * names for "damage, a boss, a mistake" (`--danger`), not a new one: a row that says YOUR OWN SIDE DID THIS
+ * must not read at the same weight as a row that says a droid did.
+ *
+ * `scrollbar-gutter: stable` for the reason front-screen.mjs holds every
+ * scroller to it — a run four areas long overflows and a run one area long does
+ * not, so a track that is only reserved sometimes shifts the whole column under
+ * the reader between two openings of the same card. */
+.report-census { display: flex; flex-direction: column; gap: 2px; margin: 0 0 12px; }
+.report-census .rc { display: flex; align-items: baseline; gap: 8px;
+  padding: 3px 0; border-top: 1px solid rgba(255,255,255,.07); font-size: 12.5px; }
+.report-census .rc b { min-width: 2.2em; text-align: right; font-variant-numeric: tabular-nums; }
+.report-census .rc span { flex: 1; min-width: 0; opacity: .78; }
+.report-census .rc.own span { opacity: 1; color: var(--danger); }
+.report-census .rc.none { opacity: .5; border-top: 0; }
+.report-areas { max-height: 34vh; overflow-y: auto; scrollbar-gutter: stable; }
+.report-areas .ra { margin: 0 0 10px; }
+.report-areas .ra > h4 { margin: 0 0 4px; font-size: 11.5px; letter-spacing: .12em;
+  text-transform: uppercase; opacity: .62; font-weight: 600; }
+.report-areas .ra > h4 em { font-style: normal; opacity: .7; letter-spacing: .04em;
+  text-transform: none; }
+.report-areas .rl { display: flex; flex-direction: column; gap: 1px;
+  padding: 4px 0; border-top: 1px solid rgba(255,255,255,.07); }
+.report-areas .rl b { font-size: 12.5px; letter-spacing: .02em; }
+.report-areas .rl span { font-size: 11px; opacity: .58; }
+.report-areas .rl.quiet b { font-weight: 500; opacity: .72; }
+.report-areas .rl.own span { color: var(--danger); opacity: .85; }
+.report-areas .ra.empty { opacity: .55; font-size: 12px; }
+
+
+/* ── COMMEND — PLAN §4.4's third muster option ─────────────────────────────
+ *
+ * A LIST, not the shelf's card grid. A unit card is a thing you buy any number
+ * of; a man is one row that either can be promoted or cannot, and setting the
+ * two the same way would say the roll is a second shop. `.poor` is the shelf's
+ * own word for priced-out, reused rather than renamed so one rule dims both. */
+.muster-commend { margin: 8px 0 2px; }
+.muster-commend h4 { margin: 0 0 5px; font-size: 11px; letter-spacing: .13em;
+  text-transform: uppercase; opacity: .55; font-weight: 600; }
+.muster-commend .cm { display: flex; justify-content: space-between; align-items: baseline;
+  gap: 10px; padding: 4px 7px; border: 1px solid rgba(255,255,255,.08);
+  border-radius: 3px; margin-bottom: 3px; cursor: pointer; }
+.muster-commend .cm:hover { border-color: rgba(255,255,255,.22); }
+.muster-commend .cm b { font-size: 12px; }
+.muster-commend .cm span { font-size: 10.5px; opacity: .6; }
+/* Priced out keeps its place and stops being a button — a row that vanished
+ * would read as a roster that forgot the man. */
+.muster-commend .cm.poor { opacity: .42; cursor: default; }
+.muster-commend .cm.poor:hover { border-color: rgba(255,255,255,.08); }

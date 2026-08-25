@@ -77,8 +77,10 @@ import * as THREE from 'three';
 import { OutlinePass, cutsItsOwnSilhouette, INK } from '../../src/toon/Ink.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { celInstall } from '../../src/toon/Cel.js';
+import { hasCustomShader } from '../../src/toon/Toon.js';
 import { BAKES_PER_FRAME } from '../../src/game/MergedSkin.js';
-import { L3_AT, JOINS_PER_FRAME, CohortField } from '../../src/game/Cohorts.js';
+import { L3_AT, JOINS_PER_FRAME, CohortField, CAPTURES_PER_FRAME, poseSlots, poseMatrix,
+  poseSlotOf, posedVertexShader, POSE_GLSL } from '../../src/game/Cohorts.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { clocked } from './_shared.mjs';
 
@@ -1072,6 +1074,15 @@ export async function run({ check, assert }) {
 
   const cohortCalls = (world) => world.cohorts.stats().calls;
 
+  /**
+   * How far the ink's own prepass reaches, written by the band check below and
+   * read by the crowd check under that. Shared rather than recomputed because
+   * driving the shipped `prepass` over every level × tier pair is the expensive
+   * half of that check, and the margin it leaves is the same margin the pose
+   * palette has to stay inside.
+   */
+  const inkReach = { plane: 0, at: '' };
+
   check('frame: past the ink’s reach a body stops drawing itself, and the cost stops counting bodies', async () => {
     const { world, engine, frames, budget } = await farLine();
     const dists = world.enemies.map((e) => engine.camera.position.distanceTo(e.position));
@@ -1187,6 +1198,10 @@ export async function run({ check, assert }) {
     assert(Math.abs(L3_AT - INK.edgeFade[1] * 1.06) < 1e-9,
       `L3_AT is ${L3_AT} and INK.edgeFade[1] · 1.06 is ${INK.edgeFade[1] * 1.06} — the band has `
       + 'stopped being the ink\'s own reach and become a number somebody typed');
+    /* …and the gap between the two is published, because it is also the room a
+     * cohort's POSE PALETTE has to move a vertex in before it would be drawn
+     * into the prepass at a pose its colour is not in. See the crowd check. */
+    inkReach.plane = plane; inkReach.at = at;
     return `${worst.length} level × tier pairs; the prepass reaches furthest on ${at} at `
       + `${plane.toFixed(1)} m, and the band starts at ${L3_AT.toFixed(1)} m`;
   });
@@ -1281,6 +1296,156 @@ export async function run({ check, assert }) {
       + `worst placement error ${worst.toExponential(1)} m${refused ? `, ${refused} refused` : ''}`;
   });
 
+  /**
+   * ── THE RASTERISER §7 PRICES THE POSE ON, AND THE BENCH IT DRIVES ──────
+   *
+   * At module scope because TWO checks read them now: what the frozen pose cost
+   * a body, and what the palette gives a CROWD back. A second copy of either
+   * would be a second opinion about what a cohort looks like, which is the
+   * thing being measured (HANDOFF §2.4).
+   *
+   * `cohortTris` takes the instance's gait PHASE and reads the palette through
+   * the shipped `poseMatrix`, so what it rasterises is the data the vertex
+   * shader is handed. A negative phase is a body that is not walking and gets
+   * the identity — which is the rung exactly as it shipped, and is how the
+   * before/after below are two readings of one function rather than two
+   * functions.
+   */
+  const H = 720, VFOV = 60, SS = 4;
+  const pxPerM = (d) => (H / 2) / (d * Math.tan(VFOV * Math.PI / 360));
+  const cover = (tris, anchor, d, frame = 2.6) => {
+    const s = pxPerM(d) * SS, N = Math.max(4, Math.round(frame * pxPerM(d))), M = N * SS;
+    const g = new Uint8Array(M * M);
+    for (const [a, b, c] of tris) {
+      const A = [(a.z - anchor.z + frame / 2) * s, (a.y - anchor.y) * s];
+      const B = [(b.z - anchor.z + frame / 2) * s, (b.y - anchor.y) * s];
+      const C = [(c.z - anchor.z + frame / 2) * s, (c.y - anchor.y) * s];
+      const x0 = Math.max(0, Math.floor(Math.min(A[0], B[0], C[0])));
+      const x1 = Math.min(M - 1, Math.ceil(Math.max(A[0], B[0], C[0])));
+      const y0 = Math.max(0, Math.floor(Math.min(A[1], B[1], C[1])));
+      const y1 = Math.min(M - 1, Math.ceil(Math.max(A[1], B[1], C[1])));
+      for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
+        const X = px + 0.5, Y = py + 0.5;
+        const d1 = (X - B[0]) * (A[1] - B[1]) - (A[0] - B[0]) * (Y - B[1]);
+        const d2 = (X - C[0]) * (B[1] - C[1]) - (B[0] - C[0]) * (Y - C[1]);
+        const d3 = (X - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (Y - A[1]);
+        if (!(((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0)))) g[py * M + px] = 1;
+      }
+    }
+    const cov = new Float32Array(N * N);
+    for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
+      if (g[y * M + x]) cov[((y / SS) | 0) * N + ((x / SS) | 0)] += 1 / (SS * SS);
+    }
+    return cov;
+  };
+  const L1 = (a, b) => { let t = 0; for (let i = 0; i < a.length; i++) t += Math.abs(a[i] - b[i]); return t; };
+  const A1 = (a) => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t; };
+  const skinTris = (skin) => {
+    const out = [];
+    for (const m of skin.meshes) {
+      m.updateMatrixWorld(true);
+      const P = m.geometry.attributes.position, idx = m.geometry.index, w = [];
+      for (let i = 0; i < P.count; i++) {
+        const v = new THREE.Vector3().fromBufferAttribute(P, i);
+        m.applyBoneTransform(i, v); w.push(v.applyMatrix4(m.matrixWorld));
+      }
+      for (let i = 0; i < idx.count; i += 3) out.push([w[idx.getX(i)], w[idx.getX(i + 1)], w[idx.getX(i + 2)]]);
+    }
+    return out;
+  };
+  const cohortTris = (L, phase = -1) => {
+    const out = [], im = new THREE.Matrix4(), pm = new THREE.Matrix4(), full = new THREE.Matrix4();
+    for (const mesh of L.c.meshes) {
+      im.fromArray(mesh.instanceMatrix.array, L.slot * 16);
+      const P = mesh.geometry.attributes.position, AB = mesh.geometry.attributes.aBone;
+      const idx = mesh.geometry.index, w = [];
+      /* THE PALETTE FIRST, THEN THE INSTANCE MATRIX, which is the order the
+       * vertex shader applies them in: the palette is a canonical-frame
+       * transform and `instanceMatrix` is what puts the canonical body back on
+       * the ground. `poseMatrix` is the shipped reader — a phase below zero is
+       * "not walking" and gives the identity, i.e. the frozen rung. */
+      let bone = -1;
+      for (let i = 0; i < P.count; i++) {
+        const b = AB ? AB.getX(i) : 0;
+        if (b !== bone) { bone = b; full.multiplyMatrices(im, poseMatrix(L.c, phase, b, pm)); }
+        w.push(new THREE.Vector3().fromBufferAttribute(P, i).applyMatrix4(full));
+      }
+      for (let i = 0; i < idx.count; i += 3) out.push([w[idx.getX(i)], w[idx.getX(i + 1)], w[idx.getX(i + 2)]]);
+    }
+    return out;
+  };
+
+  /**
+   * One physics world and one scene for every §7 check that needs a body it can
+   * drive by hand. Lazy and shared for the same reason `farLine` is: building
+   * it is the expensive part, and two of them would be two seeds.
+   */
+  let _bench = null;
+  const poseBench = () => (_bench ||= (async () => {
+    const { initPhysics } = await import('../../src/physics/Rapier.js');
+    await initPhysics();
+    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
+    const Foe = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
+    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
+      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
+      crater() {}, flush() {}, slopeAt: () => 0 };
+    physics.terrain = terrain;
+    const nothing = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
+    const scene = new THREE.Scene();
+    const world = { scene, physics, terrain, statics: [], settings: { fov: 60 },
+      players: [], enemies: [], props: [], particles: nothing, time: 0, groundColor: 0xcfae82,
+      bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
+      report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
+    Foe.enemyRng.seed(20260821);
+    return { world, scene, physics, terrain, nothing, Foe };
+  })());
+
+  /**
+   * ONE MARCHING COHORT, BUILT ONCE, READ BY TWO CHECKS.
+   *
+   * Shared because the two things worth asserting about the pose palette are
+   * the same crowd in two states — walking and halted — and a second crowd
+   * would be a second seed, a second freeze and a second answer to "what does
+   * this cohort look like". The checks below take it in order: the first fills
+   * the palette and prices the picture, the second halts it and disposes.
+   *
+   * The bodies are spread along X so the side-on rasteriser sees each man in
+   * his own frame, and each starts at a different point of the walk so the
+   * crowd arrives spread across the cycle — which is what `Enemy._animPhase`
+   * does to a wave that spawns together, reproduced here by construction.
+   */
+  const CROWD = { type: 'trooper', n: 8 };
+  let _crowd = null;
+  const poseCrowd = (assert) => (_crowd ||= (async () => {
+    const { world, scene, physics, terrain, nothing, Foe } = await poseBench();
+    Foe.enemyRng.seed(20260824);
+    const field = new CohortField(scene);
+    world.cohorts = field;
+    const ctx = { camera: world.engine.camera, terrain, particles: nothing, physics,
+      enemies: [], players: [], time: 0, dt: 1 / 60, bolts: world.bolts, pickTarget: () => null };
+    /* `velocity` and `grounded` are what `BipedAnimator.solve` reads to decide
+     * it is walking, so driving them by hand is driving the shipped predicate —
+     * `halt` is the same call with the speed taken out and nothing else. */
+    const stride = (e) => { e.velocity.set(0, 0, 3.0); e.grounded = true; e._pose(1 / 60, ctx); };
+    const halt = (e) => { e.velocity.set(0, 0, 0); e.grounded = true; e._pose(1 / 60, ctx); };
+    const crowd = [];
+    const enlist = (i) => {
+      const e = new Foe.Enemy(world, CROWD.type, new THREE.Vector3(i * 4, 0, 0));
+      e.facing = 0;
+      for (let k = 0; k < 40 + i * 9; k++) stride(e);
+      world.time += 1; e._applyLod(2);
+      if (!e._l2?.skin) { world.time += 1; e._applyLod(1); e._applyLod(2); }
+      world.time += 1;
+      assert(field.join(e), `${CROWD.type} could not join a cohort`);
+      crowd.push(e);
+      return e;
+    };
+    for (let i = 0; i < CROWD.n; i++) enlist(i);
+    return { world, physics, field, crowd, ctx, stride, halt, enlist, cold: field.stats() };
+  })());
+
   check('frame: the pose a cohort freezes is inside the band the gait already occupies', async () => {
     /**
      * WHAT THE RUNG ACTUALLY TRADES, AND THE ONLY HONEST WAY TO PRICE IT.
@@ -1300,77 +1465,7 @@ export async function run({ check, assert }) {
      * from a frame of the animation, and that is a stronger statement than any
      * threshold anybody would have chosen.
      */
-    const { initPhysics } = await import('../../src/physics/Rapier.js');
-    await initPhysics();
-    const { RapierWorld } = await import('../../src/physics/RapierWorld.js');
-    const Foe = await import('../../src/game/Enemy.js');
-    await import('../../src/game/Levels.js');
-
-    const H = 720, VFOV = 60, SS = 4;
-    const pxPerM = (d) => (H / 2) / (d * Math.tan(VFOV * Math.PI / 360));
-    const cover = (tris, anchor, d, frame = 2.6) => {
-      const s = pxPerM(d) * SS, N = Math.max(4, Math.round(frame * pxPerM(d))), M = N * SS;
-      const g = new Uint8Array(M * M);
-      for (const [a, b, c] of tris) {
-        const A = [(a.z - anchor.z + frame / 2) * s, (a.y - anchor.y) * s];
-        const B = [(b.z - anchor.z + frame / 2) * s, (b.y - anchor.y) * s];
-        const C = [(c.z - anchor.z + frame / 2) * s, (c.y - anchor.y) * s];
-        const x0 = Math.max(0, Math.floor(Math.min(A[0], B[0], C[0])));
-        const x1 = Math.min(M - 1, Math.ceil(Math.max(A[0], B[0], C[0])));
-        const y0 = Math.max(0, Math.floor(Math.min(A[1], B[1], C[1])));
-        const y1 = Math.min(M - 1, Math.ceil(Math.max(A[1], B[1], C[1])));
-        for (let py = y0; py <= y1; py++) for (let px = x0; px <= x1; px++) {
-          const X = px + 0.5, Y = py + 0.5;
-          const d1 = (X - B[0]) * (A[1] - B[1]) - (A[0] - B[0]) * (Y - B[1]);
-          const d2 = (X - C[0]) * (B[1] - C[1]) - (B[0] - C[0]) * (Y - C[1]);
-          const d3 = (X - A[0]) * (C[1] - A[1]) - (C[0] - A[0]) * (Y - A[1]);
-          if (!(((d1 < 0) || (d2 < 0) || (d3 < 0)) && ((d1 > 0) || (d2 > 0) || (d3 > 0)))) g[py * M + px] = 1;
-        }
-      }
-      const cov = new Float32Array(N * N);
-      for (let y = 0; y < M; y++) for (let x = 0; x < M; x++) {
-        if (g[y * M + x]) cov[((y / SS) | 0) * N + ((x / SS) | 0)] += 1 / (SS * SS);
-      }
-      return cov;
-    };
-    const L1 = (a, b) => { let t = 0; for (let i = 0; i < a.length; i++) t += Math.abs(a[i] - b[i]); return t; };
-    const A1 = (a) => { let t = 0; for (let i = 0; i < a.length; i++) t += a[i]; return t; };
-    const skinTris = (skin) => {
-      const out = [];
-      for (const m of skin.meshes) {
-        m.updateMatrixWorld(true);
-        const P = m.geometry.attributes.position, idx = m.geometry.index, w = [];
-        for (let i = 0; i < P.count; i++) {
-          const v = new THREE.Vector3().fromBufferAttribute(P, i);
-          m.applyBoneTransform(i, v); w.push(v.applyMatrix4(m.matrixWorld));
-        }
-        for (let i = 0; i < idx.count; i += 3) out.push([w[idx.getX(i)], w[idx.getX(i + 1)], w[idx.getX(i + 2)]]);
-      }
-      return out;
-    };
-    const cohortTris = (L) => {
-      const out = [], im = new THREE.Matrix4();
-      for (const mesh of L.c.meshes) {
-        im.fromArray(mesh.instanceMatrix.array, L.slot * 16);
-        const P = mesh.geometry.attributes.position, idx = mesh.geometry.index, w = [];
-        for (let i = 0; i < P.count; i++) w.push(new THREE.Vector3().fromBufferAttribute(P, i).applyMatrix4(im));
-        for (let i = 0; i < idx.count; i += 3) out.push([w[idx.getX(i)], w[idx.getX(i + 1)], w[idx.getX(i + 2)]]);
-      }
-      return out;
-    };
-
-    const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
-    const terrain = { height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
-      size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
-      crater() {}, flush() {}, slopeAt: () => 0 };
-    physics.terrain = terrain;
-    const nothing = { sandPuff() {}, sparkBurst() {}, cutFlare() {}, slag() {}, plasma: { spawn() {} } };
-    const scene = new THREE.Scene();
-    const world = { scene, physics, terrain, statics: [], settings: { fov: 60 },
-      players: [], enemies: [], props: [], particles: nothing, time: 0, groundColor: 0xcfae82,
-      bolts: { fire() {} }, engine: { flash() {}, camera: new THREE.PerspectiveCamera() },
-      report() {}, notify() {}, notifyFloating() {}, addHitstop() {} };
-    Foe.enemyRng.seed(20260821);
+    const { world, scene, physics, terrain, nothing, Foe } = await poseBench();
 
     const rows = [];
     let worstRatio = 0, worstAt = '', smallest = 1e9;
@@ -1412,10 +1507,299 @@ export async function run({ check, assert }) {
       `${worstAt}'s frozen pose sits ${worstRatio.toFixed(2)}× further from the live body than the `
       + 'live body sits from itself one gait frame later. The rung is meant to be indistinguishable '
       + 'from a frame of the animation it replaces; past 1.0 it is a pose nobody would have drawn.');
-    physics.dispose?.();
     return `${rows.length} archetypes at ${L3_AT.toFixed(0)} m (${pxPerM(L3_AT).toFixed(2)} px/m, `
       + `smallest body ${smallest.toFixed(1)} px of coverage): worst frozen/gait ratio `
       + `${worstRatio.toFixed(2)} (${worstAt}) — ${rows.join(', ')}`;
+  });
+
+
+  check('frame: a cohort wears a CROWD of poses now, and still costs a draw call a MATERIAL', async () => {
+    /**
+     * ══ WHAT THE PALETTE BUYS, AND THE ONLY THING IT IS ALLOWED TO COST ══
+     *
+     * The check above this one prices the frozen pose against ONE body and the
+     * answer is that it is already honest — worst archetype 0.98x the gait's own
+     * frame-to-frame movement. What it cannot see is the defect a player
+     * actually reports, because it never looks at two bodies at once: every
+     * instance of one cohort wore ONE pose, so the error was the SAME error on
+     * every man at the same instant and a hundred of them read as lockstep long
+     * before any one of them reads as wrong.
+     *
+     * So this is the same rasteriser pointed at a CROWD, and it asserts the two
+     * halves of the trade separately:
+     *
+     *   THE DECISION CHANGES. The frozen crowd is literally one silhouette
+     *   repeated — every pair of instances is identical to the pixel. With the
+     *   palette it is not, and each instance sits CLOSER to the body it is
+     *   standing in for than the frozen pose did. Both readings come out of one
+     *   function (`cohortTris`) called with and without a phase, so this is not
+     *   two rasterisers agreeing with each other.
+     *
+     *   THE COUNT DOES NOT. `stats().calls` is taken before the palette exists,
+     *   after it has filled, and again with the crowd doubled. A pose that cost
+     *   a draw call would be a palette of frozen cohorts, and §7's own reading
+     *   prices that: 8 cohorts at 38 calls x `poseSlots()` is 456, against the
+     *   L2 merge's 196 — worse than deleting the rung.
+     *
+     * And the GLSL is held to the JS. `poseMatrix` is what this rasterises
+     * through; `POSE_GLSL` is what the GPU runs. They address one texture with
+     * one pair of terms and neither is allowed to move alone — see
+     * tools/checks/_glsl.mjs for why a check with its own copy of a shader's
+     * arithmetic measures nothing.
+     */
+    const patched = posedVertexShader(THREE.ShaderLib.physical.vertexShader);
+    assert(patched.indexOf('objectNormal = mat3( cohortPoseM )') < patched.indexOf('#include <defaultnormal_vertex>'),
+      'the pose rotates objectNormal AFTER <defaultnormal_vertex> has consumed it — the body would '
+      + 'be lit in a pose it is not drawn in');
+    assert(patched.indexOf('transformed = ( cohortPoseM') > patched.indexOf('#include <begin_vertex>'),
+      'the pose moves `transformed` before <begin_vertex> assigns it');
+    assert(POSE_GLSL.pars.includes('floor( aPose * uPoseSlots )')
+      && POSE_GLSL.pars.includes('aBone.x * 3.0'),
+      'the shader no longer addresses the palette the way `poseMatrix` does — one of the two moved, '
+      + 'so what this check rasterises is not what the GPU draws');
+
+    const slots = poseSlots();
+    const { field, crowd, stride, enlist, cold } = await poseCrowd(assert);
+    const N = CROWD.n;
+    assert(cold.instances === N, `${cold.instances} of ${N} bodies are instances`);
+    const c = crowd[0]._l3.c;
+    assert(c.pose, 'the cohort has no pose palette at all');
+    /* AND THE MATERIAL IT HANGS OFF WAS NOT ALREADY EXTENDED. `Cohorts` ASSIGNS
+     * `onBeforeCompile` on its clone rather than chaining, so a character
+     * material that had grown one of its own would lose it — silently, and only
+     * on the cohort rung. `Toon.hasCustomShader` is the codebase's own test for
+     * "this material has been extended"; nothing in the character path trips it
+     * today and this is what says so out loud if that changes. */
+    for (const e of crowd) for (const m of e._l2.skin.meshes) {
+      assert(!hasCustomShader(m.material),
+        `${CROWD.type}'s merged bin \`${m.material.name || m.material.type}\` carries its own `
+        + 'onBeforeCompile, and the cohort clone assigns over it — that extension is dropped for '
+        + 'every instanced body and kept for every one a metre closer');
+    }
+    assert(c.pose.filled === 0, `the palette holds ${c.pose.filled} captured slots before a frame `
+      + 'has been stepped — an untouched palette must be the identity, which is this rung as it shipped');
+
+    /* A CAPTURE A FRAME OVER THE WHOLE FIELD, which is what `step` promises and
+     * what the bound below is measuring: the palette cannot fill faster than
+     * `CAPTURES_PER_FRAME`, and if it needed more than a few seconds of them a
+     * crowd would spend the fight in lockstep anyway. */
+    const budget = slots * 40;
+    let frames = 0;
+    while (frames < budget && c.pose.filled < slots) {
+      for (const e of crowd) { stride(e); field.place(e); }
+      field.step();
+      frames++;
+    }
+    assert(c.pose.filled === slots,
+      `${frames} frames at ${CAPTURES_PER_FRAME} capture a frame and the palette has ${c.pose.filled} `
+      + `of ${slots} slots. A crowd that never fills its palette is a crowd in lockstep.`);
+
+    const warm = field.stats(), poses = field.poseStats();
+    assert(warm.calls === cold.calls,
+      `the palette took the cohort from ${cold.calls} draw calls to ${warm.calls}`);
+    assert(poses.worn > 1,
+      `${N} instances are wearing ${poses.worn} distinct pose${poses.worn === 1 ? '' : 's'}. That is `
+      + 'the rung as it was: one pose for the whole cohort, whatever the population.');
+    assert(poses.frozen === 0,
+      `${poses.frozen} of ${N} walking bodies are still wearing the frozen pose`);
+    /* AND NO PHASE ADDRESSES A ROW THAT IS NOT THERE. `poseSlotOf` CLAMPS to the
+     * last slot and the GLSL's `floor( aPose * uPoseSlots )` does not, so the
+     * writer in `place` is the only thing keeping the two in agreement: a phase
+     * that reached 1.0 would send the shader a row past the palette while every
+     * reader on this side quietly answered with the last one. */
+    for (const e of crowd) {
+      const ph = c.aPose.array[e._l3.slot];
+      assert(Math.floor(ph * slots) === poseSlotOf(ph, slots),
+        `a phase of ${ph} sends the shader to row ${Math.floor(ph * slots)} of a ${slots}-row `
+        + `palette, while poseSlotOf clamps it to ${poseSlotOf(ph, slots)}`);
+    }
+
+    /* …AND THE COST STILL DOES NOT COUNT BODIES. Same claim as the rung's own,
+     * re-asserted with the palette on, because a per-instance pose is exactly
+     * the shape of change that quietly turns an instanced draw back into one. */
+    for (let i = 0; i < N; i++) enlist(N + i);
+    for (let f = 0; f < 8; f++) { for (const e of crowd) { stride(e); field.place(e); } field.step(); }
+    const twice = field.stats();
+    assert(twice.instances >= N * 2 - 1 && twice.calls === cold.calls,
+      `${twice.instances} instances now cost ${twice.calls} draw calls against ${cold.calls} for ${N}`);
+
+    /* ── the picture, at the band's own distance ─────────────────────── */
+    const posed = [], frozenC = [], live = [];
+    for (const e of crowd.slice(0, N)) {
+      const ph = c.aPose.array[e._l3.slot];
+      assert(ph >= 0, 'a walking body wrote a negative phase');
+      posed.push(cover(cohortTris(e._l3, ph), e.position, L3_AT));
+      frozenC.push(cover(cohortTris(e._l3, -1), e.position, L3_AT));
+      live.push(cover(skinTris(e._l2.skin), e.position, L3_AT));
+    }
+    let sameFrozen = 0, samePosed = 0, pairs = 0;
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) {
+      pairs++;
+      if (L1(frozenC[i], frozenC[j]) < 1e-9) sameFrozen++;
+      if (L1(posed[i], posed[j]) < 1e-9) samePosed++;
+    }
+    assert(sameFrozen === pairs,
+      `${sameFrozen} of ${pairs} frozen pairs are identical — this check is not measuring the rung `
+      + 'it thinks it is, because the frozen cohort is one silhouette by construction');
+    assert(samePosed < pairs,
+      `all ${pairs} pairs of the posed crowd are still pixel-identical: the palette is filled but `
+      + 'nothing is reading it');
+
+    let ef = 0, ep = 0, worstPair = 0;
+    for (let i = 0; i < N; i++) {
+      ef += L1(frozenC[i], live[i]);
+      ep += L1(posed[i], live[i]);
+    }
+    for (let i = 0; i < N; i++) for (let j = i + 1; j < N; j++) worstPair = Math.max(worstPair, L1(posed[i], posed[j]));
+    assert(ep < ef,
+      `the posed crowd sits ${(ep / N).toFixed(2)} px from the bodies it stands in for and the frozen `
+      + `crowd sat ${(ef / N).toFixed(2)} px. The palette is meant to move each instance TOWARD the `
+      + 'man it replaces; if it does not, it is decoration with a texture fetch attached.');
+
+    /* ── and it stays out of the ink, which is the licence for all of it ─ */
+    let disp = 0;
+    const pm = new THREE.Matrix4(), v0 = new THREE.Vector3(), v1 = new THREE.Vector3();
+    const g0 = c.meshes[0].geometry, PA = g0.attributes.position, AB = g0.attributes.aBone;
+    for (let sl = 0; sl < slots; sl++) {
+      for (let i = 0; i < PA.count; i += 7) {
+        poseMatrix(c, (sl + 0.5) / slots, AB.getX(i), pm);
+        v0.fromBufferAttribute(PA, i);
+        v1.copy(v0).applyMatrix4(pm);
+        disp = Math.max(disp, v0.distanceTo(v1));
+      }
+    }
+    assert(inkReach.plane > 0,
+      'the ink-reach check has not run yet, so this has nothing to compare the pose against');
+    assert(disp < L3_AT - inkReach.plane,
+      `a palette slot moves a vertex ${disp.toFixed(2)} m and the gap between the ink prepass's `
+      + `furthest reach (${inkReach.plane.toFixed(1)} m on ${inkReach.at}) and the band `
+      + `(${L3_AT.toFixed(1)} m) is only ${(L3_AT - inkReach.plane).toFixed(1)} m. A posed vertex `
+      + 'that crossed into the prepass would be outlined at the pose it is not in, which is the '
+      + 'objection this rung refused a vertex shader over.');
+
+    /* NOT DISPOSED — the halt check below takes this same crowd, because the
+     * pose the palette must NOT hold is only meaningful against the one it
+     * does. It disposes. */
+    return `${N} bodies of one cohort, ${slots} palette slots filled in ${frames} frames at `
+      + `${CAPTURES_PER_FRAME} capture a frame: ${poses.worn} distinct poses drawn where the frozen `
+      + `rung drew 1, all ${pairs} frozen pairs identical and ${samePosed} posed; error to the live `
+      + `body ${(ef / N).toFixed(2)} → ${(ep / N).toFixed(2)} px, crowd spread ${worstPair.toFixed(2)} px; `
+      + `${twice.instances} bodies still cost ${twice.calls} draw calls (a pose a mesh would be `
+      + `${cold.calls * slots}); worst slot moves a vertex ${disp.toFixed(2)} m into a `
+      + `${(L3_AT - inkReach.plane).toFixed(1)} m gap before the ink`;
+  });
+
+  check('frame: a cohort that halts wears the pose it halted in, and stops feeding the palette', async () => {
+    /**
+     * ══ WHY `BipedAnimator.moving` IS PUBLISHED, AND WHAT IT DECIDES ══════
+     *
+     * The palette is a WALK, and `phase` alone cannot say whether a body is
+     * walking: a man who stops keeps the phase he stopped on. Both sides of the
+     * palette read the gait's own predicate instead, and both would be wrong
+     * without it —
+     *
+     *   THE WRITER (`Cohorts.place`). A halted instance writes -1 and wears the
+     *     pose the cohort was frozen in. Off `phase` alone the crowd would be
+     *     held mid-stride, each man on a different foot — a field of statues
+     *     caught walking, which is worse than the lockstep this rung started as
+     *     because it is now a LIE ABOUT WHAT THE BODY IS DOING.
+     *
+     *   THE DONOR (`Cohorts.capture`). A halted man is never read into the
+     *     palette. Otherwise a slice of parade rest lands in one slot and every
+     *     instance in the crowd whose phase reaches it snaps to attention for
+     *     one twelfth of a second, forever.
+     *
+     * THE SAME CROWD as the check above, which is the point: it walked, its
+     * palette filled, and the picture was measured. Halting it must put every
+     * one of those readings back exactly where the frozen rung had them — one
+     * silhouette, no captures, a palette that does not move a byte. That is the
+     * decision changing, measured in both directions on one field.
+     */
+    const { field, crowd, stride, halt, physics } = await poseCrowd(assert);
+    const c = crowd[0]._l3.c, P = c.pose;
+    const slots = poseSlots();
+    assert(P.filled === slots,
+      `the palette holds ${P.filled} of ${slots} slots — the walking check above did not run, so `
+      + 'this has no filled palette to prove is left alone');
+
+    /* Every one of them is indexing the palette while it walks, which is what
+     * the halt below has to take away. */
+    assert(crowd.every((e) => c.aPose.array[e._l3.slot] >= 0),
+      'a walking body wrote a negative phase, so there is nothing here for the halt to change');
+
+    const before = P.data.slice();
+    let took = 0;
+    for (let f = 0; f < slots * 4; f++) {
+      for (const e of crowd) { halt(e); field.place(e); }
+      took += field.step();
+    }
+    const held = crowd.map((e) => e.animator.phase - Math.floor(e.animator.phase));
+    const worn = crowd.map((e) => c.aPose.array[e._l3.slot]);
+
+    assert(held.some((p) => p > 0.02 && p < 0.98),
+      'every halted body\'s gait phase is at the top of the cycle, so nothing here would have shown '
+      + 'a reader that held a standing man mid-stride');
+    assert(worn.every((p) => p < 0), `${worn.filter((p) => p >= 0).length} of ${crowd.length} halted `
+      + 'bodies are still indexing the walk palette — they are held mid-stride, on whichever foot '
+      + 'they stopped on');
+    assert(took === 0, `${took} captures were taken off a crowd that is standing still. The palette `
+      + 'is a walk cycle; a standing pose in it snaps the whole crowd to attention for one slot.');
+    let moved = 0;
+    for (let i = 0; i < before.length; i++) if (before[i] !== P.data[i]) moved++;
+    assert(moved === 0, `${moved} palette floats changed while nobody walked`);
+    const poses = field.poseStats();
+    assert(poses.frozen === poses.instances,
+      `${poses.instances - poses.frozen} of ${poses.instances} halted instances are not on the `
+      + 'frozen pose');
+    assert(poses.worn === 0, `${poses.worn} distinct walk poses are still being drawn`);
+
+    /* AND IT IS ONE SILHOUETTE AGAIN, pixel for pixel — the rung exactly as it
+     * shipped, which is the state a halted crowd is supposed to fall back to.
+     * Read through the same rasteriser the walking crowd was, at the same
+     * distance, so the two readings are comparable by construction. */
+    const cov = crowd.slice(0, CROWD.n).map((e) => cover(cohortTris(e._l3, c.aPose.array[e._l3.slot]),
+      e.position, L3_AT));
+    let same = 0, pairs = 0;
+    for (let i = 0; i < cov.length; i++) for (let j = i + 1; j < cov.length; j++) {
+      pairs++; if (L1(cov[i], cov[j]) < 1e-9) same++;
+    }
+    assert(same === pairs, `${same} of ${pairs} halted pairs are identical — a halted cohort is `
+      + 'meant to be the frozen rung, and the frozen rung is one silhouette by construction');
+
+    /**
+     * …AND IT WALKS AGAIN THE MOMENT THEY DO, so the halt is a state and not a
+     * door that shuts. Same bodies, same field, speed put back.
+     *
+     * `frozen === 0` is the assertion. `worn` IS NOT, and the reason is a
+     * property of the shipped gait rather than of this rung: `BipedAnimator`
+     * resets `phase` on the walk-restart edge so a body "starts on the foot a
+     * person would start on — the one already furthest behind" (Rig.js), and a
+     * squad that halted together and steps off together therefore shares one
+     * phase for the first stride. That is a real squad stepping off in unison,
+     * which is what a squad does; the lockstep the palette exists to break is
+     * the PERMANENT one, and the crowd it breaks arrives already spread because
+     * `Enemy._animPhase` offsets a wave that spawns together. Asserting a
+     * spread here would be asserting the gait is wrong about how people start
+     * walking.
+     */
+    for (let f = 0; f < slots; f++) { for (const e of crowd) { stride(e); field.place(e); } field.step(); }
+    const again = field.poseStats();
+    assert(again.frozen === 0,
+      `${again.frozen} of ${again.instances} bodies are still wearing the frozen pose after the `
+      + 'crowd started walking again — the halt is one-way');
+    assert(new Set(crowd.map((e) => e.animator.phase)).size === 1,
+      `the crowd stepped off on ${new Set(crowd.map((e) => e.animator.phase)).size} different phases. `
+      + 'Rig.js resets the phase on the walk-restart edge, so a squad that halted together shares '
+      + 'one — if that stopped being true this note about why `worn` is not asserted is stale');
+
+    field.dispose();
+    for (const e of crowd) e.dispose?.();
+    physics.dispose?.();
+    return `${crowd.length} bodies halted mid-stride (phases ${held.slice(0, 3).map((p) => p.toFixed(2)).join('/')}…): `
+      + `every one wears the frozen pose, all ${pairs} pairs identical again, ${took} captures taken `
+      + `and ${moved} of ${before.length} palette floats moved in ${slots * 4} frames; `
+      + `0 frozen over ${again.instances} bodies when they march again, all on one phase because `
+      + 'Rig.js starts a stride on the foot furthest behind';
   });
 
   check('frame: a cohort member is still a body — it is the drawing that changed', async () => {

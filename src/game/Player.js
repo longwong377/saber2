@@ -28,7 +28,8 @@ import { parryScale, TOUGHNESS, impactDamage, RETURN_CONE } from './Combat.js';
  * `forceResistance` in Enemy.js, and one contest read out of two rulebooks is
  * exactly the drift `Powers.js` exists to have ended (HANDOFF §2.3/§2.4).
  * Enemy.js imports nothing from this file, so the edge is one-way. */
-import { forceResistance, IMPULSE_AS_HP, limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
+import { forceResistance, gripClaim, gripHolders, gripRelease, gripSeize, heldMass, IMPULSE_AS_HP,
+         limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
 import { POWER_COST, SENSE_DRAIN } from './Powers.js';
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
@@ -89,6 +90,10 @@ function segmentPointSq(p0, p1, pt) {
   return _tkA.multiplyScalar(t).add(p0).distanceToSquared(pt);
 }
 const _g4 = new THREE.Vector3(), _g5 = new THREE.Vector3();
+/** Where a contested hold resolves to. Its own vector rather than one of the
+ *  `_v` pool because `_updateGrip` is holding `hold` (_v1) live across the call
+ *  and `_sweepHeld` borrows most of the rest. See `gripClaim` in Enemy.js. */
+const _gc = new THREE.Vector3();
 /** `applyKnockback` scales the shove when the pool blunts it, and the vector it
  *  is handed is somebody ELSE's scratch (`Enemy._castPower` passes its `_v2`) —
  *  so it copies into its own rather than writing through the caller's. Exactly
@@ -2699,6 +2704,52 @@ export function defaultBoonMods() {
     ward: 1,
     /** Domination. Force compel refuses by name without it — see forceCompel. */
     compel: false,
+    /* ══════════════════════════════════════════════════════════════════
+     *  THE RULES, AS OPPOSED TO THE NUMBERS — PLAN.md §4.6
+     * ══════════════════════════════════════════════════════════════════
+     *
+     * "Eight facets that change RULES rather than numbers… At least two of the
+     * eight must change the QUORUM. Variance that cannot touch the keystone is
+     * variance in a side pocket, and this is the difference between melded and
+     * parallel."
+     *
+     * Every field below is a rule somebody else's system asks about, and every
+     * one has its reader named beside it, because a card that promises a rule
+     * nothing reads is the one defect this codebase keeps removing. They are
+     * declared here rather than kept on the instance for the reason this
+     * table's own header gives: `defaultBoonMods` is the closed contract, and
+     * a key that is not in it is a key nothing can iterate or serialise. */
+
+    /**
+     * WHAT SHARE OF THE LIVING HAS TO BE STANDING WITH THE LINE for the ground
+     * to be taken. `CommandDirector.lineGathered` is the reader, and it is the
+     * keystone itself — half is the shipped rule and a third is Skirmish Order.
+     */
+    quorumShare: 0.5,
+    /** …AND WHAT THAT COSTS: the muster's purse, scaled. Read by `_areaClear`. */
+    musterShare: 1,
+    /**
+     * DOES A MAN ON THE GROUND STILL COUNT while somebody is standing over
+     * him? `lineGathered` again — §4.9's bleed-out window and the quorum are in
+     * direct tension by design, and Triage is the facet that changes which way
+     * that tension pulls.
+     */
+    triage: false,
+    /** How fast a squad turns ground into a position. Read by `_digTick`. */
+    digRate: 1,
+    /**
+     * WHAT SHARE OF THE WEATHER YOUR OWN LINE HAS TO SEE THROUGH. 1 is the
+     * storm as it stands; Storm Sense halves it for your side only. Read by
+     * `Enemy._hasLineOfSight`, which is the one place that asks.
+     */
+    stormEyes: 1,
+    /** Does breaking cover pay Insight? Read by `World.onPropBroken`. */
+    salvage: false,
+    /**
+     * DOES A BROKEN MAN GO TO GROUND WHERE HE STANDS instead of walking home?
+     * Read by `CommandDirector.steer`, which is where a rout is a destination.
+     */
+    standfast: false,
   };
 }
 
@@ -2937,6 +2988,10 @@ export class Player {
     // ── force powers
     this.gripBody = null;
     this.gripEnemy = null;
+    /** This hand's share of a contested hold, 0..1. 1 whenever nobody else has
+     *  a hand on it, which is every grip in a single-player game. Read by
+     *  `hurlGripped` — you can only throw what you own. See `gripClaim`. */
+    this.gripShare = 1;
     /** null when not channelling a heal, otherwise seconds elapsed. */
     this.healing = null;
     this._healFrom = 0;
@@ -3276,10 +3331,27 @@ export class Player {
     // …and never against yourself: a held power bills through the same door,
     // and a caster paying twice for one cast is not a contest.
     if (source === this) return 0;
-    const r = forceResistance(this.force, amount, kind, this.staggerTimer > 0);
+    const r = forceResistance(this.force, amount, kind, this._guardOpen());
     this.force = Math.max(0, this.force - r.spend);
     return r.blunt;
   }
+
+  /**
+   * IS THIS PLAYER'S GUARD ALREADY BEATEN — one predicate, the mirror of
+   * `Enemy._guardOpen`, and it exists for the reason that one does: two readers.
+   *
+   * The blow this player is resisting (`resistForce`, above) and the pull they
+   * are resisting in a contested grip (`_updateGrip`) have to agree about
+   * whether the guard is open, or "break his guard and the cap collapses to a
+   * fifth" would be true of a shove and false of a tug-of-war over the same
+   * crate in the same second. It was written inline here and would have been
+   * written inline again there.
+   *
+   * `staggerTimer > 0` and not a stun: a player is never taken off the
+   * controls, which is a rule the whole game already keeps, so a stagger is the
+   * one open state a player has.
+   */
+  _guardOpen() { return this.staggerTimer > 0; }
 
   applyKnockback(impulse, damage = 0, source = null, gentle = false) {
     if (!this.alive) return false;
@@ -6228,6 +6300,47 @@ export class Player {
   _heft(mass) { return lerp(1, 0.28, clamp(Math.max(0, mass) / this.liftCapacity, 0, 1)); }
 
   /**
+   * WHAT THIS THING WEIGHS IN FORCE, per second, before distance and wear.
+   *
+   * `HOLD_COST.base + rise × (mass / cap)` was typed out twice in `_updateGrip`
+   * — once for a prop and once for a person, the only difference being which
+   * half of `HOLD_COST` it read — and it is now needed a third and fourth time
+   * by the contest, which must weigh a pull with the same number the bill is
+   * built on or the two would drift. One expression, four readers.
+   */
+  _holdRate(mass, person) {
+    const H = person ? HOLD_COST.person : HOLD_COST.prop;
+    return H.base + H.rise * clamp(mass / this.liftCapacity, 0, 1);
+  }
+
+  /**
+   * WHAT THIS HAND PULLS WITH, in the hp-per-second the whole Force contest is
+   * priced in — the number `gripClaim` weighs against somebody else's. Two
+   * terms, and neither of them is new.
+   *
+   *   THE MASS TERM is `_holdRate`: what the object weighs in Force. It is the
+   *   same for both contestants, so it CANCELS out of the ratio between them
+   *   and reaches the contest only through `forceResistance`'s
+   *   `pool × RESIST_PER_FORCE` arm — a heavy thing drives both bars down
+   *   towards where that arm starts binding, and the emptier bar slips first.
+   *   Which is what fighting over a pillar ought to feel like.
+   *
+   *   `forceScale`, AND NOT `1/√forceScale`. The BILL divides by the root
+   *   because a stronger Force user finds the same hold easier; a pull has to
+   *   multiply, because he also pulls harder. Weighting a contest by what the
+   *   hold COSTS — which is what reusing the bill's own `effort` would have
+   *   done — hands every crate to whoever is weakest. Reach, capacity and the
+   *   throw all read the slider this way round.
+   *
+   * The bill's distance and wear terms are deliberately absent. They are what a
+   * hold costs YOU over time, and they already decide the contest through the
+   * pool: hold it at arm's length for six seconds and yours is the bar that
+   * empties. Folding them in as well would say that reeling an object towards
+   * you makes you worse at holding it.
+   */
+  _gripPull(mass, person) { return this._holdRate(mass, person) * this.forceScale; }
+
+  /**
    * Where an enemy's middle is, derived from its POSITION rather than from
    * Enemy.aimPoint.
    *
@@ -6732,7 +6845,7 @@ export class Player {
       const e = hit.body.userData.enemy;
       // The crosshair was ON it, so it is the answer whether or not the answer
       // is yes — see `_forceSeen`.
-      return e ? { enemy: e, mass: e.A ? e.A.mass : 80, distance: hit.distance,
+      return e ? { enemy: e, mass: heldMass(e), distance: hit.distance,
                    immovable: e.grippable === false }
                : { body: hit.body, mass: hit.body.mass, distance: hit.distance };
     }
@@ -6772,7 +6885,7 @@ export class Player {
     }
     for (const e of ctx.enemies || []) {
       if (e.dead) continue;
-      consider(e, this._enemyPoint(e, _g2), e.A ? e.A.mass : 80, true, e.grippable === false);
+      consider(e, this._enemyPoint(e, _g2), heldMass(e), true, e.grippable === false);
     }
     return best || refuse;
   }
@@ -6954,10 +7067,32 @@ export class Player {
     }
   }
 
+  /**
+   * LET GO — of MY end of it, which is not the same as the thing being free.
+   *
+   * Both lines here used to end the hold outright: `gravityScale = 1` drops a
+   * crate out of the air and `releaseHold()` clears `gripped` and `liftTarget`.
+   * With two people on one body that is the first of them to let go dropping it
+   * out of the other's hands — and the second one goes on paying per second for
+   * a hold that has already ended, which is the worst version of the defect the
+   * contest exists to fix.
+   *
+   * So the ending is conditional on being the LAST hand off it. `gripRelease`
+   * answers how many claims remain, having first pruned any whose lease has
+   * lapsed, so a gripper who died or disconnected cannot leave a crate hanging.
+   */
   releaseGrip() {
     this._holdT = 0;
-    if (this.gripBody) { this.gripBody.gravityScale = 1; this.gripBody = null; }
-    if (this.gripEnemy) { this.gripEnemy.releaseHold(); this.gripEnemy = null; }
+    const now = this.world?.time ?? 0;
+    if (this.gripBody) {
+      if (gripRelease(this.gripBody, this, now) === 0) this.gripBody.gravityScale = 1;
+      this.gripBody = null;
+    }
+    if (this.gripEnemy) {
+      if (gripRelease(this.gripEnemy, this, now) === 0) this.gripEnemy.releaseHold();
+      this.gripEnemy = null;
+    }
+    this.gripShare = 1;
     this._endGesture('grip');
   }
 
@@ -7037,6 +7172,37 @@ export class Player {
 
   hurlGripped(ctx) {
     if (!this.gripBody && !this.gripEnemy) return;
+    /**
+     * ── YOU CAN ONLY THROW WHAT YOU OWN ─────────────────────────────────
+     *
+     * §4.8: *"break his guard and the resistance cap collapses from a half to a
+     * FIFTH, and it becomes a projectile with his name on it."* This line is
+     * where that stops being a description and becomes the rule.
+     *
+     * Two guarded Force users on one crate resolve to 0.500 and 0.500 — dead
+     * level, by construction, because each cancels `RESIST_CAP` of the other —
+     * so NEITHER of them can throw it and the object hangs shuddering between
+     * them for as long as both keep paying. Stagger him, and his `_guardOpen`
+     * turns the cancellation he is doing into `RESIST_CAP × RESIST_BEATEN`; the
+     * shares go 0.642 / 0.358 and the throw unlocks on the same frame. That is
+     * one press behaving differently because of something the player did to the
+     * man beside him, which is the only definition of a decision this codebase
+     * accepts.
+     *
+     * A REFUSAL AND NOT A SILENCE, and it names the counter-play rather than a
+     * number, for the reason `TOO HEAVY` does: there is no setting that answers
+     * this one, so a bare `return` would read as the key being broken. The
+     * strict `> 0.5` is deliberate — a tie is not a win.
+     */
+    const held = this.gripBody || this.gripEnemy;
+    if (gripHolders(held, this.world?.time ?? 0) > 1 && !(this.gripShare > 0.5)) {
+      return this._refuse('force hurl',
+        `another hand has ${Math.round((1 - this.gripShare) * 100)}% of it — break his guard first`);
+    }
+    /* AND IT LEAVES EVERY HAND AT ONCE. `_updateGrip` renews the hold every
+     * frame, so a loser still gripping would re-take a body in mid-flight on
+     * his very next frame. See `gripSeize`. */
+    gripSeize(held, this);
     const aim = this._aimTarget(ctx, _g3);
     const P = this.forceScale;
     const cap = this.liftCapacity;
@@ -7068,6 +7234,11 @@ export class Player {
       this._hurlBody(ctx, this.gripEnemy, aim.point);
       this.gripEnemy = null;
     }
+    /* An empty hand owns all of nothing. `releaseGrip` is not the path a throw
+     * takes out of a hold, so it says so here too — otherwise the next hold
+     * would open reporting the share of the last contest until its first frame
+     * of `_updateGrip` corrected it. */
+    this.gripShare = 1;
     this._endGesture('grip');
     audio.force(this.chest, 'push');
   }
@@ -7095,7 +7266,11 @@ export class Player {
    */
   _hurlBody(ctx, e, at) {
     const P = this.forceScale;
-    const m = e.A ? e.A.mass : 80;
+    /* THE PAIR, IF THERE IS A PAIR. A man thrown with his mate still on him is
+     * the heavier of the two throws and the speed law already knows what to do
+     * about that — see `heldMass`. `releaseHold` one line down ends the grip,
+     * and `stepGrab` lets go of a man the Force no longer has. */
+    const m = heldMass(e);
     // Whichever hold had it, it does not have it any more. Both are cleared
     // because the volley throws bodies the FIELD held while the grip may hold
     // one of its own, and a body must not leave with a mark still on it.
@@ -7267,8 +7442,7 @@ export class Player {
       _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
       if (_g1.distanceToSquared(pos) > r * r) continue;
       cd.set(e.id, 0.55);
-      const mass = this.gripBody ? Math.max(1, this.gripBody.mass)
-        : (held?.A ? held.A.mass : 80);
+      const mass = this.gripBody ? Math.max(1, this.gripBody.mass) : heldMass(held);
       const dmg = impactDamage(mass, speed, { k: 0.00004, floor: 3, cap: 18 });
       _g2.copy(vel).multiplyScalar(1 / Math.max(1e-3, speed));
       e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.62, 5, 17)).setY(2.6), dmg, this);
@@ -7450,7 +7624,7 @@ export class Player {
        * cannot be paid.
        */
       const hilt = this._grippedHilt();
-      const holdCost = (HOLD_COST.prop.base + HOLD_COST.prop.rise * clamp(b.mass / cap, 0, 1)) * effort * dt;
+      const holdCost = this._holdRate(b.mass, false) * effort * dt;
       const litCost = hilt && hilt.saberLit ? TK.lit * effort * dt : 0;
       if (litCost > 0 && !this._canSpend(holdCost + litCost)) {
         igniteHilt(hilt, false);
@@ -7459,9 +7633,31 @@ export class Player {
         this._spend(litCost);
       }
       if (!this._spend(holdCost)) { this.releaseGrip(); return; }
+      /**
+       * ── AND SOMEBODY ELSE MAY HAVE A HAND ON IT ──────────────────────────
+       *
+       * `gripClaim` is the whole of the contest and its arithmetic is
+       * `forceResistance` — see the block over it in Enemy.js. Uncontested it
+       * answers `share 1, drain 0` and the point that went in, so every hold in
+       * a single-player game takes exactly the path it took before.
+       *
+       * Contested it answers the SHARED resolution, which both grippers compute
+       * identically in the same frame, plus what this hand owes for resisting
+       * the other's pull. That price goes through `_spend` like every other
+       * Force price, so the Force Drain slider and the `forceCost` boons reach
+       * it — and so running out ends the hold through the door it already ended
+       * through. Losing a tug-of-war is not a new failure mode; it is the bar
+       * emptying faster because two people are pulling.
+       */
+      const g = gripClaim(b, this, hold, this._gripPull(b.mass, false), {
+        time: ctx.time || 0, pool: this.force, beaten: this._guardOpen(),
+        radius: b.boundingRadius || 0.5, out: _gc,
+      });
+      this.gripShare = g.share;
+      if (g.drain > 0 && !this._spend(g.drain * dt)) { this.releaseGrip(); return; }
       const heft = this._heft(b.mass);
       b.wake();
-      _v2.subVectors(hold, b.position);
+      _v2.subVectors(g.point, b.position);
       b.velocity.copy(_v2).multiplyScalar(9 * heft).clampLength(0, 28 * heft);
       b.angularVelocity.multiplyScalar(1 - dt * 2);
       b.angularVelocity.y += dt * 2.2 * heft;
@@ -7491,19 +7687,63 @@ export class Player {
       }
     } else if (this.gripEnemy) {
       const e = this.gripEnemy;
-      const m = e.A ? e.A.mass : 80;
+      /**
+       * WHAT YOU ARE LIFTING, WHICH IS NOT ALWAYS ONE MAN — PLAN §4.8's second
+       * bullet. `heldMass` is him plus whatever squadmate has hold of him, and
+       * it is the ONLY thing this bullet changes on this side of the seam:
+       * everything below reads `m` exactly as it did and every one of them now
+       * answers a different question because the number did.
+       *
+       *   the gate below  a pair heavier than your cap is pulled out of your
+       *                   hands, where the man alone was not
+       *   `_holdRate`     the pair costs more Force per second than the man
+       *   `_heft`         and moves more sluggishly at the end of your arm
+       *   `_gripPull`     and weighs more in the two-Force-user contest, where
+       *                   it cancels out of the ratio and reaches the shares
+       *                   only through `forceResistance`'s pool arm — which is
+       *                   what `_gripPull`'s own note predicts a heavy thing
+       *                   does: it drives BOTH bars down and the emptier one
+       *                   slips first.
+       */
+      const m = heldMass(e);
+      /* AND BEING OUTWEIGHED IS AN ANSWER, NOT A SILENCE. This branch could
+       * only ever fire on a cap that had changed underneath a hold; now the
+       * MASS changes underneath it, and a body that leaves your hands the
+       * instant his mate takes hold of him with nothing on screen reads as the
+       * grip breaking. Same sentence `TOO HEAVY` already says at the pick,
+       * through the same `_liftRefusal`, because it is the same fact. */
+      if (!e.dead && m > cap) {
+        this.lastGripRefusal = { ...this._liftRefusal({ mass: m, enemy: e }) };
+        this.world?.notify?.('TOO HEAVY', this.lastGripRefusal.why);
+      }
       if (e.dead || m > cap) { this.releaseGrip(); return; }
       /* SAY IT AGAIN, EVERY FRAME. This line is the whole of the lease: while
        * it runs the body stays held, and the frame it stops running for any
        * reason at all is the frame the body starts coming back. */
       e.hold();
-      if (!this._spend((HOLD_COST.person.base + HOLD_COST.person.rise * clamp(m / cap, 0, 1)) * effort * dt)) { this.releaseGrip(); return; }
+      if (!this._spend(this._holdRate(m, true) * effort * dt)) { this.releaseGrip(); return; }
       // Enemy.update damps its own position toward liftTarget at a fixed rate,
       // so the only place a heavy body can be made to FEEL heavy from here is
       // the target: walk it toward the hold point at a speed the Force can
       // actually manage rather than teleporting it there every frame.
       dampVec(this._liftPoint, hold, 0.8 + 3.4 * this._heft(m), dt);
-      e.liftTarget = this._liftPoint;
+      /* THE SAME CONTEST AS THE CRATE ABOVE, and the note over it covers both.
+       * THE CLAIM IS `_liftPoint` AND NOT `hold`: the mass-lagged point is where
+       * this hand actually is, and the contest is between two hands rather than
+       * between two crosshairs. `liftTarget` then gets a COPY of the shared
+       * resolution rather than an alias of `_liftPoint`, because two grippers
+       * aliasing one field is precisely the last-writer-wins the contest
+       * exists to end — with the copy both write the same value and it does not
+       * matter which of them ran last. */
+      const g = gripClaim(e, this, this._liftPoint, this._gripPull(m, true), {
+        time: ctx.time || 0, pool: this.force, beaten: this._guardOpen(),
+        radius: e.radius ?? 0.55, out: _gc,
+      });
+      this.gripShare = g.share;
+      if (g.drain > 0 && !this._spend(g.drain * dt)) { this.releaseGrip(); return; }
+      /* Made on first use, the way `_refusals` is, because the checks hold up
+       * Player-shaped stand-ins that never ran the constructor. */
+      e.liftTarget = (this._contestPoint ||= new THREE.Vector3()).copy(g.point);
       /* A HELD BODY IS A REAL OBJECT TOO — note #9's other half. The velocity
        * is read off the ragdoll's own chest rather than off `e.velocity`,
        * which a limp body does not drive. See `_sweepHeld`. */

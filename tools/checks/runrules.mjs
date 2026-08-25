@@ -155,7 +155,7 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
-  check('rules: the panel will not offer more rules than a wave can carry', () => {
+  check('rules: the panel will not offer more rules than a player may author', () => {
     const { settings, doc, close } = menuOn({ level: 'colosseum' });
     try {
       const cards = [...doc.getElementById('rule-list').children];
@@ -165,14 +165,17 @@ export async function run({ check, assert }) {
         const card = cards[Waves.CONDITION_KEYS.indexOf(k)];
         if (!card.classList.contains('barred')) card.dispatchEvent({ type: 'click' });
       }
-      assert(settings.rules.length === Waves.CONDITION_MAX,
-        `clicking every offered rule left ${settings.rules.length} against a cap of ${Waves.CONDITION_MAX}`);
+      /* `RULE_MAX` AND NOT `CONDITION_MAX` — PLAN.md §4.6's cap. The panel
+       * sells at most two; the composer still carries up to four, two of them
+       * dealt. Two numbers that used to be one, and this loop is the panel's. */
+      assert(settings.rules.length === Waves.RULE_MAX,
+        `clicking every offered rule left ${settings.rules.length} against a cap of ${Waves.RULE_MAX}`);
       for (const k of legal) {
         if (settings.rules.includes(k)) continue;
         assert(cards[Waves.CONDITION_KEYS.indexOf(k)].classList.contains('barred'),
-          `${k} is still offered with ${Waves.CONDITION_MAX} rules already held`);
+          `${k} is still offered with ${Waves.RULE_MAX} rules already held`);
       }
-      return `${settings.rules.length} of ${Waves.CONDITION_MAX} held, the rest greyed`;
+      return `${settings.rules.length} of ${Waves.RULE_MAX} held, the rest greyed`;
     } finally { close(); }
   });
 

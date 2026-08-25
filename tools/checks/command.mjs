@@ -945,9 +945,40 @@ export async function run({ check, assert }) {
     for (const k of a) {
       if (wipe[k] === null) {
         if (!printed.has(k)) {
-          /* Not a row, so nothing below applies. It still may not DIFFER in
+          /**
+           * Not a row, so nothing below applies. It still may not DIFFER in
            * kind between the two endings — that is the drift this check is
-           * for — and both being null is the agreement it wants. */
+           * for — and both being null is the agreement it wants.
+           *
+           * ── EXCEPT WHERE IT IS THE NAMES BEHIND A ROW THAT IS ITSELF NULL ──
+           *
+           * `roll` is §4.9's after-action list and `report` is the same list
+           * counted, and neither is a row: the card prints "Troops lost" as a
+           * count and hands the NAMES and the CENSUS to `showDeath` separately.
+           * So both are null in exactly the runs where `fallen` is null — a
+           * mode with no company — and present in exactly the runs where
+           * `fallen` is a number, including on an army that lost nobody, which
+           * is a different and true statement.
+           *
+           * That is a stronger claim than "the two endings agree", so it is
+           * asserted as the PAIRING rather than excused: whenever a non-row
+           * field goes null with `fallen`, it must go non-null with `fallen`
+           * too. A `roll` that stayed null on a run that lost six men would
+           * fail this, which is the defect worth catching — the count saying
+           * six and the list saying nothing.
+           *
+           * WHAT IT MAY COME BACK AS is a projection of the log and not a
+           * scalar: a list of the fallen, or a record with those lists inside
+           * it. A number here would be a third count of the dead beside
+           * `fallen` and the roll's own length, which is how three answers to
+           * one question get into one card.
+           */
+          if (wipe.fallen === null && win.fallen !== null && win[k] !== null) {
+            assert(Array.isArray(win[k]) || typeof win[k] === 'object',
+              `${k} follows \`fallen\` and came back as ${JSON.stringify(win[k])} — `
+              + 'a field that pairs with the roll is the log projected, not a number');
+            continue;
+          }
           assert(win[k] === null,
             `${k} is not a row on the card, is null after a wipe and ${JSON.stringify(win[k])} `
             + 'after a victory — two endings disagree about a field neither prints');
@@ -2675,8 +2706,15 @@ export async function run({ check, assert }) {
     const me = forceful();
     w.players.push(me); w.player = me; d.commander.player = me;
     d.deploy();
-    assert(Cmd.FORMATION_IDS.every((id) => Cmd.ORDERS[id] === Cmd.FORMATIONS[id]),
-      'ORDERS is not a superset of FORMATIONS');
+    /* `ORDERS = { ...FORMATIONS, ...COMMAND_FORCE }`, so "ORDERS is a superset
+     * of FORMATIONS" is true by construction and cannot fail for the reason it
+     * used to give. The ONE thing that spread can do wrong is shadow: a Force
+     * verb sharing an id with a formation silently replaces it, and the wheel
+     * then shows a slot that casts instead of forming up. That is the claim. */
+    const shadowed = Object.keys(Cmd.COMMAND_FORCE).filter((id) => id in Cmd.FORMATIONS);
+    assert(!shadowed.length,
+      `${shadowed.join(', ')} is both a formation and a Force verb — the spread that builds ORDERS `
+      + 'drops the formation, so the wheel shows a slot that casts instead of forming up');
     const names = Object.values(Cmd.ORDERS).map((o) => o.name);
     assert(new Set(names).size === names.length, `two orders share a name: ${names.join(', ')}`);
     /* A key, where one is claimed, is claimed once — the wheel is not a reason
@@ -2925,6 +2963,254 @@ export async function run({ check, assert }) {
       'he is still his own group after being sent back');
     return `12 → ${'5+5+2'}, 3 dead → 2+5+2 with every survivor's number kept, `
       + `a reinforcement into 1st, and one man out of 2nd and back`;
+  });
+
+  /* ── the branching route (PLAN.md §4.6) ───────────────────────────── */
+
+  check('command: the route forks, the run keeps its length, and the fork says nothing about the wave', async () => {
+    /**
+     * PLAN.md §4.6: "A branching route over the five Command areas that already
+     * exist, with partial information: you see the ground, the weather and the
+     * garrison weight, not the contents."
+     *
+     * §7's guardrail is that a check has to DEMONSTRATE THE DECISION CHANGING,
+     * so this is an A/B: one seed, two directors, the same plan, and the only
+     * difference between them is which road was taken at the one boundary that
+     * has two. Everything asserted below is a difference between those two runs
+     * or a thing that is identical across them, because a fork whose two roads
+     * produce the same run is not a fork and a fork that changes the LENGTH of
+     * the run is a broken promise on the deploy card.
+     *
+     *   DIFFERENT      the ground, the muster it pays, the garrison band, the
+     *                  rung the shelf is gated on, and the total reinforcement
+     *                  points the crossing hands out.
+     *   THE SAME       the number of engagements, the first ground, the last
+     *                  ground, and that the route only ever goes forwards.
+     *   NOT THERE      the contents. No budget, no heavy share, no archetype —
+     *                  and the proof is that the fork does not move when the
+     *                  wave's inputs do.
+     */
+    const { rollSession, planStages, SESSION_PLANS } = await import('../../src/game/Session.js');
+
+    /* THE SEED IS FOUND, NOT TYPED. A fork needs slack and only the Push has
+     * any (see `routeChoices`), so the check asks the roll which seeds are
+     * Pushes rather than hard-coding one that happens to be — the day the
+     * weights move, this still finds a Push instead of silently testing a
+     * Grind that has no fork in it and passing for the wrong reason. */
+    let seed = 0;
+    while (seed < 512 && rollSession(seed).id !== 'push') seed++;
+    assert(rollSession(seed).id === 'push', `no seed under 512 rolls a Push`);
+
+    /**
+     * One crossing, driven to its end on the stub world, taking road `pick` at
+     * every boundary that offers one.
+     *
+     * `pick` is an INDEX into the offer's own `route` and not an area id, so
+     * the two drives below differ by one integer and nothing else — a check
+     * that named the two grounds would be a check that stops meaning anything
+     * the day `AREAS` is re-tuned.
+     */
+    const cross = (pick) => {
+      const w = cmdWorld();
+      w.runSeed = seed;
+      /* `_endCampaign` reaches for the three things a real World has at the end
+       * of a run. Stubbed here rather than stopping the drive one area short,
+       * because the last clear is the one that logs the last engagement. */
+      w._announceBattle = () => {};
+      w.runStats = (o) => o;
+      w.onGameOver = () => {};
+      const { d } = dirFor({ world: w });
+      const forks = [];
+      d.onMuster = (o) => {
+        if ((o.route || []).length > 1) {
+          forks.push(o.route);
+          const want = o.route[Math.min(pick, o.route.length - 1)];
+          /* `takeRoute` reports whether the route MOVED, so asking for the road
+           * you are already on is honestly false rather than a silent yes —
+           * which is also the assertion that "choose nothing" and "choose the
+           * default" are the same run. */
+          if (want.taken) assert(!d.takeRoute(want.id), 'taking the road already taken moved the route');
+          else assert(d.takeRoute(want.id), `the director refused the road to ${want.name}`);
+          assert(d.stages[d.areaIndex].id === want.id,
+            `asked for ${want.name} and the route walks onto ${d.stages[d.areaIndex].name}`);
+          assert(d.musterOffer().route.find((r) => r.id === want.id).taken,
+            'the re-read offer does not mark the road that was taken');
+        }
+        /* The same two calls the no-screen path makes, so the ONLY difference
+         * between the two drives is the road. */
+        d.autoMuster();
+        d.closeMuster();
+      };
+      /* One wave paid per area, on the LAST wave of it, and the run's own
+       * counter keeps climbing across the boundaries: `WaveDirector.payWave`
+       * pays a wave number once, so a driver that restarted the count at every
+       * area would silently stop paying the moment two areas were the same
+       * length — which is exactly what a branch that swaps a 4-wave ground for
+       * a 5-wave one makes happen. */
+      let wave = 0;
+      for (let guard = 0; guard < 32 && !d.done; guard++) {
+        const A = d.area;
+        d.areaWaves = A.waves - 1;
+        d.wave = (wave += A.waves);
+        if (!d.payWave(wave)) break;
+      }
+      assert(d.done, `the crossing never ended on road ${pick}`);
+      return { d, forks };
+    };
+
+    const A = cross(0), B = cross(1);
+    assert(A.d.plan.id === 'push' && B.d.plan.id === 'push',
+      `seed ${seed} built a ${A.d.plan.id}, not the Push it rolls`);
+
+    /* ── ONE FORK, AND IT IS WHERE THE ARITHMETIC SAYS IT IS ───────────── */
+    assert(A.forks.length === 1 && B.forks.length === 1,
+      `a Push offered ${A.forks.length}/${B.forks.length} forks; its three stages over `
+      + `${Cmd.AREAS.length} grounds leave exactly one slot free`);
+    const [one, two] = A.forks[0];
+    assert(one.taken && !two.taken,
+      'the first candidate is not the road the run is already on — with no screen wired '
+      + 'the director must take the ground `planStages` dealt');
+
+    /* ── THE DECISION CHANGED THE RUN ──────────────────────────────────── */
+    const ground = (d) => d.stages.map((st) => st.name);
+    assert(ground(A.d).join() !== ground(B.d).join(),
+      `both roads crossed ${ground(A.d).join(' → ')} — the fork changed nothing`);
+    assert(A.d.stages[1] !== B.d.stages[1],
+      'the two roads walked onto the same ground');
+    assert(A.d.stages[1].muster !== B.d.stages[1].muster,
+      `both roads pay ${A.d.stages[1].muster} reinforcement points — the fork trades no currency`);
+    assert(Cmd.garrisonBand(A.d.stages[1]) !== Cmd.garrisonBand(B.d.stages[1]),
+      `both roads read "${Cmd.garrisonBand(A.d.stages[1])}" — a band that is the same on both `
+      + 'candidates changes no decision and should not be on the card');
+    /* …AND IT REACHED THE PURSE, which is the consequence a player actually
+     * feels. Off the ledger both runs wrote, not off the table they read. */
+    const paid = (r) => r.d.stages.reduce((n, st) => n + st.muster, 0);
+    assert(paid(A) !== paid(B),
+      `both crossings paid out ${paid(A)} points in total`);
+    /* …and the shelf: the heavier road stands on a higher rung one engagement
+     * earlier, which is what `areaRung` gates `unlockAt` on. */
+    const rungAt1 = (r) => Cmd.AREAS.indexOf(r.d.stages[1]) + 1;
+    assert(rungAt1(A) !== rungAt1(B),
+      `both roads stand on rung ${rungAt1(A)} for their second engagement`);
+
+    /* ── AND IT DID NOT CHANGE THE PROMISE ─────────────────────────────── */
+    const engagements = (r) => r.d.log.filter((e) => e.t === 'area').length;
+    assert(engagements(A) === engagements(B) && engagements(A) === A.d.plan.engagements,
+      `${engagements(A)} and ${engagements(B)} engagements were fought of a Push's `
+      + `${A.d.plan.engagements} — the deploy card printed a duration`);
+    for (const r of [A, B]) {
+      assert(r.d.stages.length === r.d.plan.engagements, 'the route changed length');
+      assert(r.d.stages[0] === Cmd.AREAS[0], 'a road did not start at the landing zone');
+      assert(r.d.stages[r.d.stages.length - 1] === Cmd.AREAS[Cmd.AREAS.length - 1],
+        'a road did not end on the last ground');
+      for (let i = 1; i < r.d.stages.length; i++) {
+        assert(Cmd.AREAS.indexOf(r.d.stages[i]) > Cmd.AREAS.indexOf(r.d.stages[i - 1]),
+          `the route doubles back at stage ${i + 1} — the shelf would lose a rung between areas`);
+      }
+    }
+
+    /* ── THE FORK CARRIES THE GROUND AND NOT THE CONTENTS ──────────────── */
+    const KEYS = ['brief', 'garrison', 'id', 'muster', 'name', 'rung', 'taken', 'waves'];
+    for (const cand of A.forks[0]) {
+      assert(Object.keys(cand).sort().join() === KEYS.join(),
+        `a candidate carries {${Object.keys(cand).sort().join()}} and the fork may carry {${KEYS.join()}}`);
+      /* Every number on it is a COUNT — a rung, a wave count, a price. The two
+       * dials that decide what the wave is made of are fractions, so this one
+       * assertion excludes both of them by their own shape rather than by
+       * naming them. */
+      const nums = Object.values(cand).filter((v) => typeof v === 'number');
+      assert(nums.length && nums.every(Number.isInteger),
+        `${cand.name} carries a fractional number — budget and heavy are the only `
+        + 'fractions in AREAS and neither of them is the player’s to see');
+      for (const area of Cmd.AREAS) {
+        assert(!nums.includes(area.budget) && !nums.includes(area.heavy),
+          `${cand.name} is carrying ${area.name}'s wave dials`);
+      }
+      /* The prose is the ground's own, so no third description of a place can
+       * drift from the deploy card's and the muster header's. */
+      const src = Cmd.AREAS.find((a) => a.id === cand.id);
+      assert(src && cand.name === src.name && cand.brief === src.brief,
+        `${cand.id} is described in words that are not AREAS' own`);
+      assert(Cmd.GARRISON_BANDS.includes(cand.garrison),
+        `"${cand.garrison}" is not one of the declared bands`);
+    }
+
+    /**
+     * …AND THE PROOF THAT IT IS ABOUT THE GROUND RATHER THAN THE WAVE: buy a
+     * body, which moves every input the composer has — `allyScale` is per
+     * living muster point and `budgetFor` multiplies by it — and re-read the
+     * offer. A fork that shifted by so much as a word would be a fork that had
+     * been told what is coming.
+     */
+    const w2 = cmdWorld();
+    w2.runSeed = seed;
+    const { d: probe } = dirFor({ world: w2 });
+    probe.onMuster = () => {};
+    probe.areaWaves = probe.area.waves - 1;
+    probe.wave = probe.area.waves;
+    assert(probe.payWave(probe.area.waves), 'the probe never held its first area');
+    assert(probe.mustering, 'the probe is not sitting on an open muster');
+    const before = JSON.stringify(probe.musterOffer().route);
+    const scaleBefore = probe.allyScale();
+    probe.roster.points += 999;
+    assert(probe.recruit('heavy') || probe.recruit('trooper'), 'the probe could not buy a body');
+    assert(probe.allyScale() !== scaleBefore, 'buying a body did not move the wave’s own input');
+    assert(JSON.stringify(probe.musterOffer().route) === before,
+      'the fork moved when the army did — it is reading the wave, not the ground');
+
+    /* ── AND THE PLANS THAT HAVE NO SLACK HAVE NO FORK ─────────────────── */
+    const census = [];
+    for (const plan of SESSION_PLANS) {
+      const w3 = cmdWorld();
+      const { d } = dirFor({ world: w3 });
+      d.plan = plan;
+      d.stages = planStages(plan, Cmd.AREAS);
+      let n = 0;
+      for (let i = 0; i < d.stages.length; i++) { d.areaIndex = i; if (d.routeChoices().length) n++; }
+      /**
+       * TWO THINGS HAVE TO BE TRUE OF ANY LADDER, and they are stated as
+       * properties rather than as the numbers this one happens to produce:
+       *
+       *   NO SLACK, NO FORK. A route with as many stages as there are grounds
+       *     has every slot spoken for — that is the Grind, and it is correct
+       *     rather than a gap: its own blurb is "the whole crossing".
+       *   NO INTERIOR SLOT, NO FORK. The first stage and the last are pinned,
+       *     so a plan of two stages is decided before it starts — that is the
+       *     Raid. A fork can only ever appear at one of the `n - 2` slots
+       *     between the ends, which is also the ceiling on how many there are.
+       */
+      const slack = Cmd.AREAS.length - plan.engagements;
+      const interior = Math.max(0, plan.engagements - 2);
+      if (!slack || !interior) {
+        assert(n === 0,
+          `a ${plan.id} offers ${n} forks with ${slack} grounds spare and ${interior} slots that are not ends`);
+      } else {
+        assert(n >= 1 && n <= interior,
+          `a ${plan.id} offers ${n} forks over ${interior} interior slots with ${slack} grounds spare`);
+      }
+      census.push(`${plan.id} ${n}`);
+    }
+
+    /* ── AND WITH NO SCREEN THE ROUTE IS THE ONE planStages DEALT ──────── */
+    const w4 = cmdWorld();
+    w4.runSeed = seed;
+    w4._announceBattle = () => {}; w4.runStats = (o) => o; w4.onGameOver = () => {};
+    const { d: quiet } = dirFor({ world: w4 });
+    const planned = planStages(quiet.plan, Cmd.AREAS);
+    let qw = 0;
+    for (let guard = 0; guard < 32 && !quiet.done; guard++) {
+      const st = quiet.area;
+      quiet.areaWaves = st.waves - 1;
+      quiet.wave = (qw += st.waves);
+      if (!quiet.payWave(qw)) break;
+    }
+    assert(quiet.stages.length === planned.length && quiet.stages.every((st, i) => st === planned[i]),
+      'a crossing with no muster screen wired left the route `planStages` dealt');
+
+    return `seed ${seed} rolls a Push: one fork (${census.join(' · ')}), `
+      + `${one.name} ${one.muster}pts/${one.waves}w "${one.garrison}" against `
+      + `${two.name} ${two.muster}pts/${two.waves}w "${two.garrison}"; `
+      + `${engagements(A)} engagements either way, ${paid(A)} vs ${paid(B)} points paid out`;
   });
 
 }

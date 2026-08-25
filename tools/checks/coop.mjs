@@ -1595,6 +1595,123 @@ export async function run({ check, assert }) {
     return `held at y ${heldY.toFixed(2)}, dropped ${released.toFixed(2)} s after the peer went quiet`;
   });
 
+  check('co-op: two Force users on one body is a contest, and the host is where it is settled', async () => {
+    /**
+     * ── THE DEFECT, MEASURED ON THIS EXACT FIXTURE BEFORE IT WAS FIXED ────
+     *
+     * Two players can already hold one body — nothing stopped them, and both
+     * paid for it. `e.liftTarget` was ONE SLOT, written every frame by the
+     * host's own `_updateGrip` and every claim tick by this handler, so the
+     * body went wherever whichever of them ran later put it. Driven here, host
+     * pulling one way and guest the other:
+     *
+     *     host's hold point   -1.18, 6.12, 2.96
+     *     guest's hold point  -0.67, 0.41, 2.96
+     *     the body sat at     -1.13, 5.82, 2.96   ← 0.30 m from one, 5.43 from the other
+     *     force spent over 2 s: host 8.7, guest 7.6
+     *
+     * Two people spending pool, one of them getting nothing, and nothing on
+     * either screen to say which. That is `PLAN §4.8`'s own sentence about the
+     * state of the art — *"in Psi-Ops, Half-Life 2, The Force Unleashed and
+     * Control, exactly one entity owns an object"* — shipping as a bug.
+     *
+     * ── WHAT THIS BINDS ──────────────────────────────────────────────────
+     *
+     * The arithmetic has its own suite (`grip.mjs`, on two players in one
+     * world, where there is no latency between the contest and the assertion).
+     * What can only be measured HERE is the wire:
+     *
+     *   1. the host's ledger has BOTH hands on the body, which means the grip
+     *      claim's new `w`/`f`/`b` — what the guest pulls with, the pool behind
+     *      it, and whether that guard is broken — arrived and were read, since
+     *      the host cannot see any of the three any other way;
+     *   2. the body resolves BETWEEN the two hold points rather than at either;
+     *   3. and breaking the guest's guard — a fact that exists only on the
+     *      guest's machine — moves the resolution on the host's.
+     *
+     * The host is the authority by construction: it is the one machine that can
+     * see both pulls. A guest is never told what the host's hand is doing, so
+     * its own copy resolves as though it were alone and is corrected by the
+     * next snapshot, exactly as every other optimistic claim on this wire is.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { gripHolders } = await import('../../src/game/Enemy.js');
+    const { host, client, pump } = await H.bootPair({ level: 'colosseum' });
+    const e = host.spawnEnemy('trooper', new THREE.Vector3(0, 0, 6));
+    e.id = 'contested';
+    e._think = () => {};
+    /* TWO HANDS CHOKE AT TWICE THE RATE, and a trooper held by both of them
+     * dies inside four seconds — which would end the measurement rather than
+     * fail it. The contest is not a claim about health. */
+    e.maxHp = 1e6; e.hp = 1e6;
+    pump(0.5);
+    const ce = client._netEnemyIndex.get('contested');
+    assert(ce, 'the guest never got a copy of the body');
+    const hp = host.player, cp = client.player;
+    hp.position.set(-6, 0, 6); cp.position.set(6, 0, 6);
+    pump(0.3);
+    const ctx = (w) => ({ enemies: w.enemies, players: w.players, bolts: w.bolts,
+      physics: w.physics, terrain: w.terrain, particles: w.particles, time: w.time });
+    for (const [p, tgt] of [[hp, e], [cp, ce]]) {
+      p.force = p.maxForce; p.cooldowns.grip = 0;
+      p.aimDir.subVectors(tgt.position, p.camera.pos).normalize();
+      p.toggleGrip(ctx(p === hp ? host : client));
+    }
+    assert(hp.gripEnemy === e, 'the host did not take hold of its own copy of the body');
+    assert(cp.gripEnemy === ce, 'the guest did not take hold of its mirror of the body');
+
+    /* Opposite ways, and the two hold points are what the contest is between. */
+    const hAim = new THREE.Vector3(-1, 0.9, 0).normalize();
+    const cAim = new THREE.Vector3(1, 0.9, 0).normalize();
+    const drive = (secs, beatGuest = false) => {
+      const f0 = { h: hp.force, g: cp.force };
+      for (let i = 0; i < secs * 60; i++) {
+        hp.aimDir.copy(hAim); cp.aimDir.copy(cAim);
+        if (beatGuest) cp.staggerTimer = 1;
+        pump(1 / 60);
+      }
+      return { h: f0.h - hp.force, g: f0.g - cp.force };
+    };
+    const wants = (p, aim) => new THREE.Vector3().copy(p.camera.pos).addScaledVector(aim, p.gripDistance).x;
+
+    const spent = drive(2);
+    const hx = wants(hp, hAim), cx = wants(cp, cAim);
+    assert(hx < cx - 8, `setup: the two hold points are ${(cx - hx).toFixed(2)} m apart, which is not a tug-of-war`);
+    assert(gripHolders(e, host.time) === 2,
+      'the host has one hand on the body, not two — the guest\'s pull never crossed the wire');
+    const level = e.position.x;
+    assert(level > hx + 2 && level < cx - 2,
+      `the body sits at x ${level.toFixed(2)} against hold points at ${hx.toFixed(2)} and ${cx.toFixed(2)} — `
+      + 'one of them still owns it outright');
+    assert(spent.h > 0 && spent.g > 0,
+      `only one of them is paying for it: host ${spent.h.toFixed(1)}, guest ${spent.g.toFixed(1)}`);
+
+    /**
+     * AND NOW THE GUEST'S GUARD BREAKS — on the GUEST'S machine, where the host
+     * cannot see it. It reaches the host only as the `b` bit on the grip claim,
+     * and if that bit is not sent or not read the body does not move at all.
+     */
+    drive(2, true);
+    const pulled = level - e.position.x;
+    assert(gripHolders(e, host.time) === 2, 'a hand left the contest mid-measurement');
+    assert(pulled > 1,
+      `breaking the guest's guard moved the body ${pulled.toFixed(2)} m towards the host — it barely noticed, `
+      + 'so the broken guard is not crossing the wire');
+    assert(hp.gripEnemy === e && cp.gripEnemy === ce, 'somebody let go before the measurement was taken');
+    assert(hp.gripShare > 0.5,
+      `the host holds ${hp.gripShare.toFixed(3)} of a body whose other holder is staggered`);
+
+    /* READ BEFORE `unload`, which disposes both players and therefore releases
+     * both grips — a share read after it is the 1.000 `releaseGrip` resets to
+     * rather than the one this check measured. */
+    const won = { share: hp.gripShare, x: e.position.x };
+    host.unload(); client.unload();
+    return `hold points ${hx.toFixed(2)} / ${cx.toFixed(2)}; level at ${level.toFixed(2)} with both paying `
+      + `${spent.h.toFixed(1)}/${spent.g.toFixed(1)} Force; guest's guard broken → ${won.x.toFixed(2)} `
+      + `(${pulled.toFixed(2)} m), host share ${won.share.toFixed(3)}`;
+  });
+
   check('co-op: the enemy record is read with as many slots as it is written with', async () => {
     /**
      * THE SIGNATURE DEFECT OF THIS REPOSITORY, and this record has already had
@@ -2657,5 +2774,73 @@ export async function run({ check, assert }) {
     ally.dispose();
     world.unload(); world.dispose?.();
     return line;
+  });
+
+  check('co-op: a player who retypes their name is renamed on everybody\'s roster', async () => {
+    /**
+     * THE NAME FIELD WAS WIRED TO A HOOK NOBODY SUPPLIED.
+     *
+     * `Menu` raises `hooks.onName` on every keystroke in the co-op name box —
+     * it has done since the box was added, and `grep onName src/` returned
+     * exactly that one line. `net.name` is read twice, by `host()` and
+     * `join()`, so a player who typed a name, hosted, and then changed their
+     * mind was listed under the old one for the whole session: on the roster,
+     * in the status line, over every nameplate and in the kill feed. That is
+     * the SAME defect the field was added to end — the note in index.html
+     * beside `#opt-name` tells the first half of the story — arriving one step
+     * later in it.
+     *
+     * DRIVEN FROM BOTH ENDS, because the two directions are different code:
+     * the host publishes a roster and a client cannot, so a client renames by
+     * saying `hello` again and the host is the one that republishes. A fix that
+     * only worked for the host would leave three players out of four stuck.
+     */
+    const s = await session();
+    const nameOn = (net, id) => net.roster.find((r) => r.id === id)?.name ?? null;
+    const hostId = s.host.peer?.id;
+    const alphaId = s.clients[0].peer?.id;
+    assert(hostId && alphaId, 'the stub broker handed out no ids');
+    assert(nameOn(s.host, hostId) === 'HOST' && nameOn(s.clients[1], alphaId) === 'ALPHA',
+      'the session did not start under the names it was opened with');
+
+    /* THE HOST RENAMES ITSELF, and everybody is told. */
+    assert(s.host.setName('GENERAL') === true, 'the host refused its own new name');
+    await s.settle();
+    for (const [who, net] of [['host', s.host], ['alpha', s.clients[0]], ['bravo', s.clients[1]]]) {
+      assert(nameOn(net, hostId) === 'GENERAL',
+        `${who} still lists the host as "${nameOn(net, hostId)}" — the rename never reached it`);
+    }
+
+    /* A CLIENT RENAMES ITSELF, and the HOST is what republishes. */
+    assert(s.clients[0].setName('SCOUT') === true, 'the client refused its own new name');
+    await s.settle();
+    assert(nameOn(s.host, alphaId) === 'SCOUT',
+      `the host still lists that client as "${nameOn(s.host, alphaId)}"`);
+    assert(nameOn(s.clients[1], alphaId) === 'SCOUT',
+      `the other client still lists them as "${nameOn(s.clients[1], alphaId)}" — the roster was not re-broadcast`);
+
+    /* AND THE SAME NAME IS NOT A MESSAGE. A keystroke that changes nothing —
+     * every arrow key in that box raises `onName` too — must not put a packet
+     * on the wire, or holding a key down is a roster broadcast a frame. */
+    assert(s.host.setName('GENERAL') === false, 'renaming to the same name is still an event');
+    /* AND AN EMPTY BOX IS THE PLACEHOLDER, not an empty name — the same
+     * `|| 'Jedi'` `host()` and `join()` have always applied to the same
+     * argument, so clearing the field leaves you called what you would be
+     * called if you opened the session now. */
+    assert(s.host.setName('') === true && s.host.name === 'Jedi',
+      `clearing the box left the player called "${s.host.name}"`);
+    s.close();
+
+    /* AND THE HOOK IS SUPPLIED, which is the half that was missing: the menu
+     * has always raised it and this is the only thing that can say somebody is
+     * listening. Read, because main.js cannot be imported under Node. */
+    const main = strip(await readFile(new URL('../../src/main.js', import.meta.url), 'utf8'));
+    assert(/onName\s*:/.test(main), 'main.js supplies no onName, so the field types into nothing again');
+    assert(/onName\s*:\s*\(\)\s*=>\s*net\.setName\(playerName\(\)\)/.test(main),
+      'main.js supplies onName but not `net.setName(playerName())` — the roster is the thing that has to '
+      + 'change, and `playerName` is the one place that owns the trim, the cap and the placeholder');
+    const menu = strip(await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8'));
+    assert(/hooks\.onName\?\.\(/.test(menu), 'the name field no longer raises onName at all');
+    return 'host GENERAL and client SCOUT on all three rosters; an unchanged name sends nothing';
   });
 }

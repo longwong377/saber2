@@ -584,7 +584,9 @@ function watchBlade(world) {
  * existing for the horde to walk toward.
  */
 const ARMS = ['none', 'blade', 'dead', 'far'];
-const STAND_OFF = 100;
+/* EXPORTED, because `_linehold.mjs` drives the same arm and a second copy of
+ * this distance would let the two instruments disagree about what "far" is. */
+export const STAND_OFF = 100;
 
 async function runArm(arm, seed, engagements) {
   const world = await commandWorld(seed, { player: arm !== 'none' });

@@ -30,10 +30,24 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
 import { GUARD } from './SaberController.js';
 import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, teamOf, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
-import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, IMPULSE_AS_HP, paysOut } from './Enemy.js';
+import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease, heldMass,
+         IMPULSE_AS_HP, paysOut } from './Enemy.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
+/**
+ * WHAT ONE BROKEN THING IS WORTH IN INSIGHT — PLAN.md §4.6's Salvage.
+ *
+ * One. `INSIGHT_PER_WAVE` is 1 and a wave is minutes of fighting, so a level's
+ * fifty breakable props are worth about fifty waves of Insight to a player who
+ * goes and breaks every one of them — which sounds enormous until you price
+ * what it costs: `COST` runs 4 to 9 with a step of 2 per facet already woken,
+ * so a run that spent every prop on the lattice would buy about six more
+ * facets and would have spent the whole battle hitting scenery instead of the
+ * army that is taking its ground. The card pays for a way of playing rather
+ * than for a chore, and the ceiling is the field.
+ */
+const SALVAGE_INSIGHT = 1;
 import { nerveTick, witnessDeath, turnedHome, shakeNerve, nerveOf, boltAnswered, NERVE } from './Nerve.js';
 /**
  * What "open" is worth, in Insight — and it was a quarter of what it promised.
@@ -174,6 +188,10 @@ import { AREAS, ARMY_IDS, CommandDirector, COMMAND_POWER_RULES, MAX_STRENGTH, OP
   assignArmies, commandConfig } from './Command.js';
 import { ArmyIndex } from './ArmyIndex.js';
 import { ObjectiveField } from './Objectives.js';
+import { FireMissionDirector } from './FireMission.js';
+import { CraterLog, SESSION_MEMORY } from '../world/CraterLog.js';
+import { GraveField } from '../world/Graves.js';
+import { FallenField } from '../world/Fallen.js';
 import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
@@ -190,6 +208,7 @@ const _contactList = [];
 /** Scratch for the one ground-colour read in `loadLevel`. */
 const _groundCol = new THREE.Color();
 import { ExtractionDirector, WITHDRAW_HOLD } from './Extraction.js';
+import { runReport } from './Session.js';
 
 /* Random per session, FIXED under the gate — see `moduleSeed`. The salt keeps
  * this stream from being the same sequence as MathUtil's `rand`. */
@@ -421,7 +440,7 @@ export class World {
      * the mode is about ends up being farmed instead of played, and there is
      * nothing here to farm. A set-piece pays more because a set-piece cost more.
      */
-    this.communion = new Communion();
+    this.communion = new Communion({ seed: this.runSeed | 0 });
 
     this.timeScale = 1;
     this.focus = new FocusSystem();
@@ -655,7 +674,11 @@ export class World {
     // `runCarry` reads `insight`/`bought`/`earned` off here and `applyCarry`
     // rebuilds the Communion from them, which is the same shape the deleted Run
     // used and the same three fields `Communion`'s own constructor takes.
-    this.communion = new Communion({});
+    /* SEEDED WITH THE RUN, because the Holocron's offer is a fact about this
+     * sitting — see `LivingForce.OFFER`. `runSeed` is written onto the World by
+     * main.js before the level loads, which is the same door the wave stream and
+     * the objective field read it through. */
+    this.communion = new Communion({ seed: this.runSeed | 0 });
     // LEVEL_ORDER[0] rather than a name: a named fallback is how a deleted
     // level stays load-bearing after it is gone. See Levels.js's alias block.
     //
@@ -1012,6 +1035,101 @@ export class World {
       const rng = makeRng(((this.runSeed | 0) ^ 0x0b1ec7) >>> 0);
       this.objectives.place({ count: 4, axis: bearing, rng: () => rng() });
     }
+    /**
+     * THE ORDER YOU CAN CHECK — PLAN.md §1, and it is gated the same way.
+     *
+     * A mode with no army has nobody to be in the ellipse and no quorum for
+     * walking out to read it to cost anything, so the flag and the army are
+     * both required — the same pair `objectives` above is built on.
+     *
+     * SEEDED OFF THE RUN, so the same sitting cuts the same orders in the same
+     * order: the cadence and the pattern of shells are the run's, exactly as
+     * the field of installations is, and a battlefield that reshuffles between
+     * reloads is one nobody can learn from.
+     */
+    /**
+     * THE GROUND REMEMBERS — PLAN.md §4.7, and it was one dangling wire.
+     *
+     * `CommandDirector.marchTo` has passed `w.craterLog` into `marchFront` for
+     * as long as the front has been dressed, `src/world/CraterLog.js` is
+     * written and checked to the last bit of the heightfield, and **nothing in
+     * the tree has ever constructed one** — so every engagement of every run
+     * opened on ground that had never been fought over, while the code that
+     * would have carried it sat complete on both sides of the gap.
+     *
+     * A RUN FACT, exactly as `runSeed` and the skirmish plan are. The World
+     * outlives `loadLevel` and the terrain does not, so the log is made once
+     * and RE-ATTACHED to each new ground: what it records is a battle, and a
+     * battle is longer than a heightfield. `attach` is idempotent per terrain
+     * and `replay` now refuses a second pass over the same ground, which is
+     * what makes it safe for `marchTo` to hand it over once per engagement.
+     *
+     * TRIMMED AT THE DOOR, because a log that grows without bound eventually
+     * replays a lunar surface (FLAGSHIP §4, and `SESSION_MEMORY` carries the
+     * arithmetic).
+     *
+     * Gated on leading an army for the reason CraterLog's own header gives:
+     * "recording is a property of the SESSION and not of the ground — a
+     * sandbox, a duel and a training ground all build a Terrain and none of
+     * them has anything to remember."
+     */
+    if (leadsArmy && !this.frontOff) {
+      this.craterLog = (this.craterLog || new CraterLog()).trim(SESSION_MEMORY).attach(this.terrain);
+    } else {
+      this.craterLog?.detach();
+      this.craterLog = null;
+    }
+    /**
+     * …AND THE GROUND KEEPS YOUR DEAD — PLAN.md §4.7's last item.
+     *
+     * The same shape as the crater log one line up and for the same reason: the
+     * RECORD is the run's and the drawing is the scene's, so a marker stands on
+     * the same coordinates in engagement three that it was planted on in
+     * engagement one. Gated on leading an army because a grave is a NAME off a
+     * roll, and a mode with no roll has no names to lose.
+     */
+    if (leadsArmy) {
+      this.graves = (this.graves || new GraveField()).attach(this.scene, this.terrain);
+    } else {
+      this.graves?.detach();
+      this.graves = null;
+    }
+    /**
+     * …AND THE ANONYMOUS DEAD, WHICH ARE EVERYBODY ELSE.
+     *
+     * `GraveField` above is one marker per NAME and it outlives the ground it
+     * was planted on. This is the opposite object on both counts, which is why
+     * it is not gated the way that one is: it holds no record, nobody in it has
+     * a name, and it belongs to THIS ground — a corpse from the last engagement
+     * lying on the next one's dirt would be a body that never fell there. So
+     * `attach` resets it, `unload` detaches it, and every mode gets one because
+     * a duel and a sandbox leave bodies on the floor exactly as a battle does.
+     *
+     * What fills it is `Corpses.js`'s SINK step, which until now deleted the
+     * body it had chosen to spend. See `FallenField`.
+     *
+     * NOT `roster.fallen`, which is a list of NAMES and is the thing `graves`
+     * draws. Same word, opposite object: this one is the men nobody counted.
+     */
+    this.fallen = (this.fallen || new FallenField()).attach(this.scene, this.terrain);
+    this.fireMissions?.dispose?.();
+    this.fireMissions = null;
+    if (leadsArmy && MODES[mode]?.fireMissions) {
+      this.fireMissions = new FireMissionDirector(this, {
+        myTeam: this.player?.team ?? 0,
+        seed: ((this.runSeed | 0) ^ 0x1e11e) >>> 0,
+      });
+      /**
+       * …AND IT IS WHERE THE OTHER SIDE'S BATTERY FIRES FROM.
+       *
+       * `Objectives._pay` has called `world.onObjectiveFire` since the day the
+       * six sites landed and nothing has ever installed it, so the Battery's
+       * "lost: it fires for them" row cost the player exactly nothing. The
+       * shells are laid by the one thing on this world that already knows how
+       * to lay shells; see `FireMissionDirector.theirBarrage`.
+       */
+      this.onObjectiveFire = () => this.fireMissions?.theirBarrage?.();
+    } else this.onObjectiveFire = null;
     /**
      * THE BATTLE, or null — and it is CARRIED, never rebuilt.
      *
@@ -1492,6 +1610,16 @@ export class World {
      * leaving them would be six masts standing on the next ground. */
     this.objectives?.dispose?.();
     this.objectives = null;
+    /* The standing order goes with the ground it was laid on, and so does the
+     * ring drawn for it. */
+    this.fireMissions?.dispose?.();
+    this.fireMissions = null;
+    /* The markers come out of the scene and the names stay on the record —
+     * `detach`, never `dispose`. See GraveField. */
+    this.graves?.detach();
+    /* The retired dead have no record to keep: they fell on THIS ground and the
+     * instances were the whole of them. See FallenField. */
+    this.fallen?.detach();
     /* The corpse ledger holds references to bodies that have just been
      * disposed. `clear()` and not `dispose()`: the ledger itself outlives the
      * level exactly as the World does, and what must not survive is its
@@ -1538,6 +1666,11 @@ export class World {
     this.grass?.dispose(); this.grass = null;
     this.water?.dispose(); this.water = null;
     this.atmosphere?.dispose(); this.atmosphere = null;
+    /* THE RECORDER COMES OFF THE GROUND BEFORE THE GROUND GOES, and the log
+     * itself survives: it is the run's memory of the battle, and the next
+     * `loadLevel` re-attaches it to the ground it replays onto. Detaching is
+     * what stops the wrapper holding a disposed terrain alive. */
+    this.craterLog?.detach();
     this.terrain?.dispose(); this.terrain = null;
     this.physics.clear();
     this.physics.terrain = null;
@@ -1662,6 +1795,11 @@ export class World {
         insight: this.communion?.insight ?? 0,
         bought: [...(this.communion?.bought ?? [])],
         earned: this.communion?.earned ?? 0,
+        /* AND THE SEED, because the Holocron's offer is derived from it and
+         * from the purchase count — a carry that dropped it would deal the
+         * player a different three on the far side of every ground change,
+         * which is the one thing an offer must not do. See LivingForce.OFFER. */
+        seed: this.communion?.seed ?? 0,
       },
       score: this.score,
       wave: this.director?.wave ?? 0,
@@ -1719,7 +1857,7 @@ export class World {
    */
   applyCarry(carry) {
     if (!carry) return null;
-    this.communion = new Communion(carry.communion || {});
+    this.communion = new Communion({ seed: this.runSeed | 0, ...(carry.communion || {}) });
     this.score = carry.score || 0;
     for (const id of carry.boons || []) {
       const boon = boonById(id);
@@ -2666,6 +2804,10 @@ export class World {
   runStats(extra = null) {
     const sum = (f) => (this.players || []).reduce((a, p) => a + (p[f] || 0), 0);
     const c = this.campaign, sk = this.skirmish, d = this.command;
+    /* ONE PROJECTION OF THE LOG, read twice. `roll` and `report` are the same
+     * `fell` entries seen at two magnifications, and the day they were two
+     * filters was the day they could disagree about who is on the list. */
+    const rep = d?.log ? runReport(d.log) : null;
     return {
       ...(extra || {}),
       wave: this.director?.wave ?? 0,
@@ -2679,6 +2821,43 @@ export class World {
        * getter over the records themselves. Null where there is no army, so
        * "Troops lost" leaves the card in the modes that have no troops. */
       fallen: d?.roster?.fallen?.length ?? null,
+      /**
+       * …AND THE NAMES, WHICH THE COUNT ABOVE HAS NEVER CARRIED — PLAN §4.9.
+       *
+       * "The after-action report — who killed whom, from what direction, at
+       * what minute. No death is mysterious, so no death is the AI's fault."
+       *
+       * The RECORD for that has been complete for some time: `_deathOf` writes
+       * the killer's name, the bearing in degrees and the minute of the run
+       * onto every `fell` entry, and `interludeBeats` renders them between
+       * engagements. What no ending has ever carried is the WHOLE RUN'S list.
+       * A player who finishes a crossing is told a number — "Troops lost 6" —
+       * over the one mode whose entire subject is named people dying for good,
+       * and the six names, each with the thing that killed it, exist in
+       * `d.log` and are thrown away with the director.
+       *
+       * So the roll is reported here with the count, off the same log the
+       * interlude reads, in the order the men fell. It is the ENTRIES and not
+       * a rendering of them: `main.js` decides what a card says and this
+       * decides what is true, which is the same split `taken` is built on.
+       *
+       * Null — not `[]` — where there is no army, for `ended`'s stated reason:
+       * a key that is present and null lets a check ask "did this ending send
+       * the field", and an empty array would mean "an army that lost nobody".
+       */
+      roll: rep ? rep.fell.map((e) => ({
+        name: e.name, rank: e.rank, unit: e.unit, area: e.area, wave: e.wave,
+        killer: e.killer ?? null, bearing: e.bearing ?? null, at: e.at ?? null,
+      })) : null,
+      /**
+       * …AND THE SAME LIST COUNTED — PLAN.md §4.9's census, which is the half
+       * of the report that changes a decision rather than the half that is
+       * owed. Its whole argument is written over `Session.runReport`; what it
+       * is doing HERE is being available to the one screen the pause card
+       * cannot reach, because the run is over and there is nothing to pause.
+       * Null on the same terms as `roll`, and for the same stated reason.
+       */
+      report: rep,
       /**
        * HOW a run ended, where "you died" is not the answer — see `main.js`'s
        * `gameOver`, which picks a third card off it.
@@ -3494,6 +3673,20 @@ export class World {
      * toward the advance, which is the one thing this must not do.
      */
     this.objectives?.update(dt, ctx);
+    /* The standing order, its reading and its shells. After the objectives
+     * because a battery that changed hands this frame is what asks for the
+     * other side's barrage, and before the bodies because the shells that land
+     * this frame have to be resolved against the positions the reading was
+     * taken from. */
+    this.fireMissions?.update(dt, ctx);
+    /* AND THE ONE YOU ARE STANDING OVER SAYS WHO HE WAS, once ever. The field
+     * owns the "once" (`seen` is on the record, so it survives a ground
+     * change); this owns the words, because `notify` is the World's door. */
+    const grave = this.graves?.update(dt, this.player);
+    if (grave) {
+      this.notify(`${grave.rank ? `${grave.rank} ` : ''}${grave.name}`.toUpperCase(),
+        GraveField.epitaph(grave));
+    }
 
     /**
      * BEFORE EVERYTHING, because a passenger's seat has to be written before
@@ -3570,6 +3763,13 @@ export class World {
       const e = this.enemies[i];
       if (!e.update(dt, ctx)) { e.dispose(); this.enemies.splice(i, 1); }
     }
+
+    /* …and ONE cohort re-reads ONE slot of its gait palette. Here rather than
+     * inside the loop above: every body has just posed and placed itself, so
+     * this is the freshest rig in the frame, and the cost is the same one
+     * capture whether the field holds forty bodies or four hundred — which is
+     * the property the whole rung is. See src/game/Cohorts.js `step`. */
+    this.cohorts?.step();
 
     // …and the hilts lying about age, so one just dropped cannot be picked
     // straight back up before the player has seen it leave their hand.
@@ -5201,6 +5401,27 @@ export class World {
 
   /* ── callbacks ───────────────────────────────────────────────────── */
 
+  /**
+   * SOMETHING BREAKABLE CAME APART — PLAN.md §4.6's Salvage, and the only
+   * reader of `Props.shatter`'s new door.
+   *
+   * "Shattering a prop refunds Insight" is one of that section's own three
+   * examples of a facet that changes a RULE rather than a number: an act that
+   * has never paid anything starts paying a currency. It is self-limiting
+   * without a cooldown or a cap, and deliberately — a level ships about fifty
+   * breakable things (measured: 54 on geonosis) and every one of them pays
+   * once, so the ceiling is the field itself. It also argues with §4.7's other
+   * half in the right direction: cover is finite, and this makes spending it a
+   * choice rather than an accident.
+   */
+  onPropBroken() {
+    if (!this.player?.boonMods?.salvage || !this.communion) return 0;
+    this.communion.insight += SALVAGE_INSIGHT;
+    this.communion.earned += SALVAGE_INSIGHT;
+    this.salvaged = (this.salvaged | 0) + 1;
+    return SALVAGE_INSIGHT;
+  }
+
   onEnemyKilled(enemy, source, kind) {
     const A = enemy.A;
     /**
@@ -5434,8 +5655,20 @@ export class World {
      * is the shipped statement of which modes hand out cards, called here rather
      * than restated as a mode name.
      */
+    /**
+     * …AND AT THE RATE THE RUN'S OWN TERMS PAY — PLAN.md §4.6.
+     *
+     * `director.hazard` is `1 + Σ worth` over the rules the player authored on
+     * the Deploy panel, which is the same share `conditionCost` charges the
+     * director for dealing one and deliberately does not charge for a rule. So
+     * a wave under DELUGE is 30% more fight and pays 30% more Insight, and the
+     * exchange rate cannot drift from the price because it IS the price.
+     *
+     * `?? 1` and not a mode test: `DojoDirector` has no rules and no hazard,
+     * and a run under no rules multiplies by one.
+     */
     const gained = this.communion.earn(wave, !!this.director?.isBossWave?.(wave),
-      insightRate(this.director?.drafts !== false));
+      insightRate(this.director?.drafts !== false, this.director?.hazard ?? 1));
     this.onInsight?.(gained, this.communion);
   }
 
@@ -6185,6 +6418,44 @@ export class World {
   }
 
   /**
+   * ASK THE HOST TO COMMEND A MAN — PLAN §4.4's third muster option.
+   *
+   * The twin of `requestMuster` and it exists for the same reason: a client's
+   * director is a shell, so the request carries the DESIGNATION and nothing
+   * else. Not the cost, not the balance, not the rank — every one of those is
+   * derived on the host from the roster it actually keeps, so there is no claim
+   * a peer can make about its own purse that anything reads.
+   */
+  requestCommend(name) {
+    if (this.netMode === 'client') { this.net?.toHost?.({ t: 'muster', cm: name }); return; }
+    this.command?.commend?.(name);
+  }
+
+  /**
+   * …AND A JOINING COMMANDER CHOSE A ROAD.
+   *
+   * The third thing a peer can say on the muster wire, beside a unit and the
+   * word done, and the same one-field message for the same reason: what crosses
+   * is the GROUND'S ID and nothing else. A route is a fact about the run — the
+   * host composes every wave of the next area off `stages` — so a client that
+   * rewrote its own copy would be looking at a brief for ground the host is not
+   * taking it to. `CommandDirector.takeRoute` runs on the machine holding the
+   * army, against the fork that machine dealt, and the answer comes back as the
+   * next offer like every other muster answer.
+   *
+   * NOT GUARDED HERE, exactly as `applyMuster` does not re-check affordability:
+   * `takeRoute` already refuses an id that is not on the open fork, a fork that
+   * is not open, and a tail that would not fit. A second copy of those three
+   * tests on this side is how the two come to disagree about where the run is
+   * going.
+   */
+  requestRoute(id) {
+    if (this.netMode !== 'client' || !this.net?.connected) return false;
+    this.net.toHost({ t: 'muster', r: id });
+    return true;
+  }
+
+  /**
    * THE MUSTER, IN WHICHEVER DIRECTION THIS MACHINE IS FACING.
    *
    * One message type, one handler, and the branch is `netMode` — which is total
@@ -6216,6 +6487,27 @@ export class World {
     if (!d.mustering) return false;
     const c = this.commanderFor(peerId);
     if (msg.done) return d.closeMuster();
+    /* THE ROAD, AND ANY COMMANDER SHARING THE PURSE MAY PICK IT — the same rule
+     * `recruit` is under one line down, and it is one rule rather than two on
+     * purpose: in co-op there is one army, one purse and one crossing, so a
+     * route only one player could steer would be a decision the others watch.
+     * `takeRoute` publishes the new offer to everybody when it lands; a refusal
+     * is nobody else's business and goes back to the peer that asked, with the
+     * offer they still have. */
+    if (msg.r !== undefined) {
+      if (d.takeRoute(msg.r)) return true;
+      this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
+      return false;
+    }
+    /* A COMMENDATION, under the same rule as the road above and for the same
+     * reason: one army, one purse, so any commander sharing it may spend on any
+     * man on the roll. `commend` publishes on success; a refusal goes back to
+     * the peer that asked. */
+    if (msg.cm !== undefined) {
+      if (d.commend(msg.cm, c)) return true;
+      this.net?.toPeer?.(peerId, { t: 'muster', o: d.musterOffer(c), no: d.refused });
+      return false;
+    }
     /* `recruit` publishes the new offer to everyone sharing this purse when it
      * succeeds — the host's own screen buys through the same line. A REFUSAL
      * publishes nothing and is nobody else's business, so it goes back to the
@@ -6525,6 +6817,11 @@ export class World {
     this.director.active = !!msg.act;
     this.director._netRemaining = msg.rem;
     this.director.intermission = msg.ic ?? 0;
+    /* THE FRONT IS THE HOST'S — see `packSnapshot`'s `fr`. A client's director
+     * never runs `_front`, so without this line the bar every player in a
+     * meeting is reading would sit at the middle of the field for the whole
+     * battle on every machine but one. */
+    if (msg.fr !== undefined && this.command) this.command.front = msg.fr;
     this.score = msg.sc;
     this._netWaveEdge(msg);
   }
@@ -6746,8 +7043,59 @@ export class World {
     const lift = e.gripped && e.liftTarget ? e.liftTarget : null;
     if (lift) {
       e._netGripAt = true;
+      /**
+       * ── AND WHAT IT IS BEING PULLED WITH, BECAUSE THE HOST CANNOT SEE IT ──
+       *
+       * A lift point alone was enough while exactly one person could ever own a
+       * body. It is not enough for a contest: `gripClaim` weighs a pull against
+       * an opposing POOL through `forceResistance`, and this machine's Force is
+       * the one thing about a guest that the protocol deliberately does not
+       * replicate — `applyClaim`'s own note says so, and until now that was
+       * correct, because the host only ever needed the guest's Force to resist
+       * blows that had already been priced here.
+       *
+       * So a grip claim carries the three numbers the arithmetic needs and
+       * nothing else: `w` what this hand pulls with, `f` the pool behind it,
+       * `b` whether this hand's guard is already broken. Without them the host
+       * would resolve a two-sided contest from one side — which is not a
+       * conservative guess, it is a different game on each screen.
+       *
+       * Guarded on the local player actually being the one holding THIS body:
+       * `e.gripped` is also true of a body the host is holding and this machine
+       * is only mirroring, and quoting somebody else's pull as our own would
+       * make a guest the loudest voice in a fight it is not in.
+       */
+      const p = this.player;
+      const mine = p && (p.gripEnemy === e);
+      /**
+       * ── AND WHAT A GRAB DOES TO THIS NUMBER, SAID PLAINLY ───────────────
+       *
+       * `heldMass` is the man plus any squadmate hanging off him (PLAN §4.8's
+       * second bullet). The grab is decided in `Enemy.update`, which a client's
+       * copy of an enemy never reaches — it returns at `netDriven` several
+       * screens earlier — so the grab exists on the HOST and nowhere else.
+       *
+       * That is the right side for it to be on, because `applyClaim`'s own note
+       * says the host is where a contest is settled; but it is not free, and
+       * the cost is this: a GUEST gripping a man the host has a grab on quotes
+       * a `w` built on the man alone, and prices its own hold, heft and cap
+       * gate on the man alone too. The error is bounded by `HOLD_COST.person
+       * .rise × grabMass / cap` — the whole of what the mass term can move —
+       * and it is second-order in the contest itself, because that term is
+       * common to both hands and cancels out of the ratio between them (see
+       * `Player._gripPull`). Nothing is stranded and no position diverges: the
+       * host still resolves and still ships the resolution in the snapshot.
+       *
+       * The exact fix is one bit in `packSnapshot`'s enemy row saying whether
+       * this body is grabbed, and it is deliberately not taken here: that row
+       * is positional and every reader of it is a wire format change.
+       */
+      const m = heldMass(e);
       this._claim({ t: 'claim', k: 'grip', id: e.id, g: 1,
-        p: [r2(lift.x), r2(lift.y), r2(lift.z)] });
+        p: [r2(lift.x), r2(lift.y), r2(lift.z)],
+        w: mine ? r2(p._gripPull(m, true)) : 0,
+        f: mine ? r2(p.force) : 0,
+        b: mine && p._guardOpen() ? 1 : 0 });
     } else if (e._netGripAt) {
       e._netGripAt = false;
       this._claim({ t: 'claim', k: 'grip', id: e.id, g: 0 });
@@ -6939,6 +7287,10 @@ export class World {
      * leaves the other reader wrong.
      */
     this.corpses?.clear();
+    /* …and the dead those corpses were retired into, for the same reason: a
+     * restart is `unload` with the ground left standing, and the men who fell
+     * in the attempt that failed did not fall in this one. */
+    this.fallen?.clear();
     this.locks.length = 0;
     /**
      * …AND WHAT IS STILL IN THE AIR, which this did not touch.
@@ -7159,7 +7511,33 @@ export class World {
          * gone quiet; this stops a body being stranded in the window where a
          * host's own copy of the gripper goes away underneath it. */
         e.hold(NET_GRIP_LEASE * 2);
-        e.liftTarget = (e._netLift ||= new THREE.Vector3()).copy(at);
+        /**
+         * ── THE HOST IS WHERE A CONTEST IS SETTLED ───────────────────────
+         *
+         * Straight into `liftTarget` is the last-writer-wins this whole change
+         * exists to end: with the host's own player also gripping, whichever of
+         * `_updateGrip` and this handler ran later that frame owned the body
+         * outright and the other one paid for nothing. Through `gripClaim` the
+         * peer becomes one claimant among however many there are, and BOTH
+         * sides read the same resolution, because the resolution is a pure
+         * function of the ledger and the clock rather than of iteration order.
+         *
+         * It is settled HERE and only here. The host is the one machine that
+         * can see both pulls — the guest is told what its hand is doing and is
+         * never told what the host's is — so a guest's own copy resolves as
+         * though it were alone and is corrected by the next snapshot, exactly
+         * as every other optimistic claim on this wire already is.
+         *
+         * The claim's lease is `NET_GRIP_LEASE`, the same clock `_netGripUntil`
+         * runs on two lines down, so a peer that goes quiet leaves the contest
+         * and the hold on the same tick rather than on two.
+         */
+        gripClaim(e, by, at, Number(msg.w) || 0, {
+          time: this.time, pool: Number(msg.f) || 0, beaten: !!msg.b,
+          radius: e.radius ?? 0.55, lease: NET_GRIP_LEASE,
+          out: (e._netLift ||= new THREE.Vector3()),
+        });
+        e.liftTarget = e._netLift;
         /**
          * A LEASE, because a held body is the one state a lost connection can
          * strand. Every other claim is an event that happened; this one is a
@@ -7171,7 +7549,9 @@ export class World {
          */
         e._netGripUntil = this.time + NET_GRIP_LEASE;
       } else {
-        e.releaseHold();
+        /* HIS HAND OFF IT, NOT EVERY HAND. The host's own player may still be
+         * holding this body, and a peer letting go used to drop it for both. */
+        if (gripRelease(e, by, this.time) === 0) e.releaseHold();
         e._netGripUntil = 0;
       }
     }
@@ -7190,7 +7570,12 @@ export class World {
     for (const e of this.enemies) {
       if (!e._netGripUntil || this.time < e._netGripUntil) continue;
       e._netGripUntil = 0;
-      e.releaseHold();
+      /* AND THE SAME RULE AS AN EXPLICIT RELEASE: the silence is the peer's,
+       * not the host's, and the host may have a hand on this body too.
+       * `gripRelease` with no claimant prunes the lapsed rows and answers how
+       * many live ones are left — the peer's row lapses on this same tick
+       * because `applyClaim` leases it on `NET_GRIP_LEASE`. */
+      if (gripRelease(e, null, this.time) === 0) e.releaseHold();
     }
   }
 

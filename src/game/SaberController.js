@@ -1417,7 +1417,6 @@ export class SaberController {
       // rate is a 0.75x recovery, and a card that raised it would otherwise
       // have made the player slower.
       this.swingCool = OVERHEAD.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
-      if (ctx.onSwing) ctx.onSwing();
     }
     /**
      * THE CHARGE IS A PAUSE AT THE TOP OF THE WIND-UP, and that is the whole
@@ -1521,7 +1520,6 @@ export class SaberController {
       // first quarter-turn is the one your hands were already making.
       this.spinSide = this.gx >= 0 ? 1 : -1;
       this.spinCool = SPIN.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
-      if (ctx.onSwing) ctx.onSwing();
       if (ctx.onSpin) ctx.onSpin();
     }
     if (this.spinT >= 0) {
@@ -1777,7 +1775,6 @@ export class SaberController {
         this.thrustCooldown = this.slashCool;
         this.comboStep = 0;
         this.comboTimer = 0;
-        if (ctx.onSwing) ctx.onSwing();
         if (ctx.onThrust) ctx.onThrust();
       }
     } else if (lmb && this.slashCool <= 0 && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
@@ -1789,7 +1786,6 @@ export class SaberController {
         this.heavyArmed = true;
         this.heavyHold = 0;
         this.heavyCharge = 0;
-        if (ctx.onChamber) ctx.onChamber();
       } else {
         this.slashT = 0;
         this.isHeavy = false;
@@ -1797,7 +1793,6 @@ export class SaberController {
         // pair reads as a combination rather than as one animation replayed.
         this.slashSide = -this.slashSide;
         this.slashCool = SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
-        if (ctx.onSwing) ctx.onSwing();
       }
     }
     /* THE STEP DOES NOT FIRE ON THE PRESS THAT CHAMBERS. `lmb` used to open the

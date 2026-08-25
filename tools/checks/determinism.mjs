@@ -313,12 +313,33 @@ export async function run({ check, assert }) {
         if (Number(m[3]) < 100) continue;       // a short fixed field, not a function
         bad.push(`${name}: ${m[0].trim()}`);
       }
+      /**
+       * …AND THE SAME GUESS SPELLED AS A REGEX, which this check did not see.
+       *
+       * `/_spinBody[\s\S]{0,3000}?cloak\?\.carry\(/` is `.slice(i, i + 3000)`
+       * with different punctuation, and TWELVE of them were live while this
+       * check was green — including one over `Player._spinBody`, which is 2569
+       * characters, so the window already ran 431 characters past the end of
+       * the function it claimed to be reading. The docstring above said
+       * `_source.mjs` "replaces all nineteen"; it replaced one spelling.
+       *
+       * A THOUSAND IS WHERE A WINDOW STOPS BEING A NEIGHBOURHOOD. The short
+       * ones — "is this attribute within 200 characters of that id" — are a
+       * different and honest claim about two tokens being near each other, and
+       * `_source.mjs`'s own `lines()` exists for the middle ground. At four
+       * figures the window is standing in for a function body, and the thing
+       * that reads a function body is `functionBody`.
+       */
+      for (const m of src.matchAll(/\[\\s\\S\]\{0,\s*(\d+)\s*\}/g)) {
+        if (Number(m[1]) < 1000) continue;
+        bad.push(`${name}: ${m[0].trim()}`);
+      }
     }
     assert(bad.length === 0,
-      `a check reads source by slicing a fixed number of characters from an index: ${bad.join('; ')} `
+      `a check reads source by guessing a fixed number of characters: ${bad.join('; ')} `
       + '— use functionBody() from _source.mjs, which reads to the real end of the function. A window '
       + 'is correct only until somebody adds a line, and it fails silently in both directions');
-    return `${files.length} suites, none guesses the length of a function`;
+    return `${files.length} suites, none guesses the length of a function, in either spelling`;
   });
 
   check('determinism: neither harness will start with two copies of three', async () => {

@@ -459,6 +459,28 @@ export const ACTIONS = [
    * L is out of the movement cluster, out of the Force row, and free on both
    * halves of the keyboard's reach — nothing wants it mid-swing. */
   { id: 'withdraw',   group: 'Command',   label: 'Call for extraction (hold)', keys: ['KeyL'], pad: 'PadBack+PadStart' },
+  /**
+   * CLEARED TO FIRE — PLAN.md §1's thesis, as one keypress.
+   *
+   * `src/game/FireMission.js` is the whole design; what this row has to get
+   * right is that it is a PRESS and not a hold. `withdraw` above is held for
+   * five seconds because it ends the run and a misfire cannot be undone — and
+   * this one ends men and cannot be undone either, so the temptation to give it
+   * the same ring is strong and it is wrong. Obeying High Command has to be the
+   * FAST answer or the decision the mode is built on ("obeying is faster and
+   * rewarded; verifying costs twelve seconds under fire") does not exist: a
+   * commitment timer prices the yes and the no identically, and then checking
+   * is free. The cost of saying yes to the wrong grid is supposed to be paid
+   * afterwards, in names.
+   *
+   * KeyK, which is the last unbound letter on the board, and it earns it: it
+   * sits under the right hand beside `withdraw` on L — the two things a general
+   * says on the comm rather than does with his body — and nothing in a fight
+   * reaches for it. The pad takes an RB chord because RB is the one modifier
+   * with room left (see ORDER_PAD_POOL, which gave its six back), and RB+Up is
+   * already the barrier, so the pair reads as a family.
+   */
+  { id: 'authorise',  group: 'Command',   label: 'Clear the fire mission', keys: ['KeyK'], pad: 'PadRB+PadDown' },
   // P for photo. This one may live under the right hand precisely BECAUSE it
   // is a press and not a hold: you take the mouse off the game the moment it
   // is on, and everything you do afterwards is flown with the movement keys.

@@ -475,8 +475,13 @@ export async function run({ check, assert }) {
       hud.setBindings(b);
       const legend = hud.el.mapKey?.innerHTML || '';
       assert(/F13/.test(legend), `the map's legend says "${legend}" with sense rebound to F13`);
-      assert(new RegExp(`${Math.round(POWER_COST.sense)}`).test(legend),
-        `the legend does not price the power: "${legend}"`);
+      /* ANCHORED TO THE PRICE AS THE LEGEND WRITES IT — `N Force` — and not a
+       * bare number anywhere in the string. The string it is searched in
+       * already contains the keycap this check just rebound to `F13`, so an
+       * unanchored price satisfies itself the day the price contains the digits
+       * of a key label or of any other number beside it. */
+      assert(new RegExp(`\\b${Math.round(POWER_COST.sense)} Force\\b`).test(legend),
+        `the legend does not price the power at ${Math.round(POWER_COST.sense)} Force: "${legend}"`);
     } finally { restore(); }
     return `cold 0 repaints · sensing ${lit} in a second · ${MINIMAP.linger}s linger fading to `
       + `${canvas.style.opacity || 1} · always-on still one box away`;
@@ -1626,9 +1631,19 @@ export async function run({ check, assert }) {
      * Driven through the REAL Menu on the REAL markup, with a director double
      * that refuses the way the real one refuses.
      */
+    /* THE FIXTURE IS A REAL `musterOffer()` AND IT USED TO BE ONE SHORT.
+     *
+     * `_areaClear` advances the index BEFORE it builds the offer, so `area`,
+     * `areaName` and `brief` are the ground being walked INTO and `next` is the
+     * one beyond it. This object said `areaName: 'The Open Plain'` beside
+     * `next: The Hailfire Line` — a shape the director never emits — and the
+     * two assertions below were written against it, so they certified a header
+     * that names the wrong ground for both of its lines. `held` is the field
+     * that was missing; see `CommandDirector.musterOffer`. */
     const offer = (points) => ({
       area: 2, areaName: 'The Open Plain',
       brief: 'Two kilometres of flat ochre.',
+      held: { id: 'landing', name: 'The Landing Zone', brief: 'The gunships put you down in the open.' },
       next: { id: 'hailfire', name: 'The Hailfire Line', brief: 'Armour on the ridge.' },
       points, strength: 3, max: 24, roster: roll(),
       units: [
@@ -1655,10 +1670,17 @@ export async function run({ check, assert }) {
       });
       const card = doc.getElementById('muster');
       assert(!card.classList.contains('hidden'), 'the muster never came up');
-      assert(doc.getElementById('muster-held').textContent.includes('The Open Plain'),
-        'the screen does not say which area was just held');
-      assert(doc.getElementById('muster-title').textContent === 'The Hailfire Line',
+      assert(doc.getElementById('muster-held').textContent.includes('The Landing Zone'),
+        'the screen does not say which area was just held — and the interlude three '
+        + 'centimetres below it names that ground correctly, so the card would disagree with itself');
+      assert(doc.getElementById('muster-title').textContent === 'The Open Plain',
         `the screen is titled "${doc.getElementById('muster-title').textContent}", not the area being walked into`);
+      assert(doc.getElementById('muster-brief').textContent.includes('flat ochre'),
+        'the brief under the title is not the brief for the ground being walked into');
+      // No fork on this offer, so the block stays down rather than printing a
+      // one-road choice. See CommandDirector.routeChoices.
+      assert(doc.getElementById('muster-route').classList.contains('hidden'),
+        'an offer with no fork on it still drew a route block');
       assert(doc.getElementById('muster-points').textContent === '14', 'the points are not the offer\'s');
       // The whole roll, at full length — the same renderer the HUD panel uses.
       assert(doc.querySelectorAll('#muster-list .rp-row.gone').length === 2,
@@ -1693,12 +1715,63 @@ export async function run({ check, assert }) {
       assert(said === '' || said.includes('points needed'),
         `an unaffordable card produced "${said}" instead of nothing or the director's reason`);
 
+      /**
+       * THE FORK — PLAN.md §4.6, on the screen and not only in the director.
+       *
+       * The same property the shelf is held to: the card draws the offer, the
+       * click goes through the caller's handler, and the SELECTION is redrawn
+       * from whatever comes back rather than toggled locally. A fork the screen
+       * marked itself would disagree with the route the host is composing waves
+       * for the first time the two got out of step.
+       */
+      const forked = (takenId) => ({
+        ...offer(14),
+        areaName: takenId === 'hailfire' ? 'The Hailfire Line' : 'The Spire Approach',
+        route: [
+          { id: 'hailfire', name: 'The Hailfire Line', brief: 'Armour on the ridge.',
+            rung: 3, waves: 4, muster: 17, garrison: 'a heavy line', taken: takenId === 'hailfire' },
+          { id: 'spires', name: 'The Spire Approach', brief: 'Under the spires, in the smoke.',
+            rung: 4, waves: 5, muster: 26, garrison: 'a massed line', taken: takenId === 'spires' },
+        ],
+      });
+      let asked = null;
+      menu.showMuster(forked('hailfire'), {
+        recruit: () => ({ offer: forked('hailfire'), refused: null }),
+        route: (id) => { asked = id; return { offer: forked(id), refused: null }; },
+        done: () => {},
+      });
+      const block = doc.getElementById('muster-route');
+      assert(!block.classList.contains('hidden'), 'an offer with two roads on it drew no fork');
+      let roads = doc.querySelectorAll('#muster-route .rd');
+      assert(roads.length === 2, `${roads.length} roads drawn from a two-road offer`);
+      assert(roads[0].classList.contains('on') && !roads[1].classList.contains('on'),
+        'the fork does not mark which road the run is already on');
+      assert(/17/.test(roads[0].textContent) && /a heavy line/.test(roads[0].textContent)
+             && /4 waves/.test(roads[0].textContent),
+        'a road does not say what it pays, how heavy it is and how long it is');
+      assert(!/1\.1|0\.35|budget|heavy share/i.test(block.textContent),
+        'the fork is printing the wave dials — §4.6 says the ground, not the contents');
+      /* THE DECISION, TAKEN: press the other road and the card comes back on
+       * it, off the offer the handler returned. */
+      roads[1].click();
+      assert(asked === 'spires', `clicking the second road asked for ${asked}`);
+      roads = doc.querySelectorAll('#muster-route .rd');
+      assert(roads[1].classList.contains('on') && !roads[0].classList.contains('on'),
+        'the card did not redraw onto the road that was taken');
+      assert(doc.getElementById('muster-title').textContent === 'The Spire Approach',
+        'the header still names the ground the run is no longer walking onto');
+
       // Advance closes it, once, and calls THIS muster's handler — not the
       // first one's, which is what a listener closing over the first `io` does.
+      menu.showMuster(offer(1), {
+        recruit: () => ({ offer: offer(1), refused: null }),
+        done: () => { closed++; },
+      });
       doc.getElementById('btn-muster-done').click();
       assert(closed === 1, `Advance fired ${closed} times`);
       assert(card.classList.contains('hidden'), 'the card is still on screen after Advance');
-      return `3 units offered, heavy bought for 9, 14 → 5 points, shelf redrawn, roll shows 2 casualties, Advance closes once`;
+      return `3 units offered, heavy bought for 9, 14 → 5 points, shelf redrawn, roll shows 2 casualties, `
+        + `a two-road fork drawn and switched onto The Spire Approach, Advance closes once`;
     } finally { undo(); }
   });
 }

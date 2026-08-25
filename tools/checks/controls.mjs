@@ -23,7 +23,7 @@
  */
 
 import * as THREE from 'three';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { CameraRig } from '../../src/game/Player.js';
 import { World } from '../../src/game/World.js';
 import { FocusSystem } from '../../src/game/Focus.js';
@@ -269,6 +269,36 @@ function targetsWorld(count, spacing = 4, cuts = [], toughness = null) {
 }
 
 /** The bodies as the blade solver wants them, rebuilt each frame. */
+/**
+ * CODES NOTHING IS BOUND TO — for every fixture that needs a key to rebind ONTO.
+ *
+ * Two fixtures below wrote `[...'A'..'Z'].find(unbound)` and got `undefined`
+ * the day the table took the last free letter (KeyK, to `authorise`). An
+ * undefined key does not throw: it is saved into a blob, loaded back, compared
+ * against the key the player "chose", and the check fails claiming the
+ * rebinder threw a deliberate rebind away — a red about the code, caused by
+ * the fixture running out of keyboard.
+ *
+ * Same three tiers `spares()` inside the settling check already uses, and for
+ * the same reason: letters first so a failure message still reads like a
+ * keyboard, then the digits, then F13–F24, which is where the room actually
+ * is. A caller that cannot get what it asked for is told so by name.
+ */
+function freeCodes(n = 1) {
+  const used = new Set(Object.values(defaultBindings()).flat());
+  const pool = [
+    ...[...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`),
+    ...[...'0123456789'].map(d => `Digit${d}`),
+    ...Array.from({ length: 12 }, (_, i) => `F${13 + i}`),
+  ];
+  const free = pool.filter(c => !used.has(c)).slice(0, n);
+  if (free.length < n) {
+    throw new Error(`the bindings table has no ${n} unbound codes left in the letters, the digits `
+      + 'or F13-F24 — this fixture needs one to rebind onto');
+  }
+  return free;
+}
+
 function solverTargets(w) {
   return w.enemies.filter(e => !e.dead).map(e => ({ id: e.id, capsules: e.capsules(), enemy: e, dead: false }));
 }
@@ -1067,8 +1097,7 @@ export async function run({ check, assert }) {
       // settling must not be a second Reset to defaults
       store.clear();
       const chosen = structuredClone(def);
-      const free = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`)
-        .find(k => !Object.values(def).flat().includes(k));
+      const [free] = freeCodes(1);
       chosen.jump = [free];
       store.set('saber.bindings.v2', JSON.stringify(chosen));
       assert(loadBindings().jump[0] === free, 'settling threw away a deliberate rebind');
@@ -1097,8 +1126,7 @@ export async function run({ check, assert }) {
     };
     try {
       const def = defaultBindings();
-      const free = [...'ABCDEFGHIJKLMNOPQRSTUVWXYZ'].map(c => `Key${c}`)
-        .find(k => !Object.values(def).flat().includes(k));
+      const [free] = freeCodes(1);
       // the v1 scheme, built by INVERTING today's pair rather than by typing
       // two codes that would go stale the next time the mouse moves
       const v1 = structuredClone(def);
@@ -1285,12 +1313,12 @@ export async function run({ check, assert }) {
      * level cards compare the selected key to each card's key to mark one
      * selected, and that is exactly what they should do. A guard that fails on
      * the correct code teaches people to delete the guard. */
-    const body = menu.slice(menu.indexOf('showPause(stats, sandboxLive)'));
+    const body = menu.slice(menu.indexOf('showPause(stats, sandboxLive,'));
     const showPause = body.slice(0, body.indexOf('\n  }\n'));
     assert(showPause.length > 200 && showPause.length < 4000,
       `showPause could not be isolated (${showPause.length} chars) — the scan is not scanning`);
     assert(!/\bthis\.s\.level\s*===/.test(showPause), 'showPause is gated on the level name again');
-    assert(/showPause\(stats, sandboxLive\)/.test(menu), 'showPause no longer takes the live answer');
+    assert(/showPause\(stats, sandboxLive,/.test(menu), 'showPause no longer takes the live answer');
 
     // And the predicate main.js computes has to agree with the director on
     // every lesson, not just on the name of the level.
@@ -1603,15 +1631,32 @@ export async function run({ check, assert }) {
       return p;
     };
 
-    // Sources, minus the BOONS table itself: a boon that "reads" its own flag
-    // only where it writes it is exactly the bug being fenced off here.
+    /**
+     * EVERY SOURCE FILE, minus the BOONS table itself: a boon that "reads" its
+     * own flag only where it writes it is exactly the bug being fenced off
+     * here, and that exclusion is the whole point of the word "elsewhere".
+     *
+     * The five files this used to name by hand were the five that happened to
+     * read a boon when it was written, and a hand-written list of readers goes
+     * stale the first time a boon is answered somewhere new — which it did:
+     * the six the line modes shipped are read in `Command.js` and `Enemy.js`,
+     * and this check called all six a lie. Walking `src/` cannot go stale, and
+     * it is strictly stronger: every file the old list named is still in it.
+     */
     const waves = await readFile(src('game/Waves.js'), 'utf8');
+    const walk = async (dir) => {
+      const out = [];
+      for (const ent of await readdir(dir, { withFileTypes: true })) {
+        const at = new URL(ent.name + (ent.isDirectory() ? '/' : ''), dir);
+        if (ent.isDirectory()) out.push(...await walk(at));
+        else if (ent.name.endsWith('.js') && ent.name !== 'Waves.js') out.push(at);
+      }
+      return out;
+    };
+    const files = await walk(src(''));
     const elsewhere = [
       waves.slice(0, waves.indexOf('export const BOONS = [')),
-      await readFile(src('game/Player.js'), 'utf8'),
-      await readFile(src('game/World.js'), 'utf8'),
-      await readFile(src('game/Duel.js'), 'utf8'),
-      await readFile(src('ui/HUD.js'), 'utf8'),
+      ...await Promise.all(files.map((f) => readFile(f, 'utf8'))),
     ].join('\n');
 
     /**
@@ -3054,5 +3099,78 @@ export async function run({ check, assert }) {
     // The flag has to still mean something at the far end.
     assert(new SaberController().holdPosition === false, 'the controller no longer starts off');
     return 'bladeHold: default off, checkbox #opt-bladehold, pushed live onto every player by applyFeelSettings';
+  });
+
+  check('controls: every price the blade raises is a price somebody pays', async () => {
+    /**
+     * TWO BALANCE HOLES HID IN THE SAME SHAPE, and the shape is `if (ctx.onX)`.
+     *
+     * `SaberController.applyInput` raises a hook where an attack costs
+     * something and lets the CALLER decide what the cost is, which is right:
+     * stamina belongs to the Player and the controller is not allowed to know
+     * about it. But an unsupplied hook is not a cost of zero that somebody
+     * chose — it is a promise nobody keeps, and it fails silently, forever.
+     *
+     * `ctx.onSpin` and `ctx.onStrain` were both raised and never supplied.
+     * Player.js's own notes record what that was worth: a full-revolution spin
+     * that does about eight times an overhead's work was FREE and therefore the
+     * answer to every fight in the game, and a chambered heavy was a state you
+     * entered once and swung out of forever. Both are wired now, both with the
+     * arithmetic beside them — and `onSwing` and `onChamber` were still raised
+     * and still unsupplied, which is the same loaded gun with nothing in it
+     * yet.
+     *
+     * So the rule, rather than the two lines: a hook the blade raises must be a
+     * hook a caller supplies. Either it costs something and somebody pays, or
+     * it does not exist. The check is a source read for the reason menu.mjs's
+     * own header gives — the ctx literals are the fact, and constructing a
+     * Player to observe an absence would only tell you the absence is quiet.
+     */
+    const blade = await read('src/game/SaberController.js');
+    const player = await read('src/game/Player.js');
+    const bare = (t) => t.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\/\/[^\n]*/g, ' ');
+
+    const raised = new Set([...bare(blade).matchAll(/\bctx\.(on[A-Z]\w*)/g)].map((m) => m[1]));
+    assert(raised.size >= 3, `only ${raised.size} hooks found in the blade — the scan is not scanning`);
+
+    /**
+     * THE SUPPLIERS ARE THE ctx OBJECT LITERALS handed to `applyInput`, and
+     * nothing else: a key written anywhere else in Player.js would match
+     * `onSpin` in the note that explains it.
+     *
+     * AND EACH CALLER ANSWERS FOR ITSELF. The first cut took the UNION of the
+     * two call sites, which is not the rule — Player calls `applyInput` twice,
+     * and the driving-a-vehicle one supplies no hooks at all, so the union
+     * passed while one of the two callers was exactly the shape being
+     * forbidden. The blade does not know which caller it has.
+     *
+     * A caller that reaches none of the hooked verbs is exempt and has to SAY
+     * so, which is what the `bladeHeld: false` half of the driving ctx already
+     * means: no blade in the hand, no attack, no price. Anything else pays.
+     */
+    const src = bare(player);
+    const sites = [];
+    for (const m of src.matchAll(/applyInput\([^)]*?,\s*dt\s*,\s*\{/g)) {
+      let depth = 0, i = src.indexOf('{', m.index + m[0].length - 1);
+      for (let j = i; j < src.length; j++) {
+        if (src[j] === '{') depth++;
+        else if (src[j] === '}' && --depth === 0) { sites.push(src.slice(i, j)); break; }
+      }
+    }
+    assert(sites.length >= 2, `only ${sites.length} applyInput ctx literal(s) found — the scan is wrong`);
+
+    const unpaid = [];
+    for (const [i, body] of sites.entries()) {
+      /* A caller with no blade in the hand cannot reach an attack, and says it
+       * in the ctx itself. `grounded: true, moving: 0` is that literal today. */
+      const supplied = new Set([...body.matchAll(/\b(on[A-Z]\w*)\s*:/g)].map((m) => m[1]));
+      if (!supplied.size && /\bgrounded:\s*true/.test(body)) continue;
+      for (const n of raised) if (!supplied.has(n)) unpaid.push(`site ${i + 1}: ${n}`);
+    }
+    assert(!unpaid.length,
+      `the blade raises ${unpaid.join(', ')} and that caller supplies nothing for it — `
+      + 'that is what made the spin and the chambered heavy free');
+    return `${raised.size} hooks raised, ${sites.length} callers, every one paid or exempt: `
+      + `${[...raised].sort().join(', ')}`;
   });
 }

@@ -87,6 +87,9 @@
 
 import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf,
   RAMP_CARDS_EVERY, BOSS_EVERY } from './Waves.js';
+/* The offer is dealt from a seeded stream — see `OFFER`. MathUtil is a leaf and
+ * this is the only thing this file takes from it. */
+import { makeRng } from '../engine/MathUtil.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Insight — what a run earns and what a facet costs                     */
@@ -141,6 +144,10 @@ export const RANK_STEP = 3;
  *     roguelite   23.3 of 46 facets held (51%)   5.9 bought   42% overlap
  *     Trial        4.9 of 46 facets held (11%)   5.0 bought   14% overlap
  *
+ *     (The table was taken when FACETS had 46 entries. It has 52 — the six
+ *     rule facets of PLAN §4.6 — so the SHARES above are of the old roster and
+ *     the counts bought are the figures that still transfer.)
+ *
  * and the cause is arithmetic rather than tuning. All six roots are `epic` at 9
  * against `insightAfter(w) = w + 2·floor(w/5)`, so a Trial player buys their
  * first facet at wave 7, the second at 15, the third at 25 and the fourth at
@@ -184,9 +191,21 @@ export const TRIAL_INSIGHT_PER_WAVE = (() => {
  * `drafts` is `WaveDirector.drafts` — the shipped statement of which modes hand
  * out cards — called rather than restated, so a mode added to `DRAFT_MODES`
  * changes both channels at once.
+ *
+ * `hazard` is `WaveDirector.hazard`, and it is PLAN.md §4.6's player-authored
+ * difficulty arriving on the one line that decides what a wave is worth. It
+ * multiplies BOTH channels, because a set-piece under a run rule is the same
+ * multiple of a wave that a set-piece without one is — see `hazardPay` in
+ * Waves.js for why the multiplier is the director's own `worth` and not a
+ * second table. Defaulted to 1, so a run under no rules is byte-identical.
+ *
+ * The product is DELIBERATELY NOT ROUNDED here. A rate of 1.08/wave rounded at
+ * this line is 1/wave and A HEAD TO CUT OFF pays nothing at all; the rounding
+ * belongs where the purse is credited, and `Communion.earn` carries the
+ * fraction across waves so the ledger stays in whole Insight without losing it.
  */
-export function insightRate(drafts = true) {
-  const per = drafts ? INSIGHT_PER_WAVE : TRIAL_INSIGHT_PER_WAVE;
+export function insightRate(drafts = true, hazard = 1) {
+  const per = (drafts ? INSIGHT_PER_WAVE : TRIAL_INSIGHT_PER_WAVE) * (hazard > 0 ? hazard : 1);
   return { per, boss: per * (INSIGHT_BOSS_BONUS / INSIGHT_PER_WAVE) };
 }
 
@@ -325,8 +344,10 @@ export const FACETS = [
     jedi: 'Mastery — Bastion', sith: 'Mastery — The Iron Wall' },
 
   /* ── The Force ─────────────────────────────────────────────────────── */
-  { id: 'attune-force', axis: 'force', to: ['wellspring', 'ataru', 'tutaminis'],
+  { id: 'attune-force', axis: 'force', to: ['wellspring', 'ataru', 'tutaminis', 'stormsense'],
     jedi: 'Attunement of the Force', sith: 'Attunement of Power' },
+  { id: 'stormsense', axis: 'force', to: [],
+    jedi: 'Storm Sense', sith: 'Eyes in the Murk' },
   { id: 'wellspring', axis: 'force', to: ['conduit'],
     jedi: 'Wellspring', sith: 'The Deep Well' },
   { id: 'ataru', axis: 'force', to: ['repulse'],
@@ -349,8 +370,10 @@ export const FACETS = [
     jedi: 'Vitality', sith: 'Spite' },
   { id: 'celerity', axis: 'body', to: ['momentum'],
     jedi: 'Celerity', sith: 'The Quickening' },
-  { id: 'meditation', axis: 'body', to: ['undying'],
+  { id: 'meditation', axis: 'body', to: ['undying', 'sapper'],
     jedi: 'Meditation', sith: 'Discipline of Pain' },
+  { id: 'sapper', axis: 'body', to: [],
+    jedi: 'Field Engineering', sith: 'Labour of the Weak' },
   { id: 'secondwind', axis: 'body', to: ['undying'],
     jedi: 'Second Wind', sith: 'Refusal' },
   { id: 'momentum', axis: 'body', to: [],
@@ -365,18 +388,30 @@ export const FACETS = [
    * exactly on the "never runs out" bar rather than comfortably past it. */
   { id: 'attune-bond', axis: 'bond', to: ['communion'],
     jedi: 'Attunement of the Bond', sith: 'Attunement of the Pact' },
-  { id: 'communion', axis: 'bond', to: ['suffusion', 'vow'],
+  { id: 'communion', axis: 'bond', to: ['suffusion', 'vow', 'skirmish', 'triage'],
     jedi: 'Battle Meditation', sith: 'Dominion' },
+  /* ── PLAN.md §4.6's two, and they are here because this is the current
+   * about the men beside you. Both change the KEYSTONE — `lineGathered` —
+   * which is the whole reason the section asks for at least two: "variance
+   * that cannot touch the keystone is variance in a side pocket". */
+  { id: 'skirmish', axis: 'bond', to: ['unity'],
+    jedi: 'Skirmish Order', sith: 'Loose Rein' },
+  { id: 'triage', axis: 'bond', to: ['unity'],
+    jedi: 'Triage', sith: 'Blood Debt' },
   { id: 'suffusion', axis: 'bond', to: ['unity'],
     jedi: 'Force Suffusion', sith: 'Siphoned Vitality' },
-  { id: 'vow', axis: 'bond', to: ['unity'],
+  { id: 'vow', axis: 'bond', to: ['unity', 'standfast'],
     jedi: "Guardian's Vow", sith: 'Blood Pact' },
+  { id: 'standfast', axis: 'bond', to: [],
+    jedi: 'Stand Fast', sith: 'None May Leave' },
   { id: 'unity', axis: 'bond', to: [],
     jedi: 'Mastery — The Unifying Force', sith: 'Mastery — The Rule of Two' },
 
   /* ── The Dark ──────────────────────────────────────────────────────── */
-  { id: 'attune-dark', axis: 'dark', to: ['lifesteal', 'juyo', 'lightning'],
+  { id: 'attune-dark', axis: 'dark', to: ['lifesteal', 'juyo', 'lightning', 'salvage'],
     jedi: 'Attunement of the Shadow', sith: 'Attunement of the Dark' },
+  { id: 'salvage', axis: 'dark', to: [],
+    jedi: 'Salvage', sith: "The Scavenger's Right" },
   { id: 'lifesteal', axis: 'dark', to: ['execute'],
     jedi: 'Sustenance', sith: 'Dark Sustenance' },
   { id: 'juyo', axis: 'dark', to: ['fury'],
@@ -481,7 +516,44 @@ export const LOCKED = {
   insight: 'not enough Insight',
   gated: 'the discipline is not yet earned',
   depth: 'not this early in a run',
+  offer: 'the Force is not showing you this one',
 };
+
+/**
+ * HOW MANY OF THE LEGAL FACETS THE HOLOCRON IS SHOWING — PLAN.md §4.6's first
+ * bullet.
+ *
+ *     The holocron offers three of the currently-legal facets, not all 46.
+ *     Same 46 nodes, same adjacency; only the OFFER changes. A solved build
+ *     order becomes a found one.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  WHY AN OFFER AND NOT A SHUFFLE OF THE TREE
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * The lattice is the same lattice in every run — the same six currents, the
+ * same joins, the same prices — because that is what a player LEARNS, and a
+ * graph that reshuffled would be a graph nobody could plan in. What changes is
+ * which of the legal moves is available this minute. So the second run of a
+ * player who has solved "Vitality, then Celerity, then Momentum" is not that
+ * run again: the same three cards are still the right ones and the Force is
+ * showing him a different three, and the decision becomes what to do with what
+ * he is offered rather than what he decided before he landed.
+ *
+ * THREE, and it is the draft's own number: `drawBoons` offers three cards on an
+ * ordinary wave, so a player already knows what three choices look like and the
+ * two systems do not disagree about how wide a decision is.
+ *
+ * ── AND IT RE-ROLLS ON A PURCHASE, NOT ON A CLOCK ──────────────────────────
+ *
+ * The offer is a pure function of the run's seed and how much has been bought,
+ * so it is the same offer every time the Holocron is opened until something is
+ * taken — a player who closes the screen to think has not lost the hand. It is
+ * also derived rather than stored, which is what keeps it correct across a
+ * level change: `snapshot` carries the seed and the count, and the offer falls
+ * out of them on the far side.
+ */
+export const OFFER = 3;
 
 /**
  * The Insight a run holds, and the facets it has woken with it.
@@ -499,6 +571,16 @@ export class Communion {
     /** Facet ids woken with Insight, in order. Its LENGTH is the price escalator. */
     this.bought = Array.isArray(o.bought) ? o.bought.slice() : [];
     this.earned = Math.max(0, o.earned ?? this.insight);
+    /**
+     * THE RUN'S OWN NUMBER, and what makes an offer a fact about a sitting
+     * rather than about a process. `World` hands it `runSeed`; a ledger built
+     * with none takes 0, which is a perfectly good stated seed and is what
+     * every check and every headless bench gets unless it says otherwise.
+     */
+    this.seed = (o.seed | 0) >>> 0;
+    /** The fraction of an Insight owed but not yet whole — see `earn`. Carried
+     *  on the snapshot so a rejoining peer is not paid the remainder twice. */
+    this._carry = Number.isFinite(o.carry) ? o.carry : 0;
   }
 
   /**
@@ -510,7 +592,26 @@ export class Communion {
    */
   earn(wave, boss = false, rate = null) {
     const r = rate || insightRate(true);
-    const n = r.per + (boss ? r.boss : 0);
+    const raw = r.per + (boss ? r.boss : 0);
+    /**
+     * A WHOLE PURSE OVER A FRACTIONAL RATE.
+     *
+     * Every rate this ledger was built on is an integer, and every price in
+     * `COST` is one, so `insight` has always been a whole number and three
+     * screens print it as one. `hazardPay` makes the rate fractional — a run
+     * under A HEAD TO CUT OFF is paid 1.08 a wave — and there are only two
+     * ways to spend that: round each payout, which pays exactly nothing for
+     * any rule worth less than half a wave, or carry the remainder.
+     *
+     * It carries. `_carry` is the fraction owed, `insight` and `earned` move
+     * only in whole units, and over a run the player is paid the exact rate:
+     * 40 waves at 1.08 is 43 Insight and not 40. Byte-identical when the rate
+     * is an integer, which is every existing caller — the carry stays at 0 and
+     * `n === raw`.
+     */
+    this._carry += raw;
+    const n = Math.floor(this._carry + 1e-9);
+    this._carry -= n;
     this.insight += n;
     this.earned += n;
     return n;
@@ -541,6 +642,11 @@ export class Communion {
     if (wave < (b.minWave ?? 1)) return LOCKED.depth;
     if (b.requires && !b.requires(taken)) return LOCKED.gated;
     if (!this.reachable(id, taken)) return LOCKED.reach;
+    /* …AND IT HAS TO BE ONE OF THE THREE ON THE TABLE — PLAN.md §4.6's first
+     * bullet. Last of the structural clauses and ahead of the price, because
+     * "not on the table" is a different sentence from "you cannot afford it"
+     * and the screen prints whichever one is true. */
+    if (!this.offerNow(taken, wave).includes(id)) return LOCKED.offer;
     if (this.insight < this.costOf(id, taken)) return LOCKED.insight;
     return null;
   }
@@ -558,6 +664,45 @@ export class Communion {
     if (rankOf(taken, id) > 0) return true;
     for (const n of NEIGHBOURS.get(id) || []) if (rankOf(taken, n) > 0) return true;
     return false;
+  }
+
+  /**
+   * WHICH OF THE LEGAL FACETS THE FORCE IS SHOWING — see `OFFER`.
+   *
+   * "Currently legal" is everything that passes every rule EXCEPT the offer
+   * itself and the price: a facet you cannot afford is still one of the three
+   * you are being shown, because "save for it" is a decision and "it is not on
+   * the table" is not. Sorted before the deal so the answer cannot depend on
+   * the order `FACETS` happens to be written in, and dealt from a seeded stream
+   * of the run's number and the purchase count — so the same run offers the
+   * same hand until something is taken, and closing the screen to think costs
+   * nothing.
+   *
+   * A run with fewer than `OFFER` legal facets is offered all of them, which is
+   * the opening of every run: the six attunements are roots and nothing else is
+   * reachable until one of them is woken.
+   */
+  offerNow(taken, wave = 1) {
+    const legal = [];
+    for (const s of FACETS) {
+      const b = boonById(s.id);
+      if (!b) continue;
+      if (rankOf(taken, s.id) >= maxRank(b)) continue;
+      if (wave < (b.minWave ?? 1)) continue;
+      if (b.requires && !b.requires(taken)) continue;
+      if (!this.reachable(s.id, taken)) continue;
+      legal.push(s.id);
+    }
+    if (legal.length <= OFFER) return legal;
+    legal.sort();
+    const rng = makeRng((Math.imul(this.seed ^ 0x9E3779B9, 0x85EBCA6B)
+      ^ Math.imul(this.bought.length + 1, 0x27D4EB2F)) >>> 0 || 1);
+    const out = [];
+    const pool = legal.slice();
+    for (let i = 0; i < OFFER && pool.length; i++) {
+      out.push(pool.splice(Math.floor(rng() * pool.length) % pool.length, 1)[0]);
+    }
+    return out;
   }
 
   canBuy(id, taken, wave = 1) { return this.reasonLocked(id, taken, wave) === null; }
@@ -580,7 +725,13 @@ export class Communion {
   }
 
   /** What a save/restore across a level change has to carry. See Run.js. */
-  snapshot() { return { insight: this.insight, bought: this.bought.slice(), earned: this.earned }; }
+  snapshot() {
+    return { insight: this.insight, carry: this._carry, bought: this.bought.slice(), earned: this.earned,
+             /* The offer is DERIVED from these two, so carrying the seed is
+              * what makes the hand on the far side of a ground change the same
+              * hand — see `offerNow`. */
+             seed: this.seed };
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

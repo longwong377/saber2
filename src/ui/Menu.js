@@ -23,6 +23,10 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
+/* The three numbers the fire-mission row prints. Derived rather than typed,
+ * exactly as the extraction row above derives its hold and its ramp: tune the
+ * reading and the Codex retunes with it. */
+import { READ_REACH, READ_SECONDS, SENSE_RATE } from '../game/FireMission.js';
 /* THE COMPANY TAB'S WHOLE SOURCE OF TRUTH. Named imports rather than a
  * namespace so a rename in Company.js fails here at parse rather than at the
  * first click, and aliased because `load`, `save`, `dress` and `nameOf` are
@@ -52,9 +56,10 @@ import { FOCUS } from '../game/Focus.js';
 // list it starts. MODES.training's own blurb says "the eleven lessons" and it
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
+import { fellLine } from '../game/Session.js';
 import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
-         CONDITIONS, CONDITION_KEYS, CONDITION_MAX, WaveDirector } from '../game/Waves.js';
+         CONDITIONS, CONDITION_KEYS, RULE_MAX, hazardPay, WaveDirector } from '../game/Waves.js';
 /**
  * WHAT EVERY FORCE POWER COSTS — and the Codex prints it because this table
  * exists precisely so that two surfaces can read one price list.
@@ -1799,6 +1804,29 @@ export const CODEX = [
       + 'from the door. Leaving with eight is a result. Quitting is not.' },
 
   /**
+   * THE ORDER THAT COMES THE OTHER WAY — PLAN.md §1, and it is the one control
+   * on this page that is not a thing you do to the world.
+   *
+   * It has to be here for the reason `withdraw` above does: a verb a player
+   * cannot find is a verb that does not exist, and this one arrives on a clock
+   * with a panel already asking for an answer. What the row must NOT do is tell
+   * him what the right answer is — the whole design is that the estimate is
+   * honest, stale, and only checkable by going out and standing near the mark.
+   * So it prints the three costs and leaves the decision alone.
+   *
+   * Both numbers are derived, from `FireMission.js`'s own constants.
+   */
+  { keys: ['authorise'],
+    text: k => 'High Command lays a fire mission on ground ahead of your line and tells you what '
+      + 'they think is standing on it. Press this and the shells come down — one keypress, and '
+      + `the sooner you answer the more war support it pays. THE ESTIMATE IS NOT REVISED: it was `
+      + 'true when the order was cut and the battle has moved since. To learn what is actually '
+      + `in the mark, get within ${READ_REACH}&nbsp;m of it and stay there — ${READ_SECONDS}&nbsp;s `
+      + `on foot, ${(READ_SECONDS / SENSE_RATE).toFixed(0)}&nbsp;s holding ${k('sense')}. Your line `
+      + 'follows you out there at its own pace unless you plant it first. Let the window close and '
+      + 'the guns are laid on somebody else, and the fleet remembers.' },
+
+  /**
    * THE SUPPORT CALLS, GENERATED — the same argument as the orders above, and
    * one more on top of it.
    *
@@ -3202,9 +3230,14 @@ export class Menu {
       draftCards: document.getElementById('draft-cards'),
       pause: document.getElementById('pause'),
       pauseStats: document.getElementById('pause-stats'),
+      reportBtn: document.getElementById('btn-pause-report'),
+      reportHead: document.getElementById('report-head'),
+      reportCensus: document.getElementById('report-census'),
+      reportAreas: document.getElementById('report-areas'),
       death: document.getElementById('death'),
       deathStats: document.getElementById('death-stats'),
       deathTitle: document.getElementById('death-title'),
+      deathRoll: document.getElementById('death-roll'),
       netStatus: document.getElementById('net-status'),
       netCode: document.getElementById('net-code'),
       netRoster: document.getElementById('net-roster'),
@@ -4118,7 +4151,7 @@ export class Menu {
         if (held.has(key)) held.delete(key); else held.add(key);
         // Through the director, so what is stored is what the run will honour:
         // the order the player picked in, minus anything the theatre vetoes,
-        // minus anything an earlier pick excludes, capped at CONDITION_MAX.
+        // minus anything an earlier pick excludes, capped at RULE_MAX.
         const wanted = CONDITION_KEYS.filter((k) => held.has(k));
         this.s.rules = this._ruleDirector().legalRuleSet(wanted);
         saveSettings(this.s);
@@ -4194,13 +4227,13 @@ export class Menu {
       const veto = d.ruleVeto(key);
       const clash = !on && [...held].find((h) => CONDITIONS[h]?.excludes?.includes(key)
         || C.excludes?.includes(h));
-      const full = !on && held.size >= CONDITION_MAX;
+      const full = !on && held.size >= RULE_MAX;
       // The mode's refusal comes FIRST: a rule this run will never read is not
       // usefully described as clashing with another one it will also not read.
       const why = inert ? inert
         : veto ? `${LEVELS[this.s.level]?.name ?? 'this theatre'}: ${veto}`
         : clash ? `cannot be held with ${CONDITIONS[clash].label}`
-        : full ? `${CONDITION_MAX} rules is the most a wave can carry`
+        : full ? `${RULE_MAX} is the most you may author — drop one to pick this`
         : null;
       card.classList.toggle('sel', on);
       card.classList.toggle('barred', !!why);
@@ -4209,9 +4242,24 @@ export class Menu {
       card.setAttribute('aria-pressed', on ? 'true' : 'false');
       card.querySelector('.txt span').textContent = why || C.tell;
     }
+    /**
+     * WHAT THE WAGER PAYS, on the line that used to say only what it cost.
+     *
+     * PLAN.md §4.6 asks for "player-authored difficulty driving Insight income
+     * — pick which axes get harder, get paid for it", and the panel is where
+     * that has to be legible: a handicap with no printed return is a punishment
+     * screen. `hazardPay` is the run's own rate (see Waves.js) and it is asked
+     * rather than restated, so a repriced condition moves this number too.
+     *
+     * The old clause stays, because it is the other half of the same sentence:
+     * a rule buys you the full wave AND the strangeness, and now it buys you a
+     * deeper Holocron for surviving it.
+     */
     if (this.el.ruleSeed) {
+      const pay = Math.round((hazardPay(this.s.rules) - 1) * 100);
       this.el.ruleSeed.textContent = held.size
-        ? `${held.size} of ${CONDITION_MAX} · no rule is charged against the wave's budget`
+        ? `${held.size} of ${RULE_MAX} · +${pay}% Insight a wave · no rule is charged `
+          + "against the wave's budget"
         : '';
     }
   }
@@ -6164,16 +6212,7 @@ export class Menu {
      * closed on every pause — a card that remembers being open is a card that
      * hides Resume behind a list you opened once, twenty minutes ago.
      */
-    const toggle = document.getElementById('btn-pause-bind');
-    const box = document.getElementById('pause-bind-box');
-    if (toggle && box && !toggle._wired) {
-      toggle._wired = true;
-      toggle.addEventListener('click', () => {
-        audio.ui('click');
-        const open = box.classList.toggle('hidden');
-        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
-      });
-    }
+    this._wirePauseToggle('btn-pause-bind', 'pause-bind-box');
     render();
   }
 
@@ -7208,7 +7247,9 @@ export class Menu {
       held: document.getElementById('muster-held'),
       title: document.getElementById('muster-title'),
       brief: document.getElementById('muster-brief'),
+      route: document.getElementById('muster-route'),
       units: document.getElementById('muster-units'),
+      commend: document.getElementById('muster-commend'),
       refused: document.getElementById('muster-refused'),
       rollHead: document.getElementById('muster-roll-head'),
       list: document.getElementById('muster-list'),
@@ -7234,12 +7275,27 @@ export class Menu {
     const draw = (o) => {
       if (!o) return;
       this._muster = o;
-      // The area just HELD, and the one being walked into. Both are the
-      // director's own strings — the brief that names the ground is what makes
-      // the next four minutes legible, and it is already written.
-      if (el.held) el.held.textContent = `${o.areaName} — held`;
-      if (el.title) el.title.textContent = o.next ? o.next.name : 'The advance is over';
-      if (el.brief) el.brief.textContent = o.next ? o.next.brief : '';
+      /**
+       * THE AREA JUST HELD, AND THE ONE BEING WALKED INTO — and until `held`
+       * existed on the offer this card named the wrong ground for both.
+       *
+       * `musterOffer` is built AFTER `_areaClear` has advanced the index, so
+       * `areaName` is where you are going and `next` is the ground beyond it.
+       * The stamp read `areaName` and the title read `next`, which put the
+       * whole header one engagement into the future: on a Push the card
+       * announced "The Hailfire Line — held" over a title of "The Core Ship"
+       * at the moment the player had just finished the LANDING ZONE — while
+       * the interlude directly beneath it, which is handed the right record,
+       * said "THE LANDING ZONE — HELD". One card, two answers.
+       *
+       * Both are the director's own strings and neither is derived here. The
+       * fallback on `held` is for the callers that have not held anything —
+       * the opening muster and every fixture written before the field existed.
+       */
+      if (el.held) el.held.textContent = `${(o.held && o.held.name) || o.areaName} — held`;
+      if (el.title) el.title.textContent = o.areaName || 'The advance is over';
+      if (el.brief) el.brief.textContent = o.brief || '';
+      if (el.route) drawRoute(o);
       if (el.points) el.points.textContent = String(o.points | 0);
       if (el.strength) el.strength.textContent = `${o.strength | 0}/${o.max | 0}`;
       if (el.rollHead) {
@@ -7265,6 +7321,94 @@ export class Menu {
           el.units.appendChild(card);
         }
       }
+
+      /**
+       * PROMOTE A SURVIVOR — PLAN §4.4's third option, and the one that was
+       * missing. "Replacements, or promote a survivor, or bank the purse."
+       *
+       * Banking has always worked: closing the muster without spending keeps
+       * the points, because the purse is never cleared. Replacements are the
+       * shelf above. This is the third, and it is the shape of the decision
+       * `MAX_STRENGTH` creates — at a full line every card above is priced out
+       * and this is the only thing left to spend on.
+       *
+       * A MAN AT THE TOP OF THE LADDER IS SHOWN AND NOT OFFERED, which is
+       * `_syncRules`' rule: a row that vanished would read as a roster that
+       * forgot him, and a row that took the click and was refused reads as the
+       * picker being broken. He keeps his place and says what he holds.
+       */
+      if (el.commend) {
+        const cm = o.commend;
+        el.commend.innerHTML = '';
+        el.commend.classList.toggle('hidden', !cm || !(cm.men || []).length);
+        if (cm && (cm.men || []).length) {
+          const head = document.createElement('h4');
+          head.textContent = `Commend — ${cm.cost} points`;
+          el.commend.appendChild(head);
+          for (const m of cm.men) {
+            const row = document.createElement('div');
+            row.className = m.afford ? 'cm' : 'cm poor';
+            /* WHAT THE POINTS WOULD BUY, not only what they cost: the rung he
+             * is on, the one above it, and how much experience is still between
+             * them — so a player can spend on the man who is one short rather
+             * than the man who is five. */
+            const to = m.to
+              ? `${m.rank} → ${escKey(m.to)} · ${m.need} more`
+              : `${m.rank} · nothing above it`;
+            row.innerHTML = `<b>${escKey(m.name)}</b><span>${escKey(to)}</span>`;
+            if (m.afford) this._activate(row, () => commend(m.name), `${m.name} — ${cm.cost} points`);
+            el.commend.appendChild(row);
+          }
+        }
+      }
+    };
+
+    /**
+     * THE FORK — PLAN.md §4.6's branching route, drawn and not decided.
+     *
+     * Two roads over the same run: `CommandDirector.routeChoices` has already
+     * worked out which grounds are legal here and `musterOffer` has already
+     * reduced each of them to the five things a player is allowed to know
+     * before they land — the ground, where it sits on the ladder, how many
+     * waves it is, what it pays, and a BAND for how heavy the garrison is.
+     * Nothing on this screen computes any of that, for the reason nothing here
+     * computes the points: a card that worked out its own weights would be a
+     * second opinion about a ground the director is composing waves for.
+     *
+     * ABSENT ON MOST RUNS, and that is arithmetic rather than a bug. A route
+     * keeps the length the seed rolled and its two ends are pinned, so a Grind
+     * (five stages over five grounds) and a Raid (two, both ends) have no slack
+     * anywhere in them and `route` comes back empty. The block hides itself
+     * rather than printing a fork with one road in it.
+     */
+    const drawRoute = (o) => {
+      const roads = (o && o.route) || [];
+      el.route.innerHTML = '';
+      el.route.classList.toggle('hidden', roads.length < 2);
+      if (roads.length < 2) return;
+      const head = document.createElement('p');
+      head.className = 'muster-route-head';
+      /* WHERE BOTH ROADS GO is the half that makes a fork answerable rather
+       * than a coin toss: the run is the same length either way and rejoins on
+       * the same ground, so what is being traded is the ground and not the
+       * evening. `next` is the director's, not a sentence assembled here. */
+      head.textContent = o.next ? `Your road — both rejoin at ${o.next.name}`
+                                : 'Your road';
+      el.route.appendChild(head);
+      for (const r of roads) {
+        const card = document.createElement('div');
+        card.className = r.taken ? 'rd on' : 'rd';
+        card.innerHTML = `<b>${escKey(r.name)}</b>`
+          + `<span class="rd-brief">${escKey(r.brief)}</span>`
+          + `<span class="rd-facts">${r.muster} points · ${r.waves} waves · rung ${r.rung}</span>`
+          + `<span class="rd-weight">Garrison: ${escKey(r.garrison)}</span>`;
+        /* Only the road you are NOT on is a control. Pressing the one you are
+         * already taking is a no-op the director would refuse anyway, and a
+         * button that does nothing is worse than no button. */
+        if (!r.taken) this._activate(card, () => road(r.id),
+          `${r.name} — ${r.garrison}, ${r.muster} points, ${r.waves} waves`);
+        el.route.appendChild(card);
+      }
     };
 
     const buy = (type) => {
@@ -7274,6 +7418,31 @@ export class Menu {
       if (el.refused) el.refused.textContent = res?.refused || '';
       audio.ui(res?.refused ? 'bad' : 'click');
       draw(res?.offer || this._muster);
+    };
+
+    /* A COMMENDATION IS THE SAME SHAPE AS BUYING A BODY and goes through the
+     * same door, for the same reason: ask the director, print what it refuses,
+     * redraw from the offer it hands back. The screen keeps no copy of a rank
+     * for the same reason it keeps no copy of the points. */
+    const commend = (name) => {
+      if (this._interludeLive) { audio.ui('bad'); return; }
+      const res = this._musterIo?.commend?.(name);
+      if (el.refused) el.refused.textContent = res?.refused || '';
+      audio.ui(res?.refused ? 'bad' : 'click');
+      draw(res?.offer || this._muster);
+    };
+
+    /* Taking a road is the same shape as buying a body and goes through the
+     * same door: ask the director, print whatever it refuses, redraw from the
+     * offer it hands back. The screen keeps no copy of the route for the same
+     * reason it keeps no copy of the points. */
+    const road = (id) => {
+      if (this._interludeLive) { audio.ui('bad'); return; }
+      const res = this._musterIo?.route?.(id);
+      if (!res) return;
+      if (el.refused) el.refused.textContent = res.refused || '';
+      audio.ui(res.refused ? 'bad' : 'good');
+      draw(res.offer || this._muster);
     };
 
     if (el.refused) el.refused.textContent = '';
@@ -7351,18 +7520,24 @@ export class Menu {
    */
   _runInterlude(el, res, schedule = null) {
     this._clearInterlude();
-    const list = el.interlude, shop = el.units, go = el.done;
+    /* THE FORK IS UNDER THE SAME GATE AS THE SHELF. Choosing a road is an
+     * input, and "it must have no input" does not have an exception for the
+     * decision that happens to be interesting. Same class, same flag, same
+     * moment it lifts. */
+    const list = el.interlude, go = el.done;
+    const gated = [el.units, el.route, el.commend].filter(Boolean);
+    const wait = (on) => gated.forEach((n) => n.classList.toggle('waiting', on));
     if (!list) return 0;
     list.innerHTML = '';
     const beats = res?.beats || [];
     if (!beats.length) {
       list.classList.add('hidden');
-      shop?.classList.remove('waiting');
+      wait(false);
       if (go) go.disabled = false;
       return 0;
     }
     list.classList.remove('hidden');
-    shop?.classList.add('waiting');
+    wait(true);
     if (go) go.disabled = true;
     /**
      * THE GATE IS IN THE CODE, NOT ONLY IN THE STYLESHEET.
@@ -7380,12 +7555,15 @@ export class Menu {
     for (const b of beats) {
       this._interludeTimers.push(at(() => {
         const li = document.createElement('li');
-        li.className = `b-${b.kind}`;
+        li.className = `b-${b.kind}${b.own ? ' own' : ''}`;
         li.innerHTML = `<b>${escKey(b.text)}</b><span>${escKey(b.sub)}</span>`;
         list.appendChild(li);
         /* A casualty is the only thing on this screen that makes a noise. The
          * rest is read, which is what a report is. */
-        if (b.kind === 'fell') audio.ui('bad');
+        /* …and a fire mission that caught your own line is a casualty beat with
+         * a grid reference on it, so it makes the same noise. `own` is set by
+         * the report off the log, never inferred from the words. */
+        if (b.kind === 'fell' || b.own) audio.ui('bad');
       }, Math.round(b.at * 1000)));
     }
     /* THE SHELF LIGHTS AFTER THE LAST BEAT, not with it: the point of the beat
@@ -7393,7 +7571,7 @@ export class Menu {
      * would take the eye off the name. */
     this._interludeTimers.push(at(() => {
       this._interludeLive = false;
-      shop?.classList.remove('waiting');
+      wait(false);
       if (go) { go.disabled = false; go.focus?.(); }
     }, Math.round(res.seconds * 1000)));
     return beats.length;
@@ -7490,6 +7668,39 @@ export class Menu {
   hideDeploy() { document.getElementById('deploy-card')?.classList.add('hidden'); }
 
   /**
+   * ONE DISCLOSURE ON THE PAUSE CARD, wired once.
+   *
+   * `.pause-wrap` is a 400 px card and each of these panels is longer than it,
+   * so every one of them is a button that says what is behind it and a box that
+   * starts closed — a card that remembers being open is a card that hides
+   * Resume behind a list you opened once, twenty minutes ago. Written here
+   * rather than three times because it WAS three times: the third copy is what
+   * made it worth extracting, and `showPause` folds all three away by the same
+   * table it uses to reset their `aria-expanded`.
+   */
+  _wirePauseToggle(btnId, boxId) {
+    const toggle = document.getElementById(btnId);
+    const box = document.getElementById(boxId);
+    if (!toggle || !box || toggle._wired) return box || null;
+    toggle._wired = true;
+    toggle.addEventListener('click', () => {
+      audio.ui('click');
+      const open = !box.classList.toggle('hidden');
+      toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+      /* AND THE PANEL YOU JUST OPENED IS ON SCREEN. `#pause .pause-wrap` is a
+       * 92vh scroller and every one of these panels is longer than what is left
+       * below the button that opens it — measured, the card is 1051 px with the
+       * report open in an 800 px window — so a button pressed at the bottom of
+       * the card opened a panel entirely below the fold and looked like a button
+       * that did nothing. Same argument and same fix as the deploy card's mode
+       * list, which front-screen.mjs already holds. `block: 'nearest'` so an
+       * already-visible panel does not jump. */
+      if (open) box.scrollIntoView?.({ block: 'nearest' });
+    });
+    return box;
+  }
+
+  /**
    * THE SETTINGS THE RUN CAN REACH — and until this existed there were none.
    *
    * THE HOLE. `#pause` carried Resume, Restart wave, Abandon run, Copy frame
@@ -7572,15 +7783,7 @@ export class Menu {
     if (mirror(row('opt-invert'))) this._check('opt-pause-invert', 'invertY');
     if (mirror(row('opt-shake'))) this._check('opt-pause-shake', 'shake');
 
-    const toggle = document.getElementById('btn-pause-opts');
-    if (toggle && !toggle._wired) {
-      toggle._wired = true;
-      toggle.addEventListener('click', () => {
-        audio.ui('click');
-        const open = box.classList.toggle('hidden');
-        toggle.setAttribute('aria-expanded', open ? 'false' : 'true');
-      });
-    }
+    this._wirePauseToggle('btn-pause-opts', 'pause-opts-box');
     this._pauseOpts = box;
     return box;
   }
@@ -7642,7 +7845,95 @@ export class Menu {
    *   pause with no world) it falls back to the settings, which is the best
    *   guess available and no worse than what this used to do.
    */
-  showPause(stats, sandboxLive) {
+  /**
+   * THE AFTER-ACTION REPORT, DRAWN — PLAN.md §4.9.
+   *
+   * `Session.runReport` did the reading; this does nothing but say it. The
+   * split is the same one `fellLine` is under and for the same reason: the
+   * projection is a pure function of the director's log and is driven by
+   * `tools/checks/report.mjs` under Node, and if the counting lived in here it
+   * could only ever be checked through a DOM.
+   *
+   * TWO BLOCKS, AND THE ORDER IS THE ARGUMENT. The census first, because it is
+   * the half that changes a decision — the muster's next purchase and whether
+   * to keep calling shells onto ground your own line is walking into. The
+   * ledger second, because it is the half that lets a player ARGUE with the
+   * census, and nobody argues with a number they have not read yet.
+   *
+   * `null` takes the whole thing off the card rather than drawing an empty one:
+   * outside Command there is no army, no log and nothing to report, and a
+   * heading over nothing reads as a screen that failed.
+   */
+  _drawReport(report) {
+    const btn = this.el.reportBtn;
+    const box = document.getElementById('pause-report-box');
+    if (!btn || !box) return false;
+    if (!report) { btn.classList.add('hidden'); box.classList.add('hidden'); return false; }
+    btn.classList.remove('hidden');
+
+    const men = (n) => `${n} ${n === 1 ? 'man' : 'men'}`;
+    const areas = (n) => `${n} ${n === 1 ? 'area' : 'areas'}`;
+    if (this.el.reportHead) {
+      this.el.reportHead.textContent = report.lost
+        ? `${men(report.lost)} lost over ${areas(report.held)} held.`
+        : `Nobody on the list, over ${areas(report.held)} held.`;
+    }
+
+    /* THE CENSUS. `own` is the row the report exists to make unmissable, so it
+     * carries its own class and its own sentence rather than sitting in the
+     * list as one more line of prose — see the note on `.rc.own` in styles.css.
+     * Deaths with nothing to name are said LAST and said plainly: inventing a
+     * killer for them is exactly the mystery this screen removes. */
+    if (this.el.reportCensus) {
+      /* THE SUFFIX IS FOR THE ROW THAT NEEDS IT. "by you" and "by your own
+       * fire mission" already say whose they were; adding "— your own side" to
+       * them is the sentence twice. A TROOPER'S DESIGNATION does not say it —
+       * `CT-4471` reads exactly like a droid to anybody who has not memorised
+       * the roll — and that is the row the suffix was written for. */
+      const rows = report.census.map((r) => `<div class="rc${r.own ? ' own' : ''}">`
+        + `<b>${r.n}</b><span>by ${r.killer}`
+        + `${r.own && r.killer !== 'you' && !/^your own/.test(r.killer) ? ' — one of yours' : ''}`
+        + '</span></div>');
+      if (report.unknown) {
+        rows.push(`<div class="rc none"><b>${report.unknown}</b>`
+          + '<span>with nothing near enough to name</span></div>');
+      }
+      this.el.reportCensus.innerHTML = rows.length ? rows.join('')
+        : '<div class="rc none">Nothing has killed one of yours yet</div>';
+    }
+
+    /* THE LEDGER, area by area, in the order they were fought. An engagement
+     * still being fought is the case the pause card is opened in most often, so
+     * it is a state of its own — "in progress" — and not a lost area. */
+    if (this.el.reportAreas) {
+      this.el.reportAreas.innerHTML = report.areas.map((a) => {
+        const state = a.held === true ? 'held' : a.held === false ? (a.why || 'lost') : 'in progress';
+        const head = `<h4>${a.n != null ? `${a.n}. ` : ''}${a.name || 'The ground'} — <em>${state}</em></h4>`;
+        const dead = a.fell.map((e) => `<div class="rl${e.killer === 'your own fire mission' || e.killer === 'you' ? ' own' : ''}">`
+          + `<b>${e.name}</b><span>${fellLine(e)}</span></div>`);
+        const up = a.up.map((e) => `<div class="rl quiet"><b>${e.name}</b><span>`
+          + `${e.t === 'steps-up' ? `takes the squad after ${e.after}`
+             : e.t === 'commend' ? `commended in the field — ${e.rank}`
+             : `promoted — ${e.rank}`}</span></div>`);
+        const fire = a.missions.map((e) => `<div class="rl${e.friendlies > 0 ? ' own' : ''}">`
+          + `<b>GRID ${e.grid} — ${e.lapsed ? 'WAVED OFF' : 'CLEARED'}</b><span>`
+          + `${e.lapsed ? `${e.told} estimated · you let the window close`
+             : e.friendlies > 0 ? `${e.friendlies} of yours inside it${e.names?.length ? ` — ${e.names.join(', ')}` : ''}`
+             : `${e.hostiles | 0} hostiles, none of yours`}</span></div>`);
+        const body = [...dead, ...fire, ...up];
+        return `<div class="ra${body.length ? '' : ' empty'}">${head}`
+          + (body.length ? body.join('') : '<div class="rl quiet"><b>Nothing to report</b></div>')
+          + '</div>';
+      }).join('');
+    }
+    return true;
+  }
+
+  /**
+   * @param {object|null} [report] `Session.runReport(director.log)`, or null in
+   *   every mode that has no army — see `_drawReport`.
+   */
+  showPause(stats, sandboxLive, report = null) {
     this.el.pauseStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
     // Only where the numbers actually bite; everywhere else they would be two
     // sliders that do nothing, which is worse than no sliders at all.
@@ -7671,8 +7962,13 @@ export class Menu {
     // card that remembers being open hides Resume behind a list you opened
     // once, twenty minutes ago.
     this._buildPauseOptions();
+    /* Same fold, same rule, and the report is the one of the three that most
+     * needs it: it is the longest panel on the card and it would otherwise
+     * push Resume off the bottom of a run four areas deep. */
+    this._drawReport(report);
+    this._wirePauseToggle('btn-pause-report', 'pause-report-box');
     for (const [btn, panel] of [['btn-pause-bind', 'pause-bind-box'],
-      ['btn-pause-opts', 'pause-opts-box']]) {
+      ['btn-pause-opts', 'pause-opts-box'], ['btn-pause-report', 'pause-report-box']]) {
       document.getElementById(panel)?.classList.add('hidden');
       document.getElementById(btn)?.setAttribute('aria-expanded', 'false');
     }
@@ -7691,9 +7987,75 @@ export class Menu {
    * the player had just lost. The seed used to live in index.html, which is
    * why nothing here felt responsible for putting it back.
    */
-  showDeath(stats, title) {
+  /**
+   * @param {Array} stats  the label/value rows `main.js` assembled
+   * @param {string} [title]
+   * @param {Array|null} [roll] `World.runStats().roll` — the run's fallen, in
+   *        the order they fell. Null in every mode that has no army.
+   * @param {object|null} [report] `World.runStats().report` — the same fallen,
+   *        counted. Null on the same terms as `roll`.
+   */
+  showDeath(stats, title, roll = null, report = null) {
     this.el.deathTitle.textContent = title || DEATH_TITLE;
     this.el.deathStats.innerHTML = stats.map(([k, v]) => `<div><span>${k}</span><b>${v}</b></div>`).join('');
+    /**
+     * THE ROLL, AND IT IS THE NAMES AND NOT THE NUMBER — PLAN.md §4.9.
+     *
+     * The card has always been able to say "Troops lost 6" and never who they
+     * were, on the one mode whose entire subject is named people dying for
+     * good. The six names, each with the thing that killed it, the quarter it
+     * came from and the minute, have been in the director's log the whole time
+     * and were thrown away with the director.
+     *
+     * `fellLine` is the SAME renderer the muster interlude uses between
+     * engagements, imported rather than repeated: two renderings of one record
+     * would eventually disagree about a man, and a report that contradicts
+     * itself is worse than no report because the player cannot tell which half
+     * to argue with.
+     *
+     * NOTHING IS INVENTED. A run with no army sends `null` and the block stays
+     * hidden; an army that lost nobody sends `[]` and gets the line that says
+     * so, which is a different and true statement. That distinction is why
+     * `runStats` reports null rather than an empty array — the same reason
+     * `taken` does, and the reason the card no longer prints "Areas taken 5".
+     */
+    const host = this.el.deathRoll;
+    if (host) {
+      const rows = Array.isArray(roll) ? roll : null;
+      host.classList.toggle('hidden', !rows);
+      if (rows) {
+        /**
+         * …AND THE CENSUS OVER IT — PLAN §4.9, the same one the pause card's
+         * report leads with, because this is the one screen that card cannot
+         * reach: the run is over and there is nothing left to pause. One line
+         * and not a panel — "seven of them to Super Battle Droids, three to
+         * your own fire missions" is the whole of what a player can still act
+         * on here, and it is what he will carry into the next run.
+         *
+         * Rendered off `runStats().report`, which is the SAME projection of the
+         * log that produced the rows below it, so the sentence and the list
+         * cannot disagree about who is on it.
+         */
+        /* "OF THEM" MEANS THE ROWS IT JUST PRINTED. `report.own` is the whole
+         * census, and this sentence is the top three — so a run whose own-side
+         * deaths were all below the fold read "8 to B2 · 6 to B1 · 5 to
+         * Droideka — 3 of them by your own side" about nineteen deaths, none of
+         * which were yours. Counted over the same slice, and said as a separate
+         * clause when the rest of them are not on screen. */
+        const shown = report?.census?.slice(0, 3) || [];
+        const shownOwn = shown.reduce((n, r) => n + (r.own ? r.n : 0), 0);
+        const rest = (report?.own || 0) - shownOwn;
+        const top = shown.length
+          ? `<p class="rl none">${shown.map((r) => `${r.n} to ${r.killer}`).join(' · ')}`
+            + `${shownOwn ? ` — ${shownOwn} of them by your own side` : ''}`
+            + `${rest > 0 ? `${shownOwn ? ',' : ' —'} ${rest} more further down the roll` : ''}</p>`
+          : '';
+        host.innerHTML = rows.length
+          ? `<h3>The roll</h3>${top}${rows.map((e) => `<div class="rl"><b>${e.name}</b>`
+            + `<span>${fellLine(e)}</span></div>`).join('')}`
+          : '<h3>The roll</h3><div class="rl none">Everyone who landed came home</div>';
+      }
+    }
     this.el.death.classList.remove('hidden');
   }
   hideDeath() { this.el.death.classList.add('hidden'); }

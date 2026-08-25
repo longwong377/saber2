@@ -273,6 +273,10 @@ export const MINIMAP_COLORS = {
   boss: '#ffb64a',
   ally: '#5dffa8',
   edge: 'rgba(255,107,116,.45)',
+  /* The standing fire mission's ground. The same amber the ring on the field is
+   * drawn in while it is unverified (`FireMission.js`'s MARK_COLOUR.standing),
+   * so the shape on the disc and the shape on the ground read as one thing. */
+  mark: '#ffb648',
 };
 
 /**
@@ -402,6 +406,25 @@ export class Minimap {
     const cos = Math.cos(yaw), sin = Math.sin(yaw);
     const px = num(player.position?.x, 0), pz = num(player.position?.z, 0);
 
+    /**
+     * WORLD → DISC, and it is one closure because there are two readers now.
+     *
+     * `plot` fills a blip; the standing order's mark is an OUTLINE at the same
+     * place, and a second copy of this arithmetic is the kind of twin that goes
+     * quietly wrong on one of its two callers the next time a sign is fixed.
+     * The sign work is measured at five yaws in tools/checks/spectacle.mjs.
+     */
+    const project = (x, z, out) => {
+      const dx = x - px, dz = z - pz;
+      let sx = dx * cos - dz * sin;
+      let sy = dx * sin + dz * cos;
+      const d = Math.hypot(sx, sy);
+      const scale = d > 1e-4 ? Math.min(d, MINIMAP.range) / d * (rim / MINIMAP.range) : 0;
+      out.x = R + sx * scale; out.y = R + sy * scale; out.edge = d > MINIMAP.range;
+      return out;
+    };
+    const _at = { x: 0, y: 0, edge: false };
+
     // The blip loop, twice over one shared body. Nothing is allocated in here.
     const plot = (x, z, colour, size) => {
       const dx = x - px, dz = z - pz;
@@ -450,6 +473,27 @@ export class Minimap {
     for (const r of world?.remotes?.values?.() || []) {
       if (!r || !r.position) continue;
       plot(r.position.x, r.position.z, MINIMAP_COLORS.ally, 2.6);
+    }
+
+    /**
+     * THE STANDING ORDER'S MARK — PLAN.md §1.
+     *
+     * An outline and not a blip, because it is a piece of GROUND and not a
+     * body, and it is the one thing on this disc the player is being asked a
+     * question about. It says WHERE and nothing else: no count, no IFF, and no
+     * hint about what is standing on it — the map is drawn by Force sense and
+     * the whole design is that sense has to be spent NEAR the mark to learn
+     * that. A ring here that changed colour when your men walked in would hand
+     * the player the answer from two hundred metres away.
+     */
+    const mark = world?.fireMissions?.mission;
+    if (mark && mark.state === 'standing') {
+      project(mark.centre.x, mark.centre.z, _at);
+      g.beginPath();
+      g.arc(_at.x, _at.y, _at.edge ? 3.2 : 5.4, 0, 6.2832);
+      g.strokeStyle = MINIMAP_COLORS.mark;
+      g.lineWidth = 2;
+      g.stroke();
     }
 
     // …and you, pointing up the screen, because heading-up means you always do.
@@ -1046,6 +1090,23 @@ export class HUD {
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
       stratagem: root.getElementById('stratagem'),
+      /* The standing order — see _missionPanel. Six nodes and no markup that
+       * says anything: the grid, the clock, the estimate, the reading, the
+       * verdict and the key. */
+      /* The front, and the four nodes that draw it. See _frontBar. */
+      front: root.getElementById('hud-front'),
+      frMark: root.getElementById('fr-mark'),
+      frHeld: root.getElementById('fr-held'),
+      frMine: root.getElementById('fr-mine'),
+      frTheirs: root.getElementById('fr-theirs'),
+      frState: root.getElementById('fr-state'),
+      mission: root.getElementById('firemission'),
+      fmGrid: root.getElementById('fm-grid'),
+      fmClock: root.getElementById('fm-clock'),
+      fmTold: root.getElementById('fm-told'),
+      fmRead: root.getElementById('fm-read-fill'),
+      fmVerdict: root.getElementById('fm-verdict'),
+      fmFoot: root.getElementById('fm-foot'),
       support: root.getElementById('bar-support'),
       supportNum: root.getElementById('bar-support-num'),
       killfeed: root.getElementById('killfeed'),
@@ -1343,6 +1404,110 @@ export class HUD {
       el.textContent = said;
       host.appendChild(el);
     }
+  }
+
+  /**
+   * THE STANDING ORDER, AND WHAT YOU ARE ALLOWED TO KNOW ABOUT IT.
+   *
+   * PLAN.md §1: "Force sense shows what is inside it, including friendly IFF…
+   * Sometimes your own men are in it and the game never says so." This panel
+   * is where that sentence is kept or broken, so it reads `readout()` and
+   * nothing else — `FireMission.readout` answers null for the counts until the
+   * reading is finished, which means a bug in this method cannot leak what the
+   * player has not earned. The panel cannot know more than the Jedi does.
+   *
+   * Keyed like the stratagem panel: a HUD that rewrites five nodes sixty times
+   * a second for a clock that ticks in whole seconds is a HUD that costs frames
+   * for nothing.
+   */
+  /**
+   * THE FRONT — PLAN.md §1's "two lines make the front", drawn.
+   *
+   * `CommandDirector.front` is a scalar in [-1, +1] and it is the whole state
+   * of a meeting: 0 is the middle of the field, +1 is your own baseline, and a
+   * side wins by driving it to the other's. Nothing in the tree read it. The
+   * mode's own sentence — "the front moves because a general left his line at
+   * the wrong moment" — is unlearnable if the moment is invisible, so this is
+   * the readout that makes the rule teachable: it moves while your line is
+   * gathered AND past it, and it stops the instant you outrun them.
+   *
+   * THE SIGN IS THE PLAYER'S, not the field's. `front` is written in absolute
+   * terms (side 0 drives it to -1), and a bar that ran the wrong way for
+   * whichever commander is on side 1 would be a HUD that lies to half a
+   * meeting. Everything below is in "ground you have taken", so the two
+   * players see mirror images of one battle and both of them see the truth.
+   */
+  _frontBar(world) {
+    const host = this.el.front;
+    if (!host) return;
+    const d = world?.command;
+    if (!d?.versus || d.front === undefined) {
+      if (this._frKey !== '') { host.classList.add('hidden'); this._frKey = ''; }
+      return;
+    }
+    const mine = world.player?.team ?? 0;
+    /* +1 is side 0's baseline, so a commander on side 1 reads the negative. */
+    const won = (mine === 0 ? d.front : -d.front) ?? 0;
+    const pct = clamp(won, -1, 1) * 50;
+    const cs = d.commanders || [];
+    const nameOf = (side) => cs.find((c) => c.side === side)?.army?.name || (side === mine ? 'YOURS' : 'THEIRS');
+    const state = Math.abs(won) < 0.02 ? 'contested' : won > 0 ? 'you are pushing' : 'you are giving ground';
+    const key = `${Math.round(pct * 2)}|${state}|${nameOf(mine)}|${nameOf(1 - mine)}`;
+    if (key === this._frKey) return;
+    this._frKey = key;
+    host.classList.remove('hidden');
+    host.classList.toggle('theirs', won < 0);
+    host.classList.toggle('pushing', won > 0.02);
+    host.classList.toggle('losing', won < -0.02);
+    this.el.frMark.style.left = `${50 + pct}%`;
+    /* The fill runs FROM the middle TO the mark, either way, so the shape says
+     * how much ground has changed hands rather than where a marker happens to
+     * be sitting. */
+    this.el.frHeld.style.left = `${50 + Math.min(0, pct)}%`;
+    this.el.frHeld.style.width = `${Math.abs(pct)}%`;
+    this.el.frMine.textContent = nameOf(mine);
+    this.el.frTheirs.textContent = nameOf(1 - mine);
+    this.el.frState.textContent = state;
+  }
+
+  _missionPanel(world) {
+    const host = this.el.mission;
+    if (!host) return;
+    const r = world?.fireMissions?.readout?.();
+    if (!r || r.state !== 'standing') {
+      if (this._fmKey !== '') { host.classList.add('hidden'); this._fmKey = ''; }
+      return;
+    }
+    const own = r.verified && r.friendlies > 0;
+    const secs = Math.ceil(r.left);
+    const key = `${r.grid}|${secs}|${Math.round(r.read * 20)}|${r.verified ? r.hostiles : 'x'}`
+      + `|${own ? r.names.join(',') + r.friendlies : ''}|${r.prize}`;
+    if (key === this._fmKey) return;
+    this._fmKey = key;
+    host.classList.remove('hidden');
+    host.classList.toggle('late', secs <= 10);
+    host.classList.toggle('read', r.verified);
+    host.classList.toggle('own', own);
+    this.el.fmGrid.textContent = `Fire mission — grid ${r.grid}`;
+    this.el.fmClock.textContent = `${secs}s`;
+    this.el.fmTold.textContent = `${r.told} hostile${r.told === 1 ? '' : 's'}, estimated`;
+    this.el.fmRead.style.width = `${Math.round(r.read * 100)}%`;
+    /**
+     * THE THREE THINGS THIS LINE MAY SAY, and the first one is the design.
+     *
+     * UNVERIFIED does not hedge and does not hint. It says what the player has
+     * — an estimate somebody else made, at a time nobody told him — and the
+     * only way past it is to go and stand near the mark. A line that read
+     * "possible friendlies" would be the game quietly doing the checking, and
+     * then there is nothing to check.
+     */
+    this.el.fmVerdict.textContent = !r.verified
+      ? 'Unverified — their estimate, at a time nobody told you'
+      : own
+        ? `${r.friendlies} OF YOURS INSIDE IT — ${r.names.join(', ')}`
+        : `Read: ${r.hostiles} hostile${r.hostiles === 1 ? '' : 's'}, none of yours`;
+    this.el.fmFoot.innerHTML = `<kbd>${escKey(this._chip('authorise'))}</kbd> clear to fire`
+      + `<b>+${r.prize}</b>`;
   }
 
   _nameplates(world, player, camera) {
@@ -2195,6 +2360,11 @@ export class HUD {
 
     // ── the support calls, while one is being spelled. See `_stratagemPanel`.
     this._stratagemPanel(player);
+    /* The standing order, above it in the same column. */
+    this._missionPanel(world);
+    /* …and the front, under the wave. Both are readouts of a mode rather than
+     * of a body, so both are written once a frame from the director. */
+    this._frontBar(world);
 
     /**
      * ── the room, and what it has to say about itself
@@ -2450,7 +2620,14 @@ export class HUD {
       ? `${state.index + 1}/${state.total}`
       : `${state.progress}/${state.need}`;
     el.coachBrief.textContent = state.brief;
-    el.coachHint.textContent = state.form ? `${state.hint}  ·  sparring: ${state.form}` : state.hint;
+    /* THE FORM'S NAME AND THE FORM'S TELL. The name alone is a label a student
+     * cannot act on; the tell is the sentence that says what to watch for, and
+     * `FORMS` has authored one per form since the table was written with
+     * nothing anywhere drawing it. Appended rather than given a line of its own
+     * because it is the second half of the same statement — see `Dojo.report`. */
+    el.coachHint.textContent = state.form
+      ? `${state.hint}  ·  sparring: ${state.form}${state.formTell ? ` · ${state.formTell}` : ''}`
+      : state.hint;
     const frac = state.need === Infinity ? 1 : clamp(state.progress / state.need, 0, 1);
     el.coachFill.style.width = `${frac * 100}%`;
   }

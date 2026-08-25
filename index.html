@@ -313,8 +313,9 @@
            defect this project keeps removing. -->
       <div class="col narrow rules">
         <h3>Run rules</h3>
-        <p class="hint" id="rule-note">Optional. Every one of them changes the question rather than the
-          number, they are in force from the first wave, and none of them makes the run cheaper.</p>
+        <p class="hint" id="rule-note">Optional, and at most two. Every one of them changes the question
+          rather than the number, they are in force from the first wave, none of them makes the run
+          cheaper, and every one of them pays Insight for as long as you survive it.</p>
         <div id="rule-list" class="difflist"></div>
         <p class="hint" id="rule-seed"></p>
         <!-- THE RUN'S NUMBER. Empty draws a fresh one on every Ignite, which is
@@ -819,6 +820,27 @@
          write `{n, w}`, and a branch with no number ("attune", "free
          practice") leaves the b empty and the word carries the line. -->
     <div id="hud-remaining" class="wave-sub"><b id="hud-left"></b><span id="hud-left-word"></span></div>
+    <!--
+      THE FRONT — the whole state of a meeting, and until now it was a number
+      one object held and nothing drew.
+
+      `CommandDirector.front` is a scalar in [-1, +1]: 0 is the middle of the
+      field, +1 is your own baseline and -1 is theirs, and a side wins by
+      driving it to the other's. It moves only while a commander's line is
+      GATHERED and PAST it — which is the whole design of the mode ("the front
+      moves because a general left his line at the wrong moment") — and a
+      player could not see it move at all. It is drawn here, under the wave,
+      because it is the one number in that mode that is worth more than the
+      wave index.
+
+      Everything in it is written by HUD._frontBar off the director; the two
+      army names come off the commanders' own armies, and the bar is hidden in
+      every mode that is not a meeting.
+    -->
+    <div id="hud-front" class="fr hidden" aria-hidden="true">
+      <div class="fr-track"><i id="fr-mark"></i><u id="fr-held"></u></div>
+      <div class="fr-caps"><span id="fr-mine">—</span><em id="fr-state"></em><span id="fr-theirs">—</span></div>
+    </div>
   </div>
 
   <div class="hud-tr">
@@ -892,6 +914,28 @@
          bottom-anchored, so the panel opening pushes the stack upward and never
          moves the roll under it. Same rule the event feed and the kill feed
          already follow on the right (see .hud-tr above). -->
+    <!--
+      THE STANDING ORDER — PLAN.md §1's "the order you can check".
+
+      High Command's fire mission, its clock, and what you know about the
+      ground it is laid on. The last line is the whole design: until you have
+      gone out and read the ellipse it says only what High Command estimated,
+      and it never volunteers that your own men are inside it. Everything in
+      here is written by HUD._missionPanel off `FireMissionDirector.readout()`;
+      there is no grid, count or key typed in this markup — the key comes from
+      the live bindings, because it is rebindable.
+
+      IN THE .hud-bl COLUMN and above the support panel, for the reason the
+      roster and the stratagem list are: boxes in a column cannot overlap at
+      any viewport, boxes pinned to a corner eventually do.
+    -->
+    <div id="firemission" class="fm hidden" aria-hidden="true">
+      <div class="fm-head"><span id="fm-grid">—</span><b id="fm-clock"></b></div>
+      <div class="fm-told" id="fm-told"></div>
+      <div class="fm-read"><i id="fm-read-fill"></i></div>
+      <div class="fm-verdict" id="fm-verdict"></div>
+      <div class="fm-foot" id="fm-foot"></div>
+    </div>
     <div id="stratagem" class="hidden"></div>
     <!--
       YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.
@@ -1178,6 +1222,14 @@
     <p class="muster-held" id="muster-held">—</p>
     <h2 id="muster-title">The Muster</h2>
     <p class="hint" id="muster-brief"></p>
+    <!-- THE FORK — PLAN.md §4.6's branching route. Present only when the plan
+         has slack in it: a Grind is five stages over five grounds and a Raid is
+         two ends, so both are decided before they start, and only a Push has a
+         slot with more than one legal ground in it. Drawn by Menu.showMuster
+         from `musterOffer().route`, which carries the ground, the rung, the
+         waves, the muster and a garrison BAND — never the budget, the heavy
+         share or a single archetype. See CommandDirector.routeChoices. -->
+    <div id="muster-route" class="muster-route hidden"></div>
     <div class="muster-body">
       <div class="muster-shop">
         <h3 id="muster-shop-head">Reinforcements</h3>
@@ -1190,6 +1242,12 @@
              same ten people. -->
         <ol id="muster-interlude" class="muster-interlude hidden"></ol>
         <div id="muster-units" class="muster-units"></div>
+        <!-- PLAN §4.4's third option: promote a survivor. Empty markup, filled
+             from `musterOffer().commend` — the men, their ranks and what the
+             next rung would be all come off the roster the host keeps, and a
+             second copy of a roll typed here could disagree with the one three
+             elements up. Gated with the shelf while the interlude plays. -->
+        <div id="muster-commend" class="muster-commend"></div>
         <p class="hint muster-refused" id="muster-refused"></p>
       </div>
       <div class="muster-roll">
@@ -1281,6 +1339,24 @@
       <div id="pause-bind-list" class="bindlist"></div>
       <button id="btn-pause-bind-reset" class="secondary">Reset to defaults</button>
     </div>
+    <!-- THE AFTER-ACTION REPORT, MID-RUN — PLAN §4.9.
+         A PANEL ON THIS CARD AND NOT A SCREEN OF ITS OWN, deliberately. An
+         overlay that stops the world is a state you can be stranded in, and
+         src/ui/Screens.js exists because of one; the two boxes directly above
+         are the shape this game already uses for "more, on the card you are
+         already looking at", and they cost no new state, no new Escape rule
+         and no new hider. The report is exactly that kind of thing — something
+         you open, read and fold away — and the pause card is the only place in
+         a run where the player is not being shot at.
+         Empty markup: every row comes off `Session.runReport(director.log)`.
+         Hidden entirely outside Command, where there is no army and no log. -->
+    <button id="btn-pause-report" class="ghost hidden" aria-expanded="false"
+            aria-controls="pause-report-box">After-action report</button>
+    <div id="pause-report-box" class="pause-binds hidden">
+      <p class="hint" id="report-head"></p>
+      <div id="report-census" class="report-census"></div>
+      <div id="report-areas" class="report-areas"></div>
+    </div>
     <!-- Filled by Menu._buildKeyLegends. V and Tab are the `view` and
          `scoreboard` actions and are rebindable; Esc is not in ACTIONS at all
          (main.js pauses off a raw keydown so it survives a broken binding), so
@@ -1293,6 +1369,13 @@
   <div class="death-wrap">
     <h2 id="death-title">You are one with the Force</h2>
     <div id="death-stats" class="death-stats"></div>
+    <!-- THE ROLL — PLAN §4.9's after-action report, over the whole run.
+         Empty markup for the reason every other list in this file is empty: the
+         names come off `World.runStats().roll`, which comes off the director's
+         own log, and a second copy of a casualty list typed here could disagree
+         with the one the interlude already prints. Hidden until there is a roll
+         to draw: a heading over nothing reads as a screen that failed. -->
+    <div id="death-roll" class="death-roll hidden"></div>
     <button id="btn-retry" class="primary">Rise again</button>
     <button id="btn-menu" class="ghost">Return to the Temple</button>
   </div>

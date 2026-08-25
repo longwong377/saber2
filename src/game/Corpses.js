@@ -47,12 +47,41 @@
  *      are removed from the physics world and the meshes are frozen where
  *      they lie. This is most of the cost (573 bodies → 33) and takes NOTHING
  *      off the screen. Every corpse gets this; it is not rationed.
- *   2. SINK — past the budget, the oldest and least worthy fade and are
- *      disposed. This is the only step that removes anything visible, and it
- *      is deliberately last.
+ *   2. SINK — past the budget, the oldest and least worthy fade out and are
+ *      disposed. This is the only step that removes anything, and it is
+ *      deliberately last.
+ *   3. RETIRE — the body leaves, but the man does not. A prone instance is laid
+ *      down where it lies in `world.fallen` (`src/world/Fallen.js`): under a
+ *      settled corpse as the fade STARTS, so it dissolves off a figure that is
+ *      already there, and on the last frame for one the cap ended while it was
+ *      still travelling, so the figure lands where the body did.
  *
- * So the budget is a budget on what is DRAWN, and the simulation cost is
- * gone for everybody regardless of it.
+ * So the budget is a budget on what is DRAWN AS A BODY, and the simulation
+ * cost is gone for everybody regardless of it.
+ *
+ * ── AND WHY STEP 3 EXISTS, WHICH IS A DRAW-CALL ARGUMENT ────────────────
+ *
+ * The table at the top counts meshes on a body that is standing still. What a
+ * body actually DRAWS depends on how far away it is, and a corpse is the one
+ * thing in this engine that gets more expensive as it recedes.
+ * `tools/_farcorpse.mjs`, a B1 on geonosis, shipped build:
+ *
+ *     100 m   alive  4 meshes (the L2 merged skin)   dead  44
+ *     163 m   alive  0 meshes (the L3 cohort)        dead  44
+ *
+ * `MergedSkin`'s staleness drops the L2 bake the moment `actor.ragdolled` goes
+ * true — correctly; a bake of a standing pose cannot follow a ragdoll — and
+ * `Enemy.update` returns on `dead` above the line that would re-ask for the
+ * cohort. So there is no rung below a corpse. `CORPSE_BUDGET`'s own note above
+ * derives twenty from triangles and meshes, which is the half of the cost that
+ * was counted; this is the half that was not, and it is the one that does not
+ * fall off with distance.
+ *
+ * That is what made deletion the only ending available. `FallenField` is the
+ * missing rung: two draw calls for however many of the dead are on the field,
+ * spent on the body `worth()` has already ranked last — far, old and behind
+ * you, which is 27 px and under and exactly the reading `Fallen.js`'s figure
+ * was built for.
  */
 
 import * as THREE from 'three';
@@ -60,7 +89,9 @@ import * as THREE from 'three';
 /**
  * The one vector this file owns. `Actor.centre` writes into what it is handed,
  * and a corpse is asked where it is once a frame — so one module scratch, not
- * an allocation per corpse per frame.
+ * an allocation per corpse per frame. `layDown` reads it too, on the frame a
+ * corpse is spent, which is inside the same call and after the settle test
+ * above it has finished with the value.
  */
 const _c = new THREE.Vector3();
 
@@ -169,6 +200,8 @@ export class Corpses {
     this.retired = 0;
     /** How many corpses the cap had to end, rather than stillness. */
     this.capped = 0;
+    /** How many were laid down in `world.fallen` rather than simply deleted. */
+    this.instanced = 0;
   }
 
   /** A body has died. It is ours now. */
@@ -177,7 +210,7 @@ export class Corpses {
     /* `mark` is where the body's centre was when the current still window
      * opened — see SETTLE_MOVE. Allocated with the record and never again. */
     this.list.push({ e: enemy, t: 0, still: 0, settled: false, sink: 0,
-      mark: new THREE.Vector3(), marked: false });
+      mark: new THREE.Vector3(), marked: false, laid: false });
   }
 
   /**
@@ -263,10 +296,40 @@ export class Corpses {
 
       /* ── 2. SINK, once one has been chosen. */
       if (c.sink > 0) {
+        /**
+         * AT THE START OF THE FADE FOR A BODY THAT HAS STOPPED, AND AT THE END
+         * OF IT FOR ONE THAT HAS NOT — and the split is the whole of getting
+         * this to look like anything.
+         *
+         * A settled corpse is not going anywhere, so its instance is laid down
+         * UNDER it while it is still opaque and is revealed as the body
+         * dissolves off it. That is a cross-fade for nothing: one write into an
+         * `InstancedMesh` that is already allocated.
+         *
+         * A corpse the CAP is ending is by construction still travelling — see
+         * SETTLE_CAP, which sinks a moving body rather than freezing it in the
+         * air — and it can cover metres during `SINK_TIME`. Laying that one at
+         * the start would leave a figure behind at the point the fade began
+         * while the body carried on past it, so it is laid on the last frame
+         * instead, where the body actually ended up.
+         *
+         * `laid` is set whether or not the field took it: a full field, a mode
+         * with no field attached, or a body whose rest pose could not be read
+         * are all "asked once and answered", and retrying every frame for the
+         * length of the fade would be 33 identical failures per corpse.
+         */
+        if (!c.laid && c.settled) {
+          c.laid = true;
+          if (layDown(e, this.world)) this.instanced++;
+        }
         c.sink -= dt;
         const k = Math.max(0, c.sink / SINK_TIME);
         fade(e, k);
         if (c.sink <= 0) {
+          if (!c.laid) {
+            c.laid = true;
+            if (layDown(e, this.world)) this.instanced++;
+          }
           try { e.dispose?.(); } catch { /* a corpse that cannot be disposed is still gone from here */ }
           this.list.splice(i, 1);
           this.retired++;
@@ -286,6 +349,84 @@ export class Corpses {
 
   /** Everything, at once — a level change. */
   clear() { this.list.length = 0; }
+}
+
+/**
+ * WHERE A BODY IS LYING, AND WHICH WAY ROUND — read off the corpse itself.
+ *
+ * Everything the instanced figure needs is already true of the thing being
+ * retired, so nothing here is authored: the place is where the ragdoll came to
+ * rest, the bearing is its own head-to-hips axis, the pose is chosen by how
+ * high its chest is standing off the ground (`FallenField.split`, which is
+ * measured off the two pose geometries rather than typed), and the colour is
+ * the body's own torso material — `instanceColor` multiplies the field's white
+ * base, so a clone stays plastoid pale and a droid stays tan without either
+ * army being named here.
+ *
+ * A body that never ragdolled at all — died in a mode with no solver, or was
+ * taken by `Enemy.dispose` before it fell — still has a position and a facing,
+ * and a dead man on the ground is the right picture for it either way.
+ *
+ * @returns whether the field took it.
+ */
+function layDown(enemy, world) {
+  const field = world?.fallen;
+  if (!field || !enemy) return false;
+  const a = enemy.actor;
+  let x, z, chestY, yaw;
+  if (a?.ragdolled && a.bodies?.size) {
+    a.centre(_c);
+    x = _c.x; z = _c.z;
+    /* The head end, if this body has one. Every rigged figure on the roster
+     * does; a body without a head bone keeps the facing it died with, which is
+     * the same fallback the un-ragdolled branch below takes. */
+    const head = a.bodies.get('head') || a.bodies.get('neck');
+    if (head) {
+      const dx = head.position.x - _c.x, dz = head.position.z - _c.z;
+      yaw = (dx * dx + dz * dz) > 1e-6 ? Math.atan2(dx, dz) : enemy.facing ?? 0;
+    } else yaw = enemy.facing ?? 0;
+    chestY = _c.y - (world.terrain?.height ? world.terrain.height(x, z) : 0);
+  } else {
+    const p = enemy.position;
+    if (!p) return false;
+    x = p.x; z = p.z;
+    yaw = enemy.facing ?? 0;
+    chestY = 0;
+  }
+  /* The body's own size, so a heavy does not retire man-sized. `Actor` keeps
+   * what it was built with; the archetype is the fallback for a body that
+   * never had one. */
+  const scale = a?.rootScale ?? enemy.A?.scale ?? 1;
+  return field.lay(x, z, yaw, chestY, toneOf(enemy), scale);
+}
+
+/**
+ * THE COLOUR THIS BODY IS DRAWN IN, which is the one thing about it that has to
+ * survive the demotion — a field where every retired man is the same grey is a
+ * field that has forgotten which army lost.
+ *
+ * The torso is asked first because it is the largest single surface on any of
+ * these figures; anything else with a colour is taken if there is no torso
+ * left to ask (a body cut in half still has to be laid down).
+ */
+function toneOf(enemy) {
+  const rig = enemy.rig;
+  const bone = rig?.get?.('chest') || rig?.get?.('spine') || rig?.get?.('body');
+  const m = bone?.primary?.material;
+  if (m?.color) return m.color;
+  let found = null;
+  const scan = (o) => {
+    if (found || !o) return;
+    o.traverse?.((n) => {
+      if (found || !n.isMesh) return;
+      for (const mm of (Array.isArray(n.material) ? n.material : [n.material])) {
+        if (mm?.color) { found = mm.color; return; }
+      }
+    });
+  };
+  scan(rig?.root);
+  if (!found && enemy.actor?.holders) for (const h of enemy.actor.holders.values()) scan(h);
+  return found;
 }
 
 /** The fastest bone in a ragdoll, which is how still the whole thing is. */

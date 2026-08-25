@@ -34,16 +34,18 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: forty boons drafted every second wave, weighted
+ * And the player grows with it: forty-six boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
  * committed to an axis. `budgetFor`'s one constant is derived from that draft
  * rate, because the two are one decision.
  *
  * (Those two counts said "twenty-nine" and "five" for a long time while the
- * table grew to forty and six. A count written in prose beside a list is the
- * same defect as a card that promises what it does not do, and it is the one
- * this codebase keeps having — so tools/checks/claims.mjs now reads these two
- * sentences and counts the arrays, and they cannot drift apart again.)
+ * table grew to forty and six, and the first said "forty" for as long as it
+ * took PLAN.md §4.6's six rule facets to land. A count written in prose beside
+ * a list is the same defect as a card that promises what it does not do, and it
+ * is the one this codebase keeps having — so tools/checks/claims.mjs reads
+ * these two sentences and counts the arrays, and the drift is caught in the
+ * same session that causes it rather than in a reader's memory.)
  */
 
 import * as THREE from 'three';
@@ -55,14 +57,41 @@ import { ArrivalDirector, seedArrivals } from './Arrivals.js';
  * nothing, deliberately — see its header — so this edge costs no cycle and no
  * canvas. */
 import { FACTIONS, factionOf, armyForOrder, opposingArmy } from './Databank.js';
-import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
+import { makeRng, moduleSeed, clamp, lerp, TAU } from '../engine/MathUtil.js';
 /* Soresu's card is a step ON a Combat constant, so it reads that constant
  * rather than restating it — the whole point of the note over `apply` below.
  * Combat imports THREE, Physics, MathUtil, Bolts and Morale and none of them
  * reaches back here, so this edge is a leaf edge and costs no cycle. */
-import { RETURN_CONE } from './Combat.js';
+import { RETURN_CONE, TOUGHNESS } from './Combat.js';
 
-const rng = makeRng((Math.random() * 1e9) | 0);
+/**
+ * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
+ *
+ * `tools/register.mjs` exists because "two module-level random streams — `rand`
+ * in MathUtil.js and `rng` in World.js — are seeded once at import and were
+ * seeded from `Math.random()`, which is right in a browser and ruinous in a
+ * gate: every process started a different stream, so a check that touched
+ * either gave a different answer each run". This was the third such stream and
+ * it kept its `Math.random()`, so WAVE COMPOSITION was the one thing a gate
+ * could not hold still — and it is the input almost every balance measurement
+ * in the tree is taken over.
+ *
+ * MEASURED, and it is the reason this line changed: `tools/checks/balance.mjs`
+ * pins `Math.random` around its own import of this file to get a reproducible
+ * standalone run, and its own note says "under verify.mjs the module is already
+ * loaded and this does nothing — which is why nothing in
+ * tools/checks/balance.mjs may depend on a specific composition". Something did
+ * anyway. Its melee-opener check records "pooled across five runs: 92, 90, 90,
+ * 91 of 96 against a floor of 72 — steady", and on the deck balance.mjs's own
+ * pin deals it reads **67 of 96** — the same 67 at every commit for the last
+ * forty, because that deck is a fixed one. Two pins, two decks, one check, and
+ * the number it reports depends on which module imported this file first.
+ *
+ * `moduleSeed` is the same door MathUtil's `rand` uses: pinned under the
+ * loader, `Math.random()` in a browser, and `SABER_SEED` in the environment to
+ * re-roll deliberately. The salt is 3 because 1 and 2 are taken.
+ */
+const rng = makeRng(moduleSeed(3));
 
 /**
  * Put the wave stream on a stated number.
@@ -483,6 +512,24 @@ export const MODES = {
      * this section PLAN.md says "reads identically with `lineIsUp` deleted".
      */
     objectives: true,
+    /**
+     * HIGH COMMAND CUTS AN ORDER AND IT IS ON YOUR WORD — PLAN.md §1's
+     * "the thesis, as one keypress".
+     *
+     * An artillery ellipse on ground ahead of your line, an estimate of what is
+     * standing on it, and a window. Obeying is one keypress and it pays; going
+     * out to read it costs twelve seconds forward of your own men, and it is
+     * the only way to learn whether any of them are inside it.
+     *
+     * ON THE LINE AND NOWHERE ELSE, for the same reason `objectives` is. Every
+     * way of checking an order is billed through the quorum or through the men:
+     * walk out at your line's pace and all ten come into the ellipse with you,
+     * outrun them and the advance stops for the twelve seconds you are away,
+     * plant them first and you pay neither. Delete the quorum — which is what
+     * every other mode is — and all three collapse into "walk over and look",
+     * which is free. See `src/game/FireMission.js`.
+     */
+    fireMissions: true,
     /**
      * A NAMED MAN GOES DOWN BEFORE HE DIES — PLAN.md §4.9.
      *
@@ -1403,6 +1450,91 @@ export const TRIAL = { from: 4, every: 2 };
 export const CONDITION_MAX = 4;
 
 /**
+ * HOW MANY OF THEM THE PLAYER MAY AUTHOR — and it is not `CONDITION_MAX`.
+ *
+ * PLAN.md §4.6: "**Modifiers with caps**: at most two, at most one beneficial,
+ * one guaranteed clean battle per rotation, pairwise blacklist."
+ *
+ * The two numbers were one number, and they are answers to different questions.
+ * `CONDITION_MAX` is what the COMPOSER can carry — a wave-shape number, derived
+ * above from the stranding measurements at waves 100/140/200, and it still is.
+ * This is what the PANEL will sell you, and it is a design number about the
+ * shape of a choice: with seven rules on the screen and a cap of four you tick
+ * four and stop reading; with a cap of two you have to decide which axis of the
+ * run you actually want moved. That is the whole content of the bullet — a
+ * checklist becomes a wager.
+ *
+ * The wave can still reach `CONDITION_MAX`: `_compose` unions the rules in and
+ * `_pickCondition` deals the rest, which is exactly what it did before anybody
+ * could author one.
+ *
+ * AND "AT MOST ONE BENEFICIAL" IS NOT IMPLEMENTED, deliberately. Every entry in
+ * `CONDITIONS` is a handicap — there is no beneficial rule for the clause to
+ * cap, so writing it would be a branch no input can take, and PLAN §7's own
+ * guardrail is that an element has to change a decision. The day a beneficial
+ * rule is authored the clause becomes real and belongs here.
+ */
+export const RULE_MAX = 2;
+
+/**
+ * WHAT SHARE OF AN ARMOUR COLUMN IS THE ARMOUR — PLAN.md §4.6's own number,
+ * and it is written down exactly once: "**Composition constraints**, not just
+ * budget size: *armour column* (40% must be vehicles)".
+ *
+ * ── AND IT IS A SHARE OF THREAT, NOT OF BODIES ───────────────────────────
+ *
+ * The two readings are not close and the arithmetic picks between them. Threat
+ * is what `_composeUnder` actually holds — a floor is a RESERVATION, the same
+ * shape as the set-piece and the head, and both of those are reservations of
+ * budget. Count cannot be reserved: `heavyLimit` clamps the enormous bodies at
+ * `HEAVY_CAP` = 10 because a walker is 66 meshes, so "40% of the bodies" on a
+ * wave-100 field of ninety is thirty-six walkers against a renderer that will
+ * hold ten. Measured, the largest count share any theatre can reach is 43% at
+ * wave 40 and 11% at wave 100 — a count floor would be a promise the frame
+ * rate forbids at every depth a player fights at.
+ *
+ * In threat the same ceiling is still there and it still binds at depth (see
+ * the reservation in `_composeUnder`), but it binds LATE instead of always,
+ * and where it binds the wave is already carrying every enormous body it is
+ * allowed. That is the honest version of the promise: as much of this wave is
+ * armour as the screen can hold, and at least two fifths of it wherever that
+ * is possible at all.
+ */
+export const ARMOUR_SHARE = 0.40;
+
+/**
+ * WHAT A RUN FOUGHT UNDER RULES IS PAID — PLAN.md §4.6's player-authored
+ * difficulty, and the exchange rate is one the director already publishes.
+ *
+ * "**Player-authored difficulty** driving Insight income — pick which axes get
+ * harder, get paid for it. Not Easy/Normal/Hard."
+ *
+ * The rate is NOT a new number. `conditionCost` charges a dealt condition
+ * `worth · budget` and skips a rule — that one line, and the paragraph over it,
+ * are the game's own statement of what a rule is worth: a wave carrying it is
+ * `worth` more fight than the same wave without it, and the player pays that
+ * difference in blood instead of in budget. So the Insight a wave pays is
+ * multiplied by exactly the same share:
+ *
+ *     hazardPay(rules)  =  1 + Σ CONDITIONS[k].worth
+ *
+ * A HEAD TO CUT OFF is worth 8% and pays 8%; a DELUGE is worth 30% and pays
+ * 30%. Two rules at the cap top out at 1.48x. Nothing is typed twice, and the
+ * day a condition is repriced the payout moves with it — which is the property
+ * that makes this a rate rather than a table of bribes.
+ *
+ * It is not a meta-progression either, for the reason the rules note gives at
+ * length: Insight is earned inside a run and dies with it (LivingForce.js's
+ * own head says so), so what this buys is a deeper build in a harder run, and
+ * nothing at all in the next one.
+ */
+export function hazardPay(keys) {
+  let s = 1;
+  for (const k of keys || []) s += (CONDITIONS[k]?.worth ?? 0);
+  return s;
+}
+
+/**
  * Every condition, and what each one costs.
  *
  * `worth` is the share of the wave's budget the condition is charged. They are
@@ -1424,6 +1556,10 @@ export const CONDITION_MAX = 4;
  *   `paceScale`    multiplies the gap between spawns.
  *   `bearing`      the whole wave arrives from one quarter of the compass.
  *   `head`         one body is the wave's leader and killing it ends the wave.
+ *   `floor`        the least share of the wave's THREAT that must be spent on
+ *                  enormous bodies, reserved before the fill. The only hook
+ *                  here that adds to a wave instead of narrowing it — see
+ *                  ARMOUR COLUMN, and the reservation in `_composeUnder`.
  *   `excludes`     the other conditions this one may never be held with. Read
  *                  in `_pickCondition` and in `legalRuleSet`, both directions —
  *                  declaring it on one of a pair is enough.
@@ -1442,6 +1578,33 @@ export const CONDITION_MAX = 4;
  * lacks rather than restating the predicate, and `escalation.mjs` holds every
  * `needs` to having one.
  */
+
+/** The materials present in a roster, as `toughness` values, commonest first
+ *  and only those with two or more archetypes behind them — see ONE MATERIAL's
+ *  note for why one is not enough. Sorted by the VALUE so the rotation is the
+ *  same order on every machine and under every pool ordering. */
+function kinsIn(list) {
+  const by = new Map();
+  /* DISTINCT ARCHETYPES, and the `new Set` is the whole of it: a pool is a
+   * WEIGHTED list — scoria names `b1` twice so a B1 is drawn twice as often —
+   * so counting entries reads one archetype as two kinds and the rotation
+   * lands on a material with a single body in it. Measured before the Set was
+   * here: wave 31 on scoria composed b1 and nothing else. */
+  for (const t of new Set(list || [])) {
+    const k = ARCHETYPES[t]?.toughness;
+    if (k == null) continue;
+    by.set(k, (by.get(k) || 0) + 1);
+  }
+  return [...by.entries()].filter(([, n]) => n >= 2).map(([k]) => k).sort((a, b) => a - b);
+}
+
+/** Melee flesh that carries no blade — the beasts, derived off the two fields
+ *  that already separate them from the duellists rather than a sixth tag. */
+function isBeast(t) {
+  const a = ARCHETYPES[t];
+  return !!a && !!a.melee && !a.saber && a.toughness === TOUGHNESS.flesh;
+}
+
 export const CONDITIONS = {
   /**
    * The wave has a head. Kill it and the rest break.
@@ -1610,6 +1773,180 @@ export const CONDITIONS = {
     needs: (types, d) => d.modifiersAt(d.wave).length >= 2,
     unmet: 'too shallow for two kinds of champion',
   },
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  COMPOSITION CONSTRAINTS — PLAN.md §4.6, and they cost no new content
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * §4.6 asks for "**Composition constraints**, not just budget size: *armour
+   * column* (40% must be vehicles), *mono-kin*, *bladed*, *droid host* (no
+   * dismemberment, no morale, but `rend` is devastating), *beast drive*."
+   *
+   * Five named, and what shipped is four of them — because the roster answers
+   * the question and the answers are not the same:
+   *
+   *   *bladed*   is already here, under another name. `silence` (NO GUNS)
+   *              narrows to `!ranged`, which IS the bladed roster. A second
+   *              card for the same filter is the duplication §2.3 is about.
+   *   *mono-kin* ONE MATERIAL, below. `ARCHETYPES[*].toughness` is the game's
+   *              own material classification and has been all along — flesh,
+   *              plastoid, droid, armour, heavy — so this is derived and not a
+   *              new field on thirty-seven records.
+   *   *armour column* ARMOUR COLUMN, below, and it is the one of the five that
+   *              is NOT a roster narrowing: §4.6 says "40% must be vehicles",
+   *              which is a floor and not a filter. It shipped as a filter
+   *              first — everything plated — because that was the hook that
+   *              already existed, and the measurement killed it: on four of
+   *              the seven theatres the plated roster is `b2` and `droideka`
+   *              and the card fielded 0% enormous bodies at every depth. So
+   *              this one IS the reservation in `_composeUnder` beside the
+   *              head and the set-piece, which is composer surgery, and it is
+   *              the only entry in this table that makes a wave heavier
+   *              rather than narrower.
+   *   *droid host* and *beast drive* are real and they are THEATRE rules:
+   *              measured over the seven shipped pools, only geonosis stations
+   *              more than one droid archetype and only the Colosseum stations
+   *              beasts at all. That is what `needs`/`unmet` are for, and it is
+   *              the honest shape — a rule the ground cannot field is greyed
+   *              with the reason rather than quietly composing a monotony.
+   *
+   * ── AND THE TWO-KIND FLOOR IS NO GUNS' LESSON, APPLIED ────────────────────
+   *
+   * Every `needs` below demands TWO archetypes and not one, for the reason
+   * `silence` states in its own words: "kamino's only melee archetype is the
+   * acolyte, so a one-type gate turned NO GUNS into six identical acolytes on
+   * that level. A wave asked a different question still has to be a wave."
+   */
+
+  /**
+   * Two fifths of the wave is the enormous, and the rest is its escort.
+   *
+   * THE ONE CONDITION IN THE TABLE THAT IS NOT A NARROWING. Every other entry
+   * here answers the question "what may come?"; this one answers "how much of
+   * what comes must be armour?", and that is `ARMOUR_SHARE` of the wave's
+   * budget reserved before the fill — see the reservation in `_composeUnder`,
+   * which is the only place a `floor` is read.
+   *
+   * ── IT WAS A FILTER, AND THE FILTER WAS FIELDING NO VEHICLES ──────────────
+   *
+   * It shipped as `toughness >= TOUGHNESS.armour` — "everything that comes is
+   * plated" — which is a stronger claim than §4.6's and, measured, a weaker
+   * wave. Plated is not enormous: on four of the seven theatres the whole
+   * plated roster is `b2` and `droideka`, so ARMOUR COLUMN composed a wave of
+   * chaff and its own tell — "some of it drives" — was false. Measured heavy
+   * share of the wave's threat UNDER THE FILTER: 0% on scoria, on the
+   * Colosseum, on the wood and on the alpine, at every depth from 1 to 100. A card that deletes the soft half of a roster and then fields the
+   * cheapest droid in the game is not the armour column §4.6 asked for.
+   *
+   * So the filter is gone and the floor is the whole of it. The wave is MIXED
+   * — that is the point of a floor and the difference from THE HEAVY GUARD,
+   * which keeps the heavies and one escort archetype and shrinks the wave to
+   * pay for it. Here the wave is the wave it would have been, with two fifths
+   * of its weight spent on the bodies you cannot clear on the way past.
+   *
+   * `needs` asks for ONE enormous archetype and not two, and that is not a
+   * relaxation of the two-kind law the block above states. That law is about
+   * FILTERS: a filter that leaves one archetype makes every body on the field
+   * identical, which is the monotony NO GUNS was measured into avoiding. A
+   * floor leaves the rest of the roster alone, so a ground with one heavy
+   * composes a mixed wave with a spine of that one heavy — which is what THE
+   * HEAVY GUARD's own `needs` has always asked for, in the same words.
+   *
+   * PRICED DOWN FROM 0.26, and the payout moves with it: `armour` is
+   * `ruleOnly`, so `conditionCost` never charges it a wave's budget and its
+   * `worth` reaches exactly one consumer — `hazardPay`, the Insight a run
+   * under its own terms is paid. A run under ARMOUR COLUMN now earns 1.16×
+   * rather than 1.26×, about 8% less, and that is the correct direction: the
+   * card no longer deletes half the roster, and on four theatres what it used
+   * to delete it to was droidekas. It sits under the two half-roster deletions
+   * (NO GUNS and NOTHING WITHIN REACH, 0.18) because it deletes nothing, and
+   * under THE HEAVY GUARD (0.22) because that one does this to the whole wave
+   * and doubles the heavy limit besides.
+   */
+  armour: {
+    label: 'ARMOUR COLUMN',
+    ruleOnly: true,
+    tell: 'two in every five of it is enormous. The rest is only what walks beside them.',
+    since: 20, worth: 0.16,
+    floor: ARMOUR_SHARE,
+    needs: (types) => types.some((t) => isHeavy(t)),
+    unmet: 'nothing this ground stations is big enough to make a column',
+  },
+
+  /**
+   * Every wave is cut from one material, and it is a different one each wave.
+   *
+   * NOT one archetype — one KIN, which is `toughness`, and the difference is
+   * the whole design: a plastoid wave is riflemen and officers and a jetpack,
+   * eight kinds of body that all answer to the same cut; an armour wave is
+   * four kinds that do not. So the wave still has shape, and what is taken away
+   * is the thing every other wave in this game gives you for free — a mixed
+   * field where the answer that works on one body works on some of the others
+   * and not the rest.
+   *
+   * THE KIN IS KEYED ON THE WAVE and not drawn from the stream. `_compose`
+   * calls `_composeUnder` up to `CONDITION_MAX` times as it tops the condition
+   * set up, and a hook that drew would answer differently on each pass — the
+   * shape would be composed against one material and priced against another.
+   * A rotation is deterministic under re-entry, replays under a seed, and is
+   * the only shape here that says "and it changes" without a second stream.
+   */
+  monokin: {
+    label: 'ONE MATERIAL',
+    ruleOnly: true,
+    tell: 'each wave is cut from one kind of body, and never the same kind twice running.',
+    since: 21, worth: 0.10,
+    types: (list, d, wave) => {
+      const kins = kinsIn(list);
+      if (kins.length < 2) return list;
+      const kin = kins[Math.max(0, (wave | 0) - 1) % kins.length];
+      return list.filter((t) => ARCHETYPES[t]?.toughness === kin);
+    },
+    needs: (types) => kinsIn(types).length >= 2,
+    unmet: 'this ground fields only one material in any quantity',
+  },
+
+  /**
+   * A droid host, and §4.6's parenthesis is a description of what droids
+   * ALREADY are here rather than three systems to build: `TOUGHNESS.droid`
+   * bodies have no morale to break and `rend` is what opens them.
+   *
+   * What the rule does is spend the wave's whole budget on the cheapest bodies
+   * the ground stations, which is a HORDE — the same threat arriving as three
+   * times the count. Only geonosis stations more than one droid archetype, and
+   * everywhere else this is greyed with its reason.
+   */
+  host: {
+    label: 'DROID HOST',
+    ruleOnly: true,
+    tell: 'nothing in it can be frightened, and there is a great deal of it.',
+    since: 22, worth: 0.12,
+    excludes: ['armour'],
+    types: (list) => list.filter((t) => ARCHETYPES[t]?.toughness === TOUGHNESS.droid),
+    needs: (types) => new Set(types.filter((t) => ARCHETYPES[t]?.toughness === TOUGHNESS.droid)).size >= 2,
+    unmet: 'this ground stations fewer than two kinds of droid',
+  },
+
+  /**
+   * A beast drive — flesh that closes, and nothing that carries a blade.
+   *
+   * Derived rather than declared: a beast is the melee flesh that is not a
+   * sabre user, which is exactly the Colosseum's five and nothing anywhere
+   * else. The fight it makes is the one `silence` makes without the duellists
+   * in it — no bolts to turn AND no blades to bind, so the whole of the
+   * defensive kit is footwork and the crowd.
+   */
+  beasts: {
+    label: 'BEAST DRIVE',
+    ruleOnly: true,
+    tell: 'no guns, no blades, and none of it stops.',
+    since: 23, worth: 0.16,
+    excludes: ['armour', 'host', 'fusillade'],
+    types: (list) => list.filter(isBeast),
+    needs: (types) => new Set(types.filter(isBeast)).size >= 2,
+    unmet: 'nothing on this ground runs at you on four legs',
+  },
+
 };
 
 export const CONDITION_KEYS = Object.keys(CONDITIONS);
@@ -2858,7 +3195,7 @@ export class WaveDirector {
    * fields until it has spent it, and from wave 15 the heavies come promoted —
    * a champion, not merely another walker.
    */
-  _setPiece(wave, budget, allowed) {
+  _setPiece(wave, budget, allowed, roster = null) {
     const out = [];
     let spend = budget * BOSS_SHARE;
     // The old gates, kept: an acklay at wave 5 is not a set-piece, it is the
@@ -2890,8 +3227,31 @@ export class WaveDirector {
      * AT-TE in front of a player who is commanding the Republic, because
      * `_setPiece` is not filtered by side in Command mode; that is Command's
      * lane and it is written up in the handover. */
+    /**
+     * …AND IT IS THE WAVE'S OWN ROSTER, not the level's.
+     *
+     * `roster` is `shape.types` — what the conditions in force have narrowed
+     * the pool down to — and reading `this.pool` instead was a hole that every
+     * roster-narrowing condition fell through at a boss wave. Measured: ARMOUR
+     * COLUMN at wave 30 fielded an acolyte and a master, because the ladder
+     * asked the LEVEL what it stations and the level stations duellists. NO
+     * GUNS and NOTHING WITHIN REACH had the same hole and passed on luck —
+     * SET_PIECE's bodies happen to be melee, so the first was never violated
+     * and the second's depth is not a boss wave.
+     *
+     * A set-piece is "the body the wave is named after", so a wave that has
+     * been told what it is made of has to name one of those. When the
+     * narrowing leaves no rung, the behaviour is the one this method already
+     * has and documents two paragraphs up: no rung to climb, and the whole
+     * set-piece share is spent on the fill instead.
+     *
+     * `roster` defaults to null and falls back to the pool, so every caller
+     * that asks this question without a condition set — three of them, all in
+     * the checks — is byte-identical.
+     */
+    const from = roster && roster.length ? roster : this.pool;
     const ladder = SET_PIECE.filter(s => (bottom || wave >= s.from)
-      && this.pool.includes(s.type) && this._sideAllows(s.type, wave))
+      && from.includes(s.type) && this._sideAllows(s.type, wave))
       .map(s => s.type);
     if (!ladder.length) return out;
     /* ONE OF EACH RUNG, heaviest first — not N copies of the heaviest. Two
@@ -3007,7 +3367,7 @@ export class WaveDirector {
     const out = [];
     for (const k of keys || []) {
       if (!CONDITIONS[k] || out.includes(k)) continue;
-      if (out.length >= CONDITION_MAX) break;
+      if (out.length >= RULE_MAX) break;
       if (this.ruleVeto(k)) continue;
       if (out.some((h) => rulesConflict(h, k))) continue;
       out.push(k);
@@ -3032,6 +3392,16 @@ export class WaveDirector {
   }
 
   set rules(v) { this._rules = Array.isArray(v) ? v.slice() : []; }
+
+  /**
+   * WHAT THIS RUN'S OWN TERMS PAY — see `hazardPay`.
+   *
+   * A getter over `this.rules` rather than a field, for the same reason the
+   * pair above is a pair: the panel writes the rule set and the payout has to
+   * move with it, and a number cached at construction would pay the run for
+   * terms it is not being fought under.
+   */
+  get hazard() { return hazardPay(this.rules); }
 
   /** What the Deploy panel prints, and what `Progress.byRule` is keyed on. */
   get ruleLabel() {
@@ -3069,6 +3439,34 @@ export class WaveDirector {
     const options = this.conditionsAt(wave).filter((k) => {
       if (held.has(k)) return false;
       const C = CONDITIONS[k];
+      /**
+       * A COMPOSITION CONSTRAINT IS NEVER DEALT — it is only ever authored.
+       *
+       * Three of PLAN.md §4.6's constraints (ONE MATERIAL, DROID HOST, BEAST
+       * DRIVE) narrow the ROSTER rather than the wave's shape, and a roster
+       * narrowing dealt at depth is what strands a budget: measured on the
+       * shipped pools, the two narrowings that ARE dealt already push the
+       * Colosseum to 51-59% unspent at wave 100, and four more compounded it
+       * until the body cap stopped binding at all and `_upgrade` was handed
+       * nothing to spend. That is a real cost and it is the composer's, not
+       * the player's.
+       *
+       * ARMOUR COLUMN IS THE FOURTH AND IT IS NOT A NARROWING — it is a floor
+       * — and it stays on this side of the line for its own reason rather
+       * than by inheritance. A dealt condition is CHARGED `worth · budget`,
+       * and the floor's own measurement is that past about wave 45 the wave
+       * is already carrying every enormous body `HEAVY_CAP` allows: 16-42% of
+       * the wave's threat at wave 70 with or without the rule. Dealt there it
+       * would take a sixth of the budget away and hand back a wave it had
+       * already composed — a condition that charges for nothing is the
+       * stranding this note is about, arrived at from the other direction.
+       *
+       * As a RULE the same narrowing is fine, because the player chose it and
+       * the fallback in `_shapeUnder` still refuses to empty the field. So the
+       * flag says which side of that line an entry is on, and the composer's
+       * own statistics are the ones it had before these were authored.
+       */
+      if (C.ruleOnly) return false;
       // WHAT THE SURPLUS CAN ACTUALLY BUY. Without this the loop would draw a
       // condition, find it unaffordable and stop — measured, that left 22% of
       // wave 140's budget stranded because the one option left was the most
@@ -3098,7 +3496,7 @@ export class WaveDirector {
     let types = this.unlockedAt(wave);
     let allowed = this.modifiersAt(wave);
     let heavy = this.heavyLimit(wave);
-    let capScale = 1;
+    let capScale = 1, floor = 0;
     let chance = this.eliteChance(wave), alive = this.maxAlive, pace = 1;
     for (const c of cs) {
       if (c.types) {
@@ -3109,6 +3507,13 @@ export class WaveDirector {
       }
       if (c.allow) allowed = c.allow(allowed, this, wave);
       capScale = capScale * (c.capScale ?? 1);
+      /* THE HIGHEST FLOOR, NEVER THE SUM. Only one entry declares one today,
+       * but `_compose` unions up to `CONDITION_MAX` of these together and two
+       * floors added would reserve a wave that has nothing left to be mixed
+       * with — which is the filter this floor replaced, arrived at by
+       * accident. A floor is a least share, so the greatest of them IS the
+       * least share both of them ask for. */
+      floor = Math.max(floor, c.floor ?? 0);
       heavy = heavy * (c.heavyScale ?? 1);
       chance = chance * (c.eliteScale ?? 1);
       alive = alive * (c.aliveScale ?? 1);
@@ -3127,6 +3532,7 @@ export class WaveDirector {
       alive: Math.max(4, Math.round(alive)), pace,
       bearing: cs.some((c) => c.bearing),
       head: cs.some((c) => c.head),
+      floor,
     };
   }
 
@@ -3153,10 +3559,13 @@ export class WaveDirector {
      * expensive bodies on purpose, and charging them against a rule written to
      * stop accidental ones would delete them. See WAVE_FLOOR. */
     const ceiling = budget / WAVE_FLOOR;
+    /* …and the same figure kept whole, because the FLOOR below is a share of
+     * the wave rather than a share of what is left of it. See the reservation. */
+    const total = budget;
     const queue = [];
 
     if (this.isBossWave(w)) {
-      for (const entry of this._setPiece(w, budget, shape.allowed)) {
+      for (const entry of this._setPiece(w, budget, shape.allowed, shape.types)) {
         queue.push(entry);
         budget -= spawnCost(entry);
       }
@@ -3191,6 +3600,97 @@ export class WaveDirector {
       }
     }
 
+    /* EPS because `budget` is a running subtraction of fractional threats:
+     * measured on the Drowned Wood at wave 10, a wave with exactly 1.0 left
+     * and a B1 costing exactly 1 held 0.9999999999999964 and refused it. An
+     * exact `<=` on an accumulated float is a coin toss, not a rule. */
+    const EPS = 1e-9;
+
+    /**
+     * THE ARMOUR IS RESERVED BEFORE THE FILL, FOR THE HEAD'S OWN REASON.
+     *
+     * PLAN.md §4.6: "*armour column* (40% must be vehicles)". A floor is the
+     * third reservation in this function and it is the same shape as the two
+     * above it — a share of the wave taken out of the budget before `_upgrade`
+     * gets to spend the budget down to nothing. Bought afterwards it could
+     * never be afforded, which is exactly what twelve leaderless vanguard
+     * waves proved about the head.
+     *
+     * WHAT IS ALREADY ENORMOUS COUNTS. The set-piece is a boss and a heavy
+     * head is a heavy body, so the debt is stated against the wave's OWN
+     * budget and credited with what those two already put on the field —
+     * otherwise a boss wave under this rule would buy its 40% twice and the
+     * fill would inherit a wave with no fill left in it.
+     *
+     * NOT CHARGED AGAINST `ceiling`, for the reason written over `ceiling`:
+     * the set-piece and the head are deliberate single expensive bodies and
+     * `WAVE_FLOOR` exists to stop ACCIDENTAL ones. So is this.
+     *
+     * ── THE THREE WAYS IT STOPS SHORT, AND ALL THREE ARE HONEST ─────────────
+     *
+     * `HEAVY_CAP` — the wave already carries every enormous body the renderer
+     *   will hold. This is what binds at depth: the budget curve is
+     *   exponential and ten heavies are linear, so past about wave 45 the
+     *   reachable share falls through 40% no matter what is reserved.
+     *   Measured under the rule on the four theatres that can field it: 42-63%
+     *   at wave 30, 16-42% at wave 70, 5-13% at wave 140 — and at the limit in
+     *   every one of those compositions, with the plain composer already
+     *   there, so the floor asks for nothing it is not already getting.
+     * `budget` — nothing enormous is affordable. Wave 1's budget is 7 and the
+     *   cheapest heavy in the game is 7, so the shallow waves reserve one body
+     *   or none. It never overspends to reach the share: the wave that cannot
+     *   afford armour is an ordinary wave, not an overdrawn one.
+     * `shape.types` — the narrowed roster has no heavy in it at all, which is
+     *   the same answer `needs` gives a theatre that stations none, arrived at
+     *   from the other side when another condition narrows it away.
+     *
+     * In none of the three does it empty or overfill the field: it only ever
+     * ADDS bodies it can pay for, so the fallback in `_shapeUnder` and the one
+     * documented overspend in the fill are both untouched.
+     */
+    if (shape.floor > 0) {
+      let owed = total * shape.floor
+        - queue.reduce((a, e) => a + (isHeavy(spawnType(e)) ? spawnCost(e) : 0), 0);
+      /**
+       * IT SPENDS AGAINST THE RENDERER'S ALLOWANCE, NOT THE DIFFICULTY CURVE'S
+       * — AND THEN THE WAVE'S LIMIT BECOMES WHAT IT SPENT.
+       *
+       * `heavyLimit` is a difficulty number that rises with the budget, and at
+       * the depths a run is actually played it is the thing that makes 40%
+       * unmeetable: measured on mustafar at wave 20 it allows three walkers,
+       * which is 22% of the wave however much budget is reserved, so the card
+       * announced two in five and delivered 28%. `HEAVY_CAP` is the other
+       * limit and it is not a difficulty number at all — a walker is 66 meshes
+       * — so it is the one the floor is held to and the one nothing here may
+       * move.
+       *
+       * Raising the SHAPE's limit for everything instead was tried and is the
+       * wrong shape: `_upgrade` trades light bodies for the heaviest that fits
+       * until `bigLeft` runs out, so a lifted ceiling was filled by the
+       * upgrade pass rather than by the floor and the wave came out 85%
+       * enormous on the Colosseum at wave 20 — which is not a floor, it is THE
+       * HEAVY GUARD with a different card on it. So the allowance is spent
+       * HERE, and `shape.heavy` is then raised to exactly what was spent: the
+       * fill and `_upgrade` both read it, both see nothing left, and the wave
+       * carries the armour its own rule bought and not one body more.
+       */
+      const room = Math.max(shape.heavy, Math.round(HEAVY_CAP * this.partyScale()));
+      let fguard = 0;
+      while (owed > 0 && queue.length < shape.cap && fguard++ < 40) {
+        const big = queue.filter((e) => isHeavy(spawnType(e))).length;
+        if (big >= room) break;
+        const can = shape.types.filter((t) => isHeavy(t)
+          && (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
+        if (!can.length) break;
+        const t = this._pickType(can, w, room - big);
+        if (!t) break;
+        queue.push(t);
+        budget -= ARCHETYPES[t].threat;
+        owed -= ARCHETYPES[t].threat;
+      }
+      shape.heavy = Math.max(shape.heavy, queue.filter((e) => isHeavy(spawnType(e))).length);
+    }
+
     let guard = 0;
     while (budget > 0 && queue.length < shape.cap && guard++ < 400) {
       const bigLeft = shape.heavy - queue.filter(e => isHeavy(spawnType(e))).length;
@@ -3219,11 +3719,6 @@ export class WaveDirector {
        * of luck; taking the cheapest makes it the smallest it can possibly be,
        * which is the only honest amount to be over by.
        */
-      /* EPS because `budget` is a running subtraction of fractional threats:
-       * measured on the Drowned Wood at wave 10, a wave with exactly 1.0 left
-       * and a B1 costing exactly 1 held 0.9999999999999964 and refused it. An
-       * exact `<=` on an accumulated float is a coin toss, not a rule. */
-      const EPS = 1e-9;
       const affordable = shape.types.filter((t) => (ARCHETYPES[t]?.threat ?? Infinity) <= budget + EPS);
       /* …AND NO ONE BODY TAKES MORE THAN ITS SHARE. See WAVE_FLOOR: the fill
        * drew uniformly from everything it could afford, so an opening wave with
@@ -5856,6 +6351,99 @@ export const BOONS = [
       p.boonMods.mend = 7;
       boonTick(p, 'undying', undyingMend);
     },
+  },
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE RULES, AS OPPOSED TO THE NUMBERS — PLAN.md §4.6
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * "Eight facets that change RULES rather than numbers… At least two of the
+   * eight must change the QUORUM. Variance that cannot touch the keystone is
+   * variance in a side pocket, and this is the difference between melded and
+   * parallel."
+   *
+   * Six of them, and the first two are the keystone ones. Every card below
+   * changes a SENTENCE somewhere else in the game rather than a coefficient in
+   * `boonMods`, which is what makes them different in kind from the forty
+   * above: none of them makes you hit harder, and every one of them makes a
+   * rule read differently. The fields they write are declared in
+   * `Player.defaultBoonMods` with their readers named beside them, and
+   * `tools/checks/variance.mjs` measures each rule changing, A/B, on the same
+   * bodies in the same places.
+   *
+   * TWO OF THEM ARE STRICTLY WORSE IF YOU PLAY THE WAY THE GAME TAUGHT YOU,
+   * which is the point of a facet that changes a rule: Skirmish Order halves
+   * the muster, and Stand Fast leaves a broken man in the open. A card that is
+   * always correct is a number wearing a rule's clothes.
+   */
+  {
+    id: 'skirmish', icon: '⌁', name: 'Skirmish Order', tag: 'The Line',
+    rarity: 'rare', axes: ['bond'],
+    /* THE KEYSTONE, MOVED. `lineIsUp` is half the living inside MORALE.NEAR of
+     * where they were told to stand; this makes it a third — and takes half
+     * the reinforcement purse for it, so a player who takes it is buying
+     * ground with bodies he will not get back. It is the one card in the game
+     * that changes what "the ground is yours" means. */
+    text: 'Spread out. The ground counts as taken with a third of your men on it — and the '
+      + 'replacements you are paid for holding it are halved.',
+    apply(p) { p.boonMods.quorumShare = 1 / 3; p.boonMods.musterShare = 0.5; },
+  },
+  {
+    id: 'triage', icon: '✚', name: 'Triage', tag: 'The Line',
+    rarity: 'rare', axes: ['bond'],
+    /* THE OTHER HALF OF §4.9's TENSION. A downed man does not count toward the
+     * quorum — that is the clause that makes the bleed-out window cost
+     * something — and this changes it to "unless somebody is standing over
+     * him", which turns dragging a casualty out of a duty into a decision
+     * about who you can spare. */
+    text: 'A man on the ground still counts, as long as somebody living is standing over him.',
+    apply(p) { p.boonMods.triage = true; },
+  },
+  {
+    id: 'standfast', icon: '⚑', name: 'Stand Fast', tag: 'Nerve',
+    rarity: 'rare', axes: ['bond'],
+    /* A ROUT IS A DESTINATION in this game — a broken man walks back to his
+     * general. This makes it a PLACE instead: he goes to ground where he is.
+     * Which is better and worse at once, and that is the card: he keeps the
+     * ground he was holding and stays in the quorum, and he does it lying in
+     * the open with whatever broke him still there. */
+    text: 'Nobody runs. A man who breaks goes to ground where he stands, and holds what he was given.',
+    apply(p) { p.boonMods.standfast = true; },
+  },
+  {
+    id: 'sapper', icon: '⛏', name: 'Field Engineering', tag: 'Ground',
+    rarity: 'common', axes: ['body'], stack: 2,
+    /* PLAN.md §4.7's Dig In, at double speed — a rule about what your ARMY can
+     * do rather than about what you can. It stacks twice because the thing it
+     * scales is a clock and halving it once is already most of the value. */
+    text: 'Your squads know how to use a shovel. A position goes up in half the time.',
+    apply(p, s = 1) { p.boonMods.digRate = (p.boonMods.digRate ?? 1) * grow(2, s); },
+  },
+  {
+    id: 'stormsense', icon: '🌪', name: 'Storm Sense', tag: 'Sight',
+    rarity: 'rare', axes: ['force'],
+    /* THE WEATHER, ONE-SIDED. A squall blinds both armies (see Smoke.js's own
+     * note on why the model cannot know who fired) — and this is the one thing
+     * in the game that breaks that symmetry, because a Force user standing
+     * with his line can tell them where to shoot. It is worth nothing in clear
+     * air, which is what makes it a card you take for a ground rather than a
+     * card you always take. */
+    text: 'You feel what you cannot see, and they fire on what you feel. Your line sees twice as '
+      + 'far through a storm as anything shooting at it.',
+    apply(p) { p.boonMods.stormEyes = 0.5; },
+  },
+  {
+    id: 'salvage', icon: '⚙', name: 'Salvage', tag: 'Insight',
+    rarity: 'common', axes: ['dark'],
+    /* PLAN.md's own example — "shattering a prop refunds Insight" — and it is
+     * a rule change because it pays a currency for an act that has never paid
+     * anything. It is also the one card that argues with §4.7's other half:
+     * cover is finite, and this makes breaking it worth doing. */
+    text: 'Nothing is wasted. Everything you break gives something back — and the field has only '
+      + 'so much in it.',
+    /* ONE RANK. What it changes is a rule — whether an act pays at all — and a
+     * second rank could only ever be a number on top of it, which is the thing
+     * this block of cards is not. */
+    apply(p) { p.boonMods.salvage = true; },
   },
   {
     id: 'unity', icon: '♾', name: 'The Unifying Force', tag: 'Mastery of Communion',

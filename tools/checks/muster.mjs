@@ -154,6 +154,127 @@ export async function run({ check, assert }) {
    * `geonosis` and `MODES.waves` has no army at all, so before this change
    * neither half of this world could exist.
    */
+  await check('muster: a purse buys a replacement or a promotion, and the promotion is still earned', async () => {
+    /**
+     * PLAN.md §4.4: "Make it a decision at the Company screen: **replacements,
+     * or promote a survivor, or bank the purse.**"
+     *
+     * Two of the three already worked and one did not. `recruit` buys
+     * replacements; BANKING is what closing a muster without spending has
+     * always done, because the purse is never cleared and points survive to the
+     * next ground. Promoting a survivor was the missing option, and its absence
+     * is most visible exactly where the decision matters most: at
+     * `MAX_STRENGTH` every card on the shelf is priced out and a full line had
+     * a purse with nowhere to go.
+     *
+     * ── WHAT THIS ASSERTS, AND WHY THE PRICE IS THE INTERESTING PART ────────
+     *
+     * A commendation must not be a second way to hold a rank. A rank in this
+     * mode is `xp` crossing a gate in `RANKS`, and `Trooper.award` is the one
+     * door every promotion in the game comes through — so this drives the
+     * purchase and requires that the MAN'S EXPERIENCE moved, that his rank only
+     * moved if the experience carried him over his own gate, and that a man
+     * already at the top of the ladder is refused rather than charged.
+     *
+     * And the price is derived, not chosen: holding an area awards
+     * `XP_PER_AREA` and pays `area.muster`, so a commendation costs what the
+     * ground that would have earned it pays. That is asserted as an IDENTITY
+     * against the two constants, which is what stops it becoming a second table
+     * — the landing zone pays 11 and must charge 6; the Core Ship pays 30 and
+     * must charge 15.
+     */
+    const C = await import('../../src/game/Command.js');
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world: w } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'command', level: 'geonosis', quality: 'low' },
+      runSeed: 41,
+    });
+    const d = w.command;
+    d.start(1);
+    const c = d.commander;
+    assert(c.roster.living.length >= 3, `the fixture mustered ${c.roster.living.length} men`);
+
+    /* ── 1. the price IS the rate, at every rung THIS RUN WALKS ──────────────
+     *
+     * `d.area` and not `AREAS[i]`: `stages` is the ROUTE, and §4.6's branching
+     * route means a run of three engagements walks rungs 0, 2 and 4 rather than
+     * 0, 1 and 2. Reading the table by index priced the ground the run is not
+     * standing on — which is how this arm first failed, at "The Open Plain
+     * costs 9 against a muster of 14" when the director was in fact on the
+     * Hailfire Line and its 17. The price has to track the ground you are on,
+     * so the assertion asks the director where that is. */
+    const seen = [];
+    for (let i = 0; i < d.stages.length; i++) {
+      d.areaIndex = i;
+      const A = d.area;
+      const want = Math.max(1, Math.ceil(A.muster / C.XP_PER_AREA));
+      assert(d.commendCost() === want,
+        `at ${A.name} a commendation costs ${d.commendCost()} against a muster of ${A.muster} and `
+        + `${C.XP_PER_AREA} xp for holding it — the price has become a second table and will `
+        + 'drift from the thing that earns it');
+      seen.push(`${A.muster}→${want}`);
+    }
+    assert(seen.length >= 2, `the route has ${seen.length} rung(s) — nothing to compare`);
+    d.areaIndex = 0;
+    const cost = d.commendCost();
+
+    /* ── 2. it is REFUSED with no purse, and nothing moves ───────────────── */
+    const man = c.roster.living[0];
+    c.roster.points = 0;
+    const xp0 = man.xp;
+    assert(d.commend(man.name, c) === null && /points needed/.test(d.refused || ''),
+      `a commendation with an empty purse was not refused: ${d.refused}`);
+    assert(man.xp === xp0, 'a refused commendation still awarded experience');
+
+    /* ── 3. bought, the experience lands and the purse pays for it ───────── */
+    c.roster.points = cost * 3;
+    const purse0 = c.roster.points;
+    d.mustering = true;
+    assert(d.commend(man.name, c), `a funded commendation was refused: ${d.refused}`);
+    assert(man.xp === xp0 + C.XP_PER_WAVE,
+      `experience went ${xp0} → ${man.xp}, not by ${C.XP_PER_WAVE}`);
+    assert(c.roster.points === purse0 - cost,
+      `the purse went ${purse0} → ${c.roster.points} for a ${cost}-point commendation`);
+    assert(d.log.some((e) => e.t === 'commend' && e.name === man.name),
+      'the commendation is not on the log, so the report is about a different run');
+
+    /* ── 4. AND THE RANK IS STILL EARNED. Buy up to the gate and the promotion
+     * arrives through `award`, exactly as fighting delivers it; one short of the
+     * gate and it does not. */
+    const gate = C.RANKS[man.rank + 1].xp;
+    const short = gate - man.xp - C.XP_PER_WAVE;
+    assert(short >= 0, `the fixture's man is already past his gate (${man.xp} of ${gate})`);
+    const rankBefore = man.rank;
+    c.roster.points = cost * (short + 2);
+    for (let i = 0; i < short; i++) d.commend(man.name, c);
+    assert(man.rank === rankBefore,
+      `${man.name} was promoted at ${man.xp} xp against a gate of ${gate} — a commendation is `
+      + 'writing a rank instead of paying experience into the gate that decides it');
+    const rose = d.commend(man.name, c);
+    assert(man.rank === rankBefore + 1 && rose && rose.title,
+      `${man.name} crossed ${gate} xp at rank ${man.rank} and no promotion came back`);
+
+    /* ── 5. …and the top of the ladder is shown and refused, not charged ─── */
+    const top = c.roster.living[1];
+    top.xp = C.RANKS[C.RANKS.length - 1].xp;
+    const before = c.roster.points;
+    assert(d.commend(top.name, c) === null && /already holds/.test(d.refused || ''),
+      `a man at the top of the ladder was not refused: ${d.refused}`);
+    assert(c.roster.points === before, 'a refused commendation still took the points');
+
+    /* ── 6. and the offer carries what the card needs, and nothing more ──── */
+    const o = d.musterOffer(c);
+    assert(o.commend && o.commend.cost === d.commendCost(), 'the offer does not price a commendation');
+    const row = o.commend.men.find((m) => m.name === top.name);
+    assert(row && row.to === null && row.afford === false,
+      'the offer offers a man who has nothing above him');
+    w.unload();
+    return `price = muster/${C.XP_PER_AREA} at every rung this route walks (${seen.join(' ')}); `
+      + `refused with no purse; ${xp0} xp → the gate at ${gate} promoted through award(); `
+      + 'the top of the ladder shown and refused';
+  });
+
   await check('allies deploy in a mode and on a ground that never had them', async () => {
     const { canHarm } = await import('../../src/game/Player.js');
     const { idleInput } = await import('./_coop.mjs');

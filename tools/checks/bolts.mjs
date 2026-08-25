@@ -85,6 +85,57 @@ export async function run({ check, assert }) {
     return { tested, lost, first };
   };
 
+  await check('bolts.0 a bolt is culled on how far it has FLOWN, not on where the level\'s zero is', async () => {
+    /**
+     * `BoltPool.update`'s range backstop read `b.pos.lengthSq() > 900 * 900` —
+     * the distance from the WORLD ORIGIN. Every shipped ground is about 460 m
+     * across, so it never fired in play and stayed invisible for exactly that
+     * reason.
+     *
+     * WHAT FOUND IT was the boot probe firing a round while the player was
+     * still aboard the insertion transport: `Extraction.beginInsertion` is the
+     * shipped opening and `ORBIT_ALT` is 2 400, so the bolt was deleted one
+     * frame after it left the muzzle with 5.49 m still to run. That altitude is
+     * a place the game really goes, and a bolt fired there is a bolt that
+     * cannot hit anything.
+     *
+     * So this drives the pool directly, at the origin and again two kilometres
+     * from it, and requires the same answer. It is the arm nothing had: the
+     * suites below all fire near zero, which is precisely where the defect is
+     * invisible.
+     */
+    const { BoltPool } = await import('../../src/game/Bolts.js');
+    const V = (x, y, z) => new THREE.Vector3(x, y, z);
+    const flight = (at) => {
+      /* A REAL `THREE.Scene`, because the pool builds an InstancedMesh and adds
+       * it — the same stub `catch.mjs` hands it for the same reason. */
+      const pool = new BoltPool(new THREE.Scene(), 8);
+      /* Straight along +x from `at`, and stepped for a second of game time at
+       * the same clamp `World.update` uses. A default bolt is 88 m/s and lives
+       * 3.2 s, so a second is 88 m — well inside any bound either reading
+       * would impose, and the only thing that can end it early is the cull. */
+      pool.fire(at.clone(), V(1, 0, 0), {});
+      let frames = 0;
+      for (let i = 0; i < 24; i++) {
+        pool.update(1 / 24, {});
+        if (pool.bolts[0].active) frames++;
+      }
+      return { frames, flew: pool.bolts[0].pos.distanceTo(at) };
+    };
+    const near = flight(V(0, 20, 0));
+    const far = flight(V(-282, 2412, -115));
+    assert(near.frames === 24,
+      `a bolt fired at the origin survived only ${near.frames} of 24 frames — the fixture is broken `
+      + 'before the defect is in it');
+    assert(far.frames === near.frames,
+      `the same bolt fired 2.4 km from the world zero survived ${far.frames} frames against `
+      + `${near.frames} at the origin — the range backstop is measuring the level's zero rather `
+      + 'than how far the round has flown, and a bolt fired out there cannot hit anything');
+    assert(Math.abs(far.flew - near.flew) < 1e-6,
+      `it flew ${far.flew.toFixed(1)} m out there against ${near.flew.toFixed(1)} m at the origin`);
+    return `${near.flew.toFixed(0)} m in ${near.frames} frames, identical at the origin and 2.4 km from it`;
+  });
+
   await check('bolts.1 the reject drops nothing, on the whole roster', async () => {
     const { world, input } = await boot();
     const types = Object.keys(ARCHETYPES).filter(k => (ARCHETYPES[k].hp | 0) > 0);

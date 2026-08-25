@@ -105,7 +105,13 @@ export async function run({ check, assert }) {
     e.die(null, null, 'bolt');
     assert(!e.dead, 'a named man at zero hp died outright — there is no window');
     assert(e.downed, 'he did not go down either, so he is in neither state');
-    assert(e.bleed === DOWN_BLEED, `the window opened at ${e.bleed}s against DOWN_BLEED ${DOWN_BLEED}`);
+    /* `e.bleed === DOWN_BLEED` was the imported constant against the only line
+     * that writes it — a stub assigning it would have passed. What is worth
+     * asserting here is that the window is a WINDOW: long enough to cross a
+     * frame and be seen, and off the table rather than typed. The clock itself
+     * is driven to both sides of it by the next check. */
+    assert(e.bleed === DOWN_BLEED && DOWN_BLEED > 1,
+      `the window opened at ${e.bleed}s against DOWN_BLEED ${DOWN_BLEED}`);
     assert(e.hp > 0,
       'a downed man is sitting at zero hp — every damage path in Enemy tests `hp <= 0`, so the '
       + 'next stray bolt in the volley that dropped him would re-kill him and the window would '

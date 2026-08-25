@@ -1060,6 +1060,19 @@ export class BipedAnimator {
     }
 
     this.phase = 0;
+    /* IS THE GAIT RUNNING AT ALL. Published because `phase` alone does not say:
+     * a body that stops walking keeps the phase it stopped on, so a reader that
+     * only saw the phase would hold a standing man mid-stride. The one reader
+     * today is `Cohorts.place` — a cohort instance indexes its pose palette by
+     * `phase` and wears the frozen pose when this is false.
+     *
+     * PUBLISHED rather than re-derived, and `THRUST_STANDING_SPEED` in
+     * SaberController.js says why: "two files deciding 'is this body moving'
+     * with two hand-written numbers is how they come to disagree". The
+     * threshold in `solve` is the gait's own and it scales with the body's own
+     * leg; a cohort carrying a copy would put a man on a walk palette on the
+     * frames his legs had already stopped. */
+    this.moving = false;
     this.duty = 0.63;
     this.freq = 0; this.spanMax = 0; this.span = 0;
     this.feet = [this._mkFoot('L', 1, 0), this._mkFoot('R', -1, 0.5)];
@@ -1275,6 +1288,7 @@ export class BipedAnimator {
     if (moveDir.lengthSq() > 1e-4) moveDir.normalize(); else moveDir.copy(fwd);
     this._moveDir.copy(moveDir);
     const moving = speed > 0.35 * this.legRef && p.grounded;
+    this.moving = moving;
 
     /**
      * THE CRAB WALK.

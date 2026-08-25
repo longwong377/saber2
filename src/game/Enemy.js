@@ -24,7 +24,7 @@ import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
-import { seeThrough } from './Smoke.js';
+import { seeThrough, depthAlong } from './Smoke.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { BOLT_COLORS } from './Bolts.js';
 /* The one weather every system reads — see its own note in Scenery.js. Used by
@@ -41,8 +41,16 @@ import { POWER_COST } from './Powers.js';
  * commander's decision and `CommandDirector.steer` is where it is taken. They
  * were on this line for a while and called by nothing in the file, which is the
  * dead field this session put back on the clone trooper for the opposite
- * reason — see `_maybeGrenade`. */
-import { senseDanger, stepReaction, GRENADE } from './Reactions.js';
+ * reason — see `_maybeGrenade`.
+ *
+ * `reachForHelp` IS, and the difference is whose decision it is. Going back for
+ * a man who is down is a thing a commander orders and a line can be ordered not
+ * to do; a man being lifted off the ground in front of you is not an order, it
+ * is a body reaching for whatever is nearest — PLAN §4.8's own sentence — and
+ * it has to happen in a wave, a duel and a colosseum, none of which has a
+ * CommandDirector in them at all. So it is asked here, once per body the Force
+ * is actually holding, and never for anybody else. */
+import { senseDanger, stepReaction, reachForHelp, GRENADE } from './Reactions.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -150,6 +158,24 @@ const CAP_BITE = 1.12;
  * not be.
  */
 const NEAR_REACH = 2.6;
+
+/**
+ * HOW MUCH TANGENT A WALL SLIDE HAS TO LEAVE BEFORE ITS DIRECTION MEANS
+ * ANYTHING, as a fraction of a unit wish.
+ *
+ * The slide in `_move` strips the into-the-face component off the wish; what is
+ * left is a difference of two nearly equal vectors, and while a body is pressed
+ * square into something it is dust whose SIGN is noise. This is the bar below
+ * which the leftover is not asked which way it points.
+ *
+ * SAME BAR, DIFFERENT QUANTITY. It lived inline as `wish.lengthSq() < 0.04` —
+ * the length of the WHOLE slid wish — and it now measures the leftover ALONG
+ * the face, which is the only part of it that carries a direction. 0.2 is that
+ * squared length's own root, so the bar has not moved: a wish about eleven
+ * degrees off square. It decides one thing (`meant` below, asked twice), so it
+ * is written once.
+ */
+const SLIDE_TANGENT = 0.2;
 
 /**
  * The broad phase's answer, borrowed for the length of one gather.
@@ -1532,6 +1558,281 @@ export function forceResistance(pool, amount, kind, beaten) {
   return { blunt, spend: blunt / RESIST_PER_FORCE };
 }
 /**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  TWO FORCE USERS, ONE BODY — the contest, and it is `forceResistance` again
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Everything above this line is one blow answered by one pool. A HOLD is not a
+ * blow: `Player._updateGrip` renews it every frame for as long as the key is
+ * down, and until this block existed the second person to reach for the same
+ * body simply overwrote the first. `Enemy.hold()`'s own note already says
+ * "`Math.max` rather than an assignment so two holders cannot shorten each
+ * other's lease" — the LEASE was written for two holders and the POSITION never
+ * was, so `liftTarget` was one slot and whoever wrote it last that frame owned
+ * the object outright. Measured on a live host/client pair, both players
+ * gripping one trooper: both `gripEnemy` true, both bars draining (8.7 and 7.6
+ * Force over two seconds), and the body sitting 0.30 m from one hold point and
+ * 5.43 m from the other. Two people paying, one of them getting nothing, and
+ * nothing on screen to say which.
+ *
+ * ── IT IS THE SAME ARITHMETIC, NOT A SECOND ONE ──────────────────────────
+ *
+ * A pull is a force in the same currency a shove is, so a contest between two
+ * pulls is `forceResistance` twice — each gripper's pool spent to cancel part
+ * of the other's pull, at the same `RESIST_CAP`, with the same `RESIST_BEATEN`
+ * discount when a guard is already broken and the same `pool × RESIST_PER_FORCE`
+ * ceiling when a bar is nearly empty. Nothing here invents a number and there
+ * is no second rulebook to drift from the first:
+ *
+ *   · A GUARDED PAIR DEADLOCKS. Each cancels `RESIST_CAP` = 55% of the other,
+ *     so each keeps 45%, the shares are 0.500/0.500 and the object sits at the
+ *     midpoint shuddering. Neither can throw it — see `share` below.
+ *   · A BROKEN GUARD COLLAPSES. `RESIST_CAP × RESIST_BEATEN` = 0.1925, so a
+ *     beaten man cancels 19.25% instead of 55% and his opponent keeps 80.75%.
+ *     Shares go 0.642/0.358 and the effective-pull ratio 1.00 → 1.79. That is
+ *     §4.8's "from a half to a FIFTH", and it is read off the two constants
+ *     rather than typed here.
+ *   · AN EMPTY BAR LOSES. The `pool × RESIST_PER_FORCE` arm of the same `min`
+ *     binds once a pool falls under `pull × RESIST_CAP / RESIST_PER_FORCE` —
+ *     about 6 Force against a person-sized hold — so the last moments of a bar
+ *     are visibly weaker rather than a cliff, and then `_spend` fails and the
+ *     hold ends through the door it already ended through. "Whoever stops
+ *     paying loses it" is not a rule added here; it is what running out of the
+ *     thing you are spending already meant.
+ *
+ * ── WHAT A CLAIM COSTS, AND WHY IT IS BILLED BY THE CALLER ───────────────
+ *
+ * `drain` is `spend` summed over everyone this claimant is resisting — pool per
+ * SECOND, because a hold is a channel and the ceiling it is weighed against is
+ * an instantaneous one. It is RETURNED rather than deducted, because every
+ * price in this game goes through `Player._spend` (see Powers.js's header: the
+ * Force Drain slider and the `forceCost` boons apply to all of them and to the
+ * same degree) and a pool docked here would be the thirteenth power that
+ * quietly did not.
+ *
+ * ── THE LEDGER IS OFF THE OBJECT ─────────────────────────────────────────
+ *
+ * A WeakMap keyed on the thing being held, so this works identically for an
+ * `Enemy` and for a bare Rapier `Body` — the two things a grip can take — with
+ * no field added to either, nothing to serialise into a snapshot, and nothing
+ * to leak when the level rotates. Claims lapse on `GRIP_LEASE` exactly as
+ * `gripped` does — or on the caller's own, which is how the wire hands a peer's
+ * claim the same `NET_GRIP_LEASE` its hold already runs on — so a gripper that
+ * dies, disconnects or is disposed stops counting without anybody having to
+ * remember to say so.
+ *
+ * ── AND IT IS ORDER-INDEPENDENT ──────────────────────────────────────────
+ *
+ * Every claimant asking in the same frame gets the same answer, because the
+ * answer is a pure function of the ledger and the clock. That is the property
+ * the old `liftTarget` write did not have and the whole reason the contest was
+ * invisible: two writers, one slot, and the winner decided by iteration order.
+ */
+
+/** Every live claim on a held thing: `thing → Map(claimant → claim)`. */
+const _grips = new WeakMap();
+/** Scratch for the axis the tremor runs along. */
+const _gAxis = new THREE.Vector3();
+
+/**
+ * HOW FAST A CONTESTED OBJECT SHUDDERS, in Hz, and it is the ONE number this
+ * block introduces.
+ *
+ * Sampled at 60 fps, 8 Hz draws seven and a half frames to the cycle — enough
+ * that the eye reads a body straining between two people rather than a stutter,
+ * and far enough under Nyquist that it does not alias into a slow wobble the
+ * way anything past ~15 Hz does. The AMPLITUDE is not a number: it is the
+ * object's own radius, scaled by how evenly the two are matched and by how much
+ * of their pull is being cancelled, so a crate trembles by a fraction of a
+ * crate and the tremor DIES as one side wins. A shudder that looked the same
+ * whoever was winning would be decoration.
+ */
+const GRIP_SHUDDER_HZ = 8;
+
+/**
+ * ONE PAIR OF HANDS OFF IT. Returns how many are still on, so the caller knows
+ * whether this was the last one — a crate whose gravity goes back on and a body
+ * that stops being held are things that must happen exactly once, at the end,
+ * and not the first time any of two grippers lets go.
+ *
+ * `time` prunes claims whose lease has lapsed, because a gripper that stopped
+ * asking without saying so (it died, the peer went quiet) must not keep a crate
+ * floating by leaving a stale row in the ledger. Left at 0 nothing is pruned,
+ * which is the safe direction: a lease that lapses is caught on the next
+ * `gripClaim` anyway.
+ */
+export function gripRelease(thing, by, time = 0) {
+  const led = _grips.get(thing);
+  if (!led) return 0;
+  led.delete(by);
+  for (const [k, c] of led) if (c.until <= time) led.delete(k);
+  return led.size;
+}
+
+/**
+ * TAKE IT OUT OF EVERY HAND — a hurl, and nothing else so far.
+ *
+ * The winner throwing an object is the one event that ends a contest from the
+ * outside, and the losers have to be TOLD: `_updateGrip` renews `e.hold()`
+ * every frame it runs, so a man who was still gripping a body at the instant
+ * somebody else threw it would re-grab it in mid-flight on his very next frame
+ * and stop it dead in the air.
+ *
+ * Each loser is let go through its own `releaseGrip`, not by deleting a row —
+ * the row is only half the state. `gripBody`/`gripEnemy`, the wear clock, the
+ * gesture and a prop's `gravityScale` all live on the gripper, and a ledger
+ * that quietly forgot somebody would leave every one of them set. A claimant
+ * with no such method (a peer's claim, which is a `RemoteAvatar` and holds none
+ * of that state) simply loses the row, and its own lease does the rest.
+ */
+export function gripSeize(thing, by) {
+  const led = _grips.get(thing);
+  if (!led) return 0;
+  const others = [];
+  for (const k of led.keys()) if (k !== by) others.push(k);
+  led.clear();
+  for (const k of others) k.releaseGrip?.();
+  return others.length;
+}
+
+/**
+ * HOW MANY PEOPLE CURRENTLY HAVE A HAND ON THIS. Uncontested is 1, free is 0.
+ *
+ * `time` is the clock the leases are measured against, and it defaults to 0 —
+ * "count every claim anybody has made" — rather than to now, because a caller
+ * that cannot name the clock wants the count and not a silent zero.
+ */
+export function gripHolders(thing, time = 0) {
+  const led = _grips.get(thing);
+  if (!led) return 0;
+  let n = 0;
+  for (const c of led.values()) if (c.until > time) n++;
+  return n;
+}
+
+/**
+ * WHAT THE FORCE IS ACTUALLY LIFTING — the man, plus anybody hanging off him.
+ *
+ * PLAN §4.8's second bullet ends *"the contest resolving against combined
+ * mass"*, and this is the whole of "combined": one number, in kilograms, that
+ * every place already asking what a body weighs now asks instead. There is no
+ * second rule anywhere for a grabbed man — `Player.liftCapacity`'s `m > cap`
+ * gate, `_heft`, `_holdRate`, `_gripPull` and the throw's speed law all read
+ * this and go on doing exactly what they did.
+ *
+ * A FUNCTION AND NOT A GETTER because the readers are not all handed real
+ * `Enemy`s: `_sweepHeld`, `_pickGripTarget` and `World._netGripSync` all
+ * already carried the `e.A ? e.A.mass : 80` fallback for the stand-ins the
+ * checks hold up, and four copies of that fallback is exactly the drift this
+ * replaces.
+ */
+export function heldMass(e) {
+  return (e?.A?.mass ?? 80) + (e?.grabLoad || 0);
+}
+
+/**
+ * STATE ONE GRIPPER'S PULL AND GET BACK WHERE THE THING ACTUALLY GOES.
+ *
+ * @param thing   the held body — an `Enemy` or a physics `Body`, either.
+ * @param by      the gripper, used as the claim's identity and nothing else.
+ * @param point   where THIS gripper is trying to put it, world space.
+ * @param pull    what this gripper is pulling with, in the hp-per-second the
+ *                rest of the Force contest is priced in. See `Player._gripPull`.
+ * @param o       `{ time, pool, beaten, radius, lease, out }`.
+ * @returns `{ point, share, drain }` — where the thing actually goes with the
+ *          tremor already folded in, this gripper's share of that resolution,
+ *          and the pool per second this gripper owes for resisting the others.
+ *          Three values and three readers: `gripHolders` answers "how many
+ *          hands" for the one caller that asks, and a fourth number nobody read
+ *          would be exactly the defect this file's grip suite is named after.
+ */
+export function gripClaim(thing, by, point, pull, o = {}) {
+  const time = o.time || 0;
+  const out = o.out || new THREE.Vector3();
+  let led = _grips.get(thing);
+  if (!led) _grips.set(thing, led = new Map());
+
+  /* THE CLAIM IS RENEWED, NOT RE-CREATED, so the vector is not re-allocated
+   * sixty times a second per gripper. Lapsing is by absolute clock rather than
+   * by subtracting dt, because with two grippers this function runs twice a
+   * frame and a dt-aged lease would age at double rate for the pair and single
+   * rate for a lone holder — the lease would then mean something different
+   * depending on how many people were in the room. */
+  let mine = led.get(by);
+  if (!mine) led.set(by, mine = { point: new THREE.Vector3(), pull: 0, pool: 0, beaten: false, until: 0, eff: 0 });
+  mine.point.copy(point);
+  mine.pull = Math.max(0, pull || 0);
+  mine.pool = Math.max(0, o.pool || 0);
+  mine.beaten = !!o.beaten;
+  mine.until = time + (o.lease || GRIP_LEASE);
+
+  const live = [];
+  for (const [k, c] of led) {
+    if (c.until <= time) { led.delete(k); continue; }
+    live.push(c);
+  }
+
+  /* ONE HAND ON IT IS NOT A CONTEST, and this arm is the whole of the old
+   * behaviour: the point you asked for, all of it yours, nothing owed. Every
+   * uncontested grip in the game takes this branch and is bit-identical to what
+   * it was before the contest existed. */
+  if (live.length < 2) {
+    return { point: out.copy(mine.point), share: 1, drain: 0 };
+  }
+
+  /* EVERY PULL, AGAINST EVERY OTHER POOL. `blunt` is hp/s of pull cancelled and
+   * `spend` is the pool/s the cancelling cost, and the two come out of one call
+   * so a contest cannot be blunted by one rule and billed by another. */
+  let sum = 0, total = 0;
+  for (const c of live) { c.eff = c.pull; c.drain = 0; total += c.pull; }
+  for (const a of live) {
+    for (const b of live) {
+      if (a === b) continue;
+      const r = forceResistance(b.pool, a.pull, 'grip', b.beaten);
+      a.eff -= r.blunt;      // …of A's pull, cancelled by B
+      b.drain += r.spend;    // …of B's pool, spent doing it
+    }
+  }
+  for (const c of live) { c.eff = Math.max(0, c.eff); sum += c.eff; }
+
+  /* A CONTEST NOBODY IS WINNING IS STILL A CONTEST. Three or more grippers can
+   * cancel each other to nothing; the object then hangs at the plain mean of
+   * the hold points rather than at `0,0,0`, which is what a zero-weight
+   * average would have put it at — under the map. */
+  out.set(0, 0, 0);
+  for (const c of live) out.addScaledVector(c.point, sum > 0 ? c.eff / sum : 1 / live.length);
+  const share = sum > 0 ? mine.eff / sum : 1 / live.length;
+
+  /**
+   * THE SHUDDER, AND IT REPORTS THE CONTEST RATHER THAN DECORATING IT.
+   *
+   *   balance   1 when the shares are level, 0 when one side has all of it.
+   *   cancelled the fraction of the two pulls doing no work — at most
+   *             `RESIST_CAP`, and it falls as a guard breaks.
+   *
+   * The axis runs between the outermost two claims in ledger order, so both
+   * grippers compute the identical vector in the same frame; the tremor is on
+   * the SHARED resolution and not on either person's idea of it.
+   */
+  let hi = share, lo = share;
+  for (const c of live) {
+    const s = sum > 0 ? c.eff / sum : 1 / live.length;
+    if (s > hi) hi = s;
+    if (s < lo) lo = s;
+  }
+  const balance = Math.max(0, 1 - (hi - lo));
+  const cancelled = total > 0 ? Math.max(0, 1 - sum / total) : 0;
+  const amp = (o.radius || 0) * balance * cancelled;
+  if (amp > 1e-4) {
+    _gAxis.subVectors(live[live.length - 1].point, live[0].point);
+    if (_gAxis.lengthSq() > 1e-8) {
+      out.addScaledVector(_gAxis.normalize(), amp * Math.sin(time * GRIP_SHUDDER_HZ * Math.PI * 2));
+    }
+  }
+  return { point: out, share, drain: mine.drain };
+}
+
+/**
  * A shove's speed, priced in the same currency as its damage, so ONE call to
  * `resistForce` answers a whole blow rather than billing its two halves
  * separately out of the same pool.
@@ -2560,6 +2861,23 @@ export class Enemy {
     this.gripLease = 0;
     this.liftTarget = null;
     /**
+     * HOW HARD WHATEVER HAS HOLD OF THIS BODY IS PULLING, in `Ragdoll.suspend`'s
+     * own units, or 0 for "whatever suspend's default is" — which is the Force.
+     * A pair of arms is the other holder and pulls at `DRAG.haul`. See `hold`.
+     */
+    this.holdStrength = 0;
+    /**
+     * THE SQUADMATE WHO HAS HOLD OF HIM, his claim's lease, and what he weighs.
+     * PLAN §4.8's second bullet; the whole of the behaviour is in
+     * `Reactions.reachForHelp`. Three fields for the same reason `beingDragged`
+     * and `dragLease` are two: the claim stops a second man grabbing (ONE
+     * joint), the lease means a grabber who is shot stops counting without
+     * anybody having to say so, and the load is the number `heldMass` reads.
+     */
+    this.grabbedBy = null;
+    this.grabLease = 0;
+    this.grabLoad = 0;
+    /**
      * ARRESTED BY A FORCE STOP — the field has this body, and this is the only
      * thing on the class that says so.
      *
@@ -2666,6 +2984,11 @@ export class Enemy {
      */
     this._wallN = new THREE.Vector3();
     this._wallT = 0;
+    /** Which way along the current face this body decided to go: +1, -1, or 0
+     *  for "no contact, nothing decided". Taken once per contact and held for
+     *  its length — see the note in `_move`, where taking it every frame is
+     *  what left men standing against rocks for the whole of a 35 m march. */
+    this._wallSide = 0;
     this._stuckT = 0;
     this._prevPos = new THREE.Vector3();
     /** Time left on a Leader's aura. Refreshed by whoever is leading. */
@@ -4360,9 +4683,17 @@ export class Enemy {
    * net path claims at the snapshot tick) is not fighting one that renews
    * every frame.
    */
-  hold(seconds = GRIP_LEASE) {
+  hold(seconds = GRIP_LEASE, strength = 0) {
     this.gripped = true;
     this.gripLease = Math.max(this.gripLease, seconds);
+    /* `Math.max` FOR THE SAME REASON THE LEASE USES IT, one line up. Two
+     * holders must not weaken each other, and the two this game has pull at
+     * very different rates — the Force at `Ragdoll.suspend`'s own default and a
+     * squadmate's arms at `DRAG.haul`. Whoever is pulling hardest is what the
+     * body follows, which is the answer that does not depend on which of them
+     * ran later in the frame. 0 means "the default", so a caller that has no
+     * opinion cannot accidentally out-vote one that has. */
+    this.holdStrength = Math.max(this.holdStrength || 0, strength);
   }
 
   /** Let go, from either end. Idempotent, and it is the only way out. */
@@ -4370,6 +4701,7 @@ export class Enemy {
     if (!this.gripped && !this.liftTarget) return false;
     this.gripped = false;
     this.gripLease = 0;
+    this.holdStrength = 0;
     this.liftTarget = null;
     this.chokeT = 0;
     return true;
@@ -4514,6 +4846,15 @@ export class Enemy {
     if (this.beingDragged) {
       this.dragLease = (this.dragLease ?? 0) - dt;
       if (this.dragLease <= 0) { this.beingDragged = null; this.dragLease = 0; }
+    }
+    /* AND THE SAME RULE AGAIN FOR THE MAN HANGING OFF HIM. `Reactions.stepGrab`
+     * renews this every frame; it lapses here the moment he stops — shot,
+     * torn off, or replaced by a grenade landing next to him. `grabLoad` goes
+     * with it and not a frame later, because it is a weight on somebody else's
+     * Force and a stale one would be a man being billed for a corpse. */
+    if (this.grabbedBy) {
+      this.grabLease = (this.grabLease ?? 0) - dt;
+      if (this.grabLease <= 0) { this.grabbedBy = null; this.grabLease = 0; this.grabLoad = 0; }
     }
     if (this.dead || !this.actor?.ragdolled) { this._recoverAt = 0; return; }
     if (this.gripped || (this.toppled && this.legsLost)) { this._recoverAt = 0; return; }
@@ -5539,6 +5880,12 @@ export class Enemy {
       return true;
     }
     senseDanger(this, dt, ctx);
+    /* …AND A MAN BEING LIFTED OFF THE GROUND REACHES FOR WHATEVER IS NEAREST.
+     * PLAN §4.8's second bullet, and it is one pass over the roster per body
+     * the Force is actually holding — nothing at all in a frame with no grip in
+     * it. Before `stepReaction` so the squadmate it recruits starts his own
+     * reaction on the frame he is asked rather than the frame after. */
+    if (this.gripped) reachForHelp(this, ctx);
     const reacting = stepReaction(this, dt, ctx);
     /* A MAN WALKING TO A RAMP IS NOT FIGHTING. `Extraction._walkTroops` stamps
      * `'boarding'` on the men it is steering and writes their `wish` itself; the
@@ -6245,7 +6592,23 @@ export class Enemy {
      * instances too. Your own line cannot shoot through your own smoke either,
      * which is what makes laying one a decision.
      */
-    if (seeThrough(from, at) < SMOKE_SEE) return false;
+    /**
+     * …AND ONE SIDE MAY SEE FURTHER THAN THE OTHER — PLAN.md §4.6's Storm
+     * Sense, and it is the only thing in the game that breaks this model's
+     * symmetry.
+     *
+     * `Smoke.js` cannot know who fired and must not: that is what makes a
+     * smoke screen a decision rather than a free win. What a Force user can do
+     * is TELL HIS OWN LINE where to shoot, so the asymmetry lives here, on the
+     * body doing the looking, and only for bodies on the player's own side.
+     * `stormEyes` is 1 for everybody in every run that has not taken the card,
+     * so the shipped behaviour is `depth * 1` and unchanged.
+     */
+    const p = this.world?.player;
+    const eyes = (p && p.team === this.team) ? (p.boonMods?.stormEyes ?? 1) : 1;
+    const see = eyes === 1 ? seeThrough(from, at)
+      : Math.exp(-depthAlong(from, at) * eyes);
+    if (see < SMOKE_SEE) return false;
     return true;
   }
 
@@ -7352,7 +7715,10 @@ export class Enemy {
        */
       if (this.actor && !this.dead) {
         if (!this.actor.ragdolled) this.actor.goRagdoll(this.velocity, null);
-        if (this.actor.suspend?.(this.liftTarget, dt)) {
+        /* AT WHATEVER HAS HOLD OF IT PULLS WITH — the Force at `suspend`'s own
+         * default, a squadmate's arms at `DRAG.haul`. `undefined` rather than a
+         * number so the default lives in exactly one place. See `hold`. */
+        if (this.actor.suspend?.(this.liftTarget, dt, this.holdStrength || undefined)) {
           /**
            * …AND HOW FAST IT IS BEING DRAGGED. This branch answered `0, 0, 0`.
            *
@@ -7517,9 +7883,12 @@ export class Enemy {
        * a spire on the way back to its commander stood motionless for 6.6 s
        * with `wish` at (-0.00, 0.00) and `_wallT` alight the whole time.
        *
-       * The lateral is captured BEFORE the slide, and used as the wish outright
-       * when the slide leaves nothing behind — which is the sentence the slide's
-       * own note already makes: along the face, not into it.
+       * The answer is the face itself — along it, not into it — and WHICH WAY
+       * along it is latched for the length of the contact rather than solved
+       * again every frame off a residual that is dust. See `_wallSide` in the
+       * slide below; `_v7` survives here as the COMMIT term's lateral and as
+       * the latch's tie-break, which are the two decisions `strafeDir` still
+       * owns.
        */
       _v7.set(-this.wish.z, 0, this.wish.x).multiplyScalar(this.strafeDir || 1);
       if (this._wallT > 0 && this._wallN.lengthSq() > 1e-6) {
@@ -7527,8 +7896,73 @@ export class Enemy {
         if (_v6.lengthSq() > 1e-6) {
           _v6.normalize();
           const into = this.wish.dot(_v6);
-          if (into < 0) this.wish.addScaledVector(_v6, -into);
-          if (this.wish.lengthSq() < 0.04 && _v7.lengthSq() > 1e-6) this.wish.copy(_v7);
+          if (into < 0) {
+            this.wish.addScaledVector(_v6, -into);
+            /**
+             * …AND WHICH WAY ALONG THE FACE IS ONE DECISION PER CONTACT, WHICH
+             * IS THE WHOLE OF THIS BLOCK AND WAS THE WHOLE OF WHAT WAS WRONG.
+             *
+             * Everything above is a per-frame function of the wish, and while a
+             * body is pressed into a face the wish is very nearly the face's
+             * own normal — so the leftover tangent is a DIFFERENCE OF TWO
+             * NEARLY EQUAL VECTORS, small enough to sit right on
+             * `SLIDE_TANGENT`, the cut this block switches at. So the body took
+             * the residual on one frame and the `_v7` fallback on the next —
+             * and `_v7` is a perpendicular of the WISH carrying `strafeDir`'s
+             * sign, which lies along the same face but nothing ever made it lie
+             * along it the same WAY. The two answers are opposite and the body
+             * alternates between them.
+             *
+             * MEASURED, one body on the shipped Geonosis rock centred at
+             * (-1.78, 4.23), ordered to a slot 40 m beyond it from where the
+             * march left CT-3208 (see `roundTheRock` in `movement.mjs`): over
+             * nine seconds the slid wish's sign ALONG THE FACE flipped
+             * FIFTY-TWO times — about every fifth frame — and the body finished
+             * 0.26 m from where it started, at (-2.34, 2.22). On the whole army:
+             * four men over six ordered 35 m walks, each standing 4.3-6.5 s
+             * inside a metre, all four against this same rock, all four reading
+             * 0.7-6.0 m/s while they did it.
+             *
+             * AND IT DOES NOT NEED A TURNED FACE, ONLY TWO FACES. Two copies of
+             * that rock set at right angles held both `strafeDir` arms in the
+             * vertex for a full twenty seconds; latched, both are out in 4.8 s.
+             * That is `outOfCorner` in `movement.mjs`, and it is why the latch
+             * is not the trap it looks like: the per-frame side was.
+             *
+             * AND THE COMMIT TERM BELOW CANNOT SAVE THEM, WHICH IS WHY IT LASTS
+             * FOREVER. The flip-flop covers 0.036 m a frame against its
+             * `speed * dt * 0.3` bar of 0.040, so `_stuckT` creeps up and does
+             * cross 0.5 — it peaked at 0.60 s — but the two long strides the
+             * swing then buys are enough to reset the clock under the bar, and
+             * the body drops straight back into the alternation. A stuck-timer
+             * cannot break a deadlock that is itself moving.
+             *
+             * So the side is LATCHED. `_wallSide` is taken once, when a contact
+             * begins — off the residual when the residual is long enough to
+             * mean something, off `strafeDir` when it is not — and held until
+             * the contact lapses (`_wallT`, cleared below with `_wallN`). A body
+             * that has started round a rock goes on round it. Over six arms of
+             * that 35 m walk: 4 of 54 men wedged before, 0 of 54 after; the
+             * furthest living man from the formation anchor fell from 34.8-35.8
+             * m to 12.0-14.2. On the fixture, 52 sign flips became 2, 0.036 m
+             * a frame became 0.130, and 0.26 m of net ground became 32.9.
+             *
+             * IT ONLY BITES WHILE THE WISH POINTS INTO THE FACE — this is
+             * inside the `into < 0` branch — so a body that wants to leave the
+             * wall leaves it, and the latch is gone 0.3 s after it last touched
+             * anything. `_v7` is left alone for the COMMIT term, which is a
+             * DIFFERENT decision on a different clock and is `strafeDir`'s to
+             * make.
+             */
+            const tx = -_v6.z, tz = _v6.x;          // the face itself, in XZ
+            const along = this.wish.x * tx + this.wish.z * tz;
+            const meant = Math.abs(along) > SLIDE_TANGENT;
+            if (!this._wallSide) this._wallSide = meant ? Math.sign(along) : (this.strafeDir || 1);
+            /* Off the latched side, or too short to steer on: take the face. */
+            if (!meant || along * this._wallSide < 0) {
+              this.wish.set(tx, 0, tz).multiplyScalar(this._wallSide);
+            }
+          }
         }
       }
       if (this._stuckT > 0.5) this.wish.addScaledVector(_v7, 1.0);
@@ -7556,7 +7990,7 @@ export class Enemy {
      * covered, because velocity can be healthy while the collision loop puts
      * the body straight back where it was. */
     this._wallT -= dt;
-    if (this._wallT <= 0) this._wallN.set(0, 0, 0);
+    if (this._wallT <= 0) { this._wallN.set(0, 0, 0); this._wallSide = 0; }
     if (canMove && this.wish && this.wish.lengthSq() > 0.25) {
       const moved = Math.hypot(this.position.x - this._prevPos.x, this.position.z - this._prevPos.z);
       if (moved < this.speed * dt * 0.3) this._stuckT += dt;

@@ -275,6 +275,10 @@ export class SkillTree {
         if (v.mastery) cls.push('mastery');
         if (v.locked === LOCKED.spent) cls.push('spent');
         if (v.locked === LOCKED.reach) cls.push('far');
+        /* A legal facet the deal is withholding reads like a distant one rather
+         * than like a live one: same dimming, and the line under it says which
+         * of the two it is. See `_stateLine`. */
+        if (v.locked === LOCKED.offer) cls.push('far');
         if (history?.get(v.id)) cls.push('known');
         const el = div(cls.join(' '));
         el.style.setProperty('--depth', String(depth));
@@ -285,6 +289,12 @@ export class SkillTree {
          * correct in both. */
         el.setAttribute('tabindex', '0');
         el.setAttribute('role', 'button');
+        /* WHICH FACET THIS RUNG IS, on the element. It was carried only in the
+         * closure, so nothing outside the click handler — a check, a screen
+         * reader's test, a future keyboard map — could say which card a rung
+         * stood for. One attribute, and it is the id the ledger is asked
+         * about. */
+        el.dataset.facet = v.id;
 
         /* THE BRACKET. A short elbow drawn in CSS off `--depth`, standing in
          * for the line the graph used to draw — the difference being that this
@@ -538,6 +548,14 @@ export class SkillTree {
         return `${rank}${v.cost} Insight — ${short} more${this._wavesAway(short)}.`;
       }
       case LOCKED.reach: return `${rank}Nothing you hold reaches this far.`;
+      /* THE OFFER — PLAN.md §4.6. A player has to be able to tell "not yet
+       * shown" from "cannot afford" and from "nothing reaches it", because
+       * those three ask for three different things: wait, save, or go the long
+       * way round. This one is the only one of the three that answers itself:
+       * take something and the Force shows you three more. */
+      case LOCKED.offer:
+        return `${rank}${v.cost} Insight — the Force is not showing you this one yet. Wake `
+          + 'something and it deals again.';
       case LOCKED.gated: return `${rank}A mastery. Commit to the discipline first.`;
       case LOCKED.depth: return `${rank}Too early. This one comes later.`;
       default: return rank;

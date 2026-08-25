@@ -1006,6 +1006,73 @@ export const FORMATIONS = {
      * a good name. */
     seeksCover: true,
   },
+  /**
+   * DIG IN — PLAN.md §4.7, and it is the only thing in this game that makes
+   * cover where there was none.
+   *
+   * *"The ground remembers visually, and `Dig In` is what makes it cover. A
+   * sapper turning a crater into a real position is the only thing that
+   * produces defilade, because artillery measurably does not."*
+   *
+   * Both halves of that are MEASURED, on a real world at the shipped low
+   * quality tier, with the real body heights (`aimAt` reads a chest at 1.17 m;
+   * the median of 666 bolts fired in a live fight leaves the muzzle at 1.15 m).
+   * Twelve rays — three ranges by four bearings — from a shooter's muzzle to
+   * the chest of a man standing on the spot:
+   *
+   *     flat ground                         0 of 12 blocked
+   *     a shell crater (2.6 m, 0.22 deep)   2 of 12
+   *     a dug position (this row's numbers) 12 of 12
+   *
+   * That is the section's own claim, in one table: shelling the ground does
+   * not make cover, and digging it does.
+   *
+   * ── AND THE DEFILADE IS SYMMETRIC, WHICH IS THE WHOLE TRADE ────────────
+   *
+   * The same twelve rays fired OUT of the position are blocked 11 of 12. That
+   * is not a defect to be tuned away: a chest and a muzzle are within two
+   * centimetres of each other on every body in this game, so a berm that stops
+   * a bolt coming in stops the one going out, and any parapet that did not
+   * would be a wall a player could shoot through. **A position is for holding
+   * ground, not for winning a firefight.** A dug-in squad stops trading fire
+   * at range and becomes very hard to kill until somebody closes — and what
+   * closes is what the Jedi is for. Stated here because a player will find it
+   * in about ninety seconds and has to be able to tell it from a bug.
+   *
+   * ── WHAT IT COSTS ──────────────────────────────────────────────────────
+   *
+   * `DIG_SECONDS` with their hands full: a digging squad holds its fire, on
+   * ground it cannot leave, while the battle goes on around it. That is the
+   * price, and it is why this is an order and not a passive.
+   */
+  digin: {
+    /* QUOTE, and it is the last key in the orders' own cluster rather than a
+     * free letter: the digit row from 6 to 0, Minus, Equal and Semicolon are
+     * the eight orders already, Semicolon's neighbour is where a ninth goes,
+     * and there is no free letter left on the board at all (KeyK went to the
+     * fire mission). Nothing types it here — `registerOrders` deals it into
+     * ACTIONS off this row, and `controls.mjs` re-derives the pair. */
+    id: 'digin', name: 'Dig in', key: 'Quote',
+    blurb: 'Turn this ground into a position. Their hands are full while they work, and then it is cover.',
+    /* `leash: 1.05` — as tight as the rules allow with the width of his own
+     * parapet added. `leashFor` floors every order at the body's own band
+     * (×1.0), because "do not chase" is a legal order and "do not shoot" is
+     * not; a man in a position is the least mobile body on the field, so it is
+     * the floor plus a twentieth — 0.95 m at a trooper's 19 m band, which is
+     * about the thickness of the berm he is standing behind, so he may always
+     * engage something that has climbed onto his own lip. */
+    leash: 1.05, advance: false, fire: 1, digs: true,
+    slot(i, n, k, out) {
+      /* INSIDE THE SCRAPE. The men have to end up under the berm they are
+       * throwing up or the position protects nothing, so the shape is a tight
+       * ring well inside `DIG_R` rather than the loose scatter TAKE COVER
+       * uses — that one is looking for something to get behind and this one is
+       * making the thing. Deterministic in `i`, for the same reason. */
+      const a = (i * 2.399963) % TAU;
+      const r = 1.8 + (i % 3) * 1.4;
+      return out.set(Math.sin(a) * r, 0, Math.cos(a) * r);
+    },
+  },
   charge: {
     id: 'charge', name: 'Charge', key: 'Minus',
     blurb: 'Break formation. Find something and kill it.',
@@ -1556,6 +1623,64 @@ export const AREAS = [
 ];
 
 
+/**
+ * HOW HEAVY THE GARRISON ON A GROUND IS, SAID IN WORDS — PLAN.md §4.6.
+ *
+ * "A branching route over the five Command areas that already exist, with
+ * partial information: you see the ground, the weather and the garrison weight,
+ * not the contents." The last clause is the whole point of this function: the
+ * fork has to be answerable and it must not be SOLVABLE. `budget` and `heavy`
+ * printed raw would be solvable — 1.10/0.35 against 1.25/0.30 is arithmetic,
+ * and a player with a wiki would take the same road every time. A band is the
+ * same fact at the resolution a commander actually has before they land.
+ *
+ * ONE READING OUT OF BOTH DIALS, because they are one quantity seen twice:
+ * `budget` is the size of the wave's threat purse and `heavy` is the share of
+ * that purse spent at the heavy end, so `budget × (1 + heavy)` is "the purse,
+ * weighted by how much of it arrives as weight". It introduces no constant —
+ * that is the only reason it is written this way rather than as a sum with two
+ * coefficients somebody would have to defend. Monotone on the shipped table:
+ *
+ *     landing 0.75 · plain 1.09 · hailfire 1.49 · spires 1.63 · foundry 2.10
+ *
+ * and the two that matter are hailfire and spires, because they are the two
+ * grounds the one real fork in the mode chooses between (see `routeChoices`).
+ * They are 9% apart and they land in different bands, which is the property
+ * §7's guardrail asks for: an element that reads the same for both candidates
+ * changes no decision and should not be on the card.
+ *
+ * THE BAND IS A RANK, NOT A THRESHOLD. Nothing here is compared against a
+ * number: an area's position in the sorted column of every area's weight is
+ * mapped onto this vocabulary. Add a sixth area, or re-tune `budget`, and the
+ * words re-deal themselves — there is no second table to keep in step, which
+ * is HANDOFF §2.3 and the same argument `AREAS`' own note makes about `tier`.
+ */
+export const GARRISON_BANDS = [
+  'a screen', 'a line', 'a heavy line', 'a massed line', 'everything they have left',
+];
+
+/** `budget × (1 + heavy)`. See `GARRISON_BANDS`; not exported, because a
+ *  caller that wanted the scalar would be a caller printing the numbers. */
+const garrisonWeight = (a) => (a?.budget || 0) * (1 + (a?.heavy || 0));
+
+/**
+ * The band a ground falls in, out of every ground the mode has.
+ *
+ * Ranked by COUNTING the areas lighter than this one rather than by
+ * `indexOf`, so a record that is not one of `AREAS` — a stage list a check
+ * drove in, a sixth area added later — still lands somewhere honest instead of
+ * falling off the end.
+ */
+export function garrisonBand(area) {
+  const w = garrisonWeight(area);
+  const all = [...new Set(AREAS.map(garrisonWeight))].sort((x, y) => x - y);
+  if (all.length < 2) return GARRISON_BANDS[0];
+  const rank = all.filter((v) => v < w).length;
+  const i = Math.round((rank / (all.length - 1)) * (GARRISON_BANDS.length - 1));
+  return GARRISON_BANDS[Math.max(0, Math.min(GARRISON_BANDS.length - 1, i))];
+}
+
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Morale, and who is in charge of whom                                  */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1928,12 +2053,95 @@ export function killerName(source) {
   if (typeof source === 'string') return source;
   if (source.trooper?.name) return source.trooper.name;
   if (source.isPlayer || source.aimDir) return 'you';
-  return source.A?.name || source.type || null;
+  /**
+   * AND THE NAME IS THE ONE THE GAME SAYS OUT LOUD, not the key it files it
+   * under. This read `source.A?.name`, and an archetype has no `name` — the
+   * field is `label`, which is what the sandbox picker, the databank and the
+   * HUD all print — so the expression was ALWAYS undefined and every death in
+   * every report in the game has been attributed to `b2` and `droideka`
+   * instead of to a Super Battle Droid and a Droideka. A report written in the
+   * spawn table's internal keys is a report that reads as debug output, which
+   * is a different way of being the mystery §4.9 exists to remove.
+   *
+   * `type` survives as the fallback for a body with no archetype record (the
+   * flight modes build their own), and it is the only thing that can be said
+   * about one.
+   */
+  return source.A?.label || ARCHETYPES[source.type]?.label || source.type || null;
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Digging in — PLAN.md §4.7                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * HOW LONG A SQUAD TAKES TO MAKE A POSITION, in seconds of at least
+ * `DIG_CREW` men standing on the ground they were given.
+ *
+ * Twenty-two, which is one wave's worth of shooting given up. It has to be
+ * long enough that digging is a decision about the next two minutes rather
+ * than a thing you do on the way past, and short enough that a player who
+ * chooses it gets to see it finish inside the engagement he chose it in. It is
+ * the same order as the blast door's measured 18.8 s breach and the objective
+ * take timer's 12 s, deliberately: this game's "hold a thing while the fight
+ * goes on around you" beats are all one length.
+ */
+export const DIG_SECONDS = 22;
+
+/** How many living men it takes to be digging at all. Two is a working party. */
+export const DIG_CREW = 2;
+
+/**
+ * THE POSITION, in metres — and every one of these is a measurement rather
+ * than a taste.
+ *
+ * The heightfield's cell is 3.39 m at the shipped LOW tier and 2.48 m at high,
+ * and `Terrain.crater` widens anything under 1.35 cells to what the grid can
+ * represent — so a foxhole is not a thing this engine can hold, and a SQUAD
+ * POSITION is. At 8 m the scrape is two and a half cells across at the coarsest
+ * tier, which is the smallest earthwork the ground can actually carry.
+ *
+ * The depth and the rim were swept against the twelve-ray test in the `digin`
+ * row's own note: at 0.7/1.6 the position blocked 10 of 12, at 0.9/1.6 it
+ * blocks 12 of 12, and it is the second one because a position that is cover
+ * from three bearings of four is a position a player cannot trust. Measured
+ * profile at low quality: a floor 0.83 m below the ground it was cut into and a
+ * berm 0.76 m above it, at 0.9 of the radius.
+ */
+export const DIG_R = 8, DIG_DEPTH = 0.9, DIG_RIM = 1.6;
+
+/** How far from the middle a man counts as working on it. */
+export const DIG_WORK_R = DIG_R + 2;
+
+/**
+ * HOW CLOSE A LIVING MAN HAS TO BE TO COUNT AS STANDING OVER A CASUALTY, in
+ * metres — PLAN.md §4.6's Triage.
+ *
+ * Three, which is inside a body's own footprint plus a step: it has to mean
+ * "he is with him", not "he is in the same field". `MORALE.NEAR` is 14 and
+ * would have made every casualty inside a formed-up squad count, which is the
+ * card paying for nothing.
+ */
+export const TRIAGE_REACH = 3;
 
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
 /** The most bodies the mode will ever field for you at once. See `_muster`. */
+/**
+ * WHAT SURVIVING SOMETHING IS WORTH, IN EXPERIENCE — and both numbers were
+ * typed at the one site that awards them.
+ *
+ * A man who was on the field when a wave cleared earns one; a man who was there
+ * when a whole area was held earns two. They are named here because a THIRD
+ * thing now pays experience — §4.4's commendation, bought out of the muster
+ * purse — and its price is derived from this rate rather than chosen. A number
+ * that decides both what fighting is worth and what buying it costs cannot be
+ * typed twice: the day one moves without the other, a commendation is either
+ * free or unaffordable and nothing says which.
+ */
+export const XP_PER_WAVE = 1;
+export const XP_PER_AREA = 2;
+
 export const MAX_STRENGTH = 24;
 /** What you march in with. Two squads. */
 export const OPENING_STRENGTH = 10;
@@ -2818,6 +3026,20 @@ export class CommandDirector extends WaveDirector {
     /** The beats of the muster that is open, or null. Published on the offer so
      *  a peer's screen tells the same story as the host's. */
     this._interlude = null;
+    /**
+     * THE FORK THAT IS OPEN, FROZEN THE MOMENT THE MUSTER OPENS.
+     *
+     * `routeChoices()` derives the pair off `stages`, and `takeRoute` REWRITES
+     * `stages` — so a fork re-derived on every read would deal a different
+     * alternative the instant the player took one. (Take the spires over the
+     * hailfire line on a Push and the freshly-derived pair becomes spires vs
+     * the open plain; the card would swap a button under the cursor.) So it is
+     * dealt once, in `_areaClear`, held here for as long as the card is up, and
+     * dropped by `closeMuster` — exactly the lifetime `_interlude` has, for
+     * exactly the reason its own note gives about being the same object every
+     * call. Empty array when this boundary has no fork; null between musters.
+     */
+    this._fork = null;
     this.onRoster = null;         // (summary) => void      — the HUD's feed
     this.onMuster = null;         // (offer) => void        — the between-areas screen
     /**
@@ -3169,6 +3391,9 @@ export class CommandDirector extends WaveDirector {
      * replacement should be. It is the roster's, so it grows with the roster. */
     c.lineup = c.roster.living.map((t) => t.type);
     for (const p of this.peersOn(c.roster)) p.lineup = c.lineup;
+    /* The squad a joining player brings is enlisted here and nowhere else, so
+     * this is the only place their names can reach the ledger. See `_logRoll`. */
+    this._logRoll(c);
     return n;
   }
 
@@ -3526,6 +3751,31 @@ export class CommandDirector extends WaveDirector {
     return n;
   }
 
+  /**
+   * THE ROLL, ONTO THE LEDGER — one entry, all the names.
+   *
+   * `recruit` logs an `enlist` and it is the only thing that does, so the men
+   * BOUGHT between areas were on the ledger and the ten a campaign is HANDED
+   * were not: `_musterOpening` calls `roster.enlist` directly, `_musterVeterans`
+   * logs a count and no names, and `_musterJoin` enlists a squad in silence.
+   *
+   * That is invisible until something asks the ledger who is on your side, and
+   * `Session.runReport` does: an opening trooper who kills his own mate in area
+   * one was not on any entry yet, so the census filed the death among the
+   * droids and reported nought by your own side. It is the one death §4.9 is
+   * sharpest about, missed for the first man to do it.
+   *
+   * ONE ENTRY AND NOT TEN, because it is one event — a company handed to you —
+   * and ten would read as ten purchases in a report that already distinguishes
+   * those. `mine` for the reason the `fell` entry carries it: in a meeting both
+   * armies muster into this same log.
+   */
+  _logRoll(c) {
+    if (!c?.roster) return;
+    this.log.push({ t: 'muster', area: this.areaNumber, mine: c === this.commander,
+                    names: c.roster.living.map((t) => t.name) });
+  }
+
   _musterOpening(c = this.commander) {
     const tiers = c.army.tiers;
     const cheapest = tiers[0].type;
@@ -3539,6 +3789,7 @@ export class CommandDirector extends WaveDirector {
       for (let i = vets; i < this.opening; i++) c.roster.enlist(cheapest);
       c.roster.points = this.stages[0].muster;
       c.lineup = c.roster.living.map((t) => t.type);
+      this._logRoll(c);
       return;
     }
     /**
@@ -3633,6 +3884,7 @@ export class CommandDirector extends WaveDirector {
      * bought is what a replacement is measured against.
      */
     c.lineup = c.roster.living.map((t) => t.type);
+    this._logRoll(c);
   }
 
   /**
@@ -3688,6 +3940,175 @@ export class CommandDirector extends WaveDirector {
     return this.campaign ? rung.at : 1;
   }
 
+  /**
+   * ══ THE BRANCHING ROUTE — PLAN.md §4.6, and what it can and cannot be ══
+   *
+   * "A branching route over the five Command areas that already exist, with
+   * partial information: you see the ground, the weather and the garrison
+   * weight, not the contents."
+   *
+   * THE LENGTH IS NOT NEGOTIABLE. `SESSION_PLANS` prints a duration on the
+   * deploy card at 0:00 — "3 engagements · 18–25 min" — and that card is the
+   * one promise the mode makes before a player commits a sitting to it. So a
+   * fork changes WHICH ground fills a slot and never HOW MANY slots there are:
+   * `stages.length` is fixed at the constructor and every branch taken here
+   * writes a route of exactly the same length. What a player trades is the
+   * ground, not the evening.
+   *
+   * TWO CLAUSES CARRY OVER FROM `planStages` UNCHANGED, and they are what make
+   * the route a route rather than a shuffle:
+   *
+   *   IT ONLY GOES FORWARD. Every stage is a strictly higher rung of `AREAS`
+   *     than the one before it. `areaRung` gates the muster shelf on the
+   *     ground you are standing on, so a route that doubled back would take
+   *     the ARC off the shelf between two areas.
+   *   IT ENDS ON THE LAST GROUND. §5's "the last stage is always the last" —
+   *     a crossing that stopped at the spires would end on somebody else's
+   *     brief and call it a victory, and `lastArea` would stop being "the end
+   *     of the list".
+   *
+   * ── SO MOST PLANS HAVE NO FORK, AND THAT IS ARITHMETIC ──────────────────
+   *
+   * With the ends pinned and the rungs strictly increasing, the slack in a
+   * route of `n` stages over `AREAS.length` grounds is `AREAS.length - n`:
+   *
+   *   A GRIND is five stages over five rungs. Every slot is spoken for, there
+   *     is no fork anywhere in it, and that is CORRECT rather than a gap —
+   *     the Grind's own blurb is "the whole crossing", and a whole crossing
+   *     with a ground left out would be a different promise.
+   *   A RAID is two stages, and both of them are ends. Also no fork.
+   *   A PUSH is three: the landing, ONE FREE SLOT, the Core Ship. That slot
+   *     has three legal grounds (rungs 2, 3, 4) and it is the only real
+   *     branch the mode has. It is also the plan half of all seeds draw.
+   *
+   * ── WHY TWO CANDIDATES AND NOT THREE ────────────────────────────────────
+   *
+   * The planned ground is always the first, because it is the answer with no
+   * screen wired: `_areaClear` opens a muster, `autoMuster` spends the purse
+   * and `closeMuster` advances onto `stages[areaIndex]` without this method
+   * ever being asked. Every headless check, every mode that is not a crossing
+   * and every run on a front end that has no fork on its card takes the route
+   * `planStages` dealt, byte for byte.
+   *
+   * The second is the legal ground whose MUSTER is furthest from the planned
+   * one's, and the reason is the guardrail rather than taste: a fork between
+   * two grounds three reinforcement points apart is a fork below the noise of
+   * one casualty, which is an element that changes no decision. On the shipped
+   * table the Push's planned middle is the Hailfire Line at 17 and the far
+   * candidate is the Spire Approach at 26 — half again the purse, a heavier
+   * garrison, a fifth wave to survive, and the rung-4 shelf one engagement
+   * early. That is a decision.
+   *
+   * ── AND THE TAIL IS NEVER UNDECIDED ─────────────────────────────────────
+   *
+   * `stages` always holds a COMPLETE route — the one the run takes if the
+   * player presses Advance and chooses nothing. That matters because
+   * `rampWave` walks `stages` to place a wave inside its area and `budgetFor`
+   * asks it about waves that have not been fought (`bodyLimit` asks about
+   * `BODY_KNEE`), so a route with a hole in it would price the present off a
+   * future that does not exist yet. Stages BEHIND `areaIndex` are never
+   * rewritten, so nothing already fought is re-priced.
+   *
+   * A branch does move the run's total WAVE count — a Push is 3+4+5 = 12
+   * through the hailfire line and 3+5+5 = 13 through the spires. Nothing
+   * asserts on that sum and nothing should: what the deploy card promises is
+   * a count of ENGAGEMENTS and a band of minutes, and `AREAS` has run 3/4/4/5/5
+   * since it was written precisely so that a later area is a longer one. The
+   * extra wave is the price on the ticket, not a drift in it.
+   *
+   * @returns {object[]} the candidate `AREAS` records, planned first, or `[]`
+   *          when this boundary has no slack.
+   */
+  routeChoices() {
+    /* `AREAS` IS A PRESSURE DIAL IN THE OTHER TWO MODES and not a route at all
+     * — `World.beginSkirmish` writes `areaIndex = sk.pressure` and never
+     * advances it. Branching a dial would move the budget curve, the heavy bias
+     * and the shelf together, which is a difficulty change nobody asked for.
+     * Same field `this.stages` is guarded by in the constructor, asked once. */
+    if (!this.crossing) return [];
+    const i = this.areaIndex;
+    /* The landing is where you come down and the last ground is where it ends;
+     * neither is anybody's to choose. Both are `planStages`' clauses, restated
+     * as bounds rather than re-derived. */
+    if (i <= 0 || i >= this.stages.length - 1) return [];
+    const from = AREAS.indexOf(this.stages[i - 1]);
+    const planned = AREAS.indexOf(this.stages[i]);
+    if (from < 0 || planned < 0) return [];
+    /* How many grounds still have to fit after this one, the last of which is
+     * `AREAS`' last. So the highest rung this slot may take is the one that
+     * still leaves a distinct rung for each of them. */
+    const tail = this.stages.length - 1 - i;
+    const lo = from + 1, hi = AREAS.length - 1 - tail;
+    if (hi <= lo || planned < lo || planned > hi) return [];
+    let alt = -1, far = -1;
+    for (let k = lo; k <= hi; k++) {
+      if (k === planned) continue;
+      const d = Math.abs(AREAS[k].muster - AREAS[planned].muster);
+      /* Ties go to the heavier ground: a fork whose two roads pay the same is
+       * a fork about what you will meet, and the heavier one is the one with
+       * something to meet. Unreachable on the shipped table — `muster` is
+       * strictly increasing — and written so that it stays answerable if it
+       * stops being. */
+      if (d > far || (d === far && k > alt)) { far = d; alt = k; }
+    }
+    return alt < 0 ? [] : [AREAS[planned], AREAS[alt]];
+  }
+
+  /**
+   * TAKE ONE OF THEM, AND KEEP THE ROUTE A ROUTE.
+   *
+   * The tail is not patched, it is RE-PLANNED, through `planStages` itself over
+   * the grounds that are still ahead. That is the whole of why this is four
+   * lines: `planStages` already knows that a route starts where it starts, ends
+   * on the last ground and spreads whatever is between evenly, and a second
+   * implementation of those three clauses here is the hand-maintained twin this
+   * repository has paid for eight times (HANDOFF §2.3). Taking the PLANNED
+   * ground therefore reproduces the existing tail exactly, which is what makes
+   * "choose nothing" and "choose the default" the same run.
+   *
+   * A COMMANDER WHO IS NOT HOLDING THE ARMY CAN ONLY ASK, the same shape
+   * `recruit` and `closeMuster` have and for the same reason: the route is a
+   * fact about the run, one machine owns the run, and a client that rewrote its
+   * own `stages` would fight a different crossing from the one the host is
+   * composing waves for. Nothing is written locally; the host's answer arrives
+   * as the next offer.
+   *
+   * @param {string} id the `AREAS` id of the ground to take.
+   * @returns {boolean} whether the route actually moved.
+   */
+  takeRoute(id) {
+    /* `refused` is the one field the muster screen prints a sentence out of,
+     * and it is cleared on the way in for the reason `recruit` clears it: a
+     * road taken after a purchase was refused must not leave the price of a
+     * body on the screen as though it were an answer about the ground. */
+    this.refused = null;
+    if (this._netShell) return this.world?.requestRoute?.(id) ?? false;
+    /* Only while the card is up. The fork is a muster's decision — outside one
+     * there is no `_fork`, and a route rewritten mid-area would move the ground
+     * under a line already standing on it. */
+    if (!this.mustering || !this._fork?.length) { this.refused = 'there is no road to choose here'; return false; }
+    const pick = this._fork.find((a) => a.id === id);
+    if (!pick) { this.refused = `${id} is not one of the roads on offer`; return false; }
+    /* The road you are already on. Refused because the route did not MOVE, and
+     * silently because it is not a refusal a player needs told about — it is
+     * the answer "yes, that is where you are going". */
+    if (pick === this.stages[this.areaIndex]) return false;
+    const i = this.areaIndex;
+    const rest = planStages({ engagements: this.stages.length - i }, AREAS.slice(AREAS.indexOf(pick)));
+    /* THE LENGTH IS THE PROMISE. `routeChoices` only offers grounds that leave
+     * room for the tail, so this cannot fail — and it is checked rather than
+     * trusted, because the one failure mode of this whole feature is a card
+     * that said three engagements and delivered two. */
+    if (rest.length !== this.stages.length - i) { this.refused = `${pick.name} leaves no room for the rest of the crossing`; return false; }
+    this.stages = [...this.stages.slice(0, i), ...rest];
+    /* THE OFFER MOVED, so every screen showing it is now wrong — the brief, the
+     * band, the muster the next ground pays. Published here for the reason
+     * `recruit` publishes: this is the one place a route changes, and a publish
+     * per caller is a chance to forget one. */
+    this.world?.publishMuster?.();
+    return true;
+  }
+
   musterOffer(c = this.commander) {
     /**
      * A SHELL SAYS WHAT IT WAS TOLD, VERBATIM — the same rule `readout` states,
@@ -3712,7 +4133,87 @@ export class CommandDirector extends WaveDirector {
       area: this.areaNumber,
       areaName: A.name,
       brief: A.brief,
+      /**
+       * THE GROUND JUST TAKEN — and it was missing, which cost the card its
+       * header.
+       *
+       * `_areaClear` advances `areaIndex` BEFORE it builds this offer, so `A`
+       * is the ground you are walking INTO and every field above it says so.
+       * The muster screen had nothing else to reach for and stamped
+       * `"${areaName} — held"` across the top of itself: on a Push it announced
+       * that the Hailfire Line had been held at the moment the player finished
+       * the landing zone and was being offered the road to it. The interlude
+       * running three centimetres below said `THE LANDING ZONE — HELD`, off
+       * `Session.interludeBeats`, which is handed the right record — so the two
+       * halves of one card named two different grounds as the one just taken.
+       *
+       * Same record `_areaClear` hands the interlude, read the same way, so the
+       * stamp and the report cannot drift. Null outside a muster, which is
+       * every other caller of this method (`_bestAffordable`, the opening) and
+       * is the honest answer there: nothing has been held yet.
+       */
+      held: this.areaIndex > 0 ? this.stages[this.areaIndex - 1] : null,
+      /** …and the ground after the one you are walking into, which is what
+       *  makes a fork readable: both roads rejoin here. Clamped to the last
+       *  stage, so it is never undefined on the final approach. */
       next: this.stages[Math.min(this.areaIndex + 1, this.stages.length - 1)],
+      /**
+       * THE FORK, AND WHAT IT IS ALLOWED TO SAY — PLAN.md §4.6's "partial
+       * information: you see the ground, the weather and the garrison weight,
+       * NOT THE CONTENTS."
+       *
+       * Four readings per candidate and every one of them is a property of the
+       * GROUND rather than of the wave that will be composed on it:
+       *
+       *   the ground     `name` and `brief`, the same two strings the deploy
+       *                  card and the muster's own header already print, so no
+       *                  third description of a place can drift from them.
+       *   the rung       where it sits on the `AREAS` ladder, which is the
+       *                  number `areaRung` gates the shelf on — taking the
+       *                  higher road opens the rung-4 bodies an engagement
+       *                  early, and that is the sharpest consequence on the
+       *                  card.
+       *   how long       `waves`. An engagement is 3 to 5 waves and the whole
+       *                  of what a longer one costs is attrition against the
+       *                  same ten men.
+       *   what it pays   `muster`, in points and not in a band, deliberately:
+       *                  it is the currency the decision trades in, the purse
+       *                  is printed two rows below it in the same units, and a
+       *                  band there would make the comparison unaskable.
+       *   the weight     `garrisonBand`, which is `budget` and `heavy` at the
+       *                  resolution a briefing has. See `GARRISON_BANDS`.
+       *
+       * WHAT IS NOT HERE IS THE CONTENTS: no `budget`, no `heavy`, no
+       * archetype and no condition. `_compose` deals those when the area
+       * starts, off a budget that also depends on how many men are standing by
+       * then — so they are not merely withheld, they do not exist yet.
+       *
+       * AND THERE IS NO WEATHER ON IT, WHICH IS THE HONEST ANSWER RATHER THAN
+       * AN OMISSION. §4.6 asks for one and PLAN.md §4.7 answers it in the same
+       * document: "There is no `Weather.js`… **Weather is entirely unbuilt**."
+       * What exists is `Scenery.weather`, ONE squall scheduler configured once
+       * per LEVEL out of `level.dust.weather` — and a crossing is one level for
+       * its whole length (§3's first convergence, one ground), so every
+       * candidate on this card would carry the same squall, the same period and
+       * the same peak. §7's guardrail is that an element has to change a
+       * decision; a column that is identical on both roads changes none, and
+       * printing it would only teach the player that the fork has a dial in it
+       * that does nothing. `waves` is the true thing in its place: it is
+       * per-ground, it differs between the two candidates the Push actually
+       * offers (4 against 5), and it is what the player is really asking when
+       * they ask about the sky.
+       */
+      route: (this._fork || []).map((a) => ({
+        id: a.id, name: a.name, brief: a.brief,
+        rung: AREAS.indexOf(a) + 1,
+        waves: a.waves,
+        muster: a.muster,
+        garrison: garrisonBand(a),
+        /** Which road the run is on right now — the planned one until the
+         *  player moves it. The card draws the selection off this rather than
+         *  keeping its own, for the reason it keeps no copy of the points. */
+        taken: a === this.stages[this.areaIndex],
+      })),
       points: c.roster.points,
       strength: c.roster.strength,
       max: MAX_STRENGTH,
@@ -3724,6 +4225,28 @@ export class CommandDirector extends WaveDirector {
        * every purchase, and a reveal that restarted itself each time you bought
        * a trooper would never finish. */
       interlude: this._interlude,
+      /**
+       * WHO CAN BE COMMENDED, AND WHAT IT COSTS — PLAN §4.4's third option.
+       *
+       * The living, with the rank each holds and how far off the next one is,
+       * so the card can show what the points would BUY rather than only what
+       * they cost. `to` is null for a man already at the top of the ladder,
+       * which is what `commend` refuses on — a row that offered it and then was
+       * refused is the picker being randomly broken (see `_syncRules`).
+       *
+       * `afford` is computed here beside the purse and not in the screen, for
+       * the reason at the head of this method: a client that worked out its own
+       * affordability would offer every man at zero points.
+       */
+      commend: {
+        cost: this.commendCost(),
+        men: c.roster.living.map((t) => ({
+          name: t.name, unit: t.label, rank: RANKS[t.rank].short, title: RANKS[t.rank].title,
+          xp: t.xp, to: t.rank < RANKS.length - 1 ? RANKS[t.rank + 1].title : null,
+          need: t.rank < RANKS.length - 1 ? RANKS[t.rank + 1].xp - t.xp : null,
+          afford: c.roster.points >= this.commendCost() && t.rank < RANKS.length - 1,
+        })),
+      },
       units: c.army.tiers
         // The AREA NUMBER, not a second column beside it. See AREAS — and see
         // `unlockAt`, which is where a contingent's answer to the same question
@@ -3783,6 +4306,79 @@ export class CommandDirector extends WaveDirector {
      * one. No-op outside a session; `_bulk` is the fallback's own suppression. */
     if (this.mustering && !this._bulk) this.world?.publishMuster?.(c);
     return t;
+  }
+
+  /**
+   * WHAT ONE COMMENDATION COSTS — PLAN §4.4, and the rate is the run's own.
+   *
+   * §4.4 asks the muster to be "a decision at the Company screen:
+   * **replacements, or promote a survivor, or bank the purse.**" Two of those
+   * three already worked: `recruit` buys replacements, and banking is what
+   * closing the muster without spending has always done — the purse is never
+   * cleared, so points survive to the next ground. Promotion was the missing
+   * one.
+   *
+   * ── AND IT BUYS EXPERIENCE, NOT RANK ─────────────────────────────────────
+   *
+   * A rank in this mode is a fact about `xp` crossing a gate in `RANKS`, and
+   * `Trooper.award` is the one door it comes through — every promotion in the
+   * game is announced by that method returning a record. So a commendation pays
+   * `XP_PER_WAVE` into the same door rather than writing a rank, and a man is
+   * promoted only if that carries him over his gate. Nothing about promotion is
+   * bypassed; what the purse buys is the fighting he did not have to do.
+   *
+   * ── THE PRICE IS DERIVED AND NOT CHOSEN ──────────────────────────────────
+   *
+   * Holding an area awards `XP_PER_AREA` and pays `area.muster` points — that
+   * pair IS the run's exchange rate between blood and money, stated by the two
+   * lines that hand them out. So a commendation costs what the ground that
+   * would have earned it pays: `muster / XP_PER_AREA`. The landing zone pays 11
+   * and charges 6; the Core Ship pays 30 and charges 15. The price rising with
+   * the purse is the point — a flat price would be free by area five, and the
+   * DECISION has to stay live at every boundary.
+   *
+   * Against a body at 5 points that is roughly one replacement per commendation,
+   * which is the trade §4.4 wants put to the player: another man, or one of the
+   * men you already have made better. And at `MAX_STRENGTH` the shelf refuses
+   * every body, so this is the only thing left to spend on — a full line is
+   * where a purse used to have nowhere to go.
+   */
+  commendCost() { return Math.max(1, Math.ceil((this.area?.muster ?? 0) / XP_PER_AREA)); }
+
+  /**
+   * Commend one man by name. Returns the RANKS record if it promoted him, or
+   * `true` if the experience landed without crossing a gate; null on refusal
+   * with the reason on `this.refused`.
+   *
+   * BY NAME AND NOT BY INDEX, for `recruit`'s reason: the same call is made by
+   * a screen the host owns and by a peer over the wire, and a roster index
+   * means two different men the moment somebody dies between the click and the
+   * arrival. A designation is unique on the roll by construction — see
+   * `designate`.
+   */
+  commend(name, c = this.commander) {
+    /* A COMMANDER WHO IS NOT HOLDING THE PURSE CAN ONLY ASK. Same shape as
+     * `recruit` and for the same reason: nothing is written locally, the host
+     * runs this against the roster it actually keeps, and the screen's numbers
+     * move when the answer arrives. */
+    if (this._netShell) { this.refused = null; this.world?.requestCommend?.(name); return null; }
+    this.refused = null;
+    const t = (c.roster?.living || []).find((x) => x.name === name);
+    if (!t) { this.refused = `${name} is not standing on this roll`; return null; }
+    const cost = this.commendCost();
+    if (c.roster.points < cost) { this.refused = `${cost} points needed, you have ${c.roster.points}`; return null; }
+    if (t.rank >= RANKS.length - 1) { this.refused = `${t.name} already holds ${RANKS[t.rank].title}`; return null; }
+    c.roster.points -= cost;
+    const rose = t.award(XP_PER_WAVE);
+    if (rose) this._promoteTrooper(t, t.body);
+    /* The log carries it for the same reason it carries an enlistment: the
+     * interlude and the after-action report read this ledger and nothing else,
+     * so a promotion the player PAID for has to be in it or the report is a
+     * story about a different run. */
+    this.log.push({ t: 'commend', name: t.name, unit: t.label, rank: RANKS[t.rank].short,
+                    area: this.areaNumber, cost });
+    if (this.mustering && !this._bulk) this.world?.publishMuster?.(c);
+    return rose || true;
   }
 
   /**
@@ -4302,12 +4898,19 @@ export class CommandDirector extends WaveDirector {
       const sp = (c.squadPlanted || (c.squadPlanted = new Map()));
       if (!F.advance || c.holding) sp.set(key, this._squadFrame(c, squad));
       else sp.delete(key);
+      /* A NEW ORDER ABANDONS A HALF-DUG POSITION. The hole in the ground is
+       * permanent once it is finished — it is terrain — but the work is not
+       * banked: a squad pulled off a scrape and sent back to it starts again,
+       * which is what stops "dig in, charge, dig in" being a way to have the
+       * position without ever standing still for it. See `_digTick`. */
+      c.digs?.delete(key);
     } else {
       c.squadOrders?.clear();
       /* An army-wide order takes every squad's private ground back with its
        * private order, for the reason the clause above gives about `squadOrders`
        * itself: "everyone form wedge" has to mean everyone. */
       c.squadPlanted?.clear();
+      c.digs?.clear();
       c.formation = id;
     }
     // A formation that does not advance is planted where the commander was
@@ -5403,6 +6006,18 @@ export class CommandDirector extends WaveDirector {
      */
     if (t.broken || t.rout) {
       /**
+       * …AND SOME ARMIES DO NOT RUN — PLAN.md §4.6's Stand Fast.
+       *
+       * A rout is a DESTINATION below — the man walks back to his general — and
+       * this makes it a place instead: he goes to ground where he is standing.
+       * Better and worse at once, which is the card: he keeps the ground he was
+       * given and stays inside the quorum, and he does it lying in the open
+       * with whatever broke him still there. `_goToGround` is the same call the
+       * refusing branch below already makes, so this adds no behaviour — it
+       * changes which of two shipped ones a broken man gets.
+       */
+      if (this.world?.player?.boonMods?.standfast) { this._goToGround(e, dt, c, true); return; }
+      /**
        * FINISHED IS NOT STOPPED. This line used to be
        * `if (t.morale < MORALE.REFUSE) return;`, and with `targetFor`
        * refusing on the same test it left a man below `REFUSE` inert:
@@ -5755,7 +6370,34 @@ export class CommandDirector extends WaveDirector {
         this.log.push({ t: 'fell', name: t.name, unit: t.label, rank: t.rankRec.short,
                         area: this.areaNumber, wave: this.wave, xp: t.xp, kills: t.kills,
                         killer: killerName(source), bearing,
+                        /**
+                         * AND WHOSE MAN HE WAS. `onDeath` routes EVERY
+                         * commander's dead into this one log, and `formUp`
+                         * builds a second commander for the other army — so in
+                         * a meeting the ledger holds both rolls, and a report
+                         * reading it flat counts the enemy's dead as yours and
+                         * calls an enemy trooper who kills one of your men
+                         * "your own side". One boolean, written where the death
+                         * happens, because only here is `c` still in hand.
+                         */
+                        mine: c === this.commander,
                         at: Math.round((this.world?.time || 0) * 10) / 10 });
+        /**
+         * …AND THE GROUND KEEPS HIM — PLAN.md §4.7.
+         *
+         * The same three facts the log just took, standing on the spot he took
+         * them on: `src/world/Graves.js` holds the record and draws a rifle in
+         * the dirt for it, and a player who fights back over this ground in the
+         * next engagement walks through his own casualty list. Off the same
+         * `fell` values rather than re-derived, so the marker and the report
+         * can never say two different things.
+         */
+        this.world?.graves?.mark?.({
+          name: t.name, rank: t.rankRec.short, unit: t.label,
+          killer: killerName(source),
+          at: Math.round((this.world?.time || 0) * 10) / 10,
+          x: e.position.x, y: e.position.y, z: e.position.z,
+        });
         this.world?.notify?.(`${t.rankRec.title.toUpperCase()} DOWN`,
           `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${c.roster.strength} still standing`);
         this.shake(squad, wasLeader ? 'LEADER_FELL' : 'COMRADE_FELL', c);
@@ -6531,6 +7173,7 @@ export class CommandDirector extends WaveDirector {
        * players each solving a twenty-man circle would put every man in four
        * different places and hand the frame to whichever loop ran last. */
       const squads = this.squadsOf(c);
+      this._gravesFelt(dt, c);
       let i = 0;
       let n = 0;
       for (const sq of squads) n += sq.length;
@@ -6554,6 +7197,16 @@ export class CommandDirector extends WaveDirector {
          * one frame of latency on a decision that is re-made sixty times a
          * second. It is not worth it and it would be the slower answer.
          */
+        /* THE SQUAD'S OWN ORDER, and the fire gate reads it now.
+         *
+         * `F` above is the ARMY's formation, and it was what decided whether a
+         * body held its fire — so a single squad told to HOLD FIRE went on
+         * shooting, because the army had not been. `formationFor` is the one
+         * derivation of "what is this squad under" and `slotFor` has always
+         * used it; this is the same question asked in the one other place that
+         * was answering it with the army's answer. */
+        const Fk = FORMATIONS[this.formationFor(c, k)] || F;
+        const digging = Fk.digs ? this._digTick(dt, c, k, squads[k]) : false;
         const lead = this.leaderOf(squads[k]);
         const focus = (lead && lead.body && !lead.body.dead) ? lead.body.target : null;
         /* …AND THE LEADER DOES NOT FOLLOW HIMSELF. Stamping the focus on every
@@ -6586,7 +7239,12 @@ export class CommandDirector extends WaveDirector {
            * failure that note was written for — a driven run stuck from t≈711 s
            * to t=3535 s with two bodies alive and no way out but Abandon —
            * except that this time the army would be standing next to them. */
-          if (F.fire <= 0 && !this._closing) holdFire(e);
+          /* …AND A MAN WITH A SHOVEL IN HIS HANDS IS NOT SHOOTING. That is the
+           * whole price of a position (PLAN.md §4.7): a squad gives up its
+           * fire for `DIG_SECONDS` on ground it has already been told it
+           * cannot leave. It lifts the moment the position is finished, and
+           * `_closing` lifts it early for the reason it lifts every order. */
+          if ((Fk.fire <= 0 || digging) && !this._closing) holdFire(e);
           this._clearBlade(e, c, dt);
         }
       }
@@ -6594,10 +7252,126 @@ export class CommandDirector extends WaveDirector {
   }
 
   /**
+   * THEY ARE WALKING PAST THEIR OWN DEAD — PLAN.md §4.8's third bullet.
+   *
+   * "A marker where each man of the company fell, on that ground, in later
+   * runs, with the surviving squad's morale reacting when they walk past it."
+   * `src/world/Graves.js` is the first half and this is the second: the ground
+   * remembering and the men minding are one mechanism, which is what that
+   * bullet means by "one system with §4.7's ground memory, not two".
+   *
+   * ── ONE MAN A FRAME, AND THAT IS THE WHOLE COST ────────────────────────
+   *
+   * Every living body against every marker is 24 × 64 distance tests a frame in
+   * a mode whose frame budget PLAN.md §4.3 is entirely about. So this walks
+   * ONE man per commander per frame, round-robin: at 30 Hz a twelve-man line is
+   * sampled two and a half times a second, which is four times finer than the
+   * cooldown the reaction is rate-limited by. A man cannot walk past a grave
+   * without being asked, and nothing is asked twice.
+   */
+  _gravesFelt(dt, c) {
+    const graves = this.world?.graves?.entries;
+    if (!graves?.length) return;
+    const living = c?.roster?.living || [];
+    if (!living.length) return;
+    const k = (c._graveCursor = ((c._graveCursor | 0) + 1) % living.length);
+    const t = living[k];
+    const e = t?.body;
+    if (!e || e.dead || e.downed) return;
+    t._graveT = Math.max(0, (t._graveT || 0) - dt * living.length);
+    if (t._graveT > 0) return;
+    const r2 = MORALE.GRAVE_FELT * MORALE.GRAVE_FELT;
+    for (const g of graves) {
+      const dx = g.x - e.position.x, dz = g.z - e.position.z;
+      if (dx * dx + dz * dz > r2) continue;
+      /* HIS OWN, and never his own marker: a man cannot walk past the place he
+       * himself fell, but a roster that reuses a name across a campaign could
+       * hand him one. The name is the only identity a grave keeps. */
+      if (g.name === t.name) continue;
+      t._graveT = MORALE.GRAVE_COOLDOWN;
+      this.shake(t, 'PASSED_GRAVE', c);
+      return;
+    }
+  }
+
+  /**
+   * ONE SQUAD, ONE POSITION — PLAN.md §4.7's Dig In.
+   *
+   * @returns whether these men currently have their hands full, which is what
+   *          the fire gate above reads.
+   *
+   * ── WHY THE STATE IS PER SQUAD AND NOT PER MAN ─────────────────────────
+   *
+   * The engine's heightfield cell is 2.5–3.4 m, so five individual scrapes are
+   * five craters the ground cannot tell apart — see `DIG_R`. What a squad digs
+   * is ONE position, and that is also the right unit for the design: the
+   * delegation that shipped for §4.4 gives a squad its own ground, and this is
+   * what a squad does with ground it has been given.
+   *
+   * ── AND IT IS DUG THROUGH THE ONE DOOR THAT BREAKS GROUND ──────────────
+   *
+   * `Terrain.crater` with a deep bowl and a heavy rim, which is exactly what a
+   * scrape and its spoil are. Nothing here reaches into the heightfield: the
+   * crater is the game's only verb for moving earth, `CraterLog` wraps it, and
+   * so a position dug in engagement two is still there in engagement three
+   * without this file knowing that persistence exists. It costs one call.
+   *
+   * The soot the crater lays with it is honest rather than unfortunate — the
+   * ground has been turned over, and a fresh earthwork on a dust plain reads
+   * dark. What says "position" rather than "shell hole" is the shape: a berm
+   * 0.76 m proud of the ground all the way round, which no shell in this game
+   * can make.
+   */
+  _digTick(dt, c, k, squad) {
+    const key = String(k);
+    const digs = (c.digs || (c.digs = new Map()));
+    let rec = digs.get(key);
+    /* WHERE THEY WERE TOLD TO STAND, which is the squad's own planted ground
+     * when it has one and the army's frozen frame otherwise. Taken ONCE, at
+     * the first tick: a position that followed the anchor would be a hole that
+     * moved while it was being dug. */
+    if (!rec) {
+      const A = this._anchorFor(FORMATIONS.digin, c, k);
+      if (!A?.pos) return false;
+      rec = { x: A.pos.x, z: A.pos.z, t: 0, done: false };
+      digs.set(key, rec);
+    }
+    if (rec.done) return false;
+    /* WHO IS ACTUALLY ON IT. A man running back to the position is not digging
+     * it, and a man on the ground is not either — the same clause that keeps a
+     * casualty out of the quorum keeps him off the shovel. */
+    let crew = 0;
+    for (const t of squad) {
+      const e = t.body;
+      if (!e || e.dead || e.downed) continue;
+      const dx = e.position.x - rec.x, dz = e.position.z - rec.z;
+      if (dx * dx + dz * dz <= DIG_WORK_R * DIG_WORK_R) crew++;
+    }
+    if (crew < DIG_CREW) return false;
+    /* AND SOME LINES KNOW HOW TO USE A SHOVEL — PLAN.md §4.6's Field
+     * Engineering, which is a rule about what your ARMY can do rather than a
+     * number on the player. */
+    rec.t += dt * clamp(this.world?.player?.boonMods?.digRate ?? 1, 0.25, 4);
+    if (rec.t < DIG_SECONDS) return true;
+    rec.done = true;
+    this.digs = (this.digs | 0) + 1;
+    const T = this.world?.terrain;
+    if (T?.crater) T.crater(rec.x, rec.z, DIG_R, DIG_DEPTH, DIG_RIM);
+    this.log.push({ t: 'dug', squad: k, area: this.areaNumber, wave: this.wave,
+                    at: Math.round((this.world?.time || 0) * 10) / 10 });
+    if (c === this.commander) {
+      const lead = this.leaderOf(squad);
+      this.world?.notify?.(`${lead ? lead.name : `${k + 1} SQUAD`} — DUG IN`,
+        'the ground is a position now, and it is cover from anything at range');
+    }
+    return false;
+  }
+
+  /**
    * GET OUT OF THE WAY OF THE BLADE.
    *
    * "in too many of the troop formations the troops are totally in the way of
-   * your saber like they don't avoid it at all and crowd you."
+   * your saber like they don't avoid it at all and crowd you.""
    *
    * Nothing in the formation solver knew the commander was holding a weapon.
    * The slots are all clear of one — `circle`'s inner rank is at 4.2 m against
@@ -6660,7 +7434,7 @@ export class CommandDirector extends WaveDirector {
     // Experience for living through it: a body that was on the field when the
     // wave cleared earned something even if it never fired.
     for (const t of this.roster.living) {
-      const p = t.award(1);
+      const p = t.award(XP_PER_WAVE);
       if (p) this._promoteTrooper(t, t.body);
     }
     /**
@@ -6941,7 +7715,22 @@ export class CommandDirector extends WaveDirector {
        * He is still ALIVE, exactly as a man on a gun is: losing him is losing
        * him, and the roster has not written him off. What he is not is standing.
        */
-      if (e.downed) { down++; continue; }
+      /**
+       * …UNLESS SOMEBODY IS STANDING OVER HIM — PLAN.md §4.6's Triage, and it
+       * is one of the two facets that section requires to move the KEYSTONE.
+       *
+       * The rule above is what makes the bleed-out window cost something; this
+       * card changes which way the tension pulls, so a player who takes it
+       * spends men on holding casualties rather than on holding ground. The
+       * medic is any living man of the same side inside `TRIAGE_REACH` — a
+       * body, not a role, because this game has no medics and inventing one
+       * would be a second system to make a card true.
+       */
+      if (e.downed) {
+        down++;
+        if (this.world?.player?.boonMods?.triage && this._overHim(e, living)) near++;
+        continue;
+      }
       const own = sp?.get(String(e.cmdSquad | 0));
       const at = own ? own.pos : p.position;
       if (dist2(e.position, at) <= r2) near++;
@@ -6950,7 +7739,36 @@ export class CommandDirector extends WaveDirector {
     /* An army that no longer exists cannot come up, and a run that waited for
      * it would hang instead of ending. `_checkLine` is the door for that. */
     if (!alive) return true;
-    return near * 2 >= alive;
+    /**
+     * HALF, UNLESS A FACET SAYS OTHERWISE — PLAN.md §4.6's Skirmish Order.
+     *
+     * The share is the keystone itself, so this is the one line in the game a
+     * card is allowed to move: at a third the ground comes faster and the
+     * muster that pays for the men who took it is halved (`_areaClear`). It is
+     * read off the player rather than off a director flag because it is the
+     * PLAYER's build, and a run with no player at all — a headless bench, a
+     * client — reads the shipped half.
+     */
+    const share = clamp(this.world?.player?.boonMods?.quorumShare ?? 0.5, 0.2, 1);
+    return near >= alive * share;
+  }
+
+  /**
+   * IS SOMEBODY STANDING OVER THIS MAN? See the Triage clause in
+   * `lineGathered`.
+   *
+   * Any living body on his own side inside `TRIAGE_REACH`, and never himself.
+   * A downed man beside another downed man is two casualties, not a casualty
+   * and a medic.
+   */
+  _overHim(e, living) {
+    const r2 = TRIAGE_REACH * TRIAGE_REACH;
+    for (const t of living) {
+      const o = t.body;
+      if (!o || o === e || o.dead || o.downed) continue;
+      if (dist2(o.position, e.position) <= r2) return true;
+    }
+    return false;
   }
 
   lineIsUp(c = this.commander) {
@@ -7068,7 +7886,13 @@ export class CommandDirector extends WaveDirector {
           wanted.unshift(up);
           this.log.push({ t: 'foundry', from: tiers[i], to: up, area: this.areaNumber, wave: this.wave });
           if (c === this.commander) {
-            this.world?.notify?.('THE FOUNDRY', `the next one up is a ${ARCHETYPES[up]?.name || up}`);
+            /* `.label` AND NOT `.name`, which is the same defect `killerName`
+             * carried: an archetype has no `name`, so this banner had always
+             * fallen through to the spawn table's internal key and told the
+             * player who had just held a building that "the next one up is a
+             * arc". Every other read of this table in the tree asks for
+             * `.threat` or `.label`; this was the one `.name` in `src/`. */
+            this.world?.notify?.('THE FOUNDRY', `the next one up is a ${ARCHETYPES[up]?.label || up}`);
           }
         }
       }
@@ -7103,12 +7927,16 @@ export class CommandDirector extends WaveDirector {
     this.awaitingLine = false;
     for (const t of this.roster.living) {
       t.areas++;
-      const p = t.award(2);
+      const p = t.award(XP_PER_AREA);
       if (p) this._promoteTrooper(t, t.body);
     }
     // Holding a whole area is the biggest thing that happens to a line's nerve.
     for (const c of this.commanders) this.shake(null, 'AREA_HELD', c);
-    this.roster.points += this.area.muster;
+    /* THE PURSE, SCALED BY WHATEVER RULE THE RUN IS UNDER — PLAN.md §4.6.
+     * Skirmish Order is the only thing that moves it: taking ground with a
+     * third of your men costs you half the men you are paid for taking it
+     * with, which is what makes that card a decision rather than a discount. */
+    this.roster.points += this.area.muster * (this.world?.player?.boonMods?.musterShare ?? 1);
     /* HOLDING GROUND IS WHAT EARNS A FLEET'S ATTENTION. The largest single
      * credit on the table — see SUPPORT_EARN. */
     this.world?.support?.credit('area');
@@ -7143,6 +7971,11 @@ export class CommandDirector extends WaveDirector {
       got: held.muster, points: this.roster.points,
       strength: this.roster.strength, max: MAX_STRENGTH,
     });
+    /* AND THE FORK, DEALT ONCE — before the offer, because the offer carries it.
+     * `routeChoices` reads `stages` and `takeRoute` rewrites `stages`, so this
+     * is the only moment at which the pair is the pair the player was first
+     * shown. See `_fork`. */
+    this._fork = this.routeChoices();
     const offer = this.musterOffer();
     this.world?.notify?.(`${this.stages[this.areaIndex - 1].name.toUpperCase()} — HELD`,
       `${this.roster.points} reinforcement points · ${this.roster.strength} standing`);
@@ -7325,6 +8158,10 @@ export class CommandDirector extends WaveDirector {
      * everything after this line belongs to the next interlude. */
     this._logAt = this.log.length;
     this._interlude = null;
+    /* The road is taken. Dropping it here rather than in `_areaClear` is what
+     * makes `takeRoute` refuse outside a muster instead of quietly moving the
+     * ground under a line that is already standing on it. */
+    this._fork = null;
     /* THE GUNSHIPS, which is what the mode's first brief has always said
      * happens and what the code never did. See `deploy`.
      *

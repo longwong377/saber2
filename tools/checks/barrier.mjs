@@ -175,10 +175,21 @@ export async function run({ check, assert }) {
      * `_priceOf`, so a save carrying a cost boon empties the bar at a
      * different rate than the raw SHIELD.hold would suggest. */
     p.force = SHIELD.hold * 0.33;
+    const said = [];
+    b.world.onNotify = (t, sub) => said.push([String(t), String(sub ?? '')]);
     b.step(60);
     assert(!p.shield.up, `the barrier is still up on ${p.force.toFixed(1)} Force`);
-    assert(b.world.notices?.some?.(s => /BARRIER DOWN/.test(s)) !== false,
-      'the barrier went out in silence');
+    /* AND IT SAID SO, THROUGH THE ONE PATH THERE IS. This read
+     * `b.world.notices?.some?.(…) !== false`, and there is no `world.notices`:
+     * `World.notify` raises `onNotify` and nothing else. So the expression was
+     * `undefined`, `undefined !== false` is true, and deleting Player's
+     * `notify('BARRIER DOWN', why)` left this green — the "loudly" in the note
+     * above asserted nothing at all. */
+    assert(said.some(([t]) => /BARRIER DOWN/.test(t)),
+      `the barrier went out in silence — ${said.length} notices, `
+      + `${said.map(([t]) => t).join(' / ') || 'none at all'}`);
+    const why = said.find(([t]) => /BARRIER DOWN/.test(t))?.[1] || '';
+    assert(why, 'the barrier says it went down and never says why, which is the half a player can act on');
     return `raise ${POWER_COST.shield}; quiet second ${quiet.toFixed(2)}; `
       + `${n} bolts ${loud.toFixed(2)}; empty bar drops it`;
   });

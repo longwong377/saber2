@@ -1676,6 +1676,54 @@ export function run({ check, assert }) {
       + `${Cmd.ARMY_IDS.length} armies — so it stays off the wire`;
   });
 
+  check('command/versus: the front is the host\'s, and both machines read the same one', async () => {
+    /**
+     * PLAN.md §4.5's KILL CRITERION, and the answer is a host authority.
+     *
+     * "If two commanders cannot be kept in agreement on `lineIsUp`, the mode's
+     * win condition desyncs and it needs a host authority." It has one by
+     * construction — `CommandDirector._front` runs inside the director's own
+     * update and a client's director is a shell that never steps — so the
+     * question is not whether both machines compute the same number, it is
+     * whether the client is told the one number that exists. Until this field
+     * it was not: the whole state of a meeting sat at zero on every machine but
+     * the host's, and the bar a player reads to know whether they are winning
+     * would have read "contested" for an entire battle.
+     */
+    const { SIDES } = await import('../../src/game/Player.js');
+    const { host, client, pump } = await commandPair({ host: { commandVersus: true },
+                                                       client: { commandVersus: true }, start: false });
+    host.beginVersus();
+    await joinAsCommander(host, { team: SIDES[1] });
+    host.beginVersus();
+    assert(host.command?.versus, 'the host is not running a meeting at all');
+
+    /* THE HOST DRIVES IT. `_front` moves the scalar only for a line that is
+     * gathered and forward, which `command-pvp`'s own first check measures —
+     * this one is about the wire, so the number is set directly and the
+     * question is whether it arrives. */
+    host.command.front = 0;
+    pump(0.5);
+    const before = client.command?.front ?? null;
+    host.command.front = -0.42;
+    pump(0.5);
+    const after = client.command?.front ?? null;
+    assert(before !== null,
+      'the client has no front at all — a meeting whose central quantity is undefined on one '
+      + 'machine cannot draw a bar, and cannot agree about who is winning');
+    assert(Math.abs(after - (-0.42)) < 0.02,
+      `the host drove the front to -0.42 and the client reads ${after} — the mode's whole state `
+      + 'does not cross the wire');
+    /* …AND THE CLIENT DOES NOT INVENT ONE. A shell director that stepped
+     * `_front` itself would drift from the host's within seconds, which is
+     * exactly the desync §4.5 names. */
+    host.command.front = 0.31;
+    pump(0.5);
+    assert(Math.abs((client.command?.front ?? 0) - 0.31) < 0.02,
+      'the client stopped following the host — it is computing a front of its own');
+    return 'host -0.42 → client -0.42, host +0.31 → client +0.31';
+  });
+
   check('command/versus: the joining commander is told which side they are on and where it stands', async () => {
     /**
      * `assignSides` AND `Net.setSides` BOTH EXISTED, COMPLETE, WITH ZERO

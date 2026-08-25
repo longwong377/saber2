@@ -34,7 +34,7 @@
 
 import * as THREE from 'three';
 import { Terrain } from '../../src/world/Terrain.js';
-import { CraterLog, CRATER_FIELDS, BURN_LOG_FIELDS } from '../../src/world/CraterLog.js';
+import { CraterLog, CRATER_FIELDS, BURN_LOG_FIELDS, SESSION_MEMORY } from '../../src/world/CraterLog.js';
 import { frontAt, burnt, walkingBarrage, marchFront, frontCamera, burnBand,
   FRONT_START, FRONT_STEP } from '../../src/world/Front.js';
 import { addFallen, FALLEN_LENGTH } from '../../src/world/Fallen.js';
@@ -592,5 +592,77 @@ export async function run({ check, assert }) {
     for (const mesh of out.meshes) tris += (mesh.geometry.index.count / 3) * mesh.count;
     return `${out.count} bodies in ${out.calls} calls, ${(tris / out.count).toFixed(0)} triangles each, `
       + `${(100 * band / out.count).toFixed(0)}% inside the 26 m band`;
+  });
+
+  check('crater log: a log lays itself onto one ground once, however many times it is handed over', () => {
+    /**
+     * `CommandDirector.marchTo` dresses engagements 1…n in a loop and hands
+     * `world.craterLog` to EVERY one of those `marchFront` calls. Without this
+     * rule, carrying a log across a ground change meant replaying it once per
+     * engagement onto the same fresh terrain — three engagements in, every hole
+     * three times as deep, and each individual crater still the right size.
+     */
+    const dug = ground();
+    const log = new CraterLog().attach(dug);
+    battle(log, dug, 60, 5);
+    log.detach();
+    const fresh = ground();
+    const first = log.replay(fresh);
+    const after = fresh.height(0, 40);
+    const again = log.replay(fresh);
+    assert(first.craters > 0, 'the first replay laid nothing');
+    assert(again.skipped && again.craters === 0,
+      `a second replay onto the same ground laid ${again.craters} more craters`);
+    assert(fresh.height(0, 40) === after, 'the ground moved on a replay that laid nothing');
+    /* …and a DIFFERENT log still lays itself onto ground somebody has played
+     * onto, because that is a different question and a legitimate one. */
+    const other = CraterLog.fromJSON(log.toJSON());
+    assert(other.replay(fresh).craters > 0,
+      'a second log refused to lay itself onto ground the first had played onto — the guard is on '
+      + 'the ground rather than on the log, so a co-op guest or a saved campaign could not dress');
+    return `${first.craters} craters laid once, a repeat handover laid 0, a second log laid `
+      + `${other.length}`;
+  });
+
+  check('crater log: the run carries the ground it fought over onto the next one', async () => {
+    /**
+     * THE WIRE THAT WAS COMPLETE ON BOTH SIDES AND CONNECTED NOWHERE.
+     *
+     * `marchTo` has passed `w.craterLog` into `marchFront` for as long as the
+     * front has been dressed, and nothing in the tree ever constructed one — so
+     * every engagement of every run opened on ground that had never been fought
+     * over, and this file's exactness checks were measuring a system with no
+     * caller. This drives a REAL World through a REAL ground change, because
+     * that is the only place the defect lived.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: FIELD,
+      settings: { mode: 'theline', level: FIELD },
+      runSeed: 7,
+    });
+    const log = world.craterLog;
+    assert(log, 'a world leading an army built no crater log at all — the wire is still hanging');
+    assert(world.terrain._craterLog === log,
+      'the log exists and is not recording the ground it belongs to');
+    /* A few real holes, through the door every explosion in the game uses. */
+    for (let i = 0; i < 12; i++) world.terrain.crater(10 + i * 3, -20, 2.4, 0.3);
+    assert(log.length >= 12, `${log.length} craters recorded off twelve calls to terrain.crater`);
+    const dug = log.length;
+
+    /* THE GROUND CHANGES. The log is a fact about the RUN and the terrain is
+     * not, so it has to survive `unload` and re-attach to what comes next. */
+    world.rotateTo(FIELD);
+    assert(world.craterLog === log,
+      'the ground changed and the run forgot the battle it had just fought');
+    assert(log.length >= dug, `the log shrank from ${dug} to ${log.length} across a ground change`);
+    assert(world.terrain._craterLog === log,
+      'the log survived the rotation and is not recording the new ground');
+    /* …and it is the NEW terrain, not the disposed one. */
+    assert(world.terrain._craterLogPlayed === log || log.length >= dug,
+      'the new ground has neither been played onto nor is being recorded');
+    world.unload?.();
+    return `${dug} craters recorded on the first ground and carried across the rotation, `
+      + `trimmed at ${SESSION_MEMORY}`;
   });
 }
