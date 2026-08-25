@@ -172,34 +172,130 @@ export async function run({ check, assert }) {
     return `17.25 kg at 30 m/s → ${viaLaw.toFixed(1)} damage, through the game's own curve`;
   });
 
-  check('contacts: only strikers are armed, so one collision is billed once', async () => {
-    /* Both sides of a pair are offered a handler. The rule that stops a double
-     * bill needs no bookkeeping — arm the things that DELIVER a hit and never
-     * the things that take one — and this is the check that the rule is being
-     * kept, stated against the shipped constructors rather than against a list
-     * somebody maintains by hand. */
+  check('contacts: everything with mass is a striker, and nothing hits itself', async () => {
+    /**
+     * THE RULE CHANGED, AND THIS IS THE NEW ONE.
+     *
+     * It used to be "arm the things that deliver a hit and never the things
+     * that take one", which kept a collision from being billed twice with no
+     * bookkeeping at all. It was also a way of saying that a living body is
+     * not matter, and the player's answer to that was: "EVERYTHING NEEDS
+     * PHYSICS".
+     *
+     * So every body is armed now, and a body-on-body contact IS billed both
+     * ways — which is correct rather than a double bill: when a beast runs
+     * into a trooper, the trooper is hurt by 1400 kg and the beast is hurt by
+     * 80, and each side is priced off its OWN mass by the dispatcher. What
+     * replaces the old rule is the one thing that would otherwise be paid
+     * twice for nothing: a creature meeting itself.
+     */
     const H = await import('./_coop.mjs');
     const { world } = await H.bootWorld({ level: 'geonosis', settings: { mode: 'waves', quality: 'low' } });
     const input = H.idleInput();
     for (let i = 0; i < 30; i++) world.update(1 / 60, input);
 
-    let props = 0, armedProps = 0, armedVictims = 0;
-    const victims = [];
+    let props = 0, armedProps = 0, bodies = 0, armedBodies = 0;
+    const cold = [];
     for (const b of world.physics.bodies) {
       const u = b.userData;
-      if (u.prop) { props++; if (b.onContact) armedProps++; }
-      if (u.enemy || u.player) { if (b.onContact) { armedVictims++; victims.push(u.enemy ? 'enemy' : 'player'); } }
+      if (u.prop) { props++; if (b.onContact) armedProps++; else cold.push('prop'); }
+      if (u.enemy || u.player) {
+        bodies++;
+        if (b.onContact) armedBodies++; else cold.push(u.enemy ? `enemy:${u.enemy.type || '?'}` : 'player');
+      }
     }
     world.unload();
 
     assert(props > 0, 'no prop bodies on Geonosis — this check is not looking at anything');
-    assert(armedProps === props,
-      `${armedProps} of ${props} props carry the kinetic law. A prop that is not armed is a crate that `
-      + 'falls on a droid and does nothing, which is the defect this whole channel exists to close');
-    assert(armedVictims === 0,
-      `${armedVictims} bodies that only ever TAKE hits are armed (${victims.join(', ')}). Both sides of a `
-      + 'contact are called, so arming a victim bills one collision twice');
-    return `${armedProps}/${props} props armed, 0 victims armed`;
+    assert(bodies > 0, 'no living bodies on Geonosis — this check is not looking at anything');
+    assert(armedProps === props && armedBodies === bodies,
+      `${cold.length} thing(s) with mass carry no kinetic law: ${[...new Set(cold)].join(', ')}. `
+      + 'A crate that falls on a droid and does nothing, or a walker that steps through infantry and does '
+      + 'nothing, is the whole defect this channel exists to close');
+
+    /* AND THE SELF-COLLISION GUARD IS REAL, not a comment. A creature is in the
+     * world twice over the moment it goes down — one kinematic capsule and
+     * nineteen ragdoll capsules in the same space — and RAGDOLL and ENEMY name
+     * each other now, so those halves are a collider pair. */
+    const I = await import('../../src/game/Impact.js');
+    const actor = { id: 'A' };
+    const enemy = { id: 'e1', actor };
+    const capsule = { userData: { enemy } };
+    const bone = { userData: { actor, bone: 'chest' } };
+    const bone2 = { userData: { actor, bone: 'armL' } };
+    assert(I.sameCreature(bone, capsule, enemy), 'a bone does not know it belongs to its own body');
+    assert(I.sameCreature(capsule, bone, enemy), 'a body does not know its own bone');
+    assert(I.sameCreature(bone, bone2, null), 'two bones of one corpse read as two creatures');
+    assert(!I.sameCreature(bone, { userData: { actor: { id: 'B' } } }, { id: 'e2' }),
+      'two different corpses read as one creature — the guard would swallow real hits');
+    return `${armedProps}/${props} props and ${armedBodies}/${bodies} bodies armed; self-collision guarded`;
+  });
+
+  check('contacts: a body walking into a body is a hit, priced off each side\'s own mass', async () => {
+    /**
+     * EVERY LIVING THING IN THIS GAME IS A KINEMATIC CAPSULE, and three
+     * separate facts had to be true before one of them could hit another. Each
+     * was false, each was silent, and none of the others would have shown it:
+     *
+     *   THE MASKS. `Enemy` named WORLD, PROP and DEBRIS; `Ragdoll` did not name
+     *   ENEMY and `Enemy` did not name RAGDOLL. Two bodies, or a corpse and a
+     *   body, were not a collider pair at all.
+     *
+     *   THE COLLISION TYPES. Rapier's default omits KINEMATIC_KINEMATIC.
+     *   Measured: two kinematic boxes driven together over 120 steps raise
+     *   **0** start events at the default and **1** with ALL. Masks and event
+     *   flags are both irrelevant until this one is right.
+     *
+     *   THE VELOCITY. `Enemy._syncBody` moves the capsule with `setTransform`,
+     *   which says nothing about speed — so every body in the game reported a
+     *   velocity of zero however hard it was running, and the closing speed
+     *   this regime is priced on was always 0.
+     *
+     * So this is asserted as DAMAGE arriving, not as flags being set. A check
+     * that looked at masks or arming would have passed through all three.
+     */
+    const T = await import('three');
+    const { armKinetic, KINETIC_BODY, KINETIC_MIN_APPROACH } = await import('../../src/game/Impact.js');
+    const w = new RapierWorld({ gravity: -22 });
+    w.addStaticBox(V(0, -0.5, 0), V(60, 0.5, 60));
+    const mk = (x, mass) => {
+      const b = new Body({ position: V(x, 0.9, 0), shape: RW.capsule(0.55, 0.35), mass,
+        kinematic: true, static: false, layer: RW.LAYER.ENEMY,
+        mask: RW.LAYER.WORLD | RW.LAYER.PROP | RW.LAYER.DEBRIS | RW.LAYER.RAGDOLL
+          | RW.LAYER.ENEMY | RW.LAYER.PLAYER,
+        allowSleep: false, gravityScale: 0 });
+      armKinetic(b, KINETIC_BODY);
+      w.add(b);
+      return b;
+    };
+    const seen = [];
+    const brute = mk(-4, 130), victim = mk(0, 52);
+    brute.onContact = (o, c) => seen.push({ who: 'brute', speed: c.speed, mass: c.mass, approach: c.approach });
+    victim.onContact = (o, c) => seen.push({ who: 'victim', speed: c.speed, mass: c.mass, approach: c.approach });
+    /* `kinVel` and not `.velocity`: a kinematic body's linear velocity belongs
+     * to whoever else wants it (the netcode stages remote impulses there), and
+     * the carried speed the dispatcher prices this regime on lives on its own
+     * field. Driving the wrong one is exactly the mistake that made a charging
+     * beast read as standing still. */
+    for (let i = 0; i < 180; i++) { brute.position.x += 6 / 60; brute.kinVel.set(6, 0, 0); w.step(1 / 60); }
+    w.dispose();
+
+    assert(seen.length > 0,
+      'a 130 kg body was driven at 6 m/s through a 52 kg body standing still and NOTHING was reported. '
+      + 'Every living thing in this game is a kinematic capsule, so this is the case that decides whether '
+      + '"everything has physics" is true or is a comment');
+    const B = seen.find((h) => h.who === 'brute'), Vv = seen.find((h) => h.who === 'victim');
+    assert(B && Vv, `only one side was told: ${seen.map((h) => h.who).join(', ')}`);
+    assert(B.approach && Vv.approach, 'a pair that cannot recoil was priced through the Δv path, which reads zero for it');
+    assert(Math.abs(B.speed - 6) < 1.5, `closing speed read ${B.speed.toFixed(2)} for a 6 m/s approach`);
+    /* EACH SIDE OFF ITS OWN MASS. Handing both the same reduced mass would
+     * have the 52 kg droid hitting back like a 130 kg one. */
+    assert(Math.abs(B.mass - 130) < 1 && Math.abs(Vv.mass - 52) < 1,
+      `the striker was priced at ${B.mass} kg and the struck at ${Vv.mass} kg; they should be 130 and 52`);
+    assert(KINETIC_MIN_APPROACH < 6,
+      `KINETIC_MIN_APPROACH is ${KINETIC_MIN_APPROACH}; a walker never moves at the 6 m/s the thrown-object `
+      + 'gate uses, so a gate that high means no machine in the game can ever run anybody over');
+    return `130 kg into 52 kg at 6 m/s: striker priced at ${B.mass} kg, struck at ${Vv.mass} kg`;
   });
 
   check('contacts: a crate nobody threw hurts the droid it lands on', async () => {
@@ -350,25 +446,27 @@ export async function run({ check, assert }) {
       let i = -1;
       while ((i = src.indexOf('new Body(', i + 1)) !== -1) {
         /* The construction plus what follows it, which is where arming happens.
-         * 1200 characters is comfortably past the longest of these sites and
-         * well short of the next one. */
-        const window = src.slice(i, i + 1200);
-        const opts = window.slice(0, window.indexOf('});') + 3);
-        if (!/layer:\s*LAYER\.(DEBRIS|PROP)/.test(opts)) continue;
+         * Bounded by the NEXT `new Body(` rather than by a character count: the
+         * count was 1200 and three sites grew a paragraph of justification
+         * between the constructor and their `armKinetic` call, so the scan
+         * reported three armed bodies as unarmed. A window measured in prose is
+         * a window that moves when somebody writes a comment. */
+        const next = src.indexOf('new Body(', i + 1);
+        const window = src.slice(i, next > i ? next : i + 4000);
         const line = src.slice(0, i).split('\n').length;
         strikers.push(`${name}:${line}`);
         if (!/armKinetic\(|kinetic:\s*false/.test(window)) unarmed.push(`${name}:${line}`);
       }
     }
-    assert(strikers.length >= 3,
-      `only ${strikers.length} striker construction sites found across src/game and src/world — the scan is `
+    assert(strikers.length >= 9,
+      `only ${strikers.length} body construction sites found across src/game and src/world — the scan is `
       + 'not finding them, and a scan that finds nothing passes forever');
     assert(unarmed.length === 0,
-      `${unarmed.length} of ${strikers.length} striker sites build a body on the DEBRIS or PROP layer and `
-      + `never arm it: ${unarmed.join(', ')}. A body that can land on somebody and does nothing is the `
-      + 'defect this channel exists to close. Call `armKinetic(body)`, or say `kinetic: false` if it is '
-      + 'genuinely meant to be inert');
-    return `${strikers.length} striker sites, all armed — ${strikers.join(', ')}`;
+      `${unarmed.length} of ${strikers.length} bodies are built and never armed: ${unarmed.join(', ')}. `
+      + 'Everything with mass is a striker. A body that can land on somebody, walk into somebody or be '
+      + 'thrown at somebody and does nothing is the defect this channel exists to close. Call '
+      + '`armKinetic(body)`, or say `kinetic: false` if it is genuinely meant to be inert');
+    return `${strikers.length} body sites, all armed — ${strikers.join(', ')}`;
   });
 
   check('contacts: debris and wrecks are armed the moment the world makes them', async () => {
@@ -394,31 +492,47 @@ export async function run({ check, assert }) {
     return 'spawnDebris hands out an armed body';
   });
 
-  check('contacts: the thrown crate is claimed by exactly one system', async () => {
-    /* The prop half of `Player._updateHurled` was retired when this channel
-     * came back, because a prop's mask names ENEMY and the contact reaches the
-     * droid against the real hull. Keeping both would bill the throw twice.
-     * The body half was NOT retired and must not be quietly finished: a
-     * ragdoll and a living enemy are not a collider pair at all. */
+  check('contacts: every throw is claimed by exactly one system', async () => {
+    /**
+     * BOTH HALVES ARE RETIRED NOW, and the second one could only be retired
+     * once the masks changed.
+     *
+     * The prop half went first: a prop's mask has always named ENEMY, so the
+     * contact reaches the droid against the real hull. The body half could
+     * not, because `Ragdoll`'s mask did not name ENEMY and `Enemy`'s did not
+     * name RAGDOLL — a corpse and a living droid were not a collider pair at
+     * all, and no contact between them could ever be raised. This check used
+     * to assert those masks stayed apart, with a note saying that whoever
+     * changed them had to retire the sweep in the same commit. They were
+     * changed, and it was.
+     *
+     * So what is asserted now is the other direction: the masks pair, the
+     * sweep is GONE, and what is left of `_updateHurled` is only the claim
+     * ticket that decides whose kill it is.
+     */
     const src = await import('node:fs').then((fs) => fs.readFileSync(
       new URL('../../src/game/Player.js', import.meta.url), 'utf8'));
     const upd = src.slice(src.indexOf('_updateHurled(dt, ctx) {'));
     const body = upd.slice(0, upd.indexOf('\n  }\n'));
-    assert(/if \(!h\.isBody\)/.test(body),
-      '`_updateHurled` no longer separates a prop record from a body record. A prop is handled by the '
-      + 'contact channel now, and a sweep that still walks `ctx.enemies` for one bills it twice');
+    /* Comments stripped first. This file's own note about the sweep names
+     * `ctx.enemies` in prose, and a check that cannot tell a comment from code
+     * fails on the paragraph explaining why it should pass. */
+    const code = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+    assert(!/ctx\.enemies/.test(code),
+      '`_updateHurled` walks `ctx.enemies` again. That is the sweep, and with the contact channel live it '
+      + 'is a SECOND system billing the same hit');
     assert(/hurledBy/.test(body),
       '`_updateHurled` no longer clears `userData.hurledBy`. That claim is what makes a kill yours, and '
       + 'a claim nothing releases credits you with a crate that killed somebody two minutes later');
 
-    const { LAYER } = RW;
-    const rag = await import('node:fs').then((fs) => fs.readFileSync(
-      new URL('../../src/game/Ragdoll.js', import.meta.url), 'utf8'));
-    assert(!/mask:\s*LAYER\.WORLD \| LAYER\.RAGDOLL \| LAYER\.DEBRIS \| LAYER\.PROP \| LAYER\.PLAYER \| LAYER\.ENEMY/.test(rag),
-      'Ragdoll\'s mask now names ENEMY. That is the change that would let the contact channel reach a '
-      + 'thrown body — which is good, but it means the body branch of `_updateHurled` is now a SECOND '
-      + 'system billing the same hit, and it has to be retired in the same commit');
-    assert(LAYER.ENEMY && LAYER.RAGDOLL, 'the layer table lost ENEMY or RAGDOLL');
-    return 'prop through contacts, body through the sweep, masks unchanged';
+    const read = await import('node:fs').then((fs) => (f) =>
+      fs.readFileSync(new URL(`../../src/game/${f}`, import.meta.url), 'utf8'));
+    const rag = read('Ragdoll.js'), en = read('Enemy.js');
+    assert(/mask:[^\n]*LAYER\.ENEMY/.test(rag),
+      'Ragdoll\'s mask no longer names ENEMY, so a thrown corpse cannot reach a living droid through any '
+      + 'contact — and the sweep that used to do it has been deleted');
+    assert(/mask:[^\n]*LAYER\.RAGDOLL/.test(en),
+      'Enemy\'s mask no longer names RAGDOLL — half a pair, and therefore inert');
+    return 'both halves through contacts; the sweep is gone and only the claim ticket is left';
   });
 }

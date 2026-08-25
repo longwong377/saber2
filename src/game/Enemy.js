@@ -21,6 +21,7 @@ import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
   DUEL_PHASES, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
 import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
+import { armKinetic, KINETIC_BODY } from './Impact.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
@@ -3074,10 +3075,30 @@ export class Enemy {
        * their masks on the understanding that it does not. RAGDOLL is absent
        * because the corpse's own mask (Ragdoll.js) does not name ENEMY, so it
        * would be half a pair and therefore inert. */
-      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS,
+      /* AND NOW IT ALSO MEETS CORPSES, OTHER BODIES AND THE PLAYER.
+       *
+       * This named WORLD, PROP and DEBRIS only, which was the right answer for
+       * as long as nothing was ever told that two things touched: RAGDOLL was
+       * left out because "the corpse's own mask does not name ENEMY, so it
+       * would be half a pair and therefore inert", and ENEMY and PLAYER were
+       * left out because two kinematic capsules cannot push each other and
+       * there was nothing else a pair could have been for.
+       *
+       * There is now. A contact between two bodies is the only way the game
+       * can know that a beast charged a line, that a thrown corpse landed on
+       * somebody, or that an AT-TE — which is an `Enemy` with a vehicle
+       * archetype — walked through infantry. Both sides are kinematic so
+       * Rapier still resolves nothing and nobody is pushed anywhere; what
+       * changes is that the pair now EXISTS, and a pair that exists can raise
+       * an event. Ragdoll.js names ENEMY on its side in the same commit, so
+       * the half-a-pair problem is closed rather than moved. */
+      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER,
       allowSleep: false, gravityScale: 0,
     });
     this.body.userData.enemy = this;
+    /* A BODY IS A STRIKER. Everything with mass and motion is, and a machine
+     * most of all — see KINETIC_BODY in Impact.js. */
+    armKinetic(this.body, KINETIC_BODY);
     world.physics.add(this.body);
 
     this._caps = [];
@@ -8312,6 +8333,45 @@ export class Enemy {
   _syncBody() {
     if (this.bodyRemoved) return;
     this.body.setTransform(_v1.set(this.position.x, this.position.y + (this.A.big ? 1.4 : 0.9), this.position.z), null);
+    /**
+     * AND IT CARRIES THE SPEED IT IS BEING CARRIED AT.
+     *
+     * `setTransform` moves the capsule and says nothing about how fast, so this
+     * body reported no speed at all for its whole life however hard it was
+     * running — and the contact dispatcher prices a body-on-body hit off
+     * exactly that number, so a charging beast read as standing still.
+     *
+     * It goes on `kinVel` and NOT on `.velocity`. A kinematic body's linear
+     * velocity is ignored by Rapier and is therefore used by other things: the
+     * co-op netcode stages a remote Force impulse in it and reads it back next
+     * tick. Writing the walk speed there wiped that impulse every frame, and
+     * `coop.mjs` reported it as "the impulse is not on the wire". It was on the
+     * wire; it was being overwritten on arrival. See `Body.kinVel`.
+     */
+    this.body.kinVel.copy(this.velocity);
+    /**
+     * AND THE CAPSULE JOINS ITS OWN CORPSE'S SELF-EXCLUSION GROUP.
+     *
+     * `Enemy`'s mask names RAGDOLL now, so a body and a corpse are a collider
+     * pair — which is the point: a thrown corpse has to be able to hit a
+     * standing man. It also means a body's own bones pair with its own capsule,
+     * and a ragdoll wedged inside the capsule it came out of is a corpse that
+     * cannot fall over.
+     *
+     * `selfGroup` is the machinery that already solves this for bone-on-bone
+     * and it solves this too, unchanged: `groups()` strips RAGDOLL from the
+     * mask and puts back every self bit EXCEPT this body's own, so the capsule
+     * still meets every other corpse on the field and never its own.
+     *
+     * It is done here, lazily, rather than beside the `Actor` that owns the
+     * group. Tried there first and `body.selfGroup` was still 0 at runtime:
+     * there is more than one path that builds an actor and only one of them
+     * went through the line. A frame-late assignment guarded by a comparison
+     * costs nothing and cannot be routed around.
+     */
+    if (this.body.selfGroup === 0 && this.actor?.selfGroup) {
+      this.body.setSelfGroup(this.actor.selfGroup);
+    }
   }
 
   /* ── pose ────────────────────────────────────────────────────────── */

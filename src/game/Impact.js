@@ -75,6 +75,50 @@ const _back = new THREE.Vector3();
 export const KINETIC_MIN_SPEED = 6;
 
 /**
+ * …AND THE SAME GATE FOR A BODY, WHICH IS MUCH LOWER, BECAUSE MASS CARRIES IT.
+ *
+ * The 6 above is right for a thing whose damage comes from how fast it is
+ * going — a crate, a chunk, a limb. A living body's comes from how much of it
+ * there is: an AT-TE is 900 kg and a beast is 1400, and neither of them ever
+ * moves at 6 m/s. At 4 m/s a walker reads 8.6 damage and at 1.5 it reads 1.2,
+ * so the curve is already doing the gating; all this floor has to do is stop
+ * two droids brushing shoulders in a crowd from being an event.
+ */
+export const KINETIC_MIN_APPROACH = 1.5;
+
+/**
+ * HOW OFTEN ONE BODY MAY HURT THE SAME BODY, in seconds.
+ *
+ * A contact START is once per meeting, which is all the dedupe a crate needs:
+ * it arrives, it hits, it is done. Two LIVING bodies do not do that. They are
+ * kinematic capsules driven into each other by their own locomotion, and while
+ * they are overlapping they slide, separate by a millimetre and touch again —
+ * so the pair raises a start, and another, and another, several times a second
+ * for as long as they are jostling.
+ *
+ * Found by `powers.mjs`, which had nothing to do with contacts: its mend test
+ * put a hurt ally next to the player and reported "the ally went 14 → 4 hp —
+ * the mend paid for itself and did nothing". Ten damage from standing next to
+ * somebody, arriving as a few dozen tiny bills.
+ */
+export const BODY_HIT_EVERY = 0.6;
+
+/**
+ * What a body's blow is worth to somebody on its OWN side.
+ *
+ * `Command.installTeamDamage` already wraps `damage` on enlisted bodies and
+ * scales a blow to a team-mate by `settings.teamDamage`, 0.35 by default. That
+ * wrapper is only installed where an army has been enlisted, so in Waves or
+ * the Trials a Jedi walking into their own trooper would be billed in full —
+ * and a body walking into a body is the one kind of blow that happens whether
+ * or not anybody meant it. So the same rule is applied here, off the victim's
+ * own `teamDamage` where it has one, and the wrapper is left to do its work
+ * where it exists: the two compose, which is right, because a shove between
+ * team-mates should be gentler than a shove between enemies twice over.
+ */
+export const TEAM_SHARE = 0.35;
+
+/**
  * The default price of a collision, and it is the CRATE's price.
  *
  * `k`, `floor` and `cap` are `impactDamage`'s own signature. The floor is 0
@@ -108,6 +152,24 @@ export const KINETIC = { k: 0.0006, floor: 0, cap: 140 };
  * already set — it is the same field that decides whose kill it is.
  */
 export const KINETIC_THROWN = { k: 0.0006, floor: 8, cap: 140 };
+
+/**
+ * …AND THE PRICE OF BEING HIT BY SOMETHING ALIVE.
+ *
+ * Same curve, and two differences that are both about what a body is.
+ *
+ * `hurtsProps: false` — a body shoves scenery, it does not smash it. Every
+ * droid in a crowd brushing past every crate in a level would otherwise chew
+ * through the props of a busy room in a minute, and a trooper walking into a
+ * barrel is not an attack on the barrel. The shove still happens; that is
+ * Rapier's job and it has always worked.
+ *
+ * The cap is the same 140 and it BINDS here, which is the point. A 1400 kg
+ * beast at 8 m/s prices at 430 and a walker at 6 prices at 194: both saturate,
+ * and that is the correct read — being run down by either should be somewhere
+ * between very bad and fatal rather than a number that scales forever.
+ */
+export const KINETIC_BODY = { k: 0.0006, floor: 0, cap: 140, hurtsProps: false };
 
 /**
  * Arm a body so that what it hits knows about it.
@@ -146,6 +208,26 @@ export function victimOf(body) {
 }
 
 /**
+ * Are these two bodies parts of ONE creature?
+ *
+ * Three ways they can be, and all three happen: the same body on both sides of
+ * a pair (Rapier will not raise that, but a caller might), a bone and the
+ * capsule of the actor it belongs to, and two bones of the same ragdoll.
+ * `userData.actor` is the Ragdoll and `Enemy.actor` is the same object, which
+ * is what makes the middle case answerable at all.
+ */
+export function sameCreature(a, b, victim) {
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const ua = a.userData, ub = b.userData;
+  if (ua.actor && ua.actor === ub.actor) return true;              // two bones, one corpse
+  const mine = ua.enemy || ua.player;
+  if (mine && (mine === victim || mine.actor === ub.actor)) return true;
+  if (ua.actor && victim && victim.actor === ua.actor) return true;  // bone → its own body
+  return false;
+}
+
+/**
  * The handler itself. `this` is the armed body; `c` is RapierWorld's scratch
  * contact and must not be kept.
  *
@@ -155,7 +237,10 @@ export function victimOf(body) {
  * three special cases it replaces.
  */
 export function kineticContact(other, c) {
-  if (c.speed < KINETIC_MIN_SPEED) return;
+  /* Two gates, because there are two regimes — see KINETIC_MIN_APPROACH.
+   * `c.approach` is set by the dispatcher when neither side could recoil, which
+   * is every pair of living bodies in the game. */
+  if (c.speed < (c.approach ? KINETIC_MIN_APPROACH : KINETIC_MIN_SPEED)) return;
   const self = c.self;
   /**
    * WHOSE KILL IT IS decides WHAT IT IS WORTH, which is one lookup for both.
@@ -164,8 +249,9 @@ export function kineticContact(other, c) {
    * claim, is ordinary matter again. See `KINETIC_THROWN`.
    */
   const source = self.userData.hurledBy || null;
-  const tune = self.userData.kinetic || (source ? KINETIC_THROWN : KINETIC);
-  const dmg = impactDamage(c.mass, c.speed, tune);
+  const tune = self.userData.kinetic
+    || (source ? KINETIC_THROWN : (c.approach ? KINETIC_BODY : KINETIC));
+  let dmg = impactDamage(c.mass, c.speed, tune);
   if (dmg <= 0) return;
 
   /* A thrown thing carries its thrower, so a droid crushed by a crate you put
@@ -176,6 +262,22 @@ export function kineticContact(other, c) {
   _dir.copy(c.normal);
 
   const victim = victimOf(other);
+
+  /**
+   * NOTHING HITS ITSELF, and this is not a theoretical case.
+   *
+   * A creature is in the physics world more than once: a living body is a
+   * kinematic capsule, and the moment it goes down it is ALSO nineteen ragdoll
+   * capsules occupying the same space. Now that RAGDOLL and ENEMY name each
+   * other, those two halves of one creature are a collider pair — so a downed
+   * trooper's own shoulder grinds against their own capsule and bills them for
+   * it, several times a second, forever.
+   *
+   * `powers.mjs` caught it and the shape of the report is worth keeping: its
+   * mend test said "the ally went 14 → 4 hp — the mend paid for itself and did
+   * nothing". Nobody was attacking anybody. The man was lying on himself.
+   */
+  if (victim && sameCreature(self, other, victim)) return;
 
   // The world itself: architecture, a wall, the ground. Nothing to hurt, but
   // the thing that hit it can still break on it.
@@ -194,6 +296,31 @@ export function kineticContact(other, c) {
     const key = victim.id ?? victim;
     if (seen.has(key)) return;
     seen.add(key);
+  }
+
+  /**
+   * A BODY DOES NOT HIT THE SAME BODY TWICE IN A HURRY, and it does not hit
+   * its own side as hard. Both only apply to the body regime — a crate has
+   * neither a side nor a habit of lingering. See BODY_HIT_EVERY, TEAM_SHARE.
+   */
+  if (c.approach) {
+    let log = self.userData.kinLog;
+    if (!log) { log = self.userData.kinLog = new Map(); }
+    const key = victim.id ?? victim;
+    const last = log.get(key);
+    if (last !== undefined && c.time - last < BODY_HIT_EVERY) return;
+    log.set(key, c.time);
+    /* The map is per striker and a striker meets a bounded number of things;
+     * it is still swept, because a body that lives a whole level meets a lot
+     * of them one at a time. */
+    if (log.size > 24) for (const [k, t] of log) { if (c.time - t > BODY_HIT_EVERY * 4) log.delete(k); }
+
+    const mine = self.userData.enemy?.team ?? self.userData.player?.team;
+    const theirs = victim.team;
+    if (mine !== undefined && theirs !== undefined && mine === theirs) {
+      dmg *= (victim.teamDamage ?? TEAM_SHARE);
+      if (dmg <= 0) { _thud(_pt, 1); return; }
+    }
   }
 
   if (typeof victim.applyKnockback === 'function') {
@@ -220,8 +347,10 @@ export function kineticContact(other, c) {
     _imp.copy(_dir).multiplyScalar(mag).setY(Math.min(4, mag * 0.27));
     victim.applyKnockback(_imp, dmg, source);
   } else if (typeof victim.damage === 'function') {
-    // A prop. Its own `damage` decides whether that was enough to break it.
-    victim.damage(dmg, _pt, _dir);
+    // A prop. Its own `damage` decides whether that was enough to break it —
+    // unless the striker is a body, which shoves scenery rather than breaking
+    // it. See KINETIC_BODY.
+    if (tune.hurtsProps !== false) victim.damage(dmg, _pt, _dir);
   }
 
   _selfDamage(self, tune, dmg, _pt, _dir);

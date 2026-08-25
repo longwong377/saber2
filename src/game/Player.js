@@ -18,6 +18,7 @@ import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
 import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
+import { armKinetic, KINETIC_BODY } from './Impact.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
@@ -3114,10 +3115,16 @@ export class Player {
       spheres: capsuleSpheres(0.55, this.radius, 'y', 3),
       shape: capsule(0.55, this.radius),
       mass: 78, kinematic: true, static: false, layer: LAYER.PLAYER,
-      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL,
+      /* ENEMY added: a body walking into you, and you into it, is a contact
+       * now rather than two capsules ignoring each other. See Enemy.js's own
+       * note — both are kinematic, so nothing is pushed; what changes is that
+       * the pair exists and can raise an event. */
+      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY,
       allowSleep: false, gravityScale: 0,
     });
     this.body.userData.player = this;
+    /* You are matter too. A Jedi at a dead sprint into a droid is a hit. */
+    armKinetic(this.body, KINETIC_BODY);
     world.physics.add(this.body);
 
     this.chest = new THREE.Vector3();
@@ -7388,13 +7395,14 @@ export class Player {
        * the player, and when to let go of that claim. `_updateHurled` runs only
        * that half for a prop now.
        *
-       * WHAT IS NOT RETIRED, and why, so nobody finishes the job blindly: a
-       * thrown BODY still needs the sweep. `Ragdoll`'s mask does not name
-       * ENEMY and `Enemy`'s does not name RAGDOLL — deliberately, see the note
-       * at Enemy.js's body construction — so a corpse and a living droid are
-       * not a collider pair at all and no contact between them will ever be
-       * raised. Retiring the body branch means changing those masks first, and
-       * that changes how every corpse in the game behaves.
+       * AND THE BODY BRANCH IS RETIRED TOO, NOW THAT IT CAN BE. This note used
+       * to say a thrown BODY still needed the sweep, because `Ragdoll`'s mask
+       * did not name ENEMY and `Enemy`'s did not name RAGDOLL, so a corpse and
+       * a living droid were not a collider pair at all and no contact between
+       * them could ever be raised. Both masks name the other now and every
+       * ragdoll bone is armed, so a thrown body reaches what it lands on
+       * through Rapier's own narrowphase — against nineteen real capsules
+       * rather than against one sphere at the chest.
        */
     }
     const rec = {
@@ -7417,7 +7425,27 @@ export class Player {
       mass: isBody ? (thing.A ? thing.A.mass : 80) : Math.max(1, thing.mass),
       radius: isBody ? (thing.radius ?? 0.55) : thing.boundingRadius,
     };
-    if (!isBody) thing.userData.hurlHit = rec.hit;
+    /**
+     * THE CLAIM GOES ON EVERY BODY THE THROW IS MADE OF.
+     *
+     * A prop is one body and takes the ticket directly. A thrown PERSON is a
+     * ragdoll — nineteen capsules, any of which may be the one that lands on
+     * somebody — so the thrower's claim and the throw's one-hit-per-victim set
+     * go on all of them, sharing the SAME Set so an arm and a shoulder
+     * arriving together bill once between them rather than once each.
+     */
+    if (!isBody) {
+      thing.userData.hurlHit = rec.hit;
+    } else {
+      const a2 = thing.actor;
+      if (a2?.bodies) {
+        for (const b2 of a2.bodies.values()) {
+          b2.userData.hurledBy = this;
+          b2.userData.hurlTimer = 2.6;
+          b2.userData.hurlHit = rec.hit;
+        }
+      }
+    }
     this.hurled.push(rec);
     if (this.hurled.length > 12) this.hurled.shift();
   }
@@ -7449,60 +7477,29 @@ export class Player {
        * what stops a crate you threw two minutes ago from being credited to
        * you when a collapse finally knocks it into somebody.
        */
-      if (!h.isBody) {
+      /* EVERY record is a claim ticket now, body or prop: the hit itself
+       * arrives through the contact channel either way. What is left is how
+       * long the kill counts as yours. */
+      {
+        const each = (fn) => {
+          if (!h.isBody) { if (h.thing.userData) fn(h.thing.userData); return; }
+          const a2 = h.thing.actor;
+          if (a2?.bodies) for (const b2 of a2.bodies.values()) fn(b2.userData);
+        };
         if (h.timer <= 0 || h.thing.dead) {
-          if (h.thing.userData) {
-            h.thing.userData.hurledBy = null;
-            h.thing.userData.hurlTimer = 0;
-            h.thing.userData.hurlHit = null;
-          }
+          each((u) => { u.hurledBy = null; u.hurlTimer = 0; u.hurlHit = null; });
           this.hurled.splice(i, 1);
-        } else if (h.thing.userData) {
-          h.thing.userData.hurlTimer = h.timer;
+        } else {
+          each((u) => { u.hurlTimer = h.timer; });
         }
         continue;
       }
-      Player._hurlVel(h, _g3);
-      const speed = _g3.length();
-      // Spent: out of time, gone, or slowed to something that could not hurt a
-      // droid if it landed on one.
-      if (h.timer <= 0 || h.thing.dead || speed < 7) { this.hurled.splice(i, 1); continue; }
-      Player._hurlPos(h, _g4);
-      for (const e of ctx.enemies || []) {
-        if (e.dead || e === h.thing || h.hit.has(e.id)) continue;
-        const r = h.radius + (e.radius ?? 0.4) + 0.25;
-        _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
-        if (_g1.distanceToSquared(_g4) > r * r) continue;
-        h.hit.add(e.id);
-        // Kinetic energy, scaled to the damage numbers this game uses: a 22 kg
-        // crate at 40 m/s reads 21, a 210 kg droideka body at 25 reads 79, and
-        // the ceiling stops a pillar from one-shotting a boss. The record was
-        // built carrying `k`, `floor` and `cap`, which is exactly the rule's
-        // own signature — and `Forest._sweep` prices a falling trunk through
-        // the same function rather than through a second copy of this line.
-        const dmg = impactDamage(h.mass, speed, h);
-        _g2.copy(_g3).multiplyScalar(1 / Math.max(1e-3, speed));
-        e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.5, 4, 22)).setY(4), dmg, this);
-        /* BOTH BODIES TAKE A SHARE. A person thrown into a person hurts the
-         * person who was thrown, and that is what makes a living projectile a
-         * decision rather than a free crowd-clear: you are spending the body
-         * you are holding. A crate takes nothing, because a crate has no
-         * health and shattering it is `Prop`'s own business. */
-        if (h.isBody && !h.thing.dead) {
-          h.thing.damage?.(dmg * 0.55, e.position, this, 'impact');
-          h.thing.stun?.(0.5, _g2, 1.0);
-        }
-        audio.thud(_g4, clamp(dmg / 60, 0.4, 1.4));
-        this.camera.addShake(clamp(dmg / 220, 0.04, 0.3));
-        ctx.particles?.sparkBurst(_g4, null, 14, { speed: 7 });
-        // A throw sheds most of its momentum into whatever it hit.
-        if (h.isBody) {
-          const a = h.thing.actor;
-          if (a?.ragdolled) for (const b of a.bodies.values()) b.velocity.multiplyScalar(0.4);
-        } else {
-          h.thing.velocity.multiplyScalar(0.35);
-        }
-      }
+      /* THE SWEEP IS GONE. Everything below this line used to be it: a
+       * per-frame sphere test of the thrown thing against `ctx.enemies`, run
+       * by the THROWER because nothing else in the game could be told that two
+       * objects had touched. `RapierWorld._dispatchContacts` tells them now,
+       * and a thrown body reaches a droid through nineteen real capsules
+       * rather than one sphere at the chest. See `_trackHurl`. */
     }
   }
 

@@ -55,7 +55,7 @@ const _ra = new THREE.Vector3(), _rb = new THREE.Vector3(), _js = new THREE.Vect
 const _ZERO = new THREE.Vector3();
 /** The scratch contact handed to every `Body.onContact`. See _dispatchContacts. */
 const _contact = {
-  self: null, other: null, speed: 0, mass: 0, impulse: 0, world: false,
+  self: null, other: null, speed: 0, mass: 0, impulse: 0, world: false, approach: false, time: 0,
   normal: new THREE.Vector3(), point: new THREE.Vector3(),
 };
 
@@ -490,6 +490,21 @@ export class Body {
      * for why the closing speed on its own is not good enough.
      */
     this._pv = new THREE.Vector3();
+    /**
+     * HOW FAST A KINEMATIC BODY IS BEING CARRIED, which is not its `velocity`.
+     *
+     * A kinematic body is moved by `setTransform`, so Rapier neither reads nor
+     * writes its linear velocity and `.velocity` is free for other things to
+     * use — which they do: the co-op netcode stages a remote Force impulse
+     * there and reads it back on the next tick. Writing the walk speed into
+     * `.velocity` so the contact dispatcher could see it wiped that impulse
+     * every frame, and `coop.mjs` said so: "a guest's throw moved the host's
+     * body 0.150 m — the impulse is not on the wire". It was on the wire. It
+     * was being overwritten on arrival.
+     *
+     * So the carried speed lives here instead and `.velocity` is left alone.
+     */
+    this.kinVel = new THREE.Vector3();
     this._impulses = null;
   }
 
@@ -506,6 +521,24 @@ export class Body {
     const had = !!this._onContact;
     this._onContact = fn || null;
     if (!!this._onContact !== had) this._syncContactEvents();
+  }
+
+  /**
+   * Join this body to a self-exclusion group, or change which one, live.
+   *
+   * `selfGroup` was a constructor-only field because the only thing that used
+   * it was a ragdoll, and a ragdoll knows its group before it builds a bone.
+   * A LIVING body does not: its capsule is built in `Enemy`'s constructor and
+   * its `Actor` — which owns the group — comes later. Being able to say so
+   * afterwards is what lets a corpse and the capsule it came out of stop
+   * colliding with each other.
+   */
+  setSelfGroup(g) {
+    this.selfGroup = g | 0;
+    if (!this.colliders || !this._world || this._world.dead) return this;
+    const groups = this.groups();
+    for (const c of this.colliders) c.setCollisionGroups(groups);
+    return this;
   }
 
   _syncContactEvents() {
@@ -562,12 +595,38 @@ export class Body {
   _syncContactArm() {
     const w = this._world;
     if (!w || w.dead || !this.colliders) return;
-    const want = !!this._onContact && !this.static
-      && this.velocity.lengthSq() >= w._armSpeed2;
+    /* A KINEMATIC BODY ARMS AT A LOWER SPEED, because its damage comes from
+     * its MASS rather than its pace — see Impact.KINETIC_MIN_APPROACH. A
+     * walker crossing a line at 3 m/s is what the 4 m/s gate would miss, and
+     * it is the case the whole body regime exists for. */
+    const gate = this.kinematic ? 1.0 : w._armSpeed2;
+    const v = this.kinematic ? this.kinVel : this.velocity;
+    const want = !!this._onContact && !this.static && v.lengthSq() >= gate;
     if (want === this._armed) return;
     this._armed = want;
-    const f = want ? w.R.ActiveEvents.COLLISION_EVENTS : w.R.ActiveEvents.NONE;
-    for (const c of this.colliders) c.setActiveEvents(f);
+    const R = w.R;
+    const f = want ? R.ActiveEvents.COLLISION_EVENTS : R.ActiveEvents.NONE;
+    /**
+     * AND THE COLLISION TYPES, WITHOUT WHICH ARMING A BODY DOES NOTHING.
+     *
+     * Rapier's default `ActiveCollisionTypes` is DYNAMIC_DYNAMIC |
+     * DYNAMIC_KINEMATIC | DYNAMIC_FIXED. KINEMATIC_KINEMATIC is not in it.
+     * Every living body in this game — every droid, every walker, the player —
+     * is a KINEMATIC capsule, so a pair of them generates no contact at all and
+     * no amount of arming, masking or event-flagging changes that.
+     *
+     * Measured on the vendored build, two kinematic boxes driven together over
+     * 120 steps: **0 start events at the default, 1 with ALL**. Without this
+     * line the whole "everything with mass is a striker" change is inert, and
+     * every check that looks at flags rather than at damage passes anyway.
+     *
+     * FIXED_FIXED is left out: two static boxes cannot begin to touch, and
+     * paying the narrowphase for every pair of them in a level's architecture
+     * is the one part of ALL that buys nothing.
+     */
+    const T = R.ActiveCollisionTypes;
+    const types = want ? (T.ALL & ~T.FIXED_FIXED) : T.DEFAULT;
+    for (const c of this.colliders) { c.setActiveEvents(f); c.setActiveCollisionTypes(types); }
   }
 
   /* ── impulses ────────────────────────────────────────────────────── */
@@ -1110,6 +1169,15 @@ export class RapierWorld {
      * listening before it can do harm. Squared once here because the step loop
      * asks the question of every armed body every step.
      */
+    /**
+     * Seconds of simulated time, handed to every contact as `c.time`.
+     *
+     * A consumer that needs "not again for a while" has nowhere else to get a
+     * clock: the physics world is stepped from gameplay but does not carry
+     * gameplay's time, and `performance.now()` is wall time, which runs on
+     * through a pause and does not run at all in a headless replay.
+     */
+    this.simTime = 0;
     this.contactArmSpeed = opts.contactArmSpeed ?? 4;
     this._armSpeed2 = this.contactArmSpeed * this.contactArmSpeed;
 
@@ -1599,6 +1667,7 @@ export class RapierWorld {
   /** ONE integration step, of at most MAX_STEP. See `step`. */
   _stepOnce(dt) {
     const t0 = performance.now();
+    this.simTime += dt;
 
     this._refreshHeightfield(dt);
     if (this.joints.length) this._solveJoints(dt);
@@ -1785,7 +1854,66 @@ export class RapierWorld {
       const ma = a && !a.static && !a.kinematic ? a.mass : 0;
       const mb = b && !b.static && !b.kinematic ? b.mass : 0;
       const mass = (ma > 0 && mb > 0) ? (ma * mb) / (ma + mb) : (ma > 0 ? ma : mb);
-      if (!(mass > 0)) continue;
+
+      /**
+       * TWO THINGS THAT CANNOT RECOIL — the regime Δv cannot price at all, and
+       * the one that covers every LIVING body in the game.
+       *
+       * `Enemy` and `Player` carry KINEMATIC capsules: they go exactly where
+       * gameplay puts them and a contact never changes their velocity. So the
+       * whole trick this dispatcher rests on — read the impulse off `mass ×
+       * (v_after − v_before)` — reads zero for both sides of a droid walking
+       * into a droid, a beast charging a line, or an AT-TE stepping through
+       * infantry. `mass` above is 0 for such a pair and everything below it
+       * would divide by nothing.
+       *
+       * Those are not edge cases. A crewed machine in this game IS an `Enemy`
+       * with a vehicle archetype (see `Driving.isCrewed`), so this branch is
+       * what makes a walker running you over a physical event rather than
+       * scenery walking through you.
+       *
+       * With no recoil to measure, the honest quantity is the CLOSING SPEED
+       * along the line between them, which is the same thing the retired sweep
+       * used and rejects a graze the same way Δv does: a walker striding PAST
+       * you closes at almost nothing, and one striding INTO you closes at its
+       * full pace.
+       */
+      let approach = 0;
+      if (!(mass > 0)) {
+        const da = a && a.mass > 0 ? a.mass : 0, db = b && b.mass > 0 ? b.mass : 0;
+        // a static box or the heightfield: there is no exchange to price
+        if (!(da > 0 && db > 0)) continue;
+        _v4.copy(b.position).sub(a.position);
+        const d = _v4.length();
+        if (d < 1e-4) continue;
+        _v4.multiplyScalar(1 / d);
+        /* The CARRIED speed for a kinematic body — see `Body.kinVel`. Its
+         * `.velocity` is somebody else's field and is usually zero. */
+        approach = _v5.copy(a.kinematic ? a.kinVel : a.velocity)
+          .sub(b.kinematic ? b.kinVel : b.velocity).dot(_v4);
+        if (approach < this.contactFloor) continue;
+        const c2 = _contact;
+        c2.speed = approach;
+        c2.impulse = 0;
+        c2.approach = true;
+        c2.time = this.simTime;
+        c2.normal.copy(_v4);
+        c2.point.copy(a.position).add(b.position).multiplyScalar(0.5);
+        c2.world = false;
+        n++;
+        /* THE MASS IS THE STRIKER'S OWN, set per handler rather than once.
+         * A 900 kg walker meeting a 52 kg B1 is not one number: the walker
+         * delivers a walker's worth and the droid delivers a droid's worth,
+         * and handing both sides the same reduced mass would have the B1
+         * hitting back like a walker. */
+        const ah2 = a._onContact, bh2 = b._onContact;
+        if (ah2) { c2.self = a; c2.other = b; c2.mass = a.mass; ah2.call(a, b, c2); }
+        if (bh2 && !b.dead) {
+          c2.self = b; c2.other = a; c2.mass = b.mass;
+          c2.normal.negate(); bh2.call(b, a, c2); c2.normal.negate();
+        }
+        continue;
+      }
 
       /**
        * HOW HARD, AND WHY IT IS NOT THE CLOSING SPEED.
@@ -1854,6 +1982,8 @@ export class RapierWorld {
       c.speed = speed;
       c.mass = mass;
       c.impulse = J;
+      c.approach = false;
+      c.time = this.simTime;
       /**
        * The direction the exchange pushed, which is the direction a consumer
        * wants for knockback. It is the Δv of whichever side was measured —

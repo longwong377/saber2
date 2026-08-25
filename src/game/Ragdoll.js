@@ -285,13 +285,22 @@ export class Actor {
         linearDamping: 0.08, angularDamping: 0.18,
         solverIterations: 4, inertiaScale: 3,
         layer: LAYER.RAGDOLL,
-        mask: LAYER.WORLD | LAYER.RAGDOLL | LAYER.DEBRIS | LAYER.PROP | LAYER.PLAYER,
+        /* ENEMY IS NAMED NOW. It was left out because `Enemy`'s own mask did
+         * not name RAGDOLL, so the pair would have been half a pair and inert;
+         * Enemy.js names it in the same commit. A corpse thrown into a squad is
+         * the thing this makes possible. */
+        mask: LAYER.WORLD | LAYER.RAGDOLL | LAYER.DEBRIS | LAYER.PROP | LAYER.PLAYER | LAYER.ENEMY,
         selfGroup: this.selfGroup,
       });
       if (velocity) body.velocity.copy(velocity);
       if (angular) body.angularVelocity.copy(angular);
       body.userData.actor = this;
       body.userData.bone = bone.name;
+      /* A CORPSE IS MATTER. Every bone is a striker — a body thrown into a
+       * squad, a limb torn off at speed, a dead trooper knocked down a stair
+       * into the men below. These are dynamic, so the contact is priced off
+       * Rapier's own Δv like a crate's rather than off closing speed. */
+      armKinetic(body);
       this.physics.add(body);
       this.bodies.set(bone.name, body);
 

@@ -1791,7 +1791,26 @@ export class Prop {
       this.world.particles.smoke.spawn(centre, _v1.set(0, 1.2, 0), { life: 1.4, size: 0.6, drag: 1.6, gravity: -1, color: 0x4a4a4e, alpha: 0.4 });
     }
     const n = this.generation >= 1 ? 3 : 6;
-    const geo = this.mesh.geometry;
+    /**
+     * A PROP WITH NO GEOMETRY CANNOT BE BROKEN INTO PIECES OF ITSELF.
+     *
+     * `this.mesh.geometry` was read straight, and there is a whole family of
+     * props whose `mesh` is a GROUP rather than a mesh — a dropped lightsaber
+     * is one, which is a hilt, an emitter and a blade. `shatter` threw on them.
+     *
+     * It was unreachable for as long as the only things that broke props were
+     * the blade and a deliberate throw, neither of which is aimed at a dropped
+     * weapon. Making every body a striker made it reachable at once: a droid
+     * walking into a fallen saber, and `dropped.mjs` — a suite with nothing to
+     * do with contacts — threw inside `World.update`.
+     *
+     * The prop still DIES, because something just destroyed it and pretending
+     * otherwise would leave an indestructible object lying on the floor. It
+     * simply leaves no chunks, which is the honest answer for a thing whose
+     * shape the chunk-maker cannot read.
+     */
+    const geo = this.mesh?.geometry;
+    if (!geo) { this.destroy(true); return; }
     geo.computeBoundingBox();
     const size = new THREE.Vector3(); geo.boundingBox.getSize(size);
     for (let i = 0; i < n; i++) {
