@@ -421,6 +421,8 @@ export class Body {
      * thousands of static colliders therefore cost nothing.
      */
     this._onContact = null;
+    /** Whether the colliders currently carry the event flag. See _syncContactArm. */
+    this._armed = false;
     this.onContact = opts.onContact || null;
 
     /**
@@ -508,10 +510,64 @@ export class Body {
 
   _syncContactEvents() {
     const w = this._world;
-    if (!w || !this.colliders || w.dead) return;
-    const flags = this._onContact ? w.R.ActiveEvents.COLLISION_EVENTS : w.R.ActiveEvents.NONE;
-    for (const c of this.colliders) c.setActiveEvents(flags);
+    if (!w || w.dead) return;
     if (this._onContact) w._armContacts();
+    // The FLAG is not set here. See `_syncContactArm` — a handler says this
+    // body is interested, and its speed says whether it is interesting yet.
+    this._syncContactArm();
+  }
+
+  /**
+   * ARMED ONLY WHILE IT COULD ACTUALLY HIT SOMETHING, and this is the
+   * difference between a channel that is free and one that is not.
+   *
+   * A prop lying still cannot deliver a hit, so it does not need the flag. The
+   * flag follows the body's SPEED instead, and because one side of a pair is
+   * enough to raise an event, nothing is lost by a resting body being dark: the
+   * thing that hits it is the thing that is moving, and that one is armed.
+   *
+   * ── WHAT IT IS WORTH: NOTHING YET MEASURABLE, and the road to saying so
+   *    honestly is worth more than the conclusion ─────────────────────────
+   *
+   * The first reading said arming Geonosis' 50 props cost 0.671 ms a frame,
+   * +12.6%. It was an artefact. It compared two freshly booted worlds, so most
+   * of it was JIT warmup — visible in the raw blocks, which start at 3.4 ms
+   * and settle at 1.0. §2.5's rule about an instrument that reports
+   * catastrophe, wearing its benchmark hat.
+   *
+   * Measured properly — ONE world, alternating blocks, physics time only, so
+   * boot, render and AI are all out of the reading — off, gated and
+   * always-armed are the same number, and stay the same number on settled
+   * piles of 200 and 500 plain boxes at nine repeats of 200 frames:
+   *
+   *     bodies   no flag    gated      always armed
+   *     200      0.107 ms   0.113 ms   0.107 ms
+   *     500      0.311 ms   0.326 ms   0.323 ms
+   *
+   * The ordering of those three flips between runs, which is the tell: the
+   * differences are at the noise floor and none of them is real. So the claim
+   * this gate is entitled to make is NOT "it made the channel free" — the
+   * channel was already free at every scale that has been measured.
+   *
+   * It is kept for the case that has not been: hundreds of bodies genuinely IN
+   * MOTION at once, where the flag count stops being ~2 and the event traffic
+   * stops being 90-in-600-frames. A collapse does that, and
+   * `prefracture-budget.mjs` is where it would show. Insurance bought at a
+   * price that cannot be measured is worth holding; do not go looking for the
+   * saving it did not make.
+   *
+   * `contactArmSpeed` sits below the speed at which a contact is worth any
+   * damage at all, so a body is always armed before it is dangerous.
+   */
+  _syncContactArm() {
+    const w = this._world;
+    if (!w || w.dead || !this.colliders) return;
+    const want = !!this._onContact && !this.static
+      && this.velocity.lengthSq() >= w._armSpeed2;
+    if (want === this._armed) return;
+    this._armed = want;
+    const f = want ? w.R.ActiveEvents.COLLISION_EVENTS : w.R.ActiveEvents.NONE;
+    for (const c of this.colliders) c.setActiveEvents(f);
   }
 
   /* ── impulses ────────────────────────────────────────────────────── */
@@ -618,13 +674,12 @@ export class Body {
     const world = this._world, R = world.R;
     const groups = this.groups();
     this.colliders = [];
+    // Fresh colliders carry no event flag; `_syncContactArm` puts it back on
+    // the next step if this body is moving fast enough to want it.
+    this._armed = false;
     for (const cd of descsFor(R, this.shape)) {
       cd.setFriction(this.friction).setRestitution(this.restitution)
         .setCollisionGroups(groups).setDensity(1);
-      // The opt-in, set on the DESC rather than on the collider afterwards, so
-      // a rebuilt shape (`setShape`, which every cut limb goes through) comes
-      // back armed without anybody remembering to re-arm it.
-      if (this._onContact) cd.setActiveEvents(R.ActiveEvents.COLLISION_EVENTS);
       const c = world.world.createCollider(cd, this.rb);
       this.colliders.push(c);
       world._byCollider.set(c.handle, { body: this });
@@ -1048,6 +1103,15 @@ export class RapierWorld {
      * however fast the pair is travelling.
      */
     this.contactFloor = opts.contactFloor ?? 1.0;
+    /**
+     * How fast an armed body has to be moving to carry the event flag, in m/s.
+     *
+     * Below `Impact.KINETIC_MIN_SPEED` (6) by a margin, so a body is always
+     * listening before it can do harm. Squared once here because the step loop
+     * asks the question of every armed body every step.
+     */
+    this.contactArmSpeed = opts.contactArmSpeed ?? 4;
+    this._armSpeed2 = this.contactArmSpeed * this.contactArmSpeed;
 
     this.maxBodies = opts.maxBodies ?? 1400;
     this.killY = opts.killY ?? -180;
@@ -1550,6 +1614,11 @@ export class RapierWorld {
       // What it was doing before Rapier touched it — one copy per body per
       // step, and the only thing that makes a contact's impulse knowable.
       b._pv.copy(b.velocity);
+      /* …and whether it is moving fast enough to be worth listening to.
+       * The guard is the cheap half of the question asked inline: a body that
+       * is asleep and not currently armed can neither hit anything nor need
+       * disarming, and a settled pile is almost entirely that. */
+      if (b._onContact && (b.awake || b._armed)) b._syncContactArm();
       b._push();
     }
 
@@ -1706,7 +1775,15 @@ export class RapierWorld {
        * so it delivers all of itself. Standard two-body result, computed here
        * rather than in the consumers so every consumer prices a hit the same.
        */
-      const ma = a && !a.static ? a.mass : 0, mb = b && !b.static ? b.mass : 0;
+      /* KINEMATIC COUNTS AS IMMOVABLE, and that is not a shortcut. A
+       * kinematic body — the player's capsule is one — goes exactly where
+       * gameplay puts it and never recoils from a contact, so its effective
+       * mass in the exchange is infinite, the same as a wall's. Reading its
+       * declared mass instead would halve every hit the player takes from a
+       * crate and, worse, would let its gameplay-driven `Δv` be mistaken for
+       * an impact below. */
+      const ma = a && !a.static && !a.kinematic ? a.mass : 0;
+      const mb = b && !b.static && !b.kinematic ? b.mass : 0;
       const mass = (ma > 0 && mb > 0) ? (ma * mb) / (ma + mb) : (ma > 0 ? ma : mb);
       if (!(mass > 0)) continue;
 
@@ -1742,9 +1819,18 @@ export class RapierWorld {
        * and never an over-read — which is the safe direction for a thing that
        * decides damage.
        */
+      /* BOTH SIDES ARE READ AND THE SMALLER IS BELIEVED. Newton's third law
+       * says the two impulses are equal, so a disagreement means one side's
+       * velocity was moved by something that is not this contact — a walking
+       * enemy whose capsule is driven by its own locomotion, a body a script
+       * teleported. The smaller reading is the one that contact can account
+       * for, so it is the one that decides damage. */
       let J = 0;
       if (ma > 0) J = ma * _v4.copy(a.velocity).sub(a._pv).length();
-      else if (mb > 0) J = mb * _v4.copy(b.velocity).sub(b._pv).length();
+      if (mb > 0) {
+        const Jb = mb * _v5.copy(b.velocity).sub(b._pv).length();
+        J = ma > 0 ? Math.min(J, Jb) : Jb;
+      }
       const speed = J / mass;
       if (speed < this.contactFloor) continue;
 
@@ -1758,7 +1844,12 @@ export class RapierWorld {
        * for the struck body that is the way it was shoved, and for the
        * striking body it is the reverse, so it is flipped per handler below.
        */
-      c.normal.copy(_v4).multiplyScalar(1 / Math.max(1e-6, _v4.length()));
+      /* The direction the exchange pushed. `_v4` holds side A's Δv when A was
+       * measured; otherwise `_v5` holds B's, which points the other way and is
+       * negated so `normal` always means "the way A was shoved". */
+      if (ma > 0) c.normal.copy(_v4);
+      else c.normal.copy(_v5).negate();
+      c.normal.multiplyScalar(1 / Math.max(1e-6, c.normal.length()));
       if (a && b) c.point.copy(a.position).add(b.position).multiplyScalar(0.5);
       else c.point.copy(a ? a.position : b.position);
       // Neither side is a body: the other party is the world — a static box,
@@ -1767,19 +1858,14 @@ export class RapierWorld {
       c.world = !a || !b;
 
       n++;
-      const measuredA = ma > 0;
-      if (ah) {
-        c.other = b; c.self = a;
-        if (!measuredA) c.normal.negate();
-        ah.call(a, b, c);
-        if (!measuredA) c.normal.negate();
-      }
+      /* `normal` means "the way A was shoved", so B sees it reversed. */
+      if (ah) { c.other = b; c.self = a; ah.call(a, b, c); }
       // The second handler is re-checked: the first may have killed the body.
       if (bh && !b.dead) {
         c.other = a; c.self = b;
-        if (measuredA) c.normal.negate();
+        c.normal.negate();
         bh.call(b, a, c);
-        if (measuredA) c.normal.negate();
+        c.normal.negate();
       }
     }
 

@@ -33,6 +33,7 @@
 
 import * as THREE from 'three';
 import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullFromGeometry } from '../physics/RapierWorld.js';
+import { armKinetic } from '../game/Impact.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';
 import { registerDestructible } from './Destruction.js';
 import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps, sandMaps, MEAN_ALBEDO } from '../engine/Textures.js';
@@ -1655,6 +1656,17 @@ export class Prop {
       linearDamping: 0.05, angularDamping: 0.1,
     });
     this.body.userData.prop = this;
+    /**
+     * ARMED, so that what this prop hits finds out about it.
+     *
+     * A prop is the archetypal striker: it is the thing a collapse drops, a
+     * blast throws and the Force picks up, and until the contact channel came
+     * back the ONLY way one of them ever hurt anything was the player's own
+     * hand-rolled sweep in `Player._updateHurled`. `opts.kinetic: false` is
+     * for a prop that should stay inert — scenery that happens to be dynamic.
+     * See src/game/Impact.js for the rule and for why only strikers are armed.
+     */
+    if (opts.kinetic !== false) armKinetic(this.body, opts.kinetic || null);
     world.physics.add(this.body);
     this._syncMesh();
     /**
