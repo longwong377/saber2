@@ -87,6 +87,29 @@ export const KINETIC_MIN_SPEED = 6;
 export const KINETIC = { k: 0.0006, floor: 0, cap: 140 };
 
 /**
+ * …AND THE PRICE OF ONE YOU THREW ON PURPOSE, which is not the same price.
+ *
+ * These are `Player._trackHurl`'s prop coefficients, unchanged: `k` 0.0006,
+ * floor 8, cap 140. The floor is the whole difference and it is the reason
+ * this table exists rather than being folded into `KINETIC`.
+ *
+ * A contact HAPPENS TO YOU — a crate a collapse drops, a droid shoved into the
+ * droid behind it — and a world where every bump that clears the speed gate is
+ * worth 8 damage is a world where walking into a barrel is a threat. A THROW
+ * is an act: you spent 14 Force and your grip on it, you aimed it, and a
+ * glancing hit at the end of that still has to be worth something or the power
+ * is worse than it reads. `_updateHurled` has floored a throw at 8 since it
+ * was written and the feel of the power is built on it.
+ *
+ * Found by `force.mjs` rather than by reasoning: with the throw priced as an
+ * ambient contact, a crate that used to take 8 off a B1 took 3.6, and the
+ * check that has always asserted "a thrown crate actually hurts what it lands
+ * on" said so. `userData.hurledBy` is what tells the two apart, and it is
+ * already set — it is the same field that decides whose kill it is.
+ */
+export const KINETIC_THROWN = { k: 0.0006, floor: 8, cap: 140 };
+
+/**
  * Arm a body so that what it hits knows about it.
  *
  * `opts` is stored on the body and read back in the handler, so one shared
@@ -134,17 +157,21 @@ export function victimOf(body) {
 export function kineticContact(other, c) {
   if (c.speed < KINETIC_MIN_SPEED) return;
   const self = c.self;
-  const tune = self.userData.kinetic || KINETIC;
+  /**
+   * WHOSE KILL IT IS decides WHAT IT IS WORTH, which is one lookup for both.
+   * A body still carrying a thrower is mid-throw and is priced as one; the
+   * same crate three seconds later, after `_updateHurled` has released the
+   * claim, is ordinary matter again. See `KINETIC_THROWN`.
+   */
+  const source = self.userData.hurledBy || null;
+  const tune = self.userData.kinetic || (source ? KINETIC_THROWN : KINETIC);
   const dmg = impactDamage(c.mass, c.speed, tune);
   if (dmg <= 0) return;
 
-  /**
-   * WHOSE KILL IT IS. A thrown thing carries its thrower, so a droid crushed
-   * by a crate you put in the air is your kill and pays out as one. Anything
-   * else — a collapse, a blast, another droid's shove — has no author and
-   * passes `null`, which every `damage()` in the game already accepts.
-   */
-  const source = self.userData.hurledBy || null;
+  /* A thrown thing carries its thrower, so a droid crushed by a crate you put
+   * in the air is your kill and pays out as one. Anything else — a collapse, a
+   * blast, another droid's shove — has no author and passes `null`, which every
+   * `damage()` in the game already accepts. */
   _pt.copy(c.point);
   _dir.copy(c.normal);
 
@@ -153,6 +180,21 @@ export function kineticContact(other, c) {
   // The world itself: architecture, a wall, the ground. Nothing to hurt, but
   // the thing that hit it can still break on it.
   if (!victim) { _selfDamage(self, tune, dmg, _pt, _dir); _thud(_pt, dmg); return; }
+
+  /**
+   * ONE HIT PER VICTIM PER THROW. A contact start is once per meeting, which
+   * is dedupe enough for ordinary matter — a crate that bounces off a droid
+   * and comes back down SHOULD hurt again. A throw is different: its claim
+   * lasts 2.6 s and prices every hit at the throw's floor, so a crate settling
+   * against the body it landed on would bill 8 a time as it came to rest. The
+   * Set is the throw record's own, handed over by `Player._trackHurl`.
+   */
+  const seen = source ? self.userData.hurlHit : null;
+  if (seen) {
+    const key = victim.id ?? victim;
+    if (seen.has(key)) return;
+    seen.add(key);
+  }
 
   if (typeof victim.applyKnockback === 'function') {
     /**

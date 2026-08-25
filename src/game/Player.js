@@ -7326,6 +7326,22 @@ export class Player {
       thing.userData.hurledBy = this;
       thing.userData.hurlTimer = 2.6;
       /**
+       * ONE HIT PER VICTIM PER THROW, and the contact channel needs telling.
+       *
+       * The sweep this replaced kept `rec.hit` and consulted it every frame. A
+       * contact start is naturally once-per-meeting, which covers most of it —
+       * but a crate that lands on a droid and settles against it raises several
+       * starts as it comes to rest, and while `hurledBy` is set every one of
+       * them is priced at the THROW's floor of 8. `force.mjs` has asserted
+       * "the same throw could hit twice" since the sweep was written, and it is
+       * the assertion that caught this.
+       *
+       * The record's own Set is handed to the body rather than copied, so the
+       * throw has exactly one list of who it has already hit however the hit
+       * arrives.
+       */
+      thing.userData.hurlHit = null;                 // filled in below
+      /**
        * A THROWN PROP NO LONGER NEEDS THIS SWEEP, and that is the point of the
        * contact channel coming back.
        *
@@ -7370,6 +7386,7 @@ export class Player {
       mass: isBody ? (thing.A ? thing.A.mass : 80) : Math.max(1, thing.mass),
       radius: isBody ? (thing.radius ?? 0.55) : thing.boundingRadius,
     };
+    if (!isBody) thing.userData.hurlHit = rec.hit;
     this.hurled.push(rec);
     if (this.hurled.length > 12) this.hurled.shift();
   }
@@ -7403,7 +7420,11 @@ export class Player {
        */
       if (!h.isBody) {
         if (h.timer <= 0 || h.thing.dead) {
-          if (h.thing.userData) { h.thing.userData.hurledBy = null; h.thing.userData.hurlTimer = 0; }
+          if (h.thing.userData) {
+            h.thing.userData.hurledBy = null;
+            h.thing.userData.hurlTimer = 0;
+            h.thing.userData.hurlHit = null;
+          }
           this.hurled.splice(i, 1);
         } else if (h.thing.userData) {
           h.thing.userData.hurlTimer = h.timer;
@@ -7865,7 +7886,23 @@ export class Player {
       if (!this._spend(POWER_COST.throw)) {
         return this._refuse('saber throw', `${this._priceOf(POWER_COST.throw)} Force needed, you have ${Math.round(this.force)}`);
       }
-      this.cooldowns.throw = 0.4;
+      /**
+       * NOT SET HERE ANY MORE — see the catch below.
+       *
+       * `cooldowns.throw = 0.4` at the moment of release was, measured against
+       * the blade's own flight, DEAD CODE. The blade flies for up to
+       * `throwTimer > 1.5` seconds before it even turns round, and then has to
+       * fly back; the shortest possible round trip is longer than 0.4 s, so by
+       * the time the saber is in your hand and `throwState` is `held` again the
+       * cooldown has ALWAYS expired. Nothing was ever gated. The player:
+       * "the lightsaber throw (R) needs a longer cooldown, it's a crazy
+       * effective move with no significant cooldown so it makes sense to just
+       * spam it rather than anything else."
+       *
+       * A cooldown that runs while the power is still going off is not a
+       * cooldown, it is a decoration. It starts when the blade is back in the
+       * hand, which is the only moment the throw is actually over.
+       */
       this._gesture('cast');
       this._forceVoice('throw');
       this.throwState = 'flying';
@@ -7970,6 +8007,24 @@ export class Player {
         this.throwState = 'held';
         this.control.handPos.copy(this.throwPos);
         audio.clash(this.throwPos, 0.4);
+        /**
+         * THE RECOVERY, AND IT STARTS HERE BECAUSE HERE IS WHERE THE THROW
+         * ENDS. See the note at `throwOrRecall`.
+         *
+         * 2.2 s, and the number is read off the table the rest of the powers
+         * already form rather than picked. Every cooldown in this file:
+         *
+         *     throw 0.4(was)  dash 0.55  push 0.55  pull 0.6  lightning 1.1
+         *     shield 1.2  stasis 1.4  rend 2.4  compel 7  unleash 9
+         *
+         * The throw was the SHORTEST in the game, under a dash — for a ranged
+         * attack that hits everything along a steerable line, cannot be
+         * blocked by a body, and costs 14 Force against push's 20. It belongs
+         * beside `rend` at 2.4: a committed, high-value act you spend a beat
+         * recovering from. A hair under it because the throw also leaves you
+         * holding nothing while it is out, which `rend` does not.
+         */
+        this.cooldowns.throw = 2.2;
         return;
       }
       _v1.multiplyScalar(1 / d);
