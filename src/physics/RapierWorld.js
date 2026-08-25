@@ -1819,17 +1819,33 @@ export class RapierWorld {
        * and never an over-read — which is the safe direction for a thing that
        * decides damage.
        */
-      /* BOTH SIDES ARE READ AND THE SMALLER IS BELIEVED. Newton's third law
-       * says the two impulses are equal, so a disagreement means one side's
-       * velocity was moved by something that is not this contact — a walking
-       * enemy whose capsule is driven by its own locomotion, a body a script
-       * teleported. The smaller reading is the one that contact can account
-       * for, so it is the one that decides damage. */
+      /**
+       * BOTH SIDES ARE READ AND THE LARGER IS BELIEVED — and it was written
+       * the other way round first, for a reason that sounded better than it
+       * was.
+       *
+       * The argument for the SMALLER reading: Newton's third law says the two
+       * impulses are equal, so a disagreement means one side was moved by
+       * something that is not this contact, and the smaller number is the one
+       * the contact can account for. That is true of a free pair and wrong
+       * about the commonest case in the game. `contacts.mjs`'s first check
+       * caught it: a crate dropped nine metres onto a body resting on the
+       * ground priced at ZERO, because the struck body is BRACED — the impulse
+       * it receives goes through it into the floor, its net change of velocity
+       * over the step is nearly nothing, and the third law does not apply
+       * pairwise when a third constraint is taking the load.
+       *
+       * The side that was moving freely and got stopped is the one whose Δv is
+       * a real measure of this contact, and it is always the larger of the two.
+       * A body being driven by its own locomotion changes velocity by very
+       * little per step, so it does not win this comparison; a crate arriving
+       * at 18 m/s does.
+       */
       let J = 0;
       if (ma > 0) J = ma * _v4.copy(a.velocity).sub(a._pv).length();
       if (mb > 0) {
         const Jb = mb * _v5.copy(b.velocity).sub(b._pv).length();
-        J = ma > 0 ? Math.min(J, Jb) : Jb;
+        J = ma > 0 ? Math.max(J, Jb) : Jb;
       }
       const speed = J / mass;
       if (speed < this.contactFloor) continue;
@@ -1844,10 +1860,12 @@ export class RapierWorld {
        * for the struck body that is the way it was shoved, and for the
        * striking body it is the reverse, so it is flipped per handler below.
        */
-      /* The direction the exchange pushed. `_v4` holds side A's Δv when A was
-       * measured; otherwise `_v5` holds B's, which points the other way and is
-       * negated so `normal` always means "the way A was shoved". */
-      if (ma > 0) c.normal.copy(_v4);
+      /* The direction the exchange pushed, taken from the side that was
+       * believed above. `_v4` holds A's Δv, `_v5` holds B's — which points the
+       * other way, so it is negated to keep `normal` meaning "the way A was
+       * shoved" whichever side supplied it. */
+      const fromA = ma > 0 && (mb <= 0 || ma * _v4.length() >= mb * _v5.length());
+      if (fromA) c.normal.copy(_v4);
       else c.normal.copy(_v5).negate();
       c.normal.multiplyScalar(1 / Math.max(1e-6, c.normal.length()));
       if (a && b) c.point.copy(a.position).add(b.position).multiplyScalar(0.5);

@@ -7321,6 +7321,30 @@ export class Player {
     if (!isBody) {
       thing.userData.hurledBy = this;
       thing.userData.hurlTimer = 2.6;
+      /**
+       * A THROWN PROP NO LONGER NEEDS THIS SWEEP, and that is the point of the
+       * contact channel coming back.
+       *
+       * `Prop` arms its body with the kinetic law (src/game/Impact.js), and a
+       * prop's collision mask names ENEMY and PLAYER, so a crate you throw now
+       * meets a droid through Rapier's own narrowphase — against the real hull,
+       * at the real contact, with continuous detection, rather than against a
+       * sphere of `boundingRadius` swept by the THROWER once a frame. Keeping
+       * both would bill one collision twice.
+       *
+       * The record below is still made, because the thrower still owns two
+       * things the contact cannot know: how long the throw stays ATTRIBUTED to
+       * the player, and when to let go of that claim. `_updateHurled` runs only
+       * that half for a prop now.
+       *
+       * WHAT IS NOT RETIRED, and why, so nobody finishes the job blindly: a
+       * thrown BODY still needs the sweep. `Ragdoll`'s mask does not name
+       * ENEMY and `Enemy`'s does not name RAGDOLL — deliberately, see the note
+       * at Enemy.js's body construction — so a corpse and a living droid are
+       * not a collider pair at all and no contact between them will ever be
+       * raised. Retiring the body branch means changing those masks first, and
+       * that changes how every corpse in the game behaves.
+       */
     }
     const rec = {
       thing, isBody, timer: 2.6, hit: new Set(), speed,
@@ -7366,6 +7390,22 @@ export class Player {
     for (let i = this.hurled.length - 1; i >= 0; i--) {
       const h = this.hurled[i];
       h.timer -= dt;
+      /**
+       * A PROP'S RECORD IS NOW ONLY ITS CLAIM TICKET. The hit itself arrives
+       * through the contact channel; what is left here is how long the kill
+       * still counts as yours. Dropping the claim when the record expires is
+       * what stops a crate you threw two minutes ago from being credited to
+       * you when a collapse finally knocks it into somebody.
+       */
+      if (!h.isBody) {
+        if (h.timer <= 0 || h.thing.dead) {
+          if (h.thing.userData) { h.thing.userData.hurledBy = null; h.thing.userData.hurlTimer = 0; }
+          this.hurled.splice(i, 1);
+        } else if (h.thing.userData) {
+          h.thing.userData.hurlTimer = h.timer;
+        }
+        continue;
+      }
       Player._hurlVel(h, _g3);
       const speed = _g3.length();
       // Spent: out of time, gone, or slowed to something that could not hurt a
