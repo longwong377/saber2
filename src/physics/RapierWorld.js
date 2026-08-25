@@ -53,6 +53,43 @@ const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THRE
 const _box = new THREE.Box3();
 const _ra = new THREE.Vector3(), _rb = new THREE.Vector3(), _js = new THREE.Vector3();
 const _ZERO = new THREE.Vector3();
+const _v6 = new THREE.Vector3(), _v7 = new THREE.Vector3();
+const _v8 = new THREE.Vector3(), _v9 = new THREE.Vector3();
+const _na = new THREE.Vector3();
+
+/**
+ * The point on `body` closest to `to` — its axis projection for a capsule or a
+ * cylinder, its centre for anything else.
+ *
+ * A capsule IS a segment with a radius, so this is exact for the three things
+ * in this game that are long: a living body, a severed limb and a falling
+ * trunk. A box or a hull gets its centre, which is what the old reading used
+ * everywhere and is right for a compact shape.
+ */
+function _nearestOn(body, to, out) {
+  const sh = body.shape;
+  const half = sh && (sh.type === 'capsule' || sh.type === 'cylinder') ? sh.halfHeight : 0;
+  if (!(half > 0)) return out.copy(body.position);
+  // the capsule's own axis is +Y, carried into world space by its rotation
+  _na.set(0, 1, 0).applyQuaternion(body.quaternion);
+  const t = clampNum(out.copy(to).sub(body.position).dot(_na), -half, half);
+  return out.copy(body.position).addScaledVector(_na, t);
+}
+
+/** The velocity of `body` at world point `p`: `v + ω × r`. */
+function _pointVel(body, p, out) {
+  out.copy(body.kinematic ? body.kinVel : body.velocity);
+  const w = body.angularVelocity;
+  if (!w || (w.x === 0 && w.y === 0 && w.z === 0)) return out;
+  _na.copy(p).sub(body.position);
+  return out.set(
+    out.x + (w.y * _na.z - w.z * _na.y),
+    out.y + (w.z * _na.x - w.x * _na.z),
+    out.z + (w.x * _na.y - w.y * _na.x),
+  );
+}
+
+const clampNum = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
 /** The scratch contact handed to every `Body.onContact`. See _dispatchContacts. */
 const _contact = {
   self: null, other: null, speed: 0, mass: 0, impulse: 0, world: false, approach: false, time: 0,
@@ -544,7 +581,14 @@ export class Body {
   _syncContactEvents() {
     const w = this._world;
     if (!w || w.dead) return;
-    if (this._onContact) w._armContacts();
+    if (this._onContact) {
+      w._armContacts();
+      /* A handler attached after the colliders were built: widen them now, for
+       * the reason `_buildColliders` gives. */
+      const T = w.R.ActiveCollisionTypes;
+      const types = T.ALL & ~T.FIXED_FIXED;
+      if (this.colliders) for (const c of this.colliders) c.setActiveCollisionTypes(types);
+    }
     // The FLAG is not set here. See `_syncContactArm` — a handler says this
     // body is interested, and its speed says whether it is interesting yet.
     this._syncContactArm();
@@ -595,13 +639,25 @@ export class Body {
   _syncContactArm() {
     const w = this._world;
     if (!w || w.dead || !this.colliders) return;
-    /* A KINEMATIC BODY ARMS AT A LOWER SPEED, because its damage comes from
-     * its MASS rather than its pace — see Impact.KINETIC_MIN_APPROACH. A
-     * walker crossing a line at 3 m/s is what the 4 m/s gate would miss, and
-     * it is the case the whole body regime exists for. */
-    const gate = this.kinematic ? 1.0 : w._armSpeed2;
-    const v = this.kinematic ? this.kinVel : this.velocity;
-    const want = !!this._onContact && !this.static && v.lengthSq() >= gate;
+    /**
+     * A KINEMATIC BODY IS ARMED WHENEVER IT HAS A HANDLER, WITH NO SPEED GATE.
+     *
+     * The gate exists so that a level's hundreds of SETTLED DEBRIS cost
+     * nothing — that is a dynamic-body problem and the measurements behind the
+     * gate are all dynamic bodies. Kinematic bodies are the living ones: fifty
+     * or so, plus whatever trunks are in the air, and every one of them is
+     * relevant the whole time it exists.
+     *
+     * And gating them is not merely wasteful, it is WRONG. A kinematic pair
+     * needs BOTH sides flagged before Rapier will report it — one side is
+     * enough for a dynamic pair and is not enough here. Gated on speed, a
+     * trunk coming down on somebody STANDING STILL raised nothing at all,
+     * because the victim was stationary, therefore disarmed, therefore unable
+     * to be hit by anything. Took a falling tree to find; it was equally true
+     * of a charging beast and a man who had stopped to aim.
+     */
+    const want = !!this._onContact && !this.static
+      && (this.kinematic || this.velocity.lengthSq() >= w._armSpeed2);
     if (want === this._armed) return;
     this._armed = want;
     const R = w.R;
@@ -624,9 +680,7 @@ export class Body {
      * paying the narrowphase for every pair of them in a level's architecture
      * is the one part of ALL that buys nothing.
      */
-    const T = R.ActiveCollisionTypes;
-    const types = want ? (T.ALL & ~T.FIXED_FIXED) : T.DEFAULT;
-    for (const c of this.colliders) { c.setActiveEvents(f); c.setActiveCollisionTypes(types); }
+    for (const c of this.colliders) c.setActiveEvents(f);
   }
 
   /* ── impulses ────────────────────────────────────────────────────── */
@@ -739,6 +793,27 @@ export class Body {
     for (const cd of descsFor(R, this.shape)) {
       cd.setFriction(this.friction).setRestitution(this.restitution)
         .setCollisionGroups(groups).setDensity(1);
+      /**
+       * THE COLLISION TYPES ARE A PROPERTY OF BEING ARMED, NOT OF MOVING.
+       *
+       * Rapier's default omits KINEMATIC_KINEMATIC and every living body here
+       * is a kinematic capsule, so the flag has to be on for the pair to exist
+       * at all. It was set alongside the EVENT flag at first, which is
+       * speed-gated — and that is wrong in a way that took a falling tree to
+       * show: a trunk coming down on somebody STANDING STILL raised nothing,
+       * because the victim was stationary, therefore disarmed, therefore back
+       * on the default types, and a kinematic pair needs BOTH sides to allow
+       * it. One side is enough for the EVENT; it is not enough for the PAIR.
+       *
+       * So the types are set once, here, for anything with a handler, and only
+       * the event flag follows the speed. A pair that exists and raises no
+       * event costs a narrowphase test; a pair that does not exist cannot be
+       * hit by anything, ever.
+       */
+      if (this._onContact) {
+        const T = R.ActiveCollisionTypes;
+        cd.setActiveCollisionTypes(T.ALL & ~T.FIXED_FIXED);
+      }
       const c = world.world.createCollider(cd, this.rb);
       this.colliders.push(c);
       world._byCollider.set(c.handle, { body: this });
@@ -1887,10 +1962,33 @@ export class RapierWorld {
         const d = _v4.length();
         if (d < 1e-4) continue;
         _v4.multiplyScalar(1 / d);
-        /* The CARRIED speed for a kinematic body — see `Body.kinVel`. Its
-         * `.velocity` is somebody else's field and is usually zero. */
-        approach = _v5.copy(a.kinematic ? a.kinVel : a.velocity)
-          .sub(b.kinematic ? b.kinVel : b.velocity).dot(_v4);
+        /**
+         * MEASURED WHERE THEY MEET, NOT AT THEIR CENTRES.
+         *
+         * The carried speed is a property of the body's centre, and for a
+         * compact thing that is the whole story. For a LONG one it is not: a
+         * twenty-metre trunk sweeping down about its stump has a centre that is
+         * travelling almost straight down while the man it is about to land on
+         * is six metres off to the side, so the closing speed along the line
+         * between the two centres came out at nearly zero and the contact was
+         * dropped under `contactFloor`. A tree fell through a man three times
+         * with three real start events to show for it.
+         *
+         * So each side contributes the velocity at the point of ITS OWN body
+         * nearest the other — `v + ω × r`, the standard rigid-body result —
+         * and for a capsule "nearest point" is a projection onto its axis,
+         * which is exactly what a trunk, a limb and a living body all are.
+         */
+        _nearestOn(a, b.position, _v6);
+        _nearestOn(b, a.position, _v7);
+        _pointVel(a, _v6, _v8);
+        _pointVel(b, _v7, _v9);
+        /* …and the line between those two points rather than between the
+         * centres, for the same reason. */
+        _v4.copy(_v7).sub(_v6);
+        const dd = _v4.length();
+        if (dd > 1e-4) _v4.multiplyScalar(1 / dd);
+        approach = _v5.copy(_v8).sub(_v9).dot(_v4);
         if (approach < this.contactFloor) continue;
         const c2 = _contact;
         c2.speed = approach;
@@ -1898,7 +1996,14 @@ export class RapierWorld {
         c2.approach = true;
         c2.time = this.simTime;
         c2.normal.copy(_v4);
-        c2.point.copy(a.position).add(b.position).multiplyScalar(0.5);
+        /* BETWEEN THE POINTS THAT MEET, not between the centres. A consumer
+         * that asks WHERE it was hit — `Forest._priceTrunk` reads this back to
+         * find how far along the trunk the blow landed — gets the answer the
+         * geometry gives rather than one biased toward the middle of a
+         * twenty-metre rod. Measured: the giant's stump end priced at 82
+         * against a bound of 60, because the midpoint of the two CENTRES sits
+         * most of the way up the trunk from where it actually struck. */
+        c2.point.copy(_v6).add(_v7).multiplyScalar(0.5);
         c2.world = false;
         n++;
         /* THE MASS IS THE STRIKER'S OWN, set per handler rather than once.

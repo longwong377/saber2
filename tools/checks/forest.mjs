@@ -36,6 +36,10 @@ import { LEVELS } from '../../src/game/Levels.js';
 import { Forest, attachForest, STANDING, FALLING, DOWN, EYE_CLEAR } from '../../src/world/Trees.js';
 import { propMaterials } from '../../src/world/Props.js';
 import { TAU } from '../../src/engine/MathUtil.js';
+import { RapierWorld, Body as RBody, capsule as rCapsule, LAYER as RLAYER }
+  from '../../src/physics/RapierWorld.js';
+import { initPhysics } from '../../src/physics/Rapier.js';
+import { armKinetic, KINETIC_BODY } from '../../src/game/Impact.js';
 import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -46,35 +50,24 @@ const V = (x, y, z) => new THREE.Vector3(x, y, z);
  * prop on its floor. */
 function stubWorld(terrain = null, level = null) {
   const scene = new THREE.Scene();
+  /**
+   * A REAL PHYSICS WORLD, because a falling trunk is a real body.
+   *
+   * The hand-written stub below it kept `staticBoxes` and `bodies` arrays and
+   * mirrored the engine's record shapes, which was exactly enough for as long
+   * as the only thing the forest asked physics for was somewhere to put a log
+   * collider. A trunk that has to COLLIDE cannot be served by an array: there
+   * is no narrowphase in it, so no contact is ever raised and a tree falls
+   * through everything in silence.
+   */
+  /* NO GROUND BOX. `felling: a whole forest costs three draw calls` counts the
+   * colliders in the world and expects none while nobody is near the logs, and
+   * a floor put here for tidiness reads as one. The trees do not need it: their
+   * fall is analytic and their victims are kinematic. */
+  const real = new RapierWorld({ gravity: -22 });
   return {
+    physics: real,
     scene, level, statics: [], props: [], enemies: [], levelLights: [], doors: [],
-    /* `add`/`remove`/`bodies` are not decoration: `Forest._syncLogs` opens
-     * with `if (!this.world.physics?.add) return`, so a stub without them
-     * silently turns off the whole log-realisation path and every claim about
-     * a felled trunk being an OBJECT measures nothing. That is the shape
-     * HANDOFF §2.3 warns about — a fixture that cannot express the thing it
-     * is standing in for. */
-    physics: {
-      staticBoxes: [], bodies: [],
-      /* THE SAME RECORD SHAPE THE REAL ENGINE RETURNS — `center`,
-       * `halfExtents`, `quat`, `radius`, `userData` — because `Forest._realise`
-       * reads `box.center.clone()` off it to remember where to lay the log's
-       * collider back down. A stub that returns a differently-named bag
-       * throws there, three call layers away from anything this file names. */
-      addStaticBox(center, halfExtents, quat, o = {}) {
-        const b = {
-          center: center.clone(), halfExtents: halfExtents.clone(),
-          quat: (quat || new THREE.Quaternion()).clone(),
-          radius: halfExtents.length(), disabled: false, userData: o.userData || null,
-          p: center, e: halfExtents, q: quat, o,
-        };
-        this.staticBoxes.push(b); return b;
-      },
-      removeStaticBox(b) { const i = this.staticBoxes.indexOf(b); if (i >= 0) this.staticBoxes.splice(i, 1); },
-      add(b) { this.bodies.push(b); return b; },
-      remove(b) { const i = this.bodies.indexOf(b); if (i >= 0) this.bodies.splice(i, 1); },
-      addJoint() {}, removeJoint() {}, raycast: () => null,
-    },
     particles: { sparkBurst() {}, sandPuff() {}, slag() {} },
     addProp(p) { this.props.push(p); return p; },
     notify() {}, report() {}, spawnEnemy: () => null,
@@ -94,9 +87,59 @@ function stand(list, opts = {}) {
   return { world, f };
 }
 
-/** Step the forest forward at a fixed rate. */
-function sim(f, seconds, dt = 1 / 60) {
-  for (let i = 0; i < Math.round(seconds / dt); i++) f.update(dt);
+/**
+ * Step the forest forward at a fixed rate — AND THE PHYSICS WITH IT.
+ *
+ * A falling trunk is a real body now, and what it lands on it learns through
+ * the contact channel rather than through a raycast of its own. Stepping the
+ * forest without stepping the world it is in is stepping half the mechanism:
+ * the trunk moves, the contact is never dispatched, and every claim about a
+ * tree hurting somebody measures nothing.
+ */
+function sim(f, seconds, dt = 1 / 60, world = null) {
+  const w = world || f.world;
+  for (let i = 0; i < Math.round(seconds / dt); i++) {
+    f.update(dt);
+    w?.physics?.step?.(dt);
+  }
+}
+
+/**
+ * SOMETHING FOR A TREE TO LAND ON, and it has to be a real body.
+ *
+ * These checks used to push `{ position, dead, damage() }` into
+ * `world.enemies` and that was enough, because `Forest._sweep` walked that
+ * array itself. It does not exist any more: the trunk is matter and meets
+ * things through Rapier's narrowphase, so a victim that is not in the physics
+ * world is a victim a tree cannot touch — which is the same defect the fixture
+ * was standing in for, wearing the fixture's clothes.
+ *
+ * `applyKnockback` and not `damage`: that is the signature `Impact` uses for a
+ * LIVING thing, and a body-shaped striker deliberately shoves scenery rather
+ * than breaking it (`KINETIC_BODY.hurtsProps`). A stub with only `damage` on
+ * it would read as a crate and be skipped.
+ */
+function victim(world, pos, radius = 0.35) {
+  const v = { position: pos, dead: false, radius, hp: 0, team: 1,
+    applyKnockback(imp, dmg) { this.hp += (dmg || 0); },
+    damage(d) { this.hp += d; } };
+  const b = new RBody({
+    position: pos.clone().setY(pos.y + 0.9), shape: rCapsule(0.55, radius),
+    mass: 52, kinematic: true, static: false, layer: RLAYER.ENEMY,
+    mask: RLAYER.WORLD | RLAYER.PROP | RLAYER.DEBRIS | RLAYER.RAGDOLL | RLAYER.ENEMY | RLAYER.PLAYER,
+    allowSleep: false, gravityScale: 0,
+  });
+  b.userData.enemy = v;
+  /* ARMED, like every living body in the shipped game. It matters beyond
+   * tidiness: arming is what widens a collider's `ActiveCollisionTypes` to
+   * include KINEMATIC_KINEMATIC, and two kinematic capsules where neither has
+   * it raise no contact at all. A fixture whose victims are unarmed is a
+   * fixture where nothing can ever be hit. */
+  armKinetic(b, KINETIC_BODY);
+  v.body = b;
+  world.physics.add(b);
+  world.enemies.push(v);
+  return v;
 }
 
 /** Where a tree's tip ended up, relative to its own base, in plan. */
@@ -112,6 +155,7 @@ function angDiff(a, b) {
 
 
 export async function run({ check, assert }) {
+  await initPhysics();
   /* Every check in this file is wrapped, so the shared module state goes back
    * before each body as well as after it. What that state IS lives in
    * tools/checks/_shared.mjs and is deliberately not restated here — a list
@@ -294,14 +338,16 @@ export async function run({ check, assert }) {
     const { world, f } = stand([{ x: 0, z: 0, height: 20, radius: 0.5 }]);
     let hit = 0;
     // one body under where the trunk is going, one behind it
-    world.enemies.push(
-      { position: V(0, 0, 12), dead: false, damage(d) { hit += d; } },
-      { position: V(0, 0, -12), dead: false, damage() { hit -= 1000; } },
-    );
+    /* REAL BODIES. A trunk is matter now and meets things through the
+     * narrowphase, so a victim that is not in the physics world is one a tree
+     * cannot touch. See `victim`. */
+    const under = victim(world, V(0, 0, 12));
+    const behind = victim(world, V(0, 0, -12));
     f.fell(0, 0, 1, 0.5);
-    sim(f, 8);
-    assert(hit > 20, `a 20 m trunk landed on a body and did ${hit} damage`);
-    assert(f.stats.crushed === 1, `${f.stats.crushed} bodies were crushed; exactly one was under it`);
+    sim(f, 8, 1 / 60, world);
+    hit = under.hp;
+    assert(hit > 20, `a 20 m trunk landed on a body and did ${hit.toFixed(1)} damage`);
+    assert(behind.hp === 0, `the body BEHIND the faller took ${behind.hp.toFixed(1)} damage`);
     return `${hit.toFixed(1)} damage to the body under it, none to the one behind`;
   });
 
@@ -334,14 +380,9 @@ export async function run({ check, assert }) {
       const { world, f } = stand([{ x: 0, z: 0, height: h, radius: r }]);
       const len = h - 0.6;
       const took = [];
-      for (const t of AT) {
-        const body = { position: V(0, 0, len * t), dead: false, radius: 0.35, hp: 0,
-          damage(d) { this.hp += d; } };
-        world.enemies.push(body);
-        took.push(body);
-      }
+      for (const t of AT) took.push(victim(world, V(0, 0, len * t)));
       f.fell(0, 0, 1, 0.6);
-      sim(f, 10);
+      sim(f, 10, 1 / 60, world);
       table.set(name, took.map((b) => b.hp));
     }
     const row = (n) => table.get(n);
@@ -564,11 +605,22 @@ export async function run({ check, assert }) {
     const { world, f } = stand(list, { crush: 46 });
     /* THE PLAYER STANDS UNDER TREE 0's FALL LINE. `players` is the array World
      * keeps and every other system reads; the crush is the one that did not. */
-    const me = { position: V(-8, 0, 6), hp: 100, alive: true, hits: 0,
-      damage(d) { this.hp -= d; this.hits++; }, applyKnockback() { this.shoved = true; } };
+    /* A REAL BODY, for the reason `victim` gives: the trunk meets things
+     * through the narrowphase now, and a player who is not in the physics
+     * world is one a tree falls straight through. `applyKnockback` carries
+     * both halves — the damage and the shove — because that is the one call
+     * `Impact` makes on a living thing, deliberately, so a blow cannot be
+     * billed twice (see IMPULSE_AS_HP). */
+    const me = victim(world, V(-8, 0, 6));
+    me.hp = 100; me.hits = 0;
+    me.alive = true;
+    me.applyKnockback = function (imp, dmg) {
+      if (dmg > 0) { this.hp -= dmg; this.hits++; }
+      if (imp) this.shoved = true;
+    };
     world.players = [me];
     f.fell(0, 0, 1, 1);                      // straight along +z, onto the player
-    sim(f, 8);
+    sim(f, 8, 1 / 60, world);
     assert(me.hits > 0, 'a sixteen-metre trunk came down through the player and did not touch them');
     assert(me.hp < 100, `the player is on ${me.hp} hp after being flattened`);
     assert(me.shoved, 'it hurt but it did not move them — a tree flattens');

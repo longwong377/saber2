@@ -492,6 +492,66 @@ export async function run({ check, assert }) {
     return 'spawnDebris hands out an armed body';
   });
 
+  check('contacts: a falling tree is matter, and prices its own blow', async () => {
+    /**
+     * THE LAST MOVING, MASSIVE THING IN THE GAME THAT WAS NOT IN THE PHYSICS
+     * WORLD.
+     *
+     * A trunk's fall is an analytic rod pivot written into a flat Float32
+     * array and drawn instanced — which is the only reason a wood can hold
+     * hundreds of trees — and it meant the thing crushing you was an animation
+     * with a raycast bolted to it. `Forest._sweep` walked `world.enemies` and
+     * `world.players` and nothing else, so a trunk came down through crates,
+     * corpses, debris and barrels without touching any of them.
+     *
+     * It is a real kinematic body between `fell()` and `_land()` now — only
+     * what is in the air pays — and the raycast is gone. Both halves are
+     * asserted, because either one alone is a defect: no body and nothing is
+     * hit; both and every crush is billed twice, which is what the first
+     * measurement of this showed (a droid losing 9.6 hp from the sweep AND a
+     * contact for the same trunk).
+     */
+    const H = await import('./_coop.mjs');
+    const T = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'wood', settings: { mode: 'waves', quality: 'low', instantSpawn: true } });
+    const input = H.idleInput();
+    for (let i = 0; i < 30; i++) world.update(1 / 60, input);
+    const forest = world.forest || world.trees;
+    assert(forest, 'no forest on the wood — this check is not looking at anything');
+
+    const hinge = forest.hinge(0, new T.Vector3());
+    const e = world.spawnEnemy('b1', new T.Vector3(hinge.x + 6, 0, hinge.z));
+    e._think = () => {};
+    for (let i = 0; i < 10; i++) world.update(1 / 60, input);
+    const hp0 = e.hp;
+
+    assert(forest.fell(0, 1, 0, 0.6), 'the tree would not fall');
+    const live = forest._fallBodies?.size ?? 0;
+    const body = forest._fallBodies?.get(0);
+    assert(live === 1 && body, 'a falling trunk is not a body in the physics world');
+    assert(body.onContact, 'the falling trunk is a body and is not armed — it can touch nothing');
+    let onEnemy = 0;
+    const inner = body.onContact;
+    body.onContact = function (o, c) { if (o?.userData?.enemy) onEnemy++; return inner.call(this, o, c); };
+
+    for (let i = 0; i < 300; i++) world.update(1 / 60, input);
+    const lost = hp0 - e.hp;
+    const stillFalling = forest._fallBodies?.size ?? 0;
+    const crushedByOldSweep = forest.stats.crushed;
+    world.unload();
+
+    assert(onEnemy > 0, 'the trunk came down on a droid and raised no contact against it');
+    assert(lost > 0 || e.dead, `a tree fell on a droid and it lost ${lost.toFixed(1)} hp`);
+    assert(crushedByOldSweep === 0,
+      `the retired sweep billed ${crushedByOldSweep} crush(es). It and the contact channel are two systems `
+      + 'for one event, and a trunk landing on somebody would be paid for twice');
+    assert(stillFalling === 0,
+      `${stillFalling} trunk body/bodies outlived the fall. The body exists only between fell() and `
+      + 'land(); one that is never removed is a collider standing in the air forever');
+    return `a felled trunk raised ${onEnemy} contact(s) and took ${lost.toFixed(1)} hp off a droid`;
+  });
+
   check('contacts: every throw is claimed by exactly one system', async () => {
     /**
      * BOTH HALVES ARE RETIRED NOW, and the second one could only be retired

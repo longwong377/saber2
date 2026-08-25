@@ -68,8 +68,15 @@ import { clamp, makeRng, TAU, lerp } from '../engine/MathUtil.js';
 /* `Prop` is what a log becomes when the player walks up to it — see `_realise`.
  * Props.js does not import this file, so the edge is one-way. */
 import { Prop } from './Props.js';
+import { Body, LAYER, LOOSE_MASK, capsule } from '../physics/RapierWorld.js';
+import { armKinetic, KINETIC_BODY } from '../game/Impact.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+/** The capsule's own axis, which the trunk's rotation is measured from. */
+const _v4 = new THREE.Vector3();
+const _v5 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
+const _UPY = new THREE.Vector3(0, 1, 0);
 const _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
 const _p = new THREE.Vector3(), _s = new THREE.Vector3();
 const UP = new THREE.Vector3(0, 1, 0);
@@ -1172,6 +1179,7 @@ export class Forest {
     D[k + F.DX] = dx / m;
     D[k + F.DZ] = dz / m;
     D[k + F.STATE] = FALLING;
+    this._makeFallBody(i);
     /* A SMALL KICK OFF VERTICAL, and it is not a fudge — it is the model's
      * only degenerate point. θ̈ ∝ sin θ, so a rod that is exactly upright has
      * exactly no torque on it and stands there forever. 0.02 rad is about the
@@ -1217,6 +1225,13 @@ export class Forest {
   update(dt) {
     if (!(dt > 0) || !this.data) return;
     this.time += dt;
+    /* BEFORE anything that can return early. A landed trunk's body is held for
+     * a few steps so the contacts of its last moment can still be priced (see
+     * `_dropFallBody`), and a reap that only runs while something is still
+     * falling never runs at all once the wood goes quiet — which leaves a
+     * collider lying in the world forever, and `wood: a felled trunk is
+     * something you walk over, not a wall` said so within the minute. */
+    this._reapFallBodies();
     /**
      * THE PROXY FOLLOWS THE CUTTING EDGE, AND A THROWN BLADE LEAVES THE BODY.
      *
@@ -1268,7 +1283,10 @@ export class Forest {
       D[k + F.AGE] += dt;
       write = true;
 
-      // what it is coming down on, this frame
+      // the trunk IS a body while it is falling — carry it, and let the
+      // contact channel be what tells anybody it landed on them
+      this._carryFallBody(i);
+      // chain-felling: which STANDING trees this one brings down with it
       this._sweep(i, dt);
 
       if (D[k + F.ANG] >= REST) {
@@ -1400,6 +1418,183 @@ export class Forest {
    * `Physics.segmentSegment` already gives the blade — so a tree hitting a tree
    * is measured exactly the way a blade hitting a limb is.
    */
+  /**
+   * A TREE IS MATTER WHILE IT IS FALLING.
+   *
+   * "there shouldn't be a single thing that doesn't have physics".
+   *
+   * A trunk coming down was the last moving, massive thing in the game that
+   * was not in the physics world. Its fall is an analytic rod pivot —
+   * `θ̈ = 3g/2L·sinθ`, written into a flat Float32 array and drawn instanced —
+   * which is why a wood can hold hundreds of trees at all, and it meant the
+   * thing crushing you was animation with a raycast bolted to it.
+   *
+   * ── WHY THIS DOES NOT COST A FOREST ──────────────────────────────────
+   *
+   * The body exists ONLY between `fell()` and `_land()`. A standing tree has
+   * no body — it is one row of an array — and a fallen one already becomes a
+   * static log box or a `Prop`. Only what is actually in the air pays, and
+   * `this.active` is a handful even in a chain: the same rule as the arming
+   * gate, which is that you pay for what is moving.
+   *
+   * ── AND IT IS KINEMATIC, WHICH IS THE POINT RATHER THAN A COMPROMISE ──
+   *
+   * Handing the trunk to the solver would mean the physics decides where a
+   * tree lands, and the fall would stop being the thing the wood was tuned
+   * around — the rod equation, the chain-felling, the rest angle, the landing
+   * beat. All of that is gameplay and it stays. What changes is that the trunk
+   * is now a REAL COLLIDER carrying a real mass and a real tip speed, so
+   * everything else in the world meets it: a droid under it, a crate, a
+   * corpse, the player. That is the same shape as every living body in the
+   * game, which is also kinematic and also a striker.
+   */
+  _makeFallBody(i) {
+    const phys = this.world?.physics;
+    if (!phys || !phys.add) return;
+    const D = this.data, k = i * F.N;
+    const len = Math.max(0.4, D[k + F.H] - D[k + F.CUT]);
+    const r = Math.max(0.06, D[k + F.R]);
+    const body = new Body({
+      shape: capsule(Math.max(0.05, len * 0.5 - r), r),
+      mass: Math.min(LOG_MASS_CAP, this.massPerMetre(i) * len),
+      kinematic: true, static: false,
+      layer: LAYER.PROP, mask: LOOSE_MASK,
+      allowSleep: false, gravityScale: 0,
+      friction: 0.86, restitution: 0.03,
+    });
+    body.userData.tree = i;
+    body.userData.forest = this;
+    /**
+     * AND IT PRICES ITS OWN BLOW, because a trunk is not a lump.
+     *
+     * The generic law reads one mass and one speed off the body. Neither is
+     * right for a rod: the mass that reaches you is YOUR OWN WIDTH of trunk
+     * rather than the whole tree — a shoulder-width of a 0.5 m trunk is 440 kg
+     * and of a sapling is 40 — and the speed is `ω·r` at wherever along it you
+     * were standing, so the tip hits at several times the butt. `crushDamage`
+     * has known both since it was written.
+     *
+     * So the trunk hands the contact channel a price function rather than
+     * keeping a second collision system. Everything else — the dispatch, the
+     * dedupe, the attribution, the knockback — is the same code every other
+     * striker in the game goes through.
+     */
+    armKinetic(body, { ...KINETIC_BODY, price: (c) => this._priceTrunk(i, c) });
+    phys.add(body);
+    (this._fallBodies || (this._fallBodies = new Map())).set(i, body);
+    this._carryFallBody(i);
+  }
+
+  /** Put the body where the trunk is, and tell it how fast it is travelling. */
+  _carryFallBody(i) {
+    const body = this._fallBodies?.get(i);
+    if (!body) return;
+    const D = this.data, k = i * F.N;
+    this.hinge(i, _v1);
+    this.tip(i, _v2);
+    /* THROUGH `setTransform`, not by assigning `.position`. A kinematic body's
+     * pose has to be handed to Rapier deliberately — the same call
+     * `Enemy._syncBody` makes — and writing the fields directly moved the JS
+     * side while the collider stayed where it was, so a trunk that visibly
+     * swept through a body generated no contact at all. */
+    _v3.copy(_v2).sub(_v1).normalize();
+    _q1.setFromUnitVectors(_UPY, _v3);
+    body.setTransform(_v4.copy(_v1).add(_v2).multiplyScalar(0.5), _q1);
+    /**
+     * THE SPEED OF THE MIDDLE, which is the honest number for a rod.
+     *
+     * `VEL` is angular. A point half way along a rod pivoting at one end moves
+     * at `ω · L/2`, and the middle is where the body's own centre is, so that
+     * is what the contact channel should price a hit at. The tip moves twice
+     * as fast and the butt not at all; `crushDamage` has always scaled the
+     * blow along the trunk for exactly that reason, and the contact channel
+     * does the same thing more crudely by pricing every part of a body the
+     * same. The difference is under a factor of two and it is on the safe side
+     * for the butt and the light side for the tip.
+     */
+    const len = Math.max(0.4, D[k + F.H] - D[k + F.CUT]);
+    /**
+     * AND IT MOVES ACROSS ITSELF, NOT ALONG ITSELF.
+     *
+     * The first version set this to the trunk's own AXIS times the tip speed,
+     * which is the one direction a falling rod does not travel in: every point
+     * on it moves PERPENDICULAR to the rod, swept round the hinge. The
+     * consequence was silent and total — Rapier raised the contact, the
+     * dispatcher took the closing speed along the line to the victim, got
+     * essentially zero because the reported velocity pointed sideways past
+     * them, and dropped it under `contactFloor`. Three real start events,
+     * nothing billed, a tree falling through a man.
+     *
+     * `ω × r` is the whole of it. The rod turns about a horizontal axis
+     * perpendicular to the direction it is falling in, so that axis is
+     * `(DZ, 0, −DX)`, and `r` is the vector from the hinge to the point being
+     * carried — the body's own centre.
+     */
+    /* ω on the body, and the LINEAR part is the hinge's — which is zero,
+     * because a felled trunk turns about a stump that does not move. The
+     * dispatcher composes `v + ω × r` at whatever point the two bodies
+     * actually meet, so handing it the rotation is handing it everything: the
+     * butt reads slow, the tip reads fast, and both come out of one number
+     * instead of the centre's velocity standing in for the whole rod. */
+    body.angularVelocity.set(D[k + F.DZ], 0, -D[k + F.DX]).multiplyScalar(D[k + F.VEL]);
+    _v5.copy(body.position).sub(_v1);
+    body.kinVel.crossVectors(body.angularVelocity, _v5);
+  }
+
+  /**
+   * What this trunk's blow is worth, at the point it actually struck.
+   *
+   * `c.point` is the contact, which the dispatcher puts between the two
+   * bodies; projecting it back onto the hinge→tip segment recovers the `t`
+   * that `crushDamage` wants — 0 at the stump, 1 at the crown.
+   */
+  _priceTrunk(i, c) {
+    this.hinge(i, _v1);
+    this.tip(i, _v2);
+    _v3.copy(_v2).sub(_v1);
+    const L2 = _v3.lengthSq() || 1;
+    const t = clamp(_v4.copy(c.point).sub(_v1).dot(_v3) / L2, 0, 1);
+    /* The victim's own radius, so a beast catches more of the trunk than a
+     * droid does — the other half of "relative to their size". */
+    const rad = c.other?.boundingRadius ?? 0.5;
+    return this.crushDamage(i, t, rad);
+  }
+
+  /**
+   * The trunk has landed: the static log box and the `Prop` take it from here.
+   *
+   * NOT REMOVED THIS FRAME, and the reason is the contact channel's own shape.
+   * Rapier reports a contact one step before it resolves it, so the dispatcher
+   * holds a pair for a step and prices it on the next — and the LAST thing a
+   * falling trunk does is land on whatever is furthest out along its arc.
+   * Removing the body the instant it rested threw those contacts away: the
+   * body was gone from `_byCollider` by the time the pair was priced, so the
+   * tip of every tree in the wood hit nothing. Measured before the grace, over
+   * three tree sizes and three positions along the trunk, damage at 25/60/95%:
+   * `8/8/0`, `12/41/0`, `82/140/0` — a clean zero in the column that should
+   * hurt the most.
+   *
+   * Four steps is comfortably past the one-step deferral and is invisible: the
+   * trunk is at rest, exactly where the static log box is about to be.
+   */
+  _dropFallBody(i) {
+    const body = this._fallBodies?.get(i);
+    if (!body) return;
+    this._fallBodies.delete(i);
+    (this._fallDying || (this._fallDying = [])).push({ body, left: 4 });
+  }
+
+  /** Retire the trunk bodies whose grace has run out. See `_dropFallBody`. */
+  _reapFallBodies() {
+    const dying = this._fallDying;
+    if (!dying || !dying.length) return;
+    for (let i = dying.length - 1; i >= 0; i--) {
+      if (--dying[i].left > 0) continue;
+      this.world?.physics?.remove?.(dying[i].body);
+      dying.splice(i, 1);
+    }
+  }
+
   _sweep(i, dt) {
     const D = this.data;
     const k = i * F.N;
@@ -1427,39 +1622,25 @@ export class Forest {
       this.fell(j, D[k + F.DX], D[k + F.DZ], 0.35, (this._chainDepth || 0) + 1);
     }
 
-    /* AND ANYTHING STANDING UNDER IT — WHICH NOW INCLUDES YOU.
+    /* WHAT IT LANDS ON IS THE CONTACT CHANNEL'S BUSINESS NOW.
      *
-     * This walked `world.enemies` and nothing else, so a twenty-metre trunk
-     * came down through the player and did not touch them. Note #24: "they
-     * should damage things/players/enemies if they fall on you." A tree that
-     * is lethal to a droid and free to the person who cut it down is the one
-     * hazard in the game the player can ignore, and it is the one they made.
+     * Everything from here to the end of this method used to be a raycast of
+     * the trunk against `world.enemies` and `world.players`, with its own
+     * per-victim latch, its own knockback and its own call to `crushDamage`.
+     * It existed because a falling tree was animation and nothing in the game
+     * could be told that it had touched somebody.
      *
-     * The two lists are walked through one loop over one concatenation rather
-     * than by copying the body twice, because the property is "anything
-     * standing under it" and a second copy is how the player half would have
-     * drifted from the droid half. */
-    const world = this.world;
-    const len = Math.max(0.2, D[k + F.H] - D[k + F.CUT]);
-    for (const list of [world.enemies, world.players]) {
-      if (!list) continue;
-      for (let e = 0; e < list.length; e++) {
-        const en = list[e];
-        if (!en || en.dead || en.alive === false || en._treeHit === this.stats.felled) continue;
-        const d = pointSegDist(en.position.x, en.position.y + 0.9, en.position.z, _v1, _v2, _hit);
-        if (d > rad + 1.0) continue;
-        en._treeHit = this.stats.felled;
-        const dmg = this.crushDamage(i, _hit.t, en.radius);
-        en.damage?.(dmg, en.position, null, 'crush');
-        /* A tree does not only hurt, it FLATTENS — and the shove is the same
-         * speed the damage was billed off, so the sapling that grazed you for
-         * eight nudges you and the trunk that read a hundred and forty throws
-         * you the way it went. */
-        const push = clamp(Math.abs(D[k + F.VEL]) * _hit.t * len * 0.55, 2.5, 12);
-        en.applyKnockback?.(_v3.set(D[k + F.DX] * push, -push * 0.78, D[k + F.DZ] * push), 0, null);
-        this.stats.crushed++;
-      }
-    }
+     * The trunk is a real body while it falls (`_makeFallBody`), armed with
+     * the same kinetic law as everything else with mass, so a droid under it
+     * is hit through Rapier's own narrowphase against the real capsule —
+     * and so is a crate, a corpse, a barrel and anything else standing there,
+     * none of which this loop ever looked at. Measured before it was deleted:
+     * a felled trunk raised a contact against the droid AND the sweep billed
+     * it too, which is one hit paid for twice.
+     *
+     * `crushDamage` stays. It is still the price of a trunk hitting something
+     * and `impactDamage` is still where it goes; what has gone is the second
+     * collision system that used to call it. */
   }
 
   /**
@@ -1518,6 +1699,7 @@ export class Forest {
    * fell in front of you has to be solid when you walk into it.
    */
   _land(i) {
+    this._dropFallBody(i);
     this._writeTrunk(i);
     this._writeCrown(i);
     this.down.add(i);

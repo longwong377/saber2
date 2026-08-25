@@ -251,8 +251,23 @@ export function kineticContact(other, c) {
   const source = self.userData.hurledBy || null;
   const tune = self.userData.kinetic
     || (source ? KINETIC_THROWN : (c.approach ? KINETIC_BODY : KINETIC));
-  let dmg = impactDamage(c.mass, c.speed, tune);
-  if (dmg <= 0) return;
+  /**
+   * `price` — the one escape valve, for a striker that is not uniform.
+   *
+   * Everything in this file assumes a body is a lump: one mass, one speed,
+   * priced by one curve. A falling TREE is not. The mass that reaches you is
+   * your own width of trunk rather than the whole tree, and the speed depends
+   * where along it you were standing, because a rod pivoting at one end moves
+   * at `ω·r`. `Forest.crushDamage` has known both of those since it was
+   * written and is a strictly better answer than `impactDamage(mass, speed)`
+   * for that one shape.
+   *
+   * This is a TUNING, not a second collision system. The contact is still
+   * dispatched here, deduped here, attributed here and applied here; the
+   * striker is only allowed to say what its own blow is worth.
+   */
+  let dmg = tune.price ? tune.price(c, self) : impactDamage(c.mass, c.speed, tune);
+  if (!(dmg > 0)) return;
 
   /* A thrown thing carries its thrower, so a droid crushed by a crate you put
    * in the air is your kill and pays out as one. Anything else — a collapse, a
