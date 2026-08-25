@@ -2271,6 +2271,121 @@ export function attachCloak(scene, rig, opts = {}) {
  *
  * @param opts.drape  a HOOD_CUTS row's `drape` — { r, y, arc, length, cols, rows }
  */
+/**
+ * A HOOD SITS ON THE SHOULDERS. A HELMET SITS ON THE SKULL.
+ *
+ * The player, on the fourth or fifth pass at this: "hoods still look like
+ * helmets idk what to tell you, this is the millionth time, the hoods should be
+ * actual cloth laid over the person's actual head, it should move like it's
+ * fucking fabric not goddamn helmet idk why you keep missing this".
+ *
+ * The reason it kept being missed is that everybody, including me, went looking
+ * at the SHAPE. The shell is a tapered, leaned, fluted sphere segment with a
+ * rolled rim and a gathered peak, and `attachHoodDrape` already runs a real
+ * six-iteration cloth solve for the fall down the nape. None of that is the
+ * problem. The problem is one line of scene graph: `hoodOn` parents the shell
+ * to the HEAD BONE, so it inherits the skull's rotation exactly, and a
+ * garment that yaws 1:1 with the skull is — definitionally, whatever it is
+ * shaped like — a helmet. Turn to look at something and the cloth turns with
+ * your nose.
+ *
+ * What a real hood does is the opposite: it rests on the shoulders and the
+ * back of the neck, so it holds still and your FACE TURNS INSIDE IT, and only
+ * once the head has gone far enough does the fabric get dragged round with it.
+ *
+ * ── HOW IT IS DONE ─────────────────────────────────────────────────────
+ *
+ * The shell stays a child of the head — it has to, or it would need its own
+ * follow of the head's position, and that is a second thing to get wrong. What
+ * changes is its LOCAL rotation, set every frame so that its WORLD rotation is
+ * a damped, angle-limited lag toward the CHEST's. `headWorld⁻¹ · hoodWorld` is
+ * that local, and it is exact rather than approximate.
+ *
+ * Two constants carry the behaviour, and they are the only ones:
+ *
+ *   `follow`  how fast the fabric is dragged round once it is being dragged.
+ *             Low enough that a fast head turn visibly leaves it behind, high
+ *             enough that it is never a beat behind a walking figure.
+ *   `give`    how far, in radians, the head may turn inside the hood before
+ *             the fabric moves at all. This is the hood's own slack — the
+ *             difference between a garment resting on you and one strapped to
+ *             you — and it is what makes a glance cost the hood nothing.
+ *
+ * The limit is what stops it becoming a bug in the other direction: a hood
+ * that lagged without bound would end up facing backwards on a spinning
+ * fighter, which reads worse than the helmet did.
+ */
+export class HoodShell {
+  constructor(rig, mesh, opts = {}) {
+    this.mesh = mesh || null;
+    this.head = rig?.get('head')?.obj || null;
+    /* The chest and not the neck: the neck is half-driven by the head's own
+     * look-at on most of these rigs, so lagging toward it would be lagging
+     * toward a damped copy of the thing being lagged away from. */
+    this.base = rig?.get('chest')?.obj || rig?.get('spine')?.obj || null;
+    this.follow = opts.follow ?? 7.5;
+    this.give = opts.give ?? 0.42;          // ~24°, a hood's slack on the head
+    this.limit = opts.limit ?? 0.95;        // ~54°, past which it is dragged hard
+    this._w = new THREE.Quaternion();       // the hood's world rotation
+    this._t = new THREE.Quaternion();
+    this._i = new THREE.Quaternion();
+    this._ready = false;
+  }
+
+  /** Put the fabric back where the head is, with no lag. For a teleport, a
+   *  respawn, or the frame a body is first shown. */
+  reset() { this._ready = false; }
+
+  update(dt) {
+    const m = this.mesh, head = this.head, base = this.base;
+    if (!m || !head || !base || !(dt > 0)) return;
+    head.updateMatrixWorld();
+    base.updateMatrixWorld();
+    head.getWorldQuaternion(this._i);
+    base.getWorldQuaternion(this._t);
+    if (!this._ready) { this._w.copy(this._t); this._ready = true; }
+
+    /**
+     * THE SLACK, AND WHY IT IS MEASURED AGAINST THE HEAD RATHER THAN THE CHEST.
+     *
+     * The target is the chest, but the thing that must not clip is the HEAD:
+     * the fabric is allowed to hold still only while the skull is still inside
+     * it. So the angle that decides whether to drag is the one between where
+     * the hood is now and where the head is now, and the direction it is
+     * dragged toward is the chest. Below `give` the hood does not move at all,
+     * which is the whole difference between cloth and a strap.
+     */
+    const off = this._w.angleTo(this._i);
+    if (off > this.give) {
+      const over = (off - this.give) / Math.max(1e-3, this.limit - this.give);
+      const k = 1 - Math.exp(-this.follow * (0.25 + 0.75 * Math.min(1, over)) * dt);
+      // dragged toward the HEAD once it is being dragged — the fabric is being
+      // pushed by the skull, not pulled by the shoulders
+      this._w.slerp(this._i, k);
+    } else {
+      // settling back onto the shoulders while nothing is pushing it
+      this._w.slerp(this._t, 1 - Math.exp(-this.follow * 0.35 * dt));
+    }
+    /* HARD STOP. Whatever the damping did, the hood may not end up more than
+     * `limit` off the head, or a fighter who spins puts their face through the
+     * side of it. */
+    const after = this._w.angleTo(this._i);
+    if (after > this.limit) this._w.rotateTowards(this._i, after - this.limit);
+
+    m.quaternion.copy(this._i).invert().multiply(this._w);
+  }
+
+  dispose() { this.mesh = this.head = this.base = null; }
+}
+
+/** Build a `HoodShell` for whatever hood mesh a built body is wearing. */
+export function attachHoodShell(rig, opts = {}) {
+  const head = rig?.get('head')?.obj;
+  const mesh = head?.children?.find((c) => c.isMesh && c.userData.hood);
+  if (!mesh) return null;
+  return new HoodShell(rig, mesh, opts);
+}
+
 export function attachHoodDrape(scene, rig, opts = {}) {
   const D = opts.drape;
   const head = rig.get('head');

@@ -3849,6 +3849,151 @@ function facet(g) {
 }
 
 /** The sphere segment of a shell, centred on the origin and on the face. */
+/** How much air a hood leaves round a head, in metres at scale 1. */
+const HOOD_GAP = 0.012;
+
+/** How many height bands the skull is measured in. See `headProfile`. */
+const HOOD_BANDS = 16;
+/** …and how many bearings. A hood is leaned and fluted, so it is not round. */
+const HOOD_AZ = 24;
+
+/**
+ * HOW WIDE THE HEAD IS AT EVERY HEIGHT — not how wide it is at its widest.
+ *
+ * The first version of this returned one number, the skull's greatest radius,
+ * and widened the shell by the ratio. It did not work and `hood.mjs` proved it
+ * did not: every species still pushed through, 6 mm to 70 mm. The reason is
+ * that a head and a hood are different shapes. The skull is widest at the
+ * temples, most of the way up; the shell is widest at the hem, which flares
+ * out below the jaw. Matching one maximum to the other compares two places
+ * that are nowhere near each other, and leaves the cloth narrower than the
+ * skull exactly where the skull is widest.
+ *
+ * So the head is reduced to a PROFILE — its greatest radius in each of
+ * `HOOD_BANDS` slices up its own height — and the shell is pushed out band by
+ * band. Measured off whatever is parented to the head bone, so montrals, a
+ * snout or a crown of horns are all just head, and a species nobody has built
+ * yet is handled on the day it is added rather than added to a table.
+ */
+function headProfile(headObj, yLo, yHi) {
+  let lo = Infinity, hi = -Infinity;
+  const pts = [];
+  const p = new THREE.Vector3();
+  headObj.traverse((o) => {
+    if (!o.isMesh || o.userData.hood) return;
+    const pos = o.geometry?.attributes?.position;
+    if (!pos) return;
+    o.updateMatrix();
+    /* Sampled rather than walked: this runs once per body built, and the
+     * widest point of a skull is not a needle a stride of a few can miss. */
+    const step = Math.max(1, Math.floor(pos.count / 700));
+    for (let i = 0; i < pos.count; i += step) {
+      p.fromBufferAttribute(pos, i).applyMatrix4(o.matrix);
+      /**
+       * ONLY WHERE THE SHELL IS, and this is the clause that made the fit work
+       * on the three species it was written for.
+       *
+       * Binned over the whole head, `span` is set by whatever hangs off it —
+       * a Twi'lek's lekku and a Nautolan's tentacles run all the way down the
+       * back, and a Togruta's montrals stand well above the crown. That put
+       * the entire skull inside two or three of sixteen bands and left the fit
+       * with almost no resolution exactly where it needed the most, which is
+       * why `hood.mjs` kept naming those three and nobody else.
+       *
+       * Points above the crown clamp into the top band rather than being
+       * dropped: a montral that starts inside the hood and leaves through the
+       * top still has to push the cloth out on its way.
+       */
+      if (p.y < yLo) continue;
+      const y = Math.min(p.y, yHi);
+      pts.push(p.x, y, p.z);
+      if (y < lo) lo = y;
+      if (y > hi) hi = y;
+    }
+  });
+  if (!pts.length || !(hi > lo)) return null;
+  const span = hi - lo;
+  /**
+   * A GRID, NOT A CURVE. The second version of this measured one radius per
+   * height and still let every species through, because a hood is not round:
+   * `lean` pushes the whole shell back over the nape and `flute` gathers it
+   * into folds, so at one height the cloth can be 30 mm from the axis at the
+   * back and 60 at the side. Fitting a round skull to that clears the wide
+   * bearings and cuts through the narrow ones, which is what the check kept
+   * reporting.
+   */
+  const r = new Float64Array(HOOD_AZ * HOOD_BANDS);
+  const cellOf = (x, z, y) => {
+    const a = ((Math.floor(((Math.atan2(z, x) + Math.PI) / (2 * Math.PI)) * HOOD_AZ) % HOOD_AZ) + HOOD_AZ) % HOOD_AZ;
+    const b = Math.min(HOOD_BANDS - 1, Math.max(0, Math.floor(((y - lo) / span) * HOOD_BANDS)));
+    return a * HOOD_BANDS + b;
+  };
+  for (let i = 0; i < pts.length; i += 3) {
+    const c = cellOf(pts[i], pts[i + 2], pts[i + 1]);
+    const d = Math.hypot(pts[i], pts[i + 2]);
+    if (d > r[c]) r[c] = d;
+  }
+  /**
+   * Then every cell takes the widest of itself and its neighbours, in both
+   * axes and wrapping in bearing. Two reasons, and the second is why the
+   * height pass is one-sided:
+   *
+   *   The skull is SAMPLED, so a cell can be empty or short by luck, and cloth
+   *   fitted to a lucky cell cuts through the vertex the sample missed.
+   *
+   *   Cloth that clears the temples has to clear them on the way past. A
+   *   narrow band under a wide one lets the shell pinch in below the widest
+   *   part, which is a hood that fits until the head moves.
+   */
+  const g2 = new Float64Array(r.length);
+  for (let a = 0; a < HOOD_AZ; a++) {
+    for (let b = 0; b < HOOD_BANDS; b++) {
+      let m = 0;
+      for (let da = -1; da <= 1; da++) {
+        const aa = ((a + da) % HOOD_AZ + HOOD_AZ) % HOOD_AZ;
+        for (let db = -1; db <= 1; db++) {
+          const bb = Math.min(HOOD_BANDS - 1, Math.max(0, b + db));
+          const v = r[aa * HOOD_BANDS + bb];
+          if (v > m) m = v;
+        }
+      }
+      g2[a * HOOD_BANDS + b] = m;
+    }
+  }
+  for (let a = 0; a < HOOD_AZ; a++) {
+    for (let b = HOOD_BANDS - 2; b >= 0; b--) {
+      const i2 = a * HOOD_BANDS + b;
+      g2[i2] = Math.max(g2[i2], g2[i2 + 1] * 0.92);
+    }
+  }
+  return { r: g2, lo, span, cellOf };
+}
+
+/**
+ * Push a hood shell out until it lies outside the head it is worn on.
+ *
+ * `g` is in SHELL space and the profile is in HEAD space, which differ by the
+ * offset the Kit places the shell at — so the vertex is lifted into head space
+ * to be measured and the correction is applied back in shell space. Widening
+ * only: a shell already clear of the skull is left exactly as its cut authored
+ * it, which is what keeps ten different hood cuts ten different shapes.
+ */
+function fitHoodToHead(g, prof, oy, oz, gap) {
+  if (!prof) return;
+  const p = g.attributes.position;
+  let moved = 0;
+  for (let i = 0; i < p.count; i++) {
+    const x = p.getX(i), y = p.getY(i) + oy, z = p.getZ(i) + oz;
+    const need = prof.r[prof.cellOf(x, z, y)] + gap;
+    const r = Math.hypot(x, z);
+    if (r >= need || r < 1e-6) continue;
+    const k = need / r;
+    p.setXYZ(i, x * k, p.getY(i), z * k - oz);
+    moved++;
+  }
+  if (moved) { p.needsUpdate = true; g.computeVertexNormals(); }
+}
+
 function hoodShell(S, s) {
   const len = Math.PI * (2 - S.open);
   // centred on +Z: three puts phi = 0 at -X, so a run of `len` is centred on
@@ -3946,6 +4091,29 @@ export function hoodOn(headObj, mat, s, id) {
   if (H.shell) {
     const S = H.shell;
     let g = hoodShell(S, s);
+    /**
+     * AND IT IS SIZED OFF THE HEAD THAT IS ACTUALLY IN IT.
+     *
+     * "also the person's head like on certain races clip out of the hoods as
+     * well." The shell's radius is a constant per cut, scaled by one number,
+     * and that number is the BODY's — so every cut was fitted to whichever
+     * head happened to be in the room when it was tuned. A Kel Dor's mask, a
+     * Togruta's montrals, a Zabrak's crown and a Trandoshan's snout are not
+     * that head, and each of them pushed through a shell built for it.
+     *
+     * The fix is not a table of per-species radii, which is a list somebody
+     * has to extend on the day a species is added and will not. It is to ask
+     * the head. Everything already parented to `headObj` is the head — the
+     * skull, the face, the horns, whatever the species hung there — so its
+     * bounding sphere in head space is the thing the hood has to clear, and
+     * the shell is widened until it does, never narrowed.
+     */
+    /* The shell's own y span, in head space, is what the head is measured
+     * over — see `headProfile`. */
+    g.computeBoundingBox();
+    const gb = g.boundingBox;
+    fitHoodToHead(g, headProfile(headObj, gb.min.y + S.y * s, gb.max.y + S.y * s),
+      S.y * s, S.z * s, HOOD_GAP * s);
     // The lining is taken off the SMOOTH shell, before any faceting: it is
     // the inside surface, nobody sees its silhouette, and `liningGeo` reverses
     // winding through the index buffer that faceting throws away.

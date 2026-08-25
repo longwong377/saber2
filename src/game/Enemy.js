@@ -20,7 +20,7 @@ import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
   DUEL_PHASES, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
-import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { TOUGHNESS, thinner, bladesTouching, aimAt } from './Combat.js';
@@ -3415,6 +3415,11 @@ export class Enemy {
        * below, so a hooded figure at range costs nothing. */
       const hoodMesh = built.rig?.get('head')?.obj?.children
         ?.find((c) => c.isMesh && c.userData.hood);
+      /* THE SHELL MOVES TOO. `attachHoodDrape` below simulates the FALL down
+       * the nape and always has; the dome over the skull was rigid and welded
+       * to the head bone, which is the whole of "hoods still look like
+       * helmets". See HoodShell. */
+      this.hoodShell = attachHoodShell(this.rig);
       const HD = hoodMesh && hoodCut(hoodMesh.userData.hood)?.drape;
       if (HD) {
         this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
@@ -5479,6 +5484,7 @@ export class Enemy {
     audio.jet?.(this.position, 0, this.id);
     if (this.cloak) { this.cloak.dispose(); this.cloak = null; }
     if (this.hoodDrape) { this.hoodDrape.dispose(); this.hoodDrape = null; }
+    if (this.hoodShell) { this.hoodShell.dispose(); this.hoodShell = null; }
     if (this.skirt) { this.skirt.dispose(); this.skirt = null; }
     if (this.saber) {
       /**
@@ -8710,6 +8716,11 @@ export class Enemy {
         this.cloak.update(dt, this.cloak.refreshColliders(), _v3);
       }
     }
+    /* The dome, which lags the skull and settles onto the shoulders. It is
+     * NOT gated on `clothOn`: it costs one quaternion slerp, it is what stops
+     * the garment reading as armour, and a figure near enough to see the hood
+     * at all is near enough for that to matter. */
+    if (this.hoodShell) this.hoodShell.update(dt);
     // the hood's fall, on the same cut and the same wind as the cape
     if (this.hoodDrape) {
       if (!this.clothOn) this.hoodDrape.setVisible(false);

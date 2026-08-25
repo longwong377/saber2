@@ -17,7 +17,7 @@ import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
-import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
@@ -3143,6 +3143,7 @@ export class Player {
     this.cloak?.dispose();
     this.skirt?.dispose(); this.skirt = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
+    this.hoodShell?.dispose(); this.hoodShell = null;
     const mat = this.palette.outer.clone();
     mat.side = THREE.DoubleSide;
     /**
@@ -3198,6 +3199,10 @@ export class Player {
        * `built.headScale`, and the two differ by 1.85 on the small-folk row.
        * A fall pinned at the body's scale starts half way up a shell built at
        * the head's. */
+      /* The dome over the skull, which was welded to the head bone and is why
+       * a hood has read as a helmet through several passes at its SHAPE. See
+       * HoodShell in Cloth.js. */
+      this.hoodShell = attachHoodShell(this.rig);
       this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
         // the hood's own bolt; attachHoodDrape clones it and owns the copy
         scale: this.built?.headScale ?? S,
@@ -6047,6 +6052,9 @@ export class Player {
      * paying for nothing. `_applyViewMode` already hides the rigid shell by
      * traversing the neck; this is not under that bone, so it needs its own. */
     if (this.hoodDrape) {
+      /* In first person there is no head in the frame to hang it on, so the
+       * dome is left alone with the fall. */
+      if (this.hoodShell && !this.camera.firstPerson) this.hoodShell.update(dt);
       if (this.camera.firstPerson) this.hoodDrape.setVisible(false);
       else {
         this.hoodDrape.setVisible(true);
@@ -9987,6 +9995,7 @@ export class Player {
     this.hum.retract();
     this.cloak?.dispose(); this.cloak = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
+    this.hoodShell?.dispose(); this.hoodShell = null;
     this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
     /**
@@ -10223,6 +10232,7 @@ export class Player {
     this.hum.dispose();
     this.cloak?.dispose(); this.cloak = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
+    this.hoodShell?.dispose(); this.hoodShell = null;
     /**
      * THE SKIRT TOO, and it was the only garment this line forgot.
      *
