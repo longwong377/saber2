@@ -26,6 +26,56 @@ Playable two ways:
 
 ## 1. State
 
+### 1.0 START HERE — the shortest true statement of where this is
+
+**Branch `claude/autonomous-completion-6b2kzi`, gate green at 2062 checks.**
+
+**HOW TO PLAY IT.** `node tools/pack.mjs out.html` builds the whole game as ONE
+self-contained file — no server, open it in a browser. **AND THE PAGES LINK IS
+A DIFFERENT QUESTION.** `.github/workflows/pages.yml` publishes on a push to
+`main`, `master` or `claude/lightsaber-combat-game-lxw391` (the default) and on
+nothing else. A feature branch publishes NOTHING however many times it is
+pushed, so <https://longwong377.github.io/saber2/> only moves when this work
+reaches the default branch.
+
+**WHAT PLAN SAYS IS LEFT: nothing unbuilt.** Every design bullet in §0–§6 is
+built, struck by measurement, or is a decision rather than a feature. What is
+actually outstanding is three things, and only one of them is work:
+
+  1. **THE WATCHDOG — a decision, and it is the developer's.**
+     `WaveDirector._watchdog` scores a body's progress as its distance to the
+     nearest live PLAYER. In Command the horde's fight is your ARMY, so with no
+     player on the field every enemy reads stalled and the director retires it:
+     measured, **39.4 retirements a wave against the 10.5 bodies the line
+     actually shot** — 62% of the wave deleted. It fires wherever the player is
+     not, including **every frame after the commander goes down in shipped
+     play**. The fix is 52 lines at `tools/_watchdog.patch`, the census
+     instrument is `tools/_whywave.mjs`, and it is NOT in the tree because with
+     it the unaided line is wiped on every seed and `theline.12` — a shipped
+     check asserting §5's own "costs about half the line" — goes red at 0.0 of
+     10. Landing it lands a difficulty re-tune, and which knob gives (wave
+     budget, `RULE_MAX`, morale, or the target itself) is a balance call.
+     **Until it is made, every M1 magnitude in this document is measured against
+     a floor the director was propping up.**
+  2. **The per-object ink prepass** (§4.3's last rung) — waiting on one run of
+     `tools/_frame.mjs` on REAL HARDWARE. A 2.5–3.8 s software frame cannot
+     resolve a 12% effect; the A/B/A bracket is what would establish it.
+  3. **Nothing else.** B1b, B3, M4 and §4.8 were all listed as owed and all
+     turned out to be built — see the struck bullets below.
+
+**THE ONE THING THAT WILL COST YOU AN HOUR IF YOU SKIP IT:** read §2 before
+touching a tool. In particular §2.1 (always run with `--import
+./tools/register.mjs`, or you get two copies of three and fictional failures),
+§2.2 and §2.2b (**the container rolls the clone back, and `git checkout --
+<path>` on an uncommitted tree is a loaded gun** — between them they cost this
+session a file and a working tree; commit and push often, because the remote is
+the only thing that survives), §2.6b (**do not run anything else while the gate
+runs**; one review agent alongside it turned a frame-budget check red that
+passes 3/3 alone), and §2.3b–e, which are four new ways a check can be unable
+to fail.
+
+---
+
 > **SESSION OF 2026-08-23 (SECOND) — WHAT LANDED, IN ONE PLACE.** Branch
 > `claude/autonomous-completion-6b2kzi`, eleven commits, and the whole of
 > PLAN.md §6's chain after item 4 is now built or measured.
@@ -273,6 +323,29 @@ Playable two ways:
 > of them found live game defects rather than only check defects —
 > `killerName`/the Foundry banner printing spawn keys, and the form `tell` that
 > the dojo never said.
+>
+> **AND THEN THE SESSION'S OWN DIFF WAS REVIEWED THE SAME WAY**, which found
+> eight more — six of them introduced by the report itself. The two that were
+> not: **the enemy's battery was firing under your name** (`theirBarrage` shared
+> `HIGH_COMMAND` with `authorise`, so every man the CIS guns killed entered the
+> report as a death the player caused, marked in the colour reserved for a
+> mistake), and **the men a campaign is HANDED were on no entry in the ledger**
+> (`recruit` logs an `enlist`; `_musterOpening`, `_musterVeterans` and
+> `_musterJoin` logged nothing, so the census could not tell an opening trooper
+> from a droid until he died — and the cost was the FIRST friendly-fire death of
+> every run). The six that were mine: a meeting's ledger holds both armies and
+> was read flat; an engagement with no casualties yet was dropped so the "in
+> progress" row was unreachable; `t: 'won'` was not a terminator; the death
+> card's "N of them by your own side" counted the whole census while printing
+> the top three; the census said "your own side" twice on the two rows that
+> already say it; and two of the new checks were weaker than they looked.
+>
+> **THE LESSON WORTH CARRYING: review the diff you just wrote, adversarially,
+> as a separate pass.** Six of eight were mine and none of them were visible to
+> me while writing. `tools/_onecheck.mjs` is what makes that affordable — one
+> check out of one suite, seconds instead of the twenty-five minutes a
+> `theline.mjs` run costs — and it had this exact defect itself on its first
+> cut, reporting GREEN on a check broken on purpose (trap §2.3e).
 >
 > **§4.3's animated instanced rung IS BUILT**, and it was never "gated hard on
 > M4": `src/engine/Profiler.js` has been the browser frame instrument all along,
