@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { Body, RagdollJoint, LAYER, LOOSE_MASK, capsuleSpheres, capsule, selfGroup } from '../physics/RapierWorld.js';
+import { armKinetic } from './Impact.js';
 import { limbGeo } from './Bodies.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 
@@ -585,6 +586,8 @@ export class DetachedPiece {
        * half of the pair. */
       mask: LOOSE_MASK,
     });
+    /* A severed stump is a striker too — see the note below. */
+    armKinetic(body);
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len: dropLen });
     this._rootBody = body;
@@ -634,6 +637,13 @@ export class DetachedPiece {
       friction: 0.8, restitution: 0.03, inertiaScale: 3, layer: LAYER.DEBRIS,
       mask: LOOSE_MASK,                      // see the stump above
     });
+    /* A SEVERED LIMB IS A STRIKER. Found by `contacts.mjs`'s source scan
+     * rather than by anybody remembering it, which is the scan earning itself:
+     * a limb weighs 0.3–14 kg and leaves at whatever the blade gave it, and
+     * LOOSE_MASK already means it MEETS the person standing next to the one
+     * you cut. The numbers are small by construction — a 5 kg piece at 15 m/s
+     * is 0.7 damage — so this is fidelity rather than a balance change. */
+    armKinetic(body);
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len, bone });
   }

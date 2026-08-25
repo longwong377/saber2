@@ -32,6 +32,7 @@ import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileT
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease, heldMass,
          IMPULSE_AS_HP, paysOut } from './Enemy.js';
+import { armKinetic } from './Impact.js';
 import { WaveDirector, RankSet, boonTick, boonGuard, bondReceive, bondGuardIn, bondGive, BOND, boonById, MODES,
   skirmishConfig, SKIRMISH } from './Waves.js';
 import { Communion, FACETS, insightRate } from './LivingForce.js';
@@ -3121,6 +3122,10 @@ export class World {
        * whose capsule reaches 1.79, and 0.29 on a Training Droid. */
       mask: LOOSE_MASK,
     });
+    /* A FRAGMENT IS A STRIKER. This is the case the contact channel was
+     * rebuilt for — a prop shatters over somebody's head and the pieces are
+     * real. See src/game/Impact.js. */
+    armKinetic(body);
     if (velocity) body.velocity.copy(velocity);
     body.angularVelocity.set((rng() - .5) * 9, (rng() - .5) * 9, (rng() - .5) * 9);
     const entry = { mesh, body, age: 0, life: 22 + rng() * 8 };
@@ -3147,6 +3152,8 @@ export class World {
        * wrecked chassis of a destroyed machine, and it was walk-through. */
       mask: LOOSE_MASK,
     });
+    /* Twenty kilos of wrecked chassis thrown by whatever destroyed it. */
+    armKinetic(body);
     if (velocity) body.velocity.copy(velocity);
     body.angularVelocity.set((rng() - .5) * 8, (rng() - .5) * 8, (rng() - .5) * 8);
     const entry = { mesh: group, body, age: 0, life: 24 };

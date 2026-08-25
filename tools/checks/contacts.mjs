@@ -316,6 +316,84 @@ export async function run({ check, assert }) {
     return 'a five-metre drop leaves the crate intact';
   });
 
+  check('contacts: every striker the tree builds is armed, including ones added later', async () => {
+    /**
+     * THE RULE THAT HAS TO SURVIVE THE NEXT PERSON, and the reason it is a
+     * source scan rather than a list.
+     *
+     * `Impact.armKinetic` on a `Prop` covers every prop in every level for free,
+     * because props are built by one constructor. Nothing else is: debris,
+     * wrecked chassis and the chunks a building collapses into are each
+     * constructed at their own `new Body(...)` site, and a fourth site added
+     * next month would be a whole new class of object that silently does
+     * nothing when it lands on somebody — which is precisely the defect this
+     * channel was built to end, returning by the back door.
+     *
+     * A hand-kept list of sites is the thing HANDOFF 2.3 warns about, so the
+     * subject is DERIVED: every `new Body(` in the tree whose options name the
+     * DEBRIS or PROP layer is a striker, and every one of them has to be armed
+     * within sight of its construction. Anything that genuinely should stay
+     * inert says so with `kinetic: false` on the same line and is exempted by
+     * that rather than by being forgotten.
+     */
+    const { readFileSync } = await import('node:fs');
+    const { readdirSync, statSync } = await import('node:fs');
+    const roots = ['src/game', 'src/world'];
+    const files = [];
+    for (const r of roots) {
+      const dir = new URL(`../../${r}/`, import.meta.url);
+      for (const f of readdirSync(dir)) if (f.endsWith('.js')) files.push([`${r}/${f}`, new URL(f, dir)]);
+    }
+    const strikers = [], unarmed = [];
+    for (const [name, url] of files) {
+      const src = readFileSync(url, 'utf8');
+      let i = -1;
+      while ((i = src.indexOf('new Body(', i + 1)) !== -1) {
+        /* The construction plus what follows it, which is where arming happens.
+         * 1200 characters is comfortably past the longest of these sites and
+         * well short of the next one. */
+        const window = src.slice(i, i + 1200);
+        const opts = window.slice(0, window.indexOf('});') + 3);
+        if (!/layer:\s*LAYER\.(DEBRIS|PROP)/.test(opts)) continue;
+        const line = src.slice(0, i).split('\n').length;
+        strikers.push(`${name}:${line}`);
+        if (!/armKinetic\(|kinetic:\s*false/.test(window)) unarmed.push(`${name}:${line}`);
+      }
+    }
+    assert(strikers.length >= 3,
+      `only ${strikers.length} striker construction sites found across src/game and src/world — the scan is `
+      + 'not finding them, and a scan that finds nothing passes forever');
+    assert(unarmed.length === 0,
+      `${unarmed.length} of ${strikers.length} striker sites build a body on the DEBRIS or PROP layer and `
+      + `never arm it: ${unarmed.join(', ')}. A body that can land on somebody and does nothing is the `
+      + 'defect this channel exists to close. Call `armKinetic(body)`, or say `kinetic: false` if it is '
+      + 'genuinely meant to be inert');
+    return `${strikers.length} striker sites, all armed — ${strikers.join(', ')}`;
+  });
+
+  check('contacts: debris and wrecks are armed the moment the world makes them', async () => {
+    /* The source scan above proves the CALL is there; this proves it took, on
+     * the objects the world actually hands out. Both are wanted: a scan cannot
+     * see a call that runs on a branch nobody takes. */
+    const H = await import('./_coop.mjs');
+    const T = await import('three');
+    const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'waves', quality: 'low' } });
+    const input = H.idleInput();
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    const at = world.player.position.clone(); at.y += 2; at.x += 3;
+
+    const mesh = new T.Mesh(new T.BoxGeometry(0.3, 0.3, 0.3), new T.MeshBasicMaterial());
+    world.spawnDebris(mesh, at.clone(), new T.Vector3(0, 1, 0), new T.Vector3(0.3, 0.3, 0.3));
+    const deb = world.debris[world.debris.length - 1];
+    assert(deb?.body, 'spawnDebris produced no body');
+    const debArmed = !!deb.body.onContact;
+    world.unload();
+    assert(debArmed,
+      'a fragment of a shattered prop is not armed. A crate broken over somebody\'s head showers them with '
+      + 'pieces that pass straight through, which is the same defect the whole channel was rebuilt to fix');
+    return 'spawnDebris hands out an armed body';
+  });
+
   check('contacts: the thrown crate is claimed by exactly one system', async () => {
     /* The prop half of `Player._updateHurled` was retired when this channel
      * came back, because a prop's mask names ENEMY and the contact reaches the

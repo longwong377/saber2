@@ -59,6 +59,7 @@
 
 import * as THREE from 'three';
 import { Body, LAYER, box as boxShape, hullFromGeometry } from '../physics/RapierWorld.js';
+import { armKinetic } from '../game/Impact.js';
 import { sliceGeometry } from './Slice.js';
 import { TOUGHNESS, cutNeed } from '../game/Combat.js';
 import { clamp, makeRng } from '../engine/MathUtil.js';
@@ -2182,6 +2183,11 @@ export class Structure {
       linearDamping: 0.02, angularDamping: 0.12,
     });
     body.userData.chunk = chunk;
+    /* A CHUNK OF A COLLAPSING BUILDING IS A STRIKER, and it is the exact
+     * sentence the contact channel exists for: this mask has named ENEMY and
+     * PLAYER all along, so the masonry has always LANDED on people and, until
+     * `Body.onContact` was dispatched again, never hurt one. */
+    armKinetic(body);
     body.userData.onCull = () => this.manager._forget(chunk, true);
     chunk.body = body;
     this.world.physics?.add?.(body);

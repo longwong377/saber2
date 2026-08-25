@@ -156,14 +156,26 @@ export function kineticContact(other, c) {
 
   if (typeof victim.applyKnockback === 'function') {
     /**
-     * A living thing. The shove is the contact's own direction at a speed
-     * bounded the way `_updateHurled` bounds it, so a contact-driven hit and a
-     * thrown-body hit stagger a droid the same distance. Damage and impulse go
-     * through ONE call because `applyKnockback` weighs them together — see
-     * IMPULSE_AS_HP — and billing them separately would charge a body twice
-     * for one blow.
+     * A living thing. Damage and impulse go through ONE call because
+     * `applyKnockback` weighs them together — see IMPULSE_AS_HP — and billing
+     * them separately would charge a body twice for one blow.
+     *
+     * THE SHOVE IS OFF THE MOMENTUM, NOT OFF THE SPEED, and the first version
+     * took it off the speed because that is what `_updateHurled` does. That
+     * was safe there and is not safe here: `_updateHurled` only ever sees
+     * things the player deliberately threw, which are heavy, so `speed * 0.5`
+     * with a floor of 4 was a fine shorthand for "a crate just hit you". The
+     * contact channel sees everything — including a 0.4 kg severed finger,
+     * which under that formula shoved exactly as hard as a 120 kg crate,
+     * because neither the floor nor the ceiling mentions mass.
+     *
+     * `c.impulse` is the real momentum exchanged, in N·s, so the division is
+     * only a change of units. It is calibrated to leave the throw alone: the
+     * 22 kg crate at 30 m/s that used to read 15.0 reads 15.0, and the finger
+     * that used to read 4 now reads 0.2.
      */
-    _imp.copy(_dir).multiplyScalar(clamp(c.speed * 0.5, 4, 22)).setY(4);
+    const mag = Math.min(22, c.impulse / 35);
+    _imp.copy(_dir).multiplyScalar(mag).setY(Math.min(4, mag * 0.27));
     victim.applyKnockback(_imp, dmg, source);
   } else if (typeof victim.damage === 'function') {
     // A prop. Its own `damage` decides whether that was enough to break it.
