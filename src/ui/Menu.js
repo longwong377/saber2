@@ -3201,6 +3201,40 @@ export function framePreviewCamera(camera, content, opts = {}) {
   }
 }
 
+/**
+ * A PHOTOGRAPH FIRST, A DRAWING UNDERNEATH — the theatre and hilt cards.
+ *
+ * The player, on the maps: "since I've asked you 10000000 times and it still
+ * looks like shit I want you to scrap the current preview images for the
+ * theater maps and instead use a real attractive cinematic unique screenshot
+ * emblematic of the map from the actual map". And on the hilts: "preview
+ * images for the jedi hilts all show the same image, also I thnk most of them
+ * look the same in the preview too".
+ *
+ * The hilt half was measured before it was believed, and the first clause of
+ * it is not true: the ten cards are ten DISTINCT images, each drawn from its
+ * own `HILT_SPECS` row. The second clause is entirely true and is the whole
+ * problem — at 168x54 every one of them is a grey horizontal bar on a brown
+ * ground, and the flared shroud, the curved grip, the crossguard and the ring
+ * pommel that actually separate them are a handful of pixels. Ten technically
+ * different pictures of the same bar.
+ *
+ * So both card sets are rendered from the GAME now, by `tools/shots.mjs` and
+ * `tools/hiltshots.mjs`, and committed under `assets/previews/`. A drawing of
+ * a place was always going to lose to the place.
+ *
+ * ── WHY BOTH URLS ARE LISTED, AND IN THIS ORDER ──────────────────────────
+ *
+ * `background-image` takes a list and paints the first on top. Naming the JPEG
+ * first and the drawn canvas second means the screenshot covers the drawing
+ * when it is there, and a MISSING screenshot — a level added without one, a
+ * deploy that dropped the assets folder — silently falls back to the old card
+ * instead of leaving a hole. The drawing is not deleted for exactly that
+ * reason; `previews.mjs` is what stops it becoming the thing you actually see.
+ */
+const LEVEL_SHOT = (key) => `assets/previews/${key}.jpg`;
+const HILT_SHOT = (name) => `assets/previews/hilt-${name}.jpg`;
+
 export class Menu {
   constructor(settings, hooks = {}) {
     this.s = settings;
@@ -3548,6 +3582,12 @@ export class Menu {
       steel: ['#9aa1ab', '#6f7681', '#4a5058'],
       dark: ['#5d6068', '#43464d', '#2c2e33'],
       brass: ['#c39a52', '#8f6f38', '#5e4923'],
+      /* `gold` WAS MISSING AND TWO HILTS DECLARE IT — the Consular and the
+       * Duelist — so both fell through to `steel` and were drawn as grey. Two
+       * of the ten cards were the wrong metal in the very picture whose job is
+       * to tell them apart. Found while replacing these cards with renders;
+       * the fallback has to be right or the fallback is a second defect. */
+      gold: ['#e2c06a', '#a8853c', '#6b5424'],
       black: ['#4a4a4d', '#333335', '#1f1f21'],
     };
     const [lit, mid, dark] = METAL[S.metal] || METAL.steel;
@@ -3612,6 +3652,8 @@ export class Menu {
     g.fillRect(bodyX + bodyW + shW, cy - rad * 0.32, W - (bodyX + bodyW + shW), rad * 0.64);
     return c.toDataURL();
   }
+
+  /* ── the drawn cards, which are the FALLBACK now ─────────────────────── */
 
   _levelArt(key) {
     /* 320x112 rather than 320x140, and the composition kept between y=26 and
@@ -4008,7 +4050,7 @@ export class Menu {
        * defect this file keeps removing. */
       card.dataset.level = key;
       card.innerHTML = `
-        <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
+        <div class="art" style="background-image:url(${LEVEL_SHOT(key)}),url(${this._levelArt(key)});background-size:cover"></div>
         <div class="tagpill">${this._poolTypes(L)} unit types</div>
         <div class="meta"><b>${L.name}</b><span class="why hidden"></span></div>`;
       this._activate(card, () => {
@@ -4408,7 +4450,7 @@ export class Menu {
     for (const h of HILT_STYLES) {
       const card = document.createElement('div');
       card.className = 'card small' + (this.s.hiltStyle === h ? ' sel' : '');
-      card.innerHTML = `<div class="art" style="background-image:url(${this._hiltArt(h)});background-size:cover"></div>
+      card.innerHTML = `<div class="art" style="background-image:url(${HILT_SHOT(h)}),url(${this._hiltArt(h)});background-size:cover"></div>
                         <div class="meta"><b>${h}</b></div>`;
       this._activate(card, () => {
         audio.ui('click');
