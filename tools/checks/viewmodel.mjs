@@ -61,6 +61,7 @@ function stubWorld() {
  */
 function stubInput(oneHand = false) {
   const keys = new Set();
+  let pressedOne = false;
   return {
     keys, buttons: [false, false, false],
     mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 }, bindings: null,
@@ -70,9 +71,14 @@ function stubInput(oneHand = false) {
       return out;
     },
     act: (id) => (id === 'blade' ? true
-      : id === 'grip2' ? oneHand
-        : id === 'sprint' ? keys.has('ShiftLeft') : false),
-    actHit: () => false,
+      : id === 'sprint' ? keys.has('ShiftLeft') : false),
+    /* `grip2` is a TOGGLE now, so it is pressed once rather than held — a held
+     * toggle is a key tapped every frame. See first-person.mjs's stub. */
+    actHit: (id) => {
+      if (!oneHand || id !== 'grip2' || pressedOne) return false;
+      pressedOne = true;
+      return true;
+    },
   };
 }
 

@@ -61,12 +61,33 @@ function stubWorld() {
  * moved the arms and left the blade on `GRIPS.two`, while the key moves both.
  * See `Player.handsOnHilt`, which is now the whole of the decision.
  */
+/**
+ * ONE PRESS, NOT A HELD KEY — and the change is in the game, not here.
+ *
+ * `grip2` used to be read as a LEVEL, so a bench that wanted one hand on the
+ * hilt held the key down for the whole run. The stance is a TOGGLE now (the
+ * player: "one handed grip doesn't really work because you have to hold the
+ * button the entire time for some reason"), so a held key is a key pressed
+ * sixty times a second, which lands on whichever parity the frame count
+ * happens to end on — measured, these three benches read two hands on the
+ * hilt while asking for one, which is a true report about a bench holding a
+ * toggle down.
+ *
+ * So `actHit` fires ONCE, on the first frame that asks, exactly as a player
+ * tapping the key does.
+ */
 function stubInput(oneHand = false) {
+  let pressed = false;
   return {
     keys: new Set(), buttons: [false, false, false],
     mouse: { dx: 0, dy: 0, wheel: 0 }, accel: { x: 0, y: 0 }, bindings: null,
     moveAxis: (out) => { out.x = 0; out.y = 0; return out; },
-    act: (id) => (oneHand && id === 'grip2'), actHit: () => false,
+    act: () => false,
+    actHit: (id) => {
+      if (!oneHand || id !== 'grip2' || pressed) return false;
+      pressed = true;
+      return true;
+    },
   };
 }
 

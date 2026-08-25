@@ -279,7 +279,9 @@ export const ACTIONS = [
    * holds were reshuffled at all. A one-handed grip is a STANCE you settle
    * into rather than a flick, so a pinky stretch above Tab is a home it can
    * live with; the stratagem key that took CapsLock cannot be anywhere else. */
-  { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['Backquote'],  hold: true, pad: 'PadBack+PadRB' },
+  /* NOT a hold any more — `Player._readInput` toggles the stance on the press
+   * edge, so the controls screen must stop drawing this key as one. */
+  { id: 'grip2',      group: 'Blade',    label: 'One-handed grip',   keys: ['Backquote'],  pad: 'PadBack+PadRB' },
   // Digit1/Digit2, not KeyB/KeyN. These two were seeded onto B and N at runtime
   // by SaberController, which meant they were not in this table, so they never
   // reached the options screen, could not be rebound, and could not be seen to

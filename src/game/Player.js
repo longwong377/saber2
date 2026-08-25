@@ -3003,6 +3003,8 @@ export class Player {
     this.senseActive = false;
     this.senseTimer = 0;
     this.saberThrown = false;
+    /** The explicit one-handed stance, toggled by `grip2`. See `_readInput`. */
+    this.gripOneToggle = false;
     /**
      * THE HAND IS EMPTY. See `disarmed` and `_dropSaber`.
      *
@@ -3636,7 +3638,28 @@ export class Player {
     // stasis field is a decision that lasts, and the looser one-handed blade is
     // the honest price of it; a gesture only borrows the arm, which
     // _updateBody handles on its own.
-    const wantOne = input.act('grip2') || this.saberThrown
+    /**
+     * A TOGGLE, NOT A HOLD — and the argument is already written in this file,
+     * twelve lines down, about the barrier.
+     *
+     * `grip2` was read with `act` — the LEVEL — so a one-handed grip lasted
+     * exactly as long as you kept a finger on Backquote. The player: "one
+     * handed grip doesn't really work because you have to hold the button the
+     * entire time for some reason". There is no reason. Every other lasting
+     * state in this file is a toggle and says why: stasis, sense, and the
+     * shield, whose note reads "a barrier you must keep a finger on is a
+     * barrier you cannot fight from, and everything else in this game is done
+     * with the same hand". A grip is more of a stance than the shield is.
+     *
+     * The DERIVED half is unchanged and is still the reason this is not simply
+     * a flag: carrying a crate, holding a body, running a stasis field or
+     * having thrown the blade all force one hand whatever the toggle says,
+     * because in each of those the other hand is genuinely full. The toggle is
+     * the explicit choice on top of that, and it survives picking a crate up
+     * and putting it down again.
+     */
+    if (input.actHit('grip2')) this.gripOneToggle = !this.gripOneToggle;
+    const wantOne = this.gripOneToggle || this.saberThrown
       || !!this.gripBody || !!this.gripEnemy || this.stasis.active;
     this.control.grip = wantOne ? 'one' : 'two';
 
