@@ -356,6 +356,38 @@ export async function run({ check, assert, near }) {
     return 'order-free, man-specific, run-specific';
   });
 
+  await check('two machines mustering one army muster the same men', async () => {
+    /**
+     * THE OTHER HALF, and without it the hash above propagates a desync rather
+     * than curing one: a profile keyed on a designation is only as stable as
+     * the designation, and `designate` drew off `commandRng` for a long time.
+     * Anything that touched that stream between two machines' musters gave the
+     * second one different names — and therefore different soldiers.
+     *
+     * Driven by advancing the stream between the two rosters, which is exactly
+     * what a peer check doing its own work does inside this suite, and what a
+     * second player's world does in a real session.
+     */
+    const { CommandRoster, seedCommand, commandRng } = await import('../../src/game/Command.js');
+    const muster = (advance) => {
+      seedCommand(4242);
+      for (let i = 0; i < advance; i++) commandRng();
+      const r = new CommandRoster(ARMIES.republic);
+      return Array.from({ length: 8 }, () => r.enlist('trooper'))
+        .map((t) => `${t.designation}:${ATTR_IDS.map((id) => t.attr(id)).join('.')}`);
+    };
+    const host = muster(0);
+    const guest = muster(11);
+    assert(host.join('|') === guest.join('|'),
+      'a stream touched between two musters gave the second machine different men');
+    assert(new Set(host.map((s) => s.split(':')[0])).size === 8, 'two men share a designation');
+    /* …and it is still a company rather than a run of consecutive numbers. */
+    const nums = host.map((s) => Number(s.split(':')[0].slice(3)));
+    assert(Math.max(...nums) - Math.min(...nums) > 2000,
+      `the roll is CT-${Math.min(...nums)} through CT-${Math.max(...nums)} — that is a serial, not a company`);
+    return `8 men, identical across the desync, ${Math.min(...nums)}–${Math.max(...nums)}`;
+  });
+
   await check('two men off the same table are two different men', () => {
     const r = rng(9);
     const a = rollSoldier(r, 'flesh');

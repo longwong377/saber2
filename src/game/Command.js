@@ -770,16 +770,40 @@ const DROID_PREFIX = ['OOM', 'TC', 'PK', 'BX', 'DFS', 'OM'];
  * small, and would still eventually put two identical names in the one list the
  * player is meant to read. `taken` is a Set of the strings already issued.
  */
+/**
+ * HIS NUMBER IS A FUNCTION OF HIS PLACE IN THE LINE, not a draw.
+ *
+ * This pulled one or two values off `commandRng` per man for a long time, and
+ * that was survivable while a name was only a name. It stopped being
+ * survivable the day a man's ATTRIBUTES were hashed off his designation
+ * (`musterRng`): two machines mustering the same army pull from the same
+ * stream, so anything that advanced it between them handed the second machine
+ * different names — and now different soldiers. The client's mirror of a
+ * trooper came out with a different maxHp, its copy went down on a round the
+ * host's survived, and `_reconcileClaims` billed the host for a body that was
+ * still standing. `command-pvp.mjs` measures it at 0.4 hp from a guest holding
+ * an idle input.
+ *
+ * The ordinal is the same on both machines because the muster composition and
+ * its order are. It is hashed rather than used directly so the roll still
+ * reads as a company and not as CT-1000 through CT-1011, and `musterSalt`
+ * moves it with the run seed so two campaigns are two different companies.
+ */
 function designate(army, taken) {
+  const ord = taken.size;
   for (let i = 0; i < 64; i++) {
+    let h = musterSalt >>> 0;
+    for (const v of [ord, i, army.id === 'republic' ? 1 : 2]) {
+      h = Math.imul(h ^ (v + 0x9E3779B1), 0x01000193) >>> 0;
+    }
     const s = army.id === 'republic'
-      ? `CT-${1000 + Math.floor(rng() * 8999)}`
-      : `${DROID_PREFIX[Math.floor(rng() * DROID_PREFIX.length)]}-${Math.floor(rng() * 90) + 10}`;
+      ? `CT-${1000 + (h % 8999)}`
+      : `${DROID_PREFIX[h % DROID_PREFIX.length]}-${((h >>> 8) % 90) + 10}`;
     if (!taken.has(s)) return s;
   }
-  // 64 collisions in a row is not a draw, it is a broken stream; a suffix is
-  // ugly and correct, and it can never loop forever.
-  return `CT-${taken.size + 1}${Math.floor(rng() * 90) + 10}`;
+  /* 64 collisions in a row means the space is full, not that the hash is bad;
+   * a suffix is ugly and correct, and it can never loop forever. */
+  return `CT-${taken.size + 1}${(musterSalt % 90) + 10}`;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
