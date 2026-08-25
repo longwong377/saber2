@@ -50,6 +50,11 @@
 
 import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById } from './Command.js';
 import { ATTR_IDS, traitById } from './Attributes.js';
+/* FOR THE ONE WORD THAT SAYS WHAT HE DOES. `dossier` printed `m.type` raw for
+ * a long time, so a page about a person had "clone_heavy" on it; `ARCHETYPES`
+ * already carries the label every other screen uses and this file must not
+ * grow a second copy of it. */
+import { ARCHETYPES } from './Enemy.js';
 
 /**
  * An attribute block off disk, clamped and complete.
@@ -533,7 +538,7 @@ export function dossier(m, army = null) {
   const R = RANKS[rankFor(m.xp | 0)];
   const rows = [
     ['Rank', `${R.title} (${R.short})`],
-    ['Role', m.type],
+    ['Role', ARCHETYPES[m.type]?.label ?? m.type],
     ['Service', `${m.runs | 0} withdrawal${(m.runs | 0) === 1 ? '' : 's'}`],
     ['Kills', `${m.kills | 0}`],
     ['Wounds', `${m.wounds | 0}`],

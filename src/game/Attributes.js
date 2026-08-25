@@ -114,6 +114,29 @@ export const ATTRS = [
     lo: 0.72, hi: 1.26,          // multiplier on formation tightness / order fidelity
     reads: 'CommandDirector.steer slot tolerance, Command.HOLD_BREAK',
   },
+  /**
+   * ── THE TWO THAT ARE ABOUT THE CAMPAIGN AND NOT THE FIREFIGHT ────────
+   *
+   * Every axis above decides how a man performs in the ninety seconds he is
+   * being shot at. These two decide whether you still have him next area, and
+   * they are here because that is what the Company page is actually about:
+   * `Company.js`'s own header says the minigame is keeping them alive, and a
+   * roster where nothing on it spoke to that was eight combat stats on a
+   * screen about survival.
+   */
+  {
+    id: 'hardiness', flesh: 'Constitution', steel: 'Redundancy',
+    blurb: 'How long he has on the ground before he is gone. This is the number that decides whether crossing the field for him was possible.',
+    lo: 0.70, hi: 1.30,          // multiplier on DOWN_BLEED, his bleed-out window
+    reads: 'Enemy._goDown → the bleed-out clock',
+  },
+  {
+    id: 'resolve', flesh: 'Resolve', steel: 'Reset',
+    blurb: 'How much of himself he gets back between areas. A man who never recovers is a liability three fights from now.',
+    lo: 0.66, hi: 1.30,          // multiplier on the between-areas morale rally
+    reads: 'CommandDirector — MORALE.RALLY_PER_S',
+  },
+
   /* THE ONE THAT DIFFERS, and the reason `kind` exists. See the header. */
   {
     id: 'bond', flesh: 'Loyalty', steel: 'Uplink',
@@ -206,6 +229,12 @@ export const TRAITS = [
   { id: 'runner', name: 'Runner', kind: null,
     line: 'Crosses open ground before anyone can range him. Not much armour under it.',
     up: { pace: 18 }, down: { grit: 19 } },
+  { id: 'hardtokill', name: 'Hard to kill', kind: null,
+    line: 'Has been counted out before. Keeps breathing longer than he has any right to.',
+    up: { hardiness: 16 }, down: { pace: 16, cadence: 14, reflex: 4 } },
+  { id: 'brittle', name: 'Brittle', kind: null,
+    line: 'Everything works until it does not, and then it all goes at once.',
+    up: { cadence: 12, reflex: 6 }, down: { hardiness: 20 } },
 
   /* ── men ────────────────────────────────────────────────────────────── */
   { id: 'devoted', name: 'Devoted', kind: 'flesh',
@@ -228,6 +257,12 @@ export const TRAITS = [
   { id: 'reckless', name: 'Reckless', kind: 'flesh',
     line: 'Closes the range whether you told him to or not.',
     up: { cadence: 10, pace: 8 }, down: { discipline: 13 }, flag: 'pushes' },
+  { id: 'ironnerved', name: 'Iron-nerved', kind: 'flesh',
+    line: 'Comes back to himself between fights faster than anyone should.',
+    up: { resolve: 18 }, down: { bond: 13, cadence: 8 } },
+  { id: 'haunted', name: 'Haunted', kind: 'flesh',
+    line: 'Carries the last one into the next one. Steady while it is happening.',
+    up: { nerve: 14, discipline: 8 }, down: { resolve: 24 } },
   { id: 'careful', name: 'Careful', kind: 'flesh',
     line: 'Will not leave cover for a shot he does not like. Takes ground slowly.',
     up: { discipline: 14, aim: 8 }, down: { pace: 16, cadence: 12, reflex: 6 }, flag: 'holds' },
@@ -245,6 +280,9 @@ export const TRAITS = [
   { id: 'hardened', name: 'Hardened', kind: 'steel',
     line: 'Plated past spec. Slow to bring round.',
     up: { grit: 20, nerve: 8 }, down: { reflex: 15, pace: 9 } },
+  { id: 'fieldrepaired', name: 'Field-repaired', kind: 'steel',
+    line: 'Put back together on the ground more than once. None of it is original.',
+    up: { hardiness: 12, resolve: 10 }, down: { aim: 14, cadence: 12, reflex: 5 } },
   { id: 'slaved', name: 'Slaved', kind: 'steel',
     line: 'Runs almost entirely off the node. Formidable while the node lives.',
     up: { bond: 18, discipline: 8 }, down: { nerve: 24, reflex: 10 } },

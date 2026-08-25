@@ -6279,8 +6279,16 @@ export class CommandDirector extends WaveDirector {
      * A man with something in front of him is exempt: he is already fighting,
      * and freezing him mid-firefight because the formation changed would be a
      * worse picture than the one this is here to fix.
+     *
+     * SO IS A MAN WHO IS BADLY OUT OF POSITION. The beat models taking an
+     * order in, never refusing to move — and without the distance gate a
+     * trooper fifty-five metres behind his line stood still holding a pose,
+     * which `command.mjs` caught as "given no direction to walk in". Three
+     * times his own leash is the width of a formation: inside it, the new
+     * order is a pivot and a pivot can wait; outside it, he was already
+     * walking and nothing about a new order says stop.
      */
-    if (!fighting && e.cmdOrder != null
+    if (!fighting && d < limit * 3 && e.cmdOrder != null
       && e.cmdOrder !== this.formationFor(this.commanderOf(e), e.cmdSquad)) {
       this._holdPost(e, dt);
       return;
@@ -7244,7 +7252,12 @@ export class CommandDirector extends WaveDirector {
           if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
         } else {
           // between areas, or waiting on a gunship: nerve comes back
-          d += MORALE.RALLY_PER_S;
+          /* …AT HIS OWN RATE. Resolve on a man, Reset on a droid: how much of
+           * himself he gets back between areas. This is the axis that makes a
+           * roster a CAMPAIGN decision rather than a squad-picker — a man who
+           * never recovers is fine today and a liability three fights from
+           * now, and there is nothing on the field that will tell you. */
+          d += MORALE.RALLY_PER_S * scaleOf(t, 'resolve');
         }
         /**
          * ELATION WEARS OFF — above the cap only, and at a FLAT rate.

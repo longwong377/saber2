@@ -34,8 +34,8 @@ const seeded = await page.evaluate(async (origin) => {
   const rng = (() => { let s = 12345; return () => (s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff; })();
   const NAMES = ['Rex','Cody','Boil','Waxer','Fives','Echo','Jesse','Kix','Hardcase','Tup','Dogma','Wolffe'];
   const out = {};
-  for (const [army, types] of [['republic', ['clone_trooper','clone_heavy','clone_sniper','clone_commander']],
-                               ['separatist', ['b1_battle_droid','b2_super_droid','droideka','b1_sniper']]]) {
+  for (const [army, types] of [['republic', ['trooper','heavy','sniper','arc','officer','jet']],
+                               ['separatist', ['b1','b2','droideka','bx','magna','rocket']]]) {
     const kind = A.kindOfArmy(army);
     const c = Co.blank(army);
     c.runs = 6; c.lost = 11; c.founded = 'Geonosis';

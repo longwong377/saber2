@@ -491,6 +491,51 @@ export async function run({ check, assert, near }) {
     return `${tight.toFixed(2)} m to ${slack.toFixed(2)} m of slop`;
   });
 
+  await check('how long a man has on the ground is his own number', async () => {
+    const { world } = await bootWorld({ settings: { quality: 'low' } });
+    const { Enemy, DOWN_BLEED } = await import('../../src/game/Enemy.js');
+    const { Trooper, enlistBody } = await import('../../src/game/Command.js');
+    const THREE = await import('three');
+    const flat = {}; for (const id of ATTR_IDS) flat[id] = 50;
+
+    const down = (v, x) => {
+      const t = new Trooper(ARMIES.republic, 'trooper', `CT-7${x}`,
+        { attrs: { ...flat, hardiness: v }, traits: [] });
+      const e = new Enemy(world, 'trooper', new THREE.Vector3(x * 5, 0, 0));
+      enlistBody(e, t);
+      /* THROUGH THE REAL DOOR. `_goDown` is what a body takes when its last
+       * point comes off, and reading the constant instead would prove only
+       * that arithmetic works. */
+      e._goDown(null, null, 'shot');
+      return e.bleed;
+    };
+    const weak = down(0, 1), mid = down(50, 2), tough = down(100, 3);
+    near(mid, DOWN_BLEED, 0.01, 'the middle of the scale is not the constant');
+    assert(tough > weak * 1.6,
+      `a tough man and a frail one bleed out within ${(tough / weak).toFixed(2)}× of each other`);
+    assert(weak > 8, `${weak.toFixed(1)} s is not a window anybody can cross a field in`);
+    world.dispose?.();
+    return `${weak.toFixed(0)} s to ${tough.toFixed(0)} s on the ground, ${DOWN_BLEED} s flat before`;
+  });
+
+  await check('a man who never recovers is a liability three fights from now', async () => {
+    const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
+    assert(/MORALE\.RALLY_PER_S \* scaleOf\(t, 'resolve'\)/.test(src),
+      'the between-areas rally is the same for every man');
+    /* THE ONE AXIS WHOSE EFFECT IS INVISIBLE ON THE FIELD, which is exactly why
+     * it has to be on the roster page: nothing in a firefight will ever tell
+     * you a man is not coming back from it. */
+    const { MORALE } = await import('../../src/game/Morale.js');
+    const slow = MORALE.RALLY_PER_S * attrScale('resolve', 0);
+    const quick = MORALE.RALLY_PER_S * attrScale('resolve', 100);
+    assert(quick / slow > 1.7,
+      `the fastest and slowest recovery are within ${(quick / slow).toFixed(2)}×`);
+    /* From MORALE.BREAK back to the presence cap, which is the recovery that
+     * actually matters between areas. */
+    const gap = MORALE.PRESENCE_CAP - MORALE.BREAK;
+    return `${(gap / quick).toFixed(0)} s to come back at best, ${(gap / slow).toFixed(0)} s at worst`;
+  });
+
   await check('where you stand matters more to some men than others', async () => {
     const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
     assert(/MORALE\.JEDI_NEAR \* w \* lean/.test(src), 'the Jedi presence term ignores bond');

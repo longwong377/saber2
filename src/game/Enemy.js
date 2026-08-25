@@ -5344,7 +5344,17 @@ export class Enemy {
    */
   _goDown(point, source, kind) {
     this.downed = true;
-    this.bleed = DOWN_BLEED;
+    /**
+     * …AND HOW LONG HE HAS IS HIS OWN NUMBER NOW.
+     *
+     * Constitution on a man, Redundancy on a droid. `DOWN_BLEED` is the window
+     * a body on the ground has before it is gone for good, and it is the one
+     * number in this game that decides whether crossing a field under fire for
+     * somebody was ever possible — which is what makes it belong to HIM rather
+     * than to the constant. 14 s at the bottom of the scale and 26 at the top,
+     * against 20 flat. A body with no record keeps the constant.
+     */
+    this.bleed = DOWN_BLEED * (this.trooper ? scaleOf(this.trooper, 'hardiness') : 1);
     this.hp = 0.01;
     this.wish = null;
     this.target = null;
