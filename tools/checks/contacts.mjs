@@ -275,6 +275,47 @@ export async function run({ check, assert }) {
     return dead ? 'the droid was killed by a crate nobody threw' : `the droid lost ${lost.toFixed(1)} hp to a crate nobody threw`;
   });
 
+  check('contacts: a prop is not destroyed by the act of landing', async () => {
+    /**
+     * THE REGRESSION THIS CHANNEL ALREADY CAUSED ONCE, kept as a rule.
+     *
+     * The first version billed every armed body a share of the damage it dealt,
+     * including against the world. `dropped.mjs` failed at once: a dropped
+     * lightsaber is a `Prop`, landing is a contact with the world at a speed
+     * that clears every gate, and the blade on the floor shattered on arrival.
+     *
+     * Breaking props on impact is a balance decision, so it is opt-in now
+     * (`fragile: true`). This asserts the default, because the next person to
+     * want thrown crates to break will reach for exactly the switch that broke
+     * this, and the failure is silent — a prop that shatters as it lands looks
+     * like a prop that was never there.
+     */
+    const I = await import('../../src/game/Impact.js');
+    assert(I.KINETIC.fragile !== true,
+      'the default kinetic tuning is `fragile` again. Every prop in every level now takes damage from its '
+      + 'own landing, and a dropped weapon shatters on the floor');
+
+    const H = await import('./_coop.mjs');
+    const { makeCrate } = await import('../../src/world/Props.js');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low' } });
+    const input = H.idleInput();
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    const p = world.player;
+    const at = p.position.clone(); at.x += 3;
+    const crate = makeCrate(world, at, 0.7, { mass: 40 });
+    assert(crate?.body, 'could not build a test crate');
+    crate.body.position.y += 5;
+    crate.body.wake();
+    for (let i = 0; i < 150; i++) world.update(1 / 60, input);
+    const gone = crate.dead;
+    world.unload();
+    assert(!gone,
+      'a 40 kg crate dropped five metres destroyed itself on the floor. Landing is not an attack, and a '
+      + 'prop that cannot survive being put down is not a prop');
+    return 'a five-metre drop leaves the crate intact';
+  });
+
   check('contacts: the thrown crate is claimed by exactly one system', async () => {
     /* The prop half of `Player._updateHurled` was retired when this channel
      * came back, because a prop's mask names ENEMY and the contact reaches the

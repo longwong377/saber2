@@ -175,17 +175,35 @@ export function kineticContact(other, c) {
 }
 
 /**
- * A THROWN THING BREAKS ON WHAT IT HITS, and that is not symmetry for its own
- * sake — it is what stops the crate being a free weapon. A prop that survives
- * every wall it is thrown at is a projectile with unlimited ammunition, and
- * the level is full of them.
+ * A THROWN THING BREAKING ON WHAT IT HITS — OFF BY DEFAULT, and the reason it
+ * is off is the best argument in this file.
  *
- * It pays a share rather than the whole, on the same reasoning
- * `_updateHurled` uses when it bills a thrown body 55% of what it dealt: the
- * energy went somewhere, and both ends of the collision got some of it.
+ * The case for it is real: a prop that survives every wall it is thrown at is
+ * a projectile with unlimited ammunition, and the level is full of them. So
+ * the first version of this billed every armed body a share of what it dealt,
+ * `_updateHurled`'s own 55%, including against the world.
+ *
+ * `dropped.mjs` failed immediately, and it was right to. A dropped lightsaber
+ * is a `Prop`; a dropped lightsaber LANDS; landing is a contact with the
+ * world at a speed that clears every gate — and the blade on the floor, which
+ * is a whole shipped feature with its own suite, shattered on arrival. The
+ * check that caught it had nothing to do with contacts, which is exactly why
+ * it was worth having.
+ *
+ * The lesson is not "guard the saber". It is that BREAKING A PROP IS A BALANCE
+ * DECISION AND THIS FILE IS NOT ENTITLED TO MAKE IT. The gap this whole
+ * channel exists to close is that a moving object does nothing to what it
+ * hits; making objects destroy THEMSELVES is a separate change with its own
+ * consequences for every prop in every level, and smuggling it in under a
+ * bug fix is how a physics fix turns into a balance patch nobody asked for.
+ *
+ * So it is opt-in: `{ fragile: true }` on a prop that should break, and the
+ * share is `selfShare`. When somebody does want thrown crates to break, the
+ * place to start is a threshold well above landing speed, and a check that
+ * asserts a dropped weapon survives its own drop.
  */
 function _selfDamage(self, tune, dmg, pt, dir) {
-  if (tune.fragile === false) return;
+  if (tune.fragile !== true) return;
   const prop = self.userData.prop;
   if (!prop || prop.dead || typeof prop.damage !== 'function') return;
   prop.damage(dmg * (tune.selfShare ?? 0.55), pt, _back.copy(dir).negate());
