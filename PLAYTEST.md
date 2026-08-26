@@ -7,6 +7,39 @@ notes that drove the original effort came from someone playing the game and
 looking at it, and `HANDOFF.md` §7 exists to say so. A finding here outranks any
 measurement taken without a person at the controls.
 
+## THE MARKS MEAN ONE THING EACH, AND THIS RULE COST THREE REOPENED ROWS
+
+Added on 26 Aug, after the player asked: *"You told me you finished it in the
+past so I'm confused how it isn't already in the game after I asked you about it
+a million times."* They were right, and the fault was in this file rather than in
+the work.
+
+Three rows in the V7 table below carried a ✅ and were not done:
+
+  **"Where are the giant battles"** was marked *"✅ answered"* — and the row's own
+    text says *"you cannot SEE it… zero are inside the camera frustum. The armies
+    exist; the presentation of scale does not."* A tick on a row that states the
+    feature does not work, sitting in a column of ticks that mean BUILT.
+  **"Scrap the Geonosis bunker emplacement"** was marked *"✅ gone, and nothing
+    that read it is broken"*. It was still there: 996 lines, one call site, on
+    every mode. The player was still looking at it a week later.
+  **"Command mode has no enemies"** was closed *"❌ not reproduced… needs one fact
+    from the player"*. It reproduces in the first pass of a real browser sweep:
+    Command with THE MEETING ticked composes no wave at all and reads "0 HOSTILES
+    LEFT" forever. The fact was never needed; the sweep was.
+
+So the marks are now exclusive and a row may carry exactly one:
+
+| Mark | Means |
+|---|---|
+| ✅ | BUILT, and a check in `tools/checks/` fails without it. Name the check. |
+| 🔎 | INVESTIGATED. A finding, a measurement, an explanation — and no code. Never a ✅. |
+| ⚠️ | Built in part. Say precisely which part is not. |
+| ❌ | Not done. "Could not reproduce" is ❌ and stays open until a real browser sweep of EVERY mode says otherwise. |
+
+A row that answers a question is 🔎. A row that says what is missing, inside the
+same row, is not a ✅ whatever else it says.
+
 ---
 
 ## 25 Aug — SABER GAME NOTES AND IMPROVEMENTS V7
@@ -87,8 +120,8 @@ One line per item, with the thing that settles it.
 | Hilt previews all the same | ✅ Measured first: they were ten **distinct** drawings, and indistinguishable at 168×54, which is the worse finding. Rendered from the real weapon now |
 | Hilt designs | ✅ Eight extras exist; six hilts carried one and `wings` was used by nobody. Every hilt carries two or three now, silhouettes spread — except the Ascetic and Shoto, which keep their restraint on purpose |
 | Campaign mode | ✅ answered. **One campaign exists**: "The Execution", 2 missions, Colosseum → Geonosis. The theatre picker offers only Colosseum because `campaignAt` matches the first mission's level. Not broken — there is one of them |
-| Where are the giant battles | ✅ answered. They are there and roughly the designed size: peak **48 hostiles / 58 live bodies** in The Line, 49/56 Command, 51/57 Skirmish, against FLAGSHIP §4's 40–60. What is missing is that you cannot SEE it — six seconds after deploy, **zero** are inside the camera frustum in either mode. The armies exist; the presentation of scale does not |
-| Command mode has no enemies | ❌ **not reproduced.** The real browser through the real deploy gives 49 hostiles; six seeds headless give 47–49; `commandVersus` is false and no control writes it. `hostilesLeft` in Command returns `spawnQueue + arrivals.pending + live hostiles`, so a reading of 0 means the wave composed nothing. Needs one fact from the player: a fresh Command run from the menu, or after an area was already fought? |
+| Where are the giant battles | 🔎 → ❌ **REOPENED 26 Aug.** Marked ✅ and never built; the row's own text says the feature does not work. Being built now as `src/game/Mass.js` — an instanced rank tier, 320 men at 5.75 ms against 42.8 ms for the same count of real bodies, 320 of 320 in frame at deploy, `mass.mjs` 7/7. Original finding follows. ~~answered~~. They are there and roughly the designed size: peak **48 hostiles / 58 live bodies** in The Line, 49/56 Command, 51/57 Skirmish, against FLAGSHIP §4's 40–60. What is missing is that you cannot SEE it — six seconds after deploy, **zero** are inside the camera frustum in either mode. The armies exist; the presentation of scale does not |
+| Command mode has no enemies | ❌ → **REPRODUCED 26 Aug**, in the first pass of a browser sweep of all nine modes. Command with **THE MEETING** ticked (`#opt-command-versus`, a persisted global) composes no wave at all: `Command.js:2329` gates on `commandVersus && MODES[mode].meeting` and nothing checks that a second commander exists, so `formUp` builds one commander and no opposing army. HUD reads "0 HOSTILES LEFT" forever. The player said "it was in command mode not versus" — right about the mode; the versus flag was on underneath and said nothing. Two more causes found in the same sweep: the insertion flight gates the wave director for 28 s (`World.js:3851`), and geonosis has no `ARRIVAL_BY_TERRAIN` entry so 100% of hostiles march in from 139-159 m, past the 137.8 m outline cutoff. Original note follows. ~~not reproduced.~~ The real browser through the real deploy gives 49 hostiles; six seeds headless give 47–49; `commandVersus` is false and no control writes it. `hostilesLeft` in Command returns `spawnQueue + arrivals.pending + live hostiles`, so a reading of 0 means the wave composed nothing. Needs one fact from the player: a fresh Command run from the menu, or after an area was already fought? |
 
 ---
 
@@ -291,7 +324,7 @@ Added mid-list, in three separate messages:
 | …and then on every map | ✅ same cause, same fix. |
 | Standing frozen immaterial corpses across the battlefield | ✅ `dying` was being reset to 0 on retire, which reads as "alive but not yet dead". It is `1e6` now in all three places. |
 | The stratagem and troop menus overlap | ✅ fixed. |
-| Scrap the Geonosis bunker emplacement | ✅ gone, and nothing that read it is broken. |
+| Scrap the Geonosis bunker emplacement | ❌ → ✅ **THE ✅ WAS FALSE.** It was still on every mode a week later — `src/game/Emplacement.js`, 996 lines, one call site in `magazine()`. Actually deleted 26 Aug, with its 703-line suite and its bench, and replaced by `src/game/Armour.js` (one walking OG-9 a wave). The gun had no collider, `damage()` returned false, and `update()` early-returned outside the army modes, so on most of the game it was an 11.6 m tower you walked through that never fired. |
 | Detach an NPC from a squad and put them back | ✅ through the existing order wheel — no new binding, because `KeyK`/`KeyL` are the last two spare letters the rebinder requires and taking them broke nine controls checks. |
 | Order squads separately or all at once | ✅ `squads()` groups on a stable `t.squad` field; `order(id, cmdr, squad)` writes a per-squad map. |
 | The hoods are a solid capsule / astronaut helmet | ✅ two halves. The shells were a scaled sphere segment with a torus at the mouth; they are flat-shaded, fluted, tapered and back-leaning now — and five rounds of laying folds, peaks and falls ON a smooth shell were rendered and rejected first, because a straight limb over a curved surface either floats in open air or is swallowed. The FALL is simulated cloth pinned in an arc at the nape: 202–397 mm of travel in the head's own frame through a 0.9 rad turn, against a rigid hood's zero. |
