@@ -17,7 +17,8 @@ import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
-import { attachCloak, attachSkirt, attachHoodDrape } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
+import { armKinetic, KINETIC_BODY } from './Impact.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
@@ -3003,6 +3004,8 @@ export class Player {
     this.senseActive = false;
     this.senseTimer = 0;
     this.saberThrown = false;
+    /** The explicit one-handed stance, toggled by `grip2`. See `_readInput`. */
+    this.gripOneToggle = false;
     /**
      * THE HAND IS EMPTY. See `disarmed` and `_dropSaber`.
      *
@@ -3039,11 +3042,15 @@ export class Player {
       centre: new THREE.Vector3(), point: new THREE.Vector3(), vfx: 0,
     };
     /**
-     * Things we threw, and what they have already hit. RapierWorld stores
-     * Body.onContact and never dispatches it — only the retired sphere solver
-     * ever did — so nothing in the game reads `userData.hurledBy`, and a hurled
-     * crate passed straight through a droid. Until contacts come back the
-     * thrower owns the consequence.
+     * Things we threw, and what they have already hit.
+     *
+     * This used to be the ONLY reason a thrown thing hurt anything: RapierWorld
+     * stored `Body.onContact` and dispatched it nowhere, so the thrower had to
+     * carry the consequence itself. Contacts are dispatched now
+     * (`RapierWorld._dispatchContacts`) and a thrown PROP is hurt by the world
+     * rather than by this list — see `_trackHurl`. What is left here is a
+     * thrown BODY, which no contact can reach because a ragdoll and a living
+     * enemy are not a collider pair, plus the attribution both kinds need.
      */
     this.hurled = [];
     this._wheel = 0;
@@ -3108,10 +3115,16 @@ export class Player {
       spheres: capsuleSpheres(0.55, this.radius, 'y', 3),
       shape: capsule(0.55, this.radius),
       mass: 78, kinematic: true, static: false, layer: LAYER.PLAYER,
-      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL,
+      /* ENEMY added: a body walking into you, and you into it, is a contact
+       * now rather than two capsules ignoring each other. See Enemy.js's own
+       * note — both are kinematic, so nothing is pushed; what changes is that
+       * the pair exists and can raise an event. */
+      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY,
       allowSleep: false, gravityScale: 0,
     });
     this.body.userData.player = this;
+    /* You are matter too. A Jedi at a dead sprint into a droid is a hit. */
+    armKinetic(this.body, KINETIC_BODY);
     world.physics.add(this.body);
 
     this.chest = new THREE.Vector3();
@@ -3137,6 +3150,7 @@ export class Player {
     this.cloak?.dispose();
     this.skirt?.dispose(); this.skirt = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
+    this.hoodShell?.dispose(); this.hoodShell = null;
     const mat = this.palette.outer.clone();
     mat.side = THREE.DoubleSide;
     /**
@@ -3192,6 +3206,10 @@ export class Player {
        * `built.headScale`, and the two differ by 1.85 on the small-folk row.
        * A fall pinned at the body's scale starts half way up a shell built at
        * the head's. */
+      /* The dome over the skull, which was welded to the head bone and is why
+       * a hood has read as a helmet through several passes at its SHAPE. See
+       * HoodShell in Cloth.js. */
+      this.hoodShell = attachHoodShell(this.rig);
       this.hoodDrape = attachHoodDrape(this.world.scene, this.rig, {
         // the hood's own bolt; attachHoodDrape clones it and owns the copy
         scale: this.built?.headScale ?? S,
@@ -3632,7 +3650,28 @@ export class Player {
     // stasis field is a decision that lasts, and the looser one-handed blade is
     // the honest price of it; a gesture only borrows the arm, which
     // _updateBody handles on its own.
-    const wantOne = input.act('grip2') || this.saberThrown
+    /**
+     * A TOGGLE, NOT A HOLD — and the argument is already written in this file,
+     * twelve lines down, about the barrier.
+     *
+     * `grip2` was read with `act` — the LEVEL — so a one-handed grip lasted
+     * exactly as long as you kept a finger on Backquote. The player: "one
+     * handed grip doesn't really work because you have to hold the button the
+     * entire time for some reason". There is no reason. Every other lasting
+     * state in this file is a toggle and says why: stasis, sense, and the
+     * shield, whose note reads "a barrier you must keep a finger on is a
+     * barrier you cannot fight from, and everything else in this game is done
+     * with the same hand". A grip is more of a stance than the shield is.
+     *
+     * The DERIVED half is unchanged and is still the reason this is not simply
+     * a flag: carrying a crate, holding a body, running a stasis field or
+     * having thrown the blade all force one hand whatever the toggle says,
+     * because in each of those the other hand is genuinely full. The toggle is
+     * the explicit choice on top of that, and it survives picking a crate up
+     * and putting it down again.
+     */
+    if (input.actHit('grip2')) this.gripOneToggle = !this.gripOneToggle;
+    const wantOne = this.gripOneToggle || this.saberThrown
       || !!this.gripBody || !!this.gripEnemy || this.stasis.active;
     this.control.grip = wantOne ? 'one' : 'two';
 
@@ -6020,6 +6059,9 @@ export class Player {
      * paying for nothing. `_applyViewMode` already hides the rigid shell by
      * traversing the neck; this is not under that bone, so it needs its own. */
     if (this.hoodDrape) {
+      /* In first person there is no head in the frame to hang it on, so the
+       * dome is left alone with the fall. */
+      if (this.hoodShell && !this.camera.firstPerson) this.hoodShell.update(dt);
       if (this.camera.firstPerson) this.hoodDrape.setVisible(false);
       else {
         this.hoodDrape.setVisible(true);
@@ -7304,11 +7346,11 @@ export class Player {
   /**
    * Remember what we threw, so it can hurt what it hits.
    *
-   * `userData.hurledBy` has been set here since the beginning and is read by
-   * nobody: RapierWorld stores Body.onContact and never dispatches it — only
-   * the retired sphere solver ever did — so a hurled crate passed through a
-   * droid without touching it. Until contacts come back the thrower owns the
-   * consequence, which is also the only place that knows it was a throw.
+   * `userData.hurledBy` was set here since the beginning and read by nobody,
+   * because RapierWorld stored Body.onContact and dispatched it nowhere. It is
+   * read now — `Impact.kineticContact` uses it to decide whose kill a crate is
+   * — so this is the field that makes a throw yours, and the timer below is
+   * what makes the claim expire.
    *
    * IT TAKES A PROP *OR* A BODY. The two are different objects with different
    * shapes — a `Prop` has `mass`, `boundingRadius` and a live `velocity`; an
@@ -7321,6 +7363,47 @@ export class Player {
     if (!isBody) {
       thing.userData.hurledBy = this;
       thing.userData.hurlTimer = 2.6;
+      /**
+       * ONE HIT PER VICTIM PER THROW, and the contact channel needs telling.
+       *
+       * The sweep this replaced kept `rec.hit` and consulted it every frame. A
+       * contact start is naturally once-per-meeting, which covers most of it —
+       * but a crate that lands on a droid and settles against it raises several
+       * starts as it comes to rest, and while `hurledBy` is set every one of
+       * them is priced at the THROW's floor of 8. `force.mjs` has asserted
+       * "the same throw could hit twice" since the sweep was written, and it is
+       * the assertion that caught this.
+       *
+       * The record's own Set is handed to the body rather than copied, so the
+       * throw has exactly one list of who it has already hit however the hit
+       * arrives.
+       */
+      thing.userData.hurlHit = null;                 // filled in below
+      /**
+       * A THROWN PROP NO LONGER NEEDS THIS SWEEP, and that is the point of the
+       * contact channel coming back.
+       *
+       * `Prop` arms its body with the kinetic law (src/game/Impact.js), and a
+       * prop's collision mask names ENEMY and PLAYER, so a crate you throw now
+       * meets a droid through Rapier's own narrowphase — against the real hull,
+       * at the real contact, with continuous detection, rather than against a
+       * sphere of `boundingRadius` swept by the THROWER once a frame. Keeping
+       * both would bill one collision twice.
+       *
+       * The record below is still made, because the thrower still owns two
+       * things the contact cannot know: how long the throw stays ATTRIBUTED to
+       * the player, and when to let go of that claim. `_updateHurled` runs only
+       * that half for a prop now.
+       *
+       * AND THE BODY BRANCH IS RETIRED TOO, NOW THAT IT CAN BE. This note used
+       * to say a thrown BODY still needed the sweep, because `Ragdoll`'s mask
+       * did not name ENEMY and `Enemy`'s did not name RAGDOLL, so a corpse and
+       * a living droid were not a collider pair at all and no contact between
+       * them could ever be raised. Both masks name the other now and every
+       * ragdoll bone is armed, so a thrown body reaches what it lands on
+       * through Rapier's own narrowphase — against nineteen real capsules
+       * rather than against one sphere at the chest.
+       */
     }
     const rec = {
       thing, isBody, timer: 2.6, hit: new Set(), speed,
@@ -7342,6 +7425,27 @@ export class Player {
       mass: isBody ? (thing.A ? thing.A.mass : 80) : Math.max(1, thing.mass),
       radius: isBody ? (thing.radius ?? 0.55) : thing.boundingRadius,
     };
+    /**
+     * THE CLAIM GOES ON EVERY BODY THE THROW IS MADE OF.
+     *
+     * A prop is one body and takes the ticket directly. A thrown PERSON is a
+     * ragdoll — nineteen capsules, any of which may be the one that lands on
+     * somebody — so the thrower's claim and the throw's one-hit-per-victim set
+     * go on all of them, sharing the SAME Set so an arm and a shoulder
+     * arriving together bill once between them rather than once each.
+     */
+    if (!isBody) {
+      thing.userData.hurlHit = rec.hit;
+    } else {
+      const a2 = thing.actor;
+      if (a2?.bodies) {
+        for (const b2 of a2.bodies.values()) {
+          b2.userData.hurledBy = this;
+          b2.userData.hurlTimer = 2.6;
+          b2.userData.hurlHit = rec.hit;
+        }
+      }
+    }
     this.hurled.push(rec);
     if (this.hurled.length > 12) this.hurled.shift();
   }
@@ -7366,47 +7470,36 @@ export class Player {
     for (let i = this.hurled.length - 1; i >= 0; i--) {
       const h = this.hurled[i];
       h.timer -= dt;
-      Player._hurlVel(h, _g3);
-      const speed = _g3.length();
-      // Spent: out of time, gone, or slowed to something that could not hurt a
-      // droid if it landed on one.
-      if (h.timer <= 0 || h.thing.dead || speed < 7) { this.hurled.splice(i, 1); continue; }
-      Player._hurlPos(h, _g4);
-      for (const e of ctx.enemies || []) {
-        if (e.dead || e === h.thing || h.hit.has(e.id)) continue;
-        const r = h.radius + (e.radius ?? 0.4) + 0.25;
-        _g1.copy(e.position).setY(e.position.y + (e.A && e.A.big ? 1.4 : 0.9));
-        if (_g1.distanceToSquared(_g4) > r * r) continue;
-        h.hit.add(e.id);
-        // Kinetic energy, scaled to the damage numbers this game uses: a 22 kg
-        // crate at 40 m/s reads 21, a 210 kg droideka body at 25 reads 79, and
-        // the ceiling stops a pillar from one-shotting a boss. The record was
-        // built carrying `k`, `floor` and `cap`, which is exactly the rule's
-        // own signature — and `Forest._sweep` prices a falling trunk through
-        // the same function rather than through a second copy of this line.
-        const dmg = impactDamage(h.mass, speed, h);
-        _g2.copy(_g3).multiplyScalar(1 / Math.max(1e-3, speed));
-        e.applyKnockback(_g2.clone().multiplyScalar(clamp(speed * 0.5, 4, 22)).setY(4), dmg, this);
-        /* BOTH BODIES TAKE A SHARE. A person thrown into a person hurts the
-         * person who was thrown, and that is what makes a living projectile a
-         * decision rather than a free crowd-clear: you are spending the body
-         * you are holding. A crate takes nothing, because a crate has no
-         * health and shattering it is `Prop`'s own business. */
-        if (h.isBody && !h.thing.dead) {
-          h.thing.damage?.(dmg * 0.55, e.position, this, 'impact');
-          h.thing.stun?.(0.5, _g2, 1.0);
-        }
-        audio.thud(_g4, clamp(dmg / 60, 0.4, 1.4));
-        this.camera.addShake(clamp(dmg / 220, 0.04, 0.3));
-        ctx.particles?.sparkBurst(_g4, null, 14, { speed: 7 });
-        // A throw sheds most of its momentum into whatever it hit.
-        if (h.isBody) {
-          const a = h.thing.actor;
-          if (a?.ragdolled) for (const b of a.bodies.values()) b.velocity.multiplyScalar(0.4);
+      /**
+       * A PROP'S RECORD IS NOW ONLY ITS CLAIM TICKET. The hit itself arrives
+       * through the contact channel; what is left here is how long the kill
+       * still counts as yours. Dropping the claim when the record expires is
+       * what stops a crate you threw two minutes ago from being credited to
+       * you when a collapse finally knocks it into somebody.
+       */
+      /* EVERY record is a claim ticket now, body or prop: the hit itself
+       * arrives through the contact channel either way. What is left is how
+       * long the kill counts as yours. */
+      {
+        const each = (fn) => {
+          if (!h.isBody) { if (h.thing.userData) fn(h.thing.userData); return; }
+          const a2 = h.thing.actor;
+          if (a2?.bodies) for (const b2 of a2.bodies.values()) fn(b2.userData);
+        };
+        if (h.timer <= 0 || h.thing.dead) {
+          each((u) => { u.hurledBy = null; u.hurlTimer = 0; u.hurlHit = null; });
+          this.hurled.splice(i, 1);
         } else {
-          h.thing.velocity.multiplyScalar(0.35);
+          each((u) => { u.hurlTimer = h.timer; });
         }
+        continue;
       }
+      /* THE SWEEP IS GONE. Everything below this line used to be it: a
+       * per-frame sphere test of the thrown thing against `ctx.enemies`, run
+       * by the THROWER because nothing else in the game could be told that two
+       * objects had touched. `RapierWorld._dispatchContacts` tells them now,
+       * and a thrown body reaches a droid through nineteen real capsules
+       * rather than one sphere at the chest. See `_trackHurl`. */
     }
   }
 
@@ -7821,7 +7914,23 @@ export class Player {
       if (!this._spend(POWER_COST.throw)) {
         return this._refuse('saber throw', `${this._priceOf(POWER_COST.throw)} Force needed, you have ${Math.round(this.force)}`);
       }
-      this.cooldowns.throw = 0.4;
+      /**
+       * NOT SET HERE ANY MORE — see the catch below.
+       *
+       * `cooldowns.throw = 0.4` at the moment of release was, measured against
+       * the blade's own flight, DEAD CODE. The blade flies for up to
+       * `throwTimer > 1.5` seconds before it even turns round, and then has to
+       * fly back; the shortest possible round trip is longer than 0.4 s, so by
+       * the time the saber is in your hand and `throwState` is `held` again the
+       * cooldown has ALWAYS expired. Nothing was ever gated. The player:
+       * "the lightsaber throw (R) needs a longer cooldown, it's a crazy
+       * effective move with no significant cooldown so it makes sense to just
+       * spam it rather than anything else."
+       *
+       * A cooldown that runs while the power is still going off is not a
+       * cooldown, it is a decoration. It starts when the blade is back in the
+       * hand, which is the only moment the throw is actually over.
+       */
       this._gesture('cast');
       this._forceVoice('throw');
       this.throwState = 'flying';
@@ -7926,6 +8035,24 @@ export class Player {
         this.throwState = 'held';
         this.control.handPos.copy(this.throwPos);
         audio.clash(this.throwPos, 0.4);
+        /**
+         * THE RECOVERY, AND IT STARTS HERE BECAUSE HERE IS WHERE THE THROW
+         * ENDS. See the note at `throwOrRecall`.
+         *
+         * 2.2 s, and the number is read off the table the rest of the powers
+         * already form rather than picked. Every cooldown in this file:
+         *
+         *     throw 0.4(was)  dash 0.55  push 0.55  pull 0.6  lightning 1.1
+         *     shield 1.2  stasis 1.4  rend 2.4  compel 7  unleash 9
+         *
+         * The throw was the SHORTEST in the game, under a dash — for a ranged
+         * attack that hits everything along a steerable line, cannot be
+         * blocked by a body, and costs 14 Force against push's 20. It belongs
+         * beside `rend` at 2.4: a committed, high-value act you spend a beat
+         * recovering from. A hair under it because the throw also leaves you
+         * holding nothing while it is out, which `rend` does not.
+         */
+        this.cooldowns.throw = 2.2;
         return;
       }
       _v1.multiplyScalar(1 / d);
@@ -9865,6 +9992,7 @@ export class Player {
     this.hum.retract();
     this.cloak?.dispose(); this.cloak = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
+    this.hoodShell?.dispose(); this.hoodShell = null;
     this.skirt?.dispose(); this.skirt = null;
     this.world.onPlayerDeath?.(this, source);
     /**
@@ -10101,6 +10229,7 @@ export class Player {
     this.hum.dispose();
     this.cloak?.dispose(); this.cloak = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
+    this.hoodShell?.dispose(); this.hoodShell = null;
     /**
      * THE SKIRT TOO, and it was the only garment this line forgot.
      *

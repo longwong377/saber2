@@ -2315,6 +2315,86 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .company-story p::before{content:'';position:absolute;left:0;top:.62em;
   width:6px;height:2px;background:var(--dimmer)}
 
+/* WHAT HE IS, ON THE ROW. Two chips, and only two: the attributes furthest
+   from the middle. Warm for the high one and grey for the low one so a scan
+   down sixty rows reads as a mix of shapes rather than a leaderboard — the
+   colour says WHICH WAY, never HOW GOOD, and there is no green on this page
+   for that reason. `--accent-warm` is already this interface's colour for a
+   fact about a thing rather than a live state; see the palette note up top. */
+.man-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:4px}
+.attr-chip{font:var(--mono);font-size:8.5px;font-weight:800;letter-spacing:.12em;
+  text-transform:uppercase;padding:1px 5px 2px;font-style:normal;white-space:nowrap;
+  clip-path:var(--cut-sm)}
+.attr-chip.hi{color:var(--stroke);background:var(--accent-warm)}
+.attr-chip.lo{color:var(--dim);background:var(--panel-hi)}
+
+/* THE EIGHT, AND THE MIDDLE IS THE POINT ───────────────────────────────
+   Every bar grows OUT OF a pegged 50 instead of filling from the left. A
+   left-filling bar says "more is more", and eight of them stacked collapse a
+   set of two-sided numbers back into the single ladder the whole attribute
+   system exists to not be. Grown from the centre, one glance answers the only
+   two questions worth asking about a man — which way, and how far.
+
+   Which means the centre tick has to be the most legible thing in the track:
+   it is ink, full height, and it sits ABOVE the fill (z-index) so a bar that
+   runs right up to 50 still shows where 50 was. A fill that painted over its
+   own origin would leave the reader measuring from the edge again. */
+/* CAPPED, because a 640 px track is a bar you measure rather than read: at
+   that width a 17 and a 24 are 45 px apart and both just look "left of the
+   middle for a while". Half a screen is the width at which the eye takes the
+   lean in one go and the number beside it is still attached to the bar's end. */
+.attr-list{display:flex;flex-direction:column;gap:6px;margin-bottom:16px;max-width:520px}
+.attr-row{display:grid;grid-template-columns:104px 1fr 30px;align-items:center;gap:10px}
+.attr-name{font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.11em;
+  text-transform:uppercase;color:var(--dim);overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.attr-bar{position:relative;height:13px;background:var(--void);border:2px solid var(--stroke);
+  overflow:hidden}
+/* INK, not a panel tone. This was `--panel-hi` for one build and the result is
+   the whole argument above failing silently: on the void track a 2 px line at
+   that value is not visible at 1280 wide, every bar reads as "starts somewhere
+   on the left and stops", and eight two-sided numbers are a ladder again. The
+   mark that the entire page is built around has to be the most legible thing
+   in the track, so it is the ink the panels are cut with. */
+.attr-bar .mid{position:absolute;left:50%;top:-2px;bottom:-2px;width:2px;margin-left:-1px;
+  background:var(--ink);z-index:2}
+.attr-bar .fill{position:absolute;top:0;bottom:0;transition:.18s}
+.attr-bar .fill.hi{background:var(--accent-warm)}
+.attr-bar .fill.lo{background:var(--dimmer)}
+.attr-val{font:var(--mono);font-size:11px;font-weight:800;text-align:right;color:var(--dim)}
+.attr-val.hi{color:var(--accent-warm)}
+/* A 30 is as much a fact about a man as a 70 is, so the low end is legible
+   rather than dimmed out — the grey is the DIRECTION, not a penalty stripe. */
+.attr-val.lo{color:var(--ink)}
+/* Below 900 px the label column eats the track. Stack the name over the bar
+   rather than truncating it to four letters: "Marksmansh…" and "Marksmanship"
+   are the same row, but "Prot…" and "Pace" are not. */
+@media (max-width:900px){
+  .attr-row{grid-template-columns:1fr 30px;grid-template-areas:"n n" "b v"}
+  .attr-name{grid-area:n}.attr-bar{grid-area:b}.attr-val{grid-area:v}
+}
+
+/* A TRAIT PRINTS BOTH HALVES, in the same weight, on the same line. The give
+   in warm and the take in ink — never the give alone, and never the take
+   greyed to a footnote. `Attributes.js` guarantees every trait costs
+   something, and a card that showed only the upside would read as an upgrade
+   list, which is the cross-run power `Company.js` refuses outright. */
+.trait-list{display:flex;flex-direction:column;gap:7px;margin-bottom:14px}
+.trait{background:var(--panel);padding:8px 11px 9px;border:2px solid var(--stroke);
+  box-shadow:var(--stamp);clip-path:var(--cut-sm)}
+.trait b{display:block;font-size:12.5px;font-weight:800;color:var(--ink);letter-spacing:.03em}
+.trait-line{display:block;font-size:11.5px;line-height:1.55;color:var(--dim);margin-top:1px}
+.trait-swing{display:flex;flex-wrap:wrap;gap:4px 8px;margin-top:6px}
+.trait-swing i{font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.09em;
+  font-style:normal;text-transform:uppercase}
+.trait-swing i:empty{display:none}
+.trait-swing i.up{color:var(--accent-warm)}
+.trait-swing i.down{color:var(--ink)}
+/* The behavioural half — a thing he DOES that no number can say. Boxed,
+   because it is a different kind of claim from a point swing beside it. */
+.trait-swing i.flag{color:var(--dim);border:2px solid var(--panel-hi);padding:0 5px 1px;
+  text-transform:none;letter-spacing:.04em;font-size:9.5px}
+
 /* THE NAME YOU GIVE HIM. The co-op name field's socket — same ink, same cut —
    on a row with the one button that writes it. `width:auto` on the button is
    load-bearing for the same reason it is under .commune-ring: .secondary is

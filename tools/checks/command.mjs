@@ -1489,9 +1489,26 @@ export async function run({ check, assert }) {
      * were still standing at the end of both.
      */
     const SECONDS = 45;
-    const drive = async (formation) => {
+    const drive = async (formation, discipline = 100) => {
       enemyRng.seed(20250814);
       const { world, d, input } = await commandWorld({ formation });
+      /**
+       * THE LINE IS PINNED DISCIPLINED, AND THAT IS WHAT KEEPS THE ZERO A ZERO.
+       *
+       * `Attributes.js` gives every man a Discipline score now, and a man
+       * below the middle who is being SHOT AT breaks a hold and returns fire —
+       * deliberately, and asserted from the other side in `attributes.mjs`. So
+       * an unpinned line under this order leaks a few rounds (measured: 3 in
+       * 45 s across ten men), which is the feature and not the failure.
+       *
+       * It is also not this check's subject. The property here is that the
+       * ORDER works — the note above argues at length why a zero rather than a
+       * small number is what proves it — so the one variable that is under
+       * argument elsewhere is held, exactly as the commander's survival is held
+       * below and for the same reason. Every man is a 100, nobody has an excuse,
+       * and a single bolt out of this line is the order failing.
+       */
+      for (const t of d.roster.living) if (t.attrs) t.attrs.discipline = discipline;
       let out = 0, incoming = 0;
       const fire = world.bolts.fire.bind(world.bolts);
       world.bolts.fire = (from, dir, opts = {}) => {

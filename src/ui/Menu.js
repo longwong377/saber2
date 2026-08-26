@@ -175,6 +175,14 @@ import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_O
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
 import { ARCHETYPES } from '../game/Enemy.js';
+/* THE ATTRIBUTE TABLE IS THE ONLY TABLE. Names, blurbs, swings and the trait
+ * list are all read off it here — this page prints them and owns none of them,
+ * so retuning a soldier retunes the screen and `tools/checks/attributes.mjs`
+ * can hold the two together without parsing HTML. */
+import {
+  ATTRS as ATTR_TABLE, attrName, attrBlurb, attrOf, standout as attrStandout,
+  traitById as attrTraitById, kindOfArmy,
+} from '../game/Attributes.js';
 import { DATABANK, FACTIONS, entryFor } from '../game/Databank.js';
 
 /**
@@ -3201,6 +3209,40 @@ export function framePreviewCamera(camera, content, opts = {}) {
   }
 }
 
+/**
+ * A PHOTOGRAPH FIRST, A DRAWING UNDERNEATH — the theatre and hilt cards.
+ *
+ * The player, on the maps: "since I've asked you 10000000 times and it still
+ * looks like shit I want you to scrap the current preview images for the
+ * theater maps and instead use a real attractive cinematic unique screenshot
+ * emblematic of the map from the actual map". And on the hilts: "preview
+ * images for the jedi hilts all show the same image, also I thnk most of them
+ * look the same in the preview too".
+ *
+ * The hilt half was measured before it was believed, and the first clause of
+ * it is not true: the ten cards are ten DISTINCT images, each drawn from its
+ * own `HILT_SPECS` row. The second clause is entirely true and is the whole
+ * problem — at 168x54 every one of them is a grey horizontal bar on a brown
+ * ground, and the flared shroud, the curved grip, the crossguard and the ring
+ * pommel that actually separate them are a handful of pixels. Ten technically
+ * different pictures of the same bar.
+ *
+ * So both card sets are rendered from the GAME now, by `tools/shots.mjs` and
+ * `tools/hiltshots.mjs`, and committed under `assets/previews/`. A drawing of
+ * a place was always going to lose to the place.
+ *
+ * ── WHY BOTH URLS ARE LISTED, AND IN THIS ORDER ──────────────────────────
+ *
+ * `background-image` takes a list and paints the first on top. Naming the JPEG
+ * first and the drawn canvas second means the screenshot covers the drawing
+ * when it is there, and a MISSING screenshot — a level added without one, a
+ * deploy that dropped the assets folder — silently falls back to the old card
+ * instead of leaving a hole. The drawing is not deleted for exactly that
+ * reason; `previews.mjs` is what stops it becoming the thing you actually see.
+ */
+const LEVEL_SHOT = (key) => `assets/previews/${key}.jpg`;
+const HILT_SHOT = (name) => `assets/previews/hilt-${name}.jpg`;
+
 export class Menu {
   constructor(settings, hooks = {}) {
     this.s = settings;
@@ -3548,6 +3590,12 @@ export class Menu {
       steel: ['#9aa1ab', '#6f7681', '#4a5058'],
       dark: ['#5d6068', '#43464d', '#2c2e33'],
       brass: ['#c39a52', '#8f6f38', '#5e4923'],
+      /* `gold` WAS MISSING AND TWO HILTS DECLARE IT — the Consular and the
+       * Duelist — so both fell through to `steel` and were drawn as grey. Two
+       * of the ten cards were the wrong metal in the very picture whose job is
+       * to tell them apart. Found while replacing these cards with renders;
+       * the fallback has to be right or the fallback is a second defect. */
+      gold: ['#e2c06a', '#a8853c', '#6b5424'],
       black: ['#4a4a4d', '#333335', '#1f1f21'],
     };
     const [lit, mid, dark] = METAL[S.metal] || METAL.steel;
@@ -3612,6 +3660,8 @@ export class Menu {
     g.fillRect(bodyX + bodyW + shW, cy - rad * 0.32, W - (bodyX + bodyW + shW), rad * 0.64);
     return c.toDataURL();
   }
+
+  /* ── the drawn cards, which are the FALLBACK now ─────────────────────── */
 
   _levelArt(key) {
     /* 320x112 rather than 320x140, and the composition kept between y=26 and
@@ -4008,7 +4058,7 @@ export class Menu {
        * defect this file keeps removing. */
       card.dataset.level = key;
       card.innerHTML = `
-        <div class="art" style="background-image:url(${this._levelArt(key)});background-size:cover"></div>
+        <div class="art" style="background-image:url(${LEVEL_SHOT(key)}),url(${this._levelArt(key)});background-size:cover"></div>
         <div class="tagpill">${this._poolTypes(L)} unit types</div>
         <div class="meta"><b>${L.name}</b><span class="why hidden"></span></div>`;
       this._activate(card, () => {
@@ -4408,7 +4458,7 @@ export class Menu {
     for (const h of HILT_STYLES) {
       const card = document.createElement('div');
       card.className = 'card small' + (this.s.hiltStyle === h ? ' sel' : '');
-      card.innerHTML = `<div class="art" style="background-image:url(${this._hiltArt(h)});background-size:cover"></div>
+      card.innerHTML = `<div class="art" style="background-image:url(${HILT_SHOT(h)}),url(${this._hiltArt(h)});background-size:cover"></div>
                         <div class="meta"><b>${h}</b></div>`;
       this._activate(card, () => {
         audio.ui('click');
@@ -5526,10 +5576,19 @@ export class Menu {
         const flash = mark.color == null ? ''
           : `<em class="company-mark" style="background:#${mark.color.toString(16).padStart(6, '0')}"
                title="${escKey(mark.name)}"></em>`;
+        /* THE TWO THINGS THAT MAKE HIM HIM, on the row, because eight bars on
+         * sixty men is a wall nobody reads and one number per man is a ladder.
+         * `standout` picks the two furthest from the middle and the chip says
+         * which way — so scanning the roll reads as a set of shapes rather
+         * than a ranking, which is the whole argument of Attributes.js. */
+        const chips = attrStandout(m, kindOfArmy(c.army)).map((o) =>
+          `<em class="attr-chip ${o.high ? 'hi' : 'lo'}" title="${escKey(attrBlurb(o.id, kindOfArmy(c.army)) || '')}">`
+          + `${escKey(o.name)}</em>`).join('');
         d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
           + `<b>${escKey(companyNameOf(m))}${flash}</b>`
           + `<span>${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
-          + `${m.kills | 0} down</span></div>`;
+          + `${m.kills | 0} down</span>`
+          + `<span class="man-chips">${chips}</span></div>`;
         this._activate(d, () => {
           audio.ui('click');
           this._showCompany(d.dataset.man);
@@ -5626,6 +5685,75 @@ export class Menu {
       </div>`;
   }
 
+  /**
+   * WHAT HE IS: eight attributes and the traits that bent them.
+   *
+   * ── THE MIDDLE IS MARKED, AND THAT IS THE WHOLE PAGE ────────────────
+   *
+   * Every bar here grows out of a pegged 50 rather than filling from the left.
+   * A left-filling bar says "more is more", and eight of them stacked turn a
+   * set of eight two-sided numbers back into the one ladder this whole system
+   * exists to not be. Grown from the middle, a glance answers the only two
+   * questions worth asking about a man — which way does he lean, and how far —
+   * and a squad reads as a shape instead of a score.
+   *
+   * ── AND THE NAMES CHANGE WITH THE ARMY ──────────────────────────────
+   *
+   * Marksmanship on a clone is Targeting on a droid, Loyalty is Uplink, and
+   * the bond blurb is a different sentence entirely: a man fights above himself
+   * because his General is beside him, a droid because the node is still up.
+   * `kindOfArmy` decides, `attrName`/`attrBlurb` answer, and this file types
+   * neither of them.
+   *
+   * ── A TRAIT PRINTS BOTH HALVES ──────────────────────────────────────
+   *
+   * Never the upside alone. `Attributes.js` guarantees every trait gives and
+   * takes, and a page that showed only the give would read as an upgrade list
+   * — which is the cross-run power `Company.js` refuses at the top of its own
+   * file. Deadeye is +16 Marksmanship AND −14 Cadence, on one line, in the
+   * same weight.
+   */
+  _companyProfileHtml(roll, m) {
+    const kind = kindOfArmy(roll.army);
+    const swing = (o, sign) => Object.keys(o || {})
+      .map((k) => `${sign}${o[k]} ${escKey(attrName(k, kind))}`).join(', ');
+
+    const bars = ATTR_TABLE.map((a) => {
+      const v = attrOf(m, a.id);
+      const lean = v >= 50 ? 'hi' : 'lo';
+      const half = Math.abs(v - 50);            // 0..50, in per-cent of the bar
+      return `<div class="attr-row" title="${escKey(attrBlurb(a.id, kind) || '')}">`
+        + `<span class="attr-name">${escKey(attrName(a.id, kind))}</span>`
+        + `<span class="attr-bar"><i class="mid"></i>`
+        + `<i class="fill ${lean}" style="left:${v >= 50 ? 50 : 50 - half}%;width:${half}%"></i>`
+        + `</span><span class="attr-val ${lean}">${v}</span></div>`;
+    }).join('');
+
+    const traits = (m.traits || []).map((id) => {
+      const t = attrTraitById(id);
+      if (!t) return '';
+      const up = swing(t.up, '+');
+      const down = swing(t.down, '−');
+      return `<div class="trait"><b>${escKey(t.name)}</b>`
+        + `<span class="trait-line">${escKey(t.line)}</span>`
+        + `<span class="trait-swing"><i class="up">${up}</i><i class="down">${down}</i>`
+        + `${t.flag ? `<i class="flag">${escKey(t.flag === 'pushes'
+          ? 'closes the range on his own' : 'will not leave cover for a bad shot')}</i>` : ''}`
+        + `${t.temporary ? '<i class="flag">wears off</i>' : ''}</span></div>`;
+    }).filter(Boolean).join('');
+
+    return `<h4 class="codex-head">What he is</h4>
+      <p class="hint">Rolled the day he was mustered and his for good. The spread between
+        the best and worst man on this roll is the difference between a line that holds
+        and one that does not — never the difference between one man and a squad.</p>
+      <div class="attr-list">${bars}</div>
+      <h4 class="codex-head">Traits</h4>
+      ${traits
+        ? `<div class="trait-list">${traits}</div>`
+        : '<p class="hint">Nothing marked about him. An unremarkable soldier is the '
+          + 'commonest kind and there is no penalty in it.</p>'}`;
+  }
+
   /** One man: what he is, what he has done, and the two things you may change. */
   _companyManHtml(roll, m) {
     const rows = companyDossier(m, roll.army);
@@ -5636,6 +5764,7 @@ export class Menu {
       <div class="databank-stats company-stats">
         ${rows.map(([k, v]) => `<div><b>${escKey(k)}</b><span>${escKey(v)}</span></div>`).join('')}
       </div>
+      ${this._companyProfileHtml(roll, m)}
       <h4 class="codex-head">What he has done</h4>
       ${m.story?.length
         ? `<div class="company-story">${m.story.map((line) =>

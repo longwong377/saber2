@@ -26,6 +26,7 @@
 
 import * as THREE from 'three';
 import { Body, RagdollJoint, LAYER, LOOSE_MASK, capsuleSpheres, capsule, selfGroup } from '../physics/RapierWorld.js';
+import { armKinetic } from './Impact.js';
 import { limbGeo } from './Bodies.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 
@@ -284,13 +285,22 @@ export class Actor {
         linearDamping: 0.08, angularDamping: 0.18,
         solverIterations: 4, inertiaScale: 3,
         layer: LAYER.RAGDOLL,
-        mask: LAYER.WORLD | LAYER.RAGDOLL | LAYER.DEBRIS | LAYER.PROP | LAYER.PLAYER,
+        /* ENEMY IS NAMED NOW. It was left out because `Enemy`'s own mask did
+         * not name RAGDOLL, so the pair would have been half a pair and inert;
+         * Enemy.js names it in the same commit. A corpse thrown into a squad is
+         * the thing this makes possible. */
+        mask: LAYER.WORLD | LAYER.RAGDOLL | LAYER.DEBRIS | LAYER.PROP | LAYER.PLAYER | LAYER.ENEMY,
         selfGroup: this.selfGroup,
       });
       if (velocity) body.velocity.copy(velocity);
       if (angular) body.angularVelocity.copy(angular);
       body.userData.actor = this;
       body.userData.bone = bone.name;
+      /* A CORPSE IS MATTER. Every bone is a striker — a body thrown into a
+       * squad, a limb torn off at speed, a dead trooper knocked down a stair
+       * into the men below. These are dynamic, so the contact is priced off
+       * Rapier's own Δv like a crate's rather than off closing speed. */
+      armKinetic(body);
       this.physics.add(body);
       this.bodies.set(bone.name, body);
 
@@ -585,6 +595,8 @@ export class DetachedPiece {
        * half of the pair. */
       mask: LOOSE_MASK,
     });
+    /* A severed stump is a striker too — see the note below. */
+    armKinetic(body);
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len: dropLen });
     this._rootBody = body;
@@ -634,6 +646,13 @@ export class DetachedPiece {
       friction: 0.8, restitution: 0.03, inertiaScale: 3, layer: LAYER.DEBRIS,
       mask: LOOSE_MASK,                      // see the stump above
     });
+    /* A SEVERED LIMB IS A STRIKER. Found by `contacts.mjs`'s source scan
+     * rather than by anybody remembering it, which is the scan earning itself:
+     * a limb weighs 0.3–14 kg and leaves at whatever the blade gave it, and
+     * LOOSE_MASK already means it MEETS the person standing next to the one
+     * you cut. The numbers are small by construction — a 5 kg piece at 15 m/s
+     * is 0.7 damage — so this is fidelity rather than a balance change. */
+    armKinetic(body);
     this.physics.add(body);
     this.entries.push({ body, holder, boneName: bone.name, len, bone });
   }

@@ -36,6 +36,7 @@
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
 import { clocked } from './_shared.mjs';
+import { ATTR_IDS } from '../../src/game/Attributes.js';
 import {
   ARMY_IDS, ARMIES, CommandRoster, rankFor, OPENING_STRENGTH, RANKS, MARKS, markById,
 } from '../../src/game/Command.js';
@@ -709,7 +710,24 @@ export async function run({ check, assert }) {
 
     let n = 0;
     const make = (look) => {
-      const t = new Trooper(ARMIES.republic, 'trooper', `CT-000${++n}`, {});
+      /**
+       * THE SAME MAN TWICE, WEARING DIFFERENT PAINT.
+       *
+       * `Trooper` rolls an attribute spread at the muster now, so two fresh
+       * troopers are two different soldiers — which is the point of that system
+       * and is fatal to this fixture, whose whole claim is that the ONLY
+       * difference between these two bodies is a colour. Left alone it compared
+       * one man's Grit against another's and called the gap a mark: measured,
+       * ×0.9916 against ×1.1152.
+       *
+       * So the profile is pinned flat. Not to defeat the roll — to hold every
+       * variable but the one under test, which is what the fixture always
+       * meant by "the same trooper".
+       */
+      const flat = {};
+      for (const id of ATTR_IDS) flat[id] = 50;
+      const t = new Trooper(ARMIES.republic, 'trooper', `CT-000${++n}`,
+        { attrs: flat, traits: [] });
       t.look = look;
       const e = new Enemy(world, 'trooper', new THREE.Vector3(n * 4, 0, 0));
       /* THE RATIO, NOT THE VALUE. `Enemy` jitters a body's pace and health per

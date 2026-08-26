@@ -33,6 +33,7 @@
 
 import * as THREE from 'three';
 import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullFromGeometry } from '../physics/RapierWorld.js';
+import { armKinetic } from '../game/Impact.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';
 import { registerDestructible } from './Destruction.js';
 import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps, sandMaps, MEAN_ALBEDO } from '../engine/Textures.js';
@@ -1655,6 +1656,17 @@ export class Prop {
       linearDamping: 0.05, angularDamping: 0.1,
     });
     this.body.userData.prop = this;
+    /**
+     * ARMED, so that what this prop hits finds out about it.
+     *
+     * A prop is the archetypal striker: it is the thing a collapse drops, a
+     * blast throws and the Force picks up, and until the contact channel came
+     * back the ONLY way one of them ever hurt anything was the player's own
+     * hand-rolled sweep in `Player._updateHurled`. `opts.kinetic: false` is
+     * for a prop that should stay inert — scenery that happens to be dynamic.
+     * See src/game/Impact.js for the rule and for why only strikers are armed.
+     */
+    if (opts.kinetic !== false) armKinetic(this.body, opts.kinetic || null);
     world.physics.add(this.body);
     this._syncMesh();
     /**
@@ -1779,7 +1791,40 @@ export class Prop {
       this.world.particles.smoke.spawn(centre, _v1.set(0, 1.2, 0), { life: 1.4, size: 0.6, drag: 1.6, gravity: -1, color: 0x4a4a4e, alpha: 0.4 });
     }
     const n = this.generation >= 1 ? 3 : 6;
-    const geo = this.mesh.geometry;
+    /**
+     * A PROP WITH NO GEOMETRY CANNOT BE BROKEN INTO PIECES OF ITSELF.
+     *
+     * `this.mesh.geometry` was read straight, and there is a whole family of
+     * props whose `mesh` is a GROUP rather than a mesh — a dropped lightsaber
+     * is one, which is a hilt, an emitter and a blade. `shatter` threw on them.
+     *
+     * It was unreachable for as long as the only things that broke props were
+     * the blade and a deliberate throw, neither of which is aimed at a dropped
+     * weapon. Making every body a striker made it reachable at once: a droid
+     * walking into a fallen saber, and `dropped.mjs` — a suite with nothing to
+     * do with contacts — threw inside `World.update`.
+     *
+     * The prop still DIES, because something just destroyed it and pretending
+     * otherwise would leave an indestructible object lying on the floor. It
+     * simply leaves no chunks, which is the honest answer for a thing whose
+     * shape the chunk-maker cannot read.
+     */
+    const geo = this.mesh?.geometry;
+    if (!geo) { this.destroy(true); return; }
+    /**
+     * …AND A HOST THAT CANNOT MAKE DEBRIS STILL BREAKS THE PROP.
+     *
+     * A `Prop`'s contract with the thing holding it is `scene`, `physics` and
+     * `addProp`; the debris pool is a `World` nicety and several real hosts do
+     * not have one. It never mattered while nothing could break a crate on its
+     * own — the only caller was the player's own throw, which only exists in a
+     * full World. The contact channel changed that: a corpse shoulders a crate
+     * now, and `verify.mjs`'s ragdoll fixture went red with
+     * `this.world.spawnDebris is not a function` on a crate a falling body
+     * knocked over. Breaking without chunks is the right answer; not breaking,
+     * or throwing, is not.
+     */
+    if (typeof this.world?.spawnDebris !== 'function') { this.destroy(true); return; }
     geo.computeBoundingBox();
     const size = new THREE.Vector3(); geo.boundingBox.getSize(size);
     for (let i = 0; i < n; i++) {
@@ -2777,10 +2822,12 @@ export class BlastDoor {
     }
     // the slug falls out
     const M = propMaterials();
-    const slug = new THREE.Mesh(plateGeo(this.width * 0.5, this.height * 0.45, this.thickness * 0.9, 0.05, 1), M.darkSteel);
-    this.world.spawnDebris(slug, this.mesh.position.clone(),
-      new THREE.Vector3((rng() - 0.5) * 2, 1, (rng() - 0.5) * 2 - 2),
-      new THREE.Vector3(this.width * 0.5, this.height * 0.45, this.thickness));
+    if (typeof this.world?.spawnDebris === 'function') {   // see `shatter`
+      const slug = new THREE.Mesh(plateGeo(this.width * 0.5, this.height * 0.45, this.thickness * 0.9, 0.05, 1), M.darkSteel);
+      this.world.spawnDebris(slug, this.mesh.position.clone(),
+        new THREE.Vector3((rng() - 0.5) * 2, 1, (rng() - 0.5) * 2 - 2),
+        new THREE.Vector3(this.width * 0.5, this.height * 0.45, this.thickness));
+    }
     if (this.onBreach) this.onBreach(this);
   }
 

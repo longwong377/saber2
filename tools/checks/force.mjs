@@ -30,6 +30,7 @@ import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld, Body as RBody, LAYER, box as boxShape } from '../../src/physics/RapierWorld.js';
 import { Player, canHarm, HOLD_COST, PERSON_OVER_PROP, STASIS_GRACE } from '../../src/game/Player.js';
+import { armKinetic } from '../../src/game/Impact.js';
 import { Enemy, ARCHETYPES } from '../../src/game/Enemy.js';
 import { BoltPool } from '../../src/game/Bolts.js';
 import { buildJedi } from '../../src/game/Bodies.js';
@@ -98,9 +99,26 @@ function player(world, over = {}) {
   });
 }
 
+/**
+ * A CRATE THAT IS THE CRATE THE GAME SHIPS, which this used not to be.
+ *
+ * It was `mask: LAYER.WORLD` — a crate that Rapier will not pair with a droid,
+ * a player or another crate, because a pair needs each side to name the other's
+ * layer. That was invisible for as long as the only thing that made a thrown
+ * object hurt anybody was `Player._updateHurled`, a sphere sweep run by the
+ * THROWER that never asks the physics engine anything. The fixture and the
+ * mechanism agreed with each other and both ignored the collision masks.
+ *
+ * Now that contacts are dispatched and `Prop` arms its body with the kinetic
+ * law, a fixture with the wrong mask tests a path the game no longer takes and
+ * fails for a reason that is about the fixture. So it carries `Prop`'s own
+ * layer and mask and is armed the way `Prop` arms itself.
+ */
 function prop(w, mass, pos = V(0, 1.35, -6)) {
   const b = new RBody({ position: pos, shape: boxShape(0.4, 0.5, 0.4), mass,
-    layer: LAYER.PROP, mask: LAYER.WORLD });
+    layer: LAYER.PROP,
+    mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER });
+  armKinetic(b);
   w.add(b);
   return b;
 }
@@ -501,8 +519,11 @@ export async function run({ check, assert, near }) {
       w.step(1 / 60);
       p._updateHurled(1 / 60, { enemies: [e], particles: null });
     }
-    // RapierWorld stores Body.onContact and never dispatches it, so the
-    // userData.hurledBy this code has always set was read by nobody.
+    /* The hit arrives through the contact channel now — `Prop` arms its body
+     * and `Impact.kineticContact` prices it — rather than through the
+     * thrower's own sweep, which is retired for props. `userData.hurledBy`,
+     * set here since the beginning and for years read by nobody, is what still
+     * makes this the player's kill. */
     assert(e.hp < hp0 - 5, `the crate passed through the droid (hp ${hp0} → ${e.hp.toFixed(1)})`);
     assert(p.hurled.length === 0 || p.hurled[0].hit.has(e.id), 'the same throw could hit twice');
     return `B1 hp ${hp0} → ${e.hp.toFixed(1)} from one thrown crate`;

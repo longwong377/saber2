@@ -52,8 +52,35 @@ import { noInk } from '../toon/Ink.js';
 export const BASE_R = 0.42;
 /** The smallest the mark may be on screen, in pixels of a 1080-tall frame. */
 export const MIN_PX = 5.0;
-/** How dark, at the near end. Near, the ink and a real shadow are still there. */
+/** How dark, once it has faded in. See `NEAR_FREE`. */
 export const NEAR_A = 0.34;
+/**
+ * CLOSER THAN THIS THE MARK IS NOT DRAWN AT ALL, and it is the correction to a
+ * defect this file's own comments describe and did not implement.
+ *
+ * Every note here says the mark exists for the band past ~55 m where the ink
+ * outline has faded and the shadow cascade has stopped, and that "near, the
+ * real shadow and the ink are still doing work and this only has to help".
+ * The arithmetic did not agree: `a = NEAR_A + (farA − NEAR_A)·min(1, d/90)` is
+ * **0.34 at d = 0**, so a hard-edged 34%-dark oval was multiplied into the
+ * ground directly under the player's own feet and under every enemy in melee
+ * range, at the one distance where the renderer is already drawing a real
+ * soft shadow for them.
+ *
+ * The player, twice: *"all enemies and also the player literally everyone has
+ * a solid black circle underneath them, it's almost like a broken shadow
+ * effect but it's really annoying"*. It is not a broken shadow. It is this,
+ * doing exactly what it was told, at a distance nobody meant it to.
+ *
+ * So it fades in instead of starting on. Nothing about the far end moves —
+ * `farAlphaFor`, `TARGET`, `MAX_A` and every number `cel.mjs` measures are
+ * untouched, because the far end was never the problem.
+ */
+export const NEAR_FREE = 10;
+/** …and by this distance it is fully faded in. Comfortably inside the ~55 m
+ *  where the ink outline goes and the ~62 m where the cascade gives up, so the
+ *  mark is at full strength before it is the only thing left. */
+export const HELP_AT = 42;
 /**
  * …AND HOW DARK AT THE FAR END, WHICH IS NOT A CONSTANT ANY MORE.
  *
@@ -207,9 +234,14 @@ export class ContactShadows {
       this._m.compose(this._p, this._q, this._s);
       mesh.setMatrixAt(n, this._m);
       /* Darker with distance: near, the real shadow and the ink are still doing
-       * work and this only has to help; far, it is the only thing there. */
+       * work and this only has to help; far, it is the only thing there.
+       * The gate is what makes that sentence true — see `NEAR_FREE`. */
       const k = Math.min(1, d / 90);
-      const a = NEAR_A + (this.farA - NEAR_A) * k;
+      const g = d <= NEAR_FREE ? 0
+        : d >= HELP_AT ? 1
+          : (d - NEAR_FREE) / (HELP_AT - NEAR_FREE);
+      const a = (NEAR_A + (this.farA - NEAR_A) * k) * (g * g * (3 - 2 * g));
+      if (a < 0.004) continue;                      // nothing to draw, and one fewer instance
       this._c.setScalar(1 - a);                     // multiplied into the ground below
       mesh.setColorAt(n, this._c);
       n++;

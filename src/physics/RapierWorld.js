@@ -52,6 +52,49 @@ const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion(), _q3 = new THREE.Quaternion();
 const _box = new THREE.Box3();
 const _ra = new THREE.Vector3(), _rb = new THREE.Vector3(), _js = new THREE.Vector3();
+const _ZERO = new THREE.Vector3();
+const _v6 = new THREE.Vector3(), _v7 = new THREE.Vector3();
+const _v8 = new THREE.Vector3(), _v9 = new THREE.Vector3();
+const _na = new THREE.Vector3();
+
+/**
+ * The point on `body` closest to `to` — its axis projection for a capsule or a
+ * cylinder, its centre for anything else.
+ *
+ * A capsule IS a segment with a radius, so this is exact for the three things
+ * in this game that are long: a living body, a severed limb and a falling
+ * trunk. A box or a hull gets its centre, which is what the old reading used
+ * everywhere and is right for a compact shape.
+ */
+function _nearestOn(body, to, out) {
+  const sh = body.shape;
+  const half = sh && (sh.type === 'capsule' || sh.type === 'cylinder') ? sh.halfHeight : 0;
+  if (!(half > 0)) return out.copy(body.position);
+  // the capsule's own axis is +Y, carried into world space by its rotation
+  _na.set(0, 1, 0).applyQuaternion(body.quaternion);
+  const t = clampNum(out.copy(to).sub(body.position).dot(_na), -half, half);
+  return out.copy(body.position).addScaledVector(_na, t);
+}
+
+/** The velocity of `body` at world point `p`: `v + ω × r`. */
+function _pointVel(body, p, out) {
+  out.copy(body.kinematic ? body.kinVel : body.velocity);
+  const w = body.angularVelocity;
+  if (!w || (w.x === 0 && w.y === 0 && w.z === 0)) return out;
+  _na.copy(p).sub(body.position);
+  return out.set(
+    out.x + (w.y * _na.z - w.z * _na.y),
+    out.y + (w.z * _na.x - w.x * _na.z),
+    out.z + (w.x * _na.y - w.y * _na.x),
+  );
+}
+
+const clampNum = (v, lo, hi) => (v < lo ? lo : v > hi ? hi : v);
+/** The scratch contact handed to every `Body.onContact`. See _dispatchContacts. */
+const _contact = {
+  self: null, other: null, speed: 0, mass: 0, impulse: 0, world: false, approach: false, time: 0,
+  normal: new THREE.Vector3(), point: new THREE.Vector3(),
+};
 
 let _bodyId = 1;
 
@@ -401,6 +444,22 @@ export class Body {
     /** One bit from `selfGroup(i)`, or 0. See SELF_GROUPS. */
     this.selfGroup = opts.selfGroup ?? 0;
     this.userData = opts.userData || {};
+    /**
+     * WHAT THIS BODY HITS — and it is an ACCESSOR, not a field, because the
+     * opt-in has to reach the collider.
+     *
+     * Rapier only reports a contact for a pair where at least one collider was
+     * built asking for it, so "does anyone care about this body's contacts" is
+     * a question the physics engine has to be told the answer to rather than
+     * one the game can keep to itself. Measured on the vendored build: a
+     * flagged box falling onto an UNFLAGGED ground still reports its contact,
+     * so one side is enough — which is the whole reason this can be an opt-in
+     * at all. Architecture and terrain never carry the flag and a level's
+     * thousands of static colliders therefore cost nothing.
+     */
+    this._onContact = null;
+    /** Whether the colliders currently carry the event flag. See _syncContactArm. */
+    this._armed = false;
     this.onContact = opts.onContact || null;
 
     /**
@@ -460,7 +519,168 @@ export class Body {
     this._sv = new THREE.Vector3();
     this._sw = new THREE.Vector3();
     this._sg = this.gravityScale;
+    /**
+     * The velocity this body carried INTO the current step.
+     *
+     * Contact damage is a question about the exchange, and the exchange is
+     * exactly `mass × (v_after − v_before)`. See RapierWorld._dispatchContacts
+     * for why the closing speed on its own is not good enough.
+     */
+    this._pv = new THREE.Vector3();
+    /**
+     * HOW FAST A KINEMATIC BODY IS BEING CARRIED, which is not its `velocity`.
+     *
+     * A kinematic body is moved by `setTransform`, so Rapier neither reads nor
+     * writes its linear velocity and `.velocity` is free for other things to
+     * use — which they do: the co-op netcode stages a remote Force impulse
+     * there and reads it back on the next tick. Writing the walk speed into
+     * `.velocity` so the contact dispatcher could see it wiped that impulse
+     * every frame, and `coop.mjs` said so: "a guest's throw moved the host's
+     * body 0.150 m — the impulse is not on the wire". It was on the wire. It
+     * was being overwritten on arrival.
+     *
+     * So the carried speed lives here instead and `.velocity` is left alone.
+     */
+    this.kinVel = new THREE.Vector3();
     this._impulses = null;
+  }
+
+  /* ── contacts ────────────────────────────────────────────────────── */
+
+  get onContact() { return this._onContact; }
+
+  /**
+   * Setting a handler arms the body; clearing it disarms. The flag is pushed
+   * down to the live colliders, so a handler attached after the body is in the
+   * world takes effect on the next step rather than on the next rebuild.
+   */
+  set onContact(fn) {
+    const had = !!this._onContact;
+    this._onContact = fn || null;
+    if (!!this._onContact !== had) this._syncContactEvents();
+  }
+
+  /**
+   * Join this body to a self-exclusion group, or change which one, live.
+   *
+   * `selfGroup` was a constructor-only field because the only thing that used
+   * it was a ragdoll, and a ragdoll knows its group before it builds a bone.
+   * A LIVING body does not: its capsule is built in `Enemy`'s constructor and
+   * its `Actor` — which owns the group — comes later. Being able to say so
+   * afterwards is what lets a corpse and the capsule it came out of stop
+   * colliding with each other.
+   */
+  setSelfGroup(g) {
+    this.selfGroup = g | 0;
+    if (!this.colliders || !this._world || this._world.dead) return this;
+    const groups = this.groups();
+    for (const c of this.colliders) c.setCollisionGroups(groups);
+    return this;
+  }
+
+  _syncContactEvents() {
+    const w = this._world;
+    if (!w || w.dead) return;
+    if (this._onContact) {
+      w._armContacts();
+      /* A handler attached after the colliders were built: widen them now, for
+       * the reason `_buildColliders` gives. */
+      const T = w.R.ActiveCollisionTypes;
+      const types = T.ALL & ~T.FIXED_FIXED;
+      if (this.colliders) for (const c of this.colliders) c.setActiveCollisionTypes(types);
+    }
+    // The FLAG is not set here. See `_syncContactArm` — a handler says this
+    // body is interested, and its speed says whether it is interesting yet.
+    this._syncContactArm();
+  }
+
+  /**
+   * ARMED ONLY WHILE IT COULD ACTUALLY HIT SOMETHING, and this is the
+   * difference between a channel that is free and one that is not.
+   *
+   * A prop lying still cannot deliver a hit, so it does not need the flag. The
+   * flag follows the body's SPEED instead, and because one side of a pair is
+   * enough to raise an event, nothing is lost by a resting body being dark: the
+   * thing that hits it is the thing that is moving, and that one is armed.
+   *
+   * ── WHAT IT IS WORTH: NOTHING YET MEASURABLE, and the road to saying so
+   *    honestly is worth more than the conclusion ─────────────────────────
+   *
+   * The first reading said arming Geonosis' 50 props cost 0.671 ms a frame,
+   * +12.6%. It was an artefact. It compared two freshly booted worlds, so most
+   * of it was JIT warmup — visible in the raw blocks, which start at 3.4 ms
+   * and settle at 1.0. §2.5's rule about an instrument that reports
+   * catastrophe, wearing its benchmark hat.
+   *
+   * Measured properly — ONE world, alternating blocks, physics time only, so
+   * boot, render and AI are all out of the reading — off, gated and
+   * always-armed are the same number, and stay the same number on settled
+   * piles of 200 and 500 plain boxes at nine repeats of 200 frames:
+   *
+   *     bodies   no flag    gated      always armed
+   *     200      0.107 ms   0.113 ms   0.107 ms
+   *     500      0.311 ms   0.326 ms   0.323 ms
+   *
+   * The ordering of those three flips between runs, which is the tell: the
+   * differences are at the noise floor and none of them is real. So the claim
+   * this gate is entitled to make is NOT "it made the channel free" — the
+   * channel was already free at every scale that has been measured.
+   *
+   * It is kept for the case that has not been: hundreds of bodies genuinely IN
+   * MOTION at once, where the flag count stops being ~2 and the event traffic
+   * stops being 90-in-600-frames. A collapse does that, and
+   * `prefracture-budget.mjs` is where it would show. Insurance bought at a
+   * price that cannot be measured is worth holding; do not go looking for the
+   * saving it did not make.
+   *
+   * `contactArmSpeed` sits below the speed at which a contact is worth any
+   * damage at all, so a body is always armed before it is dangerous.
+   */
+  _syncContactArm() {
+    const w = this._world;
+    if (!w || w.dead || !this.colliders) return;
+    /**
+     * A KINEMATIC BODY IS ARMED WHENEVER IT HAS A HANDLER, WITH NO SPEED GATE.
+     *
+     * The gate exists so that a level's hundreds of SETTLED DEBRIS cost
+     * nothing — that is a dynamic-body problem and the measurements behind the
+     * gate are all dynamic bodies. Kinematic bodies are the living ones: fifty
+     * or so, plus whatever trunks are in the air, and every one of them is
+     * relevant the whole time it exists.
+     *
+     * And gating them is not merely wasteful, it is WRONG. A kinematic pair
+     * needs BOTH sides flagged before Rapier will report it — one side is
+     * enough for a dynamic pair and is not enough here. Gated on speed, a
+     * trunk coming down on somebody STANDING STILL raised nothing at all,
+     * because the victim was stationary, therefore disarmed, therefore unable
+     * to be hit by anything. Took a falling tree to find; it was equally true
+     * of a charging beast and a man who had stopped to aim.
+     */
+    const want = !!this._onContact && !this.static
+      && (this.kinematic || this.velocity.lengthSq() >= w._armSpeed2);
+    if (want === this._armed) return;
+    this._armed = want;
+    const R = w.R;
+    const f = want ? R.ActiveEvents.COLLISION_EVENTS : R.ActiveEvents.NONE;
+    /**
+     * AND THE COLLISION TYPES, WITHOUT WHICH ARMING A BODY DOES NOTHING.
+     *
+     * Rapier's default `ActiveCollisionTypes` is DYNAMIC_DYNAMIC |
+     * DYNAMIC_KINEMATIC | DYNAMIC_FIXED. KINEMATIC_KINEMATIC is not in it.
+     * Every living body in this game — every droid, every walker, the player —
+     * is a KINEMATIC capsule, so a pair of them generates no contact at all and
+     * no amount of arming, masking or event-flagging changes that.
+     *
+     * Measured on the vendored build, two kinematic boxes driven together over
+     * 120 steps: **0 start events at the default, 1 with ALL**. Without this
+     * line the whole "everything with mass is a striker" change is inert, and
+     * every check that looks at flags rather than at damage passes anyway.
+     *
+     * FIXED_FIXED is left out: two static boxes cannot begin to touch, and
+     * paying the narrowphase for every pair of them in a level's architecture
+     * is the one part of ALL that buys nothing.
+     */
+    for (const c of this.colliders) c.setActiveEvents(f);
   }
 
   /* ── impulses ────────────────────────────────────────────────────── */
@@ -567,9 +787,33 @@ export class Body {
     const world = this._world, R = world.R;
     const groups = this.groups();
     this.colliders = [];
+    // Fresh colliders carry no event flag; `_syncContactArm` puts it back on
+    // the next step if this body is moving fast enough to want it.
+    this._armed = false;
     for (const cd of descsFor(R, this.shape)) {
       cd.setFriction(this.friction).setRestitution(this.restitution)
         .setCollisionGroups(groups).setDensity(1);
+      /**
+       * THE COLLISION TYPES ARE A PROPERTY OF BEING ARMED, NOT OF MOVING.
+       *
+       * Rapier's default omits KINEMATIC_KINEMATIC and every living body here
+       * is a kinematic capsule, so the flag has to be on for the pair to exist
+       * at all. It was set alongside the EVENT flag at first, which is
+       * speed-gated — and that is wrong in a way that took a falling tree to
+       * show: a trunk coming down on somebody STANDING STILL raised nothing,
+       * because the victim was stationary, therefore disarmed, therefore back
+       * on the default types, and a kinematic pair needs BOTH sides to allow
+       * it. One side is enough for the EVENT; it is not enough for the PAIR.
+       *
+       * So the types are set once, here, for anything with a handler, and only
+       * the event flag follows the speed. A pair that exists and raises no
+       * event costs a narrowphase test; a pair that does not exist cannot be
+       * hit by anything, ever.
+       */
+      if (this._onContact) {
+        const T = R.ActiveCollisionTypes;
+        cd.setActiveCollisionTypes(T.ALL & ~T.FIXED_FIXED);
+      }
       const c = world.world.createCollider(cd, this.rb);
       this.colliders.push(c);
       world._byCollider.set(c.handle, { body: this });
@@ -942,6 +1186,76 @@ export class RapierWorld {
 
     this._byCollider = new Map();    // Rapier collider handle → { body } | { box }
 
+    /**
+     * CONTACT DISPATCH — the channel the Rapier migration dropped.
+     *
+     * `Body.onContact` has been stored on this class since the migration and
+     * delivered nowhere: the retired sphere solver in Physics.js dispatched it
+     * at five sites and its consumers went with it, so for as long as Rapier
+     * has been the engine, NOTHING in the game has learned that two things
+     * touched. Every system that needed the fact built its own sweep instead —
+     * the thrower's in Player, the forest's raycast, the blast sphere in World
+     * — which is why only the player's own throws ever hurt anything.
+     *
+     * ── why STARTED events and not contact forces ──────────────────────
+     *
+     * Rapier offers both. Measured on the vendored build, one 20 kg box
+     * dropped onto flat ground:
+     *
+     *     CONTACT_FORCE_EVENTS, threshold 1 N     85 events in 120 steps
+     *     COLLISION_EVENTS, started only           1 event  in 300 steps
+     *
+     * A resting body presses on the ground with its own weight forever, so a
+     * force threshold cannot tell "landed on a droid" from "sitting on sand"
+     * without being tuned per mass — and every settled crate in a level would
+     * bill a callback a frame. A contact START fires once, when two things
+     * that were apart become touching, which is exactly the event the game
+     * means by "hit". This is the difference between a channel that costs
+     * nothing at rest and the frame-budget disaster ROADMAP item 4 warns about.
+     *
+     * The queue is built only when something first opts in, so a level that
+     * wants no contacts allocates nothing.
+     */
+    this._events = null;
+    /**
+     * Pairs that BEGAN touching in the previous step, flat as [h1, h2, …].
+     *
+     * Rapier reports a contact start one step before it resolves it: measured
+     * on the vendored build, a 22 kg crate driven into an 80 kg body reports
+     * the start at frame 13 and changes velocity at frame 14, at 30 m/s and at
+     * 90 m/s alike. So the pair is held for a step and priced on the next one,
+     * when the impulse has actually landed. See _dispatchContacts.
+     */
+    this._contactPending = [];
+    /**
+     * How fast the two have to be closing before anyone is told, in m/s.
+     *
+     * Debris settling against debris generates real contact starts at a
+     * hundredth of a metre a second, and waking gameplay code for those is
+     * paying for an event nothing can act on. The floor is on the RELATIVE
+     * speed, so two things drifting together at the same velocity are silent
+     * however fast the pair is travelling.
+     */
+    this.contactFloor = opts.contactFloor ?? 1.0;
+    /**
+     * How fast an armed body has to be moving to carry the event flag, in m/s.
+     *
+     * Below `Impact.KINETIC_MIN_SPEED` (6) by a margin, so a body is always
+     * listening before it can do harm. Squared once here because the step loop
+     * asks the question of every armed body every step.
+     */
+    /**
+     * Seconds of simulated time, handed to every contact as `c.time`.
+     *
+     * A consumer that needs "not again for a while" has nowhere else to get a
+     * clock: the physics world is stepped from gameplay but does not carry
+     * gameplay's time, and `performance.now()` is wall time, which runs on
+     * through a pause and does not run at all in a headless replay.
+     */
+    this.simTime = 0;
+    this.contactArmSpeed = opts.contactArmSpeed ?? 4;
+    this._armSpeed2 = this.contactArmSpeed * this.contactArmSpeed;
+
     this.maxBodies = opts.maxBodies ?? 1400;
     this.killY = opts.killY ?? -180;
     this.stats = { bodies: 0, contacts: 0, awake: 0, ms: 0, colliders: 0, rapier: 0, joints: 0, substeps: 1, overBudget: 0 };
@@ -1059,6 +1373,12 @@ export class RapierWorld {
    * remember to clear a flag the world set is the same defect waiting for the
    * next caller.
    */
+  /** Build the event queue the first time anything asks for contacts. */
+  _armContacts() {
+    if (this._events || this.dead || !this.world) return;
+    this._events = new this.R.EventQueue(true);
+  }
+
   add(body) {
     if (this.dead) { if (body) body.dead = true; return body; }
     if (!body.isRapier) throw new Error('RapierWorld.add: not a Rapier body — pass a `shape:`.');
@@ -1066,6 +1386,7 @@ export class RapierWorld {
     this.bodies.push(body);
     body.dead = false;
     body._bind(this);
+    if (body._onContact) this._armContacts();
     return body;
   }
 
@@ -1411,15 +1732,17 @@ export class RapierWorld {
     dt = Math.min(dt, MAX_FRAME);
     const n = Math.min(MAX_SUBSTEPS, Math.max(1, Math.ceil(dt / MAX_STEP)));
     const h = dt / n;
-    let ms = 0;
-    for (let s = 0; s < n; s++) { this._stepOnce(h); ms += this.stats.ms; }
+    let ms = 0, contacts = 0;
+    for (let s = 0; s < n; s++) { this._stepOnce(h); ms += this.stats.ms; contacts += this.stats.contacts; }
     this.stats.ms = ms;
+    this.stats.contacts = contacts;
     this.stats.substeps = n;
   }
 
   /** ONE integration step, of at most MAX_STEP. See `step`. */
   _stepOnce(dt) {
     const t0 = performance.now();
+    this.simTime += dt;
 
     this._refreshHeightfield(dt);
     if (this.joints.length) this._solveJoints(dt);
@@ -1432,11 +1755,19 @@ export class RapierWorld {
         _v1.set(0, 1, 0).applyQuaternion(b.quaternion);       // the capsule's own axis
         b.angularVelocity.addScaledVector(_v1, -b.angularVelocity.dot(_v1) * (1 - Math.exp(-b.spinFriction * dt)));
       }
+      // What it was doing before Rapier touched it — one copy per body per
+      // step, and the only thing that makes a contact's impulse knowable.
+      b._pv.copy(b.velocity);
+      /* …and whether it is moving fast enough to be worth listening to.
+       * The guard is the cheap half of the question asked inline: a body that
+       * is asleep and not currently armed can neither hit anything nor need
+       * disarming, and a settled pile is almost entirely that. */
+      if (b._onContact && (b.awake || b._armed)) b._syncContactArm();
       b._push();
     }
 
     this.world.timestep = dt;
-    this.world.step();
+    this.world.step(this._events || undefined);
 
     let awake = 0;
     for (let i = 0; i < bodies.length; i++) {
@@ -1472,6 +1803,15 @@ export class RapierWorld {
         b._rp.copy(b.position); b._rq.copy(b.quaternion);
       }
     }
+
+    /**
+     * DISPATCHED HERE, AFTER THE PULL, SO HANDLERS SEE A COHERENT WORLD.
+     *
+     * Every body's `.position` and `.velocity` are the post-step values a
+     * handler would expect to read, and `._pv` still holds what it was doing
+     * on the way in — which is the pair the impulse is computed from.
+     */
+    if (this._events) this._dispatchContacts();
 
     // A jointed body may only go down with the rest of its ragdoll: sleeping
     // one limb of a corpse whose other arm is still moving just gets it woken
@@ -1510,6 +1850,288 @@ export class RapierWorld {
     this.stats.colliders = this.world.colliders.len();
     this.stats.awake = awake;
     this.stats.ms = performance.now() - t0;
+  }
+
+  /**
+   * Tell both sides of every new contact, once.
+   *
+   * WHAT THIS CANNOT GIVE YOU, said plainly rather than guessed at: a contact
+   * START carries only the two collider handles. Rapier's manifold — the true
+   * normal and the true contact point — is not populated for the pair at the
+   * moment the start is reported (probed on the vendored build: the
+   * `contactPair` callback does not fire), so `normal` here is the direction
+   * of the RELATIVE VELOCITY and `point` is the midpoint between the two
+   * bodies. That is an approximation, and it is the same approximation the
+   * three hand-rolled sweeps this replaces were already making — Player's
+   * hurl sweep drives its knockback off the thrown thing's velocity and places
+   * its effects at the thrown thing's position. Nothing loses fidelity by
+   * coming through here; several things gain a contact they never had.
+   *
+   * The payload is a SCRATCH object, reused for every contact in the frame.
+   * Handlers run synchronously inside the drain and must not keep it.
+   */
+  _dispatchContacts() {
+    const q = this._events;
+    /**
+     * COLLECTED FIRST, PRICED A STEP LATER, DISPATCHED AFTER THE DRAIN.
+     *
+     * Two separate reasons, and they compose into one buffer.
+     *
+     * The drain callback runs inside Rapier's own iteration over its event
+     * buffer, on the WASM side. A handler is game code, and game code kills
+     * things: `Enemy.die` removes bodies, a shattering prop replaces its own
+     * collider. Calling `removeRigidBody` from inside that callback mutates
+     * the world Rust is mid-way through walking. So the drain does nothing but
+     * copy handles into a flat list, and every handler runs after it has
+     * returned — by which time removing a body is the ordinary, safe act it is
+     * everywhere else in this file.
+     *
+     * And the pair is priced one step after it is reported, because that is
+     * when Rapier resolves it — see `_contactPending`. A start whose impulse
+     * never arrives (a speculative contact that separated again, a graze) then
+     * prices at zero and is dropped by `contactFloor`, which is the graze
+     * rejection working rather than a case being missed.
+     *
+     * Handles are safe to hold across the gap because `remove` deletes a
+     * body's colliders from `_byCollider`: a pair whose body died earlier in
+     * the same frame resolves to nothing and is skipped, rather than
+     * resolving to a stale body through a handle Rapier has reissued.
+     */
+    const pairs = this._contactPending;
+    let n = 0;
+    for (let i = 0; i < pairs.length; i += 2) {
+      const r1 = this._byCollider.get(pairs[i]), r2 = this._byCollider.get(pairs[i + 1]);
+      const a = r1 ? r1.body : null, b = r2 ? r2.body : null;
+      // Neither side is a body — two static boxes cannot begin to touch, but a
+      // handle we have no record of is a collider somebody else owns.
+      if (!a && !b) continue;
+      if (a && a.dead) continue;
+      if (b && b.dead) continue;
+      const ah = a && a._onContact, bh = b && b._onContact;
+      if (!ah && !bh) continue;
+
+      /**
+       * THE MASS THAT MEETS THE OTHER THING — the reduced mass.
+       *
+       * Two free bodies share the exchange, so a 22 kg crate hitting an 80 kg
+       * trooper delivers as 17.3 kg and not as 22; a body meeting the
+       * architecture, a wall or the ground meets something that cannot recoil,
+       * so it delivers all of itself. Standard two-body result, computed here
+       * rather than in the consumers so every consumer prices a hit the same.
+       */
+      /* KINEMATIC COUNTS AS IMMOVABLE, and that is not a shortcut. A
+       * kinematic body — the player's capsule is one — goes exactly where
+       * gameplay puts it and never recoils from a contact, so its effective
+       * mass in the exchange is infinite, the same as a wall's. Reading its
+       * declared mass instead would halve every hit the player takes from a
+       * crate and, worse, would let its gameplay-driven `Δv` be mistaken for
+       * an impact below. */
+      const ma = a && !a.static && !a.kinematic ? a.mass : 0;
+      const mb = b && !b.static && !b.kinematic ? b.mass : 0;
+      const mass = (ma > 0 && mb > 0) ? (ma * mb) / (ma + mb) : (ma > 0 ? ma : mb);
+
+      /**
+       * TWO THINGS THAT CANNOT RECOIL — the regime Δv cannot price at all, and
+       * the one that covers every LIVING body in the game.
+       *
+       * `Enemy` and `Player` carry KINEMATIC capsules: they go exactly where
+       * gameplay puts them and a contact never changes their velocity. So the
+       * whole trick this dispatcher rests on — read the impulse off `mass ×
+       * (v_after − v_before)` — reads zero for both sides of a droid walking
+       * into a droid, a beast charging a line, or an AT-TE stepping through
+       * infantry. `mass` above is 0 for such a pair and everything below it
+       * would divide by nothing.
+       *
+       * Those are not edge cases. A crewed machine in this game IS an `Enemy`
+       * with a vehicle archetype (see `Driving.isCrewed`), so this branch is
+       * what makes a walker running you over a physical event rather than
+       * scenery walking through you.
+       *
+       * With no recoil to measure, the honest quantity is the CLOSING SPEED
+       * along the line between them, which is the same thing the retired sweep
+       * used and rejects a graze the same way Δv does: a walker striding PAST
+       * you closes at almost nothing, and one striding INTO you closes at its
+       * full pace.
+       */
+      let approach = 0;
+      if (!(mass > 0)) {
+        const da = a && a.mass > 0 ? a.mass : 0, db = b && b.mass > 0 ? b.mass : 0;
+        // a static box or the heightfield: there is no exchange to price
+        if (!(da > 0 && db > 0)) continue;
+        _v4.copy(b.position).sub(a.position);
+        const d = _v4.length();
+        if (d < 1e-4) continue;
+        _v4.multiplyScalar(1 / d);
+        /**
+         * MEASURED WHERE THEY MEET, NOT AT THEIR CENTRES.
+         *
+         * The carried speed is a property of the body's centre, and for a
+         * compact thing that is the whole story. For a LONG one it is not: a
+         * twenty-metre trunk sweeping down about its stump has a centre that is
+         * travelling almost straight down while the man it is about to land on
+         * is six metres off to the side, so the closing speed along the line
+         * between the two centres came out at nearly zero and the contact was
+         * dropped under `contactFloor`. A tree fell through a man three times
+         * with three real start events to show for it.
+         *
+         * So each side contributes the velocity at the point of ITS OWN body
+         * nearest the other — `v + ω × r`, the standard rigid-body result —
+         * and for a capsule "nearest point" is a projection onto its axis,
+         * which is exactly what a trunk, a limb and a living body all are.
+         */
+        _nearestOn(a, b.position, _v6);
+        _nearestOn(b, a.position, _v7);
+        _pointVel(a, _v6, _v8);
+        _pointVel(b, _v7, _v9);
+        /* …and the line between those two points rather than between the
+         * centres, for the same reason. */
+        _v4.copy(_v7).sub(_v6);
+        const dd = _v4.length();
+        if (dd > 1e-4) _v4.multiplyScalar(1 / dd);
+        approach = _v5.copy(_v8).sub(_v9).dot(_v4);
+        if (approach < this.contactFloor) continue;
+        const c2 = _contact;
+        c2.speed = approach;
+        c2.impulse = 0;
+        c2.approach = true;
+        c2.time = this.simTime;
+        c2.normal.copy(_v4);
+        /* BETWEEN THE POINTS THAT MEET, not between the centres. A consumer
+         * that asks WHERE it was hit — `Forest._priceTrunk` reads this back to
+         * find how far along the trunk the blow landed — gets the answer the
+         * geometry gives rather than one biased toward the middle of a
+         * twenty-metre rod. Measured: the giant's stump end priced at 82
+         * against a bound of 60, because the midpoint of the two CENTRES sits
+         * most of the way up the trunk from where it actually struck. */
+        c2.point.copy(_v6).add(_v7).multiplyScalar(0.5);
+        c2.world = false;
+        n++;
+        /* THE MASS IS THE STRIKER'S OWN, set per handler rather than once.
+         * A 900 kg walker meeting a 52 kg B1 is not one number: the walker
+         * delivers a walker's worth and the droid delivers a droid's worth,
+         * and handing both sides the same reduced mass would have the B1
+         * hitting back like a walker. */
+        const ah2 = a._onContact, bh2 = b._onContact;
+        if (ah2) { c2.self = a; c2.other = b; c2.mass = a.mass; ah2.call(a, b, c2); }
+        if (bh2 && !b.dead) {
+          c2.self = b; c2.other = a; c2.mass = b.mass;
+          c2.normal.negate(); bh2.call(b, a, c2); c2.normal.negate();
+        }
+        continue;
+      }
+
+      /**
+       * HOW HARD, AND WHY IT IS NOT THE CLOSING SPEED.
+       *
+       * The obvious reading — how fast were these two approaching — is wrong
+       * in a way a sandbox notices immediately: it cannot tell a hit from a
+       * GRAZE. Measured with the first version of this dispatcher, a crate
+       * skidding along flat ground at 30 m/s reported a 30 m/s impact with the
+       * world every time the contact restarted, because almost all of that
+       * speed was tangential and none of it was being exchanged.
+       *
+       * Rapier already knows the true answer and states it as a change of
+       * velocity: the impulse it applied to resolve the contact is
+       * `mass × (v_after − v_before)`, which is zero for a graze and maximal
+       * for a head-on hit, with every angle in between handled for free and no
+       * contact normal required — which matters, because a contact START does
+       * not carry a usable manifold (see the note above).
+       *
+       * `speed` is then that impulse expressed back as a closing speed,
+       * `J / μ`, so it is in the same units the hand-rolled sweeps used and
+       * `impactDamage(mass, speed)` prices a contact identically to the throw
+       * it replaces. Sanity: two equal masses meeting head-on at ±15 m/s each
+       * take Δv = 15, giving J/μ = 30 — the closing speed, as it should be.
+       *
+       * Two residues, stated rather than hidden. About `g·dt` of the reading
+       * is gravity rather than the other body — 0.5 m/s at a 1/60 s step,
+       * which is what `contactFloor` sits above. And a very fast hit is
+       * resolved over more than one step: measured at 90 m/s the exchange came
+       * as Δv of 60 and then 10.65, so a single step's reading is 85% of it.
+       * Only the first step is counted, so the number is a FLOOR on the hit
+       * and never an over-read — which is the safe direction for a thing that
+       * decides damage.
+       */
+      /**
+       * BOTH SIDES ARE READ AND THE LARGER IS BELIEVED — and it was written
+       * the other way round first, for a reason that sounded better than it
+       * was.
+       *
+       * The argument for the SMALLER reading: Newton's third law says the two
+       * impulses are equal, so a disagreement means one side was moved by
+       * something that is not this contact, and the smaller number is the one
+       * the contact can account for. That is true of a free pair and wrong
+       * about the commonest case in the game. `contacts.mjs`'s first check
+       * caught it: a crate dropped nine metres onto a body resting on the
+       * ground priced at ZERO, because the struck body is BRACED — the impulse
+       * it receives goes through it into the floor, its net change of velocity
+       * over the step is nearly nothing, and the third law does not apply
+       * pairwise when a third constraint is taking the load.
+       *
+       * The side that was moving freely and got stopped is the one whose Δv is
+       * a real measure of this contact, and it is always the larger of the two.
+       * A body being driven by its own locomotion changes velocity by very
+       * little per step, so it does not win this comparison; a crate arriving
+       * at 18 m/s does.
+       */
+      let J = 0;
+      if (ma > 0) J = ma * _v4.copy(a.velocity).sub(a._pv).length();
+      if (mb > 0) {
+        const Jb = mb * _v5.copy(b.velocity).sub(b._pv).length();
+        J = ma > 0 ? Math.max(J, Jb) : Jb;
+      }
+      const speed = J / mass;
+      if (speed < this.contactFloor) continue;
+
+      const c = _contact;
+      c.speed = speed;
+      c.mass = mass;
+      c.impulse = J;
+      c.approach = false;
+      c.time = this.simTime;
+      /**
+       * The direction the exchange pushed, which is the direction a consumer
+       * wants for knockback. It is the Δv of whichever side was measured —
+       * for the struck body that is the way it was shoved, and for the
+       * striking body it is the reverse, so it is flipped per handler below.
+       */
+      /* The direction the exchange pushed, taken from the side that was
+       * believed above. `_v4` holds A's Δv, `_v5` holds B's — which points the
+       * other way, so it is negated to keep `normal` meaning "the way A was
+       * shoved" whichever side supplied it. */
+      const fromA = ma > 0 && (mb <= 0 || ma * _v4.length() >= mb * _v5.length());
+      if (fromA) c.normal.copy(_v4);
+      else c.normal.copy(_v5).negate();
+      c.normal.multiplyScalar(1 / Math.max(1e-6, c.normal.length()));
+      if (a && b) c.point.copy(a.position).add(b.position).multiplyScalar(0.5);
+      else c.point.copy(a ? a.position : b.position);
+      // Neither side is a body: the other party is the world — a static box,
+      // a wall, the heightfield. `null` is what the retired solver passed for
+      // exactly this and the contract is kept.
+      c.world = !a || !b;
+
+      n++;
+      /* `normal` means "the way A was shoved", so B sees it reversed. */
+      if (ah) { c.other = b; c.self = a; ah.call(a, b, c); }
+      // The second handler is re-checked: the first may have killed the body.
+      if (bh && !b.dead) {
+        c.other = a; c.self = b;
+        c.normal.negate();
+        bh.call(b, a, c);
+        c.normal.negate();
+      }
+    }
+
+    /**
+     * Only now are this step's new starts collected, to be priced on the next
+     * one. Processing the old list before refilling it is what makes the
+     * one-step deferral a single buffer rather than two.
+     */
+    pairs.length = 0;
+    q.drainCollisionEvents((h1, h2, started) => {
+      if (started) pairs.push(h1, h2);
+    });
+    this.stats.contacts = n;
   }
 
   /* ── queries ─────────────────────────────────────────────────────── */
@@ -1602,6 +2224,9 @@ export class RapierWorld {
     this._hfSeq = -1;
     // A fresh Rapier world is cheaper and far safer than unpicking every
     // collider, joint and island by hand.
+    this._events?.free?.();
+    this._events = null;
+    this._contactPending.length = 0;
     this.world?.free?.();
     this.world = realloc ? new this.R.World({ x: 0, y: this.gravity.y, z: 0 }) : null;
     if (this.world) this.world.numSolverIterations = this._iterations;

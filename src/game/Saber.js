@@ -158,49 +158,73 @@ function hiltFloor(group) {
   return Number.isFinite(lo) ? lo : -0.09;
 }
 
+/**
+ * ── AND THEY ARE PUSHED FURTHER APART THAN THEY WERE ──────────────────────
+ *
+ * "make the hilt designs much more creative and detailed and imaginative than
+ * what they are now". The table already gave every hilt its own row; what it
+ * did not do was SPEND the vocabulary it has. Eight extras are implemented —
+ * crossguard, sleeve, claw, window, hook, wings, collar, knurl — and before
+ * this pass six hilts carried exactly one of them, two carried two, and
+ * `wings` was implemented and named by nobody: a whole feature that shipped
+ * and could not be seen on any weapon in the game.
+ *
+ * So every hilt carries two or three now and the silhouette numbers are spread
+ * rather than clustered: the Sentinel's shroud flares to 1.42 with seven neck
+ * rings and a claw over wings, the Crossguard's to 1.52, the Ascetic's holds
+ * at 1.02 with nothing on it, and the Duelist's bend goes 0.22 → 0.34 so the
+ * curve is a curve at a glance rather than on inspection. The Consular loses
+ * its stud — a ceremonial hilt should have no controls anybody can see — and
+ * gains the window that shows what it is for.
+ *
+ * Restraint is a design too, and two rows keep it deliberately: the Ascetic is
+ * "a tube, nothing on it that does not have to be on it" and the Shoto is a
+ * small object rather than a decorated one. A roster where every entry is
+ * maximal has no maximum.
+ */
 export const HILT_SPECS = {
   /* ── the five that shipped, now actually different from each other ──── */
   Graflex: {
     blurb: 'A camera flash, once. The one everybody copies.',
     len: 0.24, r: 0.019, emitter: 0.155,
-    shroud: [1.24, 1.05, 0.035], rings: [3, 0.014, 1.02, 0.0035],
+    shroud: [1.30, 1.05, 0.035], rings: [3, 0.014, 1.02, 0.0035],
     grip: { len: 0.062, r: 0.97, kind: 'ribbed' },
-    box: [0.018, 0.05, 0.012], studs: 2, pommel: 'cap',
-    extras: ['window'], metal: 'steel',
+    box: [0.018, 0.05, 0.012], studs: 3, pommel: 'cap',
+    extras: ['window', 'knurl', 'collar'], metal: 'steel',
   },
   Guardian: {
     // Was identical to the Graflex. It is the soldier's hilt now: no glass, no
     // neck jewellery, a longer grip and a flared cap you could club with.
     blurb: 'Plain, heavy, and made to be held in a fist all day.',
     len: 0.25, r: 0.0205, emitter: 0.155,
-    shroud: [1.16, 1.02, 0.042], rings: null,
-    grip: { len: 0.078, r: 1.0, kind: 'wrapped' },
-    box: [0.022, 0.036, 0.014], studs: 1, pommel: 'sphere',
-    extras: ['collar'], metal: 'dark',
+    shroud: [1.10, 1.14, 0.052], rings: null,
+    grip: { len: 0.086, r: 1.04, kind: 'wrapped' },
+    box: [0.024, 0.036, 0.015], studs: 1, pommel: 'sphere',
+    extras: ['collar', 'hook'], metal: 'dark',
   },
   Sentinel: {
     blurb: 'Ridged the whole way down, for a hand that never lets go.',
     len: 0.235, r: 0.018, emitter: 0.155,
-    shroud: [1.30, 0.98, 0.030], rings: [5, 0.009, 1.06, 0.0026],
-    grip: { len: 0.070, r: 0.95, kind: 'fluted' },
-    box: [0.014, 0.062, 0.010], studs: 3, pommel: 'spike',
-    extras: ['claw'], metal: 'steel',
+    shroud: [1.42, 0.94, 0.028], rings: [7, 0.008, 1.09, 0.0026],
+    grip: { len: 0.070, r: 0.93, kind: 'fluted' },
+    box: [0.013, 0.068, 0.010], studs: 4, pommel: 'spike',
+    extras: ['claw', 'wings'], metal: 'steel',
   },
   Consular: {
     blurb: 'More jewellery than weapon, and it was never meant to be drawn.',
     len: 0.245, r: 0.0186, emitter: 0.155,
-    shroud: [1.10, 1.10, 0.026], rings: [2, 0.020, 1.10, 0.0042],
-    grip: { len: 0.058, r: 0.92, kind: 'plain' },
-    box: null, studs: 1, pommel: 'ring',
-    extras: ['sleeve', 'knurl'], metal: 'gold',
+    shroud: [1.06, 1.22, 0.024], rings: [3, 0.022, 1.16, 0.0046],
+    grip: { len: 0.056, r: 0.90, kind: 'plain' },
+    box: null, studs: 0, pommel: 'ring',
+    extras: ['sleeve', 'knurl', 'window'], metal: 'gold',
   },
   Crossguard: {
     blurb: 'Vented sideways because the crystal cannot hold what it is asked to.',
     len: 0.255, r: 0.0198, emitter: 0.155,
-    shroud: [1.34, 1.00, 0.040], rings: [1, 0.016, 1.14, 0.005],
+    shroud: [1.52, 0.96, 0.046], rings: [1, 0.018, 1.20, 0.005],
     grip: { len: 0.072, r: 0.99, kind: 'ribbed' },
-    box: [0.020, 0.044, 0.013], studs: 2, pommel: 'cap',
-    extras: ['crossguard'], metal: 'dark',
+    box: [0.021, 0.048, 0.014], studs: 2, pommel: 'cap',
+    extras: ['crossguard', 'claw'], metal: 'dark',
   },
 
   /* ── five more ──────────────────────────────────────────────────────── */
@@ -210,26 +234,26 @@ export const HILT_SPECS = {
     // the way a duelling sabre does.
     blurb: 'Curved, so the point sits where the wrist points and not where the arm does.',
     len: 0.25, r: 0.0182, emitter: 0.158,
-    shroud: [1.18, 1.00, 0.030], rings: [2, 0.012, 1.04, 0.003],
-    grip: { len: 0.074, r: 0.94, kind: 'fluted', bend: 0.22 },
-    box: [0.015, 0.040, 0.011], studs: 1, pommel: 'cap',
-    extras: ['knurl'], metal: 'gold',
+    shroud: [1.22, 0.98, 0.028], rings: [2, 0.012, 1.04, 0.003],
+    grip: { len: 0.080, r: 0.92, kind: 'fluted', bend: 0.34 },
+    box: [0.015, 0.040, 0.011], studs: 1, pommel: 'ring',
+    extras: ['knurl', 'sleeve'], metal: 'gold',
   },
   Archaic: {
     blurb: 'Older than the Order that carries it. The crystal shows through.',
     len: 0.26, r: 0.021, emitter: 0.160,
-    shroud: [1.06, 1.06, 0.048], rings: [4, 0.011, 1.00, 0.0044],
-    grip: { len: 0.066, r: 1.02, kind: 'wrapped' },
+    shroud: [1.02, 1.12, 0.056], rings: [5, 0.011, 0.98, 0.0048],
+    grip: { len: 0.066, r: 1.04, kind: 'wrapped' },
     box: null, studs: 0, pommel: 'ring',
-    extras: ['window', 'collar'], metal: 'dark',
+    extras: ['window', 'collar', 'claw'], metal: 'dark',
   },
   Warden: {
     blurb: 'Two boxes, four studs and a cap you could drive a nail with.',
     len: 0.265, r: 0.0215, emitter: 0.162,
-    shroud: [1.12, 1.08, 0.044], rings: [2, 0.016, 1.06, 0.005],
-    grip: { len: 0.080, r: 1.0, kind: 'ribbed' },
-    box: [0.026, 0.056, 0.016], studs: 3, pommel: 'sphere',
-    extras: ['hook', 'collar'], metal: 'steel',
+    shroud: [1.08, 1.18, 0.050], rings: [2, 0.017, 1.08, 0.005],
+    grip: { len: 0.084, r: 1.02, kind: 'ribbed' },
+    box: [0.028, 0.062, 0.017], studs: 4, pommel: 'sphere',
+    extras: ['hook', 'collar', 'wings'], metal: 'steel',
   },
   Ascetic: {
     // The belt hook is not a decoration and it is the only thing on this hilt

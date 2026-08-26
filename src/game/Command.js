@@ -87,6 +87,7 @@
 
 import * as THREE from 'three';
 import { ARCHETYPES, applyModifier, DREAD, FORCE_KINDS } from './Enemy.js';
+import { rollSoldier, kindOfArmy, attrOf, scaleOf, hasFlag, shedTraits, ATTR_IDS } from './Attributes.js';
 import { buildTrooper, buildB1, buildB2, buildBodyguard } from './Bodies.js';
 import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
@@ -136,7 +137,36 @@ const rng = commandRng;
 export function seedCommand(seed) {
   const s = (Math.imul((seed | 0) ^ 0x2545F491, 0x9E3779B1) >>> 0) || 1;
   rng.seed(s);
+  musterSalt = s;
   return s;
+}
+
+/**
+ * ── WHY A MAN'S PROFILE IS HASHED AND NOT DRAWN ─────────────────────────
+ *
+ * `rollSoldier` needs randomness and the obvious source is `commandRng`. It is
+ * the wrong one, and `command-pvp.mjs` is where that shows: a stream gives the
+ * SAME man different numbers depending on when he was mustered, so two machines
+ * building the same army in a different order build two different armies. The
+ * client's mirror of a trooper then has a different maxHp from the host's, its
+ * copy goes down on a round the host's survives, and `_reconcileClaims` bills
+ * the host for a body that is still standing. Measured before this: 0.4 hp
+ * across 2 claims from a guest holding an idle input — and it came and went
+ * with machine LOAD, because the suite's async checks interleave at their
+ * awaits and the interleave decided the draw order.
+ *
+ * A hash of who he is has none of that. The same designation in the same army
+ * on the same run is the same soldier on every machine, in any order, however
+ * many times he is built — and `musterSalt` moves with the run seed, so two
+ * campaigns do not hand you the same twelve men.
+ */
+let musterSalt = 0x5EED0C7;
+
+function musterRng(army, type, designation) {
+  let h = musterSalt >>> 0;
+  const key = `${army || ''}/${type || ''}/${designation || ''}`;
+  for (let i = 0; i < key.length; i++) h = Math.imul(h ^ key.charCodeAt(i), 0x01000193) >>> 0;
+  return makeRng(h || 1);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -590,6 +620,38 @@ export function enemyOf(army) {
  * every rung multiplied), which is why the top rung is worth roughly twice the
  * bottom one and not five times it.
  */
+/**
+ * WHAT EACH UNIT TYPE IS DRAWN TOWARDS, in attribute points.
+ *
+ * A lean on the roll, never a replacement for it — see `rollSoldier`. An ARC is
+ * drawn better on the things an ARC is for and is still allowed to come out a
+ * poor shot, because "the good unit is simply the good unit" is the rank ladder
+ * again and a roster with no bad ARCs in it has one fewer decision in it.
+ *
+ * The two armies lean opposite ways on purpose. A clone line is drawn towards
+ * nerve and discipline; a droid line towards cadence and protocol and away from
+ * stability, which is the source material and is also what makes the two
+ * rosters play differently rather than reskin each other.
+ */
+export const ARCHETYPE_BIAS = {
+  /* Republic */
+  trooper:  { nerve: 4, discipline: 4 },
+  heavy:    { grit: 12, cadence: 8, pace: -10, aim: -6 },
+  sniper:   { aim: 20, reflex: 6, cadence: -16, grit: -8 },
+  jet:      { pace: 18, reflex: 10, grit: -10, discipline: -6 },
+  arc:      { aim: 12, reflex: 12, nerve: 10, discipline: 6 },
+  officer:  { bond: 16, discipline: 14, nerve: 10, pace: -6 },
+  /* Confederacy */
+  b1:       { cadence: 6, nerve: -10, aim: -8, bond: 8 },
+  b2:       { grit: 14, cadence: 6, pace: -8, reflex: -6 },
+  rocket:   { aim: 10, cadence: -12, grit: -6 },
+  droideka: { grit: 20, cadence: 16, pace: -14, bond: -8 },
+  bx:       { aim: 16, reflex: 16, pace: 8, grit: -8 },
+  magna:    { grit: 12, discipline: 14, reflex: 8, cadence: -10 },
+};
+
+/* The per-soldier spread that makes two men of one rank two different men.
+ * See src/game/Attributes.js for why a ladder alone was not enough. */
 export const RANKS = [
   { title: 'Trooper',    short: 'TRP', xp: 0,  color: null,     hp: 1.00, dmg: 1.00, speed: 1.00 },
   { title: 'Veteran',    short: 'VET', xp: 4,  color: 0xb4382c, hp: 1.14, dmg: 1.06, speed: 1.02 },
@@ -708,16 +770,40 @@ const DROID_PREFIX = ['OOM', 'TC', 'PK', 'BX', 'DFS', 'OM'];
  * small, and would still eventually put two identical names in the one list the
  * player is meant to read. `taken` is a Set of the strings already issued.
  */
+/**
+ * HIS NUMBER IS A FUNCTION OF HIS PLACE IN THE LINE, not a draw.
+ *
+ * This pulled one or two values off `commandRng` per man for a long time, and
+ * that was survivable while a name was only a name. It stopped being
+ * survivable the day a man's ATTRIBUTES were hashed off his designation
+ * (`musterRng`): two machines mustering the same army pull from the same
+ * stream, so anything that advanced it between them handed the second machine
+ * different names — and now different soldiers. The client's mirror of a
+ * trooper came out with a different maxHp, its copy went down on a round the
+ * host's survived, and `_reconcileClaims` billed the host for a body that was
+ * still standing. `command-pvp.mjs` measures it at 0.4 hp from a guest holding
+ * an idle input.
+ *
+ * The ordinal is the same on both machines because the muster composition and
+ * its order are. It is hashed rather than used directly so the roll still
+ * reads as a company and not as CT-1000 through CT-1011, and `musterSalt`
+ * moves it with the run seed so two campaigns are two different companies.
+ */
 function designate(army, taken) {
+  const ord = taken.size;
   for (let i = 0; i < 64; i++) {
+    let h = musterSalt >>> 0;
+    for (const v of [ord, i, army.id === 'republic' ? 1 : 2]) {
+      h = Math.imul(h ^ (v + 0x9E3779B1), 0x01000193) >>> 0;
+    }
     const s = army.id === 'republic'
-      ? `CT-${1000 + Math.floor(rng() * 8999)}`
-      : `${DROID_PREFIX[Math.floor(rng() * DROID_PREFIX.length)]}-${Math.floor(rng() * 90) + 10}`;
+      ? `CT-${1000 + (h % 8999)}`
+      : `${DROID_PREFIX[h % DROID_PREFIX.length]}-${((h >>> 8) % 90) + 10}`;
     if (!taken.has(s)) return s;
   }
-  // 64 collisions in a row is not a draw, it is a broken stream; a suffix is
-  // ugly and correct, and it can never loop forever.
-  return `CT-${taken.size + 1}${Math.floor(rng() * 90) + 10}`;
+  /* 64 collisions in a row means the space is full, not that the hash is bad;
+   * a suffix is ugly and correct, and it can never loop forever. */
+  return `CT-${taken.size + 1}${(musterSalt % 90) + 10}`;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1766,12 +1852,47 @@ export class Trooper {
     this.rout = false;
     this.areas = 0;               // areas survived
     this.joined = opts.joined ?? 1;
+    /**
+     * WHO HE IS, as opposed to how good he is.
+     *
+     * `rank` is the ladder and it only ever goes up; this is the SPREAD, rolled
+     * once at muster and carried for life. Two Sergeants are two different
+     * soldiers now — see src/game/Attributes.js for the whole argument, and for
+     * why a clone and a droid are rolled from different tables.
+     *
+     * Restored rather than re-rolled when `opts.attrs` is handed in, because a
+     * company that comes back from a run with different men in it is not a
+     * company. `Company.js` persists both fields.
+     */
+    this.kind = opts.kind || kindOfArmy(this.army);
+    if (opts.attrs) {
+      /* …AND HE MAY HAVE GROWN OUT OF SOMETHING SINCE. `shedTraits` drops a
+       * trait whose condition has lapsed and hands back the points it cost —
+       * a man is not green after his third area, and the Nerve it took off him
+       * comes back with the trait. It is a no-op for everyone else. */
+      const shed = shedTraits({ ...opts, attrs: opts.attrs, traits: opts.traits || [] });
+      this.attrs = { ...shed.attrs };
+      this.traits = shed.traits.slice();
+    } else {
+      /* HASHED FROM WHO HE IS, never drawn from a stream. See `musterRng` — a
+       * stream makes the same man depend on the order he was built in, and two
+       * machines building one army in different orders build two armies. */
+      const rolled = rollSoldier(
+        opts.rng || musterRng(this.army?.id ?? this.army, this.type, this.designation), this.kind,
+        { bias: ARCHETYPE_BIAS[this.type] || null });
+      this.attrs = rolled.attrs;
+      this.traits = rolled.traits;
+    }
     this.alive = true;
     this.diedIn = null;
     this.body = null;
   }
 
   get rank() { return rankFor(this.xp); }
+  /** One attribute, 0..100. See Attributes.js. */
+  attr(id) { return attrOf(this, id); }
+  /** …and the multiplier it buys on the sim quantity it names. */
+  scale(id) { return scaleOf(this, id); }
   get rankRec() { return RANKS[this.rank]; }
   get label() { return ARCHETYPES[this.type]?.label ?? this.type; }
 
@@ -2521,6 +2642,78 @@ export function enlistBody(e, trooper, opts = {}) {
   e.hp = e.maxHp;
   e.attackDamage *= R.dmg;
   e.speed *= R.speed;
+
+  /**
+   * …AND THE MAN'S OWN SPREAD, ON TOP OF THE LADDER.
+   *
+   * The rank says how good he has become. This says what he is: two Sergeants
+   * are no longer the same soldier. Multipliers, applied after the rank for the
+   * same reason the rank is applied after the archetype — each layer says
+   * something the one under it cannot, and none of them replaces another. A
+   * fast Commander is still a Commander.
+   *
+   * Every line below is the ONLY consumer of its attribute, which is what
+   * `attributes.mjs` asserts: a stat nothing reads is a number on a card, and
+   * this file is written against exactly that.
+   */
+  e.maxHp *= scaleOf(trooper, 'grit');
+  e.hp = e.maxHp;
+  e.speed *= scaleOf(trooper, 'pace');
+  /**
+   * …AND IT HAS TO BE HIS OWN COPY FIRST.
+   *
+   * `e.A` is `ARCHETYPES[type]` — the SHARED table — unless `applyModifier`
+   * has already cloned it for an elite. That comment used to claim the clone
+   * was always there and it was wrong, so for one build every line below wrote
+   * onto the table itself: the first trooper mustered multiplied every
+   * trooper's spread, the second multiplied it again, and the army's cone
+   * compounded through the whole roll. `attributes.mjs` caught it as a
+   * marksman and a poor shot reading a spread ratio of exactly 1.000 — the
+   * signature of two bodies sharing one object.
+   *
+   * Cloned by identity rather than by a flag, so this is a no-op on a body
+   * `applyModifier` already gave its own copy to and never a second layer.
+   */
+  if (e.A && e.A === ARCHETYPES[e.type]) e.A = { ...e.A };
+  const A = e.A;
+  if (A) {
+    /* Spread is a CONE, so a poor shot MULTIPLIES it up — `attrScale` returns
+     * 1.30 at zero Marksmanship and 0.74 at a hundred, which is the one
+     * attribute in the table whose `lo` is above its `hi`. */
+    if (A.spread != null) A.spread *= scaleOf(trooper, 'aim');
+    const cad = scaleOf(trooper, 'cadence');
+    if (A.fireRate != null) A.fireRate *= cad;
+    /* …and the gap INSIDE a burst shortens as the rate rises, or a fast
+     * trigger would fire the same burst at the same speed and only wait less
+     * between them, which is not what a cadence is. */
+    if (A.burstGap != null) A.burstGap /= cad;
+    /**
+     * ── THE TWO THINGS A NUMBER CANNOT SAY ──────────────────────────────
+     *
+     * A trait's `flag` is a BEHAVIOUR, and both of these move the one field
+     * that decides where a body wants to stand: `preferred`, its stand-off
+     * band. Point swings make a man better or worse at his job; these two make
+     * him do a different job, which is the whole reason the flag exists beside
+     * the deltas rather than instead of them.
+     *
+     * RECKLESS closes. He wants to be at 62% of the range he was built for, so
+     * he walks out of the line towards whatever is shooting and you watch him
+     * do it. CAREFUL stands off at 128% and — see `slotFor` — hunts cover
+     * whether or not anyone is shooting at him yet.
+     *
+     * Neither is an upgrade. A reckless heavy gunner dies in the open and a
+     * careful sniper never takes the ground; `Attributes.js` pairs both flags
+     * with a real point cost for the same reason.
+     */
+    if (Array.isArray(A.preferred) && A.preferred.length === 2) {
+      const band = hasFlag(trooper, 'pushes') ? 0.62 : hasFlag(trooper, 'holds') ? 1.28 : 1;
+      if (band !== 1) A.preferred = [A.preferred[0] * band, A.preferred[1] * band];
+    }
+  }
+  /* The muster morale he arrives at. `Trooper.morale` is 0.72 for a fresh man;
+   * Nerve moves where his own floor sits, so a jumpy soldier begins a battle
+   * closer to breaking and a stubborn one has further to fall. */
+  trooper.morale = clamp(trooper.morale * scaleOf(trooper, 'nerve'), 0, 1);
 
   /* The aura the fifth rung carries, and the one place this mode reaches for an
    * existing MODIFIER rather than inventing a field. `leader` is the rally ring
@@ -5582,8 +5775,15 @@ export class CommandDirector extends WaveDirector {
      * moved picks the ground he is on now, and a man nobody is shooting at
      * falls back onto his slot the moment `underFire` lapses.
      */
+    /* …AND A CAREFUL MAN IS ALWAYS LOOKING FOR SOMETHING TO GET BEHIND, which
+     * is what "will not leave cover for a shot he does not like" means on the
+     * ground. The REACTIVE hunt and not the ordered one: bounded by the
+     * formation's own tolerance, so he finds the nearest lee INSIDE his slot
+     * rather than turning a line abreast into twelve men behind twelve crates
+     * — the exact failure `COVER_LEAN` exists to prevent. */
+    const careful = e.trooper && hasFlag(e.trooper, 'holds');
     if (F.seeksCover) this._coverSite(e, out, A, COVER_HUNT, this._coverEpoch | 0, 0);
-    else if (e.underFire > 0) this._coverSite(e, out, A, COVER_LEAN, e._fireEpoch | 0, 1);
+    else if (e.underFire > 0 || careful) this._coverSite(e, out, A, COVER_LEAN, e._fireEpoch | 0, 1);
     if (this.world?.terrain) out.y = this.world.terrain.height(out.x, out.z);
     return out;
   }
@@ -6100,13 +6300,47 @@ export class CommandDirector extends WaveDirector {
     const dx = slot.x - e.position.x, dz = slot.z - e.position.z;
     const d = Math.hypot(dx, dz);
     e.cmdSlotDist = d;
-    const limit = fighting ? this.leashFor(F, e) : FORM_TOLERANCE;
+    /* …AND HOW TIGHTLY HE HOLDS IT. Discipline's first consumer: a slack man
+     * gets more slop before he is walked back to his mark and a tight one gets
+     * less, so a disciplined line is visibly a LINE and a poor one is a smear
+     * of men roughly where they were told. Divided, because a higher score is
+     * a smaller tolerance. */
+    const disc = e.trooper?.scale ? e.trooper.scale('discipline') : 1;
+    const limit = (fighting ? this.leashFor(F, e) : FORM_TOLERANCE) / disc;
     if (d <= limit) {
       /* ON HIS MARK. Fighting from it is the whole job; NOT fighting from it is
        * a man standing in the open with nothing to do, and that is 54-63% of
        * the frames in every standing formation. See `_holdPost`. */
       if (fighting) { e.idleT = 0; this._crouch(e, dt, 0); }
       else this._holdPost(e, dt);
+      return;
+    }
+    /**
+     * …AND HE HAS TO HAVE TAKEN THE ORDER IN. See `ORDER_LAG`.
+     *
+     * THE SLOT IS NOT WHAT LAGS — `slotFor` still answers where the order says
+     * he belongs, because that is a fact about the order and every other
+     * reader of it wants the truth. What lags is HIM: for the first beat after
+     * a new order he is still standing where the old one put him, and the
+     * sharp men in the line move before the slow ones do. An order used to
+     * pivot twenty-four bodies on a single frame, which is a spreadsheet
+     * moving rather than an army.
+     *
+     * A man with something in front of him is exempt: he is already fighting,
+     * and freezing him mid-firefight because the formation changed would be a
+     * worse picture than the one this is here to fix.
+     *
+     * SO IS A MAN WHO IS BADLY OUT OF POSITION. The beat models taking an
+     * order in, never refusing to move — and without the distance gate a
+     * trooper fifty-five metres behind his line stood still holding a pose,
+     * which `command.mjs` caught as "given no direction to walk in". Three
+     * times his own leash is the width of a formation: inside it, the new
+     * order is a pivot and a pivot can wait; outside it, he was already
+     * walking and nothing about a new order says stop.
+     */
+    if (!fighting && d < limit * 3 && e.cmdOrder != null
+      && e.cmdOrder !== this.formationFor(this.commanderOf(e), e.cmdSquad)) {
+      this._holdPost(e, dt);
       return;
     }
     e.idleT = 0;
@@ -7020,14 +7254,31 @@ export class CommandDirector extends WaveDirector {
             const k = Math.sqrt(d2) / MORALE.NEAR;
             return 1 - (1 - MORALE.EDGE) * k;
           };
+          /**
+           * HOW MUCH THIS SOLDIER LEANS ON SOMEBODY BEING THERE — and it is the
+           * axis where the two armies stop being a reskin of each other.
+           *
+           * `bond` is Loyalty on a man and Uplink on a machine, and it scales
+           * both presence terms. A Devoted clone at 1.70 fights well above
+           * himself with his General beside him and comes apart the moment you
+           * walk away; a Lone wolf at 0.55 gains almost nothing from you and
+           * does not care when you go. That makes WHERE YOU STAND a command
+           * decision every second of a fight rather than only a combat one.
+           *
+           * The same number reads differently on a droid, which is the point:
+           * a Slaved unit is formidable while its node lives and degrades hard
+           * when the officer beside it dies. One army is managed by being
+           * present; the other is managed by cutting a link. See Attributes.js.
+           */
+          const lean = scaleOf(t, 'bond');
           let near = false, presence = 0;
           if (jedi?.position) {
             const w = share(dist2(e.position, jedi.position));
-            if (w > 0) { presence += MORALE.JEDI_NEAR * w; near = true; }
+            if (w > 0) { presence += MORALE.JEDI_NEAR * w * lean; near = true; }
           }
           if (lead && lead !== t && lead.body && !lead.body.dead) {
             const w = share(dist2(e.position, lead.body.position));
-            if (w > 0) { presence += MORALE.LEADER_NEAR * w; near = true; }
+            if (w > 0) { presence += MORALE.LEADER_NEAR * w * lean; near = true; }
           }
           /* AND THEY EASE OFF AT THE CEILING — see `MORALE.PRESENCE_CAP` for
            * the 1.000 this is here to unpin. A taper and not a switch, because
@@ -7039,11 +7290,24 @@ export class CommandDirector extends WaveDirector {
             presence *= 1 - clamp(over, 0, 1);
           }
           d += presence;
-          if (!near) d += MORALE.ALONE;
+          /* …AND THE SAME NUMBER IS THE FALL. `MORALE.ALONE` is a negative
+           * drift, so scaling it by `lean` is the second half of the sentence
+           * the attribute's own blurb makes: "how far he falls when you are
+           * not". Without this line, Loyalty was pure upside — a bonus that
+           * appears when you walk over and simply is not there when you do
+           * not — and a devoted man cost nothing to field. Now he genuinely
+           * comes apart on his own and a lone wolf genuinely does not care,
+           * which is the trade the roster screen is showing you. */
+          if (!near) d += MORALE.ALONE * lean;
           if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
         } else {
           // between areas, or waiting on a gunship: nerve comes back
-          d += MORALE.RALLY_PER_S;
+          /* …AT HIS OWN RATE. Resolve on a man, Reset on a droid: how much of
+           * himself he gets back between areas. This is the axis that makes a
+           * roster a CAMPAIGN decision rather than a squad-picker — a man who
+           * never recovers is fine today and a liability three fights from
+           * now, and there is nothing on the field that will tell you. */
+          d += MORALE.RALLY_PER_S * scaleOf(t, 'resolve');
         }
         /**
          * ELATION WEARS OFF — above the cap only, and at a FLAT rate.
@@ -7227,6 +7491,28 @@ export class CommandDirector extends WaveDirector {
            * body of every army exactly once a frame. See UNDER_FIRE, and
            * `installTeamDamage` for what sets it. */
           if (e.underFire > 0) e.underFire = Math.max(0, e.underFire - dt);
+          /**
+           * …AND SO DOES THE ORDER HE IS ACTUALLY ACTING ON. See `ORDER_LAG`.
+           *
+           * `Fk.id` is what the squad has been TOLD; `e.cmdOrder` is what this
+           * man is doing about it yet. They are the same thing for a body that
+           * has had a moment, and for the first second after a new order they
+           * are not — which is the whole of Reflex on the field.
+           *
+           * Here, in the one loop that touches every living body once a frame,
+           * for the same reason `underFire` decays here: `slotFor` is called
+           * more than once a frame by more than one caller and has no `dt`, so
+           * a clock inside it would run at whatever rate it happened to be
+           * asked. Both readers read the answer; neither computes it.
+           */
+          if (e.cmdOrder == null) e.cmdOrder = Fk.id;
+          else if (e.cmdOrder !== Fk.id) {
+            e.cmdOrderT = (e.cmdOrderT || 0) + dt;
+            if (e.cmdOrderT >= ORDER_LAG * (t.scale ? t.scale('reflex') : 1)) {
+              e.cmdOrder = Fk.id;
+              e.cmdOrderT = 0;
+            }
+          } else e.cmdOrderT = 0;
           /* Fire discipline. `holdFire` is Waves.js's own primitive — it pushes
            * the fuse back up without touching the brain, so a trooper ordered to
            * hold still takes cover, calls out and tracks you exactly as it did.
@@ -7244,7 +7530,47 @@ export class CommandDirector extends WaveDirector {
            * fire for `DIG_SECONDS` on ground it has already been told it
            * cannot leave. It lifts the moment the position is finished, and
            * `_closing` lifts it early for the reason it lifts every order. */
-          if ((Fk.fire <= 0 || digging) && !this._closing) holdFire(e);
+          /* …AND A POORLY DISCIPLINED MAN BREAKS IT. See `HOLD_BREAK`. The
+           * break is on the BODY and not on the order, so a squad told to hold
+           * still holds — it is one man in it who did not, which is what the
+           * player is being asked to notice about him. */
+          /* THE ORDER HE HAS TAKEN IN, which for the gun is the whole point:
+           * you call HOLD FIRE and the slow men in the line are still firing
+           * for a beat. `Fk` is what the squad was told; `e.cmdOrder` is what
+           * this man is doing about it yet. */
+          const Fe = FORMATIONS[e.cmdOrder] || Fk;
+          if ((Fe.fire <= 0 || digging) && !this._closing) {
+            /**
+             * …AND A POORLY DISCIPLINED MAN BREAKS IT WHEN HE IS BEING SHOT AT.
+             *
+             * `underFire` gates it, and that gate is the design rather than a
+             * softening. A break at empty air would ruin the one thing HOLD
+             * FIRE is for — walking a line into position without giving it
+             * away — and the player could neither see who did it nor do
+             * anything about it. Under fire it is the opposite: a man with
+             * rounds landing on him returns them, you can see exactly which
+             * man, and where you put him was your decision. An ambush is still
+             * silent; a poor line pinned in the open is not.
+             */
+            /* NO DICE. A per-body accumulator rather than a roll per frame:
+             * `Math.random()` in the update loop is a divergence between a
+             * host and a guest running the same second (`command-pvp.mjs`
+             * caught exactly that in the muster), and drawing from
+             * `commandRng` here would advance the army's shared stream at
+             * frame rate and make everything else that reads it depend on the
+             * frame time. A man can take so much and then he answers: the poor
+             * one breaks first, every time, which is also the more legible
+             * rule. */
+            const disc = t.scale ? t.scale('discipline') : 1;
+            if (e.cmdBreak > 0) e.cmdBreak -= dt;
+            else {
+              if (disc < 1 && e.underFire > 0) {
+                e.cmdHold = (e.cmdHold || 0) + dt * (1 - disc) * HOLD_BREAK / 0.28;
+                if (e.cmdHold >= 1) { e.cmdHold = 0; e.cmdBreak = BREAK_FOR; }
+              }
+              holdFire(e);
+            }
+          } else { e.cmdBreak = 0; e.cmdHold = 0; }
           this._clearBlade(e, c, dt);
         }
       }
@@ -8525,6 +8851,37 @@ export class CommandDirector extends WaveDirector {
 
 /** How far off its slot a trooper may drift before the steer takes over. */
 export const FORM_TOLERANCE = 2.2;
+
+/**
+ * HOW LONG A MAN TAKES TO ACT ON AN ORDER HE HAS JUST BEEN GIVEN.
+ *
+ * Reflex's one consumer, and the reason it is worth having on a roster. An
+ * order used to be instantaneous: the player pressed a key and twenty-four
+ * bodies pivoted on the same frame, which is a spreadsheet moving and not an
+ * army. Now the sharp men go first and the slow ones are still in the old shape
+ * for the better part of a second — so a line changing formation under fire has
+ * a MOMENT in it, and who you put on the flank matters.
+ *
+ * Scaled by `reflex`, which is the one other attribute whose `lo` is above its
+ * `hi`: 1.21 s at nothing, 0.63 s at a hundred. Under a second at every point
+ * on the scale, because this is a lag the player should FEEL and never wait on.
+ */
+export const ORDER_LAG = 0.9;
+
+/**
+ * …AND HOW OFTEN A BADLY DISCIPLINED MAN FIRES ANYWAY.
+ *
+ * Discipline's second consumer. HOLD FIRE is an order, and an order a man
+ * cannot break is not discipline — it is a switch on a machine. So a soldier
+ * below the middle looses a burst on his own now and then, `BREAK_FOR` seconds
+ * of it, and a squad of poor men told to hold gives the position away.
+ *
+ * Rolled per body per second rather than per frame, so the rate is the rate
+ * whatever the frame time is. At zero Discipline that is a break about every
+ * three seconds; at the middle it is nothing at all, and above it, less.
+ */
+export const HOLD_BREAK = 0.34;
+export const BREAK_FOR = 0.8;
 
 /*
  * ── HANDOVER: what this mode needs from files it does not own ───────────

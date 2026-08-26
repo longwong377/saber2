@@ -9,6 +9,89 @@ measurement taken without a person at the controls.
 
 ---
 
+## 25 Aug — SABER GAME NOTES AND IMPROVEMENTS V7
+
+Handed over with: *"You will finish everything on this list to perfection, every
+single thing I talked about. You've missed many things I've listed in the past
+but you will not repeat the mistake, this list is not in order but a stream of
+consciousness so you will finish/group it in whatever order makes most sense for
+you"*.
+
+> **Logged BEFORE the work this time.** V6's own entry records that it was
+> written up afterwards and that this broke the rule at the top of this file.
+> Taken against the build as it stood at `20556c3`, before the contact-dispatch
+> work on this branch.
+
+### The bugs
+
+> *"all enemies and also the player literally everyone has a solid black circle
+> underneath them, it's almost like a broken shadow effect but it's really
+> annoying"*
+>
+> *"command mode never has any enemies show up?"*
+>
+> *"one handed grip doesn't really work because you have to hold the button the
+> entire time for some reason"*
+
+### The balance note
+
+> *"the lightsaber throw (R) needs a longer cooldown, it's a crazy effective
+> move with no significant cooldown so it makes sense to just spam it rather
+> than anything else"*
+
+### The things asked for before and still wrong
+
+> *"hoods still look like helmets idk what to tell you, this is the millionth
+> time, the hoods should be actual cloth laid over the person's actual head, it
+> should move like it's fucking fabric not goddamn helmet idk why you keep
+> missing this, also the person's head like on certain races clip out of the
+> hoods as well"*
+>
+> *"since I've asked you 10000000 times and it still looks like shit I want you
+> to scrap the current preview images for the theater maps and instead use a
+> real attractive cinematic unique screenshot emblematic of the map from the
+> actual map and use that as the placeholder preview images instead of the bare
+> garbage you have now"*
+>
+> *"preview images for the jedi hilts all show the same image, also I thnk most
+> of them look the same in the preview too, also make the hilt designs much more
+> creative and detailed and imaginative than what they are now, you can look
+> online for references too"*
+
+### The two questions, which are the most important lines in the list
+
+> *"explain to me what campaine mode is? the only map is colosseum I'm just
+> confused what it is"*
+>
+> *"What the fuck have we been building the last couple days where the fuck is
+> it? where are the giant epic battles one army vs another giant scale the
+> literal shit I asked for, did I miss it or just not get far enough?"*
+
+**Read the second one as a finding, not as a mood.** The player cannot find the
+thing the last several days of work were about. Whether THE LINE is unfinished,
+unreachable from the menu, or finished and not recognisable when played, all
+three are failures and only the first is the one anybody has been tracking.
+
+### What came of it
+
+One line per item, with the thing that settles it.
+
+| Item | Outcome |
+|---|---|
+| Black circle under everyone | ✅ `ContactShadows` alpha was `NEAR_A + (farA−NEAR_A)·min(1,d/90)` — **0.34 at d=0**, a hard oval under your own feet on top of the real shadow. Fades in now: 0.000 inside 10 m, unchanged from 42 m out. `cel.mjs` asserted a mark at 10 m and now asserts the near band clear |
+| Saber throw cooldown | ✅ It was 0.4 s **and started when the blade left your hand** — the flight alone is longer, so it had always expired by the catch. It was never short; it was dead code. 2.2 s, starting on the catch |
+| One-handed grip held | ✅ A toggle. The shield's own note twelve lines away already made the argument: "a barrier you must keep a finger on is a barrier you cannot fight from" |
+| Hoods read as helmets | ✅ The shape was never the problem. `hoodOn` parented the shell to the **head bone**, so it yawed 1:1 with the skull — which is what a helmet is, whatever it is shaped like. `HoodShell` holds it toward the chest with slack and a limit. Measured: a 17° glance moves it 0.0°, an 80° turn drags it to within 24°, and it never exceeds 54° off |
+| Heads clip out of hoods | ✅ for four species, ⚠️ by design for three. Fitted per bearing **and** per height against the real head. Twi'lek, Togruta and Nautolan still come out by 17–31 mm and it is exactly the appendage — a montral stands above and outside the crown, so a shell that contains one is a tent. Exempt **by name** and by a 90 mm bound in `hood.mjs` |
+| Map previews | ✅ Seven real screenshots, `tools/shots.mjs`. The camera is scored, not authored — 24 candidates per level, best kept, worst printed |
+| Hilt previews all the same | ✅ Measured first: they were ten **distinct** drawings, and indistinguishable at 168×54, which is the worse finding. Rendered from the real weapon now |
+| Hilt designs | ✅ Eight extras exist; six hilts carried one and `wings` was used by nobody. Every hilt carries two or three now, silhouettes spread — except the Ascetic and Shoto, which keep their restraint on purpose |
+| Campaign mode | ✅ answered. **One campaign exists**: "The Execution", 2 missions, Colosseum → Geonosis. The theatre picker offers only Colosseum because `campaignAt` matches the first mission's level. Not broken — there is one of them |
+| Where are the giant battles | ✅ answered. They are there and roughly the designed size: peak **48 hostiles / 58 live bodies** in The Line, 49/56 Command, 51/57 Skirmish, against FLAGSHIP §4's 40–60. What is missing is that you cannot SEE it — six seconds after deploy, **zero** are inside the camera frustum in either mode. The armies exist; the presentation of scale does not |
+| Command mode has no enemies | ❌ **not reproduced.** The real browser through the real deploy gives 49 hostiles; six seeds headless give 47–49; `commandVersus` is false and no control writes it. `hostilesLeft` in Command returns `spawnQueue + arrivals.pending + live hostiles`, so a reading of 0 means the wave composed nothing. Needs one fact from the player: a fresh Command run from the menu, or after an area was already fought? |
+
+---
+
 ## 23 Aug — SABER GAME NOTES AND IMPROVEMENTS V6
 
 Handed over with: *"You will finish everything on this list to perfection, every
