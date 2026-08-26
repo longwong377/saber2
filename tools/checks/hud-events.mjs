@@ -1774,4 +1774,76 @@ export async function run({ check, assert }) {
         + `a two-road fork drawn and switched onto The Spire Approach, Advance closes once`;
     } finally { undo(); }
   });
+  /**
+   * THE ONE INPUT THAT ENDS THE RUN, AND WHETHER THE PLAYER CAN SEE IT.
+   *
+   * The player, after several sessions with the mechanic already shipped:
+   * *"I still don't see a way to retreat and take your troops out and again
+   * maybe I missed it but I don't see a way to do that."*
+   *
+   * They had not missed it. `World._withdrawTick` carries a comment saying the
+   * hold "is reported to the HUD every frame as `withdrawHold` in [0,1], so the
+   * ring the player watches fill is the same number this method is counting",
+   * and `World`'s own header says "HUD fills its ring against it". Both were
+   * false for the whole life of the feature — nothing in `src/ui`, `index.html`
+   * or `styles.css` ever read the field. A key you hold for a second and a half,
+   * which ends the run and decides which of your named men come home, gave no
+   * feedback of any kind until it had already fired.
+   *
+   * THE ASSERTION IS THE WIRE, NOT THE ELEMENT. A div that exists and is never
+   * written is precisely the state this check exists to have caught, so the fill
+   * is read back off the DOM after real `update` calls and has to carry the
+   * number the world is counting. The band matters as much as the movement: a
+   * ring that snapped to full on the first frame would satisfy "it moves" and
+   * would be a worse lie than no ring at all.
+   */
+  check('the ring that fills while you call the ship is the hold that ends the run', () => {
+    const { hud, doc, restore } = hudOnPage(INDEX);
+    try {
+      const ring = doc.getElementById('withdraw-ring');
+      assert(ring, 'there is no withdraw ring in index.html at all');
+      const fill = ring.firstElementChild;
+      assert(fill, 'the ring has no element in it to fill');
+      assert(/withdrawring/.test(STYLES) && /--w/.test(STYLES),
+        'nothing in styles.css draws the ring, so the markup is invisible');
+
+      const w = stubWorld({ ...DEFAULT_SETTINGS });
+      const p = player();
+      const cam = new THREE.PerspectiveCamera();
+      /* THE WORLD IS THE AUTHORITY AND THE HUD IS A READER. These are the
+       * values `World._withdrawTick` actually produces: zero at rest, a rising
+       * fraction under the key, zero again the frame it comes off. */
+      w.withdrawHold = 0;
+      hud.update(1 / 60, w, p, cam);
+      assert(ring.classList.contains('hidden'),
+        'the ring is on screen before anybody asked for the ship — furniture, not an event');
+
+      const seen = [];
+      for (const h of [0.11, 0.34, 0.67]) {
+        w.withdrawHold = h;
+        hud.update(1 / 60, w, p, cam);
+        /* `setProperty` stores under the literal key on both the real
+         * CSSStyleDeclaration path and this repo's page shim, so reading it
+         * back is the same lookup the browser would do for `--w`. */
+        seen.push(Number(fill.style['--w']) || 0);
+      }
+      assert(!ring.classList.contains('hidden'), 'the ring never came up while the hold was rising');
+      /* Each reading is the world's own number, so the two cannot drift: a ring
+       * driven by a second clock is decoration. */
+      [0.11, 0.34, 0.67].forEach((h, i) => {
+        assert(Math.abs(seen[i] - h) < 0.005,
+          `the world said ${h} and the ring drew ${seen[i]} — that is two numbers`);
+      });
+      assert(seen[2] > seen[0], 'the ring does not fill as the hold rises');
+
+      /* …AND IT LETS GO. The hold resets on release and so must the ring, or a
+       * player who thought better of it watches a full ring and cannot tell
+       * whether they called the ship. */
+      w.withdrawHold = 0;
+      hud.update(1 / 60, w, p, cam);
+      assert(ring.classList.contains('hidden'), 'the ring stayed up after the key came off');
+      return `hidden at rest, ${seen.map((x) => x.toFixed(2)).join(' → ')} under the hold, `
+        + 'gone on release, every reading the world\'s own number';
+    } finally { restore(); }
+  });
 }

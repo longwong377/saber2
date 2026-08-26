@@ -13,7 +13,7 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
   soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
-import { HUD } from './ui/HUD.js';
+import { HUD, ordinal } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
   LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
@@ -2037,8 +2037,25 @@ function orderKeys() {
   if (!cmd) return;
   for (const o of ORDER_ACTIONS) {
     if (!input.actHit(o.action)) continue;
-    if (!cmd.order(o.id)) continue;
-    hud.message(o.name.toUpperCase(), o.blurb);
+    /**
+     * …TO THE SQUAD YOU PICKED, AND THAT ARGUMENT WAS MISSING.
+     *
+     * `order(id, cmdr = null, squad = null)` defaults to the whole army, and
+     * this call passed neither — so a player who opened the wheel, chose
+     * TARGET, and stepped the selection to "2nd Squad only" could then press a
+     * formation key and silently order all five squads. The wheel passed it
+     * (`HUD.js`, `world.command.order?.(o.id, null, world.command.selectedSquad)`)
+     * and the nine keys did not, which made the two doors to one verb disagree
+     * about what the verb was for.
+     *
+     * Selecting a squad is the whole of "order individual troops", and it is
+     * already the hardest thing on this HUD to find. A selection that the fast
+     * path throws away is worse than no selection at all.
+     */
+    if (!cmd.order(o.id, null, cmd.selectedSquad ?? null)) continue;
+    const only = cmd.selectedSquad == null ? o.blurb
+      : `${ordinal(cmd.selectedSquad + 1)} Squad — ${o.blurb}`;
+    hud.message(o.name.toUpperCase(), only);
     break;                       // one order a frame; two at once is neither
   }
 }

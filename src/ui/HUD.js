@@ -777,8 +777,10 @@ export class EmoteWheel extends RadialWheel {
  * wrong blurb on it. HOLD is appended because it is a toggle rather than a
  * formation and lives beside them rather than among them.
  */
-/** 1st, 2nd, 3rd… for a squad number the player is reading off a wheel. */
-function ordinal(n) {
+/** 1st, 2nd, 3rd… for a squad number the player is reading off a wheel.
+ *  Exported because `main.js`'s order keys name the same squad in the same
+ *  words — a second copy of this is a second way to spell "2nd Squad". */
+export function ordinal(n) {
   const t = n % 100;
   if (t >= 11 && t <= 13) return `${n}th`;
   return `${n}${['th', 'st', 'nd', 'rd'][n % 10] || 'th'}`;
@@ -1085,6 +1087,7 @@ export class HUD {
       score: root.getElementById('hud-score'),
       targetOpen: root.getElementById('target-open'),
       mendCue: root.getElementById('mend-cue'),
+      withdrawRing: root.getElementById('withdraw-ring'),
       center: root.getElementById('hud-center-msg'),
       drivePrompt: root.getElementById('drive-prompt'),
       hitmarks: root.getElementById('hitmarks'),
@@ -2164,6 +2167,31 @@ export class HUD {
      * this draws what the power would actually do rather than a second opinion
      * about who is in range (HANDOFF §2.4).
      */
+    /**
+     * …AND THE SHIP, WHICH IS THE ONE INPUT THAT ENDS THE RUN.
+     *
+     * `World._withdrawTick`'s own comment has claimed for several builds that
+     * this number reaches the HUD — "the ring the player watches fill is the
+     * same number this method is counting" — and nothing read it. The player
+     * could not find the mechanic at all: "I still don't see a way to retreat
+     * and take your troops out."
+     *
+     * Read off `world.withdrawHold` and nothing else, so the ring and the
+     * commitment cannot disagree by construction. Hidden at zero rather than
+     * drawn empty: a permanent ring on the screen is furniture, and this is an
+     * event.
+     */
+    if (el.withdrawRing) {
+      const h = world.withdrawHold || 0;
+      if (h > 0) {
+        el.withdrawRing.classList.remove('hidden');
+        el.withdrawRing.firstElementChild.style.setProperty('--w', h.toFixed(3));
+      } else if (this._withdrawShown) {
+        el.withdrawRing.classList.add('hidden');
+      }
+      this._withdrawShown = h > 0;
+    }
+
     if (el.mendCue) {
       const t = player.healTarget || player._mendTarget?.({ enemies: world.enemies });
       const key = t ? `${t.hp < t.maxHp * 0.35 ? 2 : 1}${player.healing != null ? 'h' : ''}` : null;

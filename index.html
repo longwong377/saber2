@@ -875,6 +875,25 @@
     -->
     <div id="mend-cue" class="targetopen mend hidden"><b></b><i></i></div>
     <!--
+      CALLING THE SHIP — and the ring the source has been promising for builds.
+
+      `World._withdrawTick` says, in a comment, that the hold "is reported to
+      the HUD every frame as `withdrawHold` in [0,1], so the ring the player
+      watches fill is the same number this method is counting", and `World`'s
+      own header says "HUD fills its ring against it". Neither was ever true:
+      nothing in src/ui, index.html or styles.css read the field. So the one
+      control that decides whether your company survives the run was a key you
+      held for a second and a half with no feedback of any kind until the
+      run-ending commitment fired.
+
+      A conic-gradient ring rather than an SVG arc, for the reason the rest of
+      this HUD gives for its meters: one element, one custom property, no
+      per-frame DOM churn — the fill is `--w` and nothing else moves.
+    -->
+    <div id="withdraw-ring" class="withdrawring hidden">
+      <i style="--w:0"></i><b>CALLING THE SHIP</b><span>HOLD</span>
+    </div>
+    <!--
       EVENT FEED — killstreaks, deflection runs, a boss arriving.
 
       Inside .hud-tr on purpose, under the score and the combo counter, in the
