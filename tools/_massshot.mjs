@@ -44,45 +44,100 @@ await page.waitForTimeout(1500);
 await page.click('#btn-deploy-drop', { timeout: 2500 }).catch(() => {});
 await page.waitForTimeout(9000);
 
-const out = await page.evaluate(async (origin) => {
-  const S = window.SABER, w = S?.world;
-  if (!w) return { err: 'no world' };
-  const THREE = await import(`${origin}/node_modules/three/build/three.module.js`).catch(() => null)
-    || await import(`${origin}/src/engine/three.js`).catch(() => null);
+/**
+ * THE BATTLE IS HOOKED INTO THE GAME'S OWN FRAME, not driven from here.
+ *
+ * The first version called `world.update(1/60, {})` in a loop and died on
+ * `input?.act is not a function` — correctly. The page already has a running
+ * rAF loop with the real input object in it, and a second driver would be a
+ * second clock: every body would be stepped twice a frame and every number
+ * taken off it would be about a world nobody is playing. So the probe installs
+ * one hook and then simply waits, exactly as a player does.
+ */
+/**
+ * …AND THE RUN HAS TO STILL BE RUNNING WHEN WE MEASURE IT.
+ *
+ * `main.js` pauses the game the moment pointer lock is lost, which is right for
+ * a player alt-tabbing and fatal for a headless probe: the first run of this
+ * file collected FOUR frames in ten seconds and reported a 45 ms median off
+ * them. A number taken from a paused game is not a slow number, it is not a
+ * number at all — and it is the same artifact that silently froze an earlier
+ * investigation at `world.time = 0` with a full spawn queue.
+ *
+ * Unpaused from the page rather than by editing the game: the probe holds the
+ * run open the way a played session does.
+ */
+await page.evaluate(() => {
+  const S = window.SABER;
+  if (S?.input) S.input.onLockChange = () => {};
+  S?.menu?.resume?.();
+  document.getElementById('pause')?.classList.add('hidden');
+});
+
+/**
+ * WHAT THE RENDERER ACTUALLY DID, WITH AND WITHOUT THE BATTLE.
+ *
+ * Two earlier shapes of this probe tried to measure a FRAME TIME and both
+ * failed honestly: the page collected three or four frames in ten seconds,
+ * because a headless run without pointer lock is not a running game. A median
+ * taken off four frames is not a slow number, it is not a number.
+ *
+ * So this measures the thing that is trustworthy off a single drawn frame and
+ * is the one the design argument actually rests on: DRAW CALLS. The claim for
+ * the instanced tier is that its cost stops depending on how many men there
+ * are, and a draw-call count before and after laying three hundred and twenty
+ * of them is exactly that claim, stated in the renderer's own numbers.
+ *
+ * Frame time on this box is swiftshader — software rasterisation with no GPU
+ * behind it — so it would not be a number about a player's machine even if the
+ * loop were running. `tools/checks/mass.mjs` holds the SIM cost, which is CPU
+ * and is comparable.
+ */
+const read = () => page.evaluate(() => {
+  const r = window.SABER?.world?.engine?.renderer?.info?.render;
+  return { calls: r?.calls ?? -1, tris: r?.triangles ?? -1 };
+});
+
+const before = await read();
+
+await page.evaluate(async (origin) => {
+  const S = window.SABER, w = S.world;
   const M = await import(`${origin}/src/game/Mass.js`);
   const E = await import(`${origin}/src/game/Enemy.js`);
-  const V = (x, y, z) => new (w.player.position.constructor)(x, y, z);
   const p = w.player.position;
-  /* Donors: two real bodies, well out of the way, so the cohort has a rig to
-   * bake per side. */
-  for (const t of ['trooper', 'b1']) {
-    w.enemies.push(new E.Enemy(w, t, V(p.x + 300, 0, p.z + 300)));
-  }
-  for (let i = 0; i < 6; i++) w.update(1 / 60, S.input?.state ?? {});
+  const V = (x, y, z) => new (p.constructor)(x, y, z);
+  /* Donors: one real body per side, parked far out, so the cohort has a rig to
+   * bake a merged skin from. See `MassField._donorFor`. */
+  for (const t of ['trooper', 'b1']) w.enemies.push(new E.Enemy(w, t, V(p.x + 300, 0, p.z + 300)));
   const f = new M.MassField(w);
-  const axis = V(0, 0, 1);
-  M.layBattle(f, { blocks: 8, gap: 150, origin: p, axis });
-  /* Point the camera down the axis so the shot is the picture a player lands
-   * looking at. */
-  const cam = w.engine.camera;
-  const before = { calls: 0, tris: 0 };
-  const info = w.engine.renderer?.info;
-  const times = [];
-  for (let i = 0; i < 240; i++) {
-    const t0 = performance.now();
-    f.update(1 / 60, { bolts: w.bolts });
-    w.update(1 / 60, S.input?.state ?? {});
-    w.engine.render?.(w.scene, cam);
-    times.push(performance.now() - t0);
-  }
-  times.sort((a, b) => a - b);
-  return {
-    men: f.count(0) + f.count(1), mine: f.count(0), theirs: f.count(1),
-    calls: info?.render?.calls ?? -1, tris: info?.render?.triangles ?? -1,
-    median: times[120], p95: times[228],
-    bolts: w.bolts.bolts.filter((b) => b.active).length,
-  };
+  window.__mass = f;
+  M.layBattle(f, { blocks: 8, gap: 150, origin: p, axis: V(0, 0, 1) });
+  /* One step, so the cohort joins land and the instances are written before
+   * anything is counted. */
+  f.update(1 / 60, { bolts: w.bolts });
 }, `http://127.0.0.1:${port}`);
-console.log(JSON.stringify(out, null, 2));
+
+await page.waitForTimeout(2500);
+const after = await read();
+
+const out = await page.evaluate(() => {
+  const f = window.__mass;
+  const w = window.SABER.world;
+  const bins = [...w.cohorts.cohorts.values()].filter(Boolean)
+    .reduce((a, c) => a + c.meshes.length, 0);
+  return {
+    men: f.count(0) + f.count(1),
+    ranks: f.ranks.length,
+    instanced: f.ranks.reduce((a, r) => a + r.men.filter((m) => m._l3).length, 0),
+    cohortBins: bins,
+    realBodies: w.enemies.filter((e) => !e.dead).length,
+  };
+});
+console.log(JSON.stringify({
+  ...out,
+  drawCalls: { before: before.calls, after: after.calls, added: after.calls - before.calls },
+  triangles: { before: before.tris, after: after.tris, added: after.tris - before.tris },
+}, null, 2));
+
 await page.screenshot({ path: 'tools/out/mass-battle.png' });
 await browser.close(); server.close();
