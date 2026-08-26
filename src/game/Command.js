@@ -101,6 +101,7 @@ import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn.js';
 import { MORALE } from './Morale.js';
 import { applyLevy } from './Levy.js';
+import { applyArmour } from './Armour.js';
 import { shakeNerve } from './Nerve.js';
 import { findCasualty, startDrag } from './Reactions.js';
 import { marchFront } from '../world/Front.js';
@@ -3881,7 +3882,11 @@ export class CommandDirector extends WaveDirector {
    * Applied here it rides every recomposition and moves neither number.
    */
   _composeUnder(wave, keys) {
-    return applyLevy(super._composeUnder(wave, keys), this, wave);
+    /* ARMOUR BEFORE THE LEVY, and the order is the arrival order. `applyLevy`
+     * appends forty conscripts behind the shuffle; a walker dealt after that
+     * mass would be the slowest body in the queue arriving last, forty entries
+     * after the fight it belongs to. See src/game/Armour.js. */
+    return applyLevy(applyArmour(super._composeUnder(wave, keys), this), this, wave);
   }
 
   /* ── the muster ────────────────────────────────────────────────────── */

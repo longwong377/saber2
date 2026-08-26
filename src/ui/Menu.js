@@ -1671,11 +1671,17 @@ export const CODEX = [
      * were the whole of it: the sweep skipped LAYER.ENEMY entirely, so five
      * hostiles standing inside a 9 m field walked on unarrested and one of them
      * closed 5.77 m into melee while "frozen". The card is true now, and it
-     * says the two things it was quietest about — that PEOPLE are what it
-     * mainly holds, and that the key has a second use. */
-    text: k => `Stasis field — freeze what is near you: the people, their bolts, and anything `
-      + `already in flight. ${k('hurl')} fires the whole field; pressing ${k('stasis')} again `
-      + `throws the whole field again, with every bolt going back to whoever fired it.` },
+     * says the one thing it was quietest about — that the key has a second use.
+     *
+     * IT NO LONGER SAYS "THE PEOPLE". It did, and the game did it, and the
+     * player asked twice for it to stop: the field is carried on your chest and
+     * re-sweeps every frame, so walking forward froze men who were never in the
+     * cast, which reads from the outside as "touching an enemy freezes it". The
+     * card and the power moved together — see `_stasisCapture`. */
+    text: k => `Stasis field — stop what is already in the air: every bolt inside it, and anything `
+      + `in flight. The men keep fighting; only what was thrown at you hangs there. `
+      + `${k('hurl')} fires the whole field; pressing ${k('stasis')} again `
+      + `throws it again, with every bolt going back to whoever fired it.` },
   { keys: ['heal'],
     /* THE ALLY HALF WAS MISSING FROM THE GAME AND THEREFORE FROM THE CARD.
      * The player asked "remind me how to heal allies", and the honest answer
