@@ -534,6 +534,30 @@ export class ExtractionDirector {
   holdsHorde(ring = 0) {
     if (!this.active) return false;
     if (!this.landing) return true;
+    /**
+     * …AND THE RING TOLERANCE IS NO LONGER NEEDED, because the thing it was
+     * protecting has moved.
+     *
+     * It waited until the ship's ground track was inside the level's own spawn
+     * ring, and the reason was `Arrivals._anchor`: every distance in that file
+     * was measured from the PLAYER, who during the fall is a seat in a bay
+     * 150 m downrange of the pad. Released at the top of the descent, the ring
+     * was drawn around a moving aeroplane and 13 of the first 25 bodies stood
+     * past `Cohorts.L3_AT` — born outline-less, the exact defect `marchBand`
+     * exists to have ended. The tolerance bought that back and cost about four
+     * of the nine seconds of the fall.
+     *
+     * `_anchor` reads `lzPoint` while the commander is riding now, so the ring
+     * is drawn around the place the ship is AIMED at and does not move. The
+     * whole descent is available and the wave is that much further in when the
+     * ramp comes down.
+     *
+     * The parameter stays, and answering it is still honest: a caller that has
+     * a ring and an anchor that cannot use one is exactly the state this was
+     * written for, and re-deriving that from scratch the next time is how a
+     * fix gets lost.
+     */
+    if (this.world?.arrivals?.anchorsOnLz) return false;
     return this.lzOffset > (ring || 0);
   }
 

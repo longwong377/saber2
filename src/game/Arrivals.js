@@ -820,8 +820,43 @@ export class ArrivalDirector {
     return rmax;
   }
 
+  /**
+   * WHERE THE ARRIVALS ARE MEASURED FROM — and it is not always the player.
+   *
+   * Every distance in this file is the player's, which is right for all of the
+   * game except the half-minute at the start of it. `World` releases the wave
+   * director on the gunship's DESCENT now, so the enemy is on the ground and
+   * walking in before the ramp comes down — but for that whole fall the player
+   * is a seat in a bay, and measured on geonosis the bay is 150 m downrange of
+   * the pad at the top of the fall and 39 m with two seconds left.
+   *
+   * Anchored there, the ring is drawn around a moving aeroplane: 13 of the
+   * first 25 bodies stood past `Cohorts.L3_AT`, which is the born-outline-less
+   * defect `marchBand` exists to have ended. `World.holdsHorde` bought the time
+   * back by waiting until the ship's ground track was inside the level's own
+   * spawn ring, and that costs about four seconds of the nine-second fall.
+   *
+   * So while the commander is riding, the anchor is THE PLACE THE SHIP IS
+   * AIMED AT. That is what the whole flight is about, it does not move, and it
+   * is where the player will be standing when any of this matters. The wave
+   * can then be called from the top of the descent instead of most of the way
+   * down it.
+   */
+  /**
+   * Does this director measure from the landing zone rather than the player?
+   *
+   * Asked by `ExtractionDirector.holdsHorde` so it can release the wave at the
+   * top of the descent instead of most of the way down it. A capability, read
+   * off the object that has it, rather than a version number two files agree
+   * about by hand.
+   */
+  get anchorsOnLz() { return !!(this.world?.player?.riding && this.world?.extraction?.lzPoint); }
+
   _anchor(out) {
-    const p = this.world.player;
+    const w = this.world;
+    const p = w.player;
+    const lz = p?.riding ? w.extraction?.lzPoint : null;
+    if (lz) return out.copy(lz);
     return out.copy(p ? p.position : _v3.set(0, 0, 0));
   }
 

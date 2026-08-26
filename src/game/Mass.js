@@ -735,6 +735,104 @@ export class MassField {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
+ * ── THE GROUND BETWEEN TWO LINES DECIDES THE BATTLE ──────────────────────
+ *
+ * This was the mode's worst defect and it is invisible from a screenshot.
+ * `layBattle` put its anchors at fixed distances along the axis and never
+ * asked whether the two lines could SEE each other. Measured on the shipped
+ * Geonosis front, twelve blocks a side, twenty seconds:
+ *
+ *     real terrain    122 v 202     hit rates 3.4% and 7.4%
+ *     flat ground     225 v 239     16 casualties in total
+ *
+ * Fire volume was near-equal at 1034 rounds against 1222, so it was neither
+ * damage nor cadence. Flattening the ground removed the imbalance completely,
+ * which makes the ground the cause rather than a suspicion: a ridge between
+ * the two anchors eats one side's fire and not the other's, and which side
+ * loses is decided by where the level generator happened to put a rise.
+ *
+ * So each pair of opposing blocks is SEATED before it is planted: the profile
+ * between the two nominal anchors is sampled, and if something stands between
+ * them both anchors slide along the axis, together, to the nearby pair with
+ * the clearest line. Together, so the no-man's-land keeps the width the mode
+ * declared; along the axis only, so the frontage keeps its shape and blocks do
+ * not end up standing in each other.
+ *
+ * A LINE THAT CANNOT BE CLEARED IS LEFT WHERE IT WAS. Some ground has a hill
+ * in the middle of it and no amount of sliding fixes that — and a block shoved
+ * forty metres to find a sightline is a block that is no longer part of its
+ * own army's line. The bound is what makes this a seating and not a search.
+ */
+export const SEAT_WINDOW = 26;
+export const SEAT_STEPS = 7;
+export const SEAT_SAMPLES = 12;
+
+/**
+ * What a clear line between two opposing blocks is worth when a bearing is
+ * chosen, and how much a height advantage costs.
+ *
+ * Both are scored against the picture terms, which are worth 15 at most (five
+ * points across your own line at two each, five across theirs at one). Three
+ * clear pairs at 1.5 is 4.5 — enough to move a bearing off a plateau and not
+ * enough to choose a battle you cannot see. `TILT_CAP` stops one cliff
+ * dominating the whole sweep: past twenty metres of difference the bearing is
+ * already disqualified and how much worse it gets does not matter.
+ */
+export const SIGHT_WORTH = 1.5;
+export const TILT_WORTH = 0.22;
+export const TILT_CAP = 20;
+
+/**
+ * How much ground stands between two points, in metres above the sightline.
+ *
+ * Zero is a clear shot. Sampled rather than swept, because the answer only has
+ * to rank candidate seatings against each other and a dozen points across a
+ * hundred and fifty metres already finds every ridge a body could hide behind.
+ */
+export function blockage(terrain, a, b) {
+  if (!terrain?.height) return 0;
+  const ay = terrain.height(a.x, a.z) + MUZZLE;
+  const by = terrain.height(b.x, b.z) + MUZZLE;
+  let worst = 0;
+  for (let i = 1; i < SEAT_SAMPLES; i++) {
+    const t = i / SEAT_SAMPLES;
+    const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+    const over = terrain.height(x, z) - (ay + (by - ay) * t);
+    if (over > worst) worst = over;
+  }
+  return worst;
+}
+
+/**
+ * Slide one opposing pair along the axis to where they can see each other.
+ *
+ * Both anchors are moved by the same amount, so the gap the mode declared is
+ * the gap they fight across. `a` and `b` are edited in place.
+ */
+export function seatPair(terrain, a, b, axis) {
+  if (!terrain?.height) return 0;
+  let best = blockage(terrain, a, b), bestAt = 0;
+  if (best <= 0) return 0;
+  for (let s = 1; s <= SEAT_STEPS; s++) {
+    const d = (s / SEAT_STEPS) * SEAT_WINDOW;
+    for (const sign of [1, -1]) {
+      _v.copy(axis).multiplyScalar(d * sign);
+      const blocked = blockage(terrain, _s.copy(a).add(_v), _w.copy(b).add(_v));
+      if (blocked < best) { best = blocked; bestAt = d * sign; }
+      if (best <= 0) break;
+    }
+    if (best <= 0) break;
+  }
+  if (bestAt) {
+    _v.copy(axis).multiplyScalar(bestAt);
+    a.add(_v); b.add(_v);
+    a.y = terrain.height(a.x, a.z);
+    b.y = terrain.height(b.x, b.z);
+  }
+  return best;
+}
+
+/**
  * TWO ARMIES FACING EACH OTHER, AND THE PLAYER BEHIND THEIR OWN LINE.
  *
  * This is the part that decides whether the player ever SEES the battle, and it
@@ -771,10 +869,13 @@ export function layBattle(field, opts = {}) {
   const width = RANK_COLS * SPACING + 6;
   const mineAt = opts.back ?? PROMOTE + 10;
   const out = { mine: [], theirs: [] };
+  const terrain = field.world?.terrain || null;
   for (let i = 0; i < blocks; i++) {
     const off = (i - (blocks - 1) / 2) * width;
     const a = origin.clone().addScaledVector(axis, mineAt).addScaledVector(right, off);
     const b = origin.clone().addScaledVector(axis, mineAt + gap).addScaledVector(right, off);
+    /* …AND THEY HAVE TO BE ABLE TO SEE EACH OTHER. See `seatPair`. */
+    seatPair(terrain, a, b, axis);
     const mine = field.add({ type: opts.mine ?? 'trooper', team: 0, dir: axis, anchor: a,
       men: opts.men ?? RANK_MEN });
     const theirs = field.add({ type: opts.theirs ?? 'b1', team: 1, dir: axis.clone().negate(),
@@ -1043,6 +1144,39 @@ class Front {
           if (this._sees(x, z, p, eye)) score += worth;
         }
       }
+      /**
+       * …AND WHETHER THE TWO LINES CAN FIGHT EACH OTHER, which is a different
+       * question from whether you can SEE them and is the one that decides the
+       * battle.
+       *
+       * The clauses above score the PICTURE — the player's own sightline to
+       * both frontages — and a bearing can win them outright while putting the
+       * enemy line on top of a plateau. Measured on the shipped front, twelve
+       * blocks a side: mean ground under your line 1.9 m, under theirs 31.7 m,
+       * with four of nine opposing pairs still blocked by up to 33 m of rock
+       * after `seatPair` had done what a ±26 m nudge can do. The result was a
+       * battle nobody could have won from the low side:
+       *
+       *     122 v 202 on real ground, 225 v 239 on flat
+       *
+       * with fire volume near-equal. So two more terms, both about the pair
+       * rather than the viewer: the ground between them has to be clear, and
+       * the two lines have to stand at comparable height. A thirty-metre
+       * advantage is not a battle, it is a firing range.
+       *
+       * Weighted to outrank the tie-break and to be outranked by the picture:
+       * a battle you cannot see is worse than a battle that is unfair, because
+       * the unfair one is at least happening in front of you.
+       */
+      let mutual = 0, tilt = 0;
+      for (const off of [-1, 0, 1]) {
+        _s.set(p.x + dx * mineAt + rx * off * half, 0, p.z + dz * mineAt + rz * off * half);
+        _w.set(p.x + dx * theirsAt + rx * off * half, 0, p.z + dz * theirsAt + rz * off * half);
+        mutual += blockage(w.terrain, _s, _w) > 0 ? 0 : 1;
+        tilt += Math.abs((w.terrain?.height(_w.x, _w.z) ?? 0) - (w.terrain?.height(_s.x, _s.z) ?? 0));
+      }
+      score += mutual * SIGHT_WORTH;
+      score -= Math.min(tilt / 3, TILT_CAP) * TILT_WORTH;
       /* Then how far you have to turn, so a tie goes to where you are already
        * looking. Never more than one point, so it can only break a tie. */
       score -= Math.abs(((k + BEARINGS / 2) % BEARINGS) - BEARINGS / 2) / BEARINGS;

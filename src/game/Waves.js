@@ -631,7 +631,27 @@ export const MODES = {
     blurb: 'Hundreds against hundreds. Two armies exchanging fire across open ground with you '
       + 'somewhere in the middle of it — one Jedi in a real battle, cutting apart the men who '
       + 'reach you while the lines fight it out behind.',
-    massBattle: { blocks: 12, gap: 150 },
+    /**
+     * `gap` 150 → 90, and the number came off a measured ground profile.
+     *
+     * 150 put their line 250 m out. Sampled along the chosen bearing on
+     * geonosis, the ground is flat to two hundred metres and then climbs:
+     *
+     *     0m −1 · 50m 0 · 100m 2 · 150m 0 · 200m 1 · 250m 3 · 275m 10 · 300m 25
+     *
+     * The centre was fine. A twelve-block line is 192 m of frontage, so at
+     * 250 m the FLANKS reached into the rise — measured, mean ground under your
+     * line 1.9 m and under theirs 31.7 m, with four of nine opposing pairs
+     * blocked by up to 33 m of rock. A thirty-metre height advantage is not a
+     * battle, it is a firing range, and it produced 122 v 202 from an even
+     * start while flat ground produced 225 v 239.
+     *
+     * Nothing is lost by closing it. `Mass.STAND_OFF` is 55 m: the two lines
+     * WALK toward each other and stand at fifty-five whatever they opened at,
+     * so the gap is an approach and not a range. Ninety puts their line at
+     * 190 m, inside the flat, and gets the battle in front of you sooner.
+     */
+    massBattle: { blocks: 12, gap: 90 },
   },
   /**
    * SKIRMISH — the one run in this game that can be WON, anywhere.

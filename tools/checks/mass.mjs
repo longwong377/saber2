@@ -36,7 +36,7 @@ import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
 import { MODES } from '../../src/game/Waves.js';
 import {
-  MassField, Rank, layBattle,
+  MassField, Rank, layBattle, blockage,
   RANK_MEN, RANK_COLS, PROMOTE, STAND_OFF, BREAK_AT, HIT, MUZZLE,
 } from '../../src/game/Mass.js';
 
@@ -605,5 +605,82 @@ export async function run({ check, assert }) {
       + `${near.length} real bodies inside ${PROMOTE} m, ${n} men at ${med.toFixed(2)} ms median `
       + `(vs ~${asBodies.toFixed(0)} ms as bodies), ${clear}/${tried} sampled men clear of the ground, `
       + `${cohorts} cohorts, bake centred ${off.toFixed(2)} m off`;
+  });
+
+  /**
+   * THE BATTLE IS FOUGHT ON THE GROUND, AND THE GROUND WAS DECIDING IT.
+   *
+   * The mode's worst defect and the one no count and no screenshot could see.
+   * `layBattle` put its anchors at fixed distances along the axis and never
+   * asked whether the two lines could SEE each other. Measured on the shipped
+   * front, twelve blocks a side, twenty seconds:
+   *
+   *     real terrain    122 v 202     hit rates 3.4% and 7.4%
+   *     flat ground     225 v 239     16 casualties in total
+   *
+   * Fire volume was near-equal at 1034 rounds against 1222, so it was neither
+   * damage nor cadence. The enemy line simply stood 30 m higher: mean ground
+   * 1.9 m under yours and 31.7 m under theirs, with four of nine opposing
+   * pairs blocked by up to 33 m of rock. Which side lost was decided by where
+   * the level generator happened to put a rise.
+   *
+   * TWO THINGS FIXED IT and this holds both. `seatPair` slides each opposing
+   * pair along the axis to the nearby seating with the clearest line, and the
+   * mode's opening `gap` came in from 150 to 90 — because the ground on
+   * geonosis is flat to two hundred metres and a 192 m-wide frontage at 250 m
+   * reaches into the hills with its flanks. Nothing is lost by closing it:
+   * `STAND_OFF` is 55, so the lines walk toward each other and stand at
+   * fifty-five whatever they opened at.
+   *
+   * THE ASSERTION IS THE OUTCOME, NOT THE GEOMETRY. A check that only measured
+   * clearance would pass on a build where the ground was level and something
+   * else was lopsided, and the player does not care which it was. So this
+   * drives a real battle and demands it stay a contest.
+   */
+  check('mass: the ground does not decide the battle before it starts', async () => {
+    const b = await field(THREE);
+    b.world.unload?.();
+    const { world } = await bootWorld({
+      level: 'geonosis', settings: { quality: 'low', mode: MASS_MODES[0][0] } });
+    const input = idleInput();
+    let n = 0;
+    while (!world.front?.laid && n < 600) { world.update(STEP, input); n++; }
+    assert(world.front?.laid, 'the front never laid a battle');
+    const f = world.mass;
+    const T = world.terrain;
+    const mine = f.ranks.filter((r) => r.team === 0);
+    const theirs = f.ranks.filter((r) => r.team === 1);
+    const n0 = { mine: f.count(0), theirs: f.count(1) };
+
+    /* 1. NEITHER SIDE IS STANDING ON A PLATEAU. Mean ground under each line,
+     * which is the number that was 1.9 against 31.7. */
+    const mean = (rs) => rs.reduce((a, r) => a + T.height(r.anchor.x, r.anchor.z), 0) / (rs.length || 1);
+    const tilt = Math.abs(mean(theirs) - mean(mine));
+    assert(tilt < 18,
+      `one line stands ${tilt.toFixed(0)} m above the other — that is a firing range, not a battle`);
+
+    /* 2. AND THEY CAN SHOOT AT EACH OTHER. Most pairs clear; a hill somewhere
+     * on the frontage is a battlefield and not a bug. */
+    const pairs = Math.min(mine.length, theirs.length);
+    let clear = 0;
+    for (let i = 0; i < pairs; i++) if (blockage(T, mine[i].anchor, theirs[i].anchor) <= 0) clear++;
+    assert(clear >= pairs * 0.6,
+      `${clear} of ${pairs} opposing pairs can see each other — the rest are shooting into rock`);
+
+    /* 3. THE OUTCOME, which is the assertion the other two exist to explain.
+     * Twenty seconds of a real battle has to cost both sides, and the loser
+     * must still be a line rather than a rout. */
+    while (world.time < 20) world.update(STEP, input);
+    const a1 = f.count(0), b1 = f.count(1);
+    const lostA = n0.mine - a1, lostB = n0.theirs - b1;
+    assert(lostA > 20 && lostB > 20,
+      `twenty seconds cost ${lostA} and ${lostB} — one of these lines is not in the fight`);
+    const ratio = Math.max(lostA, lostB) / Math.max(1, Math.min(lostA, lostB));
+    assert(ratio < 2.2,
+      `one side lost ${Math.max(lostA, lostB)} and the other ${Math.min(lostA, lostB)} `
+      + `(${ratio.toFixed(1)}x) from an even start — the ground is deciding this`);
+    world.unload?.();
+    return `${tilt.toFixed(1)} m between the two lines' ground, ${clear}/${pairs} pairs clear, `
+      + `and ${n0.mine}v${n0.theirs} became ${a1}v${b1} in 20 s (${lostA} lost against ${lostB})`;
   });
 }
