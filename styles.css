@@ -1070,6 +1070,12 @@ button{font-family:inherit}
 .targetopen.hidden{display:none}
 /* The mend cue reads as help rather than as damage — see #mend-cue. */
 .targetopen.mend b{color:var(--good)}
+/* …AND THE ONE YOU HAVE NOT LOOKED AT YET. Dimmer, because it is an offer and
+   not a state: the man under your reticle is a thing you can do RIGHT NOW, and
+   this one is a thing you could do if you turned your head. Same words, less
+   weight, so the two never read as the same prompt. */
+.targetopen.mend.far b{color:var(--dim)}
+.targetopen.mend.far i{opacity:.55}
 
 /* THE WITHDRAW RING ─────────────────────────────────────────────────────
    The one control that decides whether your company survives the run, and

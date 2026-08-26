@@ -2194,13 +2194,34 @@ export class HUD {
 
     if (el.mendCue) {
       const t = player.healTarget || player._mendTarget?.({ enemies: world.enemies });
-      const key = t ? `${t.hp < t.maxHp * 0.35 ? 2 : 1}${player.healing != null ? 'h' : ''}` : null;
-      if (t && this._mendKey !== key) {
+      /**
+       * …AND THE MAN YOU ARE NOT LOOKING AT, WHICH IS WHY NOBODY FOUND THIS.
+       *
+       * The player, three sessions running: "how do I heal my troops? You
+       * should have already added it but maybe I've missed it." Ally mend has
+       * worked the whole time and this cue has printed the whole time — but
+       * only while a wounded man is inside the aim cone, which in a firefight
+       * is where the ENEMY is. The prompt that teaches the power only appeared
+       * once you were already doing it.
+       *
+       * `nearestWounded` is the same question with the cone off. When there is
+       * somebody in reach and they are not under the reticle, the cue says so
+       * and tells you what to do about it. The power is untouched: it still
+       * wants the aim.
+       */
+      const near = t ? null : player.nearestWounded?.({ enemies: world.enemies });
+      const who = t || near;
+      const key = who
+        ? `${t ? 'a' : 'n'}${who.hp < who.maxHp * 0.35 ? 2 : 1}${player.healing != null ? 'h' : ''}`
+        : null;
+      if (who && this._mendKey !== key) {
         this._mendKey = key;
         el.mendCue.firstChild.textContent = player.healing != null ? 'MENDING' : 'WOUNDED ALLY';
-        el.mendCue.lastChild.textContent = player.healing != null ? 'HOLD STILL' : `${this._mendKeyLabel()} TO MEND`;
+        el.mendCue.lastChild.textContent = player.healing != null ? 'HOLD STILL'
+          : t ? `${this._mendKeyLabel()} TO MEND` : `LOOK AT THEM · ${this._mendKeyLabel()} TO MEND`;
+        el.mendCue.classList.toggle('far', !t);
         el.mendCue.classList.remove('hidden');
-      } else if (!t && this._mendKey !== null) {
+      } else if (!who && this._mendKey !== null) {
         this._mendKey = null;
         el.mendCue.classList.add('hidden');
       }

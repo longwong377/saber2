@@ -8545,6 +8545,50 @@ export class Player {
    * refuse to mend you. Downed men come first — see `_updateHeal`, which
    * stands a limp one up when the channel completes.
    */
+  /**
+   * THE WOUNDED MAN YOU ARE NOT LOOKING AT.
+   *
+   * The player, across at least three sessions and in the end flatly:
+   * *"I've asked to this before 100 times but how do I heal my troops? You
+   * should have already added it but maybe I've missed it."*
+   *
+   * They had missed it, and the miss was designed in. Ally mend has worked for
+   * a long time and the HUD does print `WOUNDED ALLY` — but only while a
+   * wounded man is inside `MEND_CONE` of where you are AIMING, which in a
+   * firefight is where the enemy is. The one prompt that would teach the power
+   * appears only in the moment you are already doing the thing it teaches.
+   *
+   * So this is the same question with the cone taken off: is there anybody near
+   * enough to mend at all? The HUD asks it when `_mendTarget` says no, and says
+   * "look at them" instead of nothing. The POWER is unchanged — it still wants
+   * the aim, because a heal that snaps to whoever is nearest is a different
+   * power — and this only decides whether the screen mentions that it exists.
+   *
+   * Everything else is `_mendTarget`'s own test, in the same order, so the two
+   * cannot disagree about who counts as a hurt ally.
+   */
+  nearestWounded(ctx) {
+    const list = ctx?.enemies || this.world?.enemies;
+    if (!list) return null;
+    const rules = ctx?.rules ?? this.world?.rules ?? null;
+    let best = null, bestD = Infinity;
+    for (const e of list) {
+      if (!e || e.dead || e === this) continue;
+      if (canHarm(this, e, rules)) continue;
+      if (!(e.hp < (e.maxHp ?? 0))) continue;
+      _v1.subVectors(e.position, this.chest);
+      const d = _v1.length();
+      if (d > MEND_REACH || d < 1e-3) continue;
+      /* A limp man wins any tie of distance, for `_mendTarget`'s reason: he is
+       * the one who is out of the fight entirely. */
+      const rank = d - (e.actor?.ragdolled ? MEND_LIMP_EDGE * MEND_REACH : 0);
+      if (rank >= bestD) continue;
+      bestD = rank;
+      best = e;
+    }
+    return best;
+  }
+
   _mendTarget(ctx) {
     const list = ctx?.enemies || this.world?.enemies;
     if (!list) return null;
