@@ -265,10 +265,23 @@ export async function run({ check, assert }) {
      * covers a mode that does not exist yet. It also holds the other end — the
      * mode that DOES declare it must still get its meeting, or the fix would be
      * "turn the feature off" wearing a different hat.
+     *
+     * …AND THE THIRD COLUMN IS "TICKED, WITH NOBODY TO MEET", which is the
+     * shape the player actually hit: the box is persisted, so it outlives the
+     * session it was ticked in. Every mode, Command included, must field
+     * exactly what it fields with the box clear — see `meetingOpposed`. The
+     * mode-isolation clause above could never see it, because its own fixture
+     * was always alone and it read Command's empty queue as correct.
      */
     const L = LEVELS.geonosis;
-    const stub = (mode, versus) => ({
+    const stub = (mode, versus, session) => ({
       enemies: [], players: [], difficulty: null, takenBoons: new Set(), level: L,
+      /* The one fact `meetingOpposed` asks the world for when nobody is
+       * standing on the field yet. `connected` is the field `World.attachNet`
+       * puts there and the shape `bootPair` builds, so this is the question the
+       * game asks and not a paraphrase of it. */
+      net: session ? { connected: true } : null,
+      notify() {},
       settings: { mode, level: 'geonosis', order: 'jedi', commandVersus: versus },
     });
     /* AN A/B ON THE BOX, PER MODE, rather than a bar on the queue length. Some
@@ -276,22 +289,30 @@ export async function run({ check, assert }) {
      * supposed to — so "did it field anything" cannot tell a mode minding its
      * own business from a mode that a Command box just emptied. What can is
      * whether ticking the box CHANGED anything: outside Command it must not. */
-    const open = (mode, versus) => {
-      const d = new Cmd.CommandDirector(stub(mode, versus), { pool: L.pool, seed: 1234 });
+    const open = (mode, versus, session = true) => {
+      const d = new Cmd.CommandDirector(stub(mode, versus, session), { pool: L.pool, seed: 1234 });
       d.start(1);
       return { versus: d.versus, queue: d.spawnQueue.length };
     };
     const out = [];
     for (const mode of Object.keys(Waves.MODES)) {
-      const off = open(mode, false), on = open(mode, true);
+      const off = open(mode, false), on = open(mode, true), alone = open(mode, true, false);
       const wants = !!Waves.MODES[mode].meeting;
       assert(on.versus === wants,
         `${mode} reads the meeting box as ${on.versus} where its own entry says ${wants}`);
+      /* THE STICKY BOX, IN A RUN WITH NO SESSION. Every mode, no exceptions:
+       * with nobody to meet the box is not a mode switch, it is nothing. */
+      assert(alone.versus === false,
+        `${mode} held a meeting with no session and no second player — versus stayed true`);
+      assert(alone.queue === off.queue,
+        `${mode} fields ${off.queue} bodies with the meeting box clear and ${alone.queue} with it `
+        + 'ticked in a run that has nobody to meet. The box is a persisted global; a player who '
+        + 'ticked it in a session last week must still get a battle today.');
       if (wants) {
         assert(on.queue === 0 && off.queue > 0,
           `${mode} declares a meeting and composed ${on.queue} bodies anyway (${off.queue} without `
           + "the box) — the other army is supposed to be a person's");
-        out.push(`${mode} ${off.queue}→meets`);
+        out.push(`${mode} ${off.queue}→meets, alone ${alone.queue}`);
       } else {
         assert(on.queue === off.queue,
           `${mode} fields ${off.queue} bodies normally and ${on.queue} with a COMMAND box ticked — `
@@ -300,6 +321,97 @@ export async function run({ check, assert }) {
       }
     }
     return out.join(', ');
+  });
+
+  check('command: a meeting with nobody to meet is a battle, not an empty field', async () => {
+    /**
+     * THE PLAYER'S OWN REPORT, AS A NUMBER, AND IT IS THE ONE NUMBER HE GAVE:
+     * "no in the mode I was playing it said 0 hostiles the entire time / it was
+     * in command mode not versus".
+     *
+     * `opt-command-versus` is a PERSISTED GLOBAL. Ticked once — in a session,
+     * where it is exactly right — it is still ticked in every solo Command run
+     * afterwards, and a meeting's opposing army is deployed by a PERSON rather
+     * than composed. Measured on the shipped build through the same two calls
+     * `main.js` makes after the world stands up: opening spawn queue 0 bodies,
+     * `hostilesLeft` 0 at 30 s and 0 at 60 s, and the run cannot end because
+     * there is nothing on the field to clear.
+     *
+     * WHY THIS IS A DRIVE AND NOT A FLAG READ. A check that asserted `versus`
+     * would have been GREEN throughout: the flag was correct — the player asked
+     * for a meeting and `MODES.command.meeting` says Command may hold one — and
+     * the defect was entirely in the consequence. So the assertion is the
+     * hostile count off the same `hostilesLeft` the HUD prints, on a real
+     * World, sixty game-seconds deep.
+     *
+     * A/B AGAINST THE SAME RUN WITH THE BOX CLEAR, so "there is a fight" is
+     * measured against the fight the mode gives anyway rather than against a
+     * number typed here. Same `runSeed`, so both arms compose the same wave.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { hostilesLeft } = await import('../../src/ui/HUD.js');
+    const arm = async (box) => {
+      const { world } = await bootWorld({
+        level: 'geonosis', runSeed: 7,
+        settings: { mode: 'command', level: 'geonosis', order: 'jedi', commandVersus: box },
+      });
+      /* VERBATIM THE TWO LINES main.js RUNS once the world is standing and the
+       * net (if any) is attached. Calling `director.start(1)` directly would
+       * skip `beginVersus`, which is the door the whole defect came through. */
+      if (world.command?.versus) world.beginVersus();
+      else world.director.start(1);
+      const input = idleInput();
+      let t = 0, at30 = null, empty = 0, peak = 0;
+      for (let i = 0; i < Math.round(60 / STEP); i++) {
+        world.update(STEP, input);
+        t += STEP;
+        const h = hostilesLeft(world);
+        peak = Math.max(peak, h);
+        if (h === 0) empty++;
+        if (at30 === null && t >= 30) at30 = h;
+      }
+      const r = { versus: world.command.versus, wave: world.command.wave,
+        at30, at60: hostilesLeft(world), peak, empty };
+      world.unload();
+      return r;
+    };
+    const off = await arm(false), on = await arm(true);
+
+    assert(on.at30 > 0,
+      `0 hostiles 30 s into a solo Command run with the meeting box ticked (${off.at30} with it `
+      + 'clear). This is the player\'s report verbatim: the field is empty and stays empty.');
+    assert(on.versus === false,
+      'a solo Command run with the meeting box ticked is still calling itself a meeting. '
+      + '`update` skips the entire wave loop on that flag, so a wave composed under it would '
+      + 'never drain its queue — the flag has to be cleared, not worked around.');
+    /* …AND THE FIELD FILLED AT ALL, which is the blunt form of the report and
+     * the one number that was 0 for the whole life of the defect. */
+    assert(on.peak > 0,
+      'the field never held a single hostile in 60 s of a solo Command run');
+    /**
+     * HOW MUCH OF THE MINUTE WAS EMPTY, against the same seeded run without the
+     * box — and this is the clause that carries the 60 s half of the report.
+     *
+     * NOT an equality on the count at 60 s. Both arms are the same wave against
+     * the same army and they end it within a body or two of each other, but
+     * WHICH body dies on which frame is combat, not composition: measured, 2
+     * left with the box clear against 0 with it ticked in the same seeded run,
+     * which is a fight finishing rather than a field that never filled. What
+     * cannot be noise is how long there was nobody there at all — 1800 frames
+     * of 1800 before this fix, and within a second of the control after it.
+     */
+    assert(on.empty <= off.empty + 60,
+      `${on.empty} frames of 1800 with an empty field against ${off.empty} in the same seeded run `
+      + 'without the box — the fallback is not the fight the mode gives anyway');
+    /* …AND IT IS THE SAME SIZE OF FIGHT. A fallback that composed two bodies
+     * would satisfy every clause above and still be a different mode. Measured
+     * 50 and 50; the 0.8 is slack for whose body died on which frame, not for a
+     * smaller wave — a token fallback would land at 2 against 50. */
+    assert(on.peak >= off.peak * 0.8,
+      `peak ${on.peak} hostiles with the box against ${off.peak} without it`);
+    return `box clear ${off.at30}@30s ${off.at60}@60s (peak ${off.peak}, ${off.empty} empty frames); `
+      + `box ticked ${on.at30}@30s ${on.at60}@60s (peak ${on.peak}, ${on.empty}), `
+      + 'meeting stood down';
   });
 
   check('command: geonosis is FLAT where you fight and has something to see everywhere', () => {

@@ -2295,7 +2295,29 @@ export const OPENING_STRENGTH = 10;
  */
 export const TEAM_DAMAGE_DEFAULT = 0.35;
 
-export function commandConfig(settings) {
+/**
+ * IS THERE A SECOND COMMANDER TO FIGHT, OR COULD THERE BE ONE?
+ *
+ * A meeting needs somebody on the other side of it. Two things count and
+ * nothing else does: a live net endpoint — a host waiting on a peer is still a
+ * session, because the second commander is on the way — or a second local
+ * player already on the field.
+ *
+ * Asked of the WORLD and not of the settings, because "am I in a session" is
+ * not a thing a menu can know at the moment the box is ticked; it is a fact
+ * about the run, and it exists only once the run does. A world that has not
+ * been handed in answers FALSE, and that default is deliberate: an empty field
+ * is the failure this gate exists to prevent, so a path that forgot to pass a
+ * world must fall back to a real battle rather than to a meeting with nobody.
+ */
+export function meetable(world) {
+  if (!world) return false;
+  if (world.net?.connected) return true;
+  if (world.netMode === 'host' || world.netMode === 'client') return true;
+  return (world.players?.length ?? 0) > 1;
+}
+
+export function commandConfig(settings, world = null) {
   const s = settings || {};
   const td = s.teamDamage;
   const f = s.commandFormation;
@@ -2326,7 +2348,38 @@ export function commandConfig(settings) {
      * names being kept here, so the next mode that leads an army declines the
      * meeting by saying nothing.
      */
-    versus: !!s.commandVersus && !!MODES[s.mode]?.meeting,
+    /**
+     * ── AND THERE HAS TO BE SOMEBODY TO MEET ────────────────────────────
+     *
+     * This was `!!s.commandVersus && !!MODES[s.mode]?.meeting` and it never
+     * asked the one question the feature is named after. `commandVersus` is a
+     * PERSISTED GLOBAL — a box in Options that stays ticked between sessions —
+     * so a player who tried a meeting once and moved on carried it into every
+     * solo Command run afterwards, and `start` declines to compose a wave when
+     * the other side is supposed to be a person's. `formUp` then builds
+     * `Math.max(commanders, sides, players)` = 1 commander, so no opposing army
+     * is ever deployed either.
+     *
+     * The result is the player's report, verbatim and across several sessions:
+     * *"in the mode I was playing it said 0 hostiles the entire time"*, and,
+     * when asked, *"it was in command mode not versus"*. They were right about
+     * the mode. The versus flag was on underneath and said nothing.
+     *
+     * It survived one investigation that could not reproduce it, because the
+     * harness booted with a clean settings object and the box was never ticked.
+     * A sticky global is exactly the class of bug a fresh fixture cannot find.
+     *
+     * SO THE FLAG IS CLEARED RATHER THAN WORKED AROUND. `update` skips the
+     * entire wave loop on `versus`, so a wave composed under a true flag would
+     * never drain its queue — a fallback that composed one anyway would be a
+     * second, quieter version of the same empty field. With nobody to meet this
+     * is simply not a meeting, and the mode runs as it always did.
+     *
+     * `session` is the presence of a live endpoint, which is what a meeting
+     * needs and is asked of the world rather than assumed: a host with no peer
+     * yet is still a session, because the second commander is coming.
+     */
+    versus: !!s.commandVersus && !!MODES[s.mode]?.meeting && meetable(world),
     /**
      * AN ARMY IN A MODE THAT NEVER HAD ONE.
      *
@@ -3031,7 +3084,7 @@ export class CommandDirector extends WaveDirector {
      * holds none of them, so `drafts` is false before and after (measured).
      */
     super(world, { ...opts, mode: opts.mode ?? world?.settings?.mode ?? 'command' });
-    const cfg = commandConfig(world?.settings);
+    const cfg = commandConfig(world?.settings, world);
 
     /**
      * EVERY PERSON ON THIS FIELD WITH AN ARMY, and there used to be room for
@@ -3168,8 +3221,30 @@ export class CommandDirector extends WaveDirector {
       formation: cfg.formation,
     })];
     this.teamDamage = cfg.teamDamage;
-    /** Two commanders on one field, rather than one against the composer. */
+    /**
+     * Two commanders on one field, rather than one against the composer — and
+     * it is a WISH at this point rather than a fact. Nothing here can know
+     * whether the second commander exists; see `meetingOpposed`, which is asked
+     * at the two moments that can.
+     */
     this.versus = !!cfg.versus;
+    /**
+     * THE RULES THIS WORLD HAD BEFORE THE MEETING REWROTE THEM, or null.
+     *
+     * `World._loadSteps` swaps `world.rules` for `pvpRules({pvp: true,
+     * duelRounds: 1})` when the director it has just built says `versus` — six
+     * lines AFTER this constructor runs, which is why the object still on the
+     * world here is the one the World's own constructor derived from the
+     * player's settings. Measured on a solo Command deploy with the meeting box
+     * ticked: `{pvp:true,friendlyFire:true}` on a field with one player on it,
+     * so the player's own troopers' bolts could hit him and each other for the
+     * whole run, with nothing anywhere having asked for that.
+     *
+     * Kept rather than re-derived because `pvpRules` lives in Player.js and a
+     * static edge from this file to that one closes a cycle (see `enlistBody`).
+     * Handing the world back the object it already had restates nothing.
+     */
+    this._preMeeting = this.versus ? (world?.rules ?? null) : null;
     /** How many bodies the opening muster enlists. A campaign opens with
      *  `OPENING_STRENGTH`; a contingent opens with what the player asked for. */
     this.opening = clamp(opts.strength ?? OPENING_STRENGTH, 1, MAX_STRENGTH);
@@ -6898,6 +6973,78 @@ export class CommandDirector extends WaveDirector {
 
   _announceRoster() { this.onRoster?.(this.roster.summary()); }
 
+  /* ── the meeting, and whether there is one ─────────────────────────── */
+
+  /**
+   * IS THERE ANYBODY TO MEET? — and until this existed, nothing asked.
+   *
+   * The player, reporting it as a mode that does nothing: "no in the mode I was
+   * playing it said 0 hostiles the entire time / it was in command mode not
+   * versus". Measured on the shipped build, a solo `command` deploy with
+   * `opt-command-versus` ticked: opening spawn queue 0 bodies, `hostilesLeft`
+   * 0 at 30 s and 0 at 60 s, forever. The FLAG was correct the whole time —
+   * `commandConfig` said versus, `MODES.command.meeting` said the mode may hold
+   * one — and the consequence was an empty plain, because a meeting's opposing
+   * army is deployed by a PERSON and there was no person.
+   *
+   * IT CANNOT BE ASKED IN `commandConfig`, which is where the flag is decided
+   * and would be the obvious home. That function runs inside this constructor,
+   * which `World._loadSteps` runs during the load: at that moment `world.net`
+   * is null and `world.players` is EMPTY on every machine, because `main.js`
+   * calls `attachNet` and `spawnPlayer` after `loadLevelAsync` returns
+   * (measured: `net null, players 0` for a host in a real session and for a
+   * solo player alike). A gate there could only ever answer "alone".
+   *
+   * So it is asked at the two moments that CAN answer — `formUp` and `start`,
+   * both of which run from `World.beginVersus`, which `main.js` calls after the
+   * net is attached and the player is standing.
+   *
+   * THREE WAYS TO HAVE AN OPPONENT, and a session counts even while it is
+   * empty. A host who ignited a session and is waiting for a friend is
+   * deliberately alone for a few seconds — `World.beginVersus` already tells
+   * them so and prints the code to share — and standing their meeting down
+   * under them would be the same silent override this method exists to end.
+   *
+   * @param census how many commanders the caller is about to seat, when it
+   *               knows better than the world does — `formUp` is handed the
+   *               list before anybody is enlisted off it.
+   */
+  meetingOpposed(census = 0) {
+    const w = this.world;
+    if (Math.max(census | 0, this.commanders.length, w?.players?.length ?? 0) > 1) return true;
+    return !!w?.net?.connected;
+  }
+
+  /**
+   * NO OPPONENT AND NO SESSION TO BRING ONE — SO FIGHT THE CAMPAIGN INSTEAD.
+   *
+   * The flag is CLEARED rather than worked around, because `versus` is read in
+   * nine places and every one of them wants the same answer: `update` skips the
+   * whole wave loop on it (so a wave composed under a live flag would never
+   * drain its queue), the HUD prints a front instead of a hostile count,
+   * `World.beginVersus` refuses to seat anybody, and `main.js` chooses between
+   * `beginVersus()` and `director.start(1)` on it. One field, one truth.
+   *
+   * …AND THE WORLD GETS ITS RULES BACK. See `_preMeeting`: `_loadSteps` has
+   * already swapped in `pvpRules({pvp: true})` on the strength of the flag, and
+   * a solo run left under them has friendly fire on for every blaster on the
+   * field. Restoring the object the world was carrying before is exact — that
+   * IS the rule set a Command run without a meeting has.
+   *
+   * Said out loud, ONCE. `this.versus` is the guard: it can only be true the
+   * first time. The player's whole complaint was that a sticky global changed
+   * the mode and nothing anywhere said so.
+   */
+  standDownMeeting() {
+    if (!this.versus) return false;
+    this.versus = false;
+    if (this._preMeeting && this.world) this.world.rules = this._preMeeting;
+    this._preMeeting = null;
+    this.world?.notify?.('THE MEETING STANDS DOWN',
+      'no second commander — fighting the composed wave instead', 'alarm');
+    return true;
+  }
+
   /* ── the wave loop ─────────────────────────────────────────────────── */
 
   /**
@@ -6910,6 +7057,13 @@ export class CommandDirector extends WaveDirector {
     /* THE FIRST ENGAGEMENT'S LEDGER OPENS HERE — the other door into one, the
      * first time round. `closeMuster` is the door for every area after it. */
     this._logAt = this.log.length;
+    /* NEVER OPEN A FIELD WITH NOBODY ON THE OTHER SIDE OF IT. The last gate
+     * before the wave is composed or declined — `formUp` catches the same fact
+     * a moment earlier when `World.beginVersus` runs, and this catches the
+     * callers that reach `start` without it (`World.restartWave`, the direct
+     * `director.start(1)` in the check suites, and a landing that opens a new
+     * area). See `meetingOpposed`. */
+    if (this.versus && !this.meetingOpposed()) this.standDownMeeting();
     /**
      * A MEETING HAS NO WAVE TO COMPOSE, and that is the whole of what versus
      * changes about this class.
@@ -7004,9 +7158,27 @@ export class CommandDirector extends WaveDirector {
    * @param armies from `assignArmies`, so two Jedi are not both the Republic.
    */
   formUp(sides = [], armies = null, players = []) {
+    /**
+     * …AND THERE HAS TO BE SOMEBODY AT THE OTHER END OF THE LINE.
+     *
+     * BEFORE the anchors, not after, and that is the whole reason the gate is
+     * here as well as in `start`. `World.beginVersus` copies `c.anchor` onto the
+     * player's body — so a commander who has been formed up and then stood down
+     * is a solo player teleported 60 m up the plain from the ground the level
+     * put them on, with their army's formation solved around a point nobody
+     * chose. Refusing before the anchor is assigned leaves `c.anchor` undefined
+     * and `beginVersus`' own `if (p.position && c?.anchor)` declines to move
+     * anybody, which is exactly right.
+     *
+     * The census is the list the CALLER is holding: `beginVersus` hands over
+     * every player in the session before a second commander has been enlisted
+     * off it, so `this.commanders.length` is still 1 at this line in a real
+     * two-player meeting too.
+     */
+    const n = Math.max(this.commanders.length, sides.length, players.length);
+    if (this.versus && !this.meetingOpposed(n)) { this.standDownMeeting(); return this.commanders; }
     const t = this.world?.terrain;
     const half = VERSUS_SEPARATION / 2;
-    const n = Math.max(this.commanders.length, sides.length, players.length);
     for (let i = 0; i < n; i++) {
       /**
        * THE SIDE AND THE ARMY GO IN, RATHER THAN BEING PAINTED ON AFTERWARDS.

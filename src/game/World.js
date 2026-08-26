@@ -993,7 +993,7 @@ export class World {
      * spelled here: nothing can kill you in a lesson, so there is nothing for a
      * line to be lost to.
      */
-    const contingent = campaign ? 0 : commandConfig(this.settings).contingent;
+    const contingent = campaign ? 0 : commandConfig(this.settings, this).contingent;
     const leadsArmy = campaign || contingent > 0;
     this.director = leadsArmy
       ? new CommandDirector(this, { pool: L.pool, campaign,
