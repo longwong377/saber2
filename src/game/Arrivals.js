@@ -38,6 +38,18 @@
  * records which of the two it passed on, so a future arrival that quietly
  * satisfies neither cannot be added without the check saying so.
  *
+ * ── AND THE SECOND HALF OF IT, which cost geonosis its whole opening minute.
+ * "A silhouette on the horizon" is a claim about what the RENDERER does with a
+ * body at that range, and this file had no idea where the renderer stops. Past
+ * `Cohorts.L3_AT` there is no silhouette: no outline, no own mesh, one shared
+ * pose. So the sentence above has a ceiling now, and it is `marchBand`:
+ *
+ *     NOTHING IS EVER PLACED BEYOND THE DISTANCE AT WHICH IT STOPS DRAWING
+ *     ITSELF.
+ *
+ * Derived from the renderer's own constant, not from any level's numbers, so
+ * the next map with a wide ring cannot reintroduce the defect.
+ *
  * ── COSTS ─────────────────────────────────────────────────────────────────
  *
  * Every geometry and every material below is built ONCE, at module scope, and
@@ -56,6 +68,10 @@ import * as THREE from 'three';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { spawnClear, bladeClear } from './Spawn.js';
+/* The one number in this file that is not this file's to choose. See
+ * `marchBand` — a placement rule that does not know where the renderer
+ * stops drawing a body is a placement rule that will put one past it. */
+import { L3_AT } from './Cohorts.js';
 import { armyForOrder, opposingArmy } from './Databank.js';
 
 /**
@@ -193,8 +209,72 @@ export const ARRIVAL_LEAD = 2.4;
  * spawn ring. 1.45 puts it at 45–90 m depending on the level, which is past
  * the LOD-2 threshold (62 m) on the wider ones and reads as a shape on the
  * skyline rather than a droid.
+ *
+ * IT IS A MULTIPLE AND THEREFORE NOT A DISTANCE, which is the whole of the
+ * defect `marchBand` exists to close — see below.
  */
 export const MARCH_RADIUS = 1.45;
+
+/**
+ * How much wider the band's far edge is than its near one.
+ *
+ * This was a bare `1.14` written out at three call sites, one of which is
+ * `deliveryIsAnnounced` — i.e. the rule and its own test each carried their
+ * own copy of the number. There is one now, and `marchBand` is the only place
+ * it is applied.
+ */
+export const MARCH_SPREAD = 1.14;
+
+/**
+ * WHERE A MARCH MAY BE PUT DOWN — near edge and far edge, in metres.
+ *
+ * ── THE FLOOR is `ring × MARCH_RADIUS`, and it is load-bearing for the reason
+ * `_sitePoint` gives: a body that simply appears and walks is an acceptable
+ * arrival ONLY because it appears beyond the ring everything else spawns at.
+ *
+ * ── THE CEILING IS THE PART THAT WAS MISSING, and it is the rule this whole
+ * function exists to state:
+ *
+ *     A BODY MUST NEVER BE PLACED BEYOND THE DISTANCE AT WHICH IT STOPS
+ *     DRAWING ITSELF.
+ *
+ * `Cohorts.L3_AT` is that distance — 137.8 m, itself derived from the far
+ * plane the ink prepass gives its own camera. Past it `Enemy._lod` hands the
+ * body to the cohort field: no outline, no own mesh, one shared pose. IMPORTED
+ * FROM THE MODULE THAT OWNS IT rather than retyped, so moving `INK.edgeFade`
+ * moves this bound with it.
+ *
+ * What it cost to not have it: geonosis' `spawnRadius` is `[58, 96]`, the
+ * widest ring in the game by a factor of 1.6, and `96 × 1.45 × 1.14` is 158.7 m.
+ * Every hostile on that level was BORN OUTLINE-LESS, 21 m past the distance the
+ * renderer stops treating it as a body, in the thickest fog in the game, and
+ * then walked 30–45 s to get into view. Measured in Command at 50 s: median
+ * hostile range 110.9 m, 32 of 49 outside the frustum. Nothing about geonosis
+ * was wrong except that its ring is big, which is its premise — so the fix
+ * belongs here, at the placement, and not in that level's table. The next map
+ * with a wide ring gets it for free.
+ *
+ * Measured furthest arrival per level over waves 4–16, before → after, with
+ * `tools/checks/arrivals.mjs` printing the same table: scoria 69.6, mustafar
+ * 85.6, colosseum 82.2, wood 76.0, drifts 99.2, alpine 84.9 — all unchanged,
+ * all already inside 137.8 — and geonosis 158.2 → 137.4. Six of seven levels
+ * are untouched because the clamp only bites where the band already reached
+ * past the renderer. 137.4 is the headless number, at `setback` 0; in game the
+ * boom takes the same placement to 134.7.
+ *
+ * @param ring     the level's own outer spawn radius
+ * @param setback  how far the camera sits behind the anchor these distances are
+ *                 measured from; see `ArrivalDirector._setback`
+ * @returns [near, far] in metres, `far <= L3_AT - setback` always
+ */
+export function marchBand(ring, setback = 0) {
+  const cap = Math.max(L3_AT - setback, 1);
+  /* The band is SCALED down rather than clipped: clipping `far` alone against
+   * a `near` already past the cap would invert the two, and `lerp(rMin, rMax)`
+   * with rMin > rMax draws points outside both. */
+  const far = Math.min(ring * MARCH_RADIUS * MARCH_SPREAD, cap);
+  return [Math.min(ring * MARCH_RADIUS, far / MARCH_SPREAD), far];
+}
 
 /** Ships and gates in flight at once. Three is a busy sky; four is a queue. */
 export const MAX_CONCURRENT = 3;
@@ -280,9 +360,25 @@ export const ARRIVAL_BY_TERRAIN = {
   // than by a probability table so the whole model is one literal you can read.
   drifts: ['dropship', 'dropship', 'march'],
   alpine: ['dropship', 'dropship', 'march'],
-  dunes: ['dropship', 'dropship', 'march'],
-  canyon: ['dropship', 'dropship', 'march'],
-  hangar: ['gate'],
+  /* THREE KEYS ARE GONE: `dunes`, `canyon` and `hangar`. They described the
+   * dune sea, the wash and Hangar Bay Nine, all three deleted from LEVELS at
+   * the player's request — so this table, whose whole job is to answer "how
+   * does the enemy get onto THIS ground", was three fifths a description of
+   * ground that does not exist. `hangar` was also the only `['gate']` entry
+   * here, which made "the game can still open a gate" a fact about a deleted
+   * level; the Colosseum registers the real one from Levels.js.
+   *
+   * They were not merely stale, they were UNREACHABLE-AND-UNTESTABLE: keyed by
+   * a terrain string no level declares, nothing could ever draw from them, and
+   * no check could ever fail on them being wrong. That is the shape §2.3 is
+   * about — a row that cannot be wrong is a row that is not right either.
+   *
+   * The keys cannot be derived from LEVELS here: `Spawn.js` records why this
+   * module must not import `Levels.js` back (Levels.js imports this table to
+   * register its own grounds into it). So the derivation is done in the one
+   * place that can see both tables at once — `tools/checks/arrivals.mjs` now
+   * asserts BOTH directions, every level has an entry AND every entry has a
+   * level, which is what stops the next deleted ground leaving a row here. */
 };
 
 /** Bodies too big to fit in anything: they walk. */
@@ -729,6 +825,28 @@ export class ArrivalDirector {
     return out.copy(p ? p.position : _v3.set(0, 0, 0));
   }
 
+  /**
+   * How far behind the anchor the camera is, in metres.
+   *
+   * WHY THIS EXISTS AND IS NOT ZERO. Every distance in this file is measured
+   * from the PLAYER — `_anchor` — and the threshold `marchBand` clamps against
+   * is measured from the CAMERA: `Enemy._lod` is
+   * `ctx.camera.position.distanceTo(this.position) > L3_AT`. In third person
+   * those differ by the boom, so a body placed at exactly `L3_AT` from the
+   * player and standing in front of them is past `L3_AT` from the camera and
+   * is instanced anyway — the clamp would be 3 m short of the thing it claims.
+   *
+   * Read off the rig that will actually run that test rather than typed here:
+   * `CameraRig.distance` is the boom's unoccluded length (3.05 m walking, 5.1 m
+   * on the death cam, 0 in first person, where the camera IS the anchor and the
+   * setback is genuinely zero). A fixture with no rig gets 0, which leaves the
+   * bound at exactly `L3_AT` — that is the weakest form of the rule and the one
+   * the check measures, so the shipped game is strictly inside what is asserted.
+   */
+  _setback() {
+    return this.world.player?.camera?.distance || 0;
+  }
+
   /** Ground a point on the level's own terrain. */
   _ground(p) {
     const t = this.world.terrain;
@@ -783,10 +901,16 @@ export class ArrivalDirector {
   _open(kind, A, bearing = null, arc = Math.PI / 2, near = null, cap = 0) {
     const anchor = this._anchor(new THREE.Vector3());
     const ring = this._ring();
+    const [mNear, mFar] = marchBand(ring, this._setback());
     const at = near !== null
       ? this._sitePoint(near * 0.55, near, new THREE.Vector3(), bearing, arc)
       : kind === 'march'
-        ? this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3(), bearing, arc)
+        ? this._sitePoint(mNear, mFar, new THREE.Vector3(), bearing, arc)
+        /* A ship and a gate land at 0.72–0.94 of the ring, i.e. INSIDE it, so
+         * they cannot reach the ceiling `marchBand` exists to hold — a level
+         * would have to declare a 147 m outer ring first, and its own spawns
+         * would already be past the renderer by then. The check asserts this
+         * over every level rather than trusting the arithmetic here. */
         : this._sitePoint(ring * 0.72, ring * 0.94, new THREE.Vector3(), bearing, arc);
     const f = new Arrival(this.world, kind, at, anchor, this.group);
     f.bearing = bearing;
@@ -860,7 +984,8 @@ export class ArrivalDirector {
   relocate(e) {
     if (!e || !e.position) return false;
     const ring = this._ring();
-    const at = this._sitePoint(ring * MARCH_RADIUS, ring * MARCH_RADIUS * 1.14, new THREE.Vector3());
+    const [mNear, mFar] = marchBand(ring, this._setback());
+    const at = this._sitePoint(mNear, mFar, new THREE.Vector3());
     if (!at || !Number.isFinite(at.x) || !Number.isFinite(at.z)) return false;
     /* AND THE GIVE-UP CASE HAS TO BE CHECKED, which is the whole reason this
      * returns a boolean at all. `_sitePoint` falls back to the ring itself when
@@ -914,5 +1039,11 @@ export class ArrivalDirector {
  * arrival kind is answerable to this function.
  */
 export function deliveryIsAnnounced(entry, ring = 56) {
-  return entry.lead >= ARRIVAL_LEAD || entry.dist >= ring * MARCH_RADIUS * 0.9;
+  /* OFF `marchBand`, NOT off `ring × MARCH_RADIUS`. This used to recompute the
+   * band's floor itself, which was the same expression until the clamp existed
+   * and then was not: on geonosis the placement is now capped at 134.7 m and
+   * this would still have been demanding 125.3 m of a band whose floor the cap
+   * had pulled to 118.2 — a wave whose bodies were placed correctly and judged
+   * against a bar the placement rule no longer aims at. One band, one reader. */
+  return entry.lead >= ARRIVAL_LEAD || entry.dist >= marchBand(ring)[0] * 0.9;
 }

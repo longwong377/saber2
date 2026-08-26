@@ -281,11 +281,14 @@ export const FALL = 9.0;
  * 70 m out and 46 m up before removing them), which is exactly why this read as
  * a bug rather than as a convention: the same fiction behaved two ways.
  *
- * It cannot be another PHASE, and that is the whole design of it. `World`
- * gates the wave director on `!extraction.active` (World.js:3301) and `active`
- * is `phase !== 'done'`, so a departure phase would hold the horde off for as
- * long as the ship took to climb — a hidden five-second peace at the start of
- * every battle. So the ship is HANDED OFF instead: ownership of the group moves
+ * It cannot be another PHASE, and that is the whole design of it. A phase is a
+ * thing the rest of the game waits on — the camera is the director's, the
+ * passengers are the director's, and `_finish` is what hands the world back —
+ * so five and a half seconds of climb-out spent inside the sequence is five and
+ * a half seconds of the player watching a ship leave instead of fighting. (It
+ * would no longer hold the HORDE off: `holdsHorde` releases the director at the
+ * top of the descent and every beat after it. It would still hold everything
+ * else.) So the ship is HANDED OFF instead: ownership of the group moves
  * to `_departing`, `_finish` runs on the same frame it always did, the fight
  * starts on time, and the transport climbs out on its own as set dressing.
  */
@@ -459,6 +462,135 @@ export class ExtractionDirector {
   get aboard() { return this.phase === 'liftoff' || this.phase === 'transit' || this.phase === 'descent'; }
   /** What the sequence did, beat by beat, in seconds. The check reads it. */
   get log() { return this._log; }
+
+  /**
+   * IS A TRANSPORT COMING DOWN ON THE GROUND THE FIGHT IS ON — or already on it?
+   *
+   * `descent` is the fall onto the ground the NEXT fight happens on, whichever
+   * leg it belongs to: an insertion falls out of the burn onto the only ground
+   * it ever had, and an extraction's descent is on the far side of the swap, so
+   * by the time it starts the level under the hull is the new one. Everything
+   * after it — `opening`, `unload`, `sealing` — is the ramp, and `leg` is 'in'
+   * for all of it (`_descent` sets it on touchdown), which is what separates
+   * those from the identically-named beats on the pad you are LEAVING.
+   */
+  get landing() {
+    if (!this.active) return false;
+    return this.phase === 'descent'
+      || (this.leg === 'in' && this.phase !== 'orbit' && this.phase !== 'entry');
+  }
+
+  /**
+   * MUST THE HORDE WAIT FOR THIS FLIGHT? `World.update`'s wave-director gate.
+   *
+   * It used to be `!extraction.active`, and `active` is `phase !== 'done'` —
+   * so the director was held for the WHOLE sequence, and `beginInsertion` is
+   * the last line of deploy. Measured on a geonosis skirmish: phases ran
+   * orbit@0 entry@7.0 descent@13.5 opening@22.5 unload@24.3 sealing@26.3
+   * done@28.0, and there were ZERO hostiles on the field for all 28 of those
+   * seconds while the HUD printed "50 HOSTILES LEFT". The player, across many
+   * sessions: "When I spawn onto geonosis I still have no enemies spawn in."
+   *
+   * WHAT THE OLD GATE WAS PROTECTING, all of which this keeps:
+   *
+   *   the ground you are LEAVING. An extraction is up to forty seconds and
+   *     `WaveDirector.intermission` is 5.5, so an ungated director opens the
+   *     next engagement's first wave on the pad you are walking away from with
+   *     the commander sat in an aircraft. Every phase from `aftermath` to
+   *     `transit` still holds — that is the whole outbound leg.
+   *   `CommandDirector._troops` fighting `Extraction._walkTroops` for the same
+   *     `wish` field. `_walkTroops` is what files your line up the ramp and it
+   *     runs in `boarding` and the outbound `opening`/`sealing` — all held.
+   *     The inbound tail never calls it: `_unload` puts the line off the ramp
+   *     with `_release`, which clears `_extracting` on the body it frees.
+   *   ORBIT AND ENTRY, which are new and are held for their own reason: the
+   *     ground is 2400 m down and a smudge, the commander cannot see it, and
+   *     everything that sites a body — `World.pickSpawn`, `Arrivals._anchor` —
+   *     is anchored on the commander, who is in space.
+   *
+   * What is released is the LANDING: the ship is over the ground the fight is
+   * on, closing on the pad, and the enemy has the rest of the descent to walk
+   * in. You land INTO a battle. Two things ride on top of this and neither
+   * belongs here — nothing may be PLACED on the pad (`clearOfLZ`), and the
+   * horde waits until the ship is inside the ring the LEVEL spawns at, which is
+   * the level's number and so is asked in `World._hordeRuns`.
+   */
+  get holdsHorde() { return this.active && !this.landing; }
+
+  /**
+   * HOW FAR THE SHIP STILL IS FROM THE PAD, ACROSS THE GROUND, in metres.
+   *
+   * Horizontal and not slant, because every reader of it is asking about where
+   * a BODY may stand. Zero when there is no ship or no pad: an absent aircraft
+   * is not a thing anything has to keep clear of, and answering `Infinity`
+   * would hold the horde off for a flight that has already lost its transport.
+   */
+  get lzOffset() {
+    const at = this.lzPoint, g = this.group;
+    if (!at || !g) return 0;
+    return Math.hypot(g.position.x - at.x, g.position.z - at.z);
+  }
+
+  /**
+   * HOW MUCH GROUND THE SHIP KEEPS TO ITSELF, in metres.
+   *
+   * DERIVED, and from the one number in this file that is already an answer to
+   * "how far apart are a man on the ground and this transport": `PAD_RANGE` is
+   * where an extraction sets the ship down relative to the commander who called
+   * it — far enough that walking to it is a walk. A body standing closer to the
+   * pad than the length of that walk is a body under the hull.
+   *
+   * It is a floor and not a ceiling: every shipped level's `spawnRadius[0]` is
+   * well outside it (26 m on the tightest, 58 on geonosis), so on the levels
+   * that exist this rejects nothing. That is the point of a guard — the levels
+   * that exist are not the ones it is for. The Dojo's ring is [5, 8].
+   */
+  get lzRadius() { return PAD_RANGE; }
+
+  /**
+   * WHERE THE SHIP IS COMING DOWN — and null unless one actually is.
+   *
+   * Scoped to `landing` and NOT to `active`, and that is not tidiness. `down`
+   * is the pad of the flight in progress only from the descent onward: before
+   * it, on an extraction, it is still the pad on the ground you LEFT, and the
+   * level changes under the aircraft in the middle of the cruise. A keep-out
+   * taken from it during `transit` would be a twenty-metre circle drawn on the
+   * NEW level at the OLD level's coordinates — and `_afterRotate` deploys both
+   * armies inside that phase, ten bodies every time, so they are exactly what
+   * would have been pushed out of a place nothing was ever landing on.
+   */
+  get lzPoint() { return this.landing ? (this.down || this.pad || null) : null; }
+
+  /**
+   * KEEP A PLACEMENT OFF THE PAD.
+   *
+   * `World.spawnEnemy` is the one door every body in the game comes through —
+   * the director's direct path, every gunship's `_deliver`, and the sandbox —
+   * so the rule is stated once, here, in the file that owns where the pad is,
+   * and asked once, there. It PUSHES rather than rejects: a delivery has
+   * already been flown and animated by the time it reaches that door, and
+   * refusing it would lose the body rather than move it.
+   *
+   * The push is radial and keeps the bearing, so a squad that came in from the
+   * east is still to the east — just off the pad — and the ground under the new
+   * point is re-read, because the pad is flat and 20 m of Geonosis is not.
+   */
+  clearOfLZ(pos) {
+    const at = this.lzPoint;
+    if (!pos || !at) return pos;
+    const r = this.lzRadius;
+    const dx = pos.x - at.x, dz = pos.z - at.z;
+    const d = Math.hypot(dx, dz);
+    if (d >= r) return pos;
+    /* Straight on top of the pad has no bearing to keep, so it is given one
+     * rather than dividing by zero — the ship's own heading, which puts the
+     * body off the nose instead of in a corner the pad picker never uses. */
+    const a = d > 1e-3 ? Math.atan2(dz, dx) : this.padYaw;
+    const x = at.x + Math.cos(a) * r, z = at.z + Math.sin(a) * r;
+    const out = pos.clone ? pos.clone() : new THREE.Vector3(pos.x, pos.y, pos.z);
+    out.set(x, this.world?.terrain ? this.world.terrain.height(x, z) : pos.y, z);
+    return out;
+  }
 
   /**
    * TAKE THE GROUND CHANGE, or decline it.

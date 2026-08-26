@@ -2933,6 +2933,14 @@ export class World {
   addDoor(d) { this.doors.push(d); return d; }
 
   spawnEnemy(type, pos) {
+    /* NOTHING IS PUT DOWN ON THE PAD. This is the one door every body in the
+     * game comes through — the director's direct path, every gunship's
+     * `_deliver`, the sandbox — which is why the rule is asked here rather than
+     * at each of them, and why it is ASKED rather than restated: the extraction
+     * owns where the ship is coming down and how much room it needs, so it owns
+     * the push. See `ExtractionDirector.clearOfLZ`. Costs one `hypot` per body
+     * spawned, and only while a flight is up: `lzPoint` is null otherwise. */
+    pos = this.extraction?.clearOfLZ(pos) ?? pos;
     const e = new Enemy(this, type, pos);
     this.enemies.push(e);
     /**
@@ -2969,7 +2977,17 @@ export class World {
   pickSpawn(type) {
     const L = this.level;
     const [rmin, rmax] = L.spawnRadius || [34, 56];
-    const anchor = this.player ? this.player.position : _v1.set(0, 0, 0);
+    /* THE GROUND THE COMMANDER IS ABOUT TO STAND ON, while they are still in
+     * the air above it. The director now runs through the landing (see the gate
+     * in `update`), and for those nine seconds `player.position` is a seat in a
+     * bay: measured on a geonosis insertion it opens the descent 150 m from the
+     * pad and 900 m up, so a ring drawn round it puts the wave up to 246 m from
+     * where the ramp is going to come down. The LZ is the anchor the whole
+     * flight is aimed at, so it is the anchor the wave is drawn round; the
+     * moment `_release` puts the commander on the sand, `riding` clears and
+     * this is their own position again — which is the same point. */
+    const flying = this.player?.riding && this.extraction?.landing ? this.extraction.lzPoint : null;
+    const anchor = flying || (this.player ? this.player.position : _v1.set(0, 0, 0));
     for (let i = 0; i < 24; i++) {
       const a = rng() * TAU;
       const r = lerp(rmin, rmax, rng());
@@ -3841,14 +3859,12 @@ export class World {
     // 8 — director (the host owns the horde; clients receive it)
     // …but not once the run is over: a director that keeps spawning at a corpse
     // is the reason `running` used to be switched off here. See onPlayerDeath.
-    /* …AND NOT WHILE THE ARMY IS BEING FLOWN OFF THE GROUND. An extraction is
-     * up to forty seconds long, and `WaveDirector.intermission` is five and a
-     * half — so without this gate the next engagement's first wave would open
-     * on the ground you are leaving, with the commander sat in an aircraft.
-     * It also stops `CommandDirector._troops` fighting `Extraction._walkTroops`
-     * for the same `wish` field. Everything the director owns resumes on the
-     * far side, on the new ground, exactly as it does after a plain rotate. */
-    if (this.netMode !== 'client' && !this.over && !this.extraction?.active) this.director.update(dt, ctx);
+    /* …AND NOT WHILE THE ARMY IS BEING FLOWN OFF THE GROUND — but the LANDING
+     * is not that, and for as long as this said `!extraction.active` it was
+     * treated as if it were. `active` is `phase !== 'done'` and `beginInsertion`
+     * is the last line of deploy, so every fighting mode opened with 28 seconds
+     * of empty field under a HUD reading "50 HOSTILES LEFT". See `_hordeRuns`. */
+    if (this.netMode !== 'client' && !this.over && this._hordeRuns()) this.director.update(dt, ctx);
     /* The meeting's clock, and it is outside the director because it is not the
      * director's: `DuelMatch` is driven by facts about the WHOLE field — who
      * has anybody left standing — and the host owns it whether or not there is
@@ -3886,6 +3902,41 @@ export class World {
 
     this.engine.fitShadows(focus);
     this.engine.setRadial(this.player?.senseActive ? 0.35 : 0);
+  }
+
+  /**
+   * MAY THE WAVE DIRECTOR HAVE THIS FRAME while a transport is in the air?
+   *
+   * TWO OWNERS, ONE ANSWER. `ExtractionDirector.holdsHorde` says which PHASES
+   * of a flight the horde has to wait for — the whole outbound leg, plus the
+   * orbit and the entry burn — and its own note gives the four things that gate
+   * has always protected. This adds the one clause that is the LEVEL's rather
+   * than the flight's, and it cannot live over there because `spawnRadius` is
+   * the level's number:
+   *
+   *     THE HORDE IS CALLED WHEN THE SHIP IS OVER THE GROUND IT IS LANDING ON.
+   *
+   * Everything that sites a body measures from the commander — `pickSpawn`
+   * above, `Arrivals._anchor`, and therefore `marchBand` — and for the first
+   * half of the fall the commander is a seat 150 m downrange of the pad, so a
+   * ring drawn round them is a ring drawn round the wrong place. `marchBand`
+   * caps a placement at the distance a body stops drawing itself (137.8 m,
+   * `Cohorts.L3_AT`) for the reason its own note gives, and that cap is
+   * measured from the anchor: releasing at the top of the fall put 13 of the
+   * first 25 bodies more than 137.8 m FROM THE PAD — half the opening wave
+   * arriving as cohort silhouettes on ground the player was about to be stood
+   * on, which is the exact defect that note says cost geonosis its opening
+   * minute. One ring is the tolerance, and it is the level's own ring, so a
+   * tight arena waits longer and a wide plain waits less.
+   *
+   * MEASURED, geonosis skirmish, hostiles alive when the ramp opens: 0 before,
+   * 19 after, nearest 26 m, and 3 of them beyond the draw cap instead of 13.
+   */
+  _hordeRuns() {
+    const X = this.extraction;
+    if (!X?.active) return true;
+    if (X.holdsHorde) return false;
+    return X.lzOffset <= (this.level?.spawnRadius?.[1] ?? 56);
   }
 
   _bladeEntries() {

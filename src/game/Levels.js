@@ -5295,6 +5295,21 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
    * top of you. A wave you watch advance is the wave this level is for. So it is
    * two marches to one ship — and the ship is still there because a gunship
    * flaring in over a flat plain is the other image these plates are full of.
+   *
+   * ── THIS ROW WAS ONLY HONEST ONCE THE MARCH HAD A CEILING, and for a while
+   * it was not. `spawnRadius` here is `[58, 96]`, the widest ring in the game
+   * by a factor of 1.6, and the march band was an unbounded `ring × 1.45 ×
+   * 1.14` — 139–159 m. `Cohorts.L3_AT` is 137.8 m, so two arrivals in three on
+   * this level were BORN PAST THE DISTANCE A BODY STOPS DRAWING ITS OWN
+   * OUTLINE: no silhouette, no mesh of its own, in the thickest fog in the
+   * game, for the 30–45 s it took to walk into view. Measured in Command at
+   * 50 s: median hostile range 110.9 m, 32 of 49 outside the frustum. The
+   * argument above was right and the placement made it unwatchable.
+   *
+   * `Arrivals.marchBand` clamps that band against `L3_AT` now — the fix is
+   * there and not here, because nothing about this level was wrong except that
+   * its ring is big, which is its premise. Two marches to one ship stands, and
+   * the walk it buys is 121–138 m of a body you can actually see.
    */
   geonosis: ['march', 'march', 'dropship'],
   /* Open sky over a lava field, and the ground between the rivers is broken
