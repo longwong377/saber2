@@ -521,8 +521,16 @@
           are composed against the army standing in them, so more men mean a bigger fight, not an easier one;
           losses are replaced one man every two waves cleared, never above the number set here. <b>0 is off.</b>
           Command, Skirmish and Campaign ignore this — their army comes with the mode.</p>
-        <label class="check"><input type="checkbox" id="opt-command-versus"> THE MEETING &mdash; fight another commander</label>
-        <p class="hint"><b>Command only, and needs a session.</b> A <b>meeting engagement</b> is what two
+        <!-- The word is an element because Menu._syncVersusBox rewrites it, the
+             same way the bloom box's is: this setting is a persisted global and
+             a meeting's opposing army is deployed by a PERSON, so a solo player
+             who ticked it in a session last week got 0 hostiles for a whole run
+             and no control anywhere said why. -->
+        <label class="check" id="opt-command-versus-row"><input type="checkbox" id="opt-command-versus">
+          <span id="opt-command-versus-label">THE MEETING &mdash; fight another commander</span></label>
+        <p class="hint"><b>Command only, and needs a session.</b> With nobody to meet &mdash; no session, and
+          no second commander in it &mdash; <b>the meeting stands down</b> and Command fights its own
+          composed campaign instead; it says so on the field when it does. A <b>meeting engagement</b> is what two
           armies have when neither had time to dig in — and it is what Command becomes with this on: one
           battle against another player's army instead of five areas against a composed horde, two rosters
           deployed 120&nbsp;m apart and walking toward each other.

@@ -64,6 +64,55 @@ import { mergeGeos } from './Props.js';
 const LEN = 1.80;
 
 /**
+ * WHAT ONE MAN'S FALL IS WORTH TO THE GROUND'S LONG MEMORY.
+ *
+ * ── THE GROUND DID NOT KNOW ANYBODY HAD DIED ON IT ──────────────────────
+ *
+ * `Terrain.scars` is the field that "does not decay and is not a window", the
+ * one thing on the ground that says a war happened here, and it is written by
+ * bolts (`_boltHitTest`), craters (`Terrain.crater`) and the front's own
+ * dressing (`Front.burnBand`). MEASURED on colosseum, five men killed at their
+ * feet and the field read back at each body's own resting place:
+ *
+ *     scorch at the five death sites   0.000  0.000  0.000  0.000  0.000
+ *
+ * Nothing. A saber kill lands no bolt and digs no crater, so the ground a
+ * company was cut down on was indistinguishable from ground nobody had ever
+ * stood on. The burnt half of a front was therefore a fact about the DRESSING
+ * — laid once at load by `burnBand` — and never a record of the fight the
+ * player actually had.
+ *
+ * ── AND WHY IT IS A SMUDGE PER MAN AND NOT A BURN ───────────────────────
+ *
+ * `SCAR_STACK` is 0.30 and its own note reads: "it takes four passes over the
+ * same ground to blacken it, so what the field draws is where the fighting
+ * CONCENTRATED". This is the same argument one rung down. A body is not a
+ * shell — it burns nothing by itself — and what actually marks that square
+ * metre is the fight that put him there: the bolts that missed, the blade, and
+ * the men who went over the spot. So one man is worth half of what a single
+ * pass is, which MEASURED against the field's own stacking is:
+ *
+ *     bodies falling on one 1.6 m cell    1     2     4     7     8
+ *     scorch the ground reads back      0.15  0.30  0.60  1.00  1.00
+ *
+ * One man is a smudge you would not notice; seven fallen within a body's length
+ * of each other is black ground, which is what a heap is. The mark reads 1.6 m
+ * either side of him and nothing at 2.4 m, measured across the same field, so a
+ * line of men who fell where they stood draws a line and men scattered over a
+ * hillside draw nothing — which is the distinction worth having.
+ *
+ * The radius is a man's own length rather than a second number, and it costs
+ * **1.34 µs** a body (20 000 writes, same ground): six figures a wave of the
+ * field's 1.6 m cells, once per death, against a frame that has 33 000 µs.
+ *
+ * Over a long drive — 894 deaths on the colosseum — the ground goes from 206
+ * marked cells to 812, and `world.update` measures 0.689 ms before and 0.650
+ * after, which is to say the difference is under the noise on a 300-frame
+ * sample. The record is four times the size and costs nothing to keep.
+ */
+const LIE_SCORCH = 0.5;
+
+/**
  * HOW FAR INTO THE GROUND A BODY LIES, in metres.
  *
  * A man on sand is IN it by a few centimetres and — more to the point — a prone
@@ -300,6 +349,8 @@ export function addFallen(world, opts = {}) {
 
 /** Exported so a check cannot keep a second copy of how long a man is. */
 export const FALLEN_LENGTH = LEN;
+/** …and of what one man's fall is worth to the ground. See `LIE_SCORCH`. */
+export { LIE_SCORCH as FALLEN_SCORCH };
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE FIELD A FIGHT FILLS — where a corpse goes when the budget is done  */
@@ -509,6 +560,23 @@ export class FallenField {
     im.instanceMatrix.needsUpdate = true;
     if (im.instanceColor) im.instanceColor.needsUpdate = true;
     im.computeBoundingSphere?.();
+    /**
+     * AND THE GROUND REMEMBERS HIM AFTER THE RING HAS FORGOTTEN.
+     *
+     * See `LIE_SCORCH`. This is the one write in this file that OUTLIVES the
+     * figure: the ring above recycles a slot at the 521st casualty and the
+     * field is emptied on a wave restart, but `Terrain.scars` neither ages nor
+     * scrolls, so where a fight concentrated stays dark for the rest of the
+     * level. It is the same door `Front.burnBand` lays the front's dressing
+     * through, which is why the two stack instead of arguing: a swath the
+     * dressing burnt and a swath the player filled are the same mark, and
+     * ground that got both is darker than ground that got either.
+     *
+     * `Terrain.tick` pushes the field to the GPU on its own 0.1 s clock, so
+     * nothing here flushes — a flush per body would be one texture upload per
+     * casualty, which is the cost `Corpses.js` retires bodies to avoid.
+     */
+    T?.scorch?.(x, z, LEN, LIE_SCORCH);
     return true;
   }
 

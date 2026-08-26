@@ -29,13 +29,29 @@
  *     and ZERO inside the camera frustum six seconds later. Check 6.
  */
 
+import { readFile } from 'node:fs/promises';
 import { clocked } from './_shared.mjs';
 import { bootWorld, idleInput } from './_coop.mjs';
+import { makeDocument } from './_page.mjs';
+import { Menu, DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
+import { MODES } from '../../src/game/Waves.js';
 import {
-  MassField, Rank, layBattle, RANK_MEN, RANK_COLS, PROMOTE, STAND_OFF, BREAK_AT, HIT, MUZZLE,
+  MassField, Rank, layBattle, openFront,
+  RANK_MEN, RANK_COLS, PROMOTE, STAND_OFF, BREAK_AT, HIT, MUZZLE,
 } from '../../src/game/Mass.js';
 
 const STEP = 1 / 60;
+const read = (f) => readFile(new URL('../../' + f, import.meta.url), 'utf8');
+
+/**
+ * WHICH MODES FIELD A MASS BATTLE, ASKED OF THE TABLE THAT OWNS THEM.
+ *
+ * Not `'thefront'`. `Mass.openFront` names no mode either — it reads
+ * `MODES[mode].massBattle` for the size, the same way `World.loadLevel` reads
+ * `objectives` and `fireMissions` — so the day a second mass mode is authored
+ * it is checked by these rows and not by a copy of them.
+ */
+const MASS_MODES = Object.entries(MODES).filter(([, M]) => M.massBattle);
 
 /** A world with a donor body per side already standing on it. */
 async function field(THREE) {
@@ -279,5 +295,260 @@ export async function run({ check, assert }) {
       + 'the army exists and the battle does not, which is the whole complaint');
     b.world.unload?.();
     return `${seen} of ${total} men inside the frame from the deploy spot, both armies`;
+  });
+
+  /* ═════ 6. …and a MODE actually deploys into it ═══════════════════════ */
+
+  /**
+   * EVERY CHECK ABOVE THIS LINE BUILT ITS OWN BATTLE, and for the whole life of
+   * this file that was the only kind there was: `grep -rn 'MassField\|layBattle'
+   * src/` outside Mass.js returned ZERO. Seven green rows over a tier no player
+   * could reach — which is the same defect as the empty camera frustum in check
+   * 5, one layer further out. A suite that only ever calls the machinery itself
+   * cannot tell a wired mode from an unwired one.
+   *
+   * So these two boot the MODE. The battle is laid by nothing this file typed:
+   * the world builds the mode's own director, `director.start(1)` is the line
+   * `main.js` deploys every non-Command mode with, `openFront` is the one door
+   * beside it, and the per-frame drive is `world.update` and nothing else.
+   */
+
+  check('the front: the mode is on the Deploy panel, built from the table and nothing else', async () => {
+    /**
+     * THE MENU BUILDS ITSELF OUT OF `MODES`, so a correct row needs no Menu.js
+     * edit — and that sentence is worth exactly as much as a check of it.
+     * `Menu._buildModes` walks `Object.entries(MODES)`, and this asserts the
+     * card, its name, its tooltip and the fact that pressing it writes the
+     * setting the deploy path reads.
+     *
+     * SYNCHRONOUS from `install()` to `close()`, for the reason
+     * `tools/checks/menu.mjs` gives at length: a fake `document` is a global,
+     * and a check that awaits while one is installed hands its page to whatever
+     * runs next.
+     */
+    const html = await read('index.html');
+    assert(MASS_MODES.length > 0,
+      'no mode declares `massBattle` — the mass tier is unreachable again and the rest of '
+      + 'this file is measuring a machine nobody can deploy into');
+    const doc = makeDocument(html);
+    const restore = doc.install();
+    try {
+      const settings = { ...structuredClone(DEFAULT_SETTINGS) };
+      const menu = new Menu(settings, { onDeploy() {} });
+      const cards = [...doc.getElementById('mode-list').children];
+      assert(cards.length === Object.keys(MODES).length,
+        `${cards.length} cards for ${Object.keys(MODES).length} modes — the panel is not the table`);
+      const rows = [];
+      for (const [key, M] of MASS_MODES) {
+        const card = cards.find((c) => c.querySelector('b')?.textContent === M.name);
+        assert(card, `'${key}' is in MODES and has no card on the Deploy panel`);
+        /* The tooltip is what the player reads before they pick it, and it is
+         * the row's own blurb — see `_buildModes`, which is why moving the text
+         * off the table would take `claims.mjs`'s subject away. */
+        assert(card.dataset.tip && M.blurb.startsWith(card.dataset.tip.replace(/\.$/, '')),
+          `the ${M.name} card's tooltip is not its blurb: "${card.dataset.tip}"`);
+        menu.selectMode(key);
+        assert(settings.mode === key, `pressing the ${M.name} card set mode='${settings.mode}'`);
+        assert(card.className.includes('sel'), `the ${M.name} card does not light when picked`);
+        /* AND THE GROUND IS STILL THE PLAYER'S. A mass battle is laid around
+         * wherever the player lands, so unlike Command it owes no
+         * `fixedTheatre` — and a row that declared one while the column stayed
+         * live is the exact defect `_syncTheatre` was written for. */
+        assert(!M.fixedTheatre === !doc.getElementById('level-list').classList.contains('inert'),
+          `${M.name} greys the Theatre column and does not say why`);
+        rows.push(`${M.name} (${key})`);
+      }
+      return `${rows.join(', ')} on the Deploy panel, ${cards.length} cards from ${Object.keys(MODES).length} rows, no Menu.js edit`;
+    } finally { restore(); }
+  });
+
+  check('the front: booting the MODE puts hundreds a side on the field, in frame, with real bodies at your elbow', async () => {
+    /**
+     * THE WHOLE MODE, END TO END, AND NOTHING HAND-PLACED.
+     *
+     * Four claims, and they are four because a mass battle can fail as any one
+     * of them while looking perfect in the other three:
+     *
+     *   HUNDREDS A SIDE. The card says "hundreds against hundreds" and that is
+     *     a claim, so it is held to the count rather than trusted. The expected
+     *     figure is derived from the mode's own `massBattle.blocks` × `RANK_MEN`
+     *     — type a smaller battle into the table and this row moves with it, but
+     *     a battle that no longer answers the word on the card fails.
+     *   BOTH SIDES. Half a battle is what every previous attempt produced.
+     *   IN THE FRAME. Check 5's subject, now through the mode: 49 hostiles and
+     *     zero in the frustum is what a shipped deploy actually did.
+     *   AND REAL BODIES AT YOUR ELBOW. `PROMOTE` is 90 m and a rank is never
+     *     planted inside it, so a mass-only mode would be ninety metres of empty
+     *     ground with a war on the far side of it. The mode runs the ordinary
+     *     wave director as well, and this is the assertion that it does.
+     *
+     * THE DOOR IS `main.js`'s, AND THAT IS ASSERTED TOO. A check that opens the
+     * front itself would pass just as green with the deploy path never calling
+     * it — which is the exact state this whole section was written to end — so
+     * the source is read for the call and for the fact that it is made off the
+     * declared field rather than a mode name.
+     */
+    const main = await read('src/main.js');
+    assert(/MODES\[settings\.mode\]\?\.massBattle\)\s*openFront\(world\)/.test(main),
+      'src/main.js does not open a front off `MODES[...].massBattle` — the mode declares a battle '
+      + 'and the deploy path never lays one, which is the defect this check exists for');
+
+    const [key, M] = MASS_MODES[0];
+    const { world } = await bootWorld({ level: 'geonosis', settings: { quality: 'low', mode: key } });
+    const input = idleInput();
+    /* The two lines of the deploy path, in the order `main.js` runs them. */
+    world.director.start(1);
+    const front = openFront(world);
+    assert(front, `openFront refused ${key}, which declares massBattle`);
+    assert(!front.laid, 'the front laid its battle before a frame was stepped');
+
+    /* AND FROM HERE NOTHING BUT THE WORLD'S OWN FRAME. If `world.props` ever
+     * stops being driven, or the front stops being registered on it, every
+     * number below goes to zero.
+     *
+     * A HALF SECOND, not a frame: the front will not bake a cohort off a mould
+     * whose bones have not reached it yet, which takes a handful of frames on
+     * every body in the game (see `Front._posed`). The bound is loose enough
+     * not to measure the settle and tight enough that "the battle is there when
+     * you land" still means what it says. */
+    let frames = 0;
+    while (!front.laid && frames < 30) { world.update(STEP, input); frames++; }
+    const f = world.mass;
+    assert(f && front.laid, `${frames} frames after deploy there is still no battle`);
+
+    const want = M.massBattle.blocks * RANK_MEN;
+    const mine0 = f.count(0), theirs0 = f.count(1);
+    assert(mine0 >= want * 0.9 && theirs0 >= want * 0.9,
+      `${mine0} v ${theirs0} of ${want} a side laid — the mode's own declaration is not what reached the ground`);
+    assert(/hundreds against hundreds/i.test(M.blurb),
+      `the ${M.name} card no longer says what this row holds it to: "${M.blurb}"`);
+    assert(mine0 >= 200 && theirs0 >= 200,
+      `the card says "hundreds against hundreds" and the mode fielded ${mine0} against ${theirs0}`);
+
+    /* THE PICTURE, on the frame the player lands. The camera is the world's own
+     * and it is pointed down the axis the front laid itself on — which is the
+     * player's own facing, so this is the lay-out's promise checked rather than
+     * a camera moved until the answer came out right. */
+    const cam = world.engine?.camera;
+    assert(cam, 'no camera to look through');
+    cam.position.copy(world.player.position).setY(world.player.position.y + 1.6);
+    cam.lookAt(world.player.position.clone().addScaledVector(front.axis, 100)
+      .setY(world.player.position.y + 1.6));
+    cam.updateMatrixWorld(true);
+    const m = cam.matrixWorld.elements;
+    const fx = -m[8], fy = -m[9], fz = -m[10];
+    const halfV = (cam.fov * Math.PI / 180) / 2;
+    const halfH = Math.atan(Math.tan(halfV) * cam.aspect);
+    let seen = 0, total = 0;
+    for (const r of f.ranks) for (const man of r.men) {
+      if (!man.alive) continue;
+      total++;
+      const vx = man.position.x - cam.position.x;
+      const vy = man.position.y - cam.position.y;
+      const vz = man.position.z - cam.position.z;
+      const len = Math.hypot(vx, vy, vz) || 1;
+      if ((vx * fx + vy * fy + vz * fz) / len >= Math.cos(halfH * 1.05)) seen++;
+    }
+    assert(seen > total * 0.5,
+      `${seen} of ${total} men are in front of the camera on the frame you land`);
+    assert(frames < 30, `the battle took ${frames} frames to appear after the player landed`);
+
+    /**
+     * …AND THEY ARE DRAWN WHERE THEY STAND, which no count could ever say.
+     *
+     * `CohortField._cohortFor` freezes the merged skin out of `bone.matrixWorld`
+     * against the mould's `position`. An `Enemy` spawned this frame has been
+     * through no `update`, so its bones are all still at the ORIGIN while its
+     * `position` is wherever it was put — measured, a body spawned 70 m out is
+     * posed on frame 1 and not before. A battle laid on the frame its moulds
+     * were spawned therefore bakes geometry displaced by that whole distance,
+     * and in a real browser three hundred men were drawn FLOATING IN THE AIR
+     * over the plain while every `man.position` in this file was correct. Every
+     * headless number above this line passed while the picture was nonsense,
+     * which is exactly the class of defect check 5 exists for.
+     *
+     * The frozen parts are in the body's own frame, so their bounding box is
+     * centred on the man. Anything else is the bake being taken from a rig that
+     * was somewhere the body was not.
+     */
+    let off = 0;
+    for (const c of world.cohorts.cohorts.values()) {
+      if (!c || !c.members.size) continue;
+      for (const im of c.meshes) {
+        im.geometry.computeBoundingBox();
+        const bb = im.geometry.boundingBox;
+        off = Math.max(off, Math.hypot((bb.min.x + bb.max.x) / 2,
+          (bb.min.y + bb.max.y) / 2, (bb.min.z + bb.max.z) / 2));
+      }
+    }
+    assert(off < 3,
+      `a cohort's frozen skin is centred ${off.toFixed(1)} m from the body's own origin — it was `
+      + 'baked off a rig that had never been posed, and every man in it is drawn that far from '
+      + 'where he is standing');
+
+    /**
+     * …AND NOT ONE MAN OF THE MASS CARRIES A RIG, which is the rule the two
+     * defects above both came out of.
+     *
+     * `CohortField.step` picks a cohort MEMBER and writes its bones into the
+     * gait palette against ITS OWN `position` and `facing`; the shader then
+     * cancels the instance matrix against that same canon. So a member whose
+     * rig belongs to a body standing somewhere else drags every instance
+     * wearing that slot to where the rig is — and the palette is per cohort
+     * KEY, which real distant bodies of the same type share, so it is not a
+     * mistake the mass could keep to itself. A man with no `rig` and no `_l2`
+     * cannot be picked (`capture` returns on both), which makes the rule
+     * structural rather than a matter of ordering.
+     */
+    let rigged = 0;
+    for (const r of f.ranks) for (const man of r.men) if (man.rig || man._l2) rigged++;
+    assert(rigged === 0,
+      `${rigged} of the mass's men carry a rig or a merged skin that is not theirs — `
+      + 'any one of them can be picked to pose the cohort, and every man in it is then drawn '
+      + 'wherever that rig is standing');
+    let cohorts = 0;
+    for (const c of world.cohorts.cohorts.values()) if (c?.pose && c.members.size) cohorts++;
+
+    /* Now let the near fight arrive, and the far one exchange fire. */
+    const t = [];
+    for (let i = 0; i < 900; i++) {
+      const t0 = process.hrtime.bigint();
+      world.update(STEP, input);
+      t.push(Number(process.hrtime.bigint() - t0) / 1e6);
+    }
+    t.sort((x, y) => x - y);
+    const med = t[t.length >> 1];
+
+    assert(cohorts >= 2, `${cohorts} instanced cohorts — both armies are not being drawn by the mass rung`);
+
+    /* THE NEAR FIGHT. Real `Enemy` bodies inside `PROMOTE`, which is the half of
+     * the mode the mass deliberately cannot supply. */
+    const p = world.player.position;
+    const near = world.enemies.filter((e) => e && !e.dead && e.position.distanceTo(p) < PROMOTE);
+    assert(near.length >= 3,
+      `${near.length} real bodies inside ${PROMOTE} m fifteen seconds in — the mass is fighting the `
+      + 'battle and the player has nothing to swing at, which is half the mode missing');
+
+    /* AND IT IS STILL A BATTLE, not a light show: both lines have bled. */
+    const mine1 = f.count(0), theirs1 = f.count(1);
+    assert(mine1 < mine0 && theirs1 < theirs0,
+      `no casualties on one side in fifteen seconds (${mine0}→${mine1} v ${theirs0}→${theirs1})`);
+
+    /**
+     * AND THE WHOLE FRAME IS AFFORDABLE. The bar is check 5's — the real
+     * thing's own measured cost in this repo, ~0.13 ms a body — spent here on
+     * the mass PLUS the near fight's real bodies PLUS the entire world update,
+     * which is the number a player actually pays.
+     */
+    const n = mine1 + theirs1;
+    const asBodies = n * 0.13;
+    assert(med < asBodies * 0.5,
+      `${n} men cost ${med.toFixed(1)} ms of frame against ${asBodies.toFixed(1)} ms for the same `
+      + 'count of real bodies — the tier is not buying anything');
+
+    world.unload?.();
+    return `${M.name}: ${mine0} v ${theirs0} = ${mine0 + theirs0} laid ${frames} frames in, ${seen}/${total} in frame, `
+      + `${near.length} real bodies inside ${PROMOTE} m, ${n} men at ${med.toFixed(2)} ms median `
+      + `(vs ~${asBodies.toFixed(0)} ms as bodies), ${cohorts} cohorts, bake centred ${off.toFixed(2)} m off`;
   });
 }

@@ -89,6 +89,14 @@
 
 import * as THREE from 'three';
 import { ARCHETYPES } from './Enemy.js';
+/* The mode's size is declared on the mode, not here — see `openFront`. */
+import { MODES } from './Waves.js';
+/* Whose uniform each line wears is the game's own three-clause rule, asked
+ * rather than restated — see `Front.sides`. */
+import { armyToLead, enemyOf } from './Command.js';
+/* Where the instanced rung starts. The moulds have to stand past it — see
+ * `MOULD_FLANK`. */
+import { L3_AT } from './Cohorts.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The dial                                                              */
@@ -316,18 +324,70 @@ export class MassField {
     return r;
   }
 
-  /** Give every living man of `r` a cohort instance. */
+  /**
+   * Give every living man of `r` a cohort instance.
+   *
+   * ── AND A MAN NEVER CARRIES THE MOULD'S RIG, which he used to ────────
+   *
+   * This copied `donor.rig` and `donor._l2` onto every man, and the two of them
+   * are exactly what `CohortField` reads to POSE a cohort — so both halves of
+   * the drawing were taken from a body standing somewhere else:
+   *
+   *   THE FREEZE. `_cohortFor` bakes the static geometry with `freezeSkin(skin,
+   *     e.position, e.facing)` — the MAN's coordinates — off `bone.matrixWorld`,
+   *     which is the MOULD's. Measured on a laid battle: the frozen skin came
+   *     out centred 111 m from its own origin, and in a browser three hundred
+   *     men were drawn floating in the air over the plain while every
+   *     `man.position` in this file was correct.
+   *   THE CAPTURE. `capture(pose, man)` computes `canon(man.position) ·
+   *     mouldBone.matrixWorld · inv`, and the shader's own algebra then cancels
+   *     the instance matrix against that canon — so a captured slot draws every
+   *     man wearing it AT THE MOULD. The palette is per cohort KEY, which real
+   *     distant bodies of the same type share, so it is not even a mistake the
+   *     mass could keep to itself.
+   *
+   * Both go away with one rule: a man carries a TYPE and nothing else. The bake
+   * is taken once per key off the mould at the mould's own coordinates
+   * (`_bake`), and the gait palette is filled by real bodies of that type
+   * standing in the instanced band — which is what the moulds are placed to be.
+   * A man with no rig can never be picked to pose one.
+   */
   _joinAll(r) {
     const F = this.world?.cohorts;
     if (!F) return;
     const donor = this._donorFor(r.type);
     if (!donor) return;
+    this._bake(F, donor);
     for (const m of r.men) {
       if (!m.alive || m._l3) continue;
       m.type = donor.type; m.mod = donor.mod; m.bodyScale = donor.bodyScale;
-      m.rig = donor.rig; m._l2 = donor._l2;
       F.join(m);
     }
+  }
+
+  /**
+   * MAKE THE COHORT ONCE, AT THE MOULD'S OWN COORDINATES.
+   *
+   * `CohortField._cohortFor` bakes on the FIRST join of a key and caches
+   * forever after, so whoever joins first decides where the frozen geometry
+   * sits. That must be a body whose `position`, `facing` and bones agree — a
+   * real one — and the men do not qualify. So a seed carrying the mould's
+   * coordinates goes in first and is taken straight back out; every man after
+   * it lands in a cohort that is already correct and is only ever asked for a
+   * matrix.
+   *
+   * Nothing happens when the key already exists, which is the common case:
+   * twenty-four ranks share two moulds.
+   */
+  _bake(F, donor) {
+    if (!donor.rig || F.cohorts.has(F.keyFor(donor))) return;
+    const seed = {
+      type: donor.type, mod: donor.mod, bodyScale: donor.bodyScale,
+      rig: donor.rig, _l2: donor._l2,
+      position: donor.position.clone(), facing: donor.facing,
+      animator: { moving: false, phase: 0 },
+    };
+    if (F.join(seed)) F.leave(seed);
   }
 
   /**
@@ -571,6 +631,7 @@ export class MassField {
     }
   }
 
+
   /** Standing men, by side. What a HUD would print. */
   count(team) {
     let n = 0;
@@ -639,4 +700,443 @@ export function layBattle(field, opts = {}) {
     if (theirs) out.theirs.push(theirs);
   }
   return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE FRONT — the mode, and the seam it is driven on                    */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * EVERYTHING ABOVE THIS LINE WAS UNREACHABLE, which is the defect this section
+ * closes and the one the player was told about.
+ *
+ * `MassField` was measured, checked at 7/7 and called by nothing but its own
+ * suite: `grep -rn 'MassField\|layBattle' src/` outside this file returned
+ * ZERO. A tier that no mode deploys into is a tier the player cannot see, which
+ * is the same complaint the header opens with wearing a different hat.
+ *
+ * ── THE MODE IS TWO FIGHTS AT ONCE, AND THAT IS THE WHOLE POINT ──────────
+ *
+ * `PROMOTE` is 90 m and this file refuses to plant a rank inside it, because
+ * the seam between a rank and a real body is not solved (see that constant).
+ * So a mode that fielded ONLY mass would leave the player standing in ninety
+ * metres of empty ground watching a war they cannot reach.
+ *
+ * The mode therefore runs the ORDINARY WAVE DIRECTOR for the near fight and
+ * the mass for the far one. Nothing here starts the director or knows how — it
+ * is `main.js`'s `director.start(1)`, the same line every non-Command mode
+ * deploys through — and nothing here is a second escalation. You are one Jedi
+ * in a real battle: full bodies, physics, ragdolls and dismemberment inside 90
+ * m, and hundreds of instanced men firing real bolts past you outside it.
+ *
+ * ── THE PER-FRAME SEAM IS `world.props`, WHICH ALREADY EXISTS ────────────
+ *
+ * `World.update` drives `for (const p of this.props) p.update(dt)` and
+ * `World.unload` calls `destroy()` on every one of them. `Levy.js`,
+ * `Riders.js`, `Flight.js` and `Hazard.js` are all attached exactly this way —
+ * a game system with a per-frame tick and a teardown, registered through
+ * `world.addProp`. Adding a `world.mass?.update()` line to `World.update`
+ * would be a fifth way to say the same thing, so this takes the fourth.
+ *
+ * It runs AFTER `bolts.update` in the frame, which is the ordering `_sweep`
+ * wants: a bolt's `prev → pos` segment for THIS frame is already written when
+ * the mass asks who it passed through.
+ *
+ * ── AND IT IS LAID WHEN THE PLAYER IS STANDING ON THE GROUND ─────────────
+ *
+ * `layBattle` puts the player behind the middle of their own line looking down
+ * the axis, and the axis it is given here is the player's own facing. That
+ * cannot be read at deploy: every fighting mode opens with `beginInsertion`,
+ * so for the first ~28 seconds `player.position` is a seat in a gunship 900 m
+ * up and `player.facing` is wherever the bay is pointing. A battle laid from
+ * that would be laid around the ship.
+ *
+ * So the front ARMS at deploy and LAYS on the first frame the player is on
+ * their feet — `player.riding`, the same field `World.pickSpawn` consults for
+ * the same reason. With no flight (a check, `instantSpawn`) that is frame one.
+ */
+
+/**
+ * THE MOULD, AND EXACTLY WHERE IT HAS TO STAND.
+ *
+ * `MassField._donorFor`'s note says the mass needs one real `Enemy` per unit
+ * type to bake a merged skin off, and that a caller with one should hand it in
+ * through `useDonor`. These two numbers are where that body goes, and both of
+ * them are a band with a measured wall on each side.
+ *
+ * PAST 62 m, because that is where `applyMergedSkin` bakes `_l2` — the merged
+ * skin `CohortField._cohortFor` wants — and a body at the player's elbow never
+ * has one.
+ *
+ * AND INSIDE `Cohorts.L3_AT` (137.8 m), which is the surprising half and was
+ * found the expensive way. `Enemy.update` applies its LOD rung at line ~5822
+ * and poses its rig two thousand lines later, so a body that is ALREADY past
+ * L3_AT on its first update joins a cohort before it has ever been posed —
+ * and `_cohortFor` freezes the skin out of `bone.matrixWorld`, which for an
+ * unposed rig is still at the WORLD ORIGIN. Measured, a trooper spawned 150 m
+ * out: the frozen geometry came back centred 152 m from its own origin, and in
+ * a real browser the whole cohort was drawn floating in the air over the plain.
+ * (That is a defect in the shipped LOD path, not in this file; it is simply not
+ * reachable by any body that walks out to the band instead of appearing in it.)
+ *
+ * So a mould stands in the middle of that band, where it is guaranteed to have
+ * a merged skin and guaranteed never to bake a cohort itself — and `_bake`
+ * makes the cohort deliberately, off that posed body, at its own coordinates.
+ *
+ * WHAT THE MEN THEN WEAR is the frozen pose, and that is the honest state: the
+ * gait palette is filled by `CohortField.step` from a cohort MEMBER, and the
+ * only members here are men with no rig of their own (see `_joinAll` for why
+ * they must not have one). A real body of the same type that later crosses
+ * L3_AT joins this same cohort and fills the palette correctly, and every man
+ * in it starts walking; until one does, they stand. `place`'s own `-1` is that
+ * state and it is the rung as it shipped.
+ */
+const MOULD_FWD = 85;
+const MOULD_SIDE = 45;
+
+/** Roughly where the player's eye is over their feet, and how tall a man is.
+ *  Both are only used to ask whether a line would be over a ridge or behind
+ *  it — see `Front._bearing` — so they are the body's rough numbers and not a
+ *  second copy of anything the rig owns. */
+const EYE = 1.5;
+const STANDING = 1.8;
+
+/** How many bearings `Front._bearing` sweeps. Every 10°: finer than the 16 m
+ *  a block is wide at the range the near line stands. */
+const BEARINGS = 36;
+
+/**
+ * A LAID BATTLE, ATTACHED TO THE WORLD AND DRIVEN BY IT.
+ *
+ * Registered as a prop, so `World.update` ticks it and `World.unload` tears it
+ * down without either of them knowing what it is.
+ */
+class Front {
+  constructor(world, plan) {
+    this.world = world;
+    this.plan = plan;
+    this.field = new MassField(world);
+    this.moulds = [];
+    this.laid = null;
+    this.dead = false;
+    this.id = 'front';
+    this.kind = 'front';
+    this.grippable = false;
+    this.hp = Infinity;
+    this.toughness = Infinity;
+    /**
+     * THE DUCK-TYPED BODY EVERY PROP OWES, and it is not optional.
+     *
+     * `World._boltHitTest` walks `world.props` and reads
+     * `pr.body.boundingRadius` on every one before it looks at anything else;
+     * `World._resolveBlades` reads `pr.body.position.distanceToSquared`. A
+     * prop without one throws on the first bolt of the first frame — measured,
+     * this mode died in `_boltHitTest` before a rank was ever laid. The shape
+     * is `LevyPack`'s, whose own note records the same lesson, and the radius
+     * is zero because a front is not a thing a bolt can hit: the men are.
+     */
+    this.body = {
+      position: new THREE.Vector3(), quaternion: new THREE.Quaternion(),
+      velocity: new THREE.Vector3(), angularVelocity: new THREE.Vector3(),
+      boundingRadius: 0, mass: 0, invMass: 0, static: true,
+      applyImpulse() {}, wake() {},
+    };
+    this.mesh = null;
+  }
+
+  capsules(out = []) { out.length = 0; return out; }
+  cut() { return []; }
+  shatter() {}
+  damage() { return false; }
+
+  /**
+   * THE TWO UNIFORMS, DERIVED FROM THE GROUND AND THE PLAYER'S ORDER.
+   *
+   * Not typed here. `armyToLead` is the three-clause rule every other part of
+   * the game resolves a side with — the player's order first, the ground's own
+   * armies second — and `enemyOf` is the other one. Typing `'trooper'` and
+   * `'b1'` would put clones on both sides of a Sith's battle, which is the
+   * exact complaint `Databank.armyForOrder`'s note quotes.
+   */
+  sides() {
+    const w = this.world;
+    const mine = armyToLead(w.settings?.order, { ground: w.level?.armies });
+    return { mine: mine.tiers[0].type, theirs: enemyOf(mine).tiers[0].type };
+  }
+
+  /** Is the player on their own feet on real ground yet? See the note above. */
+  _ready() {
+    const p = this.world?.player;
+    return !!(p && p.alive !== false && !p.riding && this.world.terrain);
+  }
+
+  /**
+   * One real soldier of `type`, put down through the world's own door, on the
+   * flank of the ground between the player and their line.
+   *
+   * `side` is which flank. The distance is fixed rather than derived from the
+   * battle's size, because it is answering the LOD band and not the frontage —
+   * see `MOULD_FWD`.
+   */
+  _mould(type, team, side) {
+    const w = this.world;
+    const p = w.player.position;
+    const right = new THREE.Vector3(this.axis.z, 0, -this.axis.x);
+    const at = p.clone().addScaledVector(this.axis, MOULD_FWD)
+      .addScaledVector(right, MOULD_SIDE * side);
+    /* Off the edge of the world is no use to anybody: try the other flank, then
+     * the axis itself. */
+    if (!w.terrain.inBounds(at.x, at.z, 8)) {
+      at.copy(p).addScaledVector(this.axis, MOULD_FWD).addScaledVector(right, -MOULD_SIDE * side);
+    }
+    if (!w.terrain.inBounds(at.x, at.z, 8)) at.copy(p).addScaledVector(this.axis, MOULD_FWD);
+    at.y = w.terrain.height(at.x, at.z);
+    const e = w.spawnEnemy(type, at);
+    if (!e) return null;
+    /* `e.team = 0` and nothing else: that is the one field `Command.enlistBody`
+     * sets to put a body on the player's side, and the rest of what it does is
+     * roster, rank and formation — none of which this body has or needs. A
+     * team-0 body is not counted by `WaveDirector.blocksWaveEnd`, so a mould
+     * standing in your line cannot hold the near fight's wave open. */
+    e.team = team;
+    e.frontSide = side;
+    this.field.useDonor(e);
+    return e;
+  }
+
+  /**
+   * WHICH WAY THE BATTLE FACES, AND WHY IT IS NOT SIMPLY WHERE YOU LOOK.
+   *
+   * `layBattle`'s own note is that a battle is a PICTURE — it lays the player
+   * behind the middle of their own line looking down the axis so that the first
+   * frame is a wall of your men with a wall of theirs beyond it. That
+   * arrangement is angular, and angles are not what an authored heightfield
+   * gives you. Measured on a shipped Geonosis deploy, the ground between the
+   * player and their own line sampled every tenth of the way:
+   *
+   *     -0.7  -0.3  -0.2  -0.2  -0.3  -0.5  -0.2  8.6  19.3  1.4  0.2
+   *
+   * A nineteen-metre rock standing at 80 m. Four hundred and eighty men were on
+   * the field and every one of them was inside the camera's angle — the frustum
+   * count said 480 of 480 — and the picture was an empty plain. That is check
+   * 5's defect wearing terrain instead of a spawn heuristic, and no count can
+   * see it.
+   *
+   * Nor is it rare. Twenty-four bearings swept on three grounds, scoring the
+   * highest thing standing between the player and 250 m: geonosis 1 of 24 under
+   * 2°, drifts 0 of 24, scoria 0 of 24 (and half of them off the map). A
+   * bearing picked without asking the ground is a bearing that is usually wrong.
+   *
+   * So the axis is CHOSEN: every bearing is walked, each line is asked whether
+   * it would stand above everything in front of it, and the best answer wins
+   * with the player's own facing as the tie-break. `PROMOTE` is what makes this
+   * necessary rather than optional — the near line cannot be brought closer
+   * than 90 m to duck under a ridge, because inside 90 m the mass may not
+   * stand at all.
+   */
+  _bearing(fallback) {
+    const w = this.world;
+    const p = w.player.position;
+    const eye = p.y + EYE;
+    const mineAt = PROMOTE + 10;
+    const theirsAt = mineAt + this.plan.gap;
+    const half = (this.plan.blocks * (RANK_COLS * SPACING + 6)) / 2;
+    let best = null;
+    for (let k = 0; k < BEARINGS; k++) {
+      const a = fallback + (k / BEARINGS) * Math.PI * 2;
+      const dx = Math.sin(a), dz = Math.cos(a);
+      const rx = dz, rz = -dx;
+      let score = 0;
+      /* Five points across each line rather than one down the middle: a block
+       * on the flank stands behind different ground from the one in the
+       * centre, and the picture is the whole frontage. Your own line is worth
+       * twice theirs — it is the wall you are standing behind and the near half
+       * of the picture. */
+      for (const [at, worth] of [[mineAt, 2], [theirsAt, 1]]) {
+        for (const off of [-1, -0.5, 0, 0.5, 1]) {
+          const x = p.x + dx * at + rx * off * half;
+          const z = p.z + dz * at + rz * off * half;
+          if (this._sees(x, z, p, eye)) score += worth;
+        }
+      }
+      /* Then how far you have to turn, so a tie goes to where you are already
+       * looking. Never more than one point, so it can only break a tie. */
+      score -= Math.abs(((k + BEARINGS / 2) % BEARINGS) - BEARINGS / 2) / BEARINGS;
+      if (!best || score > best.score) best = { score, a };
+    }
+    this.sightline = best ? Math.round((best.score + 1) * 10) / 10 : 0;
+    return best ? best.a : fallback;
+  }
+
+  /**
+   * Would a man standing at `(x, z)` be visible from the player's eye?
+   *
+   * The heightfield sampled along the sightline against the line itself, which
+   * is the only question that matters and the one an angular frustum count
+   * cannot answer. Coarse on purpose — 8 m steps over a couple of hundred
+   * metres — because it is deciding a bearing, not a hit.
+   */
+  _sees(x, z, p, eye) {
+    const t = this.world.terrain;
+    if (!t.inBounds(x, z, 6)) return false;
+    const tx = x - p.x, tz = z - p.z;
+    const d = Math.hypot(tx, tz);
+    if (d < 1) return true;
+    const top = t.height(x, z) + STANDING;
+    for (let s = 10; s < d - 4; s += 8) {
+      const k = s / d;
+      const hx = p.x + tx * k, hz = p.z + tz * k;
+      if (!t.inBounds(hx, hz, 6)) return false;
+      if (t.height(hx, hz) > eye + (top - eye) * k) return false;
+    }
+    return true;
+  }
+
+  /** Put the two moulds down, and fix the axis they were placed around. */
+  _plant() {
+    const p = this.world.player;
+    const f = this._bearing(p.facing ?? 0);
+    this.axis = new THREE.Vector3(Math.sin(f), 0, Math.cos(f)).normalize();
+    /**
+     * …AND YOU ARE TURNED TO FACE IT, ONCE, ON THE FRAME IT IS LAID.
+     *
+     * Half a measure otherwise: a battle laid on a bearing the player is not
+     * looking down is a battle behind them, which is the same empty frame by a
+     * different route. `CameraRig.addYaw` is the rig's own door and this is the
+     * only thing in this file that ever writes to it — one turn, at the moment
+     * the mode begins, and the camera is the player's again on the next frame.
+     */
+    /* THE RIG'S `yaw` IS WHERE THE CAMERA SITS, WHICH IS BEHIND YOU, so the
+     * look direction is its opposite. Measured by setting it to the bearing
+     * outright: `player.facing` converged on the bearing PLUS 180°, and the
+     * battle stood exactly behind the player — 0 of 480 men in the frame, on a
+     * bearing chosen for its clear line of sight. */
+    const look = f + Math.PI;
+    const turn = ((look - (p.camera?.yaw ?? look)) + Math.PI * 3) % (Math.PI * 2) - Math.PI;
+    if (Math.abs(turn) > 0.02) p.camera?.addYaw?.(turn);
+    const { mine, theirs } = this.sides();
+    this.types = { mine, theirs };
+    for (const [type, team, side] of [[mine, 0, -1], [theirs, 1, 1]]) {
+      const e = this._mould(type, team, side);
+      if (e) this.moulds.push(e);
+    }
+  }
+
+  /**
+   * ARE THE MOULDS' BONES WHERE THE MOULDS ARE? — and the battle waits for it.
+   *
+   * `_bake` freezes the cohort's geometry out of `bone.matrixWorld` against the
+   * mould's `position`, so the two have to agree or every man in that cohort is
+   * drawn by the difference between them. They do not agree at once: measured,
+   * frame by frame, on a b1 spawned 110 m out, the hips sit within 30 cm of the
+   * WORLD ORIGIN for four frames and only then jump to the body — and
+   * `Enemy._poseAt`, which looks like the answer, is already set on frame 0.
+   * A battle laid on the frame its moulds were planted therefore baked a skin
+   * displaced by the mould's whole world position, and in a real browser three
+   * hundred men were drawn floating in the air over the plain while every
+   * `man.position` in this file was correct.
+   *
+   * So the question is asked of the bones the bake will actually read, and it
+   * is asked flat: the first bone is the hips and they ride about a metre over
+   * the body's feet, while the failure is a hundred metres.
+   */
+  _posed() {
+    if (!this.moulds.length) return false;
+    const at = new THREE.Vector3();
+    for (const m of this.moulds) {
+      if (!m?.rig) return false;
+      const bone = m._l2?.skin?.skeleton?.bones?.[0] || m.rig.bones?.get?.('hips')?.obj;
+      if (!bone) return false;
+      m.rig.updateMatrices();
+      at.setFromMatrixPosition(bone.matrixWorld).setY(0);
+      if (at.distanceToSquared(new THREE.Vector3(m.position.x, 0, m.position.z)) > 4) return false;
+    }
+    return true;
+  }
+
+  /**
+   * A DEAD MOULD IS STILL THE THING THE COHORT WAS BAKED FROM, and after it is
+   * disposed its rig is gone. Nothing already drawn breaks — the frozen
+   * geometry outlives the body it came off — but a battle that has not been
+   * laid yet needs a live one, and a cohort that is being posed by a real body
+   * of the same type wants the freshest one there is.
+   */
+  _replaceMoulds() {
+    for (let i = 0; i < this.moulds.length; i++) {
+      const m = this.moulds[i];
+      if (m && !m.dead && !m.disposed && m.rig) continue;
+      const type = m?.type;
+      if (!type) continue;
+      const live = this.world.enemies.find(
+        (e) => e && e.type === type && e.rig && !e.dead && !e.disposed && e !== m);
+      if (live) { this.moulds[i] = live; this.field.useDonor(live); continue; }
+      /* Nothing of that uniform is left standing, so put another one down —
+       * but only while there is still a battle waiting on it. */
+      if (this.laid) continue;
+      const fresh = this._mould(type, m.team ?? 1, m.frontSide ?? (i ? 1 : -1));
+      if (fresh) this.moulds[i] = fresh;
+    }
+  }
+
+  _lay() {
+    const w = this.world;
+    const p = w.player;
+    const { mine, theirs } = this.types;
+    this.laid = layBattle(this.field, {
+      mine, theirs,
+      blocks: this.plan.blocks, gap: this.plan.gap,
+      origin: p.position, axis: this.axis,
+    });
+    const n = this.field.count(0) + this.field.count(1);
+    w.notify?.('THE FRONT', `${this.field.count(0)} of yours against ${this.field.count(1)} of theirs`);
+    return n;
+  }
+
+  update(dt) {
+    if (this.dead) return;
+    if (!this.laid) {
+      if (!this._ready()) return;
+      if (!this.moulds.length) this._plant();
+      this._replaceMoulds();
+      /* Nothing may be baked off a mould whose bones are not yet where the
+       * mould is — see `_posed`. A handful of frames, normally. */
+      if (!this._posed()) return;
+      this._lay();
+      return;
+    }
+    this._replaceMoulds();
+    this.field.update(dt);
+  }
+
+  destroy() {
+    if (this.dead) return;
+    this.dead = true;
+    this.field.dispose();
+    const i = this.world.props.indexOf(this);
+    if (i >= 0) this.world.props.splice(i, 1);
+    if (this.world.front === this) { this.world.front = null; this.world.mass = null; }
+  }
+  dispose() { this.destroy(); }
+}
+
+/**
+ * OPEN THE FRONT FOR A MODE THAT DECLARES ONE.
+ *
+ * The size of the battle is the MODE's, off `MODES[mode].massBattle`, in the
+ * same way `objectives`, `fireMissions` and `battles` are the mode's — so this
+ * function names no mode and a second mass mode lights itself. Called once
+ * from `main.js`'s deploy path beside `director.start(1)`; everything after
+ * that is the prop tick.
+ */
+export function openFront(world, opts = {}) {
+  if (!world) return null;
+  const plan = opts.plan || MODES[world.settings?.mode]?.massBattle;
+  if (!plan) return null;
+  if (world.front && !world.front.dead) return world.front;
+  const front = new Front(world, plan);
+  world.front = front;
+  /** What a HUD, a check or the next mode asks for the battle itself. */
+  world.mass = front.field;
+  if (world.addProp) world.addProp(front); else world.props?.push(front);
+  return front;
 }

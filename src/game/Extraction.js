@@ -510,12 +510,32 @@ export class ExtractionDirector {
    *
    * What is released is the LANDING: the ship is over the ground the fight is
    * on, closing on the pad, and the enemy has the rest of the descent to walk
-   * in. You land INTO a battle. Two things ride on top of this and neither
-   * belongs here — nothing may be PLACED on the pad (`clearOfLZ`), and the
-   * horde waits until the ship is inside the ring the LEVEL spawns at, which is
-   * the level's number and so is asked in `World._hordeRuns`.
+   * in. You land INTO a battle. Nothing may be PLACED on the pad while it does
+   * — that is `clearOfLZ`, asked at `World.spawnEnemy`.
+   *
+   * ── AND NOT UNTIL THE SHIP IS ACTUALLY OVER THAT GROUND ────────────────
+   *
+   * `ring` is the level's own `spawnRadius[1]` — how far out it puts things —
+   * handed in because this file has no business knowing a level's numbers, and
+   * it is a TOLERANCE on the anchor. Everything that sites a body measures from
+   * the commander (`World.pickSpawn`, `Arrivals._anchor`, and so `marchBand`),
+   * and for the first half of the fall the commander is a seat 150 m downrange
+   * of the pad — measured, geonosis: 150 m out at the top of the descent, 39 m
+   * with two seconds to go. `marchBand` caps a placement at the distance a body
+   * stops drawing itself (137.8 m, `Cohorts.L3_AT`) for the reason its own note
+   * gives, and that cap is measured from the anchor: released at the top of the
+   * fall, 13 of the first 25 bodies stood more than 137.8 m FROM THE PAD — half
+   * the opening wave arriving as cohort silhouettes on ground the player was
+   * about to be standing on, which is the exact defect that note says cost
+   * geonosis its opening minute. One ring is the tolerance, so a tight arena
+   * waits longer and a wide plain waits less, and with no ring stated at all
+   * the horde waits for the wheels.
    */
-  get holdsHorde() { return this.active && !this.landing; }
+  holdsHorde(ring = 0) {
+    if (!this.active) return false;
+    if (!this.landing) return true;
+    return this.lzOffset > (ring || 0);
+  }
 
   /**
    * HOW FAR THE SHIP STILL IS FROM THE PAD, ACROSS THE GROUND, in metres.
@@ -540,10 +560,13 @@ export class ExtractionDirector {
    * it — far enough that walking to it is a walk. A body standing closer to the
    * pad than the length of that walk is a body under the hull.
    *
-   * It is a floor and not a ceiling: every shipped level's `spawnRadius[0]` is
-   * well outside it (26 m on the tightest, 58 on geonosis), so on the levels
-   * that exist this rejects nothing. That is the point of a guard — the levels
-   * that exist are not the ones it is for. The Dojo's ring is [5, 8].
+   * IT REJECTS NOTHING THAT SHIPS TODAY, and that is not an argument against
+   * it. Every fighting level draws its wave from a ring starting well outside
+   * the pad — 26 m on the tightest, 58 on geonosis — so on those levels this is
+   * a guard with nothing to do. The Dojo's ring is [5, 8]; the levels that
+   * exist are not the ones a placement law is for. Driven at [6, 14],
+   * `tools/checks/landing.mjs` measures 9 of 24 placements asked for inside the
+   * pad and none left there.
    */
   get lzRadius() { return PAD_RANGE; }
 

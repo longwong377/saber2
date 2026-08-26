@@ -18,6 +18,8 @@ import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
   LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
+/* The mass tier, and the one door a mode opens it through. */
+import { openFront } from './game/Mass.js';
 import { theatreFor, LEVELS } from './game/Levels.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
  * game's, so the deploy card can be assembled here without this file reaching
@@ -774,6 +776,27 @@ async function deploy() {
      * not to the one mode that has it today. */
     } else if (MODES[settings.mode]?.picksCampaign) world.beginCampaign();
     else world.director.start(1);
+    /**
+     * …AND THE BATTLE BEHIND THE WAVE, for a mode that declares one.
+     *
+     * AFTER the director, never instead of it. `MODES.thefront` is two fights
+     * at once — the wave director's real bodies inside `Mass.PROMOTE` and
+     * hundreds of instanced men outside it — and the line above is the one
+     * that starts the first of them. `Mass.js`'s header has the argument;
+     * the short version is that a mass-only mode leaves the player in ninety
+     * metres of empty ground watching a war they cannot reach.
+     *
+     * OFF THE DECLARED FIELD, not the mode's name, for the reason
+     * `picksCampaign` above is off one: the branch belongs to the property.
+     * `openFront` reads the size out of the same row and arms itself — it does
+     * NOT lay the battle here, because `beginInsertion` runs four lines below
+     * and for the whole of that flight the player is a seat in a gunship. See
+     * the note over `Front._ready`.
+     *
+     * Inside the host branch with the rest of them: laying a front puts real
+     * bodies on the ground, and a client does not spawn its own.
+     */
+    if (MODES[settings.mode]?.massBattle) openFront(world);
   }
   /**
    * AND YOU ARRIVE, RATHER THAN APPEAR.

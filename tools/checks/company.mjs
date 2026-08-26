@@ -36,7 +36,12 @@
 import { readFile } from 'node:fs/promises';
 import { makeDocument } from './_page.mjs';
 import { clocked } from './_shared.mjs';
-import { ATTR_IDS } from '../../src/game/Attributes.js';
+import { ATTR_IDS, traitById } from '../../src/game/Attributes.js';
+/* THE SAME CURRENCY THE TRAIT TABLE IS PRICED IN, imported rather than
+ * re-derived. A bond is the one thing on a record a PLAYER can cause, so if it
+ * were profitable it would be a ratchet rather than a lottery — and two check
+ * files with two copies of the weighting would be free to disagree about it. */
+import { priceSwing } from './attributes.mjs';
 import {
   ARMY_IDS, ARMIES, CommandRoster, rankFor, OPENING_STRENGTH, RANKS, MARKS, markById,
 } from '../../src/game/Command.js';
@@ -390,6 +395,395 @@ export async function run({ check, assert }) {
     assert(served > 0, 'no veteran reached a contingent that was handed six');
     return `contingent ${plain} either way · ${served} of them men who had served before`;
   });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  Bonds between men                                                 */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  /**
+   * WHY THESE FOUR AND NOT A HAPPY PATH.
+   *
+   * Everything above this line is about a roll that costs something. A bond is
+   * the first thing in this file that GIVES something, which means it is the
+   * first thing that can quietly stop costing — and every failure mode it has
+   * is silent:
+   *
+   *   IT FORMS TOO EASILY. A bond every man has after his first withdrawal is
+   *     a fact about nobody. There is no symptom; the roster simply prints an
+   *     extra line for everyone.
+   *   IT DOES NOT SURVIVE, or a hand-edited save hands a man fifty of them.
+   *   IT IS PROFIT. The one that matters most: a bond that is a net gain in
+   *     the currency `attributes.mjs` prices traits in makes a veteran roster
+   *     strictly stronger than a fresh one, which is the cross-run power both
+   *     this file's header and `Company.js`'s refuse.
+   *   IT KEEPS PAYING AFTER HE IS DEAD. The whole cost of a bond is losing it,
+   *     so a lapsed one that never lapses is the mechanism with its price
+   *     removed and nothing on any screen to say so.
+   */
+
+  /** Two runs of the same men, holding `a` grounds and then `b` more. */
+  const twoRuns = (n, a, b) => {
+    const r = freshRoll(n);
+    for (const t of r.all) t.areas = a;
+    Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+    if (b <= 0) return { names: r.all.map((t) => t.designation) };
+    const back = new CommandRoster(ARMIES.republic);
+    for (const m of Company.fieldable(Company.load('republic'))) back.enlistRecord(m);
+    for (const t of back.all) t.areas = a + b;
+    Company.keep(back.all, { army: 'republic', deployed: back.all, ground: 'drifts' });
+    return { names: r.all.map((t) => t.designation), back };
+  };
+
+  check('company: a bond forms only after real shared service, and never before', () => withCleanStore(() => {
+      const near = Math.max(1, Company.BOND_AREAS - 1);
+      /* ONE GROUND SHORT. The whole point of the threshold is that two men who
+       * were merely mustered together and withdrew do not come home friends. */
+      const short = freshRoll(4);
+      for (const t of short.all) t.areas = near;
+      Company.keep(short.all, { army: 'republic', deployed: short.all, ground: 'geonosis' });
+      const half = Company.load('republic').men[0];
+      assert(half.bonds.length,
+        `${near} grounds held side by side and the roll recorded no shared service at all`);
+      assert(half.bonds.every((b) => b.areas === near),
+        `the tally reads ${half.bonds.map((b) => b.areas).join('/')} for ${near} shared grounds`);
+      assert(!half.traits.includes('bonded'),
+        `a bond formed on ${near} of the ${Company.BOND_AREAS} grounds it asks for`);
+      assert(!Company.dossier(half, 'republic').some(([k]) => k === 'Bonded to'),
+        'the dossier calls unfinished shared service a bond');
+
+
+      /* THE SECOND RUN CROSSES IT. Same men, same ground, one more area each. */
+      const roll1 = Company.load('republic');
+      const back = new CommandRoster(ARMIES.republic);
+      for (const m of Company.fieldable(roll1)) back.enlistRecord(m);
+      for (const t of back.all) t.areas = Company.BOND_AREAS;
+      Company.keep(back.all, { army: 'republic', deployed: back.all, ground: 'drifts' });
+      const roll2 = Company.load('republic');
+      const him = roll2.men.find((m) => m.designation === half.designation);
+      assert(him.bonds.some((b) => b.areas >= Company.BOND_AREAS),
+        `his best tally is ${Math.max(...him.bonds.map((b) => b.areas))} of ${Company.BOND_AREAS}`);
+      assert(him.traits.includes('bonded'),
+        'he has held four grounds beside the same man and it has changed nothing about him');
+      assert(Company.dossier(him, 'republic').some(([k]) => k === 'Bonded to'),
+        'his page does not say who he came through it with');
+      /* IT IS TWO-SIDED ON THE ROLL AS WELL AS ON THE CARD: every man he
+       * carries carries him back, or one of them is bonded to a stranger. */
+      const by = new Map(roll2.men.map((m) => [m.designation, m]));
+      for (const b of him.bonds) {
+        assert(by.get(b.with)?.bonds.some((o) => o.with === him.designation),
+          `${him.designation} is bonded to ${b.with} and ${b.with} has never heard of him`);
+      }
+      assert(him.bonds.length <= Company.BONDS_MAX,
+        `${him.bonds.length} bonds against a cap of ${Company.BONDS_MAX}`);
+      return `${near}/${Company.BOND_AREAS} grounds: tallied, not bonded · `
+        + `${Company.BOND_AREAS}/${Company.BOND_AREAS}: ${him.bonds.length} bond(s), both sides`;
+  }));
+
+  check('company: shared ground is what the pair did, not what the older of them did', () => withCleanStore(() => {
+      /**
+       * A man who has held nine grounds and a man who arrived for the last one
+       * have ONE ground between them. It is the whole force of the word
+       * "together" in the rule, and it is the clause that would go red the day
+       * somebody read the tally off `areas` directly — which is very tempting,
+       * because `areas` is already on the record and is already the right
+       * number for one of the two men.
+       *
+       * The fixture is chosen so that every wrong answer is a DIFFERENT number:
+       * the larger is 9, the first man's is 9, the second's is 1, and the sum
+       * is 10. Only `min` gives 1.
+       */
+      const pair = freshRoll(2);
+      const [vet, green] = pair.all;
+      vet.areas = 9; green.areas = 1;
+      Company.keep(pair.all, { army: 'republic', deployed: pair.all, ground: 'geonosis' });
+      const roll = Company.load('republic');
+      const him = roll.men.find((m) => m.designation === vet.designation);
+      const shared = him.bonds.find((b) => b.with === green.designation);
+      assert(shared, 'nine grounds and one, and the pair have no tally between them at all');
+      assert(shared.areas === 1,
+        `9 grounds and 1 came out as ${shared.areas} shared — that is `
+        + `${shared.areas === 9 ? 'the older man\'s own service' : 'not what they did together'}`);
+      /* AND IT READS THE SAME FROM HIS SIDE, which is what makes it a fact
+       * about the pair rather than a field on one of them. */
+      const back = roll.men.find((m) => m.designation === green.designation)
+        .bonds.find((b) => b.with === vet.designation);
+      assert(back && back.areas === shared.areas,
+        `he reads ${shared.areas} and the other man reads ${back?.areas}`);
+      assert(!him.traits.includes('bonded'), 'one shared ground is a bond');
+      return `9 grounds and 1 → ${shared.areas} shared, the same from both sides, no bond`;
+  }));
+
+  check('company: a bond survives the save, and a hand-edited one cannot stack', () => withCleanStore(() => {
+      twoRuns(4, 2, Company.BOND_AREAS - 2);
+      const before = Company.load('republic').men[0];
+      assert(before.traits.includes('bonded'), 'this clause needs a bond to have formed');
+      const was = before.bonds.map((b) => `${b.with}:${b.areas}`).join(' ');
+
+      /* THROUGH THE REAL STORE. `save` writes only `MAN_FIELDS`, so a bond
+       * that lived on the object and never reached the whitelist would pass
+       * every clause above and be gone the next time the game opened. */
+      Company.save(Company.load('republic'));
+      const after = Company.load('republic').men.find((m) => m.designation === before.designation);
+      assert(after.bonds.map((b) => `${b.with}:${b.areas}`).join(' ') === was,
+        `his bonds read "${after.bonds.map((b) => `${b.with}:${b.areas}`).join(' ')}" `
+        + `after a save that wrote "${was}"`);
+      assert(after.traits.includes('bonded'), 'the bond survived and the trait it hangs did not');
+      /* …AND READING IT TWICE DOES NOT PAY HIM TWICE. `settleBonds` runs on
+       * every `load`, and the Menu loads every time it opens. */
+      const twice = Company.load('republic').men.find((m) => m.designation === before.designation);
+      for (const id of ATTR_IDS) {
+        assert(twice.attrs[id] === after.attrs[id],
+          `opening the roll again moved his ${id}: ${after.attrs[id]} → ${twice.attrs[id]}`);
+      }
+
+      /**
+       * NOW THE HAND-EDITED SAVE. Written straight to the key, which is the
+       * only threat model that matters here: `bonds` is the one field on a
+       * record that names ANOTHER record, so it is the only one where an edit
+       * buys something the game never handed out.
+       */
+      const raw = JSON.parse(localStorage.getItem(KEY));
+      const roll = Company.load('republic');
+      const me = raw.republic.men.find((m) => m.designation === before.designation);
+      me.bonds = [
+        { with: me.designation, areas: 99 },                 // himself
+        { with: 'CT-0000', areas: 99 },                      // a man who does not exist
+        { with: roll.men[1].designation, areas: 1e9 },       // a tally no screen can draw
+        ...Array.from({ length: 50 }, (_, i) => ({ with: `CT-9${i}`, areas: 40 })),
+        { with: null, areas: 4 }, { with: 'CT-1', areas: 'lots' },
+      ];
+      localStorage.setItem(KEY, JSON.stringify(raw));
+      const fixed = Company.load('republic').men.find((m) => m.designation === before.designation);
+      assert(fixed.bonds.length <= Company.BONDS_MAX,
+        `a save claiming 54 bonds came back with ${fixed.bonds.length}`);
+      assert(!fixed.bonds.some((b) => b.with === fixed.designation), 'he is bonded to himself');
+      const on = new Set(Company.load('republic').men.map((m) => m.designation));
+      for (const b of fixed.bonds) {
+        assert(on.has(b.with), `${b.with} is not on the roll and is on his record`);
+        assert(Number.isInteger(b.areas) && b.areas > 0 && b.areas <= Company.BOND_TALLY_MAX,
+          `a tally of ${b.areas} survived the sanitiser`);
+      }
+      /* AND THE ONE HE INVENTED IS ONE-SIDED, so it is not a bond. The man he
+       * claims never claimed him back at anything like that number. */
+      const rows = Company.bondRows(fixed, Company.load('republic'));
+      for (const r of rows) assert(r.strength <= 1, `a bond of strength ${r.strength} on a 0..1 bar`);
+      return `saved and re-read intact (${was}) · 54 hand-written bonds sanitised to `
+        + `${fixed.bonds.length}`;
+  }));
+
+  check('company: a manifest is ten and a man has three, and the last man is not left out', () => withCleanStore(() => {
+      /**
+       * THE SLOTS, DEALT ON A ROLL THAT IS BIGGER THAN THEM. Eight men who held
+       * every ground together is 28 pairs competing for 12 slots, and it is the
+       * only shape that catches the two ways this goes wrong at once:
+       *
+       *   A MAN WITH SEVEN BONDS has none — the cap is what stops the tab
+       *     becoming a join table, and it has to survive the fold, not just the
+       *     sanitiser on the way in.
+       *   AND A MAN WITH ZERO. Dealing the slots per man rather than per pair
+       *     left the last four of these eight bonded to nobody at all, because
+       *     none of the three they each chose chose them back. Measured on this
+       *     exact fixture before `settleBonds` dealt them by pair: 4 of 8 men
+       *     with no bond, and nothing anywhere would have said so.
+       */
+      const n = Company.BONDS_MAX + 5;
+      twoRuns(n, 2, Company.BOND_AREAS - 2);
+      const roll = Company.load('republic');
+      assert(roll.men.length === n, `${roll.men.length} of ${n} men came home`);
+      const by = new Map(roll.men.map((m) => [m.designation, m]));
+      const counts = roll.men.map((m) => m.bonds.length);
+      assert(Math.max(...counts) <= Company.BONDS_MAX,
+        `a man came out of one withdrawal with ${Math.max(...counts)} bonds`);
+      assert(Math.min(...counts) > 0,
+        `${counts.filter((c) => !c).length} of ${n} men who held every ground together `
+        + `came home bonded to nobody — the slots are being dealt per man (${counts.join(',')})`);
+      for (const m of roll.men) {
+        assert(m.traits.includes('bonded'), `${m.designation} has a bond and does not carry it`);
+        for (const b of m.bonds) {
+          const back = by.get(b.with)?.bonds.find((o) => o.with === m.designation);
+          assert(back && back.areas === b.areas,
+            `${m.designation}→${b.with} reads ${b.areas} and comes back ${back?.areas}`);
+        }
+      }
+      return `${n} men, 28 pairs, ${counts.join('/')} bonds each — none over `
+        + `${Company.BONDS_MAX}, none at zero`;
+  }));
+
+  check('company: a bond is not a net gain in the currency traits are priced in', () => withCleanStore(() => {
+      /**
+       * MEASURED ON THE STORED RECORD, not on the table. `attributes.mjs`
+       * prices the `bonded` row itself; this prices what actually happened to a
+       * man on a real roll after two real withdrawals, which is the number that
+       * would move if `settleBonds` ever applied the give and skipped the take.
+       */
+      twoRuns(4, 2, Company.BOND_AREAS - 2);
+      const roll = Company.load('republic');
+      const him = roll.men[0];
+      assert(him.traits.includes('bonded'), 'this clause needs a bond to have formed');
+
+      /* THE SAME MAN WITHOUT HIS BOND. `Trooper` re-rolls a profile from a hash
+       * of who he is, so a fresh muster of his own designation IS the man he
+       * was before anything happened to him — no fixture, no stored copy. */
+      const plain = new CommandRoster(ARMIES.republic).enlistRecord({
+        type: him.type, designation: him.designation, army: 'republic',
+      });
+      const delta = {};
+      for (const id of ATTR_IDS) delta[id] = him.attrs[id] - plain.attr(id);
+      const moved = ATTR_IDS.filter((id) => delta[id] !== 0);
+      assert(moved.length >= 2,
+        `a bond moved ${moved.length} of his numbers (${moved.join(', ')}) — `
+        + 'a one-sided trait is a rank with a name on it');
+      assert(moved.some((id) => delta[id] > 0) && moved.some((id) => delta[id] < 0),
+        `the bond moved ${moved.join(', ')} all the same way`);
+      const net = priceSwing(delta);
+      assert(net <= 0,
+        `two withdrawals with the same men made him +${net.toFixed(4)} of a soldier for free — `
+        + 'a veteran roster is now strictly stronger than a fresh one');
+      /* …AND NOT A PUNISHMENT. Nobody may learn to bring different men. */
+      assert(net > -0.06, `a bond costs ${(-net).toFixed(4)} of a man — that is a tax on surviving`);
+      /* AND THE WHOLE ROLL, not just the man who happened to be first: a
+       * mechanism that was neutral per man and positive per company would be
+       * the same defect one level up. */
+      let total = 0;
+      for (const m of roll.men) {
+        const t = new CommandRoster(ARMIES.republic).enlistRecord({
+          type: m.type, designation: m.designation, army: 'republic',
+        });
+        const d = {};
+        for (const id of ATTR_IDS) d[id] = m.attrs[id] - t.attr(id);
+        total += priceSwing(d);
+      }
+      assert(total <= 0, `the roll of ${roll.men.length} gained +${total.toFixed(4)} between them`);
+      return `${moved.length} axes moved, net ${net.toFixed(4)} per man, `
+        + `${total.toFixed(4)} across the roll`;
+  }));
+
+  check('company: a bond to a dead man stops paying, and hands back what it lent', () => withCleanStore(() => {
+      twoRuns(4, 2, Company.BOND_AREAS - 2);
+      const roll = Company.load('republic');
+      const him = roll.men[0];
+      assert(him.traits.includes('bonded'), 'this clause needs a bond to have formed');
+      const lent = { ...him.attrs };
+      const friends = him.bonds.map((b) => b.with);
+      assert(friends.length, 'he is bonded to nobody');
+
+      /* THE THIRD RUN: he walks up the ramp and every man he is bonded to does
+       * not. `left` is the same door the casualty clauses above use. */
+      const out = new CommandRoster(ARMIES.republic);
+      for (const m of Company.fieldable(roll)) out.enlistRecord(m);
+      const home = out.all.filter((t) => !friends.includes(t.designation));
+      const lostThem = out.all.filter((t) => friends.includes(t.designation));
+      for (const t of out.all) t.areas = Company.BOND_AREAS + 2;
+      Company.keep(home, {
+        army: 'republic', deployed: out.all, left: lostThem, ground: 'felucia',
+      });
+
+      const after = Company.load('republic').men.find((m) => m.designation === him.designation);
+      assert(after, 'he did not come home either — this clause needs him alive');
+      for (const b of after.bonds) {
+        assert(!friends.includes(b.with),
+          `${b.with} is dead and is still on ${after.designation}'s record`);
+      }
+      assert(!after.traits.includes('bonded'),
+        'every man he was bonded to is dead and he is still drawing the bond');
+      assert(!Company.dossier(after, 'republic').some(([k]) => k === 'Bonded to'),
+        'his page still lists a bond to a dead man');
+
+      /* AND THE NUMBERS CAME BACK. He is the man he was mustered as, exactly —
+       * not a veteran left carrying a 14 Nerve penalty for ever with nothing on
+       * the page to explain it. Compared against a fresh muster of his own
+       * designation, which is what `Trooper`'s hash makes reproducible. */
+      const plain = new CommandRoster(ARMIES.republic).enlistRecord({
+        type: after.type, designation: after.designation, army: 'republic',
+      });
+      const stuck = ATTR_IDS.filter((id) => after.attrs[id] !== plain.attr(id));
+      assert(!stuck.length,
+        `losing them left ${stuck.map((id) => `${id} ${after.attrs[id]} vs ${plain.attr(id)}`).join(', ')}`);
+      const paid = ATTR_IDS.filter((id) => lent[id] !== after.attrs[id]);
+      assert(paid.length,
+        'nothing on his record changed when the men he was bonded to died — the bond was never worth anything');
+
+      /* THE SAME THING THROUGH THE OTHER DOOR: a save that still claims the
+       * trait and a bond to a name that is not on the roll. `load` has to
+       * refuse it and refund it without a run happening at all. */
+      const raw = JSON.parse(localStorage.getItem(KEY));
+      const rec = raw.republic.men.find((m) => m.designation === after.designation);
+      rec.attrs = { ...lent };
+      rec.traits = [...new Set([...(rec.traits || []), 'bonded'])];
+      rec.bonds = [{ with: 'CT-0000', areas: Company.BOND_TALLY_MAX }];
+      localStorage.setItem(KEY, JSON.stringify(raw));
+      const forged = Company.load('republic').men.find((m) => m.designation === after.designation);
+      assert(!forged.traits.includes('bonded'), 'a hand-written bond to a ghost still pays out');
+      assert(!forged.bonds.length, `${forged.bonds.length} bonds to men who are not on the roll`);
+      const kept = ATTR_IDS.filter((id) => forged.attrs[id] !== plain.attr(id));
+      assert(!kept.length,
+        `the forged bond kept ${kept.map((id) => `${id}=${forged.attrs[id]}`).join(', ')}`);
+      return `${friends.length} bond(s) struck off with the men · ${paid.length} axes handed back · `
+        + 'a forged bond to a ghost refunded on load';
+  }));
+
+  check('company: a roster screen can print a bond without owning a second model', () => withCleanStore(() => {
+      /**
+       * REQUIREMENT 3, ASSERTED AS AN API RATHER THAN AS MARKUP. `Menu.js` is
+       * another agent's file and a bond it could only render by reaching across
+       * the roll itself would be a second model of the pairing living in a DOM
+       * method — where the only way to test it is to parse HTML. So everything
+       * a page needs is a pure function here, and this is the clause that says
+       * so.
+       */
+      const near = Math.max(1, Company.BOND_AREAS - 1);
+      const short = freshRoll(3);
+      for (const t of short.all) t.areas = near;
+      Company.keep(short.all, { army: 'republic', deployed: short.all, ground: 'geonosis' });
+      let roll = Company.load('republic');
+      /* A PAIR THAT IS NOT A PAIR YET IS THE INTERESTING ROW, and the one a
+       * screen that only printed finished bonds would hide: it is the only
+       * thing on this tab that says anything about the NEXT run. */
+      const soon = Company.bondRows(roll.men[0], roll);
+      assert(soon.length, 'shared service short of a bond is invisible to the page');
+      assert(soon.every((r) => !r.bonded && r.toGo === Company.BOND_AREAS - near),
+        `a pair ${Company.BOND_AREAS - near} ground(s) short reads ${JSON.stringify(soon[0])}`);
+      assert(soon.every((r) => r.strength > 0 && r.strength < 1),
+        'the bar for an unfinished bond is empty or full');
+
+      const backOn = new CommandRoster(ARMIES.republic);
+      for (const m of Company.fieldable(roll)) backOn.enlistRecord(m);
+      for (const t of backOn.all) t.areas = Company.BOND_AREAS;
+      Company.keep(backOn.all, { army: 'republic', deployed: backOn.all, ground: 'drifts' });
+      roll = Company.load('republic');
+      const him = roll.men[0];
+      Company.dress('republic', him.bonds[0].with, { callsign: 'Ladder' });
+      roll = Company.load('republic');
+      const rows = Company.bondRows(roll.men.find((m) => m.designation === him.designation), roll);
+      assert(rows.length && rows.every((r) => r.bonded && r.strength === 1 && r.toGo === 0),
+        `a finished bond reads ${JSON.stringify(rows[0])}`);
+      /* THE NAME IS THE ONE THE PLAYER GAVE HIM, resolved off the roll — which
+       * is the whole reason this cannot be a field on the record. */
+      const named = rows.find((r) => r.with === him.bonds[0].with);
+      assert(named.name.includes('Ladder'),
+        `the page would print "${named.name}" for a man the player named Ladder`);
+      assert(rows.every((r) => r.type), 'the rows do not say what the other man does');
+
+      /* WHAT IT IS WORTH, IN BOTH ARMIES' WORDS AND OFF THE TRAIT TABLE. A
+       * second copy of the swing over here is the defect this repo has removed
+       * nine of, so it is compared against the row that owns it. */
+      const t = traitById('bonded');
+      const flesh = Company.bondWorth('flesh');
+      const steel = Company.bondWorth('steel');
+      assert(flesh.length === Object.keys(t.up).length + Object.keys(t.down).length,
+        `bondWorth prints ${flesh.length} of the ${Object.keys(t.up).length
+          + Object.keys(t.down).length} halves of the swing`);
+      assert(flesh.some(([, v]) => v.startsWith('+')) && flesh.some(([, v]) => v.startsWith('−')),
+        `bondWorth shows one side only: ${JSON.stringify(flesh)}`);
+      for (const k in t.up) {
+        assert(flesh.some(([, v]) => v === `+${t.up[k]}`), `the give is not ${t.up[k]} any more`);
+      }
+      assert(flesh.map(([k]) => k).join() !== steel.map(([k]) => k).join(),
+        'a droid page and a clone page name the bond axis the same thing');
+      return `${soon.length} unfinished row(s), ${rows.length} finished · `
+        + `worth ${flesh.map(([k, v]) => `${v} ${k}`).join(', ')} / `
+        + `${steel.map(([k, v]) => `${v} ${k}`).join(', ')}`;
+  }));
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  The tab                                                           */

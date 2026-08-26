@@ -4770,6 +4770,49 @@ export class Menu {
   }
 
   /**
+   * THE MEETING BOX, WHICH BEING ALONE OVERRULES — and the silence here is half
+   * of why the defect below survived several sessions.
+   *
+   * The player: "no in the mode I was playing it said 0 hostiles the entire
+   * time / it was in command mode not versus". `commandVersus` is a PERSISTED
+   * GLOBAL — ticked once, in a session, and still ticked a week later in a solo
+   * run — and a meeting's opposing army is deployed by a person rather than
+   * composed. Measured by driving the shipped page with the box ticked and no
+   * session: `command.versus` true, spawn queue 0 bodies, 0 hostiles at 30 s
+   * and 0 at 60 s. `CommandDirector.standDownMeeting` is what stops that being
+   * an empty field now; this is what stops it being a surprise.
+   *
+   * THE GATE IS "IS THERE A SESSION", not "is there a second commander", and
+   * that is deliberate: it is the same question `meetingOpposed` asks the world
+   * (`world.net?.connected`), and a host has to be able to tick this BEFORE the
+   * friend they are about to invite has joined. A box that could only be ticked
+   * once somebody was already standing there could never be ticked at all.
+   *
+   * Disabled and relabelled rather than hidden, exactly as `_syncBloomBox` does
+   * it and for the same reason: the player's own preference is untouched and
+   * comes straight back the moment they are in a session again. Driven on the
+   * page: setting `true` throughout, box ticked and live in a session, unticked
+   * at 0.55 opacity out of one, and ticked again on re-entry.
+   */
+  _syncVersusBox() {
+    const box = document.getElementById('opt-command-versus');
+    if (!box) return;
+    /* Set by `netSession`, which main.js calls with 'host', 'client' or null.
+     * Undefined until it has ever been called, which is the solo case too. */
+    const live = !!this._netMode;
+    box.disabled = !live;
+    box.checked = !!this.s.commandVersus && live;
+    const label = document.getElementById('opt-command-versus-label');
+    if (label) {
+      label.textContent = live
+        ? 'THE MEETING — fight another commander'
+        : 'THE MEETING — needs a session; host or join one first';
+    }
+    const row = document.getElementById('opt-command-versus-row');
+    if (row) row.classList.toggle('overruled', !live);
+  }
+
+  /**
    * A CHECKBOX, WITH THE TWO THINGS `_slider` HAS HAD ALL ALONG.
    *
    * 1. IT IS IN THE BOUND TABLE, so one setting can carry more than one box.
@@ -5745,7 +5788,13 @@ export class Menu {
         + `<span class="trait-swing"><i class="up">${up}</i><i class="down">${down}</i>`
         + `${t.flag ? `<i class="flag">${escKey(t.flag === 'pushes'
           ? 'closes the range on his own' : 'will not leave cover for a bad shot')}</i>` : ''}`
-        + `${t.temporary ? '<i class="flag">wears off</i>' : ''}</span></div>`;
+        /* `sheds`, not `temporary`. The table carried a `temporary: 'areas >= 3'`
+         * STRING for one build; it became a real predicate named `sheds` in the
+         * same commit that made shedding actually happen, and this line kept
+         * reading the old name — so the one trait in the game that goes away
+         * never said so on the card. A field that does not exist is falsy, and
+         * a falsy check is a silent one. */
+        + `${t.sheds ? '<i class="flag">wears off</i>' : ''}</span></div>`;
     }).filter(Boolean).join('');
 
     return `<h4 class="codex-head">What he is</h4>
@@ -6852,6 +6901,7 @@ export class Menu {
     this._range('opt-ally-army', -1, ARMY_IDS.length - 1, 1, 'allyArmy');
     this._slider('opt-ally-army', 'allyArmy', v => contingentArmyName(Math.round(v)));
     this._check('opt-command-versus', 'commandVersus');
+    this._syncVersusBox();
     /* The battle, for Skirmish. Read by `deploy()` at world build like the
      * three above, so the value written here is the one the next battle gets
      * and not one a running world would have to be told about. */
@@ -7220,6 +7270,12 @@ export class Menu {
   netSession(mode) {
     this.el.netLeave?.classList.toggle('hidden', !mode);
     this.el.restart?.classList.toggle('hidden', mode === 'client');
+    /* …AND THE ONE OPTION THAT IS ONLY REAL IN A SESSION. This is the only
+     * signal the options screen gets that a session has begun or ended, so it
+     * is where the meeting box learns which of the two it is looking at. See
+     * `_syncVersusBox`. */
+    this._netMode = mode || null;
+    this._syncVersusBox();
   }
   /**
    * The roster, with the names treated as what they are: text that arrived

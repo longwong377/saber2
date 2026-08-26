@@ -209,6 +209,45 @@ export function attrScale(id, v) {
  * does not have a corroded actuator; the two lists are allowed to be different
  * lengths and are.
  */
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  What two men who keep coming home together become                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * HOW MUCH GROUND TWO MEN HAVE TO HOLD SIDE BY SIDE BEFORE IT IS A BOND.
+ *
+ * Everything above this line is rolled at muster and fixed for life, which
+ * means a roster is a table: nothing about a man ever changes because of what
+ * he has LIVED THROUGH with the men beside him. This is the one thing that
+ * does, and `Company.js` is where the counting happens — it folds a finished
+ * run into the roll and already knows exactly which men walked up the ramp
+ * together and how much ground each of them held doing it.
+ *
+ * FOUR, and it is a "more than one run" number rather than a tuning one. A
+ * campaign is a handful of areas, so four shared grounds cannot be reached by
+ * two men who were merely mustered into the same contingent and withdrew from
+ * the first ground they landed on — which is the whole failure mode here. A
+ * bond that formed on the first shared area would be a thing every man on
+ * every manifest had by the end of his first withdrawal, and a fact that is
+ * true of everybody is not a fact about anybody.
+ *
+ * The threshold lives HERE rather than in Company.js because `bonded.sheds`
+ * below is the predicate that reads it, and a second copy of the number beside
+ * the code that counts is the defect this repo has been bitten by nine times.
+ */
+export const BOND_AREAS = 4;
+
+/**
+ * The bonds on a stored man that are real bonds rather than shared service so
+ * far. `Company.js` keeps a running tally per pair; only the ones that have
+ * crossed `BOND_AREAS` are anything the sim or the roster screen calls a bond.
+ */
+export const liveBonds = (m) => (m?.bonds || [])
+  .filter((b) => b && (b.areas | 0) >= BOND_AREAS);
+
+/** …and whether he has any at all, which is what the trait below turns on. */
+export const isBonded = (m) => liveBonds(m).length > 0;
+
 export const TRAITS = [
   /* ── both ───────────────────────────────────────────────────────────── */
   { id: 'deadeye', name: 'Deadeye', kind: null,
@@ -235,6 +274,58 @@ export const TRAITS = [
   { id: 'brittle', name: 'Brittle', kind: null,
     line: 'Everything works until it does not, and then it all goes at once.',
     up: { cadence: 12, reflex: 6 }, down: { hardiness: 20 } },
+
+  /**
+   * ── THE ONE NOBODY IS ROLLED WITH ───────────────────────────────────
+   *
+   * `earned` keeps it out of `traitsFor`, so `rollSoldier` can never deal it:
+   * every other row in this table is a fact about a man from the day he was
+   * mustered, and this is the only one that is a fact about what he has DONE.
+   * `Company.js` hangs it on him when two men have held `BOND_AREAS` grounds
+   * side by side and `shedTraits` takes it back off, with its swing, the
+   * moment the last man he is bonded to is off the roll.
+   *
+   * ── WHAT IT GIVES AND WHY THAT IS THE SAME THING AS WHAT IT COSTS ───
+   *
+   * It pays in `bond` and in nothing else, and that is the whole design rather
+   * than a shortcut. `bond` is the ONLY axis in this table that is already
+   * two-sided in the sim: `CommandDirector._morale` multiplies the JEDI_NEAR
+   * and LEADER_NEAR presence terms by `scaleOf(t, 'bond')` AND multiplies
+   * `MORALE.ALONE` — a negative per-second drift — by the same number. So a
+   * bonded man genuinely fights above himself while somebody is standing with
+   * him and genuinely comes apart faster when nobody is. Measured off the
+   * shipped table: +16 bond is +0.00925 morale/s beside a Jedi and -0.00239/s
+   * with nobody in reach, on terms that already existed. Inventing a second
+   * "somebody I care about is near" channel would have been a second copy of
+   * a rule this file's own axis already owns (HANDOFF 2.4).
+   *
+   * That asymmetry is real but it is not a price the ROSTER can see, and the
+   * law at the top of this section is about the roster: a trait that reads as
+   * pure profit on the card makes a veteran company strictly stronger than a
+   * fresh one and breaks `Company.js`'s refusal of cross-run power. So it is
+   * also paid for in the currency `tools/checks/attributes.mjs` prices every
+   * other row in — each attribute point weighted by the fraction of its own
+   * axis it buys. -14 Nerve is the morale floor he musters at, and -8 Resolve
+   * is how much of himself he gets back between areas: he leans on somebody,
+   * so he starts shakier and takes longer to come back from a bad ground.
+   * Priced: +0.1088 given, -0.1160 taken, net -0.0072. A bond is a SHAPE and not
+   * a reward, which is the only way it can exist in this table at all.
+   *
+   * ── WHAT IS DELIBERATELY NOT HERE, SO NOBODY READS IT AS AN OVERSIGHT ──
+   *
+   * The presence terms pay off the JEDI and off the SQUAD LEADER, so what a
+   * bonded man is actually leaning on is whoever is standing with him rather
+   * than the specific man he is bonded to. Making the bonded man himself a
+   * presence source is a change to `CommandDirector._morale`, which is another
+   * file's; everything above works today through terms that already exist. The
+   * per-fight half of "take it badly when he goes down" is already in the table
+   * as `MORALE.COMRADE_FELL`; what THIS adds is the part that outlives the
+   * fight — lose him and the bond goes with him, for good.
+   */
+  { id: 'bonded', name: 'Bonded', kind: null, earned: true,
+    line: 'Has come through too much beside the same one, and is not the same without them.',
+    up: { bond: 16 }, down: { nerve: 14, resolve: 8 },
+    sheds: (m) => !isBonded(m) },
 
   /* ── men ────────────────────────────────────────────────────────────── */
   { id: 'devoted', name: 'Devoted', kind: 'flesh',
@@ -309,6 +400,43 @@ export const traitById = (id) => TRAIT_BY_ID.get(id) || null;
  *
  * @param man   a stored man: `attrs`, `traits`, and whatever the predicates read.
  */
+/**
+ * A TRAIT'S SWING, APPLIED OR REVERSED, and there is one copy of it.
+ *
+ * `dir` is +1 to hang the trait on a man and -1 to take it off him again. The
+ * three callers below — the muster, `applyTrait` and `shedTraits` — all used to
+ * spell these two loops out, and a sign that disagreed between the way on and
+ * the way off is exactly the defect `shedTraits`'s own note is about: a veteran
+ * carrying a rookie's penalty for good with nothing on the roster to say why.
+ */
+function bake(attrs, t, dir) {
+  for (const k in (t.up || {})) attrs[k] = clamp((attrs[k] ?? 50) + dir * t.up[k], 0, 100);
+  for (const k in (t.down || {})) attrs[k] = clamp((attrs[k] ?? 50) - dir * t.down[k], 0, 100);
+  return attrs;
+}
+
+/**
+ * HANG A TRAIT ON A MAN HE WAS NOT ROLLED WITH, swing and all.
+ *
+ * The exact inverse of `shedTraits` and the other half of the machinery a
+ * bond is built on — `Company.js` calls this when two men cross `BOND_AREAS`
+ * and calls `shedTraits` when the last man one of them was bonded to is off
+ * the roll. Returns a NEW `{ attrs, traits }` and never edits what it was
+ * handed, for the same reason: the caller's object is the record off disk.
+ *
+ * A trait he already has is a no-op rather than a second helping, which is
+ * what keeps the whole thing idempotent — the roll is settled on every read
+ * and a man must not gain 16 Loyalty per time the Company tab is opened.
+ */
+export function applyTrait(man, id) {
+  const t = TRAIT_BY_ID.get(id);
+  const traits = (man?.traits || []).slice();
+  const attrs = { ...(man?.attrs || {}) };
+  if (!t || traits.includes(id)) return { attrs: man?.attrs || attrs, traits };
+  traits.push(id);
+  return { attrs: bake(attrs, t, 1), traits };
+}
+
 export function shedTraits(man) {
   const traits = (man?.traits || []).slice();
   const attrs = { ...(man?.attrs || {}) };
@@ -319,14 +447,21 @@ export function shedTraits(man) {
     if (!t) continue;
     if (!t.sheds || !t.sheds(man)) { keep.push(id); continue; }
     shed = true;
-    for (const k in (t.up || {})) attrs[k] = clamp((attrs[k] ?? 50) - t.up[k], 0, 100);
-    for (const k in (t.down || {})) attrs[k] = clamp((attrs[k] ?? 50) + t.down[k], 0, 100);
+    bake(attrs, t, -1);
   }
   return shed ? { attrs, traits: keep } : { attrs: man?.attrs || attrs, traits };
 }
 
-/** The traits a given kind may be dealt. */
-export const traitsFor = (kind) => TRAITS.filter((t) => !t.kind || t.kind === kind);
+/**
+ * The traits a given kind may be DEALT — which is not the same list as the
+ * traits a given kind may carry. `earned` rows are excluded: `bonded` is a
+ * fact about what a man has done and the muster has no opinion about it, so a
+ * pool that contained it would hand a fresh recruit somebody else's history.
+ * `rollSoldier` draws from here, which is what makes that true rather than
+ * remembered.
+ */
+export const traitsFor = (kind) =>
+  TRAITS.filter((t) => !t.earned && (!t.kind || t.kind === kind));
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Rolling a soldier                                                     */
@@ -378,8 +513,7 @@ export function rollSoldier(rng, kind = 'flesh', opts = {}) {
     const t = pool[Math.floor(rng() * pool.length) % pool.length];
     if (traits.includes(t.id)) continue;
     traits.push(t.id);
-    for (const k in (t.up || {})) attrs[k] = clamp((attrs[k] ?? 50) + t.up[k], 0, 100);
-    for (const k in (t.down || {})) attrs[k] = clamp((attrs[k] ?? 50) - t.down[k], 0, 100);
+    bake(attrs, t, 1);
   }
   return { attrs, traits };
 }

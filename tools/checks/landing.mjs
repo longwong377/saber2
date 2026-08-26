@@ -290,7 +290,7 @@ export async function run({ check, assert }) {
     let ledger = null;
     until(world, input, 90, (w, t) => !w.extraction.active && t > 2, (w) => {
       const x = w.extraction, d = w.director;
-      if (!x.active || !x.holdsHorde || !d) { ledger = null; return; }
+      if (!x.active || !x.holdsHorde(w.level?.spawnRadius?.[1]) || !d) { ledger = null; return; }
       held++;
       heldPhases.add(x.phase);
       promised = Math.max(promised, d.remaining ?? 0);

@@ -1884,6 +1884,15 @@ export class Trooper {
       this.attrs = rolled.attrs;
       this.traits = rolled.traits;
     }
+    /**
+     * …AND WHO HE HAS SERVED WITH. A tally per partner, off the record and not
+     * re-derived: `Company.settleBonds` owns the arithmetic and this only has
+     * to carry it, because `Company.manOf` reads `t.bonds` on the way back out
+     * and a Trooper that dropped them would lose every bond on the roll on the
+     * first run a man survived. Empty for a fresh recruit, which is right — a
+     * bond is a thing you earn by coming home together.
+     */
+    this.bonds = Array.isArray(opts.bonds) ? opts.bonds.map((b) => ({ ...b })) : [];
     this.alive = true;
     this.diedIn = null;
     this.body = null;
@@ -2021,11 +2030,45 @@ export class CommandRoster {
     if (this.taken.has(m.designation)) return null;
     this.taken.add(m.designation);
     const army = ARMIES[m.army] || ARMIES[this.army?.id] || this.army;
+    /**
+     * ── AND THE MAN HIMSELF, WHICH THIS DOOR WAS THROWING AWAY ───────────
+     *
+     * `attrs`, `traits`, `kind` and `bonds` were not on this list, and this
+     * method's own header calls itself "the one door a saved roll comes back
+     * through". So every veteran was re-rolled at muster: `opts.attrs` arrived
+     * undefined, the `Trooper` constructor took its `else` branch, and the
+     * profile on the record — the ten attributes, the traits he was dealt, the
+     * traits he had EARNED — was discarded and replaced by a fresh
+     * `musterRng(army, type, designation)` draw.
+     *
+     * It hid for a long time because that draw is a hash of who he is, so the
+     * re-roll reproduces the same BASE man and nothing looked wrong. What it
+     * cannot reproduce is anything that happened to him since:
+     *
+     *   MEASURED, two men with five shared grounds, through the real
+     *   `keep()` → `load()` → `trooperOf()`:
+     *     stored   traits ['devoted','bonded']  bond 65  nerve 48  resolve 35
+     *     fielded  traits ['devoted']           bond 49  nerve 62  resolve 43
+     *
+     * So a bond was a card decoration, `shedTraits` was dead on the only path a
+     * saved man actually takes — "Green wears off" was a promise nothing kept —
+     * and the whole persisted profile was ornamental. The constructor's restore
+     * branch was correct and unreachable.
+     *
+     * Sanitised on the way in by `Company.readMan` already; passed through here
+     * rather than re-validated, for the reason that file gives at length.
+     */
     const t = new Trooper(army && army.id ? army : { id: m.army }, m.type, m.designation, {
       id: m.id ?? undefined, roster: this, squad: Number.isInteger(m.squad) ? m.squad : null,
       xp: Math.max(0, m.xp | 0),
       morale: Math.min(1, Math.max(0, Number.isFinite(m.morale) ? m.morale : 0.72)),
       joined: Math.max(1, m.joined | 0),
+      kind: m.kind, attrs: m.attrs || null, traits: m.traits,
+      /* `shedTraits` reads these off the man to decide what he has grown out
+       * of, so they have to be in the bag the constructor sees rather than
+       * assigned afterwards. */
+      areas: Math.max(0, m.areas | 0), runs: Math.max(0, m.runs | 0),
+      bonds: m.bonds,
     });
     t.nickname = typeof m.nickname === 'string' ? m.nickname : null;
     t.kills = Math.max(0, m.kills | 0);
@@ -2300,8 +2343,8 @@ export const TEAM_DAMAGE_DEFAULT = 0.35;
  *
  * A meeting needs somebody on the other side of it. Two things count and
  * nothing else does: a live net endpoint — a host waiting on a peer is still a
- * session, because the second commander is on the way — or a second local
- * player already on the field.
+ * session, because the second commander is on the way — or a second player
+ * already on the field.
  *
  * Asked of the WORLD and not of the settings, because "am I in a session" is
  * not a thing a menu can know at the moment the box is ticked; it is a fact
@@ -2309,6 +2352,24 @@ export const TEAM_DAMAGE_DEFAULT = 0.35;
  * been handed in answers FALSE, and that default is deliberate: an empty field
  * is the failure this gate exists to prevent, so a path that forgot to pass a
  * world must fall back to a real battle rather than to a meeting with nobody.
+ *
+ * ── AND IT MAY NOT BE ASKED FROM `commandConfig`, WHICH IS WHERE IT LOOKS ──
+ * ── LIKE IT BELONGS. ──────────────────────────────────────────────────────
+ *
+ * That function runs inside `CommandDirector`'s constructor, which
+ * `World._loadSteps` runs DURING THE LOAD, and `main.js` calls `attachNet` and
+ * `spawnPlayer` only after `loadLevelAsync` has returned. So at that moment
+ * `world.net` is null, `world.netMode` is undefined and `world.players` is
+ * EMPTY — on a host in a real session exactly as on a solo player. Measured by
+ * gating the flag there: 8 of the 20 command-pvp checks went red, including
+ * "two commanders meet on Geonosis" with `beginVersus produced 0 commanders`.
+ * A gate there can only ever answer "alone", so it does not answer the question
+ * at all — it turns the feature off.
+ *
+ * It is asked instead from `CommandDirector.meetingOpposed`, at the two moments
+ * that can answer: `formUp` and `start`, both reached through
+ * `World.beginVersus`, which `main.js` calls once the net is attached and the
+ * player is standing.
  */
 export function meetable(world) {
   if (!world) return false;
@@ -2317,7 +2378,7 @@ export function meetable(world) {
   return (world.players?.length ?? 0) > 1;
 }
 
-export function commandConfig(settings, world = null) {
+export function commandConfig(settings) {
   const s = settings || {};
   const td = s.teamDamage;
   const f = s.commandFormation;
@@ -2349,16 +2410,14 @@ export function commandConfig(settings, world = null) {
      * meeting by saying nothing.
      */
     /**
-     * ── AND THERE HAS TO BE SOMEBODY TO MEET ────────────────────────────
+     * ── AND THERE HAS TO BE SOMEBODY TO MEET, WHICH IS ASKED ELSEWHERE ──
      *
-     * This was `!!s.commandVersus && !!MODES[s.mode]?.meeting` and it never
-     * asked the one question the feature is named after. `commandVersus` is a
-     * PERSISTED GLOBAL — a box in Options that stays ticked between sessions —
-     * so a player who tried a meeting once and moved on carried it into every
-     * solo Command run afterwards, and `start` declines to compose a wave when
-     * the other side is supposed to be a person's. `formUp` then builds
-     * `Math.max(commanders, sides, players)` = 1 commander, so no opposing army
-     * is ever deployed either.
+     * `commandVersus` is a PERSISTED GLOBAL — a box in Options that stays
+     * ticked between sessions — so a player who tried a meeting once and moved
+     * on carried it into every solo Command run afterwards, and `start`
+     * declines to compose a wave when the other side is supposed to be a
+     * person's. `formUp` then builds `Math.max(commanders, sides, players)` = 1
+     * commander, so no opposing army is ever deployed either.
      *
      * The result is the player's report, verbatim and across several sessions:
      * *"in the mode I was playing it said 0 hostiles the entire time"*, and,
@@ -2369,17 +2428,13 @@ export function commandConfig(settings, world = null) {
      * harness booted with a clean settings object and the box was never ticked.
      * A sticky global is exactly the class of bug a fresh fixture cannot find.
      *
-     * SO THE FLAG IS CLEARED RATHER THAN WORKED AROUND. `update` skips the
-     * entire wave loop on `versus`, so a wave composed under a true flag would
-     * never drain its queue — a fallback that composed one anyway would be a
-     * second, quieter version of the same empty field. With nobody to meet this
-     * is simply not a meeting, and the mode runs as it always did.
-     *
-     * `session` is the presence of a live endpoint, which is what a meeting
-     * needs and is asked of the world rather than assumed: a host with no peer
-     * yet is still a session, because the second commander is coming.
+     * WHAT THIS LINE STAYS IS THE PLAYER'S ANSWER AND THE MODE'S. Whether there
+     * is anybody to meet is not knowable here — see the second half of
+     * `meetable`'s note, and the 8 red command-pvp checks measured when it was
+     * asked here — so it is asked by `meetingOpposed` at the moment the field
+     * opens, and `standDownMeeting` clears this flag when the answer is no.
      */
-    versus: !!s.commandVersus && !!MODES[s.mode]?.meeting && meetable(world),
+    versus: !!s.commandVersus && !!MODES[s.mode]?.meeting,
     /**
      * AN ARMY IN A MODE THAT NEVER HAD ONE.
      *
@@ -3084,7 +3139,7 @@ export class CommandDirector extends WaveDirector {
      * holds none of them, so `drafts` is false before and after (measured).
      */
     super(world, { ...opts, mode: opts.mode ?? world?.settings?.mode ?? 'command' });
-    const cfg = commandConfig(world?.settings, world);
+    const cfg = commandConfig(world?.settings);
 
     /**
      * EVERY PERSON ON THIS FIELD WITH AN ARMY, and there used to be room for
@@ -6987,20 +7042,13 @@ export class CommandDirector extends WaveDirector {
    * one — and the consequence was an empty plain, because a meeting's opposing
    * army is deployed by a PERSON and there was no person.
    *
-   * IT CANNOT BE ASKED IN `commandConfig`, which is where the flag is decided
-   * and would be the obvious home. That function runs inside this constructor,
-   * which `World._loadSteps` runs during the load: at that moment `world.net`
-   * is null and `world.players` is EMPTY on every machine, because `main.js`
-   * calls `attachNet` and `spawnPlayer` after `loadLevelAsync` returns
-   * (measured: `net null, players 0` for a host in a real session and for a
-   * solo player alike). A gate there could only ever answer "alone".
+   * ASKED HERE AND NOT WHERE THE FLAG IS DECIDED, for the reason the second
+   * half of `meetable`'s note gives with the measurement: at `commandConfig`
+   * time the world has no net and no players yet, on a host in a real session
+   * exactly as on a solo player. `formUp` and `start` are the two moments that
+   * can answer, and both are reached through `World.beginVersus`.
    *
-   * So it is asked at the two moments that CAN answer — `formUp` and `start`,
-   * both of which run from `World.beginVersus`, which `main.js` calls after the
-   * net is attached and the player is standing.
-   *
-   * THREE WAYS TO HAVE AN OPPONENT, and a session counts even while it is
-   * empty. A host who ignited a session and is waiting for a friend is
+   * A SESSION COUNTS EVEN WHILE IT IS EMPTY. A host who ignited a session and is waiting for a friend is
    * deliberately alone for a few seconds — `World.beginVersus` already tells
    * them so and prints the code to share — and standing their meeting down
    * under them would be the same silent override this method exists to end.
@@ -7010,9 +7058,11 @@ export class CommandDirector extends WaveDirector {
    *               list before anybody is enlisted off it.
    */
   meetingOpposed(census = 0) {
-    const w = this.world;
-    if (Math.max(census | 0, this.commanders.length, w?.players?.length ?? 0) > 1) return true;
-    return !!w?.net?.connected;
+    /* `meetable` is the rule and it is CALLED rather than restated (HANDOFF
+     * §2.4) — a second copy of "what counts as a session" would eventually
+     * disagree with the first. All this adds is the count the caller is holding
+     * and has not seated yet. */
+    return Math.max(census | 0, this.commanders.length) > 1 || meetable(this.world);
   }
 
   /**

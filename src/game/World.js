@@ -3863,8 +3863,16 @@ export class World {
      * is not that, and for as long as this said `!extraction.active` it was
      * treated as if it were. `active` is `phase !== 'done'` and `beginInsertion`
      * is the last line of deploy, so every fighting mode opened with 28 seconds
-     * of empty field under a HUD reading "50 HOSTILES LEFT". See `_hordeRuns`. */
-    if (this.netMode !== 'client' && !this.over && this._hordeRuns()) this.director.update(dt, ctx);
+     * of empty field under a HUD reading "50 HOSTILES LEFT".
+     *
+     * `holdsHorde` is that gate stated by PHASE — the whole outbound leg, plus
+     * the orbit and the entry burn — and its own note gives the four things it
+     * has always protected. The one number it is handed is the LEVEL's, because
+     * `spawnRadius` is the level's: everything that sites a body measures from
+     * the commander, so the horde is not called until the ship's ground track
+     * is inside the ring the level itself spawns at. See that method. */
+    if (this.netMode !== 'client' && !this.over
+      && !this.extraction?.holdsHorde(this.level?.spawnRadius?.[1])) this.director.update(dt, ctx);
     /* The meeting's clock, and it is outside the director because it is not the
      * director's: `DuelMatch` is driven by facts about the WHOLE field — who
      * has anybody left standing — and the host owns it whether or not there is
@@ -3902,41 +3910,6 @@ export class World {
 
     this.engine.fitShadows(focus);
     this.engine.setRadial(this.player?.senseActive ? 0.35 : 0);
-  }
-
-  /**
-   * MAY THE WAVE DIRECTOR HAVE THIS FRAME while a transport is in the air?
-   *
-   * TWO OWNERS, ONE ANSWER. `ExtractionDirector.holdsHorde` says which PHASES
-   * of a flight the horde has to wait for — the whole outbound leg, plus the
-   * orbit and the entry burn — and its own note gives the four things that gate
-   * has always protected. This adds the one clause that is the LEVEL's rather
-   * than the flight's, and it cannot live over there because `spawnRadius` is
-   * the level's number:
-   *
-   *     THE HORDE IS CALLED WHEN THE SHIP IS OVER THE GROUND IT IS LANDING ON.
-   *
-   * Everything that sites a body measures from the commander — `pickSpawn`
-   * above, `Arrivals._anchor`, and therefore `marchBand` — and for the first
-   * half of the fall the commander is a seat 150 m downrange of the pad, so a
-   * ring drawn round them is a ring drawn round the wrong place. `marchBand`
-   * caps a placement at the distance a body stops drawing itself (137.8 m,
-   * `Cohorts.L3_AT`) for the reason its own note gives, and that cap is
-   * measured from the anchor: releasing at the top of the fall put 13 of the
-   * first 25 bodies more than 137.8 m FROM THE PAD — half the opening wave
-   * arriving as cohort silhouettes on ground the player was about to be stood
-   * on, which is the exact defect that note says cost geonosis its opening
-   * minute. One ring is the tolerance, and it is the level's own ring, so a
-   * tight arena waits longer and a wide plain waits less.
-   *
-   * MEASURED, geonosis skirmish, hostiles alive when the ramp opens: 0 before,
-   * 19 after, nearest 26 m, and 3 of them beyond the draw cap instead of 13.
-   */
-  _hordeRuns() {
-    const X = this.extraction;
-    if (!X?.active) return true;
-    if (X.holdsHorde) return false;
-    return X.lzOffset <= (this.level?.spawnRadius?.[1] ?? 56);
   }
 
   _bladeEntries() {
