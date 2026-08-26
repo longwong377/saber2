@@ -1097,8 +1097,9 @@ export async function run({ check, assert }) {
      * NOTHING ELSE ON THE FIELD. The director is put into its own idle state —
      * `active` false with an endless intermission, which is the state the mode
      * is in between two waves — so the two bodies below are the only things
-     * shooting and no wave arrives to move anybody. Nothing is stepped: `_shoot` is called directly, so the
-     * reading is of the aim and not of a fight.
+     * shooting and no wave arrives to move anybody. Nothing is stepped:
+     * `_shoot` is called directly, so the reading is of the aim and not of a
+     * fight.
      */
     const { enemyRng } = await import('../../src/game/Enemy.js');
     const THREE = await import('three');
