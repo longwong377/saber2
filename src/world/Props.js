@@ -2455,12 +2455,14 @@ export class BlastDoor {
      * WARDED — a plate a blade cannot start on.
      *
      * Set by whatever stands in front of this door and cleared by whatever
-     * takes that thing down; `GunPit` in src/game/Emplacement.js is the one
-     * writer today and its deflector is the one thing that sets it. It is NOT
-     * armour and NOT a second health bar: `burn` refuses outright while it is
-     * true, so no amount of blade opens a warded door and the answer is
-     * elsewhere on the field. A door nobody has warded is every door that has
-     * ever been in this game, which is why it defaults false.
+     * takes that thing down. NOTHING IN THE TREE SETS IT TODAY: the gun
+     * emplacement behind the magazine's middle door was the one writer and it
+     * is gone (src/game/Armour.js records why), so every door in the shipped
+     * game is unwarded and the refusal in `burn` never fires. It is NOT armour
+     * and NOT a second health bar: `burn` refuses outright while it is true, so
+     * no amount of blade opens a warded door and the answer is elsewhere on
+     * the field. A door nobody has warded is every door that has ever been in
+     * this game, which is why it defaults false — and is, for now, every door.
      */
     this.warded = false;
     /**

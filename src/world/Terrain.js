@@ -3702,14 +3702,14 @@ export class Terrain {
    * convenience.
    *
    * Half the callers of a terrain raycast do not want the hit — they want to
-   * know whether there IS one. `Emplacement.GunPit.update` asks exactly that,
+   * know whether there IS one. The caller that found this asked exactly that,
    * one line under the identical question asked of `physics.raycast`, which
    * takes a predicate and returns a body: "is the ground between my muzzle and
    * that man". It called this with three arguments, and the moment the answer
    * was YES this threw `Cannot read properties of undefined (reading 'set')`
    * and took the frame down with it. Found by a probe driving a whole sitting;
-   * it is a live crash in the shipped game, on the one path that only runs when
-   * a gun pit's target walks behind a rise.
+   * it was a live crash in the shipped game, on the one path that only ran when
+   * the shooter's target walked behind a rise.
    *
    * Guarding at the call site would have fixed one caller and left the trap
    * armed for the next; making the out parameters optional here answers "did it

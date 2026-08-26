@@ -141,7 +141,7 @@ async function commandPair(opts = {}) {
        * honest `_reconcileClaims`, billing the host for damage the host had
        * already dealt itself. The client fires replicated bolts into its own
        * pool (`_spawnNetBolts`) and resolves them against its own mirrors, so
-       * a GunPit's round is simulated on BOTH machines; the host applies it,
+       * a hostile round is simulated on BOTH machines; the host applies it,
        * the client applies it to its copy, and the reconciler sends the
        * difference back as a claim. Measured on this pair with the joining
        * player idle and nothing but `idleInput` on either end: **a 39.4 hp
@@ -775,10 +775,12 @@ export function run({ check, assert }) {
      * applied itself.** Co-op was roughly half again easier than the
      * single-machine numbers every tuning pass in this project was taken on.
      *
-     * Two roads fed it and the second is a different defect with the same
-     * shape. The gun emplacement is built by the LEVEL, so both machines had
+     * Two roads fed it and the second was a different defect with the same
+     * shape. The gun emplacement was built by the LEVEL, so both machines had
      * one and both were firing it — a second gun on one embrasure, laid on the
-     * client's own copy of the line, billed back to the host (`GunPit._fire`).
+     * client's own copy of the line, billed back to the host. That object is
+     * gone from the tree (src/game/Armour.js), but the road it opened is not:
+     * anything a LEVEL stands up exists on both machines and fires on both.
      * The deaths were the larger half of both: rounding puts the two copies a
      * point apart, the client's mirror goes down on a round the host's
      * survives, and `_reconcileClaims`' kill clause then claims that body's
