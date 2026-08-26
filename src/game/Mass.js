@@ -177,6 +177,29 @@ export const CONE = 0.075;
 /** A rank at or under this fraction of its strength breaks and falls back. */
 export const BREAK_AT = 0.35;
 
+/**
+ * HOW FAR A BROKEN BLOCK GETS BEFORE IT IS GONE, and this number is the
+ * difference between a battle and a rout that eats one side whole.
+ *
+ * A broken rank stopped firing (`_fire` refuses on `broken`) and kept being
+ * SHOT AT, because nothing took it off the field. So the moment either side
+ * broke a block it stopped contributing volume and started absorbing rounds
+ * for free — and the side that broke first snowballed. Measured on the first
+ * real run of the mode, twelve blocks a side, ninety seconds:
+ *
+ *     240 v 240   →   47 v 195
+ *
+ * Not a damage imbalance: a trooper rank hits for 7.2 and a B1 rank for 5.4.
+ * It was entirely the spiral.
+ *
+ * So a broken block that has put this much ground between itself and the
+ * nearest enemy is off the field. That is what routing MEANS — the unit is out
+ * of the battle, not standing in the open being shot at — and it is also the
+ * only ending that stops a lost flank from becoming a lost army. Its men are
+ * not casualties and are not counted as any: they ran.
+ */
+export const ROUT_AWAY = 60;
+
 /** How near a swept bolt has to pass a man to fell him. See `_sweep`. */
 export const HIT = 0.9;
 
@@ -237,9 +260,23 @@ export class Rank {
         alive: true, slot: i,
         position: new THREE.Vector3(),
         facing: 0,
-        /* The gait phase is what makes a block of instances read as marching
-         * men rather than a sheet of copies. Spread across the cycle by index,
-         * exactly as `Enemy._animPhase` spreads a crowd. */
+        /**
+         * THE GAIT PHASE, SPREAD ACROSS THE CYCLE BY INDEX, exactly as
+         * `Enemy._animPhase` spreads a crowd — so a block reads as men rather
+         * than as a sheet of copies.
+         *
+         * WHAT IT ACTUALLY BUYS DEPENDS ON SOMETHING THIS FILE DOES NOT OWN,
+         * and that is worth writing down rather than implying. `CohortField`
+         * draws an instance in the palette slot its phase names, and the
+         * palette is filled by `step` from a cohort MEMBER — a real body of
+         * that type, posing its own bones against its own position. A man of
+         * the mass is not one and must never be (see `_joinAll`), so until a
+         * real body of the same uniform crosses `Cohorts.L3_AT` and joins the
+         * same cohort, every slot is identity and the block wears the pose it
+         * was frozen in. One does and they all start walking; none does and
+         * they stand. Both are correct pictures; only the second is the one
+         * these numbers are usually seen in.
+         */
         animator: { moving: true, phase: (i * 0.37) % 1 },
       });
     }
@@ -539,7 +576,30 @@ export class MassField {
       r.anchor.addScaledVector(r.dir, step);
       if (terrain) r.anchor.y = terrain.height(r.anchor.x, r.anchor.z);
       r.place(terrain);
+      /* …AND A BLOCK THAT HAS GOT AWAY IS GONE. See `ROUT_AWAY`: a broken rank
+       * that stays on the field is a free target that fires nothing back, and
+       * that is what turned the first real run of this mode into 47 against
+       * 195 from an even start. */
+      if (r.broken) {
+        const foe = this._nearestFoe(r);
+        if (!foe || r.anchor.distanceTo(foe) > STAND_OFF + ROUT_AWAY) this.retire(r);
+      }
     }
+  }
+
+  /**
+   * Take a block off the field — routed, or wiped.
+   *
+   * Its instances go back to the cohort's free list, which is what makes the
+   * men vanish rather than freeze in place. Not a casualty count: `count()`
+   * answers "men standing on this field", and a block that ran is not standing
+   * on it.
+   */
+  retire(r) {
+    for (const m of r.men) if (m.alive) { m.alive = false; this._release(m); }
+    r.alive = 0;
+    const i = this.ranks.indexOf(r);
+    if (i >= 0) this.ranks.splice(i, 1);
   }
 
   /**
@@ -606,10 +666,33 @@ export class MassField {
       const d = o.anchor.distanceToSquared(r.anchor);
       if (d < bd) { bd = d; best = o.anchor; }
     }
+    /**
+     * …AND THE PLAYER ONLY WHEN THERE IS NOTHING ELSE, which is a correction
+     * and is the whole of a battle that was lopsided from the first minute.
+     *
+     * This used to take the player whenever they were the NEAREST hostile
+     * thing, and standing in front of a firing line should feel like standing
+     * in front of a firing line. But the player is one point, and every enemy
+     * block that picked them aimed at the same point — so their fire arrived
+     * CONCENTRATED on one axis while the other side, each block picking its own
+     * nearest anchor, spread its fire across the whole frontage. Concentration
+     * beats spread, and it beat it badly. Measured, twelve blocks a side from
+     * an even start, ninety seconds:
+     *
+     *     240 v 240   →   2 v 208
+     *
+     * with fire VOLUME nearly equal at 1094 rounds against 1229. It was never a
+     * damage or a rate problem; it was twelve blocks agreeing on a target.
+     *
+     * So a rank shoots the enemy LINE while there is one in reach, and turns on
+     * the player only when there is not — which is also the truer picture: a
+     * firing line engages the line in front of it, and notices the one man
+     * running at it when the line is gone.
+     */
     const p = this.world?.player;
-    if (p && p.alive !== false && r.team === 1) {
+    if (p && p.alive !== false && !best) {
       const d = p.position.distanceToSquared(r.anchor);
-      if (d < bd) { bd = d; best = p.position; }
+      if (d < REACH * REACH) best = p.position;
     }
     return best;
   }
@@ -744,16 +827,17 @@ export function layBattle(field, opts = {}) {
  *
  * ── AND IT IS LAID WHEN THE PLAYER IS STANDING ON THE GROUND ─────────────
  *
- * `layBattle` puts the player behind the middle of their own line looking down
- * the axis, and the axis it is given here is the player's own facing. That
- * cannot be read at deploy: every fighting mode opens with `beginInsertion`,
- * so for the first ~28 seconds `player.position` is a seat in a gunship 900 m
- * up and `player.facing` is wherever the bay is pointing. A battle laid from
- * that would be laid around the ship.
+ * `layBattle` lays the whole battle around ONE point and ONE bearing, and
+ * neither can be read at deploy: every fighting mode opens with
+ * `beginInsertion`, so for the first ~28 seconds `player.position` is a seat
+ * in a gunship 900 m up and the camera belongs to the bay. Measured on a real
+ * insertion, the commander is put on the sand at 24.3 s.
  *
  * So the front ARMS at deploy and LAYS on the first frame the player is on
  * their feet — `player.riding`, the same field `World.pickSpawn` consults for
  * the same reason. With no flight (a check, `instantSpawn`) that is frame one.
+ * The bearing is then chosen against the ground rather than taken from where
+ * they happen to be looking; see `Front._bearing`.
  */
 
 /**
@@ -964,7 +1048,10 @@ class Front {
       score -= Math.abs(((k + BEARINGS / 2) % BEARINGS) - BEARINGS / 2) / BEARINGS;
       if (!best || score > best.score) best = { score, a };
     }
-    this.sightline = best ? Math.round((best.score + 1) * 10) / 10 : 0;
+    /** What the winning bearing scored, out of 15 — five points across your own
+     *  line at two each and five across theirs at one. A readable number for a
+     *  probe or a report: 15 is both frontages entirely in the clear. */
+    this.sightline = best ? Math.round(best.score * 10) / 10 : 0;
     return best ? best.a : fallback;
   }
 

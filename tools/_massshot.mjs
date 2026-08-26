@@ -30,7 +30,7 @@ page.on('console', (m) => { if (m.type()==='error') console.log('CONSOLE:', m.te
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil:'domcontentloaded', timeout:60000 });
 await page.evaluate(() => localStorage.setItem('saber.settings.v2', JSON.stringify(
   { instantSpawn:true, level:'geonosis', quality:'low', resolutionScale:0.6, difficulty:'knight',
-    mode:'waves', volume:0, music:0, grassScale:0.5, particleScale:0.6 })));
+    mode:'thefront', volume:0, music:0, grassScale:0.5, particleScale:0.6 })));
 await page.reload({ waitUntil:'domcontentloaded' });
 await page.waitForSelector('#menu:not(.hidden)', { timeout:90000 });
 await page.click('#btn-deploy');
@@ -43,6 +43,7 @@ await page.waitForTimeout(1500);
  * the first time. */
 await page.click('#btn-deploy-drop', { timeout: 2500 }).catch(() => {});
 await page.waitForTimeout(9000);
+const sample = async (tag) => { const r = await page.evaluate(window.__probe); return { tag, ...r }; };
 
 /**
  * THE BATTLE IS HOOKED INTO THE GAME'S OWN FRAME, not driven from here.
@@ -100,39 +101,56 @@ const read = () => page.evaluate(() => {
 
 const before = await read();
 
-await page.evaluate(async (origin) => {
-  const S = window.SABER, w = S.world;
-  const M = await import(`${origin}/src/game/Mass.js`);
-  const E = await import(`${origin}/src/game/Enemy.js`);
-  const p = w.player.position;
-  const V = (x, y, z) => new (p.constructor)(x, y, z);
-  /* Donors: one real body per side, parked far out, so the cohort has a rig to
-   * bake a merged skin from. See `MassField._donorFor`. */
-  for (const t of ['trooper', 'b1']) w.enemies.push(new E.Enemy(w, t, V(p.x + 300, 0, p.z + 300)));
-  const f = new M.MassField(w);
-  window.__mass = f;
-  M.layBattle(f, { blocks: 8, gap: 150, origin: p, axis: V(0, 0, 1) });
-  /* One step, so the cohort joins land and the instances are written before
-   * anything is counted. */
-  f.update(1 / 60, { bolts: w.bolts });
-}, `http://127.0.0.1:${port}`);
-
-await page.waitForTimeout(2500);
-const after = await read();
-
-const out = await page.evaluate(() => {
-  const f = window.__mass;
+/* THE MODE, NOT A HAND-LAID BATTLE. An earlier shape of this probe called
+ * `layBattle` itself, which proves the tier works and proves nothing about
+ * whether a PLAYER can reach it. `main.js` calls `openFront(world)` when the
+ * mode row declares `massBattle`, so booting into `thefront` and finding an
+ * army is the whole question. */
+await page.evaluate(() => { window.__probe = () => {
   const w = window.SABER.world;
+  const f = w.mass;
+  if (!f) return { err: 'the mode did not open a front — world.mass is missing' };
+  const cam = w.engine.camera;
+  cam.updateMatrixWorld(true);
+  const m = cam.matrixWorld.elements;
+  const fx = -m[8], fy = -m[9], fz = -m[10];
+  const halfV = (cam.fov * Math.PI / 180) / 2;
+  const halfH = Math.atan(Math.tan(halfV) * cam.aspect);
+  let seen = 0, total = 0, near = Infinity;
+  for (const r of f.ranks) for (const man of r.men) {
+    if (!man.alive) continue;
+    total++;
+    const vx = man.position.x - cam.position.x;
+    const vy = man.position.y - cam.position.y;
+    const vz = man.position.z - cam.position.z;
+    const len = Math.hypot(vx, vy, vz) || 1;
+    near = Math.min(near, len);
+    if ((vx * fx + vy * fy + vz * fz) / len >= Math.cos(halfH)) seen++;
+  }
   const bins = [...w.cohorts.cohorts.values()].filter(Boolean)
     .reduce((a, c) => a + c.meshes.length, 0);
   return {
-    men: f.count(0) + f.count(1),
+    mode: w.settings.mode,
+    men: f.count(0) + f.count(1), mine: f.count(0), theirs: f.count(1),
     ranks: f.ranks.length,
-    instanced: f.ranks.reduce((a, r) => a + r.men.filter((m) => m._l3).length, 0),
+    inFrame: seen, of: total, nearestMan: Math.round(near),
     cohortBins: bins,
     realBodies: w.enemies.filter((e) => !e.dead).length,
+    boltsInAir: w.bolts.bolts.filter((b) => b.active).length,
+    t: Math.round(w.time),
   };
-});
+}; });
+
+/* SAMPLED TWICE, forty seconds apart. The first is the picture you land on;
+ * the second is whether it is a BATTLE — men down, rounds in the air, the near
+ * fight arrived. A crowd that looks right on the deploy frame and never moves
+ * is the failure this file's own header calls a screensaver. */
+const out = await page.evaluate(() => window.__probe());
+await page.waitForTimeout(40000);
+const later = await page.evaluate(() => window.__probe());
+const after = await read();
+console.log('at deploy :', JSON.stringify(out));
+console.log('+40 s     :', JSON.stringify(later));
 console.log(JSON.stringify({
   ...out,
   drawCalls: { before: before.calls, after: after.calls, added: after.calls - before.calls },

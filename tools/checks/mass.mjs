@@ -36,7 +36,7 @@ import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
 import { MODES } from '../../src/game/Waves.js';
 import {
-  MassField, Rank, layBattle, openFront,
+  MassField, Rank, layBattle,
   RANK_MEN, RANK_COLS, PROMOTE, STAND_OFF, BREAK_AT, HIT, MUZZLE,
 } from '../../src/game/Mass.js';
 
@@ -382,25 +382,40 @@ export async function run({ check, assert }) {
      *     ground with a war on the far side of it. The mode runs the ordinary
      *     wave director as well, and this is the assertion that it does.
      *
-     * THE DOOR IS `main.js`'s, AND THAT IS ASSERTED TOO. A check that opens the
-     * front itself would pass just as green with the deploy path never calling
-     * it — which is the exact state this whole section was written to end — so
-     * the source is read for the call and for the fact that it is made off the
-     * declared field rather than a mode name.
+     * THE DOOR IS THE WORLD'S, AND THAT IS ASSERTED AS BEHAVIOUR. A check that
+     * opened the front itself would pass just as green with nothing ever
+     * calling it — the exact state this section exists to end — so the world is
+     * booted into the mode and asked whether it HAS one.
+     *
+     * It was a source scan for one build, pinned to `main.js` because that is
+     * where the call was, and that pinning was the defect in miniature: the
+     * call belonged beside `objectives` and `fireMissions` in `World.loadLevel`
+     * (a branch belongs to the property it is gated on, not to the screen that
+     * calls it first), and moving it there — which made the mode reachable from
+     * a headless boot and from a co-op client for the first time — turned the
+     * check RED. A check that fails when the code gets better is testing the
+     * wrong thing.
      */
-    const main = await read('src/main.js');
-    assert(/MODES\[settings\.mode\]\?\.massBattle\)\s*openFront\(world\)/.test(main),
-      'src/main.js does not open a front off `MODES[...].massBattle` — the mode declares a battle '
-      + 'and the deploy path never lays one, which is the defect this check exists for');
-
     const [key, M] = MASS_MODES[0];
     const { world } = await bootWorld({ level: 'geonosis', settings: { quality: 'low', mode: key } });
     const input = idleInput();
-    /* The two lines of the deploy path, in the order `main.js` runs them. */
-    world.director.start(1);
-    const front = openFront(world);
-    assert(front, `openFront refused ${key}, which declares massBattle`);
+    /* THE ASSERTION: the world came back from a plain boot WITH a front on it.
+     * Nothing here opens one, which is the point — a mode that declares a
+     * battle and gets none is what this check is for, and it is exactly the
+     * state the build was in when `openFront` lived on one screen's deploy
+     * path.
+     *
+     * TWO OBJECTS AND THEY ARE NOT THE SAME ONE. `world.front` is the prop the
+     * world drives — it holds the moulds, the bearing and whether the battle
+     * has been laid; `world.mass` is the `MassField` it drives, which is what
+     * a HUD counts and what `World.loadLevel` disposes. Reading `laid` off the
+     * field is `undefined` forever, which is a check that waits thirty frames
+     * for a flag nothing sets. */
+    const front = world.front;
+    assert(front, `${key} declares massBattle and a booted world has no front on it at all`);
+    assert(world.mass, `${key} has a front and no field for it to drive`);
     assert(!front.laid, 'the front laid its battle before a frame was stepped');
+    world.director.start(1);
 
     /* AND FROM HERE NOTHING BUT THE WORLD'S OWN FRAME. If `world.props` ever
      * stops being driven, or the front stops being registered on it, every
@@ -431,6 +446,7 @@ export async function run({ check, assert }) {
      * a camera moved until the answer came out right. */
     const cam = world.engine?.camera;
     assert(cam, 'no camera to look through');
+    const p0 = world.player.position.clone();
     cam.position.copy(world.player.position).setY(world.player.position.y + 1.6);
     cam.lookAt(world.player.position.clone().addScaledVector(front.axis, 100)
       .setY(world.player.position.y + 1.6));
@@ -452,6 +468,44 @@ export async function run({ check, assert }) {
     assert(seen > total * 0.5,
       `${seen} of ${total} men are in front of the camera on the frame you land`);
     assert(frames < 30, `the battle took ${frames} frames to appear after the player landed`);
+
+    /**
+     * …AND THE GROUND IS NOT IN THE WAY, WHICH THE ANGLE CANNOT SAY.
+     *
+     * The count above is the one check 5 makes and it is not enough on its own.
+     * Measured on a shipped Geonosis deploy before the bearing was chosen: the
+     * terrain between the player and their own line ran
+     * `-0.7 -0.3 -0.2 -0.2 -0.3 -0.5 -0.2 8.6 19.3 1.4 0.2` — a nineteen-metre
+     * rock at 80 m — and the frustum count said **480 of 480** over a frame with
+     * an empty plain in it. So the sightline is walked against the heightfield,
+     * which is the only question a player is actually asking.
+     *
+     * A THIRD, and not most of them, because this is authored ground and not a
+     * parade square: swept over twenty-four bearings on three levels, ONE
+     * bearing of twenty-four on geonosis and none at all on drifts or scoria
+     * had less than 2° of anything standing in front of it. What the mode owes
+     * is that it CHOSE — see `Front._bearing` — not that Geonosis is flat.
+     */
+    const eyeY = world.player.position.y + 1.5;
+    let clear = 0, tried = 0;
+    for (const r of f.ranks) for (let i = 0; i < r.men.length; i += 4) {
+      const man = r.men[i];
+      if (!man.alive) continue;
+      tried++;
+      const tx = man.position.x - p0.x, tz = man.position.z - p0.z;
+      const d = Math.hypot(tx, tz);
+      const top = man.position.y + 1.2;
+      let ok = true;
+      for (let sm = 10; sm < d - 4; sm += 8) {
+        const k = sm / d;
+        if (world.terrain.height(p0.x + tx * k, p0.z + tz * k) > eyeY + (top - eyeY) * k) { ok = false; break; }
+      }
+      if (ok) clear++;
+    }
+    assert(clear > tried / 3,
+      `only ${clear} of ${tried} men sampled have a line of sight to the player that clears the `
+      + 'ground — the army is over a ridge and the frame is an empty plain, which is the original '
+      + 'complaint with terrain instead of a spawn heuristic in front of it');
 
     /**
      * …AND THEY ARE DRAWN WHERE THEY STAND, which no count could ever say.
@@ -549,6 +603,7 @@ export async function run({ check, assert }) {
     world.unload?.();
     return `${M.name}: ${mine0} v ${theirs0} = ${mine0 + theirs0} laid ${frames} frames in, ${seen}/${total} in frame, `
       + `${near.length} real bodies inside ${PROMOTE} m, ${n} men at ${med.toFixed(2)} ms median `
-      + `(vs ~${asBodies.toFixed(0)} ms as bodies), ${cohorts} cohorts, bake centred ${off.toFixed(2)} m off`;
+      + `(vs ~${asBodies.toFixed(0)} ms as bodies), ${clear}/${tried} sampled men clear of the ground, `
+      + `${cohorts} cohorts, bake centred ${off.toFixed(2)} m off`;
   });
 }

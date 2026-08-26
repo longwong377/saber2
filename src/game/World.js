@@ -20,6 +20,7 @@ import { Particles } from '../world/Particles.js';
 import { LightningVfx } from '../world/Lightning.js';
 import { GrenadeField } from './Reactions.js';
 import { CohortField } from './Cohorts.js';
+import { openFront } from './Mass.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
@@ -1036,6 +1037,34 @@ export class World {
       const rng = makeRng(((this.runSeed | 0) ^ 0x0b1ec7) >>> 0);
       this.objectives.place({ count: 4, axis: bearing, rng: () => rng() });
     }
+    /**
+     * …AND THE BATTLE BEHIND THEM — the mass tier, armed off the same kind of
+     * declared field.
+     *
+     * `openFront` lived in `main.js`'s deploy path for one build, which is the
+     * one entry point a player uses and the only one anything else does. So a
+     * headless world booted straight into the mode had `world.mass` undefined
+     * and no battle at all: every check had to lay one by hand, which proves
+     * the tier works and proves nothing about whether the MODE does. A co-op
+     * client would have had none either.
+     *
+     * Here instead, beside `objectives` and `fireMissions`, because the mode
+     * row's own note says that is where it belongs: a branch belongs to the
+     * property it is gated on, not to the screen that happens to call it first.
+     * `openFront` only ARMS the front — it does not lay it, because the player
+     * spends the next half minute as a seat in a gunship — so running it at
+     * load is exactly as correct as running it at deploy and reaches every
+     * caller instead of one.
+     */
+    /* `front` is the object and `mass` is its field — `openFront` sets both and
+     * the teardown has to take both, or a level change leaves a dead Front on
+     * `world.front` and `openFront`'s own `if (world.front && !world.front.dead)`
+     * hands the next ground the last one's battle. */
+    this.front?.dispose?.();
+    this.front = null;
+    this.mass = null;
+    if (this.netMode !== 'client' && MODES[mode]?.massBattle) openFront(this);
+
     /**
      * THE ORDER YOU CAN CHECK — PLAN.md §1, and it is gated the same way.
      *
