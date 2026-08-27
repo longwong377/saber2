@@ -351,12 +351,12 @@ export function run({ check, assert, near }) {
      * `Terrain.raycast(origin, dir, maxDist, outPoint, outNormal)` returns the
      * distance and writes the hit into the last two. Half of what asks a
      * terrain for a ray does not want the hit — it wants to know whether there
-     * IS one. `Emplacement.GunPit.update` asks exactly that, one line under the
+     * IS one. The caller that found this asked exactly that, one line under the
      * identical question put to `physics.raycast`: "is the ground between my
      * muzzle and that man". It called this with three arguments, which is fine
      * on every frame the ray MISSES and throws `Cannot read properties of
-     * undefined (reading 'set')` on the first frame it hits — so the crash
-     * waits in the game until a gun pit's target walks behind a rise.
+     * undefined (reading 'set')` on the first frame it hits — so the crash sat
+     * in the game until that shooter's target walked behind a rise.
      *
      * Found by a probe driving a whole sitting, not by a check: no suite had a
      * terrain ray that hit while being asked as a predicate. That is the hole

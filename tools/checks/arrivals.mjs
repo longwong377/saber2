@@ -36,9 +36,10 @@ import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import {
-  ArrivalDirector, ARRIVAL_LEAD, MARCH_RADIUS, MAX_CONCURRENT,
-  ARRIVAL_BY_TERRAIN, arrivalKindFor, capacityOf, deliveryIsAnnounced,
+  ArrivalDirector, ARRIVAL_LEAD, MARCH_RADIUS, MARCH_SPREAD, MAX_CONCURRENT,
+  ARRIVAL_BY_TERRAIN, arrivalKindFor, capacityOf, deliveryIsAnnounced, marchBand,
 } from '../../src/game/Arrivals.js';
+import { L3_AT } from '../../src/game/Cohorts.js';
 import { clocked } from './_shared.mjs';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
@@ -105,7 +106,7 @@ export async function run({ check, assert }) {
     const rows = [];
     // Enumerated, not named. A hand-written list is how a check keeps testing
     // levels that have been deleted and stops testing the ones that replaced
-    // them — three of the five named here no longer exist.
+    // them, which is exactly what `ARRIVAL_BY_TERRAIN` did for three rows.
     for (const key of LEVEL_ORDER) {
       /* DEEPEN UNTIL THERE IS A WAVE TO MEASURE, rather than asserting that
        * wave 4 is one everywhere.
@@ -138,17 +139,131 @@ export async function run({ check, assert }) {
     return rows.join('; ');
   });
 
+  check('arrivals: no arrival is ever placed past the distance it stops drawing itself', () => {
+    /**
+     * THE OTHER HALF OF THE CHECK ABOVE, and geonosis is what it cost to not
+     * have it.
+     *
+     * "It is delivered from beyond `MARCH_RADIUS` times the level's own spawn
+     * ring and walks the whole way in" is only an announcement if the walk is
+     * something you can SEE. `MARCH_RADIUS` is a multiple, not a distance, so
+     * it says nothing about where the renderer stops: past `Cohorts.L3_AT`
+     * (137.8 m, derived from the ink prepass' own far plane) `Enemy._lod` hands
+     * a body to the cohort field and it has no outline, no own mesh and one
+     * shared pose. A body born past it is not a silhouette on the horizon, it
+     * is nothing at all until it has walked far enough to become one.
+     *
+     * On the build this check was written against, `spawnRadius: [58, 96]` and
+     * `96 × 1.45 × 1.14` put every marching hostile on geonosis at 139–159 m —
+     * 21 m outside the renderer — and Command at 50 s had a median hostile
+     * range of 110.9 m with 32 of 49 outside the frustum.
+     *
+     * MEASURED FURTHEST ARRIVAL PER LEVEL, waves 4–16, before → after:
+     *
+     *     scoria      69.6 → 69.6      wood        76.0 → 76.0
+     *     mustafar    85.6 → 85.6      drifts      99.2 → 99.2
+     *     colosseum   82.2 → 82.2      alpine      84.9 → 84.9
+     *     geonosis   158.2 → 137.4
+     *
+     * Six of seven are untouched, which is the point: the clamp is a ceiling,
+     * not a tuning pass, and it only bites where a band already reached past
+     * the renderer.
+     */
+    const rows = [], analytic = [], measured = [], floors = [];
+    for (const key of LEVEL_ORDER) {
+      const L = LEVELS[key];
+      const ring = L.spawnRadius?.[1] ?? 56;
+      const [near, far] = marchBand(ring);
+      const raw = ring * MARCH_RADIUS * MARCH_SPREAD;
+
+      // ── the rule, as arithmetic
+      if (far > L3_AT) analytic.push(`${key} places out to ${far.toFixed(1)} m`);
+      /* ── AND THE FLOOR THE CEILING COULD EAT. `marchBand` scales the band
+       * down, so a level whose ring is wide enough can have its NEAR edge
+       * pulled inside its own spawn ring — at which point a march is no longer
+       * "beyond where everything else spawns" and the check above it is
+       * satisfied by slack rather than by the property. That happens at
+       * `L3_AT / MARCH_SPREAD` = 120.9 m of outer ring; geonosis' 96 m is the
+       * widest shipped and clears it. This is the assertion the NEXT wide map
+       * trips, and the honest answer when it does is that a level cannot both
+       * spawn past the renderer and announce anything. */
+      if (near <= ring) floors.push(`${key} marches from ${near.toFixed(1)} m inside its own ${ring} m ring`);
+
+      // ── and the rule, as bodies actually put on the ground
+      const log = [];
+      for (let wave = 4; log.length < 24 && wave <= 16; wave += 2) log.push(...playWave(key, wave).log);
+      assert(log.length >= 8, `${key}: only ${log.length} bodies arrived across waves 4–16`);
+      const worst = log.reduce((a, b) => (b.dist > a.dist ? b : a));
+      if (worst.dist > L3_AT) {
+        measured.push(`${key} put a ${worst.type} down at ${worst.dist.toFixed(1)} m by ${worst.kind}`);
+      }
+      rows.push(`${key} ring ${ring} m, band ${near.toFixed(0)}–${far.toFixed(0)} m`
+        + `${raw > L3_AT ? ` (clamped from ${raw.toFixed(0)})` : ''}, furthest ${worst.dist.toFixed(1)} m`);
+    }
+    assert(analytic.length === 0,
+      `${analytic.length} level(s) can place an arrival past L3_AT (${L3_AT.toFixed(1)} m), where a `
+      + `body stops drawing its own outline: ${analytic.join('; ')}`);
+    assert(measured.length === 0,
+      `${measured.length} level(s) actually did place one past L3_AT (${L3_AT.toFixed(1)} m): `
+      + measured.join('; '));
+    assert(floors.length === 0,
+      `the L3_AT ceiling has eaten the march floor on ${floors.length} level(s) — a march inside the `
+      + `spawn ring announces nothing: ${floors.join('; ')}`);
+
+    /* ── AND THE CHECK HAS TO BE ABLE TO FAIL ON A ROSTER THAT DOES NOT HAPPEN
+     * TO CONTAIN A WIDE LEVEL. Everything above is a fact about seven levels;
+     * delete geonosis and it passes against a `marchBand` with no ceiling in
+     * it at all. So the rule is also asserted as a property of the function,
+     * at a ring no level has, which is where a future map would land. */
+    for (const ring of [96, 200, 1000]) {
+      const [near, far] = marchBand(ring);
+      assert(far <= L3_AT + 1e-9,
+        `marchBand(${ring}) reaches ${far.toFixed(1)} m — the ceiling is not derived from L3_AT `
+        + `(${L3_AT.toFixed(1)} m), it is a number that happens to be big enough today`);
+      assert(near > 0 && near <= far,
+        `marchBand(${ring}) returned [${near.toFixed(1)}, ${far.toFixed(1)}] — a band whose floor is `
+        + 'above its ceiling makes `lerp(rMin, rMax)` draw points outside both');
+    }
+    /* …and the setback the shipped game passes only ever tightens it. */
+    const [, capped] = marchBand(1000, 3.05);
+    assert(capped <= L3_AT - 3.05 + 1e-9,
+      `a 3.05 m camera setback left the band reaching ${capped.toFixed(1)} m`);
+
+    return `${rows.join('; ')} — all inside L3_AT ${L3_AT.toFixed(1)} m`;
+  });
+
   check('arrivals: every level type has a way of bringing enemies in', () => {
     // A level whose terrain is not in the table falls through to `march`,
     // which is honest but is not a set piece. Every level actually in LEVELS
     // has to have been thought about.
     const missing = [];
+    const grounds = new Set();
     for (const [key, L] of Object.entries(LEVELS)) {
+      grounds.add(L.terrain);
       if (L.training) continue;                       // the dojo conjures its own
       if (!ARRIVAL_BY_TERRAIN[L.terrain]) missing.push(`${key} (terrain '${L.terrain}')`);
     }
     assert(missing.length === 0,
       `${missing.length} shipping level(s) have no arrival for their terrain: ${missing.join(', ')}`);
+
+    /* ── AND THE OTHER DIRECTION, WHICH IS THE ONE THAT HAD ROTTED.
+     *
+     * This table used to carry `dunes`, `canyon` and `hangar` — the dune sea,
+     * the wash and Hangar Bay Nine, all three deleted from LEVELS — so three of
+     * its five rows described ground that does not exist and could never be
+     * drawn from. Nothing here could fail on them, because "every level has an
+     * entry" is silent about entries with no level.
+     *
+     * `Arrivals.js` cannot import `Levels.js` to derive its own keys (Spawn.js
+     * records the cycle: Levels.js imports the table to register its grounds
+     * into it), so the derivation is done HERE, in the one module that can see
+     * both. `hangar` was also the only `['gate']` in the literal, which made
+     * "the game can still open a gate" a fact about a deleted level — the
+     * assertion below now reaches it through the Colosseum instead. */
+    const orphans = Object.keys(ARRIVAL_BY_TERRAIN).filter((t) => !grounds.has(t));
+    assert(orphans.length === 0,
+      `${orphans.length} arrival table row(s) describe ground no level stands on: ${orphans.join(', ')}`
+      + ' — an entry no terrain string reaches can never be drawn from and can never be wrong');
     // and the two set pieces must both be reachable, not merely declared
     const kinds = new Set(Object.values(ARRIVAL_BY_TERRAIN).flat());
     for (const need of ['dropship', 'gate', 'march']) {
@@ -318,7 +433,7 @@ export async function run({ check, assert }) {
       + 'if it is under 1.4 the squad is not riding together)');
     assert(peak <= MAX_CONCURRENT,
       `${peak} arrivals were live at once against a cap of ${MAX_CONCURRENT}`);
-    return `waves 4–10 on the dunes: ${JSON.stringify(byKind)}; ${perShip.toFixed(2)} bodies per `
+    return `waves 4–10 on the drifts: ${JSON.stringify(byKind)}; ${perShip.toFixed(2)} bodies per `
       + `gunship, never more than ${peak} arrival(s) in flight`;
   });
 
@@ -326,7 +441,13 @@ export async function run({ check, assert }) {
     // `alive === 0 && !spawnQueue.length` ended the wave. Bodies in transit
     // are in neither list, so a wave could be declared clear with a full
     // gunship thirty metres up, and the HUD would read 0 remaining.
-    const w = fakeWorld('dunes');
+    /* ON A LEVEL THAT EXISTS. Every fixture below this line said `'dunes'`,
+     * which was deleted with the dune sea: `LEVELS.dunes` is undefined, so
+     * `fakeWorld` handed the director `level: undefined` and it fell back to a
+     * 34–56 m ring and the default arrival. Five fixtures were measuring the
+     * absence of a level, which is the same disease as the three dead rows in
+     * `ARRIVAL_BY_TERRAIN` and was three lines away from it. */
+    const w = fakeWorld('drifts');
     const d = new WaveDirector(w, { mode: 'roguelite', pool: LEVELS.drifts.pool });
     d.start(3);
     const ctx = { enemies: w.enemies, particles: null, terrain: w.terrain,
@@ -391,14 +512,14 @@ export async function run({ check, assert }) {
      * here so neither can drift: the room arrives by default, AND the instant
      * room still exists for anybody who wants it.
      */
-    const w = fakeWorld('dunes');
+    const w = fakeWorld('drifts');
     const d = new WaveDirector(w, { mode: 'sandbox', pool: ['b1'] });
     assert(d.arrivals.enabled === true,
       'the sandbox still teleports bodies in front of the player — see note #17');
     assert(d.arrivals.request('b1') === true,
       'the sandbox director refused an arrival request, so its bodies have nowhere to come from');
 
-    const fast = fakeWorld('dunes');
+    const fast = fakeWorld('drifts');
     fast.settings = { instantSpawn: true };
     const df = new WaveDirector(fast, { mode: 'sandbox', pool: ['b1'] });
     assert(df.arrivals.enabled === false,
@@ -410,7 +531,7 @@ export async function run({ check, assert }) {
      * sandbox-only test would miss: a player who has asked for instant spawns
      * has asked for them everywhere, and a mode that half-honoured it would be
      * two behaviours behind one switch. */
-    const wr = fakeWorld('dunes');
+    const wr = fakeWorld('drifts');
     wr.settings = { instantSpawn: true };
     const dr = new WaveDirector(wr, { mode: 'roguelite', pool: ['b1'] });
     assert(dr.arrivals.enabled === false, 'instantSpawn is honoured in the sandbox and ignored in a wave');
@@ -422,7 +543,7 @@ export async function run({ check, assert }) {
     // parks its one group in `world.statics`, which is the list World.unload
     // empties. So a level that ends mid-landing costs one scene removal, not a
     // leak per ship.
-    const w = fakeWorld('dunes');
+    const w = fakeWorld('drifts');
     const before = w.scene.children.length;
     const d = new WaveDirector(w, { mode: 'roguelite', pool: LEVELS.drifts.pool });
     assert(w.scene.children.length === before + 1,

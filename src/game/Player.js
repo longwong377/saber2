@@ -8545,6 +8545,50 @@ export class Player {
    * refuse to mend you. Downed men come first — see `_updateHeal`, which
    * stands a limp one up when the channel completes.
    */
+  /**
+   * THE WOUNDED MAN YOU ARE NOT LOOKING AT.
+   *
+   * The player, across at least three sessions and in the end flatly:
+   * *"I've asked to this before 100 times but how do I heal my troops? You
+   * should have already added it but maybe I've missed it."*
+   *
+   * They had missed it, and the miss was designed in. Ally mend has worked for
+   * a long time and the HUD does print `WOUNDED ALLY` — but only while a
+   * wounded man is inside `MEND_CONE` of where you are AIMING, which in a
+   * firefight is where the enemy is. The one prompt that would teach the power
+   * appears only in the moment you are already doing the thing it teaches.
+   *
+   * So this is the same question with the cone taken off: is there anybody near
+   * enough to mend at all? The HUD asks it when `_mendTarget` says no, and says
+   * "look at them" instead of nothing. The POWER is unchanged — it still wants
+   * the aim, because a heal that snaps to whoever is nearest is a different
+   * power — and this only decides whether the screen mentions that it exists.
+   *
+   * Everything else is `_mendTarget`'s own test, in the same order, so the two
+   * cannot disagree about who counts as a hurt ally.
+   */
+  nearestWounded(ctx) {
+    const list = ctx?.enemies || this.world?.enemies;
+    if (!list) return null;
+    const rules = ctx?.rules ?? this.world?.rules ?? null;
+    let best = null, bestD = Infinity;
+    for (const e of list) {
+      if (!e || e.dead || e === this) continue;
+      if (canHarm(this, e, rules)) continue;
+      if (!(e.hp < (e.maxHp ?? 0))) continue;
+      _v1.subVectors(e.position, this.chest);
+      const d = _v1.length();
+      if (d > MEND_REACH || d < 1e-3) continue;
+      /* A limp man wins any tie of distance, for `_mendTarget`'s reason: he is
+       * the one who is out of the fight entirely. */
+      const rank = d - (e.actor?.ragdolled ? MEND_LIMP_EDGE * MEND_REACH : 0);
+      if (rank >= bestD) continue;
+      bestD = rank;
+      best = e;
+    }
+    return best;
+  }
+
   _mendTarget(ctx) {
     const list = ctx?.enemies || this.world?.enemies;
     if (!list) return null;
@@ -9156,96 +9200,41 @@ export class Player {
     }
 
     /**
-     * AND THE PEOPLE — which is what "what is near you" means in a fight.
+     * …AND THE PEOPLE ARE NOT TAKEN, WHICH IS A REVERSAL AND IS THE PLAYER'S.
      *
-     * THE ARREST IS `Enemy.stun`, and it is a reuse rather than a new freeze.
-     * That verb is what a parry, a chamber, a lost blade lock, a Force shove, a
-     * heavy cut and `topple()` all already call, and every consumer of "can
-     * this body act" already reads the `stunTimer` it sets: `_think` returns
-     * without a wish, `_move`'s `canMove` refuses to walk, the facing solve
-     * refuses to turn, `_sustain` drops a held power, `breakCast` breaks a
-     * wind-up mid-flight, and `_guardOpen` opens the guard so the blade can
-     * finish what the field started. A parallel freeze would have had to
-     * restate every one of those and would have drifted from all of them.
-     * `Enemy.stasisHeld` is the MARK that says which arrest this is; it buys
-     * exactly two narrow things, both of them visible, and its own note in
-     * Enemy.js says what they are.
+     * This loop existed and it worked. It arrested every hostile inside the
+     * field through `Enemy.stun` and the Codex card advertised it. The player,
+     * twice, and the second time after it had been explained:
      *
-     * THERE IS NO `v² ≥ 4` HERE, AND THE ABSENCE IS THE RULE. The crate branch
-     * takes only what is in flight because freezing the crate you are standing
-     * next to is a bug report — but that rule was never about MOVEMENT, it was
-     * about whether the thing is part of the fight, and a resting crate is
-     * scenery. A hostile standing still and shooting you is the most
-     * fight-shaped thing in the room. Gating people on speed would refuse
-     * exactly the sniper, the cover-camper and the wind-up you most want to
-     * stop, and would make the power fire differently depending on which foot
-     * a walking man happened to be on.
+     *   "That force move that suspends all blasters mid air works and is cool
+     *    but idk if it's a bug or not but if I touch an enemy during that
+     *    freeze it also freezes/suspends the enemies which is not what I want.
+     *    I want it to just suspend the bolts in the air like the enemies
+     *    shouldn't be frozen at any point they should continue to fire if they
+     *    wish to regardless."
      *
-     * WHAT DOES GET REFUSED is what the grip refuses, by the same two gates in
-     * the same order and against the same cap: an author's outright
-     * `grippable: false` (the AT-TE and the AAT — terrain that shoots), then
-     * `mass > liftCapacity`. A field stricter than the grip would be a second
-     * rulebook for the same question.
+     * That is a design call and it is theirs to make. What is worth writing
+     * down is WHY it read as a bug rather than as a feature, because the reason
+     * is mechanical and not a matter of taste: `_updateStasis` re-centres the
+     * field on your chest every frame and re-sweeps. So the field is not a
+     * volume you cast onto the battlefield, it is a bubble you carry — and
+     * walking forward arrests people who were never in the cast. From the
+     * outside that is indistinguishable from "touching an enemy freezes it",
+     * which is exactly the sentence the player used.
      *
-     * WHO IT MAY REACH IS `canHarm`'S QUESTION AND NOT THIS METHOD'S, and the
-     * distinction is the whole of player note #29:
+     * SO THE FIELD IS THE TWO SUBJECTS THAT ARE ALREADY IN FLIGHT: the bolts
+     * and the loose objects. Both are things that were thrown at you, both are
+     * frozen where they hang, and neither of them is a person deciding
+     * anything. The power keeps its picture — a wall of stopped fire — and the
+     * fight keeps going on around it, which is the thing being asked for.
      *
-     *   "your allies should be as real as the enemies like no difference — you
-     *    can do damage to them and throw them and manipulate them so you need
-     *    to be careful not to hurt them … but like obviously the force
-     *    blaster-stop thing shouldn't affect your allies' blasters."
-     *
-     * Two clauses, and they are about two different subjects. Their SHOTS are
-     * exempt: the bolt loop above skips `bolt.team === this.team`, which
-     * Command.js and World.js both cite by name, and a bolt is an object in
-     * flight with no allegiance of its own to consult — its team field IS the
-     * whole question. Their BODIES are not exempt: a body has a rule attached
-     * to it, the note asks for allies you can throw and manipulate and must be
-     * careful with, and freezing one is a manipulation. So the field reaches
-     * exactly what push, pull, grip, lightning, compel and rend reach, by
-     * asking the same gate they ask.
-     *
-     * `hostileTo` is that gate — `canHarm` per body, against `ctx.rules` — and
-     * routing through it is what stops a second rulebook: the day `rules` grows
-     * a case, a hand-written team comparison here would be the one call site
-     * that never heard about it. `tools/checks/pvp.mjs` forbids the comparison
-     * outright for that reason, and it is right to.
-     *
-     * The list is `ctx.enemies` and NOT `_foes(ctx)`, which is the same filter
-     * over the players as well. A rival player is not arrested by this, and the
-     * reason is mechanical rather than political: the arrest is `Enemy.stun`
-     * and a Player has no `stunTimer` to set — its own note in `_readInput`
-     * says as much. Freezing a person who is holding the controls is a
-     * different power with a different argument, and it is not this one.
-     *
-     * The array is retained for the reason `_foeList` is: the sweep runs every
-     * frame the field is up, and this is a hot path in a crowd. It is a second
-     * array rather than `_foeList` itself because a power iterating `_foes` can
-     * be on the stack when the field sweeps.
+     * The mark and the release path stay. `Enemy.stasisHeld`, `_freeStasisEnemy`
+     * and the enemy branch of `_launchStasisItem` are all still correct code for
+     * a held body; nothing sets the mark now, and a power that wants to hold a
+     * person later has the machinery sitting there rather than having to invent
+     * it again. `hostileTo` is no longer called from this method — that was the
+     * only reason `_stasisFoes` existed.
      */
-    const foes = (this._stasisFoes ||= []);
-    foes.length = 0;
-    hostileTo(this, ctx.enemies, ctx.rules ?? this.world?.rules ?? null, foes);
-    for (const e of foes) {
-      // Already ours, or the grip's — two holds on one body is two bills for
-      // one arrest, and `_updateGrip` is the one that can also move it.
-      if (e.stasisHeld || e.gripped || e === this.gripEnemy) continue;
-      /* A body already LIMP is not a person walking into your field, it is a
-       * set of parts — and the loop above owns parts. Taking it as a person
-       * too would bill one subject twice and freeze it by two different rules,
-       * one of which (`_move`) it is not even running any more. */
-      if (e.actor?.ragdolled) continue;
-      if (this._enemyPoint(e, _g5).distanceToSquared(S.centre) > r2) continue;
-      const m = e.A ? e.A.mass : 80;
-      if (e.grippable === false || m > cap) {
-        refusals?.push({ enemy: e, mass: m, immovable: e.grippable === false });
-        continue;
-      }
-      e.stasisHeld = true;
-      e.stun(STASIS_GRACE);
-      S.held.push({ enemy: e });
-      taken++;
-    }
     return taken;
   }
 

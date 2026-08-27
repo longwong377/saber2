@@ -49,7 +49,9 @@
  */
 
 import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById } from './Command.js';
-import { ATTR_IDS, traitById } from './Attributes.js';
+import {
+  ATTR_IDS, traitById, attrName, BOND_AREAS, liveBonds, isBonded, applyTrait, shedTraits,
+} from './Attributes.js';
 /* FOR THE ONE WORD THAT SAYS WHAT HE DOES. `dossier` printed `m.type` raw for
  * a long time, so a page about a person had "clone_heavy" on it; `ARCHETYPES`
  * already carries the label every other screen uses and this file must not
@@ -73,6 +75,39 @@ function saneAttrs(a) {
     out[id] = Math.max(0, Math.min(100, Math.round(v)));
   }
   return out;
+}
+
+/** The order a man's bonds are kept and shown in. Stable across a reload. */
+const strongestFirst = (a, b) => ((b.areas | 0) - (a.areas | 0))
+  || (a.with < b.with ? -1 : a.with > b.with ? 1 : 0);
+
+/**
+ * A MAN'S BONDS OFF DISK, made safe.
+ *
+ * The failure this exists to stop is not a crash, it is a save file with fifty
+ * entries in it: `bonds` is the only field on a record that names ANOTHER
+ * record, so it is the only one where a hand edit buys something — a man
+ * bonded to forty people, or to a name that is not on the roll, or to himself,
+ * or with a tally of 1e9 that sorts him to the top of every list for ever.
+ *
+ * Everything a save can assert about a bond is checked here except the one
+ * thing this function cannot see, which is whether the other man is still
+ * alive. That is `settleBonds`, which runs once the whole roll has been read.
+ */
+function saneBonds(list, self) {
+  if (!Array.isArray(list)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const b of list) {
+    if (!b || typeof b !== 'object') continue;
+    const who = typeof b.with === 'string' ? b.with : null;
+    if (!who || who === self || seen.has(who)) continue;
+    const n = Number(b.areas);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    seen.add(who);
+    out.push({ with: who, areas: Math.min(BOND_TALLY_MAX, Math.max(0, Math.round(n))) });
+  }
+  return out.sort(strongestFirst).slice(0, BONDS_MAX);
 }
 
 /** Where it lives. Versioned like every other store in the tree. */
@@ -103,9 +138,41 @@ const MAN_FIELDS = [
    * so the tab can say "nine runs, since Geonosis" rather than a bare number.
    * Neither is read by anything that fights. */
   'runs', 'since', 'story',
+  /* AND WHO HE HAS BEEN THROUGH IT WITH. The one field on this list that is
+   * about two men rather than one; see `settleBonds`. It is a TALLY of shared
+   * grounds per partner, not a flag — a bond that could only be on or off
+   * would have to be decided in the one frame it crossed the line, and the
+   * roster screen could never show a pair three grounds short of one. */
+  'bonds',
   /* AND WHAT THE PLAYER CHOSE TO DO WITH HIM. See `look`. */
   'look',
 ];
+
+/**
+ * HOW MANY MEN ONE MAN CARRIES.
+ *
+ * Three, and it is the same kind of honesty number `CAP` is. A manifest is
+ * about ten men, so a tally kept against everybody would give every survivor
+ * nine entries after one withdrawal and sixty after six — a roster screen
+ * listing nine names under "who he came home with" is a join table, not a
+ * relationship, and a man with nine bonds has none.
+ *
+ * WHICH three is `settleBonds`'s decision and it is dealt per PAIR rather than
+ * per man — see the note there for the measurement that says why, and for why
+ * dealing them the obvious way left half a roll bonded to nobody.
+ */
+export const BONDS_MAX = 3;
+
+/**
+ * …AND HOW MUCH SHARED SERVICE ONE PAIR MAY BANK. `BOND_AREAS` × 8: enough
+ * that "we have been through four times what it takes" is a thing a record can
+ * say, and bounded so that a hand-edited save cannot hand a pair a number the
+ * screen has to render or the sorter has to trust.
+ */
+export const BOND_TALLY_MAX = BOND_AREAS * 8;
+
+/** The trait a live bond hangs on a man. Named once; `Attributes.js` owns it. */
+const BOND_TRAIT = 'bonded';
 
 /**
  * The blank company. A company with no men is a real state and not an error:
@@ -193,12 +260,111 @@ function readMan(m, army) {
     runs: Math.max(0, num(m.runs, 0)),
     since: typeof m.since === 'string' ? m.since : null,
     story: Array.isArray(m.story) ? m.story.filter((s) => typeof s === 'string').slice(-STORY_KEEP) : [],
+    bonds: saneBonds(m.bonds, m.designation),
     look: m.look && typeof m.look === 'object' && !Array.isArray(m.look) ? { ...m.look } : null,
   };
 }
 
 /** How many lines of a man's own history the record keeps. */
 export const STORY_KEEP = 8;
+
+/* ── bonds ───────────────────────────────────────────────────────────── */
+
+/**
+ * MAKE THE WHOLE ROLL'S BONDS COHERENT, and hang or strip the trait to match.
+ *
+ * Run on every read and again after every fold, because a bond is the only
+ * thing on a record whose truth depends on somebody ELSE's record. Three
+ * clauses, and each of them is a way the pair can stop being a pair:
+ *
+ *   HE IS NOT ON THE ROLL ANY MORE. Which on this roll means one thing —
+ *     `keep` strikes off every man who did not reach the ramp, so a name that
+ *     is missing is a name that is dead. This is the clause that makes a bond
+ *     cost something: the man you fought above yourself beside is gone, the
+ *     trait comes off with `shedTraits`, and the 16 Loyalty it lent you goes
+ *     with him. It is also the clause that stops a bond to a dead man paying
+ *     out for ever, which is the one bug this whole mechanism could have that
+ *     nobody would ever notice from the outside.
+ *   HE DOES NOT CARRY IT BACK. A bond exists between two records or it does
+ *     not exist; a tally only one of them has is a save file talking to itself.
+ *   THERE IS NO ROOM. `BONDS_MAX` is three and a manifest is ten, so the slots
+ *     have to be dealt somehow — and dealing them PER MAN is the obvious answer
+ *     and the wrong one. Measured on eight men who held every ground together:
+ *     each keeping "my three strongest, ties to the lower designation" left the
+ *     first four men bonded to each other and the last four bonded to NOBODY,
+ *     because none of their choices chose them back. So the slots are dealt per
+ *     PAIR instead — every pair on the roll sorted by shared ground and taken
+ *     greedily while both men still have room. Symmetric by construction, so
+ *     there is no second clause tidying up the half-bonds it made, and on those
+ *     same eight men it gives all eight three apiece.
+ *   AND THE TRAIT FOLLOWS THE TALLY, never the other way round. `bonded` is
+ *     hung on him by `applyTrait` the moment a tally crosses `BOND_AREAS` and
+ *     taken off by `shedTraits` when the last one lapses — which also refunds
+ *     its swing, so a man who outlives his friends is left with the numbers he
+ *     was mustered with rather than a permanent 14 Nerve penalty and nothing
+ *     on the page to explain it.
+ *
+ * IDEMPOTENT, which is load-bearing: this runs on every `load()` and the Menu
+ * loads on every frame it is open. `applyTrait` refuses a trait a man already
+ * carries, so the swing is baked exactly once however many times the roll is
+ * read.
+ */
+function settleBonds(men) {
+  const byName = new Map(men.map((m) => [m.designation, m]));
+  /* EVERY PAIR ONCE, and only where both records agree it exists. The shared
+   * ground is the SMALLER of the two tallies, which is the conservative read of
+   * a disagreement — a hand-edited 1e9 against an honest 4 is four grounds. */
+  const pairs = [];
+  for (const m of men) {
+    for (const b of (m.bonds || [])) {
+      if (m.designation >= b.with) continue;
+      const other = byName.get(b.with);
+      const back = other && (other.bonds || []).find((x) => x.with === m.designation);
+      if (!back) continue;
+      pairs.push({ a: m, b: other, areas: Math.min(b.areas | 0, back.areas | 0) });
+    }
+  }
+  pairs.sort((x, y) => (y.areas - x.areas)
+    || (x.a.designation < y.a.designation ? -1 : x.a.designation > y.a.designation ? 1 : 0)
+    || (x.b.designation < y.b.designation ? -1 : 1));
+  for (const m of men) m.bonds = [];
+  for (const p of pairs) {
+    if (p.a.bonds.length >= BONDS_MAX || p.b.bonds.length >= BONDS_MAX) continue;
+    if (!(p.areas > 0)) continue;
+    p.a.bonds.push({ with: p.b.designation, areas: p.areas });
+    p.b.bonds.push({ with: p.a.designation, areas: p.areas });
+  }
+  for (const m of men) {
+    m.bonds.sort(strongestFirst);
+    /* THE TRAIT IS DERIVED FROM THE TALLY EVERY TIME. A stored `bonded` on a
+     * man with no live bond is a hand-edited save asking for 14 Nerve back;
+     * `shedTraits` is what refuses it, and it is the same call that takes the
+     * trait off a man whose friend has just been struck off. */
+    if (!m.attrs) { m.traits = (m.traits || []).filter((id) => id !== BOND_TRAIT); continue; }
+    const shed = shedTraits(m);
+    m.attrs = shed.attrs;
+    m.traits = shed.traits;
+    if (isBonded(m) && !m.traits.includes(BOND_TRAIT)) {
+      const worn = applyTrait(m, BOND_TRAIT);
+      m.attrs = worn.attrs;
+      m.traits = worn.traits;
+    }
+  }
+  return men;
+}
+
+/**
+ * ADD ONE RUN'S SHARED GROUND TO A PAIR'S TALLY.
+ *
+ * Called with the men as they stand after the fold, so `m.bonds` is already
+ * the tally they came into this run with.
+ */
+function shareGround(m, who, n) {
+  if (!(n > 0) || who === m.designation) return;
+  const had = m.bonds.find((b) => b.with === who);
+  if (had) had.areas = Math.min(BOND_TALLY_MAX, (had.areas | 0) + n);
+  else m.bonds.push({ with: who, areas: Math.min(BOND_TALLY_MAX, n) });
+}
 
 /**
  * The company for one army.
@@ -212,8 +378,8 @@ export function load(army = ARMY_IDS[0]) {
   const all = readAll();
   const v = all[id];
   if (!v || typeof v !== 'object') return blank(id);
-  const men = Array.isArray(v.men)
-    ? v.men.map((m) => readMan(m, id)).filter(Boolean).slice(0, CAP) : [];
+  const men = settleBonds(Array.isArray(v.men)
+    ? v.men.map((m) => readMan(m, id)).filter(Boolean).slice(0, CAP) : []);
   const num = (x, d) => (Number.isFinite(x) ? Math.max(0, x) : d);
   return {
     ...blank(id),
@@ -292,6 +458,10 @@ export function manOf(t, meta = {}) {
     runs: Math.max(0, (t.runs | 0)),
     since: t.since ?? meta.ground ?? null,
     story: Array.isArray(t.story) ? t.story.slice(-STORY_KEEP) : [],
+    /* `Trooper` has no opinion about this — a bond is a fact about two men
+     * across runs and the field only ever sees one run. `keep` carries the
+     * tally forward off the record that was already on the roll. */
+    bonds: saneBonds(t.bonds, t.designation),
     look: t.look ?? null,
   };
 }
@@ -345,9 +515,23 @@ export function keep(manifest, opts = {}) {
   const byId = new Map(c.men.map((m) => [m.id, m]));
   const byName = new Map(c.men.map((m) => [m.designation, m]));
   const kept = [];
+  /**
+   * WHO CAME HOME ON THIS MANIFEST, AND HOW MUCH GROUND EACH HELD DOING IT.
+   *
+   * Both halves of a bond are here and neither is a new ledger. `home` is the
+   * men who walked up the same ramp, which `keep` already knows. `held` is
+   * DERIVED from a field that has always been on the record: `areas` is a
+   * lifetime count, so what a man held on THIS run is simply what it has gone
+   * up by since the roll last saw him. That is also the right answer for a man
+   * the muster benched — his `areas` did not move, so he shared no ground with
+   * anybody, which is true.
+   */
+  const home = [];
   for (const t of mine) {
     const had = (t.id && byId.get(t.id)) || byName.get(t.designation) || null;
     const m = manOf(t, opts);
+    m.bonds = (had?.bonds || []).map((b) => ({ ...b }));
+    home.push({ m, held: Math.max(0, (m.areas | 0) - (had?.areas | 0)) });
     /* A MAN WHO WAS ALREADY ON THE ROLL KEEPS HIS OWN HISTORY. The run he just
      * finished carries the xp, the kills and the wounds it earned — those live
      * on the `Trooper` and came back with him — but `runs` and `since` are the
@@ -359,6 +543,27 @@ export function keep(manifest, opts = {}) {
     m.story = [...(had?.story || []), ...(line ? [line] : [])].slice(-STORY_KEEP);
     kept.push(m);
     if (had) { byId.delete(had.id); byName.delete(had.designation); }
+  }
+
+  /**
+   * TWO MEN WHO HELD THE SAME GROUND AND BOTH GOT OFF IT SHARE IT.
+   *
+   * `min` of the two, because shared service is what they did TOGETHER: a man
+   * who held four grounds and a man who joined for the last one have one
+   * ground between them, not four. Both sides are written, so the tally is
+   * symmetric by construction and `settleBonds` only ever has to break ties,
+   * never invent the other half.
+   *
+   * O(n²) over the manifest, which is the ten or so men who came home — not
+   * over `CAP`. At 60 it is 1 770 pairs once per withdrawal.
+   */
+  for (let i = 0; i < home.length; i++) {
+    for (let j = i + 1; j < home.length; j++) {
+      const shared = Math.min(home[i].held, home[j].held);
+      if (shared <= 0) continue;
+      shareGround(home[i].m, home[j].m.designation, shared);
+      shareGround(home[j].m, home[i].m.designation, shared);
+    }
   }
 
   /**
@@ -393,7 +598,7 @@ export function keep(manifest, opts = {}) {
     gone.push(manOf(t, opts));
   }
 
-  c.men = kept.slice(0, CAP);
+  c.men = settleBonds(kept.slice(0, CAP));
   c.lost = (c.lost | 0) + gone.length;
   c.fallen = [
     ...gone.map((m) => ({
@@ -554,6 +759,11 @@ export function dossier(m, army = null) {
       `${Math.round((R.hp - 1) * 100)}% health · ${Math.round((R.dmg - 1) * 100)}% damage · `
       + `${Math.round((R.speed - 1) * 100)}% pace`]);
   }
+  /* WHO HE WOULD CROSS A STREET FOR. Designations rather than callsigns: this
+   * row is rendered through `escKey` on a page that is compared against this
+   * table character for character, and a nickname arrives wrapped in quotes. */
+  const bonded = liveBonds(m);
+  if (bonded.length) rows.push(['Bonded to', bonded.map((b) => b.with).join(', ')]);
   if (m.since) rows.push(['Since', m.since]);
   if (m.nickname) rows.push(['Earned', `"${m.nickname}"`]);
   if (A) rows.push(['Army', A.name]);
@@ -561,6 +771,79 @@ export function dossier(m, army = null) {
   if (mk.color != null) rows.push(['Mark', mk.name]);
   return rows;
 }
+
+/* ── what a roster screen prints about a bond ─────────────────────────── */
+
+/**
+ * ONE MAN'S BONDS, AS ROWS A SCREEN RENDERS AND DOES NOT THINK ABOUT.
+ *
+ * Here rather than in Menu.js for the reason `dossier` gives above and for one
+ * more that is specific to this: a bond is the only thing on a record that
+ * needs the REST of the roll to be printed at all — the other man's callsign,
+ * whether he is still standing — and a tab that reached across the roster to
+ * work that out would be a second model of the pairing living in a DOM method,
+ * where the only way to test it is to parse HTML.
+ *
+ * @param m        a stored man.
+ * @param company  his roll, for the other man's name. Omitted, the rows still
+ *                 come back with designations in them and nothing else lost.
+ *
+ * Each row: `with` his designation, `name` what he is actually called,
+ * `areas` the grounds the pair have held side by side, `bonded` whether that
+ * has crossed `BOND_AREAS` yet, and `strength` the same fact as 0..1 for a bar.
+ * Strongest first — the same order the record itself is kept in.
+ *
+ * WHAT A SCREEN SHOULD DO WITH IT: print every row, not just the bonded ones.
+ * A pair two grounds short is the interesting one, because it is the only
+ * thing on this entire tab that tells a player something about the NEXT run —
+ * take those two out together and they come back changed. A page that showed
+ * only finished bonds would hide the whole decision.
+ */
+export function bondRows(m, company = null) {
+  const roll = company?.men || [];
+  const by = new Map(roll.map((x) => [x.designation, x]));
+  return (m?.bonds || []).slice().sort(strongestFirst).map((b) => {
+    const other = by.get(b.with) || null;
+    const areas = b.areas | 0;
+    return {
+      with: b.with,
+      name: other ? nameOf(other) : b.with,
+      type: other?.type ?? null,
+      areas,
+      bonded: areas >= BOND_AREAS,
+      strength: Math.min(1, areas / BOND_AREAS),
+      /* HOW FAR OFF, so the page can say "one more ground" rather than a bar
+       * with no number under it. Zero once it is a bond. */
+      toGo: Math.max(0, BOND_AREAS - areas),
+    };
+  });
+}
+
+/**
+ * WHAT A BOND IS WORTH, as label/value rows, in the two armies' own words.
+ *
+ * Read straight off the trait table — `Attributes.js` owns the swing and this
+ * file must not grow a second copy of it, which is the defect this codebase has
+ * removed nine of. The names come from `attrName` so a droid's page says Uplink
+ * and Reset where a clone's says Loyalty and Resolve.
+ *
+ * BOTH HALVES OR NEITHER. `Menu.js`'s trait renderer already refuses to print
+ * the give without the take, and this returns them in one list for the same
+ * reason: a page that showed "+16 Loyalty" alone would read as a reward for
+ * playing a long time, which is exactly the cross-run power this file refuses
+ * at the top.
+ */
+export function bondWorth(kind = 'flesh') {
+  const t = traitById(BOND_TRAIT);
+  if (!t) return [];
+  const rows = [];
+  for (const k in (t.up || {})) rows.push([attrName(k, kind), `+${t.up[k]}`]);
+  for (const k in (t.down || {})) rows.push([attrName(k, kind), `−${t.down[k]}`]);
+  return rows;
+}
+
+/** What the pairing costs to say in one line: the threshold, named once. */
+export { BOND_AREAS };
 
 /** The marks a screen may offer. Named here so the tab holds no second table. */
 export { MARKS };

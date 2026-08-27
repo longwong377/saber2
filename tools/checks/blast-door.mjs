@@ -213,32 +213,23 @@ function breachTexels(door) {
   return Math.round(door.meltArea / cellArea);
 }
 
-function rearm(world, door) {
+function rearm(door) {
   door.kerfData.fill(0);
   door.cutArea = 0;
   door.opened = false;
   /* AND THE WARD OFF, because this suite is about the PLATE.
    *
-   * The middle door of the shipped magazine has a gun pit behind it, and that
-   * pit's deflector holds `door.warded` true — `BlastDoor.burn` refuses
-   * outright while it is, so a blade on that plate does nothing at all. That
-   * is the emplacement's rule and it is measured where it belongs, in
-   * `breach.mjs`. Here it would only mean this suite silently stopped
-   * measuring the melt rate on one of its three doors, which is the failure
-   * `rearm` exists to prevent for `opened` and `cutArea` already.
+   * `BlastDoor.burn` refuses outright while `door.warded` is true, so a warded
+   * plate burns none of the texels a breach needs and this suite would
+   * silently stop measuring the melt rate on one of its three doors — the
+   * failure `rearm` exists to prevent for `opened` and `cutArea` already.
    *
-   * AND WRITING THE FLAG IS NOT TAKING IT OFF, which is what this line used to
-   * do and why the middle door burned exactly zero texels of the 515 a breach
-   * needs. `GunPit._wards` runs from the world's own tick and ends with
-   * `door.warded = this.warded && !this.taken` — so a flag cleared before the
-   * loop is back on the first frame of it, every frame, forever. The pit is
-   * the owner of that state and `silence()` is the door in it: the position is
-   * taken, `taken` latches, and the plate is unwarded for good. Which is also
-   * the only shape of this that could be right — a fixture that could unward a
-   * door by assignment would be measuring a plate the game never presents. */
-  for (const pit of world.gunPits || []) {
-    if (pit && !pit.dead && pit.door === door) pit.silence();
-  }
+   * NOTHING IN THE TREE SETS THE FLAG TODAY. The gun emplacement that stood
+   * behind the shipped magazine's middle door was its one writer and it is
+   * gone (src/game/Armour.js has the history), so this assignment currently
+   * has nothing to undo. It stays because `rearm` is the place a reused door
+   * is handed back in a known state, and `burn`'s refusal is still live code
+   * the moment anything wards a plate again. */
   door.warded = false;
 }
 
@@ -504,7 +495,7 @@ export async function run({ check, assert }) {
     for (let i = 0; i < cases.length; i++) {
       const [name, drive] = cases[i];
       const door = world.doors[i];
-      rearm(world, door);
+      rearm(door);
       const r = holdFree(world, door, { ...drive, secs: 75 });
       assert(r.opened,
         `${name} loop: 75 s of held blade burned ${r.cut} of the ${breachTexels(door)} `
@@ -542,7 +533,7 @@ export async function run({ check, assert }) {
      */
     const { world } = await field();
     const door = world.doors[0];
-    rearm(world, door);
+    rearm(door);
     const p = world.player, { out } = frameOf(door);
     const yaw = facing(-out.x, -out.z);
     const stand = door.mesh.position.clone().addScaledVector(out, 1.15);
@@ -602,7 +593,7 @@ export async function run({ check, assert }) {
      */
     const { world } = await field();
     const door = world.doors[2];
-    rearm(world, door);
+    rearm(door);
     const p = world.player, C = p.control, { out, across } = frameOf(door);
     const yaw = facing(-out.x, -out.z);
     const stand = door.mesh.position.clone().addScaledVector(out, 1.05);
@@ -654,7 +645,7 @@ export async function run({ check, assert }) {
      */
     const { world } = await field('free');
     const door = world.doors[0];
-    rearm(world, door);
+    rearm(door);
     const held = holdFree(world, door, { R: 0.5, omega: 1.0, dist: 0.95, secs: 8 });
     assert(!held.opened && held.cut > 40,
       `eight seconds of hold burned ${held.cut} texels — too few to measure a fade against`);
@@ -706,7 +697,7 @@ export async function run({ check, assert }) {
     const { world } = await field();
     const { makeCrate } = await import('../../src/world/Props.js');
     const door = world.doors[1];
-    rearm(world, door);
+    rearm(door);
     const { out, across } = frameOf(door);
     const inward = out.clone().negate();
     const p = world.player, T = world.terrain;

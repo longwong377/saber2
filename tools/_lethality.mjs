@@ -60,7 +60,7 @@ let T = null;
 
 /**
  * Which side dealt it. `team` is the field every shooter in the game carries —
- * an Emplacement has one, a bolt's owner has one — and it is what
+ * every Enemy has one, a bolt's owner has one — and it is what
  * `World._boltHitTest` sorts on.
  *
  * THE PLAYER IS ON THE LINE'S TEAM and has to be split out by CLASS, which the

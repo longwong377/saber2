@@ -59,6 +59,90 @@
  * So the budget is a budget on what is DRAWN AS A BODY, and the simulation
  * cost is gone for everybody regardless of it.
  *
+ * ── AND THE BUDGET WAS NEVER WHAT RETIRED A BODY ────────────────────────
+ *
+ * Everything above is about `SINK`, and `SINK` is not what takes the dead off
+ * this field. `Enemy.update` ends `return this.dying < 40` and `World.update`
+ * disposes on that, so EVERY body is torn out of the world forty seconds after
+ * it fell whether the budget wanted it or not — and the guard at the top of
+ * `update` below spliced the record out without a word. `FallenField.lay` never ran,
+ * `retired` never moved, and the man was simply gone.
+ *
+ * MEASURED, colosseum sandbox at `high`, 24 B1s spawned, the 6 the room kept
+ * killed at once, and driven for a minute. `world.fallen` is the prone field:
+ *
+ *      before        corpse bodies   retired   prone figures   scene meshes
+ *      t= 2 s              6            0            0             581
+ *      t=30 s              6            0            0             766
+ *      t=60 s              0            0            0             509
+ *
+ *      after         corpse bodies   retired   prone figures   scene meshes
+ *      t= 2 s              6            0            0             581
+ *      t=30 s              6            0            0             766
+ *      t=60 s              0            0            6             509
+ *
+ * A minute after a fight the field held NOTHING — fewer meshes than before the
+ * men were ever spawned. The budget was never reached and could not have been;
+ * six is under twenty, so `live.length > this.budget` was false the whole time
+ * and the only thing that ever ended a corpse was a flat forty-second timer in
+ * another file. That is exactly the design the WHY A BUDGET AND NOT A TIMER
+ * note above argues against, running underneath it unseen.
+ *
+ * `bury` is the fix and it is not a new rung: the teardown now ends in the SAME
+ * `FallenField.lay` the SINK step already ended in, so a body the world takes
+ * away leaves the man behind.
+ *
+ * ── AND IT IS EXACTLY THE BODIES `worth()` CHOSE TO KEEP THAT WERE LOST ──
+ *
+ * A long drive makes the size of the leak look small and it is worth stating
+ * honestly. 120 waves of eight B1s killed on the colosseum, 894 deaths, driven
+ * until the ledger was empty:
+ *
+ *                     laid down    lost to the teardown    scarred cells
+ *      before             875                19                 206
+ *      after              895                 0                 812
+ *
+ * Nineteen out of 894, because in a fight that big the budget SINKS almost
+ * everybody before their fortieth second arrives. The nineteen are the ones
+ * still inside the budget when the shooting stopped — which by construction
+ * are the nearest, the freshest and the most in front of you, the three terms
+ * `worth()` is made of. The leak was not spread over the field; it took the
+ * pile at your feet and left the ones you had walked away from.
+ *
+ * That is why the six-man table above is the honest measure of it: below the
+ * budget the teardown is the ONLY ending a corpse has, and every one of them
+ * was lost.
+ *
+ * ── WHAT KEEPING THEM COSTS, WHICH IS THE HALF THAT MATTERS ─────────────
+ *
+ * Nothing on the CPU and two draw calls on the GPU, and both halves are
+ * measured rather than argued. The scene-mesh column above does not move
+ * because the field's two buffers are allocated at `attach` whether anything
+ * is in them or not; the triangles do, by 636 for six men — 104 each, which is
+ * the figure `Fallen.js` measured off its own merged buffer.
+ *
+ * And the same world driven with the field EMPTY against the field FILLED TO
+ * ITS CAP, 300 frames a run, five runs, median of the medians:
+ *
+ *        6 prone figures     0.96 / 1.02 ms       2 draw calls
+ *      520 prone figures     0.93 / 0.94 ms       2 draw calls
+ *
+ * The dead of a whole engagement are free to `world.update` because nothing in
+ * it touches them: an `InstancedMesh` that is written once at the lay and never
+ * again is not in the frame's work at all. 520 figures is 54 080 triangles, 5%
+ * of what the empty colosseum already draws.
+ *
+ * ── WHICH IS WHY EVERY RECORD CARRIES ITS RESTING PLACE ─────────────────
+ *
+ * The teardown happens inside `World.update`'s enemy loop, which runs BEFORE
+ * `corpses.update` in the same frame — so by the time this file sees the body
+ * it has already been disposed and its rig is gone. Reading the place off it
+ * then is reading a torn-down graph. So `rest` is taken while the body is
+ * real: once at `take`, so a man who is culled the instant he dies still has
+ * one, and again the moment he settles, which is where he actually ends up.
+ * It is four numbers and a colour, and it is written twice per corpse rather
+ * than once per corpse per frame.
+ *
  * ── AND WHY STEP 3 EXISTS, WHICH IS A DRAW-CALL ARGUMENT ────────────────
  *
  * The table at the top counts meshes on a body that is standing still. What a
@@ -89,9 +173,9 @@ import * as THREE from 'three';
 /**
  * The one vector this file owns. `Actor.centre` writes into what it is handed,
  * and a corpse is asked where it is once a frame — so one module scratch, not
- * an allocation per corpse per frame. `layDown` reads it too, on the frame a
- * corpse is spent, which is inside the same call and after the settle test
- * above it has finished with the value.
+ * an allocation per corpse per frame. `restOf` reads it too — on the frame a
+ * corpse settles that is inside the same call, and after the settle test above
+ * it has finished with the value.
  */
 const _c = new THREE.Vector3();
 
@@ -202,6 +286,10 @@ export class Corpses {
     this.capped = 0;
     /** How many were laid down in `world.fallen` rather than simply deleted. */
     this.instanced = 0;
+    /** How many the world tore down under us — the forty-second teardown. */
+    this.torn = 0;
+    /** How many of those still left a man on the ground. See `bury`. */
+    this.buried = 0;
   }
 
   /** A body has died. It is ours now. */
@@ -209,8 +297,62 @@ export class Corpses {
     if (!enemy || this.list.some((c) => c.e === enemy)) return;
     /* `mark` is where the body's centre was when the current still window
      * opened — see SETTLE_MOVE. Allocated with the record and never again. */
-    this.list.push({ e: enemy, t: 0, still: 0, settled: false, sink: 0,
-      mark: new THREE.Vector3(), marked: false, laid: false });
+    const c = { e: enemy, t: 0, still: 0, settled: false, sink: 0,
+      mark: new THREE.Vector3(), marked: false, laid: false,
+      rest: { x: 0, z: 0, yaw: 0, chestY: 0, scale: 1 }, hasRest: false, tone: null, onField: false };
+    /**
+     * WHERE HE IS NOW, AND WHAT COLOUR HE IS — taken here because this is the
+     * last moment the body is guaranteed to be whole. See the RESTING PLACE
+     * note in the header: the world's own teardown reaches this file with the
+     * rig already disposed, and a room cull can take a man on the frame he
+     * dies, before he has settled anywhere to be read off.
+     *
+     * The COLOUR is only ever read here. It cannot change — an army does not
+     * repaint its dead — and `toneOf` is a traverse of the whole rig, so once
+     * per death is the honest number of times to pay for it. Cloned because
+     * the value is a live material's own `Color` and the lay it is spent on
+     * may be a minute later, by which time the material has been disposed.
+     */
+    c.hasRest = restOf(enemy, this.world, c.rest);
+    const tone = toneOf(enemy);
+    c.tone = tone ? tone.clone() : null;
+    this.list.push(c);
+  }
+
+  /**
+   * LAY THIS MAN DOWN, ONCE, WHEREVER THE RECORD LAST SAW HIM.
+   *
+   * The single door out of this file into `world.fallen`, and both endings go
+   * through it: the SINK the budget chooses, and the teardown another file
+   * imposes. `laid` is the once — a full field, a mode with no field attached
+   * and a body whose place was never readable are all "asked and answered",
+   * and asking again every frame for the length of a fade would be 33
+   * identical failures per corpse.
+   *
+   * IT ANSWERS "IS HE ON THE FIELD", NOT "DID I JUST PUT HIM THERE", and the
+   * difference is the one case where both endings happen to the same corpse: a
+   * body the budget is already fading when its fortieth second arrives is
+   * disposed by `World.update` mid-sink, and the teardown branch then asks
+   * about a man who is already lying down. Answering `false` there would
+   * report him as lost when he is on the ground in front of you. Both SINK
+   * callers guard on `!c.laid` first, so nothing double-counts a lay.
+   *
+   * @returns whether there is a man on the field for this corpse.
+   */
+  bury(c) {
+    if (c.laid) return c.onField;
+    c.laid = true;
+    /* The freshest place available. A body that is still real is read again
+     * here, because a corpse that slid two metres while it was fading ends up
+     * where it ends up; a body the world has already torn down keeps the rest
+     * taken at `take` or at settle, which is the whole reason it is kept. */
+    const e = c.e;
+    if (e && !e.disposed) { if (restOf(e, this.world, c.rest)) c.hasRest = true; }
+    if (!c.hasRest) return false;
+    const f = this.world?.fallen;
+    const r = c.rest;
+    c.onField = !!(f && f.lay(r.x, r.z, r.yaw, r.chestY, c.tone, r.scale));
+    return c.onField;
   }
 
   /**
@@ -248,7 +390,28 @@ export class Corpses {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const c = this.list[i];
       const e = c.e;
-      if (!e || e.disposed || !e.dead) { this.list.splice(i, 1); continue; }
+      /**
+       * THE BODY IS GONE FROM UNDER US — and this line used to be the leak.
+       *
+       * `World.update` steps every enemy and disposes the ones whose `update`
+       * returns false, forty seconds after they fell, and it does it BEFORE
+       * `corpses.update` in the same frame. So the commonest ending a corpse
+       * has in this game arrives here, and it arrived as a `splice` — no lay,
+       * no count, no man left on the ground. See the header's table: sixty
+       * seconds after a six-man fight the field held nothing at all.
+       *
+       * `!e.dead` is the other branch and it is NOT buried: a body that is no
+       * longer dead is a body that has been brought back, and laying a prone
+       * figure under a man who is standing up again is the one outcome worse
+       * than losing him.
+       */
+      if (!e || e.disposed) {
+        this.torn++;
+        if (this.bury(c)) this.buried++;
+        this.list.splice(i, 1);
+        continue;
+      }
+      if (!e.dead) { this.list.splice(i, 1); continue; }
       c.t += dt;
 
       /* ── 1. SETTLE. Free, unrationed, and where the simulation cost is. */
@@ -271,6 +434,12 @@ export class Corpses {
           if (a?.freeze) a.freeze();
           else if (a?.ragdolled) sleepBodies(a, this.world);
           c.settled = true;
+          /* WHERE HE ACTUALLY CAME TO REST, which is the answer `take`'s guess
+           * is only standing in for. A settled body does not move again — that
+           * is what settled means here — so this is the last time the place
+           * needs asking, and every ending after it can be served from the
+           * record whether the body still exists or not. */
+          if (restOf(e, this.world, c.rest)) c.hasRest = true;
           this.settled++;
         } else if (c.t > SETTLE_CAP) {
           /**
@@ -288,6 +457,7 @@ export class Corpses {
             if (a?.freeze) a.freeze();
             else if (a?.ragdolled) sleepBodies(a, this.world);
             c.settled = true;
+            if (restOf(e, this.world, c.rest)) c.hasRest = true;
             this.settled++;
             this.capped++;
           }
@@ -313,23 +483,17 @@ export class Corpses {
          * while the body carried on past it, so it is laid on the last frame
          * instead, where the body actually ended up.
          *
-         * `laid` is set whether or not the field took it: a full field, a mode
-         * with no field attached, or a body whose rest pose could not be read
-         * are all "asked once and answered", and retrying every frame for the
-         * length of the fade would be 33 identical failures per corpse.
+         * Both calls go through `bury`, which is where "once" is enforced and
+         * where the teardown ending arrives as well.
          */
         if (!c.laid && c.settled) {
-          c.laid = true;
-          if (layDown(e, this.world)) this.instanced++;
+          if (this.bury(c)) this.instanced++;
         }
         c.sink -= dt;
         const k = Math.max(0, c.sink / SINK_TIME);
         fade(e, k);
         if (c.sink <= 0) {
-          if (!c.laid) {
-            c.laid = true;
-            if (layDown(e, this.world)) this.instanced++;
-          }
+          if (!c.laid && this.bury(c)) this.instanced++;
           try { e.dispose?.(); } catch { /* a corpse that cannot be disposed is still gone from here */ }
           this.list.splice(i, 1);
           this.retired++;
@@ -356,22 +520,26 @@ export class Corpses {
  *
  * Everything the instanced figure needs is already true of the thing being
  * retired, so nothing here is authored: the place is where the ragdoll came to
- * rest, the bearing is its own head-to-hips axis, the pose is chosen by how
+ * rest, the bearing is its own head-to-hips axis, and the pose is chosen by how
  * high its chest is standing off the ground (`FallenField.split`, which is
- * measured off the two pose geometries rather than typed), and the colour is
- * the body's own torso material — `instanceColor` multiplies the field's white
- * base, so a clone stays plastoid pale and a droid stays tan without either
- * army being named here.
+ * measured off the two pose geometries rather than typed). The colour is the
+ * one thing NOT read here — see `take`, which takes it once at death because a
+ * traverse of the whole rig is not a thing to do twice.
  *
  * A body that never ragdolled at all — died in a mode with no solver, or was
  * taken by `Enemy.dispose` before it fell — still has a position and a facing,
  * and a dead man on the ground is the right picture for it either way.
  *
- * @returns whether the field took it.
+ * WRITTEN INTO THE CALLER'S OBJECT rather than returned as a new one. Every
+ * corpse holds exactly one of these for its whole life and it is rewritten in
+ * place two or three times — at death, at settle, and at the lay if the body is
+ * still real — so the field's memory of a fight costs one small object per man
+ * and no allocation per frame.
+ *
+ * @returns whether it could be read at all.
  */
-function layDown(enemy, world) {
-  const field = world?.fallen;
-  if (!field || !enemy) return false;
+function restOf(enemy, world, out) {
+  if (!enemy || !out) return false;
   const a = enemy.actor;
   let x, z, chestY, yaw;
   if (a?.ragdolled && a.bodies?.size) {
@@ -397,7 +565,9 @@ function layDown(enemy, world) {
    * what it was built with; the archetype is the fallback for a body that
    * never had one. */
   const scale = a?.rootScale ?? enemy.A?.scale ?? 1;
-  return field.lay(x, z, yaw, chestY, toneOf(enemy), scale);
+  if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(yaw)) return false;
+  out.x = x; out.z = z; out.yaw = yaw; out.chestY = chestY; out.scale = scale;
+  return true;
 }
 
 /**

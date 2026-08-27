@@ -1006,6 +1006,71 @@ export async function run({ check, assert }) {
       + `self ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`;
   });
 
+  check('powers: a hurt man behind you is announced, so the power is findable at all', async () => {
+    /**
+     * THE REASON NOBODY EVER FOUND ALLY MEND.
+     *
+     * The player, three sessions running and in the end flatly: *"I've asked
+     * this before 100 times but how do I heal my troops? You should have
+     * already added it but maybe I've missed it."*
+     *
+     * They had missed it, and the miss was designed in. The power has worked
+     * for a long time and the HUD has printed `WOUNDED ALLY` for a long time —
+     * but the cue was driven by `_mendTarget`, which admits only a man inside
+     * `MEND_CONE` of where you are AIMING. In a firefight that is where the
+     * enemy is. So the one prompt that would teach the power appeared only in
+     * the moment you were already using it, and a player who never happened to
+     * point their reticle at a bleeding trooper never learned it exists.
+     *
+     * `nearestWounded` is the same question with the cone off, and it is what
+     * the HUD falls back to. THE ASSERTION IS THE GAP: a wounded ally who is
+     * in reach but NOT under the reticle must be found by one and refused by
+     * the other. A check that only asserted "it finds him" would pass on the
+     * build that hid him, because `_mendTarget` finds him too — once you look.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const p = world.player;
+    const ctx = { enemies: world.enemies, players: world.players };
+    const { MEND_REACH } = await import('../../src/game/Player.js')
+      .then((m) => ({ MEND_REACH: m.MEND_REACH ?? 15 }));
+
+    /* Behind your shoulder, well inside reach. `aimDir` is left where the boot
+     * put it and the man is placed against it, so "not looking at him" is a
+     * geometric fact rather than a hope. */
+    const back = p.aimDir.clone().setY(0).normalize().multiplyScalar(-6);
+    const mate = world.spawnEnemy('trooper', p.position.clone().add(back));
+    assert(mate, 'no trooper spawned');
+    mate.team = p.team;
+    mate.trooper = { name: 'CT-1174' };
+    mate.hp = mate.maxHp * 0.4;
+
+    const aimed = p._mendTarget(ctx);
+    const near = p.nearestWounded(ctx);
+    assert(near === mate,
+      'a wounded ally six metres away was not found at all — the cue can never fire');
+    assert(aimed !== mate,
+      'the aimed test found a man behind the player, so this fixture is not testing the gap');
+    /* …AND THE REACH IS STILL THE REACH. A prompt that advertises a man you
+     * cannot actually mend is worse than silence, so the cone comes off and
+     * nothing else does. */
+    const far = world.spawnEnemy('trooper',
+      p.position.clone().add(p.aimDir.clone().setY(0).normalize().multiplyScalar(-(MEND_REACH + 12))));
+    far.team = p.team;
+    far.hp = far.maxHp * 0.4;
+    assert(p.nearestWounded(ctx) === mate,
+      `a man ${(MEND_REACH + 12).toFixed(0)} m away is being announced as mendable`);
+    /* …and a man at full health is nobody's business. */
+    mate.hp = mate.maxHp;
+    assert(p.nearestWounded(ctx) !== mate, 'an unhurt trooper is being offered as a patient');
+    world.unload?.();
+    return `a hurt man 6 m behind you is found by nearestWounded and refused by _mendTarget, `
+      + `and one at ${(MEND_REACH + 12).toFixed(0)} m is refused by both`;
+  });
+
   check('powers: with two hurt men under the reticle the mend takes the one on the floor', async () => {
     /**
      * THE PREFERENCE THE PICKER ALREADY CLAIMED AND DID NOT HAVE.

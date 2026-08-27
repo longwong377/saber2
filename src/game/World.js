@@ -20,6 +20,7 @@ import { Particles } from '../world/Particles.js';
 import { LightningVfx } from '../world/Lightning.js';
 import { GrenadeField } from './Reactions.js';
 import { CohortField } from './Cohorts.js';
+import { openFront } from './Mass.js';
 import { WarSupport } from './Support.js';
 import { GrassField, Water, Atmosphere, weather } from '../world/Scenery.js';
 import { BoltPool } from './Bolts.js';
@@ -993,7 +994,7 @@ export class World {
      * spelled here: nothing can kill you in a lesson, so there is nothing for a
      * line to be lost to.
      */
-    const contingent = campaign ? 0 : commandConfig(this.settings).contingent;
+    const contingent = campaign ? 0 : commandConfig(this.settings, this).contingent;
     const leadsArmy = campaign || contingent > 0;
     this.director = leadsArmy
       ? new CommandDirector(this, { pool: L.pool, campaign,
@@ -1036,6 +1037,34 @@ export class World {
       const rng = makeRng(((this.runSeed | 0) ^ 0x0b1ec7) >>> 0);
       this.objectives.place({ count: 4, axis: bearing, rng: () => rng() });
     }
+    /**
+     * …AND THE BATTLE BEHIND THEM — the mass tier, armed off the same kind of
+     * declared field.
+     *
+     * `openFront` lived in `main.js`'s deploy path for one build, which is the
+     * one entry point a player uses and the only one anything else does. So a
+     * headless world booted straight into the mode had `world.mass` undefined
+     * and no battle at all: every check had to lay one by hand, which proves
+     * the tier works and proves nothing about whether the MODE does. A co-op
+     * client would have had none either.
+     *
+     * Here instead, beside `objectives` and `fireMissions`, because the mode
+     * row's own note says that is where it belongs: a branch belongs to the
+     * property it is gated on, not to the screen that happens to call it first.
+     * `openFront` only ARMS the front — it does not lay it, because the player
+     * spends the next half minute as a seat in a gunship — so running it at
+     * load is exactly as correct as running it at deploy and reaches every
+     * caller instead of one.
+     */
+    /* `front` is the object and `mass` is its field — `openFront` sets both and
+     * the teardown has to take both, or a level change leaves a dead Front on
+     * `world.front` and `openFront`'s own `if (world.front && !world.front.dead)`
+     * hands the next ground the last one's battle. */
+    this.front?.dispose?.();
+    this.front = null;
+    this.mass = null;
+    if (this.netMode !== 'client' && MODES[mode]?.massBattle) openFront(this);
+
     /**
      * THE ORDER YOU CAN CHECK — PLAN.md §1, and it is gated the same way.
      *
@@ -2933,6 +2962,14 @@ export class World {
   addDoor(d) { this.doors.push(d); return d; }
 
   spawnEnemy(type, pos) {
+    /* NOTHING IS PUT DOWN ON THE PAD. This is the one door every body in the
+     * game comes through — the director's direct path, every gunship's
+     * `_deliver`, the sandbox — which is why the rule is asked here rather than
+     * at each of them, and why it is ASKED rather than restated: the extraction
+     * owns where the ship is coming down and how much room it needs, so it owns
+     * the push. See `ExtractionDirector.clearOfLZ`. Costs one `hypot` per body
+     * spawned, and only while a flight is up: `lzPoint` is null otherwise. */
+    pos = this.extraction?.clearOfLZ(pos) ?? pos;
     const e = new Enemy(this, type, pos);
     this.enemies.push(e);
     /**
@@ -2969,7 +3006,17 @@ export class World {
   pickSpawn(type) {
     const L = this.level;
     const [rmin, rmax] = L.spawnRadius || [34, 56];
-    const anchor = this.player ? this.player.position : _v1.set(0, 0, 0);
+    /* THE GROUND THE COMMANDER IS ABOUT TO STAND ON, while they are still in
+     * the air above it. The director now runs through the landing (see the gate
+     * in `update`), and for those nine seconds `player.position` is a seat in a
+     * bay: measured on a geonosis insertion it opens the descent 150 m from the
+     * pad and 900 m up, so a ring drawn round it puts the wave up to 246 m from
+     * where the ramp is going to come down. The LZ is the anchor the whole
+     * flight is aimed at, so it is the anchor the wave is drawn round; the
+     * moment `_release` puts the commander on the sand, `riding` clears and
+     * this is their own position again — which is the same point. */
+    const flying = this.player?.riding && this.extraction?.landing ? this.extraction.lzPoint : null;
+    const anchor = flying || (this.player ? this.player.position : _v1.set(0, 0, 0));
     for (let i = 0; i < 24; i++) {
       const a = rng() * TAU;
       const r = lerp(rmin, rmax, rng());
@@ -3841,14 +3888,20 @@ export class World {
     // 8 — director (the host owns the horde; clients receive it)
     // …but not once the run is over: a director that keeps spawning at a corpse
     // is the reason `running` used to be switched off here. See onPlayerDeath.
-    /* …AND NOT WHILE THE ARMY IS BEING FLOWN OFF THE GROUND. An extraction is
-     * up to forty seconds long, and `WaveDirector.intermission` is five and a
-     * half — so without this gate the next engagement's first wave would open
-     * on the ground you are leaving, with the commander sat in an aircraft.
-     * It also stops `CommandDirector._troops` fighting `Extraction._walkTroops`
-     * for the same `wish` field. Everything the director owns resumes on the
-     * far side, on the new ground, exactly as it does after a plain rotate. */
-    if (this.netMode !== 'client' && !this.over && !this.extraction?.active) this.director.update(dt, ctx);
+    /* …AND NOT WHILE THE ARMY IS BEING FLOWN OFF THE GROUND — but the LANDING
+     * is not that, and for as long as this said `!extraction.active` it was
+     * treated as if it were. `active` is `phase !== 'done'` and `beginInsertion`
+     * is the last line of deploy, so every fighting mode opened with 28 seconds
+     * of empty field under a HUD reading "50 HOSTILES LEFT".
+     *
+     * `holdsHorde` is that gate stated by PHASE — the whole outbound leg, plus
+     * the orbit and the entry burn — and its own note gives the four things it
+     * has always protected. The one number it is handed is the LEVEL's, because
+     * `spawnRadius` is the level's: everything that sites a body measures from
+     * the commander, so the horde is not called until the ship's ground track
+     * is inside the ring the level itself spawns at. See that method. */
+    if (this.netMode !== 'client' && !this.over
+      && !this.extraction?.holdsHorde(this.level?.spawnRadius?.[1])) this.director.update(dt, ctx);
     /* The meeting's clock, and it is outside the director because it is not the
      * director's: `DuelMatch` is driven by facts about the WHOLE field — who
      * has anybody left standing — and the host owns it whether or not there is

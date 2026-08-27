@@ -340,43 +340,42 @@ export async function run({ check, assert }) {
         world.director.start(1);
         d.spawnQueue.length = 0;
         /**
-         * ── AND THE EMPLACEMENT IS SILENCED, WHICH IS THE OTHER HALF OF THAT
-         *    SENTENCE AND THE HALF THAT WAS MISSING ────────────────────────
+         * ── AND NOTHING MAY BE SHOOTING THAT THE QUEUE DOES NOT OWN, WHICH IS
+         *    THE OTHER HALF OF THAT SENTENCE ────────────────────────────────
          *
-         * Emptying the queue stops bodies ARRIVING. It does nothing about the
-         * gun that is already standing on the ground: `Levels.js` hangs a
-         * `GunPit` behind the level's second blast door, and `GunPit._acquire`
-         * shoots the ROSTER by preference — "the whole content of the
-         * emplacement is that leaving it standing costs you names". So this
-         * check's 35 m walk was a walk under fire, and the casualties it took
-         * are what the reading below is made of: `strung` is the furthest
-         * LIVING man, so a straggler who dies does not lengthen the line, he
-         * shortens it.
+         * Emptying the queue stops bodies ARRIVING. It does nothing about
+         * anything already standing on the ground, and this ground used to
+         * carry a gun emplacement: built by `Levels.js` behind the level's
+         * second blast door, outside `world.enemies`, laying its rounds on the
+         * ROSTER by preference. So this check's 35 m walk was a walk under
+         * fire, and the casualties it took were what the reading below was
+         * made of: `strung` is the furthest LIVING man, so a straggler who dies
+         * does not lengthen the line, he shortens it.
          *
-         * MEASURED on this tree, the two arms back to back with the gun live:
+         * MEASURED then, the two arms back to back with the gun live:
          *
          *     paced     8 of 10 standing   CT-6702 at 2.8 s, CT-2794 at 2.9 s,
-         *                                  both `kind=bolt`, source GunPit
+         *                                  both `kind=bolt`, from the gun
          *     unpaced  10 of 10 standing   nobody hit
          *
          * — two different armies at the moment of measurement, which is the
          * same defect `restoreShared` above was added to fix, arriving through
-         * a door no stream could close. The arm that loses its two rearmost men
-         * reads 12.0 m strung out against the other's 14.2, and WHICH arm loses
-         * them depends on where the men happen to be standing when the gun
-         * traverses — so it moves with anything that moves the walk, and the
-         * VERDICT moves with it. Alone the pair read 12.0 / 14.2 and passed; a
-         * full gate reported 22.5 / 12.0 and red; two more full gates here read
+         * a door no stream could close. The arm that lost its two rearmost men
+         * read 12.0 m strung out against the other's 14.2, and WHICH arm lost
+         * them depended on where the men happened to be standing when the gun
+         * traversed — so it moved with anything that moved the walk, and the
+         * VERDICT moved with it. Alone the pair read 12.0 / 14.2 and passed; a
+         * full gate reported 22.5 / 12.0 and red; two more full gates read
          * 9 of 10 in BOTH arms, 14.2 / 14.2, and green. Three answers to one
          * question, none of them about pacing.
          *
-         * Silenced, both arms end 10 of 10 standing and 14.2 m strung out, on
-         * a lag of 5.1 m against 0.0 — the rule's own effect, measured on one
-         * army instead of two. `silence()` is the gun's own door path
-         * (`emplaceGun` wraps `door.onBreach` with it) and not a flag poked
-         * from here; `breach.mjs` already A/Bs the emplacement through it.
+         * THE GUN IS GONE from the tree (src/game/Armour.js records why), and
+         * what took its job is a walker composed into the WAVE — so it arrives
+         * through the spawn queue this arm has just emptied, and the queue is
+         * once again the whole of the door. The note stays because the trap
+         * does not depend on the gun: put anything on this ground that shoots
+         * without being queued and the reading below stops being about pacing.
          */
-        for (const g of world.gunPits || []) g.silence?.();
         for (let i = 0; i < 60; i++) world.update(1 / 30, { act: () => false, actHit: () => false,
           actDown: () => false, moveAxis: (o) => (o ? (o.x = 0, o.y = 0, o) : { x: 0, y: 0 }),
           mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },

@@ -13,7 +13,7 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
   soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
-import { HUD } from './ui/HUD.js';
+import { HUD, ordinal } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
   LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
@@ -773,6 +773,21 @@ async function deploy() {
      * for the reason `battles` above is: the branch belongs to the property,
      * not to the one mode that has it today. */
     } else if (MODES[settings.mode]?.picksCampaign) world.beginCampaign();
+    /**
+     * …AND THIS ONE LINE IS ALSO WHAT STARTS THE NEAR HALF OF A MASS BATTLE.
+     *
+     * `MODES.thefront` is two fights at once — the wave director's real bodies
+     * inside `Mass.PROMOTE` and hundreds of instanced men outside it — and this
+     * is the line that starts the first of them. It needs no branch of its own:
+     * the mode is an ordinary wave mode with a war behind it.
+     *
+     * THE MASS ITSELF IS NOT ARMED HERE. It was for one build, and that made
+     * the battle a property of THIS deploy path rather than of the mode — a
+     * world booted any other way, a check or a co-op client, had no front at
+     * all. `World.loadLevel` arms it now off `MODES[mode].massBattle`, beside
+     * `objectives` and `fireMissions`, which is where a branch gated on a
+     * declared field belongs.
+     */
     else world.director.start(1);
   }
   /**
@@ -2037,8 +2052,25 @@ function orderKeys() {
   if (!cmd) return;
   for (const o of ORDER_ACTIONS) {
     if (!input.actHit(o.action)) continue;
-    if (!cmd.order(o.id)) continue;
-    hud.message(o.name.toUpperCase(), o.blurb);
+    /**
+     * …TO THE SQUAD YOU PICKED, AND THAT ARGUMENT WAS MISSING.
+     *
+     * `order(id, cmdr = null, squad = null)` defaults to the whole army, and
+     * this call passed neither — so a player who opened the wheel, chose
+     * TARGET, and stepped the selection to "2nd Squad only" could then press a
+     * formation key and silently order all five squads. The wheel passed it
+     * (`HUD.js`, `world.command.order?.(o.id, null, world.command.selectedSquad)`)
+     * and the nine keys did not, which made the two doors to one verb disagree
+     * about what the verb was for.
+     *
+     * Selecting a squad is the whole of "order individual troops", and it is
+     * already the hardest thing on this HUD to find. A selection that the fast
+     * path throws away is worse than no selection at all.
+     */
+    if (!cmd.order(o.id, null, cmd.selectedSquad ?? null)) continue;
+    const only = cmd.selectedSquad == null ? o.blurb
+      : `${ordinal(cmd.selectedSquad + 1)} Squad — ${o.blurb}`;
+    hud.message(o.name.toUpperCase(), only);
     break;                       // one order a frame; two at once is neither
   }
 }

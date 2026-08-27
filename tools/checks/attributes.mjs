@@ -33,10 +33,49 @@ import { functionBody } from './_source.mjs';
 import {
   ATTRS, ATTR_IDS, TRAITS, attrScale, rollSoldier, attrOf, scaleOf, hasFlag,
   kindOfArmy, traitsFor, attrName, attrBlurb, standout, profileMean, shedTraits,
+  BOND_AREAS, applyTrait, isBonded,
 } from '../../src/game/Attributes.js';
 import { ARMIES, ARCHETYPE_BIAS, ORDER_LAG, HOLD_BREAK } from '../../src/game/Command.js';
 
 const SRC = new URL('../../src/', import.meta.url);
+
+/**
+ * WHAT A SWING IS WORTH, IN THE ONLY CURRENCY THE SIM ACTUALLY SPENDS.
+ *
+ * POINTS ARE NOT COMPARABLE ACROSS AXES and pretending they are is how the
+ * trait table was wrong. A raw point sum said twelve of seventeen traits were
+ * profitable; it was also understating the worst of them, because a point of
+ * Loyalty moved a 0.62–1.34 multiplier and a point of Pace moved a 0.88–1.14
+ * one. Two very different things called "one point".
+ *
+ * So each point is priced at the fraction of its own axis it buys. `|hi − 1|`
+ * and `|1 − lo|` rather than the signed values, because Marksmanship and
+ * Reflex both run backwards — a lower cone and a shorter delay are both
+ * advantages.
+ *
+ * EXPORTED because `company.mjs` prices a bond on a real roll in the same
+ * currency, and two check files with two copies of this formula would be free
+ * to disagree about whether the same swing was profitable. One copy.
+ *
+ * @param delta  signed attribute points, `{ bond: +16, nerve: -14 }`.
+ */
+export function priceSwing(delta) {
+  let net = 0;
+  for (const a of ATTRS) {
+    const d = delta?.[a.id] || 0;
+    if (!d) continue;
+    net += d * (d > 0 ? Math.abs(a.hi - 1) : Math.abs(1 - a.lo)) / 50;
+  }
+  return net;
+}
+
+/** A trait's `up`/`down` as one signed swing, for `priceSwing`. */
+export function traitSwing(t) {
+  const d = {};
+  for (const k in (t?.up || {})) d[k] = (d[k] || 0) + t.up[k];
+  for (const k in (t?.down || {})) d[k] = (d[k] || 0) - t.down[k];
+  return d;
+}
 
 /** Every .js under src/, as [path, text]. The scan's subject is DERIVED. */
 async function sources() {
@@ -179,26 +218,12 @@ export async function run({ check, assert, near }) {
   });
 
   await check('no trait is a net gain, priced in what a point is worth', () => {
-    /**
-     * POINTS ARE NOT COMPARABLE ACROSS AXES and pretending they are is how this
-     * table was wrong. A raw point sum said twelve of seventeen traits were
-     * profitable; it was also understating the worst of them, because a point
-     * of Loyalty moved a 0.55–1.70 multiplier and a point of Pace moved a
-     * 0.88–1.14 one. Two very different things called "one point".
-     *
-     * So each point is priced at the fraction of its own axis it buys, which is
-     * the only currency the sim actually spends. `|hi − 1|` and `|1 − lo|`
-     * rather than the signed values, because Marksmanship and Reflex both run
-     * backwards — a lower cone and a shorter delay are both advantages.
-     */
-    const W = {};
-    for (const a of ATTRS) W[a.id] = { up: Math.abs(a.hi - 1) / 50, dn: Math.abs(1 - a.lo) / 50 };
-    const priced = TRAITS.map((t) => {
-      let g = 0, l = 0;
-      for (const k in (t.up || {})) g += t.up[k] * W[k].up;
-      for (const k in (t.down || {})) l += t.down[k] * W[k].dn;
-      return { id: t.id, net: g - l, temp: !!t.sheds };
-    });
+    /* The currency is `priceSwing` at the top of this file, which `company.mjs`
+     * spends too — see its note for why a point of Loyalty and a point of Pace
+     * are not the same point, and why there is exactly one copy of the rule. */
+    const priced = TRAITS.map((t) => ({
+      id: t.id, net: priceSwing(traitSwing(t)), temp: !!t.sheds,
+    }));
     const gains = priced.filter((r) => r.net > 0);
     assert(!gains.length, 'traits that are pure profit: '
       + gains.map((r) => `${r.id} +${r.net.toFixed(3)}`).join(', '));
@@ -216,30 +241,188 @@ export async function run({ check, assert, near }) {
   });
 
   await check('a trait that says it wears off actually does, and refunds', () => {
+    /**
+     * SEARCHED, NOT SPELLED OUT, and that is what makes this survive a second
+     * temporary trait pointing the other way.
+     *
+     * This clause used to hand every `sheds` predicate `areas: 0` and expect it
+     * KEPT and `areas: 9` and expect it GONE, which is `green`'s direction —
+     * a man grows out of being green. `bonded` runs the other way: a man has it
+     * because of something he has, and loses it when that is taken off him. A
+     * check that knew one direction would have had to be edited into agreeing
+     * with the new trait, which is the twin this codebase keeps deleting.
+     *
+     * So the property asserted is direction-free and is the one that actually
+     * matters: over a small spread of men there is at least one who keeps it
+     * and at least one who does not, and the one who loses it gets every point
+     * back. A predicate that always fires fails on the first clause and one
+     * that never fires fails on the second.
+     */
     const temp = TRAITS.filter((t) => t.sheds);
     assert(temp.length, 'nothing in the table is temporary');
+    /* The states a shed predicate is allowed to read, at both ends. A new
+     * predicate reading a field that is not here fails LOUDLY (it will never
+     * shed) rather than silently passing. */
+    const lives = [
+      { areas: 0, bonds: [] },
+      { areas: 9, bonds: [] },
+      { areas: 0, bonds: [{ with: 'CT-0001', areas: BOND_AREAS }] },
+      { areas: 9, bonds: [{ with: 'CT-0001', areas: BOND_AREAS }] },
+    ];
+    const words = [];
     for (const t of temp) {
       assert(typeof t.sheds === 'function', `${t.id}.sheds is not a predicate`);
-      /* Both directions, on the same man, so this cannot pass by shedding
-       * everything or by shedding nothing. */
-      const attrs = {}; for (const id of ATTR_IDS) attrs[id] = 50;
-      for (const k in t.up) attrs[k] += t.up[k];
-      for (const k in t.down) attrs[k] -= t.down[k];
-      const green = { attrs, traits: [t.id], areas: 0 };
-      const held = shedTraits(green);
-      assert(held.traits.includes(t.id), `${t.id} came off a man who has not earned it`);
-      const grown = shedTraits({ ...green, areas: 9 });
-      assert(!grown.traits.includes(t.id), `${t.id} never comes off`);
-      for (const id of ATTR_IDS) {
-        assert(grown.attrs[id] === 50,
-          `${t.id} came off but ${id} kept its swing: ${grown.attrs[id]}`);
+      const man = (life) => {
+        const attrs = {}; for (const id of ATTR_IDS) attrs[id] = 50;
+        for (const k in t.up) attrs[k] += t.up[k];
+        for (const k in t.down) attrs[k] -= t.down[k];
+        return { ...life, attrs, traits: [t.id] };
+      };
+      let kept = 0, shed = 0;
+      for (const life of lives) {
+        const before = man(life);
+        const after = shedTraits(before);
+        if (after.traits.includes(t.id)) { kept++; continue; }
+        shed++;
+        for (const id of ATTR_IDS) {
+          assert(after.attrs[id] === 50,
+            `${t.id} came off but ${id} kept its swing: ${after.attrs[id]}`);
+        }
+        /* AND IT DOES NOT EDIT THE RECORD IT WAS HANDED. The caller's object is
+         * the man off disk; a mutation here would rewrite the save. */
+        const moved = ATTR_IDS.filter((id) => before.attrs[id] !== man(life).attrs[id]);
+        assert(!moved.length && before.traits.includes(t.id),
+          `${t.id} shed by mutating the stored man (${moved.join(', ')})`);
       }
-      /* AND IT DOES NOT EDIT THE RECORD IT WAS HANDED. The caller's object is
-       * the man off disk; a mutation here would rewrite the save. */
-      assert(green.traits.includes(t.id) && green.attrs.nerve !== 50,
-        `${t.id} shed by mutating the stored man`);
+      assert(kept, `${t.id} comes off every man there is — nobody can carry it`);
+      assert(shed, `${t.id} never comes off anybody`);
+      words.push(`${t.id} ${kept}/${lives.length} kept`);
     }
-    return `${temp.map((t) => t.id).join(', ')} — off and refunded`;
+    return `${words.join(', ')} — every loss refunded in full`;
+  });
+
+  await check('the one trait nobody is rolled with is never dealt at a muster', () => {
+    /**
+     * `bonded` is the only row in the table that is a fact about what a man has
+     * DONE rather than what he was drawn as, and the way that goes wrong is
+     * silent: a fresh recruit dealt it out of the pool would walk onto his
+     * first ground already carrying somebody else's history, +16 Loyalty and
+     * a Nerve penalty he did not earn, and nothing anywhere would say so.
+     *
+     * Driven through the real muster rather than by reading `traitsFor`: eight
+     * thousand men off both tables, and every trait any of them was dealt has
+     * to be one the pool admits.
+     */
+    const earned = TRAITS.filter((t) => t.earned).map((t) => t.id);
+    assert(earned.length, 'nothing in the table is earned rather than rolled');
+    for (const kind of ['flesh', 'steel']) {
+      const pool = new Set(traitsFor(kind).map((t) => t.id));
+      for (const id of earned) assert(!pool.has(id), `${id} is in the ${kind} muster pool`);
+      const r = rng(31337);
+      let dealt = 0;
+      for (let i = 0; i < 4000; i++) {
+        for (const id of rollSoldier(r, kind, { traits: 2 }).traits) {
+          assert(pool.has(id), `a ${kind} muster dealt ${id}, which is not in its pool`);
+          dealt++;
+        }
+      }
+      assert(dealt > 4000, `${dealt} traits dealt over 4000 ${kind} musters — nobody got one`);
+    }
+    return `${earned.join(', ')} — never dealt over 8 000 musters`;
+  });
+
+  await check('a bond is a shape and not a rank with a name on it', () => {
+    /**
+     * THE LAW AT THE TOP OF THE TRAIT TABLE, APPLIED TO THE ONE TRAIT A PLAYER
+     * CAN CAUSE. Everything else in that table is dealt by the muster, so a
+     * profitable one is a lottery; this one is earned by keeping men alive
+     * together, so a profitable one is a RATCHET — play long enough and every
+     * man on the roll carries it, and `Company.js`'s refusal of cross-run power
+     * is broken by the file that was meant to respect it.
+     *
+     * Priced in the same currency as the clause above, and it must ALSO be
+     * two-sided in the sim rather than only on the card — which is the whole
+     * reason it pays in `bond` and nothing else. `CommandDirector._morale`
+     * multiplies the presence terms by `scaleOf(t, 'bond')` and multiplies
+     * `MORALE.ALONE` by the same number, so one attribute is the gift and the
+     * cost at once. Both are measured off the shipped tables.
+     */
+    const t = TRAITS.find((x) => x.id === 'bonded');
+    assert(t, 'there is no bond in the trait table');
+    assert(t.earned && t.sheds, 'the bond is either dealt at muster or never lapses');
+    const g = priceSwing(t.up);
+    const l = -priceSwing(traitSwing({ down: t.down }));
+    assert(g - l <= 0,
+      `a bond is worth +${(g - l).toFixed(4)} of a man for nothing — that is a rank, not a bond`);
+    /* …AND NOT A PUNISHMENT EITHER. Coming home with the same men must not be
+     * something a player learns to avoid; the same floor the permanent traits
+     * are held to. */
+    assert(g - l > -0.06,
+      `a bond costs ${(l - g).toFixed(4)} of a man — keeping people alive is a tax`);
+
+    /* THE SIM HALF. +16 on the widest axis in the table, read at both ends of
+     * the one term that is signed both ways. */
+    assert(Object.keys(t.up).join() === 'bond',
+      `a bond pays in ${Object.keys(t.up).join(', ')} — it must pay through the presence `
+      + 'machinery that already exists, which is the bond axis and nothing else');
+    const step = attrScale('bond', 50 + t.up.bond) - attrScale('bond', 50);
+    assert(step > 0.05, `+${t.up.bond} bond moves the presence multiplier by ${step.toFixed(4)}`);
+
+    /**
+     * AND IT GOES ON EXACTLY ONCE AND COMES OFF EXACTLY ONCE.
+     *
+     * `Company.settleBonds` runs on every read of the store, and the Menu reads
+     * the store every time it opens. A second helping per read would give a man
+     * +16 Loyalty per visit to his own page, which is the quietest possible way
+     * for a roster screen to become a shop — no button, no number, just a tab
+     * you left open.
+     */
+    const flat = {}; for (const id of ATTR_IDS) flat[id] = 50;
+    const paired = { attrs: flat, traits: [], bonds: [{ with: 'CT-0001', areas: BOND_AREAS }] };
+    assert(isBonded(paired), `a tally of ${BOND_AREAS} is not a bond`);
+    const once = applyTrait(paired, 'bonded');
+    const twice = applyTrait({ ...paired, ...once }, 'bonded');
+    assert(once.attrs.bond === 50 + t.up.bond, `the bond bought ${once.attrs.bond - 50} Loyalty`);
+    for (const id of ATTR_IDS) {
+      assert(twice.attrs[id] === once.attrs[id],
+        `reading the roll twice moved ${id} again: ${once.attrs[id]} → ${twice.attrs[id]}`);
+    }
+    assert(twice.traits.length === 1, `he is bonded ${twice.traits.length} times over`);
+    /* …and taking it off leaves the man he was mustered as, to the point. */
+    const alone = shedTraits({ ...paired, ...once, bonds: [] });
+    for (const id of ATTR_IDS) {
+      assert(alone.attrs[id] === 50, `losing him left ${id} at ${alone.attrs[id]}`);
+    }
+    return `priced +${g.toFixed(3)} / −${l.toFixed(3)} = ${(g - l).toFixed(4)}; `
+      + `presence ×${step.toFixed(4)} both ways`;
+  });
+
+  await check('a bond pays out beside somebody and bills him when he is alone', async () => {
+    /**
+     * THE OTHER HALF OF THE SAME SENTENCE, IN THE UNITS THE FIGHT USES.
+     *
+     * The clause above prices a bond on the roster card. This one asks what it
+     * actually does to a man per second, off `MORALE` itself, and it is the
+     * assertion that would go red the day somebody "fixed" the fall by taking
+     * `lean` off `ALONE` — at which point Loyalty becomes pure upside, a bond
+     * becomes free, and a veteran roster becomes strictly stronger.
+     */
+    const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
+    const { MORALE } = await import('../../src/game/Morale.js');
+    const t = TRAITS.find((x) => x.id === 'bonded');
+    assert(/MORALE\.ALONE \* lean/.test(src),
+      'the fall does not read bond — a bond would be a gift with no bill attached');
+    const step = attrScale('bond', 50 + t.up.bond) - attrScale('bond', 50);
+    const near = MORALE.JEDI_NEAR * step;
+    const alone = MORALE.ALONE * step;
+    assert(near > 0 && alone < 0,
+      `a bond is worth ${near}/s beside somebody and ${alone}/s alone — those are the same sign`);
+    /* SMALL ON BOTH SIDES, and it has to be: the presence terms are the
+     * largest per-second numbers in the table and a bond that moved them by a
+     * third would make standing next to the right pair the only tactic. */
+    assert(near / MORALE.JEDI_NEAR < 0.2,
+      `a bond adds ${(near / MORALE.JEDI_NEAR * 100).toFixed(0)}% to presence — that is a second rank ladder`);
+    return `+${near.toFixed(5)}/s beside him, ${alone.toFixed(5)}/s on his own`;
   });
 
   await check('a droid is not brave and a clone has no actuators', () => {
@@ -386,6 +569,62 @@ export async function run({ check, assert, near }) {
     assert(Math.max(...nums) - Math.min(...nums) > 2000,
       `the roll is CT-${Math.min(...nums)} through CT-${Math.max(...nums)} — that is a serial, not a company`);
     return `8 men, identical across the desync, ${Math.min(...nums)}–${Math.max(...nums)}`;
+  });
+
+  await check('a saved man reaches the field as himself, not as a fresh roll', async () => {
+    /**
+     * THE DOOR THAT WAS THROWING THE WHOLE SYSTEM AWAY.
+     *
+     * `CommandRoster.enlistRecord` calls itself "the one door a saved roll comes
+     * back through" and passed no `attrs`, no `traits` and no `kind` to the
+     * `Trooper` constructor. So `opts.attrs` arrived undefined, the constructor
+     * took its `else` branch, and every veteran was RE-ROLLED at muster.
+     *
+     * It hid because the re-roll is a hash of who he is, so it reproduces the
+     * same BASE man and nothing looked wrong. What it cannot reproduce is
+     * anything that happened to him since. Measured before the fix, two men
+     * with five shared grounds through the real keep → load → trooperOf:
+     *
+     *     stored   traits ['devoted','bonded']  bond 65  nerve 48
+     *     fielded  traits ['devoted']           bond 49  nerve 62
+     *
+     * So the constructor's restore branch — and `shedTraits` with it — was
+     * correct code on an unreachable path, and "Green wears off" was a promise
+     * nothing kept.
+     *
+     * THE ASSERTION HANGS A TRAIT THE MUSTER CANNOT DEAL. Comparing a stored
+     * profile against a fielded one would pass on the broken build, because the
+     * hash gives back the same numbers; the only thing that separates "restored"
+     * from "re-rolled" is something the roll could never have produced.
+     */
+    const { CommandRoster, seedCommand } = await import('../../src/game/Command.js');
+    const Company = await import('../../src/game/Company.js');
+    seedCommand(20260826);
+    const a = new CommandRoster(ARMIES.republic).enlist('trooper');
+    a.areas = 0;
+    /* Hand-set, so the fielded man cannot match by luck. */
+    a.attrs.nerve = 21;
+    a.traits = [...a.traits.filter((t) => t !== 'green'), 'green'];
+    const stored = Company.manOf(a, {});
+
+    const green = new CommandRoster(ARMIES.republic);
+    const kept = Company.trooperOf(stored, ARMIES.republic, green);
+    assert(kept, 'the saved man did not come back at all');
+    assert(kept.traits.includes('green'),
+      'a trait the muster pool cannot deal did not survive the door — the man was re-rolled');
+    assert(kept.attr('nerve') === 21,
+      `nerve came back as ${kept.attr('nerve')} against a stored 21 — the profile was re-rolled`);
+
+    /* …AND THE OTHER HALF: a man who HAS grown out of it shed it, with the
+     * refund. This is the branch that was dead, so asserting the restore alone
+     * would leave it dead. */
+    const vet = { ...stored, areas: 9 };
+    const grown = Company.trooperOf(vet, ARMIES.republic, new CommandRoster(ARMIES.republic));
+    assert(!grown.traits.includes('green'),
+      'nine areas held and he is still Green — shedTraits is on an unreachable path again');
+    assert(grown.attr('nerve') > kept.attr('nerve'),
+      `the trait came off and its ${kept.attr('nerve')} Nerve did not come back (${grown.attr('nerve')})`);
+    return `green held at 0 areas with nerve ${kept.attr('nerve')}, shed at 9 with nerve ${grown.attr('nerve')}`;
   });
 
   await check('two men off the same table are two different men', () => {

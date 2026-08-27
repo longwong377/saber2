@@ -1070,6 +1070,40 @@ button{font-family:inherit}
 .targetopen.hidden{display:none}
 /* The mend cue reads as help rather than as damage — see #mend-cue. */
 .targetopen.mend b{color:var(--good)}
+/* …AND THE ONE YOU HAVE NOT LOOKED AT YET. Dimmer, because it is an offer and
+   not a state: the man under your reticle is a thing you can do RIGHT NOW, and
+   this one is a thing you could do if you turned your head. Same words, less
+   weight, so the two never read as the same prompt. */
+.targetopen.mend.far b{color:var(--dim)}
+.targetopen.mend.far i{opacity:.55}
+
+/* THE WITHDRAW RING ─────────────────────────────────────────────────────
+   The one control that decides whether your company survives the run, and
+   until now the only one with no feedback at all: you held a key for a second
+   and a half and the screen said nothing until it was already done.
+
+   Centred and large, unlike every other cue on this HUD, and that is the
+   point rather than an accident — this is the only input in the game that
+   ENDS THE RUN, the hold exists precisely so it cannot be a slip, and a
+   commitment you cannot see yourself making is the same as no commitment.
+   It is up for 1.5 s at most and it is gone the frame you let go.
+
+   The fill is a conic gradient driven by one custom property, so a frame that
+   advances the hold touches one number and nothing reflows. */
+.withdrawring{position:absolute;left:50%;top:56%;transform:translate(-50%,-50%);
+  display:flex;flex-direction:column;align-items:center;gap:9px;pointer-events:none;z-index:6}
+.withdrawring.hidden{display:none}
+.withdrawring i{width:84px;height:84px;border-radius:50%;display:block;
+  background:conic-gradient(var(--danger) calc(var(--w) * 360deg), rgba(0,0,0,.34) 0);
+  box-shadow:0 0 0 3px rgba(0,0,0,.55), 0 0 22px -4px var(--danger);
+  /* The hole. A ring and not a pie: a filled disc reads as an object on the
+     screen, and a ring reads as a clock, which is what this is. */
+  -webkit-mask:radial-gradient(circle, transparent 55%, #000 56%);
+          mask:radial-gradient(circle, transparent 55%, #000 56%)}
+.withdrawring b{font:var(--mono);font-size:12px;font-weight:800;letter-spacing:.2em;
+  color:var(--danger);text-shadow:0 2px 0 rgba(0,0,0,.7)}
+.withdrawring span{font:var(--mono);font-size:9.5px;letter-spacing:.22em;color:#fff;opacity:.72;
+  text-shadow:0 2px 0 rgba(0,0,0,.7)}
 
 /* ── event feed ──────────────────────────────────────────
    Killstreaks, deflection runs, a boss walking in.

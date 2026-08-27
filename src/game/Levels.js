@@ -50,7 +50,6 @@ import { attachRiders, saddleThreat } from './Riders.js';
  * assignment already gives: this is the module that decides what bodies
  * exist for everything not declared in Enemy.js. */
 import { GEONOSIAN_UNITS, attachFlight } from './Flight.js';
-import { emplaceGun } from './Emplacement.js';
 import { attachForest } from '../world/Trees.js';
 import { attachHazard } from '../world/Hazard.js';
 import { addSmokeColumns, smokeSites, smokeAir } from '../world/Smoke.js';
@@ -1932,30 +1931,37 @@ function magazine(world, opts = {}) {
   }
 
   /**
-   * …AND THE MIDDLE CELL IS A GUN PIT. FLAGSHIP §7's BREACH, made into a verb.
+   * …AND THE MIDDLE CELL WAS A GUN PIT, AND IS NOT ANY MORE.
    *
-   * The rank of three has been an ERRAND since it was hung: each door holds a
-   * cache and fourteen points of war support, so nothing on the field changes
-   * if you walk past all three. §7 does not describe an errand — "the one thing
-   * on the field only a Jedi can touch… twenty seconds of held blade,
-   * deflecting nothing, away from your line, both bars draining" is a price,
-   * and a price is only a price when not paying it costs something.
+   * It stood here for several builds as FLAGSHIP §7's BREACH: a heavy gun in a
+   * casemate, laid on your muster ground, that could only be silenced by
+   * twenty seconds of held blade on the door. The argument was good. The object
+   * was not, and the player's verdict on it is the honest summary — "it looks
+   * like shit, it does absolutely nothing, and I can't destroy it either."
    *
-   * So the middle bay is a casemate with a heavy gun in it, laid on the muster
-   * ground 76.7 m away, shooting your named men. It cannot be shot back at, or
-   * gripped, or charged — see src/game/Emplacement.js, where the whole argument
-   * for that lives — and the door is the only way in. THE FLANKING TWO ARE
-   * UNCHANGED and are still caches, which is what makes the rank a decision
-   * rather than a queue: one of these twenty seconds you have to spend, and two
-   * of them you may.
+   * All three halves of that were literally true and none of them were bugs:
    *
-   * The MIDDLE one, and not an end one, because the wing walls close the
-   * approach into a defile that is narrowest on the centre line — the note over
-   * this function already says the defile is "the shape of the fight", and the
-   * door the battle forces you to stand at should be the one with the least
-   * ground behind your back.
+   *   IT DID NOTHING on most of the game. `GunPit.update` opened with `if
+   *     (!this.world?.command) return;` — no army, no gun — so in Trial of
+   *     Waves, roguelite, duel, sandbox and training an 11.6 m tower stood on
+   *     the field and never once fired.
+   *   IT COULD NOT BE DESTROYED, by design: `toughness = Infinity`, `hp =
+   *     Infinity`, `capsules()` empty, `cut()` empty, `damage() { return
+   *     false; }`. Every one of those was the deliberate answer to "the door is
+   *     the only way in", and every one of them reads from the outside as an
+   *     object the game is ignoring.
+   *   AND YOU WALKED THROUGH IT. It never called `addStatic` and never
+   *     registered a physics box, so the tower was scene geometry with no
+   *     collider — which is the single worst thing a large solid-looking object
+   *     can be in a game whose whole pitch is that everything is simulated.
+   *
+   * THE RANK OF THREE IS UNCHANGED and is still three caches. What replaced the
+   * gun's job — a standing threat that shoots your named line, off the wave's
+   * threat ledger — is `src/game/Armour.js`: one walking OG-9 that advances on
+   * your line and that you can actually kill. See that file for why a thing
+   * that moves and dies is worth more here than a thing that neither.
    */
-  if (doors[1]) emplaceGun(world, doors[1]);
+
 
   return doors;
 }
@@ -5289,6 +5295,21 @@ Object.assign(ARRIVAL_BY_TERRAIN, {
    * top of you. A wave you watch advance is the wave this level is for. So it is
    * two marches to one ship — and the ship is still there because a gunship
    * flaring in over a flat plain is the other image these plates are full of.
+   *
+   * ── THIS ROW WAS ONLY HONEST ONCE THE MARCH HAD A CEILING, and for a while
+   * it was not. `spawnRadius` here is `[58, 96]`, the widest ring in the game
+   * by a factor of 1.6, and the march band was an unbounded `ring × 1.45 ×
+   * 1.14` — 139–159 m. `Cohorts.L3_AT` is 137.8 m, so two arrivals in three on
+   * this level were BORN PAST THE DISTANCE A BODY STOPS DRAWING ITS OWN
+   * OUTLINE: no silhouette, no mesh of its own, in the thickest fog in the
+   * game, for the 30–45 s it took to walk into view. Measured in Command at
+   * 50 s: median hostile range 110.9 m, 32 of 49 outside the frustum. The
+   * argument above was right and the placement made it unwatchable.
+   *
+   * `Arrivals.marchBand` clamps that band against `L3_AT` now — the fix is
+   * there and not here, because nothing about this level was wrong except that
+   * its ring is big, which is its premise. Two marches to one ship stands, and
+   * the walk it buys is 121–138 m of a body you can actually see.
    */
   geonosis: ['march', 'march', 'dropship'],
   /* Open sky over a lava field, and the ground between the rivers is broken

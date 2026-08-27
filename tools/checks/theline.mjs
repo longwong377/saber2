@@ -738,32 +738,24 @@ export async function run({ check, assert }) {
      * message and no line number.
      *
      * AND A DEATH HERE IS NOT A HARNESS ACCIDENT, which is why this is a
-     * re-read and not a `?.`. Two things are shooting at these men and the arm
-     * silences neither:
-     *
-     *   THE EMPLACEMENT. `Levels.js` hangs a `GunPit` behind the ground's
-     *     second blast door; it reaches 120 m and `_acquire` lays it on the
-     *     ROSTER by preference — "leaving it standing costs you names". The
-     *     loop above kills every hostile in `world.enemies`; the gun is not in
-     *     that list and goes on firing at a line that is standing still.
-     *   THE DROP. The displacement writes `position.x` and leaves `y` where it
-     *     was, so each man falls onto whatever the ground is 56 m away, and
-     *     `Enemy._move` charges fall damage past 20 m/s.
+     * re-read and not a `?.`. THE DROP kills men on its own: the displacement
+     * writes `position.x` and leaves `y` where it was, so each man falls onto
+     * whatever the ground is 56 m away, and `Enemy._move` charges fall damage
+     * past 20 m/s.
      *
      * MEASURED, this fixture held for 30 s instead of 6, from full health at
-     * 46 hp: with the gun live the ten read 0 · 21 · 46 · 46 · 37 · 46 · 46 ·
-     * 18 · 46 · 46 off one three-round burst, and with it silenced they still
-     * read 37 · 46 · 29 · 46 · 46 · 29 · 46 · 46 · 46 · 35 off the fall alone.
-     * One burst is enough to take a man to nothing, and held for 120 s the
-     * line is gone entirely. Whether any of it lands inside the six seconds
-     * this arm actually runs turns on `GUN.spread`, drawn from `MathUtil`'s
-     * module-scope `rand` — one of the streams `restoreShared` deliberately
-     * does NOT put back, so it is decided by everything that ran before this
-     * suite rather than by the order it ran in. It is a PHASE and not an
-     * order, which is why it does not bisect: alone all ten came through
-     * (measured, ten `ok`), two full gates run while fixing this brought all
-     * ten through as well, and the gate that found it printed the message
-     * above and nothing else.
+     * 46 hp: the ten read 37 · 46 · 29 · 46 · 46 · 29 · 46 · 46 · 46 · 35 off
+     * the fall alone, and held for 120 s the line is gone entirely.
+     *
+     * A GUN EMPLACEMENT used to be the other and worse half of this — hung by
+     * `Levels.js` behind the ground's second blast door, reaching 120 m and
+     * laying its rounds on the ROSTER by preference. It was not in
+     * `world.enemies`, so the loop above did not kill it and it went on firing
+     * at a line standing still; one three-round burst took a man from 46 to
+     * nothing. It is gone from the tree (src/game/Armour.js records why) and
+     * what replaced it is a body in `world.enemies`, which that loop does
+     * reach. The re-read is kept for the drop, and because the next thing put
+     * on this ground may be outside that list too.
      *
      * The re-read is also the honest fixture: the arm below is about a line
      * coming back, and the line that comes back is the line that is left.
@@ -922,10 +914,10 @@ export async function run({ check, assert }) {
      *   with a delay."
      *
      * GEONOSIS, NAMED. The mode rolls its ground off the seed (theline.11) and
-     *   this is the only one carrying the levy and the gun pit — the two
-     *   sources of fire the wave's threat budget never pays for, and five of
-     *   the eight names an engagement costs. A check that let the seed choose
-     *   would average seven different fights and report the mean as one.
+     *   this is the only one carrying the levy, and it fields the free walker
+     *   as well — the two sources of fire the wave's threat budget never pays
+     *   for. A check that let the seed choose would average seven different
+     *   fights and report the mean as one.
      *
      * ── WHY THE BAND IS THIS WIDE, WHICH IS A MEASUREMENT AND NOT A HEDGE ──
      *
@@ -1051,7 +1043,7 @@ export async function run({ check, assert }) {
       + `${Cmd.OPENING_STRENGTH} standing on average [${left.join(' ')}] — the target is about half `
       + 'a line, and a line this far under it means the muster is never reached and the mode cannot '
       + 'be won. The two things to look at first are the sources of fire the wave\'s threat budget '
-      + 'does not pay for: src/game/Emplacement.js and src/game/Levy.js.');
+      + 'does not pay for: src/game/Armour.js and src/game/Levy.js.');
     assert(mean <= HALF + SLACK,
       `${SEEDS.length} engagements with no Jedi on the field left ${mean.toFixed(1)} of `
       + `${Cmd.OPENING_STRENGTH} standing [${left.join(' ')}] — an engagement nobody dies in makes `
@@ -1103,11 +1095,11 @@ export async function run({ check, assert }) {
      * nothing else in the tree would say so.
      *
      * NOTHING ELSE ON THE FIELD. The director is put into its own idle state —
-     * `active` false with an endless intermission, which is what
-     * `breach.mjs` uses and is the state the mode is in between two waves — so
-     * the two bodies below are the only things shooting and no wave arrives to
-     * move anybody. Nothing is stepped: `_shoot` is called directly, so the
-     * reading is of the aim and not of a fight.
+     * `active` false with an endless intermission, which is the state the mode
+     * is in between two waves — so the two bodies below are the only things
+     * shooting and no wave arrives to move anybody. Nothing is stepped:
+     * `_shoot` is called directly, so the reading is of the aim and not of a
+     * fight.
      */
     const { enemyRng } = await import('../../src/game/Enemy.js');
     const THREE = await import('three');
