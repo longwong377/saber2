@@ -116,17 +116,22 @@ const FLOURISH = { dur: 0.62, turns: 2, radius: 0.30 };
  */
 export const READY_GUARD = {
   third: { x: 0.30, y: 0.08 },
-  /* THE FIRST-PERSON READY IS HIGHER THAN THE THIRD-PERSON ONE, which is the
-   * opposite of what it was, and the reason is the WRIST rather than the blade.
-   * A fist rolled round the shaft to where the palm faces across the body (see
-   * FP_TUNE) sits 59 mm below the grip point instead of 27 mm, and at half a
-   * metre from the lens those 32 mm are 3.7 degrees — enough to put the hand
-   * off the bottom of a 30-degree half-field. The guard carries the hilt, the
-   * hilt carries the fist, so the hold comes up rather than the grip being
-   * compromised back toward the emitter. Measured, not guessed: the hand reads
-   * 27.6 degrees down at y=0.02 and 23.2 at y=0.12, against a 26-degree bound
-   * — and 23.2 frames the hold better than the 26.0 it shipped at. */
-  first: { x: 0.26, y: 0.12 },
+  /* THE FIRST-PERSON HOLD IS LOW, and the authority is the player's own
+   * reference (assets/reference/first-person): a fist near the BOTTOM edge of
+   * the frame with the whole hilt standing clear above it and almost no arm
+   * in shot. The previous value here was y 0.12, argued from keeping the hand
+   * comfortably inside a 26-degree bound — and the result was the thing the
+   * player kept reporting: hands and forearms carried at mid-frame, a dark
+   * clump in the middle of the picture. The reference frames the fist AT the
+   * edge, not comfortably inside it.
+   *
+   * Measured at y=-0.02 with tools/_fpgeom.mjs: handR at NDC y -0.57, the
+   * hilt 34% of frame height with 31/31 samples on screen, and the arms cover
+   * 4.2% of the frame — against the mid-frame hold this replaces. The
+   * first-person and viewmodel suites hold the fist on screen and the hilt in
+   * frame at every pitch, so lower than this fails a check rather than
+   * quietly sliding out of shot. */
+  first: { x: 0.26, y: -0.02 },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
