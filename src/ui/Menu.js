@@ -32,7 +32,8 @@ import { READ_REACH, READ_SECONDS, SENSE_RATE } from '../game/FireMission.js';
  * first click, and aliased because `load`, `save`, `dress` and `nameOf` are
  * words this file already uses for other things. */
 import {
-  loadAll as companyLoadAll, fieldable as companyFieldable, dossier as companyDossier,
+  loadAll as companyLoadAll, load as companyLoad,
+  fieldable as companyFieldable, dossier as companyDossier,
   dress as companyDress, nameOf as companyNameOf, companyLines,
   CALLSIGN_MAX as companyCallsignMax,
 } from '../game/Company.js';
@@ -170,7 +171,8 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
  * the set the block below has to count. */
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
-         LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById } from '../game/Command.js';
+         LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById,
+         musterPlan } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -3471,6 +3473,10 @@ export class Menu {
         panels.forEach(p => p.classList.toggle('active', p.dataset.panel === t.dataset.tab));
         if (t.dataset.tab === 'saber') this._startPreview();
         else this._stopPreview();
+        /* The Company page's "Taking in" section reads three live settings
+         * (mode, contingent, ally army), all set on OTHER tabs — re-rendered
+         * on arrival or it reports the plan as it stood last time. */
+        if (t.dataset.tab === 'company') { this._buildCompanyList?.(); this._showCompany?.(this._companyKey); }
         // A panel that was display:none has no scroll geometry at all, so the
         // fade and the reveal are computed the moment it becomes the one on
         // screen and not before.
@@ -5742,11 +5748,58 @@ export class Menu {
         given and everything he has done. Everyone who does not is not.</p>
       <p class="hint"><b>${total}</b> on the roll · <b>${lost}</b> lost ·
         <b>${runs}</b> withdrawal${runs === 1 ? '' : 's'} survived</p>
+      ${this._companyMusterHtml()}
       <p class="hint">You can give a man a callsign and paint him a mark. You cannot
         buy him anything: what makes a soldier better in this game is living through
         another one, and the ladder pays that out on its own. Keeping him alive is
         the whole of it.</p>
       ${rolls.map((c) => `<p class="hint">${companyLines(c).map(escKey).join(' — ')}</p>`).join('')}`;
+  }
+
+  /**
+   * WHO THE NEXT RUN IS TAKING IN — the other half of the page, and the half
+   * that was missing.
+   *
+   * The roll column says who SURVIVES between runs; nothing anywhere said who
+   * the next Ignite will actually field, so a player whose roll was empty saw
+   * a page that was all memorial — "I still only see fallen troops… nothing in
+   * regards to the troops I'm taking in." This section answers with the same
+   * resolution the deploy path uses — `musterPlan`, the one resolver — so the
+   * names printed here are exactly the names `veteransToField` will hand the
+   * director, in the order `fieldable` ranks them, with the balance stated as
+   * the fresh enlistments the muster will draw.
+   *
+   * Rendered per show rather than cached, because three settings feed it (the
+   * mode, the contingent, the ally-army choice) and the tab click re-renders —
+   * see `_buildTabs`.
+   */
+  _companyMusterHtml() {
+    const M = MODES[this.s.mode];
+    const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+    if (!plan) {
+      return `<h3>Taking in</h3>
+        <p class="hint">${escKey(M?.name || this.s.mode)} fields no army of yours.
+          Pick an army mode — Command, a skirmish, a campaign, the line — or set
+          <b>Your line</b> on the Deploy panel, and the men you are taking in are
+          named here before you go.</p>`;
+    }
+    const army = ARMIES[plan.army];
+    const unit = army?.unit || 'trooper';
+    const vets = companyFieldable(companyLoad(plan.army), plan.want);
+    const fresh = Math.max(0, plan.want - vets.length);
+    const rows = vets.map((m) => {
+      const R = RANKS[rankFor(m.xp | 0)];
+      return `<div><b>${escKey(companyNameOf(m))}</b><span>${escKey(R.title)} · `
+        + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · ${m.kills | 0} down</span></div>`;
+    }).join('');
+    return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
+      <p class="hint">${escKey(army?.name || plan.army)} fields <b>${plan.want}</b>
+        ${escKey(unit)}s next run: <b>${vets.length}</b> of the company,
+        <b>${fresh}</b> fresh.</p>
+      <div class="company-fallen company-taking">${rows}
+        ${fresh ? `<div><b>${fresh} fresh ${escKey(unit)}${fresh === 1 ? '' : 's'}</b>`
+          + `<span>drawn at the muster — get them out and they are named on this page</span></div>` : ''}
+      </div>`;
   }
 
   /** The men who did not come back, most recent first. */

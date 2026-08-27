@@ -280,7 +280,7 @@ async function boot(level, firstPerson) {
   await page.evaluate(([lv, fp]) => {
     localStorage.setItem('saber.settings.v2', JSON.stringify({
       level: lv, quality: 'medium', resolutionScale: 0.6, difficulty: 'knight', mode: 'roguelite',
-      volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6, firstPerson: !!fp }));
+      volume: 0, music: 0, grassScale: 0.5, particleScale: 0.6, instantSpawn: true, firstPerson: !!fp }));
   }, [level, firstPerson]);
   await page.reload({ waitUntil: 'domcontentloaded' });
   await page.waitForSelector('#menu:not(.hidden)', { timeout: 120000 });

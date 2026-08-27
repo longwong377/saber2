@@ -839,6 +839,89 @@ export async function run({ check, assert }) {
       } finally { close(); }
   }));
 
+  /**
+   * THE MEN YOU GOT OUT ARE THE MEN THE NEXT ARMY MODE FIELDS.
+   *
+   * The defect this binds: `main.js` gated the company on `picksCampaign` —
+   * true for exactly one of the five army modes — while `World.loadLevel`'s
+   * own rule is `crossing || battles`. So a man extracted from a Command run
+   * NEVER fielded in the next one unless the unrelated allies slider was set,
+   * and the tab read as a graveyard: the roll only ever gained fallen. The
+   * player, verbatim: "I still only see fallen troops in the troop management
+   * screen and nothing in regards to the troops I'm taking in."
+   *
+   * `musterPlan` is the one resolver now; these clauses hold it to loadLevel's
+   * three answers: an army mode fields OPENING_STRENGTH whatever the slider
+   * says, a bare mode fields the contingent the slider asked for or nothing,
+   * and the contingent's army choice is honoured only where a contingent is
+   * what is being built.
+   */
+  check('company: the men you got out are the men the next army mode fields', async () => {
+    const { musterPlan } = await import('../../src/game/Command.js');
+    const { MODES } = await import('../../src/game/Waves.js');
+    for (const mode of Object.keys(MODES)) {
+      const army = !!(MODES[mode].crossing || MODES[mode].battles);
+      const bare = musterPlan({ mode, allies: 0, order: 0 });
+      if (army) {
+        assert(bare && bare.want === OPENING_STRENGTH,
+          `${mode} leads an army and musterPlan answers ${JSON.stringify(bare)} with the slider at 0 `
+          + '— the company would never field there again');
+      } else {
+        assert(bare === null,
+          `${mode} fields no army at allies 0 and musterPlan still answers ${JSON.stringify(bare)}`);
+        const five = musterPlan({ mode, allies: 5, order: 0 });
+        assert(five && five.want === 5,
+          `${mode} with a contingent of five gets ${JSON.stringify(five)}`);
+      }
+    }
+    /* The contingent's ally-army choice is honoured; an army mode's is not —
+     * its army is the mode's, resolved off the order, and letting the box
+     * override it would hand a Republic roll to a Separatist roster. */
+    const chosen = musterPlan({ mode: 'waves', allies: 4, order: 0, allyArmy: 1 });
+    assert(chosen?.army === ARMY_IDS[1],
+      `a contingent asked for ${ARMY_IDS[1]} and musterPlan drew ${chosen?.army}`);
+    return `${Object.keys(MODES).length} modes resolved · army modes field ${OPENING_STRENGTH} `
+      + 'regardless of the slider · bare modes field the slider or nothing';
+  });
+
+  check('company: the tab names the men being taken in, not only the fallen', () => withCleanStore(() => {
+      const r = freshRoll(4);
+      const [lead] = r.all;
+      lead.award(24);
+      Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+
+      const { menu, doc, close } = menuOn();
+      try {
+        /* An army mode with the allies slider untouched — the exact state the
+         * player reported from. The section must name the banked men as next
+         * run's line and say how many fresh fill the rest. */
+        menu.s.mode = 'command';
+        menu.s.allies = 0;
+        menu._showCompany(null);
+        const page = doc.getElementById('company-page');
+        const txt = page.textContent.replace(/\s+/g, ' ');
+        assert(/Taking in/.test(txt), 'the page has no "Taking in" section');
+        assert(txt.includes(lead.designation),
+          `the section does not name ${lead.designation}, who is first off the roll`);
+        assert(new RegExp(`${OPENING_STRENGTH - 4} fresh`).test(txt),
+          `four banked men against a line of ${OPENING_STRENGTH} and the page does not say `
+          + `"${OPENING_STRENGTH - 4} fresh": "${txt.slice(0, 300)}"`);
+
+        /* And a mode with no army says so instead of showing a stale plan. */
+        menu.s.mode = 'duel';
+        menu._showCompany(null);
+        const t2 = page.textContent.replace(/\s+/g, ' ');
+        assert(/fields no army/.test(t2), 'a mode with no army does not explain itself');
+        /* The roll summary lines below the section may still NAME the men —
+         * they are the company's, whatever the mode. What must be gone is the
+         * plan: no count of fresh enlistments for a line nobody is fielding. */
+        assert(!/fresh/.test(t2.split('You can give')[0].split('Taking in')[1] || ''),
+          'the duel page still states a muster plan for a mode with no army');
+        return `Taking in: ${lead.designation} + ${OPENING_STRENGTH - 4} fresh on command · `
+          + 'duel says it fields no army';
+      } finally { close(); }
+  }));
+
   check('company: a man\'s page prints every line of his record and types none of them', () => withCleanStore(() => {
       const r = freshRoll(3);
       const [him] = r.all;
