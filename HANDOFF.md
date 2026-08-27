@@ -28,7 +28,8 @@ Playable two ways:
 
 ### 1.0 START HERE — the shortest true statement of where this is
 
-**Branch `claude/autonomous-completion-6b2kzi`, gate green at 2062 checks.**
+**Branch `claude/game-critique-ideas-uh54iw`. See §5.0 for what this session
+did; the gate figure below predates it and §6.4 lists what is red.**
 
 **HOW TO PLAY IT.** `node tools/pack.mjs out.html` builds the whole game as ONE
 self-contained file — no server, open it in a browser. **AND THE PAGES LINK IS
@@ -1608,6 +1609,134 @@ Scale honestly: audits have diminishing returns here. Audit 3's refuters
 corrected *me* more often than they corrected the finders.
 
 ---
+
+## 5.0 What THIS session changed — 26 Aug
+
+Driven entirely by one playtest message. Every item below was reported by the
+player, and three of them had been marked done in `PLAYTEST.md` and were not.
+That log's marks are now exclusive: a tick means BUILT and a named check fails
+without it. Investigation gets its own mark and can never be a tick.
+
+### The three that were falsely ticked
+
+- **The gun emplacement** was still on every mode a week after "✅ gone".
+  `src/game/Emplacement.js`, 996 lines, one call site in Geonosis's
+  `magazine()`. All three of the player's complaints were literally true and
+  none were bugs: `update()` opened with `if (!this.world?.command) return;` so
+  it never fired outside the army modes; `toughness`/`hp` were `Infinity` and
+  `damage()` returned false, deliberately; and it never called `addStatic`, so
+  an 11.6 m tower had **no collider at all**. Deleted with its 703-line suite
+  and its bench. `src/game/Armour.js` takes its job — one walking OG-9 a wave,
+  free to the threat budget for the levy's reason, because the gun was 35–43%
+  of all damage onto the player's named line and was off the ledger.
+- **"Command mode has no enemies"** was closed as *not reproduced, needs one
+  fact from the player*. It reproduces in the first pass of a browser sweep of
+  all nine modes. THREE separate causes, all real:
+  1. the insertion flight gated the wave director for 28 s (`World.js`), while
+     the HUD already printed the full count;
+  2. Geonosis had no `ARRIVAL_BY_TERRAIN` entry — and three of that table's
+     five keys named levels that no longer exist — so 100% of hostiles marched
+     in from 139–159 m, past the 137.8 m cut where a body stops drawing its own
+     outline, in 50% fog, off a 42 m minimap. Born invisible;
+  3. **Command with THE MEETING ticked composes no wave at all.** A persisted
+     global, and nothing checked that a second commander exists. "0 HOSTILES
+     LEFT" forever. The player said "it was in command mode not versus" — right
+     about the mode; the versus flag was on underneath and said nothing.
+- **"Where are the giant battles"** was ticked *answered* on a row whose own
+  text says "you cannot SEE it… zero are inside the camera frustum". Now
+  `src/game/Mass.js` + the `thefront` mode: **480 men, 240 a side, laid 6
+  frames after you land, all of them in frame.**
+
+### The mass tier, and what it cost
+
+Real bodies cost ~0.13 ms each: 26 → 6.4 ms, 200 → 25.5, 320 → 42.8. So
+hundreds-vs-hundreds as real bodies is not affordable and never was. A `Rank`
+is 20 men simulated as one entity and drawn as cohort instances.
+
+    320 men     5.75 ms sim   against 42.8 ms for the same count of real bodies
+    draw calls  855 → 877     +22 for 320 men, 0.069 a man
+    triangles   807k → 4.96M  +4.15M, and this is the honest cost
+
+13k triangles a man is `MergedSkin` at full density — it merges, it does not
+decimate, because the rung it was built for is forty bodies. Fine on a GPU and
+the first thing to cut if it ever needs to be cheaper.
+
+**THE GROUND WAS DECIDING THE BATTLE.** `layBattle` placed its anchors at fixed
+distances and never asked whether the two lines could see each other:
+
+    real terrain    122 v 202    hit rates 3.4% and 7.4%
+    flat ground     225 v 239    16 casualties in total
+
+Fire volume was near-equal, so it was neither damage nor cadence — the enemy
+line stood 30 m higher. Sampling the ground along the chosen bearing showed
+geonosis is flat to 200 m and then climbs (`250m:3 · 275m:10 · 300m:25`): the
+centre was always fine, and a 192 m-wide frontage at 250 m reaches into the
+hills **with its flanks**. Fixed by `seatPair`, by scoring the bearing on the
+PAIR and not just the viewer, and by bringing the opening `gap` from 150 to 90.
+Nothing is lost by that: `STAND_OFF` is 55, so the lines walk toward each other
+and fight at fifty-five whatever they opened at. Now **135 v 149, losses 105
+against 91**.
+
+### THE DOOR THAT MADE THE WHOLE ATTRIBUTE SYSTEM ORNAMENTAL
+
+The best single finding of the session, and an adversarial verifier found it by
+refusing to believe a claim. `CommandRoster.enlistRecord` calls itself *"the one
+door a saved roll comes back through"* and passed **no `attrs`, no `traits`, no
+`kind`** to the `Trooper` constructor. Every veteran was re-rolled at muster:
+
+    stored   traits ['devoted','bonded']  bond 65  nerve 48
+    fielded  traits ['devoted']           bond 49  nerve 62
+
+It hid because the re-roll is a hash of who he is, so it gives back the same
+BASE man and nothing looked wrong. What it cannot give back is anything that
+happened to him since. So the ten attributes and 22 traits shipped the session
+before **never reached the field**, `shedTraits` was correct code on an
+unreachable path, and "Green wears off" was a promise nothing kept.
+
+The check hangs a trait the muster pool CANNOT DEAL, because comparing stored
+against fielded passes on the broken build.
+
+### The rest
+
+- **Stasis no longer freezes people**, on the player's word. Worth recording
+  why it read as a bug: `_updateStasis` re-centres the field on your chest every
+  frame and re-sweeps, so it is a bubble you CARRY and walking forward arrested
+  men who were never in the cast. Nine checks asserted the old behaviour; one
+  replaces them, pointed the other way — five men in a live field walk 1.4–7.3 m
+  and keep shooting.
+- **The withdraw ring exists.** `World`'s source claimed for builds that the HUD
+  filled a ring against `withdrawHold`. **Nothing ever read the field.** The one
+  input that ends the run had no feedback until it fired.
+- **Ally mend was unfindable by construction.** It has worked for a long time
+  and the HUD printed `WOUNDED ALLY` — but only while a wounded man was inside
+  the AIM CONE, which in a firefight is where the enemy is. `nearestWounded` is
+  the same question with the cone off. The check asserts THE GAP: a hurt man
+  6 m behind you must be found by one test and refused by the other.
+- **Order keys discarded your squad selection** — pick "2nd Squad" on the wheel,
+  press a formation key, and it silently ordered all five.
+- **The dead stay.** A flat 40-second timer was disposing corpses underneath the
+  budget, and the record was spliced out with no lay: a minute after a fight the
+  field held NOTHING. The nineteen lost per 894 deaths were not random — in a
+  big fight the budget sinks almost everybody early, so the timer took the ones
+  still INSIDE it: the nearest, freshest and most in front of you. Cost of
+  keeping all of them: **520 figures at 0.93 ms against 6 figures at 0.96 ms.**
+- **`openFront` lived in `main.js`'s deploy path**, so the mode's battle existed
+  only for that one screen — headless boots and co-op clients got none. Armed in
+  `World.loadLevel` now, beside `objectives` and `fireMissions`. The check that
+  guarded it was a SOURCE SCAN pinned to `main.js` and moving the call turned it
+  red: a check that fails when the code gets better is testing the wrong thing.
+
+### What is still open
+
+- The **near fight** in `thefront` is thin — the mass battle is there and real
+  bodies at your elbow are not yet. That is the mode's next piece.
+- **Promotion** — walking at a distant rank and having it become real men — is
+  designed and not built. It is Operation 02 of the plan below.
+- `theline.12` is **flaky**: 3.3 in isolation, 6.5 earlier, red in-suite. Its own
+  note puts se ≈ 1.5 on a four-seed mean. Not tuned, because tuning a flaky
+  check is how a check stops meaning anything.
+- The expansion plan — six operations in dependency order, every claim measured
+  — is the artifact linked from the session, and `Op 01/04/06` are partly built.
 
 ## 5. What the LAST session changed
 
