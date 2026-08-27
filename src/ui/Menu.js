@@ -3345,8 +3345,42 @@ export class Menu {
     this.el.bootFill.style.width = `${Math.round(fraction * 100)}%`;
     if (message) this.el.bootMsg.textContent = message;
   }
-  hideBoot() { this.el.boot.classList.add('hidden'); }
+  /**
+   * THE SEAM BETWEEN THE BOOT SCREEN AND THE MENU, and why it is a cross-fade.
+   *
+   * This used to be one line — `classList.add('hidden')` — and the player saw
+   * the join: the boot screen vanished in the same tick `showMenu()` raised a
+   * `.screen` whose `fadeIn` starts at opacity 0, so for a few frames the page
+   * behind both was on screen — `--void` near-black with the menu's white type
+   * arriving over it before the sepia plate composited. Reported as "a black
+   * and white screen flash for less than a second" between the two screens.
+   *
+   * So the boot screen now leaves ON TOP of a menu that is already fully
+   * opaque underneath it (`#boot.out` lifts its z-index over `#menu`, which
+   * paints above `#boot` by DOM order otherwise), and there is no frame in
+   * which neither screen covers the page. `showMenu` skips the menu's own
+   * `fadeIn` for exactly this arrival — see the `cut` toggle there.
+   *
+   * The `hidden` class still lands, because three checks and `screens` read
+   * `#boot.hidden` as "the game is ready": on `transitionend`, with a timer
+   * fallback for a tab whose transitions never run (background tab, reduced
+   * motion, a headless probe).
+   */
+  hideBoot() {
+    const b = this.el.boot;
+    if (!b || b.classList.contains('hidden') || b.classList.contains('out')) return;
+    b.classList.add('out');
+    const done = () => b.classList.add('hidden');
+    b.addEventListener('transitionend', done, { once: true });
+    setTimeout(done, 600);
+  }
   showMenu() {
+    /* Raised under the departing boot screen there is nothing to fade in FROM
+     * — the fade would show the page through both layers. Raised any other way
+     * (quitting a run, the death card), the boot is long hidden and the fade
+     * over the game canvas stays. */
+    const boot = this.el.boot;
+    this.el.menu.classList.toggle('cut', !!boot && !boot.classList.contains('hidden'));
     this.el.menu.classList.remove('hidden');
     /**
      * THE ONE-SHOT NOTICE IS ONE SHOT.
