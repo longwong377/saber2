@@ -8,7 +8,7 @@ name: Deploy SABER to Pages
 
 on:
   push:
-    branches: ['main', 'master', 'claude/lightsaber-combat-game-lxw391']
+    branches: ['main', 'master', 'claude/lightsaber-combat-game-lxw391', 'claude/game-feature-verification-m5udbp']
   workflow_dispatch:
 
 permissions:

@@ -177,6 +177,15 @@ b{font-weight:800}
    exactly as it does on `.menu-bg`. */
 #boot::after{content:'';position:absolute;inset:0;z-index:1;pointer-events:none;
   background:rgba(248,240,222,.22)}
+/* THE DEPARTURE. `Menu.hideBoot` cross-fades this screen out OVER the menu
+   instead of snapping to display:none — the old snap left a frame or two of
+   the near-black page with white type fading over it ("a black and white
+   screen flash"). z-index above `#menu` (which otherwise paints on top by DOM
+   order), opacity to 0, and `hidden` lands on transitionend. `#menu.cut` is
+   the other half: raised under this fade there is nothing to fade in FROM, so
+   the screen's own fadeIn is skipped on exactly that arrival. */
+#boot.out{z-index:60;opacity:0;transition:opacity .3s ease;pointer-events:none}
+#menu.cut{animation:none}
 /* 660 and not 460: the mark is 620 px wide with 24 px of padding either side.
    The bar and the message underneath keep their own widths. */
 /* A WIDTH AND NOT A MAX-WIDTH, and this is the same trap `.logo` fell into one

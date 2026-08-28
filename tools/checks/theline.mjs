@@ -31,7 +31,7 @@
 import * as Cmd from '../../src/game/Command.js';
 import * as Waves from '../../src/game/Waves.js';
 import { LEVELS } from '../../src/game/Levels.js';
-import { clocked } from './_shared.mjs';
+import { clocked, snapshotShared, restoreShared } from './_shared.mjs';
 
 /** 1/30 for the reason `command.mjs` gives: these drives are game-minutes long
  *  and this box renders through swiftshader. HANDOFF §2.6. */
@@ -981,6 +981,9 @@ export async function run({ check, assert }) {
      * particular: a static edge from a check to World.js patches the copy of
      * three that verify.mjs's own graph resolved. */
     const { seedWorld } = await import('../../src/game/World.js');
+    /* The muster's stream, imported the same dynamic way and for the same
+     * reason as `seedWorld` above. */
+    const { commandRng } = await import('../../src/game/Command.js');
     /**
      * …AND THE CONTOURS ARE HELD STILL, which is the one thing this fixture
      * takes off the shipped configuration and the reason is that this check is
@@ -1017,6 +1020,26 @@ export async function run({ check, assert }) {
       enemyRng.seed((20260821 ^ Math.imul(seed, 2654435761)) >>> 0);
       Waves.seedWaves((20260821 ^ Math.imul(seed, 40503)) >>> 0);
       seedWorld((20260821 ^ Math.imul(seed, 2246822519)) >>> 0);
+      /**
+       * …AND THE MUSTER'S OWN STREAM, WHICH IS THE ARMY ITSELF.
+       *
+       * Three streams were pinned here and there are four. `commandRng` is
+       * where `Command.js` draws every designation, every nickname and every
+       * ATTRIBUTE ROLL, so a fixture that leaves it wherever the previous
+       * check finished fields a DIFFERENT TEN MEN each time — different nerve,
+       * different grit, different marksmanship — and then reports their
+       * survival as if the only variable were the code under test.
+       *
+       * Measured: this check read `mean 0.0 [0 0 0 0]` inside its own suite
+       * and `mean 3.3 [5 4 0 4], 3/4 held` in a fresh process on the same four
+       * seeds, on the same commit, with nothing else changed. The band was
+       * never wrong and neither was the game; the two runs mustered different
+       * armies. `_shared.mjs` records the identical defect being found in
+       * `theline.16` and adding this stream to the snapshot — the snapshot
+       * hands it BACK afterwards, which does not help a check that needs it at
+       * a known phase BEFORE it starts.
+       */
+      commandRng.seed((20260821 ^ Math.imul(seed, 1597334677)) >>> 0);
       const { world, d, input } = await lineWorld({ seed, spawn: false });
       d.onMuster = () => {};
       assert(d.roster.strength === Cmd.OPENING_STRENGTH,
@@ -1129,6 +1152,37 @@ export async function run({ check, assert }) {
     assert(hostile && hostile.team !== man.team,
       `a ${hostileType} spawned onto the line's own team, so this measures a man shooting himself`);
     hostile.position.set(man.position.x + RANGE, man.position.y, man.position.z);
+    /**
+     * …AND THE BODIES ARE POSED WHERE THEY NOW STAND, which this check did not
+     * do and which made every number it read a fiction.
+     *
+     * `_shoot` takes its muzzle off the WORLD MATRIX of the weapon on the rig,
+     * and the rig is placed during `update`. Assigning `position` moves the
+     * record and nothing else, and the whole point of this fixture is that
+     * nothing is stepped — so the muzzle stayed where the body was
+     * CONSTRUCTED. Measured before this existed: the shooter stood at
+     * (45.5, 0.27, 3.96) and fired from (0.00, 0.03, 0.34) — the world origin —
+     * along a line 38 degrees ABOVE horizontal, and the volley crossed the
+     * target's own column 3.13 m underground. Every one of those numbers was
+     * the fixture's rather than the game's: ask `Combat.aimAt` directly and it
+     * answers `chest`, feet + 1.15, on a freshly spawned body.
+     *
+     * SO THE BODIES ARE STEPPED, AND THE SHARED STREAMS ARE HANDED BACK.
+     * Two frames is all the pose needs, and stepping costs something this file
+     * would otherwise pay silently: `enemyRng` and the wave stream are
+     * module-scope and shared with every check after this one. Measured — two
+     * bare frames here turned theline.19 red without touching anything
+     * theline.19 tests, which is §2.9's defect exactly. `snapshotShared` is
+     * the tool this repository already has for it.
+     */
+    const snap = await snapshotShared();
+    try {
+      const still = { act: () => false, actHit: () => false, actDown: () => false,
+        moveAxis: (o) => (o ? (o.x = 0, o.y = 0, o) : { x: 0, y: 0 }),
+        mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+        delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {} };
+      for (let i = 0; i < 2; i++) world.update(1 / 60, still);
+    } finally { restoreShared(snap); }
 
     /** Where a fired bolt's line crosses the target's own vertical column. */
     const crossing = (from, dir, at) => {
@@ -1138,7 +1192,19 @@ export async function run({ check, assert }) {
       return from.y + dir.y * ((wx * dir.x + wz * dir.z) / dd);
     };
 
-    const ROUNDS = 60;
+    /**
+     * 1200 AND NOT 60, and the old number was calibrated on the broken fixture.
+     *
+     * A rifle disperses: measured on this bench, `dir.y` varies by about ±0.086
+     * shot to shot, which at 45 m is ±3.9 m of crossing height. The median of
+     * 60 rounds therefore carries a standard error near 0.37 m against a
+     * tolerance of half a chest (0.575 m) — so the reading was a coin flip
+     * dressed as a measurement, and it only ever looked stable because the
+     * muzzle was pinned at the origin and the geometry was degenerate. At 1200
+     * the error is an order of magnitude under the bound. Nothing is stepped
+     * per round, so the cost is arithmetic.
+     */
+    const ROUNDS = 1200;
     const volley = (shooter, target) => {
       const heights = [];
       const real = world.bolts.fire;

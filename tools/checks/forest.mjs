@@ -203,6 +203,81 @@ export async function run({ check, assert }) {
       'a thrust goes with the lean';
   });
 
+  /**
+   * A TRUNK IN THE AIR IS SOMETHING YOU CAN CUT.
+   *
+   * "I notice that as a tree falls I can't cut it why is that?"
+   *
+   * The trunk was already MATTER while it fell — a real kinematic body that
+   * crushes what is under it, which is what the commit claiming "a falling
+   * tree is matter" actually delivered. What it was not was CUTTABLE:
+   * `capsules()` read `STATE !== STANDING` and skipped, so for the two or
+   * three seconds of a fall the blade was offered nothing at all and swung
+   * straight through. This is the gap between those two sentences, and it is
+   * the reason the claim read as a lie from the outside.
+   *
+   * Three clauses, and each one is a separate way for this to be broken:
+   * the solver is OFFERED the trunk while it is in the air; cutting it makes
+   * TWO pieces rather than felling something else; and the piece that came
+   * off is genuinely moving, with the speed the rod had where it was cut.
+   */
+  check('felling: a trunk can be cut while it is still in the air', () => {
+    const { f } = stand([{ x: 0, z: 0, height: 18, radius: 0.45 }]);
+    f.body.position.set(0, 0, 0);
+    f.fell(0, 1, 0, 0.6);
+    assert(f.data[6] === FALLING, 'the fixture tree did not start falling');
+
+    /* Late in the fall, because a rod starts at rest by construction — the
+     * first five degrees take about two seconds ("the pause that makes a
+     * felling read as a felling"), and a cut there would measure the capsule
+     * while saying nothing about the throw. */
+    const foot = f.hinge(0, new THREE.Vector3()).y;
+    const h0 = f.tip(0, new THREE.Vector3()).y - foot;
+    for (let i = 0; i < 900 && f.data[6] === FALLING; i++) {
+      sim(f, 1 / 60);
+      if (f.tip(0, new THREE.Vector3()).y - foot < h0 * 0.45) break;
+    }
+    assert(f.data[6] === FALLING, 'the trunk landed before it could be cut');
+
+    const caps = f.capsules([]).filter((c) => c.tree === 0 && c.falling);
+    assert(caps.length === 1,
+      `the blade is offered ${caps.length} capsules for a trunk in the air — `
+      + 'a swing through a falling tree passes through it');
+    const cap = caps[0];
+    /* AND THE CAPSULE IS WHERE THE TRUNK IS. A capsule left at the stump would
+     * satisfy the count and be a lie about geometry: the solver would report a
+     * hit on empty air and miss the trunk overhead. */
+    const mid = cap.p0.clone().add(cap.p1).multiplyScalar(0.5);
+    const axis = f.axis(0, new THREE.Vector3());
+    const hinge = f.hinge(0, new THREE.Vector3());
+    const along = mid.clone().sub(hinge);
+    const off = along.clone().addScaledVector(axis, -along.dot(axis)).length();
+    assert(off < 0.25, `the capsule's middle is ${off.toFixed(2)} m off the trunk's own axis`);
+
+    const lenB = f.tip(0, new THREE.Vector3()).distanceTo(hinge);
+    const halves = f.cut(mid, V(0, 1, 0), V(3, 0, 0));
+    assert(halves.length === 1,
+      `cutting a trunk in the air produced ${halves.length} pieces — nothing came off`);
+    const lenA = f.tip(0, new THREE.Vector3()).distanceTo(f.hinge(0, new THREE.Vector3()));
+    assert(lenA < lenB - 0.5,
+      `the trunk was ${lenB.toFixed(2)} m before the cut and ${lenA.toFixed(2)} m after — `
+      + 'the blade went through it and it did not get shorter');
+
+    const piece = halves[0];
+    assert(piece.body, 'the severed top has no body — it is a picture, not a log');
+    const v = piece.body.velocity.length();
+    assert(v > 1,
+      `the severed top is travelling at ${v.toFixed(2)} m/s — it was cut off a rod that was `
+      + 'moving and it should carry that away');
+    /* AND THE TRUNK THAT IS LEFT GOES ON FALLING. Severing must not strand the
+     * remainder mid-air, which is what a shortened record with a stale body
+     * would do. */
+    sim(f, 12);
+    assert(f.data[6] === DOWN, 'the remaining trunk never came to rest after the cut');
+    return `${lenB.toFixed(1)} m trunk cut in the air → ${lenA.toFixed(1)} m remainder + a `
+      + `${(lenB - lenA).toFixed(1)} m log thrown at ${v.toFixed(1)} m/s`;
+  });
+
   check('felling: the fall is a hinge and not a tween — it pauses, then it goes', () => {
     /* θ̈ = (3g/2L)·sin θ for a rod hinged at one end. Two consequences the
      * shape of the motion lives on, and a linear tween has neither:

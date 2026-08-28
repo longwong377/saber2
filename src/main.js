@@ -31,7 +31,7 @@ import { recordRun, loadProgress } from './game/Progress.js';
  * handed a plain list of records on its settings blob and hands back a
  * manifest; neither it nor Command.js knows a store exists. */
 import * as Company from './game/Company.js';
-import { armyToLead, commandConfig, OPENING_STRENGTH } from './game/Command.js';
+import { musterPlan } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 import { clamp } from './engine/MathUtil.js';
@@ -120,32 +120,21 @@ const worldSettings = () => (session ? { ...settings, ...session } : settings);
  * commander out of `assignArmies`, and whose company that is, is a question
  * nobody has asked yet.
  *
- * The size is the same number the muster would have spent: a campaign's
- * `OPENING_STRENGTH` or the contingent the slider asked for. Handing over more
- * than that would put men on the roll the deployment cannot field, and
- * `_musterVeterans` would drop them silently.
+ * The size is the same number the muster would have spent — `musterPlan`
+ * answers it. Handing over more than that would put men on the roll the
+ * deployment cannot field, and `_musterVeterans` would drop them silently.
  */
 function veteransToField(levelKey = null) {
   if (session) return null;
-  const mode = settings.mode;
-  const campaign = !!MODES[mode]?.picksCampaign;
-  const cfg = commandConfig(settings);
-  const contingent = campaign ? 0 : cfg.contingent;
-  if (!campaign && !(contingent > 0)) return null;
-  /* THE SAME THREE-CLAUSE RESOLUTION THE DIRECTOR MAKES, called and not
-   * restated: the choice only for a contingent (a campaign passes null, which
-   * is what keeps `sideForOrder`'s veto intact), and the ground always,
-   * because it only ever decides for a commander whose order leads neither
-   * army. Getting a different answer here to the one the muster makes would
-   * hand a Republic roll to a Separatist roster, and `_musterVeterans` would
-   * drop every man of it in silence. */
-  const army = armyToLead(settings.order, {
-    choice: campaign ? null : cfg.allyArmy,
-    ground: LEVELS[levelKey]?.armies,
-  })?.id;
-  if (!army) return null;
-  const want = campaign ? OPENING_STRENGTH : contingent;
-  const men = Company.fieldable(Company.load(army), want);
+  /* THE RESOLUTION IS `musterPlan`'S, called and not restated. This function
+   * used to carry its own three clauses and one of them was wrong: it gated
+   * the company on `picksCampaign` — one army mode of five — so a man got out
+   * of a Command run was never taken back into one. `musterPlan`'s note has
+   * the whole story; what stays here is the half that is this file's, the
+   * save file. */
+  const plan = musterPlan(settings, LEVELS[levelKey]?.armies);
+  if (!plan) return null;
+  const men = Company.fieldable(Company.load(plan.army), plan.want);
   return men.length ? men : null;
 }
 

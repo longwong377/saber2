@@ -238,7 +238,14 @@ export async function run({ check, assert, THREE: T }) {
       if (hands === 2) {
         assert(bL < 25, `two hands on the hilt, and the off fist's bore is ${bL.toFixed(0)} mm off the axis — `
           + 'the pose has one hand on the weapon and the body says two');
-        assert(l.down < half,
+        /* `half + 4` and not `half`: the player's own reference
+         * (assets/reference/first-person) frames the fist STRADDLING the
+         * bottom edge — the grip low, the hilt standing clear above it — and
+         * the lowered hold (READY_GUARD.first) sits the off fist's CENTRE up
+         * to a fist's width below the edge while its upper half is still in
+         * shot. Four degrees is that half-fist at half a metre. Past it the
+         * whole fist is gone and the weapon really is held from off screen. */
+        assert(l.down < half + 4,
           `two hands on the hilt and the off one is ${l.down.toFixed(1)} degrees below a ${half.toFixed(0)} degree `
           + 'half-field — it is holding the weapon from off the bottom of the screen');
         out.push(`two hands: sword ${r.down.toFixed(1)}° down NDC y ${r.ndc.y.toFixed(2)}, off hand `
@@ -663,12 +670,20 @@ export async function run({ check, assert, THREE: T }) {
     assert(Math.abs(over(w1, w3)) < 5,
       `swept through its travel the tip reaches ${w1.toFixed(2)} m in first person against ${w3.toFixed(2)} in third — `
       + `${over(w1, w3).toFixed(1)}%`);
-    // The resting pose is allowed to differ a little — READY_GUARD is per view
-    // by design and the eye carries its own 7 cm forward set — but not by the
-    // 28% that used to stand here.
-    assert(Math.abs(over(r1.far, r3.far)) < 8,
+    // The resting pose is allowed to differ MORE than the envelope — the CARRY
+    // is per view by design now, not only READY_GUARD. The anchor's rise split
+    // (see HILT_RISE_THIRD in Player.js): first person carries the hands up
+    // near the lens because they have to be in the frame under it; third
+    // person carries the sword at the lower chest because a body walking with
+    // its fists at its chin was the jank every walk cell of motion.mjs showed.
+    // That is a VERTICAL split of about 0.28 m at the anchor, so the rest
+    // distance from the chest may legitimately differ by it. What it must not
+    // be is the 28% two-anchors state this row was written against — the
+    // envelope rows above still hold the SWORD to 5%, so a rest drift past
+    // this bound is a carry change nobody documented, not a longer weapon.
+    assert(Math.abs(over(r1.far, r3.far)) < 20,
       `at rest the blade sits ${r1.far.toFixed(2)} m from the chest in first person against ${r3.far.toFixed(2)} in third — `
-      + `${over(r1.far, r3.far).toFixed(1)}%; the ready guards differ per view, this much is not a ready guard`);
+      + `${over(r1.far, r3.far).toFixed(1)}%; the carries differ per view by design, but this much is a second weapon`);
 
     return `one anchor: envelope ${s3.far.toFixed(2)}/${s1.far.toFixed(2)} m from the chest `
       + `(${over(s1.far, s3.far).toFixed(1)}%), ${s3.horiz.toFixed(2)}/${s1.horiz.toFixed(2)} m from the feet `

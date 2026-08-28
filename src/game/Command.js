@@ -2494,6 +2494,47 @@ export function commandConfig(settings) {
 }
 
 /**
+ * WHO THE NEXT RUN WILL FIELD FROM THE PLAYER'S SETTINGS — army and size — or
+ * null for a run with no army of yours in it.
+ *
+ * ONE RESOLVER, TWO SCREENS AND THE DEPLOY PATH. `main.js`'s `veteransToField`
+ * asks it before every deploy, and the Company tab asks it to say who is being
+ * taken in — and the whole reason it exists is that the two used to disagree
+ * with `World.loadLevel`. main.js gated the company on `picksCampaign`, which
+ * is true for exactly ONE of the five army modes, while `loadLevel`'s own rule
+ * for "leads an army" has been `crossing || battles` since the mode-name test
+ * was deleted. So in Command, The Line, The Front and Skirmish the men a
+ * player got out NEVER FIELDED AGAIN unless the unrelated allies slider was
+ * set — and then at the slider's size, which those modes ignore in favour of
+ * `OPENING_STRENGTH`. The company read as a graveyard: the roll only ever
+ * gained fallen, because the living were never taken back in.
+ *
+ * The three clauses are `loadLevel`'s, restated once and imported everywhere:
+ * an army mode (`crossing || battles`) fields `OPENING_STRENGTH` whatever the
+ * slider says; any other mode fields the contingent the slider asked for, or
+ * nothing; and the army is `armyToLead`'s answer, with the contingent's
+ * `allyArmy` choice honoured only where a contingent is what is being built
+ * (an army mode passes null, which keeps `sideForOrder`'s veto intact).
+ *
+ * `groundArmies` is `LEVELS[key]?.armies` from whoever knows the ground —
+ * this file does not import Levels.js and is not going to for a tiebreak that
+ * only decides for a commander whose order leads neither army.
+ */
+export function musterPlan(settings, groundArmies = null) {
+  const s = settings || {};
+  const armyMode = !!(MODES[s.mode]?.crossing || MODES[s.mode]?.battles);
+  const cfg = commandConfig(s);
+  const contingent = armyMode ? 0 : cfg.contingent;
+  if (!armyMode && !(contingent > 0)) return null;
+  const army = armyToLead(s.order, {
+    choice: armyMode ? null : cfg.allyArmy,
+    ground: groundArmies,
+  })?.id;
+  if (!army) return null;
+  return { army, want: armyMode ? OPENING_STRENGTH : contingent, armyMode };
+}
+
+/**
  * WHAT ONE CLEARED WAVE IS WORTH TO A CONTINGENT'S PURSE, in muster points.
  *
  * A campaign reinforces at an AREA boundary, on a screen, out of a purse the

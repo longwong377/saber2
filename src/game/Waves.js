@@ -4772,6 +4772,22 @@ export function cleavingThrow(p) {
 
   p.throwCleaved = new Set();     // ids already met on THIS flight
   p.throwCleaves = 0;             // bodies passed through, this flight
+  /**
+   * …AND THE THINGS THE CUT ITSELF MADE, which are skipped and NOT counted.
+   *
+   * A body the disc parts can produce new bodies — a crate's two halves, and
+   * now the top of a trunk severed in mid-air (`Forest.severFalling`). The
+   * disc has already been through all of them, so meeting them again is the
+   * runaway this function's own note measured at "two crates, 14 cleaves".
+   *
+   * They used to be marked in `throwCleaved` itself, which conflated "the
+   * blade went through this" with "do not look at this again" — so the set
+   * grew without the counter and the two disagreed by however much debris the
+   * flight had created. In a wood that never happened, because nothing in a
+   * stand of trees produced a prop; a trunk cut in the air does, and the pair
+   * came apart the moment one could. Two sets, one meaning each.
+   */
+  p.throwSpared = new Set();
   const from = new THREE.Vector3();
 
   p._updateThrow = function (dt, ctx) {
@@ -4779,7 +4795,9 @@ export function cleavingThrow(p) {
     // the one frame that is the start of a new flight. A manual recall must NOT
     // reset it — the way back is the same flight, and a body already parted on
     // the way out should not be parted a second time on the way home.
-    if (this.throwTimer === 0) { this.throwCleaved.clear(); this.throwCleaves = 0; }
+    if (this.throwTimer === 0) {
+      this.throwCleaved.clear(); this.throwSpared.clear(); this.throwCleaves = 0;
+    }
     from.copy(this.throwPos);
     // Scale dt rather than the recall's own speed clamp: the spin, the steering
     // lerp and the arrival test all read the same clock, so the blade still
@@ -4804,6 +4822,7 @@ function cleaveAlong(p, from, to, dt) {
   if (!w || typeof w._applyBladeEvent !== 'function') return;
   const reach = p.saber?.bladeLength ?? 1.15;
   const seen = p.throwCleaved;
+  const spared = p.throwSpared || (p.throwSpared = new Set());
 
   /**
    * `key` is what the flight REMEMBERS and `id` is what the cut is addressed
@@ -4896,14 +4915,18 @@ function cleaveAlong(p, from, to, dt) {
       for (const cap of pr.capsules()) {
         const key = pr.id + ':' + cap.name;
         if (seen.has(key)) continue;
+        /* A trunk severed in the air produces a log, and the disc has already
+         * been through it — but the sever can come from the ORDINARY blade
+         * solver as well as from this loop (a thrown disc drives both), so the
+         * sparing is done where the log is born: `Forest._flyingLog`. */
         meet(pr.id, [cap], { prop: pr }, key);
       }
       continue;
     }
-    if (seen.has(pr.id)) continue;
+    if (seen.has(pr.id) || spared.has(pr.id)) continue;
     const before = props.length;
     meet(pr.id, pr.capsules(), { prop: pr });
-    for (let k = before; k < props.length; k++) if (props[k]) seen.add(props[k].id);
+    for (let k = before; k < props.length; k++) if (props[k]) spared.add(props[k].id);
   }
 }
 

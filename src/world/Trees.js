@@ -249,6 +249,34 @@ const LIFT_RING = 14;
 const LIFT_CAP = 9;
 const LOG_MASS_CAP = 900;
 /**
+ * THE SHORTEST PIECE A MID-AIR CUT MAY LEAVE, in metres, at either end.
+ *
+ * A cut 20 cm from the tip is a swing that produced a disc and left the tree
+ * apparently untouched, which reads as the blade having missed — the same
+ * argument `fell`'s 0.92 clamp makes about a high cut on a standing trunk. The
+ * cut slides to the nearest place that leaves two real pieces instead, so a
+ * swing near the end of a falling trunk lops a metre off it rather than
+ * nothing.
+ */
+const FLY_MIN = 0.9;
+/**
+ * HOW MANY SEVERED TOPS MAY BE REAL AT ONCE.
+ *
+ * Each one is a `Prop`: a mesh, a crown, a dynamic body. `LIFT_CAP` is 9 for
+ * the logs already lying in the wood and this is the same kind of budget for
+ * the ones you make in the air — one chain-fell into a swinging blade can part
+ * several trunks in a second. Past the cap the OLDEST severed top is released
+ * back to nothing, which is the same rule `_cullOldestDebris` uses: what goes
+ * is what you cut longest ago and have most likely walked away from.
+ */
+const FLY_CAP = 6;
+/* Scratch for `capsules` and the mid-air sever alone. They run inside the
+ * blade solve, which is already holding this file's `_v1.._v3` and `_p/_q/_s`,
+ * so they may borrow none of them. */
+const _cp0 = new THREE.Vector3(), _cp1 = new THREE.Vector3(), _cax = new THREE.Vector3();
+const _sv1 = new THREE.Vector3(), _sv2 = new THREE.Vector3(), _sv3 = new THREE.Vector3();
+
+/**
  * Green wood, kg/m³ — the ONE density this file prices a trunk with.
  *
  * It was a literal `700` inside `_realise`'s mass, which was the only place a
@@ -1045,6 +1073,15 @@ export class Forest {
    */
   _writeCrown(i) {
     const k = i * F.N;
+    /* A TRUNK WHOSE TOP WAS CUT OFF IN THE AIR HAS NO CROWN. The leaves went
+     * with the piece that flew — see `severFalling`, which owns this set —
+     * and without this the remainder would draw a bush on its own kerf. */
+    if (this._decrowned?.has(i)) {
+      this.hinge(i, _p);
+      _q.identity(); _s.setScalar(0);
+      this.crownMesh.setMatrixAt(i, _m.compose(_p, _q, _s));
+      return;
+    }
     const h = this.data[k + F.H], r = this.data[k + F.R];
     const len = Math.max(0.2, h - this.data[k + F.CUT]);
     const down = this.data[k + F.STATE] === DOWN;
@@ -1107,6 +1144,48 @@ export class Forest {
         toughness: this.toughness,
       });
     }
+    /**
+     * ── AND THE ONES IN THE AIR, WHICH THE BLADE COULD NOT TOUCH ─────────
+     *
+     * "I notice that as a tree falls I can't cut it why is that?"
+     *
+     * The loop above reads `STATE !== STANDING` and skips, so for the two or
+     * three seconds a trunk spends coming down it offered the blade NOTHING:
+     * a twenty-metre tree swept through the guard and the swing passed
+     * straight through it. It was already a real kinematic body over exactly
+     * that interval — it can crush you, knock over crates and fell its
+     * neighbours — so what was missing was not physics, it was the CUT.
+     *
+     * The capsule is the trunk where it actually is: hinge to tip along the
+     * live fall axis, rebuilt every time the solver asks, because the thing
+     * moves. `falling: true` is what tells `cut()` to sever a rod in flight
+     * rather than fell a tree that is already on its way down — see
+     * `severFalling`.
+     *
+     * `active` and not the whole array: only trunks in the air are candidates,
+     * and there are a handful even in a chain. The `reach` cull is the same
+     * one the standing loop uses, measured to the trunk's MIDDLE rather than
+     * its base, since a falling trunk's base can be twenty metres from the
+     * part of it that is over your head.
+     */
+    for (let a = 0; a < this.active.length; a++) {
+      const i = this.active[a];
+      const k = i * F.N;
+      const len = Math.max(0.4, D[k + F.H] - D[k + F.CUT]);
+      if (len < FLY_MIN * 2) continue;      // too short to have two halves
+      this.hinge(i, _cp0);
+      this.axis(i, _cax);
+      _cp1.copy(_cp0).addScaledVector(_cax, len);
+      const mx = (_cp0.x + _cp1.x) * 0.5 - near.x, mz = (_cp0.z + _cp1.z) * 0.5 - near.z;
+      if (mx * mx + mz * mz > (this.reach + len * 0.5) ** 2) continue;
+      out.push({
+        name: 't' + i, tree: i, forest: this, falling: true,
+        p0: _cp0.clone().addScaledVector(_cax, 0.15),
+        p1: _cp1.clone().addScaledVector(_cax, -0.15),
+        r: D[k + F.R] * 1.05,
+        toughness: this.toughness,
+      });
+    }
     return out;
   }
 
@@ -1115,6 +1194,15 @@ export class Forest {
    * back, because a felled tree is still one object.
    */
   cut(planePoint, planeNormal, impulse) {
+    /* A TRUNK IN THE AIR IS ANSWERED FIRST, and it is a different event: a
+     * standing tree is FELLED (one object, hinged at the kerf) and a falling
+     * one is SEVERED (two objects, one of them already moving). The falling
+     * test comes first because a trunk coming down past you is nearer your
+     * blade than the stump it came off, and `nearestStanding` measures in
+     * PLAN — so without this, cutting the tree over your head felled whatever
+     * happened to be growing under it. */
+    const f = this.nearestFalling(planePoint, 3.0);
+    if (f >= 0) return this.severFalling(f, planePoint, impulse);
     const i = this.nearestStanding(planePoint, 3.0);
     if (i < 0) return [];
     /* THE DIRECTION THE CUT IMPLIES. `impulse` is the velocity the blade was
@@ -1139,6 +1227,181 @@ export class Forest {
   /** The blade is grinding but has not got through: nothing to do. */
   shatter() {}
   damage() { return false; }
+
+  /**
+   * Nearest FALLING trunk to a point, within `r` metres of the trunk itself.
+   *
+   * Measured to the segment rather than in plan, because a trunk in the air is
+   * a rod lying at an angle and its base tells you nothing about where the
+   * part you just hit is. `active` is the whole candidate set — a handful even
+   * in a chain — so this is a few segment distances and no index.
+   */
+  nearestFalling(p, r = 3.0) {
+    const D = this.data;
+    if (!D || !this.active.length) return -1;
+    let best = -1, bestD = r * r;
+    for (let a = 0; a < this.active.length; a++) {
+      const i = this.active[a];
+      const k = i * F.N;
+      const len = Math.max(0.4, D[k + F.H] - D[k + F.CUT]);
+      if (len < FLY_MIN * 2) continue;
+      this.hinge(i, _sv1);
+      this.axis(i, _sv2);
+      /* Distance to the segment: the projection along the axis, clamped to the
+       * trunk's own length, which is the same primitive the blade's
+       * segment-to-segment test uses one level up. */
+      const t = clamp(_sv3.copy(p).sub(_sv1).dot(_sv2), 0, len);
+      const d = _sv3.copy(_sv1).addScaledVector(_sv2, t).distanceToSquared(p);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  /**
+   * THE BLADE PARTS A TRUNK THAT IS ALREADY IN THE AIR.
+   *
+   * What a player expects, and what this does: the top comes OFF and goes on
+   * travelling. The piece above the kerf becomes a real dynamic log carrying
+   * the velocity it had at the moment it was cut — `v = ω × r` at its own
+   * middle, plus the spin, so it tumbles away rather than dropping straight
+   * down — and the piece below goes on falling on its own hinge, shorter.
+   *
+   * THE REMAINDER IS SHORTENED BY MOVING `H`, not by inventing a second
+   * record. Every reader in this file derives the trunk's length from
+   * `H − CUT` — the rod equation, the capsule, the collider, `_realise`,
+   * `_land` — so one write shortens the tree everywhere at once and nothing
+   * downstream needs to know a cut happened. The fall body is rebuilt because
+   * its capsule was sized from the old length.
+   *
+   * AND THE CROWN GOES WITH THE TOP, which is the half of this that would look
+   * wrong if it were skipped: the leaves are at the tip, the tip is what you
+   * just cut off, and a remainder that kept drawing a crown would be a bare
+   * pole with a bush on its cut face. `_decrowned` is what `_writeCrown` reads.
+   */
+  severFalling(i, planePoint, impulse) {
+    const D = this.data, k = i * F.N;
+    if (D[k + F.STATE] !== FALLING) return [];
+    const len = Math.max(0.4, D[k + F.H] - D[k + F.CUT]);
+    if (len < FLY_MIN * 2) return [];
+    this.hinge(i, _sv1);
+    this.axis(i, _sv2);
+    /* WHERE ALONG THE TRUNK, clamped so both pieces are real — see FLY_MIN. */
+    const t = clamp(_sv3.copy(planePoint).sub(_sv1).dot(_sv2), FLY_MIN, len - FLY_MIN);
+    const r = D[k + F.R];
+    const flyLen = len - t;
+    const w = D[k + F.VEL];
+    const dx = D[k + F.DX], dz = D[k + F.DZ];
+    const ang = D[k + F.ANG];
+    /* THE VELOCITY OF THE PIECE'S OWN MIDDLE. The axis turns in the vertical
+     * plane through (dx, dz), so its rate is (dx·cosθ, −sinθ, dz·cosθ) — the
+     * one direction perpendicular to the rod in the plane it is falling
+     * through — and a point `d` from the hinge travels at ω·d along it. */
+    const mid = t + flyLen * 0.5;
+    const c = Math.cos(ang), sn = Math.sin(ang);
+    const vel = new THREE.Vector3(dx * c, -sn, dz * c).multiplyScalar(w * mid);
+    /* …and the spin it keeps. ω about the horizontal axis the fall turns
+     * about: (dz, 0, −dx), which is what makes `ω × axis` come out as the
+     * rate above rather than its negative. */
+    const spin = new THREE.Vector3(dz, 0, -dx).multiplyScalar(w);
+    const from = _sv3.copy(_sv1).addScaledVector(_sv2, t);
+    const prop = this._flyingLog(i, from, _sv2, flyLen, r, vel, spin);
+
+    // the trunk that is left, shortened where the blade went through
+    D[k + F.H] = D[k + F.CUT] + t;
+    (this._decrowned || (this._decrowned = new Set())).add(i);
+    this._dropFallBody(i);
+    this._makeFallBody(i);
+    this._writeTrunk(i);
+    this._writeCrown(i);
+    this.trunkMesh.instanceMatrix.needsUpdate = true;
+    this.crownMesh.instanceMatrix.needsUpdate = true;
+    this.stats.severed = (this.stats.severed | 0) + 1;
+
+    const fx = this.world.particles;
+    if (fx) fx.sparkBurst?.(from.clone(), null, 10, { speed: 5, embers: false });
+    /* Returned so the caller can see something parted. `Prop.cut`'s contract is
+     * "the halves, or null if it did not part"; a felled tree hands back `[]`
+     * because it is still one object, and this genuinely made one. */
+    return prop ? [prop] : [];
+  }
+
+  /**
+   * The severed top: a real log, with the crown it was carrying, thrown.
+   *
+   * Modelled on `_realise` — the same tapered rod, the same tone-as-vertex-
+   * colour, the same sphere chain so the blade can cut it AGAIN on the way
+   * down — and deliberately NOT seated on the ground the way `_realise` is:
+   * this one is born in the air on purpose, so the lift that keeps a resting
+   * log out of a hillside would be teleporting it.
+   */
+  _flyingLog(i, from, axis, len, r, vel, spin) {
+    const D = this.data, k = i * F.N;
+    const mid = from.clone().addScaledVector(axis, len * 0.5);
+    const geo = taperedGeo(len, r, 0.52, 6, 2);
+    geo.translate(0, -len * 0.5, 0);
+    const t = D[k + F.TONE];
+    const col = new Float32Array(geo.attributes.position.count * 3);
+    for (let v = 0; v < col.length; v += 3) { col[v] = t; col[v + 1] = t; col[v + 2] = t; }
+    geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    const mesh = new THREE.Mesh(geo, this.trunkMesh.material);
+    /* THE LEAVES CAME OFF WITH IT. Shared geometry and the stand's own leaf
+     * material — a child of the log mesh, so it rides the body for free and
+     * `Prop.destroy` takes it with the rest. Sized as `_writeCrown` sizes a
+     * standing crown and seated near the top of the piece, which is where it
+     * was on the tree. */
+    if (this.crownMesh) {
+      const crown = new THREE.Mesh(this.crownMesh.geometry, this.crownMesh.material);
+      const spread = r * 9.4;
+      crown.scale.set(spread, spread * 0.76, spread);
+      crown.position.set(0, len * 0.38, 0);
+      mesh.add(crown);
+    }
+    const quat = new THREE.Quaternion().setFromUnitVectors(UP, axis);
+    const spheres = [];
+    const N = Math.max(3, Math.min(9, Math.round(len / 2.2)));
+    for (let s = 0; s < N; s++) {
+      spheres.push({ c: new THREE.Vector3(0, (s / (N - 1) - 0.5) * len, 0), r: r * 1.05 });
+    }
+    const prop = new Prop(this.world, {
+      kind: 'log', mesh, toughness: this.toughness, hp: 90, weather: false,
+      grippable: true, spheres,
+      mass: Math.min(LOG_MASS_CAP, this.massPerMetre(i) * len),
+      friction: 0.86, restitution: 0.04,
+      position: mid, quaternion: quat, centre: true,
+    });
+    if (!prop.body) return prop;
+    prop.body.position.copy(mid);
+    prop.body.quaternion.copy(quat);
+    prop.body.velocity.copy(vel);
+    prop.body.angularVelocity.copy(spin);
+    prop.body.userData.climb = CLIMB_LOG;
+    /**
+     * A DISC IN FLIGHT HAS ALREADY BEEN THROUGH THIS LOG.
+     *
+     * The log did not exist a moment ago and it exists because the blade that
+     * is still travelling cut the trunk it came off. `cleaveAlong`'s own rule
+     * for a crate's halves says the same thing — "anything the cut just
+     * produced is the same body in two parts, and the disc has already been
+     * through it" — and without it the flight meets its own debris on the next
+     * frame and spends a pierce on it, which is the runaway that note measured
+     * at fourteen cleaves off two crates.
+     *
+     * Marked HERE and not in `cleaveAlong`, because a thrown disc drives the
+     * ordinary blade solver as well as the cleave pass (`update` walks this
+     * forest's body to `throwPos` for exactly that reason), so a log severed by
+     * the solver would never be seen by the other bookkeeping at all. One
+     * mechanism, at the one place a severed log is born.
+     */
+    const owner = this.world?.player;
+    if (owner?.throwSpared && owner.throwState && owner.throwState !== 'held') {
+      owner.throwSpared.add(prop.id);
+    }
+    /* THE BUDGET, and it is the oldest that goes — see FLY_CAP. */
+    const list = this._flying || (this._flying = []);
+    list.push(prop);
+    while (list.length > FLY_CAP) list.shift()?.destroy?.();
+    return prop;
+  }
 
   /** Nearest standing trunk to a point, within `r` metres in plan. */
   nearestStanding(p, r = 3.0) {

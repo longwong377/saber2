@@ -947,6 +947,33 @@ const HEAL_FRACTION = 0.45;
 const HILT = { rise: 0.32, fwd: 0.20 };
 /** Exported so tools/_anchor.mjs and tools/_unify.mjs can sweep it. */
 export const HILT_ANCHOR = HILT;
+/**
+ * ── AND THE THIRD-PERSON CARRY COMES BACK DOWN ─────────────────────────────
+ *
+ * `HILT.rise` is in METRES — `limbs.arm` is a RATIO, 1 for a human — so the
+ * unified anchor parks the weapon 0.32 m above a 1.34 m chest: 1.66 m, which
+ * is the FACE. Measured with tools/_carry.mjs on the shipped anchor: sword
+ * hand at 1.54 m against a head bone at 1.47, forearm at 1.58, hilt at 1.46.
+ * The third-person figure walks the whole game with its fists in front of its
+ * chin — the player's "arm and shoulder positions are janky and awkward", on
+ * screen in every walk cell of tools/motion.mjs.
+ *
+ * First person NEEDS that height: the lens is at the eyes and the hands must
+ * be in the frame under it. Third person needs a carry — hands at the lower
+ * chest, blade angled up across the body. One number cannot be both, which is
+ * how it came to be authored for the view that was being measured at the time
+ * (the FP framing grid above) and shipped to the other.
+ *
+ * So the RISE is per view and everything else stays shared. What the split
+ * costs is the strict two-view parity the unification bought — and less of it
+ * than the number suggests: the reach that matters on the ground plane is
+ * `fwd + guardR + blade`, which does not move; what moves is the height the
+ * guard is carried at. Measured after (same probe): hand 1.25 m, hilt 1.18,
+ * forearm 1.32 against 1.58 before — a sword carried in front of the chest,
+ * not the chin. The blade's own angle (33.8° up) does not move: the guard
+ * point and the cursor are untouched, only the height the pair hang at.
+ */
+const HILT_RISE_THIRD = 0.04;
 
 /**
  * WHERE A HAND HOLDS A HILT — and it was nowhere near where the game put one.
@@ -1264,7 +1291,22 @@ export const FOREARM = { cone: Math.sin(12 * Math.PI / 180), rate: 40 };
  * cap chosen for one of four arms is the shape of mistake this whole file
  * keeps deleting, so it stays where the other three put it.
  */
-export const ELBOW = { swivel: 120 * Math.PI / 180, rate: 30 };
+/**
+ * ── PER VIEW SINCE THE CARRY SPLIT ─────────────────────────────────────────
+ *
+ * `swivel`/`rate` are the FIRST-person pair — the numbers the table above was
+ * swept to, on an anchor that did not move. `swivelThird`/`rateThird` came
+ * with `HILT_RISE_THIRD`: a carry at the lower chest works the one-handed
+ * elbow through a different arc, and the shipped 120°/30 read 1574°/s on the
+ * viewmodel bench's third-one-hand forearm against its 1250 ratchet. Re-swept
+ * at the new carry: 180° took it to 1370, rate 18 under the bound — while the
+ * same pair handed FIRST person a 109.5° wrist against its own 109 ratchet,
+ * which is why this is two pairs and not a retune of one.
+ */
+export const ELBOW = {
+  swivel: 120 * Math.PI / 180, rate: 30,
+  swivelThird: 180 * Math.PI / 180, rateThird: 18,
+};
 
 /**
  * HOW FAST A FIST CAN ROLL ROUND THE SHAFT, in radians per second.
@@ -4894,7 +4936,7 @@ export class Player {
     const fp = this.camera.firstPerson;
     this.gripAnchor.copy(fp ? this.camera.eyePosition(this.position, eyeH, _v5) : this.chest)
       .addScaledVector(_v4.set(0, 1, 0).applyQuaternion(this.camera.aimQuat),
-        HILT.rise * A - (fp ? eyeH - chestH : 0))
+        (fp ? HILT.rise : HILT_RISE_THIRD) * A - (fp ? eyeH - chestH : 0))
       .addScaledVector(_v4.set(0, 0, -1).applyQuaternion(this.camera.aimQuat), HILT.fwd * A);
     // The same two heights EYE_H/EYE_H_CROUCH already name, and on the same
     // body scale — they were typed again here, unscaled, which is the shape
@@ -5459,7 +5501,11 @@ export class Player {
    */
   _wristPole(upperName, foreName, handName, handQuat, wrist, pole, dt) {
     const st = this._elbow[upperName];
-    if (!(ELBOW.swivel > 0) || !st) return pole;
+    /* The pair is the view's — see ELBOW's own note on the carry split. */
+    const fp = this.camera.firstPerson;
+    const swivel = fp ? ELBOW.swivel : ELBOW.swivelThird;
+    const rate = fp ? ELBOW.rate : ELBOW.rateThird;
+    if (!(swivel > 0) || !st) return pole;
     const fore = this.rig.get(foreName), hand = this.rig.get(handName);
     if (!fore || !hand) return pole;
     const shoulder = this.rig.worldPos(upperName, _wp1);
@@ -5480,7 +5526,7 @@ export class Player {
     if (len < 1e-4 || _wp6.lengthSq() < 1e-8) return pole;
     _wp5.multiplyScalar(1 / len); _wp6.normalize();
     let phi = clamp(Math.atan2(_wp2.crossVectors(_wp5, _wp6).dot(_wp4), _wp5.dot(_wp6)),
-      -ELBOW.swivel, ELBOW.swivel);
+      -swivel, swivel);
     /**
      * …AND AN ELBOW DOES NOT TELEPORT ROUND THE ARM EITHER, which is the same
      * lesson `FOREARM.rate` is, one joint further up and found the same way.
@@ -5495,7 +5541,7 @@ export class Player {
       let d = phi - st.phi;
       while (d > Math.PI) d -= 2 * Math.PI;
       while (d < -Math.PI) d += 2 * Math.PI;
-      phi = st.phi + clamp(d, -ELBOW.rate * dt, ELBOW.rate * dt);
+      phi = st.phi + clamp(d, -rate * dt, rate * dt);
     }
     st.phi = phi; st.have = true;
     _wp5.applyAxisAngle(_wp4, phi);

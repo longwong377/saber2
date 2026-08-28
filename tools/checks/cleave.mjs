@@ -84,20 +84,51 @@ export async function run({ check, assert }) {
     assert(!keys.includes(F.id),
       `the whole stand was cleaved as one target ("${F.id}") — one tree per throw, and every other `
       + `trunk in the wood retired behind it (${peak} cleave(s) recorded)`);
+    /**
+     * A KEY IS A TRUNK OF THIS STAND, OR A LOG LYING IN IT.
+     *
+     * The second half is newer than this check and it is not a loosening — it
+     * is the wood having more in it than trees. A trunk can be cut while it is
+     * still in the air now (`Forest.severFalling`), so the remainder is
+     * SHORTER, and a shorter rod comes down faster (θ̈ ∝ 3g/2L): trees that
+     * used to be still falling when a flight ended are down and realised into
+     * `Prop` logs inside it. A disc passing through a log lying on the ground
+     * cuts it, exactly as it would a crate.
+     *
+     * WHAT IS NOT ALLOWED IS THE DISC EATING ITS OWN DEBRIS, and that is held
+     * by the counter assertion below rather than by this loop: a log the cut
+     * itself produced goes into `throwSpared` at the moment it is born, so it
+     * is skipped and never counted. Before that existed the two disagreed by
+     * however much debris the flight had made.
+     *
+     * The defect this check was written for is untouched and asserted above:
+     * the bare stand id must never appear, because one entry for the whole
+     * wood retires every other trunk in it for the rest of the flight.
+     */
     const trunks = new Set();
+    let logs = 0;
     for (const k of keys) {
       const m = /^(.+):t(\d+)$/.exec(k);
-      assert(m && m[1] === F.id, `"${k}" is not a trunk of ${F.id}`);
-      trunks.add(m[2]);
+      if (m) {
+        assert(m[1] === F.id, `"${k}" names trunks of ${m[1]}, not the stand ${F.id} under test`);
+        trunks.add(m[2]);
+      } else { logs++; }
     }
-    assert(trunks.size === keys.length, `${keys.length} keys named only ${trunks.size} distinct trunks`);
+    assert(trunks.size + logs === keys.length,
+      `${keys.length} keys named only ${trunks.size} distinct trunks and ${logs} log(s)`);
+    /* AND THE FLIGHT IS STILL MOSTLY A WOOD CROSSING. A disc that spent its
+     * pierces on debris would satisfy every line above with one trunk and a
+     * pile of logs, which is the shape this bound refuses. */
+    assert(trunks.size >= 4,
+      `only ${trunks.size} distinct standing trunks were cleaved on the flight, against ${logs} log(s)`);
     assert(peak >= 4,
       `the disc crossed the wood and the technique went through ${peak} trunk(s) — the card says it `
       + 'cuts clean through everything it passes');
     assert(peak === keys.length,
       `the counter says ${peak} and the flight remembered ${keys.length} bodies — one of them is lying`);
     world.unload(); world.dispose?.();
-    return `${peak} trunks cleaved on one flight, ${trunks.size} distinct: ${keys.slice(0, 4).join(' ')}…`;
+    return `${peak} cleaves on one flight — ${trunks.size} distinct trunks, ${logs} log(s): `
+      + `${keys.slice(0, 4).join(' ')}…`;
   });
 
   check('cleave: the counter is the technique\'s, not the ordinary solver\'s', async () => {
