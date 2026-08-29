@@ -229,7 +229,30 @@ for (const [file, src] of mods) {
   if (MIN) {
     try {
       const { transformSync } = await import('esbuild');
-      s = transformSync(s, { minify: true, format: 'esm', target: 'es2022' }).code;
+      s = transformSync(s, {
+        /* WHITESPACE AND COMMENTS ONLY. NOT IDENTIFIERS, AND THIS IS NOT
+         * CAUTION — a renaming pass produces a build that boots and then
+         * cannot start a match.
+         *
+         * `Props.assertOpts` is the reason. Every builder in Props.js opens
+         * by handing ITSELF to a guard that reads what the function reads:
+         * `collectKeys` calls `fn.toString()` and pulls the option names out
+         * of the SOURCE TEXT, then finds the helpers it forwards to by
+         * matching their names — 'emit', 'light', 'Prop', 'Crowd', 'Storm' —
+         * against that same text. Rename the locals and the extracted set
+         * comes back empty, so the guard rejects every option the builder
+         * genuinely honours. Measured on a full-minify build: it booted
+         * cleanly, showed no page errors, and every deploy died with
+         * "zn: handed an option it does not read — mat. It reads: ." — the
+         * empty tail of that sentence is the whole diagnosis.
+         *
+         * Stripping comments and whitespace leaves identifiers, property
+         * accesses and helper names exactly where the guard looks for them,
+         * and this codebase is far more comment than code, so it is where
+         * nearly all of the saving was anyway. */
+        minifyWhitespace: true, minifyIdentifiers: false, minifySyntax: false,
+        format: 'esm', target: 'es2022',
+      }).code;
     } catch (e) {
       throw new Error(`pack --min needs esbuild (npm i esbuild): ${e.message}`);
     }
