@@ -24,7 +24,8 @@ that in one line instead of burying it.
 
     node tools/pack.mjs /tmp/borz.html
 
-Then send the file. No preamble, no summary, no explanation of what a
+Then send the file. Also republish the anonymous play link (the artifact):
+build with tools/_packmin.mjs and republish /tmp/borz-artifact.html. No preamble, no summary, no explanation of what a
 single-file build is. Just the file and one line saying what changed since
 the last one.
 
