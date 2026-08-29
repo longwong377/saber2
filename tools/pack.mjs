@@ -22,11 +22,12 @@
  * rewritten to `location.href`, which resolves and then simply 404s for the
  * one optional mp3 — the score is generated, so nothing depends on it.
  */
-import { readFile, writeFile, stat } from 'node:fs/promises';
+import { readFile, writeFile, stat, readdir } from 'node:fs/promises';
 import { dirname, resolve, relative, extname } from 'node:path';
 
 const ROOT = new URL('../', import.meta.url).pathname.replace(/\/$/, '');
 const OUT = process.argv[2] || `${ROOT}/borz-play.html`;
+const MIN = process.argv.includes('--min');
 const rel = (p) => relative(ROOT, p);
 const exists = async (p) => { try { return (await stat(p)).isFile(); } catch { return false; } };
 
@@ -105,12 +106,133 @@ const peer = `${ROOT}/vendor/peerjs/peerjs.min.js`;
 const peerData = await exists(peer)
   ? `data:text/javascript;base64,${(await readFile(peer)).toString('base64')}` : null;
 
+/**
+ * ── AND THE ASSETS THE PAGE ASKS FOR AT RUNTIME, WHICH IT NEVER GOT ────────
+ *
+ * The promise a few lines down — "nothing was fetched and nothing can 404" —
+ * was true of the modules and of `styles.css`, and false of everything else.
+ * Two kinds of reference escaped:
+ *
+ *   THE `<img>` TAGS in index.html. The boot plate and the wordmark are
+ *   `src="./assets/menu/…"` attributes, not CSS `url()`, so the loop above
+ *   never saw them.
+ *
+ *   THE CARDS THE MENU BUILDS AT RUNTIME. `LEVEL_SHOT` and `HILT_SHOT` are
+ *   template literals interpolated into `background-image:url(…)` inside an
+ *   inline style, so the path does not exist until a tab is opened.
+ *
+ * Measured on the shipped packer, single-file build opened from disk: NINE
+ * failed requests — the menu backdrop, the wordmark and all seven theatre
+ * screenshots. The page still worked, which is what kept it invisible:
+ * `_levelArt`'s drawn fallback sits under the screenshot by design, so the
+ * cards fell back to the drawings the screenshots were commissioned to
+ * replace. Anyone playing the packed file was looking at the old art and
+ * anyone opening the hosted site was not.
+ *
+ * WHAT IS INLINED IS WHAT IS REFERENCED, discovered rather than listed: every
+ * `assets/…` path named by index.html or by any module in the graph. A list
+ * here would be a second copy of the level roster and would go stale the day a
+ * level is added (§2.3). Audio is deliberately excluded — the soundtrack is
+ * 28 MB and is streamed.
+ */
+const ASSET_IMG = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' };
+const assetData = new Map();
+async function inlineAsset(relPath) {
+  if (assetData.has(relPath)) return assetData.get(relPath);
+  const type = ASSET_IMG[extname(relPath).toLowerCase()];
+  if (!type) return null;
+  const file = `${ROOT}/${relPath}`;
+  if (!await exists(file)) return null;
+  const uri = `data:${type};base64,${(await readFile(file)).toString('base64')}`;
+  assetData.set(relPath, uri);
+  return uri;
+}
+
+/* The paths named with no interpolation in them: every one is resolved here
+ * and substituted in place, in the HTML and in the module sources alike. */
+const STATIC_ASSET = /(?:\.\/)?(assets\/[A-Za-z0-9_\-./]+\.(?:png|webp|jpe?g|gif|svg))/g;
+/* index.html names its own — the boot plate and the wordmarks — and they are
+ * in no module, so the page is scanned alongside the graph. */
+for (const m of [...html.matchAll(STATIC_ASSET)]) await inlineAsset(m[1]);
+for (const [file, src] of mods) {
+  let out = src, hit = false;
+  for (const m of [...src.matchAll(STATIC_ASSET)]) {
+    const uri = await inlineAsset(m[1]);
+    if (uri) { out = out.replaceAll(m[0], uri); hit = true; }
+  }
+  if (hit) mods.set(file, out);
+}
+
+/**
+ * …AND THE INTERPOLATED ONES GO THROUGH A MAP, because `assets/previews/${key}
+ * .jpg` is not a path until it is evaluated. Every candidate file in the
+ * directories the graph names is offered, and the lookup falls back to the
+ * original string — so a build that somehow misses one degrades to exactly the
+ * behaviour it has today rather than to a broken card.
+ */
+/**
+ * …AND THE INTERPOLATED ONES ARE WRAPPED, not rewritten by name.
+ *
+ * A template literal that begins `assets/` is not a path until it runs, so it
+ * cannot be substituted — it is handed to `__A` instead, which resolves it
+ * against the map below at the moment the card is built. Wrapping every such
+ * literal rather than naming `LEVEL_SHOT` and `HILT_SHOT` is the point: the
+ * next one somebody writes is carried too, and a literal whose file is missing
+ * falls through `__A` unchanged, which is exactly today's behaviour.
+ *
+ * Runs AFTER the static pass, so anything already turned into a `data:` URI no
+ * longer starts with `assets/` and is left alone.
+ */
+const TEMPLATE_ASSET = /`((?:\.\/)?assets\/[^`]*\$\{[^`]*)`/g;
+for (const [file, src] of mods) {
+  if (!TEMPLATE_ASSET.test(src)) continue;
+  TEMPLATE_ASSET.lastIndex = 0;
+  mods.set(file, src.replace(TEMPLATE_ASSET, (m) => `__A(${m})`));
+}
+
+const dirs = new Set();
+for (const [, src] of mods) {
+  for (const m of src.matchAll(/(?:\.\/)?(assets\/[A-Za-z0-9_\-./]*)\$\{/g)) dirs.add(m[1]);
+}
+for (const d of dirs) {
+  const dir = `${ROOT}/${d}`.replace(/\/[^/]*$/, '');
+  try { if (!(await stat(dir)).isDirectory()) continue; } catch { continue; }
+  for (const name of await readdir(dir)) {
+    await inlineAsset(`${d.replace(/[^/]*$/, '')}${name}`);
+  }
+}
+
 const imports = {};
 let bytes = 0;
 for (const [file, src] of mods) {
   let s = src;
   if (file.endsWith('/Net.js') && peerData) {
     s = s.replace(/new URL\(\s*['"][^'"]*peerjs\.min\.js['"][^)]*\)\.href/, JSON.stringify(peerData));
+  }
+  /**
+   * `--min` MINIFIES EACH MODULE ON THE WAY IN, for the hosted build.
+   *
+   * The artifact host caps a page at 16 MB and the plain pack is over it —
+   * this codebase is more comment than code by design, so the cut is large:
+   * 16.1 MB of module base64 becomes 6.5. It is a flag on THIS packer rather
+   * than a second script, because the second script was a copy and drifted
+   * within the hour: it was still inlining nothing when this file had learned
+   * to inline the menu art, and the build it produced was missing the same
+   * nine images this pass exists to fix.
+   *
+   * esbuild's transform renames locals only. Export names, import specifiers
+   * and every string — the GLSL the shader surgery patches included — come
+   * through byte-identical, and the specifier self-check below re-reads all of
+   * them out of the minified source.
+   */
+  if (MIN) {
+    try {
+      const { transformSync } = await import('esbuild');
+      s = transformSync(s, { minify: true, format: 'esm', target: 'es2022' }).code;
+    } catch (e) {
+      throw new Error(`pack --min needs esbuild (npm i esbuild): ${e.message}`);
+    }
   }
   const b64 = Buffer.from(s, 'utf8').toString('base64');
   bytes += b64.length;
@@ -229,8 +351,47 @@ const head = (page.match(/<head[^>]*>([\s\S]*?)<\/head>/) || [, ''])[1]
    * that is no longer fetched at all. */
   .replace(TAG, (m) => (/rel=["'](?:icon|preload)["']/i.test(m) ? '' : m));
 
+/**
+ * THE ASSET MAP AND ITS RESOLVER, ahead of the modules that read them.
+ *
+ * A plain `<script>` and not a module, so it has run before the first
+ * `import` is evaluated. `__A` falls through to the path it was given when a
+ * file is not in the map, which keeps a build that missed one behaving exactly
+ * as the unpacked game does rather than painting a hole.
+ */
+const assetMap = `<script>window.__PACKED_ASSETS=${JSON.stringify(
+  Object.fromEntries(assetData))};window.__A=function(p){return window.__PACKED_ASSETS[
+  String(p).replace(/^\\.\\//,'')]||p};</script>`;
+body = assetMap + body;
+
+/**
+ * …AND THE `<img>` TAGS THE HTML CARRIES ITSELF. `src="./assets/menu/…"` is an
+ * attribute, so neither the stylesheet loop nor the module passes could see
+ * it; the boot plate and all three wordmarks were fetched off disk and 404ed.
+ */
+for (const [relPath, uri] of assetData) {
+  const pat = new RegExp(`(src|href)=(["'])\\.?/?${relPath.replace(/[.]/g, '\\.')}\\2`, 'g');
+  body = body.replace(pat, (m, attr, q) => `${attr}=${q}${uri}${q}`);
+}
+
+/**
+ * AND THE PROMISE IS CHECKED RATHER THAN MADE. The notice this build writes
+ * says "nothing was fetched and nothing can 404", and it said so for weeks
+ * while nine images were being fetched. Any `assets/` path still standing in
+ * the finished page — outside a `data:` URI and outside the audio that is
+ * streamed on purpose — fails the pack.
+ */
+const leftover = [...`${head}\n${body}`.matchAll(/(?:src|href)=["'](\.?\/?assets\/[^"']+)["']/g)]
+  .map((m) => m[1])
+  .filter((u) => !u.includes('assets/music/'));
+if (leftover.length) {
+  throw new Error(`pack: ${leftover.length} asset(s) would be fetched at runtime and 404: `
+    + `${[...new Set(leftover)].slice(0, 6).join(', ')}`);
+}
+
 await writeFile(OUT, `${head}\n${body}`);
 const size = (await stat(OUT)).size;
 console.log(`modules  : ${mods.size}`);
 console.log(`module b64: ${(bytes / 1e6).toFixed(2)} MB`);
+console.log(`assets   : ${assetData.size} inlined`);
 console.log(`written  : ${OUT}  ${(size / 1e6).toFixed(2)} MB`);
