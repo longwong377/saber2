@@ -263,6 +263,8 @@ function nextFrame() {
   }
   return Promise.resolve();
 }
+/** Scratch for the aim origin — see the `aimOrigin` note in _throwCaught. */
+const _aimFrom = new THREE.Vector3();
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _blastAt = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
@@ -4204,7 +4206,34 @@ export class World {
       const bolt = h.bolt;
       if (!bolt.active) continue;
       const res = gradeCaught(h.snap, {
-        aimOrigin: player.camera.pos,
+        /**
+         * FROM THE BODY, NOT THE LENS — and this one line was two complaints.
+         *
+         * "as the game progresses… my cursor from my perspective is now way to
+         * my left… makes aiming really difficult" and "it's easier to block
+         * bolts and send bolts back to where you want when the deflection
+         * aiming is set to physical rather than the standard reticle… I'm
+         * missing enemies to the left and right more often since they're
+         * usually strafing."
+         *
+         * This was `player.camera.pos`. In third person that is 3.05 m behind
+         * the player and 0.46 m to ONE SHOULDER — and `CameraRig._resolveShoulder`
+         * swaps which shoulder on a wall raycast, silently, mid-fight. So the
+         * cone `pickReturnTarget` searches was hung off the lens, and measured
+         * with two enemies mirrored exactly about the sightline at ±1, 2, 3, 5
+         * and 8 m, the answer was the camera's and not the player's: on the
+         * right shoulder it returned the bolt at the RIGHT one every time, on
+         * the left shoulder at the LEFT one every time. Walk past a wall and
+         * your aim changes sides without you touching anything.
+         *
+         * It also explains why `physical` felt better: that model never asks
+         * this question, so it never inherits the parallax.
+         *
+         * `aimPoint()` is the player's chest — the anchor the rest of the game
+         * already aims from. The DIRECTION stays the camera's, because that is
+         * what the reticle means; only the origin comes back to the body.
+         */
+        aimOrigin: player.aimPoint(_aimFrom),
         aimDir: player.aimDir,
         candidates,
         flow: player.flow,
@@ -5083,7 +5112,9 @@ export class World {
 
     // ── BLOCK. Not caught, not aimed: it goes somewhere and that is the point.
     const res = gradeCaught(snap, {
-      aimOrigin: owner.camera.pos,
+      /* The body and not the lens — see the note on the other `gradeCaught`
+       * call in this file for the measurement. */
+      aimOrigin: owner.aimPoint(_aimFrom),
       aimDir: owner.aimDir,
       candidates: hostileTo(owner, this.enemies, this.rules),   // see _throwCaught
       flow: owner.flow,

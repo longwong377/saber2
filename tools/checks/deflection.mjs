@@ -701,4 +701,67 @@ export async function run({ check, assert }) {
     return `foe under the reticle → grade ${onFoe.grade}, ${onFoe.score} score · `
       + `ally → grade ${onAlly.grade}, ${onAlly.score}`;
   });
+
+  check('a returned bolt is aimed from your body, not from whichever shoulder the camera is on', async () => {
+    /**
+     * TWO COMPLAINTS, ONE LINE.
+     *
+     * "as the game progresses… my cursor from my perspective is now way to my
+     * left… makes aiming really difficult", and "it's easier to block bolts and
+     * send bolts back to where you want when the deflection aiming is set to
+     * physical rather than the standard reticle… I'm missing enemies to the
+     * left and right more often since they're usually strafing."
+     *
+     * `World` handed `gradeCaught` an `aimOrigin` of `player.camera.pos`. In
+     * third person that is the LENS: 3.05 m behind the player and 0.46 m to one
+     * shoulder, and `CameraRig._resolveShoulder` swaps which shoulder on a wall
+     * raycast, silently, mid-fight. So the cone `pickReturnTarget` searches was
+     * hung off the camera, and with two enemies mirrored exactly about the
+     * sightline the answer was the camera's: right shoulder returned the bolt
+     * at the right one, left shoulder at the left one, at every separation
+     * tried. Walking past a wall changed which way your bolts went.
+     *
+     * The direction is still the camera's, because that is what the reticle
+     * means. Only the ORIGIN comes back to the body.
+     */
+    const THREE = await import('three');
+    const { pickReturnTarget, RETURN_CONE } = await import('../../src/game/Combat.js');
+    const BOOM = 3.05, HEIGHT = 1.52, SHOULDER = 0.46;
+    const chest = new THREE.Vector3(0, 1.35, 0);
+    const aimDir = new THREE.Vector3(0, 0, -1);
+    const lens = (side) => new THREE.Vector3(side * SHOULDER, HEIGHT, BOOM);
+    const foe = (tag, x) => ({ tag, dead: false, position: new THREE.Vector3(x, 1.2, -10),
+      chest: new THREE.Vector3(x, 1.35, -10) });
+
+    const swung = [], steady = [];
+    for (const x of [1, 2, 3, 5, 8]) {
+      const pair = [foe('left', -x), foe('right', x)];
+      const r = pickReturnTarget(lens(1), aimDir, pair, RETURN_CONE)?.entity?.tag;
+      const l = pickReturnTarget(lens(-1), aimDir, pair, RETURN_CONE)?.entity?.tag;
+      const c = pickReturnTarget(chest, aimDir, pair, RETURN_CONE)?.entity?.tag;
+      if (r !== l) swung.push(`±${x} m: right shoulder → ${r}, left shoulder → ${l}`);
+      steady.push(`±${x} ${c}`);
+    }
+    /* THE DEFECT, STATED AS ITS OWN MEASUREMENT: from the lens the answer
+     * depends on the shoulder. This is what the fix is measured against, so it
+     * is asserted rather than described — if it ever stops being true the note
+     * above is stale and the check below is proving nothing. */
+    assert(swung.length === 5,
+      `the shoulder no longer decides the target from the lens (${swung.length} of 5 separations `
+      + 'disagreed), so this check can no longer tell the body apart from the camera');
+
+    /* AND THE FIX: World must not hand the lens in. Asserted against the source
+     * because the alternative is booting a whole world to read one argument. */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/game/World.js', import.meta.url), 'utf8');
+    const origins = [...src.matchAll(/aimOrigin:\s*([^,\n]+)/g)].map((m) => m[1].trim());
+    assert(origins.length >= 2, `only ${origins.length} aimOrigin call site(s) found — the scan is wrong`);
+    const fromLens = origins.filter((o) => /camera/.test(o));
+    assert(!fromLens.length,
+      `${fromLens.length} deflection aim(s) still start at the camera: ${fromLens.join(', ')} — `
+      + 'in third person that is 0.46 m to whichever shoulder the rig last chose');
+    assert(origins.every((o) => /aimPoint/.test(o)),
+      `an aimOrigin is not the player's own aim point: ${origins.join(', ')}`);
+    return `from the lens the shoulder decides all 5 separations; from the body: ${steady.join(', ')}`;
+  });
 }
