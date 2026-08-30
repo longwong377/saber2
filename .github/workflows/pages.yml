@@ -8,7 +8,19 @@ name: Deploy SABER to Pages
 
 on:
   push:
-    branches: ['main', 'master', 'claude/lightsaber-combat-game-lxw391', 'claude/game-feature-verification-m5udbp']
+    # ONLY THE DEFAULT BRANCH, AND THE LIST USED TO BE LONGER.
+    #
+    # Pages deploys the default branch and refuses every other one, so a feature
+    # branch in this list buys nothing — but it does not cost nothing either.
+    # Every run here takes the `pages` concurrency group below with
+    # `cancel-in-progress: true`, so a push to a feature branch STARTS A RUN
+    # THAT CANCELS AN IN-FLIGHT DEPLOY OF THE DEFAULT BRANCH and then fails on
+    # its own account seconds later. Three of those fired in the twenty minutes
+    # after a good deploy and the site was left stuck on its loading screen.
+    #
+    # A branch that cannot be published must not be able to interrupt the one
+    # that can.
+    branches: ['main', 'master', 'claude/lightsaber-combat-game-lxw391']
   workflow_dispatch:
 
 permissions:
