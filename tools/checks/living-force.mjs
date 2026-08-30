@@ -373,31 +373,29 @@ export async function run({ check, assert }) {
     const openNow = Tree.FACETS.filter((s) => led.canBuy(s.id, empty, 40)).map((s) => s.id);
     const roots = Tree.CURRENTS.map((c) => c.root);
     /**
-     * ONLY HEARTS, AND `OFFER` OF THEM — PLAN.md §4.6's first bullet.
+     * EXACTLY THE SIX HEARTS, which is what this asserted before a three-card
+     * deal was put in front of the lattice and is what it asserts again.
      *
-     * This asserted "exactly the six", and that was the whole truth while every
-     * legal facet was on the table. It is not any more: the Holocron shows
-     * `OFFER` of the currently-legal facets and re-deals on a purchase, so from
-     * an empty hand it shows three of the six hearts. THE PROPERTY THIS CHECK
-     * IS FOR IS UNTOUCHED — nothing but a root can be woken out of nowhere,
-     * which is what makes the lines mean anything — and it is now stated as a
-     * subset rather than as an identity, plus the count the offer promises.
+     * The property is the one that makes the lines mean anything: nothing but
+     * a root can be woken out of nowhere. While the offer existed this had to
+     * be weakened to "a subset of the roots, three of them", which no longer
+     * said that every root is a legal opening — only that whatever was dealt
+     * happened to be one.
      */
     assert(openNow.every((id) => roots.includes(id)),
       `from an empty hand the Holocron offers ${openNow.join(', ')}, and ${
         openNow.filter((id) => !roots.includes(id)).join(', ')} is not a heart — the lines are `
       + 'decoration if anything can be woken from nothing');
-    assert(openNow.length === Math.min(Tree.OFFER, roots.length),
-      `${openNow.length} of the six hearts are on the table against an offer of ${Tree.OFFER}`);
-    /* …AND EVERY HEART IS REACHABLE, which is the half the identity used to
-     * carry: an offer that could never show you a current would be a run whose
-     * whole shape was decided by a deal you did not see. */
-    const everSeen = new Set();
+    assert(openNow.length === roots.length,
+      `${openNow.length} of the six hearts can be woken from an empty hand — every current has to be `
+      + 'an opening, or the run\'s shape is decided before the player chooses');
+    /* AND THE SEED CHANGES NOTHING. A run's number used to pick which three of
+     * the six you were shown; it must not pick which currents exist. */
     for (let seed = 0; seed < 40; seed++) {
-      for (const id of new Tree.Communion({ insight: 9999, seed }).offerNow(empty, 40)) everSeen.add(id);
+      const shown = new Tree.Communion({ insight: 9999, seed }).offerNow(empty, 40);
+      assert(shown.length === roots.length,
+        `seed ${seed} opens with ${shown.length} of the six hearts — the opening is a deal again`);
     }
-    assert(roots.every((r) => everSeen.has(r)),
-      `${roots.filter((r) => !everSeen.has(r)).join(', ')} never appears in forty opening hands`);
 
     // A DRAFTED card is a bridgehead: it wakes its own facet, and its
     // neighbours become reachable without any purchase at all. This is the
@@ -491,89 +489,114 @@ export async function run({ check, assert }) {
     // whole lattice.
     const led = new Tree.Communion({ insight: 999 });
     const taken = new Waves.RankSet(['attune-blade']);
-    /* BOUGHT OFF THE OFFER, because there is one now: `buy` refuses a facet the
-     * Holocron is not showing (PLAN.md §4.6), so a fixture that names a card
-     * and spends on it is a fixture that silently buys nothing and then reports
-     * that the price never moved. The escalator is about `bought.length`, so
-     * WHICH facet is taken does not matter — that it was actually taken does. */
-    const one = led.offerNow(taken, 40)[0];
-    const first = led.costOf(one, taken);
-    assert(led.buy(one, taken, 40), `the Holocron refused the facet it was offering (${one})`);
-    taken.take(one);
-    const two = led.offerNow(taken, 40).find((id) => id !== one) || led.offerNow(taken, 40)[0];
-    const second = led.costOf(two, taken);
-    assert(second > first, `the second facet cost ${second} against the first at ${first}`);
+    /**
+     * ONE FACET, PRICED BEFORE AND AFTER — not two facets compared to each
+     * other, which is what stood here and was never a measurement of the
+     * escalator at all.
+     *
+     * `costOf` is `base[rarity] + COST_STEP·bought + RANK_STEP·rank`, so two
+     * DIFFERENT facets differ by their rarity base before the escalator is
+     * consulted. The old fixture took whatever the three-card deal happened to
+     * show first and compared it against a different card from the next deal;
+     * with the deal gone and the list sorted, that became a common facet
+     * measured against an epic one and read 11 against 12 — a fall, from an
+     * escalator that had done nothing wrong.
+     *
+     * Asking one facet's price on both sides of somebody else's purchase
+     * isolates `bought.length`, which is the only thing this clause is about.
+     */
+    const spend = led.offerNow(taken, 40)[0];
+    const watch = led.offerNow(taken, 40).find((id) => id !== spend);
+    assert(spend && watch, 'fewer than two facets are legal, so nothing can be priced');
+    const first = led.costOf(watch, taken);
+    assert(led.buy(spend, taken, 40), `the Holocron refused a facet it calls legal (${spend})`);
+    taken.take(spend);
+    const second = led.costOf(watch, taken);
+    assert(second > first,
+      `${watch} cost ${first} before a purchase and ${second} after — the escalator is flat`);
     /* AND A REPEAT IS NEVER THE CHEAP PLAY — asked of the facet that was
      * actually bought, because `RANK_STEP` is a term on the rank HELD and a
      * card nobody has taken has no second rank to price. */
-    const again = led.costOf(one, taken);
+    const again = led.costOf(spend, taken);
     assert(again > second,
-      `a second rank of ${one} costs ${again}, less than a fresh ${two} at ${second}`);
+      `a second rank of ${spend} costs ${again}, no more than a first rank of ${watch} at ${second}`);
     return `${rows.join(', ')}; worst share of a run's growth ${(worst * 100).toFixed(0)}% at w${worstAt}; `
       + `prices ${first} → ${second} → ${again}`;
   });
 
-  check('living force: the Holocron shows three of the legal facets, and re-deals when one is taken', () => {
+  check('living force: the Holocron shows every facet the rules allow, and hides none of them', () => {
     /**
-     * PLAN.md §4.6's first bullet, which is the one that turns a solved build
-     * order into a found one:
+     * THE CHECK THAT USED TO PIN THE OPPOSITE, and the report that turned it
+     * round:
      *
-     *     The holocron offers three of the currently-legal facets, not all 46.
-     *     Same 46 nodes, same adjacency; only the OFFER changes.
+     *     "the holocron does not unlock in order like you can't just choose to
+     *      do one list or path it picks and chooses almost at random"
      *
-     * Four properties, and the third is the one a player would notice first if
-     * it were missing: the hand does not change while you are looking at it.
+     * It did, and this file asserted that it should. PLAN.md §4.6 asked for a
+     * three-card offer over the lattice so that "a solved build order becomes a
+     * found one"; what it produced was a chart the player could read and could
+     * not act on, because the two facets they were walking toward were usually
+     * among the forty-three not being shown. The lattice is the promise, so the
+     * lattice is what the Holocron now offers.
+     *
+     * What still gates a facet is everything a player can SEE on the chart —
+     * the joins, the depth, the disciplines, the price. `LOCKED.offer` has no
+     * writer any more.
      */
     const taken = new Waves.RankSet(['attune-blade', 'attune-body', 'cadence']);
     const led = new Tree.Communion({ insight: 9999, seed: 4242 });
     const hand = led.offerNow(taken, 40);
-    assert(hand.length === Tree.OFFER, `the Holocron offered ${hand.length} of ${Tree.OFFER}`);
-    /* EVERY CARD ON THE TABLE IS ONE THE RULES ALLOW. An offer that showed an
-     * unreachable facet would be a menu item that lies, which is the defect the
-     * support calls' own release ladder is written to avoid. */
+
+    /* EVERY LEGAL FACET IS ON THE TABLE. This is the property the player asked
+     * for, stated as an identity: the legal set and the offered set are the
+     * same set, so a line can be walked to its end. */
+    const legal = Tree.FACETS.filter((f) => led.reachable(f.id, taken)
+      && Waves.rankOf(taken, f.id) < Waves.maxRank(Waves.boonById(f.id))).map((f) => f.id);
+    assert(legal.length > Tree.OFFER,
+      `only ${legal.length} facets are legal, so this fixture cannot tell a full offer from a deal`);
+    assert(hand.slice().sort().join() === legal.slice().sort().join(),
+      `the Holocron offers ${hand.length} of ${legal.length} legal facets — withholding ${
+        legal.filter((id) => !hand.includes(id)).slice(0, 5).join(', ')}`);
+
+    /* AND NOTHING ON IT LIES. Everything shown really can be taken. */
     for (const id of hand) {
       assert(led.reachable(id, taken), `${id} is on the table and nothing held is joined to it`);
       assert(led.reasonLocked(id, taken, 40) === null,
         `${id} is on the table and still refuses: ${led.reasonLocked(id, taken, 40)}`);
     }
-    /* AND THE LEGAL FACETS THAT ARE NOT ON IT SAY WHY. */
-    const legal = Tree.FACETS.filter((f) => led.reachable(f.id, taken)
-      && Waves.rankOf(taken, f.id) < Waves.maxRank(Waves.boonById(f.id)));
-    const off = legal.filter((f) => !hand.includes(f.id));
-    assert(off.length,
-      `only ${legal.length} facets are legal at all, so there is nothing for the offer to withhold `
-      + '— the fixture is not measuring the rule');
-    for (const f of off.slice(0, 5)) {
-      assert(led.reasonLocked(f.id, taken, 40) === Tree.LOCKED.offer,
-        `${f.id} is legal, is not on the table, and reads "${led.reasonLocked(f.id, taken, 40)}"`);
-    }
 
-    /* THE HAND DOES NOT MOVE WHILE YOU LOOK AT IT. */
-    for (let i = 0; i < 20; i++) {
-      assert(led.offerNow(taken, 40).join() === hand.join(),
-        'the offer changed between two reads with nothing bought — a player who closes the '
-        + 'Holocron to think would lose the hand');
+    /* A PATH CAN BE WALKED, which is the whole of the complaint. Take the
+     * blade line end to end and assert every step was available when it was
+     * wanted — not merely that the facets exist. */
+    const walk = new Waves.RankSet(['attune-blade']);
+    const led2 = new Tree.Communion({ insight: 99999, seed: 7 });
+    const blade = Tree.FACETS.filter((f) => f.axis === 'blade' && f.id !== 'attune-blade');
+    let walked = 0;
+    for (const f of blade) {
+      if (!led2.reachable(f.id, walk)) continue;
+      if (led2.reasonLocked(f.id, walk, 40) !== null) continue;
+      assert(led2.buy(f.id, walk, 40), `${f.id} is legal and the Holocron refused it`);
+      walk.take(f.id); walked++;
     }
-    /* …AND IT RE-DEALS WHEN SOMETHING IS TAKEN. */
-    assert(led.buy(hand[0], taken, 40), `the Holocron refused ${hand[0]}, which it was offering`);
-    taken.take(hand[0]);
-    const next = led.offerNow(taken, 40);
-    assert(next.join() !== hand.join(), 'the same three came back after a purchase');
-    assert(!next.includes(hand[0]) || Waves.maxRank(Waves.boonById(hand[0])) > 1,
-      'a facet with nothing left to give is still on the table');
+    assert(walked >= 3,
+      `only ${walked} facets of the blade current could be taken in a row — a player cannot `
+      + 'follow a line');
 
-    /* AND THE HAND IS THE RUN'S. Two ledgers on two seeds, same holdings. */
+    /* THE SEED DOES NOT DECIDE WHAT YOU MAY TAKE. It still seeds the draft and
+     * the world; it must no longer decide which half of the chart is real. */
     const a = new Tree.Communion({ insight: 9999, seed: 1 }).offerNow(taken, 40).join();
     const b = new Tree.Communion({ insight: 9999, seed: 2 }).offerNow(taken, 40).join();
-    assert(a !== b,
-      `two runs were dealt the same three (${a}) — the offer is what makes a second run of a `
-      + 'solved build a different run');
-    /* …and the same seed is the same hand, which is what `snapshot` carries it
-     * across a ground change for. */
-    const again = new Tree.Communion({ insight: 9999, seed: 1 }).offerNow(taken, 40).join();
-    assert(a === again, 'the same seed dealt two different hands');
-    return `${Tree.OFFER} of ${legal.length} legal · steady over 20 reads · re-dealt on a purchase · `
-      + 'different per seed';
+    assert(a === b,
+      'two runs with the same holdings are shown different facets — the run number is deciding '
+      + 'the chart again');
+
+    /* AND IT DOES NOT MOVE UNDER YOU. */
+    for (let i = 0; i < 20; i++) {
+      assert(led.offerNow(taken, 40).join() === hand.join(),
+        'the offer changed between two reads with nothing bought');
+    }
+    return `${hand.length} of ${legal.length} legal facets shown (all of them) · a blade line `
+      + `walked ${walked} deep · identical across seeds and 20 reads`;
   });
 
   check('living force: a run wakes a third of the lattice, and two runs are not the same third', () => {

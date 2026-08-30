@@ -642,11 +642,35 @@ export class Communion {
     if (wave < (b.minWave ?? 1)) return LOCKED.depth;
     if (b.requires && !b.requires(taken)) return LOCKED.gated;
     if (!this.reachable(id, taken)) return LOCKED.reach;
-    /* …AND IT HAS TO BE ONE OF THE THREE ON THE TABLE — PLAN.md §4.6's first
-     * bullet. Last of the structural clauses and ahead of the price, because
-     * "not on the table" is a different sentence from "you cannot afford it"
-     * and the screen prints whichever one is true. */
-    if (!this.offerNow(taken, wave).includes(id)) return LOCKED.offer;
+    /**
+     * ── THE THREE-CARD OFFER IS GONE, AND IT WAS THE WHOLE COMPLAINT ────────
+     *
+     * "the holocron does not unlock in order like you can't just choose to do
+     *  one list or path it picks and chooses almost at random"
+     *
+     * It did. `offerNow` dealt THREE of the legal facets from a seeded stream
+     * and everything else answered `LOCKED.offer` — "the Force is not showing
+     * you this one" — so the lattice a player was looking at was never the
+     * thing they could act on. Simulated on the shipped build, a player who
+     * took a blade facet whenever one appeared was offered none for the first
+     * four picks and pulled into `force` instead.
+     *
+     * TWO THINGS MADE IT WORSE THAN THREE-OF-N SOUNDS. The six roots carry
+     * `stack: Infinity`, so they are legal forever and sat in the pool
+     * competing for those three slots for the whole run — the same simulation
+     * bought `attune-force` and `attune-blade` five times between them. And
+     * the deal re-rolls on every purchase, so the one facet you were saving
+     * for could vanish the moment you bought anything else.
+     *
+     * What gates a facet now is what the lattice actually draws: the joins
+     * (`reachable`), the depth (`minWave`), the disciplines (`requires`) and
+     * the price. Those are rules a player can see and plan against. The
+     * randomness was not.
+     *
+     * `offerNow` is kept and now answers with every legal facet, because it is
+     * still the honest question "what may I take right now" and the Holocron
+     * and the checks both ask it.
+     */
     if (this.insight < this.costOf(id, taken)) return LOCKED.insight;
     return null;
   }
@@ -693,16 +717,11 @@ export class Communion {
       if (!this.reachable(s.id, taken)) continue;
       legal.push(s.id);
     }
-    if (legal.length <= OFFER) return legal;
+    /* EVERY legal facet, sorted so the answer never depends on the order
+     * `FACETS` happens to be written in. The seeded three-card deal that used
+     * to stand here is gone — see `reasonLocked`. */
     legal.sort();
-    const rng = makeRng((Math.imul(this.seed ^ 0x9E3779B9, 0x85EBCA6B)
-      ^ Math.imul(this.bought.length + 1, 0x27D4EB2F)) >>> 0 || 1);
-    const out = [];
-    const pool = legal.slice();
-    for (let i = 0; i < OFFER && pool.length; i++) {
-      out.push(pool.splice(Math.floor(rng() * pool.length) % pool.length, 1)[0]);
-    }
-    return out;
+    return legal;
   }
 
   canBuy(id, taken, wave = 1) { return this.reasonLocked(id, taken, wave) === null; }

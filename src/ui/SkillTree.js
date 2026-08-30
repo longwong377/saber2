@@ -275,9 +275,10 @@ export class SkillTree {
         if (v.mastery) cls.push('mastery');
         if (v.locked === LOCKED.spent) cls.push('spent');
         if (v.locked === LOCKED.reach) cls.push('far');
-        /* A legal facet the deal is withholding reads like a distant one rather
-         * than like a live one: same dimming, and the line under it says which
-         * of the two it is. See `_stateLine`. */
+        /* `LOCKED.offer` has no writer any more — the Holocron shows every
+         * facet the rules allow (see LivingForce.reasonLocked). The class is
+         * still mapped so a build that somehow produced one would dim rather
+         * than render as live. */
         if (v.locked === LOCKED.offer) cls.push('far');
         if (history?.get(v.id)) cls.push('known');
         const el = div(cls.join(' '));
@@ -550,12 +551,14 @@ export class SkillTree {
       case LOCKED.reach: return `${rank}Nothing you hold reaches this far.`;
       /* THE OFFER — PLAN.md §4.6. A player has to be able to tell "not yet
        * shown" from "cannot afford" and from "nothing reaches it", because
-       * those three ask for three different things: wait, save, or go the long
-       * way round. This one is the only one of the three that answers itself:
-       * take something and the Force shows you three more. */
+       * those ask for different things: save, or go the long way round.
+       *
+       * THE FIRST OF THOSE NO LONGER HAPPENS. The three-card deal is gone and
+       * `reasonLocked` never answers `offer`; the sentence is kept because the
+       * reason code is kept, and a reason with no sentence is how a screen ends
+       * up printing "undefined" the day somebody reinstates one. */
       case LOCKED.offer:
-        return `${rank}${v.cost} Insight — the Force is not showing you this one yet. Wake `
-          + 'something and it deals again.';
+        return `${rank}${v.cost} Insight — the Force is not showing you this one yet.`;
       case LOCKED.gated: return `${rank}A mastery. Commit to the discipline first.`;
       case LOCKED.depth: return `${rank}Too early. This one comes later.`;
       default: return rank;
