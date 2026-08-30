@@ -1286,8 +1286,42 @@ export async function run({ check, assert }) {
     assert(onMine.length === 0,
       `${onMine.length} watchdog interventions on your own line (${onMine.map((r) => r.what).join(', ')}) — `
       + 'a body standing where it was ORDERED to stand is being rescued from its own firing position');
-    assert(d.roster.fallen.length < Cmd.OPENING_STRENGTH / 2,
-      `${d.roster.fallen.length} of ${Cmd.OPENING_STRENGTH} names came off the roll while holding an order`);
+    /**
+     * THE PREMISE, TESTED DIRECTLY — and it used to be tested by proxy.
+     *
+     * `onMine.length === 0` is vacuously true if the watchdog was not running,
+     * and the note above says exactly when that happens: `_watchdog` runs
+     * inside `CommandDirector.update`, `World.update` gates the director on
+     * `!this.over`, so the frame the commander dies is the frame it stops
+     * looking. Something has to prove it looked.
+     *
+     * What stood here was a bound on ATTRITION — fewer than five of ten names
+     * off the roll — and attrition is not this check's subject. The note that
+     * introduced it says so itself: "how much of a ten-man roster an engagement
+     * should cost is a design call nobody has made — it is in NEXT.md as a
+     * question, not in a constant here." It was a stand-in for "the fixture
+     * survived its own window", and it was a BAD one, because the quantity it
+     * measures is chaotic and inherits a phase no runner puts back: the same
+     * code read 0 names lost alone, 5 after `colosseum` and `command-pvp`, 6 on
+     * a re-run of that, and 7 inside the full suite. It failed on a change to
+     * the levy that can only ever make the enemy FIRE LESS, which is how it was
+     * caught being a tripwire on unrelated work rather than a gate on this one.
+     *
+     * So the premise is asserted as the premise. The run must still be going
+     * (or the director stopped and the count above means nothing), the line
+     * must still exist to have been left alone, and the watchdog must have done
+     * SOME work — its interventions on the horde are the proof it was awake for
+     * the same window in which it did none on your men. None of the three
+     * depends on which wave turned up.
+     */
+    assert(!world.over,
+      'the run ended inside the 90 s window, so the director stopped and "no interventions on '
+      + 'your line" is true because nothing was looking');
+    assert(d.roster.strength > 0,
+      'the whole line is dead, so there was nothing left for the watchdog to dismantle');
+    assert(log.length > 0,
+      'the watchdog logged no interventions anywhere in 90 s — it was not running, and "none on '
+      + 'your own line" says nothing about a system that never ran');
     assert(away > 25,
       `the fixture never actually left its line behind — the furthest trooper was ${away.toFixed(0)} m away`);
     world.unload();
