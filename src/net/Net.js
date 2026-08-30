@@ -1203,6 +1203,7 @@ export const LOCAL_KEYS = {
   invertY: 'your mouse', firstPerson: 'which shoulder you play over',
   scheme: 'your control scheme', deflectAim: 'how YOUR guard is aimed',
   bladeHold: 'whether YOUR blade holds position',
+  fullscreen: 'whether YOUR browser gives the game the whole screen',
   /* ── your ears ───────────────────────────────────────────────────── */
   volume: 'your speakers', music: 'your speakers', musicIndex: 'your soundtrack',
   voiceLevel: 'your speakers', voiceIndex: 'your voice', voiceLines: 'whether YOU speak',

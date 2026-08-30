@@ -554,6 +554,21 @@
         <label class="check"><input type="checkbox" id="opt-bladehold"> Blade holds position</label>
         <p class="hint">On, the blade stays where your last flick left it. Off, it eases back to the ready
           guard between swings.</p>
+        <!--
+          FULL SCREEN. A checkbox AND a button, because they answer two
+          different questions: the box is "do this every time I Ignite" and the
+          button is "do it now". Only a press can ask for it — the fullscreen
+          API is granted inside a user gesture and nowhere else — which is also
+          why this is not an action with a key binding.
+
+          `#btn-fullscreen` hides itself where the API does not exist (iOS
+          Safari on an iPhone has none), because a button that cannot work is
+          worse than no button. Menu._syncFullscreen does that.
+        -->
+        <label class="check"><input type="checkbox" id="opt-fullscreen"> Full screen when I Ignite</label>
+        <button id="btn-fullscreen" class="ghost" style="margin-top:8px">Go full screen now</button>
+        <p class="hint">Takes the browser's tabs and address bar off the screen. On a phone it also stops
+          the URL bar sliding over the controls, so it is worth having on there whatever this box says.</p>
         <h3 style="margin-top:22px">Deflection aiming</h3>
         <div id="opt-deflect" class="difflist"></div>
         <h3 style="margin-top:22px">The Force</h3>
@@ -1590,6 +1605,26 @@
       'or <b>python3 -m http.server 8080</b>) and open the address it prints.</p></div>';
   }
 </script>
+<!--
+  THE TOUCH PAD, and it is EMPTY until a finger lands on the page.
+
+  "the game actually runs pretty decent on the phone but there's no control
+  scheme… is there any way you can make touch controls for the phone? (Don't
+  fuck up the actual desktop game)"
+
+  Every node inside it is built by `src/engine/Touch.js` on the first real
+  `touchstart` and never before, so a desktop — including a laptop with a
+  touchscreen — has an empty div and one passive listener, which is the whole
+  of what this feature costs a mouse. The container is here rather than being
+  created in JS for the reason every other overlay in this file is: a surface
+  the stylesheet has to place cannot be a string inside a module.
+
+  OUTSIDE #hud, because it is not part of the readout — it is the controller.
+  The HUD is hidden on the menu and on every overlay; the pad is hidden with it
+  through `Touch.show`, which also lets go of anything a thumb was holding.
+-->
+<div id="touch" aria-hidden="true"></div>
+
 <script type="module" src="./src/main.js"></script>
 </body>
 </html>

@@ -749,8 +749,15 @@ export const MODES = {
     alwaysVersus: true,
     battles: true,
     needsSession: true,
-    fixedRules: 'Not in a meeting: the other army is deployed by a person, not composed, so no '
-      + 'wave is built for a rule to change.',
+    /* NO `fixedRules`, and the first draft had one — "the other army is
+     * deployed by a person, not composed, so no wave is built for a rule to
+     * change" — which was simply not true of the code under it. A meeting is
+     * run by a CommandDirector like `skirmish`, `command` and `campaign`, and
+     * driven with every condition legal it carries the same three they do
+     * (vanguard, silence, hammer). The sentence greyed a column that worked,
+     * which is the Deploy panel lying about the game rather than describing
+     * it. Rules apply to the FIELD, so both sides get them, and the host picks
+     * them for everybody — see SESSION_KEYS. */
   },
   skirmish: {
     name: 'Skirmish',

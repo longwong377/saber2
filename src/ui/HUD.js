@@ -1609,6 +1609,19 @@ export class HUD {
       const d = document.createElement('div');
       d.className = 'pw';
       /**
+       * THE SLOT NAMES ITS ACTION — one attribute, and it is what makes a
+       * phone playable past the six buttons a thumb rack can hold.
+       *
+       * There are forty-four actions and two thumbs, so the touch pad carries
+       * the ones a fight cannot be had without and nothing else. The Force
+       * verbs are already HERE, in a row of exactly the powers this player
+       * holds, with the cooldown, the price and the ready state on each, under
+       * the right thumb. `Touch.bindWheel` makes them pressable; this is the
+       * only thing that had to change for it, and it changes nothing on a
+       * desktop — an unread data attribute is not a behaviour.
+       */
+      d.dataset.action = action;
+      /**
        * FIVE CHILDREN, EACH CREATED AND HELD — not one innerHTML blob picked
        * apart with `querySelector` afterwards.
        *
@@ -1920,7 +1933,20 @@ export class HUD {
     this._lightOrder();
   }
 
-  show(on) { this.el.hud.classList.toggle('hidden', !on); }
+  /**
+   * THE READOUT GOES UP OR DOWN — and whatever else belongs with it.
+   *
+   * `onShow` exists for exactly one caller: the touch pad is the CONTROLLER
+   * rather than part of the readout, so it lives outside `#hud` — but it must
+   * appear and vanish on precisely the same four moments, and a phone player
+   * whose thumb is on GUARD when the menu opens must not keep guarding. Four
+   * hand-copied `touch.show(...)` lines beside the four `hud.show(...)` calls
+   * is the shape this repository keeps deleting; one hook is not.
+   */
+  show(on) {
+    this.el.hud.classList.toggle('hidden', !on);
+    this.onShow?.(!!on);
+  }
 
   setLevel(name, difficulty) {
     this.el.level.textContent = name;
