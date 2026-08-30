@@ -156,6 +156,38 @@ function delegated(opts = {}) {
  */
 async function commandWorld(opts = {}) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
+  /**
+   * THE TWO STREAMS `clocked` DOES NOT PUT BACK, stated by the checks that
+   * need them stated.
+   *
+   * `restoreShared` covers `enemyRng`, `duelRng` and `commandRng`. It does NOT
+   * cover Waves' stream — `_shared.mjs` says so, and says why: the seed is part
+   * of what a wave check is measuring — and it does not cover `World.js`'s one
+   * module-level `rng` either. A fixture that boots a real world and drives it
+   * therefore inherits both from whatever ran before it in the process.
+   *
+   * For most of this file that is harmless: the checks read structure, orders
+   * and interventions, which do not care which wave turned up. For the ones
+   * that read ATTRITION it is the whole answer. The watchdog check bounds the
+   * roster at fewer than five of ten lost; it reads none at all alone, five
+   * after `colosseum` and `command-pvp`, and seven inside the full suite — the
+   * same code, three answers, and none of them about the watchdog. It is a
+   * tripwire on unrelated work rather than a gate on this one, and it went off
+   * on a change to the levy that can only ever make the enemy FIRE LESS.
+   *
+   * OPT-IN, because pinning it for every check in this file is re-tuning the
+   * file to fix one fixture: the first seed tried turned "the last wave of the
+   * area did not pay" red instead. So the checks that measure attrition name a
+   * seed and the rest are left exactly as they were. Named rather than rolled,
+   * for `theline.11`'s reason — a fixture that draws a fresh one reports a
+   * different number every time it is looked at.
+   */
+  if (opts.waveSeed != null) {
+    const { seedWaves } = await import('../../src/game/Waves.js');
+    const { seedWorld } = await import('../../src/game/World.js');
+    seedWaves(opts.waveSeed);
+    seedWorld?.(opts.waveSeed);
+  }
   const { world } = await bootWorld({
     level: 'geonosis',
     settings: { mode: 'command', level: 'geonosis', order: opts.order || 'jedi' },
@@ -1202,7 +1234,10 @@ export async function run({ check, assert }) {
      * required — a driven wave that happens to place every body somewhere
      * reachable is a good wave, not a broken watchdog.
      */
-    const { world, d, input } = await commandWorld({ formation: 'cover' });
+    /* THE STREAMS ARE NAMED because the roster assertion below is about
+     * ATTRITION, and neither Waves' nor World's is put back between suites —
+     * see the note on `commandWorld` for what that was costing. */
+    const { world, d, input } = await commandWorld({ formation: 'cover', waveSeed: 20260830 });
     const mine = new Set(d.army.tiers.map((t) => t.type));
     // A commander who keeps walking: full stick with a slow turn, which is a
     // ~80 m circle at 4.6 m/s and takes the line well outside anything the
