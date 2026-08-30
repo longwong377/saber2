@@ -6272,7 +6272,13 @@ export const BOONS = [
     },
   },
   {
-    id: 'conduit', icon: '🌊', name: 'Conduit', tag: 'Channel',
+    /* THE NAME IS 'Thief' AND THE ID IS STILL `conduit`. The id is a save key
+     * and a wire key — it is in `takenBoons`, in a Company record, in the
+     * lattice's `to:` lists and in every check that names the facet — so
+     * renaming it would silently strip the facet from every existing run. What
+     * a player reads is `name`; what the game stores is `id`, and only one of
+     * them was asked to change. */
+    id: 'conduit', icon: '🌊', name: 'Thief', tag: 'Channel',
     rarity: 'rare', axes: ['force'], stack: 3,
     text: 'The fight feeds the Force: every body you put down hands a measure of it straight back.',
     apply(p, s = 1) {

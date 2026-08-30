@@ -6228,7 +6228,10 @@ export class Menu {
       ['open', 'Open',
        'A deep purse at every deploy, and it refills for the next one. You still kneel, still choose, '
        + 'and prices still climb — a full lattice is still further than one run\u2019s spending.'],
-      ['all', 'Everything woken',
+      /* NAMED BY THE PLAYER. The key stays 'all' — it is written to settings,
+       * read by `World.spawnPlayer` and named by SETTING_READERS — and only
+       * the label on the card changed. */
+      ['all', 'Quarth Mode',
        'Every facet already yours before the first wave. No choice at all: this is for looking at a power, not earning it.'],
     ];
     host.innerHTML = '';

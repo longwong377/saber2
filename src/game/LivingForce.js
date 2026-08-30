@@ -265,7 +265,7 @@ export const CURRENTS = [
     creed: { jedi: 'What is turned aside was never yours to answer for.',
              sith: 'Let it come. Let it come back.' } },
   { axis: 'force', root: 'attune-force', 
-    jedi: 'The Consular', sith: 'The Sorcerer', grey: 'The Well',
+    jedi: 'The Book', sith: 'The Sorcerer', grey: 'The Well',
     creed: { jedi: 'The Force is not a weapon you spend.',
              sith: 'Everything is a weapon, if you are willing to spend it.' } },
   { axis: 'body', root: 'attune-body', 
