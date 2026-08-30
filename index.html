@@ -354,16 +354,25 @@
                of that back. See `.col.narrow.pinned` in styles.css. -->
           <h3 class="stacked">Mode</h3>
           <div id="mode-list" class="difflist"></div>
-          <!-- A MODE THAT NEEDS OTHER PEOPLE SAYS SO BEFORE YOU IGNITE, not
-               after. `MODES[key].needsSession` is the declaration and
-               `Menu._syncSessionNeed` is its only reader; the line is empty and
-               takes no space for every mode that does not declare it
-               (`.needline:empty` in styles.css). The Commander Battle stands
-               its meeting down and fights the composed wave when it is deployed
-               alone — which is the right fallback and is not the thing the
-               player picked the card for. -->
-          <p id="mode-need" class="hint needline"></p>
         </div>
+        <!-- A MODE THAT NEEDS OTHER PEOPLE SAYS SO BEFORE YOU IGNITE, not
+             after. `MODES[key].needsSession` is the declaration and
+             `Menu._syncSessionNeed` is its only reader; the line is empty and
+             takes no space for every mode that does not declare it
+             (`.needline:empty` in styles.css). The Commander Battle stands its
+             meeting down and fights the composed wave when it is deployed alone
+             — which is the right fallback and is not the thing the player
+             picked the card for.
+
+             OUTSIDE THE SCROLLER, and that is not a taste. `.col-scroll` fades
+             its bottom edge while there is more below it, and `_revealMode`
+             scrolls the chosen card clear of that fade; a paragraph after the
+             last card means there is always more below it, so the fade never
+             comes off and the last mode in the list sits under it. Measured by
+             `lineseen.1` the moment this line was added inside: at 1366x768,
+             choosing Campaign left the card at 374..410 of a 410 px column.
+             Here it is beside the button it is about. -->
+        <p id="mode-need" class="hint needline"></p>
         <button id="btn-deploy" class="primary">Ignite</button>
       </div>
     </section>

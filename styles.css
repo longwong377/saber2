@@ -475,7 +475,23 @@ b{font-weight:800}
  * panel-hi inside 2 px of ink — instead of a translucent sliver. It is a
  * physical object in the same language as everything else on the screen, and
  * it is 8 px of permanent evidence that there is more list than window. */
+/* THE FADE NEEDS SOMETHING TO FADE OVER, and the last card in the list is not
+   it. `.more` masks the bottom 26 px while there is more below; at the END of
+   the scroll there is nothing more, so the mask comes off and the last card is
+   legible — which held for as long as the last card could reach the end. Add an
+   eleventh mode and it cannot: `_revealMode` asks for the card to sit 26 px
+   clear of the bottom, the scroller is already at its maximum, and the card
+   stays flush against the edge. Measured by `lineseen.1` the day the Commander
+   Battle was added: at 1366x768, choosing Campaign left it at 374..410 of a
+   410 px column.
+   The padding is inside the scroller, so it scrolls with the content and gives
+   the last card exactly the room the reveal asks for. It is the SAME 26 as the
+   mask below and as `Menu.SCROLL_FADE`, and `front-screen.mjs` reads all three
+   out of the shipped files and asserts they agree — a fade that is deeper than
+   the room left for it is the defect this padding removes, arriving the other
+   way round. */
 .col.narrow.pinned>.col-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;
+  padding-bottom:26px;
   scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
 .col.narrow.pinned>.col-scroll::-webkit-scrollbar{width:8px;background:var(--void)}
 .col.narrow.pinned>.col-scroll::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}

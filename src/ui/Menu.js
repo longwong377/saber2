@@ -1002,7 +1002,10 @@ export const SETTING_READERS = {
    * free-form number and exactly one function decides what it means. */
   teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
-  commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
+  /* The expression, not the whole line: `versus` is two clauses now — the box,
+   * and `MODES[mode].alwaysVersus` for the mode that IS a meeting — so the
+   * reader this setting has is the half that mentions it. */
+  commandVersus:   ['game/Command.js', '!!s.commandVersus'],
   /* The meeting's four, and `versusCommandConfig` is the only reader of any of
    * them — the same rule `commandConfig` and `sandboxConfig` are held to. */
   versusStrength:  ['game/Command.js', 's.versusStrength'],

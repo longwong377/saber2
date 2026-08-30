@@ -284,6 +284,27 @@ export async function run({ check, assert }) {
       const more = rule('.col.narrow.pinned.more>.col-scroll');
       assert(more && more.includes(`calc(100% - ${SCROLL_FADE}px)`),
         `the mask does not fade ${SCROLL_FADE}px — Menu.SCROLL_FADE has drifted from styles.css`);
+      /**
+       * …AND THE ROOM LEFT FOR IT IS THE SAME NUMBER.
+       *
+       * The fade covers the bottom 26 px WHILE there is more below; at the end
+       * of the scroll there is nothing more, the mask comes off, and the last
+       * card is legible. That held for as long as the last card could reach the
+       * end — and it stopped the day an eleventh mode was added: `_revealMode`
+       * asks for the card to sit clear of the fade, the scroller is already at
+       * its maximum, and the card stays flush against the edge. `lineseen.1`
+       * measured it at 1366x768: Campaign at 374..410 of a 410 px column.
+       *
+       * The scroller carries `padding-bottom` of exactly the fade for that
+       * reason, and it is a THIRD copy of 26 — so it is read out of the
+       * stylesheet here beside the other two rather than left to drift.
+       */
+      const scrollRule = CSS.match(/\n\.col\.narrow\.pinned>\.col-scroll\{([^}]*)\}/);
+      assert(scrollRule, '.col.narrow.pinned>.col-scroll has no rule of its own');
+      const pad = scrollRule[1].match(/padding-bottom:\s*([0-9.]+)px/);
+      assert(pad && Math.abs(parseFloat(pad[1]) - SCROLL_FADE) < 0.5,
+        `the scroller reserves ${pad ? pad[1] : 'no'}px under its content against a ${SCROLL_FADE}px `
+        + 'fade — the last card in any of these columns cannot be scrolled clear of it');
       return `more/less toggled at 0, 160 and ${788 - 466} of 788-466, and the mask is ${SCROLL_FADE}px`;
     } finally { close(); }
   });
