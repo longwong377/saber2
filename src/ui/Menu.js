@@ -166,7 +166,10 @@ import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES,
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
          conflicts, chordKey, WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
-         codesFor, isPadCode, PAD_MODIFIERS } from '../engine/Bindings.js';
+         codesFor, isPadCode, PAD_MODIFIERS,
+         /* The bindings' own storage key, so the settings blob names the real
+          * one rather than a second copy of the string. See `_wirePortable`. */
+         STORE_KEY as BIND_KEY } from '../engine/Bindings.js';
 // The six formation orders, so they can be pushed through Bindings' seam below.
 /* `ORDERS` is aliased because Order.js already exports a table of that name —
  * the Jedi orders a crystal belongs to — and the two are unrelated. This one is
@@ -4864,6 +4867,83 @@ export class Menu {
    * still there and comes straight back when they leave the tier — the setting
    * is untouched, only the control's appearance follows the tier.
    */
+  /**
+   * SETTINGS AND KEYBINDS AS TEXT — the one way they cross a browser.
+   *
+   * "it works perfectly fine on any other browser but obviously I would lose
+   * my saved settings… I just don't want to lose my personal keybinds."
+   *
+   * `localStorage` is per-origin AND per-browser; nothing in the page can read
+   * another browser's copy, so the only honest answer is to hand the player the
+   * bytes. Copy writes the two blobs this game owns — the settings and the
+   * bindings, under their real storage keys — and Load puts them back through
+   * the same readers that boot uses, so a blob from an older build is coerced
+   * exactly as a stored one would be rather than trusted.
+   *
+   * IT DOES NOT RELOAD THE PAGE. The settings are applied live and saved; the
+   * bindings are handed to the controller through the hook the rebinder already
+   * uses. A player who loads a blob and then plays should not have to be told
+   * to refresh first.
+   */
+  _wirePortable() {
+    const box = document.getElementById('opt-portable');
+    const said = document.getElementById('portable-said');
+    const copy = document.getElementById('btn-portable-copy');
+    const load = document.getElementById('btn-portable-load');
+    if (!box || !copy || !load) return;
+    const tell = (m) => { if (said) said.textContent = m; };
+    this._activate(copy, () => {
+      audio.ui('click');
+      const blob = JSON.stringify({
+        v: 1,
+        [STORE_KEY]: this.s,
+        [BIND_KEY]: loadBindings(),
+      });
+      box.value = blob;
+      box.select?.();
+      /* The clipboard needs a gesture and can still be refused; the text is in
+       * the box either way, which is why the box is the deliverable and the
+       * clipboard is the convenience. */
+      try {
+        navigator.clipboard?.writeText?.(blob)
+          .then(() => tell('Copied — paste it into the other browser.'),
+                () => tell('Select the text above and copy it.'));
+      } catch { tell('Select the text above and copy it.'); }
+      tell('Copied — paste it into the other browser.');
+    });
+    this._activate(load, () => {
+      audio.ui('click');
+      let blob = null;
+      try { blob = JSON.parse(box.value.trim()); } catch { return tell('That is not a settings blob.'); }
+      if (!blob || typeof blob !== 'object') return tell('That is not a settings blob.');
+      const s = blob[STORE_KEY], b = blob[BIND_KEY];
+      if (!s && !b) return tell('No settings or keybinds in that text.');
+      let n = 0;
+      if (s && typeof s === 'object') {
+        try {
+          localStorage.setItem(STORE_KEY, JSON.stringify(s));
+          /* Read back through the loader rather than trusting the blob: it is
+           * the same coercion a stored blob gets on boot, so an old or a
+           * half-written one cannot arrive as something the game has never
+           * seen. */
+          Object.assign(this.s, loadSettings());
+          this._syncAll?.();
+          this.hooks.onFeel?.(this.s);
+          n++;
+        } catch { return tell('This browser refused to save settings.'); }
+      }
+      if (b && typeof b === 'object') {
+        try {
+          localStorage.setItem(BIND_KEY, JSON.stringify(b));
+          this.hooks.onBindings?.(loadBindings());
+          n++;
+        } catch { return tell('This browser refused to save keybinds.'); }
+      }
+      tell(n === 2 ? 'Loaded — settings and keybinds are yours again.'
+                   : 'Loaded.');
+    });
+  }
+
   _syncBloomBox() {
     const box = document.getElementById('opt-bloom');
     if (!box) return;
@@ -7394,6 +7474,7 @@ export class Menu {
     }
     document.getElementById('opt-fullscreen')?.closest('label')
       ?.classList.toggle('hidden', !canFullscreen());
+    this._wirePortable();
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._syncBloomBox();
     this._check('opt-showperf', 'showPerf', () => this._syncDiag());

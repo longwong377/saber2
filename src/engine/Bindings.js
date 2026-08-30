@@ -29,7 +29,7 @@
  * deliberate rebind the player made, which is the complaint the whole
  * mechanism exists to avoid.
  */
-const STORE_KEY = 'saber.bindings.v2';
+export const STORE_KEY = 'saber.bindings.v2';
 const LEGACY_KEYS = ['saber.bindings.v1'];
 const RETIRED = {
   // v1 predates the RMB-guards / LMB-attacks swap. Those two rows come back

@@ -2864,3 +2864,18 @@ body:has(#touch.on) .powers .pw{touch-action:none}
    reads as a label rather than competing with the name above it. */
 .hol-what{font:var(--ui);font-size:10px;line-height:1.35;color:var(--dim);
   padding:0 2px 8px;letter-spacing:.02em}
+
+/* The boot screen's own error line — see the note in index.html. Monospace and
+   selectable, because the whole point is that a player can read it back. */
+.boot-err{max-width:min(560px,88vw);margin:18px auto 0;padding:14px 16px;
+  border:2px solid var(--stroke);background:rgba(8,10,20,.72);
+  font:var(--mono);font-size:11px;line-height:1.5;color:var(--ink);
+  white-space:pre-wrap;text-align:left;user-select:text;-webkit-user-select:text}
+
+/* The settings blob: a plain text field, monospace and selectable, because its
+   whole job is to be copied out and pasted in. See index.html. */
+.portable{width:100%;box-sizing:border-box;resize:vertical;margin-top:8px;
+  padding:8px 10px;border:2px solid var(--stroke);background:rgba(8,10,20,.62);
+  color:var(--ink);font:var(--mono);font-size:10px;line-height:1.45;
+  user-select:text;-webkit-user-select:text}
+.portrow{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}

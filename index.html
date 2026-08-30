@@ -206,6 +206,69 @@
     <div class="logo"><h1 class="wm"><img class="wordmark" src="./assets/menu/logo.webp" width="1729" height="470" alt="Battlefield Borz" decoding="async"></h1></div>
     <div class="boot-bar"><i id="boot-fill"></i></div>
     <div id="boot-msg" class="boot-msg">forging blade…</div>
+    <!--
+      WHY THE BOOT SCREEN CAN NOW SAY WHAT WENT WRONG.
+
+      A player: "for whatever reason the game doesn't want to load on the
+      browser I've been playing it on, it works perfectly fine on any other
+      browser… it is stuck at forging blade."
+
+      "forging blade…" is the text ABOVE, in the markup, and the first warm-up
+      step is a no-op — so a page sitting on it has not reached step one. The
+      module graph never ran at all. That happens for reasons this page could
+      always see and never showed: one module failing to parse on an older
+      engine takes the whole graph with it, a 404 on any file in it does the
+      same, and `boot()` had no `.catch`, so anything it threw left the screen
+      exactly here, forever, in silence.
+
+      A CLASSIC SCRIPT AND NOT A MODULE, deliberately. A module cannot report
+      its own SyntaxError — it never runs — so the reporter has to be parsed by
+      a different mechanism than the thing it is watching. This is ES5 on
+      purpose for the same reason: it must survive the engine that could not
+      read the game.
+    -->
+    <div id="boot-err" class="boot-err" hidden></div>
+    <script>
+      (function () {
+        var box = document.getElementById('boot-err');
+        var msg = document.getElementById('boot-msg');
+        var shown = false;
+        function say(what, where) {
+          if (shown || !box) return;
+          shown = true;
+          box.hidden = false;
+          box.textContent = 'The game could not start on this browser.\n\n'
+            + what + (where ? '\n' + where : '')
+            + '\n\nIt is very likely this browser is a version older than one of the '
+            + 'features the game uses. It runs in another browser; your settings and '
+            + 'keybinds can be carried over with Options → Settings file → Copy.';
+          if (msg) msg.textContent = 'could not start';
+        }
+        window.addEventListener('error', function (e) {
+          /* A failed <script>/<img>/<link> fires an error whose target is the
+             element, not a message: name the file rather than saying "Script
+             error", which is what a cross-origin module reports. */
+          var t = e && e.target;
+          if (t && t !== window && t.src) return say('A file the game needs did not load.', t.src);
+          say((e && e.message) || 'A script error with no message.',
+              e && e.filename ? e.filename + ':' + e.lineno : '');
+        }, true);
+        window.addEventListener('unhandledrejection', function (e) {
+          var r = e && e.reason;
+          say((r && (r.message || r)) + '' || 'A promise failed with no message.', '');
+        });
+        /* AND THE SILENT CASE: no error fired and nothing started. An import
+           map that resolves nothing, a module blocked by an extension, a
+           network that stalled — all of them look like this screen forever.
+           `window.SABER` is what main.js sets when it has finished. */
+        setTimeout(function () {
+          if (!window.SABER && !shown) {
+            say('It has been 30 seconds and the game has not started, with no error reported.',
+                'That usually means a script was blocked — by an extension, or by the browser itself.');
+          }
+        }, 30000);
+      }());
+    </script>
   </div>
 </div>
 
@@ -569,6 +632,29 @@
         <button id="btn-fullscreen" class="ghost" style="margin-top:8px">Go full screen now</button>
         <p class="hint">Takes the browser's tabs and address bar off the screen. On a phone it also stops
           the URL bar sliding over the controls, so it is worth having on there whatever this box says.</p>
+        <!--
+          YOUR SETTINGS, AS TEXT YOU CAN CARRY.
+
+          A player: "it works perfectly fine on any other browser but obviously
+          I would lose my saved settings… I just don't want to lose my personal
+          keybinds."
+
+          Settings and keybinds live in this browser's localStorage, which is
+          per-browser by design and cannot be read across one. So they are
+          offered as a blob instead: Copy on the machine that has them, Load on
+          the one that does not. Keybinds are the point — they are the thing
+          nobody wants to type twice — so they travel with the rest.
+        -->
+        <h3 style="margin-top:22px">Settings file</h3>
+        <p class="hint">Your options and keybinds live in this browser only. Copy them here to carry
+          them to another browser — or to keep a copy before anything goes wrong.</p>
+        <textarea id="opt-portable" class="portable" rows="3" spellcheck="false"
+          placeholder="Press Copy to put your settings here, or paste a saved blob and press Load."></textarea>
+        <div class="portrow">
+          <button id="btn-portable-copy" class="ghost">Copy</button>
+          <button id="btn-portable-load" class="ghost">Load</button>
+          <span id="portable-said" class="hint"></span>
+        </div>
         <h3 style="margin-top:22px">Deflection aiming</h3>
         <div id="opt-deflect" class="difflist"></div>
         <h3 style="margin-top:22px">The Force</h3>

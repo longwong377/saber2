@@ -2400,7 +2400,17 @@ const _roseA = new THREE.Vector3(), _roseB = new THREE.Vector3();
 
 /* ── go ──────────────────────────────────────────────────────────────── */
 
-boot().then(() => requestAnimationFrame(frame));
+boot().then(() => requestAnimationFrame(frame), (err) => {
+  /* A THROW IN BOOT USED TO BE A SCREEN THAT NEVER MOVED. `.then(fn)` with no
+   * second argument swallows the rejection into an unhandled one, so the boot
+   * screen sat on whatever step it had reached with nothing said. The reporter
+   * in index.html draws the message; this makes sure it hears about it, and it
+   * re-throws so the console still carries the stack. */
+  window.dispatchEvent(new ErrorEvent('error', {
+    message: (err && err.message) || String(err), error: err,
+  }));
+  throw err;
+});
 
 // Handy for tuning from the console.
 window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud, touch,
