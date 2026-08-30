@@ -6253,13 +6253,13 @@ export const BOONS = [
   {
     id: 'tutaminis', icon: '🌡', name: 'Tutaminis', tag: 'Absorption',
     rarity: 'common', axes: ['force', 'guard'],
-    text: 'Bolts that strike you are absorbed — they feed your Force instead of only wounding you.',
+    text: 'Blaster bolts that strike you are absorbed: they feed your Force instead of only wounding you.',
     apply(p) { p.boonMods.absorb = true; },
   },
   {
     id: 'repulse', icon: '💥', name: 'Force Repulse', tag: 'Impact',
     rarity: 'rare', axes: ['force'],
-    text: 'Landing from a height blows everything nearby off its feet.',
+    text: 'Landing from a height blows everything within 8 m off its feet, harder the further you fell.',
     apply(p) { p.boonMods.repulse = true; },
   },
   {
@@ -6434,7 +6434,7 @@ export const BOONS = [
   {
     id: 'encircle', icon: '⭕', name: 'Encircled', tag: 'Bulwark',
     rarity: 'common', axes: ['guard', 'body'], stack: 3,
-    text: 'A crowd is cover. Each enemy close to you takes 6% off the damage all of them do, up to 14%.',
+    text: 'A crowd is cover. Each enemy within 7 m takes 6% off the damage all of them do to you, up to 42%.',
     // CAPPED, and this is the general rule for anything that subtracts damage:
     // `encircleGuard` scales this by the crowd size, so an uncapped third rank
     // in a wave-30 press would reach total immunity — a stack that ends the
@@ -6520,7 +6520,7 @@ export const BOONS = [
   {
     id: 'momentum', icon: '🌠', name: 'Momentum', tag: 'Cadence',
     rarity: 'common', axes: ['body'], stack: 3,
-    text: '6% faster on your feet, and each kill adds another 5% for a few seconds. Standing still spends it.',
+    text: '6% faster on your feet, and each kill adds another 5% — five kills deep, decaying a stack every 4 seconds once you stop.',
     apply(p, s = 1) {
       p.boonMods.moveSpeed *= grow(1.06, s);
       p._momentumPer = (p._momentumPer ?? 0) + 0.05 * s;
@@ -6539,7 +6539,7 @@ export const BOONS = [
   {
     id: 'detonate', icon: '☢', name: 'Detonation', tag: 'Blast',
     rarity: 'rare', axes: ['force', 'dark'], stack: 3,
-    text: 'What you fell goes off. Every kill explodes for 14 damage to whatever was standing over it.',
+    text: 'What you fell goes off. Every kill explodes for 14 damage out to 4.6 m, falling off to 45% at the rim.',
     apply(p, s = 1) {
       p._detonate = (p._detonate ?? 0) + 14 * s;
       boonOnKill(p, 'detonate', detonateBody);
@@ -6548,7 +6548,7 @@ export const BOONS = [
   {
     id: 'steadfast', icon: '🗿', name: 'Steadfast', tag: 'Stance',
     rarity: 'rare', axes: ['guard', 'body'], stack: 2,
-    text: 'Nothing staggers you, and any blow heavy enough to have tried lands for half.',
+    text: 'Nothing staggers you, and any blow over 14 damage — the ones that would have — lands for half.',
     // Capped for the same reason as Encircled: this one subtracts damage
     // outright, so two ranks of 0.5 would be immunity to every heavy blow in
     // the game.
@@ -6713,8 +6713,7 @@ export const BOONS = [
      * with his line can tell them where to shoot. It is worth nothing in clear
      * air, which is what makes it a card you take for a ground rather than a
      * card you always take. */
-    text: 'You feel what you cannot see. Your line sees twice as far through a storm as anything shooting at it.'
-      + 'far through a storm as anything shooting at it.',
+    text: 'You feel what you cannot see. Your line sees twice as far through a storm as anything shooting at it.',
     apply(p) { p.boonMods.stormEyes = 0.5; },
   },
   {
@@ -6724,8 +6723,7 @@ export const BOONS = [
      * a rule change because it pays a currency for an act that has never paid
      * anything. It is also the one card that argues with §4.7's other half:
      * cover is finite, and this makes breaking it worth doing. */
-    text: 'Nothing is wasted. Every prop you break pays 1 Insight — and the field has only so much in it.'
-      + 'so much in it.',
+    text: 'Nothing is wasted. Every prop you break pays 1 Insight — and the field has only so much in it.',
     /* ONE RANK. What it changes is a rule — whether an act pays at all — and a
      * second rank could only ever be a number on top of it, which is the thing
      * this block of cards is not. */
@@ -6881,8 +6879,7 @@ export const ATTUNEMENTS = [
   {
     id: 'attune-guard', icon: '🛡', name: 'Attunement of the Guard', tag: 'Attunement',
     rarity: 'epic', stack: Infinity, attune: 'guard',
-    text: 'Returns strike 12% harder, blows land 12% lighter, and Flow builds 5% faster. Permanent, and repeatable.'
-      + 'Permanent, and repeatable.',
+    text: 'Returns strike 12% harder, blows land 12% lighter, and Flow builds 5% faster. Permanent, and repeatable.',
     // See `wardGuard`: this is the game's only defensive axis that compounds,
     // and it is the blade attunement's own step in the opposite direction.
     apply(p) {
@@ -6968,7 +6965,7 @@ export const ATTUNEMENTS = [
      * no number they can see, which is the exact shape of the two dead
      * attunements this suite caught last pass.
      */
-    text: 'Your communion reaches further and carries more — and half of what you give, you keep.',
+    text: 'Your communion reaches 12% further and its edge grows another 16%, and half of what you give away you also keep. Permanent, and repeatable.',
     apply(p) {
       const edge = p._bondEdge = (p._bondEdge ?? 0) + BOND.step;
       p._bondRange = (p._bondRange ?? BOND.range) * 1.12;

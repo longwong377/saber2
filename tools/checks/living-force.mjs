@@ -1891,7 +1891,7 @@ export async function run({ check, assert }) {
     const STAT = ['maxHp', 'maxForce', 'maxStamina'];
     /* A digit, or the words English uses for one. */
     const MAGNITUDE = /\d|\bhalf\b|\btwice\b|\bdouble[ds]?\b|\bthird\b|\bquarter\b|\bfifth\b|\bentirely\b|\bin full\b|\boutright\b/i;
-    const mute = [], silent = [];
+    const mute = [], silent = [], doubled = [];
     const cards = [...Waves.BOONS, ...(Waves.ATTUNEMENTS || [])];
     const inTree = new Set(Tree.FACETS.map((f) => f.id));
     let numeric = 0, switches = 0;
@@ -1899,6 +1899,23 @@ export async function run({ check, assert }) {
       if (!inTree.has(b.id)) continue;
       const text = String(b.text || '');
       if (!text.trim()) { silent.push(b.id); continue; }
+      /**
+       * A SENTENCE THAT SAYS ITSELF TWICE, which is what a botched edit ships.
+       *
+       * `text:` in this table is sometimes ONE literal and sometimes several
+       * joined with `+` across lines. A rewrite that replaced only the first
+       * left the old tail glued on the end, and three cards went out reading
+       * "…only so much in it.so much in it." and "…Permanent, and
+       * repeatable.Permanent, and repeatable." Nothing caught it: the text was
+       * present, it was long enough, and it stated its magnitude. Only reading
+       * it did — so this reads it.
+       */
+      for (let n = Math.floor(text.length / 2); n >= 10; n--) {
+        if (text.slice(0, -n).includes(text.slice(-n))) {
+          doubled.push(`${b.id} ends by repeating "${text.slice(-n)}"`);
+          break;
+        }
+      }
       /* NO LENGTH BAR. The first cut of this failed `celerity` — "You move 20%
        * faster." — for being 24 characters, which is the check preferring prose
        * to clarity and is the opposite of the point. Short is not vague; vague
@@ -1917,6 +1934,8 @@ export async function run({ check, assert }) {
       }
     }
     assert(!silent.length, `card(s) in the lattice with no text at all: ${silent.join(', ')}`);
+    assert(!doubled.length,
+      `card(s) whose text repeats itself — a half-applied edit: ${doubled.join('; ')}`);
     assert(!mute.length,
       `${mute.length} card(s) change a number and never print one — the exact complaint:\n  `
       + mute.join('\n  '));
