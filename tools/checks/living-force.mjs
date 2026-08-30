@@ -1854,4 +1854,73 @@ export async function run({ check, assert }) {
       `${vague.length} unbound card(s) never name their power: ${vague.join('; ')}`);
     return `${Powers.UNBOUND.length} cards, each naming its power, its cooldown and its price`;
   });
+
+  check('a card that changes a number says which number, and by how much', async () => {
+    /**
+     * "go through everything else in the holocron and make sure the player can
+     * actually understand what they're getting and that it's not too vague"
+     *
+     * They were describable in two piles. Some cards stated a magnitude —
+     * "a quarter sooner", "twice as long", "Thirty more vitality" — and some
+     * gave you an image and nothing to plan with: "Cuts bite deeper", "a share
+     * of every blow", "hands a measure of it straight back", "the less the
+     * Force asks", "give it a few seconds". A player choosing between two
+     * cards cannot compare a share with a measure.
+     *
+     * Every one of those had a number sitting in its own `apply` — 0.35, 22,
+     * 0.85, five seconds — so the fix was never invention, it was transcription.
+     * The names keep the Book's voice; the bodies carry the arithmetic.
+     *
+     * WHAT THIS CANNOT DO is check that the number is the RIGHT one — no test
+     * short of reading English can. What it can do is refuse the shape the
+     * whole complaint was about: a card that moves a number and does not print
+     * one. A card whose effect is a switch (Force lightning, Triage, Salvage)
+     * is exempt from the magnitude and not from the rest.
+     */
+    const { defaultBoonMods } = await import('../../src/game/Player.js');
+    const { modsMoved } = await import('./_shared.mjs');
+    /* Rich enough for the cards that reach past `boonMods` — a blade with a
+     * length, a control block with a deadzone — because the alternative is
+     * exempting exactly the cards that were vaguest. */
+    const stub = () => ({
+      boonMods: defaultBoonMods(), boons: new Set(),
+      maxHp: 100, hp: 100, maxForce: 100, maxStamina: 100, stamina: 100,
+      saber: { bladeLength: 1.4, coreWidth: 1 },
+      control: { deadzone: 0.2, sensitivity: 1 },
+    });
+    const STAT = ['maxHp', 'maxForce', 'maxStamina'];
+    /* A digit, or the words English uses for one. */
+    const MAGNITUDE = /\d|\bhalf\b|\btwice\b|\bdouble[ds]?\b|\bthird\b|\bquarter\b|\bfifth\b|\bentirely\b|\bin full\b|\boutright\b/i;
+    const mute = [], silent = [];
+    const cards = [...Waves.BOONS, ...(Waves.ATTUNEMENTS || [])];
+    const inTree = new Set(Tree.FACETS.map((f) => f.id));
+    let numeric = 0, switches = 0;
+    for (const b of cards) {
+      if (!inTree.has(b.id)) continue;
+      const text = String(b.text || '');
+      if (!text.trim()) { silent.push(b.id); continue; }
+      /* NO LENGTH BAR. The first cut of this failed `celerity` — "You move 20%
+       * faster." — for being 24 characters, which is the check preferring prose
+       * to clarity and is the opposite of the point. Short is not vague; vague
+       * is vague, and the magnitude rule below is what measures it. */
+      const before = stub(), after = stub();
+      try { b.apply(after, 1); } catch { continue; }   // needs a live world: not this check's business
+      const moved = modsMoved(after.boonMods, before.boonMods)
+        .filter((k) => typeof after.boonMods[k] === 'number');
+      const stats = STAT.filter((k) => after[k] !== before[k]);
+      const blade = after.saber.bladeLength !== before.saber.bladeLength
+        || after.saber.coreWidth !== before.saber.coreWidth;
+      if (!moved.length && !stats.length && !blade) { switches++; continue; }
+      numeric++;
+      if (!MAGNITUDE.test(text)) {
+        mute.push(`${b.id} moves ${[...moved, ...stats].join('/') || 'the blade'} and says "${text}"`);
+      }
+    }
+    assert(!silent.length, `card(s) in the lattice with no text at all: ${silent.join(', ')}`);
+    assert(!mute.length,
+      `${mute.length} card(s) change a number and never print one — the exact complaint:\n  `
+      + mute.join('\n  '));
+    assert(numeric > 20, `only ${numeric} cards were measured as numeric — the stub has stopped applying them`);
+    return `${numeric} cards move a number and every one states a magnitude; ${switches} are switches`;
+  });
 }

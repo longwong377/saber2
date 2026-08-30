@@ -412,11 +412,23 @@ export async function run({ check, assert }) {
       [new RegExp(`(a|an|one|two|three|four|five) ${F}s? (?:sooner|less|shorter|cheaper)`, 'i'),
         (m) => 1 - (NUM[m[1].toLowerCase()] ?? 1) / DEN[m[2].toLowerCase()]],
       // "a third of your vitality, gone"
-      [new RegExp(`an? ${F} of your \\w+, gone`, 'i'), (m) => 1 - 1 / DEN[m[1].toLowerCase()]],
+      [new RegExp(`an? ${F} of your \\w+,? (?:is )?gone`, 'i'), (m) => 1 - 1 / DEN[m[1].toLowerCase()]],
       // "in half the time"
       [new RegExp(`in ${F} the time`, 'i'), (m) => 1 / DEN[m[1].toLowerCase()]],
       // "thirty more vitality" — additive, in the card's own units
       [/(ten|twenty|thirty|forty|fifty) more/i, (m) => NUM[m[1].toLowerCase()]],
+      /* PER CENT, because that is what the cards say now.
+       *
+       * The lattice used to describe itself in fractions — "a fifth faster",
+       * "a quarter sooner" — and a player comparing two cards had to do the
+       * arithmetic in their head. The wording moved to per cent; this parser
+       * had to move with it or the clearer sentence reads as no claim at all,
+       * which is how "You move 20% faster." arrived here as "0 recognisable
+       * quantities". Same two directions as the fraction rules above. */
+      [/(\d+)% (?:faster|more|further|deeper|wider|longer|harder|hotter|higher)/i,
+        (m) => 1 + Number(m[1]) / 100],
+      [/(\d+)% (?:less|sooner|shorter|cheaper|lighter|slower)/i,
+        (m) => 1 - Number(m[1]) / 100],
       /* "costs little over half" is the one card that hedges on purpose, and
        * the hedge is the claim: somewhere just past half. It is checked against
        * that band rather than a point, because pinning it would be inventing a
@@ -429,31 +441,55 @@ export async function run({ check, assert }) {
      * about the RECOVERY, so Cadence's reader inverts `attackRate` rather than
      * reporting it. `hint` picks the clause when a card states two things.
      */
+    /**
+     * A CARD MAY SAY TWO THINGS, AND MOST OF THE GOOD ONES DO.
+     *
+     * This used to demand exactly one recognisable quantity in a whole card,
+     * which quietly made the check an editor: a card that wanted to state both
+     * halves of what it does — "Force powers cost 45% less, you jump 18%
+     * higher" — could not, because the second number made the first
+     * unreadable. That is the check shaping the game to suit itself, and it
+     * pushed the lattice towards exactly the vagueness a player complained
+     * about.
+     *
+     * So a probe may name the CLAUSE it is about. The text is split on its own
+     * punctuation and only the matching clause is parsed; a probe with no hint
+     * still has to find exactly one quantity in the whole card, which is the
+     * old rule for the cards that only say one thing.
+     */
+    const clauseOf = (text, hint) => {
+      if (!hint) return text;
+      const parts = String(text).split(/(?:[.;,])\s*/).filter(Boolean);
+      const hit = parts.filter((c) => new RegExp(hint, 'i').test(c));
+      return hit.length ? hit.join(' ') : text;
+    };
     const probes = [
-      ['vaapad', (p) => p.boonMods.deflectDamage],
-      ['makashi', (p) => p.boonMods.riposteWindow],
+      ['vaapad', (p) => p.boonMods.deflectDamage, 'bolts'],
+      ['makashi', (p) => p.boonMods.riposteWindow, 'riposte'],
       ['celerity', (p) => p.boonMods.moveSpeed],
-      ['vitality', (p) => p.maxHp - 100],
-      ['darkside', (p) => p.maxHp / 100],
-      ['unity', (p) => p._bondRange / 16],
+      ['vitality', (p) => p.maxHp - 100, 'vitality'],
+      ['darkside', (p) => p.maxHp / 100, 'gone'],
+      ['unity', (p) => p._bondRange / 16, 'reaches'],
       ['bastion', (p) => p.boonMods.deflectDamage],
-      ['ataru', (p) => p.boonMods.forceCost],
-      ['meditation', (p) => p.boonMods.staminaRegen],
-      ['wellspring', (p) => p.boonMods.forceRegen],
+      ['ataru', (p) => p.boonMods.forceCost, 'cost'],
+      ['meditation', (p) => p.boonMods.staminaRegen, 'Stamina'],
+      ['wellspring', (p) => p.boonMods.forceRegen, 'fills'],
       ['cadence', (p) => 1 / p.boonMods.attackRate],
     ];
     const all = [...BOONS, ...ATTUNEMENTS];
     const bad = [], rows = [];
-    for (const [id, read] of probes) {
+    for (const [id, read, hint] of probes) {
       const card = all.find((b) => b.id === id);
       assert(card, `there is no card called '${id}' any more`);
+      const clause = clauseOf(card.text, hint);
       const hits = PHRASES.map(([re, val, tol]) => {
-        const m = re.exec(card.text);
+        const m = re.exec(clause);
         return m ? { want: val(m), tol: tol ?? 0.03, said: m[0] } : null;
       }).filter(Boolean);
       assert(hits.length === 1,
-        `${id} states ${hits.length} recognisable quantities in "${card.text}" — `
-        + 'this check cannot tell which one the code is supposed to produce');
+        `${id} states ${hits.length} recognisable quantities in "${clause}" — `
+        + 'this check cannot tell which one the code is supposed to produce'
+        + (hint ? ` (reading the clause matching /${hint}/)` : ''));
       const { want, tol, said } = hits[0];
       assert(isFinite(want), `could not read a number out of "${said}" in ${id}`);
       const f = drafted([id]);

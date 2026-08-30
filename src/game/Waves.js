@@ -6168,7 +6168,7 @@ export const BOONS = [
   {
     id: 'vaapad', icon: '⚡', name: 'Vaapad', tag: 'Form VII',
     rarity: 'rare', axes: ['guard'], stack: 3,
-    text: 'Returned bolts strike for half again as much, and every return feeds your Flow.',
+    text: 'Returned bolts strike for half again as much, and every return feeds your Flow 35% faster.',
     apply(p, s = 1) { p.boonMods.deflectDamage *= grow(1.5, s); p.boonMods.flowGain *= grow(1.35, s); },
   },
   {
@@ -6193,7 +6193,7 @@ export const BOONS = [
      * fix was the one thing that never got it. A name in prose is checked by
      * nothing, which is the whole argument for importing the number below
      * instead of writing it again. */
-    text: 'A wider guard. A returned bolt finds its mark further off your sightline, and your reserves run deeper.',
+    text: 'A wider guard: returns find a mark 0.16 further off your sightline, and you carry 25 more stamina.',
     // The cone GROWS by rank instead of being set to a constant, or rank 2
     // would silently be half a card. Capped, because a return cone wide enough
     // to contain everything on screen is an auto-aim, not a guard.
@@ -6216,13 +6216,13 @@ export const BOONS = [
      * promises, a thing the player had before they drafted anything.
      *
      * The card is not changed. The sentence is, to the leap it actually adds. */
-    text: 'Acrobatic. Every Force power costs little over half, you leap higher, and the air gives you one leap more than it gives anyone else.',
+    text: 'Acrobatic. Force powers cost 45% less, you jump 18% higher, and the air gives you one leap more.',
     apply(p) { p.boonMods.doubleJump = true; p.boonMods.forceCost *= 0.55; p.boonMods.jumpPower *= 1.18; },
   },
   {
     id: 'djemso', icon: '🗡', name: 'Djem So', tag: 'Form V',
     rarity: 'common', axes: ['blade'], stack: 3,
-    text: 'Power over finesse. Cuts bite deeper, and whatever you cut is thrown off its feet.',
+    text: 'Power over finesse. Cuts land 40% harder, and a limb you sever shoves the body off its feet.',
     // The shove is the half of this card that was only ever a sentence. It is
     // an impulse and a stun on the body that was cut, so Form V opens ground
     // where Shatterpoint only opens armour.
@@ -6235,7 +6235,7 @@ export const BOONS = [
   {
     id: 'makashi', icon: '🤺', name: 'Makashi', tag: 'Form II',
     rarity: 'common', axes: ['guard', 'blade'], stack: 2,
-    text: 'Duellist. A steadier blade against another blade, and ripostes last twice as long.',
+    text: 'Duellist. Ripostes last twice as long and your aim runs 6% finer.',
     apply(p, s = 1) { p.boonMods.riposteWindow = (p.boonMods.riposteWindow ?? 1) * grow(2, s); p.control.sensitivity *= grow(1.06, s); },
   },
   {
@@ -6247,13 +6247,13 @@ export const BOONS = [
     // off. It is worth a great deal against the five that need four or more
     // passes (droideka, walker, armoured and shielded elites), and that is what
     // the card is for. The text now says so instead of promising a general edge.
-    text: 'You see where things want to break. Armour, shields and heavy plate part in half the time.',
+    text: 'You see where things want to break. Cuts land 90% harder against armour, shields and heavy plate.',
     apply(p, s = 1) { p.boonMods.cutPower *= grow(1.9, s); },
   },
   {
     id: 'tutaminis', icon: '🌡', name: 'Tutaminis', tag: 'Absorption',
     rarity: 'common', axes: ['force', 'guard'],
-    text: 'Bolts that strike you feed the Force instead of only wounding.',
+    text: 'Bolts that strike you are absorbed — they feed your Force instead of only wounding you.',
     apply(p) { p.boonMods.absorb = true; },
   },
   {
@@ -6287,7 +6287,7 @@ export const BOONS = [
      */
     id: 'compel', icon: '👁', name: 'Domination', tag: 'Dark',
     rarity: 'epic', minWave: 9, axes: ['force', 'dark'],
-    text: 'Take a mind. The one you touch turns its blaster on its own — or, alone, on itself.',
+    text: 'Take a mind. The one you touch turns its blaster on the men beside it — or, with nobody beside it, on itself.',
     apply(p) { p.boonMods.compel = true; },
   },
   {
@@ -6317,7 +6317,7 @@ export const BOONS = [
      * and the sentence now describes the half that is real; making the bleed
      * itself scale would need a reader in Player._regen, which is handed over
      * rather than smuggled in here. */
-    text: 'Stamina returns half again as fast, and everything you do earns more Flow.',
+    text: 'Stamina returns 50% faster, and everything you do earns 15% more Flow.',
     apply(p, s = 1) { p.boonMods.staminaRegen *= grow(1.5, s); p.boonMods.flowGain *= grow(1.15, s); },
   },
   {
@@ -6330,7 +6330,7 @@ export const BOONS = [
     // Extended Blade, Cadence) and the diminishing ranks bounding what a run can
     // pile into one axis. tools/checks/balance.mjs holds the spread to 6x.
     rarity: 'common', axes: ['body'], stack: 4,
-    text: 'Thirty more vitality, and a kill returns a little of it.',
+    text: 'Thirty more vitality, and every kill returns 3 of it.',
     apply(p, s = 1) {
       const d = Math.round(30 * s);
       p.maxHp += d; p.hp += d; p.boonMods.healOnKill += 3 * s;
@@ -6339,7 +6339,7 @@ export const BOONS = [
   {
     id: 'celerity', icon: '💨', name: 'Celerity', tag: 'Speed',
     rarity: 'common', axes: ['body'], stack: 3,
-    text: 'You move a fifth faster.',
+    text: 'You move 20% faster.',
     apply(p, s = 1) { p.boonMods.moveSpeed *= grow(1.2, s); },
   },
   {
@@ -6352,13 +6352,13 @@ export const BOONS = [
     // came down off 15 m/s to 9.4, which a real swing can reach, so a longer
     // blade is what turns RETURNs into PERFECTs and their 1.5x into 2.5x. The
     // text says the consequence now rather than the mechanism.
-    text: 'A longer blade. More reach, and a tip fast enough to turn returns into perfect ones.',
+    text: '24 cm more blade. The extra reach also puts the tip where more of your returns become perfect ones.',
     apply(p, s = 1) { p.saber.bladeLength += 0.24 * s; },
   },
   {
     id: 'dualcrystal', icon: '💎', name: 'Focusing Crystal', tag: 'Crystal',
     rarity: 'rare', axes: ['blade'],
-    text: 'A brighter, hotter blade. Cuts land more easily and the trail burns wider.',
+    text: 'A hotter, wider core: cuts land 20% harder and the blade itself is a quarter thicker.',
     // Three promises, and for a long time one of them landed. The line is
     // unchanged — `coreWidth` is now an accessor on Saber, so writing it pushes
     // the new width into uWidth/uRadius and into trailThickness instead of
@@ -6391,13 +6391,13 @@ export const BOONS = [
      * 0.46 s recovery to 0.346 s, which is 24.8% sooner, not 33%. (Against the
      * whole 0.78 s swing-plus-recovery cycle it is 14.6%.) A card whose entire
      * pitch is a number has to state the number it produces. */
-    text: 'You recover from a swing faster. The blade comes back around a quarter sooner.',
+    text: 'You recover from a swing 25% sooner.',
     apply(p, s = 1) { p.boonMods.attackRate *= grow(1.33, s); },
   },
   {
     id: 'lifesteal', icon: '🩸', name: 'Dark Sustenance', tag: 'Dark',
     rarity: 'rare', axes: ['dark'], stack: 3,
-    text: 'Severing a limb returns vitality.',
+    text: 'Severing a limb returns 5 vitality.',
     apply(p, s = 1) { p.boonMods.lifesteal += 5 * s; },
   },
 
@@ -6406,7 +6406,7 @@ export const BOONS = [
   {
     id: 'counterstroke', icon: '↩', name: 'Counterstroke', tag: 'Riposte',
     rarity: 'common', axes: ['blade', 'guard'], stack: 3,
-    text: 'A parry opens them up and you take the opening: while the riposte lasts your blade cuts twice as hard.',
+    text: 'A parry opens them up. The riposte window is 35% longer, and your blade cuts twice as hard while it lasts.',
     // Multiplies the window rather than setting it, so Makashi's doubling and
     // this card's stack instead of one overwriting the other.
     apply(p, s = 1) {
@@ -6424,7 +6424,7 @@ export const BOONS = [
      * which is the only way a claim check is worth anything. The number stays
      * (tools/checks/escalation.mjs measures a real second of regeneration
      * against it); the sentence moves to what it actually pays. */
-    text: 'A deeper well, and it fills back up three fifths again as fast.',
+    text: '45 more Force, and the well fills back 60% faster.',
     apply(p, s = 1) {
       if (typeof p.maxForce === 'number') { p.maxForce += 45 * s; p.force = p.maxForce; }
       p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * grow(1.6, s);
@@ -6434,7 +6434,7 @@ export const BOONS = [
   {
     id: 'encircle', icon: '⭕', name: 'Encircled', tag: 'Bulwark',
     rarity: 'common', axes: ['guard', 'body'], stack: 3,
-    text: 'A crowd is cover. Every one of them within reach of you takes a little of the sting out of all of them.',
+    text: 'A crowd is cover. Each enemy close to you takes 6% off the damage all of them do, up to 14%.',
     // CAPPED, and this is the general rule for anything that subtracts damage:
     // `encircleGuard` scales this by the crowd size, so an uncapped third rank
     // in a wave-30 press would reach total immunity — a stack that ends the
@@ -6448,7 +6448,7 @@ export const BOONS = [
   {
     id: 'juyo', icon: '☄', name: 'Juyo', tag: 'Form VII',
     rarity: 'rare', axes: ['blade', 'dark'], stack: 3,
-    text: 'Ferocity compounds. Every limb you take sharpens the next cut, and the edge cools the moment you stop.',
+    text: 'Ferocity compounds: each limb you take sharpens your cuts by 12%, stacking six deep. The edge cools about a stack every two seconds once you stop.',
     apply(p, s = 1) {
       p.boonMods.ferocity = (p.boonMods.ferocity ?? 0) + 0.12 * s;
       boonTick(p, 'juyo', juyoEdge);
@@ -6463,7 +6463,7 @@ export const BOONS = [
      * them was asked to change. */
     id: 'conduit', icon: '🌊', name: 'Thief', tag: 'Channel',
     rarity: 'rare', axes: ['force'], stack: 3,
-    text: 'The fight feeds the Force: every body you put down hands a measure of it straight back.',
+    text: 'The fight feeds the Force: every body you put down hands 22 Force straight back.',
     apply(p, s = 1) {
       p.boonMods.conduit = (p.boonMods.conduit ?? 0) + 22 * s;
       boonTick(p, 'conduit', conduitReturn);
@@ -6475,7 +6475,7 @@ export const BOONS = [
     // 0.6 of a second chance is not a thing. Two is the cap because a third
     // makes a wave essentially unloseable at the health where Fury pays best.
     rarity: 'rare', axes: ['body'], stack: 2,
-    text: 'Once each wave, the blow that would finish you leaves you standing on a sliver instead.',
+    text: 'Once each wave, the blow that would finish you leaves you at 1 health instead.',
     apply(p) {
       p.boonMods.secondWind = (p.boonMods.secondWind ?? 0) + 1;
       boonGuard(p, 'secondwind', secondWindGuard, secondWindAfter);
@@ -6484,7 +6484,7 @@ export const BOONS = [
   {
     id: 'fury', icon: '🔥', name: 'Fury', tag: 'Dark',
     rarity: 'rare', axes: ['dark', 'blade'], stack: 3,
-    text: 'Pain is a weapon. The nearer death you are, the harder you strike and the faster you move.',
+    text: 'Pain is a weapon. The nearer death you are the harder you strike — up to 70% at the edge of it.',
     apply(p, s = 1) {
       p.boonMods.fury = (p.boonMods.fury ?? 0) + 0.7 * s;
       boonTick(p, 'fury', furyEdge);
@@ -6493,7 +6493,7 @@ export const BOONS = [
   {
     id: 'thorns', icon: '🪞', name: 'Reflection', tag: 'Retribution',
     rarity: 'common', axes: ['guard'], stack: 3,
-    text: 'What is done to you is done back. A share of every blow that lands returns to whoever struck it.',
+    text: 'What is done to you is done back: 35% of every blow that lands on you is dealt straight to whoever struck it.',
     apply(p, s = 1) {
       p._thornsShare = (p._thornsShare ?? 0) + 0.35 * s;
       boonGuard(p, 'thorns', null, thornsBack);
@@ -6508,7 +6508,7 @@ export const BOONS = [
     // uses the ground — which is the behaviour the guard axis is supposed to
     // reward and had no way of paying for.
     rarity: 'common', axes: ['guard'], stack: 3,
-    text: 'A ward of Force stands between you and the blow. It breaks, and it knits itself back together in the quiet.',
+    text: 'A 22-point ward takes the blow before your health does. Four quiet seconds and it starts knitting back.',
     apply(p, s = 1) {
       p._aegisMax = (p._aegisMax ?? 0) + 22 * s;
       p._aegis = p._aegisMax;
@@ -6520,7 +6520,7 @@ export const BOONS = [
   {
     id: 'momentum', icon: '🌠', name: 'Momentum', tag: 'Cadence',
     rarity: 'common', axes: ['body'], stack: 3,
-    text: 'A body that falls is a step you did not have to take. Each kill drives the next, and standing still spends it.',
+    text: '6% faster on your feet, and each kill adds another 5% for a few seconds. Standing still spends it.',
     apply(p, s = 1) {
       p.boonMods.moveSpeed *= grow(1.06, s);
       p._momentumPer = (p._momentumPer ?? 0) + 0.05 * s;
@@ -6530,7 +6530,7 @@ export const BOONS = [
   {
     id: 'execute', icon: '🗝', name: 'Mercy Stroke', tag: 'Finisher',
     rarity: 'rare', axes: ['dark'], stack: 3,
-    text: 'Take a limb from something already broken and it does not get up. The kill is yours, and everything a kill pays.',
+    text: 'Take a limb from anything under 14% health and it does not get up. The kill is yours, and everything a kill pays.',
     apply(p, s = 1) {
       p._executeAt = Math.min(0.42, (p._executeAt ?? 0) + 0.14 * s);
       boonOnSever(p, 'execute', executeCut);
@@ -6539,7 +6539,7 @@ export const BOONS = [
   {
     id: 'detonate', icon: '☢', name: 'Detonation', tag: 'Blast',
     rarity: 'rare', axes: ['force', 'dark'], stack: 3,
-    text: 'What you fell goes off. Whatever was standing over the body wishes it had not been.',
+    text: 'What you fell goes off. Every kill explodes for 14 damage to whatever was standing over it.',
     apply(p, s = 1) {
       p._detonate = (p._detonate ?? 0) + 14 * s;
       boonOnKill(p, 'detonate', detonateBody);
@@ -6548,7 +6548,7 @@ export const BOONS = [
   {
     id: 'steadfast', icon: '🗿', name: 'Steadfast', tag: 'Stance',
     rarity: 'rare', axes: ['guard', 'body'], stack: 2,
-    text: 'Nothing staggers you, and anything heavy enough to have tried lands for half.',
+    text: 'Nothing staggers you, and any blow heavy enough to have tried lands for half.',
     // Capped for the same reason as Encircled: this one subtracts damage
     // outright, so two ranks of 0.5 would be immunity to every heavy blow in
     // the game.
@@ -6564,7 +6564,7 @@ export const BOONS = [
   {
     id: 'communion', icon: '🕯', name: 'Communion', tag: 'Bond',
     rarity: 'common', axes: ['bond'], stack: 3,
-    text: 'Your presence is felt. Anyone fighting beside you cuts harder and moves faster for it — and alone, half of it stays with you.',
+    text: 'Your presence is felt. Everyone within 16 m fights 16% harder — and alone, half of it stays with you.',
     apply(p, s = 1) {
       p._bondEdge = (p._bondEdge ?? 0) + BOND.step * s;
       boonTick(p, 'bond', bondAura);
@@ -6573,7 +6573,7 @@ export const BOONS = [
   {
     id: 'suffusion', icon: '💠', name: 'Suffusion', tag: 'Bond',
     rarity: 'rare', axes: ['bond'], stack: 3,
-    text: 'Every limb you take mends the people around you. If there is nobody, half of it mends you.',
+    text: 'Every limb you take heals everyone in your communion for 4. With nobody there, half of it heals you.',
     apply(p, s = 1) {
       p._bondHeal = (p._bondHeal ?? 0) + 4 * s;
       boonOnSever(p, 'suffusion', suffuseSever);
@@ -6587,7 +6587,7 @@ export const BOONS = [
     // handed and `vowGuard` bounds what you keep — for the same reason
     // Encircled and Steadfast are capped: anything that subtracts damage
     // outright reaches immunity if you let it stack.
-    text: 'You stand between them and it. Anyone inside your communion takes less, and while somebody is there, so do you.',
+    text: 'You stand between them and it. Anyone inside your communion takes 12% less, and so do you while somebody is there.',
     apply(p, s = 1) {
       p._bondWard = Math.min(BOND.wardCap, (p._bondWard ?? 0) + 0.12 * s);
       boonGuard(p, 'vow', vowGuard);
@@ -6600,7 +6600,7 @@ export const BOONS = [
   {
     id: 'bastion', icon: '🏰', name: 'Bastion', tag: 'Mastery of Defence',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['guard'], needs: MASTERY_NEEDS, requires: mastery('guard'),
-    text: 'Everything you turn aside comes back twice as hard, and turning it aside costs you nothing.',
+    text: 'Everything you turn aside comes back twice as hard, and the guard it costs you is refunded in full.',
     apply(p) {
       p.boonMods.deflectDamage *= 2.0;
       /* A SHARE OF WHAT THE GUARD SPENT, not a flat number per bolt — see
@@ -6614,7 +6614,7 @@ export const BOONS = [
   {
     id: 'tempest', icon: '🌪', name: 'Tempest', tag: 'Mastery of the Force',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['force'], needs: MASTERY_NEEDS, requires: mastery('force'),
-    text: 'Power feeds power. The deeper your Flow runs the less the Force asks, and at the flood it asks almost nothing.',
+    text: 'Power feeds power. Force costs fall with your Flow, by up to 85% at the flood.',
     apply(p) {
       p.boonMods.tempest = 0.85;
       boonTick(p, 'tempest', tempestDiscount);
@@ -6623,7 +6623,7 @@ export const BOONS = [
   {
     id: 'sunder', icon: '⚔', name: 'Sundering', tag: 'Mastery of the Blade',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['blade'], needs: MASTERY_NEEDS, requires: mastery('blade'),
-    text: 'The stroke does not stop at one body. Whatever was standing behind it loses a limb too.',
+    text: 'A severing stroke carries on to a second body within 2.4 m — it loses a limb too.',
     apply(p) {
       p.boonMods.sunderReach = 2.4;
       boonOnSever(p, 'sunder', sunderThrough);
@@ -6632,7 +6632,7 @@ export const BOONS = [
   {
     id: 'undying', icon: '🌿', name: 'Undying', tag: 'Mastery of the Body',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['body'], needs: MASTERY_NEEDS, requires: mastery('body'),
-    text: 'Give it a few seconds without a wound and the wounds close by themselves.',
+    text: 'Five seconds without a wound and you begin healing 7 a second, until something lands.',
     apply(p) {
       p.boonMods.mend = 7;
       boonTick(p, 'undying', undyingMend);
@@ -6681,7 +6681,7 @@ export const BOONS = [
      * something — and this changes it to "unless somebody is standing over
      * him", which turns dragging a casualty out of a duty into a decision
      * about who you can spare. */
-    text: 'A man on the ground still counts, as long as somebody living is standing over him.',
+    text: 'A downed man is not a lost one: he stays on the roll and gets back up, so long as somebody living is standing over him.',
     apply(p) { p.boonMods.triage = true; },
   },
   {
@@ -6692,7 +6692,7 @@ export const BOONS = [
      * Which is better and worse at once, and that is the card: he keeps the
      * ground he was holding and stays in the quorum, and he does it lying in
      * the open with whatever broke him still there. */
-    text: 'Nobody runs. A man who breaks goes to ground where he stands, and holds what he was given.',
+    text: 'Nobody runs. A man whose nerve breaks drops where he stands and keeps holding the ground he was given, instead of leaving the field.',
     apply(p) { p.boonMods.standfast = true; },
   },
   {
@@ -6701,7 +6701,7 @@ export const BOONS = [
     /* PLAN.md §4.7's Dig In, at double speed — a rule about what your ARMY can
      * do rather than about what you can. It stacks twice because the thing it
      * scales is a clock and halving it once is already most of the value. */
-    text: 'Your squads know how to use a shovel. A position goes up in half the time.',
+    text: 'Your squads know how to use a shovel: a position goes up twice as fast.',
     apply(p, s = 1) { p.boonMods.digRate = (p.boonMods.digRate ?? 1) * grow(2, s); },
   },
   {
@@ -6713,7 +6713,7 @@ export const BOONS = [
      * with his line can tell them where to shoot. It is worth nothing in clear
      * air, which is what makes it a card you take for a ground rather than a
      * card you always take. */
-    text: 'You feel what you cannot see, and they fire on what you feel. Your line sees twice as '
+    text: 'You feel what you cannot see. Your line sees twice as far through a storm as anything shooting at it.'
       + 'far through a storm as anything shooting at it.',
     apply(p) { p.boonMods.stormEyes = 0.5; },
   },
@@ -6724,7 +6724,7 @@ export const BOONS = [
      * a rule change because it pays a currency for an act that has never paid
      * anything. It is also the one card that argues with §4.7's other half:
      * cover is finite, and this makes breaking it worth doing. */
-    text: 'Nothing is wasted. Everything you break gives something back — and the field has only '
+    text: 'Nothing is wasted. Every prop you break pays 1 Insight — and the field has only so much in it.'
       + 'so much in it.',
     /* ONE RANK. What it changes is a rule — whether an act pays at all — and a
      * second rank could only ever be a number on top of it, which is the thing
@@ -6734,7 +6734,7 @@ export const BOONS = [
   {
     id: 'unity', icon: '♾', name: 'The Unifying Force', tag: 'Mastery of Communion',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['bond'], needs: MASTERY_NEEDS, requires: mastery('bond'),
-    text: 'The bond closes. Your communion reaches twice as far, and everything you were giving away you now also keep.',
+    text: 'The bond closes. Your communion reaches twice as far — 32 m instead of 16 — its edge grows another 10%, and everything you give away you also keep.',
     apply(p) {
       p._bondMastery = true;
       p._bondRange = (p._bondRange ?? BOND.range) * 2;
@@ -6745,7 +6745,7 @@ export const BOONS = [
   {
     id: 'darkside', icon: '⚫', name: 'The Dark Side', tag: 'Mastery of the Dark',
     rarity: 'epic', minWave: MASTERY_AT, axes: ['dark'], needs: MASTERY_NEEDS, requires: mastery('dark'),
-    text: 'A third of your vitality, gone. Everything you take from them, doubled — and the blade bites deeper for it.',
+    text: 'A third of your vitality is gone. Cuts land 25% harder, every kill returns 5, and a severed limb returns double what it did.',
     apply(p) {
       if (p.maxHp > 0) { p.maxHp = Math.round(p.maxHp * 0.66); p.hp = Math.min(p.hp, p.maxHp); }
       p.boonMods.lifesteal = (p.boonMods.lifesteal || 0) * 2 + 4;
@@ -6875,13 +6875,13 @@ export const ATTUNEMENTS = [
   {
     id: 'attune-blade', icon: '⚔', name: 'Attunement of the Blade', tag: 'Attunement',
     rarity: 'epic', stack: Infinity, attune: 'blade',
-    text: 'The edge sharpens and the recovery shortens. Permanent, and it will happen again.',
+    text: 'Cuts land 12% harder and your swing recovers 6% faster. Permanent, and it will happen again.',
     apply(p) { p.boonMods.cutPower *= 1 + ATTUNE_STEP; p.boonMods.attackRate *= 1.06; },
   },
   {
     id: 'attune-guard', icon: '🛡', name: 'Attunement of the Guard', tag: 'Attunement',
     rarity: 'epic', stack: Infinity, attune: 'guard',
-    text: 'What you turn aside comes back harder, and what lands lands lighter. '
+    text: 'Returns strike 12% harder, blows land 12% lighter, and Flow builds 5% faster. Permanent, and repeatable.'
       + 'Permanent, and repeatable.',
     // See `wardGuard`: this is the game's only defensive axis that compounds,
     // and it is the blade attunement's own step in the opposite direction.
@@ -6895,7 +6895,7 @@ export const ATTUNEMENTS = [
   {
     id: 'attune-force', icon: '🌀', name: 'Attunement of the Force', tag: 'Attunement',
     rarity: 'epic', stack: Infinity, attune: 'force',
-    text: 'The Force asks less and returns sooner. Permanent, and repeatable.',
+    text: 'Force powers cost about 8% less and the well refills 10% faster. Permanent, and repeatable.',
     apply(p) {
       p.boonMods.forceCost *= 1 - ATTUNE_STEP * 0.7;
       p.boonMods.forceRegen = (p.boonMods.forceRegen ?? 1) * 1.10;
@@ -6930,7 +6930,7 @@ export const ATTUNEMENTS = [
     rarity: 'epic', stack: Infinity, attune: 'body',
     // Additive on hp rather than multiplicative, so it does not compound with
     // Vitality's ranks into the same runaway the harness already caught once.
-    text: 'You endure more of it, and carry it faster. Permanent, and repeatable.',
+    text: '18 more vitality and 4% more speed. Permanent, and repeatable.',
     apply(p) { p.maxHp += 18; p.hp += 18; p.boonMods.moveSpeed *= 1.04; },
   },
   {
@@ -6981,7 +6981,7 @@ export const ATTUNEMENTS = [
   {
     id: 'attune-dark', icon: '⚫', name: 'Attunement of the Dark', tag: 'Attunement',
     rarity: 'epic', stack: Infinity, attune: 'dark',
-    text: 'It gives back more of what you take from them, and the taking sharpens you.',
+    text: 'Severed limbs return 2 more vitality, and each one sharpens your cuts another 3%. Permanent, and repeatable.',
     apply(p) {
       p.boonMods.lifesteal += 2;
       p.boonMods.ferocity = (p.boonMods.ferocity ?? 0) + 0.03;
