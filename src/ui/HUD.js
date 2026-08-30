@@ -1036,17 +1036,25 @@ export class FreeCam {
       // the gait's own function, so the creep here is the creep there.
       const boost = input.act('sprint') ? FREECAM.boost : walkScale(input);
       const v = FREECAM.speed * boost * dt;
+      /* THROUGH `actAxis`, NOT `act`, and the difference is a whole device.
+       * A held key answers 1 to both, but a STICK — a pad's or a thumb's — only
+       * ever answers `actAxis`: `act('moveF')` reads `touchHeld` and the key
+       * table, and neither of those is where a stick's magnitude lives. Read
+       * the wrong one and the free camera is the one place in the game a stick
+       * does not move you, which is also how it would read as broken rather
+       * than as unbound. The four the body walks on go through `moveAxis`, and
+       * this is the same question one level down. */
       let f = 0, r = 0, u = 0;
-      if (input.act('moveF')) f += 1;
-      if (input.act('moveB')) f -= 1;
-      if (input.act('moveR')) r += 1;
-      if (input.act('moveL')) r -= 1;
+      f = input.actAxis('moveF') - input.actAxis('moveB');
+      r = input.actAxis('moveR') - input.actAxis('moveL');
       if (input.act('jump')) u += 1;
       if (input.act('crouch')) u -= 1;
-      if (f || r) {
-        const len = Math.hypot(f, r);
-        f /= len; r /= len;
-      }
+      /* CLAMPED, not normalised. Two keys held is `hypot(1,1)` and has to come
+       * back to 1, but a stick eased a third of the way is already 0.33 and
+       * normalising it would push it to full speed — the exact switch the
+       * analog read was for. Same rule as `Input.moveAxis`. */
+      const len = Math.hypot(f, r);
+      if (len > 1) { f /= len; r /= len; }
       _fe.set(this.pitch, this.yaw, 0, 'YXZ');
       _fq.setFromEuler(_fe);
       _fwd.set(0, 0, -1).applyQuaternion(_fq);

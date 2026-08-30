@@ -721,7 +721,13 @@ export async function run({ check, assert }) {
 
     const readers = new Map();
     for (const [path, text] of files) {
-      for (const m of text.matchAll(/\.act(?:Hit)?\(\s*['"]([A-Za-z0-9_]+)['"]/g)) {
+      /* `actAxis` counts as reading the action, and it has to. A STICK — the
+       * pad's or the touch pad's — only ever answers `actAxis`: `act(id)`
+       * reads `touchHeld` and the key table, and a magnitude lives in neither.
+       * The free camera was the last caller asking `act('moveF')`, and moving
+       * it onto the axis (so a thumb can fly it) briefly made all four
+       * movement keys read as handled by nobody. */
+      for (const m of text.matchAll(/\.act(?:Hit|Axis)?\(\s*['"]([A-Za-z0-9_]+)['"]/g)) {
         if (!readers.has(m[1])) readers.set(m[1], []);
         readers.get(m[1]).push(path);
       }
