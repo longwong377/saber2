@@ -42,7 +42,10 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { createServer } from 'node:http';
 import { makeDocument } from './_page.mjs';
+import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
+import { handler } from '../serve.mjs';
 import { Touch, TOUCH_BUTTONS, TOUCH_TOOLS } from '../../src/engine/Touch.js';
 import { Input } from '../../src/engine/Input.js';
 import { canFullscreen, isFullscreen, goFullscreen, exitFullscreen, toggleFullscreen } from '../../src/engine/Fullscreen.js';
@@ -611,5 +614,115 @@ export async function run({ check, assert }) {
     assert(branches.length === 0,
       `main.js branches on the device ${branches.length} time(s) — the phone is meant to be invisible downstream`);
     return 'no update(), no rAF, no timer, no device branch in main.js';
+  });
+
+  /* ── 7. the phone the pad is actually held on ─────────────────────── */
+
+  check('a landscape phone fits: nothing off the frame, and nothing under a thumb', async () => {
+    /**
+     * THE ONE THING NO STYLESHEET CAN BE ASKED, and the reason this suite
+     * drives a real browser at all.
+     *
+     * The touch pad wants three corners the HUD already uses, and a phone in
+     * landscape is 390 px tall where the HUD was laid out at 720. Measured
+     * before this was fixed, at 844x390:
+     *
+     *   #power-wheel   y 414..512 — the whole control row BELOW the screen,
+     *                  because `.hud-br` is capped at `100vh - 300px` and a
+     *                  five-box bottom-anchored flow spills out of a 90 px box
+     *   .tc-tools      on `.hud-tr`, 172x20 of the score and the wave
+     *   .tc-left       on `.hud-bl`, 124x54 of the vitals
+     *   .tc-pad        on `.hud-br` and the minimap, 248x90 and 132x102
+     *
+     * So the assertion is not "does it render" — it did — it is that no two of
+     * these boxes share a pixel and none of them is outside the frame, at the
+     * three shapes a phone is actually held in.
+     */
+    const server = createServer(handler);
+    await new Promise((r) => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const { chromium } = await import('playwright-core');
+    const browser = await chromium.launch({ executablePath: chromiumPath(), args: CHROME_ARGS });
+    /* A wide phone, a short one and a small one. All landscape, because the
+     * game says so on the pad itself and the stylesheet says it in a
+     * `(orientation:portrait)` rule. */
+    const SIZES = [[844, 390], [740, 360], [667, 375]];
+    const lines = [];
+    try {
+      for (const [width, height] of SIZES) {
+        const ctx = await browser.newContext({
+          viewport: { width, height }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+        const page = await ctx.newPage();
+        const errs = [];
+        page.on('pageerror', (e) => errs.push(e.message));
+        try {
+          await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });
+          await page.waitForFunction(() => !!window.SABER, null, { timeout: 120000 });
+          await page.evaluate(() => {
+            document.getElementById('boot')?.classList.add('hidden');
+            document.getElementById('menu')?.classList.add('hidden');
+            window.SABER.hud.show(true);
+          });
+          // A real touch, because the pad does not exist until there is one.
+          await page.touchscreen.tap(Math.round(width * 0.45), Math.round(height * 0.35));
+          await page.waitForTimeout(150);
+          const out = await page.evaluate(() => {
+            const WATCH = ['.hud-tl', '.hud-tr', '.hud-bl', '.hud-br', '#power-wheel',
+              '.tc-pad', '.tc-left', '.tc-tools'];
+            const seen = [];
+            for (const sel of WATCH) {
+              const el = document.querySelector(sel);
+              if (!el) continue;
+              const cs = getComputedStyle(el);
+              if (cs.display === 'none' || cs.visibility === 'hidden' || +cs.opacity === 0) continue;
+              const b = el.getBoundingClientRect();
+              if (b.width < 2 || b.height < 2) continue;
+              seen.push({ sel, el, b });
+            }
+            const outside = [];
+            for (const { sel, b } of seen) {
+              const off = [];
+              if (b.left < -0.5) off.push(`left ${Math.round(b.left)}`);
+              if (b.right > innerWidth + 0.5) off.push(`right +${Math.round(b.right - innerWidth)}`);
+              if (b.top < -0.5) off.push(`top ${Math.round(b.top)}`);
+              if (b.bottom > innerHeight + 0.5) off.push(`bottom +${Math.round(b.bottom - innerHeight)}`);
+              if (off.length) outside.push(`${sel} ${off.join(', ')}`);
+            }
+            const overlaps = [];
+            for (let i = 0; i < seen.length; i++) for (let j = i + 1; j < seen.length; j++) {
+              const A = seen[i], B = seen[j];
+              // A box inside another box is a flow, not a collision.
+              if (A.el.contains(B.el) || B.el.contains(A.el)) continue;
+              const x = Math.min(A.b.right, B.b.right) - Math.max(A.b.left, B.b.left);
+              const y = Math.min(A.b.bottom, B.b.bottom) - Math.max(A.b.top, B.b.top);
+              if (x > 2 && y > 2) {
+                overlaps.push(`${A.sel} over ${B.sel} by ${Math.round(x)}x${Math.round(y)}`);
+              }
+            }
+            /* AND THE WHEEL HAS TO BE PRESSABLE. `#touch.on` is `inset:0` at
+             * z-index 40 over a HUD at 20, so a slot that is merely on screen
+             * is still a slot no finger can reach. */
+            const slot = document.querySelector('#power-wheel [data-action]');
+            let reach = 'no slot';
+            if (slot) {
+              const r = slot.getBoundingClientRect();
+              const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+              reach = top?.closest('[data-action]') === slot ? 'ok'
+                : `blocked by ${top?.id ? '#' + top.id : '.' + String(top?.className).split(' ')[0]}`;
+            }
+            return { outside, overlaps, boxes: seen.length, reach };
+          });
+          assert(!errs.length, `${width}x${height}: the page threw — ${errs[0]}`);
+          assert(!out.outside.length,
+            `${width}x${height}: ${out.outside.length} box(es) outside the frame — ${out.outside.join('; ')}`);
+          assert(!out.overlaps.length,
+            `${width}x${height}: ${out.overlaps.length} collision(s) — ${out.overlaps.join('; ')}`);
+          assert(out.reach === 'ok',
+            `${width}x${height}: the power wheel cannot be pressed — ${out.reach}`);
+          lines.push(`${width}x${height} ${out.boxes} boxes, 0 collisions, wheel reachable`);
+        } finally { await page.close(); await ctx.close(); }
+      }
+    } finally { await browser.close(); server.close(); }
+    return lines.join('; ');
   });
 }
