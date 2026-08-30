@@ -330,6 +330,17 @@ export async function run({ check, assert }) {
        * `tools/checks/variance.mjs` is where it is measured, A/B, on a real
        * director. */
       'sapper',
+      /* THE UNBOUND TIER'S BLADE AND BODY CARDS. Both remove a COOLDOWN — the
+       * throw's 2.2 s and the cry's 9 s — and charge Force and health for it.
+       * This model has no clock at all: it plays out a duel in passes, not in
+       * seconds, so "how often may this power be used" is not a term it is
+       * missing but a dimension it does not have, and the two powers in
+       * question (a thrown blade, a radial shove) are ones it cannot see even
+       * once, let alone repeatedly. `saberthrow` directly above is the same
+       * gap for the same power. They are measured in `powers.mjs`, on a real
+       * Player, by casting twenty times in a row and reading the bill. */
+      'unbound-throw',
+      'unbound-unleash',
     ]);
     const missed = [];
     for (const b of BOONS) {

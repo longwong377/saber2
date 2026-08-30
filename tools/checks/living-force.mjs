@@ -771,6 +771,7 @@ export async function run({ check, assert }) {
       }
       const held = Tree.FACETS.filter((s) => Waves.rankOf(taken, s.id) > 0);
       return { drafts: picked, bought, ids: new Set(held.map((s) => s.id)),
+        all: new Set(held.map((s) => s.id)),
         axes: new Set(held.map((s) => s.axis)) };
     };
 
@@ -790,7 +791,13 @@ export async function run({ check, assert }) {
         }
         out.push({
           name,
-          woken: runs.reduce((a, r) => a + r.ids.size, 0) / runs.length,
+          /* Base facets only — see the note on BASE below, which is why the
+           * unbound tier is measured by its own check rather than diluted
+           * into this one. */
+          woken: runs.reduce((a, r) =>
+            a + [...r.ids].filter((id) => !id.startsWith('unbound-')).length, 0) / runs.length,
+          unbound: runs.reduce((a, r) =>
+            a + [...r.ids].filter((id) => id.startsWith('unbound-')).length, 0) / runs.length,
           bought: runs.reduce((a, r) => a + r.bought, 0) / runs.length,
           axes: runs.reduce((a, r) => a + r.axes.size, 0) / runs.length,
           overlap: j / n,
@@ -799,14 +806,37 @@ export async function run({ check, assert }) {
       return out;
     };
 
+    /**
+     * ── THE SHARE IS OF THE LATTICE A RUN IS FOR, AND THE UNBOUND TIER IS NOT
+     *    PART OF IT ────────────────────────────────────────────────────────
+     *
+     * The bar below exists to catch DEAD CONTENT — "the facets nobody reaches
+     * should be cut or joined up" — and it uses "how much of the table does a
+     * run hold" as the proxy for it. That proxy stops being the same question
+     * the moment a tier is added whose whole design is that you take ONE of it.
+     * The ten `unbound-*` facets are one leaf per Force power, hung off that
+     * power's own facet, gated on four cards of a single axis and wave 16; a
+     * committed run reaches its own axis's in roughly half of runs and has no
+     * business reaching the other nine, because they are on currents it did not
+     * walk. Counted in the denominator they would drag every run's share down
+     * by ten facets it was never meant to hold, and the number would say "dead
+     * content" about the one tier that is measured directly, facet by facet,
+     * in the check immediately after this one.
+     *
+     * So the share is of the BASE lattice and the tier is asked its own
+     * question. Deriving the split off the id prefix rather than listing it
+     * keeps the exemption exactly as wide as the tier is.
+     */
+    const BASE = Tree.FACETS.filter((s) => !s.id.startsWith('unbound-'));
     const rows = [];
     const path = measure(true);
     let worstShare = 1, worstAt = '', worstOverlap = 0, overlapAt = '';
     for (const r of path) {
-      const share = r.woken / Tree.FACETS.length;
+      const share = r.woken / BASE.length;
       if (share < worstShare) { worstShare = share; worstAt = r.name; }
       if (r.overlap > worstOverlap) { worstOverlap = r.overlap; overlapAt = r.name; }
-      rows.push(`${r.name} ${r.woken.toFixed(1)}/${Tree.FACETS.length} woken (${r.bought.toFixed(1)} bought)`);
+      rows.push(`${r.name} ${r.woken.toFixed(1)}/${BASE.length} woken `
+        + `(${r.bought.toFixed(1)} bought, ${r.unbound.toFixed(1)} unbound)`);
     }
     assert(worstShare >= 0.33,
       `a ${worstAt} run reaches wave 40 holding ${(worstShare * 100).toFixed(0)}% of the lattice — `

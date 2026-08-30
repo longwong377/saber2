@@ -31,7 +31,7 @@ import { parryScale, TOUGHNESS, impactDamage, RETURN_CONE } from './Combat.js';
  * Enemy.js imports nothing from this file, so the edge is one-way. */
 import { forceResistance, gripClaim, gripHolders, gripRelease, gripSeize, heldMass, IMPULSE_AS_HP,
          limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
-import { POWER_COST, SENSE_DRAIN } from './Powers.js';
+import { POWER_COST, SENSE_DRAIN, UNBOUND, UNLEASH_TOLL, unboundId } from './Powers.js';
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
@@ -2775,6 +2775,17 @@ export function defaultBoonMods() {
     ward: 1,
     /** Domination. Force compel refuses by name without it — see forceCompel. */
     compel: false,
+    /**
+     * WHICH POWERS ARE OFF THEIR LEASH — `{ lightning: true }` and so on, keyed
+     * by the same names `POWER_COST` and `this.cooldowns` use.
+     *
+     * A fresh object rather than a shared one because this table is rebuilt per
+     * player and a Set or a frozen literal here would be one object shared by
+     * every body in a co-op session. Written by the `unbound-*` cards in
+     * Waves.BOONS; read in exactly one place, `Player._recover`, which is also
+     * the one place that bills the toll for it.
+     */
+    unbound: {},
     /* ══════════════════════════════════════════════════════════════════
      *  THE RULES, AS OPPOSED TO THE NUMBERS — PLAN.md §4.6
      * ══════════════════════════════════════════════════════════════════
@@ -6289,6 +6300,49 @@ export class Player {
    */
   _lightningColor() { return this.world?.settings?.lightningColor ?? 0x9fd8ff; }
 
+  /**
+   * THE RECOVERY A POWER OWES AFTER IT LANDS — and the one place the unbound
+   * tier is paid for.
+   *
+   * Every `this.cooldowns.x = n` in this file goes through here. That is the
+   * whole implementation of "no cooldown at all but at a great cost": one seam,
+   * so a power cannot be unbound and un-billed, and a power added later cannot
+   * quietly miss the tier — it writes its recovery the same way the other ten
+   * do or it has no recovery to remove.
+   *
+   * IT IS BILLED HERE AND NOT AT THE SPEND, which is deliberate. The spend gate
+   * runs before a power is known to have happened — `forceCompel` refuses after
+   * charging nothing, the throw charges on release, the mend charges per frame
+   * — so a surcharge at the gate would bill refusals and double-bill channels.
+   * A cooldown is written exactly once, at the moment a cast has succeeded, and
+   * that is the moment this tier is meant to cost something.
+   *
+   * The toll is taken rather than gated, so it can empty the pool and stop the
+   * NEXT cast rather than this one. That is the shape the player asked for —
+   * "allow me to spam it as much as I want (at a cost)" — a rate limited by
+   * what you have left instead of by a clock.
+   */
+  _recover(key, seconds) {
+    if (!this.boonMods.unbound?.[key]) return seconds;
+    /* The surcharge rides the same economy every other price does: the Force
+     * Drain slider and `forceCost` reach it, because a build that made the
+     * power cheap should make its surcharge cheap too — the bleed below is the
+     * part that no build can buy out of. */
+    const list = POWER_COST[key] ?? 0;
+    if (list > 0) {
+      const drain = this.world?.settings?.forceDrain ?? 1;
+      if (drain > 0) {
+        this.force = Math.max(0, this.force - list * UNLEASH_TOLL.force * drain * this.boonMods.forceCost);
+      }
+    }
+    /* AND BLOOD, which is a share of the maximum rather than of what is left,
+     * so it does not shrink as the bar empties — and floored at 1, so the
+     * button maims and the fight kills. See UNLEASH_TOLL. */
+    const bleed = this.maxHp * UNLEASH_TOLL.bleed;
+    this.hp = Math.max(UNLEASH_TOLL.floor, this.hp - bleed);
+    return 0;
+  }
+
   _canSpend(cost) {
     const drain = this.world.settings?.forceDrain ?? 1;
     return drain <= 0 || this.force >= cost * drain * this.boonMods.forceCost;
@@ -6688,7 +6742,7 @@ export class Player {
     if (!this._spend(POWER_COST.push)) {
       return this._refuse('force push', `${this._priceOf(POWER_COST.push)} Force needed, you have ${Math.round(this.force)}`);
     }
-    this.cooldowns.push = 0.55;
+    this.cooldowns.push = this._recover('push', 0.55);
     this._gesture('push');
     this._forceVoice('push');
     audio.force(this.chest, 'push');
@@ -6768,7 +6822,7 @@ export class Player {
     if (!this._spend(POWER_COST.pull)) {
       return this._refuse('force pull', `${this._priceOf(POWER_COST.pull)} Force needed, you have ${Math.round(this.force)}`);
     }
-    this.cooldowns.pull = 0.6;
+    this.cooldowns.pull = this._recover('pull', 0.6);
     this._gesture('pull');
     this._forceVoice('pull');
     audio.force(this.chest, 'pull');
@@ -8126,7 +8180,7 @@ export class Player {
          * recovering from. A hair under it because the throw also leaves you
          * holding nothing while it is out, which `rend` does not.
          */
-        this.cooldowns.throw = 2.2;
+        this.cooldowns.throw = this._recover('throw', 2.2);
         return;
       }
       _v1.multiplyScalar(1 / d);
@@ -8246,7 +8300,7 @@ export class Player {
   endLightning() {
     if (this.channel?.kind !== 'lightning') return;
     this.channel = null;
-    this.cooldowns.lightning = 1.1;
+    this.cooldowns.lightning = this._recover('lightning', 1.1);
     this._endGesture?.('lightning');
     this.world?.lightning?.clear?.();
   }
@@ -8471,7 +8525,7 @@ export class Player {
       const cost = POWER_COST.unleash * (this.world.settings?.forceDrain ?? 1) * this.boonMods.forceCost;
       return this._refuse('unleash', `${Math.round(cost)} Force needed, you have ${Math.round(this.force)}`);
     }
-    this.cooldowns.unleash = 9;
+    this.cooldowns.unleash = this._recover('unleash', 9);
 
     /* BOTH ARMS OUT. `unleash` is already in GESTURES — it was written for
      * this shape and had no caller — and `_gesture` with no `at` is the
@@ -8761,7 +8815,7 @@ export class Player {
      * while it is up, not a lockout after it: a cooldown long enough to matter
      * would turn "when do I lower it" — the only interesting question here —
      * into "it lowered itself". */
-    this.cooldowns.shield = 1.2;
+    this.cooldowns.shield = this._recover('shield', 1.2);
     this._endGesture('guard');
     if (why) this.world?.notify?.('BARRIER DOWN', why);
   }
@@ -8916,7 +8970,7 @@ export class Player {
     victim = victim || best;
 
     this._spend(COMPEL_COST);
-    this.cooldowns.compel = 7;
+    this.cooldowns.compel = this._recover('compel', 7);
     this._gesture('reach');
     this._forceVoice('compel');
     best.compelled = { target: victim, t: COMPEL_TIME };
@@ -9158,7 +9212,7 @@ export class Player {
     this.healTarget = null;
     this.healing = null;
     this._endGesture('mend');
-    this.cooldowns.heal = completed ? 9 : 3;
+    this.cooldowns.heal = this._recover('heal', completed ? 9 : 3);
     if (!completed) this.world?.notify?.('HEAL BROKEN', why);
     else if (T) {
       /* AND A MAN WHO WAS LYING DOWN IS STANDING UP. `Enemy.recover` is the
@@ -9486,7 +9540,7 @@ export class Player {
     if (!S.active) return;
     S.active = false;
     this._endGesture('stasis');
-    this.cooldowns.stasis = 1.4;
+    this.cooldowns.stasis = this._recover('stasis', 1.4);
 
     if (!fire || !S.held.length) {
       for (const h of S.held) {
@@ -9718,7 +9772,7 @@ export class Player {
         `${this._priceOf(REND_COST)} Force needed, you have ${Math.round(this.force)}`);
     }
 
-    this.cooldowns.rend = 2.4;
+    this.cooldowns.rend = this._recover('rend', 2.4);
     /* The ARM goes out here and the LINE does not — see below. Reaching for a
      * chassis and having it hold is a thing that happened to you, and the
      * gesture is the reaching. */

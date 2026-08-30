@@ -117,3 +117,121 @@ export const POWER_BOON = { lightning: 'lightning', compel: 'compel' };
  * stops, which is the same shape the lightning channel and the barrier use.
  */
 export const SENSE_DRAIN = 22;
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  THE UNBOUND TIER — a power off its leash, and what that costs          */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "I think it would be really cool if every force ability/power was represented
+ * in the holocron (where it fits like make them be on the corresponding path)
+ * such that it would really buff that ability to where it no longer has any
+ * cooldown at all but at a great cost… like for example if you worked really
+ * hard you could unlock it (should not be easy) but for example would allow you
+ * to spam disassemble or compel as much as you wanted (at a cost) this would
+ * open up cool unique playstyles."
+ *
+ * ── WHAT A COOLDOWN IS FOR, AND WHAT REPLACES IT ────────────────────────
+ *
+ * A cooldown is a rate limit the player cannot pay past — the one price in this
+ * game that is not denominated in anything. Taking it away has to put something
+ * in its place or the power is simply free, so each unbound power is billed
+ * TWICE on every cast: a surcharge on the Force it already costs, and blood.
+ *
+ * The surcharge alone would not do it. Force regenerates, Tempest and Ataru cut
+ * what it asks by most of itself, and Force Drain 0 is a shipped setting whose
+ * own label reads "unlimited Force" — so a build exists in which the surcharge
+ * is nothing, and that build would get a free power. The bleed is what cannot
+ * be bought out of: it is a share of your MAXIMUM health, so it does not soften
+ * as you get stronger, and nothing in the game reduces it.
+ *
+ * IT CAN TAKE YOU TO ONE HIT POINT AND IT CANNOT KILL YOU. That floor is a
+ * decision and it is not mercy: a power that kills its owner is a power nobody
+ * presses twice, so the tier would exist and never be used. At one hit point
+ * the next bolt does it, which is the risk this is supposed to be — the death
+ * is the fight's, not the button's.
+ *
+ * ── WHY THE TABLE IS HERE ───────────────────────────────────────────────
+ *
+ * Because it is read by four things that must not disagree: `Player` (which
+ * charges the toll and skips the cooldown), `Waves.BOONS` (which turns each row
+ * into a card), `LivingForce.FACETS` (which hangs each card off its current's
+ * mastery) and the HUD. This module imports nothing, which is why it can be
+ * seen from all four — see the header. One row per power: the axis it belongs
+ * to, the mastery it hangs off, and both temple's names for it.
+ *
+ * `after` is the facet this one HANGS OFF in the lattice — its own technique
+ * wherever the lattice already has one (the throw hangs off Cleaving Throw, the
+ * lightning off Force Lightning, Disassemble off Dissolution) and its current's
+ * mastery where it does not. That is the join and it is not the gate: what
+ * makes one hard to reach is `rarity: 'epic'`, `minWave` deeper than any
+ * mastery, and four cards of its own axis — see the note in Waves.js, which
+ * measured what happened when the gate was the mastery instead.
+ */
+export const UNLEASH_TOLL = {
+  /** What the power costs on top of its list price, as a share of it. */
+  force: 1.5,
+  /** …and what it costs in blood, as a share of MAXIMUM health. */
+  bleed: 0.06,
+  /** The floor. See above: it maims, it does not kill. */
+  floor: 1,
+  /** How deep in a run the tier opens at all. */
+  minWave: 16,
+};
+
+/** `unbound-push` and so on — the id a boon, a facet and a save all share. */
+export const unboundId = (key) => `unbound-${key}`;
+
+/**
+ * Ten powers, and the two that are missing are missing for a reason that is
+ * worth saying out loud rather than leaving as a gap: `grip` and `sense` HAVE
+ * no cooldown. The grip is a channel billed per frame and Force Sense is a
+ * toggle billed per second, so there is nothing here for this tier to remove —
+ * an "unbound" card for either would be a card that does nothing, which is the
+ * one defect this codebase keeps deleting.
+ */
+export const UNBOUND = [
+  { key: 'push', axis: 'force', after: 'repulse', icon: '🌊',
+    name: 'The Endless Wave', tag: 'Unbound — Push',
+    jedi: 'The Endless Wave', sith: 'The Hand That Never Closes',
+    text: 'The shove no longer needs a breath between. It asks half again as much Force and a little of your blood each time.' },
+  { key: 'pull', axis: 'force', after: 'conduit', icon: '🪝',
+    name: 'The Tide That Answers', tag: 'Unbound — Pull',
+    jedi: 'The Tide That Answers', sith: 'Everything Comes To Me',
+    text: 'Reach again the instant you have reached. Half again the Force, and blood.' },
+  { key: 'stasis', axis: 'force', after: 'tempest', icon: '🧊',
+    name: 'The Held Hour', tag: 'Unbound — Stasis',
+    jedi: 'The Held Hour', sith: 'Time Is Mine To Keep',
+    text: 'Hold one, then the next, then the next, with nothing in between but what it costs you.' },
+  { key: 'rend', axis: 'force', after: 'detonate', icon: '🔩',
+    name: 'The Unmaking', tag: 'Unbound — Disassemble',
+    jedi: 'The Unmaking', sith: 'Take It All Apart',
+    text: 'Take them apart as fast as you can look at them. Half again the Force, and blood for every one.' },
+  { key: 'throw', axis: 'blade', after: 'saberthrow', icon: '🌀',
+    name: 'The Blade That Returns', tag: 'Unbound — Throw',
+    jedi: 'The Blade That Returns', sith: 'The Blade That Does Not Wait',
+    text: 'It is back in your hand and gone again. No recovery, at half again the Force and a cut of your own.' },
+  { key: 'shield', axis: 'guard', after: 'aegis', icon: '🔆',
+    name: 'The Standing Ward', tag: 'Unbound — Barrier',
+    jedi: 'The Standing Ward', sith: 'The Wall That Never Falls',
+    text: 'Drop the barrier and raise it in the same breath. What it saves you it takes back in Force and blood.' },
+  { key: 'unleash', axis: 'body', after: 'undying', icon: '💥',
+    name: 'The Cry Unending', tag: 'Unbound — Unleash',
+    jedi: 'The Cry Unending', sith: 'The Roar That Does Not Stop',
+    text: 'The nine-second silence after the cry is gone. Everything else about it costs more.' },
+  { key: 'heal', axis: 'bond', after: 'triage', icon: '➕',
+    name: 'The Well That Does Not Empty', tag: 'Unbound — Mend',
+    jedi: 'The Well That Does Not Empty', sith: 'Bleed For Them',
+    text: 'Mend one man and turn straight to the next. The Force asks half again, and you pay the rest yourself.' },
+  { key: 'lightning', axis: 'dark', after: 'lightning', icon: '⚡',
+    name: 'The Storm Refused No Longer', tag: 'Unbound — Lightning',
+    jedi: 'The Storm Refused No Longer', sith: 'The Endless Storm',
+    text: 'It does not stop coming. Half again the Force, and the storm earths itself through you.' },
+  { key: 'compel', axis: 'dark', after: 'compel', icon: '🕯',
+    name: 'Every Word Unforgivable', tag: 'Unbound — Compel',
+    jedi: 'Every Word Unforgivable', sith: 'None May Refuse',
+    text: 'Say it again, and again, to whoever is left. Half again the Force, and a piece of you each time.' },
+];
+
+/** The row for a power, or null — the one lookup, so nothing greps the list. */
+export function unboundOf(key) { return UNBOUND.find((u) => u.key === key) || null; }

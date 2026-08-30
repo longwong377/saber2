@@ -63,6 +63,7 @@ import { makeRng, moduleSeed, clamp, lerp, TAU } from '../engine/MathUtil.js';
  * Combat imports THREE, Physics, MathUtil, Bolts and Morale and none of them
  * reaches back here, so this edge is a leaf edge and costs no cycle. */
 import { RETURN_CONE, TOUGHNESS } from './Combat.js';
+import { UNBOUND, UNLEASH_TOLL, unboundId } from './Powers.js';
 
 /**
  * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
@@ -6674,6 +6675,58 @@ export const BOONS = [
       p.boonMods.cutPower *= 1.25;
     },
   },
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE UNBOUND TIER — ten cards, none of them written here
+   * ══════════════════════════════════════════════════════════════════
+   *
+   * "…every force ability/power was represented in the holocron… such that it
+   * would really buff that ability to where it no longer has any cooldown at
+   * all but at a great cost."
+   *
+   * One card per power, GENERATED off `Powers.UNBOUND`, because the same ten
+   * rows also have to become facets in `LivingForce.FACETS` and are read by
+   * `Player._recover`. Three hand-written copies of one list is the defect this
+   * file has been bitten by seven times — a HUD price list, an announcer voice
+   * map, the sandbox unit list, a level card's unit count, a garment length, a
+   * wire record and the boon-price table. The list is `Powers.js`, which
+   * imports nothing and can therefore be seen from all three.
+   *
+   * WHAT MAKES ONE HARD TO GET, and it is two bars rather than one because
+   * there are two ways into this table and they are not the same road.
+   *
+   *   THROUGH THE TREE  the facet hangs off its current's MASTERY and off
+   *                     nothing else (see LivingForce.FACETS), so buying one
+   *                     means having already woken an epic, wave-12,
+   *                     three-cards-of-its-axis facet and then paying the
+   *                     ledger's steepest price one step past it.
+   *   THROUGH THE DRAFT  a card is offered on `minWave` and `requires` alone,
+   *                     which is why `requires` is a bar of its own and not
+   *                     simply `rankOf(taken, u.after) > 0`. It asked for the
+   *                     mastery itself at first, and measured over twelve
+   *                     forty-wave runs that made the whole tier unreachable:
+   *                     a committed run holds 0.4 to 1.1 masteries by wave 40,
+   *                     because the Insight escalator prices epics out long
+   *                     before then, so ten cards nobody would ever see. A
+   *                     tier that cannot be reached is not a hard tier, it is a
+   *                     picture of one — which is the exact thing
+   *                     `living-force.mjs` fails a lattice for.
+   *
+   * So the draft bar is ONE CARD DEEPER than the mastery's own: four of your
+   * axis, and sixteen waves. That is a committed current and most of a run, and
+   * it is reachable by playing rather than by luck.
+   *
+   * The apply is a single flag. Everything the tier costs is billed in one
+   * place, `Player._recover`, and the note there says why it is billed at the
+   * cooldown rather than at the spend.
+   */
+  ...UNBOUND.map((u) => ({
+    id: unboundId(u.key), icon: u.icon, name: u.name, tag: u.tag,
+    rarity: 'epic', minWave: UNLEASH_TOLL.minWave, axes: [u.axis], stack: 1,
+    requires: (taken) => axisCountOf(taken, u.axis) >= MASTERY_NEEDS + 1,
+    text: u.text,
+    apply(p) { p.boonMods.unbound = { ...(p.boonMods.unbound || {}), [u.key]: true }; },
+  })),
 ];
 
 /* ══════════════════════════════════════════════════════════════════════ */

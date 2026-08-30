@@ -53,6 +53,7 @@ import { Player } from '../../src/game/Player.js';
 import { duelRng, FORMS, BladeLock } from '../../src/game/Duel.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { POWER_COST } from '../../src/game/Powers.js';
+import { readFile } from 'node:fs/promises';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const scene = new THREE.Scene();
@@ -1087,6 +1088,164 @@ export async function run({ check, assert }) {
 
     return 'with {pvp:false, friendlyFire:true} — the real command rules — canHarm says yes about '
       + 'your own trooper and the mend finds him anyway; a hostile is still refused';
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE UNBOUND TIER
+   * ══════════════════════════════════════════════════════════════════ */
+
+  check('powers: an unbound power has no cooldown at all, and bills blood for it', async () => {
+    /**
+     * "I think it would be really cool if every force ability/power was
+     * represented in the holocron… such that it would really buff that ability
+     * to where it no longer has any cooldown at all but at a great cost… would
+     * allow you to spam disassemble or compel as much as you wanted (at a
+     * cost)."
+     *
+     * A cooldown is the one price in this game that is not denominated in
+     * anything, so removing it has to put a price back or the card is simply
+     * "this power is now free" with a long unlock in front of it. Four
+     * properties, driven on a real Player rather than read off the table:
+     *
+     *   THE CLOCK IS GONE     the cooldown is 0 after a cast, so the next cast
+     *                         is legal on the next frame. That is the promise.
+     *   THE FORCE IS NOT      the surcharge comes out of the pool at the moment
+     *                         the cast lands, so spamming empties you.
+     *   NEITHER IS THE BLOOD  and this is the half no build can buy out of:
+     *                         Force Drain 0 is a shipped setting whose label
+     *                         reads "unlimited Force", and under it the
+     *                         surcharge is nothing. The bleed still lands.
+     *   IT MAIMS, IT DOES NOT the floor is 1 hp. A power that kills its owner
+     *   KILL                  is a power nobody presses twice, so the tier
+     *                         would exist and never be used; at 1 hp the next
+     *                         bolt does it, which is the risk it is for.
+     */
+    const { UNBOUND, UNLEASH_TOLL, unboundId } = await import('../../src/game/Powers.js');
+    const { BOONS, boonById } = await import('../../src/game/Waves.js');
+    const Tree = await import('../../src/game/LivingForce.js');
+
+    /* Every row is a card AND a facet, on its own axis, hung off a real facet.
+     * Three tables generated from one list — see Powers.js — so this is asking
+     * that the generation actually reached all three. */
+    for (const u of UNBOUND) {
+      const id = unboundId(u.key);
+      const b = boonById(id);
+      assert(b, `${id} is in no boon table, so it can never be drafted`);
+      assert(b.axes?.[0] === u.axis, `${id} is a ${b.axes?.[0]} card on a ${u.axis} power`);
+      assert(b.rarity === 'epic' && b.minWave === UNLEASH_TOLL.minWave,
+        `${id} is ${b.rarity} at wave ${b.minWave} — the tier is meant to be the steepest thing`);
+      const f = Tree.FACETS.find((s) => s.id === id);
+      assert(f, `${id} is on no path in the Holocron — the player asked for it to be ON one`);
+      assert(f.axis === u.axis, `${id} sits on the ${f.axis} path and buffs a ${u.axis} power`);
+      assert(Tree.neighboursOf(id).includes(u.after),
+        `${id} is not joined to ${u.after}, so nothing in the lattice leads to it`);
+      assert(POWER_COST[u.key] !== undefined, `${u.key} is not a priced power`);
+    }
+
+    /* AND THE TWO THAT ARE NOT HERE ARE NOT HERE FOR A REASON. `grip` and
+     * `sense` have no cooldown to remove — one is a per-frame channel, the
+     * other a per-second toggle — so a card for either would do nothing. If
+     * they ever grow one, this goes red and asks for the card. */
+    const src = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    /* Anchored to the START of a line, so the prose in this file that quotes
+     * `this.cooldowns.x = n` is prose and not a twelfth power. */
+    const written = new Set([...src.matchAll(/^\s*this\.cooldowns\.([a-z]+)\s*=\s*(?!0;)/gm)]
+      .map((m) => m[1]));
+    const covered = new Set(UNBOUND.map((u) => u.key));
+    for (const key of written) {
+      if (key === 'dash') continue;                    // movement, not a Force power
+      assert(covered.has(key),
+        `${key} writes a cooldown and has no unbound card — every power with a clock is meant `
+        + 'to have one');
+    }
+    for (const key of ['grip', 'sense']) {
+      assert(!written.has(key),
+        `${key} has grown a cooldown, so it now needs an unbound card like the other ten`);
+    }
+    /* …and every one of the ten goes through the ONE seam that bills the toll.
+     * A cooldown written straight would be a power that is unbound and free. */
+    for (const key of covered) {
+      /* The RIGHT-HAND SIDE, captured and read — not a negative lookahead.
+       * `=\s*(?!this\._recover)` passes on the real line every time, because
+       * `\s*` backtracks to zero and the lookahead is then tested against a
+       * space. A check that cannot fail is worse than no check. */
+      const rhs = [...src.matchAll(new RegExp(`^\\s*this\\.cooldowns\\.${key}\\s*=\\s*(.+)$`, 'gm'))]
+        .map((m) => m[1].trim());
+      assert(rhs.length, `nothing writes this.cooldowns.${key} any more`);
+      for (const line of rhs) {
+        assert(line === '0;' || line.startsWith(`this._recover('${key}'`),
+          `${key}'s cooldown is written as "${line}" — not through _recover, so unbound it would `
+          + 'cost nothing');
+      }
+    }
+
+    /* ── and now the behaviour, on a real body ─────────────────────── */
+    /* Every generator this touches put back afterwards. This check builds
+     * Players and a physics world in a file whose other checks do not restore
+     * shared state, and a check that leaves the module clock somewhere else is
+     * a check that breaks whichever one runs next. */
+    const { snapshotShared, restoreShared } = await import('./_shared.mjs');
+    const snap = await snapshotShared();
+    try {
+      const w = gameWorld();
+      const p = new Player(w, { fov: 60 });
+      w.players.push(p);
+      p.hp = p.maxHp = 200;
+      p.force = p.maxForce = 4000;
+      const H = await import('./_coop.mjs');
+      const ctx = { input: H.idleInput(), physics: w.physics, terrain: w.terrain,
+        enemies: [], players: [p] };
+
+      /* THE SHOVE, because it is a one-shot: it spends, it lands and it writes
+       * its recovery inside one call. The lightning is a held channel and
+       * writes its clock when the channel ENDS, which is a different property
+       * and not the one this is about. */
+      p.forcePush(ctx);
+      const bound = p.cooldowns.push;
+      assert(bound > 0, 'force push has no cooldown to remove in the first place');
+
+      // Unbound: the clock is gone.
+      p.cooldowns.push = 0;
+      p.boonMods.unbound = { push: true };
+      const hp0 = p.hp, force0 = p.force;
+      p.forcePush(ctx);
+      assert(p.cooldowns.push === 0,
+        `unbound, the cast still left ${p.cooldowns.push.toFixed(2)}s of recovery`);
+      const spent = force0 - p.force;
+      const listed = POWER_COST.push;
+      assert(spent > listed * (1 + UNLEASH_TOLL.force) - 1,
+        `the cast took ${spent.toFixed(1)} Force where the list price is ${listed} and the `
+        + `surcharge is ${UNLEASH_TOLL.force}× more on top — the tier is free`);
+      assert(hp0 - p.hp > 1, `the cast cost ${(hp0 - p.hp).toFixed(1)} hp — there is no blood in it`);
+
+      // Spam: twenty casts back to back, which the clock made impossible.
+      let casts = 0;
+      for (let i = 0; i < 20; i++) { if (p.cooldowns.push <= 0) { p.forcePush(ctx); casts++; } }
+      assert(casts === 20, `only ${casts} of 20 casts got through — something still rate-limits it`);
+      assert(p.hp >= UNLEASH_TOLL.floor,
+        `twenty casts took the player to ${p.hp.toFixed(1)} hp — the floor is ${UNLEASH_TOLL.floor}`);
+      assert(p.hp <= UNLEASH_TOLL.floor + 0.01,
+        `twenty casts left ${p.hp.toFixed(1)} of 200 hp — the bleed is decoration`);
+
+      /* AND UNDER "UNLIMITED FORCE" IT STILL BLEEDS, which is the property the
+       * surcharge alone cannot carry: Force Drain 0 is a shipped setting whose
+       * own label reads "unlimited Force". */
+      const q = new Player(w, { fov: 60 });
+      q.hp = q.maxHp = 200;
+      q.force = q.maxForce = 4000;
+      q.boonMods.unbound = { push: true };
+      w.settings.forceDrain = 0;
+      const qhp = q.hp, qf = q.force;
+      q.forcePush({ ...ctx, players: [q] });
+      assert(q.force === qf, 'Force Drain 0 charged for the power after all');
+      assert(qhp - q.hp > 1,
+        `at Force Drain 0 the unbound cast cost ${(qhp - q.hp).toFixed(1)} hp — the tier is free `
+        + 'under a setting the player can just switch on');
+
+      return `${UNBOUND.length} powers unbound, each a card and a facet on its own path; bound `
+        + `${bound.toFixed(2)}s → 0s, 20 casts back to back, 200 hp → ${UNLEASH_TOLL.floor}, and `
+        + 'it still bleeds at Force Drain 0';
+    } finally { restoreShared(snap); }
   });
 
   check('powers: a hurt man behind you is announced, so the power is findable at all', async () => {
