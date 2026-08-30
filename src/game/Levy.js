@@ -388,7 +388,9 @@ function installLevyAim(e) {
        * whole design.
        *
        * So the fix is the FALLBACK and not the aim: losing your Jedi must not
-       * turn the weather into the most dangerous thing on the field. A
+       * turn the weather into the most dangerous thing on the field — and
+       * "losing" means there is no blade on the field at all, not that the one
+       * there is momentarily out of reach. A
        * conscript with nobody to walk at still advances, still has to be
        * cleared, still soaks and suppresses — it simply stops being a rifleman
        * in somebody else's firing line. `LEVY_SLACK` is one multiplier on its
@@ -400,7 +402,27 @@ function installLevyAim(e) {
        * against A PLAYER, and against a player `best` is never null — so the
        * slack is 1 on every frame that check looks at.
        */
-      this._levySlack = best ? 1 : LEVY_SLACK;
+      /**
+       * AND THE TEST IS "IS THERE A JEDI AT ALL", NOT "CAN I SEE ONE".
+       *
+       * The first cut slacked whenever the player-only pick came back empty,
+       * which is every frame a blade is merely out of reach — behind cover, on
+       * the far side of the field, thirty seconds into a commander's walk. That
+       * is not a levy with nobody to walk at; it is a levy whose man has
+       * stepped away, and it should keep firing exactly as it did. Measured, the
+       * loose cadence bled into `command`, whose commander is held alive for
+       * ninety seconds and simply walks: its watchdog fixture went from losing
+       * no names to losing five, on a change that can only ever make the enemy
+       * FIRE LESS. A rule that moves a number in the direction it cannot move
+       * it is a rule pointed at the wrong question.
+       *
+       * `players.some(alive)` is the honest one. It is the same field
+       * `World._down` reads to decide the run is over, and it is false in
+       * exactly the case this is for: no blade on the field, so the weather has
+       * nothing to come for and must not become the firing line instead.
+       */
+      const anyBlade = !!w?.players?.some?.((p) => p && p.alive !== false);
+      this._levySlack = anyBlade ? 1 : LEVY_SLACK;
       return best || pick(b);
     };
     try { return base.call(this, dt, ctx); } finally { ctx.pickTarget = pick; }
