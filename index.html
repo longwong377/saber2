@@ -355,6 +355,24 @@
           <h3 class="stacked">Mode</h3>
           <div id="mode-list" class="difflist"></div>
         </div>
+        <!-- A MODE THAT NEEDS OTHER PEOPLE SAYS SO BEFORE YOU IGNITE, not
+             after. `MODES[key].needsSession` is the declaration and
+             `Menu._syncSessionNeed` is its only reader; the line is empty and
+             takes no space for every mode that does not declare it
+             (`.needline:empty` in styles.css). The Commander Battle stands its
+             meeting down and fights the composed wave when it is deployed alone
+             — which is the right fallback and is not the thing the player
+             picked the card for.
+
+             OUTSIDE THE SCROLLER, and that is not a taste. `.col-scroll` fades
+             its bottom edge while there is more below it, and `_revealMode`
+             scrolls the chosen card clear of that fade; a paragraph after the
+             last card means there is always more below it, so the fade never
+             comes off and the last mode in the list sits under it. Measured by
+             `lineseen.1` the moment this line was added inside: at 1366x768,
+             choosing Campaign left the card at 374..410 of a 410 px column.
+             Here it is beside the button it is about. -->
+        <p id="mode-need" class="hint needline"></p>
         <button id="btn-deploy" class="primary">Ignite</button>
       </div>
     </section>
@@ -480,6 +498,47 @@
           <b>free-for-all</b> — friendly fire is not a separate switch, it is what this one means, so
           there are no allies and no accidents. Everybody drops to the duel's health. Takes effect on
           the next <b>Ignite</b>, and it is read on each machine, so agree on it before you deploy.</p>
+        <!--
+          THE COMMANDER BATTLE, SET UP WHERE THE PEOPLE IN IT ARE.
+
+          "there should be a battle mode that is specifically co-op in that you
+          and your friends can choose to be either allies or enemy commanders…
+          at the beginning you choose the number and mixup of each of your
+          armies/the field."
+
+          It is on the SESSION panel and not on Deploy because every control in
+          it is about the table rather than about the run: who is with whom is a
+          fact about the four people in the roster above, and it is the host's
+          to state — the player asked, in the same message, that a mode "not be
+          dependent on what any modes/maps non-host players have selected on
+          their screens". All four ride `Net.SESSION_KEYS` for that reason.
+
+          The MIXUP is not here on purpose: it is the muster, which is the
+          screen this mode already has for composing an army out of a purse, and
+          a second unit picker beside it would be two answers to one question.
+        -->
+        <h3 style="margin-top:22px">Commander Battle</h3>
+        <p class="hint">One field, two armies, and the people in the roster above at the head of them.
+          The host sets all of it; nobody else's menu is read.</p>
+        <label class="slider">Men a side <input type="range" id="opt-versus-strength"
+          min="5" max="24" step="1" value="20"><b></b></label>
+        <p class="hint">Per <b>side</b>, not per commander — two allies split one army of this size rather
+          than bringing one each, so three players is a fair 2v1 instead of 15 against 10.</p>
+        <label class="slider">Reinforcements <input type="range" id="opt-versus-reinforce"
+          min="0" max="180" step="5" value="0"><b></b></label>
+        <p class="hint">Off, what you brought is what you have. On, a squad lands behind <b>both</b> lines on
+          one clock and the middle of the plain becomes a frontline — until a side's muster points run out,
+          which is what decides how long it can keep feeding.</p>
+        <h3 style="margin-top:22px">What ends it</h3>
+        <div id="opt-versus-win" class="difflist"></div>
+        <p class="hint">What each army is MADE of is the contingent's own shelf, under
+          <b>Options → Your army</b>: a rung of the ladder, or <b>Mixed</b> to spend the side's
+          points on the line first and then the heaviest thing left affordable. It is the host's
+          like everything else here, and it is one picker rather than two answers to one question.</p>
+        <h3 style="margin-top:22px">The sides</h3>
+        <p class="hint" id="versus-teams-hint">Press a name to move them across. Two sides have to have
+          somebody on them.</p>
+        <div id="versus-teams" class="roster"></div>
       </div>
     </section>
 
@@ -925,22 +984,6 @@
   </div>
 
   <div class="hud-bl">
-    <!-- THE SUPPORT-CALL PANEL LIVES IN THIS COLUMN NOW, ABOVE THE ROLL.
-
-         It used to be its own absolutely-positioned box at left:34px, top:50%,
-         vertically middled and up to 74vh tall, on the argument that "nothing
-         else on the HUD lives there". Something else does: `#roster` grows
-         UPWARD from bottom:28px and reaches about 400 px with a full roll, so
-         on a 720-1080 px viewport the two boxes intersect over the lower-left
-         third and the upper stratagems are the half you lose. Reported as
-         exactly that — "the stratagem menu and the troop ui menu would overlap
-         and obscure each other on the left side of the screen".
-
-         Two boxes pinned to the same corner eventually collide at SOME
-         viewport; two boxes in one column cannot collide at any. This column is
-         bottom-anchored, so the panel opening pushes the stack upward and never
-         moves the roll under it. Same rule the event feed and the kill feed
-         already follow on the right (see .hud-tr above). -->
     <!--
       THE STANDING ORDER — PLAN.md §1's "the order you can check".
 
@@ -952,9 +995,20 @@
       there is no grid, count or key typed in this markup — the key comes from
       the live bindings, because it is rebindable.
 
-      IN THE .hud-bl COLUMN and above the support panel, for the reason the
-      roster and the stratagem list are: boxes in a column cannot overlap at
-      any viewport, boxes pinned to a corner eventually do.
+      FIRST IN THE .hud-bl COLUMN — the LEFT one, with the vitals, while the
+      roll and the call list are on the right with the map.
+
+      That split is by subject and it is also what makes the right column fit.
+      By subject: the bars and this panel are what is true of YOU and the order
+      you are under; the roll, the map and the wheel are what is true of your
+      ARMY and the ground. By arithmetic: the map and the ability wheel already
+      spend ~300 px of the bottom right, and a 186 px order panel stacked on top
+      of a full roll pushed the column into the kill feed. Here it costs the
+      left column — which carries four bars and a strip of boon chips and has
+      the room — nothing that shows.
+
+      Still in a FLOW and not pinned: boxes in a column cannot overlap at any
+      viewport, boxes pinned to a corner eventually do.
     -->
     <div id="firemission" class="fm hidden" aria-hidden="true">
       <div class="fm-head"><span id="fm-grid">—</span><b id="fm-clock"></b></div>
@@ -962,35 +1016,6 @@
       <div class="fm-read"><i id="fm-read-fill"></i></div>
       <div class="fm-verdict" id="fm-verdict"></div>
       <div class="fm-foot" id="fm-foot"></div>
-    </div>
-    <div id="stratagem" class="hidden"></div>
-    <!--
-      YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.
-
-      Command mode gives every trooper a designation, a nickname earned by
-      surviving, a rank with a painted insignia and a permanent death — and
-      until now the only trace of any of it on screen was a two-line message
-      when somebody was promoted or died. `CommandDirector.readout()` has
-      published the whole roll the entire time and nothing read it: main.js
-      called `hud.setRoster?.(summary)` into a method that did not exist.
-
-      IN THE FLOW OF .hud-bl, ABOVE THE BARS, not a fifth absolutely-positioned
-      box. That is the rule this HUD was rebuilt on after the event feed and the
-      kill feed were found drawn through one another: boxes in a column cannot
-      overlap at any viewport, boxes pinned to the same corner eventually do.
-      Every element in here is filled by HUD.setRoster / HUD.setOrder; there is
-      no name, rank or key typed in this markup.
-    -->
-    <div id="roster" class="rp hidden" aria-hidden="true">
-      <div class="rp-head"><span id="rp-army">—</span><b id="rp-strength"></b></div>
-      <!-- The formation you are actually in. Nothing said this before, so the
-           six order keys changed the battle and the screen was silent. -->
-      <div class="rp-order"><i></i><span id="rp-order-name">—</span><em id="rp-order-sub"></em></div>
-      <!-- One chip per order, keys read from the live bindings by
-           HUD.setBindings — these are rebindable now, so they cannot be typed. -->
-      <div id="rp-orders" class="rp-keys"></div>
-      <div id="rp-list" class="rp-list"></div>
-      <div id="rp-foot" class="rp-foot"></div>
     </div>
     <!--
       THE THREE LABELS THAT HAD NEVER BEEN ON SCREEN.
@@ -1047,6 +1072,67 @@
   </div>
 
   <div class="hud-br">
+    <!-- THE ARMY COLUMN — the support call and the roll, ON THE RIGHT, above
+         the map they are read against.
+
+         Both were bottom-LEFT, in one column with the vitals, for a good
+         reason that stopped being enough: two boxes pinned to the same corner
+         eventually collide at some viewport, boxes in a column cannot. They
+         still cannot. What that column did not survive was the thing UNDER
+         them — `#boon-strip` is the last child of `.hud-bl` and wraps, and
+         with a full holocron it was eight rows of named chips. A
+         bottom-anchored column grows upward, so every one of those rows lifted
+         the roll and the call list by its own height. Measured on the real
+         page at 1280x720 before this: `.hud-bl` spanned y -811…702 — eight
+         hundred pixels of HUD above the top of the window. Reported exactly:
+         "all the icons for all your powerups cover the bottom left side of
+         your screen pushing up the troop management screen and stratagem
+         screens so far up that they are totally obscured".
+
+         So the left column carries what is true of YOU — four bars, the boons
+         that buff them, the order you are under — and this one carries what is
+         true of your ARMY: who is still standing, what you can call in, and
+         the ground it lands on. Nothing here is absolutely-positioned: it is
+         still one flow, the map and the wheel included, so none of these can
+         be drawn through another.
+
+         TWO MORE RULES IN styles.css MAKE IT FIT, and both are there because
+         moving a column that does not fit only moves the failure: `.hud-br` is
+         height-capped so the roll's list gives up rows rather than the stack
+         running off the top, and the roll stands down entirely while the call
+         list is held, since they are the two tallest boxes here and nobody
+         reads a roll while spelling a code. -->
+    <div id="stratagem" class="hidden"></div>
+    <!--
+      YOUR ARMY, WHICH THE GAME HAS ALWAYS HAD AND NEVER SHOWN.
+
+      Command mode gives every trooper a designation, a nickname earned by
+      surviving, a rank with a painted insignia and a permanent death — and
+      until now the only trace of any of it on screen was a two-line message
+      when somebody was promoted or died. `CommandDirector.readout()` has
+      published the whole roll the entire time and nothing read it: main.js
+      called `hud.setRoster?.(summary)` into a method that did not exist.
+
+      IN THE FLOW OF .hud-br, ABOVE THE MAP, not a fifth absolutely-positioned
+      box. That is the rule this HUD was rebuilt on after the event feed and the
+      kill feed were found drawn through one another: boxes in a column cannot
+      overlap at any viewport, boxes pinned to the same corner eventually do.
+      It reads next to the map on purpose — the roll and the ground your men
+      are on are the same question asked two ways.
+      Every element in here is filled by HUD.setRoster / HUD.setOrder; there is
+      no name, rank or key typed in this markup.
+    -->
+    <div id="roster" class="rp hidden" aria-hidden="true">
+      <div class="rp-head"><span id="rp-army">—</span><b id="rp-strength"></b></div>
+      <!-- The formation you are actually in. Nothing said this before, so the
+           six order keys changed the battle and the screen was silent. -->
+      <div class="rp-order"><i></i><span id="rp-order-name">—</span><em id="rp-order-sub"></em></div>
+      <!-- One chip per order, keys read from the live bindings by
+           HUD.setBindings — these are rebindable now, so they cannot be typed. -->
+      <div id="rp-orders" class="rp-keys"></div>
+      <div id="rp-list" class="rp-list"></div>
+      <div id="rp-foot" class="rp-foot"></div>
+    </div>
     <!--
       THE MINIMAP, in the flow of the bottom-right block and above the power
       wheel — not floated somewhere of its own.

@@ -149,7 +149,31 @@ const blank = () => ({
  * the far end — see `CommandDirector._endCampaign`. A mode left out of this
  * set leaves no trace at all, and a mode whose whole subject is a casualty
  * list leaving no trace is the defect the paragraph above is an account of. */
-const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'theline', 'skirmish', 'campaign']);
+/**
+ * THE MODES A RUN IS RECORDED FOR — and the rule is "can this be lost", not
+ * "is this a wave ladder".
+ *
+ * Two were missing and both were missing silently, which is the whole reason
+ * `progress.mjs` asks the question mode by mode: a set has no default it can
+ * complain about, so a mode added to `MODES` simply falls through to "not
+ * recorded" and nobody finds out.
+ *
+ *   `thefront`  an ordinary wave mode with a war behind it — `MODES` says so
+ *               in as many words — so a run of it is a run of `waves` with
+ *               hundreds more men on the field. There was never an argument
+ *               for refusing it; it was just never decided about.
+ *   `versus`    a commander battle is ONE engagement, so its depth is always
+ *               1 and that is honest rather than uninformative: what a meeting
+ *               produces is a win, a loss and a body count, and `runs`, `wins`
+ *               and `kills` are exactly the three fields this record keeps.
+ *               Refusing it would mean the one mode you can be BEATEN at by a
+ *               person leaves no trace.
+ *
+ * The two that stay out are the two where there is no run to record at all:
+ * nothing in the lessons can kill you, and the sandbox is a room with a slider.
+ */
+const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'theline', 'skirmish',
+  'campaign', 'thefront', 'versus']);
 
 function read() {
   try {

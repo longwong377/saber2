@@ -294,25 +294,56 @@ export async function run({ check, assert }) {
       d.start(1);
       return { versus: d.versus, queue: d.spawnQueue.length };
     };
+    /**
+     * FOUR RUNS PER MODE, NOT THREE, and the fourth is what a mode of its own
+     * needed.
+     *
+     * The A/B used to be "the box on against the box off, both in a session",
+     * with the alone run compared against the box-off one. That comparison has
+     * two variables in it — the box AND the session — and it was exact for
+     * exactly as long as the box was the only way to reach a meeting. It is not
+     * any more: `MODES.versus` carries `alwaysVersus`, so its box-off run is
+     * still a meeting, and the old line read a mode whose whole subject is the
+     * meeting as "a Command setting emptied this one".
+     *
+     * So the box is A/B'd against ITSELF at each session state, which is the
+     * property the paragraph above always meant: ticking a Command box must not
+     * change what any mode fields when there is nobody to meet.
+     */
     const out = [];
     for (const mode of Object.keys(Waves.MODES)) {
-      const off = open(mode, false), on = open(mode, true), alone = open(mode, true, false);
-      const wants = !!Waves.MODES[mode].meeting;
+      const M = Waves.MODES[mode];
+      const off = open(mode, false), on = open(mode, true);
+      const aloneOff = open(mode, false, false), alone = open(mode, true, false);
+      const wants = !!M.meeting;
       assert(on.versus === wants,
         `${mode} reads the meeting box as ${on.versus} where its own entry says ${wants}`);
+      /* A MODE THAT DECLARES ITSELF A MEETING NEEDS NO BOX. The other half of
+       * `alwaysVersus`: a card called Commander Battle that fights a composed
+       * wave because a checkbox on the Command panel was never ticked is the
+       * defect the mode was made to end. */
+      assert(!M.alwaysVersus || off.versus === true,
+        `${mode} declares alwaysVersus and reads as a campaign with the Command box clear`);
       /* THE STICKY BOX, IN A RUN WITH NO SESSION. Every mode, no exceptions:
        * with nobody to meet the box is not a mode switch, it is nothing. */
       assert(alone.versus === false,
         `${mode} held a meeting with no session and no second player — versus stayed true`);
-      assert(alone.queue === off.queue,
-        `${mode} fields ${off.queue} bodies with the meeting box clear and ${alone.queue} with it `
-        + 'ticked in a run that has nobody to meet. The box is a persisted global; a player who '
+      assert(alone.queue === aloneOff.queue,
+        `${mode} fields ${aloneOff.queue} bodies with the meeting box clear and ${alone.queue} with `
+        + 'it ticked in a run that has nobody to meet. The box is a persisted global; a player who '
         + 'ticked it in a session last week must still get a battle today.');
       if (wants) {
-        assert(on.queue === 0 && off.queue > 0,
-          `${mode} declares a meeting and composed ${on.queue} bodies anyway (${off.queue} without `
-          + "the box) — the other army is supposed to be a person's");
-        out.push(`${mode} ${off.queue}→meets, alone ${alone.queue}`);
+        /* WITH SOMEBODY TO MEET, NOTHING IS COMPOSED — the other army is a
+         * person's. WITH NOBODY, there is a battle rather than an empty plain.
+         * Stated against the SESSION rather than against the box, so it holds
+         * for a mode that has no box to compare. */
+        assert(on.queue === 0,
+          `${mode} declares a meeting and composed ${on.queue} bodies anyway — the other army is `
+          + "supposed to be a person's");
+        assert(alone.queue > 0,
+          `${mode} stood its meeting down with nobody to meet and then composed nothing — that is `
+          + 'the empty plain the stand-down exists to prevent');
+        out.push(`${mode} meets, alone ${alone.queue}`);
       } else {
         assert(on.queue === off.queue,
           `${mode} fields ${off.queue} bodies normally and ${on.queue} with a COMMAND box ticked — `

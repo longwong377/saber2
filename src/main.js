@@ -14,8 +14,8 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD, ordinal } from './ui/HUD.js';
-import { Menu, loadSettings, saveSettings, applyFeelSettings, VICTORY_TITLE,
-  LINE_LOST_TITLE } from './ui/Menu.js';
+import { Menu, loadSettings, saveSettings, applyFeelSettings, bladeCeiling, BLADE_CAP,
+  VICTORY_TITLE, LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { theatreFor, LEVELS } from './game/Levels.js';
@@ -100,7 +100,30 @@ const playerName = () => (settings.playerName || '').trim().slice(0, 18) || 'Jed
 let session = null;
 const sessionOr = (key) => (session && session[key] !== undefined ? session[key] : settings[key]);
 /** The settings a world is built from: the player's, with the host's overrides. */
-const worldSettings = () => (session ? { ...settings, ...session } : settings);
+/**
+ * THE SETTINGS THIS WORLD IS BUILT FROM: yours, with the host's over the top.
+ *
+ * `session` carries exactly `Net.SESSION_KEYS` — everything that shapes the
+ * shared world or the fairness of the run — so the spread is the whole rule and
+ * `LOCAL_KEYS` beside it is the statement of what is deliberately left alone.
+ *
+ * ONE THING NEEDS MORE THAN A SPREAD. `bladeLength` is yours, because a session
+ * is not a reason for everybody to hold the same sword; the CEILING on it is
+ * the host's, because "Unlimited blade length" is a handicap and `unlimitedBlade`
+ * is shared for that reason. Those two facts together have a hole in them: a
+ * guest who stored a 4 m blade under their own unlimited setting keeps the 4 m
+ * blade when a host who has it switched off hands them `unlimitedBlade: false`,
+ * since nothing re-clamps a stored number at world-build time — `_wear`'s clamp
+ * runs in the MENU, against the menu's own copy. So the ceiling is applied here,
+ * where the two answers finally meet, through `bladeCeiling` rather than a
+ * second copy of which constant is which.
+ */
+const worldSettings = () => {
+  if (!session) return settings;
+  const s = { ...settings, ...session };
+  s.bladeLength = Math.min(s.bladeLength ?? BLADE_CAP, bladeCeiling(s));
+  return s;
+};
 
 /**
  * THE MEN THIS RUN IS FIELDING FROM A PREVIOUS ONE, or null.
@@ -723,7 +746,13 @@ async function deploy() {
     // missed, and each of them would fall back independently. They would agree
     // today, by luck, because the fallback is deterministic — but "the host
     // sends the level it is standing in" is the thing that has to be true.
-    if (net.isHost) net.broadcast({ t: 'start', ...sessionPart(settings), level: world.levelKey });
+    /* `seed` AFTER the spread, exactly as `level` is and for the same reason:
+     * `settings.seed` is the seed BOX (usually empty, meaning "roll one"), and
+     * what a client has to reproduce is the number that was actually rolled.
+     * See SESSION_KEYS for what that number generates. */
+    if (net.isHost) {
+      net.broadcast({ t: 'start', ...sessionPart(settings), level: world.levelKey, seed: world.runSeed });
+    }
   }
 
   hud.show(true);
@@ -1401,7 +1430,11 @@ function gameOver(stats) {
    * every field read here to being a field `runStats` reports.
    */
   const TAKEN = { campaign: 'Missions taken', skirmish: 'Engagements won', command: 'Areas taken',
-                  theline: 'Ground taken', duel: 'Forms faced' };
+                  theline: 'Ground taken', duel: 'Forms faced',
+                  /* A meeting is ONE battle, so what its count answers is not
+                   * "how many did you take" but "did you take this one". The
+                   * noun is the field, because the field is the whole stake. */
+                  versus: 'The field' };
   const row = (label, v) => (v == null ? null : [label, v]);
   /**
    * A THIRD CARD, BECAUSE THE LINE HAS A THIRD ENDING.

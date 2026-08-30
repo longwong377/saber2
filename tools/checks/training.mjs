@@ -19,7 +19,7 @@
 import { readFileSync } from 'node:fs';
 import * as THREE from 'three';
 import { WaveDirector, MODES, sandboxConfig, sandboxUnits, holdFire, tuneFireRate,
-  SANDBOX_MAX_ENEMIES } from '../../src/game/Waves.js';
+  SANDBOX_MAX_ENEMIES, DOJO_MIX } from '../../src/game/Waves.js';
 import { DojoDirector, LESSONS } from '../../src/game/Dojo.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { DEFAULT_SETTINGS, BLADE_CAP, BLADE_MAX, bladeCeiling, loadSettings, STORE_KEY, LEGACY_KEYS } from '../../src/ui/Menu.js';
@@ -218,6 +218,140 @@ export async function run({ check, assert }) {
     const kinds = new Set(w.enemies.map(e => e.type));
     assert(kinds.size >= 2, `"mixed" produced only ${[...kinds].join(', ')}`);
     return `single-type rooms are pure; mixed drew ${kinds.size} kinds`;
+  });
+
+  /* ── as many kinds as you like, and how many of each ───────────────── */
+
+  check('sandbox: the room is a list of counts, and every named quota is filled exactly', () => {
+    /**
+     * "Currently for training/sandbox you can only select one enemy type, I
+     * want you to allow me to select as many as I want and specify the specific
+     * number of that specific enemy."
+     *
+     * The reader first, because everything downstream is a consequence of it.
+     * Three properties and none of them is "the object round-trips":
+     *
+     *   NAMED IS HONOURED     A count you typed is not truncated by a slider
+     *                         you did not touch, so the total follows the names
+     *                         UP. Asking for 30 droidekas in a room of 5 is a
+     *                         room of 30, not 5 droidekas and a lost 25.
+     *   THE REST IS THE REST  `sandboxType` did not change meaning: it is what
+     *                         the bodies you did not name are, so a blob with
+     *                         no mix in it describes the room it always did.
+     *                         Every check above this line is that assertion.
+     *   THE CEILING HOLDS     SANDBOX_MAX_ENEMIES is a ceiling on the room, not
+     *                         on one row, so a mix that oversubscribes it is
+     *                         cut at the ceiling rather than allowed past it.
+     */
+    const one = sandboxConfig({ sandboxCount: 6, sandboxType: 'mixed', sandboxMix: { droideka: 2 } });
+    assert(one.count === 6, `a mix of 2 inside a room of 6 changed the total to ${one.count}`);
+    assert(one.named === 2, `${one.named} named where 2 were asked for`);
+    assert(one.mix.length === 2 && one.mix[0].type === 'droideka' && one.mix[0].n === 2,
+      `the named quota is not first in the list: ${JSON.stringify(one.mix)}`);
+    assert(one.mix[1].type === 'mixed' && one.mix[1].n === 4,
+      `the remainder is ${JSON.stringify(one.mix[1])} — 6 asked for, 2 named, so 4 are left`);
+
+    // The total follows the names up…
+    const up = sandboxConfig({ sandboxCount: 5, sandboxMix: { droideka: 30 } });
+    assert(up.count === 30 && up.mix.length === 1 && up.mix[0].n === 30,
+      `30 droidekas in a room of 5 came back as ${JSON.stringify(up.mix)} in a room of ${up.count}`);
+
+    // …but not past the ceiling, and the cut is at the ceiling, not the row.
+    const over = sandboxConfig({ sandboxCount: 0, sandboxMix: { b1: 30, trooper: 30 } });
+    assert(over.count === SANDBOX_MAX_ENEMIES,
+      `60 bodies were accepted into a room capped at ${SANDBOX_MAX_ENEMIES}: ${over.count}`);
+    assert(over.mix.reduce((a, m) => a + m.n, 0) === SANDBOX_MAX_ENEMIES,
+      `the quotas sum to ${over.mix.reduce((a, m) => a + m.n, 0)} in a room of ${over.count}`);
+
+    // Junk out of localStorage is dropped rather than turned into a spawn.
+    const junk = sandboxConfig({ sandboxCount: 4, sandboxMix: { nonsense: 3, b1: 'two', droideka: 1 } });
+    assert(junk.named === 1 && junk.mix[0].type === 'droideka',
+      `an archetype that does not exist got through: ${JSON.stringify(junk.mix)}`);
+
+    // And a blob with no mix in it is the room this mode always had.
+    const old = sandboxConfig({ sandboxCount: 7, sandboxType: 'b1' });
+    assert(old.count === 7 && old.mix.length === 1 && old.mix[0].type === 'b1' && old.mix[0].n === 7,
+      `an old settings blob no longer describes its own room: ${JSON.stringify(old.mix)}`);
+    return `2+4 of 6, 30 raises the room, 60 cut to ${SANDBOX_MAX_ENEMIES}, junk dropped, `
+      + 'an old blob unchanged';
+  });
+
+  check('sandbox: two droidekas and five B1s is two droidekas and five B1s', () => {
+    /**
+     * The reader can be right and the room still wrong, because the room is
+     * built by a spawner that used to ask "what type is this sandbox" ONCE and
+     * fill every slot with the answer. The pool here is deliberately something
+     * neither row asks for: if the quota logic falls through to the old path
+     * the room fills with troopers and this says so.
+     */
+    const s = { ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 7,
+      sandboxMix: { b1: 5, droideka: 2 } };
+    const w = fakeWorld(s);
+    const d = new WaveDirector(w, { mode: 'sandbox', pool: ['trooper'] });
+    d.start(1);
+    settle(d, w);
+    const tally = {};
+    for (const e of w.enemies) if (!e.dead) tally[e.type] = (tally[e.type] || 0) + 1;
+    assert(tally.b1 === 5 && tally.droideka === 2 && Object.keys(tally).length === 2,
+      `the room is ${JSON.stringify(tally)} — asked for 5 b1 and 2 droideka`);
+
+    /* AND IT CONVERGES WHEN YOU CHANGE IT, which is the property that made the
+     * old picker worth having: the droids you stopped asking for are retired
+     * rather than waited out. */
+    s.sandboxMix = { droideka: 4 };
+    s.sandboxCount = 4;
+    settle(d, w, 200);
+    const after = {};
+    for (const e of w.enemies) if (!e.dead) after[e.type] = (after[e.type] || 0) + 1;
+    assert(after.droideka === 4 && Object.keys(after).length === 1,
+      `after re-mixing the room is ${JSON.stringify(after)} — asked for 4 droideka and nothing else`);
+    return `5 b1 + 2 droideka, then live → 4 droideka, pool 'trooper' never leaked in`;
+  });
+
+  check('sandbox: a named quota and a mixed remainder share one room', () => {
+    // The half that is easiest to get wrong: fill the remainder first and the
+    // two droidekas never arrive, because the mixed draw is allowed to count
+    // bodies against a quota it cannot satisfy. Named is filled FIRST.
+    const s = { ...DEFAULT_SETTINGS, mode: 'sandbox', sandboxCount: 10,
+      sandboxType: 'mixed', sandboxMix: { droideka: 2 } };
+    const w = fakeWorld(s);
+    const d = new WaveDirector(w, { mode: 'sandbox', pool: ['b1', 'trooper'] });
+    d.start(1);
+    settle(d, w);
+    const live = w.enemies.filter(e => !e.dead);
+    const deka = live.filter(e => e.type === 'droideka').length;
+    assert(live.length === 10, `${live.length} bodies in a room of 10`);
+    assert(deka === 2, `${deka} droidekas where 2 were named — the remainder ate the quota`);
+    const rest = new Set(live.filter(e => e.type !== 'droideka').map(e => e.type));
+    assert([...rest].every(t => t === 'b1' || t === 'trooper'),
+      `the remainder drew ${[...rest].join(', ')}, which is not this theatre's pool`);
+    return `2 droideka + 8 from the pool (${[...rest].join('/')}) in a room of 10`;
+  });
+
+  check('sandbox: the dojo room honours a mix too, not just the arena', () => {
+    // Two rooms, one rule — see `sandboxQuota`. The dojo has its own spawner
+    // and its own idea of a mixed draw (DOJO_MIX, not the level pool), so
+    // "named quotas are honoured" has to be asked of it separately.
+    /* NAMED WITH SOMETHING THE ROTATION CANNOT PRODUCE. DOJO_MIX is remote,
+     * dummy and sparring, so naming a dummy would have the rotation quietly
+     * satisfying the quota and the check would pass on a director that ignored
+     * the mix entirely. A B1 is not in the rotation: every one in this room was
+     * asked for by name. */
+    const s = { ...DEFAULT_SETTINGS, mode: 'training', sandboxCount: 5,
+      sandboxMix: { b1: 3 } };
+    const w = fakeWorld(s);
+    w.scene = { add() {}, remove() {} };
+    const d = intoSandbox(new DojoDirector(w));
+    for (let i = 0; i < 400; i++) d.update(1 / 60, ctxFor(w));
+    const live = d.sandboxUnits.filter(e => !e.dead);
+    const named = live.filter(e => e.type === 'b1').length;
+    const rest = live.filter(e => e.type !== 'b1').map(e => e.type);
+    assert(live.length === 5, `${live.length} in the room where 5 were asked for`);
+    assert(named === 3,
+      `${named} B1s where 3 were named — the dojo is still filling from DOJO_MIX alone`);
+    assert(rest.every(t => DOJO_MIX.includes(t)),
+      `the remainder drew ${rest.join(', ')}, which is not the dojo's own rotation`);
+    return `3 B1s named + 2 from the rotation (${rest.join('/')}), in a ${live.length}-body room`;
   });
 
   check('sandbox: changing the opponent reshapes the room instead of waiting', () => {

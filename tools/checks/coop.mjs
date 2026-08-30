@@ -94,6 +94,164 @@ export async function run({ check, assert }) {
   check = await clocked(check);
   /* ══ identity ═══════════════════════════════════════════════════════════ */
 
+  check('co-op: a joining player builds the host\'s ground, not one of their own', async () => {
+    /**
+     * "the co-op doesn't really work, sometimes the host will see the teammates
+     *  and enemies/allies but the teammates see nothing no host, friends, or
+     *  enemies/allies bare map"
+     *
+     * THE RUN'S NUMBER WAS THE ONE THING ABOUT A SESSION THAT NEVER CROSSED.
+     * Both machines called `mintRunSeed()` and each got its own random number,
+     * and `runSeed` is not cosmetic:
+     *
+     *   `World._groundKeyFor` GENERATES the heightfield from it on every level
+     *     that declares `battlefield` — so the same theatre is a different
+     *     landscape on the two machines.
+     *   `Levels.theatreFor` ROLLS THE THEATRE ITSELF from it for a mode that
+     *     declares `seedsGround`. Measured over eight rolls, THE LINE lands on
+     *     five different theatres.
+     *   `ObjectiveField.place` puts the objectives with it.
+     *
+     * So the two ends built different worlds and then exchanged absolute
+     * coordinates about them. Every body arrives buried in the client's hills
+     * or hanging over them — or on another planet entirely — which is a bare
+     * map with nobody on it.
+     *
+     * Asserted on the WIRE and on the resolver rather than by booting a pair,
+     * because the defect is in what `start` carries and what `deploy` does with
+     * it, and neither end of that is inside `bootPair` (the harness attaches a
+     * net to two worlds that were already built).
+     */
+    const Net = await import('../../src/net/Net.js');
+    const { theatreFor } = await import('../../src/game/Levels.js');
+    const { MODES } = await import('../../src/game/Waves.js');
+
+    assert(Net.SESSION_KEYS.includes('seed'),
+      'the run seed is not a session key, so it never reaches a joining player and every '
+      + 'machine rolls its own ground');
+
+    /* THE HOST'S OWN SEED, not the settings box. `settings.seed` is normally
+     * empty — "roll one" — so a wire that carried only the box would carry
+     * nothing on exactly the runs that need it. */
+    const host = { mode: 'theline', level: 'geonosis', difficulty: 'knight', seed: '' };
+    const hostRunSeed = 2654435761;
+    const msg = { t: 'start', ...Net.sessionPart(host), level: 'mustafar', seed: hostRunSeed };
+    const session = Net.sessionPart(msg);
+    assert(Number(session.seed) === hostRunSeed,
+      `the start message carried seed ${session.seed} against the host's ${hostRunSeed}`);
+
+    /* AND THE CLIENT RESOLVES THE SAME GROUND FROM IT — for every mode whose
+     * theatre is a roll, which is the set where this bites hardest. */
+    const rolled = Object.keys(MODES).filter((m) => MODES[m]?.seedsGround);
+    assert(rolled.length, 'no mode rolls its ground, so this fixture measures nothing');
+    for (const mode of rolled) {
+      for (const seed of [1, 2654435761, 99991, 0]) {
+        const a = theatreFor(mode, 'geonosis', seed);
+        const b = theatreFor(mode, 'geonosis', seed);
+        assert(a === b, `${mode} is not a function of the seed: ${a} then ${b}`);
+      }
+      /* …and that the roll really does move, or the clause above is vacuous. */
+      const seen = new Set([1, 2, 3, 4, 5, 6, 7, 8].map((i) =>
+        theatreFor(mode, 'geonosis', (Math.imul(i, 2654435761)) >>> 0)));
+      assert(seen.size > 1,
+        `${mode} lands on ${[...seen][0]} for every seed, so a mismatched seed could not have `
+        + 'produced two different grounds — check this fixture, not the game');
+    }
+
+    /* AND BOTH BROADCASTS SEND IT. There are two — the deploy in main.js and
+     * the ground rotation in World.js — and a rotation that dropped the seed
+     * would put the pair back on different ground at the first mission
+     * boundary. */
+    const { readFile } = await import('node:fs/promises');
+    for (const rel of ['../../src/main.js', '../../src/game/World.js']) {
+      const src = await readFile(new URL(rel, import.meta.url), 'utf8');
+      const starts = [...src.matchAll(/t: 'start',[^}]*}/g)].map((m) => m[0]);
+      assert(starts.length, `${rel} sends no start message`);
+      for (const line of starts) {
+        assert(/\bseed:/.test(line),
+          `${rel} broadcasts a start without a seed: ${line.slice(0, 90)}`);
+      }
+    }
+    return `seed on the wire; ${rolled.join(', ')} resolve identically from it; both start `
+      + 'broadcasts carry it';
+  });
+
+  check('co-op: every setting in the game is the host\'s or is yours, and it says which', async () => {
+    /**
+     * "I want you to be sure that every mode works in co-op and it's not
+     * dependent on what any modes/maps non-host players have selected on their
+     * screens."
+     *
+     * `worldSettings()` is `{...settings, ...session}` and `session` is exactly
+     * `SESSION_KEYS`, so this is not a matter of degree: a key that is not on
+     * that list is the JOINING player's own answer, used to build their half of
+     * a world the host is authoritative for. Six keys were on it — the ground,
+     * the mode, the difficulty, the seed and the two damage switches — and that
+     * left, among fifty-odd others:
+     *
+     *   `allies`      picks the DIRECTOR CLASS. A host at 20 and a guest at 0
+     *                 is an army on one machine and a wave director on the
+     *                 other.
+     *   `rules`       the run CONDITIONS. The waves are composed under them.
+     *   `skirmish*`   the whole battle plan — how many engagements, how long,
+     *                 how big, how hard.
+     *   `sandbox*`    the practice room's population.
+     *   `forceDrain`  0 is the setting whose own label reads "unlimited Force".
+     *
+     * THE PROPERTY IS TOTALITY, not a longer list. Every setting the game has
+     * is on `SESSION_KEYS` or in `LOCAL_KEYS`, never both and never neither, so
+     * the next setting somebody adds cannot quietly default to "each machine
+     * decides for itself" — which is what all of the above did, silently, for
+     * as long as they existed.
+     *
+     * The REASONS are asserted too. `LOCAL_KEYS` is a map to a sentence rather
+     * than an array precisely so that "it is not shared" has to be argued, once,
+     * where the decision is made.
+     */
+    const { SESSION_KEYS, LOCAL_KEYS } = await import('../../src/net/Net.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const all = Object.keys(DEFAULT_SETTINGS);
+    const shared = new Set(SESSION_KEYS), local = new Set(Object.keys(LOCAL_KEYS));
+
+    const unclassified = all.filter((k) => !shared.has(k) && !local.has(k));
+    assert(!unclassified.length,
+      `${unclassified.join(', ')} — neither the host's nor declared local. In a session that means `
+      + 'the JOINING player\'s answer builds their half of the world, which is the defect this '
+      + 'list exists to make impossible. Add it to SESSION_KEYS, or to LOCAL_KEYS with a reason.');
+    const both = all.filter((k) => shared.has(k) && local.has(k));
+    assert(!both.length, `${both.join(', ')} are on both lists — they cannot be both`);
+    const ghosts = [...shared, ...local].filter((k) => !all.includes(k));
+    assert(!ghosts.length,
+      `${ghosts.join(', ')} are classified and are not settings — a row for a key that does not `
+      + 'exist is a row nothing can ever be wrong about');
+
+    /* A REASON, AND ONE THAT SAYS SOMETHING. A one-word placeholder is the
+     * shape this map exists to refuse. */
+    for (const [k, why] of Object.entries(LOCAL_KEYS)) {
+      assert(typeof why === 'string' && why.trim().length >= 8,
+        `${k} is declared local with the reason "${why}" — that is not an argument`);
+    }
+
+    /* …AND THE ONES THAT WOULD BE WORST TO GET WRONG, BY NAME. Derived lists
+     * catch the next mistake; these catch a regression on the ones already
+     * measured, and each is a sentence about the shared world rather than a
+     * taste. */
+    for (const k of ['mode', 'level', 'seed', 'difficulty', 'rules', 'allies', 'pvp',
+      'forceDrain', 'holocron', 'sandboxCount', 'skirmishStrength',
+      'versusStrength', 'versusTeams', 'versusWin', 'versusReinforce']) {
+      assert(shared.has(k), `${k} is not the host's — a guest could set it in somebody else's run`);
+    }
+    /* …and the ones it would be worst to TAKE. A host reaching onto somebody
+     * else's mouse is the other failure, and it is the one a widened list
+     * causes. */
+    for (const k of ['fov', 'sensitivity', 'quality', 'volume', 'invertY', 'reticleShape',
+      'playerName', 'firstPerson', 'scheme']) {
+      assert(local.has(k), `${k} is the host's — that is the host reaching onto somebody else's mouse`);
+    }
+    return `${all.length} settings: ${SESSION_KEYS.length} the host's, ${local.size} yours, `
+      + 'none unclassified and none on both';
+  });
+
   check('co-op: four players are four bodies, not one body wearing four names', async () => {
     /**
      * THE RELAY THREW AWAY WHO SENT THE PACKET.

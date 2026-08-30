@@ -259,6 +259,13 @@ const POWER_ICONS = {
  * twin of a number that lived nowhere: it is `SENSE_DRAIN` in
  * src/game/Powers.js now, beside the twelve one-shot prices, because it is one.
  */
+/* HOW MANY BOONS STILL GET THEIR NAME ON THE STRIP. Past this the chips go to
+ * icons — see `HUD.setBoons`, which explains why a wall of named chips was the
+ * thing pushing the command panels off the top of the screen. Ten is two rows
+ * of named chips at 520 px, which is as much as the corner can spend before it
+ * is competing with the vitals for the left of the frame. */
+export const BOONS_NAMED = 10;
+
 export const MINIMAP = { range: 42, hz: 20, size: 132, linger: 3.5 };
 
 /**
@@ -2790,12 +2797,39 @@ export class HUD {
     while (this.el.killfeed.children.length > 5) this.el.killfeed.firstChild.remove();
   }
 
+  /**
+   * THE STRIP STOPS BEING A WALL ONCE THERE ARE ENOUGH OF THEM.
+   *
+   * Every boon was a chip reading "icon NAME" — about 90 px of it — in a strip
+   * that wraps. That is fine at four and it is a wall at forty: with a full
+   * holocron the strip was eight wrapped rows, and since `.hud-bl` is
+   * bottom-anchored every one of those rows LIFTED everything above it. The
+   * player reported the consequence rather than the cause: "all the icons for
+   * all your powerups cover the bottom left side of your screen pushing up the
+   * troop management screen and stratagem screens so far up that they are
+   * totally obscured". Measured on the real page at 1280x720, `.hud-bl` spanned
+   * y -811…702 — eight hundred pixels of HUD above the top of the window.
+   *
+   * The panels have moved out of that column (see index.html), which is the
+   * half of the fix that stops them being pushed. This is the other half: past
+   * `NAMED` boons the strip drops to ICONS, which is the part a player reads at
+   * a glance anyway, and the name goes to the tooltip and the accessible label
+   * rather than off the screen. Nothing is hidden and no count is elided — a
+   * "+31 more" chip would be exactly the failure of not showing you what you
+   * unlocked. Forty-four chips: 8 rows named, 3 rows as icons.
+   */
   setBoons(boons) {
     this.el.boons.innerHTML = '';
+    const dense = boons.length > BOONS_NAMED;
+    this.el.boons.classList.toggle('dense', dense);
     for (const b of boons) {
       const d = document.createElement('div');
       d.className = 'bn';
-      d.textContent = `${b.icon} ${b.name}`;
+      /* The name is still ON the chip when it is dense — as the title and the
+       * label, so a hover and a screen reader both still get it. */
+      d.title = b.name;
+      d.setAttribute('aria-label', b.name);
+      d.textContent = dense ? `${b.icon}` : `${b.icon} ${b.name}`;
       this.el.boons.appendChild(d);
     }
   }

@@ -2434,7 +2434,15 @@ export function commandConfig(settings) {
      * asked here — so it is asked by `meetingOpposed` at the moment the field
      * opens, and `standDownMeeting` clears this flag when the answer is no.
      */
-    versus: !!s.commandVersus && !!MODES[s.mode]?.meeting,
+    /* `alwaysVersus` IS NOT THE SAME STATEMENT AS `meeting`, and the meeting
+     * mode needs both. `meeting` says a mode MAY hold one — Command says it
+     * too, because Command is playable either way and the tick box is what
+     * chooses. `alwaysVersus` says the mode IS one, so `MODES.versus` cannot be
+     * deployed with the switch off: a card named Commander Battle that fights
+     * a composed wave because a checkbox on another panel was never ticked is
+     * the defect this mode exists to end. */
+    versus: !!MODES[s.mode]?.alwaysVersus
+      || (!!s.commandVersus && !!MODES[s.mode]?.meeting),
     /**
      * AN ARMY IN A MODE THAT NEVER HAD ONE.
      *
@@ -2490,6 +2498,113 @@ export function commandConfig(settings) {
      * words are the same word in all three places they appear.
      */
     allyArmy: ARMY_IDS[Math.round(Number(s.allyArmy))] ?? null,
+  };
+}
+
+/* ═══════════════════════════════════════════════════════════════════════ */
+/*  The commander battle — MODES.versus                                    */
+/* ═══════════════════════════════════════════════════════════════════════ */
+
+/** How a meeting can be decided. See `versusCommandConfig`. */
+export const VERSUS_WINS = {
+  /**
+   * FIGHT TO THE DEATH — the player's own words, and the default. A side is
+   * out when nothing of it is standing: not its commanders, not its men. No
+   * clock, so a battle cannot be won by running away and waiting.
+   */
+  annihilation: {
+    label: 'To the last man',
+    blurb: 'A side is beaten when nothing of it is left standing — the commanders and every man.',
+    counts: 'standing', clock: false,
+  },
+  /**
+   * KILL THE GENERAL. The armies still fight and still matter — they are what
+   * stands between you and the other commander — but the battle is decided by
+   * the two of you. Much shorter, and it makes the line a shield rather than
+   * the objective.
+   */
+  commanders: {
+    label: 'Cut down the commanders',
+    blurb: 'The army is the wall. A side falls when its commanders are down, whatever is still standing.',
+    counts: 'generals', clock: false,
+  },
+  /**
+   * ON THE CLOCK, decided on remaining health if nobody has been wiped out —
+   * which is what a meeting already did, because `pvpRules` gives it
+   * `roundTime`. Kept as a named choice rather than left as the silent default
+   * it used to be: a battle that ends in a draw on a timer nobody was told
+   * about is the version of this mode the player was handed first.
+   */
+  rounds: {
+    label: 'On the clock',
+    blurb: 'Best of three, each round on a timer, decided on health if nobody has been wiped out.',
+    counts: 'standing', clock: true,
+  },
+};
+/** Bodies a side may bring, and how often reinforcements may come. */
+export const VERSUS_LIMITS = {
+  strength: { min: SQUAD, max: MAX_STRENGTH, def: 20 },
+  /** Seconds between reinforcement waves. 0 is off — a standing battle. */
+  reinforce: { min: 0, max: 180, def: 0 },
+};
+
+/**
+ * READ THE MEETING'S PICKS OFF A SETTINGS BLOB — one reader, the same shape
+ * `commandConfig`, `sandboxConfig` and `pvpRules` have.
+ *
+ * ── WHY STRENGTH IS PER SIDE AND NOT PER COMMANDER ──────────────────────
+ *
+ * A meeting shares one roster per SIDE (see `_rosterFor`), opens it at
+ * `OPENING_STRENGTH` and adds a squad for every commander past the first —
+ * §9's rule, and the right one for co-op Command, where every player is on the
+ * same side and a bigger table should field a bigger company.
+ *
+ * It is the wrong rule for a battle BETWEEN sides, and three players is where
+ * that stops being theoretical. Driven on the shipped build with three
+ * commanders: sides 0/2/0, and the rosters came out **15 against 10** — the
+ * pair outnumbering the lone commander by half again, on top of being two
+ * people. Four players is 2v2 and even by luck; three is not, and the mode is
+ * for however many friends are in the room.
+ *
+ * So a side brings `strength` men whoever leads them. Two allies split one army
+ * of twenty rather than bringing ten each, which is also the sentence the mode
+ * is about: two armies meet, and how many commanders one of them happens to
+ * have is a question about command, not about how many rifles are on the field.
+ *
+ * ── AND THE SIDES ARE THE HOST'S ────────────────────────────────────────
+ *
+ * `teams` is peer id → side, written by the host in the lobby. Empty is the
+ * default and the default is `assignSides`' alternation, which is what every
+ * session has always done. It is deliberately a stated map rather than a rule:
+ * "you and your friends can choose to be either allies or enemy commanders" is
+ * a choice, and a choice that can only be made by re-ordering who joined first
+ * is not one.
+ */
+export function versusCommandConfig(settings) {
+  const s = settings || {};
+  const L = VERSUS_LIMITS;
+  const n = (spec, v) => (Number.isFinite(Number(v))
+    ? clamp(Math.round(Number(v)), spec.min, spec.max) : spec.def);
+  const w = s.versusWin;
+  const teams = (s.versusTeams && typeof s.versusTeams === 'object') ? s.versusTeams : null;
+  const seats = new Map();
+  if (teams) {
+    for (const [id, side] of Object.entries(teams)) {
+      const v = Math.round(Number(side));
+      /* An index into SIDES, not a raw team number: the lobby offers "side 1 or
+       * side 2" and `sideTeam` is the one place that says what those are. A
+       * stored number out of range is dropped rather than trusted — this blob
+       * is localStorage and crosses versions. */
+      if (Number.isFinite(v) && v >= 0 && v < ARMY_IDS.length) seats.set(String(id), v);
+    }
+  }
+  return {
+    strength: n(L.strength, s.versusStrength),
+    reinforce: n(L.reinforce, s.versusReinforce),
+    win: VERSUS_WINS[w] ? w : 'annihilation',
+    rule: VERSUS_WINS[w] || VERSUS_WINS.annihilation,
+    /** peer id → index into SIDES. Empty means "alternate down the roster". */
+    seats,
   };
 }
 
@@ -3325,6 +3440,24 @@ export class CommandDirector extends WaveDirector {
      */
     this.versus = !!cfg.versus;
     /**
+     * THE MEETING'S OWN PICKS, read once — `versusCommandConfig` is the only
+     * thing allowed to say what the four settings mean, and this is its only
+     * caller. Read whether or not `versus` is true, because it is one object
+     * with defaults in it and a director that stands its meeting down still has
+     * to have a coherent answer for anything that asks.
+     */
+    this.meetingPlan = versusCommandConfig(world?.settings ?? opts.settings ?? null);
+    /**
+     * HOW MANY MEN A SIDE BRINGS — see `versusCommandConfig` for why this is
+     * per SIDE and not per commander, and for the three-commander measurement
+     * that made it so. Zero outside a meeting, which is the flag every reader
+     * uses to fall back to `this.opening` and the §9 join rule.
+     */
+    this.sideStrength = this.versus ? this.meetingPlan.strength : 0;
+    /** Seconds between reinforcement waves, or 0 for a standing battle. */
+    this.reinforceEvery = this.versus ? this.meetingPlan.reinforce : 0;
+    this._reinforceIn = this.reinforceEvery;
+    /**
      * THE RULES THIS WORLD HAD BEFORE THE MEETING REWROTE THEM, or null.
      *
      * `World._loadSteps` swaps `world.rules` for `pvpRules({pvp: true,
@@ -3362,7 +3495,28 @@ export class CommandDirector extends WaveDirector {
      * between areas, out of a purse an area paid — that IS its composition, and
      * a slider that pre-composed it would take the mode's own decision away.
      */
-    this.unit = this.campaign ? 0 : (opts.unit ?? cfg.unit);
+    /**
+     * …AND A MEETING COMPOSES ITS ARMY, which is the half of the player's ask
+     * that the campaign rule was swallowing.
+     *
+     * "at the beginning you choose the number and mixup of each of your
+     * armies/the field."
+     *
+     * A CAMPAIGN is forced to rung 0 for a good reason, written out under
+     * `_musterOpening`: the roll at the top of a crossing is "ten identical
+     * strangers, so that the three names in it four areas later are something
+     * the player earned", and the composition is what the muster screen between
+     * areas is FOR. A meeting has no areas and no muster screen — it is one
+     * battle — so under that rule it fielded twenty identical clone troopers
+     * against twenty identical B1s and a purse with nowhere to spend it.
+     *
+     * So a meeting reads the contingent's own composition control, which is the
+     * shelf this game already has for "what is my army made of": a rung of the
+     * ladder, or `CONTINGENT_MIXED` for the line-then-the-heaviest-affordable
+     * spend `autoMuster` uses. It is already on `SESSION_KEYS`, so it is the
+     * host's answer for the table like everything else about the battle.
+     */
+    this.unit = (this.campaign && !cfg.versus) ? 0 : (opts.unit ?? cfg.unit);
     this.areaIndex = 0;
     this.areaWaves = 0;
     /** Raised once, when the last area is behind you. See `_endCampaign`. */
@@ -3746,6 +3900,26 @@ export class CommandDirector extends WaveDirector {
    * new squad is named out of the same `taken` set as the rest of the roll.
    */
   _musterJoin(c) {
+    /**
+     * …AND IN A MEETING A JOINER BRINGS NOBODY.
+     *
+     * §9's rule — the line opens at `OPENING_STRENGTH` and grows by one squad
+     * for every commander beyond the first — is exactly right for co-op
+     * Command, where every player is on the same side and a bigger table should
+     * field a bigger company. It is exactly wrong for a battle BETWEEN sides,
+     * and three players is where that shows: two allies against one commander
+     * came out 15 against 10, which is the pair outnumbering the lone player by
+     * half again on top of being two people.
+     *
+     * So the side brings what the host said it brings and an ally takes a squad
+     * out of it. `_reseat`, which the caller runs next, is what actually deals
+     * the existing bodies to the new commander — this method never had to put
+     * men on the field for a joiner to have some, only to add them.
+     */
+    if (this.versus && this.sideStrength > 0) {
+      c.lineup = c.roster.living.map((t) => t.type);
+      return 0;
+    }
     const cheapest = c.army.tiers[0].type;
     let n = 0;
     for (let i = 0; i < SQUAD && c.roster.strength < MAX_STRENGTH; i++) {
@@ -4145,17 +4319,42 @@ export class CommandDirector extends WaveDirector {
                     names: c.roster.living.map((t) => t.name) });
   }
 
+  /**
+   * HOW MANY MEN THIS COMMANDER'S ROSTER OPENS WITH.
+   *
+   * `this.opening` everywhere except a meeting, which is every mode that had
+   * one before: a campaign opens with `OPENING_STRENGTH`, a contingent with
+   * what the player asked for.
+   *
+   * IN A MEETING IT IS THE SIDE'S, not the commander's, and the note on
+   * `versusCommandConfig` carries the three-player measurement that decided it:
+   * one roster per side, opened at `OPENING_STRENGTH` and grown a squad per
+   * extra commander, made a 2v1 into **15 against 10**. A side brings what the
+   * host said it brings, and how many people are leading it is a question about
+   * command rather than about rifles.
+   */
+  openingFor(c = this.commander) {
+    return this.versus && this.sideStrength > 0
+      ? clamp(this.sideStrength, 1, MAX_STRENGTH)
+      : this.opening;
+  }
+
   _musterOpening(c = this.commander) {
     const tiers = c.army.tiers;
     const cheapest = tiers[0].type;
     /* THE MEN WHO CAME BACK LAST TIME GO OUT FIRST. See `_musterVeterans`. */
     const vets = this._musterVeterans(c);
-    if (this.campaign) {
+    /* THE CROSSING'S RULE, AND NOT THE MEETING'S — see `this.unit` in the
+     * constructor for the whole argument. A campaign opens with identical
+     * strangers and composes at the muster screen between areas; a meeting is
+     * one battle with no screen between anything, so it composes here or it
+     * never composes at all. */
+    if (this.campaign && !this.versus) {
       /* `this.opening` and not `OPENING_STRENGTH`: a campaign's opening IS the
        * constant and says so in the constructor. One loop, one authority.
        * `vets` are already on the roll and are part of that count — a company
        * of ten deploys ten, not twenty. */
-      for (let i = vets; i < this.opening; i++) c.roster.enlist(cheapest);
+      for (let i = vets; i < this.openingFor(c); i++) c.roster.enlist(cheapest);
       c.roster.points = this.stages[0].muster;
       c.lineup = c.roster.living.map((t) => t.type);
       this._logRoll(c);
@@ -4197,7 +4396,8 @@ export class CommandDirector extends WaveDirector {
      * `Company.js`'s own note refuses at the top of its file. What a returning
      * company buys is rank, not headcount.
      */
-    c.roster.points = Math.max(0, this.opening - vets) * musterCost(cheapest);
+    const opening = this.openingFor(c);
+    c.roster.points = Math.max(0, opening - vets) * musterCost(cheapest);
     const want = this.unit >= 0 ? tiers[Math.min(this.unit, tiers.length - 1)] : null;
     this._bulk = true;
     try {
@@ -4212,7 +4412,7 @@ export class CommandDirector extends WaveDirector {
          * three places it says so out loud.
          */
         this.refused = `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
-          + `${this.opening} ${c.army.unit}${this.opening === 1 ? '' : 's'} buys ${c.roster.points}`;
+          + `${opening} ${c.army.unit}${opening === 1 ? '' : 's'} buys ${c.roster.points}`;
         this.world?.notify?.('CONTINGENT UNCHANGED', this.refused);
       } else if (want) {
         while (this.recruit(want.type, c));
@@ -4235,7 +4435,7 @@ export class CommandDirector extends WaveDirector {
        * at ten Republic allies, and five B1s and a MagnaGuard for 29 of 30 at
        * ten Confederate ones.
        */
-      const room = Math.max(0, this.opening - vets);
+      const room = Math.max(0, opening - vets);
       const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
       for (let i = 0; i < line && this.recruit(cheapest, c); i++);
       for (let guard = 0; guard < MAX_STRENGTH; guard++) {
@@ -7349,7 +7549,7 @@ export class CommandDirector extends WaveDirector {
      * lines are steered by the same code one player's is.
      *
      * …AND IT HAS A FRONT NOW. See `_front`. */
-    if (this.versus) { this._front(dt); this._troops(dt, ctx); return; }
+    if (this.versus) { this._reinforceTick(dt); this._front(dt); this._troops(dt, ctx); return; }
     if (this.mustering) { this.arrivals.update(dt, ctx); this._troops(dt, ctx); return; }
     super.update(dt, ctx);
     this._troops(dt, ctx);
@@ -7400,15 +7600,23 @@ export class CommandDirector extends WaveDirector {
      * ends the round.
      */
     const present = this.world?.players;
+    /* Commanders still on their feet, per side. Zero-filled with `standing` so
+     * a side that has been beaten is a side AT ZERO rather than a side that was
+     * never there — `DuelMatch` tells those two apart and only one of them ends
+     * the round. */
+    const generals = {};
     /* A SIDE WHOSE COMMANDER HAS GONE IS STILL A SIDE, AT ZERO. The paragraph
      * above is why, and `dismissCommander` is what fills this set — the
      * Commander itself is gone from the list, which is the whole point, so the
      * side it held has to be remembered somewhere else or it stops existing. */
-    for (const s of this._departed) { standing[s] = standing[s] || 0; health[s] = health[s] || 0; }
+    for (const s of this._departed) {
+      standing[s] = standing[s] || 0; health[s] = health[s] || 0; generals[s] = generals[s] || 0;
+    }
     for (const c of this.commanders) {
       const s = c.side;
       standing[s] = standing[s] || 0;
       health[s] = health[s] || 0;
+      generals[s] = generals[s] || 0;
       if (c.player && Array.isArray(present) && !present.includes(c.player)) continue;
       /* THIS COMMANDER'S OWN SQUADS. With one roster shared by four players
        * `roster.living` is everybody's line, so counting it per commander
@@ -7420,9 +7628,18 @@ export class CommandDirector extends WaveDirector {
         health[s] += Math.max(0, b.hp || 0);
       }
       const p = c.player;
-      if (p && p.alive !== false && !p.dead) { standing[s]++; health[s] += Math.max(0, p.hp || 0); }
+      if (p && p.alive !== false && !p.dead) {
+        standing[s]++;
+        health[s] += Math.max(0, p.hp || 0);
+        /* THE GENERALS, COUNTED SEPARATELY — the tally `VERSUS_WINS.commanders`
+         * is decided on. It is the same walk and the same "is this body still
+         * in the fight" test as the line above it, because a win condition that
+         * disagreed with the census about whether a commander is standing would
+         * be a battle that ends twice or not at all. */
+        generals[s]++;
+      }
     }
-    return { standing, health };
+    return { standing, health, generals };
   }
 
   /**
@@ -8178,6 +8395,55 @@ export class CommandDirector extends WaveDirector {
    * simply stops, which is what a stalemate looks like and what the men on it
    * are for.
    */
+  /**
+   * THE FRONTLINE VARIANT — reinforcements, in waves, to both sides.
+   *
+   * "maybe also a mode where reinforcements come in waves so imagine like two
+   * armies meeting and a frontline."
+   *
+   * A meeting without this is one army against one army: whatever you brought
+   * is what you have, and the battle is a single collision that resolves in a
+   * couple of minutes. With it the field stops being a collision and becomes a
+   * LINE — men keep arriving behind you, the middle of the plain is where they
+   * meet, and holding ground starts to mean something because the ground is
+   * what decides whose reinforcements reach the fight first.
+   *
+   * BOTH SIDES, ON ONE CLOCK, AND THAT IS THE WHOLE FAIRNESS ARGUMENT. A timer
+   * per side would drift apart the moment one of them was interrupted, and a
+   * battle where one army's replacements arrive a beat sooner every cycle is
+   * decided by the timer rather than by the fight. One clock, one wave, both
+   * ends of the field.
+   *
+   * ONE ROSTER PER SIDE, NOT ONE PER COMMANDER. `_rosterFor` already shares a
+   * roster between allies, so reinforcing every commander would pay a side with
+   * three players three times — a 3v1 that is also 3× the replacements is not a
+   * battle. The set is what makes it once per side however many people are
+   * leading it, which is the same sentence `openingFor` is.
+   *
+   * `SQUAD` a side a wave, through `reinforce` — the one door that prices,
+   * guards, enlists, logs and flies them in. The purse is what stops this being
+   * infinite: a roster's points run out, `reinforce` returns 0, and the side
+   * that spent better lasts longer.
+   */
+  _reinforceTick(dt) {
+    if (!(this.reinforceEvery > 0) || this._netShell) return;
+    this._reinforceIn -= dt;
+    if (this._reinforceIn > 0) return;
+    this._reinforceIn = this.reinforceEvery;
+    const done = new Set();
+    let sent = 0;
+    for (const c of this.commanders) {
+      if (done.has(c.roster)) continue;
+      done.add(c.roster);
+      sent += this.reinforce(SQUAD, { byShip: true }, c);
+    }
+    if (sent) {
+      this.log.push({ t: 'reinforce-wave', n: sent, wave: this.wave });
+      this.world?.notify?.('REINFORCEMENTS', `${sent} more on the ramp — both lines`);
+    }
+    return sent;
+  }
+
   _front(dt) {
     if (!this.versus) return;
     const cs = this.commanders || [];

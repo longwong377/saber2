@@ -360,7 +360,16 @@ export function kineticContact(other, c) {
      */
     const mag = Math.min(22, c.impulse / 35);
     _imp.copy(_dir).multiplyScalar(mag).setY(Math.min(4, mag * 0.27));
+    /* THE HEALTH BEFORE, FOR THE WIRE. On a co-op client both machines run the
+     * same physics world and resolve the same contacts, so a bump that hurts
+     * has already been billed by the host — `World.netContactBilled` moves that
+     * machine's baseline instead of claiming it back. Measured as a live leak
+     * before this existed: an idle joining player billing the host 0.1–0.5 hp a
+     * time in `force` damage, out of forty men in a line jostling each other.
+     * A no-op off the wire, and the only thing this file knows about the net. */
+    const hp0 = victim.hp;
     victim.applyKnockback(_imp, dmg, source);
+    victim.world?.netContactBilled?.(victim, hp0, source);
   } else if (typeof victim.damage === 'function') {
     // A prop. Its own `damage` decides whether that was enough to break it —
     // unless the striker is a body, which shoves scenery rather than breaking

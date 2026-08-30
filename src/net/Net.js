@@ -1085,7 +1085,139 @@ function lerpAngle(a, b, t) {
  * bytes nobody reads, and the day something else reads them is the day they
  * join this list.
  */
-export const SESSION_KEYS = ['level', 'difficulty', 'mode', 'pvp', 'commandVersus'];
+/**
+ * …AND `seed` IS ON IT NOW, which is the fix for a client standing on a bare
+ * map.
+ *
+ * The run's number was the one thing about a session that never crossed. Every
+ * machine called `mintRunSeed()` and got its OWN random number, and `runSeed`
+ * is not a cosmetic: `World._groundKeyFor` GENERATES THE HEIGHTFIELD from it
+ * on every `battlefield` level, `theatreFor` ROLLS THE GROUND ITSELF from it
+ * for a `seedsGround` mode (The Line lands on five different theatres over
+ * eight seeds), and the objectives are placed from it.
+ *
+ * So the host and the joining player built different worlds and then exchanged
+ * absolute coordinates about them. What the client saw depended on how far
+ * apart the two rolls fell: a different theatre outright, or the same theatre
+ * with a different landscape, with every body arriving inside its hills or
+ * hanging over them. That is the reported symptom — "the teammates see nothing,
+ * no host, no friends, no enemies, bare map".
+ *
+ * It rides on `start` beside `level` for the same reason `level` does: that
+ * message is the sentence "the session is now on this ground", and the ground
+ * is not fully named until the number that generates it is on the wire too.
+ */
+/**
+ * …AND SIX KEYS WAS NOT ENOUGH, WHICH THE PLAYER FOUND BEFORE ANY CHECK DID.
+ *
+ * "I want you to be sure that every mode works in co-op and it's not dependent
+ * on what any modes/maps non-host players have selected on their screens."
+ *
+ * The ground, the mode, the difficulty and the seed were on the wire, so the
+ * headline was right. Everything else a menu can say about what the run IS was
+ * still each machine's own, and `worldSettings()` is `{...settings, ...session}`
+ * — so a key that is not on this list is the JOINING player's answer, used to
+ * build their half of a world the host is authoritative for. Read down the
+ * settings table and it is not a short list of edge cases:
+ *
+ *   `allies`      decides whether `World.loadLevel` builds a CommandDirector at
+ *                 all. A host at 20 and a guest at 0 is an army on one machine
+ *                 and a wave director on the other.
+ *   `rules`       the run CONDITIONS — NO GUNS, the lot. The waves are composed
+ *                 under them.
+ *   `skirmish*`   the whole battle plan: how many engagements, how long, how
+ *                 big, how hard.
+ *   `sandbox*`    the practice room's population, which each machine holds to
+ *                 its own numbers.
+ *   `forceDrain`  0 is the setting whose own label reads "unlimited Force". A
+ *                 guest could switch it on in somebody else's session.
+ *
+ * So the rule this list states is now stated properly: a setting that shapes
+ * the SHARED WORLD or the FAIRNESS of the run is the host's, and everything
+ * else is yours. `LOCAL_KEYS` below is the other half of it, and
+ * `tools/checks/session.mjs` holds every setting in the game to being on
+ * exactly one of the two lists — so the next setting somebody adds cannot
+ * quietly default to "each machine decides for itself".
+ */
+export const SESSION_KEYS = [
+  /* THE GROUND AND THE RUN. `seed` generates the heightfield, rolls the
+   * theatre for a `seedsGround` mode and places the objectives — see above. */
+  'level', 'seed', 'mode', 'difficulty', 'rules',
+  /* WHO MAY HURT WHOM. The worst possible thing for two machines to disagree
+   * about, because it decides damage. */
+  'pvp', 'commandVersus', 'teamDamage',
+  /* WHETHER THERE IS AN ARMY AT ALL, and what it is made of. `allies` is the
+   * one that picks the DIRECTOR CLASS, so a disagreement here is not a
+   * difference of degree. */
+  'allies', 'allyUnit', 'allyArmy', 'commandFormation',
+  /* THE MEETING'S OWN PICKS — the sides, what each side fields, how it is won
+   * and whether reinforcements come. See MODES.versus. */
+  'versusStrength', 'versusWin', 'versusReinforce', 'versusTeams',
+  /* THE BATTLE PLAN. */
+  'skirmishEngagements', 'skirmishWaves', 'skirmishStrength',
+  'skirmishPressure', 'skirmishRotate',
+  /* THE PRACTICE ROOM, and whether bodies walk in or appear. */
+  'sandboxCount', 'sandboxFire', 'sandboxType', 'sandboxMix', 'instantSpawn',
+  /* THE HANDICAPS. Every one of these is a lever a guest could otherwise pull
+   * on somebody else's run: unlimited Force, an unleashed blade, free Focus,
+   * and whether the Holocron is in play. */
+  'holocron', 'forcePower', 'forceDrain', 'unlimitedBlade', 'unlimitedFocus',
+];
+
+/**
+ * WHAT STAYS YOURS, AND WHY — the other half of the rule above.
+ *
+ * Every setting in the game is on this list or on SESSION_KEYS, and
+ * `tools/checks/session.mjs` fails if one is on neither or on both. The reason
+ * strings are the point: "it is not shared" is a decision, and a decision with
+ * no reason written next to it is the one that gets made wrong next time.
+ *
+ * Three kinds, and they are genuinely different:
+ *
+ *   YOUR MACHINE     a frame rate is not a rule. Nothing here changes what
+ *                    happens, only what it costs to draw.
+ *   YOUR BODY        who you are and what you look like. Some of it already
+ *                    crosses on `LOOK_KEYS` so other people can see you — that
+ *                    is a different wire and a different question from "whose
+ *                    answer wins".
+ *   YOUR HANDS       a control scheme, a sensitivity, a reticle. Sharing one
+ *                    of these would be the host reaching onto somebody else's
+ *                    mouse.
+ */
+export const LOCAL_KEYS = {
+  /* ── your machine ────────────────────────────────────────────────── */
+  quality: 'a frame rate is not a rule',
+  resolutionScale: 'a frame rate is not a rule',
+  maxBodies: 'how many bodies THIS machine will draw; the host stays authoritative for who is alive',
+  bloom: 'a post pass', grain: 'a post pass', particleScale: 'a post pass',
+  grassScale: 'ground cover density, drawn not simulated',
+  showPerf: 'a debug overlay',
+  /* ── what your screen does to you ────────────────────────────────── */
+  shake: 'camera feel', slowmo: 'camera feel', rumble: 'a gamepad motor',
+  letterbox: 'a framing choice', injury: 'a screen effect', deathDrain: 'a screen effect',
+  popups: 'whether YOUR feed prints', minimap: 'whether YOUR map is up',
+  minimapSense: 'whether YOUR map costs Force to read',
+  reticleShape: 'your crosshair', reticleSize: 'your crosshair', reticleColor: 'your crosshair',
+  /* ── your hands ──────────────────────────────────────────────────── */
+  sensitivity: 'your mouse', camFollow: 'your camera', fov: 'your camera',
+  invertY: 'your mouse', firstPerson: 'which shoulder you play over',
+  scheme: 'your control scheme', deflectAim: 'how YOUR guard is aimed',
+  bladeHold: 'whether YOUR blade holds position',
+  /* ── your ears ───────────────────────────────────────────────────── */
+  volume: 'your speakers', music: 'your speakers', musicIndex: 'your soundtrack',
+  voiceLevel: 'your speakers', voiceIndex: 'your voice', voiceLines: 'whether YOU speak',
+  forceVoice: 'whether YOU call your powers', enemyVoices: 'whether the horde speaks to YOU',
+  speechMode: 'how YOUR lines are delivered', enemyBody: 'whose body plays a line',
+  /* ── your body ───────────────────────────────────────────────────── */
+  playerName: 'your name; it crosses on the roster instead',
+  order: 'which temple you belong to — measured not to change an army assignment in 0 of 28 rosters, see beginVersus',
+  colorIndex: 'your crystal', lightningColor: 'your lightning', hiltStyle: 'your hilt',
+  species: 'your face', face: 'your face', robeCut: 'your clothes', robeIndex: 'your clothes',
+  wardrobe: 'your clothes', skinIndex: 'your skin', hairIndex: 'your hair', build: 'your build',
+  bladeLength: 'your blade — re-clamped against the SESSION\'s ceiling, see worldSettings',
+  coreWidth: 'your blade',
+  troopNames: 'whose name is over whose head, on YOUR screen',
+};
 
 /**
  * Those keys of an object, skipping the ones it does not carry.

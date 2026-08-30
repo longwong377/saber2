@@ -53,6 +53,7 @@ import { Player } from '../../src/game/Player.js';
 import { duelRng, FORMS, BladeLock } from '../../src/game/Duel.js';
 import { DIFFICULTY } from '../../src/game/Combat.js';
 import { POWER_COST } from '../../src/game/Powers.js';
+import { readFile } from 'node:fs/promises';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const scene = new THREE.Scene();
@@ -1004,6 +1005,247 @@ export async function run({ check, assert }) {
     assert(p.hp > mine + 1, `the player's own heal went ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`);
     return `ally ${before.toFixed(0)} → ${mate.hp.toFixed(0)} hp and back on his feet; `
       + `self ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`;
+  });
+
+  check('powers: with friendly fire ON the mend still knows who your own men are', async () => {
+    /**
+     * THE BUG THIS EXISTS FOR, and it hid behind every other mend check in
+     * this file for months.
+     *
+     * `_mendTarget` and `nearestWounded` used to open with
+     * `if (canHarm(this, e, rules)) continue` — a friend is whoever you cannot
+     * hurt, which reads as obviously right. It is wrong, and it is wrong in
+     * exactly the modes that have allies: `World` installs `COMMAND_POWER_RULES`
+     * as the frame's rules whenever there is an army and it is not a meeting,
+     * and that object is `{pvp: false, friendlyFire: true}`. Friendly fire ON
+     * means `canHarm(you, your own trooper)` answers TRUE, so every ally was
+     * skipped before distance or aim was measured. `_mendTarget` returned null,
+     * `forceHeal` fell through to its own-body path, and `nearestWounded`
+     * returned null so the HUD never even said the power existed.
+     *
+     * The other checks here pass a ctx with no `rules` at all — `waves` in the
+     * colosseum has no army, so `world.rules` is undefined, the default says
+     * you cannot hurt your own side, and the ally was found. Every one of them
+     * passed on a build where ally healing was impossible in Command, The Line,
+     * Skirmish and Campaign — all four modes it is for.
+     *
+     * The player found it, twice: "I still don't know how you heal your
+     * allies", then "I think it only heals yourself."
+     *
+     * So this check pins the frame that shipped: the SAME wounded ally, under
+     * the rules object `World` really hands the player, with the trap asserted
+     * out loud rather than assumed — `canHarm` must still say yes (friendly
+     * fire is a real setting and this must not have been "fixed" by turning it
+     * off) and the mend must find him anyway.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { COMMAND_POWER_RULES } = await import('../../src/game/Command.js');
+    const { canHarm, sameSide } = await import('../../src/game/Player.js');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+
+    /* The rules `World.js` builds for a command frame, not an invented one. */
+    assert(COMMAND_POWER_RULES.friendlyFire === true && COMMAND_POWER_RULES.pvp === false,
+      'COMMAND_POWER_RULES changed shape — this check is pinned to the frame that shipped');
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players, rules: COMMAND_POWER_RULES };
+
+    const at = new THREE.Vector3(p.position.x, p.position.y, p.position.z - 6);
+    const mate = world.spawnEnemy('trooper', at);
+    assert(mate, 'no trooper spawned');
+    mate.team = p.team;                                  // one of yours
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    mate.hp = mate.maxHp * 0.3;
+
+    /* THE TRAP, ASSERTED. If this ever goes false the check has stopped
+     * measuring anything and somebody has quietly turned friendly fire off. */
+    assert(canHarm(p, mate, COMMAND_POWER_RULES) === true,
+      'friendly fire is no longer on for command powers, so this check proves nothing');
+    assert(sameSide(p, mate), 'sameSide does not recognise a trooper carrying your own team id');
+
+    /* Aim re-taken here: the frames above moved him. */
+    p.aimDir.subVectors(mate.position, p.chest).normalize();
+    assert(p._mendTarget(ctx) === mate,
+      'a wounded man of YOURS under the reticle was not found, because friendly fire was read as '
+      + 'enmity — this is the bug the player reported as "it only heals yourself"');
+    assert(p.nearestWounded(ctx) === mate,
+      'the HUD cue cannot see your own wounded man, so the power stays invisible');
+
+    /* AND AN ENEMY IS STILL NOT A PATIENT. The fix must not have widened the
+     * net to "anybody hurt nearby". */
+    const foe = world.spawnEnemy('trooper',
+      new THREE.Vector3(p.position.x, p.position.y, p.position.z - 5));
+    assert(foe, 'no hostile spawned');
+    foe.team = (p.team ?? 0) + 1;
+    foe.hp = foe.maxHp * 0.2;
+    for (let i = 0; i < 4; i++) world.update(1 / 60, input);
+    p.aimDir.subVectors(foe.position, p.chest).normalize();
+    assert(p._mendTarget(ctx) !== foe, 'the mend offered itself to a HOSTILE');
+
+    return 'with {pvp:false, friendlyFire:true} — the real command rules — canHarm says yes about '
+      + 'your own trooper and the mend finds him anyway; a hostile is still refused';
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE UNBOUND TIER
+   * ══════════════════════════════════════════════════════════════════ */
+
+  check('powers: an unbound power has no cooldown at all, and bills blood for it', async () => {
+    /**
+     * "I think it would be really cool if every force ability/power was
+     * represented in the holocron… such that it would really buff that ability
+     * to where it no longer has any cooldown at all but at a great cost… would
+     * allow you to spam disassemble or compel as much as you wanted (at a
+     * cost)."
+     *
+     * A cooldown is the one price in this game that is not denominated in
+     * anything, so removing it has to put a price back or the card is simply
+     * "this power is now free" with a long unlock in front of it. Four
+     * properties, driven on a real Player rather than read off the table:
+     *
+     *   THE CLOCK IS GONE     the cooldown is 0 after a cast, so the next cast
+     *                         is legal on the next frame. That is the promise.
+     *   THE FORCE IS NOT      the surcharge comes out of the pool at the moment
+     *                         the cast lands, so spamming empties you.
+     *   NEITHER IS THE BLOOD  and this is the half no build can buy out of:
+     *                         Force Drain 0 is a shipped setting whose label
+     *                         reads "unlimited Force", and under it the
+     *                         surcharge is nothing. The bleed still lands.
+     *   IT MAIMS, IT DOES NOT the floor is 1 hp. A power that kills its owner
+     *   KILL                  is a power nobody presses twice, so the tier
+     *                         would exist and never be used; at 1 hp the next
+     *                         bolt does it, which is the risk it is for.
+     */
+    const { UNBOUND, UNLEASH_TOLL, unboundId } = await import('../../src/game/Powers.js');
+    const { BOONS, boonById } = await import('../../src/game/Waves.js');
+    const Tree = await import('../../src/game/LivingForce.js');
+
+    /* Every row is a card AND a facet, on its own axis, hung off a real facet.
+     * Three tables generated from one list — see Powers.js — so this is asking
+     * that the generation actually reached all three. */
+    for (const u of UNBOUND) {
+      const id = unboundId(u.key);
+      const b = boonById(id);
+      assert(b, `${id} is in no boon table, so it can never be drafted`);
+      assert(b.axes?.[0] === u.axis, `${id} is a ${b.axes?.[0]} card on a ${u.axis} power`);
+      assert(b.rarity === 'epic' && b.minWave === UNLEASH_TOLL.minWave,
+        `${id} is ${b.rarity} at wave ${b.minWave} — the tier is meant to be the steepest thing`);
+      const f = Tree.FACETS.find((s) => s.id === id);
+      assert(f, `${id} is on no path in the Holocron — the player asked for it to be ON one`);
+      assert(f.axis === u.axis, `${id} sits on the ${f.axis} path and buffs a ${u.axis} power`);
+      assert(Tree.neighboursOf(id).includes(u.after),
+        `${id} is not joined to ${u.after}, so nothing in the lattice leads to it`);
+      assert(POWER_COST[u.key] !== undefined, `${u.key} is not a priced power`);
+    }
+
+    /* AND THE TWO THAT ARE NOT HERE ARE NOT HERE FOR A REASON. `grip` and
+     * `sense` have no cooldown to remove — one is a per-frame channel, the
+     * other a per-second toggle — so a card for either would do nothing. If
+     * they ever grow one, this goes red and asks for the card. */
+    const src = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    /* Anchored to the START of a line, so the prose in this file that quotes
+     * `this.cooldowns.x = n` is prose and not a twelfth power. */
+    const written = new Set([...src.matchAll(/^\s*this\.cooldowns\.([a-z]+)\s*=\s*(?!0;)/gm)]
+      .map((m) => m[1]));
+    const covered = new Set(UNBOUND.map((u) => u.key));
+    for (const key of written) {
+      if (key === 'dash') continue;                    // movement, not a Force power
+      assert(covered.has(key),
+        `${key} writes a cooldown and has no unbound card — every power with a clock is meant `
+        + 'to have one');
+    }
+    for (const key of ['grip', 'sense']) {
+      assert(!written.has(key),
+        `${key} has grown a cooldown, so it now needs an unbound card like the other ten`);
+    }
+    /* …and every one of the ten goes through the ONE seam that bills the toll.
+     * A cooldown written straight would be a power that is unbound and free. */
+    for (const key of covered) {
+      /* The RIGHT-HAND SIDE, captured and read — not a negative lookahead.
+       * `=\s*(?!this\._recover)` passes on the real line every time, because
+       * `\s*` backtracks to zero and the lookahead is then tested against a
+       * space. A check that cannot fail is worse than no check. */
+      const rhs = [...src.matchAll(new RegExp(`^\\s*this\\.cooldowns\\.${key}\\s*=\\s*(.+)$`, 'gm'))]
+        .map((m) => m[1].trim());
+      assert(rhs.length, `nothing writes this.cooldowns.${key} any more`);
+      for (const line of rhs) {
+        assert(line === '0;' || line.startsWith(`this._recover('${key}'`),
+          `${key}'s cooldown is written as "${line}" — not through _recover, so unbound it would `
+          + 'cost nothing');
+      }
+    }
+
+    /* ── and now the behaviour, on a real body ─────────────────────── */
+    /* Every generator this touches put back afterwards. This check builds
+     * Players and a physics world in a file whose other checks do not restore
+     * shared state, and a check that leaves the module clock somewhere else is
+     * a check that breaks whichever one runs next. */
+    const { snapshotShared, restoreShared } = await import('./_shared.mjs');
+    const snap = await snapshotShared();
+    try {
+      const w = gameWorld();
+      const p = new Player(w, { fov: 60 });
+      w.players.push(p);
+      p.hp = p.maxHp = 200;
+      p.force = p.maxForce = 4000;
+      const H = await import('./_coop.mjs');
+      const ctx = { input: H.idleInput(), physics: w.physics, terrain: w.terrain,
+        enemies: [], players: [p] };
+
+      /* THE SHOVE, because it is a one-shot: it spends, it lands and it writes
+       * its recovery inside one call. The lightning is a held channel and
+       * writes its clock when the channel ENDS, which is a different property
+       * and not the one this is about. */
+      p.forcePush(ctx);
+      const bound = p.cooldowns.push;
+      assert(bound > 0, 'force push has no cooldown to remove in the first place');
+
+      // Unbound: the clock is gone.
+      p.cooldowns.push = 0;
+      p.boonMods.unbound = { push: true };
+      const hp0 = p.hp, force0 = p.force;
+      p.forcePush(ctx);
+      assert(p.cooldowns.push === 0,
+        `unbound, the cast still left ${p.cooldowns.push.toFixed(2)}s of recovery`);
+      const spent = force0 - p.force;
+      const listed = POWER_COST.push;
+      assert(spent > listed * (1 + UNLEASH_TOLL.force) - 1,
+        `the cast took ${spent.toFixed(1)} Force where the list price is ${listed} and the `
+        + `surcharge is ${UNLEASH_TOLL.force}× more on top — the tier is free`);
+      assert(hp0 - p.hp > 1, `the cast cost ${(hp0 - p.hp).toFixed(1)} hp — there is no blood in it`);
+
+      // Spam: twenty casts back to back, which the clock made impossible.
+      let casts = 0;
+      for (let i = 0; i < 20; i++) { if (p.cooldowns.push <= 0) { p.forcePush(ctx); casts++; } }
+      assert(casts === 20, `only ${casts} of 20 casts got through — something still rate-limits it`);
+      assert(p.hp >= UNLEASH_TOLL.floor,
+        `twenty casts took the player to ${p.hp.toFixed(1)} hp — the floor is ${UNLEASH_TOLL.floor}`);
+      assert(p.hp <= UNLEASH_TOLL.floor + 0.01,
+        `twenty casts left ${p.hp.toFixed(1)} of 200 hp — the bleed is decoration`);
+
+      /* AND UNDER "UNLIMITED FORCE" IT STILL BLEEDS, which is the property the
+       * surcharge alone cannot carry: Force Drain 0 is a shipped setting whose
+       * own label reads "unlimited Force". */
+      const q = new Player(w, { fov: 60 });
+      q.hp = q.maxHp = 200;
+      q.force = q.maxForce = 4000;
+      q.boonMods.unbound = { push: true };
+      w.settings.forceDrain = 0;
+      const qhp = q.hp, qf = q.force;
+      q.forcePush({ ...ctx, players: [q] });
+      assert(q.force === qf, 'Force Drain 0 charged for the power after all');
+      assert(qhp - q.hp > 1,
+        `at Force Drain 0 the unbound cast cost ${(qhp - q.hp).toFixed(1)} hp — the tier is free `
+        + 'under a setting the player can just switch on');
+
+      return `${UNBOUND.length} powers unbound, each a card and a facet on its own path; bound `
+        + `${bound.toFixed(2)}s → 0s, 20 casts back to back, 200 hp → ${UNLEASH_TOLL.floor}, and `
+        + 'it still bleeds at Force Drain 0';
+    } finally { restoreShared(snap); }
   });
 
   check('powers: a hurt man behind you is announced, so the power is findable at all', async () => {

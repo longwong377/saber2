@@ -284,6 +284,27 @@ export async function run({ check, assert }) {
       const more = rule('.col.narrow.pinned.more>.col-scroll');
       assert(more && more.includes(`calc(100% - ${SCROLL_FADE}px)`),
         `the mask does not fade ${SCROLL_FADE}px — Menu.SCROLL_FADE has drifted from styles.css`);
+      /**
+       * …AND THE ROOM LEFT FOR IT IS THE SAME NUMBER.
+       *
+       * The fade covers the bottom 26 px WHILE there is more below; at the end
+       * of the scroll there is nothing more, the mask comes off, and the last
+       * card is legible. That held for as long as the last card could reach the
+       * end — and it stopped the day an eleventh mode was added: `_revealMode`
+       * asks for the card to sit clear of the fade, the scroller is already at
+       * its maximum, and the card stays flush against the edge. `lineseen.1`
+       * measured it at 1366x768: Campaign at 374..410 of a 410 px column.
+       *
+       * The scroller carries `padding-bottom` of exactly the fade for that
+       * reason, and it is a THIRD copy of 26 — so it is read out of the
+       * stylesheet here beside the other two rather than left to drift.
+       */
+      const scrollRule = CSS.match(/\n\.col\.narrow\.pinned>\.col-scroll\{([^}]*)\}/);
+      assert(scrollRule, '.col.narrow.pinned>.col-scroll has no rule of its own');
+      const pad = scrollRule[1].match(/padding-bottom:\s*([0-9.]+)px/);
+      assert(pad && Math.abs(parseFloat(pad[1]) - SCROLL_FADE) < 0.5,
+        `the scroller reserves ${pad ? pad[1] : 'no'}px under its content against a ${SCROLL_FADE}px `
+        + 'fade — the last card in any of these columns cannot be scrolled clear of it');
       return `more/less toggled at 0, 160 and ${788 - 466} of 788-466, and the mask is ${SCROLL_FADE}px`;
     } finally { close(); }
   });
@@ -536,6 +557,157 @@ export async function run({ check, assert }) {
           assert(out.docW <= out.w + 1,
             `${width}x${height}: the document is ${out.docW}px wide in a ${out.w}px frame`);
           lines.push(`${width}x${height} ${out.boxes} boxes in frame`);
+        } finally { await page.close(); }
+      }
+      return lines.join(' · ');
+    } finally {
+      await browser.close();
+      await new Promise(r => server.close(r));
+    }
+  });
+
+  check('layout: a full HUD stays inside the frame, with the army column clear of the vitals', async () => {
+    /**
+     * MEASURED, BECAUSE THIS ONE SHIPPED FOR MONTHS AND READ FINE AS SOURCE.
+     *
+     * Reported: "all the icons for all your powerups cover the bottom left side
+     * of your screen pushing up the troop management screen and stratagem
+     * screens so far up that they are totally obscured". The stylesheet had no
+     * defect in it. `.hud-bl` is a bottom-anchored column and every box in it
+     * was correct on its own; what was wrong was the SUM. `#boon-strip` is its
+     * last child and wraps, so with a full holocron it was eight rows of named
+     * chips, and a bottom-anchored column pays for its own growth by lifting
+     * everything above it. Driven in a real browser at 1280x720 with the roll,
+     * the call list, the order panel and forty-four boons all up, `.hud-bl`
+     * spanned y -811…702: eight hundred pixels of HUD above the top edge of the
+     * window, exactly as described and invisible to every structural check in
+     * this tree, because "these boxes are in one flow" was true the whole time.
+     *
+     * So the question this asks is the one only a browser can answer: with
+     * everything the HUD can hold on screen at once, where did it land. Three
+     * properties:
+     *
+     *   IN THE FRAME       Nothing may be off any edge. That is the report.
+     *   NOT ON EACH OTHER  The two bottom columns are anchored to opposite
+     *                      edges and are the two that grew; at any width the
+     *                      game is actually played at they must not meet.
+     *   THE FIX IS LOAD-   The roll stands down while the call list is held.
+     *   BEARING            Without that the army column is ~420 px taller and
+     *                      the cap starts eating the roll instead.
+     *
+     * The content is synthesised rather than played, because the state being
+     * measured — a full company, a full call list, a live fire mission and a
+     * complete holocron, all at once — is an hour of play to reach and is
+     * exactly the state nobody reached before shipping it. The CLASSES are what
+     * carry the sizes, and they are the real ones.
+     */
+    const { chromium } = await import('playwright-core');
+    const { chromiumPath, CHROME_ARGS } = await import('./_browser.mjs');
+    const { BOONS_NAMED } = await import('../../src/ui/HUD.js');
+
+    const server = createServer(handler);
+    await new Promise(r => server.listen(0, '127.0.0.1', r));
+    const port = server.address().port;
+    const browser = await chromium.launch({ executablePath: chromiumPath(), args: CHROME_ARGS });
+    // The three the game is played on. The narrow pair the check above covers
+    // are deliberately not here: at 360 px the ability wheel alone is the whole
+    // width of the frame, so "the two bottom corners do not meet" is not a
+    // property that frame has, and asserting it there would be asserting a lie.
+    const SIZES = [[1920, 1080], [1366, 768], [1280, 720]];
+    const lines = [];
+    try {
+      for (const [width, height] of SIZES) {
+        const page = await browser.newPage({ viewport: { width, height } });
+        try {
+          await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'load' });
+          await page.waitForFunction(
+            () => document.querySelectorAll('.menu-tabs .tab').length >= 7,
+            null, { timeout: 30000 });
+          const out = await page.evaluate((named) => {
+            document.getElementById('boot')?.classList.add('hidden');
+            document.getElementById('menu')?.classList.add('hidden');
+            document.getElementById('hud')?.classList.remove('hidden');
+            const el = (id) => document.getElementById(id);
+            const show = (id) => {
+              const n = el(id);
+              n?.classList.remove('hidden');
+              n?.removeAttribute('aria-hidden');
+            };
+            show('firemission'); show('stratagem'); show('roster');
+            show('minimap'); show('minimap-key');
+            el('fm-told').textContent = 'ORBITAL STRIKE — RIDGE LINE';
+            el('fm-verdict').textContent = 'ESTIMATE ONLY — GO AND LOOK';
+            el('fm-foot').innerHTML = 'READ THE GROUND <b>0/3</b> <kbd>F</kbd>';
+            /* Eighteen calls exist and `_stratagemPanel` shows ten of them
+             * plus the phrase line, the leading row and the spill row. */
+            el('stratagem').innerHTML =
+              '<div class="sg-row sg-mark"><b>RESUPPLY</b><span class="sg-cost">30</span></div>'
+              + '<div class="sg-words"><em class="on">down</em> <em class="next">up</em></div>'
+              + Array.from({ length: 11 }, (_, i) =>
+                `<div class="sg-row"><span class="sg-code">DDULR</span><b>CALL ${i}</b>`
+                + '<span class="sg-cost">30</span></div>').join('');
+            el('rp-army').textContent = '212TH ATTACK BN';
+            el('rp-orders').innerHTML =
+              Array.from({ length: 6 }, (_, i) => `<div class="rp-key">${i + 1}</div>`).join('');
+            el('rp-list').innerHTML = Array.from({ length: 40 }, (_, i) =>
+              `<div class="rp-row"><i></i><b>${i}</b><span>CT-${1000 + i} "LONGSHOT"</span>`
+              + '<em>100</em></div>').join('');
+            el('rp-foot').innerHTML = 'FALLEN 4 <b>MEDALS 2</b>';
+            /* Past BOONS_NAMED the strip is icons — the same switch setBoons
+             * makes, asserted here by driving the class it sets. */
+            const BOONS = 44;
+            el('boon-strip').classList.toggle('dense', BOONS > named);
+            el('boon-strip').innerHTML =
+              Array.from({ length: BOONS }, () => '<div class="bn">⚡</div>').join('');
+            el('power-wheel').innerHTML = Array.from({ length: 11 }, () =>
+              '<div class="pw"><span class="gl"><svg viewBox="0 0 24 24">'
+              + '<path d="M2 2 L22 22"/></svg></span></div>').join('');
+            const mm = el('minimap');
+            mm.width = mm.height = 132; mm.style.width = mm.style.height = '132px';
+            el('minimap-key').innerHTML = 'SENSE <b>V</b>';
+            el('event-feed').innerHTML = Array.from({ length: 4 }, (_, i) =>
+              `<div class="ev"><b>SOMETHING HAPPENED ${i}</b><span>a subtitle</span></div>`).join('');
+            el('killfeed').innerHTML = Array.from({ length: 5 }, (_, i) =>
+              `<div class="kf"><b>CT-1234</b> cut down <b>B1-${i}</b></div>`).join('');
+
+            const R = (sel) => {
+              const n = document.querySelector(sel);
+              if (!n) return null;
+              const b = n.getBoundingClientRect();
+              if (!b.width && !b.height) return null;
+              return { sel, t: Math.round(b.top), b: Math.round(b.bottom),
+                l: Math.round(b.left), r: Math.round(b.right) };
+            };
+            const boxes = ['.hud-tl', '.hud-tr', '.hud-bl', '.hud-br'].map(R).filter(Boolean);
+            const area = (a, c) => Math.max(0, Math.min(a.b, c.b) - Math.max(a.t, c.t))
+              * Math.max(0, Math.min(a.r, c.r) - Math.max(a.l, c.l));
+            const bl = boxes.find((x) => x.sel === '.hud-bl');
+            const br = boxes.find((x) => x.sel === '.hud-br');
+            return {
+              boxes,
+              W: innerWidth, H: innerHeight,
+              blbr: bl && br ? area(bl, br) : 0,
+              /* The load-bearing rule, asked of the live layout rather than of
+               * the stylesheet: with the call list up the roll is not drawn. */
+              rollDown: getComputedStyle(el('roster')).display === 'none',
+              armyH: br ? br.b - br.t : 0,
+            };
+          }, BOONS_NAMED);
+
+          const escaped = out.boxes.filter((b) =>
+            b.t < -0.5 || b.b > out.H + 0.5 || b.l < -0.5 || b.r > out.W + 0.5);
+          assert(!escaped.length,
+            `${width}x${height}: ${escaped.length} HUD block(s) outside the frame — `
+            + escaped.map((b) => `${b.sel} y ${b.t}…${b.b} x ${b.l}…${b.r}`).join('; ')
+            + ' — this is the reported defect: a bottom-anchored column that grew past the top edge');
+          assert(out.rollDown,
+            `${width}x${height}: the roll is still drawn under a held call list — that is ~420 px `
+            + 'the army column does not have, and the cap pays for it out of the roll');
+          assert(out.blbr === 0,
+            `${width}x${height}: the vitals column and the army column overlap by ${out.blbr} px² — `
+            + 'two corners anchored to opposite edges have met, which is what moving the panels '
+            + 'across was supposed to make impossible');
+          lines.push(`${width}x${height} in frame, army column ${out.armyH}px`);
         } finally { await page.close(); }
       }
       return lines.join(' · ');

@@ -46,7 +46,23 @@ import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
 
 export async function run({ check, assert }) {
-  check('packed: the single-file build boots from a bare file:// URL and can be played', async () => {
+  /**
+   * BOTH BUILDS, because only one of them was ever driven and the other is the
+   * one people are handed.
+   *
+   * `--min` is what fits the hosted play link under its 16 MB cap, and it was
+   * shipped broken: it booted, showed the menu, drew the front screen, threw no
+   * page error — and every deploy died with "handed an option it does not read
+   * — mat. It reads: ." `Props.assertOpts` derives a builder's legal options by
+   * reading the builder's own SOURCE with `fn.toString()`, so an identifier
+   * rename empties the set and the guard refuses everything the builder
+   * honours. Nothing short of pressing Ignite could have found it, and this
+   * check pressed Ignite only on the build that was fine.
+   *
+   * So the arms are the two commands a person actually runs.
+   */
+  for (const [arm, FLAGS] of [['plain', []], ['--min', ['--min']]])
+  check(`packed: the ${arm} single-file build boots from a bare file:// URL and can be played`, async () => {
     const exe = chromiumPath();
     const dir = mkdtempSync(join(tmpdir(), 'borzpack-'));
     const out = join(dir, 'borz.html');
@@ -55,9 +71,10 @@ export async function run({ check, assert }) {
        * because its failure modes include throwing on a substitution that no
        * longer matches — and a check that imported it would have to reproduce
        * argv to reach the same code. */
-      const packed = spawnSync(process.execPath, [`${ROOT}/tools/pack.mjs`, out], { encoding: 'utf8' });
+      const packed = spawnSync(process.execPath, [`${ROOT}/tools/pack.mjs`, out, ...FLAGS], { encoding: 'utf8' });
       assert(packed.status === 0,
-        `node tools/pack.mjs exited ${packed.status}: ${(packed.stderr || '').trim().slice(0, 400)}`);
+        `node tools/pack.mjs ${FLAGS.join(' ')} exited ${packed.status}: `
+        + `${(packed.stderr || '').trim().slice(0, 400)}`);
       const size = statSync(out).size;
       assert(size > 2e6, `the packed page is ${(size / 1e6).toFixed(2)} MB — that is not the whole game`);
 
@@ -71,9 +88,22 @@ export async function run({ check, assert }) {
         page.setDefaultTimeout(300000);
         const errs = [], offpage = [];
         page.on('pageerror', (e) => errs.push(String(e).slice(0, 200)));
+        /**
+         * EVERY REQUEST THAT IS NOT THE PAGE ITSELF, and `file://` used to be
+         * on the free list.
+         *
+         * That exemption is how nine missing images survived in the shipped
+         * packer: the boot plate, the wordmark and all seven theatre
+         * screenshots were fetched as `file:///tmp/assets/…`, 404ed, and were
+         * waved through here because they were not "off-page" by this test's
+         * own definition. The build's promise is that NOTHING is fetched, so
+         * the only address allowed is the page's own.
+         */
+        const self = `file://${out}`;
         page.on('request', (r) => {
           const u = r.url();
-          if (!u.startsWith('data:') && !u.startsWith('file://') && !u.startsWith('blob:')) offpage.push(u.slice(0, 120));
+          if (u.startsWith('data:') || u.startsWith('blob:') || u === self) return;
+          offpage.push(u.slice(0, 120));
         });
         await page.goto(`file://${out}`, { waitUntil: 'load' });
         const state = await page.evaluate(async () => {
@@ -153,7 +183,7 @@ export async function run({ check, assert }) {
         assert(play.draws > 50,
           `${play.draws} draw calls in the deployed frame — the packed page is not drawing a level`);
         assert(errs.length === 0, `the packed page threw during play: ${errs.join(' · ')}`);
-        return `${(size / 1e6).toFixed(2)} MB, menu up in ${state.frames} frames at `
+        return `${arm}: ${(size / 1e6).toFixed(2)} MB, menu up in ${state.frames} frames at `
           + `${state.rect[0]}x${state.rect[1]} with ${state.tabs} tabs, boot bar intact, `
           + `nothing fetched off the page; deployed onto ${play.level} by frame ${play.frames} `
           + `— ${play.advanced} s of game time, ${play.enemies} enem${play.enemies === 1 ? 'y' : 'ies'}, `

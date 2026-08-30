@@ -34,10 +34,12 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: forty-six boons drafted every second wave, weighted
+ * And the player grows with it: fifty-six boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
- * committed to an axis. `budgetFor`'s one constant is derived from that draft
- * rate, because the two are one decision.
+ * committed to an axis — and, one step past a mastery, ten unbound powers gated
+ * harder still, each taking the cooldown off one Force power and charging Force
+ * and blood for every cast. `budgetFor`'s one constant is derived from that
+ * draft rate, because the two are one decision.
  *
  * (Those two counts said "twenty-nine" and "five" for a long time while the
  * table grew to forty and six, and the first said "forty" for as long as it
@@ -63,6 +65,7 @@ import { makeRng, moduleSeed, clamp, lerp, TAU } from '../engine/MathUtil.js';
  * Combat imports THREE, Physics, MathUtil, Bolts and Morale and none of them
  * reaches back here, so this edge is a leaf edge and costs no cycle. */
 import { RETURN_CONE, TOUGHNESS } from './Combat.js';
+import { UNBOUND, UNLEASH_TOLL, unboundId } from './Powers.js';
 
 /**
  * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
@@ -696,6 +699,59 @@ export const MODES = {
    * and the Theatre column stays live because the player's pick is still real —
    * it is round one, and `Levels.levelRotation`'s `first` is what makes it so.
    */
+  /**
+   * ── THE COMMANDER BATTLE — the one mode that is FOR the people in the room ─
+   *
+   * "there should be a battle mode that is specifically co-op in that you and
+   * your friends can choose to be either allies or enemy commanders and you can
+   * for example have you at the head of your chosen army vs your friend and this
+   * chosen army, at the beginning you choose the number and mixup of each of
+   * your armies/the field and you basically fight to the death with different
+   * win conditions, maybe also a mode where reinforcements come in waves so
+   * imagine like two armies meeting and a frontline."
+   *
+   * Most of it was already built and none of it was findable. `commandVersus`
+   * is a CHECKBOX on the Command panel, disabled until you are already in a
+   * session, worded "THE MEETING — fight another commander" — and the player
+   * who asked for this mode had been playing the game for weeks and opened
+   * with "correct me if I'm wrong and this game mode already exists". A mode
+   * hidden behind a tick box in another mode's options is a mode nobody plays.
+   *
+   * So it is a mode. Everything under it that already worked — `formUp`'s two
+   * ends of one line, `assignSides`, `assignArmies`, the shared roster per
+   * side, `DuelMatch`, the seat and side on the wire — is untouched and is
+   * reached by the same three lines it always was. What the mode adds is the
+   * four decisions the player asked to make, and they are SETTINGS rather than
+   * code because every one of them is the host's to make for the table:
+   * `versusTeams` (who is with whom), `versusStrength` (how many a side),
+   * `versusWin` (what ends it) and `versusReinforce` (whether it is a standing
+   * battle or a frontline that keeps feeding).
+   *
+   * `meeting` and `alwaysVersus` are two different statements and both are
+   * needed. `meeting` says the mode MAY hold one, which Command also says
+   * because Command may be played either way. `alwaysVersus` says this mode IS
+   * one — there is no tick box, and `commandConfig` reads it so that the switch
+   * cannot be left off by accident on the one mode whose whole subject it is.
+   *
+   * `battles: true` is what gives it an army at all: `World.loadLevel` reads it
+   * (through `campaign`) to build a CommandDirector rather than a bare wave
+   * director, and it is the honest word — a meeting is a bounded battle with an
+   * army, which is exactly what `skirmish` and `campaign` are. It does NOT get
+   * `rotates`, because a battle to the death is fought on one field.
+   */
+  versus: {
+    name: 'Commander Battle',
+    blurb: 'You and your friends, at the head of your own armies, on one field. The host sets the '
+      + 'sides, how many men each side brings and what ends it — last army standing, the '
+      + 'commanders, or the clock — and whether reinforcements keep coming. Needs a session: a '
+      + 'battle with one commander in it is not a battle.',
+    meeting: true,
+    alwaysVersus: true,
+    battles: true,
+    needsSession: true,
+    fixedRules: 'Not in a meeting: the other army is deployed by a person, not composed, so no '
+      + 'wave is built for a rule to change.',
+  },
   skirmish: {
     name: 'Skirmish',
     blurb: 'One battle, fought over changing ground. You lead an army, they field one, '
@@ -884,15 +940,116 @@ export function instantSpawn(settings) {
   return !!(settings && settings.instantSpawn);
 }
 
-/** Read the practice knobs off a settings blob, clamped and defaulted. */
+/**
+ * Read the practice knobs off a settings blob, clamped and defaulted.
+ *
+ * ── THE ROOM IS A LIST NOW, NOT A PICK ──────────────────────────────────
+ *
+ * "Currently for training/sandbox you can only select one enemy type, I want
+ * you to allow me to select as many as I want and specify the specific number
+ * of that specific enemy."
+ *
+ * `sandboxType` was a single key and every consumer asked it `=== 'mixed'` or
+ * filtered the room by it, which is why a room could hold one kind of body and
+ * only one. `sandboxMix` is the list: `{ droideka: 2, b1: 10 }`, counts per
+ * archetype. Both still exist and neither is redundant —
+ *
+ *   `sandboxMix`    what you asked for BY NAME. Explicit, so it is honoured
+ *                   first and never truncated: dialling the total below the
+ *                   sum raises the total instead of quietly dropping a droid
+ *                   you asked for, because a number you typed losing to a
+ *                   slider you did not touch is the wrong way round.
+ *   `sandboxCount`  the size of the room. Unchanged: it is still the one
+ *                   slider, still the total population.
+ *   `sandboxType`   what the REMAINDER is. Also unchanged in meaning — a room
+ *                   with no named counts is `count` bodies of this type, which
+ *                   is precisely what it did before — and 'mixed' still means
+ *                   whatever the theatre fields.
+ *
+ * So an old settings blob, and every check written against one, describes the
+ * same room it always did: no `sandboxMix`, remainder is the whole room, type
+ * decides it. `mix` is the resolved list both spawners read, named entries
+ * first and the remainder last, and it is the ONLY thing they are allowed to
+ * ask — see `sandboxQuota`.
+ */
 export function sandboxConfig(settings) {
   const s = settings || {};
-  const raw = s.sandboxCount;
-  const count = clamp(Math.round(typeof raw === 'number' && isFinite(raw) ? raw : 5), 0, SANDBOX_MAX_ENEMIES);
   const f = s.sandboxFire;
   const fire = clamp(typeof f === 'number' && isFinite(f) ? f : 1, 0, 2);
   const t = s.sandboxType;
-  return { count, fire, type: (t === 'mixed' || ARCHETYPES[t]) ? t : 'mixed' };
+  const type = (t === 'mixed' || ARCHETYPES[t]) ? t : 'mixed';
+
+  /* Named counts, in the picker's own order so the room is built in the order
+   * it is read on screen. Anything that is not a live archetype is dropped
+   * rather than trusted: this blob is localStorage and comes back across
+   * versions, and an archetype that has been renamed must not become a spawn
+   * request for a body that no longer exists. */
+  const asked = (s.sandboxMix && typeof s.sandboxMix === 'object') ? s.sandboxMix : null;
+  const mix = [];
+  let named = 0;
+  if (asked) {
+    for (const k of sandboxKeys()) {
+      const n = Math.round(Number(asked[k]));
+      if (!(n > 0) || !isFinite(n)) continue;
+      const take = Math.min(n, SANDBOX_MAX_ENEMIES - named);
+      if (take <= 0) break;                       // the ceiling is the ceiling
+      mix.push({ type: k, n: take });
+      named += take;
+    }
+  }
+
+  const raw = s.sandboxCount;
+  const want = Math.round(typeof raw === 'number' && isFinite(raw) ? raw : 5);
+  const count = clamp(Math.max(want, named), 0, SANDBOX_MAX_ENEMIES);
+  const rest = count - named;
+  if (rest > 0) mix.push({ type, n: rest });
+
+  return { count, fire, type, mix, named };
+}
+
+/**
+ * WHO STAYS AND WHAT COMES NEXT — one answer, for both rooms.
+ *
+ * The arena sandbox (`WaveDirector._sandboxUpdate`) and the dojo's sandbox room
+ * (`DojoDirector._sandboxTick`) each had their own copy of "keep up to `count`
+ * of the right archetype and retire the rest", written against a single type.
+ * Two copies of a rule that is about to get harder is how the two rooms drift,
+ * so the rule moved here and both call it.
+ *
+ * It is expressed as WHAT STAYS rather than what to remove, which is the only
+ * formulation that handles both ways a room can be wrong at once — too many
+ * bodies, and bodies of a kind you stopped asking for — and it walks `alive` in
+ * the order the caller hands it over, so a caller that sorts nearest-first
+ * keeps the fight it is standing in and retires the far edge of the room.
+ *
+ * Named quotas are filled BEFORE the remainder, and that ordering is the whole
+ * of why a mix converges: a room already full of the remainder's draw would
+ * otherwise count those bodies against a quota they cannot satisfy, and the two
+ * droidekas you asked for would never arrive.
+ *
+ * `next` is the type to spawn — 'mixed' meaning "draw one, caller's choice",
+ * which is the one thing the two rooms genuinely disagree about (the dojo
+ * rotates DOJO_MIX, the arena draws from the level's pool).
+ */
+export function sandboxQuota(cfg, alive) {
+  const keep = new Set();
+  const have = cfg.mix.map(() => 0);
+  const spoken = new Set();
+  const fill = (i, ok) => {
+    const m = cfg.mix[i];
+    for (const e of alive) {
+      if (have[i] >= m.n) return;
+      if (spoken.has(e) || !ok(e)) continue;
+      spoken.add(e); keep.add(e); have[i]++;
+    }
+  };
+  cfg.mix.forEach((m, i) => { if (m.type !== 'mixed') fill(i, (e) => e.type === m.type); });
+  cfg.mix.forEach((m, i) => { if (m.type === 'mixed') fill(i, () => true); });
+  let next = null;
+  for (let i = 0; i < cfg.mix.length; i++) {
+    if (have[i] < cfg.mix[i].n) { next = cfg.mix[i].type; break; }
+  }
+  return { keep, next, have };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
@@ -4122,8 +4279,8 @@ export class WaveDirector {
   /* ── sandbox ─────────────────────────────────────────────────────── */
 
   /** Uniform pick from the level's pool, which is already weighted by repeats. */
-  _sandboxType(cfg) {
-    if (cfg.type !== 'mixed') return cfg.type;
+  _sandboxType(want) {
+    if (want && want !== 'mixed') return want;
     if (!this.pool.length) return 'b1';
     /**
      * AND NOT ONE OF YOUR OWN. This is the last door into the field — every
@@ -4213,9 +4370,12 @@ export class WaveDirector {
     // kill the old ones, and shrinking the count takes the far edge of the room
     // rather than the fight you are standing in.
     const anchor = this.world.player ? this.world.player.position : null;
-    const right = cfg.type === 'mixed' ? alive.slice() : alive.filter(e => e.type === cfg.type);
-    if (anchor) right.sort((a, b) => a.position.distanceToSquared(anchor) - b.position.distanceToSquared(anchor));
-    const keep = new Set(right.slice(0, cfg.count));
+    const order = alive.slice();
+    if (anchor) order.sort((a, b) => a.position.distanceToSquared(anchor) - b.position.distanceToSquared(anchor));
+    /* ONE ANSWER FOR BOTH ROOMS — see `sandboxQuota`. Nearest first, so
+     * shrinking the room takes its far edge rather than the fight you are
+     * standing in. */
+    const { keep, next } = sandboxQuota(cfg, order);
     if (keep.size < alive.length) {
       for (const e of alive) {
         if (keep.has(e)) continue;
@@ -4234,8 +4394,8 @@ export class WaveDirector {
      * and lands forty. The wave path has counted `arrivals.pending` for exactly
      * this reason since arrivals shipped; the sandbox path never had to. */
     const inbound = this.arrivals.enabled ? this.arrivals.pending : 0;
-    if (keep.size + inbound < cfg.count && this.spawnTimer <= 0) {
-      const type = this._sandboxType(cfg);
+    if (next && keep.size + inbound < cfg.count && this.spawnTimer <= 0) {
+      const type = this._sandboxType(next);
       /* THE DEFAULT IS AN ARRIVAL — note #17. `request` returns false when
        * arrivals are off (`settings.instantSpawn`), and then the old direct
        * path runs exactly as it always did, because a room must never fail to
@@ -6272,7 +6432,13 @@ export const BOONS = [
     },
   },
   {
-    id: 'conduit', icon: '🌊', name: 'Conduit', tag: 'Channel',
+    /* THE NAME IS 'Thief' AND THE ID IS STILL `conduit`. The id is a save key
+     * and a wire key — it is in `takenBoons`, in a Company record, in the
+     * lattice's `to:` lists and in every check that names the facet — so
+     * renaming it would silently strip the facet from every existing run. What
+     * a player reads is `name`; what the game stores is `id`, and only one of
+     * them was asked to change. */
+    id: 'conduit', icon: '🌊', name: 'Thief', tag: 'Channel',
     rarity: 'rare', axes: ['force'], stack: 3,
     text: 'The fight feeds the Force: every body you put down hands a measure of it straight back.',
     apply(p, s = 1) {
@@ -6564,6 +6730,58 @@ export const BOONS = [
       p.boonMods.cutPower *= 1.25;
     },
   },
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE UNBOUND TIER — ten cards, none of them written here
+   * ══════════════════════════════════════════════════════════════════
+   *
+   * "…every force ability/power was represented in the holocron… such that it
+   * would really buff that ability to where it no longer has any cooldown at
+   * all but at a great cost."
+   *
+   * One card per power, GENERATED off `Powers.UNBOUND`, because the same ten
+   * rows also have to become facets in `LivingForce.FACETS` and are read by
+   * `Player._recover`. Three hand-written copies of one list is the defect this
+   * file has been bitten by seven times — a HUD price list, an announcer voice
+   * map, the sandbox unit list, a level card's unit count, a garment length, a
+   * wire record and the boon-price table. The list is `Powers.js`, which
+   * imports nothing and can therefore be seen from all three.
+   *
+   * WHAT MAKES ONE HARD TO GET, and it is two bars rather than one because
+   * there are two ways into this table and they are not the same road.
+   *
+   *   THROUGH THE TREE  the facet hangs off its current's MASTERY and off
+   *                     nothing else (see LivingForce.FACETS), so buying one
+   *                     means having already woken an epic, wave-12,
+   *                     three-cards-of-its-axis facet and then paying the
+   *                     ledger's steepest price one step past it.
+   *   THROUGH THE DRAFT  a card is offered on `minWave` and `requires` alone,
+   *                     which is why `requires` is a bar of its own and not
+   *                     simply `rankOf(taken, u.after) > 0`. It asked for the
+   *                     mastery itself at first, and measured over twelve
+   *                     forty-wave runs that made the whole tier unreachable:
+   *                     a committed run holds 0.4 to 1.1 masteries by wave 40,
+   *                     because the Insight escalator prices epics out long
+   *                     before then, so ten cards nobody would ever see. A
+   *                     tier that cannot be reached is not a hard tier, it is a
+   *                     picture of one — which is the exact thing
+   *                     `living-force.mjs` fails a lattice for.
+   *
+   * So the draft bar is ONE CARD DEEPER than the mastery's own: four of your
+   * axis, and sixteen waves. That is a committed current and most of a run, and
+   * it is reachable by playing rather than by luck.
+   *
+   * The apply is a single flag. Everything the tier costs is billed in one
+   * place, `Player._recover`, and the note there says why it is billed at the
+   * cooldown rather than at the spend.
+   */
+  ...UNBOUND.map((u) => ({
+    id: unboundId(u.key), icon: u.icon, name: u.name, tag: u.tag,
+    rarity: 'epic', minWave: UNLEASH_TOLL.minWave, axes: [u.axis], stack: 1,
+    requires: (taken) => axisCountOf(taken, u.axis) >= MASTERY_NEEDS + 1,
+    text: u.text,
+    apply(p) { p.boonMods.unbound = { ...(p.boonMods.unbound || {}), [u.key]: true }; },
+  })),
 ];
 
 /* ══════════════════════════════════════════════════════════════════════ */

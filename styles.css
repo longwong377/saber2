@@ -475,7 +475,23 @@ b{font-weight:800}
  * panel-hi inside 2 px of ink — instead of a translucent sliver. It is a
  * physical object in the same language as everything else on the screen, and
  * it is 8 px of permanent evidence that there is more list than window. */
+/* THE FADE NEEDS SOMETHING TO FADE OVER, and the last card in the list is not
+   it. `.more` masks the bottom 26 px while there is more below; at the END of
+   the scroll there is nothing more, so the mask comes off and the last card is
+   legible — which held for as long as the last card could reach the end. Add an
+   eleventh mode and it cannot: `_revealMode` asks for the card to sit 26 px
+   clear of the bottom, the scroller is already at its maximum, and the card
+   stays flush against the edge. Measured by `lineseen.1` the day the Commander
+   Battle was added: at 1366x768, choosing Campaign left it at 374..410 of a
+   410 px column.
+   The padding is inside the scroller, so it scrolls with the content and gives
+   the last card exactly the room the reveal asks for. It is the SAME 26 as the
+   mask below and as `Menu.SCROLL_FADE`, and `front-screen.mjs` reads all three
+   out of the shipped files and asserts they agree — a fade that is deeper than
+   the room left for it is the defect this padding removes, arriving the other
+   way round. */
 .col.narrow.pinned>.col-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;padding-right:8px;
+  padding-bottom:26px;
   scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
 .col.narrow.pinned>.col-scroll::-webkit-scrollbar{width:8px;background:var(--void)}
 .col.narrow.pinned>.col-scroll::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
@@ -698,6 +714,33 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    the picker being broken, and the rules were live in eight modes and honoured
    in five. Each card still carries the reason — see _syncRules. */
 .difflist.inert{opacity:.38;filter:saturate(.4);pointer-events:none}
+/* THE MODE THAT NEEDS OTHER PEOPLE, said under the list. Empty for every mode
+   that does not, and `:empty` takes its own margin back — a blank paragraph
+   holding 14 px open under a column this tight is the defect the deploy
+   column's own notes are about. Warm rather than red: it is a prerequisite,
+   not an error, and the mode is still playable alone. */
+.needline{margin-top:10px;color:var(--accent-warm)}
+.needline:empty{display:none}
+/* THE COUNT ON AN OPPONENT ROW. The row is still a whole control — pressing it
+   gives the room to that one kind, which is what it always did — so the stepper
+   has to read as a thing INSIDE the row rather than as the row's own buttons:
+   pushed to the trailing edge, its own field, and the number between the two
+   keys where a count belongs. `flex:none` so a long unit name never squeezes
+   the digits, which is the one part of this that must not wrap. */
+.diff .step{flex:none;margin-left:auto;display:flex;align-items:center;gap:6px;
+  padding:2px 3px;border:2px solid var(--stroke);background:var(--void);clip-path:var(--cut-sm)}
+.diff .step b{min-width:20px;text-align:center;font:var(--mono);font-size:12px;font-weight:800;
+  color:var(--ink);font-variant-numeric:tabular-nums}
+.diff .step button{width:22px;height:22px;padding:0;border:0;background:var(--panel-2);
+  color:var(--ink);font:var(--mono);font-size:14px;font-weight:800;line-height:1;cursor:pointer;
+  clip-path:var(--cut-sm);transition:.12s}
+.diff .step button:hover:not(:disabled){background:var(--accent);color:var(--stroke)}
+.diff .step button:disabled{opacity:.3;cursor:default}
+/* The remainder is a reading, not an offer — no keys, and it says so by being
+   dim until it is the only thing in the room. */
+.diff .step.rest{border-style:dashed}
+.diff .step.rest b{color:var(--dim)}
+.diff.sel .step.rest b{color:var(--ink)}
 .diff.rule.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
   box-shadow:none;transform:none}
 .diff.rule.barred .txt span{color:var(--dimmer)}
@@ -836,6 +879,20 @@ button{font-family:inherit}
 .roster .p{display:flex;align-items:center;gap:10px;padding:9px 12px;border:2px solid var(--stroke);
   background:var(--panel);font-size:12px;clip-path:var(--cut-sm)}
 .roster .p i{width:9px;height:9px;background:var(--good);border:2px solid var(--stroke)}
+/* THE SIDE ON A NAME, in the lobby's roster. A chip on the trailing edge, in
+   the two colours the field itself uses for the two ends of the line — the
+   whole point of the control is that you can see at a glance who is with whom,
+   and two identical grey chips reading SIDE 1 and SIDE 2 would need reading
+   rather than glancing. `.overruled` on the list is what a joining player
+   sees: the sides are still legible, they are simply not theirs to set. */
+.roster .p .side{margin-left:auto;flex:none;padding:2px 8px 3px;border:2px solid var(--stroke);
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.16em;font-style:normal;
+  color:var(--stroke);clip-path:var(--cut-sm)}
+.roster .p .side.s0{background:var(--accent)}
+.roster .p .side.s1{background:var(--accent-warm)}
+.roster .p .side.s2{background:var(--good)}
+.roster .p .side.s3{background:var(--danger)}
+.roster.overruled{opacity:.62;pointer-events:none}
 .codebox{padding:20px;border:2px solid var(--stroke);text-align:center;font:var(--mono);
   font-size:26px;font-weight:800;letter-spacing:.28em;color:var(--stroke);
   background:var(--accent);margin-bottom:12px;cursor:pointer;word-break:break-all;
@@ -1050,7 +1107,15 @@ button{font-family:inherit}
    emphasis rather than the space simply closing. */
 .wave-sub:has(b:empty) span{font-size:17px;max-width:none;color:var(--ink);padding-bottom:0;letter-spacing:.1em}
 
-.hud-tr{position:absolute;right:32px;top:26px;text-align:right;animation:riseIn .4s both}
+/* AND IT DRAWS OVER THE ARMY COLUMN, not under it. Both are on the right; this
+   one is top-anchored and transient (a popup lives 2.8 s, a kill line 4.2 s)
+   and `.hud-br` is bottom-anchored and persistent, so in a heavy fight with a
+   full roll on screen their edges meet. When they do, the thing that just
+   happened has to be the thing you can read — a panel that has been sitting
+   there for a minute burying the line saying you were just flanked is the
+   wrong way round. */
+.hud-tr{position:absolute;right:32px;top:26px;text-align:right;z-index:8;
+  pointer-events:none;animation:riseIn .4s both}
 /* A METER IS A VESSEL: an inked socket with a lit bar in it. 3 px of unbordered
    gradient is a progress element; this reads as a gauge at a glance, which is
    the only way it gets read at all mid-fight. */
@@ -1156,7 +1221,12 @@ button{font-family:inherit}
    reads as part of the same product as the level cards and not as a table.
    Everything in it is written by HUD.setRoster / HUD.setOrder. */
 .rp{width:248px;margin-bottom:18px;border:2px solid var(--stroke);background:var(--panel);
-  clip-path:var(--cut-sm);box-shadow:var(--stamp);text-shadow:none}
+  clip-path:var(--cut-sm);box-shadow:var(--stamp);text-shadow:none;
+  /* A COLUMN THAT CAN GIVE. Head, order, keys and foot are fixed height and
+     must stay readable; the LIST is the part that can lose rows. `min-height:0`
+     is what lets it: a flex item's default floor is its content, so without it
+     the panel refuses to shrink and pushes the stack off the top instead. */
+  display:flex;flex-direction:column;flex:0 1 auto;min-height:0}
 .rp.hidden{display:none}
 .rp-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
   padding:7px 11px 6px;background:var(--panel-2);border-bottom:2px solid var(--stroke);
@@ -1180,7 +1250,7 @@ button{font-family:inherit}
    fight, so a scrollbar in here would be a control nobody can reach. The mask
    fades the last rows out so a full roster reads as continuing rather than as
    ending on a cut line; the muster screen shows the whole of it. */
-.rp-list{max-height:min(32vh,290px);overflow:hidden;padding:2px 0 4px;
+.rp-list{flex:1 1 auto;min-height:0;max-height:min(32vh,290px);overflow:hidden;padding:2px 0 4px;
   border-top:2px solid var(--stroke);
   -webkit-mask-image:linear-gradient(to bottom,#000 calc(100% - 16px),transparent);
   mask-image:linear-gradient(to bottom,#000 calc(100% - 16px),transparent)}
@@ -1219,7 +1289,7 @@ button{font-family:inherit}
    that says so and it exists only because the player went and looked — so it
    is the loudest thing this panel can draw. */
 .fm{width:248px;margin-bottom:18px;border:2px solid var(--stroke);background:var(--panel);
-  clip-path:var(--cut-sm);box-shadow:var(--stamp);text-shadow:none}
+  clip-path:var(--cut-sm);box-shadow:var(--stamp);text-shadow:none;flex:none}
 .fm.hidden{display:none}
 .fm-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;
   padding:7px 11px 6px;background:var(--panel-2);border-bottom:2px solid var(--stroke);
@@ -1351,10 +1421,29 @@ button{font-family:inherit}
 .bar.st i{background:var(--good);box-shadow:0 0 10px rgba(95,224,160,.5)}
 .bar.low i{animation:pulseLow .8s ease-in-out infinite}
 @keyframes pulseLow{0%,100%{opacity:1}50%{opacity:.45}}
-.boons{display:flex;gap:7px;margin-top:24px;flex-wrap:wrap;max-width:340px}
+/* WIDER, BECAUSE THE LEFT COLUMN IS ITS OWN NOW. With the roll and the call
+   list moved to `.hud-br` the only thing above this strip is four bars, so the
+   strip can spend the width it was never allowed and pay for it in rows: a
+   full holocron at 340 px was eight wrapped rows lifting everything above it,
+   and the same chips across 520 px are five. It is still bottom-anchored and
+   still grows upward — it just has almost nothing left to push, and what it
+   does push is a 140 px block rather than 600 px of panels. */
+.boons{display:flex;gap:7px;margin-top:24px;flex-wrap:wrap;
+  /* THE WIDTH IS THE GAP TO THE OTHER CORNER, not a number. Both bottom
+     columns are anchored to their own edge, so the only thing that stops the
+     strip running into the ability wheel is how much frame is left after it:
+     the wheel is 566 px plus its margin, and this is what remains. It reaches
+     its 520 px ceiling from about 1120 px of frame upward — every screen this
+     is played on — and gives ground on a narrow one instead of overlapping. */
+  max-width:clamp(120px,calc(100vw - 600px),520px)}
 .boons .bn{padding:3px 9px 4px;border:2px solid var(--stroke);background:var(--panel-2);
   font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;
   color:var(--ink);clip-path:var(--cut-sm);text-shadow:none}
+/* DENSE: icons only, set by HUD.setBoons past BOONS_NAMED. The name is on the
+   chip as its title and its aria-label, so nothing is lost but the width. */
+.boons.dense{gap:5px}
+.boons.dense .bn{padding:3px 5px 4px;min-width:20px;text-align:center;
+  font-size:13px;letter-spacing:0}
 
 /* A COLUMN, not two boxes. The map sits on the power wheel, right-aligned with
    it, in one flow — the same rule the score column was moved to obey after the
@@ -1362,7 +1451,17 @@ button{font-family:inherit}
    `position:absolute; top:120px`. Boxes in a flow cannot overlap at any
    viewport; boxes pinned to the same corner eventually do. */
 .hud-br{position:absolute;right:34px;bottom:30px;display:flex;flex-direction:column;
-  align-items:flex-end;gap:12px}
+  align-items:flex-end;gap:12px;
+  /* AND IT IS CAPPED, because this column now carries the army as well as the
+     map. The standing order, the support call, the roll, the map and the wheel
+     are five boxes in one bottom-anchored flow; unbounded, a long call list and
+     a full roll on a short viewport push the top of the stack off the screen —
+     which is the exact failure that got these three moved out of `.hud-bl` in
+     the first place, and moving it across with them would have been no fix at
+     all. Bounded, the flow has to fit, and the two boxes that CAN give (the
+     roll's list, the call list) shrink instead. Nothing is ever drawn off the
+     top and nothing overlaps, because it is still one flow. */
+  max-height:calc(100vh - 300px)}
 /* The disc, and it has NO SIZE HERE on purpose.
    A canvas has two sizes — the backing store the arcs are drawn into and the
    box CSS lays out — and HUD.Minimap writes both of them from MINIMAP.size,
@@ -1371,7 +1470,7 @@ button{font-family:inherit}
    moves is a map drawn at one resolution and scaled to another. What is here is
    the frame around it: a ring, because a radar is a radius, and a square would
    lie about its corners, where the range is 1.41× what the rim says. */
-#minimap{border-radius:50%;border:2px solid var(--stroke);background:rgba(8,10,20,.72);
+#minimap{flex:none;border-radius:50%;border:2px solid var(--stroke);background:rgba(8,10,20,.72);
   box-shadow:0 0 0 2px rgba(72,216,255,.22)}
 #minimap.hidden{display:none}
 /* WHAT IT COSTS TO SEE THE MAP, under where the map would be. Only up while
@@ -1412,7 +1511,7 @@ button{font-family:inherit}
    wrap fire, since a flex row with no width constraint has nothing to wrap
    against; it is expressed against the viewport rather than typed so it follows
    any future slot, and the column above it is already right-aligned. */
-.powers{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:min(566px,calc(100vw - 48px))}
+.powers{flex:none;display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px;max-width:min(566px,calc(100vw - 48px))}
 .pw{position:relative;width:46px;height:46px;border:2px solid var(--stroke);background:var(--panel);
   display:flex;align-items:center;justify-content:center;
   overflow:hidden;transition:.13s;clip-path:var(--cut-sm);opacity:.55}
@@ -1574,8 +1673,20 @@ button{font-family:inherit}
    viewport, and it scrolls nothing because the panel is only up while the key
    is held. */
 #stratagem{display:flex;flex-direction:column;gap:3px;pointer-events:none;z-index:6;
-  margin-bottom:14px;max-height:62vh;animation:riseIn .12s ease-out both}
+  margin-bottom:14px;max-height:62vh;animation:riseIn .12s ease-out both;
+  /* Shrinkable, and it clips from the bottom rather than growing past the top
+     of the frame — see `.hud-br`'s cap. The list is only up while the key is
+     held, so losing the last row or two of eighteen beats losing the first. */
+  flex:0 1 auto;min-height:0;overflow:hidden}
 #stratagem.hidden{display:none}
+/* AND THE ROLL STANDS DOWN WHILE A CALL IS BEING SPELLED. They are the two
+   tallest boxes in the column and they are never both being read: the call list
+   is only up while the key is HELD, and what you are doing in that second is
+   reading a code, not counting your men. Stacking them cost ~420 px of the
+   frame in the one moment the column is most crowded — with the map and the
+   wheel under them that is what reached the kill feed. `:has` on the column, so
+   the rule is stated once and in the place that owns the stacking. */
+.hud-br:has(#stratagem:not(.hidden)) #roster{display:none}
 /* THE PHRASE, under the leading row. Every keystroke is a word (see
    callPhrase in src/game/Stratagems.js); this is the script the player is
    reading aloud, so

@@ -90,6 +90,7 @@ import { BOONS, ATTUNEMENTS, RARITY, maxRank, rankOf, boonById, axisCountOf,
 /* The offer is dealt from a seeded stream — see `OFFER`. MathUtil is a leaf and
  * this is the only thing this file takes from it. */
 import { makeRng } from '../engine/MathUtil.js';
+import { UNBOUND, unboundId } from './Powers.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Insight — what a run earns and what a facet costs                     */
@@ -265,7 +266,7 @@ export const CURRENTS = [
     creed: { jedi: 'What is turned aside was never yours to answer for.',
              sith: 'Let it come. Let it come back.' } },
   { axis: 'force', root: 'attune-force', 
-    jedi: 'The Consular', sith: 'The Sorcerer', grey: 'The Well',
+    jedi: 'The Book', sith: 'The Sorcerer', grey: 'The Well',
     creed: { jedi: 'The Force is not a weapon you spend.',
              sith: 'Everything is a weapon, if you are willing to spend it.' } },
   { axis: 'body', root: 'attune-body', 
@@ -328,7 +329,7 @@ export const FACETS = [
     jedi: 'Form III — Soresu', sith: 'Form III — Resilience' },
   { id: 'makashi', axis: 'guard', to: ['counterstroke'],
     jedi: 'Form II — Makashi', sith: 'Form II — The Duellist' },
-  { id: 'aegis', axis: 'guard', to: ['thorns', 'steadfast'],
+  { id: 'aegis', axis: 'guard', to: ['thorns', 'steadfast', 'unbound-shield'],
     jedi: 'Aegis', sith: 'Carapace' },
   { id: 'vaapad', axis: 'guard', to: ['bastion'],
     jedi: 'Form VII — Vaapad', sith: 'Form VII — The Fed Fury' },
@@ -354,13 +355,13 @@ export const FACETS = [
     jedi: 'Form IV — Ataru', sith: 'Form IV — The Leaping Death' },
   { id: 'tutaminis', axis: 'force', to: ['detonate'],
     jedi: 'Tutaminis', sith: 'Devour the Bolt' },
-  { id: 'conduit', axis: 'force', to: ['tempest'],
+  { id: 'conduit', axis: 'force', to: ['tempest', 'unbound-pull'],
     jedi: 'Conduit', sith: 'The Taking Channel' },
-  { id: 'repulse', axis: 'force', to: ['tempest'],
+  { id: 'repulse', axis: 'force', to: ['tempest', 'unbound-push'],
     jedi: 'Force Repulse', sith: 'Shockwave' },
-  { id: 'detonate', axis: 'force', to: [],
+  { id: 'detonate', axis: 'force', to: ['unbound-rend'],
     jedi: 'Dissolution', sith: 'Detonation' },
-  { id: 'tempest', axis: 'force', to: [],
+  { id: 'tempest', axis: 'force', to: ['unbound-stasis'],
     jedi: 'Mastery — Tempest', sith: 'Mastery — The Storm' },
 
   /* ── The Body ──────────────────────────────────────────────────────── */
@@ -378,7 +379,7 @@ export const FACETS = [
     jedi: 'Second Wind', sith: 'Refusal' },
   { id: 'momentum', axis: 'body', to: [],
     jedi: 'Momentum', sith: 'Bloodrush' },
-  { id: 'undying', axis: 'body', to: [],
+  { id: 'undying', axis: 'body', to: ['unbound-unleash'],
     jedi: 'Mastery — Undying', sith: 'Mastery — The Unkillable' },
 
   /* ── Communion ─────────────────────────────────────────────────────── */
@@ -396,7 +397,7 @@ export const FACETS = [
    * that cannot touch the keystone is variance in a side pocket". */
   { id: 'skirmish', axis: 'bond', to: ['unity'],
     jedi: 'Skirmish Order', sith: 'Loose Rein' },
-  { id: 'triage', axis: 'bond', to: ['unity'],
+  { id: 'triage', axis: 'bond', to: ['unity', 'unbound-heal'],
     jedi: 'Triage', sith: 'Blood Debt' },
   { id: 'suffusion', axis: 'bond', to: ['unity'],
     jedi: 'Force Suffusion', sith: 'Siphoned Vitality' },
@@ -416,7 +417,7 @@ export const FACETS = [
     jedi: 'Sustenance', sith: 'Dark Sustenance' },
   { id: 'juyo', axis: 'dark', to: ['fury'],
     jedi: 'Form VII — Vaapad Unbound', sith: 'Form VII — Juyo' },
-  { id: 'lightning', axis: 'dark', to: ['compel'],
+  { id: 'lightning', axis: 'dark', to: ['compel', 'unbound-lightning'],
     jedi: 'The Refused Lightning', sith: 'Force Lightning' },
   /* Hung off lightning rather than off the heart, and further out than any
    * other facet on this axis, because it is the deepest thing the dark side
@@ -424,7 +425,7 @@ export const FACETS = [
    * acts on a decision. Reaching it means having already taken the lightning,
    * which is the point — you do not arrive at taking someone's mind by
    * accident. The Jedi name is the honest one for a Jedi who has done it. */
-  { id: 'compel', axis: 'dark', to: [],
+  { id: 'compel', axis: 'dark', to: ['unbound-compel'],
     jedi: 'The Unforgivable Word', sith: 'Domination' },
   { id: 'execute', axis: 'dark', to: ['darkside'],
     jedi: 'Mercy Stroke', sith: 'Cull the Weak' },
@@ -437,8 +438,32 @@ export const FACETS = [
   // Cleaving Throw and Sundering are both blade, but the throw is the one
   // technique in the game that leaves your hand — it hangs off the outermost
   // facet of the blade current rather than sitting inside the shape.
-  { id: 'saberthrow', axis: 'blade', to: [],
+  { id: 'saberthrow', axis: 'blade', to: ['unbound-throw'],
     jedi: 'Cleaving Throw', sith: 'The Loosed Blade' },
+
+  /* ── the unbound tier: one leaf per power, past its current's mastery ──
+   *
+   * "…every force ability/power was represented in the holocron (where it fits
+   * like make them be on the corresponding path)."
+   *
+   * Generated off `Powers.UNBOUND`, which is also what `Waves.BOONS` turns into
+   * the ten cards and what `Player._recover` reads to decide whether a power
+   * has a cooldown at all. Three consumers, one list — see the note in
+   * Waves.js, and the one in Powers.js for what the tier costs.
+   *
+   * The JOINS are written from the OTHER end, above, and not from here: that is
+   * this table's own convention — each pair is written once, from the facet
+   * nearer the root — and reading them there is also the honest picture of the
+   * shape. Eight of the ten hang off their own technique (the unbound throw off
+   * Cleaving Throw, the unbound lightning off Force Lightning, the unbound
+   * Disassemble off Dissolution), which is where a player would look for them;
+   * the two the lattice has no facet for — the barrier's and the cry's — hang
+   * off their current's mastery. `to: []` because a leaf is a leaf: the tier
+   * does not chain into itself, so taking one is never a step towards
+   * another. */
+  ...UNBOUND.map((u) => ({
+    id: unboundId(u.key), axis: u.axis, to: [], jedi: u.jedi, sith: u.sith,
+  })),
 ];
 
 /* ── derived indexes, built once ─────────────────────────────────────── */
@@ -642,11 +667,35 @@ export class Communion {
     if (wave < (b.minWave ?? 1)) return LOCKED.depth;
     if (b.requires && !b.requires(taken)) return LOCKED.gated;
     if (!this.reachable(id, taken)) return LOCKED.reach;
-    /* …AND IT HAS TO BE ONE OF THE THREE ON THE TABLE — PLAN.md §4.6's first
-     * bullet. Last of the structural clauses and ahead of the price, because
-     * "not on the table" is a different sentence from "you cannot afford it"
-     * and the screen prints whichever one is true. */
-    if (!this.offerNow(taken, wave).includes(id)) return LOCKED.offer;
+    /**
+     * ── THE THREE-CARD OFFER IS GONE, AND IT WAS THE WHOLE COMPLAINT ────────
+     *
+     * "the holocron does not unlock in order like you can't just choose to do
+     *  one list or path it picks and chooses almost at random"
+     *
+     * It did. `offerNow` dealt THREE of the legal facets from a seeded stream
+     * and everything else answered `LOCKED.offer` — "the Force is not showing
+     * you this one" — so the lattice a player was looking at was never the
+     * thing they could act on. Simulated on the shipped build, a player who
+     * took a blade facet whenever one appeared was offered none for the first
+     * four picks and pulled into `force` instead.
+     *
+     * TWO THINGS MADE IT WORSE THAN THREE-OF-N SOUNDS. The six roots carry
+     * `stack: Infinity`, so they are legal forever and sat in the pool
+     * competing for those three slots for the whole run — the same simulation
+     * bought `attune-force` and `attune-blade` five times between them. And
+     * the deal re-rolls on every purchase, so the one facet you were saving
+     * for could vanish the moment you bought anything else.
+     *
+     * What gates a facet now is what the lattice actually draws: the joins
+     * (`reachable`), the depth (`minWave`), the disciplines (`requires`) and
+     * the price. Those are rules a player can see and plan against. The
+     * randomness was not.
+     *
+     * `offerNow` is kept and now answers with every legal facet, because it is
+     * still the honest question "what may I take right now" and the Holocron
+     * and the checks both ask it.
+     */
     if (this.insight < this.costOf(id, taken)) return LOCKED.insight;
     return null;
   }
@@ -693,16 +742,11 @@ export class Communion {
       if (!this.reachable(s.id, taken)) continue;
       legal.push(s.id);
     }
-    if (legal.length <= OFFER) return legal;
+    /* EVERY legal facet, sorted so the answer never depends on the order
+     * `FACETS` happens to be written in. The seeded three-card deal that used
+     * to stand here is gone — see `reasonLocked`. */
     legal.sort();
-    const rng = makeRng((Math.imul(this.seed ^ 0x9E3779B9, 0x85EBCA6B)
-      ^ Math.imul(this.bought.length + 1, 0x27D4EB2F)) >>> 0 || 1);
-    const out = [];
-    const pool = legal.slice();
-    for (let i = 0; i < OFFER && pool.length; i++) {
-      out.push(pool.splice(Math.floor(rng() * pool.length) % pool.length, 1)[0]);
-    }
-    return out;
+    return legal;
   }
 
   canBuy(id, taken, wave = 1) { return this.reasonLocked(id, taken, wave) === null; }

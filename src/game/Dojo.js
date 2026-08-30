@@ -17,7 +17,7 @@ import { propMaterials, addWall } from '../world/Props.js';
 import { FORMS, FORM_KEYS } from './Duel.js';
 import { GRADE } from './Combat.js';
 import { ARCHETYPES } from './Enemy.js';
-import { sandboxConfig, holdFire, tuneFireRate, walkIn, arrived, instantSpawn, DOJO_MIX } from './Waves.js';
+import { sandboxConfig, sandboxQuota, holdFire, tuneFireRate, walkIn, arrived, instantSpawn, DOJO_MIX } from './Waves.js';
 import { clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -265,6 +265,8 @@ export class DojoDirector {
     this.mode = 'training';
     this._settleTimer = 0;
     this.onLesson = null;
+    /** Set by `World`, like every other director's. See `_advance`. */
+    this.onWaveClear = null;
     this.totalSpawned = 0;
     this.streak = 0;
     // bodies still walking to their post — see _steerRoom
@@ -275,6 +277,15 @@ export class DojoDirector {
     this._sandboxFire = null;
     this._sandboxSaid = -1;
   }
+
+  /**
+   * THE SYLLABUS HANDS OUT NO CARDS, and `_earnInsight` asks in order to price
+   * a clear: `insightRate(director.drafts !== false)` pays the low rate to a
+   * mode that also deals boons and the full rate to one that does not. Without
+   * this getter `drafts` is `undefined`, which is not `false`, so Training was
+   * billed as a draft mode and paid 1 an lesson instead of 4.
+   */
+  get drafts() { return false; }
 
   get lesson() { return LESSONS[Math.min(this.index, LESSONS.length - 1)]; }
   get remaining() { return this.lesson.need === Infinity ? 0 : Math.max(0, this.lesson.need - this.progress); }
@@ -310,6 +321,28 @@ export class DojoDirector {
   _advance() {
     audio.ui('good');
     this.world.notify(this.lesson.title.toUpperCase(), 'learned');
+    /**
+     * A LESSON LEARNED IS THIS MODE'S CLEARED WAVE, and until this line the
+     * Holocron was unspendable here.
+     *
+     * `World._earnInsight` hangs off `director.onWaveClear`, which every other
+     * director in the game fires and this one has never had — so Training was
+     * the one mode where you could kneel, open the chart, and find 0 Insight
+     * for as long as you played. Measured across all ten modes: 4 Insight a
+     * clear everywhere, 1 in Path of the Blade (which pays in cards instead),
+     * and 0 here.
+     *
+     * That is the wrong mode to be the exception. Training is where a player
+     * goes to find out what a power DOES, and the Holocron is the screen that
+     * hands them one; the Options card that grants the whole lattice exists
+     * for the same reason and names the same need.
+     *
+     * `this.wave` is the lesson number (`_applyLesson` sets it), so the income
+     * ramps with the syllabus exactly as a wave counter ramps with a run, and
+     * the callback is fired with the wave that was just FINISHED rather than
+     * the one being set up — the same argument every other caller makes.
+     */
+    this.onWaveClear?.(this.wave, true);
     this.index = Math.min(this.index + 1, LESSONS.length - 1);
     this.progress = 0;
     this._applyLesson();
@@ -578,9 +611,15 @@ export class DojoDirector {
     return e;
   }
 
-  _sandboxType(cfg) {
-    if (cfg.type !== 'mixed') return cfg.type;
+  _sandboxType(want) {
+    if (want && want !== 'mixed') return want;
     return DOJO_MIX[(this._mixCursor++) % DOJO_MIX.length];
+  }
+
+  /** What the room is short of right now, in the order the picker lists it. */
+  _sandboxNext() {
+    const live = this.sandboxUnits.filter((e) => !e.dead);
+    return sandboxQuota(sandboxConfig(this.world.settings), live).next;
   }
 
   _sandboxRoom(anchor) {
@@ -591,7 +630,15 @@ export class DojoDirector {
     // over the next few seconds, which reads as them arriving rather than as a
     // stall — and is the same rate the arena sandbox fills at.
     const now = Math.min(cfg.count, 6);
-    for (let i = 0; i < now; i++) this._spawnSandboxUnit(anchor, this._sandboxType(cfg), i);
+    /* Asked one at a time rather than `count` draws of one type, because the
+     * room is a list of quotas now: each spawn is decided against what is
+     * already standing, so "two droidekas and four B1s" lands as two and four
+     * and not as six of whichever came first. */
+    for (let i = 0; i < now; i++) {
+      const want = this._sandboxNext();
+      if (!want) break;
+      this._spawnSandboxUnit(anchor, this._sandboxType(want), i);
+    }
     this._sandboxFire = cfg.fire;
     if (cfg.type === 'mixed') this.spar = this.sandboxUnits.find(e => e.duel) || null;
   }
@@ -619,15 +666,14 @@ export class DojoDirector {
     // else — so changing the opponent picker reshapes the room instead of
     // waiting for you to cut the previous one down.
     const live = this.sandboxUnits.filter(e => !e.dead);
-    const right = cfg.type === 'mixed' ? live : live.filter(e => e.type === cfg.type);
-    const keep = new Set(right.slice(0, cfg.count));
+    const { keep, next } = sandboxQuota(cfg, live);
     if (keep.size < live.length) {
       for (const e of live) {
         if (keep.has(e)) continue;
         this._retire(e);
       }
-    } else if (live.length < cfg.count) {
-      this._spawnSandboxUnit(anchor, this._sandboxType(cfg), this.totalSpawned);
+    } else if (next && live.length < cfg.count) {
+      this._spawnSandboxUnit(anchor, this._sandboxType(next), this.totalSpawned);
     }
 
     if (this._sandboxFire !== cfg.fire) {
