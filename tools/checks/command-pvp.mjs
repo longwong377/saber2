@@ -413,7 +413,7 @@ export function run({ check, assert }) {
       + `${fightable.length}/${horde.length} of the horde still are`;
   });
 
-  check('command/coop: four players, ONE roster, four squads — and one purse', async () => {
+  check('command/coop: two, three or four players — ONE roster, a squad each, one purse', async () => {
     /**
      * FLAGSHIP §9, DRIVEN ON THE SIDE IT IS ACTUALLY ABOUT.
      *
@@ -442,37 +442,54 @@ export function run({ check, assert }) {
      */
     const { SIDES } = await import('../../src/game/Player.js');
     const Cmd = await import('../../src/game/Command.js');
+    const rows = [];
+    /**
+     * TWO, THREE AND FOUR, and THREE is the one that had never been run.
+     *
+     * "obviously everything needs to work with 3-player coop if it already
+     * doesn't." This check was written at four and every number in it was a
+     * literal four — `cs.length === 4`, `solo + 3 * SQUAD`, three joiners by
+     * name — so a rule that happened to hold at four and break at three would
+     * have passed. Nothing here is a party size any more: the joiners are
+     * `n - 1` of them, the line is `solo + (n - 1) * SQUAD` capped at the
+     * mode's own ceiling, and the departure clause runs at every size, so the
+     * re-deal is measured with two commanders left as well as with three.
+     */
+    for (const n of [2, 3, 4]) {
     const { host } = await commandPair({ start: false });
     const d = host.command;
     assert(d && !d.versus, 'this fixture is not a co-op world');
 
     const solo = d.roster.strength;
     const players = [];
-    for (const n of ['B', 'C', 'D']) {
-      const p = { name: n, isLocal: false, alive: true, dead: false, hp: 100,
+    for (const name of ['B', 'C', 'D'].slice(0, n - 1)) {
+      /* `dispose` because this loop unloads the world between party sizes, and
+       * `World.unload` disposes every player — a stub standing in for a peer
+       * has to carry the one method the teardown calls on it. */
+      const p = { name, isLocal: false, alive: true, dead: false, hp: 100,
         team: d.commander.side, order: 'jedi', position: host.player.position.clone(),
-        actor: { setPosition() {} } };
+        actor: { setPosition() {} }, dispose() {} };
       players.push(p);
       host.players.push(p);
       const c = d.enlistCommander({ player: p, side: d.commander.side, army: d.commander.army });
-      assert(c, `${n} was seated with no commander`);
+      assert(c, `${name} was seated with no commander`);
     }
     const cs = d.commanders;
-    assert(cs.length === 4, `four players produced ${cs.length} commanders`);
+    assert(cs.length === n, `${n} players produced ${cs.length} commanders`);
 
     /* ONE ROLL. */
     const rosters = new Set(cs.map((c) => c.roster));
     assert(rosters.size === 1,
-      `four players on one side hold ${rosters.size} rosters — that is four private armies`);
+      `${n} players on one side hold ${rosters.size} rosters — that is ${n} private armies`);
     const roll = d.roster.all;
     const names = new Set(roll.map((t) => t.name));
     assert(names.size === roll.length,
       `${roll.length} named bodies and ${names.size} distinct names`);
 
     /* THE LINE GREW BY A SQUAD A PLAYER, capped by the mode's own ceiling. */
-    const want = Math.min(Cmd.MAX_STRENGTH, solo + 3 * Cmd.SQUAD);
+    const want = Math.min(Cmd.MAX_STRENGTH, solo + (n - 1) * Cmd.SQUAD);
     assert(d.roster.strength === want,
-      `four players field ${d.roster.strength} men; one opened with ${solo} and each joiner brings `
+      `${n} players field ${d.roster.strength} men; one opened with ${solo} and each joiner brings `
       + `${Cmd.SQUAD} up to ${Cmd.MAX_STRENGTH}, so it should be ${want}`);
 
     /* ONE PURSE. */
@@ -502,7 +519,8 @@ export function run({ check, assert }) {
     host.players.splice(host.players.indexOf(gone), 1);
     const dropped = d.dismissCommander(gone);
     assert(dropped, 'the departed player kept their Commander');
-    assert(d.commanders.length === 3, `${d.commanders.length} commanders after one left`);
+    assert(d.commanders.length === n - 1,
+      `${d.commanders.length} commanders after one of ${n} left`);
     assert(!d.commanders.some((c) => c.player === gone), 'the orphan is still in the list');
     assert(d.roster.strength === want, `${want} men before the peer left and ${d.roster.strength} after`);
     const seen2 = new Map();
@@ -512,9 +530,11 @@ export function run({ check, assert }) {
       `${stranded.length} of the departed player's men are led by nobody — the squads did not re-deal`);
     assert(![...seen2.values()].some((n) => n > 1), 'a man is led twice after the re-deal');
 
-    return `4 commanders · 1 roster · ${roll.length} names, ${names.size} distinct · `
-      + `${d.roster.squads().length} squads dealt ${per.join('/')} · one purse · `
-      + `after a peer left: 3 commanders, 0 orphans, every man re-dealt`;
+    rows.push(`${n}: ${roll.length} men, ${names.size} names, squads ${per.join('/')}, `
+      + `${d.commanders.length} left after a departure, 0 orphans`);
+    host.unload();
+    }
+    return rows.join(' · ');
   });
 
   check('command/net: your army\'s rifles do not shoot the joining player', async () => {
@@ -1066,6 +1086,351 @@ export function run({ check, assert }) {
   /* ══════════════════════════════════════════════════════════════════ */
   /*  Phase C — versus: two commanders, two armies, one field           */
   /* ══════════════════════════════════════════════════════════════════ */
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE COMMANDER BATTLE — MODES.versus
+   * ══════════════════════════════════════════════════════════════════ */
+
+  check('versus: THREE commanders is 2v1 and both sides field the same number of men', async () => {
+    /**
+     * "make sure it works for 3 players as well not just 2."
+     *
+     * Two and four were driven; three never was, and three is the one that was
+     * wrong. `_rosterFor` shares a roster per SIDE and `_musterJoin` adds a
+     * squad for every commander past the first — §9's rule, and the right one
+     * for co-op Command, where everybody is on the same side and a bigger table
+     * should field a bigger company. Measured on the shipped build with three
+     * commanders in a meeting:
+     *
+     *     sides   0 / 2 / 0        armies  republic / separatist / republic
+     *     rosters 15  ·  10  ·  15   ← ONE roster of 15 against one of 10
+     *
+     * The pair outnumbered the lone commander by half again ON TOP of being two
+     * people. So `openingFor` reads the side's strength in a meeting and
+     * `_musterJoin` brings nobody: a side fields what the host said it fields
+     * and an ally takes a squad out of it rather than adding one.
+     *
+     * Everything else about three commanders is asserted here too, because
+     * nothing had ever run it: the 2v1 split, one army per side with the allies
+     * sharing it, two ends of one field with the pair beside each other, and a
+     * match built on the two sides in play rather than on three seats.
+     */
+    const Cmd = await import('../../src/game/Command.js');
+    const { host } = await commandPair({ host: { commandVersus: true } , start: false });
+    for (const n of ['B', 'C']) await joinAsCommander(host, { id: n, name: `RIVAL-${n}` });
+    const cs = host.beginVersus();
+    const d = host.command;
+    assert(cs.length === 3, `three players produced ${cs.length} commanders`);
+
+    const sides = cs.map((c) => c.side);
+    assert(new Set(sides).size === 2,
+      `three commanders were put on ${new Set(sides).size} sides (${sides.join('/')}) — a meeting `
+      + 'has two ends and a third side has no army, no paint and no enemy list');
+    assert(sides[0] === sides[2] && sides[0] !== sides[1],
+      `the sides came out ${sides.join('/')} — evens and odds are what formUp's anchors assume`);
+
+    const ids = cs.map((c) => c.army.id);
+    assert(ids[0] === ids[2] && ids[0] !== ids[1],
+      `the armies came out ${ids.join('/')} — the two allies are in opposing colours`);
+    for (const c of cs) {
+      assert(c.foe.id !== c.army.id, `${c.army.id} believes its enemy is itself`);
+    }
+
+    /* THE MEASUREMENT THIS CHECK EXISTS FOR. One roster per side, so the two
+     * allies' commanders answer with the same object and it is counted once. */
+    const bySide = new Map();
+    for (const c of cs) bySide.set(c.side, c.roster);
+    assert(bySide.size === 2, `${bySide.size} rosters for two sides`);
+    const strengths = [...bySide.values()].map((r) => r.living.length);
+    assert(strengths[0] === strengths[1],
+      `the two sides field ${strengths.join(' against ')} men — a 2v1 is already two people `
+      + 'against one, and it must not also be more rifles');
+    const want = d.meetingPlan.strength;
+    assert(strengths[0] === want,
+      `a side fields ${strengths[0]} where the host asked for ${want}`);
+
+    /* TWO ENDS OF ONE FIELD, the pair beside each other rather than in each
+     * other's ranks — the anchors formUp lays out, at three rather than four. */
+    const gap = (a, b) => Math.hypot(a.anchor.x - b.anchor.x, a.anchor.z - b.anchor.z);
+    assert(Math.abs(gap(cs[0], cs[1]) - Cmd.VERSUS_SEPARATION) < 1,
+      `the two sides formed up ${gap(cs[0], cs[1]).toFixed(1)} m apart, not ${Cmd.VERSUS_SEPARATION}`);
+    assert(Math.abs(gap(cs[0], cs[2]) - Cmd.PAIR_SPACING) < 0.5,
+      `the two allies are ${gap(cs[0], cs[2]).toFixed(1)} m apart, not ${Cmd.PAIR_SPACING}`);
+
+    /* …AND A MATCH THAT CAN END. `DuelMatch` filters `sides` for who is still
+     * standing, so the same side number twice makes a wiped-out side read as
+     * two survivors and the round never closes. */
+    assert(host.match, 'three commanders on two sides built no match');
+    assert(host.match.sides.length === 2 && new Set(host.match.sides).size === 2,
+      `the match was built on sides ${JSON.stringify(host.match.sides)} — one per SEAT rather than `
+      + 'one per side, so a beaten side counts as two survivors');
+
+    /* …AND THE CENSUS AGREES, ON THE MEN. `standing` counts the commanders too,
+     * so a 2v1 is legitimately one body up on the pair's side — that is the two
+     * PEOPLE, which is the thing a 2v1 is. The rifles are what had to be
+     * levelled, and `standing - generals` is what the men are. */
+    const census = d.census();
+    const menOn = (side) => census.standing[side] - census.generals[side];
+    assert(menOn(sides[0]) === menOn(sides[1]),
+      `the census reads ${menOn(sides[0])} men against ${menOn(sides[1])} at the top of a battle `
+      + 'nobody has fought yet');
+    assert(census.standing[sides[0]] - census.standing[sides[1]] === 1,
+      `the pair's side is ${census.standing[sides[0]] - census.standing[sides[1]]} bodies up — a `
+      + '2v1 should be exactly one, which is the second commander');
+    const matchSides = JSON.stringify(host.match.sides);
+    host.unload();
+    return `3 commanders → 2v1 on sides ${sides.join('/')}, armies ${ids.join('/')}, `
+      + `${strengths.join(' v ')} men a side, one match on ${matchSides}`;
+  });
+
+  check('versus: the host says who is with whom, and three players can be 1v2 either way', async () => {
+    /**
+     * "you and your friends can choose to be either allies or enemy
+     * commanders."
+     *
+     * `assignSides` alternates down the roster, so the ONLY way to change the
+     * teams was to change who joined first — a race, not a choice. `versusTeams`
+     * is the host's stated map from peer id to side; it rides `SESSION_KEYS`, so
+     * it is the host's answer for the table and no other machine's menu is
+     * consulted, which is the other half of what the player asked for.
+     *
+     * Driven at three, both ways round: the host alone against the pair, and
+     * the host with one of them. Neither is reachable by joining in a different
+     * order — the alternation gives seats 0 and 2 to the same side, full stop.
+     */
+    const seatsOf = async (teams) => {
+      const { host } = await commandPair({
+        host: { commandVersus: true, versusTeams: teams }, start: false,
+      });
+      /* The ids the host's own map is keyed on: the peer id for the local
+       * player and the avatar id for everybody else — `beginVersus.idOf`. */
+      for (const n of ['B', 'C']) await joinAsCommander(host, { id: n, name: `RIVAL-${n}` });
+      const cs = host.beginVersus();
+      const out = cs.map((c) => c.side);
+      host.unload();
+      return out;
+    };
+    /* The fixture's host has no peer id, so `idOf` falls back to 'host' — which
+     * is the same string the lobby writes for a host that has not connected
+     * yet, and exactly the case worth pinning. */
+    const alone = await seatsOf({ host: 0, B: 1, C: 1 });
+    assert(alone[0] !== alone[1] && alone[1] === alone[2],
+      `asked for the host alone against both, got ${alone.join('/')}`);
+    const paired = await seatsOf({ host: 0, B: 0, C: 1 });
+    assert(paired[0] === paired[1] && paired[1] !== paired[2],
+      `asked for the host with B against C, got ${paired.join('/')}`);
+    /* …AND THE ALTERNATION IS STILL THE DEFAULT, so every session that has ever
+     * run is unchanged. */
+    const none = await seatsOf({});
+    assert(none[0] === none[2] && none[0] !== none[1],
+      `with no stated sides the alternation gave ${none.join('/')}`);
+    /* A CHART THAT EMPTIES THE FIELD IS REFUSED WHOLE. Everybody on one side is
+     * a battle with nobody in it; a half-honoured chart would put somebody
+     * somewhere nobody asked for. */
+    const flat = await seatsOf({ host: 0, B: 0, C: 0 });
+    assert(new Set(flat).size === 2,
+      `a chart putting all three on one side was honoured — the field came out ${flat.join('/')}`);
+    return `host alone ${alone.join('/')}, host+B ${paired.join('/')}, `
+      + `default ${none.join('/')}, all-on-one refused → ${flat.join('/')}`;
+  });
+
+  check('versus: the win condition decides what ends it, and the clock is only one of them', async () => {
+    /**
+     * "you basically fight to the death with different win conditions."
+     *
+     * The shipped meeting had exactly one ending and nobody had been told about
+     * it: `pvpRules` gives a round 120 seconds and decides it on remaining
+     * health, so two armies that did not wipe each other out inside two minutes
+     * drew on a timer. Measured on a real pair: 124 s, `10 v 10 -> 10 v 10`, and
+     * that was the whole session.
+     *
+     * Three conditions now, and this asserts the two things that make them real
+     * rather than three words on three cards: the CENSUS each one counts, and
+     * the CLOCK each one runs on. `annihilation` and `commanders` have no timer
+     * at all — a battle to the last man cannot be won by running away — and
+     * `rounds` is the one that keeps the old behaviour and says so on its card.
+     */
+    const Cmd = await import('../../src/game/Command.js');
+    const { PVP_LIMITS } = await import('../../src/game/Player.js');
+    for (const [key, W] of Object.entries(Cmd.VERSUS_WINS)) {
+      assert(W.label && W.blurb && W.blurb.length > 20, `${key} has no card worth reading`);
+      assert(W.counts === 'standing' || W.counts === 'generals',
+        `${key} counts "${W.counts}", which no census answers`);
+    }
+    const cfg = (win) => Cmd.versusCommandConfig({ versusWin: win });
+    assert(cfg('nonsense').win === 'annihilation', 'an unknown condition was accepted');
+    assert(cfg().win === 'annihilation', 'the default is not the fight to the death');
+
+    /* THE CENSUS EACH ONE COUNTS, on a real three-commander field: the generals
+     * are a strict subset of what is standing, and they are what `commanders`
+     * is decided on. */
+    const { host } = await commandPair({ host: { commandVersus: true }, start: false });
+    for (const n of ['B', 'C']) await joinAsCommander(host, { id: n, name: `RIVAL-${n}` });
+    host.beginVersus();
+    const c = host.command.census();
+    assert(c.generals, 'census() reports no generals, so the commanders condition cannot be read');
+    for (const side of Object.keys(c.standing)) {
+      assert(c.generals[side] <= c.standing[side],
+        `side ${side} has ${c.generals[side]} generals standing out of ${c.standing[side]} bodies`);
+      assert(c.generals[side] > 0, `side ${side} opened the battle with no commander standing`);
+    }
+    const total = Object.values(c.generals).reduce((a, n) => a + n, 0);
+    assert(total === 3, `three commanders, ${total} generals in the census`);
+    host.unload();
+
+    /* THE CLOCK. A world built under each condition, and the rules it hands
+     * `DuelMatch` — the one place `roundTime` and `rounds` are decided. */
+    const H = await import('./_coop.mjs');
+    const seen = [];
+    for (const win of Object.keys(Cmd.VERSUS_WINS)) {
+      const { world } = await H.bootWorld({
+        level: 'geonosis',
+        settings: { mode: 'versus', level: 'geonosis', order: 'jedi', quality: 'low',
+          versusWin: win, instantSpawn: true },
+      });
+      assert(world.command?.versus,
+        `mode 'versus' with win '${win}' did not come up as a meeting — alwaysVersus is not read`);
+      const timed = Cmd.VERSUS_WINS[win].clock;
+      assert(world.rules.roundTime === (timed ? PVP_LIMITS.roundTime.def : PVP_LIMITS.roundTime.max),
+        `${win} runs a ${world.rules.roundTime}s round where ${timed ? 'the default' : 'no clock'} `
+        + 'was asked for');
+      assert(world.rules.rounds === (timed ? PVP_LIMITS.rounds.def : 1),
+        `${win} is best of ${world.rules.rounds} — permadeath means a battle is one round unless `
+        + 'the condition says otherwise');
+      seen.push(`${win} ${world.rules.rounds}×${world.rules.roundTime}s`);
+      world.unload();
+    }
+    return `${Object.keys(Cmd.VERSUS_WINS).length} conditions: ${seen.join(', ')}; generals are a `
+      + 'subset of the standing on a real 2v1';
+  });
+
+  check('versus: reinforcements come to BOTH sides, once a side, on one clock', async () => {
+    /**
+     * "maybe also a mode where reinforcements come in waves so imagine like two
+     * armies meeting and a frontline."
+     *
+     * Three properties and the third is the one three players breaks:
+     *
+     *   BOTH SIDES   one clock, one wave, both ends of the field. A timer per
+     *                side drifts apart the moment one of them is interrupted,
+     *                and a battle where one army's replacements land a beat
+     *                sooner every cycle is decided by the timer.
+     *   ON A CLOCK   nothing arrives before the interval and something does
+     *                after it, which is what makes it a frontline rather than a
+     *                bigger opening army.
+     *   ONCE A SIDE  `_rosterFor` shares a roster between allies, so reinforcing
+     *                every COMMANDER pays a side with two players twice. A 2v1
+     *                that is also 2× the replacements is not a battle, and it
+     *                is invisible at two players and at four.
+     */
+    const { host } = await commandPair({
+      host: { commandVersus: true, versusReinforce: 20 }, start: false,
+    });
+    for (const n of ['B', 'C']) await joinAsCommander(host, { id: n, name: `RIVAL-${n}` });
+    const cs = host.beginVersus();
+    const d = host.command;
+    assert(d.reinforceEvery === 20, `the director reads a ${d.reinforceEvery}s interval`);
+
+    const bySide = new Map();
+    for (const c of cs) bySide.set(c.side, c.roster);
+    const before = new Map([...bySide].map(([s, r]) => [s, r.strength]));
+    /* Points, or there is nothing to buy and this measures a purse rather than
+     * a clock. A meeting's roster opens with the muster's own purse; topped up
+     * here so the check is about the interval. */
+    for (const r of bySide.values()) r.points = 500;
+
+    /* NOTHING BEFORE THE INTERVAL. */
+    d._reinforceTick(19);
+    for (const [s, r] of bySide) {
+      assert(r.strength === before.get(s),
+        `side ${s} grew from ${before.get(s)} to ${r.strength} before the first interval was up`);
+    }
+    /* …AND A SQUAD AFTER IT, TO EVERY SIDE, ONCE. */
+    d._reinforceTick(2);
+    const after = new Map([...bySide].map(([s, r]) => [s, r.strength]));
+    const grew = [...bySide.keys()].map((s) => after.get(s) - before.get(s));
+    assert(grew.every((n) => n > 0),
+      `the wave reached ${grew.filter((n) => n > 0).length} of ${grew.length} sides (${grew.join('/')})`);
+    assert(grew[0] === grew[1],
+      `the sides were reinforced by ${grew.join(' and ')} — the side with two commanders was paid twice`);
+
+    /* AND OFF IS OFF: a standing battle gets nothing however long it runs. */
+    const { host: still } = await commandPair({
+      host: { commandVersus: true, versusReinforce: 0 }, start: false,
+    });
+    const s0 = still.command.commander.roster.strength;
+    still.command.commander.roster.points = 500;
+    still.command._reinforceTick(600);
+    assert(still.command.commander.roster.strength === s0,
+      `a standing battle grew from ${s0} to ${still.command.commander.roster.strength} men`);
+    host.unload(); still.unload();
+    return `nothing at 19s, +${grew.join('/+')} at 21s to both sides of a 2v1, and nothing at all `
+      + 'in 600s with reinforcements off';
+  });
+
+  check('versus: a meeting composes its army instead of fielding one kind twice', async () => {
+    /**
+     * "at the beginning you choose the number and mixup of each of your
+     * armies/the field."
+     *
+     * The NUMBER is `versusStrength` and the FIELD is the theatre; the MIXUP
+     * was being swallowed by a rule written for a different mode. `MODES.versus`
+     * declares `battles`, which is what gets it a CommandDirector at all, and
+     * `battles` sets `campaign` — and a campaign is forced to rung 0 on purpose:
+     * the roll at the top of a crossing is "ten identical strangers, so that the
+     * three names in it four areas later are something the player earned", and
+     * the composition is what the muster screen BETWEEN AREAS is for.
+     *
+     * A meeting has no areas and no muster screen. Under the campaign's rule it
+     * fielded twenty identical clone troopers against twenty identical B1s with
+     * a purse it could never spend — the opposite of what was asked for, from a
+     * line of code that is right where it was written.
+     *
+     * So a meeting reads the contingent's own composition control, which is the
+     * shelf this game already has for "what is my army made of". Asserted three
+     * ways, because "it is a mix" alone would pass on an accident:
+     *
+     *   MIXED IS MIXED       CONTINGENT_MIXED spends the purse on the line and
+     *                        then the heaviest thing left, so the roll holds
+     *                        more than one kind of body.
+     *   A RUNG IS THAT RUNG  asking for one rung fields that rung, which is the
+     *                        half a "did it vary" test cannot see.
+     *   A CAMPAIGN IS NOT    the rule it was borrowing is untouched: a Command
+     *   TOUCHED              crossing still opens with identical strangers.
+     */
+    const Cmd = await import('../../src/game/Command.js');
+    const roll = async (settings) => {
+      const { host } = await commandPair({ host: settings, start: false });
+      const d = host.command;
+      const types = d.commander.roster.living.map((t) => t.type);
+      const strength = d.commander.roster.strength;
+      host.unload();
+      return { kinds: new Set(types), types, strength };
+    };
+
+    const mixed = await roll({ commandVersus: true, allyUnit: Cmd.CONTINGENT_MIXED });
+    assert(mixed.kinds.size > 1,
+      `a mixed meeting fielded ${mixed.kinds.size} kind of body (${[...mixed.kinds].join(', ')}) — `
+      + 'the purse was spent on one rung, or not spent at all');
+
+    /* A NAMED RUNG. Rung 1 of either ladder is the second-cheapest thing, so a
+     * side of twenty can afford several of them and still buy line — what is
+     * asserted is that the rung ARRIVED, not that it is the whole army. */
+    const rung = 1;
+    const named = await roll({ commandVersus: true, allyUnit: rung });
+    const wantType = Cmd.ARMIES[[...Cmd.ARMY_IDS][0]].tiers[rung].type;
+    assert(named.kinds.has(wantType),
+      `asked for rung ${rung} (${wantType}) and the roll came out ${[...named.kinds].join(', ')}`);
+
+    /* …AND THE CROSSING STILL OPENS WITH STRANGERS. The rule this mode stopped
+     * borrowing is the rule Command keeps. */
+    const crossing = await roll({ commandVersus: false, allyUnit: Cmd.CONTINGENT_MIXED });
+    assert(crossing.kinds.size === 1,
+      `a Command crossing opened with ${crossing.kinds.size} kinds (${[...crossing.kinds].join(', ')}) `
+      + '— the campaign\'s ten identical strangers are what its muster screen exists to change');
+    return `mixed → ${[...mixed.kinds].join('+')} (${mixed.strength} men), rung ${rung} → `
+      + `${[...named.kinds].join('+')}, a crossing still opens ${[...crossing.kinds].join('+')}`;
+  });
 
   check('command/versus: two Jedi lead two different armies', async () => {
     /**

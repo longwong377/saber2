@@ -698,6 +698,13 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    the picker being broken, and the rules were live in eight modes and honoured
    in five. Each card still carries the reason — see _syncRules. */
 .difflist.inert{opacity:.38;filter:saturate(.4);pointer-events:none}
+/* THE MODE THAT NEEDS OTHER PEOPLE, said under the list. Empty for every mode
+   that does not, and `:empty` takes its own margin back — a blank paragraph
+   holding 14 px open under a column this tight is the defect the deploy
+   column's own notes are about. Warm rather than red: it is a prerequisite,
+   not an error, and the mode is still playable alone. */
+.needline{margin-top:10px;color:var(--accent-warm)}
+.needline:empty{display:none}
 /* THE COUNT ON AN OPPONENT ROW. The row is still a whole control — pressing it
    gives the room to that one kind, which is what it always did — so the stepper
    has to read as a thing INSIDE the row rather than as the row's own buttons:
@@ -856,6 +863,20 @@ button{font-family:inherit}
 .roster .p{display:flex;align-items:center;gap:10px;padding:9px 12px;border:2px solid var(--stroke);
   background:var(--panel);font-size:12px;clip-path:var(--cut-sm)}
 .roster .p i{width:9px;height:9px;background:var(--good);border:2px solid var(--stroke)}
+/* THE SIDE ON A NAME, in the lobby's roster. A chip on the trailing edge, in
+   the two colours the field itself uses for the two ends of the line — the
+   whole point of the control is that you can see at a glance who is with whom,
+   and two identical grey chips reading SIDE 1 and SIDE 2 would need reading
+   rather than glancing. `.overruled` on the list is what a joining player
+   sees: the sides are still legible, they are simply not theirs to set. */
+.roster .p .side{margin-left:auto;flex:none;padding:2px 8px 3px;border:2px solid var(--stroke);
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.16em;font-style:normal;
+  color:var(--stroke);clip-path:var(--cut-sm)}
+.roster .p .side.s0{background:var(--accent)}
+.roster .p .side.s1{background:var(--accent-warm)}
+.roster .p .side.s2{background:var(--good)}
+.roster .p .side.s3{background:var(--danger)}
+.roster.overruled{opacity:.62;pointer-events:none}
 .codebox{padding:20px;border:2px solid var(--stroke);text-align:center;font:var(--mono);
   font-size:26px;font-weight:800;letter-spacing:.28em;color:var(--stroke);
   background:var(--accent);margin-bottom:12px;cursor:pointer;word-break:break-all;

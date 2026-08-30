@@ -120,6 +120,15 @@ function snap(p) {
   for (const k of Object.keys(p.boonMods)) {
     const v = p.boonMods[k];
     if (typeof v === 'number' || typeof v === 'boolean') o[`boonMods.${k}`] = v;
+    /* A SET OF FLAGS IS A FIELD TOO, and reading only numbers and booleans was
+     * how ten real cards read as inert. `boonMods.unbound` is `{ lightning:
+     * true }` — the unbound tier's whole effect, one key per power taken off
+     * its cooldown — and an object never `!==` its own earlier self, so the
+     * card that wrote it looked like a card that did nothing. Flattened to a
+     * string, which is what a comparison by identity cannot do for it. */
+    else if (v && typeof v === 'object' && !Array.isArray(v)) {
+      o[`boonMods.${k}`] = Object.keys(v).filter((x) => v[x]).sort().join(',');
+    }
   }
   for (const k of Object.keys(p)) {
     if (k === 'boonMods') continue;
@@ -767,14 +776,41 @@ export async function run({ check, assert }) {
     const header = readFileSync(join(SRC, 'game/Waves.js'), 'utf8').slice(0, 3000);
     const boonsSaid = num(header, 'boons drafted');
     const mastSaid = num(header, 'masteries gated');
-    const masteries = BOONS.filter((b) => typeof b.requires === 'function').length;
+    const unboundSaid = num(header, 'unbound powers gated');
+    /**
+     * `requires` IS NO LONGER THE SAME QUESTION AS "IS THIS A MASTERY", and
+     * counting it as one is how this check would have started lying rather than
+     * failing. It was `BOONS.filter(b => typeof b.requires === 'function')`,
+     * which was exact while a gate was a mastery and only a mastery; the
+     * unbound tier is ten more cards with a `requires` of their own, so that
+     * expression now answers 16 to a sentence about masteries.
+     *
+     * Split by what the card IS rather than by the field it happens to carry —
+     * an id prefix and a tag, both of which the tables state about themselves —
+     * and the sum is asserted too, so a gated card that is neither reads as a
+     * third kind nobody has described rather than quietly joining one of them.
+     */
+    const unbound = BOONS.filter((b) => b.id.startsWith('unbound-'));
+    const masteries = BOONS.filter((b) => typeof b.requires === 'function'
+      && !b.id.startsWith('unbound-'));
+    const gated = BOONS.filter((b) => typeof b.requires === 'function').length;
     assert(boonsSaid === BOONS.length,
       `the Waves.js header says ${boonsSaid} boons and BOONS holds ${BOONS.length}`);
-    assert(mastSaid === masteries,
-      `the Waves.js header says ${mastSaid} masteries and ${masteries} cards are gated on one`);
+    assert(mastSaid === masteries.length,
+      `the Waves.js header says ${mastSaid} masteries and ${masteries.length} cards are gated on one`);
+    assert(unboundSaid === unbound.length,
+      `the header says ${unboundSaid} unbound powers and the table holds ${unbound.length}`);
+    assert(masteries.length + unbound.length === gated,
+      `${gated} cards carry a gate and only ${masteries.length + unbound.length} of them are `
+      + 'a mastery or an unbound power — there is a third kind the header does not describe');
+    for (const b of unbound) {
+      assert(/^Unbound — /.test(b.tag),
+        `${b.id} is tagged "${b.tag}" — the strip and the Holocron name this tier by its tag`);
+    }
 
     return `${rows.join('; ')}; ${Object.keys(MODES).length} modes all named and described; `
-      + `the Waves header's ${boonsSaid} boons and ${mastSaid} masteries are what the tables hold`;
+      + `the Waves header's ${boonsSaid} boons, ${mastSaid} masteries and ${unboundSaid} unbound `
+      + 'powers are what the tables hold';
   });
 
   check('claims: the sandbox offers every enemy the game has, because it says it does', () => {

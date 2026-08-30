@@ -354,6 +354,15 @@
                of that back. See `.col.narrow.pinned` in styles.css. -->
           <h3 class="stacked">Mode</h3>
           <div id="mode-list" class="difflist"></div>
+          <!-- A MODE THAT NEEDS OTHER PEOPLE SAYS SO BEFORE YOU IGNITE, not
+               after. `MODES[key].needsSession` is the declaration and
+               `Menu._syncSessionNeed` is its only reader; the line is empty and
+               takes no space for every mode that does not declare it
+               (`.needline:empty` in styles.css). The Commander Battle stands
+               its meeting down and fights the composed wave when it is deployed
+               alone — which is the right fallback and is not the thing the
+               player picked the card for. -->
+          <p id="mode-need" class="hint needline"></p>
         </div>
         <button id="btn-deploy" class="primary">Ignite</button>
       </div>
@@ -480,6 +489,47 @@
           <b>free-for-all</b> — friendly fire is not a separate switch, it is what this one means, so
           there are no allies and no accidents. Everybody drops to the duel's health. Takes effect on
           the next <b>Ignite</b>, and it is read on each machine, so agree on it before you deploy.</p>
+        <!--
+          THE COMMANDER BATTLE, SET UP WHERE THE PEOPLE IN IT ARE.
+
+          "there should be a battle mode that is specifically co-op in that you
+          and your friends can choose to be either allies or enemy commanders…
+          at the beginning you choose the number and mixup of each of your
+          armies/the field."
+
+          It is on the SESSION panel and not on Deploy because every control in
+          it is about the table rather than about the run: who is with whom is a
+          fact about the four people in the roster above, and it is the host's
+          to state — the player asked, in the same message, that a mode "not be
+          dependent on what any modes/maps non-host players have selected on
+          their screens". All four ride `Net.SESSION_KEYS` for that reason.
+
+          The MIXUP is not here on purpose: it is the muster, which is the
+          screen this mode already has for composing an army out of a purse, and
+          a second unit picker beside it would be two answers to one question.
+        -->
+        <h3 style="margin-top:22px">Commander Battle</h3>
+        <p class="hint">One field, two armies, and the people in the roster above at the head of them.
+          The host sets all of it; nobody else's menu is read.</p>
+        <label class="slider">Men a side <input type="range" id="opt-versus-strength"
+          min="5" max="24" step="1" value="20"><b></b></label>
+        <p class="hint">Per <b>side</b>, not per commander — two allies split one army of this size rather
+          than bringing one each, so three players is a fair 2v1 instead of 15 against 10.</p>
+        <label class="slider">Reinforcements <input type="range" id="opt-versus-reinforce"
+          min="0" max="180" step="5" value="0"><b></b></label>
+        <p class="hint">Off, what you brought is what you have. On, a squad lands behind <b>both</b> lines on
+          one clock and the middle of the plain becomes a frontline — until a side's muster points run out,
+          which is what decides how long it can keep feeding.</p>
+        <h3 style="margin-top:22px">What ends it</h3>
+        <div id="opt-versus-win" class="difflist"></div>
+        <p class="hint">What each army is MADE of is the contingent's own shelf, under
+          <b>Options → Your army</b>: a rung of the ladder, or <b>Mixed</b> to spend the side's
+          points on the line first and then the heaviest thing left affordable. It is the host's
+          like everything else here, and it is one picker rather than two answers to one question.</p>
+        <h3 style="margin-top:22px">The sides</h3>
+        <p class="hint" id="versus-teams-hint">Press a name to move them across. Two sides have to have
+          somebody on them.</p>
+        <div id="versus-teams" class="roster"></div>
       </div>
     </section>
 

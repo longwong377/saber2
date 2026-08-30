@@ -172,7 +172,7 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
          LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById,
-         musterPlan } from '../game/Command.js';
+         musterPlan, versusCommandConfig, VERSUS_WINS, VERSUS_LIMITS } from '../game/Command.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -575,6 +575,26 @@ export const DEFAULT_SETTINGS = {
    * makes "this has no control" a question anybody can ask.
    */
   commandVersus: false,
+  /* ── the commander battle (MODES.versus) ───────────────────────────────
+   *
+   * All four are the HOST's, and they are on `Net.SESSION_KEYS` for that
+   * reason: the player asked for a mode that "is not dependent on what any
+   * modes/maps non-host players have selected on their screens", and a battle
+   * whose two sides were sized by two different menus would not be one battle.
+   *
+   * `versusCommandConfig` in Command.js is the only thing allowed to read them
+   * — the same shape `sandboxConfig`, `commandConfig` and `pvpRules` have, so a
+   * menu writes free-form values and exactly one function decides what they
+   * mean. */
+  /** Bodies per SIDE, not per commander — see `versusCommandConfig`. */
+  versusStrength: 20,
+  /** What ends it: 'annihilation' | 'commanders' | 'rounds'. */
+  versusWin: 'annihilation',
+  /** Seconds between reinforcement waves; 0 is a standing battle. */
+  versusReinforce: 0,
+  /** Who is with whom: peer id → side index, decided by the host in the lobby.
+   *  Empty means the default — `assignSides`' alternation down the roster. */
+  versusTeams: {},
   /**
    * FREE DUELS WITH FRIENDS — the switch the whole of `pvpRules` was waiting
    * for.
@@ -983,6 +1003,13 @@ export const SETTING_READERS = {
   teamDamage:      ['game/Command.js', 'const td = s.teamDamage'],
   commandFormation: ['game/Command.js', 'const f = s.commandFormation'],
   commandVersus:   ['game/Command.js', 'versus: !!s.commandVersus'],
+  /* The meeting's four, and `versusCommandConfig` is the only reader of any of
+   * them — the same rule `commandConfig` and `sandboxConfig` are held to. */
+  versusStrength:  ['game/Command.js', 's.versusStrength'],
+  versusWin:       ['game/Command.js', 's.versusWin'],
+  versusReinforce: ['game/Command.js', 's.versusReinforce'],
+  versusTeams:     ['game/Command.js', 's.versusTeams'],
+  versusStrength:  ['game/Command.js', 's.versusStrength'],
   allies:          ['game/Command.js', 'Number(s.allies)'],
   /* The contingent's shape and its side. Same rule as `allies` directly above
    * and for the same reason: `commandConfig` is the one function allowed to
@@ -4420,6 +4447,9 @@ export class Menu {
     // moment the mode changes, not after the player has deployed into a level
     // they did not choose.
     this._syncTheatre();
+    /* …AND A MODE THAT NEEDS OTHER PEOPLE SAYS SO HERE, for the same reason and
+     * at the same moment. See `_syncSessionNeed`. */
+    this._syncSessionNeed();
     // A mode can pick its own theatre, and the theatre is what vetoes a rule.
     this._syncRules();
     // …and the Codex's purse table is the same director's answer to a different
@@ -4842,6 +4872,34 @@ export class Menu {
    * page: setting `true` throughout, box ticked and live in a session, unticked
    * at 0.55 opacity out of one, and ticked again on re-entry.
    */
+  /**
+   * A MODE THAT NEEDS OTHER PEOPLE, SAID BEFORE IGNITE RATHER THAN AFTER.
+   *
+   * `MODES.versus` is a battle between commanders, so a session is not a
+   * preference it has — it is the mode. Deployed alone it does the right thing
+   * (`standDownMeeting` clears the flag and the composed wave is fought
+   * instead, which `command.mjs` measures) and the right thing is not what the
+   * player pressed the card for.
+   *
+   * Off the DECLARED field and not off the mode's name, like every other branch
+   * in this file: `needsSession` is on the mode's own row, so the second mode
+   * that needs a table lights this line on the day it is written. The line is
+   * empty — and takes no space — for every mode that does not declare it.
+   *
+   * Called from `selectMode` and from `netSession`, which are the two moments
+   * the answer can change: the mode you picked, and whether there is anybody
+   * here.
+   */
+  _syncSessionNeed() {
+    const el = document.getElementById('mode-need');
+    if (!el) return;
+    const M = MODES[this.s.mode];
+    el.textContent = (M?.needsSession && !this._netMode)
+      ? `${M.name} is fought against another commander — host or join a session under `
+        + 'Co-op first. Deployed alone it stands the meeting down and fights the composed wave.'
+      : '';
+  }
+
   _syncVersusBox() {
     const box = document.getElementById('opt-command-versus');
     if (!box) return;
@@ -6152,6 +6210,95 @@ export class Menu {
    * the sentence the whole screen has to support stays true: the room is the
    * size of the slider, and anything you have not named by hand is a draw.
    */
+  /**
+   * WHAT ENDS A COMMANDER BATTLE — one card per row of `VERSUS_WINS`.
+   *
+   * Built from the table rather than typed, like every other picker on this
+   * screen, so a fourth condition is a row in Command.js and appears here on
+   * the day it is written. The blurb on each card is the table's own.
+   */
+  _buildVersusWins() {
+    const host = document.getElementById('opt-versus-win');
+    if (!host) return;
+    const cfg = versusCommandConfig(this.s);
+    host.innerHTML = '';
+    for (const [key, W] of Object.entries(VERSUS_WINS)) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (cfg.win === key ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${W.label}</b><span>${W.blurb}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this.s.versusWin = key;
+        [...host.children].forEach((c) => c.classList.toggle('sel', c === d));
+        saveSettings(this.s);
+      });
+      host.appendChild(d);
+    }
+  }
+
+  /**
+   * WHO IS WITH WHOM — the roster again, with a side on every name.
+   *
+   * "you and your friends can choose to be either allies or enemy commanders."
+   * `assignSides` alternates down the roster, so before this the only way to
+   * change the teams was to change who joined first, which is a race and not a
+   * choice.
+   *
+   * THE HOST'S ONLY, and greyed for everybody else rather than hidden: a
+   * joining player should be able to SEE which side they have been put on, and
+   * a control that quietly does nothing is the defect this menu keeps deleting.
+   * `World.beginVersus` reads the map through `versusCommandConfig` and refuses
+   * a chart that leaves fewer than two sides standing, so the worst a stray
+   * press can do is be ignored — but the hint says so before it happens.
+   *
+   * The default is an EMPTY map, which is `assignSides`' alternation: a host
+   * who never touches this gets exactly the sessions that have always run.
+   */
+  versusTeams(players = null) {
+    const host = document.getElementById('versus-teams');
+    if (!host) return;
+    if (players) this._netList = players;
+    const list = this._netList || [];
+    const mine = this._netMode === 'host';
+    const cfg = versusCommandConfig(this.s);
+    const hint = document.getElementById('versus-teams-hint');
+    if (hint) {
+      hint.textContent = !this._netMode
+        ? 'Host or join a session — a battle needs a commander at each end.'
+        : mine ? 'Press a name to move them across. Two sides have to have somebody on them.'
+        : 'The host sets the sides for the table.';
+    }
+    host.classList.toggle('overruled', !mine);
+    host.innerHTML = '';
+    list.forEach((p, i) => {
+      const d = document.createElement('div');
+      d.className = 'p';
+      /* The stated side, or the one the alternation would give them — shown
+       * either way, because "unset" is not a thing a player can be on a field
+       * and a blank chip would read as a bug. */
+      const seat = cfg.seats.get(String(p.id));
+      const side = seat === undefined ? (i % ARMY_IDS.length) : seat;
+      d.innerHTML = `<i></i><span></span><em class="side s${side}"></em>`;
+      d.querySelector('span').textContent = p.name || 'Jedi';
+      /* "SIDE 1" and not an army name. Which army a side leads is
+       * `assignArmies`' answer and it depends on the orders in the room, so a
+       * lobby chip that said "Republic" would be a promise this screen cannot
+       * keep. The number is the thing being chosen here. */
+      d.querySelector('em').textContent = `SIDE ${side + 1}`;
+      if (mine) {
+        this._activate(d, () => {
+          audio.ui('click');
+          const next = { ...(this.s.versusTeams || {}) };
+          next[String(p.id)] = (side + 1) % ARMY_IDS.length;
+          this.s.versusTeams = next;
+          saveSettings(this.s);
+          this.versusTeams();
+        });
+      }
+      host.appendChild(d);
+    });
+  }
+
   _buildSandboxUnits() {
     const host = document.getElementById('opt-sandbox-type');
     if (!host) return;
@@ -7081,6 +7228,24 @@ export class Menu {
     this._slider('opt-ally-army', 'allyArmy', v => contingentArmyName(Math.round(v)));
     this._check('opt-command-versus', 'commandVersus');
     this._syncVersusBox();
+    /**
+     * THE COMMANDER BATTLE'S FOUR, and every bound off the table that clamps
+     * them — `VERSUS_LIMITS` is `versusCommandConfig`'s ceiling and a second
+     * copy of 24 typed into index.html is the twin this file has paid for
+     * nine times. The strength control is the one that would have been wrong
+     * rather than merely duplicated: its floor is a SQUAD, because a side that
+     * cannot field one squad is not an army.
+     */
+    this._range('opt-versus-strength', VERSUS_LIMITS.strength.min, VERSUS_LIMITS.strength.max, 1,
+      'versusStrength');
+    this._slider('opt-versus-strength', 'versusStrength',
+      (v) => `${Math.round(v)} a side`);
+    this._range('opt-versus-reinforce', VERSUS_LIMITS.reinforce.min, VERSUS_LIMITS.reinforce.max, 5,
+      'versusReinforce');
+    this._slider('opt-versus-reinforce', 'versusReinforce',
+      (v) => (v <= 0 ? 'none — what you bring is what you have' : `a squad every ${Math.round(v)}s`));
+    this._buildVersusWins();
+    this.versusTeams();
     /* The battle, for Skirmish. Read by `deploy()` at world build like the
      * three above, so the value written here is the one the next battle gets
      * and not one a running world would have to be told about. */
@@ -7455,6 +7620,11 @@ export class Menu {
      * `_syncVersusBox`. */
     this._netMode = mode || null;
     this._syncVersusBox();
+    /* …AND THE SIDE LIST, which is greyed out of a session and live in one —
+     * the same signal, the same reason. And the line under the mode list, which
+     * is the same fact asked the other way round. */
+    this.versusTeams();
+    this._syncSessionNeed();
   }
   /**
    * The roster, with the names treated as what they are: text that arrived
@@ -7464,6 +7634,11 @@ export class Menu {
    * The name goes in as a text node; only the markup around it is markup.
    */
   netRoster(players) {
+    /* KEPT, because the Commander Battle's side list is this same roster with a
+     * side on every name and it is redrawn from settings as well as from the
+     * wire. See `versusTeams`. */
+    this._netList = players || [];
+    this.versusTeams(this._netList);
     this.el.netRoster.innerHTML = '';
     for (const p of players) {
       const d = document.createElement('div');

@@ -34,10 +34,12 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: forty-six boons drafted every second wave, weighted
+ * And the player grows with it: fifty-six boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
- * committed to an axis. `budgetFor`'s one constant is derived from that draft
- * rate, because the two are one decision.
+ * committed to an axis — and, one step past a mastery, ten unbound powers gated
+ * harder still, each taking the cooldown off one Force power and charging Force
+ * and blood for every cast. `budgetFor`'s one constant is derived from that
+ * draft rate, because the two are one decision.
  *
  * (Those two counts said "twenty-nine" and "five" for a long time while the
  * table grew to forty and six, and the first said "forty" for as long as it
@@ -697,6 +699,59 @@ export const MODES = {
    * and the Theatre column stays live because the player's pick is still real —
    * it is round one, and `Levels.levelRotation`'s `first` is what makes it so.
    */
+  /**
+   * ── THE COMMANDER BATTLE — the one mode that is FOR the people in the room ─
+   *
+   * "there should be a battle mode that is specifically co-op in that you and
+   * your friends can choose to be either allies or enemy commanders and you can
+   * for example have you at the head of your chosen army vs your friend and this
+   * chosen army, at the beginning you choose the number and mixup of each of
+   * your armies/the field and you basically fight to the death with different
+   * win conditions, maybe also a mode where reinforcements come in waves so
+   * imagine like two armies meeting and a frontline."
+   *
+   * Most of it was already built and none of it was findable. `commandVersus`
+   * is a CHECKBOX on the Command panel, disabled until you are already in a
+   * session, worded "THE MEETING — fight another commander" — and the player
+   * who asked for this mode had been playing the game for weeks and opened
+   * with "correct me if I'm wrong and this game mode already exists". A mode
+   * hidden behind a tick box in another mode's options is a mode nobody plays.
+   *
+   * So it is a mode. Everything under it that already worked — `formUp`'s two
+   * ends of one line, `assignSides`, `assignArmies`, the shared roster per
+   * side, `DuelMatch`, the seat and side on the wire — is untouched and is
+   * reached by the same three lines it always was. What the mode adds is the
+   * four decisions the player asked to make, and they are SETTINGS rather than
+   * code because every one of them is the host's to make for the table:
+   * `versusTeams` (who is with whom), `versusStrength` (how many a side),
+   * `versusWin` (what ends it) and `versusReinforce` (whether it is a standing
+   * battle or a frontline that keeps feeding).
+   *
+   * `meeting` and `alwaysVersus` are two different statements and both are
+   * needed. `meeting` says the mode MAY hold one, which Command also says
+   * because Command may be played either way. `alwaysVersus` says this mode IS
+   * one — there is no tick box, and `commandConfig` reads it so that the switch
+   * cannot be left off by accident on the one mode whose whole subject it is.
+   *
+   * `battles: true` is what gives it an army at all: `World.loadLevel` reads it
+   * (through `campaign`) to build a CommandDirector rather than a bare wave
+   * director, and it is the honest word — a meeting is a bounded battle with an
+   * army, which is exactly what `skirmish` and `campaign` are. It does NOT get
+   * `rotates`, because a battle to the death is fought on one field.
+   */
+  versus: {
+    name: 'Commander Battle',
+    blurb: 'You and your friends, at the head of your own armies, on one field. The host sets the '
+      + 'sides, how many men each side brings and what ends it — last army standing, the '
+      + 'commanders, or the clock — and whether reinforcements keep coming. Needs a session: a '
+      + 'battle with one commander in it is not a battle.',
+    meeting: true,
+    alwaysVersus: true,
+    battles: true,
+    needsSession: true,
+    fixedRules: 'Not in a meeting: the other army is deployed by a person, not composed, so no '
+      + 'wave is built for a rule to change.',
+  },
   skirmish: {
     name: 'Skirmish',
     blurb: 'One battle, fought over changing ground. You lead an army, they field one, '

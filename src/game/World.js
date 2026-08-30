@@ -29,7 +29,7 @@ import { BladeContactSolver, captureSnapshot, gradeCaught, resolveBladeClash, GR
  * game/ at all, so this edge cannot close a cycle — and the alternative was a
  * second copy of the shoulder line, which is the twin §2.3 keeps deleting. */
 import { GUARD } from './SaberController.js';
-import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, sideTeam, teamOf, TEAM } from './Player.js';
+import { assignSides, DuelMatch, Player, asTeam, bladeTargets, canHarm, hostileTo, pvpRules, PVP_LIMITS, sideTeam, teamOf, TEAM } from './Player.js';
 import { ageDropped } from './Dropped.js';
 import { Enemy, ARCHETYPES, applyModifier, ENEMY_POWERS, FORCE_KINDS, gripClaim, gripRelease, heldMass,
          IMPULSE_AS_HP, paysOut } from './Enemy.js';
@@ -1221,7 +1221,30 @@ export class World {
      * rounds, and a roster you get back is not a roster you can lose.
      */
     if (this.command?.versus) {
-      this.rules = pvpRules({ ...this.settings, pvp: true, duelRounds: 1 });
+      /**
+       * …AND THE ROUND COUNT AND THE CLOCK ARE NOW THE WIN CONDITION'S.
+       *
+       * `duelRounds: 1` was the decision above and it stays the decision for
+       * two of the three conditions, for the reason the paragraph gives: a
+       * roster you get back between rounds is a roster you cannot lose, and
+       * permadeath is the mode. `rounds` is the one condition that asks for
+       * the opposite and says so on its own card — best of three on a timer —
+       * so it is the one that gets `PVP_LIMITS.rounds`' own default.
+       *
+       * THE CLOCK IS THE OTHER HALF AND IT WAS THE SILENT ONE. `roundTime`
+       * defaults to 120 s whatever anybody asked for, so the shipped meeting
+       * ended in a draw on a timer nobody had been told about — measured at
+       * 124 s, `10 v 10 -> 10 v 10`, and that was the whole session. A battle
+       * to the last man does not have a timer; `VERSUS_WINS[key].clock` says
+       * which do, and a condition with no clock is handed the ceiling
+       * `pvpLimit` will allow rather than a special case inside `DuelMatch`.
+       */
+      const rule = this.command.meetingPlan?.rule ?? null;
+      this.rules = pvpRules({
+        ...this.settings, pvp: true,
+        duelRounds: rule?.clock ? undefined : 1,
+        duelRoundTime: rule?.clock ? undefined : PVP_LIMITS.roundTime.max,
+      });
     }
     /**
      * …AND THE SCORE, WHICH IS TOLD FACTS AND NOT A STATE.
@@ -2153,6 +2176,24 @@ export class World {
   beginSkirmish(picks = null, wave = null) {
     const d = this.command;
     if (!d || !MODES[this.settings?.mode]?.battles) return null;
+    /**
+     * …AND NOT UNDER A MEETING, which is the one battle this must not open.
+     *
+     * `MODES.versus` declares `battles` — it is a bounded battle with an army,
+     * which is exactly what the field is for, and it is what gets the mode a
+     * CommandDirector instead of a bare wave director. That declaration also
+     * arms `update`'s "the battle opens itself if nobody opened it", which is
+     * the line that makes a mode playable through a front end that knows
+     * nothing about it — and under a meeting it would compose a wave against a
+     * commander's strength and drop a THIRD force onto a field with two armies
+     * already on it. `beginVersus` is the opening this mode has; `start`'s own
+     * note has the same refusal for the same reason.
+     *
+     * Refused here rather than in the caller because there are two callers —
+     * main.js's deploy branch and the self-opening line — and a guard in one of
+     * them is a guard the other does not have.
+     */
+    if (d.versus) return null;
     const sk = (this.skirmish ||= this._planSkirmish(picks));
     if (sk.started || sk.done) return sk;
     sk.started = true;
@@ -5134,6 +5175,42 @@ export class World {
    */
   _netBoltBilled(e, hp0, bolt) {
     if (this.netMode !== 'client' || !bolt.replicated || bolt.owner?.isLocal) return;
+    this._netHostDealt(e, hp0);
+  }
+
+  /**
+   * A BLOW THIS MACHINE WATCHED RATHER THAN STRUCK — the rule, once, for the
+   * three doors that reach it.
+   *
+   * `_reconcileClaims` measures a claim as the gap between the host's last
+   * stated health and ours, "whatever dealt it", and that is the right seam:
+   * it is why a guest's lightning, choke and rend all reach the host with no
+   * call site apiece. What it cannot see is that a client SIMULATES a great
+   * deal it did not do — the host's bolts are replicated into its own pool so
+   * a guest can deflect one, the host's shoves are integrated locally so a
+   * flying body does not stutter, and Rapier resolves the same contacts on
+   * both machines because both machines have the same physics world. Every one
+   * of those lands on a mirror, and every one of them the host has already
+   * billed itself.
+   *
+   * Moving the BASELINE by what the blow took is the whole rule: it says "this
+   * one is already yours" without deleting the simulation, which is what a
+   * "don't simulate it" fix would have cost — the deflection the replication
+   * exists to allow.
+   *
+   * Three callers and they were two: `_boltHurt` for a replicated round,
+   * `_stepNetEnemies` for what `_move` takes off a body it is carrying, and now
+   * `Impact.kineticContact` for a collision. That third one was measured as a
+   * live leak by `command-pvp.mjs` and read as a flake for as long as it was
+   * one: a joining player holding an idle input still billed the host 0.1 to
+   * 0.5 hp a time in `force` damage, from bodies bumping each other in a line
+   * of forty, which is a sum that is zero on a quiet frame and not on a busy
+   * one. The check that caught it asserts ZERO for exactly that reason.
+   *
+   * @param hp0 the body's health BEFORE the blow, so this measures what the
+   *   game decided rather than what the caller asked for.
+   */
+  _netHostDealt(e, hp0) {
     if (!e || e._netHp === undefined) return;
     e._netHp -= Math.max(0, hp0 - e.hp);
     /**
@@ -5154,6 +5231,25 @@ export class World {
      * died and nothing later can make it untrue.
      */
     if (e.dead) { e._netDead = true; e._netHostKill = true; }
+  }
+
+  /**
+   * A COLLISION, AND WHOSE IT IS. Called by `Impact.kineticContact` around the
+   * blow it delivers — see `_netHostDealt` for the rule.
+   *
+   * The discriminator is the STRIKER'S AUTHOR, which the contact channel
+   * already carries: `self.userData.hurledBy` is the hand that put the object
+   * in the air, and everything else — a collapse, a blast, one droid shoved
+   * into the droid behind it — passes null. So a crate this player threw is
+   * this machine's alone (the host never applied that impulse and its copy of
+   * the crate is sitting still) and is billed like any other blow; a contact
+   * with no author, or with somebody else's, is one both machines just watched
+   * happen the same way.
+   */
+  netContactBilled(e, hp0, source) {
+    if (this.netMode !== 'client') return;
+    if (source && (source === this.player || source.isLocal)) return;
+    this._netHostDealt(e, hp0);
   }
 
   _boltHitTest(bolt, from, to) {
@@ -6161,7 +6257,42 @@ export class World {
      * want and stranding the third player is not.
      */
     const seats = assignSides(list.map((_, i) => ({ id: i })), ARMY_IDS.length);
-    const sides = list.map((_, i) => seats.get(i));
+    /**
+     * …AND THE HOST MAY SAY OTHERWISE, WHICH IS THE WHOLE MODE.
+     *
+     * "you and your friends can choose to be either allies or enemy
+     * commanders." `assignSides` alternates down the roster, so the only way to
+     * change who is with whom was to change who joined first — which is not a
+     * choice, it is a race. `versusTeams` is the host's stated map from peer id
+     * to side, written in the lobby and carried on `SESSION_KEYS`, and
+     * `versusCommandConfig` is the one thing that reads it.
+     *
+     * PER PLAYER, FALLING BACK PER PLAYER. A host who has moved one name and
+     * left the rest alone gets exactly that: the one they moved goes where they
+     * put it and everybody else alternates as before. An empty map is the
+     * shipped behaviour, byte for byte.
+     *
+     * AND IT CANNOT EMPTY THE FIELD. Every commander on one side is a battle
+     * with nobody in it — `beginVersus` would build no match, `_aloneAt` would
+     * announce it and the mode would look broken — so a stated map that leaves
+     * fewer than two sides standing is refused as a whole and the alternation
+     * is used. Refused rather than patched, because a half-honoured seating
+     * chart puts somebody somewhere nobody asked for.
+     */
+    const plan = d.meetingPlan;
+    const idOf = (p, i) => (p === this.player ? (this.net?.peer?.id ?? 'host') : (p?.id ?? i));
+    let sides = list.map((_, i) => seats.get(i));
+    if (plan?.seats?.size) {
+      const asked = list.map((p, i) => {
+        const seat = plan.seats.get(String(idOf(p, i)));
+        return seat === undefined ? seats.get(i) : sideTeam(seat);
+      });
+      if (new Set(asked).size >= 2) sides = asked;
+      else {
+        this.notify('SIDES IGNORED',
+          'every commander was put on one side — falling back to alternating the roster', 'alarm');
+      }
+    }
     /**
      * …AND AN ARMY PER SIDE, so two allies lead one and wear one colour.
      *
@@ -6337,8 +6468,27 @@ export class World {
   _matchTick(dt) {
     const m = this.match, d = this.command;
     if (!m || !d || this.netMode === 'client' || this.over) return;
-    const { standing, health } = d.census();
-    const events = m.update(dt, standing, health);
+    const { standing, health, generals } = d.census();
+    /**
+     * WHICH TALLY DECIDES THE ROUND — the meeting's win condition, applied at
+     * the one line that can apply it.
+     *
+     * `DuelMatch.update` asks "how many of this side are still in it" and ends
+     * the round when only one side answers above zero. That question has more
+     * than one honest answer now, and which one is right is the player's pick
+     * rather than the match's business — so the CENSUS is chosen here and the
+     * match is left as the one thing that knows about rounds, clocks and
+     * scores. `VERSUS_WINS[key].counts` is the whole switch; adding a fourth
+     * condition is a row in that table and a tally in `census()`, not a branch
+     * in here.
+     *
+     * `commanders` is the interesting one: the armies still fight and still
+     * matter, because they are what stands between you and the other general,
+     * but the battle is decided by the people playing it.
+     */
+    const rule = d.meetingPlan?.rule;
+    const tally = rule?.counts === 'generals' ? generals : standing;
+    const events = m.update(dt, tally, health);
     for (const ev of events) {
       if (ev.type === 'fight') this.notify('ENGAGE', `${d.commander.army.name} against ${d.commander.foe.name}`);
       if (ev.type !== 'match-end') continue;
