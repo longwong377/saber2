@@ -524,6 +524,53 @@ export async function run({ check, assert }) {
       + `prices ${first} → ${second} → ${again}`;
   });
 
+  check('living force: the Holocron earns and spends in every mode the game has', async () => {
+    /**
+     * "confirm that the holocron and upgrades work in every single mode"
+     *
+     * It did not, and the exception was the worst one available. The Holocron
+     * is three mechanisms and a mode can have any two: a ledger, a WAY TO EARN
+     * (the director firing `onWaveClear`), and a purchase that reaches the
+     * body. Training had the ledger and the screen and no income —
+     * `World.loadLevel` returns early for `training`, before the block that
+     * hangs `_earnInsight` on the clear signal — so a player could kneel in the
+     * one mode built for trying powers out and find 0 Insight forever.
+     *
+     * Asked of the real World per mode rather than of a list of mode names,
+     * because a list is the thing that goes stale the day a mode is added.
+     */
+    const { MODES } = Waves;
+    /* Dynamic, the way every other check in this file reaches the harness. */
+    const { bootWorld } = await import('./_coop.mjs');
+    const rows = [];
+    for (const mode of Object.keys(MODES)) {
+      const level = MODES[mode]?.level || 'geonosis';
+      const { world } = await bootWorld({ level, settings: { mode, difficulty: 'knight' } });
+      try {
+        assert(world.communion, `${mode}: no Insight ledger at all`);
+        assert(typeof world.director?.onWaveClear === 'function',
+          `${mode}: the director fires no wave-clear signal, so the Holocron can never be paid`);
+        const before = world.communion.insight;
+        world.director.onWaveClear(1, true);
+        const earned = world.communion.insight - before;
+        assert(earned > 0,
+          `${mode}: a cleared wave paid ${earned} Insight — the Holocron opens here and cannot be spent`);
+        /* AND A PURCHASE REACHES THE BODY. A root is legal from an empty hand,
+         * so this needs no run behind it. */
+        const p = world.player;
+        const cut0 = p.boonMods.cutPower;
+        world.communion.insight += 500;
+        const boon = world.communion.buy('attune-blade', world.takenBoons, 1);
+        assert(boon, `${mode}: the Holocron refused a root facet from an empty hand`);
+        world.applyBoon(boon);
+        assert(p.boonMods.cutPower > cut0,
+          `${mode}: a woken facet did not reach the player — the upgrade is a screen only`);
+        rows.push(`${mode} ${earned}`);
+      } finally { world.unload?.(); world.dispose?.(); }
+    }
+    return `Insight per clear — ${rows.join(', ')}`;
+  });
+
   check('living force: the Holocron shows every facet the rules allow, and hides none of them', () => {
     /**
      * THE CHECK THAT USED TO PIN THE OPPOSITE, and the report that turned it

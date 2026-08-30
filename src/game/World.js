@@ -915,6 +915,23 @@ export class World {
       this.training = true;
       this.running = true;
       this.over = false;
+      /**
+       * …AND IT EARNS, which this early return used to take away.
+       *
+       * Everything below — the wave-clear callback, and `_earnInsight` hanging
+       * off it — is skipped by this branch, so Training was the one mode in the
+       * game where the Holocron could be opened and never spent: measured
+       * across all ten modes, 4 Insight a clear everywhere, 1 in Path of the
+       * Blade, and 0 here. Training is the worst mode to make that exception
+       * in, because it is where a player goes to find out what a power does.
+       *
+       * A finished LESSON is this director's cleared wave and it fires the same
+       * callback (see `DojoDirector._advance`), so the one line that has to
+       * survive the early return is the income. The rest of the block below is
+       * a wave director's business — the score, the party heal, the draft, the
+       * rung signal — and none of it belongs to a syllabus.
+       */
+      this.director.onWaveClear = (w, fresh = true) => { if (fresh) this._earnInsight(w); };
       return L;
     }
     this.training = false;
