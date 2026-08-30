@@ -49,7 +49,7 @@ import { Particles } from '../../src/world/Particles.js';
 import { GrassField } from '../../src/world/Scenery.js';
 import { Terrain } from '../../src/world/Terrain.js';
 import { DojoDirector } from '../../src/game/Dojo.js';
-import { clocked } from './_shared.mjs';
+import { clocked, modsMoved } from './_shared.mjs';
 
 /**
  * Where every COLUMN of Engine's QUALITY table is actually read.
@@ -1682,10 +1682,7 @@ export async function run({ check, assert }) {
     for (const b of BOONS) {
       const before = base(), after = base();
       b.apply(after);
-      const touched = [];
-      for (const k of Object.keys(after.boonMods)) {
-        if (after.boonMods[k] !== before.boonMods[k]) touched.push(k);
-      }
+      const touched = modsMoved(after.boonMods, before.boonMods);
       // Numbers are the easy half. A boon whose effect is a TECHNIQUE leaves no
       // number behind at all — it installs something on the instance — so an
       // own-key diff has to count too, or the one boon that was a lie would be

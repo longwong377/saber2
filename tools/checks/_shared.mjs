@@ -283,3 +283,35 @@ export async function clocked(check) {
     return run;
   });
 }
+
+/**
+ * WHICH `boonMods` FIELDS A CARD ACTUALLY MOVED — compared BY VALUE.
+ *
+ * Four checks asked this question with `after[k] !== before[k]` over two
+ * separate `defaultBoonMods()` calls, which is correct exactly as long as every
+ * field is a number or a boolean. `unbound` — the map of Force powers a player
+ * has taken off its leash — is an OBJECT, so the two calls hand back two empty
+ * objects that are not each other, and every card in the game read as having
+ * moved it.
+ *
+ * ONE of those four went red and the other three got quietly WEAKER, which is
+ * the worse outcome and the reason this is shared code now rather than a fix in
+ * the one that failed. `controls.mjs` and `order.mjs` both use the moved list to
+ * find cards that do NOTHING — a boon with an empty list is a lie the build
+ * catches — and a key that is always in the list means no card can ever have an
+ * empty one. The inert-boon check had stopped being able to fail.
+ *
+ * Object fields are compared by their JSON, which is enough for what is in
+ * there: flat maps of key → true.
+ */
+export function modsMoved(after, before) {
+  const out = [];
+  for (const k of new Set([...Object.keys(before), ...Object.keys(after)])) {
+    const a = after[k], b = before[k];
+    if (a === b) continue;
+    if (a && b && typeof a === 'object' && typeof b === 'object'
+        && JSON.stringify(a) === JSON.stringify(b)) continue;
+    out.push(k);
+  }
+  return out;
+}

@@ -27,6 +27,7 @@
  * modelled and compared against what the director charges for it.
  */
 
+import { modsMoved } from './_shared.mjs';
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
@@ -2547,10 +2548,7 @@ export async function run({ check, assert }) {
       const p = driven();
       p.boons.add(boon.id);
       boon.apply(p);
-      const keys = Object.keys(p.boonMods).filter(k => {
-        const base = driven().boonMods;
-        return p.boonMods[k] !== base[k];
-      });
+      const keys = modsMoved(p.boonMods, driven().boonMods);
       return { keys: keys.sort(), cut: p.boonMods.cutPower };
     };
     const a = chan(dj), b = chan(sh);
