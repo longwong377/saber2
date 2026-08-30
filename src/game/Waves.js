@@ -6010,6 +6010,22 @@ const RARITY_ORDER = ['common', 'rare', 'epic'];
 /** A mastery needs this many cards of its axis already in hand, and this depth. */
 export const MASTERY_NEEDS = 3;
 export const MASTERY_AT = 12;
+/**
+ * AN UNBOUND POWER NEEDS ONE MORE, AND THAT IS THE WHOLE DIFFERENCE.
+ *
+ * There are two tiers of card that ask what you already hold, and they must not
+ * share a threshold: at `MASTERY_NEEDS` a run reaches the unbound tier about as
+ * often as it reaches a mastery — measured 0.4 to 1.1 masteries per 40-wave run
+ * — so the two would arrive together and the second would not read as deeper.
+ * One more card of the axis puts it reliably behind the mastery.
+ *
+ * DECLARED rather than folded into the predicate, because a threshold that
+ * lives only inside a closure cannot be asked. `escalation.mjs` drives every
+ * requiring card at `needs - 1` and at `needs` and demands the answer flip
+ * there, and with one global number it drove the unbound cards at the wrong
+ * count and called them unreachable. Each card carries its own now.
+ */
+export const UNBOUND_NEEDS = MASTERY_NEEDS + 1;
 const mastery = (axis) => (taken) => axisCountOf(taken, axis) >= MASTERY_NEEDS;
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -6583,7 +6599,7 @@ export const BOONS = [
 
   {
     id: 'bastion', icon: '🏰', name: 'Bastion', tag: 'Mastery of Defence',
-    rarity: 'epic', minWave: MASTERY_AT, axes: ['guard'], requires: mastery('guard'),
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['guard'], needs: MASTERY_NEEDS, requires: mastery('guard'),
     text: 'Everything you turn aside comes back twice as hard, and turning it aside costs you nothing.',
     apply(p) {
       p.boonMods.deflectDamage *= 2.0;
@@ -6597,7 +6613,7 @@ export const BOONS = [
   },
   {
     id: 'tempest', icon: '🌪', name: 'Tempest', tag: 'Mastery of the Force',
-    rarity: 'epic', minWave: MASTERY_AT, axes: ['force'], requires: mastery('force'),
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['force'], needs: MASTERY_NEEDS, requires: mastery('force'),
     text: 'Power feeds power. The deeper your Flow runs the less the Force asks, and at the flood it asks almost nothing.',
     apply(p) {
       p.boonMods.tempest = 0.85;
@@ -6606,7 +6622,7 @@ export const BOONS = [
   },
   {
     id: 'sunder', icon: '⚔', name: 'Sundering', tag: 'Mastery of the Blade',
-    rarity: 'epic', minWave: MASTERY_AT, axes: ['blade'], requires: mastery('blade'),
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['blade'], needs: MASTERY_NEEDS, requires: mastery('blade'),
     text: 'The stroke does not stop at one body. Whatever was standing behind it loses a limb too.',
     apply(p) {
       p.boonMods.sunderReach = 2.4;
@@ -6615,7 +6631,7 @@ export const BOONS = [
   },
   {
     id: 'undying', icon: '🌿', name: 'Undying', tag: 'Mastery of the Body',
-    rarity: 'epic', minWave: MASTERY_AT, axes: ['body'], requires: mastery('body'),
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['body'], needs: MASTERY_NEEDS, requires: mastery('body'),
     text: 'Give it a few seconds without a wound and the wounds close by themselves.',
     apply(p) {
       p.boonMods.mend = 7;
@@ -6717,7 +6733,7 @@ export const BOONS = [
   },
   {
     id: 'unity', icon: '♾', name: 'The Unifying Force', tag: 'Mastery of Communion',
-    rarity: 'epic', minWave: MASTERY_AT, axes: ['bond'], requires: mastery('bond'),
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['bond'], needs: MASTERY_NEEDS, requires: mastery('bond'),
     text: 'The bond closes. Your communion reaches twice as far, and everything you were giving away you now also keep.',
     apply(p) {
       p._bondMastery = true;
@@ -6728,7 +6744,7 @@ export const BOONS = [
   },
   {
     id: 'darkside', icon: '⚫', name: 'The Dark Side', tag: 'Mastery of the Dark',
-    rarity: 'epic', minWave: MASTERY_AT, axes: ['dark'], requires: mastery('dark'),
+    rarity: 'epic', minWave: MASTERY_AT, axes: ['dark'], needs: MASTERY_NEEDS, requires: mastery('dark'),
     text: 'A third of your vitality, gone. Everything you take from them, doubled — and the blade bites deeper for it.',
     apply(p) {
       if (p.maxHp > 0) { p.maxHp = Math.round(p.maxHp * 0.66); p.hp = Math.min(p.hp, p.maxHp); }
@@ -6785,7 +6801,8 @@ export const BOONS = [
   ...UNBOUND.map((u) => ({
     id: unboundId(u.key), icon: u.icon, name: u.name, tag: u.tag,
     rarity: 'epic', minWave: UNLEASH_TOLL.minWave, axes: [u.axis], stack: 1,
-    requires: (taken) => axisCountOf(taken, u.axis) >= MASTERY_NEEDS + 1,
+    needs: UNBOUND_NEEDS,
+    requires: (taken) => axisCountOf(taken, u.axis) >= UNBOUND_NEEDS,
     text: u.text,
     apply(p) { p.boonMods.unbound = { ...(p.boonMods.unbound || {}), [u.key]: true }; },
   })),
