@@ -1085,7 +1085,29 @@ function lerpAngle(a, b, t) {
  * bytes nobody reads, and the day something else reads them is the day they
  * join this list.
  */
-export const SESSION_KEYS = ['level', 'difficulty', 'mode', 'pvp', 'commandVersus'];
+/**
+ * …AND `seed` IS ON IT NOW, which is the fix for a client standing on a bare
+ * map.
+ *
+ * The run's number was the one thing about a session that never crossed. Every
+ * machine called `mintRunSeed()` and got its OWN random number, and `runSeed`
+ * is not a cosmetic: `World._groundKeyFor` GENERATES THE HEIGHTFIELD from it
+ * on every `battlefield` level, `theatreFor` ROLLS THE GROUND ITSELF from it
+ * for a `seedsGround` mode (The Line lands on five different theatres over
+ * eight seeds), and the objectives are placed from it.
+ *
+ * So the host and the joining player built different worlds and then exchanged
+ * absolute coordinates about them. What the client saw depended on how far
+ * apart the two rolls fell: a different theatre outright, or the same theatre
+ * with a different landscape, with every body arriving inside its hills or
+ * hanging over them. That is the reported symptom — "the teammates see nothing,
+ * no host, no friends, no enemies, bare map".
+ *
+ * It rides on `start` beside `level` for the same reason `level` does: that
+ * message is the sentence "the session is now on this ground", and the ground
+ * is not fully named until the number that generates it is on the wire too.
+ */
+export const SESSION_KEYS = ['level', 'difficulty', 'mode', 'pvp', 'commandVersus', 'seed'];
 
 /**
  * Those keys of an object, skipping the ones it does not carry.

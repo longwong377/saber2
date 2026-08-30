@@ -94,6 +94,88 @@ export async function run({ check, assert }) {
   check = await clocked(check);
   /* ══ identity ═══════════════════════════════════════════════════════════ */
 
+  check('co-op: a joining player builds the host\'s ground, not one of their own', async () => {
+    /**
+     * "the co-op doesn't really work, sometimes the host will see the teammates
+     *  and enemies/allies but the teammates see nothing no host, friends, or
+     *  enemies/allies bare map"
+     *
+     * THE RUN'S NUMBER WAS THE ONE THING ABOUT A SESSION THAT NEVER CROSSED.
+     * Both machines called `mintRunSeed()` and each got its own random number,
+     * and `runSeed` is not cosmetic:
+     *
+     *   `World._groundKeyFor` GENERATES the heightfield from it on every level
+     *     that declares `battlefield` — so the same theatre is a different
+     *     landscape on the two machines.
+     *   `Levels.theatreFor` ROLLS THE THEATRE ITSELF from it for a mode that
+     *     declares `seedsGround`. Measured over eight rolls, THE LINE lands on
+     *     five different theatres.
+     *   `ObjectiveField.place` puts the objectives with it.
+     *
+     * So the two ends built different worlds and then exchanged absolute
+     * coordinates about them. Every body arrives buried in the client's hills
+     * or hanging over them — or on another planet entirely — which is a bare
+     * map with nobody on it.
+     *
+     * Asserted on the WIRE and on the resolver rather than by booting a pair,
+     * because the defect is in what `start` carries and what `deploy` does with
+     * it, and neither end of that is inside `bootPair` (the harness attaches a
+     * net to two worlds that were already built).
+     */
+    const Net = await import('../../src/net/Net.js');
+    const { theatreFor } = await import('../../src/game/Levels.js');
+    const { MODES } = await import('../../src/game/Waves.js');
+
+    assert(Net.SESSION_KEYS.includes('seed'),
+      'the run seed is not a session key, so it never reaches a joining player and every '
+      + 'machine rolls its own ground');
+
+    /* THE HOST'S OWN SEED, not the settings box. `settings.seed` is normally
+     * empty — "roll one" — so a wire that carried only the box would carry
+     * nothing on exactly the runs that need it. */
+    const host = { mode: 'theline', level: 'geonosis', difficulty: 'knight', seed: '' };
+    const hostRunSeed = 2654435761;
+    const msg = { t: 'start', ...Net.sessionPart(host), level: 'mustafar', seed: hostRunSeed };
+    const session = Net.sessionPart(msg);
+    assert(Number(session.seed) === hostRunSeed,
+      `the start message carried seed ${session.seed} against the host's ${hostRunSeed}`);
+
+    /* AND THE CLIENT RESOLVES THE SAME GROUND FROM IT — for every mode whose
+     * theatre is a roll, which is the set where this bites hardest. */
+    const rolled = Object.keys(MODES).filter((m) => MODES[m]?.seedsGround);
+    assert(rolled.length, 'no mode rolls its ground, so this fixture measures nothing');
+    for (const mode of rolled) {
+      for (const seed of [1, 2654435761, 99991, 0]) {
+        const a = theatreFor(mode, 'geonosis', seed);
+        const b = theatreFor(mode, 'geonosis', seed);
+        assert(a === b, `${mode} is not a function of the seed: ${a} then ${b}`);
+      }
+      /* …and that the roll really does move, or the clause above is vacuous. */
+      const seen = new Set([1, 2, 3, 4, 5, 6, 7, 8].map((i) =>
+        theatreFor(mode, 'geonosis', (Math.imul(i, 2654435761)) >>> 0)));
+      assert(seen.size > 1,
+        `${mode} lands on ${[...seen][0]} for every seed, so a mismatched seed could not have `
+        + 'produced two different grounds — check this fixture, not the game');
+    }
+
+    /* AND BOTH BROADCASTS SEND IT. There are two — the deploy in main.js and
+     * the ground rotation in World.js — and a rotation that dropped the seed
+     * would put the pair back on different ground at the first mission
+     * boundary. */
+    const { readFile } = await import('node:fs/promises');
+    for (const rel of ['../../src/main.js', '../../src/game/World.js']) {
+      const src = await readFile(new URL(rel, import.meta.url), 'utf8');
+      const starts = [...src.matchAll(/t: 'start',[^}]*}/g)].map((m) => m[0]);
+      assert(starts.length, `${rel} sends no start message`);
+      for (const line of starts) {
+        assert(/\bseed:/.test(line),
+          `${rel} broadcasts a start without a seed: ${line.slice(0, 90)}`);
+      }
+    }
+    return `seed on the wire; ${rolled.join(', ')} resolve identically from it; both start `
+      + 'broadcasts carry it';
+  });
+
   check('co-op: four players are four bodies, not one body wearing four names', async () => {
     /**
      * THE RELAY THREW AWAY WHO SENT THE PACKET.

@@ -723,7 +723,13 @@ async function deploy() {
     // missed, and each of them would fall back independently. They would agree
     // today, by luck, because the fallback is deterministic — but "the host
     // sends the level it is standing in" is the thing that has to be true.
-    if (net.isHost) net.broadcast({ t: 'start', ...sessionPart(settings), level: world.levelKey });
+    /* `seed` AFTER the spread, exactly as `level` is and for the same reason:
+     * `settings.seed` is the seed BOX (usually empty, meaning "roll one"), and
+     * what a client has to reproduce is the number that was actually rolled.
+     * See SESSION_KEYS for what that number generates. */
+    if (net.isHost) {
+      net.broadcast({ t: 'start', ...sessionPart(settings), level: world.levelKey, seed: world.runSeed });
+    }
   }
 
   hud.show(true);

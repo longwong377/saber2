@@ -2042,7 +2042,10 @@ export class World {
      * independently.
      */
     if (this.netMode === 'host' && this.net?.connected) {
-      this.net.broadcast({ t: 'start', ...sessionPart(this.settings), level: this.levelKey });
+      /* …AND THE SEED WITH IT. A rotation is a new ground and the client
+       * rebuilds from this message; without the number that generated the
+       * host's ground it builds a different one. See Net.SESSION_KEYS. */
+      this.net.broadcast({ t: 'start', ...sessionPart(this.settings), level: this.levelKey, seed: this.runSeed });
     }
     /* WE HAVE ARRIVED — a separate signal from `onRotate`, which is the
      * request. The handful of things a front end owns per player (the camera's
