@@ -7,7 +7,7 @@
  * frame and how fast each point along it was moving when it got there.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp } from '../engine/MathUtil.js';
 import { ground } from '../world/Scenery.js';
 

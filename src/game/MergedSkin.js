@@ -79,7 +79,7 @@
  * one of forty identical soldiers.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { cutsItsOwnSilhouette } from '../toon/Ink.js';
 
 const _m1 = new THREE.Matrix4();

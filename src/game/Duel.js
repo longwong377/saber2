@@ -16,7 +16,7 @@
  * guard-sphere the player's own blade uses.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, damp, smoothstep, makeRng, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 

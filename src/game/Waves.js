@@ -50,7 +50,7 @@
  * same session that causes it rather than in a reader's memory.)
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES, MODIFIERS, MODIFIER_KEYS, modifierThreat, modifiersFor, applyModifier, enemyRng } from './Enemy.js';
 import { duelRng } from './Duel.js';
 import { segmentSegment } from '../physics/Physics.js';

@@ -10,7 +10,7 @@
  * `SABER_SIGNAL` at your own broker if you would rather not use it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { buildJedi, speciesOf } from '../game/Bodies.js';
 import { Rig, BipedAnimator } from '../game/Rig.js';
 import { Saber } from '../game/Saber.js';

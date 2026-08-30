@@ -85,7 +85,7 @@
  *                   already calls contacts and already cheers its kills.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES, applyModifier, DREAD, FORCE_KINDS } from './Enemy.js';
 import { rollSoldier, kindOfArmy, attrOf, scaleOf, hasFlag, shedTraits, ATTR_IDS } from './Attributes.js';
 import { buildTrooper, buildB1, buildB2, buildBodyguard } from './Bodies.js';

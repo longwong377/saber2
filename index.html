@@ -30,15 +30,29 @@
      that boots in a second it does not fire. Removing the tag would trade a
      console line nobody sees for a visible pop the moment the menu opens. -->
 <link rel="preload" as="image" fetchpriority="low" href="./assets/menu/title.webp">
-<script type="importmap">
-{
-  "imports": {
-    "three": "./vendor/three/three.module.js",
-    "three/addons/": "./vendor/three/",
-    "rapier": "./vendor/rapier/rapier.es.js"
-  }
-}
-</script>
+<!--
+  THE IMPORT MAP IS GONE, AND WITH IT THE NEWEST THING THIS PAGE NEEDED.
+
+  A player: "on my current browser it says… A file the game needs did not load…
+  but works fine on other browsers."
+
+  It was not a file that did not load. For a <script type="module">, a RESOLVE
+  failure anywhere in the graph fires `error` on the element exactly as a 404
+  does — and `import … from 'three'` resolves to nothing without an import map.
+  Import maps are Chrome 89, FIREFOX 108 and SAFARI 16.4; everything else in the
+  game is years older than that, so this one tag set the whole browser floor and
+  the failure it caused was indistinguishable from a missing file.
+
+  So `src/` imports the vendored copies by relative path and there is no map to
+  support. `tools/pack.mjs` reads bare specifiers out of one if it finds one, so
+  it keeps working either way; `tools/register.mjs` still maps `three` for the
+  checks, which run in node and never touch this page.
+
+  Nothing replaces it deliberately: a bare specifier reintroduced later must
+  fail loudly in every browser rather than work in the new ones and break the
+  old, which is exactly how this went unnoticed. `wiring.mjs` asserts src/ stays
+  free of them.
+-->
 </head>
 <body>
 
@@ -233,15 +247,76 @@
         var box = document.getElementById('boot-err');
         var msg = document.getElementById('boot-msg');
         var shown = false;
+        /**
+         * WHAT THIS BROWSER CANNOT DO — asked, not guessed.
+         *
+         * The first version of this said "A file the game needs did not load"
+         * and named src/main.js, which was misleading: for a
+         * <script type="module">, a RESOLVE or PARSE failure anywhere in the
+         * graph fires `error` on the element exactly as a 404 does. The file
+         * was there the whole time; the browser could not build the graph.
+         *
+         * So the page tests the things it actually needs and names the ones
+         * that are missing. `HTMLScriptElement.supports('importmap')` is the
+         * one that matters most: import maps are Chrome 89, FIREFOX 108 and
+         * SAFARI 16.4, which is a far higher bar than anything else here, and
+         * without them `import … from 'three'` resolves to nothing and the
+         * whole graph fails at its root.
+         *
+         * Every syntax probe goes through `new Function`, so a form this engine
+         * cannot parse throws where it is caught instead of killing the
+         * reporter — which is the whole reason this script is ES5.
+         */
+        function missing() {
+          var out = [];
+          var S = window.HTMLScriptElement;
+          if (!S || !S.supports) out.push('HTMLScriptElement.supports (2021)');
+          else {
+            if (!S.supports('module')) out.push('ES modules');
+            if (!S.supports('importmap')) out.push('import maps — Chrome 89, Firefox 108, Safari 16.4');
+          }
+          var probes = [
+            ['optional chaining and ??', 'var a = null; return a?.b ?? 1;'],
+            ['logical assignment (||=)', 'var a = 0; a ||= 1; return a;'],
+            ['class fields', 'class C { x = 1; } return new C().x;'],
+            ['private fields', 'class C { #x = 1; get v(){ return this.#x; } } return new C().v;'],
+            ['dynamic import', 'return typeof import;'],
+            ['Object.hasOwn', 'return Object.hasOwn({a:1}, "a");'],
+            ['Array.at', 'return [1,2].at(-1);'],
+            ['String.replaceAll', 'return "a".replaceAll("a","b");'],
+            ['structuredClone', 'return typeof structuredClone;']
+          ];
+          for (var i = 0; i < probes.length; i++) {
+            try { new Function(probes[i][1])(); } catch (e) { out.push(probes[i][0]); }
+          }
+          try {
+            var c = document.createElement('canvas');
+            if (!c.getContext('webgl2')) out.push('WebGL2');
+          } catch (e) { out.push('WebGL2'); }
+          return out;
+        }
         function say(what, where) {
           if (shown || !box) return;
           shown = true;
+          var gaps = [];
+          try { gaps = missing(); } catch (e) {}
           box.hidden = false;
           box.textContent = 'The game could not start on this browser.\n\n'
             + what + (where ? '\n' + where : '')
-            + '\n\nIt is very likely this browser is a version older than one of the '
-            + 'features the game uses. It runs in another browser; your settings and '
-            + 'keybinds can be carried over with Options → Settings file → Copy.';
+            + '\n\n'
+            + (gaps.length
+                ? 'This browser is missing:\n  \u2022 ' + gaps.join('\n  \u2022 ')
+                  + '\n\nThat is almost certainly the reason. Updating the browser should fix it.'
+                : 'Everything the game tests for is present in this browser, so it is NOT too old.\n'
+                  + 'The two things that look like this instead are:\n'
+                  + '  \u2022 a half-cached copy — the site was fetched while it was mid-publish, and\n'
+                  + '    this browser kept it. Load ' + location.origin + location.pathname + '?v=' + Date.now() + '\n'
+                  + '    (a fresh address it cannot have cached), or hard-reload with\n'
+                  + '    Ctrl+Shift+R / Cmd+Shift+R.\n'
+                  + '  \u2022 a script blocked by an extension or the browser\u2019s own protection.')
+            + '\n\nYour settings and keybinds can be carried over with Options \u2192 Settings file '
+            + '\u2192 Copy in a browser where it does run.'
+            + '\n\n' + navigator.userAgent;
           if (msg) msg.textContent = 'could not start';
         }
         window.addEventListener('error', function (e) {

@@ -302,9 +302,25 @@ for (const m of [...css.matchAll(/url\(\s*["']?(\.\/[^"')]+)["']?\s*\)/g)]) {
   css = css.replace(m[0], `url("data:${type};base64,${(await readFile(file)).toString('base64')}")`);
 }
 
+/**
+ * THE PACKED PAGE ALWAYS CARRIES A MAP, EVEN THOUGH THE SOURCE PAGE NO LONGER
+ * DOES — and a `.replace` that matched nothing used to silently drop it.
+ *
+ * index.html shipped an import map until the day it turned out to be the whole
+ * browser floor (Chrome 89, Firefox 108, Safari 16.4) for a game that otherwise
+ * runs on engines years older; `src/` and the vendored addons name their files
+ * by relative path now and the tag is gone. This packer's own mechanism is a
+ * different thing entirely — every module becomes a bare key over a data: URL,
+ * which is what a single file can resolve — so it still needs one, and with
+ * nothing to replace it emitted an 4.77 MB page whose modules were unreachable
+ * instead of a 24.7 MB one that runs.
+ *
+ * So: replace a map if the page has one, and INSERT one if it does not.
+ */
+const MAP_TAG = `<script type="importmap">${JSON.stringify({ imports })}</script>`;
+const HAS_MAP = /<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/;
 let page = html
-  .replace(/<script[^>]*type=["']importmap["'][^>]*>[\s\S]*?<\/script>/,
-    `<script type="importmap">${JSON.stringify({ imports })}</script>`)
+  .replace(HAS_MAP.test(html) ? HAS_MAP : /(?=<\/head>)/, HAS_MAP.test(html) ? MAP_TAG : MAP_TAG + '\n')
   .replace(/<script([^>]*)\bsrc=["'][^"']+["']([^>]*)><\/script>/,
     `<script$1$2>import "m:${rel(entry)}";</script>`)
   .replace(/<link[^>]*\bhref=["']\.\/styles\.css["'][^>]*>/, `<style>\n${css}\n</style>`);

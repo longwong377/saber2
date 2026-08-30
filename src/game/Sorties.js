@@ -68,7 +68,7 @@
  *          position over time, the same as the other two.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, smoothstep, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 import { dropshipModel } from './Arrivals.js';

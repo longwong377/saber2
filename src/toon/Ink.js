@@ -67,8 +67,8 @@
  * read as texture. That distinction has to be authored — see `noInk`.
  */
 
-import * as THREE from 'three';
-import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import * as THREE from '../../vendor/three/three.module.js';
+import { Pass, FullScreenQuad } from '../../vendor/three/postprocessing/Pass.js';
 
 /**
  * Line weight and colour.

@@ -95,7 +95,7 @@
  * `hullProxy` for the three lines in Enemy.js that would close it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Rig } from './Rig.js';
 import { ARCHETYPES } from './Enemy.js';
 import { TOUGHNESS } from './Combat.js';

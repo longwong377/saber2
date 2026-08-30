@@ -69,7 +69,7 @@
  *      one visible variable was, in the plates, a fact about the SKY.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { makeRng, TAU } from '../engine/MathUtil.js';
 import { addSmokeColumns, smokeSites, smokeAir } from './Smoke.js';
 import { addFallen } from './Fallen.js';

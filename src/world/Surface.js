@@ -55,7 +55,7 @@
  * gradient is computed here, on the CPU, when the texel is written.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp } from '../engine/MathUtil.js';
 
 /** Texels across the window. 192 at 48 m is a 25 cm cell — a boot print. */

@@ -47,7 +47,7 @@
  * round that has just landed is not instantly a wall.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp } from '../engine/MathUtil.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3();

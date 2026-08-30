@@ -36,7 +36,7 @@
  * regeneration and cannot know where it landed.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { surfacePoint } from './Bodies.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();

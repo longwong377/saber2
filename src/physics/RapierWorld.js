@@ -40,7 +40,7 @@
  * property access.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { rapier } from './Rapier.js';
 import { LAYER, LOOSE_MASK, boxSpheres, capsuleSpheres } from './Physics.js';
 import { BoxIndex } from './BoxIndex.js';

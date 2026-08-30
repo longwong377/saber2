@@ -45,7 +45,7 @@
  * for a minimum tick size. Near, it is a shadow. Far, it is the mark that says
  * a body is standing there, and that is the job.
  */
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { noInk } from '../toon/Ink.js';
 
 /** Radius under a man of ordinary size, in metres. */

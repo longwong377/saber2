@@ -52,7 +52,7 @@
  * because whatever colour a white body has comes from the light on it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { CEL_BAND_GLSL } from '../toon/Cel.js';
 import { ground } from '../world/Scenery.js';
 /* The sky, from the one place that derives it. Engine imports this file, so

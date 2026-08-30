@@ -30,7 +30,7 @@ let ready = null;
 export function initPhysics() {
   if (ready) return ready;
   ready = (async () => {
-    const mod = await import('rapier');
+    const mod = await import('../../vendor/rapier/rapier.es.js');
     const R = mod.default ?? mod;
     await R.init();
     RAPIER = R;

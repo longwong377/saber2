@@ -146,12 +146,26 @@ export async function run({ check, assert }) {
      * how two copies of three came to be loadable at once (§2.1), so the map
      * is the authority here and node's resolution is not consulted.
      */
-    assert(Object.keys(g.map).length > 0,
-      'index.html has no import map — every bare specifier in the game is then a browser 404');
+    /**
+     * THE MAP IS GONE AND THE RULE SURVIVES IT, INVERTED.
+     *
+     * This asserted that index.html HAD an import map and that every bare
+     * specifier was in it. Both halves were right while the game had one — and
+     * the map turned out to be the whole browser floor: import maps are Chrome
+     * 89, Firefox 108 and Safari 16.4, against a game that otherwise runs on
+     * engines years older, and a player met it as "A file the game needs did
+     * not load", because a resolve failure fires the same event a 404 does.
+     *
+     * `src/` and the vendored addons name their files by relative path now, so
+     * the honest form of the same rule is that NOTHING the browser loads needs
+     * a map at all. That is the check below this one; what stays here is the
+     * half that is still this check's own: no specifier may be left unresolved.
+     */
     assert(g.bare.length === 0,
-      `${g.bare.length} bare specifier(s) with no import-map entry, each of which resolves under node `
-      + `and 404s in the browser:\n${g.bare.map((b) => `      ${b.spec}  ← ${b.from}`).join('\n')}`);
-    return `import map answers all bare specifiers (${Object.keys(g.map).join(', ')})`;
+      `${g.bare.length} bare specifier(s) in the graph, each of which resolves under node and needs `
+      + `an import map in the browser — Chrome 89 / Firefox 108 / Safari 16.4:\n`
+      + `${g.bare.map((b) => `      ${b.spec}  ← ${b.from}`).join('\n')}`);
+    return `every specifier in the graph is a path the browser can follow with no map (${g.files ?? '?'} files)`;
   });
 
   check('wiring: the page\'s own assets are on disk', () => {
@@ -180,5 +194,70 @@ export async function run({ check, assert }) {
       + '"every specifier resolves" no longer covers the whole graph. If one is genuinely needed, '
       + 'raise this ceiling deliberately and say here what is behind it');
     return 'no computed dynamic imports — the static walk covers the whole graph';
+  });
+
+  check('nothing the browser loads names a bare module specifier', async () => {
+    /**
+     * THE IMPORT MAP WAS THE WHOLE BROWSER FLOOR, and nothing said so.
+     *
+     * A player: "on my current browser it says… A file the game needs did not
+     * load… but works fine on other browsers." It was not a file that failed to
+     * load. For a `<script type="module">`, a RESOLVE failure anywhere in the
+     * graph fires `error` on the element exactly as a 404 does — and
+     * `import … from 'three'` resolves to nothing without an import map.
+     *
+     * Import maps are Chrome 89, FIREFOX 108 and SAFARI 16.4. Everything else
+     * the game uses is years older, so one tag in the head decided which
+     * browsers could run it, and the failure it produced was indistinguishable
+     * from a missing file.
+     *
+     * `src/` and the vendored addons name their files by relative path now and
+     * the tag is gone. This is what keeps it gone: a bare specifier
+     * reintroduced later would work in a new browser and fail in an old one,
+     * which is precisely how it went unnoticed for as long as it did.
+     *
+     * `tools/` is exempt and deliberately so — those run in node under
+     * `register.mjs`, which maps `three` on purpose, and they never touch the
+     * page.
+     */
+    const { readdir, readFile } = await import('node:fs/promises');
+    const root = new URL('../../', import.meta.url);
+    const files = [];
+    const walk = async (dir) => {
+      for (const e of await readdir(new URL(dir, root), { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        const p = `${dir}${e.name}`;
+        if (e.isDirectory()) await walk(`${p}/`);
+        else if (e.name.endsWith('.js')) files.push(p);
+      }
+    };
+    await walk('src/');
+    await walk('vendor/');
+    /* A specifier is bare when it starts with neither a dot nor a slash nor a
+     * scheme — the same test the loader applies. */
+    const BARE = /(?:^|[\s;}(])(?:import|export)\s*(?:[^;'"()]*?\sfrom\s*)?(['"])([^'".\/][^'"]*)\1/g;
+    const DYN = /\bimport\s*\(\s*(['"])([^'".\/][^'"]*)\1/g;
+    const offenders = [];
+    for (const f of files) {
+      const src = await readFile(new URL(f, root), 'utf8');
+      for (const re of [BARE, DYN]) {
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(src))) {
+          if (/^(https?|node|data):/.test(m[2])) continue;
+          offenders.push(`${f} names '${m[2]}'`);
+        }
+      }
+    }
+    assert(!offenders.length,
+      `${offenders.length} bare specifier(s) in what the browser loads — each one needs an import `
+      + `map, which is Chrome 89 / Firefox 108 / Safari 16.4:\n  ${offenders.slice(0, 10).join('\n  ')}`);
+    /* …and the page must not carry a map either, or the next bare specifier is
+     * invisible again in every browser that has one. */
+    const html = await readFile(new URL('index.html', root), 'utf8');
+    assert(!/<script[^>]*type=["']importmap["']/.test(html),
+      'index.html carries an import map again — a bare specifier would then work in a new browser '
+      + 'and fail in an old one, which is how this was missed the first time');
+    return `${files.length} files the browser loads, no bare specifiers, no import map`;
   });
 }

@@ -92,7 +92,7 @@
  *   AI's fault"). You cleared it. It is yours.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, makeRng } from '../engine/MathUtil.js';
 import { SPOTTER_SIGHT } from './Stratagems.js';
 

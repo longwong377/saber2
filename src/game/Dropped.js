@@ -45,7 +45,7 @@
  * reader of it is a place the game used to pretend the weapon was still there.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Prop } from '../world/Props.js';
 import { SABER_COLORS, BLADE_TUNING, buildHiltGroup } from './Saber.js';
 import { TOUGHNESS } from './Combat.js';

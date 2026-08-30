@@ -123,7 +123,7 @@
  *   frame it would have without the rung. The rendering is what changed.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { INK } from '../toon/Ink.js';
 import { buildMergedSkin, applyMergedSkin } from './MergedSkin.js';
 /* READ, never held at module scope. This is one half of a cycle — Enemy.js

@@ -49,7 +49,7 @@
  * under you, is worth having; a driven tank that is a camera with a gun is not.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 import { audio } from '../engine/Audio.js';
 import { clamp, TAU } from '../engine/MathUtil.js';

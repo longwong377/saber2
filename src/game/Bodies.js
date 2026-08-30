@@ -15,7 +15,7 @@
  * so a hand with nineteen pieces in it still costs one draw call.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Rig, humanoidSkeleton, walkerSkeleton, aimY } from './Rig.js';
 import { clothMaps, armorMaps, metalMaps, duracreteMaps, skinMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { makeRng, lerp, clamp } from '../engine/MathUtil.js';

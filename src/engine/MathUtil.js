@@ -1,6 +1,6 @@
 /** BATTLEFRONT BORZ — deterministic noise, random and small math helpers. */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 /**
  * Clamp, written so NaN lands on the low bound instead of passing straight

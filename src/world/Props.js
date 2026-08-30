@@ -31,7 +31,7 @@
  * Pass `{ kit }` to any `add*` to compose it into a larger merge.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullFromGeometry } from '../physics/RapierWorld.js';
 import { armKinetic } from '../game/Impact.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';

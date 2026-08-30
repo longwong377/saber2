@@ -25,7 +25,7 @@
  * duellist on screen can have both, and both are switched off past lod > 1.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 import { limbScale } from './Rig.js';
 /**

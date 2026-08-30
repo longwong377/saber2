@@ -7,7 +7,7 @@
  * Toon.js for why `src/engine/Engine.js` is deliberately not imported.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { buildJedi, buildB1, ROBE_COLORS } from '../game/Bodies.js';
 import { BipedAnimator } from '../game/Rig.js';
 import { Saber } from '../game/Saber.js';

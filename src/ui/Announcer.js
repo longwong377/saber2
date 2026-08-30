@@ -203,7 +203,7 @@ const HARD_LANDING = 11;
  */
 export const STREAKS = [
   { at: 2, title: 'DOUBLE STRIKE', sub: 'two in one breath' },
-  { at: 3, title: 'TRIPLE STRIKE', sub: 'three' },
+  { at: 3, title: 'TRIPLE STRIKE', sub: '../../vendor/three/three.module.js' },
   { at: 4, title: 'ONSLAUGHT', sub: 'four without pause' },
   { at: 5, title: 'RELENTLESS', sub: 'five' },
   { at: 7, title: 'UNSTOPPABLE', sub: 'seven' },
@@ -227,7 +227,7 @@ export const RETURNS = [
  */
 export const CHAMBERS = [
   { at: 2, title: 'CHAMBERED ×2', sub: 'two arcs met on the way in' },
-  { at: 3, title: 'READING THE BLADE', sub: 'three' },
+  { at: 3, title: 'READING THE BLADE', sub: '../../vendor/three/three.module.js' },
   { at: 5, title: 'NOTHING GETS THROUGH', sub: 'five, unbroken' },
 ];
 

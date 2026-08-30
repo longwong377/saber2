@@ -62,7 +62,7 @@
  * and anything standing under it takes it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { TOUGHNESS, impactDamage } from '../game/Combat.js';
 import { clamp, makeRng, TAU, lerp } from '../engine/MathUtil.js';
 /* `Prop` is what a log becomes when the player walks up to it — see `_realise`.

@@ -21,7 +21,7 @@
  *    where the instance budget actually goes.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { grassSprite, litterSprite, smokeSprite } from '../engine/Textures.js';
 /* The cel model's own arithmetic, so `grassShade` cannot drift from the shader
  * it stands for. Cel.js imports nothing at all — in particular not Engine.js,

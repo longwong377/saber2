@@ -49,7 +49,7 @@
  * which is correct and is the only symmetric case.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { impactDamage } from './Combat.js';
 import { clamp } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';

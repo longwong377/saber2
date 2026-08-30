@@ -20,7 +20,7 @@
  *                  to char over the first couple of seconds.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { sparkSprite, smokeSprite, radialSprite, scorchSprite } from '../engine/Textures.js';
 import { makeRng, clamp, TAU } from '../engine/MathUtil.js';
 import { WIND_GLSL, windUniforms, syncWind, ground, wind } from './Scenery.js';

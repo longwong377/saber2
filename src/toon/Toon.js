@@ -58,7 +58,7 @@
  * that is the whole argument for committing rather than half-measuring.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The ramp                                                              */

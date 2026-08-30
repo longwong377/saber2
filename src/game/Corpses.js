@@ -168,7 +168,7 @@
  * was built for.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 /**
  * The one vector this file owns. `Actor.centre` writes into what it is handed,

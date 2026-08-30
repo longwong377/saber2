@@ -23,7 +23,7 @@
  * Everything else stays one mesh and one draw call.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { fbm2, ridged2, clamp, lerp, smoothstep, TAU } from '../engine/MathUtil.js';
 import { sandMaps, rockMaps, duracreteMaps, metalMaps, soilMaps, snowMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { SurfaceField, SURFACE_RES, SURFACE_SIZE, SURFACE_GRAD_FS } from './Surface.js';

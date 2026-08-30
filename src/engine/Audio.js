@@ -16,7 +16,7 @@
  * tools/checks/audio.mjs is what stops them regressing.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, damp, makeRng } from './MathUtil.js';
 import { utterance, peakGain, contourFor, nextForceLine, forcePool } from './Voice.js';
 import { Score } from './Score.js';

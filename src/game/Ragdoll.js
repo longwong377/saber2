@@ -24,7 +24,7 @@
  * with the rubble, because they are all in the same broadphase.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Body, RagdollJoint, LAYER, LOOSE_MASK, capsuleSpheres, capsule, selfGroup } from '../physics/RapierWorld.js';
 import { armKinetic } from './Impact.js';
 import { limbGeo } from './Bodies.js';

@@ -16,7 +16,7 @@
  * answer it in the same units. Whoever is asking cannot tell them apart, which
  * is the point: neither can the player.
  */
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 const _p1 = new THREE.Vector3(), _p2 = new THREE.Vector3();
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);

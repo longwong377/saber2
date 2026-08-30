@@ -7,7 +7,7 @@
  * body is solved to match it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.js';
 import { buildJedi, buildShieldBubble } from './Bodies.js';

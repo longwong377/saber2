@@ -33,13 +33,13 @@
  *      display luminance with bloom off and 0.782 with it on.
  */
 
-import * as THREE from 'three';
-import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { Sky } from 'three/addons/objects/Sky.js';
+import * as THREE from '../../vendor/three/three.module.js';
+import { EffectComposer } from '../../vendor/three/postprocessing/EffectComposer.js';
+import { RenderPass } from '../../vendor/three/postprocessing/RenderPass.js';
+import { ShaderPass } from '../../vendor/three/postprocessing/ShaderPass.js';
+import { UnrealBloomPass } from '../../vendor/three/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from '../../vendor/three/postprocessing/OutputPass.js';
+import { Sky } from '../../vendor/three/objects/Sky.js';
 import { SkyDome } from './SkyDome.js';
 import { installCelShading, CEL, CEL_BAND_GLSL } from '../toon/Cel.js';
 import { OutlinePass } from '../toon/Ink.js';

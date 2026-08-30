@@ -48,7 +48,7 @@
  * the sparks' fade at different distances and nothing anywhere would throw.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 /**
  * The shared uniform OBJECTS.

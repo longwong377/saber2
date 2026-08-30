@@ -30,7 +30,7 @@
  * `index.html` and everything under src/game and src/engine are untouched.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Engine } from '../engine/Engine.js';
 import { Input } from '../engine/Input.js';
 import { initPhysics } from '../physics/Rapier.js';

@@ -57,7 +57,7 @@
  * which is what the hull collider wanted anyway.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { Body, LAYER, box as boxShape, hullFromGeometry } from '../physics/RapierWorld.js';
 import { armKinetic } from '../game/Impact.js';
 import { sliceGeometry } from './Slice.js';

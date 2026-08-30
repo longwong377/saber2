@@ -43,7 +43,7 @@
  * ground he took an hour ago walks through his own casualty list.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { noInk } from '../toon/Ink.js';
 
 /**

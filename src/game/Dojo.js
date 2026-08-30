@@ -11,7 +11,7 @@
  * graded the way it did. Nothing here can kill you.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { plateGeo } from './Bodies.js';
 import { propMaterials, addWall } from '../world/Props.js';
 import { FORMS, FORM_KEYS } from './Duel.js';

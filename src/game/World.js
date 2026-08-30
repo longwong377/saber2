@@ -7,7 +7,7 @@
  * the bolt arrived, not by where it ended up afterwards.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { RapierWorld, Body, LAYER, LOOSE_MASK, box, ball, hullFromGeometry, boxFromObject } from '../physics/RapierWorld.js';
 import { Terrain, TERRAIN_PRESETS } from '../world/Terrain.js';
 /* The cel band the ground sits in, for the contact marks' own contrast — see

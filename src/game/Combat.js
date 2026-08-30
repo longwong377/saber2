@@ -8,7 +8,7 @@
  * whether you were looking at anything worth sending it to.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { clamp, lerp, smoothstep } from '../engine/MathUtil.js';
 import { segmentCapsule } from './Bolts.js';

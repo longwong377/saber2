@@ -52,7 +52,7 @@
  * still 0.4% of this level's 520-call budget.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 /* One reader for "which side of the front, and how far" — see the note over
  * `frontLine`. A band across a curve is the same two numbers as a band across
  * a bearing, so this file holds no copy of either. */

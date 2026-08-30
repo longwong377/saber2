@@ -61,7 +61,7 @@
  * in `strike`.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, makeRng } from '../engine/MathUtil.js';
 
 const rng = makeRng(0x11e7);

@@ -70,7 +70,7 @@
  * a flight plan and have not been wrapped yet.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 import { buildGeonosian } from './Bodies.js';
 import { TOUGHNESS } from './Combat.js';

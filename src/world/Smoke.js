@@ -39,7 +39,7 @@
  * dropship's rotor wash and the stasis field already use.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { makeRng, clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { makeSoft } from './SoftDepth.js';
 

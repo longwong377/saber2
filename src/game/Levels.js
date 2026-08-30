@@ -6,7 +6,7 @@
  * somewhere to come from, and a Jedi needs somewhere to fall back to.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 /**
  * FIRST IN THE LIST, AND THAT IS NOT TIDINESS.
  *

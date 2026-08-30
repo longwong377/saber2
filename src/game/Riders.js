@@ -34,7 +34,7 @@
  * `tools/checks/colosseum.mjs` asserts that every saddled archetype has it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 
 const _v1 = new THREE.Vector3();

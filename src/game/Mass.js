@@ -87,7 +87,7 @@
  * Writing that down is the point: a reader must not think the seam is solved.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 /* The mode's size is declared on the mode, not here — see `openFront`. */
 import { MODES } from './Waves.js';

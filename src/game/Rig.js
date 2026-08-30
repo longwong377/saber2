@@ -11,7 +11,7 @@
  * a subtree, not rebuilding a skinned mesh.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, damp, smoothstep, TAU } from '../engine/MathUtil.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();

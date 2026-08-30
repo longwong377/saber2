@@ -4,7 +4,7 @@
  * Boot, warm the procedural content, then hand the frame to the World.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../vendor/three/three.module.js';
 import { Engine, QUALITY } from './engine/Engine.js';
 import { Input } from './engine/Input.js';
 import { Touch } from './engine/Touch.js';

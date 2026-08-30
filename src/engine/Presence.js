@@ -36,7 +36,7 @@
  * bands already cap at a third of the engine.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, makeRng } from './MathUtil.js';
 import { audio as defaultAudio } from './Audio.js';
 

@@ -65,7 +65,7 @@
  * system, the effect belongs in that other system.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { audio } from '../engine/Audio.js';
 import { SUPPORT_MAX, DEAREST_SHARE } from './Support.js';
 

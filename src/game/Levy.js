@@ -69,7 +69,7 @@
  * which is HANDOFF §2.3's defect with a new coat.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES, paysOut } from './Enemy.js';
 /**
  * `paysOut` CAME FROM `World.js` AND THE CYCLE WAS NOT SAFE.

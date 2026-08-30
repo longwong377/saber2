@@ -5,7 +5,7 @@
  * persisted between sessions.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 /* The one place a menu can ask for the whole screen — see Fullscreen.js for
  * why it must be a press and never a frame-loop decision. */
 import { canFullscreen, toggleFullscreen } from '../engine/Fullscreen.js';
@@ -166,10 +166,15 @@ import { applyReticle, shapeAt, colorAt, RETICLE_SHAPES, RETICLE_COLORS, EMOTES,
 import { QUALITY } from '../engine/Engine.js';
 import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBindings, resolveConflicts,
          conflicts, chordKey, WALK_SCALE, walkScale, registerOrders, ORDER_ACTIONS,
-         codesFor, isPadCode, PAD_MODIFIERS,
-         /* The bindings' own storage key, so the settings blob names the real
-          * one rather than a second copy of the string. See `_wirePortable`. */
-         STORE_KEY as BIND_KEY } from '../engine/Bindings.js';
+         codesFor, isPadCode, PAD_MODIFIERS, STORE_KEY as BIND_KEY } from '../engine/Bindings.js';
+/* `BIND_KEY` is the bindings' own storage key, so the settings blob names the
+ * real one rather than carrying a second copy of the string — see
+ * `_wirePortable`. The note is OUT of the import statement on purpose:
+ * `tools/pack.mjs` reads specifiers with a regex whose body excludes quotes,
+ * and an apostrophe inside the braces stopped it seeing the `from` clause at
+ * all. The import was then left unrewritten and the single-file build died on
+ * "Failed to resolve module specifier ../engine/Bindings.js", because a data:
+ * URL has nothing for a relative path to be relative to. */
 // The six formation orders, so they can be pushed through Bindings' seam below.
 /* `ORDERS` is aliased because Order.js already exports a table of that name —
  * the Jedi orders a crystal belongs to — and the two are unrelated. This one is

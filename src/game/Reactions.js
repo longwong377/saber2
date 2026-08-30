@@ -71,7 +71,7 @@
  * keeps deleting. `GrenadeField` is handed the world's Stratagems and calls it.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, damp } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 /**

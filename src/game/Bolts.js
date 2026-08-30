@@ -7,7 +7,7 @@
  * through each other because neither is ever sampled as a snapshot.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 import { depthAlong, OPAQUE, SCATTER } from './Smoke.js';

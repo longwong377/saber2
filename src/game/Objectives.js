@@ -69,7 +69,7 @@
  * the "and lose it" half of the table is ever felt.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { propMaterials } from '../world/Props.js';
 import { clamp } from '../engine/MathUtil.js';
 

@@ -35,7 +35,7 @@
  * terrain shader's own arithmetic expects (0.389). See MEAN_ALBEDO.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { fbm2, clamp, lerp, makeRng } from './MathUtil.js';
 
 const cache = new Map();

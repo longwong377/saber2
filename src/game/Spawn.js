@@ -29,7 +29,7 @@
  * of a dressed level. The collider list is what "inside something" means.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 const _sp = new THREE.Vector3(), _sq = new THREE.Vector3();
 

@@ -7,7 +7,7 @@
  * crate cut corner-to-corner produces two wedges, not two halves of a crate.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 const _v = new THREE.Vector3(), _n = new THREE.Vector3(), _t = new THREE.Vector3();
 

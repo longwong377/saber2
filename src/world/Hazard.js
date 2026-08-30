@@ -39,7 +39,7 @@
  * player learns to fight beside rather than over.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 
 const _p = new THREE.Vector3();
 const _n = new THREE.Vector3();
