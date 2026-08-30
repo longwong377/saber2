@@ -17,7 +17,7 @@ import { propMaterials, addWall } from '../world/Props.js';
 import { FORMS, FORM_KEYS } from './Duel.js';
 import { GRADE } from './Combat.js';
 import { ARCHETYPES } from './Enemy.js';
-import { sandboxConfig, holdFire, tuneFireRate, walkIn, arrived, instantSpawn, DOJO_MIX } from './Waves.js';
+import { sandboxConfig, sandboxQuota, holdFire, tuneFireRate, walkIn, arrived, instantSpawn, DOJO_MIX } from './Waves.js';
 import { clamp, lerp, TAU } from '../engine/MathUtil.js';
 import { audio } from '../engine/Audio.js';
 
@@ -611,9 +611,15 @@ export class DojoDirector {
     return e;
   }
 
-  _sandboxType(cfg) {
-    if (cfg.type !== 'mixed') return cfg.type;
+  _sandboxType(want) {
+    if (want && want !== 'mixed') return want;
     return DOJO_MIX[(this._mixCursor++) % DOJO_MIX.length];
+  }
+
+  /** What the room is short of right now, in the order the picker lists it. */
+  _sandboxNext() {
+    const live = this.sandboxUnits.filter((e) => !e.dead);
+    return sandboxQuota(sandboxConfig(this.world.settings), live).next;
   }
 
   _sandboxRoom(anchor) {
@@ -624,7 +630,15 @@ export class DojoDirector {
     // over the next few seconds, which reads as them arriving rather than as a
     // stall — and is the same rate the arena sandbox fills at.
     const now = Math.min(cfg.count, 6);
-    for (let i = 0; i < now; i++) this._spawnSandboxUnit(anchor, this._sandboxType(cfg), i);
+    /* Asked one at a time rather than `count` draws of one type, because the
+     * room is a list of quotas now: each spawn is decided against what is
+     * already standing, so "two droidekas and four B1s" lands as two and four
+     * and not as six of whichever came first. */
+    for (let i = 0; i < now; i++) {
+      const want = this._sandboxNext();
+      if (!want) break;
+      this._spawnSandboxUnit(anchor, this._sandboxType(want), i);
+    }
     this._sandboxFire = cfg.fire;
     if (cfg.type === 'mixed') this.spar = this.sandboxUnits.find(e => e.duel) || null;
   }
@@ -652,15 +666,14 @@ export class DojoDirector {
     // else — so changing the opponent picker reshapes the room instead of
     // waiting for you to cut the previous one down.
     const live = this.sandboxUnits.filter(e => !e.dead);
-    const right = cfg.type === 'mixed' ? live : live.filter(e => e.type === cfg.type);
-    const keep = new Set(right.slice(0, cfg.count));
+    const { keep, next } = sandboxQuota(cfg, live);
     if (keep.size < live.length) {
       for (const e of live) {
         if (keep.has(e)) continue;
         this._retire(e);
       }
-    } else if (live.length < cfg.count) {
-      this._spawnSandboxUnit(anchor, this._sandboxType(cfg), this.totalSpawned);
+    } else if (next && live.length < cfg.count) {
+      this._spawnSandboxUnit(anchor, this._sandboxType(next), this.totalSpawned);
     }
 
     if (this._sandboxFire !== cfg.fire) {

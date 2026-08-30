@@ -884,15 +884,116 @@ export function instantSpawn(settings) {
   return !!(settings && settings.instantSpawn);
 }
 
-/** Read the practice knobs off a settings blob, clamped and defaulted. */
+/**
+ * Read the practice knobs off a settings blob, clamped and defaulted.
+ *
+ * ── THE ROOM IS A LIST NOW, NOT A PICK ──────────────────────────────────
+ *
+ * "Currently for training/sandbox you can only select one enemy type, I want
+ * you to allow me to select as many as I want and specify the specific number
+ * of that specific enemy."
+ *
+ * `sandboxType` was a single key and every consumer asked it `=== 'mixed'` or
+ * filtered the room by it, which is why a room could hold one kind of body and
+ * only one. `sandboxMix` is the list: `{ droideka: 2, b1: 10 }`, counts per
+ * archetype. Both still exist and neither is redundant —
+ *
+ *   `sandboxMix`    what you asked for BY NAME. Explicit, so it is honoured
+ *                   first and never truncated: dialling the total below the
+ *                   sum raises the total instead of quietly dropping a droid
+ *                   you asked for, because a number you typed losing to a
+ *                   slider you did not touch is the wrong way round.
+ *   `sandboxCount`  the size of the room. Unchanged: it is still the one
+ *                   slider, still the total population.
+ *   `sandboxType`   what the REMAINDER is. Also unchanged in meaning — a room
+ *                   with no named counts is `count` bodies of this type, which
+ *                   is precisely what it did before — and 'mixed' still means
+ *                   whatever the theatre fields.
+ *
+ * So an old settings blob, and every check written against one, describes the
+ * same room it always did: no `sandboxMix`, remainder is the whole room, type
+ * decides it. `mix` is the resolved list both spawners read, named entries
+ * first and the remainder last, and it is the ONLY thing they are allowed to
+ * ask — see `sandboxQuota`.
+ */
 export function sandboxConfig(settings) {
   const s = settings || {};
-  const raw = s.sandboxCount;
-  const count = clamp(Math.round(typeof raw === 'number' && isFinite(raw) ? raw : 5), 0, SANDBOX_MAX_ENEMIES);
   const f = s.sandboxFire;
   const fire = clamp(typeof f === 'number' && isFinite(f) ? f : 1, 0, 2);
   const t = s.sandboxType;
-  return { count, fire, type: (t === 'mixed' || ARCHETYPES[t]) ? t : 'mixed' };
+  const type = (t === 'mixed' || ARCHETYPES[t]) ? t : 'mixed';
+
+  /* Named counts, in the picker's own order so the room is built in the order
+   * it is read on screen. Anything that is not a live archetype is dropped
+   * rather than trusted: this blob is localStorage and comes back across
+   * versions, and an archetype that has been renamed must not become a spawn
+   * request for a body that no longer exists. */
+  const asked = (s.sandboxMix && typeof s.sandboxMix === 'object') ? s.sandboxMix : null;
+  const mix = [];
+  let named = 0;
+  if (asked) {
+    for (const k of sandboxKeys()) {
+      const n = Math.round(Number(asked[k]));
+      if (!(n > 0) || !isFinite(n)) continue;
+      const take = Math.min(n, SANDBOX_MAX_ENEMIES - named);
+      if (take <= 0) break;                       // the ceiling is the ceiling
+      mix.push({ type: k, n: take });
+      named += take;
+    }
+  }
+
+  const raw = s.sandboxCount;
+  const want = Math.round(typeof raw === 'number' && isFinite(raw) ? raw : 5);
+  const count = clamp(Math.max(want, named), 0, SANDBOX_MAX_ENEMIES);
+  const rest = count - named;
+  if (rest > 0) mix.push({ type, n: rest });
+
+  return { count, fire, type, mix, named };
+}
+
+/**
+ * WHO STAYS AND WHAT COMES NEXT — one answer, for both rooms.
+ *
+ * The arena sandbox (`WaveDirector._sandboxUpdate`) and the dojo's sandbox room
+ * (`DojoDirector._sandboxTick`) each had their own copy of "keep up to `count`
+ * of the right archetype and retire the rest", written against a single type.
+ * Two copies of a rule that is about to get harder is how the two rooms drift,
+ * so the rule moved here and both call it.
+ *
+ * It is expressed as WHAT STAYS rather than what to remove, which is the only
+ * formulation that handles both ways a room can be wrong at once — too many
+ * bodies, and bodies of a kind you stopped asking for — and it walks `alive` in
+ * the order the caller hands it over, so a caller that sorts nearest-first
+ * keeps the fight it is standing in and retires the far edge of the room.
+ *
+ * Named quotas are filled BEFORE the remainder, and that ordering is the whole
+ * of why a mix converges: a room already full of the remainder's draw would
+ * otherwise count those bodies against a quota they cannot satisfy, and the two
+ * droidekas you asked for would never arrive.
+ *
+ * `next` is the type to spawn — 'mixed' meaning "draw one, caller's choice",
+ * which is the one thing the two rooms genuinely disagree about (the dojo
+ * rotates DOJO_MIX, the arena draws from the level's pool).
+ */
+export function sandboxQuota(cfg, alive) {
+  const keep = new Set();
+  const have = cfg.mix.map(() => 0);
+  const spoken = new Set();
+  const fill = (i, ok) => {
+    const m = cfg.mix[i];
+    for (const e of alive) {
+      if (have[i] >= m.n) return;
+      if (spoken.has(e) || !ok(e)) continue;
+      spoken.add(e); keep.add(e); have[i]++;
+    }
+  };
+  cfg.mix.forEach((m, i) => { if (m.type !== 'mixed') fill(i, (e) => e.type === m.type); });
+  cfg.mix.forEach((m, i) => { if (m.type === 'mixed') fill(i, () => true); });
+  let next = null;
+  for (let i = 0; i < cfg.mix.length; i++) {
+    if (have[i] < cfg.mix[i].n) { next = cfg.mix[i].type; break; }
+  }
+  return { keep, next, have };
 }
 
 /* ═══════════════════════════════════════════════════════════════════════ */
@@ -4122,8 +4223,8 @@ export class WaveDirector {
   /* ── sandbox ─────────────────────────────────────────────────────── */
 
   /** Uniform pick from the level's pool, which is already weighted by repeats. */
-  _sandboxType(cfg) {
-    if (cfg.type !== 'mixed') return cfg.type;
+  _sandboxType(want) {
+    if (want && want !== 'mixed') return want;
     if (!this.pool.length) return 'b1';
     /**
      * AND NOT ONE OF YOUR OWN. This is the last door into the field — every
@@ -4213,9 +4314,12 @@ export class WaveDirector {
     // kill the old ones, and shrinking the count takes the far edge of the room
     // rather than the fight you are standing in.
     const anchor = this.world.player ? this.world.player.position : null;
-    const right = cfg.type === 'mixed' ? alive.slice() : alive.filter(e => e.type === cfg.type);
-    if (anchor) right.sort((a, b) => a.position.distanceToSquared(anchor) - b.position.distanceToSquared(anchor));
-    const keep = new Set(right.slice(0, cfg.count));
+    const order = alive.slice();
+    if (anchor) order.sort((a, b) => a.position.distanceToSquared(anchor) - b.position.distanceToSquared(anchor));
+    /* ONE ANSWER FOR BOTH ROOMS — see `sandboxQuota`. Nearest first, so
+     * shrinking the room takes its far edge rather than the fight you are
+     * standing in. */
+    const { keep, next } = sandboxQuota(cfg, order);
     if (keep.size < alive.length) {
       for (const e of alive) {
         if (keep.has(e)) continue;
@@ -4234,8 +4338,8 @@ export class WaveDirector {
      * and lands forty. The wave path has counted `arrivals.pending` for exactly
      * this reason since arrivals shipped; the sandbox path never had to. */
     const inbound = this.arrivals.enabled ? this.arrivals.pending : 0;
-    if (keep.size + inbound < cfg.count && this.spawnTimer <= 0) {
-      const type = this._sandboxType(cfg);
+    if (next && keep.size + inbound < cfg.count && this.spawnTimer <= 0) {
+      const type = this._sandboxType(next);
       /* THE DEFAULT IS AN ARRIVAL — note #17. `request` returns false when
        * arrivals are off (`settings.instantSpawn`), and then the old direct
        * path runs exactly as it always did, because a room must never fail to

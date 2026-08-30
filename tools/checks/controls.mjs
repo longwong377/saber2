@@ -1598,7 +1598,7 @@ export async function run({ check, assert }) {
       ...[...menu.matchAll(/querySelector\('#(opt-[a-z0-9-]+)'\)/g)].map(m => m[1]),
     ]);
 
-    const wired = new Set([...bound.map(([, key]) => key), 'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade']);
+    const wired = new Set([...bound.map(([, key]) => key), 'sandboxType', 'sandboxMix', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade']);
     const orphan = [...ids].filter(id => !bound.some(([bid]) => bid === id) && !custom.has(id));
     assert(!orphan.length, `controls bound to nothing: ${orphan.join(', ')}`);
 
@@ -1983,6 +1983,11 @@ export async function run({ check, assert }) {
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
       'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade', 'holocron',
+      // The opponent list's counts — one stepper per archetype, all writing
+      // into one object the way `wardrobe` and `face` do. `sandboxType` above
+      // is still real and still picked: it is what the bodies you did NOT name
+      // are, so the two are a pair rather than a duplicate.
+      'sandboxMix',
       'skinIndex', 'hairIndex', 'order', 'species', 'face', 'robeCut',
       // a swatch row under the crystals, same shape as colorIndex's
       'lightningColor',

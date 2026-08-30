@@ -448,7 +448,14 @@ export const DEFAULT_SETTINGS = {
   // fire are both things a player asked for and could not have.
   sandboxCount: 5,
   sandboxFire: 1,
+  // What the bodies you did NOT name by hand are. 'mixed' is whatever the
+  // theatre fields; see sandboxConfig, which is the one thing allowed to read
+  // any of these three.
   sandboxType: 'mixed',
+  // …AND THE ONES YOU DID: `{ droideka: 2, b1: 10 }`, counts per archetype.
+  // Empty by default, which is exactly the room this mode always had — the
+  // whole population drawn from `sandboxType`.
+  sandboxMix: {},
   unlimitedBlade: false,
   // The other half of note 46. The slow-motion itself was deepened (heldScale
   // 0.35 -> 0.18, see FOCUS); this is the option that lets a player who is
@@ -957,6 +964,7 @@ export const SETTING_READERS = {
   sandboxCount:    ['game/Waves.js', 's.sandboxCount'],
   sandboxFire:     ['game/Waves.js', 's.sandboxFire'],
   sandboxType:     ['game/Waves.js', 's.sandboxType'],
+  sandboxMix:      ['game/Waves.js', 's.sandboxMix'],
   unlimitedBlade:  ['ui/Menu.js', 's.unlimitedBlade ? BLADE_MAX : BLADE_CAP'],
   unlimitedFocus:  ['game/World.js', 'this.settings.unlimitedFocus'],
   sensitivity:     ['game/World.js', 'sensitivity: this.settings.sensitivity'],
@@ -5423,14 +5431,21 @@ export class Menu {
         <p class="hint">Zero enemies is an empty arena to move around in. Zero fire is a room
           full of droids that walk, dodge and never pull a trigger — the two are independent on
           purpose, because reading a swing and reading a bolt are different lessons.</p>
-        <p class="hint" style="margin-top:14px">All three are <b>live</b>: they are repeated on the
-          pause screen, and the room reshapes itself the moment you resume — change the opponent
-          and the wrong droids are retired, no kills required.</p>
+        <p class="hint" style="margin-top:14px">All of it is <b>live</b>: repeated on the pause
+          screen, and the room reshapes itself the moment you resume — change the mix and the
+          droids you stopped asking for are retired, no kills required.</p>
       </div>
       <div class="col">
         <h3>Opponent</h3>
-        <p class="hint" style="margin-bottom:14px">Practise against exactly one kind of droid.</p>
+        <p class="hint" style="margin-bottom:14px">Name as many kinds as you like and how many of
+          each. <b>+</b> and <b>−</b> set a count; pressing the row itself clears the others and
+          gives the whole room to that one. <b>Mixed</b> is the remainder — every body you have
+          not asked for by name — so a room with nothing named is the theatre's own draw, which
+          is what this list always did.</p>
         <div id="opt-sandbox-type" class="difflist"></div>
+        <p class="hint" style="margin-top:12px">Naming more than the room holds raises the
+          <b>Enemies</b> slider to fit; the ceiling is ${SANDBOX_MAX_ENEMIES}. Taking one away
+          leaves the room the size it was and hands the place to the mixed draw.</p>
       </div>
       <div class="col narrow pinned">
         <div class="col-scroll">
@@ -5467,7 +5482,13 @@ export class Menu {
     wrap.insertBefore(panel, document.querySelector('.menu-foot'));
 
     this._slider('opt-sandbox-count', 'sandboxCount',
-      v => (v <= 0 ? 'empty' : String(Math.round(v))));
+      v => (v <= 0 ? 'empty' : String(Math.round(v))),
+      /* The opponent list prints the REMAINDER on its Mixed row, and the
+       * remainder is this number minus what has been named — so the list is
+       * stale the instant this moves. Registered as the side effect rather than
+       * hooked onto the input, because the pause card is a second handle on the
+       * same number and `_set` runs this for both. */
+      () => this._buildSandboxUnits());
     this._slider('opt-sandbox-fire', 'sandboxFire',
       v => (v <= 0 ? 'held' : `${v.toFixed(2)}×`));
     this._slider('opt-train-bladelen', 'bladeLength', v => `${v.toFixed(2)}m`, (v) => {
@@ -6111,21 +6132,89 @@ export class Menu {
       <p class="hint databank-foot">${escKey(p.faction.note)}</p>`;
   }
 
+  /**
+   * THE OPPONENT LIST IS A LIST OF COUNTS, NOT A PICK.
+   *
+   * "Currently for training/sandbox you can only select one enemy type, I want
+   * you to allow me to select as many as I want and specify the specific number
+   * of that specific enemy."
+   *
+   * It was a radio list: one row `sel`, `s.sandboxType = u.key`, and every
+   * consumer downstream filtering the room to that one archetype. Now every row
+   * carries a stepper and writes into `s.sandboxMix`, and `sandboxConfig`
+   * resolves the list — see the note there for why `sandboxCount` and
+   * `sandboxType` are both still real and both still mean what they meant.
+   *
+   * MIXED IS THE REMAINDER AND IS NOT STEPPED, which is the one thing here that
+   * had to be decided rather than derived. A count on Mixed alongside a total
+   * would be two controls for one number and they would fight. So Mixed shows
+   * `count − named` and moves when either the slider or a stepper moves, and
+   * the sentence the whole screen has to support stays true: the room is the
+   * size of the slider, and anything you have not named by hand is a draw.
+   */
   _buildSandboxUnits() {
     const host = document.getElementById('opt-sandbox-type');
     if (!host) return;
     const cfg = sandboxConfig(this.s);
+    const mix = this.s.sandboxMix && typeof this.s.sandboxMix === 'object' ? this.s.sandboxMix : {};
+    const rest = Math.max(0, cfg.count - cfg.named);
     host.innerHTML = '';
     for (const u of sandboxUnits()) {
       const d = document.createElement('div');
-      d.className = 'diff' + (cfg.type === u.key ? ' sel' : '');
-      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${u.name}</b><span>${u.blurb}</span></div>`;
-      this._activate(d, () => {
-        audio.ui('click');
-        this.s.sandboxType = u.key;
-        [...host.children].forEach(c => c.classList.toggle('sel', c === d));
-        saveSettings(this.s);
-      });
+      const n = u.key === 'mixed' ? rest : Math.max(0, Math.round(Number(mix[u.key]) || 0));
+      d.className = 'diff sandbox-row' + (n > 0 ? ' sel' : '');
+      d.dataset.unit = u.key;
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${u.name}</b><span>${u.blurb}</span></div>`
+        + (u.key === 'mixed'
+          /* The remainder, stated rather than offered — see the note above. */
+          ? `<div class="step rest"><b>${n}</b></div>`
+          : `<div class="step"><button type="button" class="less" aria-label="one fewer ${u.name}"
+                ${n <= 0 ? 'disabled' : ''}>−</button><b>${n}</b><button type="button" class="more"
+                aria-label="one more ${u.name}"
+                ${cfg.count >= SANDBOX_MAX_ENEMIES && n <= 0 ? 'disabled' : ''}>+</button></div>`);
+      if (u.key !== 'mixed') {
+        const step = (by) => {
+          audio.ui('click');
+          const was = Math.max(0, Math.round(Number(this.s.sandboxMix?.[u.key]) || 0));
+          const now = Math.max(0, was + by);
+          const next = { ...(this.s.sandboxMix || {}) };
+          if (now > 0) next[u.key] = now; else delete next[u.key];
+          this.s.sandboxMix = next;
+          /* THE TOTAL FOLLOWS THE NAMES UP, AND NOT BACK DOWN. Asking for one
+           * more droideka than the room holds raises the room — a number you
+           * typed must not lose to a slider you did not touch — but taking one
+           * away leaves the total where it is, so the body you removed becomes
+           * a mixed draw instead of shrinking the fight you are in. `_set` is
+           * what moves the OTHER handle on this number, the pause card's. */
+          const cur = sandboxConfig(this.s);
+          if (cur.named > (this.s.sandboxCount ?? 0)) this._set('sandboxCount', cur.named);
+          saveSettings(this.s);
+          this._buildSandboxUnits();
+        };
+        d.querySelector('.less')?.addEventListener('click', (e) => { e.stopPropagation(); step(-1); });
+        d.querySelector('.more')?.addEventListener('click', (e) => { e.stopPropagation(); step(+1); });
+        /* THE ROW ITSELF IS STILL A CONTROL. A radio list taught every player
+         * of this screen that the row is what you press, so a row press means
+         * "just this one": it clears the rest of the mix and takes the whole
+         * room. That is the old behaviour exactly, reached the old way. */
+        this._activate(d, () => {
+          audio.ui('click');
+          this.s.sandboxMix = {};
+          this.s.sandboxType = u.key;
+          saveSettings(this.s);
+          if (this._pauseType) this._pauseType.value = u.key;
+          this._buildSandboxUnits();
+        });
+      } else {
+        this._activate(d, () => {
+          audio.ui('click');
+          this.s.sandboxMix = {};
+          this.s.sandboxType = 'mixed';
+          saveSettings(this.s);
+          if (this._pauseType) this._pauseType.value = 'mixed';
+          this._buildSandboxUnits();
+        });
+      }
       host.appendChild(d);
     }
   }

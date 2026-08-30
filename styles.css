@@ -698,6 +698,26 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
    the picker being broken, and the rules were live in eight modes and honoured
    in five. Each card still carries the reason — see _syncRules. */
 .difflist.inert{opacity:.38;filter:saturate(.4);pointer-events:none}
+/* THE COUNT ON AN OPPONENT ROW. The row is still a whole control — pressing it
+   gives the room to that one kind, which is what it always did — so the stepper
+   has to read as a thing INSIDE the row rather than as the row's own buttons:
+   pushed to the trailing edge, its own field, and the number between the two
+   keys where a count belongs. `flex:none` so a long unit name never squeezes
+   the digits, which is the one part of this that must not wrap. */
+.diff .step{flex:none;margin-left:auto;display:flex;align-items:center;gap:6px;
+  padding:2px 3px;border:2px solid var(--stroke);background:var(--void);clip-path:var(--cut-sm)}
+.diff .step b{min-width:20px;text-align:center;font:var(--mono);font-size:12px;font-weight:800;
+  color:var(--ink);font-variant-numeric:tabular-nums}
+.diff .step button{width:22px;height:22px;padding:0;border:0;background:var(--panel-2);
+  color:var(--ink);font:var(--mono);font-size:14px;font-weight:800;line-height:1;cursor:pointer;
+  clip-path:var(--cut-sm);transition:.12s}
+.diff .step button:hover:not(:disabled){background:var(--accent);color:var(--stroke)}
+.diff .step button:disabled{opacity:.3;cursor:default}
+/* The remainder is a reading, not an offer — no keys, and it says so by being
+   dim until it is the only thing in the room. */
+.diff .step.rest{border-style:dashed}
+.diff .step.rest b{color:var(--dim)}
+.diff.sel .step.rest b{color:var(--ink)}
 .diff.rule.barred{opacity:.4;filter:saturate(.35);pointer-events:none;cursor:default;
   box-shadow:none;transform:none}
 .diff.rule.barred .txt span{color:var(--dimmer)}
