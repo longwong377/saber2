@@ -6359,8 +6359,13 @@ export class Enemy {
      * that finishes one is not made to wait again for permission it already
      * had. */
     this.sightCd = Math.max(0, (this.sightCd || 0) - dt);
-    // A rallied shooter reloads faster; the leader's ring is what tells you so.
-    const rally = this.rallyTimer > 0 ? RALLY.rate : 1;
+    /* A rallied shooter reloads faster; the leader's ring is what tells you so.
+     * And a conscript with no blade left to walk at reloads SLOWER — see
+     * `LEVY_SLACK` in src/game/Levy.js, which is the whole of why: forty free
+     * rifles falling back onto a ten-man line was the largest single source of
+     * damage in the mode. `_levySlack` is 1 on every body that is not a loose
+     * levy, including every conscript that can see a player. */
+    const rally = (this.rallyTimer > 0 ? RALLY.rate : 1) * (this._levySlack || 1);
     if (this.burstLeft > 0) {
       this.burstTimer -= dt;
       if (this.burstTimer <= 0) {

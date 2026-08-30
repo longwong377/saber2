@@ -133,6 +133,18 @@ export const LEVY_TYPE = 'conscript';
 export const LEVY_STRENGTH = 40;
 
 /**
+ * HOW MUCH SLOWER A CONSCRIPT RELOADS WITH NO BLADE TO WALK AT.
+ *
+ * A multiplier on the reload interval, so 3 is a third of the rounds. See the
+ * note in `installLevyAim` for what it is for and what it must not touch.
+ * Chosen against the arithmetic rather than by feel: the levy was putting 263
+ * of the 533 hp an engagement lands on a ten-man line, and the line has 460 to
+ * give — so the target of "about half a line standing" needs roughly half the
+ * incoming gone, and a third of the levy's rounds is that half.
+ */
+export const LEVY_SLACK = 3;
+
+/**
  * Does this director's ground want a levy at all?
  *
  * ASKED OF THE POOL, not of a list of level keys. A level that names
@@ -356,9 +368,39 @@ function installLevyAim(e) {
         w.command = null;
         try { best = pick(b); } finally { w.command = cmd; }
       }
-      /* No blade left to walk at — a levy on a field with no Jedi standing
-       * still has to do something, and what it does is whatever it would have
-       * done. That is also every mode with no player on the party's team. */
+      /**
+       * NO BLADE LEFT TO WALK AT — AND THIS IS THE CLIFF THE MODE FELL OFF.
+       *
+       * A levy on a field with no Jedi standing still has to do something, and
+       * what it did was whatever it would have done: forty free rifles, all at
+       * once, aimed at a ten-man line. Measured on Geonosis, engagement 1, no
+       * player on the field, the conscripts were the single largest source of
+       * damage onto the player's own men — 263 hp against the paid wave's 177,
+       * out of a line that only has 460 to give. The line was wiped on three
+       * seeds in five and `theline.12` read 0 of 10 against the player's stated
+       * target of about five.
+       *
+       * WITH A JEDI UP THE SAME MECHANISM IS EXACTLY RIGHT, which is what says
+       * the aim rule is not the defect. Driven with a fighting player on the
+       * field, 100% of conscripts were pointed at him and their damage onto the
+       * line fell from 263 to 19, with nine of ten men standing at the muster.
+       * The levy comes for you, the paid wave fights your line, and that is the
+       * whole design.
+       *
+       * So the fix is the FALLBACK and not the aim: losing your Jedi must not
+       * turn the weather into the most dangerous thing on the field. A
+       * conscript with nobody to walk at still advances, still has to be
+       * cleared, still soaks and suppresses — it simply stops being a rifleman
+       * in somebody else's firing line. `LEVY_SLACK` is one multiplier on its
+       * reload, applied where `RALLY.rate` already applies one, so nothing
+       * about the body changes except how often it fires at men it was never
+       * meant to be shooting at.
+       *
+       * IT CANNOT MOVE §6's PRICE. `conscript.mjs` measures this body's dps
+       * against A PLAYER, and against a player `best` is never null — so the
+       * slack is 1 on every frame that check looks at.
+       */
+      this._levySlack = best ? 1 : LEVY_SLACK;
       return best || pick(b);
     };
     try { return base.call(this, dt, ctx); } finally { ctx.pickTarget = pick; }
