@@ -2320,6 +2320,34 @@ export function harmRules(world) {
  * victim is the one whose health is about to move, and a peer's avatar carries
  * the world it was built in.
  */
+/**
+ * IS THIS BODY ONE OF MINE? — the question a mend asks, and it is NOT the
+ * negation of `canHarm`.
+ *
+ * `canHarm` answers "may my bolts hurt this thing", and same-team it defers to
+ * `friendlyFire`. The mend used to be written as `if (canHarm(...)) continue`,
+ * on the reasonable-looking argument that a friend is whoever you cannot hurt.
+ * It is not: `COMMAND_POWER_RULES` is `{pvp: false, friendlyFire: true}` and
+ * `World` installs it as the frame's rules whenever there is an army and it is
+ * not a meeting — Command, The Line, Skirmish and Campaign, which are exactly
+ * the four modes that HAVE allies. So `canHarm(you, your own trooper)` came
+ * back true, every ally was skipped before distance or aim was even measured,
+ * `_mendTarget` returned null and the channel healed you instead.
+ *
+ * The player, more than once: "I still don't know how you heal your allies",
+ * and then "I think it only heals yourself". They were right, and the reason
+ * the code read as correct is that friendly fire being ON is what made it
+ * wrong — a setting nobody associates with a heal.
+ *
+ * A side is a side. Two bodies on the same team are friends whether or not a
+ * stray bolt between them lands, so this asks the teams and nothing else.
+ */
+export function sameSide(a, b) {
+  if (!a || !b || a === b) return false;
+  const x = teamOf(a), y = teamOf(b);
+  return x !== undefined && y !== undefined && x === y;
+}
+
 export function canHarm(attacker, victim, rules = null) {
   if (!attacker) return true;
   if (attacker === victim) return true;
@@ -8616,11 +8644,10 @@ export class Player {
   nearestWounded(ctx) {
     const list = ctx?.enemies || this.world?.enemies;
     if (!list) return null;
-    const rules = ctx?.rules ?? this.world?.rules ?? null;
     let best = null, bestD = Infinity;
     for (const e of list) {
       if (!e || e.dead || e === this) continue;
-      if (canHarm(this, e, rules)) continue;
+      if (!sameSide(this, e)) continue;                 // see `sameSide`
       if (!(e.hp < (e.maxHp ?? 0))) continue;
       _v1.subVectors(e.position, this.chest);
       const d = _v1.length();
@@ -8638,13 +8665,13 @@ export class Player {
   _mendTarget(ctx) {
     const list = ctx?.enemies || this.world?.enemies;
     if (!list) return null;
-    const rules = ctx?.rules ?? this.world?.rules ?? null;
     let best = null, bestScore = -Infinity;
     for (const e of list) {
       if (!e || e.dead || e === this) continue;
-      /* Friendly, by the same rule every other list in this file is built
-       * from: anything the powers are allowed to HARM is not an ally. */
-      if (canHarm(this, e, rules)) continue;
+      /* ON MY SIDE — asked of the teams, not of `canHarm`. See `sameSide`:
+       * with friendly fire on (which is every mode that has an army) `canHarm`
+       * says yes about your own troopers, and this loop skipped all of them. */
+      if (!sameSide(this, e)) continue;
       if (!(e.hp < (e.maxHp ?? 0))) continue;
       _v1.subVectors(e.position, this.chest);
       const d = _v1.length();

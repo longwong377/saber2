@@ -1006,6 +1006,89 @@ export async function run({ check, assert }) {
       + `self ${mine.toFixed(0)} → ${p.hp.toFixed(0)}`;
   });
 
+  check('powers: with friendly fire ON the mend still knows who your own men are', async () => {
+    /**
+     * THE BUG THIS EXISTS FOR, and it hid behind every other mend check in
+     * this file for months.
+     *
+     * `_mendTarget` and `nearestWounded` used to open with
+     * `if (canHarm(this, e, rules)) continue` — a friend is whoever you cannot
+     * hurt, which reads as obviously right. It is wrong, and it is wrong in
+     * exactly the modes that have allies: `World` installs `COMMAND_POWER_RULES`
+     * as the frame's rules whenever there is an army and it is not a meeting,
+     * and that object is `{pvp: false, friendlyFire: true}`. Friendly fire ON
+     * means `canHarm(you, your own trooper)` answers TRUE, so every ally was
+     * skipped before distance or aim was measured. `_mendTarget` returned null,
+     * `forceHeal` fell through to its own-body path, and `nearestWounded`
+     * returned null so the HUD never even said the power existed.
+     *
+     * The other checks here pass a ctx with no `rules` at all — `waves` in the
+     * colosseum has no army, so `world.rules` is undefined, the default says
+     * you cannot hurt your own side, and the ally was found. Every one of them
+     * passed on a build where ally healing was impossible in Command, The Line,
+     * Skirmish and Campaign — all four modes it is for.
+     *
+     * The player found it, twice: "I still don't know how you heal your
+     * allies", then "I think it only heals yourself."
+     *
+     * So this check pins the frame that shipped: the SAME wounded ally, under
+     * the rules object `World` really hands the player, with the trap asserted
+     * out loud rather than assumed — `canHarm` must still say yes (friendly
+     * fire is a real setting and this must not have been "fixed" by turning it
+     * off) and the mend must find him anyway.
+     */
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { COMMAND_POWER_RULES } = await import('../../src/game/Command.js');
+    const { canHarm, sameSide } = await import('../../src/game/Player.js');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+
+    /* The rules `World.js` builds for a command frame, not an invented one. */
+    assert(COMMAND_POWER_RULES.friendlyFire === true && COMMAND_POWER_RULES.pvp === false,
+      'COMMAND_POWER_RULES changed shape — this check is pinned to the frame that shipped');
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players, rules: COMMAND_POWER_RULES };
+
+    const at = new THREE.Vector3(p.position.x, p.position.y, p.position.z - 6);
+    const mate = world.spawnEnemy('trooper', at);
+    assert(mate, 'no trooper spawned');
+    mate.team = p.team;                                  // one of yours
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    mate.hp = mate.maxHp * 0.3;
+
+    /* THE TRAP, ASSERTED. If this ever goes false the check has stopped
+     * measuring anything and somebody has quietly turned friendly fire off. */
+    assert(canHarm(p, mate, COMMAND_POWER_RULES) === true,
+      'friendly fire is no longer on for command powers, so this check proves nothing');
+    assert(sameSide(p, mate), 'sameSide does not recognise a trooper carrying your own team id');
+
+    /* Aim re-taken here: the frames above moved him. */
+    p.aimDir.subVectors(mate.position, p.chest).normalize();
+    assert(p._mendTarget(ctx) === mate,
+      'a wounded man of YOURS under the reticle was not found, because friendly fire was read as '
+      + 'enmity — this is the bug the player reported as "it only heals yourself"');
+    assert(p.nearestWounded(ctx) === mate,
+      'the HUD cue cannot see your own wounded man, so the power stays invisible');
+
+    /* AND AN ENEMY IS STILL NOT A PATIENT. The fix must not have widened the
+     * net to "anybody hurt nearby". */
+    const foe = world.spawnEnemy('trooper',
+      new THREE.Vector3(p.position.x, p.position.y, p.position.z - 5));
+    assert(foe, 'no hostile spawned');
+    foe.team = (p.team ?? 0) + 1;
+    foe.hp = foe.maxHp * 0.2;
+    for (let i = 0; i < 4; i++) world.update(1 / 60, input);
+    p.aimDir.subVectors(foe.position, p.chest).normalize();
+    assert(p._mendTarget(ctx) !== foe, 'the mend offered itself to a HOSTILE');
+
+    return 'with {pvp:false, friendlyFire:true} — the real command rules — canHarm says yes about '
+      + 'your own trooper and the mend finds him anyway; a hostile is still refused';
+  });
+
   check('powers: a hurt man behind you is announced, so the power is findable at all', async () => {
     /**
      * THE REASON NOBODY EVER FOUND ALLY MEND.
