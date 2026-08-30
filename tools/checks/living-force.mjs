@@ -1761,7 +1761,7 @@ export async function run({ check, assert }) {
       + `all ${all.held} of ${Tree.FACETS.length} facets, lightning+compel woken`;
   });
 
-  check("the open purse actually reaches the bottom of the Book, from wave 1", () => {
+  check("the open purse reaches the bottom of every current, from wave 1", () => {
     /**
      * THE PROMISE, TESTED AS A PROMISE — and the money was never the reason.
      *
@@ -1804,9 +1804,25 @@ export async function run({ check, assert }) {
     open.insight = 600;
     const all = buyAll(open, 1);
     const missed = Tree.FACETS.filter((f) => !all.has(f.id)).map((f) => f.id);
+    /**
+     * PER CURRENT, because "an entire path" is what was asked for and a path is
+     * ONE of the six — The Book is the Force current's Jedi name, not a name
+     * for the lattice. A total that is right while one column is unreachable
+     * would answer the wrong question, and reading a single number is exactly
+     * how that goes unnoticed.
+     */
+    const short = [];
+    for (const c of Tree.CURRENTS) {
+      const mine = Tree.FACETS.filter((f) => f.axis === c.axis);
+      const got = mine.filter((f) => all.has(f.id)).length;
+      if (got < mine.length) short.push(`${c.axis} ${got}/${mine.length}`);
+    }
+    assert(!short.length,
+      `an open purse cannot finish every current at wave 1: ${short.join(', ')} — `
+      + '"finish an entire path at the very beginning" is the whole promise');
     assert(!missed.length,
       `an open purse could not reach ${missed.length} of ${Tree.FACETS.length} facets at wave 1: `
-      + `${missed.slice(0, 8).join(', ')} — the card promises the whole Book from the first wave`);
+      + `${missed.slice(0, 8).join(', ')} — the card promises the whole Holocron from the first wave`);
     /* AND IT DOES NOT EMPTY, which is the other half of what was asked for. */
     assert(open.insight === 600,
       `an open purse fell from 600 to ${open.insight} — it is meant not to be spent`);
@@ -1826,7 +1842,7 @@ export async function run({ check, assert }) {
      * They were. "The shove no longer needs a breath between" is the whole of
      * what "The Endless Wave" used to say about being Force push, and a card
      * whose effect you have to infer is a card that cannot be chosen. The name
-     * stays evocative — that is the Book's voice — but the body has to say
+     * stays evocative — that is the Holocron's voice — but the body has to say
      * which power, in the same words the key-bindings screen uses for it, so
      * the two can be read against each other.
      */
@@ -1869,7 +1885,7 @@ export async function run({ check, assert }) {
      *
      * Every one of those had a number sitting in its own `apply` — 0.35, 22,
      * 0.85, five seconds — so the fix was never invention, it was transcription.
-     * The names keep the Book's voice; the bodies carry the arithmetic.
+     * The names keep the Holocron's voice; the bodies carry the arithmetic.
      *
      * WHAT THIS CANNOT DO is check that the number is the RIGHT one — no test
      * short of reading English can. What it can do is refuse the shape the
@@ -1949,7 +1965,7 @@ export async function run({ check, assert }) {
      * done: "go through everything else in the holocron".
      *
      * TWO OF THEM WERE THE CARDS' OWN DEFECT, one level out. The six plates are
-     * the whole navigation of the Book and carried a NAME and a COUNT: "THE
+     * the whole navigation of the Holocron and carried a NAME and a COUNT: "THE
      * GUARDIAN 3/8", with a creed under it that is a mood rather than a
      * signpost. And two lock lines refused without saying how far away the
      * thing was — "A mastery. Commit to the discipline first." and "Too early.

@@ -6491,7 +6491,7 @@ export class Menu {
        * `Communion.open` lifts the depth gate as well — measured, 62 of 62 at
        * wave 1 against 22 before. */
       ['open', 'Open',
-       'The whole Book, from the first wave. The purse never empties and nothing is held back for '
+       'The whole Holocron — all six currents — from the first wave. The purse never empties and nothing is held back for '
        + 'depth, so you can take a path to the bottom before the first fight. You still kneel, still '
        + 'choose, and prices still climb on the card — they just cannot stop you.'],
       /* NAMED BY THE PLAYER. The key stays 'all' — it is written to settings,

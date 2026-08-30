@@ -259,7 +259,7 @@ export function insightAfter(waves, bossEvery = BOSS_EVERY, rate = null) {
 /**
  * WHAT EACH CURRENT IS FOR, in one plain line.
  *
- * The six plates are the whole navigation of the Book, and they carried a NAME
+ * The six plates are the whole navigation of the Holocron, and they carried a NAME
  * and a COUNT and nothing else. "THE GUARDIAN 3/8" does not tell a player that
  * this is the column with cutting power in it, and the creed underneath —
  * "The blade is the last argument, and the shortest" — is a mood, not a
