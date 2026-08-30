@@ -7,6 +7,8 @@
 import * as THREE from 'three';
 import { Engine, QUALITY } from './engine/Engine.js';
 import { Input } from './engine/Input.js';
+import { Touch } from './engine/Touch.js';
+import { goFullscreen } from './engine/Fullscreen.js';
 import { audio } from './engine/Audio.js';
 import { initPhysics } from './physics/Rapier.js';
 import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
@@ -57,6 +59,26 @@ const engine = new Engine(canvas, settings.quality);
 const input = new Input(canvas);
 const hud = new HUD(document);
 const net = new Net();
+/**
+ * THE THUMB, ARMED AND OTHERWISE ASLEEP.
+ *
+ * `attach()` binds ONE passive `touchstart` and builds nothing; the overlay,
+ * the rest of the listeners and every write into `input` happen on the first
+ * real touch. So a desktop pays one listener for this and nothing else — see
+ * the header of src/engine/Touch.js, which is the whole of the "don't fuck up
+ * the actual desktop game" argument.
+ *
+ * The MENU button is wired to the same door Escape uses, because a phone has
+ * no Escape and a player who cannot pause cannot stop.
+ */
+const touch = new Touch(input, { onMenu: () => input.onMenu?.() }).attach();
+/* The pad is the controller, not the readout, so it lives outside `#hud` — and
+ * it goes up and down on exactly the same four moments. See `HUD.show`. */
+hud.onShow = (on) => touch.show(on);
+/* …AND THE POWER WHEEL IS THE REST OF THE PAD. Every slot on it already names
+ * its action (HUD._buildPowers), so a tap fires the same edge a screen button
+ * does and the six-button rack does not have to grow to forty-four. */
+touch.bindWheel(document.getElementById('power-wheel'));
 
 input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
@@ -759,6 +781,16 @@ async function deploy() {
   screens.state = 'playing';
   input.enabled = true;
   input.requestLock();
+  /**
+   * …AND THE WHOLE SCREEN, IF THAT IS WHAT WAS ASKED FOR.
+   *
+   * Here rather than anywhere else because a browser grants a fullscreen
+   * request inside a USER GESTURE and refuses it everywhere else, and Ignite
+   * is a press. `goFullscreen` is a no-op when it is already full screen and
+   * swallows a refusal, so a deploy reached from a trigger, a rotation or a
+   * check never fails on it.
+   */
+  if (settings.fullscreen) goFullscreen();
 
   /* A MEETING STARTS ITSELF DIFFERENTLY, and it is the same one line either
    * way. `beginVersus` hands out the sides, the armies and the two anchors and
@@ -2235,6 +2267,9 @@ window.addEventListener('keydown', startScore, true);
 
 canvas.addEventListener('pointerdown', () => {
   audio.init(); audio.resume();
+  /* `requestLock` is already a no-op once a finger has been used (Input), so
+   * this needs no touch branch of its own — a tap on the canvas wakes the
+   * audio exactly as a click does and asks for nothing it cannot have. */
   if (screens.state === 'playing' && !input.locked) input.requestLock();
 });
 
@@ -2368,5 +2403,5 @@ const _roseA = new THREE.Vector3(), _roseB = new THREE.Vector3();
 boot().then(() => requestAnimationFrame(frame));
 
 // Handy for tuning from the console.
-window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud,
+window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud, touch,
   get fps() { return Math.round(fpsSmooth); } };

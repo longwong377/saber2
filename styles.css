@@ -2657,3 +2657,205 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
  * would read as a roster that forgot the man. */
 .muster-commend .cm.poor { opacity: .42; cursor: default; }
 .muster-commend .cm.poor:hover { border-color: rgba(255,255,255,.08); }
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  THE TOUCH PAD — src/engine/Touch.js
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * "is there any way you can make touch controls for the phone? (Don't fuck up
+ * the actual desktop game)"
+ *
+ * `#touch` is EMPTY and `display:none` until a finger has actually landed on
+ * the page — the module builds its children on the first `touchstart` and adds
+ * `.on`. So on a desktop this whole block matches one empty div and paints
+ * nothing, which is the stylesheet half of the same safety argument the module
+ * makes: a laptop with a touchscreen is untouched until somebody touches it.
+ *
+ * It obeys the same four laws as every other surface here — ink, flat, stamp,
+ * cut — because a control pad that looked like a web overlay would be the one
+ * object on the screen that did.
+ */
+#touch{position:fixed;inset:0;z-index:40;display:none;
+  /* The pad is a set of holes: the container itself must never eat a touch,
+     only its buttons and its two drag zones do. `touch-action:none` is what
+     stops the browser treating a drag as a scroll or a double tap as a zoom —
+     without it a swing gesture pulls the page down instead of the blade. */
+  pointer-events:none;touch-action:none;-webkit-user-select:none;user-select:none;
+  -webkit-tap-highlight-color:transparent}
+#touch.on{display:block;pointer-events:auto}
+
+/* THE STICK APPEARS UNDER THE THUMB. Placed by the module at the point the
+   finger landed — a fixed stick on a phone is a stick you miss, because you
+   are looking at the fight and not at your hand. Centred on its own origin,
+   so `left`/`top` can be the raw touch point. */
+#touch .tc-stick{position:absolute;transform:translate(-50%,-50%);border-radius:50%;
+  border:2px solid var(--stroke);background:rgba(8,10,20,.42);
+  box-shadow:0 0 0 2px rgba(72,216,255,.16);opacity:0;transition:opacity .12s;
+  display:flex;align-items:center;justify-content:center;pointer-events:none}
+#touch .tc-stick.on{opacity:1}
+#touch .tc-stick i{width:34%;height:34%;border-radius:50%;background:var(--accent);
+  border:2px solid var(--stroke);box-shadow:0 0 18px -4px var(--accent)}
+
+/* THE THUMB ARC, bottom right. `safe-area-inset` because a phone in landscape
+   puts a notch and a home bar exactly where the right thumb wants to be. */
+#touch .tc-pad{position:absolute;right:calc(18px + env(safe-area-inset-right,0px));
+  bottom:calc(18px + env(safe-area-inset-bottom,0px));
+  display:grid;grid-template-columns:repeat(3,auto);gap:10px;justify-items:end;align-items:end}
+#touch .tc-btn{-webkit-appearance:none;appearance:none;
+  width:74px;height:74px;padding:0;border:2px solid var(--stroke);
+  background:rgba(16,21,29,.62);color:var(--ink);
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.14em;
+  clip-path:var(--cut-sm);transition:background .08s,transform .08s;
+  touch-action:none}
+/* The GUARD is the one that is held, so it is the one you cannot miss. */
+#touch .tc-btn.big{width:96px;height:96px;font-size:10px;
+  background:rgba(24,32,44,.72);border-color:var(--accent);color:var(--accent)}
+/* The two left-hand holds sit under the LEFT thumb, past the stick — their own
+   rack against the left edge, not an absolutely-placed child of the right one.
+   Above the stick's reach so a thumb rolling onto RUN does not drag the stick
+   with it. */
+#touch .tc-left{position:absolute;left:calc(18px + env(safe-area-inset-left,0px));
+  bottom:calc(18px + env(safe-area-inset-bottom,0px));display:flex;gap:10px}
+#touch .tc-btn.left{width:64px;height:64px}
+#touch .tc-btn.down{background:var(--accent);color:var(--stroke);transform:scale(.94)}
+#touch .tc-btn.big.down{background:var(--accent);color:var(--stroke)}
+
+/* BETWEEN FIGHTS: menu, full screen, view, crouch. Small, top right, out of
+   the way of both thumbs — these are pressed when nothing is happening. */
+#touch .tc-tools{position:absolute;top:calc(14px + env(safe-area-inset-top,0px));
+  right:calc(14px + env(safe-area-inset-right,0px));display:flex;gap:8px}
+#touch .tc-tool{-webkit-appearance:none;appearance:none;padding:7px 11px 8px;
+  border:2px solid var(--stroke);background:rgba(16,21,29,.62);color:var(--dim);
+  font:var(--mono);font-size:9px;font-weight:800;letter-spacing:.14em;
+  clip-path:var(--cut-sm);touch-action:none}
+#touch .tc-tool.down{background:var(--accent);color:var(--stroke)}
+
+/* THE POWER WHEEL IS A BUTTON RACK ON A PHONE. It already lists exactly the
+   Force verbs this player holds, with the cooldown and the price on each, and
+   it already sits under the right thumb — so `Touch.bindWheel` makes its slots
+   pressable rather than laying out a second copy of them. This is the press
+   feedback; everything else about a slot is unchanged. */
+/* `body:has()` and not `#touch.on ~ #hud`: #touch is written AFTER #hud in
+   index.html, so the sibling combinator points the wrong way down the tree and
+   could never have matched. */
+body:has(#touch.on) .powers .pw{touch-action:none}
+.powers .pw.down{background:var(--accent);border-color:var(--accent)}
+.powers .pw.down svg{stroke:var(--stroke)}
+
+/* A PHONE IS PLAYED SIDEWAYS. The HUD's two bottom corners need the width, and
+   the pad needs both thumbs off the same edge. Said once, where a portrait
+   phone will actually read it. */
+#touch .tc-turn{position:absolute;inset:0;display:none;align-items:center;justify-content:center;
+  background:var(--void);color:var(--ink);font:var(--display);font-size:16px;
+  letter-spacing:.18em;text-transform:uppercase;text-align:center;padding:0 12vw}
+@media (orientation:portrait) and (pointer:coarse){
+  #touch.on .tc-turn{display:flex}
+}
+
+/* ══════════════════════════════════════════════════════════════════════
+ *  A PHONE, HELD SIDEWAYS — where the HUD and the thumbs meet
+ * ══════════════════════════════════════════════════════════════════════
+ *
+ * The pad wants three of the four corners the HUD already uses, and a
+ * landscape phone is 390 px tall where all of this was laid out at 720. What
+ * that actually looked like, measured in Chromium at 844x390 before any of the
+ * rules below existed:
+ *
+ *   #power-wheel  y 414..512 — the entire control row BELOW THE SCREEN. `.hud-br`
+ *                 is capped at `100vh - 300px`, which is 90 px on this phone,
+ *                 and a five-box bottom-anchored flow simply spills out of it.
+ *                 The powers were unreachable, not merely awkward.
+ *   .tc-tools     over `.hud-tr` by 172x20 — the score and the wave
+ *   .tc-left      over `.hud-bl` by 124x54 — the vitals, under the RUN button
+ *   .tc-pad       over `.hud-br` by 248x90 and the minimap by 132x102
+ *
+ * THE PAD WINS THE CORNERS, because it is the controller and the rest is a
+ * readout: a bar you cannot see is worse than a bar you cannot see for a
+ * moment, but a button you cannot press is the game not working. So every rule
+ * here moves the HUD and none of them moves a control.
+ *
+ * `(pointer:coarse)` and not a width: a 1024x600 touchscreen kiosk has this
+ * problem and a 900x500 desktop window does not, because the desktop window
+ * has no pad in it. The height is what the problem actually is.
+ */
+@media (pointer:coarse) and (max-height:560px){
+  /**
+   * AND THE HUD COMES UP OVER THE PAD, which is the one rule here that is not
+   * about where a box sits.
+   *
+   * `#hud` is `position:fixed; z-index:20`, so it is a STACKING CONTEXT: a
+   * child's z-index is resolved inside it and cannot climb out. `#power-wheel`
+   * at z-index 50 was therefore still painted under `#touch` at 40, and
+   * `elementFromPoint` on a slot answered `#touch` — the wheel was on screen,
+   * correctly laid out, and could not be pressed. The context has to move, not
+   * the child.
+   *
+   * SAFE BECAUSE THE HUD TAKES NO POINTER. `#hud` is `pointer-events:none` and
+   * the wheel is the only thing in it that turns them back on, so raising the
+   * layer moves paint order and one hit target and nothing else. And no box up
+   * here overlaps a control anyway — that is what the rest of this block is
+   * for, and what the browser check asserts at three phone sizes.
+   */
+  #hud{z-index:50}
+
+  /* THE SCORE DROPS UNDER THE TOOL ROW. It is the only thing up there. */
+  .hud-tr{top:56px}
+
+  /* THE VITALS CLIMB OVER THE LEFT-HAND RACK — 64 px of button plus its inset
+     plus a gap. Still bottom-left, still the first thing a glance lands on. */
+  .hud-bl{bottom:calc(86px + env(safe-area-inset-bottom,0px))}
+
+  /* THE COMMANDER COLUMN LEAVES THE THUMB and takes the free top band, and it
+     is TOP-anchored there on purpose: a bottom-anchored flow on a short
+     viewport spills off the BOTTOM, which is exactly how the power wheel ended
+     up 122 px below the screen. Bounded on both axes so it can never grow into
+     the vitals on its left or the pad below it — the boxes that can give (the
+     roll, the call list) shrink instead, which is what the cap has always been
+     for. `right` clears the thumb rack: 264 px of buttons, an 18 px inset and
+     a gap. */
+  .hud-br{top:14px;bottom:auto;right:300px;
+    max-width:240px;max-height:calc(100vh - 220px)}
+  /* The radar at two thirds. The canvas keeps its own backing store — HUD's
+     Minimap writes that from MINIMAP.size — so this scales the box down and
+     the drawing gets sharper, not softer. */
+  #minimap{width:84px;height:84px}
+
+  /* THE WHEEL IS A CONTROL, so it leaves the readout column entirely and takes
+     the band between the two thumb racks, where there is nothing else.
+     `pointer-events:auto` because `#hud` turns them off for the whole readout,
+     and this is the one part of it that is pressed. The layer it needs to be
+     above is raised on `#hud` itself — see the note there. */
+  #power-wheel{position:fixed;z-index:2;pointer-events:auto;
+    left:calc(280px + env(safe-area-inset-left,0px));
+    right:calc(292px + env(safe-area-inset-right,0px));
+    bottom:calc(14px + env(safe-area-inset-bottom,0px));
+    max-width:none;justify-content:flex-start}
+  /* Smaller slots, because two rows of them have to fit under the band. The
+     glyph is the slot — see `.pw` — so it scales with it. */
+  .pw{width:38px;height:38px}
+  .pw svg{width:19px;height:19px}
+}
+
+/* A SMALL PHONE — an SE on its side is 667x375, and the full-size rack leaves
+   no band at all between the two thumbs. The buttons come down; the guard
+   stays the biggest thing on the screen. */
+@media (pointer:coarse) and (max-height:560px) and (max-width:700px){
+  #touch .tc-btn{width:64px;height:64px}
+  #touch .tc-btn.big{width:84px;height:84px}
+  #touch .tc-btn.left{width:56px;height:56px}
+  .hud-bl{bottom:calc(78px + env(safe-area-inset-bottom,0px))}
+  /* The rack is 232 px wide here rather than 264, so everything that was
+     placed to clear it moves right with it — otherwise the readout column
+     stays over the vitals, which is where it landed first (17x45 at 667x375). */
+  /* …and it drops under the tool row too. There is no top band left beside
+     MENU/FULL/1st-3rd/Crouch on a 667 px screen — placed level with them the
+     column sat on the tools by 22x32. */
+  .hud-br{right:260px;top:56px;max-height:calc(100vh - 250px)}
+  #power-wheel{left:calc(260px + env(safe-area-inset-left,0px));
+    right:calc(260px + env(safe-area-inset-right,0px))}
+  /* And the band between the thumbs is 147 px on this phone, so the slots come
+     down again. Small, but a power you can reach beats a power you can read. */
+  .powers{gap:5px}
+  .pw{width:32px;height:32px}
+  .pw svg{width:16px;height:16px}
+}

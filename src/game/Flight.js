@@ -80,18 +80,26 @@ import { clamp } from '../engine/MathUtil.js';
 /**
  * A STANDING PLAYER'S BLADE, in metres off the floor, and it is MEASURED.
  *
- * 3.047 m is the highest the tip of a lit blade gets during an overhead swing,
+ * 2.768 m is the highest the tip of a lit blade gets during an overhead swing,
  * off a real `Player` driven through `Player.update` on flat ground with the
- * shipped `attackOver` binding held. The hilt tops out at 1.953 m and a thrust,
- * a stab and a spin all top out at 2.20–2.23 m, so the overhead is the number
+ * shipped `attackOver` binding held. The hilt tops out at 1.674 m and a thrust,
+ * a stab and a spin all top out at 1.92–1.95 m, so the overhead is the number
  * that matters and it is the most generous one the player has.
+ *
+ * IT WAS 3.047 UNTIL THE CARRY MOVED. "The carry is per view: a sword in front
+ * of the chest, not the chin" lowered where the blade is held, and everything
+ * came down with it by the same 0.279 m — the hilt from 1.953, the tip from
+ * 3.047, the three lesser swings from 2.20–2.23. That the drop was IDENTICAL
+ * across the hilt and all four attacks is what says it was the carry and not a
+ * weakened swing, and it is the reason this line is checked rather than
+ * trusted: a hand-maintained twin of a driven body drifts silently, and this
+ * one had been describing a player who no longer existed for three days.
  *
  * `tools/checks/flight.mjs` re-measures it every run rather than trusting this
  * line: it is here so the altitudes below can be read against something, and
- * the check is what stops it from becoming a hand-maintained twin of a driven
- * body (HANDOFF §2.3).
+ * the check is what stops it from becoming that twin again (HANDOFF §2.3).
  */
-export const BLADE_REACH = 3.047;
+export const BLADE_REACH = 2.768;
 
 /**
  * WHAT THE REFERENCE STATES AND WHAT WAS BUILT — the same contract as

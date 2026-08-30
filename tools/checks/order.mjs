@@ -38,7 +38,7 @@ import { ORDERS, ORDER_IDS, getOrder, applyOrder, crystalPalette, crystalAt,
 import { ROBE_COLORS } from '../../src/game/Bodies.js';
 import { BOONS } from '../../src/game/Waves.js';
 import { readFile } from 'node:fs/promises';
-import { clocked } from './_shared.mjs';
+import { clocked, modsMoved } from './_shared.mjs';
 
 const src = (p) => new URL(`../../src/${p}`, import.meta.url);
 
@@ -658,10 +658,7 @@ export async function run({ check, assert, near }) {
     for (const o of ORDERS) {
       const p = subject(o.id);
       const before = subject(null);
-      const touched = [];
-      for (const k of Object.keys(p.boonMods)) {
-        if (p.boonMods[k] !== before.boonMods[k]) touched.push(k);
-      }
+      const touched = modsMoved(p.boonMods, before.boonMods);
       for (const k of ['maxHp', 'maxForce', 'maxStamina']) if (p[k] !== before[k]) touched.push(k);
       if (touched.length < 2) inert.push(`${o.id} (${touched.length} fields)`);
       for (const k of touched) {

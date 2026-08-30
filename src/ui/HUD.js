@@ -1036,17 +1036,25 @@ export class FreeCam {
       // the gait's own function, so the creep here is the creep there.
       const boost = input.act('sprint') ? FREECAM.boost : walkScale(input);
       const v = FREECAM.speed * boost * dt;
+      /* THROUGH `actAxis`, NOT `act`, and the difference is a whole device.
+       * A held key answers 1 to both, but a STICK — a pad's or a thumb's — only
+       * ever answers `actAxis`: `act('moveF')` reads `touchHeld` and the key
+       * table, and neither of those is where a stick's magnitude lives. Read
+       * the wrong one and the free camera is the one place in the game a stick
+       * does not move you, which is also how it would read as broken rather
+       * than as unbound. The four the body walks on go through `moveAxis`, and
+       * this is the same question one level down. */
       let f = 0, r = 0, u = 0;
-      if (input.act('moveF')) f += 1;
-      if (input.act('moveB')) f -= 1;
-      if (input.act('moveR')) r += 1;
-      if (input.act('moveL')) r -= 1;
+      f = input.actAxis('moveF') - input.actAxis('moveB');
+      r = input.actAxis('moveR') - input.actAxis('moveL');
       if (input.act('jump')) u += 1;
       if (input.act('crouch')) u -= 1;
-      if (f || r) {
-        const len = Math.hypot(f, r);
-        f /= len; r /= len;
-      }
+      /* CLAMPED, not normalised. Two keys held is `hypot(1,1)` and has to come
+       * back to 1, but a stick eased a third of the way is already 0.33 and
+       * normalising it would push it to full speed — the exact switch the
+       * analog read was for. Same rule as `Input.moveAxis`. */
+      const len = Math.hypot(f, r);
+      if (len > 1) { f /= len; r /= len; }
       _fe.set(this.pitch, this.yaw, 0, 'YXZ');
       _fq.setFromEuler(_fe);
       _fwd.set(0, 0, -1).applyQuaternion(_fq);
@@ -1609,6 +1617,19 @@ export class HUD {
       const d = document.createElement('div');
       d.className = 'pw';
       /**
+       * THE SLOT NAMES ITS ACTION — one attribute, and it is what makes a
+       * phone playable past the six buttons a thumb rack can hold.
+       *
+       * There are forty-four actions and two thumbs, so the touch pad carries
+       * the ones a fight cannot be had without and nothing else. The Force
+       * verbs are already HERE, in a row of exactly the powers this player
+       * holds, with the cooldown, the price and the ready state on each, under
+       * the right thumb. `Touch.bindWheel` makes them pressable; this is the
+       * only thing that had to change for it, and it changes nothing on a
+       * desktop — an unread data attribute is not a behaviour.
+       */
+      d.dataset.action = action;
+      /**
        * FIVE CHILDREN, EACH CREATED AND HELD — not one innerHTML blob picked
        * apart with `querySelector` afterwards.
        *
@@ -1920,7 +1941,20 @@ export class HUD {
     this._lightOrder();
   }
 
-  show(on) { this.el.hud.classList.toggle('hidden', !on); }
+  /**
+   * THE READOUT GOES UP OR DOWN — and whatever else belongs with it.
+   *
+   * `onShow` exists for exactly one caller: the touch pad is the CONTROLLER
+   * rather than part of the readout, so it lives outside `#hud` — but it must
+   * appear and vanish on precisely the same four moments, and a phone player
+   * whose thumb is on GUARD when the menu opens must not keep guarding. Four
+   * hand-copied `touch.show(...)` lines beside the four `hud.show(...)` calls
+   * is the shape this repository keeps deleting; one hook is not.
+   */
+  show(on) {
+    this.el.hud.classList.toggle('hidden', !on);
+    this.onShow?.(!!on);
+  }
 
   setLevel(name, difficulty) {
     this.el.level.textContent = name;

@@ -101,10 +101,43 @@ export async function run({ check, assert }) {
       enemies: [], players: [], difficulty: null, takenBoons: new Set(), level: L,
       settings: { mode: 'command', level: 'geonosis', order: 'jedi' },
     });
+    /**
+     * THE CONTROL HAS TO SUPPRESS THE LEVY AND NOTHING ELSE, and the first
+     * version of it did not.
+     *
+     * It replaced the whole override with the base class's method — which drops
+     * every wrapper on that line, not just the levy. `applyArmour` was added
+     * beside `applyLevy` after this check was written, so the control quietly
+     * stopped fielding a walker the levied arm still fielded, and the A/B
+     * reported the LEVY as having changed the wave. It had not: the diff was
+     * one `walker`, and it was armour's.
+     *
+     * So the wrappers are read off the production method and re-applied, all of
+     * them but the levy, innermost first. A third wrapper added tomorrow fails
+     * the assertion by name instead of silently becoming part of the measured
+     * difference.
+     */
+    const WRAPPERS = {
+      applyArmour: (await import('../../src/game/Armour.js')).applyArmour,
+      applyLevy: (await import('../../src/game/Levy.js')).applyLevy,
+    };
+    const src = Cmd.CommandDirector.prototype._composeUnder.toString();
+    const used = [...src.matchAll(/\b(apply[A-Z]\w*)\s*\(/g)].map((m) => m[1]);
+    const unknown = used.filter((n) => !WRAPPERS[n]);
+    assert(!unknown.length,
+      `_composeUnder now calls ${unknown.join(', ')} and this control cannot suppress it — `
+      + 'add it to WRAPPERS or the A/B measures that wrapper as well as the levy');
+    assert(used.includes('applyLevy'), '_composeUnder no longer applies the levy at all');
     const arm = (levied) => {
       Waves.seedWaves(20260821);
       const d = new Cmd.CommandDirector(stub(), { pool: L.pool, seed: 4242 });
-      if (!levied) d._composeUnder = Waves.WaveDirector.prototype._composeUnder.bind(d);
+      if (!levied) {
+        // source order is outermost-first, so re-apply in reverse
+        const keep = used.slice().reverse().filter((n) => n !== 'applyLevy');
+        d._composeUnder = (wave, keys) => keep.reduce(
+          (out, n) => WRAPPERS[n](out, d, wave),
+          Waves.WaveDirector.prototype._composeUnder.call(d, wave, keys));
+      }
       d.start(1);
       d.wave = 5;
       d._compose();

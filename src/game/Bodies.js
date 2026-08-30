@@ -3988,7 +3988,34 @@ function fitHoodToHead(g, prof, oy, oz, gap) {
     const r = Math.hypot(x, z);
     if (r >= need || r < 1e-6) continue;
     const k = need / r;
-    p.setXYZ(i, x * k, p.getY(i), z * k - oz);
+    /**
+     * RADIALLY FROM THE HEAD'S CORE, AND NOT SIDEWAYS. This one line was the
+     * whole of "a hood you can see the head through".
+     *
+     * The first version moved the vertex out in x and z at CONSTANT y, which
+     * is the obvious reading of "push the shell out until it clears the
+     * skull" and is wrong in a way nothing about the shell says. From a point
+     * inside the head, moving a vertex outward while holding its height
+     * FLATTENS the direction it lies in: every point of the shell slides down
+     * in angle, the cap over the crown thins, and the skull comes out through
+     * the top of its own hood. Measured against `hoods.mjs`'s ray test, the
+     * cowl fell from 80.0% of the cranium covered to 68.8 and the Sith hood
+     * from 83.8 to 52.5 — a third of the head bare, on the two most-worn cuts
+     * in the game, from a change whose entire subject was making hoods fit.
+     *
+     * It was not the air gap: at a gap of zero the same two read 71.3 and
+     * 60.0, because the flattening happens whenever a vertex moves at all. And
+     * it was not the 24x16 grid being read cell-by-cell — interpolating it
+     * bilinearly changed the four numbers by nothing.
+     *
+     * Scaling y about the profile's middle by the same factor makes the push a
+     * true radial one, so the angle a vertex lies in is what it was and the
+     * cover is what the cut authored. 78.8 / 78.8 / 100.0 / 81.3, all four
+     * over the bar, with the cloth still held off the skull — which is what
+     * the fit was for.
+     */
+    const cy = prof.lo + prof.span * 0.5;
+    p.setXYZ(i, x * k, (cy + (y - cy) * k) - oy, z * k - oz);
     moved++;
   }
   if (moved) { p.needsUpdate = true; g.computeVertexNormals(); }

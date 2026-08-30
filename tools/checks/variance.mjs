@@ -1,3 +1,4 @@
+import { modsMoved } from './_shared.mjs';
 /**
  * BATTLEFRONT BORZ — the facets that change a rule.
  *
@@ -68,7 +69,7 @@ export async function run({ check, assert }) {
        * the coefficients the other forty cards move. */
       const p = { boonMods: defaultBoonMods() };
       b.apply(p, 1);
-      const moved = Object.keys(mods).filter((k) => p.boonMods[k] !== mods[k]);
+      const moved = modsMoved(p.boonMods, mods);
       assert(moved.length && moved.length <= 2,
         `${id} moves ${moved.length} fields (${moved.join(', ')}) — a facet that changes a rule `
         + 'changes one sentence, and one that changes six is a stat card');

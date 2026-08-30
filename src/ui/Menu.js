@@ -6,6 +6,9 @@
  */
 
 import * as THREE from 'three';
+/* The one place a menu can ask for the whole screen — see Fullscreen.js for
+ * why it must be a press and never a frame-loop decision. */
+import { canFullscreen, toggleFullscreen } from '../engine/Fullscreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood } from '../game/Bodies.js';
@@ -885,6 +888,26 @@ export const DEFAULT_SETTINGS = {
   // reader with no setting is the same lie as a setting with no reader, just
   // pointing the other way.
   bladeHold: false,
+  /**
+   * GO FULL SCREEN WHEN YOU IGNITE.
+   *
+   * "make sure there's a way to make the game full screen right now you still
+   * see your browser/tabs/desktop but I think it would be cool to be able to
+   * be completely full screen"
+   *
+   * A SETTING and not an action: the fullscreen API is only granted inside a
+   * user gesture, so it cannot be something the frame loop decides to do — it
+   * has to ride a press the player already made, and Ignite is that press.
+   * The button beside this checkbox is the other half, for a player who wants
+   * it now rather than at the next deploy.
+   *
+   * Off by default, because a desktop player who has arranged their windows
+   * did not ask for the tab strip to vanish. On a phone it is the difference
+   * between a playable screen and one where the URL bar slides over the guard
+   * button — the touch pad carries its own FULL button for that reason and
+   * does not wait for this.
+   */
+  fullscreen: false,
 };
 
 /** The blade may only be long while the training leash is off. */
@@ -1055,6 +1078,9 @@ export const SETTING_READERS = {
   grassScale:      ['game/World.js', 'this.settings.grassScale'],
   particleScale:   ['game/World.js', 'this.settings.particleScale'],
   bladeHold:       ['game/World.js', 'this.settings.bladeHold'],
+  /* Read at the one moment a browser will grant the request: the Ignite press.
+   * See the note on the setting itself for why it cannot be an action. */
+  fullscreen:      ['main.js', 'settings.fullscreen'],
   /**
    * The voice, the room and the reticle.
    *
@@ -7346,6 +7372,27 @@ export class Menu {
     // onto every player's controller, so it bites on the next frame instead of
     // on the next deploy.
     this._check('opt-bladehold', 'bladeHold', () => this.hooks.onFeel?.(this.s));
+    /**
+     * FULL SCREEN — the box, and the button beside it.
+     *
+     * The BOX is a preference read at Ignite (main.js). The BUTTON is the only
+     * way to get there right now, and it has to be a press: the fullscreen API
+     * is granted inside a user gesture and refused everywhere else, which is
+     * the same reason this is not an action with a key on it.
+     *
+     * Both are hidden where the API does not exist — iOS Safari on an iPhone
+     * has no fullscreen at all — because a control the game will ignore is the
+     * exact defect `SETTING_READERS` and the dead-control checks are about,
+     * and it is not made acceptable by the browser being the one ignoring it.
+     */
+    this._check('opt-fullscreen', 'fullscreen');
+    const fsBtn = document.getElementById('btn-fullscreen');
+    if (fsBtn) {
+      this._activate(fsBtn, () => { audio.ui('click'); toggleFullscreen(); });
+      fsBtn.classList.toggle('hidden', !canFullscreen());
+    }
+    document.getElementById('opt-fullscreen')?.closest('label')
+      ?.classList.toggle('hidden', !canFullscreen());
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._syncBloomBox();
     this._check('opt-showperf', 'showPerf', () => this._syncDiag());

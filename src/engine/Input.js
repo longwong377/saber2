@@ -94,6 +94,31 @@ export class Input {
     this._navDir = null; this._navWait = 0; this._navSuppress = false;
     this.padDownSet = new Set();
     this.padPressedSet = new Set();
+    /* ── THE THIRD DEVICE: A THUMB ────────────────────────────────────
+     *
+     * "the game actually runs pretty decent on the phone but there's no
+     * control scheme… is there any way you can make touch controls for the
+     * phone? (Don't fuck up the actual desktop game)"
+     *
+     * A touch control is bound to an ACTION and never to a key code, which is
+     * the one way it differs from the other two devices and the reason it gets
+     * its own sets rather than synthesising `KeyW`. A screen button cannot be
+     * rebound — there is no keyboard to rebind it to — and a player who has
+     * moved Force push onto G must still get Force push when they press the
+     * button that says Force push. So the touch layer names the action and
+     * `act`/`actHit`/`actAxis` read these three beside the bindings table.
+     *
+     * EMPTY ON A DESKTOP, AND THAT IS THE WHOLE OF THE SAFETY ARGUMENT.
+     * Nothing writes to them until `Touch` is built, and `Touch` is built on
+     * the first real `touchstart` and never before — so on a machine with a
+     * mouse every read below is a lookup in an empty Set, which is the same
+     * answer it gave before this existed.
+     */
+    this.touchHeld = new Set();
+    this.touchHitSet = new Set();
+    this.touchAxes = new Map();
+    /** True once a finger has actually been used. Suppresses pointer lock. */
+    this.touchActive = false;
     this.padAxis = { 0: 0, 1: 0, 2: 0, 3: 0 };
     this.bindings = loadBindings();
     this._chordsBy = new Map();
@@ -207,6 +232,11 @@ export class Input {
 
   requestLock() {
     if (this.locked) return;
+    /* A PHONE HAS NO POINTER TO LOCK. `requestPointerLock` on a touch device
+     * either rejects or — worse on some Android builds — succeeds and swallows
+     * the touches the on-screen controls need. The touch layer is the pointer
+     * there, so this is a no-op the moment a finger has been used. */
+    if (this.touchActive) return;
     // Both paths can reject — most often "a user gesture is required", which
     // simply means the caller has to wait for the next click. Swallow it; an
     // unhandled rejection here would surface as a page error.
@@ -401,6 +431,10 @@ export class Input {
     this.pressed.clear(); this.released.clear();
     this.buttonPressed.fill(false);
     this.buttonReleased.fill(false);
+    /* The touch EDGE is cleared with the keyboard's and the pad's, so a tap is
+     * one `actHit` on exactly one frame. What is HELD is not cleared here —
+     * that is the finger's business and it clears it on lift. */
+    this.touchHitSet.clear();
   }
 
   down(code) { return this.keys.has(code); }
@@ -511,6 +545,7 @@ export class Input {
 
   /** Is any key bound to this action currently held. */
   act(id) {
+    if (this.touchHeld.has(id)) return true;
     const keys = this.bindings[id];
     if (!keys) return false;
     for (let i = 0; i < keys.length; i++) if (this._codeDown(keys[i])) return true;
@@ -518,6 +553,7 @@ export class Input {
   }
   /** Did any key bound to this action go down THIS frame. */
   actHit(id) {
+    if (this.touchHitSet.has(id)) return true;
     const keys = this.bindings[id];
     if (!keys) return false;
     for (let i = 0; i < keys.length; i++) if (this._codeHit(keys[i])) return true;
@@ -538,9 +574,15 @@ export class Input {
    * different opinions on the same frame.
    */
   actAxis(id) {
+    /* THE STICK IS ANALOG ON A THUMB TOO. A virtual stick eased a third of the
+     * way walks a third of the pace, for the same reason the pad's does — a
+     * threshold here would turn the one advantage a stick has over a key into
+     * another switch. Read as a floor rather than a return, so a finger and a
+     * held key on the same action answer with the stronger of the two. */
+    let best = this.touchAxes.get(id) ?? 0;
+    if (best >= 1) return 1;
     const keys = this.bindings[id];
-    if (!keys) return 0;
-    let best = 0;
+    if (!keys) return best;
     for (let i = 0; i < keys.length; i++) {
       const code = keys[i];
       const a = PAD_AXES[code];

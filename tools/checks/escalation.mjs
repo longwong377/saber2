@@ -27,6 +27,7 @@
  * modelled and compared against what the director charges for it.
  */
 
+import { modsMoved } from './_shared.mjs';
 import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
@@ -2141,21 +2142,40 @@ export async function run({ check, assert }) {
     const rows = [];
     for (const m of masteries) {
       const axis = m.axes[0];
+      /**
+       * EACH CARD'S OWN THRESHOLD, and this used to be one global number.
+       *
+       * There are two tiers of requiring card — a mastery at `MASTERY_NEEDS`
+       * and an unbound power at `UNBOUND_NEEDS`, one deeper, so the second
+       * arrives after the first instead of alongside it. Driven at the global
+       * number the ten unbound cards were each asked at one short of their own
+       * gate, answered no, and were reported unreachable. A threshold that is
+       * only inside the closure cannot be asked, so the card declares it.
+       */
+      const needs = m.needs;
+      assert(Number.isInteger(needs) && needs >= 1,
+        `${m.id} gates on what you hold and does not say how much — \`needs\` is ${JSON.stringify(needs)}`);
       const others = Waves.BOONS.filter(b => b.id !== m.id && b.axes.includes(axis));
-      assert(others.length >= Waves.MASTERY_NEEDS,
-        `${m.id} needs ${Waves.MASTERY_NEEDS} of "${axis}" and only ${others.length} other cards carry it — it is unreachable`);
-      const two = new Set(others.slice(0, Waves.MASTERY_NEEDS - 1).map(b => b.id));
-      const enough = new Set(others.slice(0, Waves.MASTERY_NEEDS).map(b => b.id));
-      assert(!m.requires(two), `${m.id} is offered on ${Waves.MASTERY_NEEDS - 1} of its axis`);
-      assert(m.requires(enough), `${m.id} is not offered even on ${Waves.MASTERY_NEEDS} of its axis`);
+      assert(others.length >= needs,
+        `${m.id} needs ${needs} of "${axis}" and only ${others.length} other cards carry it — it is unreachable`);
+      const short = new Set(others.slice(0, needs - 1).map(b => b.id));
+      const enough = new Set(others.slice(0, needs).map(b => b.id));
+      assert(!m.requires(short), `${m.id} is offered on ${needs - 1} of its axis`);
+      assert(m.requires(enough), `${m.id} is not offered even on ${needs} of its axis`);
       // and the draft really does withhold it
       let offered = 0;
       for (let i = 0; i < 600; i++) {
-        if (Waves.drawBoons(3, two, 30).some(b => b.id === m.id)) offered++;
+        if (Waves.drawBoons(3, short, 30).some(b => b.id === m.id)) offered++;
       }
-      assert(offered === 0, `${m.id} was offered ${offered} times to a player holding only ${two.size} of its axis`);
-      rows.push(`${m.id}←${axis}×${Waves.MASTERY_NEEDS}`);
+      assert(offered === 0, `${m.id} was offered ${offered} times to a player holding only ${short.size} of its axis`);
+      rows.push(`${m.id}←${axis}×${needs}`);
     }
+    /* AND THE TWO TIERS ARE ACTUALLY TWO. If they ever collapse onto one
+     * number the deeper one stops being deeper and this check would pass
+     * without noticing — which is the state it was in. */
+    assert(Waves.UNBOUND_NEEDS > Waves.MASTERY_NEEDS,
+      `an unbound power needs ${Waves.UNBOUND_NEEDS} of its axis and a mastery needs `
+      + `${Waves.MASTERY_NEEDS} — the deeper tier is not deeper`);
     // one per axis, so no axis is a dead end
     const axes = new Set(Waves.BOONS.flatMap(b => b.axes));
     const covered = new Set(masteries.flatMap(b => b.axes));
@@ -2528,10 +2548,7 @@ export async function run({ check, assert }) {
       const p = driven();
       p.boons.add(boon.id);
       boon.apply(p);
-      const keys = Object.keys(p.boonMods).filter(k => {
-        const base = driven().boonMods;
-        return p.boonMods[k] !== base[k];
-      });
+      const keys = modsMoved(p.boonMods, driven().boonMods);
       return { keys: keys.sort(), cut: p.boonMods.cutPower };
     };
     const a = chan(dj), b = chan(sh);

@@ -252,6 +252,11 @@ class Element {
     for (let n = this; n; n = n.parentElement) if (n.matches(sel)) return n;
     return null;
   }
+  /** Node.contains — true for the node itself, as the DOM's is. */
+  contains(node) {
+    for (let n = node; n; n = n.parentNode) if (n === this) return true;
+    return false;
+  }
 
   /* ── events & focus ───────────────────────────────────────────────── */
   addEventListener(type, fn) {

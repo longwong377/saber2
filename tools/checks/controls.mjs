@@ -49,7 +49,7 @@ import { Particles } from '../../src/world/Particles.js';
 import { GrassField } from '../../src/world/Scenery.js';
 import { Terrain } from '../../src/world/Terrain.js';
 import { DojoDirector } from '../../src/game/Dojo.js';
-import { clocked } from './_shared.mjs';
+import { clocked, modsMoved } from './_shared.mjs';
 
 /**
  * Where every COLUMN of Engine's QUALITY table is actually read.
@@ -721,7 +721,13 @@ export async function run({ check, assert }) {
 
     const readers = new Map();
     for (const [path, text] of files) {
-      for (const m of text.matchAll(/\.act(?:Hit)?\(\s*['"]([A-Za-z0-9_]+)['"]/g)) {
+      /* `actAxis` counts as reading the action, and it has to. A STICK — the
+       * pad's or the touch pad's — only ever answers `actAxis`: `act(id)`
+       * reads `touchHeld` and the key table, and a magnitude lives in neither.
+       * The free camera was the last caller asking `act('moveF')`, and moving
+       * it onto the axis (so a thumb can fly it) briefly made all four
+       * movement keys read as handled by nobody. */
+      for (const m of text.matchAll(/\.act(?:Hit|Axis)?\(\s*['"]([A-Za-z0-9_]+)['"]/g)) {
         if (!readers.has(m[1])) readers.set(m[1], []);
         readers.get(m[1]).push(path);
       }
@@ -1676,10 +1682,7 @@ export async function run({ check, assert }) {
     for (const b of BOONS) {
       const before = base(), after = base();
       b.apply(after);
-      const touched = [];
-      for (const k of Object.keys(after.boonMods)) {
-        if (after.boonMods[k] !== before.boonMods[k]) touched.push(k);
-      }
+      const touched = modsMoved(after.boonMods, before.boonMods);
       // Numbers are the easy half. A boon whose effect is a TECHNIQUE leaves no
       // number behind at all — it installs something on the instance — so an
       // own-key diff has to count too, or the one boon that was a lie would be
