@@ -319,12 +319,47 @@
             + '\n\n' + navigator.userAgent;
           if (msg) msg.textContent = 'could not start';
         }
+        /**
+         * AND WHEN THE MODULE FAILS, ASK THE NETWORK DIRECTLY.
+         *
+         * A `<script type="module">` fires the SAME bare `error` event whether
+         * its file 404'd, was blocked by an extension, or parsed badly
+         * somewhere deep in the graph — the event carries no message and no
+         * status, which is why the first version of this said "a file did not
+         * load" about a file that was sitting right there.
+         *
+         * `fetch` is a different mechanism with a different answer: a status
+         * tells us the file is served and the fault is in PARSING it, a network
+         * error tells us something is stopping the request, and a `type` of
+         * text/html where JavaScript should be tells us the host served a 404
+         * page with a 200 on it. One request settles what a week of guessing
+         * could not.
+         */
+        function probeFile(url, done) {
+          try {
+            fetch(url, { cache: 'no-store' }).then(function (r) {
+              done('HTTP ' + r.status + ' ' + (r.headers.get('content-type') || 'no content-type'));
+            }, function (err) {
+              done('the request itself failed: ' + (err && err.message)
+                   + ' — something is blocking it (an extension, or the network)');
+            });
+          } catch (err) { done('fetch threw: ' + (err && err.message)); }
+        }
         window.addEventListener('error', function (e) {
           /* A failed <script>/<img>/<link> fires an error whose target is the
              element, not a message: name the file rather than saying "Script
              error", which is what a cross-origin module reports. */
           var t = e && e.target;
-          if (t && t !== window && t.src) return say('A file the game needs did not load.', t.src);
+          if (t && t !== window && t.src) {
+            var url = t.src;
+            say('The browser could not build the game from ' + url + '.',
+                'A module script reports the same error for a file that did not arrive and for one '
+                + 'that arrived and would not parse, so the line below asks the network which it was.');
+            probeFile(url, function (answer) {
+              if (box) box.textContent += '\n\nThe file itself: ' + answer;
+            });
+            return;
+          }
           say((e && e.message) || 'A script error with no message.',
               e && e.filename ? e.filename + ':' + e.lineno : '');
         }, true);

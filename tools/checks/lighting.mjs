@@ -1369,7 +1369,14 @@ export function run({ check, assert, near, THREE: T }) {
       try {
         await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded' });
         const out = await page.evaluate(async (level) => {
-          const T = await import('three');
+          /* THE PAGE RESOLVES THIS, NOT NODE. index.html carries no import map
+           * any more — it was setting a Firefox 108 / Safari 16.4 floor on a
+           * game that runs on far older engines — so a bare 'three' in here is
+           * a specifier the BROWSER cannot answer, and this check failed with
+           * "Failed to resolve module specifier 'three'". The other
+           * `import('three')` calls in this suite run in node under
+           * `register.mjs` and are untouched. */
+          const T = await import('/vendor/three/three.module.js');
           const { Engine } = await import('/src/engine/Engine.js');
           const { LEVELS } = await import('/src/game/Levels.js');
           const cv = document.createElement('canvas');
