@@ -1414,7 +1414,32 @@ export async function run({ check, assert }) {
     p.forceHeal(ctx);
     assert(p.healTarget === mate, 'the mend did not open on the ally');
     for (let i = 0; i < 12; i++) world.update(1 / 60, input);
+    /**
+     * THE BOLT HAS TO ACTUALLY LAND, and once in twenty-five runs it did not.
+     *
+     * `Player.damage` opens `if (!this.alive || this.invuln > 0) return false;`
+     * and the `b1` this fixture spawns is alive and shooting for the whole
+     * scenario. When one of its bolts lands a few frames before this line, the
+     * player is inside the invulnerability window and the test's own six damage
+     * is discarded — so hp does not move, `hp < _healFrom` is false, and the
+     * mend carries on for exactly the right reason while the check reports that
+     * it "carried on regardless".
+     *
+     * Measured by looping the scenario: one failure in twenty-five, at the same
+     * run and with the same numbers on either side of a month of commits — hp
+     * 44.52 before the hit and 44.52 after. Not random: phase-dependent, which
+     * is why it surfaced in a full run and hid when the suite was re-run alone.
+     *
+     * So the window is cleared and the premise is ASSERTED. A check whose
+     * subject is "what happens when you are hit" must not be able to pass, or
+     * fail, on a frame where you were not.
+     */
+    p.invuln = 0;
+    const hpBefore = p.hp;
     p.damage(6, p.position, foe, 'bolt');
+    assert(p.hp < hpBefore - 0.01,
+      `the fixture's own bolt did not land — hp ${hpBefore.toFixed(2)} before and ${p.hp.toFixed(2)} `
+      + 'after, so this run cannot say anything about what a hit does to a mend');
     world.update(1 / 60, input);
     assert(p.healing === null, 'a hit landed on the healer and the mend carried on regardless');
     return 'a hostile is not a patient; a hit on the healer ends it';
