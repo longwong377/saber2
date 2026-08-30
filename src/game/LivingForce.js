@@ -256,28 +256,47 @@ export function insightAfter(waves, bossEvery = BOSS_EVERY, rate = null) {
  * Holocron is a rack of plates and a current is one plate, laid out by the
  * grid. See the note where the coordinate space used to be.
  */
+/**
+ * WHAT EACH CURRENT IS FOR, in one plain line.
+ *
+ * The six plates are the whole navigation of the Book, and they carried a NAME
+ * and a COUNT and nothing else. "THE GUARDIAN 3/8" does not tell a player that
+ * this is the column with cutting power in it, and the creed underneath —
+ * "The blade is the last argument, and the shortest" — is a mood, not a
+ * signpost. A player scanning six columns for somewhere to put four Insight
+ * had no way to choose but to open all of them.
+ *
+ * So `what` is the signpost and the creed stays the mood. Written from what
+ * the axis's own cards actually do.
+ */
 export const CURRENTS = [
   { axis: 'blade', root: 'attune-blade', 
+    what: 'Cutting power, swing speed and reach.',
     jedi: 'The Guardian', sith: 'The Executioner', grey: 'The Blade',
     creed: { jedi: 'The blade is the last argument, and the shortest.',
              sith: 'There is no argument. There is the blade.' } },
   { axis: 'guard', root: 'attune-guard', 
+    what: 'Deflection, ripostes, and taking less when it lands.',
     jedi: 'The Sentinel', sith: 'The Bulwark', grey: 'The Guard',
     creed: { jedi: 'What is turned aside was never yours to answer for.',
              sith: 'Let it come. Let it come back.' } },
   { axis: 'force', root: 'attune-force', 
+    what: 'The size of your Force, what it costs, and how fast it comes back.',
     jedi: 'The Book', sith: 'The Sorcerer', grey: 'The Well',
     creed: { jedi: 'The Force is not a weapon you spend.',
              sith: 'Everything is a weapon, if you are willing to spend it.' } },
   { axis: 'body', root: 'attune-body', 
+    what: 'Vitality, speed, stamina — and staying on your feet.',
     jedi: 'The Pilgrim', sith: 'The Juggernaut', grey: 'The Body',
     creed: { jedi: 'The body is the first thing the Force is given.',
              sith: 'Pain is only information.' } },
   { axis: 'bond', root: 'attune-bond',
+    what: 'Your troops: what they deal, what they survive, and what heals them.',
     jedi: 'The Unifying Force', sith: 'The Rule of Two', grey: 'Communion',
     creed: { jedi: 'There is no you. There is what stands beside you.',
              sith: 'One to embody the power. One to crave it.' } },
   { axis: 'dark', root: 'attune-dark', 
+    what: 'Taking life from what you kill, and the powers that come with it.',
     jedi: 'The Shadow', sith: 'The Abyss', grey: 'The Dark',
     creed: { jedi: 'Name it, so that you can refuse it.',
              sith: 'Take it. It was always going to be taken.' } },
@@ -839,7 +858,26 @@ export function facetView(id, { taken, ledger, wave = 1, order = null }) {
     locked,
     can: locked === null,
     to: neighboursOf(id),
+    /**
+     * THE TWO NUMBERS A REFUSAL NEEDS, carried so the screen can print them.
+     *
+     * "A mastery. Commit to the discipline first." and "Too early. This one
+     * comes later." are the two lock lines that refuse without saying how far
+     * away the thing is — the same defect the cards themselves had, one surface
+     * out. A player deciding whether to save, or to buy a third blade card, is
+     * asking exactly "how many" and "which wave", and both numbers are right
+     * here: `needs` is what the card declares (see `UNBOUND_NEEDS` in Waves.js)
+     * and `have` is what `axisCountOf` already counts for `requires` itself.
+     */
+    minWave: b.minWave ?? 1,
+    needs: b.needs ?? null,
+    have: b.needs ? axisCountOf(taken, s.axis) : null,
   };
+}
+
+/** What a current is for — the plate's own subtitle. See CURRENTS. */
+export function whatOf(axis) {
+  return CURRENTS.find((c) => c.axis === axis)?.what || '';
 }
 
 /** The whole lattice, in draw order: lines want every facet's position anyway. */

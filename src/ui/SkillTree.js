@@ -29,7 +29,7 @@
  * they are the coordinate space of the star chart, and a rack has no
  * coordinates. They still exist in LivingForce.js because `facetView` publishes
  * an x/y off them and two checks read it; nothing here does. */
-import { latticeView, facetView, shapeOf, currentName, creedOf, CURRENTS, LOCKED, COST_STEP }
+import { latticeView, facetView, shapeOf, currentName, creedOf, whatOf, CURRENTS, LOCKED, COST_STEP }
   from '../game/LivingForce.js';
 import { audio } from '../engine/Audio.js';
 
@@ -259,6 +259,9 @@ export class SkillTree {
       head.appendChild(div('hol-name', currentName(c.axis, order).toUpperCase()));
       head.appendChild(div('hol-count', `${woken}/${mine.length}`));
       plate.appendChild(head);
+      /* WHAT THE COLUMN IS FOR, under its name. A name and a count is not a
+       * signpost — see the note on CURRENTS. */
+      plate.appendChild(div('hol-what', whatOf(c.axis)));
 
       const bar = div('hol-bar');
       const fill = div('hol-fill');
@@ -568,8 +571,21 @@ export class SkillTree {
        * up printing "undefined" the day somebody reinstates one. */
       case LOCKED.offer:
         return `${rank}${v.cost} Insight — the Force is not showing you this one yet.`;
-      case LOCKED.gated: return `${rank}A mastery. Commit to the discipline first.`;
-      case LOCKED.depth: return `${rank}Too early. This one comes later.`;
+      /* BOTH OF THESE USED TO REFUSE WITHOUT SAYING HOW FAR.
+       *
+       * "A mastery. Commit to the discipline first." and "Too early. This one
+       * comes later." are the same defect the cards had: a sentence a player
+       * cannot plan against. The question being asked at a locked mastery is
+       * "how many more of this current do I need", and at a deep card "which
+       * wave" — and `facetView` carries both numbers now. */
+      case LOCKED.gated: {
+        const need = v.needs, have = v.have;
+        if (!(need > 0)) return `${rank}A mastery. Commit to the discipline first.`;
+        const short = Math.max(0, need - (have | 0));
+        return `${rank}A mastery: ${need} of this current, and you hold ${have | 0}. `
+          + `${short} more to go.`;
+      }
+      case LOCKED.depth: return `${rank}Too early — this one opens at wave ${v.minWave}.`;
       default: return rank;
     }
   }

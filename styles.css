@@ -2859,3 +2859,8 @@ body:has(#touch.on) .powers .pw{touch-action:none}
   .pw{width:32px;height:32px}
   .pw svg{width:16px;height:16px}
 }
+
+/* The plate's signpost: what this current is for, under its name. Quiet, so it
+   reads as a label rather than competing with the name above it. */
+.hol-what{font:var(--ui);font-size:10px;line-height:1.35;color:var(--dim);
+  padding:0 2px 8px;letter-spacing:.02em}

@@ -1942,4 +1942,49 @@ export async function run({ check, assert }) {
     assert(numeric > 20, `only ${numeric} cards were measured as numeric — the stub has stopped applying them`);
     return `${numeric} cards move a number and every one states a magnitude; ${switches} are switches`;
   });
+
+  check('the holocron says what it is for, and its refusals say how far', () => {
+    /**
+     * THE SURFACES THAT ARE NOT CARDS — asked for by name after the cards were
+     * done: "go through everything else in the holocron".
+     *
+     * TWO OF THEM WERE THE CARDS' OWN DEFECT, one level out. The six plates are
+     * the whole navigation of the Book and carried a NAME and a COUNT: "THE
+     * GUARDIAN 3/8", with a creed under it that is a mood rather than a
+     * signpost. And two lock lines refused without saying how far away the
+     * thing was — "A mastery. Commit to the discipline first." and "Too early.
+     * This one comes later." — which are exactly the sentences a player is
+     * asking "how many more?" and "which wave?" at.
+     *
+     * Both numbers already existed. `facetView` carries them now, so the check
+     * is that they arrive rather than that a particular sentence is printed:
+     * the wording is the screen's business, the numbers are not.
+     */
+    for (const c of Tree.CURRENTS) {
+      const what = Tree.whatOf(c.axis);
+      assert(what && what.length > 15,
+        `the ${c.axis} current has no line saying what it is for — a plate with a name and a count `
+        + 'is not a signpost');
+      assert(what !== Tree.creedOf(c.axis, null),
+        `the ${c.axis} current's signpost is just its creed, which is a mood and not a description`);
+    }
+    /* A DEPTH-LOCKED CARD KNOWS WHICH WAVE IT OPENS ON, and a gated one knows
+     * how many of its current it wants and how many you hold. */
+    const led = new Tree.Communion();
+    led.insight = 9999;
+    const held = new Set(['cadence']);
+    const deep = Tree.facetView('unbound-push', { taken: held, ledger: led, wave: 1 });
+    assert(deep.locked === Tree.LOCKED.depth,
+      `unbound-push at wave 1 is ${deep.locked}, so this is measuring the wrong refusal`);
+    assert(deep.minWave > 1, 'the depth-locked card does not carry the wave it opens on');
+    const mast = Tree.facetView('sunder', { taken: held, ledger: led, wave: 20 });
+    assert(mast.locked === Tree.LOCKED.gated,
+      `sunder at wave 20 holding one blade card is ${mast.locked} — expected the discipline gate`);
+    assert(mast.needs > 0 && Number.isInteger(mast.have),
+      `the gated card carries needs=${mast.needs} have=${mast.have} — the refusal cannot say how far`);
+    assert(mast.have < mast.needs,
+      `sunder says you hold ${mast.have} of ${mast.needs} and is still gated`);
+    return `${Tree.CURRENTS.length} currents signposted; depth names wave ${deep.minWave}, `
+      + `the discipline gate names ${mast.have}/${mast.needs}`;
+  });
 }
