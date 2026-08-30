@@ -1560,7 +1560,12 @@ export class World {
      * id into BOONS instead of carrying an effect of its own.
      */
     if (this.settings.holocron === 'open') {
+      /* THE PURSE, AND THE GATE BEHIND IT. `HOLOCRON_PURSE` is what the number
+       * on the screen reads; `open` is what makes the promise true — see the
+       * note on `Communion.open` for the nineteen facets an infinite purse
+       * still could not reach at wave 1. */
       this.communion.insight = Math.max(this.communion.insight, HOLOCRON_PURSE);
+      this.communion.open = true;
     } else if (this.settings.holocron === 'all') {
       for (const facet of FACETS) {
         const boon = boonById(facet.id);

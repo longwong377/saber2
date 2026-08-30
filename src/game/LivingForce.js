@@ -593,6 +593,27 @@ export const OFFER = 3;
 export class Communion {
   constructor(o = {}) {
     this.insight = Math.max(0, o.insight ?? 0);
+    /**
+     * A PURSE THAT DOES NOT EMPTY, AND A DEPTH GATE THAT DOES NOT HOLD.
+     *
+     * `settings.holocron === 'open'` promises, in the menu card and in
+     * `World.spawnPlayer`'s own note, that "everything is REACHABLE". It was
+     * not, and the money was never the reason. Driven through this class at
+     * wave 1 with an infinite purse, nineteen facets still answer
+     * `LOCKED.depth` — `lightning`, `compel`, `darkside`, `sunder`, `bastion`,
+     * `tempest`, `undying`, `unity` among them — because a facet inherits its
+     * card's `minWave` and the deepest is 16. Those are exactly the powers the
+     * setting was added for: "I haven't even been able to force lightning or
+     * force compel yet."
+     *
+     * So `open` lifts BOTH, and only for the player who asked for it. The
+     * earned game is untouched: `minWave` is still the one hard gate a draft
+     * cannot be argued around, prices still climb, and the shape of the
+     * lattice — the joins, the disciplines a mastery is gated on — is still
+     * exactly what it draws, because those are rules you can satisfy by
+     * buying rather than walls you cannot see past.
+     */
+    this.open = !!o.open;
     /** Facet ids woken with Insight, in order. Its LENGTH is the price escalator. */
     this.bought = Array.isArray(o.bought) ? o.bought.slice() : [];
     this.earned = Math.max(0, o.earned ?? this.insight);
@@ -664,7 +685,10 @@ export class Communion {
     const b = boonById(id);
     if (!s || !b) return LOCKED.reach;
     if (rankOf(taken, id) >= maxRank(b)) return LOCKED.spent;
-    if (wave < (b.minWave ?? 1)) return LOCKED.depth;
+    /* Depth is the draft's one hard gate and the tree must not be a way round
+     * it — unless the player has opened the purse, which is a request for
+     * exactly that. See the note on `Communion.open`. */
+    if (!this.open && wave < (b.minWave ?? 1)) return LOCKED.depth;
     if (b.requires && !b.requires(taken)) return LOCKED.gated;
     if (!this.reachable(id, taken)) return LOCKED.reach;
     /**
@@ -696,7 +720,7 @@ export class Communion {
      * still the honest question "what may I take right now" and the Holocron
      * and the checks both ask it.
      */
-    if (this.insight < this.costOf(id, taken)) return LOCKED.insight;
+    if (!this.open && this.insight < this.costOf(id, taken)) return LOCKED.insight;
     return null;
   }
 
@@ -762,7 +786,10 @@ export class Communion {
   buy(id, taken, wave = 1) {
     if (!this.canBuy(id, taken, wave)) return null;
     const cost = this.costOf(id, taken);
-    this.insight -= cost;
+    /* An open purse is not spent. The price is still COMPUTED and still shown,
+     * because the escalator is the shape of the choice and the card promises it
+     * survives — what it does not do is stop you. */
+    if (!this.open) this.insight -= cost;
     this.bought.push(id);
     const b = boonById(id);
     return b;
@@ -771,6 +798,9 @@ export class Communion {
   /** What a save/restore across a level change has to carry. See Run.js. */
   snapshot() {
     return { insight: this.insight, carry: this._carry, bought: this.bought.slice(), earned: this.earned,
+             /* Carried, or a level change would quietly shut a purse the player
+              * opened in the deploy screen. */
+             open: this.open,
              /* The offer is DERIVED from these two, so carrying the seed is
               * what makes the hand on the far side of a ground change the same
               * hand — see `offerNow`. */

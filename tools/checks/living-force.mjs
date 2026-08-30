@@ -1760,4 +1760,98 @@ export async function run({ check, assert }) {
     return `earned ${earned.insight}i/${earned.held} · open ${open.insight}i/${open.held} · `
       + `all ${all.held} of ${Tree.FACETS.length} facets, lightning+compel woken`;
   });
+
+  check("the open purse actually reaches the bottom of the Book, from wave 1", () => {
+    /**
+     * THE PROMISE, TESTED AS A PROMISE — and the money was never the reason.
+     *
+     * The player: "confirm that with a full purse you can finish an entire
+     * path at the very beginning of a game… it still wouldn't let me get the
+     * final couple of things at the very bottom."
+     *
+     * They were right, and the first guess was wrong. `HOLOCRON_PURSE` was
+     * short once and is derived now, so a bigger number looked like the fix.
+     * Driven at wave 1 with an INFINITE purse, nineteen facets still answered
+     * `LOCKED.depth` — a facet inherits its card's `minWave` and the deepest is
+     * 16 — and among them were `lightning` and `compel`, which are the two
+     * powers this setting was added for in the first place.
+     *
+     * So the check drives BOTH arms at wave 1. 'earned' must still be the game
+     * (a purse that runs out and a depth gate that holds), and 'open' must
+     * reach every facet in the lattice on the first wave, which is what its
+     * card says in as many words.
+     */
+    const buyAll = (ledger, wave) => {
+      const taken = new Set();
+      for (let pass = 0; pass < 200; pass++) {
+        let any = false;
+        for (const f of Tree.FACETS) {
+          if (taken.has(f.id)) continue;
+          if (!ledger.canBuy(f.id, taken, wave)) continue;
+          ledger.buy(f.id, taken, wave); taken.add(f.id); any = true;
+        }
+        if (!any) break;
+      }
+      return taken;
+    };
+    const shut = new Tree.Communion();
+    shut.insight = 600;
+    const got = buyAll(shut, 1);
+    assert(got.size < Tree.FACETS.length,
+      `a shut purse reached all ${Tree.FACETS.length} facets at wave 1 — the earned game has no gate left`);
+
+    const open = new Tree.Communion({ open: true });
+    open.insight = 600;
+    const all = buyAll(open, 1);
+    const missed = Tree.FACETS.filter((f) => !all.has(f.id)).map((f) => f.id);
+    assert(!missed.length,
+      `an open purse could not reach ${missed.length} of ${Tree.FACETS.length} facets at wave 1: `
+      + `${missed.slice(0, 8).join(', ')} — the card promises the whole Book from the first wave`);
+    /* AND IT DOES NOT EMPTY, which is the other half of what was asked for. */
+    assert(open.insight === 600,
+      `an open purse fell from 600 to ${open.insight} — it is meant not to be spent`);
+    /* …and the price is still COMPUTED, because the escalator is the shape of
+     * the choice and the card still shows it. A cost that went to zero would
+     * be the feature quietly becoming 'all'. */
+    assert(open.costOf(Tree.FACETS[0].id, all) > 0, 'an open purse zeroed the prices');
+    return `wave 1: shut purse ${got.size}, open purse ${all.size} of ${Tree.FACETS.length}, purse unspent`;
+  });
+
+  check('every unbound card names the power it unleashes, in the words the game uses', async () => {
+    /**
+     * "can you explain to me which powerups make which force abilities have no
+     * cooldown anymore? the descriptions in the holocron are so riddly and
+     * totally vague"
+     *
+     * They were. "The shove no longer needs a breath between" is the whole of
+     * what "The Endless Wave" used to say about being Force push, and a card
+     * whose effect you have to infer is a card that cannot be chosen. The name
+     * stays evocative — that is the Book's voice — but the body has to say
+     * which power, in the same words the key-bindings screen uses for it, so
+     * the two can be read against each other.
+     */
+    const { ACTIONS } = await import('../../src/engine/Bindings.js');
+    const Powers = await import('../../src/game/Powers.js');
+    const vague = [];
+    for (const u of Powers.UNBOUND) {
+      const act = ACTIONS.find((a) => a.id === u.key);
+      assert(act, `unbound card ${u.name} names '${u.key}', which is not an action`);
+      assert(act.label, `the action '${u.key}' has no label to name it by`);
+      /* The first noun of the action's own label — "Force push" out of
+       * "Force push", "Stasis field" out of "Stasis field", "Throw" out of
+       * "Throw / recall saber" — is what a player will scan for. */
+      const word = act.label.split(/[\/(]/)[0].trim().toLowerCase();
+      const text = String(u.text || '').toLowerCase();
+      if (!text.includes(word) && !text.includes(u.key)) vague.push(`${u.name} → ${act.label}`);
+      assert(/cooldown/.test(text),
+        `${u.name} never says the word "cooldown", which is the only thing it does`);
+      /* And the price, because a card that states a gift and hides a bill is
+       * the riddle wearing a different hat. */
+      assert(/force/.test(text) && /health|blood|hp/.test(text),
+        `${u.name} does not say what it costs in Force and in health`);
+    }
+    assert(!vague.length,
+      `${vague.length} unbound card(s) never name their power: ${vague.join('; ')}`);
+    return `${Powers.UNBOUND.length} cards, each naming its power, its cooldown and its price`;
+  });
 }

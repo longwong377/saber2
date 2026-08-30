@@ -6480,19 +6480,20 @@ export class Menu {
     const modes = [
       ['earned', 'Earned',
        'The game. Insight is a run currency, you kneel to spend it, and nothing carries over.'],
-      /* "you simply never run short" WAS NOT TRUE, and it is not this file's
-       * number to fix. `World.HOLOCRON_PURSE` is 600 and its comment says "600
-       * clears the whole chart with room over"; measured over the shipped
-       * FACETS and COST tables through `Communion.costOf` itself — cheapest
-       * first, rank 0, the most favourable order there is — waking all 46
-       * facets costs 2359, and 600 buys 22 of them. So the card is written to
-       * what the mode actually is: a purse that starts every deploy full
-       * enough to build, against a price series that still climbs. The derived
-       * replacement for the constant has been sent to the lane that owns
-       * src/game/World.js; when it lands, this line can promise more again. */
+      /* "you simply never run short" IS TRUE NOW, and twice it was not.
+       *
+       * First the purse was a typed 600 against 2359 of facets, so it bought 22
+       * of them; that is derived from the tables now (`World.HOLOCRON_PURSE`).
+       * Then the money stopped being the reason at all: driven at wave 1 with
+       * an INFINITE purse, nineteen facets still answered `LOCKED.depth`,
+       * including the two this setting was added for. A card cannot promise
+       * "everything is reachable" over a gate the purse cannot argue with, so
+       * `Communion.open` lifts the depth gate as well — measured, 62 of 62 at
+       * wave 1 against 22 before. */
       ['open', 'Open',
-       'A deep purse at every deploy, and it refills for the next one. You still kneel, still choose, '
-       + 'and prices still climb — a full lattice is still further than one run\u2019s spending.'],
+       'The whole Book, from the first wave. The purse never empties and nothing is held back for '
+       + 'depth, so you can take a path to the bottom before the first fight. You still kneel, still '
+       + 'choose, and prices still climb on the card — they just cannot stop you.'],
       /* NAMED BY THE PLAYER. The key stays 'all' — it is written to settings,
        * read by `World.spawnPlayer` and named by SETTING_READERS — and only
        * the label on the card changed. */

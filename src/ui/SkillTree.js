@@ -363,7 +363,12 @@ export class SkillTree {
     }
 
     /* the ledger line */
-    if (this.el.insight) this.el.insight.textContent = String(Math.floor(ledger?.insight ?? 0));
+    /* AN OPEN PURSE SAYS SO. `Math.floor(Infinity)` is "Infinity" and a purse
+     * that never moves while you spend reads as a broken counter, so the one
+     * state where the number is not the point prints the symbol for it. */
+    if (this.el.insight) {
+      this.el.insight.textContent = ledger?.open ? '\u221e' : String(Math.floor(ledger?.insight ?? 0));
+    }
     /**
      * WHAT THE NUMBER IS FOR, under the number.
      *
@@ -452,6 +457,10 @@ export class SkillTree {
      * The wording is the one that stays true whichever reason emptied it. */
     if (!reach.length) return 'nothing the purse alone can open';
     const now = reach.filter((v) => v.can).length;
+    /* With the purse open there is no shortfall to report and never will be —
+     * saying "0 short of the cheapest" under an infinity sign is the interface
+     * arguing with itself. */
+    if (this.ctx?.ledger?.open) return `${now} of ${reach.length} within reach, and the purse is open`;
     if (now) return `${now} of ${reach.length} within reach, yours now`;
     const short = Math.min(...reach.map((v) => v.cost)) - Math.floor(this.ctx?.ledger?.insight ?? 0);
     return `${short} short of the cheapest within reach`;
