@@ -314,8 +314,22 @@
         function looksStale(what) {
           return /Failed to resolve module specifier/i.test(String(what || ''));
         }
+        var extra = 0;
         function say(what, where) {
-          if (shown || !box) return;
+          if (!box) return;
+          /* THE FIRST ERROR OWNS THE BOX AND THE REST ARE APPENDED, because
+             the second error is often the informative one: the element event
+             says only "a module failed", while the TypeError or SyntaxError
+             behind it arrives moments later with a message and a line number.
+             Dropping everything after the first is how this box spent a day
+             saying less than the console did. */
+          if (shown) {
+            if (extra < 5 && what) {
+              extra++;
+              box.textContent += '\nAlso: ' + what + (where ? ' \u2014 ' + where : '');
+            }
+            return;
+          }
           shown = true;
           var gaps = [];
           try { gaps = missing(); } catch (e) {}
@@ -341,10 +355,31 @@
                   + '    (a fresh address it cannot have cached), or hard-reload with\n'
                   + '    Ctrl+Shift+R / Cmd+Shift+R.\n'
                   + '  \u2022 a script blocked by an extension or the browser\u2019s own protection.')
-            + '\n\nYour settings and keybinds can be carried over with Options \u2192 Settings file '
-            + '\u2192 Copy in a browser where it does run.'
             + '\n\n' + navigator.userAgent;
           if (msg) msg.textContent = 'could not start';
+          /**
+           * THE KEYBINDS RIDE OUT ON THE ERROR PAGE, because the export lives
+           * in Options and Options needs the game to boot. A player whose only
+           * copy of their bindings is inside the one browser that cannot start
+           * the game was told to use a screen they could not reach — this is
+           * that screen's job done from here. Paste the blob into Options \u2192
+           * Settings file \u2192 Load in a browser where it runs.
+           */
+          try {
+            var blob = {};
+            var KEYS = ['saber.settings.v6', 'saber.bindings.v2'];
+            for (var i = 0; i < KEYS.length; i++) {
+              var raw = localStorage.getItem(KEYS[i]);
+              if (raw) blob[KEYS[i]] = JSON.parse(raw);
+            }
+            if (blob['saber.settings.v6'] || blob['saber.bindings.v2']) {
+              blob.v = 1;
+              box.textContent += '\n\nYour settings and keybinds, saved in this browser, as text you '
+                + 'can carry:\n\n' + JSON.stringify(blob)
+                + '\n\nSelect that line, copy it, and paste it into Options \u2192 Settings file \u2192 '
+                + 'Load in a browser where the game runs. Nothing is lost.';
+            }
+          } catch (err2) {}
         }
         /**
          * AND WHEN THE MODULE FAILS, ASK THE NETWORK DIRECTLY.
@@ -362,15 +397,110 @@
          * page with a 200 on it. One request settles what a week of guessing
          * could not.
          */
-        function probeFile(url, done) {
-          try {
-            fetch(url, { cache: 'no-store' }).then(function (r) {
-              done('HTTP ' + r.status + ' ' + (r.headers.get('content-type') || 'no content-type'));
-            }, function (err) {
-              done('the request itself failed: ' + (err && err.message)
-                   + ' — something is blocking it (an extension, or the network)');
-            });
-          } catch (err) { done('fetch threw: ' + (err && err.message)); }
+        /**
+         * THE DOCTOR — it stops asking one question and asks all of them.
+         *
+         * The single-fetch version of this promised "the line below asks the
+         * network which it was" and then, on the machine that mattered, the
+         * line never came: a fetch that hangs reports nothing, which is the
+         * one answer a diagnostic must never give. So:
+         *
+         *   FIRST it fetches main.js twice — once through the cache, once past
+         *   it — and COMPARES. Different bytes is the whole verdict: this
+         *   browser built the game from a cached copy of one build against the
+         *   page of another, and a hard reload ends it. That is the failure
+         *   removing the import map made possible, and the one theory nobody
+         *   could prove from the outside.
+         *
+         *   THEN it walks the module graph file by file, fresh, and names the
+         *   first thing wrong with any of them: a status that is not 200, a
+         *   body that is a web page where JavaScript belongs (security
+         *   software and captive networks answer in the site's place), or a
+         *   request that fails outright.
+         *
+         *   AND A WATCHDOG says so when the network answers nothing at all,
+         *   because a held-open request is itself a finding.
+         */
+        var doctored = false;
+        function doctor() {
+          if (doctored || !box || !window.fetch || window.SABER) return;
+          doctored = true;
+          var alive = Date.now();
+          function report(line) { alive = Date.now(); box.textContent += '\n' + line; }
+          setTimeout(function check() {
+            if (Date.now() - alive > 12000) {
+              report('No answer from the network in 12 seconds. The requests are being held open, '
+                + 'which points at security software or the network between this browser and the '
+                + 'site \u2014 not at the game and not at the browser.');
+            } else if (!window.SABER) { setTimeout(check, 3000); }
+          }, 12500);
+          report('\nChecking\u2026');
+          var MAIN = new URL('./src/main.js', location.href).href;
+          Promise.all([
+            fetch(MAIN).then(function (r) { return r.text(); }),
+            fetch(MAIN, { cache: 'no-store' }).then(function (r) { return r.text(); })
+          ]).then(function (two) {
+            if (two[0] !== two[1]) {
+              report('FOUND IT: the copy of the game this browser has cached ('
+                + two[0].length + ' bytes) is NOT the copy the site serves ('
+                + two[1].length + ' bytes). The page is from one build and the JavaScript from '
+                + 'another, and mixed builds cannot start.\n\nHold Shift and press Reload '
+                + '(Ctrl+Shift+R, \u2318\u21E7R on a Mac). Your keybinds are not touched by that.');
+              return;
+            }
+            walk();
+          }, function () { walk(); });
+          function walk() {
+            var seen = {}, queue = [MAIN], checked = 0, bytes = 0;
+            function step() {
+              if (!queue.length || checked >= 300) {
+                report('Every file of the game arrives from the site and is JavaScript ('
+                  + checked + ' files, ' + Math.round(bytes / 1024) + ' KB). So the network and '
+                  + 'the files are fine; the failure happens RUNNING one of them in this browser. '
+                  + 'Press F12, open the Console, and send over the first red line \u2014 it names '
+                  + 'the file and the line number.');
+                return;
+              }
+              var url = queue.shift();
+              if (seen[url]) { step(); return; }
+              seen[url] = 1;
+              fetch(url, { cache: 'no-store' }).then(function (r) {
+                if (!r.ok) {
+                  report('FOUND IT: ' + url + ' answers HTTP ' + r.status + '.');
+                  return;
+                }
+                return r.text().then(function (body) {
+                  checked++; bytes += body.length;
+                  if (/^\s*</.test(body)) {
+                    report('FOUND IT: ' + url + ' comes back as a WEB PAGE, not JavaScript. '
+                      + 'Something between this browser and the site is answering in its place \u2014 '
+                      + 'security software, a proxy, or a sign-in network.');
+                    return;
+                  }
+                  /* Comments quote import lines in this codebase, so they are
+                     stripped before specifiers are read; only relative paths
+                     are followed, which is all this build contains. */
+                  var src = body.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+                  var re = /(?:^|[\s;})(])(?:import|export)\s*(?:[^;'"()]*?from\s*)?['"]([^'"]+)['"]|import\s*\(\s*['"]([^'"]+)['"]/g;
+                  var m;
+                  while ((m = re.exec(src))) {
+                    var spec = m[1] || m[2];
+                    if (!spec || !/^[./]/.test(spec) || !/\.js$/.test(spec)) continue;
+                    try {
+                      var u = new URL(spec, r.url || url).href;
+                      if (u.indexOf(location.origin) === 0 && !seen[u]) queue.push(u);
+                    } catch (e2) {}
+                  }
+                  step();
+                });
+              }, function (err) {
+                report('FOUND IT: the request for ' + url + ' failed outright ('
+                  + (err && err.message) + ') \u2014 something is blocking it before it reaches '
+                  + 'the site.');
+              });
+            }
+            step();
+          }
         }
         window.addEventListener('error', function (e) {
           /* A failed <script>/<img>/<link> fires an error whose target is the
@@ -381,14 +511,13 @@
             var url = t.src;
             say('The browser could not build the game from ' + url + '.',
                 'A module script reports the same error for a file that did not arrive and for one '
-                + 'that arrived and would not parse, so the line below asks the network which it was.');
-            probeFile(url, function (answer) {
-              if (box) box.textContent += '\n\nThe file itself: ' + answer;
-            });
+                + 'that arrived and would not parse, so the lines below check every file directly.');
+            doctor();
             return;
           }
           say((e && e.message) || 'A script error with no message.',
               e && e.filename ? e.filename + ':' + e.lineno : '');
+          doctor();
         }, true);
         window.addEventListener('unhandledrejection', function (e) {
           var r = e && e.reason;
