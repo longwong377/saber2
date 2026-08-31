@@ -716,7 +716,10 @@ export function holds(who, duty) {
     if (t.alive === false || t.dead === true) return false;
     rank = typeof t.rank === 'number' ? t.rank : null;
   }
-  if (!(rank >= 0)) return false;
+  /* `Number.isInteger`, not `rank >= 0`: `null >= 0` is TRUE in JavaScript, so
+   * the loose test handed every licence to `holds(undefined, 'STANDS')` — a
+   * question with no man in it answering yes. */
+  if (!Number.isInteger(rank)) return false;
   return rank >= i;
 }
 

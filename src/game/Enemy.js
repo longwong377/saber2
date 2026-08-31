@@ -1516,7 +1516,7 @@ let _auditPhase = 0;
  * a 30 m shot is a hand's width — and it is no longer the whole argument for
  * fielding a veteran.
  */
-const AIM_BY_RANK = [1.00, 0.97, 0.94, 0.91, 0.88];
+export const AIM_BY_RANK = [1.00, 0.97, 0.94, 0.91, 0.88];
 
 /**
  * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
