@@ -1405,6 +1405,13 @@ function bank(stats = null) {
      * who reached the ship. */
     deployed: roster.all,
     left: roster.all.filter((t) => !manifest.includes(t)),
+    /* …AND WHICH OF THEM WERE STILL STANDING. `left` is everybody who is not
+     * on the ship, which is the man killed in engagement two and the man
+     * eleven metres from a closing ramp with nothing wrong with him. Both are
+     * gone; they are not the same thing to have done to somebody, and the
+     * memorial says which now. See `Company.FATES`. */
+    stranded: roster.all.filter((t) => t.alive && !manifest.includes(t))
+      .map((t) => t.designation),
     ground: world.levelKey ?? null,
     /* `won` is a real ending and `keep`'s own signature lists it. Without this
      * clause a victory filed as 'wiped' — the fallback reads `world.over`,

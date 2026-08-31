@@ -46,6 +46,10 @@ import {
 import { makeRng } from '../../src/engine/MathUtil.js';
 import * as Company from '../../src/game/Company.js';
 import * as Muster from '../../src/game/Muster.js';
+import { HURT_AT } from '../../src/game/Morale.js';
+import { MODES } from '../../src/game/Waves.js';
+/* THE DEPLOYED ARMY, shared with licence.mjs — one fixture, see `_army.mjs`. */
+import { army as licenceArmy } from './_army.mjs';
 
 /**
  * Run `fn` against an empty company AND an empty slate, and put the player's
@@ -1390,5 +1394,139 @@ export async function run({ check, assert, THREE: T }) {
         + 'first one opens with a pen and a wardrobe';
     } finally { localStorage.setItem = realSet; close(); }
   }));
+
+  check('barracks: the scar is reachable in every mode a company lives in', () => {
+    /**
+     * ── A FEATURE THAT WAS SHIPPED, SAVED, PRINTED AND UNEARNABLE ─────────
+     *
+     * `Trooper.wounds` is persisted, printed on the dossier, phrased in the
+     * story line, celebrated in the orders of the day and painted on the plate
+     * by `scorchUp`. It had exactly one writer — `Enemy._getUpFromDown` —
+     * which fires only where `MODES.downed` is declared. Grep the whole tree
+     * for that flag and it is on ONE mode: The Line. So in Command, in
+     * skirmish, in the wave modes — every mode a company actually lives in —
+     * no man could ever earn a scar, and the paint was unreachable.
+     *
+     * The second writer is in `_troops`, the one loop that touches every
+     * living body of every army once a frame, so it is present wherever a
+     * director runs. This drives it there rather than calling it: what has to
+     * be true is that a man shot to a third of his health in an ORDINARY mode
+     * comes out of the frame carrying it.
+     */
+    const modes = Object.keys(MODES).filter((k) => !MODES[k]?.downed);
+    assert(modes.length >= 3, `only ${modes.length} modes lack a downed rule`);
+
+    const { d, c } = licenceArmy();
+    const sq = d.squadsOf(c)[0];
+    const man = sq.find((t) => t.body);
+    assert(man && (man.wounds | 0) === 0, 'the fixture man already has a scar');
+    assert(!d.world.director?.downedMen,
+      'the fixture is running a mode that declares downed — the point is the modes that do not');
+
+    /* A SCRATCH IS NOT A WOUND. */
+    man.body.hp = man.body.maxHp * (HURT_AT + 0.2);
+    d._troops(1 / 30, {});
+    assert((man.wounds | 0) === 0,
+      `a man on ${(man.body.hp / man.body.maxHp).toFixed(2)} of his health was written a scar`);
+
+    /* …AND BEING SHOT TO A THIRD IS. */
+    man.body.hp = man.body.maxHp * (HURT_AT - 0.01);
+    d._troops(1 / 30, {});
+    assert((man.wounds | 0) === 1,
+      `a man shot to a third came out of the frame with ${man.wounds | 0} wounds — the scar `
+      + 'is still unreachable outside The Line');
+
+    /* ONE PER RUN, whatever else happens to him — `wounds` reads as "runs he
+     * nearly died in", which is the number a scar can honestly stand for. */
+    for (let i = 0; i < 20; i++) { man.body.hp = 1; d._troops(1 / 30, {}); }
+    assert((man.wounds | 0) === 1,
+      `twenty frames at 1 hp wrote ${man.wounds} scars — a bad afternoon is one scar`);
+
+    /* …AND THE OTHER WRITER RESPECTS THE SAME FLAG, so a man who is shot to a
+     * third and THEN goes down and is picked up is not counted twice. */
+    Enemy.prototype._getUpFromDown.call({
+      downed: true, bleed: 1, _downHelp: 9, maxHp: 100, hp: 5, actor: null, beingDragged: null,
+      world: { command: { log: [], areaNumber: 1, wave: 1, commander: { side: 9 } }, notify() {} },
+      team: 1, trooper: man,
+    });
+    assert((man.wounds | 0) === 1,
+      `going down after being bloodied made it ${man.wounds} — the two writers are double-counting`);
+
+    /* AND IT MOVES NO NUMBER. A scar is a mesh; the man is the man. */
+    const was = { hp: man.body.maxHp, dmg: man.body.attackDamage, speed: man.body.speed };
+    d._troops(1 / 30, {});
+    assert(man.body.maxHp === was.hp && man.body.attackDamage === was.dmg
+      && man.body.speed === was.speed, 'carrying a scar changed a number');
+    return `1 scar for a man shot to ${HURT_AT} in a mode with no downed rule, 1 after twenty `
+      + `more frames and a rescue; ${modes.length} modes now reachable`;
+  });
+
+  check('barracks: left behind is not killed in action, and the memorial says which',
+    () => withCleanStore(() => {
+      /**
+       * `keep` treats every man who went out and did not come back as gone,
+       * which is right and is the whole cost of the mechanism. The memorial
+       * was printing ONE sentence over two different facts: the man cut down
+       * in engagement two, and the man standing eleven metres from a closing
+       * ramp with nothing wrong with him.
+       *
+       * Both cost the same — there is no branch anywhere that softens the
+       * second, and this check asserts that too — but a casualty list that
+       * cannot tell them apart teaches nothing about either.
+       */
+      const roll = freshRoll(6);
+      const [home, killed, stranded] = [roll.all[0], roll.all[1], roll.all[2]];
+      killed.alive = false;
+      Company.keep([home], {
+        army: 'republic', deployed: roll.all, ground: 'geonosis', ended: 'withdrew',
+        left: roll.all.filter((t) => t !== home),
+        stranded: [stranded.designation],
+        roll: [{ name: killed.name, killer: 'B2 Super Battle Droid', at: 421 }],
+      });
+      const c = Company.load('republic');
+
+      /* IT STILL COSTS EVERYTHING. Five went out and did not come back; five
+       * are off the roll, whatever the memorial calls them. */
+      assert(c.men.length === 1 && c.men[0].designation === home.designation,
+        `${c.men.length} men still on a roll that lost five`);
+      assert((c.lost | 0) === 5, `the ledger counts ${c.lost} lost of 5`);
+
+      const row = (t) => c.fallen.find((f) => f.designation === t.designation);
+      assert(row(killed)?.fate === 'kia',
+        `a man cut down reads "${row(killed)?.fate}"`);
+      assert(row(killed)?.killer === 'B2 Super Battle Droid' && row(killed)?.at === 7,
+        'the killed man lost his epitaph');
+      assert(row(stranded)?.fate === 'left',
+        `a man still standing when the ramp closed reads "${row(stranded)?.fate}"`);
+      /* AND NOTHING IS STANDING OVER HIM. A killer under a man nothing killed
+       * is the blank this whole field exists to fill. */
+      assert(row(stranded)?.killer === null && row(stranded)?.at === null,
+        `a man left behind was given a killer: ${JSON.stringify(row(stranded))}`);
+      /* A man who went out, is not on the manifest and is not named stranded
+       * is a casualty — the default every record written before this meant. */
+      const other = roll.all.find((t) => t !== home && t !== killed && t !== stranded);
+      assert(row(other)?.fate === 'kia', 'an unnamed loss stopped defaulting to a casualty');
+
+      /* THE PAGE SAYS IT, off the store, through the real renderer. */
+      const { menu, doc, close } = menuOn();
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany('republic/-fallen');
+        const txt = doc.getElementById('company-page').textContent;
+        assert(/still standing when the ramp closed/.test(txt),
+          'the memorial says nothing about the man it left');
+        assert(/B2 Super Battle Droid/.test(txt), 'the memorial lost the killer it did know');
+      } finally { close(); }
+
+      /* AND A HOSTILE STORE CANNOT INVENT A THIRD FATE. */
+      const raw = JSON.parse(localStorage.getItem(Company.KEY));
+      raw.republic.fallen[0].fate = 'promoted-to-glory';
+      localStorage.setItem(Company.KEY, JSON.stringify(raw));
+      assert(Company.load('republic').fallen[0].fate === 'kia',
+        'a made-up fate came off disk intact');
+      return '5 lost either way · 1 kia with a killer and a minute, 1 left with neither, '
+        + 'the page says both, a forged fate reads kia';
+    }));
 
 }

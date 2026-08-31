@@ -44,7 +44,7 @@ export const MORALE = {
   WAVE_CLEAR: 0.34,
   /** An area is held. */
   AREA_HELD: 0.5,
-  /** Their own health, per second, below a third. */
+  /** Their own health, per second, below `HURT_AT`. */
   WOUNDED: -0.10,
   /**
    * THEY WALKED PAST ONE OF THEIR OWN GRAVES — PLAN.md §4.8's third bullet,
@@ -242,3 +242,15 @@ export const MORALE = {
  * ordinary worst thing fits between the resting point and the clamp".
  */
 MORALE.PRESENCE_CAP = 1 + MORALE.COMRADE_FELL;
+
+/**
+ * ── WHAT "BADLY HURT" MEANS, ONCE, FOR THE WHOLE GAME ───────────────────
+ *
+ * A third of a body's own health. It was typed as `0.34` inside `_morale` and
+ * described as "below a third" in the table above, and it now has a second
+ * reader — the wound a man carries out of a run — so it is a name rather than
+ * a number in two places. A scar and the nerve it costs to be that close to
+ * dead are the same event, and they must not be able to disagree about when it
+ * happened.
+ */
+export const HURT_AT = 0.34;

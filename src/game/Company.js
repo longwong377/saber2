@@ -274,6 +274,26 @@ export const HONOURS_KEEP = 6;
 const HONOUR_KINDS = ['named', 'promoted', 'bonded', 'fifth', 'scarred'];
 
 /**
+ * ══ THE TWO WAYS A NAME COMES OFF THE ROLL, AND THEY ARE NOT THE SAME ══════
+ *
+ * `keep` treats every man who went out and did not come back as gone, which is
+ * correct and is the whole cost of the mechanism. But the memorial was
+ * printing one sentence over two very different facts: the man cut down in
+ * engagement two, and the man who was standing eleven metres from a closing
+ * ramp with nothing wrong with him.
+ *
+ * Those are different things to have done to somebody. The first is a battle;
+ * the second is a decision you made about where to be and how long to hold.
+ * Both cost the same — he is off the roll for good either way, and there is no
+ * branch anywhere that softens the second one — but a casualty list that
+ * cannot tell them apart cannot teach you anything about either.
+ *
+ * `kia` is the default for every record written before this existed, which is
+ * what those records meant.
+ */
+export const FATES = ['kia', 'left'];
+
+/**
  * One fallen record off disk, made safe. The three fields a record gained in
  * the epitaph pass — the callsign he answered to, who got him, and the minute —
  * arrive from old saves absent and from hand-edited ones hostile, so each is
@@ -294,6 +314,11 @@ function saneFallen(f) {
     killer: typeof f.killer === 'string'
       ? f.killer.replace(/[<>&`\\]/g, '').slice(0, 40) : null,
     at: Number.isFinite(f.at) ? Math.max(0, Math.min(999, f.at | 0)) : null,
+    /* HOW HE STOPPED BEING ON THE ROLL — see `FATES`. Unknown or absent reads
+     * as `kia`, which is what every record written before this field existed
+     * meant and is the honest default: the list has always been a casualty
+     * list. */
+    fate: FATES.includes(f.fate) ? f.fate : 'kia',
   };
 }
 
@@ -616,6 +641,10 @@ export function trooperOf(m, army, roster) {
  *                      manifest itself names, and refuses a mixed one.
  * @param opts.left     the men who did not get aboard, as `Trooper`s. Only their
  *                      names are kept; they are gone.
+ * @param opts.stranded which of those were still ALIVE when the ramp closed —
+ *                      `Trooper`s or bare designations. They are gone on the
+ *                      same terms as the dead; what this changes is the
+ *                      sentence the memorial says over them. See `FATES`.
  * @param opts.ground   the level id the run ended on, for `since` and the story.
  * @param opts.ended    'withdrew' | 'wiped' | 'won' — what `runStats` reports.
  *                      Read by `storyLine`, which phrases a won run's line.
@@ -752,17 +781,35 @@ export function keep(manifest, opts = {}) {
   for (const r of (Array.isArray(opts.roll) ? opts.roll : [])) {
     if (r && typeof r.name === 'string') rollByName.set(r.name.split(' "')[0], r);
   }
+  /**
+   * WHO WAS STILL STANDING WHEN THE RAMP CLOSED — see `FATES`.
+   *
+   * Names, because that is the only thing this file is ever handed about a
+   * live `Trooper` and the only thing it needs: the caller is the one holding
+   * the run, and `alive && !aboard` is a question only it can answer. A call
+   * that does not pass the list reads every loss as a casualty, which is what
+   * this list always said and is the safe direction.
+   */
+  const stranded = new Set(Array.isArray(opts.stranded)
+    ? opts.stranded.map((t) => (typeof t === 'string' ? t : t?.designation)).filter(Boolean)
+    : []);
   c.fallen = [
     ...gone.map((m) => {
       const r = rollByName.get(m.designation) || null;
+      const left = stranded.has(m.designation);
       return {
         designation: m.designation, nickname: m.nickname ?? null, type: m.type,
         callsign: cleanCallsign(m.look?.callsign),
         rank: rankFor(m.xp | 0), kills: m.kills | 0, runs: m.runs | 0,
         where: opts.ground ?? null,
-        killer: typeof r?.killer === 'string'
-          ? r.killer.replace(/[<>&`\\]/g, '').slice(0, 40) : null,
-        at: Number.isFinite(r?.at) ? Math.max(0, Math.min(999, Math.floor(r.at / 60))) : null,
+        /* A MAN LEFT BEHIND HAS NO KILLER AND NO MINUTE, whatever the run's
+         * account happens to hold under his name — nothing killed him, which
+         * is exactly the fact the list was losing. */
+        killer: left || typeof r?.killer !== 'string'
+          ? null : r.killer.replace(/[<>&`\\]/g, '').slice(0, 40),
+        at: !left && Number.isFinite(r?.at)
+          ? Math.max(0, Math.min(999, Math.floor(r.at / 60))) : null,
+        fate: left ? 'left' : 'kia',
       };
     }),
     ...(c.fallen || []),

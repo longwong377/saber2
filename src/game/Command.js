@@ -99,7 +99,7 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
  * direction as MathUtil above: game reaches into engine, never the reverse. */
 import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn.js';
-import { MORALE } from './Morale.js';
+import { MORALE, HURT_AT } from './Morale.js';
 import { applyLevy } from './Levy.js';
 import { applyArmour } from './Armour.js';
 import { shakeNerve } from './Nerve.js';
@@ -8448,7 +8448,7 @@ export class CommandDirector extends WaveDirector {
            * comes apart on his own and a lone wolf genuinely does not care,
            * which is the trade the roster screen is showing you. */
           if (!near) d += MORALE.ALONE * lean;
-          if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
+          if (e.maxHp && e.hp < e.maxHp * HURT_AT) d += MORALE.WOUNDED;
         } else {
           // between areas, or waiting on a gunship: nerve comes back
           /* …AT HIS OWN RATE. Resolve on a man, Reset on a droid: how much of
@@ -8640,6 +8640,37 @@ export class CommandDirector extends WaveDirector {
            * body of every army exactly once a frame. See UNDER_FIRE, and
            * `installTeamDamage` for what sets it. */
           if (e.underFire > 0) e.underFire = Math.max(0, e.underFire - dt);
+          /**
+           * ── THE WOUND YOU CAN SEE, IN EVERY MODE ────────────────────────
+           *
+           * `Trooper.wounds` is persisted, printed on the dossier, phrased in
+           * the story line, celebrated in the orders of the day, and PAINTED
+           * ON THE PLATE by `scorchUp` at the next deploy. It had exactly one
+           * writer — `Enemy._getUpFromDown` — and that writer only fires where
+           * `MODES.downed` is declared, which is The Line and nowhere else. So
+           * in Command, in skirmish, in the wave modes — every mode a company
+           * actually lives in — the scars were unreachable. A feature that is
+           * shipped, saved, displayed and impossible to earn.
+           *
+           * The second writer is here, in the one loop that touches every
+           * living body of every army exactly once a frame: a man whose body
+           * drops under `HURT_AT` — the same third `_morale` reads — is a man
+           * who was nearly killed, and if he walks off the ground he wears it.
+           *
+           * ONE PER MAN PER RUN, and `_getUpFromDown` respects the same flag —
+           * so `wounds` means "runs he nearly died in" rather than "times a
+           * bolt got through", which is the number a roster wants and the one
+           * a scar can honestly stand for. `_hurtRun` is on the record and not
+           * on the body because the body is disposed at every area boundary
+           * and the man crosses.
+           *
+           * IT BUYS NOTHING. A scar is a mesh; `enlistBody` applies the rank
+           * and the profile and paints this on top, exactly as a mark is.
+           */
+          if (!t._hurtRun && e.maxHp > 0 && e.hp <= e.maxHp * HURT_AT) {
+            t._hurtRun = true;
+            t.wounds = (t.wounds | 0) + 1;
+          }
           /**
            * …AND SO DOES THE ORDER HE IS ACTUALLY ACTING ON. See `ORDER_LAG`.
            *

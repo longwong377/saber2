@@ -2974,6 +2974,9 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 .duty-row span{font-size:11.5px;line-height:1.5;color:var(--dim)}
 .duty-row i{font-style:normal;font-weight:800;color:var(--ink)}
 .company-post{margin-bottom:14px}
+/* A man left behind is not a casualty and the line does not read like one:
+   the killer's red is for the ones something killed. */
+.fell.left{color:var(--dim)}
 .company-post button{margin-bottom:6px}
 .company-post button[disabled]{opacity:.4;cursor:not-allowed;transform:none}
 

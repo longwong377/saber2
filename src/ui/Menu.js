@@ -6512,16 +6512,31 @@ export class Menu {
       <p id="company-back" class="hint company-back">‹ Back to the company</p>
       <p class="hint">${roll.lost | 0} ${escKey(army?.unit || 'trooper')}s have not come home.
         The ${roll.fallen.length} most recent are named here; the rest are on no list
-        anywhere, which is what permanent means.</p>
+        anywhere, which is what permanent means.${(() => {
+          const n = roll.fallen.filter((f) => f.fate === 'left').length;
+          return n ? ` ${n} of them ${n === 1 ? 'was' : 'were'} still standing when the ship `
+            + 'left — that is a decision you made about how long to hold, not a battle.' : '';
+        })()}</p>
       <div class="company-fallen">
         ${roll.fallen.map((f) => {
           const R = RANKS[Math.max(0, Math.min(RANKS.length - 1, f.rank | 0))];
           const name = f.callsign || f.nickname;
           const called = name ? `${f.designation} "${name}"` : f.designation;
-          const fell = f.killer
-            ? `<span class="fell">Fell${f.where ? ` on ${escKey(f.where)}` : ''} to ${escKey(f.killer)}`
-              + `${Number.isFinite(f.at) ? `, minute ${f.at}` : ''}.</span>`
-            : '';
+          /**
+           * LEFT IS NOT DEAD, and this page was saying one sentence over two
+           * very different facts — see `Company.FATES`. Nothing was standing
+           * over the man who did not reach the ramp; what happened to him is
+           * that the door closed, and the memorial owes him that word rather
+           * than a blank where a killer's name should be.
+           */
+          const left = f.fate === 'left';
+          const fell = left
+            ? `<span class="fell left">Left${f.where ? ` on ${escKey(f.where)}` : ''} `
+              + '— still standing when the ramp closed.</span>'
+            : (f.killer
+              ? `<span class="fell">Fell${f.where ? ` on ${escKey(f.where)}` : ''} to ${escKey(f.killer)}`
+                + `${Number.isFinite(f.at) ? `, minute ${f.at}` : ''}.</span>`
+              : '');
           return `<div><b>${escKey(called)}</b><span>${escKey(R.title)} · ${f.kills | 0} down · `
             + `${f.runs | 0} run${(f.runs | 0) === 1 ? '' : 's'}`
             + `${f.where ? ` · ${escKey(f.where)}` : ''}</span>${fell}</div>`;
