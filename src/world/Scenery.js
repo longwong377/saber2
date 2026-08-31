@@ -35,6 +35,27 @@ import { makeRng, clamp, lerp, fbm2, ridged2, TAU } from '../engine/MathUtil.js'
 import { setAir } from '../game/Smoke.js';
 
 const rng = makeRng(70707);
+/**
+ * PUT THIS FILE'S STREAM BACK TO A STATED PLACE.
+ *
+ * The last of the game's module-level streams to get a name, and
+ * `tools/checks/_shared.mjs` had it at the top of its own "what is still not
+ * covered" list: "Scenery.js's own `rng` (module scope, private, drives every
+ * scatter)". Private is the whole problem — the boundary between two check
+ * suites can only restore what it can reach, which is the same sentence
+ * `enemyRng`, `duelRng`, `commandRng` and `seedWorld` were each named for.
+ *
+ * WHAT IT COSTS TO LEAVE IT FREE, measured on `theline.19`, whose subject is
+ * how many MINUTES a sitting takes: with the other four pinned it read 14.4
+ * alone, twice, and 15.0 inside a full run — 6 waves against 8 in the same
+ * quarter of an hour. Scatter is cover, cover is how long a firefight takes,
+ * and a check that times a fight over ground nobody seeded is timing the
+ * dressing as much as the battle.
+ *
+ * It changes nothing about a real session: the module opens on 70707 exactly
+ * as it always did, and nothing in `src/` calls this.
+ */
+export function seedScenery(seed) { rng.seed(seed >>> 0); return rng; }
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _col = new THREE.Color();

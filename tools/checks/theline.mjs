@@ -1485,9 +1485,34 @@ export async function run({ check, assert }) {
     try {
       for (let i = 0; i < (hi * 60) / STEP && !over; i++) {
         input.tick(STEP);
-        /* IMMORTAL, BOTH SIDES OF THE PLAYER'S ARMY — see the note above. */
+        /**
+         * IMMORTAL, BOTH SIDES OF THE PLAYER'S ARMY — AND IT WAS NOT.
+         *
+         * This used to top the health up once a frame, which is not the same
+         * thing as unkillable: a body taken from full to zero BETWEEN two of
+         * these lines is dead before the next one runs, and in THE LINE a
+         * wiped army ends the run (`holdTheLine`). So the drive did not
+         * measure the length of a Raid at all on those runs — it measured how
+         * long the line lasted, which is a different quantity and a far more
+         * chaotic one. Measured, the same fixture behind the same predecessor
+         * on two runs of one build: **3.2 minutes and 15.0**, one of them a
+         * wipe wearing a length's clothes.
+         *
+         * `damage` is the one door — `Enemy.damage` is what every bolt, blade
+         * and blast ends at — so refusing it is the whole hold, and it has to
+         * be re-applied rather than done once: an area boundary recalls the
+         * army and `deploy()` builds a NEW body for every record, which
+         * arrives with the class method again. The flag is on the body so the
+         * wrap is idempotent and costs one property read a frame.
+         */
         if (world.player) world.player.hp = world.player.maxHp;
-        for (const tr of d.roster.all) if (tr.alive && tr.body && !tr.body.dead) tr.body.hp = tr.body.maxHp;
+        for (const tr of d.roster.all) {
+          const b = tr.body;
+          if (!tr.alive || !b || b.dead || b._heldUp) continue;
+          b._heldUp = true;
+          b.damage = () => false;
+          b.hp = b.maxHp;
+        }
         world.update(STEP, input); t += STEP;
         /* THE SAME TWO CALLS `_areaClear` MAKES WHEN NOTHING IS WIRED, in the
          * same order: "muster for the player and press on". `autoMuster` is

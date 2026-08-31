@@ -61,7 +61,26 @@
  */
 export const SESSION_PLANS = [
   {
-    id: 'raid', name: 'Raid', engagements: 2, minutes: [10, 15], weight: 1,
+    /**
+     * 12–20 AND IT WAS 10–15, and the number was moved by a measurement rather
+     * than by taste.
+     *
+     * A Raid is `planStages` over `AREAS`, so it is the landing (3 waves) and
+     * the Core Ship (5) — eight waves ending on the heaviest ground in the
+     * game, budget 1.45 and 45% heavies. `theline.19` fights the whole of it
+     * with BOTH sides of the player's army held unkillable, which makes the
+     * clock it reports a FLOOR: 14.4 minutes at its most favourable and past
+     * 15 on a slower composition, against a card that said 15 was the ceiling.
+     * A played sitting, with men who die, is longer than either.
+     *
+     * So the card was overpromising at the top and unreachable at the bottom,
+     * and the honest half of the pair is this one. The other half — making a
+     * Raid genuinely short by cutting waves out of it — is a difficulty
+     * re-tune for every player of the mode and a balance call somebody should
+     * make deliberately; see HANDOFF §6.4. The Push and the Grind have never
+     * been driven end to end, so their two bands are still projections.
+     */
+    id: 'raid', name: 'Raid', engagements: 2, minutes: [12, 20], weight: 1,
     blurb: 'In, hold twice, out. The line you land with is very nearly the line you leave with.',
   },
   {

@@ -98,8 +98,7 @@
  * reach.
  *
  * ── WHAT IS STILL NOT COVERED, and it is not an oversight in each case:
- * Scenery.js's own `rng` (module scope, private, drives every scatter), the
- * wave stream (`seedWaves` is a suite's own call, because the seed is part of
+ * the wave stream (`seedWaves` is a suite's own call, because the seed is part of
  * what it is measuring), `ground.clock` and `_scarAt` (they have to move
  * together or `ground.scar`'s throttle refuses every cut for the rest of the
  * run — see the note on `ground.clock`), and Engine's once-only ShaderChunk
@@ -139,9 +138,16 @@ export async function snapshotShared() {
    * than to where the snapshot found them, and this is the same statement.
    */
   const { seedWorld } = await import('../../src/game/World.js');
+  /* ── AND THE SCATTER, which was the last one on the list below. Its own note
+   * in Scenery.js carries the measurement: with the other four pinned,
+   * `theline.19` still read 14.4 minutes alone and 15.0 in a full run, 6 waves
+   * against 8, because the trees and rocks a firefight is fought through were
+   * laid by a stream nobody had put back. */
+  const { seedScenery } = await import('../../src/world/Scenery.js');
   const { audio } = await import('../../src/engine/Audio.js');
   return {
     seedWorld,
+    seedScenery,
     wind,
     time: wind.time,
     /* The four `configure` sets, which is the whole of a level's wind block.
@@ -188,6 +194,7 @@ export function restoreShared(snap) {
   snap.duelRng.seed(8123);                  // src/game/Duel.js:33
   snap.commandRng.seed(0x5EED0C7);          // src/game/Command.js, `commandRng`
   snap.seedWorld?.(0x0B0D1E5);              // src/game/World.js, `seedWorld`
+  snap.seedScenery?.(70707);                // src/world/Scenery.js, its own module seed
   for (const k of Object.keys(snap.audio)) if (!(k in snap.sound)) delete snap.audio[k];
   Object.assign(snap.audio, snap.sound);
   if (snap.store) {

@@ -28,8 +28,8 @@ Playable two ways:
 
 ### 1.0 START HERE — the shortest true statement of where this is
 
-**Branch `claude/game-critique-ideas-uh54iw`. See §5.0 for what this session
-did; the gate figure below predates it and §6.4 lists what is red.**
+**Branch `claude/game-feature-verification-m5udbp`, merged to the default.
+See §5.0 for what this session did and §6.4 for the gate.**
 
 **HOW TO PLAY IT.** `node tools/pack.mjs out.html` builds the whole game as ONE
 self-contained file — no server, open it in a browser. **AND THE PAGES LINK IS
@@ -1610,7 +1610,145 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
-## 5.0 What THIS session changed — 26 Aug
+## 5.0 What THIS session changed — 30–31 Aug
+
+Driven entirely by playtest messages, again, and the shape of the round is worth
+more than the list: **five of the seven items were features that already existed
+and could not be reached.** Not one of them was a missing mechanic. §6.6's first
+bucket — a thing that exists and is broken beats a thing that exists and cannot
+be reached beats a thing that does not exist — held for all five.
+
+### The company: three defects, one system
+
+The player: *"we get in the extraction ship and go to the next map, at some point
+the troops that got on were cleared off the ship and a new set of troops came in…
+the promoted guy wasn't in the game anymore but he still was on the troop list"*
+and, separately, *"I finished a skirmish run and when I was back at the main menu
+and went to the troop tab I could only see a list of fallen troops, nothing about
+the troops that had just survived."*
+
+1. **THE LINE DID NOT CROSS THE MAP.** `World.loadLevel` builds a *new*
+   `CommandDirector` — every ground change goes through it — and that
+   constructor ends on `_musterOpening()`. So the incoming ground raised a fresh
+   army while the outgoing roll, ranks and casualty list and all, went with the
+   director that owned it. `_beforeRotate` recalls the army first, which is what
+   keeps twelve withdrawals from being twelve deaths, and that recall had been
+   preserving records for a roster nobody carried. `runCarry` carries them now
+   (`carry.line`) and `CommandDirector.reinstate` puts them on the incoming roll
+   *before* either branch tops it up.
+
+   **The `Trooper` objects themselves move, not records of them.** There is a
+   record round-trip in Command.js already — `enlistRecord`, the door a *saved*
+   man comes back through — and it is the wrong tool twice over inside one run:
+   it is a field list, so anything added to a man tomorrow is silently dropped
+   on every crossing, and a man crossing a ground has not been serialised, so
+   there is nothing to reconstruct. `CommandRoster.adopt` claims the
+   designation, cuts `body`, clears the three fight-is-over flags, and is done.
+
+2. **WINNING STRUCK THE WHOLE ROLL OFF.** `World.manifest` had exactly one
+   writer, `_endWithdrawal`, and `main.js`'s `bank()` reads it as "who came
+   home" — so a run that ended any other way handed `Company.keep` an EMPTY
+   list with `deployed: roster.all` under it, and keep's rule for a man who went
+   out and is not on the manifest is that he is dead. **Every won skirmish
+   executed the company.** `World.sealManifest` is the sentence — the
+   withdrawal is how you leave a ground you do *not* hold; a battle you won is a
+   ground nobody has to be extracted from — and both endings that can be won
+   call it. A wipe and a walk-out still keep nobody, deliberately, and
+   `company.mjs` still says of itself that it is the check that goes red the day
+   a bad run is softened.
+
+3. **THE ROLL DID NOT SAY WHO WAS GOING OUT.** The *Taking in* page named them
+   in full and always did; the roll column showed sixty men with no line drawn
+   where the muster stops. `musterPlan` is called, not restated.
+
+`tools/checks/skirmish.mjs` gained three checks: the crossing (asserted on
+designations and rank, because ten men crossing and ten strangers arriving are
+the same number), the two verdicts, and **the end-to-end nobody had** — win,
+`keep`, `fieldable`, `_musterVeterans`, and the promoted man still a corporal on
+the next line. Four green units with a defect in the joins is exactly the shape
+the player hit.
+
+### What was already built and simply invisible
+
+*"wouldn't it be interesting if you wanted to pre-name your troops… you should
+be able to even customize certain cosmetic parts of your troops before battle."*
+
+Both shipped. Company tab → a man → **Callsign** (14 chars, overrides the earned
+nickname) and **Mark** (eight colours, painted low on the legs by `enlistBody`
+→ `markUp`, so it is on the body at forty metres). Both write through
+`Company.dress`, which `company.mjs` holds to exactly those two fields — *"a
+roster screen that can edit anything else is a cheat panel"*. Neither could be
+reached because the roll was always empty. **Fix the reachability defect before
+building the feature somebody is describing; they may be describing what you
+have.**
+
+### The gate: three flakes, and one of them was a lie about a length
+
+None was a defect in the game. All three were the harness measuring something it
+had not pinned.
+
+- **`_shared.mjs` now pins `seedWorld` and `seedScenery`.** World.js exported
+  `seedWorld` *for this boundary* and nothing ever called it; Scenery's `rng`
+  was private and sat at the top of this file's own "what is still not covered"
+  list. So two of the game's streams were restored between suites and two ran
+  free. `theline.19`, whose entire subject is how many minutes a sitting takes,
+  read **15.0, 4.5 and 2.7 minutes on one build**. Scatter is cover and cover is
+  how long a firefight takes. `undertaker`'s felled-trunk clause was the same
+  cause wearing different words — a log at the kill plane, green alone, red in
+  the run.
+- **`graves`' own-marker arm compared man 0 across two fixtures**, which is two
+  draws from the roster stream. Squad leaders carry their own morale terms and
+  sit far below their privates (0.343 and 0.286 against 0.840 on this fixture,
+  with no grave on the ground at all), so *whether man 0 was one* decided the
+  reading. It reads `_graveT` inside one line now, which is the mechanism.
+- **`command-pvp` pumps until fire has crossed the wire**, instead of for a
+  typed 20 seconds, so its premise stops depending on which second the first
+  rifle goes off.
+
+### …and `theline.19` was not measuring what it said
+
+Worth its own heading, because it is the best instrument lesson of the round and
+it survived four separate attempts to fix it as a flake.
+
+The check drives a whole Raid to a verdict **"with the army held unkillable"**
+and reports the wall clock as a FLOOR. It was not holding the army unkillable.
+It topped every trooper's health up once a frame, which is not the same thing:
+a body taken from full to zero *between* two of those lines is dead before the
+next one runs, and in THE LINE a wiped army ends the run. So on some runs it was
+not timing a Raid at all — it was timing how long the line lasted, which is a
+different quantity and a far more chaotic one. Measured, same fixture, same
+predecessor, two runs of one build: **3.2 minutes and 15.0.**
+
+`Enemy.damage` is the one door every bolt, blade and blast ends at, so refusing
+it is the whole hold — re-applied each frame off a flag on the body, because an
+area boundary rebuilds every body with the class method again.
+
+**A premise stated in a comment is not a premise the code keeps.** Both of this
+round's harness fixes are that sentence: `command-pvp` asserts its premise and
+failed honestly when it stopped being true; `theline.19` asserted a number while
+its own premise quietly stopped holding, and reported the number.
+
+With the hold real, `SESSION_PLANS.raid.minutes` moved **10–15 → 12–20**, which
+is the honest half of the pair the check itself offers. A Raid is eight waves
+ending on the heaviest ground in the game; the floor is past fifteen minutes and
+a played sitting is longer. The other half — making a Raid genuinely short by
+cutting waves out of it — is a difficulty re-tune for every player of the mode
+and is left as a stated balance call. **The Push and the Grind have never been
+driven end to end, so their bands are still projections.**
+
+### What is still open
+
+- **The Push (18–25) and the Grind (30–45) are unmeasured.** `theline.19` drives
+  the Raid because it is the only plan cheap enough to sit in a gate. A Push at
+  three engagements floored at 45.7 minutes once, before the tuning that fixed
+  it, and nothing has re-driven it since.
+- **A Raid may simply be too long for its name.** See above; the card is honest
+  now and the mode is unchanged.
+- Scenery's stream is pinned but `ground.clock`/`_scarAt` and the wave stream
+  still are not — the two exclusions in `_shared.mjs`'s list have their reasons
+  written beside them.
+
+## 5.0b What the session before this one changed — 26 Aug
 
 Driven entirely by one playtest message. Every item below was reported by the
 player, and three of them had been marked done in `PLAYTEST.md` and were not.
@@ -2589,9 +2727,20 @@ be pinning a scene rather than holding a rule.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
-forward   1517 passed, 0 failed    18.7 min of suite time, clean worktree, quiet box
-reverse   1517 passed, 0 failed    SABER_CHECK_ORDER=reverse, same worktree
+31 Aug    2177 passed, 2 failed   → both re-run alone and green; both were the
+                                    harness, not the game, and both are fixed
+                                    (§5.0: the two unpinned streams, and
+                                    theline.19's premise). ~45 min on this box.
+26 Aug    forward   1517 passed, 0 failed   18.7 min, clean worktree, quiet box
+26 Aug    reverse   1517 passed, 0 failed   SABER_CHECK_ORDER=reverse, same tree
 ```
+
+**A RED LINE IN A FULL RUN IS NOT A FINDING UNTIL IT HAS BEEN RE-RUN ALONE**,
+and this round is the clearest case the repo has: two reds out of 2179, neither
+of them a defect in the game, and one of them — `theline.19` — a check that had
+been reporting a *number* for a run whose stated premise had quietly stopped
+holding. See §5.0's last two headings. Both are closed at the boundary rather
+than in the check that noticed, which is where four earlier ones were closed.
 
 **The same count in both directions is the part that matters**, not the zero.
 Forty-two of this session's fifty-nine failures were order-dependent — a suite
