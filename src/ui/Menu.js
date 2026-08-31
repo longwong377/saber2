@@ -6042,12 +6042,24 @@ export class Menu {
        * deploy path fields, picks and slate and all, so the tags on these
        * rows can no longer disagree with the ground. With no picks set the
        * lineup's veterans are exactly `fieldable`'s prefix, which is what the
-       * cut sentence and its check have always said. */
+       * cut sentence and its check have always said.
+       *
+       * A JOINED CLIENT'S TAB CLAIMS NOTHING: `veteransToField` refuses to
+       * field a client's men (the host's army is the one on the ground), so a
+       * page tagging ten of them DEPLOYING would be the page lying — the exact
+       * defect class the resolver exists to kill, from the other side. The
+       * host keeps the full display, because the host's men really do drop. */
+      const sessionClient = this._netMode === 'client';
       const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+      const versus = Muster.versusPlanned(this.s);
+      const line = !sessionClient && plan && plan.army === c.army
+        ? (Muster.lineup(plan, c, { versus }) || []) : [];
+      /* Read AFTER lineup — its ensure() may have just laundered or wiped
+       * the picks — and claimed only where the resolver actually honours
+       * them: an army-mode plan, no meeting. Anywhere else "Hand-picked"
+       * would be a header over a line in muster order. */
       const slate = plan && plan.army === c.army ? Muster.slateFor(c.army) : null;
-      const picked = !!(slate?.picks?.length);
-      const line = plan && plan.army === c.army
-        ? (Muster.lineup(plan, c, { versus: Muster.versusPlanned(this.s) }) || []) : [];
+      const picked = !!(plan?.armyMode) && !versus && !sessionClient && !!(slate?.picks?.length);
       const goingSet = new Set(line.map((x) => x.designation));
       const taking = men.filter((m) => goingSet.has(m.designation)).length;
       if (taking > 0) {
@@ -6166,11 +6178,13 @@ export class Menu {
         + 'muster forms here with names.');
       return;
     }
-    if ((this._netList?.length || 0) > 1) {
-      /* `_netList` is the co-op roster `netRoster` keeps; more than one name
-       * on it means a session, and a session fields the HOST's army — see
-       * veteransToField's own note. The slate stands, unspent, for the next
-       * solo run, and saying so beats a silently empty muster. */
+    if (this._netMode === 'client') {
+      /* `_netMode` is what main.js's session wiring tells this menu —
+       * 'host', 'client' or null — and 'client' is EXACTLY the state where
+       * `veteransToField` refuses to field these men. The host is not it:
+       * the host's veterans and recruits really drop into a co-op run, so
+       * hiding the muster from the host would be the page lying the other
+       * way, to the one player whose men are actually at stake. */
       hint('In a session the host’s army musters. Your muster stands for your next solo run.');
       return;
     }
@@ -6250,6 +6264,7 @@ export class Menu {
      * switch invalidates a held key to the index rather than a blank page.
      */
     const recruit = roll && who?.startsWith('+')
+      && !Muster.versusPlanned(this.s) && this._netMode !== 'client'
       ? Muster.slateFor(armyId).recruits.find((r) => r.designation === who.slice(1)) || null
       : null;
     /* `-fallen` self-invalidates too — with nobody on the list there is no
@@ -6391,6 +6406,15 @@ export class Menu {
      * "6 fresh" used to be the whole of what a player could know about six
      * men they were about to lead.
      */
+    /* A JOINED CLIENT IS TOLD THE TRUTH INSTEAD OF A LINEUP: the host's army
+     * is the one that musters, and a named list of men who will not drop is
+     * the page lying with extra steps. The host keeps the list — his men do. */
+    if (this._netMode === 'client') {
+      return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
+        <p class="hint">In a session the host's army musters — see the Co-op tab
+          for who is on the ground. Your roll and your muster stand for your next
+          solo run, exactly as you left them.</p>`;
+    }
     const c = companyLoad(plan.army);
     const versus = Muster.versusPlanned(this.s);
     const line = Muster.lineup(plan, c, { versus }) || [];
@@ -6407,12 +6431,28 @@ export class Menu {
       return `<div><b>${escKey(companyNameOf(m))}</b><span>${escKey(R.title)} · `
         + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · ${m.kills | 0} down</span></div>`;
     }).join('');
+    /**
+     * A MEETING'S NUMBERS ARE THE MEETING'S. A versus side opens at the
+     * lobby's strength — default 20 — with the balance beyond your veterans
+     * raised at the muster and recorded on no roll. The old sentence claimed
+     * "nobody new is drawn", which was true of the SLATE and false of the
+     * side; a page that under-reports a line by seventeen bodies is not a
+     * page about the next run.
+     */
+    if (versus) {
+      const side = versusCommandConfig(this.s).strength;
+      return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
+        <p class="hint">${escKey(army?.name || plan.army)} fields <b>${side}</b>
+          ${escKey(unit)}s a side in a meeting: <b>${vets.length}</b> of the company,
+          the balance raised at the muster and kept on no roll. The named men of
+          your muster stay home — a duel between commanders records no survivors
+          and takes no recruits.</p>
+        <div class="company-fallen company-taking">${rows}</div>`;
+    }
     return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
       <p class="hint">${escKey(army?.name || plan.army)} fields <b>${line.length}</b>
         ${escKey(unit)}s next run: <b>${vets.length}</b> of the company,
-        <b>${fresh}</b> fresh.${versus
-          ? ' A meeting risks veterans only — nobody new is drawn for a duel between commanders.'
-          : ''}</p>
+        <b>${fresh}</b> fresh.</p>
       <div class="company-fallen company-taking">${rows}</div>`;
   }
 
@@ -6538,7 +6578,12 @@ export class Menu {
      */
     const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
     let pickBtn = '';
-    if (plan && plan.army === roll.army && !Muster.versusPlanned(this.s)) {
+    /* Offered ONLY where `lineup` honours picks: an army-mode plan, no
+     * meeting, not a joined client. A contingent's line is composed by the
+     * purse, and a button that wrote picks the resolver ignores would render,
+     * click, and change nothing — a lie with a hover state. */
+    if (plan?.armyMode && plan.army === roll.army && !Muster.versusPlanned(this.s)
+        && this._netMode !== 'client') {
       const line = Muster.lineup(plan, roll, {}) || [];
       const going = line.some((x) => x.designation === m.designation);
       const swappable = going
@@ -6628,8 +6673,18 @@ export class Menu {
       </div>
       <p class="hint">No record yet — his numbers are rolled the day he musters, from
         the run itself, so there is nothing here to read and nothing anywhere to
-        reroll. What you may give him now is a name and a paint job. He drops with
-        you next run; bring him home and he joins the roll with both.</p>
+        reroll. What you may give him now is a name and a paint job.
+        ${(() => {
+          /* The sentence is a claim about the NEXT DEPLOY, so it is read off
+           * the resolver rather than assumed: a hand-picked line can bench a
+           * recruit, and his page must not promise a drop the lineup refuses. */
+          const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+          const drops = plan && plan.army === roll.army
+            && (Muster.lineup(plan, roll, {}) || []).some((x) => x.designation === r.designation);
+          return drops
+            ? 'He drops with you next run; bring him home and he joins the roll with both.'
+            : 'The line was picked past him this run — he keeps the name and waits for the next muster.';
+        })()}</p>
       <h4 class="codex-head">Callsign</h4>
       <p class="hint">Up to ${companyCallsignMax} characters. He has earned nothing to
         answer to yet — this is the name you are lending him until he does.</p>
@@ -6785,7 +6840,9 @@ export class Menu {
     const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
     const armyId = ARMIES[this._stageArmy] ? this._stageArmy
       : (plan?.army || armyToLead(this.s.order, {})?.id || ARMY_IDS[0]);
-    if (plan && plan.army === armyId) {
+    /* A joined client's men do not deploy (veteransToField refuses), so their
+     * stage is a review of the roll, never a claim about the next run. */
+    if (this._netMode !== 'client' && plan && plan.army === armyId) {
       const men = Muster.lineup(plan, companyLoad(armyId),
         { versus: Muster.versusPlanned(this.s) }) || [];
       return { armyId, men, planned: true };
@@ -6968,14 +7025,26 @@ export class Menu {
     const slots = paradeSlots(men.length);
     p.queue = men.map((man, i) => ({ man, slot: slots[i] }));
     p.lineContent = null;
+    /* An EMPTY parade still frames: the measure's ground fallback only runs
+     * if something calls it, and with nothing queued the build loop never
+     * would — the camera would sit at the origin looking at nothing. */
+    if (!p.queue.length) this._stageMeasure();
     p.dirty = true;
     const cap = document.getElementById('company-stage-caption');
     const army = ARMIES[armyId];
-    p.lineCaption = men.length
-      ? (planned
-        ? `${army?.name || armyId} — the ${men.length} deploying with you next run. Drag to look; click a body to meet him.`
-        : `${army?.name || armyId} — the roll under review. ${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours.`)
-      : `${army?.name || armyId} fields nobody yet. The muster forms when you lead them.`;
+    const modeName = MODES[this.s.mode]?.name || this.s.mode;
+    /* The unplanned sentence tells the truth about THIS roll: when a plan
+     * exists for the other army, the mode does field an army of yours — just
+     * not the one standing here. */
+    p.lineCaption = this._netMode === 'client'
+      ? `${army?.name || armyId} — the roll under review. In a session the host's army musters.`
+      : men.length
+        ? (planned
+          ? `${army?.name || armyId} — the ${men.length} deploying with you next run. Drag to look; click a body to meet him.`
+          : (musterPlan(this.s, LEVELS[this.s.level]?.armies)
+            ? `${army?.name || armyId} — the roll under review. ${modeName} fields your other army, not this roll.`
+            : `${army?.name || armyId} — the roll under review. ${modeName} fields no army of yours.`))
+        : `${army?.name || armyId} fields nobody yet. The muster forms when you lead them.`;
     if (cap) cap.textContent = p.lineCaption;
   }
 
@@ -6984,22 +7053,39 @@ export class Menu {
     const p = this.barracks;
     const next = p?.queue.shift();
     if (!next) return;
+    /* The measure fires on the shift that EMPTIES the queue, whether or not
+     * this last build succeeds — a bail before it left the whole stage
+     * unframed forever when the final man was the one exotic chassis. */
+    const emptied = !p.queue.length;
     const fig = buildParadeFigure(next.man);
-    if (!fig) return;
-    const holder = new THREE.Group();
-    /* Measured at the origin, before the holder is placed: this box is the
-     * man's own, in his own frame, and the man-shot camera is solved from it
-     * wherever he stands. */
-    holder.add(fig.root);
-    fig.content = previewContent([holder]);
-    fig.holder = holder;
-    fig.home = next.slot;
-    fig.step = 0;
-    fig.stepTo = 0;
-    holder.position.set(next.slot.x, 0, next.slot.z);
-    p.pivot.add(holder);
-    p.figures.push(fig);
-    if (!p.queue.length) this._stageMeasure();
+    if (fig) {
+      const holder = new THREE.Group();
+      /* Measured at the origin, before the holder is placed: this box is the
+       * man's own, in his own frame, and the man-shot camera is solved from
+       * it wherever he stands. */
+      holder.add(fig.root);
+      fig.content = previewContent([holder]);
+      fig.holder = holder;
+      fig.home = next.slot;
+      fig.step = 0;
+      /* A selection made while the queue was still building reaches the men
+       * built after it — the man whose page is open steps forward the frame
+       * he exists, and the caption catches up with him. */
+      fig.stepTo = p.selected === next.man.designation ? 0.55 : 0;
+      if (fig.stepTo > 0) { p.animating = true; this._stageCaptionFor(fig.man); }
+      holder.position.set(next.slot.x, 0, next.slot.z);
+      p.pivot.add(holder);
+      p.figures.push(fig);
+    }
+    if (emptied) this._stageMeasure();
+  }
+
+  /** The caption for one man, shared by selection and late-built figures. */
+  _stageCaptionFor(m) {
+    const cap = document.getElementById('company-stage-caption');
+    if (!cap || !m) return;
+    const called = m.look?.callsign || m.nickname;
+    cap.textContent = `${called ? `${m.designation} "${called}"` : m.designation} steps forward.`;
   }
 
   /** The whole line's content, measured with the spin taken off. */
@@ -7009,6 +7095,13 @@ export class Menu {
     const spin = p.group.rotation.clone();
     p.group.rotation.set(0, 0, 0);
     p.pivot.position.set(0, 0, 0);
+    /* PROPAGATED BEFORE MEASURING, and this is the whole trick: zeroing the
+     * rotation writes locals, but `previewContent`'s per-object update reads
+     * the PARENT's matrixWorld as it stands — which is the last rendered
+     * frame's spin and pivot offset, because only a render walks the scene.
+     * One explicit walk here and the box is measured in the frame the
+     * comments above always claimed it was. */
+    p.scene.updateMatrixWorld(true);
     p.lineContent = p.figures.length
       ? previewContent(p.figures.map((f) => f.holder))
       : previewContent([p.ground]);
@@ -7038,6 +7131,13 @@ export class Menu {
     p.figures = [];
     p.queue = [];
     p.selected = null;
+    /* A dropped selection takes the man-shot with it: a restage from the
+     * army header would otherwise frame the NEW line at close-up zoom with
+     * a shot button both selected and inert. */
+    if (p.shot !== 'line') {
+      const line = PARADE_SHOTS[0];
+      p.shot = line.id; p.zoom = line.zoom; p.focus = line.focus;
+    }
     this._syncStageShots();
   }
 
@@ -7045,8 +7145,24 @@ export class Menu {
   _stageSelect(designation) {
     const p = this.barracks;
     if (!p) return;
-    if (p.selected === (designation ?? null)) return;
-    p.selected = designation ?? null;
+    const want = designation ?? null;
+    /* A man who is not ON the stage — a reserve veteran, another army's man —
+     * has a page but no figure, and a man-shot with nobody in it would frame
+     * the whole line at close-up zoom. The camera stays on the line; the page
+     * is still his. Men still in the build queue count as staged: the shot
+     * finds them the frame they land. */
+    const staged = want !== null && (p.figures.some((f) => f.man.designation === want)
+      || p.queue.some((q) => q.man.designation === want));
+    if (p.selected === want) {
+      /* Same man, fresh page — a rename. The camera holds; the caption
+       * follows his new name. */
+      if (want !== null && staged) {
+        const fig = p.figures.find((f) => f.man.designation === want);
+        if (fig) this._stageCaptionFor(fig.man);
+      }
+      return;
+    }
+    p.selected = staged ? want : null;
     for (const f of p.figures) f.stepTo = f.man.designation === p.selected ? 0.55 : 0;
     p.animating = true;
     p.shot = p.selected ? 'man' : 'line';
@@ -7055,14 +7171,10 @@ export class Menu {
     p.dirty = true;
     this._syncStageShots();
     const cap = document.getElementById('company-stage-caption');
-    if (cap && p.selected) {
+    if (p.selected) {
       const fig = p.figures.find((f) => f.man.designation === p.selected);
-      const m = fig?.man;
-      if (m) {
-        const called = m.look?.callsign || m.nickname;
-        cap.textContent = `${called ? `${m.designation} "${called}"` : m.designation} steps forward.`;
-      }
-    } else if (cap && !p.selected) {
+      if (fig) this._stageCaptionFor(fig.man);
+    } else if (cap) {
       /* Putting the page down is a CAMERA move, not a teardown: the men are
        * the same men, so the caption comes back from the last restage and
        * the figures stay standing. This used to force a full rebuild — a

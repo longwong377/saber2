@@ -182,6 +182,10 @@ const worldSettings = () => {
 let fieldedRecruits = { army: null, names: [] };
 
 function veteransToField(levelKey = null) {
+  /* Reset FIRST, ahead of every return: a session deploy after a failed solo
+   * one must not leave last time's names in the cache for consume to spend
+   * on a run that never fielded them. */
+  fieldedRecruits = { army: null, names: [] };
   if (session) return null;
   /* THE RESOLUTION IS `musterPlan`'S, called and not restated. This function
    * used to carry its own three clauses and one of them was wrong: it gated
@@ -190,7 +194,6 @@ function veteransToField(levelKey = null) {
    * the whole story; what stays here is the half that is this file's, the
    * save file. */
   const plan = musterPlan(settings, LEVELS[levelKey]?.armies);
-  fieldedRecruits = { army: null, names: [] };
   if (!plan) return null;
   /**
    * `Muster.lineup` is the ONE resolver of who deploys: veterans in

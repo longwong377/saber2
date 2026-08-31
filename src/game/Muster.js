@@ -58,22 +58,37 @@ export const SLATE_CAP = OPENING_STRENGTH;
 
 /* ── the store ───────────────────────────────────────────────────────── */
 
+/**
+ * THE SLATE SURVIVES A BROWSER WITH NO STORAGE — for the SESSION, in memory.
+ *
+ * Private browsing and a full quota make `localStorage` throw, and the old
+ * behavior was the worst of both: `ensure` handed the tab an in-memory slate
+ * to RENDER, the write silently failed, and every later read (`slateFor`
+ * resolving a recruit's page, `dressRecruit` taking a callsign) saw a blank
+ * store — rows that bounced and edits that vanished, with no error anywhere.
+ * The memory mirror makes the whole tab coherent for as long as the page
+ * lives; only persistence across a reload is lost, which is what a browser
+ * with no storage actually means.
+ */
+let memStore = null;
+
 function readAll() {
   try {
-    if (typeof localStorage === 'undefined') return {};
+    if (typeof localStorage === 'undefined') return memStore || {};
     const raw = localStorage.getItem(KEY);
-    if (!raw) return {};
+    if (!raw) return memStore || {};
     const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
+    if (!v || typeof v !== 'object' || Array.isArray(v)) return memStore || {};
     return v;
-  } catch { return {}; }
+  } catch { return memStore || {}; }
 }
 
 function writeAll(v) {
+  memStore = v;
   try {
     if (typeof localStorage === 'undefined') return;
     localStorage.setItem(KEY, JSON.stringify(v));
-  } catch { /* private browsing, a full quota — losing a slate is not a crash */ }
+  } catch { /* private browsing, a full quota — the mirror above carries it */ }
 }
 
 /** A designation in this army's own grammar, or nothing. */
