@@ -1967,17 +1967,30 @@ export class HUD {
     const host = this.el.rpOrders;
     if (!host) return;
     host.innerHTML = '';
-    for (const o of ORDER_ACTIONS) {
+    const cap = (action, id, title) => {
       const chip = document.createElement('i');
       chip.className = 'rp-key';
-      chip.dataset.order = o.id;
-      chip.title = `${o.name} — ${o.blurb}`;
+      if (id) chip.dataset.order = id;
+      /* …AND IT IS A BUTTON ON A PHONE. `Touch.bindWheel` makes anything
+       * carrying a `data-action` tappable, and these chips carried only
+       * `data-order` — so the one strip on screen that names every order was
+       * decoration on the device that has no keyboard. One attribute. */
+      chip.dataset.action = action;
+      chip.title = title;
       chip.textContent = bindings
-        ? keyLabel(codesFor(bindings, o.action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
+        ? keyLabel(codesFor(bindings, action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
           this._pad?.family || 'xbox')
         : '';
       host.appendChild(chip);
-    }
+      return chip;
+    };
+    for (const o of ORDER_ACTIONS) cap(o.action, o.id, `${o.name} — ${o.blurb}`);
+    /* AND WHO THE ORDER IS FOR, at the end of the row where the sentence ends.
+     * See `squadtarget` in Bindings.js: the only way to order one squad rather
+     * than the whole line used to be a wheel slot that appeared in no list. */
+    const t = cap('squadtarget', null,
+      'Target — step through your squads; the next order is for that one alone');
+    t.classList.add('rp-key-target');
     this._lightOrder();
   }
 

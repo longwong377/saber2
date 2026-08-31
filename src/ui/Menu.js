@@ -1861,10 +1861,24 @@ export const CODEX = [
    * two Force verbs authored with it appeared in no list a player could read —
    * not here, not in the teaching panel, nowhere but a wheel caption. */
   { keys: ['orderwheel'], hold: true,
-    text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders and `
-      + '<b>hold ground</b>, on one key. Hold it, aim at a slot, let go. The '
-      + `${ORDER_ACTIONS.length} keys below are the ${ORDER_ACTIONS.length} FORMATIONS without the `
-      + 'wheel, for anybody who would rather not; the two Force orders are the wheel only.' },
+    text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders, `
+      + '<b>hold ground</b>, <b>target</b> and <b>detach</b>, on one key. Hold it, aim at a '
+      + `slot, let go. The ${ORDER_ACTIONS.length} keys below are the ${ORDER_ACTIONS.length} `
+      + 'FORMATIONS without the wheel, for anybody who would rather not; the two Force '
+      + 'orders are the wheel only.' },
+  /* THE THREE SLOTS THAT ARE NOT FORMATIONS, NAMED. `Target` and `Detach` were
+   * on the wheel and in no list a player could read — and Target is the only
+   * way to order ONE squad rather than the whole line, which is the mode's own
+   * headline feature. A control that can only be found by holding a key and
+   * reading a caption is a control most players never find. */
+  { keys: ['squadtarget'],
+    text: () => '<b>Target a squad</b> — step through your squads; the next order is for '
+      + 'that one alone, and stepping past the last hands the line back whole. The squad '
+      + 'you land on is named out loud, and you name the squads themselves on the Company '
+      + 'tab. Also a slot on the wheel, and a chip on the order strip for a thumb.' },
+  { keys: ['orderwheel'], hold: true,
+    text: () => '<b>Detach</b> (on the wheel) — pull the nearest man out of his squad to '
+      + 'take his own orders, or send him back.' },
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
     text: () => `<b>${o.name}</b> — ${o.blurb}`,

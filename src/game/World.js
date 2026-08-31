@@ -6688,9 +6688,14 @@ export class World {
    * whichever machine pressed them, and the bodies only exist on the host. So
    * this is the ask, and `applyOrder` below is the host deciding.
    */
-  requestOrder(id) {
+  requestOrder(id, squad = null) {
     if (this.netMode !== 'client' || !this.net?.connected) return false;
-    this.net.toHost({ t: 'order', f: id });
+    /* …AND WHICH SQUAD IT IS FOR. This sent the formation alone, so a joining
+     * player's squad selection was thrown away at the wire and every order
+     * they gave went army-wide — the Target slot on their wheel moved a field
+     * nobody transmitted. `s` is null for the whole line, which is what every
+     * message from an older build means. */
+    this.net.toHost({ t: 'order', f: id, s: Number.isInteger(squad) ? squad : null });
     return true;
   }
 
@@ -6708,7 +6713,12 @@ export class World {
    */
   applyOrder(peerId, msg) {
     if (this.netMode !== 'host' || !this.command) return false;
-    return this.command.order(msg?.f, this.commanderFor(peerId));
+    /* THE SQUAD COMES OVER THE WIRE TOO — see `requestOrder`. Validated here
+     * rather than trusted: a peer may name a squad of the army they are
+     * entitled to move, and `order` itself refuses an index nobody answers to,
+     * but a non-integer must not reach it as one. */
+    const squad = Number.isInteger(msg?.s) && msg.s >= 0 ? msg.s : null;
+    return this.command.order(msg?.f, this.commanderFor(peerId), squad);
   }
 
   /**

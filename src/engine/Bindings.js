@@ -415,6 +415,31 @@ export const ACTIONS = [
    */
   { id: 'orderwheel', group: 'Command',   label: 'Order wheel',      keys: ['KeyT'],       hold: true, pad: 'PadBack+PadLB' },
   /**
+   * ── WHICH SQUAD THE NEXT ORDER IS FOR, ON A KEY OF ITS OWN ──────────────
+   *
+   * "how do you order one squad to do one thing and another squad to do
+   *  something else?"
+   *
+   * You could, and only through the wheel's Target slot — which meant TWO full
+   * hold-aim-release cycles to give one order to one squad, no way at all on a
+   * phone (the order wheel is a held key and there is no button to hold), and
+   * a slot that appeared in no list a player could read. The mode's headline
+   * feature was reachable by accident.
+   *
+   * So it is a real row: rebindable, on the options screen, in the controls
+   * list, with a pad chord, and — because the HUD's order strip is built from
+   * bindings and `Touch.bindWheel` makes anything with a `data-action` on it
+   * tappable — a button on a phone.
+   *
+   * COMMA, because it is the last free letter-row key on a board where every
+   * obvious one is taken (`Y` is Hurl, `G`/`H`/`J` and the rest are spoken
+   * for), and because it sits under the same hand as the six formation digits
+   * it modifies. `bindings.mjs` refuses a default that collides, which is how
+   * the first draft of this row — `KeyY` and `PadBack+PadRB`, both already
+   * bound — was caught before it shipped.
+   */
+  { id: 'squadtarget', group: 'Command',  label: 'Target a squad',   keys: ['Comma'],      pad: 'PadRB+PadLeft' },
+  /**
    * ONE BINDING FOR EVERY SUPPORT CALL THERE WILL EVER BE.
    *
    * Hold it and the movement keys stop moving you and start SPELLING — see

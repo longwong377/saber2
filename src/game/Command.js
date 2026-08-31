@@ -6166,7 +6166,11 @@ export class CommandDirector extends WaveDirector {
      * which is the same round trip the roster and the casualty list already
      * make, and it is the only version of this that cannot lie.
      */
-    if (this._netShell) return this.world?.requestOrder?.(id) ?? false;
+    /* …AND THE SQUAD GOES WITH IT. A shell that asked for the formation alone
+     * threw the joining player's own selection away at the wire: their Target
+     * slot moved a field nobody transmitted, and every order they gave went
+     * army-wide. */
+    if (this._netShell) return this.world?.requestOrder?.(id, squad) ?? false;
     const c = cmdr || this.commander;
     /**
      * ── ONE SQUAD, OR ALL OF THEM ────────────────────────────────────────

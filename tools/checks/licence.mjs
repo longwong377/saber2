@@ -230,7 +230,9 @@ export async function run({ check, assert }) {
       'the man who could keep the ground is dead and the squad is still holding it — '
       + 'the licence buys nothing');
     const said = d.world.notes.map(([a, b]) => `${a} ${b}`).join(' | ');
-    assert(/GROUND IS GIVEN UP/.test(said), `nothing was said about the ground: ${said}`);
+    /* The squad's own NAME is in the headline now — see `squadLabel` — so the
+     * sentence is matched on the verb rather than on a fixed string. */
+    assert(/GIVES UP THE GROUND/.test(said), `nothing was said about the ground: ${said}`);
     assert(d.log.some((e) => e.t === 'ground-lost'), 'the ledger does not record the loss');
 
     /* …AND IT IS KEPT WHEN SOMEBODY LEFT IS LICENSED, which is the half that
@@ -245,7 +247,7 @@ export async function run({ check, assert }) {
     d2.onDeath(sq2[0].body, null);
     assert(c2.squadPlanted?.has('0'),
       'the ground was given up with a licensed man still standing in the squad');
-    assert(!/GROUND IS GIVEN UP/.test(d2.world.notes.map(([a]) => a).join()),
+    assert(!/GIVES UP THE GROUND/.test(d2.world.notes.map(([a]) => a).join()),
       'the vacancy was announced for a capability that did not leave');
     return 'the position is dropped and announced with nobody licensed left; kept in silence '
       + 'with a Veteran still up';
@@ -366,7 +368,7 @@ export async function run({ check, assert }) {
     d.world.notes.length = 0;
     d.onDeath(nobody.body, null);
     const said = d.world.notes.map(([a]) => a);
-    for (const line of ['GROUND IS GIVEN UP', 'HELD THE POST', 'VOICE IS GONE']) {
+    for (const line of ['GIVES UP THE GROUND', 'HELD THE POST', 'VOICE IS GONE']) {
       assert(!said.some((a) => a.includes(line)),
         `a rung-0 trooper's death announced "${line}"`);
     }

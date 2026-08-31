@@ -83,6 +83,17 @@ hud.onShow = (on) => touch.show(on);
  * its action (HUD._buildPowers), so a tap fires the same edge a screen button
  * does and the six-button rack does not have to grow to forty-four. */
 touch.bindWheel(document.getElementById('power-wheel'));
+/**
+ * …AND THE ORDER STRIP, for the same one listener and the same reason.
+ *
+ * `Touch.js`'s own header says "the order and emote wheels are held-key
+ * radials, which is a gesture a thumb already makes" — and there is no button
+ * to hold, so on a phone a player could not give ANY order, let alone one to a
+ * single squad. The strip under the order readout already names every
+ * formation and now carries a Target chip beside them; making it a button rack
+ * costs one line and no layout, exactly as the power wheel did.
+ */
+touch.bindWheel(document.getElementById('rp-orders'));
 
 input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
@@ -2221,6 +2232,15 @@ function orderKeys() {
   if (screens.state !== 'playing') return;
   const cmd = world?.command;
   if (!cmd) return;
+  /**
+   * ── WHO THE NEXT ORDER IS FOR, ON ITS OWN KEY ─────────────────────────
+   *
+   * Stepping the target used to mean two full hold-aim-release cycles of the
+   * order wheel — one to pick the squad, one to give the order — and there was
+   * no way to do it at all on a phone. `cycleSquad` says out loud which squad
+   * it landed on, so this needs no message of its own.
+   */
+  if (input.actHit('squadtarget')) cmd.cycleSquad?.();
   for (const o of ORDER_ACTIONS) {
     if (!input.actHit(o.action)) continue;
     /**
