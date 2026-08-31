@@ -198,8 +198,14 @@ const MAN_FIELDS = [
    * would have to be decided in the one frame it crossed the line, and the
    * roster screen could never show a pair three grounds short of one. */
   'bonds',
-  /* AND WHAT THE PLAYER CHOSE TO DO WITH HIM. See `look`. */
-  'look',
+  /* AND WHAT THE PLAYER CHOSE TO DO WITH HIM. See `look` for the paint and the
+   * kit; `post` is the other decision — the squad's seat, given by hand. It is
+   * a boolean and it buys no number: what it does is put one named man in
+   * front of `leaderOf`'s derivation, so a company remembers who had the squad
+   * between one press of play and the next. `save` drops a field that is
+   * `null` or `undefined` but keeps `false`, so an unseated man costs nothing
+   * he was not already costing. */
+  'look', 'post',
 ];
 
 /**
@@ -341,6 +347,12 @@ function readMan(m, army) {
       ? m.traits.filter((t) => typeof t === 'string' && traitById(t)).slice(0, 4)
       : [],
     squad: Number.isInteger(m.squad) ? m.squad : null,
+    /* A BOOLEAN, and the LICENCE is checked at the other door rather than
+     * here: this file knows nothing about ranks and `CommandRoster.
+     * enlistRecord` re-tests `holds(t, 'LEADS')` on the way onto a roll, which
+     * is where the rank actually exists. Coerced hard so a stored "yes" or a
+     * stored object cannot ride in as truthy. */
+    post: m.post === true,
     xp: Math.max(0, num(m.xp, 0)),
     kills: Math.max(0, num(m.kills, 0)),
     wounds: Math.max(0, num(m.wounds, 0)),
@@ -553,6 +565,11 @@ export function manOf(t, meta = {}) {
     attrs: t.attrs ? { ...t.attrs } : null,
     traits: Array.isArray(t.traits) ? t.traits.slice() : [],
     squad: Number.isInteger(t.squad) ? t.squad : null,
+    /* THE SEAT HE WAS GIVEN — see `Trooper.post`. A boolean and nothing more:
+     * it buys no number, it is re-checked against the licence on the way back
+     * in, and it exists so a company does not forget who had the squad
+     * between one press of play and the next. */
+    post: !!t.post,
     xp: Math.max(0, t.xp | 0),
     kills: Math.max(0, t.kills | 0),
     wounds: Math.max(0, t.wounds | 0),
@@ -923,6 +940,46 @@ export function dress(army, key, look = {}) {
     if (whole?.paint) next.paint = whole.paint; else delete next.paint;
   }
   m.look = Object.keys(next).length ? next : null;
+  return save(c);
+}
+
+/**
+ * ══ GIVE A MAN HIS SQUAD'S SEAT, ON THE ROLL ═══════════════════════════════
+ *
+ * The store's half of `CommandRoster.appoint`, and it is a second
+ * implementation of one rule, which is a thing this file otherwise refuses.
+ * It is here because the two halves cannot be one function: the roster's
+ * version operates on live `Trooper`s inside a fight and reaches `holds()`,
+ * which lives in Command.js — and Command.js may not import this file back.
+ *
+ * SO THE RULE IS NOT COPIED, IT IS SPLIT. This side owns the parts that are
+ * facts about the STORE — is he on this roll, is he alive, is there already
+ * somebody in his squad's seat — and it does not decide the licence at all.
+ * The rank gate lives on exactly one side of the line, the fighting side, and
+ * `enlistRecord` re-tests it on the way onto every roll. A post written here
+ * for a man who is not licensed is a post that never reaches a squad, which is
+ * the safe direction for the half that cannot see a rank.
+ *
+ * The caller passes `licensed` because the SCREEN knows: it has `RANKS` and it
+ * has his xp. That keeps the gate one table's answer rather than two.
+ *
+ * @returns the written company.
+ */
+export function appoint(army, key, on = true, licensed = true) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m) return c;
+  if (!on) { m.post = false; return save(c); }
+  if (!licensed) return c;
+  /* ONE SEAT PER SQUAD — the same sentence `CommandRoster.appoint` makes, and
+   * for the same reason: two men holding one squad's post is `leaderOf`
+   * answering with whichever came first in an array whose order is nobody's
+   * decision. A man with no squad dealt to him yet is his own case. */
+  for (const other of c.men) {
+    if (other === m || !other.post) continue;
+    if (other.squad === m.squad) other.post = false;
+  }
+  m.post = true;
   return save(c);
 }
 

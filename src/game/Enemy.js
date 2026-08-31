@@ -1504,13 +1504,19 @@ let _auditPhase = 0;
 /**
  * What a rank is worth to a soldier's AIM, as a multiplier on their own spread.
  *
- * Derived from RANKS' shape rather than authored beside it: the ladder buys
- * about 78% more health from bottom to top, and this is the same climb applied
- * to the one thing a rank obviously should buy and did not. A Commander shoots
- * at 0.68 of a raw trooper's spread, which over a 30 m shot is the difference
- * between a hit and a near miss and is visible in one firefight.
+ * Derived from RANKS' shape rather than authored beside it, and it moved when
+ * RANKS did. The ladder used to buy 78% more health from bottom to top and this
+ * table matched that climb — a Commander shot at 0.68 of a raw trooper's
+ * spread. Both were compressed for the reason written out over `DUTIES` in
+ * Command.js: a rung worth that much makes a returning company strictly
+ * stronger and makes the fresh men on the slate furniture, and what a rank buys
+ * now is a LICENCE rather than a bigger number.
+ *
+ * 0.88 at the top is still a real hand — about a tenth off the cone, which over
+ * a 30 m shot is a hand's width — and it is no longer the whole argument for
+ * fielding a veteran.
  */
-const AIM_BY_RANK = [1.00, 0.92, 0.84, 0.76, 0.68];
+const AIM_BY_RANK = [1.00, 0.97, 0.94, 0.91, 0.88];
 
 /**
  * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half

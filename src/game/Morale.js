@@ -72,6 +72,28 @@ export const MORALE = {
   PASSED_GRAVE: -0.03,
   /** Per second within `NEAR` of a living commander who is on their side. */
   LEADER_NEAR: 0.055,
+  /**
+   * ── THE VOICE — per second within `NEAR` of a man licensed to RELAY ─────
+   *
+   * `LEADER_NEAR` is the squad's own leader steadying the squad's own men, and
+   * it stops at the squad boundary because that is what a squad leader is for.
+   * The top rung of `RANKS` carries a licence that does not: "carries an order
+   * onward to men you cannot reach". So a Commander on the roll steadies
+   * ANYBODY in the army who is standing near him, in his squad or not — the
+   * one presence term in this table that crosses a squad line.
+   *
+   * SMALLER THAN A SQUAD LEADER'S, deliberately. He is not their sergeant and
+   * they are not his men; what he is, is a familiar voice on ground where
+   * neither you nor their own leader happens to be. And it stacks with neither
+   * for free — the whole presence sum tapers into `PRESENCE_CAP` exactly as it
+   * did, so a man beside all three is steady rather than elated.
+   *
+   * WHAT MAKES IT WORTH HAVING is what happens when he dies: every squad he
+   * was standing among loses it on the same frame, and `onDeath` says so. That
+   * is the vacancy this ladder was rebuilt to produce — a specific man whose
+   * death takes a capability off the field rather than a health bar.
+   */
+  RELAY_NEAR: 0.035,
   /** …and of the Jedi themselves, which is worth more. */
   JEDI_NEAR: 0.085,
   /**

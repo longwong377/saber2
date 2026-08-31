@@ -41,7 +41,7 @@ import { clocked } from './_shared.mjs';
 import { ATTR_IDS } from '../../src/game/Attributes.js';
 import {
   ARMIES, CommandRoster, musterPlan, OPENING_STRENGTH, RANKS, rankFor, MARKS,
-  markById, SQUAD, commandRng, CommandDirector,
+  markById, SQUAD, commandRng, CommandDirector, composeContingent, CONTINGENT_MIXED,
 } from '../../src/game/Command.js';
 import { makeRng } from '../../src/engine/MathUtil.js';
 import * as Company from '../../src/game/Company.js';
@@ -103,6 +103,7 @@ export async function run({ check, assert, THREE: T }) {
   const { enemyRng, Enemy } = await import('../../src/game/Enemy.js');
   const {
     Menu, DEFAULT_SETTINGS, paradeSlots, buildParadeFigure, paradeContent, PARADE_SHOTS,
+    STORE_KEY,
   } = await import('../../src/ui/Menu.js');
 
   /** A real Menu on the real page — databank.mjs and company.mjs's pattern. */
@@ -1131,4 +1132,263 @@ export async function run({ check, assert, THREE: T }) {
       + `${(box.min.y * 100).toFixed(1)}cm · Sergeant wears all four channels, ${vet.rig.list.length} `
       + 'bones both builds';
   });
+
+  check('barracks: a kit and a paint are geometry and colour, and move no number', async () => {
+    /**
+     * THE DRESSING ROOM'S HALF OF "THE PAGE SELLS NOTHING".
+     *
+     * The mark and the band above are paint bolted onto a finished body by
+     * `enlistBody`. A KIT is not: a pauldron is a plate that has to exist when
+     * the rig is built, so a man's kit rides the SPAWN — `world.spawnEnemy(t,
+     * p, { look, kind })` → `Enemy` → `kitOptsFrom` → `buildTrooper`. That is
+     * a different road into the same body, and it is a road that could carry a
+     * number, so it gets the same proof.
+     *
+     * THE SEED IS PINNED RATHER THAN THE PROFILE. `Enemy`'s constructor rolls
+     * pace off `enemyRng` before `_build` is ever called, so seeding the
+     * stream to the same value before each construction makes the two bodies
+     * numerically identical by construction — and any difference that then
+     * appears is the kit, exactly. No ratio, no epsilon: equality.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { KIT_FIELDS, PAINT_SLOTS, kitOptsFrom, PAINTS } = await import('../../src/game/Bodies.js');
+    const { world } = await bootWorld({ settings: { quality: 'low' } });
+
+    /** Every material colour on a rig, and how many meshes carry them. */
+    const survey = (e) => {
+      const hexes = new Set();
+      let meshes = 0;
+      (e.rig?.root || e.group)?.traverse?.((o) => {
+        if (!o.isMesh) return;
+        meshes++;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (!m) continue;
+          if (m.color) hexes.add(m.color.getHex());
+          if (m.emissive && m.emissive.getHex()) hexes.add(m.emissive.getHex());
+        }
+      });
+      return { meshes, hexes };
+    };
+
+    const SEED = 90210;
+    const spawn = (look, kind, x) => {
+      enemyRng.seed(SEED);
+      const e = world.spawnEnemy(kind === 'steel' ? 'b1' : 'trooper',
+        new THREE.Vector3(x, 0, 24), look ? { look, kind } : null);
+      return e;
+    };
+
+    /* THE FULLEST KIT THE VOCABULARY ALLOWS, built off KIT_FIELDS itself so a
+     * field added tomorrow is under this check the day it ships rather than the
+     * day someone remembers. Each field takes its LAST legal value, which is
+     * the one furthest from "as issued" in every row. */
+    const dressed = (kind) => {
+      const kit = {};
+      for (const f in KIT_FIELDS[kind]) {
+        const vals = KIT_FIELDS[kind][f].values;
+        kit[f] = vals[vals.length - 1][0];
+      }
+      const paint = {};
+      for (const [field] of PAINT_SLOTS[kind]) paint[field] = PAINTS[PAINTS.length - 1].id;
+      return { kit, paint };
+    };
+
+    const NUMBERS = ['maxHp', 'hp', 'attackDamage', 'speed', 'forceMax', 'radius', 'height'];
+    const report = [];
+    for (const [kind, x] of [['flesh', 0], ['steel', 12]]) {
+      const bare = spawn(null, kind, x);
+      const look = dressed(kind);
+      const kitted = spawn(look, kind, x + 4);
+      for (const k of NUMBERS) {
+        if (bare[k] == null && kitted[k] == null) continue;
+        assert(bare[k] === kitted[k],
+          `a dressed ${kind} body's ${k} is ${kitted[k]} and a bare one's is ${bare[k]} — `
+          + 'the dressing room is selling power');
+      }
+      /* …AND THE SAME BRAIN. A kit that quietly changed the archetype would
+       * move nothing above and everything in the fight. */
+      assert(bare.type === kitted.type, `a dressed ${kind} body is a ${kitted.type}`);
+      assert(bare.constructor === kitted.constructor, 'a dressed body is a different class');
+
+      /* IT ACTUALLY LANDED, both halves. Geometry: more meshes on the rig,
+       * because every field's last value bolts something on. Colour: the
+       * palette hex the player picked is on the body and is not on the bare
+       * one — which is what "I painted it and nothing happened" would look
+       * like, and it is the complaint this whole tab exists to answer. */
+      const b = survey(bare); const d = survey(kitted);
+      assert(d.meshes > b.meshes,
+        `a fully kitted ${kind} body has ${d.meshes} meshes and a bare one ${b.meshes} — `
+        + 'the kit is stored and never built');
+      const hex = PAINTS[PAINTS.length - 1].color;
+      assert(d.hexes.has(hex),
+        `${PAINTS[PAINTS.length - 1].name} is not on a ${kind} body that was painted it`);
+      assert(!b.hexes.has(hex), `an unpainted ${kind} body already wears the test colour`);
+      report.push(`${kind} +${d.meshes - b.meshes} meshes, painted, 0 numbers moved`);
+    }
+
+    /**
+     * AND THE GATE REFUSES EVERYTHING ELSE. `kitOptsFrom` is the only door
+     * between a stored look and a body builder, and the store is a JSON blob
+     * the player's own browser holds — so a hand-edited one must not be able
+     * to reach past the wardrobe. `frame` is named because it is the live
+     * risk: it is real, `buildTrooper` honours it, and it is what the
+     * silhouette checks measure to keep six archetypes apart at range.
+     */
+    const hostile = kitOptsFrom({
+      kit: { frame: 2.5, pauldron: 'L', scale: 9, hp: 999, pack: 'nonsense' },
+      paint: { color: 'bone', visor: '#ff0000', frame: 'ash' },
+    }, 'flesh');
+    assert(!('frame' in hostile), 'frame reached the body builder through a stored kit');
+    for (const k of ['scale', 'hp']) assert(!(k in hostile), `${k} reached the body builder`);
+    assert(hostile.pauldron === 'L', 'a legal field was dropped by the gate');
+    assert(!('pack' in hostile), 'an illegal VALUE for a legal field went through');
+    assert(hostile.color === PAINTS.find((p) => p.id === 'bone').color,
+      'a legal paint id did not resolve to its palette colour');
+    assert(!('visor' in hostile), 'a raw colour string went through as a paint');
+    return `${report.join('; ')}; gate dropped frame/scale/hp and a raw hex`;
+  });
+
+  check('barracks: a contingent slate is exactly what the purse composes, and the field takes it', () => withCleanStore(() => {
+    /**
+     * THE ONE ANSWER, TWICE — the defect this replaced was two hand-maintained
+     * twins: `_musterOpening` composed the line the fight actually gets, and
+     * the tab guessed at it with `n × cheapest`. They disagreed, and the tab's
+     * guess was the one the player read.
+     *
+     * There is now one composer, so what has to be asserted is that BOTH
+     * callers still route through it and that neither has grown a second
+     * opinion. The slate is checked against `composeContingent` directly, and
+     * the roster the fight builds is checked against the slate — with veterans
+     * standing, because a purse that forgets what the standing line already
+     * cost is exactly how "eight allies" became fourteen bodies.
+     */
+    const cases = [
+      { allies: 8, allyUnit: CONTINGENT_MIXED, vets: 0 },
+      { allies: 8, allyUnit: CONTINGENT_MIXED, vets: 3 },
+      { allies: 12, allyUnit: 0, vets: 0 },
+      { allies: 12, allyUnit: 2, vets: 5 },
+      { allies: 6, allyUnit: 3, vets: 0 },
+    ];
+    const lines = [];
+    for (const cs of cases) {
+      localStorage.removeItem(Muster.KEY);
+      localStorage.removeItem(Company.KEY);
+      const plan = musterPlan({ ...DEFAULT_SETTINGS, mode: 'waves', allies: cs.allies,
+        allyUnit: cs.allyUnit, allyArmy: 0 }, null);
+      assert(plan && !plan.armyMode, `waves with ${cs.allies} allies did not plan a contingent`);
+      assert(plan.unit === cs.allyUnit, `the plan lost the composition: ${plan.unit}`);
+
+      /* A STANDING LINE, banked the way a withdrawal banks one, so the purse
+       * has something to subtract. */
+      if (cs.vets) {
+        const roll = freshRoll(cs.vets);
+        Company.keep(roll.all, { army: plan.army, deployed: roll.all, ground: 'test' });
+      }
+      const c = Company.load(plan.army);
+      const slate = Muster.ensure(plan, c);
+      const standing = Company.fieldable(c, plan.want).map((m) => m.type);
+      const want = composeContingent(ARMIES[plan.army], plan.want, standing, plan.unit);
+      const got = slate.recruits.map((r) => r.type);
+      assert(JSON.stringify(got) === JSON.stringify(want.types),
+        `the tab slated ${JSON.stringify(got)} and the purse composes `
+        + `${JSON.stringify(want.types)} for ${JSON.stringify(cs)}`);
+
+      /* AND THE FIGHT'S OWN ROSTER IS THAT LINE. `lineup` is the deployment
+       * answer both the tab and `_musterOpening` read; the veterans lead it
+       * and the recruits fill it, and nothing is truncated to `want` — which
+       * for a contingent is a PURSE and not a headcount. That truncation is
+       * not hypothetical: capping a contingent at the slider's number is
+       * exactly the bug this resolver was rewritten to stop, and it is the
+       * shape a careless `Math.min(want, …)` would put back. */
+      const line = Muster.lineup(plan, c);
+      const flat = (a) => JSON.stringify([...a].sort());
+      assert(line.length === standing.length + want.types.length,
+        `the lineup fields ${line.length} men off ${standing.length} veterans and a slate of `
+        + `${want.types.length} — for ${JSON.stringify(cs)}`);
+      assert(flat(line.map((m) => m.type)) === flat([...standing, ...want.types]),
+        `the lineup is made of ${flat(line.map((m) => m.type))} and the purse bought `
+        + `${flat([...standing, ...want.types])}`);
+      /* AND EVERY MAN ON IT IS A MAN — a designation apiece, none blank, none
+       * shared, because "10 troops" with nobody behind it is the tab the
+       * player already threw out. */
+      const names = new Set(line.map((m) => m.designation));
+      assert(names.size === line.length && !names.has(undefined) && !names.has(''),
+        `${line.length} men on the line and ${names.size} distinct names`);
+      lines.push(`${cs.allies}/${cs.allyUnit}/+${cs.vets}v → ${got.length}`);
+    }
+    return lines.join(', ');
+  }));
+
+  check('barracks: the dead end is a door, and what comes through it has names', () => withCleanStore(() => {
+    /**
+     * A FRESH PROFILE OPENS ON A MODE THAT FIELDS NOBODY. That was the whole
+     * of the player's complaint arriving by a second road: the tab was
+     * honest — this mode has no army of yours — and honest was useless.
+     *
+     * So the sentence kept its honesty and grew a control, and this is the
+     * proof that the control is real: click it on a mode with a null plan and
+     * the muster below fills with MEN — designations, and a look each — not a
+     * number and not a promise.
+     */
+    const { menu, doc, close } = menuOn({ mode: 'waves', allies: 0 });
+    /* WHAT REACHED THE DISK, caught at the door rather than read after it —
+     * the fixture puts the player's own settings back the moment the click
+     * returns, so the written bytes have to be caught as they go past. */
+    let saved = null;
+    const realSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k, v) => { if (k === STORE_KEY) saved = v; return realSet(k, v); };
+    try {
+      assert(musterPlan(menu.s, null) === null, 'the fixture mode already plans a muster');
+      menu.showMenu();
+      menu._buildCompanyList();
+      const host = doc.getElementById('company-muster');
+      const door = host.querySelector('.company-restore');
+      assert(door, 'a mode that fields nobody offers no way to raise a line');
+      assert(!host.querySelectorAll('[data-recruit]').length, 'men mustered before the door was opened');
+
+      const hadS = localStorage.getItem(STORE_KEY);
+      try { door.click(); } finally {
+        /* …put back through the REAL setter: restoring through the spy would
+         * overwrite the very bytes the spy was installed to catch. */
+        if (hadS == null) localStorage.removeItem(STORE_KEY);
+        else realSet(STORE_KEY, hadS);
+      }
+      assert(menu.s.allies === OPENING_STRENGTH,
+        `the door set allies to ${menu.s.allies}`);
+      /* AND IT SAVED. "I should be able to boot the game fresh and see the
+       * troops I will have" is the whole point of the door, so a version of it
+       * that writes `this.s` directly — same men on screen, nothing on disk —
+       * is the door not working, one boot later. `_set` is what persists;
+       * this is the assertion that notices when something stops calling it. */
+      assert(JSON.parse(saved || '{}').allies === OPENING_STRENGTH,
+        `the line was raised on screen and ${JSON.parse(saved || '{}').allies} was written to disk`);
+      const men = [...doc.getElementById('company-muster').querySelectorAll('[data-recruit]')];
+      assert(men.length >= 1, 'the door opened onto an empty muster');
+      const named = men.filter((d) => /[A-Z]{1,3}-?\d/.test(d.querySelector('b')?.textContent || ''));
+      assert(named.length === men.length,
+        `${men.length - named.length} of ${men.length} men came through the door unnamed`);
+
+      /* AND THEY ARE THE SAME MEN THE FIGHT WOULD GET — the door writes a
+       * setting, and the setting is what `musterPlan` reads, so there is no
+       * second path here to drift. */
+      const plan = musterPlan(menu.s, null);
+      assert(plan, 'the door left the plan null');
+      const line = Muster.lineup(plan, Company.load(plan.army));
+      assert(line.length === men.length,
+        `the page shows ${men.length} men and the drop fields ${line.length}`);
+
+      /* …AND ONE OPENS. The complaint was "you can't click anywhere to see
+       * these troops", so the door is not done until the man behind it has a
+       * page with a pen and a wardrobe on it. */
+      men[0].click();
+      const page = doc.getElementById('company-page');
+      assert(page && page.querySelector('[data-kit]'),
+        'a man raised through the door has no kit to change');
+      assert(page.querySelector('[data-paint]'), 'a man raised through the door has no paint');
+      assert(page.querySelector('input'), 'a man raised through the door cannot be named');
+      return `${men.length} named men through the door, saved to disk, `
+        + 'first one opens with a pen and a wardrobe';
+    } finally { localStorage.setItem = realSet; close(); }
+  }));
+
 }

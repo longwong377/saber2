@@ -2958,6 +2958,25 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 .kit-chip.sel{background:var(--accent);color:var(--stroke);border-color:var(--stroke);
   transform:translate(-2px,-2px);box-shadow:var(--stamp)}
 .kit-chip:focus-visible{outline:3px solid var(--accent-warm);outline-offset:3px}
+/* ── THE LICENCE ──────────────────────────────────────────────────────────
+   The rank ladder as five rows, every rung shown and the ones he holds lit.
+   A rung he has not reached is dimmed rather than hidden: the two lines under
+   his own are the reason to keep this particular man alive. */
+.duty-list{display:flex;flex-direction:column;gap:5px;margin:8px 0 14px}
+.duty-row{display:flex;align-items:baseline;gap:10px;padding:6px 10px 7px;
+  border:2px solid var(--stroke);background:var(--panel-2);opacity:.45;
+  clip-path:var(--cut-sm);transition:.12s}
+.duty-row.has{opacity:1;background:var(--panel)}
+.duty-row.at{border-color:var(--accent);box-shadow:var(--stamp)}
+.duty-row b{flex:0 0 62px;font:var(--mono);font-size:10px;font-weight:800;
+  letter-spacing:.08em;color:var(--dim)}
+.duty-row.has b{color:var(--accent)}
+.duty-row span{font-size:11.5px;line-height:1.5;color:var(--dim)}
+.duty-row i{font-style:normal;font-weight:800;color:var(--ink)}
+.company-post{margin-bottom:14px}
+.company-post button{margin-bottom:6px}
+.company-post button[disabled]{opacity:.4;cursor:not-allowed;transform:none}
+
 /* The paint rows reuse the swatch the marks already use, at a size that lets
    fifteen of them sit on one row beside a label. */
 .company-paints{gap:6px}

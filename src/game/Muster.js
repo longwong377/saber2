@@ -428,9 +428,14 @@ export function lineup(plan, company, opts = {}) {
    * count. On a contingent it is a PURSE, priced in cheapest-rung bodies, and
    * what it buys is routinely a different number of men: twenty-four
    * Confederate allies is fourteen bodies including a tank, and twelve
-   * Republic allies pointed at rung two is ten snipers. Capping those at the
-   * slider's number would put a line on the tab that the ground then
-   * contradicts — which is the one defect this resolver exists to prevent.
+   * Republic allies pointed at rung two is ten snipers.
+   *
+   * So the cap is read off WHAT EXISTS rather than off the slider. A purse
+   * priced in points cannot currently buy more bodies than it has cheapest
+   * rungs, so `want` would not bite today — it bit when the purse was priced
+   * by headcount and spent by points, and it would bite again the day a
+   * ladder's first rung stops being its cheapest. MAX_STRENGTH is the real
+   * ceiling and the only one worth naming here.
    */
   const cap = plan.armyMode ? want : Math.min(MAX_STRENGTH, vets.length + recruits.length);
   const byName = new Map([

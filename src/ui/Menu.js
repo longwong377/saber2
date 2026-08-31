@@ -38,7 +38,7 @@ import { READ_REACH, READ_SECONDS, SENSE_RATE } from '../game/FireMission.js';
 import {
   loadAll as companyLoadAll, load as companyLoad,
   fieldable as companyFieldable, dossier as companyDossier,
-  dress as companyDress, nameOf as companyNameOf, companyLines,
+  dress as companyDress, appoint as companyAppoint, nameOf as companyNameOf, companyLines,
   CALLSIGN_MAX as companyCallsignMax,
   honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
@@ -185,6 +185,7 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
          LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById, SQUAD,
+         DUTIES, dutiesAt, holds,
          armyToLead, CommandDirector,
          musterPlan, versusCommandConfig, VERSUS_WINS, VERSUS_LIMITS } from '../game/Command.js';
 /* THE MUSTER SLATE — the pre-rolled recruits the next run will field, and the
@@ -6129,7 +6130,8 @@ export class Menu {
         d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
           + `<b>${escKey(companyNameOf(m))}${flash}</b>`
           + `<span>${taking > 0 ? (going ? 'DEPLOYING · ' : 'RESERVE · ') : ''}`
-          + `${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
+          + `${escKey(R.title)}${m.post ? ' · HAS THE SQUAD' : ''} · `
+          + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
           + `${m.kills | 0} down</span>`
           + `<span class="man-chips">${chips}</span></div>`;
         /* Clicking the man who is already open puts the page down — the
@@ -6652,6 +6654,7 @@ export class Menu {
         : '<p class="hint">Nothing yet. A run where he took no wounds and killed nobody '
           + 'writes no line — eight entries of the same ground is not a history.</p>'}
       ${pickBtn}
+      ${this._licenceHtml(roll, m)}
       <h4 class="codex-head">Callsign</h4>
       <p class="hint">What you call him. Up to ${companyCallsignMax} characters; clear it and
         he answers to ${m.nickname ? `the name he earned, "${escKey(m.nickname)}"` : 'his number'}
@@ -6682,6 +6685,75 @@ export class Menu {
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
       ${this._dressingHtml(m.look, kindOfArmy(roll.army))}`;
+  }
+
+  /**
+   * ══ WHAT HIS RANK LETS HIM DO, AND THE SEAT YOU MAY GIVE HIM ═══════════
+   *
+   * The other half of compressing the ladder. `RANKS` used to buy 78% more
+   * health from bottom to top and this page printed that number, so "what is a
+   * Captain" had exactly one answer and it was a health bar. The numbers are
+   * small now and what a rung actually buys is a LICENCE — a thing this man
+   * may do that the man below him may not — so this is the panel that says so,
+   * in the same words the fight uses when it takes one away.
+   *
+   * EVERY RUNG IS SHOWN, not only the ones he has. A ladder you can only see
+   * the bottom of is a ladder with nothing to climb towards, and the two lines
+   * under his own are the reason to keep this particular man alive rather than
+   * the next one. Read off `RANKS` and `dutiesAt` — there is no second list of
+   * what a rung is worth in this file.
+   *
+   * AND THE POST, which is the one thing on this page that is a DECISION
+   * rather than a fact. See `Trooper.post`.
+   */
+  _licenceHtml(roll, m) {
+    const rank = rankFor(m.xp | 0);
+    const mine = dutiesAt(rank);
+    const rungs = RANKS.map((R, i) => {
+      const has = i <= rank;
+      const at = i === rank;
+      return `<div class="duty-row${has ? ' has' : ''}${at ? ' at' : ''}">
+        <b>${escKey(R.duty)}</b>
+        <span><i>${escKey(R.title)}</i> — ${escKey(R.licence)}</span></div>`;
+    }).join('');
+
+    /**
+     * THE SEAT. Offered on every man so the refusal is visible: a control that
+     * is simply absent teaches nothing, and "why can I do this for him and not
+     * for him" is the question this whole panel exists to answer. A man below
+     * the licence gets the button DISABLED with the rung named — which is the
+     * shape `SCOPE.md` asks for, "every refusal needs a visible reason".
+     */
+    const canLead = holds(rank, 'LEADS');
+    const need = RANKS[DUTIES.indexOf('LEADS')];
+    const seated = !!m.post;
+    const held = roll.men.find((x) => x !== m && x.post && x.squad === m.squad
+      && Number.isInteger(m.squad));
+    const post = `<div class="company-post">
+      <button class="secondary" id="company-post" data-on="${seated ? '' : '1'}"
+        ${canLead ? '' : 'disabled'}>
+        ${seated ? 'Take back the post' : 'Give him the squad'}</button>
+      <p class="hint">${canLead
+        ? (seated
+          ? 'He has the seat. His squad is his to hold, and if he falls it goes '
+            + 'back to whoever the roll says — with a line in the fight about it.'
+          : (held
+            ? `${escKey(companyNameOf(held))} has it now. Giving it to him takes it off `
+              + 'that man.'
+            : 'Name him and his squad is his — he leads it whatever the roll would '
+              + 'have said, and his death costs you the decision.'))
+        : `A ${escKey(RANKS[rank].title.toLowerCase())} does not hold a squad's post. `
+          + `${escKey(need.title)} is the rung that does — ${need.xp} experience, `
+          + `and he has ${m.xp | 0}.`}</p></div>`;
+
+    return `<h4 class="codex-head">Licence</h4>
+      <p class="hint">What the rank is for. The numbers a rung buys are small on
+        purpose — a company that comes home is not meant to be a stronger army, it is
+        meant to be a more capable one. ${escKey(RANKS[rank].title)} holds
+        ${mine.length} of ${RANKS.length}.</p>
+      <div class="duty-list">${rungs}</div>
+      <h4 class="codex-head">The post</h4>
+      ${post}`;
   }
 
   /**
@@ -6888,6 +6960,23 @@ export class Menu {
         markById(sw.dataset.band).name);
     }
     this._wireDressing(m.look, kindOfArmy(roll.army), write);
+    /**
+     * THE SEAT. The licence is decided HERE, on the screen that has both the
+     * rank table and his experience, and handed to `Company.appoint` — see the
+     * long note there for why the store deliberately does not know what a rank
+     * is. Disabled buttons are wired anyway and refuse on the click: a control
+     * that silently does nothing is the shape this tab was rebuilt to stop
+     * being, and `_activate` is also what gives it a keyboard.
+     */
+    const seat = document.getElementById('company-post');
+    if (seat) this._activate(seat, () => {
+      const rank = rankFor(m.xp | 0);
+      if (!holds(rank, 'LEADS')) { audio.ui('deny'); return; }
+      audio.ui('click');
+      companyAppoint(roll.army, m.designation, !!seat.dataset.on, true);
+      this._buildCompanyList();
+      this._showCompany(key);
+    }, seat.textContent.trim());
     /**
      * FIELD/BENCH IS A SWAP, NEVER A RESIZE. The picks written are the whole
      * line, spelled out: the current lineup with one name exchanged, so the
