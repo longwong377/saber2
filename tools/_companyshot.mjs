@@ -21,6 +21,10 @@
  *   company-man.png      a veteran's page.
  *   company-droid.png    a droid's page — same page, different words.
  *   company-bars.png     the attr bars at 3x, where a 2 px line is visible.
+ *   company-dressing.png the whole of a recruit's page at full scroll height — twelve
+ *                        rows of kit and paint, the issue buttons and the ladder.
+ *   company-page-full.png a veteran's whole page, same reason.
+ *   company-licence.png  the five rungs and what each one is a licence for.
  *   company-fallen.png   the fallen page, with epitaphs seeded through the
  *                        real Company.keep (opts.roll carries killer + minute).
  *
@@ -326,6 +330,17 @@ if (recruitRow) {
   await recruitRow.click();
   await page.waitForTimeout(500);
   await page.screenshot({ path: OUT('company-recruit.png') });
+  /**
+   * …AND THE WHOLE OF HIS PAGE, which the viewport shot cannot show.
+   *
+   * A recruit's page is the tallest thing in this tab now — twelve rows of
+   * kit and paint, the two issue buttons, the squad chips and the five rungs
+   * of the ladder — and every one of those is below the fold at 1280x800. An
+   * element screenshot captures the full scroll height, which is the only way
+   * to LOOK at the thing this tab was rebuilt to be.
+   */
+  const rPage = await page.$('#company-page');
+  if (rPage) await rPage.screenshot({ path: OUT('company-dressing.png') });
 } else console.log('NO RECRUIT ROWS — the slate did not mint.');
 
 /* Back to the roll for the veteran pages: man rows carry dataset.man and the
@@ -347,6 +362,14 @@ await page.screenshot({ path: OUT('company-droid.png') });
    1280-wide frame is not where you find out whether a 2 px line is there. */
 const list = await page.$('.attr-list');
 if (list) await list.screenshot({ path: OUT('company-bars.png'), scale: 'css' });
+
+/* THE LICENCE AND THE SEAT, on a veteran, at full height — the panel that says
+   what a rank is FOR now that the numbers a rung buys are small. */
+if (rows[0]) { await rows[0].click(); await page.waitForTimeout(350); }
+const vPage = await page.$('#company-page');
+if (vPage) await vPage.screenshot({ path: OUT('company-page-full.png') });
+const duties = await page.$('.duty-list');
+if (duties) await duties.screenshot({ path: OUT('company-licence.png'), scale: 'css' });
 
 const probe = await page.evaluate(() => {
   const q = (s) => document.querySelectorAll(s).length;
