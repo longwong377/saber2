@@ -374,11 +374,17 @@ export function lineup(plan, company, opts = {}) {
   if (!plan) return null;
   const c = company && company.army === plan.army ? company : Company.load(plan.army);
   const want = Math.max(0, plan.want | 0);
-  const vets = Company.fieldable(c, want);
+  /* EVERY man is reachable by a pick, not only the prefix. The default line
+   * is `fieldable`'s first `want`; a pick naming a RESERVE veteran must find
+   * him too, or the tab's "field him next run" writes a name this resolver
+   * silently drops — a button that lies. The whole roll goes in the map; the
+   * WANT cap below is what keeps a pick from ever growing the line. */
+  const all = Company.fieldable(c);
+  const vets = all.slice(0, want);
   const slate = opts.versus ? null : ensure(plan, c);
   const recruits = slate ? slate.recruits.map((r) => materialize(r, plan.army)) : [];
   const byName = new Map([
-    ...vets.map((m) => [m.designation, m]),
+    ...all.map((m) => [m.designation, m]),
     ...recruits.map((m) => [m.designation, m]),
   ]);
   /* Default order: veterans then recruits. Picks reorder within the same men —
