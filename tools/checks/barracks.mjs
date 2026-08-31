@@ -2094,6 +2094,21 @@ export async function run({ check, assert, THREE: T }) {
             'a Marksman painted Blood does not wear it on the field');
         } else {
           assert(!field.has(blood.color), 'an unpainted Marksman already wears the test colour');
+          /* …AND HE STILL HAS HIS OWN PLATE. Moving the archetype's colours
+           * into `BODY_KITS` fixed the override; a version that simply DROPPED
+           * them would make both surfaces agree on the builder's defaults and
+           * pass the clause above while quietly turning the Marksman into a
+           * line trooper at forty metres. Both surfaces, because the whole
+           * point of the table is that they read it. */
+          const plate = 0x2c3038;
+          assert(field.has(plate) && parade.has(plate),
+            `an unpainted Marksman does not wear his own plate — field ${field.has(plate)}, `
+            + `parade ${parade.has(plate)}`);
+          const line = hexes(ARCHETYPES.trooper.build({
+            scale: ARCHETYPES.trooper.scale ?? 1, ...(B.bodyOptsFor('trooper') || {}),
+          }).rig.root);
+          assert(!line.has(plate),
+            'a line trooper already wears the Marksman\'s plate — the colours are not his');
         }
         report.push(look ? 'painted' : 'as issued');
       }
