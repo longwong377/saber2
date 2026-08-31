@@ -1107,11 +1107,13 @@ export const FORMATIONS = {
      * of earshot of him. You are not telling them where to go; you are
      * standing where they are to go.
      *
-     * `always` skips the REACH test and only the reach test. Fear, isolation
-     * and a leaderless squad still refuse it, because a man who will not
-     * advance into fire will not sprint across it to you either — and if
-     * every refusal were skipped this would be the one button that makes the
-     * other three ignorable.
+     * `always` means this order LANDS — on everybody, whatever else is wrong
+     * with them. The first draft skipped the reach and only the reach, on the
+     * reasoning that a man too frightened to advance is too frightened to
+     * sprint to you; an adversarial pass found the hole in it, which is that
+     * the company that would refuse this is a shaken company, and a shaken
+     * company is the only kind anybody ever presses it for. What a frightened
+     * man actually does is run to his officer.
      *
      * WHAT IT COSTS is that it is the worst fighting shape in the table: a
      * ring facing outward at 4.2 m has no frontage, no concentration and no
@@ -4637,6 +4639,38 @@ export class CommandDirector extends WaveDirector {
     const at = this._carrying?.position || c?.player?.position || c?.anchor || null;
     if (!at) return [];
     const out = [{ pos: at, r: ORDER_REACH, from: null }];
+    /**
+     * ── AND THE GROUND THE FORMATION IS ACTUALLY SOLVED ON ────────────────
+     *
+     * `_frame` returns `c._paceAnchor`, not the player: the shape follows you
+     * at `advancePace` and — FLAGSHIP §6, deliberately — without bound, so once
+     * no trooper is inside `MORALE.NEAR` the anchor stops dead. Every proof
+     * that a man in his own correct slot is within reach is a statement about a
+     * distance from THAT point, and this measured from the player.
+     *
+     * MEASURED, 24 men in `line`, the player walking at 6 m/s against a
+     * slowest trooper of 4.1:
+     *
+     *     +2s   lag  4.5   furthest man 28.0   deaf 0
+     *     +4s   lag  9.0   furthest man 29.0   deaf 0
+     *     +6s   lag 13.5   furthest man 30.7   deaf 0
+     *     +10s  lag 25.0   furthest man 37.2   deaf 1
+     *
+     * Five seconds of walking faster than your own line spends the whole 5.1 m
+     * margin, and it charges the player for the wrong thing entirely: SENDING
+     * A SQUAD AWAY is what this mechanic is for; outwalking men who are jogging
+     * after you is not.
+     *
+     * So the anchor is a mouth as well — it is where the company IS, and you
+     * are where you are. It does NOT make the reach unbounded: a squad given
+     * its own ground is measured against both and is outside both, which is
+     * the case the whole rule exists for. It is not a relay and carries no
+     * licence: the two together are the commander, in the two places he is.
+     */
+    if (!this._carrying && c?._paceAnchor
+      && c._paceAnchor.distanceToSquared(at) > 1) {
+      out.push({ pos: c._paceAnchor, r: ORDER_REACH, from: null });
+    }
     const r2 = ORDER_REACH * ORDER_REACH;
     for (const t of this.led(c)) {
       if (t.alive === false || !holds(t, 'RELAYS')) continue;
@@ -4708,7 +4742,27 @@ export class CommandDirector extends WaveDirector {
     for (const t of men) {
       if (t.alive === false) continue;
       const e = t.body;
-      if (!F.always && !this._inReach(t, voices)) { refused.push({ t, why: 'out of reach' }); continue; }
+      /**
+       * ── FALL BACK TO ME IS NOT REFUSED, BY ANYTHING ──────────────────────
+       *
+       * `always` first drafted as "skips the reach and only the reach", on the
+       * reasoning that a man who will not advance into fire will not sprint
+       * across it to you either. That is wrong about soldiers and wrong about
+       * the mechanic, and an adversarial pass found the shape of it: the
+       * company that refuses this order is a company that is SHAKEN, which is
+       * the only circumstance anybody ever presses it in. A permadeath
+       * mitigation with a hole in it exactly where it is needed is not a
+       * mitigation.
+       *
+       * What a frightened man does is run to his officer. So the one order
+       * whose destination is the man giving it lands on everybody, and the
+       * cost stays real and stays where it was: `circle` is the worst fighting
+       * shape in the table — a ring facing outward at 4.2 m with the shortest
+       * leash in the file — so buying your company back costs you the
+       * engagement. See `circle.always`.
+       */
+      if (F.always) { took.push(t); continue; }
+      if (!this._inReach(t, voices)) { refused.push({ t, why: 'out of reach' }); continue; }
       if (unled) { refused.push({ t, why: 'unled' }); continue; }
       if (F.advance && e && !e.dead) {
         if (braveryOf(e) < SHAKEN_AT) { refused.push({ t, why: 'shaken' }); continue; }
@@ -4796,7 +4850,13 @@ export class CommandDirector extends WaveDirector {
        * needs a runner (their line is wherever the host's is not) is the one
        * who could never send one. The notify below is still the local screen's
        * and stays gated on the player's own commander. */
-      if (line.why === 'out of reach') {
+      /* AND NOT BY A DELIVERY. `_carrying` is set around the one `order()`
+       * call a runner makes on arrival, and a partially-refused delivery was
+       * writing a fresh window from the delivery point — so the next press
+       * dispatched a second man to carry the order the first had just carried.
+       * The guard was on CONSUMING the window and not on arming it, which is
+       * the half `order()`'s own note claimed to have covered. */
+      if (line.why === 'out of reach' && !this._carrying) {
         c._pending = { id, squad: squad == null ? null : Number(squad) | 0,
                        at: this.world?.time || 0 };
       }
@@ -4856,6 +4916,15 @@ export class CommandDirector extends WaveDirector {
       ? this.led(c).filter((t) => t.alive !== false)
       : (this.squadsOf(c)[Number(squad) | 0] || []);
     if (!men.length) return false;
+    /* ONE MAN CARRIES ONE ORDER. Nothing tracked a runner per (order, unit),
+     * so refuse → press → runner A → refuse → press → runner B put two men out
+     * of the line with the same message, two RUNNER AWAY toasts and two
+     * `delivered` rows — and the refusal toast's own "Press it again to send a
+     * runner" invites exactly those presses. */
+    const already = squad == null ? null : Number(squad) | 0;
+    for (const t of this.led(c)) {
+      if (t.runner && t.runner.id === id && t.runner.squad === already) return false;
+    }
     const ask = this._ask(F, c, men, squad);
     const deaf = ask.refused.filter((r) => r.why === 'out of reach' && r.t.body && !r.t.body.dead);
     if (!deaf.length) return false;
@@ -4886,10 +4955,10 @@ export class CommandDirector extends WaveDirector {
     const man = pool[0];
     man.runner = { id, squad: squad == null ? null : Number(squad) | 0, to,
                    until: (this.world?.time || 0) + RUNNER_LIFE };
-    /* HIS OWN ORDER GOES WITH HIM. `formationFor` reads `t.order` first, so a
-     * runner pinned to whatever he was doing keeps his slot solved in the
-     * right frame the moment he arrives and stops running — and `slotFor`'s
-     * runner branch is what overrides it in the meantime. */
+    /* NOTHING IS WRITTEN ONTO HIM BUT THE ERRAND. `slotFor`'s runner branch is
+     * the whole of what a runner is on the field, and `t.order` is left exactly
+     * as it was — so the moment he stops running he is back in whatever his
+     * unit is doing, with no second piece of state to unwind. */
     this.log.push({ t: 'runner', name: man.name, formation: id,
                     squad: squad == null ? null : Number(squad) | 0, n: deaf.length,
                     area: this.areaNumber, wave: this.wave });
@@ -4992,7 +5061,18 @@ export class CommandDirector extends WaveDirector {
    */
   _supervised(c, men) {
     const live = men.filter((t) => t.alive !== false && t.body && !t.body.dead);
-    if (!live.length) return false;
+    /**
+     * A SQUAD STILL IN THE AIR IS NOT UNLED — it is not anywhere yet.
+     *
+     * `_inReach` deliberately answers TRUE for a man with no body ("null body
+     * = not landed yet"), and this answered the opposite: five men bought at
+     * the muster and riding a gunship for four seconds have no bodies, so
+     * `live` was empty, `_supervised` said no, and Take cover or Dig in on
+     * that squad was refused as `unled` — a statement about a LICENCE, made
+     * about a squad whose ranks the test never reached. A Sergeant in it did
+     * not help, and no runner window either, because only distance arms one.
+     */
+    if (!live.length) return true;
     if (live.some((t) => holds(t, 'LEADS'))) return true;
     const at = c?.player?.position || c?.anchor;
     if (!at) return true;
@@ -6905,7 +6985,11 @@ export class CommandDirector extends WaveDirector {
           this.world?.notify?.('NOBODY ANSWERS', this.orderRefused);
           /* …and the selection goes with them, so the next order is the
            * army's rather than another one into an empty number. */
-          if (this.selectedSquad === (Number(squad) | 0)) {
+          /* NOT ON A DELIVERY. A runner dispatched thirty seconds ago whose
+           * destination squad has since been wiped arrives, calls this method,
+           * and would move the player's Target slot from a `_troops` tick — a
+           * HUD retargeted by something that is not a key press. */
+          if (!this._carrying && this.selectedSquad === (Number(squad) | 0)) {
             this.selectedSquad = null;
             this.onTarget?.(null, null);
           }
@@ -9619,6 +9703,51 @@ export class CommandDirector extends WaveDirector {
           if (lead && lead !== t && lead.body && !lead.body.dead) {
             const w = share(dist2(e.position, lead.body.position));
             if (w > 0) { presence += MORALE.LEADER_NEAR * w * lean; near = true; }
+          } else if (lead === t) {
+            /**
+             * ══ A SERGEANT IS NOT ALONE IN THE MIDDLE OF HIS OWN SQUAD ══════
+             *
+             * `ALONE` is documented as "per second with no friendly commander
+             * and no Jedi inside NEAR", and the clause above deliberately
+             * excludes a leader from his own leader term — he does not lead
+             * himself. Put together, those two sentences said that every squad
+             * leader on the field decays to zero morale unless the Jedi is
+             * personally standing next to him, and that INVERTS THE LADDER:
+             * the men the company is built around become the most fragile
+             * thing in it.
+             *
+             * MEASURED, army-wide `line`, settled 60 s, no enemies, general at
+             * the centre of it — every shaken man at every size was a squad
+             * leader beyond `MORALE.NEAR`, and at `MAX_STRENGTH` that is three
+             * of five leaders sitting at 0.000:
+             *
+             *     n=10  1 shaken   leaders at 11, 3 m
+             *     n=15  1 shaken   leaders at 17, 5, 7 m
+             *     n=20  1 shaken   leaders at 23, 11, 3, 13 m
+             *     n=24  3 shaken   leaders at 28, 16, 4, 9, 20 m
+             *
+             * `line` at 24 men is ±27.6 m of frontage, so those leaders got
+             * there by STANDING IN THE SLOT THEY WERE ORDERED INTO.
+             *
+             * It was invisible until an order could be refused: `braveryOf` is
+             * `morale*0.72 + rank/4*0.28`, so a rank-0 leader at 0.000 reads
+             * 0.000 against `SHAKEN_AT`, and from then on he refused every
+             * advancing order for the rest of the run.
+             *
+             * WHAT HOLDS A LEADER UP IS THE SQUAD HE IS LEADING. Not a
+             * presence bonus — he is not being led, and paying him one would
+             * re-pin the channel `PRESENCE_CAP` exists to unpin. Just `near`:
+             * a man with his own men at his shoulder is not ALONE, whatever
+             * else he is. And the rule keeps its teeth in the one place it
+             * should have them — A LEADER WHOSE SQUAD IS GONE IS ALONE, which
+             * is the last-man story this mode is about.
+             */
+            for (const o of squad) {
+              if (o === t || o.alive === false) continue;
+              const b = o.body;
+              if (!b || b.dead) continue;
+              if (share(dist2(e.position, b.position)) > 0) { near = true; break; }
+            }
           }
           /* …AND WHOEVER CARRIES THE COMPANY'S VOICE, from any squad. The
            * BEST of them and not the sum: two Commanders standing together is

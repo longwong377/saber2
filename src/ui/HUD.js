@@ -3166,34 +3166,51 @@ export function rosterHtml(summary, squadNames = null, word = 'Squad') {
    * player typed at the exact moment it mattered most — the last squad
    * standing — while the nameplates went on showing it. */
   const named = squads.some((k) => (squadNames && squadNames[k]));
+  /**
+   * …AND WHETHER THEY CAN HEAR YOU FROM WHERE YOU ARE STANDING.
+   *
+   * `Command.ORDER_REACH` is 34 m and an order past it does not land, so the
+   * one thing a player needs to know before pressing an order key is which of
+   * their men are currently out of earshot. `heard` is stamped on the summary
+   * by `_announceRoster`; a build that does not carry it leaves every row
+   * undefined and this says nothing, which is what a mode with no reach rule
+   * should look like.
+   *
+   * THE COUNT AND NOT A BOOLEAN, because a group straddling the edge is the
+   * interesting case: "3 of 5 in earshot" is the sentence that makes the
+   * player walk twenty metres.
+   *
+   * A FUNCTION OF ANY GROUP, and that is the fix rather than the tidying. It
+   * lived inside the squad-heading branch, which only runs when there are two
+   * squads, or a name, or a detached man — so a company ground down to ONE
+   * squad printed a bare list with no warning on it, and that is precisely the
+   * state in which the whole roll can go deaf at once. The Detached heading
+   * had none either, and a detached man is by definition the one furthest from
+   * anybody.
+   */
+  const earshot = (men) => {
+    const known = men.filter((t) => t.heard !== undefined);
+    const deaf = known.filter((t) => !t.heard).length;
+    if (!known.length || !deaf) return '';
+    return deaf === known.length ? ' <i class="rp-far">out of reach</i>'
+      : ` <i class="rp-far">${known.length - deaf}/${known.length} in earshot</i>`;
+  };
   const body = squads.length > 1 || (named && squads.length) || loose.length
     ? squads.map((k) => {
       const men = keyed.filter((t) => t.squad === k);
-      /**
-       * …AND WHETHER THEY CAN HEAR YOU FROM WHERE YOU ARE STANDING.
-       *
-       * `Command.ORDER_REACH` is 34 m and an order past it does not land, so
-       * the one thing a player needs to know before pressing an order key is
-       * which of their squads is currently out of earshot. `heard` is stamped
-       * on the summary by `_announceRoster`; a build that does not carry it
-       * leaves every row undefined and this says nothing, which is what a mode
-       * with no reach rule should look like.
-       *
-       * THE COUNT AND NOT A BOOLEAN, because a squad straddling the edge is
-       * the interesting case: "3 of 5 in earshot" is the sentence that makes
-       * the player walk twenty metres.
-       */
-      const known = men.filter((t) => t.heard !== undefined);
-      const deaf = known.filter((t) => !t.heard).length;
-      const far = !known.length || !deaf ? ''
-        : deaf === known.length ? ' <i class="rp-far">out of reach</i>'
-          : ` <i class="rp-far">${known.length - deaf}/${known.length} in earshot</i>`;
-      return `<div class="rp-div">${esc(label(k))} — ${men.length}${far}</div>`
+      return `<div class="rp-div">${esc(label(k))} — ${men.length}${earshot(men)}</div>`
         + men.map(trooperRow).join('');
     }).join('') + (loose.length
-      ? `<div class="rp-div">Detached — ${loose.length}</div>` + loose.map(trooperRow).join('')
+      ? `<div class="rp-div">Detached — ${loose.length}${earshot(loose)}</div>`
+        + loose.map(trooperRow).join('')
       : '')
-    : living.map(trooperRow).join('');
+    /* ONE SQUAD IS STILL A COMPANY THAT CAN BE OUT OF EARSHOT. No heading is
+     * right — there is nothing to distinguish — but the warning is not a
+     * heading, so it gets its own line above the list rather than being lost
+     * with it. */
+    : (earshot(living) ? `<div class="rp-div">${esc(label(squads[0] ?? 0))}`
+        + ` — ${living.length}${earshot(living)}</div>` : '')
+      + living.map(trooperRow).join('');
   return head + body
     + (fallen.length ? `<div class="rp-div">Fallen — ${fallen.length}</div>` : '')
     + fallen.map(trooperRow).join('');

@@ -524,18 +524,36 @@ export async function run({ check, assert }) {
       + 'men you can see is a walk that costs a run');
     assert(c.formation === 'circle', 'the recall returned true and wrote nothing');
 
-    /* AND IT SKIPS THE REACH AND ONLY THE REACH. A man who will not advance
-     * into fire will not sprint across it to you either, and if `always` meant
-     * "skip every refusal" this would be the one button that makes the other
-     * three ignorable. */
+    /**
+     * AND A SHAKEN COMPANY TAKES IT, which is the clause this check had
+     * BACKWARDS and an adversarial pass turned round.
+     *
+     * It first asserted that fear still refuses the recall, on the reasoning
+     * that a man too frightened to advance is too frightened to sprint to you.
+     * The hole is that the company which would refuse it is a SHAKEN company,
+     * and a shaken company is the only kind anybody ever presses this for — so
+     * the mitigation was absent in the one circumstance it exists for. What a
+     * frightened man actually does is run to his officer.
+     *
+     * BOTH ARMS, because "it lands on everybody" is only worth something
+     * beside "everything else does not": the same men, the same frame, one
+     * order each.
+     */
     for (const sq of squads) put(d, sq, 2, 2);
     const was = [];
     for (const sq of squads) for (const t of sq) { was.push([t, t.morale]); t.morale = 0; }
+    const other = d._ask(Cmd.FORMATIONS.charge, c, d.led(c), null);
+    assert(other.took.length === 0 && other.refused.every((r) => r.why === 'shaken'),
+      `a company at zero morale took CHARGE (${other.took.length} of ${other.took.length
+        + other.refused.length}) — the control arm is not shaken and this proves nothing`);
     const ask = d._ask(Cmd.FORMATIONS.circle, c, d.led(c), null);
-    assert(ask.refused.some((r) => r.why === 'shaken'),
-      'a terrified company took the recall — `always` is skipping every refusal, not the reach');
+    assert(ask.refused.length === 0,
+      `${ask.refused.length} of a terrified company refused the RECALL (${ask.refused[0]?.why}) — `
+      + 'a permadeath mitigation that a shaken company can refuse is absent in the only '
+      + 'circumstance anybody presses it for');
     for (const [t, m] of was) t.morale = m;
-    return `circle only · 560 m recall taken · ${ask.refused.length} shaken men still refuse it`;
+    return `circle only · 560 m recall taken · a company at zero morale refuses CHARGE `
+      + `${other.refused.length}/${other.refused.length} and takes the recall ${ask.took.length}/${ask.took.length}`;
   });
 
   check('reach.10 an army standing in its own correct slots is always in earshot', async () => {
@@ -592,6 +610,233 @@ export async function run({ check, assert }) {
       + ` — all inside ${Cmd.ORDER_REACH} m`;
   });
 
+  check('reach.11 a company standing where it was ordered to stand is still commandable an hour later', () => {
+    /**
+     * ══ THE WORST THING THIS FEATURE DID, AND IT WAS NOT IN THIS FEATURE ══
+     *
+     * `_morale` pays presence from the Jedi, from a man's SQUAD LEADER, and
+     * from a RELAYS man. A leader is excluded from his own leader term — he
+     * does not lead himself — and there was no other term, so a squad leader
+     * further than `MORALE.NEAR` (14 m) from the Jedi took `MORALE.ALONE`
+     * every frame until his morale hit zero. `braveryOf` is
+     * `morale*0.72 + rank/4*0.28`, so a rank-0 leader read 0.000.
+     *
+     * He got there BY STANDING IN THE SLOT HE WAS ORDERED INTO: `line` at 24
+     * men is ±27.6 m of frontage. MEASURED before the fix, army-wide `line`,
+     * settled 60 s, no enemies, the general at the centre — every shaken man
+     * at every company size was a squad leader beyond 14 m, and at
+     * `MAX_STRENGTH` three of five leaders sat at 0.000:
+     *
+     *     n=10  1 shaken   leaders at 11, 3 m
+     *     n=15  1 shaken   leaders at 17, 5, 7 m
+     *     n=20  1 shaken   leaders at 23, 11, 3, 13 m
+     *     n=24  3 shaken   leaders at 28, 16, 4, 9, 20 m
+     *
+     * That was a latent defect in the morale table and it was invisible for as
+     * long as morale bought nothing an order could be refused for. The reach
+     * made it visible and made it permanent: three named leaders refusing
+     * every advancing order for the rest of the run, each refusal re-pinning
+     * `t.order`, with no remedy — a runner carries an order past distance, not
+     * past fear.
+     *
+     * WHAT HOLDS A LEADER UP IS THE SQUAD HE IS LEADING, and the rule keeps
+     * its teeth where they belong: a leader whose squad is gone IS alone.
+     * Both halves are driven.
+     */
+    const { d, c, me } = field();
+    c.roster.points = 9999;
+    while (c.roster.strength < Cmd.MAX_STRENGTH && d.recruit('trooper')) { /* fill the company */ }
+    d.deploy();
+    d._troops(1 / 30, {});
+    assert(d.order('line') === true, 'a company at its general\'s feet would not form line');
+    d._troops(1 / 30, {});
+    /* EVERY MAN IN THE SLOT THE ORDER PUT HIM IN — which is the whole point:
+     * nobody has wandered off, nobody was sent away. */
+    for (const t of d.led(c)) {
+      const at = d.slotFor(t.body);
+      if (at) t.body.position.set(at.x, 0, at.z);
+    }
+    for (let i = 0; i < 1800; i++) d._morale(1 / 30, c);
+
+    const squads = d.squadsOf(c);
+    const leads = squads.map((sq) => d.leaderOf(sq)).filter((t) => t && t.body);
+    assert(leads.length >= 4, `only ${leads.length} squads in a company of ${c.roster.strength}`);
+    const far = leads.filter((t) => Math.hypot(t.body.position.x - me.position.x,
+      t.body.position.z - me.position.z) > 14);
+    assert(far.length >= 1,
+      'no squad leader ended up further than MORALE.NEAR from the general — the geometry this '
+      + 'check is about did not happen, so it proves nothing');
+    for (const t of leads) {
+      assert(t.morale > Cmd.SHAKEN_AT,
+        `${t.name} leads a squad, is standing in the slot LINE put him in `
+        + `${Math.hypot(t.body.position.x - me.position.x, t.body.position.z - me.position.z).toFixed(0)} m `
+        + `out, and has decayed to ${t.morale.toFixed(3)} morale — every squad leader in the `
+        + 'company goes shaken and then refuses every advancing order for the rest of the run');
+    }
+    const ask = d._ask(Cmd.FORMATIONS.rank, c, d.led(c), null);
+    assert(ask.took.length === ask.took.length + ask.refused.length,
+      `${ask.refused.length} of ${c.roster.strength} refused an order after an hour of standing `
+      + `in formation (${[...new Set(ask.refused.map((r) => r.why))].join(', ')})`);
+
+    /* AND THE RULE STILL HAS TEETH. A leader with nobody left is alone. */
+    const lone = leads[0];
+    for (const t of d.squadOf(lone, c)) if (t !== lone && t.body) t.body.position.set(400, 0, 400);
+    lone.body.position.set(200, 0, 0);
+    me.position.set(0, 0, 0);
+    const was = lone.morale;
+    for (let i = 0; i < 300; i++) d._morale(1 / 30, c);
+    assert(lone.morale < was,
+      `${lone.name} is the last man of his squad, 200 m from anybody, and his morale did not `
+      + 'move — a leader is never alone and the term is dead');
+    return `${leads.length} leaders in a ${c.roster.strength}-man line, ${far.length} of them past `
+      + `${14} m, lowest morale ${Math.min(...leads.map((t) => t.morale)).toFixed(2)} · `
+      + 'a leader with no squad left still falls';
+  });
+
+  check('reach.12 the reach is measured from the ground the formation is solved on', () => {
+    /**
+     * THE VOICE COMES FROM YOUR BODY AND THE SHAPE IS SOLVED SOMEWHERE ELSE.
+     *
+     * `_frame` returns `c._paceAnchor`, which lags the player at `advancePace`
+     * and — FLAGSHIP §6, deliberately — without bound: once no trooper is
+     * inside 14 m, `advancePace` returns 0 and the anchor stops dead. So
+     * `reach.10`'s proof is about a distance from the ANCHOR, and the test was
+     * against the PLAYER. MEASURED, 24 men in `line`, the player walking at
+     * 6 m/s against a slowest trooper of 4.1:
+     *
+     *     +2s   lag  4.5   furthest man 28.0   deaf 0
+     *     +4s   lag  9.0   furthest man 29.0   deaf 0
+     *     +6s   lag 13.5   furthest man 30.7   deaf 0
+     *     +10s  lag 25.0   furthest man 37.2   deaf 1
+     *
+     * Five seconds of walking faster than your slowest man spends the whole
+     * 5.1 m margin — and it charges the player for something the mechanic is
+     * not about. Sending a squad away is the cost; outwalking your own line
+     * while it jogs after you is not.
+     *
+     * SO THE ANCHOR IS A MOUTH TOO. It is where the company IS; you are where
+     * you are. A squad genuinely sent somewhere else is out of reach of both,
+     * which is the case the rule is for.
+     */
+    const { d, c, me } = field();
+    const anchor = c._paceAnchor;
+    assert(anchor, 'the commander has no pace anchor — this check is about the wrong field');
+    /* The line stays where it formed and the general walks off. */
+    const men = d.led(c).filter((t) => t.body && !t.body.dead);
+    for (const t of men) t.body.position.set(0, 0, 0);
+    anchor.set(0, 0, 0);
+    me.position.set(Cmd.ORDER_REACH + 10, 0, 0);
+    const voices = d._voices(c);
+    assert(voices.length >= 2,
+      `the general walked ${Cmd.ORDER_REACH + 10} m ahead of the ground his own formation is `
+      + 'solved on and his line went deaf — outwalking your own men is not what the reach is '
+      + 'meant to charge for');
+    const ask = d._ask(Cmd.FORMATIONS.charge, c, men, null);
+    assert(ask.took.length === men.length,
+      `${ask.refused.length} of the line could not hear an order given ${Cmd.ORDER_REACH + 10} m `
+      + 'ahead of the ground they are standing on');
+
+    /* AND A SQUAD ACTUALLY SENT AWAY IS STILL OUT OF REACH OF BOTH. */
+    for (const t of men) t.body.position.set(400, 0, 400);
+    const gone = d._ask(Cmd.FORMATIONS.charge, c, men, null);
+    assert(gone.took.length === 0 && gone.refused.every((r) => r.why === 'out of reach'),
+      'a company 560 m from both the general and his anchor was still in earshot — the second '
+      + 'mouth has made the reach unbounded');
+    return `${voices.length} mouths: the body and the ground the shape is solved on · `
+      + 'a company sent 560 m away is out of reach of both';
+  });
+
+  check('reach.13 a squad still in the air, and one man carrying one order', () => {
+    /**
+     * TWO NARROW CASES, BOTH FOUND BY DRIVING RATHER THAN BY READING.
+     *
+     * A SQUAD IN A GUNSHIP IS NOT UNLED. `_inReach` deliberately answers TRUE
+     * for a man with no body — he has not landed yet — and `_supervised`
+     * answered the opposite, so five men bought at the muster and riding a
+     * ship for four seconds were refused a post as `unled`: a statement about
+     * a LICENCE, made about a squad whose ranks the test never reached. A
+     * Sergeant in it did not help, and no runner window either, because only
+     * distance arms one.
+     *
+     * ONE MAN CARRIES ONE ORDER. Nothing tracked a runner per (order, unit),
+     * so refuse → press → runner A → refuse → press → runner B put two men out
+     * of the line with the same message, two RUNNER AWAY toasts and two
+     * `delivered` rows. The refusal toast's own "Press it again to send a
+     * runner" invites exactly those presses. And a delivery must not arm the
+     * window off its own partial refusal, or the arrival dispatches a second
+     * man to carry what the first one just carried.
+     */
+    const { w, d, c, squads } = field();
+    const k = 1, men = squads[k];
+    /* IN THE AIR: no bodies at all, which is what a gunship looks like here. */
+    const kept = men.map((t) => [t, t.body]);
+    for (const t of men) t.body = null;
+    assert(d._supervised(c, men) === true,
+      'a squad still in a gunship reads as unled — a claim about a licence, about a squad whose '
+      + 'ranks the test never reached');
+    const air = d._ask(Cmd.FORMATIONS.digin, c, men, k);
+    assert(!air.refused.some((r) => r.why === 'unled'),
+      'a squad in the air was refused a post as unled');
+    for (const [t, e] of kept) t.body = e;
+
+    /* ONE RUNNER. */
+    d._pending = null; c._pending = null;
+    put(d, men, 150, 150);
+    assert(d.order('charge', c, k) === false, 'a squad 210 m out took an order');
+    w.time += 1;
+    assert(d.order('charge', c, k) === true, 'the second press sent nobody');
+    const first = d.led(c).filter((t) => t.runner);
+    assert(first.length === 1, `${first.length} men were sent with one order`);
+    /* Refuse it again and press again: the window must not put a second man on
+     * the same errand. */
+    w.time += 1;
+    d.order('charge', c, k);
+    w.time += 1;
+    d.order('charge', c, k);
+    const now = d.led(c).filter((t) => t.runner && t.runner.id === 'charge' && t.runner.squad === k);
+    assert(now.length === 1,
+      `${now.length} men are carrying the same order to the same squad — two RUNNER AWAY toasts `
+      + 'and two deliveries for one press of one key');
+
+    /* AND A DELIVERY DOES NOT ARM THE WINDOW OFF ITS OWN REFUSAL. Cleared
+     * first, because the presses above legitimately armed one — what is being
+     * measured is whether the ARRIVAL writes a new one. */
+    c._pending = null;
+    const man = now[0];
+    /* Two of the destination men walk out of his voice, so the delivery is
+     * partially refused for distance — the exact case that re-armed it. */
+    for (const t of men.slice(0, 2)) t.body.position.set(500, 0, 500);
+    man.body.position.set(man.runner.to.x, 0, man.runner.to.z);
+    d._runnerTick(man, 1 / 30);
+    assert(!c._pending,
+      `a delivery armed a fresh runner window (${JSON.stringify(c._pending)}) — the next press `
+      + 'sends a second man to carry the order the first one just carried');
+    /* AND A DELIVERY DOES NOT MOVE THE PLAYER'S TARGET SLOT. A runner sent
+     * thirty seconds ago whose destination squad has since been wiped arrives,
+     * calls `order()`, and takes its "nobody left to take it" branch — which
+     * clears the selection. That is a HUD retargeted from a `_troops` tick by
+     * something that is not a key press. */
+    d._pending = null; c._pending = null;
+    put(d, men, 150, 150);
+    d.order('charge', c, k);
+    w.time += 1;
+    d.order('charge', c, k);
+    const late = d.led(c).find((t) => t.runner && t.runner.squad === k);
+    assert(late, 'no runner was sent for the selection case');
+    d.selectedSquad = k;
+    let told = 'nothing';
+    d.onTarget = (i) => { told = i; };
+    for (const t of men) { t.alive = false; if (t.body) t.body.dead = true; }
+    late.body.position.set(late.runner.to.x, 0, late.runner.to.z);
+    d._runnerTick(late, 1 / 30);
+    assert(d.selectedSquad === k,
+      'a runner arriving at a squad that was wiped while he crossed moved the player\'s Target '
+      + 'slot — a HUD retargeted from a physics tick by a key press half a minute old');
+    assert(told === 'nothing', `onTarget fired (${told}) from a delivery`);
+    return 'a squad in the air is supervised · one man per order · a delivery arms nothing '
+      + 'and retargets nothing';
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  And the player can see it before they press anything              */
   /* ══════════════════════════════════════════════════════════════════ */
@@ -646,6 +891,29 @@ export async function run({ check, assert }) {
       'a squad with two men in earshot and three out of it does not say so — the panel is '
       + 'all-or-nothing about a rule that is per man');
 
+    /**
+     * …AND A COMPANY DOWN TO ONE SQUAD IS THE STATE WITH NO HEADING AND THE
+     * MOST TO SAY.
+     *
+     * The readout lived inside the squad-heading branch, which only runs when
+     * there are two squads, or a name, or a detached man. A roll ground down
+     * to a single squad printed a bare list with no warning on it — and that
+     * is precisely the state in which the WHOLE COMPANY can go deaf at once.
+     * A detached man is the same shape of gap from the other end: by
+     * definition the one furthest from anybody.
+     */
+    const one = { ...seen, roll: seen.roll.filter((r) => r.squad === 1 && !r.detached)
+      .map((r) => ({ ...r, squad: 0, heard: false })) };
+    const solo = rosterHtml(one, null, 'Squad');
+    assert(/out of reach/.test(solo),
+      'a company down to ONE squad, every man of it out of earshot, printed a bare list with no '
+      + 'warning — the state where the whole roll can go deaf at once is the state with no heading');
+    const det = { ...seen, roll: seen.roll.map((r, i) => ({ ...r,
+      squad: i < 2 ? null : r.squad, detached: i < 2, heard: i < 2 ? false : true })) };
+    assert(/out of reach/.test(rosterHtml(det, null, 'Squad')),
+      'a detached man out of earshot is not marked — a man pulled out of the line is by '
+      + 'definition the furthest from anybody');
+
     /* AND A BUILD THAT DOES NOT CARRY THE FIELD SAYS NOTHING, rather than
      * claiming everybody is deaf: a summary off the wire (`applyNet`) has no
      * `heard` on any row. */
@@ -683,7 +951,7 @@ export async function run({ check, assert }) {
       + 'is only refreshed by things that happen to the roll, and this one happens to you');
     assert(seen.roll.filter((r) => r.heard === false).length === 0,
       'the repaint carried the old picture');
-    return 'per-man `heard` on the summary · "out of reach" · "2/5 in earshot" · '
-      + 'silent without it · repaints when they cross, not on a timer';
+    return 'per-man `heard` on the summary · "out of reach" · "2/5 in earshot" · one squad and '
+      + 'the detached both marked · silent without it · repaints when they cross, not on a timer';
   });
 }
