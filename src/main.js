@@ -2261,7 +2261,14 @@ function orderKeys() {
      * already the hardest thing on this HUD to find. A selection that the fast
      * path throws away is worse than no selection at all.
      */
+    /* …AND A DISPATCH IS NOT THE ORDER LANDING. The second press of an order
+     * that was refused for distance sends a runner and returns true, so
+     * printing the formation's own line here would say "CHARGE — 2nd Squad"
+     * over a squad still standing where it was with a man halfway to it.
+     * `_sendRunner` has already said the true thing out loud. */
+    const wasRun = cmd.runnerAt;
     if (!cmd.order(o.id, null, cmd.selectedSquad ?? null)) continue;
+    if (cmd.runnerAt !== wasRun) break;
     /* THE SQUAD'S OWN NAME, through the director's one reader. This built its
      * own string — `${ordinal(n + 1)} Squad` — which hardcoded the word
      * "Squad" past `ARMIES[].squadWord` and ignored the name the player gave

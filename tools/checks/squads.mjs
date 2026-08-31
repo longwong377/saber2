@@ -64,7 +64,16 @@ export async function run({ check, assert, THREE: T }) {
     /* Give 2nd Squad its own ground and its own name. */
     for (const t of squads[1]) if (t.body) t.body.position.set(70, 0, 0);
     d.squadNames = ['', 'Havoc'];
-    d.order('cover', c, 1);
+    /* THE GENERAL WALKS OVER TO SAY IT. 70 m is twice ORDER_REACH's 34 m, and a
+     * post — a per-squad order that does not advance — also has to satisfy
+     * `_supervised`, which on a muster of ten rank-0 troopers means the general
+     * inside RELAY_REACH, 20 m, of the squad's own centre. Said from the origin
+     * the order is refused whole and `squadPlanted` is never even created;
+     * what this check is about is what happens to that ground afterwards. He
+     * walks back, so the wipe below is measured with him where he deployed. */
+    c.player.position.set(70, 0, 0);
+    assert(d.order('cover', c, 1) === true, '2nd squad refused ground it was standing on');
+    c.player.position.set(0, 0, 0);
     const ground = c.squadPlanted.get('1');
     assert(ground, '2nd squad was never given ground');
 
@@ -333,8 +342,20 @@ export async function run({ check, assert, THREE: T }) {
     for (const t of squads[1]) if (t.body) t.body.position.set(90, 0, 0);
     d._troops(1 / 30, {});
 
-    d.order('front', c, 0);
-    d.order('front', c, 1);
+    /* EACH ORDER IS GIVEN FROM THE SQUAD'S OWN GROUND. 90 m is well past
+     * ORDER_REACH's 34 m, so shouted from the origin neither squad hears it,
+     * both keep the army's formation and both solve one shape around one point
+     * — which is the exact stacking this check exists to catch, arrived at for
+     * a reason that has nothing to do with the shape. `front` advances, so the
+     * post rule never applies and the two men-tests pass where they stand:
+     * default morale reads 0.43 against SHAKEN_AT's 0.30, and a squad standing
+     * on itself is nobody's idea of alone. He returns to the origin before the
+     * shapes are measured. */
+    c.player.position.set(-90, 0, 0);
+    assert(d.order('front', c, 0) === true, '1st squad refused an advance from its own ground');
+    c.player.position.set(90, 0, 0);
+    assert(d.order('front', c, 1) === true, '2nd squad refused an advance from its own ground');
+    c.player.position.set(0, 0, 0);
     d._troops(1 / 30, {});
 
     const slots = [];

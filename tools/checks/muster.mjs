@@ -425,6 +425,87 @@ export async function run({ check, assert }) {
       + `a fallen ARC comes back an ARC (${back.join('+')})`;
   });
 
+  await check('muster: the men who held the ground keep it, and the ships bring only replacements', async () => {
+    /**
+     * ══ THE TRANSPORT CARRIES THE DEAD MAN'S REPLACEMENT, NOT THE SURVIVOR ══
+     *
+     * The player, on the area boundary: "after finishing a round and calling in
+     * reinforcements you leave that menu and you're now by yourself until a
+     * couple seconds later the reinforcement ships come in and drop your new
+     * troops off — however for sake of immersion it would make more sense if
+     * the troops that survived stayed with you on the ground and the only
+     * troopers coming in with the ships would be new troopers. Right now your
+     * surviving troops get off the transport with the new troops."
+     *
+     * They did. `_areaClear` called `recall()` on the WHOLE roll, so the six
+     * men who had just held the ground were disposed alongside the four about
+     * to be bought, the muster opened over an empty field, and `closeMuster`
+     * flew everybody back in. A survivor riding in on the transport that is
+     * meant to be bringing his replacements is the mode telling you its own
+     * casualty list does not mean anything — the one list FLAGSHIP §13 calls
+     * the mode's second spine on the grounds that it only ever shrinks.
+     *
+     * ── WHAT IS ACTUALLY DRIVEN, AND WHY EACH CLAUSE IS SEPARATE ───────────
+     *
+     * THE SAME BODIES. Not "seven men are standing" — object identity, and the
+     *   same position to a millimetre. A withdrawal that disposed the bodies
+     *   and instantly rebuilt them somewhere else would satisfy a head count
+     *   and would be the exact thing the player is describing.
+     * THE SHIPS CARRY THE REPLACEMENTS AND NOTHING ELSE. `deploy` is asked how
+     *   many bodies it put down, and the answer has to be the number of men
+     *   with no body — not the strength of the roll.
+     * AND A FULL WITHDRAWAL STILL WITHDRAWS. The end of a campaign and a
+     *   departing commander have no next area for anybody to be standing in,
+     *   and `keepStanding` is opt-in for exactly that reason.
+     */
+    const { army } = await import('./_army.mjs');
+    const { d, c } = army();
+    const started = d.led(c).filter((t) => t.body && !t.body.dead);
+    assert(started.length >= 6, `only ${started.length} men were deployed to begin with`);
+
+    /* Three killed the way a wave kills them, through the director's own door. */
+    for (const t of started.slice(0, 3)) { t.body.dead = true; d.onDeath(t.body, null); }
+    assert(c.roster.fallen.length === 3, `${c.roster.fallen.length} casualties for three deaths`);
+    const held = d.led(c).filter((t) => t.body && !t.body.dead);
+    const was = new Map(held.map((t) => [t, { e: t.body, at: t.body.position.clone() }]));
+
+    /* THE AREA BOUNDARY, exactly as `_areaClear` spells it. */
+    d.recall(null, { keepStanding: true });
+    const after = d.led(c).filter((t) => t.body && !t.body.dead);
+    assert(after.length === held.length,
+      `${held.length} men held the ground and ${after.length} were still standing on it after `
+      + 'the muster opened — the survivors are being flown back in with their own replacements');
+    for (const t of after) {
+      const w0 = was.get(t);
+      assert(w0 && w0.e === t.body,
+        `${t.name} is standing there on a different body — the withdrawal disposed him and `
+        + 'rebuilt him, which is the same event with a head count that hides it');
+      assert(t.body.position.distanceTo(w0.at) < 1e-6,
+        `${t.name} moved ${t.body.position.distanceTo(w0.at).toFixed(1)} m across the boundary`);
+    }
+
+    /* THE SHIPS. Two bought, two flown, and not one survivor among them. */
+    c.roster.points = 999;
+    const bought = [d.recruit('trooper'), d.recruit('trooper')].filter(Boolean);
+    assert(bought.length === 2, `the purse bought ${bought.length} replacements`);
+    const put = d.deployAll({ byShip: true });
+    assert(put === bought.length,
+      `${put} bodies were deployed for ${bought.length} replacements — the transport is `
+      + 'carrying men who never left the ground');
+    for (const t of after) {
+      assert(t.body === was.get(t).e, `${t.name} was re-deployed by the ship he did not need`);
+    }
+
+    /* AND THE FULL WITHDRAWAL IS STILL A WITHDRAWAL. */
+    d.recall();
+    const end = d.led(c).filter((t) => t.body && !t.body.dead).length;
+    assert(end === 0,
+      `${end} bodies survived an end-of-run recall — \`keepStanding\` leaked into the door that `
+      + 'takes an army off the field for good');
+    return `${held.length} survivors kept their own bodies and their own ground · `
+      + `${put} ships for ${bought.length} replacements · full recall still clears ${held.length}`;
+  });
+
   /**
    * THE THREE ARMY MODES ARE UNTOUCHED — the regression this change is most
    * likely to cause, so it is the one held down hardest. Command's army is the

@@ -4884,6 +4884,12 @@ export class CommandDirector extends WaveDirector {
         + `${squad == null ? 'the line' : this.squadLabel(Number(squad) | 0, c).toLowerCase()} `
         + `— ${deaf.length} ${deaf.length === 1 ? 'man' : 'men'} who never heard you`);
     }
+    /* WHEN, so a caller that also prints a line about the order can tell that
+     * what just happened was a DISPATCH and not the order landing. `main.js`
+     * reads it either side of its `order()` call: without it the key loop
+     * would print "CHARGE — 2nd Squad" over a squad that is still standing
+     * where it was, with a runner halfway there. */
+    this.runnerAt = this.world?.time ?? 0;
     this.onRunner?.(man, F, squad);
     return true;
   }
@@ -6663,8 +6669,8 @@ export class CommandDirector extends WaveDirector {
     return n;
   }
 
-  recall(c = null) {
-    if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k); return n; }
+  recall(c = null, opts = {}) {
+    if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k, opts); return n; }
     /* Anything still in the air is not coming: `Waves.reset` empties the
      * staging list at an area boundary anyway, and a record left in this set
      * would never be deployed again. */
@@ -6672,13 +6678,47 @@ export class CommandDirector extends WaveDirector {
     let n = 0;
     for (const t of c.roster.all) {
       const e = t.body;
-      t.body = null;
       /* A WITHDRAWAL ENDS EVERY PRIVATE ORDER. `t.order` is a man out of step
        * with his unit and `t.runner` is a man crossing ground that is about to
        * stop existing; both are facts about an engagement, and the company
        * that lands in the next area forms up as a company. */
       t.order = null;
       t.runner = null;
+      /**
+       * ══ AND THE MEN WHO ARE STILL STANDING STAY STANDING ══════════════════
+       *
+       * The player, on the area boundary: "after finishing a round and calling
+       * in reinforcements you leave that menu and you're now by yourself until
+       * a couple seconds later the reinforcement ships come in and drop your
+       * new troops off — however for sake of immersion it would make more
+       * sense if the troops that survived stayed with you on the ground and
+       * the only troopers coming in with the ships would be new troopers.
+       * Right now your surviving troops get off the transport with the new
+       * troops."
+       *
+       * They did, and this was the line that did it. `_areaClear` withdrew the
+       * WHOLE roll — the six men who had just held the ground along with the
+       * four who were about to be bought — so the muster opened over an empty
+       * field and closed on a flight of gunships carrying men who had never
+       * left. A survivor riding in on the transport that is supposed to be
+       * bringing his replacements is the mode telling you its own casualty
+       * list does not mean anything.
+       *
+       * `deploy` has always skipped a record that already has a live body
+       * (`if (t.body && !t.body.dead) continue`), so keeping the body is the
+       * whole fix: the ships then carry exactly the men with no body, which is
+       * the dead being replaced and nobody else. What re-forms the survivors
+       * is the thing that always re-forms them — they are under a formation
+       * solved against the commander's frame, so they walk back in on their
+       * own feet while the ships come down, which is the picture the player is
+       * asking for and not a second mechanism.
+       *
+       * ONLY WHERE IT IS ASKED FOR. The end of a campaign and a departing
+       * commander's army both still take every body off the field, because
+       * there is no next area for anybody to be standing in.
+       */
+      if (opts.keepStanding && e && !e.dead) continue;
+      t.body = null;
       if (!e) continue;
       e.trooper = null;
       if (e.dead) continue;
@@ -10720,10 +10760,40 @@ export class CommandDirector extends WaveDirector {
     this.areaIndex++;
     this.areaWaves = 0;
     this.mustering = true;
-    // The army comes off the field and is put down again around you at the top
-    // of the next area — the gunships, which is what the first area's brief
-    // says happens. See `recall`.
-    this.recall();
+    /**
+     * THE DEAD COME OFF THE ROLL AND THE LIVING STAY ON THE GROUND.
+     *
+     * `keepStanding` is the player's note about the transports, answered in
+     * `recall` where the withdrawal happens. What is still withdrawn here is
+     * everything with no body under it — a man killed in the last wave, and a
+     * man still in a gunship that is not going to finish its flight — so
+     * `deploy` at the bottom of `closeMuster` puts down the replacements and
+     * only the replacements.
+     */
+    this.recall(null, { keepStanding: true });
+    /**
+     * …AND THE GROUND EVERY SQUAD WAS HOLDING IS GIVEN BACK.
+     *
+     * This is the other half of keeping the bodies, and it did not exist
+     * before because there were no bodies to keep. A squad told to hold a
+     * ridge is planted on that ridge (`squadPlanted`), the front then MOVES —
+     * `marchTo`, the mode's one-way visible variable — and a squad still
+     * holding the ground the last engagement was fought on would sit out the
+     * next one a hundred metres behind the line, under an order the player
+     * gave about a piece of ground that is now behind them.
+     *
+     * The FORMATION is kept: "form line" is a statement about the shape the
+     * company fights in and it survives an area. What does not survive is a
+     * particular piece of dirt, and neither does a half-dug scrape on it.
+     */
+    for (const c of this.commanders) {
+      c._planted = null;
+      c.holding = false;
+      c.squadOrders?.clear();
+      c.squadPlanted?.clear();
+      c.digs?.clear();
+      c._pending = null;
+    }
     /**
      * THE INTERLUDE, BUILT BEFORE THE OFFER IT RIDES ON.
      *
