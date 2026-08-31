@@ -496,6 +496,43 @@ export async function run({ check, assert }) {
       assert(t.body === was.get(t).e, `${t.name} was re-deployed by the ship he did not need`);
     }
 
+    /**
+     * …AND THE AREA BOUNDARY IS THE CALLER THAT ASKS FOR IT.
+     *
+     * Everything above drives `recall` directly, which is the right way to
+     * measure what the withdrawal DOES and is blind to the one line that
+     * decides whether it ever happens that way in a run: a `_areaClear` that
+     * went back to a bare `recall()` would pass every assertion above and put
+     * the survivors back on the transports. Measured — that mutation is
+     * invisible to a fixture that calls `recall` itself.
+     *
+     * So the call site is read. `_areaClear` is where a run crosses from one
+     * engagement to the next and it is the only caller that has a next area to
+     * leave anybody standing in; the two that do not — the end of a campaign
+     * and a departing commander — must NOT carry it, and that is asserted in
+     * the same breath rather than left as an absence.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const { functionBody } = await import('./_source.mjs');
+    const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
+    const boundary = functionBody(src, '  _areaClear(');
+    const calls = [...boundary.matchAll(/this\.recall\(([^)]*)\)/g)].map((m) => m[1]);
+    assert(calls.length === 1,
+      `_areaClear makes ${calls.length} withdrawal calls — there is one boundary and one door`);
+    assert(/keepStanding:\s*true/.test(calls[0]),
+      `the area boundary calls recall(${calls[0]}) — without \`keepStanding\` every survivor is `
+      + 'disposed and flown back in beside his own replacement, which is the defect this '
+      + 'check exists for and which no fixture calling recall() itself can see');
+    for (const [what, sig] of [['the end of a campaign', '  _endCampaign('],
+                               ['a departing commander', '  dismissCommander(']]) {
+      const body = functionBody(src, sig);
+      for (const m of body.matchAll(/this\.recall\(([^)]*)\)/g)) {
+        assert(!/keepStanding/.test(m[1]),
+          `${what} leaves bodies standing (recall(${m[1]})) — there is no next area for them `
+          + 'to be standing in');
+      }
+    }
+
     /* AND THE FULL WITHDRAWAL IS STILL A WITHDRAWAL. */
     d.recall();
     const end = d.led(c).filter((t) => t.body && !t.body.dead).length;
@@ -503,7 +540,8 @@ export async function run({ check, assert }) {
       `${end} bodies survived an end-of-run recall — \`keepStanding\` leaked into the door that `
       + 'takes an army off the field for good');
     return `${held.length} survivors kept their own bodies and their own ground · `
-      + `${put} ships for ${bought.length} replacements · full recall still clears ${held.length}`;
+      + `${put} ships for ${bought.length} replacements · the boundary asks for it and the two `
+      + `one-way doors do not · full recall still clears ${held.length}`;
   });
 
   /**
