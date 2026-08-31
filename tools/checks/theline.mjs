@@ -948,8 +948,11 @@ export async function run({ check, assert }) {
      * checks above it had left behind.
      *
      * THAT ONE IS FIXED AT THE SOURCE rather than absorbed here: `seedWorld`
-     * exists now and the loop below pins all THREE of the game's streams per
-     * seed. What is left in the band is the spread this fixture has when it is
+     * exists now and the loop below pins ALL TWELVE of the game's streams per
+     * seed — the four this file always knew about and the eight `_shared.mjs`
+     * restores, which were the larger error of the two. See `MORE` below for
+     * the three-way measurement that found it. What is left in the band is the
+     * spread this fixture has when it is
      * genuinely repeated, and the quantity is chaotic rather than merely
      * noisy — two arms differing only in one bolt's damage, 10 against 5, took
      * the same seed from five survivors to one and the next from one to five.
@@ -967,11 +970,13 @@ export async function run({ check, assert }) {
      * The seeds are named rather than rolled for the reason `theline.11`'s
      * ground sweep names its own: a check that draws a fresh seed each run
      * reports a different number every time it is looked at. Their absolute
-     * values are NOT reproducible against `tools/_linehold.mjs` seed for seed —
-     * `World.js` holds one module-level `rng` for the whole process and exports
-     * no reseeder, so the phase depends on everything that ran before — which
-     * is the other half of why this asserts a band on a mean rather than a
-     * figure on a run.
+     * values are still NOT reproducible against `tools/_linehold.mjs` seed for
+     * seed — that tool pins nothing like this list and its phase depends on
+     * whatever ran before it — which is the other half of why this asserts a
+     * band on a mean rather than a figure on a run. Inside THIS file the loop
+     * is now phase-independent, which is a different and stronger claim than
+     * the one that stood here: it no longer matters what ran before it in the
+     * suite, and a red here is a statement about the game again.
      */
     const HALF = Cmd.OPENING_STRENGTH / 2;
     const SLACK = 4.0;
@@ -984,6 +989,58 @@ export async function run({ check, assert }) {
     /* The muster's stream, imported the same dynamic way and for the same
      * reason as `seedWorld` above. */
     const { commandRng } = await import('../../src/game/Command.js');
+    /**
+     * ══ AND THE OTHER EIGHT, WHICH IS WHY THIS READ `[3 0 0 0]` ═══════════
+     *
+     * Four streams were pinned here and the game has twelve. `_shared.mjs`
+     * restores the other eight — Props, Bodies, Player, Particles, Bolts,
+     * Ragdoll, Cloth, Vehicles — to the seed their own module opened on
+     * before every check, which is exactly what a check that needs a stable
+     * phase wants and is exactly wrong for this one: it holds all eight at
+     * ONE PHASE ACROSS ALL FOUR SEEDS. The loop below was therefore not four
+     * samples of the game. It was one configuration of eight streams, sampled
+     * four times, with four other streams jittered inside it — so a bad draw
+     * in the bolt dispersion or the body attributes did not average out over
+     * the seeds, it applied to every one of them at once.
+     *
+     * MEASURED, and the three readings are the whole argument. On this
+     * fixture, unchanged, on the same commit:
+     *
+     *   eight streams pinned by `_shared` (the shipped harness)
+     *       [3 0 0 0]        mean 0.8, 1/4 held      — RED
+     *   eight streams left wherever the previous check finished
+     *       [6 0 9 3]        mean 4.5, 3/4 held
+     *   eight streams pinned HERE, per seed, as below
+     *       [0 4 5 5]        mean 3.5, 3/4 held
+     *
+     * The first two are the same four samples of one configuration, taken at
+     * two arbitrary phases; the gap between 0.8 and 4.5 is the size of the
+     * error that made this check's own note say "a single red here is worth
+     * re-running before it is believed". The third is four samples of four
+     * configurations, which is what the mean below was always claiming to be.
+     *
+     * A BISECT CONFIRMED IT FROM THE OTHER SIDE before this was written: the
+     * flip to `[3 0 0 0]` lands exactly on `c003842`, the commit that added
+     * the eight seeders, with zero variance either side of it — 4.5 on its
+     * parent and 0.8 on it and on every commit after, reproduced three times
+     * each. Nothing about the game changed at that commit; it touches no
+     * gameplay file. What changed was which phase this loop starts from.
+     *
+     * DERIVED FROM THE SEED, like the four above and for the same reason: the
+     * seeds are 1, 2, 3 and 5, and adjacent small seeds put a stream in nearly
+     * the same place. `2654435761 + j * 7919` walks each of the eight to a
+     * different corner of its own space.
+     */
+    const MORE = [
+      (await import('../../src/world/Props.js')).seedProps,
+      (await import('../../src/game/Bodies.js')).seedBodies,
+      (await import('../../src/game/Player.js')).seedPlayerRng,
+      (await import('../../src/world/Particles.js')).seedParticles,
+      (await import('../../src/game/Bolts.js')).seedBolts,
+      (await import('../../src/game/Ragdoll.js')).seedRagdoll,
+      (await import('../../src/game/Cloth.js')).seedCloth,
+      (await import('../../src/game/Vehicles.js')).seedVehicles,
+    ];
     /**
      * …AND THE CONTOURS ARE HELD STILL, which is the one thing this fixture
      * takes off the shipped configuration and the reason is that this check is
@@ -1040,6 +1097,10 @@ export async function run({ check, assert }) {
        * a known phase BEFORE it starts.
        */
       commandRng.seed((20260821 ^ Math.imul(seed, 1597334677)) >>> 0);
+      /* …and the eight `_shared.mjs` holds still. See `MORE`. */
+      for (let j = 0; j < MORE.length; j++) {
+        MORE[j]((20260821 ^ Math.imul(seed, 2654435761 + j * 7919)) >>> 0);
+      }
       const { world, d, input } = await lineWorld({ seed, spawn: false });
       d.onMuster = () => {};
       assert(d.roster.strength === Cmd.OPENING_STRENGTH,

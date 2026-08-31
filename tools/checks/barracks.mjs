@@ -2249,11 +2249,18 @@ export async function run({ check, assert, THREE: T }) {
       assert(said.length === 2, `cycling twice said ${said.length} thing(s)`);
       assert(said[1].includes('HAVOC'),
         `cycling onto the named squad said "${said[1]}"`);
-      /* AND A PLANTED ORDER NAMES IT TOO. */
+      /* AND A PLANTED ORDER NAMES IT TOO — said with the general standing in
+       * the squad, because an order only carries 34 m off his body and a post
+       * handed to a squad with no sergeant in it needs him inside 20 m of the
+       * squad's centre. Shouted at these men from the deployment point it is
+       * refused entire, nothing is written, and the only thing the world hears
+       * is the refusal — which is a toast about reach and not about a name. */
       const sq = d.squadsOf(c)[1];
       for (const t of sq) if (t.body) t.body.position.set(-60, 0, 0);
+      c.player.position.set(-60, 0, 0);
       w.notes.length = 0;
-      d.order('cover', c, 1);
+      assert(d.order('cover', c, 1) === true,
+        `the squad would not take the order: ${d.orderRefused}`);
       assert(w.notes.some(([a]) => a.includes('HAVOC')),
         `the order named ${JSON.stringify(w.notes.map(([a]) => a))}`);
 

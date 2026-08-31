@@ -216,12 +216,22 @@ export async function run({ check, assert }) {
     const { d, c } = army();
     const sq = d.squadsOf(c)[0];
     for (const t of sq) if (t.body) t.body.position.set(-60, 0, 0);
+    /* AND THE GENERAL WALKS OVER AND SAYS IT STANDING IN THE SQUAD. An order
+     * carries `ORDER_REACH` — 34 m off the commander's own body — and these men
+     * are at 60, so shouted from the deployment point it is refused entire and
+     * NOTHING is written: no `squadOrders`, no plant, no ground to lose. Where
+     * he stood when he said it is not otherwise a term in anything below: the
+     * plant is the squad's own centroid and `_vacancy` reads the licences of
+     * the men left standing, so he is free to walk off again the moment it
+     * lands, which is the sentence this whole check is about. */
+    c.player.position.set(-60, 0, 0);
     /* A licensed leader, and nobody under him who is. `deploy` raises rung-0
      * troopers, so the rest of the squad is already unlicensed. */
     const lead = sq[0];
     lead.award(Cmd.RANKS[2].xp);
     assert(d.leaderOf(sq) === lead, 'the fixture did not put the licensed man in charge');
-    d.order('cover', c, 0);
+    assert(d.order('cover', c, 0) === true,
+      `the squad would not take the order that gives it its ground: ${d.orderRefused}`);
     assert(c.squadPlanted?.has('0'), 'the squad was never given ground to lose');
 
     d.world.notes.length = 0;
@@ -240,9 +250,11 @@ export async function run({ check, assert }) {
     const { d: d2, c: c2 } = army();
     const sq2 = d2.squadsOf(c2)[0];
     for (const t of sq2) if (t.body) t.body.position.set(-60, 0, 0);
+    c2.player.position.set(-60, 0, 0);      // within the 34 m an order carries
     sq2[0].award(Cmd.RANKS[2].xp);
     sq2[1].award(Cmd.RANKS[1].xp);          // a Veteran, who HOLDS
-    d2.order('cover', c2, 0);
+    assert(d2.order('cover', c2, 0) === true,
+      `the second squad would not take it either: ${d2.orderRefused}`);
     d2.world.notes.length = 0;
     d2.onDeath(sq2[0].body, null);
     assert(c2.squadPlanted?.has('0'),

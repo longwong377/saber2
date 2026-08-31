@@ -4779,9 +4779,16 @@ export class CommandDirector extends WaveDirector {
                       area: this.areaNumber, wave: this.wave });
       /* THE WINDOW IS ARMED ON DISTANCE AND ON NOTHING ELSE. A runner carries
        * an order to men who did not hear it; he cannot carry courage. */
-      if (line.why === 'out of reach' && mine) {
-        this._pending = { id, squad: squad == null ? null : Number(squad) | 0,
-                          at: this.world?.time || 0 };
+      /* ON THE COMMANDER AND NOT ON THE DIRECTOR, because a director holds
+       * every commander in the session. A window on `this` would let a joining
+       * player's refused order arm the host's next press, and would give a
+       * joining player no window of their own — so the one player who most
+       * needs a runner (their line is wherever the host's is not) is the one
+       * who could never send one. The notify below is still the local screen's
+       * and stays gated on the player's own commander. */
+      if (line.why === 'out of reach') {
+        c._pending = { id, squad: squad == null ? null : Number(squad) | 0,
+                       at: this.world?.time || 0 };
       }
     }
     if (!ask.took.length) {
@@ -6782,7 +6789,7 @@ export class CommandDirector extends WaveDirector {
     /**
      * ── THE SECOND PRESS SENDS A MAN ─────────────────────────────────────
      *
-     * `_takeUp` arms `_pending` when an order is refused FOR DISTANCE, and
+     * `_takeUp` arms `c._pending` when an order is refused FOR DISTANCE, and
      * only then. The same order, at the same unit, inside `RUNNER_WINDOW` is
      * read as "then take it to them" — which is what a player does with a
      * button that just told them nobody heard it.
@@ -6796,12 +6803,12 @@ export class CommandDirector extends WaveDirector {
      * the window off its own refusal and dispatch a runner to carry the order
      * the runner just carried.
      */
-    if (!this._carrying && c === this.commander && this._pending) {
-      const P = this._pending;
+    if (!this._carrying && c._pending) {
+      const P = c._pending;
       const key = squad == null ? null : Number(squad) | 0;
       const now = this.world?.time || 0;
       if (P.id === id && P.squad === key && now - P.at <= RUNNER_WINDOW) {
-        this._pending = null;
+        c._pending = null;
         if (this._sendRunner(id, squad, c)) return true;
       }
     }

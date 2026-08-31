@@ -368,8 +368,16 @@ export async function run({ check, assert }) {
     const k = 1, men = squads[k];
     put(d, men, 120, 120);
     assert(d.order('charge', c, k) === false, 'a squad 170 m out took an order');
-    assert(d._pending && d._pending.id === 'charge' && d._pending.squad === k,
+    assert(c._pending && c._pending.id === 'charge' && c._pending.squad === k,
       'a distance refusal did not arm the runner window');
+    /* THE WINDOW IS THE COMMANDER'S. A director holds every commander in the
+     * session, so a window on `this` would let one player's refused order arm
+     * another player's next press — and would leave a joining player, whose
+     * line is by definition wherever the host's is not, with no way to send a
+     * runner at all. */
+    assert(d._pending === undefined,
+      'the runner window is on the director and is therefore shared between every commander '
+      + 'in the session');
 
     w.time += 1;
     assert(d.order('charge', c, k) === true,
@@ -424,7 +432,7 @@ export async function run({ check, assert }) {
       'the order the dead runner was carrying landed anyway');
 
     /* AND ONE WHO GETS THERE DELIVERS. A second dispatch, walked to the mark. */
-    d._pending = null;
+    c._pending = null;
     put(d, men, 120, 120);
     d.order('charge', c, k);
     w.time += 1;
