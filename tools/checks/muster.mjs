@@ -497,6 +497,52 @@ export async function run({ check, assert }) {
     }
 
     /**
+     * ══ AND THE BOUNDARY SAYS WHAT IT TOOK AWAY ═══════════════════════════
+     *
+     * `HUD._squadOrders` is push-only: it is cleared by an ARMY-WIDE
+     * `setOrder` and by nothing else. So a boundary that deleted `squadOrders`
+     * in silence left the order panel's second line saying "Havoc — take
+     * cover" about a squad under no order, for the rest of the run. That is
+     * the defect `HUD.setOrder`'s own note already records — "the director
+     * gives a squad's own order up in two places nobody was telling this panel
+     * about … for ever" — and the boundary was a third place.
+     *
+     * `_vacancy` has the shape: a null formation with a null name, per squad.
+     * ONE PER SQUAD THAT ACTUALLY HAD ONE, so a boundary after an engagement
+     * nobody delegated in says nothing at all.
+     */
+    {
+      const { army: army2 } = await import('./_army.mjs');
+      const A = army2();
+      const said = [];
+      A.d.onOrder = (F, n, one) => said.push([F?.id ?? null, one?.squad ?? null, one?.name ?? null]);
+      const sq2 = A.d.squadsOf(A.c);
+      A.c.player.position.set(0, 0, 0);
+      assert(A.d.order('cover', A.c, 1) === true, `1st arm: ${A.d.orderRefused}`);
+      assert(A.d.order('digin', A.c, 0) === true, `2nd arm: ${A.d.orderRefused}`);
+      A.d.hold(true);
+      said.length = 0;
+      A.d._areaClear?.();
+      const drops = said.filter((r) => r[0] === null && r[1] != null);
+      assert(drops.length === 2,
+        `the boundary deleted two squads' orders and announced ${drops.length} of them — the `
+        + 'order panel goes on printing an order nobody is under, for the rest of the run');
+      assert(new Set(drops.map((r) => r[1])).size === 2,
+        `both announcements named the same squad (${JSON.stringify(drops)})`);
+      assert(!A.c.holding, 'the boundary left the company holding ground the front has left');
+      assert(A.w.notes.some(([t]) => /FRONT HAS MOVED/.test(t)),
+        'the hold and every squad order were released without a word to the player — `hold()` '
+        + 'notifies and logs, and the boundary undid the same standing order in silence');
+      /* AND A QUIET BOUNDARY IS QUIET. */
+      const B = army2();
+      const alsoSaid = [];
+      B.d.onOrder = () => alsoSaid.push(1);
+      B.d._areaClear?.();
+      assert(alsoSaid.length === 0,
+        `a boundary after an engagement nobody delegated in announced ${alsoSaid.length} drops`);
+    }
+
+    /**
      * …AND THE AREA BOUNDARY IS THE CALLER THAT ASKS FOR IT.
      *
      * Everything above drives `recall` directly, which is the right way to
@@ -533,6 +579,42 @@ export async function run({ check, assert }) {
       }
     }
 
+    /**
+     * ══ AND A MAN ON HIS BACK DID NOT HOLD THE GROUND ═════════════════════
+     *
+     * `!e.dead` is not the same question as "is he standing". In THE LINE a
+     * wounded named man is DOWNED — ragdolled, bleeding out on `_tickDown`,
+     * and `dead === false` — so a withdrawal testing only `dead` KEPT him:
+     * he crossed the boundary lying in the dirt of an area already banked,
+     * `deploy` skipped him because he has a body, no replacement was ever
+     * bought for him, the line re-formed on the commander and walked away,
+     * and the bleed finished him. Driven before the fix: "downed man kept his
+     * body: true · still downed: true · ships put down 0 bodies."
+     *
+     * And while he lived he was a permanent −1 on `lineGathered`'s numerator
+     * with a +1 still on its denominator, so every later quorum was that much
+     * harder to make for a wound taken two areas ago.
+     */
+    const hurt = d.led(c).find((t) => t.body && !t.body.dead);
+    assert(hurt, 'nobody left standing to wound');
+    hurt.body.downed = true;
+    d.recall(null, { keepStanding: true });
+    assert(!hurt.body,
+      `${hurt.name} was bleeding on the ground and the withdrawal left him there — the ships `
+      + 'bring nobody for a man whose body is technically alive, and the bleed finishes him in '
+      + 'an area he already survived');
+    assert(d.led(c).filter((t) => t.body && !t.body.dead).length === after.length - 1,
+      'the downed man took somebody standing off the field with him');
+    /* AND HE IS FLOWN BACK. Counted against the men who actually have no body:
+     * the second withdrawal above also released the two replacements bought
+     * earlier out of `_inbound`, so they need ground again too. */
+    const needing = d.led(c).filter((t) => !t.body || t.body.dead).length;
+    const flown = d.deployAll({ byShip: true });
+    assert(flown === needing,
+      `${flown} bodies were put down for ${needing} men without one — the man carried off the `
+      + 'last area was not flown back');
+    assert(needing >= 1, 'nobody needed a ship, so this proves nothing about the wounded man');
+
     /* AND THE FULL WITHDRAWAL IS STILL A WITHDRAWAL. */
     d.recall();
     const end = d.led(c).filter((t) => t.body && !t.body.dead).length;
@@ -540,8 +622,8 @@ export async function run({ check, assert }) {
       `${end} bodies survived an end-of-run recall — \`keepStanding\` leaked into the door that `
       + 'takes an army off the field for good');
     return `${held.length} survivors kept their own bodies and their own ground · `
-      + `${put} ships for ${bought.length} replacements · the boundary asks for it and the two `
-      + `one-way doors do not · full recall still clears ${held.length}`;
+      + `${put} ships for ${bought.length} replacements · a man on his back is carried off and `
+      + `flown back · the boundary asks for it and the two one-way doors do not`;
   });
 
   /**

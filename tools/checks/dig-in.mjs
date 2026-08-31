@@ -144,7 +144,17 @@ export async function run({ check, assert }) {
     /* 1st Squad is put on its own ground and told to dig it. */
     const first = squads[0];
     for (const t of first) if (t.body) t.body.position.set(50, 0, 0);
-    d.order('digin', d.commander, 0);
+    /* AND THE ORDER HAS TO GET TO THEM, ON BOTH COUNTS. `ORDER_REACH` is 34 m
+     * off the general's body, so he watches from 25; a post — a per-squad
+     * order that does not advance — then needs a man licensed to LEAD in the
+     * squad, because supervision-by-presence only reaches `RELAY_REACH`'s 20 m
+     * of the squad's own centre. He is kept OFF the ground deliberately: a
+     * hole cut where the general stands would satisfy the assertion below if
+     * he were standing in it, and that is the assertion's whole subject. */
+    d.commander.player.position.set(25, 0, 0);
+    first[0].xp = Cmd.RANKS[2].xp;
+    assert(d.order('digin', d.commander, 0) === true,
+      `the squad would not take the position — ${d.orderRefused}`);
     /* `holdFire` is Waves.js's own primitive and what it does to a body with
      * no class behind it is push the attack fuse back up to 0.5 — see that
      * function's own note about the stand-in objects checks hold up. So the
@@ -188,9 +198,20 @@ export async function run({ check, assert }) {
     const { LEVELS } = await import('../../src/game/Levels.js');
     const { world, d, squads } = await armed(Cmd, LEVELS);
     const first = squads[0];
+    /* THE SQUAD IS TOLD TO DIG WHILE IT IS STILL A SQUAD, and the general says
+     * it standing in them: 50 m is past `ORDER_REACH`'s 34, and a post on a
+     * squad of rank-0 troopers needs him inside `RELAY_REACH`'s 20 m of its
+     * centre. The ground the hole is cut on is the squad's centroid at that
+     * moment — so it is (50,0), which is what the next line then takes all but
+     * one man off. Ordering a squad that is already scattered would plant the
+     * position on the average of the two places it is in, and the man left
+     * behind would not be standing on it. */
+    for (const t of first) if (t.body) t.body.position.set(50, 0, 0);
+    d.commander.player.position.set(50, 0, 0);
+    assert(d.order('digin', d.commander, 0) === true,
+      `the squad would not take the position — ${d.orderRefused}`);
     /* One man on the ground, the rest of his squad two hundred metres away. */
-    first.forEach((t, i) => { if (t.body) t.body.position.set(i === 0 ? 50 : 250, 0, 0); });
-    d.order('digin', d.commander, 0);
+    first.forEach((t, i) => { if (t.body && i) t.body.position.set(250, 0, 0); });
     step(d, DIG_SECONDS * 1.5);
     assert(!world.craters.length,
       `one man dug a ${DIG_R} m position on his own in ${DIG_SECONDS} s — DIG_CREW is ${DIG_CREW}`);
@@ -199,9 +220,14 @@ export async function run({ check, assert }) {
     for (const t of first) if (t.body) t.body.position.set(50, 0, 0);
     step(d, DIG_SECONDS * 0.6);
     assert(!world.craters.length, 'the position finished early');
-    /* …and then they are sent somewhere else. */
-    d.order('charge', d.commander, 0);
-    d.order('digin', d.commander, 0);
+    /* …and then they are sent somewhere else. Both orders are asserted to LAND
+     * — the general is still standing in them, so nothing is out of the 34 m
+     * — because an order that was refused would abandon the work just as well
+     * and this check would then be measuring a refusal. */
+    assert(d.order('charge', d.commander, 0) === true,
+      `the squad would not take the charge — ${d.orderRefused}`);
+    assert(d.order('digin', d.commander, 0) === true,
+      `the squad would not take the position a second time — ${d.orderRefused}`);
     step(d, DIG_SECONDS * 0.6);
     assert(!world.craters.length,
       'the work banked across an order that pulled the squad off it — "dig in, charge, dig in" '
@@ -226,7 +252,12 @@ export async function run({ check, assert }) {
     const { world, d, squads } = await armed(Cmd, LEVELS);
     const log = new CraterLog().attach(world.terrain);
     for (const t of squads[0]) if (t.body) t.body.position.set(50, 0, 0);
-    d.order('digin', d.commander, 0);
+    /* The general goes and stands in them to say it: 50 m is past
+     * `ORDER_REACH`'s 34, and a post on rank-0 troopers is refused as `unled`
+     * unless he is inside `RELAY_REACH`'s 20 m of the squad's own centre. */
+    d.commander.player.position.set(50, 0, 0);
+    assert(d.order('digin', d.commander, 0) === true,
+      `the squad would not take the position — ${d.orderRefused}`);
     step(d, DIG_SECONDS + 1);
     assert(world.craters.length === 1, 'nothing was dug');
     assert(log.length === 1,

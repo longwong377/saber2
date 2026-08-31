@@ -6494,7 +6494,11 @@ export class CommandDirector extends WaveDirector {
      * breaking it was not the one the player was looking at.
      */
     const air = opts.byShip && this.arrivals?.enabled ? this.arrivals : null;
-    let n = 0, unplaced = 0;
+    /* WANTED, not LED. `live` is everybody this commander leads and the loop
+     * skips anyone who already has a body — so with survivors keeping theirs
+     * across a boundary, "2 of 10 could not be set down" counted eight men
+     * nobody tried to set down. The banner names the men who needed ground. */
+    let n = 0, unplaced = 0, wanted = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
       if (t.body && !t.body.dead) continue;
@@ -6546,6 +6550,7 @@ export class CommandDirector extends WaveDirector {
        */
       const face = c.player && c.player.isLocal && c.player.alive !== false ? c.player : null;
       const spread = live.length > 1 ? (i / (live.length - 1) - 0.5) : 0;
+      wanted++;
       if (!this._standingRoom(w, anchor, face, i, live.length, spread, _v2)) { unplaced++; continue; }
       /* THE COMMANDER'S SIDE, not the world's one constant. `world.partyTeam`
        * is the LOCAL player's side and there is one of it; a second army on it
@@ -6594,7 +6599,7 @@ export class CommandDirector extends WaveDirector {
     this.undeployed = unplaced;
     if (unplaced && c === this.commander) {
       this.world?.notify?.('NO GROUND FOR THE LINE',
-        `${unplaced} of ${live.length} could not be set down — move off the wall`);
+        `${unplaced} of ${wanted} could not be set down — move off the wall`);
     }
     this._announceRoster();
     /* THE WITNESS THAT AN ARMY EXISTED. `_checkLine` needs to tell "the roster
@@ -6766,9 +6771,24 @@ export class CommandDirector extends WaveDirector {
 
   recall(c = null, opts = {}) {
     if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k, opts); return n; }
-    /* Anything still in the air is not coming: `Waves.reset` empties the
-     * staging list at an area boundary anyway, and a record left in this set
-     * would never be deployed again. */
+    /**
+     * ANYTHING STILL IN THE AIR IS NOT COMING — and saying so was not enough.
+     *
+     * This claimed `Waves.reset` empties the staging list at an area boundary.
+     * THERE IS NO `WaveDirector.reset`, and `arrivals.clear()` has exactly one
+     * caller in the tree (`World.restartWave`). So a gunship carrying a record
+     * across a boundary went on flying: the record leaves `_inbound` here,
+     * `closeMuster` requests a SECOND flight for the same man, both run
+     * `enlistBody`, and the loser is a live body with `e.trooper` still set and
+     * `t.body` pointing elsewhere — whose eventual death strikes a living man
+     * off the roll, because `onDeath` reads `e.trooper`.
+     *
+     * Not reproduced in 9 000 frames of natural play, which is the honest
+     * caveat and not a reason to leave a claim about a method that does not
+     * exist standing in the file. `_areaClear` cancels the flights for real
+     * now; this set is emptied here because it is per commander and the ships
+     * are not.
+     */
     for (const t of c.roster.all) this._inbound.delete(t);
     let n = 0;
     for (const t of c.roster.all) {
@@ -6812,7 +6832,29 @@ export class CommandDirector extends WaveDirector {
        * commander's army both still take every body off the field, because
        * there is no next area for anybody to be standing in.
        */
-      if (opts.keepStanding && e && !e.dead) continue;
+      /**
+       * …AND `!e.dead` IS NOT THE SAME QUESTION AS "IS HE STANDING".
+       *
+       * In THE LINE (`MODES.theline.downed`) a wounded named man is DOWNED:
+       * ragdolled, bleeding out on `_tickDown`, and `dead === false`. Testing
+       * only `dead` kept him — so he crossed the boundary lying in the dirt of
+       * an area you had already banked, `deploy` skipped him because he has a
+       * body, no replacement was ever bought for him, the line re-formed on
+       * the commander and walked away, and the bleed finished him. Driven:
+       * "downed man kept his body: true · still downed: true · ships put down
+       * 0 bodies", against the old withdrawal's "0 casualties, ships put down
+       * 10 — he comes back standing."
+       *
+       * And while he lived he was a permanent −1 on `lineGathered`'s
+       * numerator with a +1 still on its denominator, so every later
+       * `lineIsUp` was that much harder for a wound taken two areas ago.
+       *
+       * The man who HELD THE GROUND is the man who is on his feet on it. One
+       * on his back is a casualty the withdrawal carries off and the next
+       * area's ships put down again, which is what the old code did for him by
+       * accident and what this does for him on purpose.
+       */
+      if (opts.keepStanding && e && !e.dead && !e.downed) continue;
       t.body = null;
       if (!e) continue;
       e.trooper = null;
@@ -10942,6 +10984,11 @@ export class CommandDirector extends WaveDirector {
      * only the replacements.
      */
     this.recall(null, { keepStanding: true });
+    /* AND THE SHIPS THAT WERE STILL IN THE AIR GO WITH THEM — see `recall`'s
+     * note on `_inbound` for the orphan a flight that outlives its record
+     * makes. Once, here, because `arrivals` is the world's and not any one
+     * commander's. */
+    this.arrivals?.clear?.();
     /**
      * …AND THE GROUND EVERY SQUAD WAS HOLDING IS GIVEN BACK.
      *
@@ -10958,12 +11005,44 @@ export class CommandDirector extends WaveDirector {
      * particular piece of dirt, and neither does a half-dug scrape on it.
      */
     for (const c of this.commanders) {
+      /**
+       * …AND THE PANEL IS TOLD, WHICH IS THE HALF THAT WAS MISSING.
+       *
+       * `HUD._squadOrders` is push-only: it is cleared by an ARMY-WIDE
+       * `setOrder` and by nothing else, so a boundary that deleted
+       * `squadOrders` in silence left the order panel's second line saying
+       * "Havoc — take cover" about a squad under no order, for the rest of the
+       * run. That is exactly the defect `HUD.setOrder`'s own note records —
+       * "the director gives a squad's own order up in two places nobody was
+       * telling this panel about … for ever" — and this was a third place.
+       *
+       * `_vacancy` already has the shape for it: a null formation with a null
+       * name, per squad. One per squad that actually had an order, so a
+       * boundary after an engagement nobody delegated in says nothing.
+       *
+       * AND THE HOLD GOES WITH IT. `hold()` notifies and logs; this released
+       * the same standing order without a word.
+       */
+      const dropped = [...(c.squadOrders || [])].map(([k]) => Number(k) | 0);
+      const wasHolding = c.holding;
       c._planted = null;
       c.holding = false;
       c.squadOrders?.clear();
       c.squadPlanted?.clear();
       c.digs?.clear();
       c._pending = null;
+      if (c !== this.commander) continue;
+      for (const k of dropped) {
+        this.onOrder?.({ id: null, name: null }, this.liveSquads(c).length,
+          { squad: k, name: null });
+      }
+      if (dropped.length || wasHolding) {
+        this.world?.notify?.('THE FRONT HAS MOVED',
+          wasHolding
+            ? 'the company is off its ground and every squad is back under your own order'
+            : `${dropped.length} ${dropped.length === 1 ? 'squad is' : 'squads are'} back under `
+              + 'your own order — the ground they were given is behind the line now');
+      }
     }
     /**
      * THE INTERLUDE, BUILT BEFORE THE OFFER IT RIDES ON.
