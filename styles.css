@@ -2449,6 +2449,13 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 /* THE CASUALTY LIST reads as a row of the roll and not as a man, so it is the
    one .diff on the page with no rank dot to fill and a dimmer hand. */
 .company-fallen-row .txt b{color:var(--dim)}
+/* WHO IS GOING OUT NEXT RUN, ON THE ROLL ITSELF. The Taking in page names them
+   in full; this is the same cut read where the player is actually scanning, so
+   a company of forty does not look like forty men who are all deploying. */
+.company-cut{margin:0 0 8px}
+.company-reserve{opacity:.62}
+.company-reserve .txt b{color:var(--dim)}
+
 .company-fallen-row .dot{background:var(--void);border:2px solid var(--panel-hi)}
 
 /* …AND THE LIST ITSELF, which is a column of names and two facts apiece. Same

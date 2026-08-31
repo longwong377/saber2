@@ -1328,6 +1328,24 @@ function bank(stats = null) {
   world._banked = true;
   const roster = d.roster;
   if (!roster) return;
+  /**
+   * WHO CAME HOME — asked of the World, which is the only thing that knows.
+   *
+   * This used to be `world.manifest` with an empty-array fallback, and the
+   * fallback was doing all the work: `manifest` was written by exactly ONE
+   * method, `_endWithdrawal`, so a run that ended any other way handed `keep`
+   * an empty list with `deployed: roster.all` under it — and `keep`'s rule for
+   * a man who went out and is not on the manifest is that he is dead. Winning
+   * a skirmish therefore struck the whole roll off. The player found it from
+   * the other end: "I finished a skirmish run and… I could only see a list of
+   * fallen troops, nothing about the troops that had just survived. And when I
+   * went into a new skirmish game, it was a fresh set of troops."
+   *
+   * `World.sealManifest` is the fix and it is stated there rather than here,
+   * for the split this file's header keeps: main.js owns localStorage, the
+   * game owns the game, and "who walked off that ground" is a question about
+   * the battle.
+   */
   const manifest = Array.isArray(world.manifest) ? world.manifest : [];
   Company.keep(manifest, {
     army: d.commander?.army?.id ?? roster.army?.id ?? roster.army,
@@ -1339,7 +1357,11 @@ function bank(stats = null) {
     deployed: roster.all,
     left: roster.all.filter((t) => !manifest.includes(t)),
     ground: world.levelKey ?? null,
-    ended: stats?.ended ?? (world.over ? 'wiped' : 'quit'),
+    /* `won` is a real ending and `keep`'s own signature lists it. Without this
+     * clause a victory filed as 'wiped' — the fallback reads `world.over`,
+     * which EVERY ending sets — and the story line a man carries out of the
+     * run would say the wrong thing about the day he had. */
+    ended: stats?.ended ?? (stats?.won === true ? 'won' : (world.over ? 'wiped' : 'quit')),
   });
 }
 

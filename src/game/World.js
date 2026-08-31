@@ -1893,6 +1893,22 @@ export class World {
         limbsRemoved: p.limbsRemoved | 0, score: p.score | 0,
       } : null,
       /**
+       * …AND THE LINE, WHICH IS THE ONE THING A CROSSING WAS THROWING AWAY.
+       *
+       * `loadLevel` builds a new `CommandDirector` and its constructor ends on
+       * `_musterOpening()`, so every ground change raised a fresh army: the men
+       * who boarded the ship were replaced by strangers on the far side, while
+       * the names stayed on the troop list because that list is read off the
+       * COMPANY. Reported exactly that way, and it is one cause.
+       *
+       * The `Trooper` records themselves, not copies of them — see
+       * `CommandRoster.adopt` for why a record round-trip is the wrong tool
+       * inside a single run. `all` and not `living`: the roll is a casualty
+       * list too, and a man who fell in engagement one is still a name the
+       * next screen has to be able to print.
+       */
+      line: this.command?.commander?.roster?.all?.slice() ?? null,
+      /**
        * …AND THE STATE YOU ARE IN, WHICH IS A DECISION AND NOT AN OVERSIGHT.
        *
        * A respawned Player is at full health, full Force and full stamina.
@@ -2015,12 +2031,12 @@ export class World {
 
   _beforeRotate() {
     this.rotating = true;
-    /* Names, ranks and casualty lists belong to the CAMPAIGN, which is the mode
-     * whose whole subject is a body you recognise. A skirmish raises a line for
-     * the battle and raises a fresh one on the next ground — see
-     * `_musterSkirmish`. The recall is still the right call: it is how bodies
-     * leave the field without being counted as casualties, and `unload` is
-     * about to dispose every one of them. */
+    /* THE BODIES LEAVE, THE MEN DO NOT. This is how an army comes off the field
+     * without being counted as casualties — `unload` is about to dispose every
+     * body on it — and the records it leaves behind are carried by `runCarry`
+     * and put back by `_afterRotate`. It used to say that a skirmish raises a
+     * fresh line on the next ground; that WAS what happened, and it is the
+     * defect this pair closes rather than a rule. */
     this.command?.recall?.();
     return this.runCarry();
   }
@@ -2033,6 +2049,12 @@ export class World {
      * — so composing first would field the outgoing mission's wave on the
      * incoming mission's ground. It starts the director itself, which is why
      * the line below asks whether one is running rather than assuming not. */
+    /* THE LINE COMES BACK BEFORE ANYTHING COUNTS IT. Both branches below top a
+     * roster up to a strength, so a crossing that reinstated afterwards would
+     * field the carried men ON TOP of a full fresh muster. `reinstate` drops
+     * the roll `loadLevel`'s constructor mustered and puts the real one in its
+     * place; the top-up then adds only what the line is short. */
+    if (carry?.line?.length) this.command?.reinstate?.(carry.line);
     if (this.campaign && !this.skirmish) this.beginMission((carry?.wave || 0) + 1);
     else if (this.skirmish) this._musterSkirmish();
     /* THE ESCALATION CONTINUES. `start(1)` on a new ground would hand the
@@ -2511,6 +2533,10 @@ export class World {
     if (this.campaign && !this.campaign.done) { this.campaign.done = true; this.campaign.won = !!won; }
     if (this.command) this.command.done = true;
     this.over = true;
+    /* THE SURVIVORS WALK OFF A GROUND THEY HELD — see `sealManifest`. Before
+     * this line a won skirmish came home with nobody and the whole roll was
+     * struck off by the layer that keeps it. */
+    this.sealManifest(!!won);
     this._announceBattle(!!won);
     this.onGameOver?.(this.runStats({ won: !!won }));
     return true;
@@ -2583,6 +2609,49 @@ export class World {
    * on the manifest and nothing else. Writing a death for him would put him on
    * the memorial roll beside men who actually fell, which is a different fact.
    */
+  /**
+   * ══ WHO WALKED OFF THIS GROUND — every ending's last statement ══
+   *
+   * `manifest` is the passenger list and it had exactly one writer,
+   * `_endWithdrawal`. That was a true statement about the SHIP and a false one
+   * about the run: the layer that keeps a company reads this field as "who
+   * came home", and a run that ended any other way therefore came home with
+   * nobody. The player found it: "I finished a skirmish run and… I could only
+   * see a list of fallen troops, nothing about the troops that had just
+   * survived. And when I went into a new skirmish game, it was a fresh set of
+   * troops." A whole line, struck off for winning.
+   *
+   * THE WITHDRAWAL IS HOW YOU LEAVE A GROUND YOU DO NOT HOLD. That is the
+   * point of a door held for a second and a half, and it is why the ship keeps
+   * only the men who reached the ramp inside `LAST_CALL`. A battle you WON is
+   * a ground nobody has to be extracted from, so its survivors walk off it —
+   * all of them.
+   *
+   * THE OTHER TWO ENDINGS KEEP NOBODY AND BOTH ARE DELIBERATE. A wipe is the
+   * stake the whole company plays for — `tools/checks/company.mjs` says of
+   * itself that it is "the check that would go red the day" a run that ended
+   * badly is softened, and this does not soften one. Walking out mid-run is
+   * the same: there is a door, and closing the tab is not it.
+   *
+   * FIRST WRITER WINS, which is what makes this callable from an ending that
+   * runs inside another one. `_endSkirmish` is a mission boundary as well as a
+   * run ending and `_endCampaign` recalls the army before it announces
+   * anything; whichever of them speaks first has the truth, and a later call
+   * must not overwrite a real passenger list with a derived one.
+   *
+   * @param won the ending's own verdict. Only `true` brings anybody home —
+   *            `null` is a withdrawal, which has already written its list.
+   * @returns the manifest, so a caller can report on it.
+   */
+  sealManifest(won) {
+    if (Array.isArray(this.manifest)) return this.manifest;
+    /* `living` and not `all`: `Company.keep` reads this as who came home, and
+     * a man who fell in engagement two did not. He is on `deployed`, which is
+     * how the roll knows he went out at all. */
+    this.manifest = won === true ? (this.command?.roster?.living?.slice() ?? []) : [];
+    return this.manifest;
+  }
+
   _endWithdrawal(kept) {
     if (this.over) return;
     this.over = true;

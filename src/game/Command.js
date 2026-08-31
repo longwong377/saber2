@@ -2085,6 +2085,57 @@ export class CommandRoster {
   }
 
   /**
+   * ══ THE LINE CROSSES THE GROUND WITH YOU — the men themselves, not copies ══
+   *
+   * The player: "we get in the extraction ship and go to the next map, at some
+   * point the troops that got on were cleared off the ship and a new set of
+   * troops came in… the promoted guy wasn't in the game anymore but he still
+   * was on the troop list."
+   *
+   * Both halves of that are one cause. `World.loadLevel` builds a NEW
+   * `CommandDirector` — a ground change goes through it — and the constructor
+   * ends on `_musterOpening()`, so the incoming ground raises a fresh roll
+   * while the outgoing one, ranks and casualty list and all, is dropped with
+   * the director that owned it. `_beforeRotate` recalls the army first, which
+   * is what keeps twelve withdrawals from being twelve deaths, and that recall
+   * was preserving records for a roster nobody carried across.
+   *
+   * SO THE `Trooper` OBJECTS THEMSELVES MOVE, and that is the whole method.
+   * There is a record round-trip in this file already — `enlistRecord`, the
+   * door a SAVED man comes back through — and using it here would be the wrong
+   * tool twice over: it is a field list, so anything added to a man tomorrow
+   * and not added to that list is silently dropped on every ground change; and
+   * a man crossing a ground inside one run has not been serialised, so there
+   * is nothing to reconstruct. A `Trooper` holds no reference to the world or
+   * to the level — `body` is the only live edge and `recall` has already cut
+   * it — so he can simply be handed to the next roll intact.
+   *
+   * THE THREE FIELDS THAT DO NOT CROSS are the three `enlistRecord` refuses
+   * for the same reason, and the sentence there is the rule here: `broken`,
+   * `rout` and `detached` are about a fight that is over. A man who walked up
+   * the ramp shaken walks off the next one steady.
+   *
+   * @returns how many were taken on.
+   */
+  adopt(men) {
+    if (!Array.isArray(men)) return 0;
+    let n = 0;
+    for (const t of men) {
+      if (!t || typeof t.designation !== 'string') continue;
+      /* One name, one man — the same refusal `enlistRecord` makes, and here it
+       * is what stops a double rotation putting a man on his own roll twice. */
+      if (this.taken.has(t.designation)) continue;
+      this.taken.add(t.designation);
+      t.roster = this;
+      t.body = null;
+      t.broken = false; t.rout = false; t.detached = false;
+      this.all.push(t);
+      n++;
+    }
+    return n;
+  }
+
+  /**
    * The squads, as arrays of living troopers.
    *
    * Derived from the living list every time rather than stored, and that is the
@@ -5310,6 +5361,46 @@ export class CommandDirector extends WaveDirector {
    *
    * @returns how many bodies were withdrawn.
    */
+  /**
+   * ══ AND BACK ONTO THE NEXT GROUND — the other half of `recall` ══
+   *
+   * `recall` takes the army off the field so the records survive the bodies,
+   * and for a ground change those records then had nowhere to go: `loadLevel`
+   * builds a NEW director and its constructor musters a fresh roll, so the
+   * line the player had just walked up a ramp with was replaced by strangers
+   * between one map and the next. The player saw both halves of it — "the
+   * troops that got on were cleared off the ship and a new set of troops came
+   * in… the promoted guy wasn't in the game anymore but he still was on the
+   * troop list."
+   *
+   * THE FRESH ROLL IS DROPPED, NOT MERGED. Those men were mustered by a
+   * constructor that had not been told a line already existed; keeping them
+   * would double the army on every crossing. Nothing has been built for them
+   * yet — `deploy()` has not run — so there is nothing on the field to clean
+   * up, and the purse the muster set is left alone because it belongs to the
+   * area rather than to the roll.
+   *
+   * TOPPING UP IS SOMEBODY ELSE'S JOB and deliberately so: `World._musterSkirmish`
+   * recruits up to the battle's strength and `_musterOpening` fills a campaign's
+   * opening, and both count what is already on the roster. So a line of six
+   * that crosses arrives as six and is topped up to ten by the caller — which
+   * is the behaviour asked for, "I want those guys to stay with me when other
+   * troops get added".
+   *
+   * @returns how many men crossed.
+   */
+  reinstate(men, c = this.commander) {
+    if (!c?.roster || !Array.isArray(men) || !men.length) return 0;
+    c.roster.all.length = 0;
+    c.roster.taken.clear();
+    const n = c.roster.adopt(men);
+    /* The lineup is what the muster screen and `_musterJoin` read as "what this
+     * army is made of", and it was written from the roll this call just
+     * replaced. */
+    c.lineup = c.roster.living.map((t) => t.type);
+    return n;
+  }
+
   recall(c = null) {
     if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k); return n; }
     /* Anything still in the air is not coming: `Waves.reset` empties the
@@ -8921,6 +9012,11 @@ export class CommandDirector extends WaveDirector {
     this.recall();
     const w = this.world;
     if (!w) return true;
+    /* THE SURVIVORS WALK OFF A CROSSING THEY WON — `World.sealManifest` says
+     * why, and says it once. After `recall`, deliberately: recall takes the
+     * bodies off the field and leaves every record standing, which is exactly
+     * the list this seals. */
+    w.sealManifest?.(won);
     /**
      * SAID BY THE ONE THING THAT SAYS HOW A RUN ENDED — and this is the half
      * that was missing rather than wrong.

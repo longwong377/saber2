@@ -5841,8 +5841,40 @@ export class Menu {
         empty.className = 'hint';
         empty.textContent = c.lost
           ? `${c.lost} lost, nobody left. Lead another and call the ship in time.`
-          : 'No roll yet. Call for extraction and everyone who reaches the ramp is here next run.';
+          : 'No roll yet. Win a battle, or call for extraction and reach the ramp, and everyone '
+            + 'who walks off the ground is here next run.';
         list.appendChild(empty);
+      }
+      /**
+       * ── AND WHICH OF THEM YOU ARE ACTUALLY TAKING ──────────────────────
+       *
+       * "when you go into the troop tab you should see the troops that you're
+       * going to spawn with in your next game, isn't that the entire point of
+       * the troop tab?"
+       *
+       * The roll is the whole company and a deployment is a SLICE of it —
+       * `Company.fieldable(load(army), plan.want)` in main.js's
+       * `veteransToField`, sorted by rank and then service, so a company that
+       * outgrew the muster fields its best and benches the rest. That cut was
+       * invisible here: the tab showed sixty men and the run took ten, in this
+       * order, and nothing said where the line was.
+       *
+       * `musterPlan` is the same function `veteransToField` calls and it is
+       * called rather than restated (§2.4) — it is the thing that knows a
+       * skirmish opens at `OPENING_STRENGTH` and a contingent opens at whatever
+       * the player set, and which army the current mode and order even lead.
+       * `null` where this mode fields no army at all, and then nothing is
+       * claimed rather than a number being invented.
+       */
+      const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+      const taking = plan && plan.army === c.army ? Math.min(plan.want | 0, men.length) : 0;
+      if (taking > 0) {
+        const head2 = document.createElement('p');
+        head2.className = 'hint company-cut';
+        head2.textContent = taking >= men.length
+          ? `All ${men.length} deploy with you next run.`
+          : `The top ${taking} of ${men.length} deploy with you next run — rank first, then service.`;
+        list.appendChild(head2);
       }
       for (const m of men) {
         const R = RANKS[rankFor(m.xp | 0)];
@@ -5866,9 +5898,15 @@ export class Menu {
         const chips = attrStandout(m, kindOfArmy(c.army)).map((o) =>
           `<em class="attr-chip ${o.high ? 'hi' : 'lo'}" title="${escKey(attrBlurb(o.id, kindOfArmy(c.army)) || '')}">`
           + `${escKey(o.name)}</em>`).join('');
+        /* THE CUT, ON THE ROW. `men` is already in `fieldable` order, so the
+         * first `taking` of them are the ones going out — the same slice
+         * `veteransToField` takes, read off the same sort. */
+        const going = men.indexOf(m) < taking;
+        if (taking > 0 && !going) d.classList.add('company-reserve');
         d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
           + `<b>${escKey(companyNameOf(m))}${flash}</b>`
-          + `<span>${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
+          + `<span>${taking > 0 ? (going ? 'DEPLOYING · ' : 'RESERVE · ') : ''}`
+          + `${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
           + `${m.kills | 0} down</span>`
           + `<span class="man-chips">${chips}</span></div>`;
         this._activate(d, () => {

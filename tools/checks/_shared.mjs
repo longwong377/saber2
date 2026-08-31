@@ -122,8 +122,26 @@ export async function snapshotShared() {
    * with "the area was taken with the whole line four times NEAR away". The
    * rule was never wrong; the two runs had different armies. */
   const { commandRng } = await import('../../src/game/Command.js');
+  /**
+   * ── AND THE WORLD'S OWN STREAM, which was exported for this and never wired.
+   *
+   * `World.js` draws `pickSpawn`, `spawnDebris` and the dressing from a
+   * module-level `rng`, and its own note says what leaving it alone costs:
+   * "four consecutive readings of one build by one check spanned 1.3 to 6.0,
+   * purely on where the eleven checks above it had left this stream." It
+   * exported `seedWorld` so a harness could put it back and then nothing
+   * called it — two of the game's three streams pinned and the third free,
+   * which is the gap `theline.19` was falling through: 15.0, 4.5 and 2.7
+   * minutes on one build, a check whose whole subject is a length.
+   *
+   * There is no snapshot half for this one and there does not need to be:
+   * `restoreShared` puts the other three back to their MODULE seeds rather
+   * than to where the snapshot found them, and this is the same statement.
+   */
+  const { seedWorld } = await import('../../src/game/World.js');
   const { audio } = await import('../../src/engine/Audio.js');
   return {
+    seedWorld,
     wind,
     time: wind.time,
     /* The four `configure` sets, which is the whole of a level's wind block.
@@ -169,6 +187,7 @@ export function restoreShared(snap) {
   snap.enemyRng.seed(4711);                 // src/game/Enemy.js:41
   snap.duelRng.seed(8123);                  // src/game/Duel.js:33
   snap.commandRng.seed(0x5EED0C7);          // src/game/Command.js, `commandRng`
+  snap.seedWorld?.(0x0B0D1E5);              // src/game/World.js, `seedWorld`
   for (const k of Object.keys(snap.audio)) if (!(k in snap.sound)) delete snap.audio[k];
   Object.assign(snap.audio, snap.sound);
   if (snap.store) {

@@ -818,10 +818,28 @@ export function run({ check, assert }) {
      * replicated bolts would pass this check and delete the mechanic.
      */
     const { host, client, pump, seen } = await commandPair();
-    pump(20);
+    /**
+     * PUMPED UNTIL THE PREMISE IS TRUE, NOT FOR A TYPED NUMBER OF SECONDS.
+     *
+     * This was `pump(20)`, and 20 s of a Geonosis line is plenty — alone. In a
+     * FULL RUN it went red once at "0 bolts to 60 mirrors": the fixture is
+     * deterministic, but the streams it draws from are not restored between
+     * suites (§2.11), so which second the first rifle goes off moves with
+     * whatever ran before it. The check then failed for having nothing to
+     * measure, which is the honest outcome of a premise that is not yet true
+     * and a bad reason to call a defect.
+     *
+     * So the clock is the premise's: pump in slices until fire has crossed the
+     * wire onto real mirrors, and give up at 60 s. A line that has not fired a
+     * round in a minute IS the defect this asserts a premise for, and the
+     * message below still says so. `asked === 0` is untouched by the change —
+     * an idle guest claims nothing over any length of run.
+     */
+    const fireSeen = () => seen.toClient.reduce((a, m) => a + (m.bf?.length || 0), 0);
+    for (let t = 0; t < 60 && !(fireSeen() > 0 && client._netEnemyIndex.size > 0); t += 5) pump(5);
     const claims = seen.toHost.filter((m) => m.t === 'claim');
     const asked = claims.reduce((a, m) => a + (Number(m.d) || 0), 0);
-    const fired = seen.toClient.reduce((a, m) => a + (m.bf?.length || 0), 0);
+    const fired = fireSeen();
     const mirrors = client._netEnemyIndex.size;
     assert(fired > 0 && mirrors > 0,
       `the host replicated ${fired} bolts to ${mirrors} mirrors — with no fire crossing there is `

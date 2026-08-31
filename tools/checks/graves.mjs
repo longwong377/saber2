@@ -211,13 +211,42 @@ export async function run({ check, assert }) {
       `the gap widened inside the ${MORALE.GRAVE_COOLDOWN}s cooldown — the ground is being felt `
       + 'again before a man has had time to walk out of it');
 
-    /* AND A MAN IS NOT HAUNTED BY HIS OWN MARKER. */
+    /**
+     * AND A MAN IS NOT HAUNTED BY HIS OWN MARKER — measured INSIDE ONE LINE.
+     *
+     * This arm used to stand a second `armedLine()` beside the first and
+     * compare man 0 to man 0 across the pair. Two fixtures are two draws from
+     * the roster stream, so the two lines were only the same line by luck:
+     * alone the luck held, and in a full run — the stream at a different offset
+     * (§2.11) — it did not, and the check reported a man haunted by his own
+     * grave when what had actually happened was that the control was a
+     * different roster.
+     *
+     * ONE LINE, AND READ OFF THE COOLDOWN RATHER THAN THE MORALE. Morale is
+     * not comparable man to man even inside one roster: squad leaders carry
+     * their own terms and sit far below their privates (measured on this
+     * fixture, 0.343 and 0.286 against 0.840 for the eight others, with no
+     * grave on the ground at all). So whether man 0 is a leader decides a
+     * morale comparison, and which index is a leader is exactly what moves
+     * when the roster stream moves — the flake, restated.
+     *
+     * `_graveT` is the mechanism itself and carries none of that: it is set to
+     * `GRAVE_COOLDOWN` by the one line that shakes a man for a marker, and by
+     * nothing else. Ten seconds is long enough for the cursor to have offered
+     * the grave to every man (one a frame) and short enough that no cooldown
+     * has run out, so the property is exact — everyone else is holding one,
+     * and the man whose name is on the stone never took it.
+     */
     const own = await armedLine();
     own.world.graves = new GraveField();
     own.world.graves.mark(man(own.men[0].name, 200, 200));
-    const control = await armedLine();
-    step(own, 5); step(control, 5);
-    assert(Math.abs(own.men[0].morale - control.men[0].morale) < 1e-9,
+    step(own, 10);
+    const shaken = own.men.slice(1).filter((t) => (t._graveT || 0) > 0).length;
+    assert(shaken === own.men.length - 1,
+      `${shaken} of ${own.men.length - 1} men standing on a grave were shaken by it — the rest `
+      + 'never felt the ground, so this arm cannot tell a name being honoured from a marker that '
+      + 'does nothing');
+    assert(!(own.men[0]._graveT > 0),
       'a man was shaken by a grave carrying his own name — the name is the only identity a marker '
       + 'keeps, so it is the only thing that can say the grave is his');
     return `clean ground ${flat.toFixed(3)} · among their own ${among.toFixed(3)} `

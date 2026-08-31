@@ -809,4 +809,207 @@ export async function run({ check, assert }) {
       return `mission boundary flew ${phases.size} phases (${[...phases].join(' → ')}) in 20 s`;
     } finally { S.restoreShared(snap); }
   });
+
+  check('the line crosses the ground with you, and the top-up is added to it', async () => {
+    /**
+     * ══ THE MEN WHO BOARDED THE SHIP WERE REPLACED BY STRANGERS ══
+     *
+     * Reported: "we get in the extraction ship and go to the next map, at some
+     * point the troops that got on were cleared off the ship and a new set of
+     * troops came in… the promoted guy wasn't in the game anymore but he still
+     * was on the troop list."
+     *
+     * One cause for both halves. `World.loadLevel` builds a NEW
+     * `CommandDirector` — a ground change goes through it — and that
+     * constructor ends on `_musterOpening()`. So the incoming ground raised a
+     * fresh roll and the outgoing one, ranks and casualty list and all, went
+     * with the director that owned it; the name stayed visible because the
+     * troop tab reads the COMPANY, which is written at the end of a run.
+     *
+     * ASSERTED ON IDENTITY, NOT ON A HEAD-COUNT. Ten men crossing and ten
+     * strangers arriving are the same number, which is exactly why the defect
+     * survived: the designations are what say it is the same line. The rank is
+     * asserted too, because the promotion is the thing the player noticed —
+     * `xp` is what `rank` is derived from, so a man who crossed as a corporal
+     * and arrives as a recruit has been re-mustered whatever his name says.
+     *
+     * AND THE FALLEN CROSS. A roll is a casualty list as much as a line, and a
+     * man who died in engagement one is still a name the next muster screen
+     * has to print.
+     */
+    const { world, input } = await boot({ mode: 'skirmish' });
+    const d = world.command;
+    assert(d, 'a skirmish with no army — this check measures the roster');
+    world.beginSkirmish();
+    const before = d.commander.roster;
+    assert(before.all.length >= 4,
+      `a skirmish opened with ${before.all.length} men, which is too few to tell a carried line `
+      + 'from a fresh muster');
+    /* A PROMOTION AND A CASUALTY, so the two things a fresh muster cannot
+     * reproduce are both on the roll before the crossing. */
+    const hero = before.living[0];
+    hero.xp = 400;
+    const heroRank = hero.rank;
+    const heroName = hero.designation;
+    const dead = before.living[before.living.length - 1];
+    dead.alive = false;
+    const names = before.all.map((t) => t.designation).sort();
+    const wasLiving = before.strength;
+
+    world.rotateTo('drifts');
+    const after = world.command?.commander?.roster;
+    assert(after, 'the ground changed and the army did not come with it at all');
+    const now = after.all.map((t) => t.designation);
+    const lost = names.filter((n) => !now.includes(n));
+    assert(lost.length === 0,
+      `${lost.length} of ${names.length} men did not cross the ground: ${lost.slice(0, 5).join(', ')}`
+      + ' — the new director mustered a roll of its own and the line that boarded the ship was '
+      + 'dropped with the old one');
+    const he = after.all.find((t) => t.designation === heroName);
+    assert(he && he.rank === heroRank,
+      `${heroName} crossed as ${heroRank} and arrived as ${he ? he.rank : 'nobody'} — a man `
+      + 're-mustered under his own name is not the same man');
+    assert(after.all.some((t) => t.designation === dead.designation && !t.alive),
+      'the fallen did not cross — the roll on the next ground is a line without its casualty list');
+    /* AND THE TOP-UP IS ADDED TO THEM, not instead of them: "I want those guys
+     * to stay with me when other troops get added". */
+    assert(after.strength >= wasLiving,
+      `the line stood ${wasLiving} before the crossing and ${after.strength} after — a top-up that `
+      + 'shrinks the army has replaced it');
+    /* …AND EVERY MAN GETS A BODY ON THE NEW GROUND. `recall` nulls `body`, so a
+     * carried record that nothing re-fields is precisely the "still on the
+     * troop list, not in the game" half of the report. */
+    for (let i = 0; i < 240; i++) world.update(1 / 60, input);
+    const fielded = after.living.filter((t) => t.body && !t.body.dead).length;
+    assert(fielded >= Math.min(wasLiving, after.strength),
+      `${fielded} of ${after.strength} men on the roll are standing on the new ground — the rest `
+      + 'are names on a list with no body, which is what the player saw');
+    return `${names.length} crossed (${wasLiving} standing, 1 fallen), ${heroName} still ${heroRank}, `
+      + `${after.strength} on the roll after the top-up, ${fielded} on their feet`;
+  });
+
+  check('a battle you WIN brings your survivors home, and a wipe still keeps nobody', async () => {
+    /**
+     * ══ WINNING STRUCK THE WHOLE ROLL OFF ══
+     *
+     * Reported: "I finished a skirmish run and when I was back at the main menu
+     * and went to the troop tab I could only see a list of fallen troops,
+     * nothing about the troops that had just survived. And when I went into a
+     * new skirmish game, it was a fresh set of troops."
+     *
+     * `World.manifest` had exactly one writer — `_endWithdrawal`, the ship —
+     * and `main.js`'s `bank()` reads it as "who came home", handing
+     * `Company.keep` an EMPTY list with `deployed: roster.all` under it. Keep's
+     * rule for a man who went out and is not on the manifest is that he is
+     * dead, so every ending except the ship executed the army.
+     *
+     * MEASURED HERE ON THE WORLD, not through `bank()`: `main.js` cannot be
+     * imported without a browser, and the decision was moved into
+     * `World.sealManifest` for that reason among others — main.js owns
+     * localStorage, the game owns the game.
+     *
+     * BOTH VERDICTS, because the failure this could grow into is the opposite
+     * one: a wipe that quietly keeps the line would pass a check that only ever
+     * looked at a victory, and `tools/checks/company.mjs` says of itself that
+     * it is "the check that would go red the day" a bad run is softened.
+     */
+    const won = await boot({ mode: 'skirmish' });
+    won.world.beginSkirmish();
+    const line = won.world.command.commander.roster;
+    const standing = line.strength;
+    assert(standing > 0, 'a skirmish opened with nobody on the line');
+    /* One casualty, so "the survivors" is a smaller list than "the roll" and
+     * the assertion cannot pass by carrying everybody. */
+    const fell = line.living[0];
+    fell.alive = false;
+    won.world.skirmish.cleared = won.world.skirmish.engagements;
+    won.world._endSkirmish(true);
+    const home = won.world.manifest;
+    assert(Array.isArray(home),
+      'a won battle wrote no manifest at all — every man who fought it is about to be struck off '
+      + 'the roll by the layer that keeps the company');
+    assert(home.length === standing - 1,
+      `${home.length} of ${standing - 1} survivors walked off a ground they had just taken`);
+    assert(!home.includes(fell),
+      'a man who fell in the battle is on the list of men who came home from it');
+
+    /* …AND A WIPE STILL COSTS EVERYTHING. */
+    const lost = await boot({ mode: 'skirmish' });
+    lost.world.beginSkirmish();
+    const dead = lost.world.command.commander.roster.strength;
+    lost.world._endSkirmish(false);
+    assert(Array.isArray(lost.world.manifest) && lost.world.manifest.length === 0,
+      `${lost.world.manifest?.length} of ${dead} men came home from a battle that was lost — the `
+      + 'roll dying with the commander is the stake the whole company plays for');
+    return `won: ${home.length} of ${standing} home (1 fallen left behind) · lost: 0 of ${dead}`;
+  });
+
+  check('the men who survived your last skirmish are on the line in your next one', async () => {
+    /**
+     * ══ THE WHOLE LOOP, END TO END, IN ONE CHECK ══
+     *
+     * "when I went into a new skirmish game, it was a fresh set of troops… I
+     * thought we made it so troops that survive with you go with you into the
+     * next run? Am I wrong?"
+     *
+     * Not wrong: every piece of it was built and the first one was broken, so
+     * the last one had nothing to do. This drives the four in order —
+     * `_endSkirmish(true)` seals a manifest, `Company.keep` folds it into the
+     * roll, `Company.fieldable` picks who deploys, `_musterVeterans` puts them
+     * back on a line — because each of those has its own check and the run of
+     * them did not. A defect in the joins between four green units is exactly
+     * the shape the player hit.
+     *
+     * `Company.fieldable(load(...))` is `main.js`'s `veteransToField` inlined
+     * rather than called: that function is fifteen lines into a module that
+     * needs a browser to import. What it does is these two calls and the plan
+     * that decides the army, and the plan has its own check in company.mjs.
+     */
+    const Company = await import('../../src/game/Company.js');
+    const store = globalThis.localStorage;
+    const had = store?.getItem?.(Company.KEY) ?? null;
+    try {
+      store?.removeItem?.(Company.KEY);
+      /* ── RUN ONE, WON. */
+      const a = await boot({ mode: 'skirmish' });
+      a.world.beginSkirmish();
+      const roster = a.world.command.commander.roster;
+      const army = a.world.command.commander.army.id;
+      /* A promotion, so the man who comes back is provably the same man and not
+       * a fresh trooper who happens to share a designation table. */
+      const hero = roster.living[0];
+      hero.xp = 400;
+      const heroName = hero.designation, heroRank = hero.rank;
+      const survivors = roster.living.map((t) => t.designation).sort();
+      a.world.skirmish.cleared = a.world.skirmish.engagements;
+      a.world._endSkirmish(true);
+      Company.keep(a.world.manifest, {
+        army, deployed: roster.all, left: [], ground: a.world.levelKey, ended: 'won',
+      });
+
+      /* ── AND RUN TWO, WHICH HAS NEVER HEARD OF RUN ONE. */
+      const roll = Company.fieldable(Company.load(army), 10);
+      assert(roll.length === survivors.length,
+        `${roll.length} men are on the roll after a won battle that ${survivors.length} walked `
+        + 'away from — the company kept the wrong number of them');
+      const H = await import('./_coop.mjs');
+      const { world: b } = await H.bootWorld({ level: 'colosseum',
+        settings: { quality: 'low', difficulty: 'knight', mode: 'skirmish' },
+        run: { veterans: roll } });
+      b.beginSkirmish();
+      const line = b.command.commander.roster.all.map((t) => t.designation);
+      const missing = survivors.filter((n) => !line.includes(n));
+      assert(missing.length === 0,
+        `${missing.length} of ${survivors.length} veterans did not make the next line: `
+        + `${missing.slice(0, 5).join(', ')} — the roll persisted and the muster ignored it`);
+      const he = b.command.commander.roster.all.find((t) => t.designation === heroName);
+      assert(he && he.rank === heroRank,
+        `${heroName} finished the last run as ${heroRank} and turned up as `
+        + `${he ? he.rank : 'nobody'} — the rank is the thing a company is FOR`);
+      return `${survivors.length} survivors banked and all ${survivors.length} back on the next `
+        + `line, ${heroName} still ${heroRank}, ${line.length} strong after the top-up`;
+    } finally {
+      if (had === null) store?.removeItem?.(Company.KEY); else store?.setItem?.(Company.KEY, had);
+    }
+  });
 }

@@ -44,6 +44,7 @@ import { ATTR_IDS, traitById } from '../../src/game/Attributes.js';
 import { priceSwing } from './attributes.mjs';
 import {
   ARMY_IDS, ARMIES, CommandRoster, rankFor, OPENING_STRENGTH, RANKS, MARKS, markById,
+  musterPlan,
 } from '../../src/game/Command.js';
 import * as Company from '../../src/game/Company.js';
 
@@ -797,11 +798,14 @@ export async function run({ check, assert }) {
    * red rather than a check that was updated to agree with it.
    */
   const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
-  const menuOn = () => {
+  /* `over` is for the clauses whose subject is a SETTING the page reads — the
+   * roll column's cut is decided by `musterPlan(this.s)`, and the default mode
+   * leads no army, so a page built on the defaults has no cut to show. */
+  const menuOn = (over = null) => {
     const doc = makeDocument(INDEX_HTML);
     const restore = doc.install();
     try {
-      const menu = new Menu(structuredClone(DEFAULT_SETTINGS), {});
+      const menu = new Menu({ ...structuredClone(DEFAULT_SETTINGS), ...(over || {}) }, {});
       return { menu, doc, close: restore };
     } catch (e) { restore(); throw e; }
   };
@@ -1056,6 +1060,54 @@ export async function run({ check, assert }) {
       + 'and a roster screen that can edit anything else is a cheat panel');
     return `dress writes ${fields.join(' + ')} and nothing else; no currency word in Company.js`;
   });
+
+  check('company: the roll says which of them you are taking out next run', () => withCleanStore(() => {
+    /**
+     * ── "IS THAT NOT THE ENTIRE POINT OF THE TROOP TAB?" ─────────────────
+     *
+     * "when you go into the troop tab you should see the troops that you're
+     * going to spawn with in your next game."
+     *
+     * The Taking in page names them in full and always did. What the ROLL
+     * column did not say is where the cut falls, and the cut is real: a
+     * deployment is `Company.fieldable(load(army), plan.want)`, so a company of
+     * fourteen fields ten and benches four, in this order, with nothing on
+     * screen saying which four.
+     *
+     * ASSERTED AGAINST `musterPlan`, which is what `veteransToField` asks and
+     * therefore what actually decides — not against a typed 10. The day a
+     * skirmish's opening moves, this check moves with it or it goes red for
+     * the right reason.
+     */
+    const led = { ...DEFAULT_SETTINGS, mode: 'skirmish' };
+    const want = musterPlan(led, null)?.want ?? 0;
+    assert(want > 0,
+      'a skirmish fields no army, so this check cannot see a cut — musterPlan and MODES disagree '
+      + 'about which modes lead one');
+    const r = freshRoll(want + 4);
+    Company.keep(r.all, { army: 'republic', deployed: r.all, ground: 'geonosis' });
+    const { doc, close } = menuOn({ mode: 'skirmish' });
+    try {
+      const list = doc.getElementById('company-list');
+      const rows = [...list.querySelectorAll('.diff')].filter((d) => !d.dataset.man.endsWith('-fallen'));
+      assert(rows.length === want + 4, `${rows.length} rows against a roll of ${want + 4}`);
+      const going = rows.filter((d) => !d.classList.contains('company-reserve'));
+      assert(going.length === want,
+        `${going.length} of ${rows.length} men are shown as deploying against a muster that takes `
+        + `${want} — the page and the field disagree about who is going out`);
+      /* THE CUT IS A PREFIX, not a scatter: `fieldable` sorts and the muster
+       * slices, so the men going out are the top of the list and the reserve
+       * is the tail. A page that marked four at random would pass a count. */
+      const firstBenched = rows.findIndex((d) => d.classList.contains('company-reserve'));
+      assert(firstBenched === want,
+        `the first reserve man is row ${firstBenched} and the muster takes ${want} — the marking `
+        + 'does not follow the order the field takes them in');
+      const txt = list.textContent.replace(/\s+/g, ' ');
+      assert(txt.includes(`${want} of ${rows.length}`),
+        `the roll never states the cut in words: "${txt.slice(0, 120)}"`);
+      return `${want} of ${want + 4} marked as deploying, in fieldable order, and said in words`;
+    } finally { close(); }
+  }));
 
   check('company: an empty roll explains itself instead of showing an empty column', () => withCleanStore(() => {
       const { doc, close } = menuOn();
