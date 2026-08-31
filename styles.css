@@ -2465,7 +2465,14 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    roll, then ground, then page — because the packed single-file build is
    played at whatever size a browser window happens to be. */
 [data-panel="company"]{flex-wrap:wrap;overflow-y:auto}
+/* HARD-BOUNDED, both of them. In one headless profile the flex columns grew
+   to their CONTENT height — 2231px against a 495px panel — and the stage
+   sized its GL buffer 740x4454: the parade was being drawn into a buffer the
+   compositor showed only the empty top strip of. A no-op wherever layout
+   already agrees; the fence where it does not. */
+[data-panel="company"] .col{max-height:100%}
 .company-ground{flex:1.25;display:flex;flex-direction:column;min-width:300px}
+#company-stage{max-height:70vh}
 #company-stage{flex:1;min-height:300px;position:relative;border:2px solid var(--stroke);
   background:
     radial-gradient(ellipse at 50% 78%, #4a3a28 0%, #2b2118 62%, #1d1712 100%);

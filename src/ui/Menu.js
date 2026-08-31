@@ -6970,14 +6970,13 @@ export class Menu {
     p.lineContent = null;
     p.dirty = true;
     const cap = document.getElementById('company-stage-caption');
-    if (cap) {
-      const army = ARMIES[armyId];
-      cap.textContent = men.length
-        ? (planned
-          ? `${army?.name || armyId} — the ${men.length} deploying with you next run. Drag to look; click a body to meet him.`
-          : `${army?.name || armyId} — the roll under review. ${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours.`)
-        : `${army?.name || armyId} fields nobody yet. The muster forms when you lead them.`;
-    }
+    const army = ARMIES[armyId];
+    p.lineCaption = men.length
+      ? (planned
+        ? `${army?.name || armyId} — the ${men.length} deploying with you next run. Drag to look; click a body to meet him.`
+        : `${army?.name || armyId} — the roll under review. ${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours.`)
+      : `${army?.name || armyId} fields nobody yet. The muster forms when you lead them.`;
+    if (cap) cap.textContent = p.lineCaption;
   }
 
   /** One body per frame, so a ten-man restage never hitches the menu. */
@@ -7064,7 +7063,11 @@ export class Menu {
         cap.textContent = `${called ? `${m.designation} "${called}"` : m.designation} steps forward.`;
       }
     } else if (cap && !p.selected) {
-      this._restage(true);
+      /* Putting the page down is a CAMERA move, not a teardown: the men are
+       * the same men, so the caption comes back from the last restage and
+       * the figures stay standing. This used to force a full rebuild — a
+       * visible ten-frame teardown on every deselect, for nothing. */
+      cap.textContent = p.lineCaption || '';
     }
   }
 
