@@ -1529,4 +1529,157 @@ export async function run({ check, assert, THREE: T }) {
         + 'the page says both, a forged fate reads kia';
     }));
 
+  check('barracks: a pattern issues across both stores, and nothing personal travels',
+    () => withCleanStore(() => {
+      /**
+       * ── THE FOUR HUNDRED CLICKS ───────────────────────────────────────────
+       *
+       * Twelve rows of kit and three of paint across ten men is somewhere north
+       * of four hundred clicks to make a company look like one company, and
+       * looking like one company is most of what this screen is for. So a
+       * man's pattern can be issued.
+       *
+       * BOTH STORES, and that is the clause that matters: on a fresh profile
+       * every man the player HAS is a recruit on the slate, so a control that
+       * only wrote the roll would do nothing at all for exactly the person it
+       * was written for. `Muster.issue` is the one door because Muster is the
+       * only file that can see both — Company may not import it back.
+       *
+       * AND NOTHING PERSONAL TRAVELS. The callsign is the name you gave one
+       * soldier; the mark and the band are the whole of how you pick him out
+       * of a line at forty metres. A pattern that copied either would delete
+       * the one thing on this tab that makes a man findable, which is the
+       * feature eating itself.
+       */
+      const roll = freshRoll(6);
+      for (let i = 0; i < roll.all.length; i++) roll.all[i].squad = i < 3 ? 0 : 1;
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const plan = planOf(10);
+      Muster.ensure(plan, Company.load('republic'));
+
+      const from = Company.load('republic').men[0];
+      Company.dress('republic', from.designation, {
+        kit: { pauldron: 'R', kama: 'long' },
+        paint: { color: 'blood', visor: 'sun' },
+        callsign: 'Torch', mark: 'ice',
+      });
+      const before = Muster.slateFor('republic').recruits.length;
+      assert(before > 0, 'the fixture minted no recruits to issue to');
+
+      /* ── HIS SQUAD ONLY ────────────────────────────────────────────────── */
+      const n = Muster.issue('republic', from.designation, 'squad');
+      assert(n > 0, 'issuing to a squad wrote nobody');
+      const c1 = Company.load('republic');
+      const mate = c1.men.find((m) => m.squad === from.squad && m.designation !== from.designation);
+      const other = c1.men.find((m) => m.squad !== from.squad);
+      assert(mate?.look?.kit?.pauldron === 'R' && mate?.look?.paint?.color === 'blood',
+        `a man in the same squad wears ${JSON.stringify(mate?.look)}`);
+      assert(!other?.look?.kit,
+        `a man in another squad was issued the pattern anyway: ${JSON.stringify(other?.look)}`);
+      assert(!mate.look.callsign && !mate.look.mark,
+        `the pattern carried something personal: ${JSON.stringify(mate.look)}`);
+      /* AND THE MAN IT CAME FROM IS UNTOUCHED — including the name he answers
+       * to, which a loop that wrote him too would have overwritten with his
+       * own pattern minus the callsign. */
+      const still = c1.men.find((m) => m.designation === from.designation);
+      assert(still.look.callsign === 'Torch' && still.look.mark === 'ice',
+        `the pattern's own man lost his name or his mark: ${JSON.stringify(still.look)}`);
+
+      /* ── AND THE WHOLE COMPANY, WHICH IS THE SLATE TOO ─────────────────── */
+      Muster.issue('republic', from.designation, 'line');
+      const c2 = Company.load('republic');
+      for (const m of c2.men) {
+        if (m.designation === from.designation) continue;
+        assert(m.look?.kit?.kama === 'long' && m.look?.paint?.visor === 'sun',
+          `${m.designation} on the roll wears ${JSON.stringify(m.look)}`);
+      }
+      const slate = Muster.slateFor('republic');
+      assert(slate.recruits.length === before, 'issuing a pattern changed the size of the slate');
+      for (const r of slate.recruits) {
+        assert(r.look?.kit?.kama === 'long' && r.look?.paint?.visor === 'sun',
+          `${r.designation} on the SLATE wears ${JSON.stringify(r.look)} — the men a fresh `
+          + 'player actually has were not written');
+      }
+
+      /* ── A DROID WEARS WHAT A DROID CAN ────────────────────────────────── */
+      const droids = new CommandRoster(ARMIES.separatist);
+      for (let i = 0; i < 3; i++) droids.enlist(ARMIES.separatist.tiers[0].type);
+      for (const t of droids.all) t.squad = 0;
+      Company.keep(droids.all, { army: 'separatist', deployed: droids.all, ground: 'geonosis' });
+      const d0 = Company.load('separatist').men[0];
+      Company.dress('separatist', d0.designation,
+        { kit: { pauldron: 'R', pack: 'rocket' }, paint: { color: 'jungle' } });
+      Muster.issue('separatist', d0.designation, 'line');
+      const mate2 = Company.load('separatist').men[1];
+      assert(mate2.look?.kit?.pack === 'rocket',
+        `a droid did not get the part of the pattern a droid can wear: ${JSON.stringify(mate2.look)}`);
+      assert(!('pauldron' in (mate2.look?.kit || {})),
+        'a droid was issued a clone pauldron — the gate is not being asked');
+
+      /* ── AND IT MOVES NO NUMBER, which is the law this whole tab is under. */
+      const after = Company.load('republic').men;
+      for (const m of after) {
+        assert(!('hp' in m) && !('post' in (m.look || {})) && (m.xp | 0) === 0,
+          `issuing a pattern wrote something that is not a look: ${JSON.stringify(m.look)}`);
+      }
+      return `${n} in a squad of 3, then the whole roll and all ${slate.recruits.length} `
+        + 'recruits; callsign, mark and band stayed put; a droid got the rocket tube and not the pauldron';
+    }));
+
+  check('barracks: a veteran can be moved between squads, and the seat does not move with him',
+    () => withCleanStore(() => {
+      /**
+       * A recruit could be dealt a squad from the day the slate existed and a
+       * man who had COME HOME could not, so a company that survived was stuck
+       * in whatever squads the muster happened to deal it — for ever. That is
+       * odd on its own and it became load-bearing when the post arrived: a
+       * seat belongs to a squad, so a player who cannot move a man between
+       * squads cannot organise the company the seats are in.
+       *
+       * AND THE SEAT STAYS BEHIND. Carrying it would put a second holder in
+       * the squad he walks into, which is `leaderOf` answering with whichever
+       * man came first in an array whose order is nobody's decision.
+       */
+      const roll = freshRoll(4);
+      roll.all[0].award(RANKS[2].xp);
+      for (const t of roll.all) t.squad = 0;
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const him = roll.all[0].designation;
+      Company.appoint('republic', him, true, true);
+      assert(Company.load('republic').men.find((m) => m.designation === him)?.post === true,
+        'the fixture failed to seat him');
+
+      Company.assign('republic', him, 1);
+      const m = Company.load('republic').men.find((x) => x.designation === him);
+      assert(m.squad === 1, `he was moved to squad ${m.squad}`);
+      assert(m.post !== true, 'he carried his squad\'s seat into a different squad');
+
+      /* AN IMPOSSIBLE SQUAD IS "WHEREVER THE MUSTER DEALS HIM", not a refusal
+       * and not a stored 900: this is a screen writing a number and the store
+       * is where a number is decided. */
+      Company.assign('republic', him, 900);
+      assert(Company.load('republic').men.find((x) => x.designation === him)?.squad === null,
+        'a squad past the ceiling was stored as typed');
+      Company.assign('republic', him, -3);
+      assert(Company.load('republic').men.find((x) => x.designation === him)?.squad === null,
+        'a negative squad was stored as typed');
+
+      /* THE PAGE OFFERS IT, and offers the same squads a recruit's page does. */
+      const { menu, doc, close } = menuOn();
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(`republic/${him}`);
+        const chips = [...doc.getElementById('company-page').querySelectorAll('[data-squad]')];
+        assert(chips.length === Company.SQUADS_MAX + 1,
+          `a veteran's page offers ${chips.length} squad chips and the roll has `
+          + `${Company.SQUADS_MAX} squads plus "wherever"`);
+        chips[2].click();
+        assert(Company.load('republic').men.find((x) => x.designation === him)?.squad === 2,
+          'the chip on a veteran\'s page wrote nothing');
+      } finally { close(); }
+      return `moved 0 → 1 → clamped → 2 through the page; the seat stayed in squad 0; `
+        + `${Company.SQUADS_MAX} squads offered on both pages`;
+    }));
+
 }

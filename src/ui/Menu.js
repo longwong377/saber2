@@ -38,7 +38,9 @@ import { READ_REACH, READ_SECONDS, SENSE_RATE } from '../game/FireMission.js';
 import {
   loadAll as companyLoadAll, load as companyLoad,
   fieldable as companyFieldable, dossier as companyDossier,
-  dress as companyDress, appoint as companyAppoint, nameOf as companyNameOf, companyLines,
+  dress as companyDress, appoint as companyAppoint, assign as companyAssign,
+  SQUADS_MAX as companySquadsMax,
+  nameOf as companyNameOf, companyLines,
   CALLSIGN_MAX as companyCallsignMax,
   honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
@@ -6684,6 +6686,19 @@ export class Menu {
         : '<p class="hint">Nothing yet. A run where he took no wounds and killed nobody '
           + 'writes no line — eight entries of the same ground is not a history.</p>'}
       ${pickBtn}
+      <h4 class="codex-head">${escKey(ARMIES[roll.army]?.squadWord || 'Squad')}</h4>
+      <p class="hint">Which ${(ARMIES[roll.army]?.squadWord || 'squad').toLowerCase()} he falls in
+        with. A recruit could be dealt one from the day the slate existed and a man who had
+        come home could not, so a company that survived was stuck in whatever squads the
+        muster happened to deal it. Moving him gives up his post — a seat belongs to a
+        squad, and two men holding one is nobody holding it.</p>
+      <div class="swatches company-squads">
+        ${Array.from({ length: companySquadsMax }, (_, i) =>
+          `<i class="swatch squad-chip${m.squad === i ? ' sel' : ''}" data-squad="${i}"
+             title="${escKey(ARMIES[roll.army]?.squadWord || 'Squad')} ${i + 1}">${i + 1}</i>`).join('')}
+        <i class="swatch squad-chip${m.squad == null ? ' sel' : ''}" data-squad=""
+           title="Wherever the muster deals him" style="border-style:dashed">—</i>
+      </div>
       ${this._licenceHtml(roll, m)}
       <h4 class="codex-head">Callsign</h4>
       <p class="hint">What you call him. Up to ${companyCallsignMax} characters; clear it and
@@ -6714,7 +6729,7 @@ export class Menu {
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
-      ${this._dressingHtml(m.look, kindOfArmy(roll.army))}`;
+      ${this._dressingHtml(m.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', m.squad)}`;
   }
 
   /**
@@ -6791,7 +6806,7 @@ export class Menu {
    * double-quoted HTML attribute close the attribute. Every legal value in
    * `KIT_FIELDS` is a scalar, so three letters cover the whole vocabulary.
    */
-  _dressingHtml(look, kind) {
+  _dressingHtml(look, kind, army = null, squadWord = 'Squad', squad = null) {
     const legal = KIT_FIELDS[kind] || {};
     const kit = look?.kit || {};
     const paint = look?.paint || {};
@@ -6830,7 +6845,25 @@ export class Menu {
       <p class="hint">What he carries. Every one of these is hardware the body was
         always able to wear; none of them moves a number, and he takes it onto the
         ground with him.</p>
-      <div class="kit-list">${kitRows}</div>`;
+      <div class="kit-list">${kitRows}</div>
+      ${army ? `
+      <h4 class="codex-head">Issue the pattern</h4>
+      <p class="hint">Twelve rows of kit and three of paint, across ten men, is a few
+        hundred clicks to make a company look like one company — so what he is wearing
+        can be issued to the rest. His callsign, his shin mark and his forearm band do
+        not travel: those are the whole of how you pick one man out of a line, and a
+        pattern that copied them would delete it. A droid gets whatever part of a
+        clone's pattern a droid can wear.</p>
+      <div class="issue-row">
+        ${/* ONLY WHEN HE IS IN ONE. Every man on a fresh slate is dealt no
+            squad at all, so "his squad" and "the whole company" would be the
+            same set and the page would be offering one button twice — which
+            is the dead control this tab keeps being rebuilt to stop being. */
+          Number.isInteger(squad)
+            ? `<button class="secondary" id="company-issue-squad">Issue to `
+              + `${escKey(squadWord.toLowerCase())} ${squad + 1}</button>` : ''}
+        <button class="secondary" id="company-issue-line">Issue to the whole company</button>
+      </div>` : ''}`;
   }
 
   /**
@@ -6839,7 +6872,21 @@ export class Menu {
    * kit or a whole paint set, so clearing a slot is the same call as choosing
    * one and the store can never hold a half-written set.
    */
-  _wireDressing(look, kind, write) {
+  _wireDressing(look, kind, write, issue = null) {
+    /**
+     * THE PATTERN, ISSUED. `issue` is `(scope) => …` and is null on a page
+     * that has nobody to issue to. `Muster.issue` is the one door and it
+     * writes BOTH stores — the roll and the slate — because on a fresh
+     * profile every man the player has is a recruit, and a control that
+     * stopped at the roll would do nothing at all for exactly the person it
+     * was written for.
+     */
+    if (issue) {
+      const b1 = document.getElementById('company-issue-squad');
+      const b2 = document.getElementById('company-issue-line');
+      if (b1) this._activate(b1, () => { audio.ui('click'); issue('squad'); }, b1.textContent.trim());
+      if (b2) this._activate(b2, () => { audio.ui('click'); issue('line'); }, b2.textContent.trim());
+    }
     const kit = { ...(look?.kit || {}) };
     const paint = { ...(look?.paint || {}) };
     for (const el of document.querySelectorAll('.company-paints .swatch')) {
@@ -6877,7 +6924,10 @@ export class Menu {
     const band = markById(r.look?.band);
     const called = r.look?.callsign ? `${r.designation} "${r.look.callsign}"` : r.designation;
     const label = ARCHETYPES[r.type]?.label ?? r.type;
-    const squads = Math.max(1, Math.ceil(OPENING_STRENGTH / SQUAD));
+    /* THE SAME SQUADS A VETERAN'S PAGE OFFERS — one derivation, in
+     * `Company.SQUADS_MAX`, or the two pages deal one company into two
+     * different sets of squads. */
+    const squads = companySquadsMax;
     return `
       <h3 class="databank-name">${escKey(called)}</h3>
       <p class="databank-army-line">${escKey(army?.name || roll.army)} — recruit</p>
@@ -6929,7 +6979,7 @@ export class Menu {
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
-      ${this._dressingHtml(r.look, kindOfArmy(roll.army))}
+      ${this._dressingHtml(r.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', r.squad)}
       <h4 class="codex-head">${escKey(army?.squadWord || 'Squad')}</h4>
       <p class="hint">Which ${(army?.squadWord || 'squad').toLowerCase()} he falls in with —
         the whole of what it changes is who stands beside him.</p>
@@ -7007,7 +7057,14 @@ export class Menu {
       this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
         markById(sw.dataset.band).name);
     }
-    this._wireDressing(m.look, kindOfArmy(roll.army), write);
+    this._wireDressing(m.look, kindOfArmy(roll.army), write, (scope) => {
+      Muster.issue(roll.army, m.designation, scope);
+      /* THE PARADE GROUND IS THE RECEIPT. Rebuilding the list restages every
+       * figure on it, so the whole line visibly changes colour in front of
+       * the player — which is a better answer than a message saying it did. */
+      this._buildCompanyList();
+      this._showCompany(key);
+    });
     /**
      * THE SEAT. The licence is decided HERE, on the screen that has both the
      * rank table and his experience, and handed to `Company.appoint` — see the
@@ -7016,6 +7073,15 @@ export class Menu {
      * that silently does nothing is the shape this tab was rebuilt to stop
      * being, and `_activate` is also what gives it a keyboard.
      */
+    for (const sw of document.querySelectorAll('.company-squads .swatch')) {
+      this._activate(sw, () => {
+        audio.ui('click');
+        const v = sw.dataset.squad;
+        companyAssign(roll.army, m.designation, v === '' ? null : (v | 0));
+        this._buildCompanyList();
+        this._showCompany(key);
+      }, sw.title || 'Squad');
+    }
     const seat = document.getElementById('company-post');
     if (seat) this._activate(seat, () => {
       const rank = rankFor(m.xp | 0);
@@ -7088,7 +7154,11 @@ export class Menu {
       this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
         markById(sw.dataset.band).name);
     }
-    this._wireDressing(r.look, kindOfArmy(armyId), write);
+    this._wireDressing(r.look, kindOfArmy(armyId), write, (scope) => {
+      Muster.issue(armyId, r.designation, scope);
+      this._buildCompanyList();
+      this._showCompany(key);
+    });
     for (const sw of document.querySelectorAll('.company-squads .swatch')) {
       this._activate(sw, () => {
         audio.ui('click');

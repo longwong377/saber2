@@ -48,7 +48,7 @@
  * the one being written.
  */
 
-import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById } from './Command.js';
+import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById, SQUAD, MAX_STRENGTH } from './Command.js';
 import {
   ATTR_IDS, traitById, attrName, BOND_AREAS, liveBonds, isBonded, applyTrait, shedTraits,
 } from './Attributes.js';
@@ -1029,6 +1029,48 @@ export function appoint(army, key, on = true, licensed = true) {
   m.post = true;
   return save(c);
 }
+
+/**
+ * ══ WHICH SQUAD A MAN FALLS IN WITH ════════════════════════════════════════
+ *
+ * A recruit could be dealt a squad from his own page since the slate existed
+ * (`Muster.setRecruitSquad`); a VETERAN could not, so a company that came home
+ * was stuck in whatever squads the muster happened to deal it, for ever. That
+ * is a strange gap on its own and it became a real one when the post arrived:
+ * a seat is per squad, so a player who cannot move a man between squads cannot
+ * organise the company the seats are in.
+ *
+ * `null` means "wherever the muster deals him", which is what every man means
+ * before anybody has an opinion. Out-of-range is clamped to null rather than
+ * refused for the reason `readMan` clamps everything: this is a screen writing
+ * a number and the store is the place that decides what a number may be.
+ *
+ * MOVING HIM DOES NOT MOVE HIS SEAT. A post is a fact about a squad — see
+ * `CommandRoster.appoint` — so a man carried into a squad that already has a
+ * holder would be the second one, which is `leaderOf` answering with whichever
+ * came first in an array. He arrives WITHOUT the seat, and the player gives it
+ * to him again if that was the point.
+ */
+export function assign(army, key, squad) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m) return c;
+  const to = Number.isInteger(squad) && squad >= 0 && squad < SQUADS_MAX ? squad : null;
+  if (to !== m.squad && m.post) m.post = false;
+  m.squad = to;
+  return save(c);
+}
+
+/**
+ * How many squads a screen may deal into.
+ *
+ * Derived from the two numbers that already decide it — the biggest line the
+ * game can field and how many men stand in a squad — rather than chosen, so a
+ * roll cannot be dealt into a squad the field will never form. Both pages that
+ * offer the choice read this, which is what stops a recruit's page and a
+ * veteran's offering different squads for the same company.
+ */
+export const SQUADS_MAX = Math.max(1, Math.ceil(MAX_STRENGTH / SQUAD));
 
 /** What a man is called on a screen — the same rule `Trooper.name` uses. */
 export function nameOf(m) {

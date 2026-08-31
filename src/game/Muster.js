@@ -466,6 +466,50 @@ export function lineup(plan, company, opts = {}) {
  * roll, holding the same line: a callsign, a mark and a band, and nothing any
  * part of the fight reads. Field-validated exactly as `dress` validates.
  */
+/**
+ * ══ ISSUE ONE PATTERN ACROSS BOTH STORES ═══════════════════════════════════
+ *
+ * `Company.issue` copies a man's kit and paint across the ROLL. The men a
+ * fresh player actually has are on the SLATE, so a control that stopped at the
+ * roll would do nothing at all on the first night — which is exactly the
+ * player this feature is for, four hundred clicks deep into dressing ten
+ * strangers one row at a time.
+ *
+ * So the one door is here, in the file that can see both: Muster imports
+ * Company and Company may not import back (see the note at the top of
+ * Company.js). The pattern may come from either store; it is written to both.
+ *
+ * `scope` is 'squad' or 'line'. Nothing personal travels — kit and paint only,
+ * never a callsign, a mark or a band; see `Company.issue` for why. Every write
+ * goes through the store's own dressing door, so a droid gets whatever part of
+ * a clone's pattern a droid can wear and the rest is dropped.
+ *
+ * @returns how many men were written.
+ */
+export function issue(army, designation, scope = 'squad') {
+  const slate = slateFor(army);
+  const roll = Company.load(army);
+  const from = slate.recruits.find((x) => x.designation === designation)
+    || roll.men.find((x) => x.designation === designation);
+  if (!from) return 0;
+  const kit = from.look?.kit ? { ...from.look.kit } : null;
+  const paint = from.look?.paint ? { ...from.look.paint } : null;
+  const wanted = (m) => m.designation !== designation
+    && (scope !== 'squad' || m.squad === from.squad);
+  let n = 0;
+  for (const m of roll.men) {
+    if (!wanted(m)) continue;
+    Company.dress(army, m.designation, { kit, paint });
+    n++;
+  }
+  for (const r of slateFor(army).recruits) {
+    if (!wanted(r)) continue;
+    dressRecruit(army, r.designation, { kit, paint });
+    n++;
+  }
+  return n;
+}
+
 export function dressRecruit(army, designation, look = {}) {
   const slate = slateFor(army);
   const r = slate.recruits.find((x) => x.designation === designation);
