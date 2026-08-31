@@ -57,6 +57,7 @@ import {
  * already carries the label every other screen uses and this file must not
  * grow a second copy of it. */
 import { ARCHETYPES } from './Enemy.js';
+import { makeStore } from './Store.js';
 
 /**
  * An attribute block off disk, clamped and complete.
@@ -245,23 +246,22 @@ function saneFallen(f) {
  * the game because a number they never saw is a string has lost more than a
  * roster.
  */
-function readAll() {
-  try {
-    if (typeof localStorage === 'undefined') return {};
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return {};
-    const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-    return v;
-  } catch { return {}; }
-}
+/**
+ * THE STORE. One policy, shared with the muster slate — src/game/Store.js.
+ *
+ * This used to catch a refused write and throw the value away under a comment
+ * saying "losing a roll is not a crash". It is not a crash and it is worse
+ * than one: the roll stays on screen, the player keeps fighting for it, and it
+ * is already gone. A refused write is remembered for the life of the page now,
+ * and `notSaving` lets the tab say so.
+ */
+const STORE = makeStore(KEY);
 
-function writeAll(v) {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(KEY, JSON.stringify(v));
-  } catch { /* private browsing, a full quota — losing a roll is not a crash */ }
-}
+/** True when a write has been refused. The Company tab reads this and warns. */
+export const notSaving = () => STORE.broken;
+
+const readAll = () => STORE.read();
+const writeAll = (v) => STORE.write(v);
 
 /** A stored man, made safe. Anything unreadable becomes a fresh recruit's value. */
 function readMan(m, army) {
@@ -471,7 +471,7 @@ export function loadAll() {
 
 /** Wipe one army's roll, or all of them. The player's own door, never the game's. */
 export function clear(army = null) {
-  if (army === null) { writeAll({}); return; }
+  if (army === null) { STORE.drop(); return; }
   const all = readAll();
   delete all[army];
   writeAll(all);

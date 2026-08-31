@@ -562,12 +562,90 @@ export async function run({ check, assert, THREE: T }) {
     Muster.ensure(plan, Company.load('republic'));
     const raw = localStorage.getItem(Muster.KEY);
     assert(raw, 'ensure minted a slate and wrote nothing at all');
-    for (let i = 0; i < 5; i++) Muster.ensure(plan, Company.load('republic'));
-    Muster.slateFor('republic');
-    Muster.slateFor('republic');
+
+    /**
+     * COUNTED, NOT COMPARED — and that distinction is the whole check.
+     *
+     * This clause used to snapshot the stored STRING and assert it had not
+     * changed, which cannot fail for a store that rewrites the SAME bytes
+     * every call: proven by mutation, `saveSlate` made unconditional and the
+     * suite still passed nineteen of nineteen. The law being guarded is not
+     * "the slate does not change on a render", it is "a render does not WRITE"
+     * — so the spy counts the door being opened, and the byte comparison stays
+     * underneath it as a second clause, because it catches the other defect.
+     */
+    const realSet = localStorage.setItem.bind(localStorage);
+    let writes = 0;
+    localStorage.setItem = (k, v) => { if (k === Muster.KEY) writes++; return realSet(k, v); };
+    try {
+      for (let i = 0; i < 5; i++) Muster.ensure(plan, Company.load('republic'));
+      Muster.slateFor('republic');
+      Muster.slateFor('republic');
+    } finally { localStorage.setItem = realSet; }
+    assert(writes === 0,
+      `five clean ensures and two reads opened the store for writing ${writes} time(s) — `
+      + 'the tab writes localStorage per render');
     assert(localStorage.getItem(Muster.KEY) === raw,
-      'five clean ensures and two reads rewrote the store — the tab now writes localStorage per render');
-    return 'one write to mint, then five ensures and two reads, byte-identical';
+      'the store changed under a clean read');
+    return 'one write to mint, then five ensures and two reads: zero writes, byte-identical';
+  }));
+
+  check('barracks: a cleared store is cleared, and a refused write is remembered', () => withCleanStore(() => {
+    /**
+     * THE TWO HALVES OF src/game/Store.js, and they used to be one guess.
+     *
+     * `Muster` kept an in-memory mirror and read it back whenever `getItem`
+     * answered nothing — so a store cleared ON PURPOSE (a player wiping site
+     * data; this very fixture restoring between suites) came back from the
+     * dead, callsigns and all. An absent key on a WORKING store is an empty
+     * record. A store that has actually REFUSED a write is the only one that
+     * gets to answer from memory, and it says so through `notSaving` so the
+     * tab can warn instead of letting a player name men into a void.
+     */
+    const plan = musterPlan({ mode: 'skirmish', allies: 0, order: 'jedi' }, null);
+    const slate = Muster.ensure(plan, Company.load('republic'));
+    Muster.dressRecruit('republic', slate.recruits[0].designation, { callsign: 'Ghost' });
+    assert(Muster.slateFor('republic').recruits[0].look?.callsign === 'Ghost',
+      'the callsign did not reach the store at all');
+    localStorage.removeItem(Muster.KEY);
+    const after = Muster.slateFor('republic');
+    assert(after.recruits.length === 0 && after.salt === null,
+      `a cleared store answered with ${after.recruits.length} recruits — memory is shadowing the store`);
+    assert(!Muster.notSaving(), 'a working store reported itself as not saving');
+
+    /* AND THE OTHER HALF: a store that throws keeps the page coherent. */
+    const realSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+    let broken;
+    try {
+      const s2 = Muster.ensure(plan, Company.load('republic'));
+      assert(s2.recruits.length === plan.want, 'a refused write lost the slate it had just minted');
+      broken = Muster.notSaving();
+    } finally { localStorage.setItem = realSet; }
+    assert(broken, 'a refused write did not raise notSaving — the tab cannot warn about silent loss');
+    return 'an absent key reads empty; a refused write is kept in memory and admitted';
+  }));
+
+  check('barracks: the salt moves with every term it claims to move with', () => withCleanStore(() => {
+    /**
+     * The salt is a hash of (army, runs, lost, headcount) and its whole job is
+     * that a banked run cannot leave the same men on the slate. A CONSTANT
+     * salt is caught by the determinism clause above — but removing any ONE
+     * term was invisible, because a wipe also writes the dead onto `fallen`
+     * and `takenOf` excludes them, so fresh names appeared either way and the
+     * check could not tell which mechanism produced them. Each term is pinned
+     * here directly, against a company that differs in exactly one field.
+     */
+    const base = { ...Company.blank('republic'), runs: 2, lost: 3, men: [] };
+    const salt = Muster.saltOf(base);
+    for (const [field, value] of [['runs', 3], ['lost', 4]]) {
+      assert(Muster.saltOf({ ...base, [field]: value }) !== salt,
+        `two companies differing only in \`${field}\` hash to the same salt — that term is decoration`);
+    }
+    const withMan = { ...base, men: [{ designation: 'CT-1234', type: 'trooper', xp: 0, runs: 0 }] };
+    assert(Muster.saltOf(withMan) !== salt,
+      'a company that gained a man hashes to the same salt — the headcount term is decoration');
+    return 'runs, lost and headcount each move the salt on their own';
   }));
 
   check('barracks: the muster lives beside the roll, not in it', () => withCleanStore(() => {
