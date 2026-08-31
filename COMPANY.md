@@ -185,11 +185,13 @@ Sizes are the panel's, sanity-checked: **S** ≈ a sitting, **M** ≈ a day,
 *Why it is the first phase:* it is the smallest change that makes a specific
 man's death take something away, and every later phase hangs off `holds()`.
 
-### PHASE 2 — THE REACH AND THE REFUSAL  (M)  *and it unblocks every other mode*
+### PHASE 2 — THE REACH AND THE REFUSAL  (M)  ✔ BUILT — see "PHASE 2 IS BUILT" below
 
-`order()` (`Command.js:5497`) has **no distance test and no rank test of any
-kind** — verified. An order reaches every man on the roll, anywhere, instantly.
-SCOPE calls fixing this the highest-leverage of its three capability mechanisms.
+`order()` had **no distance test and no rank test of any kind** — verified. An
+order reached every man on the roll, anywhere, instantly. SCOPE called fixing
+this the highest-leverage of its three capability mechanisms, and it is done:
+what follows is what was specified, and the section at the bottom of this file
+is what was built and how each clause is held down.
 
 - **Reach.** `ORDER_REACH` off the commander's body. Out of reach, the order
   does not land.
@@ -466,29 +468,71 @@ It found one real bug before it shipped: `null >= 0` is true in JavaScript, so
   area unlock, and the `break` threw the rest away — a composed side took the
   field as ten identical clone troopers.
 
-Held by `tools/checks/barracks.mjs`, which is 29 checks now. Fifteen further
+Held by `tools/checks/barracks.mjs`, which is 35 checks now. Fifteen further
 mutations, fifteen caught.
+
+## PHASE 2 IS BUILT — the reach, the refusal and the runner
+
+`order()` had no distance test and no rank test of any kind, so every
+capability on top of it was expensive against a command interface that always
+worked. What is in the game now:
+
+- **The reach is 34 m off your body.** Past it the order does not land,
+  `order()` returns false, and NOTHING is written — no formation, no plant, no
+  cover epoch, so the HUD cannot say a squad is doing something it never heard.
+- **A Commander is a second mouth.** A man licensed to `RELAYS` who is himself
+  inside your reach carries the order 20 m further. One hop, never a chain — an
+  order that hops indefinitely is an order with no reach at all. This is the
+  top rung's second consumer; before it, the whole of `RELAYS` was a morale
+  term worth 0.035/s.
+- **Four refusals, each with the term that failed named out loud** — *out of
+  reach · shaken · alone · unled*. `shaken` and `alone` refuse an ADVANCE and
+  never refuse cover, because a model in which a frightened man ignores "get
+  behind that rock" has never met a frightened man.
+- **A post needs a man who can be left, or you standing there.** A per-squad
+  order that does not advance (`cover`, `digin`) is a delegation: it hands the
+  squad its own ground and lets you walk away. It needs a man licensed to
+  `LEADS`, or the general inside 20 m of the squad's centre. Measured: a muster
+  deals ten troopers at rank 0, so a licence-only test would have made
+  delegation unreachable on a fresh company — the second door is what makes the
+  rule a choice instead of a wall.
+- **A man who did not hear it goes on doing what he was told last.** `t.order`,
+  read first by `formationFor`, set on the refusers and cleared on the takers —
+  so a refusal is never permanent.
+- **The runner.** Press the same order again inside six seconds and the
+  juniorest man who heard it leaves the line to carry it: out of the formation,
+  on the shortest leash in the file, delivering from where he is standing. If
+  he is killed the order dies with him and the log says so. A message that
+  cannot be intercepted is a function call with a delay on it.
+- **Fall Back To Me**, which Warning #1 named as the missing permadeath
+  mitigation. It is not a new verb: `circle` already means *form on me*, so it
+  carries `always` and skips the reach and only the reach. Fear still refuses
+  it, and it is the worst fighting shape in the table — the escape hatch is
+  real and it is not free.
+- **The panel says who cannot hear you, before you press anything.** The roster
+  column — the only in-game view of a squad — prints "out of reach" or "3/5 in
+  earshot" on each squad heading. A rule a player can only discover by having
+  an order fail reads as the game being broken.
+
+Held by `tools/checks/reach.mjs`, 9 checks, each driving one term in isolation.
+Twenty-four mutations across the feature, twenty-four caught.
 
 ### Still on the list, in the order they are worth building
 
-1. **PHASE 2 — the reach and the refusal.** `order()` still has no distance
-   test and no rank test: an order reaches every man on the roll, anywhere,
-   instantly. This is the highest-leverage thing left, and it is what gives
-   `RELAYS` its second consumer and every later phase something to be expensive
-   against in every mode.
-2. **PHASE 4's manifest.** The gunship publishes ten seats, `MAX_STRENGTH` is
+1. **PHASE 4's manifest.** The gunship publishes ten seats, `MAX_STRENGTH` is
    24, and which men board is decided by squared distance to the ramp with zero
    player input. *Left is not dead* made the loss legible; naming who runs for
    the ship is what makes it a decision. The other half — somebody turns round
    and holds the door, deterministically, and is named for ever — is the
    sentence that mechanic is for.
-3. **PHASE 3 — the billets.** Five jobs, each held by one named man. The
-   licence taxonomy they hang off exists now.
-4. **PHASE 5 — citations.** `_earnNickname` still draws blind from a table
+2. **PHASE 3 — the billets.** Five jobs, each held by one named man. The
+   licence taxonomy they hang off exists now, and so does the reach the
+   Voice's billet was going to extend.
+3. **PHASE 5 — citations.** `_earnNickname` still draws blind from a table
    while the director logs twenty-one named event kinds with name, killer,
    bearing and minute. Mint the name from the deed and print the sentence that
    earned it — and mint at the area boundary, not at the fold, or the player
    who dies or quits most runs never sees it.
-5. **PHASE 6 — the book.** Last, and it begins with the invisible work: a
+4. **PHASE 6 — the book.** Last, and it begins with the invisible work: a
    parade figure costs 15.82 ms and 54 meshes with no LOD, and `_restage`
    rebuilds every figure on any signature change.
