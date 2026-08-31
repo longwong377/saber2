@@ -381,6 +381,28 @@ export async function run({ check, assert }) {
       'the runner was drawn from the squad that cannot hear the general');
     assert(d.leaderOf(d.squadOf(runner, c)) !== runner,
       'a squad leader was sent as a messenger — his squad is what he is for');
+    /**
+     * …AND THAT IS A RULE AND NOT AN ACCIDENT OF THE SORT. The pool is
+     * ordered by rank ascending and a leader is usually the senior man in it,
+     * so on an ordinary company he comes last anyway and removing the guard
+     * changes nothing visible. The rule only bites when he is the ONLY man
+     * who heard it — so that is the arm: everybody else moved out of reach,
+     * one squad leader left standing beside the general, and NOBODY GOES.
+     * A company with nothing but leaders left keeps them.
+     */
+    const lead = d.leaderOf(squads[0]);
+    const parked = [];
+    for (const t of d.led(c)) {
+      if (t === lead || !t.body) continue;
+      parked.push([t, t.body.position.clone()]);
+      t.body.position.set(500, 0, 500);
+    }
+    lead.body.position.set(1, 0, 1);
+    assert(d._sendRunner('charge', k, c) === false,
+      `${lead.name} leads ${d.squadLabel(0, c)} and was sent away with a message because he `
+      + 'was the only man in earshot — a squad leader is never the messenger');
+    for (const [t, at] of parked) t.body.position.copy(at);
+    d._troops(1 / 30, {});
     assert(Math.hypot(runner.runner.to.x - 120, runner.runner.to.z - 120) < 1,
       'the runner was sent somewhere other than the men who did not hear it');
     /* HE IS OUT OF THE FORMATION WHILE HE CARRIES IT, which is the whole of
