@@ -9022,7 +9022,31 @@ export class CommandDirector extends WaveDirector {
     this.world?.notify?.('CHECK YOUR FIRE', `${e.trooper.name} is one of yours`, 'alarm');
   }
 
-  _announceRoster() { this.onRoster?.(this.roster.summary()); }
+  /**
+   * THE ROSTER PANEL'S FEED — and it carries who can hear you.
+   *
+   * `CommandRoster.summary()` is a statement about the ROLL and knows nothing
+   * about a world, a body or a distance, which is right and is why the reach
+   * is stamped on the way past rather than inside it. The panel is the only
+   * in-game view of a squad, so it is the one surface where "they cannot hear
+   * you" belongs BEFORE the press rather than as a toast after it — a rule the
+   * player can only discover by having an order fail is a rule that reads as
+   * the game being broken.
+   *
+   * Per MAN, not per squad, because a squad straddling the edge is the case
+   * that matters: five men, two of whom will take it.
+   */
+  _announceRoster() {
+    const r = this.roster.summary();
+    const c = this.commander;
+    if (r && c) {
+      const voices = this._voices(c);
+      const by = new Map();
+      for (const t of this.led(c)) by.set(t.id, this._inReach(t, voices));
+      for (const row of r.roll) if (by.has(row.id)) row.heard = by.get(row.id);
+    }
+    this.onRoster?.(r);
+  }
 
   /* ── the meeting, and whether there is one ─────────────────────────── */
 

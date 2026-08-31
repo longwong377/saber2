@@ -529,4 +529,68 @@ export async function run({ check, assert }) {
     for (const [t, m] of was) t.morale = m;
     return `circle only · 560 m recall taken · ${ask.refused.length} shaken men still refuse it`;
   });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  And the player can see it before they press anything              */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('reach.9 the roster panel says which squad cannot hear you', async () => {
+    /**
+     * A RULE A PLAYER CAN ONLY DISCOVER BY HAVING AN ORDER FAIL IS A RULE THAT
+     * READS AS THE GAME BEING BROKEN. The toast after the press is the
+     * confirmation; this is the thing that has to be on the screen BEFORE it,
+     * and the roster panel is the only in-game view of a squad there is.
+     *
+     * TWO HALVES AND BOTH ARE DRIVEN, because either alone is a feature that
+     * exists in one file: the director has to stamp `heard` on the summary it
+     * hands out (`CommandRoster.summary()` knows nothing about a world and
+     * must not), and `rosterHtml` has to print it.
+     *
+     * THE STRADDLING CASE IS THE ONE THAT MATTERS. A squad wholly out of
+     * earshot is easy; "3 of 5 in earshot" is the sentence that makes a player
+     * walk twenty metres, so it is asserted separately from the all-or-nothing
+     * one.
+     */
+    const { rosterHtml } = await import('../../src/ui/HUD.js');
+    const { d, c, squads } = field();
+    const k = 1, men = squads[k];
+
+    let seen = null;
+    d.onRoster = (r) => { seen = r; };
+    put(d, men, 200, 200);
+    d._announceRoster();
+    assert(seen, 'the director never announced a roster');
+    const rows = new Map(seen.roll.map((r) => [r.id, r]));
+    for (const t of men) {
+      assert(rows.get(t.id)?.heard === false,
+        `${t.name} is 283 m out and the roster row does not say he cannot hear you — the panel `
+        + 'has no way to show the reach and the player finds out by pressing a key');
+    }
+    for (const t of squads[0]) {
+      assert(rows.get(t.id)?.heard === true, `${t.name} is standing on the general and reads as deaf`);
+    }
+
+    const all = rosterHtml(seen, d.squadNames, 'Squad');
+    assert(/out of reach/.test(all),
+      'a squad nobody in it can hear you does not say so on the panel');
+
+    /* THE STRADDLE. Two of the five walk back into earshot. */
+    men[0].body.position.set(2, 0, 2);
+    men[1].body.position.set(2, 0, 2);
+    d._troops(1 / 30, {});
+    d._announceRoster();
+    const some = rosterHtml(seen, d.squadNames, 'Squad');
+    assert(/2\/5 in earshot/.test(some),
+      'a squad with two men in earshot and three out of it does not say so — the panel is '
+      + 'all-or-nothing about a rule that is per man');
+
+    /* AND A BUILD THAT DOES NOT CARRY THE FIELD SAYS NOTHING, rather than
+     * claiming everybody is deaf: a summary off the wire (`applyNet`) has no
+     * `heard` on any row. */
+    const bare = { ...seen, roll: seen.roll.map(({ heard, ...r }) => r) };
+    const quiet = rosterHtml(bare, d.squadNames, 'Squad');
+    assert(!/out of reach|in earshot/.test(quiet),
+      'a roster with no reach information printed a reach readout anyway');
+    return 'per-man `heard` on the summary · "out of reach" · "2/5 in earshot" · silent without it';
+  });
 }

@@ -3169,7 +3169,26 @@ export function rosterHtml(summary, squadNames = null, word = 'Squad') {
   const body = squads.length > 1 || (named && squads.length) || loose.length
     ? squads.map((k) => {
       const men = keyed.filter((t) => t.squad === k);
-      return `<div class="rp-div">${esc(label(k))} — ${men.length}</div>`
+      /**
+       * …AND WHETHER THEY CAN HEAR YOU FROM WHERE YOU ARE STANDING.
+       *
+       * `Command.ORDER_REACH` is 34 m and an order past it does not land, so
+       * the one thing a player needs to know before pressing an order key is
+       * which of their squads is currently out of earshot. `heard` is stamped
+       * on the summary by `_announceRoster`; a build that does not carry it
+       * leaves every row undefined and this says nothing, which is what a mode
+       * with no reach rule should look like.
+       *
+       * THE COUNT AND NOT A BOOLEAN, because a squad straddling the edge is
+       * the interesting case: "3 of 5 in earshot" is the sentence that makes
+       * the player walk twenty metres.
+       */
+      const known = men.filter((t) => t.heard !== undefined);
+      const deaf = known.filter((t) => !t.heard).length;
+      const far = !known.length || !deaf ? ''
+        : deaf === known.length ? ' <i class="rp-far">out of reach</i>'
+          : ` <i class="rp-far">${known.length - deaf}/${known.length} in earshot</i>`;
+      return `<div class="rp-div">${esc(label(k))} — ${men.length}${far}</div>`
         + men.map(trooperRow).join('');
     }).join('') + (loose.length
       ? `<div class="rp-div">Detached — ${loose.length}</div>` + loose.map(trooperRow).join('')
