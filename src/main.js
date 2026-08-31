@@ -33,6 +33,10 @@ import { recordRun, loadProgress } from './game/Progress.js';
  * handed a plain list of records on its settings blob and hands back a
  * manifest; neither it nor Command.js knows a store exists. */
 import * as Company from './game/Company.js';
+/* …AND THE SLATE, the company's other half: the pre-rolled recruits the next
+ * run will field. Same split — this file owns the store boundary, the game is
+ * handed plain records. See src/game/Muster.js for the whole argument. */
+import * as Muster from './game/Muster.js';
 import { musterPlan } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
@@ -169,6 +173,14 @@ const worldSettings = () => {
  * answers it. Handing over more than that would put men on the roll the
  * deployment cannot field, and `_musterVeterans` would drop them silently.
  */
+/**
+ * The recruit designations the LAST lineup fielded, held for `deploy` to hand
+ * to `Muster.consume` once the world actually exists. A module `let` rather
+ * than state on the world, because the world is exactly what does not exist
+ * yet if the build throws — and a failed deploy must consume nobody.
+ */
+let fieldedRecruits = { army: null, names: [] };
+
 function veteransToField(levelKey = null) {
   if (session) return null;
   /* THE RESOLUTION IS `musterPlan`'S, called and not restated. This function
@@ -178,9 +190,30 @@ function veteransToField(levelKey = null) {
    * the whole story; what stays here is the half that is this file's, the
    * save file. */
   const plan = musterPlan(settings, LEVELS[levelKey]?.armies);
+  fieldedRecruits = { army: null, names: [] };
   if (!plan) return null;
-  const men = Company.fieldable(Company.load(plan.army), plan.want);
-  return men.length ? men : null;
+  /**
+   * `Muster.lineup` is the ONE resolver of who deploys: veterans in
+   * `fieldable` order, then the slate's pre-named recruits, the player's
+   * picks honoured, never more than the plan wants. The Company tab renders
+   * the same call, which is the whole point — the page and the ground agree
+   * because they are one answer.
+   *
+   * VERSUS FIELDS VETERANS ONLY, decided HERE from the settings and not from
+   * the director's flag: a meeting never banks, so a recruit who died in one
+   * would still be standing on the parade ground afterwards — and
+   * `standDownMeeting` can clear the director's own flag mid-run, so the
+   * deploy-time answer is the only stable one.
+   */
+  const company = Company.load(plan.army);
+  const men = Muster.lineup(plan, company, { versus: Muster.versusPlanned(settings) });
+  if (!men || !men.length) return null;
+  fieldedRecruits = {
+    army: plan.army,
+    names: men.filter((m) => (m.runs | 0) === 0 && !company.men
+      .some((v) => v.designation === m.designation)).map((m) => m.designation),
+  };
+  return men;
 }
 
 /** A name from the wire, on its way into innerHTML. */
@@ -752,6 +785,19 @@ async function deploy() {
     const el = document.getElementById('menu-record');
     if (el) el.textContent = `Could not deploy: ${e.message || e}`;
     return;
+  }
+
+  /**
+   * THE DEPLOY TOOK THE RECRUITS. Their names leave the slate now that a
+   * world provably exists — they are on a roster, and the fold will put each
+   * one on the roll or on the casualty list. Strictly after `buildWorld`
+   * resolves, so a failed deploy consumes nobody, and only for a solo army
+   * run: a session fields the host's men and a meeting fielded no recruits
+   * (`veteransToField` cached none), so both are no-ops by construction.
+   */
+  if (!session && world?.command && fieldedRecruits.names.length) {
+    Muster.consume(fieldedRecruits.army, fieldedRecruits.names);
+    fieldedRecruits = { army: null, names: [] };
   }
 
   // Only now is the menu allowed to go: from here on there is a world behind
@@ -1362,6 +1408,11 @@ function bank(stats = null) {
      * which EVERY ending sets — and the story line a man carries out of the
      * run would say the wrong thing about the day he had. */
     ended: stats?.ended ?? (stats?.won === true ? 'won' : (world.over ? 'wiped' : 'quit')),
+    /* THE RUN'S OWN ACCOUNT of who fell to what and when, for the epitaphs.
+     * A quit banks with no stats and therefore no account — the casualty list
+     * still names the men, it just cannot say who got them, which is the
+     * truthful record of walking out mid-fight. */
+    roll: stats?.roll ?? null,
   });
 }
 

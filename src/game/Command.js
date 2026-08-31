@@ -790,10 +790,18 @@ const DROID_PREFIX = ['OOM', 'TC', 'PK', 'BX', 'DFS', 'OM'];
  * reads as a company and not as CT-1000 through CT-1011, and `musterSalt`
  * moves it with the run seed so two campaigns are two different companies.
  */
-function designate(army, taken) {
+/**
+ * …AND THE SAME HASH UNDER A CALLER'S OWN SALT. `Muster.js` mints the next
+ * run's recruits at MENU time, when `musterSalt` belongs to whatever run last
+ * seeded it — so it hands its own salt in rather than reading state that is
+ * not about its men. The format strings live here and ONLY here: a second
+ * copy of the CT-/OOM- grammar in another file is the hand-maintained twin
+ * this repository keeps removing.
+ */
+export function designateWith(salt, army, taken) {
   const ord = taken.size;
   for (let i = 0; i < 64; i++) {
-    let h = musterSalt >>> 0;
+    let h = salt >>> 0;
     for (const v of [ord, i, army.id === 'republic' ? 1 : 2]) {
       h = Math.imul(h ^ (v + 0x9E3779B1), 0x01000193) >>> 0;
     }
@@ -804,7 +812,11 @@ function designate(army, taken) {
   }
   /* 64 collisions in a row means the space is full, not that the hash is bad;
    * a suffix is ugly and correct, and it can never loop forever. */
-  return `CT-${taken.size + 1}${(musterSalt % 90) + 10}`;
+  return `CT-${taken.size + 1}${(salt % 90) + 10}`;
+}
+
+function designate(army, taken) {
+  return designateWith(musterSalt, army, taken);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1834,7 +1846,9 @@ export class Trooper {
     this.detached = false;
     this.xp = opts.xp ?? 0;
     this.kills = 0;
-    this.wounds = 0;              // times brought below a quarter and survived
+    this.wounds = 0;              // times he went down and was helped back up
+                                  // — written by Enemy._getUpFromDown, worn as
+                                  // scars by `scorchUp`, and persisted.
     /**
      * MORALE, 0..1, and it lives on the RECORD rather than on the body for the
      * same reason the name does: it is the thing about this soldier that
@@ -2903,6 +2917,10 @@ const _hide = new THREE.Vector3();
 const CREST_GEO = new THREE.BoxGeometry(0.026, 0.052, 0.150);
 /** A man's own stripe — see `MARKS`. Wider than it is tall, and shallow. */
 const MARK_GEO = new THREE.BoxGeometry(0.030, 0.110, 0.075);
+/** The second place a mark can go — a ring's worth of band on a forearm. */
+const BAND_GEO = new THREE.BoxGeometry(0.062, 0.052, 0.062);
+/** A wound made visible: a shallow scorch chip on the chest plate. */
+const SCORCH_GEO = new THREE.BoxGeometry(0.075, 0.055, 0.020);
 const BELL_GEO = (() => {
   const g = new THREE.SphereGeometry(0.088, 8, 4, 0, TAU, 0, Math.PI * 0.42);
   g.scale(1.15, 0.8, 1.05);
@@ -3056,6 +3074,19 @@ export function enlistBody(e, trooper, opts = {}) {
   if (mark != null && opts.director) {
     e.markColor = mark;
     opts.director.markUp(e, mark);
+  }
+  /* …AND THE BAND, the same sentence one bone over. Optional-called because a
+   * check's stub director carries only the two methods it is checking, and a
+   * band must never be the reason an enlistment throws. */
+  const band = markById(trooper.look?.band)?.color;
+  if (band != null && opts.director) {
+    e.bandColor = band;
+    opts.director.bandUp?.(e, band);
+  }
+  /* …AND HIS SCARS, which nobody chose. See `scorchUp` — `wounds` is written
+   * by the game and rendered here, and a man with none wears none. */
+  if ((trooper.wounds | 0) > 0 && opts.director) {
+    opts.director.scorchUp?.(e, trooper.wounds | 0);
   }
 
   installCommand(e);
@@ -7316,6 +7347,106 @@ export class CommandDirector extends WaveDirector {
         m.position.set(0, 0.55 * S, 0);
         e.group.add(m); meshes.push(m); on++;
       }
+    }
+    return on > 0;
+  }
+
+  /**
+   * THE SECOND MARK — a band on the right forearm, from the same palette.
+   *
+   * `markUp`'s rules verbatim, one bone over: its own material and mesh, never
+   * a recolour of the rank paint or the shin mark, registered on
+   * `_modMeshes`/`_modMaterials` so the body's own teardown frees it, and
+   * re-applied at every area boundary because bodies are rebuilt. The forearm
+   * because it is the one paintable site the reserved language does not use —
+   * the crest and bells are the rank's, the shins are the mark's — and because
+   * an arm is what a commander sees raised when a man is firing.
+   */
+  bandUp(e, color) {
+    if (!e || color == null) return false;
+    if (e._cmdBand) { e._cmdBand.color.setHex(color); e._cmdBand.emissive?.setHex(color); return true; }
+    const rig = e.rig;
+    const S = e.A?.scale ?? 1;
+    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.15 });
+    mat.emissive = new THREE.Color(color);
+    mat.emissiveIntensity = 0.22;
+    e._cmdBand = mat;
+    (e._modMaterials || (e._modMaterials = [])).push(mat);
+    const meshes = e._modMeshes || (e._modMeshes = []);
+    let on = 0;
+    const b = rig?.get?.('foreR');
+    if (b) {
+      const m = new THREE.Mesh(BAND_GEO, mat);
+      m.scale.setScalar(S);
+      /* A third of the way down the forearm — clear of the vambrace plate and
+       * of the hand, and positive y for `markUp`'s reason: a bone's local +y
+       * runs along it toward its child. */
+      m.position.set(0, 0.35 * (b.length || 0.3), 0);
+      m.castShadow = false;
+      b.obj.add(m);
+      meshes.push(m);
+      on++;
+    }
+    if (!on) {
+      /* No forearm — a droideka, a walker. The chest, then the group, exactly
+       * as the shin mark falls back: a man the player painted and cannot find
+       * is the defect both of these exist to fix. */
+      const c = rig?.get?.('chest');
+      if (c) {
+        const m = new THREE.Mesh(BAND_GEO, mat);
+        m.scale.setScalar(S * 1.3);
+        m.position.set(0.09 * S, 0.3 * (c.length || 0.3), 0.06 * S);
+        c.obj.add(m); meshes.push(m); on++;
+      } else if (e.group) {
+        const m = new THREE.Mesh(BAND_GEO, mat);
+        m.scale.setScalar(S * 2.0);
+        m.position.set(0.3 * S, 0.7 * S, 0);
+        e.group.add(m); meshes.push(m); on++;
+      }
+    }
+    return on > 0;
+  }
+
+  /**
+   * WHAT SURVIVING LOOKS LIKE. One shallow scorch chip on the chest plate per
+   * time this man went down and was helped back up, capped at three.
+   *
+   * Nobody paints these on purpose and nothing pays for them: `Trooper.wounds`
+   * is written by `Enemy._getUpFromDown` and this only renders the count. The
+   * chips are dark and matte — deliberately NOT from the mark palette and NOT
+   * emissive, because they are history rather than signal, and a scar that
+   * glowed would read as a third rank language at forty metres.
+   */
+  scorchUp(e, n) {
+    if (!e || !(n > 0)) return false;
+    if (e._cmdScorch) return true;
+    const rig = e.rig;
+    const S = e.A?.scale ?? 1;
+    const mat = new THREE.MeshStandardMaterial({ color: 0x241f1a, roughness: 0.92, metalness: 0.04 });
+    e._cmdScorch = mat;
+    (e._modMaterials || (e._modMaterials = [])).push(mat);
+    const meshes = e._modMeshes || (e._modMeshes = []);
+    const count = Math.min(3, n | 0);
+    /* Fixed offsets, not a roll: the same man carries the same scars on every
+     * ground, and nothing here may draw from a stream at deploy time. */
+    const AT = [[0.07, 0.46, 1], [-0.09, 0.30, 0.85], [0.02, 0.16, 0.7]];
+    let on = 0;
+    const host = rig?.get?.('chest') || rig?.get?.('spine') || null;
+    for (let i = 0; i < count; i++) {
+      const m = new THREE.Mesh(SCORCH_GEO, mat);
+      const [x, y, sc] = AT[i];
+      if (host) {
+        m.scale.setScalar(S * sc);
+        m.position.set(x * S, y * (host.length || 0.3), 0.105 * S);
+        host.obj.add(m);
+      } else if (e.group) {
+        m.scale.setScalar(S * sc * 1.6);
+        m.position.set(x * 2 * S, (0.5 + y) * S, 0.2 * S);
+        e.group.add(m);
+      } else { continue; }
+      m.castShadow = false;
+      meshes.push(m);
+      on++;
     }
     return on > 0;
   }

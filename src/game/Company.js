@@ -192,10 +192,50 @@ export const blank = (army = ARMY_IDS[0]) => ({
   fallen: [],
   /** The run this roll was founded on. Null until the first man is kept. */
   founded: null,
+  /**
+   * ORDERS OF THE DAY — the moments of the LAST fold, overwritten every time.
+   * A promotion, a name earned, a bond formed, a fifth run, a wound survived:
+   * ceremony without a ceremony screen, read once off the index page the next
+   * time the menu is raised. OVERWRITTEN and capped rather than appended,
+   * because "since the last muster" is the whole meaning — an archive of old
+   * honours would be a feed, and a feed is homework. A wipe writes none: the
+   * dead get the memorial, not a bulletin.
+   */
+  honours: [],
 });
 
 /** How many names the casualty list keeps. A list, not an archive. */
 export const FALLEN_KEEP = 40;
+
+/** How many orders of the day one fold may write. A toast, not a feed. */
+export const HONOURS_KEEP = 6;
+
+/** The kinds an honour may be. Whitelisted on read like every stored enum. */
+const HONOUR_KINDS = ['named', 'promoted', 'bonded', 'fifth', 'scarred'];
+
+/**
+ * One fallen record off disk, made safe. The three fields a record gained in
+ * the epitaph pass — the callsign he answered to, who got him, and the minute —
+ * arrive from old saves absent and from hand-edited ones hostile, so each is
+ * clamped exactly as `readMan` clamps the living.
+ */
+function saneFallen(f) {
+  if (!f || typeof f.designation !== 'string') return null;
+  const num = (v, d) => (Number.isFinite(v) ? v : d);
+  return {
+    designation: f.designation,
+    nickname: typeof f.nickname === 'string' ? f.nickname : null,
+    callsign: cleanCallsign(f.callsign),
+    type: typeof f.type === 'string' ? f.type : null,
+    rank: Math.max(0, num(f.rank, 0) | 0),
+    kills: Math.max(0, num(f.kills, 0) | 0),
+    runs: Math.max(0, num(f.runs, 0) | 0),
+    where: typeof f.where === 'string' ? f.where : null,
+    killer: typeof f.killer === 'string'
+      ? f.killer.replace(/[<>&`\\]/g, '').slice(0, 40) : null,
+    at: Number.isFinite(f.at) ? Math.max(0, Math.min(999, f.at | 0)) : null,
+  };
+}
 
 /* ── the store ───────────────────────────────────────────────────────── */
 
@@ -387,9 +427,19 @@ export function load(army = ARMY_IDS[0]) {
     runs: num(v.runs, 0),
     lost: num(v.lost, 0),
     fallen: Array.isArray(v.fallen)
-      ? v.fallen.filter((f) => f && typeof f.designation === 'string').slice(0, FALLEN_KEEP)
+      ? v.fallen.map(saneFallen).filter(Boolean).slice(0, FALLEN_KEEP)
       : [],
     founded: typeof v.founded === 'string' ? v.founded : null,
+    honours: Array.isArray(v.honours)
+      ? v.honours.filter((h) => h && HONOUR_KINDS.includes(h.kind)
+          && typeof h.designation === 'string')
+        .map((h) => ({
+          kind: h.kind,
+          designation: h.designation,
+          detail: typeof h.detail === 'string' ? h.detail.slice(0, 40) : null,
+        }))
+        .slice(0, HONOURS_KEEP)
+      : [],
   };
 }
 
@@ -408,6 +458,7 @@ export function save(company) {
     lost: company.lost | 0,
     fallen: (company.fallen || []).slice(0, FALLEN_KEEP),
     founded: company.founded ?? null,
+    honours: (company.honours || []).slice(0, HONOURS_KEEP),
   };
   writeAll(all);
   return company;
@@ -497,6 +548,12 @@ export function trooperOf(m, army, roster) {
  *                      names are kept; they are gone.
  * @param opts.ground   the level id the run ended on, for `since` and the story.
  * @param opts.ended    'withdrew' | 'wiped' | 'won' — what `runStats` reports.
+ *                      Read by `storyLine`, which phrases a won run's line.
+ * @param opts.roll     the run's own casualty rows (`stats.roll`), when the
+ *                      ending had stats at all — a quit banks with none. Each
+ *                      row carries the DISPLAY name (`CT-1500 "Ladder"`), the
+ *                      killer and the second it happened; the epitaphs below
+ *                      match by the designation prefix and keep the minute.
  *
  * @returns the written company.
  */
@@ -505,6 +562,19 @@ export function keep(manifest, opts = {}) {
   const army = opts.army ?? list[0]?.army ?? ARMY_IDS[0];
   if (!ARMIES[army]) return load(ARMY_IDS[0]);
   const c = load(army);
+
+  /**
+   * THE PAIRS THAT WERE ALREADY BONDS, before this fold moves anything — so
+   * the orders of the day can name the ones that FORMED tonight rather than
+   * re-announcing every old friendship on every withdrawal.
+   */
+  const wasBonded = new Set();
+  for (const m of c.men) {
+    for (const b of liveBonds(m)) {
+      wasBonded.add(m.designation < b.with
+        ? `${m.designation}|${b.with}` : `${b.with}|${m.designation}`);
+    }
+  }
 
   /* A MANIFEST FROM ANOTHER ARMY IS DROPPED, NOT MERGED. Two rolls exist
    * because a designation, a rank colour and a unit word are all different on
@@ -531,7 +601,7 @@ export function keep(manifest, opts = {}) {
     const had = (t.id && byId.get(t.id)) || byName.get(t.designation) || null;
     const m = manOf(t, opts);
     m.bonds = (had?.bonds || []).map((b) => ({ ...b }));
-    home.push({ m, held: Math.max(0, (m.areas | 0) - (had?.areas | 0)) });
+    home.push({ m, had, held: Math.max(0, (m.areas | 0) - (had?.areas | 0)) });
     /* A MAN WHO WAS ALREADY ON THE ROLL KEEPS HIS OWN HISTORY. The run he just
      * finished carries the xp, the kills and the wounds it earned — those live
      * on the `Trooper` and came back with him — but `runs` and `since` are the
@@ -600,14 +670,64 @@ export function keep(manifest, opts = {}) {
 
   c.men = settleBonds(kept.slice(0, CAP));
   c.lost = (c.lost | 0) + gone.length;
+  /**
+   * THE EPITAPH FIELDS. A fallen record used to drop the callsign at exactly
+   * the moment it mattered — a recruit the player named "dies wearing it" only
+   * if the casualty list can still say it — and it never said who got him.
+   * `opts.roll` is the run's own account and it speaks in DISPLAY names, so
+   * the match is by designation prefix; `at` arrives in seconds and is kept as
+   * the minute, which is how a person tells the story of a battle.
+   */
+  const rollByName = new Map();
+  for (const r of (Array.isArray(opts.roll) ? opts.roll : [])) {
+    if (r && typeof r.name === 'string') rollByName.set(r.name.split(' "')[0], r);
+  }
   c.fallen = [
-    ...gone.map((m) => ({
-      designation: m.designation, nickname: m.nickname ?? null, type: m.type,
-      rank: rankFor(m.xp | 0), kills: m.kills | 0, runs: m.runs | 0,
-      where: opts.ground ?? null,
-    })),
+    ...gone.map((m) => {
+      const r = rollByName.get(m.designation) || null;
+      return {
+        designation: m.designation, nickname: m.nickname ?? null, type: m.type,
+        callsign: cleanCallsign(m.look?.callsign),
+        rank: rankFor(m.xp | 0), kills: m.kills | 0, runs: m.runs | 0,
+        where: opts.ground ?? null,
+        killer: typeof r?.killer === 'string'
+          ? r.killer.replace(/[<>&`\\]/g, '').slice(0, 40) : null,
+        at: Number.isFinite(r?.at) ? Math.max(0, Math.min(999, Math.floor(r.at / 60))) : null,
+      };
+    }),
     ...(c.fallen || []),
   ].slice(0, FALLEN_KEEP);
+  /**
+   * THE ORDERS OF THE DAY, from the diff this fold just made. Only men who
+   * actually came home are celebrated — a wipe or a quit writes an empty list,
+   * because `home` is empty on both — and only what CHANGED tonight is worth a
+   * line: the first nickname, a rank crossed, a bond formed, a fifth run, a
+   * wound survived. Overwritten wholesale; see `blank`.
+   */
+  const honours = [];
+  for (const h of home) {
+    if (!h.had?.nickname && h.m.nickname) {
+      honours.push({ kind: 'named', designation: h.m.designation, detail: h.m.nickname });
+    }
+    if (h.had && rankFor(h.m.xp | 0) > rankFor(h.had.xp | 0)) {
+      honours.push({ kind: 'promoted', designation: h.m.designation,
+        detail: RANKS[rankFor(h.m.xp | 0)].title });
+    }
+    if ((h.m.runs | 0) === 5) {
+      honours.push({ kind: 'fifth', designation: h.m.designation, detail: null });
+    }
+    if ((h.m.wounds | 0) > ((h.had?.wounds | 0) || 0)) {
+      honours.push({ kind: 'scarred', designation: h.m.designation, detail: null });
+    }
+  }
+  for (const m of c.men) {
+    for (const b of liveBonds(m)) {
+      if (m.designation >= b.with) continue;
+      if (wasBonded.has(`${m.designation}|${b.with}`)) continue;
+      honours.push({ kind: 'bonded', designation: m.designation, detail: b.with });
+    }
+  }
+  c.honours = honours.slice(0, HONOURS_KEEP);
   if (kept.length && !c.founded) c.founded = opts.ground ?? null;
   /* A RUN ONLY COUNTS IF SOMEBODY CAME HOME. `runs` on the company is
    * withdrawals survived — the number the tab prints beside its name — and a
@@ -631,6 +751,11 @@ export function storyLine(t, opts = {}) {
   if (t.wounds > 0) bits.push(t.wounds === 1 ? 'wounded' : `wounded ${t.wounds}×`);
   if (t.areas > 0) bits.push(t.areas === 1 ? 'held a ground' : `held ${t.areas} grounds`);
   if (!bits.length) return null;
+  /* HOW THE DAY ENDED, on an eventful line only. A won ground is a different
+   * sentence from a withdrawal and the record may as well say so — but eight
+   * entries of "held to the end" with nothing else in them is not a history,
+   * so a quiet run still writes no line. */
+  if (opts.ended === 'won') bits.push('held to the end');
   return where ? `${where}: ${bits.join(', ')}` : bits.join(', ');
 }
 
@@ -713,6 +838,13 @@ export function dress(army, key, look = {}) {
     const mk = markById(look.mark);
     if (mk.color == null) delete next.mark; else next.mark = mk.id;
   }
+  if ('band' in look) {
+    /* The same validation the mark gets and for the same reason: an id from an
+     * older build is a colour this one does not have, and a body that silently
+     * painted nothing would be a player's choice quietly deleted. */
+    const bd = markById(look.band);
+    if (bd.color == null) delete next.band; else next.band = bd.id;
+  }
   if ('callsign' in look) {
     const cs = cleanCallsign(look.callsign);
     if (cs) next.callsign = cs; else delete next.callsign;
@@ -769,7 +901,36 @@ export function dossier(m, army = null) {
   if (A) rows.push(['Army', A.name]);
   const mk = markById(m.look?.mark);
   if (mk.color != null) rows.push(['Mark', mk.name]);
+  const bd = markById(m.look?.band);
+  if (bd.color != null) rows.push(['Band', bd.name]);
   return rows;
+}
+
+/**
+ * THE ORDERS OF THE DAY, as sentences a screen prints and does not think
+ * about. Derived here for `dossier`'s reason — the index page renders these
+ * and a check compares the page against this same function, so a page that
+ * stopped saying one goes red rather than the check being taught to agree.
+ *
+ * Names resolve through the roll so a bonded pair prints the callsigns the
+ * player actually reads; a man since struck off keeps his bare designation,
+ * which is the truthful spelling of what remains of him.
+ */
+export function honoursOf(c) {
+  if (!c?.honours?.length) return [];
+  const by = new Map((c.men || []).map((m) => [m.designation, m]));
+  const who = (d) => { const m = by.get(d); return m ? nameOf(m) : d; };
+  return c.honours.map((h) => {
+    switch (h.kind) {
+      case 'named': return `${h.designation} came home with a name — "${h.detail}"`;
+      case 'promoted': return `${who(h.designation)} made ${h.detail}`;
+      case 'bonded': return `${who(h.designation)} and ${who(h.detail)} are bonded — `
+        + `${BOND_AREAS} grounds side by side`;
+      case 'fifth': return `${who(h.designation)}: five runs survived`;
+      case 'scarred': return `${who(h.designation)} went down out there and got back up`;
+      default: return null;
+    }
+  }).filter(Boolean);
 }
 
 /* ── what a roster screen prints about a bond ─────────────────────────── */

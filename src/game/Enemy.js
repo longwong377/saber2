@@ -5445,6 +5445,11 @@ export class Enemy {
     if (this.actor?.ragdolled) this.recover();
     const c = this.world?.command;
     if (c && this.trooper) {
+      /* THE WOUND IS REMEMBERED. `Trooper.wounds` was declared, persisted and
+       * displayed from the day the record existed, and this is its one writer:
+       * went down, was picked up, lived. The dossier phrases it and `scorchUp`
+       * paints it on the plate at the next deploy. */
+      this.trooper.wounds = (this.trooper.wounds | 0) + 1;
       c.log.push({ t: 'saved', name: this.trooper.name, area: c.areaNumber, wave: c.wave });
       if (this.team === c.commander?.side) {
         this.world?.notify?.(`${this.trooper.name} IS UP`, 'back on their feet, and not for long');
