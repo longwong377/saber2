@@ -3423,7 +3423,10 @@ export function paradeContent(figures) {
  */
 export const PARADE_SHOTS = [
   { id: 'line', name: 'The line', zoom: 1, focus: 0 },
-  { id: 'man', name: 'The man', zoom: 2.4, focus: 0.5 },
+  /* Full figure, head to boots — 1.15 is "fills the frame with a margin",
+   * measured against the screenshot harness; 2.4 was a torso. `close` is the
+   * creator's own proven face framing, one man over. */
+  { id: 'man', name: 'The man', zoom: 1.15, focus: 0.3 },
   { id: 'close', name: 'Close', zoom: 3.4, focus: 0.74 },
 ];
 

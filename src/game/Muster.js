@@ -210,6 +210,14 @@ const CLONE_LINES = [
   'Field-strips anything with a trigger. Twice, to be sure.',
   'Stands closest to the general. Says it is a coincidence.',
   'Has walked away from two crashes. Does not talk about the third.',
+  'Learned every callsign on the roll by the second day.',
+  'Shoots left-handed. The armourer has given up asking.',
+  'Saves half of every ration. Will not say for what.',
+  'Whistles the extraction tone in his sleep.',
+  'Asked for the oldest rifle in the crate. Keeps it shooting.',
+  'Memorised the withdrawal route before the drop route.',
+  'Draws the terrain in the dust and stares at it.',
+  'Has never once ridden in the middle of the dropship.',
 ];
 const DROID_LINES = [
   'Boot sequence two seconds slow. Compensates by never stopping.',
@@ -228,6 +236,14 @@ const DROID_LINES = [
   'Has outlived four commanding units. Draws no conclusion.',
   'Hums a maintenance tone in standby. The others sync to it.',
   'Marked "return to foundry" twice. Returned to the line twice.',
+  'Requisitioned one (1) paintbrush. Purpose: unlogged.',
+  'Its left knee squeaks on the advance. Never on the retreat.',
+  'Stores fallen units\' serials in a partition nobody assigned.',
+  'Calculates odds aloud. Rounds them up for the others.',
+  'Turns to face the artillery. Says the data is better.',
+  'Has a designated rock on three separate battlefields.',
+  'Reboots facing the enemy. Standing orders, it says.',
+  'Its targeting laser is a degree warm. It calls this style.',
 ];
 
 /** The line for one designation — a pure hash, stable for the man's life. */
