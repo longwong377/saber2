@@ -2995,6 +2995,8 @@ body:has(#touch.on) .powers .pw{touch-action:none}
   display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
 .orbat-squad h5 em{font-style:normal;font-weight:700;letter-spacing:.04em;
   text-transform:none;color:var(--dim);font-size:11px}
+.company-squadname{display:flex;gap:6px;margin:0 0 6px}
+.company-squadname input{flex:1;min-width:0}
 /* A man left behind is not a casualty and the line does not read like one:
    the killer's red is for the ones something killed. */
 .fell.left{color:var(--dim)}

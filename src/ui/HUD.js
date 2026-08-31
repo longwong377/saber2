@@ -851,9 +851,15 @@ export class OrderWheel extends RadialWheel {
       const n = d.squadsOf?.(d.commander)?.length ?? 0;
       if (n <= 1) return 'One squad. Everything you order goes to it.';
       const sel = d.selectedSquad;
+      /* BY THE SQUAD'S OWN NAME, through the director's one reader — a squad
+       * the menu calls Havoc and the wheel calls 2nd is two squads as far as
+       * the player is concerned. `ordinal` was this file's own second copy of
+       * "what a squad is called". */
+      const word = (d.commander?.army?.squadWord || 'squad').toLowerCase();
       return sel == null
-        ? `All ${n} squads. Choose this to pick one.`
-        : `${ordinal(sel + 1)} Squad only. Choose this again to step on.`;
+        ? `All ${n} ${word}s. Choose this to pick one.`
+        : `${d.squadLabel?.(sel) ?? `${ordinal(sel + 1)} Squad`} only. `
+          + 'Choose this again to step on.';
     }
     if (item.kind === 'detach') {
       const t = d?.nearestTrooper?.();

@@ -253,6 +253,21 @@ export const blank = (army = ARMY_IDS[0]) => ({
   /** The run this roll was founded on. Null until the first man is kept. */
   founded: null,
   /**
+   * ── WHAT THIS COMPANY CALLS ITS SQUADS ────────────────────────────────
+   *
+   * An array of names by squad index — `squads[1]` is what 2nd Squad is
+   * called. Empty entries mean the number, which is what every squad is
+   * called until somebody names it.
+   *
+   * A NAME PER SQUAD AND NOT A RECORD PER SQUAD. Everything else about a
+   * squad is derived — who is in it is `Trooper.squad` grouped at read time,
+   * who leads it is `leadOf`, where it is standing is the frame — and
+   * inventing a stored object for one string would give every one of those
+   * derivations something to drift from. This is the one fact about a squad
+   * that cannot be derived, because it is a thing the player said.
+   */
+  squads: [],
+  /**
    * ORDERS OF THE DAY — the moments of the LAST fold, overwritten every time.
    * A promotion, a name earned, a bond formed, a fifth run, a wound survived:
    * ceremony without a ceremony screen, read once off the index page the next
@@ -520,6 +535,12 @@ export function load(army = ARMY_IDS[0]) {
       ? v.fallen.map(saneFallen).filter(Boolean).slice(0, FALLEN_KEEP)
       : [],
     founded: typeof v.founded === 'string' ? v.founded : null,
+    /* THE SQUAD NAMES, cleaned exactly as a callsign is and capped at the
+     * number of squads a line can form. A name past the ceiling is a name for
+     * a squad the field will never make, and an empty slot is the number. */
+    squads: Array.isArray(v.squads)
+      ? v.squads.slice(0, SQUADS_MAX).map((n) => cleanSquadName(n))
+      : [],
     honours: Array.isArray(v.honours)
       ? v.honours.filter((h) => h && HONOUR_KINDS.includes(h.kind)
           && typeof h.designation === 'string')
@@ -548,6 +569,7 @@ export function save(company) {
     lost: company.lost | 0,
     fallen: (company.fallen || []).slice(0, FALLEN_KEEP),
     founded: company.founded ?? null,
+    squads: (company.squads || []).slice(0, SQUADS_MAX),
     honours: (company.honours || []).slice(0, HONOURS_KEEP),
   };
   writeAll(all);
@@ -1074,6 +1096,65 @@ export function assign(army, key, squad) {
  * veteran's offering different squads for the same company.
  */
 export const SQUADS_MAX = Math.max(1, Math.ceil(MAX_STRENGTH / SQUAD));
+
+/** How long a squad's name may be. Shorter than a callsign: it is printed in
+ *  a notification headline in the middle of a fight. */
+export const SQUAD_NAME_MAX = 14;
+
+/** A squad name, made safe — the same rule a callsign follows, one line. */
+export function cleanSquadName(v) {
+  if (typeof v !== 'string') return '';
+  const out = v.replace(/[<>&`\\\n\r\t]/g, '').trim().slice(0, SQUAD_NAME_MAX);
+  return out;
+}
+
+/**
+ * ══ WHAT THIS COMPANY CALLS ITS SQUADS ═════════════════════════════════════
+ *
+ * "I should be able to name my squads before starting a game."
+ *
+ * A squad is otherwise entirely derived — its men are `Trooper.squad` grouped
+ * at read time, its leader is `leadOf`, its ground is a frame — and a name is
+ * the one fact about it that cannot be, because it is a thing the player said.
+ * So it is a string per index on the roll and nothing else: no stored squad
+ * object for the derivations to drift from.
+ *
+ * `''` clears it, and an empty name reads as the number, which is what every
+ * squad is called until somebody names it.
+ */
+export function nameSquad(army, index, name) {
+  const c = load(army);
+  const i = index | 0;
+  if (!(i >= 0 && i < SQUADS_MAX)) return c;
+  const list = (c.squads || []).slice();
+  while (list.length <= i) list.push('');
+  list[i] = cleanSquadName(name);
+  /* Trailing blanks are not a name and not worth a byte. */
+  while (list.length && !list[list.length - 1]) list.pop();
+  c.squads = list;
+  return save(c);
+}
+
+/**
+ * What squad `i` is called — the name if it has one, the number if not.
+ *
+ * ONE READER FOR EVERY SURFACE. The tab prints it, the fight's notifications
+ * print it, and the order wheel prints it; a second copy of "name or number"
+ * would be a squad the menu calls Havoc and the HUD calls 2nd.
+ *
+ * @param word  the army's own word for a squad — `ARMIES[id].squadWord`,
+ *              passed in because this file does not know which army a company
+ *              belongs to any better than its caller does.
+ */
+export function squadLabel(company, i, word = 'Squad') {
+  const named = (company?.squads || [])[i | 0];
+  return named || `${word} ${(i | 0) + 1}`;
+}
+
+/** Every squad name on a roll, as a plain array — what the fight is handed. */
+export function squadNames(company) {
+  return (company?.squads || []).slice(0, SQUADS_MAX).map((n) => n || '');
+}
 
 /** What a man is called on a screen — the same rule `Trooper.name` uses. */
 export function nameOf(m) {

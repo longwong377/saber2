@@ -1030,7 +1030,12 @@ export class World {
            * six veterans with no browser in the room; a headless bench that
            * passes nothing gets the fresh muster it always got.
            */
-          veterans: this.run.veterans || null })
+          veterans: this.run.veterans || null,
+          /* …AND WHAT THE PLAYER CALLS THEIR SQUADS. Same handoff as the
+           * veterans and for the same split: the names live in a localStorage
+           * module and this file has never been one. See `squadNames` on the
+           * director. */
+          squadNames: this.run.squadNames || null })
       : new WaveDirector(this, { mode, pool: L.pool });
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = leadsArmy ? this.director : null;

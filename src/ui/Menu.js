@@ -41,6 +41,8 @@ import {
   dress as companyDress, appoint as companyAppoint, assign as companyAssign,
   SQUADS_MAX as companySquadsMax,
   nameOf as companyNameOf, companyLines, notSaving as companyNotSaving,
+  nameSquad as companyNameSquad, squadLabel as companySquadLabel,
+  SQUAD_NAME_MAX as companySquadNameMax,
   CALLSIGN_MAX as companyCallsignMax,
   honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
@@ -6351,10 +6353,45 @@ export class Menu {
       this._wireCompanyBack();
       return;
     }
-    if (!man) { host.innerHTML = this._companyIndexHtml(rolls); return; }
+    if (!man) {
+      host.innerHTML = this._companyIndexHtml(rolls);
+      this._wireSquadNames();
+      return;
+    }
     host.innerHTML = this._companyManHtml(roll, man);
     this._wireCompanyEdits(roll, man);
     this._wireCompanyBack();
+  }
+
+  /**
+   * THE SQUAD NAMES ON THE ORDER OF BATTLE, wired to the one door that writes
+   * one. Enter is the obvious key in a one-field row and there is no form here
+   * to submit — the menu is one page and a real `<form>` would navigate — so
+   * it is bound alongside the button, exactly as the callsign field is.
+   *
+   * The army is the plan's, because the order of battle is about the line the
+   * NEXT RUN fields and that is the only army it shows.
+   */
+  _wireSquadNames() {
+    const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+    if (!plan) return;
+    const write = (i, value) => {
+      audio.ui('click');
+      companyNameSquad(plan.army, i, value);
+      this._buildCompanyList();
+      this._showCompany(null);
+    };
+    for (const btn of document.querySelectorAll('[data-squad-name-save]')) {
+      const i = btn.dataset.squadNameSave | 0;
+      const field = document.querySelector(`[data-squad-name="${i}"]`);
+      if (!field) continue;
+      this._activate(btn, () => write(i, field.value), `Name squad ${i + 1}`);
+      field.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        write(i, field.value);
+      });
+    }
   }
 
   /** The keyboard-visible way off any page: one link, back to the index. */
@@ -6552,11 +6589,30 @@ export class Menu {
        * player something that is technically true and reads as noise. What is
        * worth printing is a RANK, or a seat the player gave. */
       const worth = lead && ((R && R.color != null) || seat);
+      /**
+       * …AND THE PLAYER MAY NAME IT.
+       *
+       * "I should be able to name my squads before starting a game (this is
+       *  all for any mode with troops)."
+       *
+       * A name is the one fact about a squad that cannot be derived — its men,
+       * its leader and its ground all are — and it is what turns "2nd Squad"
+       * into a thing you recognise when the fight says it has the ground. One
+       * reader, `Company.squadLabel`, so the tab, the order wheel and every
+       * notification in the fight say the same word.
+       */
+      const label = companySquadLabel(c, n, squadWord);
       return `<div class="orbat-squad">
-        <h5>${escKey(squadWord)} ${n + 1}<em>${men.length} `
+        <h5><span class="orbat-name">${escKey(label)}</span><em>${men.length} `
         + `${men.length === 1 ? 'man' : 'men'}${worth
           ? ` · ${seat ? 'has the seat: ' : ''}${escKey(R.short)} ${escKey(companyNameOf(lead))}`
           : ' · nobody in it outranks anybody'}</em></h5>
+        <div class="company-squadname">
+          <input class="squad-name" data-squad-name="${n}" type="text"
+            maxlength="${companySquadNameMax}" value="${escKey((c.squads || [])[n] || '')}"
+            placeholder="${escKey(`${squadWord} ${n + 1}`)}">
+          <button class="secondary squad-name-save" data-squad-name-save="${n}">Name</button>
+        </div>
         <div class="company-fallen company-taking">${men.map(manRow).join('')}</div>
       </div>`;
     }).join('');

@@ -4013,6 +4013,19 @@ export class CommandDirector extends WaveDirector {
      */
     this.veterans = Array.isArray(opts.veterans) ? opts.veterans : null;
     /**
+     * ── WHAT THE PLAYER CALLS THEIR SQUADS ────────────────────────────────
+     *
+     * "I should be able to name my squads before starting a game."
+     *
+     * An array of strings by squad index, handed in exactly the way the
+     * veterans are and for the same reason: the names live in `Company.js`,
+     * which is a localStorage module, and this file has never been one. Whoever
+     * builds the World reads `Company.squadNames()` and hands it over; the
+     * director prints what it is given. A run with none prints the numbers,
+     * which is what every squad is called until somebody names it.
+     */
+    this.squadNames = Array.isArray(opts.squadNames) ? opts.squadNames.slice() : null;
+    /**
      * WHICH RUNG THE CONTINGENT IS BUILT ON, or `CONTINGENT_MIXED`.
      *
      * A campaign is pinned to rung 0 whatever the options screen says, and that
@@ -4201,6 +4214,36 @@ export class CommandDirector extends WaveDirector {
     if (n <= 1) { this.selectedSquad = null; return null; }
     const cur = this.selectedSquad;
     this.selectedSquad = cur == null ? 0 : (cur + 1 >= n ? null : cur + 1);
+    /**
+     * …AND THE PLAYER IS TOLD WHO THEY ARE TALKING TO.
+     *
+     * "the troop management menu says 2 squads sometimes but for all intents
+     *  and purposes it's just one squad."
+     *
+     * It was two squads and the selection was a field nobody printed: the
+     * player pressed the target slot, `selectedSquad` moved from null to 0 to
+     * 1 to null, and NOTHING on screen changed until an order was given —
+     * which is a mode switch with no indicator, and is indistinguishable from
+     * the control doing nothing. So the cycle says out loud who has the next
+     * order, by the squad's own NAME where it has one, and how many men are in
+     * it, which is the other half of "I should be able to view my squads".
+     */
+    if (c === this.commander) {
+      const k = this.selectedSquad;
+      if (k == null) {
+        this.world?.notify?.('THE WHOLE LINE',
+          `${n} ${c?.army?.squadWord?.toLowerCase() || 'squad'}s — the next order is `
+          + 'for all of them');
+      } else {
+        const men = this.squadsOf(c)[k] || [];
+        const lead = this.leaderOf(men);
+        const alive = men.filter((t) => t.alive !== false).length;
+        this.world?.notify?.(`${this.squadLabel(k, c).toUpperCase()} HAS YOUR EAR`,
+          `${alive} ${alive === 1 ? 'man' : 'men'}`
+          + `${lead ? `, ${lead.rankRec.title.toLowerCase()} ${lead.name}` : ''}`
+          + ' — the next order is theirs alone');
+      }
+    }
     return this.selectedSquad;
   }
 
@@ -6099,8 +6142,10 @@ export class CommandDirector extends WaveDirector {
       const lead = this.leaderOf(men);
       const n = men.filter((t) => t.alive !== false).length;
       if (lead) {
-        this.world?.notify?.(`${lead.rankRec.title.toUpperCase()} ${lead.name} HAS THE GROUND`,
-          `${F.name.toLowerCase()} — ${n} ${n === 1 ? 'man' : 'men'}, and they stay there without you`);
+        this.world?.notify?.(
+          `${this.squadLabel(Number(squad) | 0, c).toUpperCase()} HAS THE GROUND`,
+          `${lead.rankRec.title.toLowerCase()} ${lead.name} — ${F.name.toLowerCase()}, `
+          + `${n} ${n === 1 ? 'man' : 'men'}, and they stay there without you`);
       }
       this.log.push({ t: 'delegate', formation: id, squad: Number(squad) | 0,
                       name: lead?.name || null, n, area: this.areaNumber, wave: this.wave });
@@ -7688,7 +7733,7 @@ export class CommandDirector extends WaveDirector {
       c.digs?.delete(key);
       this.log.push({ t: 'ground-lost', squad: Number(key) | 0, after: t.name,
                       area: this.areaNumber, wave: this.wave });
-      this.world?.notify?.('THE GROUND IS GIVEN UP',
+      this.world?.notify?.(`${this.squadLabel(Number(key) | 0, c).toUpperCase()} GIVES UP THE GROUND`,
         living.length
           ? `${t.name} was holding it — nobody left in the squad is licensed to, and they are `
             + 'coming back to you'
@@ -7714,6 +7759,23 @@ export class CommandDirector extends WaveDirector {
         `${t.name} was the last man who could steady a squad you are not standing in — `
         + 'from here the whole company leans on you');
     }
+  }
+
+  /**
+   * ══ WHAT SQUAD `k` IS CALLED ═══════════════════════════════════════════
+   *
+   * The name the player gave it, or the army's own word and the number. ONE
+   * READER, because a squad the menu calls Havoc and the HUD calls 2nd is two
+   * squads as far as the player is concerned — which is the whole complaint
+   * this answers.
+   *
+   * `squadWord` is the army's, so a Confederate 2nd Squad is 2nd Unit and a
+   * named one is whatever it was named either way.
+   */
+  squadLabel(k, c = this.commander) {
+    const named = (this.squadNames || [])[k | 0];
+    if (named) return named;
+    return `${c?.army?.squadWord || 'Squad'} ${(k | 0) + 1}`;
   }
 
   /** Which squad key `t` belongs to for `c`, as `squadPlanted` spells it. */
@@ -9028,8 +9090,9 @@ export class CommandDirector extends WaveDirector {
                     at: Math.round((this.world?.time || 0) * 10) / 10 });
     if (c === this.commander) {
       const lead = this.leaderOf(squad);
-      this.world?.notify?.(`${lead ? lead.name : `${k + 1} SQUAD`} — DUG IN`,
-        'the ground is a position now, and it is cover from anything at range');
+      this.world?.notify?.(`${this.squadLabel(k, c).toUpperCase()} — DUG IN`,
+        lead ? `${lead.name} has a position now, and it is cover from anything at range`
+             : 'the ground is a position now, and it is cover from anything at range');
     }
     return false;
   }

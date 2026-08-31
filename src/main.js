@@ -219,6 +219,28 @@ function veteransToField(levelKey = null) {
   return men;
 }
 
+/**
+ * WHAT THE PLAYER CALLS THEIR SQUADS, for the army the next run fields.
+ *
+ * The names are a fact about the COMPANY — they persist, they are set on the
+ * Company tab before you land, and they are the same names next run — so they
+ * come off the roll `musterPlan` names, exactly as the veterans do. A run that
+ * fields no army of yours (a duel, a lesson) plans nothing and hands nothing,
+ * and the fight prints the numbers, which is what every squad is called until
+ * somebody names it.
+ *
+ * NOT filtered by whether that squad will exist: `Company.squadNames` is a
+ * flat array by index and the director reads the entry for whatever squads the
+ * deal actually makes. A name for a fourth squad on a line that forms two is
+ * simply never printed, and it is still there the run the line is big enough.
+ */
+function squadNamesToField() {
+  if (session) return null;
+  const plan = musterPlan(settings, LEVELS[settings.level]?.armies);
+  if (!plan) return null;
+  return Company.squadNames(Company.load(plan.army));
+}
+
 /** A name from the wire, on its way into innerHTML. */
 const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
@@ -440,7 +462,12 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
 
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
-  world = new World(engine, worldSettings(), { veterans: veteransToField(levelKey) });
+  world = new World(engine, worldSettings(), {
+    veterans: veteransToField(levelKey),
+    /* WHAT THE PLAYER CALLS THEIR SQUADS — read here for the same reason the
+     * veterans are: main.js owns localStorage and the game owns the game. */
+    squadNames: squadNamesToField(),
+  });
   /**
    * THE RUN'S NUMBER, BEFORE ANYTHING READS IT.
    *

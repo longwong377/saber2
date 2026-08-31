@@ -2115,4 +2115,95 @@ export async function run({ check, assert, THREE: T }) {
       return `${report.join(' and ')}: the two surfaces agree hex for hex`;
     });
 
+  check('barracks: a squad has a name, and every surface says the same one',
+    () => withCleanStore(() => {
+      /**
+       * ── "I SHOULD BE ABLE TO NAME MY SQUADS BEFORE STARTING A GAME" ───────
+       *
+       * A squad is otherwise entirely derived — its men are `Trooper.squad`
+       * grouped at read time, its leader is `leadOf`, its ground is a frame —
+       * and the name is the one fact about it that cannot be, because it is a
+       * thing the player said. So it is a string per index on the roll and
+       * nothing else: no stored squad object for those derivations to drift
+       * from.
+       *
+       * THE POINT IS THAT EVERY SURFACE SAYS THE SAME WORD. A squad the tab
+       * calls Havoc and the order wheel calls 2nd is two squads as far as the
+       * player is concerned, which is the complaint this answers. So this
+       * drives the tab, then asks the FIGHT, and asserts they agree.
+       */
+      const roll = freshRoll(8);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+
+      const { menu, doc, close } = menuOn({ mode: 'command' });
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(null);
+        const fields = [...doc.getElementById('company-page').querySelectorAll('[data-squad-name]')];
+        assert(fields.length >= 2,
+          `${fields.length} squad name field(s) on an order of battle of two squads`);
+        assert(/Squad 1/.test(fields[0].getAttribute('placeholder') || ''),
+          `an unnamed squad's field does not offer its number: `
+          + `"${fields[0].getAttribute('placeholder')}"`);
+        fields[1].value = 'Havoc';
+        doc.querySelector('[data-squad-name-save="1"]').click();
+      } finally { close(); }
+
+      assert(JSON.stringify(Company.load('republic').squads) === JSON.stringify(['', 'Havoc']),
+        `the store holds ${JSON.stringify(Company.load('republic').squads)}`);
+
+      /* THE HEADING SAYS IT — the same page, re-read off the store. */
+      const again = menuOn({ mode: 'command' });
+      try {
+        again.menu.showMenu();
+        again.menu._buildCompanyList();
+        again.menu._showCompany(null);
+        const heads = [...again.doc.getElementById('company-page')
+          .querySelectorAll('.orbat-name')].map((h) => h.textContent);
+        assert(heads[1] === 'Havoc', `the order of battle reads ${JSON.stringify(heads)}`);
+        assert(heads[0] === 'Squad 1', 'an unnamed squad stopped reading as its number');
+      } finally { again.close(); }
+
+      /* AND THE FIGHT SAYS IT, through the handoff main.js makes. */
+      const { d, c, w } = licenceArmy();
+      d.squadNames = Company.squadNames(Company.load('republic'));
+      assert(d.squadLabel(1, c) === 'Havoc',
+        `the director calls squad 1 "${d.squadLabel(1, c)}"`);
+      assert(d.squadLabel(0, c) === 'Squad 1',
+        `the director calls an unnamed squad "${d.squadLabel(0, c)}"`);
+      /* …in the sentence a player actually reads. Selecting a squad used to
+       * change a field nobody printed, which is a mode switch with no
+       * indicator and is indistinguishable from the control doing nothing. */
+      w.notes.length = 0;
+      d.cycleSquad(c);
+      d.cycleSquad(c);
+      const said = w.notes.map(([a]) => a);
+      assert(said.length === 2, `cycling twice said ${said.length} thing(s)`);
+      assert(said[1].includes('HAVOC'),
+        `cycling onto the named squad said "${said[1]}"`);
+      /* AND A PLANTED ORDER NAMES IT TOO. */
+      const sq = d.squadsOf(c)[1];
+      for (const t of sq) if (t.body) t.body.position.set(-60, 0, 0);
+      w.notes.length = 0;
+      d.order('cover', c, 1);
+      assert(w.notes.some(([a]) => a.includes('HAVOC')),
+        `the order named ${JSON.stringify(w.notes.map(([a]) => a))}`);
+
+      /* A NAME IS CLEANED AND CAPPED, and clearing it gives the number back. */
+      Company.nameSquad('republic', 0, '  <b>Ghost</b> squad that is far too long  ');
+      const first = Company.load('republic').squads[0];
+      assert(first.length <= Company.SQUAD_NAME_MAX && !/[<>&]/.test(first),
+        `a hostile name was stored as "${first}"`);
+      Company.nameSquad('republic', 1, '');
+      assert(Company.squadLabel(Company.load('republic'), 1, 'Squad') === 'Squad 2',
+        'clearing a name did not give the number back');
+      /* …and a squad past the ceiling is not a squad. */
+      Company.nameSquad('republic', 99, 'Nowhere');
+      assert((Company.load('republic').squads || []).length <= Company.SQUADS_MAX,
+        'a name was stored for a squad the field can never form');
+      return `named on the tab, read on the order of battle, said by the wheel's own `
+        + 'reader and by two fight notifications; cleaned, capped and clearable';
+    }));
+
 }
