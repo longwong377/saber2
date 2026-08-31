@@ -599,6 +599,37 @@ export async function run({ check, assert }) {
     const quiet = rosterHtml(bare, d.squadNames, 'Squad');
     assert(!/out of reach|in earshot/.test(quiet),
       'a roster with no reach information printed a reach readout anyway');
-    return 'per-man `heard` on the summary · "out of reach" · "2/5 in earshot" · silent without it';
+    /**
+     * …AND IT FOLLOWS YOUR FEET, WHICH IS THE HALF THAT NEEDED ITS OWN CLOCK.
+     *
+     * `_announceRoster` fires on a death, a deploy and a start — every one of
+     * them something happening to the ROLL. Earshot is not about the roll; it
+     * changes on a frame where nothing at all has happened to anybody, because
+     * YOU walked. So a panel refreshed only on those events would have said
+     * "2nd Squad — out of reach" for the whole of the next engagement after
+     * the player walked back to it.
+     *
+     * DRIVEN THROUGH `_troops`, which is the loop the game actually runs, and
+     * stepped for a real quarter second rather than poked — a check that calls
+     * `_announceRoster` itself proves nothing about whether anything calls it.
+     */
+    let paints = 0;
+    d.onRoster = (r) => { seen = r; paints++; };
+    for (const t of men) t.body.position.set(200, 0, 200);
+    for (let i = 0; i < 30; i++) d._troops(1 / 30, {});
+    const settled = paints;
+    for (let i = 0; i < 30; i++) d._troops(1 / 30, {});
+    assert(paints === settled,
+      `the panel repainted ${paints - settled} times in a second with nobody moving — the `
+      + 'readout is on a timer rather than on a change');
+    for (const t of men) t.body.position.set(2, 0, 2);
+    for (let i = 0; i < 30; i++) d._troops(1 / 30, {});
+    assert(paints > settled,
+      'the squad walked back into earshot and the panel never heard about it — the readout '
+      + 'is only refreshed by things that happen to the roll, and this one happens to you');
+    assert(seen.roll.filter((r) => r.heard === false).length === 0,
+      'the repaint carried the old picture');
+    return 'per-man `heard` on the summary · "out of reach" · "2/5 in earshot" · '
+      + 'silent without it · repaints when they cross, not on a timer';
   });
 }

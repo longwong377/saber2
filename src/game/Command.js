@@ -4855,12 +4855,17 @@ export class CommandDirector extends WaveDirector {
     /* HE IS DRAWN FROM THE WHOLE ARMY AND NOT FROM THE SQUAD BEING SENT TO,
      * because the squad being sent to is the one that cannot hear you. Anybody
      * of yours who DID hear can carry it. */
+    /* THE VOICES ONCE, not once per man. `_voices` walks the whole roll to find
+     * the licensed relays in it, so asking it inside this loop made choosing a
+     * runner quadratic in the size of the company — 576 passes at
+     * `MAX_STRENGTH`, on a frame the player is already being told something. */
+    const voices = this._voices(c);
     const pool = [];
     for (const t of this.led(c)) {
       if (t.alive === false || t.runner) continue;
       const e = t.body;
       if (!e || e.dead) continue;
-      if (!this._inReach(t, this._voices(c))) continue;
+      if (!this._inReach(t, voices)) continue;
       if (this.leaderOf(this.squadOf(t, c)) === t) continue;
       pool.push(t);
     }
@@ -9757,6 +9762,33 @@ export class CommandDirector extends WaveDirector {
      */
     this._threatT = (this._threatT || 0) + dt;
     if (this._threatT >= 1) { this._threatT = 0; this._threatAt = -1; }
+    /**
+     * ── AND WHO CAN HEAR YOU, WHICH CHANGES BECAUSE YOU WALKED ─────────────
+     *
+     * `_announceRoster` is EVENT-DRIVEN — a death, a deploy, a start — and
+     * every one of those events is something happening to the ROLL. The
+     * earshot readout it now carries is not about the roll at all; it is about
+     * where you are standing, and it changes on a frame where nothing has
+     * happened to anybody. So a panel refreshed only on those events would
+     * have told the player "2nd Squad — out of reach" for the whole of the
+     * next engagement after they walked back to it.
+     *
+     * FOUR TIMES A SECOND AND ONLY ON A CHANGE. The signature is the deaf set,
+     * so a player standing still repaints nothing and a player crossing the
+     * boundary repaints once. The cost when nothing changes is one walk of the
+     * roll per quarter second, against `_troops`'s own walk of it every frame.
+     */
+    this._earT = (this._earT || 0) + dt;
+    if (this._earT >= 0.25) {
+      this._earT = 0;
+      const c0 = this.commander;
+      if (c0 && this.onRoster) {
+        const voices = this._voices(c0);
+        let sig = '';
+        for (const t of this.led(c0)) if (!this._inReach(t, voices)) sig += t.id + ',';
+        if (sig !== this._earSig) { this._earSig = sig; this._announceRoster(); }
+      }
+    }
     /* Per commander, and the indices restart per army: `cmdIndex` is a position
      * in ONE roster's living list, and two armies sharing a numbering would
      * have the second one solving its slots against the first one's count. */
