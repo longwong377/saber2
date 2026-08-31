@@ -62,9 +62,19 @@ const KEY = 'saber.company.v1';
  */
 function withCleanStore(fn) {
   const had = localStorage.getItem(KEY);
+  /* The muster slate rides along: the Company tab's list build calls
+   * `Muster.ensure`, which writes `saber.muster.v1` when the plan wants fresh
+   * men — so a fixture that cleaned only the company key would leave slate
+   * state behind for the next clause to trip over. */
+  const hadSlate = localStorage.getItem('saber.muster.v1');
   localStorage.removeItem(KEY);
+  localStorage.removeItem('saber.muster.v1');
   try { return fn(); }
-  finally { if (had == null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, had); }
+  finally {
+    if (had == null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, had);
+    if (hadSlate == null) localStorage.removeItem('saber.muster.v1');
+    else localStorage.setItem('saber.muster.v1', hadSlate);
+  }
 }
 
 /** A roster of `n` fresh clones, off the real roster so the names are real. */
@@ -1055,10 +1065,31 @@ export async function run({ check, assert }) {
     const dressBody = /export function dress\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(code)?.[1] || '';
     assert(dressBody, 'Company.dress is gone');
     const fields = [...dressBody.matchAll(/'(\w+)' in look/g)].map((m) => m[1]).sort();
-    assert(fields.join(',') === 'callsign,mark',
-      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a mark and a name, `
-      + 'and a roster screen that can edit anything else is a cheat panel');
-    return `dress writes ${fields.join(' + ')} and nothing else; no currency word in Company.js`;
+    /* Three now — the band joined the mark and the name in the barracks
+     * rebuild, argued at `bandUp` and priced by the paint checks below and in
+     * barracks.mjs. Still cosmetic to the last field, still validated against
+     * the one palette, and STILL a pin: the day a fourth appears, somebody
+     * comes here and argues it the way the band was argued. */
+    assert(fields.join(',') === 'band,callsign,mark',
+      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a mark, a band and `
+      + 'a name, and a roster screen that can edit anything else is a cheat panel');
+    /* …and the slate's own writer holds the same line for men not yet on any
+     * roll: `Muster.dressRecruit` takes the same three fields and Muster.js
+     * has grown no currency word either. */
+    const mu = await src('game/Muster.js');
+    const muCode = strip(mu);
+    for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {
+      assert(!new RegExp(`\\b${word}\\b`, 'i').test(muCode),
+        `Muster.js has grown a "${word}" — the slate has become a shop`);
+    }
+    const recruitBody = /export function dressRecruit\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(muCode)?.[1] || '';
+    assert(recruitBody, 'Muster.dressRecruit is gone');
+    const rFields = [...recruitBody.matchAll(/'(\w+)' in look/g)].map((m) => m[1]).sort();
+    assert(rFields.join(',') === 'band,callsign,mark',
+      `Muster.dressRecruit writes ${rFields.join(', ') || 'nothing'} — a recruit may be named `
+      + 'and painted, nothing else');
+    return `dress and dressRecruit write ${fields.join(' + ')} and nothing else; `
+      + 'no currency word in Company.js or Muster.js';
   });
 
   check('company: the roll says which of them you are taking out next run', () => withCleanStore(() => {
