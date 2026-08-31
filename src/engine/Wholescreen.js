@@ -1,6 +1,21 @@
 /**
  * BATTLEFRONT BORZ — the whole screen.
  *
+ * ── WHY THIS FILE IS NOT CALLED Fullscreen.js ───────────────────────────
+ *
+ * It was, for one day, and one player could not start the game at all: their
+ * browser's content blocker killed the request for a same-origin module named
+ * `Fullscreen.js` — a URL that reads exactly like the popup-and-overlay
+ * scripts filter lists exist to block — and one blocked file takes the whole
+ * module graph down with it. The boot doctor's verdict, verbatim: "the request
+ * for …/src/engine/Fullscreen.js failed outright (Failed to fetch) — something
+ * is blocking it before it reaches the site." Worked in every other browser,
+ * failed in theirs from the day this file shipped.
+ *
+ * So the name says what the header always said instead. A boot-critical file
+ * must not be named like blocker bait; `wiring.mjs` now holds every file the
+ * browser loads to that rule, so the next Popup.js or Overlay.js cannot ship.
+ *
  * "make sure there's a way to make the game full screen right now you still
  * see your browser/tabs/desktop but I think it would be cool to be able to be
  * completely full screen"

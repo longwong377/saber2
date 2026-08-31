@@ -8,7 +8,7 @@ import * as THREE from '../vendor/three/three.module.js';
 import { Engine, QUALITY } from './engine/Engine.js';
 import { Input } from './engine/Input.js';
 import { Touch } from './engine/Touch.js';
-import { goFullscreen } from './engine/Fullscreen.js';
+import { goFullscreen } from './engine/Wholescreen.js';
 import { audio } from './engine/Audio.js';
 import { initPhysics } from './physics/Rapier.js';
 import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,

@@ -48,7 +48,7 @@ import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
 import { handler } from '../serve.mjs';
 import { Touch, TOUCH_BUTTONS, TOUCH_TOOLS } from '../../src/engine/Touch.js';
 import { Input } from '../../src/engine/Input.js';
-import { canFullscreen, isFullscreen, goFullscreen, exitFullscreen, toggleFullscreen } from '../../src/engine/Fullscreen.js';
+import { canFullscreen, isFullscreen, goFullscreen, exitFullscreen, toggleFullscreen } from '../../src/engine/Wholescreen.js';
 import { ACTION_IDS } from '../../src/engine/Bindings.js';
 import { DEFAULT_SETTINGS, SETTING_READERS } from '../../src/ui/Menu.js';
 

@@ -260,4 +260,44 @@ export async function run({ check, assert }) {
       + 'and fail in an old one, which is how this was missed the first time');
     return `${files.length} files the browser loads, no bare specifiers, no import map`;
   });
+
+  check('no file the browser loads is named like something a content blocker eats', async () => {
+    /**
+     * THE GAME WAS UNPLAYABLE ON ONE PLAYER'S BROWSER BECAUSE OF A FILENAME.
+     *
+     * `src/engine/Fullscreen.js` shipped with the fullscreen feature and that
+     * browser's content blocker — filter lists match URL substrings, and
+     * "fullscreen" sits beside "popup" and "overlay" in the annoyance lists —
+     * refused the request outright. One refused file takes the whole module
+     * graph down, so the game worked in every other browser and died on that
+     * one at "forging blade", from the day the file was added. The boot
+     * doctor's verdict named it: "failed outright (Failed to fetch) —
+     * something is blocking it before it reaches the site."
+     *
+     * A content blocker is part of the environment the game ships into, the
+     * same as a small screen or an old GPU. So no file the BROWSER loads may
+     * carry a name that reads as ad-tech or annoyance-tech. The list is the
+     * words generic filter lists actually match, not every word that could
+     * offend one; `tools/` is exempt because nothing in it crosses the wire.
+     */
+    const { readdir } = await import('node:fs/promises');
+    const root = new URL('../../', import.meta.url);
+    const BAIT = /(^|[-._])(ads?|advert\w*|banner|pop-?up|pop-?under|track(er|ing)?|analytics|telemetry|beacon|sponsor\w*|promo\w*|interstitial|overlay|fullscreen|adblock)([-._]|$)/i;
+    const offenders = [];
+    const walk = async (dir) => {
+      for (const e of await readdir(new URL(dir, root), { withFileTypes: true })) {
+        if (e.name === 'node_modules' || e.name.startsWith('.')) continue;
+        const p = `${dir}${e.name}`;
+        if (e.isDirectory()) { if (BAIT.test(e.name)) offenders.push(p + '/'); await walk(`${p}/`); }
+        else if (BAIT.test(e.name.replace(/\.[a-z0-9]+$/i, ''))) offenders.push(p);
+      }
+    };
+    await walk('src/');
+    await walk('vendor/');
+    await walk('assets/');
+    assert(!offenders.length,
+      `${offenders.length} file(s) named like blocker bait — a filter list will eat the request and `
+      + `one refused module kills the whole boot: ${offenders.join(', ')}`);
+    return 'every file the browser loads has a name no filter list matches';
+  });
 }

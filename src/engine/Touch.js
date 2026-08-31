@@ -55,7 +55,7 @@
  * already makes.
  */
 
-import { canFullscreen, toggleFullscreen } from './Fullscreen.js';
+import { canFullscreen, toggleFullscreen } from './Wholescreen.js';
 
 /** How much of a screen width a full stick throw is. */
 const STICK_RADIUS = 0.16;
@@ -206,7 +206,7 @@ export class Touch {
      * you PRESS rather than something the frame loop can decide to do. On a
      * phone it also takes the URL bar away, which is what stops the viewport
      * resizing under the HUD every time the page is touched — see
-     * Fullscreen.js.
+     * Wholescreen.js.
      *
      * Only where the API exists. iOS Safari on an iPhone has no fullscreen at
      * all, and a button that cannot work is worse than no button.

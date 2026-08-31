@@ -6,9 +6,9 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-/* The one place a menu can ask for the whole screen — see Fullscreen.js for
+/* The one place a menu can ask for the whole screen — see Wholescreen.js for
  * why it must be a press and never a frame-loop decision. */
-import { canFullscreen, toggleFullscreen } from '../engine/Fullscreen.js';
+import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood } from '../game/Bodies.js';
