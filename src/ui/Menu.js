@@ -11,7 +11,8 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
-         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor } from '../game/Bodies.js';
+         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor,
+         KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom } from '../game/Bodies.js';
 import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -3386,7 +3387,13 @@ export function buildParadeFigure(man) {
   if (!A?.build) return null;
   let built;
   try {
-    built = A.build({ scale: A.scale ?? 1, ...(bodyOptsFor(man.type) || {}) });
+    /* THE MAN'S OWN KIT, over the rung's — the same merge `Enemy._build` does,
+     * so the figure on the parade ground is the body that will land. */
+    built = A.build({
+      scale: A.scale ?? 1,
+      ...(bodyOptsFor(man.type) || {}),
+      ...kitOptsFrom(man.look, man.kind === 'steel' ? 'steel' : 'flesh'),
+    });
   } catch { return null; }
   const rig = built.rig ?? null;
   const root = rig?.root ?? built.group ?? null;
@@ -3421,6 +3428,16 @@ export function paradeContent(figures) {
  * The three shots the stage bar offers. `line` frames everybody; the other
  * two need a selected man and the bar disables them until there is one.
  */
+/**
+ * A kit value, as an attribute-safe tag and back. `null`, `true`, `false` and
+ * a handful of words are the whole vocabulary `KIT_FIELDS` can hold, so this
+ * is three letters and a prefix rather than a serialiser — and it never emits
+ * a quote, which is the only thing that mattered.
+ */
+export const kitTag = (v) => (v === null ? 'n' : v === true ? 't' : v === false ? 'f' : `s:${v}`);
+export const kitValue = (s) => (s === 'n' ? null : s === 't' ? true : s === 'f' ? false
+  : (typeof s === 'string' && s.startsWith('s:') ? s.slice(2) : null));
+
 export const PARADE_SHOTS = [
   { id: 'line', name: 'The line', zoom: 1, focus: 0 },
   /* Full figure, head to boots — 1.15 is "fills the frame with a margin",
@@ -6663,7 +6680,96 @@ export class Menu {
             data-band="${escKey(k.id)}" title="${escKey(k.name)}"
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
-      </div>`;
+      </div>
+      ${this._dressingHtml(m.look, kindOfArmy(roll.army))}`;
+  }
+
+  /**
+   * THE DRESSING ROOM — every knob the body builders take, as rows of chips.
+   *
+   * One renderer for a veteran and a recruit alike, because the two differ in
+   * which door the write goes through and in nothing else a player can see.
+   * The vocabulary is `KIT_FIELDS` and `PAINT_SLOTS`, read off Bodies.js so
+   * this file holds no second list of what a pauldron may be — the day a
+   * builder learns a new option, the screen offers it.
+   *
+   * The chips carry the VALUE rather than an index, so a row can be re-ordered
+   * or a value retired without silently re-pointing somebody's saved kit at
+   * the wrong thing — and it is carried in a QUOTE-FREE encoding (`n`, `t`,
+   * `f`, `s:<word>`) rather than as JSON, because JSON's own quotes inside a
+   * double-quoted HTML attribute close the attribute. Every legal value in
+   * `KIT_FIELDS` is a scalar, so three letters cover the whole vocabulary.
+   */
+  _dressingHtml(look, kind) {
+    const legal = KIT_FIELDS[kind] || {};
+    const kit = look?.kit || {};
+    const paint = look?.paint || {};
+    const swatch = (p, on, field) => `<i class="swatch${on ? ' sel' : ''}"
+        data-paint="${escKey(field)}" data-hue="${escKey(p ? p.id : '')}"
+        title="${escKey(p ? p.name : 'As issued')}"
+        style="background:${p ? `#${p.color.toString(16).padStart(6, '0')}` : 'transparent'};
+               ${p ? '' : 'border-style:dashed'}"></i>`;
+    const paintRows = (PAINT_SLOTS[kind] || []).map(([field, name]) => `
+      <div class="kit-row"><span class="kit-name">${escKey(name)}</span>
+        <span class="swatches company-paints">
+          ${swatch(null, !paint[field], field)}
+          ${PAINTS.map((p) => swatch(p, paint[field] === p.id, field)).join('')}
+        </span></div>`).join('');
+    const kitRows = Object.keys(legal).map((field) => {
+      const row = legal[field];
+      const now = field in kit ? kit[field] : undefined;
+      return `<div class="kit-row"><span class="kit-name">${escKey(row.name)}</span>
+        <span class="kit-chips">
+          ${row.values.map(([v, label]) => {
+            const on = now === undefined ? false : now === v;
+            return `<i class="kit-chip${on ? ' sel' : ''}" data-kit="${escKey(field)}"
+              data-val="${escKey(kitTag(v))}">${escKey(label)}</i>`;
+          }).join('')}
+          <i class="kit-chip${now === undefined ? ' sel' : ''}" data-kit="${escKey(field)}"
+             data-val="" title="Whatever his rung is issued">As issued</i>
+        </span></div>`;
+    }).join('');
+    return `
+      <h4 class="codex-head">Paint</h4>
+      <p class="hint">His armour, under the rank's own colours. The crest and the
+        shoulder bells stay the game's — that is the one thing a line is read by at
+        ninety metres, and it goes on top of whatever you choose here.</p>
+      <div class="kit-list">${paintRows}</div>
+      <h4 class="codex-head">Kit</h4>
+      <p class="hint">What he carries. Every one of these is hardware the body was
+        always able to wear; none of them moves a number, and he takes it onto the
+        ground with him.</p>
+      <div class="kit-list">${kitRows}</div>`;
+  }
+
+  /**
+   * …and the wiring for it. `write` is the door — `Company.dress` for a man on
+   * the roll, `Muster.dressRecruit` for one who is not — and both take a WHOLE
+   * kit or a whole paint set, so clearing a slot is the same call as choosing
+   * one and the store can never hold a half-written set.
+   */
+  _wireDressing(look, kind, write) {
+    const kit = { ...(look?.kit || {}) };
+    const paint = { ...(look?.paint || {}) };
+    for (const el of document.querySelectorAll('.company-paints .swatch')) {
+      this._activate(el, () => {
+        audio.ui('click');
+        const field = el.dataset.paint;
+        const hue = el.dataset.hue;
+        if (hue) paint[field] = hue; else delete paint[field];
+        write({ paint });
+      }, `${el.dataset.paint} — ${paintById(el.dataset.hue)?.name || 'as issued'}`);
+    }
+    for (const el of document.querySelectorAll('.kit-chips .kit-chip')) {
+      this._activate(el, () => {
+        audio.ui('click');
+        const field = el.dataset.kit;
+        const raw = el.dataset.val;
+        if (raw === '') delete kit[field];
+        else kit[field] = kitValue(raw);
+        write({ kit });
+      }, `${el.dataset.kit}`);
+    }
   }
 
   /**
@@ -6732,6 +6838,7 @@ export class Menu {
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
+      ${this._dressingHtml(r.look, kindOfArmy(roll.army))}
       <h4 class="codex-head">${escKey(army?.squadWord || 'Squad')}</h4>
       <p class="hint">Which ${(army?.squadWord || 'squad').toLowerCase()} he falls in with —
         the whole of what it changes is who stands beside him.</p>
@@ -6780,6 +6887,7 @@ export class Menu {
       this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
         markById(sw.dataset.band).name);
     }
+    this._wireDressing(m.look, kindOfArmy(roll.army), write);
     /**
      * FIELD/BENCH IS A SWAP, NEVER A RESIZE. The picks written are the whole
      * line, spelled out: the current lineup with one name exchanged, so the
@@ -6843,6 +6951,7 @@ export class Menu {
       this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
         markById(sw.dataset.band).name);
     }
+    this._wireDressing(r.look, kindOfArmy(armyId), write);
     for (const sw of document.querySelectorAll('.company-squads .swatch')) {
       this._activate(sw, () => {
         audio.ui('click');
@@ -7037,8 +7146,14 @@ export class Menu {
     const p = this.barracks;
     if (!p) return;
     const { armyId, men, planned } = this._stageLineup();
+    /* THE SIGNATURE IS EVERYTHING THE FIGURE IS BUILT FROM — rank paint, both
+     * marks, the scars, and now the kit and the paint job, because those are
+     * GEOMETRY and materials and a stale signature would leave the player
+     * choosing a pauldron and watching nothing happen. The callsign is
+     * deliberately absent: a rename moves a caption, not a body. */
     const sig = armyId + '|' + men.map((m) =>
-      `${m.designation}:${m.xp | 0}:${m.wounds | 0}:${m.look?.mark ?? ''}:${m.look?.band ?? ''}`).join(',');
+      `${m.designation}:${m.xp | 0}:${m.wounds | 0}:${m.look?.mark ?? ''}:${m.look?.band ?? ''}`
+      + `:${JSON.stringify(m.look?.kit ?? null)}:${JSON.stringify(m.look?.paint ?? null)}`).join(',');
     if (!force && sig === p.sig) return;
     p.sig = sig;
     p.armyId = armyId;
