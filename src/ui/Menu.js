@@ -6854,7 +6854,7 @@ export class Menu {
     this.barracks = p;
 
     host.addEventListener('pointerdown', (e) => {
-      p.drag = true; p.moved = 0;
+      p.drag = true;
       p.lastX = e.clientX; p.lastY = e.clientY;
       p.downAt = { x: e.clientX, y: e.clientY };
       host.setPointerCapture?.(e.pointerId);
