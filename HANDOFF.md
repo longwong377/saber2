@@ -1610,7 +1610,98 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
-## 5.0 What THIS session changed — 30–31 Aug
+## 5.0 What THIS session changed — 31 Aug: the barracks
+
+Driven by one message, and the message was a verdict: *"I have told Opus and
+you (Fable) at times to build a highly interactive and expansive troop
+management section and as of just a couple minutes ago you told me it was
+done. I tried it, and it's still fucking nothing."* The full text and the
+marks table are in PLAYTEST.md, 31 Aug. The finding under it is §6.6's again,
+for the third session running: the persistence engine, dossiers, attributes
+and the two cosmetic editors all existed — and for a player who dies or quits
+every run, the roll was empty forever, so all of it stood behind a door that
+never opened.
+
+### The muster slate — src/game/Muster.js, saber.muster.v1
+
+The fresh half of the next deployment is real named men BEFORE the run. Read
+the file's header before touching it; the two load-bearing absences are:
+
+- **No attributes in the store, ever.** A recruit's numbers are rolled at
+  muster by the Trooper constructor's hash of the RUN seed — which does not
+  exist at menu time — so there is nothing to scout, reroll, or hand-edit.
+  `barracks: the slate holds no numbers and cannot be made to` proves it at
+  four doors.
+- **No entropy.** The salt is `saltOf(company)` — a hash of runs/lost/
+  headcount — so deleting the store re-mints the SAME men and every banked
+  run moves the slate. `Date.now`/`Math.random` appear nowhere.
+
+`Muster.lineup(plan, company, {versus})` is the ONE resolver of who deploys:
+veterans in `fieldable` order, recruits behind, picks honoured, capped at the
+plan's want. main.js `veteransToField` fields it, the Taking-in list prints
+it, the roll rows tag from it, the stage stands it. The versus gate is
+decided from SETTINGS at deploy time (`Muster.versusPlanned`), never the
+director's flag — `standDownMeeting` clears that flag mid-run and the run
+then banks, which is why "versus never banks" was not a safe premise; recruit
+exclusion at lineup time is the actual safety. `Muster.consume` runs in
+main.js's deploy() strictly after `buildWorld` resolves, on the cached
+fielded-recruit names only.
+
+### The tab: three columns, and doors that close
+
+`#company-list` keeps its exact old contract (seven company.mjs censuses read
+it); recruit rows live in the SIBLING `#company-muster`. The middle column is
+the parade ground: a second WebGLRenderer (deliberately not a refactor of
+`_startPreview` — preview.mjs pins that source), lazy behind the tab click,
+render-on-demand (a clean frame costs one boolean), stopped by `hideMenu`
+and the tab switch, restaged by `showMenu`. Bodies are `ARCHETYPES[].build`
++ `bodyOptsFor`; paint is `CommandDirector.prototype.repaint/markUp/bandUp/
+scorchUp` called on stubs — company.mjs's own proof-of-paint trick, promoted
+to production. Deselect works four ways (click-again, Escape, Back links,
+stale-key self-invalidation); the toggle lives in the ROW CLICK handler, not
+in `_showCompany`, because tab re-entry and the edit-rewire path re-show the
+held key and must not un-show it.
+
+### What the record owed its men
+
+`Trooper.wounds` had NO writer anywhere — declared, persisted, displayed,
+never incremented. `Enemy._getUpFromDown` writes it now; `scorchUp` wears it
+as chest scars. Fallen records keep the callsign and gain killer + minute
+(from `stats.roll`, matched by designation prefix off the DISPLAY name, `at`
+converted from seconds). `keep()` finally reads `opts.ended` (via
+`storyLine`'s "held to the end") and writes `c.honours` — overwritten per
+fold, capped at 6, empty on a wipe, rendered by `honoursOf`. `look` grew
+`band` (forearm, same MARKS palette) — the dress pin in company.mjs was
+amended to `band,callsign,mark` in the same pass, with a twin pin on
+`Muster.dressRecruit`.
+
+### The gate, and one bug the new suite caught
+
+tools/checks/barracks.mjs: 19 checks, ~8 s, full tier. Writing it caught a
+real defect before any player did: `lineup` resolved picks against the
+want-sliced fieldable PREFIX, so "field him next run" on a reserve veteran
+wrote a pick the resolver silently dropped. Fixed (the candidate map spans
+the whole roll; the want cap does the bounding) and pinned by
+`barracks: a reserve veteran can be fielded by name`.
+
+Fast tier: 383/384 — the one red (`movement.mjs`, the 35 m Geonosis line
+navigation check) is red on the UNMODIFIED base commit too, verified in a
+clean worktree at b47308a; it is this box's, or this branch's, pre-existing
+condition and no part of the barracks. company 28/28, barracks 19/19, menu
+31/31, attributes 29/29, skirmish 23/23, preview 12/12, databank 8/8.
+smoke: clean boot, deploy, combat, zero console errors.
+
+### Still latent, on purpose, and known
+
+- The two-copies-of-look clobber (Company.js:541 — a mid-run dress is
+  reverted at fold because the live Trooper's look wins) is unchanged and
+  untriggered: the tab is menu-only. A future mid-run barracks lands on it.
+- A named-but-unfielded recruit's look dies with the salt when the company
+  moves — stated in Muster.ensure's own comment. The muster moved on.
+- A designation evicted off `FALLEN_KEEP`'s forty can be re-minted onto a
+  recruit — accepted, same reuse `designate` itself allows.
+
+## 5.0a What the session before this one changed — 30–31 Aug
 
 Driven entirely by playtest messages, again, and the shape of the round is worth
 more than the list: **five of the seven items were features that already existed

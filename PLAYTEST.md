@@ -42,7 +42,50 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
-## 25 Aug — SABER GAME NOTES AND IMPROVEMENTS V7
+## 31 Aug — "I want you to completely trash this screen"
+
+Handed over with: *"I have told Opus and you (Fable) at times to build a highly
+interactive and expansive troop management section and as of just a couple
+minutes ago you told me it was done. I tried it, and it's still fucking
+nothing. A list of fallen troops and a checkmark that says you will spawn in
+with 10 troops. You can't click anywhere to see these troops, there's still
+nothing to interact with, I don't see the troops, I can't customize any
+troops, literally nothing. I can't see Sith troops leet alone my troops. And
+when you select fallen troops you can never deselect it. I want you to
+completely trash this screen… really think long and hard and think outside
+the box and really come up with an interesting almost mini game here of troop
+management, the player can choose to ignore it completely… or chooses to
+interact with it and develop more investment in your own troops before and
+after battle."* And, re-quoted from the session before: *"wouldn't it be
+interesting if you wanted to pre-name your troops? … you should be able to
+even customize certain cosmetic parts of your troops before battle."*
+
+The player was right about the state of the tab, and the finding under it was
+the one HANDOFF §6.6 keeps finding: the persistence engine, the dossiers, the
+attribute system and the callsign/mark editors all existed — and for a player
+who dies or quits every run (their own stated case: *"you're either dying or
+quitting 99% of the time"*), the roll was permanently empty, so every one of
+those features was standing behind a door that never opened. The rebuild's
+answer is the muster slate: the fresh half of the next deployment is real
+named men BEFORE the run, so the tab has faces on the worst day as well as
+the best.
+
+| Ask | Mark | What stands |
+|---|---|---|
+| "You can't click anywhere to see these troops… nothing to interact with" | ✅ | Every man of the next deployment is a row and a page — veterans on the roll, recruits under **The muster**. `barracks: the muster lives beside the roll, not in it` and `barracks: a recruit's page names him, refuses him numbers, and the pen writes` fail without it. |
+| "I don't see the troops… I can't see Sith troops let alone my troops" | ✅ | The parade ground: the panel's middle column stages the exact lineup in 3D — the game's own bodies, rank paint, marks, bands, scars — and the army headers restage either side's line, mode be damned. `barracks: the parade is deterministic and framed…` fails without the staging; `tools/_companyshot.mjs` photographs it. |
+| "I can't customize any troops" | ✅ | Callsign, shin mark, forearm band and a squad — on veterans AND on recruits before they have fired a shot; painted on the fielded body by `enlistBody`. `company: the page sells nothing…` pins the field list to exactly those; `barracks: the band is paint on a forearm and moves no number` prices it. |
+| "when you select fallen troops you can never deselect it" | ✅ | Click-again, Escape, a Back link on every page, and stale keys self-invalidate. `barracks: selection closes now, everywhere, and a stale key self-invalidates` fails without each. |
+| "pre-name your troops… customize before battle" | ✅ | The slate: pre-rolled recruits with real designations, named and painted at the menu, fielded verbatim through the veterans pipe. `barracks: the lineup is the ground truth — the field enlists exactly it` walks a callsign onto `Trooper.name` on a real World. |
+| "didn't we build a mechanic where troops that survive… go with you into the next game?" | 🔎 | Built on 30–31 Aug (`skirmish.mjs`'s crossing/verdict/loop checks pin it) and INVISIBLE to this player — a wiped roll showed nothing. The tab now shows the next deployment whatever happened last run, and the Taking-in list, the roll tags and the stage all read one resolver (`Muster.lineup`), which is also what deploys. |
+| "an almost mini game… the player can choose to ignore it completely" | ✅ | The loop: meet the muster → name and paint → deploy → they come back ranked, scarred, bonded and honoured, or become epitaphs. Ignoring it costs nothing: `barracks: ensure on a clean read writes not one byte` and `barracks: the slate holds no numbers and cannot be made to` hold the ignored path to the same size, stakes and stats as before. |
+
+What was deliberately NOT built, and why, in the code's own words: stat
+upgrades and rerolls of any kind (a recruit's numbers do not exist until the
+run seed does — the reroll surface is unconstructible, not policed), recruit
+type choice in army modes (rung-0 strangers is the campaign's law), and any
+softening of `keep()` (a wipe still wipes; the muster standing under the
+fallen row is the answer to the morning after).
 
 Handed over with: *"You will finish everything on this list to perfection, every
 single thing I talked about. You've missed many things I've listed in the past
