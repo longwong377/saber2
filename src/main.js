@@ -680,6 +680,9 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
      * `HUD.rosterHtml` for why the column is grouped at all. */
     hud.setSquadWords?.(d.squadNames, d.commander?.army?.squadWord);
     d.onRoster = (summary) => hud.setRoster?.(summary);
+    /* …AND WHO THE NEXT ORDER IS FOR, held on the order panel rather than
+     * announced once and forgotten. See `HUD.setTarget`. */
+    d.onTarget = (name) => hud.setTarget?.(name);
     if (typeof screens.muster === 'function') {
       d.onMuster = (offer) => screens.muster(offer, {
         /* Buy, then re-read. The director guards every refusal case itself and

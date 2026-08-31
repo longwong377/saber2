@@ -4343,6 +4343,10 @@ export class CommandDirector extends WaveDirector {
      */
     if (c === this.commander) {
       const k = this.selectedSquad;
+      /* …AND IT IS HELD ON SCREEN, not only announced. A toast fades in two
+       * and a bit seconds; the selection does not, and a mode whose only
+       * indicator has gone is a mode you lose track of. */
+      this.onTarget?.(k == null ? null : this.squadLabel(k, c), k);
       if (k == null) {
         this.world?.notify?.('THE WHOLE LINE',
           `${n} ${c?.army?.squadWord?.toLowerCase() || 'squad'}s — the next order is `

@@ -1568,12 +1568,13 @@ export class HUD {
     while (this._plates.length < live.length) {
       const node = document.createElement('div');
       node.className = 'tplate';
-      node.innerHTML = '<div><span class="tp-rank"></span><span class="tp-name"></span></div>'
+      node.innerHTML = '<div><span class="tp-rank"></span><span class="tp-name"></span>'
+        + '<span class="tp-squad"></span></div>'
         + '<div class="tp-bars"><div class="tp-hp"><i></i></div><div class="tp-mor"><i></i></div></div>';
       host.appendChild(node);
       this._plates.push({ node, rank: node.querySelector('.tp-rank'),
-        name: node.querySelector('.tp-name'), hp: node.querySelector('.tp-hp i'),
-        mor: node.querySelector('.tp-mor i') });
+        name: node.querySelector('.tp-name'), squad: node.querySelector('.tp-squad'),
+        hp: node.querySelector('.tp-hp i'), mor: node.querySelector('.tp-mor i') });
     }
     for (let i = 0; i < this._plates.length; i++) {
       const P = this._plates[i];
@@ -1604,6 +1605,23 @@ export class HUD {
         P.rank.style.color = R.color ? '#0a0b14' : 'var(--ink)';
       }
       if (P._name !== t.name) { P._name = t.name; P.name.textContent = t.name; }
+      /**
+       * …AND WHICH SQUAD HE IS IN. Nothing on the field distinguished one
+       * squad from another — not the plate, not the minimap, not the paint —
+       * so "who is in 2nd Squad" had no answer anywhere in a running game.
+       * The label is the player's own name for it where they gave one, through
+       * the same words the roster column and the fight's notifications use.
+       *
+       * Written only on a CHANGE, like the rank and the name above it: a man
+       * does not move between squads mid-fight except by being detached, and
+       * a DOM write per plate per frame is twenty-four of them at sixty hertz.
+       */
+      const sq = t.detached ? 'detached'
+        : (Number.isInteger(t.squad)
+          ? ((this._squadNames && this._squadNames[t.squad])
+            || `${this._squadWord || 'Squad'} ${t.squad + 1}`)
+          : '');
+      if (P._squad !== sq) { P._squad = sq; P.squad.textContent = sq; }
       const hp = clamp((e.hp ?? 1) / Math.max(1, e.maxHp ?? 1), 0, 1);
       const mo = clamp(t.morale ?? 1, 0, 1);
       P.hp.style.width = `${hp * 100}%`;
@@ -1913,18 +1931,20 @@ export class HUD {
    */
   setOrder(id, name, squads, one = null) {
     if (one) {
-      if (this.el.rpOrderSub) {
-        this.el.rpOrderSub.textContent = `${one.name} — ${String(name || '').toLowerCase()}`;
-      }
+      this._squadOrders = this._squadOrders || new Map();
+      this._squadOrders.set(one.squad, `${one.name} — ${String(name || '').toLowerCase()}`);
+      this._paintOrderSub();
       return;
     }
     const was = this._order;
     this._order = id || null;
     if (this.el.rpOrderName) this.el.rpOrderName.textContent = name || '—';
-    if (this.el.rpOrderSub) {
-      const n = squads | 0;
-      this.el.rpOrderSub.textContent = n ? `${n} squad${n === 1 ? '' : 's'}` : '';
-    }
+    /* An army-wide order takes every squad's private one with it, exactly as
+     * `CommandDirector.order` clears `squadOrders` — "everyone form wedge" has
+     * to mean everyone, on the panel too. */
+    this._squadOrders?.clear();
+    this._squadCount = squads | 0;
+    this._paintOrderSub();
     this._lightOrder();
     /*
      * AND THE ORDER IS SPOKEN, which it never was.
@@ -1944,6 +1964,33 @@ export class HUD {
      * one who says nothing.
      */
     if (this._order && this._order !== was) this.announcer?.say(this._settings, 'order');
+  }
+
+  /**
+   * ══ WHO THE NEXT ORDER IS FOR, HELD ON SCREEN ══════════════════════════
+   *
+   * Selecting a squad announced itself and then the announcement faded, so ten
+   * seconds later there was again nothing saying who your next order was for —
+   * a mode switch whose only indicator is a toast is a mode switch you lose
+   * track of. This is the same line the squad count already occupied, and it
+   * carries three things in the order they matter: who has your ear, what any
+   * squad under its own order was told, and how many squads there are.
+   */
+  setTarget(name) {
+    this._target = name || null;
+    this._paintOrderSub();
+  }
+
+  /** The one writer of the order panel's second line. */
+  _paintOrderSub() {
+    const el = this.el.rpOrderSub;
+    if (!el) return;
+    const bits = [];
+    if (this._target) bits.push(`▸ ${this._target}`);
+    for (const [, said] of (this._squadOrders || new Map())) bits.push(said);
+    const n = this._squadCount | 0;
+    if (!bits.length && n) bits.push(`${n} squad${n === 1 ? '' : 's'}`);
+    el.textContent = bits.join(' · ');
   }
 
   /** Light the chip for the current formation, and only that one. */

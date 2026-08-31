@@ -2387,6 +2387,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .tplate .tp-rank{display:inline-block;padding:0 3px;margin-right:3px;
   color:var(--stroke);font-weight:800;clip-path:var(--cut-sm)}
 .tplate .tp-name{color:var(--ink);font-weight:700}
+/* Which squad he is in, quieter than his name and on the same line: the plate
+   already answers "who is that", and this is the other half of the question a
+   player asks when they are about to order one squad and not the other. */
+.tplate .tp-squad{color:var(--dim);font-weight:700;margin-left:5px;font-size:.86em}
+.tplate .tp-squad:empty{display:none}
 /* HEALTH AND NERVE ARE TWO BARS AND THEY ARE DIFFERENT WIDTHS ON PURPOSE. A
    man at half health and a man who is about to break are two different
    problems and the player has to be able to tell them apart at a glance
