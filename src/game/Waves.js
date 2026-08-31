@@ -2446,8 +2446,8 @@ export class WaveDirector {
      * The sandbox keeps the direct path: it is a debug room whose whole
      * purpose is putting twenty bodies in front of you in three seconds.
      */
-    this.arrivals = new ArrivalDirector(world, (type, mod, pos) => {
-      const e = world.spawnEnemy(type, pos);
+    this.arrivals = new ArrivalDirector(world, (type, mod, pos, look = null) => {
+      const e = world.spawnEnemy(type, pos, look);
       if (e && mod) applyModifier(e, mod);
       return e;
     }, ARCHETYPES);

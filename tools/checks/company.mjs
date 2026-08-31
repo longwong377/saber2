@@ -1070,9 +1070,17 @@ export async function run({ check, assert }) {
      * barracks.mjs. Still cosmetic to the last field, still validated against
      * the one palette, and STILL a pin: the day a fourth appears, somebody
      * comes here and argues it the way the band was argued. */
-    assert(fields.join(',') === 'band,callsign,mark',
-      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a mark, a band and `
-      + 'a name, and a roster screen that can edit anything else is a cheat panel');
+    /* FIVE NOW, AND THE ARGUMENT IS THE SAME ONE. `kit` is hardware the body
+     * builders have always accepted — a pauldron, a kama, a pack — and `paint`
+     * is the armour under the rank's own colours. Neither moves a number:
+     * `KIT_FIELDS` deliberately withholds `frame`, the one option that would
+     * resize a man into another rung's silhouette, and a colour has never been
+     * read by anything that fights. Both are priced on real bodies by
+     * `barracks.mjs`. The pin stays a pin: the day a SIXTH appears, somebody
+     * comes here and argues it the way these two were argued. */
+    assert(fields.join(',') === 'band,callsign,kit,mark,paint',
+      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a name, two marks, `
+      + 'a kit and a paint job, and a roster screen that can edit anything else is a cheat panel');
     /* …and the slate's own writer holds the same line for men not yet on any
      * roll: `Muster.dressRecruit` takes the same three fields and Muster.js
      * has grown no currency word either. */
@@ -1085,9 +1093,9 @@ export async function run({ check, assert }) {
     const recruitBody = /export function dressRecruit\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(muCode)?.[1] || '';
     assert(recruitBody, 'Muster.dressRecruit is gone');
     const rFields = [...recruitBody.matchAll(/'(\w+)' in look/g)].map((m) => m[1]).sort();
-    assert(rFields.join(',') === 'band,callsign,mark',
-      `Muster.dressRecruit writes ${rFields.join(', ') || 'nothing'} — a recruit may be named `
-      + 'and painted, nothing else');
+    assert(rFields.join(',') === 'band,callsign,kit,mark,paint',
+      `Muster.dressRecruit writes ${rFields.join(', ') || 'nothing'} — a recruit may be named, `
+      + 'painted and kitted, nothing else');
     return `dress and dressRecruit write ${fields.join(' + ')} and nothing else; `
       + 'no currency word in Company.js or Muster.js';
   });

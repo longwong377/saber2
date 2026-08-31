@@ -6173,6 +6173,126 @@ export function buildB2(opts = {}) {
  * crest, the collar arc and the bells keep their paint and are tagged
  * `userData.silhouette` so they stop being invisible past thirty metres.
  */
+/**
+ * THE PALETTE A PLAYER PAINTS ARMOUR FROM.
+ *
+ * Named colours rather than a free picker, for the reason `MARKS` gives about
+ * itself: these have to read against dust, against both armies' plate, and at
+ * the range a line is actually seen from. A hex field would also be a hex
+ * field in a save file, which is a thing to sanitise rather than a thing to
+ * offer. Both armies draw from one list — a captured droid painted in Republic
+ * bone is a thing a player may do and the fiction survives it.
+ */
+export const PAINTS = [
+  { id: 'bone', name: 'Bone', color: 0xe8e9ec },
+  { id: 'ash', name: 'Ash', color: 0x8e8e96 },
+  { id: 'slate', name: 'Slate', color: 0x4a5460 },
+  { id: 'char', name: 'Charcoal', color: 0x2b2b30 },
+  { id: 'sand', name: 'Sand', color: 0xb9a077 },
+  { id: 'clay', name: 'Clay', color: 0x8a5a3c },
+  { id: 'blood', name: 'Blood', color: 0xb4382c },
+  { id: 'rust', name: 'Rust', color: 0xc0682a },
+  { id: 'sun', name: 'Sun', color: 0xe8b028 },
+  { id: 'jungle', name: 'Jungle', color: 0x3f8f4a },
+  { id: 'teal', name: 'Teal', color: 0x2e7d78 },
+  { id: 'sky', name: 'Sky', color: 0x3a86c8 },
+  { id: 'deep', name: 'Deep', color: 0x24406e },
+  { id: 'plum', name: 'Plum', color: 0x7a4a9c },
+  { id: 'ice', name: 'Ice', color: 0x9fd8e6 },
+];
+
+/** One paint by id, or null for "leave the chassis its own". */
+export function paintById(id) {
+  return PAINTS.find((p) => p.id === id) || null;
+}
+
+/**
+ * WHAT A PLAYER MAY CHANGE ABOUT A BODY, AND WHAT THEY MAY NOT.
+ *
+ * The builders below already take every one of these — a pauldron side, a kama
+ * length, a pack, a rangefinder, a brace, the bells, and the three material
+ * slots a clone's armour is painted in. They have taken them since the day the
+ * kits were written; nothing has ever handed them anything but the archetype's
+ * own row. This table is the list a PLAYER may reach, and it is deliberately
+ * shorter than the list the builders accept:
+ *
+ *   NOTHING HERE MOVES A NUMBER. Every field is geometry the LOD already
+ *   culls or a material colour. `frame` — the radial girth — is left out on
+ *   purpose: it is what separates a Marksman's silhouette from a line
+ *   trooper's at thirty metres, and `characters.mjs` measures exactly that.
+ *   A player may dress a man; they may not resize him into another rung.
+ *
+ *   THE RANK'S OWN PAINT IS NOT ON THIS LIST EITHER. The crest and the
+ *   shoulder bells `repaint` bolts on are the one sentence a battlefield
+ *   reads at ninety metres, and they go on top of whatever is underneath.
+ *
+ * Each row is `[field, [legal values]]`, and a value that is not on its row is
+ * dropped rather than corrected — the same rule `markById` follows.
+ */
+export const KIT_FIELDS = {
+  flesh: {
+    pauldron: { name: 'Pauldron', values: [[null, 'None'], ['L', 'Left'], ['R', 'Right']] },
+    kama: { name: 'Kama', values: [[false, 'None'], [true, 'Short'], ['long', 'Long']] },
+    pack: { name: 'Pack', values: [[null, 'None'], ['jet', 'Jet'], ['scout', 'Scout'],
+      ['comms', 'Comms'], ['field', 'Field']] },
+    rangefinder: { name: 'Rangefinder', values: [[null, 'None'], ['scope', 'Scope'], ['stalk', 'Stalk']] },
+    crest: { name: 'Crest', values: [[false, 'None'], [true, 'Fin']] },
+    holsters: { name: 'Holsters', values: [[false, 'None'], [true, 'Sidearms']] },
+    brace: { name: 'Brace', values: [[false, 'None'], [true, 'Braced']] },
+    bells: { name: 'Shoulder bells', values: [[true, 'Belled'], [false, 'Stripped']] },
+    cape: { name: 'Half cape', values: [[false, 'None'], [true, 'Worn']] },
+  },
+  steel: {
+    pack: { name: 'Pack', values: [[null, 'None'], ['rocket', 'Rocket tube']] },
+    blade: { name: 'Sidearm', values: [[null, 'None'], ['vibro', 'Vibrosword']] },
+  },
+};
+
+/**
+ * The paint slots each chassis carries — the builder's own option name, and
+ * what that surface is called by somebody looking at it.
+ */
+export const PAINT_SLOTS = {
+  flesh: [['color', 'Plate'], ['accent', 'Unit flash'], ['visor', 'Visor']],
+  steel: [['color', 'Shell'], ['markColor', 'Unit flash'], ['eyeColor', 'Photoreceptor']],
+};
+
+/** Just the option names, for the sanitiser and the builders. */
+export const PAINT_FIELDS = {
+  flesh: PAINT_SLOTS.flesh.map(([f]) => f),
+  steel: PAINT_SLOTS.steel.map(([f]) => f),
+};
+
+/**
+ * A stored `look.kit` and `look.paint`, made into builder options.
+ *
+ * Anything unrecognised is dropped: this reads off a save file, and a body is
+ * built from the result on a machine that has to keep running.
+ */
+export function kitOptsFrom(look, kind = 'flesh') {
+  const out = {};
+  if (!look || typeof look !== 'object') return out;
+  const legal = KIT_FIELDS[kind] || {};
+  const kit = look.kit;
+  if (kit && typeof kit === 'object') {
+    for (const field in legal) {
+      if (!(field in kit)) continue;
+      if (legal[field].values.some(([v]) => v === kit[field])) out[field] = kit[field];
+    }
+  }
+  /* IDS, NOT COLOURS, because that is what the store keeps: a stored colour
+   * is a stored colour for ever, and a re-tuned palette would never reach the
+   * men already wearing it. This is the one place the id becomes a number. */
+  const paint = look.paint;
+  if (paint && typeof paint === 'object') {
+    for (const field of (PAINT_FIELDS[kind] || [])) {
+      const p = paintById(paint[field]);
+      if (p) out[field] = p.color;
+    }
+  }
+  return out;
+}
+
 export const TROOPER_KITS = {
   /** The line trooper: the baseline every other kit is read against. */
   line: {},
@@ -6239,8 +6359,10 @@ export function buildTrooper(opts = {}) {
   // entire figure, and it is what you see at every joint.
   const under = clothMat(0x191c21, 0.88);
   const accent = armorMat(opts.accent ?? 0x2f6fbe, 0.1, 0.34, 3.0);
-  // and the visor was bare too — dark glass wants scratches and a specular
-  const visor = glassMat(0x0a0d12, 0.13);
+  // and the visor was bare too — dark glass wants scratches and a specular.
+  // The colour is an option now so a company can be told apart by its glass;
+  // the default is the dark plate every reference frame of this fight has.
+  const visor = glassMat(opts.visor ?? 0x0a0d12, 0.13);
   const gear = leatherMat(0x25282e, 0.62);
   const scorch = scorchMat();
 

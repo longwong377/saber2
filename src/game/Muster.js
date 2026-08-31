@@ -92,20 +92,14 @@ function readRecruit(r, armyId) {
   const tiers = ARMIES[armyId]?.tiers || [];
   const type = tiers.some((t) => t.type === r.type) ? r.type : (tiers[0]?.type ?? null);
   if (!type) return null;
-  const look = r.look && typeof r.look === 'object' && !Array.isArray(r.look) ? {} : null;
-  if (look) {
-    const cs = Company.cleanCallsign(r.look.callsign);
-    if (cs) look.callsign = cs;
-    const mk = markById(r.look.mark);
-    if (mk.color != null) look.mark = mk.id;
-    const bd = markById(r.look.band);
-    if (bd.color != null) look.band = bd.id;
-  }
   return {
     designation: r.designation,
     type,
     squad: Number.isInteger(r.squad) && r.squad >= 0 && r.squad <= 4 ? r.squad : null,
-    look: look && Object.keys(look).length ? look : null,
+    /* THE SAME DOOR THE ROLL'S MEN COME THROUGH — one sanitiser for both
+     * stores, so a recruit and a veteran can never disagree about what a look
+     * may legally contain. See `Company.saneLook`. */
+    look: Company.saneLook(r.look, armyId === 'separatist' ? 'steel' : 'flesh'),
   };
 }
 
@@ -471,6 +465,7 @@ export function dressRecruit(army, designation, look = {}) {
   const slate = slateFor(army);
   const r = slate.recruits.find((x) => x.designation === designation);
   if (!r) return slate;
+  const kind = army === 'separatist' ? 'steel' : 'flesh';
   const next = { ...(r.look || {}) };
   if ('mark' in look) {
     const mk = markById(look.mark);
@@ -483,6 +478,14 @@ export function dressRecruit(army, designation, look = {}) {
   if ('callsign' in look) {
     const cs = Company.cleanCallsign(look.callsign);
     if (cs) next.callsign = cs; else delete next.callsign;
+  }
+  if ('kit' in look) {
+    const whole = Company.saneLook({ kit: look.kit }, kind);
+    if (whole?.kit) next.kit = whole.kit; else delete next.kit;
+  }
+  if ('paint' in look) {
+    const whole = Company.saneLook({ paint: look.paint }, kind);
+    if (whole?.paint) next.paint = whole.paint; else delete next.paint;
   }
   r.look = Object.keys(next).length ? next : null;
   return saveSlate(slate);

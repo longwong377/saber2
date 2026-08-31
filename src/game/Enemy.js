@@ -12,7 +12,7 @@ import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
+  buildJedi, bodyOptsFor, kitOptsFrom, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
   hoodCut } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { WEIGHT as TOKEN_WEIGHT } from './Tokens.js';
@@ -2789,8 +2789,23 @@ function installStandard(e) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 export class Enemy {
-  constructor(world, type, spawn) {
+  constructor(world, type, spawn, opts = null) {
     const A = ARCHETYPES[type] || ARCHETYPES.b1;
+    /**
+     * WHAT THE MAN WEARING THIS BODY CHOSE, and it has to arrive HERE.
+     *
+     * A kit is geometry — a pauldron, a kama, a pack — so it is decided when
+     * the body is built and cannot be bolted on afterwards the way the rank
+     * paint and the shin mark are. `enlistBody` runs after this constructor,
+     * which is why the look rides in on the spawn instead of being applied at
+     * the weld. Null for every enemy in the game, which is all of them but
+     * your own line.
+     */
+    this.look = opts?.look ?? null;
+    /* Which chassis's vocabulary his kit is written in — the `Trooper` record
+     * has carried `kind` since attributes existed, so the spawn hands it over
+     * rather than this file guessing from an archetype name. */
+    this.lookKind = opts?.kind || 'flesh';
     this.id = 'e' + (_enemyId++);
     this.type = type;
     this.A = A;
@@ -3189,7 +3204,14 @@ export class Enemy {
      * the shipped roster: trooper/sniper and acolyte/sparring sat at 1.000
      * flank IoU — identical silhouettes at 30 m — and the roster's worst pair
      * drops to 0.895 with this line in. */
-    const opts = { scale: A.scale, ...(bodyOptsFor(this.type) || {}) };
+    /* THE ARCHETYPE'S KIT FIRST, THE MAN'S OWN CHOICES OVER IT. `buildTrooper`
+     * spreads its kit row and then the options, so a player's pauldron beats
+     * the rung's and everything they did not touch stays the rung's. */
+    const opts = {
+      scale: A.scale,
+      ...(bodyOptsFor(this.type) || {}),
+      ...kitOptsFrom(this.look, this.lookKind || 'flesh'),
+    };
     if (this.type === 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }
     const built = A.build(opts);
     this.built = built;

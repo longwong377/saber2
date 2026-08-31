@@ -5307,10 +5307,16 @@ export class CommandDirector extends WaveDirector {
       /* 18 m, and the check holds it under 30: a gunship that sets your line
        * down at the far edge of the spawn ring has not reinforced you, it has
        * started them on a walk. */
-      if (air && air.request(t.type, null, null, Math.PI / 2, enlist, { kind: 'dropship', near: 18, cap: 6 })) {
+      /* WHAT HE CHOSE TO WEAR, handed over with the request. A kit is
+       * geometry, so it has to be in hand when the body is BUILT — `enlist`
+       * below runs after that and can only paint. Both doors take it, because
+       * a man who arrives by gunship is the same man. */
+      const worn = t.look ? { look: t.look, kind: t.kind } : null;
+      if (air && air.request(t.type, null, null, Math.PI / 2, enlist,
+        { kind: 'dropship', near: 18, cap: 6, look: worn })) {
         this._inbound.add(t); n++; continue;
       }
-      const e = w.spawnEnemy(t.type, _v2);
+      const e = w.spawnEnemy(t.type, _v2, worn);
       if (!e) { unplaced++; continue; }
       enlist(e);
       n++;

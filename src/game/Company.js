@@ -57,6 +57,7 @@ import {
  * already carries the label every other screen uses and this file must not
  * grow a second copy of it. */
 import { ARCHETYPES } from './Enemy.js';
+import { KIT_FIELDS, PAINT_FIELDS, PAINTS, paintById } from './Bodies.js';
 import { makeStore } from './Store.js';
 
 /**
@@ -109,6 +110,58 @@ function saneBonds(list, self) {
     out.push({ with: who, areas: Math.min(BOND_TALLY_MAX, Math.max(0, Math.round(n))) });
   }
   return out.sort(strongestFirst).slice(0, BONDS_MAX);
+}
+
+/**
+ * A WHOLE LOOK OFF DISK OR OFF A SCREEN, MADE SAFE — the one door both stores
+ * and both write paths go through.
+ *
+ * `look` grew from two fields to five when the barracks learned to dress a man
+ * rather than only name him, and five fields on an object that arrives from
+ * localStorage is five ways a hand edit reaches a body builder. So every one
+ * of them is whitelisted here, once:
+ *
+ *   callsign  `cleanCallsign` — trimmed, capped, and stripped of the
+ *             characters that would otherwise have to be escaped correctly by
+ *             every screen that prints a name.
+ *   mark/band ids from `MARKS`, never colours. An unknown id is dropped.
+ *   kit       fields and values from `KIT_FIELDS[kind]`, which is the list the
+ *             BUILDERS accept minus the ones that would resize a man into
+ *             another rung. Anything else is dropped rather than corrected.
+ *   paint     ids from `PAINTS`, resolved to the builder's own option names by
+ *             `PAINT_FIELDS[kind]` — so a clone paints plate/accent/visor and
+ *             a droid paints shell/flash/eye, out of one table.
+ *
+ * Returns null for an empty result, because "he wears nothing of yours" is a
+ * real state and an object with no keys in it is not.
+ */
+export function saneLook(look, kind = 'flesh') {
+  if (!look || typeof look !== 'object' || Array.isArray(look)) return null;
+  const out = {};
+  const cs = cleanCallsign(look.callsign);
+  if (cs) out.callsign = cs;
+  for (const slot of ['mark', 'band']) {
+    const mk = markById(look[slot]);
+    if (mk.color != null) out[slot] = mk.id;
+  }
+  const legal = KIT_FIELDS[kind] || {};
+  if (look.kit && typeof look.kit === 'object' && !Array.isArray(look.kit)) {
+    const kit = {};
+    for (const field in legal) {
+      if (!(field in look.kit)) continue;
+      if (legal[field].values.some(([v]) => v === look.kit[field])) kit[field] = look.kit[field];
+    }
+    if (Object.keys(kit).length) out.kit = kit;
+  }
+  if (look.paint && typeof look.paint === 'object' && !Array.isArray(look.paint)) {
+    const paint = {};
+    for (const field of (PAINT_FIELDS[kind] || [])) {
+      const p = paintById(look.paint[field]);
+      if (p) paint[field] = p.id;
+    }
+    if (Object.keys(paint).length) out.paint = paint;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** Where it lives. Versioned like every other store in the tree. */
@@ -301,7 +354,7 @@ function readMan(m, army) {
     since: typeof m.since === 'string' ? m.since : null,
     story: Array.isArray(m.story) ? m.story.filter((s) => typeof s === 'string').slice(-STORY_KEEP) : [],
     bonds: saneBonds(m.bonds, m.designation),
-    look: m.look && typeof m.look === 'object' && !Array.isArray(m.look) ? { ...m.look } : null,
+    look: saneLook(m.look, m.kind === 'steel' ? 'steel' : 'flesh'),
   };
 }
 
@@ -848,6 +901,26 @@ export function dress(army, key, look = {}) {
   if ('callsign' in look) {
     const cs = cleanCallsign(look.callsign);
     if (cs) next.callsign = cs; else delete next.callsign;
+  }
+  /**
+   * …AND WHAT HE WEARS. `kit` is hardware the builders already accept — a
+   * pauldron, a kama, a pack — and `paint` is the armour under the rank's own
+   * colours. Both arrive as a WHOLE object rather than a field at a time,
+   * because a kit is a set: the screen sends what the man wears now and this
+   * writes it, so clearing a pauldron is the same call as choosing one.
+   *
+   * Neither moves a number. Nothing in `KIT_FIELDS` resizes a man — `frame`
+   * is left off that list on purpose, see it — and a colour has never been
+   * read by anything that fights. `barracks.mjs` prices both on real bodies.
+   */
+  const kind = m.kind === 'steel' ? 'steel' : 'flesh';
+  if ('kit' in look) {
+    const whole = saneLook({ kit: look.kit }, kind);
+    if (whole?.kit) next.kit = whole.kit; else delete next.kit;
+  }
+  if ('paint' in look) {
+    const whole = saneLook({ paint: look.paint }, kind);
+    if (whole?.paint) next.paint = whole.paint; else delete next.paint;
   }
   m.look = Object.keys(next).length ? next : null;
   return save(c);

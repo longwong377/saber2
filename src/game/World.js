@@ -3098,7 +3098,7 @@ export class World {
    */
   addDoor(d) { this.doors.push(d); return d; }
 
-  spawnEnemy(type, pos) {
+  spawnEnemy(type, pos, opts = null) {
     /* NOTHING IS PUT DOWN ON THE PAD. This is the one door every body in the
      * game comes through — the director's direct path, every gunship's
      * `_deliver`, the sandbox — which is why the rule is asked here rather than
@@ -3107,7 +3107,7 @@ export class World {
      * the push. See `ExtractionDirector.clearOfLZ`. Costs one `hypot` per body
      * spawned, and only while a flight is up: `lzPoint` is null otherwise. */
     pos = this.extraction?.clearOfLZ(pos) ?? pos;
-    const e = new Enemy(this, type, pos);
+    const e = new Enemy(this, type, pos, opts);
     this.enemies.push(e);
     /**
      * A BOSS ARRIVING IS A SHOT, and the camera had never framed one.
@@ -3832,7 +3832,7 @@ export class World {
       rules: this.command && !this.command.versus ? COMMAND_POWER_RULES : undefined,
       pickTarget: (e) => this.pickTarget(e),
       pickSpawn: (t) => this.pickSpawn(t),
-      spawnEnemy: (t, p) => this.spawnEnemy(t, p),
+      spawnEnemy: (t, p, o) => this.spawnEnemy(t, p, o),
     };
     /* THE SAME CONTEXT, REACHABLE FROM LATER IN THE FRAME. `grenades.update`
      * runs with the particles and the debris — after the bodies, because a

@@ -6173,9 +6173,34 @@ export class Menu {
       host.appendChild(p);
     };
     if (!plan) {
-      hint(`${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours — `
-        + 'pick an army mode or set Your line on the Deploy panel, and the next '
-        + 'muster forms here with names.');
+      /**
+       * ── THE DEAD END, MADE A DOOR ────────────────────────────────────────
+       *
+       * A fresh profile opens on a mode that fields no army, so the first
+       * thing this tab ever said was "go and change a setting on a different
+       * panel" — which is the "I open it and see nothing" this whole rebuild
+       * exists to answer, arriving by another road.
+       *
+       * The line is a SETTING, and a setting can be written from here. So the
+       * sentence keeps its honesty — this mode fields nobody, and the page
+       * will not pretend otherwise — and gains the one control that changes
+       * that. One click and the muster below fills with named men.
+       */
+      const M2 = MODES[this.s.mode];
+      const army = ARMIES[armyToLead(this.s.order, {})?.id] || ARMIES[ARMY_IDS[0]];
+      hint(`${M2?.name || this.s.mode} fields no army of yours. Raise a line and it `
+        + 'musters here — named, painted and yours, before you land.');
+      const raise = document.createElement('p');
+      raise.className = 'hint company-restore';
+      raise.textContent = `Take ${OPENING_STRENGTH} ${army?.unit || 'trooper'}s `
+        + `into ${M2?.name || this.s.mode}`;
+      this._activate(raise, () => {
+        audio.ui('click');
+        this._set('allies', OPENING_STRENGTH);
+        this._buildCompanyList();
+        this._showCompany(null);
+      }, raise.textContent);
+      host.appendChild(raise);
       return;
     }
     if (this._netMode === 'client') {
@@ -6193,11 +6218,6 @@ export class Menu {
         + 'between commanders.');
       return;
     }
-    if (!plan.armyMode) {
-      hint('A contingent is composed at the muster from the purse you set — '
-        + 'veterans first, the balance by rung.');
-      return;
-    }
     const army = ARMIES[plan.army];
     const c = companyLoad(plan.army);
     const slate = Muster.ensure(plan, c);
@@ -6210,8 +6230,9 @@ export class Menu {
     const head = document.createElement('p');
     head.className = 'hint company-cut';
     head.textContent = `${recruits.length} recruit${recruits.length === 1 ? '' : 's'} drop with `
-      + `you next run. Open one — a callsign and a paint job are his to keep, `
-      + `and if he lives he joins the roll.`;
+      + `you next run${plan.armyMode ? '' : ' — what the purse buys, composed'}. `
+      + 'Open one: a callsign, a paint job and a kit are his to keep, and if he '
+      + 'lives he joins the roll.';
     host.appendChild(head);
     const list = document.createElement('div');
     list.className = 'difflist';
