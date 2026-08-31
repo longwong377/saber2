@@ -2700,6 +2700,81 @@ export function versusCommandConfig(settings) {
  * this file does not import Levels.js and is not going to for a tiebreak that
  * only decides for a commander whose order leads neither army.
  */
+/**
+ * WHAT A CONTINGENT'S PURSE ACTUALLY BUYS — as a pure list of types.
+ *
+ * The contingent is not a headcount, it is a SPEND: the purse is priced in
+ * cheapest-rung bodies (`opening − vets` of them) and then spent on the rung
+ * the player chose, so ten troopers' worth of points buys rather fewer
+ * droidekas. That arithmetic decides the composition of every non-campaign
+ * army, and it used to live only inside `_musterOpening`'s loops — which meant
+ * the barracks could not name a contingent's men in advance without growing a
+ * second copy of a spend, and a second copy of a spend is exactly the
+ * hand-maintained twin this repository keeps deleting.
+ *
+ * So it is here, once, with no roster and no side effects. `_musterOpening`
+ * drives the result through `recruit()` exactly as it drove its own loops, and
+ * the barracks asks the same question — which is the only reason a pre-rolled
+ * contingent cannot out-buy the muster it is standing in for.
+ *
+ * @returns `{ types, refused }` — the types in the order they are bought, and
+ *          the sentence to say when the chosen rung is beyond the purse.
+ */
+export function composeContingent(army, opening, standing = [], unit = CONTINGENT_MIXED) {
+  const tiers = army?.tiers || [];
+  if (!tiers.length) return { types: [], refused: null };
+  const cheapest = tiers[0].type;
+  /**
+   * THE PURSE IS POINTS, AND EVERYTHING ON THE LINE COSTS FROM IT.
+   *
+   * It used to be priced by HEADCOUNT — `(opening − vets) × cost(cheapest)` —
+   * and that is not the same arithmetic as the spend it pays for, so the two
+   * disagreed the moment anybody arrived already composed: a line pre-raised
+   * to the full purse still read as "six of eight bodies", left two
+   * cheapest-rung units of change on the counter, and the muster spent it
+   * again. Priced in POINTS the sum is self-consistent, so composing a
+   * contingent and then composing it again buys nothing the second time.
+   *
+   * It is also more honest about veterans: a returning ARC has always been
+   * worth more to a line than a returning trooper, and now he costs the purse
+   * what he is worth instead of what the cheapest man is worth.
+   */
+  const list = Array.isArray(standing) ? standing : [];
+  const spent = list.reduce((a, t) => a + musterCost(typeof t === 'string' ? t : t?.type), 0);
+  let points = Math.max(0, (opening | 0) * musterCost(cheapest) - spent);
+  let strength = list.length;
+  const types = [];
+  const spend = (type) => {
+    const rung = tiers.find((t) => t.type === type);
+    if (!rung || points < rung.cost || strength >= MAX_STRENGTH) return false;
+    points -= rung.cost;
+    strength++;
+    types.push(type);
+    return true;
+  };
+  const want = unit >= 0 ? tiers[Math.min(unit, tiers.length - 1)] : null;
+  if (want && points < want.cost) {
+    return {
+      types,
+      refused: `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
+        + `${opening} ${army.unit}${opening === 1 ? '' : 's'} buys ${points}`,
+    };
+  }
+  if (want) { while (spend(want.type)); }
+  const room = Math.max(0, (opening | 0) - list.length);
+  const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
+  for (let i = 0; i < line && spend(cheapest); i++);
+  /* THEN THE BEST THING LEFT ON THE SHELF — `_bestAffordable`'s rule without
+   * the director, because a contingent gates no rung behind an area. This is
+   * what stops a remainder being thrown away: ten Republic allies is 50
+   * points, one AT-TE is 32, and the 18 left over buy three of the line. */
+  for (let guard = 0; guard < MAX_STRENGTH; guard++) {
+    const best = tiers.filter((t) => t.cost <= points).sort((a, b) => b.cost - a.cost)[0];
+    if (!best || !spend(best.type)) break;
+  }
+  return { types, refused: null };
+}
+
 export function musterPlan(settings, groundArmies = null) {
   const s = settings || {};
   const armyMode = !!(MODES[s.mode]?.crossing || MODES[s.mode]?.battles);
@@ -2711,7 +2786,16 @@ export function musterPlan(settings, groundArmies = null) {
     ground: groundArmies,
   })?.id;
   if (!army) return null;
-  return { army, want: armyMode ? OPENING_STRENGTH : contingent, armyMode };
+  return {
+    army,
+    want: armyMode ? OPENING_STRENGTH : contingent,
+    armyMode,
+    /* WHICH RUNG A CONTINGENT'S PURSE IS POINTED AT, so the barracks can ask
+     * `composeContingent` what it buys without reaching for the settings blob
+     * a second time. Null on an army mode, whose opening is rung-0 strangers
+     * by design and has no rung to choose. */
+    unit: armyMode ? null : cfg.unit,
+  };
 }
 
 /**
@@ -4479,51 +4563,43 @@ export class CommandDirector extends WaveDirector {
      * company buys is rank, not headcount.
      */
     const opening = this.openingFor(c);
-    c.roster.points = Math.max(0, opening - vets) * musterCost(cheapest);
-    const want = this.unit >= 0 ? tiers[Math.min(this.unit, tiers.length - 1)] : null;
+    /* THE PURSE, IN POINTS — see `composeContingent`. Everything already on
+     * the roll (a returning company, a contingent the barracks composed in
+     * advance) has spent what it is worth, so the muster cannot buy it twice. */
+    const standing = c.roster.all.map((t) => t.type);
+    c.roster.points = Math.max(0, opening * musterCost(cheapest)
+      - standing.reduce((a, type) => a + musterCost(type), 0));
+    /**
+     * ── A CONTINGENT IS A PURSE, AND THE SPEND LIVES IN ONE PLACE ────────
+     *
+     * The budget is what the slider already meant, priced: `opening ×
+     * musterCost(cheapest)`, so eight allies is exactly what eight clone
+     * troopers cost, and a heavier contingent is a SMALLER one. Which rungs
+     * that buys — the chosen rung first, then the line, then the heaviest
+     * thing still affordable so no remainder is thrown away — is
+     * `composeContingent`, CALLED here rather than restated.
+     *
+     * It moved out of these loops so that the barracks can ask what a
+     * contingent will be made of BEFORE the run and get the answer this
+     * muster is about to act on. A second copy of a spend is the
+     * hand-maintained twin this repository keeps deleting, and the tab
+     * showing men the ground then disagrees with is the defect the whole
+     * troop tab was rebuilt to kill. `recruit` still does the spending, the
+     * logging, the unlock gate and the refusals; only the arithmetic left.
+     */
+    const { types, refused } = composeContingent(c.army, opening, standing, this.unit);
     this._bulk = true;
     try {
-      if (want && c.roster.points < want.cost) {
-        /**
-         * A REQUEST THAT CANNOT BE MET SAYS SO. The player asked for a
-         * contingent of AT-TEs and set the size to one, which is 5 points
-         * against 32: there is a right answer (the line) and there is no
-         * honest way to hand it over in silence. Same law as `reinforce`'s NO
-         * REINFORCEMENTS and `deploy`'s NO GROUND below — the three places
-         * this mode can fail to give the player what they asked for are the
-         * three places it says so out loud.
-         */
-        this.refused = `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
-          + `${opening} ${c.army.unit}${opening === 1 ? '' : 's'} buys ${c.roster.points}`;
+      /* A REQUEST THAT CANNOT BE MET SAYS SO — the player asked for a
+       * contingent of AT-TEs and set the size to one, which is 5 points
+       * against 32. Same law as `reinforce`'s NO REINFORCEMENTS and
+       * `deploy`'s NO GROUND: the places this mode cannot give the player
+       * what they asked for are the places it says so out loud. */
+      if (refused) {
+        this.refused = refused;
         this.world?.notify?.('CONTINGENT UNCHANGED', this.refused);
-      } else if (want) {
-        while (this.recruit(want.type, c));
       }
-      /**
-       * THEN THE LINE, AND THEN THE BEST THING LEFT ON THE SHELF — which is
-       * `autoMuster`'s two-phase spend, reached through the same
-       * `_bestAffordable` it uses, because "spend a purse sensibly" is one
-       * question and this file is not going to answer it twice.
-       *
-       * For a CHOSEN rung these two loops are what stops the remainder being
-       * thrown away, and the machine is where it shows: ten Republic allies is
-       * 50 points, one AT-TE is 32, and the 18 left over buy three clone
-       * troopers to walk beside it. Without them the player would have asked
-       * for ten men and been handed one walker and a dead 18 points.
-       *
-       * For `CONTINGENT_MIXED` they ARE the composition — half the purse on the
-       * line, the rest on the heaviest rungs it will carry — measured, that is
-       * five clone troopers, an officer and a jet trooper for 47 of 50 points
-       * at ten Republic allies, and five B1s and a MagnaGuard for 29 of 30 at
-       * ten Confederate ones.
-       */
-      const room = Math.max(0, opening - vets);
-      const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
-      for (let i = 0; i < line && this.recruit(cheapest, c); i++);
-      for (let guard = 0; guard < MAX_STRENGTH; guard++) {
-        const best = this._bestAffordable(c);
-        if (!best || !this.recruit(best, c)) break;
-      }
+      for (const type of types) if (!this.recruit(type, c)) break;
     } finally { this._bulk = false; }
     /**
      * THE SHAPE THE REPLACEMENTS PUT BACK. `_reinforce` used to refill toward a

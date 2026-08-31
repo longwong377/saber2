@@ -42,7 +42,8 @@
  */
 
 import {
-  ARMIES, ARMY_IDS, OPENING_STRENGTH, designateWith, markById, commandConfig,
+  ARMIES, ARMY_IDS, OPENING_STRENGTH, MAX_STRENGTH, designateWith, markById,
+  commandConfig, composeContingent,
 } from './Command.js';
 import * as Company from './Company.js';
 import { makeStore } from './Store.js';
@@ -51,11 +52,15 @@ import { makeStore } from './Store.js';
 export const KEY = 'saber.muster.v1';
 
 /**
- * How many recruits one army's slate may hold. `OPENING_STRENGTH` is every
- * army mode's want, so the slate never needs more — and a cap is what keeps a
- * hand-edited store from handing the tab ten thousand rows to render.
+ * How many recruits one army's slate may hold.
+ *
+ * `MAX_STRENGTH`, not `OPENING_STRENGTH`: an army mode's opening is ten, but a
+ * contingent is whatever the player set the line to and that runs to
+ * twenty-four. The cap is what keeps a hand-edited store from handing the tab
+ * ten thousand rows to render, so it has to sit at the largest line the game
+ * can actually field.
  */
-export const SLATE_CAP = OPENING_STRENGTH;
+export const SLATE_CAP = MAX_STRENGTH;
 
 /* ── the store ───────────────────────────────────────────────────────── */
 
@@ -292,11 +297,27 @@ export function versusPlanned(settings) {
  * @returns the true slate for the plan's army, or null for a null plan.
  */
 export function ensure(plan, company) {
-  if (!plan || !plan.armyMode || !ARMIES[plan.army]) return null;
+  if (!plan || !ARMIES[plan.army]) return null;
   const c = company && company.army === plan.army ? company : Company.load(plan.army);
   const salt = saltOf(c);
-  const fresh = Math.max(0, Math.min(SLATE_CAP,
-    (plan.want | 0) - Company.fieldable(c, plan.want).length));
+  const vets = Company.fieldable(c, plan.want).length;
+  /**
+   * WHAT THE FRESH HALF IS MADE OF, and it is two different questions.
+   *
+   * An ARMY MODE opens on rung-0 identical strangers — that is the campaign's
+   * own law, argued in `_musterOpening` — so the count is the whole answer and
+   * every man is the cheapest rung.
+   *
+   * A CONTINGENT is a purse, and what it buys is `composeContingent`'s answer,
+   * asked here so the men on the tab are the men the muster will raise. This
+   * is the clause that lets the barracks show your line in EVERY mode that
+   * fields one, instead of only in the five that open on ten strangers.
+   */
+  const standing = Company.fieldable(c, plan.want).map((m) => m.type);
+  const wants = plan.armyMode
+    ? new Array(Math.max(0, (plan.want | 0) - vets)).fill(ARMIES[plan.army].tiers[0].type)
+    : composeContingent(ARMIES[plan.army], plan.want | 0, standing, plan.unit ?? -1).types;
+  const fresh = Math.max(0, Math.min(SLATE_CAP, wants.length));
   let slate = slateFor(plan.army);
   let moved = false;
 
@@ -317,6 +338,15 @@ export function ensure(plan, company) {
     slate.recruits = slate.recruits.slice(0, fresh);
     moved = true;
   }
+  /* AND THE COMPOSITION ITSELF CAN GO STALE. Moving the contingent's rung
+   * slider changes what the purse buys, so a slate minted against the old
+   * answer describes men the muster will not raise. Re-type in place — the
+   * designations and everything the player wrote on them survive, because the
+   * man is his name and his paint, not his rung. */
+  for (let i = 0; i < slate.recruits.length; i++) {
+    const want = wants[i];
+    if (want && slate.recruits[i].type !== want) { slate.recruits[i].type = want; moved = true; }
+  }
   if (slate.recruits.length < fresh) {
     /**
      * Mint the gap. The taken set is walked from ordinal 0 with every prior
@@ -325,7 +355,6 @@ export function ensure(plan, company) {
      * salt is a function of nothing else.
      */
     const army = ARMIES[plan.army];
-    const cheapest = army.tiers[0].type;
     const taken = takenOf(c, slate);
     /* Bounded, because `designateWith`'s own last resort does not consult
      * `taken` — a full namespace must produce a short slate, never a spin. */
@@ -333,7 +362,10 @@ export function ensure(plan, company) {
       const designation = designateWith(slate.salt, army, taken);
       if (taken.has(designation)) continue;
       taken.add(designation);
-      slate.recruits.push({ designation, type: cheapest, squad: null, look: null });
+      /* The type for THIS slot, off the composition — cheapest on an army
+       * mode, whatever the purse bought on a contingent. */
+      const type = wants[slate.recruits.length] || army.tiers[0].type;
+      slate.recruits.push({ designation, type, squad: null, look: null });
     }
     moved = true;
   }
@@ -346,7 +378,7 @@ export function ensure(plan, company) {
     ]);
     const seen = new Set();
     const picks = slate.picks.filter((p) =>
-      known.has(p) && !seen.has(p) && (seen.add(p), true)).slice(0, plan.want | 0);
+      known.has(p) && !seen.has(p) && (seen.add(p), true)).slice(0, SLATE_CAP);
     if (picks.length !== slate.picks.length) { slate.picks = picks.length ? picks : null; moved = true; }
   }
 
@@ -390,11 +422,23 @@ export function lineup(plan, company, opts = {}) {
    * is `fieldable`'s first `want`; a pick naming a RESERVE veteran must find
    * him too, or the tab's "field him next run" writes a name this resolver
    * silently drops — a button that lies. The whole roll goes in the map; the
-   * WANT cap below is what keeps a pick from ever growing the line. */
+   * CAP below is what keeps a pick from ever growing the line. */
   const all = Company.fieldable(c);
   const vets = all.slice(0, want);
   const slate = opts.versus ? null : ensure(plan, c);
   const recruits = slate ? slate.recruits.map((r) => materialize(r, plan.army)) : [];
+  /**
+   * WHAT THE LINE MAY BE, AND IT IS NOT ALWAYS `want`.
+   *
+   * On an army mode `want` is a HEADCOUNT — ten men — and the cap is the
+   * count. On a contingent it is a PURSE, priced in cheapest-rung bodies, and
+   * what it buys is routinely a different number of men: twenty-four
+   * Confederate allies is fourteen bodies including a tank, and twelve
+   * Republic allies pointed at rung two is ten snipers. Capping those at the
+   * slider's number would put a line on the tab that the ground then
+   * contradicts — which is the one defect this resolver exists to prevent.
+   */
+  const cap = plan.armyMode ? want : Math.min(MAX_STRENGTH, vets.length + recruits.length);
   const byName = new Map([
     ...all.map((m) => [m.designation, m]),
     ...recruits.map((m) => [m.designation, m]),
@@ -410,10 +454,10 @@ export function lineup(plan, company, opts = {}) {
     if (m && !used.has(p)) { picked.push(m); used.add(p); }
   }
   for (const m of fallback) {
-    if (picked.length >= want) break;
+    if (picked.length >= cap) break;
     if (!used.has(m.designation)) { picked.push(m); used.add(m.designation); }
   }
-  return picked.slice(0, want);
+  return picked.slice(0, cap);
 }
 
 /* ── what the player may change ──────────────────────────────────────── */
