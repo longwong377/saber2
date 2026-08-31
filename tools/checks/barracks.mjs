@@ -88,6 +88,8 @@ function freshRoll(n, army = ARMIES.republic) {
  */
 const planOf = (want) => ({ army: 'republic', want, armyMode: true });
 
+const squadWordIndex = (n) => (Number.isInteger(n) ? `squad ${n + 1}` : 'nowhere');
+
 export async function run({ check, assert, THREE: T }) {
   /**
    * THE PAIR, FOR THE WHOLE FILE — determinism.mjs names the two reasons: this
@@ -1705,6 +1707,14 @@ export async function run({ check, assert, THREE: T }) {
       Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
       const seated = roll.all[3].designation;
       Company.appoint('republic', seated, true, true);
+      /* AND ONE MAN PUT SOMEWHERE BY HAND. The deal fills the first squad that
+       * is not full; a man the player has already assigned keeps what he was
+       * given, and the order of battle has to honour that or the veteran squad
+       * picker is a control that writes a number nothing reads. Squad 3 is far
+       * enough from the fill that only an honoured assignment puts him
+       * there. */
+      const posted = roll.all[6].designation;
+      Company.assign('republic', posted, 3);
 
       const { menu, doc, close } = menuOn({ mode: 'command' });
       try {
@@ -1752,6 +1762,15 @@ export async function run({ check, assert, THREE: T }) {
         assert(leadOf(mine)?.designation === seated,
           `the page says ${seated} has that squad and the rule says `
           + `${leadOf(mine)?.designation}`);
+
+        /* THE HAND-ASSIGNED MAN IS WHERE HE WAS PUT, on the page and in the
+         * deal both. */
+        const where = squadPlan(line, SQUAD).find(([m]) => m.designation === posted)?.[1];
+        assert(where === 3,
+          `a man assigned to ${squadWordIndex(3)} was dealt into ${squadWordIndex(where)}`);
+        const heads = squads.map((d) => d.querySelector('h5')?.textContent || '');
+        assert(heads.some((h) => /4/.test(h.split('·')[0] || '')),
+          `no squad heading on the page is the fourth: ${JSON.stringify(heads)}`);
 
         /* A SQUAD WITH NOBODY ABOVE THE FIRST RUNG SAYS SO rather than naming
          * a trooper who is a trooper like the other nine. */
