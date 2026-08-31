@@ -42,6 +42,7 @@ import { ATTR_IDS } from '../../src/game/Attributes.js';
 import {
   ARMIES, CommandRoster, musterPlan, OPENING_STRENGTH, RANKS, rankFor, MARKS,
   markById, SQUAD, commandRng, CommandDirector, composeContingent, CONTINGENT_MIXED,
+  leadOf, squadPlan,
 } from '../../src/game/Command.js';
 import { makeRng } from '../../src/engine/MathUtil.js';
 import * as Company from '../../src/game/Company.js';
@@ -1680,6 +1681,87 @@ export async function run({ check, assert, THREE: T }) {
       } finally { close(); }
       return `moved 0 → 1 → clamped → 2 through the page; the seat stayed in squad 0; `
         + `${Company.SQUADS_MAX} squads offered on both pages`;
+    }));
+
+  check('barracks: the order of battle is the shape the ground forms, and it names who has each squad',
+    () => withCleanStore(() => {
+      /**
+       * ── A LIST OF TEN NAMES IS A LIST; A COMPANY IS SQUADS ────────────────
+       *
+       * Every squad in the fight has somebody in charge of it — that has been
+       * true since `leaderOf` existed — and it had never once been SHOWN. So a
+       * player who named a man to a seat, which is the whole point of the
+       * post, could not see their own company's shape anywhere.
+       *
+       * The page must not have its own opinion about either half. `squadPlan`
+       * is the deal `CommandRoster.assignSquads` performs, lifted so a screen
+       * can ask without writing, and `leadOf` is `leaderOf` — post first, then
+       * the rule. This drives the real page and then asks the FIGHT the same
+       * two questions, so the day either derivation drifts, the tab and the
+       * ground stop agreeing and this goes red.
+       */
+      const roll = freshRoll(7);
+      roll.all[3].award(RANKS[2].xp);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const seated = roll.all[3].designation;
+      Company.appoint('republic', seated, true, true);
+
+      const { menu, doc, close } = menuOn({ mode: 'command' });
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(null);
+        const page = doc.getElementById('company-page');
+        const squads = [...page.querySelectorAll('.orbat-squad')];
+        assert(squads.length >= 2,
+          `${squads.length} squad(s) on the order of battle for a line of ten`);
+
+        /* THE SAME DEAL THE FIELD MAKES. Asked of the resolver the page reads
+         * and of the pure rule the roster writes with, independently. */
+        const plan = musterPlan(menu.s, null);
+        const line = Muster.lineup(plan, Company.load('republic')) || [];
+        const want = new Map();
+        for (const [m, n] of squadPlan(line, SQUAD)) {
+          want.set(n, (want.get(n) || 0) + 1);
+        }
+        assert(squads.length === want.size,
+          `the page drew ${squads.length} squads and the deal makes ${want.size}`);
+        /* ONE `<b>` PER MAN — a child-combinator count is what the page's own
+         * markup happens to make and is not what is being asserted; the name
+         * is. */
+        const drawn = squads.map((d) => d.querySelectorAll('.company-taking b').length);
+        assert(JSON.stringify(drawn) === JSON.stringify([...want.keys()].sort((a, b) => a - b)
+          .map((k) => want.get(k))),
+          `the page put ${JSON.stringify(drawn)} men in its squads and the deal makes `
+          + `${JSON.stringify([...want.values()])}`);
+        assert(drawn.reduce((a, b) => a + b, 0) === line.length,
+          `${drawn.reduce((a, b) => a + b, 0)} men on the order of battle and ${line.length} `
+          + 'in the line — somebody is not going, or is going twice');
+
+        /* AND THE SEAT IS NAMED, in the squad the deal actually put him in. */
+        const his = squadPlan(line, SQUAD).find(([m]) => m.designation === seated)?.[1];
+        assert(Number.isInteger(his), 'the seated man is not in the line at all');
+        const head = squads[[...want.keys()].sort((a, b) => a - b).indexOf(his)]
+          ?.querySelector('h5')?.textContent || '';
+        assert(/has the seat/.test(head) && head.includes(seated),
+          `the squad the seated man is in reads "${head.replace(/\s+/g, ' ')}"`);
+
+        /* …AND THE FIGHT AGREES. `leadOf` is what `CommandDirector.leaderOf`
+         * calls, so the man the page names is the man the ground obeys. */
+        const mine = squadPlan(line, SQUAD).filter(([, n]) => n === his).map(([m]) => m);
+        assert(leadOf(mine)?.designation === seated,
+          `the page says ${seated} has that squad and the rule says `
+          + `${leadOf(mine)?.designation}`);
+
+        /* A SQUAD WITH NOBODY ABOVE THE FIRST RUNG SAYS SO rather than naming
+         * a trooper who is a trooper like the other nine. */
+        const flat = squads.map((d) => d.querySelector('h5')?.textContent || '')
+          .filter((h) => !/has the seat/.test(h));
+        assert(flat.some((h) => /outranks/.test(h)),
+          `no squad of raw troopers said so: ${JSON.stringify(flat)}`);
+        return `${squads.length} squads, ${drawn.join('+')} men, the seat named in `
+          + `${['1st', '2nd', '3rd'][his] || `#${his + 1}`}, and leadOf agrees`;
+      } finally { close(); }
     }));
 
 }

@@ -187,7 +187,7 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
          LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById, SQUAD,
-         DUTIES, dutiesAt, holds,
+         DUTIES, dutiesAt, holds, leadOf, squadPlan,
          armyToLead, CommandDirector,
          musterPlan, versusCommandConfig, VERSUS_WINS, VERSUS_LIMITS } from '../game/Command.js';
 /* THE MUSTER SLATE — the pre-rolled recruits the next run will field, and the
@@ -6478,7 +6478,7 @@ export class Menu {
     const onRoll = new Set(c.men.map((m) => m.designation));
     const vets = line.filter((m) => onRoll.has(m.designation));
     const fresh = line.length - vets.length;
-    const rows = line.map((m) => {
+    const manRow = (m) => {
       if (!onRoll.has(m.designation)) {
         const called = m.look?.callsign ? `${m.designation} "${m.look.callsign}"` : m.designation;
         return `<div><b>${escKey(called)}</b><span>Fresh · `
@@ -6487,6 +6487,54 @@ export class Menu {
       const R = RANKS[rankFor(m.xp | 0)];
       return `<div><b>${escKey(companyNameOf(m))}</b><span>${escKey(R.title)} · `
         + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · ${m.kills | 0} down</span></div>`;
+    };
+    const rows = line.map(manRow).join('');
+    /**
+     * ══ THE ORDER OF BATTLE ═══════════════════════════════════════════════
+     *
+     * A flat list of ten names is a list; a company is squads, and each squad
+     * has somebody in charge of it. That was true in the fight from the day
+     * `leaderOf` existed and it had never once been shown, so a player who
+     * named a man to a seat — the whole point of the post — could not see
+     * their own company's shape anywhere.
+     *
+     * BOTH DERIVATIONS ARE THE FIGHT'S OWN. `squadPlan` is the deal
+     * `CommandRoster.assignSquads` performs, lifted so a screen can ask it
+     * without writing anything, and `leadOf` is `leaderOf` — including the
+     * post's preference in front of it. Nothing here re-states either rule,
+     * which is what makes this page and the ground agree about who is in
+     * charge of what.
+     *
+     * The undealt men are shown as the squad they will BE dealt into, not as
+     * "unassigned": a fresh company has nobody assigned by hand and the field
+     * is about to put it into two tidy squads, and a page that said "ten
+     * unassigned" about that would be describing its own store rather than
+     * the next run.
+     */
+    const squadWord = army?.squadWord || 'Squad';
+    const dealt = new Map();
+    for (const [m, n] of squadPlan(line, SQUAD)) {
+      if (!dealt.has(n)) dealt.set(n, []);
+      dealt.get(n).push(m);
+    }
+    const orbat = [...dealt.keys()].sort((a, b) => a - b).map((n) => {
+      const men = dealt.get(n);
+      const lead = leadOf(men);
+      const seat = lead && lead.post;
+      const R = lead ? RANKS[rankFor(lead.xp | 0)] : null;
+      /* NAMED ONLY WHEN THE ANSWER IS SOMEBODY. A squad of ten fresh recruits
+       * has a leader by the rule — the first of them — and saying "led by
+       * CT-4471" about a man who is a trooper like the other nine tells the
+       * player something that is technically true and reads as noise. What is
+       * worth printing is a RANK, or a seat the player gave. */
+      const worth = lead && ((R && R.color != null) || seat);
+      return `<div class="orbat-squad">
+        <h5>${escKey(squadWord)} ${n + 1}<em>${men.length} `
+        + `${men.length === 1 ? 'man' : 'men'}${worth
+          ? ` · ${seat ? 'has the seat: ' : ''}${escKey(R.short)} ${escKey(companyNameOf(lead))}`
+          : ' · nobody in it outranks anybody'}</em></h5>
+        <div class="company-fallen company-taking">${men.map(manRow).join('')}</div>
+      </div>`;
     }).join('');
     /**
      * A MEETING'S NUMBERS ARE THE MEETING'S. A versus side opens at the
@@ -6509,8 +6557,10 @@ export class Menu {
     return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
       <p class="hint">${escKey(army?.name || plan.army)} fields <b>${line.length}</b>
         ${escKey(unit)}s next run: <b>${vets.length}</b> of the company,
-        <b>${fresh}</b> fresh.</p>
-      <div class="company-fallen company-taking">${rows}</div>`;
+        <b>${fresh}</b> fresh — in <b>${dealt.size}</b>
+        ${escKey(dealt.size === 1 ? squadWord.toLowerCase() : `${squadWord.toLowerCase()}s`)},
+        each with somebody in charge of it.</p>
+      <div class="orbat">${orbat}</div>`;
   }
 
   /** The men who did not come back, most recent first. */

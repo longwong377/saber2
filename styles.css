@@ -2984,6 +2984,17 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 .duty-row i{font-style:normal;font-weight:800;color:var(--ink)}
 .company-post{margin-bottom:14px}
 .issue-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+/* ── THE ORDER OF BATTLE ──────────────────────────────────────────────────
+   The line the next run fields, in the squads it will form, each under the
+   man who is in charge of it. A heading per squad rather than a divider: the
+   squad is the unit the player gives orders to, so it is the thing the eye
+   should land on first. */
+.orbat{display:flex;flex-direction:column;gap:12px}
+.orbat-squad h5{margin:0 0 5px;font:var(--mono);font-size:10.5px;font-weight:800;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--accent);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.orbat-squad h5 em{font-style:normal;font-weight:700;letter-spacing:.04em;
+  text-transform:none;color:var(--dim);font-size:11px}
 /* A man left behind is not a casualty and the line does not read like one:
    the killer's red is for the ones something killed. */
 .fell.left{color:var(--dim)}

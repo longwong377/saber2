@@ -723,9 +723,96 @@ export function holds(who, duty) {
   return rank >= i;
 }
 
+/**
+ * ══ WHICH SQUAD EACH MAN ENDS UP IN — the deal, as a pure answer ═══════════
+ *
+ * A man with a squad keeps it; a man with none is dropped into the first squad
+ * that is not full. That is the whole rule and it has been `assignSquads`'s
+ * rule since squads became a field, but it lived inside a method that MUTATES
+ * a live roster — so the Company tab, which wants to show the player the shape
+ * their company will actually form, had nothing to ask.
+ *
+ * Showing it matters now that a seat can be named: an order of battle that
+ * printed only the men the player had assigned by hand would say "eight of
+ * your ten are unassigned" about a company the field is about to deal into two
+ * tidy squads. So the deal is a function, it is handed the men, and it returns
+ * pairs rather than writing anything — the roster writes, the screen reads,
+ * and neither has its own opinion about where a man goes.
+ *
+ * @returns `[man, squadIndex][]`, in the order handed in.
+ */
+export function squadPlan(men, size = SQUAD) {
+  const list = Array.isArray(men) ? men : [];
+  const counts = new Map();
+  for (const t of list) {
+    if (!Number.isInteger(t?.squad)) continue;
+    counts.set(t.squad, (counts.get(t.squad) || 0) + 1);
+  }
+  const out = [];
+  for (const t of list) {
+    if (Number.isInteger(t?.squad)) { out.push([t, t.squad]); continue; }
+    let pick = 0;
+    while ((counts.get(pick) || 0) >= size) pick++;
+    counts.set(pick, (counts.get(pick) || 0) + 1);
+    out.push([t, pick]);
+  }
+  return out;
+}
+
 /** Every licence this rank carries, cheapest first — what a man's page prints. */
 export function dutiesAt(rank) {
   return DUTIES.slice(0, Math.max(0, Math.min(DUTIES.length, (rank | 0) + 1)));
+}
+
+/**
+ * ══ WHO IS IN CHARGE OF THIS SQUAD — derived, never stored ═════════════════
+ *
+ * "Troops should have a squad commander/hierarchy if they already don't,
+ *  certain roles are replaced if that person falls in combat, other's are not."
+ *
+ * ── THE POST COMES FIRST, AND THE DERIVATION IS STILL THE ANSWER ───────────
+ *
+ * A player who named a man to this squad's seat gets that man, alive and
+ * licensed. Everyone else gets the rule below it: the highest-ranked living
+ * member, ties broken by experience and then by enlistment order so the answer
+ * is stable frame to frame.
+ *
+ * Deriving it is the whole of "replaced if that person falls" — there is no
+ * field to clear and no promotion to schedule, because the question is asked
+ * rather than remembered. That is also why the post sits in FRONT of the
+ * derivation rather than being a field the derivation reads: when the seat's
+ * holder dies this function has already answered, on the same frame, and
+ * `onDeath` only has to say so out loud.
+ *
+ * ── A FUNCTION AND NOT A METHOD, because the SCREEN asks it too ────────────
+ *
+ * The order of battle on the Company tab shows who leads each squad off the
+ * saved roll, where there is no director and no live `Trooper` — just records
+ * off disk. A second copy of this rule over there is the hand-maintained twin
+ * this file has deleted eight of, and it is the worst possible one to have:
+ * the tab would name a man and the fight would obey another.
+ *
+ * So it takes anything with the four fields, and both callers hand it what
+ * they have. A record has `xp` and no `rank` getter, so the rung is derived
+ * here when it is absent; a record off disk has no `alive` either, and absent
+ * means alive, because a fallen man is not on the roll at all.
+ *
+ * The role that is NOT replaced is yours. A Jedi commanding is a person, not a
+ * rung, and `_endCampaign` is what happens when that one falls.
+ */
+export function leadOf(men) {
+  const list = Array.isArray(men) ? men : [];
+  const up = (t) => t && t.alive !== false;
+  const rungOf = (t) => (typeof t.rank === 'number' ? t.rank : rankFor(t.xp | 0));
+  for (const t of list) if (up(t) && t.post && holds(rungOf(t), 'LEADS')) return t;
+  let best = null;
+  for (const t of list) {
+    if (!up(t)) continue;
+    if (!best) { best = t; continue; }
+    if (rungOf(t) > rungOf(best)) { best = t; continue; }
+    if (rungOf(t) === rungOf(best) && (t.xp | 0) > (best.xp | 0)) best = t;
+  }
+  return best;
 }
 
 /**
@@ -2345,20 +2432,8 @@ export class CommandRoster {
    * three after a bad area.
    */
   assignSquads(size = SQUAD) {
-    const counts = new Map();
-    for (const t of this.all) {
-      if (!t.alive || t.squad == null) continue;
-      counts.set(t.squad, (counts.get(t.squad) || 0) + 1);
-    }
-    for (const t of this.all) {
-      if (!t.alive || t.squad != null) continue;
-      let pick = 0;
-      for (let n = 0; ; n++) {
-        if ((counts.get(n) || 0) < size) { pick = n; break; }
-      }
-      t.squad = pick;
-      counts.set(pick, (counts.get(pick) || 0) + 1);
-    }
+    const dealt = squadPlan(this.all.filter((t) => t.alive), size);
+    for (const [t, n] of dealt) t.squad = n;
     return this;
   }
 
@@ -8281,51 +8356,13 @@ export class CommandDirector extends WaveDirector {
    * circle exactly where the casualty was.
    */
   /**
-   * WHO IS IN CHARGE OF THIS SQUAD — derived, never stored.
-   *
-   * "Troops should have a squad commander/hierarchy if they already don't,
-   * certain roles are replaced if that person falls in combat, other's are
-   * not."
-   *
-   * The leader of a squad is its highest-ranked living member, ties broken by
-   * experience and then by enlistment order so the answer is stable frame to
-   * frame. Deriving it is the whole of "replaced if that person falls": there
-   * is no field to clear and no promotion to schedule — the moment a sergeant
-   * goes down, the next man up IS the leader, on the next frame, because the
-   * question is asked rather than remembered.
-   *
-   * The role that is NOT replaced is yours. A Jedi commanding is a person, not
-   * a rung, and `_endCampaign` is what happens when that one falls.
+   * WHO IS IN CHARGE OF THIS SQUAD — the module's `leadOf`, under the name
+   * every caller in this class already uses. The rule itself moved out because
+   * the Company tab's order of battle asks the same question of records off
+   * disk, where there is no director; see the long note over `leadOf` for why
+   * a second copy of it would be the worst twin in the file.
    */
-  leaderOf(squad) {
-    /**
-     * ── THE POST COMES FIRST, AND THE DERIVATION IS STILL THE ANSWER ─────
-     *
-     * A player who named a man to this squad's seat gets that man, alive and
-     * licensed. Everyone else gets the rule below, unchanged — which is the
-     * whole reason the post is a preference in front of a derivation rather
-     * than a field the derivation reads: when the post-holder falls there is
-     * nothing to clear and nobody to appoint. The next line of this function
-     * has already answered, on the same frame, and `onDeath` only has to say
-     * so out loud.
-     *
-     * Licensed is re-tested here and not only at the door, because a squad is
-     * assembled from men who came from three places — a saved company, a fresh
-     * slate, and `adopt` carrying a run across a ground — and only one of
-     * those three passes through `enlistRecord`.
-     */
-    for (const t of squad) {
-      if (t.alive && t.post && holds(t, 'LEADS')) return t;
-    }
-    let best = null;
-    for (const t of squad) {
-      if (!t.alive) continue;
-      if (!best) { best = t; continue; }
-      if (t.rank > best.rank) { best = t; continue; }
-      if (t.rank === best.rank && t.xp > best.xp) best = t;
-    }
-    return best;
-  }
+  leaderOf(squad) { return leadOf(squad); }
 
   /**
    * ── WHO IN THIS SQUAD IS LICENSED TO `duty` ────────────────────────────
