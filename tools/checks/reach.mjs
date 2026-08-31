@@ -538,6 +538,60 @@ export async function run({ check, assert }) {
     return `circle only · 560 m recall taken · ${ask.refused.length} shaken men still refuse it`;
   });
 
+  check('reach.10 an army standing in its own correct slots is always in earshot', async () => {
+    /**
+     * ══ THE NUMBER, AND THE ONE PROPERTY IT HAS TO HAVE ═══════════════════
+     *
+     * A reach that is shorter than the shape the army was TOLD to form is a
+     * rule that fires on a company doing exactly what it was ordered to do:
+     * form line abreast, then discover you cannot re-order the ends of it.
+     * That is not a cost, it is a bug that looks like a cost, and it would be
+     * introduced by a tuning change to either side — a wider formation or a
+     * shorter reach — with nothing in the tree noticing.
+     *
+     * SO IT IS MEASURED OFF THE FORMATIONS THEMSELVES, at the largest company
+     * the game can field (`MAX_STRENGTH`), across every squad index, rather
+     * than asserted as a literal. MEASURED at the time of writing, the widest
+     * slot each formation puts a man in:
+     *
+     *     rank 28.9 · line 27.7 · behind 27.4 · holdfire 21.3 · front 20.4
+     *     cover 13.6 · circle 5.8 · digin 4.6 · charge 0.0
+     *
+     * against a reach of 34. `rank` is the binding one with 5.1 m to spare.
+     *
+     * COVER IS THE EXCEPTION AND IS CHECKED SEPARATELY. A man told to take
+     * cover does not stand in his slot — `slotFor` hunts up to `COVER_HUNT`
+     * from it — so the worst case there is the slot plus the hunt, and that
+     * has to fit too or a line that took cover could not then be told to move.
+     */
+    const THREE = await import('three');
+    const out = new THREE.Vector3();
+    const worst = [];
+    for (const F of Object.values(Cmd.FORMATIONS)) {
+      let max = 0;
+      for (let i = 0; i < Cmd.MAX_STRENGTH; i++) {
+        for (let k = 0; k < Cmd.SQUAD_SLOTS; k++) {
+          if (!F.slot(i, Cmd.MAX_STRENGTH, k, out)) continue;
+          max = Math.max(max, Math.hypot(out.x, out.z));
+        }
+      }
+      worst.push([F.id, max]);
+      assert(max <= Cmd.ORDER_REACH,
+        `\`${F.id}\` puts a man ${max.toFixed(1)} m from his commander and the reach is `
+        + `${Cmd.ORDER_REACH} m — a company that formed the shape it was ordered to form `
+        + 'cannot be given its next order');
+    }
+    /* AND THE ONE THAT DOES NOT STAND IN ITS SLOT. */
+    const cover = worst.find(([id]) => id === 'cover')[1];
+    assert(cover + 16 <= Cmd.ORDER_REACH,
+      `a man in COVER can be ${(cover + 16).toFixed(1)} m out (a ${cover.toFixed(1)} m slot plus `
+      + `the 16 m cover hunt) against a reach of ${Cmd.ORDER_REACH} — a line that took cover `
+      + 'could not then be told to move');
+    worst.sort((a, b) => b[1] - a[1]);
+    return worst.map(([id, m]) => `${id} ${m.toFixed(1)}`).join(' · ')
+      + ` — all inside ${Cmd.ORDER_REACH} m`;
+  });
+
   /* ══════════════════════════════════════════════════════════════════ */
   /*  And the player can see it before they press anything              */
   /* ══════════════════════════════════════════════════════════════════ */
