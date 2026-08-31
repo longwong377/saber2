@@ -11,7 +11,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
-         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood } from '../game/Bodies.js';
+         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor } from '../game/Bodies.js';
 import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -39,6 +39,7 @@ import {
   fieldable as companyFieldable, dossier as companyDossier,
   dress as companyDress, nameOf as companyNameOf, companyLines,
   CALLSIGN_MAX as companyCallsignMax,
+  honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
 // The Descent's ladder, named on the Deploy panel because the mode picks its
 // own places and the Theatre column has no say in it — see _syncTheatre.
@@ -182,8 +183,13 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
  * the set the block below has to count. */
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
-         LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById,
+         LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById, SQUAD,
+         armyToLead, CommandDirector,
          musterPlan, versusCommandConfig, VERSUS_WINS, VERSUS_LIMITS } from '../game/Command.js';
+/* THE MUSTER SLATE — the pre-rolled recruits the next run will field, and the
+ * one resolver (`lineup`) of who deploys. The barracks renders it; main.js
+ * fields it; the two agree because they are one call. See Muster.js. */
+import * as Muster from '../game/Muster.js';
 // THE DATABANK. `ARCHETYPES` is the roster — the page list is enumerated off it
 // and never typed — and Databank.js carries the one thing a roster cannot hold:
 // which side a body fights for, what it is carrying, and who it is.
@@ -3323,6 +3329,104 @@ export function framePreviewCamera(camera, content, opts = {}) {
 const LEVEL_SHOT = (key) => `assets/previews/${key}.jpg`;
 const HILT_SHOT = (name) => `assets/previews/hilt-${name}.jpg`;
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE PARADE GROUND — the Company tab's 3D stage, as pure functions     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "I can't see Sith troops let alone my troops."
+ *
+ * The stage stands the EXACT next deployment — `Muster.lineup`, the same call
+ * the deploy path fields — on open ground: veterans in front in the order
+ * they will fight, wearing their real rank paint, marks, bands and scars;
+ * the slate's recruits behind them in plain plate. Everything below is
+ * exported and DOM-free for the reason the character preview's assembly is:
+ * `tools/checks/barracks.mjs` drives these exact functions with no canvas and
+ * no GL, and a check that re-implemented the staging would agree with itself.
+ *
+ * The bodies are the game's own — `ARCHETYPES[type].build` with the same
+ * `bodyOptsFor` kit the battlefield uses — and the paint is the game's own:
+ * `CommandDirector.prototype.repaint/markUp/bandUp/scorchUp` called on a
+ * stub, which is exactly how `tools/checks/company.mjs` already proves the
+ * mark is paint. One copy of what a Sergeant looks like, everywhere.
+ */
+
+/**
+ * Where each man stands: ranks of `SQUAD`, deploying order front-left to
+ * rear-right, the whole formation centred on the origin. File spacing wide
+ * enough that ten men read as ten and not as a texture.
+ */
+export function paradeSlots(n) {
+  const out = [];
+  const per = SQUAD;
+  const ranks = Math.max(1, Math.ceil((n | 0) / per));
+  for (let i = 0; i < (n | 0); i++) {
+    const rank = Math.floor(i / per);
+    const inRank = Math.min(per, (n | 0) - rank * per);
+    const file = i % per;
+    out.push({
+      x: (file - (inRank - 1) / 2) * 0.95,
+      /* Rank 0 stands FURTHEST FORWARD (+z, toward the default camera) — the
+       * deploying order reads front-to-back, which is the order they fight. */
+      z: ((ranks - 1) / 2 - rank) * 1.4,
+    });
+  }
+  return out;
+}
+
+/**
+ * One man of the line, built and painted and stood on y=0.
+ *
+ * Returns `{ root, rig, man }` — `root` is what a scene adds and what a
+ * raycast hits. A chassis with no biped rig (a droideka a contingent run
+ * banked) stands as built; nothing here may throw over an exotic veteran.
+ */
+export function buildParadeFigure(man) {
+  const A = ARCHETYPES[man.type];
+  if (!A?.build) return null;
+  let built;
+  try {
+    built = A.build({ scale: A.scale ?? 1, ...(bodyOptsFor(man.type) || {}) });
+  } catch { return null; }
+  const rig = built.rig ?? null;
+  const root = rig?.root ?? built.group ?? null;
+  if (!root) return null;
+  if (rig) standPreviewFigure(rig);
+  /**
+   * The paint, through the game's own methods on a stub body — the pattern
+   * `company.mjs` uses to prove a mark is paint. `this` is unused in all
+   * four; the stub carries the three fields they read.
+   */
+  const stub = { rig, A: { scale: A.scale ?? 1 }, group: root };
+  const R = RANKS[rankFor(man.xp | 0)];
+  if (R?.color != null) CommandDirector.prototype.repaint.call(null, stub, R.color);
+  const mark = markById(man.look?.mark)?.color;
+  if (mark != null) CommandDirector.prototype.markUp.call(null, stub, mark);
+  const band = markById(man.look?.band)?.color;
+  if (band != null) CommandDirector.prototype.bandUp.call(null, stub, band);
+  if ((man.wounds | 0) > 0) CommandDirector.prototype.scorchUp.call(null, stub, man.wounds | 0);
+  return { root, rig, man, _stub: stub };
+}
+
+/**
+ * The whole formation's bounding content, in the shape `framePreviewCamera`
+ * frames — one cylinder over every figure at its slot.
+ */
+export function paradeContent(figures) {
+  const objects = figures.map((f) => f.root).filter(Boolean);
+  return previewContent(objects);
+}
+
+/**
+ * The three shots the stage bar offers. `line` frames everybody; the other
+ * two need a selected man and the bar disables them until there is one.
+ */
+export const PARADE_SHOTS = [
+  { id: 'line', name: 'The line', zoom: 1, focus: 0 },
+  { id: 'man', name: 'The man', zoom: 2.4, focus: 0.5 },
+  { id: 'close', name: 'Close', zoom: 3.4, focus: 0.74 },
+];
+
 export class Menu {
   constructor(settings, hooks = {}) {
     this.s = settings;
@@ -3502,11 +3606,23 @@ export class Menu {
      */
     this._buildCompanyList?.();
     this._showCompany?.(null);
+    /* …and if the player left on the Company tab, the parade ground wakes
+     * with the roll the run just rewrote — `hideMenu` stopped it, and the
+     * signature check inside `_restage` makes this cheap when nothing moved. */
+    if (document.querySelector('[data-panel="company"]')?.classList.contains('active')) {
+      this._startStage?.();
+    }
     // The panel had no layout while the screen was hidden, so this is the first
     // frame on which "how much is below the fold" has an answer.
     this._onPanelShown();
   }
-  hideMenu() { this.el.menu.classList.add('hidden'); }
+  hideMenu() {
+    this.el.menu.classList.add('hidden');
+    /* Deploying does not click a tab, so the stage's loop would keep raycast
+     * math and renders running behind the live game. It stops with the menu
+     * and `showMenu`/the tab click bring it back. */
+    this._stopStage?.();
+  }
 
   setGpuLine(text) { this.el.gpu.textContent = text; this._syncDiag(); }
 
@@ -3547,8 +3663,16 @@ export class Menu {
         else this._stopPreview();
         /* The Company page's "Taking in" section reads three live settings
          * (mode, contingent, ally army), all set on OTHER tabs — re-rendered
-         * on arrival or it reports the plan as it stood last time. */
-        if (t.dataset.tab === 'company') { this._buildCompanyList?.(); this._showCompany?.(this._companyKey); }
+         * on arrival or it reports the plan as it stood last time. The stage
+         * starts here and only here, for the DOM-shim reason `_startStage`
+         * gives, and stops on the way to any other tab. */
+        if (t.dataset.tab === 'company') {
+          this._buildCompanyList?.();
+          this._showCompany?.(this._companyKey);
+          this._startStage?.();
+        } else {
+          this._stopStage?.();
+        }
         // A panel that was display:none has no scroll geometry at all, so the
         // fade and the reveal are computed the moment it becomes the one on
         // screen and not before.
@@ -5794,10 +5918,31 @@ export class Menu {
     const panel = document.createElement('section');
     panel.className = 'panel';
     panel.dataset.panel = 'company';
+    /**
+     * THREE COLUMNS NOW: the roll, the ground, the page.
+     *
+     * `#company-list` keeps its exact contract — veterans and the fallen row,
+     * nothing else — because seven checks in `tools/checks/company.mjs` query
+     * `.diff` rows inside it and read `dataset.man` off every one. The muster
+     * slate's recruit rows live in `#company-muster`, a SIBLING, where those
+     * censuses cannot see them and do not have to.
+     *
+     * `#company-stage` is an empty div until the tab is actually clicked —
+     * the whole Menu must construct under tools/dom-shim.mjs, where there is
+     * no canvas and no GL, so the renderer is lazy behind `_startStage` the
+     * same way the Jedi preview is lazy behind its tab.
+     */
     panel.innerHTML = `
       <div class="col narrow company-roll">
         <h3>The roll</h3>
         <div id="company-list"></div>
+        <h3 class="company-muster-head">The muster</h3>
+        <div id="company-muster"></div>
+      </div>
+      <div class="col wide company-ground">
+        <div id="company-stage"></div>
+        <div id="company-shots" class="shots"></div>
+        <p id="company-stage-caption" class="hint"></p>
       </div>
       <div class="col wide company-page" id="company-page"></div>`;
     const foot = wrap.querySelector('.menu-foot');
@@ -5806,6 +5951,22 @@ export class Menu {
     this._companyKey = null;
     this._buildCompanyList();
     this._showCompany(null);
+
+    /**
+     * ESCAPE PUTS THE PAGE DOWN. The other half of the deselect fix — the
+     * first half is that clicking a selected row toggles it off. Scoped hard:
+     * only while the menu is up, the Company panel is the active one, and
+     * something is actually selected, so the key still means everything else
+     * it means everywhere else (main.js's window handler runs regardless;
+     * `screens.escape()` is a no-op in the menu state).
+     */
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (this.el.menu?.classList.contains('hidden')) return;
+      if (!panel.classList.contains('active')) return;
+      if (!this._companyKey) return;
+      this._showCompany(null);
+    });
   }
 
   /** Which army's roll the page is showing. Every one of them, in order. */
@@ -5831,6 +5992,14 @@ export class Menu {
       const head = document.createElement('h4');
       head.className = 'codex-head databank-army';
       head.textContent = army?.short || army?.name || c.army;
+      /* The header is the door to the OTHER army's parade: a Sith player can
+       * stand their droids on the ground whatever the mode picker says — the
+       * ask was "I can't see Sith troops let alone my troops", unconditional. */
+      this._activate(head, () => {
+        audio.ui('click');
+        this._stageArmy = c.army;
+        this._restage?.(true);
+      }, `Review ${army?.name || c.army} on the parade ground`);
       host.appendChild(head);
 
       const list = document.createElement('div');
@@ -5866,15 +6035,39 @@ export class Menu {
        * `null` where this mode fields no army at all, and then nothing is
        * claimed rather than a number being invented.
        */
+      /* …AND THE ANSWER IS `Muster.lineup`'S NOW — the one resolver the
+       * deploy path fields, picks and slate and all, so the tags on these
+       * rows can no longer disagree with the ground. With no picks set the
+       * lineup's veterans are exactly `fieldable`'s prefix, which is what the
+       * cut sentence and its check have always said. */
       const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
-      const taking = plan && plan.army === c.army ? Math.min(plan.want | 0, men.length) : 0;
+      const slate = plan && plan.army === c.army ? Muster.slateFor(c.army) : null;
+      const picked = !!(slate?.picks?.length);
+      const line = plan && plan.army === c.army
+        ? (Muster.lineup(plan, c, { versus: Muster.versusPlanned(this.s) }) || []) : [];
+      const goingSet = new Set(line.map((x) => x.designation));
+      const taking = men.filter((m) => goingSet.has(m.designation)).length;
       if (taking > 0) {
         const head2 = document.createElement('p');
         head2.className = 'hint company-cut';
-        head2.textContent = taking >= men.length
-          ? `All ${men.length} deploy with you next run.`
-          : `The top ${taking} of ${men.length} deploy with you next run — rank first, then service.`;
+        head2.textContent = picked
+          ? `Hand-picked: ${taking} of ${men.length} deploy with you next run.`
+          : (taking >= men.length
+            ? `All ${men.length} deploy with you next run.`
+            : `The top ${taking} of ${men.length} deploy with you next run — rank first, then service.`);
         list.appendChild(head2);
+        if (picked) {
+          const restore = document.createElement('p');
+          restore.className = 'hint company-restore';
+          restore.textContent = 'Restore muster order';
+          this._activate(restore, () => {
+            audio.ui('click');
+            Muster.clearPicks(c.army);
+            this._buildCompanyList();
+            this._showCompany(this._companyKey);
+          }, 'Restore muster order');
+          list.appendChild(restore);
+        }
       }
       for (const m of men) {
         const R = RANKS[rankFor(m.xp | 0)];
@@ -5898,10 +6091,8 @@ export class Menu {
         const chips = attrStandout(m, kindOfArmy(c.army)).map((o) =>
           `<em class="attr-chip ${o.high ? 'hi' : 'lo'}" title="${escKey(attrBlurb(o.id, kindOfArmy(c.army)) || '')}">`
           + `${escKey(o.name)}</em>`).join('');
-        /* THE CUT, ON THE ROW. `men` is already in `fieldable` order, so the
-         * first `taking` of them are the ones going out — the same slice
-         * `veteransToField` takes, read off the same sort. */
-        const going = men.indexOf(m) < taking;
+        /* THE CUT, ON THE ROW — read off the same lineup the field takes. */
+        const going = goingSet.has(m.designation);
         if (taking > 0 && !going) d.classList.add('company-reserve');
         d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
           + `<b>${escKey(companyNameOf(m))}${flash}</b>`
@@ -5909,9 +6100,11 @@ export class Menu {
           + `${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
           + `${m.kills | 0} down</span>`
           + `<span class="man-chips">${chips}</span></div>`;
+        /* Clicking the man who is already open puts the page down — the
+         * deselect the fallen row never had, given to every row alike. */
         this._activate(d, () => {
           audio.ui('click');
-          this._showCompany(d.dataset.man);
+          this._showCompany(d.dataset.man === this._companyKey ? null : d.dataset.man);
         }, companyNameOf(m));
         list.appendChild(d);
       }
@@ -5927,11 +6120,105 @@ export class Menu {
         d.dataset.man = `${c.army}/-fallen`;
         d.innerHTML = `<i class="dot"></i><div class="txt"><b>The fallen</b>`
           + `<span>${c.lost | 0} lost, ${c.fallen.length} of them named</span></div>`;
-        this._activate(d, () => { audio.ui('click'); this._showCompany(d.dataset.man); },
-          `The fallen of ${army?.name || c.army}`);
+        this._activate(d, () => {
+          audio.ui('click');
+          this._showCompany(d.dataset.man === this._companyKey ? null : d.dataset.man);
+        }, `The fallen of ${army?.name || c.army}`);
         host.appendChild(d);
       }
     }
+    this._buildMusterList();
+    /* The stage shows the same lineup these rows tag, so a re-render of the
+     * rows is a re-render of the ground — cheaply skipped inside when the
+     * stage has not been started or the lineup has not moved. */
+    this._restage?.();
+  }
+
+  /**
+   * THE MUSTER — the slate's recruits, in their own container.
+   *
+   * A SIBLING of `#company-list` and never a child, because seven checks
+   * census `.diff` rows inside that id and read `dataset.man` off each; these
+   * rows carry `dataset.recruit` and live where the census does not look.
+   *
+   * Only the PLAN's army mints a slate — the muster is "who drops with you
+   * next run", and no other army has a next run until the player leads it.
+   * The other states get their sentence instead of silence: a mode with no
+   * army, a meeting, a session, a contingent whose purse composes its own.
+   */
+  _buildMusterList() {
+    const host = document.getElementById('company-muster');
+    if (!host) return;
+    host.innerHTML = '';
+    const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+    const hint = (text) => {
+      const p = document.createElement('p');
+      p.className = 'hint';
+      p.textContent = text;
+      host.appendChild(p);
+    };
+    if (!plan) {
+      hint(`${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours — `
+        + 'pick an army mode or set Your line on the Deploy panel, and the next '
+        + 'muster forms here with names.');
+      return;
+    }
+    if ((this._netList?.length || 0) > 1) {
+      /* `_netList` is the co-op roster `netRoster` keeps; more than one name
+       * on it means a session, and a session fields the HOST's army — see
+       * veteransToField's own note. The slate stands, unspent, for the next
+       * solo run, and saying so beats a silently empty muster. */
+      hint('In a session the host’s army musters. Your muster stands for your next solo run.');
+      return;
+    }
+    if (Muster.versusPlanned(this.s)) {
+      hint('A meeting fields your veterans only — nobody new is risked on a duel '
+        + 'between commanders.');
+      return;
+    }
+    if (!plan.armyMode) {
+      hint('A contingent is composed at the muster from the purse you set — '
+        + 'veterans first, the balance by rung.');
+      return;
+    }
+    const army = ARMIES[plan.army];
+    const c = companyLoad(plan.army);
+    const slate = Muster.ensure(plan, c);
+    const recruits = slate?.recruits || [];
+    if (!recruits.length) {
+      hint(`The company fills every slot ${army?.name || plan.army} fields next run — `
+        + 'no recruits are drawn while veterans stand for the whole line.');
+      return;
+    }
+    const head = document.createElement('p');
+    head.className = 'hint company-cut';
+    head.textContent = `${recruits.length} recruit${recruits.length === 1 ? '' : 's'} drop with `
+      + `you next run. Open one — a callsign and a paint job are his to keep, `
+      + `and if he lives he joins the roll.`;
+    host.appendChild(head);
+    const list = document.createElement('div');
+    list.className = 'difflist';
+    for (const r of recruits) {
+      const d = document.createElement('div');
+      d.className = 'diff recruit';
+      d.dataset.recruit = `${plan.army}/+${r.designation}`;
+      const mark = markById(r.look?.mark);
+      const band = markById(r.look?.band);
+      const flash = (mk) => (mk.color == null ? ''
+        : `<em class="company-mark" style="background:#${mk.color.toString(16).padStart(6, '0')}"
+             title="${escKey(mk.name)}"></em>`);
+      const called = r.look?.callsign ? `${r.designation} "${r.look.callsign}"` : r.designation;
+      d.innerHTML = `<i class="dot"></i><div class="txt">`
+        + `<b>${escKey(called)}${flash(mark)}${flash(band)}</b>`
+        + `<span>DEPLOYING · Fresh${Number.isInteger(r.squad) ? ` · ${army?.squadWord || 'Squad'} ${r.squad + 1}` : ''}</span>`
+        + `<span class="company-flavor">${escKey(Muster.flavorOf(plan.army, r.designation))}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this._showCompany(d.dataset.recruit === this._companyKey ? null : d.dataset.recruit);
+      }, called);
+      list.appendChild(d);
+    }
+    host.appendChild(list);
   }
 
   /**
@@ -5946,24 +6233,60 @@ export class Menu {
     const host = document.getElementById('company-page');
     if (!host) return;
     const list = document.getElementById('company-list');
+    const muster = document.getElementById('company-muster');
     const [armyId, who] = String(key ?? '').split('/');
     const rolls = this._companyRolls();
     const roll = rolls.find((c) => c.army === armyId) || null;
-    const man = roll && who && who !== '-fallen'
+    const man = roll && who && who !== '-fallen' && !who.startsWith('+')
       ? roll.men.find((m) => m.designation === who) || null : null;
-    const fallen = !!roll && who === '-fallen';
-    this._companyKey = man ? `${roll.army}/${man.designation}` : (fallen ? key : null);
+    /**
+     * A RECRUIT'S KEY WEARS A SIGIL, `army/+designation`, the same way the
+     * casualty page wears `-fallen`: the roll's own namespace stays exactly
+     * what the checks census, and a slate key can never shadow a veteran.
+     * Validated against the CURRENT slate — a re-mint, a consume or an army
+     * switch invalidates a held key to the index rather than a blank page.
+     */
+    const recruit = roll && who?.startsWith('+')
+      ? Muster.slateFor(armyId).recruits.find((r) => r.designation === who.slice(1)) || null
+      : null;
+    /* `-fallen` self-invalidates too — with nobody on the list there is no
+     * page, and the empty-roll state was exactly where the key used to stick. */
+    const fallen = !!roll && who === '-fallen' && (roll.fallen?.length || 0) > 0;
+    this._companyKey = man ? `${roll.army}/${man.designation}`
+      : recruit ? `${roll.army}/+${recruit.designation}`
+        : (fallen ? key : null);
 
     if (list) {
       for (const d of list.querySelectorAll('.diff')) {
         d.classList.toggle('sel', d.dataset.man === this._companyKey);
       }
     }
+    if (muster) {
+      for (const d of muster.querySelectorAll('.diff')) {
+        d.classList.toggle('sel', d.dataset.recruit === this._companyKey);
+      }
+    }
+    /* The stage frames whoever the page is about — or the whole line. */
+    this._stageSelect?.(man?.designation ?? recruit?.designation ?? null);
 
-    if (fallen) { host.innerHTML = this._companyFallenHtml(roll); return; }
+    if (fallen) { host.innerHTML = this._companyFallenHtml(roll); this._wireCompanyBack(); return; }
+    if (recruit) {
+      host.innerHTML = this._companyRecruitHtml(roll, recruit);
+      this._wireRecruitEdits(roll.army, recruit);
+      this._wireCompanyBack();
+      return;
+    }
     if (!man) { host.innerHTML = this._companyIndexHtml(rolls); return; }
     host.innerHTML = this._companyManHtml(roll, man);
     this._wireCompanyEdits(roll, man);
+    this._wireCompanyBack();
+  }
+
+  /** The keyboard-visible way off any page: one link, back to the index. */
+  _wireCompanyBack() {
+    const back = document.getElementById('company-back');
+    if (back) this._activate(back, () => { audio.ui('click'); this._showCompany(null); },
+      'Back to the company');
   }
 
   /** The page a player sees before they have picked anybody. */
@@ -5973,17 +6296,58 @@ export class Menu {
     const runs = rolls.reduce((a, c) => a + (c.runs | 0), 0);
     /* Every number counted, none typed — the defect `_showDatabank`'s own note
      * records having had for about an hour. */
+    /**
+     * ORDERS OF THE DAY — what the LAST fold changed, before anything else on
+     * the page: a name earned, a rank crossed, a bond formed. Rendered from
+     * `Company.honoursOf` (derived, never restated here) and hidden outright
+     * when there is nothing to say — a fresh install and the morning after a
+     * wipe both get silence, not an empty block.
+     */
+    const honours = rolls.flatMap((c) =>
+      companyHonours(c).map((line) => ({ army: ARMIES[c.army], line })));
+    const orders = honours.length
+      ? `<h4 class="codex-head">Orders of the day</h4>
+        <div class="company-honours">${honours.map((h) =>
+          `<p>${escKey(h.line)}<em> — ${escKey(h.army?.short || h.army?.name || '')}</em></p>`).join('')}
+        </div>`
+      : '';
+    /**
+     * THE BOND WATCHLIST — the one thing on this tab that is about the NEXT
+     * run rather than the last one. `bondRows`' own note says to print the
+     * unfinished pairs; this prints the closest few, because "two grounds
+     * short — take them out together" is a decision, and a decision is what a
+     * pre-run screen is for.
+     */
+    const watch = [];
+    for (const c of rolls) {
+      for (const m of c.men) {
+        for (const b of companyBondRows(m, c)) {
+          if (b.bonded || !(b.areas > 0)) continue;
+          if (m.designation >= b.with) continue;
+          watch.push({ a: companyNameOf(m), b: b.name, toGo: b.toGo });
+        }
+      }
+    }
+    watch.sort((x, y) => x.toGo - y.toGo);
+    const watchlist = watch.length
+      ? `<h4 class="codex-head">Almost bonded</h4>
+        ${watch.slice(0, 4).map((w) => `<p class="hint">${escKey(w.a)} and ${escKey(w.b)} —
+          ${w.toGo} ground${w.toGo === 1 ? '' : 's'} short. Get them out together and
+          they come back changed.</p>`).join('')}`
+      : '';
     return `<h3>The company</h3>
       <p class="hint">These are the men who got out. Everyone who walks up the ramp
         before it closes is here next run, with the rank he earned, the name he was
         given and everything he has done. Everyone who does not is not.</p>
       <p class="hint"><b>${total}</b> on the roll · <b>${lost}</b> lost ·
         <b>${runs}</b> withdrawal${runs === 1 ? '' : 's'} survived</p>
+      ${orders}
       ${this._companyMusterHtml()}
-      <p class="hint">You can give a man a callsign and paint him a mark. You cannot
-        buy him anything: what makes a soldier better in this game is living through
-        another one, and the ladder pays that out on its own. Keeping him alive is
-        the whole of it.</p>
+      <p class="hint">You can give a man a callsign, paint him a mark and band his
+        arm. You cannot buy him anything: what makes a soldier better in this game is
+        living through another one, and the ladder pays that out on its own. Keeping
+        him alive is the whole of it.</p>
+      ${watchlist}
       ${rolls.map((c) => `<p class="hint">${companyLines(c).map(escKey).join(' — ')}</p>`).join('')}`;
   }
 
@@ -6016,38 +6380,68 @@ export class Menu {
     }
     const army = ARMIES[plan.army];
     const unit = army?.unit || 'trooper';
-    const vets = companyFieldable(companyLoad(plan.army), plan.want);
-    const fresh = Math.max(0, plan.want - vets.length);
-    const rows = vets.map((m) => {
+    /**
+     * THE LINEUP, NOT A RESTATEMENT OF IT. `Muster.lineup` is what the deploy
+     * path fields — veterans, slate recruits, the player's picks — so the
+     * names printed here are exactly the names the ground gets, in the order
+     * it gets them, because they are one call. The fresh half is NAMED now:
+     * "6 fresh" used to be the whole of what a player could know about six
+     * men they were about to lead.
+     */
+    const c = companyLoad(plan.army);
+    const versus = Muster.versusPlanned(this.s);
+    const line = Muster.lineup(plan, c, { versus }) || [];
+    const onRoll = new Set(c.men.map((m) => m.designation));
+    const vets = line.filter((m) => onRoll.has(m.designation));
+    const fresh = line.length - vets.length;
+    const rows = line.map((m) => {
+      if (!onRoll.has(m.designation)) {
+        const called = m.look?.callsign ? `${m.designation} "${m.look.callsign}"` : m.designation;
+        return `<div><b>${escKey(called)}</b><span>Fresh · `
+          + `${escKey(Muster.flavorOf(plan.army, m.designation))}</span></div>`;
+      }
       const R = RANKS[rankFor(m.xp | 0)];
       return `<div><b>${escKey(companyNameOf(m))}</b><span>${escKey(R.title)} · `
         + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · ${m.kills | 0} down</span></div>`;
     }).join('');
     return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
-      <p class="hint">${escKey(army?.name || plan.army)} fields <b>${plan.want}</b>
+      <p class="hint">${escKey(army?.name || plan.army)} fields <b>${line.length}</b>
         ${escKey(unit)}s next run: <b>${vets.length}</b> of the company,
-        <b>${fresh}</b> fresh.</p>
-      <div class="company-fallen company-taking">${rows}
-        ${fresh ? `<div><b>${fresh} fresh ${escKey(unit)}${fresh === 1 ? '' : 's'}</b>`
-          + `<span>drawn at the muster — get them out and they are named on this page</span></div>` : ''}
-      </div>`;
+        <b>${fresh}</b> fresh.${versus
+          ? ' A meeting risks veterans only — nobody new is drawn for a duel between commanders.'
+          : ''}</p>
+      <div class="company-fallen company-taking">${rows}</div>`;
   }
 
   /** The men who did not come back, most recent first. */
   _companyFallenHtml(roll) {
     const army = ARMIES[roll.army];
+    /**
+     * EPITAPHS NOW, NOT STAT ROWS. A record keeps the callsign since the fold
+     * learned to carry it — the name the player gave a man is exactly the
+     * thing this page exists to say out loud — and, when the run ended with
+     * an account at all, who got him and in which minute. A quit banks with
+     * no account, so those lines are honestly absent: walking out mid-fight
+     * leaves you not knowing, which is true.
+     */
     return `<h3>The fallen</h3>
       <p class="databank-army-line">${escKey(army?.name || roll.army)}</p>
+      <p id="company-back" class="hint company-back">‹ Back to the company</p>
       <p class="hint">${roll.lost | 0} ${escKey(army?.unit || 'trooper')}s have not come home.
         The ${roll.fallen.length} most recent are named here; the rest are on no list
         anywhere, which is what permanent means.</p>
       <div class="company-fallen">
         ${roll.fallen.map((f) => {
           const R = RANKS[Math.max(0, Math.min(RANKS.length - 1, f.rank | 0))];
-          const called = f.nickname ? `${f.designation} "${f.nickname}"` : f.designation;
+          const name = f.callsign || f.nickname;
+          const called = name ? `${f.designation} "${name}"` : f.designation;
+          const fell = f.killer
+            ? `<span class="fell">Fell${f.where ? ` on ${escKey(f.where)}` : ''} to ${escKey(f.killer)}`
+              + `${Number.isFinite(f.at) ? `, minute ${f.at}` : ''}.</span>`
+            : '';
           return `<div><b>${escKey(called)}</b><span>${escKey(R.title)} · ${f.kills | 0} down · `
             + `${f.runs | 0} run${(f.runs | 0) === 1 ? '' : 's'}`
-            + `${f.where ? ` · ${escKey(f.where)}` : ''}</span></div>`;
+            + `${f.where ? ` · ${escKey(f.where)}` : ''}</span>${fell}</div>`;
         }).join('')}
       </div>`;
   }
@@ -6131,9 +6525,36 @@ export class Menu {
   _companyManHtml(roll, m) {
     const rows = companyDossier(m, roll.army);
     const mark = markById(m.look?.mark);
+    const band = markById(m.look?.band);
+    /**
+     * FIELD HIM / BENCH HIM — the one management verb the roll ever needed.
+     * Offered only where a deployment exists to manage: the plan's army, with
+     * a lineup, and always as a SWAP — the line never runs short and never
+     * over. `_wireCompanyEdits` does the arithmetic; this only says which of
+     * the two the button is.
+     */
+    const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+    let pickBtn = '';
+    if (plan && plan.army === roll.army && !Muster.versusPlanned(this.s)) {
+      const line = Muster.lineup(plan, roll, {}) || [];
+      const going = line.some((x) => x.designation === m.designation);
+      const swappable = going
+        ? line.length > 0 && (companyFieldable(roll).length + (Muster.slateFor(roll.army).recruits?.length || 0)) > line.length
+        : line.length > 0;
+      if (swappable) {
+        pickBtn = `<h4 class="codex-head">Next run</h4>
+          <p class="hint">${going
+            ? 'He is deploying. Bench him and the next man in the muster order steps up.'
+            : 'He is in reserve. Field him and the last man in the line stands down.'}</p>
+          <button class="secondary" id="company-pick" data-going="${going ? '1' : ''}">
+            ${going ? 'Bench him next run' : 'Field him next run'}</button>`;
+      }
+    }
     return `
       <h3 class="databank-name">${escKey(companyNameOf(m))}</h3>
       <p class="databank-army-line">${escKey(ARMIES[roll.army]?.name || roll.army)}</p>
+      <p id="company-back" class="hint company-back">‹ Back to the company</p>
+      <p class="company-flavor">${escKey(Muster.flavorOf(roll.army, m.designation))}</p>
       <div class="databank-stats company-stats">
         ${rows.map(([k, v]) => `<div><b>${escKey(k)}</b><span>${escKey(v)}</span></div>`).join('')}
       </div>
@@ -6144,6 +6565,7 @@ export class Menu {
             `<p>${escKey(line)}</p>`).join('')}</div>`
         : '<p class="hint">Nothing yet. A run where he took no wounds and killed nobody '
           + 'writes no line — eight entries of the same ground is not a history.</p>'}
+      ${pickBtn}
       <h4 class="codex-head">Callsign</h4>
       <p class="hint">What you call him. Up to ${companyCallsignMax} characters; clear it and
         he answers to ${m.nickname ? `the name he earned, "${escKey(m.nickname)}"` : 'his number'}
@@ -6163,6 +6585,83 @@ export class Menu {
             data-mark="${escKey(k.id)}" title="${escKey(k.name)}"
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
+      </div>
+      <h4 class="codex-head">Band</h4>
+      <p class="hint">A second mark, on the right forearm — the same nine colours,
+        for the player who runs out of shins. Nothing that fights reads either.</p>
+      <div class="swatches company-bands">
+        ${MARKS.map((k) => `<i class="swatch${k.id === band.id ? ' sel' : ''}"
+            data-band="${escKey(k.id)}" title="${escKey(k.name)}"
+            style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
+                   ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
+      </div>`;
+  }
+
+  /**
+   * A RECRUIT'S PAGE — deliberately thin where a veteran's is dense, because
+   * the emptiness is the promise: "His numbers are rolled the day he musters"
+   * is both the fiction and the literal mechanism (the run seed does not
+   * exist yet), so what stands here is a name, a face, a line of character
+   * and the two paint channels. The contrast with a veteran's crowded page is
+   * the whole loop, drawn as a page.
+   */
+  _companyRecruitHtml(roll, r) {
+    const army = ARMIES[roll.army];
+    const mark = markById(r.look?.mark);
+    const band = markById(r.look?.band);
+    const called = r.look?.callsign ? `${r.designation} "${r.look.callsign}"` : r.designation;
+    const label = ARCHETYPES[r.type]?.label ?? r.type;
+    const squads = Math.max(1, Math.ceil(OPENING_STRENGTH / SQUAD));
+    return `
+      <h3 class="databank-name">${escKey(called)}</h3>
+      <p class="databank-army-line">${escKey(army?.name || roll.army)} — recruit</p>
+      <p id="company-back" class="hint company-back">‹ Back to the company</p>
+      <p class="company-flavor">${escKey(Muster.flavorOf(roll.army, r.designation))}</p>
+      <div class="databank-stats company-stats">
+        <div><b>Role</b><span>${escKey(label)}</span></div>
+        <div><b>Army</b><span>${escKey(army?.name || roll.army)}</span></div>
+        <div><b>Mark</b><span>${escKey(mark.name)}</span></div>
+        <div><b>Band</b><span>${escKey(band.name)}</span></div>
+      </div>
+      <p class="hint">No record yet — his numbers are rolled the day he musters, from
+        the run itself, so there is nothing here to read and nothing anywhere to
+        reroll. What you may give him now is a name and a paint job. He drops with
+        you next run; bring him home and he joins the roll with both.</p>
+      <h4 class="codex-head">Callsign</h4>
+      <p class="hint">Up to ${companyCallsignMax} characters. He has earned nothing to
+        answer to yet — this is the name you are lending him until he does.</p>
+      <div class="company-callsign">
+        <input id="company-callsign" type="text" maxlength="${companyCallsignMax}"
+          value="${escKey(r.look?.callsign || '')}"
+          placeholder="${escKey(r.designation)}">
+        <button class="secondary" id="company-callsign-save">Set</button>
+      </div>
+      <h4 class="codex-head">Mark</h4>
+      <p class="hint">A stripe on his shins, on the body he will actually wear out
+        there. It changes nothing else.</p>
+      <div class="swatches company-marks">
+        ${MARKS.map((k) => `<i class="swatch${k.id === mark.id ? ' sel' : ''}"
+            data-mark="${escKey(k.id)}" title="${escKey(k.name)}"
+            style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
+                   ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
+      </div>
+      <h4 class="codex-head">Band</h4>
+      <p class="hint">A second mark, on the right forearm.</p>
+      <div class="swatches company-bands">
+        ${MARKS.map((k) => `<i class="swatch${k.id === band.id ? ' sel' : ''}"
+            data-band="${escKey(k.id)}" title="${escKey(k.name)}"
+            style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
+                   ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
+      </div>
+      <h4 class="codex-head">${escKey(army?.squadWord || 'Squad')}</h4>
+      <p class="hint">Which ${(army?.squadWord || 'squad').toLowerCase()} he falls in with —
+        the whole of what it changes is who stands beside him.</p>
+      <div class="swatches company-squads">
+        ${Array.from({ length: squads }, (_, i) =>
+          `<i class="swatch squad-chip${r.squad === i ? ' sel' : ''}" data-squad="${i}"
+             title="${escKey(army?.squadWord || 'Squad')} ${i + 1}">${i + 1}</i>`).join('')}
+        <i class="swatch squad-chip${r.squad == null ? ' sel' : ''}" data-squad=""
+           title="Wherever the muster deals him" style="border-style:dashed">—</i>
       </div>`;
   }
 
@@ -6197,6 +6696,433 @@ export class Menu {
     for (const sw of document.querySelectorAll('.company-marks .swatch')) {
       this._activate(sw, () => { audio.ui('click'); write({ mark: sw.dataset.mark }); },
         markById(sw.dataset.mark).name);
+    }
+    for (const sw of document.querySelectorAll('.company-bands .swatch')) {
+      this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
+        markById(sw.dataset.band).name);
+    }
+    /**
+     * FIELD/BENCH IS A SWAP, NEVER A RESIZE. The picks written are the whole
+     * line, spelled out: the current lineup with one name exchanged, so the
+     * count cannot drift and `Muster.lineup` cannot be argued with about who
+     * backfills — the backfill happened here, visibly, before the write.
+     */
+    const pick = document.getElementById('company-pick');
+    if (pick) this._activate(pick, () => {
+      audio.ui('click');
+      const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+      if (!plan || plan.army !== roll.army) return;
+      const c = companyLoad(roll.army);
+      const line = Muster.lineup(plan, c, {}) || [];
+      const names = line.map((x) => x.designation);
+      const slate = Muster.slateFor(roll.army);
+      const bench = [...companyFieldable(c).map((x) => x.designation),
+        ...(slate.recruits || []).map((x) => x.designation)]
+        .filter((d) => !names.includes(d));
+      let next = null;
+      if (pick.dataset.going) {
+        if (!bench.length) return;               // nobody behind him to step up
+        next = names.map((d) => (d === m.designation ? bench[0] : d));
+      } else {
+        if (!names.length) return;
+        next = names.slice(0, -1).concat(m.designation);
+      }
+      Muster.setPicks(roll.army, next);
+      this._buildCompanyList();
+      this._showCompany(key);
+    }, pick.textContent.trim());
+  }
+
+  /**
+   * The recruit page's editors — `_wireCompanyEdits`' twin, writing through
+   * `Muster.dressRecruit` because the man is on no roll yet. Same ids, same
+   * write-then-rerender discipline: the store may legitimately answer with
+   * something other than what was typed.
+   */
+  _wireRecruitEdits(armyId, r) {
+    const key = `${armyId}/+${r.designation}`;
+    const write = (look) => {
+      Muster.dressRecruit(armyId, r.designation, look);
+      this._buildCompanyList();
+      this._showCompany(key);
+    };
+    const field = document.getElementById('company-callsign');
+    const save = document.getElementById('company-callsign-save');
+    if (save && field) {
+      this._activate(save, () => { audio.ui('click'); write({ callsign: field.value }); }, 'Set callsign');
+      field.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        write({ callsign: field.value });
+      });
+    }
+    for (const sw of document.querySelectorAll('.company-marks .swatch')) {
+      this._activate(sw, () => { audio.ui('click'); write({ mark: sw.dataset.mark }); },
+        markById(sw.dataset.mark).name);
+    }
+    for (const sw of document.querySelectorAll('.company-bands .swatch')) {
+      this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
+        markById(sw.dataset.band).name);
+    }
+    for (const sw of document.querySelectorAll('.company-squads .swatch')) {
+      this._activate(sw, () => {
+        audio.ui('click');
+        const v = sw.dataset.squad;
+        Muster.setRecruitSquad(armyId, r.designation, v === '' ? null : (v | 0));
+        this._buildCompanyList();
+        this._showCompany(key);
+      }, sw.title || 'Squad');
+    }
+  }
+
+  /* ── the parade ground ─────────────────────────────────────────────── */
+
+  /** Whose line the ground is staging, and exactly which men. */
+  _stageLineup() {
+    const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+    const armyId = ARMIES[this._stageArmy] ? this._stageArmy
+      : (plan?.army || armyToLead(this.s.order, {})?.id || ARMY_IDS[0]);
+    if (plan && plan.army === armyId) {
+      const men = Muster.lineup(plan, companyLoad(armyId),
+        { versus: Muster.versusPlanned(this.s) }) || [];
+      return { armyId, men, planned: true };
+    }
+    /* An army the current mode does not field still stands for review — its
+     * veterans, up to a full opening's worth — because "I want to SEE my
+     * troops" was never conditional on the mode picker. */
+    return { armyId, men: companyFieldable(companyLoad(armyId), OPENING_STRENGTH), planned: false };
+  }
+
+  /**
+   * THE STAGE, created on the first real Company-tab click and never from the
+   * constructor — the whole Menu must build under tools/dom-shim.mjs, where
+   * there is no canvas and no GL. Every acquisition below is guarded, and a
+   * bail leaves NOTHING half-made: `this.barracks` is assigned once, last,
+   * or not at all, so the next click simply tries again.
+   */
+  _startStage() {
+    if (this.barracks) {
+      this.barracks.running = true;
+      this._restage();
+      return;
+    }
+    const host = document.getElementById('company-stage');
+    if (!host || typeof host.appendChild !== 'function') return;
+    let renderer = null;
+    try {
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 2));
+      renderer.setSize(host.clientWidth || 480, host.clientHeight || 300, false);
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      host.appendChild(renderer.domElement);
+    } catch {
+      try { renderer?.dispose?.(); } catch { /* a renderer that half-made */ }
+      return;
+    }
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(PREVIEW_VIEW.fov, 1.6, 0.05, 80);
+    scene.add(new THREE.HemisphereLight(0x9fc4ff, 0x2a2418, 1.1));
+    const key = new THREE.DirectionalLight(0xffffff, 2.4);
+    key.position.set(2, 3, 2); scene.add(key);
+    const rim = new THREE.DirectionalLight(0x6fa8ff, 1.6);
+    rim.position.set(-2, 1, -2); scene.add(rim);
+
+    const group = new THREE.Group();
+    scene.add(group);
+    /* The pivot, for the creator preview's reason: both drag axes should turn
+     * about the middle of the shot, so the pivot carries the whole formation
+     * down (and, for a man shot, across) and the camera keeps looking at the
+     * origin. */
+    const pivot = new THREE.Group();
+    group.add(pivot);
+    const ground = new THREE.Mesh(
+      new THREE.CircleGeometry(6.5, 48),
+      new THREE.MeshStandardMaterial({ color: 0x8a6f4d, roughness: 1, metalness: 0 }));
+    ground.rotation.x = -Math.PI / 2;
+    pivot.add(ground);
+
+    const p = {
+      renderer, scene, camera, group, pivot, host, ground,
+      running: true, dirty: true, figures: [], queue: [], sig: null,
+      lineContent: null, armyId: null,
+      yaw: 0.32, pitch: 0.1, zoom: 1, focus: 0, shot: 'line',
+      selected: null, animating: false, drag: false, w: 0, h: 0,
+      downAt: null,
+    };
+    this.barracks = p;
+
+    host.addEventListener('pointerdown', (e) => {
+      p.drag = true; p.moved = 0;
+      p.lastX = e.clientX; p.lastY = e.clientY;
+      p.downAt = { x: e.clientX, y: e.clientY };
+      host.setPointerCapture?.(e.pointerId);
+    });
+    host.addEventListener('pointerup', (e) => {
+      p.drag = false;
+      host.releasePointerCapture?.(e.pointerId);
+      /* A click is a pick; a drag is a drag. Four pixels is the line. */
+      if (p.downAt && Math.hypot(e.clientX - p.downAt.x, e.clientY - p.downAt.y) < 4) {
+        this._stagePick(e);
+      }
+      p.downAt = null;
+    });
+    host.addEventListener('pointermove', (e) => {
+      if (!p.drag) return;
+      p.yaw += (e.clientX - p.lastX) * 0.01;
+      p.pitch = Math.max(-1.1, Math.min(1.1, p.pitch + (e.clientY - p.lastY) * 0.008));
+      p.lastX = e.clientX; p.lastY = e.clientY;
+      p.dirty = true;
+    });
+    host.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      p.zoom = Math.max(1, Math.min(PREVIEW_ZOOM_MAX, p.zoom * (e.deltaY > 0 ? 0.88 : 1.136)));
+      p.shot = 'free';
+      p.dirty = true;
+      this._syncStageShots();
+    }, { passive: false });
+
+    this._buildStageShots();
+    this._restage(true);
+
+    /**
+     * RENDER-ON-DEMAND. The Jedi preview spins, so it renders every frame;
+     * a parade STANDS, so a clean frame costs one boolean. Drag, zoom, a
+     * selection stepping forward, a resize and a restage all mark dirty; a
+     * menu left open on this tab burns nothing.
+     */
+    const loop = () => {
+      if (!this.barracks) return;
+      requestAnimationFrame(loop);
+      if (!p.running) return;
+      if (p.queue.length) { this._stageBuildNext(); p.dirty = true; }
+      if (p.animating) { p.dirty = true; }
+      const w = host.clientWidth || 480, h = host.clientHeight || 300;
+      if (p.w !== w || p.h !== h) { p.w = w; p.h = h; renderer.setSize(w, h, false); p.dirty = true; }
+      if (!p.dirty) return;
+      p.dirty = false;
+      this._stageAnimate();
+      p.group.rotation.set(p.pitch, p.yaw, 0);
+      this._frameStage();
+      renderer.render(scene, camera);
+    };
+    loop();
+  }
+
+  _stopStage() { if (this.barracks) this.barracks.running = false; }
+
+  /** The shot bar under the stage — PARADE_SHOTS is the one list. */
+  _buildStageShots() {
+    const host = document.getElementById('company-shots');
+    if (!host) return;
+    host.innerHTML = '';
+    this._stageShotButtons = new Map();
+    for (const shot of PARADE_SHOTS) {
+      const b = document.createElement('button');
+      b.className = 'shot';
+      b.textContent = shot.name;
+      this._activate(b, () => {
+        audio.ui('click');
+        const p = this.barracks;
+        if (!p) return;
+        if (shot.id !== 'line' && !p.selected) return;
+        p.shot = shot.id; p.zoom = shot.zoom; p.focus = shot.focus;
+        p.dirty = true;
+        this._syncStageShots();
+      }, shot.name);
+      this._stageShotButtons.set(shot.id, b);
+      host.appendChild(b);
+    }
+    this._syncStageShots();
+  }
+
+  _syncStageShots() {
+    if (!this._stageShotButtons) return;
+    const p = this.barracks;
+    for (const [id, b] of this._stageShotButtons) {
+      b.classList.toggle('sel', p?.shot === id);
+      const needsMan = id !== 'line';
+      b.classList.toggle('inert', needsMan && !p?.selected);
+    }
+  }
+
+  /**
+   * REBUILD THE FORMATION — cheaply skipped when nothing moved. The signature
+   * is the lineup itself (army, names, looks, ranks, wounds), so a paint, a
+   * pick, a fold or an army switch restages and an idle re-render does not.
+   */
+  _restage(force = false) {
+    const p = this.barracks;
+    if (!p) return;
+    const { armyId, men, planned } = this._stageLineup();
+    const sig = armyId + '|' + men.map((m) =>
+      `${m.designation}:${m.xp | 0}:${m.wounds | 0}:${m.look?.mark ?? ''}:${m.look?.band ?? ''}`).join(',');
+    if (!force && sig === p.sig) return;
+    p.sig = sig;
+    p.armyId = armyId;
+    this._stageDisposeAll();
+    const slots = paradeSlots(men.length);
+    p.queue = men.map((man, i) => ({ man, slot: slots[i] }));
+    p.lineContent = null;
+    p.dirty = true;
+    const cap = document.getElementById('company-stage-caption');
+    if (cap) {
+      const army = ARMIES[armyId];
+      cap.textContent = men.length
+        ? (planned
+          ? `${army?.name || armyId} — the ${men.length} deploying with you next run. Drag to look; click a body to meet him.`
+          : `${army?.name || armyId} — the roll under review. ${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours.`)
+        : `${army?.name || armyId} fields nobody yet. The muster forms when you lead them.`;
+    }
+  }
+
+  /** One body per frame, so a ten-man restage never hitches the menu. */
+  _stageBuildNext() {
+    const p = this.barracks;
+    const next = p?.queue.shift();
+    if (!next) return;
+    const fig = buildParadeFigure(next.man);
+    if (!fig) return;
+    const holder = new THREE.Group();
+    /* Measured at the origin, before the holder is placed: this box is the
+     * man's own, in his own frame, and the man-shot camera is solved from it
+     * wherever he stands. */
+    holder.add(fig.root);
+    fig.content = previewContent([holder]);
+    fig.holder = holder;
+    fig.home = next.slot;
+    fig.step = 0;
+    fig.stepTo = 0;
+    holder.position.set(next.slot.x, 0, next.slot.z);
+    p.pivot.add(holder);
+    p.figures.push(fig);
+    if (!p.queue.length) this._stageMeasure();
+  }
+
+  /** The whole line's content, measured with the spin taken off. */
+  _stageMeasure() {
+    const p = this.barracks;
+    if (!p) return;
+    const spin = p.group.rotation.clone();
+    p.group.rotation.set(0, 0, 0);
+    p.pivot.position.set(0, 0, 0);
+    p.lineContent = p.figures.length
+      ? previewContent(p.figures.map((f) => f.holder))
+      : previewContent([p.ground]);
+    p.group.rotation.copy(spin);
+    p.dirty = true;
+  }
+
+  _stageDisposeAll() {
+    const p = this.barracks;
+    if (!p) return;
+    for (const f of p.figures) {
+      p.pivot.remove(f.holder);
+      /* The rig's own traverse frees geometry and materials — the same door
+       * `Enemy.dispose` uses — and the paint stubs' bolt-on materials go with
+       * it. Shared insignia geometry re-uploads on next use, exactly as it
+       * does across every in-game area boundary. */
+      try { f.rig?.dispose?.(); } catch { /* a torn-down figure is the goal */ }
+      for (const m of (f._stub?._modMaterials || [])) { try { m.dispose(); } catch {} }
+      if (!f.rig) {
+        f.root?.traverse?.((o) => {
+          o.geometry?.dispose?.();
+          if (Array.isArray(o.material)) o.material.forEach((m) => m?.dispose?.());
+          else o.material?.dispose?.();
+        });
+      }
+    }
+    p.figures = [];
+    p.queue = [];
+    p.selected = null;
+    this._syncStageShots();
+  }
+
+  /** The page told the stage who it is about. */
+  _stageSelect(designation) {
+    const p = this.barracks;
+    if (!p) return;
+    if (p.selected === (designation ?? null)) return;
+    p.selected = designation ?? null;
+    for (const f of p.figures) f.stepTo = f.man.designation === p.selected ? 0.55 : 0;
+    p.animating = true;
+    p.shot = p.selected ? 'man' : 'line';
+    const at = PARADE_SHOTS.find((s) => s.id === p.shot);
+    if (at) { p.zoom = at.zoom; p.focus = at.focus; }
+    p.dirty = true;
+    this._syncStageShots();
+    const cap = document.getElementById('company-stage-caption');
+    if (cap && p.selected) {
+      const fig = p.figures.find((f) => f.man.designation === p.selected);
+      const m = fig?.man;
+      if (m) {
+        const called = m.look?.callsign || m.nickname;
+        cap.textContent = `${called ? `${m.designation} "${called}"` : m.designation} steps forward.`;
+      }
+    } else if (cap && !p.selected) {
+      this._restage(true);
+    }
+  }
+
+  _stageAnimate() {
+    const p = this.barracks;
+    if (!p) return;
+    let moving = false;
+    for (const f of p.figures) {
+      const d = f.stepTo - f.step;
+      if (Math.abs(d) > 0.005) { f.step += d * 0.22; moving = true; }
+      else f.step = f.stepTo;
+      f.holder.position.z = f.home.z + f.step;
+    }
+    p.animating = moving;
+  }
+
+  /** Click a body, meet the man — the same path as clicking his row. */
+  _stagePick(e) {
+    const p = this.barracks;
+    if (!p || !p.figures.length) return;
+    const rect = p.host.getBoundingClientRect?.();
+    if (!rect || !rect.width || !rect.height) return;
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1);
+    const ray = new THREE.Raycaster();
+    ray.setFromCamera(ndc, p.camera);
+    let hit = null, best = Infinity;
+    const box = new THREE.Box3();
+    for (const f of p.figures) {
+      box.setFromObject(f.holder);
+      const at = ray.ray.intersectBox(box, new THREE.Vector3());
+      if (!at) continue;
+      const d = at.distanceToSquared(p.camera.position);
+      if (d < best) { best = d; hit = f; }
+    }
+    const roll = companyLoad(p.armyId);
+    if (!hit) { this._showCompany(null); return; }
+    const onRoll = roll.men.some((m) => m.designation === hit.man.designation);
+    const keyOf = onRoll
+      ? `${p.armyId}/${hit.man.designation}`
+      : `${p.armyId}/+${hit.man.designation}`;
+    audio.ui('click');
+    this._showCompany(keyOf === this._companyKey ? null : keyOf);
+  }
+
+  _frameStage() {
+    const p = this.barracks;
+    if (!p || !p.lineContent) return;
+    const w = p.host?.clientWidth || p.w || 480, h = p.host?.clientHeight || p.h || 300;
+    const sel = p.shot !== 'line' && p.selected
+      ? p.figures.find((f) => f.man.designation === p.selected) : null;
+    if (sel) {
+      p.pivot.position.set(-sel.home.x, -(sel.content.y0 + sel.content.y1) / 2,
+        -(sel.home.z + sel.step));
+      framePreviewCamera(p.camera, sel.content,
+        { pitch: p.pitch, aspect: w / h, zoom: p.zoom, focus: p.focus, margin: 0.1 });
+    } else {
+      p.pivot.position.set(0, -(p.lineContent.y0 + p.lineContent.y1) / 2, 0);
+      framePreviewCamera(p.camera, p.lineContent,
+        { pitch: p.pitch, aspect: w / h, zoom: p.zoom, focus: p.focus, margin: 0.1 });
     }
   }
 

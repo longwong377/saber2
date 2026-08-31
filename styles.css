@@ -2458,6 +2458,51 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 
 .company-fallen-row .dot{background:var(--void);border:2px solid var(--panel-hi)}
 
+/* ── the parade ground ───────────────────────────────────────────────────
+   The Company panel's middle column: a live 3D stage of the exact lineup the
+   next run fields. The canvas is created lazily on the tab click; this only
+   shapes the box it lands in. The three columns wrap on a narrow window —
+   roll, then ground, then page — because the packed single-file build is
+   played at whatever size a browser window happens to be. */
+[data-panel="company"]{flex-wrap:wrap;overflow-y:auto}
+.company-ground{flex:1.25;display:flex;flex-direction:column;min-width:300px}
+#company-stage{flex:1;min-height:300px;position:relative;border:2px solid var(--stroke);
+  background:
+    radial-gradient(ellipse at 50% 78%, #4a3a28 0%, #2b2118 62%, #1d1712 100%);
+  box-shadow:var(--stamp);cursor:grab;touch-action:none}
+#company-stage:active{cursor:grabbing}
+#company-stage canvas{position:absolute;inset:0;width:100%;height:100%;display:block}
+#company-stage-caption{margin:8px 0 0;min-height:2.4em}
+#company-shots .shot.inert{opacity:.35;pointer-events:none}
+
+/* THE MUSTER — the slate's recruits, under the roll. A recruit's dot is
+   HOLLOW: no rank, because he has not stood anywhere yet. The flavor line is
+   the one line of character he gets before he has a history. */
+.company-muster-head{margin-top:18px}
+.diff.recruit .dot{background:transparent;border:2px solid var(--dim)}
+.diff.recruit.sel .dot{background:var(--accent);border-color:var(--accent)}
+.company-flavor{display:block;font-size:10px;font-style:italic;color:var(--dim);
+  line-height:1.35;margin:2px 0 0}
+p.company-flavor{font-size:11px;margin:2px 0 10px}
+
+/* The way back off any page, and the hand-picked line's way back to the
+   muster's own order. Both are links in a page of prose, so they read as
+   what they are: a small verb, not a heading. */
+.company-back,.company-restore{cursor:pointer;color:var(--accent-warm);width:fit-content}
+.company-back:hover,.company-restore:hover{text-decoration:underline}
+
+/* ORDERS OF THE DAY — the last fold's moments, on the index. */
+.company-honours p{margin:4px 0;font-size:12px;line-height:1.45}
+.company-honours em{color:var(--dim);font-style:normal;font-size:10px}
+
+/* An epitaph's second line: who got him, and in which minute. */
+.company-fallen .fell{display:block;font-size:10.5px;color:var(--dim);
+  font-style:italic;margin-top:2px}
+
+/* Squad chips are swatches that carry a numeral instead of a colour. */
+.company-squads .swatch{display:inline-flex;align-items:center;justify-content:center;
+  font:var(--mono);font-size:12px;font-weight:800;color:var(--ink);font-style:normal}
+
 /* …AND THE LIST ITSELF, which is a column of names and two facts apiece. Same
    chip as .databank-stats and deliberately NOT a grid: the fallen are read in
    order, most recent first, and a grid would sort them by the window width. */
