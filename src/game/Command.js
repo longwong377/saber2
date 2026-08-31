@@ -4760,8 +4760,18 @@ export class CommandDirector extends WaveDirector {
     /* WHAT THEY WERE DOING, TAKEN NOW. After `order()` writes, this question
      * has a different answer for every man on the roll. */
     const before = new Map();
-    for (const r of ask.refused) {
-      before.set(r.t, this.formationFor(c, this._squadKeyOf(r.t, c), r.t));
+    if (ask.refused.length) {
+      /* ONE WALK OF THE SQUADS, not one per refuser. `_squadKeyOf` searches
+       * `squadsOf` for the man handed to it, so asking it inside this loop is
+       * quadratic in the size of the company — and the case where every man
+       * refuses (a company that is shaken through) is exactly the case where
+       * the loop is longest. */
+      const squads = this.squadsOf(c);
+      const key = new Map();
+      for (let i = 0; i < squads.length; i++) for (const t of squads[i]) key.set(t, String(i));
+      for (const r of ask.refused) {
+        before.set(r.t, this.formationFor(c, key.get(r.t) ?? null, r.t));
+      }
     }
     /**
      * ── AND IT IS NOT `this.refused` ──────────────────────────────────────
