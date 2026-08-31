@@ -3159,7 +3159,18 @@ export async function run({ check, assert }) {
      */
     const R = new Cmd.CommandRoster(Cmd.ARMIES[Cmd.ARMY_IDS[0]]);
     for (let i = 0; i < 12; i++) R.enlist('trooper');
-    const shape = () => R.squads().map((s) => s.length).join('+');
+    /**
+     * THE SIZES OF THE SQUADS THAT HAVE MEN IN THEM.
+     *
+     * `squads()` is indexed by the squad NUMBER and padded to `SQUAD_SLOTS`, so
+     * a wiped squad is an empty entry and a detached man's index can never be
+     * a squad's — see the note there and `squads.mjs`. Its raw length is a
+     * count of SLOTS and never was a count of squads; what this check is about
+     * is how the men are dealt, so the empties are dropped before the shape is
+     * read. A squad that empties still shows as a shrinking group below,
+     * because it has men in it right up until it does not.
+     */
+    const shape = () => R.squads().map((s) => s.length).filter((n) => n).join('+');
     assert(shape() === '5+5+2', `12 men dealt to ${shape()}, expected 5+5+2`);
 
     const ids = R.living.map((t) => t.squad);

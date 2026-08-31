@@ -2492,9 +2492,22 @@ export class CommandRoster {
     }
     const out = [];
     for (let k = 0; k <= top; k++) out.push(by.get(k) || []);
-    /* Past the last NUMBERED squad, so "1st, 2nd, then the men you pulled out"
-     * is still the order the HUD walks and a solo man's index is never a
-     * squad's. */
+    /**
+     * …AND A DETACHED MAN'S INDEX IS PAST EVERY SQUAD NUMBER THERE CAN BE.
+     *
+     * Appending them after the last LIVE squad put the identity leak straight
+     * back for the men it is easiest to lose track of: wipe the top squad and
+     * every detached man shifts down one index, taking `squadOrders`,
+     * `squadPlanted`, `selectedSquad` — and the NAME — with him. Measured, the
+     * game announced "REAPER HAS THE GROUND — trooper CT-7200, 1 man": a lone
+     * detached trooper wearing the name the player typed for 3rd Squad.
+     *
+     * `SQUAD_SLOTS` is the ceiling a line can actually form, so a solo index
+     * can never collide with a squad number and never moves because somebody
+     * else died. `squadLabel` reads the same ceiling and calls them what they
+     * are.
+     */
+    while (out.length < SQUAD_SLOTS) out.push([]);
     for (const one of solo) out.push(one);
     return out;
   }
@@ -2658,6 +2671,7 @@ export const TRIAGE_REACH = 3;
 
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
+
 /** The most bodies the mode will ever field for you at once. See `_muster`. */
 /**
  * WHAT SURVIVING SOMETHING IS WORTH, IN EXPERIENCE — and both numbers were
@@ -2675,6 +2689,13 @@ export const XP_PER_WAVE = 1;
 export const XP_PER_AREA = 2;
 
 export const MAX_STRENGTH = 24;
+/**
+ * HOW MANY NUMBERED SQUADS A LINE CAN FORM — the biggest line the game fields,
+ * in squads. `Company.SQUADS_MAX` is the same arithmetic on the same two
+ * numbers and is what the tab's squad pickers offer; this is the one the FIGHT
+ * uses, and it is what keeps a detached man's index from ever being a squad's.
+ */
+export const SQUAD_SLOTS = Math.ceil(MAX_STRENGTH / SQUAD);
 /** What you march in with. Two squads. */
 export const OPENING_STRENGTH = 10;
 
@@ -4307,15 +4328,45 @@ export class CommandDirector extends WaveDirector {
    */
   cycleSquad(cmdr = null) {
     const c = cmdr || this.commander;
-    const squads = this.squadsOf(c);
-    /* THE SQUADS THAT HAVE ANYBODY IN THEM. `squads()` is indexed by the squad
-     * number now, so a wiped squad is an empty entry rather than a hole — and
-     * a target slot that stepped onto one would be a selection nobody can
-     * answer. */
-    const live = squads.map((sq, i) => [i, sq.filter((t) => t.alive !== false).length])
-      .filter(([, m]) => m > 0).map(([i]) => i);
+    /**
+     * ── A JOINING PLAYER CYCLES THE HOST'S COUNT ──────────────────────────
+     *
+     * `netShell` empties the roster by design — a client holds no men — so
+     * `squadsOf` is `[]`, every squad is "not live", and the target slot could
+     * never move off null. The wire carrying the squad index was inert:
+     * measured, three presses and it still sent `s: null`.
+     *
+     * The one thing a client DOES have is the host's own `readout()`, which
+     * carries the live squad count off `liveSquads`. So a client steps
+     * `0 … n-1` and back to the line, exactly as the host does, and the index
+     * it sends means the same thing at the other end because both sides read
+     * the same number.
+     */
+    if (this._netShell) {
+      const n = this.readout(c)?.squads | 0;
+      if (n <= 1) { this.selectedSquad = null; this.onTarget?.(null, null); return null; }
+      const cur = this.selectedSquad;
+      this.selectedSquad = cur == null ? 0 : (cur + 1 >= n ? null : cur + 1);
+      const k = this.selectedSquad;
+      this.onTarget?.(k == null ? null : this.squadLabel(k, c), k);
+      this.world?.notify?.(k == null ? 'THE WHOLE LINE' : `${this.squadLabel(k, c).toUpperCase()} HAS YOUR EAR`,
+        k == null ? `${n} squads — the next order is for all of them`
+          : 'the next order is theirs alone');
+      return this.selectedSquad;
+    }
+    /* THE SQUADS THAT HAVE ANYBODY IN THEM — see `liveSquads`. A target slot
+     * that stepped onto a wiped squad would be a selection nobody can answer. */
+    const live = this.liveSquads(c);
     const n = live.length;
-    if (n <= 1) { this.selectedSquad = null; return null; }
+    if (n <= 1) {
+      /* AND THE PANEL IS TOLD. This dropped the selection in silence, so a
+       * player whose army fell to one squad kept reading "▸ Havoc" on the
+       * order panel while every order went to the whole line. */
+      const had = this.selectedSquad;
+      this.selectedSquad = null;
+      if (had != null && c === this.commander) this.onTarget?.(null, null);
+      return null;
+    }
     /* AND A SELECTION THAT HAS STOPPED EXISTING IS NOT A SELECTION. This
      * clamped only when the army was down to one squad, so a player who picked
      * 3rd Squad and then lost it kept a `selectedSquad` of 2 against two live
@@ -4323,7 +4374,10 @@ export class CommandDirector extends WaveDirector {
      * `onOrder` so the HUD repainted as though it had landed, and did nothing
      * at all. An order that vanishes silently is worse than one that is
      * refused. */
-    if (this.selectedSquad != null && !live.includes(this.selectedSquad)) this.selectedSquad = null;
+    if (this.selectedSquad != null && !live.includes(this.selectedSquad)) {
+      this.selectedSquad = null;
+      if (c === this.commander) this.onTarget?.(null, null);
+    }
     const cur = this.selectedSquad;
     const at = cur == null ? -1 : live.indexOf(cur);
     this.selectedSquad = at + 1 >= n ? null : live[at + 1];
@@ -4392,8 +4446,11 @@ export class CommandDirector extends WaveDirector {
     if (!c.roster?.detach?.(t, on)) return null;
     /* The selection is an INDEX into a list this has just reshaped, so it
      * cannot be trusted across the change. Back to the whole army, which is the
-     * one target that is always valid. */
+     * one target that is always valid — AND THE PANEL IS TOLD, or it goes on
+     * naming a squad the next order will not go to. */
+    const had = this.selectedSquad;
     this.selectedSquad = null;
+    if (had != null && c === this.commander) this.onTarget?.(null, null);
     this.world?.notify?.(on ? 'DETACHED' : 'BACK IN LINE',
       on ? `${t.designation} takes his own orders` : `${t.designation} rejoins his squad`);
     return t;
@@ -5405,6 +5462,11 @@ export class CommandDirector extends WaveDirector {
       area: this.areaNumber,
       areaName: A.name,
       brief: A.brief,
+      /* WHAT THE PLAYER CALLS THEIR SQUADS, and the army's own word for one —
+       * so the muster card that opens seconds after an engagement groups the
+       * roll under the same headings the fight's own column just used. */
+      squadNames: this.squadNames ? this.squadNames.slice() : null,
+      squadWord: c.army?.squadWord || 'Squad',
       /**
        * THE GROUND JUST TAKEN — and it was missing, which cost the card its
        * header.
@@ -6192,6 +6254,35 @@ export class CommandDirector extends WaveDirector {
      * army-wide order CLEARS those, because "everyone form wedge" has to mean
      * everyone and not "everyone who has not been told otherwise". */
     if (squad != null) {
+      /**
+       * …AND A SQUAD NOBODY ANSWERS TO IS NOT A SQUAD.
+       *
+       * `cycleSquad` clamps the selection when the player presses Target, and
+       * that is the only moment it clamped — so selecting 2nd Squad, losing
+       * 2nd Squad and then pressing an order key wrote `squadOrders['1']` and
+       * a plant on nobody, fired `onOrder` so the panel printed "Squad 2 —
+       * take cover", toasted it, and did nothing whatever on the field. An
+       * order that vanishes silently is worse than one that is refused, and
+       * this is the door every path goes through: the keys, the wheel and the
+       * wire.
+       *
+       * It also pushed a `delegate` row with `name: null, n: 0`, which the
+       * interlude renders as "held the ground on their own — 0 men".
+       */
+      const men = this.squadsOf(c)[Number(squad) | 0];
+      if (!men || !men.some((t) => t.alive !== false)) {
+        this.refused = `${this.squadLabel(Number(squad) | 0, c)} has nobody left to take it`;
+        if (c === this.commander) {
+          this.world?.notify?.('NOBODY ANSWERS', this.refused);
+          /* …and the selection goes with them, so the next order is the
+           * army's rather than another one into an empty number. */
+          if (this.selectedSquad === (Number(squad) | 0)) {
+            this.selectedSquad = null;
+            this.onTarget?.(null, null);
+          }
+        }
+        return false;
+      }
       const key = String(squad);
       (c.squadOrders || (c.squadOrders = new Map())).set(key, id);
       /**
@@ -6273,7 +6364,7 @@ export class CommandDirector extends WaveDirector {
      * for null.
      */
     if (c === this.commander) {
-      this.onOrder?.(F, this.squadsOf(c).length,
+      this.onOrder?.(F, this.liveSquads(c).length,
         squad == null ? null : { squad: Number(squad) | 0, name: this.squadLabel(Number(squad) | 0, c) });
     }
     /**
@@ -6862,6 +6953,21 @@ export class CommandDirector extends WaveDirector {
     if (squad != null) {
       const own = c.squadPlanted?.get(String(squad));
       if (own && (!F.advance || c.holding)) return own;
+      /**
+       * …AND A SQUAD ADVANCING UNDER ITS OWN ORDER ADVANCES FROM WHERE IT IS.
+       *
+       * An advancing formation writes no plant, so a delegated squad fell
+       * through to the commander's frame — and two squads both told to
+       * advance solved the same shape around the same point. Measured: order
+       * 1st Squad Vanguard, then 2nd Squad Vanguard, and all ten men landed on
+       * five slots, five stacked pairs, because `front`'s slot ignores the
+       * squad index entirely.
+       *
+       * A squad you sent forward on its own goes forward from its own ground.
+       * That is also the sentence the order means: "you, go" is not "you, come
+       * and stand where I am and then go".
+       */
+      if (c.squadOrders?.has(String(squad))) return this._squadFrame(c, squad);
     }
     if ((!F.advance || c.holding) && c._planted) return c._planted;
     return this._frame(c, _v1);
@@ -7884,6 +7990,12 @@ export class CommandDirector extends WaveDirector {
       c.squadPlanted.delete(key);
       c.squadOrders?.delete(key);
       c.digs?.delete(key);
+      /* …AND THE PANEL LOSES THE LINE WITH IT. The subtitle carries a squad's
+       * own order until it is told otherwise, and this is one of the two
+       * places the director takes one away. A null name is the drop — see
+       * `HUD.setOrder`. */
+      this.onOrder?.({ id: null, name: null }, this.liveSquads(c).length,
+        { squad: Number(key) | 0, name: null });
       this.log.push({ t: 'ground-lost', squad: Number(key) | 0, after: t.name,
                       area: this.areaNumber, wave: this.wave });
       this.world?.notify?.(`${this.squadLabel(Number(key) | 0, c).toUpperCase()} GIVES UP THE GROUND`,
@@ -7915,6 +8027,27 @@ export class CommandDirector extends WaveDirector {
   }
 
   /**
+   * ══ THE SQUADS THAT HAVE ANYBODY IN THEM ═══════════════════════════════
+   *
+   * `squadsOf` is indexed by the squad NUMBER, so a wiped squad is an empty
+   * entry and `.length` is a count of SLOTS. Every surface that says "2
+   * squads" wants the live count instead, and the two readings drifting apart
+   * is the owner's original complaint made worse: wipe 1st Squad and the panel
+   * said "2 squads" for the rest of the run while the target slot, which
+   * filters, found one and did nothing when pressed.
+   *
+   * @returns the indices of the squads with a living man in them.
+   */
+  liveSquads(c = this.commander) {
+    const out = [];
+    const squads = this.squadsOf(c);
+    for (let i = 0; i < squads.length; i++) {
+      if (squads[i].some((t) => t.alive !== false)) out.push(i);
+    }
+    return out;
+  }
+
+  /**
    * ══ WHAT SQUAD `k` IS CALLED ═══════════════════════════════════════════
    *
    * The name the player gave it, or the army's own word and the number. ONE
@@ -7926,9 +8059,18 @@ export class CommandDirector extends WaveDirector {
    * named one is whatever it was named either way.
    */
   squadLabel(k, c = this.commander) {
-    const named = (this.squadNames || [])[k | 0];
+    const i = k | 0;
+    /* A DETACHED MAN IS NOT A SQUAD. `squads()` puts solo groups past
+     * `SQUAD_SLOTS` precisely so their index can never be a squad's, and a
+     * name typed for 3rd Squad must never end up over one man who was pulled
+     * out of the line. */
+    if (i >= SQUAD_SLOTS) {
+      const one = this.squadsOf(c)[i]?.[0];
+      return one ? `${one.name} (detached)` : 'Detached';
+    }
+    const named = (this.squadNames || [])[i];
     if (named) return named;
-    return `${c?.army?.squadWord || 'Squad'} ${(k | 0) + 1}`;
+    return `${c?.army?.squadWord || 'Squad'} ${i + 1}`;
   }
 
   /** Which squad key `t` belongs to for `c`, as `squadPlanted` spells it. */
@@ -9008,7 +9150,22 @@ export class CommandDirector extends WaveDirector {
          * the army's and slicing it would break the one formation that is
          * supposed to span everybody.
          */
-        const own = c.squadOrders?.has(String(k)) || c.squadPlanted?.has(String(k));
+        /**
+         * …AND ONLY WHERE THE SQUAD HAS AN ORDER OF ITS OWN.
+         *
+         * A squad under the ARMY's order keeps the army's index and count,
+         * because there the shape IS the army's and slicing it would break the
+         * one formation that is supposed to span everybody.
+         *
+         * THE OTHER HALF OF THIS IS IN `_anchorFor`, and it took a measurement
+         * to find: an ADVANCING order writes no plant, so two squads both told
+         * to advance both fell through to the commander's frame and solved the
+         * same shape around the same point — ten men on five slots, five
+         * stacked pairs, because `front`'s slot ignores the squad index. A
+         * squad sent forward on its own goes forward from its own ground now,
+         * so its own numbering lands somewhere of its own.
+         */
+        const own = c.squadOrders?.has(String(k));
         const live = own ? squads[k].filter((t) => t.body && !t.body.dead).length : n;
         let j = 0;
         for (const t of squads[k]) {
@@ -10336,7 +10493,9 @@ export class CommandDirector extends WaveDirector {
        * caller deriving a number this object already had everything for, and it
        * is unanswerable on a machine whose roster is a wire record rather than a
        * list of Troopers. Derived here, once, from the same roll. */
-      squads: this.squadsOf(c).length,
+      /* THE LIVE ONES. `squadsOf` is indexed by squad number now, so its
+       * length counts SLOTS — including the ones that have been wiped out. */
+      squads: this.liveSquads(c).length,
       /**
        * THE COMMANDER'S OWN FORCE, in the same object as everything else the
        * outside is allowed to know — plain data, no functions and no live

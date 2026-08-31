@@ -9593,7 +9593,12 @@ export class Menu {
         const lost = (o.roster?.roll || []).filter(t => !t.alive).length;
         el.rollHead.textContent = lost ? `The roll — ${lost} lost` : 'The roll';
       }
-      if (el.list) el.list.innerHTML = rosterHtml(o.roster);
+      /* THE SAME WORDS THE FIGHT USED. This took the defaults, so the card
+       * that opens seconds after an engagement grouped the same men under
+       * "Squad 1 / Squad 2" where the in-fight column had said "Havoc" — and a
+       * Confederate company read "Squad" instead of its own "Unit". The offer
+       * carries both, off the director. */
+      if (el.list) el.list.innerHTML = rosterHtml(o.roster, o.squadNames, o.squadWord);
 
       if (el.units) {
         el.units.innerHTML = '';

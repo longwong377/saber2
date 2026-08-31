@@ -313,4 +313,163 @@ export async function run({ check, assert, THREE: T }) {
       `the host let ${JSON.stringify([got[1][1], got[2][1]])} through as a squad index`);
     return `bound to ${b.squadtarget[0]}, a chip on the strip, and the squad crosses the wire`;
   });
+  check('squads: two squads sent forward on their own do not stand in each other', () => {
+    /**
+     * ── THE OTHER HALF OF THE SHAPE, AND IT TOOK A MEASUREMENT TO FIND ────
+     *
+     * Laying a delegated squad out with its own index and count is right and
+     * is not enough: an ADVANCING order writes no plant, so two squads both
+     * told to advance both fell through to the commander's frame and solved
+     * the SAME shape around the SAME point. `front`'s slot ignores the squad
+     * index entirely, so ten men landed on five slots — five stacked pairs,
+     * which is worse than the half-ring it replaced.
+     *
+     * A squad you send forward on its own goes forward from its own ground.
+     */
+    const { d, c } = deployed();
+    const squads = d.squadsOf(c);
+    assert(squads.length >= 2, 'need two squads');
+    for (const t of squads[0]) if (t.body) t.body.position.set(-90, 0, 0);
+    for (const t of squads[1]) if (t.body) t.body.position.set(90, 0, 0);
+    d._troops(1 / 30, {});
+
+    d.order('front', c, 0);
+    d.order('front', c, 1);
+    d._troops(1 / 30, {});
+
+    const slots = [];
+    for (const sq of [squads[0], squads[1]]) {
+      for (const t of sq) {
+        const v = d.slotFor(t.body, new THREE.Vector3());
+        if (v) slots.push(v.clone());
+      }
+    }
+    assert(slots.length >= 8, `${slots.length} men solved a slot`);
+    let worst = Infinity;
+    for (let i = 0; i < slots.length; i++) {
+      for (let j = i + 1; j < slots.length; j++) {
+        worst = Math.min(worst, slots[i].distanceTo(slots[j]));
+      }
+    }
+    assert(worst > 0.5,
+      `two men were sent to slots ${worst.toFixed(2)} m apart — the two squads are solving `
+      + 'one shape around one point');
+    /* …AND THE TWO SQUADS ARE ACTUALLY APART, not merely non-identical. */
+    const mid = (sq) => {
+      const v = new THREE.Vector3();
+      let n = 0;
+      for (const t of sq) {
+        const p = d.slotFor(t.body, new THREE.Vector3());
+        if (p) { v.add(p); n++; }
+      }
+      return n ? v.divideScalar(n) : null;
+    };
+    const a = mid(squads[0]); const b = mid(squads[1]);
+    assert(a && b && a.distanceTo(b) > 60,
+      `the two squads' shapes are centred ${a && b ? a.distanceTo(b).toFixed(0) : '?'} m apart `
+      + 'after being sent forward from ground 180 m apart');
+    return `${slots.length} distinct slots, closest pair ${worst.toFixed(1)} m, the two shapes `
+      + `${a.distanceTo(b).toFixed(0)} m apart`;
+  });
+
+  check('squads: an order into a squad nobody answers to is refused, out loud', () => {
+    /**
+     * `cycleSquad` clamps the selection when Target is pressed, and that was
+     * the ONLY moment it clamped. Select 2nd Squad, lose 2nd Squad, press an
+     * order key: `order` returned true, wrote a plant on nobody, fired
+     * `onOrder` so the panel printed "Squad 2 — take cover", toasted it, and
+     * did nothing whatever on the field. An order that vanishes silently is
+     * worse than one that is refused.
+     */
+    const { d, c } = deployed();
+    const squads = d.squadsOf(c);
+    assert(squads.length >= 2, 'need two squads');
+    d.selectedSquad = 1;
+    for (const t of squads[1]) { t.alive = false; if (t.body) t.body.dead = true; }
+    const said = [];
+    d.onTarget = (name) => said.push(['target', name]);
+    d.world.notes.length = 0;
+
+    assert(d.order('cover', c, 1) === false,
+      'an order into a wiped squad was accepted');
+    assert(!c.squadPlanted?.has('1'), 'the refused order still planted ground on nobody');
+    assert(!c.squadOrders?.has('1'), 'the refused order still wrote a squad order');
+    assert(d.world.notes.some(([a]) => /NOBODY ANSWERS/.test(a)),
+      `the refusal said ${JSON.stringify(d.world.notes.map(([a]) => a))}`);
+    assert(d.selectedSquad === null, 'the selection stayed on a squad nobody answers to');
+    assert(said.some(([, n]) => n === null), 'the panel was not told the target had gone');
+
+    /* AND AN INDEX THAT WAS NEVER A SQUAD IS THE SAME ANSWER. */
+    assert(d.order('cover', c, 99) === false, 'an order to squad 100 was accepted');
+    assert(!c.squadOrders?.has('99'), 'squad 100 has an order');
+    return 'a wiped squad and an invented one are both refused, and the selection goes with them';
+  });
+
+  check('squads: a detached man is never a squad, and never takes a squad\'s name', () => {
+    /**
+     * Solo groups used to be appended after the last LIVE squad, so wiping the
+     * top squad shifted every detached man down one index — carrying
+     * `squadOrders`, `squadPlanted`, `selectedSquad` and the NAME with him.
+     * Measured before the fix: with two squads and one detached man the game
+     * announced "REAPER HAS THE GROUND — trooper CT-7200, 1 man", a lone
+     * trooper wearing the name the player typed for 3rd Squad.
+     */
+    const { d, c } = deployed();
+    d.squadNames = ['1st', '2nd', 'Reaper'];
+    const before = d.squadsOf(c);
+    const loose = before[1][0];
+    assert(c.roster.detach(loose, true), 'the fixture could not detach a man');
+    const after = d.squadsOf(c);
+    const at = after.findIndex((sq) => sq.length === 1 && sq[0] === loose);
+    assert(at >= Cmd.SQUAD_SLOTS,
+      `a detached man sits at index ${at} and the squad ceiling is ${Cmd.SQUAD_SLOTS} — his `
+      + 'index is a squad number and will be somebody else\'s tomorrow');
+    assert(!/Reaper|1st|2nd/.test(d.squadLabel(at, c)),
+      `a detached man is called "${d.squadLabel(at, c)}" — a name the player typed for a squad`);
+    assert(/detached/i.test(d.squadLabel(at, c)),
+      `a detached man is called "${d.squadLabel(at, c)}"`);
+
+    /* …AND HIS INDEX DOES NOT MOVE WHEN A SQUAD DIES. */
+    for (const t of after[0]) { t.alive = false; if (t.body) t.body.dead = true; }
+    const later = d.squadsOf(c);
+    const now = later.findIndex((sq) => sq.length === 1 && sq[0] === loose);
+    assert(now === at,
+      `the detached man moved from index ${at} to ${now} because another squad died`);
+    return `detached at index ${at} past a ceiling of ${Cmd.SQUAD_SLOTS}, named `
+      + `"${d.squadLabel(at, c)}", and it does not move when a squad is wiped`;
+  });
+
+  check('squads: the panel counts the squads that have men in them', async () => {
+    /**
+     * `squadsOf` is indexed by the squad NUMBER, so its length counts SLOTS
+     * including wiped ones. Both the order panel's count and the wheel's
+     * caption read it, so wiping 1st Squad left the panel saying "2 squads"
+     * for the rest of the run while pressing Target — which filters — found
+     * one and did nothing. That is the owner's original complaint, made
+     * literally worse.
+     */
+    const { d, c } = deployed();
+    /* The list is padded to `SQUAD_SLOTS` so a detached man's index can never
+     * be a squad's — see the note on `squads()` — which is exactly why its
+     * length was never a count of squads and reading it as one was the bug. */
+    assert(d.squadsOf(c).length >= Cmd.SQUAD_SLOTS,
+      `the list is ${d.squadsOf(c).length} long and the ceiling is ${Cmd.SQUAD_SLOTS}`);
+    assert(d.liveSquads(c).length === 2,
+      `the fixture deployed ${d.liveSquads(c).length} live squads`);
+    const seen = [];
+    d.onOrder = (F, n) => seen.push(n);
+    d.order('rank', c);
+    assert(seen[0] === 2, `a two-squad army reported ${seen[0]} squads`);
+
+    for (const t of d.squadsOf(c)[0]) { t.alive = false; if (t.body) t.body.dead = true; }
+    assert(d.liveSquads(c).length === 1,
+      `${d.liveSquads(c).length} live squads after one of two was wiped`);
+    d.order('rank', c);
+    assert(seen[1] === 1,
+      `one squad is standing and the panel was told ${seen[1]} — the count is of slots`);
+    assert(d.readout(c).squads === 1,
+      `the readout says ${d.readout(c).squads} squads with one standing`);
+    return '2 → 1 as a squad is lost, on the panel and in the readout';
+  });
+
 }

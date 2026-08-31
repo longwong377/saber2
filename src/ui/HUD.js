@@ -1931,8 +1931,15 @@ export class HUD {
    */
   setOrder(id, name, squads, one = null) {
     if (one) {
+      this._squadCount = squads | 0;
       this._squadOrders = this._squadOrders || new Map();
-      this._squadOrders.set(one.squad, `${one.name} — ${String(name || '').toLowerCase()}`);
+      /* A NULL NAME DROPS THE LINE. The director gives a squad's own order up
+       * in two places nobody was telling this panel about — the vacancy that
+       * takes its ground away, and a squad being wiped — so the subtitle kept
+       * saying "Havoc — take cover" for a squad that had stopped holding
+       * anything, for ever, with a new segment for every squad ever ordered. */
+      if (!name) this._squadOrders.delete(one.squad);
+      else this._squadOrders.set(one.squad, `${one.name} — ${String(name).toLowerCase()}`);
       this._paintOrderSub();
       return;
     }
@@ -1987,7 +1994,12 @@ export class HUD {
     if (!el) return;
     const bits = [];
     if (this._target) bits.push(`▸ ${this._target}`);
-    for (const [, said] of (this._squadOrders || new Map())) bits.push(said);
+    /* AT MOST TWO SQUAD LINES. This is one line on a HUD in the middle of a
+     * fight, and an army of five squads under five orders is a line nobody can
+     * read — the two most recent are the two the player just gave. */
+    const said = [...(this._squadOrders || new Map()).values()];
+    for (const line of said.slice(-2)) bits.push(line);
+    if (said.length > 2) bits.push(`+${said.length - 2}`);
     const n = this._squadCount | 0;
     if (!bits.length && n) bits.push(`${n} squad${n === 1 ? '' : 's'}`);
     el.textContent = bits.join(' · ');
@@ -3149,7 +3161,12 @@ export function rosterHtml(summary, squadNames = null, word = 'Squad') {
   const loose = living.filter((t) => !Number.isInteger(t.squad) || t.detached);
   const squads = [...new Set(keyed.map((t) => t.squad))].sort((a, b) => a - b);
   const head = '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>';
-  const body = squads.length > 1
+  /* HEADED WHENEVER THE PLAYER HAS SAID SOMETHING, not only when there are two
+   * squads left. Gating on `length > 1` meant the column dropped the name the
+   * player typed at the exact moment it mattered most — the last squad
+   * standing — while the nameplates went on showing it. */
+  const named = squads.some((k) => (squadNames && squadNames[k]));
+  const body = squads.length > 1 || (named && squads.length) || loose.length
     ? squads.map((k) => {
       const men = keyed.filter((t) => t.squad === k);
       return `<div class="rp-div">${esc(label(k))} — ${men.length}</div>`
