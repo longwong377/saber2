@@ -393,3 +393,102 @@ company can no longer do. It is roughly a day's work, it opens no doors, it
 fixes the repository's one live contradiction, and it is the first time in this
 game's life that losing a specific man will take something away from the player
 that he can name.
+
+---
+
+## 10. What actually shipped, and what is still on the list
+
+Written after the build. Every claim here is held by a named check; the mutation
+counts are what those checks caught when the code under them was deliberately
+broken.
+
+### Part 0 — the five defects
+
+All five fixed. `src/game/Store.js` is now one storage policy for both durable
+stores (the memory mirror no longer shadows a cleared store, and a refused write
+is remembered rather than thrown away); the no-write check spies on `setItem`
+and counts, so it can fail; the salt's `lost` term is pinned along with `runs`
+and the headcount; a fresh profile opens on men rather than on an empty parade
+ground; and `writeAll` no longer swallows a full quota in silence.
+
+### PHASE 1 — THE LICENCE — **shipped**
+
+- The ladder came down: `1.00 → 1.20` health, `1.12` damage, `1.04` pace, and
+  `AIM_BY_RANK` flattened to `0.88` at the top. A returning company is a more
+  capable army, not a bigger or a tougher one.
+- `DUTIES` is one table and `holds()` is its one reader — a record, a body
+  wearing one, or a bare rung, and never a corpse.
+- **Four of the five duties bite today**, each on a real system, each additive:
+  - `HOLDS` — when a planted squad's leader falls and nobody left in it is
+    licensed, the ground is given up on that frame and the fight says so.
+  - `LEADS` — the post. The player names a man to his squad's seat; it sits in
+    front of `leadOf`'s derivation, so his death needs nothing cleared.
+  - `CREWS` — one licensed man on a position digs it alone; an unlicensed man
+    cannot, and an ordinary crew of three still can.
+  - `RELAYS` — the only presence term in `Morale.js` that crosses a squad
+    boundary. Lose him and every squad he was standing among feels it.
+  - `STANDS` is the floor and gates nothing, which is honest: it is what
+    everybody has.
+- **The vacancy** speaks only when a capability has actually left the field —
+  never on an ordinary casualty, which is what keeps the line worth reading.
+
+Held by `tools/checks/licence.mjs` (8 checks). Twelve mutations, twelve caught.
+It found one real bug before it shipped: `null >= 0` is true in JavaScript, so
+`holds(undefined, 'STANDS')` was answering yes.
+
+### Also shipped, out of Phases 3–4 and the tab itself
+
+- **Deep customization, in every mode that fields a line.** Twelve rows of kit
+  and paint per man — pauldron, kama, pack, rangefinder, crest, holsters,
+  brace, bells, cape; plate, unit flash, visor — from a fifteen-colour palette,
+  worn on the parade ground and carried onto the field through the spawn.
+  Measured on a cleared store across all eleven modes: ten named men, 33 kit
+  chips and 48 swatches in every mode that fields troops.
+- **Issue the pattern** — to his squad or to the whole company, across both
+  stores, because on a fresh profile every man the player has is on the slate.
+  Nothing personal travels: the callsign, the shin mark and the forearm band
+  are how you find one man in a line of ten.
+- **The order of battle** — the line in the squads it will actually form, each
+  under the man who leads it, off the fight's own `squadPlan` and `leadOf`.
+- **A veteran can be moved between squads.** A recruit could be dealt one from
+  the day the slate existed; a man who had come home could not.
+- **Left is not dead.** The memorial stopped printing one sentence over the man
+  cut down in engagement two and the man standing eleven metres from a closing
+  ramp. Both still cost everything.
+- **The scar is reachable.** `Trooper.wounds` had exactly one writer, and it
+  only fires where `MODES.downed` is declared — The Line, and nowhere else. A
+  second writer sits in the loop that touches every living body once a frame.
+- **Training stops being offered a line it cannot land.** It runs on a
+  `DojoDirector`, which has no roster, and the raise-a-line door was minting,
+  naming and saving ten men for it.
+- **The contingent composer learned about the shelf.** A twenty-man meeting
+  composed `10 troopers + an AT-TE + an officer`, `recruit` refused both on the
+  area unlock, and the `break` threw the rest away — a composed side took the
+  field as ten identical clone troopers.
+
+Held by `tools/checks/barracks.mjs`, which is 29 checks now. Fifteen further
+mutations, fifteen caught.
+
+### Still on the list, in the order they are worth building
+
+1. **PHASE 2 — the reach and the refusal.** `order()` still has no distance
+   test and no rank test: an order reaches every man on the roll, anywhere,
+   instantly. This is the highest-leverage thing left, and it is what gives
+   `RELAYS` its second consumer and every later phase something to be expensive
+   against in every mode.
+2. **PHASE 4's manifest.** The gunship publishes ten seats, `MAX_STRENGTH` is
+   24, and which men board is decided by squared distance to the ramp with zero
+   player input. *Left is not dead* made the loss legible; naming who runs for
+   the ship is what makes it a decision. The other half — somebody turns round
+   and holds the door, deterministically, and is named for ever — is the
+   sentence that mechanic is for.
+3. **PHASE 3 — the billets.** Five jobs, each held by one named man. The
+   licence taxonomy they hang off exists now.
+4. **PHASE 5 — citations.** `_earnNickname` still draws blind from a table
+   while the director logs twenty-one named event kinds with name, killer,
+   bearing and minute. Mint the name from the deed and print the sentence that
+   earned it — and mint at the area boundary, not at the fold, or the player
+   who dies or quits most runs never sees it.
+5. **PHASE 6 — the book.** Last, and it begins with the invisible work: a
+   parade figure costs 15.82 ms and 54 meshes with no LOD, and `_restage`
+   rebuilds every figure on any signature change.
