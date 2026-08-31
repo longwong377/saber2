@@ -48,6 +48,7 @@ import { makeRng } from '../../src/engine/MathUtil.js';
 import * as Company from '../../src/game/Company.js';
 import * as Muster from '../../src/game/Muster.js';
 import { HURT_AT } from '../../src/game/Morale.js';
+import { PAINTS } from '../../src/game/Bodies.js';
 import { MODES } from '../../src/game/Waves.js';
 /* THE DEPLOYED ARMY, shared with licence.mjs — one fixture, see `_army.mjs`. */
 import { army as licenceArmy } from './_army.mjs';
@@ -1782,5 +1783,321 @@ export async function run({ check, assert, THREE: T }) {
           + `${['1st', '2nd', '3rd'][his] || `#${his + 1}`}, and leadOf agrees`;
       } finally { close(); }
     }));
+
+  check('barracks: a delivered contingent is not announced as a refusal', () => {
+    /**
+     * ── THE LOUDEST OF THREE REFUSALS, FIRING ON THE SUCCESS PATH ─────────
+     *
+     * `composeContingent` tested the REMAINDER of the purse, and
+     * `_musterOpening` runs after `_musterVeterans` has already enlisted the
+     * whole line the barracks composed — so the purse handed in was a purse
+     * already spent on exactly what was asked for. Every ordinary contingent
+     * run opened with
+     *
+     *     CONTINGENT UNCHANGED — Clone Trooper costs 5 points and 10 troopers buys 0
+     *
+     * on top of a contingent delivered precisely as asked. `allyUnit` defaults
+     * to rung 0, so this was every player, every run.
+     *
+     * A refusal has to be about the REQUEST — "six allies cannot buy an
+     * AT-TE" is true and useful; "the men you already have used up the money"
+     * is the system working. Both directions are pinned, because a version
+     * that simply never refuses is the same defect with the volume down.
+     */
+    const A = ARMIES.republic;
+    const cost = (t) => A.tiers.find((x) => x.type === t).cost;
+    const line = (n, t) => new Array(n).fill(t);
+
+    /* THE SUCCESS PATH, WITH THE LINE ALREADY STANDING. */
+    for (const [want, unit, standing] of [
+      [10, 0, line(10, 'trooper')],
+      [8, CONTINGENT_MIXED, line(6, 'trooper')],
+      [12, 2, line(6, 'sniper')],
+    ]) {
+      const r = composeContingent(A, want, standing, unit);
+      assert(!r.refused,
+        `a contingent of ${want} with ${standing.length} already standing was refused: `
+        + `"${r.refused}"`);
+    }
+
+    /* …AND THE REAL ONE STILL SPEAKS. The dearest rung against a purse that
+     * never could have bought it. */
+    const dearest = A.tiers.reduce((a, b) => (b.cost > a.cost ? b : a));
+    const rung = A.tiers.indexOf(dearest);
+    const tooSmall = Math.max(1, Math.floor((dearest.cost - 1) / cost('trooper')));
+    const no = composeContingent(A, tooSmall, [], rung);
+    assert(no.refused && no.refused.includes(dearest.cost.toString()),
+      `${tooSmall} allies cannot buy a ${dearest.type} (${dearest.cost} points) and the `
+      + `composer said "${no.refused}"`);
+    assert(!no.refused.includes(' buys 0'),
+      `the refusal quotes the remainder rather than the purse: "${no.refused}"`);
+    const enough = composeContingent(A, Math.ceil(dearest.cost / cost('trooper')), [], rung);
+    assert(!enough.refused && enough.types.includes(dearest.type),
+      `a purse that can exactly afford a ${dearest.type} got "${enough.refused}"`);
+    return `3 delivered contingents announced nothing · ${tooSmall} allies still refused a `
+      + `${dearest.type}, quoting the purse`;
+  });
+
+  check('barracks: every chip the wardrobe offers is a chip the builder reads', async () => {
+    /**
+     * ── THE DEAD CONTROL, ARRIVING THROUGH THE ONE DOOR NOBODY CHECKED ────
+     *
+     * `KIT_FIELDS` and `PAINT_SLOTS` are keyed by chassis KIND — flesh or
+     * steel — which is the right key for what the STORE may hold and the wrong
+     * one for what a PAGE may offer, because the options are read by
+     * individual builders and the builders do not agree.
+     *
+     * Measured on the shipped roster before `WEARS` existed: a surviving AT-TE
+     * (a named man on the Republic roll the moment one comes home) was offered
+     * nine rows of kit and three of paint that `Vehicles.js` does not read,
+     * and every B2, droideka and Magna was offered a unit flash and a
+     * photoreceptor that their builders do not read. Fifteen controls that
+     * stored a value, lit up, and changed nothing anywhere.
+     *
+     * This RE-MEASURES the table rather than trusting it: every rung of both
+     * ladders is built bare and then once per field, and the whole
+     * mesh-and-material signature is compared. A builder that learns a field,
+     * or forgets one, goes red here rather than shipping a chip that does
+     * nothing.
+     */
+    const B = await import('../../src/game/Bodies.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const sig = (root) => {
+      const parts = [];
+      const walk = (o) => {
+        if (!o) return;
+        if (o.isMesh) {
+          parts.push(`${o.name || ''}:${o.geometry?.attributes?.position?.count || 0}`);
+          for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+            if (m) parts.push(`${m.color ? m.color.getHex() : '-'}/${m.emissive ? m.emissive.getHex() : '-'}`);
+          }
+        }
+        for (const c of (o.children || [])) walk(c);
+      };
+      walk(root);
+      return parts.join('|');
+    };
+    const build = (type, opts) => {
+      const A = ARCHETYPES[type];
+      const built = A.build({ scale: A.scale ?? 1, ...(B.bodyOptsFor(type) || {}), ...opts });
+      return sig(built.rig?.root || built.group);
+    };
+
+    const rows = [];
+    let offered = 0;
+    for (const id of Object.keys(ARMIES)) {
+      const kind = id === 'separatist' ? 'steel' : 'flesh';
+      for (const tier of ARMIES[id].tiers) {
+        const type = tier.type;
+        const base = build(type, {});
+        const live = new Set();
+        for (const f in (B.KIT_FIELDS[kind] || {})) {
+          for (const [v] of B.KIT_FIELDS[kind][f].values) {
+            if (build(type, { [f]: v }) !== base) { live.add(f); break; }
+          }
+        }
+        for (const [f] of (B.PAINT_SLOTS[kind] || [])) {
+          for (const p of B.PAINTS) {
+            if (build(type, { [f]: p.color }) !== base) { live.add(f); break; }
+          }
+        }
+        const can = B.wearableFor(type, kind);
+        const shown = [...can.kit, ...can.paint];
+        offered += shown.length;
+        const dead = shown.filter((f) => !live.has(f));
+        assert(!dead.length,
+          `${type} is offered ${dead.length} control(s) its builder does not read: `
+          + `${dead.join(', ')}`);
+        /* AND NOTHING REAL IS HIDDEN. A field the builder honours and the page
+         * refuses to offer is the same table drifting the other way. */
+        const missing = [...live].filter((f) => !shown.includes(f));
+        assert(!missing.length,
+          `${type} reads ${missing.join(', ')} and the wardrobe does not offer `
+          + 'them — the table is stale in the other direction');
+        rows.push(`${type}:${shown.length}`);
+      }
+    }
+    /* A CHASSIS THAT WEARS NOTHING GETS NO WARDROBE AT ALL, and the page says
+     * so rather than drawing an empty room with two issue buttons under it. */
+    const bare = Object.keys(B.WEARS).find((t) => Array.isArray(B.WEARS[t]) && !B.WEARS[t].length);
+    assert(bare, 'no chassis in WEARS wears nothing — the vehicle case is untested');
+    const { menu, doc, close } = menuOn();
+    try {
+      const html = menu._dressingHtml(null, 'flesh', 'republic', 'Squad', null, bare);
+      assert(!/data-kit=|data-paint=/.test(html),
+        `${bare} was still offered chips: the wardrobe drew for a chassis that wears nothing`);
+      assert(/nothing on this chassis is yours to change/i.test(html),
+        `${bare}'s page says nothing about why its wardrobe is empty`);
+    } finally { close(); }
+    return `${rows.length} chassis, ${offered} live controls offered, 0 dead; ${bare} gets a `
+      + 'sentence instead of an empty room';
+  });
+
+  check('barracks: a refused write is what the next read answers with, and the page says so',
+    () => withCleanStore(() => {
+      /**
+       * ── THE MIRROR OUTRANKS THE DISK, AND ONLY WHILE THE DISK REFUSES ────
+       *
+       * `Store.read` consulted the mirror only when the key was ABSENT, so a
+       * store that had ever saved successfully — which is every store, after
+       * the first fold — went on parsing the STALE disk copy for the rest of
+       * the session. Which is exactly the failure the file was written to end:
+       * quota fills, the player renames a man, `setItem` throws, and the next
+       * click re-reads the pre-rename JSON and the rename is simply gone.
+       *
+       * Driven through the real stores by making `setItem` throw, because a
+       * unit test of `makeStore` alone would not prove `Company.load` and the
+       * tab are on the far side of it.
+       */
+      const roll = freshRoll(4);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const him = roll.all[0].designation;
+      assert(!Company.notSaving(), 'the store is refusing before anything was refused');
+
+      const realSet = localStorage.setItem.bind(localStorage);
+      let name = null;
+      try {
+        localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+        Company.dress('republic', him, { callsign: 'Torch' });
+        assert(Company.notSaving(), 'a refused write did not mark the store broken');
+        name = Company.load('republic').men.find((m) => m.designation === him)?.look?.callsign;
+      } finally { localStorage.setItem = realSet; }
+      assert(name === 'Torch',
+        `the write was refused and the next read answered "${name}" — the mirror was `
+        + 'dropped and the stale disk copy came back, which is the edit vanishing');
+
+      /* AND THE PAGE SAYS SO. `notSaving` had no readers in src/ at all, which
+       * made the whole remembered-write mechanism something the player could
+       * not be told about. */
+      const { menu, doc, close } = menuOn();
+      try {
+        localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+        Company.dress('republic', him, { callsign: 'Boil' });
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(null);
+        const txt = doc.getElementById('company-page').textContent;
+        assert(/NOT SAVING/.test(txt),
+          'the store is refusing writes and the company page says nothing about it');
+      } finally { localStorage.setItem = realSet; close(); }
+
+      /* …AND A WRITE THAT LANDS HEALS IT. A quota that frees up is a store
+       * that works again, and a page that kept apologising would be its own
+       * kind of lie. */
+      Company.dress('republic', him, { callsign: 'Deuce' });
+      assert(!Company.notSaving(), 'a successful write did not clear the refusal');
+      assert(Company.load('republic').men.find((m) => m.designation === him)?.look?.callsign
+        === 'Deuce', 'the healed store did not keep the write that healed it');
+      return 'a refused rename survives the next read, the page warns, and a landed write heals it';
+    }));
+
+  check('barracks: two men cannot hold one squad\'s seat, on the roll or on a saved file',
+    () => withCleanStore(() => {
+      /**
+       * `CommandRoster.appoint` is where the seat rule lives — licensed,
+       * alive, ONE PER SQUAD — and `enlistRecord` used to set `t.post` by hand
+       * with only the licence half of it. So the exclusivity clause had no
+       * caller on the fighting side at all: a store holding two seated men in
+       * one squad put both on the roll, and `leadOf` then answered with
+       * whichever came first in an array whose order is nobody's decision.
+       *
+       * And `null === null`, so the two copies of the rule ALSO stripped each
+       * other's seat off two men who had not been dealt a squad yet — the
+       * opposite of what both their comments claim.
+       */
+      const roll = freshRoll(6);
+      for (const t of roll.all) t.award(RANKS[2].xp);
+      roll.all[0].squad = 0; roll.all[1].squad = 0; roll.all[2].squad = 1;
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      /* A FORGED FILE: two seats in squad 0 and one in squad 1. */
+      const c = Company.load('republic');
+      for (const d of [roll.all[0], roll.all[1], roll.all[2]]) {
+        c.men.find((m) => m.designation === d.designation).post = true;
+      }
+      Company.save(c);
+
+      const back = new CommandRoster(ARMIES.republic);
+      for (const m of Company.load('republic').men) back.enlistRecord(m);
+      const seatsIn = (n) => back.all.filter((t) => t.post && t.squad === n).length;
+      assert(seatsIn(0) === 1,
+        `${seatsIn(0)} men walked onto the roll holding squad 0's seat`);
+      assert(seatsIn(1) === 1, `${seatsIn(1)} men hold squad 1's seat`);
+      assert(back.all.filter((t) => t.post).length === 2,
+        'the seats in two different squads did not both survive');
+
+      /* AND TWO UNDEALT MEN DO NOT CONTEND. They are not in the same squad;
+       * they are in no squad, and stripping one for the other is a seat taken
+       * off a man for a reason that does not exist. */
+      const loose = new CommandRoster(ARMIES.republic);
+      const a = loose.enlist('trooper'); const b = loose.enlist('trooper');
+      a.award(RANKS[2].xp); b.award(RANKS[2].xp);
+      loose.appoint(a, true);
+      const second = loose.appoint(b, true);
+      assert(a.post && b.post,
+        'appointing a second man with no squad stripped the first — `null === null`');
+      assert(second.was === null,
+        `the second appointment claimed it took the seat off ${second.was?.designation}`);
+      return '1 seat per squad off a forged file, 2 squads both kept, and two undealt men '
+        + 'do not contend';
+    }));
+
+  check('barracks: a painted Marksman is the same man on the parade ground and on the field',
+    async () => {
+      /**
+       * `Enemy._build` carried a one-line special case — `if (type ===
+       * 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }` —
+       * and it ran AFTER the man's own kit was spread, so it wrote over both
+       * channels unconditionally. A Marksman the player had painted Blood on
+       * the parade ground landed on the ground in stock plate: the tab showing
+       * one man and the field fielding another, which is the whole defect the
+       * parade ground exists to make impossible.
+       *
+       * The colours moved into `BODY_KITS`, where both readers get them from
+       * one table and a choice is spread over the top. Asserted as an exact
+       * agreement between the two surfaces, painted and unpainted.
+       */
+      const B = await import('../../src/game/Bodies.js');
+      const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+      const hexes = (root) => {
+        const out = new Set();
+        const walk = (o) => {
+          if (!o) return;
+          if (o.isMesh) {
+            for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+              if (m?.color) out.add(m.color.getHex());
+            }
+          }
+          for (const c of (o.children || [])) walk(c);
+        };
+        walk(root);
+        return out;
+      };
+      const blood = PAINTS.find((p) => p.id === 'blood');
+      const report = [];
+      for (const look of [null, { paint: { color: 'blood' } }]) {
+        const A = ARCHETYPES.sniper;
+        const field = hexes(A.build({
+          scale: A.scale ?? 1, ...(B.bodyOptsFor('sniper') || {}),
+          ...B.kitOptsFrom(look, 'flesh'),
+        }).rig.root);
+        const fig = buildParadeFigure({ army: 'republic', type: 'sniper', designation: 'CT-1',
+          xp: 0, wounds: 0, look, kind: 'flesh' });
+        assert(fig, 'the parade could not build a Marksman');
+        const parade = hexes(fig.root);
+        const only = [...field].filter((h) => !parade.has(h))
+          .concat([...parade].filter((h) => !field.has(h)));
+        assert(!only.length,
+          `a Marksman ${look ? 'painted Blood' : 'as issued'} differs between the parade `
+          + `ground and the field on ${only.map((h) => `#${h.toString(16)}`).join(' ')}`);
+        if (look) {
+          assert(field.has(blood.color),
+            'a Marksman painted Blood does not wear it on the field');
+        } else {
+          assert(!field.has(blood.color), 'an unpainted Marksman already wears the test colour');
+        }
+        report.push(look ? 'painted' : 'as issued');
+      }
+      return `${report.join(' and ')}: the two surfaces agree hex for hex`;
+    });
 
 }

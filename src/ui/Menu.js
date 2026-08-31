@@ -11,7 +11,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
-         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor,
+         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor, wearableFor,
          KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom } from '../game/Bodies.js';
 import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
@@ -40,7 +40,7 @@ import {
   fieldable as companyFieldable, dossier as companyDossier,
   dress as companyDress, appoint as companyAppoint, assign as companyAssign,
   SQUADS_MAX as companySquadsMax,
-  nameOf as companyNameOf, companyLines,
+  nameOf as companyNameOf, companyLines, notSaving as companyNotSaving,
   CALLSIGN_MAX as companyCallsignMax,
   honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
@@ -6378,6 +6378,29 @@ export class Menu {
      * when there is nothing to say — a fresh install and the morning after a
      * wipe both get silence, not an empty block.
      */
+    /**
+     * ── THE STORE IS REFUSING, AND THE PAGE SAYS SO ───────────────────────
+     *
+     * `Store.js` remembers a refused write for the life of the page so a
+     * player keeps seeing the roll they edited. What it cannot do is survive
+     * the tab being closed — and a player naming and painting ten men into a
+     * store that is full deserves to know before they spend the evening on it,
+     * not after. Both stores are asked, because the slate and the roll fail
+     * independently and either going quiet is worth the same sentence.
+     *
+     * This is what `notSaving` was exported for. It had no readers in `src/`
+     * at all until now, which made the whole remembered-write mechanism a
+     * thing the player could not be told about — the silent failure the store
+     * was rewritten to end, one layer further out.
+     */
+    const stuck = [companyNotSaving() && 'the roll', Muster.notSaving() && 'the muster']
+      .filter(Boolean);
+    const notSaved = stuck.length
+      ? `<p class="hint company-cut"><b>NOT SAVING.</b> This browser has refused to write
+          ${escKey(stuck.join(' and '))} — its storage is full, or this page is private.
+          Everything here is still true for as long as the tab is open, and none of it
+          will survive closing it.</p>`
+      : '';
     const honours = rolls.flatMap((c) =>
       companyHonours(c).map((line) => ({ army: ARMIES[c.army], line })));
     const orders = honours.length
@@ -6411,6 +6434,7 @@ export class Menu {
           they come back changed.</p>`).join('')}`
       : '';
     return `<h3>The company</h3>
+      ${notSaved}
       <p class="hint">These are the men who got out. Everyone who walks up the ramp
         before it closes is here next run, with the rank he earned, the name he was
         given and everything he has done. Everyone who does not is not.</p>
@@ -6779,7 +6803,7 @@ export class Menu {
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
-      ${this._dressingHtml(m.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', m.squad)}`;
+      ${this._dressingHtml(m.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', m.squad, m.type)}`;
   }
 
   /**
@@ -6817,10 +6841,19 @@ export class Menu {
     const seated = !!m.post;
     const held = roll.men.find((x) => x !== m && x.post && x.squad === m.squad
       && Number.isInteger(m.squad));
+    /**
+     * NOT RENDERED AT ALL BELOW THE RUNG, and the reason is rendered instead.
+     *
+     * It used to render `disabled` with a click handler that played a deny
+     * sound — and a disabled button dispatches no click and takes no focus, so
+     * that branch could never run. A dead refusal path is the same defect as a
+     * dead control wearing the opposite costume. The sentence under it already
+     * names the rung and the experience he is short, which is the part a
+     * player can act on.
+     */
     const post = `<div class="company-post">
-      <button class="secondary" id="company-post" data-on="${seated ? '' : '1'}"
-        ${canLead ? '' : 'disabled'}>
-        ${seated ? 'Take back the post' : 'Give him the squad'}</button>
+      ${canLead ? `<button class="secondary" id="company-post" data-on="${seated ? '' : '1'}">
+        ${seated ? 'Take back the post' : 'Give him the squad'}</button>` : ''}
       <p class="hint">${canLead
         ? (seated
           ? 'He has the seat. His squad is his to hold, and if he falls it goes '
@@ -6856,8 +6889,20 @@ export class Menu {
    * double-quoted HTML attribute close the attribute. Every legal value in
    * `KIT_FIELDS` is a scalar, so three letters cover the whole vocabulary.
    */
-  _dressingHtml(look, kind, army = null, squadWord = 'Squad', squad = null) {
-    const legal = KIT_FIELDS[kind] || {};
+  _dressingHtml(look, kind, army = null, squadWord = 'Squad', squad = null, type = null) {
+    /**
+     * ONLY WHAT THIS CHASSIS ACTUALLY WEARS — see `WEARS` in Bodies.js.
+     *
+     * `KIT_FIELDS` is keyed by chassis KIND, which is the right key for what
+     * the store may hold and the wrong one for what a page may offer: the
+     * options are read by individual builders and the builders do not agree.
+     * Measured, this page was offering a surviving AT-TE nine rows of kit and
+     * three of paint that `Vehicles.js` does not read, and every B2 a unit
+     * flash and a photoreceptor that `buildB2` does not read.
+     */
+    const can = wearableFor(type, kind);
+    const legal = {};
+    for (const f of can.kit) legal[f] = KIT_FIELDS[kind][f];
     const kit = look?.kit || {};
     const paint = look?.paint || {};
     const swatch = (p, on, field) => `<i class="swatch${on ? ' sel' : ''}"
@@ -6865,7 +6910,8 @@ export class Menu {
         title="${escKey(p ? p.name : 'As issued')}"
         style="background:${p ? `#${p.color.toString(16).padStart(6, '0')}` : 'transparent'};
                ${p ? '' : 'border-style:dashed'}"></i>`;
-    const paintRows = (PAINT_SLOTS[kind] || []).map(([field, name]) => `
+    const paintRows = (PAINT_SLOTS[kind] || []).filter(([f]) => can.paint.includes(f))
+      .map(([field, name]) => `
       <div class="kit-row"><span class="kit-name">${escKey(name)}</span>
         <span class="swatches company-paints">
           ${swatch(null, !paint[field], field)}
@@ -6885,6 +6931,15 @@ export class Menu {
              data-val="" title="Whatever his rung is issued">As issued</i>
         </span></div>`;
     }).join('');
+    /* A CHASSIS THAT WEARS NOTHING SAYS SO. An AT-TE on the roll is a named
+     * man like any other and his page is the same page; what it must not do is
+     * draw an empty wardrobe with two issue buttons under it. */
+    if (!can.kit.length && !can.paint.length) {
+      return `<h4 class="codex-head">Kit and paint</h4>
+        <p class="hint">Nothing on this chassis is yours to change — it is built to one
+          pattern and carries no fittings. His callsign, his mark and his band are
+          still his.</p>`;
+    }
     return `
       <h4 class="codex-head">Paint</h4>
       <p class="hint">His armour, under the rank's own colours. The crest and the
@@ -7029,7 +7084,7 @@ export class Menu {
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
-      ${this._dressingHtml(r.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', r.squad)}
+      ${this._dressingHtml(r.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', r.squad, r.type)}
       <h4 class="codex-head">${escKey(army?.squadWord || 'Squad')}</h4>
       <p class="hint">Which ${(army?.squadWord || 'squad').toLowerCase()} he falls in with —
         the whole of what it changes is who stands beside him.</p>
@@ -7116,12 +7171,12 @@ export class Menu {
       this._showCompany(key);
     });
     /**
-     * THE SEAT. The licence is decided HERE, on the screen that has both the
-     * rank table and his experience, and handed to `Company.appoint` — see the
-     * long note there for why the store deliberately does not know what a rank
-     * is. Disabled buttons are wired anyway and refuse on the click: a control
-     * that silently does nothing is the shape this tab was rebuilt to stop
-     * being, and `_activate` is also what gives it a keyboard.
+     * THE SEAT. The licence is decided by `_licenceHtml`, on the screen that
+     * has both the rank table and his experience: below the rung there is no
+     * button at all and the sentence says which rung would do it. So this
+     * only ever runs for a man who may hold one, and it hands the answer to
+     * `Company.appoint` — see the long note there for why the store
+     * deliberately does not know what a rank is.
      */
     for (const sw of document.querySelectorAll('.company-squads .swatch')) {
       this._activate(sw, () => {
@@ -7134,8 +7189,6 @@ export class Menu {
     }
     const seat = document.getElementById('company-post');
     if (seat) this._activate(seat, () => {
-      const rank = rankFor(m.xp | 0);
-      if (!holds(rank, 'LEADS')) { audio.ui('deny'); return; }
       audio.ui('click');
       companyAppoint(roll.army, m.designation, !!seat.dataset.on, true);
       this._buildCompanyList();

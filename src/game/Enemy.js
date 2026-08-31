@@ -956,7 +956,10 @@ export const ARCHETYPES = {
     speed: 3.6, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 3.4, burst: 1, spread: 0.004, damage: 34, telegraph: 1.0,
     preferred: [22, 42], boltColor: BOLT_COLORS.gold, score: 320, threat: 3,
-    trooperColor: 0x2c3038, accent: 0xff9a20, hipHeight: 0.95,
+    /* The plate and the flash live in `BODY_KITS.sniper` now, with every other
+     * thing this body wears — see the note there for the defect that moved
+     * them. */
+    hipHeight: 0.95,
   },
   acolyte: {
     /* DARK ACOLYTE, not "Sith Acolyte". There are two Sith and the game fields
@@ -3218,7 +3221,11 @@ export class Enemy {
       ...(bodyOptsFor(this.type) || {}),
       ...kitOptsFrom(this.look, this.lookKind || 'flesh'),
     };
-    if (this.type === 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }
+    /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
+     * to be a special case on this line, spread AFTER the man's own kit, so a
+     * Marksman the player had painted landed on the field in stock colours
+     * while the parade ground showed him red. In the kit table it is the
+     * rung's default in both readers and a choice beats it. */
     const built = A.build(opts);
     this.built = built;
 

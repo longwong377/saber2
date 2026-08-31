@@ -51,10 +51,32 @@ export function makeStore(key) {
       let raw = null;
       try { raw = localStorage.getItem(key); }
       catch { broken = true; return mirror || {}; }
-      /* THE CLAUSE THE WHOLE FILE EXISTS FOR: nothing under the key is an
-       * empty record, not a reason to reach for what we remember. Only a
-       * store that has actually refused us gets to answer from memory. */
-      if (raw == null) return broken ? (mirror || {}) : {};
+      /**
+       * ── THE MIRROR OUTRANKS THE DISK, AND ONLY WHILE THE DISK IS REFUSING ─
+       *
+       * This tested `raw == null` first — "nothing under the key is an empty
+       * record, not a reason to reach for what we remember" — and that reads
+       * well and is the wrong order. It only reached the mirror when the key
+       * was ABSENT, so a store that had ever saved successfully (which is
+       * every store, after the first fold) went on parsing the STALE disk copy
+       * for the rest of the session and the mirror was dropped on the floor.
+       *
+       * Which is precisely the failure this file was written to end. Quota
+       * fills mid-session; the player renames a man; `setItem` throws; the
+       * mirror holds the new roll; the player clicks the next man and the tab
+       * re-reads the pre-rename JSON and the rename is simply gone. Every edit
+       * after that bounces, silently, with the old roll on screen.
+       *
+       * So: while `broken`, the mirror IS the store — it is by construction
+       * the newest thing we have, and the disk copy is by construction older
+       * than the write that failed. A successful write clears both.
+       *
+       * A CLEARED STORE IS STILL CLEARED. `drop()` resets `broken` and the
+       * mirror together, so the player's own delete is not undone by a
+       * memory of what used to be there.
+       */
+      if (broken && mirror) return mirror;
+      if (raw == null) return {};
       try {
         const v = JSON.parse(raw);
         if (!v || typeof v !== 'object' || Array.isArray(v)) return {};

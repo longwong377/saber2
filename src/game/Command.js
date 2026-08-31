@@ -656,15 +656,15 @@ export const ARCHETYPE_BIAS = {
  * See src/game/Attributes.js for why a ladder alone was not enough. */
 export const RANKS = [
   { title: 'Trooper',    short: 'TRP', xp: 0,  color: null,     hp: 1.00, dmg: 1.00, speed: 1.00,
-    duty: 'STANDS', licence: 'Takes an order while you are near him.' },
+    duty: 'STANDS', licence: 'Takes his orders and stands in the line. Every man holds this.' },
   { title: 'Veteran',    short: 'VET', xp: 4,  color: 0xb4382c, hp: 1.05, dmg: 1.03, speed: 1.01,
-    duty: 'HOLDS',  licence: 'Keeps a planted order after you have gone.' },
+    duty: 'HOLDS',  licence: 'His squad keeps the ground it was given when the man leading it falls.' },
   { title: 'Sergeant',   short: 'SGT', xp: 10, color: 0x2f6fbe, hp: 1.10, dmg: 1.06, speed: 1.02,
-    duty: 'LEADS',  licence: 'May hold a squad\u2019s post, and take a standing order at all.' },
+    duty: 'LEADS',  licence: 'May be given a squad\u2019s post \u2014 he leads it whatever the roll would have said.' },
   { title: 'Captain',    short: 'CPT', xp: 20, color: 0x3f8f4a, hp: 1.15, dmg: 1.09, speed: 1.03,
-    duty: 'CREWS',  licence: 'Counts as a crew with no commander present.' },
+    duty: 'CREWS',  licence: 'Digs a position on his own, where a lone man cannot.' },
   { title: 'Commander',  short: 'CMD', xp: 36, color: 0xe8b028, hp: 1.20, dmg: 1.12, speed: 1.04,
-    duty: 'RELAYS', licence: 'Carries an order onward to men you cannot reach.' },
+    duty: 'RELAYS', licence: 'Steadies any of your men standing near him, in his squad or not.' },
 ];
 
 /**
@@ -687,6 +687,26 @@ export const RANKS = [
  * reader, `holds()`. Every consumer asks that function; nothing anywhere
  * compares a rank index to a magic number, because the second place that knows
  * "2 means he can lead" is the place that drifts.
+ *
+ * ── EVERY `licence` STRING HERE DESCRIBES A CONSUMER THAT EXISTS ───────────
+ *
+ * This panel is printed on a man's page and read as a promise, so the wording
+ * is held to what the code does rather than to what the design wants next.
+ * The first draft of it promised that an order needs a rung to be TAKEN and
+ * that a standing order needs one to be GIVEN, and neither is true: `order()`
+ * has no rank test anywhere, and gating one would take a shipped, asked-for
+ * feature away from every fresh company on its first night. So `STANDS` says
+ * what it is — the floor every man holds — and the four above it name their
+ * actual readers:
+ *
+ *   HOLDS   `_vacancy`  — the plant survives its leader only if somebody
+ *                         licensed is still standing in the squad.
+ *   LEADS   `leadOf`    — the post the player names, in front of the rule.
+ *   CREWS   `_digTick`  — one licensed man on the position is a crew.
+ *   RELAYS  `_morale`   — the only presence term that crosses a squad line.
+ *
+ * `licence.mjs` drives all four on a real director. A rung that gains a
+ * consumer changes this sentence in the same commit.
  *
  * The order matters and is the order of the rungs: index i in this list is the
  * duty granted at rung i.
@@ -2272,13 +2292,25 @@ export class CommandRoster {
     t.since = typeof m.since === 'string' ? m.since : null;
     t.story = Array.isArray(m.story) ? m.story.slice() : [];
     t.look = m.look && typeof m.look === 'object' ? { ...m.look } : null;
-    /* THE SEAT, and it is re-checked against the licence on the way in rather
-     * than trusted. A stored post is a stored post for ever; a rank is not
-     * (nothing demotes today, but a hand-edited store is a store the player's
-     * own browser holds), and a man leading a squad he is not licensed to lead
-     * is exactly the drift `holds()` exists to prevent. */
-    t.post = !!m.post && holds(t, 'LEADS');
     this.all.push(t);
+    /**
+     * THE SEAT, AND IT GOES ON THROUGH THE ONE DOOR THAT WRITES ONE.
+     *
+     * `appoint` is where the rule lives — licensed, alive, one seat per squad
+     * — and this used to set `t.post` by hand with only the licence half of
+     * it. That left the exclusivity clause with no caller on the fighting side
+     * at all: a store holding two seated men in one squad put both of them on
+     * the roll, and `leadOf` then answered with whichever came first in an
+     * array whose order is nobody's decision.
+     *
+     * A stored post is a stored post for ever and a rank is not — nothing
+     * demotes today, but the store is a JSON blob in the player's own browser
+     * — so the licence is re-tested here rather than trusted, which `appoint`
+     * does as its first act. Pushed before the call because `appoint` refuses
+     * a man who is not on the roll, which is the guard that makes it safe
+     * everywhere else.
+     */
+    if (m.post) this.appoint(t, true);
     return t;
   }
 
@@ -2374,7 +2406,16 @@ export class CommandRoster {
     let was = null;
     for (const other of this.all) {
       if (other === t || !other.post) continue;
-      if (other.squad === t.squad) { other.post = false; was = other; }
+      /* `Number.isInteger`, because `null === null` is TRUE and the sentence
+       * above says the opposite. Two men who have not been dealt a squad yet
+       * are not in the same squad — they are in no squad — and stripping one
+       * for the other's sake is a seat taken off a man for a reason that does
+       * not exist. `assignSquads` will deal them both shortly and only then is
+       * there a squad for them to contend over. */
+      if (Number.isInteger(t.squad) && other.squad === t.squad) {
+        other.post = false;
+        was = other;
+      }
     }
     t.post = true;
     return { ok: true, reason: null, was };
@@ -2930,6 +2971,32 @@ export function versusCommandConfig(settings) {
  * @returns `{ types, refused }` — the types in the order they are bought, and
  *          the sentence to say when the chosen rung is beyond the purse.
  */
+/**
+ * ══ WHAT IS ON THE SHELF — the rungs a muster may actually buy ═════════════
+ *
+ * `unlockAt` is the director's method and it is one line: a campaign gates a
+ * rung on the ground you are standing on, and anything else sells the whole
+ * ladder. That is exactly the rule the BARRACKS needs too, to compose the same
+ * line the muster is about to compose — and the barracks has no director.
+ *
+ * So the rule is a function of the two facts it depends on, and both callers
+ * hand it what they have. `composeContingent` was given an `allow` set after a
+ * meeting composed `10 troopers + an AT-TE + an officer` and `recruit` refused
+ * both of the last two on the unlock; this is where that set comes from, once,
+ * so the tab and the ground cannot end up gating differently.
+ *
+ * @param campaign  whether unlocks apply at all — `crossing || battles`.
+ * @param areaRung  the ground being stood on, 1-based. Ignored when not a
+ *                  campaign, which is why the barracks may leave it out.
+ * @returns a Set of type names, or null for "the whole ladder" — which is what
+ *          `composeContingent` reads as no gate at all.
+ */
+export function shelfFor(army, campaign, areaRung = 1) {
+  if (!campaign) return null;
+  return new Set((army?.tiers || [])
+    .filter((t) => (t.at ?? 1) <= areaRung).map((t) => t.type));
+}
+
 export function composeContingent(army, opening, standing = [], unit = CONTINGENT_MIXED,
                                   allow = null) {
   /**
@@ -2985,7 +3052,11 @@ export function composeContingent(army, opening, standing = [], unit = CONTINGEN
    */
   const list = Array.isArray(standing) ? standing : [];
   const spent = list.reduce((a, t) => a + musterCost(typeof t === 'string' ? t : t?.type), 0);
-  let points = Math.max(0, (opening | 0) * musterCost(cheapest) - spent);
+  /* THE WHOLE PURSE, and what is LEFT of it. Both are needed and they answer
+   * different questions: the spend is out of what is left, and the REFUSAL is
+   * about the whole — see the note over the refusal below. */
+  const purse = (opening | 0) * musterCost(cheapest);
+  let points = Math.max(0, purse - spent);
   let strength = list.length;
   const types = [];
   const spend = (type) => {
@@ -3007,11 +3078,32 @@ export function composeContingent(army, opening, standing = [], unit = CONTINGEN
       refused: `${ARCHETYPES[want.type]?.label ?? want.type} is not on the shelf here`,
     };
   }
-  if (want && points < want.cost) {
+  /**
+   * ── A REFUSAL IS ABOUT THE REQUEST, NOT ABOUT THE CHANGE IN THE PURSE ───
+   *
+   * This tested the REMAINDER — `points`, after the standing line's cost had
+   * been taken off — and that is the wrong question the moment anybody is
+   * already standing. `_musterOpening` runs AFTER `_musterVeterans` has
+   * enlisted the whole line the barracks composed, so the purse it hands in is
+   * a purse that has already been spent on exactly what was asked for: every
+   * ordinary contingent run opened with
+   *
+   *     CONTINGENT UNCHANGED — Clone Trooper costs 5 points and 10 troopers buys 0
+   *
+   * on top of a contingent that had been delivered precisely as asked. That is
+   * the loudest of this mode's three "say it out loud" refusals firing on the
+   * success path, which teaches the player to look away from it — and then the
+   * real one, a purse that genuinely cannot afford the rung, goes past unread.
+   *
+   * So the test is against the WHOLE purse. "Six allies cannot buy an AT-TE"
+   * is a true and useful sentence about a slider setting; "the men you already
+   * have used up the money" is not a refusal at all, it is the system working.
+   */
+  if (want && want.cost > purse) {
     return {
       types,
       refused: `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
-        + `${opening} ${army.unit}${opening === 1 ? '' : 's'} buys ${points}`,
+        + `${opening} ${army.unit}${opening === 1 ? '' : 's'} buys ${purse}`,
     };
   }
   if (want) { while (spend(want.type)); }
@@ -3055,6 +3147,16 @@ export function musterPlan(settings, groundArmies = null) {
      * a second time. Null on an army mode, whose opening is rung-0 strangers
      * by design and has no rung to choose. */
     unit: armyMode ? null : cfg.unit,
+    /**
+     * …AND WHAT IS FOR SALE, so the barracks composes off the same shelf the
+     * muster will. `shelfFor` is `unlockAt`'s rule; a contingent is never a
+     * campaign (`musterPlan` zeroes the contingent on an army mode, and
+     * `campaign` IS `armyMode`), so today this is always the whole ladder —
+     * and it is CARRIED rather than assumed, because the day a crossing takes
+     * a contingent the tab would otherwise start naming an AT-TE the muster
+     * refuses.
+     */
+    shelf: shelfFor(army, armyMode, 1),
   };
 }
 
@@ -4847,13 +4949,12 @@ export class CommandDirector extends WaveDirector {
      * troop tab was rebuilt to kill. `recruit` still does the spending, the
      * logging, the unlock gate and the refusals; only the arithmetic left.
      */
-    /* WHAT IS ON THE SHELF HERE — `unlockAt` against the ground being stood on,
-     * which is the SAME gate `musterOffer` filters with and `recruit` refuses
-     * on. Handed to the composer rather than left for it to guess: see the
-     * `allow` note over `composeContingent` for the meeting that came out as
-     * ten identical troopers when it was left out. */
-    const shelf = new Set(c.army.tiers
-      .filter((t) => this.unlockAt(t) <= this.areaRung).map((t) => t.type));
+    /* WHAT IS ON THE SHELF HERE — `shelfFor`, which is `unlockAt`'s rule as a
+     * function so the barracks can ask it too. Handed to the composer rather
+     * than left for it to guess: see the `allow` note over `composeContingent`
+     * for the meeting that came out as ten identical troopers when it was left
+     * out. */
+    const shelf = shelfFor(c.army, this.campaign, this.areaRung);
     const { types, refused } = composeContingent(c.army, opening, standing, this.unit, shelf);
     this._bulk = true;
     try {

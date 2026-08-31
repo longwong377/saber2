@@ -95,7 +95,14 @@ function readRecruit(r, armyId) {
   return {
     designation: r.designation,
     type,
-    squad: Number.isInteger(r.squad) && r.squad >= 0 && r.squad <= 4 ? r.squad : null,
+    /* THE SAME CEILING BOTH SQUAD PICKERS OFFER, read off `Company.SQUADS_MAX`
+     * rather than typed. It was `<= 4` here and `ceil(MAX_STRENGTH / SQUAD)`
+     * on the pages, which agree today by coincidence: move `SQUAD` or
+     * `MAX_STRENGTH` and this store starts silently dropping the squad the
+     * page just offered, which is a control that writes and a store that
+     * forgets. */
+    squad: Number.isInteger(r.squad) && r.squad >= 0 && r.squad < Company.SQUADS_MAX
+      ? r.squad : null,
     /* THE SAME DOOR THE ROLL'S MEN COME THROUGH — one sanitiser for both
      * stores, so a recruit and a veteran can never disagree about what a look
      * may legally contain. See `Company.saneLook`. */
@@ -310,7 +317,10 @@ export function ensure(plan, company) {
   const standing = Company.fieldable(c, plan.want).map((m) => m.type);
   const wants = plan.armyMode
     ? new Array(Math.max(0, (plan.want | 0) - vets)).fill(ARMIES[plan.army].tiers[0].type)
-    : composeContingent(ARMIES[plan.army], plan.want | 0, standing, plan.unit ?? -1).types;
+    /* THE PLAN'S OWN SHELF — `shelfFor`'s answer, carried on the plan so this
+     * file composes off exactly what the muster will be allowed to buy. */
+    : composeContingent(ARMIES[plan.army], plan.want | 0, standing, plan.unit ?? -1,
+                        plan.shelf ?? null).types;
   const fresh = Math.max(0, Math.min(SLATE_CAP, wants.length));
   let slate = slateFor(plan.army);
   let moved = false;
@@ -469,20 +479,27 @@ export function lineup(plan, company, opts = {}) {
 /**
  * ══ ISSUE ONE PATTERN ACROSS BOTH STORES ═══════════════════════════════════
  *
- * `Company.issue` copies a man's kit and paint across the ROLL. The men a
- * fresh player actually has are on the SLATE, so a control that stopped at the
- * roll would do nothing at all on the first night — which is exactly the
- * player this feature is for, four hundred clicks deep into dressing ten
- * strangers one row at a time.
+ * A man's kit and paint, copied across the rest of them. Twelve rows of kit
+ * and three of paint across ten men is somewhere north of four hundred clicks
+ * to make a company look like one company, and looking like one company is
+ * most of what that screen is for.
  *
- * So the one door is here, in the file that can see both: Muster imports
- * Company and Company may not import back (see the note at the top of
- * Company.js). The pattern may come from either store; it is written to both.
+ * IT LIVES HERE BECAUSE THIS IS THE ONLY FILE THAT CAN SEE BOTH STORES. The
+ * men a fresh player actually has are on the SLATE, so a version of this that
+ * wrote only the roll would do nothing at all on the first night — which is
+ * exactly the player it is for. Muster imports Company and Company may not
+ * import back (see the note at the top of Company.js), so there is one door
+ * and it is this one. The pattern may come from either store; it is written to
+ * both, through each store's own dressing door.
  *
- * `scope` is 'squad' or 'line'. Nothing personal travels — kit and paint only,
- * never a callsign, a mark or a band; see `Company.issue` for why. Every write
- * goes through the store's own dressing door, so a droid gets whatever part of
- * a clone's pattern a droid can wear and the rest is dropped.
+ * `scope` is 'squad' or 'line'. NOTHING PERSONAL TRAVELS — kit and paint only,
+ * never a callsign, a mark or a band. Those three are the whole of how a
+ * player picks one man out of a line of ten at forty metres, and a pattern
+ * that copied them would delete the feature it was serving.
+ *
+ * A droid gets whatever part of a clone's pattern a droid can wear and the
+ * rest is dropped, because every write goes through the store's own dressing
+ * door and that door sanitises against the man being written.
  *
  * @returns how many men were written.
  */
