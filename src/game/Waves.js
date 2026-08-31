@@ -311,6 +311,21 @@ export const MODES = {
     /* NO FLIGHT IN HERE EITHER — see `insertion` on `MODES.sandbox` above. Ten
      * lessons that cannot kill you do not open with an orbital drop. */
     insertion: false,
+    /**
+     * ── THE LESSONS ARE RUN BY THE DOJO, AND THAT IS A DECLARATION NOW ─────
+     *
+     * `World.loadLevel` tested `this.settings.mode === 'training'` to decide
+     * whether to build a `DojoDirector`, which is the mode's own design living
+     * somewhere the mode cannot see — the exact shape the note over
+     * `objectives` two records down argues against.
+     *
+     * It grew a second reader and that is what forced the issue: the barracks
+     * offers to raise a line in any mode that can field one, and Training
+     * cannot, because a `DojoDirector` has no roster at all. Without this flag
+     * the tab offered a fresh player ten named men for a lesson that would
+     * never deploy them — a control that mints and saves and lies.
+     */
+    dojo: true,
   },
   /**
    * COMMAND — the one mode where you are not alone.

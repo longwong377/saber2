@@ -6207,6 +6207,21 @@ export class Menu {
        */
       const M2 = MODES[this.s.mode];
       const army = ARMIES[armyToLead(this.s.order, {})?.id] || ARMIES[ARMY_IDS[0]];
+      /**
+       * …AND A MODE THAT CANNOT FIELD ONE IS NOT OFFERED THE DOOR.
+       *
+       * Training runs on a `DojoDirector`, which has no roster: raising a line
+       * there would mint ten named men, save them, show them on this page and
+       * never deploy one — a control that lies in the most expensive way this
+       * tab can. The sentence stays honest and stops there. Read off the
+       * mode's own declaration; see `dojo` in Waves.js.
+       */
+      if (M2?.dojo) {
+        hint(`${M2?.name || this.s.mode} is run by the dojo and fields no line at all. `
+          + 'Nothing you name here would land in it — pick a mode with an army and '
+          + 'the muster fills.');
+        return;
+      }
       hint(`${M2?.name || this.s.mode} fields no army of yours. Raise a line and it `
         + 'musters here — named, painted and yours, before you land.');
       const raise = document.createElement('p');
@@ -6724,13 +6739,6 @@ export class Menu {
   _licenceHtml(roll, m) {
     const rank = rankFor(m.xp | 0);
     const mine = dutiesAt(rank);
-    const rungs = RANKS.map((R, i) => {
-      const has = i <= rank;
-      const at = i === rank;
-      return `<div class="duty-row${has ? ' has' : ''}${at ? ' at' : ''}">
-        <b>${escKey(R.duty)}</b>
-        <span><i>${escKey(R.title)}</i> — ${escKey(R.licence)}</span></div>`;
-    }).join('');
 
     /**
      * THE SEAT. Offered on every man so the refusal is visible: a control that
@@ -6761,12 +6769,8 @@ export class Menu {
           + `${escKey(need.title)} is the rung that does — ${need.xp} experience, `
           + `and he has ${m.xp | 0}.`}</p></div>`;
 
-    return `<h4 class="codex-head">Licence</h4>
-      <p class="hint">What the rank is for. The numbers a rung buys are small on
-        purpose — a company that comes home is not meant to be a stronger army, it is
-        meant to be a more capable one. ${escKey(RANKS[rank].title)} holds
-        ${mine.length} of ${RANKS.length}.</p>
-      <div class="duty-list">${rungs}</div>
+    return `${this._ladderHtml(rank)}
+      <p class="hint">${escKey(RANKS[rank].title)} holds ${mine.length} of ${RANKS.length}.</p>
       <h4 class="codex-head">The post</h4>
       ${post}`;
   }
@@ -6935,7 +6939,36 @@ export class Menu {
              title="${escKey(army?.squadWord || 'Squad')} ${i + 1}">${i + 1}</i>`).join('')}
         <i class="swatch squad-chip${r.squad == null ? ' sel' : ''}" data-squad=""
            title="Wherever the muster deals him" style="border-style:dashed">—</i>
-      </div>`;
+      </div>
+      ${this._ladderHtml(0)}`;
+  }
+
+  /**
+   * ══ THE LADDER, AS A REASON TO KEEP THIS PARTICULAR MAN ALIVE ══════════
+   *
+   * A fresh profile has no veterans, so on the first night every page the
+   * player can open is a RECRUIT's page — and the licence panel lived only on
+   * a veteran's. Measured across all eleven modes on a cleared store: ten
+   * named men, thirty-three kit chips, forty-eight paint swatches and ZERO
+   * rows of ladder, in every single one. The one thing on this tab that says
+   * why a man is worth bringing home was invisible to exactly the player who
+   * has not brought one home yet.
+   *
+   * So the ladder is its own renderer and both pages call it. `at` is the rung
+   * the reader is standing on — 0 for a recruit, who is standing at the
+   * bottom of it looking up, which is the whole point of showing him all five.
+   */
+  _ladderHtml(at) {
+    const rank = Math.max(0, Math.min(RANKS.length - 1, at | 0));
+    const rungs = RANKS.map((R, i) => `<div class="duty-row${i <= rank ? ' has' : ''}`
+      + `${i === rank ? ' at' : ''}"><b>${escKey(R.duty)}</b>`
+      + `<span><i>${escKey(R.title)}</i> — ${escKey(R.licence)}</span></div>`).join('');
+    return `<h4 class="codex-head">Licence</h4>
+      <p class="hint">What a rank is for. The numbers a rung buys are small on purpose —
+        a company that comes home is meant to be a more capable army, not a bigger or a
+        tougher one. What it actually buys is permission, and every one of these is
+        something the company loses on the day the man holding it does.</p>
+      <div class="duty-list">${rungs}</div>`;
   }
 
   /**

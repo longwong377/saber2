@@ -884,8 +884,28 @@ export async function run({ check, assert }) {
         assert(bare === null,
           `${mode} fields no army at allies 0 and musterPlan still answers ${JSON.stringify(bare)}`);
         const five = musterPlan({ mode, allies: 5, order: 0 });
-        assert(five && five.want === 5,
-          `${mode} with a contingent of five gets ${JSON.stringify(five)}`);
+        /**
+         * …AND A MODE WITH NO ROSTER AT ALL ANSWERS NOTHING, WHATEVER THE
+         * SLIDER SAYS.
+         *
+         * `MODES.training` is run by a `DojoDirector`, which has no roster —
+         * so a plan there would have the barracks mint, name, paint and SAVE
+         * ten men for a run that can never deploy one of them. Measured before
+         * the exemption, on a cleared store: Training offered "Take 10
+         * troopers into Training", and the click wrote a line to disk.
+         *
+         * Asserted from the mode's own declaration rather than by name, and
+         * asserted in BOTH directions, so neither the flag nor the reader can
+         * quietly go away.
+         */
+        if (MODES[mode].dojo) {
+          assert(five === null,
+            `${mode} is run by the dojo and musterPlan still answers ${JSON.stringify(five)} — `
+            + 'the tab would raise a line that has nowhere to land');
+        } else {
+          assert(five && five.want === 5,
+            `${mode} with a contingent of five gets ${JSON.stringify(five)}`);
+        }
       }
     }
     /* The contingent's ally-army choice is honoured; an army mode's is not —
@@ -894,8 +914,14 @@ export async function run({ check, assert }) {
     const chosen = musterPlan({ mode: 'waves', allies: 4, order: 0, allyArmy: 1 });
     assert(chosen?.army === ARMY_IDS[1],
       `a contingent asked for ${ARMY_IDS[1]} and musterPlan drew ${chosen?.army}`);
+    /* THE FLAG HAS A WRITER. A `dojo` nobody declares would make the clause
+     * above vacuous — every mode would take the `else` and the exemption would
+     * be a comment. */
+    const dojos = Object.keys(MODES).filter((m) => MODES[m].dojo);
+    assert(dojos.length === 1, `${dojos.length} modes declare a dojo: ${dojos.join(', ')}`);
     return `${Object.keys(MODES).length} modes resolved · army modes field ${OPENING_STRENGTH} `
-      + 'regardless of the slider · bare modes field the slider or nothing';
+      + `regardless of the slider · bare modes field the slider or nothing · ${dojos[0]} fields `
+      + 'nobody at any setting';
   });
 
   check('company: the tab names the men being taken in, not only the fallen', () => withCleanStore(() => {

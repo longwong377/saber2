@@ -2464,7 +2464,16 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    shapes the box it lands in. The three columns wrap on a narrow window —
    roll, then ground, then page — because the packed single-file build is
    played at whatever size a browser window happens to be. */
-[data-panel="company"]{flex-wrap:wrap;overflow-y:auto}
+/* AND IT RESERVES ITS TRACK. Every scrolling rule in this file has to, and
+   this one did not: three columns of roll, parade and dossier is the tallest
+   thing in the menu, and an overlay scrollbar with a transparent track over a
+   dark panel is what makes a full page read as a cut one. See the note over
+   `.col.narrow.pinned>.col-scroll`, which is the same fix, and front-screen.mjs,
+   which is what noticed this rule had been written without it. */
+[data-panel="company"]{flex-wrap:wrap;overflow-y:auto;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
+[data-panel="company"]::-webkit-scrollbar{width:8px;background:var(--void)}
+[data-panel="company"]::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 /* HARD-BOUNDED, both of them. In one headless profile the flex columns grew
    to their CONTENT height — 2231px against a 495px panel — and the stage
    sized its GL buffer 740x4454: the parade was being drawn into a buffer the

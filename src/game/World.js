@@ -912,7 +912,7 @@ export class World {
      * with no writer: a condition that could never be true, sitting in front of
      * the one that decides. A dead disjunct reads like a supported path.
      */
-    if (this.settings.mode === 'training') {
+    if (MODES[this.settings.mode]?.dojo) {
       this.director = new DojoDirector(this);
       this.training = true;
       this.running = true;

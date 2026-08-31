@@ -2959,6 +2959,12 @@ export function musterPlan(settings, groundArmies = null) {
   const armyMode = !!(MODES[s.mode]?.crossing || MODES[s.mode]?.battles);
   const cfg = commandConfig(s);
   const contingent = armyMode ? 0 : cfg.contingent;
+  /* A LESSON FIELDS NOBODY, whatever the slider says. `MODES.training` builds
+   * a `DojoDirector`, which has no roster at all — so a plan here would offer
+   * the barracks ten named men for a run that can never deploy them, and the
+   * tab would mint and save a line that does not exist. Read off the mode's
+   * own declaration rather than off its name; see `dojo` in Waves.js. */
+  if (MODES[s.mode]?.dojo) return null;
   if (!armyMode && !(contingent > 0)) return null;
   const army = armyToLead(s.order, {
     choice: armyMode ? null : cfg.allyArmy,
