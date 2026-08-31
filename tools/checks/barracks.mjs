@@ -1822,6 +1822,30 @@ export async function run({ check, assert, THREE: T }) {
 
     /* …AND THE REAL ONE STILL SPEAKS. The dearest rung against a purse that
      * never could have bought it. */
+    /**
+     * …AND A REQUEST THE STANDING LINE HAS EATEN IS STILL A REFUSAL, IF NOBODY
+     * STANDING IS THE THING THAT WAS ASKED FOR.
+     *
+     * Testing the whole purse killed the false alarm and opened a quieter hole
+     * the other way: four returning ARCs against a request for AT-TEs is a
+     * purse that COULD have bought one and 2 points left, so the composer
+     * bought nothing and said nothing and the muster came up empty. The
+     * question is whether the player got what they asked for.
+     */
+    const atte = A.tiers.findIndex((t) => t.type === 'atte');
+    if (atte >= 0) {
+      const eaten = composeContingent(A, 10, new Array(4).fill('arc'), atte);
+      assert(eaten.refused && /already standing/.test(eaten.refused),
+        `a purse the veterans ate produced ${JSON.stringify(eaten.types)} and said `
+        + `"${eaten.refused}"`);
+      /* …AND NOT WHEN THE THING ASKED FOR IS ALREADY ON THE FIELD. He got it
+       * last run; there is nothing to say. */
+      const got = composeContingent(A, 10, ['atte'], atte);
+      assert(!got.refused,
+        `the AT-TE the player asked for is already standing and the muster said `
+        + `"${got.refused}"`);
+    }
+
     const dearest = A.tiers.reduce((a, b) => (b.cost > a.cost ? b : a));
     const rung = A.tiers.indexOf(dearest);
     const tooSmall = Math.max(1, Math.floor((dearest.cost - 1) / cost('trooper')));
@@ -1928,6 +1952,29 @@ export async function run({ check, assert, THREE: T }) {
         `${bare} was still offered chips: the wardrobe drew for a chassis that wears nothing`);
       assert(/nothing on this chassis is yours to change/i.test(html),
         `${bare}'s page says nothing about why its wardrobe is empty`);
+
+      /**
+       * …AND A CHASSIS THAT WEARS HALF DRAWS HALF. A B2, a droideka and a
+       * Magna read a shell colour and NO kit, and a guard on
+       * `!kit.length && !paint.length` let those three pages print a "Kit"
+       * heading, the paragraph about what he carries, and an empty box — a
+       * promise followed by nothing, which is the same dead control one layer
+       * along. Every chassis is checked, so the day a builder loses its last
+       * field in either half this goes red.
+       */
+      for (const id of Object.keys(ARMIES)) {
+        const kind = id === 'separatist' ? 'steel' : 'flesh';
+        for (const tier of ARMIES[id].tiers) {
+          const can = B.wearableFor(tier.type, kind);
+          const page = menu._dressingHtml(null, kind, id, 'Squad', null, tier.type);
+          for (const [half, head] of [['kit', 'Kit'], ['paint', 'Paint']]) {
+            const heading = new RegExp(`codex-head">${head}<`);
+            assert(heading.test(page) === (can[half].length > 0),
+              `${tier.type} ${can[half].length ? 'wears' : 'wears no'} ${half} and its page `
+              + `${heading.test(page) ? 'prints' : 'omits'} the ${head} heading`);
+          }
+        }
+      }
     } finally { close(); }
     return `${rows.length} chassis, ${offered} live controls offered, 0 dead; ${bare} gets a `
       + 'sentence instead of an empty room';
@@ -2025,20 +2072,40 @@ export async function run({ check, assert, THREE: T }) {
       assert(back.all.filter((t) => t.post).length === 2,
         'the seats in two different squads did not both survive');
 
-      /* AND TWO UNDEALT MEN DO NOT CONTEND. They are not in the same squad;
-       * they are in no squad, and stripping one for the other is a seat taken
-       * off a man for a reason that does not exist. */
+      /**
+       * AND TWO UNDEALT MEN DO CONTEND, which reads like the opposite of the
+       * rule and is the rule.
+       *
+       * `squadPlan` deals every man with no squad into the first bucket that
+       * is under strength, so two men at `squad: null` are two men bound for
+       * the SAME squad — and a guard that spared them (on the grounds that
+       * `null === null` is a coincidence) put both of them in squad 0 holding
+       * one seat, which is the exact state this whole clause exists to
+       * prevent. Reachable without a hand-edited file: the man page's squad
+       * picker offers a dashed "—" chip that writes null.
+       *
+       * Asserted through the deal, not just through `appoint`, because the
+       * deal is the reason.
+       */
       const loose = new CommandRoster(ARMIES.republic);
       const a = loose.enlist('trooper'); const b = loose.enlist('trooper');
       a.award(RANKS[2].xp); b.award(RANKS[2].xp);
+      a.squad = null; b.squad = null;
       loose.appoint(a, true);
       const second = loose.appoint(b, true);
-      assert(a.post && b.post,
-        'appointing a second man with no squad stripped the first — `null === null`');
-      assert(second.was === null,
-        `the second appointment claimed it took the seat off ${second.was?.designation}`);
-      return '1 seat per squad off a forged file, 2 squads both kept, and two undealt men '
-        + 'do not contend';
+      assert(b.post && !a.post,
+        'two men with no squad both hold a seat — and the deal is about to put them in '
+        + 'the same squad');
+      assert(second.was === a,
+        `the second appointment says it took the seat off ${second.was?.designation ?? 'nobody'}`);
+      loose.assignSquads();
+      assert(a.squad === b.squad,
+        `the deal put the two undealt men in squads ${a.squad} and ${b.squad} — the reason `
+        + 'the clause above is right has stopped being true');
+      assert(loose.all.filter((t) => t.post && t.squad === a.squad).length === 1,
+        'the squad the deal made has two seat-holders in it');
+      return '1 seat per squad off a forged file, 2 squads both kept, and two men bound for '
+        + 'the same deal contend';
     }));
 
   check('barracks: a painted Marksman is the same man on the parade ground and on the field',

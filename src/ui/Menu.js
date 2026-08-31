@@ -6886,11 +6886,15 @@ export class Menu {
     const mine = dutiesAt(rank);
 
     /**
-     * THE SEAT. Offered on every man so the refusal is visible: a control that
-     * is simply absent teaches nothing, and "why can I do this for him and not
-     * for him" is the question this whole panel exists to answer. A man below
-     * the licence gets the button DISABLED with the rung named — which is the
-     * shape `SCOPE.md` asks for, "every refusal needs a visible reason".
+     * THE SEAT — and below the rung there is no button, only the reason.
+     *
+     * It used to render the button `disabled` with a click handler that played
+     * a deny sound, on the argument that a control which is simply absent
+     * teaches nothing. The handler could not fire: a disabled button dispatches
+     * no click and takes no focus, and `_activate` refuses one outright. So the
+     * visible reason is the SENTENCE, which names the rung and the experience
+     * he is short — that is the half a player can act on, and it is what
+     * `SCOPE.md`'s "every refusal needs a visible reason" was asking for.
      */
     const canLead = holds(rank, 'LEADS');
     const need = RANKS[DUTIES.indexOf('LEADS')];
@@ -6987,9 +6991,16 @@ export class Menu {
              data-val="" title="Whatever his rung is issued">As issued</i>
         </span></div>`;
     }).join('');
-    /* A CHASSIS THAT WEARS NOTHING SAYS SO. An AT-TE on the roll is a named
-     * man like any other and his page is the same page; what it must not do is
-     * draw an empty wardrobe with two issue buttons under it. */
+    /**
+     * A CHASSIS THAT WEARS NOTHING SAYS SO, AND ONE THAT WEARS HALF DRAWS HALF.
+     *
+     * The first version guarded the whole room on `!kit.length && !paint.length`
+     * and that is the wrong conjunction: a B2, a droideka and a Magna read a
+     * shell colour and NO kit at all, so those three pages printed a "Kit"
+     * heading, the paragraph about what he carries, and an empty box under it —
+     * a promise followed by nothing, which is the dead control this table
+     * exists to remove, relocated. Each section carries its own guard.
+     */
     if (!can.kit.length && !can.paint.length) {
       return `<h4 class="codex-head">Kit and paint</h4>
         <p class="hint">Nothing on this chassis is yours to change — it is built to one
@@ -6997,16 +7008,16 @@ export class Menu {
           still his.</p>`;
     }
     return `
-      <h4 class="codex-head">Paint</h4>
+      ${can.paint.length ? `<h4 class="codex-head">Paint</h4>
       <p class="hint">His armour, under the rank's own colours. The crest and the
         shoulder bells stay the game's — that is the one thing a line is read by at
         ninety metres, and it goes on top of whatever you choose here.</p>
-      <div class="kit-list">${paintRows}</div>
-      <h4 class="codex-head">Kit</h4>
+      <div class="kit-list">${paintRows}</div>` : ''}
+      ${can.kit.length ? `<h4 class="codex-head">Kit</h4>
       <p class="hint">What he carries. Every one of these is hardware the body was
         always able to wear; none of them moves a number, and he takes it onto the
         ground with him.</p>
-      <div class="kit-list">${kitRows}</div>
+      <div class="kit-list">${kitRows}</div>` : ''}
       ${army ? `
       <h4 class="codex-head">Issue the pattern</h4>
       <p class="hint">Twelve rows of kit and three of paint, across ten men, is a few

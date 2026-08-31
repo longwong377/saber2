@@ -43,7 +43,7 @@
 
 import {
   ARMIES, ARMY_IDS, OPENING_STRENGTH, MAX_STRENGTH, designateWith, markById,
-  commandConfig, composeContingent,
+  commandConfig, composeContingent, shelfFor,
 } from './Command.js';
 import * as Company from './Company.js';
 import { makeStore } from './Store.js';
@@ -317,10 +317,13 @@ export function ensure(plan, company) {
   const standing = Company.fieldable(c, plan.want).map((m) => m.type);
   const wants = plan.armyMode
     ? new Array(Math.max(0, (plan.want | 0) - vets)).fill(ARMIES[plan.army].tiers[0].type)
-    /* THE PLAN'S OWN SHELF — `shelfFor`'s answer, carried on the plan so this
-     * file composes off exactly what the muster will be allowed to buy. */
+    /* WHAT THE MUSTER WILL BE ALLOWED TO BUY — `shelfFor`, the same rule
+     * `_musterOpening` hands the composer, asked here with the plan's own
+     * `campaign` term. A contingent is never a campaign, so this is the whole
+     * ladder today; it is asked rather than assumed so the day that stops
+     * being true the tab and the ground move together. */
     : composeContingent(ARMIES[plan.army], plan.want | 0, standing, plan.unit ?? -1,
-                        plan.shelf ?? null).types;
+                        shelfFor(plan.army, plan.campaign)).types;
   const fresh = Math.max(0, Math.min(SLATE_CAP, wants.length));
   let slate = slateFor(plan.army);
   let moved = false;

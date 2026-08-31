@@ -1436,9 +1436,26 @@ export async function run({ check, assert }) {
      * emphatically not the dojo and requires every lesson to build its room.
      */
     assert(Waves.MODES.training, 'there is no training mode — the lessons are still pinned to one level');
+    /**
+     * …AND `World.loadLevel` HONOURS IT — read off the mode's own DECLARATION
+     * rather than off the spelling of a branch.
+     *
+     * This used to grep for `settings.mode === 'training'`, which is a test of
+     * one string and cannot tell whether the branch it found is the dojo
+     * branch or something else that happens to name the mode. The mode
+     * declares `dojo` now — one flag, one writer, two readers (`loadLevel`
+     * builds the `DojoDirector` off it, and `musterPlan` refuses to raise a
+     * line for a mode that has no roster to put one on) — so the property is
+     * asserted in both directions: the mode says it, and the world reads it.
+     */
+    assert(Waves.MODES.training.dojo === true,
+      'MODES.training does not declare `dojo`, so nothing can tell the lessons apart from a wave');
+    const dojos = Object.keys(Waves.MODES).filter((m) => Waves.MODES[m].dojo);
+    assert(dojos.length === 1, `${dojos.length} modes declare a dojo: ${dojos.join(', ')}`);
     const world = await read('game/World.js');
-    assert(/settings\.mode === 'training'/.test(world),
-      'World.loadLevel does not honour the training mode, so picking it drops you into a normal wave');
+    assert(/MODES\[this\.settings\.mode\]\?\.dojo/.test(world),
+      'World.loadLevel does not read the mode\'s dojo declaration, so picking Training drops '
+      + 'you into a normal wave');
 
     const settings = { mode: 'training' };
     let id = 0;

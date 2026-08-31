@@ -2406,16 +2406,25 @@ export class CommandRoster {
     let was = null;
     for (const other of this.all) {
       if (other === t || !other.post) continue;
-      /* `Number.isInteger`, because `null === null` is TRUE and the sentence
-       * above says the opposite. Two men who have not been dealt a squad yet
-       * are not in the same squad — they are in no squad — and stripping one
-       * for the other's sake is a seat taken off a man for a reason that does
-       * not exist. `assignSquads` will deal them both shortly and only then is
-       * there a squad for them to contend over. */
-      if (Number.isInteger(t.squad) && other.squad === t.squad) {
-        other.post = false;
-        was = other;
-      }
+      /**
+       * TWO UNDEALT MEN DO CONTEND, and a guard that said otherwise put the
+       * defect back.
+       *
+       * `null === null` is true, and for one turn that read like a bug: two
+       * men with no squad are "in no squad", so why should one displace the
+       * other? Because `squadPlan` deals every undealt man into the FIRST
+       * bucket that is under strength — measured, two posted men at `squad:
+       * null` came out of `assignSquads` both in squad 0, both still holding
+       * the seat, which is exactly the two-holders state this method exists to
+       * prevent. And it is reachable without touching the store: the man
+       * page's squad picker offers a dashed "—" chip that writes null.
+       *
+       * So a null squad is not "no squad", it is "wherever the muster deals
+       * him" — and two men bound for the same deal are two men in the same
+       * squad as far as a seat is concerned. The conservative answer is the
+       * correct one.
+       */
+      if (other.squad === t.squad) { other.post = false; was = other; }
     }
     t.post = true;
     return { ok: true, reason: null, was };
@@ -2446,21 +2455,48 @@ export class CommandRoster {
      */
     const live = this.living;
     for (const t of live) if (t.squad == null) this.assignSquads(size);
+    /**
+     * ── AND THE INDEX IS THE SQUAD NUMBER, NOT A POSITION IN A LIST ───────
+     *
+     * This returned a COMPACTED array — the groups that had men in them, in
+     * order — so `squads()[0]` was "the lowest-numbered squad still standing"
+     * rather than "1st Squad". Wipe out 1st Squad and the survivors of 2nd
+     * became index 0, and every index-keyed thing followed them onto a
+     * different body of men: `squadPlanted` and `squadOrders` keys, the ground
+     * they had been given, `selectedSquad`, and the NAME the player gave them.
+     * 2nd Squad became 1st Squad mid-fight, holding ground it was never sent
+     * to, called something it was never called.
+     *
+     * That is squad identity leaking, and it is the whole of what "I should be
+     * able to name my squads" is asking for. So the array is indexed BY THE
+     * NUMBER: `squads()[1]` is 1st-index squad whether or not squad 0 has
+     * anybody left in it, and a wiped squad is an empty array rather than a
+     * hole in the numbering. Every caller that walks the list already skips a
+     * squad with nobody in it — `leaderOf` answers null, `_digTick` finds no
+     * crew, `slotFor` is never asked — so an empty entry costs a loop
+     * iteration and nothing else.
+     *
+     * The detached keep their own groups, appended past the numbered ones so
+     * their indices can never collide with a squad number.
+     */
     const by = new Map();
+    let top = -1;
+    const solo = [];
     for (const t of live) {
       // A man pulled out of the line answers only to himself — see `detach`.
-      const key = t.detached ? `solo:${t.id}` : `sq:${t.squad}`;
-      if (!by.has(key)) by.set(key, []);
-      by.get(key).push(t);
+      if (t.detached) { solo.push([t]); continue; }
+      const k = t.squad | 0;
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(t);
+      if (k > top) top = k;
     }
-    // Numbered squads first and in order, then the detached, so "1st, 2nd,
-    // then the men you pulled out" is the order the HUD walks.
-    const keys = [...by.keys()].sort((a, b) => {
-      const A = a.startsWith('sq:'), B = b.startsWith('sq:');
-      if (A !== B) return A ? -1 : 1;
-      return A ? (+a.slice(3)) - (+b.slice(3)) : a.localeCompare(b);
-    });
-    return keys.map((k) => by.get(k));
+    const out = [];
+    for (let k = 0; k <= top; k++) out.push(by.get(k) || []);
+    /* Past the last NUMBERED squad, so "1st, 2nd, then the men you pulled out"
+     * is still the order the HUD walks and a solo man's index is never a
+     * squad's. */
+    for (const one of solo) out.push(one);
+    return out;
   }
 
   /**
@@ -2517,6 +2553,21 @@ export class CommandRoster {
         id: t.id, name: t.name, unit: t.label, rank: t.rankRec.short,
         rankTitle: t.rankRec.title, xp: t.xp, kills: t.kills, areas: t.areas,
         alive: t.alive, diedIn: t.diedIn,
+        /**
+         * …AND WHICH SQUAD HE IS IN, which was the one fact this record did
+         * not carry and the reason nothing on the HUD could group by squad.
+         *
+         * "I should be able to separately view my squads in an actual game."
+         * The roster panel, the nameplates and the minimap all read this
+         * summary, and not one of them could have told you who was in 2nd
+         * Squad because the answer was not in it. `detached` with it, because
+         * a man pulled out of the line is not in any squad and a column that
+         * filed him under one would be lying about the one thing detaching
+         * is for.
+         */
+        squad: Number.isInteger(t.squad) ? t.squad : null,
+        detached: !!t.detached,
+        post: !!t.post,
       })),
     };
   }
@@ -2993,7 +3044,14 @@ export function versusCommandConfig(settings) {
  */
 export function shelfFor(army, campaign, areaRung = 1) {
   if (!campaign) return null;
-  return new Set((army?.tiers || [])
+  /* AN ID OR A RECORD. Callers hold one or the other — `musterPlan` has an id
+   * on a plan, the director has `c.army` — and a function that silently
+   * answered "nothing is for sale" to one of them is worse than one that
+   * throws: `composeContingent` reads an empty shelf as an empty ladder and
+   * composes NOBODY, in silence. Measured: `shelfFor('republic', true, 1)`
+   * came back as an empty Set. */
+  const A = typeof army === 'string' ? ARMIES[army] : army;
+  return new Set((A?.tiers || [])
     .filter((t) => (t.at ?? 1) <= areaRung).map((t) => t.type));
 }
 
@@ -3106,6 +3164,32 @@ export function composeContingent(army, opening, standing = [], unit = CONTINGEN
         + `${opening} ${army.unit}${opening === 1 ? '' : 's'} buys ${purse}`,
     };
   }
+  /**
+   * …AND A PURSE THE STANDING LINE HAS ALREADY EATEN IS ALSO A REFUSAL, IF
+   * NOBODY STANDING IS THE THING THAT WAS ASKED FOR.
+   *
+   * Testing the whole purse killed the false alarm and opened a quieter hole
+   * in the other direction: a player with four returning ARCs who sets the
+   * contingent to AT-TEs has a purse of 50 that COULD have bought one and 2
+   * left after the veterans, so the composer bought nothing, said nothing, and
+   * the muster came up empty. Measured, `opening 10, 4 ARCs standing, want
+   * AT-TE` → `{}` with `refused: null`.
+   *
+   * The honest question is whether the player got what they asked for. If the
+   * requested rung is standing already, they did — the purse was spent on it
+   * last run and there is nothing to say. If it is not standing and the
+   * remainder cannot buy one, they did not, and the sentence names the reason
+   * that is actually true: the line you brought back is what spent it.
+   */
+  if (want && points < want.cost
+      && !list.some((t) => (typeof t === 'string' ? t : t?.type) === want.type)) {
+    return {
+      types,
+      refused: `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and the `
+        + `${list.length} ${army.unit}${list.length === 1 ? '' : 's'} already standing leave `
+        + `${points} of ${purse}`,
+    };
+  }
   if (want) { while (spend(want.type)); }
   const room = Math.max(0, (opening | 0) - list.length);
   const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
@@ -3148,15 +3232,23 @@ export function musterPlan(settings, groundArmies = null) {
      * by design and has no rung to choose. */
     unit: armyMode ? null : cfg.unit,
     /**
-     * …AND WHAT IS FOR SALE, so the barracks composes off the same shelf the
-     * muster will. `shelfFor` is `unlockAt`'s rule; a contingent is never a
-     * campaign (`musterPlan` zeroes the contingent on an army mode, and
-     * `campaign` IS `armyMode`), so today this is always the whole ladder —
-     * and it is CARRIED rather than assumed, because the day a crossing takes
-     * a contingent the tab would otherwise start naming an AT-TE the muster
-     * refuses.
+     * …AND WHETHER UNLOCKS APPLY, which is the one term `shelfFor` needs and
+     * the only one this plan can honestly supply.
+     *
+     * The first version of this carried a computed `shelf` and it was wrong
+     * twice: `army` here is an ID and `shelfFor` wanted a record, so every
+     * plan carried an EMPTY set; and it pinned the area to 1 while the
+     * director gates on the ground it is standing on, so a crossing that ever
+     * took a contingent would have had the tab gating at area 1 and the ground
+     * at area N — the same disagreement, reintroduced from the other side.
+     *
+     * So the plan carries the FACT and the reader does the arithmetic.
+     * `campaign` is `crossing || battles`, which is exactly `armyMode`, and
+     * `World.loadLevel` computes the director's from the same two flags —
+     * `Muster.ensure` only ever composes for a contingent, where it is false
+     * and the whole ladder is for sale.
      */
-    shelf: shelfFor(army, armyMode, 1),
+    campaign: armyMode,
   };
 }
 
@@ -4197,7 +4289,12 @@ export class CommandDirector extends WaveDirector {
     const peers = this.peersOn(c.roster);
     if (peers.length <= 1) return all;
     const mine = Math.max(0, peers.indexOf(c));
-    return all.filter((_, i) => i % peers.length === mine);
+    /* EMPTIED, NOT FILTERED. `squads()` is indexed by the squad NUMBER now —
+     * see the note there — so removing entries would renumber every squad
+     * below the one that went, which is the identity leak this file just
+     * stopped having. A commander who does not have 2nd Squad sees 2nd Squad
+     * empty, and 3rd Squad is still 3rd. */
+    return all.map((sq, i) => (i % peers.length === mine ? sq : []));
   }
 
   /**
@@ -4210,10 +4307,26 @@ export class CommandDirector extends WaveDirector {
    */
   cycleSquad(cmdr = null) {
     const c = cmdr || this.commander;
-    const n = this.squadsOf(c).length;
+    const squads = this.squadsOf(c);
+    /* THE SQUADS THAT HAVE ANYBODY IN THEM. `squads()` is indexed by the squad
+     * number now, so a wiped squad is an empty entry rather than a hole — and
+     * a target slot that stepped onto one would be a selection nobody can
+     * answer. */
+    const live = squads.map((sq, i) => [i, sq.filter((t) => t.alive !== false).length])
+      .filter(([, m]) => m > 0).map(([i]) => i);
+    const n = live.length;
     if (n <= 1) { this.selectedSquad = null; return null; }
+    /* AND A SELECTION THAT HAS STOPPED EXISTING IS NOT A SELECTION. This
+     * clamped only when the army was down to one squad, so a player who picked
+     * 3rd Squad and then lost it kept a `selectedSquad` of 2 against two live
+     * squads — and `order(id, c, 2)` then wrote a plant nobody reads, fired
+     * `onOrder` so the HUD repainted as though it had landed, and did nothing
+     * at all. An order that vanishes silently is worse than one that is
+     * refused. */
+    if (this.selectedSquad != null && !live.includes(this.selectedSquad)) this.selectedSquad = null;
     const cur = this.selectedSquad;
-    this.selectedSquad = cur == null ? 0 : (cur + 1 >= n ? null : cur + 1);
+    const at = cur == null ? -1 : live.indexOf(cur);
+    this.selectedSquad = at + 1 >= n ? null : live[at + 1];
     /**
      * …AND THE PLAYER IS TOLD WHO THEY ARE TALKING TO.
      *
@@ -6118,11 +6231,43 @@ export class CommandDirector extends WaveDirector {
     // STANDING when the order was given — see `_anchorFor`. So is one the
     // commander has told to HOLD, which is the same mechanism as a decision
     // rather than as a property of one order.
-    c._planted = (F.advance && !c.holding) ? null : this._frame(c, new THREE.Vector3());
+    /**
+     * …AND ONE SQUAD'S ORDER DOES NOT MOVE THE ARMY'S GROUND.
+     *
+     * `c._planted` is the ARMY's frozen frame, and this line ran on both
+     * branches with `F` bound to whichever formation was just given. So
+     * ordering 2nd Squad to CHARGE — an advancing formation — nulled the
+     * army's plant, and every OTHER squad, which was holding cover on ground
+     * it had been given, silently snapped back to following the commander.
+     * One squad's order un-planted the rest of the line.
+     *
+     * A per-squad order writes a per-squad plant (above) and nothing else. The
+     * army's ground is the army's, and only an army-wide order moves it.
+     */
+    if (squad == null) {
+      c._planted = (F.advance && !c.holding) ? null : this._frame(c, new THREE.Vector3());
+    }
     // A new order is a new choice of cover. See `_coverSite`.
     this._coverEpoch = (this._coverEpoch | 0) + 1;
     this.log.push({ t: 'order', formation: id, area: this.areaNumber, wave: this.wave });
-    if (c === this.commander) this.onOrder?.(F, this.squadsOf(c).length);
+    /**
+     * …AND THE HUD IS TOLD WHICH ORDER IT IS.
+     *
+     * `onOrder` repaints the one persistent order display on screen, and it
+     * fired for a per-squad order too — while the per-squad branch above
+     * deliberately does NOT set `c.formation`. So ordering 2nd Squad to take
+     * cover lit "Take cover" across the army's panel while the army was still
+     * in line abreast: the only always-visible statement of what your men are
+     * doing, saying something no squad was doing.
+     *
+     * The squad index goes with it, so a HUD that wants to say "2nd Squad —
+     * take cover" can, and one that only understands the army's order can test
+     * for null.
+     */
+    if (c === this.commander) {
+      this.onOrder?.(F, this.squadsOf(c).length,
+        squad == null ? null : { squad: Number(squad) | 0, name: this.squadLabel(Number(squad) | 0, c) });
+    }
     /**
      * AND A STANDING ORDER IS SAID IN THE NAME OF THE MAN WHO NOW HAS IT.
      *
@@ -8834,11 +8979,36 @@ export class CommandDirector extends WaveDirector {
          * nobody asked for, on the one man whose job is to choose. Measured in
          * a meeting: both lines locked onto each other's front rank at first
          * contact and neither ever re-aimed. */
+        /**
+         * ── A DELEGATED SQUAD FORMS A WHOLE SHAPE, NOT A FRAGMENT OF ONE ────
+         *
+         * `slot(idx, n, k)` lays a formation out by a man's index within a
+         * COUNT, and both were the ARMY's: `i` ran globally across every squad
+         * and `n` was the whole living line. So a second squad of five ordered
+         * into a circle got `slot(5..9, 10)` — `a = (i/n) * TAU` — and stood in
+         * the arc from 180° to 324°. A half ring. Ordered into a line it took
+         * one wing of a rank and left the other empty.
+         *
+         * That is the owner's complaint arriving as geometry: "it says 2
+         * squads but for all intents and purposes it's just one squad". Both
+         * squads really were on two anchors under two orders, and each one was
+         * drawing a slice of a shape meant for ten men.
+         *
+         * SO A SQUAD UNDER ITS OWN ORDER IS LAID OUT AS ITS OWN LINE — index
+         * within the squad, count of the squad. A squad still under the ARMY's
+         * order keeps the army's index and count, because there the shape IS
+         * the army's and slicing it would break the one formation that is
+         * supposed to span everybody.
+         */
+        const own = c.squadOrders?.has(String(k)) || c.squadPlanted?.has(String(k));
+        const live = own ? squads[k].filter((t) => t.body && !t.body.dead).length : n;
+        let j = 0;
         for (const t of squads[k]) {
           const e = t.body;
           if (!e || e.dead) { i++; continue; }
-          e.cmdIndex = i++;
-          e.cmdCount = n;
+          e.cmdIndex = own ? j++ : i;
+          i++;
+          e.cmdCount = own ? Math.max(1, live) : n;
           e.cmdSquad = k;
           e.cmdFocus = (focus && t !== lead) ? focus : null;
           /* UNDER FIRE decays here for the same reason the indices are

@@ -1839,6 +1839,18 @@ export class HUD {
    * asks for a field the director does not already publish. Pass `null` to put
    * the panel away, which is what every non-Command mode does.
    */
+  /**
+   * WHAT THE PLAYER CALLS THEIR SQUADS, and their army's own word for one.
+   *
+   * Set once when the fight starts, off the same `Company.squadNames` the
+   * director is handed, so the roster column and every notification say the
+   * same word. Absent is the honest default: the number.
+   */
+  setSquadWords(names, word) {
+    this._squadNames = Array.isArray(names) ? names.slice() : null;
+    this._squadWord = word || 'Squad';
+  }
+
   setRoster(summary) {
     const host = this.el.roster;
     if (!host) return;
@@ -1861,7 +1873,9 @@ export class HUD {
 
     const { living, fallen } = rosterSides(summary);
     if (this.el.rpStrength) this.el.rpStrength.textContent = `${living.length}/${summary.roll.length}`;
-    if (this.el.rpList) this.el.rpList.innerHTML = rosterHtml(summary);
+    if (this.el.rpList) {
+      this.el.rpList.innerHTML = rosterHtml(summary, this._squadNames, this._squadWord);
+    }
     if (this.el.rpFoot) {
       // Reinforcement points belong here and not only on the muster screen: it
       // is what a casualty COSTS, and the price is worth knowing while the
@@ -1880,10 +1894,30 @@ export class HUD {
    * keycaps under it are built from the live bindings by `setBindings`, and the
    * one you are in is lit.
    *
-   * Signature is the director's: `onOrder(F, squads)` → `setOrder(F.id, F.name,
-   * squads)`, which is exactly what main.js was already calling into thin air.
+   * Signature is the director's: `onOrder(F, squads, one)` → `setOrder(F.id,
+   * F.name, squads, one)`, which is exactly what main.js was already calling
+   * into thin air.
+   *
+   * ── AND A PER-SQUAD ORDER DOES NOT REPAINT THE ARMY'S ─────────────────
+   *
+   * `one` is `{ squad, name }` when the order was given to ONE squad, and null
+   * when it was the whole line. This used to arrive with two arguments and the
+   * panel repainted for both, while `CommandDirector.order`'s per-squad branch
+   * deliberately does not set `c.formation`: telling 2nd Squad to take cover
+   * lit "Take cover" across the only always-visible statement of what your men
+   * are doing, while the army was still in line abreast. The one persistent
+   * order display on screen said something no squad was doing.
+   *
+   * So a per-squad order writes the SUBTITLE — which squad, and what they were
+   * told — and leaves the headline and the lit chip to the army's own order.
    */
-  setOrder(id, name, squads) {
+  setOrder(id, name, squads, one = null) {
+    if (one) {
+      if (this.el.rpOrderSub) {
+        this.el.rpOrderSub.textContent = `${one.name} — ${String(name || '').toLowerCase()}`;
+      }
+      return;
+    }
     const was = this._order;
     this._order = id || null;
     if (this.el.rpOrderName) this.el.rpOrderName.textContent = name || '—';
@@ -3029,10 +3063,42 @@ export function trooperRow(t) {
  * like", and the one that is wrong is always the one you are not looking at.
  * Pure and DOM-free so a check can assert what a player would read.
  */
-export function rosterHtml(summary) {
+export function rosterHtml(summary, squadNames = null, word = 'Squad') {
   const { living, fallen } = rosterSides(summary);
-  return '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>'
-    + living.map(trooperRow).join('')
+  /**
+   * ── AND IT IS GROUPED BY SQUAD, WHICH IS THE ONLY IN-GAME VIEW OF ONE ────
+   *
+   * "I should be able to separately view my squads in an actual game."
+   *
+   * Nothing on the field distinguished squad 1 from squad 2 — not the roster,
+   * not the nameplates, not the minimap, not the paint — so a player who
+   * delegated an order had no way to see who they had delegated it to. This
+   * column already draws every living man; grouping it under a heading per
+   * squad turns it into the view, and costs nothing but the headings.
+   *
+   * `squadNames` is what the player called them, handed down from the same
+   * one reader the fight's notifications use, so a squad named Havoc is Havoc
+   * here too. Absent, they are the army's own word and the number.
+   *
+   * A ROLL WITH NO SQUADS IN IT IS ONE LIST, exactly as before — a mode with
+   * one squad, or a summary from a build that did not carry the field, must
+   * not sprout a heading that says nothing.
+   */
+  const label = (k) => (squadNames && squadNames[k]) || `${word} ${k + 1}`;
+  const keyed = living.filter((t) => Number.isInteger(t.squad) && !t.detached);
+  const loose = living.filter((t) => !Number.isInteger(t.squad) || t.detached);
+  const squads = [...new Set(keyed.map((t) => t.squad))].sort((a, b) => a - b);
+  const head = '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>';
+  const body = squads.length > 1
+    ? squads.map((k) => {
+      const men = keyed.filter((t) => t.squad === k);
+      return `<div class="rp-div">${esc(label(k))} — ${men.length}</div>`
+        + men.map(trooperRow).join('');
+    }).join('') + (loose.length
+      ? `<div class="rp-div">Detached — ${loose.length}</div>` + loose.map(trooperRow).join('')
+      : '')
+    : living.map(trooperRow).join('');
+  return head + body
     + (fallen.length ? `<div class="rp-div">Fallen — ${fallen.length}</div>` : '')
     + fallen.map(trooperRow).join('');
 }

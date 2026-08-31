@@ -15,7 +15,7 @@ import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
   soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
-import { HUD, ordinal } from './ui/HUD.js';
+import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, bladeCeiling, BLADE_CAP,
   VICTORY_TITLE, LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
@@ -664,6 +664,10 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
    */
   if (world.command) {
     const d = world.command;
+    /* WHAT THE PLAYER CALLS THEIR SQUADS, once, so the roster column groups
+     * under the same words the fight's notifications use. See
+     * `HUD.rosterHtml` for why the column is grouped at all. */
+    hud.setSquadWords?.(d.squadNames, d.commander?.army?.squadWord);
     d.onRoster = (summary) => hud.setRoster?.(summary);
     if (typeof screens.muster === 'function') {
       d.onMuster = (offer) => screens.muster(offer, {
@@ -716,7 +720,10 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
         },
       }) || fallbackMuster(d);
     }
-    d.onOrder = (F, squads) => hud.setOrder?.(F.id, F.name, squads);
+    /* `one` is `{ squad, name }` for an order given to a single squad and null
+     * for the whole line — see `HUD.setOrder`, which paints them differently
+     * because the army-wide panel was repainting for both. */
+    d.onOrder = (F, squads, one) => hud.setOrder?.(F.id, F.name, squads, one);
     d.onRoster(d.roster.summary());
     /* The formation you START in, which nothing announced. `order()` fires
      * `onOrder` and the opening formation is never ordered — it is configured
@@ -2232,8 +2239,13 @@ function orderKeys() {
      * path throws away is worse than no selection at all.
      */
     if (!cmd.order(o.id, null, cmd.selectedSquad ?? null)) continue;
+    /* THE SQUAD'S OWN NAME, through the director's one reader. This built its
+     * own string — `${ordinal(n + 1)} Squad` — which hardcoded the word
+     * "Squad" past `ARMIES[].squadWord` and ignored the name the player gave
+     * it, so the wheel said "HAVOC only" and the key press said "2nd Squad"
+     * about the same five men. */
     const only = cmd.selectedSquad == null ? o.blurb
-      : `${ordinal(cmd.selectedSquad + 1)} Squad — ${o.blurb}`;
+      : `${cmd.squadLabel(cmd.selectedSquad)} — ${o.blurb}`;
     hud.message(o.name.toUpperCase(), only);
     break;                       // one order a frame; two at once is neither
   }

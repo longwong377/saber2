@@ -74,6 +74,16 @@ export function makeStore(key) {
        * A CLEARED STORE IS STILL CLEARED. `drop()` resets `broken` and the
        * mirror together, so the player's own delete is not undone by a
        * memory of what used to be there.
+       *
+       * THE ONE PATH THIS LOSES, NAMED. Two tabs on one profile: tab A's write
+       * hits quota and it starts answering from memory; the player frees
+       * space; tab B saves a newer roll; tab A goes on answering the older one
+       * and its next successful write builds on it. Nothing here can tell
+       * which of two copies is newer — there is no clock on the key — so the
+       * choice is between losing the edit the player just made in THIS tab
+       * (which they are looking at) and losing one made in another tab they
+       * are not. Losing the one on screen is the worse of the two, and it is
+       * the one that used to happen every time.
        */
       if (broken && mirror) return mirror;
       if (raw == null) return {};

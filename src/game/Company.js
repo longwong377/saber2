@@ -1046,10 +1046,11 @@ export function appoint(army, key, on = true, licensed = true) {
    * decision. A man with no squad dealt to him yet is his own case. */
   for (const other of c.men) {
     if (other === m || !other.post) continue;
-    /* `Number.isInteger`, because `null === null` is TRUE and the sentence
-     * above says the opposite: two men who have not been dealt a squad are not
-     * in the same squad, they are in no squad. */
-    if (Number.isInteger(m.squad) && other.squad === m.squad) other.post = false;
+    /* AND TWO UNDEALT MEN CONTEND. `null === null` reads like a bug and is
+     * the correct answer: `squadPlan` deals every undealt man into the first
+     * bucket under strength, so two men at `squad: null` are two men bound for
+     * the same squad. See the long note on `CommandRoster.appoint`. */
+    if (other.squad === m.squad) other.post = false;
   }
   m.post = true;
   return save(c);
