@@ -40,6 +40,19 @@ import { existsSync, statSync } from 'node:fs';
 import { extname, join, resolve, normalize } from 'node:path';
 import { decodePng } from './_png.mjs';
 const ROOT = resolve(new URL('..', import.meta.url).pathname);
+/**
+ * HOW LONG A FRAME MAY TAKE TO SETTLE.
+ *
+ * Playwright's default is 30 s and the parade stage cannot meet it here: the
+ * harness marks the canvas dirty every 30 ms on purpose (a demand-driven
+ * canvas that goes quiet composites a stale, often blank frame under
+ * swiftshader), so `page.screenshot` is waiting for a surface that is being
+ * re-rendered under it, in software, on a box that has just run a check
+ * battery. Two minutes is not a performance claim about the game — it is the
+ * cost of screenshotting a live GL canvas without a GPU.
+ */
+const SHOT_TIMEOUT = 120000;
+
 const OUT = (name) => join(ROOT, 'tools/out', name);
 const MIME = { '.html':'text/html','.js':'text/javascript','.mjs':'text/javascript','.css':'text/css','.json':'application/json','.png':'image/png','.wasm':'application/wasm','.svg':'image/svg+xml' };
 const server = createServer(async (req,res)=>{ try{ let p=decodeURIComponent(req.url.split('?')[0]); if(p==='/')p='/index.html';
@@ -265,7 +278,7 @@ await page.evaluate(() => {
   if (p) globalThis.__stageKeepalive = setInterval(() => { p.dirty = true; }, 30);
 });
 await page.waitForTimeout(400);
-await page.screenshot({ path: OUT('company-index.png') });
+await page.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-index.png') });
 
 /* THE STAGE SHOT IS THE WHOLE PANEL, clipped to the panel's own box — the
  * parade means nothing without the roll beside it and the caption under it. */
@@ -280,7 +293,7 @@ if (panelBox) {
    * give the render loop a beat to see the settled box, resize the buffer
    * through its own path and redraw, before the clipped shot is taken. */
   await page.waitForTimeout(1500);
-  await page.screenshot({ path: OUT('company-stage.png'),
+  await page.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-stage.png'),
     clip: { x: panelBox.x, y: panelBox.y, width: panelBox.w, height: panelBox.h } });
 }
 await page.evaluate(() => { clearInterval(globalThis.__stageKeepalive); });
@@ -322,14 +335,14 @@ await page.evaluate(() => document.getElementById('company-muster')
   ?.scrollIntoView({ block: 'end' }));
 await page.waitForTimeout(300);
 const rollCol = await page.$('.company-roll');
-if (rollCol) await rollCol.screenshot({ path: OUT('company-muster.png') });
+if (rollCol) await rollCol.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-muster.png') });
 
 /* A RECRUIT'S PAGE — the dressed one is the first row on the slate. */
 const recruitRow = await page.$('#company-muster .diff.recruit');
 if (recruitRow) {
   await recruitRow.click();
   await page.waitForTimeout(500);
-  await page.screenshot({ path: OUT('company-recruit.png') });
+  await page.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-recruit.png') });
   /**
    * …AND THE WHOLE OF HIS PAGE, which the viewport shot cannot show.
    *
@@ -340,7 +353,7 @@ if (recruitRow) {
    * to LOOK at the thing this tab was rebuilt to be.
    */
   const rPage = await page.$('#company-page');
-  if (rPage) await rPage.screenshot({ path: OUT('company-dressing.png') });
+  if (rPage) await rPage.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-dressing.png') });
 } else console.log('NO RECRUIT ROWS — the slate did not mint.');
 
 /* Back to the roll for the veteran pages: man rows carry dataset.man and the
@@ -350,26 +363,26 @@ await page.evaluate(() => document.getElementById('company-list')
 const rows = await page.$$('#company-list .diff:not(.company-fallen-row)');
 console.log('rows on the roll:', rows.length);
 if (rows[0]) { await rows[0].click(); await page.waitForTimeout(350); }
-await page.screenshot({ path: OUT('company-man.png') });
+await page.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-man.png') });
 /* …and a droid, because the whole point of `kind` is that the same page says
  * different words for the same eight numbers. */
 for (const r of rows) {
   const t = await r.textContent();
   if (t && t.includes('B1-')) { await r.click(); await page.waitForTimeout(350); break; }
 }
-await page.screenshot({ path: OUT('company-droid.png') });
+await page.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-droid.png') });
 /* THE BARS AT 3x, because the whole claim of this layout is a 2 px line and a
    1280-wide frame is not where you find out whether a 2 px line is there. */
 const list = await page.$('.attr-list');
-if (list) await list.screenshot({ path: OUT('company-bars.png'), scale: 'css' });
+if (list) await list.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-bars.png'), scale: 'css' });
 
 /* THE LICENCE AND THE SEAT, on a veteran, at full height — the panel that says
    what a rank is FOR now that the numbers a rung buys are small. */
 if (rows[0]) { await rows[0].click(); await page.waitForTimeout(350); }
 const vPage = await page.$('#company-page');
-if (vPage) await vPage.screenshot({ path: OUT('company-page-full.png') });
+if (vPage) await vPage.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-page-full.png') });
 const duties = await page.$('.duty-list');
-if (duties) await duties.screenshot({ path: OUT('company-licence.png'), scale: 'css' });
+if (duties) await duties.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-licence.png'), scale: 'css' });
 
 const probe = await page.evaluate(() => {
   const q = (s) => document.querySelectorAll(s).length;
@@ -403,7 +416,7 @@ const fallenRow = await page.$('#company-list .company-fallen-row');
 if (fallenRow) {
   await fallenRow.click();
   await page.waitForTimeout(400);
-  await page.screenshot({ path: OUT('company-fallen.png') });
+  await page.screenshot({ timeout: SHOT_TIMEOUT, path: OUT('company-fallen.png') });
   const fp = await page.evaluate(() => ({
     entries: document.querySelectorAll('#company-page .company-fallen > div').length,
     fellLines: [...document.querySelectorAll('#company-page .fell')].map((e) => e.textContent),
