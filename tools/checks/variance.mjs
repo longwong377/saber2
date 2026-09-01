@@ -190,7 +190,20 @@ export async function run({ check, assert }) {
   check('variance: Field Engineering digs the position in half the time', async () => {
     const { d, c } = await armed();
     const squads = d.squadsOf(c);
-    for (const t of squads[0]) if (t.body) t.body.position.set(50, 0, 0);
+    /**
+     * TWENTY METRES, NOT FIFTY — AND THE DIFFERENCE IS A FEATURE.
+     *
+     * They were put at 50 m to give them clear ground to dig on, which was
+     * free until orders grew a range. `Command.ORDER_REACH` is 34 m: past it a
+     * squad cannot hear you and the order is refused out loud, which is the
+     * whole point of it. So a fixture that stands them fifty metres off and
+     * shouts is testing the refusal, not the dig rate, and it reported "the
+     * card promises a 22 s job in half the time" about a card that was never
+     * asked for anything.
+     *
+     * Far enough to be their own ground, near enough to be given an order.
+     */
+    for (const t of squads[0]) if (t.body) t.body.position.set(20, 0, 0);
     d.order('digin', c, 0);
     const step = (secs) => { for (let i = 0; i < secs * 30; i++) d._troops(1 / 30, {}); };
     d.world.player.boonMods.digRate = 2;
