@@ -61,10 +61,29 @@ export function cmdWorld() {
   return w;
 }
 
-/** A deployed army with a body commanding it and its squad numbers stamped. */
-export function army() {
+/**
+ * A deployed army with a body commanding it and its squad numbers stamped.
+ *
+ * ── AND THE MODE IS A PARAMETER, BECAUSE IT DECIDES THREE FLAGS ─────────
+ *
+ * `new CommandDirector(w, { pool })` passes no mode, so `this.mode` falls to
+ * `'command'` and the director comes up with `holdTheLine`, `lineAdvances` and
+ * `downedMen` all FALSE. Every suite that used this fixture was therefore
+ * measuring Command, and one of them — `muster.mjs`'s survivors check — was
+ * asserting about THE LINE: the `!e.downed` term in `recall` is the one clause
+ * that is The Line's alone, and it was tested inside a director where nothing
+ * can go down, against a `downed` boolean the check wrote onto a stub itself.
+ * Delete the whole downed mechanic from `Enemy.js` and that check still passed.
+ *
+ * The default is unchanged, so every existing caller measures exactly what it
+ * measured before. `army('theline')` is the door that was missing.
+ *
+ * @param {string} [mode] the mode the director is built for. Absent is
+ *        `'command'`, which is what it has always been.
+ */
+export function army(mode = undefined) {
   const w = cmdWorld();
-  const d = new Cmd.CommandDirector(w, { pool: LEVELS.geonosis.pool });
+  const d = new Cmd.CommandDirector(w, { pool: LEVELS.geonosis.pool, ...(mode ? { mode } : {}) });
   const me = { position: V(0, 0, 0), aimDir: V(0, 0, 1), facing: 0, alive: true, team: 0 };
   w.players.push(me);
   w.player = me;

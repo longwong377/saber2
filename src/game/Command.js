@@ -5123,12 +5123,32 @@ export class CommandDirector extends WaveDirector {
      */
     if (!live.length) return true;
     if (live.some((t) => holds(t, 'LEADS'))) return true;
-    const at = c?.player?.position || c?.anchor;
-    if (!at) return true;
+    /**
+     * …AND FROM THE GROUND THE SHAPE IS SOLVED ON, TOO, exactly as `_voices`
+     * measures reach from both mouths.
+     *
+     * `_voices` grew a second point because `_frame` returns `c._paceAnchor`
+     * and not the player: the formation follows you at `advancePace`, so
+     * walking faster than your own line spends the whole margin in five
+     * seconds and charges you for outwalking men who are jogging after you.
+     * The measurement is in reach.12 and the fix went in there. This test did
+     * not get it, so the exact walk `out of reach` forgives still bit as
+     * `unled` — the same distance refused under a different word, and the one
+     * word with no remedy attached to it.
+     *
+     * THE NEARER OF THE TWO, because supervision is a fact about whether you
+     * are standing with them and either point being close enough means you
+     * are. One list, one reading, in both places.
+     */
+    const mouths = [];
+    if (c?.player?.position) mouths.push(c.player.position);
+    else if (c?.anchor) mouths.push(c.anchor);
+    if (c?._paceAnchor) mouths.push(c._paceAnchor);
+    if (!mouths.length) return true;
     let x = 0, z = 0;
     for (const t of live) { x += t.body.position.x; z += t.body.position.z; }
     x /= live.length; z /= live.length;
-    return Math.hypot(at.x - x, at.z - z) <= RELAY_REACH;
+    return mouths.some((at) => Math.hypot(at.x - x, at.z - z) <= RELAY_REACH);
   }
 
   /**

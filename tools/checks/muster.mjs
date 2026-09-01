@@ -730,6 +730,15 @@ export async function run({ check, assert }) {
      */
     const hurt = d.led(c).find((t) => t.body && !t.body.dead);
     assert(hurt, 'nobody left standing to wound');
+    /* THE FIXTURE'S OWN BOOLEAN IS NOT THE MECHANIC, and this line is only
+     * half of the assertion. `army()` builds a Command director — `downedMen`
+     * false — over stub bodies that are not `Enemy`s, so nothing in this path
+     * can go down and writing the flag here tests `recall`'s reading of a
+     * field the check itself set. Delete `_goDown` from Enemy.js and this
+     * still passes. It stays, because `recall`'s `!e.downed` term is worth
+     * driving in isolation — and the check below it drives THE LINE in a real
+     * world, with a real `Enemy` put on his back by real damage, so the two
+     * halves together cover the clause. */
     hurt.body.downed = true;
     d.recall(null, { keepStanding: true });
     assert(!hurt.body,
@@ -811,6 +820,85 @@ export async function run({ check, assert }) {
       + `${put} ships for ${bought.length} replacements · a man on his back is carried off and `
       + `flown back · the boundary asks for it and the two one-way doors do not`;
   });
+
+  /**
+   * ══ THE LINE, IN A REAL WORLD, WITH A REAL MAN ON HIS BACK ═════════════
+   *
+   * The check above is the mechanics of `recall`, driven on the shared
+   * `_army.mjs` fixture — and that fixture builds `new CommandDirector(w, {
+   * pool })` with NO MODE, so it falls to `'command'`: `holdTheLine` false,
+   * `lineAdvances` false, `downedMen` FALSE, over stub bodies that are not
+   * `Enemy`s. So the one clause in the withdrawal that is THE LINE's alone —
+   * the `!e.downed` term — was measured inside a director where nothing can go
+   * down, against a boolean the check wrote onto a stub itself. Delete the
+   * whole downed mechanic from `Enemy.js` and it still passes.
+   *
+   * This is the other half. A real `World` on `theline`, real `Enemy` bodies,
+   * a man put on his back by `Enemy.die` → `_mayGoDown` → `_goDown` — which
+   * refuses outright unless `world.director.downedMen` is true, so reaching
+   * that state is itself the proof the mode is the one under test — and then
+   * the boundary crossed through the shipped `_areaClear`.
+   *
+   * WHAT IS HELD: the survivors keep their OWN BODIES (object identity, not a
+   * head count — a withdrawal that disposed and rebuilt them would satisfy a
+   * count and be the exact defect the player reported), and the man bleeding
+   * on the ground is carried off rather than left in an area already banked.
+   */
+  await check('the men who held the ground keep it in THE LINE, and the man on his back is carried off',
+    async () => {
+      const { idleInput } = await import('./_coop.mjs');
+      const { w } = await world('theline', 'geonosis', {});
+      try {
+        const d = w.command;
+        assert(d, 'The Line fielded no army');
+        assert(d.downedMen === true,
+          'the world came up with `downedMen` false — this is not The Line, and the clause '
+          + 'under test cannot fire in it');
+        assert(d.holdTheLine === true, 'the world came up without the line as the win condition');
+        d.deployAll?.({});
+        for (let i = 0; i < 60; i++) w.update(DT, idleInput());
+        const c = d.commander;
+        const up = d.led(c).filter((t) => t.body && !t.body.dead);
+        assert(up.length >= 4, `only ${up.length} men were on the ground`);
+
+        /* ── ONE MAN PUT ON HIS BACK BY THE REAL MECHANIC. `die` is the door
+         * every kill goes through, and `_mayGoDown` refuses unless the mode
+         * says so — so if this leaves him dead rather than downed, the fixture
+         * is not The Line and the assertion below says so. */
+        const man = up[0];
+        man.body.die?.(null, null, 'bolt');
+        assert(man.body.downed === true,
+          `${man.name} was killed outright instead of going down — \`_mayGoDown\` refused, `
+          + 'which means this director is not the one the clause belongs to');
+        assert(man.alive !== false, 'a downed man was struck off the roll');
+
+        /* ── AND THREE KILLED OUTRIGHT, so there is something for the ships to
+         * bring and the survivor count is not the whole roll. */
+        for (const t of up.slice(1, 4)) t.body.die?.(null, null, 'sever');
+        for (let i = 0; i < 10; i++) w.update(DT, idleInput());
+        const held = d.led(c).filter((t) => t.body && !t.body.dead && !t.body.downed);
+        assert(held.length >= 2, `${held.length} men left standing to hold anything`);
+        const was = new Map(held.map((t) => [t, t.body]));
+
+        /* ── THE BOUNDARY, through the shipped call site and not through
+         * `recall` — a `_areaClear` that went back to a bare `recall()` is
+         * invisible to a fixture that calls `recall` itself. */
+        d._areaClear?.();
+        const after = d.led(c).filter((t) => t.body && !t.body.dead);
+        assert(after.length === held.length,
+          `${held.length} men held the ground and ${after.length} were standing on it after the `
+          + 'boundary — the survivors are being flown back in with their own replacements');
+        for (const [t, e] of was) {
+          assert(t.body === e,
+            `${t.name} crossed the boundary on a NEW body — a head count would not see it, and `
+            + 'it is exactly the defect the player reported');
+        }
+        assert(!man.body,
+          `${man.name} was bleeding on the ground and the withdrawal left him there`);
+        return `${held.length} survivors kept their own bodies across a real Line boundary · `
+          + `${man.name} went down through Enemy.die and was carried off`;
+      } finally { w.dispose?.(); }
+    });
 
   /**
    * THE THREE ARMY MODES ARE UNTOUCHED — the regression this change is most

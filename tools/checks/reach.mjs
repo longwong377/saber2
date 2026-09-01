@@ -50,6 +50,7 @@
 
 import * as Cmd from '../../src/game/Command.js';
 import { army } from './_army.mjs';
+import { MORALE } from '../../src/game/Morale.js';
 
 /** Put a squad's bodies somewhere, and refresh the stamps that follow them. */
 function put(d, men, x, z) {
@@ -1113,5 +1114,68 @@ export async function run({ check, assert }) {
     assert(row()?.runner === null, 'the roll still marks a man who has stopped carrying it');
     return 'a hostile on his toes is a target, one past the floor is not, and the roll marks '
       + 'him only while he carries it';
+  });
+
+  /**
+   * ══ reach.16 THE NUMBERS THAT JUSTIFY THEMSELVES AGAINST SOMETHING ══════
+   *
+   * An audit's verdict on the constants in this file: "one measured, seven
+   * typed". `ORDER_REACH` is guarded — reach.10 walks every formation's slot
+   * function at MAX_STRENGTH and holds the widest slot each produces against
+   * it, so a tuning change either side turns it red with a sentence naming
+   * which. The other six each carry a prose rationale that names another
+   * constant and none of them was ever asked.
+   *
+   * Two of those rationales are one-liners nobody wrote, verbatim from the
+   * source:
+   *
+   *   `ALONE_NEAR`      "12 is inside `MORALE.NEAR`'s 14 — a man who is close
+   *                      enough to steady you is close enough to advance with"
+   *   `RUNNER_DELIVER`  "inside `RELAY_REACH` and outside a body's own leash"
+   *
+   * A rationale that names a number and is not checked against it is a comment
+   * that goes stale the day either number moves, and this file has already
+   * paid for one of those (`SHAKEN_AT` against the plate's typed 0.4, reach.14).
+   * These are cheap and they are the difference between a constant that is
+   * derived and a constant that is asserted about.
+   */
+  check('reach.16 every constant that justifies itself against another one is held to it', () => {
+    const rows = [];
+    /* ALONE_NEAR: a man close enough to steady you is close enough to advance
+     * with, so the isolation radius must not be WIDER than the morale one. */
+    assert(Cmd.ALONE_NEAR <= MORALE.NEAR,
+      `ALONE_NEAR is ${Cmd.ALONE_NEAR} and MORALE.NEAR is ${MORALE.NEAR} — a man the morale `
+      + 'model counts as beside you is refused an advance for being alone');
+    rows.push(`ALONE_NEAR ${Cmd.ALONE_NEAR} ≤ MORALE.NEAR ${MORALE.NEAR}`);
+
+    /* RUNNER_DELIVER: inside RELAY_REACH, or a runner "arrives" from further
+     * away than the supervision that arrival is supposed to stand in for. */
+    assert(Cmd.RUNNER_DELIVER <= Cmd.RELAY_REACH,
+      `RUNNER_DELIVER is ${Cmd.RUNNER_DELIVER} and RELAY_REACH is ${Cmd.RELAY_REACH} — he `
+      + 'delivers from outside the distance a relayed order carries');
+    /* …AND OUTSIDE A BODY'S OWN LEASH, or he stops to fight the thing he was
+     * sent past instead of arriving. `FORM_TOLERANCE` is what `steer` will
+     * settle for, so arrival has to be reachable from it. */
+    assert(Cmd.RUNNER_DELIVER > Cmd.FORM_TOLERANCE,
+      `RUNNER_DELIVER is ${Cmd.RUNNER_DELIVER} and steer settles within ${Cmd.FORM_TOLERANCE} — `
+      + 'a runner can stop moving before he is close enough to have arrived, and the order '
+      + 'hangs until it times out');
+    rows.push(`RUNNER_DELIVER ${Cmd.RUNNER_DELIVER} in (${Cmd.FORM_TOLERANCE}, ${Cmd.RELAY_REACH}]`);
+
+    /* RELAY_REACH is the SHORTER hop on purpose — a relayed order must not
+     * carry further than one you gave yourself, or the licence is a bonus
+     * rather than a substitute. */
+    assert(Cmd.RELAY_REACH <= Cmd.ORDER_REACH,
+      `RELAY_REACH ${Cmd.RELAY_REACH} is further than ORDER_REACH ${Cmd.ORDER_REACH}`);
+    rows.push(`RELAY_REACH ${Cmd.RELAY_REACH} ≤ ORDER_REACH ${Cmd.ORDER_REACH}`);
+
+    /* THE WINDOW IS SHORTER THAN THE ERRAND. If a runner could still be out
+     * when the window to send another reopened, one press would put two men on
+     * the same errand — which reach.13 forbids and this is the arithmetic
+     * under it. */
+    assert(Cmd.RUNNER_WINDOW < Cmd.RUNNER_LIFE,
+      `RUNNER_WINDOW ${Cmd.RUNNER_WINDOW} is not shorter than RUNNER_LIFE ${Cmd.RUNNER_LIFE}`);
+    rows.push(`RUNNER_WINDOW ${Cmd.RUNNER_WINDOW} < RUNNER_LIFE ${Cmd.RUNNER_LIFE}`);
+    return rows.join(' · ');
   });
 }

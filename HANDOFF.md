@@ -28,6 +28,15 @@ Playable two ways:
 
 ### 1.0 START HERE — the shortest true statement of where this is
 
+> **1 Sep — THE AUDIT ROUND. See §5.00.** Three adversarial auditors read the
+> troop-management work against the four failure shapes and returned 44
+> findings; the substantive ones are closed and each fix was verified RED
+> against the code it replaced. **Two process traps are worth more than the
+> findings: (a) ~40 concurrent agents took the container down — three is the
+> ceiling, see §2.6b; (b) an audit run BEFORE the fixes, on one subsystem, is
+> not an audit.** What is still open is listed at the end of §5.00.
+
+
 **Branch `claude/game-feature-verification-m5udbp`, merged to the default.
 See §5.0 for what this session did and §6.4 for the gate.**
 
@@ -1634,7 +1643,224 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
-## 5.0 What THIS session changed — 31 Aug: the barracks
+## 5.00 What THIS session changed — 1 Sep: the audit round
+
+The session's own instruction, given three times and the source of the anger
+when it was skipped: *"when you're completely done everything to perfection or
+at the point of your choosing you need to audit/objectively critique your work
+real hard"*, *"audit your work with an objective group who assumes you're a
+lazy piece of shit doing trash work"*, and finally *"Did you adversarially
+audit everything against what I asked for? everything is in game and working?
+all the new systems we made?"* — after which the audits ran, found 44 findings
+across three subsystems, and everything below is those findings closed.
+
+**THE PROCESS TRAP, FIRST, because it cost the container.** A workflow fanning
+out 13 auditors × 3 judges is ~40 concurrent agents on a 4-core box and the
+container restarted. Three at a time is the ceiling. See §2.6b — this is the
+same "twelve lanes on one box" law, applied to agents instead of check lanes.
+Audits went out as three direct `Agent` calls, in the background, while the
+main lane kept working.
+
+**THE OTHER PROCESS TRAP.** The audits were run BEFORE the fixes and only on
+one subsystem, then the work shipped. That is not what "audit when you're done"
+means, and the user was right to say so. Audit AFTER, on everything, and treat
+a green suite as evidence of nothing.
+
+### What the auditors were briefed on — four failure shapes
+
+Every auditor got the same four, and every one of them produced a hit:
+
+1. **A module written, tested and never called by the game.** (`onRunner`,
+   `ground-lost`/`post-lost`/`voice-lost`.)
+2. **A test fixture standing in for the thing it tests** — a check that drives
+   an internal directly and asserts a callback FIRES, one call short of the
+   screen. (`reach.9` on the earshot readout; `muster`'s downed clause.)
+3. **A stub agreeing with a misspelled caller**, `?.` swallowing a method that
+   does not exist on the object. (`engine.sky.configureOrbit` — see §5.0's
+   hangar notes.)
+4. **Something rescaled while everything measured against it stayed put.**
+   (`squadsOf().length`, the plate's typed 0.4, the chip count's `+ 1`.)
+
+Use them again. They are not a checklist of past bugs; they are the four ways
+this codebase specifically goes wrong.
+
+### The findings, closed
+
+**The Duel fielded a platoon.** `settings.allies` is a PERSISTED GLOBAL and
+`commandConfig` read it with no mode gate, so a player who dialled six troopers
+up in the Trial carried six into the Duel: `World.loadLevel` built a
+`CommandDirector` for a ladder, six rifles cleared waves 1–4, and the player
+could stand still. `MODES.duel.blurb` says "No blasters, no crowd". The menu
+made it a one-click lie with a "Take 10 troopers into Duel" button. Fixed by
+`MODES.duel.solo` + a gate in `commandConfig`, the same shape as `alwaysVersus`
+one field up — which exists because of the *same sticky global* in the *same
+function*. Its own note says "a sticky global is exactly the class of bug a
+fresh fixture cannot find", and one field down it was right.
+
+**Four readings of the company on screen, four of them stale.**
+- The order wheel's Target caption read "All 5 squads" on every army ever
+  built and kept reading it with one squad left: `squadsOf()` is padded to
+  `SQUAD_SLOTS`, so its length is a count of SLOTS. Its `n <= 1` branch had
+  never executed. `liveSquads` existed for exactly this; the wheel was the one
+  reader left behind.
+- `_squadCount` was written only by `setOrder`, whose only caller is an order
+  key — so "2 squads" was refreshed by GIVING AN ORDER and nothing else.
+- The roster cache key carried neither `squad` nor `detached`, so detaching a
+  man never regrouped the column. **That is twice now that a missing field in
+  this key froze a screen** (the first was `heard`). The rule is written beside
+  it: if `rosterHtml` reads it, it belongs in the key.
+- `summary().post` crossed to the HUD and `grep -c post src/ui/HUD.js` was 0.
+
+**The plate's "shaken" was a typed literal.** `mo < 0.4` against raw morale,
+while the rule that refuses an advance is `braveryOf(body) < SHAKEN_AT` (0.30)
+over `morale*0.72 + rank/4*0.28`. Measured: a Sergeant refuses below 0.222 and
+the plate called him shaken below 0.400; a Commander refuses below 0.028. The
+one pre-press fear signal flagged obedient men and stayed quiet about
+frightened ones. `reach.14` now walks the morale axis at three rungs, asks the
+director through `_ask` and PAINTS THE REAL NAMEPLATE, and holds the two to the
+same crossing.
+
+**Seven of nine formations left a dead squad's order on screen for ever.**
+`_vacancy` gave a squad's order up only when the order PLANTED, and seven of
+the nine are `advance` and plant nothing. `HUD.setOrder` claims to have closed
+"the two places nobody was telling this panel about" and `_areaClear` calls
+itself a third; this was the fourth and it was the common one.
+
+**"…and they stay there without you" was printed on every plant.** That is the
+HOLDS licence talking, and a rank-0 company holds no HOLDS — so a fresh company
+was promised it and told "SQUAD 2 GIVES UP THE GROUND" one casualty later.
+
+**The vacancy's three log rows had no reader anywhere in `src/`.** The entire
+licence-loss system was a 2.4-second toast in a firefight. They are beats in
+the interlude now, below the delegations, reading as their answer.
+
+**The runner was the delivery animation his own comment disclaimed.**
+`leashFor` gives him `LEASH_FLOOR` "so he still shoots what walks into him",
+and `targetFor` centred that disc on `slotFor(e)` — which for a runner returns
+his DESTINATION. A droid on his toes was out of range. Nothing marked him
+either: `grep -rn runner src/ui/` was empty.
+
+**`onRunner` was called and wired by nobody** — not declared beside its four
+siblings, swallowed by `?.`. Deleted rather than wired, because "a man is
+carrying an order" is a STATE that ends when he arrives, dies or times out, and
+a fire-once hook cannot say any of those. `summary()` carries it instead.
+
+**Hold ground and Detach had no key.** `registerOrders` builds a row per
+FORMATION, so the nine shapes each got a key, a chip, a controls row and a
+rebind, and the two verbs that are NOT formations got a wheel slot and nothing
+else — unrebindable, on no list a player reads, and unreachable on a phone
+(the order wheel is a HELD key and a phone has no button to hold). That is
+precisely the door `squadtarget` was pulled out of the wheel to fix, left open
+twice. Now `Period` and `Slash`.
+
+**`order()` half-obeyed an index that is not one.** `order('cover', c, 1.7)`
+returned true, ordered squad 1 and filed its memory under `'1.7'` — a key
+`_formationFor(c, 1)` can never read. `-1` was refused with a message naming
+"Squad 0". Truncated at the door now, and NEVER mapped to `null`, because
+`null` means the whole army here.
+
+**Two fixtures stood in for what they test.** `_army.mjs` built
+`new CommandDirector(w, { pool })` with no mode, so it fell to `'command'` —
+`holdTheLine` false, `lineAdvances` false, `downedMen` FALSE — and
+`muster.mjs`'s survivors check was asserting about THE LINE against a `downed`
+boolean it wrote onto a stub itself. Delete the whole downed mechanic from
+`Enemy.js` and it passed. `army(mode)` takes a mode now (default unchanged),
+and a second check drives a real `World` on `theline` with a real `Enemy` put
+on his back by `Enemy.die` → `_mayGoDown` → `_goDown`, which refuses outright
+unless `downedMen` is true — so reaching that state is itself the proof the
+mode is the one under test.
+
+**`_supervised` never got the second mouth `_voices` has.** `_voices` measures
+reach from the player AND from `c._paceAnchor`, because `_frame` returns the
+anchor and walking faster than your own line spends the whole margin in five
+seconds (the measurement is in `reach.12`). `_supervised` measured from the
+player alone, so the exact walk `out of reach` forgives still bit as `unled` —
+the same distance refused under a different word, and the one word with no
+remedy attached to it.
+
+**Six typed constants that justify themselves against another constant were
+never asked.** `ALONE_NEAR`'s "12 is inside `MORALE.NEAR`'s 14" and
+`RUNNER_DELIVER`'s "inside `RELAY_REACH` and outside a body's own leash" are
+one-liners nobody had written. `reach.16` writes them. A rationale that names a
+number and is not checked against it is a comment that goes stale the day
+either number moves — and this file had already paid for one of those.
+
+### Every fix was verified RED
+
+Each new check was run against the code it replaces before being kept. That is
+the only thing that separates a check from a decoration, and §2.3b is the
+standing rule it enforces. The four proofs on record this session: the wheel
+caption, the detach cache key, the shaken literal, and the runner's leash
+centre.
+
+### What is NOT closed
+
+- **Squads F12** — three copies of "name or number" (`Command.squadLabel`,
+  `Company.squadLabel`, and a third inline in `HUD.rosterHtml`), against a
+  comment claiming one reader. They agree today. Drift risk, low.
+- **Licence F18** — `Company.appoint`'s `licensed` parameter is asserted by
+  its one caller as a hardcoded `true`. Decorative in production; the real
+  gate is that no button renders below Sergeant.
+- **Muster F8** — `_inbound` is drained only by `recall`, so in a mode that
+  never recalls (`waves` and the other four contingent modes) it retains
+  Trooper records for ever. Benign today because a landed man has a live body
+  and is skipped anyway; a live trap for any future path that clears a body
+  without killing the record.
+- **`Enemy._pace` does not exist.** Cited as the movement consumer of morale by
+  `Morale.js:32`, `Morale.js:109` and `Command.js:9912`. Comment-only.
+- The reach system's **design** critique, which the auditor was right about and
+  which is not a bug: `unled` is a LICENCE check wearing the same toast as a
+  DISTANCE refusal. Reach is legible, continuous and fixable by walking, with a
+  runner as the remedy. `unled` is binary, jargon-named, and now has a remedy
+  sentence but still no pre-warning. Consider folding it into the standing-order
+  confirmation rather than the refusal channel.
+
+### WHERE THIS SESSION STOPPED — read this first if you are picking it up
+
+**Branch `claude/troop-management-redesign-5vovlm`. Six commits past the last
+merge to the default branch (`ae1fa5a`), so THE PLAY LINK DOES NOT HAVE THIS
+WORK YET.** `.github/workflows/pages.yml` publishes on a push to the default
+branch only. Merging into `claude/lightsaber-combat-game-lxw391` is what puts
+it on <https://longwong377.github.io/saber2/>, and per CLAUDE.md that merge is
+part of finishing, not something to ask about.
+
+    cc9ac74  the Duel's contingent
+    2abd1ba  the four stale readings + the shaken threshold
+    2c4b8d1  the stale squad order, the HOLDS lie, the vacancy in the report
+    91156f5  the runner, and keys for Hold ground and Detach
+    (+ one uncommitted at the time of writing — see below)
+
+**WHAT WAS IN FLIGHT WHEN THE SESSION ENDED, exactly:**
+
+1. **Uncommitted in the working tree:** `_army.mjs`'s new `army(mode)`
+   parameter, `muster.mjs`'s real-Line boundary check, `_supervised`'s second
+   mouth (`c._paceAnchor`), and `reach.16` (the constant relationships). All
+   four are written and `reach` is green at 16/16 and `muster` at 21/21.
+   **`theline` had not finished when the session ended** — it is the one suite
+   that could plausibly be moved by the `_supervised` change, so run it before
+   trusting the commit:
+   `node --import ./tools/register.mjs tools/_one.mjs theline`
+2. **Three adversarial auditors were still running** on the HANGAR, launched
+   after the fixes above: (a) the room's wiring and sky, re-verifying the six
+   fixes the first hangar audit forced; (b) deck life, the company inspection
+   path, deck audio and faction purity, driven end-to-end in a real browser;
+   (c) the PACKED and SHIPPED build — bare specifiers, console errors on boot
+   in four modes, and whether the default branch actually carries this work.
+   **Their findings were never read.** Re-run them if the transcript is gone;
+   the briefs are the four failure shapes above plus the six claimed hangar
+   fixes listed in §5.0's hangar notes.
+3. **A full `tools/verify.mjs` run had not been done since the fixes.** It
+   takes over an hour. §2.6d and §2.7 are the traps.
+
+**THE NEXT THREE THINGS, in order:** finish `theline`, commit, merge to the
+default branch and pack/send the build (CLAUDE.md: "link ready?", "link",
+"build" = `node tools/pack.mjs /tmp/borz.html`, send the file, one line on what
+changed — and do it unasked at the end of any work worth playing). Then read
+the three hangar audits. Then the full gate.
+
+---
+
+## 5.0 What the session before this one changed — 31 Aug: the barracks
 
 Driven by one message, and the message was a verdict: *"I have told Opus and
 you (Fable) at times to build a highly interactive and expansive troop
