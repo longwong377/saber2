@@ -86,8 +86,12 @@ appears.
   physics box that stops a player leaving through the top stays.
 - `✓` **No bare side walls. It cannot look like a box.** Bays face both ways —
   inboard onto the working deck, outboard onto the apron.
-- `~` Haze/fog volume so far rows dissolve. It exists and is driven; it was
-  tuned for a 128 m room and is being re-derived off `DECK.lip`.
+- `✓` Haze so far rows dissolve. It existed and was driven, tuned for a 128 m
+  room: at the old density the aperture rim 218 m away was 99.5% extinguished,
+  so the haze was eating the brightest object in the room, both rack walls and
+  the bulkhead. Solved off `DECK` rather than typed. The field planes are now
+  fogged too — they were the one thing at full contrast at 220 m while the rim
+  sitting on them faded, so the shield read as nearer than its own frame.
 
 ## THE COMPANY
 
@@ -121,56 +125,94 @@ appears.
 - `✓` The line squares up in a ripple. `turnIn` was computed and then the
   rotation was hard-assigned on the very next line; it fed one field no file in
   this project reads.
-- `~` Camera close-focus when you select one: he breaks attention, turns to
-  face you, salutes, holds; deselect snaps him back. **In progress** — there
-  was no raycast of any kind in this room.
+- `✓` Select one and he breaks attention, turns to face you, salutes, holds;
+  deselect snaps him back. There was no raycast of ANY kind in this room, and
+  `turnTo` was imported into `Hangar.js` and never used — the bullet, imported
+  as an intention. The turn and the salute are re-armed inside their own
+  plateau so he holds rather than unwinding.
+  **The camera does not move, and that is a decision.** `Player._updateCamera`
+  assigns the lens every frame and recomposes from `aimQuat` on the next line,
+  so anything written to it is overwritten within the same frame; stopping that
+  means taking the mouse away in a room built around walking down a line. The
+  close-focus is composed by the subject instead — the pick only reaches 6 m,
+  so you walk up to him and he closes the last half-metre himself.
 - `✓` at ease / present arms / salute / sing out / dismissed, all on the wheel.
   Dismissed now breaks the line and fall-in deals it again; both were fields
   written and read by nothing, so "dismissed" was a caption over a company
   still standing rigidly at attention.
-- `~` Troops sing/chant on command, faction-specific. On the wheel; the voice
-  is being built.
+- `✓` Troops sing/chant on command, faction-specific. Four detuned larynxes
+  with vibrato and a falling cadence against three near-identical squares with
+  neither; two halves of one performance within 0.4 dB of each other, because
+  a chant repeats. No phrase anywhere in the module, asserted over the whole
+  file rather than over one function.
 
 ## CUSTOMISING THEM, IN FRONT OF YOU
 
-- `~` Change them live from the hangar — rename, paint, attach. **In
-  progress.** There was no UI in the hangar at all, and the only route from the
-  deck to the editor was to destroy the room.
-- `~` Paint applies as a **sweep, not a pop**. It was a pop by construction —
-  `color.setHex(...)`, a single-frame assignment, with no uniform and no tween
-  anywhere in the project to sweep with. **In progress.**
-- `·` Attachment parts physically drop in from off-frame or are handed over by
-  a droid.
-- `~` Every change plays a one-shot audio cue. The four exist and are measured;
-  their only callers were their own unit test. **In progress.**
-- `~` Everything you change is saved on leaving, and everything doable here is
-  doable in the main menu. **In progress.** The menu's edit surface is real and
-  complete; the deck's was empty, which made the second half of that sentence
-  true only vacuously.
+- `~` Change them live from the hangar — paint and attach are live on the body
+  in front of you; **rename is not reachable from a key**. The API is complete
+  and checked, but text entry cannot be a bindings action and suppressing WASD
+  while typing needs a change where `_move` runs. Said plainly rather than
+  ticked.
+  There is no DOM panel either, deliberately: the deck is pointer-locked and a
+  lost lock routes straight to `pause()`. A read-only caption and the wheel do
+  the work.
+- `✓` Paint applies as a **sweep, not a pop**. It was a pop by construction —
+  `color.setHex(...)`, a single-frame assignment, with nothing in the project
+  to sweep with. It is a per-vertex mask rather than a shader uniform, because
+  the deck draws MERGED skins and a uniform would have to survive a material
+  clone, agree with the merge key and recompile per figure. A height edge runs
+  boot to crown: measured at 0.72 s, 35 frames of movement, 34 of them with a
+  genuine wet edge — and the check asserts it takes more than one frame, which
+  is what would catch a regression back to a pop.
+- `~` Attachment parts drop in from off-frame — a plate falls 4.6 m over about
+  0.6 s and the man is rebuilt at the landing. Honestly: a kit change rebuilds
+  that one man, because a pauldron is geometry baked at build time and there is
+  no runtime attach point. The rebuild is hidden under the landing part.
+  Nobody hands it over; there is no droid in that loop yet.
+- `✓` Every change plays a one-shot audio cue. All four are called and
+  asserted. Their only callers had been their own unit test — the textbook
+  case of this whole effort.
+- `✓` Everything you change is saved on leaving, and `Company.dress` is still
+  the single writer — write first, then wear, exactly as the menu does. The
+  check enumerates both surfaces and asserts set equality, so the two cannot
+  drift. It used to be true only vacuously, because the deck's surface was
+  empty.
 
 ## THE DECK, ALIVE
 
-- `~` Crew crossing in the far midground, silhouettes on looping paths. Built
-  and stepped; sited 89–142 m out under haze that left them at 0.69–0.95
-  extinction, i.e. invisible. Being re-sited.
+- `✓` Crew crossing in the far midground, silhouettes on looping paths. They
+  were sited 89–142 m out under haze that left them 69–95% extinguished — built,
+  stepped, and invisible. 59–105 m now, as fractions of `DECK`, and one lane
+  that walked down into the pit and out again is pushed off it at dress.
 - `✓` Repair droids on fixed loops. Real and driven.
-- `~` A gantry crane traversing overhead. The trolley is real; the rail it
-  rides was deleted two rewrites ago, so it slid through empty air.
-- `~` A ship mid-repair with a tech, sparks, welding flare. The previous status
-  line here said "hull + scaffold placed; no tech, no sparks, no flare" and was
-  **exactly inverted**: the tech, the sparks and the flare are all real and
-  stepped, and the hull and the scaffold are what had been deleted. A man in a
-  jumpsuit hung 4.1 m up welding nothing.
-- `~` Sparks, steam vents, coolant hiss. Two independent lists — five visual
-  vents against four audio ones, different positions, different periods, no
-  shared clock — so the puff and the hiss never coincided. Three were over a
-  3.2 m pit.
+- `✓` A gantry crane traversing overhead. The trolley was real and the rail it
+  rides had been deleted two rewrites ago, so a crane crab slid through empty
+  air at 10.35 m. There is a 16 m portal gantry under it now and the stroke is
+  read off the rail rather than typed.
+- `✓` A ship mid-repair with a tech, sparks, welding flare. The previous status
+  line said "hull + scaffold placed; no tech, no sparks, no flare" and was
+  **exactly inverted**: the tech, the sparks and the flare were all real and
+  stepped, and the hull and the scaffold were what had been deleted — a man in
+  a jumpsuit hanging 4.1 m up welding nothing. A 15 m hull section on four
+  splayed jacks and a two-lift scaffold with a ladder, and he stands on it.
+- `~` Sparks, steam vents, coolant hiss. Both lists are re-sited off `DECK`
+  and off the real heightfield — three used to hiss into a 3.2 m pit — and the
+  audio ones are slid along the wall until `terrain.height` says deck. They are
+  still **two lists with two clocks**, so a puff and a hiss at the same vent
+  are not the same event. Named rather than ticked.
 - `✓` Loader sled crossing with a crate.
 - `✓` Idle chatter on the PA, distant and unintelligible. 12/12 announcements
   distinct, no words in the source. The horns were floating in open space.
-- `~` Ships pass through the shield on a schedule; launches; damaged arrivals;
-  heat shimmer. **In progress.** There was no ship — only an audio pass with no
-  geometry, and `DeckAudio` says so in its own prose.
+- `~` Ships pass through the shield on a schedule; launches; damaged arrivals.
+  All three exist now with geometry and sound on one clock: an arrival through
+  the forward field with a smoke trail, a ring, a flare, a hard landing and
+  deck grit blown sideways; it cools; then clamps, spin-up, taxi and punch out
+  through the same field, with two crew retargeted as the fire crew and handed
+  back. Periods of 46 s and 31 s so the two never resolve. There was no ship at
+  all before — only an audio pass with no geometry, and `DeckAudio` said so in
+  its own prose.
+  **Heat shimmer is a heat plume, not a shimmer.** A real one is a screen-space
+  refraction pass and no file in this feature owns a pass. Said in the code.
 
 ## THE FIELD
 
@@ -211,24 +253,32 @@ and every line of it was unreachable because of one word.
 
 - `✓` Deep hull hum bed, PA, muffled battle thumps, dopplered repulsor whine,
   footsteps changing material at the lip. All real, all driven, all measured.
-- `~` The delayed thump is not yet bound to the flash that caused it: `SkyDome`
-  pushes every explosion onto a queue capped at 12 and nothing drains it, so
-  the thump you hear is uncorrelated with any explosion you saw. This file
-  ticked that bullet while its own last sentence said "nothing drains it yet".
-  **In progress.**
-- `~` Boot steps for the company walking in. Twenty-four men crossed the deck in
-  total silence; only the coalesced halt fired. **In progress.**
+- `✓` The delayed thump is the flash you actually saw. `SkyDome` pushes every
+  explosion onto a queue capped at 12; nothing drained it, so the thump came
+  off an independent random timer. `drainBlasts` runs in `HangarDirector.update`
+  and replays each flash's own strength and delay — 3 flashes, 3 thumps, at
+  0.88/1.9/2.1 s. This file ticked that bullet for weeks while its own last
+  sentence said "nothing drains it yet".
+- `✓` Boot steps for the company walking in. Twenty-four men crossed fifty
+  metres of plate in total silence — `bootFall` existed, was measured, and had
+  no caller in `src/`. `bootStride` integrates distance rather than counting
+  frames, so a man who walks further takes more steps: 24 men over 56 m gives
+  930 boots coalesced to 239 sounds, 10 voices at peak against a cap of 15.
 - `✓` Walking off the deck takes the deck's sound with it. `undressDeckAudio`
   was imported and called from nowhere, so a twenty-five node hull-hum graph
   kept running under the main menu.
 
 ## FACTION PURITY
 
-- `~` **In progress.** `DeckKit.js` had zero occurrences of `faction` or
-  `army`, and `parkedFighter` is documented in its own file as "the TIE read" —
-  so a Republic player stood in a hangar whose dominant visual element was a
-  hundred and forty Separatist fighters. In the section the player said kills
-  the whole illusion.
+- `✓` Two palettes, six ship silhouettes, two insignia, two light
+  temperatures, two PA voices, and the fleet outside. `DeckKit.js` had zero
+  occurrences of `faction` or `army`, and `parkedFighter` is documented in its
+  own file as "the TIE read" — so a Republic player stood in a hangar whose
+  dominant visual element was a hundred and forty Separatist fighters.
+  And the resolution itself was broken twice over: `factionOf` tested every
+  candidate for being a string while `armyToLead` returns the army RECORD, so
+  a Sith player's hangar was a Republic hangar wall to wall; and the room was
+  steering off `settings.army`, which nothing in this project writes.
 - `✓` The battle outside now takes the faction, so a Separatist player no
   longer watches his own fleet fire Republic-blue.
 - `✓` A Separatist player with an empty Separatist roll is no longer handed the
@@ -263,5 +313,12 @@ and every line of it was unreachable because of one word.
   One correction to the old claim: there are no "gaps where last run's dead
   used to stand" — a fallen man is off the roll entirely, so the line is
   shorter, not gapped. The only gaps are the squad separators.
-- `·` A memorial on the one real wall you walk past.
-- `·` Deploy for the run by walking up the gunship's ramp.
+- `✓` A memorial on the one real wall you walk past. The roll has always
+  carried its dead and nothing had ever drawn them. A recessed panel beside the
+  doors, one lit bar per name, no numerals — rule 7, and a name stencilled two
+  metres high on a bulkhead is a label rather than a memorial.
+- `✓` Deploy for the run by walking up the gunship's ramp. The only way off
+  this deck was the pause card's Menu button, so the hangar was a cul-de-sac
+  you backed out of. A dwell on the apron at the foot of the near pad — not a
+  tripwire, so walking past the ship on the way to the shield does not launch a
+  run — and it asks `main.js` rather than deciding what a run is.
