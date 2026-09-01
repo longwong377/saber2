@@ -20,12 +20,13 @@ Status: `·` not started · `~` partial · `✓` done and driven
 
 ## THE COMPANY
 
-- `·` You give an order, audibly, and it calls your troops — similar in carrying
+- `~` You give an order, audibly, and it calls your troops — similar in carrying
   out to a stratagem.
-- `·` Troops file in from off-camera in a loose column, then snap to formation.
+- `✓` Troops file in from off-camera in a loose column, then snap to formation.
   **The filing in sells it more than the standing.**
-- `·` Staggered arrival — they don't all take the same number of steps. Slight
-  timing offsets on the snap-to.
+- `✓` Staggered arrival — they don't all take the same number of steps. Slight
+  timing offsets on the snap-to. (three things differ per man, not one: start,
+  pace and distance; 11 men formed up in 9 s)
 - `✓` Idle micro-motion while at attention: breathing, weight shifts, helmet
   turns, one man adjusting his grip.
 - `·` Camera close-focus when you select one: he breaks attention, turns to face
@@ -33,7 +34,8 @@ Status: `·` not started · `~` partial · `✓` done and driven
 - `·` Deselect returns him to attention with a snap.
 - `·` Multiple salute types, order barks, formation changes (at ease, present
   arms, dismissed).
-- `~` at ease / present arms exist as poses; no order, no bark, no dismissal.
+- `~` at ease / present arms / salute / dismissed all exist as ORDERS with barks
+  (`DECK_ORDERS`); no audible voice line yet, no formation change on dismissal.
 - `·` Troops sing/chant on command, faction-specific.
 
 ## CUSTOMISING THEM, IN FRONT OF YOU
@@ -43,7 +45,8 @@ Status: `·` not started · `~` partial · `✓` done and driven
 - `·` Paint applies as a **sweep, not a pop** — like a wash moving over the armour.
 - `·` Attachment parts physically drop in from off-frame or are handed over by a
   droid.
-- `·` Every change plays a one-shot audio cue so the menu feels tactile.
+- `~` Every change plays a one-shot audio cue. The four cues exist and are
+  measured (`cuePaint`/`cueAttach`/`cueDetach`/`cueName`); nothing calls them yet.
 - `·` Everything you change is saved on leaving, and everything doable here is
   doable in the main menu.
 
@@ -58,7 +61,8 @@ Status: `·` not started · `~` partial · `✓` done and driven
 - `·` Sparks, steam vents, coolant hiss — motion in the periphery is worth more
   than detail.
 - `·` Loader sled crossing the far deck with a crate.
-- `·` Idle chatter callouts on the PA, distant and unintelligible.
+- `✓` Idle chatter callouts on the PA, distant and unintelligible. 12/12
+  announcements distinct, no words in the source.
 - `·` Ships pass through the shield on a schedule — pop, shockwave ring, engine
   wash, deck grit blown sideways.
 - `·` Launches: clamps release, repulsor spin-up whine, taxi, punch through.
@@ -73,8 +77,9 @@ Status: `·` not started · `~` partial · `✓` done and driven
   transparent.
 - `·` Ripples outward from anything that passes through.
 - `·` Flickers and browns out when a big hit lands on the ship.
-- `·` Audible pressure differential — muffled hush right at the boundary, deck
-  noise behind you.
+- `✓` Audible pressure differential — muffled hush right at the boundary, deck
+  noise behind you. −12.1 dB A-weighted spawn→lip; 3k–12k down 18.3 dB while
+  20–60 Hz goes UP 0.8, and sub share 90% → 99%.
 - `·` Debris occasionally hits it from outside and burns off in a flare.
 
 ## THE PLANET
@@ -105,12 +110,18 @@ Status: `·` not started · `~` partial · `✓` done and driven
 
 ## SOUND
 
-- `·` Deep hull hum bed, constant.
-- `·` PA announcements, faction-flavoured.
-- `·` Distant muffled battle thumps, irregular.
-- `·` Repulsor whine dopplering as ships pass.
-- `·` Boot steps on deck grating for the troop line.
-- `·` Your own footsteps changing material as you walk toward the shield.
+- `✓` Deep hull hum bed, constant. 7 layers, 25 nodes, no pool voice.
+- `✓` PA announcements, faction-flavoured. Republic 82% in 800 Hz–3 kHz;
+  Separatist lower horn, more drive, 3 pips. No words anywhere in the source.
+- `✓` Distant muffled battle thumps, irregular. 100% under 200 Hz, one voice,
+  blooms the bed's rumble for 1.6 s. `hullThump(world, strength, {delay})`.
+- `✓` Repulsor whine dopplering as ships pass. WebAudio's Doppler was removed
+  from browsers in 2016; this is done on the oscillator frequency instead, plus
+  the noise rate and both filter cutoffs. 3.08 semitones on a 240 m pass.
+- `✓` Boot steps on deck grating for the troop line. The halt is ONE sound, not
+  eleven — coalesced in 55 ms, shorter than the 64 ms flight time from the line.
+- `✓` Your own footsteps changing material as you walk toward the shield. Plate
+  893 Hz, grating 2143, lip 1762, against 1852 for everything before.
 
 ## FACTION PURITY
 
@@ -136,7 +147,8 @@ Status: `·` not started · `~` partial · `✓` done and driven
 - `·` The muster call reuses the real order wheel, so the deck is where the
   command interface is learned.
 - `·` `ORDER_REACH` applies: walk away from the line and they cannot hear you.
-- `·` The line is the actual persistent roll, with the gaps where last run's dead
+- `✓` The line is the actual persistent roll, dealt by the fight's own
+  `squadPlan` and led by its own `leadOf`, with the gaps where last run's dead
   used to stand.
 - `·` A memorial on the one real wall you walk past.
 - `·` Deploy for the run by walking up the gunship's ramp.
