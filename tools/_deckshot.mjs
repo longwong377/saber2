@@ -56,7 +56,7 @@ const browser = await chromium.launch({
     '--autoplay-policy=no-user-gesture-required'],
 });
 say('browser up');
-const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
+const page = await browser.newPage({ viewport: { width: 960, height: 540 } });
 /* THE STACK, NOT THE MESSAGE. A bare `e.message` on a per-frame throw is
  * "Cannot read properties of undefined" sixty times a second and names
  * nothing; the frame that matters is the first one, with its stack. */
@@ -118,7 +118,15 @@ const info = await page.evaluate(async () => {
   const btn = document.getElementById('btn-hangar');
   if (!btn) return { fail: 'no #btn-hangar in the DOM' };
   btn.click();
-  for (let i = 0; i < 6000 && !(window.SABER?.world?.terrain); i++) await raf();
+  /* AND IT SAYS WHERE IT GOT TO. A bare spin for six thousand frames against
+   * a world that is still building looks identical, from outside, to a hang —
+   * which is exactly what thirty-five minutes of this looked like on a loaded
+   * box. The counter is published so the log can say "still building" rather
+   * than nothing at all. */
+  for (let i = 0; i < 5000 && !(window.SABER?.world?.terrain); i++) {
+    await raf();
+    if (i % 100 === 0) window.__deckWait = i;
+  }
   const w = window.SABER?.world;
   if (!w) return { fail: 'no world after clicking the door' };
   for (let i = 0; i < 240; i++) await raf();
@@ -183,7 +191,7 @@ if (!info.fail) {
        * puts him back on the deck inside two frames and the plan shot comes
        * back as a picture of the floor. There is no noclip flag on this body,
        * so the position is simply re-pinned every frame for the fly stations. */
-      for (let i = 0; i < 40; i++) {
+      for (let i = 0; i < 22; i++) {
         await raf();
         if (v.fly) {
           const q = window.SABER?.world?.player;
