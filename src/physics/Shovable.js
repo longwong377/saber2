@@ -204,6 +204,31 @@ export class Shovable {
   get down() { return this.state === STATE.DOWN || this.state === STATE.REST; }
 
   /**
+   * HIS MARK MOVED, WHICH HAPPENS THE MOMENT ANYBODY IS DISMISSED.
+   *
+   * `mark` is where BACK walks him and where a man culled below `killY` is put
+   * back — both of which are wrong the instant the company is given a new
+   * shape. Without this a dismissed man's figure walks off to his new spot and
+   * his body stays standing on the old one, so the Force still finds him where
+   * he used to be. That is the exact class of bug this whole file exists to
+   * stop: a drawn man and a physical man in two different places.
+   */
+  retarget(mark) {
+    const y = this.world.terrain ? this.world.terrain.height(mark.x, mark.z) : (mark.y ?? 0);
+    this.mark.set(mark.x, y, mark.z);
+    /* IF HE IS STANDING ON IT, HE MOVES WITH IT. If he is down, mid-rise or
+     * walking, leave the body alone — BACK will find the new mark on its own
+     * and a body teleported out from under a tumble is a man who blinks. */
+    if (this.state === STATE.POST) {
+      this.body.setTransform(_v.copy(this.mark).setY(this.mark.y + SHOVE.halfH),
+        _q.setFromAxisAngle(UP, this.facing));
+      this.body.sleep();
+      this._publish();
+    }
+    return this;
+  }
+
+  /**
    * PUT HIM DOWN, without waiting for the Force to do it. The deck's own
    * scripting uses this — a ship coming through the field, a crate landing in
    * the line — and so does the check, because a test that can only knock a man

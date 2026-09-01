@@ -28,7 +28,9 @@
  * run into a 40-deep history.
  */
 
+import { readFile } from 'node:fs/promises';
 import * as Waves from '../../src/game/Waves.js';
+import { CommandDirector } from '../../src/game/Command.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { DECK, HANGAR_LEVEL, HangarDirector } from '../../src/game/Hangar.js';
@@ -247,14 +249,44 @@ export async function run({ check, assert }) {
       settings: { mode: 'hangar', level: 'hangar', allies: 8 },
     });
     try {
-      assert(!world.command,
-        'the flight deck built a CommandDirector — bank() fires on any world that has one and '
-        + 'treats every deployed man not on an extraction manifest as dead, so walking out of '
-        + 'this room would strike the whole roll, silently, every visit');
+      /**
+       * AND THE ASSERTION IS ABOUT `bank`, NOT ABOUT `world.command`.
+       *
+       * It used to be `assert(!world.command)`, which was a proxy: at the time
+       * the only thing that ever set that field was a `CommandDirector`, so
+       * "no command" and "bank cannot fire" were the same sentence. They are
+       * not any more — the deck sets it deliberately, because `HUD.update`
+       * gates the order wheel on it and the brief asks for the real wheel in
+       * this room.
+       *
+       * A proxy that stops being true is worse than no check: it goes red on
+       * a change that is correct and tempts whoever is holding the change to
+       * delete it. So this asserts the thing that actually matters, which is
+       * that `bank()` refuses this world — and it asserts it against `bank`'s
+       * own gate rather than restating it, because a restatement is the second
+       * copy of the rule and would pass while the real one rotted.
+       */
+      assert(!(world.command instanceof CommandDirector),
+        `the flight deck built a ${world.command?.constructor?.name} — a real director on this `
+        + 'deck brings a roster, a manifest and an ending with it');
+      assert(world.command?.deck === true,
+        'the deck\'s command adapter does not declare itself a deck. `main.bank()` returns early '
+        + 'on `d.deck`, and its rule for a deployed man who is not on an extraction manifest is '
+        + 'that he is dead — so without that flag, walking out of this room strikes the whole '
+        + 'permadeath roll, silently, every single visit');
       assert(world.director instanceof HangarDirector,
         `the deck built a ${world.director?.constructor?.name} instead of a HangarDirector`);
       assert(!world.manifest, 'the deck sealed a manifest');
-      return 'allies forced to 8: still no CommandDirector, still no manifest';
+      /* AND THE GATE IS READ FROM `main.js` ITSELF, so this check fails the day
+       * somebody deletes the `d.deck` term rather than the day somebody
+       * notices. A test that owns its own copy of the rule tests its copy. */
+      const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+      const gate = /function bank\([^)]*\)\s*\{[\s\S]{0,3000}?\n\}/.exec(mainSrc)?.[0] || '';
+      assert(/if\s*\(!d \|\| d\.deck/.test(gate),
+        'main.bank() no longer returns early for a deck adapter — the flight deck sets '
+        + '`world.command` to open the order wheel, and bank() executes the roll of any world '
+        + 'that has one');
+      return 'allies forced to 8: no CommandDirector, no manifest, and bank() refuses the deck';
     } finally { world.unload(); }
   });
 

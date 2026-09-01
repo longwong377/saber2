@@ -3029,3 +3029,24 @@ body:has(#touch.on) .powers .pw{touch-action:none}
    fifteen of them sit on one row beside a label. */
 .company-paints{gap:6px}
 .company-paints .swatch{width:20px;height:20px}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE FLIGHT DECK'S HUD, WHICH IS ONE WHEEL AND NOTHING ELSE.
+
+   There is no wave on that deck, no enemy and no score, and a readout saying
+   zero of each is the surest way to make a place feel like a menu. But the
+   order wheel is a child of `#hud`, so `hud.show(false)` — which is what the
+   deck used to do — took the one piece of interface the room exists for down
+   with the rest of it, and the brief's "the muster call reuses the real order
+   wheel" could not be true while it did.
+
+   So the root stays up wearing `.deck` and everything in it is hidden by name
+   except the two wheels and the centre message. A rule beats a second HUD.
+   ══════════════════════════════════════════════════════════════════════ */
+#hud.deck > *{display:none !important}
+#hud.deck > #order-wheel,
+#hud.deck > #emote-wheel,
+#hud.deck > #hud-center-msg{display:block !important}
+#hud.deck > #order-wheel.hidden,
+#hud.deck > #emote-wheel.hidden{display:none !important}

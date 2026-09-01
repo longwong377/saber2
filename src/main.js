@@ -453,7 +453,7 @@ function mintRunSeed() {
     : (Math.random() * 0xffffffff) >>> 0;
 }
 
-async function buildWorld(levelKey, onProgress = null, runSeed = null, override = null) {
+async function buildWorld(levelKey, onProgress = null, runSeed = null, override = null, opts = null) {
   if (world) { world.dispose(); world = null; }
   /**
    * PHYSICS BEFORE ANYTHING, AND IT IS AWAITED HERE RATHER THAN ASSUMED.
@@ -497,6 +497,21 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null, override 
      * veterans are: main.js owns localStorage and the game owns the game. */
     squadNames: squadNamesToField(),
   });
+  /**
+   * A HOOK BETWEEN THE WORLD EXISTING AND THE LEVEL BEING BUILT, AND IT EXISTS
+   * BECAUSE THERE WAS NO SUCH MOMENT.
+   *
+   * `enterHangar` set `world._pickedLevel` — the record the flight deck's
+   * window looks out at — on the line AFTER `await buildWorld(...)`. The
+   * dressing that reads it runs INSIDE that await, at load stage 6. So the
+   * assignment always landed after its only reader had already given up and
+   * fallen back to the hangar's own level record, and the deck's planet was
+   * derived from the deck's own near-black floor swatch instead of from the
+   * theatre the player picked. The comment in `Hangar.outsideLevel` claiming
+   * main.js "stashes the RECORD on the world before the dressing runs" was
+   * describing an ordering that has never held.
+   */
+  if (opts?.onWorld) opts.onWorld(world);
   /**
    * THE RUN'S NUMBER, BEFORE ANYTHING READS IT.
    *
@@ -837,10 +852,13 @@ async function enterHangar() {
      * puts Geonosis outside — which is the planet the next run is fought on. */
     const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
     await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label), null,
-      { mode: 'hangar', level: 'hangar', allies: 0 });
-    /* THE RECORD, not the key: `Hangar.js` imports no levels — see
-     * `outsideLevel` — so the world carries what its window is looking at. */
-    if (world) world._pickedLevel = LEVELS[outside] || null;
+      { mode: 'hangar', level: 'hangar', allies: 0 },
+      /* THE RECORD, not the key: `Hangar.js` imports no levels — see
+       * `outsideLevel` — so the world carries what its window is looking at.
+       * AND IT IS HANDED OVER BEFORE THE LEVEL IS BUILT. This used to be an
+       * assignment on the next line, which is after the dressing that reads
+       * it; see the `onWorld` note in `buildWorld`. */
+      { onWorld: (w) => { w._pickedLevel = LEVELS[outside] || null; } });
   } catch (e) {
     console.error('hangar failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
@@ -856,11 +874,21 @@ async function enterHangar() {
   menu.hideMenu();
   menu.hideDeath();
   screens.clear();
-  /* THE HUD IS DOWN. There is no wave, no score and no hostile count, and a
-   * readout saying zero of each is the surest way to make a place feel like a
-   * menu. `HangarDirector` answers the four fields the HUD dereferences without
-   * optional chaining, so it can be shown if anything ever wants it. */
-  hud.show(false);
+  /**
+   * THE HUD IS DOWN TO ONE THING: THE ORDER WHEEL.
+   *
+   * There is no wave, no score and no hostile count, and a readout saying zero
+   * of each is the surest way to make a place feel like a menu — so `hud.show`
+   * was simply `false`. But the order wheel LIVES INSIDE `#hud`, so hiding the
+   * root hid the one piece of interface this room is for, and the brief's
+   * "the muster call reuses the real order wheel, so the deck is where the
+   * command interface is learned" could not be true while it did.
+   *
+   * `.deck` on the root is one stylesheet rule that hides every child except
+   * the wheels and the centre message. One class beats a second HUD.
+   */
+  hud.show(true);
+  document.getElementById('hud')?.classList.add('deck');
   input.enabled = true;
   input.requestLock();
   screens.set('playing');
@@ -886,6 +914,7 @@ async function enterHangar() {
 function leaveHangar() {
   screens.clear();
   hud.show(false);
+  document.getElementById('hud')?.classList.remove('deck');
   hud.freecam?.exit?.(hud);
   hud.announcer?.reset?.();
   input.enabled = false;
@@ -1545,7 +1574,24 @@ function cardAfter(ms, what, show) {
 function bank(stats = null) {
   if (!world || world._banked) return;
   const d = world.command;
-  if (!d || d.versus || session) return;
+  /**
+   * AND A DECK IS NOT A BATTLE. `d.deck` is the flight deck's order-wheel
+   * adapter saying so.
+   *
+   * This gate has always been "is `world.command` truthy", and `world.command`
+   * has always meant one thing — a `CommandDirector`, which only a real fight
+   * builds. The hangar now sets it too, because the order wheel is gated on it
+   * and the brief asks for the real wheel in that room; without this line,
+   * walking off the deck would hand `Company.keep` an empty manifest under
+   * `deployed: roster.all`, and its rule for a deployed man not on the
+   * manifest is that he is dead. The whole permadeath roll, struck silently,
+   * on every visit.
+   *
+   * `leaveHangar` already avoids calling `bank` at all, and that is not
+   * enough: it is one forgotten branch away from the same wipe, and this room
+   * has more than two exits. The invariant belongs where the damage is.
+   */
+  if (!d || d.deck || d.versus || session) return;
   world._banked = true;
   const roster = d.roster;
   if (!roster) return;

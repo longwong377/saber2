@@ -1750,6 +1750,17 @@ export class World {
      * from the first cleared skirmish or campaign mission onward.
      */
     this.remotes?.clear();
+    /**
+     * THE DIRECTOR GETS A WORD BEFORE THE ROOM IS TAKEN APART.
+     *
+     * Nothing here has ever asked one to clean up after itself, because until
+     * the flight deck no director owned anything outside the world's own
+     * lists. `HangarDirector` owns a twenty-five node audio graph on the
+     * shared bus and a body per man, and neither is a static, a light, a prop
+     * or a player — so walking off the deck left the hull hum running under
+     * the main menu. Optional, so every existing director is unchanged.
+     */
+    try { this.director?.dispose?.(); } catch {}
     for (const p of this.props.slice()) p.destroy();
     this.props.length = 0;
     for (const d of this.doors) d.dispose();

@@ -2622,8 +2622,24 @@ export class HUD {
      * troops in it.
      */
     if (world.command && this.el.orderwheel) {
-      if (!this.orders) {
-        this.orders = new OrderWheel(this.el.orderwheel, ORDERS);
+      /**
+       * THE TABLE COMES OFF THE DIRECTOR, so the flight deck can put its own
+       * orders in the same wheel.
+       *
+       * `HANGAR-SPEC.md`: "the muster call reuses the real order wheel, so the
+       * deck is where the command interface is learned." That only means
+       * anything if it is THIS wheel — the same machine, the same held key,
+       * the same flick — with a different five things in it. A second wheel
+       * built for the hangar would be the second copy of the interface, which
+       * is the defect this file keeps deleting.
+       *
+       * `ORDERS` stays the default, so every existing caller is unchanged.
+       */
+      const table = world.command.orders || ORDERS;
+      if (!this.orders || this._orderTable !== table) {
+        this.orders?.close?.();
+        this.orders = new OrderWheel(this.el.orderwheel, table);
+        this._orderTable = table;
       }
       this.orders.director = world.command;
       const o = this.orders.update(input, this);

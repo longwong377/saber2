@@ -49,12 +49,12 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { buildFigure, paradeMan, poseParade, salute, turnTo, stagger, STANCES } from './Parade.js';
+import { buildFigure, paradeMan, poseParade, salute, stagger, STANCES } from './Parade.js';
 import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
-import { squadPlan, leadOf, SQUAD } from './Command.js';
+import { squadPlan, leadOf, SQUAD, ORDER_REACH } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 /**
  * ONE PROP FROM THE OUTDOOR LIBRARY, AND IT IS THE ONE THE PLAYER THROWS.
@@ -75,6 +75,7 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
  * body to pick up, and a crate is a crate on a deck as much as in a village.
  */
 import { makeCrate } from '../world/Props.js';
+import { makeShovable } from '../physics/Shovable.js';
 import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig,
   catwalk, crates, smear, deckLamp, shuttlePad } from './DeckKit.js';
 
@@ -125,7 +126,7 @@ function fieldMaterial(color) {
       /* HOW HARD THE HEX READS. A bubble round one body is 2 m across and its
        * weave is a texture; a plane 128 m across at the same frequency is a
        * moiré field. The scale is a uniform so the two uses can disagree. */
-      uWeave: { value: 0.06 },
+      uWeave: { value: 0.55 },
     },
     vertexShader: /* glsl */`
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
@@ -146,7 +147,18 @@ function fieldMaterial(color) {
            planet behind it is not washed out — the field is the brightest
            surface in the room and it still must not be the loudest. */
         float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 1.8);
-        float hexes = sin(vP.x * uWeave) * sin(vP.y * uWeave) * sin(vP.z * uWeave);
+        /* TWO TERMS, NOT THREE, AND THAT IS THE WHOLE BUG. This multiplied
+           a third sine of vP.z, and every field plane is a PlaneGeometry --
+           which writes EVERY vertex at object-space z = 0. sin(0) is 0, so
+           the product was 0 everywhere, on all four planes, always. The
+           "subtle hex/interference pattern" the spec ticks has never been
+           drawn: what was on screen was a fresnel gradient and a ripple.
+
+           And the frequency was a hectometre. At uWeave 0.06 one cell is
+           105 m across a 288 m plane -- two and a half cells over the whole
+           aperture. It is metres now, which is what "subtle pattern" means on
+           a surface you can stand next to. */
+        float hexes = sin(vP.x * uWeave) * sin(vP.y * uWeave);
         float ripple = 0.5 + 0.5 * sin(vP.y * 0.10 - uTime * 0.9);
         float raw = fres * 0.62 + max(hexes, 0.0) * 0.20 + ripple * 0.06;
         float e = max(fwidth(raw) * 0.5, 0.004);
@@ -212,9 +224,26 @@ function addField(world) {
     fieldPlane(world, mat, new THREE.Vector3(sx * L, H / 2, 0), new THREE.Vector2(L * 2, H),
       q(0, 1, 0, sx * Math.PI / 2));
   }
-  /* Aft of the bulkhead there is nothing to close: the wall does it. */
-  fieldPlane(world, mat, new THREE.Vector3(0, H, 0), new THREE.Vector2(L * 2, L * 2),
-    q(1, 0, 0, -Math.PI / 2));
+  /**
+   * ══ AND THERE IS NO OVERHEAD PLANE, BECAUSE THAT PLANE WAS A CEILING ════
+   *
+   * A 288 x 288 m field lay flat at y = 64 over the whole deck. The prose
+   * above argued the player would never see it edge-on so it would never read
+   * as a lid -- and that argument is backwards. The field shader is fresnel
+   * driven: it is DIMMEST looking straight up at it and BRIGHTEST at grazing
+   * angles, which are exactly the angles you look at an overhead from. At 17
+   * degrees of elevation it lands about eight times brighter than the forward
+   * plane seen face on. It was a glowing lid over the room.
+   *
+   * Worse, it was the one object the no-ceiling check could not see:
+   * tools/checks/hangar.mjs skips saberNoInk materials and anything named
+   * field-rim, which is this plane and the three bars along its edges. The
+   * rule this room stands on was enforced everywhere except on the thing that
+   * broke it.
+   *
+   * The physics box that stops a player leaving through the top stays. It is
+   * invisible, which is the correct way for a ceiling to exist here.
+   */
 
   /**
    * ══ THE RIM, AND IT IS THE MOST IMPORTANT OBJECT IN THE ROOM ══════════
@@ -278,9 +307,57 @@ function addField(world) {
   /* UP THE TWO FORWARD CORNERS, so the aperture is framed vertically as well —
    * a band on the floor alone reads as a kerb. */
   for (const sx of [-1, 1]) rim(sx * L, H / 2, L, T, H, T);
-  /* AND ACROSS THE TOP, closing the frame against the overhead field. */
+  /* AND ACROSS THE TOP OF THE APERTURE ONLY -- the forward edge, which is
+   * the top of the window you look out of. The two that used to run back
+   * along the sides at y = H were drawing the outline of the overhead plane,
+   * so between them they traced a lit rectangle over the deck: the ceiling
+   * again, in the one material the check exempts. One bar, forward, framing
+   * the view; nothing overhead behind you. */
   rim(0, H, L, L * 2, T, T);
-  for (const sx of [-1, 1]) rim(sx * L, H, 0, T, T, L * 2);
+
+  /**
+   * ══ THE STROBES, WHICH THE SPEC TICKED AND THE ROOM DID NOT HAVE ════════
+   *
+   * "Deck extends out toward the shield and just ends. Warning strobes at the
+   * lip, no railing." The railing was correctly absent and the strobes were
+   * absent too -- grep for the word across src/ and the hangar had none. Two
+   * files still carried prose about "the strobes stand 2.5 m inside it",
+   * describing an object that was deleted with the first dressing.
+   *
+   * They are what makes an unfenced edge legible: a rank of low markers along
+   * the last plates, pulsing out of phase so the eye reads a line rather than
+   * a row of dots. Out of phase is the whole point -- a strobe rank that
+   * blinks together is a decoration, and one that runs is an edge.
+   */
+  const strobeMat = new THREE.MeshBasicMaterial({ color: 0xffe9d2, toneMapped: false });
+  strobeMat.userData.saberNoInk = true;
+  strobeMat.name = 'lip-strobe';
+  const IN = 3.0;                      // how far inside the drop they stand
+  const spots = [];
+  for (let d = -L + 12; d <= L - 12; d += 16) {
+    spots.push([d, L - IN], [-L + IN, d], [L - IN, d]);
+  }
+  /**
+   * ONE INSTANCED MESH FOR ALL OF THEM. Fifty separate meshes on the lip is
+   * fifty draw calls before the ink pass doubles them, which is a quarter of
+   * this room's whole budget spent on markers a player looks at once. The
+   * pulse is a per-instance colour, so the phase runs along the rank without
+   * touching a matrix.
+   */
+  const strobes = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.34, 0.5, 0.9, 6), strobeMat, spots.length);
+  strobes.name = 'lip-strobe';
+  strobes.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(spots.length * 3), 3);
+  const _m = new THREE.Matrix4();
+  for (let i = 0; i < spots.length; i++) {
+    strobes.setMatrixAt(i, _m.makeTranslation(spots[i][0], 0.45, spots[i][1]));
+    strobes.setColorAt(i, new THREE.Color(1, 0.92, 0.82));
+  }
+  strobes.instanceMatrix.needsUpdate = true;
+  strobes.frustumCulled = false;
+  world.scene.add(strobes);
+  world.statics.push(strobes);
+  world._deckStrobes = { mesh: strobes, spots, t: 0 };
 
   /* THE BARRIER, and it is four boxes rather than the planes themselves — a
    * plane has no thickness and a character controller resolves through one. */
@@ -491,6 +568,76 @@ function dressStructure(kit, paint) {
 }
 
 /**
+ * THE LIP PULSES, AND IT RUNS RATHER THAN BLINKING.
+ *
+ * A rank of markers flashing in unison is a decoration; one where the pulse
+ * travels along the rank is an edge, and the eye reads the direction of the
+ * drop off it without being told. The phase is the marker's own distance
+ * along the lip, so the wave runs the perimeter, and the whole thing is one
+ * colour attribute upload a frame on one instanced mesh.
+ */
+function stepStrobes(world, dt) {
+  const S = world?._deckStrobes;
+  if (!S) return;
+  S.t += dt;
+  const c = _strobeCol;
+  for (let i = 0; i < S.spots.length; i++) {
+    const phase = S.t * 2.2 - i * 0.42;
+    /* SHARP ON, SLOW OFF — a xenon flash, not a sine. A sine reads as a
+     * breathing lamp and every warning light in the world is an impulse. */
+    const f = phase - Math.floor(phase / (Math.PI * 2)) * (Math.PI * 2);
+    const k = f < 0.5 ? 1 : Math.max(0.14, 1 - (f - 0.5) * 0.9);
+    c.setRGB(k, k * 0.92, k * 0.8);
+    S.mesh.setColorAt(i, c);
+  }
+  if (S.mesh.instanceColor) S.mesh.instanceColor.needsUpdate = true;
+}
+const _strobeCol = new THREE.Color();
+
+/**
+ * ══ WHAT YOU CANNOT WALK THROUGH ══════════════════════════════════════════
+ *
+ * One box per structural mass, declared against the same numbers
+ * `dressStructure` builds from. It is duplication and it is the honest kind:
+ * the alternative is deriving colliders from merged geometry, which cannot
+ * distinguish a wall from the ninety fighters merged into the same mesh.
+ *
+ * The bays themselves are deliberately NOT solid to their own depth — the
+ * wall is one slab from its outer face to the mouth of the recess, so a
+ * player walks up to the racks and stops, rather than being able to stand
+ * inside an alcove with a fighter through his head.
+ */
+function deckColliders(world) {
+  const P = world.physics;
+  if (!P?.addStaticBox) return;
+  const q = new THREE.Quaternion();
+  const box = (cx, cy, cz, hx, hy, hz) =>
+    P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(hx, hy, hz), q, { friction: 0.7 });
+
+  const WALL = 56, first = DECK.aft + 14, n = 14, pitch = 11.6;
+  const zEnd = first + (n - 1) * pitch + pitch * 0.6;
+  const mid = (first - pitch * 0.6 + zEnd) / 2;
+  const half = (zEnd - (first - pitch * 0.6)) / 2;
+  /* THE TWO RACK WALLS, each one box from the mouth of the inboard recess to
+   * the mouth of the outboard one. */
+  for (const s of [-1, 1]) box(s * (WALL + 7), 34, mid, 14.5, 34, half);
+  /* THE BULKHEAD, the only interior surface, with the doorway left open —
+   * the company walks through it and so does the player. */
+  const bz = DECK.aft + 4;
+  for (const sx of [-1, 1]) box(sx * 84, 28, bz, 60, 28, 3.5);
+  box(0, 41, bz, 24, 15, 3.5);
+  /* THE SHUTTLE PADS, low enough to step onto and solid enough to stand on. */
+  for (const [px, pz, r] of [[-26, 46, 17], [30, 92, 15]]) box(px, 0.6, pz, r, 0.6, r);
+  /* THE PIT: four kerbs, so a player can walk to the edge and look in but
+   * cannot fall into a hole with no floor authored under it. */
+  for (const [dx, dz, w, d] of [[-30, -18, 26, 1.6], [-30, 30, 26, 1.6],
+    [-43, 6, 1.6, 48], [-17, 6, 1.6, 48]]) {
+    box(dx, 0.5, dz, w / 2, 0.5, d / 2);
+  }
+  world._deckSolids = 4 + 2 + 3 + 2 + 4;
+}
+
+/**
  * ══ THE LIGHT, AND THE FIRST VERSION HAD ALMOST NONE ══════════════════════
  *
  * What shipped was one directional key, four point lamps 46 m apart on a deck
@@ -572,11 +719,44 @@ export function dressHangar(world) {
   world._deckPaint = paint.build(world);
   lightDeck(world);
 
-  /* LOOSE CRATES, and they are loose on purpose: `_grippableBody` takes a
+  /**
+   * ══ AND THE ROOM IS SOLID, WHICH NONE OF IT WAS ═══════════════════════
+   *
+   * `DeckBuild.build` pushes its merged meshes onto `world.statics`, and
+   * `world.statics` is read in exactly one place in this project: the
+   * disposal loop in `World.unload`. Nothing created a collider for any of
+   * it. The player walked straight through both rack walls, a hundred and
+   * forty parked fighters, the bulkhead facing, the catwalks, the crate
+   * clusters, the shuttles and the pit, and was stopped only by the four
+   * barrier boxes out at the field.
+   *
+   * "Physics on everything, in the hangar" is a line of the brief, and a room
+   * you can walk out of the back of is not a room. The colliders are declared
+   * HERE, beside the geometry that needs them, rather than derived from the
+   * merged meshes — a merge has thrown away the part boundaries by the time
+   * anything could read them, and a single bounding box round a merged wall
+   * would be a box round the whole room.
+   */
+  deckColliders(world);
+
+  /**
+   * LOOSE CRATES, and they are loose on purpose: `_grippableBody` takes a
    * PROP-layer dynamic body, so these are what the player picks up and throws
    * at the field. They cannot go in the kit — a merged crate cannot be
-   * gripped. */
-  for (const [x, z] of [[26, -66], [30, -62], [22, -70], [-24, -66], [-19, -71], [20, -30]]) {
+   * gripped.
+   *
+   * AND THEY ARE WITHIN THROWING RANGE, WHICH THEY WERE NOT. The six sat
+   * 73–114 m from the nearest field plane against a measured hurl of 45.6 m,
+   * so "pick up crates and throw them at the shield" — a brief line, and the
+   * one bit of play the room actually had — could not be done from where any
+   * of them stood. You had to carry one seventy metres first. Three are on
+   * the apron near the lip now, inside one throw of the forward field, and
+   * three stay back by the line so there is something to shove near the men.
+   */
+  for (const [x, z] of [
+    [26, 112], [31, 108], [-28, 116],
+    [26, -66], [-24, -66], [20, -30],
+  ]) {
     makeCrate(world, new THREE.Vector3(x, 0.5, z), 0.9);
   }
 
@@ -600,13 +780,50 @@ export function dressHangar(world) {
    * an ice world outside. `dressHangar` runs at stage 6, after
    * `applyAtmosphere` at stage 4, so this is the last word.
    */
+  /* THE COMPANY FIRST, because the window's faction comes off the roll that
+   * is actually standing in the room. */
+  callTheCompany(world);
   const shown = outsideLevel(world);
-  world.engine?.sky?.configureOrbit?.({
+  /**
+   * ══ `skyDome`, NOT `sky`. ONE WORD, AND IT COST THE WHOLE VIEW ══════════
+   *
+   * `engine.sky` is three's Preetham `Sky` mesh (`Engine.js:2059`) and it has
+   * no `configureOrbit`. The orbit window lives on `engine.skyDome`
+   * (`Engine.js:2065`). The optional call swallowed the miss in silence, so
+   * `SkyDome._orbit` stayed null, `uOrbit` stayed 0, and with
+   * `atmosphere.sky === false` the dome was never even visible: beyond the
+   * field there was `bgColor` and nothing else.
+   *
+   * There has never been a planet, a starfield, a fleet, a turbolaser or a
+   * dying capital ship in this room. Seventeen bullets of `HANGAR-SPEC.md`
+   * were ticked against a shader that has never once run in the game.
+   *
+   * It survived because `tools/checks/_coop.mjs`'s stub engine has NEITHER
+   * property, so the suites took the same silent no-op path the browser did,
+   * and because the numbers in the spec were measured by `_orbitprobe.mjs`,
+   * which builds a `SkyDome` by hand and calls this method on it directly. A
+   * probe that constructs the subject cannot test the wiring to it.
+   *
+   * AND THE FACTION GOES WITH IT. `SkyDome` colours the friendly bolts blue
+   * and the hostile ones red off `spec.faction`; with none passed, a
+   * Separatist player would have watched his own fleet fire Republic-blue.
+   */
+  world.engine?.skyDome?.configureOrbit?.({
     level: shown,
     terrain: TERRAIN_PRESETS[shown?.terrain],
+    faction: world?._company?.army || world?.settings?.army || 'republic',
   });
 
-  callTheCompany(world);
+  /**
+   * ══ AND THE ORDER WHEEL OPENS, BECAUSE THERE IS SOMETHING TO OPEN IT ═══
+   *
+   * `HUD.update` gates the wheel on `world.command`, which `World` assigns
+   * below its own early return for this level — so the deck had none, the
+   * wheel could never be built, `main.orderKeys` returned on its first line,
+   * and every one of `DECK_ORDERS` was unreachable by any input the game has.
+   */
+  world.command = deckCommand(world);
+
   /* THE ROOM'S SOUND, and it is not decoration: the pressure differential at
    * the field is measured at −12.1 dB A-weighted from the spawn to the lip,
    * with the energy under 200 Hz going 90% → 99%. Walking toward the shield
@@ -730,7 +947,26 @@ export class HangarDirector {
    * body or a prop — the company walking in, halting and breathing goes
    * through here.
    */
+  /**
+   * WALKING OFF THE DECK HAS TO TAKE THE DECK'S SOUND WITH IT.
+   *
+   * `undressDeckAudio` was imported at the top of this file and called from
+   * nowhere in `src/`. `World.unload` disposes statics and lights and knows
+   * nothing about a twenty-five node hull-hum graph, and `world._deckAudio`
+   * was never nulled — so the bed kept running after the player was back on
+   * the menu, and `dressDeckAudio`'s own guard would have refused to build it
+   * again if the same `World` were ever re-dressed.
+   *
+   * `World.unload` calls `director.dispose?.()`; this is that hook.
+   */
+  dispose() {
+    try { undressDeckAudio(this.world); } catch {}
+    this.world._deckAudio = null;
+    for (const row of this.world?._company?.men || []) { try { row.shove?.dispose(); } catch {} }
+  }
+
   update(dt) {
+    stepStrobes(this.world, dt);
     stepCompany(this.world, dt);
     /* AFTER the listener has moved, which is `World.update`'s own ordering —
      * the pressure filter and every Doppler ratio are functions of where the
@@ -782,8 +1018,20 @@ export const MUSTER = {
   perRank: 12,
   /** Seconds from the order to the last man halting. */
   formUp: 8.5,
-  /** Where they come from: the bulkhead doors, off to either side of centre. */
-  door: { z: -44, spread: 7 },
+  /**
+   * WHERE THEY COME FROM: THE BULKHEAD DOORS, and until now that was a lie.
+   *
+   * This said `z: -44`. The bulkhead is at `DECK.aft` — it was -46 when this
+   * number was written and it is -104 now — so the men were materialising 60 m
+   * out in open deck, four metres from their own marks, and "filing in" was
+   * eleven bodies interpenetrating at two points and then fanning sideways.
+   * The longest walk in a full company was 23 m and almost all of it lateral.
+   *
+   * It is derived from the bulkhead now and it can never drift from it again.
+   * The doorway `dressStructure` builds is 42 m wide centred on 0, so the two
+   * files come out either side of its centre and split at the threshold.
+   */
+  door: { z: DECK.aft + 8, spread: 7 },
 };
 
 /**
@@ -792,7 +1040,23 @@ export const MUSTER = {
  * 8.5 s minus the last man's start offset that is a brisk double-time, which is
  * what a company crossing a deck to a call actually moves at.
  */
-const MARCH_SPEED = 5.4;
+const MARCH_SPEED = (() => {
+  /**
+   * AND IT IS DERIVED, WHICH THE COMMENT ABOVE HAS ALWAYS CLAIMED IT WAS.
+   *
+   * `MUSTER.formUp` is documented three separate times in this file as "the
+   * only figure anybody should ever tune", and the pace was the literal 5.4
+   * sitting under all of it: `formUp` was read by nothing and tuning it
+   * changed nothing at all.
+   *
+   * The longest walk on the deck is a corner man of the widest rank going
+   * from the doorway to his mark. At `formUp` seconds minus the last man's
+   * start offset that is the speed, and now a change to `formUp` moves it.
+   */
+  const wide = (MUSTER.perRank - 1) * MUSTER.interval / 2 + MUSTER.gap * 2;
+  const far = Math.hypot(wide - MUSTER.door.spread, DECK.line - MUSTER.door.z);
+  return far / Math.max(1, MUSTER.formUp - 1.0);
+})();
 
 /** Where man `i` of `n` stands, by squad. Pure, so a check can ask it. */
 export function markFor(i, n, squad, squads) {
@@ -827,9 +1091,36 @@ export function markFor(i, n, squad, squads) {
  */
 export function callTheCompany(world, opts = {}) {
   const rolls = companyLoadAll().filter((r) => (r?.men || []).length);
-  if (!rolls.length) return null;
   const want = opts.army || world?.settings?.army;
-  const roll = rolls.find((r) => r.army === want) || rolls[0];
+  if (!rolls.length) {
+    /**
+     * AND A PLAYER WITH NO ROLL IS TOLD WHY, rather than left on an empty
+     * floor. The button says "Inspect your men"; a fresh save has none, and
+     * what happened was that the room opened, `callTheCompany` returned null
+     * on its first line, and the player stood in a hangar with nobody in it
+     * and no explanation at all.
+     */
+    world.notify?.('NOBODY ON THE ROLL YET',
+      'Fight a run and the men who come back are the men who stand here.', 'flavour');
+    return null;
+  }
+  /**
+   * ONE ARMY, AND NEVER THE OTHER ONE AS A FALLBACK.
+   *
+   * This was `rolls.find(...) || rolls[0]`, three lines under a comment
+   * promising that two companies must never be in the same room because one
+   * wrong-faction asset kills the illusion. A Separatist player whose
+   * Separatist roll was empty got a REPUBLIC company, on a Separatist deck.
+   * If the army the player is here as has nobody on it, the honest answer is
+   * that nobody falls in — and to say so.
+   */
+  const roll = want ? rolls.find((r) => r.army === want) : rolls[0];
+  if (!roll) {
+    world.notify?.('NO ONE OF YOURS ABOARD',
+      `Nobody on the ${want} roll. The other side's company does not stand on your deck.`,
+      'flavour');
+    return null;
+  }
   const men = roll.men.slice(0, MAX_ON_DECK);
 
   /* THE SHAPE THE FIGHT WOULD DEAL THEM, not a fresh one. `squadPlan` is the
@@ -853,7 +1144,19 @@ export function callTheCompany(world, opts = {}) {
       const fig = buildFigure(rec);
       if (!fig) continue;
       const man = paradeMan(fig.rig, { designation: rec.designation || rec.name || `m${i}` });
-      /* FACING AFT — at the player, with the aperture behind them. */
+      /**
+       * FACING AFT — at the player, with the aperture behind them. And it is
+       * ONE rotation now, not two.
+       *
+       * `man.facing = Math.PI` and `fig.root.rotation.y = Math.PI` were both
+       * being applied, in different frames — the pose yaw is authored in the
+       * figure's own space — and they cancelled. Measured on a real rig: the
+       * pair composed to hips-forward = +z, which is the APERTURE. Every man
+       * on this deck has been standing with his back to the player, under a
+       * comment saying the opposite, and it only ever looked survivable
+       * because the player was also spawning in the wrong place, on the far
+       * side of them, facing the same way.
+       */
       man.facing = Math.PI;
       man.stance = 'attention';
       const mark = markFor(i, men.length, order.indexOf(k), order.length);
@@ -863,7 +1166,6 @@ export function callTheCompany(world, opts = {}) {
        * the way a real one does. */
       const side = (i % 2) ? 1 : -1;
       fig.root.position.set(side * MUSTER.door.spread, 0, MUSTER.door.z);
-      fig.root.rotation.y = Math.PI;
       world.scene.add(fig.root);
       const rowMan = {
         rec, fig, man, mark, squad: k, lead: false,
@@ -873,8 +1175,13 @@ export function callTheCompany(world, opts = {}) {
          * they are deliberately three: when he starts (the column does not
          * leave the threshold as one), how fast he walks, and how far he has to
          * go. Any one of them alone still reads as a formation animation. */
+        /* TWO DIFFERENT DRAWS, WHICH IS WHAT MADE THIS ONE. Both of these
+         * read `stagger(man) % 1` — the SAME number — so the late starter was
+         * always, exactly, the slow walker: one draw, perfectly correlated
+         * with itself, wearing two hats. A second decorrelated stream off the
+         * same seed costs a multiply and makes the claim true. */
         start: 0.10 + (i % 3) * 0.18 + (stagger(man) % 1) * 0.55,
-        pace: 0.88 + (stagger(man) % 1) * 0.26,
+        pace: 0.88 + ((stagger(man) * 7.13 + 0.37) % 1) * 0.26,
         from: fig.root.position.clone(),
         merged: null,
       };
@@ -886,6 +1193,24 @@ export function callTheCompany(world, opts = {}) {
     const row = company.men.find((r) => r.rec.designation === lead?.designation);
     if (row) row.lead = true;
   }
+  /**
+   * ══ AND THEY ARE BODIES, WHICH THEY WERE NOT ══════════════════════════
+   *
+   * `src/physics/Shovable.js` is four hundred lines written for exactly this
+   * call, tested end to end through the whole POST → DOWN → REST → RISE →
+   * BACK cycle with a real Force push — and it was imported by nothing but its
+   * own test. `makeShovable`, the function written to take the row shape this
+   * function builds, had never been called by anyone, including that test.
+   * "Physics on everything, in the hangar and on every troop" was the brief,
+   * and every man on this deck was a hologram the Force went straight through.
+   *
+   * One dynamic PROP-layer collider a man. `Player._grippableBody` and
+   * `forcePush`'s sweep over `physics.bodies` both find them the frame they
+   * exist, with no change to Player.js. They sleep at attention, so a company
+   * standing still is twenty-four retired islands and costs the solver
+   * nothing.
+   */
+  makeShovable(world, company.men);
   world._company = company;
   return company;
 }
@@ -922,6 +1247,34 @@ export function stepCompany(world, dt) {
   c.t += dt;
   for (const row of c.men) {
     const { fig, man, mark } = row;
+    /**
+     * ══ HE IS A BODY FIRST, AND A FIGURE SECOND ═══════════════════════════
+     *
+     * While the Force has hold of him — pushed, gripped, hurled, or lying
+     * there being annoyed about it — the solver owns where he is and which way
+     * up, and this loop's job is to copy that onto the drawn figure and get
+     * out of the way. Only once he is back on his feet does the walk and the
+     * parade pose resume.
+     *
+     * `up` is his own recovery blend, so the hand-off is not a pop: the rise
+     * is `Shovable`'s, the pose is `Parade`'s, and neither of them has to know
+     * about the other.
+     */
+    const sh = row.shove;
+    if (sh) {
+      sh.update(dt);
+      if (sh.state !== 'post') {
+        fig.root.position.copy(sh.at);
+        fig.root.quaternion.copy(sh.quaternion);
+        /* FLAT OUT OR GETTING UP — no parade pose over either. A man at
+         * attention while lying on his back is the uncanny version of this. */
+        if (sh.down) { row.merged?.update?.(c.t); continue; }
+        man.stance = 'ease';
+        poseParade(man, c.t + stagger(man));
+        row.merged?.update?.(c.t);
+        continue;
+      }
+    }
     const local = Math.max(0, c.t - row.start) * row.pace;
     /* HOW LONG HIS OWN WALK IS: the distance he has to cover at his own pace.
      * A fixed duration would have the far men sprint and the near men crawl. */
@@ -944,11 +1297,31 @@ export function stepCompany(world, dt) {
       const across = smoothstepIn(Math.max(0, (p - 0.5) / 0.5));
       fig.root.position.x = row.from.x + (mark.x - row.from.x) * across;
       fig.root.position.z = row.from.z + (mark.z - row.from.z) * along;
-      /* Facing where he is going, then squaring to the front at the end. */
+      /**
+       * FACING WHERE HE IS GOING, THEN SQUARING TO THE FRONT AT THE END —
+       * and this is the first version of that sentence that does anything.
+       *
+       * `turnIn` was computed and then `fig.root.rotation.y` was hard-assigned
+       * to π on the very next line, so the ripple the comment describes has
+       * never been drawn; `turnIn` fed only `man.marching`, which no file in
+       * this project reads. A company that squares up in a ripple and one that
+       * is already square are two different rooms, and this was the second
+       * one with prose about the first.
+       *
+       * He faces his own travel until the last fifth of the walk, then swings
+       * to the front. `atan2` on the velocity he actually has, not on the
+       * vector to the mark, so a man stepping sideways into his file faces
+       * sideways while he does it.
+       */
       const turnIn = smoothstepIn(Math.max(0, (p - 0.8) / 0.2));
-      fig.root.rotation.y = Math.PI;
+      const vx = (mark.x - row.from.x) * 0.75;
+      const vz = (mark.z - row.from.z) * (p < 0.66 ? 1 : 0.25);
+      const goingTo = (Math.abs(vx) + Math.abs(vz)) > 0.01 ? Math.atan2(vx, vz) : 0;
+      /* THE FRONT IS 0, NOT π. `man.facing` already carries the π that turns
+       * him to look aft at the player; a second one here is the pair that
+       * cancelled. See `callTheCompany`. */
+      fig.root.rotation.y = goingTo * (1 - turnIn);
       man.stance = 'attention';
-      man.marching = turnIn < 1;
     } else if (!row.halted) {
       row.halted = true;
       c.halted = (c.halted | 0) + 1;
@@ -959,7 +1332,7 @@ export function stepCompany(world, dt) {
        * going 0% → 91%. Eleven separate footfalls would be a stutter. */
       if (c.halted === c.men.length) bootHalt(world, { x: 0, y: 0, z: DECK.line }, c.men.length);
       fig.root.position.set(mark.x, 0, mark.z);
-      fig.root.rotation.y = Math.PI;
+      fig.root.rotation.y = 0;
       /* HE IS STANDING STILL NOW, so he can be folded. See the note above. */
       if (!row.merged) row.merged = mergeFigure(fig, { castShadow: true });
     }
@@ -990,12 +1363,96 @@ function smoothstepIn(x) { const t = Math.max(0, Math.min(1, x)); return t * t *
  * player who learns "press this, they do that" learns the real one.
  */
 export const DECK_ORDERS = {
-  fallin: { name: 'Fall in', bark: 'COMPANY — FALL IN', stance: 'attention' },
-  ease: { name: 'At ease', bark: 'STAND AT — EASE', stance: 'ease' },
-  present: { name: 'Present arms', bark: 'PRESENT — ARMS', stance: 'present' },
-  salute: { name: 'Salute', bark: 'COMPANY — SALUTE', salute: true },
-  dismissed: { name: 'Dismissed', bark: 'COMPANY — DISMISSED', dismiss: true },
+  /* `id` and `blurb` are what `OrderWheel` reads off a table — the same two
+   * fields `Command.FORMATIONS` carries — so this drops straight into the real
+   * wheel with no adapter between. */
+  fallin: {
+    id: 'fallin', name: 'Fall in', blurb: 'Square the line up and hold at attention.',
+    bark: 'COMPANY — FALL IN', stance: 'attention',
+  },
+  ease: {
+    id: 'ease', name: 'At ease', blurb: 'Feet apart, hands behind. They can breathe.',
+    bark: 'STAND AT — EASE', stance: 'ease',
+  },
+  present: {
+    id: 'present', name: 'Present arms', blurb: 'Weapons up to the vertical. The formal one.',
+    bark: 'PRESENT — ARMS', stance: 'present',
+  },
+  salute: {
+    id: 'salute', name: 'Salute', blurb: 'Each man on his own beat, inside a third of a second.',
+    bark: 'COMPANY — SALUTE', salute: true,
+  },
+  sing: {
+    id: 'sing', name: 'Sing out', blurb: 'The company gives voice. Their own, not yours.',
+    bark: 'COMPANY — SOUND OFF', sing: true,
+  },
+  dismissed: {
+    id: 'dismissed', name: 'Dismissed', blurb: 'They break off and stand easy where they are.',
+    bark: 'COMPANY — DISMISSED', dismiss: true,
+  },
 };
+
+/**
+ * ══ THE DECK'S OWN DIRECTOR, AND IT EXISTS TO OPEN THE REAL WHEEL ═════════
+ *
+ * `HUD.update` builds the order wheel if and only if `world.command` is set,
+ * and `World` assigns that below its own early return for the hangar — so on
+ * this deck `world.command` was `undefined` by construction and the wheel
+ * could never open. `DECK_ORDERS` and `deckOrder` had zero callers anywhere in
+ * the repository, which quietly killed four spec bullets and left two authored
+ * poses in `Parade.js` — `atEase` and `presentArms`, a hundred lines between
+ * them — as code no player could ever reach.
+ *
+ * This is the smallest object the wheel and `main.orderKeys` actually read. It
+ * is deliberately NOT a `CommandDirector`: that class carries a squad model, a
+ * refusal system, runners, morale and a fight to hang them on, and none of
+ * those things exist in a room where nothing is shooting at anybody.
+ *
+ * ORDER_REACH IS HONOURED, and it is the point of putting the interface here.
+ * `HANGAR-SPEC.md`'s own line: "walk away from the line and they cannot hear
+ * you." It is the fight's own constant, imported from the fight's own file, so
+ * the distance a player learns on the deck is the distance he has in a battle.
+ */
+export function deckCommand(world) {
+  return {
+    /**
+     * THE ONE FIELD THAT KEEPS THIS FROM BEING A CATASTROPHE.
+     *
+     * `main.bank()` is gated on `world.command` being truthy and nothing else,
+     * and its rule for a man who was deployed and is not on an extraction
+     * manifest is that he is dead. Setting `world.command` here to open the
+     * order wheel therefore put the entire permadeath roll one forgotten exit
+     * away from being struck off on every visit to the room whose whole
+     * purpose is looking after it. `bank` reads this and returns.
+     */
+    deck: true,
+    orders: DECK_ORDERS,
+    formation: 'fallin',
+    selectedSquad: null,
+    commander: null,
+    squadsOf: () => [],
+    readout: () => ({ force: [] }),
+    order(id) {
+      const p = world.player;
+      const c = world._company;
+      if (!c) return false;
+      /* FROM THE MAN, NOT FROM THE MIDDLE OF THE LINE. The nearest man is who
+       * has to hear it; a company thirty metres wide is not one listener. */
+      let best = Infinity;
+      for (const row of c.men) {
+        const d = Math.hypot((row.mark.x) - (p?.position?.x ?? 0),
+          (row.mark.z) - (p?.position?.z ?? 0));
+        if (d < best) best = d;
+      }
+      if (p && best > ORDER_REACH) {
+        world.notify?.('TOO FAR', `${Math.round(best)} m — they cannot hear you from here`, 'alarm');
+        return false;
+      }
+      this.formation = id;
+      return deckOrder(world, id);
+    },
+  };
+}
 
 /** Give one. Returns false for an id nobody answers to. */
 export function deckOrder(world, id) {
@@ -1009,10 +1466,67 @@ export function deckOrder(world, id) {
      * second, which is what a drilled company actually looks like. */
     for (const row of c.men) salute(row.man, c.t + (stagger(row.man) % 1) * 0.34);
   }
-  if (O.dismiss) c.dismissed = c.t;
+  /**
+   * DISMISSED BREAKS THE LINE, which is the half of that order the first
+   * version did not do: `c.dismissed = c.t` was written and read by nothing,
+   * so "dismissed" was a caption over a company still standing rigidly at
+   * attention. Each man gets a loose spot of his own near where he stood and
+   * walks to it — the same walk `stepCompany` already drives, so this is two
+   * fields and no new machinery.
+   */
+  if (O.dismiss) {
+    c.dismissed = c.t;
+    c.stance = 'ease';
+    for (const row of c.men) {
+      const r = (stagger(row.man) % 1);
+      const r2 = ((stagger(row.man) * 3.7 + 0.11) % 1);
+      row.from = row.fig.root.position.clone();
+      row.mark = {
+        x: row.mark.x + (r - 0.5) * 14,
+        z: row.mark.z + (r2 - 0.5) * 12,
+      };
+      row.halted = false;
+      /* THE CLOCK RESTARTS BELOW, so his start offset is measured from zero. */
+      row.start = r * 0.9;
+      row.shove.retarget(row.mark);
+    }
+    c.halted = 0;
+    c.t = 0;
+  }
+  /* FALLING IN AFTER A DISMISSAL PUTS THEM BACK, which is the other half of
+   * the same thing: the marks were overwritten, so they have to be dealt
+   * again from the same pure function that dealt them. */
+  if (id === 'fallin' && c.dismissed) {
+    c.dismissed = 0;
+    const n = c.men.length;
+    const squads = new Set(c.men.map((r) => r.squad)).size;
+    for (let k = 0; k < n; k++) {
+      const row = c.men[k];
+      row.mark = markFor(k, n, row.squad, squads);
+      row.from = row.fig.root.position.clone();
+      row.halted = false;
+      row.start = 0;
+      row.shove.retarget(row.mark);
+    }
+    c.halted = 0;
+    c.t = 0;
+  }
+  if (O.sing) {
+    /* THEIR OWN VOICE AND NOT YOURS. `DeckAudio` synthesises it with no words
+     * in the source, the same rule the PA is held to, and it is picked off the
+     * roll's army so a Separatist company never sounds Republic. */
+    c.singing = 1;
+    companySing?.(world, c.army, c.men.length);
+  }
   world.notify?.(O.bark, `${c.men.length} ${c.men.length === 1 ? 'man' : 'men'}`);
   return true;
 }
+
+/* THE SINGING IS `DeckAudio`'s TO MAKE and it may not exist yet — that file is
+ * being written beside this one. A missing voice must not take the order down
+ * with it, so the call is resolved late and guarded. */
+let companySing = null;
+export function setCompanySing(fn) { companySing = fn; }
 
 
 /**
