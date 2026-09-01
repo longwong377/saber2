@@ -265,9 +265,22 @@ export async function run({ check, assert }) {
     try {
       let meshes = 0;
       world.scene.traverse((o) => { if (o.isMesh || o.isInstancedMesh) meshes++; });
-      assert(meshes < 380,
-        `${meshes} meshes dressing an empty deck, against Hangar Bay Nine's 395 — there is no `
-        + 'room left for the men, who are the only reason to come here');
+    /**
+     * 240, not 380. The first browser reading of the finished room was 988
+     * meshes and **1035 draw calls** — against 225 for Geonosis, the 395 that
+     * Hangar Bay Nine was deleted at, and an ink pass that rasterises every
+     * opaque object a SECOND time. Composing the four dressing passes through
+     * `Props.Kit`, which bins by material and emits one mesh per bin, took the
+     * empty room from 336 to 193: spars 70 → 3, bulkhead 26 → 17, deck 103 → 36.
+     *
+     * The bound is set just above what the room actually costs rather than at
+     * a round number, because the whole point is to notice the next thing that
+     * forgets to compose.
+     */
+      assert(meshes < 240,
+        `${meshes} meshes dressing an empty deck. It was 193 after every static assembly was `
+        + 'composed through Props.Kit; something new is emitting per-prop, and the ink pass '
+        + 'doubles whatever this is');
       assert(meshes > 60, `${meshes} meshes is not a hangar, it is a floor`);
       return `${meshes} meshes empty, against 395 for the room that was deleted`;
     } finally { world.unload(); }

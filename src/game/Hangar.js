@@ -54,7 +54,7 @@ import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
 import { squadPlan, leadOf, SQUAD } from './Command.js';
-import { propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
+import { Kit, propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
   addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
   makeConsole, makeCrate, addHullSection, addFloorSlab } from '../world/Props.js';
 
@@ -167,6 +167,24 @@ function fieldPlane(world, mat, centre, size, quat) {
  */
 function addSpars(world, M) {
   const steel = M.darkSteel || M.metal;
+  /**
+   * ── FOURTEEN RIBS, ONE DRAW CALL ─────────────────────────────────────
+   *
+   * MEASURED, and it is why this composes: fourteen `addPipeRun` calls emitted
+   * on their own came to **70 meshes** — more than the bulkhead and the whole
+   * port-side job put together, for structure that is deliberately background.
+   * The first real reading of the finished room in a browser was 988 meshes and
+   * **1035 draw calls**, against 225 for Geonosis and the 395 that Hangar Bay
+   * Nine was deleted at, and the ink pass rasterises every opaque object a
+   * second time.
+   *
+   * `Kit` is the answer and it is the file's own: every maker takes an
+   * `opts.kit` and bins its geometry by MATERIAL instead of emitting, so
+   * everything here that is the same steel comes out as one mesh. The ribs
+   * never move, never break and are never touched again — there is nothing a
+   * separate object would buy them.
+   */
+  const kit = new Kit(4242);
   for (let i = 0; i < 7; i++) {
     const z = -30 + i * 15;
     for (const sx of [-1, 1]) {
@@ -181,15 +199,21 @@ function addSpars(world, M) {
           Math.sin(t * Math.PI * 0.5) * 62,
           z + Math.sin(t * Math.PI) * 1.6));
       }
-      addPipeRun(world, pts, { radius: 0.55, mat: steel, count: 1, supports: false });
+      addPipeRun(world, pts, { radius: 0.55, mat: steel, count: 1, supports: false, kit });
       /* One tie back to the deck at the springing, so the rib has a foot
        * rather than growing out of the floor. */
       addPipeRun(world, [
         new THREE.Vector3(sx * 62, 0.4, z),
         new THREE.Vector3(sx * 54, 6.5, z),
-      ], { radius: 0.30, mat: steel, count: 1, supports: false });
+      ], { radius: 0.30, mat: steel, count: 1, supports: false, kit });
     }
   }
+  /* NO COLLIDERS AND NO SHADOWS. A rib springs from the deck edge at 62 m and
+   * arcs away over the void; nothing can reach one, and a shadow cast from
+   * sixty metres up by a 0.55 m tube is a smear the cascades pay three passes
+   * for. Both are the same argument: this is a silhouette against the sky. */
+  kit.emit(world, new THREE.Vector3(0, 0, 0), new THREE.Quaternion(),
+    { collide: false, castShadow: false });
 }
 
 /**
@@ -206,21 +230,24 @@ function addSpars(world, M) {
 function dressBulkhead(world, M) {
   const steel = M.darkSteel || M.metal;
   const z = DECK.aft + 2.2;
+  /* ONE WALL, ONE MESH PER MATERIAL — see `addSpars` for the measurement that
+   * made every static assembly in this room compose. The doors, the jamb and
+   * the console rank are the only things here anybody can touch, and the doors
+   * are what a player walks into, so the SLABS carry their colliders and the
+   * cable runs do not. */
+  const kit = new Kit(1717);
 
   /* THE DOORS. Two leaves and a lit threshold, centred, because the deck needs
    * one place a man could plausibly have walked in from — the troop line files
    * in through here and it has to come from somewhere. */
-  addWall(world, new THREE.Vector3(0, 5.5, z + 0.3), new THREE.Vector3(15, 11, 0.9),
-    new THREE.Quaternion(), steel);
-  for (const sx of [-1, 1]) {
-    addWall(world, new THREE.Vector3(sx * 4.4, 4.6, z), new THREE.Vector3(7.6, 9.2, 0.6),
-      new THREE.Quaternion(), steel);
-  }
-  const jamb = new THREE.Mesh(
-    new THREE.BoxGeometry(16.4, 0.34, 0.34),
-    new THREE.MeshStandardMaterial({ color: 0x14181f, emissive: 0xff9a20, emissiveIntensity: 2.4, roughness: 0.5 }));
-  jamb.position.set(0, 9.5, z - 0.5);
-  world.scene.add(jamb); world.statics.push(jamb);
+  kit.slab(steel, 15, 11, 0.9, 0, 5.5, z + 0.3);
+  for (const sx of [-1, 1]) kit.slab(steel, 7.6, 9.2, 0.6, sx * 4.4, 4.6, z);
+  /* The lit threshold is its own material, so it is its own bin and its own
+   * draw call whatever else happens — which is correct: it is the only warm
+   * emissive on this wall and the eye goes to it. */
+  const lit = new THREE.MeshStandardMaterial({
+    color: 0x14181f, emissive: 0xff9a20, emissiveIntensity: 2.4, roughness: 0.5 });
+  kit.put(new THREE.BoxGeometry(16.4, 0.34, 0.34), lit, 0, 9.5, z - 0.5);
 
   /* THE WATCH. A rank of consoles along the wall with somebody's job on them,
    * lit from below — the only warm light in a room whose every other source is
@@ -230,10 +257,11 @@ function dressBulkhead(world, M) {
     makeConsole(world, new THREE.Vector3(i * 7.5, 0, z + 1.6));
   }
   for (const sx of [-1, 1]) {
-    addLamp(world, new THREE.Vector3(sx * 26, 0, z + 2.0), { height: 9, reach: 3.2 });
+    addLamp(world, new THREE.Vector3(sx * 26, 0, z + 2.0), { height: 9, reach: 3.2, kit });
     addCableRun(world, new THREE.Vector3(sx * 30, 8.2, z + 0.4),
-      new THREE.Vector3(sx * 12, 7.4, z + 0.4), { sag: 0.5 });
+      new THREE.Vector3(sx * 12, 7.4, z + 0.4), { sag: 0.5, kit });
   }
+  kit.emit(world, new THREE.Vector3(0, 0, 0));
 }
 
 /**
@@ -297,32 +325,40 @@ function addField(world) {
  */
 function dressDeck(world, M) {
   const steel = M.darkSteel || M.metal;
+  /**
+   * ── EVERYTHING STATIC IN ONE KIT, and the exceptions are named ─────────
+   *
+   * See `addSpars` for the measurement. What stays out of the kit is what has
+   * to keep its own identity: the loose crates, because a merged crate cannot
+   * be gripped and thrown, which is half the reason to be in this room at all.
+   */
+  const kit = new Kit(909);
 
   /* ── PORT: the job. A gantry over the launch trench with a hull section
    * under it on jacks, scaffolding up its flank, and the tools left where a
    * shift left them. One ship being worked on says more about a war than six
    * parked ones, and it is the only honest thing this engine can do with a
    * hull: nothing here has a parked pose or a bay that opens. */
-  addGantry(world, new THREE.Vector3(-34, 0, -6), { length: 34, height: 11, width: 4.2, bays: 5 });
-  addHullSection(world, new THREE.Vector3(-34, 3.4, -6), { length: 26, radius: 5.2 });
-  addScaffold(world, new THREE.Vector3(-27, 0, -14), { lifts: 3, width: 3.2 });
-  addScaffold(world, new THREE.Vector3(-27, 0, 4), { lifts: 2, width: 3.2 });
-  addMachine(world, new THREE.Vector3(-24, 0, -22));
-  addTank(world, new THREE.Vector3(-46, 0, -24));
-  addTank(world, new THREE.Vector3(-46, 0, -18));
+  addGantry(world, new THREE.Vector3(-34, 0, -6), { length: 34, height: 11, width: 4.2, bays: 5, kit });
+  addHullSection(world, new THREE.Vector3(-34, 3.4, -6), { length: 26, radius: 5.2, kit });
+  addScaffold(world, new THREE.Vector3(-27, 0, -14), { lifts: 3, width: 3.2, kit });
+  addScaffold(world, new THREE.Vector3(-27, 0, 4), { lifts: 2, width: 3.2, kit });
+  addMachine(world, new THREE.Vector3(-24, 0, -22), { kit });
+  addTank(world, new THREE.Vector3(-46, 0, -24), { kit });
+  addTank(world, new THREE.Vector3(-46, 0, -18), { kit });
   addPipeRun(world, [
     new THREE.Vector3(-52, 1.1, -30), new THREE.Vector3(-52, 1.1, 6),
     new THREE.Vector3(-44, 1.1, 14),
-  ], { radius: 0.26, mat: steel, count: 3, spread: 0.7, valves: true });
+  ], { radius: 0.26, mat: steel, count: 3, spread: 0.7, valves: true, kit });
 
   /* ── STARBOARD: the stores. Racks, crates, a loading slab and the deck
    * office. Stacked to different heights on purpose — a level line of crates
    * is a wall, and a wall is the thing this room is not allowed to grow. */
-  addFloorSlab(world, new THREE.Vector3(36, 0, -4), new THREE.Vector2(22, 30));
-  addCrateStack(world, new THREE.Vector3(30, 0, -20), { tiers: 3, columns: 3 });
-  addCrateStack(world, new THREE.Vector3(38, 0, -10), { tiers: 2, columns: 2 });
-  addCrateStack(world, new THREE.Vector3(33, 0, 6), { tiers: 4, columns: 2 });
-  addMachine(world, new THREE.Vector3(44, 0, -26));
+  addFloorSlab(world, new THREE.Vector3(36, 0, -4), new THREE.Vector2(22, 30), { kit });
+  addCrateStack(world, new THREE.Vector3(30, 0, -20), { tiers: 3, columns: 3, kit });
+  addCrateStack(world, new THREE.Vector3(38, 0, -10), { tiers: 2, columns: 2, kit });
+  addCrateStack(world, new THREE.Vector3(33, 0, 6), { tiers: 4, columns: 2, kit });
+  addMachine(world, new THREE.Vector3(44, 0, -26), { kit });
   makeConsole(world, new THREE.Vector3(26, 0, -26));
 
   /* LOOSE CRATES, and they are loose on purpose: `_grippableBody` takes a
@@ -337,11 +373,12 @@ function dressDeck(world, M) {
    * does not trust its own edge. They are stanchions rather than lamps so they
    * read as deck furniture at knee height and never light the room. */
   for (let i = -3; i <= 3; i++) {
-    addStanchion(world, new THREE.Vector3(i * 18, 0, DECK.lip - 2.5));
+    addStanchion(world, new THREE.Vector3(i * 18, 0, DECK.lip - 2.5), { kit });
     if (Math.abs(i) === 3) continue;
-    addStanchion(world, new THREE.Vector3(-DECK.lip + 2.5, 0, i * 18));
-    addStanchion(world, new THREE.Vector3(DECK.lip - 2.5, 0, i * 18));
+    addStanchion(world, new THREE.Vector3(-DECK.lip + 2.5, 0, i * 18), { kit });
+    addStanchion(world, new THREE.Vector3(DECK.lip - 2.5, 0, i * 18), { kit });
   }
+  kit.emit(world, new THREE.Vector3(0, 0, 0));
 }
 
 /**
@@ -370,6 +407,14 @@ function lightDeck(world) {
     world.scene.add(l); world.levelLights.push(l);
   }
 }
+
+/**
+ * THE FOUR PASSES, NAMED — so a cost measurement can say which one is
+ * expensive. A traverse of the finished room buckets every prop into one
+ * anonymous `Mesh` and tells you nothing you can act on; building them one at a
+ * time on a bare scene is the only reading that names a caller.
+ */
+export const __deckParts = { field: addField, spars: addSpars, bulkhead: dressBulkhead, deck: dressDeck };
 
 /** The one dress entry the level record names. */
 export function dressHangar(world) {
