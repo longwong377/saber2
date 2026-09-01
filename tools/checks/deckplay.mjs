@@ -29,7 +29,7 @@ import { SHOVE, STATE, Shovable } from '../../src/physics/Shovable.js';
 /**
  * THE ALLOW-LIST, WRITTEN ONCE. `Player._readInput`'s deck branch reads these
  * five Force verbs (plus `hurl`, which is the release for two of them, `view`
- * and `dash`); `OFF_THE_DECK` in that file carries the eight refusals and their
+ * and `dash`); `OFF_THE_DECK` in that file carries the seven refusals and their
  * reasons. Here the complement is DERIVED off `POWER_COST` rather than typed
  * out, so a thirteenth power added to the game lands on the refused side and
  * has to be argued onto the deck rather than arriving on it silently.
@@ -157,15 +157,23 @@ export async function run({ check, assert, THREE }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
-  /*  The blade, and the eight refusals                                 */
+  /*  The blade, and the seven refusals                                 */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('deck: the blade goes down and there is no key that lights it', async () => {
+  check('deck: the blade comes out down, the ignite key lights it, and a stroke puts a man on the deck', async () => {
     /**
      * `World.spawnPlayer` ends with an unconditional `p.saber.ignite()` — it
      * has no notion of a destination that is not a fight — so the deck's own
-     * branch is the first frame downstream of it that can answer. One frame is
-     * 0.11 of an ignition ramp and it is retracted at 8.5/s from there.
+     * branch is the first frame downstream of it that can answer, and it
+     * answers ONCE: the blade goes down as he walks out of the lift, and from
+     * then on it is his. "You can't take out your lightsaber in the hangar
+     * and damage anything" was on the list of what was wrong with the room.
+     *
+     * What it damages: every body on a `Shovable` is offered to the blade
+     * solver by `Hangar.deckBladeTargets` as a prop whose shatter is the
+     * shove — driven here through the target the solver would be handed,
+     * because a check that has to land a real stroke is a test of the
+     * camera as well.
      */
     const { world } = await deck();
     try {
@@ -175,17 +183,40 @@ export async function run({ check, assert, THREE }) {
       assert(!p.saber.lit, 'the blade is still lit on the deck after a frame');
       step(world, 0.5, idleInput());
       assert(p.saber.ignition < 0.02, `the blade is ${p.saber.ignition.toFixed(2)} out after half a second`);
-      /* AND THE IGNITE KEY DOES NOT ANSWER IT. Held for a second. */
-      const ignite = press(idleInput(), 'ignite');
-      step(world, 1, ignite);
-      assert(!p.saber.lit, 'the ignite key lit a blade in a room full of your own men');
-      assert(!p.saberDown,
-        'the deck disarmed the player — the hilt stays in the hand, `saberDown` is a different sentence');
-      return `blade out in ${(1 / 60).toFixed(3)} s, ignite refused for 60 frames`;
+      /* THE KEY ANSWERS. One press: lit; one more: out. */
+      world.update(1 / 60, press(idleInput(), 'ignite'));
+      assert(p.saber.lit, 'the ignite key did not light the blade on the deck');
+      assert(!p.saberDown, 'the deck disarmed the player — the hilt stays in the hand');
+      step(world, 0.6, idleInput());
+      assert(p.saber.ignition > 0.9, `lit, but only ${p.saber.ignition.toFixed(2)} out after 0.6 s — something is retracting it`);
+      world.update(1 / 60, press(idleInput(), 'ignite'));
+      step(world, 0.5, idleInput());
+      assert(!p.saber.lit, 'the second press did not put the blade away');
+      /* AND A STROKE MEETS A MAN. Stand beside the first crowd man; the target
+       * list within reach of the blade carries him; his shatter puts him down. */
+      const c = world._company;
+      const row = c.crowd.find((r) => r.shove && !r.shove.down) || c.men.find((r) => r.shove && !r.shove.down);
+      assert(row, 'nobody on the deck stands on a body the blade could meet');
+      p.position.set(row.pos.x + 1.0, row.pos.y, row.pos.z);
+      p.velocity?.set?.(0, 0, 0);
+      p._syncBody?.();
+      const targets = world.deckBladeTargets(p.position);
+      const t = targets.find((x) => x.capsules[0].p0.distanceTo(row.shove.at) < 0.5);
+      assert(t, `${targets.length} targets within reach and none of them is the man beside you`);
+      assert(t.capsules[0].p1.y - t.capsules[0].p0.y > 1.2, 'the target capsule is not a man\'s height');
+      assert(t.prop.cut() === null, 'the deck lets the blade sever your own man');
+      t.prop.shatter(new THREE.Vector3(1, 0, 0), t.capsules[0].p0);
+      step(world, 0.5, idleInput());
+      assert(row.shove.down, `hit with the blade, the man is ${row.shove.state}, not down`);
+      /* Far away, the list is empty: the solver is not handed the whole deck. */
+      p.position.set(0, 0, DECK.line + 20); p._syncBody?.();
+      const far = world.deckBladeTargets(p.position).length;
+      assert(far <= 6, `${far} bodies offered to the blade from the middle of an empty deck`);
+      return `down in one frame, lit on the key, ${targets.length} within reach, a stroke puts a man down`;
     } finally { world.unload(); }
   });
 
-  check('deck: the eight powers it refuses refuse OUT LOUD, and none of them fires', async () => {
+  check('deck: the seven powers it refuses refuse OUT LOUD, and none of them fires', async () => {
     /**
      * A power that appears to do nothing reads as a broken button, and the HUD
      * wheel advertises all twelve whatever room the player is standing in. So
@@ -193,7 +224,7 @@ export async function run({ check, assert, THREE }) {
      * up and plays the refusal blip — and, separately, has to not have run.
      *
      * The second half is the one worth driving rather than reading: the pool is
-     * the witness. Eight powers priced from 14 to 40 Force, and if a single one
+     * the witness. Seven powers priced from 14 to 40 Force, and if a single one
      * of them reached `_spend` the bar would move.
      */
     const { world } = await deck();
@@ -202,12 +233,12 @@ export async function run({ check, assert, THREE }) {
       step(world, 0.2, idleInput());
       const notices = [];
       world.notify = (title, why) => notices.push([title, why]);
-      const denied = ['ignite', 'throw', 'lightning', 'compel', 'rend', 'sense', 'heal', 'shield'];
+      const denied = ['throw', 'lightning', 'compel', 'rend', 'sense', 'heal', 'shield'];
       const force0 = p.force;
       for (const key of denied) {
         world.update(1 / 60, press(idleInput(), key));
         /* `_refuse` gates one notice per name per 0.7 s off `world.time`, so
-         * the clock has to move between keys or seven of the eight are eaten. */
+         * the clock has to move between keys or six of the seven are eaten. */
         world.time += 1;
       }
       const said = new Set(notices.map(([t]) => t.toLowerCase()));
@@ -216,7 +247,7 @@ export async function run({ check, assert, THREE }) {
         `${silent.length} of the deck's refusals are SILENT (${silent.join(', ')}) — a key that `
         + 'does nothing at all reads as the game being broken, which is the defect `_refuse` exists for');
       assert(Math.abs(p.force - force0) < 0.01,
-        `the pool moved ${(force0 - p.force).toFixed(1)} Force — one of the eight actually ran`);
+        `the pool moved ${(force0 - p.force).toFixed(1)} Force — one of the seven actually ran`);
       assert(!p.senseActive && !p.shield.up && !p.healing && !p.saberThrown && !p.channel,
         'a refused power left state behind: '
         + `sense ${p.senseActive} shield ${p.shield.up} heal ${!!p.healing} throw ${p.saberThrown}`);
@@ -266,7 +297,7 @@ export async function run({ check, assert, THREE }) {
         `${quiet.join(', ')} never fired with the key held — the allow-list has stopped letting things through`);
       assert(polled.length > 30, `only ${polled.length} actions were polled in a second`);
       return `${new Set(polled).size} distinct actions held for a second: `
-        + `${fired.join(', ')} fired, 0 of the 8 refused ones did`;
+        + `${fired.join(', ')} fired, 0 of the 7 refused ones did`;
     } finally { world.unload(); }
   });
 

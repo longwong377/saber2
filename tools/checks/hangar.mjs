@@ -9,15 +9,19 @@
  * measured 395 draw calls for an EMPTY room and read as a box anyway.
  *
  * Every one of those levels passed its suites. So the first thing this file has
- * to do is hold the shape, not the dressing — and the shape is checkable:
+ * to do is hold the shape, not the dressing — and the shape is checkable. It
+ * held the opposite shape for a while (one wall, no ceiling, ever) and the
+ * player's verdict on that room was that its edges were "a janky mess" and it
+ * "looks weird without a ceiling". What it holds now is his room:
  *
- *   ONE WALL.        Exactly one bearing out of the room is closed by ground.
- *                    A second is the Invisible Hand again.
- *   NO CEILING.      No geometry over the deck below the field, ever. This is
- *                    the one assertion in the file that must never be relaxed.
- *   IT ENDS.         The heightfield is 128 m and the deck's edge is the
- *                    heightfield's edge, so the ship runs out under your feet
- *                    rather than stopping at a wall or a fog bank.
+ *   FIVE SIDES.      Two full-length walls, the bulkhead and a lid close it;
+ *                    thirteen of sixteen bearings out of it are stopped.
+ *   ONE OPENING.     The three forward bearings reach space, and the planet
+ *                    stands in them.
+ *   A LID, NOT A BOX. The ceiling is at DECK.roof, above the walls, and a
+ *                    good share of the deck is under structure hung well
+ *                    below it — girders, rails, cables, fighters.
+ *   IT IS BIG.       200–400 m, and the lip is the heightfield's edge.
  *   THE VIEW IS THE ROOM. The aperture subtends more of the frame than the
  *                    interior does, from where the player is put down.
  *
@@ -38,11 +42,33 @@ import { DECK, HANGAR_LEVEL, HangarDirector } from '../../src/game/Hangar.js';
 /** Boot the deck through the same door the game uses. */
 async function deck() {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
-  const { world } = await bootWorld({
+  const { world, engine } = await bootWorld({
     level: 'hangar',
     settings: { mode: 'hangar', level: 'hangar', allies: 0 },
   });
-  return { world, input: idleInput() };
+  return { world, engine, input: idleInput() };
+}
+
+/**
+ * Rays against everything drawn in the room except the field and its rim.
+ * The field is a plane the player looks THROUGH; a ray that stopped at it
+ * would call the opening closed.
+ */
+function caster(THREE, world) {
+  const ray = new THREE.Raycaster();
+  const solid = [];
+  world.scene.traverse((o) => {
+    if (!o.isMesh && !o.isInstancedMesh) return;
+    if (o.material?.userData?.saberNoInk) return;
+    if (o.name === 'field-rim') return;
+    solid.push(o);
+  });
+  const cast = (from, dir, far) => {
+    ray.set(from, dir.clone().normalize());
+    ray.far = far;
+    return ray.intersectObjects(solid, false)[0] || null;
+  };
+  return { solid, cast };
 }
 
 export async function run({ check, assert }) {
@@ -53,169 +79,159 @@ export async function run({ check, assert }) {
   /*  The shape                                                         */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('hangar: one wall, and it is behind you', () => {
+  check('hangar: a room closed on five sides and open on the sixth, which is forward', async () => {
     /**
-     * SIXTEEN BEARINGS OUT OF THE ROOM, asking each one whether the GROUND
-     * closes it. `descent.mjs` walks a level this way to prove a room is
-     * bounded; this walks it to prove the opposite about fifteen of them.
+     * SIXTEEN BEARINGS OUT OF THE ROOM, by ray, from thirty metres over the
+     * middle of the deck. This file used to prove the OPPOSITE — one wall,
+     * fifteen open bearings, "no ceiling, ever" — and the player's answer to
+     * that room was "the hangar was too big outside of the side walls, you
+     * were able to go behind them and it's just a janky mess on the edges,
+     * ships were going through the side walls, give the hangar a solid
+     * ceiling". So the shape this holds is the one he asked for: the two
+     * rack walls run the full length, the bulkhead closes the aft, the lid
+     * closes the top, and the ONE way out is the aperture forward — which is
+     * still the whole view, and still has to be open to the planet.
      *
-     * The bulkhead is the wall and it is aft. Everything else has to run out
-     * flat to the lip, because the moment a second bearing rises the deck has
-     * a corner in it, and a room with corners is the shape that was deleted.
-     */
-    const P = TERRAIN_PRESETS.hangardeck;
-    assert(P, 'there is no hangardeck ground');
-    const R = P.scale / 2;
-    const walled = [];
-    for (let i = 0; i < 16; i++) {
-      const a = (i / 16) * Math.PI * 2;
-      const dx = Math.sin(a), dz = Math.cos(a);
-      let high = 0;
-      for (let r = 6; r <= R - 4; r += 2) high = Math.max(high, P.height(dx * r, dz * r));
-      if (high > 6) walled.push(`${Math.round(a * 180 / Math.PI)}° rises ${high.toFixed(0)} m`);
-    }
-    assert(walled.length >= 1, 'no bearing out of the deck is closed — there is no ship here at all');
-    assert(walled.length <= 5,
-      `${walled.length} of 16 bearings out of the deck are closed by ground (${walled.join(', ')}) `
-      + '— that is a room with corners, which is the shape Levels.js has deleted three times');
-    /* AND IT IS AFT. A wall in front of the player is a wall across the view. */
-    for (let r = 6; r <= R - 4; r += 2) {
-      assert(P.height(0, r) < 3,
-        `the ground rises ${P.height(0, r).toFixed(0)} m ${r} m FORWARD of the player — the one `
-        + 'wall is supposed to be behind him and the aperture is supposed to be the whole view');
-    }
-    /* OFF THE PRESET'S OWN SCALE, not a literal: the room went from 128 m to
-     * 288 and this said 'the bulkhead is not a bulkhead' about a bulkhead that
-     * had simply moved. A check that has to be edited every time the room is
-     * resized is a check that will one day be edited to pass. */
-    const aftFace = -P.scale / 2 + 8;
-    assert(P.height(0, aftFace) > 25,
-      `the ground ${aftFace.toFixed(0)} m aft rises ${P.height(0, aftFace).toFixed(0)} m — there is `
-      + 'no bulkhead behind the player');
-    return `${walled.length} of 16 bearings closed, all aft · ${P.height(0, aftFace).toFixed(0)} m of bulkhead`;
-  });
-
-  check('hangar: the deck ends, rather than stopping at something', () => {
-    /**
-     * THE HEIGHTFIELD'S EDGE IS THE DECK'S EDGE, which is the whole reason
-     * this room does not need a wall it is not meant to look at. Every deleted
-     * interior was doing something at its boundary — a wall, a fog bank, a
-     * doorway to nowhere — and a player who walks toward the edge of this one
-     * simply runs out of ship.
-     *
-     * 128 m and not 300: `TERRAIN_PRESETS.hangar` and `.warship` are both far
-     * larger, and a larger sheet is a sheet that has to be ENDED.
-     */
-    const P = TERRAIN_PRESETS.hangardeck;
-    /**
-     * IT IS BIG, AND BIG IS THE BRIEF. This asserted 160 m when the room was
-     * 128, on the reasoning that a larger sheet has to be CLOSED by something.
-     * That reasoning was right and the conclusion was wrong: the references are
-     * enormous — in `hangar 7.jpg` the racked fighters recede until they are
-     * specks — and the brief says "scale must be immense". What closes this one
-     * is the rack walls for the aft two-thirds and the field for the rest, so
-     * the sheet never has to be ended by a fog bank.
-     *
-     * The bound that still matters is the OTHER one: a deck so large the player
-     * cannot cross it is a corridor with nothing at the end.
-     */
-    assert(P.scale >= 200,
-      `the deck is only ${P.scale} m across — the brief is "scale must be immense" and every `
-      + 'reference is enormous; 128 m read as a shed');
-    assert(P.scale <= 400,
-      `the deck is ${P.scale} m across — past about 400 a player cannot walk from the bulkhead to `
-      + 'the lip in under a minute, and a room nobody crosses is a corridor');
-    assert(P.flat === true, 'the deck is not flat');
-    assert(DECK.lip === P.scale / 2,
-      `DECK.lip is ${DECK.lip} and the ground ends at ${P.scale / 2} — the strobes, the field and `
-      + 'the barrier are all placed off DECK.lip and would stand somewhere the deck is not');
-    return `${P.scale} m of deck, lip at ${DECK.lip} m, and nothing past it`;
-  });
-
-  check('hangar: there is no ceiling, and there never can be', async () => {
-    /**
-     * THE ONE ASSERTION IN THIS FILE THAT MUST NEVER BE RELAXED.
-     *
-     * "Explicitly do not build: no ceiling, ever." It is also the single thing
-     * that decides whether this reads as a deck or as a room: the spars arc up
-     * and out of frame and the eye completes an enclosure it is never shown,
-     * and one horizontal plane over the deck undoes all of it.
-     *
-     * Driven on the real scene rather than read off the source: every mesh in
-     * the world is asked for its bounding box, and anything WIDE and FLAT
-     * sitting over the deck below the field is a ceiling whatever it was called
-     * when it was added.
+     * Rays and not bounding boxes, because the room is merged into a mesh
+     * per material and a box cannot say what is in front of what.
      */
     const THREE = await import('three');
     const { world } = await deck();
     try {
-      /**
-       * ══ RAYS, NOT BOUNDING BOXES ═══════════════════════════════════════
-       *
-       * This walked every mesh's bounding box looking for something broad and
-       * flat overhead, and the moment the room's structure was merged into one
-       * mesh per material — which is how it affords twenty rack bays — that
-       * mesh's box became the whole room and the check reported a 164×212 m
-       * ceiling at 47 m. There was no ceiling. A bounding box cannot see a
-       * shape, only its extent, and every correct answer here is about shape.
-       *
-       * So it fires rays STRAIGHT UP from a grid over the deck and asks what
-       * they hit. That is the question — "is there anything over my head" — and
-       * it cannot be fooled by a merge, by an instanced mesh, or by geometry
-       * that happens to span the room while enclosing none of it.
-       */
-      const ray = new THREE.Raycaster();
-      const up = new THREE.Vector3(0, 1, 0);
-      const from = new THREE.Vector3();
-      const solid = [];
-      world.scene.traverse((o) => {
-        if (!o.isMesh && !o.isInstancedMesh) return;
-        if (o.material?.userData?.saberNoInk) return;      // the field
-        if (o.name === 'field-rim') return;                 // its frame
-        solid.push(o);
-      });
-      const hits = [];
-      const STEP = 12;
-      let probes = 0;
-      for (let x = -DECK.lip + 10; x <= DECK.lip - 10; x += STEP) {
-        for (let z = DECK.aft + 20; z <= DECK.lip - 10; z += STEP) {
-          probes++;
-          from.set(x, 2.0, z);
-          ray.set(from, up);
-          ray.far = DECK.roof - 3;
-          const hit = ray.intersectObjects(solid, false)[0];
-          /* An overhead FIXTURE is not a ceiling — every reference has them and
-           * they are how the room reads as tall. What is forbidden is a
-           * SURFACE: something hit from many neighbouring points at the same
-           * height. A rig is hit from one or two. */
-          if (hit) hits.push({ x, z, y: +hit.point.y.toFixed(1) });
+      const { solid, cast } = caster(THREE, world);
+      const from = new THREE.Vector3(0, 30, 20);
+      const open = [], shut = [];
+      for (let i = 0; i < 16; i++) {
+        const a = (i / 16) * Math.PI * 2;
+        const hit = cast(from, new THREE.Vector3(Math.sin(a), 0, Math.cos(a)), 600);
+        const deg = Math.round((a * 180) / Math.PI);
+        const forward = i === 0 || i === 1 || i === 15;
+        if (forward) {
+          assert(!hit, `the bearing ${deg}° — through the aperture — is closed ${hit?.distance.toFixed(0)} m out`);
+          open.push(deg);
+        } else {
+          assert(hit && hit.distance < 170,
+            `the bearing ${deg}° runs ${hit ? hit.distance.toFixed(0) + ' m' : 'open'} — the room is not closed there`);
+          shut.push(deg);
         }
       }
-      /* Group by height and see if any one height is hit from a broad area. */
-      const byY = new Map();
-      for (const h of hits) {
-        const k = Math.round(h.y / 4) * 4;
-        if (!byY.has(k)) byY.set(k, []);
-        byY.get(k).push(h);
+      /* THE WALLS RUN THE FULL LENGTH: from the centreline, both ways, at
+       * every thirty metres from the bulkhead to the lip, something solid
+       * stands within a metre past DECK.wall and no more than sixteen inside
+       * it (the racks). A gap is the "janky mess on the edges". */
+      let gaps = 0;
+      for (let z = DECK.aft + 10; z <= DECK.lip - 4; z += 30) {
+        for (const s of [-1, 1]) {
+          const hit = cast(new THREE.Vector3(0, 12, z), new THREE.Vector3(s, 0, 0), 300);
+          const d = hit ? hit.distance : Infinity;
+          if (!(d <= DECK.wall + 1 && d >= DECK.wall - 16)) gaps++;
+        }
       }
-      const lids = [...byY].filter(([, list]) => list.length > probes * 0.25);
-      assert(!lids.length,
-        `${lids.map(([y, l]) => `${l.length} of ${probes} points have something solid overhead at `
-          + `${y} m`).join('; ')} — that is a ceiling however it was built, and "no ceiling, ever" `
-        + 'is the one rule this room stands on');
-      const covered = hits.length;
-      assert(covered < probes * 0.45,
-        `${covered} of ${probes} points on the deck have something over them — the overhead is `
-        + 'supposed to be fixtures and open space, not cover');
-
-      return `no lid: ${covered} of ${probes} deck points have anything overhead, none of them `
-        + `sharing a height · ${solid.length} solid objects tested by ray`;
+      assert(gaps === 0, `${gaps} stations along the deck see past a side wall`);
+      /* AND THE BULKHEAD IS AFT, in the ground as well as in the dressing. */
+      const P = TERRAIN_PRESETS.hangardeck;
+      const aftFace = -P.scale / 2 + 8;
+      assert(P.height(0, aftFace) > 25,
+        `the ground ${aftFace.toFixed(0)} m aft rises ${P.height(0, aftFace).toFixed(0)} m — there is no bulkhead behind the player`);
+      const aft = cast(new THREE.Vector3(0, 12, -60), new THREE.Vector3(0, 0, -1), 200);
+      assert(aft && aft.distance < 60, 'nothing solid stands aft of the muster line');
+      return `${shut.length} bearings closed, ${open.length} open (${open.join('°, ')}°) · walls whole at 16 stations · ${solid.length} solids by ray`;
     } finally { world.unload(); }
   });
 
-  /* ══════════════════════════════════════════════════════════════════ */
-  /*  The two ways it could destroy a save                              */
-  /* ══════════════════════════════════════════════════════════════════ */
+  check('hangar: the deck ends at the field, and the planet is in the opening', async () => {
+    /**
+     * THE HEIGHTFIELD'S EDGE IS THE LIP, and everything placed off DECK.lip —
+     * the strobes, the field, the barrier, the transport's run out — stands
+     * where the deck is. It is big, and big is the brief: the references are
+     * enormous, and 128 m read as a shed. But past about 400 m a player
+     * cannot cross it in under a minute, and a room nobody crosses is a
+     * corridor.
+     *
+     * And the opening is OPEN: a grid of rays forward from thirty metres
+     * inside the lip, at five heights, reaches space. "The planet/war wasn't
+     * facing the main force field, it was behind the hangar, it should be
+     * visible in front of you when you spawn in" — so the orbit's planet
+     * bearing is read off the real SkyDome and has to be forward.
+     */
+    const THREE = await import('three');
+    const P = TERRAIN_PRESETS.hangardeck;
+    assert(P, 'there is no hangardeck ground');
+    assert(P.scale >= 200, `the deck is only ${P.scale} m across — the brief is "scale must be immense"`);
+    assert(P.scale <= 400, `the deck is ${P.scale} m across — past about 400 a player cannot walk it`);
+    assert(P.flat === true, 'the deck is not flat');
+    assert(DECK.lip === P.scale / 2,
+      `DECK.lip is ${DECK.lip} and the ground ends at ${P.scale / 2} — the strobes, the field and `
+      + 'the barrier are all placed off DECK.lip and would stand somewhere the deck is not');
+    const { world, engine } = await deck();
+    try {
+      const { cast } = caster(THREE, world);
+      const blocked = [];
+      for (const y of [3, 20, 45, 60, 80]) {
+        for (const x of [-60, -30, 0, 30, 60]) {
+          const hit = cast(new THREE.Vector3(x, y, DECK.lip - 30), new THREE.Vector3(0, 0, 1), 400);
+          if (hit) blocked.push(`(${x}, ${y}) at ${hit.distance.toFixed(0)} m`);
+        }
+      }
+      /* One overhead chamfer piece may sit in the topmost row; the view is
+       * the other twenty-four. */
+      assert(blocked.length <= 2 && blocked.every((b) => /, (60|80)\)/.test(b)),
+        `the opening is closed at ${blocked.join('; ')}`);
+      const sd = engine?.skyDome;
+      const dir = sd?.mat?.uniforms?.uPlanetDir?.value;
+      assert(dir, 'the SkyDome has no planet bearing to read');
+      assert(dir.z > 0.85 && dir.y > -0.05,
+        `the planet is at (${dir.x.toFixed(2)}, ${dir.y.toFixed(2)}, ${dir.z.toFixed(2)}) — not in the opening in front of the player`);
+      return `${P.scale} m of deck, lip at ${DECK.lip} m, ${25 - blocked.length} of 25 forward rays reach space, planet at z=${dir.z.toFixed(2)}`;
+    } finally { world.unload(); }
+  });
+
+  check('hangar: a lid, high over the walls, and busy underneath — not a box', async () => {
+    /**
+     * "Give the hangar a solid ceiling (but very high up even higher than the
+     *  side walls you have now, it just looks weird right now without a
+     *  ceiling), but the ceiling can't make the hangar look like a shitty box
+     *  like you've done in the past — a billion things going on."
+     *
+     * Three facts, by rays straight up from a grid over the whole deck:
+     * everything is under SOMETHING (the lid is whole); the lid is where
+     * DECK.roof says and no higher (the colliders close the top there); and
+     * a good share of the deck is under structure hanging well below the
+     * plate — girders, cables, crane rails, hung fighters — which is the
+     * difference between a ceiling and a box.
+     */
+    const THREE = await import('three');
+    const { world } = await deck();
+    try {
+      const { cast } = caster(THREE, world);
+      let probes = 0, hits = 0, lid = 0, busy = 0, top = 0;
+      for (let x = -DECK.wall + 6; x <= DECK.wall - 6; x += 8) {
+        for (let z = DECK.aft + 8; z <= DECK.lip - 6; z += 8) {
+          probes++;
+          const hit = cast(new THREE.Vector3(x, 2, z), new THREE.Vector3(0, 1, 0), 400);
+          if (!hit) continue;
+          hits++;
+          top = Math.max(top, hit.point.y);
+          if (hit.point.y >= DECK.roof - 6) lid++;
+          else busy++;
+        }
+      }
+      assert(hits >= probes * 0.97, `${probes - hits} of ${probes} deck points have nothing over them — the lid has holes`);
+      assert(top <= DECK.roof + 4, `something over the deck is at ${top.toFixed(0)} m, above the roof at ${DECK.roof}`);
+      assert(top >= DECK.roof - 2, `the highest thing over the deck is ${top.toFixed(0)} m — the lid is not at the roof`);
+      assert(lid >= probes * 0.5, `only ${lid} of ${probes} points see the lid — it is not a ceiling`);
+      assert(busy >= probes * 0.12,
+        `${busy} of ${probes} points have structure hanging under the lid — that is a bare plate, a box`);
+      assert(busy <= probes * 0.6, `${busy} of ${probes} points are under hanging structure — the lid is buried`);
+      /* HIGHER THAN THE WALLS: over the wall foot, looking down from above the
+       * roof, the first thing met is the lid, at the roof, not a wall cap. */
+      for (const x of [-DECK.wall + 2, DECK.wall - 2]) {
+        const hit = cast(new THREE.Vector3(x, DECK.roof + 30, 20), new THREE.Vector3(0, -1, 0), 200);
+        assert(hit && hit.point.y >= DECK.roof - 2, `over x=${x} the lid is ${hit ? hit.point.y.toFixed(0) + ' m' : 'missing'}`);
+      }
+      return `${hits}/${probes} covered · lid ${lid}, hung structure ${busy} · top at ${top.toFixed(1)} m over a roof of ${DECK.roof}`;
+    } finally { world.unload(); }
+  });
 
   check('hangar: walking onto the deck cannot execute your company', async () => {
     /**

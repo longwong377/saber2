@@ -230,6 +230,7 @@ const _dir = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _hit = new THREE.Vector3();
 const _box = new THREE.Box3();
+const _box2 = new THREE.Box3();
 const _col = new THREE.Color();
 const FWD = new THREE.Vector3(0, 0, -1);
 
@@ -321,7 +322,19 @@ export function pickMan(world, opts = {}) {
      * one walk of two dozen bodies once — against caching a box per man, which
      * would have to be invalidated by the walk-on, the step-out, a shove and a
      * rebuild, and would be wrong on whichever of those was forgotten. */
-    _box.setFromObject(root);
+    /* THE DRAWN MAN, NOT HIS FAR SKIN. `Box3.setFromObject` takes every
+     * child whatever its visibility, and the merged L2 skin under the root
+     * is hidden inside 62 m with its bake-time bounds — baked in the crowd,
+     * so once the company had really WALKED to the line every box ran 50 m
+     * back to the wall and the pick took the file beside the man. */
+    _box.makeEmpty();
+    root.updateWorldMatrix(true, true);
+    root.traverse((o) => {
+      if (!o.isMesh || !o.visible || o.userData?.mergedSkinL2) return;
+      if (!o.geometry) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      _box.union(_box2.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld));
+    });
     if (_box.isEmpty()) continue;
     if (!ray.intersectBox(_box, _hit)) continue;
     /* MEASURED FROM THE MAN'S FEET TO THE PLAYER'S, not along the ray from the

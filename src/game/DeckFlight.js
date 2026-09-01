@@ -339,6 +339,25 @@ export function rampFoot(world, out = new THREE.Vector3()) {
   return out;
 }
 
+/**
+ * A SPOT ON THE APRON BEHIND THE RAMP, in world space: `back` metres further
+ * from the hull than the ramp's foot, `side` metres across. Worked in the
+ * hull's own frame and turned out, because "behind the ramp" is +Z in that
+ * frame and the parked hull is yawed π — adding to the WORLD z put the whole
+ * boarding file under the hull, where the floor query lifted them onto the
+ * bay floor a metre at a time.
+ */
+export function rampSpot(world, back, side = 0, out = new THREE.Vector3()) {
+  const st = world?._deckFlight;
+  if (!st) { out.set(DEPLOY_RAMP.x + side, FLIGHT.padHeight, DEPLOY_RAMP.z - back); return out; }
+  const B = st.bay;
+  const reach = Math.cos(rampAngle(st)) * FLIGHT.ramp;
+  out.set(side, -1.15, B.back + reach + 0.25 + back);
+  st.group.localToWorld(out);
+  out.y = FLIGHT.padHeight;
+  return out;
+}
+
 /** A man's slot in the bay, in the hull's frame: the seats, benches first. */
 function slotFor(st, i) {
   const seats = st.seats;
@@ -379,7 +398,6 @@ export function depart(world) {
   const c = world._company;
   st.phase = PHASE.BOARD; st.t = 0;
   st.aboard.length = 0;
-  const foot = rampFoot(world, _v).clone();
   if (c) {
     for (let i = 0; i < c.men.length; i++) {
       const row = c.men[i];
@@ -387,8 +405,9 @@ export function depart(world) {
       _v2.set(slot.x, slot.y, slot.z);
       st.group.localToWorld(_v2);
       /* Two legs: to the ramp's foot in file, then to his own place. */
+      const spot = rampSpot(world, 1.2 + Math.floor(i / 2) * 1.1, (i % 2) ? 0.6 : -0.6, _v);
       row.path = [
-        { x: foot.x + ((i % 2) ? 0.6 : -0.6), z: foot.z + 1.2 + Math.floor(i / 2) * 1.1 },
+        { x: spot.x, z: spot.z },
         { x: _v2.x, z: _v2.z },
       ];
       row.mark = row.path.shift();
@@ -439,8 +458,8 @@ function putAshore(world, st, row, i) {
   row.aboard = false;
   const fig = row.fig;
   world.scene.add(fig.root);
-  const foot = rampFoot(world, _v);
-  fig.root.position.set(foot.x + ((i % 2) ? 0.6 : -0.6), 0, foot.z + 0.8 + Math.floor(i / 2) * 0.9);
+  const spot = rampSpot(world, 0.8 + Math.floor(i / 2) * 0.9, (i % 2) ? 0.6 : -0.6, _v);
+  fig.root.position.set(spot.x, spot.y, spot.z);
   fig.root.quaternion.identity();
   row.pos.copy(fig.root.position);
   row.from.copy(row.pos);
@@ -481,13 +500,16 @@ function releasePlayer(world, st) {
   if (!p) return;
   p.riding = null;
   p._extracting = null;
-  const foot = rampFoot(world, _v);
+  const spot = rampSpot(world, 1.4, 0, _v);
   if (p.rig?.root) { p.rig.root.position.set(0, 0, 0); p.rig.root.quaternion.identity(); }
-  p.position.set(foot.x, foot.y, foot.z + 1.4);
+  p.position.set(spot.x, spot.y, spot.z);
   p.velocity?.set?.(0, 0, 0);
   p.grounded = true;
   p._syncBody?.();
   st.seated = false;
+  /* The ramp's dwell waits for him to walk away first — see `Hangar.stepRamp`. */
+  world._rampArmed = false;
+  world._rampHold = 0;
 }
 
 /** Everybody riding, put where the hull says they are. `Extraction`'s move. */

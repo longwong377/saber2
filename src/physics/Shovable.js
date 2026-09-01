@@ -224,8 +224,7 @@ export class Shovable {
    * stop: a drawn man and a physical man in two different places.
    */
   retarget(mark) {
-    const y = this.world.floorAt ? this.world.floorAt(mark.x, mark.z)
-      : this.world.terrain ? this.world.terrain.height(mark.x, mark.z) : (mark.y ?? 0);
+    const y = this._deckY(mark.x, mark.z, mark.y);
     this.mark.set(mark.x, y, mark.z);
     /* IF HE IS STANDING ON IT, HE MOVES WITH IT. If he is down, mid-rise or
      * walking, leave the body alone — BACK will find the new mark on its own
@@ -448,9 +447,20 @@ export class Shovable {
    * terrain, else his own mark. Reading only the heightfield put every man
    * on a pad 0.45 m into it, and stood him up INSIDE its collider.
    */
-  _deckY(x, z) {
-    if (this.world.floorAt) return this.world.floorAt(x, z);
-    return this.world.terrain ? this.world.terrain.height(x, z) : this.mark.y;
+  _deckY(x, z, fallback = this.mark.y) {
+    const one = this.world.floorAt ? this.world.floorAt
+      : this.world.terrain ? (px, pz) => this.world.terrain.height(px, pz) : null;
+    if (!one) return fallback;
+    /* THE BOX, NOT THE POINT. A man's body is 0.6 m wide, and a floor read
+     * at his centre put half the box inside a pad's kerb as he walked over
+     * its edge — the solver threw the overlap out at eight metres a second
+     * and the walk-off from the transport was ten men falling over on the
+     * apron. The highest floor under any corner is the floor the box stands
+     * on; he steps up a third of a metre early, which is what a foot does. */
+    let y = one(x, z);
+    y = Math.max(y, one(x + SHOVE.halfW, z + SHOVE.halfD), one(x - SHOVE.halfW, z + SHOVE.halfD),
+      one(x + SHOVE.halfW, z - SHOVE.halfD), one(x - SHOVE.halfW, z - SHOVE.halfD));
+    return y;
   }
 
   /** Where the caller should put the rig this frame. */
@@ -487,9 +497,8 @@ export function makeShovable(world, rows, opts = {}) {
     if (!r || !r.mark || r.shove) continue;
     const mark = r.mark.isVector3 ? r.mark
       : new THREE.Vector3(r.mark.x, r.mark.y ?? 0, r.mark.z);
-    if (world.floorAt) mark.y = world.floorAt(mark.x, mark.z);
-    else if (world.terrain) mark.y = world.terrain.height(mark.x, mark.z);
     r.shove = new Shovable(world, mark, { facing: r.man?.facing ?? opts.facing ?? 0 });
+    r.shove.retarget(mark);
     out.push(r.shove);
   }
   return out;

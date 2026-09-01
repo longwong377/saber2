@@ -999,6 +999,14 @@ function stepRamp(world, dt) {
   if (world._deckFlight?.busy) return;
   const R = DEPLOY_RAMP;
   const d = Math.hypot(p.position.x - R.x, p.position.z - R.z);
+  /* ARMED BY LEAVING. A player put down at the ramp's foot by an arrival is
+   * inside the reach the moment he can move, and the dwell re-boarded him
+   * a second later; the ramp only counts a player who has walked away from
+   * it once since the last time it put him down. `DeckFlight` disarms it. */
+  if (world._rampArmed === false) {
+    if (d > R.reach) world._rampArmed = true;
+    return;
+  }
   if (d > R.reach) {
     /* STEPPING OFF JUST FORGETS. An empty `notify` is still a toast — the HUD
      * raises the element and animates it — so clearing the countdown by
@@ -1427,6 +1435,7 @@ export function dressHangar(world) {
    * and every one of `DECK_ORDERS` was unreachable by any input the game has.
    */
   world.orders = deckCommand(world);
+  world.deckBladeTargets = (mid) => deckBladeTargets(world, mid);
 
   /* THE ROOM'S SOUND, and it is not decoration: the pressure differential at
    * the field is measured at −12.1 dB A-weighted from the spawn to the lip,
@@ -1625,6 +1634,7 @@ export class HangarDirector {
     try { undressDeckMirror(this.world); } catch {}
     try { undressDeckFlight(this.world); } catch {}
     if (this.world.floorAt) this.world.floorAt = null;
+    if (this.world.deckBladeTargets) this.world.deckBladeTargets = null;
     this.world._deckAudio = null;
     dismissCompany(this.world);
   }
@@ -2064,6 +2074,17 @@ function stepRowInner(world, c, row, dt) {
   const local = Math.max(0, c.t - row.start) * row.pace;
   const dx = row.mark.x - row.pos.x, dz = row.mark.z - row.pos.z;
   const dist = Math.hypot(dx, dz);
+  if (!row.halted && dist > 0.12 && local <= 0) {
+    /* HIS TURN HAS NOT COME. A staggered start (`sendCompany`, `depart`,
+     * `putAshore` all set `start` in the future) is a man STANDING until
+     * it does — it used to fall through to the halt below, which put him
+     * on his mark at once, so a company "filing in from the crowd" was the
+     * first man walking and everybody else teleporting to the line. */
+    man.stance = row.crowd ? row.home.stance : 'ease';
+    poseParade(man, c.t + stagger(man));
+    row.merged?.update?.(c.t);
+    return;
+  }
   if (!row.halted && dist > 0.12 && local > 0) {
     /* ── THE WALK. A position this file owns, advanced at his own pace, and
      * the gait solver asked to put legs under it. The root stands at the
@@ -2079,7 +2100,7 @@ function stepRowInner(world, c, row, dt) {
      * have a man circling him for ever. Without this the file to the ramp
      * formed through the player standing at its foot. */
     const P = world.player;
-    if (P && !P.riding && dist > 1.2) {
+    if (P && !P.riding && dist > 1.2 && !(row.slot && !row.path?.length)) {
       const px = P.position.x - row.pos.x, pz = P.position.z - row.pos.z;
       const along = px * nx + pz * nz;
       if (along > -0.2 && along < 1.8) {
@@ -2093,7 +2114,12 @@ function stepRowInner(world, c, row, dt) {
       }
     }
     row.pos.x += nx * step; row.pos.z += nz * step;
-    row.pos.y = floorY(world, row.pos.x, row.pos.z);
+    /* THE FLOOR, AT A CLIMBING PACE. A pad's edge is a 0.45 m kerb and the
+     * bay's floor is a metre over the ramp's foot; the feet are planted on
+     * the true floor by the gait solver, and the root follows it at the
+     * rate a man steps up or down, so a kerb is a step and not a pop. */
+    const fy = floorY(world, row.pos.x, row.pos.z);
+    row.pos.y = fy > row.pos.y ? Math.min(fy, row.pos.y + 2.4 * dt) : Math.max(fy, row.pos.y - 4.0 * dt);
     row.vel.set(nx * speed, 0, nz * speed);
     const facing = Math.atan2(nx, nz);
     if (row.anim) {
@@ -2154,6 +2180,59 @@ function stepRowInner(world, c, row, dt) {
   man.stance = row.crowd ? row.home.stance : c.stance;
   poseParade(man, c.t + stagger(man));
   row.merged?.update?.(c.t);
+}
+
+/**
+ * ══ WHAT THE BLADE MEETS ON THE DECK ══════════════════════════════════════
+ *
+ * Every body on the deck that stands on a `Shovable` — the company, the
+ * crowd, and anything another director pushes onto `world._deckProps` (the
+ * crew and the droids) — offered to the blade solver as a prop: one capsule
+ * the height of a man, plastoid-tough, whose `cut` declines (nobody on this
+ * deck is severed) and whose `shatter` is the shove the Force uses. A man hit
+ * with a lit blade goes over and gets up; the plate scars under the stroke
+ * like any ground. Within `reach` of the blade's middle only, because the
+ * solver is handed the list every swinging frame.
+ */
+const _bladeTargets = [];
+const _bladeMid = new THREE.Vector3();
+export function deckBladeTargets(world, mid, reach = 5) {
+  const out = _bladeTargets;
+  out.length = 0;
+  const c = world?._company;
+  if (mid) _bladeMid.copy(mid); else if (world?.player) _bladeMid.copy(world.player.position); else return out;
+  const r2 = reach * reach;
+  const offer = (row, tag, i) => {
+    const sh = row?.shove;
+    if (!sh || sh.down || row.aboard) return;
+    const at = sh.at;
+    if (at.distanceToSquared(_bladeMid) > r2) return;
+    out.push({
+      id: `deck-${tag}-${i}`,
+      capsules: [{
+        name: 'body',
+        p0: new THREE.Vector3(at.x, at.y + 0.15, at.z),
+        p1: new THREE.Vector3(at.x, at.y + 1.65, at.z),
+        r: 0.32, toughness: 1.5,
+      }],
+      prop: {
+        cut: () => null,
+        shatter: (impulse, point) => {
+          const dir = impulse && impulse.lengthSq() > 1e-4 ? impulse : _v.subVectors(at, _bladeMid);
+          sh.shove(dir, 6.5);
+          world.particles?.sparkBurst?.(point || at, null, 10, { speed: 5 });
+        },
+      },
+      dead: false,
+    });
+  };
+  if (c) {
+    c.men.forEach((row, i) => offer(row, 'man', i));
+    c.crowd.forEach((row, i) => offer(row, 'crowd', i));
+  }
+  const extra = world?._deckProps;
+  if (extra) for (let i = 0; i < extra.length; i++) offer(extra[i], 'prop', i);
+  return out;
 }
 
 /**

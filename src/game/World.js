@@ -4557,6 +4557,11 @@ export class World {
         if (pr.body.position.distanceToSquared(bladeMid) > 25) continue;
         targets.push({ id: pr.id, capsules: pr.capsules(), prop: pr, dead: false });
       }
+      /* THE DECK'S BODIES — the company, the crowd, the crew and the droids
+       * standing on `Shovable`s. `Hangar.deckBladeTargets` shapes each as a
+       * prop whose `cut` declines and whose `shatter` knocks him over, so the
+       * branch below needs nothing new. Empty everywhere but the deck. */
+      if (this.deckBladeTargets) for (const t of this.deckBladeTargets(bladeMid)) targets.push(t);
       for (const d of this.doors) {
         if (d.opened) continue;
         if (d.mesh.position.distanceToSquared(bladeMid) > 64) continue;

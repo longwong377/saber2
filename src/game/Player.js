@@ -2941,7 +2941,6 @@ export function defaultBoonMods() {
  * dynamic body in the radius.
  */
 const OFF_THE_DECK = {
-  ignite: 'your blade stays down among your own men',
   throw: 'you would be throwing it down your own line',
   lightning: 'there is nobody here to burn',
   compel: 'there is nobody here to turn',
@@ -3809,7 +3808,26 @@ export class Player {
     if (this.hosting) {
       this._wheel = input.mouse.wheel;
       input.mouse.wheel = 0;
-      if (this.saber.lit) { this.saber.retract(); this.hum.retract(); }
+      /**
+       * THE BLADE IS YOURS ON THE DECK. It comes out DOWN — `spawnPlayer`
+       * ignites unconditionally and a man does not walk out of a lift with
+       * his sabre lit — but the ignite key is the ignite key, and a lit blade
+       * swings: "you can't take out your lightsaber in the hangar and damage
+       * anything" was on the player's list of what is wrong with the room.
+       * What it damages is answered by `Hangar.deckBladeTargets`: every body
+       * on the deck with a `Shovable` under it (your own men, the crowd, the
+       * crew, the droids) goes over like a man hit with a hilt; the deck's
+       * plate scars under it like any ground. `throw` stays refused — a
+       * thrown blade down your own line is a different sentence.
+       */
+      if (!this._deckBladeDown) {
+        this._deckBladeDown = true;
+        if (this.saber.lit) { this.saber.retract(); this.hum.retract(); }
+      } else if (input.actHit('ignite') && !this.saberDown) {
+        this.saber.toggle();
+        if (this.saber.lit) { this.hum.ignite(); audio.tone({ freq: 180, freqEnd: 900, dur: 0.4, gain: 0.22, type: 'sawtooth', pos: this.saber.base }); }
+        else { this.hum.retract(); audio.tone({ freq: 900, freqEnd: 120, dur: 0.35, gain: 0.2, type: 'sawtooth', pos: this.saber.base }); }
+      }
       const look = this.control.applyInput(input, dt, {
         stamina: this.stamina / this.maxStamina,
         attackRate: this.boonMods.attackRate,
@@ -3857,7 +3875,7 @@ export class Player {
        */
       if (input.actHit('focus')) deckFocus(this.world);
       if (deckWheel(this.world, this._wheel)) this._wheel = 0;
-      /* AND THE EIGHT THAT ARE NOT WELCOME SAY SO. `_refuse` carries its own
+      /* AND THE SEVEN THAT ARE NOT WELCOME SAY SO. `_refuse` carries its own
        * 0.7 s per-name gate, so a held key is one notice and one blip rather
        * than sixty. */
       for (const key in OFF_THE_DECK) {

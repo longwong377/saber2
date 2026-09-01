@@ -19,7 +19,7 @@
  */
 
 import { DECK, DEPLOY_RAMP } from '../../src/game/Hangar.js';
-import { FLIGHT, PHASE, flightPhase, rampFoot, inBay } from '../../src/game/DeckFlight.js';
+import { FLIGHT, PHASE, flightPhase, rampFoot, rampSpot, inBay } from '../../src/game/DeckFlight.js';
 
 async function deck(extra = {}) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
@@ -74,9 +74,9 @@ export async function run({ check, assert, THREE }) {
       step(world, 20, idle);
       const onLine = c.men.filter((r) => Math.abs(r.pos.z - DECK.line) < 4).length;
       assert(onLine >= c.men.length - 1, `${onLine} of ${c.men.length} men reached the line`);
-      /* THE DWELL, at the ramp's foot. */
-      const foot = rampFoot(world);
-      put(p, THREE, foot.x, foot.z + 1.2);
+      /* THE DWELL, at the ramp's foot — a step back from it, on the apron. */
+      const dwell = rampSpot(world, 1.2, 0);
+      put(p, THREE, dwell.x, dwell.z);
       let deployed = 0;
       world.onDeckDeploy = () => { deployed++; };
       step(world, DEPLOY_RAMP.hold + 0.5, idle);
@@ -133,6 +133,9 @@ export async function run({ check, assert, THREE }) {
       const c = world._company;
       assert(flightPhase(world) === PHASE.APPROACH, `an arrival opens in ${flightPhase(world)}`);
       assert(st.group.position.z > DECK.lip + 400, `the hull starts at z=${st.group.position.z.toFixed(0)}, not far out`);
+      /* The player is spawned after the deck is dressed, so the seat is taken
+       * on the first frame, before anything is drawn. */
+      step(world, 1 / 60, idle);
       assert(p.riding, 'the player is not aboard the hull he is arriving on');
       assert(c.men.every((r) => r.aboard), 'the company is not aboard the hull it is arriving on');
       /* The lift stands open for a man who did not come by it. */
@@ -150,6 +153,10 @@ export async function run({ check, assert, THREE }) {
       assert(!p.riding, 'the ramp is down and the player is still seated');
       const foot = rampFoot(world);
       assert(Math.hypot(p.position.x - foot.x, p.position.z - foot.z) < 3, 'the player was not put off at the ramp');
+      /* On the apron, not under the hull: further from the hull's centre than the foot is. */
+      const hull = st.group.position;
+      assert(Math.hypot(p.position.x - hull.x, p.position.z - hull.z) > Math.hypot(foot.x - hull.x, foot.z - hull.z),
+        'the player was put down under the hull rather than behind the ramp');
       assert(c.men.every((r) => !r.aboard), 'men still aboard after the ramp came down');
       step(world, 24, idle);
       const home = c.men.filter((r) => Math.hypot(r.pos.x - r.home.x, r.pos.z - r.home.z) < 1.0).length;
