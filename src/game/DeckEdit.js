@@ -3,7 +3,7 @@
  *  THE FLIGHT DECK — LOOKING ONE MAN IN THE FACE, AND CHANGING HIM THERE
  * ══════════════════════════════════════════════════════════════════════════
  *
- * `HANGAR-SPEC.md` asks for five things this file is the whole of, and every
+ * `HANGAR-SPEC.md` asks for seven things this file is the whole of, and every
  * one of them was marked `·` — not started — when it was written:
  *
  *   "Camera close-focus when you select one: he breaks attention, turns to
@@ -23,10 +23,14 @@
  *
  * `Hangar.js` owns the ROOM and the company's arrival. Nothing in it reads a
  * pointer, and the one hook the deck has that is not a body or a prop is
- * `HangarDirector.update`. This file is what that hook calls. Keeping it apart
- * is not tidiness: three of the four modules the deck is built out of are being
- * edited by other hands at the same time, and a layer that only needs ONE line
- * in each of them can be written, checked and landed without touching any.
+ * `HangarDirector.update`. This file is what that hook calls.
+ *
+ * Keeping it apart is not tidiness, it is the same argument `DeckLife.js` and
+ * `DeckAudio.js` already make about that file: the deck is four layers over one
+ * room, and each of them reaches `Hangar.js` through exactly one line. This one
+ * costs three lines in the whole of the rest of the tree — a step in the
+ * director, a key in `Player`'s deck branch, and a commit in `leaveHangar` —
+ * and everything else it does it does to itself.
  *
  * ── THE FOUR THINGS THAT WERE ALREADY WRITTEN AND DEAD ────────────────────
  *
@@ -126,7 +130,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { salute, turnTo, stagger, buildFigure, paradeMan, SALUTE, TURN } from './Parade.js';
 import { mergeFigure } from './MergedSkin.js';
-import { dress as companyDress, load as companyLoad } from './Company.js';
+import { dress as companyDress } from './Company.js';
 import { MARKS, markById, CommandDirector } from './Command.js';
 import { ARCHETYPES } from './Enemy.js';
 import {
@@ -170,6 +174,22 @@ const STEP_TIME = 0.42;
  * about 25 cm there is no edge left to see on a 1.8 m man.
  */
 export const SWEEP = { dur: 0.8, soft: 0.14 };
+
+/**
+ * HOW LONG THE WHEEL HAS TO SETTLE BEFORE A NOTCH IS A CHANGE.
+ *
+ * The list is ninety options long on a clone trooper, and applying every notch
+ * as it went past would write the save ninety times, start ninety washes, and —
+ * once the cursor reached the kit rows — rain ninety plates onto the man from
+ * off-frame. A wheel spun through a palette is ONE decision with a lot of
+ * frames in it.
+ *
+ * 0.22 s: longer than the gap between notches of a single flick (a mouse wheel
+ * reports every 15–40 ms while it is being turned) and shorter than the pause
+ * between two deliberate ones, so a spin commits once at the end and a single
+ * click commits at once.
+ */
+const WHEEL_DWELL = 0.22;
 
 /**
  * THE PART COMING IN.
@@ -240,10 +260,14 @@ export function editState(world) {
       drops: [],
       /** Where the wheel is in `optionsFor(row)`. */
       cursor: 0,
+      /** The option the wheel is sitting on, not yet committed. */
+      pending: null,
       /** Free-text rename in progress, or null. See `beginNaming`. */
       naming: null,
       /** Edits applied since the room opened — what `leaveDeck` reports. */
       writes: 0,
+      /** The company clock this layer was last stepped on. See `stepDeckEdit`. */
+      steppedAt: -1,
     };
   }
   return world._deckEdit;
@@ -358,9 +382,18 @@ export function holdMan(world, row) {
   const c = world?._company;
   if (!st || !c || !row) return null;
   if (st.held === row) return row;
-  if (st.held) releaseMan(world);
+  if (st.held) {
+    releaseMan(world);
+    /* THE MAN YOU HAD IS PUT BACK AT ONCE rather than walked back. There is one
+     * `step` for the whole layer and it belongs to whoever is held now; the
+     * only thing that would be watching the old man's pace is the new one. */
+    if (st.going?._deckHome) st.going.fig.root.position.copy(st.going._deckHome);
+    st.going = null;
+  }
   st.held = row;
   st.going = null;
+  /* FROM THE LINE, not from wherever the last man's pace had got to. */
+  st.step = 0;
   st.at = c.t;
   st.cursor = 0;
   /* HIS MARK, REMEMBERED BEFORE HE LEAVES IT. `stepCompany` writes a halted
@@ -378,7 +411,13 @@ export function holdMan(world, row) {
     if (_dir.lengthSq() > 1e-4) row._deckOut.copy(_dir.normalize());
   }
   faceThePlayer(world, row, true);
-  world?.notify?.(nameOf(row.rec), 'stood out of the line');
+  /* THE PAINT PROBE, PAID FOR HERE. `paintSlots` builds one throwaway body per
+   * archetype to find out which material each paint slot lands on, and doing
+   * it lazily on the first swatch would put that build on the frame the player
+   * turns the wheel. Selecting a man is already a frame with a body stepping
+   * out of a line on it, and the answer is cached for the session. */
+  paintSlots(row.rec.type, row.rec.kind === 'steel' ? 'steel' : 'flesh');
+  tag(world, nameOf(row.rec), 'stood out of the line');
   return row;
 }
 
@@ -397,6 +436,9 @@ export function releaseMan(world) {
   const st = editState(world);
   const row = st?.held;
   if (!row) return null;
+  /* A CHANGE DIALLED AND NOT YET SETTLED IS STILL A CHANGE. Putting the man
+   * down half a beat after the last notch must not throw it away. */
+  if (st.pending) commitWheel(world);
   row.man.turn = null;
   row.man.saluteAt = null;
   st.held = null;
@@ -405,6 +447,7 @@ export function releaseMan(world) {
   st.going = row;
   st.naming = null;
   detachKeys(st);
+  tag(world, null);
   return row;
 }
 
@@ -517,8 +560,21 @@ export function wheelEdit(world, notches) {
   if (!list.length) return false;
   st.cursor = ((st.cursor + Math.sign(notches)) % list.length + list.length) % list.length;
   const o = list[st.cursor];
-  applyEdit(world, o.op, o.field ? { [o.field]: o.value } : o.value);
+  /* DIALLED NOW, APPLIED WHEN THE WHEEL STOPS. See `WHEEL_DWELL`. */
+  st.pending = { ...o, at: world._company.t };
+  tag(world, nameOf(st.held.rec), `${o.label} …`);
   return true;
+}
+
+/** Apply whatever the wheel is sitting on. Idempotent; a no-op with nothing dialled. */
+export function commitWheel(world) {
+  const st = world?._deckEdit;
+  const o = st?.pending;
+  if (!o || !st.held) { if (st) st.pending = null; return null; }
+  st.pending = null;
+  const look = applyEdit(world, o.op, o.field ? { [o.field]: o.value } : o.value);
+  tag(world, nameOf(st.held.rec), o.label);
+  return look;
 }
 
 /**
@@ -654,9 +710,19 @@ function wearPaint(world, row, op, was, look, kind) {
       cue(cuePaint, world, row);
       return;
     }
-    if (!stub?.[slot]) fn.call(null, stub, to);
+    /* A MARK HE HAS NEVER WORN HAS NO OLD COLOUR, so it washes on out of the
+     * ARMOUR — the stripe is painted onto the shin rather than switched on.
+     * `markUp` bolts the meshes at the colour it is given, so the material is
+     * put back to the plate's before the wash starts. */
+    const fresh = !stub?.[slot];
+    if (fresh) fn.call(null, stub, to);
     const mat = stub?.[slot];
-    if (mat) entries.push({ mat, from: mat.color.clone(), to: new THREE.Color(to) });
+    if (mat) {
+      const from = (fresh ? row.fig.palette?.plate?.color : mat.color)?.clone()
+        ?? mat.color.clone();
+      if (fresh) mat.color.copy(from);
+      entries.push({ mat, from, to: new THREE.Color(to) });
+    }
   } else {
     const slots = paintSlots(row.rec.type, kind);
     const pal = row.fig.palette || {};
@@ -732,6 +798,17 @@ function stepSweep(world, s, t) {
     for (const e of s.entries) e.mat.color.copy(e.from).lerp(e.to, k);
     return false;
   }
+  /**
+   * WHAT THE BUFFER COULD NOT ANSWER FOR.
+   *
+   * A mark the player has never given this man is bolted on AFTER the bake —
+   * `CommandDirector.markUp` parents two new meshes to his shins — so its
+   * material is in no span of the merged skin and no amount of writing that
+   * buffer would move it. Those materials take the same clock as a colour ramp,
+   * which is what the unmerged path does anyway. Tracked rather than assumed,
+   * so a material that IS in the buffer is never done twice.
+   */
+  const painted = new Set();
   for (let i = 0; i < skin.meshes.length; i++) {
     const geo = skin.meshes[i].geometry;
     const col = geo.attributes.color;
@@ -751,10 +828,14 @@ function stepSweep(world, s, t) {
           col.setXYZ(start + v, _col.r, _col.g, _col.b);
         }
         dirty = true;
+        painted.add(e.mat);
       }
       start += count;
     }
     if (dirty) col.needsUpdate = true;
+  }
+  for (const e of s.entries) {
+    if (!painted.has(e.mat)) e.mat.color.copy(e.from).lerp(e.to, k);
   }
   return false;
 }
@@ -903,6 +984,21 @@ export function stepDeckEdit(world, dt) {
   const c = world?._company;
   if (!st || !c) return;
   const t = c.t;
+  /**
+   * ONCE A FRAME, WHOEVER CALLS IT.
+   *
+   * `c.t` advances exactly once per `stepCompany`, so it is the frame's own
+   * identity and a second call inside the same frame is a second call. This is
+   * not defensive padding: the layer is driven from `HangarDirector.update`
+   * and the checks drive it themselves as well, and a wash stepped twice a
+   * frame crosses the man in half the time it is authored to — which would be
+   * a real defect measured as a passing test.
+   */
+  if (st.steppedAt === t) return;
+  st.steppedAt = t;
+
+  /* THE WHEEL, ONCE IT HAS STOPPED. */
+  if (st.pending && t - st.pending.at >= WHEEL_DWELL) commitWheel(world);
 
   /* THE HOLD. See `holdMan` — both sequences unwind by themselves and a man
    * being looked at must not. */
@@ -963,6 +1059,7 @@ export function stepDeckEdit(world, dt) {
 export function leaveDeck(world) {
   const st = world?._deckEdit;
   if (!st) return 0;
+  if (st.pending) commitWheel(world);
   if (st.naming) commitName(world);
   const c = world?._company;
   if (c) for (const s of st.sweeps) stepSweep(world, s, s.at + SWEEP.dur);
@@ -1008,7 +1105,7 @@ export function beginNaming(world) {
   if (st.naming) { st.naming = null; detachKeys(st); return false; }
   st.naming = { text: st.held.rec.look?.callsign || '' };
   attachKeys(world, st);
-  world?.notify?.('Callsign', st.naming.text || '…');
+  tag(world, `${st.held.rec.designation} —`, `${st.naming.text}_`);
   return true;
 }
 
@@ -1017,14 +1114,18 @@ export function typeName(world, key) {
   const st = world?._deckEdit;
   if (!st?.naming) return false;
   if (key === 'Enter') { commitName(world); return true; }
-  if (key === 'Backspace') { st.naming.text = st.naming.text.slice(0, -1); return true; }
+  if (key === 'Backspace') {
+    st.naming.text = st.naming.text.slice(0, -1);
+    tag(world, `${st.held.rec.designation} —`, `${st.naming.text}_`);
+    return true;
+  }
   /* PRINTABLE ONLY, and the store does the rest: `cleanCallsign` caps the
    * length, collapses the spaces and refuses the five characters that would
    * end up in an `innerHTML`. A second copy of that rule here is a second copy
    * of that rule. */
   if (key.length !== 1) return false;
   st.naming.text += key;
-  world?.notify?.('Callsign', st.naming.text);
+  tag(world, `${st.held.rec.designation} —`, `${st.naming.text}_`);
   return true;
 }
 
@@ -1071,4 +1172,36 @@ function cue(fn, world, row) {
 
 function nameOf(rec) {
   return rec?.look?.callsign ? `${rec.designation} "${rec.look.callsign}"` : (rec?.designation || 'trooper');
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE READOUT                                                               */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ SAYING WHICH MAN, AND WHAT JUST HAPPENED TO HIM ═══════════════════════
+ *
+ * `#deck-tag`, and it exists because `world.notify` CANNOT BE SEEN HERE:
+ * `enterHangar` ends in `hud.show(false)`, which puts `hidden` on the whole of
+ * `#hud`, and every toast the game raises is inside it. So a player standing in
+ * front of twenty-four men in identical armour, turning a wheel that repaints
+ * one of them, would have nothing on screen naming which one he had picked or
+ * what the last notch did. The free camera's bar is outside `#hud` for exactly
+ * this reason and this is beside it.
+ *
+ * `world.notify` is still called as well, so the sentence is in the event feed
+ * for anyone who has the HUD up — this is the second reader of one statement,
+ * not a second statement.
+ */
+function tag(world, name, note) {
+  world?.notify?.(name || '', note || '');
+  const d = globalThis.document;
+  const el = d?.getElementById?.('deck-tag');
+  if (!el) return;
+  if (!name) { el.classList.add('hidden'); return; }
+  const n = d.getElementById('deck-tag-name');
+  const s = d.getElementById('deck-tag-note');
+  if (n) n.textContent = name;
+  if (s) s.textContent = note || '';
+  el.classList.remove('hidden');
 }

@@ -1622,6 +1622,26 @@
   <em id="freecam-key">—</em>
 </div>
 
+<!--
+  THE MAN YOU ARE LOOKING AT, on the flight deck. OUTSIDE #hud for exactly the
+  reason the free camera's bar is: `enterHangar` calls `hud.show(false)` and
+  that puts `hidden` on the whole of #hud, so a caption inside it — and every
+  `world.notify` toast — is invisible in the one room where the player needs to
+  be told which of two dozen identical men he has just picked and what the last
+  notch of the wheel did to him.
+
+  A READOUT AND NOT A PANEL. There is no control in here, nothing to click and
+  `pointer-events:none`, because the deck is pointer-locked: a control would
+  have to release the lock, and a released lock on this screen state routes
+  straight to `pause()` (main.js `input.onLockChange`). Everything editable is
+  reached from the wheel and the focus key; this only ever says what happened.
+  Painted by src/game/DeckEdit.js.
+-->
+<div id="deck-tag" class="hidden">
+  <b id="deck-tag-name">—</b>
+  <span id="deck-tag-note"></span>
+</div>
+
 <!-- ══════════════════════ OVERLAYS ══════════════════════ -->
 <!-- THE MENU NOBODY MEANT TO OPEN.
      "Once I pressed a button and saw a menu mid game where I selected a power

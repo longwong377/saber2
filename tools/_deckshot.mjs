@@ -149,6 +149,12 @@ console.log('deck:', JSON.stringify(info));
 
 const SHOT = { timeout: 180000 };
 if (!info.fail) {
+  /* `setTransform` wants a real Vector3 and the page holds three only inside
+   * the bundle, so one constructor is hung on `window` here — AFTER the world
+   * exists, because there is no player to take it off before that. */
+  await page.evaluate(() => {
+    window.THREE_V3 = window.SABER?.world?.player?.position?.constructor || null;
+  });
   const shots = [
     /**
      * AND THE FIRST ONE IS WHERE THE GAME ACTUALLY PUTS HIM.
@@ -182,8 +188,24 @@ if (!info.fail) {
       const raf = () => new Promise((r) => requestAnimationFrame(r));
       const p = window.SABER?.world?.player;
       if (p) {
-        /* `keep` LEAVES HIM WHERE THE GAME PUT HIM. See the note on the list. */
-        if (!v.keep) p.position.set(v.x, v.y, v.z);
+        /**
+         * THE BODY, NOT JUST THE VECTOR — AND WITHOUT THIS EVERY SHOT WAS THE
+         * SAME SHOT.
+         *
+         * The player is a physics body and `player.position` is read back off
+         * it every step, so assigning the vector is overwritten before the
+         * next frame draws. Twelve stations, twelve identical pictures, and
+         * the tool reported success for all of them. `tools/checks/deckplay.mjs`
+         * has always done it correctly — `p.body.setTransform(...)` — and this
+         * tool did not.
+         */
+        if (!v.keep) {
+          p.position.set(v.x, v.y, v.z);
+          p.velocity?.set?.(0, 0, 0);
+          if (window.THREE_V3) {
+            p.body?.setTransform?.(new window.THREE_V3(v.x, v.y + 0.9, v.z), null);
+          }
+        }
         if (p.camera) { p.camera.yaw = v.yaw; p.camera.pitch = v.pitch; }
         if (p.control) { p.control.yaw = v.yaw; p.control.pitch = v.pitch; }
       }

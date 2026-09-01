@@ -52,8 +52,10 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { buildFigure, paradeMan, poseParade, salute, stagger, STANCES } from './Parade.js';
 import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
-import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
+import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt,
+  drainBlasts, bootStride, deckChant } from './DeckAudio.js';
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
+import { stepDeckEdit } from './DeckEdit.js';
 import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 /**
@@ -1064,11 +1066,30 @@ export class HangarDirector {
   update(dt) {
     stepStrobes(this.world, dt);
     stepCompany(this.world, dt);
+    /**
+     * AFTER THE COMPANY, AND THE ORDER IS LOAD-BEARING. `stepCompany` ends
+     * each man with `merged.update`, which carries a moved material colour
+     * into the merged buffer — and the paint wash writes that buffer directly.
+     * Stepped before it, every frame of the sweep is overwritten by a flat
+     * colour and "paint as a sweep, not a pop" quietly becomes a pop again.
+     */
+    stepDeckEdit(this.world, dt);
     /* AFTER the listener has moved, which is `World.update`'s own ordering —
      * the pressure filter and every Doppler ratio are functions of where the
      * player is standing THIS frame. */
     stepDeckLife(this.world, dt);
     stepDeckAudio(this.world, dt, this.world?.player?.camera?.obj || this.world?.player);
+    /**
+     * AND THE THUMPS ARE THE FLASHES YOU SAW.
+     *
+     * `SkyDome` pushes every explosion outside onto `ground.orbit.events` with
+     * its own strength and delay, capped at twelve, and NOTHING drained it —
+     * so the queue rotated for ever and the muffled thump a player heard came
+     * off an independent random timer, uncorrelated with any blast in the
+     * window. `HANGAR-SPEC.md` ticked that bullet while its own last sentence
+     * said "nothing drains it yet".
+     */
+    drainBlasts(this.world);
   }
 }
 
@@ -1394,6 +1415,17 @@ export function stepCompany(world, dt) {
       fig.root.position.x = row.from.x + (mark.x - row.from.x) * across;
       fig.root.position.z = row.from.z + (mark.z - row.from.z) * along;
       /**
+       * AND HE MAKES A NOISE DOING IT. Twenty-four men crossed fifty metres of
+       * deck plate in total silence — `bootFall` existed, was measured, and had
+       * no caller in `src/` — with one coalesced stamp at the end. The stamp
+       * was the whole of "boot steps on deck grating for the troop line".
+       *
+       * `bootStride` integrates distance rather than counting frames, so a man
+       * who walks further takes more steps, which is the same fact the stagger
+       * is built on.
+       */
+      bootStride(world, row, fig.root.position, dt);
+      /**
        * FACING WHERE HE IS GOING, THEN SQUARING TO THE FRONT AT THE END —
        * and this is the first version of that sentence that does anything.
        *
@@ -1618,11 +1650,12 @@ export function deckOrder(world, id) {
   return true;
 }
 
-/* THE SINGING IS `DeckAudio`'s TO MAKE and it may not exist yet — that file is
- * being written beside this one. A missing voice must not take the order down
- * with it, so the call is resolved late and guarded. */
+/* THE SINGING IS `DeckAudio`'s TO MAKE, and the seam stays even now that it
+ * exists: the order must not fall over if a voice ever fails to build. */
 let companySing = null;
 export function setCompanySing(fn) { companySing = fn; }
+/* `deckChant(world, army, men)` matches the call above verbatim. */
+setCompanySing(deckChant);
 
 
 /**

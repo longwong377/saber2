@@ -107,20 +107,26 @@
  *     damagedArrival(world, {x, z, speed})        one coming back in a state
  *     bootStride(world, man, pos, dt)             one man walking, per frame
  *     bootFall(world, pos) / bootHalt(world, at, n)   the muster
- *     deckChant(world, {army, men})               the company, on command
+ *     deckChant(world, army, men)                  the company, on command
  *     paCall(world) / ventBurst(world, at)        on demand, if the schedules
  *                                                 are turned off
  *     cuePaint / cueAttach / cueDetach / cueName  a man being changed
  *
- * ── WHAT `Hangar.js` HAS TO ADD ──────────────────────────────────────────
+ * ── WHAT `Hangar.js` HAS TO ADD, AND IT IS THREE LINES ───────────────────
  *
- * Two of those had no caller anywhere in `src/` and both are one line in code
- * that already runs every frame:
+ * Two of these had no caller anywhere in `src/` and the third is a seam that
+ * is already there and unfilled. All three are one line each:
  *
  *     HangarDirector.update, on the line after `stepDeckAudio(...)`
  *         drainBlasts(this.world);
- *     stepCompany, in the `if (p < 1)` branch after the position is written
+ *     stepCompany, inside `if (p < 1)`, after `fig.root.position` is written
  *         bootStride(world, row, fig.root.position, dt);
+ *     once, at module scope beside the other wiring
+ *         setCompanySing(deckChant);
+ *
+ * The last one is why `deckChant` is positional: `deckOrder` already calls
+ * `companySing?.(world, c.army, c.men.length)`, so the signatures meet with no
+ * adapter between them.
  *
  * ── SILENT AND SAFE HEADLESS ──────────────────────────────────────────────
  *
@@ -1087,9 +1093,15 @@ export function dressDeckAudio(world, opts = {}) {
   const st = newState(world, opts);
   world._deckAudio = st;
 
+  /* ONE ANSWER FOR THE WHOLE ROOM. `dressHangar` resolves `_deckFaction`
+   * before anything is built and hands it in, and the fallback reads the same
+   * field rather than `_company?.army` — the dressing runs BEFORE the company
+   * exists, so a player with no roll used to get the default PA voice on a
+   * deck already built in the other faction's colours. */
   st.army = PA_VOICE[opts.army] ? opts.army
-    : PA_VOICE[world._company?.army] ? world._company.army
-      : PA_VOICE[world.settings?.army] ? world.settings.army : 'republic';
+    : PA_VOICE[world._deckFaction] ? world._deckFaction
+      : PA_VOICE[world._company?.army] ? world._company.army
+        : PA_VOICE[world.settings?.army] ? world.settings.army : 'republic';
 
   /* ── THE DECK UNDERFOOT. See `deckSurfaceAt` for why this is an override on
    * the INSTANCE and not a second footstep system. */
@@ -1806,6 +1818,7 @@ export function bootHalt(world, at, men = 1) {
   return audio.shape({
     dur: 0.42, gain: 1, pos, prio: PRIO.world,
     build(ctx, out, t0, pitch) {
+      const extra = [];
       /* THE SCRAPE. Boot on grit on steel: broadband, brief, and swept DOWN in
        * frequency because a foot squaring up slows as it arrives. */
       const sc = ctx.createBufferSource();
@@ -1822,6 +1835,38 @@ export function bootHalt(world, at, men = 1) {
       sg.gain.linearRampToValueAtTime(0.0001, t0 + 0.40);
       sc.connect(sf); sf.connect(sg); sg.connect(out);
 
+      /* ══ THE DECK ANSWERING, AND WHY IT IS NOT `footfall`'s ═══════════
+       *
+       * `footfall` already has this layer — `bodyThump`, added over 2.75
+       * reference masses — and for a long time it was the whole of what made
+       * ten men sound different from one. It stopped working when the room
+       * grew: `bodyThump` asks for about 0.105 of gain, `_reach` culls
+       * anything under `HEARING_FLOOR` after `attenuation`, and the muster
+       * line is now 30 m from where the player is put down instead of 22.
+       * Measured across those eight metres: the sub share of a ten-man halt
+       * goes 91% → 0%, because the layer is not quieter, it is REFUSED.
+       *
+       * A rank halting is the loudest thing this room does and it cannot be
+       * the one sound that falls off a cliff at the distance the room is built
+       * around. So the weight is carried here, inside a `shape` whose own gain
+       * is 1 rather than 0.105, which reaches the whole deck — and it starts
+       * at five men, which is the same line `footfall` draws and the same
+       * argument: four men stamping is a sound, five is a rank. */
+      if (n >= 5) {
+        const deck = ctx.createOscillator();
+        deck.type = 'sine';
+        const f0 = clamp(66 / Math.pow(n, 0.22), 26, 66);
+        deck.frequency.setValueAtTime(f0 * pitch, t0);
+        deck.frequency.exponentialRampToValueAtTime(f0 * 0.45 * pitch, t0 + 0.30);
+        const dg = ctx.createGain(); dg.gain.value = 0;
+        dg.gain.setValueAtTime(0.0001, t0);
+        dg.gain.linearRampToValueAtTime(clamp(0.020 * Math.pow(n, 0.42), 0.02, 0.115), t0 + 0.020);
+        dg.gain.setTargetAtTime(0.0001, t0 + 0.022, 0.10);
+        dg.gain.linearRampToValueAtTime(0.0001, t0 + 0.40);
+        deck.connect(dg); dg.connect(out);
+        extra.push(deck);
+      }
+
       /* THE ARMOUR. Plates settling against each other — the tell that the
        * thing that stopped was wearing something. */
       const kit = ctx.createBufferSource();
@@ -1834,7 +1879,7 @@ export function bootHalt(world, at, men = 1) {
       kg.gain.setTargetAtTime(0.0001, t0 + 0.042, 0.035);
       kg.gain.linearRampToValueAtTime(0.0001, t0 + 0.40);
       kit.connect(kf); kf.connect(kg); kg.connect(out);
-      return [sc, kit];
+      return [sc, kit, ...extra];
     },
   });
 }
@@ -2033,19 +2078,28 @@ export const CHANT = {
  * the room when the player walks to the field, which is right: the men are
  * behind him and so is the air that carries them.
  *
- * @param opts.army 'republic' | 'separatist'. Defaults to the company's.
- * @param opts.men  how many are singing. Moves the level and the spread, and
- *                  nothing else: a hundred men are not ten times ten men.
- * @param opts.at   where they are. Defaults to the muster line.
+ * ── THE SIGNATURE IS `Hangar.setCompanySing`'s, EXACTLY ──────────────────
+ *
+ * `deckOrder` calls `companySing?.(world, c.army, c.men.length)` through a
+ * seam that is resolved late, because this file is being written beside that
+ * one and a missing voice must not take an order down with it. Positional
+ * rather than an options bag for that one reason: it makes the wiring
+ * `setCompanySing(deckChant);` and nothing else, so there is no adapter to
+ * drift out of step with either side.
+ *
+ * @param army 'republic' | 'separatist'. Falls back to the room's own answer.
+ * @param men  how many are singing. Moves the level and nothing else: a
+ *             hundred men are not ten times ten men.
+ * @param opts.at where they are. Defaults to the muster line.
  */
-export function deckChant(world, opts = {}) {
+export function deckChant(world, army, men = 12, opts = {}) {
   const st = world?._deckAudio;
   if (!st || st.torn) return false;
-  const V = CHANT[opts.army] || CHANT[st.army] || CHANT.republic;
-  const men = clamp(Math.round(opts.men ?? 12) || 1, 1, 60);
+  const V = CHANT[army] || CHANT[st.army] || CHANT.republic;
+  const n = clamp(Math.round(men ?? 12) || 1, 1, 60);
   /* SATURATION, the same shape `BOOT.fold` uses and for the same reason: a
    * body of men is heard as one bigger thing, not as a sum. */
-  const body = Math.min(1 + Math.log(men) * 0.30, 2.4);
+  const body = Math.min(1 + Math.log(n) * 0.30, 2.4);
   const at = opts.at || { x: 0, y: 1.6, z: DECK.line };
   st._q.set(at.x ?? at[0] ?? 0, at.y ?? at[1] ?? 1.6, at.z ?? at[2] ?? DECK.line);
 
@@ -2165,15 +2219,23 @@ export const LAUNCH = {
   spool: 1.15,
   /** How fast it taxis out, and how far past the lip it is gone, in lips. */
   speed: 24, out: 1.25,
-  /** Where it starts, as a fraction of the depth, and how high it rides. */
-  from: 0.30, y: 0.055,
+  /**
+   * WHERE IT STARTS, AND IT IS A PAD THAT EXISTS. `dressStructure` puts one
+   * craft on a pad at (−26, 46) and another at (30, 92) — "the middle
+   * distance… what gives the room a scale ladder" — so the default launch is
+   * the port one leaving and the default arrival is the starboard one coming
+   * back. A sequence that started from open deck would be the horns again.
+   */
+  padX: -26 / 144, from: (46 + 104) / 248,
+  /** How high it rides once the lift has it, as a fraction of the overhead. */
+  y: 0.055,
   gain: 3.4,
 };
 
 /** An arrival, which is a launch backwards and worse. */
 export const ARRIVE = {
-  /** Where it comes in from and how fast, and where it puts down. */
-  speed: 32, at: 0.42,
+  /** How fast it comes in, and the starboard pad it puts down on. */
+  speed: 32, padX: 30 / 144, at: (92 + 104) / 248,
   /** How far through the approach the engine misses. */
   cough: [0.35, 0.62],
   /** The mass that lands, as a multiple of `Audio.REF_MASS`. */
@@ -2201,7 +2263,7 @@ function queueCue(st, hold, kind, x, y, z, k = 1) {
 export function launchSequence(world, opts = {}) {
   const st = world?._deckAudio;
   if (!st || st.torn) return false;
-  const x = Number.isFinite(opts.x) ? opts.x : -rackX() * 0.5;
+  const x = Number.isFinite(opts.x) ? opts.x : DECK.lip * LAUNCH.padX;
   const z0 = Number.isFinite(opts.z) ? opts.z : alongDeck(LAUNCH.from);
   const y = Number.isFinite(opts.y) ? opts.y : DECK.roof * LAUNCH.y;
   const speed = clamp(Number.isFinite(opts.speed) ? opts.speed : LAUNCH.speed, 4, 200);
@@ -2223,7 +2285,7 @@ export function launchSequence(world, opts = {}) {
 export function damagedArrival(world, opts = {}) {
   const st = world?._deckAudio;
   if (!st || st.torn) return false;
-  const x = Number.isFinite(opts.x) ? opts.x : rackX() * 0.45;
+  const x = Number.isFinite(opts.x) ? opts.x : DECK.lip * ARRIVE.padX;
   const z1 = Number.isFinite(opts.z) ? opts.z : alongDeck(ARRIVE.at);
   const speed = clamp(Number.isFinite(opts.speed) ? opts.speed : ARRIVE.speed, 4, 200);
   const z0 = DECK.lip * LAUNCH.out;
@@ -2405,7 +2467,7 @@ function hardLanding(st, q) {
       gf.type = 'bandpass'; gf.frequency.value = 1400 * drop * pitch; gf.Q.value = 3.4;
       const gg = ctx.createGain(); gg.gain.value = 0;
       gg.gain.setValueAtTime(0.0001, t0);
-      gg.gain.linearRampToValueAtTime(0.095, t0 + 0.006);
+      gg.gain.linearRampToValueAtTime(0.072, t0 + 0.006);
       gg.gain.setTargetAtTime(0.0001, t0 + 0.008, 0.045);
       /* THE BOUNCE. It came down harder than it should have, so it comes back
        * up — and the second contact is the one that says so. */
@@ -2415,14 +2477,23 @@ function hardLanding(st, q) {
       gg.gain.linearRampToValueAtTime(0.0001, t0 + 1.4);
       gear.connect(gf); gf.connect(gg); gg.connect(out);
 
-      /* THE MASS. What the deck says about it, an octave under everything. */
+      /* ══ THE MASS, AND IT IS THE LOUDEST THING IN THE SOUND ═══════════
+       *
+       * "Felt before it is heard" is the whole of what a hard landing means,
+       * and it is a claim about which band the energy is in rather than about
+       * level. Measured over the second the ship touches, with the gear and
+       * the scrape as they were first written, only 23% of a hundred tonnes
+       * arriving was under 200 Hz — the rest was a 1.4 kHz strut and a bright
+       * scrape over the tail of the approach whine, which is the sound of a
+       * skip rather than of an impact. So the sub carries it and the two
+       * bright layers came down to make room for it. */
       const thud = ctx.createOscillator();
-      thud.type = 'sine'; thud.frequency.setValueAtTime(84 * drop * pitch, t0);
-      thud.frequency.exponentialRampToValueAtTime(29 * drop * pitch, t0 + 0.5);
+      thud.type = 'sine'; thud.frequency.setValueAtTime(78 * drop * pitch, t0);
+      thud.frequency.exponentialRampToValueAtTime(26 * drop * pitch, t0 + 0.55);
       const tg = ctx.createGain(); tg.gain.value = 0;
       tg.gain.setValueAtTime(0.0001, t0);
-      tg.gain.linearRampToValueAtTime(0.105, t0 + 0.022);
-      tg.gain.setTargetAtTime(0.0001, t0 + 0.024, 0.22);
+      tg.gain.linearRampToValueAtTime(0.185, t0 + 0.022);
+      tg.gain.setTargetAtTime(0.0001, t0 + 0.024, 0.32);
       tg.gain.linearRampToValueAtTime(0.0001, t0 + 1.4);
       thud.connect(tg); tg.connect(out);
 
@@ -2435,7 +2506,7 @@ function hardLanding(st, q) {
       sf.frequency.exponentialRampToValueAtTime(520 * pitch, t0 + 0.72);
       const sg = ctx.createGain(); sg.gain.value = 0;
       sg.gain.setValueAtTime(0.0001, t0 + 0.05);
-      sg.gain.linearRampToValueAtTime(0.036, t0 + 0.10);
+      sg.gain.linearRampToValueAtTime(0.028, t0 + 0.10);
       sg.gain.linearRampToValueAtTime(0.0001, t0 + 0.80);
       sc.connect(sf); sf.connect(sg); sg.connect(out);
       return [gear, thud, sc];

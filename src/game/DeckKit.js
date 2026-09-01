@@ -129,11 +129,19 @@ const FACTION_ALIAS = new Map([
 /**
  * NORMALISE ANYTHING THAT KNOWS WHOSE ROOM THIS IS into one of two ids.
  *
- * Takes a string, or a `DeckBuild`, or a whole `World` — the army lives in four
- * places depending on how far through a session you are (`world._company.army`
- * once the roll is loaded, `world.settings.army` before that), and a caller
- * that has to remember which one is populated at dress time is a caller that
- * will get it wrong once and put a droid fighter over a clone's head.
+ * Takes a string, a `DeckBuild`, or a whole `World`. The army lives in a
+ * different field depending on how far through a session you are —
+ * `world._company.army` once the roll is loaded and `world.settings.army`
+ * before that — and a caller made to remember which of them is populated at
+ * dress time is a caller that will get it wrong once and put a droid fighter
+ * over a clone's head.
+ *
+ * NOTE FOR THE DRESS PASS: at the moment `dressHangar` runs, `_company` does
+ * not exist yet (`callTheCompany` is the last thing it does) and nothing in
+ * `src/` ever writes `settings.army`. So a room that asks this and nothing else
+ * gets the default. The army a session actually leads is `roll.army` off
+ * `Company.loadAll()`, or `Command.armyToLead(settings.order)` when the player
+ * has no saved company — resolve it there and pass the answer in.
  */
 export function factionOf(v) {
   if (typeof v === 'string') return FACTION_ALIAS.get(v.toLowerCase()) || DEFAULT_FACTION;
@@ -825,24 +833,30 @@ export function shuttlePad(kit, x, z, opts = {}) {
    * thing that survives the haze.
    */
   if (faction === 'republic') {
+    /* A `CylinderGeometry` laid along X and then spun by `yaw` points its nose
+     * down (cos yaw, −sin yaw); across the hull is (sin yaw, cos yaw). Named,
+     * because the two are one sign apart and a part put on the wrong one reads
+     * as a wing growing out of the nose. */
+    const fx = Math.cos(yaw), fz = -Math.sin(yaw);
+    const ax = Math.sin(yaw), az = Math.cos(yaw);
     /* The body: fat, rounded, lying along the yaw. */
     const body = new THREE.CylinderGeometry(4.2, 4.6, 19, 8);
     body.rotateZ(Math.PI / 2);
     body.rotateY(yaw);
     kit.geoAt(M.hull, body, x, 6.0, z);
     /* The chin cockpit, forward and low. */
-    kit.slabAt(M.wing, x + Math.sin(yaw) * 9.5, 4.6, z + Math.cos(yaw) * 9.5, 6.0, 3.2, 5.0, yaw);
+    kit.slabAt(M.wing, x + fx * 9.5, 4.6, z + fz * 9.5, 6.0, 3.2, 5.0, yaw);
     /* THE WINGS, CANTED DOWN, with a pod on each tip. Wide, never tall. */
     for (const sx of [-1, 1]) {
       const g = new THREE.BoxGeometry(3.0, 0.9, 13.0);
       g.rotateX(sx * 0.22); g.rotateY(yaw);
-      kit.geoAt(M.wing, g, x + sx * Math.cos(yaw) * 9.5, 6.4, z - sx * Math.sin(yaw) * 9.5);
+      kit.geoAt(M.wing, g, x + sx * ax * 9.0, 6.4, z + sx * az * 9.0);
       const pod = new THREE.CylinderGeometry(1.5, 1.3, 8.0, 8);
       pod.rotateZ(Math.PI / 2); pod.rotateY(yaw);
-      kit.geoAt(M.dark, pod, x + sx * Math.cos(yaw) * 15.0, 4.6, z - sx * Math.sin(yaw) * 15.0);
+      kit.geoAt(M.dark, pod, x + sx * ax * (r * 0.82), 4.6, z + sx * az * (r * 0.82));
     }
     /* The dorsal fin — the one vertical it gets, and it is short. */
-    kit.slabAt(M.hull, x - Math.sin(yaw) * 7, 11.4, z - Math.cos(yaw) * 7, 0.8, 5.0, 6.0, yaw);
+    kit.slabAt(M.hull, x - fx * 7, 11.4, z - fz * 7, 0.8, 5.0, 6.0, yaw);
   } else {
     /* The hull: a long wedge, nose forward. */
     const hull = new THREE.CylinderGeometry(0.6, 3.4, 22, 6);

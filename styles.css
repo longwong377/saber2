@@ -1764,6 +1764,24 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 #freecam-bar.fade{opacity:.12}
 #freecam-bar em{font-style:normal;color:var(--accent);letter-spacing:.14em}
 
+/* THE MAN ON THE DECK — see the note over #deck-tag in index.html for why this
+   is not inside #hud. Bottom centre and under the crosshair rather than in a
+   corner, because it is a caption on the thing in the middle of the frame; the
+   same plate, border and cut as the free camera's bar, because they are the
+   same kind of object — a line of state that is true while you are standing
+   somewhere, not an event that fades. `pointer-events:none` is load-bearing:
+   the deck is pointer-locked and anything clickable here would have to break
+   the lock, which routes to the pause card. */
+#deck-tag{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:21;
+  display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 18px 9px;
+  clip-path:var(--cut-sm);border:2px solid var(--stroke);background:var(--panel);
+  pointer-events:none;font:var(--mono);font-size:10px;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--dim);max-width:min(560px,86vw);text-align:center}
+#deck-tag.hidden{display:none}
+#deck-tag b{color:var(--ink);font-size:12px;letter-spacing:.16em}
+#deck-tag span{color:var(--accent);letter-spacing:.14em}
+#deck-tag span:empty{display:none}
+
 #dmg-vignette,#flow-vignette{position:absolute;inset:0;opacity:0;transition:opacity .35s;pointer-events:none}
 #dmg-vignette{background:radial-gradient(120% 100% at 50% 50%,transparent 42%,rgba(255,30,50,.55) 100%)}
 #flow-vignette{background:radial-gradient(120% 100% at 50% 50%,transparent 48%,rgba(72,216,255,.3) 100%);

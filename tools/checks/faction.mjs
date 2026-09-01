@@ -413,6 +413,45 @@ export async function run({ check, assert }) {
     return rows.join(' · ');
   });
 
+  check('faction: the room wears its army\'s mark, on the deck and on the bulkhead', async () => {
+    /**
+     * AN EXPORT WITH NO CALLER IS THE DEFECT THIS ROOM ALREADY HAS ONCE.
+     * `Paint.digit` and `Paint.number` have been written, complete and correct,
+     * with zero callers since the file was made — and the reason is that they
+     * were built for a marking rule 7 forbids. An insignia that nothing paints
+     * is the same shape of failure with the opposite cause: the mark is right
+     * and it is simply not in the room, which no palette check and no cost
+     * check can see.
+     *
+     * The brief names deck insignia in the same breath as the ship classes, so
+     * it is held the same way: it has to be THERE, and it has to be the army's.
+     */
+    const H = await import('../../src/game/Hangar.js');
+    const K = await import('../../src/game/DeckKit.js');
+    const rows = [];
+    for (const f of K.FACTIONS) {
+      const kit = new K.DeckBuild(f);
+      const paint = new K.Paint(f);
+      H.__deckParts.structure(kit, paint);
+      const wall = [...kit.bins.keys()].some((m) => m.name === `deck-${f}-mark`);
+      const deck = paint.byColor.has(K.FACTION_PALETTE[f].mark);
+      assert(wall || deck,
+        `a ${f} deck carries no insignia anywhere. \`Paint.insignia(x, z, size)\` lays the mark on `
+        + 'the plate and `insigniaPanel(kit, x, y, z, size)` stands it on the bulkhead; both are '
+        + 'exported from DeckKit.js and neither has a caller, which is exactly the state `digit` '
+        + 'and `number` have been in since this file was written.');
+      assert(wall,
+        `a ${f} deck paints its mark on the floor but not on the bulkhead. The aft face is the one `
+        + 'solid surface in the room and the only thing a player standing anywhere can read — '
+        + 'call `insigniaPanel(kit, 0, y, bz + 3, size)`.');
+      assert(deck,
+        `a ${f} deck marks its bulkhead but not its plate. Rule 7's markings are the deck's, and `
+        + 'the muster ground is what the player looks down at — call `paint.insignia(x, z, size)`.');
+      rows.push(`${f}: deck + bulkhead`);
+    }
+    return rows.join(' · ');
+  });
+
   /**
    * ══ AND THE ROOM THE PLAYER ACTUALLY WALKS INTO ═══════════════════════
    *

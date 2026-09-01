@@ -13,6 +13,7 @@ import { audio } from './engine/Audio.js';
 import { initPhysics } from './physics/Rapier.js';
 import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
   soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
+import { leaveDeck } from './game/DeckEdit.js';
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
@@ -919,6 +920,12 @@ function leaveHangar() {
   hud.announcer?.reset?.();
   input.enabled = false;
   input.exitLock();
+  /* "Everything you change is saved on leaving." Every edit is already durable —
+  // `Company.dress` ends in a localStorage write — so this is for the one piece
+  // of state that is not: a callsign being typed on the frame he walked off, a
+  // wheel notch still settling, and any wash crossing a man about to be
+  // disposed. */
+  if (world) leaveDeck(world);
   if (world) { world.dispose(); world = null; }
   menu.showMenu();
   screens.set('menu');

@@ -3383,7 +3383,25 @@ export class Terrain {
     // the preset's two rock colours are what make them different rocks.
     switch (this.preset.maps) {
       case 'sand': return [sandMaps(1), rockMaps(2)];
-      case 'deck': return [duracreteMaps(2), metalMaps(2)];
+      /**
+       * ══ THE DECK IS PLATE, NOT DURACRETE ══════════════════════════════
+       *
+       * `'deck'` handed the flight deck `duracreteMaps` as its BASE carrier —
+       * bombed masonry, the outdoor rubble surface — and that is why the one
+       * thing the player named on the first render of this room was "no detail
+       * on the ground": the floor of a capital ship was wearing concrete, pale
+       * enough to swamp a near-black albedo and read as a car park.
+       *
+       * `DeckKit.js`'s own header names duracrete as the reason that whole
+       * file exists. It was still under the floor.
+       *
+       * Two metal sets at different repeats: the plate at 2, the panel detail
+       * at 6, so the seams read close up and the deck goes smooth at distance
+       * rather than turning into a moiré. Reference rule 2 is a near-black
+       * surface that gives the room's lights back to you, and the first thing
+       * that has to be true for that is that it is not concrete.
+       */
+      case 'deck': return [metalMaps(2), metalMaps(6)];
       case 'soil': return [soilMaps(1), rockMaps(2)];
       case 'snow': return [snowMaps(1), rockMaps(2)];
       /**

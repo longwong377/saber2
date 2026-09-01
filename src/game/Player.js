@@ -39,6 +39,7 @@ import { POWER_COST, SENSE_DRAIN, UNBOUND, UNLEASH_TOLL, unboundId } from './Pow
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
+import { focusKey as deckFocus, wheelEdit as deckWheel } from './DeckEdit.js';
 import { Stratagems, DIRS, DIR_ACTION } from './Stratagems.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -3840,6 +3841,22 @@ export class Player {
         else if (this.stasis.active) this.releaseStasis(ctx, true);
       }
       if (input.actHit('dash') && this.cooldowns.dash <= 0) this._tryDash(ctx);
+      /**
+       * AND THE NINTH ACTION, WHICH IS NOT A POWER.
+       *
+       * `focus` slows time on a battlefield; on a deck there is no time to
+       * slow, its binding is Mouse3 — where "the thing I am looking at" is
+       * actually pressed — and the word already means here what it means
+       * everywhere else. A new row in `Bindings.js` would have to find a free
+       * key in a table where every letter near WASD is spoken for twice over,
+       * and `controls.mjs` has caught three attempts at that.
+       *
+       * The wheel is claimed unconditionally above; while a man is held there
+       * is nothing gripped for it to collide with, so the notch dials his kit
+       * and is handed back the moment he is put down.
+       */
+      if (input.actHit('focus')) deckFocus(this.world);
+      if (deckWheel(this.world, this._wheel)) this._wheel = 0;
       /* AND THE EIGHT THAT ARE NOT WELCOME SAY SO. `_refuse` carries its own
        * 0.7 s per-name gate, so a held key is one notice and one blip rather
        * than sixty. */
