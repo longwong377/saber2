@@ -49,7 +49,7 @@ import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS, SCROLL_FADE } from '../../src/ui/Menu.js';
 import { SPECIES, HAIR_STYLES, BEARD_STYLES, speciesOf } from '../../src/game/Bodies.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
-import { MODES } from '../../src/game/Waves.js';
+import { MODES, playableModes } from '../../src/game/Waves.js';
 import { LESSONS } from '../../src/game/Dojo.js';
 import { handler } from '../serve.mjs';
 
@@ -360,8 +360,16 @@ export async function run({ check, assert }) {
     try {
       const scroller = doc.getElementById('mode-list').closest('.col-scroll');
       const cards = [...doc.getElementById('mode-list').children];
-      assert(cards.length === Object.keys(MODES).length,
-        `${cards.length} cards for ${Object.keys(MODES).length} modes`);
+      /* THE MODES THAT ARE A CHOICE. `MODES` is the table of DESTINATIONS and
+       * one of them — the flight deck — is reached from the Company tab by a
+       * door rather than by picking it, so a card for it would be a hangar
+       * offered as a theatre. `playableModes` is the one derivation. */
+      const PICKABLE = playableModes();
+      assert(cards.length === PICKABLE.length,
+        `${cards.length} cards for ${PICKABLE.length} modes a player can pick`);
+      assert(PICKABLE.length < Object.keys(MODES).length,
+        'every mode in the table is pickable — `playableModes` has stopped filtering anything '
+        + 'and this check can no longer see a destination leaking into the mode list');
 
       /* The band and the card stack, as Chromium measured them at 1280x720:
        * a 368 px viewport on to 788 px of content, mode cards 65-79 px tall
@@ -378,7 +386,7 @@ export async function run({ check, assert }) {
       // The shipped default. Off the bottom of the band by a long way.
       menu.s.mode = 'roguelite';
       menu._revealMode();
-      const card = cards[Object.keys(MODES).indexOf('roguelite')];
+      const card = cards[PICKABLE.indexOf('roguelite')];
       let r = card.getBoundingClientRect();
       assert(r.bottom <= BAND - SCROLL_FADE + 0.5,
         `the selected mode was revealed with its last ${Math.ceil(r.bottom - (BAND - SCROLL_FADE))}px under the fade`);
@@ -394,7 +402,7 @@ export async function run({ check, assert }) {
       // The last mode in the list is the one the lessons live behind.
       menu.s.mode = 'training';
       menu._revealMode();
-      r = cards[Object.keys(MODES).indexOf('training')].getBoundingClientRect();
+      r = cards[PICKABLE.indexOf('training')].getBoundingClientRect();
       assert(r.bottom <= BAND - SCROLL_FADE + 0.5 && r.top >= 0,
         `Training was revealed at ${r.top}..${r.bottom} of a ${BAND}px band`);
 

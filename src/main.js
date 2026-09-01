@@ -294,6 +294,11 @@ const menu = new Menu(settings, {
   onResume: () => resume(),
   onRestart: () => { menu.hidePause(); restartWave(); },
   onQuit: () => quitToMenu(),
+  /* THE COMPANY TAB'S OWN DOOR — see `enterHangar`. It is not `onDeploy` with
+   * an argument: a deploy persists settings, spends recruits, rolls a run seed
+   * and files a run, and every one of those is wrong for a room you walk into
+   * to look at your men. */
+  onHangar: () => { enterHangar().catch((e) => console.error('hangar failed', e)); },
   // Context the raw numbers do not carry: which level, which tier, and how much
   // of the frame the player's own settings asked for. A report that says 24 ms
   // without saying "arena, ultra, grass 1.5" is not actionable.
@@ -448,7 +453,7 @@ function mintRunSeed() {
     : (Math.random() * 0xffffffff) >>> 0;
 }
 
-async function buildWorld(levelKey, onProgress = null, runSeed = null) {
+async function buildWorld(levelKey, onProgress = null, runSeed = null, override = null) {
   if (world) { world.dispose(); world = null; }
   /**
    * PHYSICS BEFORE ANYTHING, AND IT IS AWAITED HERE RATHER THAN ASSUMED.
@@ -473,7 +478,20 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
 
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
-  world = new World(engine, worldSettings(), {
+  /**
+   * `override` IS WHAT KEEPS A ROOM OFF THE PLAYER'S SAVED SETTINGS.
+   *
+   * `worldSettings()` returns the live `settings` object by reference when
+   * there is no session, so a destination that wanted a different mode had two
+   * choices: write `settings.mode` and persist it, or pass it here. The first
+   * is a trap with three separate teeth — `record()` files a run under
+   * `sessionOr('mode')`, `theatreFor` reads it back on the next Deploy, and
+   * `saveSettings` puts it on disk — so a visit to the flight deck would have
+   * changed what the player's next real run was.
+   *
+   * Layered over, never under: a caller that says `{mode:'hangar'}` means it.
+   */
+  world = new World(engine, override ? { ...worldSettings(), ...override } : worldSettings(), {
     veterans: veteransToField(levelKey),
     /* WHAT THE PLAYER CALLS THEIR SQUADS — read here for the same reason the
      * veterans are: main.js owns localStorage and the game owns the game. */
@@ -780,6 +798,94 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
  * BUILD FIRST, REVEAL SECOND. Nothing the player can see changes until there is
  * a world to show them, and a failure puts the menu back with the reason on it.
  */
+/**
+ * ══ WALK ONTO THE FLIGHT DECK ═════════════════════════════════════════════
+ *
+ * A sibling of `deploy()` and emphatically not a call into it. Everything
+ * `deploy` does that this must not do is a way to corrupt a save:
+ *
+ *   `saveSettings(settings)`  — would persist a mode nobody chose to play.
+ *   `Muster.consume(...)`     — would spend pre-rolled recruits on a room
+ *                               nobody fought in. Cannot fire anyway, because
+ *                               `allies: 0` leaves no `world.command`.
+ *   `mintRunSeed` semantics   — a visit is not a run and must not roll one.
+ *   the mode-start block      — there is no wave to start.
+ *   `beginInsertion`          — you are already aboard.
+ *
+ * `allies: 0` is load-bearing and not cosmetic: `leadsArmy = campaign ||
+ * contingent > 0` and `contingent` comes off `settings.allies`, a PERSISTED
+ * GLOBAL SLIDER that any player who has touched it carries into every world.
+ * Without the override a player with allies turned on would build a
+ * `CommandDirector` on the deck, and `bank()` on the way out would strike every
+ * man on the roll as dead. `MODES.hangar` also has no `campaign` flag, so both
+ * halves of `leadsArmy` are false by construction and `World.loadLevel`'s
+ * hangar branch returns before either is consulted.
+ *
+ * `screens.state = 'playing'` rather than a new state, because `'playing'` is
+ * already in `Screens.LIVE`: Escape, Start and a lost pointer lock all route to
+ * `pause()` with no new code, and `main.js`'s frame gate already steps the
+ * world. A new state would need `LIVE`, the pad host list, the frame gate and a
+ * card/take pair, and would buy nothing — `Screens.js`'s own header calls a
+ * reachable state with no exit the bug the module exists to prevent.
+ */
+async function enterHangar() {
+  try {
+    await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label), null,
+      { mode: 'hangar', level: 'hangar', allies: 0 });
+  } catch (e) {
+    console.error('hangar failed', e);
+    if (world) { try { world.dispose(); } catch {} world = null; }
+    hud.show(false);
+    input.enabled = false;
+    menu.showMenu();
+    screens.set('menu');
+    const el = document.getElementById('menu-record');
+    if (el) el.textContent = `Could not reach the deck: ${e.message || e}`;
+    return;
+  }
+  cancelDeathCard();
+  menu.hideMenu();
+  menu.hideDeath();
+  screens.clear();
+  /* THE HUD IS DOWN. There is no wave, no score and no hostile count, and a
+   * readout saying zero of each is the surest way to make a place feel like a
+   * menu. `HangarDirector` answers the four fields the HUD dereferences without
+   * optional chaining, so it can be shown if anything ever wants it. */
+  hud.show(false);
+  input.enabled = true;
+  input.requestLock();
+  screens.set('playing');
+}
+
+/**
+ * …AND WALK OFF IT. `quitToMenu` minus the two calls that would file a run and
+ * execute the company, plus the two teardowns it has always been missing.
+ *
+ * `record()` is skipped because a visit is not a run: it files under
+ * `sessionOr('mode')` and would evict a real one from the 40-deep recent list.
+ * `bank()` is skipped because walking off a deck is not a withdrawal and there
+ * is no manifest to walk off it with — see `enterHangar`.
+ *
+ * `freecam.exit` and `announcer.reset` are here because they are bugs
+ * everywhere and this is the first door built after they were found: the HUD's
+ * photo mode holds hard references to the world and its camera and only drops
+ * them on a later `hud.update` that never runs at the menu, and `Announcer`'s
+ * `reset()` has had zero callers outside its own constructor since it was
+ * written, so every room inherits the last fight's kill deltas and a queue of
+ * dead `Enemy` references.
+ */
+function leaveHangar() {
+  screens.clear();
+  hud.show(false);
+  hud.freecam?.exit?.(hud);
+  hud.announcer?.reset?.();
+  input.enabled = false;
+  input.exitLock();
+  if (world) { world.dispose(); world = null; }
+  menu.showMenu();
+  screens.set('menu');
+}
+
 async function deploy() {
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
@@ -1263,6 +1369,15 @@ function restartWave() {
 }
 
 function quitToMenu() {
+  /**
+   * THE DECK LEAVES BY ITS OWN DOOR, and the branch is here rather than in the
+   * two callers because there are more than two: the pause card's Menu button,
+   * `#btn-quit`, `#btn-menu`, and anything added later all arrive through
+   * `onQuit`. A destination that has to remember to be exited specially is one
+   * that will eventually be exited the other way, and the other way from the
+   * deck is `record()` filing a phantom run and `bank()` executing the roll.
+   */
+  if (world && world.settings?.mode === 'hangar') { menu.hidePause?.(); leaveHangar(); return; }
   // Before anything else: a card scheduled 2.6 s ago must not land on the menu.
   cancelDeathCard();
   menu.hideDeath();

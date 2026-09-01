@@ -122,6 +122,25 @@ export function seedWaves(seed, rung = 0) {
   return s;
 }
 
+/**
+ * WHICH MODES ARE A CHOICE — the one derivation, so nothing counts them twice.
+ *
+ * `MODES` is the table of DESTINATIONS: everything `World.loadLevel`,
+ * `Extraction` and the theatre column need to know about a place the game can
+ * put you. Most of those places are also cards in the mode list, and one is
+ * not — the flight deck is reached from the Company tab by a door, and a
+ * hangar offered as something to deploy into would be a hangar in the theatre
+ * grid, which is the shape `Levels.js` has now deleted three times.
+ *
+ * A FUNCTION AND NOT A SECOND TABLE, because a hand-maintained list of "the
+ * real ones" is the twin this codebase keeps paying for. Every consumer — the
+ * menu's card builder and the two checks that count cards against modes —
+ * reads this, so adding a destination that is not a choice is one flag.
+ */
+export function playableModes() {
+  return Object.keys(MODES).filter((k) => !MODES[k].hidden);
+}
+
 export const MODES = {
   /**
    * THE TRIAL OF WAVES WAS PATH OF THE BLADE WITH THE REWARD LOOP DELETED.
@@ -319,6 +338,15 @@ export const MODES = {
     fixedTheatre: true,
     insertion: false,
     fixedRules: 'Nothing is composed here: there is no wave, no enemy and no ending on the deck.',
+    /* NOT A MODE YOU PICK. It is in this table because `World.loadLevel`,
+     * `Extraction` and the theatre column all answer questions about a
+     * destination by reading a row here — `level`, `insertion`, `fixedTheatre`
+     * — and a second table for one room would be the same rule written twice.
+     * What it must not be is a card in the mode list beside Command and The
+     * Line: it is reached from the Company tab, by a door, and offering it as
+     * something to deploy INTO would put a hangar in the theatre grid, which is
+     * the shape `Levels.js` has deleted three times. See `playableModes`. */
+    hidden: true,
   },
   training: {
     name: 'Training',

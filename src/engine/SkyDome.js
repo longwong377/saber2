@@ -59,6 +59,7 @@ import { ground } from '../world/Scenery.js';
  * this closes a cycle — safe because every one of these is a hoisted function
  * declaration and none is called while a module body is still evaluating. */
 import { skyRadiance, skyShoulder, skyDisplayShoulder, sunDirection } from './Engine.js';
+import { clamp, smoothstep, TAU, DEG } from './MathUtil.js';
 
 const _lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const _WHITE = new THREE.Color(1, 1, 1);

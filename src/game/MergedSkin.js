@@ -459,13 +459,21 @@ function staleness(owner) {
 const _budget = { at: -1, spent: 0 };
 export const BAKES_PER_FRAME = 1;
 
-function mayBake(owner) {
-  const now = owner.world?.time ?? 0;
+/**
+ * The budget itself, against a clock the caller names. Split out from
+ * `mayBake` so the bare-rig door below shares ONE allowance with the Enemy
+ * rung rather than opening a second one — the cost is the CPU's, and a hangar
+ * that baked 24 parade figures on the same frame an arriving wave crossed 62 m
+ * would spend 25 bakes in a frame budgeted for one.
+ */
+function mayBakeAt(now) {
   if (_budget.at !== now) { _budget.at = now; _budget.spent = 0; }
   if (_budget.spent >= BAKES_PER_FRAME) return false;
   _budget.spent++;
   return true;
 }
+
+function mayBake(owner) { return mayBakeAt(owner.world?.time ?? 0); }
 
 /**
  * Show or hide the merged skin for one body, building it the first time.
@@ -601,4 +609,213 @@ export function disposeMergedSkin(owner) {
   }
   if (L.on) for (const m of L.skin.replaced) m.visible = true;
   owner._l2 = null;
+}
+
+/* ── the bare-rig door ────────────────────────────────────────────────── */
+
+/**
+ * ── A FIGURE THAT IS NOT AN ENEMY, AND WHAT IT COSTS TO PRETEND OTHERWISE ──
+ *
+ * `buildMergedSkin` above has always taken a bare rig. `applyMergedSkin` is the
+ * only Enemy-shaped thing in this file, and it is Enemy-shaped in six separate
+ * places: `owner.actor`, `owner.mod`, `owner._l2`, `owner._l2Wait`,
+ * `owner.world.time` and `owner.position`. A man standing on a parade ground is
+ * a `{ rig, palette }` in a holder — src/ui/Menu.js `buildParadeFigure` — with
+ * none of those, and the stage never calls `_applyLod` at all, so nothing on
+ * that path has ever reached the bake.
+ *
+ * MEASURED, on the shipped builders, republic tier 0 through 3 in the order a
+ * line musters (tools/_paradecost.mjs, and the numbers are in this file's
+ * check):
+ *
+ *     10 figures    540 meshes  ->   43 merged   12.6x
+ *     24 figures   1296 meshes  ->  103 merged   12.6x
+ *
+ * 1296 opaque meshes is 2592 rasterisations with the ink prepass, against a
+ * dressing bound of 520 for a whole level (tools/checks/world-immersion.mjs).
+ * A room with two dozen named men in it is not affordable without this and is
+ * comfortable with it.
+ *
+ * THE MERGE IS NOT A FREEZE. Weight 1.0 on one bone is exactly the rigid
+ * parenting the graph was already doing, so the skeleton still drives the
+ * skin: `bindMode` is three's default `AttachedBindMode`, which recomputes
+ * `bindMatrixInverse` from the mesh's live `matrixWorld` every frame, and the
+ * algebra comes out as `L_now · L_bake⁻¹` — the pose delta since the bake,
+ * with the root's own placement cancelling exactly. So a merged figure may be
+ * carried around by a holder, spun by a pivot AND re-posed, which the Enemy
+ * path never needed because its rig root is permanently identity at the world
+ * origin. src/game/Parade.js poses these after the bake and the check reads
+ * the vertices back.
+ *
+ * AND THE PAINT STILL MOVES. That is the part the merge would otherwise take
+ * away and the whole reason the parade wants it: `material.color` is absorbed
+ * into a vertex attribute at bake time, so a `palette.plate.color.setHex(…)`
+ * after the bake would change a material nothing draws. `paint()` closes that
+ * — see the note over `paintSpansOf`.
+ */
+
+/**
+ * WHERE EACH SOURCE MATERIAL'S VERTICES LANDED IN THE MERGED BUFFER.
+ *
+ * DERIVED, not recorded: `bakeBin` walks `bin.entries` in order and appends
+ * each mesh's vertices whole, and `buildMergedSkin` publishes those same
+ * meshes as `sources[i]` IN THE ORDER THEY WERE BAKED for exactly this kind of
+ * question. So the offsets are a running sum of `position.count` and this file
+ * needs no second bookkeeping alongside the bake — which is the arrangement
+ * HANDOFF §2.3 asks for, and it means the Enemy path is not touched by a line.
+ *
+ * `sole` is the bin's one source material when every span shares it, and null
+ * when the bin folded several. It exists because a repaint is not only a
+ * colour: `CommandDirector.repaint` (src/game/Command.js) sets `emissive` to
+ * the rank colour too, and emissive is NOT absorbed by the merge — it splits
+ * a bin, so a bin that folded several materials has several that agree about
+ * it and no one of them may speak for the merged clone.
+ */
+function paintSpansOf(skin) {
+  const out = [];
+  for (let i = 0; i < skin.meshes.length; i++) {
+    const spans = [];
+    let start = 0, sole = null, mixed = false;
+    for (const src of skin.sources[i]) {
+      const c = src.material.color;
+      spans.push({ src, start, count: src.geometry.attributes.position.count,
+        r: c.r, g: c.g, b: c.b });
+      start += spans[spans.length - 1].count;
+      if (sole === null) sole = src.material;
+      else if (sole !== src.material) mixed = true;
+    }
+    out.push({ spans, sole: mixed ? null : sole });
+  }
+  return out;
+}
+
+/**
+ * Carry any colour a source material has been given since the bake into the
+ * merged buffer. Returns how many spans moved.
+ *
+ * The comparison is on the raw linear r/g/b rather than on `getHex()`, which
+ * quantises to 8 bits a channel and would miss a scrub finer than 1/255 — and
+ * a paint scrub is precisely a slider being dragged.
+ *
+ * The rewrite re-reads the SOURCE geometry's own colour attribute when the
+ * source material declared `vertexColors`, because that is what `bakeBin`
+ * multiplied in; a trooper's six materials declare none, so the inner loop is
+ * a straight fill for every figure that ships today, and a body whose creases
+ * are baked into vertices (`shadeAO`, src/game/Bodies.js) still repaints
+ * correctly the day one reaches here.
+ */
+function syncPaint(skin, bins) {
+  let moved = 0;
+  for (let i = 0; i < skin.meshes.length; i++) {
+    const mesh = skin.meshes[i], bin = bins[i];
+    const attr = mesh.geometry.attributes.color;
+    let dirty = false;
+    for (const s of bin.spans) {
+      const c = s.src.material.color;
+      if (c.r === s.r && c.g === s.g && c.b === s.b) continue;
+      s.r = c.r; s.g = c.g; s.b = c.b;
+      const C = s.src.material.vertexColors ? s.src.geometry.attributes.color : null;
+      for (let v = 0; v < s.count; v++) {
+        attr.setXYZ(s.start + v,
+          c.r * (C ? C.getX(v) : 1), c.g * (C ? C.getY(v) : 1), c.b * (C ? C.getZ(v) : 1));
+      }
+      dirty = true; moved++;
+    }
+    if (dirty) attr.needsUpdate = true;
+    const sole = bin.sole;
+    if (sole?.emissive && mesh.material.emissive && !mesh.material.emissive.equals(sole.emissive)) {
+      mesh.material.emissive.copy(sole.emissive);
+      mesh.material.emissiveIntensity = sole.emissiveIntensity;
+      moved++;
+    }
+  }
+  return moved;
+}
+
+/**
+ * Merge a built figure, keeping it posable and keeping its paint live.
+ *
+ * `figure` is what a `buildParadeFigure`-shaped call returns — `{ rig, palette,
+ * … }` — or a bare `Rig`. Everything else on it is left alone and carried
+ * across, so a caller's own fields survive.
+ *
+ * The bake is DEFERRED and the caller drives it: `update(now)` bakes at most
+ * `BAKES_PER_FRAME` figures per distinct `now`, sharing the Enemy rung's one
+ * allowance, and returns false until this figure's turn comes round. Twenty-
+ * four men bake over twenty-four frames — 0.4 s at 60 Hz, during which each
+ * draws the unmerged set it was already drawing — instead of one 66 ms lurch
+ * on the frame the room opens. A check that wants them all at once steps `now`
+ * per figure, which is what the budget means and needs no back door.
+ *
+ * `castShadow` defaults to TRUE here and is false in `applyMergedSkin`, and
+ * that is not an inconsistency: the Enemy rung only ever runs past 62 m, where
+ * `_applyLod` has already taken the shadow pass off the whole body. A man
+ * standing three metres from the camera under a key light without a shadow is
+ * a cardboard cut-out.
+ */
+export function mergeFigure(figure, opts = {}) {
+  const rig = figure?.rig ?? (figure?.isRig || figure?.bones ? figure : null);
+  const h = {
+    ...(figure && figure.rig ? figure : {}),
+    rig,
+    palette: figure?.palette ?? null,
+    root: rig?.root ?? figure?.root ?? null,
+    /** The merged skin, or null once baked if there was nothing to gain. */
+    skin: null,
+    /** True once the bake has been attempted; false while the budget defers. */
+    ready: !rig,
+    from: 0,
+    to: 0,
+    _bins: null,
+
+    /**
+     * One frame's work: bake if it is this figure's turn, otherwise carry any
+     * paint that moved into the merged buffer. Returns true when the merged
+     * skin is what is drawing.
+     */
+    update(now = 0) {
+      if (!this.ready) {
+        if (!mayBakeAt(now)) return false;
+        this.ready = true;
+        const skin = buildMergedSkin(rig, opts);
+        if (!skin) return false;                 // nothing to gain — see buildMergedSkin
+        this.skin = skin;
+        this.from = skin.from;
+        this.to = skin.to;
+        this._bins = paintSpansOf(skin);
+        for (const m of skin.replaced) m.visible = false;
+        for (const m of skin.meshes) { m.visible = true; m.castShadow = opts.castShadow ?? true; }
+        return true;
+      }
+      if (this.skin) syncPaint(this.skin, this._bins);
+      return !!this.skin;
+    },
+
+    /** The paint pass alone, for a caller that has just moved a swatch. */
+    paint() { return this.skin ? syncPaint(this.skin, this._bins) : 0; },
+
+    /**
+     * Give the merged meshes back and show the originals again.
+     *
+     * Only needed for a figure that OUTLIVES its merge — a kit change, a
+     * teardown that keeps the rig. A figure being thrown away whole needs
+     * nothing: the merged meshes are children of `rig.root` and `Rig.dispose`
+     * walks it, which is the same argument `disposeMergedSkin` makes.
+     */
+    dispose() {
+      if (this.skin) {
+        for (const m of this.skin.meshes) {
+          m.geometry.dispose();
+          m.material.dispose();
+          m.removeFromParent();
+        }
+        for (const m of this.skin.replaced) m.visible = true;
+      }
+      this.skin = null;
+      this._bins = null;
+      this.ready = !rig;
+      this.from = this.to = 0;
+    },
+  };
+  return h;
 }

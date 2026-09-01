@@ -67,7 +67,7 @@ import { FOCUS } from '../game/Focus.js';
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
 import { fellLine } from '../game/Session.js';
-import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
+import { MODES, playableModes, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
          CONDITIONS, CONDITION_KEYS, RULE_MAX, hazardPay, WaveDirector } from '../game/Waves.js';
 /**
@@ -4618,7 +4618,10 @@ export class Menu {
   _buildModes() {
     this.el.modes.innerHTML = '';
     this._modeCards = new Map();
-    for (const [key, M] of Object.entries(MODES)) {
+    /* THE ONES THAT ARE A CHOICE. `MODES` also holds destinations that are
+     * reached by a door rather than by picking them — see `playableModes`. */
+    for (const key of playableModes()) {
+      const M = MODES[key];
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.mode === key ? ' sel' : '');
       /* THE BLURB IS A TOOLTIP NOW, not a paragraph under every row. Nine modes
@@ -5982,6 +5985,15 @@ export class Menu {
         <div id="company-stage"></div>
         <div id="company-shots" class="shots"></div>
         <p id="company-stage-caption" class="hint"></p>
+        <!-- THE DOOR TO THE DECK, and it belongs on this tab and not on Play.
+             This is already where a player comes to look at their men; the
+             parade stage above it is a portrait of one of them, and this is the
+             room they are all standing in. _buildButtons binds it to onHangar,
+             which is a SIBLING of onDeploy - see enterHangar in main.js for the
+             five things a deploy does that walking onto a deck must not.
+             No backticks in here: this block is inside a template literal. -->
+        <button id="btn-hangar" class="btn wide">Inspect your men</button>
+        <p class="hint">On the deck of the ship carrying them, with the war outside.</p>
       </div>
       <div class="col wide company-page" id="company-page"></div>`;
     const foot = wrap.querySelector('.menu-foot');
@@ -9220,6 +9232,7 @@ export class Menu {
       if (el) el.addEventListener('click', () => { audio.ui('click'); fn(); });
     };
     bind('btn-deploy', () => this.hooks.onDeploy?.(this.s));
+    bind('btn-hangar', () => this.hooks.onHangar?.(this.s));
     bind('btn-resume', () => this.hooks.onResume?.());
     bind('btn-restart', () => this.hooks.onRestart?.());
     bind('btn-quit', () => this.hooks.onQuit?.());
