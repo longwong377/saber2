@@ -27,6 +27,28 @@ import { WIND_GLSL, windUniforms, syncWind, ground, wind } from './Scenery.js';
 import { SOFT_GLSL, softUniforms } from './SoftDepth.js';
 
 const rng = makeRng(2718);
+/**
+ * ── PUT THIS FILE'S STREAM BACK ─────────────────────────────────────────
+ *
+ * A module-level stream that no harness can reseed makes every check after it
+ * depend on how many draws the checks before it happened to take. `verify.mjs`
+ * runs every suite in one process and says so in its own note; five streams
+ * were already restorable and this one was not.
+ *
+ * MEASURED, and it is not theoretical: building ONE crate before
+ * `blast-door.mjs` — a single `makeCrate` on a throwaway scene, which touches
+ * nothing but this stream — turned that suite from 9/9 into the gate's own
+ * failure, "75 s of held blade burned 0 of the 515 texels". The breach slug's
+ * launch vector comes off here, so a shifted phase throws the debris somewhere
+ * else, the player takes the second impact instead of surviving it on five
+ * points, and a dead player's blade never touches the plate again.
+ *
+ * The seed is the module's own, so `restoreShared` puts it back where the
+ * module started rather than where a snapshot found it — the same statement
+ * the other five make.
+ */
+export function seedParticles(seed) { rng.seed(seed >>> 0); return rng; }
+
 
 const VERT = /* glsl */`
   precision highp float;

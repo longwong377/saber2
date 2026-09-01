@@ -34,6 +34,7 @@ import { addHorizon, makeCoverField, ground, BODY_FADE } from '../world/Scenery.
 import { registerDestructible } from '../world/Destruction.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
+import { HANGAR_LEVEL } from './Hangar.js';
 /* The IG-100 general's set-piece is registered at the bottom of this file —
  * see the
  * note there. These three edges add nothing to anybody's static import graph
@@ -4875,6 +4876,32 @@ LEVELS.geonosis = {
  * That is the third time the same instruction has been given about the same
  * class of level, and this file has now stopped arguing with it. Every level
  * below is open sky. */
+/**
+ * ══ AND ONE GROUND THAT IS NOT A THEATRE ══════════════════════════════════
+ *
+ * The flight deck is a place you go to look at your men, not a place you fight
+ * on. It is in `LEVELS` — `World.loadLevel` resolves its ground and its
+ * dressing through the same door as everything else — and deliberately NOT in
+ * `LEVEL_ORDER` below, which is what the theatre grid draws from and what
+ * forty-seven suites walk asking about weather, ground cover, spawn legality
+ * and generated fronts. Every one of those is a question about a battlefield.
+ *
+ * IT REGISTERS ITSELF, from `Hangar.js`, and the direction matters: that file
+ * needs `LEVELS` to answer which world is outside the window, so a `import
+ * { HANGAR_LEVEL } from './Hangar.js'` here was a cycle. It did not throw on
+ * every path — module order decides which half of a cycle is undefined — so it
+ * ran green for hours and then died with `Cannot access 'HANGAR_LEVEL' before
+ * initialization` the first time a suite imported the two in the other order.
+ * The dependency points one way and this is that way: `Levels.js` owns the
+ * roster and knows about the deck; `Hangar.js` imports no levels at all and is
+ * HANDED the record for whatever world is outside its window. The two other
+ * arrangements were both tried and both were worse — importing the record here
+ * was a cycle that ran green for hours before dying on one suite's import
+ * order, and registering from the far side made the ground exist only if
+ * something had imported that file.
+ */
+LEVELS.hangar = HANGAR_LEVEL;
+
 export const LEVEL_ORDER = ['scoria', 'mustafar', 'colosseum', 'wood', 'drifts', 'alpine',
   'geonosis'];
 

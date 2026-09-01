@@ -44,7 +44,7 @@ export const MORALE = {
   WAVE_CLEAR: 0.34,
   /** An area is held. */
   AREA_HELD: 0.5,
-  /** Their own health, per second, below a third. */
+  /** Their own health, per second, below `HURT_AT`. */
   WOUNDED: -0.10,
   /**
    * THEY WALKED PAST ONE OF THEIR OWN GRAVES — PLAN.md §4.8's third bullet,
@@ -72,6 +72,28 @@ export const MORALE = {
   PASSED_GRAVE: -0.03,
   /** Per second within `NEAR` of a living commander who is on their side. */
   LEADER_NEAR: 0.055,
+  /**
+   * ── THE VOICE — per second within `NEAR` of a man licensed to RELAY ─────
+   *
+   * `LEADER_NEAR` is the squad's own leader steadying the squad's own men, and
+   * it stops at the squad boundary because that is what a squad leader is for.
+   * The top rung of `RANKS` carries a licence that does not: "carries an order
+   * onward to men you cannot reach". So a Commander on the roll steadies
+   * ANYBODY in the army who is standing near him, in his squad or not — the
+   * one presence term in this table that crosses a squad line.
+   *
+   * SMALLER THAN A SQUAD LEADER'S, deliberately. He is not their sergeant and
+   * they are not his men; what he is, is a familiar voice on ground where
+   * neither you nor their own leader happens to be. And it stacks with neither
+   * for free — the whole presence sum tapers into `PRESENCE_CAP` exactly as it
+   * did, so a man beside all three is steady rather than elated.
+   *
+   * WHAT MAKES IT WORTH HAVING is what happens when he dies: every squad he
+   * was standing among loses it on the same frame, and `onDeath` says so. That
+   * is the vacancy this ladder was rebuilt to produce — a specific man whose
+   * death takes a capability off the field rather than a health bar.
+   */
+  RELAY_NEAR: 0.035,
   /** …and of the Jedi themselves, which is worth more. */
   JEDI_NEAR: 0.085,
   /**
@@ -220,3 +242,15 @@ export const MORALE = {
  * ordinary worst thing fits between the resting point and the clamp".
  */
 MORALE.PRESENCE_CAP = 1 + MORALE.COMRADE_FELL;
+
+/**
+ * ── WHAT "BADLY HURT" MEANS, ONCE, FOR THE WHOLE GAME ───────────────────
+ *
+ * A third of a body's own health. It was typed as `0.34` inside `_morale` and
+ * described as "below a third" in the table above, and it now has a second
+ * reader — the wound a man carries out of a run — so it is a name rather than
+ * a number in two places. A scar and the nerve it costs to be that close to
+ * dead are the same event, and they must not be able to disagree about when it
+ * happened.
+ */
+export const HURT_AT = 0.34;

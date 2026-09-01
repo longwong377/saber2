@@ -884,8 +884,28 @@ export async function run({ check, assert }) {
         assert(bare === null,
           `${mode} fields no army at allies 0 and musterPlan still answers ${JSON.stringify(bare)}`);
         const five = musterPlan({ mode, allies: 5, order: 0 });
-        assert(five && five.want === 5,
-          `${mode} with a contingent of five gets ${JSON.stringify(five)}`);
+        /**
+         * …AND A MODE WITH NO ROSTER AT ALL ANSWERS NOTHING, WHATEVER THE
+         * SLIDER SAYS.
+         *
+         * `MODES.training` is run by a `DojoDirector`, which has no roster —
+         * so a plan there would have the barracks mint, name, paint and SAVE
+         * ten men for a run that can never deploy one of them. Measured before
+         * the exemption, on a cleared store: Training offered "Take 10
+         * troopers into Training", and the click wrote a line to disk.
+         *
+         * Asserted from the mode's own declaration rather than by name, and
+         * asserted in BOTH directions, so neither the flag nor the reader can
+         * quietly go away.
+         */
+        if (MODES[mode].dojo) {
+          assert(five === null,
+            `${mode} is run by the dojo and musterPlan still answers ${JSON.stringify(five)} — `
+            + 'the tab would raise a line that has nowhere to land');
+        } else {
+          assert(five && five.want === 5,
+            `${mode} with a contingent of five gets ${JSON.stringify(five)}`);
+        }
       }
     }
     /* The contingent's ally-army choice is honoured; an army mode's is not —
@@ -894,8 +914,14 @@ export async function run({ check, assert }) {
     const chosen = musterPlan({ mode: 'waves', allies: 4, order: 0, allyArmy: 1 });
     assert(chosen?.army === ARMY_IDS[1],
       `a contingent asked for ${ARMY_IDS[1]} and musterPlan drew ${chosen?.army}`);
+    /* THE FLAG HAS A WRITER. A `dojo` nobody declares would make the clause
+     * above vacuous — every mode would take the `else` and the exemption would
+     * be a comment. */
+    const dojos = Object.keys(MODES).filter((m) => MODES[m].dojo);
+    assert(dojos.length === 1, `${dojos.length} modes declare a dojo: ${dojos.join(', ')}`);
     return `${Object.keys(MODES).length} modes resolved · army modes field ${OPENING_STRENGTH} `
-      + 'regardless of the slider · bare modes field the slider or nothing';
+      + `regardless of the slider · bare modes field the slider or nothing · ${dojos[0]} fields `
+      + 'nobody at any setting';
   });
 
   check('company: the tab names the men being taken in, not only the fallen', () => withCleanStore(() => {
@@ -1070,9 +1096,17 @@ export async function run({ check, assert }) {
      * barracks.mjs. Still cosmetic to the last field, still validated against
      * the one palette, and STILL a pin: the day a fourth appears, somebody
      * comes here and argues it the way the band was argued. */
-    assert(fields.join(',') === 'band,callsign,mark',
-      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a mark, a band and `
-      + 'a name, and a roster screen that can edit anything else is a cheat panel');
+    /* FIVE NOW, AND THE ARGUMENT IS THE SAME ONE. `kit` is hardware the body
+     * builders have always accepted — a pauldron, a kama, a pack — and `paint`
+     * is the armour under the rank's own colours. Neither moves a number:
+     * `KIT_FIELDS` deliberately withholds `frame`, the one option that would
+     * resize a man into another rung's silhouette, and a colour has never been
+     * read by anything that fights. Both are priced on real bodies by
+     * `barracks.mjs`. The pin stays a pin: the day a SIXTH appears, somebody
+     * comes here and argues it the way these two were argued. */
+    assert(fields.join(',') === 'band,callsign,kit,mark,paint',
+      `Company.dress writes ${fields.join(', ') || 'nothing'} — it may write a name, two marks, `
+      + 'a kit and a paint job, and a roster screen that can edit anything else is a cheat panel');
     /* …and the slate's own writer holds the same line for men not yet on any
      * roll: `Muster.dressRecruit` takes the same three fields and Muster.js
      * has grown no currency word either. */
@@ -1085,9 +1119,9 @@ export async function run({ check, assert }) {
     const recruitBody = /export function dressRecruit\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(muCode)?.[1] || '';
     assert(recruitBody, 'Muster.dressRecruit is gone');
     const rFields = [...recruitBody.matchAll(/'(\w+)' in look/g)].map((m) => m[1]).sort();
-    assert(rFields.join(',') === 'band,callsign,mark',
-      `Muster.dressRecruit writes ${rFields.join(', ') || 'nothing'} — a recruit may be named `
-      + 'and painted, nothing else');
+    assert(rFields.join(',') === 'band,callsign,kit,mark,paint',
+      `Muster.dressRecruit writes ${rFields.join(', ') || 'nothing'} — a recruit may be named, `
+      + 'painted and kitted, nothing else');
     return `dress and dressRecruit write ${fields.join(' + ')} and nothing else; `
       + 'no currency word in Company.js or Muster.js';
   });

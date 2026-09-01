@@ -198,6 +198,7 @@ import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
+import { HangarDirector } from './Hangar.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
@@ -912,7 +913,30 @@ export class World {
      * with no writer: a condition that could never be true, sitting in front of
      * the one that decides. A dead disjunct reads like a supported path.
      */
-    if (this.settings.mode === 'training') {
+    /**
+     * ══ THE FLIGHT DECK HAS NO DIRECTOR AT ALL ═══════════════════════════
+     *
+     * There is no wave here, no enemy, no ending and no score — and there is
+     * emphatically no `CommandDirector`, which is not a tidiness point but the
+     * one thing standing between this room and a wiped company. `main.js`'s
+     * `bank()` fires on any world with a `command` and treats every deployed
+     * man not on an extraction manifest as dead; a deck world that built one
+     * would kill the entire roll on the way out, silently, every visit.
+     *
+     * `HangarDirector` exists only because the HUD dereferences
+     * `world.director.wave`, `.active`, `.intermission` and `.state()` with no
+     * optional chaining, and there has never been a directorless world for it
+     * to have been written against. Four fields and an empty `update` is a
+     * smaller change than putting four `?.` into the shipped HUD for the
+     * benefit of one room.
+     */
+    if (MODES[this.settings.mode]?.level === 'hangar') {
+      this.director = new HangarDirector(this);
+      this.running = true;
+      this.over = false;
+      return L;
+    }
+    if (MODES[this.settings.mode]?.dojo) {
       this.director = new DojoDirector(this);
       this.training = true;
       this.running = true;
@@ -1030,7 +1054,12 @@ export class World {
            * six veterans with no browser in the room; a headless bench that
            * passes nothing gets the fresh muster it always got.
            */
-          veterans: this.run.veterans || null })
+          veterans: this.run.veterans || null,
+          /* …AND WHAT THE PLAYER CALLS THEIR SQUADS. Same handoff as the
+           * veterans and for the same split: the names live in a localStorage
+           * module and this file has never been one. See `squadNames` on the
+           * director. */
+          squadNames: this.run.squadNames || null })
       : new WaveDirector(this, { mode, pool: L.pool });
     /** The army, or null. Read by the HUD, the summary and the checks. */
     this.command = leadsArmy ? this.director : null;
@@ -1721,6 +1750,17 @@ export class World {
      * from the first cleared skirmish or campaign mission onward.
      */
     this.remotes?.clear();
+    /**
+     * THE DIRECTOR GETS A WORD BEFORE THE ROOM IS TAKEN APART.
+     *
+     * Nothing here has ever asked one to clean up after itself, because until
+     * the flight deck no director owned anything outside the world's own
+     * lists. `HangarDirector` owns a twenty-five node audio graph on the
+     * shared bus and a body per man, and neither is a static, a light, a prop
+     * or a player — so walking off the deck left the hull hum running under
+     * the main menu. Optional, so every existing director is unchanged.
+     */
+    try { this.director?.dispose?.(); } catch {}
     for (const p of this.props.slice()) p.destroy();
     this.props.length = 0;
     for (const d of this.doors) d.dispose();
@@ -3098,7 +3138,7 @@ export class World {
    */
   addDoor(d) { this.doors.push(d); return d; }
 
-  spawnEnemy(type, pos) {
+  spawnEnemy(type, pos, opts = null) {
     /* NOTHING IS PUT DOWN ON THE PAD. This is the one door every body in the
      * game comes through — the director's direct path, every gunship's
      * `_deliver`, the sandbox — which is why the rule is asked here rather than
@@ -3107,7 +3147,7 @@ export class World {
      * the push. See `ExtractionDirector.clearOfLZ`. Costs one `hypot` per body
      * spawned, and only while a flight is up: `lzPoint` is null otherwise. */
     pos = this.extraction?.clearOfLZ(pos) ?? pos;
-    const e = new Enemy(this, type, pos);
+    const e = new Enemy(this, type, pos, opts);
     this.enemies.push(e);
     /**
      * A BOSS ARRIVING IS A SHOT, and the camera had never framed one.
@@ -3832,7 +3872,7 @@ export class World {
       rules: this.command && !this.command.versus ? COMMAND_POWER_RULES : undefined,
       pickTarget: (e) => this.pickTarget(e),
       pickSpawn: (t) => this.pickSpawn(t),
-      spawnEnemy: (t, p) => this.spawnEnemy(t, p),
+      spawnEnemy: (t, p, o) => this.spawnEnemy(t, p, o),
     };
     /* THE SAME CONTEXT, REACHABLE FROM LATER IN THE FRAME. `grenades.update`
      * runs with the particles and the debris — after the bodies, because a
@@ -6683,9 +6723,14 @@ export class World {
    * whichever machine pressed them, and the bodies only exist on the host. So
    * this is the ask, and `applyOrder` below is the host deciding.
    */
-  requestOrder(id) {
+  requestOrder(id, squad = null) {
     if (this.netMode !== 'client' || !this.net?.connected) return false;
-    this.net.toHost({ t: 'order', f: id });
+    /* …AND WHICH SQUAD IT IS FOR. This sent the formation alone, so a joining
+     * player's squad selection was thrown away at the wire and every order
+     * they gave went army-wide — the Target slot on their wheel moved a field
+     * nobody transmitted. `s` is null for the whole line, which is what every
+     * message from an older build means. */
+    this.net.toHost({ t: 'order', f: id, s: Number.isInteger(squad) ? squad : null });
     return true;
   }
 
@@ -6703,7 +6748,12 @@ export class World {
    */
   applyOrder(peerId, msg) {
     if (this.netMode !== 'host' || !this.command) return false;
-    return this.command.order(msg?.f, this.commanderFor(peerId));
+    /* THE SQUAD COMES OVER THE WIRE TOO — see `requestOrder`. Validated here
+     * rather than trusted: a peer may name a squad of the army they are
+     * entitled to move, and `order` itself refuses an index nobody answers to,
+     * but a non-integer must not reach it as one. */
+    const squad = Number.isInteger(msg?.s) && msg.s >= 0 ? msg.s : null;
+    return this.command.order(msg?.f, this.commanderFor(peerId), squad);
   }
 
   /**

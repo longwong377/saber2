@@ -382,9 +382,11 @@ export async function run({ check, assert }) {
      *   NO WEBFONT. Still the hard constraint, and still for the reason one
      *     file over: tools/checks/packed.mjs boots the single-file build from
      *     `file://` and fails on one byte fetched off-page.
-     *   ONE COPY. Three screens name the same path, so the browser decodes it
-     *     once; a second exported crop for the boot screen would be HANDOFF
-     *     §2.3 with a bigger diff.
+     *   ONE COPY. Every screen that carries it names the same path, so the
+     *     browser decodes it once; a second exported crop for one of them would
+     *     be HANDOFF §2.3 with a bigger diff. The COUNT is not the property and
+     *     was pinned at three until the Holocron took the menu's own plate and
+     *     wordmark — see the note at that assertion.
      *   IT IS LOCAL. A logo on a CDN breaks the packed build exactly as a
      *     webfont does.
      *
@@ -397,11 +399,22 @@ export async function run({ check, assert }) {
     assert(!/fonts\.(googleapis|gstatic)\.com/i.test(HTML_C + CSS_C),
       'the front end names a Google Fonts host — see tools/checks/packed.mjs, which boots from file://');
 
+    /* EVERY SCREEN THAT IS NOT THE GAME CARRIES IT, and the count is not the
+     * property — ONE COPY is. The count was pinned at three (boot, menu,
+     * loading) and went to four when the Holocron stopped having a backdrop of
+     * its own: "when looking at the holocron in the main menu the background
+     * should be the same background that the main menu has (game title still at
+     * the top)". A fourth screen naming the same file is the rule working; a
+     * fourth screen naming a second crop is HANDOFF §2.3 with a bigger diff,
+     * and that is what the `srcs.size` line below has always been for. */
     const marks = [...HTML_C.matchAll(/<img[^>]*class="wordmark"[^>]*>/g)].map((m) => m[0]);
-    assert(marks.length === 3,
-      `${marks.length} screen(s) carry the wordmark — the boot screen, the menu and the loading screen all do`);
+    assert(marks.length >= 3,
+      `${marks.length} screen(s) carry the wordmark — the boot screen, the menu and the loading `
+      + 'screen all do, and any non-game screen may');
     const srcs = new Set(marks.map((m) => /src="([^"]+)"/.exec(m)?.[1]));
-    assert(srcs.size === 1, `the three marks name ${srcs.size} different files: ${[...srcs].join(', ')}`);
+    assert(srcs.size === 1,
+      `${marks.length} marks name ${srcs.size} different files: ${[...srcs].join(', ')} — the `
+      + 'browser must decode the painting once');
     const src = [...srcs][0];
     assert(src && src.startsWith('./'),
       `the wordmark is loaded from "${src}" — it must be a same-directory relative path, because `
@@ -535,41 +548,111 @@ export async function run({ check, assert }) {
     assert(!/\bprogressLines\b/.test(code),
       'src/main.js still calls progressLines — the history is back under the title of the game');
     assert(!/\bshowRecord\b/.test(code), 'showRecord() is back in src/main.js');
-    const writes = [...code.matchAll(/getElementById\('menu-record'\)/g)].length;
-    assert(writes === 1,
-      `#menu-record has ${writes} writers in main.js — it is the failed-deploy notice and nothing else now`);
     /**
-     * INSIDE `deploy()`'s CATCH, ESTABLISHED BY BRACE COUNTING and not by "a
-     * `catch` token appears within nine hundred characters".
+     * EVERY WRITER IS A FAILURE NOTICE, WHICH IS THE PROPERTY — not "there is
+     * one of them". The count was pinned at one and went to two when a second
+     * door onto a world was built (`enterHangar`, which fails exactly the way
+     * `deploy` does and has to say so on the same line, for
+     * `tools/checks/session.mjs`'s reason: an invisible failure is the same
+     * black screen). A third door would be a third writer and would be equally
+     * correct; a writer on an unconditional path is the defect, at any count.
      *
-     * `main.js` has eight `catch` sites; the old regex asked only whether one
-     * of them happened to sit nearby, so moving the write out of the catch onto
-     * any unconditional path that follows one — turning the failed-deploy
-     * notice into a permanent line under the title of the game, which is the
-     * exact defect this check was written to end — left it green.
+     * INSIDE A CATCH, ESTABLISHED BY BRACE COUNTING and not by "a `catch`
+     * token appears within nine hundred characters". `main.js` has eight
+     * `catch` sites; the old regex asked only whether one of them happened to
+     * sit nearby, so moving the write onto any unconditional path that follows
+     * one — turning the failure notice into a permanent line under the title of
+     * the game, which is the exact defect this check was written to end — left
+     * it green.
+     *
+     * BACKWARDS TO THE ENCLOSING BLOCK is the only direction that survives the
+     * `try { world.dispose(); } catch {}` nested inside these very catches: a
+     * forward scan for "the last catch seen" loses the outer one the moment the
+     * inner one closes.
+     */
+    const sites = [...code.matchAll(/getElementById\('menu-record'\)/g)].map((m) => m.index);
+    assert(sites.length >= 1,
+      'nothing writes #menu-record at all — the failure notice is gone, and a deploy that dies '
+      + 'now says nothing anywhere the player can read it');
+    /** The brace that opens the block this offset sits directly inside. */
+    const blockAt = (at) => {
+      let depth = 0;
+      for (let i = at; i >= 0; i--) {
+        if (code[i] === '}') depth++;
+        else if (code[i] === '{') { if (depth === 0) return i; depth--; }
+      }
+      return -1;
+    };
+    const isCatch = (open) =>
+      open > 0 && /catch\s*(\([^)]*\))?\s*$/.test(code.slice(Math.max(0, open - 80), open));
+
+    for (const at of sites) {
+      const open = blockAt(at);
+      assert(open > 0, 'a #menu-record write is not inside any block');
+      /**
+       * ══ OR INSIDE A HELPER NOTHING BUT A CATCH CALLS ══════════════════
+       *
+       * The rule this check exists for is "main.js touches that element only
+       * to report a failure". Lexically-inside-a-catch was the whole of it
+       * while there was exactly one door that could fail. There are two now —
+       * Ignite and the flight deck — and `pause-card.mjs` separately requires
+       * that main.js keep exactly ONE writer, so that two inline copies is not
+       * an available answer either.
+       *
+       * A named helper called only from catches satisfies both, and satisfies
+       * the actual invariant better than a duplicated line does. So the rule
+       * grows one clause rather than being weakened: if the write is in a
+       * function, EVERY call site of that function must itself be inside a
+       * catch. That is the same guarantee, established the same way.
+       */
+      if (!isCatch(open)) {
+        const head = code.slice(Math.max(0, open - 200), open);
+        const fn = /function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*$/.exec(head);
+        assert(fn, `a #menu-record writer at ${at} is neither inside a catch nor inside a named `
+          + 'function — there is nothing to establish that only a failure reaches it');
+        const name = fn[1];
+        const calls = [...code.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))]
+          .map((m) => m.index)
+          .filter((i) => i < open - 200 || i > at);
+        assert(calls.length >= 1, `${name} writes #menu-record and nothing calls it`);
+        for (const c of calls) {
+          assert(isCatch(blockAt(c)),
+            `${name} writes #menu-record and is called from outside a catch at ${c} — a writer `
+            + 'reachable on an unconditional path is a permanent line under the title of the game');
+        }
+        continue;
+      }
+      assert(isCatch(open),
+        `a #menu-record writer at ${at} is not inside a catch — see tools/checks/session.mjs, `
+        + 'which requires a failed deploy to say so somewhere the player can read it, and ONLY a '
+        + 'failed one. A writer on an unconditional path is a permanent line under the title.');
+    }
+    /**
+     * AND `deploy` STILL SAYS SO WHEN IT FAILS, because that is the door
+     * `session.mjs` names by name.
+     *
+     * It used to be enough to look for the `getElementById` inside `deploy`.
+     * With the write moved into a helper — see the clause above, and the two
+     * doors that can now fail — what has to be true is that deploy's own catch
+     * still reaches it. So the question is asked of the call rather than of
+     * the DOM lookup.
      */
     const body = functionBody(code, 'function deploy(');
-    const at = body.indexOf("getElementById('menu-record')");
-    assert(at > 0, "deploy() no longer writes #menu-record at all — the failed-deploy notice is gone");
-    /* BACKWARDS TO THE BLOCK THAT ENCLOSES IT, which is the only direction that
-     * survives the `try { world.dispose(); } catch {}` nested inside this very
-     * catch — a forward scan for "the last catch seen" loses the outer one the
-     * moment the inner one closes. */
-    let depth = 0, open = -1;
-    for (let i = at; i >= 0; i--) {
-      if (body[i] === '}') depth++;
-      else if (body[i] === '{') { if (depth === 0) { open = i; break; } depth--; }
-    }
-    assert(open > 0, 'the #menu-record write is not inside any block of deploy()');
-    assert(/catch\s*(\([^)]*\))?\s*$/.test(body.slice(Math.max(0, open - 80), open)),
-      "the one remaining #menu-record writer is not inside deploy()'s catch — see tools/checks/session.mjs, "
-      + 'which requires a failed deploy to say so somewhere the player can read it, and only a failed one');
+    const writer = /function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{[^}]{0,200}getElementById\('menu-record'\)/
+      .exec(code);
+    const reaches = body.includes("getElementById('menu-record')")
+      || (writer && new RegExp(`\\b${writer[1]}\\s*\\(`).test(body));
+    assert(reaches,
+      'deploy() no longer says anything when it fails — neither a #menu-record write of its own '
+      + `nor a call to the one that does${writer ? ` (${writer[1]})` : ''}. A deploy that dies in `
+      + 'silence is the same black screen this notice exists to prevent');
     /* …and the thing it stopped displaying is still there to display. */
     const prog = await read('src/game/Progress.js');
     assert(/export function progressLines\b/.test(prog),
       'progressLines() was deleted along with its display — the instruction was to remove the line from the menu, '
       + 'not to stop counting runs');
-    return 'no progressLines in main.js, #menu-record written once, from the catch; Progress.js intact';
+    return `no progressLines in main.js; ${sites.length} #menu-record writer(s), every one of `
+      + 'them inside a catch; Progress.js intact';
   });
 
   check('keyart: the plate can be rebuilt, and its bounds are still enforced where they live', async () => {

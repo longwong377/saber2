@@ -12,7 +12,7 @@ import { Actor } from './Ragdoll.js';
 import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
-  buildJedi, bodyOptsFor, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
+  buildJedi, bodyOptsFor, kitOptsFrom, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
   hoodCut } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { WEIGHT as TOKEN_WEIGHT } from './Tokens.js';
@@ -956,7 +956,10 @@ export const ARCHETYPES = {
     speed: 3.6, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
     fireRate: 3.4, burst: 1, spread: 0.004, damage: 34, telegraph: 1.0,
     preferred: [22, 42], boltColor: BOLT_COLORS.gold, score: 320, threat: 3,
-    trooperColor: 0x2c3038, accent: 0xff9a20, hipHeight: 0.95,
+    /* The plate and the flash live in `BODY_KITS.sniper` now, with every other
+     * thing this body wears — see the note there for the defect that moved
+     * them. */
+    hipHeight: 0.95,
   },
   acolyte: {
     /* DARK ACOLYTE, not "Sith Acolyte". There are two Sith and the game fields
@@ -1504,13 +1507,19 @@ let _auditPhase = 0;
 /**
  * What a rank is worth to a soldier's AIM, as a multiplier on their own spread.
  *
- * Derived from RANKS' shape rather than authored beside it: the ladder buys
- * about 78% more health from bottom to top, and this is the same climb applied
- * to the one thing a rank obviously should buy and did not. A Commander shoots
- * at 0.68 of a raw trooper's spread, which over a 30 m shot is the difference
- * between a hit and a near miss and is visible in one firefight.
+ * Derived from RANKS' shape rather than authored beside it, and it moved when
+ * RANKS did. The ladder used to buy 78% more health from bottom to top and this
+ * table matched that climb — a Commander shot at 0.68 of a raw trooper's
+ * spread. Both were compressed for the reason written out over `DUTIES` in
+ * Command.js: a rung worth that much makes a returning company strictly
+ * stronger and makes the fresh men on the slate furniture, and what a rank buys
+ * now is a LICENCE rather than a bigger number.
+ *
+ * 0.88 at the top is still a real hand — about a tenth off the cone, which over
+ * a 30 m shot is a hand's width — and it is no longer the whole argument for
+ * fielding a veteran.
  */
-const AIM_BY_RANK = [1.00, 0.92, 0.84, 0.76, 0.68];
+export const AIM_BY_RANK = [1.00, 0.97, 0.94, 0.91, 0.88];
 
 /**
  * THE RULE ITSELF, AS ONE FUNCTION — and it is exported so that the other half
@@ -2789,8 +2798,23 @@ function installStandard(e) {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 export class Enemy {
-  constructor(world, type, spawn) {
+  constructor(world, type, spawn, opts = null) {
     const A = ARCHETYPES[type] || ARCHETYPES.b1;
+    /**
+     * WHAT THE MAN WEARING THIS BODY CHOSE, and it has to arrive HERE.
+     *
+     * A kit is geometry — a pauldron, a kama, a pack — so it is decided when
+     * the body is built and cannot be bolted on afterwards the way the rank
+     * paint and the shin mark are. `enlistBody` runs after this constructor,
+     * which is why the look rides in on the spawn instead of being applied at
+     * the weld. Null for every enemy in the game, which is all of them but
+     * your own line.
+     */
+    this.look = opts?.look ?? null;
+    /* Which chassis's vocabulary his kit is written in — the `Trooper` record
+     * has carried `kind` since attributes existed, so the spawn hands it over
+     * rather than this file guessing from an archetype name. */
+    this.lookKind = opts?.kind || 'flesh';
     this.id = 'e' + (_enemyId++);
     this.type = type;
     this.A = A;
@@ -3189,8 +3213,19 @@ export class Enemy {
      * the shipped roster: trooper/sniper and acolyte/sparring sat at 1.000
      * flank IoU — identical silhouettes at 30 m — and the roster's worst pair
      * drops to 0.895 with this line in. */
-    const opts = { scale: A.scale, ...(bodyOptsFor(this.type) || {}) };
-    if (this.type === 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }
+    /* THE ARCHETYPE'S KIT FIRST, THE MAN'S OWN CHOICES OVER IT. `buildTrooper`
+     * spreads its kit row and then the options, so a player's pauldron beats
+     * the rung's and everything they did not touch stays the rung's. */
+    const opts = {
+      scale: A.scale,
+      ...(bodyOptsFor(this.type) || {}),
+      ...kitOptsFrom(this.look, this.lookKind || 'flesh'),
+    };
+    /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
+     * to be a special case on this line, spread AFTER the man's own kit, so a
+     * Marksman the player had painted landed on the field in stock colours
+     * while the parade ground showed him red. In the kit table it is the
+     * rung's default in both readers and a choice beats it. */
     const built = A.build(opts);
     this.built = built;
 
@@ -5445,11 +5480,20 @@ export class Enemy {
     if (this.actor?.ragdolled) this.recover();
     const c = this.world?.command;
     if (c && this.trooper) {
-      /* THE WOUND IS REMEMBERED. `Trooper.wounds` was declared, persisted and
-       * displayed from the day the record existed, and this is its one writer:
-       * went down, was picked up, lived. The dossier phrases it and `scorchUp`
-       * paints it on the plate at the next deploy. */
-      this.trooper.wounds = (this.trooper.wounds | 0) + 1;
+      /* THE WOUND IS REMEMBERED: went down, was picked up, lived. The dossier
+       * phrases it and `scorchUp` paints it on the plate at the next deploy.
+       *
+       * ONE PER MAN PER RUN, and the flag is shared with the second writer in
+       * `CommandDirector._troops` — see the long note there. A man who is shot
+       * to a third and then goes down and is picked up had one bad afternoon,
+       * not two, and `wounds` reads as "runs he nearly died in", which is the
+       * number a roster wants and the one a scar can stand for. Going down
+       * always claims the flag if it is free, because it is the sharper of the
+       * two events. */
+      if (!this.trooper._hurtRun) {
+        this.trooper._hurtRun = true;
+        this.trooper.wounds = (this.trooper.wounds | 0) + 1;
+      }
       c.log.push({ t: 'saved', name: this.trooper.name, area: c.areaNumber, wave: c.wave });
       if (this.team === c.commander?.side) {
         this.world?.notify?.(`${this.trooper.name} IS UP`, 'back on their feet, and not for long');

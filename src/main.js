@@ -13,9 +13,10 @@ import { audio } from './engine/Audio.js';
 import { initPhysics } from './physics/Rapier.js';
 import { sandMaps, rockMaps, metalMaps, clothMaps, armorMaps, duracreteMaps,
   soilMaps, snowMaps, skinMaps } from './engine/Textures.js';
+import { leaveDeck } from './game/DeckEdit.js';
 import { World } from './game/World.js';
 import { DIFFICULTY } from './game/Combat.js';
-import { HUD, ordinal } from './ui/HUD.js';
+import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, bladeCeiling, BLADE_CAP,
   VICTORY_TITLE, LINE_LOST_TITLE } from './ui/Menu.js';
 import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
@@ -83,6 +84,17 @@ hud.onShow = (on) => touch.show(on);
  * its action (HUD._buildPowers), so a tap fires the same edge a screen button
  * does and the six-button rack does not have to grow to forty-four. */
 touch.bindWheel(document.getElementById('power-wheel'));
+/**
+ * …AND THE ORDER STRIP, for the same one listener and the same reason.
+ *
+ * `Touch.js`'s own header says "the order and emote wheels are held-key
+ * radials, which is a gesture a thumb already makes" — and there is no button
+ * to hold, so on a phone a player could not give ANY order, let alone one to a
+ * single squad. The strip under the order readout already names every
+ * formation and now carries a Target chip beside them; making it a button rack
+ * costs one line and no layout, exactly as the power wheel did.
+ */
+touch.bindWheel(document.getElementById('rp-orders'));
 
 input.sensitivity = 1;      // the blade controller applies the user's scaling
 input.invertY = settings.invertY;
@@ -219,6 +231,28 @@ function veteransToField(levelKey = null) {
   return men;
 }
 
+/**
+ * WHAT THE PLAYER CALLS THEIR SQUADS, for the army the next run fields.
+ *
+ * The names are a fact about the COMPANY — they persist, they are set on the
+ * Company tab before you land, and they are the same names next run — so they
+ * come off the roll `musterPlan` names, exactly as the veterans do. A run that
+ * fields no army of yours (a duel, a lesson) plans nothing and hands nothing,
+ * and the fight prints the numbers, which is what every squad is called until
+ * somebody names it.
+ *
+ * NOT filtered by whether that squad will exist: `Company.squadNames` is a
+ * flat array by index and the director reads the entry for whatever squads the
+ * deal actually makes. A name for a fourth squad on a line that forms two is
+ * simply never printed, and it is still there the run the line is big enough.
+ */
+function squadNamesToField() {
+  if (session) return null;
+  const plan = musterPlan(settings, LEVELS[settings.level]?.armies);
+  if (!plan) return null;
+  return Company.squadNames(Company.load(plan.army));
+}
+
 /** A name from the wire, on its way into innerHTML. */
 const escName = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
@@ -261,6 +295,11 @@ const menu = new Menu(settings, {
   onResume: () => resume(),
   onRestart: () => { menu.hidePause(); restartWave(); },
   onQuit: () => quitToMenu(),
+  /* THE COMPANY TAB'S OWN DOOR — see `enterHangar`. It is not `onDeploy` with
+   * an argument: a deploy persists settings, spends recruits, rolls a run seed
+   * and files a run, and every one of those is wrong for a room you walk into
+   * to look at your men. */
+  onHangar: () => { enterHangar().catch((e) => console.error('hangar failed', e)); },
   // Context the raw numbers do not carry: which level, which tier, and how much
   // of the frame the player's own settings asked for. A report that says 24 ms
   // without saying "arena, ultra, grass 1.5" is not actionable.
@@ -415,7 +454,23 @@ function mintRunSeed() {
     : (Math.random() * 0xffffffff) >>> 0;
 }
 
-async function buildWorld(levelKey, onProgress = null, runSeed = null) {
+/**
+ * ══ THE ONE LINE ON THE MENU THAT SAYS A DOOR DID NOT OPEN ════════════════
+ *
+ * `#menu-record` is allowed exactly ONE writer, and `tools/checks/pause-card.mjs`
+ * counts them: the element used to carry a run summary as well, that summary
+ * was deleted for being history rather than a currency, and what survives is
+ * the failure notice alone. Two doors can fail — Deploy and the flight deck —
+ * so the notice is a function rather than a second `getElementById`.
+ *
+ * A failure the player cannot see is the same thing as a black screen.
+ */
+function sayOnTheMenu(text) {
+  const el = document.getElementById('menu-record');
+  if (el) el.textContent = text;
+}
+
+async function buildWorld(levelKey, onProgress = null, runSeed = null, override = null, opts = null) {
   if (world) { world.dispose(); world = null; }
   /**
    * PHYSICS BEFORE ANYTHING, AND IT IS AWAITED HERE RATHER THAN ASSUMED.
@@ -440,7 +495,40 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
 
   // The player's settings, with whatever the host of this session decided
   // laid over them — and never the other way round. See `session` above.
-  world = new World(engine, worldSettings(), { veterans: veteransToField(levelKey) });
+  /**
+   * `override` IS WHAT KEEPS A ROOM OFF THE PLAYER'S SAVED SETTINGS.
+   *
+   * `worldSettings()` returns the live `settings` object by reference when
+   * there is no session, so a destination that wanted a different mode had two
+   * choices: write `settings.mode` and persist it, or pass it here. The first
+   * is a trap with three separate teeth — `record()` files a run under
+   * `sessionOr('mode')`, `theatreFor` reads it back on the next Deploy, and
+   * `saveSettings` puts it on disk — so a visit to the flight deck would have
+   * changed what the player's next real run was.
+   *
+   * Layered over, never under: a caller that says `{mode:'hangar'}` means it.
+   */
+  world = new World(engine, override ? { ...worldSettings(), ...override } : worldSettings(), {
+    veterans: veteransToField(levelKey),
+    /* WHAT THE PLAYER CALLS THEIR SQUADS — read here for the same reason the
+     * veterans are: main.js owns localStorage and the game owns the game. */
+    squadNames: squadNamesToField(),
+  });
+  /**
+   * A HOOK BETWEEN THE WORLD EXISTING AND THE LEVEL BEING BUILT, AND IT EXISTS
+   * BECAUSE THERE WAS NO SUCH MOMENT.
+   *
+   * `enterHangar` set `world._pickedLevel` — the record the flight deck's
+   * window looks out at — on the line AFTER `await buildWorld(...)`. The
+   * dressing that reads it runs INSIDE that await, at load stage 6. So the
+   * assignment always landed after its only reader had already given up and
+   * fallen back to the hangar's own level record, and the deck's planet was
+   * derived from the deck's own near-black floor swatch instead of from the
+   * theatre the player picked. The comment in `Hangar.outsideLevel` claiming
+   * main.js "stashes the RECORD on the world before the dressing runs" was
+   * describing an ordering that has never held.
+   */
+  if (opts?.onWorld) opts.onWorld(world);
   /**
    * THE RUN'S NUMBER, BEFORE ANYTHING READS IT.
    *
@@ -637,7 +725,14 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
    */
   if (world.command) {
     const d = world.command;
+    /* WHAT THE PLAYER CALLS THEIR SQUADS, once, so the roster column groups
+     * under the same words the fight's notifications use. See
+     * `HUD.rosterHtml` for why the column is grouped at all. */
+    hud.setSquadWords?.(d.squadNames, d.commander?.army?.squadWord);
     d.onRoster = (summary) => hud.setRoster?.(summary);
+    /* …AND WHO THE NEXT ORDER IS FOR, held on the order panel rather than
+     * announced once and forgotten. See `HUD.setTarget`. */
+    d.onTarget = (name) => hud.setTarget?.(name);
     if (typeof screens.muster === 'function') {
       d.onMuster = (offer) => screens.muster(offer, {
         /* Buy, then re-read. The director guards every refusal case itself and
@@ -689,7 +784,10 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
         },
       }) || fallbackMuster(d);
     }
-    d.onOrder = (F, squads) => hud.setOrder?.(F.id, F.name, squads);
+    /* `one` is `{ squad, name }` for an order given to a single squad and null
+     * for the whole line — see `HUD.setOrder`, which paints them differently
+     * because the army-wide panel was repainting for both. */
+    d.onOrder = (F, squads, one) => hud.setOrder?.(F.id, F.name, squads, one);
     d.onRoster(d.roster.summary());
     /* The formation you START in, which nothing announced. `order()` fires
      * `onOrder` and the opening formation is never ordered — it is configured
@@ -732,6 +830,138 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null) {
  * BUILD FIRST, REVEAL SECOND. Nothing the player can see changes until there is
  * a world to show them, and a failure puts the menu back with the reason on it.
  */
+/**
+ * ══ WALK ONTO THE FLIGHT DECK ═════════════════════════════════════════════
+ *
+ * A sibling of `deploy()` and emphatically not a call into it. Everything
+ * `deploy` does that this must not do is a way to corrupt a save:
+ *
+ *   `saveSettings(settings)`  — would persist a mode nobody chose to play.
+ *   `Muster.consume(...)`     — would spend pre-rolled recruits on a room
+ *                               nobody fought in. Cannot fire anyway, because
+ *                               `allies: 0` leaves no `world.command`.
+ *   `mintRunSeed` semantics   — a visit is not a run and must not roll one.
+ *   the mode-start block      — there is no wave to start.
+ *   `beginInsertion`          — you are already aboard.
+ *
+ * `allies: 0` is load-bearing and not cosmetic: `leadsArmy = campaign ||
+ * contingent > 0` and `contingent` comes off `settings.allies`, a PERSISTED
+ * GLOBAL SLIDER that any player who has touched it carries into every world.
+ * Without the override a player with allies turned on would build a
+ * `CommandDirector` on the deck, and `bank()` on the way out would strike every
+ * man on the roll as dead. `MODES.hangar` also has no `campaign` flag, so both
+ * halves of `leadsArmy` are false by construction and `World.loadLevel`'s
+ * hangar branch returns before either is consulted.
+ *
+ * `screens.state = 'playing'` rather than a new state, because `'playing'` is
+ * already in `Screens.LIVE`: Escape, Start and a lost pointer lock all route to
+ * `pause()` with no new code, and `main.js`'s frame gate already steps the
+ * world. A new state would need `LIVE`, the pad host list, the frame gate and a
+ * card/take pair, and would buy nothing — `Screens.js`'s own header calls a
+ * reachable state with no exit the bug the module exists to prevent.
+ */
+async function enterHangar() {
+  try {
+    /* THE THEATRE THE PLAYER PICKED goes with them, because the deck's whole
+     * view is the world this ship is over and `level` has to be `'hangar'` for
+     * `World` to build the deck at all. `theatreFor` is the same resolver
+     * `deploy` uses, so a mode that owns its ground (Command declares Geonosis)
+     * puts Geonosis outside — which is the planet the next run is fought on. */
+    const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
+    await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label), null,
+      { mode: 'hangar', level: 'hangar', allies: 0 },
+      /* THE RECORD, not the key: `Hangar.js` imports no levels — see
+       * `outsideLevel` — so the world carries what its window is looking at.
+       * AND IT IS HANDED OVER BEFORE THE LEVEL IS BUILT. This used to be an
+       * assignment on the next line, which is after the dressing that reads
+       * it; see the `onWorld` note in `buildWorld`. */
+      { onWorld: (w) => { w._pickedLevel = LEVELS[outside] || null; } });
+  } catch (e) {
+    console.error('hangar failed', e);
+    if (world) { try { world.dispose(); } catch {} world = null; }
+    hud.show(false);
+    input.enabled = false;
+    menu.showMenu();
+    screens.set('menu');
+    sayOnTheMenu(`Could not reach the deck: ${e.message || e}`);
+    return;
+  }
+  /**
+   * AND THE DECK HAS A DOOR OUT THAT IS NOT THE MENU.
+   *
+   * "Deploy for the run by walking up the gunship's ramp." `Hangar` watches
+   * the apron at the foot of the near pad's ramp and raises this; what a run
+   * IS — the mode, the theatre, the seed — is main.js's to know, so the room
+   * asks and this answers. `leaveHangar` first, because `deploy` builds a
+   * world and the deck's one has to be put down properly: its director owns a
+   * twenty-five node audio graph and a body per man.
+   */
+  if (world) {
+    world.onDeckDeploy = () => {
+      leaveHangar();
+      deploy().catch((e) => console.error('deploy from the deck failed', e));
+    };
+  }
+  cancelDeathCard();
+  menu.hideMenu();
+  menu.hideDeath();
+  screens.clear();
+  /**
+   * THE HUD IS DOWN TO ONE THING: THE ORDER WHEEL.
+   *
+   * There is no wave, no score and no hostile count, and a readout saying zero
+   * of each is the surest way to make a place feel like a menu — so `hud.show`
+   * was simply `false`. But the order wheel LIVES INSIDE `#hud`, so hiding the
+   * root hid the one piece of interface this room is for, and the brief's
+   * "the muster call reuses the real order wheel, so the deck is where the
+   * command interface is learned" could not be true while it did.
+   *
+   * `.deck` on the root is one stylesheet rule that hides every child except
+   * the wheels and the centre message. One class beats a second HUD.
+   */
+  hud.show(true);
+  document.getElementById('hud')?.classList.add('deck');
+  input.enabled = true;
+  input.requestLock();
+  screens.set('playing');
+}
+
+/**
+ * …AND WALK OFF IT. `quitToMenu` minus the two calls that would file a run and
+ * execute the company, plus the two teardowns it has always been missing.
+ *
+ * `record()` is skipped because a visit is not a run: it files under
+ * `sessionOr('mode')` and would evict a real one from the 40-deep recent list.
+ * `bank()` is skipped because walking off a deck is not a withdrawal and there
+ * is no manifest to walk off it with — see `enterHangar`.
+ *
+ * `freecam.exit` and `announcer.reset` are here because they are bugs
+ * everywhere and this is the first door built after they were found: the HUD's
+ * photo mode holds hard references to the world and its camera and only drops
+ * them on a later `hud.update` that never runs at the menu, and `Announcer`'s
+ * `reset()` has had zero callers outside its own constructor since it was
+ * written, so every room inherits the last fight's kill deltas and a queue of
+ * dead `Enemy` references.
+ */
+function leaveHangar() {
+  screens.clear();
+  hud.show(false);
+  document.getElementById('hud')?.classList.remove('deck');
+  hud.freecam?.exit?.(hud);
+  hud.announcer?.reset?.();
+  input.enabled = false;
+  input.exitLock();
+  /* "Everything you change is saved on leaving." Every edit is already durable —
+  // `Company.dress` ends in a localStorage write — so this is for the one piece
+  // of state that is not: a callsign being typed on the frame he walked off, a
+  // wheel notch still settling, and any wash crossing a man about to be
+  // disposed. */
+  if (world) leaveDeck(world);
+  if (world) { world.dispose(); world = null; }
+  menu.showMenu();
+  screens.set('menu');
+}
+
 async function deploy() {
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
@@ -785,8 +1015,7 @@ async function deploy() {
     screens.set('menu');
     // Said out loud on the one line of the main menu this file already owns,
     // because a failure the player cannot see is the same black screen.
-    const el = document.getElementById('menu-record');
-    if (el) el.textContent = `Could not deploy: ${e.message || e}`;
+    sayOnTheMenu(`Could not deploy: ${e.message || e}`);
     return;
   }
 
@@ -1215,6 +1444,15 @@ function restartWave() {
 }
 
 function quitToMenu() {
+  /**
+   * THE DECK LEAVES BY ITS OWN DOOR, and the branch is here rather than in the
+   * two callers because there are more than two: the pause card's Menu button,
+   * `#btn-quit`, `#btn-menu`, and anything added later all arrive through
+   * `onQuit`. A destination that has to remember to be exited specially is one
+   * that will eventually be exited the other way, and the other way from the
+   * deck is `record()` filing a phantom run and `bank()` executing the roll.
+   */
+  if (world && world.settings?.mode === 'hangar') { menu.hidePause?.(); leaveHangar(); return; }
   // Before anything else: a card scheduled 2.6 s ago must not land on the menu.
   cancelDeathCard();
   menu.hideDeath();
@@ -1373,7 +1611,24 @@ function cardAfter(ms, what, show) {
 function bank(stats = null) {
   if (!world || world._banked) return;
   const d = world.command;
-  if (!d || d.versus || session) return;
+  /**
+   * AND A DECK IS NOT A BATTLE. `d.deck` is the flight deck's order-wheel
+   * adapter saying so.
+   *
+   * This gate has always been "is `world.command` truthy", and `world.command`
+   * has always meant one thing — a `CommandDirector`, which only a real fight
+   * builds. The hangar now sets it too, because the order wheel is gated on it
+   * and the brief asks for the real wheel in that room; without this line,
+   * walking off the deck would hand `Company.keep` an empty manifest under
+   * `deployed: roster.all`, and its rule for a deployed man not on the
+   * manifest is that he is dead. The whole permadeath roll, struck silently,
+   * on every visit.
+   *
+   * `leaveHangar` already avoids calling `bank` at all, and that is not
+   * enough: it is one forgotten branch away from the same wipe, and this room
+   * has more than two exits. The invariant belongs where the damage is.
+   */
+  if (!d || d.deck || d.versus || session) return;
   world._banked = true;
   const roster = d.roster;
   if (!roster) return;
@@ -1405,6 +1660,13 @@ function bank(stats = null) {
      * who reached the ship. */
     deployed: roster.all,
     left: roster.all.filter((t) => !manifest.includes(t)),
+    /* …AND WHICH OF THEM WERE STILL STANDING. `left` is everybody who is not
+     * on the ship, which is the man killed in engagement two and the man
+     * eleven metres from a closing ramp with nothing wrong with him. Both are
+     * gone; they are not the same thing to have done to somebody, and the
+     * memorial says which now. See `Company.FATES`. */
+    stranded: roster.all.filter((t) => t.alive && !manifest.includes(t))
+      .map((t) => t.designation),
     ground: world.levelKey ?? null,
     /* `won` is a real ending and `keep`'s own signature lists it. Without this
      * clause a victory filed as 'wiped' — the fallback reads `world.over`,
@@ -2178,8 +2440,19 @@ function fallbackMuster(d) {
 
 function orderKeys() {
   if (screens.state !== 'playing') return;
-  const cmd = world?.command;
+  /* THE SAME TWO HANDLES `HUD` READS, and for the reason written there: the
+   * deck answers the wheel without being a commanded fight. */
+  const cmd = world?.command || world?.orders;
   if (!cmd) return;
+  /**
+   * ── WHO THE NEXT ORDER IS FOR, ON ITS OWN KEY ─────────────────────────
+   *
+   * Stepping the target used to mean two full hold-aim-release cycles of the
+   * order wheel — one to pick the squad, one to give the order — and there was
+   * no way to do it at all on a phone. `cycleSquad` says out loud which squad
+   * it landed on, so this needs no message of its own.
+   */
+  if (input.actHit('squadtarget')) cmd.cycleSquad?.();
   for (const o of ORDER_ACTIONS) {
     if (!input.actHit(o.action)) continue;
     /**
@@ -2197,9 +2470,21 @@ function orderKeys() {
      * already the hardest thing on this HUD to find. A selection that the fast
      * path throws away is worse than no selection at all.
      */
+    /* …AND A DISPATCH IS NOT THE ORDER LANDING. The second press of an order
+     * that was refused for distance sends a runner and returns true, so
+     * printing the formation's own line here would say "CHARGE — 2nd Squad"
+     * over a squad still standing where it was with a man halfway to it.
+     * `_sendRunner` has already said the true thing out loud. */
+    const wasRun = cmd.runnerAt;
     if (!cmd.order(o.id, null, cmd.selectedSquad ?? null)) continue;
+    if (cmd.runnerAt !== wasRun) break;
+    /* THE SQUAD'S OWN NAME, through the director's one reader. This built its
+     * own string — `${ordinal(n + 1)} Squad` — which hardcoded the word
+     * "Squad" past `ARMIES[].squadWord` and ignored the name the player gave
+     * it, so the wheel said "HAVOC only" and the key press said "2nd Squad"
+     * about the same five men. */
     const only = cmd.selectedSquad == null ? o.blurb
-      : `${ordinal(cmd.selectedSquad + 1)} Squad — ${o.blurb}`;
+      : `${cmd.squadLabel(cmd.selectedSquad)} — ${o.blurb}`;
     hud.message(o.name.toUpperCase(), only);
     break;                       // one order a frame; two at once is neither
   }
@@ -2489,5 +2774,20 @@ boot().then(() => requestAnimationFrame(frame), (err) => {
 });
 
 // Handy for tuning from the console.
+/**
+ * AND `screens` AND `resume` ARE ON IT, WHICH THEY WERE NOT.
+ *
+ * `tools/_deckshot.mjs` walks the shipped page onto the flight deck and takes
+ * the frames this room is judged by. In a headless browser `requestPointerLock`
+ * does not resolve, `onLockChange` fires with `locked: false`, and the very
+ * next line pauses the run — so the world stops stepping, the camera never
+ * recomposes, and every station the tool visits renders the same frozen frame.
+ * Thirteen identical pictures, and the tool reported success for all of them.
+ *
+ * The tool cannot fix that from outside without a way to say "I am a robot,
+ * keep playing". These two handles are that, and they are read by nothing in
+ * the game itself.
+ */
 window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud, touch,
+  screens, resume, pause,
   get fps() { return Math.round(fpsSmooth); } };

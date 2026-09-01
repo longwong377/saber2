@@ -42,54 +42,40 @@
  */
 
 import {
-  ARMIES, ARMY_IDS, OPENING_STRENGTH, designateWith, markById, commandConfig,
+  ARMIES, ARMY_IDS, OPENING_STRENGTH, MAX_STRENGTH, designateWith, markById,
+  commandConfig, composeContingent, shelfFor,
 } from './Command.js';
 import * as Company from './Company.js';
+import { makeStore } from './Store.js';
 
 /** Where it lives. Versioned like every other store in the tree. */
 export const KEY = 'saber.muster.v1';
 
 /**
- * How many recruits one army's slate may hold. `OPENING_STRENGTH` is every
- * army mode's want, so the slate never needs more — and a cap is what keeps a
- * hand-edited store from handing the tab ten thousand rows to render.
+ * How many recruits one army's slate may hold.
+ *
+ * `MAX_STRENGTH`, not `OPENING_STRENGTH`: an army mode's opening is ten, but a
+ * contingent is whatever the player set the line to and that runs to
+ * twenty-four. The cap is what keeps a hand-edited store from handing the tab
+ * ten thousand rows to render, so it has to sit at the largest line the game
+ * can actually field.
  */
-export const SLATE_CAP = OPENING_STRENGTH;
+export const SLATE_CAP = MAX_STRENGTH;
 
 /* ── the store ───────────────────────────────────────────────────────── */
 
 /**
- * THE SLATE SURVIVES A BROWSER WITH NO STORAGE — for the SESSION, in memory.
- *
- * Private browsing and a full quota make `localStorage` throw, and the old
- * behavior was the worst of both: `ensure` handed the tab an in-memory slate
- * to RENDER, the write silently failed, and every later read (`slateFor`
- * resolving a recruit's page, `dressRecruit` taking a callsign) saw a blank
- * store — rows that bounced and edits that vanished, with no error anywhere.
- * The memory mirror makes the whole tab coherent for as long as the page
- * lives; only persistence across a reload is lost, which is what a browser
- * with no storage actually means.
+ * THE STORE. One policy, shared with the company roll — see src/game/Store.js
+ * for why an absent key and a refused write are different facts.
  */
-let memStore = null;
+const STORE = makeStore(KEY);
 
-function readAll() {
-  try {
-    if (typeof localStorage === 'undefined') return memStore || {};
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return memStore || {};
-    const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return memStore || {};
-    return v;
-  } catch { return memStore || {}; }
-}
+/** True when a write has been refused, so a screen can say the slate is not
+ *  being saved rather than letting the player name men into a void. */
+export const notSaving = () => STORE.broken;
 
-function writeAll(v) {
-  memStore = v;
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(KEY, JSON.stringify(v));
-  } catch { /* private browsing, a full quota — the mirror above carries it */ }
-}
+const readAll = () => STORE.read();
+const writeAll = (v) => STORE.write(v);
 
 /** A designation in this army's own grammar, or nothing. */
 const DESIGNATION_RE = {
@@ -106,20 +92,21 @@ function readRecruit(r, armyId) {
   const tiers = ARMIES[armyId]?.tiers || [];
   const type = tiers.some((t) => t.type === r.type) ? r.type : (tiers[0]?.type ?? null);
   if (!type) return null;
-  const look = r.look && typeof r.look === 'object' && !Array.isArray(r.look) ? {} : null;
-  if (look) {
-    const cs = Company.cleanCallsign(r.look.callsign);
-    if (cs) look.callsign = cs;
-    const mk = markById(r.look.mark);
-    if (mk.color != null) look.mark = mk.id;
-    const bd = markById(r.look.band);
-    if (bd.color != null) look.band = bd.id;
-  }
   return {
     designation: r.designation,
     type,
-    squad: Number.isInteger(r.squad) && r.squad >= 0 && r.squad <= 4 ? r.squad : null,
-    look: look && Object.keys(look).length ? look : null,
+    /* THE SAME CEILING BOTH SQUAD PICKERS OFFER, read off `Company.SQUADS_MAX`
+     * rather than typed. It was `<= 4` here and `ceil(MAX_STRENGTH / SQUAD)`
+     * on the pages, which agree today by coincidence: move `SQUAD` or
+     * `MAX_STRENGTH` and this store starts silently dropping the squad the
+     * page just offered, which is a control that writes and a store that
+     * forgets. */
+    squad: Number.isInteger(r.squad) && r.squad >= 0 && r.squad < Company.SQUADS_MAX
+      ? r.squad : null,
+    /* THE SAME DOOR THE ROLL'S MEN COME THROUGH — one sanitiser for both
+     * stores, so a recruit and a veteran can never disagree about what a look
+     * may legally contain. See `Company.saneLook`. */
+    look: Company.saneLook(r.look, armyId === 'separatist' ? 'steel' : 'flesh'),
   };
 }
 
@@ -311,11 +298,33 @@ export function versusPlanned(settings) {
  * @returns the true slate for the plan's army, or null for a null plan.
  */
 export function ensure(plan, company) {
-  if (!plan || !plan.armyMode || !ARMIES[plan.army]) return null;
+  if (!plan || !ARMIES[plan.army]) return null;
   const c = company && company.army === plan.army ? company : Company.load(plan.army);
   const salt = saltOf(c);
-  const fresh = Math.max(0, Math.min(SLATE_CAP,
-    (plan.want | 0) - Company.fieldable(c, plan.want).length));
+  const vets = Company.fieldable(c, plan.want).length;
+  /**
+   * WHAT THE FRESH HALF IS MADE OF, and it is two different questions.
+   *
+   * An ARMY MODE opens on rung-0 identical strangers — that is the campaign's
+   * own law, argued in `_musterOpening` — so the count is the whole answer and
+   * every man is the cheapest rung.
+   *
+   * A CONTINGENT is a purse, and what it buys is `composeContingent`'s answer,
+   * asked here so the men on the tab are the men the muster will raise. This
+   * is the clause that lets the barracks show your line in EVERY mode that
+   * fields one, instead of only in the five that open on ten strangers.
+   */
+  const standing = Company.fieldable(c, plan.want).map((m) => m.type);
+  const wants = plan.armyMode
+    ? new Array(Math.max(0, (plan.want | 0) - vets)).fill(ARMIES[plan.army].tiers[0].type)
+    /* WHAT THE MUSTER WILL BE ALLOWED TO BUY — `shelfFor`, the same rule
+     * `_musterOpening` hands the composer, asked here with the plan's own
+     * `campaign` term. A contingent is never a campaign, so this is the whole
+     * ladder today; it is asked rather than assumed so the day that stops
+     * being true the tab and the ground move together. */
+    : composeContingent(ARMIES[plan.army], plan.want | 0, standing, plan.unit ?? -1,
+                        shelfFor(plan.army, plan.campaign)).types;
+  const fresh = Math.max(0, Math.min(SLATE_CAP, wants.length));
   let slate = slateFor(plan.army);
   let moved = false;
 
@@ -336,6 +345,15 @@ export function ensure(plan, company) {
     slate.recruits = slate.recruits.slice(0, fresh);
     moved = true;
   }
+  /* AND THE COMPOSITION ITSELF CAN GO STALE. Moving the contingent's rung
+   * slider changes what the purse buys, so a slate minted against the old
+   * answer describes men the muster will not raise. Re-type in place — the
+   * designations and everything the player wrote on them survive, because the
+   * man is his name and his paint, not his rung. */
+  for (let i = 0; i < slate.recruits.length; i++) {
+    const want = wants[i];
+    if (want && slate.recruits[i].type !== want) { slate.recruits[i].type = want; moved = true; }
+  }
   if (slate.recruits.length < fresh) {
     /**
      * Mint the gap. The taken set is walked from ordinal 0 with every prior
@@ -344,7 +362,6 @@ export function ensure(plan, company) {
      * salt is a function of nothing else.
      */
     const army = ARMIES[plan.army];
-    const cheapest = army.tiers[0].type;
     const taken = takenOf(c, slate);
     /* Bounded, because `designateWith`'s own last resort does not consult
      * `taken` — a full namespace must produce a short slate, never a spin. */
@@ -352,7 +369,10 @@ export function ensure(plan, company) {
       const designation = designateWith(slate.salt, army, taken);
       if (taken.has(designation)) continue;
       taken.add(designation);
-      slate.recruits.push({ designation, type: cheapest, squad: null, look: null });
+      /* The type for THIS slot, off the composition — cheapest on an army
+       * mode, whatever the purse bought on a contingent. */
+      const type = wants[slate.recruits.length] || army.tiers[0].type;
+      slate.recruits.push({ designation, type, squad: null, look: null });
     }
     moved = true;
   }
@@ -365,7 +385,7 @@ export function ensure(plan, company) {
     ]);
     const seen = new Set();
     const picks = slate.picks.filter((p) =>
-      known.has(p) && !seen.has(p) && (seen.add(p), true)).slice(0, plan.want | 0);
+      known.has(p) && !seen.has(p) && (seen.add(p), true)).slice(0, SLATE_CAP);
     if (picks.length !== slate.picks.length) { slate.picks = picks.length ? picks : null; moved = true; }
   }
 
@@ -409,11 +429,28 @@ export function lineup(plan, company, opts = {}) {
    * is `fieldable`'s first `want`; a pick naming a RESERVE veteran must find
    * him too, or the tab's "field him next run" writes a name this resolver
    * silently drops — a button that lies. The whole roll goes in the map; the
-   * WANT cap below is what keeps a pick from ever growing the line. */
+   * CAP below is what keeps a pick from ever growing the line. */
   const all = Company.fieldable(c);
   const vets = all.slice(0, want);
   const slate = opts.versus ? null : ensure(plan, c);
   const recruits = slate ? slate.recruits.map((r) => materialize(r, plan.army)) : [];
+  /**
+   * WHAT THE LINE MAY BE, AND IT IS NOT ALWAYS `want`.
+   *
+   * On an army mode `want` is a HEADCOUNT — ten men — and the cap is the
+   * count. On a contingent it is a PURSE, priced in cheapest-rung bodies, and
+   * what it buys is routinely a different number of men: twenty-four
+   * Confederate allies is fourteen bodies including a tank, and twelve
+   * Republic allies pointed at rung two is ten snipers.
+   *
+   * So the cap is read off WHAT EXISTS rather than off the slider. A purse
+   * priced in points cannot currently buy more bodies than it has cheapest
+   * rungs, so `want` would not bite today — it bit when the purse was priced
+   * by headcount and spent by points, and it would bite again the day a
+   * ladder's first rung stops being its cheapest. MAX_STRENGTH is the real
+   * ceiling and the only one worth naming here.
+   */
+  const cap = plan.armyMode ? want : Math.min(MAX_STRENGTH, vets.length + recruits.length);
   const byName = new Map([
     ...all.map((m) => [m.designation, m]),
     ...recruits.map((m) => [m.designation, m]),
@@ -429,10 +466,10 @@ export function lineup(plan, company, opts = {}) {
     if (m && !used.has(p)) { picked.push(m); used.add(p); }
   }
   for (const m of fallback) {
-    if (picked.length >= want) break;
+    if (picked.length >= cap) break;
     if (!used.has(m.designation)) { picked.push(m); used.add(m.designation); }
   }
-  return picked.slice(0, want);
+  return picked.slice(0, cap);
 }
 
 /* ── what the player may change ──────────────────────────────────────── */
@@ -442,10 +479,62 @@ export function lineup(plan, company, opts = {}) {
  * roll, holding the same line: a callsign, a mark and a band, and nothing any
  * part of the fight reads. Field-validated exactly as `dress` validates.
  */
+/**
+ * ══ ISSUE ONE PATTERN ACROSS BOTH STORES ═══════════════════════════════════
+ *
+ * A man's kit and paint, copied across the rest of them. Twelve rows of kit
+ * and three of paint across ten men is somewhere north of four hundred clicks
+ * to make a company look like one company, and looking like one company is
+ * most of what that screen is for.
+ *
+ * IT LIVES HERE BECAUSE THIS IS THE ONLY FILE THAT CAN SEE BOTH STORES. The
+ * men a fresh player actually has are on the SLATE, so a version of this that
+ * wrote only the roll would do nothing at all on the first night — which is
+ * exactly the player it is for. Muster imports Company and Company may not
+ * import back (see the note at the top of Company.js), so there is one door
+ * and it is this one. The pattern may come from either store; it is written to
+ * both, through each store's own dressing door.
+ *
+ * `scope` is 'squad' or 'line'. NOTHING PERSONAL TRAVELS — kit and paint only,
+ * never a callsign, a mark or a band. Those three are the whole of how a
+ * player picks one man out of a line of ten at forty metres, and a pattern
+ * that copied them would delete the feature it was serving.
+ *
+ * A droid gets whatever part of a clone's pattern a droid can wear and the
+ * rest is dropped, because every write goes through the store's own dressing
+ * door and that door sanitises against the man being written.
+ *
+ * @returns how many men were written.
+ */
+export function issue(army, designation, scope = 'squad') {
+  const slate = slateFor(army);
+  const roll = Company.load(army);
+  const from = slate.recruits.find((x) => x.designation === designation)
+    || roll.men.find((x) => x.designation === designation);
+  if (!from) return 0;
+  const kit = from.look?.kit ? { ...from.look.kit } : null;
+  const paint = from.look?.paint ? { ...from.look.paint } : null;
+  const wanted = (m) => m.designation !== designation
+    && (scope !== 'squad' || m.squad === from.squad);
+  let n = 0;
+  for (const m of roll.men) {
+    if (!wanted(m)) continue;
+    Company.dress(army, m.designation, { kit, paint });
+    n++;
+  }
+  for (const r of slateFor(army).recruits) {
+    if (!wanted(r)) continue;
+    dressRecruit(army, r.designation, { kit, paint });
+    n++;
+  }
+  return n;
+}
+
 export function dressRecruit(army, designation, look = {}) {
   const slate = slateFor(army);
   const r = slate.recruits.find((x) => x.designation === designation);
   if (!r) return slate;
+  const kind = army === 'separatist' ? 'steel' : 'flesh';
   const next = { ...(r.look || {}) };
   if ('mark' in look) {
     const mk = markById(look.mark);
@@ -458,6 +547,14 @@ export function dressRecruit(army, designation, look = {}) {
   if ('callsign' in look) {
     const cs = Company.cleanCallsign(look.callsign);
     if (cs) next.callsign = cs; else delete next.callsign;
+  }
+  if ('kit' in look) {
+    const whole = Company.saneLook({ kit: look.kit }, kind);
+    if (whole?.kit) next.kit = whole.kit; else delete next.kit;
+  }
+  if ('paint' in look) {
+    const whole = Company.saneLook({ paint: look.paint }, kind);
+    if (whole?.paint) next.paint = whole.paint; else delete next.paint;
   }
   r.look = Object.keys(next).length ? next : null;
   return saveSlate(slate);
@@ -506,7 +603,7 @@ export function consume(army, designations) {
 
 /** Wipe the store — the player's own door, mirroring `Company.clear`. */
 export function clear(army = null) {
-  if (army === null) { writeAll({}); return; }
+  if (army === null) { STORE.drop(); return; }
   const all = readAll();
   delete all[army];
   writeAll(all);

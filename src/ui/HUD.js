@@ -851,9 +851,15 @@ export class OrderWheel extends RadialWheel {
       const n = d.squadsOf?.(d.commander)?.length ?? 0;
       if (n <= 1) return 'One squad. Everything you order goes to it.';
       const sel = d.selectedSquad;
+      /* BY THE SQUAD'S OWN NAME, through the director's one reader — a squad
+       * the menu calls Havoc and the wheel calls 2nd is two squads as far as
+       * the player is concerned. `ordinal` was this file's own second copy of
+       * "what a squad is called". */
+      const word = (d.commander?.army?.squadWord || 'squad').toLowerCase();
       return sel == null
-        ? `All ${n} squads. Choose this to pick one.`
-        : `${ordinal(sel + 1)} Squad only. Choose this again to step on.`;
+        ? `All ${n} ${word}s. Choose this to pick one.`
+        : `${d.squadLabel?.(sel) ?? `${ordinal(sel + 1)} Squad`} only. `
+          + 'Choose this again to step on.';
     }
     if (item.kind === 'detach') {
       const t = d?.nearestTrooper?.();
@@ -1562,12 +1568,13 @@ export class HUD {
     while (this._plates.length < live.length) {
       const node = document.createElement('div');
       node.className = 'tplate';
-      node.innerHTML = '<div><span class="tp-rank"></span><span class="tp-name"></span></div>'
+      node.innerHTML = '<div><span class="tp-rank"></span><span class="tp-name"></span>'
+        + '<span class="tp-squad"></span></div>'
         + '<div class="tp-bars"><div class="tp-hp"><i></i></div><div class="tp-mor"><i></i></div></div>';
       host.appendChild(node);
       this._plates.push({ node, rank: node.querySelector('.tp-rank'),
-        name: node.querySelector('.tp-name'), hp: node.querySelector('.tp-hp i'),
-        mor: node.querySelector('.tp-mor i') });
+        name: node.querySelector('.tp-name'), squad: node.querySelector('.tp-squad'),
+        hp: node.querySelector('.tp-hp i'), mor: node.querySelector('.tp-mor i') });
     }
     for (let i = 0; i < this._plates.length; i++) {
       const P = this._plates[i];
@@ -1598,6 +1605,23 @@ export class HUD {
         P.rank.style.color = R.color ? '#0a0b14' : 'var(--ink)';
       }
       if (P._name !== t.name) { P._name = t.name; P.name.textContent = t.name; }
+      /**
+       * …AND WHICH SQUAD HE IS IN. Nothing on the field distinguished one
+       * squad from another — not the plate, not the minimap, not the paint —
+       * so "who is in 2nd Squad" had no answer anywhere in a running game.
+       * The label is the player's own name for it where they gave one, through
+       * the same words the roster column and the fight's notifications use.
+       *
+       * Written only on a CHANGE, like the rank and the name above it: a man
+       * does not move between squads mid-fight except by being detached, and
+       * a DOM write per plate per frame is twenty-four of them at sixty hertz.
+       */
+      const sq = t.detached ? 'detached'
+        : (Number.isInteger(t.squad)
+          ? ((this._squadNames && this._squadNames[t.squad])
+            || `${this._squadWord || 'Squad'} ${t.squad + 1}`)
+          : '');
+      if (P._squad !== sq) { P._squad = sq; P.squad.textContent = sq; }
       const hp = clamp((e.hp ?? 1) / Math.max(1, e.maxHp ?? 1), 0, 1);
       const mo = clamp(t.morale ?? 1, 0, 1);
       P.hp.style.width = `${hp * 100}%`;
@@ -1833,6 +1857,18 @@ export class HUD {
    * asks for a field the director does not already publish. Pass `null` to put
    * the panel away, which is what every non-Command mode does.
    */
+  /**
+   * WHAT THE PLAYER CALLS THEIR SQUADS, and their army's own word for one.
+   *
+   * Set once when the fight starts, off the same `Company.squadNames` the
+   * director is handed, so the roster column and every notification say the
+   * same word. Absent is the honest default: the number.
+   */
+  setSquadWords(names, word) {
+    this._squadNames = Array.isArray(names) ? names.slice() : null;
+    this._squadWord = word || 'Squad';
+  }
+
   setRoster(summary) {
     const host = this.el.roster;
     if (!host) return;
@@ -1855,7 +1891,9 @@ export class HUD {
 
     const { living, fallen } = rosterSides(summary);
     if (this.el.rpStrength) this.el.rpStrength.textContent = `${living.length}/${summary.roll.length}`;
-    if (this.el.rpList) this.el.rpList.innerHTML = rosterHtml(summary);
+    if (this.el.rpList) {
+      this.el.rpList.innerHTML = rosterHtml(summary, this._squadNames, this._squadWord);
+    }
     if (this.el.rpFoot) {
       // Reinforcement points belong here and not only on the muster screen: it
       // is what a casualty COSTS, and the price is worth knowing while the
@@ -1874,17 +1912,46 @@ export class HUD {
    * keycaps under it are built from the live bindings by `setBindings`, and the
    * one you are in is lit.
    *
-   * Signature is the director's: `onOrder(F, squads)` → `setOrder(F.id, F.name,
-   * squads)`, which is exactly what main.js was already calling into thin air.
+   * Signature is the director's: `onOrder(F, squads, one)` → `setOrder(F.id,
+   * F.name, squads, one)`, which is exactly what main.js was already calling
+   * into thin air.
+   *
+   * ── AND A PER-SQUAD ORDER DOES NOT REPAINT THE ARMY'S ─────────────────
+   *
+   * `one` is `{ squad, name }` when the order was given to ONE squad, and null
+   * when it was the whole line. This used to arrive with two arguments and the
+   * panel repainted for both, while `CommandDirector.order`'s per-squad branch
+   * deliberately does not set `c.formation`: telling 2nd Squad to take cover
+   * lit "Take cover" across the only always-visible statement of what your men
+   * are doing, while the army was still in line abreast. The one persistent
+   * order display on screen said something no squad was doing.
+   *
+   * So a per-squad order writes the SUBTITLE — which squad, and what they were
+   * told — and leaves the headline and the lit chip to the army's own order.
    */
-  setOrder(id, name, squads) {
+  setOrder(id, name, squads, one = null) {
+    if (one) {
+      this._squadCount = squads | 0;
+      this._squadOrders = this._squadOrders || new Map();
+      /* A NULL NAME DROPS THE LINE. The director gives a squad's own order up
+       * in two places nobody was telling this panel about — the vacancy that
+       * takes its ground away, and a squad being wiped — so the subtitle kept
+       * saying "Havoc — take cover" for a squad that had stopped holding
+       * anything, for ever, with a new segment for every squad ever ordered. */
+      if (!name) this._squadOrders.delete(one.squad);
+      else this._squadOrders.set(one.squad, `${one.name} — ${String(name).toLowerCase()}`);
+      this._paintOrderSub();
+      return;
+    }
     const was = this._order;
     this._order = id || null;
     if (this.el.rpOrderName) this.el.rpOrderName.textContent = name || '—';
-    if (this.el.rpOrderSub) {
-      const n = squads | 0;
-      this.el.rpOrderSub.textContent = n ? `${n} squad${n === 1 ? '' : 's'}` : '';
-    }
+    /* An army-wide order takes every squad's private one with it, exactly as
+     * `CommandDirector.order` clears `squadOrders` — "everyone form wedge" has
+     * to mean everyone, on the panel too. */
+    this._squadOrders?.clear();
+    this._squadCount = squads | 0;
+    this._paintOrderSub();
     this._lightOrder();
     /*
      * AND THE ORDER IS SPOKEN, which it never was.
@@ -1904,6 +1971,38 @@ export class HUD {
      * one who says nothing.
      */
     if (this._order && this._order !== was) this.announcer?.say(this._settings, 'order');
+  }
+
+  /**
+   * ══ WHO THE NEXT ORDER IS FOR, HELD ON SCREEN ══════════════════════════
+   *
+   * Selecting a squad announced itself and then the announcement faded, so ten
+   * seconds later there was again nothing saying who your next order was for —
+   * a mode switch whose only indicator is a toast is a mode switch you lose
+   * track of. This is the same line the squad count already occupied, and it
+   * carries three things in the order they matter: who has your ear, what any
+   * squad under its own order was told, and how many squads there are.
+   */
+  setTarget(name) {
+    this._target = name || null;
+    this._paintOrderSub();
+  }
+
+  /** The one writer of the order panel's second line. */
+  _paintOrderSub() {
+    const el = this.el.rpOrderSub;
+    if (!el) return;
+    const bits = [];
+    if (this._target) bits.push(`▸ ${this._target}`);
+    /* AT MOST TWO SQUAD LINES. This is one line on a HUD in the middle of a
+     * fight, and an army of five squads under five orders is a line nobody can
+     * read — the two most recent are the two the player just gave. */
+    const said = [...(this._squadOrders || new Map()).values()];
+    for (const line of said.slice(-2)) bits.push(line);
+    if (said.length > 2) bits.push(`+${said.length - 2}`);
+    const n = this._squadCount | 0;
+    if (!bits.length && n) bits.push(`${n} squad${n === 1 ? '' : 's'}`);
+    el.textContent = bits.join(' · ');
   }
 
   /** Light the chip for the current formation, and only that one. */
@@ -1927,17 +2026,30 @@ export class HUD {
     const host = this.el.rpOrders;
     if (!host) return;
     host.innerHTML = '';
-    for (const o of ORDER_ACTIONS) {
+    const cap = (action, id, title) => {
       const chip = document.createElement('i');
       chip.className = 'rp-key';
-      chip.dataset.order = o.id;
-      chip.title = `${o.name} — ${o.blurb}`;
+      if (id) chip.dataset.order = id;
+      /* …AND IT IS A BUTTON ON A PHONE. `Touch.bindWheel` makes anything
+       * carrying a `data-action` tappable, and these chips carried only
+       * `data-order` — so the one strip on screen that names every order was
+       * decoration on the device that has no keyboard. One attribute. */
+      chip.dataset.action = action;
+      chip.title = title;
       chip.textContent = bindings
-        ? keyLabel(codesFor(bindings, o.action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
+        ? keyLabel(codesFor(bindings, action, this._pad?.device === 'pad' ? 'pad' : 'key')[0],
           this._pad?.family || 'xbox')
         : '';
       host.appendChild(chip);
-    }
+      return chip;
+    };
+    for (const o of ORDER_ACTIONS) cap(o.action, o.id, `${o.name} — ${o.blurb}`);
+    /* AND WHO THE ORDER IS FOR, at the end of the row where the sentence ends.
+     * See `squadtarget` in Bindings.js: the only way to order one squad rather
+     * than the whole line used to be a wheel slot that appeared in no list. */
+    const t = cap('squadtarget', null,
+      'Target — step through your squads; the next order is for that one alone');
+    t.classList.add('rp-key-target');
     this._lightOrder();
   }
 
@@ -2509,20 +2621,56 @@ export class HUD {
      * director does and there is nothing for it to say in a mode with no
      * troops in it.
      */
-    if (world.command && this.el.orderwheel) {
-      if (!this.orders) {
-        this.orders = new OrderWheel(this.el.orderwheel, ORDERS);
+    /**
+     * ══ WHATEVER ANSWERS THE WHEEL, WHICH IS NOT ALWAYS `command` ═════════
+     *
+     * `world.command` does not mean "there is an order wheel"; everywhere else
+     * in this project it means "this is a commanded fight, with a roster, a
+     * manifest and an ending". `main.js` alone branches on it a dozen times —
+     * to seal a manifest, to file a run report, to bank the permadeath roll,
+     * to open the muster panel — and the flight deck is none of those things.
+     *
+     * Setting `command` on the deck to get the wheel open was tried and it
+     * took `buildWorld` straight into the CommandDirector branch, where
+     * `d.roster.summary()` threw on an adapter that has no roster: the room
+     * would not load at all. `bank()` was the one that got noticed; there were
+     * eleven more behind it.
+     *
+     * So the wheel gets its own handle. A fight sets `command` and nothing
+     * else; the deck sets `orders` and nothing else; this line is the only
+     * place the two meet.
+     */
+    const wheelDir = world.command || world.orders;
+    if (wheelDir && this.el.orderwheel) {
+      /**
+       * THE TABLE COMES OFF THE DIRECTOR, so the flight deck can put its own
+       * orders in the same wheel.
+       *
+       * `HANGAR-SPEC.md`: "the muster call reuses the real order wheel, so the
+       * deck is where the command interface is learned." That only means
+       * anything if it is THIS wheel — the same machine, the same held key,
+       * the same flick — with a different five things in it. A second wheel
+       * built for the hangar would be the second copy of the interface, which
+       * is the defect this file keeps deleting.
+       *
+       * `ORDERS` stays the default, so every existing caller is unchanged.
+       */
+      const table = wheelDir.orders || ORDERS;
+      if (!this.orders || this._orderTable !== table) {
+        this.orders?.close?.();
+        this.orders = new OrderWheel(this.el.orderwheel, table);
+        this._orderTable = table;
       }
-      this.orders.director = world.command;
+      this.orders.director = wheelDir;
       const o = this.orders.update(input, this);
       if (o) {
-        if (o.kind === 'hold') world.command.hold?.();
-        else if (o.kind === 'squad') world.command.cycleSquad?.();
-        else if (o.kind === 'detach') world.command.detachNearest?.();
+        if (o.kind === 'hold') wheelDir.hold?.();
+        else if (o.kind === 'squad') wheelDir.cycleSquad?.();
+        else if (o.kind === 'detach') wheelDir.detachNearest?.();
         /* …AND THE ORDER CARRIES ITS TARGET. `selectedSquad` is null unless the
          * player has chosen one on this same wheel, and null is the whole army
          * — which is the behaviour every existing caller had and keeps. */
-        else world.command.order?.(o.id, null, world.command.selectedSquad);
+        else wheelDir.order?.(o.id, null, wheelDir.selectedSquad);
       }
     } else if (this.orders) {
       this.orders.close();
@@ -3023,10 +3171,83 @@ export function trooperRow(t) {
  * like", and the one that is wrong is always the one you are not looking at.
  * Pure and DOM-free so a check can assert what a player would read.
  */
-export function rosterHtml(summary) {
+export function rosterHtml(summary, squadNames = null, word = 'Squad') {
   const { living, fallen } = rosterSides(summary);
-  return '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>'
-    + living.map(trooperRow).join('')
+  /**
+   * ── AND IT IS GROUPED BY SQUAD, WHICH IS THE ONLY IN-GAME VIEW OF ONE ────
+   *
+   * "I should be able to separately view my squads in an actual game."
+   *
+   * Nothing on the field distinguished squad 1 from squad 2 — not the roster,
+   * not the nameplates, not the minimap, not the paint — so a player who
+   * delegated an order had no way to see who they had delegated it to. This
+   * column already draws every living man; grouping it under a heading per
+   * squad turns it into the view, and costs nothing but the headings.
+   *
+   * `squadNames` is what the player called them, handed down from the same
+   * one reader the fight's notifications use, so a squad named Havoc is Havoc
+   * here too. Absent, they are the army's own word and the number.
+   *
+   * A ROLL WITH NO SQUADS IN IT IS ONE LIST, exactly as before — a mode with
+   * one squad, or a summary from a build that did not carry the field, must
+   * not sprout a heading that says nothing.
+   */
+  const label = (k) => (squadNames && squadNames[k]) || `${word} ${k + 1}`;
+  const keyed = living.filter((t) => Number.isInteger(t.squad) && !t.detached);
+  const loose = living.filter((t) => !Number.isInteger(t.squad) || t.detached);
+  const squads = [...new Set(keyed.map((t) => t.squad))].sort((a, b) => a - b);
+  const head = '<div class="rp-row rp-cols"><i></i><b>Rk</b><span>Trooper</span><em>K</em></div>';
+  /* HEADED WHENEVER THE PLAYER HAS SAID SOMETHING, not only when there are two
+   * squads left. Gating on `length > 1` meant the column dropped the name the
+   * player typed at the exact moment it mattered most — the last squad
+   * standing — while the nameplates went on showing it. */
+  const named = squads.some((k) => (squadNames && squadNames[k]));
+  /**
+   * …AND WHETHER THEY CAN HEAR YOU FROM WHERE YOU ARE STANDING.
+   *
+   * `Command.ORDER_REACH` is 34 m and an order past it does not land, so the
+   * one thing a player needs to know before pressing an order key is which of
+   * their men are currently out of earshot. `heard` is stamped on the summary
+   * by `_announceRoster`; a build that does not carry it leaves every row
+   * undefined and this says nothing, which is what a mode with no reach rule
+   * should look like.
+   *
+   * THE COUNT AND NOT A BOOLEAN, because a group straddling the edge is the
+   * interesting case: "3 of 5 in earshot" is the sentence that makes the
+   * player walk twenty metres.
+   *
+   * A FUNCTION OF ANY GROUP, and that is the fix rather than the tidying. It
+   * lived inside the squad-heading branch, which only runs when there are two
+   * squads, or a name, or a detached man — so a company ground down to ONE
+   * squad printed a bare list with no warning on it, and that is precisely the
+   * state in which the whole roll can go deaf at once. The Detached heading
+   * had none either, and a detached man is by definition the one furthest from
+   * anybody.
+   */
+  const earshot = (men) => {
+    const known = men.filter((t) => t.heard !== undefined);
+    const deaf = known.filter((t) => !t.heard).length;
+    if (!known.length || !deaf) return '';
+    return deaf === known.length ? ' <i class="rp-far">out of reach</i>'
+      : ` <i class="rp-far">${known.length - deaf}/${known.length} in earshot</i>`;
+  };
+  const body = squads.length > 1 || (named && squads.length) || loose.length
+    ? squads.map((k) => {
+      const men = keyed.filter((t) => t.squad === k);
+      return `<div class="rp-div">${esc(label(k))} — ${men.length}${earshot(men)}</div>`
+        + men.map(trooperRow).join('');
+    }).join('') + (loose.length
+      ? `<div class="rp-div">Detached — ${loose.length}${earshot(loose)}</div>`
+        + loose.map(trooperRow).join('')
+      : '')
+    /* ONE SQUAD IS STILL A COMPANY THAT CAN BE OUT OF EARSHOT. No heading is
+     * right — there is nothing to distinguish — but the warning is not a
+     * heading, so it gets its own line above the list rather than being lost
+     * with it. */
+    : (earshot(living) ? `<div class="rp-div">${esc(label(squads[0] ?? 0))}`
+        + ` — ${living.length}${earshot(living)}</div>` : '')
+      + living.map(trooperRow).join('');
+  return head + body
     + (fallen.length ? `<div class="rp-div">Fallen — ${fallen.length}</div>` : '')
     + fallen.map(trooperRow).join('');
 }

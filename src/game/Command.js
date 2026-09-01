@@ -99,11 +99,11 @@ import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
  * direction as MathUtil above: game reaches into engine, never the reverse. */
 import { audio } from '../engine/Audio.js';
 import { nudgeFromSwing, bladeClear, placementClear, SWING_REACH } from './Spawn.js';
-import { MORALE } from './Morale.js';
+import { MORALE, HURT_AT } from './Morale.js';
 import { applyLevy } from './Levy.js';
 import { applyArmour } from './Armour.js';
 import { shakeNerve } from './Nerve.js';
-import { findCasualty, startDrag } from './Reactions.js';
+import { findCasualty, startDrag, braveryOf } from './Reactions.js';
 import { marchFront } from '../world/Front.js';
 /* THE SHAPE OF ONE SITTING — how long it is and which ground it crosses.
  * A leaf: Session.js imports nothing from here, which is what lets the
@@ -616,10 +616,11 @@ export function enemyOf(army) {
  * only just — the last rung is for the one who lived through all of it, which is
  * exactly the body the note is about.
  *
- * `hp`/`dmg`/`speed` are multipliers on the archetype, applied at spawn. They
- * compound with the rank BELOW them (a captain is not "a trooper × 1.30", it is
- * every rung multiplied), which is why the top rung is worth roughly twice the
- * bottom one and not five times it.
+ * `hp`/`dmg`/`speed` are multipliers on the archetype, applied at spawn — and
+ * they are DELIBERATELY SMALL. See the note over `DUTIES`: a ladder whose top
+ * rung is twice the bottom one makes a returning company strictly stronger and
+ * makes every fresh recruit furniture, so the numbers were compressed and what
+ * a rank actually buys moved to the LICENCE.
  */
 /**
  * WHAT EACH UNIT TYPE IS DRAWN TOWARDS, in attribute points.
@@ -654,12 +655,185 @@ export const ARCHETYPE_BIAS = {
 /* The per-soldier spread that makes two men of one rank two different men.
  * See src/game/Attributes.js for why a ladder alone was not enough. */
 export const RANKS = [
-  { title: 'Trooper',    short: 'TRP', xp: 0,  color: null,     hp: 1.00, dmg: 1.00, speed: 1.00 },
-  { title: 'Veteran',    short: 'VET', xp: 4,  color: 0xb4382c, hp: 1.14, dmg: 1.06, speed: 1.02 },
-  { title: 'Sergeant',   short: 'SGT', xp: 10, color: 0x2f6fbe, hp: 1.30, dmg: 1.13, speed: 1.04 },
-  { title: 'Captain',    short: 'CPT', xp: 20, color: 0x3f8f4a, hp: 1.50, dmg: 1.22, speed: 1.07 },
-  { title: 'Commander',  short: 'CMD', xp: 36, color: 0xe8b028, hp: 1.78, dmg: 1.34, speed: 1.10 },
+  { title: 'Trooper',    short: 'TRP', xp: 0,  color: null,     hp: 1.00, dmg: 1.00, speed: 1.00,
+    duty: 'STANDS', licence: 'Takes his orders and stands in the line. Every man holds this.' },
+  { title: 'Veteran',    short: 'VET', xp: 4,  color: 0xb4382c, hp: 1.05, dmg: 1.03, speed: 1.01,
+    duty: 'HOLDS',  licence: 'His squad keeps the ground it was given when the man leading it falls.' },
+  { title: 'Sergeant',   short: 'SGT', xp: 10, color: 0x2f6fbe, hp: 1.10, dmg: 1.06, speed: 1.02,
+    duty: 'LEADS',  licence: 'May be given a squad\u2019s post \u2014 he leads it whatever the roll would have said.' },
+  { title: 'Captain',    short: 'CPT', xp: 20, color: 0x3f8f4a, hp: 1.15, dmg: 1.09, speed: 1.03,
+    duty: 'CREWS',  licence: 'Digs a position on his own, where a lone man cannot.' },
+  { title: 'Commander',  short: 'CMD', xp: 36, color: 0xe8b028, hp: 1.20, dmg: 1.12, speed: 1.04,
+    duty: 'RELAYS', licence: 'Steadies any of your men standing near him, in his squad or not.' },
 ];
+
+/**
+ * ── THE LICENCE ─────────────────────────────────────────────────────────
+ *
+ * WHAT A RANK IS FOR, once it has stopped being a health bar.
+ *
+ * The numbers above used to run 1.00 → 1.78 health across five rungs, and a
+ * roll where the top rung is worth almost twice the bottom one is a roll where
+ * the answer to every question is "field the veterans". That is a ratchet
+ * wearing a ladder's clothes: it makes a returning company strictly stronger,
+ * which is the one direction `Company.js`'s own header refuses, and it makes
+ * the fresh men on the slate furniture. So the spread is compressed to
+ * 1.00 → 1.20 health, 1.12 damage, 1.04 pace — still worth having, no longer
+ * worth restarting a run over — and what a rank buys instead is a LICENCE.
+ *
+ * A duty is a thing this man may DO that the man below him may not. Cumulative:
+ * a rung grants its own duty and every duty under it, so a Sergeant STANDS,
+ * HOLDS and LEADS. There is exactly one table — this one — and exactly one
+ * reader, `holds()`. Every consumer asks that function; nothing anywhere
+ * compares a rank index to a magic number, because the second place that knows
+ * "2 means he can lead" is the place that drifts.
+ *
+ * ── EVERY `licence` STRING HERE DESCRIBES A CONSUMER THAT EXISTS ───────────
+ *
+ * This panel is printed on a man's page and read as a promise, so the wording
+ * is held to what the code does rather than to what the design wants next.
+ * The first draft of it promised that an order needs a rung to be TAKEN and
+ * that a standing order needs one to be GIVEN, and neither is true: `order()`
+ * has no rank test anywhere, and gating one would take a shipped, asked-for
+ * feature away from every fresh company on its first night. So `STANDS` says
+ * what it is — the floor every man holds — and the four above it name their
+ * actual readers:
+ *
+ *   HOLDS   `_vacancy`  — the plant survives its leader only if somebody
+ *                         licensed is still standing in the squad.
+ *   LEADS   `leadOf`    — the post the player names, in front of the rule.
+ *   CREWS   `_digTick`  — one licensed man on the position is a crew.
+ *   RELAYS  `_morale`   — the only presence term that crosses a squad line.
+ *
+ * `licence.mjs` drives all four on a real director. A rung that gains a
+ * consumer changes this sentence in the same commit.
+ *
+ * The order matters and is the order of the rungs: index i in this list is the
+ * duty granted at rung i.
+ */
+export const DUTIES = RANKS.map((r) => r.duty);
+
+/**
+ * DOES THIS MAN HOLD THIS LICENCE?
+ *
+ * Takes whatever the caller has in hand — a `Trooper`, an `Enemy` wearing one,
+ * or a bare rank index — because the fight holds bodies, the tab holds records
+ * and the tests hold numbers, and a licence that could only be asked one of
+ * those three ways would grow a second copy in the other two.
+ *
+ * A dead man holds nothing. That is not a nicety: the whole point of the post
+ * and the vacancy is that a capability leaves the field when its holder does,
+ * and a `holds()` that answered for a corpse would keep the company able to do
+ * something nobody alive can do.
+ */
+export function holds(who, duty) {
+  const i = DUTIES.indexOf(duty);
+  if (i < 0) return false;
+  let rank = null;
+  if (typeof who === 'number') rank = who;
+  else if (who && typeof who === 'object') {
+    const t = who.trooper && typeof who.trooper === 'object' ? who.trooper : who;
+    if (t.alive === false || t.dead === true) return false;
+    rank = typeof t.rank === 'number' ? t.rank : null;
+  }
+  /* `Number.isInteger`, not `rank >= 0`: `null >= 0` is TRUE in JavaScript, so
+   * the loose test handed every licence to `holds(undefined, 'STANDS')` — a
+   * question with no man in it answering yes. */
+  if (!Number.isInteger(rank)) return false;
+  return rank >= i;
+}
+
+/**
+ * ══ WHICH SQUAD EACH MAN ENDS UP IN — the deal, as a pure answer ═══════════
+ *
+ * A man with a squad keeps it; a man with none is dropped into the first squad
+ * that is not full. That is the whole rule and it has been `assignSquads`'s
+ * rule since squads became a field, but it lived inside a method that MUTATES
+ * a live roster — so the Company tab, which wants to show the player the shape
+ * their company will actually form, had nothing to ask.
+ *
+ * Showing it matters now that a seat can be named: an order of battle that
+ * printed only the men the player had assigned by hand would say "eight of
+ * your ten are unassigned" about a company the field is about to deal into two
+ * tidy squads. So the deal is a function, it is handed the men, and it returns
+ * pairs rather than writing anything — the roster writes, the screen reads,
+ * and neither has its own opinion about where a man goes.
+ *
+ * @returns `[man, squadIndex][]`, in the order handed in.
+ */
+export function squadPlan(men, size = SQUAD) {
+  const list = Array.isArray(men) ? men : [];
+  const counts = new Map();
+  for (const t of list) {
+    if (!Number.isInteger(t?.squad)) continue;
+    counts.set(t.squad, (counts.get(t.squad) || 0) + 1);
+  }
+  const out = [];
+  for (const t of list) {
+    if (Number.isInteger(t?.squad)) { out.push([t, t.squad]); continue; }
+    let pick = 0;
+    while ((counts.get(pick) || 0) >= size) pick++;
+    counts.set(pick, (counts.get(pick) || 0) + 1);
+    out.push([t, pick]);
+  }
+  return out;
+}
+
+/** Every licence this rank carries, cheapest first — what a man's page prints. */
+export function dutiesAt(rank) {
+  return DUTIES.slice(0, Math.max(0, Math.min(DUTIES.length, (rank | 0) + 1)));
+}
+
+/**
+ * ══ WHO IS IN CHARGE OF THIS SQUAD — derived, never stored ═════════════════
+ *
+ * "Troops should have a squad commander/hierarchy if they already don't,
+ *  certain roles are replaced if that person falls in combat, other's are not."
+ *
+ * ── THE POST COMES FIRST, AND THE DERIVATION IS STILL THE ANSWER ───────────
+ *
+ * A player who named a man to this squad's seat gets that man, alive and
+ * licensed. Everyone else gets the rule below it: the highest-ranked living
+ * member, ties broken by experience and then by enlistment order so the answer
+ * is stable frame to frame.
+ *
+ * Deriving it is the whole of "replaced if that person falls" — there is no
+ * field to clear and no promotion to schedule, because the question is asked
+ * rather than remembered. That is also why the post sits in FRONT of the
+ * derivation rather than being a field the derivation reads: when the seat's
+ * holder dies this function has already answered, on the same frame, and
+ * `onDeath` only has to say so out loud.
+ *
+ * ── A FUNCTION AND NOT A METHOD, because the SCREEN asks it too ────────────
+ *
+ * The order of battle on the Company tab shows who leads each squad off the
+ * saved roll, where there is no director and no live `Trooper` — just records
+ * off disk. A second copy of this rule over there is the hand-maintained twin
+ * this file has deleted eight of, and it is the worst possible one to have:
+ * the tab would name a man and the fight would obey another.
+ *
+ * So it takes anything with the four fields, and both callers hand it what
+ * they have. A record has `xp` and no `rank` getter, so the rung is derived
+ * here when it is absent; a record off disk has no `alive` either, and absent
+ * means alive, because a fallen man is not on the roll at all.
+ *
+ * The role that is NOT replaced is yours. A Jedi commanding is a person, not a
+ * rung, and `_endCampaign` is what happens when that one falls.
+ */
+export function leadOf(men) {
+  const list = Array.isArray(men) ? men : [];
+  const up = (t) => t && t.alive !== false;
+  const rungOf = (t) => (typeof t.rank === 'number' ? t.rank : rankFor(t.xp | 0));
+  for (const t of list) if (up(t) && t.post && holds(rungOf(t), 'LEADS')) return t;
+  let best = null;
+  for (const t of list) {
+    if (!up(t)) continue;
+    if (!best) { best = t; continue; }
+    if (rungOf(t) > rungOf(best)) { best = t; continue; }
+    if (rungOf(t) === rungOf(best) && (t.xp | 0) > (best.xp | 0)) best = t;
+  }
+  return best;
+}
 
 /**
  * THE PERSONAL MARKINGS A PLAYER MAY PAINT ON ONE OF THEIR OWN.
@@ -919,8 +1093,35 @@ export const RANK_STAND = 8.6;
 export const FORMATIONS = {
   circle: {
     id: 'circle', name: 'Circle', key: 'Digit6',
-    blurb: 'Ring around you, facing out. Nothing reaches you first.',
+    blurb: 'Ring around you, facing out. Nothing reaches you first. They always hear this one.',
     leash: 1.0, advance: true, fire: 1,
+    /**
+     * ══ FALL BACK TO ME — the one order that is never out of reach ═════════
+     *
+     * COMPANY.md's Warning #1 names four mitigations real-time permadeath
+     * needs and says three exist and this one does not: "It is one order and
+     * it belongs here, where the rally point is your body." It does not need
+     * to be a new verb. CIRCLE already means *form on me* — every slot in it
+     * is solved as an offset from the commander's own frame — so the order
+     * whose destination IS the man giving it is the order that cannot be out
+     * of earshot of him. You are not telling them where to go; you are
+     * standing where they are to go.
+     *
+     * `always` means this order LANDS — on everybody, whatever else is wrong
+     * with them. The first draft skipped the reach and only the reach, on the
+     * reasoning that a man too frightened to advance is too frightened to
+     * sprint to you; an adversarial pass found the hole in it, which is that
+     * the company that would refuse this is a shaken company, and a shaken
+     * company is the only kind anybody ever presses it for. What a frightened
+     * man actually does is run to his officer.
+     *
+     * WHAT IT COSTS is that it is the worst fighting shape in the table: a
+     * ring facing outward at 4.2 m has no frontage, no concentration and no
+     * cover, and `leash: 1.0` is the shortest in the file. So the escape
+     * hatch is real and it is not free — you get your company back and you
+     * give up the engagement to do it.
+     */
+    always: true,
     slot(i, n, k, out) {
       // Spread over the WHOLE roster rather than per squad, or two squads of
       // five make two arcs of five and leave two holes you can be shot through.
@@ -1423,6 +1624,106 @@ export const ORDERS = { ...FORMATIONS, ...COMMAND_FORCE };
 export const ORDER_IDS = Object.keys(ORDERS);
 
 /**
+ * ══ HOW FAR AN ORDER CARRIES — the cost that exists in every mode ══════════
+ *
+ * COMPANY.md PHASE 2, and the sentence it opens with was a measurement:
+ * "`order()` has no distance test and no rank test of any kind — verified. An
+ * order reaches every man on the roll, anywhere, instantly." So the command
+ * interface was a set of buttons that always worked, and every capability
+ * built on top of it — a squad's own ground, a licence, a billet — was
+ * expensive against nothing. SCOPE calls fixing this the highest-leverage of
+ * its three capability mechanisms, and the argument is that REACH IS A COST
+ * THAT EXISTS EVERYWHERE, because every mode has your body in it. A quorum
+ * does not travel; a distance does.
+ *
+ * 34 m, and the number is read off the shapes the orders themselves make.
+ * `line`'s frontage at full strength is about 26 m and `MORALE.NEAR` is 14, so
+ * a reach under about 30 would refuse an order to the far end of your own line
+ * abreast — a rule that fires on a formation the player did nothing wrong to
+ * form. 34 takes in the whole of every formation in the table with a little
+ * room, and stops at about the distance a squad sent to hold a flank ends up
+ * from the man who sent it. What it costs is exactly the thing the mode is
+ * about: send a squad away and you stop being able to talk to it.
+ */
+export const ORDER_REACH = 34;
+
+/**
+ * …AND HOW FAR IT CARRIES FROM SOMEBODY ELSE'S MOUTH — RELAYS' second consumer.
+ *
+ * `RANKS[4].licence` promises a Commander "steadies any of your men standing
+ * near him, in his squad or not", and `MORALE.RELAY_NEAR` was the whole of it:
+ * a presence term worth 0.035/s. A licence whose only effect is a morale
+ * trickle is a line of text. This is the other half — a man licensed to RELAY
+ * who is himself inside your reach becomes a SECOND SOURCE of the order, and
+ * everything within 20 m of him hears it.
+ *
+ * Shorter than yours, because he is passing on what he was told rather than
+ * giving it: 20 m is a squad's own frontage, which is the honest span of one
+ * sergeant's voice. Two of them chain — his relay is not a voice for a third —
+ * deliberately: an order that hops indefinitely is an order with no reach at
+ * all, and the point of the mechanism is that the map has places you cannot
+ * talk to. One hop is a capability; unlimited hops is the old bug with extra
+ * steps.
+ */
+export const RELAY_REACH = 20;
+
+/**
+ * WHERE FEAR STOPS A MAN ADVANCING — and it is `braveryOf` and nothing new.
+ *
+ * COMPANY.md is explicit that compliance is rolled "against a per-man value
+ * built from existing terms (`Reactions.braveryOf`, presence `share`,
+ * discipline) — no dice, no new attribute". `braveryOf` is already
+ * `morale*0.72 + rank/4*0.28 + rally`, so it carries the whole ladder and the
+ * whole morale table, and a shaken man is a man his own numbers say is shaken.
+ *
+ * 0.30, and the asymmetry beneath it is the design: fear refuses an ADVANCE
+ * and never refuses cover. A model where a frightened man ignores "take
+ * cover" is a model that has never met a frightened man, and it would make the
+ * mechanic read as the game breaking rather than as the men behaving. So the
+ * only orders fear can stop are the ones that ask a man to walk toward the
+ * thing shooting at him.
+ */
+export const SHAKEN_AT = 0.30;
+
+/**
+ * …AND HOW CLOSE A FRIEND HAS TO BE FOR HIM NOT TO BE ALONE.
+ *
+ * The second refusal, and it is the one that gives a wiped-out squad a voice.
+ * A lone survivor ordered to charge is being ordered to charge by himself, and
+ * *alone* is the reason. 12 m is inside `MORALE.NEAR`'s 14 — a man who is
+ * close enough to steady you is close enough to advance with.
+ */
+export const ALONE_NEAR = 12;
+
+/**
+ * ── THE RUNNER ────────────────────────────────────────────────────────────
+ *
+ * "Press the same order again inside a short window and a named man leaves the
+ * line to CARRY it. He can be killed on the way, and then the order dies with
+ * him and the log says so."
+ *
+ * 6 seconds is the window: long enough to be a deliberate second press and
+ * short enough that pressing the same order twice in one engagement, thirty
+ * seconds apart, is not read as a dispatch. He has 30 s to get there — past
+ * that he has failed and rejoins, because a runner who never times out is a
+ * man permanently out of the line. And he delivers at 8 m, which is inside
+ * `RELAY_REACH` and outside a body's own leash: he has to actually arrive.
+ */
+export const RUNNER_WINDOW = 6;
+export const RUNNER_LIFE = 30;
+export const RUNNER_DELIVER = 8;
+
+/**
+ * EVERY REASON AN ORDER CAN BE REFUSED, in the words the player is shown.
+ *
+ * `SCOPE.md:78-81`: "Every refusal needs a visible reason." A list rather than
+ * four string literals scattered through `_ask`, so a check can assert that
+ * the set the player can be shown is the set the code can produce — the same
+ * reason `DUTIES` is derived from `RANKS` rather than typed twice.
+ */
+export const REFUSALS = ['out of reach', 'shaken', 'alone', 'unled'];
+
+/**
  * THE SHORTEST LEASH ANY BODY IS EVER GIVEN, in metres.
  *
  * `preferred[1]` is 3.4 m for a BX commando droid and 3.6 for a MagnaGuard,
@@ -1844,6 +2145,30 @@ export class Trooper {
     this.squad = opts.squad ?? null;
     /** …and whether he has been pulled out of it to take his own orders. */
     this.detached = false;
+    /**
+     * ── THE POST ────────────────────────────────────────────────────────
+     *
+     * HE HOLDS HIS SQUAD'S SEAT, and it is the one thing on this record the
+     * player writes by hand rather than earns.
+     *
+     * `leaderOf` derives a squad's leader from rank and then experience, which
+     * is a fine rule and is nobody's decision. The post is the player naming a
+     * man: *this one has the squad*. It sits in FRONT of the derivation and
+     * the derivation stays behind it as the fallback, so there is nothing to
+     * clear when he dies — the moment he stops being alive the rule takes over
+     * again and somebody is already leading.
+     *
+     * IT BUYS NO NUMBERS AND CANNOT. A post-holder is not tougher, faster or a
+     * better shot; what he is, is the man whose death costs the squad its
+     * standing order and prints a sentence about it. He also has to be
+     * LICENSED for it — `holds(t, 'LEADS')`, the Sergeant rung — so the seat
+     * is something a man becomes eligible for by surviving, and naming him is
+     * a decision rather than a formality.
+     *
+     * Persisted, because a company that forgets who had the squad between runs
+     * is a company you have to re-appoint every time you press play.
+     */
+    this.post = !!opts.post;
     this.xp = opts.xp ?? 0;
     this.kills = 0;
     this.wounds = 0;              // times he went down and was helped back up
@@ -2095,6 +2420,24 @@ export class CommandRoster {
     t.story = Array.isArray(m.story) ? m.story.slice() : [];
     t.look = m.look && typeof m.look === 'object' ? { ...m.look } : null;
     this.all.push(t);
+    /**
+     * THE SEAT, AND IT GOES ON THROUGH THE ONE DOOR THAT WRITES ONE.
+     *
+     * `appoint` is where the rule lives — licensed, alive, one seat per squad
+     * — and this used to set `t.post` by hand with only the licence half of
+     * it. That left the exclusivity clause with no caller on the fighting side
+     * at all: a store holding two seated men in one squad put both of them on
+     * the roll, and `leadOf` then answered with whichever came first in an
+     * array whose order is nobody's decision.
+     *
+     * A stored post is a stored post for ever and a rank is not — nothing
+     * demotes today, but the store is a JSON blob in the player's own browser
+     * — so the licence is re-tested here rather than trusted, which `appoint`
+     * does as its first act. Pushed before the call because `appoint` refuses
+     * a man who is not on the roll, which is the guard that makes it safe
+     * everywhere else.
+     */
+    if (m.post) this.appoint(t, true);
     return t;
   }
 
@@ -2158,6 +2501,62 @@ export class CommandRoster {
    * the next call simply produces fewer, fuller squads. `SQUAD` is the only
    * number involved.
    */
+  /**
+   * ── GIVE ONE MAN HIS SQUAD'S SEAT, OR TAKE IT BACK ──────────────────────
+   *
+   * The only writer of `Trooper.post`, and it is on the ROSTER rather than on
+   * the man because the rule that matters is a rule about the squad: one seat,
+   * one holder. A setter on the Trooper would be a setter with no way to see
+   * the other nine men, and the second post in a squad would be silent — two
+   * men "leading", `leaderOf` returning whichever came first in an array whose
+   * order is nobody's decision.
+   *
+   * REFUSES RATHER THAN ASSUMES, and says which of the three reasons it was,
+   * because this is a control on a screen and a control that goes dead with no
+   * sentence is the thing this whole tab was rebuilt to stop being.
+   *
+   * @returns { ok, reason, was } — `was` is the man who held it before, so the
+   *          caller can say "you took it off him" without asking twice.
+   */
+  appoint(t, on = true) {
+    if (!t || !this.all.includes(t)) return { ok: false, reason: 'not on this roll', was: null };
+    if (!on) { const was = t.post; t.post = false; return { ok: true, reason: null, was: was ? t : null }; }
+    if (!t.alive) return { ok: false, reason: 'he is dead', was: null };
+    if (!holds(t, 'LEADS')) {
+      return { ok: false, was: null,
+        reason: `a ${t.rankRec.title.toLowerCase()} does not hold a squad's post — `
+          + `${RANKS[DUTIES.indexOf('LEADS')].title} is the rung that does` };
+    }
+    /* ONE SEAT PER SQUAD. A man with no squad dealt to him yet is his own
+     * case and takes the seat unopposed; everyone else displaces whoever was
+     * sitting in it, which is the whole of what the player meant by clicking. */
+    let was = null;
+    for (const other of this.all) {
+      if (other === t || !other.post) continue;
+      /**
+       * TWO UNDEALT MEN DO CONTEND, and a guard that said otherwise put the
+       * defect back.
+       *
+       * `null === null` is true, and for one turn that read like a bug: two
+       * men with no squad are "in no squad", so why should one displace the
+       * other? Because `squadPlan` deals every undealt man into the FIRST
+       * bucket that is under strength — measured, two posted men at `squad:
+       * null` came out of `assignSquads` both in squad 0, both still holding
+       * the seat, which is exactly the two-holders state this method exists to
+       * prevent. And it is reachable without touching the store: the man
+       * page's squad picker offers a dashed "—" chip that writes null.
+       *
+       * So a null squad is not "no squad", it is "wherever the muster deals
+       * him" — and two men bound for the same deal are two men in the same
+       * squad as far as a seat is concerned. The conservative answer is the
+       * correct one.
+       */
+      if (other.squad === t.squad) { other.post = false; was = other; }
+    }
+    t.post = true;
+    return { ok: true, reason: null, was };
+  }
+
   squads(size = SQUAD) {
     /**
      * ── GROUPED BY A STABLE ASSIGNMENT, NOT SLICED BY POSITION ────────────
@@ -2183,21 +2582,61 @@ export class CommandRoster {
      */
     const live = this.living;
     for (const t of live) if (t.squad == null) this.assignSquads(size);
+    /**
+     * ── AND THE INDEX IS THE SQUAD NUMBER, NOT A POSITION IN A LIST ───────
+     *
+     * This returned a COMPACTED array — the groups that had men in them, in
+     * order — so `squads()[0]` was "the lowest-numbered squad still standing"
+     * rather than "1st Squad". Wipe out 1st Squad and the survivors of 2nd
+     * became index 0, and every index-keyed thing followed them onto a
+     * different body of men: `squadPlanted` and `squadOrders` keys, the ground
+     * they had been given, `selectedSquad`, and the NAME the player gave them.
+     * 2nd Squad became 1st Squad mid-fight, holding ground it was never sent
+     * to, called something it was never called.
+     *
+     * That is squad identity leaking, and it is the whole of what "I should be
+     * able to name my squads" is asking for. So the array is indexed BY THE
+     * NUMBER: `squads()[1]` is 1st-index squad whether or not squad 0 has
+     * anybody left in it, and a wiped squad is an empty array rather than a
+     * hole in the numbering. Every caller that walks the list already skips a
+     * squad with nobody in it — `leaderOf` answers null, `_digTick` finds no
+     * crew, `slotFor` is never asked — so an empty entry costs a loop
+     * iteration and nothing else.
+     *
+     * The detached keep their own groups, appended past the numbered ones so
+     * their indices can never collide with a squad number.
+     */
     const by = new Map();
+    let top = -1;
+    const solo = [];
     for (const t of live) {
       // A man pulled out of the line answers only to himself — see `detach`.
-      const key = t.detached ? `solo:${t.id}` : `sq:${t.squad}`;
-      if (!by.has(key)) by.set(key, []);
-      by.get(key).push(t);
+      if (t.detached) { solo.push([t]); continue; }
+      const k = t.squad | 0;
+      if (!by.has(k)) by.set(k, []);
+      by.get(k).push(t);
+      if (k > top) top = k;
     }
-    // Numbered squads first and in order, then the detached, so "1st, 2nd,
-    // then the men you pulled out" is the order the HUD walks.
-    const keys = [...by.keys()].sort((a, b) => {
-      const A = a.startsWith('sq:'), B = b.startsWith('sq:');
-      if (A !== B) return A ? -1 : 1;
-      return A ? (+a.slice(3)) - (+b.slice(3)) : a.localeCompare(b);
-    });
-    return keys.map((k) => by.get(k));
+    const out = [];
+    for (let k = 0; k <= top; k++) out.push(by.get(k) || []);
+    /**
+     * …AND A DETACHED MAN'S INDEX IS PAST EVERY SQUAD NUMBER THERE CAN BE.
+     *
+     * Appending them after the last LIVE squad put the identity leak straight
+     * back for the men it is easiest to lose track of: wipe the top squad and
+     * every detached man shifts down one index, taking `squadOrders`,
+     * `squadPlanted`, `selectedSquad` — and the NAME — with him. Measured, the
+     * game announced "REAPER HAS THE GROUND — trooper CT-7200, 1 man": a lone
+     * detached trooper wearing the name the player typed for 3rd Squad.
+     *
+     * `SQUAD_SLOTS` is the ceiling a line can actually form, so a solo index
+     * can never collide with a squad number and never moves because somebody
+     * else died. `squadLabel` reads the same ceiling and calls them what they
+     * are.
+     */
+    while (out.length < SQUAD_SLOTS) out.push([]);
+    for (const one of solo) out.push(one);
+    return out;
   }
 
   /**
@@ -2210,20 +2649,8 @@ export class CommandRoster {
    * three after a bad area.
    */
   assignSquads(size = SQUAD) {
-    const counts = new Map();
-    for (const t of this.all) {
-      if (!t.alive || t.squad == null) continue;
-      counts.set(t.squad, (counts.get(t.squad) || 0) + 1);
-    }
-    for (const t of this.all) {
-      if (!t.alive || t.squad != null) continue;
-      let pick = 0;
-      for (let n = 0; ; n++) {
-        if ((counts.get(n) || 0) < size) { pick = n; break; }
-      }
-      t.squad = pick;
-      counts.set(pick, (counts.get(pick) || 0) + 1);
-    }
+    const dealt = squadPlan(this.all.filter((t) => t.alive), size);
+    for (const [t, n] of dealt) t.squad = n;
     return this;
   }
 
@@ -2266,6 +2693,21 @@ export class CommandRoster {
         id: t.id, name: t.name, unit: t.label, rank: t.rankRec.short,
         rankTitle: t.rankRec.title, xp: t.xp, kills: t.kills, areas: t.areas,
         alive: t.alive, diedIn: t.diedIn,
+        /**
+         * …AND WHICH SQUAD HE IS IN, which was the one fact this record did
+         * not carry and the reason nothing on the HUD could group by squad.
+         *
+         * "I should be able to separately view my squads in an actual game."
+         * The roster panel, the nameplates and the minimap all read this
+         * summary, and not one of them could have told you who was in 2nd
+         * Squad because the answer was not in it. `detached` with it, because
+         * a man pulled out of the line is not in any squad and a column that
+         * filed him under one would be lying about the one thing detaching
+         * is for.
+         */
+        squad: Number.isInteger(t.squad) ? t.squad : null,
+        detached: !!t.detached,
+        post: !!t.post,
       })),
     };
   }
@@ -2356,6 +2798,7 @@ export const TRIAGE_REACH = 3;
 
 /** How many bodies are one squad. Five is a fireteam and it fits one screen. */
 export const SQUAD = 5;
+
 /** The most bodies the mode will ever field for you at once. See `_muster`. */
 /**
  * WHAT SURVIVING SOMETHING IS WORTH, IN EXPERIENCE — and both numbers were
@@ -2373,6 +2816,13 @@ export const XP_PER_WAVE = 1;
 export const XP_PER_AREA = 2;
 
 export const MAX_STRENGTH = 24;
+/**
+ * HOW MANY NUMBERED SQUADS A LINE CAN FORM — the biggest line the game fields,
+ * in squads. `Company.SQUADS_MAX` is the same arithmetic on the same two
+ * numbers and is what the tab's squad pickers offer; this is the one the FIGHT
+ * uses, and it is what keeps a detached man's index from ever being a squad's.
+ */
+export const SQUAD_SLOTS = Math.ceil(MAX_STRENGTH / SQUAD);
 /** What you march in with. Two squads. */
 export const OPENING_STRENGTH = 10;
 
@@ -2700,18 +3150,254 @@ export function versusCommandConfig(settings) {
  * this file does not import Levels.js and is not going to for a tiebreak that
  * only decides for a commander whose order leads neither army.
  */
+/**
+ * WHAT A CONTINGENT'S PURSE ACTUALLY BUYS — as a pure list of types.
+ *
+ * The contingent is not a headcount, it is a SPEND: the purse is priced in
+ * cheapest-rung bodies (`opening − vets` of them) and then spent on the rung
+ * the player chose, so ten troopers' worth of points buys rather fewer
+ * droidekas. That arithmetic decides the composition of every non-campaign
+ * army, and it used to live only inside `_musterOpening`'s loops — which meant
+ * the barracks could not name a contingent's men in advance without growing a
+ * second copy of a spend, and a second copy of a spend is exactly the
+ * hand-maintained twin this repository keeps deleting.
+ *
+ * So it is here, once, with no roster and no side effects. `_musterOpening`
+ * drives the result through `recruit()` exactly as it drove its own loops, and
+ * the barracks asks the same question — which is the only reason a pre-rolled
+ * contingent cannot out-buy the muster it is standing in for.
+ *
+ * @returns `{ types, refused }` — the types in the order they are bought, and
+ *          the sentence to say when the chosen rung is beyond the purse.
+ */
+/**
+ * ══ WHAT IS ON THE SHELF — the rungs a muster may actually buy ═════════════
+ *
+ * `unlockAt` is the director's method and it is one line: a campaign gates a
+ * rung on the ground you are standing on, and anything else sells the whole
+ * ladder. That is exactly the rule the BARRACKS needs too, to compose the same
+ * line the muster is about to compose — and the barracks has no director.
+ *
+ * So the rule is a function of the two facts it depends on, and both callers
+ * hand it what they have. `composeContingent` was given an `allow` set after a
+ * meeting composed `10 troopers + an AT-TE + an officer` and `recruit` refused
+ * both of the last two on the unlock; this is where that set comes from, once,
+ * so the tab and the ground cannot end up gating differently.
+ *
+ * @param campaign  whether unlocks apply at all — `crossing || battles`.
+ * @param areaRung  the ground being stood on, 1-based. Ignored when not a
+ *                  campaign, which is why the barracks may leave it out.
+ * @returns a Set of type names, or null for "the whole ladder" — which is what
+ *          `composeContingent` reads as no gate at all.
+ */
+export function shelfFor(army, campaign, areaRung = 1) {
+  if (!campaign) return null;
+  /* AN ID OR A RECORD. Callers hold one or the other — `musterPlan` has an id
+   * on a plan, the director has `c.army` — and a function that silently
+   * answered "nothing is for sale" to one of them is worse than one that
+   * throws: `composeContingent` reads an empty shelf as an empty ladder and
+   * composes NOBODY, in silence. Measured: `shelfFor('republic', true, 1)`
+   * came back as an empty Set. */
+  const A = typeof army === 'string' ? ARMIES[army] : army;
+  return new Set((A?.tiers || [])
+    .filter((t) => (t.at ?? 1) <= areaRung).map((t) => t.type));
+}
+
+export function composeContingent(army, opening, standing = [], unit = CONTINGENT_MIXED,
+                                  allow = null) {
+  /**
+   * ── AND ONLY WHAT IS ACTUALLY ON THE SHELF ─────────────────────────────
+   *
+   * `allow` is the set of rung types the caller's own gate permits, or null
+   * for "all of them". It exists because this composer has TWO callers whose
+   * shelves are not the same shelf, and the first version of it assumed they
+   * were: a contingent in a wave mode gates nothing (`unlockAt` returns 1 when
+   * `campaign` is false, so the whole ladder is for sale from the first
+   * second), and a MEETING is `battles`, which is `campaign`, so its shelf is
+   * gated on `areaRung` — 1, at the opening, which is every rung above the
+   * third off it.
+   *
+   * MEASURED, and it is exactly the class of defect this function was lifted
+   * out of `_musterOpening` to prevent: composed unaware of the gate, a
+   * twenty-man meeting came out `10 troopers + 1 AT-TE + 1 officer`, `recruit`
+   * refused both of the last two on the unlock, and the side that was supposed
+   * to be a composed army took the field as ten identical clone troopers.
+   *
+   * The gate is the CALLER's because the gate is the caller's — `unlockAt` is
+   * a method on the director and depends on which ground it is standing on.
+   * What this function owns is the arithmetic, and the arithmetic is now told
+   * what it may spend on rather than guessing.
+   */
+  const ladder = army?.tiers || [];
+  if (!ladder.length) return { types: [], refused: null };
+  /* THE INDEX IS INTO THE WHOLE LADDER and the SPEND is out of what is on the
+   * shelf, and those are two different lists the moment a gate exists. `unit`
+   * is "the third rung of whichever ladder I end up leading" — see `musterPlan`
+   * — so resolving it against a filtered list would silently re-point a
+   * player's saved choice at a different unit the day a rung is gated. */
+  const tiers = allow ? ladder.filter((t) => allow.has(t.type)) : ladder;
+  if (!tiers.length) return { types: [], refused: null };
+  /* Priced off the LADDER's first rung, not the shelf's: the slider's meaning
+   * ("eight allies is what eight troopers cost") must not move because
+   * something above it happens to be gated. */
+  const cheapest = ladder[0].type;
+  /**
+   * THE PURSE IS POINTS, AND EVERYTHING ON THE LINE COSTS FROM IT.
+   *
+   * It used to be priced by HEADCOUNT — `(opening − vets) × cost(cheapest)` —
+   * and that is not the same arithmetic as the spend it pays for, so the two
+   * disagreed the moment anybody arrived already composed: a line pre-raised
+   * to the full purse still read as "six of eight bodies", left two
+   * cheapest-rung units of change on the counter, and the muster spent it
+   * again. Priced in POINTS the sum is self-consistent, so composing a
+   * contingent and then composing it again buys nothing the second time.
+   *
+   * It is also more honest about veterans: a returning ARC has always been
+   * worth more to a line than a returning trooper, and now he costs the purse
+   * what he is worth instead of what the cheapest man is worth.
+   */
+  const list = Array.isArray(standing) ? standing : [];
+  const spent = list.reduce((a, t) => a + musterCost(typeof t === 'string' ? t : t?.type), 0);
+  /* THE WHOLE PURSE, and what is LEFT of it. Both are needed and they answer
+   * different questions: the spend is out of what is left, and the REFUSAL is
+   * about the whole — see the note over the refusal below. */
+  const purse = (opening | 0) * musterCost(cheapest);
+  let points = Math.max(0, purse - spent);
+  let strength = list.length;
+  const types = [];
+  const spend = (type) => {
+    /* Off the SHELF, so a type nobody may buy cannot be bought by name. */
+    const rung = tiers.find((t) => t.type === type);
+    if (!rung || points < rung.cost || strength >= MAX_STRENGTH) return false;
+    points -= rung.cost;
+    strength++;
+    types.push(type);
+    return true;
+  };
+  const want = unit >= 0 ? ladder[Math.min(unit, ladder.length - 1)] : null;
+  /* A RUNG THAT IS NOT ON THE SHELF IS A REFUSAL WITH ITS OWN SENTENCE, and
+   * not a silent fall-through to the line: the player picked a unit and is
+   * owed the reason they did not get it. */
+  if (want && allow && !allow.has(want.type)) {
+    return {
+      types,
+      refused: `${ARCHETYPES[want.type]?.label ?? want.type} is not on the shelf here`,
+    };
+  }
+  /**
+   * ── A REFUSAL IS ABOUT THE REQUEST, NOT ABOUT THE CHANGE IN THE PURSE ───
+   *
+   * This tested the REMAINDER — `points`, after the standing line's cost had
+   * been taken off — and that is the wrong question the moment anybody is
+   * already standing. `_musterOpening` runs AFTER `_musterVeterans` has
+   * enlisted the whole line the barracks composed, so the purse it hands in is
+   * a purse that has already been spent on exactly what was asked for: every
+   * ordinary contingent run opened with
+   *
+   *     CONTINGENT UNCHANGED — Clone Trooper costs 5 points and 10 troopers buys 0
+   *
+   * on top of a contingent that had been delivered precisely as asked. That is
+   * the loudest of this mode's three "say it out loud" refusals firing on the
+   * success path, which teaches the player to look away from it — and then the
+   * real one, a purse that genuinely cannot afford the rung, goes past unread.
+   *
+   * So the test is against the WHOLE purse. "Six allies cannot buy an AT-TE"
+   * is a true and useful sentence about a slider setting; "the men you already
+   * have used up the money" is not a refusal at all, it is the system working.
+   */
+  if (want && want.cost > purse) {
+    return {
+      types,
+      refused: `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
+        + `${opening} ${army.unit}${opening === 1 ? '' : 's'} buys ${purse}`,
+    };
+  }
+  /**
+   * …AND A PURSE THE STANDING LINE HAS ALREADY EATEN IS ALSO A REFUSAL, IF
+   * NOBODY STANDING IS THE THING THAT WAS ASKED FOR.
+   *
+   * Testing the whole purse killed the false alarm and opened a quieter hole
+   * in the other direction: a player with four returning ARCs who sets the
+   * contingent to AT-TEs has a purse of 50 that COULD have bought one and 2
+   * left after the veterans, so the composer bought nothing, said nothing, and
+   * the muster came up empty. Measured, `opening 10, 4 ARCs standing, want
+   * AT-TE` → `{}` with `refused: null`.
+   *
+   * The honest question is whether the player got what they asked for. If the
+   * requested rung is standing already, they did — the purse was spent on it
+   * last run and there is nothing to say. If it is not standing and the
+   * remainder cannot buy one, they did not, and the sentence names the reason
+   * that is actually true: the line you brought back is what spent it.
+   */
+  if (want && points < want.cost
+      && !list.some((t) => (typeof t === 'string' ? t : t?.type) === want.type)) {
+    return {
+      types,
+      refused: `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and the `
+        + `${list.length} ${army.unit}${list.length === 1 ? '' : 's'} already standing leave `
+        + `${points} of ${purse}`,
+    };
+  }
+  if (want) { while (spend(want.type)); }
+  const room = Math.max(0, (opening | 0) - list.length);
+  const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
+  for (let i = 0; i < line && spend(cheapest); i++);
+  /* THEN THE BEST THING LEFT ON THE SHELF — `_bestAffordable`'s rule, on
+   * whatever `allow` left standing. This is what stops a remainder being
+   * thrown away: ten Republic allies is 50 points, one AT-TE is 32, and the 18
+   * left over buy three of the line. */
+  for (let guard = 0; guard < MAX_STRENGTH; guard++) {
+    const best = tiers.filter((t) => t.cost <= points).sort((a, b) => b.cost - a.cost)[0];
+    if (!best || !spend(best.type)) break;
+  }
+  return { types, refused: null };
+}
+
 export function musterPlan(settings, groundArmies = null) {
   const s = settings || {};
   const armyMode = !!(MODES[s.mode]?.crossing || MODES[s.mode]?.battles);
   const cfg = commandConfig(s);
   const contingent = armyMode ? 0 : cfg.contingent;
+  /* A LESSON FIELDS NOBODY, whatever the slider says. `MODES.training` builds
+   * a `DojoDirector`, which has no roster at all — so a plan here would offer
+   * the barracks ten named men for a run that can never deploy them, and the
+   * tab would mint and save a line that does not exist. Read off the mode's
+   * own declaration rather than off its name; see `dojo` in Waves.js. */
+  if (MODES[s.mode]?.dojo) return null;
   if (!armyMode && !(contingent > 0)) return null;
   const army = armyToLead(s.order, {
     choice: armyMode ? null : cfg.allyArmy,
     ground: groundArmies,
   })?.id;
   if (!army) return null;
-  return { army, want: armyMode ? OPENING_STRENGTH : contingent, armyMode };
+  return {
+    army,
+    want: armyMode ? OPENING_STRENGTH : contingent,
+    armyMode,
+    /* WHICH RUNG A CONTINGENT'S PURSE IS POINTED AT, so the barracks can ask
+     * `composeContingent` what it buys without reaching for the settings blob
+     * a second time. Null on an army mode, whose opening is rung-0 strangers
+     * by design and has no rung to choose. */
+    unit: armyMode ? null : cfg.unit,
+    /**
+     * …AND WHETHER UNLOCKS APPLY, which is the one term `shelfFor` needs and
+     * the only one this plan can honestly supply.
+     *
+     * The first version of this carried a computed `shelf` and it was wrong
+     * twice: `army` here is an ID and `shelfFor` wanted a record, so every
+     * plan carried an EMPTY set; and it pinned the area to 1 while the
+     * director gates on the ground it is standing on, so a crossing that ever
+     * took a contingent would have had the tab gating at area 1 and the ground
+     * at area N — the same disagreement, reintroduced from the other side.
+     *
+     * So the plan carries the FACT and the reader does the arithmetic.
+     * `campaign` is `crossing || battles`, which is exactly `armyMode`, and
+     * `World.loadLevel` computes the director's from the same two flags —
+     * `Muster.ensure` only ever composes for a contingent, where it is false
+     * and the whole ladder is for sale.
+     */
+    campaign: armyMode,
+  };
 }
 
 /**
@@ -3567,6 +4253,19 @@ export class CommandDirector extends WaveDirector {
      */
     this.veterans = Array.isArray(opts.veterans) ? opts.veterans : null;
     /**
+     * ── WHAT THE PLAYER CALLS THEIR SQUADS ────────────────────────────────
+     *
+     * "I should be able to name my squads before starting a game."
+     *
+     * An array of strings by squad index, handed in exactly the way the
+     * veterans are and for the same reason: the names live in `Company.js`,
+     * which is a localStorage module, and this file has never been one. Whoever
+     * builds the World reads `Company.squadNames()` and hands it over; the
+     * director prints what it is given. A run with none prints the numbers,
+     * which is what every squad is called until somebody names it.
+     */
+    this.squadNames = Array.isArray(opts.squadNames) ? opts.squadNames.slice() : null;
+    /**
      * WHICH RUNG THE CONTINGENT IS BUILT ON, or `CONTINGENT_MIXED`.
      *
      * A campaign is pinned to rung 0 whatever the options screen says, and that
@@ -3738,7 +4437,12 @@ export class CommandDirector extends WaveDirector {
     const peers = this.peersOn(c.roster);
     if (peers.length <= 1) return all;
     const mine = Math.max(0, peers.indexOf(c));
-    return all.filter((_, i) => i % peers.length === mine);
+    /* EMPTIED, NOT FILTERED. `squads()` is indexed by the squad NUMBER now —
+     * see the note there — so removing entries would renumber every squad
+     * below the one that went, which is the identity leak this file just
+     * stopped having. A commander who does not have 2nd Squad sees 2nd Squad
+     * empty, and 3rd Squad is still 3rd. */
+    return all.map((sq, i) => (i % peers.length === mine ? sq : []));
   }
 
   /**
@@ -3751,10 +4455,93 @@ export class CommandDirector extends WaveDirector {
    */
   cycleSquad(cmdr = null) {
     const c = cmdr || this.commander;
-    const n = this.squadsOf(c).length;
-    if (n <= 1) { this.selectedSquad = null; return null; }
+    /**
+     * ── A JOINING PLAYER CYCLES THE HOST'S COUNT ──────────────────────────
+     *
+     * `netShell` empties the roster by design — a client holds no men — so
+     * `squadsOf` is `[]`, every squad is "not live", and the target slot could
+     * never move off null. The wire carrying the squad index was inert:
+     * measured, three presses and it still sent `s: null`.
+     *
+     * The one thing a client DOES have is the host's own `readout()`, which
+     * carries the live squad count off `liveSquads`. So a client steps
+     * `0 … n-1` and back to the line, exactly as the host does, and the index
+     * it sends means the same thing at the other end because both sides read
+     * the same number.
+     */
+    if (this._netShell) {
+      const n = this.readout(c)?.squads | 0;
+      if (n <= 1) { this.selectedSquad = null; this.onTarget?.(null, null); return null; }
+      const cur = this.selectedSquad;
+      this.selectedSquad = cur == null ? 0 : (cur + 1 >= n ? null : cur + 1);
+      const k = this.selectedSquad;
+      this.onTarget?.(k == null ? null : this.squadLabel(k, c), k);
+      this.world?.notify?.(k == null ? 'THE WHOLE LINE' : `${this.squadLabel(k, c).toUpperCase()} HAS YOUR EAR`,
+        k == null ? `${n} squads — the next order is for all of them`
+          : 'the next order is theirs alone');
+      return this.selectedSquad;
+    }
+    /* THE SQUADS THAT HAVE ANYBODY IN THEM — see `liveSquads`. A target slot
+     * that stepped onto a wiped squad would be a selection nobody can answer. */
+    const live = this.liveSquads(c);
+    const n = live.length;
+    if (n <= 1) {
+      /* AND THE PANEL IS TOLD. This dropped the selection in silence, so a
+       * player whose army fell to one squad kept reading "▸ Havoc" on the
+       * order panel while every order went to the whole line. */
+      const had = this.selectedSquad;
+      this.selectedSquad = null;
+      if (had != null && c === this.commander) this.onTarget?.(null, null);
+      return null;
+    }
+    /* AND A SELECTION THAT HAS STOPPED EXISTING IS NOT A SELECTION. This
+     * clamped only when the army was down to one squad, so a player who picked
+     * 3rd Squad and then lost it kept a `selectedSquad` of 2 against two live
+     * squads — and `order(id, c, 2)` then wrote a plant nobody reads, fired
+     * `onOrder` so the HUD repainted as though it had landed, and did nothing
+     * at all. An order that vanishes silently is worse than one that is
+     * refused. */
+    if (this.selectedSquad != null && !live.includes(this.selectedSquad)) {
+      this.selectedSquad = null;
+      if (c === this.commander) this.onTarget?.(null, null);
+    }
     const cur = this.selectedSquad;
-    this.selectedSquad = cur == null ? 0 : (cur + 1 >= n ? null : cur + 1);
+    const at = cur == null ? -1 : live.indexOf(cur);
+    this.selectedSquad = at + 1 >= n ? null : live[at + 1];
+    /**
+     * …AND THE PLAYER IS TOLD WHO THEY ARE TALKING TO.
+     *
+     * "the troop management menu says 2 squads sometimes but for all intents
+     *  and purposes it's just one squad."
+     *
+     * It was two squads and the selection was a field nobody printed: the
+     * player pressed the target slot, `selectedSquad` moved from null to 0 to
+     * 1 to null, and NOTHING on screen changed until an order was given —
+     * which is a mode switch with no indicator, and is indistinguishable from
+     * the control doing nothing. So the cycle says out loud who has the next
+     * order, by the squad's own NAME where it has one, and how many men are in
+     * it, which is the other half of "I should be able to view my squads".
+     */
+    if (c === this.commander) {
+      const k = this.selectedSquad;
+      /* …AND IT IS HELD ON SCREEN, not only announced. A toast fades in two
+       * and a bit seconds; the selection does not, and a mode whose only
+       * indicator has gone is a mode you lose track of. */
+      this.onTarget?.(k == null ? null : this.squadLabel(k, c), k);
+      if (k == null) {
+        this.world?.notify?.('THE WHOLE LINE',
+          `${n} ${c?.army?.squadWord?.toLowerCase() || 'squad'}s — the next order is `
+          + 'for all of them');
+      } else {
+        const men = this.squadsOf(c)[k] || [];
+        const lead = this.leaderOf(men);
+        const alive = men.filter((t) => t.alive !== false).length;
+        this.world?.notify?.(`${this.squadLabel(k, c).toUpperCase()} HAS YOUR EAR`,
+          `${alive} ${alive === 1 ? 'man' : 'men'}`
+          + `${lead ? `, ${lead.rankRec.title.toLowerCase()} ${lead.name}` : ''}`
+          + ' — the next order is theirs alone');
+      }
+    }
     return this.selectedSquad;
   }
 
@@ -3786,8 +4573,11 @@ export class CommandDirector extends WaveDirector {
     if (!c.roster?.detach?.(t, on)) return null;
     /* The selection is an INDEX into a list this has just reshaped, so it
      * cannot be trusted across the change. Back to the whole army, which is the
-     * one target that is always valid. */
+     * one target that is always valid — AND THE PANEL IS TOLD, or it goes on
+     * naming a squad the next order will not go to. */
+    const had = this.selectedSquad;
     this.selectedSquad = null;
+    if (had != null && c === this.commander) this.onTarget?.(null, null);
     this.world?.notify?.(on ? 'DETACHED' : 'BACK IN LINE',
       on ? `${t.designation} takes his own orders` : `${t.designation} rejoins his squad`);
     return t;
@@ -3800,9 +4590,588 @@ export class CommandDirector extends WaveDirector {
    * differently in two places. `key` is the squad's index in `squadsOf`, which
    * is what the HUD numbers and what `order(id, cmdr, key)` is given.
    */
-  formationFor(c, key = null) {
+  formationFor(c, key = null, t = null) {
+    /**
+     * ── AND A MAN WHO WAS NEVER TOLD IS STILL DOING THE LAST THING HE WAS ──
+     *
+     * `t.order` is the one place a refusal has any consequence. An order that
+     * does not reach a man does not stop him soldiering; it leaves him under
+     * the order he already had, which is what "the order did not land" means
+     * on a field. `_ask` writes it onto the refusers and clears it on the men
+     * who took the order, so it is only ever set on men who are OUT OF STEP
+     * with their unit — and a company that has never refused anything reads
+     * exactly as it did before this existed.
+     *
+     * FIRST, ahead of the squad's order and the army's, because it is the
+     * narrowest statement about this particular man and the other two are
+     * statements about a unit he did not hear addressed.
+     */
+    if (t && t.order && FORMATIONS[t.order]) return t.order;
     const own = key != null && c?.squadOrders?.get(String(key));
     return own || c?.formation || DEFAULT_FORMATION;
+  }
+
+  /**
+   * ══ EVERY MOUTH THIS ORDER CAN COME OUT OF ════════════════════════════════
+   *
+   * You, plus every man licensed to RELAY who is standing close enough to have
+   * heard you. Returned as circles — a position and a radius — because that is
+   * all the reach test needs and it keeps the two radii (`ORDER_REACH` and
+   * `RELAY_REACH`) attached to the mouths they belong to rather than branching
+   * at the point of use.
+   *
+   * THE COMMANDER'S OWN POSITION IS `player ?? anchor`, which is exactly what
+   * `_frame` reads and for the same reason: a Commander built loose in a check
+   * and an AI commander in a meeting both have an anchor and no body, and a
+   * reach test that returned nothing for them would silently refuse every
+   * order the other army ever gave itself.
+   *
+   * ONE HOP. A relay is not itself a source for a further relay — see
+   * `RELAY_REACH`. So this list is built in one pass off the commander and is
+   * not iterated to a fixed point.
+   */
+  _voices(c) {
+    /* THE RUNNER IS THE MOUTH WHILE HE IS SPEAKING. `_runnerTick` sets this
+     * around the one `order()` call it makes, so the order he delivers reaches
+     * from where HE is standing and not from where you are — which is the
+     * whole point of having sent him, and the reason the delivery can still
+     * fail to reach a man who has since walked further off. */
+    const at = this._carrying?.position || c?.player?.position || c?.anchor || null;
+    if (!at) return [];
+    const out = [{ pos: at, r: ORDER_REACH, from: null }];
+    /**
+     * ── AND THE GROUND THE FORMATION IS ACTUALLY SOLVED ON ────────────────
+     *
+     * `_frame` returns `c._paceAnchor`, not the player: the shape follows you
+     * at `advancePace` and — FLAGSHIP §6, deliberately — without bound, so once
+     * no trooper is inside `MORALE.NEAR` the anchor stops dead. Every proof
+     * that a man in his own correct slot is within reach is a statement about a
+     * distance from THAT point, and this measured from the player.
+     *
+     * MEASURED, 24 men in `line`, the player walking at 6 m/s against a
+     * slowest trooper of 4.1:
+     *
+     *     +2s   lag  4.5   furthest man 28.0   deaf 0
+     *     +4s   lag  9.0   furthest man 29.0   deaf 0
+     *     +6s   lag 13.5   furthest man 30.7   deaf 0
+     *     +10s  lag 25.0   furthest man 37.2   deaf 1
+     *
+     * Five seconds of walking faster than your own line spends the whole 5.1 m
+     * margin, and it charges the player for the wrong thing entirely: SENDING
+     * A SQUAD AWAY is what this mechanic is for; outwalking men who are jogging
+     * after you is not.
+     *
+     * So the anchor is a mouth as well — it is where the company IS, and you
+     * are where you are. It does NOT make the reach unbounded: a squad given
+     * its own ground is measured against both and is outside both, which is
+     * the case the whole rule exists for. It is not a relay and carries no
+     * licence: the two together are the commander, in the two places he is.
+     */
+    if (!this._carrying && c?._paceAnchor
+      && c._paceAnchor.distanceToSquared(at) > 1) {
+      out.push({ pos: c._paceAnchor, r: ORDER_REACH, from: null });
+    }
+    const r2 = ORDER_REACH * ORDER_REACH;
+    for (const t of this.led(c)) {
+      if (t.alive === false || !holds(t, 'RELAYS')) continue;
+      const e = t.body;
+      if (!e || e.dead || !e.position) continue;
+      if (e.position.distanceToSquared(at) > r2) continue;
+      out.push({ pos: e.position, r: RELAY_REACH, from: t });
+    }
+    return out;
+  }
+
+  /** Whether any of those mouths reaches this man. Null body = not landed yet. */
+  _inReach(t, voices) {
+    const e = t?.body;
+    if (!e || e.dead || !e.position) return true;
+    for (const v of voices) {
+      if (!v.pos) continue;
+      if (e.position.distanceToSquared(v.pos) <= v.r * v.r) return true;
+    }
+    return false;
+  }
+
+  /**
+   * ══ ASK THESE MEN TO DO THIS — and get a reason for every one who will not ═
+   *
+   * The whole of PHASE 2's compliance rule, in one place, so an order given by
+   * a key, by the wheel and over the wire is refused identically. It answers
+   * `{ took, refused }` and WRITES NOTHING: `order()` decides what to do with
+   * the answer, which is what lets a check ask the question without moving the
+   * army.
+   *
+   * ── THE FOUR TERMS, IN THE ORDER THEY ARE ASKED ──────────────────────────
+   *
+   * OUT OF REACH first, because it is the only one that is about the order
+   *   rather than about the man, and because a man who never heard it cannot
+   *   be said to have been frightened of it. `F.always` skips this and only
+   *   this — see `circle`.
+   *
+   * UNLED next, and it is the squad's refusal rather than any man's. "An
+   *   unsupervised hold needs `HOLDS`" — a standing order plants a squad on
+   *   ground and walks away from it, and a squad with nobody in it licensed to
+   *   keep that ground is a squad that will not be there when you get back.
+   *   Only for a per-squad order, only for a non-advancing one: the army's
+   *   order is given with you standing in it, and an advance is not a post.
+   *
+   * SHAKEN and ALONE last and only against an ADVANCE, for the reason
+   *   `SHAKEN_AT` gives: fear and isolation stop a man walking toward the
+   *   muzzle, and neither has ever stopped anybody getting behind a rock.
+   *
+   * NO DICE. Every term is a threshold on a number the game already keeps, so
+   * the same company on the same ground refuses the same order twice — which
+   * is what makes a refusal a thing the player can DO something about instead
+   * of a thing that happens to them.
+   */
+  _ask(F, c, men, squadKey = null) {
+    const took = [];
+    const refused = [];
+    if (!F || !c) return { took: men ? [...men] : [], refused };
+    const voices = this._voices(c);
+    /* NO BODY, NO DISTANCE. An AI commander in a meeting and a Commander built
+     * loose in a check both have no player and may have no anchor either, and
+     * reach is a distance FROM SOMETHING. Measuring it from nowhere would
+     * refuse every order the other army ever gave itself and stop the enemy
+     * line forming up at all — a rule firing hardest on the one commander the
+     * player cannot see is the worst possible failure of a visible mechanic. */
+    if (!voices.length) return { took: men.filter((t) => t.alive !== false), refused };
+    /* THE SQUAD'S OWN TEST, ANSWERED ONCE — see `_supervised`. */
+    const unled = squadKey != null && !F.advance && !this._supervised(c, men);
+    for (const t of men) {
+      if (t.alive === false) continue;
+      const e = t.body;
+      /**
+       * ── FALL BACK TO ME IS NOT REFUSED, BY ANYTHING ──────────────────────
+       *
+       * `always` first drafted as "skips the reach and only the reach", on the
+       * reasoning that a man who will not advance into fire will not sprint
+       * across it to you either. That is wrong about soldiers and wrong about
+       * the mechanic, and an adversarial pass found the shape of it: the
+       * company that refuses this order is a company that is SHAKEN, which is
+       * the only circumstance anybody ever presses it in. A permadeath
+       * mitigation with a hole in it exactly where it is needed is not a
+       * mitigation.
+       *
+       * What a frightened man does is run to his officer. So the one order
+       * whose destination is the man giving it lands on everybody, and the
+       * cost stays real and stays where it was: `circle` is the worst fighting
+       * shape in the table — a ring facing outward at 4.2 m with the shortest
+       * leash in the file — so buying your company back costs you the
+       * engagement. See `circle.always`.
+       */
+      if (F.always) { took.push(t); continue; }
+      if (!this._inReach(t, voices)) { refused.push({ t, why: 'out of reach' }); continue; }
+      if (unled) { refused.push({ t, why: 'unled' }); continue; }
+      if (F.advance && e && !e.dead) {
+        if (braveryOf(e) < SHAKEN_AT) { refused.push({ t, why: 'shaken' }); continue; }
+        if (!this._friendNear(e, c)) { refused.push({ t, why: 'alone' }); continue; }
+      }
+      took.push(t);
+    }
+    return { took, refused };
+  }
+
+  /**
+   * ══ DID IT LAND — and what the men who did not take it are doing instead ═══
+   *
+   * NOT `_landed`, which is already a field on this director meaning "the army
+   * has arrived on this ground" — the two words collide and the collision was
+   * silent: an instance field shadows a prototype method, so `order()` threw
+   * `this._landed is not a function` the first time an army was asked anything.
+   *
+   * Called from `order()` between deciding who was asked and writing anything,
+   * because both halves of the answer are needed there: a refusal has to abort
+   * the write, and a PARTIAL refusal has to pin the refusers to what they were
+   * doing a moment ago, which is only knowable before the new order is stored.
+   *
+   * ── NOBODY TOOK IT: THE ORDER DOES NOT EXIST ─────────────────────────────
+   *
+   * `order()` returns false and nothing is written — no `c.formation`, no
+   * `squadOrders`, no plant, no `_coverEpoch`. That matters more than it
+   * looks: a HUD that lit "Take cover" over a line that never heard it is the
+   * exact failure the per-squad branch was already fixed for, and this is the
+   * same class of lie at a different range.
+   *
+   * ── SOME TOOK IT: THE REST KEEP WHAT THEY HAD ────────────────────────────
+   *
+   * `t.order` is the man's own standing order and `formationFor` reads it
+   * first. Set on the refusers, CLEARED on the takers — clearing is the half
+   * that is easy to miss and it is what stops a refusal being permanent: a man
+   * who refused a charge at forty metres and is then reached again, or who is
+   * next given an order he will take, is back in step with his unit and stops
+   * carrying a private one.
+   *
+   * ── AND THE WINDOW OPENS ─────────────────────────────────────────────────
+   *
+   * Anything refused for distance arms the runner (`RUNNER_WINDOW`). The same
+   * order again, at the same unit, inside six seconds, sends a man with it.
+   */
+  _takeUp(ask, F, c, id, squad, total) {
+    const line = this._refusalLine(ask.refused, total);
+    const mine = c === this.commander;
+    /* WHAT THEY WERE DOING, TAKEN NOW. After `order()` writes, this question
+     * has a different answer for every man on the roll. */
+    const before = new Map();
+    if (ask.refused.length) {
+      /* ONE WALK OF THE SQUADS, not one per refuser. `_squadKeyOf` searches
+       * `squadsOf` for the man handed to it, so asking it inside this loop is
+       * quadratic in the size of the company — and the case where every man
+       * refuses (a company that is shaken through) is exactly the case where
+       * the loop is longest. */
+      const squads = this.squadsOf(c);
+      const key = new Map();
+      for (let i = 0; i < squads.length; i++) for (const t of squads[i]) key.set(t, String(i));
+      for (const r of ask.refused) {
+        before.set(r.t, this.formationFor(c, key.get(r.t) ?? null, r.t));
+      }
+    }
+    /**
+     * ── AND IT IS NOT `this.refused` ──────────────────────────────────────
+     *
+     * `refused` is the MUSTER's channel — `recruit`, `road` and the contingent
+     * composer all write it and `main.js` hands it to the muster screen beside
+     * `musterOffer()` three times. An order refusal written there would put
+     * "Line abreast — 3 men — out of reach" on a screen about which unit to
+     * buy, on the frame the player opened it. Two different refusals, two
+     * fields, and the collision is the reason this one is named.
+     */
+    if (line) {
+      this.log.push({ t: 'refused', formation: id, why: line.why, n: line.all,
+                      squad: squad == null ? null : Number(squad) | 0,
+                      area: this.areaNumber, wave: this.wave });
+      /* THE WINDOW IS ARMED ON DISTANCE AND ON NOTHING ELSE. A runner carries
+       * an order to men who did not hear it; he cannot carry courage. */
+      /* ON THE COMMANDER AND NOT ON THE DIRECTOR, because a director holds
+       * every commander in the session. A window on `this` would let a joining
+       * player's refused order arm the host's next press, and would give a
+       * joining player no window of their own — so the one player who most
+       * needs a runner (their line is wherever the host's is not) is the one
+       * who could never send one. The notify below is still the local screen's
+       * and stays gated on the player's own commander. */
+      /* AND NOT BY A DELIVERY. `_carrying` is set around the one `order()`
+       * call a runner makes on arrival, and a partially-refused delivery was
+       * writing a fresh window from the delivery point — so the next press
+       * dispatched a second man to carry the order the first had just carried.
+       * The guard was on CONSUMING the window and not on arming it, which is
+       * the half `order()`'s own note claimed to have covered. */
+      if (line.why === 'out of reach' && !this._carrying) {
+        c._pending = { id, squad: squad == null ? null : Number(squad) | 0,
+                       at: this.world?.time || 0 };
+      }
+    }
+    if (!ask.took.length) {
+      this.orderRefused = line
+        ? `${F.name} — ${line.text}`
+        : `${F.name} — nobody left to take it`;
+      if (mine) {
+        this.world?.notify?.('NOT TAKEN', this.orderRefused
+          + (line?.why === 'out of reach' ? '. Press it again to send a runner.' : ''));
+      }
+      return false;
+    }
+    for (const t of ask.took) t.order = null;
+    for (const r of ask.refused) r.t.order = before.get(r.t) || null;
+    if (line && mine) {
+      this.orderRefused = `${F.name} — ${line.text}`;
+      this.world?.notify?.(`${ask.took.length} OF ${total} TOOK IT`, this.orderRefused
+        + (line.why === 'out of reach' ? '. Press it again to send a runner.' : ''));
+    } else if (mine) {
+      this.orderRefused = null;
+    }
+    return true;
+  }
+
+  /**
+   * ══ SEND A MAN WITH IT ═════════════════════════════════════════════════════
+   *
+   * "Press the same order again inside a short window and a named man leaves
+   * the line to CARRY it. He can be killed on the way, and then the order dies
+   * with him and the log says so."
+   *
+   * WHY THIS IS THE ANSWER TO REACH AND NOT A WAY ROUND IT. A reach rule with
+   * no remedy is a rule that tells the player their button is broken; a remedy
+   * that always works is the old bug. A runner is the third thing: it works,
+   * it takes time, and it can fail — and when it fails it fails as a NAME,
+   * which is the mode's whole subject. The cost of talking to a squad you sent
+   * away is a man out of the line for the length of the crossing and, some of
+   * the time, that man.
+   *
+   * WHO GOES, and the rule is the one a company would use: the JUNIOREST man
+   * who heard the order, and never the squad's leader. You do not send your
+   * sergeant with a message — his squad is what he is for, and `leaderOf` is
+   * derived so this is the same man `onDeath` announces a succession for.
+   * Among equals the nearest to where he is going, so the crossing is the
+   * shortest one available.
+   *
+   * WHERE HE GOES is the centroid of the men who did not hear it. Not one
+   * man's position: he is carrying it to a UNIT, and `RUNNER_DELIVER` is wide
+   * enough that arriving at the middle of a squad is arriving at the squad.
+   */
+  _sendRunner(id, squad, c) {
+    const F = FORMATIONS[id];
+    if (!F || !c) return false;
+    const men = squad == null
+      ? this.led(c).filter((t) => t.alive !== false)
+      : (this.squadsOf(c)[Number(squad) | 0] || []);
+    if (!men.length) return false;
+    /* ONE MAN CARRIES ONE ORDER. Nothing tracked a runner per (order, unit),
+     * so refuse → press → runner A → refuse → press → runner B put two men out
+     * of the line with the same message, two RUNNER AWAY toasts and two
+     * `delivered` rows — and the refusal toast's own "Press it again to send a
+     * runner" invites exactly those presses. */
+    const already = squad == null ? null : Number(squad) | 0;
+    for (const t of this.led(c)) {
+      if (t.runner && t.runner.id === id && t.runner.squad === already) return false;
+    }
+    const ask = this._ask(F, c, men, squad);
+    const deaf = ask.refused.filter((r) => r.why === 'out of reach' && r.t.body && !r.t.body.dead);
+    if (!deaf.length) return false;
+    let x = 0, z = 0;
+    for (const r of deaf) { x += r.t.body.position.x; z += r.t.body.position.z; }
+    const to = { x: x / deaf.length, z: z / deaf.length };
+    /* HE IS DRAWN FROM THE WHOLE ARMY AND NOT FROM THE SQUAD BEING SENT TO,
+     * because the squad being sent to is the one that cannot hear you. Anybody
+     * of yours who DID hear can carry it. */
+    /* THE VOICES ONCE, not once per man. `_voices` walks the whole roll to find
+     * the licensed relays in it, so asking it inside this loop made choosing a
+     * runner quadratic in the size of the company — 576 passes at
+     * `MAX_STRENGTH`, on a frame the player is already being told something. */
+    const voices = this._voices(c);
+    const pool = [];
+    for (const t of this.led(c)) {
+      if (t.alive === false || t.runner) continue;
+      const e = t.body;
+      if (!e || e.dead) continue;
+      if (!this._inReach(t, voices)) continue;
+      if (this.leaderOf(this.squadOf(t, c)) === t) continue;
+      pool.push(t);
+    }
+    if (!pool.length) return false;
+    pool.sort((a, b) => (a.rank | 0) - (b.rank | 0)
+      || (Math.hypot(a.body.position.x - to.x, a.body.position.z - to.z)
+        - Math.hypot(b.body.position.x - to.x, b.body.position.z - to.z)));
+    const man = pool[0];
+    man.runner = { id, squad: squad == null ? null : Number(squad) | 0, to,
+                   until: (this.world?.time || 0) + RUNNER_LIFE };
+    /* NOTHING IS WRITTEN ONTO HIM BUT THE ERRAND. `slotFor`'s runner branch is
+     * the whole of what a runner is on the field, and `t.order` is left exactly
+     * as it was — so the moment he stops running he is back in whatever his
+     * unit is doing, with no second piece of state to unwind. */
+    this.log.push({ t: 'runner', name: man.name, formation: id,
+                    squad: squad == null ? null : Number(squad) | 0, n: deaf.length,
+                    area: this.areaNumber, wave: this.wave });
+    if (c === this.commander) {
+      this.world?.notify?.('RUNNER AWAY',
+        `${man.rankRec.title.toLowerCase()} ${man.name} is carrying ${F.name.toLowerCase()} to `
+        + `${squad == null ? 'the line' : this.squadLabel(Number(squad) | 0, c).toLowerCase()} `
+        + `— ${deaf.length} ${deaf.length === 1 ? 'man' : 'men'} who never heard you`);
+    }
+    /* WHEN, so a caller that also prints a line about the order can tell that
+     * what just happened was a DISPATCH and not the order landing. `main.js`
+     * reads it either side of its `order()` call: without it the key loop
+     * would print "CHARGE — 2nd Squad" over a squad that is still standing
+     * where it was, with a runner halfway there. */
+    this.runnerAt = this.world?.time ?? 0;
+    this.onRunner?.(man, F, squad);
+    return true;
+  }
+
+  /**
+   * HE ARRIVES, HE RUNS OUT OF TIME, OR HE IS KILLED — stepped once a frame in
+   * the loop that already touches every living body once a frame.
+   *
+   * ARRIVAL IS A DISTANCE AND NOT A TIMER, so a runner shot in the leg and
+   * limping still delivers if he gets there, and one who is pinned behind a
+   * rock for twenty seconds does not. `RUNNER_DELIVER` is measured from the
+   * point he was sent to rather than from any man, for the reason
+   * `_sendRunner` gives: he is carrying it to a unit.
+   *
+   * ON ARRIVAL THE ORDER IS GIVEN AGAIN, THROUGH `order()`, from where he is
+   * standing — `_carrying` makes his own body the mouth for that one call, so
+   * the men around him hear it and men fifty metres past them still do not.
+   * That is the honest version: he delivered it where he arrived. Giving it a
+   * private write into `squadOrders` would be a second door into the thing
+   * this whole phase exists to put one door on.
+   */
+  _runnerTick(t, dt) {
+    const R = t.runner;
+    const e = t.body;
+    if (!R) return;
+    if (!e || e.dead) { t.runner = null; return; }
+    const now = this.world?.time || 0;
+    const d = Math.hypot(e.position.x - R.to.x, e.position.z - R.to.z);
+    if (d <= RUNNER_DELIVER) {
+      t.runner = null;
+      const c = this.commanderOf(e) || this.commander;
+      this._carrying = e;
+      let ok = false;
+      try { ok = this.order(R.id, c, R.squad); } finally { this._carrying = null; }
+      if (c === this.commander) {
+        const F = FORMATIONS[R.id];
+        this.world?.notify?.(ok ? 'ORDER DELIVERED' : 'HE GOT THERE AND THEY WOULD NOT',
+          `${t.name} — ${F ? F.name.toLowerCase() : R.id}`
+          + (ok ? '' : `, ${this.orderRefused || 'refused'}`));
+      }
+      this.log.push({ t: 'delivered', name: t.name, formation: R.id, ok,
+                      squad: R.squad, area: this.areaNumber, wave: this.wave });
+      return;
+    }
+    if (now >= R.until) {
+      t.runner = null;
+      if (this.commanderOf(e) === this.commander) {
+        this.world?.notify?.('HE NEVER GOT THERE',
+          `${t.name} turned back — the order is dead`);
+      }
+      this.log.push({ t: 'lostorder', name: t.name, formation: R.id, why: 'time',
+                      squad: R.squad, area: this.areaNumber, wave: this.wave });
+    }
+  }
+
+  /**
+   * ══ IS ANYBODY IN CHARGE OF THIS POST ══════════════════════════════════════
+   *
+   * The licence half of PHASE 2, and it applies to exactly one thing: a
+   * PER-SQUAD order that does not advance. `cover` and `digin` are the only
+   * two in the table, and both of them mean *hold this piece of ground* — an
+   * order that writes `squadPlanted`, gives the squad its own frame and lets
+   * the general walk away from it. That is a POST, and `RANKS[2].licence` is
+   * the sentence this enforces: "May be given a squad's post — he leads it
+   * whatever the roll would have said."
+   *
+   * TWO WAYS TO SATISFY IT, and having two is what stops the rule being a wall
+   * on a fresh company. A muster deals TEN TROOPERS AT RANK 0 — measured — so
+   * a licence-only test would make delegation unreachable until the first
+   * promotion, on a mechanic the player was specifically told they had.
+   *
+   *   A MAN WHO CAN BE LEFT — anybody still standing in the squad licensed to
+   *     LEAD. This is what a promotion buys, and it is the only version that
+   *     lets you actually leave.
+   *
+   *   OR YOU, STANDING THERE. Supervision is a fact about the ground, not a
+   *     rank: a general inside `RELAY_REACH` of the squad's own centre is the
+   *     supervision. So the fresh company's answer to "they will not hold this
+   *     on their own" is to go and hold it with them — which costs the thing
+   *     the mode is about, your attention, and is a real choice rather than a
+   *     locked button.
+   *
+   * The centroid rather than any one man, for the same reason `_sendRunner`
+   * uses one: the order is to a unit.
+   */
+  _supervised(c, men) {
+    const live = men.filter((t) => t.alive !== false && t.body && !t.body.dead);
+    /**
+     * A SQUAD STILL IN THE AIR IS NOT UNLED — it is not anywhere yet.
+     *
+     * `_inReach` deliberately answers TRUE for a man with no body ("null body
+     * = not landed yet"), and this answered the opposite: five men bought at
+     * the muster and riding a gunship for four seconds have no bodies, so
+     * `live` was empty, `_supervised` said no, and Take cover or Dig in on
+     * that squad was refused as `unled` — a statement about a LICENCE, made
+     * about a squad whose ranks the test never reached. A Sergeant in it did
+     * not help, and no runner window either, because only distance arms one.
+     */
+    if (!live.length) return true;
+    if (live.some((t) => holds(t, 'LEADS'))) return true;
+    const at = c?.player?.position || c?.anchor;
+    if (!at) return true;
+    let x = 0, z = 0;
+    for (const t of live) { x += t.body.position.x; z += t.body.position.z; }
+    x /= live.length; z /= live.length;
+    return Math.hypot(at.x - x, at.z - z) <= RELAY_REACH;
+  }
+
+  /**
+   * ══ ONE MAN, ONE BODY — AND THIS IS WHERE THE SECOND ONE ARRIVES ═════════
+   *
+   * Every body this director hands to a record goes through here, whether it
+   * was placed on the spot or flown in four seconds later, so the rule that a
+   * record has exactly one body is a function rather than a habit.
+   *
+   * WHY THERE CAN BE A SECOND. `recall` takes every record out of `_inbound`
+   * because a withdrawn man is not inbound — and it CANNOT take him off the
+   * ship: a flight belongs to the `ArrivalDirector` and has no per-record
+   * cancel. `closeMuster` then puts him down again, and the gunship that was
+   * already carrying him lands anyway.
+   *
+   * THE BLUNT FIX IS WORSE. `arrivals.clear()` at the boundary takes the enemy
+   * pipeline with it — measured, it left `arrivals.pending` non-zero fourteen
+   * seconds into the next area and turned red a check that has always asserted
+   * the boundary quiesces. The second body is caught where it lands instead.
+   *
+   * IT LEAVES THE WAY A WITHDRAWAL LEAVES: `trooper` detached first so
+   * `onDeath` reads no casualty, then `dying` past the ceiling so `World`'s
+   * enemy loop disposes it on the next frame through the door every other body
+   * leaves by, and `Corpses` spends nothing on it. No casualty, no name, no
+   * dust — nobody was ever meant to see this one.
+   *
+   * @returns true if the record took the body.
+   */
+  _landBody(t, e, c) {
+    if (!t || !e) return false;
+    if (t.body && !t.body.dead && t.body !== e) {
+      e.trooper = null;
+      e.dead = true;
+      e.dying = 1e6;
+      return false;
+    }
+    enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
+    return true;
+  }
+
+  /** Step any of this commander's men out of a static the front just raised on them. */
+  _unbury(c) {
+    const w = this.world;
+    if (!w || !c) return 0;
+    let n = 0;
+    for (const t of this.led(c)) {
+      const e = t.body;
+      if (!e || e.dead || !e.position) continue;
+      const p = e.position;
+      if (placementClear(w, p.x, p.y, p.z)) continue;
+      let moved = false;
+      for (let r = 1.5; r <= 6 && !moved; r += 1.5) {
+        for (let a = 0; a < 8 && !moved; a++) {
+          const th = (a / 8) * Math.PI * 2;
+          const x = p.x + Math.cos(th) * r, z = p.z + Math.sin(th) * r;
+          const y = w.terrain?.height(x, z) ?? p.y;
+          if (!placementClear(w, x, y, z)) continue;
+          p.set(x, y, z);
+          moved = true; n++;
+        }
+      }
+    }
+    return n;
+  }
+
+  /** Anybody of his own still standing inside `ALONE_NEAR` — his commander counts. */
+  _friendNear(e, c) {
+    const at = c?.player?.position || c?.anchor;
+    const r2 = ALONE_NEAR * ALONE_NEAR;
+    if (at && e.position.distanceToSquared(at) <= r2) return true;
+    for (const o of (this.world?.enemies || [])) {
+      if (o === e || o.dead || o.team !== e.team) continue;
+      if (o.position.distanceToSquared(e.position) <= r2) return true;
+    }
+    return false;
+  }
+
+  /**
+   * WHAT TO SAY ABOUT A REFUSAL — the largest group and the term that failed.
+   *
+   * One sentence, because four reasons printed at once is a paragraph nobody
+   * reads mid-fight, and the largest group is the one that explains why the
+   * order looked like it did nothing.
+   */
+  _refusalLine(refused, total) {
+    if (!refused.length) return null;
+    const by = new Map();
+    for (const r of refused) by.set(r.why, (by.get(r.why) | 0) + 1);
+    let why = null, n = 0;
+    for (const [k, v] of by) if (v > n) { why = k; n = v; }
+    const who = n === 1 ? (refused.find((r) => r.why === why)?.t?.name || 'one man') : `${n} men`;
+    return { why, n, text: `${who} — ${why}`, all: refused.length, total };
   }
 
   /** Everything this commander leads, flat — his squads' troopers in order. */
@@ -4479,51 +5848,66 @@ export class CommandDirector extends WaveDirector {
      * company buys is rank, not headcount.
      */
     const opening = this.openingFor(c);
-    c.roster.points = Math.max(0, opening - vets) * musterCost(cheapest);
-    const want = this.unit >= 0 ? tiers[Math.min(this.unit, tiers.length - 1)] : null;
+    /* THE PURSE, IN POINTS — see `composeContingent`. Everything already on
+     * the roll (a returning company, a contingent the barracks composed in
+     * advance) has spent what it is worth, so the muster cannot buy it twice. */
+    const standing = c.roster.all.map((t) => t.type);
+    c.roster.points = Math.max(0, opening * musterCost(cheapest)
+      - standing.reduce((a, type) => a + musterCost(type), 0));
+    /**
+     * ── A CONTINGENT IS A PURSE, AND THE SPEND LIVES IN ONE PLACE ────────
+     *
+     * The budget is what the slider already meant, priced: `opening ×
+     * musterCost(cheapest)`, so eight allies is exactly what eight clone
+     * troopers cost, and a heavier contingent is a SMALLER one. Which rungs
+     * that buys — the chosen rung first, then the line, then the heaviest
+     * thing still affordable so no remainder is thrown away — is
+     * `composeContingent`, CALLED here rather than restated.
+     *
+     * It moved out of these loops so that the barracks can ask what a
+     * contingent will be made of BEFORE the run and get the answer this
+     * muster is about to act on. A second copy of a spend is the
+     * hand-maintained twin this repository keeps deleting, and the tab
+     * showing men the ground then disagrees with is the defect the whole
+     * troop tab was rebuilt to kill. `recruit` still does the spending, the
+     * logging, the unlock gate and the refusals; only the arithmetic left.
+     */
+    /* WHAT IS ON THE SHELF HERE — `shelfFor`, which is `unlockAt`'s rule as a
+     * function so the barracks can ask it too. Handed to the composer rather
+     * than left for it to guess: see the `allow` note over `composeContingent`
+     * for the meeting that came out as ten identical troopers when it was left
+     * out. */
+    const shelf = shelfFor(c.army, this.campaign, this.areaRung);
+    const { types, refused } = composeContingent(c.army, opening, standing, this.unit, shelf);
     this._bulk = true;
     try {
-      if (want && c.roster.points < want.cost) {
-        /**
-         * A REQUEST THAT CANNOT BE MET SAYS SO. The player asked for a
-         * contingent of AT-TEs and set the size to one, which is 5 points
-         * against 32: there is a right answer (the line) and there is no
-         * honest way to hand it over in silence. Same law as `reinforce`'s NO
-         * REINFORCEMENTS and `deploy`'s NO GROUND below — the three places
-         * this mode can fail to give the player what they asked for are the
-         * three places it says so out loud.
-         */
-        this.refused = `${ARCHETYPES[want.type]?.label ?? want.type} costs ${want.cost} points and `
-          + `${opening} ${c.army.unit}${opening === 1 ? '' : 's'} buys ${c.roster.points}`;
+      /* A REQUEST THAT CANNOT BE MET SAYS SO — the player asked for a
+       * contingent of AT-TEs and set the size to one, which is 5 points
+       * against 32. Same law as `reinforce`'s NO REINFORCEMENTS and
+       * `deploy`'s NO GROUND: the places this mode cannot give the player
+       * what they asked for are the places it says so out loud. */
+      if (refused) {
+        this.refused = refused;
         this.world?.notify?.('CONTINGENT UNCHANGED', this.refused);
-      } else if (want) {
-        while (this.recruit(want.type, c));
       }
       /**
-       * THEN THE LINE, AND THEN THE BEST THING LEFT ON THE SHELF — which is
-       * `autoMuster`'s two-phase spend, reached through the same
-       * `_bestAffordable` it uses, because "spend a purse sensibly" is one
-       * question and this file is not going to answer it twice.
+       * EVERY TYPE IS OFFERED, AND A REFUSAL DOES NOT END THE LINE.
        *
-       * For a CHOSEN rung these two loops are what stops the remainder being
-       * thrown away, and the machine is where it shows: ten Republic allies is
-       * 50 points, one AT-TE is 32, and the 18 left over buy three clone
-       * troopers to walk beside it. Without them the player would have asked
-       * for ten men and been handed one walker and a dead 18 points.
+       * This used to `break` on the first `recruit` that came back null, which
+       * is a reasonable-looking way to stop spending a purse that has run out
+       * and is a silent catastrophe when the refusal is anything else.
+       * Measured: a twenty-man meeting composed `10 troopers + AT-TE +
+       * officer`, `recruit` refused the AT-TE on the area unlock, and the
+       * break threw the officer away too — the side took the field as ten
+       * identical clone troopers, which is precisely the "one kind twice" this
+       * mode's own check exists to catch.
        *
-       * For `CONTINGENT_MIXED` they ARE the composition — half the purse on the
-       * line, the rest on the heaviest rungs it will carry — measured, that is
-       * five clone troopers, an officer and a jet trooper for 47 of 50 points
-       * at ten Republic allies, and five B1s and a MagnaGuard for 29 of 30 at
-       * ten Confederate ones.
+       * The gate is handed to the composer now so the two should never
+       * disagree again; this is what happens if they ever do. `recruit` guards
+       * the purse, the unlock and `MAX_STRENGTH` itself, so offering it a type
+       * it will refuse costs one comparison and never over-buys.
        */
-      const room = Math.max(0, opening - vets);
-      const line = want ? room : Math.max(room ? 1 : 0, Math.floor(room / 2));
-      for (let i = 0; i < line && this.recruit(cheapest, c); i++);
-      for (let guard = 0; guard < MAX_STRENGTH; guard++) {
-        const best = this._bestAffordable(c);
-        if (!best || !this.recruit(best, c)) break;
-      }
+      for (const type of types) this.recruit(type, c);
     } finally { this._bulk = false; }
     /**
      * THE SHAPE THE REPLACEMENTS PUT BACK. `_reinforce` used to refill toward a
@@ -4784,6 +6168,11 @@ export class CommandDirector extends WaveDirector {
       area: this.areaNumber,
       areaName: A.name,
       brief: A.brief,
+      /* WHAT THE PLAYER CALLS THEIR SQUADS, and the army's own word for one —
+       * so the muster card that opens seconds after an engagement groups the
+       * roll under the same headings the fight's own column just used. */
+      squadNames: this.squadNames ? this.squadNames.slice() : null,
+      squadWord: c.army?.squadWord || 'Squad',
       /**
        * THE GROUND JUST TAKEN — and it was missing, which cost the card its
        * header.
@@ -5168,7 +6557,11 @@ export class CommandDirector extends WaveDirector {
      * breaking it was not the one the player was looking at.
      */
     const air = opts.byShip && this.arrivals?.enabled ? this.arrivals : null;
-    let n = 0, unplaced = 0;
+    /* WANTED, not LED. `live` is everybody this commander leads and the loop
+     * skips anyone who already has a body — so with survivors keeping theirs
+     * across a boundary, "2 of 10 could not be set down" counted eight men
+     * nobody tried to set down. The banner names the men who needed ground. */
+    let n = 0, unplaced = 0, wanted = 0;
     for (let i = 0; i < live.length; i++) {
       const t = live[i];
       if (t.body && !t.body.dead) continue;
@@ -5220,21 +6613,25 @@ export class CommandDirector extends WaveDirector {
        */
       const face = c.player && c.player.isLocal && c.player.alive !== false ? c.player : null;
       const spread = live.length > 1 ? (i / (live.length - 1) - 0.5) : 0;
+      wanted++;
       if (!this._standingRoom(w, anchor, face, i, live.length, spread, _v2)) { unplaced++; continue; }
       /* THE COMMANDER'S SIDE, not the world's one constant. `world.partyTeam`
        * is the LOCAL player's side and there is one of it; a second army on it
        * would be an ally of the first, which is the whole question. */
-      const enlist = (e) => {
-        this._inbound.delete(t);
-        enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
-      };
+      const enlist = (e) => { this._landBody(t, e, c); };
       /* 18 m, and the check holds it under 30: a gunship that sets your line
        * down at the far edge of the spawn ring has not reinforced you, it has
        * started them on a walk. */
-      if (air && air.request(t.type, null, null, Math.PI / 2, enlist, { kind: 'dropship', near: 18, cap: 6 })) {
+      /* WHAT HE CHOSE TO WEAR, handed over with the request. A kit is
+       * geometry, so it has to be in hand when the body is BUILT — `enlist`
+       * below runs after that and can only paint. Both doors take it, because
+       * a man who arrives by gunship is the same man. */
+      const worn = t.look ? { look: t.look, kind: t.kind } : null;
+      if (air && air.request(t.type, null, null, Math.PI / 2, enlist,
+        { kind: 'dropship', near: 18, cap: 6, look: worn })) {
         this._inbound.add(t); n++; continue;
       }
-      const e = w.spawnEnemy(t.type, _v2);
+      const e = w.spawnEnemy(t.type, _v2, worn);
       if (!e) { unplaced++; continue; }
       enlist(e);
       n++;
@@ -5262,7 +6659,7 @@ export class CommandDirector extends WaveDirector {
     this.undeployed = unplaced;
     if (unplaced && c === this.commander) {
       this.world?.notify?.('NO GROUND FOR THE LINE',
-        `${unplaced} of ${live.length} could not be set down — move off the wall`);
+        `${unplaced} of ${wanted} could not be set down — move off the wall`);
     }
     this._announceRoster();
     /* THE WITNESS THAT AN ARMY EXISTED. `_checkLine` needs to tell "the roster
@@ -5432,15 +6829,93 @@ export class CommandDirector extends WaveDirector {
     return n;
   }
 
-  recall(c = null) {
-    if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k); return n; }
-    /* Anything still in the air is not coming: `Waves.reset` empties the
-     * staging list at an area boundary anyway, and a record left in this set
-     * would never be deployed again. */
+  recall(c = null, opts = {}) {
+    if (!c) { let n = 0; for (const k of this.commanders) n += this.recall(k, opts); return n; }
+    /**
+     * ANYTHING STILL IN THE AIR IS NOT COMING — and saying so was not enough.
+     *
+     * This claimed `Waves.reset` empties the staging list at an area boundary.
+     * THERE IS NO `WaveDirector.reset`, and `arrivals.clear()` has exactly one
+     * caller in the tree (`World.restartWave`). So a gunship carrying a record
+     * across a boundary went on flying: the record leaves `_inbound` here,
+     * `closeMuster` requests a SECOND flight for the same man, both run
+     * `enlistBody`, and the loser is a live body with `e.trooper` still set and
+     * `t.body` pointing elsewhere — whose eventual death strikes a living man
+     * off the roll, because `onDeath` reads `e.trooper`.
+     *
+     * Not reproduced in 9 000 frames of natural play, which is the honest
+     * caveat and not a reason to leave a claim about a method that does not
+     * exist standing in the file. THE FLIGHT IS NOT CANCELLED — it cannot be,
+     * short of `arrivals.clear()`, which takes the enemy pipeline with it and
+     * re-times every arrival in the next engagement. The second body is caught
+     * where it lands instead: see `deploy`'s `enlist`.
+     */
     for (const t of c.roster.all) this._inbound.delete(t);
     let n = 0;
     for (const t of c.roster.all) {
       const e = t.body;
+      /* A WITHDRAWAL ENDS EVERY PRIVATE ORDER. `t.order` is a man out of step
+       * with his unit and `t.runner` is a man crossing ground that is about to
+       * stop existing; both are facts about an engagement, and the company
+       * that lands in the next area forms up as a company. */
+      t.order = null;
+      t.runner = null;
+      /**
+       * ══ AND THE MEN WHO ARE STILL STANDING STAY STANDING ══════════════════
+       *
+       * The player, on the area boundary: "after finishing a round and calling
+       * in reinforcements you leave that menu and you're now by yourself until
+       * a couple seconds later the reinforcement ships come in and drop your
+       * new troops off — however for sake of immersion it would make more
+       * sense if the troops that survived stayed with you on the ground and
+       * the only troopers coming in with the ships would be new troopers.
+       * Right now your surviving troops get off the transport with the new
+       * troops."
+       *
+       * They did, and this was the line that did it. `_areaClear` withdrew the
+       * WHOLE roll — the six men who had just held the ground along with the
+       * four who were about to be bought — so the muster opened over an empty
+       * field and closed on a flight of gunships carrying men who had never
+       * left. A survivor riding in on the transport that is supposed to be
+       * bringing his replacements is the mode telling you its own casualty
+       * list does not mean anything.
+       *
+       * `deploy` has always skipped a record that already has a live body
+       * (`if (t.body && !t.body.dead) continue`), so keeping the body is the
+       * whole fix: the ships then carry exactly the men with no body, which is
+       * the dead being replaced and nobody else. What re-forms the survivors
+       * is the thing that always re-forms them — they are under a formation
+       * solved against the commander's frame, so they walk back in on their
+       * own feet while the ships come down, which is the picture the player is
+       * asking for and not a second mechanism.
+       *
+       * ONLY WHERE IT IS ASKED FOR. The end of a campaign and a departing
+       * commander's army both still take every body off the field, because
+       * there is no next area for anybody to be standing in.
+       */
+      /**
+       * …AND `!e.dead` IS NOT THE SAME QUESTION AS "IS HE STANDING".
+       *
+       * In THE LINE (`MODES.theline.downed`) a wounded named man is DOWNED:
+       * ragdolled, bleeding out on `_tickDown`, and `dead === false`. Testing
+       * only `dead` kept him — so he crossed the boundary lying in the dirt of
+       * an area you had already banked, `deploy` skipped him because he has a
+       * body, no replacement was ever bought for him, the line re-formed on
+       * the commander and walked away, and the bleed finished him. Driven:
+       * "downed man kept his body: true · still downed: true · ships put down
+       * 0 bodies", against the old withdrawal's "0 casualties, ships put down
+       * 10 — he comes back standing."
+       *
+       * And while he lived he was a permanent −1 on `lineGathered`'s
+       * numerator with a +1 still on its denominator, so every later
+       * `lineIsUp` was that much harder for a wound taken two areas ago.
+       *
+       * The man who HELD THE GROUND is the man who is on his feet on it. One
+       * on his back is a casualty the withdrawal carries off and the next
+       * area's ships put down again, which is what the old code did for him by
+       * accident and what this does for him on purpose.
+       */
+      if (opts.keepStanding && e && !e.dead && !e.downed) continue;
       t.body = null;
       if (!e) continue;
       e.trooper = null;
@@ -5543,8 +7018,38 @@ export class CommandDirector extends WaveDirector {
      * which is the same round trip the roster and the casualty list already
      * make, and it is the only version of this that cannot lie.
      */
-    if (this._netShell) return this.world?.requestOrder?.(id) ?? false;
+    /* …AND THE SQUAD GOES WITH IT. A shell that asked for the formation alone
+     * threw the joining player's own selection away at the wire: their Target
+     * slot moved a field nobody transmitted, and every order they gave went
+     * army-wide. */
+    if (this._netShell) return this.world?.requestOrder?.(id, squad) ?? false;
     const c = cmdr || this.commander;
+    /**
+     * ── THE SECOND PRESS SENDS A MAN ─────────────────────────────────────
+     *
+     * `_takeUp` arms `c._pending` when an order is refused FOR DISTANCE, and
+     * only then. The same order, at the same unit, inside `RUNNER_WINDOW` is
+     * read as "then take it to them" — which is what a player does with a
+     * button that just told them nobody heard it.
+     *
+     * It returns TRUE and writes nothing. The order has not landed; it is on
+     * its way, and saying so is the honest answer to "did that do anything".
+     * The write happens in `_runnerTick` when he arrives, through this same
+     * method, with his own body as the mouth.
+     *
+     * NOT WHILE HE IS DELIVERING (`_carrying`), or the delivery would re-arm
+     * the window off its own refusal and dispatch a runner to carry the order
+     * the runner just carried.
+     */
+    if (!this._carrying && c._pending) {
+      const P = c._pending;
+      const key = squad == null ? null : Number(squad) | 0;
+      const now = this.world?.time || 0;
+      if (P.id === id && P.squad === key && now - P.at <= RUNNER_WINDOW) {
+        c._pending = null;
+        if (this._sendRunner(id, squad, c)) return true;
+      }
+    }
     /**
      * ── ONE SQUAD, OR ALL OF THEM ────────────────────────────────────────
      *
@@ -5561,6 +7066,41 @@ export class CommandDirector extends WaveDirector {
      * army-wide order CLEARS those, because "everyone form wedge" has to mean
      * everyone and not "everyone who has not been told otherwise". */
     if (squad != null) {
+      /**
+       * …AND A SQUAD NOBODY ANSWERS TO IS NOT A SQUAD.
+       *
+       * `cycleSquad` clamps the selection when the player presses Target, and
+       * that is the only moment it clamped — so selecting 2nd Squad, losing
+       * 2nd Squad and then pressing an order key wrote `squadOrders['1']` and
+       * a plant on nobody, fired `onOrder` so the panel printed "Squad 2 —
+       * take cover", toasted it, and did nothing whatever on the field. An
+       * order that vanishes silently is worse than one that is refused, and
+       * this is the door every path goes through: the keys, the wheel and the
+       * wire.
+       *
+       * It also pushed a `delegate` row with `name: null, n: 0`, which the
+       * interlude renders as "held the ground on their own — 0 men".
+       */
+      const men = this.squadsOf(c)[Number(squad) | 0];
+      if (!men || !men.some((t) => t.alive !== false)) {
+        this.orderRefused = `${this.squadLabel(Number(squad) | 0, c)} has nobody left to take it`;
+        if (c === this.commander) {
+          this.world?.notify?.('NOBODY ANSWERS', this.orderRefused);
+          /* …and the selection goes with them, so the next order is the
+           * army's rather than another one into an empty number. */
+          /* NOT ON A DELIVERY. A runner dispatched thirty seconds ago whose
+           * destination squad has since been wiped arrives, calls this method,
+           * and would move the player's Target slot from a `_troops` tick — a
+           * HUD retargeted by something that is not a key press. */
+          if (!this._carrying && this.selectedSquad === (Number(squad) | 0)) {
+            this.selectedSquad = null;
+            this.onTarget?.(null, null);
+          }
+        }
+        return false;
+      }
+      const ask = this._ask(F, c, men, squad);
+      if (!this._takeUp(ask, F, c, id, squad, men.length)) return false;
       const key = String(squad);
       (c.squadOrders || (c.squadOrders = new Map())).set(key, id);
       /**
@@ -5596,6 +7136,9 @@ export class CommandDirector extends WaveDirector {
        * position without ever standing still for it. See `_digTick`. */
       c.digs?.delete(key);
     } else {
+      const all = this.led(c).filter((t) => t.alive !== false);
+      const ask = this._ask(F, c, all, null);
+      if (!this._takeUp(ask, F, c, id, null, all.length)) return false;
       c.squadOrders?.clear();
       /* An army-wide order takes every squad's private ground back with its
        * private order, for the reason the clause above gives about `squadOrders`
@@ -5608,11 +7151,43 @@ export class CommandDirector extends WaveDirector {
     // STANDING when the order was given — see `_anchorFor`. So is one the
     // commander has told to HOLD, which is the same mechanism as a decision
     // rather than as a property of one order.
-    c._planted = (F.advance && !c.holding) ? null : this._frame(c, new THREE.Vector3());
+    /**
+     * …AND ONE SQUAD'S ORDER DOES NOT MOVE THE ARMY'S GROUND.
+     *
+     * `c._planted` is the ARMY's frozen frame, and this line ran on both
+     * branches with `F` bound to whichever formation was just given. So
+     * ordering 2nd Squad to CHARGE — an advancing formation — nulled the
+     * army's plant, and every OTHER squad, which was holding cover on ground
+     * it had been given, silently snapped back to following the commander.
+     * One squad's order un-planted the rest of the line.
+     *
+     * A per-squad order writes a per-squad plant (above) and nothing else. The
+     * army's ground is the army's, and only an army-wide order moves it.
+     */
+    if (squad == null) {
+      c._planted = (F.advance && !c.holding) ? null : this._frame(c, new THREE.Vector3());
+    }
     // A new order is a new choice of cover. See `_coverSite`.
     this._coverEpoch = (this._coverEpoch | 0) + 1;
     this.log.push({ t: 'order', formation: id, area: this.areaNumber, wave: this.wave });
-    if (c === this.commander) this.onOrder?.(F, this.squadsOf(c).length);
+    /**
+     * …AND THE HUD IS TOLD WHICH ORDER IT IS.
+     *
+     * `onOrder` repaints the one persistent order display on screen, and it
+     * fired for a per-squad order too — while the per-squad branch above
+     * deliberately does NOT set `c.formation`. So ordering 2nd Squad to take
+     * cover lit "Take cover" across the army's panel while the army was still
+     * in line abreast: the only always-visible statement of what your men are
+     * doing, saying something no squad was doing.
+     *
+     * The squad index goes with it, so a HUD that wants to say "2nd Squad —
+     * take cover" can, and one that only understands the army's order can test
+     * for null.
+     */
+    if (c === this.commander) {
+      this.onOrder?.(F, this.liveSquads(c).length,
+        squad == null ? null : { squad: Number(squad) | 0, name: this.squadLabel(Number(squad) | 0, c) });
+    }
     /**
      * AND A STANDING ORDER IS SAID IN THE NAME OF THE MAN WHO NOW HAS IT.
      *
@@ -5632,8 +7207,10 @@ export class CommandDirector extends WaveDirector {
       const lead = this.leaderOf(men);
       const n = men.filter((t) => t.alive !== false).length;
       if (lead) {
-        this.world?.notify?.(`${lead.rankRec.title.toUpperCase()} ${lead.name} HAS THE GROUND`,
-          `${F.name.toLowerCase()} — ${n} ${n === 1 ? 'man' : 'men'}, and they stay there without you`);
+        this.world?.notify?.(
+          `${this.squadLabel(Number(squad) | 0, c).toUpperCase()} HAS THE GROUND`,
+          `${lead.rankRec.title.toLowerCase()} ${lead.name} — ${F.name.toLowerCase()}, `
+          + `${n} ${n === 1 ? 'man' : 'men'}, and they stay there without you`);
       }
       this.log.push({ t: 'delegate', formation: id, squad: Number(squad) | 0,
                       name: lead?.name || null, n, area: this.areaNumber, wave: this.wave });
@@ -6197,6 +7774,21 @@ export class CommandDirector extends WaveDirector {
     if (squad != null) {
       const own = c.squadPlanted?.get(String(squad));
       if (own && (!F.advance || c.holding)) return own;
+      /**
+       * …AND A SQUAD ADVANCING UNDER ITS OWN ORDER ADVANCES FROM WHERE IT IS.
+       *
+       * An advancing formation writes no plant, so a delegated squad fell
+       * through to the commander's frame — and two squads both told to
+       * advance solved the same shape around the same point. Measured: order
+       * 1st Squad Vanguard, then 2nd Squad Vanguard, and all ten men landed on
+       * five slots, five stacked pairs, because `front`'s slot ignores the
+       * squad index entirely.
+       *
+       * A squad you sent forward on its own goes forward from its own ground.
+       * That is also the sentence the order means: "you, go" is not "you, come
+       * and stand where I am and then go".
+       */
+      if (c.squadOrders?.has(String(squad))) return this._squadFrame(c, squad);
     }
     if ((!F.advance || c.holding) && c._planted) return c._planted;
     return this._frame(c, _v1);
@@ -6238,6 +7830,22 @@ export class CommandDirector extends WaveDirector {
    * @returns the vector, or null if this formation has no slot (CHARGE).
    */
   slotFor(e, out = _slot) {
+    /**
+     * ── A MAN CARRYING AN ORDER IS NOT IN THE FORMATION ──────────────────
+     *
+     * This is the whole of what a runner IS on the field: one branch, at the
+     * one place in the file that answers "where is this body trying to be".
+     * Everything else about him — the walk, the pace, the cover he takes on
+     * the way, the bolt that kills him — is the shipped soldier doing what he
+     * always does toward a different point.
+     *
+     * That is deliberate and it is the reason he can be killed. A runner
+     * implemented as a state machine of his own would need its own pathing,
+     * its own reaction to fire and its own death, and the third one is the
+     * mechanic. See `_sendRunner`.
+     */
+    const RUN = e.trooper?.runner;
+    if (RUN && RUN.to) return out.set(RUN.to.x, 0, RUN.to.z);
     /* THE BODY'S OWN COMMANDER, not the machine's. `e.cmdr` is written by
      * `enlistBody` at deploy, so a trooper solves its slot in the frame of the
      * person who deployed it — which is what makes two lines face each other
@@ -6246,7 +7854,7 @@ export class CommandDirector extends WaveDirector {
     /* The squad's OWN order if it has been given one, else the army's. See
      * `formationFor` and the note in `order`. `cmdSquad` is the index into
      * `squadsOf`, refreshed once a frame in the same loop that stamps it. */
-    const F = FORMATIONS[this.formationFor(cmdr, e.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.formationFor(cmdr, e.cmdSquad, e.trooper)] || FORMATIONS[DEFAULT_FORMATION];
     const idx = e.cmdIndex | 0, n = e.cmdCount || 1, k = e.cmdSquad | 0;
     if (!F.slot(idx, n, k, out)) return null;
     const A = this._anchorFor(F, cmdr, e.cmdSquad);
@@ -6422,7 +8030,7 @@ export class CommandDirector extends WaveDirector {
     /* The squad's OWN order if it has been given one, else the army's. See
      * `formationFor` and the note in `order`. `cmdSquad` is the index into
      * `squadsOf`, refreshed once a frame in the same loop that stamps it. */
-    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad, e?.trooper)] || FORMATIONS[DEFAULT_FORMATION];
     const A = this._anchorFor(F, c);
     const T = this._threatBearing(A);
     /* He watches the thing he is frightened of. `Enemy._move` turns a body to
@@ -6558,6 +8166,12 @@ export class CommandDirector extends WaveDirector {
    * AND THE LAST FEW BODIES OPEN IT COMPLETELY. See `_closing`.
    */
   leashFor(F, e) {
+    /* A RUNNER FIGHTS AT ARM'S LENGTH AND NOTHING FURTHER. He is not on the
+     * line; he is crossing it. The floor is the shortest leash any body is
+     * ever given, so he still shoots what walks into him — a man who cannot
+     * defend himself at all is a delivery animation with a health bar — and
+     * he will not chase anything a metre out of his way. */
+    if (e?.trooper?.runner) return LEASH_FLOOR;
     if (F.leash === Infinity || this._closing) return Infinity;
     return Math.max(LEASH_FLOOR, this.reachOf(e) * F.leash);
   }
@@ -6779,7 +8393,7 @@ export class CommandDirector extends WaveDirector {
       if (!hurt) e._dragCd = 0.8;
     }
     /* The squad's own order if it has one — see `formationFor`. */
-    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad, e?.trooper)] || FORMATIONS[DEFAULT_FORMATION];
     /* A live target it is allowed to engage buys it the whole leash; otherwise
      * it owes the mark. `e.target` is what `_think` set THIS frame off
      * `pickTarget`, which for a trooper is `targetFor` below — so the two
@@ -6837,7 +8451,7 @@ export class CommandDirector extends WaveDirector {
      * walking and nothing about a new order says stop.
      */
     if (!fighting && d < limit * 3 && e.cmdOrder != null
-      && e.cmdOrder !== this.formationFor(this.commanderOf(e), e.cmdSquad)) {
+      && e.cmdOrder !== this.formationFor(this.commanderOf(e), e.cmdSquad, e.trooper)) {
       this._holdPost(e, dt);
       return;
     }
@@ -6917,7 +8531,7 @@ export class CommandDirector extends WaveDirector {
      * advance while the rest of the line holds must carry that formation's
      * urgency, or it walks at the army's pace to a place the army is not
      * going. */
-    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad)] || FORMATIONS[DEFAULT_FORMATION];
+    const F = FORMATIONS[this.formationFor(c, e?.cmdSquad, e?.trooper)] || FORMATIONS[DEFAULT_FORMATION];
     const urge = F.urgency ?? 1;
     return Math.min(own * CATCH_UP * urge, Math.max(own, want * urge));
   }
@@ -7075,6 +8689,35 @@ export class CommandDirector extends WaveDirector {
        * list, so asking after he is dead asks about a different squad. */
       const squad = this.squadOf(t, c);
       const wasLeader = this.leaderOf(squad) === t;
+      /* …AND WHICH SQUAD IT WAS, BY NUMBER, taken here for the same reason and
+       * it is the sharper one: `squadsOf` slices the LIVING list, so the
+       * moment `fall` runs this man is in no squad at all and the key can no
+       * longer be found. `_vacancy` needs it to reach `squadPlanted`. */
+      const squadKey = this._squadKeyOf(t, c);
+      /**
+       * ══ AND THE ORDER DIES WITH HIM ═══════════════════════════════════════
+       *
+       * COMPANY.md, on the runner: "He can be killed on the way, and then the
+       * order dies with him and the log says so." This is the sentence the
+       * whole mechanic exists to produce, and it is why the runner is a body
+       * on the field rather than a timer — a message that cannot be
+       * intercepted is not a message, it is a function call with a delay on
+       * it.
+       *
+       * Before `fall`, like the two questions above it, because the same call
+       * clears him out of the living list and the name has to be said while
+       * there is still a man attached to it.
+       */
+      if (t.runner) {
+        const F = FORMATIONS[t.runner.id];
+        this.log.push({ t: 'lostorder', name: t.name, formation: t.runner.id, why: 'killed',
+                        squad: t.runner.squad, area: this.areaNumber, wave: this.wave });
+        if (c === this.commander) {
+          this.world?.notify?.('THE ORDER DIED WITH HIM',
+            `${t.name} was carrying ${F ? F.name.toLowerCase() : t.runner.id} and never got there`);
+        }
+        t.runner = null;
+      }
       if (c.roster.fall(t, this.areaNumber)) {
         /**
          * ── WHO KILLED HIM, FROM WHERE, AND WHEN — PLAN.md §4.9 ────────────
@@ -7149,6 +8792,7 @@ export class CommandDirector extends WaveDirector {
             }
           }
         }
+        this._vacancy(t, squad, c, wasLeader, squadKey);
         this._announceRoster();
       }
       e.trooper = null;
@@ -7163,6 +8807,144 @@ export class CommandDirector extends WaveDirector {
     this.shake(this.squadOf(t, this.commanderOf(source)), 'SQUAD_KILL', this.commanderOf(source));
     const promoted = t.award(1);
     if (promoted) this._promoteTrooper(t, source);
+  }
+
+  /**
+   * ══ WHAT THE COMPANY CAN NO LONGER DO ══════════════════════════════════
+   *
+   * "THE GLASS IS DOWN. Nobody reads a mark but you."
+   *
+   * A casualty line already says a man is down and who has the squad now. Both
+   * are sentences about PEOPLE, and neither one is a sentence a player can act
+   * on — the roster is one shorter, which they could see, and somebody is
+   * leading, which they assumed. What was missing is the only line that costs
+   * anything to read: *this company has stopped being able to do a thing it
+   * could do a second ago.*
+   *
+   * So this is the vacancy, and it is deliberately narrow. It speaks ONLY when
+   * a licence has actually left the field — never on an ordinary death, never
+   * twice for one man, and never about a duty somebody else in the squad still
+   * holds. A notification that fires on every casualty is a notification the
+   * player learns to look away from, and then the one that mattered goes past
+   * unread.
+   *
+   * THREE THINGS CAN GO, and they are checked in the order they cost:
+   *
+   *   THE GROUND. `HOLDS` — the licence to keep a planted order after you have
+   *     gone. If this squad was standing on ground of its own and nobody left
+   *     in it holds that, the plant is DROPPED here, on this frame, and they
+   *     come back to whatever the army is doing. That is a real loss the
+   *     player can undo by walking over and giving the order again, which is
+   *     the shape a punishment should have.
+   *   THE SEAT. He was the man the player NAMED to this squad. `leaderOf` has
+   *     already handed it to the derivation, so nothing has to be repaired —
+   *     what is owed is the acknowledgement that a decision the player made
+   *     has been undone by the other side.
+   *   THE VOICE. `RELAYS` — the presence term in `_morale` that crosses squad
+   *     boundaries. When the last man licensed to it is gone, every squad that
+   *     was standing near him loses it on the same frame.
+   *
+   * Only for the player's own commander: the other army's licences are its own
+   * business and announcing them would be reading the enemy's roster out loud.
+   */
+  _vacancy(t, squad, c, wasLeader, key) {
+    if (!t || c !== this.commander) return;
+    const living = (squad || []).filter((x) => x.alive && x !== t);
+
+    /* ── THE GROUND ────────────────────────────────────────────────────── */
+    const planted = key != null && c.squadPlanted?.has(key);
+    if (planted && wasLeader && !this.licensedIn(living, 'HOLDS').length) {
+      c.squadPlanted.delete(key);
+      c.squadOrders?.delete(key);
+      c.digs?.delete(key);
+      /* …AND THE PANEL LOSES THE LINE WITH IT. The subtitle carries a squad's
+       * own order until it is told otherwise, and this is one of the two
+       * places the director takes one away. A null name is the drop — see
+       * `HUD.setOrder`. */
+      this.onOrder?.({ id: null, name: null }, this.liveSquads(c).length,
+        { squad: Number(key) | 0, name: null });
+      this.log.push({ t: 'ground-lost', squad: Number(key) | 0, after: t.name,
+                      area: this.areaNumber, wave: this.wave });
+      this.world?.notify?.(`${this.squadLabel(Number(key) | 0, c).toUpperCase()} GIVES UP THE GROUND`,
+        living.length
+          ? `${t.name} was holding it — nobody left in the squad is licensed to, and they are `
+            + 'coming back to you'
+          : `${t.name} was the last of them, and the position is nobody's`);
+    }
+
+    /* ── THE SEAT ──────────────────────────────────────────────────────── */
+    if (t.post) {
+      t.post = false;
+      const heir = living.length ? this.leaderOf(living) : null;
+      this.log.push({ t: 'post-lost', name: t.name, to: heir?.name || null, area: this.areaNumber });
+      this.world?.notify?.(`${t.name} HELD THE POST`,
+        heir
+          ? `you gave him the squad — it falls to ${heir.rankRec.title.toLowerCase()} `
+            + `${heir.name} until you name somebody`
+          : 'and there is nobody left in it to give it to');
+    }
+
+    /* ── THE VOICE ─────────────────────────────────────────────────────── */
+    if (holds(t.rank, 'RELAYS') && !this.relaysOf(c).length) {
+      this.log.push({ t: 'voice-lost', name: t.name, area: this.areaNumber, wave: this.wave });
+      this.world?.notify?.('THE VOICE IS GONE',
+        `${t.name} was the last man who could steady a squad you are not standing in — `
+        + 'from here the whole company leans on you');
+    }
+  }
+
+  /**
+   * ══ THE SQUADS THAT HAVE ANYBODY IN THEM ═══════════════════════════════
+   *
+   * `squadsOf` is indexed by the squad NUMBER, so a wiped squad is an empty
+   * entry and `.length` is a count of SLOTS. Every surface that says "2
+   * squads" wants the live count instead, and the two readings drifting apart
+   * is the owner's original complaint made worse: wipe 1st Squad and the panel
+   * said "2 squads" for the rest of the run while the target slot, which
+   * filters, found one and did nothing when pressed.
+   *
+   * @returns the indices of the squads with a living man in them.
+   */
+  liveSquads(c = this.commander) {
+    const out = [];
+    const squads = this.squadsOf(c);
+    for (let i = 0; i < squads.length; i++) {
+      if (squads[i].some((t) => t.alive !== false)) out.push(i);
+    }
+    return out;
+  }
+
+  /**
+   * ══ WHAT SQUAD `k` IS CALLED ═══════════════════════════════════════════
+   *
+   * The name the player gave it, or the army's own word and the number. ONE
+   * READER, because a squad the menu calls Havoc and the HUD calls 2nd is two
+   * squads as far as the player is concerned — which is the whole complaint
+   * this answers.
+   *
+   * `squadWord` is the army's, so a Confederate 2nd Squad is 2nd Unit and a
+   * named one is whatever it was named either way.
+   */
+  squadLabel(k, c = this.commander) {
+    const i = k | 0;
+    /* A DETACHED MAN IS NOT A SQUAD. `squads()` puts solo groups past
+     * `SQUAD_SLOTS` precisely so their index can never be a squad's, and a
+     * name typed for 3rd Squad must never end up over one man who was pulled
+     * out of the line. */
+    if (i >= SQUAD_SLOTS) {
+      const one = this.squadsOf(c)[i]?.[0];
+      return one ? `${one.name} (detached)` : 'Detached';
+    }
+    const named = (this.squadNames || [])[i];
+    if (named) return named;
+    return `${c?.army?.squadWord || 'Squad'} ${i + 1}`;
+  }
+
+  /** Which squad key `t` belongs to for `c`, as `squadPlanted` spells it. */
+  _squadKeyOf(t, c = this.commander) {
+    const squads = this.squadsOf(c);
+    for (let i = 0; i < squads.length; i++) if (squads[i].includes(t)) return String(i);
+    return null;
   }
 
   /**
@@ -7489,7 +9271,31 @@ export class CommandDirector extends WaveDirector {
     this.world?.notify?.('CHECK YOUR FIRE', `${e.trooper.name} is one of yours`, 'alarm');
   }
 
-  _announceRoster() { this.onRoster?.(this.roster.summary()); }
+  /**
+   * THE ROSTER PANEL'S FEED — and it carries who can hear you.
+   *
+   * `CommandRoster.summary()` is a statement about the ROLL and knows nothing
+   * about a world, a body or a distance, which is right and is why the reach
+   * is stamped on the way past rather than inside it. The panel is the only
+   * in-game view of a squad, so it is the one surface where "they cannot hear
+   * you" belongs BEFORE the press rather than as a toast after it — a rule the
+   * player can only discover by having an order fail is a rule that reads as
+   * the game being broken.
+   *
+   * Per MAN, not per squad, because a squad straddling the edge is the case
+   * that matters: five men, two of whom will take it.
+   */
+  _announceRoster() {
+    const r = this.roster.summary();
+    const c = this.commander;
+    if (r && c) {
+      const voices = this._voices(c);
+      const by = new Map();
+      for (const t of this.led(c)) by.set(t.id, this._inReach(t, voices));
+      for (const row of r.roll) if (by.has(row.id)) row.heard = by.get(row.id);
+    }
+    this.onRoster?.(r);
+  }
 
   /* ── the meeting, and whether there is one ─────────────────────────── */
 
@@ -7899,31 +9705,38 @@ export class CommandDirector extends WaveDirector {
    * circle exactly where the casualty was.
    */
   /**
-   * WHO IS IN CHARGE OF THIS SQUAD — derived, never stored.
-   *
-   * "Troops should have a squad commander/hierarchy if they already don't,
-   * certain roles are replaced if that person falls in combat, other's are
-   * not."
-   *
-   * The leader of a squad is its highest-ranked living member, ties broken by
-   * experience and then by enlistment order so the answer is stable frame to
-   * frame. Deriving it is the whole of "replaced if that person falls": there
-   * is no field to clear and no promotion to schedule — the moment a sergeant
-   * goes down, the next man up IS the leader, on the next frame, because the
-   * question is asked rather than remembered.
-   *
-   * The role that is NOT replaced is yours. A Jedi commanding is a person, not
-   * a rung, and `_endCampaign` is what happens when that one falls.
+   * WHO IS IN CHARGE OF THIS SQUAD — the module's `leadOf`, under the name
+   * every caller in this class already uses. The rule itself moved out because
+   * the Company tab's order of battle asks the same question of records off
+   * disk, where there is no director; see the long note over `leadOf` for why
+   * a second copy of it would be the worst twin in the file.
    */
-  leaderOf(squad) {
-    let best = null;
-    for (const t of squad) {
-      if (!t.alive) continue;
-      if (!best) { best = t; continue; }
-      if (t.rank > best.rank) { best = t; continue; }
-      if (t.rank === best.rank && t.xp > best.xp) best = t;
+  leaderOf(squad) { return leadOf(squad); }
+
+  /**
+   * ── WHO IN THIS SQUAD IS LICENSED TO `duty` ────────────────────────────
+   *
+   * The living, highest first, so the caller can both ask "can anybody?" and
+   * take the answer. One reader for every licence question the fight asks; see
+   * `holds()` and the `DUTIES` note for why there is exactly one.
+   */
+  licensedIn(squad, duty) {
+    const out = [];
+    for (const t of (squad || [])) if (t.alive && holds(t, duty)) out.push(t);
+    out.sort((a, b) => (b.rank - a.rank) || (b.xp - a.xp));
+    return out;
+  }
+
+  /**
+   * …AND ACROSS THE WHOLE ARMY, which is the one licence that does not stop at
+   * a squad boundary. See `MORALE.RELAY_NEAR`.
+   */
+  relaysOf(c = this.commander) {
+    const out = [];
+    for (const t of (c?.roster?.all || [])) {
+      if (t.alive && holds(t, 'RELAYS') && t.body && !t.body.dead) out.push(t);
     }
-    return best;
+    return out;
   }
 
   /**
@@ -7942,6 +9755,13 @@ export class CommandDirector extends WaveDirector {
   _morale(dt, c) {
     const jedi = c.player;
     const squads = this.squadsOf(c);
+    /* THE VOICE, ONCE PER FRAME FOR THE WHOLE ARMY — see `MORALE.RELAY_NEAR`.
+     * Every man licensed to RELAY, wherever he is standing, because that
+     * licence is the one presence term that crosses a squad boundary. Gathered
+     * out here rather than per squad: it is the same handful of men for all of
+     * them, and asking twenty-four times a frame for one answer is how a
+     * presence term becomes a profiler entry. */
+    const voices = this.relaysOf(c);
     for (const squad of squads) {
       const lead = this.leaderOf(squad);
       let living = 0, broke = 0;
@@ -7986,6 +9806,65 @@ export class CommandDirector extends WaveDirector {
           if (lead && lead !== t && lead.body && !lead.body.dead) {
             const w = share(dist2(e.position, lead.body.position));
             if (w > 0) { presence += MORALE.LEADER_NEAR * w * lean; near = true; }
+          } else if (lead === t) {
+            /**
+             * ══ A SERGEANT IS NOT ALONE IN THE MIDDLE OF HIS OWN SQUAD ══════
+             *
+             * `ALONE` is documented as "per second with no friendly commander
+             * and no Jedi inside NEAR", and the clause above deliberately
+             * excludes a leader from his own leader term — he does not lead
+             * himself. Put together, those two sentences said that every squad
+             * leader on the field decays to zero morale unless the Jedi is
+             * personally standing next to him, and that INVERTS THE LADDER:
+             * the men the company is built around become the most fragile
+             * thing in it.
+             *
+             * MEASURED, army-wide `line`, settled 60 s, no enemies, general at
+             * the centre of it — every shaken man at every size was a squad
+             * leader beyond `MORALE.NEAR`, and at `MAX_STRENGTH` that is three
+             * of five leaders sitting at 0.000:
+             *
+             *     n=10  1 shaken   leaders at 11, 3 m
+             *     n=15  1 shaken   leaders at 17, 5, 7 m
+             *     n=20  1 shaken   leaders at 23, 11, 3, 13 m
+             *     n=24  3 shaken   leaders at 28, 16, 4, 9, 20 m
+             *
+             * `line` at 24 men is ±27.6 m of frontage, so those leaders got
+             * there by STANDING IN THE SLOT THEY WERE ORDERED INTO.
+             *
+             * It was invisible until an order could be refused: `braveryOf` is
+             * `morale*0.72 + rank/4*0.28`, so a rank-0 leader at 0.000 reads
+             * 0.000 against `SHAKEN_AT`, and from then on he refused every
+             * advancing order for the rest of the run.
+             *
+             * WHAT HOLDS A LEADER UP IS THE SQUAD HE IS LEADING. Not a
+             * presence bonus — he is not being led, and paying him one would
+             * re-pin the channel `PRESENCE_CAP` exists to unpin. Just `near`:
+             * a man with his own men at his shoulder is not ALONE, whatever
+             * else he is. And the rule keeps its teeth in the one place it
+             * should have them — A LEADER WHOSE SQUAD IS GONE IS ALONE, which
+             * is the last-man story this mode is about.
+             */
+            for (const o of squad) {
+              if (o === t || o.alive === false) continue;
+              const b = o.body;
+              if (!b || b.dead) continue;
+              if (share(dist2(e.position, b.position)) > 0) { near = true; break; }
+            }
+          }
+          /* …AND WHOEVER CARRIES THE COMPANY'S VOICE, from any squad. The
+           * BEST of them and not the sum: two Commanders standing together is
+           * two men, not twice the reassurance, and summing would make a
+           * top-heavy roll pin the channel again — which is the exact defect
+           * `PRESENCE_CAP` was added to undo. */
+          if (voices.length) {
+            let best = 0;
+            for (const v of voices) {
+              if (v === t || !v.body || v.body.dead) continue;
+              const w = share(dist2(e.position, v.body.position));
+              if (w > best) best = w;
+            }
+            if (best > 0) { presence += MORALE.RELAY_NEAR * best * lean; near = true; }
           }
           /* AND THEY EASE OFF AT THE CEILING — see `MORALE.PRESENCE_CAP` for
            * the 1.000 this is here to unpin. A taper and not a switch, because
@@ -8006,7 +9885,7 @@ export class CommandDirector extends WaveDirector {
            * comes apart on his own and a lone wolf genuinely does not care,
            * which is the trade the roster screen is showing you. */
           if (!near) d += MORALE.ALONE * lean;
-          if (e.maxHp && e.hp < e.maxHp * 0.34) d += MORALE.WOUNDED;
+          if (e.maxHp && e.hp < e.maxHp * HURT_AT) d += MORALE.WOUNDED;
         } else {
           // between areas, or waiting on a gunship: nerve comes back
           /* …AT HIS OWN RATE. Resolve on a man, Reset on a droid: how much of
@@ -8125,6 +10004,33 @@ export class CommandDirector extends WaveDirector {
      */
     this._threatT = (this._threatT || 0) + dt;
     if (this._threatT >= 1) { this._threatT = 0; this._threatAt = -1; }
+    /**
+     * ── AND WHO CAN HEAR YOU, WHICH CHANGES BECAUSE YOU WALKED ─────────────
+     *
+     * `_announceRoster` is EVENT-DRIVEN — a death, a deploy, a start — and
+     * every one of those events is something happening to the ROLL. The
+     * earshot readout it now carries is not about the roll at all; it is about
+     * where you are standing, and it changes on a frame where nothing has
+     * happened to anybody. So a panel refreshed only on those events would
+     * have told the player "2nd Squad — out of reach" for the whole of the
+     * next engagement after they walked back to it.
+     *
+     * FOUR TIMES A SECOND AND ONLY ON A CHANGE. The signature is the deaf set,
+     * so a player standing still repaints nothing and a player crossing the
+     * boundary repaints once. The cost when nothing changes is one walk of the
+     * roll per quarter second, against `_troops`'s own walk of it every frame.
+     */
+    this._earT = (this._earT || 0) + dt;
+    if (this._earT >= 0.25) {
+      this._earT = 0;
+      const c0 = this.commander;
+      if (c0 && this.onRoster) {
+        const voices = this._voices(c0);
+        let sig = '';
+        for (const t of this.led(c0)) if (!this._inReach(t, voices)) sig += t.id + ',';
+        if (sig !== this._earSig) { this._earSig = sig; this._announceRoster(); }
+      }
+    }
     /* Per commander, and the indices restart per army: `cmdIndex` is a position
      * in ONE roster's living list, and two armies sharing a numbering would
      * have the second one solving its slots against the first one's count. */
@@ -8186,11 +10092,51 @@ export class CommandDirector extends WaveDirector {
          * nobody asked for, on the one man whose job is to choose. Measured in
          * a meeting: both lines locked onto each other's front rank at first
          * contact and neither ever re-aimed. */
+        /**
+         * ── A DELEGATED SQUAD FORMS A WHOLE SHAPE, NOT A FRAGMENT OF ONE ────
+         *
+         * `slot(idx, n, k)` lays a formation out by a man's index within a
+         * COUNT, and both were the ARMY's: `i` ran globally across every squad
+         * and `n` was the whole living line. So a second squad of five ordered
+         * into a circle got `slot(5..9, 10)` — `a = (i/n) * TAU` — and stood in
+         * the arc from 180° to 324°. A half ring. Ordered into a line it took
+         * one wing of a rank and left the other empty.
+         *
+         * That is the owner's complaint arriving as geometry: "it says 2
+         * squads but for all intents and purposes it's just one squad". Both
+         * squads really were on two anchors under two orders, and each one was
+         * drawing a slice of a shape meant for ten men.
+         *
+         * SO A SQUAD UNDER ITS OWN ORDER IS LAID OUT AS ITS OWN LINE — index
+         * within the squad, count of the squad. A squad still under the ARMY's
+         * order keeps the army's index and count, because there the shape IS
+         * the army's and slicing it would break the one formation that is
+         * supposed to span everybody.
+         */
+        /**
+         * …AND ONLY WHERE THE SQUAD HAS AN ORDER OF ITS OWN.
+         *
+         * A squad under the ARMY's order keeps the army's index and count,
+         * because there the shape IS the army's and slicing it would break the
+         * one formation that is supposed to span everybody.
+         *
+         * THE OTHER HALF OF THIS IS IN `_anchorFor`, and it took a measurement
+         * to find: an ADVANCING order writes no plant, so two squads both told
+         * to advance both fell through to the commander's frame and solved the
+         * same shape around the same point — ten men on five slots, five
+         * stacked pairs, because `front`'s slot ignores the squad index. A
+         * squad sent forward on its own goes forward from its own ground now,
+         * so its own numbering lands somewhere of its own.
+         */
+        const own = c.squadOrders?.has(String(k));
+        const live = own ? squads[k].filter((t) => t.body && !t.body.dead).length : n;
+        let j = 0;
         for (const t of squads[k]) {
           const e = t.body;
           if (!e || e.dead) { i++; continue; }
-          e.cmdIndex = i++;
-          e.cmdCount = n;
+          e.cmdIndex = own ? j++ : i;
+          i++;
+          e.cmdCount = own ? Math.max(1, live) : n;
           e.cmdSquad = k;
           e.cmdFocus = (focus && t !== lead) ? focus : null;
           /* UNDER FIRE decays here for the same reason the indices are
@@ -8198,6 +10144,41 @@ export class CommandDirector extends WaveDirector {
            * body of every army exactly once a frame. See UNDER_FIRE, and
            * `installTeamDamage` for what sets it. */
           if (e.underFire > 0) e.underFire = Math.max(0, e.underFire - dt);
+          /**
+           * ── THE WOUND YOU CAN SEE, IN EVERY MODE ────────────────────────
+           *
+           * `Trooper.wounds` is persisted, printed on the dossier, phrased in
+           * the story line, celebrated in the orders of the day, and PAINTED
+           * ON THE PLATE by `scorchUp` at the next deploy. It had exactly one
+           * writer — `Enemy._getUpFromDown` — and that writer only fires where
+           * `MODES.downed` is declared, which is The Line and nowhere else. So
+           * in Command, in skirmish, in the wave modes — every mode a company
+           * actually lives in — the scars were unreachable. A feature that is
+           * shipped, saved, displayed and impossible to earn.
+           *
+           * The second writer is here, in the one loop that touches every
+           * living body of every army exactly once a frame: a man whose body
+           * drops under `HURT_AT` — the same third `_morale` reads — is a man
+           * who was nearly killed, and if he walks off the ground he wears it.
+           *
+           * ONE PER MAN PER RUN, and `_getUpFromDown` respects the same flag —
+           * so `wounds` means "runs he nearly died in" rather than "times a
+           * bolt got through", which is the number a roster wants and the one
+           * a scar can honestly stand for. `_hurtRun` is on the record and not
+           * on the body because the body is disposed at every area boundary
+           * and the man crosses.
+           *
+           * IT BUYS NOTHING. A scar is a mesh; `enlistBody` applies the rank
+           * and the profile and paints this on top, exactly as a mark is.
+           */
+          if (!t._hurtRun && e.maxHp > 0 && e.hp <= e.maxHp * HURT_AT) {
+            t._hurtRun = true;
+            t.wounds = (t.wounds | 0) + 1;
+          }
+          /* …AND THE MAN CARRYING AN ORDER, in the same loop and for the same
+           * reason: it is the one that touches every living body of every army
+           * exactly once a frame. See `_runnerTick`. */
+          if (t.runner) this._runnerTick(t, dt);
           /**
            * …AND SO DOES THE ORDER HE IS ACTUALLY ACTING ON. See `ORDER_LAG`.
            *
@@ -8212,11 +10193,16 @@ export class CommandDirector extends WaveDirector {
            * a clock inside it would run at whatever rate it happened to be
            * asked. Both readers read the answer; neither computes it.
            */
-          if (e.cmdOrder == null) e.cmdOrder = Fk.id;
-          else if (e.cmdOrder !== Fk.id) {
+          /* …AND A MAN WHO REFUSED IT IS NOT LAGGING BEHIND IT. `Fk` is what
+           * the SQUAD was told; a refuser is under an order of his own
+           * (`formationFor`'s first clause) and reading the squad's here would
+           * hand him a target he never took, then time him into it. */
+          const Fm = FORMATIONS[this.formationFor(c, k, t)] || Fk;
+          if (e.cmdOrder == null) e.cmdOrder = Fm.id;
+          else if (e.cmdOrder !== Fm.id) {
             e.cmdOrderT = (e.cmdOrderT || 0) + dt;
             if (e.cmdOrderT >= ORDER_LAG * (t.scale ? t.scale('reflex') : 1)) {
-              e.cmdOrder = Fk.id;
+              e.cmdOrder = Fm.id;
               e.cmdOrderT = 0;
             }
           } else e.cmdOrderT = 0;
@@ -8374,13 +10360,30 @@ export class CommandDirector extends WaveDirector {
      * it, and a man on the ground is not either — the same clause that keeps a
      * casualty out of the quorum keeps him off the shovel. */
     let crew = 0;
+    /**
+     * ── …AND A LICENSED MAN IS A CREW ON HIS OWN ───────────────────────────
+     *
+     * `CREWS` — "counts as a crew with no commander present", the Captain's
+     * rung. `DIG_CREW` men have to be standing on the spot before earth moves,
+     * which is the right rule for a line of troopers and is exactly the rule
+     * that a Captain, who has done this in four campaigns, should be allowed
+     * to break. So one licensed man on the position digs it alone.
+     *
+     * ADDITIVE, and that word is load-bearing: nothing that could be dug
+     * before can be dug less easily now. What this buys is a position a
+     * three-man remnant could not have had — and it goes away with him, which
+     * is the whole point of the ladder.
+     */
+    let licensed = false;
     for (const t of squad) {
       const e = t.body;
       if (!e || e.dead || e.downed) continue;
       const dx = e.position.x - rec.x, dz = e.position.z - rec.z;
-      if (dx * dx + dz * dz <= DIG_WORK_R * DIG_WORK_R) crew++;
+      if (dx * dx + dz * dz > DIG_WORK_R * DIG_WORK_R) continue;
+      crew++;
+      if (holds(t, 'CREWS')) licensed = true;
     }
-    if (crew < DIG_CREW) return false;
+    if (crew < DIG_CREW && !licensed) return false;
     /* AND SOME LINES KNOW HOW TO USE A SHOVEL — PLAN.md §4.6's Field
      * Engineering, which is a rule about what your ARMY can do rather than a
      * number on the player. */
@@ -8394,8 +10397,9 @@ export class CommandDirector extends WaveDirector {
                     at: Math.round((this.world?.time || 0) * 10) / 10 });
     if (c === this.commander) {
       const lead = this.leaderOf(squad);
-      this.world?.notify?.(`${lead ? lead.name : `${k + 1} SQUAD`} — DUG IN`,
-        'the ground is a position now, and it is cover from anything at range');
+      this.world?.notify?.(`${this.squadLabel(k, c).toUpperCase()} — DUG IN`,
+        lead ? `${lead.name} has a position now, and it is cover from anything at range`
+             : 'the ground is a position now, and it is cover from anything at range');
     }
     return false;
   }
@@ -9030,10 +11034,72 @@ export class CommandDirector extends WaveDirector {
     this.areaIndex++;
     this.areaWaves = 0;
     this.mustering = true;
-    // The army comes off the field and is put down again around you at the top
-    // of the next area — the gunships, which is what the first area's brief
-    // says happens. See `recall`.
-    this.recall();
+    /**
+     * THE DEAD COME OFF THE ROLL AND THE LIVING STAY ON THE GROUND.
+     *
+     * `keepStanding` is the player's note about the transports, answered in
+     * `recall` where the withdrawal happens. What is still withdrawn here is
+     * everything with no body under it — a man killed in the last wave, and a
+     * man still in a gunship that is not going to finish its flight — so
+     * `deploy` at the bottom of `closeMuster` puts down the replacements and
+     * only the replacements.
+     */
+    this.recall(null, { keepStanding: true });
+    /**
+     * …AND THE GROUND EVERY SQUAD WAS HOLDING IS GIVEN BACK.
+     *
+     * This is the other half of keeping the bodies, and it did not exist
+     * before because there were no bodies to keep. A squad told to hold a
+     * ridge is planted on that ridge (`squadPlanted`), the front then MOVES —
+     * `marchTo`, the mode's one-way visible variable — and a squad still
+     * holding the ground the last engagement was fought on would sit out the
+     * next one a hundred metres behind the line, under an order the player
+     * gave about a piece of ground that is now behind them.
+     *
+     * The FORMATION is kept: "form line" is a statement about the shape the
+     * company fights in and it survives an area. What does not survive is a
+     * particular piece of dirt, and neither does a half-dug scrape on it.
+     */
+    for (const c of this.commanders) {
+      /**
+       * …AND THE PANEL IS TOLD, WHICH IS THE HALF THAT WAS MISSING.
+       *
+       * `HUD._squadOrders` is push-only: it is cleared by an ARMY-WIDE
+       * `setOrder` and by nothing else, so a boundary that deleted
+       * `squadOrders` in silence left the order panel's second line saying
+       * "Havoc — take cover" about a squad under no order, for the rest of the
+       * run. That is exactly the defect `HUD.setOrder`'s own note records —
+       * "the director gives a squad's own order up in two places nobody was
+       * telling this panel about … for ever" — and this was a third place.
+       *
+       * `_vacancy` already has the shape for it: a null formation with a null
+       * name, per squad. One per squad that actually had an order, so a
+       * boundary after an engagement nobody delegated in says nothing.
+       *
+       * AND THE HOLD GOES WITH IT. `hold()` notifies and logs; this released
+       * the same standing order without a word.
+       */
+      const dropped = [...(c.squadOrders || [])].map(([k]) => Number(k) | 0);
+      const wasHolding = c.holding;
+      c._planted = null;
+      c.holding = false;
+      c.squadOrders?.clear();
+      c.squadPlanted?.clear();
+      c.digs?.clear();
+      c._pending = null;
+      if (c !== this.commander) continue;
+      for (const k of dropped) {
+        this.onOrder?.({ id: null, name: null }, this.liveSquads(c).length,
+          { squad: k, name: null });
+      }
+      if (dropped.length || wasHolding) {
+        this.world?.notify?.('THE FRONT HAS MOVED',
+          wasHolding
+            ? 'the company is off its ground and every squad is back under your own order'
+            : `${dropped.length} ${dropped.length === 1 ? 'squad is' : 'squads are'} back under `
+              + 'your own order — the ground they were given is behind the line now');
+      }
+    }
     /**
      * THE INTERLUDE, BUILT BEFORE THE OFFER IT RIDES ON.
      *
@@ -9261,6 +11327,28 @@ export class CommandDirector extends WaveDirector {
      * changes under a player who is standing on it, which is §1's fifth line
      * and the mode's one-way visible variable. See `marchTo`. */
     this.marchTo(this.areaNumber);
+    /**
+     * …AND NOBODY IS LEFT INSIDE WHAT IT RAISED.
+     *
+     * `marchFront` sites plates, wrecks and barricades knowing nothing about
+     * bodies, and it used to be sited on an empty field because the whole army
+     * had been withdrawn a moment earlier. Now the survivors are standing on
+     * that field while it is re-dressed.
+     *
+     * MEASURED across 5 seeds, 943 open sample points each within 30 m of the
+     * origin: **0.59 % of open ground becomes `placementClear`-blocked** by the
+     * engagement-5 march. With eight survivors that is roughly a one-in-twenty
+     * boundary putting one man inside a fresh wreck — small, real, and cheap
+     * to close. Terrain height under a survivor moved at most 0.23 m and
+     * bodies re-ground every frame, so craters need nothing.
+     *
+     * A RING SEARCH AND NOT A REDEPLOY: he keeps his body, his name and his
+     * wounds, and he steps out of the thing that was built on top of him. If
+     * no clear metre is found inside 6 m he is left where he is, because a man
+     * standing in a wreck is a worse picture than a man teleported across the
+     * field is a fix.
+     */
+    for (const c of this.commanders) this._unbury(c);
     /* The card comes down on every OTHER machine too, and this is the half a
      * client cannot do for itself: the host's player pressing Done is the only
      * thing that ends the muster, so a peer sitting on an open card would sit
@@ -9461,7 +11549,9 @@ export class CommandDirector extends WaveDirector {
        * caller deriving a number this object already had everything for, and it
        * is unanswerable on a machine whose roster is a wire record rather than a
        * list of Troopers. Derived here, once, from the same roll. */
-      squads: this.squadsOf(c).length,
+      /* THE LIVE ONES. `squadsOf` is indexed by squad number now, so its
+       * length counts SLOTS — including the ones that have been wiped out. */
+      squads: this.liveSquads(c).length,
       /**
        * THE COMMANDER'S OWN FORCE, in the same object as everything else the
        * outside is allowed to know — plain data, no functions and no live

@@ -826,6 +826,38 @@ export class Forest {
        * Measured with `tools/_logprobe.mjs`: 3 of 4 latched on the velocity
        * test having gone nowhere; 0 of 4 on this one. */
       if (!rec.moved && rec.prop.body.position.distanceToSquared(rec.home) > 4) rec.moved = true;
+      /**
+       * ── AND A LOG THAT IS SINKING IS PUT BACK ON THE HILL ─────────────
+       *
+       * `_realise`'s long note handles the BIRTH case — a trunk is lifted out
+       * of the bank before the solver ever sees it, and it says why: a log
+       * that reaches `killY` keeps its Prop and its mesh, sits 180 m below
+       * `home`, and is gone from the wood for the rest of the level with one
+       * of the nine lift slots gone with it.
+       *
+       * It does not handle the RESTING case, and that turns out to be the one
+       * that bites. Measured with the check's own fixture: a trunk born
+       * exactly on the ground (0.00 m under), lying alone with nothing within
+       * six metres of it and the player seven away, rested for 5.6 s and then
+       * went 0.92 → 0.83 → 0.60 → 0.38 and free-fell out of the world. Swept
+       * across twelve phases of the props stream, TWO of twelve lose a log
+       * that way — about one felling in six sends a trunk to the kill plane,
+       * permanently, and nothing is touching it.
+       *
+       * The birth probe is the fix, kept live: the deepest its own underside
+       * goes below the terrain along its length, lifted back, bounded by the
+       * same `CLIMB_LOG` that decides a log is lying ON a hill rather than IN
+       * one. A trunk resting correctly is 0 and costs nine height samples a
+       * quarter-second; one that has started to sink is put back where it was
+       * and its fall velocity is cleared, so it settles rather than pumping.
+       *
+       * This is deliberately not a clamp to the terrain: a log the player has
+       * thrown, or one lying across a crate, is ABOVE the ground and must be
+       * left alone. Only downward penetration is corrected.
+       */
+      /* Cheap enough to do here and not worth its own pass: three height
+       * samples per realised log, nine at the cap, four times a second. */
+      this._unsink(rec);
       const x = rec.moved ? rec.prop.body.position.x : D[i * F.N + F.X];
       const z = rec.moved ? rec.prop.body.position.z : D[i * F.N + F.Z];
       let near = false;
@@ -848,6 +880,52 @@ export class Forest {
         if (dx * dx + dz * dz < LIFT_RING * LIFT_RING) { this._realise(i); break; }
       }
     }
+  }
+
+  /**
+   * Put a realised log back on the hill if it has sunk into it.
+   *
+   * The same probe `_realise` uses at birth — see the note there and at the
+   * call site — sampled along the trunk and applied to the live body. Nothing
+   * happens for a log resting properly, which is nearly all of them.
+   */
+  _unsink(rec) {
+    const T = this.world.terrain;
+    const b = rec?.prop?.body;
+    if (!T || !b) return;
+    /* THE TRUNK'S OWN AXIS, from the body's pose: the mesh is a rod laid about
+     * its middle, so its ends are ±len/2 along its local Y. */
+    const half = (rec.len || 0) * 0.5;
+    if (!(half > 0)) return;
+    _v4.set(0, 1, 0);
+    if (b.quaternion) _v4.applyQuaternion(b.quaternion);
+    const r = rec.radius || 0;
+    let deepest = 0;
+    for (let s = -1; s <= 1; s++) {
+      _v5.copy(b.position).addScaledVector(_v4, half * s);
+      const under = T.height(_v5.x, _v5.z) - (_v5.y - r);
+      if (under > deepest) deepest = under;
+    }
+    if (deepest <= 0.02) return;
+    /**
+     * AND IT DOES NOT GIVE UP ON A DEEP ONE.
+     *
+     * The first draft bailed past `CLIMB_LOG`, on the argument `_realise`
+     * makes at birth — a trunk deeper than that is in the hill, not on it, and
+     * there is nothing there to pick up. That argument is about a log we have
+     * not touched yet. This one is REALISED, which means `_realise` already
+     * decided it belongs on the surface; if it is a metre under now, it got
+     * there by sinking, and the metre is exactly what has to come back.
+     *
+     * Measured: with the bail in, the check still lost a trunk — a different
+     * one — because a log sinks past `CLIMB_LOG` inside one quarter-second
+     * sync tick and is abandoned to the kill plane from there.
+     */
+    b.position.y += deepest;
+    /* AND ITS FALL IS CLEARED, or the next step puts back exactly the
+     * downward speed that sank it and the log pumps instead of settling. */
+    if (b.velocity && b.velocity.y < 0) b.velocity.y = 0;
+    b.wake?.();
   }
 
   /** Turn down tree `i` into a real object. */
@@ -972,7 +1050,10 @@ export class Forest {
      * into the record rather than putting the log back in the bank. `home` is
      * the LIFTED position, so the lift itself cannot latch the displacement
      * test in `_syncLogs`. */
-    this.real.set(i, { prop, moved: lifted > 0, home: mid.clone() });
+    /* `len` and `radius` with it: `_unsink` needs the trunk's own size every
+     * frame and the flat record is indexed by a number this map's value does
+     * not carry. */
+    this.real.set(i, { prop, moved: lifted > 0, home: mid.clone(), len, radius: r });
   }
 
   /** Put log `i` back into the instance buffers. */

@@ -37,7 +37,7 @@ import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
 import { QUALITY } from '../../src/engine/Engine.js';
-import { MODES, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
+import { MODES, playableModes, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../../src/game/Extraction.js';
 import { READ_SECONDS, SENSE_RATE } from '../../src/game/FireMission.js';
@@ -493,7 +493,12 @@ export async function run({ check, assert }) {
       const list = doc.getElementById('level-list');
       let narrowed = 0, barredTotal = 0;
       const rows = [];
-      for (const mode of Object.keys(MODES)) {
+      /* THE MODES A PLAYER CAN PICK, which is what this check is about: it
+       * drives `selectMode` and reads the theatre column. `MODES` also holds
+       * destinations reached by a door — the flight deck — whose ground is
+       * deliberately not in `LEVEL_ORDER` because it is not a theatre. See
+       * `playableModes`. */
+      for (const mode of playableModes()) {
         menu.selectMode(mode);
         const cards = [...list.children];
         assert(cards.length === LEVEL_ORDER.length,

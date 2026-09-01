@@ -122,6 +122,25 @@ export function seedWaves(seed, rung = 0) {
   return s;
 }
 
+/**
+ * WHICH MODES ARE A CHOICE — the one derivation, so nothing counts them twice.
+ *
+ * `MODES` is the table of DESTINATIONS: everything `World.loadLevel`,
+ * `Extraction` and the theatre column need to know about a place the game can
+ * put you. Most of those places are also cards in the mode list, and one is
+ * not — the flight deck is reached from the Company tab by a door, and a
+ * hangar offered as something to deploy into would be a hangar in the theatre
+ * grid, which is the shape `Levels.js` has now deleted three times.
+ *
+ * A FUNCTION AND NOT A SECOND TABLE, because a hand-maintained list of "the
+ * real ones" is the twin this codebase keeps paying for. Every consumer — the
+ * menu's card builder and the two checks that count cards against modes —
+ * reads this, so adding a destination that is not a choice is one flag.
+ */
+export function playableModes() {
+  return Object.keys(MODES).filter((k) => !MODES[k].hidden);
+}
+
 export const MODES = {
   /**
    * THE TRIAL OF WAVES WAS PATH OF THE BLADE WITH THE REWARD LOOP DELETED.
@@ -294,6 +313,41 @@ export const MODES = {
    * to describe as still present. Nothing was lost with it: the room was the
    * one thing the lessons never read.)
    */
+  /**
+   * ══ THE FLIGHT DECK — a mode with no wave, no enemy and no ending ═══════
+   *
+   * It is a MODE and not a screen for the reason `training` is: `World` is the
+   * only thing in this game that can build a place — terrain, atmosphere, post
+   * chain, physics, a body you walk with, Force that works on what is standing
+   * in front of you — and a second renderer in the menu would be all of that
+   * reimplemented and none of it as good. The parade stage in the Company tab
+   * is the right answer for a PORTRAIT and the wrong one for a PLACE.
+   *
+   * `level: 'hangar'` is honoured by `World.loadLevel` as a ground override, so
+   * the theatre the player picked has no say in where the deck is — but it
+   * does decide what is outside it, which is the whole point of the view.
+   *
+   * `insertion: false` for the sandbox's reason, sharpened: you are already
+   * aboard. A 28-second orbital descent to reach the deck of the ship you are
+   * standing on would be a contradiction as well as a wait.
+   */
+  hangar: {
+    name: 'The Flight Deck',
+    blurb: 'Your company on the deck of the ship carrying them, with the war outside the field.',
+    level: 'hangar',
+    fixedTheatre: true,
+    insertion: false,
+    fixedRules: 'Nothing is composed here: there is no wave, no enemy and no ending on the deck.',
+    /* NOT A MODE YOU PICK. It is in this table because `World.loadLevel`,
+     * `Extraction` and the theatre column all answer questions about a
+     * destination by reading a row here — `level`, `insertion`, `fixedTheatre`
+     * — and a second table for one room would be the same rule written twice.
+     * What it must not be is a card in the mode list beside Command and The
+     * Line: it is reached from the Company tab, by a door, and offering it as
+     * something to deploy INTO would put a hangar in the theatre grid, which is
+     * the shape `Levels.js` has deleted three times. See `playableModes`. */
+    hidden: true,
+  },
   training: {
     name: 'Training',
     /* TEN, and it was eleven while only ten could be reached. The last rung
@@ -311,6 +365,21 @@ export const MODES = {
     /* NO FLIGHT IN HERE EITHER — see `insertion` on `MODES.sandbox` above. Ten
      * lessons that cannot kill you do not open with an orbital drop. */
     insertion: false,
+    /**
+     * ── THE LESSONS ARE RUN BY THE DOJO, AND THAT IS A DECLARATION NOW ─────
+     *
+     * `World.loadLevel` tested `this.settings.mode === 'training'` to decide
+     * whether to build a `DojoDirector`, which is the mode's own design living
+     * somewhere the mode cannot see — the exact shape the note over
+     * `objectives` two records down argues against.
+     *
+     * It grew a second reader and that is what forced the issue: the barracks
+     * offers to raise a line in any mode that can field one, and Training
+     * cannot, because a `DojoDirector` has no roster at all. Without this flag
+     * the tab offered a fresh player ten named men for a lesson that would
+     * never deploy them — a control that mints and saves and lies.
+     */
+    dojo: true,
   },
   /**
    * COMMAND — the one mode where you are not alone.
@@ -2446,8 +2515,8 @@ export class WaveDirector {
      * The sandbox keeps the direct path: it is a debug room whose whole
      * purpose is putting twenty bodies in front of you in three seconds.
      */
-    this.arrivals = new ArrivalDirector(world, (type, mod, pos) => {
-      const e = world.spawnEnemy(type, pos);
+    this.arrivals = new ArrivalDirector(world, (type, mod, pos, look = null) => {
+      const e = world.spawnEnemy(type, pos, look);
       if (e && mod) applyModifier(e, mod);
       return e;
     }, ARCHETYPES);

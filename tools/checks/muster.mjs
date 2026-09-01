@@ -425,6 +425,330 @@ export async function run({ check, assert }) {
       + `a fallen ARC comes back an ARC (${back.join('+')})`;
   });
 
+  await check('muster: the men who held the ground keep it, and the ships bring only replacements', async () => {
+    /**
+     * ══ THE TRANSPORT CARRIES THE DEAD MAN'S REPLACEMENT, NOT THE SURVIVOR ══
+     *
+     * The player, on the area boundary: "after finishing a round and calling in
+     * reinforcements you leave that menu and you're now by yourself until a
+     * couple seconds later the reinforcement ships come in and drop your new
+     * troops off — however for sake of immersion it would make more sense if
+     * the troops that survived stayed with you on the ground and the only
+     * troopers coming in with the ships would be new troopers. Right now your
+     * surviving troops get off the transport with the new troops."
+     *
+     * They did. `_areaClear` called `recall()` on the WHOLE roll, so the six
+     * men who had just held the ground were disposed alongside the four about
+     * to be bought, the muster opened over an empty field, and `closeMuster`
+     * flew everybody back in. A survivor riding in on the transport that is
+     * meant to be bringing his replacements is the mode telling you its own
+     * casualty list does not mean anything — the one list FLAGSHIP §13 calls
+     * the mode's second spine on the grounds that it only ever shrinks.
+     *
+     * ── WHAT IS ACTUALLY DRIVEN, AND WHY EACH CLAUSE IS SEPARATE ───────────
+     *
+     * THE SAME BODIES. Not "seven men are standing" — object identity, and the
+     *   same position to a millimetre. A withdrawal that disposed the bodies
+     *   and instantly rebuilt them somewhere else would satisfy a head count
+     *   and would be the exact thing the player is describing.
+     * THE SHIPS CARRY THE REPLACEMENTS AND NOTHING ELSE. `deploy` is asked how
+     *   many bodies it put down, and the answer has to be the number of men
+     *   with no body — not the strength of the roll.
+     * AND A FULL WITHDRAWAL STILL WITHDRAWS. The end of a campaign and a
+     *   departing commander have no next area for anybody to be standing in,
+     *   and `keepStanding` is opt-in for exactly that reason.
+     */
+    const { army } = await import('./_army.mjs');
+    const { d, c } = army();
+    const started = d.led(c).filter((t) => t.body && !t.body.dead);
+    assert(started.length >= 6, `only ${started.length} men were deployed to begin with`);
+
+    /* Three killed the way a wave kills them, through the director's own door. */
+    for (const t of started.slice(0, 3)) { t.body.dead = true; d.onDeath(t.body, null); }
+    assert(c.roster.fallen.length === 3, `${c.roster.fallen.length} casualties for three deaths`);
+    const held = d.led(c).filter((t) => t.body && !t.body.dead);
+    const was = new Map(held.map((t) => [t, { e: t.body, at: t.body.position.clone() }]));
+
+    /* THE AREA BOUNDARY, exactly as `_areaClear` spells it. */
+    d.recall(null, { keepStanding: true });
+    const after = d.led(c).filter((t) => t.body && !t.body.dead);
+    assert(after.length === held.length,
+      `${held.length} men held the ground and ${after.length} were still standing on it after `
+      + 'the muster opened — the survivors are being flown back in with their own replacements');
+    for (const t of after) {
+      const w0 = was.get(t);
+      assert(w0 && w0.e === t.body,
+        `${t.name} is standing there on a different body — the withdrawal disposed him and `
+        + 'rebuilt him, which is the same event with a head count that hides it');
+      assert(t.body.position.distanceTo(w0.at) < 1e-6,
+        `${t.name} moved ${t.body.position.distanceTo(w0.at).toFixed(1)} m across the boundary`);
+    }
+
+    /* THE SHIPS. Two bought, two flown, and not one survivor among them. */
+    c.roster.points = 999;
+    const bought = [d.recruit('trooper'), d.recruit('trooper')].filter(Boolean);
+    assert(bought.length === 2, `the purse bought ${bought.length} replacements`);
+    const put = d.deployAll({ byShip: true });
+    assert(put === bought.length,
+      `${put} bodies were deployed for ${bought.length} replacements — the transport is `
+      + 'carrying men who never left the ground');
+    for (const t of after) {
+      assert(t.body === was.get(t).e, `${t.name} was re-deployed by the ship he did not need`);
+    }
+
+    /**
+     * ══ AND NOBODY IS LEFT INSIDE WHAT THE FRONT RAISED ON THEM ═══════════
+     *
+     * `marchFront` sites plates, wrecks and barricades knowing nothing about
+     * bodies, and it used to run on an empty field because the whole army had
+     * just been withdrawn. Now the survivors are standing on it while it is
+     * re-dressed. MEASURED across 5 seeds, 943 open sample points each within
+     * 30 m of the origin: 0.59 % of open ground becomes `placementClear`-blocked
+     * by the engagement-5 march — with eight survivors, about one boundary in
+     * twenty puts a man inside a fresh wreck.
+     *
+     * DRIVEN BY BUILDING THE WRECK ON HIM, because a 5 % event is not
+     * something a check can wait for. He keeps his body, his name and his
+     * wounds and steps out of it; nothing else on the field moves.
+     */
+    {
+      const { army: army3 } = await import('./_army.mjs');
+      const A = army3();
+      const one = A.d.led(A.c).find((t) => t.body && !t.body.dead);
+      const was = one.body;
+      const at = one.body.position.clone();
+      /* A static exactly where he is standing, in the shape `spawnClear`
+       * actually reads — centre, radius, orientation and half extents. */
+      const THREE = await import('three');
+      A.w.physics.staticBoxes.push({
+        center: new THREE.Vector3(at.x, at.y + 1, at.z),
+        radius: 3.6,
+        invQuat: new THREE.Quaternion(),
+        halfExtents: new THREE.Vector3(2, 2, 2),
+      });
+      assert(!(await import('../../src/game/Spawn.js')).placementClear(A.w, at.x, at.y, at.z),
+        'the fixture built a wreck that the game does not think is in the way');
+      /* WHO WAS ALREADY CLEAR, asked of the same function `_unbury` asks —
+       * a wreck big enough to bury one man can reach a second, and the claim
+       * is that nobody on clear ground is touched, not that nobody else is. */
+      const { placementClear: clear } = await import('../../src/game/Spawn.js');
+      const others = A.d.led(A.c).filter((t) => t !== one && t.body
+        && clear(A.w, t.body.position.x, t.body.position.y, t.body.position.z))
+        .map((t) => [t, t.body.position.clone()]);
+      const vec = one.body.position;
+      const moved = A.d._unbury(A.c);
+      assert(one.body.position === vec,
+        'he was given a NEW position vector rather than moved — anything else holding a '
+        + 'reference to the old one (a plant, a slot, a physics body) is now looking at a '
+        + 'point he is not standing on');
+      assert(moved >= 1, 'a man standing inside a wreck the front raised on him was left in it');
+      assert(one.body === was, 'he was rebuilt rather than moved — his name and his wounds go with the body');
+      assert(one.body.position.distanceTo(at) > 1,
+        `he is still at ${at.x.toFixed(1)},${at.z.toFixed(1)} inside the static`);
+      assert(one.body.position.distanceTo(at) <= 7,
+        `he was teleported ${one.body.position.distanceTo(at).toFixed(0)} m across the field`);
+      for (const [t, p] of others) {
+        assert(t.body.position.distanceTo(p) < 1e-6,
+          `${t.name} was standing on clear ground and was moved anyway`);
+      }
+    }
+
+    /**
+     * ══ AND THE BOUNDARY SAYS WHAT IT TOOK AWAY ═══════════════════════════
+     *
+     * `HUD._squadOrders` is push-only: it is cleared by an ARMY-WIDE
+     * `setOrder` and by nothing else. So a boundary that deleted `squadOrders`
+     * in silence left the order panel's second line saying "Havoc — take
+     * cover" about a squad under no order, for the rest of the run. That is
+     * the defect `HUD.setOrder`'s own note already records — "the director
+     * gives a squad's own order up in two places nobody was telling this panel
+     * about … for ever" — and the boundary was a third place.
+     *
+     * `_vacancy` has the shape: a null formation with a null name, per squad.
+     * ONE PER SQUAD THAT ACTUALLY HAD ONE, so a boundary after an engagement
+     * nobody delegated in says nothing at all.
+     */
+    {
+      const { army: army2 } = await import('./_army.mjs');
+      const A = army2();
+      const said = [];
+      A.d.onOrder = (F, n, one) => said.push([F?.id ?? null, one?.squad ?? null, one?.name ?? null]);
+      const sq2 = A.d.squadsOf(A.c);
+      A.c.player.position.set(0, 0, 0);
+      assert(A.d.order('cover', A.c, 1) === true, `1st arm: ${A.d.orderRefused}`);
+      assert(A.d.order('digin', A.c, 0) === true, `2nd arm: ${A.d.orderRefused}`);
+      A.d.hold(true);
+      said.length = 0;
+      A.d._areaClear?.();
+      const drops = said.filter((r) => r[0] === null && r[1] != null);
+      assert(drops.length === 2,
+        `the boundary deleted two squads' orders and announced ${drops.length} of them — the `
+        + 'order panel goes on printing an order nobody is under, for the rest of the run');
+      assert(new Set(drops.map((r) => r[1])).size === 2,
+        `both announcements named the same squad (${JSON.stringify(drops)})`);
+      assert(!A.c.holding, 'the boundary left the company holding ground the front has left');
+      assert(A.w.notes.some(([t]) => /FRONT HAS MOVED/.test(t)),
+        'the hold and every squad order were released without a word to the player — `hold()` '
+        + 'notifies and logs, and the boundary undid the same standing order in silence');
+      /* AND A QUIET BOUNDARY IS QUIET. */
+      const B = army2();
+      const alsoSaid = [];
+      B.d.onOrder = () => alsoSaid.push(1);
+      B.d._areaClear?.();
+      assert(alsoSaid.length === 0,
+        `a boundary after an engagement nobody delegated in announced ${alsoSaid.length} drops`);
+    }
+
+    /**
+     * …AND THE AREA BOUNDARY IS THE CALLER THAT ASKS FOR IT.
+     *
+     * Everything above drives `recall` directly, which is the right way to
+     * measure what the withdrawal DOES and is blind to the one line that
+     * decides whether it ever happens that way in a run: a `_areaClear` that
+     * went back to a bare `recall()` would pass every assertion above and put
+     * the survivors back on the transports. Measured — that mutation is
+     * invisible to a fixture that calls `recall` itself.
+     *
+     * So the call site is read. `_areaClear` is where a run crosses from one
+     * engagement to the next and it is the only caller that has a next area to
+     * leave anybody standing in; the two that do not — the end of a campaign
+     * and a departing commander — must NOT carry it, and that is asserted in
+     * the same breath rather than left as an absence.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const { functionBody } = await import('./_source.mjs');
+    const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
+    /* AND THE MARCH IS THE CALLER THAT DIGS THEM OUT. `_unbury` is driven
+     * directly above, which is blind to whether anything calls it: measured,
+     * deleting the call from `closeMuster` passed every assertion. The march
+     * is the one moment the ground is re-dressed under men who are standing on
+     * it, so that is where it has to be, immediately after `marchTo`. */
+    const closer = functionBody(src, '  closeMuster(');
+    const march = closer.indexOf('this.marchTo(');
+    const dig = closer.indexOf('_unbury(');
+    assert(march >= 0, 'closeMuster no longer marches the front');
+    assert(dig > march,
+      'nothing digs the survivors out after the front marches over them — `marchFront` sites '
+      + 'wrecks knowing nothing about bodies, and it used to run on an empty field');
+
+    const boundary = functionBody(src, '  _areaClear(');
+    const calls = [...boundary.matchAll(/this\.recall\(([^)]*)\)/g)].map((m) => m[1]);
+    assert(calls.length === 1,
+      `_areaClear makes ${calls.length} withdrawal calls — there is one boundary and one door`);
+    assert(/keepStanding:\s*true/.test(calls[0]),
+      `the area boundary calls recall(${calls[0]}) — without \`keepStanding\` every survivor is `
+      + 'disposed and flown back in beside his own replacement, which is the defect this '
+      + 'check exists for and which no fixture calling recall() itself can see');
+    for (const [what, sig] of [['the end of a campaign', '  _endCampaign('],
+                               ['a departing commander', '  dismissCommander(']]) {
+      const body = functionBody(src, sig);
+      for (const m of body.matchAll(/this\.recall\(([^)]*)\)/g)) {
+        assert(!/keepStanding/.test(m[1]),
+          `${what} leaves bodies standing (recall(${m[1]})) — there is no next area for them `
+          + 'to be standing in');
+      }
+    }
+
+    /**
+     * ══ AND A MAN ON HIS BACK DID NOT HOLD THE GROUND ═════════════════════
+     *
+     * `!e.dead` is not the same question as "is he standing". In THE LINE a
+     * wounded named man is DOWNED — ragdolled, bleeding out on `_tickDown`,
+     * and `dead === false` — so a withdrawal testing only `dead` KEPT him:
+     * he crossed the boundary lying in the dirt of an area already banked,
+     * `deploy` skipped him because he has a body, no replacement was ever
+     * bought for him, the line re-formed on the commander and walked away,
+     * and the bleed finished him. Driven before the fix: "downed man kept his
+     * body: true · still downed: true · ships put down 0 bodies."
+     *
+     * And while he lived he was a permanent −1 on `lineGathered`'s numerator
+     * with a +1 still on its denominator, so every later quorum was that much
+     * harder to make for a wound taken two areas ago.
+     */
+    const hurt = d.led(c).find((t) => t.body && !t.body.dead);
+    assert(hurt, 'nobody left standing to wound');
+    hurt.body.downed = true;
+    d.recall(null, { keepStanding: true });
+    assert(!hurt.body,
+      `${hurt.name} was bleeding on the ground and the withdrawal left him there — the ships `
+      + 'bring nobody for a man whose body is technically alive, and the bleed finishes him in '
+      + 'an area he already survived');
+    assert(d.led(c).filter((t) => t.body && !t.body.dead).length === after.length - 1,
+      'the downed man took somebody standing off the field with him');
+    /* AND HE IS FLOWN BACK. Counted against the men who actually have no body:
+     * the second withdrawal above also released the two replacements bought
+     * earlier out of `_inbound`, so they need ground again too. */
+    const needing = d.led(c).filter((t) => !t.body || t.body.dead).length;
+    const flown = d.deployAll({ byShip: true });
+    assert(flown === needing,
+      `${flown} bodies were put down for ${needing} men without one — the man carried off the `
+      + 'last area was not flown back');
+    assert(needing >= 1, 'nobody needed a ship, so this proves nothing about the wounded man');
+
+    /**
+     * ══ AND A SHIP THAT LANDS A MAN WHO IS ALREADY STANDING PUTS DOWN NOTHING ══
+     *
+     * `recall` takes every record out of `_inbound` because a withdrawn man is
+     * not inbound, and it CANNOT take him off the ship — a flight belongs to
+     * the `ArrivalDirector` and has no per-record cancel. So the gunship lands
+     * anyway, and without a guard the man getting off it is a SECOND body
+     * carrying `e.trooper` while `t.body` points elsewhere: its eventual death
+     * strikes a living man off the roll through `onDeath`.
+     *
+     * The blunt fix — `arrivals.clear()` at the boundary — takes the enemy
+     * pipeline with it. MEASURED: it left `arrivals.pending` non-zero fourteen
+     * seconds into the next area, red on a check that has always asserted the
+     * boundary quiesces. So the second body is caught where it lands, in the
+     * one function every body this director hands out goes through.
+     */
+    {
+      const { army: army4 } = await import('./_army.mjs');
+      const A = army4();
+      const man = A.d.led(A.c).find((t) => t.body && !t.body.dead);
+      const his = man.body;
+      const late = A.w.spawnEnemy(man.type, his.position.clone());
+      const took = A.d._landBody(man, late, A.c);
+      assert(took === false,
+        `${man.name} took a second body off a late gunship — he is now two men, and the death `
+        + 'of either strikes him off the roll');
+      assert(man.body === his, 'the record changed hands to the late body');
+      assert(late.trooper == null, 'the spare body still carries a name');
+      assert(late.dead === true && late.dying > 1000,
+        'the spare body was left standing on the field instead of leaving through the door '
+        + 'every other withdrawn body leaves by');
+      /* AND THE FIRST ONE IS STILL TAKEN, or this guard has closed the door
+       * every replacement comes through. */
+      const fresh = A.c.roster.living.find((t) => !t.body);
+      if (fresh) {
+        const body = A.w.spawnEnemy(fresh.type, his.position.clone());
+        assert(A.d._landBody(fresh, body, A.c) === true,
+          'a man with no body was refused one');
+        assert(fresh.body === body, 'the record did not take the body it was given');
+      }
+      /* AND IT IS THE ONE DOOR. `deploy`'s arrival closure has to go through
+       * it — a second `enlistBody` call anywhere in that method is a second
+       * door into the rule this function exists to be. */
+      const { readFile: rf } = await import('node:fs/promises');
+      const { functionBody: fb } = await import('./_source.mjs');
+      const dep = fb(await rf(new URL('../../src/game/Command.js', import.meta.url), 'utf8'),
+        '  deploy(c = this.commander');
+      assert(!/enlistBody\s*\(/.test(dep),
+        'deploy calls enlistBody directly — the one-man-one-body rule has a second door in the '
+        + 'method that hands out every body');
+      assert(/_landBody\s*\(/.test(dep), 'deploy no longer lands its bodies through the rule');
+    }
+
+    /* AND THE FULL WITHDRAWAL IS STILL A WITHDRAWAL. */
+    d.recall();
+    const end = d.led(c).filter((t) => t.body && !t.body.dead).length;
+    assert(end === 0,
+      `${end} bodies survived an end-of-run recall — \`keepStanding\` leaked into the door that `
+      + 'takes an army off the field for good');
+    return `${held.length} survivors kept their own bodies and their own ground · `
+      + `${put} ships for ${bought.length} replacements · a man on his back is carried off and `
+      + `flown back · the boundary asks for it and the two one-way doors do not`;
+  });
+
   /**
    * THE THREE ARMY MODES ARE UNTOUCHED — the regression this change is most
    * likely to cause, so it is the one held down hardest. Command's army is the

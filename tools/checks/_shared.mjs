@@ -144,10 +144,47 @@ export async function snapshotShared() {
    * against 8, because the trees and rocks a firefight is fought through were
    * laid by a stream nobody had put back. */
   const { seedScenery } = await import('../../src/world/Scenery.js');
+  /**
+   * ── AND THE EIGHT THAT WERE STILL FREE ────────────────────────────────
+   *
+   * Five streams were pinned and the rest of the tree's module-level `rng`s
+   * were not, which is the same defect the note above records having found
+   * twice already — one file at a time.
+   *
+   * MEASURED, on the shipped gate: building ONE crate before `blast-door.mjs`
+   * — a single `makeCrate` on a throwaway scene, which touches nothing but
+   * `Props.js`'s stream — turned that suite from 9/9 into the gate's own
+   * failure, "75 s of held blade burned 0 of the 515 texels". The breach slug's
+   * launch vector is drawn there, so a shifted phase throws the debris
+   * somewhere else, the player takes the second impact instead of surviving it
+   * on five points, and a dead player's blade never reaches the plate. That
+   * check has been red in every full run and green alone for as long as
+   * anybody has looked, on this commit and on the one before this session
+   * started — a check that answers differently depending on what ran before it
+   * is worse than a red one, because the difference looks like whatever you
+   * changed last.
+   *
+   * The remaining unpinned streams are `Waves`, `Arrivals` and `Extraction`,
+   * which already export seeders of their own and are reseeded by the fixtures
+   * that drive them.
+   */
+  const { seedProps } = await import('../../src/world/Props.js');
+  const { seedBodies } = await import('../../src/game/Bodies.js');
+  const { seedPlayerRng } = await import('../../src/game/Player.js');
+  const { seedParticles } = await import('../../src/world/Particles.js');
+  const { seedBolts } = await import('../../src/game/Bolts.js');
+  const { seedRagdoll } = await import('../../src/game/Ragdoll.js');
+  const { seedCloth } = await import('../../src/game/Cloth.js');
+  const { seedVehicles } = await import('../../src/game/Vehicles.js');
   const { audio } = await import('../../src/engine/Audio.js');
   return {
     seedWorld,
     seedScenery,
+    /* Each with the seed its own module opened on — `restoreShared` puts them
+     * back where the module started, not where the snapshot found them. */
+    more: [[seedProps, 9091], [seedBodies, 5150], [seedPlayerRng, 1212],
+      [seedParticles, 2718], [seedBolts, 606], [seedRagdoll, 31337],
+      [seedCloth, 606011], [seedVehicles, 70714]],
     wind,
     time: wind.time,
     /* The four `configure` sets, which is the whole of a level's wind block.
@@ -195,6 +232,9 @@ export function restoreShared(snap) {
   snap.commandRng.seed(0x5EED0C7);          // src/game/Command.js, `commandRng`
   snap.seedWorld?.(0x0B0D1E5);              // src/game/World.js, `seedWorld`
   snap.seedScenery?.(70707);                // src/world/Scenery.js, its own module seed
+  /* …and the eight the tree kept to itself. See `snapshotShared` for the crate
+   * that proved they mattered. */
+  for (const [seed, at] of (snap.more || [])) seed?.(at);
   for (const k of Object.keys(snap.audio)) if (!(k in snap.sound)) delete snap.audio[k];
   Object.assign(snap.audio, snap.sound);
   if (snap.store) {

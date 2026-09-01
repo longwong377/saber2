@@ -34,7 +34,7 @@ import { clocked } from './_shared.mjs';
 import { bootWorld, idleInput } from './_coop.mjs';
 import { makeDocument } from './_page.mjs';
 import { Menu, DEFAULT_SETTINGS } from '../../src/ui/Menu.js';
-import { MODES } from '../../src/game/Waves.js';
+import { MODES, playableModes } from '../../src/game/Waves.js';
 import {
   MassField, Rank, layBattle, blockage,
   RANK_MEN, RANK_COLS, PROMOTE, STAND_OFF, BREAK_AT, HIT, MUZZLE,
@@ -336,8 +336,24 @@ export async function run({ check, assert }) {
       const settings = { ...structuredClone(DEFAULT_SETTINGS) };
       const menu = new Menu(settings, { onDeploy() {} });
       const cards = [...doc.getElementById('mode-list').children];
-      assert(cards.length === Object.keys(MODES).length,
-        `${cards.length} cards for ${Object.keys(MODES).length} modes — the panel is not the table`);
+      /**
+       * AGAINST `playableModes()`, NOT AGAINST THE WHOLE TABLE.
+       *
+       * `MODES` is the table of DESTINATIONS — everything `World.loadLevel`,
+       * `Extraction` and the theatre column need to know about a place the
+       * game can put you — and one of those places is not a card: the flight
+       * deck is reached from the Company tab by a door, and offering a hangar
+       * as something to deploy INTO would put one in the theatre grid, which
+       * is a shape `Levels.js` has deleted three times.
+       *
+       * `playableModes()` is the one derivation of "which of these is a
+       * choice", and its own note names the menu's card builder and the two
+       * checks that count cards against modes as its consumers. This is one of
+       * those two, and it was still counting the whole table.
+       */
+      const pickable = playableModes();
+      assert(cards.length === pickable.length,
+        `${cards.length} cards for ${pickable.length} pickable modes — the panel is not the table`);
       const rows = [];
       for (const [key, M] of MASS_MODES) {
         const card = cards.find((c) => c.querySelector('b')?.textContent === M.name);

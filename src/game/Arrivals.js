@@ -451,7 +451,7 @@ class Arrival {
    * the caller knows which record goes with which slot. Kept per SLOT rather
    * than per flight, because a gunship carries four and a squad of four is
    * four different named people. */
-  add(type, mod, onBody = null) { this.manifest.push({ type, mod, onBody }); }
+  add(type, mod, onBody = null, look = null) { this.manifest.push({ type, mod, onBody, look }); }
 
   /* ── the ship ──────────────────────────────────────────────────────── */
 
@@ -720,7 +720,7 @@ class Arrival {
     const point = this.kind === 'dropship' ? this._dropPoint(_v1)
                 : this.kind === 'gate' ? this._gatePoint(_v1)
                 : _v1.copy(this.at);
-    const e = deliver(slot.type, slot.mod, point, this);
+    const e = deliver(slot.type, slot.mod, point, this, slot.look);
     this.delivered++;
     if (!e) return;
     // …and whoever asked for this body gets it before anything else touches it.
@@ -809,7 +809,7 @@ export class ArrivalDirector {
      * land, in the open, next to you, which is what the mode's own first brief
      * describes; drawn from the same table they walked in from 134 m and the
      * area started without them. */
-    this.staging.push({ type, mod, bearing, arc, onBody, kind: opts.kind || null,
+    this.staging.push({ type, mod, bearing, arc, onBody, look: opts.look || null, kind: opts.kind || null,
       near: opts.near ?? null, cap: opts.cap ?? 0 });
     return true;
   }
@@ -967,19 +967,19 @@ export class ArrivalDirector {
       let f = this.flights.find(x => !x.done && x.kind === kind && !x.full && x.age < x.openAt * 0.6
         && (x.bearing ?? null) === want && (x.near ?? null) === (slot.near ?? null));
       if (!f) f = this._open(kind, A, want, slot.arc ?? Math.PI / 2, slot.near ?? null, slot.cap ?? 0);
-      f.add(slot.type, slot.mod, slot.onBody);
+      f.add(slot.type, slot.mod, slot.onBody, slot.look);
       this.staging.shift();
     }
 
     for (let i = this.flights.length - 1; i >= 0; i--) {
       const f = this.flights[i];
-      f.update(dt, ctx, (type, mod, point, arrival) => this._deliver(type, mod, point, arrival));
+      f.update(dt, ctx, (type, mod, point, arrival, look) => this._deliver(type, mod, point, arrival, look));
       if (f.done) { f.remove(); this.flights.splice(i, 1); }
     }
   }
 
-  _deliver(type, mod, point, arrival) {
-    const e = this.spawn(type, mod, point);
+  _deliver(type, mod, point, arrival, look = null) {
+    const e = this.spawn(type, mod, point, look);
     const anchor = this._anchor(_v2);
     this.log.push({
       kind: arrival.kind,

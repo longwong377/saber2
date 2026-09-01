@@ -543,11 +543,34 @@ export async function run({ check, assert }) {
     /* Dynamic, the way every other check in this file reaches the harness. */
     const { bootWorld } = await import('./_coop.mjs');
     const rows = [];
+    /**
+     * AND ONE MODE HAS NO WAVE TO CLEAR, WHICH IS ITS WHOLE POINT.
+     *
+     * The flight deck is a place, not a fight: no enemy, no wave, no ending
+     * and no score, and `HangarDirector` is deliberately not a `WaveDirector`
+     * subclass precisely so it cannot grow a spawn queue or a clear signal.
+     * Demanding `onWaveClear` of it is demanding income from a room whose
+     * promise is that nothing happens in it unless you ask.
+     *
+     * It still has to have the LEDGER — a player who kneels on the deck must
+     * see what he has — so it is exempted from the earning half only, and the
+     * two assertions below are split so that stays true.
+     */
+    const NO_WAVE = {
+      hangar: 'a deck has no wave to clear; you walk onto it to look at your men',
+    };
     for (const mode of Object.keys(MODES)) {
       const level = MODES[mode]?.level || 'geonosis';
       const { world } = await bootWorld({ level, settings: { mode, difficulty: 'knight' } });
       try {
         assert(world.communion, `${mode}: no Insight ledger at all`);
+        if (NO_WAVE[mode]) {
+          assert(!world.director?.onWaveClear,
+            `${mode} is on the no-wave list and has grown a clear signal — either it is a fight `
+            + 'now and the exemption is stale, or something has given a room a wave');
+          rows.push(`${mode}: ledger only (${NO_WAVE[mode]})`);
+          continue;
+        }
         assert(typeof world.director?.onWaveClear === 'function',
           `${mode}: the director fires no wave-clear signal, so the Holocron can never be paid`);
         const before = world.communion.insight;
@@ -1436,9 +1459,26 @@ export async function run({ check, assert }) {
      * emphatically not the dojo and requires every lesson to build its room.
      */
     assert(Waves.MODES.training, 'there is no training mode — the lessons are still pinned to one level');
+    /**
+     * …AND `World.loadLevel` HONOURS IT — read off the mode's own DECLARATION
+     * rather than off the spelling of a branch.
+     *
+     * This used to grep for `settings.mode === 'training'`, which is a test of
+     * one string and cannot tell whether the branch it found is the dojo
+     * branch or something else that happens to name the mode. The mode
+     * declares `dojo` now — one flag, one writer, two readers (`loadLevel`
+     * builds the `DojoDirector` off it, and `musterPlan` refuses to raise a
+     * line for a mode that has no roster to put one on) — so the property is
+     * asserted in both directions: the mode says it, and the world reads it.
+     */
+    assert(Waves.MODES.training.dojo === true,
+      'MODES.training does not declare `dojo`, so nothing can tell the lessons apart from a wave');
+    const dojos = Object.keys(Waves.MODES).filter((m) => Waves.MODES[m].dojo);
+    assert(dojos.length === 1, `${dojos.length} modes declare a dojo: ${dojos.join(', ')}`);
     const world = await read('game/World.js');
-    assert(/settings\.mode === 'training'/.test(world),
-      'World.loadLevel does not honour the training mode, so picking it drops you into a normal wave');
+    assert(/MODES\[this\.settings\.mode\]\?\.dojo/.test(world),
+      'World.loadLevel does not read the mode\'s dojo declaration, so picking Training drops '
+      + 'you into a normal wave');
 
     const settings = { mode: 'training' };
     let id = 0;

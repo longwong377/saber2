@@ -46,6 +46,67 @@ import { chromiumPath, CHROME_ARGS } from './_browser.mjs';
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
 
 export async function run({ check, assert }) {
+  check('packed: every module names three by the path a browser can follow', async () => {
+    /**
+     * ══ THE ONE-WORD BUG THAT IS INVISIBLE TO EVERY OTHER CHECK ═══════════
+     *
+     * `import * as THREE from 'three'` works perfectly in `verify.mjs`.
+     * `tools/register.mjs` maps the bare specifier onto `vendor/three`, so a
+     * module that writes it loads, links and passes its whole suite. It is also
+     * **broken in every browser and in every packed build**: the page has no
+     * import map for it, so the module fails to resolve, the page throws
+     * `Failed to resolve module specifier "three"` before `main.js` ever runs,
+     * and the game is a black screen.
+     *
+     * HANDOFF §2.1 records the mirror of this — running verify WITHOUT the
+     * loader resolves `three` out of `node_modules` and reports two fictional
+     * failures — and the lesson is the same one from the other side: the bare
+     * specifier is a Node-only convenience and `src/` may never use it.
+     *
+     * MEASURED, and it is why this check exists: a new module written with
+     * `from 'three'` booted 2 200 checks green, built its scene headless, and
+     * showed nothing at all in Chromium. The suite that would eventually have
+     * caught it is the one below — a full pack, launch and play, minutes long,
+     * which reports "the build does not boot" and names no cause.
+     *
+     * 37 of 38 files in `src/game` already write the literal path. This is that
+     * convention, enforced, in the place that owns what the shipped build can
+     * resolve.
+     */
+    const { readdir, readFile } = await import('node:fs/promises');
+    const dirs = ['src', 'src/game', 'src/engine', 'src/ui', 'src/world', 'src/physics', 'src/toon'];
+    const bad = [];
+    let files = 0, good = 0;
+    for (const d of dirs) {
+      let names = [];
+      try { names = await readdir(join(ROOT, d)); } catch { continue; }
+      for (const n of names) {
+        if (!n.endsWith('.js') && !n.endsWith('.mjs')) continue;
+        const rel = `${d}/${n}`;
+        const src = await readFile(join(ROOT, rel), 'utf8');
+        files++;
+        /* Every `from '…'` in the file, and the only ones that matter are the
+         * ones that are not a path: a browser resolves `./`, `../` and `/` and
+         * nothing else without an import map, and this page ships none. */
+        for (const m of src.matchAll(/\bfrom\s+'([^']+)'/g)) {
+          const spec = m[1];
+          if (spec.startsWith('.') || spec.startsWith('/')) continue;
+          if (/^(node:|https?:)/.test(spec)) continue;
+          bad.push(`${rel} → '${spec}'`);
+        }
+        if (/from '\.\.?\/[^']*three\.module\.js'/.test(src)) good++;
+      }
+    }
+    assert(bad.length === 0,
+      `${bad.length} bare module specifier(s) under src/ — every one of them loads under `
+      + `tools/register.mjs and fails to resolve in a browser, which is a black screen with a `
+      + `console error and no failing check: ${bad.slice(0, 6).join(', ')}`);
+    assert(good > 20,
+      `only ${good} of ${files} modules import three by a literal relative path — this check has `
+      + 'stopped being able to see the convention it enforces');
+    return `${files} modules under src/, ${good} of them naming three by path, 0 bare specifiers`;
+  });
+
   /**
    * BOTH BUILDS, because only one of them was ever driven and the other is the
    * one people are handed.

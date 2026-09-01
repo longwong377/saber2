@@ -48,7 +48,7 @@
  * the one being written.
  */
 
-import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById } from './Command.js';
+import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById, SQUAD, MAX_STRENGTH } from './Command.js';
 import {
   ATTR_IDS, traitById, attrName, BOND_AREAS, liveBonds, isBonded, applyTrait, shedTraits,
 } from './Attributes.js';
@@ -57,6 +57,8 @@ import {
  * already carries the label every other screen uses and this file must not
  * grow a second copy of it. */
 import { ARCHETYPES } from './Enemy.js';
+import { KIT_FIELDS, PAINT_FIELDS, PAINTS, paintById } from './Bodies.js';
+import { makeStore } from './Store.js';
 
 /**
  * An attribute block off disk, clamped and complete.
@@ -110,6 +112,58 @@ function saneBonds(list, self) {
   return out.sort(strongestFirst).slice(0, BONDS_MAX);
 }
 
+/**
+ * A WHOLE LOOK OFF DISK OR OFF A SCREEN, MADE SAFE — the one door both stores
+ * and both write paths go through.
+ *
+ * `look` grew from two fields to five when the barracks learned to dress a man
+ * rather than only name him, and five fields on an object that arrives from
+ * localStorage is five ways a hand edit reaches a body builder. So every one
+ * of them is whitelisted here, once:
+ *
+ *   callsign  `cleanCallsign` — trimmed, capped, and stripped of the
+ *             characters that would otherwise have to be escaped correctly by
+ *             every screen that prints a name.
+ *   mark/band ids from `MARKS`, never colours. An unknown id is dropped.
+ *   kit       fields and values from `KIT_FIELDS[kind]`, which is the list the
+ *             BUILDERS accept minus the ones that would resize a man into
+ *             another rung. Anything else is dropped rather than corrected.
+ *   paint     ids from `PAINTS`, resolved to the builder's own option names by
+ *             `PAINT_FIELDS[kind]` — so a clone paints plate/accent/visor and
+ *             a droid paints shell/flash/eye, out of one table.
+ *
+ * Returns null for an empty result, because "he wears nothing of yours" is a
+ * real state and an object with no keys in it is not.
+ */
+export function saneLook(look, kind = 'flesh') {
+  if (!look || typeof look !== 'object' || Array.isArray(look)) return null;
+  const out = {};
+  const cs = cleanCallsign(look.callsign);
+  if (cs) out.callsign = cs;
+  for (const slot of ['mark', 'band']) {
+    const mk = markById(look[slot]);
+    if (mk.color != null) out[slot] = mk.id;
+  }
+  const legal = KIT_FIELDS[kind] || {};
+  if (look.kit && typeof look.kit === 'object' && !Array.isArray(look.kit)) {
+    const kit = {};
+    for (const field in legal) {
+      if (!(field in look.kit)) continue;
+      if (legal[field].values.some(([v]) => v === look.kit[field])) kit[field] = look.kit[field];
+    }
+    if (Object.keys(kit).length) out.kit = kit;
+  }
+  if (look.paint && typeof look.paint === 'object' && !Array.isArray(look.paint)) {
+    const paint = {};
+    for (const field of (PAINT_FIELDS[kind] || [])) {
+      const p = paintById(look.paint[field]);
+      if (p) paint[field] = p.id;
+    }
+    if (Object.keys(paint).length) out.paint = paint;
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 /** Where it lives. Versioned like every other store in the tree. */
 export const KEY = 'saber.company.v1';
 
@@ -144,8 +198,14 @@ const MAN_FIELDS = [
    * would have to be decided in the one frame it crossed the line, and the
    * roster screen could never show a pair three grounds short of one. */
   'bonds',
-  /* AND WHAT THE PLAYER CHOSE TO DO WITH HIM. See `look`. */
-  'look',
+  /* AND WHAT THE PLAYER CHOSE TO DO WITH HIM. See `look` for the paint and the
+   * kit; `post` is the other decision — the squad's seat, given by hand. It is
+   * a boolean and it buys no number: what it does is put one named man in
+   * front of `leaderOf`'s derivation, so a company remembers who had the squad
+   * between one press of play and the next. `save` drops a field that is
+   * `null` or `undefined` but keeps `false`, so an unseated man costs nothing
+   * he was not already costing. */
+  'look', 'post',
 ];
 
 /**
@@ -193,6 +253,21 @@ export const blank = (army = ARMY_IDS[0]) => ({
   /** The run this roll was founded on. Null until the first man is kept. */
   founded: null,
   /**
+   * ── WHAT THIS COMPANY CALLS ITS SQUADS ────────────────────────────────
+   *
+   * An array of names by squad index — `squads[1]` is what 2nd Squad is
+   * called. Empty entries mean the number, which is what every squad is
+   * called until somebody names it.
+   *
+   * A NAME PER SQUAD AND NOT A RECORD PER SQUAD. Everything else about a
+   * squad is derived — who is in it is `Trooper.squad` grouped at read time,
+   * who leads it is `leadOf`, where it is standing is the frame — and
+   * inventing a stored object for one string would give every one of those
+   * derivations something to drift from. This is the one fact about a squad
+   * that cannot be derived, because it is a thing the player said.
+   */
+  squads: [],
+  /**
    * ORDERS OF THE DAY — the moments of the LAST fold, overwritten every time.
    * A promotion, a name earned, a bond formed, a fifth run, a wound survived:
    * ceremony without a ceremony screen, read once off the index page the next
@@ -212,6 +287,26 @@ export const HONOURS_KEEP = 6;
 
 /** The kinds an honour may be. Whitelisted on read like every stored enum. */
 const HONOUR_KINDS = ['named', 'promoted', 'bonded', 'fifth', 'scarred'];
+
+/**
+ * ══ THE TWO WAYS A NAME COMES OFF THE ROLL, AND THEY ARE NOT THE SAME ══════
+ *
+ * `keep` treats every man who went out and did not come back as gone, which is
+ * correct and is the whole cost of the mechanism. But the memorial was
+ * printing one sentence over two very different facts: the man cut down in
+ * engagement two, and the man who was standing eleven metres from a closing
+ * ramp with nothing wrong with him.
+ *
+ * Those are different things to have done to somebody. The first is a battle;
+ * the second is a decision you made about where to be and how long to hold.
+ * Both cost the same — he is off the roll for good either way, and there is no
+ * branch anywhere that softens the second one — but a casualty list that
+ * cannot tell them apart cannot teach you anything about either.
+ *
+ * `kia` is the default for every record written before this existed, which is
+ * what those records meant.
+ */
+export const FATES = ['kia', 'left'];
 
 /**
  * One fallen record off disk, made safe. The three fields a record gained in
@@ -234,6 +329,11 @@ function saneFallen(f) {
     killer: typeof f.killer === 'string'
       ? f.killer.replace(/[<>&`\\]/g, '').slice(0, 40) : null,
     at: Number.isFinite(f.at) ? Math.max(0, Math.min(999, f.at | 0)) : null,
+    /* HOW HE STOPPED BEING ON THE ROLL — see `FATES`. Unknown or absent reads
+     * as `kia`, which is what every record written before this field existed
+     * meant and is the honest default: the list has always been a casualty
+     * list. */
+    fate: FATES.includes(f.fate) ? f.fate : 'kia',
   };
 }
 
@@ -245,23 +345,22 @@ function saneFallen(f) {
  * the game because a number they never saw is a string has lost more than a
  * roster.
  */
-function readAll() {
-  try {
-    if (typeof localStorage === 'undefined') return {};
-    const raw = localStorage.getItem(KEY);
-    if (!raw) return {};
-    const v = JSON.parse(raw);
-    if (!v || typeof v !== 'object' || Array.isArray(v)) return {};
-    return v;
-  } catch { return {}; }
-}
+/**
+ * THE STORE. One policy, shared with the muster slate — src/game/Store.js.
+ *
+ * This used to catch a refused write and throw the value away under a comment
+ * saying "losing a roll is not a crash". It is not a crash and it is worse
+ * than one: the roll stays on screen, the player keeps fighting for it, and it
+ * is already gone. A refused write is remembered for the life of the page now,
+ * and `notSaving` lets the tab say so.
+ */
+const STORE = makeStore(KEY);
 
-function writeAll(v) {
-  try {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem(KEY, JSON.stringify(v));
-  } catch { /* private browsing, a full quota — losing a roll is not a crash */ }
-}
+/** True when a write has been refused. The Company tab reads this and warns. */
+export const notSaving = () => STORE.broken;
+
+const readAll = () => STORE.read();
+const writeAll = (v) => STORE.write(v);
 
 /** A stored man, made safe. Anything unreadable becomes a fresh recruit's value. */
 function readMan(m, army) {
@@ -288,6 +387,12 @@ function readMan(m, army) {
       ? m.traits.filter((t) => typeof t === 'string' && traitById(t)).slice(0, 4)
       : [],
     squad: Number.isInteger(m.squad) ? m.squad : null,
+    /* A BOOLEAN, and the LICENCE is checked at the other door rather than
+     * here: this file knows nothing about ranks and `CommandRoster.
+     * enlistRecord` re-tests `holds(t, 'LEADS')` on the way onto a roll, which
+     * is where the rank actually exists. Coerced hard so a stored "yes" or a
+     * stored object cannot ride in as truthy. */
+    post: m.post === true,
     xp: Math.max(0, num(m.xp, 0)),
     kills: Math.max(0, num(m.kills, 0)),
     wounds: Math.max(0, num(m.wounds, 0)),
@@ -301,7 +406,7 @@ function readMan(m, army) {
     since: typeof m.since === 'string' ? m.since : null,
     story: Array.isArray(m.story) ? m.story.filter((s) => typeof s === 'string').slice(-STORY_KEEP) : [],
     bonds: saneBonds(m.bonds, m.designation),
-    look: m.look && typeof m.look === 'object' && !Array.isArray(m.look) ? { ...m.look } : null,
+    look: saneLook(m.look, m.kind === 'steel' ? 'steel' : 'flesh'),
   };
 }
 
@@ -430,6 +535,12 @@ export function load(army = ARMY_IDS[0]) {
       ? v.fallen.map(saneFallen).filter(Boolean).slice(0, FALLEN_KEEP)
       : [],
     founded: typeof v.founded === 'string' ? v.founded : null,
+    /* THE SQUAD NAMES, cleaned exactly as a callsign is and capped at the
+     * number of squads a line can form. A name past the ceiling is a name for
+     * a squad the field will never make, and an empty slot is the number. */
+    squads: Array.isArray(v.squads)
+      ? v.squads.slice(0, SQUADS_MAX).map((n) => cleanSquadName(n))
+      : [],
     honours: Array.isArray(v.honours)
       ? v.honours.filter((h) => h && HONOUR_KINDS.includes(h.kind)
           && typeof h.designation === 'string')
@@ -458,6 +569,7 @@ export function save(company) {
     lost: company.lost | 0,
     fallen: (company.fallen || []).slice(0, FALLEN_KEEP),
     founded: company.founded ?? null,
+    squads: (company.squads || []).slice(0, SQUADS_MAX),
     honours: (company.honours || []).slice(0, HONOURS_KEEP),
   };
   writeAll(all);
@@ -471,7 +583,7 @@ export function loadAll() {
 
 /** Wipe one army's roll, or all of them. The player's own door, never the game's. */
 export function clear(army = null) {
-  if (army === null) { writeAll({}); return; }
+  if (army === null) { STORE.drop(); return; }
   const all = readAll();
   delete all[army];
   writeAll(all);
@@ -500,6 +612,11 @@ export function manOf(t, meta = {}) {
     attrs: t.attrs ? { ...t.attrs } : null,
     traits: Array.isArray(t.traits) ? t.traits.slice() : [],
     squad: Number.isInteger(t.squad) ? t.squad : null,
+    /* THE SEAT HE WAS GIVEN — see `Trooper.post`. A boolean and nothing more:
+     * it buys no number, it is re-checked against the licence on the way back
+     * in, and it exists so a company does not forget who had the squad
+     * between one press of play and the next. */
+    post: !!t.post,
     xp: Math.max(0, t.xp | 0),
     kills: Math.max(0, t.kills | 0),
     wounds: Math.max(0, t.wounds | 0),
@@ -546,6 +663,10 @@ export function trooperOf(m, army, roster) {
  *                      manifest itself names, and refuses a mixed one.
  * @param opts.left     the men who did not get aboard, as `Trooper`s. Only their
  *                      names are kept; they are gone.
+ * @param opts.stranded which of those were still ALIVE when the ramp closed —
+ *                      `Trooper`s or bare designations. They are gone on the
+ *                      same terms as the dead; what this changes is the
+ *                      sentence the memorial says over them. See `FATES`.
  * @param opts.ground   the level id the run ended on, for `since` and the story.
  * @param opts.ended    'withdrew' | 'wiped' | 'won' — what `runStats` reports.
  *                      Read by `storyLine`, which phrases a won run's line.
@@ -682,17 +803,35 @@ export function keep(manifest, opts = {}) {
   for (const r of (Array.isArray(opts.roll) ? opts.roll : [])) {
     if (r && typeof r.name === 'string') rollByName.set(r.name.split(' "')[0], r);
   }
+  /**
+   * WHO WAS STILL STANDING WHEN THE RAMP CLOSED — see `FATES`.
+   *
+   * Names, because that is the only thing this file is ever handed about a
+   * live `Trooper` and the only thing it needs: the caller is the one holding
+   * the run, and `alive && !aboard` is a question only it can answer. A call
+   * that does not pass the list reads every loss as a casualty, which is what
+   * this list always said and is the safe direction.
+   */
+  const stranded = new Set(Array.isArray(opts.stranded)
+    ? opts.stranded.map((t) => (typeof t === 'string' ? t : t?.designation)).filter(Boolean)
+    : []);
   c.fallen = [
     ...gone.map((m) => {
       const r = rollByName.get(m.designation) || null;
+      const left = stranded.has(m.designation);
       return {
         designation: m.designation, nickname: m.nickname ?? null, type: m.type,
         callsign: cleanCallsign(m.look?.callsign),
         rank: rankFor(m.xp | 0), kills: m.kills | 0, runs: m.runs | 0,
         where: opts.ground ?? null,
-        killer: typeof r?.killer === 'string'
-          ? r.killer.replace(/[<>&`\\]/g, '').slice(0, 40) : null,
-        at: Number.isFinite(r?.at) ? Math.max(0, Math.min(999, Math.floor(r.at / 60))) : null,
+        /* A MAN LEFT BEHIND HAS NO KILLER AND NO MINUTE, whatever the run's
+         * account happens to hold under his name — nothing killed him, which
+         * is exactly the fact the list was losing. */
+        killer: left || typeof r?.killer !== 'string'
+          ? null : r.killer.replace(/[<>&`\\]/g, '').slice(0, 40),
+        at: !left && Number.isFinite(r?.at)
+          ? Math.max(0, Math.min(999, Math.floor(r.at / 60))) : null,
+        fate: left ? 'left' : 'kia',
       };
     }),
     ...(c.fallen || []),
@@ -849,8 +988,173 @@ export function dress(army, key, look = {}) {
     const cs = cleanCallsign(look.callsign);
     if (cs) next.callsign = cs; else delete next.callsign;
   }
+  /**
+   * …AND WHAT HE WEARS. `kit` is hardware the builders already accept — a
+   * pauldron, a kama, a pack — and `paint` is the armour under the rank's own
+   * colours. Both arrive as a WHOLE object rather than a field at a time,
+   * because a kit is a set: the screen sends what the man wears now and this
+   * writes it, so clearing a pauldron is the same call as choosing one.
+   *
+   * Neither moves a number. Nothing in `KIT_FIELDS` resizes a man — `frame`
+   * is left off that list on purpose, see it — and a colour has never been
+   * read by anything that fights. `barracks.mjs` prices both on real bodies.
+   */
+  const kind = m.kind === 'steel' ? 'steel' : 'flesh';
+  if ('kit' in look) {
+    const whole = saneLook({ kit: look.kit }, kind);
+    if (whole?.kit) next.kit = whole.kit; else delete next.kit;
+  }
+  if ('paint' in look) {
+    const whole = saneLook({ paint: look.paint }, kind);
+    if (whole?.paint) next.paint = whole.paint; else delete next.paint;
+  }
   m.look = Object.keys(next).length ? next : null;
   return save(c);
+}
+
+/**
+ * ══ GIVE A MAN HIS SQUAD'S SEAT, ON THE ROLL ═══════════════════════════════
+ *
+ * The store's half of `CommandRoster.appoint`, and it is a second
+ * implementation of one rule, which is a thing this file otherwise refuses.
+ * It is here because the two halves cannot be one function: the roster's
+ * version operates on live `Trooper`s inside a fight and reaches `holds()`,
+ * which lives in Command.js — and Command.js may not import this file back.
+ *
+ * SO THE RULE IS NOT COPIED, IT IS SPLIT. This side owns the parts that are
+ * facts about the STORE — is he on this roll, is he alive, is there already
+ * somebody in his squad's seat — and it does not decide the licence at all.
+ * The rank gate lives on exactly one side of the line, the fighting side, and
+ * `enlistRecord` re-tests it on the way onto every roll. A post written here
+ * for a man who is not licensed is a post that never reaches a squad, which is
+ * the safe direction for the half that cannot see a rank.
+ *
+ * The caller passes `licensed` because the SCREEN knows: it has `RANKS` and it
+ * has his xp. That keeps the gate one table's answer rather than two.
+ *
+ * @returns the written company.
+ */
+export function appoint(army, key, on = true, licensed = true) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m) return c;
+  if (!on) { m.post = false; return save(c); }
+  if (!licensed) return c;
+  /* ONE SEAT PER SQUAD — the same sentence `CommandRoster.appoint` makes, and
+   * for the same reason: two men holding one squad's post is `leaderOf`
+   * answering with whichever came first in an array whose order is nobody's
+   * decision. A man with no squad dealt to him yet is his own case. */
+  for (const other of c.men) {
+    if (other === m || !other.post) continue;
+    /* AND TWO UNDEALT MEN CONTEND. `null === null` reads like a bug and is
+     * the correct answer: `squadPlan` deals every undealt man into the first
+     * bucket under strength, so two men at `squad: null` are two men bound for
+     * the same squad. See the long note on `CommandRoster.appoint`. */
+    if (other.squad === m.squad) other.post = false;
+  }
+  m.post = true;
+  return save(c);
+}
+
+/**
+ * ══ WHICH SQUAD A MAN FALLS IN WITH ════════════════════════════════════════
+ *
+ * A recruit could be dealt a squad from his own page since the slate existed
+ * (`Muster.setRecruitSquad`); a VETERAN could not, so a company that came home
+ * was stuck in whatever squads the muster happened to deal it, for ever. That
+ * is a strange gap on its own and it became a real one when the post arrived:
+ * a seat is per squad, so a player who cannot move a man between squads cannot
+ * organise the company the seats are in.
+ *
+ * `null` means "wherever the muster deals him", which is what every man means
+ * before anybody has an opinion. Out-of-range is clamped to null rather than
+ * refused for the reason `readMan` clamps everything: this is a screen writing
+ * a number and the store is the place that decides what a number may be.
+ *
+ * MOVING HIM DOES NOT MOVE HIS SEAT. A post is a fact about a squad — see
+ * `CommandRoster.appoint` — so a man carried into a squad that already has a
+ * holder would be the second one, which is `leaderOf` answering with whichever
+ * came first in an array. He arrives WITHOUT the seat, and the player gives it
+ * to him again if that was the point.
+ */
+export function assign(army, key, squad) {
+  const c = load(army);
+  const m = c.men.find((x) => x.designation === key);
+  if (!m) return c;
+  const to = Number.isInteger(squad) && squad >= 0 && squad < SQUADS_MAX ? squad : null;
+  if (to !== m.squad && m.post) m.post = false;
+  m.squad = to;
+  return save(c);
+}
+
+/**
+ * How many squads a screen may deal into.
+ *
+ * Derived from the two numbers that already decide it — the biggest line the
+ * game can field and how many men stand in a squad — rather than chosen, so a
+ * roll cannot be dealt into a squad the field will never form. Both pages that
+ * offer the choice read this, which is what stops a recruit's page and a
+ * veteran's offering different squads for the same company.
+ */
+export const SQUADS_MAX = Math.max(1, Math.ceil(MAX_STRENGTH / SQUAD));
+
+/** How long a squad's name may be. Shorter than a callsign: it is printed in
+ *  a notification headline in the middle of a fight. */
+export const SQUAD_NAME_MAX = 14;
+
+/** A squad name, made safe — the same rule a callsign follows, one line. */
+export function cleanSquadName(v) {
+  if (typeof v !== 'string') return '';
+  const out = v.replace(/[<>&`\\\n\r\t]/g, '').trim().slice(0, SQUAD_NAME_MAX);
+  return out;
+}
+
+/**
+ * ══ WHAT THIS COMPANY CALLS ITS SQUADS ═════════════════════════════════════
+ *
+ * "I should be able to name my squads before starting a game."
+ *
+ * A squad is otherwise entirely derived — its men are `Trooper.squad` grouped
+ * at read time, its leader is `leadOf`, its ground is a frame — and a name is
+ * the one fact about it that cannot be, because it is a thing the player said.
+ * So it is a string per index on the roll and nothing else: no stored squad
+ * object for the derivations to drift from.
+ *
+ * `''` clears it, and an empty name reads as the number, which is what every
+ * squad is called until somebody names it.
+ */
+export function nameSquad(army, index, name) {
+  const c = load(army);
+  const i = index | 0;
+  if (!(i >= 0 && i < SQUADS_MAX)) return c;
+  const list = (c.squads || []).slice();
+  while (list.length <= i) list.push('');
+  list[i] = cleanSquadName(name);
+  /* Trailing blanks are not a name and not worth a byte. */
+  while (list.length && !list[list.length - 1]) list.pop();
+  c.squads = list;
+  return save(c);
+}
+
+/**
+ * What squad `i` is called — the name if it has one, the number if not.
+ *
+ * ONE READER FOR EVERY SURFACE. The tab prints it, the fight's notifications
+ * print it, and the order wheel prints it; a second copy of "name or number"
+ * would be a squad the menu calls Havoc and the HUD calls 2nd.
+ *
+ * @param word  the army's own word for a squad — `ARMIES[id].squadWord`,
+ *              passed in because this file does not know which army a company
+ *              belongs to any better than its caller does.
+ */
+export function squadLabel(company, i, word = 'Squad') {
+  const named = (company?.squads || [])[i | 0];
+  return named || `${word} ${(i | 0) + 1}`;
+}
+
+/** Every squad name on a roll, as a plain array — what the fight is handed. */
+export function squadNames(company) {
+  return (company?.squads || []).slice(0, SQUADS_MAX).map((n) => n || '');
 }
 
 /** What a man is called on a screen — the same rule `Trooper.name` uses. */

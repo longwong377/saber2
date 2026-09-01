@@ -241,6 +241,22 @@ export async function run({ check, assert }) {
     for (const [key, L] of Object.entries(LEVELS)) {
       grounds.add(L.terrain);
       if (L.training) continue;                       // the dojo conjures its own
+      /**
+       * AND A LEVEL NOTHING ARRIVES ON DOES NOT NEED A WAY TO ARRIVE.
+       *
+       * The flight deck is in `LEVELS` because `World.loadLevel` resolves
+       * grounds through it, and deliberately NOT in `LEVEL_ORDER` — it is not
+       * a theatre you can choose to fight on, it builds a `HangarDirector`
+       * with no wave and no spawn queue, and `tools/checks/hangar.mjs` holds
+       * it to exactly that. Demanding an enemy arrival for it is demanding a
+       * set piece for a room whose whole promise is that nothing happens in it
+       * unless you ask.
+       *
+       * `LEVEL_ORDER` is the roster of grounds a fight can pick, so it is the
+       * right question to ask here — and it is asked rather than a hand-kept
+       * exclusion list, which is the twin this repository keeps paying for.
+       */
+      if (!LEVEL_ORDER.includes(key)) continue;
       if (!ARRIVAL_BY_TERRAIN[L.terrain]) missing.push(`${key} (terrain '${L.terrain}')`);
     }
     assert(missing.length === 0,

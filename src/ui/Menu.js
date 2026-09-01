@@ -11,7 +11,8 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
-         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor } from '../game/Bodies.js';
+         HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor, wearableFor,
+         KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom } from '../game/Bodies.js';
 import { BipedAnimator, limbScale } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -37,7 +38,11 @@ import { READ_REACH, READ_SECONDS, SENSE_RATE } from '../game/FireMission.js';
 import {
   loadAll as companyLoadAll, load as companyLoad,
   fieldable as companyFieldable, dossier as companyDossier,
-  dress as companyDress, nameOf as companyNameOf, companyLines,
+  dress as companyDress, appoint as companyAppoint, assign as companyAssign,
+  SQUADS_MAX as companySquadsMax,
+  nameOf as companyNameOf, companyLines, notSaving as companyNotSaving,
+  nameSquad as companyNameSquad, squadLabel as companySquadLabel,
+  SQUAD_NAME_MAX as companySquadNameMax,
   CALLSIGN_MAX as companyCallsignMax,
   honoursOf as companyHonours, bondRows as companyBondRows,
 } from '../game/Company.js';
@@ -62,7 +67,7 @@ import { FOCUS } from '../game/Focus.js';
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
 import { fellLine } from '../game/Session.js';
-import { MODES, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
+import { MODES, playableModes, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
          CONDITIONS, CONDITION_KEYS, RULE_MAX, hazardPay, WaveDirector } from '../game/Waves.js';
 /**
@@ -184,8 +189,10 @@ import { ACTIONS, MOUSE, WHEEL, keyLabel, loadBindings, saveBindings, defaultBin
 import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
          MAX_STRENGTH, OPENING_STRENGTH, TEAM_DAMAGE_DEFAULT, DEFAULT_FORMATION,
          LADDER_RUNGS, CONTINGENT_MIXED, RANKS, rankFor, MARKS, markById, SQUAD,
+         DUTIES, dutiesAt, holds, leadOf, squadPlan,
          armyToLead, CommandDirector,
          musterPlan, versusCommandConfig, VERSUS_WINS, VERSUS_LIMITS } from '../game/Command.js';
+import { buildFigure } from '../game/Parade.js';
 /* THE MUSTER SLATE — the pre-rolled recruits the next run will field, and the
  * one resolver (`lineup`) of who deploys. The barracks renders it; main.js
  * fields it; the two agree because they are one call. See Muster.js. */
@@ -1855,10 +1862,24 @@ export const CODEX = [
    * two Force verbs authored with it appeared in no list a player could read —
    * not here, not in the teaching panel, nowhere but a wheel caption. */
   { keys: ['orderwheel'], hold: true,
-    text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders and `
-      + '<b>hold ground</b>, on one key. Hold it, aim at a slot, let go. The '
-      + `${ORDER_ACTIONS.length} keys below are the ${ORDER_ACTIONS.length} FORMATIONS without the `
-      + 'wheel, for anybody who would rather not; the two Force orders are the wheel only.' },
+    text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders, `
+      + '<b>hold ground</b>, <b>target</b> and <b>detach</b>, on one key. Hold it, aim at a '
+      + `slot, let go. The ${ORDER_ACTIONS.length} keys below are the ${ORDER_ACTIONS.length} `
+      + 'FORMATIONS without the wheel, for anybody who would rather not; the two Force '
+      + 'orders are the wheel only.' },
+  /* THE THREE SLOTS THAT ARE NOT FORMATIONS, NAMED. `Target` and `Detach` were
+   * on the wheel and in no list a player could read — and Target is the only
+   * way to order ONE squad rather than the whole line, which is the mode's own
+   * headline feature. A control that can only be found by holding a key and
+   * reading a caption is a control most players never find. */
+  { keys: ['squadtarget'],
+    text: () => '<b>Target a squad</b> — step through your squads; the next order is for '
+      + 'that one alone, and stepping past the last hands the line back whole. The squad '
+      + 'you land on is named out loud, and you name the squads themselves on the Company '
+      + 'tab. Also a slot on the wheel, and a chip on the order strip for a thumb.' },
+  { keys: ['orderwheel'], hold: true,
+    text: () => '<b>Detach</b> (on the wheel) — pull the nearest man out of his squad to '
+      + 'take his own orders, or send him back.' },
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
     text: () => `<b>${o.name}</b> — ${o.blurb}`,
@@ -3381,31 +3402,22 @@ export function paradeSlots(n) {
  * raycast hits. A chassis with no biped rig (a droideka a contingent run
  * banked) stands as built; nothing here may throw over an exotic veteran.
  */
+/**
+ * ONE MAN, BUILT — and the builder itself is `Parade.buildFigure` now.
+ *
+ * It moved because the flight deck needs the same figure and `Menu.js` imports
+ * `Levels.js` which imports `Hangar.js`: a game module reaching back into the
+ * UI for its bodies is a cycle. Everything it needed was already in `src/game`
+ * except the stance, and `Parade.js` IS the stance.
+ *
+ * This wrapper exists so the Company tab's framing is unchanged to the pixel:
+ * `standPreviewFigure` plants the feet by running sixty frames of the real
+ * `BipedAnimator` at zero velocity, and `framePreviewCamera` measures what it
+ * produced. Two callers, one builder, and the caller that cares about the
+ * stance passes its own.
+ */
 export function buildParadeFigure(man) {
-  const A = ARCHETYPES[man.type];
-  if (!A?.build) return null;
-  let built;
-  try {
-    built = A.build({ scale: A.scale ?? 1, ...(bodyOptsFor(man.type) || {}) });
-  } catch { return null; }
-  const rig = built.rig ?? null;
-  const root = rig?.root ?? built.group ?? null;
-  if (!root) return null;
-  if (rig) standPreviewFigure(rig);
-  /**
-   * The paint, through the game's own methods on a stub body — the pattern
-   * `company.mjs` uses to prove a mark is paint. `this` is unused in all
-   * four; the stub carries the three fields they read.
-   */
-  const stub = { rig, A: { scale: A.scale ?? 1 }, group: root };
-  const R = RANKS[rankFor(man.xp | 0)];
-  if (R?.color != null) CommandDirector.prototype.repaint.call(null, stub, R.color);
-  const mark = markById(man.look?.mark)?.color;
-  if (mark != null) CommandDirector.prototype.markUp.call(null, stub, mark);
-  const band = markById(man.look?.band)?.color;
-  if (band != null) CommandDirector.prototype.bandUp.call(null, stub, band);
-  if ((man.wounds | 0) > 0) CommandDirector.prototype.scorchUp.call(null, stub, man.wounds | 0);
-  return { root, rig, man, _stub: stub };
+  return buildFigure(man, { stand: standPreviewFigure });
 }
 
 /**
@@ -3421,6 +3433,16 @@ export function paradeContent(figures) {
  * The three shots the stage bar offers. `line` frames everybody; the other
  * two need a selected man and the bar disables them until there is one.
  */
+/**
+ * A kit value, as an attribute-safe tag and back. `null`, `true`, `false` and
+ * a handful of words are the whole vocabulary `KIT_FIELDS` can hold, so this
+ * is three letters and a prefix rather than a serialiser — and it never emits
+ * a quote, which is the only thing that mattered.
+ */
+export const kitTag = (v) => (v === null ? 'n' : v === true ? 't' : v === false ? 'f' : `s:${v}`);
+export const kitValue = (s) => (s === 'n' ? null : s === 't' ? true : s === 'f' ? false
+  : (typeof s === 'string' && s.startsWith('s:') ? s.slice(2) : null));
+
 export const PARADE_SHOTS = [
   { id: 'line', name: 'The line', zoom: 1, focus: 0 },
   /* Full figure, head to boots — 1.15 is "fills the frame with a margin",
@@ -4582,7 +4604,10 @@ export class Menu {
   _buildModes() {
     this.el.modes.innerHTML = '';
     this._modeCards = new Map();
-    for (const [key, M] of Object.entries(MODES)) {
+    /* THE ONES THAT ARE A CHOICE. `MODES` also holds destinations that are
+     * reached by a door rather than by picking them — see `playableModes`. */
+    for (const key of playableModes()) {
+      const M = MODES[key];
       const d = document.createElement('div');
       d.className = 'diff' + (this.s.mode === key ? ' sel' : '');
       /* THE BLURB IS A TOOLTIP NOW, not a paragraph under every row. Nine modes
@@ -5946,6 +5971,15 @@ export class Menu {
         <div id="company-stage"></div>
         <div id="company-shots" class="shots"></div>
         <p id="company-stage-caption" class="hint"></p>
+        <!-- THE DOOR TO THE DECK, and it belongs on this tab and not on Play.
+             This is already where a player comes to look at their men; the
+             parade stage above it is a portrait of one of them, and this is the
+             room they are all standing in. _buildButtons binds it to onHangar,
+             which is a SIBLING of onDeploy - see enterHangar in main.js for the
+             five things a deploy does that walking onto a deck must not.
+             No backticks in here: this block is inside a template literal. -->
+        <button id="btn-hangar" class="btn wide">Inspect your men</button>
+        <p class="hint">On the deck of the ship carrying them, with the war outside.</p>
       </div>
       <div class="col wide company-page" id="company-page"></div>`;
     const foot = wrap.querySelector('.menu-foot');
@@ -6112,7 +6146,8 @@ export class Menu {
         d.innerHTML = `<i class="dot"${dot}></i><div class="txt">`
           + `<b>${escKey(companyNameOf(m))}${flash}</b>`
           + `<span>${taking > 0 ? (going ? 'DEPLOYING · ' : 'RESERVE · ') : ''}`
-          + `${escKey(R.title)} · ${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
+          + `${escKey(R.title)}${m.post ? ' · HAS THE SQUAD' : ''} · `
+          + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · `
           + `${m.kills | 0} down</span>`
           + `<span class="man-chips">${chips}</span></div>`;
         /* Clicking the man who is already open puts the page down — the
@@ -6173,9 +6208,49 @@ export class Menu {
       host.appendChild(p);
     };
     if (!plan) {
-      hint(`${MODES[this.s.mode]?.name || this.s.mode} fields no army of yours — `
-        + 'pick an army mode or set Your line on the Deploy panel, and the next '
-        + 'muster forms here with names.');
+      /**
+       * ── THE DEAD END, MADE A DOOR ────────────────────────────────────────
+       *
+       * A fresh profile opens on a mode that fields no army, so the first
+       * thing this tab ever said was "go and change a setting on a different
+       * panel" — which is the "I open it and see nothing" this whole rebuild
+       * exists to answer, arriving by another road.
+       *
+       * The line is a SETTING, and a setting can be written from here. So the
+       * sentence keeps its honesty — this mode fields nobody, and the page
+       * will not pretend otherwise — and gains the one control that changes
+       * that. One click and the muster below fills with named men.
+       */
+      const M2 = MODES[this.s.mode];
+      const army = ARMIES[armyToLead(this.s.order, {})?.id] || ARMIES[ARMY_IDS[0]];
+      /**
+       * …AND A MODE THAT CANNOT FIELD ONE IS NOT OFFERED THE DOOR.
+       *
+       * Training runs on a `DojoDirector`, which has no roster: raising a line
+       * there would mint ten named men, save them, show them on this page and
+       * never deploy one — a control that lies in the most expensive way this
+       * tab can. The sentence stays honest and stops there. Read off the
+       * mode's own declaration; see `dojo` in Waves.js.
+       */
+      if (M2?.dojo) {
+        hint(`${M2?.name || this.s.mode} is run by the dojo and fields no line at all. `
+          + 'Nothing you name here would land in it — pick a mode with an army and '
+          + 'the muster fills.');
+        return;
+      }
+      hint(`${M2?.name || this.s.mode} fields no army of yours. Raise a line and it `
+        + 'musters here — named, painted and yours, before you land.');
+      const raise = document.createElement('p');
+      raise.className = 'hint company-restore';
+      raise.textContent = `Take ${OPENING_STRENGTH} ${army?.unit || 'trooper'}s `
+        + `into ${M2?.name || this.s.mode}`;
+      this._activate(raise, () => {
+        audio.ui('click');
+        this._set('allies', OPENING_STRENGTH);
+        this._buildCompanyList();
+        this._showCompany(null);
+      }, raise.textContent);
+      host.appendChild(raise);
       return;
     }
     if (this._netMode === 'client') {
@@ -6193,11 +6268,6 @@ export class Menu {
         + 'between commanders.');
       return;
     }
-    if (!plan.armyMode) {
-      hint('A contingent is composed at the muster from the purse you set — '
-        + 'veterans first, the balance by rung.');
-      return;
-    }
     const army = ARMIES[plan.army];
     const c = companyLoad(plan.army);
     const slate = Muster.ensure(plan, c);
@@ -6210,8 +6280,9 @@ export class Menu {
     const head = document.createElement('p');
     head.className = 'hint company-cut';
     head.textContent = `${recruits.length} recruit${recruits.length === 1 ? '' : 's'} drop with `
-      + `you next run. Open one — a callsign and a paint job are his to keep, `
-      + `and if he lives he joins the roll.`;
+      + `you next run${plan.armyMode ? '' : ' — what the purse buys, composed'}. `
+      + 'Open one: a callsign, a paint job and a kit are his to keep, and if he '
+      + 'lives he joins the roll.';
     host.appendChild(head);
     const list = document.createElement('div');
     list.className = 'difflist';
@@ -6294,10 +6365,45 @@ export class Menu {
       this._wireCompanyBack();
       return;
     }
-    if (!man) { host.innerHTML = this._companyIndexHtml(rolls); return; }
+    if (!man) {
+      host.innerHTML = this._companyIndexHtml(rolls);
+      this._wireSquadNames();
+      return;
+    }
     host.innerHTML = this._companyManHtml(roll, man);
     this._wireCompanyEdits(roll, man);
     this._wireCompanyBack();
+  }
+
+  /**
+   * THE SQUAD NAMES ON THE ORDER OF BATTLE, wired to the one door that writes
+   * one. Enter is the obvious key in a one-field row and there is no form here
+   * to submit — the menu is one page and a real `<form>` would navigate — so
+   * it is bound alongside the button, exactly as the callsign field is.
+   *
+   * The army is the plan's, because the order of battle is about the line the
+   * NEXT RUN fields and that is the only army it shows.
+   */
+  _wireSquadNames() {
+    const plan = musterPlan(this.s, LEVELS[this.s.level]?.armies);
+    if (!plan) return;
+    const write = (i, value) => {
+      audio.ui('click');
+      companyNameSquad(plan.army, i, value);
+      this._buildCompanyList();
+      this._showCompany(null);
+    };
+    for (const btn of document.querySelectorAll('[data-squad-name-save]')) {
+      const i = btn.dataset.squadNameSave | 0;
+      const field = document.querySelector(`[data-squad-name="${i}"]`);
+      if (!field) continue;
+      this._activate(btn, () => write(i, field.value), `Name squad ${i + 1}`);
+      field.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
+        write(i, field.value);
+      });
+    }
   }
 
   /** The keyboard-visible way off any page: one link, back to the index. */
@@ -6321,6 +6427,29 @@ export class Menu {
      * when there is nothing to say — a fresh install and the morning after a
      * wipe both get silence, not an empty block.
      */
+    /**
+     * ── THE STORE IS REFUSING, AND THE PAGE SAYS SO ───────────────────────
+     *
+     * `Store.js` remembers a refused write for the life of the page so a
+     * player keeps seeing the roll they edited. What it cannot do is survive
+     * the tab being closed — and a player naming and painting ten men into a
+     * store that is full deserves to know before they spend the evening on it,
+     * not after. Both stores are asked, because the slate and the roll fail
+     * independently and either going quiet is worth the same sentence.
+     *
+     * This is what `notSaving` was exported for. It had no readers in `src/`
+     * at all until now, which made the whole remembered-write mechanism a
+     * thing the player could not be told about — the silent failure the store
+     * was rewritten to end, one layer further out.
+     */
+    const stuck = [companyNotSaving() && 'the roll', Muster.notSaving() && 'the muster']
+      .filter(Boolean);
+    const notSaved = stuck.length
+      ? `<p class="hint company-cut"><b>NOT SAVING.</b> This browser has refused to write
+          ${escKey(stuck.join(' and '))} — its storage is full, or this page is private.
+          Everything here is still true for as long as the tab is open, and none of it
+          will survive closing it.</p>`
+      : '';
     const honours = rolls.flatMap((c) =>
       companyHonours(c).map((line) => ({ army: ARMIES[c.army], line })));
     const orders = honours.length
@@ -6354,6 +6483,7 @@ export class Menu {
           they come back changed.</p>`).join('')}`
       : '';
     return `<h3>The company</h3>
+      ${notSaved}
       <p class="hint">These are the men who got out. Everyone who walks up the ramp
         before it closes is here next run, with the rank he earned, the name he was
         given and everything he has done. Everyone who does not is not.</p>
@@ -6421,7 +6551,7 @@ export class Menu {
     const onRoll = new Set(c.men.map((m) => m.designation));
     const vets = line.filter((m) => onRoll.has(m.designation));
     const fresh = line.length - vets.length;
-    const rows = line.map((m) => {
+    const manRow = (m) => {
       if (!onRoll.has(m.designation)) {
         const called = m.look?.callsign ? `${m.designation} "${m.look.callsign}"` : m.designation;
         return `<div><b>${escKey(called)}</b><span>Fresh · `
@@ -6430,6 +6560,73 @@ export class Menu {
       const R = RANKS[rankFor(m.xp | 0)];
       return `<div><b>${escKey(companyNameOf(m))}</b><span>${escKey(R.title)} · `
         + `${m.runs | 0} run${(m.runs | 0) === 1 ? '' : 's'} · ${m.kills | 0} down</span></div>`;
+    };
+    const rows = line.map(manRow).join('');
+    /**
+     * ══ THE ORDER OF BATTLE ═══════════════════════════════════════════════
+     *
+     * A flat list of ten names is a list; a company is squads, and each squad
+     * has somebody in charge of it. That was true in the fight from the day
+     * `leaderOf` existed and it had never once been shown, so a player who
+     * named a man to a seat — the whole point of the post — could not see
+     * their own company's shape anywhere.
+     *
+     * BOTH DERIVATIONS ARE THE FIGHT'S OWN. `squadPlan` is the deal
+     * `CommandRoster.assignSquads` performs, lifted so a screen can ask it
+     * without writing anything, and `leadOf` is `leaderOf` — including the
+     * post's preference in front of it. Nothing here re-states either rule,
+     * which is what makes this page and the ground agree about who is in
+     * charge of what.
+     *
+     * The undealt men are shown as the squad they will BE dealt into, not as
+     * "unassigned": a fresh company has nobody assigned by hand and the field
+     * is about to put it into two tidy squads, and a page that said "ten
+     * unassigned" about that would be describing its own store rather than
+     * the next run.
+     */
+    const squadWord = army?.squadWord || 'Squad';
+    const dealt = new Map();
+    for (const [m, n] of squadPlan(line, SQUAD)) {
+      if (!dealt.has(n)) dealt.set(n, []);
+      dealt.get(n).push(m);
+    }
+    const orbat = [...dealt.keys()].sort((a, b) => a - b).map((n) => {
+      const men = dealt.get(n);
+      const lead = leadOf(men);
+      const seat = lead && lead.post;
+      const R = lead ? RANKS[rankFor(lead.xp | 0)] : null;
+      /* NAMED ONLY WHEN THE ANSWER IS SOMEBODY. A squad of ten fresh recruits
+       * has a leader by the rule — the first of them — and saying "led by
+       * CT-4471" about a man who is a trooper like the other nine tells the
+       * player something that is technically true and reads as noise. What is
+       * worth printing is a RANK, or a seat the player gave. */
+      const worth = lead && ((R && R.color != null) || seat);
+      /**
+       * …AND THE PLAYER MAY NAME IT.
+       *
+       * "I should be able to name my squads before starting a game (this is
+       *  all for any mode with troops)."
+       *
+       * A name is the one fact about a squad that cannot be derived — its men,
+       * its leader and its ground all are — and it is what turns "2nd Squad"
+       * into a thing you recognise when the fight says it has the ground. One
+       * reader, `Company.squadLabel`, so the tab, the order wheel and every
+       * notification in the fight say the same word.
+       */
+      const label = companySquadLabel(c, n, squadWord);
+      return `<div class="orbat-squad">
+        <h5><span class="orbat-name">${escKey(label)}</span><em>${men.length} `
+        + `${men.length === 1 ? 'man' : 'men'}${worth
+          ? ` · ${seat ? 'has the seat: ' : ''}${escKey(R.short)} ${escKey(companyNameOf(lead))}`
+          : ' · nobody in it outranks anybody'}</em></h5>
+        <div class="company-squadname">
+          <input class="squad-name" data-squad-name="${n}" type="text"
+            maxlength="${companySquadNameMax}" value="${escKey((c.squads || [])[n] || '')}"
+            placeholder="${escKey(`${squadWord} ${n + 1}`)}">
+          <button class="secondary squad-name-save" data-squad-name-save="${n}">Name</button>
+        </div>
+        <div class="company-fallen company-taking">${men.map(manRow).join('')}</div>
+      </div>`;
     }).join('');
     /**
      * A MEETING'S NUMBERS ARE THE MEETING'S. A versus side opens at the
@@ -6452,8 +6649,10 @@ export class Menu {
     return `<h3>Taking in — ${escKey(M?.name || this.s.mode)}</h3>
       <p class="hint">${escKey(army?.name || plan.army)} fields <b>${line.length}</b>
         ${escKey(unit)}s next run: <b>${vets.length}</b> of the company,
-        <b>${fresh}</b> fresh.</p>
-      <div class="company-fallen company-taking">${rows}</div>`;
+        <b>${fresh}</b> fresh — in <b>${dealt.size}</b>
+        ${escKey(dealt.size === 1 ? squadWord.toLowerCase() : `${squadWord.toLowerCase()}s`)},
+        each with somebody in charge of it.</p>
+      <div class="orbat">${orbat}</div>`;
   }
 
   /** The men who did not come back, most recent first. */
@@ -6472,16 +6671,31 @@ export class Menu {
       <p id="company-back" class="hint company-back">‹ Back to the company</p>
       <p class="hint">${roll.lost | 0} ${escKey(army?.unit || 'trooper')}s have not come home.
         The ${roll.fallen.length} most recent are named here; the rest are on no list
-        anywhere, which is what permanent means.</p>
+        anywhere, which is what permanent means.${(() => {
+          const n = roll.fallen.filter((f) => f.fate === 'left').length;
+          return n ? ` ${n} of them ${n === 1 ? 'was' : 'were'} still standing when the ship `
+            + 'left — that is a decision you made about how long to hold, not a battle.' : '';
+        })()}</p>
       <div class="company-fallen">
         ${roll.fallen.map((f) => {
           const R = RANKS[Math.max(0, Math.min(RANKS.length - 1, f.rank | 0))];
           const name = f.callsign || f.nickname;
           const called = name ? `${f.designation} "${name}"` : f.designation;
-          const fell = f.killer
-            ? `<span class="fell">Fell${f.where ? ` on ${escKey(f.where)}` : ''} to ${escKey(f.killer)}`
-              + `${Number.isFinite(f.at) ? `, minute ${f.at}` : ''}.</span>`
-            : '';
+          /**
+           * LEFT IS NOT DEAD, and this page was saying one sentence over two
+           * very different facts — see `Company.FATES`. Nothing was standing
+           * over the man who did not reach the ramp; what happened to him is
+           * that the door closed, and the memorial owes him that word rather
+           * than a blank where a killer's name should be.
+           */
+          const left = f.fate === 'left';
+          const fell = left
+            ? `<span class="fell left">Left${f.where ? ` on ${escKey(f.where)}` : ''} `
+              + '— still standing when the ramp closed.</span>'
+            : (f.killer
+              ? `<span class="fell">Fell${f.where ? ` on ${escKey(f.where)}` : ''} to ${escKey(f.killer)}`
+                + `${Number.isFinite(f.at) ? `, minute ${f.at}` : ''}.</span>`
+              : '');
           return `<div><b>${escKey(called)}</b><span>${escKey(R.title)} · ${f.kills | 0} down · `
             + `${f.runs | 0} run${(f.runs | 0) === 1 ? '' : 's'}`
             + `${f.where ? ` · ${escKey(f.where)}` : ''}</span>${fell}</div>`;
@@ -6614,6 +6828,20 @@ export class Menu {
         : '<p class="hint">Nothing yet. A run where he took no wounds and killed nobody '
           + 'writes no line — eight entries of the same ground is not a history.</p>'}
       ${pickBtn}
+      <h4 class="codex-head">${escKey(ARMIES[roll.army]?.squadWord || 'Squad')}</h4>
+      <p class="hint">Which ${(ARMIES[roll.army]?.squadWord || 'squad').toLowerCase()} he falls in
+        with. A recruit could be dealt one from the day the slate existed and a man who had
+        come home could not, so a company that survived was stuck in whatever squads the
+        muster happened to deal it. Moving him gives up his post — a seat belongs to a
+        squad, and two men holding one is nobody holding it.</p>
+      <div class="swatches company-squads">
+        ${Array.from({ length: companySquadsMax }, (_, i) =>
+          `<i class="swatch squad-chip${m.squad === i ? ' sel' : ''}" data-squad="${i}"
+             title="${escKey(ARMIES[roll.army]?.squadWord || 'Squad')} ${i + 1}">${i + 1}</i>`).join('')}
+        <i class="swatch squad-chip${m.squad == null ? ' sel' : ''}" data-squad=""
+           title="Wherever the muster deals him" style="border-style:dashed">—</i>
+      </div>
+      ${this._licenceHtml(roll, m)}
       <h4 class="codex-head">Callsign</h4>
       <p class="hint">What you call him. Up to ${companyCallsignMax} characters; clear it and
         he answers to ${m.nickname ? `the name he earned, "${escKey(m.nickname)}"` : 'his number'}
@@ -6642,7 +6870,228 @@ export class Menu {
             data-band="${escKey(k.id)}" title="${escKey(k.name)}"
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
-      </div>`;
+      </div>
+      ${this._dressingHtml(m.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', m.squad, m.type)}`;
+  }
+
+  /**
+   * ══ WHAT HIS RANK LETS HIM DO, AND THE SEAT YOU MAY GIVE HIM ═══════════
+   *
+   * The other half of compressing the ladder. `RANKS` used to buy 78% more
+   * health from bottom to top and this page printed that number, so "what is a
+   * Captain" had exactly one answer and it was a health bar. The numbers are
+   * small now and what a rung actually buys is a LICENCE — a thing this man
+   * may do that the man below him may not — so this is the panel that says so,
+   * in the same words the fight uses when it takes one away.
+   *
+   * EVERY RUNG IS SHOWN, not only the ones he has. A ladder you can only see
+   * the bottom of is a ladder with nothing to climb towards, and the two lines
+   * under his own are the reason to keep this particular man alive rather than
+   * the next one. Read off `RANKS` and `dutiesAt` — there is no second list of
+   * what a rung is worth in this file.
+   *
+   * AND THE POST, which is the one thing on this page that is a DECISION
+   * rather than a fact. See `Trooper.post`.
+   */
+  _licenceHtml(roll, m) {
+    const rank = rankFor(m.xp | 0);
+    const mine = dutiesAt(rank);
+
+    /**
+     * THE SEAT — and below the rung there is no button, only the reason.
+     *
+     * It used to render the button `disabled` with a click handler that played
+     * a deny sound, on the argument that a control which is simply absent
+     * teaches nothing. The handler could not fire: a disabled button dispatches
+     * no click and takes no focus, and `_activate` refuses one outright. So the
+     * visible reason is the SENTENCE, which names the rung and the experience
+     * he is short — that is the half a player can act on, and it is what
+     * `SCOPE.md`'s "every refusal needs a visible reason" was asking for.
+     */
+    const canLead = holds(rank, 'LEADS');
+    const need = RANKS[DUTIES.indexOf('LEADS')];
+    const seated = !!m.post;
+    const held = roll.men.find((x) => x !== m && x.post && x.squad === m.squad
+      && Number.isInteger(m.squad));
+    /**
+     * NOT RENDERED AT ALL BELOW THE RUNG, and the reason is rendered instead.
+     *
+     * It used to render `disabled` with a click handler that played a deny
+     * sound — and a disabled button dispatches no click and takes no focus, so
+     * that branch could never run. A dead refusal path is the same defect as a
+     * dead control wearing the opposite costume. The sentence under it already
+     * names the rung and the experience he is short, which is the part a
+     * player can act on.
+     */
+    const post = `<div class="company-post">
+      ${canLead ? `<button class="secondary" id="company-post" data-on="${seated ? '' : '1'}">
+        ${seated ? 'Take back the post' : 'Give him the squad'}</button>` : ''}
+      <p class="hint">${canLead
+        ? (seated
+          ? 'He has the seat. His squad is his to hold, and if he falls it goes '
+            + 'back to whoever the roll says — with a line in the fight about it.'
+          : (held
+            ? `${escKey(companyNameOf(held))} has it now. Giving it to him takes it off `
+              + 'that man.'
+            : 'Name him and his squad is his — he leads it whatever the roll would '
+              + 'have said, and his death costs you the decision.'))
+        : `A ${escKey(RANKS[rank].title.toLowerCase())} does not hold a squad's post. `
+          + `${escKey(need.title)} is the rung that does — ${need.xp} experience, `
+          + `and he has ${m.xp | 0}.`}</p></div>`;
+
+    return `${this._ladderHtml(rank)}
+      <p class="hint">${escKey(RANKS[rank].title)} holds ${mine.length} of ${RANKS.length}.</p>
+      <h4 class="codex-head">The post</h4>
+      ${post}`;
+  }
+
+  /**
+   * THE DRESSING ROOM — every knob the body builders take, as rows of chips.
+   *
+   * One renderer for a veteran and a recruit alike, because the two differ in
+   * which door the write goes through and in nothing else a player can see.
+   * The vocabulary is `KIT_FIELDS` and `PAINT_SLOTS`, read off Bodies.js so
+   * this file holds no second list of what a pauldron may be — the day a
+   * builder learns a new option, the screen offers it.
+   *
+   * The chips carry the VALUE rather than an index, so a row can be re-ordered
+   * or a value retired without silently re-pointing somebody's saved kit at
+   * the wrong thing — and it is carried in a QUOTE-FREE encoding (`n`, `t`,
+   * `f`, `s:<word>`) rather than as JSON, because JSON's own quotes inside a
+   * double-quoted HTML attribute close the attribute. Every legal value in
+   * `KIT_FIELDS` is a scalar, so three letters cover the whole vocabulary.
+   */
+  _dressingHtml(look, kind, army = null, squadWord = 'Squad', squad = null, type = null) {
+    /**
+     * ONLY WHAT THIS CHASSIS ACTUALLY WEARS — see `WEARS` in Bodies.js.
+     *
+     * `KIT_FIELDS` is keyed by chassis KIND, which is the right key for what
+     * the store may hold and the wrong one for what a page may offer: the
+     * options are read by individual builders and the builders do not agree.
+     * Measured, this page was offering a surviving AT-TE nine rows of kit and
+     * three of paint that `Vehicles.js` does not read, and every B2 a unit
+     * flash and a photoreceptor that `buildB2` does not read.
+     */
+    const can = wearableFor(type, kind);
+    const legal = {};
+    for (const f of can.kit) legal[f] = KIT_FIELDS[kind][f];
+    const kit = look?.kit || {};
+    const paint = look?.paint || {};
+    const swatch = (p, on, field) => `<i class="swatch${on ? ' sel' : ''}"
+        data-paint="${escKey(field)}" data-hue="${escKey(p ? p.id : '')}"
+        title="${escKey(p ? p.name : 'As issued')}"
+        style="background:${p ? `#${p.color.toString(16).padStart(6, '0')}` : 'transparent'};
+               ${p ? '' : 'border-style:dashed'}"></i>`;
+    const paintRows = (PAINT_SLOTS[kind] || []).filter(([f]) => can.paint.includes(f))
+      .map(([field, name]) => `
+      <div class="kit-row"><span class="kit-name">${escKey(name)}</span>
+        <span class="swatches company-paints">
+          ${swatch(null, !paint[field], field)}
+          ${PAINTS.map((p) => swatch(p, paint[field] === p.id, field)).join('')}
+        </span></div>`).join('');
+    const kitRows = Object.keys(legal).map((field) => {
+      const row = legal[field];
+      const now = field in kit ? kit[field] : undefined;
+      return `<div class="kit-row"><span class="kit-name">${escKey(row.name)}</span>
+        <span class="kit-chips">
+          ${row.values.map(([v, label]) => {
+            const on = now === undefined ? false : now === v;
+            return `<i class="kit-chip${on ? ' sel' : ''}" data-kit="${escKey(field)}"
+              data-val="${escKey(kitTag(v))}">${escKey(label)}</i>`;
+          }).join('')}
+          <i class="kit-chip${now === undefined ? ' sel' : ''}" data-kit="${escKey(field)}"
+             data-val="" title="Whatever his rung is issued">As issued</i>
+        </span></div>`;
+    }).join('');
+    /**
+     * A CHASSIS THAT WEARS NOTHING SAYS SO, AND ONE THAT WEARS HALF DRAWS HALF.
+     *
+     * The first version guarded the whole room on `!kit.length && !paint.length`
+     * and that is the wrong conjunction: a B2, a droideka and a Magna read a
+     * shell colour and NO kit at all, so those three pages printed a "Kit"
+     * heading, the paragraph about what he carries, and an empty box under it —
+     * a promise followed by nothing, which is the dead control this table
+     * exists to remove, relocated. Each section carries its own guard.
+     */
+    if (!can.kit.length && !can.paint.length) {
+      return `<h4 class="codex-head">Kit and paint</h4>
+        <p class="hint">Nothing on this chassis is yours to change — it is built to one
+          pattern and carries no fittings. His callsign, his mark and his band are
+          still his.</p>`;
+    }
+    return `
+      ${can.paint.length ? `<h4 class="codex-head">Paint</h4>
+      <p class="hint">His armour, under the rank's own colours. The crest and the
+        shoulder bells stay the game's — that is the one thing a line is read by at
+        ninety metres, and it goes on top of whatever you choose here.</p>
+      <div class="kit-list">${paintRows}</div>` : ''}
+      ${can.kit.length ? `<h4 class="codex-head">Kit</h4>
+      <p class="hint">What he carries. Every one of these is hardware the body was
+        always able to wear; none of them moves a number, and he takes it onto the
+        ground with him.</p>
+      <div class="kit-list">${kitRows}</div>` : ''}
+      ${army ? `
+      <h4 class="codex-head">Issue the pattern</h4>
+      <p class="hint">Twelve rows of kit and three of paint, across ten men, is a few
+        hundred clicks to make a company look like one company — so what he is wearing
+        can be issued to the rest. His callsign, his shin mark and his forearm band do
+        not travel: those are the whole of how you pick one man out of a line, and a
+        pattern that copied them would delete it. A droid gets whatever part of a
+        clone's pattern a droid can wear.</p>
+      <div class="issue-row">
+        ${/* ONLY WHEN HE IS IN ONE. Every man on a fresh slate is dealt no
+            squad at all, so "his squad" and "the whole company" would be the
+            same set and the page would be offering one button twice — which
+            is the dead control this tab keeps being rebuilt to stop being. */
+          Number.isInteger(squad)
+            ? `<button class="secondary" id="company-issue-squad">Issue to `
+              + `${escKey(squadWord.toLowerCase())} ${squad + 1}</button>` : ''}
+        <button class="secondary" id="company-issue-line">Issue to the whole company</button>
+      </div>` : ''}`;
+  }
+
+  /**
+   * …and the wiring for it. `write` is the door — `Company.dress` for a man on
+   * the roll, `Muster.dressRecruit` for one who is not — and both take a WHOLE
+   * kit or a whole paint set, so clearing a slot is the same call as choosing
+   * one and the store can never hold a half-written set.
+   */
+  _wireDressing(look, kind, write, issue = null) {
+    /**
+     * THE PATTERN, ISSUED. `issue` is `(scope) => …` and is null on a page
+     * that has nobody to issue to. `Muster.issue` is the one door and it
+     * writes BOTH stores — the roll and the slate — because on a fresh
+     * profile every man the player has is a recruit, and a control that
+     * stopped at the roll would do nothing at all for exactly the person it
+     * was written for.
+     */
+    if (issue) {
+      const b1 = document.getElementById('company-issue-squad');
+      const b2 = document.getElementById('company-issue-line');
+      if (b1) this._activate(b1, () => { audio.ui('click'); issue('squad'); }, b1.textContent.trim());
+      if (b2) this._activate(b2, () => { audio.ui('click'); issue('line'); }, b2.textContent.trim());
+    }
+    const kit = { ...(look?.kit || {}) };
+    const paint = { ...(look?.paint || {}) };
+    for (const el of document.querySelectorAll('.company-paints .swatch')) {
+      this._activate(el, () => {
+        audio.ui('click');
+        const field = el.dataset.paint;
+        const hue = el.dataset.hue;
+        if (hue) paint[field] = hue; else delete paint[field];
+        write({ paint });
+      }, `${el.dataset.paint} — ${paintById(el.dataset.hue)?.name || 'as issued'}`);
+    }
+    for (const el of document.querySelectorAll('.kit-chips .kit-chip')) {
+      this._activate(el, () => {
+        audio.ui('click');
+        const field = el.dataset.kit;
+        const raw = el.dataset.val;
+        if (raw === '') delete kit[field];
+        else kit[field] = kitValue(raw);
+        write({ kit });
+      }, `${el.dataset.kit}`);
+    }
   }
 
   /**
@@ -6659,7 +7108,10 @@ export class Menu {
     const band = markById(r.look?.band);
     const called = r.look?.callsign ? `${r.designation} "${r.look.callsign}"` : r.designation;
     const label = ARCHETYPES[r.type]?.label ?? r.type;
-    const squads = Math.max(1, Math.ceil(OPENING_STRENGTH / SQUAD));
+    /* THE SAME SQUADS A VETERAN'S PAGE OFFERS — one derivation, in
+     * `Company.SQUADS_MAX`, or the two pages deal one company into two
+     * different sets of squads. */
+    const squads = companySquadsMax;
     return `
       <h3 class="databank-name">${escKey(called)}</h3>
       <p class="databank-army-line">${escKey(army?.name || roll.army)} — recruit</p>
@@ -6711,6 +7163,7 @@ export class Menu {
             style="background:${k.color == null ? 'transparent' : `#${k.color.toString(16).padStart(6, '0')}`};
                    ${k.color == null ? 'border-style:dashed' : ''}"></i>`).join('')}
       </div>
+      ${this._dressingHtml(r.look, kindOfArmy(roll.army), roll.army, ARMIES[roll.army]?.squadWord || 'Squad', r.squad, r.type)}
       <h4 class="codex-head">${escKey(army?.squadWord || 'Squad')}</h4>
       <p class="hint">Which ${(army?.squadWord || 'squad').toLowerCase()} he falls in with —
         the whole of what it changes is who stands beside him.</p>
@@ -6720,7 +7173,36 @@ export class Menu {
              title="${escKey(army?.squadWord || 'Squad')} ${i + 1}">${i + 1}</i>`).join('')}
         <i class="swatch squad-chip${r.squad == null ? ' sel' : ''}" data-squad=""
            title="Wherever the muster deals him" style="border-style:dashed">—</i>
-      </div>`;
+      </div>
+      ${this._ladderHtml(0)}`;
+  }
+
+  /**
+   * ══ THE LADDER, AS A REASON TO KEEP THIS PARTICULAR MAN ALIVE ══════════
+   *
+   * A fresh profile has no veterans, so on the first night every page the
+   * player can open is a RECRUIT's page — and the licence panel lived only on
+   * a veteran's. Measured across all eleven modes on a cleared store: ten
+   * named men, thirty-three kit chips, forty-eight paint swatches and ZERO
+   * rows of ladder, in every single one. The one thing on this tab that says
+   * why a man is worth bringing home was invisible to exactly the player who
+   * has not brought one home yet.
+   *
+   * So the ladder is its own renderer and both pages call it. `at` is the rung
+   * the reader is standing on — 0 for a recruit, who is standing at the
+   * bottom of it looking up, which is the whole point of showing him all five.
+   */
+  _ladderHtml(at) {
+    const rank = Math.max(0, Math.min(RANKS.length - 1, at | 0));
+    const rungs = RANKS.map((R, i) => `<div class="duty-row${i <= rank ? ' has' : ''}`
+      + `${i === rank ? ' at' : ''}"><b>${escKey(R.duty)}</b>`
+      + `<span><i>${escKey(R.title)}</i> — ${escKey(R.licence)}</span></div>`).join('');
+    return `<h4 class="codex-head">Licence</h4>
+      <p class="hint">What a rank is for. The numbers a rung buys are small on purpose —
+        a company that comes home is meant to be a more capable army, not a bigger or a
+        tougher one. What it actually buys is permission, and every one of these is
+        something the company loses on the day the man holding it does.</p>
+      <div class="duty-list">${rungs}</div>`;
   }
 
   /**
@@ -6759,6 +7241,38 @@ export class Menu {
       this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
         markById(sw.dataset.band).name);
     }
+    this._wireDressing(m.look, kindOfArmy(roll.army), write, (scope) => {
+      Muster.issue(roll.army, m.designation, scope);
+      /* THE PARADE GROUND IS THE RECEIPT. Rebuilding the list restages every
+       * figure on it, so the whole line visibly changes colour in front of
+       * the player — which is a better answer than a message saying it did. */
+      this._buildCompanyList();
+      this._showCompany(key);
+    });
+    /**
+     * THE SEAT. The licence is decided by `_licenceHtml`, on the screen that
+     * has both the rank table and his experience: below the rung there is no
+     * button at all and the sentence says which rung would do it. So this
+     * only ever runs for a man who may hold one, and it hands the answer to
+     * `Company.appoint` — see the long note there for why the store
+     * deliberately does not know what a rank is.
+     */
+    for (const sw of document.querySelectorAll('.company-squads .swatch')) {
+      this._activate(sw, () => {
+        audio.ui('click');
+        const v = sw.dataset.squad;
+        companyAssign(roll.army, m.designation, v === '' ? null : (v | 0));
+        this._buildCompanyList();
+        this._showCompany(key);
+      }, sw.title || 'Squad');
+    }
+    const seat = document.getElementById('company-post');
+    if (seat) this._activate(seat, () => {
+      audio.ui('click');
+      companyAppoint(roll.army, m.designation, !!seat.dataset.on, true);
+      this._buildCompanyList();
+      this._showCompany(key);
+    }, seat.textContent.trim());
     /**
      * FIELD/BENCH IS A SWAP, NEVER A RESIZE. The picks written are the whole
      * line, spelled out: the current lineup with one name exchanged, so the
@@ -6822,6 +7336,11 @@ export class Menu {
       this._activate(sw, () => { audio.ui('click'); write({ band: sw.dataset.band }); },
         markById(sw.dataset.band).name);
     }
+    this._wireDressing(r.look, kindOfArmy(armyId), write, (scope) => {
+      Muster.issue(armyId, r.designation, scope);
+      this._buildCompanyList();
+      this._showCompany(key);
+    });
     for (const sw of document.querySelectorAll('.company-squads .swatch')) {
       this._activate(sw, () => {
         audio.ui('click');
@@ -7016,8 +7535,14 @@ export class Menu {
     const p = this.barracks;
     if (!p) return;
     const { armyId, men, planned } = this._stageLineup();
+    /* THE SIGNATURE IS EVERYTHING THE FIGURE IS BUILT FROM — rank paint, both
+     * marks, the scars, and now the kit and the paint job, because those are
+     * GEOMETRY and materials and a stale signature would leave the player
+     * choosing a pauldron and watching nothing happen. The callsign is
+     * deliberately absent: a rename moves a caption, not a body. */
     const sig = armyId + '|' + men.map((m) =>
-      `${m.designation}:${m.xp | 0}:${m.wounds | 0}:${m.look?.mark ?? ''}:${m.look?.band ?? ''}`).join(',');
+      `${m.designation}:${m.xp | 0}:${m.wounds | 0}:${m.look?.mark ?? ''}:${m.look?.band ?? ''}`
+      + `:${JSON.stringify(m.look?.kit ?? null)}:${JSON.stringify(m.look?.paint ?? null)}`).join(',');
     if (!force && sig === p.sig) return;
     p.sig = sig;
     p.armyId = armyId;
@@ -8693,6 +9218,7 @@ export class Menu {
       if (el) el.addEventListener('click', () => { audio.ui('click'); fn(); });
     };
     bind('btn-deploy', () => this.hooks.onDeploy?.(this.s));
+    bind('btn-hangar', () => this.hooks.onHangar?.(this.s));
     bind('btn-resume', () => this.hooks.onResume?.());
     bind('btn-restart', () => this.hooks.onRestart?.());
     bind('btn-quit', () => this.hooks.onQuit?.());
@@ -9066,7 +9592,12 @@ export class Menu {
         const lost = (o.roster?.roll || []).filter(t => !t.alive).length;
         el.rollHead.textContent = lost ? `The roll — ${lost} lost` : 'The roll';
       }
-      if (el.list) el.list.innerHTML = rosterHtml(o.roster);
+      /* THE SAME WORDS THE FIGHT USED. This took the defaults, so the card
+       * that opens seconds after an engagement grouped the same men under
+       * "Squad 1 / Squad 2" where the in-fight column had said "Havoc" — and a
+       * Confederate company read "Squad" instead of its own "Unit". The offer
+       * carries both, off the director. */
+      if (el.list) el.list.innerHTML = rosterHtml(o.roster, o.squadNames, o.squadWord);
 
       if (el.units) {
         el.units.innerHTML = '';

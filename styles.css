@@ -1273,6 +1273,10 @@ button{font-family:inherit}
 .rp-cols b,.rp-cols em{color:var(--dimmer)}
 .rp-div{padding:7px 11px 2px;font:var(--mono);font-size:8.5px;font-weight:800;letter-spacing:.2em;
   text-transform:uppercase;color:var(--danger)}
+/* WHETHER THAT SQUAD CAN HEAR YOU — see `Command.ORDER_REACH`. Dimmer than the
+   heading it sits on and not styled as an alarm: a squad out of earshot is a
+   fact about where you are standing, not a casualty. */
+.rp-far{font-style:normal;color:var(--dim);letter-spacing:.12em}
 .rp-foot{display:flex;align-items:baseline;gap:11px;padding:6px 11px 7px;
   border-top:2px solid var(--stroke);background:var(--panel-2);
   font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
@@ -1760,6 +1764,24 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 #freecam-bar.fade{opacity:.12}
 #freecam-bar em{font-style:normal;color:var(--accent);letter-spacing:.14em}
 
+/* THE MAN ON THE DECK — see the note over #deck-tag in index.html for why this
+   is not inside #hud. Bottom centre and under the crosshair rather than in a
+   corner, because it is a caption on the thing in the middle of the frame; the
+   same plate, border and cut as the free camera's bar, because they are the
+   same kind of object — a line of state that is true while you are standing
+   somewhere, not an event that fades. `pointer-events:none` is load-bearing:
+   the deck is pointer-locked and anything clickable here would have to break
+   the lock, which routes to the pause card. */
+#deck-tag{position:fixed;left:50%;bottom:96px;transform:translateX(-50%);z-index:21;
+  display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 18px 9px;
+  clip-path:var(--cut-sm);border:2px solid var(--stroke);background:var(--panel);
+  pointer-events:none;font:var(--mono);font-size:10px;letter-spacing:.22em;
+  text-transform:uppercase;color:var(--dim);max-width:min(560px,86vw);text-align:center}
+#deck-tag.hidden{display:none}
+#deck-tag b{color:var(--ink);font-size:12px;letter-spacing:.16em}
+#deck-tag span{color:var(--accent);letter-spacing:.14em}
+#deck-tag span:empty{display:none}
+
 #dmg-vignette,#flow-vignette{position:absolute;inset:0;opacity:0;transition:opacity .35s;pointer-events:none}
 #dmg-vignette{background:radial-gradient(120% 100% at 50% 50%,transparent 42%,rgba(255,30,50,.55) 100%)}
 #flow-vignette{background:radial-gradient(120% 100% at 50% 50%,transparent 48%,rgba(72,216,255,.3) 100%);
@@ -2174,6 +2196,15 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    overridden here, and the thin one is asked for by name.
    ══════════════════════════════════════════════════════════════════════ */
 #meditation{ z-index:44; }
+/* THE PLATE AND THE WORDMARK ARE THE MENU'S, and they are on only when the
+   menu is what you came from. `.menu-bg` carries the image and the wash; this
+   only has to place it behind the lattice and take both away again when the
+   Holocron is opened mid-run, where the place behind it is the world. */
+.med-plate{z-index:0}
+.med-logo{position:relative;z-index:2;margin:0 auto 4px;flex:0 0 auto}
+.med-logo .wordmark{max-width:min(340px,52vw);height:auto}
+#meditation.over-world .med-plate,
+#meditation.over-world .med-logo{display:none}
 #meditation.over-world{
   /* Thin, and NO BLUR — a blur is the one operator that takes a place away,
      and the place is the point. Two flat washes on a diagonal instead, so
@@ -2182,7 +2213,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
     linear-gradient(200deg,rgba(160,125,255,.10) 0 30%,transparent 30.4%),
     linear-gradient(0deg,rgba(4,5,12,.80),rgba(4,5,12,.62));
 }
-.med-wrap{display:flex;flex-direction:column;width:min(1180px,96vw);height:min(880px,94vh);
+/* POSITIONED, so it sits over `.med-plate`. `.menu-bg` is absolute with a
+   z-index, which makes it a stacking context that paints above any static
+   sibling — without this the plate covers the lattice entirely. */
+.med-wrap{position:relative;z-index:2;
+  display:flex;flex-direction:column;width:min(1180px,96vw);height:min(880px,94vh);
   padding:18px 20px 14px;gap:10px;animation:riseIn .6s cubic-bezier(.22,1,.36,1) both}
 .med-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
   padding-bottom:10px;border-bottom:2px solid var(--panel-hi)}
@@ -2387,6 +2422,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .tplate .tp-rank{display:inline-block;padding:0 3px;margin-right:3px;
   color:var(--stroke);font-weight:800;clip-path:var(--cut-sm)}
 .tplate .tp-name{color:var(--ink);font-weight:700}
+/* Which squad he is in, quieter than his name and on the same line: the plate
+   already answers "who is that", and this is the other half of the question a
+   player asks when they are about to order one squad and not the other. */
+.tplate .tp-squad{color:var(--dim);font-weight:700;margin-left:5px;font-size:.86em}
+.tplate .tp-squad:empty{display:none}
 /* HEALTH AND NERVE ARE TWO BARS AND THEY ARE DIFFERENT WIDTHS ON PURPOSE. A
    man at half health and a man who is about to break are two different
    problems and the player has to be able to tell them apart at a glance
@@ -2464,7 +2504,16 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    shapes the box it lands in. The three columns wrap on a narrow window —
    roll, then ground, then page — because the packed single-file build is
    played at whatever size a browser window happens to be. */
-[data-panel="company"]{flex-wrap:wrap;overflow-y:auto}
+/* AND IT RESERVES ITS TRACK. Every scrolling rule in this file has to, and
+   this one did not: three columns of roll, parade and dossier is the tallest
+   thing in the menu, and an overlay scrollbar with a transparent track over a
+   dark panel is what makes a full page read as a cut one. See the note over
+   `.col.narrow.pinned>.col-scroll`, which is the same fix, and front-screen.mjs,
+   which is what noticed this rule had been written without it. */
+[data-panel="company"]{flex-wrap:wrap;overflow-y:auto;
+  scrollbar-gutter:stable;scrollbar-width:thin;scrollbar-color:var(--panel-hi) var(--void)}
+[data-panel="company"]::-webkit-scrollbar{width:8px;background:var(--void)}
+[data-panel="company"]::-webkit-scrollbar-thumb{background:var(--panel-hi);border:2px solid var(--stroke)}
 /* HARD-BOUNDED, both of them. In one headless profile the flex columns grew
    to their CONTENT height — 2231px against a 495px panel — and the stage
    sized its GL buffer 740x4454: the parade was being drawn into a buffer the
@@ -2938,3 +2987,84 @@ body:has(#touch.on) .powers .pw{touch-action:none}
   color:var(--ink);font:var(--mono);font-size:10px;line-height:1.45;
   user-select:text;-webkit-user-select:text}
 .portrow{display:flex;gap:8px;align-items:center;margin-top:8px;flex-wrap:wrap}
+
+/* ── the dressing room ───────────────────────────────────────────────────
+   Every knob the body builders take, as one row per surface: a name on the
+   left, the choices on the right. The rows are deliberately the same shape
+   whether they carry colour swatches or word chips, because a player moving
+   down them is doing one thing — dressing a man — and two layouts would read
+   as two features. */
+.kit-list{display:flex;flex-direction:column;gap:9px;margin:8px 0 4px}
+.kit-row{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap}
+.kit-name{flex:0 0 96px;font:var(--mono);font-size:10px;font-weight:800;
+  letter-spacing:.06em;text-transform:uppercase;color:var(--dim);padding-top:5px}
+.kit-chips{display:flex;flex-wrap:wrap;gap:6px;flex:1;min-width:0}
+.kit-chip{display:inline-block;padding:5px 9px 6px;border:2px solid var(--stroke);
+  background:var(--panel-2);color:var(--dim);font:var(--mono);font-size:10px;
+  font-weight:800;letter-spacing:.04em;font-style:normal;cursor:pointer;
+  transition:.12s;white-space:nowrap}
+.kit-chip:hover{background:var(--panel-hi);color:var(--ink);transform:translate(-1px,-1px)}
+.kit-chip.sel{background:var(--accent);color:var(--stroke);border-color:var(--stroke);
+  transform:translate(-2px,-2px);box-shadow:var(--stamp)}
+.kit-chip:focus-visible{outline:3px solid var(--accent-warm);outline-offset:3px}
+/* ── THE LICENCE ──────────────────────────────────────────────────────────
+   The rank ladder as five rows, every rung shown and the ones he holds lit.
+   A rung he has not reached is dimmed rather than hidden: the two lines under
+   his own are the reason to keep this particular man alive. */
+.duty-list{display:flex;flex-direction:column;gap:5px;margin:8px 0 14px}
+.duty-row{display:flex;align-items:baseline;gap:10px;padding:6px 10px 7px;
+  border:2px solid var(--stroke);background:var(--panel-2);opacity:.45;
+  clip-path:var(--cut-sm);transition:.12s}
+.duty-row.has{opacity:1;background:var(--panel)}
+.duty-row.at{border-color:var(--accent);box-shadow:var(--stamp)}
+.duty-row b{flex:0 0 62px;font:var(--mono);font-size:10px;font-weight:800;
+  letter-spacing:.08em;color:var(--dim)}
+.duty-row.has b{color:var(--accent)}
+.duty-row span{font-size:11.5px;line-height:1.5;color:var(--dim)}
+.duty-row i{font-style:normal;font-weight:800;color:var(--ink)}
+.company-post{margin-bottom:14px}
+.issue-row{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px}
+/* ── THE ORDER OF BATTLE ──────────────────────────────────────────────────
+   The line the next run fields, in the squads it will form, each under the
+   man who is in charge of it. A heading per squad rather than a divider: the
+   squad is the unit the player gives orders to, so it is the thing the eye
+   should land on first. */
+.orbat{display:flex;flex-direction:column;gap:12px}
+.orbat-squad h5{margin:0 0 5px;font:var(--mono);font-size:10.5px;font-weight:800;
+  letter-spacing:.09em;text-transform:uppercase;color:var(--accent);
+  display:flex;flex-wrap:wrap;gap:8px;align-items:baseline}
+.orbat-squad h5 em{font-style:normal;font-weight:700;letter-spacing:.04em;
+  text-transform:none;color:var(--dim);font-size:11px}
+.company-squadname{display:flex;gap:6px;margin:0 0 6px}
+.company-squadname input{flex:1;min-width:0}
+/* A man left behind is not a casualty and the line does not read like one:
+   the killer's red is for the ones something killed. */
+.fell.left{color:var(--dim)}
+.company-post button{margin-bottom:6px}
+.company-post button[disabled]{opacity:.4;cursor:not-allowed;transform:none}
+
+/* The paint rows reuse the swatch the marks already use, at a size that lets
+   fifteen of them sit on one row beside a label. */
+.company-paints{gap:6px}
+.company-paints .swatch{width:20px;height:20px}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   THE FLIGHT DECK'S HUD, WHICH IS ONE WHEEL AND NOTHING ELSE.
+
+   There is no wave on that deck, no enemy and no score, and a readout saying
+   zero of each is the surest way to make a place feel like a menu. But the
+   order wheel is a child of `#hud`, so `hud.show(false)` — which is what the
+   deck used to do — took the one piece of interface the room exists for down
+   with the rest of it, and the brief's "the muster call reuses the real order
+   wheel" could not be true while it did.
+
+   So the root stays up wearing `.deck` and everything in it is hidden by name
+   except the two wheels and the centre message. A rule beats a second HUD.
+   ══════════════════════════════════════════════════════════════════════ */
+#hud.deck > *{display:none !important}
+#hud.deck > #order-wheel,
+#hud.deck > #emote-wheel,
+#hud.deck > #hud-center-msg{display:block !important}
+#hud.deck > #order-wheel.hidden,
+#hud.deck > #emote-wheel.hidden{display:none !important}

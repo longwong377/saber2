@@ -3049,10 +3049,22 @@ export async function run({ check, assert }) {
      * spot and this check would pass on nothing. */
     for (const t of squads[0]) if (t.body) t.body.position.set(-60, 0, 0);
     for (const t of squads[1]) if (t.body) t.body.position.set(60, 0, 0);
-    w.player.position.set(0, 0, 0);
 
-    d.order('cover', c, 0);
-    d.order('cover', c, 1);
+    /* AND HE WALKS TO EACH ONE TO GIVE IT, because a post at 60 m is refused
+     * twice over. ORDER_REACH is 34 m off his body, so from the middle of the
+     * field neither squad hears him at all; and `cover` does not advance, so a
+     * per-squad order also has to satisfy `_supervised` — a man licensed to
+     * LEAD in the squad, of which a muster of ten rank-0 troopers has none, or
+     * the general inside RELAY_REACH, 20 m, of the squad's own centre. Standing
+     * on the ground he is naming answers both, and it is the sentence the order
+     * already meant: hold THIS. He walks back to the middle afterwards, so the
+     * last assertion still measures the plant against a general who is nowhere
+     * near it. */
+    w.player.position.set(-60, 0, 0);
+    assert(d.order('cover', c, 0) === true, '1st squad refused ground it was standing on');
+    w.player.position.set(60, 0, 0);
+    assert(d.order('cover', c, 1) === true, '2nd squad refused ground it was standing on');
+    w.player.position.set(0, 0, 0);
     const a = c.squadPlanted?.get('0'), b = c.squadPlanted?.get('1');
     assert(a && b, `only ${[a, b].filter(Boolean).length} of 2 squads were given ground`);
     const apart = Math.hypot(a.pos.x - b.pos.x, a.pos.z - b.pos.z);
@@ -3072,8 +3084,17 @@ export async function run({ check, assert }) {
     const c = d.commander;
     const squads = d.squadsOf(c);
     for (const t of squads[0]) if (t.body) t.body.position.set(-60, 0, 0);
+    /* THE ORDER IS GIVEN STANDING IN IT, which is what "and then he walks away"
+     * needs there to be in the first place. A post 60 m off is outside
+     * ORDER_REACH's 34 m and unsupervised besides — `_supervised` wants a LEADS
+     * licence in the squad or the general within 20 m of its centre — so given
+     * from the origin it is refused whole and NOTHING is written, and the
+     * sprint below would be measuring a squad that was never given anything.
+     * He says it at -60 and comes back to the origin, which is where the sprint
+     * starts. */
+    w.player.position.set(-60, 0, 0);
+    assert(d.order('cover', c, 0) === true, '1st squad never took the order to hold its ground');
     w.player.position.set(0, 0, 0);
-    d.order('cover', c, 0);
 
     const one = squads[0].find((t) => t.body)?.body;
     const other = squads[1].find((t) => t.body)?.body;
@@ -3122,7 +3143,17 @@ export async function run({ check, assert }) {
     for (const t of squads[0]) if (t.body) t.body.position.set(120, 0, 0);
     for (const t of squads[1]) if (t.body) t.body.position.set(-120, 0, 0);
     const beforeOrder = d.lineGathered(c);
-    d.order('cover', c, 0);
+    /* AND HE HAS TO BE AT THE GATE TO SEND THEM TO IT. 120 m is three and a
+     * half times ORDER_REACH, and a post wants `_supervised` on top of the
+     * distance, so an order shouted from the middle of the field is refused
+     * whole — `afterOrder` would then be a reading of an army that heard
+     * nothing at all. He gives it standing with them and walks straight back,
+     * so both readings of the quorum are taken from the same spot and the only
+     * thing that differs between them is the order. */
+    w.player.position.set(120, 0, 0);
+    assert(d.order('cover', c, 0) === true,
+      '1st squad refused the order to hold the gate it is standing on');
+    w.player.position.set(0, 0, 0);
     const afterOrder = d.lineGathered(c);
     assert(!beforeOrder,
       'most of the army 120 m away with NO order read as gathered — the quorum is not measuring '
@@ -3159,7 +3190,18 @@ export async function run({ check, assert }) {
      */
     const R = new Cmd.CommandRoster(Cmd.ARMIES[Cmd.ARMY_IDS[0]]);
     for (let i = 0; i < 12; i++) R.enlist('trooper');
-    const shape = () => R.squads().map((s) => s.length).join('+');
+    /**
+     * THE SIZES OF THE SQUADS THAT HAVE MEN IN THEM.
+     *
+     * `squads()` is indexed by the squad NUMBER and padded to `SQUAD_SLOTS`, so
+     * a wiped squad is an empty entry and a detached man's index can never be
+     * a squad's — see the note there and `squads.mjs`. Its raw length is a
+     * count of SLOTS and never was a count of squads; what this check is about
+     * is how the men are dealt, so the empties are dropped before the shape is
+     * read. A squad that empties still shows as a shrinking group below,
+     * because it has men in it right up until it does not.
+     */
+    const shape = () => R.squads().map((s) => s.length).filter((n) => n).join('+');
     assert(shape() === '5+5+2', `12 men dealt to ${shape()}, expected 5+5+2`);
 
     const ids = R.living.map((t) => t.squad);

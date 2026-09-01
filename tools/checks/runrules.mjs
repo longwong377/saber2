@@ -312,7 +312,21 @@ export async function run({ check, assert }) {
      */
     const H = await import('./_coop.mjs');
     const { enemyRng } = await import('../../src/game/Enemy.js');
-    const modes = Object.keys(Waves.MODES).filter((m) => m !== 'sandbox' && m !== 'training');
+    /**
+     * DERIVED, WHICH THE PARAGRAPH ABOVE HAS ALWAYS CLAIMED IT WAS.
+     *
+     * It said the excluded modes are "named off the director's own statement
+     * rather than by string, so a mode added to `MODES` is covered on the
+     * commit it lands" — and then excluded two of them by string. A mode added
+     * to `MODES` was NOT covered: the flight deck landed and this went red
+     * with eleven pairs, for a room that has no wave to condition and never
+     * will.
+     *
+     * `fixedRules` is the field a mode uses to say its composer never sees a
+     * rule, and the second check in this file holds every declaration of it to
+     * being true. So it is the statement, and this reads it.
+     */
+    const modes = Object.keys(Waves.MODES).filter((m) => !Waves.MODES[m].fixedRules);
     const broke = [];
     for (const mode of modes) {
       for (const rule of Waves.CONDITION_KEYS) {
@@ -404,10 +418,39 @@ export async function run({ check, assert }) {
       `${silent.join(', ')} compose${silent.length === 1 ? 's' : ''} a wave that carries no run rule and `
       + 'declare no `fixedRules` — the Deploy panel lights the cards, writes them to settings and throws '
       + 'them away, which reads as the picker being randomly broken');
-    const lying = declared.filter((m) => !deaf.includes(m));
+    /**
+     * AND THE CLAIM IS TESTED AGAINST THE SHIPPED DIRECTOR, NOT A STAND-IN.
+     *
+     * `directorFor` builds a `WaveDirector` (or a `CommandDirector`) for
+     * whatever it is handed, because until the flight deck every mode had one.
+     * The deck builds a `HangarDirector` — deliberately not a `WaveDirector`
+     * subclass, so that a room whose whole promise is that nothing happens in
+     * it cannot grow a spawn queue — and handing its key to this factory
+     * produced a wave director that honoured rules perfectly well and made the
+     * mode look like a liar.
+     *
+     * So a declaration is checked against the director the GAME builds for
+     * that mode. Three modes declare it; three worlds is a few seconds, and it
+     * is the difference between testing the claim and testing the stand-in.
+     */
+    const lying = [];
+    /* `H` is `_coop`, imported per check in this file the way every other one
+     * here reaches the harness. */
+    const H2 = await import('./_coop.mjs');
+    for (const m of declared) {
+      const level = Waves.MODES[m]?.level || 'geonosis';
+      const { world } = await H2.bootWorld({ level, settings: { mode: m, level, allies: 0 } });
+      try {
+        const d = world.director;
+        const honours = typeof d?.legalRuleSet === 'function'
+          && Array.isArray(d?.conditions);
+        if (honours && deaf.includes(m) === false) lying.push(m);
+      } finally { world.unload(); }
+    }
     assert(!lying.length,
-      `${lying.join(', ')} declare \`fixedRules\` and honour the rules perfectly well — the column is `
-      + 'greyed on a mode that would have kept the promise');
+      `${lying.join(', ')} declare \`fixedRules\` and the director the game actually builds for `
+      + 'them honours the rules perfectly well — the column is greyed on a mode that would have '
+      + 'kept the promise');
     for (const m of declared) {
       assert(typeof Waves.MODES[m].fixedRules === 'string' && Waves.MODES[m].fixedRules.length > 20,
         `${m}'s fixedRules is not a sentence a player can read: ${JSON.stringify(Waves.MODES[m].fixedRules)}`);

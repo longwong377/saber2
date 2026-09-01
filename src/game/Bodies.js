@@ -21,6 +21,28 @@ import { clothMaps, armorMaps, metalMaps, duracreteMaps, skinMaps, MEAN_ALBEDO }
 import { makeRng, lerp, clamp } from '../engine/MathUtil.js';
 
 const rng = makeRng(5150);
+/**
+ * ── PUT THIS FILE'S STREAM BACK ─────────────────────────────────────────
+ *
+ * A module-level stream that no harness can reseed makes every check after it
+ * depend on how many draws the checks before it happened to take. `verify.mjs`
+ * runs every suite in one process and says so in its own note; five streams
+ * were already restorable and this one was not.
+ *
+ * MEASURED, and it is not theoretical: building ONE crate before
+ * `blast-door.mjs` — a single `makeCrate` on a throwaway scene, which touches
+ * nothing but this stream — turned that suite from 9/9 into the gate's own
+ * failure, "75 s of held blade burned 0 of the 515 texels". The breach slug's
+ * launch vector comes off here, so a shifted phase throws the debris somewhere
+ * else, the player takes the second impact instead of surviving it on five
+ * points, and a dead player's blade never touches the plate again.
+ *
+ * The seed is the module's own, so `restoreShared` puts it back where the
+ * module started rather than where a snapshot found it — the same statement
+ * the other five make.
+ */
+export function seedBodies(seed) { rng.seed(seed >>> 0); return rng; }
+
 
 /* ── geometry helpers ────────────────────────────────────────────────── */
 
@@ -6173,6 +6195,202 @@ export function buildB2(opts = {}) {
  * crest, the collar arc and the bells keep their paint and are tagged
  * `userData.silhouette` so they stop being invisible past thirty metres.
  */
+/**
+ * THE PALETTE A PLAYER PAINTS ARMOUR FROM.
+ *
+ * Named colours rather than a free picker, for the reason `MARKS` gives about
+ * itself: these have to read against dust, against both armies' plate, and at
+ * the range a line is actually seen from. A hex field would also be a hex
+ * field in a save file, which is a thing to sanitise rather than a thing to
+ * offer. Both armies draw from one list — a captured droid painted in Republic
+ * bone is a thing a player may do and the fiction survives it.
+ */
+export const PAINTS = [
+  { id: 'bone', name: 'Bone', color: 0xe8e9ec },
+  { id: 'ash', name: 'Ash', color: 0x8e8e96 },
+  { id: 'slate', name: 'Slate', color: 0x4a5460 },
+  { id: 'char', name: 'Charcoal', color: 0x2b2b30 },
+  { id: 'sand', name: 'Sand', color: 0xb9a077 },
+  { id: 'clay', name: 'Clay', color: 0x8a5a3c },
+  { id: 'blood', name: 'Blood', color: 0xb4382c },
+  { id: 'rust', name: 'Rust', color: 0xc0682a },
+  { id: 'sun', name: 'Sun', color: 0xe8b028 },
+  { id: 'jungle', name: 'Jungle', color: 0x3f8f4a },
+  { id: 'teal', name: 'Teal', color: 0x2e7d78 },
+  { id: 'sky', name: 'Sky', color: 0x3a86c8 },
+  { id: 'deep', name: 'Deep', color: 0x24406e },
+  { id: 'plum', name: 'Plum', color: 0x7a4a9c },
+  { id: 'ice', name: 'Ice', color: 0x9fd8e6 },
+];
+
+/** One paint by id, or null for "leave the chassis its own". */
+export function paintById(id) {
+  return PAINTS.find((p) => p.id === id) || null;
+}
+
+/**
+ * WHAT A PLAYER MAY CHANGE ABOUT A BODY, AND WHAT THEY MAY NOT.
+ *
+ * The builders below already take every one of these — a pauldron side, a kama
+ * length, a pack, a rangefinder, a brace, the bells, and the three material
+ * slots a clone's armour is painted in. They have taken them since the day the
+ * kits were written; nothing has ever handed them anything but the archetype's
+ * own row. This table is the list a PLAYER may reach, and it is deliberately
+ * shorter than the list the builders accept:
+ *
+ *   NOTHING HERE MOVES A NUMBER. Every field is geometry the LOD already
+ *   culls or a material colour. `frame` — the radial girth — is left out on
+ *   purpose: it is the only lever on the builders' list that moves the BONE
+ *   PRIMARIES, which are 19 of the 26 meshes a trooper keeps at thirty metres
+ *   and most of its projected area, and it is what `characters.mjs` measures
+ *   to hold six archetypes apart. A player may dress a man; they may not
+ *   resize him into another rung.
+ *
+ *   AND THE PLATES REALLY ARE THEIRS, INCLUDING THE ONES A RUNG USES. `pack`
+ *   is how a Raider reads as a Raider and `bells` is 21 cm of the widest part
+ *   of a Marksman, so a player who belts a scout pack onto a line trooper has
+ *   made their own line harder to read. That is allowed and it is the point:
+ *   the rung's DEFAULT is the game's sentence about what a Marksman looks
+ *   like, and a player who overrides it has chosen to say something else about
+ *   their own company. What they cannot do is change the one axis the roster's
+ *   distinctness is measured on, which is why `frame` and only `frame` is off
+ *   the list.
+ *
+ *   THE RANK'S OWN PAINT IS NOT ON THIS LIST EITHER. The crest and the
+ *   shoulder bells `repaint` bolts on are the one sentence a battlefield
+ *   reads at ninety metres, and they go on top of whatever is underneath.
+ *
+ * Each row is `[field, [legal values]]`, and a value that is not on its row is
+ * dropped rather than corrected — the same rule `markById` follows.
+ */
+export const KIT_FIELDS = {
+  flesh: {
+    pauldron: { name: 'Pauldron', values: [[null, 'None'], ['L', 'Left'], ['R', 'Right']] },
+    kama: { name: 'Kama', values: [[false, 'None'], [true, 'Short'], ['long', 'Long']] },
+    pack: { name: 'Pack', values: [[null, 'None'], ['jet', 'Jet'], ['scout', 'Scout'],
+      ['comms', 'Comms'], ['field', 'Field']] },
+    rangefinder: { name: 'Rangefinder', values: [[null, 'None'], ['scope', 'Scope'], ['stalk', 'Stalk']] },
+    crest: { name: 'Crest', values: [[false, 'None'], [true, 'Fin']] },
+    holsters: { name: 'Holsters', values: [[false, 'None'], [true, 'Sidearms']] },
+    brace: { name: 'Brace', values: [[false, 'None'], [true, 'Braced']] },
+    bells: { name: 'Shoulder bells', values: [[true, 'Belled'], [false, 'Stripped']] },
+    cape: { name: 'Half cape', values: [[false, 'None'], [true, 'Worn']] },
+  },
+  steel: {
+    pack: { name: 'Pack', values: [[null, 'None'], ['rocket', 'Rocket tube']] },
+    blade: { name: 'Sidearm', values: [[null, 'None'], ['vibro', 'Vibrosword']] },
+  },
+};
+
+/**
+ * The paint slots each chassis carries — the builder's own option name, and
+ * what that surface is called by somebody looking at it.
+ */
+export const PAINT_SLOTS = {
+  flesh: [['color', 'Plate'], ['accent', 'Unit flash'], ['visor', 'Visor']],
+  steel: [['color', 'Shell'], ['markColor', 'Unit flash'], ['eyeColor', 'Photoreceptor']],
+};
+
+/** Just the option names, for the sanitiser and the builders. */
+export const PAINT_FIELDS = {
+  flesh: PAINT_SLOTS.flesh.map(([f]) => f),
+  steel: PAINT_SLOTS.steel.map(([f]) => f),
+};
+
+/**
+ * A stored `look.kit` and `look.paint`, made into builder options.
+ *
+ * Anything unrecognised is dropped: this reads off a save file, and a body is
+ * built from the result on a machine that has to keep running.
+ */
+/**
+ * ══ WHAT EACH CHASSIS ACTUALLY WEARS ═══════════════════════════════════════
+ *
+ * `KIT_FIELDS` and `PAINT_SLOTS` are keyed by CHASSIS KIND — flesh or steel —
+ * and that is the right key for what the STORE may hold. It is the wrong key
+ * for what a screen may offer, because the options are read by individual
+ * BUILDERS and the builders do not agree.
+ *
+ * MEASURED, by building every rung of both ladders twice — once bare, once
+ * with each field set — and comparing the whole mesh-and-material signature:
+ *
+ *     trooper heavy sniper jet arc officer   12 of 12   (buildTrooper)
+ *     b1                                       5 of 5   (buildB1)
+ *     bx rocket                                3 of 5   pack blade markColor
+ *     b2 droideka magna                        1 of 5   color
+ *     atte aat                                 0 of 12  (Vehicles.js takes scale)
+ *
+ * So the Company tab was offering a surviving AT-TE nine rows of kit and three
+ * of paint — fifteen controls that stored a value, lit up, and changed nothing
+ * on the figure or on the field — and offering every B2 a unit flash and a
+ * photoreceptor that `buildB2` does not read. That is the dead control this
+ * whole tab exists to stop being, arriving through the one door nobody
+ * checked.
+ *
+ * A TABLE AND NOT A DERIVATION, because deriving it means fourteen chassis ×
+ * seventeen fields × their values in builds, and this is read every time a
+ * page opens. `barracks.mjs` re-measures it instead, so the table cannot drift
+ * from the builders without going red.
+ *
+ * A type this table does not name falls back to its kind's whole vocabulary —
+ * permissive, so a new clone rung is not silently stripped of its wardrobe on
+ * the day it ships; the check is what makes sure nobody relies on that.
+ */
+export const WEARS = {
+  /* the clone line — every one of them is `buildTrooper` */
+  trooper: null, heavy: null, sniper: null, jet: null, arc: null, officer: null,
+  /* the droid chassis, each reading its own handful */
+  b1: null,
+  bx: ['pack', 'blade', 'markColor'],
+  rocket: ['pack', 'blade', 'markColor'],
+  b2: ['color'],
+  droideka: ['color'],
+  magna: ['color'],
+  /* the machines. `Vehicles.js` takes a scale and nothing else, and a walker
+   * is a named man on the roll the moment one survives a withdrawal. */
+  atte: [],
+  aat: [],
+};
+
+/**
+ * The kit and paint fields a screen may offer for one man — `WEARS` resolved
+ * against the vocabulary his chassis kind allows.
+ *
+ * @returns `{ kit: [...], paint: [...] }`, both in the vocabulary's own order
+ *          so a page's rows do not move about between chassis.
+ */
+export function wearableFor(type, kind = 'flesh') {
+  const all = { kit: Object.keys(KIT_FIELDS[kind] || {}), paint: (PAINT_FIELDS[kind] || []).slice() };
+  const only = WEARS[type];
+  if (!only) return all;
+  const want = new Set(only);
+  return { kit: all.kit.filter((f) => want.has(f)), paint: all.paint.filter((f) => want.has(f)) };
+}
+
+export function kitOptsFrom(look, kind = 'flesh') {
+  const out = {};
+  if (!look || typeof look !== 'object') return out;
+  const legal = KIT_FIELDS[kind] || {};
+  const kit = look.kit;
+  if (kit && typeof kit === 'object') {
+    for (const field in legal) {
+      if (!(field in kit)) continue;
+      if (legal[field].values.some(([v]) => v === kit[field])) out[field] = kit[field];
+    }
+  }
+  /* IDS, NOT COLOURS, because that is what the store keeps: a stored colour
+   * is a stored colour for ever, and a re-tuned palette would never reach the
+   * men already wearing it. This is the one place the id becomes a number. */
+  const paint = look.paint;
+  if (paint && typeof paint === 'object') {
+    for (const field of (PAINT_FIELDS[kind] || [])) {
+      const p = paintById(paint[field]);
+      if (p) out[field] = p.color;
+    }
+  }
+  return out;
+}
+
 export const TROOPER_KITS = {
   /** The line trooper: the baseline every other kit is read against. */
   line: {},
@@ -6239,8 +6457,10 @@ export function buildTrooper(opts = {}) {
   // entire figure, and it is what you see at every joint.
   const under = clothMat(0x191c21, 0.88);
   const accent = armorMat(opts.accent ?? 0x2f6fbe, 0.1, 0.34, 3.0);
-  // and the visor was bare too — dark glass wants scratches and a specular
-  const visor = glassMat(0x0a0d12, 0.13);
+  // and the visor was bare too — dark glass wants scratches and a specular.
+  // The colour is an option now so a company can be told apart by its glass;
+  // the default is the dark plate every reference frame of this fight has.
+  const visor = glassMat(opts.visor ?? 0x0a0d12, 0.13);
   const gear = leatherMat(0x25282e, 0.62);
   const scorch = scorchMat();
 
@@ -8783,7 +9003,16 @@ export function buildBlaster(kind = 'e5') {
 export const BODY_KITS = {
   /* the clone army — see TROOPER_KITS */
   trooper: { kit: 'line' },
-  sniper: { kit: 'marksman' },
+  /* THE MARKSMAN'S OWN PLATE LIVES HERE, not beside his numbers.
+   *
+   * `ARCHETYPES.sniper` carried `trooperColor`/`accent` and `Enemy._build`
+   * spread them on as a one-line special case AFTER the man's own kit, which
+   * meant a Marksman the player had painted landed in stock colours — the tab
+   * showing one man and the ground fielding another. The colours belong in the
+   * kit table with everything else the body wears, where `buildParadeFigure`
+   * reads them too: one statement of what a Marksman looks like, and the
+   * player's choice spread over the top of it in both readers. */
+  sniper: { kit: 'marksman', color: 0x2c3038, accent: 0xff9a20 },
   heavy: { kit: 'heavy' },
   jet: { kit: 'jet' },
   arc: { kit: 'arc' },

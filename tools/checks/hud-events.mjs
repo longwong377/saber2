@@ -1456,14 +1456,36 @@ export async function run({ check, assert }) {
       assert(ORDER_ACTIONS.length, 'no orders are registered, so the indicator has nothing to draw');
       const b = defaultBindings();
       hud.setBindings(b);
-      const chips = doc.querySelectorAll('#rp-orders .rp-key');
-      assert(chips.length === ORDER_ACTIONS.length,
-        `${chips.length} keycaps for ${ORDER_ACTIONS.length} orders`);
-      for (let i = 0; i < chips.length; i++) {
+      const chips = [...doc.querySelectorAll('#rp-orders .rp-key')];
+      /**
+       * …AND THE STRIP ENDS WITH WHO THE ORDER IS FOR.
+       *
+       * `squadtarget` is not a formation and is on this row on purpose: it is
+       * the only way to give an order to ONE squad rather than the whole line,
+       * it used to be reachable only through a wheel slot that appeared in no
+       * list a player could read, and it must be a button on a phone — which
+       * it is, because `Touch.bindWheel` makes anything with a `data-action`
+       * tappable and every chip here now carries one.
+       *
+       * So the count is the orders PLUS the target, and each cap is checked
+       * against its own live binding rather than against a position.
+       */
+      const target = chips.filter((c) => c.dataset.action === 'squadtarget');
+      assert(target.length === 1,
+        `${target.length} target chips on the order strip — the only door to a per-squad `
+        + 'order is on it once or not at all');
+      assert(chips.length === ORDER_ACTIONS.length + 1,
+        `${chips.length} keycaps for ${ORDER_ACTIONS.length} orders and a target`);
+      assert(chips.every((c) => c.dataset.action),
+        'a chip on the order strip carries no action, so a thumb cannot press it');
+      for (let i = 0; i < ORDER_ACTIONS.length; i++) {
         const want = keyLabel(b[ORDER_ACTIONS[i].action][0]);
         assert(chips[i].textContent === want,
           `the ${ORDER_ACTIONS[i].id} cap reads "${chips[i].textContent}" and it is bound to "${want}"`);
       }
+      assert(target[0].textContent === keyLabel(b.squadtarget[0]),
+        `the target cap reads "${target[0].textContent}" and it is bound to `
+        + `"${keyLabel(b.squadtarget[0])}"`);
 
       const F = ORDER_ACTIONS[0];
       hud.setOrder(F.id, F.name, 3);

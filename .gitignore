@@ -34,3 +34,5 @@ tools/_dbg*.mjs
 # Scratch probes: one-off benches written to answer one question and deleted.
 # The ones worth keeping get a name without the underscore.
 tools/_linewho.mjs
+.wf/
+.shots-orbit/

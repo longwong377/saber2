@@ -98,6 +98,63 @@ const attenuation = (d, ref = REF_DIST, maxD = MAX_DIST) => {
   return ref / (ref + ROLLOFF * (dd - ref));
 };
 
+/**
+ * ══ HOW FAST SOUND IS, AND WHY THIS FILE HAS TO KNOW ══════════════════════
+ *
+ * `grep -i "doppler\|speedOfSound\|setVelocity"` over src/ returned nothing at
+ * all before this line. That is not an oversight anybody made: WebAudio HAD a
+ * Doppler — `PannerNode.setVelocity`, `AudioListener.dopplerFactor` and
+ * `speedOfSound` — and the Web Audio API DEPRECATED all three in 2014 and
+ * Chrome and Firefox REMOVED them in 2016 (they are gone, not merely
+ * discouraged). So a panner cannot be asked for it and there is nothing to
+ * turn on.
+ *
+ * WHICH LEAVES DOING IT BY HAND, and this file is in the one position where
+ * that is easy rather than impossible: NOTHING HERE IS A SAMPLE. Every pitch
+ * in the game is an `OscillatorNode.frequency` or an
+ * `AudioBufferSourceNode.playbackRate` that this file already owns and already
+ * writes. A sample-playback engine would have to resample; this one multiplies
+ * a number it was going to set anyway.
+ *
+ * THE FORMULA, in the form that gets the signs right — û is the unit vector
+ * from the LISTENER to the SOURCE:
+ *
+ *     f' = f · (c + v_L·û) / (c + v_S·û)
+ *
+ * Read it twice against the two cases everybody knows. A listener moving
+ * toward a still source has `v_L·û = +v` and hears `f(c+v)/c` — higher. A
+ * source moving toward a still listener has its velocity pointing back down û,
+ * so `v_S·û = -v`, and the listener hears `f·c/(c-v)` — higher. Both halves
+ * rise, which is the whole of what a Doppler is.
+ *
+ * WHAT IT IS WORTH, in numbers, because it is easy to oversell: a repulsorlift
+ * crossing the flight deck at 34 m/s — a brisk taxi, and about as fast as
+ * anything gets inside a hangar — measures ×1.102 closing at 128 m and ×0.915
+ * opening at the same range, a total sweep of 1.204× or 3.22 semitones, two
+ * thirds of it inside the second and a half either side of the closest point
+ * (`DeckAudio.REPULSOR` carries the whole table). It is real and it is
+ * audible, and it is NOT the reason a pass sounds like a pass: the gain curve
+ * and the filter opening and closing do most of that work. What the pitch term
+ * adds is that the sound is MOVING rather than being faded, which is the
+ * difference the ear refuses to be talked out of.
+ *
+ * 343 m/s is dry air at 20 °C. A hangar deck open to vacuum behind a pressure
+ * field has no defensible number at all, so it uses the room-temperature one
+ * rather than inventing physics for a shield.
+ */
+export const SPEED_OF_SOUND = 343;
+/**
+ * How far the ear may be judged to have moved in one frame before this file
+ * decides it did not move — it was TELEPORTED.
+ *
+ * A respawn, a level load and a photo-mode jump all move the camera hundreds
+ * of metres between two `updateListener` calls. Divided by a 16 ms frame that
+ * is a listener travelling at Mach 40, and the ratio below would peg at its
+ * clamp and shriek. 3 m in a frame is 180 m/s at 60 Hz — past anything the
+ * player's own body can do and under any jump worth calling one.
+ */
+const TELEPORT = 3;
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE SCORE — which one                                                 */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -514,12 +571,47 @@ const BATTLE_CAP = BATTLE_KNEE * 8;
  */
 const BATTLE_STEP = 0.0008;
 
-/** Footstep timbre by ground, before the body standing on it is considered. */
+/**
+ * Footstep timbre by ground, before the body standing on it is considered.
+ *
+ * THE KEYS ARE `Terrain.surfaceAt`'s VOCABULARY and nothing else decides them.
+ * The first four are what a heightfield can report about dirt; the last three
+ * are what a DECK can report about steel, and they exist because
+ * `surfaceAt` opens `if (this.preset.flat) return 'metal'` — one keyword for
+ * every square metre of every flat ground in the game. A flight deck walked
+ * from the bulkhead to the shield is three different things underfoot and the
+ * table had one word for all of it.
+ *
+ * They are three rows and not one row with a parameter because they are three
+ * different structures, and the numbers say which:
+ *
+ *   `plate`   40 mm deck plate on frames. The lowest and dullest thing a boot
+ *             can land on: the plate is stiffer than the boot, so almost
+ *             nothing rings and what you hear is the impact itself. 1150 Hz,
+ *             Q 0.9 — barely resonant at all.
+ *   `grating` open steel bar grating over a blast channel. A boot lands on
+ *             30 mm of bar with air under it, so the panel itself rings: high,
+ *             narrow and long. 4200 Hz at Q 3.4 is the tightest resonance in
+ *             this table, which is what "it rings" means as a filter.
+ *   `lip`     the last plates before the deck ends, cantilevered over vacuum
+ *             with the field a metre away. Same steel as `plate` and none of
+ *             the mass behind it: brighter than plate, longer than plate, and
+ *             deliberately the loudest row here — the two paces before the
+ *             edge are the two paces this whole room is composed around, and a
+ *             player who arrives at them should hear that the floor has
+ *             changed under him without being told.
+ *
+ * The gains sit inside the spread the first four already establish (0.09–0.14)
+ * so nothing here is a new loudness, only a new timbre.
+ */
 const SURFACES = {
   sand:  { freq: 1500, q: 0.7, gain: 0.09 },
   stone: { freq: 2600, q: 1.4, gain: 0.11 },
   metal: { freq: 3400, q: 2.6, gain: 0.10 },
   water: { freq: 1900, q: 0.9, gain: 0.14 },
+  plate:   { freq: 1150, q: 0.9, gain: 0.105 },
+  grating: { freq: 4200, q: 3.4, gain: 0.115 },
+  lip:     { freq: 2950, q: 2.0, gain: 0.125 },
 };
 const SURFACE_DEFAULT = { freq: 1800, q: 1, gain: 0.1 };
 /** The mass a footstep is quoted at — one adult in boots. */
@@ -527,6 +619,8 @@ const REF_MASS = 80;
 
 // listener scratch — updateListener runs every frame
 const _lq = new THREE.Quaternion(), _lf = new THREE.Vector3(), _lu = new THREE.Vector3();
+/** …and the one the ear's own velocity is differenced into. See SPEED_OF_SOUND. */
+const _lv = new THREE.Vector3();
 
 export class AudioEngine {
   constructor() {
@@ -566,6 +660,19 @@ export class AudioEngine {
     this._musicDuckSet = -1e9;
     this.maxVoices = 44;
     this._listenerPos = new THREE.Vector3();
+    /**
+     * WHERE THE EAR WAS AND WHEN, so that HOW FAST IT IS MOVING is knowable.
+     *
+     * Built here rather than in `init()` for the reason `_timePitch` above is:
+     * `dopplerRatio` is reachable from a level's own dressing, which runs
+     * before a context exists on any load that beats the first user gesture,
+     * and a `_listenerVel` that is `undefined` there turns a dot product into
+     * NaN — which this file has proved twice that it will carry silently all
+     * the way to an AudioParam that throws on it.
+     */
+    this._listenerVel = new THREE.Vector3();
+    this._listenerPrev = new THREE.Vector3();
+    this._listenerAt = -1;
     this._noiseBuf = null;
     this._pinkBuf = null;
     /**
@@ -1171,6 +1278,20 @@ export class AudioEngine {
     return buf;
   }
 
+  /**
+   * THE SHARED NOISE, for a caller building its own graph through `shape` or
+   * `open`.
+   *
+   * Two buffers, two seconds each, built once in `init()` — 384 kB of white
+   * and pink that every noise in the game already loops out of. A caller that
+   * made its own would be a third and a fourth copy of the same thing for no
+   * audible difference, and `_makeNoise` draws from this file's own seeded
+   * `rng`, so a second call would also move a stream two other systems read.
+   *
+   * Null before `init()`, like everything else on the graph.
+   */
+  noiseBuffer(pink = true) { return pink ? this._pinkBuf : this._noiseBuf; }
+
   _makeImpulse(seconds, decay) {
     const rate = this.ctx.sampleRate;
     const len = Math.floor(rate * seconds);
@@ -1201,6 +1322,31 @@ export class AudioEngine {
     const fwd = _lf.set(0, 0, -1).applyQuaternion(q);
     const up = _lu.set(0, 1, 0).applyQuaternion(q);
     const t = this.ctx.currentTime;
+    /**
+     * …AND HOW FAST IT IS MOVING, differenced on the AUDIO clock.
+     *
+     * The audio clock and not the frame's dt, because this is the clock every
+     * ramp below is scheduled on and it is the one that stops while the context
+     * is suspended — a listener velocity taken off the wall clock across a
+     * tab-switch is a listener that crossed the level at 0.4 m/s while the
+     * game was paused.
+     *
+     * Smoothed at 0.35 rather than taken raw: the ear's real motion is a
+     * character controller resolving against a heightfield, which jitters by a
+     * few centimetres a frame, and an unsmoothed difference of that is ±2 m/s
+     * of noise on a walk — which a Doppler ratio would faithfully render as a
+     * warble. Three frames of lag on a term worth ±9% of a pitch is nothing;
+     * the warble is not.
+     */
+    if (this._listenerAt >= 0 && t > this._listenerAt) {
+      const dt = Math.min(t - this._listenerAt, 0.25);
+      _lv.subVectors(this._listenerPos, this._listenerPrev);
+      // A teleport is not a velocity. See TELEPORT.
+      if (_lv.lengthSq() > TELEPORT * TELEPORT) this._listenerVel.set(0, 0, 0);
+      else this._listenerVel.lerp(_lv.multiplyScalar(1 / dt), 0.35);
+    }
+    this._listenerPrev.copy(this._listenerPos);
+    this._listenerAt = t;
     if (l.positionX) {
       l.positionX.setTargetAtTime(this._listenerPos.x, t, 0.02);
       l.positionY.setTargetAtTime(this._listenerPos.y, t, 0.02);
@@ -1225,6 +1371,53 @@ export class AudioEngine {
     if (p.positionX) { p.positionX.value = pos.x; p.positionY.value = pos.y; p.positionZ.value = pos.z; }
     else p.setPosition(pos.x, pos.y, pos.z);
     return p;
+  }
+
+  /**
+   * ══ WHAT A MOVING SOURCE SOUNDS LIKE FROM A MOVING EAR ════════════════
+   *
+   * The multiplier a caller applies to every frequency it is about to set.
+   * See SPEED_OF_SOUND for the formula and for what it is honestly worth.
+   *
+   * IT RETURNS A NUMBER RATHER THAN DOING ANYTHING, and that is the whole
+   * design. A `PannerNode` cannot be told about velocity — the API that could
+   * was removed from browsers in 2016 — so there is no "the positional path"
+   * to bolt this into; the only place a pitch can move is where the pitch is
+   * SET, which is inside whatever built the voice. Everything in this file
+   * that has a continuous pitch already writes it every frame (`_openLoop`
+   * writes two), so this hands them the factor and stays out of it.
+   *
+   * A ONE-SHOT SHOULD NOT USE IT and it is worth saying why, because the
+   * temptation is obvious: a 0.1 s footstep does not move far enough during
+   * its own life for a Doppler to be a Doppler, and a fixed ratio applied at
+   * schedule time is a mistuning, not a motion. This is for voices that are
+   * HELD — a repulsorlift crossing the deck, a jetpack going past — where the
+   * ratio is re-read every frame and the SWEEP is the thing being heard.
+   *
+   * Clamped at 0.5–2.0, an octave either way. It is not a taste: the closing
+   * term goes singular as `v_S·û → -c`, and the clamp is what stops a body
+   * that some other system has flung at Mach 1 from asking an oscillator for
+   * 40 kHz.
+   *
+   * @param pos  where the source is
+   * @param vel  how fast it is moving, in world units per second, or null
+   */
+  dopplerRatio(pos, vel) {
+    if (!pos) return 1;
+    const dx = pos.x - this._listenerPos.x;
+    const dy = pos.y - this._listenerPos.y;
+    const dz = pos.z - this._listenerPos.z;
+    const d = Math.sqrt(dx * dx + dy * dy + dz * dz);
+    /* Under half a metre the unit vector is numerical noise and the geometry
+     * is meaningless anyway — the source is inside your head. */
+    if (!(d > 0.5)) return 1;
+    const ux = dx / d, uy = dy / d, uz = dz / d;
+    const vS = vel ? num(vel.x, 0) * ux + num(vel.y, 0) * uy + num(vel.z, 0) * uz : 0;
+    const vL = this._listenerVel.x * ux + this._listenerVel.y * uy + this._listenerVel.z * uz;
+    const c = SPEED_OF_SOUND;
+    const den = clamp(c + vS, c * 0.4, c * 2.5);
+    const nom = clamp(c + vL, c * 0.4, c * 2.5);
+    return clamp(nom / den, 0.5, 2);
   }
 
   /**
@@ -1411,6 +1604,191 @@ export class AudioEngine {
       this._release();
       if (out && out !== this.sfxBus) { try { out.disconnect(); } catch {} }
     }
+  }
+
+  /**
+   * ══ A ONE-SHOT WHOSE NODES THE CALLER BUILDS ══════════════════════════
+   *
+   * `noise()` and `tone()` are this file's two shapes and between them they
+   * are nearly the whole game: one source, one filter, one gain, one envelope.
+   * There is a third shape they cannot express and it is not exotic — ONE
+   * SOURCE WITH MANY SCHEDULED EVENTS ON IT. A public-address announcement is
+   * nine syllables: nine amplitude envelopes, nine pitches and nine formant
+   * pairs on a single buzz. Through `tone()` that is nine calls, nine
+   * oscillators, nine panners and — fatally — NINE VOICES out of a pool of
+   * forty-four, for one sound that a listener hears as one sound. The chatter
+   * band's whole ceiling is fifteen.
+   *
+   * So this hands the caller the mixing point and keeps everything that must
+   * not be re-implemented per sound:
+   *
+   *   the stopped-context guard, because a frozen clock stacks every scheduled
+   *     event onto one timestamp and delivers them as a crack;
+   *   the audibility test BEFORE the voice is taken, in that order, because
+   *     `_out` used to build the panner first and left 1330 live HRTF panners
+   *     hanging off the bus over 24 s of one fight;
+   *   ONE voice for the whole sound, whatever it is made of;
+   *   the panner, on the same curve as everything else;
+   *   `_freeOnEnd`, so the graph goes away on the audio clock rather than on a
+   *     wall-clock timer a background tab throttles to one a minute;
+   *   and the release in a `catch`, because a throw between taking a voice and
+   *     freeing it leaks that voice permanently and forty-four of those is a
+   *     silent game for the rest of the session.
+   *
+   * WHAT THE CALLER GETS AND WHAT IT OWES. `build(ctx, out, t0, pitch)` is
+   * handed a live context, a gain node already carrying `gain` and already
+   * wired to wherever this sound goes, the audio-clock time everything must be
+   * scheduled from, and the slow-motion pitch multiplier (see `setTimeScale`)
+   * — which the caller must apply to its own frequencies, because only the
+   * caller knows which of its numbers are frequencies. It returns the source
+   * or sources it made; this starts them at `t0` and stops them at the end,
+   * so a caller cannot leave one running.
+   *
+   * `dest` is for a caller with its own bus — a level whose whole ambience is
+   * filtered by where the player is standing needs its sounds to arrive INSIDE
+   * that filter, and a sound that routed to `sfxBus` regardless would be the
+   * one thing in the room that did not change when the room did.
+   *
+   * @returns true if it was scheduled, false if it was culled, refused or threw
+   */
+  shape({ dur = 0.4, gain = 1, pos = null, prio = PRIO.world, dest = null, build } = {}) {
+    if (!this.ready || !this._live() || typeof build !== 'function') return false;
+    dur = clamp(num(dur, 0.4), 0.01, 30);
+    gain = num(gain, 1);
+    const bus = dest || this.sfxBus;
+    const reach = this._reach(pos, gain);
+    if (!reach) { this.stats.culled++; return false; }
+    if (!this._voice(prio)) return false;
+    let out = null, head = null;
+    try {
+      out = reach === 2 ? this._panner(pos) : bus;
+      if (out !== bus) out.connect(bus);
+      head = this.ctx.createGain();
+      head.gain.value = gain;
+      head.connect(out);
+      const t = this.ctx.currentTime;
+      const made = build(this.ctx, head, t, this._timePitch);
+      const srcs = Array.isArray(made) ? made : (made ? [made] : []);
+      /* A build that made nothing is a caller bug, not a silence to swallow:
+       * without a source there is no `ended`, so the voice would sit on the
+       * wall-clock backstop for `dur + 1.2` s and the pool would fill with
+       * sounds nobody can hear. Give it back now. */
+      if (!srcs.length) throw new Error('shape(): build returned no source');
+      const stopAt = t + dur + 0.05;
+      for (const src of srcs) { src.start(t); src.stop(stopAt); }
+      /* The LAST source is the one `ended` is taken from, and the contract
+       * above is what makes that safe: everything stops at the same instant. */
+      this._freeOnEnd(srcs[srcs.length - 1], reach === 2 ? out : head, dur);
+      return true;
+    } catch {
+      this.stats.threw++;
+      this._release();
+      if (out && out !== bus) { try { out.disconnect(); } catch { /* gone */ } }
+      else if (head) { try { head.disconnect(); } catch { /* gone */ } }
+      return false;
+    }
+  }
+
+  /**
+   * ══ THE HELD TWIN OF `shape()` ════════════════════════════════════════
+   *
+   * `shape()` is an event with an end. This is a STATE, and the difference is
+   * not a duration: a state has no scheduled stop, so nothing releases its
+   * voice on its own and the caller has to. `jet()` is the proof of what that
+   * costs when it is got wrong — `audio: a dead jet trooper stops making a
+   * noise` measures six dead troopers holding six panners and six of the world
+   * band's thirty voices at the spots they fell, because the only call that
+   * released a jetpack came out of a function that returns above `this.dead`.
+   *
+   * So two things are true of every handle this returns. It is REGISTERED with
+   * `hold()`, which means `World.unload` releases it whether or not the caller
+   * remembers to — the last line of defence and the one the jetpack did not
+   * have. And `stop()` is idempotent and deregisters itself, so a caller that
+   * does remember is not stopped twice.
+   *
+   * WHAT IT DOES NOT DO is drive anything. The pitch, the filters and the gain
+   * are the caller's, because a held voice's whole reason to exist is that
+   * those move — a repulsorlift crossing the deck is `dopplerRatio` on two
+   * oscillators every frame, and no signature this file could offer would fit
+   * that and a coolant vent and a jetpack at once. The handle carries the
+   * mixing point and the panner; everything else the caller kept when it built
+   * it.
+   *
+   * @param build (ctx, out, t0, pitch) => source | source[] — started at t0,
+   *              never stopped by this, released by `stop()`
+   * @returns {{head, panner, at, stop}} or null if it could not be opened
+   */
+  open({ pos = null, gain = 1, prio = PRIO.world, dest = null, build } = {}) {
+    if (!this.ready || !this._live() || typeof build !== 'function') return null;
+    gain = num(gain, 1);
+    const bus = dest || this.sfxBus;
+    /* The audibility test does NOT run here and that is deliberate. A held
+     * voice outlives the geometry it was opened on — a ship that starts its
+     * pass 140 m out is inaudible at the instant it is asked for and 8 m away
+     * four seconds later — so culling on the opening position would refuse
+     * exactly the sounds whose whole content is that they arrive. */
+    if (!this._voice(prio)) return null;
+    let out = null, head = null, srcs = [];
+    try {
+      out = pos ? this._panner(pos) : bus;
+      if (out !== bus) out.connect(bus);
+      head = this.ctx.createGain();
+      head.gain.value = gain;
+      head.connect(out);
+      const t = this.ctx.currentTime;
+      const made = build(this.ctx, head, t, this._timePitch);
+      srcs = Array.isArray(made) ? made : (made ? [made] : []);
+      if (!srcs.length) throw new Error('open(): build returned no source');
+      for (const src of srcs) src.start(t);
+    } catch {
+      this.stats.threw++;
+      this._release();
+      for (const src of srcs) { try { src.stop(); } catch { /* never started */ } }
+      if (out && out !== bus) { try { out.disconnect(); } catch { /* gone */ } }
+      else if (head) { try { head.disconnect(); } catch { /* gone */ } }
+      return null;
+    }
+    let dead = false;
+    const handle = {
+      head,
+      panner: out === bus ? null : out,
+      /** Move it. A no-op on a voice that was opened without a position. */
+      at: (p) => {
+        if (dead || !p || out === bus || !this.ctx) return;
+        const now = this.ctx.currentTime;
+        if (out.positionX) {
+          out.positionX.setTargetAtTime(num(p.x, 0), now, 0.03);
+          out.positionY.setTargetAtTime(num(p.y, 0), now, 0.03);
+          out.positionZ.setTargetAtTime(num(p.z, 0), now, 0.03);
+        } else if (out.setPosition) out.setPosition(num(p.x, 0), num(p.y, 0), num(p.z, 0));
+      },
+      stop: (fade = 0.12) => {
+        if (dead) return;
+        dead = true;
+        drop();
+        const now = this.ctx ? this.ctx.currentTime : 0;
+        const f = clamp(num(fade, 0.12), 0.01, 2);
+        /* Down FIRST and cut later. A held graph unplugged at whatever
+         * amplitude it happened to be at is a click, and a click is the one
+         * artefact a listener localises perfectly. */
+        try { head.gain.setTargetAtTime(0.0001, now, f * 0.35); } catch { /* gone */ }
+        for (const src of srcs) { try { src.stop(now + f + 0.05); } catch { /* gone */ } }
+        /* THE VOICE GOES BACK NOW, and the NODES go back later. The pool is a
+         * budget for what can be HEARD, and a graph ramping to silence over
+         * 120 ms has already spent its share of that; holding the slot for
+         * another third of a second of teardown is the same over-holding the
+         * dead-jet-trooper check measures, in miniature and on every release.
+         * `_release` is idempotent and `dead` guards the second call. */
+        this._release();
+        setTimeout(() => {
+          for (const src of srcs) { try { src.disconnect(); } catch { /* gone */ } }
+          try { head.disconnect(); } catch { /* gone */ }
+          if (out !== bus) { try { out.disconnect(); } catch { /* gone */ } }
+        }, (f + 0.3) * 1000);
+      },
+    };
+    const drop = this.hold(() => handle.stop(0.05));
+    return handle;
   }
 
   /* ── speech ────────────────────────────────────────────────────────── */
@@ -2970,8 +3348,38 @@ export class AudioEngine {
     return this.room;
   }
 
-  /** Release every held jetpack voice. Called on unload — see `setAmbience`. */
+  /**
+   * ══ SOMETHING IS PLAYING AND ONLY THIS OBJECT KNOWS HOW TO STOP IT ═════
+   *
+   * `stopLoops()` below is the one door `World.unload` already opens, and
+   * until now it knew about exactly one kind of continuous voice: a jetpack,
+   * keyed on a body id in `_jets`. Anything else that held a graph open — a
+   * level with its own ambience bed, say, whose bed is not `wind` and not
+   * `drone` and therefore not reachable through `setAmbience({wind:0,
+   * drone:0})` — would keep playing under the main menu, which is the exact
+   * defect `stopLoops` was written for, one level of indirection out.
+   *
+   * So a caller registers its OWN teardown and unload runs it. The returned
+   * function deregisters without calling it, for a caller that stopped itself
+   * in good order and must not be stopped twice.
+   *
+   * @param stop a zero-argument function that releases the graph
+   */
+  hold(stop) {
+    if (typeof stop !== 'function') return () => {};
+    const set = (this._held ||= new Set());
+    set.add(stop);
+    return () => { set.delete(stop); };
+  }
+
+  /** Release every held voice — jetpacks and beds. Called on unload — see `setAmbience`. */
   stopLoops() {
+    if (this._held && this._held.size) {
+      /* Over a COPY: a teardown is entitled to call the deregistrar this
+       * handed it, and mutating a Set while iterating it skips entries. */
+      for (const stop of [...this._held]) { try { stop(); } catch { /* gone */ } }
+      this._held.clear();
+    }
     if (!this._jets) return;
     for (const v of this._jets.values()) { try { v.stop(); } catch { /* gone */ } }
     this._jets.clear();

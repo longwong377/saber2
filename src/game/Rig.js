@@ -820,8 +820,13 @@ function swingEase(t) {
  * tenths of a degree of toe-down, small enough that the toe of a 157mm
  * forefoot drops 1.3mm — inside the 1.5mm of clearance the sole is built with,
  * so no part of a boot is ever under the floor.
+ *
+ * EXPORTED because a planted boot is a planted boot: src/game/Parade.js stands
+ * men still rather than walking them, and it plants their feet through the
+ * same construction this block owns. A second 0.008 typed over there would be
+ * the hand-maintained twin HANDOFF §2.3 is about.
  */
-const SOLE_BIAS = 0.008;
+export const SOLE_BIAS = 0.008;
 
 /* The band of roll angles a foot is posed through, and the step the sole's
  * roll integral is tabulated at. `_poseFeet` drives pitch over roughly

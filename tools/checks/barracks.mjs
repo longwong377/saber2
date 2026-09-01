@@ -41,11 +41,17 @@ import { clocked } from './_shared.mjs';
 import { ATTR_IDS } from '../../src/game/Attributes.js';
 import {
   ARMIES, CommandRoster, musterPlan, OPENING_STRENGTH, RANKS, rankFor, MARKS,
-  markById, SQUAD, commandRng, CommandDirector,
+  markById, SQUAD, commandRng, CommandDirector, composeContingent, CONTINGENT_MIXED,
+  leadOf, squadPlan,
 } from '../../src/game/Command.js';
 import { makeRng } from '../../src/engine/MathUtil.js';
 import * as Company from '../../src/game/Company.js';
 import * as Muster from '../../src/game/Muster.js';
+import { HURT_AT } from '../../src/game/Morale.js';
+import { PAINTS } from '../../src/game/Bodies.js';
+import { MODES } from '../../src/game/Waves.js';
+/* THE DEPLOYED ARMY, shared with licence.mjs — one fixture, see `_army.mjs`. */
+import { army as licenceArmy } from './_army.mjs';
 
 /**
  * Run `fn` against an empty company AND an empty slate, and put the player's
@@ -83,6 +89,8 @@ function freshRoll(n, army = ARMIES.republic) {
  */
 const planOf = (want) => ({ army: 'republic', want, armyMode: true });
 
+const squadWordIndex = (n) => (Number.isInteger(n) ? `squad ${n + 1}` : 'nowhere');
+
 export async function run({ check, assert, THREE: T }) {
   /**
    * THE PAIR, FOR THE WHOLE FILE — determinism.mjs names the two reasons: this
@@ -103,6 +111,7 @@ export async function run({ check, assert, THREE: T }) {
   const { enemyRng, Enemy } = await import('../../src/game/Enemy.js');
   const {
     Menu, DEFAULT_SETTINGS, paradeSlots, buildParadeFigure, paradeContent, PARADE_SHOTS,
+    STORE_KEY,
   } = await import('../../src/ui/Menu.js');
 
   /** A real Menu on the real page — databank.mjs and company.mjs's pattern. */
@@ -562,12 +571,90 @@ export async function run({ check, assert, THREE: T }) {
     Muster.ensure(plan, Company.load('republic'));
     const raw = localStorage.getItem(Muster.KEY);
     assert(raw, 'ensure minted a slate and wrote nothing at all');
-    for (let i = 0; i < 5; i++) Muster.ensure(plan, Company.load('republic'));
-    Muster.slateFor('republic');
-    Muster.slateFor('republic');
+
+    /**
+     * COUNTED, NOT COMPARED — and that distinction is the whole check.
+     *
+     * This clause used to snapshot the stored STRING and assert it had not
+     * changed, which cannot fail for a store that rewrites the SAME bytes
+     * every call: proven by mutation, `saveSlate` made unconditional and the
+     * suite still passed nineteen of nineteen. The law being guarded is not
+     * "the slate does not change on a render", it is "a render does not WRITE"
+     * — so the spy counts the door being opened, and the byte comparison stays
+     * underneath it as a second clause, because it catches the other defect.
+     */
+    const realSet = localStorage.setItem.bind(localStorage);
+    let writes = 0;
+    localStorage.setItem = (k, v) => { if (k === Muster.KEY) writes++; return realSet(k, v); };
+    try {
+      for (let i = 0; i < 5; i++) Muster.ensure(plan, Company.load('republic'));
+      Muster.slateFor('republic');
+      Muster.slateFor('republic');
+    } finally { localStorage.setItem = realSet; }
+    assert(writes === 0,
+      `five clean ensures and two reads opened the store for writing ${writes} time(s) — `
+      + 'the tab writes localStorage per render');
     assert(localStorage.getItem(Muster.KEY) === raw,
-      'five clean ensures and two reads rewrote the store — the tab now writes localStorage per render');
-    return 'one write to mint, then five ensures and two reads, byte-identical';
+      'the store changed under a clean read');
+    return 'one write to mint, then five ensures and two reads: zero writes, byte-identical';
+  }));
+
+  check('barracks: a cleared store is cleared, and a refused write is remembered', () => withCleanStore(() => {
+    /**
+     * THE TWO HALVES OF src/game/Store.js, and they used to be one guess.
+     *
+     * `Muster` kept an in-memory mirror and read it back whenever `getItem`
+     * answered nothing — so a store cleared ON PURPOSE (a player wiping site
+     * data; this very fixture restoring between suites) came back from the
+     * dead, callsigns and all. An absent key on a WORKING store is an empty
+     * record. A store that has actually REFUSED a write is the only one that
+     * gets to answer from memory, and it says so through `notSaving` so the
+     * tab can warn instead of letting a player name men into a void.
+     */
+    const plan = musterPlan({ mode: 'skirmish', allies: 0, order: 'jedi' }, null);
+    const slate = Muster.ensure(plan, Company.load('republic'));
+    Muster.dressRecruit('republic', slate.recruits[0].designation, { callsign: 'Ghost' });
+    assert(Muster.slateFor('republic').recruits[0].look?.callsign === 'Ghost',
+      'the callsign did not reach the store at all');
+    localStorage.removeItem(Muster.KEY);
+    const after = Muster.slateFor('republic');
+    assert(after.recruits.length === 0 && after.salt === null,
+      `a cleared store answered with ${after.recruits.length} recruits — memory is shadowing the store`);
+    assert(!Muster.notSaving(), 'a working store reported itself as not saving');
+
+    /* AND THE OTHER HALF: a store that throws keeps the page coherent. */
+    const realSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+    let broken;
+    try {
+      const s2 = Muster.ensure(plan, Company.load('republic'));
+      assert(s2.recruits.length === plan.want, 'a refused write lost the slate it had just minted');
+      broken = Muster.notSaving();
+    } finally { localStorage.setItem = realSet; }
+    assert(broken, 'a refused write did not raise notSaving — the tab cannot warn about silent loss');
+    return 'an absent key reads empty; a refused write is kept in memory and admitted';
+  }));
+
+  check('barracks: the salt moves with every term it claims to move with', () => withCleanStore(() => {
+    /**
+     * The salt is a hash of (army, runs, lost, headcount) and its whole job is
+     * that a banked run cannot leave the same men on the slate. A CONSTANT
+     * salt is caught by the determinism clause above — but removing any ONE
+     * term was invisible, because a wipe also writes the dead onto `fallen`
+     * and `takenOf` excludes them, so fresh names appeared either way and the
+     * check could not tell which mechanism produced them. Each term is pinned
+     * here directly, against a company that differs in exactly one field.
+     */
+    const base = { ...Company.blank('republic'), runs: 2, lost: 3, men: [] };
+    const salt = Muster.saltOf(base);
+    for (const [field, value] of [['runs', 3], ['lost', 4]]) {
+      assert(Muster.saltOf({ ...base, [field]: value }) !== salt,
+        `two companies differing only in \`${field}\` hash to the same salt — that term is decoration`);
+    }
+    const withMan = { ...base, men: [{ designation: 'CT-1234', type: 'trooper', xp: 0, runs: 0 }] };
+    assert(Muster.saltOf(withMan) !== salt,
+      'a company that gained a man hashes to the same salt — the headcount term is decoration');
+    return 'runs, lost and headcount each move the salt on their own';
   }));
 
   check('barracks: the muster lives beside the roll, not in it', () => withCleanStore(() => {
@@ -1053,4 +1140,1144 @@ export async function run({ check, assert, THREE: T }) {
       + `${(box.min.y * 100).toFixed(1)}cm · Sergeant wears all four channels, ${vet.rig.list.length} `
       + 'bones both builds';
   });
+
+  check('barracks: a kit and a paint are geometry and colour, and move no number', async () => {
+    /**
+     * THE DRESSING ROOM'S HALF OF "THE PAGE SELLS NOTHING".
+     *
+     * The mark and the band above are paint bolted onto a finished body by
+     * `enlistBody`. A KIT is not: a pauldron is a plate that has to exist when
+     * the rig is built, so a man's kit rides the SPAWN — `world.spawnEnemy(t,
+     * p, { look, kind })` → `Enemy` → `kitOptsFrom` → `buildTrooper`. That is
+     * a different road into the same body, and it is a road that could carry a
+     * number, so it gets the same proof.
+     *
+     * THE SEED IS PINNED RATHER THAN THE PROFILE. `Enemy`'s constructor rolls
+     * pace off `enemyRng` before `_build` is ever called, so seeding the
+     * stream to the same value before each construction makes the two bodies
+     * numerically identical by construction — and any difference that then
+     * appears is the kit, exactly. No ratio, no epsilon: equality.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { KIT_FIELDS, PAINT_SLOTS, kitOptsFrom, PAINTS } = await import('../../src/game/Bodies.js');
+    const { world } = await bootWorld({ settings: { quality: 'low' } });
+
+    /** Every material colour on a rig, and how many meshes carry them. */
+    const survey = (e) => {
+      const hexes = new Set();
+      let meshes = 0;
+      (e.rig?.root || e.group)?.traverse?.((o) => {
+        if (!o.isMesh) return;
+        meshes++;
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (!m) continue;
+          if (m.color) hexes.add(m.color.getHex());
+          if (m.emissive && m.emissive.getHex()) hexes.add(m.emissive.getHex());
+        }
+      });
+      return { meshes, hexes };
+    };
+
+    const SEED = 90210;
+    const spawn = (look, kind, x) => {
+      enemyRng.seed(SEED);
+      const e = world.spawnEnemy(kind === 'steel' ? 'b1' : 'trooper',
+        new THREE.Vector3(x, 0, 24), look ? { look, kind } : null);
+      return e;
+    };
+
+    /* THE FULLEST KIT THE VOCABULARY ALLOWS, built off KIT_FIELDS itself so a
+     * field added tomorrow is under this check the day it ships rather than the
+     * day someone remembers. Each field takes its LAST legal value, which is
+     * the one furthest from "as issued" in every row. */
+    const dressed = (kind) => {
+      const kit = {};
+      for (const f in KIT_FIELDS[kind]) {
+        const vals = KIT_FIELDS[kind][f].values;
+        kit[f] = vals[vals.length - 1][0];
+      }
+      const paint = {};
+      for (const [field] of PAINT_SLOTS[kind]) paint[field] = PAINTS[PAINTS.length - 1].id;
+      return { kit, paint };
+    };
+
+    const NUMBERS = ['maxHp', 'hp', 'attackDamage', 'speed', 'forceMax', 'radius', 'height'];
+    const report = [];
+    for (const [kind, x] of [['flesh', 0], ['steel', 12]]) {
+      const bare = spawn(null, kind, x);
+      const look = dressed(kind);
+      const kitted = spawn(look, kind, x + 4);
+      for (const k of NUMBERS) {
+        if (bare[k] == null && kitted[k] == null) continue;
+        assert(bare[k] === kitted[k],
+          `a dressed ${kind} body's ${k} is ${kitted[k]} and a bare one's is ${bare[k]} — `
+          + 'the dressing room is selling power');
+      }
+      /* …AND THE SAME BRAIN. A kit that quietly changed the archetype would
+       * move nothing above and everything in the fight. */
+      assert(bare.type === kitted.type, `a dressed ${kind} body is a ${kitted.type}`);
+      assert(bare.constructor === kitted.constructor, 'a dressed body is a different class');
+
+      /* IT ACTUALLY LANDED, both halves. Geometry: more meshes on the rig,
+       * because every field's last value bolts something on. Colour: the
+       * palette hex the player picked is on the body and is not on the bare
+       * one — which is what "I painted it and nothing happened" would look
+       * like, and it is the complaint this whole tab exists to answer. */
+      const b = survey(bare); const d = survey(kitted);
+      assert(d.meshes > b.meshes,
+        `a fully kitted ${kind} body has ${d.meshes} meshes and a bare one ${b.meshes} — `
+        + 'the kit is stored and never built');
+      const hex = PAINTS[PAINTS.length - 1].color;
+      assert(d.hexes.has(hex),
+        `${PAINTS[PAINTS.length - 1].name} is not on a ${kind} body that was painted it`);
+      assert(!b.hexes.has(hex), `an unpainted ${kind} body already wears the test colour`);
+      report.push(`${kind} +${d.meshes - b.meshes} meshes, painted, 0 numbers moved`);
+    }
+
+    /**
+     * AND THE GATE REFUSES EVERYTHING ELSE. `kitOptsFrom` is the only door
+     * between a stored look and a body builder, and the store is a JSON blob
+     * the player's own browser holds — so a hand-edited one must not be able
+     * to reach past the wardrobe. `frame` is named because it is the live
+     * risk: it is real, `buildTrooper` honours it, and it is what the
+     * silhouette checks measure to keep six archetypes apart at range.
+     */
+    const hostile = kitOptsFrom({
+      kit: { frame: 2.5, pauldron: 'L', scale: 9, hp: 999, pack: 'nonsense' },
+      paint: { color: 'bone', visor: '#ff0000', frame: 'ash' },
+    }, 'flesh');
+    assert(!('frame' in hostile), 'frame reached the body builder through a stored kit');
+    for (const k of ['scale', 'hp']) assert(!(k in hostile), `${k} reached the body builder`);
+    assert(hostile.pauldron === 'L', 'a legal field was dropped by the gate');
+    assert(!('pack' in hostile), 'an illegal VALUE for a legal field went through');
+    assert(hostile.color === PAINTS.find((p) => p.id === 'bone').color,
+      'a legal paint id did not resolve to its palette colour');
+    assert(!('visor' in hostile), 'a raw colour string went through as a paint');
+    return `${report.join('; ')}; gate dropped frame/scale/hp and a raw hex`;
+  });
+
+  check('barracks: a contingent slate is exactly what the purse composes, and the field takes it', () => withCleanStore(() => {
+    /**
+     * THE ONE ANSWER, TWICE — the defect this replaced was two hand-maintained
+     * twins: `_musterOpening` composed the line the fight actually gets, and
+     * the tab guessed at it with `n × cheapest`. They disagreed, and the tab's
+     * guess was the one the player read.
+     *
+     * There is now one composer, so what has to be asserted is that BOTH
+     * callers still route through it and that neither has grown a second
+     * opinion. The slate is checked against `composeContingent` directly, and
+     * the roster the fight builds is checked against the slate — with veterans
+     * standing, because a purse that forgets what the standing line already
+     * cost is exactly how "eight allies" became fourteen bodies.
+     */
+    const cases = [
+      { allies: 8, allyUnit: CONTINGENT_MIXED, vets: 0 },
+      { allies: 8, allyUnit: CONTINGENT_MIXED, vets: 3 },
+      { allies: 12, allyUnit: 0, vets: 0 },
+      { allies: 12, allyUnit: 2, vets: 5 },
+      { allies: 6, allyUnit: 3, vets: 0 },
+    ];
+    const lines = [];
+    for (const cs of cases) {
+      localStorage.removeItem(Muster.KEY);
+      localStorage.removeItem(Company.KEY);
+      const plan = musterPlan({ ...DEFAULT_SETTINGS, mode: 'waves', allies: cs.allies,
+        allyUnit: cs.allyUnit, allyArmy: 0 }, null);
+      assert(plan && !plan.armyMode, `waves with ${cs.allies} allies did not plan a contingent`);
+      assert(plan.unit === cs.allyUnit, `the plan lost the composition: ${plan.unit}`);
+
+      /* A STANDING LINE, banked the way a withdrawal banks one, so the purse
+       * has something to subtract. */
+      if (cs.vets) {
+        const roll = freshRoll(cs.vets);
+        Company.keep(roll.all, { army: plan.army, deployed: roll.all, ground: 'test' });
+      }
+      const c = Company.load(plan.army);
+      const slate = Muster.ensure(plan, c);
+      const standing = Company.fieldable(c, plan.want).map((m) => m.type);
+      const want = composeContingent(ARMIES[plan.army], plan.want, standing, plan.unit);
+      const got = slate.recruits.map((r) => r.type);
+      assert(JSON.stringify(got) === JSON.stringify(want.types),
+        `the tab slated ${JSON.stringify(got)} and the purse composes `
+        + `${JSON.stringify(want.types)} for ${JSON.stringify(cs)}`);
+
+      /* AND THE FIGHT'S OWN ROSTER IS THAT LINE. `lineup` is the deployment
+       * answer both the tab and `_musterOpening` read; the veterans lead it
+       * and the recruits fill it, and nothing is truncated to `want` — which
+       * for a contingent is a PURSE and not a headcount. That truncation is
+       * not hypothetical: capping a contingent at the slider's number is
+       * exactly the bug this resolver was rewritten to stop, and it is the
+       * shape a careless `Math.min(want, …)` would put back. */
+      const line = Muster.lineup(plan, c);
+      const flat = (a) => JSON.stringify([...a].sort());
+      assert(line.length === standing.length + want.types.length,
+        `the lineup fields ${line.length} men off ${standing.length} veterans and a slate of `
+        + `${want.types.length} — for ${JSON.stringify(cs)}`);
+      assert(flat(line.map((m) => m.type)) === flat([...standing, ...want.types]),
+        `the lineup is made of ${flat(line.map((m) => m.type))} and the purse bought `
+        + `${flat([...standing, ...want.types])}`);
+      /* AND EVERY MAN ON IT IS A MAN — a designation apiece, none blank, none
+       * shared, because "10 troops" with nobody behind it is the tab the
+       * player already threw out. */
+      const names = new Set(line.map((m) => m.designation));
+      assert(names.size === line.length && !names.has(undefined) && !names.has(''),
+        `${line.length} men on the line and ${names.size} distinct names`);
+      lines.push(`${cs.allies}/${cs.allyUnit}/+${cs.vets}v → ${got.length}`);
+    }
+    return lines.join(', ');
+  }));
+
+  check('barracks: the dead end is a door, and what comes through it has names', () => withCleanStore(() => {
+    /**
+     * A FRESH PROFILE OPENS ON A MODE THAT FIELDS NOBODY. That was the whole
+     * of the player's complaint arriving by a second road: the tab was
+     * honest — this mode has no army of yours — and honest was useless.
+     *
+     * So the sentence kept its honesty and grew a control, and this is the
+     * proof that the control is real: click it on a mode with a null plan and
+     * the muster below fills with MEN — designations, and a look each — not a
+     * number and not a promise.
+     */
+    const { menu, doc, close } = menuOn({ mode: 'waves', allies: 0 });
+    /* WHAT REACHED THE DISK, caught at the door rather than read after it —
+     * the fixture puts the player's own settings back the moment the click
+     * returns, so the written bytes have to be caught as they go past. */
+    let saved = null;
+    const realSet = localStorage.setItem.bind(localStorage);
+    localStorage.setItem = (k, v) => { if (k === STORE_KEY) saved = v; return realSet(k, v); };
+    try {
+      assert(musterPlan(menu.s, null) === null, 'the fixture mode already plans a muster');
+      menu.showMenu();
+      menu._buildCompanyList();
+      const host = doc.getElementById('company-muster');
+      const door = host.querySelector('.company-restore');
+      assert(door, 'a mode that fields nobody offers no way to raise a line');
+      assert(!host.querySelectorAll('[data-recruit]').length, 'men mustered before the door was opened');
+
+      const hadS = localStorage.getItem(STORE_KEY);
+      try { door.click(); } finally {
+        /* …put back through the REAL setter: restoring through the spy would
+         * overwrite the very bytes the spy was installed to catch. */
+        if (hadS == null) localStorage.removeItem(STORE_KEY);
+        else realSet(STORE_KEY, hadS);
+      }
+      assert(menu.s.allies === OPENING_STRENGTH,
+        `the door set allies to ${menu.s.allies}`);
+      /* AND IT SAVED. "I should be able to boot the game fresh and see the
+       * troops I will have" is the whole point of the door, so a version of it
+       * that writes `this.s` directly — same men on screen, nothing on disk —
+       * is the door not working, one boot later. `_set` is what persists;
+       * this is the assertion that notices when something stops calling it. */
+      assert(JSON.parse(saved || '{}').allies === OPENING_STRENGTH,
+        `the line was raised on screen and ${JSON.parse(saved || '{}').allies} was written to disk`);
+      const men = [...doc.getElementById('company-muster').querySelectorAll('[data-recruit]')];
+      assert(men.length >= 1, 'the door opened onto an empty muster');
+      const named = men.filter((d) => /[A-Z]{1,3}-?\d/.test(d.querySelector('b')?.textContent || ''));
+      assert(named.length === men.length,
+        `${men.length - named.length} of ${men.length} men came through the door unnamed`);
+
+      /* AND THEY ARE THE SAME MEN THE FIGHT WOULD GET — the door writes a
+       * setting, and the setting is what `musterPlan` reads, so there is no
+       * second path here to drift. */
+      const plan = musterPlan(menu.s, null);
+      assert(plan, 'the door left the plan null');
+      const line = Muster.lineup(plan, Company.load(plan.army));
+      assert(line.length === men.length,
+        `the page shows ${men.length} men and the drop fields ${line.length}`);
+
+      /* …AND ONE OPENS. The complaint was "you can't click anywhere to see
+       * these troops", so the door is not done until the man behind it has a
+       * page with a pen and a wardrobe on it. */
+      men[0].click();
+      const page = doc.getElementById('company-page');
+      assert(page && page.querySelector('[data-kit]'),
+        'a man raised through the door has no kit to change');
+      assert(page.querySelector('[data-paint]'), 'a man raised through the door has no paint');
+      assert(page.querySelector('input'), 'a man raised through the door cannot be named');
+      return `${men.length} named men through the door, saved to disk, `
+        + 'first one opens with a pen and a wardrobe';
+    } finally { localStorage.setItem = realSet; close(); }
+  }));
+
+  check('barracks: the scar is reachable in every mode a company lives in', () => {
+    /**
+     * ── A FEATURE THAT WAS SHIPPED, SAVED, PRINTED AND UNEARNABLE ─────────
+     *
+     * `Trooper.wounds` is persisted, printed on the dossier, phrased in the
+     * story line, celebrated in the orders of the day and painted on the plate
+     * by `scorchUp`. It had exactly one writer — `Enemy._getUpFromDown` —
+     * which fires only where `MODES.downed` is declared. Grep the whole tree
+     * for that flag and it is on ONE mode: The Line. So in Command, in
+     * skirmish, in the wave modes — every mode a company actually lives in —
+     * no man could ever earn a scar, and the paint was unreachable.
+     *
+     * The second writer is in `_troops`, the one loop that touches every
+     * living body of every army once a frame, so it is present wherever a
+     * director runs. This drives it there rather than calling it: what has to
+     * be true is that a man shot to a third of his health in an ORDINARY mode
+     * comes out of the frame carrying it.
+     */
+    const modes = Object.keys(MODES).filter((k) => !MODES[k]?.downed);
+    assert(modes.length >= 3, `only ${modes.length} modes lack a downed rule`);
+
+    const { d, c } = licenceArmy();
+    const sq = d.squadsOf(c)[0];
+    const man = sq.find((t) => t.body);
+    assert(man && (man.wounds | 0) === 0, 'the fixture man already has a scar');
+    assert(!d.world.director?.downedMen,
+      'the fixture is running a mode that declares downed — the point is the modes that do not');
+
+    /* A SCRATCH IS NOT A WOUND. */
+    man.body.hp = man.body.maxHp * (HURT_AT + 0.2);
+    d._troops(1 / 30, {});
+    assert((man.wounds | 0) === 0,
+      `a man on ${(man.body.hp / man.body.maxHp).toFixed(2)} of his health was written a scar`);
+
+    /* …AND BEING SHOT TO A THIRD IS. */
+    man.body.hp = man.body.maxHp * (HURT_AT - 0.01);
+    d._troops(1 / 30, {});
+    assert((man.wounds | 0) === 1,
+      `a man shot to a third came out of the frame with ${man.wounds | 0} wounds — the scar `
+      + 'is still unreachable outside The Line');
+
+    /* ONE PER RUN, whatever else happens to him — `wounds` reads as "runs he
+     * nearly died in", which is the number a scar can honestly stand for. */
+    for (let i = 0; i < 20; i++) { man.body.hp = 1; d._troops(1 / 30, {}); }
+    assert((man.wounds | 0) === 1,
+      `twenty frames at 1 hp wrote ${man.wounds} scars — a bad afternoon is one scar`);
+
+    /* …AND THE OTHER WRITER RESPECTS THE SAME FLAG, so a man who is shot to a
+     * third and THEN goes down and is picked up is not counted twice. */
+    Enemy.prototype._getUpFromDown.call({
+      downed: true, bleed: 1, _downHelp: 9, maxHp: 100, hp: 5, actor: null, beingDragged: null,
+      world: { command: { log: [], areaNumber: 1, wave: 1, commander: { side: 9 } }, notify() {} },
+      team: 1, trooper: man,
+    });
+    assert((man.wounds | 0) === 1,
+      `going down after being bloodied made it ${man.wounds} — the two writers are double-counting`);
+
+    /* AND IT MOVES NO NUMBER. A scar is a mesh; the man is the man. */
+    const was = { hp: man.body.maxHp, dmg: man.body.attackDamage, speed: man.body.speed };
+    d._troops(1 / 30, {});
+    assert(man.body.maxHp === was.hp && man.body.attackDamage === was.dmg
+      && man.body.speed === was.speed, 'carrying a scar changed a number');
+    return `1 scar for a man shot to ${HURT_AT} in a mode with no downed rule, 1 after twenty `
+      + `more frames and a rescue; ${modes.length} modes now reachable`;
+  });
+
+  check('barracks: left behind is not killed in action, and the memorial says which',
+    () => withCleanStore(() => {
+      /**
+       * `keep` treats every man who went out and did not come back as gone,
+       * which is right and is the whole cost of the mechanism. The memorial
+       * was printing ONE sentence over two different facts: the man cut down
+       * in engagement two, and the man standing eleven metres from a closing
+       * ramp with nothing wrong with him.
+       *
+       * Both cost the same — there is no branch anywhere that softens the
+       * second, and this check asserts that too — but a casualty list that
+       * cannot tell them apart teaches nothing about either.
+       */
+      const roll = freshRoll(6);
+      const [home, killed, stranded] = [roll.all[0], roll.all[1], roll.all[2]];
+      killed.alive = false;
+      Company.keep([home], {
+        army: 'republic', deployed: roll.all, ground: 'geonosis', ended: 'withdrew',
+        left: roll.all.filter((t) => t !== home),
+        stranded: [stranded.designation],
+        roll: [{ name: killed.name, killer: 'B2 Super Battle Droid', at: 421 }],
+      });
+      const c = Company.load('republic');
+
+      /* IT STILL COSTS EVERYTHING. Five went out and did not come back; five
+       * are off the roll, whatever the memorial calls them. */
+      assert(c.men.length === 1 && c.men[0].designation === home.designation,
+        `${c.men.length} men still on a roll that lost five`);
+      assert((c.lost | 0) === 5, `the ledger counts ${c.lost} lost of 5`);
+
+      const row = (t) => c.fallen.find((f) => f.designation === t.designation);
+      assert(row(killed)?.fate === 'kia',
+        `a man cut down reads "${row(killed)?.fate}"`);
+      assert(row(killed)?.killer === 'B2 Super Battle Droid' && row(killed)?.at === 7,
+        'the killed man lost his epitaph');
+      assert(row(stranded)?.fate === 'left',
+        `a man still standing when the ramp closed reads "${row(stranded)?.fate}"`);
+      /* AND NOTHING IS STANDING OVER HIM. A killer under a man nothing killed
+       * is the blank this whole field exists to fill. */
+      assert(row(stranded)?.killer === null && row(stranded)?.at === null,
+        `a man left behind was given a killer: ${JSON.stringify(row(stranded))}`);
+      /* A man who went out, is not on the manifest and is not named stranded
+       * is a casualty — the default every record written before this meant. */
+      const other = roll.all.find((t) => t !== home && t !== killed && t !== stranded);
+      assert(row(other)?.fate === 'kia', 'an unnamed loss stopped defaulting to a casualty');
+
+      /* THE PAGE SAYS IT, off the store, through the real renderer. */
+      const { menu, doc, close } = menuOn();
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany('republic/-fallen');
+        const txt = doc.getElementById('company-page').textContent;
+        assert(/still standing when the ramp closed/.test(txt),
+          'the memorial says nothing about the man it left');
+        assert(/B2 Super Battle Droid/.test(txt), 'the memorial lost the killer it did know');
+      } finally { close(); }
+
+      /* AND A HOSTILE STORE CANNOT INVENT A THIRD FATE. */
+      const raw = JSON.parse(localStorage.getItem(Company.KEY));
+      raw.republic.fallen[0].fate = 'promoted-to-glory';
+      localStorage.setItem(Company.KEY, JSON.stringify(raw));
+      assert(Company.load('republic').fallen[0].fate === 'kia',
+        'a made-up fate came off disk intact');
+      return '5 lost either way · 1 kia with a killer and a minute, 1 left with neither, '
+        + 'the page says both, a forged fate reads kia';
+    }));
+
+  check('barracks: a pattern issues across both stores, and nothing personal travels',
+    () => withCleanStore(() => {
+      /**
+       * ── THE FOUR HUNDRED CLICKS ───────────────────────────────────────────
+       *
+       * Twelve rows of kit and three of paint across ten men is somewhere north
+       * of four hundred clicks to make a company look like one company, and
+       * looking like one company is most of what this screen is for. So a
+       * man's pattern can be issued.
+       *
+       * BOTH STORES, and that is the clause that matters: on a fresh profile
+       * every man the player HAS is a recruit on the slate, so a control that
+       * only wrote the roll would do nothing at all for exactly the person it
+       * was written for. `Muster.issue` is the one door because Muster is the
+       * only file that can see both — Company may not import it back.
+       *
+       * AND NOTHING PERSONAL TRAVELS. The callsign is the name you gave one
+       * soldier; the mark and the band are the whole of how you pick him out
+       * of a line at forty metres. A pattern that copied either would delete
+       * the one thing on this tab that makes a man findable, which is the
+       * feature eating itself.
+       */
+      const roll = freshRoll(6);
+      for (let i = 0; i < roll.all.length; i++) roll.all[i].squad = i < 3 ? 0 : 1;
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const plan = planOf(10);
+      Muster.ensure(plan, Company.load('republic'));
+
+      const from = Company.load('republic').men[0];
+      Company.dress('republic', from.designation, {
+        kit: { pauldron: 'R', kama: 'long' },
+        paint: { color: 'blood', visor: 'sun' },
+        callsign: 'Torch', mark: 'ice',
+      });
+      const before = Muster.slateFor('republic').recruits.length;
+      assert(before > 0, 'the fixture minted no recruits to issue to');
+
+      /* ── HIS SQUAD ONLY ────────────────────────────────────────────────── */
+      const n = Muster.issue('republic', from.designation, 'squad');
+      assert(n > 0, 'issuing to a squad wrote nobody');
+      const c1 = Company.load('republic');
+      const mate = c1.men.find((m) => m.squad === from.squad && m.designation !== from.designation);
+      const other = c1.men.find((m) => m.squad !== from.squad);
+      assert(mate?.look?.kit?.pauldron === 'R' && mate?.look?.paint?.color === 'blood',
+        `a man in the same squad wears ${JSON.stringify(mate?.look)}`);
+      assert(!other?.look?.kit,
+        `a man in another squad was issued the pattern anyway: ${JSON.stringify(other?.look)}`);
+      assert(!mate.look.callsign && !mate.look.mark,
+        `the pattern carried something personal: ${JSON.stringify(mate.look)}`);
+      /* AND THE MAN IT CAME FROM IS UNTOUCHED — including the name he answers
+       * to, which a loop that wrote him too would have overwritten with his
+       * own pattern minus the callsign. */
+      const still = c1.men.find((m) => m.designation === from.designation);
+      assert(still.look.callsign === 'Torch' && still.look.mark === 'ice',
+        `the pattern's own man lost his name or his mark: ${JSON.stringify(still.look)}`);
+
+      /* ── AND THE WHOLE COMPANY, WHICH IS THE SLATE TOO ─────────────────── */
+      Muster.issue('republic', from.designation, 'line');
+      const c2 = Company.load('republic');
+      for (const m of c2.men) {
+        if (m.designation === from.designation) continue;
+        assert(m.look?.kit?.kama === 'long' && m.look?.paint?.visor === 'sun',
+          `${m.designation} on the roll wears ${JSON.stringify(m.look)}`);
+      }
+      const slate = Muster.slateFor('republic');
+      assert(slate.recruits.length === before, 'issuing a pattern changed the size of the slate');
+      for (const r of slate.recruits) {
+        assert(r.look?.kit?.kama === 'long' && r.look?.paint?.visor === 'sun',
+          `${r.designation} on the SLATE wears ${JSON.stringify(r.look)} — the men a fresh `
+          + 'player actually has were not written');
+      }
+
+      /* ── A DROID WEARS WHAT A DROID CAN ────────────────────────────────── */
+      const droids = new CommandRoster(ARMIES.separatist);
+      for (let i = 0; i < 3; i++) droids.enlist(ARMIES.separatist.tiers[0].type);
+      for (const t of droids.all) t.squad = 0;
+      Company.keep(droids.all, { army: 'separatist', deployed: droids.all, ground: 'geonosis' });
+      const d0 = Company.load('separatist').men[0];
+      Company.dress('separatist', d0.designation,
+        { kit: { pauldron: 'R', pack: 'rocket' }, paint: { color: 'jungle' } });
+      Muster.issue('separatist', d0.designation, 'line');
+      const mate2 = Company.load('separatist').men[1];
+      assert(mate2.look?.kit?.pack === 'rocket',
+        `a droid did not get the part of the pattern a droid can wear: ${JSON.stringify(mate2.look)}`);
+      assert(!('pauldron' in (mate2.look?.kit || {})),
+        'a droid was issued a clone pauldron — the gate is not being asked');
+
+      /* ── AND IT MOVES NO NUMBER, which is the law this whole tab is under. */
+      const after = Company.load('republic').men;
+      for (const m of after) {
+        assert(!('hp' in m) && !('post' in (m.look || {})) && (m.xp | 0) === 0,
+          `issuing a pattern wrote something that is not a look: ${JSON.stringify(m.look)}`);
+      }
+      return `${n} in a squad of 3, then the whole roll and all ${slate.recruits.length} `
+        + 'recruits; callsign, mark and band stayed put; a droid got the rocket tube and not the pauldron';
+    }));
+
+  check('barracks: a veteran can be moved between squads, and the seat does not move with him',
+    () => withCleanStore(() => {
+      /**
+       * A recruit could be dealt a squad from the day the slate existed and a
+       * man who had COME HOME could not, so a company that survived was stuck
+       * in whatever squads the muster happened to deal it — for ever. That is
+       * odd on its own and it became load-bearing when the post arrived: a
+       * seat belongs to a squad, so a player who cannot move a man between
+       * squads cannot organise the company the seats are in.
+       *
+       * AND THE SEAT STAYS BEHIND. Carrying it would put a second holder in
+       * the squad he walks into, which is `leaderOf` answering with whichever
+       * man came first in an array whose order is nobody's decision.
+       */
+      const roll = freshRoll(4);
+      roll.all[0].award(RANKS[2].xp);
+      for (const t of roll.all) t.squad = 0;
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const him = roll.all[0].designation;
+      Company.appoint('republic', him, true, true);
+      assert(Company.load('republic').men.find((m) => m.designation === him)?.post === true,
+        'the fixture failed to seat him');
+
+      Company.assign('republic', him, 1);
+      const m = Company.load('republic').men.find((x) => x.designation === him);
+      assert(m.squad === 1, `he was moved to squad ${m.squad}`);
+      assert(m.post !== true, 'he carried his squad\'s seat into a different squad');
+
+      /* AN IMPOSSIBLE SQUAD IS "WHEREVER THE MUSTER DEALS HIM", not a refusal
+       * and not a stored 900: this is a screen writing a number and the store
+       * is where a number is decided. */
+      Company.assign('republic', him, 900);
+      assert(Company.load('republic').men.find((x) => x.designation === him)?.squad === null,
+        'a squad past the ceiling was stored as typed');
+      Company.assign('republic', him, -3);
+      assert(Company.load('republic').men.find((x) => x.designation === him)?.squad === null,
+        'a negative squad was stored as typed');
+
+      /* THE PAGE OFFERS IT, and offers the same squads a recruit's page does. */
+      const { menu, doc, close } = menuOn();
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(`republic/${him}`);
+        const chips = [...doc.getElementById('company-page').querySelectorAll('[data-squad]')];
+        assert(chips.length === Company.SQUADS_MAX + 1,
+          `a veteran's page offers ${chips.length} squad chips and the roll has `
+          + `${Company.SQUADS_MAX} squads plus "wherever"`);
+        chips[2].click();
+        assert(Company.load('republic').men.find((x) => x.designation === him)?.squad === 2,
+          'the chip on a veteran\'s page wrote nothing');
+      } finally { close(); }
+      return `moved 0 → 1 → clamped → 2 through the page; the seat stayed in squad 0; `
+        + `${Company.SQUADS_MAX} squads offered on both pages`;
+    }));
+
+  check('barracks: the order of battle is the shape the ground forms, and it names who has each squad',
+    () => withCleanStore(() => {
+      /**
+       * ── A LIST OF TEN NAMES IS A LIST; A COMPANY IS SQUADS ────────────────
+       *
+       * Every squad in the fight has somebody in charge of it — that has been
+       * true since `leaderOf` existed — and it had never once been SHOWN. So a
+       * player who named a man to a seat, which is the whole point of the
+       * post, could not see their own company's shape anywhere.
+       *
+       * The page must not have its own opinion about either half. `squadPlan`
+       * is the deal `CommandRoster.assignSquads` performs, lifted so a screen
+       * can ask without writing, and `leadOf` is `leaderOf` — post first, then
+       * the rule. This drives the real page and then asks the FIGHT the same
+       * two questions, so the day either derivation drifts, the tab and the
+       * ground stop agreeing and this goes red.
+       */
+      const roll = freshRoll(7);
+      roll.all[3].award(RANKS[2].xp);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const seated = roll.all[3].designation;
+      Company.appoint('republic', seated, true, true);
+      /* AND ONE MAN PUT SOMEWHERE BY HAND. The deal fills the first squad that
+       * is not full; a man the player has already assigned keeps what he was
+       * given, and the order of battle has to honour that or the veteran squad
+       * picker is a control that writes a number nothing reads. Squad 3 is far
+       * enough from the fill that only an honoured assignment puts him
+       * there. */
+      const posted = roll.all[6].designation;
+      Company.assign('republic', posted, 3);
+
+      const { menu, doc, close } = menuOn({ mode: 'command' });
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(null);
+        const page = doc.getElementById('company-page');
+        const squads = [...page.querySelectorAll('.orbat-squad')];
+        assert(squads.length >= 2,
+          `${squads.length} squad(s) on the order of battle for a line of ten`);
+
+        /* THE SAME DEAL THE FIELD MAKES. Asked of the resolver the page reads
+         * and of the pure rule the roster writes with, independently. */
+        const plan = musterPlan(menu.s, null);
+        const line = Muster.lineup(plan, Company.load('republic')) || [];
+        const want = new Map();
+        for (const [m, n] of squadPlan(line, SQUAD)) {
+          want.set(n, (want.get(n) || 0) + 1);
+        }
+        assert(squads.length === want.size,
+          `the page drew ${squads.length} squads and the deal makes ${want.size}`);
+        /* ONE `<b>` PER MAN — a child-combinator count is what the page's own
+         * markup happens to make and is not what is being asserted; the name
+         * is. */
+        const drawn = squads.map((d) => d.querySelectorAll('.company-taking b').length);
+        assert(JSON.stringify(drawn) === JSON.stringify([...want.keys()].sort((a, b) => a - b)
+          .map((k) => want.get(k))),
+          `the page put ${JSON.stringify(drawn)} men in its squads and the deal makes `
+          + `${JSON.stringify([...want.values()])}`);
+        assert(drawn.reduce((a, b) => a + b, 0) === line.length,
+          `${drawn.reduce((a, b) => a + b, 0)} men on the order of battle and ${line.length} `
+          + 'in the line — somebody is not going, or is going twice');
+
+        /* AND THE SEAT IS NAMED, in the squad the deal actually put him in. */
+        const his = squadPlan(line, SQUAD).find(([m]) => m.designation === seated)?.[1];
+        assert(Number.isInteger(his), 'the seated man is not in the line at all');
+        const head = squads[[...want.keys()].sort((a, b) => a - b).indexOf(his)]
+          ?.querySelector('h5')?.textContent || '';
+        assert(/has the seat/.test(head) && head.includes(seated),
+          `the squad the seated man is in reads "${head.replace(/\s+/g, ' ')}"`);
+
+        /* …AND THE FIGHT AGREES. `leadOf` is what `CommandDirector.leaderOf`
+         * calls, so the man the page names is the man the ground obeys. */
+        const mine = squadPlan(line, SQUAD).filter(([, n]) => n === his).map(([m]) => m);
+        assert(leadOf(mine)?.designation === seated,
+          `the page says ${seated} has that squad and the rule says `
+          + `${leadOf(mine)?.designation}`);
+
+        /* THE HAND-ASSIGNED MAN IS WHERE HE WAS PUT, on the page and in the
+         * deal both. */
+        const where = squadPlan(line, SQUAD).find(([m]) => m.designation === posted)?.[1];
+        assert(where === 3,
+          `a man assigned to ${squadWordIndex(3)} was dealt into ${squadWordIndex(where)}`);
+        const heads = squads.map((d) => d.querySelector('h5')?.textContent || '');
+        assert(heads.some((h) => /4/.test(h.split('·')[0] || '')),
+          `no squad heading on the page is the fourth: ${JSON.stringify(heads)}`);
+
+        /* A SQUAD WITH NOBODY ABOVE THE FIRST RUNG SAYS SO rather than naming
+         * a trooper who is a trooper like the other nine. */
+        const flat = squads.map((d) => d.querySelector('h5')?.textContent || '')
+          .filter((h) => !/has the seat/.test(h));
+        assert(flat.some((h) => /outranks/.test(h)),
+          `no squad of raw troopers said so: ${JSON.stringify(flat)}`);
+        return `${squads.length} squads, ${drawn.join('+')} men, the seat named in `
+          + `${['1st', '2nd', '3rd'][his] || `#${his + 1}`}, and leadOf agrees`;
+      } finally { close(); }
+    }));
+
+  check('barracks: a delivered contingent is not announced as a refusal', () => {
+    /**
+     * ── THE LOUDEST OF THREE REFUSALS, FIRING ON THE SUCCESS PATH ─────────
+     *
+     * `composeContingent` tested the REMAINDER of the purse, and
+     * `_musterOpening` runs after `_musterVeterans` has already enlisted the
+     * whole line the barracks composed — so the purse handed in was a purse
+     * already spent on exactly what was asked for. Every ordinary contingent
+     * run opened with
+     *
+     *     CONTINGENT UNCHANGED — Clone Trooper costs 5 points and 10 troopers buys 0
+     *
+     * on top of a contingent delivered precisely as asked. `allyUnit` defaults
+     * to rung 0, so this was every player, every run.
+     *
+     * A refusal has to be about the REQUEST — "six allies cannot buy an
+     * AT-TE" is true and useful; "the men you already have used up the money"
+     * is the system working. Both directions are pinned, because a version
+     * that simply never refuses is the same defect with the volume down.
+     */
+    const A = ARMIES.republic;
+    const cost = (t) => A.tiers.find((x) => x.type === t).cost;
+    const line = (n, t) => new Array(n).fill(t);
+
+    /* THE SUCCESS PATH, WITH THE LINE ALREADY STANDING. */
+    for (const [want, unit, standing] of [
+      [10, 0, line(10, 'trooper')],
+      [8, CONTINGENT_MIXED, line(6, 'trooper')],
+      [12, 2, line(6, 'sniper')],
+    ]) {
+      const r = composeContingent(A, want, standing, unit);
+      assert(!r.refused,
+        `a contingent of ${want} with ${standing.length} already standing was refused: `
+        + `"${r.refused}"`);
+    }
+
+    /* …AND THE REAL ONE STILL SPEAKS. The dearest rung against a purse that
+     * never could have bought it. */
+    /**
+     * …AND A REQUEST THE STANDING LINE HAS EATEN IS STILL A REFUSAL, IF NOBODY
+     * STANDING IS THE THING THAT WAS ASKED FOR.
+     *
+     * Testing the whole purse killed the false alarm and opened a quieter hole
+     * the other way: four returning ARCs against a request for AT-TEs is a
+     * purse that COULD have bought one and 2 points left, so the composer
+     * bought nothing and said nothing and the muster came up empty. The
+     * question is whether the player got what they asked for.
+     */
+    const atte = A.tiers.findIndex((t) => t.type === 'atte');
+    if (atte >= 0) {
+      const eaten = composeContingent(A, 10, new Array(4).fill('arc'), atte);
+      assert(eaten.refused && /already standing/.test(eaten.refused),
+        `a purse the veterans ate produced ${JSON.stringify(eaten.types)} and said `
+        + `"${eaten.refused}"`);
+      /* …AND NOT WHEN THE THING ASKED FOR IS ALREADY ON THE FIELD. He got it
+       * last run; there is nothing to say. */
+      const got = composeContingent(A, 10, ['atte'], atte);
+      assert(!got.refused,
+        `the AT-TE the player asked for is already standing and the muster said `
+        + `"${got.refused}"`);
+    }
+
+    const dearest = A.tiers.reduce((a, b) => (b.cost > a.cost ? b : a));
+    const rung = A.tiers.indexOf(dearest);
+    const tooSmall = Math.max(1, Math.floor((dearest.cost - 1) / cost('trooper')));
+    const no = composeContingent(A, tooSmall, [], rung);
+    assert(no.refused && no.refused.includes(dearest.cost.toString()),
+      `${tooSmall} allies cannot buy a ${dearest.type} (${dearest.cost} points) and the `
+      + `composer said "${no.refused}"`);
+    assert(!no.refused.includes(' buys 0'),
+      `the refusal quotes the remainder rather than the purse: "${no.refused}"`);
+    const enough = composeContingent(A, Math.ceil(dearest.cost / cost('trooper')), [], rung);
+    assert(!enough.refused && enough.types.includes(dearest.type),
+      `a purse that can exactly afford a ${dearest.type} got "${enough.refused}"`);
+    return `3 delivered contingents announced nothing · ${tooSmall} allies still refused a `
+      + `${dearest.type}, quoting the purse`;
+  });
+
+  check('barracks: every chip the wardrobe offers is a chip the builder reads', async () => {
+    /**
+     * ── THE DEAD CONTROL, ARRIVING THROUGH THE ONE DOOR NOBODY CHECKED ────
+     *
+     * `KIT_FIELDS` and `PAINT_SLOTS` are keyed by chassis KIND — flesh or
+     * steel — which is the right key for what the STORE may hold and the wrong
+     * one for what a PAGE may offer, because the options are read by
+     * individual builders and the builders do not agree.
+     *
+     * Measured on the shipped roster before `WEARS` existed: a surviving AT-TE
+     * (a named man on the Republic roll the moment one comes home) was offered
+     * nine rows of kit and three of paint that `Vehicles.js` does not read,
+     * and every B2, droideka and Magna was offered a unit flash and a
+     * photoreceptor that their builders do not read. Fifteen controls that
+     * stored a value, lit up, and changed nothing anywhere.
+     *
+     * This RE-MEASURES the table rather than trusting it: every rung of both
+     * ladders is built bare and then once per field, and the whole
+     * mesh-and-material signature is compared. A builder that learns a field,
+     * or forgets one, goes red here rather than shipping a chip that does
+     * nothing.
+     */
+    const B = await import('../../src/game/Bodies.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const sig = (root) => {
+      const parts = [];
+      const walk = (o) => {
+        if (!o) return;
+        if (o.isMesh) {
+          parts.push(`${o.name || ''}:${o.geometry?.attributes?.position?.count || 0}`);
+          for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+            if (m) parts.push(`${m.color ? m.color.getHex() : '-'}/${m.emissive ? m.emissive.getHex() : '-'}`);
+          }
+        }
+        for (const c of (o.children || [])) walk(c);
+      };
+      walk(root);
+      return parts.join('|');
+    };
+    const build = (type, opts) => {
+      const A = ARCHETYPES[type];
+      const built = A.build({ scale: A.scale ?? 1, ...(B.bodyOptsFor(type) || {}), ...opts });
+      return sig(built.rig?.root || built.group);
+    };
+
+    const rows = [];
+    let offered = 0;
+    for (const id of Object.keys(ARMIES)) {
+      const kind = id === 'separatist' ? 'steel' : 'flesh';
+      for (const tier of ARMIES[id].tiers) {
+        const type = tier.type;
+        const base = build(type, {});
+        const live = new Set();
+        for (const f in (B.KIT_FIELDS[kind] || {})) {
+          for (const [v] of B.KIT_FIELDS[kind][f].values) {
+            if (build(type, { [f]: v }) !== base) { live.add(f); break; }
+          }
+        }
+        for (const [f] of (B.PAINT_SLOTS[kind] || [])) {
+          for (const p of B.PAINTS) {
+            if (build(type, { [f]: p.color }) !== base) { live.add(f); break; }
+          }
+        }
+        const can = B.wearableFor(type, kind);
+        const shown = [...can.kit, ...can.paint];
+        offered += shown.length;
+        const dead = shown.filter((f) => !live.has(f));
+        assert(!dead.length,
+          `${type} is offered ${dead.length} control(s) its builder does not read: `
+          + `${dead.join(', ')}`);
+        /* AND NOTHING REAL IS HIDDEN. A field the builder honours and the page
+         * refuses to offer is the same table drifting the other way. */
+        const missing = [...live].filter((f) => !shown.includes(f));
+        assert(!missing.length,
+          `${type} reads ${missing.join(', ')} and the wardrobe does not offer `
+          + 'them — the table is stale in the other direction');
+        rows.push(`${type}:${shown.length}`);
+      }
+    }
+    /* A CHASSIS THAT WEARS NOTHING GETS NO WARDROBE AT ALL, and the page says
+     * so rather than drawing an empty room with two issue buttons under it. */
+    const bare = Object.keys(B.WEARS).find((t) => Array.isArray(B.WEARS[t]) && !B.WEARS[t].length);
+    assert(bare, 'no chassis in WEARS wears nothing — the vehicle case is untested');
+    const { menu, doc, close } = menuOn();
+    try {
+      const html = menu._dressingHtml(null, 'flesh', 'republic', 'Squad', null, bare);
+      assert(!/data-kit=|data-paint=/.test(html),
+        `${bare} was still offered chips: the wardrobe drew for a chassis that wears nothing`);
+      assert(/nothing on this chassis is yours to change/i.test(html),
+        `${bare}'s page says nothing about why its wardrobe is empty`);
+
+      /**
+       * …AND A CHASSIS THAT WEARS HALF DRAWS HALF. A B2, a droideka and a
+       * Magna read a shell colour and NO kit, and a guard on
+       * `!kit.length && !paint.length` let those three pages print a "Kit"
+       * heading, the paragraph about what he carries, and an empty box — a
+       * promise followed by nothing, which is the same dead control one layer
+       * along. Every chassis is checked, so the day a builder loses its last
+       * field in either half this goes red.
+       */
+      for (const id of Object.keys(ARMIES)) {
+        const kind = id === 'separatist' ? 'steel' : 'flesh';
+        for (const tier of ARMIES[id].tiers) {
+          const can = B.wearableFor(tier.type, kind);
+          const page = menu._dressingHtml(null, kind, id, 'Squad', null, tier.type);
+          for (const [half, head] of [['kit', 'Kit'], ['paint', 'Paint']]) {
+            const heading = new RegExp(`codex-head">${head}<`);
+            assert(heading.test(page) === (can[half].length > 0),
+              `${tier.type} ${can[half].length ? 'wears' : 'wears no'} ${half} and its page `
+              + `${heading.test(page) ? 'prints' : 'omits'} the ${head} heading`);
+          }
+        }
+      }
+    } finally { close(); }
+    return `${rows.length} chassis, ${offered} live controls offered, 0 dead; ${bare} gets a `
+      + 'sentence instead of an empty room';
+  });
+
+  check('barracks: a refused write is what the next read answers with, and the page says so',
+    () => withCleanStore(() => {
+      /**
+       * ── THE MIRROR OUTRANKS THE DISK, AND ONLY WHILE THE DISK REFUSES ────
+       *
+       * `Store.read` consulted the mirror only when the key was ABSENT, so a
+       * store that had ever saved successfully — which is every store, after
+       * the first fold — went on parsing the STALE disk copy for the rest of
+       * the session. Which is exactly the failure the file was written to end:
+       * quota fills, the player renames a man, `setItem` throws, and the next
+       * click re-reads the pre-rename JSON and the rename is simply gone.
+       *
+       * Driven through the real stores by making `setItem` throw, because a
+       * unit test of `makeStore` alone would not prove `Company.load` and the
+       * tab are on the far side of it.
+       */
+      const roll = freshRoll(4);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const him = roll.all[0].designation;
+      assert(!Company.notSaving(), 'the store is refusing before anything was refused');
+
+      const realSet = localStorage.setItem.bind(localStorage);
+      let name = null;
+      try {
+        localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+        Company.dress('republic', him, { callsign: 'Torch' });
+        assert(Company.notSaving(), 'a refused write did not mark the store broken');
+        name = Company.load('republic').men.find((m) => m.designation === him)?.look?.callsign;
+      } finally { localStorage.setItem = realSet; }
+      assert(name === 'Torch',
+        `the write was refused and the next read answered "${name}" — the mirror was `
+        + 'dropped and the stale disk copy came back, which is the edit vanishing');
+
+      /* AND THE PAGE SAYS SO. `notSaving` had no readers in src/ at all, which
+       * made the whole remembered-write mechanism something the player could
+       * not be told about. */
+      const { menu, doc, close } = menuOn();
+      try {
+        localStorage.setItem = () => { throw new Error('QuotaExceededError'); };
+        Company.dress('republic', him, { callsign: 'Boil' });
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(null);
+        const txt = doc.getElementById('company-page').textContent;
+        assert(/NOT SAVING/.test(txt),
+          'the store is refusing writes and the company page says nothing about it');
+      } finally { localStorage.setItem = realSet; close(); }
+
+      /* …AND A WRITE THAT LANDS HEALS IT. A quota that frees up is a store
+       * that works again, and a page that kept apologising would be its own
+       * kind of lie. */
+      Company.dress('republic', him, { callsign: 'Deuce' });
+      assert(!Company.notSaving(), 'a successful write did not clear the refusal');
+      assert(Company.load('republic').men.find((m) => m.designation === him)?.look?.callsign
+        === 'Deuce', 'the healed store did not keep the write that healed it');
+      return 'a refused rename survives the next read, the page warns, and a landed write heals it';
+    }));
+
+  check('barracks: two men cannot hold one squad\'s seat, on the roll or on a saved file',
+    () => withCleanStore(() => {
+      /**
+       * `CommandRoster.appoint` is where the seat rule lives — licensed,
+       * alive, ONE PER SQUAD — and `enlistRecord` used to set `t.post` by hand
+       * with only the licence half of it. So the exclusivity clause had no
+       * caller on the fighting side at all: a store holding two seated men in
+       * one squad put both on the roll, and `leadOf` then answered with
+       * whichever came first in an array whose order is nobody's decision.
+       *
+       * And `null === null`, so the two copies of the rule ALSO stripped each
+       * other's seat off two men who had not been dealt a squad yet — the
+       * opposite of what both their comments claim.
+       */
+      const roll = freshRoll(6);
+      for (const t of roll.all) t.award(RANKS[2].xp);
+      roll.all[0].squad = 0; roll.all[1].squad = 0; roll.all[2].squad = 1;
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      /* A FORGED FILE: two seats in squad 0 and one in squad 1. */
+      const c = Company.load('republic');
+      for (const d of [roll.all[0], roll.all[1], roll.all[2]]) {
+        c.men.find((m) => m.designation === d.designation).post = true;
+      }
+      Company.save(c);
+
+      const back = new CommandRoster(ARMIES.republic);
+      for (const m of Company.load('republic').men) back.enlistRecord(m);
+      const seatsIn = (n) => back.all.filter((t) => t.post && t.squad === n).length;
+      assert(seatsIn(0) === 1,
+        `${seatsIn(0)} men walked onto the roll holding squad 0's seat`);
+      assert(seatsIn(1) === 1, `${seatsIn(1)} men hold squad 1's seat`);
+      assert(back.all.filter((t) => t.post).length === 2,
+        'the seats in two different squads did not both survive');
+
+      /**
+       * AND TWO UNDEALT MEN DO CONTEND, which reads like the opposite of the
+       * rule and is the rule.
+       *
+       * `squadPlan` deals every man with no squad into the first bucket that
+       * is under strength, so two men at `squad: null` are two men bound for
+       * the SAME squad — and a guard that spared them (on the grounds that
+       * `null === null` is a coincidence) put both of them in squad 0 holding
+       * one seat, which is the exact state this whole clause exists to
+       * prevent. Reachable without a hand-edited file: the man page's squad
+       * picker offers a dashed "—" chip that writes null.
+       *
+       * Asserted through the deal, not just through `appoint`, because the
+       * deal is the reason.
+       */
+      const loose = new CommandRoster(ARMIES.republic);
+      const a = loose.enlist('trooper'); const b = loose.enlist('trooper');
+      a.award(RANKS[2].xp); b.award(RANKS[2].xp);
+      a.squad = null; b.squad = null;
+      loose.appoint(a, true);
+      const second = loose.appoint(b, true);
+      assert(b.post && !a.post,
+        'two men with no squad both hold a seat — and the deal is about to put them in '
+        + 'the same squad');
+      assert(second.was === a,
+        `the second appointment says it took the seat off ${second.was?.designation ?? 'nobody'}`);
+      loose.assignSquads();
+      assert(a.squad === b.squad,
+        `the deal put the two undealt men in squads ${a.squad} and ${b.squad} — the reason `
+        + 'the clause above is right has stopped being true');
+      assert(loose.all.filter((t) => t.post && t.squad === a.squad).length === 1,
+        'the squad the deal made has two seat-holders in it');
+      return '1 seat per squad off a forged file, 2 squads both kept, and two men bound for '
+        + 'the same deal contend';
+    }));
+
+  check('barracks: a painted Marksman is the same man on the parade ground and on the field',
+    async () => {
+      /**
+       * `Enemy._build` carried a one-line special case — `if (type ===
+       * 'sniper') { opts.color = A.trooperColor; opts.accent = A.accent; }` —
+       * and it ran AFTER the man's own kit was spread, so it wrote over both
+       * channels unconditionally. A Marksman the player had painted Blood on
+       * the parade ground landed on the ground in stock plate: the tab showing
+       * one man and the field fielding another, which is the whole defect the
+       * parade ground exists to make impossible.
+       *
+       * The colours moved into `BODY_KITS`, where both readers get them from
+       * one table and a choice is spread over the top. Asserted as an exact
+       * agreement between the two surfaces, painted and unpainted.
+       */
+      const B = await import('../../src/game/Bodies.js');
+      const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+      const hexes = (root) => {
+        const out = new Set();
+        const walk = (o) => {
+          if (!o) return;
+          if (o.isMesh) {
+            for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+              if (m?.color) out.add(m.color.getHex());
+            }
+          }
+          for (const c of (o.children || [])) walk(c);
+        };
+        walk(root);
+        return out;
+      };
+      const blood = PAINTS.find((p) => p.id === 'blood');
+      const report = [];
+      for (const look of [null, { paint: { color: 'blood' } }]) {
+        const A = ARCHETYPES.sniper;
+        const field = hexes(A.build({
+          scale: A.scale ?? 1, ...(B.bodyOptsFor('sniper') || {}),
+          ...B.kitOptsFrom(look, 'flesh'),
+        }).rig.root);
+        const fig = buildParadeFigure({ army: 'republic', type: 'sniper', designation: 'CT-1',
+          xp: 0, wounds: 0, look, kind: 'flesh' });
+        assert(fig, 'the parade could not build a Marksman');
+        const parade = hexes(fig.root);
+        const only = [...field].filter((h) => !parade.has(h))
+          .concat([...parade].filter((h) => !field.has(h)));
+        assert(!only.length,
+          `a Marksman ${look ? 'painted Blood' : 'as issued'} differs between the parade `
+          + `ground and the field on ${only.map((h) => `#${h.toString(16)}`).join(' ')}`);
+        if (look) {
+          assert(field.has(blood.color),
+            'a Marksman painted Blood does not wear it on the field');
+        } else {
+          assert(!field.has(blood.color), 'an unpainted Marksman already wears the test colour');
+          /* …AND HE STILL HAS HIS OWN PLATE. Moving the archetype's colours
+           * into `BODY_KITS` fixed the override; a version that simply DROPPED
+           * them would make both surfaces agree on the builder's defaults and
+           * pass the clause above while quietly turning the Marksman into a
+           * line trooper at forty metres. Both surfaces, because the whole
+           * point of the table is that they read it. */
+          const plate = 0x2c3038;
+          assert(field.has(plate) && parade.has(plate),
+            `an unpainted Marksman does not wear his own plate — field ${field.has(plate)}, `
+            + `parade ${parade.has(plate)}`);
+          const line = hexes(ARCHETYPES.trooper.build({
+            scale: ARCHETYPES.trooper.scale ?? 1, ...(B.bodyOptsFor('trooper') || {}),
+          }).rig.root);
+          assert(!line.has(plate),
+            'a line trooper already wears the Marksman\'s plate — the colours are not his');
+        }
+        report.push(look ? 'painted' : 'as issued');
+      }
+      return `${report.join(' and ')}: the two surfaces agree hex for hex`;
+    });
+
+  check('barracks: a squad has a name, and every surface says the same one',
+    () => withCleanStore(() => {
+      /**
+       * ── "I SHOULD BE ABLE TO NAME MY SQUADS BEFORE STARTING A GAME" ───────
+       *
+       * A squad is otherwise entirely derived — its men are `Trooper.squad`
+       * grouped at read time, its leader is `leadOf`, its ground is a frame —
+       * and the name is the one fact about it that cannot be, because it is a
+       * thing the player said. So it is a string per index on the roll and
+       * nothing else: no stored squad object for those derivations to drift
+       * from.
+       *
+       * THE POINT IS THAT EVERY SURFACE SAYS THE SAME WORD. A squad the tab
+       * calls Havoc and the order wheel calls 2nd is two squads as far as the
+       * player is concerned, which is the complaint this answers. So this
+       * drives the tab, then asks the FIGHT, and asserts they agree.
+       */
+      const roll = freshRoll(8);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+
+      const { menu, doc, close } = menuOn({ mode: 'command' });
+      try {
+        menu.showMenu();
+        menu._buildCompanyList();
+        menu._showCompany(null);
+        const fields = [...doc.getElementById('company-page').querySelectorAll('[data-squad-name]')];
+        assert(fields.length >= 2,
+          `${fields.length} squad name field(s) on an order of battle of two squads`);
+        assert(/Squad 1/.test(fields[0].getAttribute('placeholder') || ''),
+          `an unnamed squad's field does not offer its number: `
+          + `"${fields[0].getAttribute('placeholder')}"`);
+        fields[1].value = 'Havoc';
+        doc.querySelector('[data-squad-name-save="1"]').click();
+      } finally { close(); }
+
+      assert(JSON.stringify(Company.load('republic').squads) === JSON.stringify(['', 'Havoc']),
+        `the store holds ${JSON.stringify(Company.load('republic').squads)}`);
+
+      /* THE HEADING SAYS IT — the same page, re-read off the store. */
+      const again = menuOn({ mode: 'command' });
+      try {
+        again.menu.showMenu();
+        again.menu._buildCompanyList();
+        again.menu._showCompany(null);
+        const heads = [...again.doc.getElementById('company-page')
+          .querySelectorAll('.orbat-name')].map((h) => h.textContent);
+        assert(heads[1] === 'Havoc', `the order of battle reads ${JSON.stringify(heads)}`);
+        assert(heads[0] === 'Squad 1', 'an unnamed squad stopped reading as its number');
+      } finally { again.close(); }
+
+      /* AND THE FIGHT SAYS IT, through the handoff main.js makes. */
+      const { d, c, w } = licenceArmy();
+      d.squadNames = Company.squadNames(Company.load('republic'));
+      assert(d.squadLabel(1, c) === 'Havoc',
+        `the director calls squad 1 "${d.squadLabel(1, c)}"`);
+      assert(d.squadLabel(0, c) === 'Squad 1',
+        `the director calls an unnamed squad "${d.squadLabel(0, c)}"`);
+      /* …in the sentence a player actually reads. Selecting a squad used to
+       * change a field nobody printed, which is a mode switch with no
+       * indicator and is indistinguishable from the control doing nothing. */
+      w.notes.length = 0;
+      d.cycleSquad(c);
+      d.cycleSquad(c);
+      const said = w.notes.map(([a]) => a);
+      assert(said.length === 2, `cycling twice said ${said.length} thing(s)`);
+      assert(said[1].includes('HAVOC'),
+        `cycling onto the named squad said "${said[1]}"`);
+      /* AND A PLANTED ORDER NAMES IT TOO — said with the general standing in
+       * the squad, because an order only carries 34 m off his body and a post
+       * handed to a squad with no sergeant in it needs him inside 20 m of the
+       * squad's centre. Shouted at these men from the deployment point it is
+       * refused entire, nothing is written, and the only thing the world hears
+       * is the refusal — which is a toast about reach and not about a name. */
+      const sq = d.squadsOf(c)[1];
+      for (const t of sq) if (t.body) t.body.position.set(-60, 0, 0);
+      c.player.position.set(-60, 0, 0);
+      w.notes.length = 0;
+      assert(d.order('cover', c, 1) === true,
+        `the squad would not take the order: ${d.orderRefused}`);
+      assert(w.notes.some(([a]) => a.includes('HAVOC')),
+        `the order named ${JSON.stringify(w.notes.map(([a]) => a))}`);
+
+      /* A NAME IS CLEANED AND CAPPED, and clearing it gives the number back. */
+      Company.nameSquad('republic', 0, '  <b>Ghost</b> squad that is far too long  ');
+      const first = Company.load('republic').squads[0];
+      assert(first.length <= Company.SQUAD_NAME_MAX && !/[<>&]/.test(first),
+        `a hostile name was stored as "${first}"`);
+      Company.nameSquad('republic', 1, '');
+      assert(Company.squadLabel(Company.load('republic'), 1, 'Squad') === 'Squad 2',
+        'clearing a name did not give the number back');
+      /* …and a squad past the ceiling is not a squad. */
+      Company.nameSquad('republic', 99, 'Nowhere');
+      assert((Company.load('republic').squads || []).length <= Company.SQUADS_MAX,
+        'a name was stored for a squad the field can never form');
+      return `named on the tab, read on the order of battle, said by the wheel's own `
+        + 'reader and by two fight notifications; cleaned, capped and clearable';
+    }));
+
 }
