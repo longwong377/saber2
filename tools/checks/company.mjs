@@ -898,10 +898,19 @@ export async function run({ check, assert }) {
          * asserted in BOTH directions, so neither the flag nor the reader can
          * quietly go away.
          */
-        if (MODES[mode].dojo) {
+        /* …AND `solo` IS THE SECOND DECLARATION, for the same reason with a
+         * different sentence: `MODES.duel` refuses a contingent in
+         * `commandConfig`, so a plan there would name, paint and SAVE men for
+         * a mode that throws the number away. The duel used to take the
+         * `else` and field five — which is the defect `solo` was added to end
+         * — and this reader was the half that did not move with it. Read off
+         * the row rather than the name, and asserted in BOTH directions so
+         * neither the flag nor the reader can quietly go away. */
+        if (MODES[mode].dojo || MODES[mode].solo) {
           assert(five === null,
-            `${mode} is run by the dojo and musterPlan still answers ${JSON.stringify(five)} — `
-            + 'the tab would raise a line that has nowhere to land');
+            `${mode} ${MODES[mode].dojo ? 'is run by the dojo' : 'is one body against one body'} `
+            + `and musterPlan still answers ${JSON.stringify(five)} — the tab would raise a `
+            + 'line that has nowhere to land');
         } else {
           assert(five && five.want === 5,
             `${mode} with a contingent of five gets ${JSON.stringify(five)}`);
@@ -919,9 +928,11 @@ export async function run({ check, assert }) {
      * be a comment. */
     const dojos = Object.keys(MODES).filter((m) => MODES[m].dojo);
     assert(dojos.length === 1, `${dojos.length} modes declare a dojo: ${dojos.join(', ')}`);
+    const solos = Object.keys(MODES).filter((m) => MODES[m].solo);
+    assert(solos.length >= 1, 'no mode declares `solo` — the exemption above is vacuous');
     return `${Object.keys(MODES).length} modes resolved · army modes field ${OPENING_STRENGTH} `
-      + `regardless of the slider · bare modes field the slider or nothing · ${dojos[0]} fields `
-      + 'nobody at any setting';
+      + `regardless of the slider · bare modes field the slider or nothing · ${dojos[0]} and `
+      + `${solos.join(', ')} field nobody at any setting`;
   });
 
   check('company: the tab names the men being taken in, not only the fallen', () => withCleanStore(() => {

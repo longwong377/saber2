@@ -1875,62 +1875,328 @@ fourteen lines above ("nothing was fetched and nothing can 404"). The
 was a request for a file the page never named. **A guard that only looks at
 paths you wrote cannot see a request the browser makes on its own.**
 
+### The hangar re-audit — five of six fixes hold, and the window points the wrong way
+
+The first hangar audit (§5.0's notes) forced six fixes. A second auditor was
+sent to verify each one **by driving the running game**, not by reading the
+diff, and to hunt the four failure shapes afresh. Suites: `hangar` 9/9 ·
+`deckplay` 10/10 · `decklife` 13/13 · `deckcost` 1/1 · `deck-audio` 25/25 ·
+`deckedit` 8/8 — 66 passed, 0 failed, and the report is a demonstration that
+66 green checks is not a statement about a room.
+
+**Five fixes VERIFIED REAL, in a browser, off live values:**
+
+| fix | evidence |
+|---|---|
+| `engine.skyDome.configureOrbit` (was `engine.sky`) | `uOrbit=1`, `domeVisible=true`, `engine.sky.visible=false`; starfield and hull silhouettes render |
+| `_pickedLevel` before the dress | `pickedLevel="The Shifting Waste"`, `orbitTerrainSand=0xaa753e` — not the deck's own `0x171b21`. `main.js:528` (`opts.onWorld`) runs before `main.js:662` |
+| `DECK.start` spawn | player at `[0,0,-78]`, yaw `3.142` — `HANGAR_LEVEL.start` (`Hangar.js:1286`) read by `World._playerSpawn` |
+| `undressDeckAudio` | after `world.unload()`: `_deckAudio=null`, `st.torn=true`. `World.js:1763` → `Hangar.js:1413` → `DeckAudio.js:1143`. **Headless only — the browser leg was never measured.** |
+| lip strobes | `world._deckStrobes.spots.length = 51`, one `InstancedMesh` named `lip-strobe`, stepped at `Hangar.js:1421`. Colour delta per frame not measured. |
+
+**AND ONE STILL BROKEN, plus five new findings. In severity order:**
+
+**A — THE PLANET IS BEHIND THE AFT BULKHEAD. HIGH.** Builder
+`SkyDome._placeByPhase` (`SkyDome.js:1924`), caller `Hangar.js:1215`. Measured
+in a browser: `planetDir = [-0.013, 0.218, -0.976]` — **167.4° off the deck's
+forward axis**. The player spawns at z=-78 facing +z and the only opening is
+forward; the planet sits over the 58 m aft wall. Reproduced headless for
+drifts, mustafar and geonosis: **identical placement every time**, because
+`_placeByPhase` optimises ELEVATION ONLY and the deck's sun is fixed. Its own
+comment claims the free roll "is spent on getting the disc up out of the deck
+and into the aperture" — **the code never looks at azimuth**. The bright ring
+in the aperture measures ~4.3° of a 91.5° hFOV; it is not the planet.
+`Hangar.js:36` — *"the planet fills a third of the sky"*, the single sentence
+the whole room was designed around — has never been true for any theatre. **The
+fix that made the window render never checked where the window pointed.**
+
+**B — THE DECK'S CALLSIGN RENAME IS UNREACHABLE. MED-HIGH.** Failure shapes 1
+AND 2 together, still live. Builder `DeckEdit.beginNaming` / `typeName` /
+`commitName` (`DeckEdit.js:1096`). **Caller: none in `src/`.** `optionsFor`
+emits only `mark/band/paint/kit` — no `callsign` notch, so the wheel can never
+reach it. `naming(world)` (`DeckEdit.js:1094`) is documented as needing "one
+line in `Player.js`'s hosting branch" and has zero occurrences in `Player.js`.
+Both checks that appear to cover it do not: one drives `beginNaming`/`typeName`
+DIRECTLY (`deckedit.mjs:510-518`), the other compares `EDIT_OPS` to a
+source-scrape of `Menu.js` — table against table, no reachability anywhere.
+
+**C — `tools/checks/deckcost.mjs` HAS ZERO ASSERTIONS. MED.** 44 lines, one
+check, `grep -c "assert("` → **0**. It cannot fail: a throw inside its `count()`
+is caught, returned as the string `THREW …`, and still passes. Compare hangar
+36, deckplay 51, decklife 33, deck-audio 138, deckedit 53. This is §2.3b's law
+(a check that reads a field nothing writes cannot fail) in its blunt form — a
+check that asserts nothing at all.
+
+**D — `ground.orbit`'s lighting half has no reader. LOW-MED.**
+`SkyDome._publishOrbit` (`SkyDome.js:1835`) publishes `dir/colour/key/bounce`
+explicitly "so a directional standing in for it goes at +dir". Only `.events`
+is consumed (`DeckAudio.js:1451`). `lightDeck` hard-aims a directional at
+`(0, 150, DECK.lip*0.85)` — light from the FORWARD aperture while the planet
+is 167° aft. `Hangar.js:37` "the deck is lit from outside by it" is not
+implemented.
+
+**E — `hangar: one wall, and it is behind you` MEASURES THE WRONG OBJECT.
+LOW.** `hangar.mjs:376-398` ray-marches `TERRAIN_PRESETS.hangardeck.height`
+only. The two rack walls are `physics.addStaticBox` colliders declared in
+`deckColliders` and are invisible to it. Its own sibling check already admits
+"what closes this one is the rack walls for the aft two-thirds".
+
+**F — THE STALE HEADERS ARE STILL STALE.** This was claimed fixed and is not.
+`Hangar.js:26-27` still says "THERE IS ONE WALL AND IT IS BEHIND YOU … 128 m
+across" — the deck is 288 (`Terrain.js:719`) and `deckColliders` puts **two
+34 m-tall solid rack walls** at x=±48.5…±77.5, z=-97…+68: three walls.
+`Hangar.js:32` "field plane 90 m up" — `DECK.roof = 64`. `Hangar.js:297`
+repeats both bad numbers. `Terrain.js:699` "only 128 m across".
+`Terrain.js:775` "rising 34 m" against `:781` "it is 58 m". `Player.js:759-761`
+"`DECK.lip` IS `terrain.half` — 64" (it is 144) and "strobes stand 2.5 m
+inside it" (`IN = 3.0`).
+
+**LEADS THE AUDITOR DID NOT GET TO — start here.**
+
+- **`/tmp/deckaudit/a-spawn.png` shows an EMPTY DECK with no troopers in front
+  of the player.** The auditor could not tell whether that is real or an
+  artifact of the world being paused during that probe — but its second probe
+  measured `screens:"playing"` at spawn, which suggests the world does step,
+  **which would make the empty deck real. VERIFY THIS FIRST; it is the room's
+  whole subject.** The world reports `company: 12`.
+- Never measured in a browser: mesh/statics/light/draw-call counts, whether the
+  12-man company forms up and is visible from spawn, strobe colour delta over
+  15 frames, `_deckAudio` state after `#btn-quit`.
+- `DECK_ORDERS`/`deckCommand`/`world.orders` → `HUD.js:2759` and `main.js:2445`
+  are wired on inspection and **never driven in a browser**.
+- `world._deckLife` is not nulled on unload (`Hangar.js:1413` nulls only
+  `_deckAudio`). Harmless while `main.js:960` drops the world; a second
+  re-dress hazard.
+- **No check covers finding 2 at all.** Headless `bootWorld` still reports
+  `orbitLevel="The Flight Deck"` — the fix is real in a browser and invisible
+  to the suite, so nothing would catch it regressing.
+
+**The auditor's blunt verdict.** Worth walking into, barely — but not for the
+reason the file claims: what renders is a good dark canyon with a starfield at
+the end of it, not "the view is the room". Best thing in it: `DeckAudio.js`,
+25 checks and 138 assertions all driven, and the −12.1 dB A-weighted pressure
+change from spawn to lip is the one thing in the room that is unambiguously
+real and unambiguously felt. Worst: the planet is 167° behind you, over the
+only solid wall.
+
+### The deck's company path — re-kit yes, rename no, and the inspect key is bullet time
+
+A second auditor drove the inspect-and-customise chain through the REAL input
+(`Player._readInput`), not through the check helpers. Suites at HEAD: decklife
+13/13 · deck-audio 25/25 · deckplay 10/10 · deckcost 1/1 (0 assertions) ·
+deckedit 8/8 · barracks 35/35 · appearance 5/5 · hangar 9/9 · faction 9/9 ·
+**company 27/1 FAILED** (see G below — that one was mine and is now fixed).
+
+**THE HEADLINE, MEASURED.** Menu → deck is 2 clicks. The line forms up 12/12 at
+13 s in one rank at z=-48. Walking 30 m to 2.4 m is one key held for 6.0 s. One
+press of Mouse3 holds `CT-1198` — he turns, salutes, and steps 0.55 m out of
+the rank. One wheel notch plus 0.22 s writes `{"mark":"blood"}` to memory AND
+to disk via `Company.load`. **Five discrete inputs for the nearest option.** A
+paint colour is notch 19; a pauldron is **notch 67 of 90**. Renaming is
+impossible.
+
+**WHAT IS GENUINELY REAL, measured:** the men are not T-posed (hands 0.19/0.21 m
+lateral against ~0.7 for a T-pose); idle micro-motion exists but is tiny (head
+16 mm over 10 s); faction resolution is correct (`sith → separatist`, faction
+9/9); the browser deck runs 930 render calls / 811 geometries / 51 textures at
+12 men; `world._deckAudio` is 41 keys with a running context and is null after
+unload; and `buildFigure` reads the saved `look`, so the deck figure is a true
+preview of the field body.
+
+**THE FINDINGS, in severity order:**
+
+**F5 — THE INSPECT KEY IS ALSO BULLET TIME AND EATS THE FORCE BAR. HIGH.**
+Mouse3 is `focus`, `hold: true`. `World.js:3779-3781` gates the FocusSystem on
+`P && P.alive && P.isLocal` — **not on `hosting`** — and `Focus.js:90` has no
+hostile requirement. Measured on a real hangar world: idle `focus.scale 1.000`,
+force 125.0 → **hold 1.5 s: scale 0.180, force 80.0** → hold 4.5 s: force
+**7.9 of 125**. `Player.js:3843-3852` asserts the opposite in prose ("on a deck
+there is no time to slow") and `OFF_THE_DECK` refuses eight powers but not this
+one. So the one gesture the room is built around drains the bar and slows time
+to a fifth while you look at a man.
+
+**F1 — RENAME IS UNREACHABLE. HIGH.** Shape (1). Builder `DeckEdit.js:1100
+naming` / `:1102 beginNaming` / `:1113 typeName`. **Caller: none in `src/`.**
+All 59 actions in `Bindings.ACTIONS` driven through the real input on a held
+man → `armedNaming: NONE`. `optionsFor()` returns **90 options, 0 of op
+`callsign`**, while `EDIT_OPS` lists it. `DeckEdit.js:1093-1095` says the guard
+is "one line in `Player.js`'s hosting branch"; `Player.js:3858-3859` has only
+`focusKey` and `wheelEdit`. (Mitigated: `HANGAR-SPEC.md:151` marks it `~`.)
+
+**F2 — THE `deckedit` SUITE PROVES NONE OF THE WIRING. HIGH (process).** Shape
+(2), in its purest form yet. `deckedit.mjs:114-119` calls
+`Edit.stepDeckEdit(world, dt)` ITSELF after `world.update`; `:271` calls
+`Edit.focusKey(world)` directly; `:510` `Edit.beginNaming` directly. The real
+callers — `Player.js:3858` and `Hangar.js:1430` — are touched by no check.
+**Delete both and all 8 checks stay green**, because `stepDeckEdit`'s
+`steppedAt === c.t` guard hides the double call.
+
+**F8 — THE COMPANY IS NEVER TORN DOWN. MEDIUM.** `Hangar.js:1617-1622` does
+`world.scene.add(fig.root)` and never pushes to `world.statics`;
+`HangarDirector.dispose()` frees only `undressDeckAudio` and `row.shove`;
+`World.js` never mentions `_company`, `_deckEdit` or `_deckLife`. Measured
+after `world.unload()`: `_deckAudio` null ✓, haze gone ✓, but **845 scene
+objects remain, 60 skinned meshes, 12 of 12 company figures still parented**,
+geometries and materials never disposed.
+
+**F9 — A DELIBERATE WHEEL SCROLL WRITES THE SAVE ON EVERY NOTCH. MEDIUM.**
+`WHEEL_DWELL = 0.22` committed at `DeckEdit.js:1006`. Measured: **10 notches
+0.35 s apart → 10 writes** (10 `Company.dress` saves plus 10 washes/rebuilds);
+10 notches in consecutive frames → 1 write. Kit notches call `rebuildRow` — a
+full `buildFigure` + `mergeFigure` each. Reaching "Pauldron Left" slowly costs
+**67 saves, ~48 paint washes, ~20 body rebuilds**. The comment at `:181-190`
+claims this is prevented.
+
+**F6 — THE DECK'S ORDER WHEEL CARRIES 3 DEAD SLOTS AND 2 LYING CAPTIONS.
+MEDIUM.** Shape (3). On the shipped `deckCommand` adapter (`Hangar.js:1900`),
+`hold`, `cycleSquad`, `detachNearest`, `liveSquads`, `nearestTrooper` and
+`squadLabel` are **all `undefined`**, and `HUD.js:2783-2785` / `main.js:2455`
+`?.` them away. `main.js:2460` sends `order('hold')`, an id `DECK_ORDERS` does
+not have. Driving `deckCommand.order(id)` with all 7 formation ids plus
+`'hold'`: **all return false and say nothing**, while each still writes
+`cmd.formation`, which `HUD.js:916` reads to light a slot — so the wheel lights
+none. `HUD.js:874` reads `n = 0` and says "One squad. Everything you order goes
+to it." with 2–4 squads standing; `HUD.js:886` says "Nobody of yours is near
+enough" with 12 men in front of you. **Note: the wheel-caption and
+`WHEEL_EXTRAS` fixes committed this session are the fight's wheel; this is the
+DECK's adapter and it is a separate object.**
+
+**F4 — THE RACK HALF-BEAM IS FOUR INDEPENDENT COPIES OF 56. MEDIUM.** Shape
+(4), latent. `Hangar.js:129 wall: 56` (exported, "One name, exported, and the
+local is gone") · `DeckLife.js:201 const WALL = DECK.lip * (7/18)` ·
+`DeckAudio.js:328 GEOM.rack = 56/144` · and the guard at `decklife.mjs:383` is
+`Math.abs(wall - 56) < 0.01` — **a literal**. All three expressions equal 56.0
+today. Move `DECK.wall` to 60: Hangar builds at ±60, DeckLife sites props at
+±56, DeckAudio horns at ±56, **and the guard still passes**. Its own comment
+("Hangar.js does not export it") is false at `Hangar.js:129`.
+
+**F10 — THE DECK NAMES A MAN AND TELLS YOU NOTHING ELSE. MEDIUM.**
+`DeckEdit.js:1175 nameOf` gives `CT-1198 "Boil"` and a one-line note.
+`Company.js:1176 dossier` returns rank, role, service, kills, wounds, grounds —
+10 rows plus history — **none of it on the deck**. The memorial is anonymous
+glowing bars with no names. Zero discoverability: no prompt anywhere, and
+Mouse3's only label is "Focus (slow time)".
+
+**F11 — ONLY 24 OF 60 MEN CAN EVER STAND ON THE DECK. LOW.**
+`Hangar.js:1692 MAX_ON_DECK = 24` against `Company.js:180 CAP = 60`. Men 25–60
+are uninspectable.
+
+**G — AND ONE RED CHECK THAT WAS THIS SESSION'S OWN.** `company.mjs:906`
+asserted that every non-army, non-dojo mode gets a contingent of 5.
+`MODES.duel.solo` + the `commandConfig` gate (commit `cc9ac74`) make the duel
+0, and this second reader did not move with the fix — the exact shape the fix
+itself was about. It now reads `dojo || solo` off the row, asserts both
+directions, and asserts that something declares `solo` so the exemption cannot
+go vacuous. company 28/28. **The lesson: when you add a flag to the mode table,
+grep for every reader of its sibling flags before you commit.**
+
+**THE MOST IMPORTANT OPEN THREAD — 4a, the persistence gap.** The WRITE side is
+proven: dialling `CT-7200` to `{"mark":"blood","paint":{"color":"bone"},
+"kit":{"pauldron":"L"}}` on the deck, `leaveDeck` reports 3 edits, and
+`Company.load('republic')` returns that look **on disk**. The READ side is not.
+On a booted `command`/geonosis world `CommandDirector.roster.all` held 10 men
+including CT-7200, and **every entry printed `NO-LOOK`**. Zero bodies had
+deployed in that headless boot, so it is unproven either way. **Chase
+`Command.js:5830 _musterVeterans` → `roster.enlistRecord(m)` and find out
+whether `m.look` survives into the Trooper record.** `Muster.js:109` sets
+`look: Company.saneLook(...)` — but that is the muster SLATE path, not
+`_musterVeterans`. If `enlistRecord` drops `look`, then `Command.js:6732
+const worn = t.look ? … : null` is always null and **nothing dressed on the
+deck ever reaches a body**, which would make the whole customisation feature
+cosmetic-in-the-hangar-only. This is the single highest-value thing to check
+next.
+
+**Other leads, not conclusions:**
+- The browser probe `scratchpad/fast.mjs` reached stage 04 of 11. Stages 10–11
+  measure `renderer.info.memory` across `leaveHangar` (F8 in GPU terms) and
+  drive a real `#btn-deploy` to read a field body (4a). **Its stage-04 bone
+  probe is void** — this project's rig uses plain `Object3D`, not `isBone`; use
+  `fig.rig.bones` / `rig.worldPos(name)`.
+- `deckOrder` resets `c.t = 0` (`Hangar.js:1966/1979`) on Dismissed and Fall
+  in, and `st.pending.at`, `row.man.turn.at` and `saluteAt` are all on that
+  clock — so a dialled edit would never commit and a held man would stop
+  looking at you. Not driven.
+- `DeckAudio.js:1101-1106` — the 4th ternary clause repeats the 2nd, so the
+  final branch is unreachable. Cosmetic.
+- `Bindings.js:350` still says "T focus" after KeyT moved to `orderwheel`.
+- All 25 `deck-audio` checks run against a hand-written `OfflineCtx`
+  (`_offline-audio.mjs`), not a browser — the browser leg was confirmed by hand
+  this once and nothing holds it.
+
 ### WHERE THIS SESSION STOPPED — read this first if you are picking it up
 
-**Branch `claude/troop-management-redesign-5vovlm`. Six commits past the last
-merge to the default branch (`ae1fa5a`), so THE PLAY LINK DOES NOT HAVE THIS
-WORK YET.** `.github/workflows/pages.yml` publishes on a push to the default
-branch only. Merging into `claude/lightsaber-combat-game-lxw391` is what puts
-it on <https://longwong377.github.io/saber2/>, and per CLAUDE.md that merge is
-part of finishing, not something to ask about.
+**Everything is on the default branch and pushed. THE PLAY LINK HAS THIS WORK.**
+`claude/lightsaber-combat-game-lxw391` and
+`claude/troop-management-redesign-5vovlm` both carry it; Pages deployed and
+succeeded. The single-file build was packed and sent.
 
     cc9ac74  the Duel's contingent
     2abd1ba  the four stale readings + the shaken threshold
     2c4b8d1  the stale squad order, the HOLDS lie, the vacancy in the report
     91156f5  the runner, and keys for Hold ground and Detach
-    (+ one uncommitted at the time of writing — see below)
+    a2cc1df  the two stand-in fixtures, _supervised's second mouth, reach.16
+    f93b5ac  handoff correction
+    7351ef3  the cover-cache pin (19 h of red CI), --min, assets/assets, the packer
+    c14ebb0  the build audit's handoff section
+    (+ the company.mjs fix and this section)
 
-**WHAT WAS IN FLIGHT WHEN THE SESSION ENDED, exactly:**
+**GREEN AT THE END:** command 49 · licence 9 · squads 13 · reach 16 · muster 21
+· movement 11 · controls 46 · company 28 · dig-in 6 · objectives 10 · report 18
+· session 11 · menu 31 · modes 4 · claims 16 · spectacle 19 · touch 16 ·
+hud-events 30 · hangar 9 · deckplay 10 · decklife 13 · deck-audio 25 · deckedit
+8 · deckcost 1 · barracks 35 · appearance 5 · faction 9.
 
-1. **Uncommitted in the working tree:** `_army.mjs`'s new `army(mode)`
-   parameter, `muster.mjs`'s real-Line boundary check, `_supervised`'s second
-   mouth (`c._paceAnchor`), and `reach.16` (the constant relationships). All
-   four shipped in `a2cc1df`. Green at the time of the commit:
+**NOT GREEN, AND IT IS THE ONE THING TO DO FIRST:**
 
-       command 49/49 · licence 9/9 · squads 13/13 · reach 16/16
-       dig-in 6/6 · objectives 10/10 · muster 21/21 · controls 46/46
-       report 18/18 · session 11/11 · menu 31/31 · modes 4/4 · claims 16/16
-       spectacle 19/19 · touch 16/16 · hud-events 30/30
-
-   **`theline` IS THE ONE THAT WAS NOT RUN TO COMPLETION.** It timed out at
-   900 s twice, on a box carrying three headless-Chromium auditors — load
-   average 11 on 4 cores, which is §2.6b's law again. It is not red; it never
-   finished. It is also the one suite that could plausibly be moved by the
-   `_supervised` change (`c._paceAnchor` as a second mouth), so **run it on a
-   quiet box before trusting that commit**:
+1. **`theline` was never run to completion.** It timed out at 900 s three
+   times, every time on a box carrying headless-Chromium auditors — load
+   average 11 on 4 cores, §2.6b's law. **It is not red; it never finished.** It
+   is also the suite most likely to be moved by `_supervised`'s second mouth
+   (`c._paceAnchor`), so run it on a QUIET box before trusting `a2cc1df`:
 
        node --import ./tools/register.mjs tools/_one.mjs theline
 
-   If it is red, `_supervised` in `src/game/Command.js` is where to look — the
-   change makes supervision easier to satisfy, never harder, so a red there
-   would be a check asserting a refusal that no longer happens.
-2. **Three adversarial auditors were still running** on the HANGAR, launched
-   after the fixes above: (a) the room's wiring and sky, re-verifying the six
-   fixes the first hangar audit forced; (b) deck life, the company inspection
-   path, deck audio and faction purity, driven end-to-end in a real browser;
-   (c) the PACKED and SHIPPED build — bare specifiers, console errors on boot
-   in four modes, and whether the default branch actually carries this work.
-   **Their findings were never read.** Re-run them if the transcript is gone;
-   the briefs are the four failure shapes above plus the six claimed hangar
-   fixes listed in §5.0's hangar notes.
-3. **A full `tools/verify.mjs` run had not been done since the fixes.** It
-   takes over an hour. §2.6d and §2.7 are the traps.
+   If red, `_supervised` in `src/game/Command.js` is where to look. The change
+   makes supervision easier to satisfy, never harder, so a red there is a check
+   asserting a refusal that no longer happens.
 
-**THE NEXT THREE THINGS, in order:** finish `theline`, commit, merge to the
-default branch and pack/send the build (CLAUDE.md: "link ready?", "link",
-"build" = `node tools/pack.mjs /tmp/borz.html`, send the file, one line on what
-changed — and do it unasked at the end of any work worth playing). Then read
-the three hangar audits. Then the full gate.
+2. **No full `tools/verify.mjs` run since any of this.** Over an hour. §2.6d
+   and §2.7 are the traps.
+
+**THE HIGHEST-VALUE UNANSWERED QUESTION** is 4a in the deck-company section
+above: does anything a player dresses on the hangar deck ever reach a field
+body? The write side is proven to disk; the read side printed `NO-LOOK` for
+every man on a booted Command world. If `enlistRecord` drops `look`, the whole
+customisation feature is hangar-only. That is one afternoon's answer and it
+decides whether a shipped system is real.
+
+**THEN, IN ORDER, from the three audits above:**
+
+- the planet at 167° behind the aft wall (hangar A, HIGH) — `_placeByPhase`
+  optimises elevation and never looks at azimuth;
+- Mouse3 on the deck being bullet time that drains the Force bar (deck F5,
+  HIGH) — `World.js:3779` gates the FocusSystem on `isLocal` and not on
+  `hosting`;
+- the unreachable rename (deck F1) and the suite that proves none of its wiring
+  (deck F2);
+- `deckcost.mjs` having zero assertions (hangar C / deck F3);
+- the deck's own order wheel, three dead slots and two lying captions (deck F6)
+  — note this is a DIFFERENT object from the fight's wheel fixed this session;
+- the company never torn down on unload, 845 objects (deck F8);
+- the save written on every wheel notch, 67 saves to reach a pauldron (deck F9);
+- the four independent copies of 56 with a literal for a guard (deck F4);
+- and the stale headers, which were claimed fixed and are not (hangar F).
+
+**PROCESS LESSONS WORTH MORE THAN ANY OF IT:**
+
+1. **~40 concurrent agents took the container down.** Three is the ceiling.
+2. **An audit run BEFORE the fixes, on one subsystem, is not an audit.**
+3. **Green Pages is not green checks** — `pages.yml` and `verify.yml` are
+   independent, and the site shipped a red gate for 19 hours.
+4. **When you add a flag to the mode table, grep for every reader of its
+   sibling flags before you commit** — `MODES.duel.solo` turned `company.mjs`
+   red, which is the same "second reader left behind" shape the flag was added
+   to fix.
 
 ---
 
