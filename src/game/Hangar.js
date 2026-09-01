@@ -729,9 +729,26 @@ export function dressStructure(kit, paint) {
   /* ── THE UPLIGHTS. `hangar 3.jpg` scatters them across the plate and they
    * are the only thing in that image telling you the floor is a surface. Two
    * long runs down the working length, plus the apron. */
+  /**
+   * FOUR RUNS, NOT TWO, AND THE INNER PAIR IS THE POINT.
+   *
+   * They stood only at x = ±34 — seventeen metres either side of the
+   * centreline the player walks down — so with the ambient correctly taken
+   * down to keep the deck dark, the strip of floor he is actually standing on
+   * got nothing at all and the room read as a void with a lit ceiling. Every
+   * reference has these scattered across the plate, not ranged along its
+   * edges: they are what tells you the floor is a surface rather than a hole,
+   * and they are the cheapest scale ruler in the room because you know how big
+   * one is.
+   */
   for (let i = 0; i < 16; i++) {
     const z = DECK.aft + 20 + i * 15;
-    for (const s of [-1, 1]) deckLamp(kit, s * 34, z);
+    for (const s of [-1, 1]) {
+      deckLamp(kit, s * 34, z);
+      /* Offset half a pitch so the two runs read as a scatter rather than as
+       * a pair of railway lines. */
+      if (i % 2 === 0) deckLamp(kit, s * 13, z + 7.5);
+    }
   }
   for (const [lx, lz] of [[-92, 20], [-92, 70], [92, 20], [92, 70], [0, 118], [-60, 124], [60, 124]]) {
     deckLamp(kit, lx, lz);
@@ -1285,7 +1302,9 @@ export const HANGAR_LEVEL = {
      * air between them dark. So the ambient is a fill of last resort here,
      * and the sixteen lamps down the ranks do the work.
      */
-    sunColor: 0xbcd8ff, sunIntensity: 3.2, ambient: 0.18,
+    /* 0.24: enough that a near-black plate is a surface rather than a hole,
+     * far short of the 0.42 that was painting it pale. */
+    sunColor: 0xbcd8ff, sunIntensity: 3.2, ambient: 0.24,
     skyColor: 0x39485f, groundColor: 0x191d23, elevation: 12, azimuth: 0,
       /* COOL, like everything else. The warm bounce was invented. */
     fillColor: 0x93b2dc, fillIntensity: 0.30,

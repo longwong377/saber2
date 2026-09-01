@@ -748,7 +748,11 @@ export function deckLamp(kit, x, z, opts = {}) {
   const pc = new Float32Array(pool.attributes.position.count * 3);
   for (let i = 0; i < pool.attributes.position.count; i++) {
     /* Vertex 0 is the centre of a CircleGeometry fan; everything else is rim. */
-    const a = i === 0 ? 0.55 : 0.0;
+    /* FULL AT THE CENTRE. The pool shares the smear material, whose opacity
+     * came down to 0.30 because a REFLECTION must be dimmer than the thing it
+     * reflects — but a lamp is a light source, and at 0.55 x 0.30 it stopped
+     * being visible at all. */
+    const a = i === 0 ? 1.0 : 0.0;
     pc[i * 3] = a; pc[i * 3 + 1] = a; pc[i * 3 + 2] = a;
   }
   pool.setAttribute('color', new THREE.BufferAttribute(pc, 3));
