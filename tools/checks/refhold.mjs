@@ -96,7 +96,32 @@ export async function run({ check, assert }) {
     assert((P.gloss ?? 0) >= 0.35,
       `the deck declares gloss ${(P.gloss ?? 0).toFixed(2)} — a matte deck reflects nothing, and in `
       + 'hangar 5.webp the reflection is half the image');
-    return `deck L=${hsl.l.toFixed(2)}, gloss ${(P.gloss ?? 0).toFixed(2)}`;
+    /**
+     * AND THE DECK IS NOT METAL, WHICH IS THE OPPOSITE OF THE OBVIOUS ANSWER.
+     *
+     * Two numbers were held here and a third was doing the damage. `Terrain`
+     * built the ground with `metalness: gloss * 0.7`, and a metallic surface
+     * takes almost all its colour from the environment: on a level with
+     * `sky: false` that environment is one flat colour, and 0.385 metalness
+     * against it swamped this deck's near-black albedo entirely. The floor
+     * rendered as a mid-grey slab — LIGHTER than the walls, the exact inverse
+     * of every reference — while both numbers this check reads stayed correct.
+     *
+     * That is the shape this whole suite exists to catch and it caught none of
+     * it, because it measured the two swatches and not the material.
+     */
+    const { Terrain } = await import('../../src/world/Terrain.js');
+    const src = (await readFile(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8'));
+    const at = src.indexOf('const gloss = this.preset.gloss');
+    const win = at < 0 ? '' : src.slice(at, at + 1800);
+    assert(win, 'the terrain material is no longer built where this check looks for it');
+    assert(/metalness:\s*0\b/.test(win),
+      'the ground material is metallic. A metal takes its colour from the environment rather '
+      + 'than from its albedo, so on this level — sky:false, environment a flat colour — a deck '
+      + 'authored near-black renders as a pale grey slab lighter than its own walls. There is no '
+      + 'right value here without a real reflection probe; the reflections are drawn instead '
+      + '(DeckKit.smear)');
+    return `deck L=${hsl.l.toFixed(2)}, gloss ${(P.gloss ?? 0).toFixed(2)}, non-metal`;
   });
 
   check('reference: every field edge has a lit rim, because that is what makes it read', async () => {

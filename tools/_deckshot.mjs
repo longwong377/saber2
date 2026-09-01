@@ -155,6 +155,21 @@ if (!info.fail) {
   await page.evaluate(() => {
     window.THREE_V3 = window.SABER?.world?.player?.position?.constructor || null;
   });
+  /**
+   * AND THE RUN IS RESUMED, BECAUSE HEADLESS CHROMIUM CANNOT TAKE THE POINTER.
+   *
+   * `requestPointerLock` never resolves here, `main.input.onLockChange` fires
+   * with false, and its next line pauses. A paused world does not step, so the
+   * camera never recomposes from the yaw this tool writes and every station
+   * renders the same frozen frame — which is exactly what thirteen identical
+   * pictures were, reported as thirteen successes.
+   */
+  await page.evaluate(() => {
+    const S = window.SABER;
+    S?.screens?.set?.('playing');
+    S?.resume?.();
+    if (S?.input) S.input.enabled = true;
+  });
   const shots = [
     /**
      * AND THE FIRST ONE IS WHERE THE GAME ACTUALLY PUTS HIM.
@@ -221,8 +236,24 @@ if (!info.fail) {
         }
       }
     }, v);
+    /**
+     * READ BACK WHERE THE CAMERA ACTUALLY IS. This tool's whole job is to
+     * answer a question no check can, and it spent two runs answering it with
+     * the same frame thirteen times because nothing ever asked whether the
+     * move took. A station that did not move says so in the log, next to the
+     * file it wrote.
+     */
+    const at = await page.evaluate(() => {
+      const c = window.SABER?.engine?.camera;
+      const p = window.SABER?.world?.player;
+      return {
+        cam: c ? [c.position.x, c.position.y, c.position.z].map((n) => +n.toFixed(1)) : null,
+        man: p ? [p.position.x, p.position.y, p.position.z].map((n) => +n.toFixed(1)) : null,
+        paused: window.SABER?.screens?.state,
+      };
+    });
     await page.screenshot({ path: `${OUT}/${name}.png`, ...SHOT }).catch((e) => console.log(name, 'shot:', e.message));
-    say(`wrote ${name}`);
+    say(`wrote ${name} · cam ${JSON.stringify(at.cam)} man ${JSON.stringify(at.man)} state ${at.paused}`);
     console.log('wrote', `${OUT}/${name}.png`);
   }
 }

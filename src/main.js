@@ -2744,5 +2744,20 @@ boot().then(() => requestAnimationFrame(frame), (err) => {
 });
 
 // Handy for tuning from the console.
+/**
+ * AND `screens` AND `resume` ARE ON IT, WHICH THEY WERE NOT.
+ *
+ * `tools/_deckshot.mjs` walks the shipped page onto the flight deck and takes
+ * the frames this room is judged by. In a headless browser `requestPointerLock`
+ * does not resolve, `onLockChange` fires with `locked: false`, and the very
+ * next line pauses the run — so the world stops stepping, the camera never
+ * recomposes, and every station the tool visits renders the same frozen frame.
+ * Thirteen identical pictures, and the tool reported success for all of them.
+ *
+ * The tool cannot fix that from outside without a way to say "I am a robot,
+ * keep playing". These two handles are that, and they are read by nothing in
+ * the game itself.
+ */
 window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud, touch,
+  screens, resume, pause,
   get fps() { return Math.round(fpsSmooth); } };

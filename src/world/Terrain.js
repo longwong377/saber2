@@ -3615,9 +3615,36 @@ export class Terrain {
      * engine has always rendered.
      */
     const gloss = this.preset.gloss ?? 0;
+    /**
+     * ══ GLOSS IS ROUGHNESS ONLY. THE METALNESS WAS MAKING THE FLOOR PALE ═══
+     *
+     * `metalness: gloss * 0.7` was the first attempt at reference rule 2, and
+     * it does the opposite of what it reads like. A metallic surface takes
+     * almost all of its colour from the environment and almost none from its
+     * own albedo — so this deck, whose every authored swatch is near-black,
+     * rendered as a flat mid-grey slab: `scene.environment` on a level with
+     * `sky: false` is one flat colour, and 0.385 metalness against it swamped
+     * an albedo of 0x171b21 completely. The floor in the render was lighter
+     * than the walls, which is the exact inverse of all seven references.
+     *
+     * (The other half of the trap, worth writing down because it is the one
+     * that gets you next: on a level that DOES have a sky, the same line
+     * renders the same deck BLACK, because a metal with no environment to
+     * reflect has nothing to be. There is no value of metalness that is right
+     * here without a real reflection probe.)
+     *
+     * So: gloss sets roughness and nothing else. The albedo is the deck's own
+     * near-black, the directional key throws one sharp specular streak across
+     * it, and the reflections the references are actually famous for are drawn
+     * — `DeckKit.smear`, flat additive quads under each light strip. That is a
+     * fake, and it is named as one there.
+     */
     const mat = new THREE.MeshStandardMaterial({
-      roughness: 1 - gloss, metalness: gloss * 0.7,
+      roughness: 1 - gloss, metalness: 0,
       color: 0xffffff,
+      /* A HINT OF THE ROOM, not the room. Enough that the plate is not a matte
+       * card; nowhere near enough to lift it off its own albedo. */
+      envMapIntensity: gloss > 0 ? 0.18 : 1,
       dithering: true,
     });
 
