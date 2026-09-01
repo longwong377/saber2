@@ -441,8 +441,40 @@ export async function run({ check, assert, THREE: T }) {
     const dead = new Set(c2.fallen.map((f) => f.designation));
     assert(!namesB.some((n) => dead.has(n)),
       'a man on the casualty list was re-minted as a recruit — the muster is issuing dead men\'s numbers');
+    /**
+     * ══ …EXCEPT THE MEN THE PLAYER TOUCHED ═════════════════════════════════
+     *
+     * "make sure that all the customization survives promotions etc." A
+     * recruit named or painted on the flight deck or the tab is a man the
+     * player has met; the salt moving between his dressing and his fielding
+     * is the ORDINARY case (any banked run moves it), and losing him to it
+     * was the slate quietly throwing the player's work away. So a dressed
+     * recruit rides the re-mint: same designation, same look, reconciled
+     * against the roll and the dead like every other row. A blank one is
+     * re-minted as before, which is what the assertions above hold.
+     */
+    Company.keep([], { army: 'republic', deployed: [], ground: 'geonosis' });
+    const c3 = Company.load('republic');
+    const before = Muster.ensure(plan, c3);
+    const pick = before.recruits[1].designation;
+    Muster.dressRecruit('republic', pick, { callsign: 'Hex', mark: 'blood' });
+    /* Move the salt by hand — a wipe of an empty roll moves nothing — and ask
+     * again. */
+    const r2 = freshRoll(2);
+    Company.keep(r2.all, { army: 'republic', deployed: r2.all, ground: 'geonosis' });
+    const after2 = Muster.ensure(plan, Company.load('republic'));
+    assert(after2.salt !== before.salt, 'the roll gained two men and the salt did not move');
+    const kept = after2.recruits.find((x) => x.designation === pick);
+    assert(kept, `${pick} was named Hex and marked, the salt moved, and he was re-minted away — `
+      + 'the customisation did not survive');
+    assert(kept.look?.callsign === 'Hex' && kept.look?.mark === 'blood',
+      `${pick} survived the re-mint but not his look: ${JSON.stringify(kept.look)}`);
+    const blank = before.recruits.filter((x) => x.designation !== pick).map((x) => x.designation);
+    const survivedBlank = blank.filter((n) => after2.recruits.some((x) => x.designation === n));
+    assert(survivedBlank.length === 0,
+      `${survivedBlank.length} untouched recruits survived a salt move — only dressed men ride it`);
     return `4 folded, 4 wiped (lost ${c2.lost}) · ${namesA.length} old names all gone, `
-      + `${namesB.length} new, none of them the dead`;
+      + `${namesB.length} new, none of them the dead · a dressed recruit (${pick}) rode the next re-mint`;
   }));
 
   check('barracks: a want wiggle reproduces the same men, looks intact', () => withCleanStore(() => {
@@ -2125,10 +2157,15 @@ export async function run({ check, assert, THREE: T }) {
        */
       const B = await import('../../src/game/Bodies.js');
       const { ARCHETYPES } = await import('../../src/game/Enemy.js');
-      const hexes = (root) => {
+      /* `skip` is the parade figure's rifle: `Parade.buildFigure` hangs the
+       * archetype's blaster off the right hand now (the deck's men hold
+       * their weapons), and the bare `A.build` on the field side has none —
+       * `Enemy._build` adds it after. The comparison is about the MAN's
+       * plate, so the weapon subtree is left out on the parade side. */
+      const hexes = (root, skip = null) => {
         const out = new Set();
         const walk = (o) => {
-          if (!o) return;
+          if (!o || o === skip) return;
           if (o.isMesh) {
             for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
               if (m?.color) out.add(m.color.getHex());
@@ -2150,7 +2187,7 @@ export async function run({ check, assert, THREE: T }) {
         const fig = buildParadeFigure({ army: 'republic', type: 'sniper', designation: 'CT-1',
           xp: 0, wounds: 0, look, kind: 'flesh' });
         assert(fig, 'the parade could not build a Marksman');
-        const parade = hexes(fig.root);
+        const parade = hexes(fig.root, fig.rifle);
         const only = [...field].filter((h) => !parade.has(h))
           .concat([...parade].filter((h) => !field.has(h)));
         assert(!only.length,

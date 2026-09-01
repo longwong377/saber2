@@ -189,22 +189,39 @@ export async function run({ check, assert, THREE }) {
         const g = garments(e);
         if (g.n) worn.push([e.type, g]);
       }
-      assert(worn.length >= 1 && worn.length <= 4,
-        `${worn.length} of ${types.length} archetypes wear cloth — the note over QUALITY.cloth says `
-        + 'three (acolyte, sparring, bodyguard) and the whole sizing argument rests on it');
+      /**
+       * FOUR NOW, NOT THREE. The Clone Commander wears a simulated half-cape
+       * (`attachTrooperCape`, and the note over it in Enemy._build) — the
+       * player's "are the capes for troopers even actual cloth? they look
+       * completely solid". It is 54 particles / 251 links, under the acolyte
+       * cape it is bounded against below, on the same `clothOn` cut with the
+       * rigid plates standing in beyond it. So the population the column is
+       * sized for is four bodies wearing one garment each, and the ratio
+       * check below holds every one of them to under a third of the player.
+       * The bound is 6 rather than 4 because `cape` is a kit field a creator
+       * can put on any trooper rung — two more caped rungs is a decision and
+       * not a red gate; a seventh wearer is the sizing argument being
+       * re-derived. */
+      assert(worn.length >= 1 && worn.length <= 6,
+        `${worn.length} of ${types.length} archetypes wear cloth — the note over QUALITY.cloth was sized on `
+        + 'four (acolyte, sparring, bodyguard and the caped Commander) and the whole sizing argument rests on it');
       for (const [type, g] of worn) {
         assert(g.n === 1,
           `${type} now wears ${g.n} garments (${g.where.join(', ')}). Engine.js sizes the cloth column `
           + 'on every enemy wearing exactly one cape; a second garment on an archetype doubles the '
           + 'column\'s real cost and nothing else would notice');
       }
-      const one = worn[0][1];
+      /* EVERY worn garment, not the first one the spawn order happened to
+       * put in front: a half-cape that cost more than a cape would have hidden
+       * behind the acolyte here. */
+      const heaviest = worn.reduce((a, b) => (b[1].links > a[1].links ? b : a));
+      const one = heaviest[1];
       const ratio = player.links / one.links;
       assert(ratio > 3.5,
-        `an enemy's garment set is now ${(1 / ratio * 100).toFixed(0)}% of the player's — the note over `
+        `${heaviest[0]}'s garment set is now ${(1 / ratio * 100).toFixed(0)}% of the player's — the note over `
         + 'QUALITY.cloth is built on the two being 4.9x apart');
-      return `${worn.length}/${types.length} archetypes wear anything, one cape each `
-        + `(${one.particles} particles / ${one.links} links / ${one.colliders} colliders); the player `
+      return `${worn.length}/${types.length} archetypes wear anything (${worn.map(([t]) => t).join(', ')}), one garment each, `
+        + `heaviest ${heaviest[0]} (${one.particles} particles / ${one.links} links / ${one.colliders} colliders); the player `
         + `wears ${player.n} (${player.particles} / ${player.links} / ${player.colliders}), `
         + `${ratio.toFixed(2)}x — so 20 duellists are ${20 * one.links} links, not ${20 * player.links}`;
     } finally {

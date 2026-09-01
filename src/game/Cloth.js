@@ -2266,6 +2266,149 @@ export function attachCloak(scene, rig, opts = {}) {
   return dressCape(cloak, scene, rig, opts, S);
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE TROOPER'S HALF-CAPE                                               */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A HALF-CAPE OFF ONE SHOULDER, AS CLOTH.
+ *
+ * The player: "are the capes for troopers even actual cloth like my capes?
+ * they look completely solid." They were: `buildTrooper` bolted two plates to
+ * the chest bone under `K.cape`, and a plate welded to a ribcage moves 0.000
+ * mm in that ribcage's frame however the body turns. The file header's own
+ * measure of cloth — a hem that travels 217 mm in the pelvis frame over seven
+ * seconds of walking beside a lathe that travels none — is the whole of the
+ * complaint again, one body type over.
+ *
+ * WHAT IT IS. A sheet, like the cape and unlike the skirt: two free vertical
+ * edges, pinned along an ARC that runs from just ahead of the pauldron over
+ * the point of that shoulder and round the back to the spine. That is where a
+ * commander's half-cape is fastened in every reference plate
+ * (assets/reference/units/clones/Clone commander*.webp): it hangs off one
+ * pauldron and falls down that side of the back, and it must NOT close round
+ * the body — a closed cone off both shoulders is the Jedi's cape, and this
+ * figure has to keep reading as a soldier from behind.
+ *
+ * WHAT IT COSTS, because tools/checks/cloth-cost.mjs prices the whole cloth
+ * column on who wears what: 6 x 9 = 54 particles and 251 links, against the
+ * acolyte cape's 63 / 300. One archetype on the roster wears one (the Clone
+ * Commander; `cape` is a kit field, so the creator can put one on any
+ * trooper), and it is gated by the same `clothOn` cut every enemy garment is,
+ * with the rigid plates coming back beyond it — `rigid` is handed over here
+ * exactly as `attachSkirt` takes the robe's lathes, and `setVisible(false)`
+ * shows them again.
+ *
+ * @param opts.sx      which shoulder, as the sign the pauldron side resolves
+ *                     to in the rig's frame — `buildTrooper` publishes it as
+ *                     `built.cape.sx`, and spreading `built.cape` in is the
+ *                     whole call
+ * @param opts.rigid   the plates to hide while the cloth runs and show past
+ *                     the cut; the cloth clones the first one's material so
+ *                     the two read as one garment
+ * @param opts.scale   the body's scale
+ * @param opts.material / opts.color   override the cloth's material or tint
+ *
+ *   attachTrooperCape(scene, built.rig, { scale: S, ...built.cape })
+ */
+export function attachTrooperCape(scene, rig, opts = {}) {
+  const S = opts.scale ?? rig?.scale ?? 1;
+  const chest = rig?.get('chest');
+  if (!chest) return null;
+  const sx = opts.sx ?? 1;
+  const rigid = opts.rigid || [];
+  /* The plates' own material, cloned: the cloth has to come out the colour of
+   * the stand-in it replaces, or the body changes colour at the cut. */
+  let mat = opts.material || null;
+  if (!mat && rigid[0]?.material) {
+    mat = rigid[0].material.clone();
+    mat.side = THREE.DoubleSide;
+    if (opts.color != null) mat.color.setHex(opts.color);
+  }
+  const cols = opts.cols ?? 6, rows = opts.rows ?? 9;
+  const length = (opts.length ?? 0.60) * S;
+
+  /**
+   * THE PIN ARC, in the chest bone's frame. An ellipse round the neck at the
+   * shoulder line — half-width 0.19 across, 0.13 deep, which is the trooper's
+   * collar plate plus the pauldron — walked from a little ahead of the
+   * shoulder point (phi < 0) round the back to just past the spine. The pins
+   * ride 3 cm outside the ellipse along its own normal so the first row never
+   * starts inside the pauldron it lies on: a pin is an anchor and the solver
+   * never moves one.
+   */
+  const RX = 0.19 * S, RZ = 0.135 * S, Y = 0.172 * S, OUT = 0.030 * S;
+  const PHI0 = -0.20, PHI1 = Math.PI * 0.5 + 0.42;
+  const cloak = new Cloak(scene, {
+    cols, rows,
+    width: 0.36 * S, length,
+    material: mat, color: opts.color ?? 0x25282e,
+    // a heavier, stiffer fabric than a Jedi's cape: it is a short military
+    // half-cape, and it should swing rather than billow
+    flare: opts.flare ?? 0.55, flarePow: 1.6,
+    stiffness: 0.86, bendDown: 0.60, bend: 0.12,
+    fullness: opts.fullness ?? 0.92, jitter: 0.05,
+    damping: 0.968, lift: 0.8, drift: 0.6,
+    gravity: -13, iterations: 4, seed: opts.seed,
+    lean: 0.04,
+    anchorFn: (c, n, out) => {
+      const t = n === 1 ? 0.5 : c / (n - 1);
+      const phi = lerp(PHI0, PHI1, t);
+      const x = sx * RX * Math.cos(phi), z = -RZ * Math.sin(phi);
+      const nx = x / (RX * RX), nz = z / (RZ * RZ);
+      const nl = Math.hypot(nx, nz) || 1;
+      out.set(x + (nx / nl) * OUT, Y + Math.max(0, Math.cos(phi)) * 0.012 * S, z + (nz / nl) * OUT);
+      _m.copy(chest.obj.matrixWorld);
+      out.applyMatrix4(_m);
+    },
+  });
+  cloak._sharedMat = !!opts.material;
+
+  /* The body under it: the torso, the arm on this side (the cape lies over
+   * the back of the shoulder and must not pass through the arm when it comes
+   * up to a rifle), and the leg on this side. Plus one sphere for the back
+   * plate and whatever pack sits on it, which is what a cape down a
+   * commander's back actually hangs over. */
+  const armSide = sx > 0 ? 'L' : 'R';
+  const bones = ['chest', 'spine', 'hips', 'arm' + armSide, 'fore' + armSide, 'thigh' + armSide, 'shin' + armSide];
+  const radii = [0.19, 0.18, 0.19, 0.075, 0.060, 0.12, 0.095];
+  const back = new THREE.Vector3();
+  cloak.refreshColliders = () => {
+    const out = cloak.colliders;
+    out.length = 0;
+    for (let i = 0; i < bones.length; i++) {
+      const b = rig.get(bones[i]);
+      if (!b || b.severed) continue;
+      b.obj.updateMatrixWorld(false);
+      for (const t of [0.25, 0.8]) {
+        _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
+        out.push({ c: _v3.clone(), r: radii[i] * S });
+      }
+    }
+    chest.obj.updateMatrixWorld(false);
+    back.set(0, 0.02 * S, -0.09 * S).applyMatrix4(chest.obj.matrixWorld);
+    out.push({ c: back.clone(), r: 0.17 * S });
+    return out;
+  };
+
+  /* THE LOD SWAP — the same contract `attachSkirt` keeps: off with a
+   * stand-in shows the plates, off without one (first person) shows nothing,
+   * and disposal hands the plates back for good. */
+  cloak.setVisible = (v, standIn = true) => {
+    cloak.mesh.visible = v;
+    for (let i = 0; i < rigid.length; i++) rigid[i].visible = !v && standIn;
+  };
+  cloak.setVisible(true);
+  const _dispose = cloak.dispose.bind(cloak);
+  cloak.dispose = () => {
+    for (let i = 0; i < rigid.length; i++) rigid[i].visible = true;
+    _dispose();
+  };
+  cloak.rigid = rigid;
+  cloak.sx = sx;
+  return cloak;
+}
+
 /**
  * THE HOOD'S FALL — the answer to the half of the hood note that geometry
  * cannot reach.

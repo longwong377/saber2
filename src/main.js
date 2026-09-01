@@ -860,7 +860,7 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null, override 
  * card/take pair, and would buy nothing — `Screens.js`'s own header calls a
  * reachable state with no exit the bug the module exists to prevent.
  */
-async function enterHangar() {
+async function enterHangar(arrival = null) {
   try {
     /* THE THEATRE THE PLAYER PICKED goes with them, because the deck's whole
      * view is the world this ship is over and `level` has to be `'hangar'` for
@@ -875,7 +875,13 @@ async function enterHangar() {
        * AND IT IS HANDED OVER BEFORE THE LEVEL IS BUILT. This used to be an
        * assignment on the next line, which is after the dressing that reads
        * it; see the `onWorld` note in `buildWorld`. */
-      { onWorld: (w) => { w._pickedLevel = LEVELS[outside] || null; } });
+      { onWorld: (w) => {
+        w._pickedLevel = LEVELS[outside] || null;
+        /* AND THE MODE, so the deck stands the deployment THAT run would muster
+         * (`Hangar.deckLineup` asks `musterPlan` with it). */
+        w._pickedMode = sessionOr('mode');
+        w._deckArrival = !!arrival;
+      } });
   } catch (e) {
     console.error('hangar failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
@@ -897,6 +903,13 @@ async function enterHangar() {
    * twenty-five node audio graph and a body per man.
    */
   if (world) {
+    /**
+     * THE LIFT IS THE WAY BACK TO THE MENU. `DeckLift` raises this at the
+     * end of the ride out — the doors have shut, the shaft is streaming, and
+     * the player is where he was when he arrived. It is `leaveHangar`, which
+     * commits his edits and puts the deck down properly.
+     */
+    world.onDeckLeave = () => { leaveHangar(); };
     world.onDeckDeploy = () => {
       leaveHangar();
       deploy().catch((e) => console.error('deploy from the deck failed', e));

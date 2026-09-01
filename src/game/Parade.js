@@ -53,7 +53,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { BipedAnimator, limbScale, SOLE_BIAS } from './Rig.js';
 import { smoothstep, TAU } from '../engine/MathUtil.js';
 import { ARCHETYPES } from './Enemy.js';
-import { bodyOptsFor, kitOptsFrom } from './Bodies.js';
+import { bodyOptsFor, kitOptsFrom, buildBlaster } from './Bodies.js';
 import { RANKS, rankFor, markById, CommandDirector } from './Command.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
@@ -904,5 +904,28 @@ export function buildFigure(man, opts = {}) {
   const band = markById(man.look?.band)?.color;
   if (band != null) CommandDirector.prototype.bandUp.call(null, stub, band);
   if ((man.wounds | 0) > 0) CommandDirector.prototype.scorchUp.call(null, stub, man.wounds | 0);
-  return { root, rig, man, _stub: stub, palette: built.palette ?? null };
+  /**
+   * ══ AND HE CARRIES HIS RIFLE ═══════════════════════════════════════════
+   *
+   * "clone troopers don't appear to even be holding guns". On the deck they
+   * were not holding anything: a parade figure never ran `Enemy._build`, so
+   * the archetype's weapon was never built, and `attention`'s note says as
+   * much — "No rifle: the fists are closed at the seams." The stances have
+   * always authored a grip line (`man.grip`, `portArms`, `presentArms`); this
+   * hangs the archetype's own blaster off the right hand the way `_build`
+   * does, so port arms and present arms hold the thing they are shaped for.
+   * `rifle` is published so a caller can choose a stance's `arms` by it.
+   */
+  let rifle = null;
+  const hand = rig?.get?.('handR');
+  if (A.weapon && hand && opts.rifle !== false) {
+    try {
+      rifle = buildBlaster(A.weapon);
+      const S = A.scale ?? 1;
+      hand.obj.add(rifle);
+      rifle.position.set(0, 0.06 * S, 0.02);
+      rifle.rotation.x = -0.2;
+    } catch { rifle = null; }
+  }
+  return { root, rig, man, _stub: stub, palette: built.palette ?? null, rifle };
 }

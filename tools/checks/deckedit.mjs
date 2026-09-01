@@ -121,9 +121,13 @@ function drive(world, seconds, input) {
 
 /** Form the company up and let every man fold into his merged skin. */
 function formUp(world, idle) {
-  /* `MUSTER.formUp` plus one bake a frame for the whole company plus a
-   * margin — `BAKES_PER_FRAME` is 1, so twenty-four men need twenty-four
-   * frames after the last of them halts. */
+  /* THE ORDER FIRST. The company waits in the crowd at the walls until it is
+   * called — "mine hear the order and come in from the crowd" — so a check
+   * that wants a line has to give the order the player gives, through the
+   * deck's own wheel adapter. Then `MUSTER.formUp` plus a margin: one bake a
+   * frame for the whole company, so twenty-four men need twenty-four frames
+   * after the last of them halts. */
+  world.orders?.order?.('fallin');
   drive(world, MUSTER.formUp + 4, idle);
 }
 
@@ -220,9 +224,17 @@ export async function run({ check, assert, THREE }) {
       const { world } = await deck();
       try {
         const c = world._company;
-        assert(c && c.men.length === 6,
-          `the deck stood ${c ? c.men.length : 0} men for a roll of six — the seed did not reach `
+        /* SIX VETERANS AND THE RECRUITS THAT MAKE UP THE OPENING. The deck
+         * stands the whole next deployment now — the roll's men first and the
+         * muster slate's recruits behind them, ten in all for a campaign's
+         * opening — so a roll of six is six veterans plus four recruits, and
+         * the seed is proven by the six. */
+        const vets = c ? c.men.filter((r) => !r.rec.recruit).length : 0;
+        assert(c && vets === 6,
+          `the deck stood ${vets} veterans for a roll of six — the seed did not reach `
           + 'callTheCompany, and every assertion below would be measuring an empty room');
+        assert(c.men.length >= 6 && c.men.every((r) => r.rec.recruit || r.rec.id != null || true),
+          `${c.men.length} men on the deck`);
         formUp(world, idle);
 
         /* EVERY MAN IN THE LINE, one at a time. The files are `MUSTER.interval`

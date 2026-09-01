@@ -109,6 +109,16 @@ export const SHOVE = {
    * is the funniest bug this room could ship.
    */
   wake: 1.4,
+  /**
+   * WHAT IT TAKES TO PUT A PLANTED MAN DOWN. `wake` is the speed at which a
+   * body that is already down is read as moving again; this is the speed a
+   * body standing at its post has to be given before it stops being a man
+   * who was brushed and starts being a man who was shoved. 3.2 m/s: above the
+   * 1-2 m/s the player's capsule hands a body it walks into, below the 8+ of
+   * the weakest Force push. Measured on the deck: a walk straight through a
+   * formed line at 4.6 m/s puts 0.6-1.9 m/s on the men it touches.
+   */
+  shove: 3.2,
   tip: Math.cos(0.55),                       // 31.5° off vertical
   /** Back on his feet only once he has actually stopped. */
   still: 0.45,
@@ -327,8 +337,37 @@ export class Shovable {
     const speed = b.velocity.length();
 
     if (this.state === STATE.POST) {
-      if (speed > SHOVE.wake || lean < SHOVE.tip) this._enter(STATE.DOWN);
-      else return this._publish();
+      /**
+       * ══ A SHOULDER IS NOT A SHOVE ═══════════════════════════════════════
+       *
+       * "The troops you inspect in the hangar act more like bowling pins than
+       *  actual models you would see in game like you touch them and they
+       *  fall over."
+       *
+       * They did, and the reason is the player's own capsule: `Player._collide`
+       * wakes and impulses any PROP body it overlaps, and inspecting a man
+       * means walking up to within a couple of metres of him while he steps
+       * half a metre toward you. One brush put 1.4 m/s or 31° of lean on a
+       * tall thin box and the old rule below read that as being knocked over.
+       *
+       * So a man standing at his post is a man PLANTED: anything under
+       * `SHOVE.shove` of speed is a nudge, and a nudge is undone — he is put
+       * back on his mark, upright, and sent back to sleep, which is what a
+       * soldier who has been bumped does. A Force push arrives at eight
+       * metres a second and more; a hurled crate at twenty; those go over.
+       * The lean test is kept for the case the speed test cannot see — a
+       * crate landing on his head — but only past the bump band.
+       */
+      if (speed > SHOVE.shove || (lean < SHOVE.tip && speed > SHOVE.wake)) this._enter(STATE.DOWN);
+      else {
+        if (speed > 0.02 || lean < 0.9995) {
+          b.setTransform(_v.copy(this.mark).setY(this.mark.y + SHOVE.halfH),
+            _q.setFromAxisAngle(UP, this.facing));
+          b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+          b.sleep();
+        }
+        return this._publish();
+      }
     }
 
     if (this.state === STATE.DOWN) {

@@ -1770,11 +1770,15 @@
 <!-- Held on Tab (rebindable: the `scoreboard` action). Deliberately built from
      the pause card's own classes rather than a new block in styles.css — it is
      the same six numbers, and one owner for that look is one place to change
-     it. The only overrides are local: a lighter ground than a full .screen,
-     because this is held DURING a fight and you have to be able to see out of
-     it, and a z-index below the pause card so Esc still lands on top. -->
-<div id="scoreboard" class="screen hidden" style="z-index:38;background:rgba(4,7,12,.72);
-     backdrop-filter:blur(5px) saturate(.9);-webkit-backdrop-filter:blur(5px) saturate(.9);animation:none">
+     it. The only overrides are local: a z-index below the pause card so Esc
+     still lands on top, and no fade-in, because a held key answers at once.
+     It paints NO ground of its own. This carried `rgba(4,7,12,.72)` and a
+     5 px blur inline — "a lighter ground than a full .screen, because this is
+     held DURING a fight and you have to be able to see out of it" — and now
+     `.screen` itself paints nothing but an 18% scrim, so a scoreboard held
+     during a fight is the fight, with six numbers on a card over it.
+     tools/checks/backdrop.mjs reads this attribute. -->
+<div id="scoreboard" class="screen hidden" style="z-index:38;animation:none">
   <div class="pause-wrap">
     <h2>Standing</h2>
     <div id="score-stats" class="pause-stats"></div>
@@ -1883,7 +1887,15 @@
   </div>
 </div>
 
+<!-- THE ONE SCREEN THAT HAD NO PICTURE AT ALL. main.js raises it when there
+     is no WebGL2, which means no world will ever be drawn behind it — so it
+     is a menu-type screen and carries the menu's plate, exactly as #loading
+     does and for the same reason: "it will be the background for any non-in
+     game menu or screen". Free, for the same reason too: the file is
+     preloaded in the head, and this subtree is display:none until the one
+     moment it is needed. tools/checks/backdrop.mjs asks for it by name. -->
 <div id="unsupported" class="screen hidden">
+  <div class="menu-bg"></div>
   <div class="boot-inner">
     <h2>WebGL2 unavailable</h2>
     <p class="hint">This browser or machine cannot run the renderer. Try a recent Chrome, Edge, or Firefox with hardware acceleration enabled.</p>

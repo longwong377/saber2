@@ -354,10 +354,39 @@ export async function run({ check, assert }) {
      * ceiling: the company has to stand in this room, and twenty-four merged
      * figures are about ninety-six draws.
      */
-    const { world } = await deck();
+    const { world, input } = await deck();
     try {
-      let meshes = 0;
-      world.scene.traverse((o) => { if (o.isMesh || o.isInstancedMesh) meshes++; });
+      /* LET THE MEN FOLD. `MergedSkin` bakes one figure a frame, so a room
+       * counted on its first frame is a room of forty unmerged rigs. Forty
+       * frames is enough for the whole deck to bake; the game shows the room
+       * after a lift ride longer than that. */
+      for (let i = 0; i < 48; i++) world.update(1 / 60, input);
+      /**
+       * WHAT IS DRAWN, NOT WHAT IS IN THE GRAPH. The deck stands its company
+       * and a crowd of troopers now, and every one of them is a rig of ~54
+       * meshes folded into about seven by `MergedSkin` — with the originals
+       * left in the graph, hidden. A traverse that counts hidden meshes
+       * reported 1591 for a room whose renderer submits a fifth of that.
+       * So a mesh counts only if it and every ancestor is visible, which is
+       * the renderer's own rule. The men are counted separately below.
+       */
+      const drawn = (o) => { for (let p = o; p; p = p.parent) if (p.visible === false) return false; return true; };
+      let meshes = 0, figures = 0;
+      const roots = new Set();
+      for (const r of [...(world._company?.men || []), ...(world._company?.crowd || [])]) if (r.fig?.root) roots.add(r.fig.root);
+      world.scene.traverse((o) => {
+        if (!(o.isMesh || o.isInstancedMesh) || !drawn(o)) return;
+        let man = false;
+        for (let p = o; p; p = p.parent) if (roots.has(p)) { man = true; break; }
+        if (man) figures++; else meshes++;
+      });
+      /* AND THE MEN ARE MERGED: a figure standing still is about seven
+       * draws, and a room of forty men that has forgotten to fold them is
+       * two thousand. */
+      const nMen = roots.size;
+      if (nMen) assert(figures <= nMen * 12,
+        `${figures} drawn meshes for ${nMen} men on the deck — ${(figures / nMen).toFixed(0)} each; `
+        + 'a merged figure is about seven, so somebody is standing unmerged');
     /**
      * 240, not 380. The first browser reading of the finished room was 988
      * meshes and **1035 draw calls** — against 225 for Geonosis, the 395 that
@@ -370,12 +399,21 @@ export async function run({ check, assert }) {
      * a round number, because the whole point is to notice the next thing that
      * forgets to compose.
      */
-      assert(meshes < 240,
-        `${meshes} meshes dressing an empty deck. It was 193 after every static assembly was `
-        + 'composed through Props.Kit; something new is emitting per-prop, and the ink pass '
-        + 'doubles whatever this is');
+      /**
+       * 320, FROM 240. The room stands two things now that are not kit and
+       * cannot be: the army's REAL transport on the near pad (`DeckFlight`,
+       * the same forty-odd meshes the insertion flies, because a ship you
+       * walk into has to be a ship) and the lift car with its doors, panes
+       * and shaft (`DeckLift`, which moves). Measured at 255 with both; the
+       * bound sits just above so the next thing that forgets to compose is
+       * still caught.
+       */
+      assert(meshes < 320,
+        `${meshes} meshes dressing the deck. It was 255 with the kit composed, the transport and `
+        + 'the lift standing; something new is emitting per-prop, and the ink pass doubles '
+        + 'whatever this is');
       assert(meshes > 60, `${meshes} meshes is not a hangar, it is a floor`);
-      return `${meshes} meshes empty, against 395 for the room that was deleted`;
+      return `${meshes} meshes of room drawn (${figures} for ${nMen} men on the deck), against 395 for the room that was deleted`;
     } finally { world.unload(); }
   });
 

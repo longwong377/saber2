@@ -21,23 +21,36 @@
  * whole dressing bound — and still read as a box, because the problem was
  * never the number of things in it.
  *
- * ── SO THIS IS NOT THAT ROOM, AND THE DIFFERENCE IS THE SHAPE ─────────────
+ * ── SO THIS IS NOT THAT ROOM, AND THE DIFFERENCE IS WHAT THE WALLS ARE ────
  *
- * THERE IS ONE WALL AND IT IS BEHIND YOU. Everything else is field, deck, or
- * space. `TERRAIN_PRESETS.hangardeck` is 128 m across and the heightfield's own
- * edge IS the deck's edge, so the ship genuinely runs out under your feet —
- * nothing is hidden by a fog bank or closed off by a wall you are not meant to
- * look at, which is what every deleted interior was doing at its boundary.
+ * The first two versions of this deck answered the box with ABSENCE: one wall
+ * behind you, field on three sides, no ceiling ever, a deck that ran out
+ * under your feet. The player walked round the ends of the rack walls onto
+ * an apron with vacuum on three sides and called it "a janky mess on the
+ * edges", watched ships fly through the side walls, and asked, in as many
+ * words, for a solid ceiling higher than the walls and for the room to be
+ * wider. That instruction overrides the old rule, and this header says so
+ * because `HANGAR-SPEC.md` and three checks used to state the opposite.
  *
- * THERE IS NO CEILING. The enclosure overhead is a field plane 90 m up, and
- * the structure that reads as "inside" is a rank of spars that arc up and OUT
- * OF FRAME. A ceiling plane is the single thing this file must never grow.
+ * THE ROOM IS BOUNDED ON SIX SIDES BY THINGS YOU CAN SEE. Two rack walls run
+ * the full length from the bulkhead to the aperture; a ceiling closes the top
+ * twenty metres above the walls' bays; the bulkhead with the lift is behind
+ * you; the deck is under you; and forward there is one opening — a chamfered
+ * hexagon with a white rim, `hangar 7.jpg`'s — with the planet and the battle
+ * in it. That is the shape of every one of the seven references.
  *
- * THE VIEW IS THE ROOM, NOT A WINDOW IN IT. The planet fills a third of the
- * sky, the deck is lit from outside by it, and the brightest surface in frame
- * is the shield. If the composition ever drifts back toward a big enclosed bay
- * with a view at one end, this is the Invisible Hand again and `Levels.js`
- * already recorded what happened to it: "a box with a window."
+ * WHAT KEEPS IT FROM BEING A BOX IS DENSITY, NOT ABSENCE. The ceiling is a
+ * structure — girders, beams, catenary cables, crane rails, hung fighters,
+ * ducting, light panels, hanging fixtures — with the plate behind all of it
+ * and under 60% haze. The walls are a hundred and twenty bays. The deck has
+ * a company, a crowd, droids, workers, a real transport, repairs, traffic in
+ * and out of the opening. A box is four walls and nothing in it; a hangar is
+ * the same walls with a war's worth of hardware between them.
+ *
+ * THE VIEW IS STILL THE ROOM. The planet is FORWARD now, in the opening,
+ * where the player is facing when the lift doors part — it spent its first
+ * weeks 167° behind him over the bulkhead, because the sky placed it by phase
+ * and never by azimuth. See `SkyDome.configureOrbit`'s `forward`.
  *
  * ── WHAT IT IS FOR ────────────────────────────────────────────────────────
  *
@@ -51,12 +64,17 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { buildFigure, paradeMan, poseParade, salute, stagger, STANCES } from './Parade.js';
 import { mergeFigure } from './MergedSkin.js';
-import { loadAll as companyLoadAll } from './Company.js';
+import { loadAll as companyLoadAll, load as companyLoad } from './Company.js';
+import { lineup } from './Muster.js';
+import { BipedAnimator } from './Rig.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt,
   drainBlasts, bootStride, deckChant } from './DeckAudio.js';
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
+import { dressDeckLift, stepDeckLift, undressDeckLift } from './DeckLift.js';
+import { dressDeckMirror, stepDeckMirror, undressDeckMirror } from './DeckMirror.js';
+import { dressDeckFlight, stepDeckFlight, undressDeckFlight, embarkCompany } from './DeckFlight.js';
 import { stepDeckEdit } from './DeckEdit.js';
-import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead } from './Command.js';
+import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead, musterPlan, OPENING_STRENGTH, ARMIES, MARKS } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 /**
  * ONE PROP FROM THE OUTDOOR LIBRARY, AND IT IS THE ONE THE PLAYER THROWS.
@@ -78,73 +96,175 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
  */
 import { makeCrate } from '../world/Props.js';
 import { makeShovable } from '../physics/Shovable.js';
-import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig,
+import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig, parkedFighter,
   catwalk, crates, smear, deckLamp, shuttlePad, factionOf, insigniaPanel } from './DeckKit.js';
 
 /* The deck runs from the bulkhead aft to the lip forward. Named rather than
  * inlined because six things below have to agree about where the room stops,
  * and `hangardeck.height` is the seventh. */
+/* The deck runs from the bulkhead aft to the lip forward. Named rather than
+ * inlined because six things below have to agree about where the room stops,
+ * and `hangardeck.height` is the seventh. */
 export const DECK = {
   /**
-   * ══ THE ROOM, AND EVERY NUMBER IN IT COMES OFF THE REFERENCES ═══════════
+   * ══ THE ROOM, AND WHY IT IS A ROOM NOW ═══════════════════════════════════
    *
-   * The first version was 128 m across with a 34 m wall and it read as a shed.
-   * `hangar 7.jpg` is the target composition and nothing in it is small: the
-   * racked fighters recede until they are specks, the troopers are four pixels,
-   * and the overhead is out of frame. "Scale must be immense" is the brief and
-   * it is the first thing a number can get wrong.
+   * The first two versions of this deck were built on one rule — one wall,
+   * behind you, field on the other three sides and no ceiling ever — and the
+   * player walked round the ends of the rack walls onto an apron with vacuum
+   * on three sides and said exactly what that was:
+   *
+   *   "the hangar was too big outside of the side walls like you had decent
+   *    looking side walls but you were able to go behind them and it's just a
+   *    janky mess on the edges, also ships were going through the side walls,
+   *    give the hangar a solid ceiling (but very high up even higher than the
+   *    side walls you have now) … but the ceiling can't make the hangar look
+   *    like a shitty box … I want you to make the hangar wider"
+   *
+   * So the rule changed, on the player's own instruction, and the header of
+   * this file says so. The room is now what every one of the seven references
+   * actually is: two rack walls that run the FULL length, a ceiling higher
+   * than the walls' bay band, and ONE opening — forward, a chamfered hexagon
+   * with a white rim, with the planet in it. What keeps it from being a box is
+   * not the absence of a lid; it is that the lid is a structure — beams,
+   * cable runs, crane rails, hung fighters, ducting, light panels, fixtures —
+   * and that the haze eats it before it can read as a plane.
    */
-  /** Aft face of the bulkhead — the one solid surface in the level. */
+  /** Aft face of the bulkhead — the one solid surface behind the player. */
   aft: -104,
-  /** The lip, on every other side: the heightfield's own edge. */
+  /** The lip, forward: the heightfield's own edge, where the aperture stands. */
   lip: 144,
   /**
-   * WHERE THE PLAYER IS PUT DOWN, and every metre of it is answering to
-   * something.
+   * WHERE THE PLAYER IS PUT DOWN: INSIDE THE LIFT.
    *
-   * He stands 18 m forward of the bulkhead doors, so the company comes out
-   * BEHIND him and marches past — which is what "file in from off-camera"
-   * means from a first-person camera and is the one thing the brief says sells
-   * the whole scene. And he is 30 m from the line, inside `ORDER_REACH`'s 34,
-   * so he can give an order where he lands but only just: walk three paces the
-   * wrong way and they stop hearing you, which is the reach rule teaching
-   * itself in the room built for learning it.
+   * He no longer appears on the deck. He arrives in a lift car set into the
+   * bulkhead, rides it for a few seconds with the shaft streaming past the
+   * windows, and walks out when the doors part — see `src/game/DeckLift.js`.
+   * The car's floor is the deck, so the walk out is one continuous piece of
+   * ground.
    */
-  start: new THREE.Vector3(0, 0, -78),
+  start: new THREE.Vector3(0, 0, -99.3),
+  /**
+   * WHERE HE FIRST STANDS ON OPEN DECK: just outside the lift doors. Every
+   * distance the deck's life measures "in front of the player" is measured
+   * from here rather than from the spawn, which is inside a car in a wall.
+   */
+  threshold: -88,
   /** Where the line forms up, facing him. */
   line: -48,
-  /** The overhead field. 64 m, which is the height ref 6's catwalk implies. */
-  roof: 64,
   /**
-   * ══ WHERE THE RACK WALLS STAND, AND IT IS ONE NUMBER NOW ═══════════════
-   *
-   * This said `bays: 46` under a comment about something else entirely, was
-   * read by nothing, and was wrong — the walls stand at ±56. Meanwhile
-   * `dressStructure` kept the real figure as a local `const WALL = 56` that no
-   * other file could see, so `DeckAudio` had to site its horns as a ratio of a
-   * number it could not read and guard the result with a ray probe.
-   *
-   * One name, exported, and the local is gone.
+   * THE CEILING. 96 m: above the walls' 62 m of bays and their 78 m band of
+   * upper structure, so a player looking up sees the walls END and then a
+   * further twenty metres of beams and cables before the plate. That gap is
+   * the whole of "higher than the side walls" and it is what stops the top of
+   * the room reading as the top of a box.
    */
-  wall: 56,
+  roof: 96,
+  /**
+   * ══ WHERE THE RACK WALLS STAND, AND IT IS ONE NUMBER ═══════════════════
+   *
+   * 80, from 56: "I want you to make the hangar wider". The inboard mouth of
+   * the racks is 7.5 m inside this (see `deckColliders`), so the working
+   * deck is 145 m across between the fighters' noses — half again the old
+   * canyon. Every other file reads this rather than a ratio of the lip.
+   */
+  wall: 80,
   /** Kept as an alias for one release: `bays` was the old, wrong spelling. */
   get bays() { return this.wall; },
+  /**
+   * THE APERTURE'S CHAMFER. The forward opening is a hexagon, `hangar 7.jpg`'s
+   * shape: vertical sides to this height, then a lean inward to a top edge
+   * this much narrower on each side. Named because the rim, the field plane,
+   * the corner fills and the barrier all trace the same six points.
+   */
+  chamfer: { y: 54, x: 30 },
+};
+
+/**
+ * ══ THE LIFT CAR, in the bulkhead's own thickness ═════════════════════════
+ *
+ * `DeckLift.js` builds and drives it; this is the shape, published beside
+ * `DECK` so the bulkhead recess, the colliders, the spawn and the car cannot
+ * disagree about where it is. The car's floor is the deck plate, its door is
+ * on the deck side, and the shaft the windows look into is drawn INSIDE the
+ * bulkhead mass, where nothing on the deck can see it.
+ */
+export const LIFT = {
+  x: 0,
+  /** The car's centre. Its front face (the doors) is at `door`. */
+  z: -101.0,
+  halfW: 3.0, halfD: 3.0, height: 4.2,
+  get door() { return this.z + this.halfD; },
+  /** The lobby recess in the bulkhead round the doors. */
+  lobby: { w: 16, h: 8.4, depth: 2.6 },
 };
 
 /**
  * ══ WHERE YOU LEAVE FROM ══════════════════════════════════════════════════
  *
- * The near pad's craft, and the patch of deck at the foot of its ramp. Both
- * derived from the same pair of numbers so the trigger cannot drift off the
- * geometry — which is exactly what happened to the muster doors, the crane
- * rail, the scaffold and the PA horns, all in one commit.
+ * The transport on the near pad, and the patch of deck at the foot of its
+ * ramp. The pad is where the REAL hull stands — `DeckFlight.js` parks the
+ * army's own transport here with its ramp down and flies it out through the
+ * aperture — and the trigger is derived from it so the two cannot drift.
  */
+/**
+ * ══ WHERE THINGS MAY AND MAY NOT STAND, IN ONE TABLE ══════════════════════
+ *
+ * Four files put things on this deck — the structure, the company and its
+ * crowd, the deck's life, the flight director — and each used to keep its own
+ * idea of where the others were. The pit kerbs were twenty metres from the
+ * pit; the droids sat in the company's march corridor; the crew walked into
+ * the hole. So the deck's ground is partitioned HERE, once, as axis-aligned
+ * boxes in x/z, and every siting decision asks `inZone`/`clearOf` rather than
+ * remembering a number.
+ *
+ *   lobby      the lift's apron; the player walks out through it
+ *   corridor   from the lobby to the muster line, where the company marches
+ *   muster     the line's own ground
+ *   padA       the transport's pad, `DEPLOY_RAMP`, with its ramp apron
+ *   padB       the second craft's pad, forward starboard
+ *   pit        the recess, `PIT_KERBS`
+ *   crowdL/R   where the crowd stands and where the company waits in it
+ *   work       the repair bays' ground, port and starboard, mid-deck
+ *   apron      the last third before the aperture, kept for traffic
+ */
+export const DECK_ZONES = {
+  lobby: { x0: -11, x1: 11, z0: -104, z1: -86 },
+  corridor: { x0: -8, x1: 8, z0: -104, z1: -34 },
+  muster: { x0: -50, x1: 50, z0: -54, z1: -34 },
+  padA: { x0: -49, x1: -11, z0: -6, z1: 34 },
+  padB: { x0: 26, x1: 64, z0: 78, z1: 116 },
+  pit: { x0: -71, x1: -33, z0: -20, z1: 32 },
+  crowdL: { x0: -70, x1: -14, z0: -100, z1: -60 },
+  crowdR: { x0: 14, x1: 70, z0: -100, z1: -60 },
+  work: { x0: 30, x1: 72, z0: -30, z1: 60 },
+  apron: { x0: -72, x1: 72, z0: 116, z1: 144 },
+};
+
+/** Is (x, z) inside the named zone? */
+export function inZone(name, x, z) {
+  const Z = DECK_ZONES[name];
+  return !!Z && x >= Z.x0 && x <= Z.x1 && z >= Z.z0 && z <= Z.z1;
+}
+
+/** Is (x, z) clear of every zone named, by `pad` metres? */
+export function clearOf(names, x, z, pad = 0) {
+  for (const n of names) {
+    const Z = DECK_ZONES[n];
+    if (!Z) continue;
+    if (x >= Z.x0 - pad && x <= Z.x1 + pad && z >= Z.z0 - pad && z <= Z.z1 + pad) return false;
+  }
+  return true;
+}
+
 export const DEPLOY_RAMP = {
-  x: -26,
-  padZ: 46,
-  /* The ramp comes down 12 m aft of the pad's centre; `shuttlePad` puts it
-   * there off the same yaw. Standing within `reach` of this is the trigger. */
-  get z() { return this.padZ + 12; },
+  x: -30,
+  padZ: 14,
+  /** The hull's heading: nose to the aperture, ramp facing the line. */
+  yaw: Math.PI,
+  /* The ramp's foot is behind the hull. `Vehicles` puts the bay's back about
+   * 3.3 m aft of the hull's centre and the leaf 2.4 m past that. */
+  get z() { return this.padZ - 6.0; },
   reach: 4.2,
   /* How long you have to stand on it. A trigger that fires the instant you
    * cross it takes the run away from a player who was walking past. */
@@ -153,7 +273,7 @@ export const DEPLOY_RAMP = {
 const P_RAMP = { stencil: 0xb9bec6 };
 
 /**
- * THE FIELD. One material, four planes, and it is the only thing between the
+ * THE FIELD. One material, one plane, and it is the only thing between the
  * deck and vacuum — which is also the only thing keeping the player on the
  * deck, because there is no railing and the terrain simply ends.
  *
@@ -266,6 +386,22 @@ function fieldMaterial(color) {
 }
 
 /**
+ * ══ THE APERTURE, AS SIX POINTS ═══════════════════════════════════════════
+ *
+ * `hangar 7.jpg`: a chamfered hexagon — vertical sides, then a lean inward to
+ * a shorter top edge. In the aperture's own plane, x across and y up from the
+ * deck, anticlockwise from the bottom-left. The rim traces these, the field
+ * fills them, the corner fills cover what is outside them, and the barrier
+ * stands behind them: one list, four consumers.
+ */
+export function aperturePoints() {
+  const W = DECK.wall, H = DECK.roof, C = DECK.chamfer;
+  return [
+    [-W, 0], [W, 0], [W, C.y], [W - C.x, H], [-(W - C.x), H], [-W, C.y],
+  ];
+}
+
+/**
  * A field plane, and the invisible wall that goes with it.
  *
  * The barrier is a static box rather than terrain because the terrain's job
@@ -273,87 +409,50 @@ function fieldMaterial(color) {
  * stop at it and be able to stand there looking out, which is the best view in
  * the scene and the one thing the composition is built to reward.
  */
-function fieldPlane(world, mat, centre, size, quat) {
-  const geo = new THREE.PlaneGeometry(size.x, size.y, 2, 2);
+function fieldPlane(world, mat, geo, centre, quat) {
   const mesh = new THREE.Mesh(geo, mat);
   mesh.position.copy(centre);
   if (quat) mesh.quaternion.copy(quat);
   mesh.renderOrder = 3;
   mesh.frustumCulled = false;
+  mesh.name = 'deck-field';
   world.scene.add(mesh);
   world.statics.push(mesh);
   return mesh;
 }
 
 /**
- * ══ THE FIELD ENVELOPE — three walls and a lid, none of them solid ════════
+ * ══ THE FIELD — one opening, forward, and the rim round it ═══════════════
  *
- * Forward, port and starboard, standing ON the lip, plus one overhead at 90 m.
- * They are the room's only enclosure and they are the reason there is no
- * railing: you walk to the edge of the deck, the field stops you, and what is
- * in front of your face is a planet.
+ * The three-sided envelope is gone with the apron it stood on. What is left
+ * is what every reference has: one aperture in the forward face, a chamfered
+ * hexagon the full width of the working deck and the full height of the room,
+ * with the field across it and a fat white rim round all six edges.
  *
- * THE OVERHEAD ONE IS WHY THERE IS NO CEILING and it is worth being explicit:
- * a field at 90 m over a deck 128 m across is a plane the player will never see
- * edge-on, so it never reads as a lid. It is there for the barrier and for the
- * faint wash it puts on everything, and the spars are what actually tell the
- * eye the room has a top.
+ * THE RIM IS THE MOST IMPORTANT OBJECT IN THE ROOM. `REFERENCES.md` rule 1,
+ * agreed by all seven images: the opening is bordered by a continuous,
+ * intensely bright white band — brighter than anything it lights — and it is
+ * what says the vacuum is on the other side. Without it the field is a hole
+ * in the dark.
  */
 function addField(world) {
   const mat = fieldMaterial(0x8fd4ff);
   world._hangarField = mat;
   const L = DECK.lip;
   const H = DECK.roof;
-  const q = (ax, ay, az, ang) =>
-    new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(ax, ay, az), ang);
+  const pts = aperturePoints();
 
-  /* Forward, and it is the one the player walks up to. */
-  fieldPlane(world, mat, new THREE.Vector3(0, H / 2, L), new THREE.Vector2(L * 2, H), null);
-  for (const sx of [-1, 1]) {
-    fieldPlane(world, mat, new THREE.Vector3(sx * L, H / 2, 0), new THREE.Vector2(L * 2, H),
-      q(0, 1, 0, sx * Math.PI / 2));
-  }
-  /**
-   * ══ AND THERE IS NO OVERHEAD PLANE, BECAUSE THAT PLANE WAS A CEILING ════
-   *
-   * A 288 x 288 m field lay flat at y = 64 over the whole deck. The prose
-   * above argued the player would never see it edge-on so it would never read
-   * as a lid -- and that argument is backwards. The field shader is fresnel
-   * driven: it is DIMMEST looking straight up at it and BRIGHTEST at grazing
-   * angles, which are exactly the angles you look at an overhead from. At 17
-   * degrees of elevation it lands about eight times brighter than the forward
-   * plane seen face on. It was a glowing lid over the room.
-   *
-   * Worse, it was the one object the no-ceiling check could not see:
-   * tools/checks/hangar.mjs skips saberNoInk materials and anything named
-   * field-rim, which is this plane and the three bars along its edges. The
-   * rule this room stands on was enforced everywhere except on the thing that
-   * broke it.
-   *
-   * The physics box that stops a player leaving through the top stays. It is
-   * invisible, which is the correct way for a ceiling to exist here.
-   */
+  /* THE PLANE IS THE HEXAGON. A rectangle would show the field through the
+   * two corners the chamfer closes, which is a shield with a frame drawn on
+   * top of it rather than a shield in a frame. `ShapeGeometry` lies in the
+   * x/y plane at z = 0, the same object space the weave reads. */
+  const shape = new THREE.Shape();
+  shape.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
+  shape.closePath();
+  const geo = new THREE.ShapeGeometry(shape, 1);
+  fieldPlane(world, mat, geo, new THREE.Vector3(0, 0, L), null);
 
-  /**
-   * ══ THE RIM, AND IT IS THE MOST IMPORTANT OBJECT IN THE ROOM ══════════
-   *
-   * `assets/reference/REFERENCES.md` rule 1, agreed by all seven images: the
-   * opening is bordered by a continuous, intensely bright white band. It is the
-   * brightest thing in every one of those frames — brighter than anything it
-   * lights — and it is what says the vacuum is on the other side.
-   *
-   * WITHOUT IT THE FIELD IS INVISIBLE. Measured, in the first render of this
-   * room: three translucent additive planes against black space returned almost
-   * nothing, so the aperture read as a hole in the dark. A field seen face-on
-   * has no rim of its own to catch the light — the emitter housing is what you
-   * actually see, and every reference draws it as a fat glowing strip.
-   *
-   * Ours borders THREE field planes and the overhead rather than one window,
-   * because the player's brief is "space/force field on 3 sides and the
-   * ceiling" — more open than any reference. So the rim runs the whole lip of
-   * the deck and up the two corners, which is the same object doing the same
-   * job on a more open room.
-   */
   /**
    * AND IT IS UNLIT, WHICH THE FIRST ONE WAS NOT. A `MeshStandardMaterial`
    * with `emissiveIntensity: 3.4` is still a shaded surface: it is tone-mapped
@@ -362,87 +461,52 @@ function addField(world) {
    * brightest thing in the frame, brighter than anything it lights. Only an
    * unlit material can promise that.
    *
-   * AND IT CARRIES NO `emissive`, WHICH IT DID FOR ONE COMMIT AND SHOULD NOT
-   * HAVE. I set one on it purely so `refhold`'s "every rim is emissive" check
-   * would keep passing — bending the room to satisfy the instrument, which is
-   * the exact failure this whole effort has been correcting. It also does not
-   * work: three's `refreshUniformsCommon` does
-   *
-   *     if (material.emissive) uniforms.emissive.value.copy(...)
-   *
-   * and a `MeshBasicMaterial`'s uniform set HAS NO `emissive` — so every frame
-   * that drew the rim threw inside `WebGLRenderer.render`. In the browser, and
-   * only in the browser: no headless check renders, so all eight suites were
-   * green over a room that could not draw a frame.
-   *
-   * The check asks the right question now instead: is the rim bright, by
-   * either route.
+   * AND IT CARRIES NO `emissive`: a `MeshBasicMaterial`'s uniform set HAS NO
+   * `emissive`, so setting one threw inside `WebGLRenderer.render` every frame
+   * — in the browser only, which no headless suite could see.
    */
   const rimMat = new THREE.MeshBasicMaterial({ color: 0xf2f7ff, toneMapped: false });
   rimMat.userData.saberNoInk = true;
   rimMat.name = 'field-rim';
-  const rim = (cx, cy, cz, w, h, d) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), rimMat);
-    m.position.set(cx, cy, cz);
-    m.name = 'field-rim';
-    m.renderOrder = 2;
-    world.scene.add(m);
-    world.statics.push(m);
-    return m;
-  };
-  /* ALONG THE LIP, where the deck stops — the band a player standing at the
-   * edge is looking straight down the length of. */
   /**
    * THE BAND IS 4 m THICK, and the number is an angle rather than a taste.
-   * The lip is 144 m from where the company stands: a 1.1 m band there
-   * subtends 0.44°, which is a hairline — and a hairline is what the first
-   * render showed. Four metres is 1.6°, about the width the rim takes up in
+   * The lip is 190 m from where the company stands: a 1.1 m band there
+   * subtends 0.33°, which is a hairline — and a hairline is what the first
+   * render showed. Four metres is about the width the rim takes up in
    * `hangar 1.webp` and `hangar 4.jpg` at their own distances, and it is the
    * difference between a bright edge and no edge.
    */
   const T = 4.0;
-  rim(0, T / 2, L, L * 2, T, T);
-  for (const sx of [-1, 1]) rim(sx * L, T / 2, 0, T, T, L * 2);
-  /* UP THE TWO FORWARD CORNERS, so the aperture is framed vertically as well —
-   * a band on the floor alone reads as a kerb. */
-  for (const sx of [-1, 1]) rim(sx * L, H / 2, L, T, H, T);
-  /* AND ACROSS THE TOP OF THE APERTURE ONLY -- the forward edge, which is
-   * the top of the window you look out of. The two that used to run back
-   * along the sides at y = H were drawing the outline of the overhead plane,
-   * so between them they traced a lit rectangle over the deck: the ceiling
-   * again, in the one material the check exempts. One bar, forward, framing
-   * the view; nothing overhead behind you. */
-  rim(0, H, L, L * 2, T, T);
+  const rimGeos = [];
+  for (let i = 0; i < pts.length; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
+    const len = Math.hypot(bx - ax, by - ay) + T;
+    const g = new THREE.BoxGeometry(len, T, T);
+    g.rotateZ(Math.atan2(by - ay, bx - ax));
+    g.translate((ax + bx) / 2, (ay + by) / 2, 0);
+    rimGeos.push(g);
+  }
+  const rim = new THREE.Mesh(mergeGeometries(rimGeos), rimMat);
+  rim.position.set(0, 0, L);
+  rim.name = 'field-rim';
+  rim.renderOrder = 2;
+  world.scene.add(rim);
+  world.statics.push(rim);
 
   /**
-   * ══ THE STROBES, WHICH THE SPEC TICKED AND THE ROOM DID NOT HAVE ════════
+   * ══ THE STROBES, ALONG THE LIP ═══════════════════════════════════════════
    *
    * "Deck extends out toward the shield and just ends. Warning strobes at the
-   * lip, no railing." The railing was correctly absent and the strobes were
-   * absent too -- grep for the word across src/ and the hangar had none. Two
-   * files still carried prose about "the strobes stand 2.5 m inside it",
-   * describing an object that was deleted with the first dressing.
-   *
-   * They are what makes an unfenced edge legible: a rank of low markers along
-   * the last plates, pulsing out of phase so the eye reads a line rather than
-   * a row of dots. Out of phase is the whole point -- a strobe rank that
-   * blinks together is a decoration, and one that runs is an edge.
+   * lip, no railing." A rank of low markers along the last plates, pulsing out
+   * of phase so the eye reads a line rather than a row of dots. One instanced
+   * mesh; the pulse is a per-instance colour.
    */
   const strobeMat = new THREE.MeshBasicMaterial({ color: 0xffe9d2, toneMapped: false });
   strobeMat.userData.saberNoInk = true;
   strobeMat.name = 'lip-strobe';
   const IN = 3.0;                      // how far inside the drop they stand
   const spots = [];
-  for (let d = -L + 12; d <= L - 12; d += 16) {
-    spots.push([d, L - IN], [-L + IN, d], [L - IN, d]);
-  }
-  /**
-   * ONE INSTANCED MESH FOR ALL OF THEM. Fifty separate meshes on the lip is
-   * fifty draw calls before the ink pass doubles them, which is a quarter of
-   * this room's whole budget spent on markers a player looks at once. The
-   * pulse is a per-instance colour, so the phase runs along the rank without
-   * touching a matrix.
-   */
+  for (let d = -DECK.wall + 8; d <= DECK.wall - 8; d += 12) spots.push([d, L - IN]);
   const strobes = new THREE.InstancedMesh(
     new THREE.CylinderGeometry(0.34, 0.5, 0.9, 6), strobeMat, spots.length);
   strobes.name = 'lip-strobe';
@@ -458,353 +522,480 @@ function addField(world) {
   world.statics.push(strobes);
   world._deckStrobes = { mesh: strobes, spots, t: 0 };
 
-  /* THE BARRIER, and it is four boxes rather than the planes themselves — a
-   * plane has no thickness and a character controller resolves through one. */
+  /* THE BARRIER behind the field — a box rather than the plane itself, because
+   * a plane has no thickness and a character controller resolves through one.
+   * The walls and the ceiling carry their own in `deckColliders`. */
   const th = 2;
-  for (const [cx, cz, hx, hz] of [
-    [0, L + th, L + th, th], [0, -L - th, L + th, th],
-    [L + th, 0, th, L + th], [-L - th, 0, th, L + th],
-  ]) {
-    world.physics?.addStaticBox?.(new THREE.Vector3(cx, H / 2, cz),
-      new THREE.Vector3(hx, H / 2, hz), new THREE.Quaternion(), { friction: 0.4 });
+  world.physics?.addStaticBox?.(new THREE.Vector3(0, H / 2, L + th),
+    new THREE.Vector3(DECK.wall + 30, H / 2 + 10, th), new THREE.Quaternion(), { friction: 0.4 });
+}
+
+/** Nine lines of merge, so this file does not import a utils module for one call. */
+function mergeGeometries(geos) {
+  let n = 0, idx = 0;
+  for (const g of geos) { n += g.attributes.position.count; idx += g.index ? g.index.count : g.attributes.position.count; }
+  const pos = new Float32Array(n * 3), nor = new Float32Array(n * 3), uv = new Float32Array(n * 2);
+  const index = new Uint32Array(idx);
+  let o = 0, io = 0;
+  for (const g of geos) {
+    const p = g.attributes.position, nn = g.attributes.normal, u = g.attributes.uv;
+    pos.set(p.array, o * 3); if (nn) nor.set(nn.array, o * 3); if (u) uv.set(u.array, o * 2);
+    if (g.index) for (let i = 0; i < g.index.count; i++) index[io++] = g.index.array[i] + o;
+    else for (let i = 0; i < p.count; i++) index[io++] = i + o;
+    o += p.count;
   }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  out.setIndex(new THREE.BufferAttribute(index, 1));
+  return out;
 }
 
 /**
- * ══ THE ROOM, BUILT AGAINST `hangar 7.jpg` ════════════════════════════════
+ * ══ THE ROOM, BUILT AGAINST `hangar 7.jpg` AND `hangar 3.jpg` ════════════
  *
- * That image is the target composition and this is it, part for part:
+ * Part for part:
  *
- *   TWO WALLS OF RACKED FIGHTERS receding to a vanishing point — ten a side,
- *     each in its own canted alcove with a full-height light strip. This is
- *     rule 3 and it is the piece the first two dressings did not have at all.
- *     It is also what "rows and rows of different ships" means: the floor stays
- *     clear and the ships live in the walls.
- *   ONE SOLID WALL, aft, 58 m of it, with a catwalk across at 22 m for scale.
- *   THE OVERHEAD IS HANGING FIXTURES coming down out of frame with red status
- *     lamps on them — never a ceiling.
- *   THE DECK IS A BLACK MIRROR and it is mostly EMPTY. Every reference keeps
- *     the middle of the floor clear; what is on it is crate clusters and a lit
- *     pit, at the edges.
- *
- * AND THE WALLS STOP. The player's brief is field on three sides and overhead,
- * which is more open than any reference — so the racks run the aft two-thirds
- * and the last third of the room is open to space on both flanks. Standing at
- * the lip you have vacuum in front of you and to both sides, with the ranks
- * receding behind you.
- */
-/**
- * EXPORTED, because two different callers legitimately want two different
- * things from this pass: `deckcost.mjs` prices it against a real World, and
- * `faction.mjs` builds it into a bare kit twice to compare the two armies'
- * materials without booting anything. `__deckParts.structure` is the first
- * shape; this is the second.
+ *   TWO WALLS OF RACKED FIGHTERS receding to a vanishing point — twenty a
+ *     side, three tiers, each in its own canted alcove with a full-height
+ *     light strip. They run from the bulkhead to the aperture, so there is
+ *     no end to walk round. Above the bays the wall keeps going: a band of
+ *     panels with the long horizontal light run and a catwalk, up to the
+ *     ceiling.
+ *   ONE SOLID WALL, aft, with the lift set into it and blast doors either
+ *     side, and a catwalk across at 22 m for scale.
+ *   THE CEILING, and it is a structure rather than a plate: transverse
+ *     beams, three longitudinal girders, catenary cable runs sagging between
+ *     them (`hangar 3.jpg`'s whole top third), two crane rails with their
+ *     bridges, twenty fighters hung nose-down on ceiling mounts, ducting, and
+ *     the light panels in ranks. The plate itself is behind all of that and
+ *     under 60% haze.
+ *   THE DECK IS A BLACK MIRROR and the middle of it is clear. What is on it
+ *     is at the walls: crate clusters, the pit, the repair bays.
+ *   ONE OPENING, forward, the hexagon, with the world in it.
  */
 export function dressStructure(kit, paint) {
   _dressFaction = kit.faction || 'republic';
   /* OFF THE KIT, NEVER BARE. `deckMats()` with no argument hands back the
    * default palette, so one bare call in here was enough to mix five Republic
-   * materials into a Separatist room — which is the exact failure the brief
-   * says kills the illusion, arriving through the least visible line in the
-   * file. */
+   * materials into a Separatist room. */
   const M = deckMats(kit.faction);
   const L = DECK.lip;
-  /**
-   * ══ HOW FAR APART THE WALLS STAND, AND IT IS THE WHOLE COMPOSITION ══════
-   *
-   * They were at ±138 — 276 m apart, the full width of the deck — and that is
-   * why the first render of this room was a black void with a floor. A player
-   * standing on the centreline was 138 m from either wall, which at a 60°
-   * field of view puts the racks entirely outside the frame. Every light in
-   * the room was in the walls, so the room had no light in it.
-   *
-   * No reference is anything like that wide across the working bay. `hangar
-   * 6.jpg` is symmetric with both walls in frame and their strips carrying the
-   * whole image; `hangar 3.jpg` has one wall close enough to read its ribs.
-   * "Immense" in those pictures is the HEIGHT and the DEPTH, never the beam.
-   *
-   * So the racks stand 112 m apart and run the length of the ship, and the
-   * deck keeps its full 288 m: past the ends of the racks it opens out into an
-   * apron with vacuum on three sides. That is a bigger room than the flat one
-   * — a canyon of ships that opens onto space — and it is one you can see.
-   */
   const WALL = DECK.wall;
+  const ROOF = DECK.roof;
   const TIERS = [
     { y: 13.5, h: 21 },
     { y: 35.0, h: 20 },
     { y: 54.0, h: 16 },
   ];
 
-  /* ── THE RACK WALLS. Fourteen bays a side, three tiers, from the bulkhead
-   * forward to two thirds of the way out. Eighty-four fighters, and no two
-   * neighbours are the same hull. */
+  /* ── THE RACK WALLS. Twenty bays a side, three tiers, from the bulkhead to
+   * the aperture. A hundred and twenty fighters, and no two neighbours are
+   * the same hull. */
   const first = DECK.aft + 14;
-  const n = 14;
   const pitch = 11.6;
+  const n = Math.floor((L - 6 - first) / pitch);
   const zEnd = first + (n - 1) * pitch + pitch * 0.6;
   for (let i = 0; i < n; i++) {
     const z = first + i * pitch;
     for (const s of [-1, 1]) {
       /* The wall itself, behind the bays — dark, so the lit recesses read as
        * openings in something rather than as panels on nothing. It runs the
-       * full height: a wall that stops is a wall the eye finds the top of. */
-      kit.slabAt(M.dark, s * (WALL + 7), 34, z, 14, 68, pitch * 0.99);
+       * full height to the ceiling: a wall that stops is a wall the eye finds
+       * the top of. */
+      kit.slabAt(M.dark, s * (WALL + 7), ROOF / 2, z, 14, ROOF, pitch * 0.99);
       for (let t = 0; t < TIERS.length; t++) {
         const T = TIERS[t];
         rackBay(kit, s * WALL, T.y, z, {
           side: s, width: pitch * 0.92, height: T.h,
           /* THE HULLS ALTERNATE ON BOTH AXES. `(i + t)` rather than `i` so a
-           * column of three bays is three different ships and a row of
-           * fourteen never repeats at the same height twice running. */
+           * column of three bays is three different ships and a row never
+           * repeats at the same height twice running. */
           kind: (i + t) % 3,
         });
       }
-      /* THE OUTER FACE IS BAYS TOO. There is deck on the far side of these
-       * walls — the apron runs out to the field at ±144 — and a blank 68 m
-       * slab facing it would be the "bare side wall, cannot look like a box"
-       * the brief bans in as many words. Two tiers out there, so the count of
-       * racked ships is a hundred and forty. */
-      for (let t = 0; t < 2; t++) {
-        const T = TIERS[t];
-        rackBay(kit, s * (WALL + 14), T.y, z, {
-          side: -s, width: pitch * 0.92, height: T.h, kind: (i + t + 2) % 3,
-        });
-      }
-      /* THE REFLECTION. One smear per tier, off the wall foot, running in
-       * across the plate. This is rule 2 and it is the single biggest thing
-       * separating these pictures from a grey floor. */
-      /* EVERY BAY, not every other. This is the room's only reflection and
-       * it is drawn: at half the bays the deck read as a floor with a few
-       * bright patches on it rather than as a wet plate under a wall of
-       * lights. */
+      /* ── THE UPPER BAND, from the top tier to the ceiling: structural
+       * panels with a conduit run, so the wall is a hull section all the way
+       * up rather than bays with a blank over them. */
+      kit.slabAt(M.hull, s * (WALL - 0.6), 71, z, 1.2, 16, pitch * 0.70);
+      kit.slabAt(M.deep, s * (WALL - 0.2), 71, z, 0.8, 11, pitch * 0.54);
+      kit.slabAt(M.hull, s * (WALL - 1.0), 84, z, 2.0, 2.0, pitch * 0.99);
+      /* The reflection smear, off every bay's foot. Rule 2. */
       smear(kit, s * (WALL - 4), z, 30, pitch * 0.86, -s, 0);
     }
   }
-  /* THE WALL CAPS. Where the structure ends the section is shown — a hull that
-   * simply stopped would read as a wall that had been deleted. */
+  /* RULE 4'S LONG HORIZONTAL RUNS: two along the top of each wall, the full
+   * length, which is what ties twenty bays into one wall. */
   for (const s of [-1, 1]) {
-    kit.slabAt(M.hull, s * (WALL + 7), 34, zEnd, 15, 70, 3);
-    kit.slabAt(M.glow, s * (WALL - 0.5), 34, zEnd + 1.8, 0.5, 64, 0.7);
-    /* And the same at the aft end, so the canyon is closed at both ends. */
-    kit.slabAt(M.hull, s * (WALL + 7), 34, first - pitch * 0.6, 15, 70, 3);
+    const mid = (first + zEnd) / 2, len = zEnd - first + pitch;
+    kit.slabAt(M.glowDim, s * (WALL - 0.8), 63.5, mid, 0.5, 0.6, len);
+    kit.slabAt(M.glowDim, s * (WALL - 0.8), 79.5, mid, 0.5, 0.6, len);
+    /* And a catwalk along the upper band, with a rail — `hangar 6.jpg`'s
+     * figure-for-scale walkway, one per wall. */
+    catwalk(kit, s * (WALL - 2.6), 78.5, mid, len, { yaw: Math.PI / 2 });
+  }
+  /* THE WALL CAPS at the aft end, so the canyon is closed against the
+   * bulkhead; the forward end runs into the aperture's frame. */
+  for (const s of [-1, 1]) {
+    kit.slabAt(M.hull, s * (WALL + 7), ROOF / 2, first - pitch * 0.6, 15, ROOF + 2, 3);
+    kit.slabAt(M.hull, s * (WALL + 7), ROOF / 2, zEnd + 1.5, 15, ROOF + 2, 3);
   }
 
-  /* ── THE BULKHEAD. One solid face, ribbed, with the doors and two catwalks.
-   * It is the only interior surface in the level and it spans the deck. */
-  const bz = DECK.aft + 4;
-  for (let i = -6; i <= 6; i++) {
-    if (Math.abs(i) < 2) continue;
-    kit.slabAt(M.dark, i * 22, 28, bz, 20, 56, 3.2);
-    kit.slabAt(M.hull, i * 22 - 10.5, 28, bz + 2.0, 2.4, 58, 4);
-    /* Rule 4's vertical run, unlit so it survives the dark. */
-    kit.slabAt(M.glowDim, i * 22, 28, bz + 2.4, 1.0, 46, 0.7);
+  /* ── THE FORWARD FACE round the aperture: the two chamfer corners and the
+   * jambs, solid, so the hexagon is cut out of a wall rather than floating in
+   * the open. */
+  {
+    const C = DECK.chamfer;
+    const fz = L + 1.2;
+    for (const s of [-1, 1]) {
+      /* The jamb outboard of the opening, the wall's own thickness. */
+      kit.slabAt(M.dark, s * (WALL + 7), ROOF / 2, fz, 14, ROOF + 4, 2.4);
+      /* The corner over the chamfer: a slab lying along the lean, thick
+       * enough to close the triangle behind it. */
+      const cx = s * (WALL - C.x * 0.5), cy = (C.y + ROOF) / 2;
+      const len = Math.hypot(C.x, ROOF - C.y);
+      const g = new THREE.BoxGeometry(len + 6, 26, 2.4);
+      g.rotateZ(-s * Math.atan2(ROOF - C.y, C.x));
+      g.translate(cx + s * 9, cy + 9, 0);
+      kit.geoAt(M.dark, g, 0, 0, fz);
+    }
+    /* Emitter housings along the rim: fat studs every 12 m, the hardware the
+     * white band is drawn on. */
+    for (const [ax, ay, bx, by] of aperturePoints().map((p, i, a) => [...p, ...a[(i + 1) % a.length]])) {
+      const len = Math.hypot(bx - ax, by - ay);
+      const k = Math.max(1, Math.round(len / 12));
+      for (let j = 0; j <= k; j++) {
+        const t = j / k;
+        kit.slabAt(M.hull, ax + (bx - ax) * t, ay + (by - ay) * t, fz + 1.4, 3.2, 3.2, 2.0);
+      }
+    }
   }
-  /* The doors, recessed, with a lit head — where the company walks in. */
-  kit.slabAt(M.deep, 0, 13, bz + 1.0, 42, 26, 3);
-  for (const s of [-1, 1]) kit.slabAt(M.hull, s * 22.5, 14, bz + 2.6, 5, 28, 4);
-  kit.slabAt(M.hull, 0, 27.5, bz + 2.6, 50, 3, 4);
-  kit.slabAt(M.glow, 0, 25.6, bz + 1.2, 40, 0.7, 0.7);
+
+  /* ── THE BULKHEAD. One solid face, ribbed, with the lift set into its
+   * centre, two blast doors either side of it, and two catwalks. */
+  const bz = DECK.aft + 4;
+  for (let i = -7; i <= 7; i++) {
+    if (i === 0) continue;
+    kit.slabAt(M.dark, i * 22, ROOF / 2, bz, 20, ROOF, 3.2);
+    kit.slabAt(M.hull, i * 22 - 10.5, ROOF / 2, bz + 2.0, 2.4, ROOF + 2, 4);
+    /* Rule 4's vertical run, unlit so it survives the dark. */
+    kit.slabAt(M.glowDim, i * 22, 40, bz + 2.4, 1.0, 66, 0.7);
+  }
+  /* The centre bay of the bulkhead: solid above the lobby, the lobby cut into
+   * it, and the lift's own shaft face inside that. */
+  kit.slabAt(M.dark, 0, (ROOF + LIFT.lobby.h) / 2, bz, 22, ROOF - LIFT.lobby.h, 3.2);
+  liftLobby(kit, M, paint, bz);
+  /* THE BLAST DOORS, closed, either side: where the rest of the ship is. The
+   * crowd stands and walks in front of them; nobody comes through. */
+  for (const s of [-1, 1]) {
+    const dx = s * 30;
+    kit.slabAt(M.deep, dx, 9, bz + 1.0, 14, 18, 3);
+    kit.slabAt(M.hull, dx - 3.6, 9, bz + 2.2, 0.8, 17, 1.2);
+    kit.slabAt(M.hull, dx + 3.6, 9, bz + 2.2, 0.8, 17, 1.2);
+    kit.slabAt(M.hull, dx, 18.4, bz + 2.4, 15, 1.6, 2.2);
+    kit.slabAt(M.status, dx, 19.6, bz + 2.9, 0.6, 0.6, 0.6);
+    kit.slabAt(M.glowDim, dx, 17.2, bz + 2.6, 12, 0.4, 0.5);
+    /* Their light on the deck. */
+    smear(kit, dx, bz + 3, 14, 12, 0, 1);
+  }
   /**
    * THE INSIGNIA, WHICH IS THE ONLY THING IN THE ROOM THAT SAYS WHOSE IT IS.
    *
-   * Rule 7: large, pale, sparse — so it is one mark above the doors at the
-   * scale a ship's own crest is painted, and one on the deck where the company
-   * falls in. Not a badge on every surface; there is no insignia at all in any
-   * of the seven references, which is exactly why the temptation is to
-   * over-use the one thing that carries faction.
+   * Rule 7: large, pale, sparse — one mark above the lift at the scale a
+   * ship's own crest is painted, and one on the deck where the company falls
+   * in. See `DeckKit.insigniaParts` for the two shapes: the Republic's roundel
+   * of eight flared spokes round a hub, the Confederacy's six-armed hex. They
+   * are the two armies' own crests and nothing else's — the previous cog had
+   * an outer ring round its spokes, which is the shape the player read as the
+   * Empire's, and it is gone.
    */
-  insigniaPanel(kit, 0, 36, bz + 3.4, 22, { faction: kit.faction });
-  /**
-   * THE DOORWAY THROWS A WEDGE ONTO THE DECK. The company files out of it and
-   * an unlit door they walk out of is a hole in a wall.
-   *
-   * AND IT IS 24 x 20 m, NOT 34 x 40. At the larger size this additive quad
-   * covered the entire lower half of the frame from the player's own spawn —
-   * which is eighteen metres in front of the door, inside it — so the first
-   * thing anyone saw of this room was a pale grey wash under his feet. I spent
-   * three wrong diagnoses on that floor (the map, the metalness, the ambient,
-   * all three real problems and none of them this one) before looking at where
-   * the quad actually reaches. A light spill is the size of the door.
-   */
-  smear(kit, 0, bz + 3, 20, 24, 0, 1);
-  /**
-   * ══ THE MEMORIAL, ON THE ONE REAL WALL YOU WALK PAST ═══════════════════
-   *
-   * The player's line, and it is the only thing in the brief that is about the
-   * men who are NOT standing on the deck. The roll carries its dead —
-   * `Company.load` keeps a capped `fallen` list with each man's designation,
-   * his rank, where he fell and who killed him — and until now nothing in the
-   * game had ever drawn it anywhere.
-   *
-   * It is a recessed panel on the bulkhead beside the doors, at head height,
-   * with one lit bar per name. NOT a wall of text: the deck is a place, and a
-   * player who wants the names has the Company page. What this has to do is be
-   * a thing you walk past on the way to your line and understand — a rank of
-   * short bright marks, one for each man who is not in the formation, getting
-   * longer as the war goes on.
-   *
-   * NO NAMES IN THE GEOMETRY, deliberately. `Paint.digit` can stencil a
-   * numeral and that is the wrong instinct twice over: rule 7 says the
-   * references carry no numerals at all, and a name rendered as a 2 m stencil
-   * on a bulkhead is a label, not a memorial.
-   */
+  insigniaPanel(kit, 0, 40, bz + 3.4, 24, { faction: kit.faction });
+
+  /* ══ THE MEMORIAL, ON THE ONE REAL WALL YOU WALK PAST ═══════════════════
+   * A recessed panel beside the lift at head height, one lit bar per name.
+   * NOT a wall of text: a rank of short bright marks, one for each man who is
+   * not in the formation, getting longer as the war goes on. */
   const fallen = memorialRoll();
   if (fallen.length) {
-    const mx = -34, my = 6.4, mz = bz + 2.9;
-    /* The recess it is set into, so it reads as part of the ship. */
-    kit.slabAt(M.deep, mx, my, mz - 0.5, 15, 6.4, 1.2);
-    kit.slabAt(M.hull, mx, my + 3.4, mz, 15.6, 0.5, 1.8);
-    kit.slabAt(M.hull, mx, my - 3.4, mz, 15.6, 0.5, 1.8);
-    /* ONE BAR A MAN, in rows, and the rows fill from the top the way a plaque
-     * does. Twenty-eight fit; a company that has lost more than that has lost
-     * more than a wall can say and the bars simply stop. */
+    const mx = -13.5, my = 4.2, mz = bz + 2.9;
+    kit.slabAt(M.deep, mx, my, mz - 0.5, 8, 4.4, 1.2);
+    kit.slabAt(M.hull, mx, my + 2.4, mz, 8.6, 0.4, 1.8);
+    kit.slabAt(M.hull, mx, my - 2.4, mz, 8.6, 0.4, 1.8);
     const per = 14;
     for (let i = 0; i < Math.min(fallen.length, per * 2); i++) {
       const col = i % per, row = (i / per) | 0;
-      kit.slabAt(M.glow, mx - 6.5 + col * 1.0, my + 1.4 - row * 2.2, mz + 0.35,
-        0.34, 1.5, 0.3);
+      kit.slabAt(M.glow, mx - 3.3 + col * 0.5, my + 0.9 - row * 1.6, mz + 0.35, 0.22, 1.1, 0.3);
     }
-    /* And a single dimmer bar under them, the length of the whole roll. */
-    kit.slabAt(M.glowDim, mx, my - 2.6, mz + 0.3, 13, 0.18, 0.3);
+    kit.slabAt(M.glowDim, mx, my - 1.9, mz + 0.3, 7, 0.14, 0.3);
   }
 
   catwalk(kit, 0, 22, bz + 5.5, WALL * 2.1);
-  catwalk(kit, 0, 40, bz + 5.5, WALL * 2.1);
+  catwalk(kit, 0, 46, bz + 5.5, WALL * 2.1);
 
-  /* ── THE OVERHEAD. Fixtures down the centreline and over each wall, coming
-   * out of frame. Nothing is ever drawn across the top.
-   *
-   * THEY COME DOWN FURTHER THAN THEY DID. At `drop: 18` off a 64 m overhead
-   * they stopped at 46 m, which from the deck is above the frame and might as
-   * well not exist. In `hangar 7.jpg` the fixtures hang into the upper third
-   * of the picture — low enough to be furniture, never low enough to be a
-   * lid. */
-  for (let i = 0; i < 10; i++) {
-    const z = DECK.aft + 24 + i * 22;
-    overheadRig(kit, 0, z, { top: DECK.roof, drop: 34, radius: 3.6 });
-    for (const s of [-1, 1]) overheadRig(kit, s * (WALL * 0.62), z, { top: DECK.roof, drop: 27, radius: 2.6 });
-  }
+  /* ── THE CEILING, and everything hung from it. */
+  ceilingAt(kit, M, first, zEnd);
 
-  /* ── THE MIDDLE DISTANCE. One craft on a pad, big enough to read, between
-   * the company and the aperture — `hangar 7.jpg` and `hangar 5.webp` both
-   * put exactly one there and it is what gives the room a scale ladder. */
-  /**
-   * ══ AND THIS ONE IS THE WAY OUT ═══════════════════════════════════════
-   *
-   * "Deploy for the run by walking up the gunship's ramp." The nearer pad's
-   * craft is the one you leave on, and its ramp faces aft — toward the line,
-   * so the walk is from your own company to the ship, which is the order those
-   * two things happen in.
-   *
-   * `DEPLOY_RAMP` is where `HangarDirector` watches for the player. It is
-   * derived from the pad rather than typed, because a pad that moves and a
-   * trigger that does not is the defect this file has now paid for four times.
-   */
-  shuttlePad(kit, DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, { radius: 17, yaw: 0.22 });
-  /* A painted apron at its foot, so the one square metre of deck that does
-   * something is a place rather than a trap. */
+  /* ── THE SECOND PAD, out toward the aperture on the starboard side: a
+   * craft on a raised platform in the middle distance, `hangar 7.jpg`'s scale
+   * ladder. The near pad is left EMPTY here: the army's real transport stands
+   * on it, built by `DeckFlight`, because a ship you can walk into has to be
+   * a ship. */
+  shuttlePad(kit, 44, 96, { radius: 15, yaw: -1.2 });
+  shuttlePad(kit, DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, { radius: 15, yaw: 0, ship: false, height: 0.45 });
+  /* A painted apron at the ramp's foot, so the one square metre of deck that
+   * does something is a place rather than a trap. */
   paint.line(P_RAMP.stencil, DEPLOY_RAMP.x - 5, DEPLOY_RAMP.z - 4,
     DEPLOY_RAMP.x + 5, DEPLOY_RAMP.z - 4, 0.32);
   paint.line(P_RAMP.stencil, DEPLOY_RAMP.x - 5, DEPLOY_RAMP.z + 4,
     DEPLOY_RAMP.x + 5, DEPLOY_RAMP.z + 4, 0.32);
-  shuttlePad(kit, 30, 92, { radius: 15, yaw: -1.4 });
 
   /* ── ON THE DECK: crate clusters at the wall feet, and the pit. Nothing in
    * the middle — the middle is where the company stands and where every
    * reference leaves the floor clear. */
-  crates(kit, -WALL + 9, -70, 6, 3);
-  crates(kit, WALL - 11, -58, 5, 7);
-  crates(kit, WALL - 8, 18, 7, 11);
-  crates(kit, -WALL + 12, 58, 4, 13);
-  crates(kit, -WALL - 26, 8, 6, 17);
-  crates(kit, WALL + 30, -30, 5, 23);
-  /* The pit, lit from inside, exactly as `hangar 1.webp` and `hangar 7.jpg`
-   * have it — the one thing that says there is more ship under this one. */
-  for (const [dx, dz, w, d] of [[-30, -18, 26, 1.6], [-30, 30, 26, 1.6],
-    [-43, 6, 1.6, 48], [-17, 6, 1.6, 48]]) {
+  crates(kit, -WALL + 12, -70, 6, 3);
+  crates(kit, WALL - 14, -58, 5, 7);
+  crates(kit, WALL - 10, 18, 7, 11);
+  crates(kit, -WALL + 16, 58, 4, 13);
+  crates(kit, -WALL + 10, 104, 6, 17);
+  crates(kit, WALL - 12, 124, 5, 23);
+  crates(kit, WALL - 30, 70, 4, 29);
+  /* The pit, lit from inside — the one thing that says there is more ship
+   * under this one. Its kerbs are in `deckColliders` too. */
+  for (const [dx, dz, w, d] of PIT_KERBS) {
     kit.slabAt(M.hull, dx, 0.35, dz, w, 0.7, d);
     kit.slabAt(M.glow, dx, 0.1, dz, w * 0.9, 0.16, d * 0.9);
   }
 
-  /* ── THE UPLIGHTS. `hangar 3.jpg` scatters them across the plate and they
-   * are the only thing in that image telling you the floor is a surface. Two
-   * long runs down the working length, plus the apron. */
-  /**
-   * FOUR RUNS, NOT TWO, AND THE INNER PAIR IS THE POINT.
-   *
-   * They stood only at x = ±34 — seventeen metres either side of the
-   * centreline the player walks down — so with the ambient correctly taken
-   * down to keep the deck dark, the strip of floor he is actually standing on
-   * got nothing at all and the room read as a void with a lit ceiling. Every
-   * reference has these scattered across the plate, not ranged along its
-   * edges: they are what tells you the floor is a surface rather than a hole,
-   * and they are the cheapest scale ruler in the room because you know how big
-   * one is.
-   */
+  /* ── THE UPLIGHTS, scattered across the plate. */
   for (let i = 0; i < 16; i++) {
     const z = DECK.aft + 20 + i * 15;
     for (const s of [-1, 1]) {
-      deckLamp(kit, s * 34, z);
-      /* Offset half a pitch so the two runs read as a scatter rather than as
-       * a pair of railway lines. */
-      if (i % 2 === 0) deckLamp(kit, s * 13, z + 7.5);
+      deckLamp(kit, s * 40, z);
+      if (i % 2 === 0) deckLamp(kit, s * 16, z + 7.5);
     }
   }
-  for (const [lx, lz] of [[-92, 20], [-92, 70], [92, 20], [92, 70], [0, 118], [-60, 124], [60, 124]]) {
+  for (const [lx, lz] of [[-62, 20], [-62, 70], [62, 20], [62, 70], [0, 118], [-40, 124], [40, 124]]) {
     deckLamp(kit, lx, lz);
   }
+  /* DRAINAGE GRATINGS, flush, two runs the length of the deck — a
+   * manufactured surface has seams that do something. */
+  for (const s of [-1, 1]) {
+    kit.slabAt(M.deep, s * 52, 0.015, (DECK.aft + L) / 2, 1.4, 0.03, L - DECK.aft - 30);
+    for (let z = DECK.aft + 20; z < L - 10; z += 3.0) kit.slabAt(M.hull, s * 52, 0.03, z, 1.5, 0.03, 0.18);
+  }
 
-  /* ── THE PAINT. Rule 7: large, pale, sparse, and RED where it is coloured at
-   * all — there is no yellow in any of the seven. Long guide runs down the
-   * length of the deck, a marked muster ground, and thin red boxes at the
-   * edges the way `hangar 5.webp` has them. */
+  /* ── THE PAINT. Rule 7: large, pale, sparse, and RED where it is coloured
+   * at all — there is no yellow in any of the seven. */
   const P = DECK_PAINT;
   paint.dashed(P.stencil, 0, DECK.aft + 20, 0, L - 20, 0.5, 5.5, 4.5);
   for (const s of [-1, 1]) {
-    paint.line(P.stencil, s * 34, DECK.aft + 20, s * 34, L - 20, 0.35);
+    paint.line(P.stencil, s * 40, DECK.aft + 20, s * 40, L - 20, 0.35);
   }
-  /* AND ON THE GROUND THE LINE FORMS ON. Big, pale and alone — the men stand
-   * on their own crest, which is the one place a deck marking in these
-   * pictures is ever allowed to be a shape rather than a line. */
-  paint.insignia(0, DECK.line + 26, 30, { faction: kit.faction });
+  /* `hangar 1.webp`'s huge pale chevrons, pointing at the opening. */
+  for (const s of [-1, 1]) {
+    const cx = s * 26, cz = 104;
+    paint.line(P.stencil, cx - s * 14, cz - 16, cx, cz + 4, 1.4);
+    paint.line(P.stencil, cx + s * 4, cz - 16, cx + s * 18, cz + 4, 1.4);
+  }
+  /* TIE-DOWN POINTS on an 8 m grid across the working deck — the detail a
+   * plate has and a floor does not, and the cheapest thing on it. */
+  for (let x = -64; x <= 64; x += 8) {
+    for (let z = DECK.aft + 24; z <= L - 24; z += 8) {
+      if (Math.abs(x) < 6 && z > DECK.line - 8 && z < DECK.line + 14) continue;
+      paint.ring(P.stencil, x, z, 0.36, 0.12, 10);
+    }
+  }
+  /* AND ON THE GROUND THE LINE FORMS ON. Big, pale and alone. */
+  paint.insignia(0, DECK.line + 28, 32, { faction: kit.faction });
   /* The muster ground, boxed — the line has a place painted for it. */
   paint.line(P.stencil, -46, DECK.line - 2, 46, DECK.line - 2, 0.3);
   paint.line(P.stencil, -46, DECK.line + 9, 46, DECK.line + 9, 0.3);
   for (const s of [-1, 1]) paint.line(P.stencil, s * 46, DECK.line - 2, s * 46, DECK.line + 9, 0.3);
-  /* Red keep-outs at the rack feet and the pit, which is the only colour any
-   * reference paints on a deck. */
+  /* The lift's apron. */
+  paint.line(P.stencil, -9, bz + 4, 9, bz + 4, 0.3);
+  paint.line(P.stencil, -9, bz + 14, 9, bz + 14, 0.3);
+  /* Red keep-outs at the rack feet, the pit and both pads. */
   for (let i = 0; i < n; i += 2) {
     const z = first + i * pitch;
     for (const s of [-1, 1]) {
       paint.line(P.keepOut, s * (WALL - 9), z - pitch * 0.4, s * (WALL - 9), z + pitch * 0.4, 0.28);
     }
   }
-  paint.line(P.keepOut, -45, -20, -15, -20, 0.3);
-  paint.line(P.keepOut, -45, 32, -15, 32, 0.3);
+  paint.line(P.keepOut, -68, -18, -36, -18, 0.3);
+  paint.line(P.keepOut, -68, 30, -36, 30, 0.3);
+  paint.ring(P.keepOut, DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, 18.5, 0.3, 48);
+  paint.ring(P.keepOut, 44, 96, 18.5, 0.3, 48);
+}
+
+/** The pit's four kerbs, shared by the geometry and the colliders. */
+/* OFF THE HEIGHTFIELD'S OWN CUT: `hangardeck.height` sinks the plate inside
+ * |x+52| < 17, |z-6| < 24, and these are its four edges. The old kerbs stood
+ * round (-30, 6) while the hole was at (-52, 6) — a fence twenty metres from
+ * the drop it was fencing. */
+const PIT_KERBS = [[-52, -18, 34, 1.6], [-52, 30, 34, 1.6], [-69, 6, 1.6, 48], [-35, 6, 1.6, 48]];
+
+/**
+ * ══ THE LOBBY, cut into the bulkhead round the lift ═══════════════════════
+ *
+ * A recess the height of two men with a lit header, the lift's two door
+ * jambs, a call panel with its lamp, and the shaft's own dark face behind the
+ * doors. The doors and the car are `DeckLift`'s — they move — so what is
+ * here is the hole they sit in.
+ */
+function liftLobby(kit, M, paint, bz) {
+  const { w, h, depth } = LIFT.lobby;
+  const cz = LIFT.door;
+  /* The recess back face, which is the shaft's face: dark, with the door
+   * opening left as a darker slot behind the leaves. */
+  kit.slabAt(M.deep, 0, h / 2, cz - 0.6, w, h, 1.2);
+  /* The header and the jambs framing the recess. */
+  kit.slabAt(M.hull, 0, h + 0.8, bz + 1.6, w + 3, 1.6, depth + 1.2);
+  for (const s of [-1, 1]) kit.slabAt(M.hull, s * (w / 2 + 0.8), h / 2, bz + 1.6, 1.6, h + 2, depth + 1.2);
+  /* The lit header over the doors, rule 4's bar. */
+  kit.slabAt(M.glow, 0, LIFT.height + 0.6, cz + 0.3, LIFT.halfW * 2 + 0.6, 0.35, 0.35);
+  /* The door frame proper, proud of the shaft face. */
+  for (const s of [-1, 1]) kit.slabAt(M.hull, s * (LIFT.halfW + 0.45), LIFT.height / 2, cz + 0.2, 0.9, LIFT.height + 0.4, 0.8);
+  kit.slabAt(M.hull, 0, LIFT.height + 0.2, cz + 0.2, LIFT.halfW * 2 + 1.8, 0.5, 0.8);
+  /* The call panel, with its lamp: red while the car is away. `DeckLift`
+   * swaps the lamp's colour, so it is a separate small mesh there. */
+  kit.slabAt(M.hull, LIFT.halfW + 1.6, 1.3, cz + 0.5, 0.5, 0.7, 0.3);
+  /* And the recess floor's own smear, so the doorway throws light out. */
+  smear(kit, 0, cz + 0.4, 14, LIFT.halfW * 2, 0, 1);
+}
+
+/**
+ * ══ THE CEILING, which is a structure and not a lid ══════════════════════
+ *
+ * "give the hangar a solid ceiling (but very high up even higher than the side
+ *  walls you have now) … but the ceiling can't make the hangar look like a
+ *  shitty box like you've done in the past it feels to have a billion
+ *  different things going on to trick you"
+ *
+ * So the plate is there — a player firing a ray straight up hits something —
+ * and it is the LEAST visible thing overhead. Under it, from the top down:
+ *
+ *   the plate            `deep`, at DECK.roof, under 60% haze from the deck
+ *   longitudinal girders three, the length of the room, with lamps on them
+ *   transverse beams     every 16 m, wall to wall, deeper than the girders
+ *   light panels         ranks of unlit bars between the beams (rule 4)
+ *   catenary cable runs  sagging between beams, `hangar 3.jpg`'s whole top
+ *   crane rails          two, the length of the room; the bridges that ride
+ *                        them are `DeckLife`'s and move
+ *   ducting              two big runs along the walls, with collars
+ *   hung fighters        two rows on ceiling mounts, nose down
+ *   hanging fixtures     the big cylinders with red status lamps, `hangar
+ *                        7.jpg`, now ENDING at the plate instead of running
+ *                        up out of frame
+ *
+ * The eye never gets a clean look at the plate: something is always between
+ * it and the deck, and the haze takes the rest.
+ */
+function ceilingAt(kit, M, zFirst, zEnd) {
+  const W = DECK.wall + 14, R = DECK.roof, L = DECK.lip, A = DECK.aft;
+  const mid = (A + L) / 2, len = L - A + 8;
+  /* The plate. */
+  kit.slabAt(M.deep, 0, R + 0.6, mid, W * 2, 1.2, len);
+  /* Three girders the length of the room. */
+  for (const x of [0, -44, 44]) {
+    kit.slabAt(M.hull, x, R - 1.6, mid, 2.6, 3.2, len);
+    kit.slabAt(M.dark, x, R - 3.4, mid, 4.0, 0.5, len);
+  }
+  /* Transverse beams, every 16 m, and a status lamp on every other one. */
+  for (let z = A + 12, i = 0; z < L - 4; z += 16, i++) {
+    kit.slabAt(M.hull, 0, R - 2.2, z, W * 2, 2.2, 1.8);
+    kit.slabAt(M.dark, 0, R - 3.6, z, W * 2, 0.5, 3.0);
+    if (i % 2 === 0) for (const x of [-22, 22]) kit.slabAt(M.status, x, R - 4.1, z, 0.5, 0.5, 0.5);
+    /* Light panels in the bay between this beam and the next: four across. */
+    for (const x of [-60, -20, 20, 60]) {
+      kit.slabAt(M.glowDim, x, R - 0.4, z + 8, 6.0, 0.4, 1.4);
+    }
+  }
+  /* Catenary cable runs: a sag between neighbouring beams, six lanes. */
+  for (const x of [-66, -34, -12, 12, 34, 66]) {
+    for (let z = A + 12; z < L - 20; z += 16) {
+      const a = new THREE.Vector3(x, R - 3.2, z);
+      const b = new THREE.Vector3(x, R - 3.2, z + 16);
+      const m = new THREE.Vector3(x + (x > 0 ? -1.2 : 1.2), R - 6.4, z + 8);
+      const curve = new THREE.QuadraticBezierCurve3(a, m, b);
+      const g = new THREE.TubeGeometry(curve, 6, 0.16, 5, false);
+      kit.geoAt(M.dark, g, 0, 0, 0);
+    }
+  }
+  /* Crane rails, the length of the room. The bridges are DeckLife's. */
+  for (const x of [-36, 36]) {
+    kit.slabAt(M.hull, x, R - 7.0, mid, 1.4, 1.2, len - 12);
+    kit.slabAt(M.dark, x, R - 5.6, mid, 0.6, 1.6, len - 12);
+  }
+  /* Ducting along both walls, with collars every 20 m. */
+  for (const s of [-1, 1]) {
+    const g = new THREE.CylinderGeometry(2.2, 2.2, len - 16, 10);
+    g.rotateX(Math.PI / 2);
+    kit.geoAt(M.dark, g, s * (DECK.wall - 6), R - 4.6, mid);
+    for (let z = A + 20; z < L - 10; z += 20) {
+      const c = new THREE.CylinderGeometry(2.6, 2.6, 1.2, 10);
+      c.rotateX(Math.PI / 2);
+      kit.geoAt(M.hull, c, s * (DECK.wall - 6), R - 4.6, z);
+    }
+  }
+  /* Hung fighters, `hangar 3.jpg`: two rows on ceiling mounts, nose down
+   * toward the deck, so the room has ships OVER you as well as beside you. */
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 9; i++) {
+      const z = A + 30 + i * 24;
+      const x = s * 24;
+      kit.slabAt(M.dark, x, R - 5.0, z, 1.4, 8.0, 1.4);
+      kit.slabAt(M.hull, x, R - 9.4, z, 4.2, 1.0, 1.4);
+      hungFighter(kit, x, R - 14.0, z, (i + (s > 0 ? 1 : 0)) % 3, kit.faction);
+    }
+  }
+  /* The hanging fixtures, ending at the plate. */
+  for (let i = 0; i < 10; i++) {
+    const z = A + 24 + i * 24;
+    overheadRig(kit, 0, z, { top: R, drop: 30, radius: 3.6, capped: true });
+    for (const s of [-1, 1]) overheadRig(kit, s * (DECK.wall * 0.62), z, { top: R, drop: 24, radius: 2.6, capped: true });
+  }
+}
+
+/**
+ * A fighter hung nose-down from a ceiling mount: the rack silhouette on its
+ * side, so the dark cross of a wing reads against the plate from below.
+ */
+function hungFighter(kit, x, y, z, kind, faction) {
+  const M = deckMats(faction);
+  /* The hull as a parked fighter, spun so its wings lie flat under the plate. */
+  const sub = new DeckBuild(faction);
+  parkedFighter(sub, 0, 0, 0, 1, { kind, faction });
+  for (const [mat, geos] of sub.bins) {
+    for (const g of geos) {
+      g.rotateZ(-Math.PI / 2);
+      g.rotateY(Math.PI / 2);
+      g.translate(x, y, z);
+      kit.geoAt(mat, g, 0, 0, 0);
+    }
+  }
+  /* The cradle it hangs in. */
+  kit.slabAt(M.hull, x, y + 4.2, z, 2.2, 0.8, 5.0);
 }
 
 /**
  * ══ STANDING AT THE FOOT OF THE RAMP IS HOW YOU LEAVE ═════════════════════
  *
- * "Deploy for the run by walking up the gunship's ramp." The only way off this
- * deck was the pause card's Menu button, which disposes the room — so the
- * player's own line for how a visit ends had no implementation at all, and the
- * room was a cul-de-sac you backed out of.
- *
  * A DWELL, NOT A TRIPWIRE. `DEPLOY_RAMP.hold` seconds standing on the apron,
  * with the countdown shown, so walking past the ship on your way to the shield
- * does not launch a run. Step off and it forgets — a commitment you can change
- * your mind about is the difference between a door and a trapdoor.
+ * does not launch a run. Step off and it forgets.
  *
  * IT ASKS RATHER THAN DEPLOYS. `main.js` owns what a run IS — the mode, the
- * theatre, the seed, the session — and this file has spent this whole rewrite
- * learning not to hold a second opinion about anything. So it raises
- * `world.onDeckDeploy` and main.js decides; a build with nothing listening
- * simply has a ship you can stand under.
+ * theatre, the seed, the session — so this raises `world.onDeckDeploy` and
+ * main.js decides. With `DeckFlight` standing a real hull on the pad the
+ * dwell is the moment the ramp is taken: the flight director boards the
+ * company, seals, lifts and flies out through the aperture before main.js is
+ * asked for the run — see `DeckFlight.js`.
  */
 function stepRamp(world, dt) {
   const p = world?.player;
   if (!p || world._deckLaunched) return;
+  if (world._deckFlight?.busy) return;
   const R = DEPLOY_RAMP;
   const d = Math.hypot(p.position.x - R.x, p.position.z - R.z);
   if (d > R.reach) {
@@ -823,6 +1014,11 @@ function stepRamp(world, dt) {
     return;
   }
   world._deckLaunched = true;
+  /* THE FLIGHT FIRST, IF THERE IS ONE. `DeckFlight.depart` boards everybody,
+   * seals, lifts and punches out through the field, and raises
+   * `onDeckDeploy` itself when the hull is clear. A build with no flight
+   * director simply asks main.js at once, which is what this always did. */
+  if (world._deckFlight?.depart?.()) return;
   world.notify?.('DEPLOYING', 'the company forms up on the ramp', 'alarm');
   world.onDeckDeploy?.();
 }
@@ -881,51 +1077,19 @@ let _dressFaction = 'republic';
  *  together. Never mix — if the player sees one wrong-faction asset the whole
  *  illusion dies."
  *
- * That is the brief, and until now the room had no idea whose it was:
- * `DeckKit.js` contained the word `faction` zero times, so a hundred and forty
- * fighters built to the Separatist silhouette stood on the walls of a Republic
- * player's hangar — the loudest possible wrong-faction asset, and the dominant
- * visual element in the room.
- *
  * ONE FUNCTION, AND EVERY CONSUMER TAKES ITS ANSWER. The kit, the paint, the
  * insignia, the lights, the company, the PA and the fleet outside all read
  * this, so there is no second opinion anywhere for them to disagree over.
  *
- * IT CANNOT ASK `_company`, which is the trap: `dressStructure` runs before
- * `callTheCompany`, so at the moment the room is built there is no company to
- * ask. It reads the same roll `callTheCompany` will read, by the same door,
- * and falls back to whichever side the player's chosen order fights for —
- * because a player with no roll at all still has an alignment.
+ * THE ORDER FIRST, THE ROLL SECOND — and the order of those two is the whole
+ * rule. A player who has fought for both sides has TWO rolls, and asking the
+ * rolls first makes the room's army depend on which one happens to be stored
+ * first. The order they lead is unambiguous, is a real setting with a default
+ * and a control, and is the same lever the menu already gives — jedi leads the
+ * republic, sith the separatists. The roll only answers when there is no order
+ * to read, which is a save so fresh it has no alignment at all.
  */
 export function deckFaction(world) {
-  /**
-   * AND IT DOES NOT ASK `settings.army`, BECAUSE NOTHING WRITES IT.
-   *
-   * Three files reached for that setting and `tools/checks/controls.mjs`
-   * caught all three: it is read by shipped code, defaulted nowhere, written
-   * nowhere, and has no control in the menu. A setting like that is invisible
-   * to every other check in that file — it needs no reader declaration and no
-   * control and nothing complains — so it reads like a real answer and is
-   * always undefined.
-   *
-   * The two real answers are the roll (whose company is standing here) and
-   * `armyToLead` (whose side the player's chosen order fights for), and
-   * `order` IS a setting, with a default and a control.
-   */
-  /**
-   * THE ORDER FIRST, THE ROLL SECOND — and the order of those two is the whole
-   * rule, not a preference.
-   *
-   * A player who has fought for both sides has TWO rolls, and asking the rolls
-   * first makes the room's army depend on which one happens to be stored
-   * first: `rolls[0]`, an arbitrary answer to a question the brief says one
-   * wrong asset ruins. The order they lead is unambiguous, is a real setting
-   * with a default and a control, and is the same lever the menu already gives
-   * — jedi leads the republic, sith the separatists.
-   *
-   * The roll only answers when there is no order to read, which is a save so
-   * fresh it has no alignment at all.
-   */
   const led = (() => {
     try { return factionOf(armyToLead(world?.settings?.order)); } catch { return null; }
   })();
@@ -941,12 +1105,16 @@ export function deckFaction(world) {
  * One box per structural mass, declared against the same numbers
  * `dressStructure` builds from. It is duplication and it is the honest kind:
  * the alternative is deriving colliders from merged geometry, which cannot
- * distinguish a wall from the ninety fighters merged into the same mesh.
+ * distinguish a wall from the hundred fighters merged into the same mesh.
  *
  * The bays themselves are deliberately NOT solid to their own depth — the
  * wall is one slab from its outer face to the mouth of the recess, so a
  * player walks up to the racks and stops, rather than being able to stand
  * inside an alcove with a fighter through his head.
+ *
+ * AND THERE IS NO WAY ROUND THE END OF A WALL ANY MORE. Both run from the
+ * bulkhead to the aperture's jamb and the ceiling closes the top, so the
+ * room is bounded on six sides by something the player can see.
  */
 function deckColliders(world) {
   const P = world.physics;
@@ -955,133 +1123,92 @@ function deckColliders(world) {
   const box = (cx, cy, cz, hx, hy, hz) =>
     P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(hx, hy, hz), q, { friction: 0.7 });
 
-  const WALL = DECK.wall, first = DECK.aft + 14, n = 14, pitch = 11.6;
-  const zEnd = first + (n - 1) * pitch + pitch * 0.6;
-  const mid = (first - pitch * 0.6 + zEnd) / 2;
-  const half = (zEnd - (first - pitch * 0.6)) / 2;
+  const WALL = DECK.wall, L = DECK.lip, R = DECK.roof;
+  const mid = (DECK.aft + L) / 2, half = (L - DECK.aft) / 2 + 4;
   /* THE TWO RACK WALLS, each one box from the mouth of the inboard recess to
-   * the mouth of the outboard one. */
-  for (const s of [-1, 1]) box(s * (WALL + 7), 34, mid, 14.5, 34, half);
-  /* THE BULKHEAD, the only interior surface, with the doorway left open —
-   * the company walks through it and so does the player. */
+   * the far side of the wall, the whole length and the whole height. */
+  for (const s of [-1, 1]) box(s * (WALL + 7), R / 2, mid, 14.5, R / 2 + 4, half);
+  /* THE CEILING: the plate, so the top is closed by the thing that is drawn. */
+  box(0, R + 0.6, mid, WALL + 20, 0.8, half);
+  /* THE BULKHEAD, with the lift lobby left open — the player walks out of
+   * it and, later, back into it. */
   const bz = DECK.aft + 4;
-  for (const sx of [-1, 1]) box(sx * 84, 28, bz, 60, 28, 3.5);
-  box(0, 41, bz, 24, 15, 3.5);
+  const lw = LIFT.lobby.w / 2 + 0.8;
+  for (const s of [-1, 1]) box(s * (lw + 60), R / 2, bz, 60, R / 2 + 4, 3.5);
+  box(0, (R + LIFT.lobby.h) / 2 + 1, bz, lw + 2, (R - LIFT.lobby.h) / 2, 3.5);
+  /* The lobby's own jambs and header, so the recess is a slot and not a gap. */
+  for (const s of [-1, 1]) box(s * (lw + 0.4), LIFT.lobby.h / 2, bz + 1.6, 1.2, LIFT.lobby.h / 2 + 1, LIFT.lobby.depth / 2 + 0.6);
   /* THE SHUTTLE PADS, low enough to step onto and solid enough to stand on. */
-  for (const [px, pz, r] of [[-26, 46, 17], [30, 92, 15]]) box(px, 0.6, pz, r, 0.6, r);
+  /* Pad A is LOW — 0.45 m, under the player's 0.45 m step, so he walks up
+   * onto it and up the ramp of the hull that stands on it. Pad B keeps its
+   * height: nothing on it is anybody's to board. */
+  box(DEPLOY_RAMP.x, 0.225, DEPLOY_RAMP.padZ, 15, 0.225, 15);
+  box(44, 0.6, 96, 15, 0.6, 15);
   /* THE PIT: four kerbs, so a player can walk to the edge and look in but
    * cannot fall into a hole with no floor authored under it. */
-  for (const [dx, dz, w, d] of [[-30, -18, 26, 1.6], [-30, 30, 26, 1.6],
-    [-43, 6, 1.6, 48], [-17, 6, 1.6, 48]]) {
-    box(dx, 0.5, dz, w / 2, 0.5, d / 2);
-  }
-  world._deckSolids = 4 + 2 + 3 + 2 + 4;
+  for (const [dx, dz, w, d] of PIT_KERBS) box(dx, 0.5, dz, w / 2, 0.5, d / 2);
+  world._deckSolids = 2 + 1 + 3 + 2 + 2 + 4;
 }
 
 /**
- * ══ THE LIGHT, AND THE FIRST VERSION HAD ALMOST NONE ══════════════════════
+ * ══ THE LIGHT ═════════════════════════════════════════════════════════════
  *
- * What shipped was one directional key, four point lamps 46 m apart on a deck
- * 288 m across, and a WARM ORANGE fill at the bulkhead. The render was black
- * with two bright specks in it, and the orange was a straight breach of rule
- * 6 — the palette is monochrome blue-grey and the only colour in seven
- * references is a red status lamp. A warm bounce is a terrestrial interior
- * convention and I invented it here the same way I invented the caution
- * chevrons.
+ * Everything is cool, and the room is lit by its own ranks. A point light per
+ * pair of rack bays down both walls is what actually throws the strips' light
+ * onto the deck — an emissive material illuminates nothing in three.js — and
+ * the key comes in through the aperture from the planet's side.
  *
- * So: everything is cool, and the room is lit by its own ranks. A point light
- * per pair of rack bays down both walls is what actually throws the strips'
- * light onto the deck — an emissive material illuminates nothing in three.js,
- * which is the whole reason a wall of glowing bars sat in a black room.
- *
- * THE KEY IS STILL THE APERTURE and it still wins: 2.6 against 18 at 60 m
- * falloff means the wall lamps light their own bay and die, which is the
- * ratio every reference has — bright bars, dark air between them.
+ * THE KEY IS THE APERTURE and it still wins: 2.6 against 18 at 60 m falloff
+ * means the wall lamps light their own bay and die, which is the ratio every
+ * reference has — bright bars, dark air between them.
  */
 function lightDeck(world) {
-  /**
-   * AND THE COLOUR TEMPERATURE SWAPS WITH EVERYTHING ELSE, because the brief
-   * lists it in the same breath as the ship classes and the PA voice.
-   *
-   * Both are cool — rule 6 allows nothing else — so the difference is where in
-   * the cool they sit: the Republic deck is lit near-white with the faintest
-   * warmth left in it, the Separatist one is pushed hard to steel blue. Held
-   * to a few hundred kelvin of each other on purpose. A faction swap that
-   * changes the light to a DIFFERENT COLOUR reads as a filter over the same
-   * room; one that changes it by a shade reads as a different ship.
-   */
+  /* The colour temperature swaps with everything else: the Republic deck is
+   * lit near-white, the Separatist one pushed to steel blue, a few hundred
+   * kelvin apart on purpose. */
   const sep = world._deckFaction === 'separatist';
   const KEY = sep ? 0xaec6f2 : 0xcadcf6;
   const LAMP = sep ? 0xb9cef4 : 0xdbe6fb;
-  /**
-   * ══ STEEP, NOT FLAT — THE FIRST KEY SHADOWED THE WHOLE AFT THIRD ═══════
-   *
-   * It stood at 42 m over the lip and aimed at the bulkhead: about sixteen
-   * degrees of elevation across a 250 m room. Everything tall in here is
-   * between that light and the deck — two 68 m rack walls, two shuttles, the
-   * overhead rigs, the company itself — so every one of them threw a shadow
-   * the length of the ship, they merged, and the aft third of the deck (which
-   * is where the player lands and where his line stands) was a black band with
-   * a hard edge across it.
-   *
-   * The aperture is still the key and still throws everything AFT; it is just
-   * high enough now that a wall casts a shadow the length of a wall. About
-   * fifty degrees, which is also what the light through a hangar opening
-   * actually does when the ship is nose-on to a star.
-   */
+  /* STEEP, NOT FLAT: high enough that a wall casts a shadow the length of a
+   * wall and not the length of the ship. It comes from the aperture, which is
+   * where the planet is now. */
   const key = new THREE.DirectionalLight(KEY, 2.6);
   key.position.set(0, 150, DECK.lip * 0.85);
   key.target.position.set(0, 0, DECK.aft * 0.35);
   world.scene.add(key); world.scene.add(key.target);
   world.levelLights.push(key);
 
-  /* THE BULKHEAD WASH — cool, where the orange one was. The aft third is the
-   * one part of the room the aperture cannot reach, and a hole there reads as
-   * an unfinished level rather than as depth. */
-  /**
-   * AND IT IS SMALL AND HIGH, because at 30/90 from 16 m it was a pool of
-   * light on the deck twenty metres across — and the player spawns in it. The
-   * first frame of this room was a pale wash under his feet, which is the one
-   * thing reference rule 2 is about not having. It lifts the doorway and the
-   * plate immediately outside it, and stops.
-   */
-  const fill = new THREE.PointLight(LAMP, 13, 50, 2);
-  fill.position.set(0, 24, DECK.aft + 10);
+  /* THE BULKHEAD WASH — small and high, over the lift lobby. */
+  /* SMALL. Under the cel model a point light's falloff on a flat floor is a
+   * hard-edged disc, not a pool: at 13 over 50 m this painted a pale plate
+   * forty metres across in front of the lift, which from any height read as
+   * a lid on the floor. Six over thirty lifts the lobby and stops. */
+  const fill = new THREE.PointLight(LAMP, 6, 30, 2);
+  fill.position.set(0, 20, DECK.aft + 8);
   world.scene.add(fill); world.levelLights.push(fill);
 
   /**
-   * THE RANKS. Six a side down the canyon plus two on the apron.
-   *
-   * FOURTEEN LIGHTS IS A DELIBERATE NUMBER and it is near the ceiling of what
-   * a forward renderer will take: three.js compiles the light count into the
-   * shader, so this is the cost of every material in the room. Sixteen point
-   * lights over 288 m at 60 m range is one lamp per bay-pair, which is the
-   * rhythm in `hangar 6.jpg`, and going finer means going to baked vertex
-   * light instead.
+   * THE RANKS. Six a side down the canyon plus two on the apron: fourteen,
+   * which is near the ceiling of what a forward renderer will take — three.js
+   * compiles the light count into every material's shader.
    */
   for (let i = 0; i < 6; i++) {
-    const z = DECK.aft + 26 + i * 26;
+    const z = DECK.aft + 26 + i * 36;
     for (const s of [-1, 1]) {
-      const l = new THREE.PointLight(LAMP, 18, 62, 2);
-      l.position.set(s * 44, 16, z);
+      const l = new THREE.PointLight(LAMP, 20, 70, 2);
+      l.position.set(s * (DECK.wall - 12), 16, z);
       world.scene.add(l); world.levelLights.push(l);
     }
   }
-  /* And two out on the apron, so the deck between the racks and the lip is not
-   * a black band the player crosses to reach the view. */
+  /* And two out toward the aperture, so the deck under the opening is not a
+   * black band the player crosses to reach the view. */
   for (const s of [-1, 1]) {
-    const l = new THREE.PointLight(KEY, 14, 80, 2);
-    l.position.set(s * 46, 14, 104);
+    const l = new THREE.PointLight(KEY, 16, 90, 2);
+    l.position.set(s * 40, 16, 118);
     world.scene.add(l); world.levelLights.push(l);
   }
 }
 
-/**
- * THE FOUR PASSES, NAMED — so a cost measurement can say which one is
- * expensive. A traverse of the finished room buckets every prop into one
- * anonymous `Mesh` and tells you nothing you can act on; building them one at a
- * time on a bare scene is the only reading that names a caller.
- */
 export const __deckParts = {
   field: addField,
   /**
@@ -1184,9 +1311,14 @@ export function dressHangar(world) {
    * an ice world outside. `dressHangar` runs at stage 6, after
    * `applyAtmosphere` at stage 4, so this is the last word.
    */
-  /* THE COMPANY FIRST, because the window's faction comes off the roll that
-   * is actually standing in the room. */
+  /* THE TRANSPORT ON ITS PAD — the real hull, ramp down — before the men, so
+   * a company arriving on it has a bay to be stood in. */
+  dressDeckFlight(world, { arrival: !!world._deckArrival });
+  /* THE COMPANY, because the window's faction comes off the roll that is
+   * actually standing in the room. */
   callTheCompany(world);
+  /* AND IF THEY CAME HOME ON THE SHIP, THEY ARE STILL IN IT. */
+  if (world._deckArrival) embarkCompany(world);
   const shown = outsideLevel(world);
   /**
    * ══ `skyDome`, NOT `sky`. ONE WORD, AND IT COST THE WHOLE VIEW ══════════
@@ -1218,6 +1350,19 @@ export function dressHangar(world) {
     /* THE ROOM'S ONE ANSWER, not a third opinion. `deckFaction` is what the
      * kit, the paint, the insignia, the lights and the PA all read. */
     faction: world._deckFaction,
+    /**
+     * ══ IN THE OPENING, NOT OVER THE BULKHEAD ══════════════════════════════
+     *
+     * The deck's one aperture faces +Z and the player faces it when the lift
+     * doors part. `SkyDome._placeByPhase` used to spend the free roll about the
+     * star on elevation alone, and the disc landed 167° behind him on every
+     * theatre — a planet the room was designed around that nobody in it could
+     * see. `forward` is the opening's own axis; `rise` puts the disc's centre
+     * about 13° up, so its lower limb sits on the lip and the rest fills the
+     * hexagon from the muster line, and fills the whole view from the edge.
+     */
+    forward: [0, 0, 1],
+    rise: 0.22,
   });
 
   /**
@@ -1247,6 +1392,17 @@ export function dressHangar(world) {
    * THE HAZE IS THE PIECE THAT MATTERS MOST and it is the cheapest: far rows
    * dissolve, so the deck never has to model what is behind them. */
   dressDeckLife(world);
+  /**
+   * AND THE LIFT, WHICH IS WHERE THE PLAYER ACTUALLY IS. The spawn is inside
+   * the car; `DeckLift` runs the ride, parts the doors, and later takes him
+   * back up to the menu. A player who came in on a ship (`_deckArrival`) is
+   * not in it, so the car simply stands open.
+   */
+  dressDeckLift(world, { arrive: !!world._deckArrival });
+  /* THE BLACK MIRROR — rule 2 of the references, a real planar reflection of
+   * the room in its own plate. `DeckMirror` decides whether the fidelity tier
+   * can afford it. */
+  dressDeckMirror(world);
 }
 
 /**
@@ -1412,8 +1568,11 @@ export class HangarDirector {
    */
   dispose() {
     try { undressDeckAudio(this.world); } catch {}
+    try { undressDeckLift(this.world); } catch {}
+    try { undressDeckMirror(this.world); } catch {}
+    try { undressDeckFlight(this.world); } catch {}
     this.world._deckAudio = null;
-    for (const row of this.world?._company?.men || []) { try { row.shove?.dispose(); } catch {} }
+    dismissCompany(this.world);
   }
 
   update(dt) {
@@ -1432,6 +1591,11 @@ export class HangarDirector {
      * the pressure filter and every Doppler ratio are functions of where the
      * player is standing THIS frame. */
     stepDeckLife(this.world, dt);
+    stepDeckLift(this.world, dt);
+    stepDeckMirror(this.world, dt);
+    /* THE SHIP, after the men: a man who halted on his slot this frame is
+     * taken aboard this frame. */
+    stepDeckFlight(this.world, dt);
     stepDeckAudio(this.world, dt, this.world?.player?.camera?.obj || this.world?.player);
     /**
      * AND THE THUMPS ARE THE FLASHES YOU SAW.
@@ -1449,34 +1613,51 @@ export class HangarDirector {
 
 
 /* ══════════════════════════════════════════════════════════════════════════ */
-/*  THE COMPANY, ON THE DECK                                                  */
+/*  THE COMPANY, ON THE DECK — and the crowd it comes out of                  */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ THE MEN WALK ON ═══════════════════════════════════════════════════════
+ * ══ THE MEN WALK ON — FROM THE CROWD ══════════════════════════════════════
  *
- * "Troops file in from off-camera in a loose column, then snap to formation.
- *  **The filing in sells it more than the standing.** Staggered arrival — they
- *  don't all take the same number of steps. Slight timing offsets on the
- *  snap-to."
+ * "When I call my troops I want them to file in from the background like
+ *  imagine that the hangar is already full of troopers and mine hear the
+ *  order and come in from the crowd."
  *
- * That is the whole design of this half and it is right: a line that is simply
- * THERE when you turn round is a menu with a floor under it. The men come
- * through the bulkhead doors in a loose column, break for their places, and
- * arrive over about eight seconds — and no two of them take the same number of
- * steps, because the walk is the real gait solver moving a real body toward a
- * mark and not a lerp.
+ * So the deck is full of troopers before the player says a word: ranks formed
+ * up at port arms by the starboard wall the way `hangar 3.jpg` has them,
+ * clusters standing easy at the crate stacks, a few walking their errands
+ * between the racks. The player's own men are IN that crowd — each standing
+ * at a spot of his own among the others, at attention, facing whichever way
+ * he happened to be facing — and they are told apart by nothing but the fact
+ * that they answer. FALL IN and they leave the crowd and walk to the line;
+ * DISMISSED and they walk back into it.
  *
- * ── THE MARKS ────────────────────────────────────────────────────────────
+ * ── AND THEY ARE ALL THE NEXT DEPLOYMENT, ON A FRESH SAVE TOO ────────────
  *
- * By SQUAD, in the order `squadPlan` deals them, which is the order they form
- * in the fight — so the shape you are walking down is the shape that will be
- * on the ground. Squads are separated by a gap wider than the interval inside
- * one, because that gap is the only thing that says "these five are a unit"
- * without a label.
+ * "I couldn't customize or see my troops in the hangar on a fresh run, it
+ *  wanted me to finish a mode first but I specifically asked that I be able to
+ *  spawn in fresh troops at the very beginning for customization."
  *
- * They face AFT, toward the player, with the aperture and the planet behind
- * them. That is the shot: your men in front of you, the war behind them.
+ * `callTheCompany` used to read only the roll — the men who had come BACK
+ * from a run — and a fresh save has none, so it said so and stood nobody.
+ * The muster slate has existed the whole time (`Muster.js`): the fresh half
+ * of the next deployment, minted in advance with real designations, shown on
+ * the Company tab, and never once read by this room. It is read now, through
+ * the same resolver the tab and the deploy path use, so the men on the deck
+ * are exactly the men who ride the transport: veterans first, recruits behind
+ * them, the player's picks honoured. A recruit's edits go to the slate's own
+ * dressing door (`DeckEdit.applyEdit`), and the slate keeps a dressed recruit
+ * across a re-mint (`Muster.ensure`), so what is painted here survives.
+ *
+ * ── THE WALK IS A WALK ───────────────────────────────────────────────────
+ *
+ * The previous version slid the figure across the deck in its standing pose.
+ * Each man carries the gait solver a fighting body carries (`BipedAnimator`),
+ * and while he is between spots the solver walks him — legs cycling, arms
+ * swinging, pelvis bobbing — from a world-space position this file owns,
+ * with the figure's root at the origin the way an `Enemy`'s is. When he
+ * halts the root is put on his mark and `Parade` takes the pose back. The
+ * hand-off is a snap, and a halt IS a snap.
  */
 export const MUSTER = {
   /** Between two men of the same squad. */
@@ -1487,46 +1668,25 @@ export const MUSTER = {
   depth: 2.8,
   /** Men in one rank before it wraps. Past this a line stops being legible. */
   perRank: 12,
-  /** Seconds from the order to the last man halting. */
-  formUp: 8.5,
   /**
-   * WHERE THEY COME FROM: THE BULKHEAD DOORS, and until now that was a lie.
-   *
-   * This said `z: -44`. The bulkhead is at `DECK.aft` — it was -46 when this
-   * number was written and it is -104 now — so the men were materialising 60 m
-   * out in open deck, four metres from their own marks, and "filing in" was
-   * eleven bodies interpenetrating at two points and then fanning sideways.
-   * The longest walk in a full company was 23 m and almost all of it lateral.
-   *
-   * It is derived from the bulkhead now and it can never drift from it again.
-   * The doorway `dressStructure` builds is 42 m wide centred on 0, so the two
-   * files come out either side of its centre and split at the threshold.
+   * Seconds from the order to the last man halting. Fourteen, from eight and
+   * a half: the walk is from the crowd at the wall now, sixty-odd metres for
+   * the far man, and eight seconds of that is a sprint. A company called to
+   * the line walks briskly; it does not run.
    */
-  door: { z: DECK.aft + 8, spread: 7 },
+  formUp: 14,
+  /** A man leaves the crowd within this many seconds of the order. */
+  spread: 2.6,
 };
 
 /**
  * THE PACE, off `MUSTER.formUp` and the longest walk in the room rather than
- * typed. The far corner of the widest line is about 36 m from the doors; at
- * 8.5 s minus the last man's start offset that is a brisk double-time, which is
- * what a company crossing a deck to a call actually moves at.
+ * typed: the far corner of the crowd to the far end of the widest line.
  */
 const MARCH_SPEED = (() => {
-  /**
-   * AND IT IS DERIVED, WHICH THE COMMENT ABOVE HAS ALWAYS CLAIMED IT WAS.
-   *
-   * `MUSTER.formUp` is documented three separate times in this file as "the
-   * only figure anybody should ever tune", and the pace was the literal 5.4
-   * sitting under all of it: `formUp` was read by nothing and tuning it
-   * changed nothing at all.
-   *
-   * The longest walk on the deck is a corner man of the widest rank going
-   * from the doorway to his mark. At `formUp` seconds minus the last man's
-   * start offset that is the speed, and now a change to `formUp` moves it.
-   */
   const wide = (MUSTER.perRank - 1) * MUSTER.interval / 2 + MUSTER.gap * 2;
-  const far = Math.hypot(wide - MUSTER.door.spread, DECK.line - MUSTER.door.z);
-  return far / Math.max(1, MUSTER.formUp - 1.0);
+  const far = Math.hypot(DECK_ZONES.crowdR.x1 - (-wide), DECK.line - DECK_ZONES.crowdR.z0);
+  return far / Math.max(1, MUSTER.formUp - MUSTER.spread);
 })();
 
 /** Where man `i` of `n` stands, by squad. Pure, so a check can ask it. */
@@ -1534,9 +1694,7 @@ export function markFor(i, n, squad, squads) {
   const wide = Math.min(n, MUSTER.perRank);
   const rank = Math.floor(i / MUSTER.perRank);
   const col = i % MUSTER.perRank;
-  /* THE SQUAD GAPS ARE PART OF THE WIDTH, or the line is not centred: a
-   * company of two squads laid out on interval alone sits off to one side of
-   * the room by half a gap. */
+  /* THE SQUAD GAPS ARE PART OF THE WIDTH, or the line is not centred. */
   const gaps = Math.max(0, (squads | 0) - 1) * (MUSTER.gap - MUSTER.interval);
   const span = (wide - 1) * MUSTER.interval + gaps;
   const before = Math.max(0, squad | 0) * (MUSTER.gap - MUSTER.interval);
@@ -1547,59 +1705,162 @@ export function markFor(i, n, squad, squads) {
 }
 
 /**
- * ══ CALL THEM ═════════════════════════════════════════════════════════════
+ * ══ THE CROWD'S GROUND ════════════════════════════════════════════════════
  *
- * Reads the player's own roll through `Company.loadAll` — the same door the
- * Company tab reads, so the men standing here are the men on that page, with
- * their ranks, their wounds, their kit and the gaps where last run's dead used
- * to stand.
+ * Spots in `DECK_ZONES.crowdL/crowdR`, three kinds:
  *
- * ONE ARMY AT A TIME. A player who has fought for both sides has two rolls and
- * they must never be in the same room: `HANGAR-SPEC` is explicit that one
- * wrong-faction asset kills the illusion, and two whole companies of them is
- * not a subtle version of that. The army is the one whose roll has men on it,
- * preferring the one the player last fielded.
+ *   BLOCK    a formed body, three ranks deep by the starboard wall, at port
+ *            arms, facing the deck — `hangar 3.jpg`'s subject.
+ *   CLUSTER  three or four men standing round a crate stack, facing in.
+ *   LOOP     a pair of points a man walks between, along the wall.
+ *
+ * The player's own men are dealt the block and the clusters — never a loop,
+ * because a man who has to be found should be standing still — and the crowd
+ * takes what is left. Everything is derived from the zone so the crowd moves
+ * with the walls.
+ */
+export const CROWD = {
+  /** Other troopers on the deck besides the player's own. */
+  n: 18,
+  /** The formed block: ranks and files. */
+  block: { ranks: 3, files: 5, pitch: 1.5, depth: 1.6 },
+};
+
+function crowdSpots(rng) {
+  const L = DECK_ZONES.crowdL, R = DECK_ZONES.crowdR;
+  const spots = [];
+  /* THE BLOCK, at the starboard wall, facing -x into the room. */
+  const B = CROWD.block;
+  const bx = R.x1 - 12, bz = (R.z0 + R.z1) / 2 - 6;
+  for (let r = 0; r < B.ranks; r++) {
+    for (let f = 0; f < B.files; f++) {
+      spots.push({ x: bx + r * B.depth, z: bz + (f - (B.files - 1) / 2) * B.pitch,
+        facing: -Math.PI / 2, kind: 'block', arms: 'port', stance: 'attention' });
+    }
+  }
+  /* CLUSTERS, at the crate stacks on both flanks and the blast doors. */
+  const groups = [
+    { x: L.x0 + 14, z: L.z1 - 12, n: 4 }, { x: L.x0 + 30, z: L.z0 + 10, n: 3 },
+    { x: (L.x0 + L.x1) / 2, z: L.z1 - 2, n: 3 }, { x: R.x0 + 12, z: R.z1 - 8, n: 4 },
+    { x: R.x1 - 12, z: R.z1 - 4, n: 3 }, { x: L.x1 - 6, z: L.z0 + 12, n: 3 },
+  ];
+  for (const g of groups) {
+    for (let i = 0; i < g.n; i++) {
+      const a = (i / g.n) * Math.PI * 2 + rng() * 0.6;
+      const r = 1.3 + rng() * 0.5;
+      spots.push({ x: g.x + Math.cos(a) * r, z: g.z + Math.sin(a) * r,
+        facing: a + Math.PI, kind: 'cluster', arms: 'sides', stance: 'ease' });
+    }
+  }
+  /* LOOPS, along the walls. */
+  const loops = [
+    [[L.x0 + 8, L.z0 + 4], [L.x0 + 10, L.z1 - 2]],
+    [[R.x0 + 4, R.z0 + 6], [R.x1 - 30, R.z1 - 4]],
+    [[L.x1 - 4, L.z0 + 2], [L.x0 + 20, L.z1 - 20]],
+    [[R.x1 - 6, R.z0 + 2], [R.x1 - 8, R.z1 - 14]],
+  ];
+  for (const [a, b] of loops) {
+    spots.push({ x: a[0], z: a[1], facing: Math.atan2(b[0] - a[0], b[1] - a[1]),
+      kind: 'loop', loop: b, arms: 'port', stance: 'attention' });
+  }
+  return spots;
+}
+
+/**
+ * ══ WHO STANDS HERE: THE NEXT DEPLOYMENT ══════════════════════════════════
+ *
+ * The plan the barracks and the deploy path both use, resolved for the mode
+ * the player will ride out to. `main.js` hands the room the theatre it will
+ * fight on (`_pickedLevel`) and the mode (`_pickedMode`); a headless boot has
+ * neither, and a mode that fields no army (a duel, a lesson) still has to put
+ * MEN on this deck — it is the room the ask is about — so the fallback is the
+ * campaign's own opening: ten strangers, minted for the army the player leads.
+ */
+function deckLineup(world, army) {
+  const settings = { ...(world?.settings || {}), mode: world?._pickedMode || world?.settings?.mode };
+  const company = companyLoad(army);
+  let plan = null;
+  try { plan = musterPlan(settings); } catch { plan = null; }
+  if (plan && plan.army !== army) plan = null;
+  let list = null;
+  try { list = plan ? lineup(plan, company) : null; } catch { list = null; }
+  if (!list || !list.length) {
+    const fallback = { army, want: OPENING_STRENGTH, armyMode: true, unit: null, campaign: true };
+    try { list = lineup(fallback, company) || []; } catch { list = []; }
+  }
+  /* A fresh save's roll is empty, and every man on the list is then a recruit
+   * off the slate. The flag is what routes his edits to the slate's door. */
+  const onRoll = new Set((company?.men || []).map((m) => m.designation));
+  return list.slice(0, MAX_ON_DECK).map((rec) => ({ ...rec, recruit: !onRoll.has(rec.designation) }));
+}
+
+/**
+ * A crowd trooper's record: the army's cheapest rung, a few of the second, a
+ * rank here and there so the paint varies, an occasional mark. Seeded, so
+ * the same deck stands the same crowd.
+ */
+function crowdRecords(army, n, rng) {
+  const A = ARMIES[army];
+  const tiers = A?.tiers || [];
+  const t0 = tiers[0]?.type || 'trooper';
+  const t1 = tiers[1]?.type || t0;
+  const kind = army === 'separatist' ? 'steel' : 'flesh';
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const r = rng();
+    const num = 100 + Math.floor(rng() * 8900);
+    const designation = army === 'separatist' ? `OOM-${(10 + i * 3) % 90}` : `CT-9${String(num).padStart(3, '0')}`;
+    const xp = r < 0.62 ? 0 : (r < 0.86 ? 5 : (r < 0.97 ? 11 : 21));
+    out.push({
+      id: null, army, type: rng() < 0.82 ? t0 : t1, designation, kind,
+      xp, kills: 0, wounds: rng() < 0.2 ? 1 : 0, morale: 0.72, areas: 0, joined: 1,
+      look: rng() < 0.3 ? { mark: MARKS[Math.floor(rng() * MARKS.length)]?.id } : null,
+      crowd: true,
+    });
+  }
+  return out;
+}
+
+/** A tiny seeded stream for the crowd, so a check gets the same room twice. */
+function crowdRng(seed) {
+  let s = seed >>> 0 || 1;
+  return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; };
+}
+
+/**
+ * ══ STAND EVERYBODY UP ════════════════════════════════════════════════════
+ *
+ * Reads the next deployment through `Muster.lineup` and the crowd out of a
+ * seeded table, builds a figure and a body for each, and puts them all in the
+ * crowd. Nobody is on the line until the order is given.
+ *
+ * ONE ARMY AT A TIME, and never the other one as a fallback: the deck's
+ * faction is `deckFaction`'s answer, and the men are that army's.
  */
 export function callTheCompany(world, opts = {}) {
-  const rolls = companyLoadAll().filter((r) => (r?.men || []).length);
-  /* THE ROOM'S ONE ANSWER, not a fourth opinion — and specifically not
-   * `settings.army`, which nothing in this project writes. */
   const want = opts.army || world?._deckFaction || deckFaction(world);
-  if (!rolls.length) {
-    /**
-     * AND A PLAYER WITH NO ROLL IS TOLD WHY, rather than left on an empty
-     * floor. The button says "Inspect your men"; a fresh save has none, and
-     * what happened was that the room opened, `callTheCompany` returned null
-     * on its first line, and the player stood in a hangar with nobody in it
-     * and no explanation at all.
-     */
-    world.notify?.('NOBODY ON THE ROLL YET',
-      'Fight a run and the men who come back are the men who stand here.', 'flavour');
-    return null;
+  const men = deckLineup(world, want);
+  const rng = crowdRng(opts.seed ?? 4711);
+  const spots = crowdSpots(rng);
+  const still = spots.filter((s) => s.kind !== 'loop');
+  const loops = spots.filter((s) => s.kind === 'loop');
+  /* Shuffle the standing spots once, so the company is scattered through the
+   * crowd rather than filling the block front to back. */
+  for (let i = still.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [still[i], still[j]] = [still[j], still[i]];
   }
-  /**
-   * ONE ARMY, AND NEVER THE OTHER ONE AS A FALLBACK.
-   *
-   * This was `rolls.find(...) || rolls[0]`, three lines under a comment
-   * promising that two companies must never be in the same room because one
-   * wrong-faction asset kills the illusion. A Separatist player whose
-   * Separatist roll was empty got a REPUBLIC company, on a Separatist deck.
-   * If the army the player is here as has nobody on it, the honest answer is
-   * that nobody falls in — and to say so.
-   */
-  const roll = want ? rolls.find((r) => r.army === want) : rolls[0];
-  if (!roll) {
+  const company = {
+    army: want, men: [], crowd: [], byMan: new Map(), t: 0, at: 0,
+    stance: 'attention', mustered: false, dismissed: 0, halted: 0,
+  };
+  if (!men.length) {
     world.notify?.('NO ONE OF YOURS ABOARD',
-      `Nobody on the ${want} roll. The other side's company does not stand on your deck.`,
-      'flavour');
-    return null;
+      `Nobody on the ${want} roll and no muster minted for it.`, 'flavour');
   }
-  const men = roll.men.slice(0, MAX_ON_DECK);
 
   /* THE SHAPE THE FIGHT WOULD DEAL THEM, not a fresh one. `squadPlan` is the
-   * pure derivation the Company tab's order of battle already draws and the
-   * director already uses; asking it here is what makes the line on the deck
-   * the line on the ground. */
+   * pure derivation the Company tab's order of battle already draws. */
   const plan = squadPlan(men, SQUAD);
   const bySquad = new Map();
   for (const [m, k] of plan) {
@@ -1607,83 +1868,77 @@ export function callTheCompany(world, opts = {}) {
     bySquad.get(k).push(m);
   }
   const order = [...bySquad.keys()].sort((a, b) => a - b);
-
-  const company = { army: roll.army, men: [], byMan: new Map(), t: 0, at: 0, stance: 'attention' };
   let i = 0;
+  const stand = (rec, spot, isCrowd) => {
+    const fig = buildFigure(rec);
+    if (!fig) return null;
+    const man = paradeMan(fig.rig, { designation: rec.designation || rec.name || `m${i}` });
+    /* THE FIGURE'S OWN GAIT, kept: `paradeMan` builds one to take its
+     * measurements and throws it away. It is what walks him. */
+    const anim = fig.rig?.get?.('thighL')
+      ? new BipedAnimator(fig.rig, { scale: fig.rig.scale ?? 1 }) : null;
+    man.facing = spot.facing;
+    man.stance = spot.stance;
+    man.arms = fig.rifle ? spot.arms : 'sides';
+    fig.root.position.set(spot.x, 0, spot.z);
+    fig.root.rotation.y = 0;
+    world.scene.add(fig.root);
+    const row = {
+      rec, fig, man, anim, crowd: isCrowd,
+      /** Where he stands in the crowd, and stands back in when dismissed. */
+      home: { x: spot.x, z: spot.z, facing: spot.facing, stance: spot.stance, arms: spot.arms },
+      mark: { x: spot.x, z: spot.z },
+      from: new THREE.Vector3(spot.x, 0, spot.z),
+      pos: new THREE.Vector3(spot.x, 0, spot.z),
+      vel: new THREE.Vector3(),
+      start: 0, pace: 0.88 + ((stagger(man) * 7.13 + 0.37) % 1) * 0.26,
+      halted: true, merged: null, squad: 0, lead: false,
+      loop: spot.loop ? { a: [spot.x, spot.z], b: spot.loop, dwell: 3 + rng() * 6, at: 0 } : null,
+    };
+    /* HE IS FOLDED WHERE HE STANDS. The bake is a photograph of the rig; the
+     * gait keeps writing the bones under it, so a merged man still walks. */
+    row.merged = mergeFigure(fig, { castShadow: true });
+    return row;
+  };
   for (const k of order) {
     const squad = bySquad.get(k);
     for (let j = 0; j < squad.length; j++) {
       const rec = squad[j];
-      const fig = buildFigure(rec);
-      if (!fig) continue;
-      const man = paradeMan(fig.rig, { designation: rec.designation || rec.name || `m${i}` });
-      /**
-       * FACING AFT — at the player, with the aperture behind them. And it is
-       * ONE rotation now, not two.
-       *
-       * `man.facing = Math.PI` and `fig.root.rotation.y = Math.PI` were both
-       * being applied, in different frames — the pose yaw is authored in the
-       * figure's own space — and they cancelled. Measured on a real rig: the
-       * pair composed to hips-forward = +z, which is the APERTURE. Every man
-       * on this deck has been standing with his back to the player, under a
-       * comment saying the opposite, and it only ever looked survivable
-       * because the player was also spawning in the wrong place, on the far
-       * side of them, facing the same way.
-       */
-      man.facing = Math.PI;
-      man.stance = 'attention';
-      const mark = markFor(i, men.length, order.indexOf(k), order.length);
-      /* THEY COME FROM THE DOORS, not from their marks. `stagger` is the
-       * per-man offset that stops the column arriving as one organism; the
-       * side they come in on alternates so the column splits at the threshold
-       * the way a real one does. */
-      const side = (i % 2) ? 1 : -1;
-      fig.root.position.set(side * MUSTER.door.spread, 0, MUSTER.door.z);
-      world.scene.add(fig.root);
-      const rowMan = {
-        rec, fig, man, mark, squad: k, lead: false,
-        /* Each man's own walk: when he starts and how long he takes. The
-         * spread is what makes it a company and not a chorus line. */
-        /* THE THREE THINGS THAT MAKE IT A COMPANY AND NOT A CHORUS LINE, and
-         * they are deliberately three: when he starts (the column does not
-         * leave the threshold as one), how fast he walks, and how far he has to
-         * go. Any one of them alone still reads as a formation animation. */
-        /* TWO DIFFERENT DRAWS, WHICH IS WHAT MADE THIS ONE. Both of these
-         * read `stagger(man) % 1` — the SAME number — so the late starter was
-         * always, exactly, the slow walker: one draw, perfectly correlated
-         * with itself, wearing two hats. A second decorrelated stream off the
-         * same seed costs a multiply and makes the claim true. */
-        start: 0.10 + (i % 3) * 0.18 + (stagger(man) % 1) * 0.55,
-        pace: 0.88 + ((stagger(man) * 7.13 + 0.37) % 1) * 0.26,
-        from: fig.root.position.clone(),
-        merged: null,
-      };
-      company.men.push(rowMan);
-      company.byMan.set(rec.designation || rec.name, rowMan);
+      const spot = still.length ? still.shift() : { x: 30 + i * 2, z: -70, facing: Math.PI, kind: 'cluster', arms: 'port', stance: 'attention' };
+      /* HIS OWN MEN WAIT AT PORT ARMS, whatever the spot's crowd would do:
+       * a man who is about to be called stands ready, and it is what makes
+       * him findable in a crowd standing easy. */
+      const row = stand(rec, { ...spot, stance: 'attention', arms: 'port' }, false);
+      if (!row) continue;
+      row.squad = k;
+      row.man.facing = spot.facing;
+      company.men.push(row);
+      company.byMan.set(rec.designation || rec.name, row);
       i++;
     }
     const lead = leadOf(bySquad.get(k).map((m) => ({ ...m, alive: true })));
     const row = company.men.find((r) => r.rec.designation === lead?.designation);
     if (row) row.lead = true;
   }
+  /* THE CROWD takes the rest of the standing spots and every loop. */
+  const crowdN = Math.min(CROWD.n, still.length + loops.length);
+  const recs = crowdRecords(want, crowdN, rng);
+  for (let c = 0; c < crowdN; c++) {
+    const spot = still.length ? still.shift() : loops.shift();
+    if (!spot) break;
+    const row = stand(recs[c], spot, true);
+    if (row) company.crowd.push(row);
+  }
   /**
-   * ══ AND THEY ARE BODIES, WHICH THEY WERE NOT ══════════════════════════
+   * ══ AND THEY ARE BODIES ═════════════════════════════════════════════════
    *
-   * `src/physics/Shovable.js` is four hundred lines written for exactly this
-   * call, tested end to end through the whole POST → DOWN → REST → RISE →
-   * BACK cycle with a real Force push — and it was imported by nothing but its
-   * own test. `makeShovable`, the function written to take the row shape this
-   * function builds, had never been called by anyone, including that test.
-   * "Physics on everything, in the hangar and on every troop" was the brief,
-   * and every man on this deck was a hologram the Force went straight through.
-   *
-   * One dynamic PROP-layer collider a man. `Player._grippableBody` and
-   * `forcePush`'s sweep over `physics.bodies` both find them the frame they
-   * exist, with no change to Player.js. They sleep at attention, so a company
-   * standing still is twenty-four retired islands and costs the solver
-   * nothing.
+   * One dynamic PROP-layer collider a man, asleep where he stands, so the
+   * Force finds him and the player cannot walk through him. `Shovable`
+   * refuses to fall over for a shoulder — see its POST rule — and goes over
+   * for a push.
    */
   makeShovable(world, company.men);
+  makeShovable(world, company.crowd);
   world._company = company;
   return company;
 }
@@ -1691,168 +1946,139 @@ export function callTheCompany(world, opts = {}) {
 /** How many men the deck will stand at once. See `MergedSkin` for the cost. */
 export const MAX_ON_DECK = 24;
 
+/**
+ * ══ ONE MAN, ONE FRAME ════════════════════════════════════════════════════
+ *
+ * Shared by the company and the crowd. A man is a BODY first — while the
+ * solver has him the drawn figure copies the body — a WALKER second, and only
+ * once he has halted does `Parade` pose him.
+ */
+function stepRow(world, c, row, dt) {
+  const { fig, man } = row;
+  /* IN THE HULL: the ship owns him. Posed where he stands, and nothing else. */
+  if (row.aboard) {
+    man.stance = 'attention';
+    poseParade(man, c.t + stagger(man));
+    row.merged?.update?.(c.t);
+    return;
+  }
+  const sh = row.shove;
+  if (sh) {
+    sh.update(dt);
+    if (sh.state !== 'post') {
+      fig.root.position.copy(sh.at);
+      fig.root.quaternion.copy(sh.quaternion);
+      row.pos.copy(sh.at);
+      if (sh.down) { row.merged?.update?.(c.t); return; }
+      man.stance = 'ease';
+      poseParade(man, c.t + stagger(man));
+      row.merged?.update?.(c.t);
+      return;
+    }
+  }
+  const local = Math.max(0, c.t - row.start) * row.pace;
+  const dx = row.mark.x - row.pos.x, dz = row.mark.z - row.pos.z;
+  const dist = Math.hypot(dx, dz);
+  if (!row.halted && dist > 0.12 && local > 0) {
+    /* ── THE WALK. A position this file owns, advanced at his own pace, and
+     * the gait solver asked to put legs under it. The root stands at the
+     * origin for exactly as long as the solver is writing world-space bones
+     * under it. */
+    const speed = MARCH_SPEED * row.pace;
+    const step = Math.min(dist, speed * dt);
+    const nx = dx / dist, nz = dz / dist;
+    row.pos.x += nx * step; row.pos.z += nz * step;
+    row.pos.y = world.terrain ? world.terrain.height(row.pos.x, row.pos.z) : 0;
+    row.vel.set(nx * speed, 0, nz * speed);
+    const facing = Math.atan2(nx, nz);
+    if (row.anim) {
+      fig.root.position.set(0, 0, 0);
+      fig.root.quaternion.identity();
+      row.anim.setFacing(facing);
+      row.anim.update(dt, {
+        position: row.pos, facing, velocity: row.vel, grounded: true,
+        groundAt: (x, z) => (world.terrain ? world.terrain.height(x, z) : 0),
+        crouch: 0, accelForward: 1, deferMatrices: false,
+      });
+    } else {
+      fig.root.position.copy(row.pos);
+      fig.root.rotation.y = facing;
+    }
+    /* He makes a noise doing it. `bootStride` integrates distance. */
+    bootStride(world, row, row.pos, dt);
+    /* The body walks with him, asleep, so the Force still finds him. */
+    sh?.retarget(row.pos);
+    row.merged?.update?.(c.t);
+    return;
+  }
+  if (!row.halted && row.path?.length) {
+    /* THE NEXT LEG of a path — the ramp's foot, then the bay. */
+    row.mark = row.path.shift();
+    row.from.copy(row.pos);
+    row.start = c.t;
+    return;
+  }
+  if (!row.halted) {
+    /* THE HALT. The root goes onto the mark, the pose is Parade's again. */
+    row.halted = true;
+    row.pos.set(row.mark.x, world.terrain ? world.terrain.height(row.mark.x, row.mark.z) : 0, row.mark.z);
+    fig.root.position.copy(row.pos);
+    fig.root.quaternion.identity();
+    row.vel.set(0, 0, 0);
+    sh?.retarget(row.pos);
+    if (!row.crowd) {
+      c.halted = (c.halted | 0) + 1;
+      /* THE COMPANY HALTING IS ONE SOUND, not twenty-four. */
+      if (c.halted === c.men.length) bootHalt(world, { x: 0, y: 0, z: DECK.line }, c.men.length);
+    } else if (row.loop) {
+      /* A walker rests at each end for a different while every time. */
+      row.loop.at = c.t + row.loop.dwell + ((stagger(man) * 3.1) % 4);
+    }
+  }
+  /* A WALKER SETS OFF AGAIN once he has stood long enough. */
+  if (row.crowd && row.loop && c.t >= row.loop.at) {
+    const to = (Math.abs(row.mark.x - row.loop.b[0]) < 0.1 && Math.abs(row.mark.z - row.loop.b[1]) < 0.1)
+      ? row.loop.a : row.loop.b;
+    row.mark = { x: to[0], z: to[1] };
+    row.from.copy(row.pos);
+    row.halted = false;
+    row.start = c.t;
+    row.loop.at = Infinity;
+    return;
+  }
+  man.stance = row.crowd ? row.home.stance : c.stance;
+  poseParade(man, c.t + stagger(man));
+  row.merged?.update?.(c.t);
+}
 
 /**
- * ══ THE FILING IN, WHICH IS THE PART THAT SELLS IT ════════════════════════
- *
- * Stepped once a frame. Each man walks from the doors to his mark on his own
- * clock — his own start, his own pace — and halts. Nobody takes the same number
- * of steps as anybody else, because the distances differ, the paces differ and
- * the marks differ, which is the whole of "staggered arrival" and costs one
- * multiply per man.
- *
- * THE HALT IS A SNAP AND THE SNAP IS OFFSET. `smoothstep` to the mark, then the
- * facing swings to the front over the last fifth of his walk — so the line
- * squares up in a ripple rather than all at once, which is what a company
- * halting actually looks like and what a single eased transform never does.
- *
- * ── THE MERGE HAPPENS WHEN HE STOPS ──────────────────────────────────────
- *
- * `mergeFigure` folds 54 meshes into about 7 and `BAKES_PER_FRAME` is 1, so
- * twenty-four men bake over twenty-four frames. Doing it AT THE HALT rather
- * than at the build spreads those frames across the walk-on, when the player is
- * watching men move and cannot see a bake, instead of stacking them on the
- * frame the room opens.
+ * ══ THE FRAME ═════════════════════════════════════════════════════════════
  */
 export function stepCompany(world, dt) {
   const c = world?._company;
   if (!c) return;
   c.t += dt;
-  for (const row of c.men) {
-    const { fig, man, mark } = row;
-    /**
-     * ══ HE IS A BODY FIRST, AND A FIGURE SECOND ═══════════════════════════
-     *
-     * While the Force has hold of him — pushed, gripped, hurled, or lying
-     * there being annoyed about it — the solver owns where he is and which way
-     * up, and this loop's job is to copy that onto the drawn figure and get
-     * out of the way. Only once he is back on his feet does the walk and the
-     * parade pose resume.
-     *
-     * `up` is his own recovery blend, so the hand-off is not a pop: the rise
-     * is `Shovable`'s, the pose is `Parade`'s, and neither of them has to know
-     * about the other.
-     */
-    const sh = row.shove;
-    if (sh) {
-      sh.update(dt);
-      if (sh.state !== 'post') {
-        fig.root.position.copy(sh.at);
-        fig.root.quaternion.copy(sh.quaternion);
-        /* FLAT OUT OR GETTING UP — no parade pose over either. A man at
-         * attention while lying on his back is the uncanny version of this. */
-        if (sh.down) { row.merged?.update?.(c.t); continue; }
-        man.stance = 'ease';
-        poseParade(man, c.t + stagger(man));
-        row.merged?.update?.(c.t);
-        continue;
-      }
-    }
-    const local = Math.max(0, c.t - row.start) * row.pace;
-    /* HOW LONG HIS OWN WALK IS: the distance he has to cover at his own pace.
-     * A fixed duration would have the far men sprint and the near men crawl. */
-    const dist = Math.hypot(mark.x - row.from.x, mark.z - row.from.z);
-    /* HIS OWN SPEED, DERIVED FROM THE ONE NUMBER THAT IS A DESIGN DECISION.
-     * `MUSTER.formUp` is how long the whole thing takes and it is the only
-     * figure anybody should ever tune; the pace falls out of the longest walk
-     * on the deck so a company of four and a company of twenty-four both form
-     * up in about the same time. Measured before this was derived: a hard
-     * 3.1 m/s put the last man on his mark at fourteen seconds, which is a
-     * wait rather than an arrival. */
-    const span = Math.max(0.8, dist / MARCH_SPEED);
-    const p = Math.min(1, local / span);
-    if (p < 1) {
-      /* THE COLUMN BREAKS FOR ITS PLACES rather than sliding to them: the
-       * first two thirds of the walk is down the centreline toward the line's
-       * own z, and the last third is the man stepping out to his file. It is
-       * one extra ease and it is the difference between men and cursors. */
-      const along = smoothstepIn(Math.min(1, p / 0.66));
-      const across = smoothstepIn(Math.max(0, (p - 0.5) / 0.5));
-      fig.root.position.x = row.from.x + (mark.x - row.from.x) * across;
-      fig.root.position.z = row.from.z + (mark.z - row.from.z) * along;
-      /**
-       * AND HE MAKES A NOISE DOING IT. Twenty-four men crossed fifty metres of
-       * deck plate in total silence — `bootFall` existed, was measured, and had
-       * no caller in `src/` — with one coalesced stamp at the end. The stamp
-       * was the whole of "boot steps on deck grating for the troop line".
-       *
-       * `bootStride` integrates distance rather than counting frames, so a man
-       * who walks further takes more steps, which is the same fact the stagger
-       * is built on.
-       */
-      bootStride(world, row, fig.root.position, dt);
-      /**
-       * FACING WHERE HE IS GOING, THEN SQUARING TO THE FRONT AT THE END —
-       * and this is the first version of that sentence that does anything.
-       *
-       * `turnIn` was computed and then `fig.root.rotation.y` was hard-assigned
-       * to π on the very next line, so the ripple the comment describes has
-       * never been drawn; `turnIn` fed only `man.marching`, which no file in
-       * this project reads. A company that squares up in a ripple and one that
-       * is already square are two different rooms, and this was the second
-       * one with prose about the first.
-       *
-       * He faces his own travel until the last fifth of the walk, then swings
-       * to the front. `atan2` on the velocity he actually has, not on the
-       * vector to the mark, so a man stepping sideways into his file faces
-       * sideways while he does it.
-       */
-      const turnIn = smoothstepIn(Math.max(0, (p - 0.8) / 0.2));
-      const vx = (mark.x - row.from.x) * 0.75;
-      const vz = (mark.z - row.from.z) * (p < 0.66 ? 1 : 0.25);
-      const goingTo = (Math.abs(vx) + Math.abs(vz)) > 0.01 ? Math.atan2(vx, vz) : 0;
-      /* THE FRONT IS 0, NOT π. `man.facing` already carries the π that turns
-       * him to look aft at the player; a second one here is the pair that
-       * cancelled. See `callTheCompany`. */
-      fig.root.rotation.y = goingTo * (1 - turnIn);
-      man.stance = 'attention';
-    } else if (!row.halted) {
-      row.halted = true;
-      c.halted = (c.halted | 0) + 1;
-      /* THE COMPANY HALTING IS ONE SOUND, not eleven. `bootHalt` coalesces
-       * inside a 55 ms window — shorter than the 64 ms it takes the sound to
-       * cross from the line to the player, so it can never be heard as
-       * latency — and ten men come out +11.8 dB on one with the sub share
-       * going 0% → 91%. Eleven separate footfalls would be a stutter. */
-      if (c.halted === c.men.length) bootHalt(world, { x: 0, y: 0, z: DECK.line }, c.men.length);
-      fig.root.position.set(mark.x, 0, mark.z);
-      fig.root.rotation.y = 0;
-      /* HE IS STANDING STILL NOW, so he can be folded. See the note above. */
-      if (!row.merged) row.merged = mergeFigure(fig, { castShadow: true });
-    }
-    man.stance = c.stance;
-    poseParade(man, c.t + stagger(man));
-    row.merged?.update?.(c.t);
-  }
+  for (const row of c.men) stepRow(world, c, row, dt);
+  for (const row of c.crowd) stepRow(world, c, row, dt);
 }
 
-/* `smoothstep` from MathUtil takes an edge pair; this is the 0..1 form the
- * walk wants and it is one line rather than a second import shape. */
+/* `smoothstep` from MathUtil takes an edge pair; this is the 0..1 form. */
 function smoothstepIn(x) { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); }
+void smoothstepIn;
 
 /**
  * ══ AN ORDER, ON THE DECK ═════════════════════════════════════════════════
  *
- * "In the hangar you give a certain order (audibly, it'll be similar in
- *  carrying out to a stratagem), and that calls your troops."
- *
- * And then: "at ease, present arms, dismissed", multiple salutes, and singing.
- * These are the same verbs the fight has, which is the point of putting them
- * here — the deck is where the command interface is learned, in a place where
- * getting it wrong costs nothing.
- *
- * `ORDERS` here is deliberately NOT `Command.FORMATIONS`: a formation is a
- * shape a line fights in and these are things a company does standing still.
- * What they share is the door — one call, one id, one announcement — so a
- * player who learns "press this, they do that" learns the real one.
+ * The same verbs the fight has, which is the point of putting them here — the
+ * deck is where the command interface is learned, in a place where getting it
+ * wrong costs nothing. `ORDERS` here is deliberately NOT `Command.FORMATIONS`:
+ * a formation is a shape a line fights in and these are things a company does
+ * standing still.
  */
 export const DECK_ORDERS = {
-  /* `id` and `blurb` are what `OrderWheel` reads off a table — the same two
-   * fields `Command.FORMATIONS` carries — so this drops straight into the real
-   * wheel with no adapter between. */
   fallin: {
-    id: 'fallin', name: 'Fall in', blurb: 'Square the line up and hold at attention.',
-    bark: 'COMPANY — FALL IN', stance: 'attention',
+    id: 'fallin', name: 'Fall in', blurb: 'Call the company out of the crowd and onto the line.',
+    bark: 'COMPANY — FALL IN', stance: 'attention', muster: true,
   },
   ease: {
     id: 'ease', name: 'At ease', blurb: 'Feet apart, hands behind. They can breathe.',
@@ -1871,7 +2097,7 @@ export const DECK_ORDERS = {
     bark: 'COMPANY — SOUND OFF', sing: true,
   },
   dismissed: {
-    id: 'dismissed', name: 'Dismissed', blurb: 'They break off and stand easy where they are.',
+    id: 'dismissed', name: 'Dismissed', blurb: 'They break off and go back into the crowd.',
     bark: 'COMPANY — DISMISSED', dismiss: true,
   },
 };
@@ -1879,36 +2105,21 @@ export const DECK_ORDERS = {
 /**
  * ══ THE DECK'S OWN DIRECTOR, AND IT EXISTS TO OPEN THE REAL WHEEL ═════════
  *
- * `HUD.update` builds the order wheel if and only if `world.command` is set,
- * and `World` assigns that below its own early return for the hangar — so on
- * this deck `world.command` was `undefined` by construction and the wheel
- * could never open. `DECK_ORDERS` and `deckOrder` had zero callers anywhere in
- * the repository, which quietly killed four spec bullets and left two authored
- * poses in `Parade.js` — `atEase` and `presentArms`, a hundred lines between
- * them — as code no player could ever reach.
+ * `HUD.update` builds the order wheel if and only if `world.command` or
+ * `world.orders` is set. This is the smallest object the wheel and
+ * `main.orderKeys` actually read, and it is deliberately NOT a
+ * `CommandDirector`: that class carries a squad model, a refusal system,
+ * runners, morale and a fight to hang them on.
  *
- * This is the smallest object the wheel and `main.orderKeys` actually read. It
- * is deliberately NOT a `CommandDirector`: that class carries a squad model, a
- * refusal system, runners, morale and a fight to hang them on, and none of
- * those things exist in a room where nothing is shooting at anybody.
- *
- * ORDER_REACH IS HONOURED, and it is the point of putting the interface here.
- * `HANGAR-SPEC.md`'s own line: "walk away from the line and they cannot hear
- * you." It is the fight's own constant, imported from the fight's own file, so
- * the distance a player learns on the deck is the distance he has in a battle.
+ * ORDER_REACH IS HONOURED. `HANGAR-SPEC.md`'s own line: "walk away from the
+ * line and they cannot hear you." It is measured to the NEAREST man — so a
+ * company scattered through a crowd can still hear a fall-in from the middle
+ * of the deck, which is where a player who has just walked out of the lift
+ * is standing.
  */
 export function deckCommand(world) {
   return {
-    /**
-     * THE ONE FIELD THAT KEEPS THIS FROM BEING A CATASTROPHE.
-     *
-     * `main.bank()` is gated on `world.command` being truthy and nothing else,
-     * and its rule for a man who was deployed and is not on an extraction
-     * manifest is that he is dead. Setting `world.command` here to open the
-     * order wheel therefore put the entire permadeath roll one forgotten exit
-     * away from being struck off on every visit to the room whose whole
-     * purpose is looking after it. `bank` reads this and returns.
-     */
+    /** `main.bank()` reads this and refuses a deck. See its note. */
     deck: true,
     orders: DECK_ORDERS,
     formation: 'fallin',
@@ -1919,16 +2130,17 @@ export function deckCommand(world) {
     order(id) {
       const p = world.player;
       const c = world._company;
-      if (!c) return false;
-      /* FROM THE MAN, NOT FROM THE MIDDLE OF THE LINE. The nearest man is who
-       * has to hear it; a company thirty metres wide is not one listener. */
+      if (!c || !c.men.length) return false;
       let best = Infinity;
       for (const row of c.men) {
-        const d = Math.hypot((row.mark.x) - (p?.position?.x ?? 0),
-          (row.mark.z) - (p?.position?.z ?? 0));
+        const d = Math.hypot(row.pos.x - (p?.position?.x ?? 0), row.pos.z - (p?.position?.z ?? 0));
         if (d < best) best = d;
       }
-      if (p && best > ORDER_REACH) {
+      /* The fall-in carries across the deck — it is a shout and a PA call
+       * both — everything else is said to a formed line at the fight's own
+       * reach. */
+      const reach = id === 'fallin' ? ORDER_REACH * 3 : ORDER_REACH;
+      if (p && best > reach) {
         world.notify?.('TOO FAR', `${Math.round(best)} m — they cannot hear you from here`, 'alarm');
         return false;
       }
@@ -1938,67 +2150,51 @@ export function deckCommand(world) {
   };
 }
 
+/** Send every man of the company walking to `marks[i]`, staggered. */
+function sendCompany(c, marks) {
+  for (let k = 0; k < c.men.length; k++) {
+    const row = c.men[k];
+    row.mark = { x: marks[k].x, z: marks[k].z };
+    row.from.copy(row.pos);
+    row.halted = false;
+    row.start = c.t + (stagger(row.man) % 1) * MUSTER.spread;
+  }
+  c.halted = 0;
+}
+
 /** Give one. Returns false for an id nobody answers to. */
 export function deckOrder(world, id) {
   const O = DECK_ORDERS[id];
   const c = world?._company;
   if (!O || !c) return false;
-  if (O.stance) c.stance = O.stance;
-  if (O.salute) {
-    /* NOT ALL AT ONCE. A company saluting on one frame is a machine; each man
-     * comes up on his own beat off his own seed, inside about a third of a
-     * second, which is what a drilled company actually looks like. */
-    for (const row of c.men) salute(row.man, c.t + (stagger(row.man) % 1) * 0.34);
-  }
-  /**
-   * DISMISSED BREAKS THE LINE, which is the half of that order the first
-   * version did not do: `c.dismissed = c.t` was written and read by nothing,
-   * so "dismissed" was a caption over a company still standing rigidly at
-   * attention. Each man gets a loose spot of his own near where he stood and
-   * walks to it — the same walk `stepCompany` already drives, so this is two
-   * fields and no new machinery.
-   */
-  if (O.dismiss) {
-    c.dismissed = c.t;
-    c.stance = 'ease';
-    for (const row of c.men) {
-      const r = (stagger(row.man) % 1);
-      const r2 = ((stagger(row.man) * 3.7 + 0.11) % 1);
-      row.from = row.fig.root.position.clone();
-      row.mark = {
-        x: row.mark.x + (r - 0.5) * 14,
-        z: row.mark.z + (r2 - 0.5) * 12,
-      };
-      row.halted = false;
-      /* THE CLOCK RESTARTS BELOW, so his start offset is measured from zero. */
-      row.start = r * 0.9;
-      row.shove.retarget(row.mark);
-    }
-    c.halted = 0;
-    c.t = 0;
-  }
-  /* FALLING IN AFTER A DISMISSAL PUTS THEM BACK, which is the other half of
-   * the same thing: the marks were overwritten, so they have to be dealt
-   * again from the same pure function that dealt them. */
-  if (id === 'fallin' && c.dismissed) {
-    c.dismissed = 0;
+  if (O.muster) {
+    /* FALL IN: out of the crowd and onto the line, in the fight's own
+     * squad order. Given to a formed company it squares them up again. */
     const n = c.men.length;
     const squads = new Set(c.men.map((r) => r.squad)).size;
-    for (let k = 0; k < n; k++) {
-      const row = c.men[k];
-      row.mark = markFor(k, n, row.squad, squads);
-      row.from = row.fig.root.position.clone();
-      row.halted = false;
-      row.start = 0;
-      row.shove.retarget(row.mark);
-    }
-    c.halted = 0;
-    c.t = 0;
+    const order = [...new Set(c.men.map((r) => r.squad))].sort((a, b) => a - b);
+    const marks = c.men.map((row, k) => markFor(k, n, order.indexOf(row.squad), squads));
+    sendCompany(c, marks);
+    for (const row of c.men) { row.man.facing = Math.PI; row.man.arms = row.fig.rifle ? 'port' : 'sides'; }
+    c.mustered = true;
+    c.dismissed = 0;
+    c.stance = 'attention';
+  }
+  if (O.stance && !O.muster) c.stance = O.stance;
+  if (O.salute) {
+    /* NOT ALL AT ONCE. Each man comes up on his own beat off his own seed,
+     * inside about a third of a second. */
+    for (const row of c.men) salute(row.man, c.t + (stagger(row.man) % 1) * 0.34);
+  }
+  if (O.dismiss) {
+    /* BACK INTO THE CROWD, each to the spot he came from. */
+    c.dismissed = c.t;
+    c.mustered = false;
+    c.stance = 'attention';
+    sendCompany(c, c.men.map((r) => r.home));
+    for (const row of c.men) { row.man.facing = row.home.facing; }
   }
   if (O.sing) {
-    /* THEIR OWN VOICE AND NOT YOURS. `DeckAudio` synthesises it with no words
-     * in the source, the same rule the PA is held to, and it is picked off the
-     * roll's army so a Separatist company never sounds Republic. */
     c.singing = 1;
     companySing?.(world, c.army, c.men.length);
   }
@@ -2010,29 +2206,32 @@ export function deckOrder(world, id) {
  * exists: the order must not fall over if a voice ever fails to build. */
 let companySing = null;
 export function setCompanySing(fn) { companySing = fn; }
-/* `deckChant(world, army, men)` matches the call above verbatim. */
 setCompanySing(deckChant);
 
+/**
+ * Tear the company down: figures off the scene, bodies out of the world.
+ * `World.unload` disposes statics and knows nothing about these.
+ */
+export function dismissCompany(world) {
+  const c = world?._company;
+  if (!c) return;
+  for (const row of [...c.men, ...c.crowd]) {
+    try { row.shove?.dispose(); } catch {}
+    try { row.merged?.dispose?.(); } catch {}
+    row.fig?.root?.parent?.remove(row.fig.root);
+    try { row.fig?.rig?.dispose?.(); } catch {}
+  }
+  world._company = null;
+}
 
 /**
  * ══ WHICH WORLD IS OUTSIDE ════════════════════════════════════════════════
  *
  * The record is HANDED IN, never looked up, and that is the whole reason this
- * file does not import `Levels.js`. It did for one commit: `Levels.js` imports
- * `Hangar.js` for the level record, so the pair was a cycle — and a cycle in
- * ES modules does not throw on every path, it throws on the first import order
- * that reaches the wrong half first. It ran green for hours and then died with
- * `Cannot access 'HANGAR_LEVEL' before initialization` in one suite.
- *
- * Registering from this side instead was worse: the ground then exists only if
- * something has imported this file, and two suites that read `LEVELS` directly
- * went red saying a mode names a ground the game does not have.
- *
- * So the dependency points one way — `Levels.js` owns the roster and knows
- * about the deck; the deck knows about no levels at all — and `main.js`, which
- * already imports both, resolves the player's theatre through `theatreFor` (the
- * same resolver `deploy` uses, so a mode that owns its ground wins) and stashes
- * the RECORD on the world before the dressing runs.
+ * file does not import `Levels.js`: the pair was an import cycle for one
+ * commit and it died with `Cannot access 'HANGAR_LEVEL' before
+ * initialization` in one suite. `main.js` resolves the player's theatre and
+ * stashes the RECORD on the world before the dressing runs.
  */
 export function outsideLevel(world) {
   return world?._pickedLevel || world?.level || null;

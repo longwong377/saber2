@@ -329,7 +329,24 @@ export function ensure(plan, company) {
   let moved = false;
 
   if (slate.salt !== salt) {
-    slate = { ...blankSlate(plan.army), salt };
+    /**
+     * ══ A DRESSED RECRUIT SURVIVES THE RE-MINT ══════════════════════════
+     *
+     * The salt moving used to throw the whole slate away — "names the player
+     * gave men who never fielded are let go with the slate that held them".
+     * The player, who paints and names his recruits on the flight deck and
+     * on the Company tab, asked in as many words that "all the customization
+     * survives promotions etc.", and a run that banks (which moves the salt)
+     * is the ordinary thing that happens between dressing a man and fielding
+     * him. So the recruits the player has TOUCHED — any with a look on them —
+     * keep their designation and their look across the re-mint, provided the
+     * roll and the casualty list have not claimed the name (reconciled below
+     * like every other row); the blank ones are re-minted under the new salt
+     * as before. Deleting the store still reproduces the slate exactly,
+     * because a deleted store has no dressed men in it to keep.
+     */
+    const kept = slate.recruits.filter((r) => r.look && Object.keys(r.look).length);
+    slate = { ...blankSlate(plan.army), salt, recruits: kept };
     moved = true;
   }
 

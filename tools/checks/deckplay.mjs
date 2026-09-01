@@ -294,7 +294,11 @@ export async function run({ check, assert, THREE }) {
        * `dressDeck`, a function deleted two rewrites ago along with the
        * stanchions it named; the strobes it describes did not exist at all for
        * a while, and this comment was the only record that they should.) */
-      const start = new THREE.Vector3(9, world.terrain.height(9, DECK.start.z), DECK.start.z);
+      /* FROM THE THRESHOLD, NOT THE SPAWN. The spawn is inside the lift car
+       * now, behind a shut door in a wall, and a walk that starts there is a
+       * man pressing forward against a door for four seconds — measured,
+       * -0.1 m. `DECK.threshold` is where he first stands on open deck. */
+      const start = new THREE.Vector3(9, world.terrain.height(9, DECK.threshold), DECK.threshold);
       p.position.copy(start);
       p.velocity.set(0, 0, 0);
       p.body?.setTransform?.(new THREE.Vector3(start.x, start.y + 0.9, start.z), null);
@@ -317,7 +321,7 @@ export async function run({ check, assert, THREE }) {
        * boon, which is all `walk(idleInput())` presses. The 1.2 is the damp
        * ramp plus room to be wrong.
        */
-      const need = (DECK.lip - DECK.start.z) / 4.6 * 1.2;
+      const need = (DECK.lip - DECK.threshold) / 4.6 * 1.2;
       step(world, need - 4, walk(idleInput()));
       assert(p.position.z < DECK.lip + 1,
         `the player walked to z=${p.position.z.toFixed(1)} against a lip at ${DECK.lip} — he is off the ship`);

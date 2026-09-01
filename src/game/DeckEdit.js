@@ -131,12 +131,14 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { salute, turnTo, stagger, buildFigure, paradeMan, SALUTE, TURN } from './Parade.js';
 import { mergeFigure } from './MergedSkin.js';
 import { dress as companyDress } from './Company.js';
+import { dressRecruit } from './Muster.js';
 import { MARKS, markById, CommandDirector } from './Command.js';
 import { ARCHETYPES } from './Enemy.js';
 import {
   PAINTS, PAINT_SLOTS, KIT_FIELDS, paintById, wearableFor, bodyOptsFor,
 } from './Bodies.js';
 import { cuePaint, cueAttach, cueDetach, cueName } from './DeckAudio.js';
+import { liftKey } from './DeckLift.js';
 import { smoothstep } from '../engine/MathUtil.js';
 
 /* ── the numbers ──────────────────────────────────────────────────────── */
@@ -497,6 +499,10 @@ function faceThePlayer(world, row, fresh) {
  * has to find an empty patch of deck to deselect.
  */
 export function focusKey(world) {
+  /* THE LIFT FIRST. The same key at the lobby doors calls the car or steps
+   * into it; `liftKey` answers true only when it spent the press, so a man
+   * standing beside the doors can still be picked. */
+  if (liftKey(world)) return null;
   const st = editState(world);
   if (!st) return null;
   if (st.held) { releaseMan(world); return null; }
@@ -619,8 +625,18 @@ export function applyEdit(world, op, value, opts = {}) {
     patch = { [op]: value };
   }
 
-  /* THE ONE DOOR. Everything else in this file is what the answer looks like. */
-  const written = companyDress(army, key, patch);
+  /**
+   * THE ONE DOOR PER STORE. A man on the roll is dressed through
+   * `Company.dress`; a recruit who has never fielded is on the muster SLATE
+   * and is dressed through `Muster.dressRecruit` — the same two doors the
+   * Company tab uses. Before this the deck knew only the roll, so on a fresh
+   * save (every man a recruit) every wheel notch wrote nothing and said so to
+   * nobody: `dress` returns the unchanged roll for a designation it does not
+   * hold, `man` came back undefined, and this returned null.
+   */
+  const written = row.rec.recruit
+    ? { men: (dressRecruit(army, key, patch)?.recruits || []) }
+    : companyDress(army, key, patch);
   const man = (written?.men || []).find((m) => m.designation === key);
   if (!man) return null;
   const look = man.look || null;
@@ -947,6 +963,7 @@ function rebuildRow(world, row) {
   const man = paradeMan(fig.rig, { designation: row.rec.designation || row.rec.name });
   man.facing = row.man.facing;
   man.stance = row.man.stance;
+  man.arms = fig.rifle ? row.man.arms : 'sides';
   man.turn = row.man.turn;
   man.saluteAt = row.man.saluteAt;
   fig.root.position.copy(at);
@@ -957,6 +974,13 @@ function rebuildRow(world, row) {
   old.rig?.dispose?.();
   row.fig = fig;
   row.man = man;
+  /* THE GAIT GOES WITH THE RIG. `Hangar.callTheCompany` hangs a
+   * `BipedAnimator` on the row to walk him; it was built on the rig that has
+   * just been disposed, and a solver writing bones nobody draws is a man who
+   * stands still when he is next called. */
+  if (row.anim && fig.rig?.get?.('thighL')) {
+    row.anim = new (row.anim.constructor)(fig.rig, { scale: fig.rig.scale ?? 1 });
+  }
   /* HE IS STANDING STILL, so he is folded again on the same terms
    * `stepCompany` folds him on — 54 meshes into about 7. A man left unmerged
    * because the player changed his pack is 47 draw calls of quiet cost. */

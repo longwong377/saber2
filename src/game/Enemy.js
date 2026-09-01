@@ -20,7 +20,7 @@ import { dropSaber } from './Dropped.js';
 import { DuelBrain, Telegraph, FORMS, FORM_KEYS, TIER, ATTACKS, ATTACK_KEYS,
   DUEL_PHASES, guardQuat } from './Duel.js';
 import { buildRemote } from './Dojo.js';
-import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell, attachTrooperCape } from './Cloth.js';
 import { armKinetic, KINETIC_BODY } from './Impact.js';
 import { LAYER, Body, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
@@ -217,16 +217,82 @@ const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _eu = new THREE.Euler();
 const _m1 = new THREE.Matrix4();
 /**
- * How far the wrist has to pitch DOWN for the bore to land on the aim.
+ * ── THE HOLD: how a rifle sits in two hands ─────────────────────────────
  *
- * Not derivable from the -0.2 the weapon carries in `_build` alone, because
- * the hand bone has a rest orientation of its own that the basis below is
- * composed against. It is MEASURED: `tools/checks/characters.mjs` drives a
- * real trooper at a real target and asserts the angle between the bore and
- * the aim, so this number cannot drift without something saying so.
- * Shipped reading: 0.4 degrees, from 77.6.
+ * The player: "clone troopers don't appear to even be holding guns like they
+ * fire from their wrists."
+ *
+ * They were right, and the previous fix here (note #32, the 77.6° bore) had
+ * made it worse in one respect: it put the bore on the aim by ORIENTING THE
+ * HAND and letting the rifle hang off it, with the weapon seated 6 cm past
+ * the wrist and its whole 45 cm length in front of that. Both hands were on
+ * the line, the line was on the aim, and the stock ended five centimetres
+ * behind the trigger hand — nothing about the rifle touched the shoulder it
+ * was supposed to be braced into, and at twenty metres the eye reads exactly
+ * what the player wrote: an arm out and something firing off the end of it.
+ *
+ * So the order is reversed. The RIFLE is placed first — its stock in the
+ * pocket of the right shoulder, its bore on the aim, and it is a metre long
+ * now (see `buildBlaster`) — and each hand is then solved to the point on it
+ * that hand holds: the trigger hand to `grip`, the support hand to `foregrip`,
+ * both published by the weapon on `userData`. The torso blades toward the
+ * shot so the support arm can reach the fore-end, and the head drops toward
+ * the stock so it sits behind the sights. Reference:
+ * `assets/reference/units/clones/trooper holding … DC-15A blaster rifle.webp`,
+ * and the B1 plates beside it, which hold the E-5 the same way at a droid's
+ * proportions.
+ *
+ * WITHOUT A TARGET IN BAND the rifle is at LOW READY: stock under the arm,
+ * both hands still on it, bore forward, down and across the body. That is the
+ * other half of "fire from their wrists" — a walking trooper used to aim at
+ * nothing dead ahead, which is also a pose nobody holds. `aimBlend` runs
+ * between the two so the rifle comes up over a tenth of a second and goes
+ * down over a third, which is the difference between a soldier and a turret.
+ *
+ * Every number below is in metres on the reference figure and is scaled by
+ * the body; every one is measured by `tools/checks/rifle-hold.mjs` against
+ * the real rig, the real IK and the real weapon.
  */
-const WEAPON_PITCH = 0.26;
+/**
+ * THE GRIP FRAMES — where a hand's own axes lie in the weapon's frame.
+ *
+ * `buildHand` builds a palm whose fingers run up local +Y and curl toward
+ * local +Z, so +Z is the palm's face. A hand closed round a pistol grip has
+ * its metacarpals running forward along the bore with the palm against the
+ * grip's inboard face; a hand under the fore-end has its palm up against the
+ * furniture with the fingers running across the bore. Each is one fixed
+ * rotation between the two frames, and the weapon's local transform in the
+ * hand is the inverse of the trigger hand's — set once in `seatWeapon` — so
+ * orienting the hand to `Q · GRIP_R` puts the weapon at exactly `Q`.
+ */
+const GRIP_R = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+  new THREE.Vector3(0, 1, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(1, 0, 0)));
+const GRIP_L = new THREE.Quaternion().setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+  new THREE.Vector3(0, 0, -1), new THREE.Vector3(-1, 0, 0), new THREE.Vector3(0, 1, 0)));
+const GRIP_R_INV = GRIP_R.clone().invert();
+/** Where a closed palm's centre is, from the wrist, on the reference hand. */
+const PALM = new THREE.Vector3(0, 0.075, 0.035);
+/** The torso's yaw toward the shooting side at full aim, radians. */
+const BLADE = 0.36;
+/** How far the head drops toward the stock at full aim: roll toward it, and a nod. */
+const CHEEK_ROLL = 0.18, CHEEK_NOD = 0.08;
+
+/**
+ * Seat a blaster in the trigger hand so the hand's palm closes on its grip.
+ * The weapon's own `grip` says where that is on the weapon; `PALM` says where
+ * it is on the hand. Neither the pose nor the hold has to know the other.
+ */
+function seatWeapon(weapon, S) {
+  const grip = weapon.userData.grip || _w1.set(0, 0, 0);
+  weapon.quaternion.copy(GRIP_R_INV);
+  weapon.position.copy(PALM).multiplyScalar(S).sub(_w1.copy(grip).applyQuaternion(GRIP_R_INV));
+}
+const _w1 = new THREE.Vector3();
+/** The rifle pose's own scratch, kept off the shared `_v` set for the reason `_o1` is. */
+const _r = Array.from({ length: 22 }, () => new THREE.Vector3());
+const _rq = Array.from({ length: 9 }, () => new THREE.Quaternion());
+const _rm = new THREE.Matrix4();
+const _re = new THREE.Euler();
 const _box = new THREE.Box3(), _box2 = new THREE.Box3();
 /** The off-hand pose's own scratch — see _poseOffhand for why it needs it. */
 const _o1 = new THREE.Vector3(), _o2 = new THREE.Vector3(), _o3 = new THREE.Vector3();
@@ -3327,7 +3393,7 @@ export class Enemy {
     if (A.weapon) {
       this.weapon = buildBlaster(A.weapon);
       const hand = this.rig?.get('handR');
-      if (hand) { hand.obj.add(this.weapon); this.weapon.position.set(0, 0.06 * this.bodyScale, 0.02); this.weapon.rotation.x = -0.2; }
+      if (hand) { hand.obj.add(this.weapon); seatWeapon(this.weapon, this.bodyScale); }
     }
     if (A.saber) {
       /**
@@ -3494,6 +3560,33 @@ export class Enemy {
       this.shieldHp = 260;
       this.shieldMax = 260;
       this.deployTimer = 0;
+    }
+    /**
+     * THE COMMANDER'S HALF-CAPE IS CLOTH.
+     *
+     * The player: "are the capes for troopers even actual cloth like my
+     * capes? they look completely solid." They were two rigid plates on the
+     * chest bone. `buildTrooper` still builds those — they are the stand-in
+     * the cloth hands back past the cloth cut, exactly as the skirt's rigid
+     * lathes are — and publishes them with the shoulder they hang from as
+     * `built.cape`, which is the whole of what the garment needs to know.
+     *
+     * Keyed off the BUILT BODY and not the archetype: a cape is a kit field
+     * (`KIT_FIELDS.flesh.cape`), so the creator can put one on any trooper,
+     * and the body that was built is the only thing that knows whether it got
+     * one. It goes in `this.cloak` so the one garment path — `_stepGarments`,
+     * the `clothOn` cut, `dispose` — drives it with no new line anywhere.
+     *
+     * COST, because cloth-cost.mjs prices the column on who wears what: one
+     * archetype on the roster wears one (the Commander — `TROOPER_KITS
+     * .commander.cape`), plus any trooper the creator gives one, at 54
+     * particles and 251 links against the acolyte cape's 63 / 300, and it is
+     * gated off by the same `clothOn` distance every enemy garment is —
+     * 30 m at high, 46 at ultra, off at low — with the rigid plates coming
+     * back beyond it.
+     */
+    if (built.cape && this.rig && !this.cloak) {
+      this.cloak = attachTrooperCape(this.world.scene, this.rig, { scale: this.bodyScale, ...built.cape });
     }
     this._measurePlatform();
   }
@@ -6293,6 +6386,13 @@ export class Enemy {
     else this._rangedBrain(dt, ctx, dist);
   }
 
+  /**
+   * How near a target has to be before this body opens fire — and, because
+   * the two are one decision, before it raises its rifle from low ready. One
+   * function so the pose cannot drift from the brain (HANDOFF 2.4).
+   */
+  engageRange() { return (this.A.preferred?.[1] ?? 12) + 12; }
+
   _rangedBrain(dt, ctx, dist) {
     if (this.disarmed || this.blinded) return;
     const A = this.A;
@@ -6432,7 +6532,7 @@ export class Enemy {
      * clause above has stopped it moving and rescinding permission mid-charge
      * would leave the gun cycling silently forever. */
     if (A.plant && this.aimCharge <= 0 && (this.plantTimer || 0) < A.plant) return;
-    if (this.attackTimer <= 0 && dist < (A.preferred[1] + 12)) {
+    if (this.attackTimer <= 0 && dist < this.engageRange()) {
       /**
        * HE LOOKED, AND THE ANSWER WAS NO — AND THAT HAS TO COST HIM THE LOOK.
        *
@@ -8710,7 +8810,6 @@ export class Enemy {
     const chest = rig.worldPos('chest', _v1);
     const fwd = _v2.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     const right = _v3.set(fwd.z, 0, -fwd.x);
-    const S = this.A.scale;
 
     if (this.saber) {
       this._poseSaber(dt, ctx, chest, fwd, right);
@@ -8718,63 +8817,117 @@ export class Enemy {
     }
     if (this.disarmed || !this.weapon) {
       this.animator?.swingArms(dt, this.velocity.length(), 1);
+      this._stepGarments(dt);
       return;
     }
-    /**
-     * BOTH HANDS ON THE BORE, AND THE BORE ON THE AIM. Note #32: "the troopers
-     * (at least the clones but probably others too tbh) hold their weapons
-     * really awkwardly like it's really bad, kind of takes you out of it."
-     *
-     * Measured on a shipped clone trooper aiming at a target twenty metres
-     * dead ahead: **the barrel pointed 77.6 degrees away from the aim** — very
-     * nearly across the body — because the hand was oriented by putting its
-     * +Y up the aim line while the blaster's barrel is its own +Z. The two
-     * axes are perpendicular, so aiming one aimed nothing.
-     *
-     * `assets/reference/units/clones/trooper holding … DC-15A blaster
-     * rifle.webp` is what the pose should be, and it is three things: the bore
-     * level and along the line of sight; both hands ON that line, the trigger
-     * hand in close under the chin and the support hand well forward; and both
-     * elbows DOWN. What was here had the two hands on opposite sides of the
-     * centreline, which is why the weapon lay across the chest.
-     */
-    const aim = this.target ? aimAt(this.target, _v4).sub(chest).normalize()
-                            : _v4.copy(fwd);
-    /* The bore line: offset to the shooting side and just under the chin, so
-     * both hands hang off ONE line instead of straddling the body. */
-    const boreAt = (t, out) => out.copy(chest)
-      .addScaledVector(aim, t * S).addScaledVector(right, 0.125 * S).addScaledVector(UP, -0.045 * S);
-    const holdR = boreAt(0.25, _v5);
-    // elbow DOWN and back, which is where a trigger arm's is — it was out to
-    // the side at shoulder height, which is a pose for holding a tray
-    const poleR = _v6.copy(chest).addScaledVector(right, 0.55).addScaledVector(UP, -1.05).addScaledVector(aim, -0.35);
-    rig.solveIK('armR', 'foreR', holdR, poleR);
-    if (!this.A.custom) {
-      const holdL = boreAt(0.62, _v5);
-      const poleL = _v6.copy(chest).addScaledVector(right, -0.35).addScaledVector(UP, -1.1).addScaledVector(aim, 0.1);
-      rig.solveIK('armL', 'foreL', holdL, poleL);
+    /* The rifle reads its own frame off the rig's shoulders rather than off
+     * `right` above — which, note, is the character's LEFT: `(fwd.z, 0,
+     * -fwd.x)` for a +Z facing is +X, and the right arm hangs at -X. The old
+     * hold offset the bore by `right * 0.125` "to the shooting side" and put
+     * it on the wrong side of the body; nothing read that because the two
+     * hands were on one line either way. `_poseSaber` still takes it, and
+     * its hands are placed symmetrically about the guard so the label has no
+     * consequence there. */
+    this._poseRifle(dt, fwd);
+    this._stepGarments(dt);
+  }
+
+  /**
+   * THE RIFLE, AND THE TWO HANDS ON IT. See the note over GRIP_R for why the
+   * weapon is placed first and the hands second.
+   *
+   * Two frames are built every frame — the AIM (stock in the shoulder pocket,
+   * bore on the target) and LOW READY (stock under the arm, bore forward,
+   * down and across the chest) — and the rifle sits at `aimBlend` between
+   * them. Each hand is then IK'd to the point it holds and ORIENTED to the
+   * weapon's frame through its grip, so the bore lands on the aim exactly and
+   * the rifle's position is wherever the trigger hand could reach, which is
+   * the honest answer when an arm is short.
+   */
+  _poseRifle(dt, fwd) {
+    const rig = this.rig, W = this.weapon, S = this.bodyScale ?? this.A.scale ?? 1;
+    const ud = W.userData;
+    const stock = ud.stock || _r[0].set(0, 0, -0.2);
+    const grip = ud.grip || _r[1].set(0, -0.06, 0);
+    const foregrip = ud.foregrip || _r[2].set(0, -0.05, 0.2);
+
+    /* ── up or down. In band is the brain's own rule (`engageRange`), and a
+     *    body mid-burst or mid-telegraph is aiming whatever the range. */
+    const at = this.target ? aimAt(this.target, _r[3]) : null;
+    const dist = at ? at.distanceTo(this.position) : Infinity;
+    const want = !!at && !this.target.dead
+      && (dist < this.engageRange() || this.burstLeft > 0 || this.aimCharge > 0 || this.muzzleFlash > 0);
+    if (this.aimBlend === undefined) this.aimBlend = want ? 1 : 0;
+    this.aimBlend = damp(this.aimBlend, want ? 1 : 0, want ? 14 : 5, dt);
+    const k = this.aimBlend;
+
+    /* ── the torso blades toward the shot, so the support arm can reach the
+     *    fore-end of a metre-long rifle: yaw the ribcage about its own axis,
+     *    take the same yaw straight back out at the neck so the head stays on
+     *    the aim. The gait writes both bones every frame, so this is a
+     *    per-frame offset and never accumulates. */
+    const chestB = rig.get('chest'), neckB = rig.get('neck');
+    const custom = !!this.A.custom;
+    if (chestB && !custom && k > 1e-3) {
+      _rq[0].setFromAxisAngle(UP, -BLADE * k);
+      chestB.obj.quaternion.multiply(_rq[0]);
+      if (neckB) neckB.obj.quaternion.premultiply(_rq[1].copy(_rq[0]).invert());
     }
-    /**
-     * AND THE WRIST PUTS THE BARREL ON THE LINE.
-     *
-     * A basis rather than a single-axis aim, because a weapon needs both a
-     * direction and a ROLL: `aimY` fixes one axis and leaves the other two to
-     * whatever its own convention picks, which is how a rifle ends up on its
-     * side. +Z down the aim, +Y up, +X across — and the whole thing pitched by
-     * the 0.2 rad the weapon carries in its own local rotation (see where it
-     * is parented in `_build`), so the BORE lands on the aim rather than the
-     * hand.
-     */
-    const hand = rig.get('handR');
-    if (hand && hand.obj.parent) {
-      const f = _v5.copy(aim).applyAxisAngle(right, WEAPON_PITCH).normalize();
-      const rr = _v6.crossVectors(UP, f).normalize();
-      if (rr.lengthSq() < 1e-6) rr.copy(right);
-      const uu = _v7.crossVectors(f, rr).normalize();
-      _m1.makeBasis(rr, uu, f);
-      _q1.setFromRotationMatrix(_m1);
-      hand.obj.parent.getWorldQuaternion(_q2);
-      hand.obj.quaternion.copy(_q2.invert()).multiply(_q1);
+    const shR = rig.freshPos('armR', _r[4]), shL = rig.freshPos('armL', _r[5]);
+    if (chestB) chestB.obj.getWorldQuaternion(_rq[2]); else _rq[2].identity();
+    const cu = _r[6].set(0, 1, 0).applyQuaternion(_rq[2]);
+    // toward the LEFT shoulder — read off the rig, not off a facing, so a
+    // body whose shoulders the gait has rolled still gets its own frame
+    const across = _r[7].subVectors(shL, shR).normalize();
+    const cf = _r[8].crossVectors(across, cu).normalize();
+
+    /* ── the aim frame: the stock's butt in the shoulder pocket — inboard of
+     *    the joint, a little above it, a little ahead — and the bore from
+     *    there to the target. */
+    const pocket = _r[9].copy(shR).addScaledVector(across, 0.06 * S).addScaledVector(cu, 0.05 * S).addScaledVector(cf, 0.02 * S);
+    const dAim = at ? _r[10].subVectors(at, pocket).normalize() : _r[10].copy(fwd);
+    /* ── low ready: butt under the arm, bore forward, down and across. */
+    const rest = _r[11].copy(shR).addScaledVector(across, 0.04 * S).addScaledVector(cu, -0.11 * S).addScaledVector(cf, 0.05 * S);
+    const dRest = _r[12].copy(cf).multiplyScalar(0.70).addScaledVector(across, 0.45).addScaledVector(cu, -0.55).normalize();
+    const frame = (d, out) => {
+      const u = _r[13].copy(cu).addScaledVector(d, -d.dot(cu)).normalize();
+      const x = _r[14].crossVectors(u, d).normalize();
+      _rm.makeBasis(x, u, d);
+      return out.setFromRotationMatrix(_rm);
+    };
+    frame(dAim, _rq[3]); frame(dRest, _rq[4]);
+    const Q = _rq[5].copy(_rq[4]).slerp(_rq[3], k);
+    const anchor = _r[15].copy(rest).lerp(pocket, k);
+    const origin = _r[16].copy(anchor).sub(_r[17].copy(stock).applyQuaternion(Q));
+
+    /* ── the trigger hand: elbow down, back and out, the way a rifleman's is. */
+    const gripW = _r[17].copy(grip).applyQuaternion(Q).add(origin);
+    const handQ = _rq[6].copy(Q).multiply(GRIP_R);
+    const wristR = _r[18].copy(gripW).sub(_r[19].copy(PALM).multiplyScalar(S).applyQuaternion(handQ));
+    const poleR = _r[19].copy(shR).addScaledVector(cu, -0.9).addScaledVector(across, -0.35).addScaledVector(cf, -0.15);
+    rig.solveIK('armR', 'foreR', wristR, poleR);
+    rig.orientBoneWorld('handR', handQ);
+
+    /* ── the support hand goes where the rifle actually IS, read back off the
+     *    weapon the trigger hand is now holding — not where it was planned to
+     *    be — so a short arm leaves both hands on one rifle rather than one
+     *    hand on it and the other closed on air. */
+    if (!custom) {
+      W.updateWorldMatrix(true, false);
+      const foreW = _r[20].copy(foregrip).applyMatrix4(W.matrixWorld);
+      const handLQ = _rq[7].copy(Q).multiply(GRIP_L);
+      const wristL = _r[21].copy(foreW).sub(_r[0].copy(PALM).multiplyScalar(S).applyQuaternion(handLQ));
+      const poleL = _r[1].copy(shL).addScaledVector(cu, -0.9).addScaledVector(across, 0.25).addScaledVector(cf, 0.05);
+      rig.solveIK('armL', 'foreL', wristL, poleL);
+      rig.orientBoneWorld('handL', handLQ);
+    }
+
+    /* ── the cheek weld: the head drops toward the stock and nods onto the
+     *    sights. A roll about the head's own forward axis and a nod about its
+     *    across axis, both scaled by how far the rifle is up. */
+    const headB = rig.get('head');
+    if (headB && !custom && k > 1e-3) {
+      headB.obj.quaternion.multiply(_rq[8].setFromEuler(_re.set(CHEEK_NOD * k, 0, CHEEK_ROLL * k, 'XYZ')));
     }
     rig.updateMatrices();
   }
@@ -8826,6 +8979,20 @@ export class Enemy {
     else rig.solveIK('armL', 'foreL', _v2.copy(this.saberHand).addScaledVector(right, -0.06 * S).addScaledVector(UP, -0.06 * S), poleL);
     rig.updateMatrices();
 
+    this._stepGarments(dt);
+  }
+
+  /**
+   * THE GARMENTS, stepped once a frame from whichever arm pose ran.
+   *
+   * This lived inside `_poseSaber`, which was right while the only bodies
+   * wearing cloth were duellists. A commander's half-cape is cloth now (see
+   * `attachTrooperCape`) and a commander holds a rifle, so the step has to be
+   * reachable from the rifle pose and from a disarmed body's arm swing too —
+   * one block, three callers, and the `clothOn` gate that prices the whole
+   * cloth column (tools/checks/cloth-cost.mjs) in exactly one place.
+   */
+  _stepGarments(dt) {
     // close duellists get simulated robes; distant ones do not need them
     if (this.cloak) {
       if (!this.clothOn) {

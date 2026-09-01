@@ -425,36 +425,74 @@ export class Paint {
  *   ring and no hub anywhere in it, so the two cannot be confused at any
  *   distance or in any light, and cannot be confused by a check either.
  */
+/**
+ * ══ THE TWO CRESTS, AND WHY THE OLD ONE READ AS THE EMPIRE'S ══════════════
+ *
+ * The player: "you have the logo for the empire on the ground and on the wall
+ * remove it because it doesn't make sense it's the wheel/spoke symbol, maybe
+ * make one logo for the republic when you're them and another for the
+ * separatists when you're them".
+ *
+ * He was right about the read. The Republic's crest is eight spokes round a
+ * hub and NOTHING ROUND THEM — the spokes flare outward and end in rounded
+ * tips, open to the edge. The Empire's is six spokes INSIDE A RING. The old
+ * mark drew a heavy outer ring round eight straight spokes, which is the one
+ * feature that turns the Republic's roundel into the Imperial cog, and a
+ * player who knows the two saw the wrong war. So:
+ *
+ *   REPUBLIC — a hub disc and eight spokes that WIDEN from the hub to the
+ *   rim, each capped with a round tip, no ring. The flare is three stacked
+ *   bars of increasing width, which at any distance a deck mark is read from
+ *   is a wedge; the tip disc is what makes the ends read as rounded.
+ *
+ *   SEPARATIST — the Confederacy's six-armed hex: six broad arms radiating
+ *   from a hexagonal centre, each a wedge widening outward with a flat outer
+ *   edge, and a thin hexagonal ring inside them. No round hub and nothing
+ *   eight-fold anywhere in it.
+ *
+ * Both are flat part lists — `rect`, `disc`, `ring` — so `Paint.insignia`
+ * lays them on the deck and `insigniaPanel` stands them on the bulkhead from
+ * the same six points.
+ */
 function insigniaParts(faction, size, yaw = 0) {
   const R = size * 0.5;
   const raw = [];
+  const rot = (u, v) => ({
+    u: u * Math.cos(yaw) - v * Math.sin(yaw),
+    v: u * Math.sin(yaw) + v * Math.cos(yaw),
+  });
   if (faction === 'separatist') {
-    /* Six sides, laid tangent to a circle of radius R. */
+    /* The hexagonal centre: six short sides tangent to a circle. */
     for (let i = 0; i < 6; i++) {
       const a = yaw + (i / 6) * Math.PI * 2;
-      raw.push({ t: 'rect', u: Math.cos(a) * R * 0.866, v: Math.sin(a) * R * 0.866,
-        w: size * 0.075, h: R * 1.02, a: a });
+      raw.push({ t: 'rect', u: Math.cos(a) * R * 0.30, v: Math.sin(a) * R * 0.30,
+        w: size * 0.040, h: R * 0.36, a: a });
     }
-    /* The chevron driven down through it: two bars meeting at a point below
-     * the centre and splaying up and out. */
-    for (const s of [-1, 1]) {
-      const lu = s * R * 0.30, lv = -R * 0.10;
-      raw.push({ t: 'rect',
-        u: lu * Math.cos(yaw) - lv * Math.sin(yaw),
-        v: lu * Math.sin(yaw) + lv * Math.cos(yaw),
-        w: size * 0.085, h: R * 0.86, a: yaw - s * 0.62 });
+    /* Six arms, each three bars wide-to-wider, from the hex to the rim. */
+    for (let i = 0; i < 6; i++) {
+      const a = yaw + (i / 6) * Math.PI * 2 + Math.PI / 6;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      for (const [d, w, h] of [[0.48, 0.10, 0.22], [0.66, 0.15, 0.22], [0.84, 0.21, 0.22]]) {
+        raw.push({ t: 'rect', u: ca * R * d, v: sa * R * d,
+          w: size * w, h: R * h, a: a + Math.PI / 2 });
+      }
     }
     return raw;
   }
-  /* The cog. */
-  raw.push({ t: 'ring', u: 0, v: 0, r: R * 0.94, w: size * 0.085, a: 0 });
-  raw.push({ t: 'disc', u: 0, v: 0, r: R * 0.24, a: 0 });
+  /* The roundel: a hub and eight flared spokes, no ring. */
+  raw.push({ t: 'disc', u: 0, v: 0, r: R * 0.19, a: 0 });
   for (let i = 0; i < 8; i++) {
     const a = yaw + (i / 8) * Math.PI * 2;
-    const d = R * 0.60;
-    raw.push({ t: 'rect', u: Math.cos(a) * d, v: Math.sin(a) * d,
-      w: size * 0.055, h: R * 0.62, a: a + Math.PI / 2 });
+    const ca = Math.cos(a), sa = Math.sin(a);
+    for (const [d, w, h] of [[0.36, 0.045, 0.28], [0.58, 0.075, 0.24], [0.76, 0.105, 0.18]]) {
+      raw.push({ t: 'rect', u: ca * R * d, v: sa * R * d,
+        w: size * w, h: R * h, a: a + Math.PI / 2 });
+    }
+    raw.push({ t: 'disc', u: ca * R * 0.86, v: sa * R * 0.86, r: size * 0.062, a: 0 });
   }
+  /* `rot` is what `yaw` already did to every part above through `a`; the
+   * helper exists so a future part placed off-axis spins with the mark. */
+  void rot;
   return raw;
 }
 
@@ -832,11 +870,12 @@ export function shuttlePad(kit, x, z, opts = {}) {
   /* The pad: a low disc with a lit kerb, standing 1.2 m proud of the deck.
    * A pad is deck furniture and it is the same on both ships; what stands on
    * it is not. */
-  const pad = new THREE.CylinderGeometry(r, r * 1.04, 1.2, 16);
-  kit.geoAt(M.dark, pad, x, 0.6, z);
+  const ph = opts.height ?? 1.2;
+  const pad = new THREE.CylinderGeometry(r, r * 1.04, ph, 16);
+  kit.geoAt(M.dark, pad, x, ph / 2, z);
   const kerb = new THREE.TorusGeometry(r * 0.99, 0.22, 6, 24);
   kerb.rotateX(-Math.PI / 2);
-  kit.geoAt(M.glowDim, kerb, x, 1.2, z);
+  kit.geoAt(M.glowDim, kerb, x, ph, z);
 
   /**
    * ══ AND THIS IS THE BIGGEST SINGLE CRAFT IN THE ROOM ══════════════════
@@ -856,6 +895,10 @@ export function shuttlePad(kit, x, z, opts = {}) {
    * 90 m the two are told apart by their outline alone, which is the only
    * thing that survives the haze.
    */
+  /* A BARE PAD, for the one the real transport stands on: `DeckFlight` parks
+   * the army's own hull there, and a silhouette under a real ship is two
+   * ships in one place. */
+  if (opts.ship === false) return kit;
   if (faction === 'republic') {
     /* A `CylinderGeometry` laid along X and then spun by `yaw` points its nose
      * down (cos yaw, −sin yaw); across the hull is (sin yaw, cos yaw). Named,
@@ -1122,9 +1165,20 @@ export function overheadRig(kit, x, z, opts = {}) {
     kit.slabAt(M.status, x + Math.cos(a) * r * 1.3, top - drop + 1.2, z + Math.sin(a) * r * 1.3,
       0.5, 0.5, 0.5);
   }
-  /* And the shaft continuing up out of frame — no cap, ever. */
-  const up = new THREE.CylinderGeometry(r * 0.7, r * 0.7, 40, 10);
-  kit.geoAt(M.dark, up, x, top + 18, z);
+  /* The shaft above the fixture. `capped` ends it at `top`, which is the
+   * ceiling plate now — the version that ran 40 m up "out of frame" was
+   * written for a room with no top, and a shaft through a ceiling is a
+   * fixture that was not built for the room it hangs in. Uncapped is kept
+   * for a caller with no plate over it. */
+  if (opts.capped) {
+    const up = new THREE.CylinderGeometry(r * 0.7, r * 0.7, Math.max(0.5, top - (top - drop) - drop * 0.5), 10);
+    kit.geoAt(M.dark, up, x, top - drop * 0.25, z);
+    const plate = new THREE.CylinderGeometry(r * 1.5, r * 1.5, 0.8, 12);
+    kit.geoAt(M.hull, plate, x, top - 0.4, z);
+  } else {
+    const up = new THREE.CylinderGeometry(r * 0.7, r * 0.7, 40, 10);
+    kit.geoAt(M.dark, up, x, top + 18, z);
+  }
   return kit;
 }
 

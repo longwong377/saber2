@@ -459,8 +459,26 @@ export class Rig {
     const b = this.bones.get(name);
     if (!b || !b.obj.parent) return;
     aimY(worldDir, ref, _q1);
+    this.orientBoneWorld(name, _q1);
+  }
+
+  /**
+   * Set a bone's local rotation so its WORLD rotation is `worldQuat`.
+   *
+   * The same three lines `aimBoneWorld` ends with, for a caller that already
+   * has a whole frame rather than one axis. A rifle needs a frame: its bore is
+   * one axis and its ROLL is the other two, and the hand that holds it is
+   * placed by composing the weapon's world frame with the fixed grip the
+   * weapon sits in — see `Enemy._poseArms`. Nothing here is new behaviour; it
+   * is the seam `Enemy` used to reach round with `hand.obj.parent
+   * .getWorldQuaternion(...)` inline, which is the rule HANDOFF 2.4 says to
+   * call rather than restate.
+   */
+  orientBoneWorld(name, worldQuat) {
+    const b = this.bones.get(name);
+    if (!b || !b.obj.parent) return;
     b.obj.parent.getWorldQuaternion(_q2);
-    b.obj.quaternion.copy(_q2.invert()).multiply(_q1);
+    b.obj.quaternion.copy(_q2.invert()).multiply(worldQuat);
   }
 
   /**

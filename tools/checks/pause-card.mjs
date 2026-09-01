@@ -464,19 +464,40 @@ export async function run({ check, assert }) {
     assert(/overflow-y:\s*auto/.test(body), `#pause .pause-wrap does not scroll: ${body}`);
     /* The padding is not decoration: `overflow-y:auto` makes the other axis a
      * scrollport too, and every button on this card carries a 5 px stamp and
-     * lifts 2 px more under the pointer. And the width has to grow by exactly
-     * that padding, because `box-sizing:border-box` would otherwise take it
-     * out of the buttons. */
-    const pad = /padding:\s*0\s+(\d+)px/.exec(body);
-    const wide = /width:\s*min\((\d+)px/.exec(body);
-    assert(pad && wide, `#pause .pause-wrap needs a padding and a width: ${body}`);
+     * lifts 2 px more under the pointer. And it must not come out of the
+     * buttons, which `box-sizing:border-box` would do unless the width grows
+     * by the same amount.
+     *
+     * WHERE IT IS DECLARED MOVED, and this reads the cascade rather than one
+     * rule. The padding used to be added here, on `#pause .pause-wrap`, with
+     * the width widened to match — this assertion was `width == base + 2·pad`
+     * against the shared `.pause-wrap,.death-wrap` width. When the wall
+     * behind every overlay went (tools/checks/backdrop.mjs) each wrap became
+     * a panel and the padding went with it onto the shared card rule, so the
+     * #pause rule no longer needs a width or a padding of its own. What is
+     * held is the property, not the spelling: the horizontal padding in
+     * effect on the pause card, wherever it is written, is at least the 5 px
+     * stamp, and the content width the buttons get is the death card's. */
+    const shared = /\.draft-wrap,\.pause-wrap,\.death-wrap\{([^}]*)\}/.exec(css)?.[1] ?? '';
     const base = /\.pause-wrap,\.death-wrap\{width:min\((\d+)px/.exec(css);
     assert(base, 'the shared pause/death width rule is gone');
-    assert(Number(wide[1]) === Number(base[1]) + 2 * Number(pad[1]),
-      `the card is ${wide[1]} px wide with ${pad[1]} px of padding against a content width of `
-      + `${base[1]} — the padding is coming out of the buttons`);
+    /* The horizontal value of a `padding:` shorthand — the second when there
+     * are two or more values, the only one otherwise. */
+    const padOf = (b) => {
+      const m = /(?:^|;)\s*padding:\s*(\d+)px(?:\s+(\d+)px)?/.exec(b);
+      return m ? Number(m[2] ?? m[1]) : null;
+    };
+    const sharedPad = padOf(shared);
+    assert(sharedPad !== null, 'the shared card rule declares no padding — the stamps have no room under overflow:auto');
+    const pad = padOf(body) ?? sharedPad;
+    const ownWide = /width:\s*min\((\d+)px/.exec(body);
+    const wide = ownWide ? Number(ownWide[1]) : Number(base[1]);
+    assert(pad >= 5, `${pad} px of horizontal padding on the pause card — a stamped button's 5 px shadow is clipped`);
+    assert(wide - 2 * pad === Number(base[1]) - 2 * sharedPad,
+      `the pause card is ${wide} px wide with ${pad} px of padding — ${wide - 2 * pad} px for the buttons against `
+      + `the death card's ${Number(base[1]) - 2 * sharedPad} — the padding is coming out of the buttons`);
     return `max-height ${/max-height:\s*(\d+vh)/.exec(body)[1]}, scrolls, `
-      + `${wide[1]} px wide for ${base[1]} px of content`;
+      + `${wide} px wide with ${pad} px of padding: ${wide - 2 * pad} px for the buttons`;
   });
 
   /* ══════════════════════════════════════════════════════════════════

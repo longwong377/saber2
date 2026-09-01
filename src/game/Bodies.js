@@ -6452,6 +6452,8 @@ export function buildTrooper(opts = {}) {
   const G = K.frame ?? 1;
   const g = (v) => v * G;
   const rig = new Rig(humanoidSkeleton(S), { scale: S });
+  /** The half-cape's rigid stand-in and the shoulder it hangs from, or null — see K.cape below. */
+  let cape = null;
   const plate = armorMat(opts.color ?? 0xe8e9ec, 0.08, 0.34, 3.0);
   // The undersuit was a bare MeshStandardMaterial: flat black vinyl over the
   // entire figure, and it is what you see at every joint.
@@ -6693,13 +6695,25 @@ export function buildTrooper(opts = {}) {
          * view a line of infantry is met in — it was a 3 cm edge, and the ARC
          * and the Commander stayed 0.916 alike. A cape is read from the side,
          * so its depth is the dimension that has to be real. */
+        /**
+         * …AND IT IS THE STAND-IN NOW, NOT THE CAPE. The player: "are the
+         * capes for troopers even actual cloth like my capes? they look
+         * completely solid." These two plates are what a body at range wears
+         * and what a body inside the cloth cut has hidden under a simulated
+         * sheet — `attachTrooperCape` (Cloth.js) takes them over exactly as
+         * `attachSkirt` takes the robe's lathes, and hands them back past the
+         * cut. So the plates are still built (the flank silhouette above is
+         * still theirs) and are PUBLISHED, with the shoulder they hang from,
+         * as `cape` on the built body: `{ sx, rigid }`. `sx` is the sign the
+         * pauldron side resolves to in this frame, which is the one honest
+         * statement of which shoulder the cape is on. */
         const kc = new Kit();
         const sx = K.pauldron === 'R' ? 1 : -1;
         kc.add(gear, plateGeo(0.300 * s, 0.620 * s, 0.230 * s, 0.030 * s, 2),
           [sx * 0.060 * s, -0.180 * s, -0.200 * s], [0.30, sx * 0.16, sx * 0.05]);
         kc.add(gear, plateGeo(0.250 * s, 0.150 * s, 0.150 * s, 0.024 * s, 1),
           [sx * 0.104 * s, 0.140 * s, -0.116 * s], [0.16, sx * 0.28, sx * -0.22]);
-        markSilhouette(kc.bake(chestB.obj));
+        cape = { sx, rigid: markSilhouette(kc.bake(chestB.obj)) };
       }
 
       /* ── the pack ──
@@ -7022,7 +7036,9 @@ export function buildTrooper(opts = {}) {
       }
     },
   });
-  return { rig, palette: { plate, under, accent, visor, gear, scorch } };
+  /* `cape` is null on every trooper that does not wear one, so a caller can
+   * test it the way `Enemy._build` tests `robeSkirt`: no field, no cloth. */
+  return { rig, palette: { plate, under, accent, visor, gear, scorch }, cape };
 }
 
 /* ── sith acolyte (saber duelist) ────────────────────────────────────── */
@@ -8870,10 +8886,63 @@ export function buildBodyguard(opts = {}) {
 /* ── weapons ─────────────────────────────────────────────────────────── */
 
 /**
- * The three blasters. They are held a metre from a first-person camera, so
- * they get a receiver, a magazine, a stock, sights and cooling ribs rather
- * than the four boxes they used to be — and each one bakes down to two meshes
- * so an arena full of troopers does not cost a hundred draw calls in guns.
+ * WHERE A RIFLE IS HELD, in the weapon's own frame.
+ *
+ * Every blaster below publishes the same four points on `userData`, in metres,
+ * with +Z down the bore and +Y up: `stock` (the butt, which goes into the
+ * shoulder), `grip` (where the trigger hand's palm closes), `foregrip` (where
+ * the support hand's palm closes) and `muzzle` (the barrel's end). `length` is
+ * `muzzle.z - stock.z`, and `tools/checks/rifle-hold.mjs` measures the baked
+ * geometry against both ends so neither can drift from the mesh.
+ *
+ * The POSE is derived from these and not from the hand: `Enemy._poseArms` puts
+ * the stock at the shoulder and the bore on the aim, and then solves each arm
+ * to its own point. That is the reverse of what it used to do — hand first,
+ * rifle hanging off the hand — which is what the player was seeing: "clone
+ * troopers don't appear to even be holding guns like they fire from their
+ * wrists". A 45 cm rifle whose stock ended 5 cm behind the hand is, from
+ * twenty metres, a dark stub on the end of an arm.
+ */
+function holdPoints(g, o) {
+  g.userData.stock = new THREE.Vector3().fromArray(o.stock);
+  g.userData.grip = new THREE.Vector3().fromArray(o.grip);
+  g.userData.foregrip = new THREE.Vector3().fromArray(o.foregrip);
+  g.userData.muzzle = new THREE.Vector3().fromArray(o.muzzle);
+  g.userData.length = o.muzzle[2] - o.stock[2];
+  return g;
+}
+
+/**
+ * The blasters, cut to the reference lengths.
+ *
+ * They are held a metre from a first-person camera, so they get a receiver, a
+ * magazine, a stock, sights and cooling ribs rather than the four boxes they
+ * used to be — and each one bakes down to two silhouette meshes (receiver and
+ * furniture) plus the muzzle glow, so an arena full of troopers does not cost
+ * a hundred draw calls in guns.
+ *
+ * THE LENGTHS ARE THE REFERENCE'S, NOT A GUESS. The old `dc15` was 45 cm nose
+ * to tail, the `e5` 34 cm. `assets/reference/units/clones/trooper holding …
+ * DC-15A blaster rifle.webp` has the rifle running from the trooper's shoulder
+ * to well past his outstretched support hand — a DC-15A is 1.05 m, the DC-15S
+ * carbine a clone carries in close about 0.70, a B1's E-5 about 0.75 and the
+ * Z-6 style repeater about 1.2. Half-length rifles are most of why a trooper
+ * read as firing from his wrist: with the stock two hand-widths behind the
+ * grip, nothing about the weapon reached the body it was supposed to be
+ * braced against.
+ *
+ *   kind     length   stock z   grip z   foregrip z   muzzle z
+ *   dc15     1.05     -0.30     -0.03     +0.26        +0.75      DC-15A rifle
+ *   dc15s    0.70     -0.20     -0.03     +0.20        +0.50      DC-15S carbine
+ *   e5       0.75     -0.22     -0.04     +0.21        +0.53      E-5 carbine
+ *   sonic    0.62     -0.24     -0.065    +0.11        +0.38      sonic blaster (a horn)
+ *   heavy    1.20     -0.32     -0.07     +0.36        +0.88      rotary repeater
+ *
+ * The barrel runs all the way to `muzzle`, and the glow is a short RING round
+ * its end rather than the last four centimetres of barrel — the glow is not a
+ * silhouette part and is culled at thirty metres, and a barrel that stopped
+ * short of the muzzle would have lost its end at exactly the range a rifle's
+ * length is read at.
  */
 export function buildBlaster(kind = 'e5') {
   const g = new THREE.Group();
@@ -8883,32 +8952,67 @@ export function buildBlaster(kind = 'e5') {
   const k = new Kit();
   const rib = (n, x, y, z0, dz, w, h) => k.row(n, (i, t) =>
     k.add(dark, plateGeo(w, h, 0.008, 0.002, 1), [x, y, z0 + t * dz]));
+  /** A barrel from z0 to z1 at height y, its glow ring on the last 3 cm. */
+  const barrel = (r0, r1, y, z0, z1, seg = 8) => {
+    k.add(body, new THREE.CylinderGeometry(r1, r0, z1 - z0, seg), [0, y, (z0 + z1) / 2], [1.5708, 0, 0]);
+    k.add(glow, new THREE.CylinderGeometry(r1 * 1.25, r1 * 1.35, 0.03, seg), [0, y, z1 - 0.015], [1.5708, 0, 0]);
+  };
 
   if (kind === 'e5') {
-    // B1 carbine: slab receiver, straight magazine, skeleton stock
-    k.add(body, plateGeo(0.040, 0.056, 0.30, 0.008, 1), [0, 0, 0.06]);
-    k.add(body, plateGeo(0.030, 0.030, 0.34, 0.006, 1), [0, 0.030, 0.16]);
-    k.add(body, new THREE.CylinderGeometry(0.011, 0.013, 0.26, 8), [0, 0.026, 0.20], [1.5708, 0, 0]);
-    rib(4, 0, 0.026, 0.10, 0.10, 0.030, 0.030);
+    // B1 carbine: slab receiver, wide shroud, skeleton stock. 0.75 m.
+    k.add(body, plateGeo(0.040, 0.056, 0.30, 0.008, 1), [0, 0, 0.04]);
+    k.add(body, plateGeo(0.030, 0.030, 0.30, 0.006, 1), [0, 0.030, 0.20]);
+    k.add(body, new THREE.CylinderGeometry(0.017, 0.019, 0.14, 8), [0, 0.026, 0.28], [1.5708, 0, 0]);
+    rib(4, 0, 0.026, 0.10, 0.20, 0.032, 0.032);
+    barrel(0.011, 0.013, 0.026, 0.34, 0.53);
+    // pistol grip, fore-end, and the two bars of the stock
     k.add(dark, plateGeo(0.026, 0.11, 0.042, 0.008, 1), [0, -0.072, -0.03], [0.22, 0, 0]);
-    k.add(dark, plateGeo(0.022, 0.048, 0.13, 0.006, 1), [0, -0.028, -0.15]);
-    k.add(dark, plateGeo(0.030, 0.012, 0.12, 0.004, 1), [0, 0.036, -0.14]);
-    k.add(dark, plateGeo(0.010, 0.024, 0.014, 0.003, 1), [0, 0.052, 0.28]);
-    k.add(glow, new THREE.CylinderGeometry(0.010, 0.013, 0.03, 8), [0, 0.026, 0.325], [1.5708, 0, 0]);
-    g.userData.muzzle = new THREE.Vector3(0, 0.026, 0.34);
+    k.add(dark, plateGeo(0.032, 0.026, 0.16, 0.006, 1), [0, -0.038, 0.21]);
+    k.add(dark, plateGeo(0.022, 0.048, 0.13, 0.006, 1), [0, -0.028, -0.155]);
+    k.add(dark, plateGeo(0.030, 0.012, 0.14, 0.004, 1), [0, 0.036, -0.15]);
+    k.add(dark, plateGeo(0.028, 0.076, 0.020, 0.004, 1), [0, -0.004, -0.21]);
+    k.add(dark, plateGeo(0.010, 0.024, 0.014, 0.003, 1), [0, 0.052, 0.30]);
+    holdPoints(g, { stock: [0, -0.02, -0.22], grip: [0, -0.065, -0.04],
+      foregrip: [0, -0.048, 0.21], muzzle: [0, 0.026, 0.53] });
   } else if (kind === 'dc15') {
-    // clone rifle: heavier receiver, ribbed cooling shroud, scope, solid stock
-    k.add(body, plateGeo(0.048, 0.068, 0.38, 0.010, 1), [0, 0, 0.08]);
-    k.add(body, new THREE.CylinderGeometry(0.017, 0.020, 0.36, 10), [0, 0.030, 0.24], [1.5708, 0, 0]);
-    rib(5, 0, 0.030, 0.14, 0.20, 0.052, 0.052);
+    // DC-15A: the long clone rifle. Heavy receiver, ribbed cooling shroud, a
+    // thin barrel out to a flared muzzle, scope, solid stock. 1.05 m.
+    k.add(body, plateGeo(0.048, 0.068, 0.36, 0.010, 1), [0, 0, 0.02]);
+    k.add(body, new THREE.CylinderGeometry(0.018, 0.020, 0.30, 10), [0, 0.030, 0.35], [1.5708, 0, 0]);
+    rib(6, 0, 0.030, 0.22, 0.26, 0.052, 0.052);
+    barrel(0.009, 0.011, 0.030, 0.50, 0.75, 8);
+    // the DC-15A's bulb behind the muzzle
+    k.add(body, new THREE.CylinderGeometry(0.016, 0.014, 0.06, 8), [0, 0.030, 0.66], [1.5708, 0, 0]);
     k.add(dark, new THREE.CylinderGeometry(0.013, 0.013, 0.11, 8), [0, 0.064, 0.03], [1.5708, 0, 0]);
     k.add(dark, plateGeo(0.020, 0.020, 0.030, 0.004, 1), [0, 0.064, -0.03]);
     k.add(dark, plateGeo(0.034, 0.125, 0.048, 0.010, 1), [0, -0.084, -0.02], [0.24, 0, 0]);
-    k.add(dark, plateGeo(0.030, 0.062, 0.19, 0.010, 1), [0, -0.020, -0.20]);
+    // the fore-end the support hand closes on, under the shroud
+    k.add(dark, plateGeo(0.040, 0.030, 0.18, 0.006, 1), [0, -0.038, 0.26]);
     k.add(body, plateGeo(0.040, 0.026, 0.10, 0.006, 1), [0, -0.048, 0.08]);
-    k.add(dark, plateGeo(0.010, 0.026, 0.014, 0.003, 1), [0, 0.056, 0.40]);
-    k.add(glow, new THREE.CylinderGeometry(0.013, 0.016, 0.04, 8), [0, 0.030, 0.425], [1.5708, 0, 0]);
-    g.userData.muzzle = new THREE.Vector3(0, 0.030, 0.45);
+    // the stock, and its butt plate at -0.30
+    k.add(dark, plateGeo(0.030, 0.062, 0.14, 0.010, 1), [0, -0.020, -0.23]);
+    k.add(dark, plateGeo(0.034, 0.086, 0.020, 0.004, 1), [0, -0.024, -0.29]);
+    k.add(dark, plateGeo(0.010, 0.026, 0.014, 0.003, 1), [0, 0.056, 0.46]);
+    holdPoints(g, { stock: [0, -0.02, -0.30], grip: [0, -0.075, -0.03],
+      foregrip: [0, -0.050, 0.26], muzzle: [0, 0.030, 0.75] });
+  } else if (kind === 'dc15s') {
+    // DC-15S: the same family cut down to a carbine, with a folding-style
+    // skeleton stock. 0.70 m. Nothing on the roster carries it yet — see
+    // `patchesForOthers` in the rifle-hold report: the jet and ARC rungs in
+    // Command.js are the bodies the reference puts one on.
+    k.add(body, plateGeo(0.046, 0.066, 0.30, 0.010, 1), [0, 0, 0.02]);
+    k.add(body, new THREE.CylinderGeometry(0.018, 0.020, 0.16, 10), [0, 0.030, 0.25], [1.5708, 0, 0]);
+    rib(4, 0, 0.030, 0.19, 0.12, 0.050, 0.050);
+    barrel(0.010, 0.012, 0.030, 0.33, 0.50, 8);
+    k.add(dark, new THREE.CylinderGeometry(0.012, 0.012, 0.09, 8), [0, 0.062, 0.02], [1.5708, 0, 0]);
+    k.add(dark, plateGeo(0.034, 0.120, 0.046, 0.010, 1), [0, -0.080, -0.02], [0.24, 0, 0]);
+    k.add(dark, plateGeo(0.040, 0.030, 0.14, 0.006, 1), [0, -0.038, 0.20]);
+    k.add(dark, plateGeo(0.022, 0.014, 0.12, 0.004, 1), [0, 0.020, -0.14]);
+    k.add(dark, plateGeo(0.022, 0.014, 0.12, 0.004, 1), [0, -0.040, -0.14]);
+    k.add(dark, plateGeo(0.030, 0.080, 0.018, 0.004, 1), [0, -0.012, -0.19]);
+    k.add(dark, plateGeo(0.010, 0.024, 0.014, 0.003, 1), [0, 0.054, 0.30]);
+    holdPoints(g, { stock: [0, -0.012, -0.20], grip: [0, -0.072, -0.03],
+      foregrip: [0, -0.050, 0.20], muzzle: [0, 0.030, 0.50] });
   } else if (kind === 'sonic') {
     /**
      * THE GEONOSIAN SONIC BLASTER — a horn, not a barrel.
@@ -8918,37 +9022,48 @@ export function buildBlaster(kind = 'e5') {
      * is a stubby body with a wide flared emitter bell on the front and a
      * spherical sonic charge slung underneath. At the range these are met from
      * (see `preferred`) the bell is the only part of the gun the eye resolves,
-     * and it is the part an E-5 does not have.
+     * and it is the part an E-5 does not have. 0.62 m: the reference plates
+     * give it no rifle to be measured against, and it is held at the shoulder
+     * like one, so it is long enough for its bell to clear the support hand.
      */
-    k.add(body, plateGeo(0.052, 0.058, 0.20, 0.010, 1), [0, 0, 0.02]);
+    k.add(body, plateGeo(0.052, 0.058, 0.30, 0.010, 1), [0, 0, 0.04]);
+    k.add(body, new THREE.CylinderGeometry(0.020, 0.024, 0.08, 10), [0, 0.012, 0.23], [1.5708, 0, 0]);
     // the bell: two rings opening out to a 9 cm mouth
-    k.add(body, new THREE.CylinderGeometry(0.030, 0.020, 0.07, 10), [0, 0.012, 0.15], [1.5708, 0, 0]);
-    k.add(body, new THREE.CylinderGeometry(0.046, 0.030, 0.06, 12), [0, 0.012, 0.21], [1.5708, 0, 0]);
+    k.add(body, new THREE.CylinderGeometry(0.030, 0.020, 0.06, 10), [0, 0.012, 0.30], [1.5708, 0, 0]);
+    k.add(body, new THREE.CylinderGeometry(0.046, 0.030, 0.06, 12), [0, 0.012, 0.35], [1.5708, 0, 0]);
     // the charge sphere under the receiver, and the yoke holding it
-    k.add(dark, new THREE.SphereGeometry(0.030, 8, 6), [0, -0.048, 0.02]);
-    k.add(dark, plateGeo(0.018, 0.040, 0.020, 0.005, 1), [0, -0.022, 0.02]);
-    // pistol grip and a short shoulder brace
+    k.add(dark, new THREE.SphereGeometry(0.030, 8, 6), [0, -0.048, 0.00]);
+    k.add(dark, plateGeo(0.018, 0.040, 0.020, 0.005, 1), [0, -0.022, 0.00]);
+    // pistol grip, a fore-end ahead of the charge, and a shoulder brace
     k.add(dark, plateGeo(0.024, 0.090, 0.038, 0.008, 1), [0, -0.070, -0.06], [0.26, 0, 0]);
-    k.add(dark, plateGeo(0.026, 0.044, 0.10, 0.008, 1), [0, -0.010, -0.14]);
-    k.add(glow, new THREE.CylinderGeometry(0.034, 0.040, 0.02, 12), [0, 0.012, 0.243], [1.5708, 0, 0]);
-    g.userData.muzzle = new THREE.Vector3(0, 0.012, 0.26);
+    k.add(dark, plateGeo(0.030, 0.022, 0.08, 0.005, 1), [0, -0.036, 0.11]);
+    k.add(dark, plateGeo(0.026, 0.044, 0.13, 0.008, 1), [0, -0.010, -0.175]);
+    k.add(dark, plateGeo(0.030, 0.060, 0.016, 0.004, 1), [0, -0.012, -0.232]);
+    k.add(glow, new THREE.CylinderGeometry(0.034, 0.040, 0.02, 12), [0, 0.012, 0.37], [1.5708, 0, 0]);
+    holdPoints(g, { stock: [0, -0.01, -0.24], grip: [0, -0.060, -0.065],
+      foregrip: [0, -0.046, 0.11], muzzle: [0, 0.012, 0.38] });
   } else {
-    // heavy repeater: three barrels in a shroud, drum magazine, carry handle
-    k.add(body, plateGeo(0.070, 0.088, 0.44, 0.014, 1), [0, 0, 0.10]);
+    // heavy repeater: three barrels in a shroud, drum magazine, carry handle,
+    // a vertical foregrip. 1.2 m.
+    k.add(body, plateGeo(0.070, 0.088, 0.44, 0.014, 1), [0, 0, 0.06]);
     for (let i = 0; i < 3; i++) {
       const a = (i / 3) * Math.PI * 2;
-      k.add(body, new THREE.CylinderGeometry(0.014, 0.016, 0.42, 8),
-        [Math.sin(a) * 0.026, 0.03 + Math.cos(a) * 0.026, 0.31], [1.5708, 0, 0]);
+      k.add(body, new THREE.CylinderGeometry(0.014, 0.016, 0.60, 8),
+        [Math.sin(a) * 0.026, 0.03 + Math.cos(a) * 0.026, 0.58], [1.5708, 0, 0]);
     }
-    k.row(4, (i, t) => k.add(dark, new THREE.CylinderGeometry(0.050, 0.050, 0.014, 8),
-      [0, 0.030, (0.16 + t * 0.26)], [1.5708, 0, 0]));
-    k.add(dark, new THREE.CylinderGeometry(0.058, 0.058, 0.052, 10), [0, -0.058, 0.04], [0, 0, 1.5708]);
+    k.add(glow, new THREE.CylinderGeometry(0.052, 0.056, 0.03, 10), [0, 0.030, 0.865], [1.5708, 0, 0]);
+    k.row(5, (i, t) => k.add(dark, new THREE.CylinderGeometry(0.050, 0.050, 0.014, 8),
+      [0, 0.030, (0.30 + t * 0.48)], [1.5708, 0, 0]));
+    k.add(dark, new THREE.CylinderGeometry(0.058, 0.058, 0.052, 10), [0, -0.058, 0.02], [0, 0, 1.5708]);
     k.add(dark, plateGeo(0.040, 0.140, 0.060, 0.012, 1), [0, -0.100, -0.06], [0.20, 0, 0]);
+    k.add(dark, plateGeo(0.030, 0.100, 0.036, 0.008, 1), [0, -0.080, 0.36], [0.12, 0, 0]);
     k.add(dark, plateGeo(0.026, 0.034, 0.20, 0.008, 1), [0, 0.086, 0.06]);
-    k.add(dark, plateGeo(0.034, 0.070, 0.16, 0.010, 1), [0, -0.020, -0.22]);
-    k.add(glow, new THREE.CylinderGeometry(0.016, 0.020, 0.04, 8), [0, 0.030, 0.50], [1.5708, 0, 0]);
-    g.userData.muzzle = new THREE.Vector3(0, 0.030, 0.53);
+    k.add(dark, plateGeo(0.034, 0.070, 0.16, 0.010, 1), [0, -0.020, -0.24]);
+    k.add(dark, plateGeo(0.038, 0.092, 0.020, 0.004, 1), [0, -0.022, -0.31]);
+    holdPoints(g, { stock: [0, -0.02, -0.32], grip: [0, -0.088, -0.07],
+      foregrip: [0, -0.105, 0.36], muzzle: [0, 0.030, 0.88] });
   }
+  g.userData.kind = kind;
   /* A WEAPON IS PART OF A SOLDIER'S OUTLINE, and this one was culled.
    *
    * `Enemy._build` hangs the blaster off the hand, and `_build` runs BEFORE
@@ -8965,6 +9080,9 @@ export function buildBlaster(kind = 'e5') {
   g.traverse(o => { o.castShadow = true; });
   return g;
 }
+
+/** The blaster kinds `buildBlaster` builds, and the reference length of each. */
+export const BLASTER_LENGTH = { dc15: 1.05, dc15s: 0.70, e5: 0.75, heavy: 1.20, sonic: 0.62 };
 
 
 /* ── who wears what ──────────────────────────────────────────────────── */

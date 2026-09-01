@@ -68,6 +68,7 @@ const _UP = new THREE.Vector3(0, 1, 0);
 const _axis = new THREE.Vector3();
 const _spare = new THREE.Vector3();
 const _scratchV = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
 
 /**
  * An authored swatch, demoted to a tint: renormalised to unit luminance so it
@@ -1770,7 +1771,7 @@ export class SkyDome {
     this._planetHome = (this._planetHome || new THREE.Vector3());
     this._derivePlace = !o.at;
     if (o.at) this._planetHome.fromArray(o.at).normalize();
-    else this._placeByPhase(o.phase ?? -0.45, o.rise ?? 0.26);
+    else this._placeByPhase(o.phase ?? -0.45, o.rise ?? 0.26, o.forward ? _fwd.fromArray(o.forward) : null);
     u.uPlanetAxis.value.fromArray(o.axis ?? [0.19, 0.94, 0.29]).normalize();
     this._orbitPeriod = o.period ?? 1200;
     /* THE DRIFT IS A SWAY, NOT A LAP, AND THAT IS A FRAMING DECISION.
@@ -1921,22 +1922,61 @@ export class SkyDome {
    * entirely on elevation. Twenty-four samples of a one-dimensional family,
    * once per level, is cheaper than any closed form is worth here.
    */
-  _placeByPhase(phase, rise) {
+  /**
+   * ══ …AND BY AZIMUTH, WHICH IT NEVER WAS ═══════════════════════════════════
+   *
+   * The roll about the star's axis was scored on ELEVATION ALONE, and the
+   * comment above promised the free roll "is spent on getting the disc up out
+   * of the deck and into the aperture" — but the aperture is a direction, and
+   * nothing here ever asked which one. Measured in a browser on the flight
+   * deck: `planetDir = [-0.013, 0.218, -0.976]`, 167° off the deck's forward
+   * axis, so the world sat over the 58 m bulkhead behind the player's head on
+   * every theatre, identically, and the one sentence the room was designed
+   * around — "the planet fills a third of the sky" — was never once true.
+   *
+   * `forward` is the direction the opening faces. When a caller gives one,
+   * the score is the elevation term AND the azimuth term, and the azimuth
+   * term is weighted to win: a disc a few degrees off its wanted height is a
+   * planet; a disc behind the only wall is a rumour. Without one the old
+   * behaviour is kept, for a sky that has no opening to point at.
+   */
+  _placeByPhase(phase, rise, forward = null) {
     const sun = _scratchV.copy(this.mat.uniforms.uSunDir.value).normalize();
     _axis.set(-sun.z, 0, sun.x);
     if (_axis.lengthSq() < 1e-6) _axis.set(1, 0, 0);
     _axis.normalize();
     const home = this._planetHome;
     let best = -Infinity;
-    for (let i = 0; i < 24; i++) {
+    const fx = forward ? forward.x : 0, fz = forward ? forward.z : 0;
+    const fl = Math.hypot(fx, fz) || 1;
+    for (let i = 0; i < 72; i++) {
       _spare.copy(sun).multiplyScalar(phase)
         .addScaledVector(_axis, Math.sqrt(Math.max(1 - phase * phase, 0)))
         .normalize()
-        .applyAxisAngle(sun, (i / 24) * TAU);
+        .applyAxisAngle(sun, (i / 72) * TAU);
       /* Closest to the wanted elevation, and never below the deck: a world
        * under your feet is a world you cannot see out of a hangar door. */
-      const score = -Math.abs(_spare.y - rise) - (_spare.y < 0.02 ? 10 : 0);
+      let score = -Math.abs(_spare.y - rise) - (_spare.y < 0.02 ? 10 : 0);
+      if (forward) {
+        const hl = Math.hypot(_spare.x, _spare.z) || 1e-6;
+        const along = (_spare.x * fx + _spare.z * fz) / (hl * fl);
+        /* 3×: a full reversal costs six, an elevation miss of a whole radian
+         * costs one. The opening wins. */
+        score -= (1 - along) * 3.0;
+      }
       if (score > best) { best = score; home.copy(_spare); }
+    }
+    /* AND IF THE PHASE CIRCLE NEVER PASSES THE OPENING, put the disc in the
+     * opening anyway and let the terminator fall where the star puts it: a
+     * lit sphere in the window beats a perfect gibbous behind a wall. */
+    if (forward) {
+      const hl = Math.hypot(home.x, home.z) || 1e-6;
+      const along = (home.x * fx + home.z * fz) / (hl * fl);
+      if (along < 0.85) {
+        home.set(fx / fl, 0, fz / fl).multiplyScalar(Math.sqrt(Math.max(0, 1 - rise * rise)));
+        home.y = rise;
+        home.normalize();
+      }
     }
     return home;
   }
@@ -2035,7 +2075,8 @@ export class SkyDome {
   setSun(dir) {
     this.mat.uniforms.uSunDir.value.copy(dir).normalize();
     if (this._orbit && this._derivePlace) {
-      this._placeByPhase(this._orbit.phase ?? -0.45, this._orbit.rise ?? 0.26);
+      this._placeByPhase(this._orbit.phase ?? -0.45, this._orbit.rise ?? 0.26,
+        this._orbit.forward ? _fwd.fromArray(this._orbit.forward) : null);
       this._orbitTick(0);
     }
   }
