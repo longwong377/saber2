@@ -39,8 +39,9 @@
  *   2. THE PLATE. Recessed panel seams, tie-down rings on a grid, drainage
  *      grating, walkway mesh. A deck is a manufactured surface and it must not
  *      read as terrain.
- *   3. THE FRAMING. Ribbed structural bays with recessed panel banks and
- *      conduit runs — a hull section seen from inside, never a wall surface.
+ *   3. THE FRAMING. Tall pale slabs with pilasters at the joints, a vertical
+ *      light strip per slab, doors and booths at the foot and cable runs
+ *      along it — the wall every reference has, never a wall surface.
  *   4. THE LIGHT. Recessed strip along the deck edge and flood banks overhead.
  *      No poles. Nothing at head height on a stalk.
  *   5. THE EQUIPMENT. Low, wide, boxy, painted, hazard-striped: servicing
@@ -192,15 +193,36 @@ export function factionOf(v) {
  * both because every one of the seven has it.
  */
 export const FACTION_PALETTE = {
+  /**
+   * ══ PALE GREY STEEL UNDER WHITE LIGHT — the rebuild against the references
+   *
+   * Every one of the seven is slabs of LIGHT grey wall under a high white key
+   * with a black mirror under them: `hangar 1` and `5` are nearly white walls,
+   * `3` is pale blue-grey, `6` is desaturated pale grey. The previous palette
+   * put the hull at L=0.42 and lit it with blue lamps under a navy fog, and
+   * the room came out a monochrome navy void — the walls, the light and the
+   * air all one dark blue. The lightness has to be in the ALBEDO here: the
+   * cel pipeline has no specular to catch a light, so a wall is exactly as
+   * pale as its swatch times its lamp.
+   *
+   *   REPUBLIC   pale WARM grey steel (hue ~30°, chroma under rule 6's 0.06
+   *              ceiling for a warm), strips warm white.
+   *   SEPARATIST cooler, a third of a stop darker (hue ~214°), strips white
+   *              pushed toward cyan.
+   *
+   * A temperature difference, not a hue wash. `deep` stays near-black on both:
+   * it is the recess, the door slot and the ceiling's shadow line, and the
+   * only dark thing on a wall.
+   */
   republic: {
-    hull: 0x656e73, dark: 0x3c4348, deep: 0x1a1d20, wing: 0x4a525a,
-    strip: 0xf4f6fa, glow: 0xf7f9fc, glowDim: 0xb4bec9, smear: 0xc0cede,
-    mark: 0xa8b2bd, status: 0xff3418,
+    hull: 0xc2bfba, dark: 0x8b8a86, deep: 0x2a2b2c, wing: 0xa9a7a2,
+    strip: 0xfff8f0, glow: 0xfffaf4, glowDim: 0xe6e2dc, smear: 0xe0dcd6,
+    mark: 0x87898c, status: 0xff3418,
   },
   separatist: {
-    hull: 0x454e5e, dark: 0x262c36, deep: 0x101319, wing: 0x1a1f27,
-    strip: 0xcadfff, glow: 0xdfeaff, glowDim: 0x93b3e0, smear: 0x9dbee8,
-    mark: 0x7f93ad, status: 0xff3418,
+    hull: 0x98a4b4, dark: 0x66717f, deep: 0x1c2027, wing: 0x22262d,
+    strip: 0xe4f1ff, glow: 0xecf5ff, glowDim: 0xc9d8e8, smear: 0xbfd2e8,
+    mark: 0x6f7c8b, status: 0xff3418,
   },
 };
 
@@ -633,7 +655,7 @@ export class DeckBuild {
 const _mats = new Map();
 
 /**
- * The room's materials, for one army. Ten of them, and the tenth is the
+ * The room's materials, for one army. Eleven of them, and the tenth is the
  * insignia — a painted mark on a bulkhead is neither a light strip nor
  * structure and borrowing either makes it glow or vanish.
  *
@@ -715,10 +737,26 @@ export function deckMats(faction) {
    * is the only thing that survives a dark room, and rule 1 says the rim is
    * brighter than anything it lights.
    */
-  M.glow = new THREE.MeshBasicMaterial({ color: P.glow });
+  /* AND UNFOGGED. A light source seen through haze is still a light source:
+   * in `hangar 6` the far strips are as white as the near ones. Fogged, a
+   * glow 200 m off was the fog's own grey, which is a lamp that has gone
+   * out. `toneMapped: false` for the same reason the rim has it — the
+   * brightest thing in the room is not something the exposure gets a vote
+   * on. */
+  M.glow = new THREE.MeshBasicMaterial({ color: P.glow, fog: false, toneMapped: false });
   M.glow.userData.saberNoInk = true;
-  /* Same, dimmed, for the ranks that recede — a hundred strips all at full
-   * white is a wall of paper. */
+  /**
+   * THE WALL STRIP — the vertical bars of `hangar 1`, `3`, `5` and `6`, one
+   * per slab. Unlit, so the lighting cannot dim it, and FOGGED, so the rank
+   * recedes into the haze with the wall it is set into: fifty-four strips
+   * all at full white to the far bulkhead read as a wall of paper, and a
+   * strip that dissolves at the same rate as its slab reads as a light in a
+   * room with air in it. The fog is the wall's own pale grey now, so what a
+   * far strip fades to is bright anyway.
+   */
+  M.lamp = new THREE.MeshBasicMaterial({ color: P.strip, toneMapped: false });
+  M.lamp.userData.saberNoInk = true;
+  /* Same, dimmed, for the runs that recede — ceiling grid, cornice runs. */
   M.glowDim = new THREE.MeshBasicMaterial({ color: P.glowDim });
   M.glowDim.userData.saberNoInk = true;
   /* NAMED, ALL OF THEM. `deckcost.mjs` buckets a merged room by material name
@@ -768,87 +806,86 @@ export function smear(kit, x, z, len, wide, dirX, dirZ, opts = {}) {
 }
 
 /**
- * ══ A DECK UPLIGHT ════════════════════════════════════════════════════════
+ * ══ THE WALL VOCABULARY — slab, pilaster, strip, door, booth, cable ══════
  *
- * `hangar 3.jpg` has them scattered across the floor — small white domes set
- * flush, each throwing a short pool. At eye level they are what tells you the
- * floor is a surface and not a void, and they are the cheapest scale ruler in
- * the room because you know how big one is.
+ * What the references actually build a hangar wall out of, and what replaced
+ * the hundred and twenty lit rack bays: `hangar 1`, `3`, `5` and `6` are TALL
+ * PALE SLABS eight to twelve metres wide, a pilaster proud of the wall at
+ * every joint, one full-height vertical white strip per slab, a gallery band
+ * a third of the way up, service doors and glazed booths at deck level, and
+ * cable runs pinned along the wall. The racked-fighter wall was a repeating
+ * wallpaper of lit square bays, and from the deck it read as a server rack.
+ * The fighters are hung from the overhead now (`hangar 3`, `6`), where the
+ * references keep them.
+ *
+ * All of these take the wall's drawn face `x` (signed — the port wall is
+ * negative) and `s`, the side, so a part is proud of the wall toward the
+ * room whichever wall it is on.
  */
-export function deckLamp(kit, x, z, opts = {}) {
+
+/** One vertical strip light in a housing, from `y0` up to `y1`. */
+export function wallStrip(kit, x, s, y0, y1, z, opts = {}) {
   const M = deckMats(opts.faction ?? kit.faction);
-  const g = new THREE.CylinderGeometry(0.42, 0.55, 0.22, 8);
-  kit.geoAt(M.glow, g, x, 0.11, z);
-  /* The pool it throws, as a flat disc — additive, so it lifts the plate
-   * around it instead of painting a grey circle on it. */
-  const pool = new THREE.CircleGeometry(2.6, 12);
-  pool.rotateX(-Math.PI / 2);
-  const pc = new Float32Array(pool.attributes.position.count * 3);
-  for (let i = 0; i < pool.attributes.position.count; i++) {
-    /* Vertex 0 is the centre of a CircleGeometry fan; everything else is rim. */
-    /* FULL AT THE CENTRE. The pool shares the smear material, whose opacity
-     * came down to 0.30 because a REFLECTION must be dimmer than the thing it
-     * reflects — but a lamp is a light source, and at 0.55 x 0.30 it stopped
-     * being visible at all. */
-    const a = i === 0 ? 1.0 : 0.0;
-    pc[i * 3] = a; pc[i * 3 + 1] = a; pc[i * 3 + 2] = a;
-  }
-  pool.setAttribute('color', new THREE.BufferAttribute(pc, 3));
-  kit.geoAt(M.smear, pool, x, 0.04, z);
+  const h = y1 - y0, yc = (y0 + y1) / 2;
+  const w = opts.width ?? 0.7;
+  /* The housing: a dark slot the strip sits in, a hand proud of the slab. */
+  kit.slabAt(M.deep, x - s * 0.25, yc, z, 0.5, h + 0.8, w + 0.9);
+  /* The bar itself, proud of the slot so the ink pass draws its edge. */
+  kit.slabAt(M.lamp, x - s * 0.55, yc, z, 0.35, h, w);
+  return kit;
+}
+
+/** A pilaster at a slab joint, proud of the wall, full height. */
+export function pilaster(kit, x, s, z, height, opts = {}) {
+  const M = deckMats(opts.faction ?? kit.faction);
+  const proud = opts.proud ?? 2.0;
+  kit.slabAt(M.dark, x - s * proud * 0.5, height / 2, z, proud, height, opts.width ?? 1.8);
+  /* The lit face of it — a pale fillet so the joint reads as steel, not as a
+   * dark line drawn on the wall. */
+  kit.slabAt(M.hull, x - s * (proud + 0.15), height / 2, z, 0.3, height - 2, (opts.width ?? 1.8) * 0.6);
+  return kit;
+}
+
+/** A service door at deck level: a dark leaf, a frame, and a lamp over it. */
+export function serviceDoor(kit, x, s, z, opts = {}) {
+  const M = deckMats(opts.faction ?? kit.faction);
+  const w = opts.width ?? 4.4, h = opts.height ?? 5.6;
+  kit.slabAt(M.deep, x - s * 0.12, h / 2, z, 0.24, h, w);
+  for (const d of [-1, 1]) kit.slabAt(M.dark, x - s * 0.25, h / 2 + 0.3, z + d * (w / 2 + 0.35), 0.5, h + 0.6, 0.7);
+  kit.slabAt(M.dark, x - s * 0.25, h + 0.35, z, 0.5, 0.7, w + 1.4);
+  kit.slabAt(M.status, x - s * 0.45, h + 1.1, z, 0.35, 0.35, 0.35);
   return kit;
 }
 
 /**
- * ══ A RACK BAY — the thing that makes this a hangar ════════════════════════
- *
- * `assets/reference/REFERENCES.md` rule 3, and it is the piece the first two
- * dressings of this room did not have at all. In `hangar 7.jpg` both side walls
- * are ranks of ANGLED ALCOVES receding to a vanishing point, each holding a
- * fighter, dozens of them. In 3, 4 and 6 the same thing with the fighters on
- * overhead mounts. **That is what "rows and rows of ships" is** — the floor
- * stays clear and the ships are stored in the walls.
- *
- * The first version parked three ships on the deck and called it a hangar. Ten
- * per side, receding, is a different room.
- *
- * ONE BAY IS: a canted back panel, two ribs framing it, a full-height light
- * strip in the recess between them (rule 4), a mount arm, and a fighter hung
- * off it. Everything merges, so a wall of ten costs what one costs.
+ * A control booth: `hangar 3`'s glazed box at the foot of the wall, `hangar
+ * 1`'s control room. A shallow block proud of the slab with a lit window
+ * band the length of it, so there is somebody watching the deck.
  */
-export function rackBay(kit, x, y, z, opts = {}) {
-  const faction = factionOf(opts.faction ?? kit.faction);
-  const M = deckMats(faction);
-  const s = opts.side ?? 1;              // -1 port, +1 starboard
-  const w = opts.width ?? 15;
-  const h = opts.height ?? 21;
-  const cant = opts.cant ?? 0.16;        // the lean that makes the wall read
+export function controlBooth(kit, x, s, z, opts = {}) {
+  const M = deckMats(opts.faction ?? kit.faction);
+  const w = opts.width ?? 12, h = opts.height ?? 6.2, proud = opts.proud ?? 1.5;
+  const y0 = opts.y ?? 0;
+  kit.slabAt(M.dark, x - s * proud * 0.5, y0 + h / 2, z, proud, h, w);
+  /* The window: a pale slot across the face, and a darker sill under it. */
+  kit.slabAt(M.glowDim, x - s * (proud + 0.08), y0 + h * 0.62, z, 0.16, 1.7, w - 1.6);
+  kit.slabAt(M.hull, x - s * (proud + 0.1), y0 + h * 0.62 - 1.2, z, 0.2, 0.5, w - 1.2);
+  /* Mullions, so the window is a window and not a strip. */
+  for (let i = -1; i <= 1; i++) kit.slabAt(M.dark, x - s * (proud + 0.12), y0 + h * 0.62, z + i * (w - 1.6) / 3, 0.24, 1.9, 0.3);
+  kit.slabAt(M.status, x - s * (proud + 0.2), y0 + h - 0.5, z - w / 2 + 0.8, 0.3, 0.3, 0.3);
+  return kit;
+}
 
-  /* The recess: a dark back panel set into the wall, canted out at the top. */
-  kit.slabAt(M.deep, x - s * 1.2, y, z, 1.6, h, w * 0.92, -s * cant);
-  /* The ribs either side of it, proud, which is what gives the wall its rhythm
-   * when ten of them recede. */
-  for (const dz of [-1, 1]) {
-    kit.slabAt(M.hull, x, y, z + dz * w * 0.47, 3.2, h * 1.04, w * 0.06, -s * cant);
-  }
-  /**
-   * THE STRIPS, full height in the recess, and there are THREE of them
-   * because that is what the references show. `hangar 6.jpg` puts a group of
-   * slotted bars in every wall bay; `hangar 1.webp` a rank of tall angled
-   * ones. One thin bar per bay reads as a seam. Three read as a light.
-   *
-   * `glowDim` and not `strip`: an emissive standard material is still shaded,
-   * and in a room this dark the ranks came out grey. These are unlit.
-   */
-  for (const d of [-0.30, 0, 0.30]) {
-    kit.slabAt(M.glowDim, x - s * 2.0, y, z + d * w, 0.5, h * 0.74, w * 0.10, -s * cant);
-  }
-  /* The header run over the bay — rule 4's long horizontal, which is what ties
-   * a rank of bays into a wall instead of leaving them as separate boxes. */
-  kit.slabAt(M.glowDim, x - s * 1.4, y + h * 0.50, z, 0.4, 0.5, w * 0.86, -s * cant);
-  /* The mount arm out of the recess, and the fighter on it. */
-  kit.slabAt(M.hull, x - s * 3.6, y + h * 0.06, z, 4.4, 1.1, 1.1);
-  if (opts.ship !== false) {
-    parkedFighter(kit, x - s * 7.2, y + h * 0.06, z, s, { kind: opts.kind ?? 0, faction });
+/** A cable run pinned along a wall: a tube and a bracket every `pitch`. */
+export function cableRun(kit, x, s, y, zMid, len, opts = {}) {
+  const M = deckMats(opts.faction ?? kit.faction);
+  const r = opts.radius ?? 0.32;
+  const g = new THREE.CylinderGeometry(r, r, len, 7);
+  g.rotateX(Math.PI / 2);
+  kit.geoAt(M.dark, g, x - s * (r + 0.3), y, zMid);
+  const pitch = opts.pitch ?? 10.4;
+  for (let z = zMid - len / 2 + pitch / 2; z < zMid + len / 2; z += pitch) {
+    kit.slabAt(M.hull, x - s * 0.35, y, z, 0.7, r * 2 + 0.6, 0.5);
   }
   return kit;
 }

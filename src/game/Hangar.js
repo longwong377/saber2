@@ -35,14 +35,15 @@
  * THE ROOM IS BOUNDED ON SIX SIDES BY THINGS YOU CAN SEE. Two rack walls run
  * the full length from the bulkhead to the aperture; a ceiling closes the top
  * twenty metres above the walls' bays; the bulkhead with the lift is behind
- * you; the deck is under you; and forward there is one opening — a chamfered
- * hexagon with a white rim, `hangar 7.jpg`'s — with the planet and the battle
- * in it. That is the shape of every one of the seven references.
+ * you; the deck is under you; and forward there is one opening — a wide
+ * rounded rectangle with a thick white rim, `hangar 1`'s and `5`'s — with
+ * the planet and the battle in it. That is the shape of the references.
  *
  * WHAT KEEPS IT FROM BEING A BOX IS DENSITY, NOT ABSENCE. The ceiling is a
  * structure — girders, beams, catenary cables, crane rails, hung fighters,
- * ducting, light panels, hanging fixtures — with the plate behind all of it
- * and under 60% haze. The walls are a hundred and twenty bays. The deck has
+ * ducting, a lit strip grid, hanging fixtures — with the plate behind all of
+ * it and under pale haze. The walls are fifty-four pale slabs with a strip
+ * light each, a gallery, booths and doors (`hangar 1`, `3`, `6`). The deck has
  * a company, a crowd, droids, workers, a real transport, repairs, traffic in
  * and out of the opening. A box is four walls and nothing in it; a hangar is
  * the same walls with a war's worth of hardware between them.
@@ -97,8 +98,9 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
  */
 import { makeCrate } from '../world/Props.js';
 import { makeShovable } from '../physics/Shovable.js';
-import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig, parkedFighter,
-  catwalk, crates, smear, deckLamp, shuttlePad, factionOf, insigniaPanel } from './DeckKit.js';
+import { Paint, DeckBuild, DECK_PAINT, deckMats, overheadRig, parkedFighter,
+  catwalk, crates, smear, shuttlePad, factionOf, insigniaPanel,
+  wallStrip, pilaster, serviceDoor, controlBooth, cableRun } from './DeckKit.js';
 
 /* The deck runs from the bulkhead aft to the lip forward. Named rather than
  * inlined because six things below have to agree about where the room stops,
@@ -124,9 +126,9 @@ export const DECK = {
    *
    * So the rule changed, on the player's own instruction, and the header of
    * this file says so. The room is now what every one of the seven references
-   * actually is: two rack walls that run the FULL length, a ceiling higher
-   * than the walls' bay band, and ONE opening — forward, a chamfered hexagon
-   * with a white rim, with the planet in it. What keeps it from being a box is
+   * actually is: two walls that run the FULL length, a ceiling higher than
+   * the walls' gallery, and ONE opening — forward, a rounded rectangle with
+   * a white rim, with the planet in it. What keeps it from being a box is
    * not the absence of a lid; it is that the lid is a structure — beams,
    * cable runs, crane rails, hung fighters, ducting, light panels, fixtures —
    * and that the haze eats it before it can read as a plane.
@@ -173,12 +175,25 @@ export const DECK = {
   /** Kept as an alias for one release: `bays` was the old, wrong spelling. */
   get bays() { return this.wall; },
   /**
-   * THE APERTURE'S CHAMFER. The forward opening is a hexagon, `hangar 7.jpg`'s
-   * shape: vertical sides to this height, then a lean inward to a top edge
-   * this much narrower on each side. Named because the rim, the field plane,
-   * the corner fills and the barrier all trace the same six points.
+   * ══ THE APERTURE IS A ROUNDED RECTANGLE ══════════════════════════════
+   *
+   * `hangar 1`, `2`, `4` and `5` — four of the seven, and the three the
+   * player's own verdict named — cut the opening as a wide rounded rectangle
+   * with a thick white rim round it; only the concept piece (`hangar 7`) is
+   * a chamfered hexagon. The hexagon was built first and it read as a dim
+   * frame; the rounded rectangle is the shape a hangar door is REMEMBERED
+   * as, and its rim is the one continuous band the references are all lit
+   * by. It stands in the same opening — x in ±wall, y from the deck to
+   * `top` — with a fascia closing the band between `top` and the roof, so
+   * the aperture is a window in a wall rather than the wall simply stopping.
+   *
+   *   top     the opening's top edge; the fascia runs from here to `roof`
+   *   corner  the radius of the four corners
+   *
+   * Named because the rim, the field plane, the fascia, the emitter studs
+   * and the barrier all trace the same outline (`aperturePoints`).
    */
-  chamfer: { y: 54, x: 30 },
+  aperture: { top: 86, corner: 20 },
 };
 
 /**
@@ -387,19 +402,39 @@ function fieldMaterial(color) {
 }
 
 /**
- * ══ THE APERTURE, AS SIX POINTS ═══════════════════════════════════════════
+ * ══ THE APERTURE, AS ONE OUTLINE ══════════════════════════════════════════
  *
- * `hangar 7.jpg`: a chamfered hexagon — vertical sides, then a lean inward to
- * a shorter top edge. In the aperture's own plane, x across and y up from the
- * deck, anticlockwise from the bottom-left. The rim traces these, the field
- * fills them, the corner fills cover what is outside them, and the barrier
- * stands behind them: one list, four consumers.
+ * A rounded rectangle in the aperture's own plane — x across, y up from the
+ * deck — anticlockwise from the bottom edge, with `SEG` straight pieces per
+ * corner. The rim traces it, the field fills it, the fascia is cut round it,
+ * the studs sit outside it and the barrier stands behind it: one list, five
+ * consumers, so the frame and the hole cannot disagree.
  */
+const APERTURE_SEG = 6;
 export function aperturePoints() {
-  const W = DECK.wall, H = DECK.roof, C = DECK.chamfer;
-  return [
-    [-W, 0], [W, 0], [W, C.y], [W - C.x, H], [-(W - C.x), H], [-W, C.y],
-  ];
+  const W = DECK.wall, T = DECK.aperture.top, C = DECK.aperture.corner;
+  const pts = [];
+  const arc = (cx, cy, a0) => {
+    for (let i = 0; i <= APERTURE_SEG; i++) {
+      const a = a0 + (i / APERTURE_SEG) * (Math.PI / 2);
+      pts.push([cx + Math.cos(a) * C, cy + Math.sin(a) * C]);
+    }
+  };
+  arc(W - C, C, -Math.PI / 2);          // bottom-right
+  arc(W - C, T - C, 0);                 // top-right
+  arc(-W + C, T - C, Math.PI / 2);      // top-left
+  arc(-W + C, C, Math.PI);              // bottom-left
+  return pts;
+}
+
+/** The same outline as a `THREE.Shape`/`THREE.Path`, for the field and the fascia. */
+function apertureShape(Cls = THREE.Shape) {
+  const pts = aperturePoints();
+  const sh = new Cls();
+  sh.moveTo(pts[0][0], pts[0][1]);
+  for (let i = 1; i < pts.length; i++) sh.lineTo(pts[i][0], pts[i][1]);
+  sh.closePath();
+  return sh;
 }
 
 /**
@@ -425,10 +460,9 @@ function fieldPlane(world, mat, geo, centre, quat) {
 /**
  * ══ THE FIELD — one opening, forward, and the rim round it ═══════════════
  *
- * The three-sided envelope is gone with the apron it stood on. What is left
- * is what every reference has: one aperture in the forward face, a chamfered
- * hexagon the full width of the working deck and the full height of the room,
- * with the field across it and a fat white rim round all six edges.
+ * What every reference has: one aperture in the forward face, a wide rounded
+ * rectangle the full width of the working deck, with the field across it and
+ * a fat white rim round the whole outline.
  *
  * THE RIM IS THE MOST IMPORTANT OBJECT IN THE ROOM. `REFERENCES.md` rule 1,
  * agreed by all seven images: the opening is bordered by a continuous,
@@ -443,56 +477,62 @@ function addField(world) {
   const H = DECK.roof;
   const pts = aperturePoints();
 
-  /* THE PLANE IS THE HEXAGON. A rectangle would show the field through the
-   * two corners the chamfer closes, which is a shield with a frame drawn on
-   * top of it rather than a shield in a frame. `ShapeGeometry` lies in the
-   * x/y plane at z = 0, the same object space the weave reads. */
-  const shape = new THREE.Shape();
-  shape.moveTo(pts[0][0], pts[0][1]);
-  for (let i = 1; i < pts.length; i++) shape.lineTo(pts[i][0], pts[i][1]);
-  shape.closePath();
-  const geo = new THREE.ShapeGeometry(shape, 1);
+  /* THE PLANE IS THE OUTLINE. A rectangle would show the field through the
+   * corners the rounding closes, which is a shield with a frame drawn on top
+   * of it rather than a shield in a frame. `ShapeGeometry` lies in the x/y
+   * plane at z = 0, the same object space the weave reads. */
+  const geo = new THREE.ShapeGeometry(apertureShape(), 1);
   fieldPlane(world, mat, geo, new THREE.Vector3(0, 0, L), null);
 
   /**
-   * AND IT IS UNLIT, WHICH THE FIRST ONE WAS NOT. A `MeshStandardMaterial`
-   * with `emissiveIntensity: 3.4` is still a shaded surface: it is tone-mapped
-   * with everything else and it loses to a dark ambient, so in the first
-   * render of this room the rim was a grey kerb. Rule 1 says the rim is the
-   * brightest thing in the frame, brighter than anything it lights. Only an
-   * unlit material can promise that.
+   * AND IT IS UNLIT, UNFOGGED AND UNTONEMAPPED, because rule 1 is not a
+   * preference. A `MeshStandardMaterial` with `emissiveIntensity: 3.4` is
+   * still a shaded surface and lost to the dark ambient; a fogged white at
+   * 243 m — the lip, from the lift doors — is the fog's own colour, which is
+   * a rim that has gone out from the one place the player first sees it.
+   * `hangar 1` and `5` show the rim blazing from the far side of the deck.
    *
    * AND IT CARRIES NO `emissive`: a `MeshBasicMaterial`'s uniform set HAS NO
    * `emissive`, so setting one threw inside `WebGLRenderer.render` every frame
    * — in the browser only, which no headless suite could see.
    */
-  const rimMat = new THREE.MeshBasicMaterial({ color: 0xf2f7ff, toneMapped: false });
+  const rimMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, fog: false });
   rimMat.userData.saberNoInk = true;
   rimMat.name = 'field-rim';
   /**
-   * THE BAND IS 4 m THICK, and the number is an angle rather than a taste.
-   * The lip is 190 m from where the company stands: a 1.1 m band there
-   * subtends 0.33°, which is a hairline — and a hairline is what the first
-   * render showed. Four metres is about the width the rim takes up in
-   * `hangar 1.webp` and `hangar 4.jpg` at their own distances, and it is the
-   * difference between a bright edge and no edge.
+   * THE BAND IS 3 m THICK IN ITS PLANE and 2.4 m deep. The lip is 190 m from
+   * where the company stands: a 1.1 m band there subtends 0.33°, a hairline.
+   * Three metres is about the width the rim takes up in `hangar 1` and
+   * `hangar 4` at their own distances — a bright edge, not a line.
+   *
+   * FOUR MESHES, NOT ONE: bottom, right, top, left, each with half of the
+   * two corners it meets. `refhold` counts rims because a rim on every edge
+   * is the rule, and a traverse cannot count edges inside a merge.
    */
-  const T = 4.0;
-  const rimGeos = [];
-  for (let i = 0; i < pts.length; i++) {
-    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
-    const len = Math.hypot(bx - ax, by - ay) + T;
-    const g = new THREE.BoxGeometry(len, T, T);
+  const T = 3.0, D = 2.4;
+  const groups = [[], [], [], []];
+  const nSeg = pts.length;
+  for (let i = 0; i < nSeg; i++) {
+    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % nSeg];
+    const len = Math.hypot(bx - ax, by - ay) + T * 0.6;
+    const g = new THREE.BoxGeometry(len, T, D);
     g.rotateZ(Math.atan2(by - ay, bx - ax));
     g.translate((ax + bx) / 2, (ay + by) / 2, 0);
-    rimGeos.push(g);
+    /* Which side this piece belongs to: the corner arcs are split down the
+     * middle between the two edges they join. */
+    const per = APERTURE_SEG + 1;
+    const side = Math.floor(((i + Math.ceil(APERTURE_SEG / 2)) % nSeg) / per);
+    groups[Math.min(3, side)].push(g);
   }
-  const rim = new THREE.Mesh(mergeGeometries(rimGeos), rimMat);
-  rim.position.set(0, 0, L);
-  rim.name = 'field-rim';
-  rim.renderOrder = 2;
-  world.scene.add(rim);
-  world.statics.push(rim);
+  for (const gs of groups) {
+    if (!gs.length) continue;
+    const rim = new THREE.Mesh(mergeGeometries(gs), rimMat);
+    rim.position.set(0, 0, L);
+    rim.name = 'field-rim';
+    rim.renderOrder = 2;
+    world.scene.add(rim);
+    world.statics.push(rim);
+  }
 
   /**
    * ══ THE STROBES, ALONG THE LIP ═══════════════════════════════════════════
@@ -523,12 +563,60 @@ function addField(world) {
   world.statics.push(strobes);
   world._deckStrobes = { mesh: strobes, spots, t: 0 };
 
+  addMarkerLights(world);
+
   /* THE BARRIER behind the field — a box rather than the plane itself, because
    * a plane has no thickness and a character controller resolves through one.
    * The walls and the ceiling carry their own in `deckColliders`. */
   const th = 2;
   world.physics?.addStaticBox?.(new THREE.Vector3(0, H / 2, L + th),
     new THREE.Vector3(DECK.wall + 30, H / 2 + 10, th), new THREE.Quaternion(), { friction: 0.4 });
+}
+
+/**
+ * ══ THE MARKER LIGHTS — rows of small recessed lamps in the plate ═════════
+ *
+ * `hangar 1`, `3` and `5`: the deck is a black mirror with small white lamps
+ * set flush in it, in rows along the lanes and round the pads, each throwing
+ * a tiny pool. They replaced sixty uplights with additive discs under them:
+ * a marker is a dot of light, not a fixture, and a row of them is what says
+ * the floor goes somewhere. One `InstancedMesh`, unlit, untonemapped, no
+ * ink — a hundred and eighty outlines on a hundred and eighty discs was the
+ * loudest thing on the plate.
+ */
+function addMarkerLights(world) {
+  const sep = world._deckFaction === 'separatist';
+  const mat = new THREE.MeshBasicMaterial({ color: sep ? 0xdcecff : 0xfff6e8, toneMapped: false });
+  mat.userData.saberNoInk = true;
+  mat.name = 'deck-marker';
+  const L = DECK.lip, A = DECK.aft;
+  const spots = [];
+  /* The two lane edges, staggered so the eye reads two rows and not a grid. */
+  for (const s of [-1, 1]) {
+    for (let z = A + 24; z <= L - 20; z += 6) spots.push([s * 40, z]);
+    for (let z = A + 27; z <= L - 20; z += 12) spots.push([s * 62, z]);
+  }
+  /* The centreline, sparse, and never on the muster ground. */
+  for (let z = A + 30; z <= L - 20; z += 12) {
+    if (z > DECK.line - 10 && z < DECK.line + 14) continue;
+    spots.push([0, z]);
+  }
+  /* A ring round each pad, just outside the kerb. */
+  for (const [px, pz, r] of [[DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, PADS.a.r + 2.2], [PADS.b.x, PADS.b.z, PADS.b.r + 2.2]]) {
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2;
+      spots.push([px + Math.cos(a) * r, pz + Math.sin(a) * r]);
+    }
+  }
+  const mesh = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.26, 0.34, 0.10, 8), mat, spots.length);
+  mesh.name = 'deck-marker';
+  const _m = new THREE.Matrix4();
+  for (let i = 0; i < spots.length; i++) mesh.setMatrixAt(i, _m.makeTranslation(spots[i][0], 0.05, spots[i][1]));
+  mesh.instanceMatrix.needsUpdate = true;
+  mesh.frustumCulled = false;
+  world.scene.add(mesh);
+  world.statics.push(mesh);
+  world._deckMarkers = mesh;
 }
 
 /** Nine lines of merge, so this file does not import a utils module for one call. */
@@ -554,27 +642,33 @@ function mergeGeometries(geos) {
 }
 
 /**
- * ══ THE ROOM, BUILT AGAINST `hangar 7.jpg` AND `hangar 3.jpg` ════════════
+ * ══ THE ROOM, BUILT AGAINST `hangar 1`, `3` AND `6` ═══════════════════════
  *
- * Part for part:
+ * Part for part, and this is the rebuild against the references after the
+ * player asked whether the room he was given was what would have been built
+ * from them. It was not, and the gap was the LOOK:
  *
- *   TWO WALLS OF RACKED FIGHTERS receding to a vanishing point — twenty a
- *     side, three tiers, each in its own canted alcove with a full-height
- *     light strip. They run from the bulkhead to the aperture, so there is
- *     no end to walk round. Above the bays the wall keeps going: a band of
- *     panels with the long horizontal light run and a catwalk, up to the
- *     ceiling.
- *   ONE SOLID WALL, aft, with the lift set into it and blast doors either
- *     side, and a catwalk across at 22 m for scale.
- *   THE CEILING, and it is a structure rather than a plate: transverse
- *     beams, three longitudinal girders, catenary cable runs sagging between
- *     them (`hangar 3.jpg`'s whole top third), two crane rails with their
- *     bridges, twenty fighters hung nose-down on ceiling mounts, ducting, and
- *     the light panels in ranks. The plate itself is behind all of that and
- *     under 60% haze.
- *   THE DECK IS A BLACK MIRROR and the middle of it is clear. What is on it
- *     is at the walls: crate clusters, the pit, the repair bays.
- *   ONE OPENING, forward, the hexagon, with the world in it.
+ *   TWO WALLS OF PALE SLABS, eight to twelve metres wide, running from the
+ *     bulkhead to the aperture with a pilaster proud of the wall at every
+ *     joint and one tall white strip light per slab — two per slab in the
+ *     mouth, where `hangar 1` and `5` double the rank. A gallery catwalk
+ *     with rails a third of the way up, a lit fascia under it, cable runs
+ *     pinned along the wall, a glazed control booth every seventy metres
+ *     and a service door at the foot of every other slab. The racked-fighter
+ *     wallpaper is gone: the fighters hang from the overhead (`hangar 3`,
+ *     `6`), where the references keep them.
+ *   ONE SOLID WALL, aft, in the same vocabulary, with the lift set into it,
+ *     blast doors either side, a small crest, and two catwalks for scale.
+ *   THE CEILING is a structure — girders, beams, cables, crane rails, ducts,
+ *     hung fighters, the fixtures — under a plate that carries a grid of
+ *     white strip lights (`hangar 2`), so it reads as lit rather than as a
+ *     dark lid.
+ *   THE DECK IS A BLACK MIRROR: thin pale guide lines, thin red keep-outs
+ *     (`hangar 5`), pad rings, rows of recessed marker lights, the seam grid
+ *     and a lit pit. No emblem on the floor — the player asked for the wheel
+ *     to go, and no reference paints a crest on its deck.
+ *   ONE OPENING, forward, a rounded rectangle with a 3 m white rim, with the
+ *     world in it.
  */
 export function dressStructure(kit, paint) {
   _dressFaction = kit.faction || 'republic';
@@ -585,107 +679,119 @@ export function dressStructure(kit, paint) {
   const L = DECK.lip;
   const WALL = DECK.wall;
   const ROOF = DECK.roof;
-  const TIERS = [
-    { y: 13.5, h: 21 },
-    { y: 35.0, h: 20 },
-    { y: 54.0, h: 16 },
-  ];
+  const A = DECK.aft;
+  /**
+   * THE WALL'S DRAWN FACE, six metres inside `DECK.wall`. The collider face
+   * is at `DECK.wall - 7.5` (`deckColliders`); the pilasters stand two metres
+   * proud of this face and the booths a metre and a half, so the player is
+   * stopped a hand's breadth from the thing he can see, and the pale slab
+   * itself is what closes the room at every ray the shape check fires.
+   */
+  const F = WALL - 6;
+  const mid = (A + L) / 2, len = L - A + 8;
+  const first = A + 6, last = L - 4;
+  /* Slab pitch: 10.4 m, `hangar 6`'s rhythm, twenty-seven a side. */
+  const pitch = 10.4;
+  const n = Math.floor((last - first) / pitch);
+  /* Where one strip per slab becomes two: the last seventy metres. */
+  const mouth = L - 70;
+  /* The gallery: catwalk height, and the strip runs either side of it. */
+  const GALLERY = 30;
 
-  /* ── THE RACK WALLS. Twenty bays a side, three tiers, from the bulkhead to
-   * the aperture. A hundred and twenty fighters, and no two neighbours are
-   * the same hull. */
-  const first = DECK.aft + 14;
-  const pitch = 11.6;
-  const n = Math.floor((L - 6 - first) / pitch);
-  const zEnd = first + (n - 1) * pitch + pitch * 0.6;
-  for (let i = 0; i < n; i++) {
-    const z = first + i * pitch;
-    for (const s of [-1, 1]) {
-      /* The wall itself, behind the bays — dark, so the lit recesses read as
-       * openings in something rather than as panels on nothing. It runs the
-       * full height to the ceiling: a wall that stops is a wall the eye finds
-       * the top of. */
-      kit.slabAt(M.dark, s * (WALL + 7), ROOF / 2, z, 14, ROOF, pitch * 0.99);
-      for (let t = 0; t < TIERS.length; t++) {
-        const T = TIERS[t];
-        rackBay(kit, s * WALL, T.y, z, {
-          side: s, width: pitch * 0.92, height: T.h,
-          /* THE HULLS ALTERNATE ON BOTH AXES. `(i + t)` rather than `i` so a
-           * column of three bays is three different ships and a row never
-           * repeats at the same height twice running. */
-          kind: (i + t) % 3,
-        });
+  /* ── THE TWO WALLS. */
+  for (const s of [-1, 1]) {
+    /* The slab: one pale wall, full length, full height, under the plate. */
+    kit.slabAt(M.hull, s * (F + 7), ROOF / 2, mid, 14, ROOF, len);
+    /* The skirting at its foot and the cornice under the plate: the dark
+     * lines that make a slab read as a wall with a top and a bottom. */
+    kit.slabAt(M.dark, s * (F - 0.35), 0.55, mid, 0.7, 1.1, len);
+    kit.slabAt(M.dark, s * (F - 0.9), ROOF - 2.0, mid, 1.8, 2.6, len);
+    /* Pilasters at every joint. */
+    for (let i = 0; i <= n; i++) pilaster(kit, s * F, s, first + i * pitch, ROOF - 3.5);
+    /* One strip per slab, two in the mouth: from the skirting to under the
+     * gallery, and from over the gallery to the upper band. */
+    for (let i = 0; i < n; i++) {
+      const zc = first + (i + 0.5) * pitch;
+      const zs = zc > mouth ? [zc - pitch * 0.24, zc + pitch * 0.24] : [zc];
+      for (const z of zs) {
+        wallStrip(kit, s * F, s, 2.4, GALLERY - 3.2, z);
+        wallStrip(kit, s * F, s, GALLERY + 4.0, 62, z);
+        /* Its reflection off the plate, rule 2. */
+        smear(kit, s * (F - 2.4), z, 22, 3.0, -s, 0);
       }
-      /* ── THE UPPER BAND, from the top tier to the ceiling: structural
-       * panels with a conduit run, so the wall is a hull section all the way
-       * up rather than bays with a blank over them. */
-      kit.slabAt(M.hull, s * (WALL - 0.6), 71, z, 1.2, 16, pitch * 0.70);
-      kit.slabAt(M.deep, s * (WALL - 0.2), 71, z, 0.8, 11, pitch * 0.54);
-      kit.slabAt(M.hull, s * (WALL - 1.0), 84, z, 2.0, 2.0, pitch * 0.99);
-      /* The reflection smear, off every bay's foot. Rule 2. */
-      smear(kit, s * (WALL - 4), z, 30, pitch * 0.86, -s, 0);
+      /* At the foot: a booth every seventh slab, a door on every other. */
+      if (i % 7 === 3) controlBooth(kit, s * F, s, zc, { width: pitch * 0.86 });
+      else if (i % 2 === 0) serviceDoor(kit, s * F, s, zc);
     }
-  }
-  /* RULE 4'S LONG HORIZONTAL RUNS: two along the top of each wall, the full
-   * length, which is what ties twenty bays into one wall. */
-  for (const s of [-1, 1]) {
-    const mid = (first + zEnd) / 2, len = zEnd - first + pitch;
-    kit.slabAt(M.glowDim, s * (WALL - 0.8), 63.5, mid, 0.5, 0.6, len);
-    kit.slabAt(M.glowDim, s * (WALL - 0.8), 79.5, mid, 0.5, 0.6, len);
-    /* And a catwalk along the upper band, with a rail — `hangar 6.jpg`'s
-     * figure-for-scale walkway, one per wall. */
-    catwalk(kit, s * (WALL - 2.6), 78.5, mid, len, { yaw: Math.PI / 2 });
-  }
-  /* THE WALL CAPS at the aft end, so the canyon is closed against the
-   * bulkhead; the forward end runs into the aperture's frame. */
-  for (const s of [-1, 1]) {
-    kit.slabAt(M.hull, s * (WALL + 7), ROOF / 2, first - pitch * 0.6, 15, ROOF + 2, 3);
-    kit.slabAt(M.hull, s * (WALL + 7), ROOF / 2, zEnd + 1.5, 15, ROOF + 2, 3);
+    /* THE GALLERY: a catwalk with rails along the wall, `hangar 6`'s
+     * walkway with a figure on it, and the lit fascia under its edge. */
+    catwalk(kit, s * (F - 2.2), GALLERY, mid, len - 20, { yaw: Math.PI / 2 });
+    kit.slabAt(M.deep, s * (F - 0.3), GALLERY - 1.7, mid, 0.6, 1.4, len - 20);
+    kit.slabAt(M.glowDim, s * (F - 0.7), GALLERY - 1.3, mid, 0.3, 0.3, len - 22);
+    /* The upper band: a dark panel line where the strips end, and the long
+     * horizontal run along the top of the wall (`hangar 3`, `4`). */
+    kit.slabAt(M.dark, s * (F - 0.3), 64.5, mid, 0.6, 2.4, len - 12);
+    kit.slabAt(M.glowDim, s * (F - 0.5), 82, mid, 0.5, 0.7, len - 12);
+    /* Cable runs pinned to the wall, two heights. */
+    cableRun(kit, s * F, s, 20.5, mid, len - 16, { pitch });
+    cableRun(kit, s * F, s, 44.0, mid, len - 16, { pitch, radius: 0.26 });
   }
 
-  /* ── THE FORWARD FACE round the aperture: the two chamfer corners and the
-   * jambs, solid, so the hexagon is cut out of a wall rather than floating in
-   * the open. */
+  /* ── THE FORWARD FACE: a fascia round the opening, cut to the outline, so
+   * the rounded rectangle is a window in a wall rather than the walls
+   * simply stopping. One extrusion with the aperture as its hole. */
   {
-    const C = DECK.chamfer;
     const fz = L + 1.2;
-    for (const s of [-1, 1]) {
-      /* The jamb outboard of the opening, the wall's own thickness. */
-      kit.slabAt(M.dark, s * (WALL + 7), ROOF / 2, fz, 14, ROOF + 4, 2.4);
-      /* The corner over the chamfer: a slab lying along the lean, thick
-       * enough to close the triangle behind it. */
-      const cx = s * (WALL - C.x * 0.5), cy = (C.y + ROOF) / 2;
-      const len = Math.hypot(C.x, ROOF - C.y);
-      const g = new THREE.BoxGeometry(len + 6, 26, 2.4);
-      g.rotateZ(-s * Math.atan2(ROOF - C.y, C.x));
-      g.translate(cx + s * 9, cy + 9, 0);
-      kit.geoAt(M.dark, g, 0, 0, fz);
-    }
-    /* Emitter housings along the rim: fat studs every 12 m, the hardware the
-     * white band is drawn on. */
-    for (const [ax, ay, bx, by] of aperturePoints().map((p, i, a) => [...p, ...a[(i + 1) % a.length]])) {
-      const len = Math.hypot(bx - ax, by - ay);
-      const k = Math.max(1, Math.round(len / 12));
-      for (let j = 0; j <= k; j++) {
-        const t = j / k;
-        kit.slabAt(M.hull, ax + (bx - ax) * t, ay + (by - ay) * t, fz + 1.4, 3.2, 3.2, 2.0);
+    const face = new THREE.Shape();
+    face.moveTo(-WALL - 16, -2);
+    face.lineTo(WALL + 16, -2);
+    face.lineTo(WALL + 16, ROOF + 2);
+    face.lineTo(-WALL - 16, ROOF + 2);
+    face.closePath();
+    face.holes.push(apertureShape(THREE.Path));
+    const g = new THREE.ExtrudeGeometry(face, { depth: 2.4, bevelEnabled: false });
+    kit.geoAt(M.hull, g, 0, 0, fz - 1.2);
+    /* The lintel over the opening, dark, with a strip run along it. */
+    kit.slabAt(M.dark, 0, (DECK.aperture.top + ROOF) / 2 + 1, fz - 1.6, WALL * 2 + 8, ROOF - DECK.aperture.top - 2, 0.9);
+    kit.slabAt(M.glowDim, 0, DECK.aperture.top + 3.2, fz - 2.0, WALL * 2 - 24, 0.6, 0.5);
+    /* Emitter housings along the rim: fat studs every ~12 m, just outside
+     * the band, the hardware the white band is drawn on. */
+    const pts = aperturePoints();
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % pts.length];
+      const seg = Math.hypot(bx - ax, by - ay);
+      /* One per 12 m of straight edge; the short corner pieces get one
+       * between them (every other), so the arc is studded too. */
+      if (seg < 12 && i % 2) continue;
+      const k = Math.max(1, Math.round(seg / 12));
+      for (let j = 0; j < k; j++) {
+        const t = (j + 0.5) / k;
+        const px = ax + (bx - ax) * t, py = ay + (by - ay) * t;
+        /* Outward: away from the opening's centre. */
+        const ox = px, oy = py - DECK.aperture.top / 2;
+        const ol = Math.hypot(ox, oy) || 1;
+        kit.slabAt(M.dark, px + (ox / ol) * 3.0, Math.max(1.5, py + (oy / ol) * 3.0), fz - 0.4, 3.0, 3.0, 2.0);
       }
     }
   }
 
-  /* ── THE BULKHEAD. One solid face, ribbed, with the lift set into its
-   * centre, two blast doors either side of it, and two catwalks. */
-  const bz = DECK.aft + 4;
+  /* ── THE BULKHEAD. One pale wall in the same vocabulary — slabs, pilasters,
+   * a strip per slab — with the lift set into its centre, two blast doors
+   * either side of it, and two catwalks. */
+  const bz = A + 4;
   for (let i = -7; i <= 7; i++) {
     if (i === 0) continue;
-    kit.slabAt(M.dark, i * 22, ROOF / 2, bz, 20, ROOF, 3.2);
-    kit.slabAt(M.hull, i * 22 - 10.5, ROOF / 2, bz + 2.0, 2.4, ROOF + 2, 4);
-    /* Rule 4's vertical run, unlit so it survives the dark. */
-    kit.slabAt(M.glowDim, i * 22, 40, bz + 2.4, 1.0, 66, 0.7);
+    kit.slabAt(M.hull, i * 22, ROOF / 2, bz, 20, ROOF, 3.2);
+    kit.slabAt(M.dark, i * 22 - 11, ROOF / 2, bz + 1.6, 2.2, ROOF, 2.4);
+    kit.slabAt(M.hull, i * 22 - 11, ROOF / 2, bz + 2.9, 1.2, ROOF - 3, 0.3);
+    /* A strip per slab, from over the doors to the upper band — laid by
+     * hand rather than by `wallStrip`, whose axes are a side wall's. */
+    kit.slabAt(M.deep, i * 22, 41, bz + 1.85, 1.7, 39, 0.5);
+    kit.slabAt(M.lamp, i * 22, 41, bz + 2.15, 0.8, 38, 0.35);
   }
   /* The centre bay of the bulkhead: solid above the lobby, the lobby cut into
    * it, and the lift's own shaft face inside that. */
-  kit.slabAt(M.dark, 0, (ROOF + LIFT.lobby.h) / 2, bz, 22, ROOF - LIFT.lobby.h, 3.2);
+  kit.slabAt(M.hull, 0, (ROOF + LIFT.lobby.h) / 2, bz, 22, ROOF - LIFT.lobby.h, 3.2);
   liftLobby(kit, M, paint, bz);
   /* THE BLAST DOORS, closed, either side: where the rest of the ship is. The
    * crowd stands and walks in front of them; nobody comes through. */
@@ -694,7 +800,7 @@ export function dressStructure(kit, paint) {
     kit.slabAt(M.deep, dx, 9, bz + 1.0, 14, 18, 3);
     kit.slabAt(M.hull, dx - 3.6, 9, bz + 2.2, 0.8, 17, 1.2);
     kit.slabAt(M.hull, dx + 3.6, 9, bz + 2.2, 0.8, 17, 1.2);
-    kit.slabAt(M.hull, dx, 18.4, bz + 2.4, 15, 1.6, 2.2);
+    kit.slabAt(M.dark, dx, 18.4, bz + 2.4, 15, 1.6, 2.2);
     kit.slabAt(M.status, dx, 19.6, bz + 2.9, 0.6, 0.6, 0.6);
     kit.slabAt(M.glowDim, dx, 17.2, bz + 2.6, 12, 0.4, 0.5);
     /* Their light on the deck. */
@@ -703,15 +809,13 @@ export function dressStructure(kit, paint) {
   /**
    * THE INSIGNIA, WHICH IS THE ONLY THING IN THE ROOM THAT SAYS WHOSE IT IS.
    *
-   * Rule 7: large, pale, sparse — one mark above the lift at the scale a
-   * ship's own crest is painted, and one on the deck where the company falls
-   * in. See `DeckKit.insigniaParts` for the two shapes: the Republic's roundel
-   * of eight flared spokes round a hub, the Confederacy's six-armed hex. They
-   * are the two armies' own crests and nothing else's — the previous cog had
-   * an outer ring round its spokes, which is the shape the player read as the
-   * Empire's, and it is gone.
+   * SMALL, AND ON THE WALL ONLY. It was a 24 m crest here and a 32 m one on
+   * the muster ground; the player asked for the wheel on the floor to go, and
+   * no reference paints an emblem on its deck. A ship's crest high on a
+   * bulkhead, at the scale a crest is painted, is what the references have.
+   * See `DeckKit.insigniaParts` for the two shapes.
    */
-  insigniaPanel(kit, 0, 40, bz + 3.4, 24, { faction: kit.faction });
+  insigniaPanel(kit, 0, 34, bz + 3.4, 14, { faction: kit.faction });
 
   /* ══ THE MEMORIAL, ON THE ONE REAL WALL YOU WALK PAST ═══════════════════
    * A recessed panel beside the lift at head height, one lit bar per name.
@@ -735,7 +839,7 @@ export function dressStructure(kit, paint) {
   catwalk(kit, 0, 46, bz + 5.5, WALL * 2.1);
 
   /* ── THE CEILING, and everything hung from it. */
-  ceilingAt(kit, M, first, zEnd);
+  ceilingAt(kit, M, first, last);
 
   /* ── THE SECOND PAD, out toward the aperture on the starboard side: a
    * craft on a raised platform in the middle distance, `hangar 7.jpg`'s scale
@@ -756,9 +860,9 @@ export function dressStructure(kit, paint) {
    * reference leaves the floor clear. */
   crates(kit, -WALL + 12, -70, 6, 3);
   crates(kit, WALL - 14, -58, 5, 7);
-  crates(kit, WALL - 10, 18, 7, 11);
+  crates(kit, WALL - 12, 18, 7, 11);
   crates(kit, -WALL + 16, 58, 4, 13);
-  crates(kit, -WALL + 10, 104, 6, 17);
+  crates(kit, -WALL + 12, 104, 6, 17);
   crates(kit, WALL - 12, 124, 5, 23);
   crates(kit, WALL - 30, 70, 4, 29);
   /* The pit, lit from inside — the one thing that says there is more ship
@@ -768,17 +872,6 @@ export function dressStructure(kit, paint) {
     kit.slabAt(M.glow, dx, 0.1, dz, w * 0.9, 0.16, d * 0.9);
   }
 
-  /* ── THE UPLIGHTS, scattered across the plate. */
-  for (let i = 0; i < 16; i++) {
-    const z = DECK.aft + 20 + i * 15;
-    for (const s of [-1, 1]) {
-      deckLamp(kit, s * 40, z);
-      if (i % 2 === 0) deckLamp(kit, s * 16, z + 7.5);
-    }
-  }
-  for (const [lx, lz] of [[-62, 20], [-62, 70], [62, 20], [62, 70], [0, 118], [-40, 124], [40, 124]]) {
-    deckLamp(kit, lx, lz);
-  }
   /* DRAINAGE GRATINGS, flush, two runs the length of the deck — a
    * manufactured surface has seams that do something. */
   for (const s of [-1, 1]) {
@@ -786,47 +879,40 @@ export function dressStructure(kit, paint) {
     for (let z = DECK.aft + 20; z < L - 10; z += 3.0) kit.slabAt(M.hull, s * 52, 0.03, z, 1.5, 0.03, 0.18);
   }
 
-  /* ── THE PAINT. Rule 7: large, pale, sparse, and RED where it is coloured
-   * at all — there is no yellow in any of the seven. */
+  /**
+   * ── THE PAINT. Rule 7: large, pale, sparse, and RED where it is coloured
+   * at all — there is no yellow in any of the seven. And THIN: the references
+   * paint a black mirror with hairlines, not with a crest. The 32 m insignia,
+   * the chevrons and the grid of tie-down rings are gone; what is left is
+   * what `hangar 1`, `4` and `5` show — long pale guide lines, thin red
+   * rectangles, rings round the pads.
+   */
   const P = DECK_PAINT;
-  paint.dashed(P.stencil, 0, DECK.aft + 20, 0, L - 20, 0.5, 5.5, 4.5);
+  paint.dashed(P.stencil, 0, DECK.aft + 20, 0, L - 20, 0.28, 5.5, 4.5);
   for (const s of [-1, 1]) {
-    paint.line(P.stencil, s * 40, DECK.aft + 20, s * 40, L - 20, 0.35);
+    paint.line(P.stencil, s * 40, DECK.aft + 20, s * 40, L - 20, 0.24);
+    paint.line(P.stencil, s * 62, DECK.aft + 20, s * 62, L - 20, 0.18);
   }
-  /* `hangar 1.webp`'s huge pale chevrons, pointing at the opening. */
-  for (const s of [-1, 1]) {
-    const cx = s * 26, cz = 104;
-    paint.line(P.stencil, cx - s * 14, cz - 16, cx, cz + 4, 1.4);
-    paint.line(P.stencil, cx + s * 4, cz - 16, cx + s * 18, cz + 4, 1.4);
-  }
-  /* TIE-DOWN POINTS on an 8 m grid across the working deck — the detail a
-   * plate has and a floor does not, and the cheapest thing on it. */
-  for (let x = -64; x <= 64; x += 8) {
-    for (let z = DECK.aft + 24; z <= L - 24; z += 8) {
-      if (Math.abs(x) < 6 && z > DECK.line - 8 && z < DECK.line + 14) continue;
-      paint.ring(P.stencil, x, z, 0.36, 0.12, 10);
-    }
-  }
-  /* AND ON THE GROUND THE LINE FORMS ON. Big, pale and alone. */
-  paint.insignia(0, DECK.line + 28, 32, { faction: kit.faction });
+  /* Thin red rectangles on the crowd ground and the work bay, `hangar 5`. */
+  const box = (c, x0, z0, x1, z1, w = 0.22) => {
+    paint.line(c, x0, z0, x1, z0, w); paint.line(c, x1, z0, x1, z1, w);
+    paint.line(c, x1, z1, x0, z1, w); paint.line(c, x0, z1, x0, z0, w);
+  };
+  for (const s of [-1, 1]) box(P.keepOut, s * 20, -92, s * 58, -66);
+  box(P.keepOut, 36, -18, 66, 24);
+  box(P.keepOut, 36, 34, 66, 58);
   /* The muster ground, boxed — the line has a place painted for it. */
-  paint.line(P.stencil, -46, DECK.line - 2, 46, DECK.line - 2, 0.3);
-  paint.line(P.stencil, -46, DECK.line + 9, 46, DECK.line + 9, 0.3);
-  for (const s of [-1, 1]) paint.line(P.stencil, s * 46, DECK.line - 2, s * 46, DECK.line + 9, 0.3);
+  box(P.stencil, -46, DECK.line - 2, 46, DECK.line + 9, 0.26);
   /* The lift's apron. */
   paint.line(P.stencil, -9, bz + 4, 9, bz + 4, 0.3);
   paint.line(P.stencil, -9, bz + 14, 9, bz + 14, 0.3);
-  /* Red keep-outs at the rack feet, the pit and both pads. */
-  for (let i = 0; i < n; i += 2) {
-    const z = first + i * pitch;
-    for (const s of [-1, 1]) {
-      paint.line(P.keepOut, s * (WALL - 9), z - pitch * 0.4, s * (WALL - 9), z + pitch * 0.4, 0.28);
-    }
-  }
+  /* Red keep-outs at the pit and both pads, pale rings inside the red. */
   paint.line(P.keepOut, -68, -18, -36, -18, 0.3);
   paint.line(P.keepOut, -68, 30, -36, 30, 0.3);
-  paint.ring(P.keepOut, DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, 18.5, 0.3, 48);
-  paint.ring(P.keepOut, 44, 96, 18.5, 0.3, 48);
+  for (const [px, pz] of [[DEPLOY_RAMP.x, DEPLOY_RAMP.padZ], [44, 96]]) {
+    paint.ring(P.keepOut, px, pz, 18.5, 0.3, 48);
+    paint.ring(P.stencil, px, pz, 15.8, 0.22, 48);
+  }
 }
 
 /** The pit's four kerbs, shared by the geometry and the colliders. */
@@ -895,8 +981,20 @@ function liftLobby(kit, M, paint, bz) {
 function ceilingAt(kit, M, zFirst, zEnd) {
   const W = DECK.wall + 14, R = DECK.roof, L = DECK.lip, A = DECK.aft;
   const mid = (A + L) / 2, len = L - A + 8;
-  /* The plate. */
-  kit.slabAt(M.deep, 0, R + 0.6, mid, W * 2, 1.2, len);
+  /* The plate — `dark`, not `deep`: a black lid ninety metres up under
+   * pale haze was the one thing that made the top of the room read as a
+   * lid. The lit grid below it is what makes it read as a ceiling. */
+  kit.slabAt(M.dark, 0, R + 0.6, mid, W * 2, 1.2, len);
+  /**
+   * THE STRIP-LIGHT GRID ON THE PLATE, `hangar 2`: seven runs the length of
+   * the room and one across every beam bay, unlit bars just under the plate,
+   * so the ceiling is a lit thing seen through the girders rather than a
+   * dark plane behind them. Fogged, so from the deck it dissolves toward
+   * the same pale haze the walls do.
+   */
+  for (const x of [-66, -44, -22, 0, 22, 44, 66]) {
+    kit.slabAt(M.lamp, x, R - 0.45, mid, 1.1, 0.3, len - 12);
+  }
   /* Three girders the length of the room. */
   for (const x of [0, -44, 44]) {
     kit.slabAt(M.hull, x, R - 1.6, mid, 2.6, 3.2, len);
@@ -907,10 +1005,8 @@ function ceilingAt(kit, M, zFirst, zEnd) {
     kit.slabAt(M.hull, 0, R - 2.2, z, W * 2, 2.2, 1.8);
     kit.slabAt(M.dark, 0, R - 3.6, z, W * 2, 0.5, 3.0);
     if (i % 2 === 0) for (const x of [-22, 22]) kit.slabAt(M.status, x, R - 4.1, z, 0.5, 0.5, 0.5);
-    /* Light panels in the bay between this beam and the next: four across. */
-    for (const x of [-60, -20, 20, 60]) {
-      kit.slabAt(M.glowDim, x, R - 0.4, z + 8, 6.0, 0.4, 1.4);
-    }
+    /* The grid's cross run, halfway between this beam and the next. */
+    kit.slabAt(M.lamp, 0, R - 0.45, z + 8, W * 2 - 16, 0.3, 1.1);
   }
   /* Catenary cable runs: a sag between neighbouring beams, six lanes. */
   for (const x of [-66, -34, -12, 12, 34, 66]) {
@@ -939,8 +1035,9 @@ function ceilingAt(kit, M, zFirst, zEnd) {
       kit.geoAt(M.hull, c, s * (DECK.wall - 6), R - 4.6, z);
     }
   }
-  /* Hung fighters, `hangar 3.jpg`: two rows on ceiling mounts, nose down
-   * toward the deck, so the room has ships OVER you as well as beside you. */
+  /* Hung fighters, `hangar 3` and `6`: two rows on ceiling mounts, nose
+   * down toward the deck. This is the only place the racked-fighter idea
+   * survives — the references hang them from rails, not in wall cubbies. */
   for (const s of [-1, 1]) {
     for (let i = 0; i < 9; i++) {
       const z = A + 30 + i * 24;
@@ -1214,58 +1311,83 @@ function deckColliders(world) {
 /**
  * ══ THE LIGHT ═════════════════════════════════════════════════════════════
  *
- * Everything is cool, and the room is lit by its own ranks. A point light per
- * pair of rack bays down both walls is what actually throws the strips' light
- * onto the deck — an emissive material illuminates nothing in three.js — and
- * the key comes in through the aperture from the planet's side.
+ * HIGH-KEY WHITE, WHICH IT WAS NOT. Every reference is pale grey steel under
+ * white light — `hangar 1` and `5` are nearly white rooms with a black floor.
+ * The first rig lit a mid-grey wall with steel-blue lamps under a navy fog
+ * and a navy ambient, and the room came out one dark blue from the plate to
+ * the lid. Three things carry the lightness now, because the cel pipeline
+ * has no specular to catch a lamp and a surface is exactly its albedo times
+ * what falls on it:
  *
- * THE KEY IS THE APERTURE and it still wins: 2.6 against 18 at 60 m falloff
- * means the wall lamps light their own bay and die, which is the ratio every
- * reference has — bright bars, dark air between them.
+ *   THE ALBEDO      `DeckKit.FACTION_PALETTE` — the walls are pale.
+ *   THE LAMPS       white (warm for the Republic, cool for the Separatists),
+ *                   a few of them and WIDE. Point lights under the cel model
+ *                   fall off hard on a floor, so there are ten down the room
+ *                   at gallery height, thirty metres off the walls, rather
+ *                   than fourteen small ones at the bays' feet.
+ *   THE AIR         the fog is the wall's own pale grey, set here rather than
+ *                   in the level record, so the far end of the room dissolves
+ *                   into the haze `hangar 3` and `6` have and not into a void.
+ *                   Density is `HANGAR_LEVEL`'s.
+ *
+ * THE KEY IS STILL THE APERTURE: a steep white directional from the opening,
+ * so the floor's lit band is the planet's side and a wall is on the shadow
+ * band in the key's own colour. A flat white ambient lifts the shadow band to
+ * the pale the references show; the floor's near-black albedo keeps it a
+ * mirror under the same light.
  */
 function lightDeck(world) {
-  /* The colour temperature swaps with everything else: the Republic deck is
-   * lit near-white, the Separatist one pushed to steel blue, a few hundred
-   * kelvin apart on purpose. */
   const sep = world._deckFaction === 'separatist';
-  const KEY = sep ? 0xaec6f2 : 0xcadcf6;
-  const LAMP = sep ? 0xb9cef4 : 0xdbe6fb;
-  /* STEEP, NOT FLAT: high enough that a wall casts a shadow the length of a
-   * wall and not the length of the ship. It comes from the aperture, which is
-   * where the planet is now. */
-  const key = new THREE.DirectionalLight(KEY, 2.6);
+  /* The temperature swaps with everything else: warm white on the Republic
+   * deck, blue-white on the Separatist one — a few hundred kelvin apart. */
+  const KEY = sep ? 0xe6eeff : 0xfff6ea;
+  const LAMP = sep ? 0xdae8ff : 0xfff3e2;
+  const AIR = sep ? 0x8d9aab : 0x9f9d99;
+  const AMB = sep ? 0xb8c4d4 : 0xcfcac2;
+  const key = new THREE.DirectionalLight(KEY, 2.4);
   key.position.set(0, 150, DECK.lip * 0.85);
   key.target.position.set(0, 0, DECK.aft * 0.35);
   world.scene.add(key); world.scene.add(key.target);
   world.levelLights.push(key);
 
-  /* THE BULKHEAD WASH — small and high, over the lift lobby. */
-  /* SMALL. Under the cel model a point light's falloff on a flat floor is a
-   * hard-edged disc, not a pool: at 13 over 50 m this painted a pale plate
-   * forty metres across in front of the lift, which from any height read as
-   * a lid on the floor. Six over thirty lifts the lobby and stops. */
-  const fill = new THREE.PointLight(LAMP, 6, 30, 2);
-  fill.position.set(0, 20, DECK.aft + 8);
+  /* THE FLAT FILL, and it is what makes a wall the key does not face read
+   * pale rather than navy: the engine's hemisphere is the level record's
+   * `skyColor`, authored dark for the old room, and under the cel model the
+   * ambient is one flat colour on everything, so this is the colour of every
+   * shadow on the deck. */
+  const amb = new THREE.AmbientLight(AMB, 0.55);
+  world.scene.add(amb); world.levelLights.push(amb);
+
+  /* THE AIR: the fog takes the wall's colour. Set on the scene the engine
+   * built at stage 4 — the record's own `fogColor` is what a check reads,
+   * and the density is its. */
+  if (world.scene.fog) {
+    world.scene.fog.color.set(AIR);
+    world.engine?.skyDome?.setHaze?.(world.scene.fog.color, world.scene.fog.color);
+  }
+
+  /* THE BULKHEAD WASH, over the lift lobby, small and high. */
+  const fill = new THREE.PointLight(LAMP, 260, 60, 2);
+  fill.position.set(0, 22, DECK.aft + 10);
   world.scene.add(fill); world.levelLights.push(fill);
 
   /**
-   * THE RANKS. Six a side down the canyon plus two on the apron: fourteen,
-   * which is near the ceiling of what a forward renderer will take — three.js
-   * compiles the light count into every material's shader.
+   * THE RANKS: five a side at gallery height, standing thirty metres off the
+   * walls so the nearest slab gets about half a unit and nothing blows out,
+   * plus two out toward the aperture. Twelve, well inside what a forward
+   * renderer takes — three.js compiles the count into every shader.
    */
-  for (let i = 0; i < 6; i++) {
-    const z = DECK.aft + 26 + i * 36;
+  for (let i = 0; i < 5; i++) {
+    const z = DECK.aft + 30 + i * 44;
     for (const s of [-1, 1]) {
-      const l = new THREE.PointLight(LAMP, 20, 70, 2);
-      l.position.set(s * (DECK.wall - 12), 16, z);
+      const l = new THREE.PointLight(LAMP, 620, 130, 2);
+      l.position.set(s * 44, 34, z);
       world.scene.add(l); world.levelLights.push(l);
     }
   }
-  /* And two out toward the aperture, so the deck under the opening is not a
-   * black band the player crosses to reach the view. */
   for (const s of [-1, 1]) {
-    const l = new THREE.PointLight(KEY, 16, 90, 2);
-    l.position.set(s * 40, 16, 118);
+    const l = new THREE.PointLight(KEY, 480, 110, 2);
+    l.position.set(s * 40, 30, 124);
     world.scene.add(l); world.levelLights.push(l);
   }
 }

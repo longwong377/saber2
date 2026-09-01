@@ -311,8 +311,16 @@ export async function run({ check, assert }) {
       assert(!isRed(t) && t.chroma < 0.42,
         `${f}'s mark is #${hex.toString(16)} at ${t.h.toFixed(0)}° chroma ${t.chroma.toFixed(2)} — `
         + 'the deck paint in the references is pale grey, with red reserved for keep-out lines');
-      assert(geos.length >= 5 && geos.length <= 16,
-        `${f}'s mark is ${geos.length} pieces — under five is not a device and over sixteen is the `
+      /**
+       * 5 TO 40 PIECES, FROM 16. The Republic roundel is a hub, eight flared
+       * spokes of three bars each and eight rounded tips — thirty-three
+       * parts for ONE shape, because a flare has to be built out of bars. A
+       * piece count is a proxy for "busy" and it counted the flare as busy
+       * while this check was red against the mark the player asked for. The
+       * one-circle test below is what actually holds rule 7.
+       */
+      assert(geos.length >= 5 && geos.length <= 40,
+        `${f}'s mark is ${geos.length} pieces — under five is not a device and over forty is the `
         + '"busy" rule 7 bans');
       /* ONE MARK AND NOT A SCATTERING. Every piece inside the circle the mark
        * declares, so an insignia cannot quietly become deck furniture spread
@@ -344,9 +352,17 @@ export async function run({ check, assert }) {
     assert([...rt].sort().join(',') !== [...st].sort().join(','),
       `both marks are built from the same primitives (${[...rt].join(',')}) — at deck-marking `
       + 'scale the colour is nearly gone, so a mark that differs only in tint does not differ');
-    assert(rt.has('RingGeometry') && !st.has('RingGeometry'),
-      'the republic cog has lost its ring, or the confederate mark has grown one — those are the '
-      + 'two shapes and they are meant to be unmistakable at any distance');
+    /* THE ROUNDEL IS ROUND AND THE HEX IS NOT: the Republic mark is the one
+     * with discs (a hub and rounded tips) and the Confederacy's has none, and
+     * NEITHER has a ring — the ring round the spokes was the one feature that
+     * turned the Republic's crest into the Empire's cog, and the player read
+     * it as exactly that. */
+    assert(rt.has('CircleGeometry') && !st.has('CircleGeometry'),
+      'the republic roundel has lost its hub and tips, or the confederate hex has grown a disc — '
+      + 'those are the two shapes and they are meant to be unmistakable at any distance');
+    assert(!rt.has('RingGeometry'),
+      'the republic mark has a ring round its spokes again — that is the Imperial cog, which the '
+      + 'player asked to have removed');
     /**
      * AND NO NUMERALS ANYWHERE. `digit` lays seven-segment bars and `number`
      * lays rows of them; the references have no numeral in any of the seven
@@ -417,7 +433,7 @@ export async function run({ check, assert }) {
     return rows.join(' · ');
   });
 
-  check('faction: the room wears its army\'s mark, on the deck and on the bulkhead', async () => {
+  check('faction: the room wears its army\'s mark on the bulkhead, and nowhere on the deck', async () => {
     /**
      * AN EXPORT WITH NO CALLER IS THE DEFECT THIS ROOM ALREADY HAS ONCE.
      * `Paint.digit` and `Paint.number` have been written, complete and correct,
@@ -443,19 +459,24 @@ export async function run({ check, assert }) {
       H.dressStructure(kit, paint);
       const wall = [...kit.bins.keys()].some((m) => m.name === `deck-${f}-mark`);
       const deck = paint.byColor.has(K.FACTION_PALETTE[f].mark);
-      assert(wall || deck,
-        `a ${f} deck carries no insignia anywhere. \`Paint.insignia(x, z, size)\` lays the mark on `
-        + 'the plate and `insigniaPanel(kit, x, y, z, size)` stands it on the bulkhead; both are '
-        + 'exported from DeckKit.js and neither has a caller, which is exactly the state `digit` '
-        + 'and `number` have been in since this file was written.');
       assert(wall,
-        `a ${f} deck paints its mark on the floor but not on the bulkhead. The aft face is the one `
-        + 'solid surface in the room and the only thing a player standing anywhere can read — '
-        + 'call `insigniaPanel(kit, 0, y, bz + 3, size)`.');
-      assert(deck,
-        `a ${f} deck marks its bulkhead but not its plate. Rule 7's markings are the deck's, and `
-        + 'the muster ground is what the player looks down at — call `paint.insignia(x, z, size)`.');
-      rows.push(`${f}: deck + bulkhead`);
+        `a ${f} deck carries no insignia on its bulkhead. The aft face is the one solid surface `
+        + 'in the room and the only thing a player standing anywhere can read — call '
+        + '`insigniaPanel(kit, 0, y, bz + 3, size)`. `Paint.digit` and `number` have sat with zero '
+        + 'callers since this file was written; an insignia nothing stands is the same defect.');
+      /**
+       * AND NOT ON THE FLOOR. This used to demand `paint.insignia` on the
+       * muster ground as well — a 32 m crest under the line. The player asked
+       * for the wheel on the floor to go, and not one of the seven references
+       * paints an emblem on its deck: the floors are black mirrors with thin
+       * guide lines and small marker lights (rule 7, `hangar 1`, `4`, `5`).
+       * So the deck half of the old assertion is inverted rather than dropped:
+       * a floor crest coming back is a regression, not a decoration.
+       */
+      assert(!deck,
+        `a ${f} deck paints its crest on the plate again. The player asked for the floor wheel to `
+        + 'go and no reference has one — the mark lives on the bulkhead panel only, small.');
+      rows.push(`${f}: bulkhead only`);
     }
     return rows.join(' · ');
   });
