@@ -460,11 +460,15 @@ function hangArm(rig, m, side, yaw, out, flex, o = {}) {
 }
 
 /**
- * Reach one hand to a world point with the elbow poled explicitly — the whole
- * of `poseSaberArm`'s construction, minus the hilt. `wrist` is the point the
+ * Reach one hand to a point with the elbow poled explicitly — the whole of
+ * `poseSaberArm`'s construction, minus the hilt. `wrist` is the point the
  * FOREARM'S TIP arrives at, which is the wrist joint and not the palm;
  * `finger` is where the hand's own +Y is then aimed, or null to leave the hand
  * at whatever the forearm gave it.
+ *
+ * All three are in the FIGURE'S frame and are carried into world here, and the
+ * three arguments are consumed: they are the caller's scratch and come back
+ * transformed, which is why every call site rebuilds them.
  */
 function reachArm(rig, m, side, wrist, pole, finger) {
   const arm = side > 0 ? 'armL' : 'armR';
@@ -673,15 +677,42 @@ export function presentArms(man, p) {
   plantFoot(rig, m, 1, lx, lz, dL);
   plantFoot(rig, m, -1, rx, rz, dR);
   chestAt(man, _chest);
-  /* One vertical line, one hand-breadth in front of the breastplate. */
-  const fwdOff = 0.23 * A;
-  _hand.copy(_chest).addScaledVector(_fwd, fwdOff).addScaledVector(UP, 0.16 * A);
-  _hand2.copy(_chest).addScaledVector(_fwd, fwdOff).addScaledVector(UP, -0.34 * A);
+  /**
+   * ONE VERTICAL LINE, CLEAR OF THE ARMOUR.
+   *
+   * Measured on the built trooper, in the figure's own frame: the chest bone
+   * sits at z = 0.058 and the front face of the breastplate at z = 0.203, so
+   * anything less than 0.15 forward of the chest is INSIDE the plate. At 0.23
+   * the fists were 30 mm off the armour and the forearms folded flat against
+   * it — the pose read as arms crossed rather than as a weapon held. 0.30
+   * stands the line a hand clear of the plate, which is where a rifle is.
+   *
+   * The two hands are a chin and a belt: 1.41 and 0.99 on this figure, which
+   * is a 0.42 m grip spacing and the length of a real handguard-to-stock
+   * reach. The first version put the lower fist on the hip at 0.85 and the
+   * upper at 1.35, which is a rifle held across the stomach.
+   */
+  const fwdOff = 0.30 * A;
+  _hand.copy(_chest).addScaledVector(_fwd, fwdOff).addScaledVector(UP, 0.24 * A);
+  _hand2.copy(_chest).addScaledVector(_fwd, fwdOff).addScaledVector(UP, -0.20 * A);
   man.grip.pos.copy(_hand2);
   man.grip.dir.set(0, 1, 0);
-  _pole.copy(_chest).addScaledVector(_left, 0.72 * A).addScaledVector(UP, -0.70 * A);
+  /**
+   * ELBOWS DOWN AND TUCKED, and this pole is the whole pose.
+   *
+   * Two fists on one vertical line is a geometry that goes wrong in exactly
+   * one way: pole the elbows OUT and the two forearms run diagonally across
+   * the chest and cross in a large X, which reads as folded arms and not as a
+   * weapon. Measured at 0.58 out and 0.66 down, the forearms crossed at the
+   * sternum. Poled almost straight down from the shoulder instead — 0.30 out,
+   * a full arm's length below — the upper arms hang against the ribs and the
+   * forearms come UP to the line, which is what a man holding a rifle does.
+   */
+  _pole.copy(_chest).addScaledVector(_left, 0.30 * A).addScaledVector(UP, -1.00 * A)
+    .addScaledVector(_fwd, 0.06 * A);
   reachArm(rig, man, 1, _hand, _pole, _d.set(0, -1, 0));
-  _pole.copy(_chest).addScaledVector(_left, -0.72 * A).addScaledVector(UP, -0.70 * A);
+  _pole.copy(_chest).addScaledVector(_left, -0.30 * A).addScaledVector(UP, -1.00 * A)
+    .addScaledVector(_fwd, 0.06 * A);
   reachArm(rig, man, -1, _hand2, _pole, _d.set(0, -1, 0));
   return man;
 }
@@ -706,7 +737,7 @@ export const STANCES = { attention, ease: atEase, present: presentArms };
  * `handPoseOnHilt` makes for a hilt.
  */
 function applySalute(man, p, k) {
-  const rig = man.rig, A = man.arm;
+  const rig = man.rig, m = man, A = man.arm;
   const armR = rig.get('armR'), foreR = rig.get('foreR'), handR = rig.get('handR');
   if (!armR || !foreR) return;
   _qa.copy(armR.obj.quaternion);
@@ -716,17 +747,32 @@ function applySalute(man, p, k) {
   chestAt(man, _chest);
   if (rig.get('head')) rig.freshPos('head', _head).applyMatrix4(man._wi);
   else _head.copy(_chest).addScaledVector(UP, 0.32 * A);
-  /* The brow of the helmet, on the right side of it. */
-  _hand.copy(_head).addScaledVector(_left, -0.085 * A)
-    .addScaledVector(_fwd, 0.085 * A).addScaledVector(UP, 0.055 * A);
-  /* The wrist hangs a hand below and outboard: the fingers run up and in. */
-  _d.set(0, 0, 0).addScaledVector(_left, 0.30).addScaledVector(UP, 0.94).normalize();
-  _hand2.copy(_hand).addScaledVector(_d, -0.115 * A);
-  /* The elbow is OUT and level with the shoulder and slightly forward, which
-   * is the drill and is also the only pole that keeps the forearm and the hand
-   * in one straight line. */
-  _pole.copy(_chest).addScaledVector(_left, -1.05 * A)
-    .addScaledVector(UP, 0.14 * A).addScaledVector(_fwd, 0.34 * A);
+  /**
+   * THE BROW, off the HEAD BONE'S OWN LENGTH rather than in metres.
+   *
+   * `head` starts at the base of the skull and runs 0.23 up through it on the
+   * reference figure — so the brow of the helmet is a little over half way up
+   * it and about four tenths of it forward and out to the right. Measured on
+   * the built trooper: head origin 1.478, crown 1.708, and 0.53 lands the
+   * fingertips at 1.600, which is the bottom edge of the visor. Typed in
+   * metres it was 1.53 and the hand crossed the middle of the faceplate,
+   * because a hand placed at eye level has to come in front of the eyes to
+   * get there.
+   */
+  const hl = rig.get('head')?.length ?? 0.23 * m.s;
+  _hand.copy(_head).addScaledVector(_left, -0.38 * hl)
+    .addScaledVector(_fwd, 0.40 * hl).addScaledVector(UP, 0.53 * hl);
+  /* The wrist hangs one HAND below and outboard — `handR`'s length is exactly
+   * wrist to fingertip, so the fist ends on the brow and not through it. */
+  _d.set(0, 0, 0).addScaledVector(_left, 0.34).addScaledVector(UP, 0.94).normalize();
+  _hand2.copy(_hand).addScaledVector(_d, -(rig.get('handR')?.length ?? 0.10 * m.s));
+  /* The elbow is OUT, a touch BELOW the shoulder and slightly forward. Level
+   * with the shoulder — which is where the first version poled it — the
+   * forearm comes out horizontal and the salute reads as a hand held over the
+   * mouth; dropping the pole 90 mm takes the forearm to about 37°, which is
+   * the drill. */
+  _pole.copy(_chest).addScaledVector(_left, -0.84 * A)
+    .addScaledVector(UP, -0.10 * A).addScaledVector(_fwd, 0.17 * A);
   reachArm(rig, man, -1, _hand2, _pole, _d);
   armR.obj.quaternion.slerp(_qa, 1 - k);
   foreR.obj.quaternion.slerp(_qb, 1 - k);

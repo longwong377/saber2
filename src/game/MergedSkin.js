@@ -624,17 +624,24 @@ export function disposeMergedSkin(owner) {
  * none of those, and the stage never calls `_applyLod` at all, so nothing on
  * that path has ever reached the bake.
  *
- * MEASURED, on the shipped builders, republic tier 0 through 3 in the order a
- * line musters (tools/_paradecost.mjs, and the numbers are in this file's
- * check):
+ * MEASURED, on the real path — `buildParadeFigure` over the six republic
+ * archetypes a line musters, wearing their rank paint, marks and scars, so the
+ * bolt-on materials `CommandDirector` adds are in the count:
  *
- *     10 figures    540 meshes  ->   43 merged   12.6x
- *     24 figures   1296 meshes  ->  103 merged   12.6x
+ *     10 figures    492 visible meshes  ->   67    7.3x
+ *     24 figures   1190 visible meshes  ->  162    7.3x
  *
- * 1296 opaque meshes is 2592 rasterisations with the ink prepass, against a
- * dressing bound of 520 for a whole level (tools/checks/world-immersion.mjs).
+ * 1190 opaque meshes is 2380 rasterisations with the ink prepass, against a
+ * dressing bound of 520 for a whole LEVEL (tools/checks/world-immersion.mjs).
  * A room with two dozen named men in it is not affordable without this and is
  * comfortable with it.
+ *
+ * 7.3x and not the ~12x a bare body gives, and the difference is worth naming:
+ * a bare trooper folds to 5 bins, and the rank chip, the man's mark, his band
+ * and his scorch are four more MATERIALS — each with its own emissive, which
+ * `mergeBinKey` does not absorb — so a decorated veteran comes out at 7. That
+ * is the price of the paint being real paint, and it is still 7 draw calls for
+ * a man who cost 50.
  *
  * THE MERGE IS NOT A FREEZE. Weight 1.0 on one bone is exactly the rigid
  * parenting the graph was already doing, so the skeleton still drives the
