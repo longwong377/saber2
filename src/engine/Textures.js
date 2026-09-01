@@ -1402,3 +1402,65 @@ export function disposeTextureCache() {
   baked.clear();
   _scratches = null;
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Weathering — noise in METRES, for paint that goes on a body           */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * WHY THIS IS NOT `PERIODIC` ABOVE, AND NOT `MathUtil.noise3` EITHER.
+ *
+ * Everything above this line tiles: it is sampled in u/v over a texture that
+ * has to meet itself after one repeat, and `PERIODIC` is exported so
+ * tools/checks/materials.mjs can prove that. A chip in the paint on a shin is
+ * the opposite kind of thing. It is sampled at a VERTEX, in bone-local metres,
+ * and the two properties it needs are that it is the same number for the same
+ * vertex every time a body is built (a man carries the same chips onto every
+ * ground, and the parade figure of him has to agree with the body that lands —
+ * `tools/checks/worn-paint.mjs` compares the two region for region) and that
+ * it is different for the two sides of one body, which are authored from the
+ * same coordinates. Neither of those is a tiling question, and `MathUtil`'s
+ * noise draws its permutation from a module seed that a check may re-seed.
+ *
+ * So: an integer hash of the lattice cell, a seed for the side, and value
+ * noise over it. `cell` is the size of a chip in metres; `src/game/Command.js`
+ * `PAINT.cell` is the number and the reason for it.
+ */
+function ihash(x, y, z, seed = 0) {
+  let h = Math.imul(x | 0, 0x27d4eb2d) ^ Math.imul(y | 0, 0x165667b1)
+    ^ Math.imul(z | 0, 0x9e3779b1) ^ Math.imul((seed | 0) + 0x5bd1e995, 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 15), 0x85ebca6b);
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+/** Deterministic 0..1 for the lattice cell `p / cell` falls in. */
+function hash3(x, y, z, cell = 1, seed = 0) {
+  return ihash(Math.floor(x / cell), Math.floor(y / cell), Math.floor(z / cell), seed);
+}
+
+const _f5 = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+
+/** Value noise over `hash3`'s lattice, 0..1, smooth across cells. */
+function vnoise3(x, y, z, cell = 1, seed = 0) {
+  const fx = x / cell, fy = y / cell, fz = z / cell;
+  const x0 = Math.floor(fx), y0 = Math.floor(fy), z0 = Math.floor(fz);
+  const u = _f5(fx - x0), v = _f5(fy - y0), w = _f5(fz - z0);
+  const c = (dx, dy, dz) => ihash(x0 + dx, y0 + dy, z0 + dz, seed);
+  const l = (a, b, t) => a + (b - a) * t;
+  return l(
+    l(l(c(0, 0, 0), c(1, 0, 0), u), l(c(0, 1, 0), c(1, 1, 0), u), v),
+    l(l(c(0, 0, 1), c(1, 0, 1), u), l(c(0, 1, 1), c(1, 1, 1), u), v), w);
+}
+
+/**
+ * The wear field a painted edge follows: two octaves of value noise, 0..1,
+ * mean 0.5. The second octave is 0.37 of the first's cell so a chip has a
+ * ragged bite rather than a rounded one.
+ */
+function wear(x, y, z, cell = 0.016, seed = 0) {
+  return 0.66 * vnoise3(x, y, z, cell, seed) + 0.34 * vnoise3(x + 7.31, y - 3.17, z + 1.93, cell * 0.37, seed + 11);
+}
+
+export const WEAR = { hash3, vnoise3, wear };

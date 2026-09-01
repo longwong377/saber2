@@ -1,126 +1,129 @@
 /**
  * ══════════════════════════════════════════════════════════════════════════
- *  THE DECK, ALIVE — machines, not people
+ *  THE DECK, ALIVE — dense, and every one of them a body
  * ══════════════════════════════════════════════════════════════════════════
  *
- * ── WHY THERE IS NOT ONE WALKING PERSON WITHIN THIRTY METRES ──────────────
+ * ── WHAT THE PLAYER SAID, AND WHAT THIS FILE WAS BEFORE HE SAID IT ─────────
  *
- * The brief asks for a deck with work happening on it. The tree's own record
- * says how that goes wrong: six interior levels were deleted on the note
- * "your interior maps remind you that this is an AI game", and the single
- * cheapest way to earn that sentence is a humanoid on a path. Verified against
- * the tree before a line of this was written — there is no non-combat body in
- * this game, no task AI, no idle rig and no tool VFX. `buildRemote` is a
- * floating ball, `buildDummy` is two cylinders, `pilotBody` is eight parts
- * bolted into a seat. Every row of `ARCHETYPES` is a fighter, and a fighter
- * given somewhere to walk walks like a fighter: `BipedAnimator` at 4.2 m/s
- * with an aim solver looking for something to shoot.
+ *   "I like the repair droids/repair stuff going on but you only have one
+ *    example I want literally tons of it happening … I want countless ships,
+ *    countless repairs, I see no R2 units and just one repair droid moving
+ *    around, 1 fucking ship coming in and out that doesn't even have physics
+ *    … all the actual repair men/workers are garbage looking stand ins …
+ *    they don't even have physics … everything you can touch has to be
+ *    modeled … when ships leave they disappear after crossing the force
+ *    field but that shouldn't be the case I should see them leaving/getting
+ *    smaller … ships were going through the side walls … countless ships and
+ *    droids and workers and other shit I can throw around … way more repairs,
+ *    way more droids, more people, damaged ships coming in, fresh ones going
+ *    out after repairs, rows and rows of ships, PA, announcements"
  *
- * So the near field is MACHINERY, which has no gait to get wrong:
+ * What the room had: three stationary welders, one trolley, one posed tech
+ * made of eleven boxes, one sled, fourteen legless silhouettes at 60-105 m,
+ * two ships of twelve primitives in one instanced mesh — one of which flew
+ * from x = -144 to +144 THROUGH BOTH RACK WALLS — and `shipAway()`, which
+ * scaled a hull to zero the frame it crossed the lip. That last one is the
+ * vanish he saw. None of it had a body.
  *
- *   · three repair droids, stationary, at three jobs — treads, a turntable,
- *     one articulated arm and a welder. Three `Object3D` rotations and a
- *     spark burst. No rig, no IK, no nav, nothing to walk anywhere.
- *   · a gantry trolley traversing on a slow loop overhead, on a rail this file
- *     builds, over a hull section this file puts on jacks.
- *   · a loader sled crossing the midground with a crate on it.
- *   · one tech, POSED, on a scaffold lift under the hull — static, lit by his
- *     own arc, where a welding flare is most of what you see of him.
- *   · two hulls of traffic on two schedules that do not divide each other: one
- *     lands damaged, sits, and launches; one crosses the room through the
- *     field. Four events, no AI, and the spec asks for exactly that.
+ * ── WHAT IT IS NOW ─────────────────────────────────────────────────────────
  *
- * and the far field is silhouettes at 60-105 m through haze, which is the only
- * range at which a figure with no legs moving is honest. See `addDeckCrew`.
+ *   FIFTEEN DROIDS of five kinds — `DeckCast.DROID_KINDS` — three astromechs
+ *     that ROLL between jobs on a third leg with the dome turning and the eye
+ *     lit, four tracked welders at four seams, three folded pit droids, three
+ *     mouse droids zipping the deck's edges, two gonks waddling. One
+ *     `InstancedMesh` per kind for the chassis; the dome, the leg and the
+ *     welder's three arm parts are the only per-droid meshes.
+ *   THIRTEEN WORKERS — humanoids on the game's own skeleton, dressed by the
+ *     same `dressHumanoid` every trooper goes through, in jumpsuits
+ *     (`DeckCast.buildDeckCrew`). They WALK with `Rig.BipedAnimator`, the
+ *     gait every enemy in the game walks with, kneel at panels, hold a hose,
+ *     weld from a scaffold, watch a crane, and two of them run to a damaged
+ *     landing. Each folds to one draw call through `MergedSkin.mergeFigure`
+ *     the frame after he is built.
+ *   FOUR REPAIR JOBS at once: the hull section on jacks under the gantry,
+ *     a fighter on a cradle with its panels off and a droid in the open bay,
+ *     a transport with an engine out on a stand, and a coolant bowser with
+ *     a hose crew — plus a panel job at each wall foot.
+ *   TWO CRANE BRIDGES on the ceiling rails at x = ±36, y 89, one carrying a
+ *     hull plate and one an engine, on a slow pass the length of the room.
+ *   THREE LOADER SLEDS on three lanes, one instanced mesh.
+ *   THE TRAFFIC: two MODELLED hulls (`DeckCast.buildCastFighter/Shuttle`,
+ *     140 and 120 primitives) that come in through the aperture, land on the
+ *     apron, sit on gear with a collider you cannot walk through, spin up,
+ *     and go out — and NINE silhouettes outside the field: a formation of
+ *     four and a pair of fighters on patrol loops, a shuttle crossing, and
+ *     the far leg of every arrival and departure, drawn UNFOGGED out to
+ *     720 m past the lip, so a ship that leaves is a speck before it is
+ *     gone. Every other fighter arrival is damaged: smoke, a sputtering
+ *     bell, sparks at touchdown, the crash crew running.
+ *   PHYSICS ON ALL OF IT. Every droid is a `DeckCast.Knockable`, every
+ *     worker a `Shovable`: PROP-layer dynamic bodies, asleep at their
+ *     stations, that the Force grips, throws and knocks over, that the
+ *     player cannot walk through, and that get up again and go back to
+ *     work — a droid rights itself on `SHOVE`'s own clock.
+ *   THE PA ANNOUNCES IT: every launch, every arrival, the company falling
+ *     in, the lift — `DeckAudio.paCall`'s wordless horn with a HUD line
+ *     through `world.notify`, never closer than `PA.gap` seconds apart.
  *
- * ── EVERY COORDINATE IS A FRACTION OF `DECK`, AND THAT IS THE POINT ───────
+ * ── THE ROOM'S OWN RULES, ALL OF THEM ASKED RATHER THAN REMEMBERED ─────────
  *
- * This file was written against a 128 m room and was not touched when the room
- * became 288 m. See `frame()` for what that cost, item by item; the short
- * version is a crane on a deleted rail, a welder on a deleted scaffold, three
- * vents hissing into a pit and fourteen invisible crew. Nothing below is a
- * metre of the room any more — `across`, `fwd` and `deep` are the only three
- * rulers, `groundAt` samples the heightfield rather than assuming zero, and
- * `scanHoles` finds the pit rather than being told where it is.
- *
- * ── THE HAZE IS THE CHEAPEST THING IN THE FILE AND IT DOES THE MOST ───────
- *
- * `HANGAR-SPEC.md` calls it out and it is right: haze is what lets the far
- * half of a 288 m deck be four dark shapes and a moving light instead of
- * modelled geometry. Its density is now SOLVED against the distance from the
- * player to the aperture rim rather than typed. See `addDeckHaze` for the two
- * halves of it and for the one thing this file changes that it does not own.
+ * `Hangar.DECK_ZONES` partitions the deck; `inZone`/`clearOf` are the only
+ * way anything below decides where it may stand. Nothing crosses a rack
+ * wall (|x| > `DECK.wall` - 7.5 is inside a wall's collider), nothing
+ * crosses the ceiling, the corridor from the lobby to the line is empty,
+ * the muster ground is empty, the transport's pad is the flight lane's, and
+ * the only way in or out of the room is the aperture at z = `DECK.lip`.
+ * Inside, traffic stays under 40 m: the hung fighters reach down to 82 and
+ * the crane loads to about 64.
  *
  * ── COST ──────────────────────────────────────────────────────────────────
  *
- * The bound is not a feeling. `tools/checks/hangar.mjs` fails the room at 240
- * meshes and the ink pass rasterises every opaque object twice, so what is
- * added here is doubled. Measured, on the scene:
- *
- *   droid chassis ×3 (one merge)    3 meshes   2 532 tris
- *   droid arms     ×3               9            1 380
- *   repair bay: gantry, scaffold,
- *     hull section, jacks (merged)  3            1 060
- *   loader sled                     2              436
- *   trolley + hoist                 2              308
- *   tech                            1              752
- *   traffic (one InstancedMesh, 2)  1              508   (1 016 rasterised)
- *   emitters (one InstancedMesh, 9) 1               32   (  288 rasterised)
- *   field ripple rings              2              176
- *   crew (one InstancedMesh, 14)    1              200   (2 800 rasterised)
- *   haze sheets (one buffer)        1                6
- *                                  ──          ───────
- *                                  26            7 390   (10 754 rasterised)
- *
- * The gantry, the scaffold, the hull section and the whole of the traffic were
- * paid for by instancing rather than by budget: nine emitters — three welding
- * arcs, a torch, a sled beacon and four engine bells — were six meshes and six
- * materials and are now one `InstancedMesh` with the HDR brightness riding on
- * `instanceColor`, and two ships are two instances of one hull.
- *
- * That is also why the three droid chassis are one merge, why the crew are one
- * `InstancedMesh`, and why every arc and beacon goes through `Engine.lightUp`
- * rather than adding point lights: the pool is fixed at eight for the life of
- * the renderer, and adding one recompiles every lit material in the scene.
+ * The ink pass rasterises every opaque object twice, so what is here is
+ * composed: one instanced mesh per droid kind, one for the sleds, two for
+ * the silhouettes outside, one for every emitter in the room, one merged
+ * kit for every static piece of every job, one skinned mesh per worker.
+ * `tools/checks/decklife.mjs` prices the file's share and `deckcost.mjs`
+ * prints it by family.
  *
  * ── THE API ───────────────────────────────────────────────────────────────
  *
  *   dressDeckLife(world)      build. Call after `dressHangar`, once.
  *   stepDeckLife(world, dt)   animate. Call every frame with the world's dt.
+ *   undressDeckLife(world)    give back what was borrowed (the camera's far
+ *                             plane). `World.unload` reaches it through a
+ *                             sentinel in `world.statics` even if nobody
+ *                             calls it.
  *
- * `stepDeckLife` allocates nothing: every vector, quaternion and colour it
- * needs is a module-level scratch below, and every schedule is a float on
- * `world._deckLife`.
+ * `stepDeckLife` allocates nothing at steady state: every vector, matrix
+ * and colour is a module scratch below and every schedule is a float.
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, smoothstep, TAU, makeRng } from '../engine/MathUtil.js';
-import { Kit, propMaterials, mergeGeos, slabGeo, cylGeo, torusGeo } from '../world/Props.js';
-import { DECK } from './Hangar.js';
+import { propMaterials, mergeGeos, slabGeo, cylGeo, torusGeo } from '../world/Props.js';
+import { Shovable } from '../physics/Shovable.js';
+import { DECK, DECK_ZONES, clearOf } from './Hangar.js';
 import { DeckBuild, deckMats, catwalk } from './DeckKit.js';
+import { BipedAnimator } from './Rig.js';
+import { mergeFigure } from './MergedSkin.js';
+import {
+  castMaterials, Assembly, Knockable, DROID_KINDS, DROID_BUILDERS, astromechDome, astromechLeg,
+  buildDeckCrew, bindPose, buildCastFighter, buildCastShuttle, farHullGeometry,
+} from './DeckCast.js';
 /**
- * ══ THE SOUND OF THE TRAFFIC, WHICH HAD NO CALLER AT ALL ══════════════════
- *
- * `DeckAudio.js` ships `launchSequence` — clamps, spool, taxi, punch — and
- * `damagedArrival` — pass, two coughs, a hard landing on plate — and its own
- * header documents both as the room's API. Nothing in `src/` called either of
- * them. That is `HANGAR-SPEC`'s failure shape 1 exactly ("a module written,
- * tested, and never called"), and the reason is simply that until this file
- * grew traffic there was no ship for them to be the sound of.
- *
- * They are driven off the SAME clock as the hulls rather than a schedule of
- * their own, so the punch you hear is the punch you see. The two constants
- * come across with them because the cue timing is stated in them; both are
- * read inside functions, never at module scope, for the import-cycle reason
- * `frame()` documents at length.
+ * The sound of the traffic rides the traffic's own clocks — see `stepHull`.
+ * Both constants are read inside functions, never at module scope, for the
+ * import-cycle reason `frame()` documents.
  */
-import { LAUNCH, ARRIVE, launchSequence, damagedArrival } from './DeckAudio.js';
+import { LAUNCH, ARRIVE, launchSequence, damagedArrival, repulsorPass, paCall } from './DeckAudio.js';
+import { liftState } from './DeckLift.js';
 
-/* Scratch. `stepDeckLife` runs at 60 Hz over eight movers and a fourteen-body
- * crowd; a Vector3 per mover per frame is 1 300 allocations a second for
- * arithmetic that never leaves the function. */
+/* Scratch. Sixty hertz over forty movers; a Vector3 a mover a frame is two
+ * and a half thousand allocations a second for arithmetic that never leaves
+ * the function. */
 const _v = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
 const _q = new THREE.Quaternion();
 const _e = new THREE.Euler();
 const _m = new THREE.Matrix4();
@@ -129,243 +132,147 @@ const _m4 = new THREE.Matrix4();
 const _mb = new THREE.Matrix4();
 const _eu = new THREE.Euler();
 const _c = new THREE.Color();
+const UP = new THREE.Vector3(0, 1, 0);
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  0 · THE FRAME — and there is not one loose metre below it             */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ THE ROOM DOUBLED AND THIS FILE STAYED WHERE IT WAS ════════════════════
+ * ══ EVERY PLACE IN THIS FILE IS DERIVED, AND THE ZONES SAY WHAT IS FREE ══
  *
- * Every coordinate here used to be a literal, measured against a 128 m deck
- * with the aft face at -46 and the lip at 64. `Hangar.js` then rebuilt the room
- * at 288 m — aft -104, lip 144, the player put down 30 m further back — and
- * nothing in this file moved. What that cost, item for item:
+ * The first version of this file was written against a 128 m room and
+ * stayed where it was when the room became 288 m: a crane on a deleted rail,
+ * a welder on a deleted scaffold, three vents in a pit, fourteen invisible
+ * crew. The second version derived everything from `DECK` and then sited
+ * its two nearest droids in the ground the company's crowd now stands on.
+ * So this one goes one further: every site is a fraction of a ZONE from
+ * `Hangar.DECK_ZONES` or of the free ground BETWEEN zones, and
+ * `tools/checks/deckcast.mjs` asks `clearOf` about every one of them.
  *
- *   the trolley   rode a rail `addGantry` no longer builds, through open air
- *   the tech      stood 4.1 m up on a scaffold that had been deleted
- *   the droids    sited "beside the hull section, under the gantry" — neither
- *                 of which existed any more
- *   the sled      ran a 100 m stripe 113 m out, at 0.9 haze: a grey smear
- *   the crew      walked at 89-142 m against a comment claiming 48-70, and one
- *                 of their errands walked down into the pit and out again
- *   the vents     hissed into open air four metres above the pit floor
- *
- * Not one of those is a bug in the code. Every one of them is a NUMBER that
- * described the old room, so the fix is not to retype them against the new one
- * — that is the same failure with a later date on it. The fix is that nothing
- * below is a metre: everything is a fraction of `DECK`, and a rescale carries
- * the whole file with it.
- *
- * The four rulers:
- *
- *   `across(f)`  fraction of the canyon's half-beam — the rack walls.
- *   `fwd(m)`     metres in front of where the player is actually put down.
- *   `deep(f)`    fraction of the run from the muster line out to the lip.
- *   `NEAR`/`MID` the two bands: close enough to have to be real, and far
- *                enough to be a shape.
- *
- * Object DIMENSIONS below are still metres, and should be. A welding tech is
- * 1.8 m tall in any size of room; only WHERE he stands is a property of it.
- */
-
-/**
  * ══ AND IT IS COMPUTED ON FIRST CALL, NOT AT IMPORT ═══════════════════════
  *
- * `Hangar.js` imports this file and this file imports `DECK` from `Hangar.js`,
- * which is a cycle — and a cycle in ES modules does not fail evenly. It fails
- * on whichever import order reaches the wrong half first: a module-level
- * `const WALL = DECK.lip * …` is evaluated while `Hangar.js` is still on its
- * own import list, so `DECK` is in the temporal dead zone and the whole tree
- * throws `Cannot access 'DECK' before initialization`. Booting the deck
- * through `tools/_one.mjs hangar` is exactly that order.
- *
- * Every other reader of `DECK` in this file already happened to be inside a
- * function body, which is the only reason it has never bitten here.
- * `Hangar.js`'s own `outsideLevel` note records the same trap from the other
- * side. So the frame is a MEMOISED CALL, not a set of constants: nothing below
- * touches `DECK` until something asks for the frame, and by then both halves
- * of the cycle have finished evaluating.
+ * `Hangar.js` imports this file and this file imports `DECK` from it — a
+ * cycle, and a module-level `const X = DECK.lip * …` throws `Cannot access
+ * 'DECK' before initialization` on whichever import order reaches the wrong
+ * half first. Nothing below touches `DECK` until something asks for the
+ * frame.
  */
 let FRAME = null;
 function frame() {
   if (FRAME) return FRAME;
-  /**
-   * Half the beam of the canyon. `dressStructure` stands the rack walls here
-   * and keeps the number to itself — `DECK.bays` is the nearest thing the
-   * header publishes and it is the DEPTH of the solid structure, not its beam.
-   * So this is written as the fraction of the lip the racks actually stand at,
-   * and `tools/checks/decklife.mjs` measures the built racks and fails if the
-   * two ever stop agreeing.
-   */
-  const WALL = DECK.lip * (7 / 18);
-  /** The deck in front of the player: what every distance below is a slice of. */
+  const Z = DECK_ZONES;
+  /* `DECK.wall`, published — the fraction of the lip this used to be was the
+   * third of four independent copies of 56. */
+  const WALL = DECK.wall;
   const RUN = DECK.lip - DECK.start.z;
-  /** The line to the lip — the room ahead of the FORMATION rather than the man. */
   const SPAN = DECK.lip - DECK.line;
-  /**
-   * NEAR is "the closest NPCs, and they have to be real" — the spec's own
-   * words about the droids. MID is the far midground the crew and the traffic
-   * live in. Both are read off the room rather than typed, so the near work
-   * stays near however long the deck gets.
-   */
   const NEAR = RUN * 0.10;
   const MID = [RUN * 0.26, RUN * 0.48];
-
   const fwd = (m) => DECK.start.z + m;
   const deep = (f) => DECK.line + SPAN * f;
   const across = (f) => f * WALL;
-
   /**
-   * ══ WHERE A MAN MAY NOT BE PUT ════════════════════════════════════════
-   *
-   * `deckColliders` closes the rack walls with one box a side whose inboard
-   * face is 48.5 m out, not 56: the bays are RECESSED into the wall and the
-   * mouth of the recess is where the room actually stops. And the company now
-   * marches from the bulkhead doors at `DECK.aft + 8` straight past the player
-   * to the line, so the whole centre of the aft third is a corridor with
-   * twenty-four men walking down it.
-   *
-   * Everything sited below is outside both, which is why the two "closest NPC"
-   * droids are abeam of the player rather than in front of him.
+   * WHERE THE ROOM ACTUALLY STOPS. `deckColliders` closes each rack wall with
+   * a box whose inboard face is 7.5 m inside `DECK.wall`; anything past
+   * `CANYON` is inside a wall. `CLEAR` keeps a hull's width off it.
    */
+  const CANYON = WALL - 7.5;
   const CLEAR = WALL * 0.85;
 
-  /**
-   * ══ THE REPAIR BAY — the one place with a job going on in it ══════════
-   *
-   * `HANGAR-SPEC.md`: "One ship on a pad mid-repair with a tech on a scaffold,
-   * sparks, welding flare." What shipped was the sparks and the flare with
-   * nothing under them: `addGantry` and `addScaffold` were deleted from
-   * `Hangar.js` in the rebuild and this file went on placing a man at the
-   * height the scaffold used to be.
-   *
-   * It stands starboard for one reason: the pit is cut into the PORT half of
-   * the plate and it has already moved once, so the one heavy assembly in the
-   * file is put where the heightfield is flat under both the old cut and the
-   * new one — and `groundAt` samples under every leg anyway.
-   *
-   * Sited off `DECK.line` rather than off the player, because what it must
-   * clear is the muster ground: a hull section standing where the company
-   * forms up is a hull section standing in twenty-four men.
-   */
-  const BAY = {
-    x: across(0.58),
-    z: deep(0.12),
-    /* Metres, and rightly: a hull section is a hull section in any room. */
-    len: 15, rad: 3.0, jack: 2.6,
-  };
-  /** The portal that straddles it, and the rail the trolley actually rides. */
-  const GANTRY = {
-    /* Wide enough to stand its legs outside the jacks and the scaffold both. */
-    half: BAY.len * 0.87,
-    /* A quarter of the way to the overhead field: high enough to carry a hull
-     * plate over the section, low enough to be furniture rather than sky. */
-    beamY: DECK.roof * 0.25,
-  };
-  /** The lift the tech stands on, beside the section's port flank. */
-  const SCAFFOLD = {
-    x: BAY.x - BAY.rad - 2.0,
-    z: BAY.z + 1.5,
-    /* Two lifts: the working one at chest height to the flank, one over it. */
-    lifts: [BAY.jack + 0.7, BAY.jack + 3.4],
-    len: 9.0, wide: 2.6,
+  /* ── THE FREE GROUND, as rectangles between the zones ──────────────── */
+  /** The starboard work zone, the room's own. */
+  const W = Z.work;
+  /** Port: between the pit and the corridor, forward of the muster ground,
+   *  aft of the transport's pad. The port repair job lives here. */
+  const PORT = { x0: Z.pit.x1 + 1, x1: Z.padA.x1 - 1, z0: Z.muster.z1 + 2, z1: Z.padA.z0 - 2 };
+  /** The flanks: between the crowd and the muster line, outboard of it. */
+  const FLANK_R = { x0: Z.muster.x1 + 3, x1: CLEAR, z0: Z.crowdR.z1 + 2, z1: Z.muster.z1 - 2 };
+  const FLANK_L = { x0: -CLEAR, x1: Z.muster.x0 - 3, z0: Z.crowdL.z1 + 2, z1: Z.muster.z1 - 2 };
+  /** The slivers either side of the corridor, from the bulkhead to the crowd's end. */
+  const SLIVER = { x: Z.corridor.x1 + 4.5, z0: DECK.aft + 8, z1: Z.crowdR.z1 };
+  /** The band between the muster ground and the pit, port: three lanes run it. */
+  const BAND = { x0: -CLEAR + 4, x1: PORT.x0 - 4, z0: Z.muster.z1 + 2.5, z1: Z.pit.z0 - 3 };
+  /** The apron: two landing marks, and the crash station between them. */
+  const APRON = {
+    padL: { x: -Z.apron.x1 * 0.53, z: (Z.apron.z0 + Z.apron.z1) * 0.5 - 2 },
+    padR: { x: Z.apron.x1 * 0.53, z: (Z.apron.z0 + Z.apron.z1) * 0.5 - 2 },
+    crash: { x: 0, z: Z.apron.z0 + 6 },
   };
 
-  return (FRAME = { WALL, RUN, SPAN, NEAR, MID, CLEAR, fwd, deep, across, BAY, GANTRY, SCAFFOLD });
+  /* ── THE REPAIR BAY: the hull section on jacks, starboard, in the work zone. */
+  const BAY = { x: across(0.58), z: deep(0.12), len: 15, rad: 3.0, jack: 2.6 };
+  const GANTRY = { half: BAY.len * 0.87, beamY: DECK.roof * 0.25 };
+  const SCAFFOLD = {
+    x: BAY.x - BAY.rad - 2.0, z: BAY.z + 1.5, lifts: [BAY.jack + 0.7, BAY.jack + 3.4], len: 9.0, wide: 2.6,
+  };
+  /* ── THE CRADLE: a fighter with its panels off, forward of the bay. */
+  const CRADLE = { x: W.x0 + 6, z: deep(0.26), yaw: -0.35 };
+  /* ── THE PORT JOB: a transport lying along z with an engine out, its
+   * stand beside the empty socket, the bowser forward with a hose to the
+   * flank. */
+  const HULL = { x: (PORT.x0 + PORT.x1) * 0.5 + 1, z: (PORT.z0 + PORT.z1) * 0.5, len: 18, wide: 7 };
+  const STAND = { x: PORT.x0 + 3, z: HULL.z - HULL.len * 0.36 };
+  const BOWSER = { x: PORT.x0 + 3, z: HULL.z + HULL.len * 0.32 };
+  /* ── THE OUTSIDE. How far past the lip the far leg is drawn, and the
+   * three patrol loops that never come in. */
+  const OUTSIDE = {
+    run: 720,
+    form: { cx: 0, cz: DECK.lip + 460, ax: 400, az: 240, y: 90, period: 68 },
+    pair: { cx: 120, cz: DECK.lip + 380, ax: 300, az: 180, y: 150, period: 49 },
+    shuttle: { cx: -80, cz: DECK.lip + 330, ax: 380, az: 110, y: 28, period: 96 },
+  };
+  /** The camera's far plane this room needs: the deck's length plus the outside run, plus a hull. */
+  const FAR = (DECK.lip - DECK.aft) + OUTSIDE.run + 40;
+
+  return (FRAME = {
+    WALL, RUN, SPAN, NEAR, MID, CANYON, CLEAR, fwd, deep, across, Z, W, PORT, FLANK_R, FLANK_L, SLIVER, BAND,
+    APRON, BAY, GANTRY, SCAFFOLD, CRADLE, HULL, STAND, BOWSER, OUTSIDE, FAR,
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Materials — cached for the process, like propMaterials                */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * The four surfaces this file owns, built once and never disposed.
- *
- * `World.unload` disposes the GEOMETRY of everything in `statics` and leaves
- * materials alone, which is right — `propMaterials` hands out process-global
- * singletons and a level that disposed one would black out the next. These
- * follow the same rule for the same reason: they are cached here, so three
- * visits to the deck build three sets of geometry and one set of materials.
- */
 let MATS = null;
 function deckMaterials() {
   if (MATS) return MATS;
   const P = propMaterials();
   MATS = {
-    /* THE CREW, AND WHY THEY ARE A MATERIAL AND NOT A COLOUR. At 40-70 m
-     * through the haze below, a figure is 12-22 px tall and everything about
-     * it that survives is its outline against the deck. So it is matte, it is
-     * one value darker than the deck plate it stands on (0x474e58), and it has
-     * no accent on it at all — an accent at that size is a coloured pixel that
-     * flickers as the figure walks. */
-    crew: new THREE.MeshStandardMaterial({ color: 0x2b323d, roughness: 0.94, metalness: 0.05 }),
-    /* The tech's coveralls: the same argument at 34 m, one step warmer so he
-     * is not read as one of the far crew who wandered in. */
-    coverall: new THREE.MeshStandardMaterial({ color: 0x3a3630, roughness: 0.92, metalness: 0.04 }),
     /**
-     * ══ ONE MATERIAL FOR EVERY BURNING THING IN THE ROOM ══════════════════
-     *
-     * Three welder emitters, a cutting torch, a sled beacon and four engine
-     * bells used to be six materials on six meshes, because
-     * `emissiveIntensity` is per-material and an arc that strikes has to
-     * strike on its own. Six meshes is six draw calls, doubled by the ink
-     * pass, for objects that are between two and twelve pixels across.
-     *
-     * They are one `InstancedMesh` now and the brightness rides on
-     * `instanceColor`, which three multiplies into `vColor` per instance —
-     * so nine emitters flicker independently for one draw call. It is
-     * `MeshBasicMaterial` and not `MeshStandard` for `DeckKit`'s own stated
-     * reason: a shaded emissive is still tone-mapped and still loses to a
-     * dark ambient, and the one thing an arc must never be is dim. The colour
-     * is left at white and the HDR value is carried per instance, which is
-     * what lets a strike go to 5× without touching the other eight.
+     * ONE MATERIAL FOR EVERY BURNING THING IN THE ROOM. Arcs, a torch, three
+     * beacons, four engine bells, three astromech eyes: one `InstancedMesh`
+     * with the HDR brightness on `instanceColor`, one draw call.
+     * `MeshBasicMaterial` because a shaded emissive loses to a dark ambient.
      */
     glow: (() => {
       const m = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false });
-      /* A 2 cm arc has no silhouette worth inking, and the ink pass would
-       * rasterise all nine of them a second time to find that out. */
       m.userData.saberNoInk = true;
       return m;
     })(),
     haze: hazeMaterial(),
     ring: [0, 1].map(() => ringMaterial()),
     steel: P.darkSteel,
-    trim: P.rust,
-    lamp: P.glowAmber,
-    crate: P.crate,
   };
   return MATS;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  THE EMITTERS — nine burning points, one draw call                     */
+/*  THE EMITTERS — every burning point, one draw call                     */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * Which instance is what. Fixed slots rather than a free list: every one of
- * these has an owner for the life of the level, and a pool would cost a
- * lookup per frame to answer a question that never changes.
- */
-const GLOW = { arc: 0, torch: 3, beacon: 4, engine: 5, count: 9 };
+/** Fixed slots: every one has an owner for the life of the level. */
+const GLOW = { arc: 0, torch: 4, beacon: 5, engine: 8, eye: 12, count: 15 };
 
 function addGlows(world, life) {
   const M = deckMaterials();
-  /* One tapered stub, one metre along +Y, scaled per instance into an arc
-   * tip, a torch, a beacon or an engine bell. At the ranges these are seen
-   * from — 20 m for the nearest, 90 for the furthest — the difference between
-   * a cone and a cylinder is nothing, and the difference between one geometry
-   * and four is three buffers. */
   const im = new THREE.InstancedMesh(cylGeo(0.5, 0.16, 1.0, 8, 0.4), M.glow, GLOW.count);
   im.frustumCulled = false;
   im.castShadow = false; im.receiveShadow = false;
   im.renderOrder = 1;
   im.name = 'deck-glows';
-  /* Everything starts dark and folded to nothing. A slot whose owner has not
-   * been built yet — the ships are away for two thirds of their loop — must
-   * not draw a stub at the origin. */
-  _s.set(0, 0, 0);
-  _q.identity(); _v.set(0, 0, 0);
+  _s.set(0, 0, 0); _q.identity(); _v.set(0, 0, 0);
   for (let i = 0; i < GLOW.count; i++) {
     im.setMatrixAt(i, _m.compose(_v, _q, _s));
     im.setColorAt(i, _c.setRGB(0, 0, 0));
@@ -375,14 +282,6 @@ function addGlows(world, life) {
   life.glows = im;
 }
 
-/**
- * Park one emitter: `m4` is where its base sits in the world, `sx`/`sy` how
- * wide and how long the stub is scaled to.
- *
- * Split from the brightness on purpose — the tech never takes a step, so his
- * torch's matrix is written once at dress and only its colour is touched at
- * 60 Hz.
- */
 function glowPlace(life, slot, m4, sx, sy) {
   const im = life.glows;
   if (!im) return;
@@ -392,7 +291,6 @@ function glowPlace(life, slot, m4, sx, sy) {
   im.instanceMatrix.needsUpdate = true;
 }
 
-/** How hard it is burning. HDR: past 1 is what the bloom pass picks up. */
 function glowBurn(life, slot, r, g, b) {
   const im = life.glows;
   if (!im) return;
@@ -404,20 +302,9 @@ function glowBurn(life, slot, r, g, b) {
 /*  A merge helper for the parts that MOVE                                */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * Bin by material, merge, hang on a parent that is allowed to move.
- *
- * `Props.Kit` is the right tool for everything nailed down and the wrong one
- * here for one line: `Kit.emit` goes through `addStatic`, which sets
- * `matrixAutoUpdate = false` and calls `updateMatrix` once. That is exactly
- * what a set piece wants and exactly what a trolley on a rail cannot have.
- * `Vehicles.js:265` has the same helper for the same reason and does not
- * export it; this is twenty lines rather than a shipped-file edit.
- */
+/** Bin by material, merge, hang on a parent that is allowed to move. */
 class Bin {
   constructor() { this.bins = new Map(); }
-
-  /** Place a geometry — rotate (XYZ euler), translate, bin it. */
   put(mat, geo, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0) {
     if (rx || ry || rz) geo.applyMatrix4(_m4.makeRotationFromEuler(_eu.set(rx, ry, rz)));
     if (x || y || z) geo.translate(x, y, z);
@@ -426,15 +313,6 @@ class Bin {
     a.push(geo);
     return this;
   }
-
-  /**
-   * One mesh per material, parented to `parent`.
-   *
-   * Every mesh is also pushed to `world.statics` — not to be placed, but to be
-   * FREED: `World.unload` walks that array disposing geometry, and a mesh that
-   * is only a child of a group it never sees is a buffer that outlives the
-   * level. The group goes in too, so `scene.remove` takes the whole assembly.
-   */
   bake(world, parent, opts = {}) {
     const out = [];
     for (const [mat, geos] of this.bins) {
@@ -460,97 +338,32 @@ function mover(world, parent) {
   return g;
 }
 
+/** One vertex-coloured assembly as one mesh on a mover. */
+function castMesh(world, parent, geo, mat, name) {
+  const mesh = new THREE.Mesh(geo, mat);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.name = name || '';
+  parent.add(mesh);
+  world.statics.push(mesh);
+  return mesh;
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  1 · THE HAZE                                                          */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ THE CHEAP TRICK THAT CARRIES THE WHOLE FAR HALF ═══════════════════════
- *
- * It is two things, and they do different jobs.
- *
- * FIRST, EXTINCTION, AND IT IS SOLVED OFF THE ROOM RATHER THAN TYPED.
- *
- * This was 0.0105, and the comment that justified it reasoned about "the 60 m
- * to the far crew" and "the whole 128 m diagonal" — a room that has not
- * existed since the rebuild. The deck's diagonal is 380 m now and the aperture
- * rim stands `DECK.lip - DECK.start.z` from where the player is put down.
- * Measured at 0.0105, from the spawn:
- *
- *     26 m   7.2%      100 m  66.8%      222 m  99.6%
- *     50 m  24.1%      150 m  91.6%      380 m 100.0%
- *
- * So the haze was eating the rim — the brightest object in the frame and the
- * one thing rule 1 says must be brighter than everything it lights — along
- * with both rack walls and the whole aft bulkhead. A number tuned for a shed
- * applied to a hangar is a fade to grey.
- *
- * THE THING IT MUST NOT EAT IS THE RIM, so that is what it is solved against:
- * the haze may take two thirds of the rim's contrast at the distance the
- * player actually stands from it, and no more. That is one line of algebra off
- * `exp(-d²k²)` and it re-solves itself if the room is resized again. At the
- * present room it lands at 0.00462, which reads
- *
- *     26 m   1.4%      100 m  19.3%      222 m  65.0%
- *     59 m   7.2%      150 m  38.3%      380 m  95.4%
- *
- * — near work crisp, the crew at 59-105 m softening, the far rows and the
- * bulkhead gone, and the rim still the brightest thing in the picture.
- *
- * That number is a property of the ROOM and belongs in
- * `HANGAR_LEVEL.atmosphere`; it is set here because this lane does not own
- * that file, and it is written through the same two calls `applyAtmosphere`
- * makes (`scene.fog.density` and `OutlinePass.setHaze`) so the ink stops where
- * sight does. Without the second one the outline pass keeps ruling hard black
- * lines around shapes the fog has already dissolved, which is worse than no
- * haze at all. **See the report: this is the one line that reaches outside.**
- *
- * ONE THING IT CANNOT FIX FROM HERE. The field planes are a `ShaderMaterial`
- * with no fog chunk in it, so the shield is not extinguished at all, while the
- * `MeshBasicMaterial` rim standing on top of it is — which inverts the depth
- * cue and makes the shield read as NEARER than the frame around it. The fix is
- * a fog chunk on `fieldMaterial`, which is `Hangar.js`. Lowering the density
- * makes the mismatch smaller; it does not remove it.
- *
- * SECOND, THE BAND. Extinction alone tends everything toward a very dark fog
- * colour, which reads as the far deck being unlit rather than as air. So three
- * horizontal sheets of lit haze sit at 0.9, 2.4 and 4.2 m.
- *
- * They are HORIZONTAL on purpose and it is the whole reason they work. A
- * vertical curtain has to face the camera and swims when you turn; a sheet
- * lying flat has no bearing at all. The geometry does the distance ramp by
- * itself: from a 1.7 m eye the sheet at 4.2 m is only crossed by rays with
- * elevation above `asin(2.5 / 98)` = 1.5°, so it draws a band hugging the
- * horizon and nothing anywhere else, and the sheets below the eye do the same
- * upside down over the floor. That is haze piling up at the lip, for one draw
- * call, with no billboard in it.
- *
- * They stop dead at `DECK.lip`. A sheet that ran past it would be a grey wash
- * over the planet, seen through the field, which is the one surface in the
- * room that must not be touched.
+ * Extinction solved off the room — the haze may take `RIM_EATEN` of the
+ * aperture rim's contrast at the distance the player is put down from it —
+ * and three horizontal sheets of lit haze that pile up at the horizon. See
+ * the history in git for the whole argument; the numbers are unchanged.
  */
-/** How much of the aperture rim's contrast the haze is allowed to take. */
 const RIM_EATEN = 0.65;
-
 const HAZE = {
-  /**
-   * Solved, not typed. `1 - exp(-d²k²) = RIM_EATEN` at the distance from the
-   * player's own spawn to the rim, which is the one sight line in the room
-   * that has to survive.
-   *
-   * A GETTER, for the reason `frame()` is a call: reading `DECK` while this
-   * module is still being evaluated is the import cycle's dead zone, and a
-   * property that is only read from inside `hazeMaterial` and `addDeckHaze`
-   * has no reason to be evaluated any earlier than they are.
-   */
   get density() { return Math.sqrt(-Math.log(1 - RIM_EATEN)) / (DECK.lip - DECK.start.z); },
-  /** Sheet heights, metres. */
   lifts: [0.9, 2.4, 4.2],
-  /** Per-sheet weight — the floor sheet is the faintest, it is nearest. */
   weights: [0.55, 0.85, 1.0],
-  /** Peak alpha of the whole stack. Past about 0.3 it is a fog bank. */
   peak: 0.24,
-  /** Metres before the haze is allowed to exist at all. */
   near: 14,
 };
 
@@ -558,12 +371,6 @@ function hazeMaterial() {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
       uColor: { value: new THREE.Color(0x7e93ad) },
-      /* A SHADE DENSER THAN THE EXTINCTION IT SITS IN, and deliberately: the
-       * sheet is the LIT part of the haze and the fog is the dark part, so if
-       * the two saturated together the band would arrive exactly as the
-       * geometry behind it went black and there would be nothing to see it
-       * against. At 1.15× the sheet is already reading at 40 m while the fog
-       * has taken only 15%. */
       uDensity: { value: HAZE.density * 1.15 },
       uNear: { value: HAZE.near },
       uPeak: { value: HAZE.peak },
@@ -581,18 +388,12 @@ function hazeMaterial() {
       varying vec3 vW; varying float vWeight;
       void main() {
         float d = length(vW - cameraPosition);
-        /* The same exponential the engine's own fog chunk uses, so the sheet
-           and the extinction agree about what distance means. */
         float a = 1.0 - exp(-d * d * uDensity * uDensity);
-        /* AND NOTHING IN YOUR FACE. A flat sheet 0.7 m under the eye is
-           crossed at two metres by any ray angled down at 20 degrees, and
-           without this the player's own boots would be behind a curtain. */
         a *= smoothstep(uNear * 0.3, uNear, d);
         gl_FragColor = vec4(uColor, a * uPeak * vWeight);
       }`,
     transparent: true, depthWrite: false, side: THREE.DoubleSide,
   });
-  /* Haze has no edge, so it must not be given one. */
   mat.userData.saberNoInk = true;
   return mat;
 }
@@ -600,17 +401,11 @@ function hazeMaterial() {
 function addDeckHaze(world, life) {
   const M = deckMaterials();
   const L = DECK.lip;
-
-  /* The extinction half. Both writes, or neither. */
   if (world.scene.fog) {
     life.fog0 = world.scene.fog.density;
     world.scene.fog.density = HAZE.density;
     world.engine?.outline?.setHaze?.(HAZE.density);
   }
-
-  /* Three sheets in one buffer: they share a material and a draw call, and
-   * the per-sheet weight rides on a vertex attribute rather than on three
-   * uniforms, because three uniforms would be three meshes. */
   const geos = [];
   const weights = [];
   for (let i = 0; i < HAZE.lifts.length; i++) {
@@ -624,7 +419,7 @@ function addDeckHaze(world, life) {
   geo.setAttribute('aW', new THREE.Float32BufferAttribute(weights, 1));
   const mesh = new THREE.Mesh(geo, M.haze);
   mesh.frustumCulled = false;
-  mesh.renderOrder = 2;                        // under the field, which is 3
+  mesh.renderOrder = 2;
   mesh.castShadow = false; mesh.receiveShadow = false;
   world.scene.add(mesh);
   world.statics.push(mesh);
@@ -635,32 +430,11 @@ function addDeckHaze(world, life) {
 /*  2 · THE GROUND, AND THE HOLE IN IT                                    */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/** The deck under a point. Sampled, never assumed — see below for why. */
 function groundAt(world, x, z) {
   return world.terrain ? world.terrain.height(x, z) : 0;
 }
 
-/**
- * ══ FIND THE PIT. DO NOT BE TOLD WHERE IT IS ══════════════════════════════
- *
- * `TERRAIN_PRESETS.hangardeck` cuts a lit recess into the plate, and two
- * comments in this file used to reason about it in metres: "a 1.4 m LAUNCH
- * TRENCH at |x + 34| < 7". There has been no trench for two rebuilds; there is
- * a rectangular pit, it is 3.2 m deep, it has already moved once and it is
- * being moved again as this is written. Every one of those numbers was written
- * down by someone who had read the heightfield at the time, and every one of
- * them was wrong within a week.
- *
- * So nothing here is told where the hole is. The plate is sampled on a 3 m
- * grid once, at dress, and whatever is more than 0.8 m below the level the
- * company musters on is the hole — wherever it is, however many there are, and
- * whatever shape. Four thousand `height()` calls is about a millisecond, once,
- * and it is the difference between a crew errand that walks around the pit and
- * one that walks down into it.
- *
- * The 0.8 m threshold is chosen against the two features that are NOT holes:
- * the 5.5 cm plate seam and the 0.6 m fall in the last two metres of lip.
- */
+/** Find the pit by sampling the plate; never be told where it is. */
 function scanHoles(world) {
   const { WALL } = frame();
   const T = world.terrain;
@@ -680,179 +454,71 @@ function scanHoles(world) {
   return H;
 }
 
-/** Does the segment a→b pass over the hole, with a metre or three to spare? */
-function crossesHole(H, ax, az, bx, bz, pad = 3) {
-  if (!H.found) return false;
-  for (let i = 0; i <= 12; i++) {
-    const t = i / 12;
-    const x = lerp(ax, bx, t), z = lerp(az, bz, t);
-    if (x > H.x0 - pad && x < H.x1 + pad && z > H.z0 - pad && z < H.z1 + pad) return true;
-  }
-  return false;
-}
-
-/**
- * Slide a looping path off the hole, in place.
- *
- * `CREW_RUNS[9]` used to walk from (-56, 16) to (-30, 16) and back, which on
- * the present heightfield is a man descending three metres into a lit pit,
- * standing on nothing, and climbing out again — forever. He was not visible
- * enough for anyone to notice, which is the whole argument for the check file.
- *
- * The errand is MOVED rather than deleted, and it keeps its length and its
- * heading: the shape of a crossing crewman is what the far midground is for,
- * and a room that loses a path every time the ground changes ends up empty.
- * Out the near side first, in two-metre steps, then along the other axis if
- * the canyon runs out before the hole does.
- */
-function offHole(H, run) {
-  if (!crossesHole(H, run[0], run[1], run[2], run[3])) return true;
-  const cx = (H.x0 + H.x1) / 2, cz = (H.z0 + H.z1) / 2;
-  const sx = (run[0] + run[2]) / 2 >= cx ? 1 : -1;
-  const sz = (run[1] + run[3]) / 2 >= cz ? 1 : -1;
-  const edge = frame().CLEAR;
-  for (const axis of [0, 1]) {
-    for (let k = 1; k <= 34; k++) {
-      const d = k * 2;
-      const dx = axis === 0 ? sx * d : 0;
-      const dz = axis === 0 ? 0 : sz * d;
-      const a = [run[0] + dx, run[1] + dz, run[2] + dx, run[3] + dz];
-      if (Math.abs(a[0]) > edge || Math.abs(a[2]) > edge) break;
-      if (a[1] < DECK.aft + 14 || a[3] < DECK.aft + 14) break;
-      if (a[1] > DECK.lip - 14 || a[3] > DECK.lip - 14) break;
-      if (crossesHole(H, a[0], a[1], a[2], a[3])) continue;
-      run[0] = a[0]; run[1] = a[1]; run[2] = a[2]; run[3] = a[3];
-      return true;
-    }
-  }
-  return false;
-}
-
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  3 · THE REPAIR BAY — the thing the tech is standing on                */
+/*  3 · THE JOBS — every static piece of every repair, one merged kit     */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ A HULL SECTION ON JACKS, A SCAFFOLD, AND A GANTRY OVER BOTH ═══════════
+ * The hull section on jacks, the scaffold, the gantry, the fighter cradle
+ * with its panels leaning against it, the transport with its engine socket
+ * empty, the engine on its stand, the coolant bowser and its hose, the crash
+ * cart, the astromechs' charging posts. `DeckKit.DeckBuild` bins by material
+ * and emits one mesh per bin — hull, dark, strip, wing — so the whole lot is
+ * four draw calls, and it is the room's own palette so a Separatist deck
+ * repairs Separatist ships.
  *
- * The spec bullet is "one ship on a pad mid-repair with a tech on a scaffold,
- * sparks, welding flare", and what the room had was the sparks and the flare
- * with a man floating four metres above bare plate. `addScaffold` and
- * `addGantry` were both deleted from `Hangar.js` in the rebuild and this file
- * kept placing props against them.
- *
- * IT IS BUILT HERE NOW, AND IT COSTS THREE DRAW CALLS. `DeckKit.DeckBuild`
- * bins by material and emits one mesh for the whole assembly per material, so
- * a gantry, a scaffold, four jacks and a sectioned hull come out as hull, dark
- * and strip — three meshes, and `catwalk` composes into the same three because
- * it draws from the same six materials. Building it out of `Props.Kit` instead
- * would have brought weathering and a village's palette into a painted steel
- * room, which is the mistake `Hangar.js`'s own header records.
- *
- * WHAT IT DOES NOT GET FROM `DeckBuild` IS COLLIDERS, so the four things a
- * player can walk into — two gantry legs, the hull section, the scaffold — get
- * static boxes of their own. Nothing else is worth one: at a 0.5 m capsule
- * radius a handrail is a thing you brush past.
+ * Colliders for the things a man walks into: the section, the scaffold, the
+ * gantry legs, the cradle's trestles, the transport, the stand, the bowser.
  */
-function addRepairBay(world, life) {
-  const { BAY, GANTRY, SCAFFOLD } = frame();
-  /**
-   * THE ROOM'S OWN PALETTE, WHICH IS A PROPERTY OF WHOSE SHIP THIS IS.
-   *
-   * `deckMats()` with no argument hands back the default set, so a Separatist
-   * deck came out with a Republic gantry, scaffold and hull section standing
-   * in it and `faction.mjs` red on "the room mixes 2 armies". The single
-   * answer is `world._deckFaction`, set by `dressHangar` before anything is
-   * built. It is passed as the STRING and not as the world: `factionOf` reads
-   * `faction`/`army`/`_company.army` off an object and knows nothing about
-   * `_deckFaction`, so `deckMats(world)` silently resolves to the default —
-   * and `_company` does not exist yet at dress time anyway, which is the trap
-   * that made the field necessary in the first place.
-   *
-   * The builder is given it too, because every `DeckKit` part function reads
-   * `kit.faction` — `catwalk` below would otherwise build a Republic plank
-   * whatever this line says.
-   */
+function addJobs(world, life) {
+  const { BAY, GANTRY, SCAFFOLD, CRADLE, HULL, STAND, BOWSER, APRON } = frame();
   const M = deckMats(world._deckFaction);
   const kit = new DeckBuild(world._deckFaction);
   const g0 = groundAt(world, BAY.x, BAY.z);
-  const box = (x, y, z, hx, hy, hz) => world.physics?.addStaticBox?.(
-    _v.set(x, y, z).clone(), _v2.set(hx, hy, hz).clone(), new THREE.Quaternion(),
+  const box = (x, y, z, hx, hy, hz, yaw = 0) => world.physics?.addStaticBox?.(
+    _v.set(x, y, z).clone(), _v2.set(hx, hy, hz).clone(), new THREE.Quaternion().setFromAxisAngle(UP, yaw),
     { friction: 0.7 });
 
-  /* ── THE JACKS. Four stands under the section, splayed, with a saddle each.
-   * The splay is the tell: four vertical posts is a table, and a jack stand
-   * carries a load it was wound up under. */
+  /* ── THE HULL SECTION ON JACKS, the scaffold and the gantry: the bay the
+   * room had, unchanged. */
   const jz = BAY.len * 0.32;
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
     const x = BAY.x + sx * (BAY.rad - 0.6), z = BAY.z + sz * jz;
     kit.slabAt(M.hull, x, g0 + BAY.jack * 0.5, z, 0.55, BAY.jack, 0.55);
     kit.slabAt(M.dark, x, g0 + 0.16, z, 1.9, 0.32, 1.9);
-    /* The saddle, canted into the shell it is holding. */
     kit.slabAt(M.hull, x - sx * 0.35, g0 + BAY.jack + 0.22, z, 1.5, 0.5, 1.1, 0);
   }
-
-  /* ── THE SECTION. A barrel of hull with both ends open, which is the whole
-   * reason it reads as a piece of a ship being worked on rather than as a
-   * tank on a stand: you can see the frames inside it. */
   const shell = new THREE.CylinderGeometry(BAY.rad, BAY.rad, BAY.len, 12, 1, true);
   shell.rotateX(Math.PI / 2);
   kit.geoAt(M.hull, shell, BAY.x, g0 + BAY.jack + BAY.rad, BAY.z);
-  /* Four ring frames showing through the open ends. */
   for (let i = 0; i < 4; i++) {
     const r = new THREE.TorusGeometry(BAY.rad * 0.93, 0.16, 4, 14);
     r.rotateY(Math.PI / 2); r.rotateZ(Math.PI / 2);
     kit.geoAt(M.dark, r, BAY.x, g0 + BAY.jack + BAY.rad, BAY.z + (i / 3 - 0.5) * BAY.len * 0.86);
   }
-  /* A spine along the top and a plate off the port flank, hanging on the
-   * gantry's hook line — the panel the tech is welding back on. */
   kit.slabAt(M.dark, BAY.x, g0 + BAY.jack + BAY.rad * 1.92, BAY.z, 1.1, 0.5, BAY.len * 0.8);
-  kit.slabAt(M.dark, BAY.x - BAY.rad * 0.86, g0 + BAY.jack + BAY.rad * 0.78, BAY.z - 1.2,
-    0.35, 2.6, 3.4, 0.22);
-  /* THE WORK LIGHT UNDER IT. Rule 4 — light in this room is a thin bright bar
-   * set into structure, never a lamp head — and it is what stops a six-metre
-   * barrel being a black lump in a dark room. */
+  kit.slabAt(M.dark, BAY.x - BAY.rad * 0.86, g0 + BAY.jack + BAY.rad * 0.78, BAY.z - 1.2, 0.35, 2.6, 3.4, 0.22);
   kit.slabAt(M.strip, BAY.x, g0 + BAY.jack - 0.12, BAY.z, 1.4, 0.14, BAY.len * 0.72);
   box(BAY.x, g0 + BAY.jack + BAY.rad, BAY.z, BAY.rad, BAY.rad + BAY.jack * 0.5, BAY.len / 2);
-
-  /* ── THE SCAFFOLD. Four legs, two lifts and a ladder between them, standing
-   * clear of the flank by the length of a man's arm and his torch. */
   const sx0 = SCAFFOLD.x, sz0 = SCAFFOLD.z;
   for (const a of [-1, 1]) for (const b of [-1, 1]) {
     kit.slabAt(M.hull, sx0 + a * SCAFFOLD.wide * 0.5, g0 + SCAFFOLD.lifts[1] * 0.55,
       sz0 + b * SCAFFOLD.len * 0.5, 0.22, SCAFFOLD.lifts[1] * 1.1, 0.22);
   }
-  for (const y of SCAFFOLD.lifts) {
-    /* `DeckKit.catwalk` is exactly a scaffold lift seen from the deck — a
-     * plank, a handrail and stanchions — and it bins into the same three
-     * materials, so two of them are free. Turned to run along the hull. */
-    catwalk(kit, sx0, g0 + y - 0.25, sz0, SCAFFOLD.len, { yaw: Math.PI / 2 });
-  }
-  /* The ladder. Two stiles and five rungs, at the aft end where it is out of
-   * the way of the work and in the player's line to it. */
+  for (const y of SCAFFOLD.lifts) catwalk(kit, sx0, g0 + y - 0.25, sz0, SCAFFOLD.len, { yaw: Math.PI / 2 });
   for (const a of [-1, 1]) {
     kit.slabAt(M.hull, sx0 + a * 0.28, g0 + (SCAFFOLD.lifts[0] + SCAFFOLD.lifts[1]) * 0.5,
       sz0 - SCAFFOLD.len * 0.44, 0.07, SCAFFOLD.lifts[1] - SCAFFOLD.lifts[0] + 0.9, 0.07);
   }
   for (let i = 0; i < 5; i++) {
-    kit.slabAt(M.hull, sx0, g0 + SCAFFOLD.lifts[0] + 0.1 + i * 0.56,
-      sz0 - SCAFFOLD.len * 0.44, 0.62, 0.06, 0.06);
+    kit.slabAt(M.hull, sx0, g0 + SCAFFOLD.lifts[0] + 0.1 + i * 0.56, sz0 - SCAFFOLD.len * 0.44, 0.62, 0.06, 0.06);
   }
-  box(sx0, g0 + SCAFFOLD.lifts[1] * 0.5, sz0,
-    SCAFFOLD.wide * 0.5, SCAFFOLD.lifts[1] * 0.5, SCAFFOLD.len * 0.5);
-
-  /* ── THE GANTRY. A portal straddling the whole bay, with the rail the
-   * trolley actually rides on the underside of the beam. This is the spec's
-   * "gantry crane traversing overhead on a slow loop", and the crab that does
-   * the traversing is `addTrolley` below — kept a separate mover because half
-   * a merged mesh cannot be moved, which is the same reason `Hangar.js`'s own
-   * gantry could never have carried it. */
+  box(sx0, g0 + SCAFFOLD.lifts[1] * 0.5, sz0, SCAFFOLD.wide * 0.5, SCAFFOLD.lifts[1] * 0.5, SCAFFOLD.len * 0.5);
   for (const s of [-1, 1]) {
     const lx = BAY.x + s * GANTRY.half;
     const lg = groundAt(world, lx, BAY.z);
     kit.slabAt(M.dark, lx, lg + GANTRY.beamY * 0.5, BAY.z, 1.5, GANTRY.beamY, 1.9);
     kit.slabAt(M.hull, lx, lg + 0.35, BAY.z, 3.2, 0.7, 4.0);
-    /* Bracing, one diagonal each way, so a 16 m leg is a frame and not a post. */
     for (const b of [-1, 1]) {
       const g = new THREE.BoxGeometry(0.28, GANTRY.beamY * 0.62, 0.28);
       g.rotateX(b * 0.42);
@@ -862,131 +528,172 @@ function addRepairBay(world, life) {
   }
   const span = GANTRY.half * 2 + 3;
   kit.slabAt(M.hull, BAY.x, g0 + GANTRY.beamY + 0.55, BAY.z, span, 1.1, 1.7);
-  /* THE RAIL, and it is a real one: `TROLLEY.y` is read off it below rather
-   * than typed, so a crab cannot again be left riding air. */
   kit.slabAt(M.dark, BAY.x, g0 + GANTRY.beamY - 0.1, BAY.z, span, 0.36, 0.9);
   kit.slabAt(M.strip, BAY.x, g0 + GANTRY.beamY + 1.15, BAY.z, span * 0.94, 0.14, 0.5);
+
+  /* ── THE CRADLE. Two trestles under the fighter's wing roots, a work lamp
+   * bar between them, and three hull panels leaning against the port
+   * trestle — the panels are what says "off": a fighter with a panel missing
+   * and no panel anywhere is a fighter that was built that way. */
+  const cg = groundAt(world, CRADLE.x, CRADLE.z);
+  const cy = Math.cos(CRADLE.yaw), sy = Math.sin(CRADLE.yaw);
+  for (const s of [-1, 1]) {
+    const tx = CRADLE.x + s * 2.4 * cy, tz = CRADLE.z - s * 2.4 * sy;
+    kit.slabAt(M.dark, tx, cg + 0.6, tz, 1.2, 1.2, 4.6, CRADLE.yaw);
+    kit.slabAt(M.hull, tx, cg + 1.3, tz, 1.6, 0.2, 5.0, CRADLE.yaw);
+    box(tx, cg + 0.7, tz, 0.8, 0.7, 2.5, CRADLE.yaw);
+  }
+  kit.slabAt(M.strip, CRADLE.x, cg + 0.25, CRADLE.z, 0.3, 0.12, 6.0, CRADLE.yaw);
+  for (let i = 0; i < 3; i++) {
+    const px = CRADLE.x - 4.6 * cy - i * 0.35 * cy, pz = CRADLE.z + 4.6 * sy + i * 0.35 * sy;
+    const g = new THREE.BoxGeometry(0.08, 2.2, 1.4);
+    g.rotateZ(-0.35); g.rotateY(CRADLE.yaw);
+    kit.geoAt(M.wing, g, px, cg + 1.0, pz);
+  }
+  /* The open panel's frame on the deck beside the starboard wing, and the
+   * tool chest a man kneels at. */
+  kit.slabAt(M.dark, CRADLE.x + 5.5 * cy, cg + 0.35, CRADLE.z - 5.5 * sy, 1.1, 0.7, 0.7, CRADLE.yaw);
+
+  /* ── THE TRANSPORT WITH AN ENGINE OUT. A silhouette of the pad's own
+   * craft's family — a fat body along z, two engine pods aft, the port one
+   * MISSING and its socket a dark ring — on four landing pads. The engine on
+   * the stand beside it is the missing pod. */
+  const hg = groundAt(world, HULL.x, HULL.z);
+  const body = new THREE.CylinderGeometry(HULL.wide * 0.42, HULL.wide * 0.5, HULL.len, 10);
+  body.rotateX(Math.PI / 2);
+  kit.geoAt(M.hull, body, HULL.x, hg + 3.6, HULL.z);
+  kit.slabAt(M.wing, HULL.x, hg + 2.4, HULL.z + HULL.len * 0.42, HULL.wide * 0.6, 2.2, 3.0);
+  kit.slabAt(M.dark, HULL.x, hg + 4.2, HULL.z - HULL.len * 0.36, HULL.wide * 0.9, 2.0, 3.0);
+  const pod = new THREE.CylinderGeometry(1.1, 1.0, 4.6, 10);
+  pod.rotateX(Math.PI / 2);
+  kit.geoAt(M.dark, pod, HULL.x + HULL.wide * 0.55, hg + 2.8, HULL.z - HULL.len * 0.34);
+  const sock = new THREE.TorusGeometry(1.05, 0.16, 5, 14);
+  kit.geoAt(M.strip, sock, HULL.x - HULL.wide * 0.55, hg + 2.8, HULL.z - HULL.len * 0.34);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    kit.slabAt(M.dark, HULL.x + sx * HULL.wide * 0.3, hg + 0.9, HULL.z + sz * HULL.len * 0.3, 0.4, 1.8, 0.4);
+    kit.slabAt(M.dark, HULL.x + sx * HULL.wide * 0.3, hg + 0.1, HULL.z + sz * HULL.len * 0.3, 1.2, 0.2, 1.2);
+  }
+  kit.slabAt(M.strip, HULL.x, hg + 1.6, HULL.z, 0.4, 0.14, HULL.len * 0.6);
+  box(HULL.x, hg + 3.6, HULL.z, HULL.wide * 0.5, 2.0, HULL.len * 0.5);
+  /* The engine on its stand: an A-frame trestle and the pod lying in it. */
+  const stg = groundAt(world, STAND.x, STAND.z);
+  for (const s of [-1, 1]) {
+    kit.slabAt(M.dark, STAND.x, stg + 0.9, STAND.z + s * 2.0, 0.4, 1.8, 0.3);
+    kit.slabAt(M.dark, STAND.x + s * 1.2, stg + 0.1, STAND.z, 0.4, 0.2, 4.8);
+  }
+  kit.slabAt(M.hull, STAND.x, stg + 1.7, STAND.z, 0.3, 0.3, 4.6);
+  const pod2 = new THREE.CylinderGeometry(1.1, 1.0, 4.4, 10);
+  pod2.rotateZ(Math.PI / 2);
+  kit.geoAt(M.dark, pod2, STAND.x, stg + 2.6, STAND.z);
+  const bell = new THREE.CylinderGeometry(1.15, 0.8, 0.8, 10);
+  bell.rotateZ(Math.PI / 2);
+  kit.geoAt(M.hull, bell, STAND.x - 2.5, stg + 2.6, STAND.z);
+  box(STAND.x, stg + 1.6, STAND.z, 1.5, 1.6, 2.5);
+  /* The coolant bowser: a tank on a wheeled cart with a reel, and the hose
+   * to the transport's flank — a sagging tube, which is what a hose does. */
+  const bg = groundAt(world, BOWSER.x, BOWSER.z);
+  kit.slabAt(M.dark, BOWSER.x, bg + 0.5, BOWSER.z, 2.6, 0.3, 1.6);
+  const tank = new THREE.CylinderGeometry(0.75, 0.75, 2.4, 10);
+  tank.rotateZ(Math.PI / 2);
+  kit.geoAt(M.hull, tank, BOWSER.x, bg + 1.4, BOWSER.z);
+  kit.slabAt(M.strip, BOWSER.x + 0.9, bg + 1.4, BOWSER.z + 0.76, 0.5, 0.12, 0.06);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    const wh = new THREE.CylinderGeometry(0.3, 0.3, 0.2, 10);
+    wh.rotateZ(Math.PI / 2);
+    kit.geoAt(M.dark, wh, BOWSER.x + sx * 1.0, bg + 0.3, BOWSER.z + sz * 0.8);
+  }
+  const reel = new THREE.TorusGeometry(0.5, 0.12, 6, 12);
+  reel.rotateY(Math.PI / 2);
+  kit.geoAt(M.dark, reel, BOWSER.x + 1.4, bg + 1.2, BOWSER.z);
+  const ha = new THREE.Vector3(BOWSER.x + 1.4, bg + 1.2, BOWSER.z);
+  const hb = new THREE.Vector3(HULL.x - HULL.wide * 0.48, hg + 2.6, HULL.z + HULL.len * 0.1);
+  const hm = new THREE.Vector3((ha.x + hb.x) * 0.5, bg + 0.25, (ha.z + hb.z) * 0.5);
+  const hose = new THREE.TubeGeometry(new THREE.QuadraticBezierCurve3(ha, hm, hb), 12, 0.08, 6, false);
+  kit.geoAt(M.dark, hose, 0, 0, 0);
+  box(BOWSER.x, bg + 1.0, BOWSER.z, 1.3, 1.0, 0.9);
+
+  /* ── THE CRASH STATION on the apron: a cart of bottles and a hose. */
+  const kg = groundAt(world, APRON.crash.x, APRON.crash.z);
+  kit.slabAt(M.dark, APRON.crash.x, kg + 0.5, APRON.crash.z - 2.5, 2.2, 0.3, 1.2);
+  for (let i = 0; i < 3; i++) {
+    kit.geoAt(M.hull, new THREE.CylinderGeometry(0.22, 0.22, 1.1, 8), APRON.crash.x - 0.7 + i * 0.7, kg + 1.2, APRON.crash.z - 2.5);
+  }
+  kit.slabAt(M.status, APRON.crash.x, kg + 1.9, APRON.crash.z - 2.5, 0.3, 0.3, 0.3);
+  box(APRON.crash.x, kg + 0.8, APRON.crash.z - 2.5, 1.1, 0.8, 0.6);
 
   life.bay = { ground: g0, meshes: kit.build(world) };
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  4 · THE REPAIR DROIDS                                                 */
+/*  4 · THE DROIDS                                                        */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ THREE MACHINES AT THREE JOBS ══════════════════════════════════════════
+ * ══ FIFTEEN DROIDS, FIVE KINDS, EVERY SITE ASKED OF THE ZONES ═════════════
  *
- * A droid is four rigid bodies — chassis, turret, boom, forearm — and three
- * angles. That is all the articulation there is and all there needs to be: a
- * turntable sweeping, a boom breathing and a wrist tracking a seam is what a
- * welding machine looks like from six metres, and it is a rotation each.
+ * A row is a droid: its kind, where it stands (or the path it rolls), its
+ * heading, and for a welder the seam it works. `path` is `[x, z, x, z]` and
+ * a droid with one rolls it forever with a hold at each end; a droid
+ * without one stands.
  *
- * THE CHASSIS OF ALL THREE IS ONE MERGE. It never moves relative to the deck,
- * so three chassis binned into one `Props.Kit` at three world points come out
- * as three draw calls TOTAL rather than nine — steel, hazard trim, lamps —
- * and the kit brings their colliders with it, so you cannot walk through one.
- * The moving parts are what cost per droid, and they are four meshes each.
- *
- * Measured: 15 meshes for three droids, 4 008 triangles — 3 chassis meshes
- * shared by all of them and 4 apiece for the arm.
+ * The two nearest are in the SLIVERS beside the corridor — the only ground
+ * within thirty metres of the lift doors that is not the corridor, the
+ * lobby or the crowd's — which is where the "closest NPC has to be real"
+ * argument now lands: a pit droid at a bulkhead panel and a mouse droid on
+ * the plate you walk out onto.
  */
-let JOBS = null;
+let DROIDS = null;
 function droidJobs() {
-  if (JOBS) return JOBS;
-  const { across, fwd, NEAR, BAY } = frame();
-  return (JOBS = [
-    /**
-     * THE PLATE. Abeam of the player, twenty-four metres off his port side,
-     * and that placement is the whole point of the section.
-     *
-     * It used to be "sixteen metres off the player's start and on the path he
-     * walks to the line". Both halves of that are now wrong and the second one
-     * is worse than the first: the company marches from the bulkhead doors at
-     * `DECK.aft + 8` PAST the player to the line, so what used to be an empty
-     * approach is a corridor with twenty-four men walking down it, and a droid
-     * on it is a droid twenty-four men walk through. So the two near jobs are
-     * ABEAM rather than ahead — the same distance, out of the traffic.
-     */
-    { x: across(-0.42), z: fwd(NEAR * 0.12), yaw: 1.1,
-      sweep: 0.75, reach: 1.32, lift: 0.24, duty: 0.44, phase: 2.9 },
-    /* THE PANEL. Starboard quarter, a little forward, working down at deck
-     * level. Far enough outboard to clear the widest rank the company forms. */
-    { x: across(0.46), z: fwd(NEAR * 0.55), yaw: -2.3,
-      sweep: 0.9, reach: 0.95, lift: 0.62, duty: 0.35, phase: 5.4 },
-    /**
-     * THE SEAM. At the foot of the hull section, under the gantry — the one
-     * job in the room with a reason to be lit, and the one the tech's arc is
-     * already lighting. It is sited off `BAY` rather than typed, which is what
-     * the last version of this line could not say: it claimed to stand
-     * "beside the hull section on jacks, under the gantry" when neither
-     * existed, and it argued at length about a launch trench that has not been
-     * in the heightfield for two rebuilds.
-     */
-    { x: BAY.x - BAY.rad - 2.4, z: BAY.z - BAY.len * 0.42, yaw: Math.PI / 2,
+  if (DROIDS) return DROIDS;
+  const { BAY, CRADLE, HULL, STAND, FLANK_R, FLANK_L, SLIVER, BAND, APRON, W } = frame();
+  const cy = Math.cos(CRADLE.yaw), sy = Math.sin(CRADLE.yaw);
+  return (DROIDS = [
+    /* ASTROMECHS. One between the cradle and the bay, one from the port
+     * flank round the pit's aft edge to the port job, one on the apron
+     * between the crash station's side and the fighter's pad. */
+    { kind: 'astro', path: [CRADLE.x - 7 * cy, CRADLE.z + 6, BAY.x - BAY.rad - 6, BAY.z + 8], yaw: 0, phase: 0.2 },
+    /* The port one runs the BAND — the strip between the muster ground and
+     * the pit — end to end: a straight line from the flank patch to the port
+     * job clips the muster's corner, and paths are straight. */
+    { kind: 'astro', path: [BAND.x0 + 2, BAND.z0 + 0.5, STAND.x - 7, BAND.z0 + 0.5], yaw: 0, phase: 0.6 },
+    { kind: 'astro', path: [APRON.crash.x - 20, APRON.crash.z + 2, APRON.padL.x + 9, APRON.padL.z - 2], yaw: 0, phase: 0.9 },
+    /* WELDERS, at four seams: the section's foot, the starboard wall panel,
+     * the cradle's port wing, the transport's starboard flank. */
+    { kind: 'welder', x: BAY.x - BAY.rad - 2.4, z: BAY.z - BAY.len * 0.42, yaw: Math.PI / 2,
       sweep: 0.42, reach: 0.78, lift: 1.15, duty: 0.62, phase: 0.0 },
+    { kind: 'welder', x: FLANK_R.x1 - 6, z: (FLANK_R.z0 + FLANK_R.z1) * 0.5, yaw: Math.PI / 2,
+      sweep: 0.7, reach: 1.0, lift: 0.5, duty: 0.4, phase: 2.9 },
+    { kind: 'welder', x: CRADLE.x - 8.5 * cy, z: CRADLE.z + 8.5 * sy + 1.5, yaw: Math.PI / 2 - CRADLE.yaw,
+      sweep: 0.5, reach: 0.9, lift: 0.7, duty: 0.45, phase: 5.4 },
+    { kind: 'welder', x: HULL.x + HULL.wide * 0.5 + 2.6, z: HULL.z - 2, yaw: -Math.PI / 2,
+      sweep: 0.55, reach: 0.95, lift: 0.9, duty: 0.5, phase: 1.7 },
+    /* PIT DROIDS, folded: a bulkhead panel in the starboard sliver, the
+     * cradle's open engine bay, the port wall foot. */
+    { kind: 'pit', x: SLIVER.x, z: SLIVER.z0 + 1.5, yaw: Math.PI, phase: 0.3 },
+    { kind: 'pit', x: CRADLE.x + 3.5 * cy + 0.6 * sy, z: CRADLE.z - 3.5 * sy - 5.0, yaw: -CRADLE.yaw + Math.PI, phase: 1.3 },
+    { kind: 'pit', x: FLANK_L.x0 + 4, z: (FLANK_L.z0 + FLANK_L.z1) * 0.5, yaw: -Math.PI / 2, phase: 2.2 },
+    /* MOUSE DROIDS: both slivers, and the starboard wall foot forward. */
+    { kind: 'mouse', path: [SLIVER.x, SLIVER.z0 + 4, SLIVER.x, SLIVER.z1], yaw: 0, phase: 0.1 },
+    { kind: 'mouse', path: [-SLIVER.x, SLIVER.z1, -SLIVER.x, SLIVER.z0 + 4], yaw: 0, phase: 0.5 },
+    { kind: 'mouse', path: [W.x1 - 7, W.z1 + 2, W.x1 - 7, DECK_ZONES.apron.z0 + 2], yaw: 0, phase: 0.8 },
+    /* GONKS: the port flank, and the work zone's forward end. */
+    { kind: 'gonk', path: [FLANK_L.x0 + 10, FLANK_L.z1 - 3, FLANK_L.x0 + 10, FLANK_L.z0 + 4], yaw: 0, phase: 0.4 },
+    { kind: 'gonk', path: [W.x1 - 16, W.z0 + 64, W.x1 - 16, W.z1 - 8], yaw: 0, phase: 0.7 },
   ]);
 }
 
-/** The part of a droid that is bolted down. Binned into a shared kit. */
-function droidChassis(kit, M) {
-  const steel = M.steel, trim = M.trim, lamp = M.lamp;
-
-  /* Treads. Two units either side with three road wheels showing under the
-   * skirt — the wheels are what stop a tracked chassis reading as a box on
-   * the floor, and at 12 tris each they are the cheapest silhouette in the
-   * assembly. */
-  for (const sx of [-1, 1]) {
-    kit.slab(steel, 0.40, 0.34, 1.42, sx * 0.52, 0.26, 0, { tile: 1.1, seg: 2, collide: false });
-    kit.slab(trim, 0.44, 0.10, 1.46, sx * 0.52, 0.44, 0, { tile: 1.1, seg: 2, collide: false });
-    for (let i = 0; i < 3; i++) {
-      kit.put(cylGeo(0.135, 0.135, 0.30, 8, 0.6), trim,
-        sx * 0.52, 0.17, (i - 1) * 0.46, 0, 0, Math.PI / 2);
-    }
-  }
-  /* The belly and the hull deck, two courses so the profile has a shoulder —
-   * `addMachine`'s rule, and it is the difference between a machine and a
-   * crate on tracks. */
-  kit.slab(steel, 1.24, 0.24, 1.12, 0, 0.36, 0, { tile: 1.1, seg: 2, collide: false });
-  kit.slab(steel, 1.06, 0.30, 1.06, 0, 0.60, 0, { tile: 1.1, seg: 3, collide: false });
-  /* The locker aft, where the spare rod and the gas bottle live. */
-  kit.slab(steel, 0.74, 0.36, 0.34, 0, 0.78, -0.50, { tile: 1.1, seg: 2, collide: false });
-  kit.put(cylGeo(0.09, 0.09, 0.44, 8, 0.6), trim, 0.24, 0.98, -0.50);
-  /* Hazard flash across the front, and the turntable ring the torso sits in. */
-  kit.slab(trim, 1.02, 0.09, 0.07, 0, 0.60, 0.55, { tile: 1.1, seg: 2, collide: false });
-  kit.put(torusGeo(0.33, 0.045, 5, 14, TAU, 0.6), trim, 0, 0.755, 0);
-  /* Two marker lamps. A machine that is powered says so before it moves. */
-  for (const sx of [-1, 1]) {
-    kit.slab(lamp, 0.10, 0.06, 0.05, sx * 0.42, 0.70, 0.56, { tile: 0.5, seg: 1, collide: false });
-  }
-  kit.slab(lamp, 0.16, 0.05, 0.16, 0, 0.98, -0.50, { tile: 0.5, seg: 1, collide: false });
-  /* ONE collider for the whole thing. A droid is 1.2 m across and 1.5 m
-   * long; a player walking into it should stop, and nothing here is worth a
-   * second box. */
-  kit.collider(0, 0.48, 0, 0.62, 0.48, 0.80);
-}
-
-/** Turret, boom and forearm: the three things that turn. */
-function droidArm(world, group, M) {
+/** Turret, boom and forearm: the three things on a welder that turn. */
+function welderArm(world, group, M) {
   const steel = M.steel;
-
   const turret = mover(world, group);
   turret.position.set(0, 0.76, 0);
   const tb = new Bin();
   tb.put(steel, cylGeo(0.30, 0.32, 0.44, 12, 0.8), 0, 0.22, 0);
   tb.put(steel, slabGeo(0.30, 0.26, 0.28, { bevel: 0.03, seg: 2, tile: 1.1 }), 0, 0.34, -0.30);
-  for (const sx of [-1, 1]) {
-    tb.put(steel, slabGeo(0.11, 0.36, 0.22, { bevel: 0.025, seg: 2, tile: 1.1 }), sx * 0.21, 0.48, 0.04);
-  }
-  /* The sensor head, tipped forward. A turntable with nothing on top of it
-   * turns; a turntable with a head on it LOOKS. */
+  for (const sx of [-1, 1]) tb.put(steel, slabGeo(0.11, 0.36, 0.22, { bevel: 0.025, seg: 2, tile: 1.1 }), sx * 0.21, 0.48, 0.04);
   tb.put(steel, slabGeo(0.40, 0.16, 0.22, { bevel: 0.03, seg: 2, tile: 1.1 }), 0, 0.58, 0.16, -0.30, 0, 0);
-  /* The brow over the head, in the SAME bin as everything else on the turret.
-   * A second material here would be a second draw call on a part that turns,
-   * three times over, for a 30 cm strip seen at six metres. */
   tb.put(steel, slabGeo(0.30, 0.05, 0.05, { bevel: 0.015, seg: 1, tile: 0.6 }), 0, 0.64, 0.25, -0.30, 0, 0);
   tb.bake(world, turret);
-
   const boom = mover(world, turret);
   boom.position.set(0, 0.48, 0.04);
   const bb = new Bin();
@@ -994,153 +701,196 @@ function droidArm(world, group, M) {
   bb.put(steel, cylGeo(0.055, 0.055, 0.62, 8, 0.6), 0.11, 0.34, -0.10, 0.22, 0, 0);
   bb.put(steel, cylGeo(0.085, 0.085, 0.20, 8, 0.6), 0, 0.92, 0, 0, 0, Math.PI / 2);
   bb.bake(world, boom);
-
   const fore = mover(world, boom);
   fore.position.set(0, 0.92, 0);
   const fb = new Bin();
   fb.put(steel, slabGeo(0.12, 0.66, 0.12, { bevel: 0.025, seg: 2, tile: 1.1 }), 0, 0.33, 0);
   fb.put(steel, slabGeo(0.17, 0.15, 0.17, { bevel: 0.03, seg: 2, tile: 1.1 }), 0, 0.70, 0);
   fb.bake(world, fore);
-  /* The emitter is an instance of the shared glow mesh — see `addGlows`. It
-   * used to be a mesh and a material of its own per droid, which is three
-   * draw calls for three objects five centimetres across. */
   return { turret, boom, fore };
 }
 
-function addRepairDroids(world, life) {
+function addDroids(world, life) {
   const M = deckMaterials();
-  const kit = new Kit(3301);
-  const droids = [];
-  /* THROUGH THE LAZY READER, NOT THE OLD CONSTANT. The jobs are derived from
-   * `DECK` now, and `DECK` lives in a module that imports this one — so
-   * reading it at module-evaluation time is a temporal dead zone, not a
-   * value. `droidJobs()` is the memoised first-call form. */
+  const C = castMaterials(world._deckFaction);
   const jobs = droidJobs();
-  for (let i = 0; i < jobs.length; i++) {
-    const J = jobs[i];
-    const y = world.terrain ? world.terrain.height(J.x, J.z) : 0;
-    kit.push(J.x, y, J.z, J.yaw);
-    droidChassis(kit, M);
-    kit.pop();
-
-    const g = mover(world);
-    g.position.set(J.x, y, J.z);
-    g.rotation.y = J.yaw;
-    const arm = droidArm(world, g, M);
-    droids.push({
-      ...arm, job: J, slot: GLOW.arc + i, y,
-      /* The duty clock. A droid welds for `duty` of a 5.4 s cycle and spends
-       * the rest of it re-aiming, and the three phases are 2.5 s apart so at
-       * most two arcs are ever lit — three simultaneous arcs read as a
-       * disco, and the bloom pass agrees. */
-      t: J.phase, yaw: 0, yawTo: 0, heat: 0,
-      tip: new THREE.Vector3(),
-    });
+  const byKind = new Map();
+  for (const J of jobs) byKind.set(J.kind, (byKind.get(J.kind) || 0) + 1);
+  /* ONE INSTANCED MESH PER KIND. */
+  const meshes = {};
+  const next = {};
+  for (const [kind, n] of byKind) {
+    const built = DROID_BUILDERS[kind]();
+    const im = new THREE.InstancedMesh(built.geo, C.cast, n);
+    im.frustumCulled = false;
+    im.castShadow = true; im.receiveShadow = true;
+    im.name = `deck-droid-${kind}`;
+    world.scene.add(im);
+    world.statics.push(im);
+    meshes[kind] = im;
+    next[kind] = 0;
   }
-  /* The chassis merge is kept so a check can price the whole file: it is three
-   * meshes that belong to DeckLife and are reachable from nothing else. */
-  life.chassis = kit.emit(world, new THREE.Vector3(0, 0, 0)).meshes;
+  const dome = astromechDome(), leg = astromechLeg();
+  const droids = [];
+  let arc = 0, eye = 0;
+  for (const J of jobs) {
+    const K = DROID_KINDS[J.kind];
+    const x = J.path ? J.path[0] : J.x, z = J.path ? J.path[1] : J.z;
+    const y = groundAt(world, x, z);
+    const yaw = J.path ? Math.atan2(J.path[2] - J.path[0], J.path[3] - J.path[1]) : J.yaw;
+    const d = {
+      kind: J.kind, job: J, i: next[J.kind]++, mesh: meshes[J.kind], K,
+      kn: new Knockable(world, _v.set(x, y, z), { half: K.half, mass: K.mass, facing: yaw, pace: Math.max(K.speed, 0.6) }),
+      x, y, z, yaw, t: J.phase * 7, at: J.phase, dir: 1, hold: J.phase * 3, was: false,
+      tip: new THREE.Vector3(), heat: 0, spark: 0, slot: -1,
+    };
+    if (J.kind === 'welder') {
+      const g = mover(world);
+      g.position.set(x, y, z); g.rotation.y = yaw;
+      d.group = g;
+      Object.assign(d, welderArm(world, g, M));
+      d.slot = GLOW.arc + arc++;
+    } else if (J.kind === 'astro') {
+      const g = mover(world);
+      g.position.set(x, y, z); g.rotation.y = yaw;
+      d.group = g;
+      d.dome = castMesh(world, g, dome.geo.clone(), C.cast, 'deck-astro-dome');
+      d.dome.position.set(0, 1.46, 0);
+      d.leg = castMesh(world, g, leg.geo.clone(), C.cast, 'deck-astro-leg');
+      d.leg.position.set(0, 0.62, 0.30);
+      d.leg.rotation.x = -1.4;
+      d.slot = GLOW.eye + eye++;
+    }
+    droids.push(d);
+  }
+  dome.geo.dispose(); leg.geo.dispose();
   life.droids = droids;
+  life.droidMeshes = meshes;
 }
 
 const DROID_CYCLE = 5.4;
+
+/** Write one droid's chassis instance from a place and a heading, plus a lean. */
+function droidPlace(d, x, y, z, yaw, roll = 0, pitch = 0) {
+  _eu.set(pitch, yaw, roll, 'YXZ');
+  _q.setFromEuler(_eu);
+  _v.set(x, y, z); _s.set(1, 1, 1);
+  d.mesh.setMatrixAt(d.i, _m.compose(_v, _q, _s));
+  d.mesh.instanceMatrix.needsUpdate = true;
+  if (d.group) { d.group.position.set(x, y, z); d.group.quaternion.copy(_q); }
+}
+
+/** …and from the body, when the body is the one deciding. */
+function droidFromBody(d) {
+  const kn = d.kn;
+  _v.copy(kn.at); _s.set(1, 1, 1);
+  d.mesh.setMatrixAt(d.i, _m.compose(_v, kn.quaternion, _s));
+  d.mesh.instanceMatrix.needsUpdate = true;
+  if (d.group) { d.group.position.copy(kn.at); d.group.quaternion.copy(kn.quaternion); }
+}
 
 function stepDroids(world, life, dt) {
   const fx = world.particles;
   const eng = world.engine;
   for (const d of life.droids) {
     d.t += dt;
+    const kn = d.kn;
+    kn.update(dt);
+    const J = d.job, K = d.K;
+    /* ── KNOCKED OVER, GETTING UP, OR WALKING BACK: the body decides. */
+    if (kn.state !== 'post') {
+      droidFromBody(d);
+      if (d.slot >= 0 && d.kind === 'welder') { glowBurn(life, d.slot, 0, 0, 0); d.heat = 0; }
+      if (d.kind === 'astro') {
+        /* A thrown astromech folds its leg and the dome stops. */
+        d.leg.rotation.x = lerp(d.leg.rotation.x, -1.4, 1 - Math.exp(-6 * dt));
+        d.dome.updateMatrixWorld(true);
+        _m4.makeRotationX(Math.PI / 2 - 0.6).setPosition(0, 0.30, 0.46).premultiply(d.dome.matrixWorld);
+        glowPlace(life, d.slot, _m4, 0.06, 0.05);
+        glowBurn(life, d.slot, 0.4, 0.1, 0.05);
+      }
+      continue;
+    }
+    /* ── ON ITS BASE: run the job. */
+    if (J.path) {
+      const span = Math.hypot(J.path[2] - J.path[0], J.path[3] - J.path[1]);
+      const moving = d.hold <= 0;
+      if (d.hold > 0) d.hold -= dt;
+      else {
+        d.at += (K.speed / span) * d.dir * dt;
+        if (d.at >= 1) { d.at = 1; d.dir = -1; d.hold = 3 + (d.i * 5 + Math.floor(d.t)) % 6; }
+        else if (d.at <= 0) { d.at = 0; d.dir = 1; d.hold = 3 + (d.i * 3 + Math.floor(d.t)) % 5; }
+      }
+      const x = lerp(J.path[0], J.path[2], d.at), z = lerp(J.path[1], J.path[3], d.at);
+      const y = groundAt(world, x, z);
+      const yaw = Math.atan2((J.path[2] - J.path[0]) * d.dir, (J.path[3] - J.path[1]) * d.dir);
+      /* THE GAIT OF EACH KIND is in its lean: a gonk rocks side to side at a
+       * slow beat, a mouse droid is flat, an astromech tips back onto its
+       * third leg. */
+      const roll = d.kind === 'gonk' && moving ? Math.sin(d.t * 5.2) * 0.09 : 0;
+      const pitch = d.kind === 'astro' ? lerp(0, -0.22, d.lean = lerp(d.lean || 0, moving ? 1 : 0, 1 - Math.exp(-4 * dt))) : 0;
+      const bob = d.kind === 'gonk' && moving ? Math.abs(Math.sin(d.t * 5.2)) * 0.05 : 0;
+      if (moving || d.x !== x || d.z !== z) kn.drive(x, z, yaw);
+      d.x = x; d.z = z; d.yaw = yaw;
+      droidPlace(d, x, y + bob, z, yaw, roll, pitch);
+      if (d.kind === 'astro') {
+        /* The third leg drops when it rolls, the dome hunts, the eye blinks. */
+        d.leg.rotation.x = lerp(-1.4, 0, d.lean);
+        d.dome.rotation.y = Math.sin(d.t * 0.7) * 0.9 + (moving ? 0 : Math.sin(d.t * 2.3) * 0.25);
+        d.dome.updateMatrixWorld(true);
+        _m4.makeRotationX(Math.PI / 2 - 0.6).setPosition(0, 0.30, 0.46).premultiply(d.dome.matrixWorld);
+        glowPlace(life, d.slot, _m4, 0.06, 0.05);
+        const blink = (Math.sin(d.t * 3.1) > 0.85 ? 0.2 : 1) * (0.8 + 0.2 * Math.sin(d.t * 11));
+        glowBurn(life, d.slot, 1.6 * blink, 0.35 * blink, 0.1 * blink);
+        if (moving) {
+          eng?.lightUp?.(_v.set(x, y + 1.7, z), 0xff6040, 2.0, 3, 0);
+        }
+      }
+      continue;
+    }
+    /* A standing droid's chassis is written once, and again only after it has
+     * been knocked over — the body says where it landed. */
+    if (!d.was) { droidPlace(d, d.x, d.y, d.z, d.yaw); d.was = true; }
+    if (d.kind === 'pit') {
+      /* A folded pit droid twitches: the head nods on a slow beat. Written
+       * into the instance as a pitch. */
+      droidPlace(d, d.x, d.y, d.z, d.yaw, 0, Math.sin(d.t * 1.3) * 0.02);
+      continue;
+    }
+    if (d.kind !== 'welder') continue;
+    /* ── THE WELDER: a turntable that holds a bearing while the arc is lit
+     * and swings when it goes out, a boom that breathes, a wrist that
+     * tracks a seam. Stateless off the cycle index. */
     const ph = (d.t % DROID_CYCLE) / DROID_CYCLE;
-    const J = d.job;
     const welding = ph < J.duty;
-
-    /* THE TURNTABLE. It HOLDS a bearing while the arc is lit and swings to the
-     * next one when it goes out — not a sine, because a continuous oscillation
-     * is the single motion that says "animated prop" rather than "machine".
-     *
-     * STATELESS, and that is a fix rather than a style. The first version kept
-     * `yawFrom`/`yawTo` on the droid and rewrote them when the eased parameter
-     * came back under 0.02, which is true for a WINDOW of frames rather than
-     * for one — so `from` was overwritten with `to` several frames running and
-     * the machine never swung at all. Off the cycle index there is nothing to
-     * get out of step: cycle n holds at `bearing(n)` and hands over to
-     * `bearing(n + 1)`, which is where cycle n + 1 starts. */
     const n = Math.floor(d.t / DROID_CYCLE);
     const hold = Math.sin(n * 2.399963) * J.sweep;
-    d.yaw = welding ? hold
-      : lerp(hold, Math.sin((n + 1) * 2.399963) * J.sweep, smoothstep(J.duty, 1.0, ph));
-    d.turret.rotation.y = d.yaw;
-
-    /* The boom breathes and the wrist tracks. Small — a 3 cm travel at the
-     * tip is a machine holding a bead; 30 cm is a machine waving. */
+    d.turret.rotation.y = welding ? hold : lerp(hold, Math.sin((n + 1) * 2.399963) * J.sweep, smoothstep(J.duty, 1.0, ph));
     const bob = Math.sin(d.t * 0.9 + J.phase) * 0.035;
     d.boom.rotation.x = J.lift + bob;
     d.fore.rotation.x = -J.reach - bob * 1.6 + (welding ? Math.sin(d.t * 7.3) * 0.012 : 0);
-
-    /* WHERE THE ARC IS. One matrix decompose per droid per frame, into the
-     * scratch above, because the tip is three transforms deep and the sparks,
-     * the light and the flare all need it in world space. */
     d.turret.updateMatrixWorld(true);
     d.tip.set(0, 0.93, 0).applyMatrix4(d.fore.matrixWorld);
-    /* The emitter rides the forearm as an instance of the shared glow mesh:
-     * the fore's own matrix with the stub's local offset built into it. */
     _m4.identity().setPosition(0, 0.85, 0).premultiply(d.fore.matrixWorld);
     glowPlace(life, d.slot, _m4, 0.11, 0.16);
-
-    /* The strike. Amplitude is a fast random-ish flicker because a real arc
-     * is not a lamp — it stutters, and the stutter is most of what says
-     * welding rather than glowing. */
-    const flick = welding
-      ? 0.55 + 0.45 * Math.sin(d.t * 41.7) * Math.sin(d.t * 17.3 + 1.1)
-      : 0;
+    const flick = welding ? 0.55 + 0.45 * Math.sin(d.t * 41.7) * Math.sin(d.t * 17.3 + 1.1) : 0;
     d.heat = lerp(d.heat, flick, 1 - Math.exp(-18 * dt));
     const w = 0.07 + d.heat * 1.5;
     glowBurn(life, d.slot, w * 0.74, w * 0.85, w);
-    if (d.heat > 0.05) {
-      /* Through the pool, never a new PointLight — see the file header. */
-      eng?.lightUp?.(d.tip, 0xbcd8ff, 22 * d.heat, 11, 0);
-    }
-    /* Sparks on a fixed tick rather than per frame: five bursts a second is
-     * a continuous shower at 60 Hz and 60 is a firework. */
-    d.spark = (d.spark || 0) + dt;
+    if (d.heat > 0.05) eng?.lightUp?.(d.tip, 0xbcd8ff, 22 * d.heat, 11, 0);
+    d.spark += dt;
     if (welding && d.spark > 0.14) {
       d.spark = 0;
       _v.set(0, -1, 0);
-      fx?.sparkBurst?.(d.tip, _v, 5,
-        { speed: 5.5, color: 0xffe2b0, hdr: 3.0, flash: false, embers: false });
+      fx?.sparkBurst?.(d.tip, _v, 5, { speed: 5.5, color: 0xffe2b0, hdr: 3.0, flash: false, embers: false });
     }
   }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  5 · THE GANTRY TROLLEY                                                */
+/*  5 · THE GANTRY TROLLEY, AND THE TWO CRANE BRIDGES                     */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * A crab on the gantry's rail, and the load swinging under it.
- *
- * ══ IT WAS RIDING AIR, AND THAT IS THE WHOLE STORY OF THIS FILE ═══════════
- *
- * The comment here used to say "`addGantry` already builds the rail" and put
- * the crab at y = 10.35 on it. `addGantry` was deleted from `Hangar.js` in the
- * rebuild. For two commits this was a steel box with a two-tonne skip under it
- * sliding through empty air eleven metres over the deck, and nothing failed,
- * because nothing in the tree had ever asked what was underneath a prop.
- *
- * So the rail is built first now — `addRepairBay` puts it on the underside of
- * the gantry beam — and every number below is read off `GANTRY` rather than
- * typed, so the crab cannot come adrift from it again. The stroke is the
- * portal's own span less the width of the crab, which is what a gantry crab's
- * stroke IS.
- *
- * IT MOVES BECAUSE MOTION AT THE EDGE OF VISION IS THE ASK, and it is the
- * spec's own "gantry crane traversing overhead on a slow loop": twenty-one
- * metres of stroke at 0.9 m/s, twenty-three seconds each way, four seconds
- * standing at each end.
- *
- * Two meshes: the body, and a pivot carrying cable, hook and skip, so the load
- * can swing without the trolley rolling with it.
- */
 let TROLLEY = null;
 function trolleyRun(world) {
   if (TROLLEY) return TROLLEY;
@@ -1148,9 +898,6 @@ function trolleyRun(world) {
   const g0 = groundAt(world, BAY.x, BAY.z);
   return (TROLLEY = {
     z: BAY.z,
-    /* On the rail, not near it: the rail slab's underside, less the crab's
-     * own half-height. `addRepairBay` puts the rail at beamY - 0.1 and it is
-     * 0.36 thick, so this is the face the wheels sit on. */
     y: g0 + GANTRY.beamY - 0.1 - 0.18 - 0.23,
     x0: BAY.x - GANTRY.half + 2.5,
     x1: BAY.x + GANTRY.half - 2.5,
@@ -1164,494 +911,496 @@ function addTrolley(world, life) {
   const body = mover(world);
   body.position.set(T.x0, T.y, T.z);
   const bb = new Bin();
-  /* Long across the rail, because it rides along X now and a crab is longer
-   * than it is wide in the direction it rolls. */
   bb.put(M.steel, slabGeo(1.30, 0.46, 0.84, { bevel: 0.04, seg: 2, tile: 1.1 }), 0, 0, 0);
-  for (const sx of [-1, 1]) {
-    /* Axle across the rail, so the flanges read as gripping it. */
-    bb.put(M.steel, cylGeo(0.13, 0.13, 0.10, 8, 0.6), sx * 0.48, 0.28, 0, Math.PI / 2, 0, 0);
-  }
+  for (const sx of [-1, 1]) bb.put(M.steel, cylGeo(0.13, 0.13, 0.10, 8, 0.6), sx * 0.48, 0.28, 0, Math.PI / 2, 0, 0);
   bb.put(M.steel, slabGeo(0.30, 0.10, 0.30, { bevel: 0.02, seg: 1, tile: 0.6 }), 0, -0.26, 0);
   bb.bake(world, body);
-
   const hoist = mover(world, body);
   hoist.position.set(0, -0.28, 0);
   const hb = new Bin();
   hb.put(M.steel, cylGeo(0.028, 0.028, 2.60, 6, 0.6), 0, -1.30, 0);
   hb.put(M.steel, torusGeo(0.26, 0.055, 5, 10, Math.PI * 1.5, 0.6), 0, -2.72, 0, Math.PI / 2, 0, 0.4);
-  /* The load. A steel skip rather than a crate, so it bins with the trolley
-   * and costs nothing — and because a hook with nothing on it reads as a
-   * crane that has finished, which is the opposite of what the room is for. */
   hb.put(M.steel, slabGeo(1.10, 0.80, 0.90, { bevel: 0.05, seg: 2, tile: 1.1 }), 0, -3.35, 0);
   hb.put(M.steel, slabGeo(1.16, 0.08, 0.96, { bevel: 0.02, seg: 1, tile: 0.6 }), 0, -3.72, 0);
   hb.bake(world, hoist);
-
-  life.trolley = { run: T, body, hoist, t: 0, at: 0, dir: 1, swing: 0, swingV: 0 };
+  life.trolley = { run: T, body, hoist, t: 0, at: 0, dir: 1, swing: 0, swingV: 0, hold: 0, vel: 0 };
 }
 
-function stepTrolley(life, dt) {
-  const T = life.trolley;
-  if (!T) return;
-  const R = T.run;
+/** A crab on a rail: translate, and the load lags into the start and overshoots the stop. */
+function stepCrab(T, R, dt, axis) {
   const span = R.x1 - R.x0;
   const prev = T.at;
-  if (T.hold > 0) {
-    T.hold -= dt;
-  } else {
+  if (T.hold > 0) T.hold -= dt;
+  else {
     T.at += (R.speed / span) * T.dir * dt;
     if (T.at >= 1) { T.at = 1; T.dir = -1; T.hold = R.hold; }
     else if (T.at <= 0) { T.at = 0; T.dir = 1; T.hold = R.hold; }
   }
-  T.body.position.x = R.x0 + span * T.at;
-
-  /* THE PENDULUM IS WHY IT LOOKS HEAVY. A load that translates with its
-   * trolley is a decal; one that lags into the start and overshoots the stop
-   * has mass. Second-order, damped, driven by the trolley's own acceleration
-   * — three lines and it is the whole difference. */
+  T.body.position[axis] = R.x0 + span * T.at;
   const vel = (T.at - prev) * span / Math.max(dt, 1e-4);
   const drive = (vel - (T.vel || 0)) / Math.max(dt, 1e-4);
   T.vel = vel;
   T.swingV += (-9.4 * T.swing - clamp(drive, -18, 18) * 0.055) * dt;
   T.swingV *= Math.exp(-0.9 * dt);
   T.swing += T.swingV * dt;
-  /* Swings across the rail, which is X now — a pendulum that lagged in Z
-   * while the crab rolled in X was a load swinging sideways to its own
-   * travel, which is the one direction a hoist never swings. */
-  T.hoist.rotation.z = clamp(T.swing, -0.25, 0.25);
+  /* The pendulum swings along the travel: rotate about the OTHER axis. */
+  if (axis === 'x') T.hoist.rotation.z = clamp(T.swing, -0.25, 0.25);
+  else T.hoist.rotation.x = clamp(-T.swing, -0.25, 0.25);
 }
 
-/* ══════════════════════════════════════════════════════════════════════ */
-/*  6 · THE TECH ON THE SCAFFOLD                                          */
-/* ══════════════════════════════════════════════════════════════════════ */
-
-/**
- * ══ ONE MAN, POSED, AND HE NEVER TAKES A STEP ═════════════════════════════
- *
- * He stands on the lower lift of the scaffold `addRepairBay` builds, welding
- * the port flank of the hull section on jacks about a metre off his torch. He
- * is eleven primitives merged into one mesh plus one instance of the shared
- * emitter, and he does not move at all — the arc does the moving.
- *
- * WHY HE IS NOT A REAL BODY. `buildTrooper` through `mergeFigure` would give a
- * proper articulated man for four draw calls, and it would be the wrong man:
- * every rig in this tree is a fighter's, every pose it can hold is a combat
- * pose, and a trooper in armour standing on a scaffold is one of the player's
- * own company doing a job he has no animation for. A dark coverall silhouette
- * behind a welding flare at fifty-five metres is what a tech looks like, and
- * the flare is doing 90% of the work — measured off the arc's own exposure, the figure is
- * within two stops of black in every frame the arc is lit.
- *
- * If this ever needs to be a real body, `mergeFigure` is the door and the cost
- * is four meshes instead of one.
- */
-/**
- * WHERE HE STANDS, AND IT IS THE DECK OF A SCAFFOLD THAT NOW EXISTS.
- *
- * This was `{ x: -26.4, y: 4.10, z: -14.0 }` — a literal 4.10 m, standing on
- * "the middle lift of the port scaffold", which `Hangar.js` stopped building
- * two commits before. A welder hanging four metres in the air welding nothing.
- *
- * The lift is `SCAFFOLD.lifts[0]` and it is built by `addRepairBay` above; his
- * feet are on its plank, sampled off the ground under it. He faces +X into the
- * section's port flank, which puts his torch about a metre off the shell.
- */
-function techMark(world) {
-  const { SCAFFOLD } = frame();
-  return {
-    x: SCAFFOLD.x, z: SCAFFOLD.z,
-    y: groundAt(world, SCAFFOLD.x, SCAFFOLD.z) + SCAFFOLD.lifts[0],
-    yaw: Math.PI / 2,
-  };
-}
-
-function addTech(world, life) {
-  const TECH = techMark(world);
-  const M = deckMaterials();
-  const g = mover(world);
-  g.position.set(TECH.x, TECH.y, TECH.z);
-  g.rotation.y = TECH.yaw;
-  const b = new Bin();
-  const C = M.coverall;
-  const box = (w, h, d, x, y, z, rx = 0, rz = 0) =>
-    b.put(C, slabGeo(w, h, d, { bevel: 0.02, seg: 2, tile: 0.9 }), x, y, z, rx, 0, rz);
-
-  /* Stance: feet apart, weight on the forward foot, torso turned into the
-   * work and leaning 9°. A figure square to the world reads as a mannequin. */
-  for (const sx of [-1, 1]) {
-    box(0.14, 0.10, 0.30, sx * 0.11, 0.05, sx > 0 ? 0.10 : -0.10);
-    box(0.14, 0.44, 0.16, sx * 0.11, 0.30, sx > 0 ? 0.06 : -0.06);
-    box(0.17, 0.42, 0.19, sx * 0.11, 0.72, sx > 0 ? 0.02 : -0.03);
-  }
-  box(0.40, 0.20, 0.26, 0, 0.98, 0);
-  box(0.45, 0.52, 0.28, 0, 1.31, 0.05, 0.16);
-  box(0.30, 0.20, 0.12, 0, 1.30, 0.22);                 // the chest pack
-  box(0.54, 0.16, 0.27, 0, 1.58, 0.02, 0.16);
-  /* THE RAISED ARM, SOLVED RATHER THAN EYEBALLED. A `slabGeo` box is built
-   * along its own +Y, and `Bin.put`'s rx rotation carries +Y to
-   * (0, cos rx, sin rx) — so every angle below is `atan2` of the direction the
-   * limb is meant to point, and every centre is the joint plus half the
-   * segment along it. Guessing the four numbers is how an arm ends up
-   * reaching backwards through the man's own chest, which is what the first
-   * pass here did.
-   *
-   *   shoulder (0.27, 1.55, 0.05) → upper (0, -0.20, 0.98), 0.42 long
-   *   elbow    (0.27, 1.47, 0.46) → fore  (0,  0.25, 0.97), 0.40 long
-   *   hand     (0.27, 1.57, 0.85) → torch (0, -0.45, 0.89), 0.20 long   */
-  box(0.13, 0.42, 0.14, 0.27, 1.508, 0.256, 1.77);
-  box(0.12, 0.40, 0.13, 0.27, 1.516, 0.656, 1.318);
-  /* …and the slack one, hanging with a bend at the elbow. */
-  box(0.13, 0.44, 0.14, -0.27, 1.33, -0.02, 0.12, 0.10);
-  box(0.12, 0.40, 0.13, -0.29, 0.95, 0.06, 0.30);
-  /* Head and a welding hood — the hood is what makes the silhouette a welder
-   * and not a man in a jumpsuit, and it is one bevelled box. */
-  b.put(C, cylGeo(0.115, 0.105, 0.24, 8, 0.5), 0, 1.76, 0.03);
-  box(0.26, 0.30, 0.06, 0, 1.77, 0.16, 0.12);
-  b.bake(world, g);
-
-
-  /* THE TORCH IS ONE INSTANCE OF THE SHARED EMITTER, not a mesh of its own.
-   * It never moves — he is posed, not animated — so its matrix is written here
-   * once and `stepTech` only ever touches its colour. */
-  g.updateMatrixWorld();
-  _m4.makeRotationFromEuler(_eu.set(2.038, 0, 0)).setPosition(0.27, 1.521, 0.938);
-  glowPlace(life, GLOW.torch, _m4.premultiply(g.matrixWorld), 0.07, 0.20);
-
-  const tip = new THREE.Vector3(0.27, 1.476, 1.027);
-  life.tech = { group: g, tip: tip.applyMatrix4(g.matrixWorld), t: 0, heat: 0, spark: 0 };
-}
-
-/**
- * The flare, and it is on a schedule that is mostly OFF.
- *
- * A continuous arc is a lamp: the eye adapts to it in two seconds and the
- * brightest thing in the port half of the room stops being an event. So he
- * runs a bead for 2.8 s, stops for 4.6, and the strike at the front of each
- * bead is a single 30 ms lobe eight times the running brightness — which is
- * the frame the player looks up at.
- */
-function stepTech(world, life, dt) {
-  const T = life.tech;
+function stepTrolley(life, dt) {
+  const T = life.trolley;
   if (!T) return;
-  T.t += dt;
-  const cyc = T.t % 7.4;
-  const on = cyc < 2.8;
-  const strike = on && cyc < 0.09;
-  const flick = on
-    ? 0.5 + 0.5 * Math.sin(T.t * 37.1) * Math.sin(T.t * 13.7 + 0.6)
-    : 0;
-  T.heat = lerp(T.heat, flick, 1 - Math.exp(-22 * dt));
-  /* HDR out of one instance colour, where an `emissiveIntensity` on a material
-   * of its own used to be. Cool-white, and the strike takes it to 5×, which is
-   * the frame the player looks up at. */
-  const w = 0.08 + T.heat * 1.6 + (strike ? 3.4 : 0);
-  glowBurn(life, GLOW.torch, w * 0.84, w * 0.92, w);
-  const fx = world.particles;
-  if (T.heat > 0.05) {
-    world.engine?.lightUp?.(T.tip, 0xcfe6ff, 30 * T.heat + (strike ? 60 : 0), 16, 0);
-    T.spark += dt;
-    if (T.spark > 0.11) {
-      T.spark = 0;
-      _v.set(-0.35, -0.9, 0).normalize();
-      fx?.sparkBurst?.(T.tip, _v, 7,
-        { speed: 7.5, color: 0xfff0c8, hdr: 3.4, flash: false, embers: false });
+  stepCrab(T, T.run, dt, 'x');
+}
+
+/**
+ * ══ TWO BRIDGES ON THE CEILING RAILS ══════════════════════════════════════
+ *
+ * `Hangar.ceilingAt` lays two crane rails the length of the room at x = ±36,
+ * y = `DECK.roof` - 7, "the bridges that ride them are DeckLife's and move".
+ * They are, now: a crab under each rail with a cable down to a load twenty
+ * metres below it — a hull plate on the port rail, an engine on the
+ * starboard — running the room at 1.2 m/s with a long dwell at each end.
+ *
+ * The rail's own numbers, read once: the hull slab sits at roof - 7 and is
+ * 1.2 thick, so its underside is roof - 7.6 and the crab hangs from that.
+ * The load rides at about y 64, over the tops of the hung fighters (82) and
+ * inboard of the overhead rigs at ±49.6 — and clear of the aperture's
+ * traffic, which stays under 40 m.
+ */
+let CRANES = null;
+function craneRuns() {
+  if (CRANES) return CRANES;
+  const { WALL } = frame();
+  /* `Hangar.ceilingAt` lays the rails at x = ±36 under a roof of 96, and
+   * publishes neither: 36 is 0.45 of the wall's 80, written that way so a
+   * wider room carries its rails out with it, and `deckcast.mjs` fires a
+   * ray from each crab to make sure the rail is actually over it. */
+  const railX = WALL * 0.45, railY = DECK.roof - 7.0 - 0.6;
+  const z0 = DECK.aft + 26, z1 = DECK.lip - 26;
+  return (CRANES = [
+    { x: -railX, y: railY - 0.7, x0: z0, x1: z1, speed: 1.2, hold: 18, drop: 22, load: 'plate', phase: 0.15 },
+    { x: railX, y: railY - 0.7, x0: z1, x1: z0, speed: 1.05, hold: 24, drop: 26, load: 'engine', phase: 0.7 },
+  ]);
+}
+
+function addCranes(world, life) {
+  const C = castMaterials(world._deckFaction);
+  const P = deckMats(world._deckFaction);
+  const hull = P.hull.color.getHex(), dark = P.dark.color.getHex(), wing = P.wing.color.getHex();
+  const cranes = [];
+  for (const R of craneRuns()) {
+    const body = mover(world);
+    body.position.set(R.x, R.y, R.x0 + (R.x1 - R.x0) * R.phase);
+    const A = new Assembly();
+    /* The crab: a box across the rail, four flanged wheels up on it, a
+     * winch drum, a cab, a status lamp. */
+    A.box(dark, 3.2, 1.2, 4.4, 0, 0, 0);
+    A.pair((s) => { A.cyl(0x8d939b, 0.32, 0.32, 0.3, s * 0.9, 0.75, 1.6, 0, 0, Math.PI / 2, 10); A.cyl(0x8d939b, 0.32, 0.32, 0.3, s * 0.9, 0.75, -1.6, 0, 0, Math.PI / 2, 10); });
+    A.cyl(0x6a7079, 0.55, 0.55, 2.0, 0, -0.9, 0, 0, 0, Math.PI / 2, 12);
+    A.box(hull, 1.4, 1.0, 1.6, 1.6, -1.0, -1.0);
+    A.box(0xc03a2c, 0.3, 0.3, 0.3, 0, 0.75, 0);
+    A.box(0xb8842e, 3.3, 0.12, 0.2, 0, -0.62, 2.15);
+    A.box(0xb8842e, 3.3, 0.12, 0.2, 0, -0.62, -2.15);
+    castMesh(world, body, A.merge(), C.cast, 'deck-crane');
+    const hoist = mover(world, body);
+    hoist.position.set(0, -1.3, 0);
+    const H = new Assembly();
+    H.cyl(0x6a7079, 0.05, 0.05, R.drop, 0.5, -R.drop / 2, 0, 0, 0, 0, 6);
+    H.cyl(0x6a7079, 0.05, 0.05, R.drop, -0.5, -R.drop / 2, 0, 0, 0, 0, 6);
+    H.box(dark, 2.0, 0.6, 0.6, 0, -R.drop - 0.2, 0);
+    H.ring(0x8d939b, 0.4, 0.08, 0, -R.drop - 0.8, 0, 0, Math.PI / 2, 0, 10);
+    if (R.load === 'plate') {
+      /* A hull plate in slings: a big bevelled slab with a rib and a row of
+       * fixing holes along one edge. */
+      H.box(wing, 6.0, 0.35, 4.0, 0, -R.drop - 2.4, 0);
+      H.box(dark, 6.0, 0.2, 0.4, 0, -R.drop - 2.1, 1.6);
+      for (let i = 0; i < 6; i++) H.box(dark, 0.2, 0.4, 0.2, -2.5 + i, -R.drop - 2.4, -1.7);
+      H.pair((s) => H.cyl(0x6a7079, 0.04, 0.04, 2.0, s * 2.6, -R.drop - 1.5, 0, 0, 0, s * 0.9, 5));
+    } else {
+      /* An engine: a pod with a bell and three collars, hung by its lugs. */
+      H.cyl(dark, 1.2, 1.1, 5.0, 0, -R.drop - 3.0, 0, 0, 0, Math.PI / 2, 12);
+      H.cyl(0x1a1d22, 1.25, 0.9, 0.9, -2.9, -R.drop - 3.0, 0, 0, 0, Math.PI / 2, 12);
+      for (let i = 0; i < 3; i++) H.ring(0x8d939b, 1.22, 0.08, -1.5 + i * 1.5, -R.drop - 3.0, 0, 0, Math.PI / 2, 0, 14);
+      H.pair((s) => H.cyl(0x6a7079, 0.04, 0.04, 1.6, s * 1.4, -R.drop - 1.5, 0, 0, 0, s * 0.6, 5));
     }
+    castMesh(world, hoist, H.merge(), C.cast, 'deck-crane-load');
+    cranes.push({ run: R, body, hoist, at: R.phase, dir: 1, hold: 0, swing: 0, swingV: 0, vel: 0 });
   }
-  if (strike) fx?.cutFlare?.(T.tip, null, 0xbcd8ff, 10, { scorch: false, cover: false });
+  life.cranes = cranes;
+}
+
+function stepCranes(life, dt) {
+  for (const T of life.cranes) stepCrab(T, T.run, dt, 'z');
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  7 · THE LOADER SLED                                                   */
-/* ══════════════════════════════════════════════════════════════════════ */
-
-/**
- * A repulsor sled crossing the far deck with a crate on it, forever.
- *
- * ══ IT WAS A HUNDRED-METRE STRIPE AT 113 m AND 0.9 HAZE ═══════════════════
- *
- * `{ z: 34, x0: -50, x1: 50 }` was written for a room whose lip was at 64.
- * On the rebuilt deck the player stands at z = -78, so that lane was 112 m
- * out, the run was 100 m of it, and the extinction at the old fog density
- * took 90% of the contrast: a grey stripe with an amber dot on it.
- *
- * It runs a third of the way from the line to the lip now, in the starboard
- * half — the half without the pit in it — and the far end is inside the
- * canyon rather than pushed into the rack wall's collision box. Sixty to
- * seventy-five metres from the spawn, which is the range the haze is tuned to
- * soften and not eat. That beacon is the point: it is the one thing in the far
- * half that is always in motion, and it is what stops the deck reading as a
- * photograph the moment the crew stop crossing.
- *
- * Two meshes now, not three: the crate has to be crate-coloured or it is a
- * second lump of the sled, but the beacon is one instance of the shared
- * emitter mesh rather than a draw call for a 9 cm lamp at 70 m.
- */
-let SLED = null;
-function sledRun() {
-  if (SLED) return SLED;
-  const { across, deep } = frame();
-  return (SLED = {
-    z: deep(0.33), x0: across(-0.05), x1: across(0.76),
-    speed: 4.0, hold: 3.5, ride: 0.42,
-  });
-}
-
-function addSled(world, life) {
-  const M = deckMaterials();
-  const g = mover(world);
-  const b = new Bin();
-  b.put(M.steel, slabGeo(3.40, 0.34, 1.90, { bevel: 0.06, seg: 3, tile: 1.6 }), 0, 0.30, 0);
-  b.put(M.steel, slabGeo(0.90, 0.46, 1.30, { bevel: 0.05, seg: 2, tile: 1.1 }), -1.50, 0.68, 0);
-  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    b.put(M.steel, cylGeo(0.30, 0.24, 0.16, 10, 0.6), sx * 1.30, 0.10, sz * 0.72);
-  }
-  b.put(M.crate, slabGeo(1.50, 1.20, 1.30, { bevel: 0.05, seg: 3, tile: 1.1 }), 0.55, 1.07, 0);
-  b.put(M.crate, slabGeo(1.56, 0.10, 1.36, { bevel: 0.02, seg: 1, tile: 0.6 }), 0.55, 1.62, 0);
-  b.bake(world, g);
-  life.sled = { run: sledRun(), group: g, at: 0, dir: 1, hold: 1.2, t: 0 };
-}
-
-function stepSled(world, life, dt) {
-  const S = life.sled;
-  if (!S) return;
-  const R = S.run;
-  S.t += dt;
-  const span = R.x1 - R.x0;
-  if (S.hold > 0) S.hold -= dt;
-  else {
-    S.at += (R.speed / span) * S.dir * dt;
-    if (S.at >= 1) { S.at = 1; S.dir = -1; S.hold = R.hold; }
-    else if (S.at <= 0) { S.at = 0; S.dir = 1; S.hold = R.hold; }
-  }
-  const x = R.x0 + span * S.at;
-  /**
-   * IT HOLDS AN ALTITUDE OVER THE PLATE, IT DOES NOT TRACK THE FLOOR.
-   *
-   * This used to ease toward the sampled heightfield and the comment argued
-   * about "a 1.4 m launch trench at x = -34" — a feature that has not been in
-   * `hangardeck.height` for two rebuilds. What IS in it is a 3.2 m pit, and an
-   * easing filter over a 3.2 m hole is a sled sinking into it and climbing out
-   * again, just more slowly. A repulsor holds its height above the DECK, so
-   * the floor under it is the plate level or the terrain, whichever is higher,
-   * and the easing is left in for the plate seams it was actually good at.
-   */
-  const gy = Math.max(groundAt(world, x, R.z), life.holes.plate);
-  S.gy = S.gy === undefined ? gy : lerp(S.gy, gy, 1 - Math.exp(-2.2 * dt));
-  const y = S.gy + R.ride + Math.sin(S.t * 1.7) * 0.045;
-  S.group.position.set(x, y, R.z);
-  /* It faces the way it is going and it leans into the stop, which is the
-   * only thing that says repulsor rather than trolley. The cab is at local
-   * -X, so travelling toward +X is the turned-about one. */
-  S.group.rotation.y = S.dir > 0 ? Math.PI : 0;
-  S.group.rotation.z = (S.hold > 0 ? 0 : -S.dir * 0.035) + Math.sin(S.t * 1.1) * 0.012;
-  _v.set(x - S.dir * 1.5, y + 0.7, R.z);
-  world.engine?.lightUp?.(_v, 0xffa838, 9, 9, 0);
-  /* THE BEACON, as one instance of the shared emitter rather than a mesh.
-   * It rotates with the cab, so it is placed off the group's own matrix. */
-  S.group.updateMatrixWorld();
-  _m4.identity().setPosition(-1.50, 1.00, 0).premultiply(S.group.matrixWorld);
-  glowPlace(life, GLOW.beacon, _m4, 0.20, 0.20);
-  const bl = 0.55 + 0.45 * Math.sin(S.t * 3.1);
-  glowBurn(life, GLOW.beacon, 1.5 * bl, 0.72 * bl, 0.18 * bl);
-}
-
-/* ══════════════════════════════════════════════════════════════════════ */
-/*  8 · THE FAR CREW                                                      */
+/*  6 · THE LOADER SLEDS                                                  */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ SILHOUETTES, AND WHY THAT IS THE RIGHT ANSWER AND NOT A COMPROMISE ════
- *
- * Fourteen figures on looping errands across the midground band — 59 to 105 m
- * from where the player is put down, measured — in ONE `InstancedMesh`: one
- * draw call, one geometry, one material, fourteen matrices rewritten a frame.
- *
- * `Props.Crowd` was read first, because it is exactly this shape and already
- * shipped. It is not reusable here and the reason is one line of its geometry:
- * `addCrowd`'s body is a SEATED wedge — shoulders back, thighs and shins
- * forward, built to occupy 0.48 × 0.79 m of bench. Dragged along a deck that
- * is a man sitting in a chair sliding across the floor. What is reusable is
- * everything else about it, and all of it is reused: the instanced buffer, the
- * per-figure phase, and the observation that at range what carries is the
- * PROFILE and the speckle rather than any detail.
- *
- * THE LEGS DO NOT MOVE, AND AT THIS RANGE THAT IS HONEST. The nearest of them
- * stands 59 m from where the player is put down. A 1.78 m figure at 59 m in a
- * 60° vertical FOV over 720 px subtends 18 px; at 105 m it is 10 px. A stride
- * is under two pixels of separation at the ankle and the haze above has
- * already taken 33-45% of the contrast out of it. What DOES read at that size
- * is translation, heading, and the vertical bob of a walk — all three of which
- * are in the matrix. A rig here would buy nothing anyone can see and would
- * cost fourteen skinned bodies.
- *
- * If one of these is ever wanted CLOSE, it must not be this: it is a wedge
- * with a head on it, and near the rail that is what it looks like.
+ * Three repulsor sleds, three lanes: the starboard wall foot the length of
+ * the work zone, the mid-deck lane across the work zone's forward end, and
+ * the port band between the muster ground and the pit. One `InstancedMesh`.
  */
-/**
- * ══ THE ERRANDS, AS FRACTIONS OF THE BAND THEY ARE MEANT TO BE IN ═════════
- *
- * Fourteen pairs of `[x across the canyon, place in the midground band]`, both
- * on 0..1, so an errand cannot come loose from the room again. The table used
- * to be twenty-eight literal metres and the header above it claimed "between
- * 14 m and 58 m forward of the player"; on the rebuilt deck they were at
- * 89-142 m, which at the old fog density put them between 0.69 and 0.95 alpha
- * — fourteen invisible grey smears doing errands nobody could see. One of them,
- * `[-56, 16, -30, 16]`, walked three metres down into the lit pit and back out
- * again, forever.
- *
- * The x fractions stop at 0.78 for a reason that is not aesthetic:
- * `deckColliders` closes each rack wall with a box whose inboard face is at
- * 48.5 m, so anything past `CLEAR` is inside a wall.
- */
-const CREW_LANES = [
-  [-0.72, 0.10, -0.30, 0.10], [-0.62, 0.55, 0.10, 0.55], [0.22, 0.05, 0.74, 0.05],
-  [0.76, 0.30, 0.76, 0.72], [-0.78, 0.45, -0.78, 0.80], [-0.34, 0.68, 0.36, 0.68],
-  [0.10, 0.18, 0.10, 0.74], [-0.52, 0.36, -0.10, 0.02], [0.44, 0.58, 0.78, 0.58],
-  [-0.78, 0.00, -0.48, 0.00], [0.30, 0.42, 0.68, 0.80], [-0.18, 0.62, -0.72, 0.34],
-  [0.52, 0.12, 0.52, 0.66], [-0.42, 0.92, 0.24, 0.40],
-];
-
-/** The fourteen errands in metres, pushed clear of whatever the pit is today. */
-function crewRuns(world, holes) {
-  const { across, fwd, MID } = frame();
-  const at = (f) => fwd(MID[0] + (MID[1] - MID[0]) * f);
-  const runs = [];
-  for (const L of CREW_LANES) {
-    const r = [across(L[0]), at(L[1]), across(L[2]), at(L[3])];
-    /* An errand that cannot be got off the hole is DROPPED rather than left
-     * walking through it, and the check counts what survived: a room quietly
-     * losing half its crew to a moved pit is a thing somebody has to see. */
-    if (offHole(holes, r)) runs.push(r);
-  }
-  return runs;
+let SLEDS = null;
+function sledRuns() {
+  if (SLEDS) return SLEDS;
+  const { across, deep, W, BAND } = frame();
+  return (SLEDS = [
+    { z: deep(0.33), x0: across(-0.05), x1: across(0.76), along: 'x', speed: 4.0, hold: 3.5, ride: 0.42, phase: 0.0 },
+    { x: W.x1 - 10, z0: W.z0 + 2, z1: W.z1 - 4, along: 'z', speed: 3.6, hold: 4.5, ride: 0.42, phase: 0.5 },
+    { z: BAND.z0 + 4.5, x0: BAND.x0, x1: BAND.x1, along: 'x', speed: 3.2, hold: 5.0, ride: 0.42, phase: 0.8 },
+  ]);
 }
 
-function crewGeometry() {
-  /* One body, eleven hundred triangles, and every one of them is spent on the
-   * outline: a tapered leg block, a torso with a shoulder step, and a head.
-   * No arms — at 22 px an arm at the side is one pixel of the same value as
-   * the torso, and an arm that swings is the animation this figure does not
-   * have. */
-  const parts = [];
-  const p = (g, x, y, z) => { g.translate(x, y, z); parts.push(g); };
-  p(slabGeo(0.36, 0.86, 0.28, { bevel: 0.04, seg: 2, tile: 0.9 }), 0, 0.43, 0);
-  p(slabGeo(0.44, 0.60, 0.30, { bevel: 0.05, seg: 2, tile: 0.9 }), 0, 1.16, 0);
-  p(slabGeo(0.52, 0.16, 0.30, { bevel: 0.05, seg: 2, tile: 0.9 }), 0, 1.50, 0);
-  p(new THREE.SphereGeometry(0.115, 7, 5), 0, 1.66, 0.01);
-  return mergeGeos(parts);
-}
-
-function addDeckCrew(world, life) {
-  const M = deckMaterials();
-  const rng = makeRng(7717);
-  const table = crewRuns(world, life.holes);
-  const n = table.length;
-  const im = new THREE.InstancedMesh(crewGeometry(), M.crew, n);
-  /* NOT CULLED. The instances move over 100 m of deck and three's bounding
-   * sphere is computed once off the instance matrices; a mesh that walks out
-   * of its own sphere pops. Fourteen bodies is not worth a per-frame bounds
-   * recompute, and the whole thing is one draw either way. */
+function addSleds(world, life) {
+  const C = castMaterials(world._deckFaction);
+  const A = new Assembly();
+  A.box(0x6a7079, 3.40, 0.34, 1.90, 0, 0.30, 0);
+  A.box(0x6a7079, 0.90, 0.46, 1.30, -1.50, 0.68, 0);
+  A.box(0x1e2126, 0.7, 0.3, 1.0, -1.50, 1.0, 0);
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) A.cyl(0x1e2126, 0.30, 0.24, 0.16, sx * 1.30, 0.10, sz * 0.72, 0, 0, 0, 10);
+  A.box(0xb8842e, 3.44, 0.06, 0.12, 0, 0.49, 0.95);
+  A.box(0xb8842e, 3.44, 0.06, 0.12, 0, 0.49, -0.95);
+  A.box(0x8a7048, 1.50, 1.20, 1.30, 0.55, 1.07, 0);
+  A.box(0x4a3a26, 1.56, 0.10, 1.36, 0.55, 1.62, 0);
+  A.box(0x4a3a26, 0.12, 1.22, 1.34, 0.55, 1.07, 0);
+  const runs = sledRuns();
+  const im = new THREE.InstancedMesh(A.merge(), C.cast, runs.length);
   im.frustumCulled = false;
-  im.castShadow = false;                 // fourteen casters for 22 px of figure
-  im.receiveShadow = true;
-  im.name = 'deck-crew';
+  im.castShadow = true; im.receiveShadow = true;
+  im.name = 'deck-sleds';
   world.scene.add(im);
   world.statics.push(im);
-
-  const runs = new Float32Array(n * 4);
-  const state = new Float32Array(n * 4);   // at, dir, hold, speed
-  for (let i = 0; i < n; i++) {
-    const r = table[i];
-    runs[i * 4] = r[0]; runs[i * 4 + 1] = r[1]; runs[i * 4 + 2] = r[2]; runs[i * 4 + 3] = r[3];
-    state[i * 4] = rng();
-    state[i * 4 + 1] = rng() < 0.5 ? -1 : 1;
-    state[i * 4 + 2] = rng() * 4;
-    state[i * 4 + 3] = 1.05 + rng() * 0.6;
-  }
-  /* WHAT THEY WERE DOING BEFORE THE ALARM. `addTraffic` pulls two of these
-   * off their errands and sends them running to a hard landing — the spec's
-   * "fire crew sprinting in" — and they have to have something to go back to.
-   * A copy, not a reference: `runs` is rewritten in place. */
-  life.crew = { mesh: im, runs, home: runs.slice(), state, n, t: 0, called: -1 };
+  life.sleds = { mesh: im, runs, state: runs.map((R) => ({ at: R.phase, dir: 1, hold: 1.2 + R.phase * 3, t: R.phase * 9, gy: undefined })) };
 }
 
-function stepCrew(world, life, dt) {
-  const C = life.crew;
-  if (!C) return;
-  C.t += dt;
-  const T = world.terrain;
-  for (let i = 0; i < C.n; i++) {
-    const k = i * 4;
-    const ax = C.runs[k], az = C.runs[k + 1], bx = C.runs[k + 2], bz = C.runs[k + 3];
-    const span = Math.hypot(bx - ax, bz - az);
-    let at = C.state[k], dir = C.state[k + 1], hold = C.state[k + 2];
-    const spd = C.state[k + 3];
-    if (hold > 0) hold -= dt;
+function stepSleds(world, life, dt) {
+  const S = life.sleds;
+  if (!S) return;
+  for (let i = 0; i < S.runs.length; i++) {
+    const R = S.runs[i], s = S.state[i];
+    s.t += dt;
+    const a0 = R.along === 'x' ? R.x0 : R.z0, a1 = R.along === 'x' ? R.x1 : R.z1;
+    const span = a1 - a0;
+    if (s.hold > 0) s.hold -= dt;
     else {
-      at += (spd / span) * dir * dt;
-      /* A pause at each end, and a DIFFERENT one each time — this is what
-       * keeps fourteen errands from resolving into a metronome after a
-       * minute of watching, which is the failure the eye notices. */
-      if (at >= 1) { at = 1; dir = -1; hold = 2 + ((i * 7 + Math.floor(C.t)) % 5); }
-      else if (at <= 0) { at = 0; dir = 1; hold = 2 + ((i * 3 + Math.floor(C.t)) % 6); }
+      s.at += (R.speed / Math.abs(span)) * s.dir * dt;
+      if (s.at >= 1) { s.at = 1; s.dir = -1; s.hold = R.hold; }
+      else if (s.at <= 0) { s.at = 0; s.dir = 1; s.hold = R.hold; }
     }
-    C.state[k] = at; C.state[k + 1] = dir; C.state[k + 2] = hold;
-
-    const x = lerp(ax, bx, at), z = lerp(az, bz, at);
-    const moving = hold <= 0;
-    /* The bob is the walk. 1.85 Hz at 3 cm, plus a 2 cm roll — a figure that
-     * translates with a rigid pelvis is a chess piece on a wire. */
-    const bob = moving ? Math.abs(Math.sin(C.t * 5.8 + i * 1.7)) * 0.032 : 0;
-    const roll = moving ? Math.sin(C.t * 2.9 + i * 1.7) * 0.022 : 0;
-    _v.set(x, (T ? T.height(x, z) : 0) + bob, z);
-    _e.set(0, Math.atan2((bx - ax) * dir, (bz - az) * dir), roll);
-    _q.setFromEuler(_e);
-    _s.set(0.94 + (i % 5) * 0.022, 0.94 + (i % 3) * 0.028, 0.94);
-    C.mesh.setMatrixAt(i, _m.compose(_v, _q, _s));
+    const p = a0 + span * s.at;
+    const x = R.along === 'x' ? p : R.x, z = R.along === 'x' ? R.z : p;
+    /* A repulsor holds an altitude over the PLATE, not over the pit. */
+    const gy = Math.max(groundAt(world, x, z), life.holes.plate);
+    s.gy = s.gy === undefined ? gy : lerp(s.gy, gy, 1 - Math.exp(-2.2 * dt));
+    const y = s.gy + R.ride + Math.sin(s.t * 1.7) * 0.045;
+    const dir = s.dir * Math.sign(span);
+    const yaw = R.along === 'x' ? (dir > 0 ? Math.PI : 0) : (dir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    _eu.set(0, yaw, (s.hold > 0 ? 0 : -0.035) + Math.sin(s.t * 1.1) * 0.012, 'YXZ');
+    _q.setFromEuler(_eu);
+    _v.set(x, y, z); _s.set(1, 1, 1);
+    S.mesh.setMatrixAt(i, _m4.compose(_v, _q, _s));
+    /* The beacon on the cab, an instance of the shared emitter. */
+    _mb.identity().setPosition(-1.50, 1.20, 0).premultiply(_m4);
+    glowPlace(life, GLOW.beacon + i, _mb, 0.20, 0.20);
+    const bl = 0.55 + 0.45 * Math.sin(s.t * 3.1);
+    glowBurn(life, GLOW.beacon + i, 1.5 * bl, 0.72 * bl, 0.18 * bl);
+    world.engine?.lightUp?.(_v.set(x, y + 0.9, z), 0xffa838, 6, 8, 0);
   }
-  C.mesh.instanceMatrix.needsUpdate = true;
+  S.mesh.instanceMatrix.needsUpdate = true;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  9 · VENTS — motion at the edge of vision                              */
+/*  7 · THE WORKERS                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Five points on the periphery that breathe, and not one of them has any
- * geometry: they are schedules over `Particles`' existing pools.
+ * ══ THIRTEEN MEN, EVERY ONE A BODY, TEN OF THEM WITHIN SIXTY METRES ══════
  *
- * Every one of them is at a SURFACE — a rack wall foot, the bulkhead, the hull
- * section on jacks — because the spec's own observation is the right one and it
- * is the cheapest sentence in it: motion at the edge of vision is worth more
- * than detail in the middle. A puff of coolant 50 m away at the corner of the
- * eye is what makes a still deck feel occupied, and it costs eight particles.
+ * A row is a man and his job:
  *
- * ══ THREE OF THEM USED TO HISS INTO THE PIT ═══════════════════════════════
+ *   torch   on the scaffold's upper lift, welding the section's flank
+ *   kneel   crouched at a panel, hands on it
+ *   hose    standing, both hands on a hose at the waist
+ *   stand   standing at a job, hands on it at chest height
+ *   watch   standing, one hand up, looking at a crane
+ *   walk    a loop between two points, with a pause at each end
+ *   crash   at the crash station; runs to a damaged landing, walks back
  *
- * At `(-51.4, 1.6, -14)`, `(-46, 3.4, -20.8)` and `(-52, 1.2, 4)` the deck is
- * not at zero: those are inside the recess, so a vent nominally 1.2-3.4 m up a
- * wall was 4.4-4.8 m above a pit floor with nothing beside it. The `lift`
- * below is height ABOVE THE DECK UNDER THE VENT, resolved by sampling the
- * heightfield at dress, which is the only form of this table that cannot go
- * wrong the next time the ground moves.
- *
- * [x, lift, z, dirX, dirY, dirZ, period, open, cold]
+ * "Within sixty metres" is measured from the MUSTER LINE'S centre, where the
+ * player stands to look at his men: the zone table leaves nothing free
+ * within sixty metres of the lift doors but the corridor and the crowd's
+ * ground, so that is the honest ruler and `deckcast.mjs` uses it.
  */
+let WORKERS = null;
+function workerJobs(world) {
+  if (WORKERS) return WORKERS;
+  const { BAY, SCAFFOLD, CRADLE, HULL, STAND, BOWSER, FLANK_R, FLANK_L, BAND, APRON } = frame();
+  const cy = Math.cos(CRADLE.yaw), sy = Math.sin(CRADLE.yaw);
+  const g0 = groundAt(world, SCAFFOLD.x, SCAFFOLD.z);
+  return (WORKERS = [
+    { job: 'torch', x: SCAFFOLD.x, z: SCAFFOLD.z + 0.8, y: g0 + SCAFFOLD.lifts[1], yaw: Math.PI / 2 },
+    { job: 'kneel', x: BAY.x + BAY.rad + 1.1, z: BAY.z + 3.5, yaw: -Math.PI / 2 },
+    { job: 'walk', path: [BAY.x - BAY.rad - 1.5, BAY.z + BAY.len * 0.55 + 2, CRADLE.x - 2 * cy, CRADLE.z - 8.5] },
+    { job: 'kneel', x: CRADLE.x - 4.2 * cy, z: CRADLE.z + 4.2 * sy - 1.2, yaw: Math.PI / 2 - CRADLE.yaw },
+    { job: 'watch', x: FLANK_R.x0 + 3, z: FLANK_R.z1 - 3, yaw: -Math.PI / 2 },
+    { job: 'stand', x: FLANK_R.x1 - 9, z: (FLANK_R.z0 + FLANK_R.z1) * 0.5 + 3, yaw: Math.PI / 2 },
+    { job: 'walk', path: [BAND.x0 + 2, BAND.z1 - 1, BAND.x1, BAND.z1 - 1] },
+    { job: 'hose', x: BOWSER.x + 2.2, z: BOWSER.z + 2.0, yaw: Math.atan2(HULL.x - BOWSER.x - 2.2, HULL.z - BOWSER.z - 2.0) },
+    { job: 'hose', x: HULL.x - HULL.wide * 0.5 - 1.6, z: HULL.z + HULL.len * 0.1, yaw: Math.PI / 2 },
+    { job: 'stand', x: STAND.x + 2.4, z: STAND.z + 1.8, yaw: Math.atan2(STAND.x - STAND.x - 2.4, STAND.z - STAND.z - 1.8) },
+    { job: 'kneel', x: FLANK_L.x0 + 2.6, z: FLANK_L.z0 + 6, yaw: -Math.PI / 2 },
+    { job: 'crash', x: APRON.crash.x - 3, z: APRON.crash.z, yaw: 0 },
+    { job: 'crash', x: APRON.crash.x + 3, z: APRON.crash.z, yaw: 0 },
+  ]);
+}
+
+function addWorkers(world, life) {
+  const rng = makeRng(7717);
+  const jobs = workerJobs(world);
+  const workers = [];
+  for (let i = 0; i < jobs.length; i++) {
+    const J = jobs[i];
+    const fig = buildDeckCrew({ faction: world._deckFaction, tone: i % 2, scale: 0.97 + rng() * 0.06 });
+    world.scene.add(fig.root);
+    world.statics.push(fig.root);
+    const x = J.path ? J.path[0] : J.x, z = J.path ? J.path[1] : J.z;
+    const y = J.y ?? groundAt(world, x, z);
+    const yaw = J.path ? Math.atan2(J.path[2] - J.path[0], J.path[3] - J.path[1]) : J.yaw;
+    /* HIS BODY, at his station. Built directly rather than through
+     * `makeShovable` so the scaffold man's mark can be the PLANK and not the
+     * deck under it. */
+    const shove = new Shovable(world, _v.set(x, y, z), { facing: yaw });
+    const anim = new BipedAnimator(fig.rig, { scale: fig.rig.scale, hipHeight: 0.95 });
+    anim.setFacing(yaw);
+    const w = {
+      i, job: J, fig, rig: fig.rig, root: fig.root, anim, shove, yaw, x, z, y,
+      pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(), prev: new THREE.Vector3(x, y, z),
+      at: rng(), dir: rng() < 0.5 ? -1 : 1, hold: rng() * 4, speed: 1.15 + rng() * 0.5, t: rng() * 6,
+      run: false, target: null, wasDown: false,
+      merged: mergeFigure({ rig: fig.rig, root: fig.root, palette: null }, { castShadow: true }),
+      /* The animator's argument bag, allocated ONCE. `Enemy._pose` builds a
+       * literal a frame; at thirteen men that is eight hundred objects a
+       * second for nothing. */
+      p: null,
+    };
+    w.p = {
+      position: w.pos, facing: yaw, velocity: w.vel, grounded: true,
+      groundAt: (px, pz) => (J.y != null ? J.y : groundAt(world, px, pz)),
+      crouch: 0, accelForward: 0, deferMatrices: false,
+    };
+    workers.push(w);
+  }
+  life.workers = workers;
+}
+
+/** Pose one arm's hand to a world point, elbow poled outboard. */
+function reach(rig, side, target, yaw, out) {
+  const s = side === 'L' ? 1 : -1;
+  /* The pole: outboard of the shoulder and a little back, in the man's frame. */
+  _v3.set(s * 0.6, -0.1, -0.25).applyAxisAngle(UP, yaw).add(target);
+  rig.solveIK('arm' + side, 'fore' + side, target, _v3);
+}
+
+const WALK = 1.35, SPRINT = 3.1;
+
+function stepWorkers(world, life, dt) {
+  const W = life.workers;
+  if (!W) return;
+  const fx = world.particles;
+  for (const w of W) {
+    const sh = w.shove;
+    const J = w.job;
+    w.t += dt;
+    sh.update(dt);
+    /* ── ON THE DECK: the body decides, the figure follows it rigidly. */
+    if (sh.down) {
+      if (!w.wasDown) { bindPose(w.rig); w.wasDown = true; }
+      w.root.position.copy(sh.at);
+      w.root.quaternion.copy(sh.quaternion);
+      w.merged.update(life.t);
+      continue;
+    }
+    if (w.wasDown) {
+      /* Back on his feet: the root goes home to the origin and the gait
+       * takes over from where the body is, feet re-planted there. */
+      w.wasDown = false;
+      w.root.position.set(0, 0, 0);
+      w.root.quaternion.identity();
+      w.anim.initialised = false;
+      w.prev.copy(sh.at);
+    }
+    /* ── WHERE HE IS AND WHERE HE IS GOING. */
+    let crouch = 0;
+    if (sh.state !== 'post') {
+      /* Rising or walking back: the body's position is the truth. */
+      w.pos.copy(sh.at);
+      w.yaw = sh.facing;
+    } else if (J.path || w.run || w.target) {
+      /* A walker, or a crash man running out or walking home. */
+      let ax, az, bx, bz, spd;
+      if (w.run || w.target) {
+        ax = J.x; az = J.z; bx = w.target.x; bz = w.target.z;
+        spd = w.run ? SPRINT : WALK;
+        const span = Math.hypot(bx - ax, bz - az);
+        const want = w.run ? 1 : 0;
+        if (w.at !== want) w.at = clamp(w.at + (spd / span) * (want > w.at ? 1 : -1) * dt, 0, 1);
+        if (!w.run && w.at === 0) w.target = null;
+      } else {
+        ax = J.path[0]; az = J.path[1]; bx = J.path[2]; bz = J.path[3];
+        spd = w.speed;
+        const span = Math.hypot(bx - ax, bz - az);
+        if (w.hold > 0) w.hold -= dt;
+        else {
+          w.at += (spd / span) * w.dir * dt;
+          if (w.at >= 1) { w.at = 1; w.dir = -1; w.hold = 2 + ((w.i * 7 + Math.floor(w.t)) % 5); }
+          else if (w.at <= 0) { w.at = 0; w.dir = 1; w.hold = 2 + ((w.i * 3 + Math.floor(w.t)) % 6); }
+        }
+      }
+      const x = lerp(ax, bx, w.at), z = lerp(az, bz, w.at);
+      w.pos.set(x, groundAt(world, x, z), z);
+      const dx = w.pos.x - w.prev.x, dz = w.pos.z - w.prev.z;
+      if (dx * dx + dz * dz > 1e-8) w.yaw = Math.atan2(dx, dz);
+      else if (w.target && !w.run) w.yaw = J.yaw;
+      /* The body walks with him. `retarget` puts a posted body on its new
+       * mark, asleep, and is what `Hangar.stepCompany` does for a dismissed
+       * man. */
+      sh.retarget(w.pos);
+    } else {
+      w.pos.set(w.x, w.y, w.z);
+      w.yaw = J.yaw;
+      if (J.job === 'kneel') crouch = 1;
+    }
+    /* ── THE GAIT. Velocity from the displacement, world-space, into the
+     * same solver every enemy walks with. */
+    w.vel.set((w.pos.x - w.prev.x) / Math.max(dt, 1e-4), 0, (w.pos.z - w.prev.z) / Math.max(dt, 1e-4));
+    if (w.vel.lengthSq() > 100) w.vel.set(0, 0, 0);          // a teleport is not a sprint
+    w.prev.copy(w.pos);
+    const speed = w.vel.length();
+    const p = w.p;
+    p.facing = w.yaw; p.crouch = crouch;
+    p.accelForward = clamp(speed / 5, 0, 1);
+    w.anim.setFacing(w.yaw);
+    /**
+     * A MAN STANDING STILL IS SOLVED AT A THIRD OF THE RATE, staggered by
+     * his index — `Enemy._pose`'s own argument: the biped solve is the cost,
+     * a body that is not moving its feet does not need it sixty times a
+     * second, and the animator integrates its own clock off the `dt` it is
+     * handed so three frames arriving as one advance the idle by exactly
+     * what three would. A walker is solved every frame. Measured: 0.70 ms a
+     * frame for thirteen men at full rate, 0.34 with the standing ones at a
+     * third.
+     */
+    w.lag = (w.lag || 0) + dt;
+    const due = speed > 0.05 || sh.state !== 'post' || ((life.frame + w.i) % 3 === 0);
+    if (due) { w.anim.update(w.lag, p); w.lag = 0; }
+    /* ── THE ARMS. Walking: they swing. Working: they reach for the work. */
+    const fwdX = Math.sin(w.yaw), fwdZ = Math.cos(w.yaw);
+    const rig = w.rig;
+    if (!due) { w.merged.update(life.t); continue; }
+    if (speed > 0.3 || sh.state !== 'post') {
+      w.anim.swingArms(dt, speed, 1);
+    } else if (J.job === 'kneel') {
+      _v.set(w.pos.x + fwdX * 0.55, w.pos.y + 0.72, w.pos.z + fwdZ * 0.55);
+      reach(rig, 'R', _v, w.yaw);
+      _v2.set(w.pos.x + fwdX * 0.5 - fwdZ * 0.22, w.pos.y + 0.66, w.pos.z + fwdZ * 0.5 + fwdX * 0.22);
+      reach(rig, 'L', _v2, w.yaw);
+    } else if (J.job === 'hose') {
+      _v.set(w.pos.x + fwdX * 0.42 - fwdZ * 0.12, w.pos.y + 0.98, w.pos.z + fwdZ * 0.42 + fwdX * 0.12);
+      reach(rig, 'R', _v, w.yaw);
+      _v2.set(w.pos.x + fwdX * 0.55 + fwdZ * 0.12, w.pos.y + 1.02, w.pos.z + fwdZ * 0.55 - fwdX * 0.12);
+      reach(rig, 'L', _v2, w.yaw);
+    } else if (J.job === 'stand') {
+      const b = Math.sin(w.t * 1.7) * 0.05;
+      _v.set(w.pos.x + fwdX * 0.5, w.pos.y + 1.25 + b, w.pos.z + fwdZ * 0.5);
+      reach(rig, 'R', _v, w.yaw);
+      _v2.set(w.pos.x + fwdX * 0.45 + fwdZ * 0.25, w.pos.y + 1.15, w.pos.z + fwdZ * 0.45 - fwdX * 0.25);
+      reach(rig, 'L', _v2, w.yaw);
+    } else if (J.job === 'watch') {
+      _v.set(w.pos.x + fwdX * 0.18 - fwdZ * 0.1, w.pos.y + 1.66, w.pos.z + fwdZ * 0.18 + fwdX * 0.1);
+      reach(rig, 'R', _v, w.yaw);
+      w.anim.swingArms(dt, 0, 1);
+      /* He follows the crane: yaw drifts with the port bridge's position. */
+    } else if (J.job === 'torch') {
+      _v.set(w.pos.x + fwdX * 0.62, w.pos.y + 1.36 + Math.sin(w.t * 0.8) * 0.06, w.pos.z + fwdZ * 0.62 + Math.sin(w.t * 0.5) * 0.15);
+      reach(rig, 'R', _v, w.yaw);
+      _v2.set(w.pos.x + fwdX * 0.30 + fwdZ * 0.2, w.pos.y + 1.30, w.pos.z + fwdZ * 0.30 - fwdX * 0.2);
+      reach(rig, 'L', _v2, w.yaw);
+      stepTorch(world, life, w, dt);
+    } else {
+      w.anim.swingArms(dt, 0, 1);
+    }
+    w.merged.update(life.t);
+  }
+  void fx;
+}
+
+/**
+ * THE TORCH, in the scaffold man's right hand: an instance of the shared
+ * emitter, on a schedule that is mostly OFF — a bead for 2.8 s, a stop for
+ * 4.6, and the strike at the front of each bead is a single lobe eight
+ * times the running brightness.
+ */
+function stepTorch(world, life, w, dt) {
+  const cyc = w.t % 7.4;
+  const on = cyc < 2.8;
+  const strike = on && cyc < 0.09;
+  const flick = on ? 0.5 + 0.5 * Math.sin(w.t * 37.1) * Math.sin(w.t * 13.7 + 0.6) : 0;
+  w.heat = lerp(w.heat || 0, flick, 1 - Math.exp(-22 * dt));
+  const fwdX = Math.sin(w.yaw), fwdZ = Math.cos(w.yaw);
+  _v.set(w.pos.x + fwdX * 0.85, w.pos.y + 1.36, w.pos.z + fwdZ * 0.85);
+  _m4.makeRotationFromEuler(_eu.set(Math.PI / 2, w.yaw, 0, 'YXZ')).setPosition(_v);
+  glowPlace(life, GLOW.torch, _m4, 0.07, 0.20);
+  const b = 0.08 + w.heat * 1.6 + (strike ? 3.4 : 0);
+  glowBurn(life, GLOW.torch, b * 0.84, b * 0.92, b);
+  const fx = world.particles;
+  if (w.heat > 0.05) {
+    _v2.set(w.pos.x + fwdX * 1.05, w.pos.y + 1.36, w.pos.z + fwdZ * 1.05);
+    world.engine?.lightUp?.(_v2, 0xcfe6ff, 30 * w.heat + (strike ? 60 : 0), 16, 0);
+    w.spark = (w.spark || 0) + dt;
+    if (w.spark > 0.11) {
+      w.spark = 0;
+      _v3.set(-fwdX * 0.3, -0.9, -fwdZ * 0.3).normalize();
+      fx?.sparkBurst?.(_v2, _v3, 7, { speed: 7.5, color: 0xfff0c8, hdr: 3.4, flash: false, embers: false });
+    }
+  }
+  if (strike) fx?.cutFlare?.(_v2, null, 0xbcd8ff, 10, { scorch: false, cover: false });
+}
+
+/** Two crash men leave the station for the pad, and come back when it clears. */
+function callCrashCrew(life, x, z, out) {
+  for (const w of life.workers) {
+    if (w.job.job !== 'crash') continue;
+    if (out) {
+      if (!w.target) w.target = { x: 0, z: 0 };
+      w.target.x = x + (w.i % 2 ? 6 : -6); w.target.z = z - 7;
+      w.run = true;
+    } else w.run = false;
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  8 · VENTS — motion at the edge of vision                              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/** [x, lift, z, dirX, dirY, dirZ, period, open, cold] — at surfaces, all of them. */
 function ventTable() {
-  const { across, fwd, deep, NEAR, BAY } = frame();
+  const { across, deep, BAY, FLANK_L, WALL, W } = frame();
   return [
-    /* The port rack foot, abeam of the player — the nearest one, and the only
-     * one he is ever close enough to hear as well as see. */
-    [across(-0.94), 1.6, fwd(NEAR * 0.9), 1, 0.25, 0, 8.5, 1.4, 1],
-    /* The starboard rack foot, forward. */
-    [across(0.94), 3.4, fwd(NEAR * 2.4), -1, 0.30, 0, 11.0, 1.8, 1],
-    /* Coolant off the hull section, under the jacks — the one vent with a
-     * visible reason for existing, because there is a machine over it. */
+    /* The port rack foot, in the flank patch: nearest, and the only one the
+     * player is close enough to hear as well as see. */
+    [-(WALL - 8.5), 1.6, (FLANK_L.z0 + FLANK_L.z1) * 0.5 + 6, 1, 0.25, 0, 8.5, 1.4, 1],
+    /* The starboard rack foot, forward, in the work zone. */
+    [WALL - 8.5, 3.4, W.z1 - 20, -1, 0.30, 0, 11.0, 1.8, 1],
+    /* Coolant off the hull section, under the jacks. */
     [BAY.x - BAY.rad - 0.4, BAY.jack * 0.55, BAY.z - BAY.len * 0.3, -1, 0.5, 0, 9.5, 1.2, 1],
-    /* The bulkhead, behind the player: exhaust rather than coolant, and the
-     * only warm one. */
-    [across(-0.38), 1.2, DECK.aft + 12, 0, 0.35, 1, 13.0, 1.0, 0],
+    /* The bulkhead, beside the port blast door: exhaust, the only warm one. */
+    [across(-0.47), 1.2, DECK.aft + 6, 0, 0.35, 1, 13.0, 1.0, 0],
     /* And one out in the midground, so the far half breathes too. */
-    [across(0.9), 1.5, deep(0.34), -1, 0.35, 0, 10.0, 1.6, 1],
+    [WALL - 8.5, 1.5, deep(0.43), -1, 0.35, 0, 10.0, 1.6, 1],
   ];
 }
 
@@ -1668,13 +1417,8 @@ function stepVents(world, life, dt) {
     if (life.vtick[i] < 0.09) continue;
     life.vtick[i] = 0;
     _v.set(V[0], V[1], V[2]);
-    /* Cold vapour, not smoke: `smoke`'s pool is lit and wraps, which is what
-     * makes a puff sit in the room's own light instead of being a grey blob
-     * pasted over it. Slow and small — a jet reads as pressure, a cloud
-     * reads as a fire, and there is nothing on fire in this room. */
     for (let k = 0; k < 3; k++) {
-      _v2.set(V[3] + (k - 1) * 0.14, V[4] + 0.18 * k, V[5] + (k - 1) * 0.1)
-        .normalize().multiplyScalar(2.4 + k * 0.5);
+      _v2.set(V[3] + (k - 1) * 0.14, V[4] + 0.18 * k, V[5] + (k - 1) * 0.1).normalize().multiplyScalar(2.4 + k * 0.5);
       fx.smoke.spawn(_v, _v2, {
         life: 1.5 + k * 0.35, size: 0.16 + k * 0.05, drag: 1.7, gravity: -0.35,
         color: V[8] ? 0x9fb4c8 : 0x8b8f96, alpha: 0.16,
@@ -1684,30 +1428,9 @@ function stepVents(world, life, dt) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/* 10 · THE FIELD REACTS                                                  */
+/*  9 · THE FIELD REACTS                                                  */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-/**
- * ══ RIPPLES, BROWN-OUTS, AND THINGS BURNING OFF THE OUTSIDE ═══════════════
- *
- * `Hangar.js` publishes the field's material on `world._hangarField` with
- * `uTime` and `uPower`. THIS FILE IS THE ONLY THING THAT DRIVES EITHER — the
- * field ships with a vertical ripple term in its fragment and nothing was
- * advancing `uTime`, so the ripple was frozen. It is advanced here.
- *
- * THE RIPPLE IS GEOMETRY, NOT A SHADER TERM, and that is deliberate. Putting
- * the impact point into the field's fragment means a world-space varying and a
- * uniform array in a shader another lane owns, and it means one shared
- * material across four planes has to know which plane it is drawing. An
- * additive ring laid ON the plane at the impact point costs one draw call,
- * expands and fades independently, and can be fired by anything — a piece of
- * battle debris hitting from outside, or a crate the player throws at it,
- * which is the one the spec asks for under PLAY and the one that is actually
- * satisfying.
- *
- * Two rings, pooled. Three would be a third mesh for an overlap the schedule
- * below is written to avoid.
- */
 function ringMaterial() {
   const mat = new THREE.ShaderMaterial({
     uniforms: {
@@ -1725,16 +1448,13 @@ function ringMaterial() {
       uniform vec3 uColor; uniform float uAlpha; uniform float uWidth;
       varying vec2 vP;
       void main() {
-        /* A leading edge with a trailing wash behind it. A symmetric band is
-           a smoke ring; a wave has a front. */
         float r = length(vP);
         float front = 1.0 - smoothstep(0.0, uWidth, 1.0 - r);
         float wake = smoothstep(1.0 - uWidth * 5.0, 1.0, r);
         float a = (front * 0.75 + wake * 0.25) * step(r, 1.0);
         gl_FragColor = vec4(uColor * a * 2.2, a * uAlpha);
       }`,
-    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
-    side: THREE.DoubleSide,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   });
   mat.userData.saberNoInk = true;
   return mat;
@@ -1748,7 +1468,7 @@ function addFieldRings(world, life) {
     const mesh = new THREE.Mesh(geo, M.ring[i]);
     mesh.visible = false;
     mesh.frustumCulled = false;
-    mesh.renderOrder = 4;                       // over the field, which is 3
+    mesh.renderOrder = 4;
     mesh.castShadow = false; mesh.receiveShadow = false;
     world.scene.add(mesh);
     world.statics.push(mesh);
@@ -1757,23 +1477,12 @@ function addFieldRings(world, life) {
   life.rings = rings;
 }
 
-/**
- * Fire a ripple centred on `p`, on whichever field plane it is nearest.
- *
- * The ring is laid flat ON the plane rather than facing the camera: a
- * camera-facing ring at the lip is a flat disc floating in the aperture, and
- * one lying in the field is a wave travelling across a surface, which is what
- * a shield doing its job looks like.
- */
+/** Fire a ripple centred on `p`, laid flat on the nearest field plane. */
 function ripple(life, p, size = 16, hold = 1.5, color = 0xbfe6ff) {
   const L = DECK.lip;
   let best = null, bestD = 1e9;
   for (const r of life.rings) if (r.t >= r.life && !best) best = r;
-  if (!best) {
-    for (const r of life.rings) if (r.t < bestD) { bestD = r.t; best = r; }
-  }
-  /* Which wall it hit. The forward plane is the one the player is looking at
-   * nine times in ten, so ties go to it. */
+  if (!best) for (const r of life.rings) if (r.t < bestD) { bestD = r.t; best = r; }
   const dz = Math.abs(Math.abs(p.z) - L), dx = Math.abs(Math.abs(p.x) - L);
   best.mesh.rotation.set(0, 0, 0);
   if (dx < dz) {
@@ -1792,8 +1501,6 @@ function stepRings(life, dt) {
     if (r.t >= r.life) { if (r.mesh.visible) r.mesh.visible = false; continue; }
     r.t += dt;
     const k = clamp(r.t / r.life, 0, 1);
-    /* Fast out, slow down — a pressure wave loses speed as it spreads, and a
-     * constant-rate ring is the single tell of a canned effect. */
     const s = Math.max(0.05, r.size * (1 - Math.exp(-3.4 * k)));
     r.mesh.scale.set(s, s, 1);
     r.mat.uniforms.uAlpha.value = (1 - k) * (1 - k) * 1.15;
@@ -1802,23 +1509,11 @@ function stepRings(life, dt) {
   }
 }
 
-/**
- * The field's own schedule: something off the battle outside hits it every
- * 9-16 s, and about one in four of those is a hit on the SHIP rather than on
- * the field, which browns the whole envelope out for a second.
- *
- * That brown-out is the only thing in this file that touches the room's mood
- * rather than its furniture, and it is the cheapest storytelling available:
- * the field going soft for a beat is the war reaching in, and it needs no
- * geometry, no sound and no ship.
- */
 function stepField(world, life, dt) {
   const mat = world._hangarField;
   if (!mat) return;
   const u = mat.uniforms;
   u.uTime.value = life.t;
-
-  /* The brown-out envelope: a hard drop, three flickers, a slow recovery. */
   if (life.brown > 0) {
     life.brown = Math.max(0, life.brown - dt);
     const k = life.brown / life.brownFor;
@@ -1828,50 +1523,28 @@ function stepField(world, life, dt) {
     u.uPower.value = lerp(u.uPower.value, 1, 1 - Math.exp(-4 * dt));
     if (Math.abs(u.uPower.value - 1) < 0.005) u.uPower.value = 1;
   }
-
   life.next -= dt;
   if (life.next <= 0) {
     life.event++;
     life.next = 9 + (life.event % 4) * 2.4;
     const L = DECK.lip;
-    /* A deterministic scatter — the deck must look the same to two checks
-     * run a second apart, and Math.random in a level is how that stops being
-     * true. */
     const a = life.event * 2.399963;
     if (life.event % 4 === 3) {
-      /* A HIT ON THE SHIP. No impact point, because it did not land in this
-       * room — it landed on the hull somewhere and the deck felt it. */
       life.brown = life.brownFor = 1.35;
     } else {
-      /* DEBRIS OFF THE OUTSIDE, burning off against the field. */
-      _v.set(Math.sin(a * 3.1) * L * 0.8, 6 + Math.abs(Math.sin(a * 1.7)) * 26, L);
-      if (life.event % 4 === 1) {
-        _v.set(Math.sign(Math.sin(a)) * L, 5 + Math.abs(Math.cos(a * 2.3)) * 24,
-          Math.sin(a * 5.1) * L * 0.7);
-      }
+      /* DEBRIS OFF THE OUTSIDE burning off against the forward field — the
+       * only field there is now that the room has walls. */
+      _v.set(Math.sin(a * 3.1) * L * 0.5, 6 + Math.abs(Math.sin(a * 1.7)) * 40, L);
       ripple(life, _v, 13 + (life.event % 3) * 5, 1.5, 0xd8f0ff);
       const fx = world.particles;
-      fx?.plasma?.spawn(_v, _v2.set(0, 0, 0),
-        { life: 0.10, size: 1.4, drag: 1, gravity: 0, color: 0xffffff, alpha: 1, hdr: 5.0 });
-      fx?.plasma?.spawn(_v, _v2.set(0, 0, 0),
-        { life: 0.34, size: 3.6, drag: 1, gravity: 0, color: 0xbfe6ff, alpha: 0.9, hdr: 2.6 });
-      _v2.set(0, 0, -Math.sign(_v.z || 1)).normalize();
+      fx?.plasma?.spawn(_v, _v2.set(0, 0, 0), { life: 0.10, size: 1.4, drag: 1, gravity: 0, color: 0xffffff, alpha: 1, hdr: 5.0 });
+      fx?.plasma?.spawn(_v, _v2.set(0, 0, 0), { life: 0.34, size: 3.6, drag: 1, gravity: 0, color: 0xbfe6ff, alpha: 0.9, hdr: 2.6 });
+      _v2.set(0, 0, -1);
       fx?.sparkBurst?.(_v, _v2, 16, { speed: 14, color: 0xd8f0ff, hdr: 3.4 });
-      /* A hit ON the field lifts it for a beat before it settles. */
       u.uPower.value = 1.5;
     }
   }
-
-  /* ── AND ANYTHING THE PLAYER PUTS THROUGH IT ───────────────────────────
-   *
-   * The whole point of a hangar you can use the Force in is that the field is
-   * a thing you can hit. This is the cheapest possible test that says so: a
-   * dynamic prop moving faster than 5 m/s within 2.5 m of a field plane rings
-   * it, once, with a 0.9 s cooldown held on the prop itself.
-   *
-   * It is O(props) with two compares per prop and no square roots on the
-   * rejecting path — measured at 9 µs over 46 dynamic props, which is half a
-   * per cent of a 16.7 ms frame. */
+  /* Anything the player puts through it rings it. */
   const L = DECK.lip;
   for (const p of world.props) {
     const b = p.body;
@@ -1889,485 +1562,562 @@ function stepField(world, life, dt) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/* 11 · THE TRAFFIC — the biggest thing the room did not have             */
+/* 10 · THE TRAFFIC                                                       */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ FOUR EVENTS ON A LOOSE LOOP, AND NOT ONE LINE OF AI ═══════════════════
+ * ══ IN THROUGH THE APERTURE, OUT THROUGH THE APERTURE, AND NEVER GONE ═════
  *
- * `HANGAR-SPEC.md`, verbatim, five bullets none of which existed:
+ * Two MODELLED hulls fly the inside: a fighter on the port apron mark and a
+ * shuttle on the starboard one. Each runs one clock through seven phases —
  *
- *   ships pass through the shield on a schedule — pop, shockwave ring, engine
- *     wash, deck grit blown sideways
- *   launches: clamps release, repulsor spin-up, taxi, punch through
- *   arrivals with battle damage: smoke trail, hard landing, fire crew
- *     sprinting in
- *   heat shimmer over idling engines
- *   keep it to 3-4 scripted traffic events on a loose loop so it never feels
- *     dead but never needs AI
+ *   FAR IN    the silhouette, from `OUTSIDE.run` past the lip to the lip,
+ *             decelerating, growing
+ *   IN        the modelled hull from the lip to its pad, flaring
+ *   SIT       on gear, collider on, bells cooling, a droid rolling up
+ *   SPIN      clamps, spool, grit blown out from under it
+ *   OUT       up off the clamps and straight out through the lip
+ *   FAR OUT   the silhouette, accelerating away to `OUTSIDE.run`, shrinking
+ *   GAP       nothing, so the pad is empty for a while
  *
- * The last one is the design and the rest follow from it. There are TWO hulls
- * and they run two schedules whose periods do not divide each other, so the
- * pattern never resolves and nothing has to decide anything:
+ * — and the outside legs are constant-acceleration runs whose speed at the
+ * lip matches the inside leg's, so nothing jumps at the handover; the
+ * ripple and the plasma flash at the lip cover the swap of silhouette for
+ * model. Every other fighter arrival is damaged.
  *
- *   THE LANDER, on 46 s: comes through the forward field trailing smoke from a
- *     hit, flares, drops hard, sits with its bells cooling while two of the
- *     deck crew break off and run to it, then releases, spins up, taxis and
- *     punches back out through the same field.
- *   THE TRANSIT, on 31 s: crosses the room from the port field to the
- *     starboard one at a fifth of the way up, ringing both, and blows the deck
- *     grit sideways underneath it as it goes over.
+ * The three PATROL LOOPS outside never come in: a diamond of four fighters,
+ * a pair the other way round, a shuttle low across. Seven hulls in flight
+ * at any moment before an arrival or a departure adds to them.
  *
- * TWO SHIPS COST ONE DRAW CALL. They are two instances of one `InstancedMesh`
- * — a hull is rigid, so there is nothing to articulate and nothing a group per
- * ship would buy — and their four engine bells are four instances of the
- * shared emitter mesh from `addGlows`. A ship that is away is scaled to zero
- * rather than hidden, because hiding an instance is not a thing three has.
- *
- * WHAT IS NOT HERE, HONESTLY: the heat shimmer is a heat PLUME. A real shimmer
- * is a screen-space refraction and this file owns no pass; what the parked ship
- * gets instead is slow, near-transparent hot air off the bells, which reads at
- * eighty metres and is not the same thing at close range.
+ * INSIDE THE ROOM a hull is never past |x| = `CLEAR` - its span, never above
+ * 40 m, and enters only across the lip's plane. The pads are the apron's.
  */
 let TRAFFIC = null;
 function trafficPlan(world) {
   if (TRAFFIC) return TRAFFIC;
-  const { across, deep, WALL } = frame();
-  /**
-   * WHERE A SHIP MAY LAND, and it is the one part of the deck that is clear.
-   * Forward of the muster ground, aft of the shuttle pads `dressStructure`
-   * builds at (-26, 46) and (30, 92), starboard of the pit and well inboard of
-   * the rack walls' collision. `groundAt` puts it on the plate.
-   */
-  const pad = { x: across(0.10), z: deep(0.20) };
+  const { APRON, OUTSIDE, CLEAR } = frame();
+  const gy = (p) => groundAt(world, p.x, p.z);
   return (TRAFFIC = {
-    pad,
-    padY: groundAt(world, pad.x, pad.z),
-    /**
-     * Where the lander comes from: through the forward field, off to PORT, and
-     * high enough that the descent is most of what you see.
-     *
-     * Port and not starboard because of what is in the way. `dressStructure`
-     * stands a shuttle on a pad at (30, 92) with wings twenty metres tall, and
-     * a starboard approach passes within a metre and a half of them at the
-     * height the wings actually occupy. The port diagonal clears both pads by
-     * twelve metres and still crosses the deck in front of the player.
-     */
-    entry: { x: pad.x - across(0.34), y: DECK.roof * 0.52 },
-    /* The transit's lane. Under the overhead rigs, over the gantry. */
-    lane: { y: DECK.roof * 0.34, z: deep(0.24) },
-    wall: WALL,
-    /* Two periods that do not divide each other, which is the whole of "loose
-     * loop": 46 and 31 come back into phase once every 24 minutes. */
-    landCycle: 46, crossCycle: 31,
-    /**
-     * HOW FAR AHEAD THE SOUND HAS TO START. `damagedArrival` begins its pass
-     * out at `DECK.lip * LAUNCH.out` and queues the field punch when the ship
-     * reaches the lip, so firing it on the frame the hull crosses would put
-     * the bang a second and a half late. The speed is solved backwards from
-     * the eight seconds the visual descent actually takes, and the lead is
-     * what is left of the run outside the lip.
-     */
-    inSpeed: (DECK.lip * LAUNCH.out - pad.z) / (8.0 + 1.4),
-    outSpeed: (DECK.lip - pad.z) / 3.3,
+    outside: OUTSIDE,
+    /** Inside, traffic stays under this and inside this. */
+    ceiling: 40, clear: CLEAR,
+    hulls: [
+      /* THE FIGHTER: port pad, entering from starboard across the apron. */
+      { kind: 'fighter', pad: { x: APRON.padL.x, z: APRON.padL.z, y: gy(APRON.padL) },
+        entry: { x: APRON.padL.x + 50, y: 30 }, farX: 90, farY: 130,
+        farIn: 26, inDur: 9, sit: 30, spin: 4, out: 2.6, farOut: 26, gap: 12, t0: 14, flight: 7,
+        damagedEvery: 2 },
+      /* THE SHUTTLE: starboard pad, entering from port. Longer everything. */
+      { kind: 'shuttle', pad: { x: APRON.padR.x, z: APRON.padR.z, y: gy(APRON.padR) },
+        entry: { x: APRON.padR.x - 50, y: 32 }, farX: -110, farY: 150,
+        farIn: 28, inDur: 11, sit: 44, spin: 5, out: 3.0, farOut: 28, gap: 22, t0: 28 + 11 + 8, flight: 12,
+        damagedEvery: 0 },
+    ],
+    /* The far mesh slots: formation 0-3, pair 4-5, fighter's own leg 6;
+     * shuttle loop 0, shuttle's own leg 1. */
+    farFighters: 7, farShuttles: 2,
   });
 }
 
-/** One hull, merged. Twelve primitives, one material, one buffer for both. */
-function shipGeometry() {
-  const parts = [];
-  const p = (g, x, y, z, rx = 0) => {
-    if (rx) g.applyMatrix4(_m4.makeRotationFromEuler(_eu.set(rx, 0, 0)));
-    g.translate(x, y, z); parts.push(g);
-  };
-  /* Body, nose and canopy. Nose down +Z, which is the direction of travel for
-   * everything below, so a heading is one `atan2` and no offset. */
-  p(slabGeo(3.0, 1.9, 9.0, { bevel: 0.18, seg: 3, tile: 1.4 }), 0, 0, 0);
-  p(cylGeo(1.5, 0.25, 3.4, 8, 0.8), 0, 0, 6.1, Math.PI / 2);
-  p(slabGeo(1.5, 0.75, 2.2, { bevel: 0.1, seg: 2, tile: 0.9 }), 0, 1.15, 2.6);
-  /* Wings, tips and the tail. A flat plan with vertical tips is the read every
-   * reference gives a small craft at range: a dark cross with two hard edges. */
-  for (const sx of [-1, 1]) {
-    p(slabGeo(5.2, 0.34, 3.0, { bevel: 0.08, seg: 2, tile: 1.2 }), sx * 3.6, -0.1, -0.6);
-    p(slabGeo(0.32, 1.9, 1.9, { bevel: 0.06, seg: 2, tile: 0.8 }), sx * 5.9, 0.85, -1.2);
-    p(cylGeo(0.8, 0.8, 3.0, 10, 0.9), sx * 1.5, -0.2, -5.2, Math.PI / 2);
-  }
-  p(slabGeo(0.34, 2.4, 2.6, { bevel: 0.06, seg: 2, tile: 0.9 }), 0, 1.5, -3.6);
-  return mergeGeos(parts);
-}
+/** Where a hull is along a constant-acceleration run of `D` metres in `T`
+ *  seconds that ends (or starts) at `v1` metres a second. */
+function runIn(D, T, v1, t) { const v0 = 2 * D / T - v1; const a = (v1 - v0) / T; return v0 * t + 0.5 * a * t * t; }
+function runOut(D, T, v0, t) { const v1 = 2 * D / T - v0; const a = (v1 - v0) / T; return v0 * t + 0.5 * a * t * t; }
 
 function addTraffic(world, life) {
-  const M = deckMats(world._deckFaction);
+  const C = castMaterials(world._deckFaction);
   const P = trafficPlan(world);
-  /* The room's own hull material and not a darker panel: at eighty metres
-   * through the haze a ship has to catch the aperture key or it is a hole in
-   * the deck. Faction-resolved, like everything else built in here. */
-  const im = new THREE.InstancedMesh(shipGeometry(), M.hull, 2);
-  im.frustumCulled = false;
-  im.castShadow = false;              // two casters for a thing 80 m out
-  im.receiveShadow = true;
-  im.name = 'deck-traffic';
-  _s.set(0, 0, 0); _q.identity(); _v.set(0, 0, 0);
-  for (let i = 0; i < 2; i++) im.setMatrixAt(i, _m.compose(_v, _q, _s));
-  world.scene.add(im);
-  world.statics.push(im);
+  /* The two modelled hulls, hidden until their clocks put them inside. */
+  for (const H of P.hulls) {
+    const cast = H.kind === 'fighter' ? buildCastFighter({ faction: world._deckFaction })
+      : buildCastShuttle({ faction: world._deckFaction });
+    cast.group.visible = false;
+    world.scene.add(cast.group);
+    world.statics.push(cast.group);
+    for (const m of Object.values(cast.meshes)) if (m) world.statics.push(m);
+    H.cast = cast;
+    /* The clock starts INSIDE the first cycle — the fighter on final, the
+     * shuttle already on its pad — so the first cycle's decisions are made
+     * here rather than at a crossing nothing will see. Odd cycles of a hull
+     * with `damagedEvery` are the damaged ones, so the FIRST fighter the
+     * player sees is the one trailing smoke. */
+    H.t = H.t0; H.last = H.t0 - 1e-6; H.cycle = 1; H.smoke = 0; H.wash = 0; H.collider = null;
+    H.damaged = H.damagedEvery > 0 && ((H.cycle - 1) % H.damagedEvery === 0);
+    H.T = H.farIn + H.inDur + H.sit + H.spin + H.out + H.farOut + H.gap;
+    /* The inside descent's speed at the lip and the launch's, so the
+     * outside legs can match them. */
+    const entryDist = Math.hypot(H.entry.x - H.pad.x, DECK.lip - H.pad.z, H.entry.y - H.pad.y);
+    H.vLip = 2.4 * entryDist / H.inDur;
+    H.aOut = 2 * (DECK.lip - H.pad.z + 2) / (H.out * H.out);
+    H.vOut = H.aOut * H.out;
+  }
+  /* THE SILHOUETTES: one instanced mesh of fighters, one of shuttles, both
+   * unfogged, both frustum-unculled (they cross 900 m). */
+  const fg = farHullGeometry(0, world._deckFaction);
+  const sg = farHullGeometry('shuttle', world._deckFaction);
+  const mk = (geo, n, name) => {
+    const im = new THREE.InstancedMesh(geo, C.far, n);
+    im.frustumCulled = false;
+    im.castShadow = false; im.receiveShadow = false;
+    im.name = name;
+    _s.set(0, 0, 0); _q.identity(); _v.set(0, 0, 0);
+    for (let i = 0; i < n; i++) { im.setMatrixAt(i, _m.compose(_v, _q, _s)); im.setColorAt(i, _c.setRGB(1, 1, 1)); }
+    world.scene.add(im);
+    world.statics.push(im);
+    return im;
+  };
   life.traffic = {
-    plan: P, mesh: im,
-    /* Both start in their AWAY phase and wrap at different offsets, so the
-     * first thing the player sees is a ship crossing at about five seconds and
-     * the lander arriving at about ten — not two hulls appearing at once, and
-     * not an empty room while he is still looking at it for the first time. */
-    land: 36, cross: 26,
-    lastLand: 36, lastCross: 26, smoke: 0, wash: 0, called: false,
+    plan: P,
+    farF: mk(fg.geo, P.farFighters, 'deck-far-fighters'),
+    farS: mk(sg.geo, P.farShuttles, 'deck-far-shuttles'),
+    t: 0, formPassed: false,
   };
 }
 
-/** Put one hull in the world: position, heading, pitch, roll, and its bells. */
-function shipAt(life, i, x, y, z, yaw, pitch, roll, burn) {
-  const T = life.traffic;
+/** One far instance: place, heading, scale, and its brightness by distance. */
+function farAt(im, i, x, y, z, yaw, pitch, roll, dz) {
   _eu.set(pitch, yaw, roll, 'YXZ');
   _q.setFromEuler(_eu);
-  _v.set(x, y, z);
-  _s.set(1, 1, 1);
-  T.mesh.setMatrixAt(i, _m4.compose(_v, _q, _s));
-  T.mesh.instanceMatrix.needsUpdate = true;
-  /* The bells hang off the same matrix, which is why they do not need the
-   * ship to be a group: a rigid body's parts are one multiply apart. */
-  for (const sx of [-1, 1]) {
-    const slot = GLOW.engine + (i * 2) + (sx > 0 ? 1 : 0);
-    /* Its own scratch: `glowPlace` composes into `_m`, so handing it `_m` as
-     * the parent frame would be a matrix multiplied by itself. */
-    _mb.makeRotationX(Math.PI / 2).setPosition(sx * 1.5, -0.2, -6.9);
-    glowPlace(life, slot, _mb.premultiply(_m4), 1.5, 1.3);
-    glowBurn(life, slot, burn * 0.55, burn * 0.82, burn);
+  _v.set(x, y, z); _s.set(1, 1, 1);
+  im.setMatrixAt(i, _m4.compose(_v, _q, _s));
+  /* DARKENED BY DISTANCE, by hand — the material has no fog. Down to 45% at
+   * the end of the run, so a speck is a dark speck against the planet and not
+   * a bright one, which is what a hull in a star's light at that range is. */
+  const k = 1 - 0.55 * smoothstep(0, frame().OUTSIDE.run, Math.max(0, dz));
+  im.setColorAt(i, _c.setRGB(k, k, k));
+}
+
+function farAway(im, i) {
+  _s.set(0, 0, 0); _q.identity(); _v.set(0, 0, 0);
+  im.setMatrixAt(i, _m4.compose(_v, _q, _s));
+}
+
+/** A patrol loop: an ellipse outside, flown at constant angular rate. */
+function loopAt(L, k, offA, offR, out) {
+  const a = k * TAU + offA;
+  const r = 1 + offR;
+  out.set(L.cx + Math.cos(a) * L.ax * r, L.y + Math.sin(a * 2 + offA) * 12, L.cz + Math.sin(a) * L.az * r);
+  return out;
+}
+
+function stepPatrols(world, life, dt) {
+  const T = life.traffic, P = T.plan, O = P.outside;
+  T.t += dt;
+  /* THE FORMATION: a diamond of four on the big loop. */
+  const kf = (T.t / O.form.period) % 1;
+  for (let i = 0; i < 4; i++) {
+    const offA = -i * 0.035, offR = (i === 1 ? 0.06 : i === 2 ? -0.06 : i === 3 ? 0 : 0);
+    loopAt(O.form, kf, offA, offR, _v2);
+    loopAt(O.form, kf + 0.002, offA, offR, _v3);
+    const yaw = Math.atan2(_v3.x - _v2.x, _v3.z - _v2.z);
+    farAt(T.farF, i, _v2.x, _v2.y + (i === 3 ? -6 : 0), _v2.z, yaw, 0, -0.18, _v2.z - DECK.lip);
+  }
+  /* The leader's closest pass in front of the aperture is a repulsor pass
+   * outside the field, once per loop. */
+  loopAt(O.form, kf, 0, 0, _v2);
+  const front = Math.abs(_v2.x) < 20 && _v2.z < O.form.cz;
+  if (front && !T.formPassed) {
+    T.formPassed = true;
+    _v3.set(_v2.x - 120, _v2.y, _v2.z); _v.set(_v2.x + 120, _v2.y, _v2.z);
+    repulsorPass(world, { from: _v3, to: _v, speed: 60, power: 0.6, outside: true, spin: false });
+  } else if (!front) T.formPassed = false;
+  /* THE PAIR, the other way round. */
+  const kp = 1 - (T.t / O.pair.period) % 1;
+  for (let i = 0; i < 2; i++) {
+    loopAt(O.pair, kp, i * 0.04, i * 0.05, _v2);
+    loopAt(O.pair, kp - 0.002, i * 0.04, i * 0.05, _v3);
+    const yaw = Math.atan2(_v3.x - _v2.x, _v3.z - _v2.z);
+    farAt(T.farF, 4 + i, _v2.x, _v2.y, _v2.z, yaw, 0, 0.2, _v2.z - DECK.lip);
+  }
+  /* THE SHUTTLE, low and slow. */
+  const ks = (T.t / O.shuttle.period) % 1;
+  loopAt(O.shuttle, ks, 0, 0, _v2);
+  loopAt(O.shuttle, ks + 0.002, 0, 0, _v3);
+  farAt(T.farS, 0, _v2.x, _v2.y, _v2.z, Math.atan2(_v3.x - _v2.x, _v3.z - _v2.z), 0, -0.05, _v2.z - DECK.lip);
+}
+
+/** Put a modelled hull in the world. */
+function hullAt(life, H, x, y, z, yaw, pitch, roll, burn) {
+  const g = H.cast.group;
+  g.visible = true;
+  g.position.set(x, y, z);
+  _eu.set(pitch, yaw, roll, 'YXZ');
+  g.quaternion.setFromEuler(_eu);
+  g.updateMatrixWorld(true);
+  const slot = GLOW.engine + (H.kind === 'fighter' ? 0 : 2);
+  for (let i = 0; i < 2; i++) {
+    const b = H.cast.bells[Math.min(i, H.cast.bells.length - 1)];
+    _mb.makeRotationX(Math.PI / 2).setPosition(b.x, b.y, b.z - 0.3);
+    glowPlace(life, slot + i, _mb.premultiply(g.matrixWorld), b.r * 1.9, b.r * 1.6);
+    glowBurn(life, slot + i, burn * 0.55, burn * 0.82, burn);
   }
 }
 
-/** Fold a hull and its bells away. Scale zero: three has no per-instance hide. */
-function shipAway(life, i) {
-  const T = life.traffic;
-  _s.set(0, 0, 0); _q.identity(); _v.set(0, 0, 0);
-  T.mesh.setMatrixAt(i, _m4.compose(_v, _q, _s));
-  T.mesh.instanceMatrix.needsUpdate = true;
-  for (let k = 0; k < 2; k++) {
-    glowPlace(life, GLOW.engine + i * 2 + k, _m4, 0, 0);
-    glowBurn(life, GLOW.engine + i * 2 + k, 0, 0, 0);
+function hullAway(life, H) {
+  H.cast.group.visible = false;
+  const slot = GLOW.engine + (H.kind === 'fighter' ? 0 : 2);
+  for (let i = 0; i < 2; i++) { glowPlace(life, slot + i, _m4.identity(), 0, 0); glowBurn(life, slot + i, 0, 0, 0); }
+}
+
+/** A landed hull is solid; a flying one is not. */
+function hullSolid(world, H, on) {
+  if (on && !H.collider) {
+    const q = new THREE.Quaternion().setFromAxisAngle(UP, 0);
+    H.collider = world.physics?.addStaticBox?.(
+      new THREE.Vector3(H.pad.x, H.pad.y + H.cast.gearY + 0.2, H.pad.z),
+      new THREE.Vector3(H.cast.half.x, H.cast.half.y + 0.6, H.cast.half.z), q, { friction: 0.6 }) || null;
+    if (!H.collider) H.collider = true;
+  } else if (!on && H.collider) {
+    if (H.collider !== true) world.physics?.removeStaticBox?.(H.collider);
+    H.collider = null;
   }
 }
 
 /**
- * THE LANDER. One clock, five phases, and every transition is a `<` on it —
- * no state field, so a step that is skipped or a clock that jumps cannot leave
- * the ship halfway through a landing forever.
+ * ONE HULL'S CLOCK. Every transition is a `<` on it — no state field, so a
+ * skipped step or a jumped clock cannot leave a ship halfway through a
+ * landing forever. `H.last` is where the clock was last frame, which is how
+ * an event fires on exactly one frame.
  */
-function stepLander(world, life, dt) {
-  const T = life.traffic, P = T.plan;
+function stepHull(world, life, H, dt) {
+  const T = life.traffic, P = T.plan, O = P.outside;
   const fx = world.particles;
-  const t = T.land;
-  const IN = 8.0, SIT = 26.0, SPIN = 30.0, OUT = 35.0;
-  const gy = P.padY;
-  const px = P.pad.x, pz = P.pad.z;
+  const far = H.kind === 'fighter' ? T.farF : T.farS;
+  const slot = H.kind === 'fighter' ? 6 : 1;
+  const t = H.t, was = H.last;
+  const A = H.farIn, B = A + H.inDur, Cc = B + H.sit, D = Cc + H.spin, E = D + H.out, F = E + H.farOut;
+  const gy = H.pad.y + H.cast.gearY;
+  const px = H.pad.x, pz = H.pad.z;
+  const lip = DECK.lip;
+  const crossed = (edge) => was < edge && t >= edge;
 
-  if (t >= OUT) {
-    shipAway(life, 0); dismissFireCrew(life);
-    /* THE SOUND GOES FIRST, because the ship is still outside when the pass
-     * starts. `damagedArrival` runs from `DECK.lip * LAUNCH.out` inward, so it
-     * is fired in the away phase, `lead` seconds before the hull appears. */
-    const lead = (DECK.lip * LAUNCH.out - DECK.lip) / P.inSpeed;
-    if (T.lastLand < P.landCycle - lead && t >= P.landCycle - lead) {
-      damagedArrival(world, { x: px, z: pz, speed: P.inSpeed, mass: ARRIVE.mass });
+  if (t < A) {
+    /* ── FAR IN. From `OUTSIDE.run` past the lip down to the entry point,
+     * growing, decelerating to the inside leg's own speed. */
+    if (was >= A || was > t) {
+      /* The cycle begins: decide whether this one is damaged, and announce. */
+      H.cycle++;
+      H.damaged = H.damagedEvery > 0 && ((H.cycle - 1) % H.damagedEvery === 0);
+      hullAway(life, H);
+    }
+    const d = runIn(O.run, A, H.vLip, t);
+    const k = clamp(d / O.run, 0, 1);
+    const x = lerp(H.farX, H.entry.x, k);
+    const y = lerp(H.farY, H.entry.y, Math.pow(k, 0.8));
+    const z = lip + O.run - d;
+    const yaw = Math.atan2(H.entry.x - x, -1 - (z - lip) * 0.3);
+    farAt(far, slot, x, y, z, yaw, 0.08, (H.entry.x - H.farX) > 0 ? -0.1 : 0.1, z - lip);
+    /* THE SOUND GOES FIRST: `damagedArrival` starts its pass out at
+     * `DECK.lip * LAUNCH.out` and queues the field punch for the lip, so it
+     * is fired when the hull is there, not at the lip. A clean arrival is a
+     * repulsor pass from the lip, fired at the lip below. */
+    const lead = (lip * LAUNCH.out - lip);
+    if (H.damaged && crossed(A - lead / H.vLip)) {
+      damagedArrival(world, { x: px, z: pz, speed: H.vLip, mass: ARRIVE.mass });
+    }
+    if (crossed(A - 7)) {
+      announce(world, life, H.damaged ? 'PA — DAMAGED HULL INBOUND' : `PA — FLIGHT ${H.flight} ON FINAL`,
+        H.damaged ? `clear pad ${H.kind === 'fighter' ? 1 : 2} — crash crew to the apron`
+          : `pad ${H.kind === 'fighter' ? 1 : 2} clear to receive`);
+    }
+    if (H.damaged && t > A - 8) {
+      H.smoke += dt;
+      if (H.smoke > 0.12) {
+        H.smoke = 0;
+        _v.set(x, y, z);
+        fx?.smoke?.spawn(_v, _v2.set(0, 0.4, 2), { life: 2.2, size: 1.8, drag: 0.9, gravity: -0.1, color: 0x3a3f47, alpha: 0.45 });
+      }
     }
     return;
   }
-
-  if (t < IN) {
-    /* ── THE ARRIVAL. Battle-damaged: it comes in off the beam, trailing, and
-     * the last fifth is a flare rather than a glide. */
-    const k = clamp(t / IN, 0, 1);
-    const e = 1 - Math.pow(1 - k, 2.4);
-    const x = lerp(P.entry.x, px, e);
-    const z = lerp(DECK.lip, pz, e);
-    /* Down early, float late — the shape of an approach, and the one thing
-     * that separates a landing from a prop sliding along a line. */
-    const y = lerp(P.entry.y + gy, gy + 1.1, Math.pow(e, 0.7));
-    const yaw = Math.atan2(px - P.entry.x, pz - DECK.lip);
-    const flare = smoothstep(0.72, 0.95, k) * (1 - smoothstep(0.95, 1.0, k));
-    shipAt(life, 0, x, y, z, yaw, -0.10 + flare * 0.34, (1 - e) * 0.12,
-      1.4 + flare * 2.2);
-    /* THE POP. It comes through the field, so the field rings — the same
-     * `ripple` the debris schedule and a thrown crate already use. */
-    if (T.lastLand >= OUT || T.lastLand > t) {
-      _v.set(P.entry.x, P.entry.y + gy, DECK.lip);
-      ripple(life, _v, 22, 1.8, 0xd8f0ff);
-      fx?.plasma?.spawn(_v, _v2.set(0, 0, 0),
-        { life: 0.28, size: 5.0, drag: 1, gravity: 0, color: 0xbfe6ff, alpha: 0.9, hdr: 3.0 });
+  if (t < B) {
+    /* ── IN. Through the field and down to the pad. */
+    if (crossed(A)) {
+      farAway(far, slot);
+      _v.set(H.entry.x, H.entry.y, lip);
+      ripple(life, _v, 24, 1.8, 0xd8f0ff);
+      fx?.plasma?.spawn(_v, _v2.set(0, 0, 0), { life: 0.28, size: 5.0, drag: 1, gravity: 0, color: 0xbfe6ff, alpha: 0.9, hdr: 3.0 });
+      if (!H.damaged) {
+        _v3.set(px, gy, pz);
+        repulsorPass(world, { from: _v, to: _v3, speed: H.vLip * 0.6, power: 0.9, spin: false });
+      }
     }
-    /* THE SMOKE TRAIL. Off the port bell, because a symmetric trail is an
-     * effect and a one-sided one is damage. */
-    T.smoke += dt;
-    if (T.smoke > 0.05) {
-      T.smoke = 0;
-      _v.set(x - Math.cos(yaw) * 1.5, y + 0.2, z + Math.sin(yaw) * 1.5);
-      _v2.set(-Math.sin(yaw) * 3, 0.6, -Math.cos(yaw) * 3);
-      fx?.smoke?.spawn(_v, _v2, { life: 2.6, size: 1.1, drag: 1.1, gravity: -0.2,
-        color: 0x3a3f47, alpha: 0.5 });
+    const k = clamp((t - A) / H.inDur, 0, 1);
+    const e = 1 - Math.pow(1 - k, 2.4);
+    const x = lerp(H.entry.x, px, e);
+    const z = lerp(lip, pz, e);
+    const y = lerp(H.entry.y, gy, Math.pow(e, 0.7));
+    const yaw = Math.atan2(px - H.entry.x, pz - lip) * (1 - smoothstep(0.7, 1, k));
+    const flare = smoothstep(0.72, 0.95, k) * (1 - smoothstep(0.95, 1.0, k));
+    /* A damaged lift sputters: the bells flicker and the hull rolls. */
+    const sput = H.damaged ? (Math.sin(t * 23) > 0.6 ? 0.2 : 1) : 1;
+    hullAt(life, H, x, y, z, yaw, -0.10 + flare * 0.34, (1 - e) * (H.damaged ? 0.22 : 0.10), (1.4 + flare * 2.2) * sput);
+    H.cast.meshes.gear.visible = k > 0.55;
+    if (H.damaged) {
+      H.smoke += dt;
+      if (H.smoke > 0.05) {
+        H.smoke = 0;
+        const b = H.cast.bells[0];
+        _v.set(x + b.x * Math.cos(yaw), y + b.y, z - b.z * 0.2);
+        fx?.smoke?.spawn(_v, _v2.set(-Math.sin(yaw) * 3, 0.6, -Math.cos(yaw) * 3), { life: 2.6, size: 1.1, drag: 1.1, gravity: -0.2, color: 0x3a3f47, alpha: 0.5 });
+      }
     }
     world.engine?.lightUp?.(_v.set(x, y, z), 0xbcd8ff, 26, 30, 0);
-  } else if (t < SPIN) {
-    /* ── ON THE DECK, cooling. */
-    const sat = t - IN;
-    const yaw = Math.atan2(px - P.entry.x, pz - DECK.lip);
-    if (sat < 0.14 && T.lastLand < IN) {
-      /* THE HARD LANDING, once: dust out from under it, grit thrown sideways,
-       * and a flash of the pad lighting itself. */
-      _v.set(px, gy + 0.2, pz);
+    return;
+  }
+  if (t < Cc) {
+    /* ── SIT. Touchdown once; then cooling on gear, solid. */
+    if (crossed(B)) {
+      hullSolid(world, H, true);
+      _v.set(px, gy - H.cast.gearY + 0.2, pz);
       world.engine?.lightUp?.(_v, 0xffd8a8, 42, 26, 0);
       for (let i = 0; i < 22; i++) {
         const a = (i / 22) * TAU;
         _v2.set(Math.cos(a) * 9, 1.4, Math.sin(a) * 9);
-        fx?.dust?.spawn(_v, _v2, { life: 2.2, size: 1.5, drag: 2.0, gravity: 1.2,
-          color: 0x2a2f37, alpha: 0.45 });
-        fx?.grit?.spawn(_v, _v2.multiplyScalar(1.4),
-          { life: 1.4, size: 0.10, drag: 0.9, gravity: 12, color: 0x39404a, alpha: 0.7 });
+        fx?.dust?.spawn(_v, _v2, { life: 2.2, size: 1.5, drag: 2.0, gravity: 1.2, color: 0x2a2f37, alpha: 0.45 });
+        fx?.grit?.spawn(_v, _v2.multiplyScalar(1.4), { life: 1.4, size: 0.10, drag: 0.9, gravity: 12, color: 0x39404a, alpha: 0.7 });
       }
-      /* AND THE FIRE CREW. Two of the deck crew break off their errands and
-       * run in — the spec's own bullet, and it costs nothing because they are
-       * already instances in a mesh that is already drawn. */
-      callFireCrew(life, px, pz);
-    }
-    /* Bells cooling, and the heat plume standing over them. */
-    const cool = Math.exp(-(sat) * 0.5);
-    shipAt(life, 0, px, gy + 1.1, pz, yaw, 0, 0, 0.25 + cool * 1.1);
-    T.wash += dt;
-    if (T.wash > 0.16) {
-      T.wash = 0;
-      for (const sx of [-1, 1]) {
-        _v.set(px - Math.cos(yaw) * sx * 1.5 + Math.sin(yaw) * 6.9,
-          gy + 0.9, pz + Math.sin(yaw) * sx * 1.5 + Math.cos(yaw) * 6.9);
-        _v2.set(Math.sin(yaw) * 0.6, 1.3, Math.cos(yaw) * 0.6);
-        fx?.plasma?.spawn(_v, _v2, { life: 1.5, size: 0.9, drag: 1.6, gravity: -0.5,
-          color: 0x9fb6cc, alpha: 0.10, hdr: 0.5 });
+      if (H.damaged) {
+        /* SPARKS ON TOUCHDOWN off the gear, and the crash crew runs. */
+        _v2.set(0, 1, 0);
+        fx?.sparkBurst?.(_v, _v2, 40, { speed: 12, color: 0xffd090, hdr: 3.2 });
+        callCrashCrew(life, px, pz, true);
       }
     }
-  } else {
-    /* ── THE LAUNCH: clamps, spin-up, taxi, punch. The pad is cleared first —
-     * the two crew who ran to the landing go back to their errands before
-     * anything under them spins up. */
-    dismissFireCrew(life);
-    const k = clamp((t - SPIN) / (OUT - SPIN), 0, 1);
-    /* And the launch's four beats, once, on the frame the clamps let go. */
-    if (T.lastLand < SPIN) launchSequence(world, { x: px, z: pz, speed: P.outSpeed });
-    const yaw = 0;                                     // nose to the aperture
-    const spin = smoothstep(0, 0.34, k);
-    /* Rises off the clamps before it moves, which is the whole tell of a
-     * repulsor: a craft that translates before it lifts is on wheels. */
-    const rise = smoothstep(0.10, 0.46, k) * 3.4;
-    const runOut = Math.pow(clamp((k - 0.34) / 0.66, 0, 1), 2.1) * (DECK.lip - pz + 24);
-    shipAt(life, 0, px, gy + 1.1 + rise, pz + runOut, yaw,
-      -clamp(runOut / 90, 0, 0.16), 0, 0.4 + spin * 3.6);
-    if (k < 0.34) {
-      /* Grit blown out from under it while it winds up. */
-      T.wash += dt;
-      if (T.wash > 0.06) {
-        T.wash = 0;
-        const a = k * 37;
-        _v.set(px, gy + 0.1, pz);
-        _v2.set(Math.cos(a) * 13, 0.8, Math.sin(a) * 13);
-        fx?.grit?.spawn(_v, _v2, { life: 1.1, size: 0.09, drag: 1.0, gravity: 14,
-          color: 0x39404a, alpha: 0.75 });
-        fx?.dust?.spawn(_v, _v2, { life: 1.8, size: 1.3, drag: 2.2, gravity: 0.8,
-          color: 0x2a2f37, alpha: 0.30 });
+    const sat = t - B;
+    const cool = Math.exp(-sat * 0.5);
+    hullAt(life, H, px, gy, pz, 0, 0, 0, 0.25 + cool * 1.1);
+    H.cast.meshes.gear.visible = true;
+    H.wash += dt;
+    if (H.wash > 0.16) {
+      H.wash = 0;
+      for (const b of H.cast.bells) {
+        _v.set(px + b.x, gy + b.y + 0.6, pz + b.z - 0.5);
+        fx?.plasma?.spawn(_v, _v2.set(0, 1.3, -0.4), { life: 1.5, size: 0.9, drag: 1.6, gravity: -0.5, color: 0x9fb6cc, alpha: 0.10, hdr: 0.5 });
+        if (H.damaged && sat < 12) fx?.smoke?.spawn(_v, _v2.set(0.3, 1.0, 0), { life: 3, size: 1.4, drag: 1.2, gravity: -0.15, color: 0x2a2e34, alpha: 0.35 });
       }
-      world.engine?.lightUp?.(_v.set(px, gy + 1.2, pz), 0xcfe6ff, 30 * spin, 24, 0);
     }
-    /* AND OUT. The field takes it on the way through, the same as on the way
-     * in — one `ripple`, fired once, on the frame the nose crosses the lip. */
-    /* Where it was last frame, off the same curve rather than a stored
-     * position — the punch has to fire on exactly one frame and a stale
-     * position field is how an effect fires twice or not at all. */
-    const pk = clamp((T.lastLand - SPIN) / (OUT - SPIN), 0, 1);
-    const was = Math.pow(clamp((pk - 0.34) / 0.66, 0, 1), 2.1) * (DECK.lip - pz + 24);
-    if (pz + runOut >= DECK.lip && pz + was < DECK.lip) {
-      _v.set(px, gy + 1.1 + rise, DECK.lip);
+    return;
+  }
+  if (t < D) {
+    /* ── SPIN. Clamps, spool, grit — the pad cleared first. */
+    if (crossed(Cc)) {
+      callCrashCrew(life, px, pz, false);
+      launchSequence(world, { x: px, z: pz, speed: H.vOut });
+      announce(world, life, `PA — FLIGHT ${H.flight} CLEARED TO LAUNCH`, 'clear the apron — stand behind the line');
+    }
+    const k = (t - Cc) / H.spin;
+    const rise = smoothstep(0.5, 1, k) * 3.0;
+    hullAt(life, H, px, gy + rise, pz, 0, 0, 0, 0.4 + k * 3.0);
+    H.cast.meshes.gear.visible = rise < 1.5;
+    H.wash += dt;
+    if (H.wash > 0.06) {
+      H.wash = 0;
+      const a = k * 37;
+      _v.set(px, gy - H.cast.gearY + 0.1, pz);
+      _v2.set(Math.cos(a) * 13, 0.8, Math.sin(a) * 13);
+      fx?.grit?.spawn(_v, _v2, { life: 1.1, size: 0.09, drag: 1.0, gravity: 14, color: 0x39404a, alpha: 0.75 });
+      fx?.dust?.spawn(_v, _v2, { life: 1.8, size: 1.3, drag: 2.2, gravity: 0.8, color: 0x2a2f37, alpha: 0.30 });
+    }
+    world.engine?.lightUp?.(_v.set(px, gy, pz), 0xcfe6ff, 30 * k, 24, 0);
+    return;
+  }
+  if (t < E) {
+    /* ── OUT. Straight out of the door under constant acceleration. The
+     * collider goes the frame it leaves the pad, not before: a ship winding
+     * up is still a ship you cannot walk through. */
+    if (crossed(D)) hullSolid(world, H, false);
+    const tt = t - D;
+    const z = pz + 0.5 * H.aOut * tt * tt;
+    const y = gy + 3.0 + tt * 2.0;
+    hullAt(life, H, px, y, z, 0, -0.06, 0, 3.6);
+    H.cast.meshes.gear.visible = false;
+    const wz = pz + 0.5 * H.aOut * (was - D) * (was - D);
+    if (z >= lip && wz < lip) {
+      _v.set(px, y, lip);
       ripple(life, _v, 26, 1.6, 0xd8f0ff);
       fx?.sparkBurst?.(_v, _v2.set(0, 0, 1), 18, { speed: 16, color: 0xd8f0ff, hdr: 3.4 });
     }
+    return;
   }
-}
-
-/** THE TRANSIT: through the port field, over the deck, out the starboard one. */
-function stepTransit(world, life, dt) {
-  const T = life.traffic, P = T.plan;
-  const fx = world.particles;
-  const t = T.cross;
-  const CROSS = 7.4;
-  if (t >= CROSS) { shipAway(life, 1); return; }
-
-  const k = t / CROSS;
-  const x = lerp(-DECK.lip, DECK.lip, k);
-  const y = P.lane.y + Math.sin(k * Math.PI) * 2.4;
-  /* Nose to +X: the hull is built along +Z, so the heading is a right angle
-   * and the bank is into the middle of the room, which is where a pilot
-   * crossing a bay would be looking. */
-  shipAt(life, 1, x, y, P.lane.z, Math.PI / 2, -0.04, -0.22 + Math.sin(k * Math.PI) * 0.1, 2.6);
-
-  if (T.lastCross >= CROSS || T.lastCross > t) {
-    _v.set(-DECK.lip, y, P.lane.z);
-    ripple(life, _v, 20, 1.5, 0xd8f0ff);
-    fx?.plasma?.spawn(_v, _v2.set(0, 0, 0),
-      { life: 0.24, size: 4.4, drag: 1, gravity: 0, color: 0xbfe6ff, alpha: 0.9, hdr: 3.2 });
+  if (t < F) {
+    /* ── FAR OUT. The silhouette takes over at the lip and climbs away,
+     * accelerating, shrinking, for `OUTSIDE.run` metres. */
+    if (crossed(E)) hullAway(life, H);
+    const d = runOut(O.run, H.farOut, H.vOut, t - E);
+    const k = clamp(d / O.run, 0, 1);
+    const x = lerp(px, px * 0.4 + H.farX * 0.5, k * k);
+    const y = lerp(gy + 3 + H.out * 2, H.farY * 0.8, Math.pow(k, 1.4));
+    const z = lip + d;
+    farAt(far, slot, x, y, z, Math.atan2(x - px, 20), -0.12 * (1 - k), 0, z - lip);
+    return;
   }
-  if (x >= DECK.lip - 4 && lerp(-DECK.lip, DECK.lip, T.lastCross / CROSS) < DECK.lip - 4) {
-    _v.set(DECK.lip, y, P.lane.z);
-    ripple(life, _v, 20, 1.5, 0xd8f0ff);
-  }
-  /* THE WASH, and the deck grit going sideways under it — the spec's own
-   * phrase, and the reason a ship crossing 22 m up is felt on the floor. */
-  T.wash += dt;
-  if (Math.abs(x) < P.wall && T.wash > 0.05) {
-    T.wash = 0;
-    const gy = groundAt(world, x, P.lane.z);
-    _v.set(x, gy + 0.12, P.lane.z);
-    for (const sz of [-1, 1]) {
-      _v2.set(Math.sign(x || 1) * 4, 0.9, sz * 11);
-      fx?.grit?.spawn(_v, _v2, { life: 1.3, size: 0.08, drag: 1.1, gravity: 11,
-        color: 0x39404a, alpha: 0.6 });
-    }
-    _v2.set(0, 0, 0);
-    fx?.plasma?.spawn(_v.set(x - 7, y, P.lane.z), _v2,
-      { life: 0.5, size: 2.6, drag: 1, gravity: 0, color: 0x9fc4ff, alpha: 0.28, hdr: 1.4 });
-  }
-  world.engine?.lightUp?.(_v.set(x, y, P.lane.z), 0xbcd8ff, 30, 40, 0);
-}
-
-/**
- * Two of the far crew drop what they are doing and run to the pad.
- *
- * The cheapest possible version of "fire crew sprinting in": their errands are
- * already floats in a `Float32Array` that something rewrites every frame, so
- * an emergency is four numbers and a speed. They go back to `home` when the
- * ship leaves.
- */
-function callFireCrew(life, px, pz) {
-  const C = life.crew, T = life.traffic;
-  if (!C || T.called || C.n < 4) return;
-  T.called = true;
-  for (let i = 0; i < 2; i++) {
-    const k = i * 4;
-    const sx = i ? 1 : -1;
-    C.runs[k] = px + sx * 17; C.runs[k + 1] = pz - 15;
-    C.runs[k + 2] = px + sx * 6; C.runs[k + 3] = pz - 6;
-    C.state[k] = 0; C.state[k + 1] = 1; C.state[k + 2] = 0;
-    C.state[k + 3] = 3.1;                       // sprinting, not walking
-  }
-}
-
-/** …and back on their errands once the deck is clear. */
-function dismissFireCrew(life) {
-  const C = life.crew, T = life.traffic;
-  if (!C || !T.called) return;
-  T.called = false;
-  for (let i = 0; i < 2; i++) {
-    const k = i * 4;
-    for (let j = 0; j < 4; j++) C.runs[k + j] = C.home[k + j];
-    C.state[k] = 0; C.state[k + 1] = 1; C.state[k + 2] = 1.5;
-    C.state[k + 3] = 1.2 + i * 0.2;
-  }
+  /* ── GAP. */
+  if (crossed(F)) farAway(far, slot);
 }
 
 function stepTraffic(world, life, dt) {
   const T = life.traffic;
   if (!T) return;
-  const P = T.plan;
-  T.lastLand = T.land; T.lastCross = T.cross;
-  T.land += dt; T.cross += dt;
-  if (T.land >= P.landCycle) T.land -= P.landCycle;
-  if (T.cross >= P.crossCycle) T.cross -= P.crossCycle;
-  stepLander(world, life, dt);
-  stepTransit(world, life, dt);
+  stepPatrols(world, life, dt);
+  for (const H of T.plan.hulls) {
+    H.last = H.t;
+    H.t += dt;
+    if (H.t >= H.T) { H.t -= H.T; H.last = -1; }
+    stepHull(world, life, H, dt);
+  }
+  T.farF.instanceMatrix.needsUpdate = true;
+  T.farS.instanceMatrix.needsUpdate = true;
+  if (T.farF.instanceColor) T.farF.instanceColor.needsUpdate = true;
+  if (T.farS.instanceColor) T.farS.instanceColor.needsUpdate = true;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  THE TWO ENTRY POINTS                                                  */
+/* 11 · THE PA                                                            */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * Furnish the deck with everything that moves on it.
+ * ══ THE DECK ANNOUNCES WHAT IT IS DOING ═══════════════════════════════════
  *
- * Call once, after `dressHangar` — the droids and the tech are placed against
- * props that file puts down (the gantry, the hull section, the scaffold, the
- * racks), and the haze reads `scene.fog`, which `applyAtmosphere` creates at
- * load stage 4 against this at stage 6.
+ * `DeckAudio.paCall` is wordless by rule — a PA that says a sentence is a
+ * narrator — and stays so. What the player asked for is a deck that
+ * ANNOUNCES: every launch, every arrival, the company falling in, the lift.
+ * So every call here is the horn AND a HUD line through `world.notify`,
+ * kind `flavour`, worded as a tannoy would word it. The line is the
+ * announcement's text; the horn is its sound; nothing is spoken.
  *
- * Returns the state object it also hangs on `world._deckLife`, which is what
- * `stepDeckLife` reads. Idempotent: a second call is a no-op rather than a
- * second set of droids.
+ * Never closer than `PA.gap` seconds. A call that lands inside the gap waits
+ * in a three-slot queue and the oldest is dropped if a fourth arrives — a
+ * tannoy that read out everything a busy deck does would be the spam this
+ * number exists to stop.
  */
+const PA = { gap: 14, slots: 3 };
+
+function announce(world, life, title, sub) {
+  const Q = life.pa;
+  if (Q.n >= PA.slots) { Q.titles.shift(); Q.subs.shift(); Q.n--; }
+  Q.titles.push(title); Q.subs.push(sub); Q.n++;
+}
+
+function stepPA(world, life, dt) {
+  const Q = life.pa;
+  /* THE TWO CALLS THAT ARE NOT THE TRAFFIC'S. The company falling in — the
+   * first frame `_company` exists — and the lift being called or arriving. */
+  /* `c.mustered` is what `Hangar.deckOrder` sets on FALL IN; the company
+   * standing in the crowd before that is not a muster. */
+  const c = world._company;
+  const mustered = !!(c && c.mustered);
+  if (mustered && !Q.mustered) announce(world, life, 'PA — COMPANY TO THE LINE', 'fall in on the muster line');
+  Q.mustered = mustered;
+  const ls = liftState(world);
+  if (ls !== Q.lift) {
+    if (ls === 'opening' && Q.lift === 'stop') announce(world, life, 'PA — LIFT AT THE FLIGHT DECK', 'stand clear of the doors');
+    else if (ls === 'called' || ls === 'arriving') announce(world, life, 'PA — LIFT CALLED', 'car to the flight deck');
+    Q.lift = ls;
+  }
+  if (Q.n > 0 && life.t - Q.at >= PA.gap) {
+    const title = Q.titles.shift(), sub = Q.subs.shift();
+    Q.n--;
+    Q.at = life.t;
+    Q.made++;
+    paCall(world);
+    world.notify?.(title, sub, 'flavour');
+  }
+  void dt;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/* 12 · THE CAMERA'S FAR PLANE                                            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A SPECK AT 700 M IS BEHIND THE FAR PLANE ON EVERY QUALITY BUT ULTRA ═══
+ *
+ * `Engine.QUALITY.viewDist` is 380 m on low and 520 on medium, and the lip
+ * is 244 m from the lift. A ship that has flown 150 m past the field is at
+ * the far plane on low, and it vanishes — which is the complaint, again,
+ * with a different cause. So this room asks for the far plane it needs, and
+ * gives it back: `undressDeckLife` restores it, and a sentinel in
+ * `world.statics` calls that from `World.unload` whether or not anybody
+ * else does. `Engine.setQuality` may reset it mid-level; the step re-asserts.
+ */
+function farPlane(world, life) {
+  const cam = world.engine?.camera;
+  if (!cam) return;
+  const { FAR } = frame();
+  if (life.far0 == null) life.far0 = cam.far;
+  if (cam.far < FAR) { cam.far = FAR; cam.updateProjectionMatrix?.(); }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE ENTRY POINTS                                                      */
+/* ══════════════════════════════════════════════════════════════════════ */
+
 export function dressDeckLife(world) {
-  /* A WORLD CAN OUTLIVE ITS LEVEL. `World.loadLevel` unloads and re-dresses
-   * the same instance for a ground rotation, and `unload` takes every mesh in
-   * `statics` out of the scene without knowing this state exists. So the guard
-   * is not "have I run" but "is what I built still standing" — a haze sheet
-   * with no parent is a previous level's, and this one starts again. */
   const prev = world._deckLife;
   if (prev && prev.haze && prev.haze.parent) return prev;
+  if (prev) undressDeckLife(world);
   const vents = ventTable();
   const life = {
-    t: 0, vt: 0, vents, vtick: vents.map(() => 0),
+    t: 0, frame: 0, vt: 0, vents, vtick: vents.map(() => 0),
     next: 6, event: 0, brown: 0, brownFor: 1,
-    droids: [], rings: [], fog0: null,
+    droids: [], rings: [], workers: [], cranes: [], fog0: null, far0: null,
+    pa: { at: -99, n: 0, titles: [], subs: [], made: 0, mustered: false, lift: null },
   };
   world._deckLife = life;
-  /* WHERE THE GROUND IS NOT GROUND, FIRST, because three of the things below
-   * refuse to be placed until they know: the crew errands are pushed off it,
-   * the sled holds an altitude over it, and the checks measure against it. */
   life.holes = scanHoles(world);
-  /* Then the vents get the deck under them rather than a guessed y. Every
-   * `lift` in the table is height above the plate at that point. */
   for (const V of life.vents) V[1] += groundAt(world, V[0], V[2]);
   addDeckHaze(world, life);
-  /* THE STRUCTURE BEFORE THE THINGS THAT STAND ON IT. `addTrolley` reads the
-   * rail's own height off `GANTRY` and `addTech` reads the scaffold's lift, so
-   * a prop can no longer be placed at a height nothing is holding it at. */
-  addRepairBay(world, life);
+  addJobs(world, life);
   addGlows(world, life);
-  addRepairDroids(world, life);
+  addDroids(world, life);
   addTrolley(world, life);
-  addTech(world, life);
-  addSled(world, life);
-  addDeckCrew(world, life);
+  addCranes(world, life);
+  addSleds(world, life);
+  addWorkers(world, life);
   addTraffic(world, life);
   addFieldRings(world, life);
+  farPlane(world, life);
+  /* THE SENTINEL: `World.unload` disposes every static's geometry, and this
+   * one's dispose is the restore. */
+  const sentinel = new THREE.Object3D();
+  sentinel.name = 'deck-life-sentinel';
+  sentinel.geometry = { dispose: () => undressDeckLife(world) };
+  world.statics.push(sentinel);
+  life.sentinel = sentinel;
   return life;
 }
 
+/** Give back the camera's far plane and the bodies. Idempotent. */
+export function undressDeckLife(world) {
+  const life = world?._deckLife;
+  if (!life) return;
+  const cam = world.engine?.camera;
+  if (cam && life.far0 != null) { cam.far = life.far0; cam.updateProjectionMatrix?.(); life.far0 = null; }
+  for (const d of life.droids) { try { d.kn.dispose(); } catch {} }
+  for (const w of life.workers) { try { w.shove.dispose(); } catch {} }
+  if (life.traffic) for (const H of life.traffic.plan.hulls) { try { hullSolid(world, H, false); } catch {} }
+  life.droids = []; life.workers = [];
+}
+
 /**
- * Advance every schedule in the room by `dt`.
- *
- * Safe to call before `dressDeckLife` and after `World.unload` — both are a
- * missing `world._deckLife` and both return immediately, which matters because
- * the frame loop does not know what level it is on.
- *
- * Cost, re-measured headless on the dressed deck after the traffic and the
- * repair bay went in: 0.041 ms of the frame at steady state over 6 000 frames,
- * against 0.016 before — the difference is two ships, nine emitter instances
- * and the hull matrices, and it is a quarter of a per cent of a 16.7 ms frame.
- * Nothing in here allocates: every vector, matrix and colour it touches is a
- * module scratch above.
+ * Advance every schedule in the room by `dt`. Safe before dress and after
+ * unload — both return at once. Nothing in here allocates at steady state.
  */
 export function stepDeckLife(world, dt) {
   const life = world && world._deckLife;
-  /* …and the same test on the way in, so a frame between an unload and the
-   * next dress does not spawn welding sparks into a level that has no deck. */
   if (!life || !(dt > 0) || !life.haze || !life.haze.parent) return;
   life.t += dt;
+  life.frame++;
+  farPlane(world, life);
   stepDroids(world, life, dt);
   stepTrolley(life, dt);
-  stepTech(world, life, dt);
-  stepSled(world, life, dt);
-  stepCrew(world, life, dt);
+  stepCranes(life, dt);
+  stepSleds(world, life, dt);
+  stepWorkers(world, life, dt);
   stepVents(world, life, dt);
   stepTraffic(world, life, dt);
+  stepPA(world, life, dt);
   stepField(world, life, dt);
   stepRings(life, dt);
 }

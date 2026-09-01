@@ -129,7 +129,15 @@ const info = await page.evaluate(async () => {
   }
   const w = window.SABER?.world;
   if (!w) return { fail: 'no world after clicking the door' };
+  /* THE LIFT RIDE, then the order. The player arrives in a car with the doors
+   * shut for about seven seconds, and the company waits in the crowd until it
+   * is called — so the deck has to be given both before a line can be
+   * photographed: the ride runs out, and the wheel's own adapter is told to
+   * fall in. Under swiftshader a frame is most of a second, so the wait is
+   * counted in frames of world time rather than in wall seconds. */
   for (let i = 0; i < 240; i++) await raf();
+  w.orders?.order?.('fallin');
+  for (let i = 0; i < 480; i++) await raf();
   let meshes = 0;
   w.scene.traverse((o) => { if (o.isMesh || o.isInstancedMesh) meshes++; });
   return {

@@ -224,7 +224,8 @@ export class Shovable {
    * stop: a drawn man and a physical man in two different places.
    */
   retarget(mark) {
-    const y = this.world.terrain ? this.world.terrain.height(mark.x, mark.z) : (mark.y ?? 0);
+    const y = this.world.floorAt ? this.world.floorAt(mark.x, mark.z)
+      : this.world.terrain ? this.world.terrain.height(mark.x, mark.z) : (mark.y ?? 0);
     this.mark.set(mark.x, y, mark.z);
     /* IF HE IS STANDING ON IT, HE MOVES WITH IT. If he is down, mid-rise or
      * walking, leave the body alone — BACK will find the new mark on its own
@@ -440,7 +441,17 @@ export class Shovable {
   }
 
   /** The deck under a point. Null-terrain-safe, like `Support.supportHeight`. */
-  _deckY(x, z) { return this.world.terrain ? this.world.terrain.height(x, z) : this.mark.y; }
+  /**
+   * THE FLOOR UNDER HIM. `world.floorAt` when the level installs one — the
+   * flight deck does, because its pads stand 0.45 m and 1.2 m proud of a
+   * flat heightfield and a transport's ramp is a floor too — else the
+   * terrain, else his own mark. Reading only the heightfield put every man
+   * on a pad 0.45 m into it, and stood him up INSIDE its collider.
+   */
+  _deckY(x, z) {
+    if (this.world.floorAt) return this.world.floorAt(x, z);
+    return this.world.terrain ? this.world.terrain.height(x, z) : this.mark.y;
+  }
 
   /** Where the caller should put the rig this frame. */
   _publish() {
@@ -476,7 +487,8 @@ export function makeShovable(world, rows, opts = {}) {
     if (!r || !r.mark || r.shove) continue;
     const mark = r.mark.isVector3 ? r.mark
       : new THREE.Vector3(r.mark.x, r.mark.y ?? 0, r.mark.z);
-    if (world.terrain) mark.y = world.terrain.height(mark.x, mark.z);
+    if (world.floorAt) mark.y = world.floorAt(mark.x, mark.z);
+    else if (world.terrain) mark.y = world.terrain.height(mark.x, mark.z);
     r.shove = new Shovable(world, mark, { facing: r.man?.facing ?? opts.facing ?? 0 });
     out.push(r.shove);
   }

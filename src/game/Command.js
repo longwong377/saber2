@@ -93,6 +93,7 @@ import { TOUGHNESS } from './Combat.js';
 import { BOLT_COLORS } from './Bolts.js';
 import { MODES, WaveDirector, holdFire, isHeavy } from './Waves.js';
 import { clamp, lerp, makeRng, TAU } from '../engine/MathUtil.js';
+import { MEAN_ALBEDO, WEAR } from '../engine/Textures.js';
 /* The score's ending. `_endCampaign` is one of the two places in this game a run
  * can be WON rather than survived, and until this import existed the other one
  * — `World._endMeeting` — was the only one that could say so out loud. Same
@@ -849,10 +850,10 @@ export function leadOf(men) {
  * a player wants from it and is worth having on its own.
  *
  * IT IS NOT THE RANK COLOUR AND IT DOES NOT SIT WHERE THE RANK COLOUR SITS.
- * `repaint` bolts the rank onto the head crest and both pauldrons and that
- * language has to stay unambiguous — a player reads the line's shape off it.
- * `markUp` puts the personal flash on the SHINS, low and on the outside, where
- * nothing else in this game paints.
+ * `repaint` paints the rank on the helmet, the shoulders and the chest
+ * (`RANK_REGIONS`) and that language has to stay unambiguous — a player reads
+ * the line's shape off it. `markUp` puts the personal flash on the SHINS, low
+ * and on the outside (`MARK_REGIONS`), where nothing else in this game paints.
  *
  * Deliberately few, deliberately far apart in hue, and every one of them chosen
  * to be legible against BOTH armies' plate — bone white for the Republic and
@@ -872,6 +873,697 @@ export const MARKS = [
 /** A mark id, made safe. Anything unknown is no mark, which is the default. */
 export function markById(id) {
   return MARKS.find((m) => m.id === id) || MARKS[0];
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  Lived-in paint — a marking is a REGION OF THE PLATE, not a lump on it */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "all the customization for the troopers is a little schoolyard crayony for
+ *  my tastes … it just feels like you're slabbing paint on them."
+ *
+ * It WAS slabbing paint on them, literally: `repaint` bolted a box onto the
+ * crown and a sphere cap onto each clavicle, `markUp` stood a 3 cm brick proud
+ * of each shin, `bandUp` hung a cube off the forearm, and all four wore a flat
+ * `MeshStandardMaterial` with `emissiveIntensity 0.22` so they would read at
+ * ninety metres. Every one of those is a THING placed on the armour. A clone
+ * unit marking is not a thing — it is a colour the plate has where the sprayer
+ * went, with a ragged edge where the plate has been knocked about since, and
+ * dust in every crease of it. Open assets/reference/units/clones: the yellow
+ * on the commander's shoulder bells stops where the bell stops, the stripe on
+ * the ARC's helmet follows the crown, and the edges of all of it are chipped.
+ *
+ * SO THE PAINT IS IN THE VERTICES NOW. Every trooper geometry already carries
+ * a colour channel (Bodies.js `white()`), three's `<color_fragment>` is
+ * `diffuseColor *= vColor`, and src/game/MergedSkin.js already folds that
+ * channel into the L2 skin — so a per-vertex colour is drawn identically at
+ * three metres and at ninety without a second material, a second mesh or a
+ * glow. A region is a bone plus a box in that bone's own frame; the painter
+ * walks the meshes hanging on the bone, decides for each vertex whether it is
+ * inside, and writes the colour. `Enemy.enlistBody` and `Parade.buildFigure`
+ * call the same three methods on the same rig, so the man on the deck and the
+ * man on the field wear the same chips in the same places — measured, not
+ * assumed: tools/checks/worn-paint.mjs compares the two region for region.
+ *
+ * THREE THINGS MAKE IT READ AS PAINT RATHER THAN AS A RECOLOUR:
+ *
+ *   THE CHIP MASK. A region's boundary is not a line. Its signed distance is
+ *     pushed through `WEAR.wear` (src/engine/Textures.js) — value noise in
+ *     METRES over an integer lattice, so the same vertex always gets the same
+ *     answer — and a vertex is painted only where the distance beats the
+ *     noise. `PAINT.chip` is how far the edge wanders and `PAINT.bite` leans
+ *     it inward, because paint is knocked off the plate and never grows onto
+ *     it. Within `PAINT.edge` of the boundary a few isolated vertices are
+ *     bare outright: a chip that went through to the plastoid.
+ *   THE GRIME. A painted vertex is darkened by a slow noise field, by how
+ *     close it is to the worn edge, by whether it faces down, and by the
+ *     crease term the body already carries in the channel (`shadeAO`) raised
+ *     to 1.5 — paint holds dirt where the plate holds shadow.
+ *   THE FADE. The colour is mixed `PAINT.fade` of the way toward the plate it
+ *     sits on before anything else happens to it. Fresh paint is a swatch;
+ *     paint that has been on a body for a campaign is that swatch with the
+ *     plate showing through.
+ *
+ * NOTHING IS EMISSIVE. `worn-paint.mjs` walks every material the paint
+ * touched and refuses `emissiveIntensity > 0`; the ninety-metre read the glow
+ * used to buy is bought with AREA instead — the bells and the crest are the
+ * two largest surfaces on the upper body, and the check measures the painted
+ * area of the meshes `Enemy._applyLod` keeps at range.
+ *
+ * ── THE RESOLUTION PROBLEM, AND WHY THE PAINTER SUBDIVIDES ─────────────────
+ *
+ * A vertex colour is only as sharp as the mesh. Measured on the built trooper:
+ * the cranium is a `plateGeo(…, seg 4)` — a vertex every 4.6 cm — and the
+ * cuirass is an `arcGeo` with TWO rows of vertices, its top edge and its
+ * bottom. Painted as-is, a 4 cm crest stripe lands on one column of vertices
+ * and renders as a 9 cm gradient, and a sternum bar is a soft smear. That is
+ * exactly "slabbing paint on them" in a new medium.
+ *
+ * So the first time a body is painted (`prepPaint`) every triangle that
+ * STRADDLES a region boundary — any region on any rank, so the topology never
+ * moves again afterwards — is split at its edge midpoints until its longest
+ * edge is under `PAINT.fine`. Only the band along the boundary is refined;
+ * the interior and the rest of the body keep their triangles, and the
+ * T-junctions at the band's rim sit where the colour is uniform on both sides,
+ * so they cannot show. Measured on a trooper: 11 300 triangles becomes about
+ * 14 000, and the painted edge is a centimetre wide instead of nine.
+ *
+ * ── WHAT THE OLD CHECKS PINNED, AND WHERE THAT MOVED ───────────────────────
+ *
+ * company.mjs and barracks.mjs asserted that a mark ADDED MESHES, because a
+ * mark that made nothing would have been a mark nobody could see. The same
+ * sentence is now "a mark painted vertices, and added nothing": the records
+ * on `_cmdPaint` / `_cmdMark` / `_cmdBand` carry `color` (the colour asked
+ * for, so a Captain marked blue still answers Captain), `count` (vertices)
+ * and `geos` (what was written and what it was before), and the mesh count
+ * is asserted CONSTANT across a repaint.
+ */
+
+/**
+ * The numbers, in metres, and why each is the number it is.
+ *
+ *   chip    9 mm. The edge wanders ±9 mm — a chip the width of a fingernail,
+ *           which is what plastoid loses when it is knocked against a crate.
+ *   cell    16 mm. The size of one chip. Smaller than the 4.6 cm vertex
+ *           spacing on the cranium, which is why `prepPaint` refines.
+ *   bite    0.18 of `chip`, leaning the wander INWARD: the boundary loses
+ *           paint on average, it does not gain it.
+ *   grime   0.24 — the most a painted vertex is darkened. Two thirds of a
+ *           stop; dust, not soot. Soot is `scorchUp`'s.
+ *   fade    0.12 toward the plate. Enough that a blood-red stripe is a
+ *           campaign old, not enough to read as pink.
+ *   edge    30 mm. The band along a boundary that wears hardest and that the
+ *           refinement works on.
+ *   fine    12 mm. The longest edge a triangle straddling a boundary may keep.
+ *   levels  4 halvings — a 23 cm strip reaches `fine` in four.
+ *   ceiling the largest multiplier a vertex may carry. A paint over the
+ *           undersuit's 0x191c21 is a ×60 on the red channel; the cap is a
+ *           guard against a black material, not a tuning.
+ */
+export const PAINT = {
+  chip: 0.009, cell: 0.016, bite: 0.18, grime: 0.24, fade: 0.12,
+  edge: 0.030, fine: 0.012, levels: 4, ceiling: 96,
+};
+
+/**
+ * THE REGIONS. Bone-local metres at scale 1, multiplied by the body's scale.
+ *
+ * A shape is a list of constraints and a vertex is inside when it meets every
+ * one; the signed distance to the boundary is the smallest of the per-
+ * constraint distances, which is what the chip mask wanders. Constraints:
+ *
+ *   ['x'|'y'|'z', lo, hi]     a slab in bone-local metres
+ *   ['ax', lo, hi]            a slab in |x| — the same stripe on both cheeks
+ *   ['yL', lo, hi]            a slab in FRACTIONS OF THE BONE'S LENGTH, so a
+ *                             band sits a third of the way down whatever
+ *                             forearm it is on
+ *   ['u', nx, ny, nz, lo, hi] a slanted slab: nx·x+ny·y+nz·z in [lo, hi]
+ *   ['face', dx, dz, cos]     a sector round the bone: the vertex's direction
+ *                             in the x/z plane must be within acos(cos) of
+ *                             (dx·side, dz). `side` is -1 on an `L` bone and
+ *                             +1 on an `R` one, so [1, 0] is the OUTSIDE of
+ *                             either leg.
+ *
+ * `under: true` paints the undersuit tube beneath the plate as well as the
+ * plate. That is not a wish to paint cloth: `Enemy._applyLod` culls every
+ * mesh that is not a bone primary or a tagged silhouette past thirty metres,
+ * and a greave is neither. A mark painted only on the greave would vanish at
+ * exactly the range a commander reads their own line from. Painted on the
+ * tube too — in the same band, under the plate, where the plate hides it up
+ * close — the mark is on the man at every distance. The rank's regions are
+ * all on surfaces the LOD keeps (helmet, cuirass, bells, biceps plates,
+ * clavicles, pauldron) and need none of that; the thigh patch is the one
+ * exception and says so.
+ *
+ * WHERE THE BONE'S FRAME POINTS. +y runs ALONG the bone toward its child —
+ * down a leg, down an arm, up the head. +z is the front of the body on every
+ * humanoid bone (Bodies.js seats kneecaps and visors on +z). The legs are a
+ * half-turn about z from the torso, so local +x is the character's RIGHT on a
+ * leg and LEFT on the head; `side` above is what makes "outside" mean the
+ * same thing on both.
+ *
+ * THE HEAD'S NUMBERS come from `buildTrooper`'s `headShell`: the cranium is a
+ * 15.8 cm block centred at y 0.136 — its flat top at 0.215 and the fin to
+ * 0.233 — the faceplate's front at z 0.106, the cheeks flaring at |x| 0.085,
+ * the visor's brow bar at y 0.108. Every constraint below is one of those
+ * numbers plus or minus a plate thickness.
+ */
+export const RANK_REGIONS = [
+  /* Every rank from Veteran up wears these two: they are the two largest
+   * surfaces on the upper body and the ones against the sky, which is what
+   * makes a rank readable at ninety metres without a glow. */
+  { id: 'crest', from: 1, bone: 'head',
+    shape: [['ax', 0, 0.020], ['y', 0.176, Infinity], ['z', -0.105, 0.082]] },
+  { id: 'bell', from: 1, bone: ['armL', 'armR'],
+    shape: [['y', -0.095, 0.053]] },
+  /* A Sergeant adds the cheek stripes — slanting down toward the jaw off the
+   * visor's corner, the way the ARC plate wears them — and a band round the
+   * top of each biceps plate. */
+  { id: 'cheek', from: 2, bone: 'head',
+    shape: [['ax', 0.064, Infinity], ['y', 0.012, 0.128], ['z', -0.050, 0.100],
+      ['u', 0, -0.83, 0.55, -0.058, -0.030]] },
+  { id: 'arm', from: 2, bone: ['armL', 'armR'],
+    shape: [['y', 0.118, 0.164]] },
+  /* A Captain adds the sternum bar down the front of the cuirass and the
+   * outer half of each clavicle. */
+  { id: 'sternum', from: 3, bone: 'chest',
+    shape: [['ax', 0, 0.023], ['y', 0.012, 0.196], ['z', 0.050, Infinity]] },
+  { id: 'clav', from: 3, bone: ['clavL', 'clavR'],
+    shape: [['y', 0.058, 0.140]] },
+  /* A Commander wears the most: the brow above the visor, the chin, the
+   * pauldron if the kit gave him one, and a patch on the front of each thigh
+   * — the yellow commander's cuisses in the reference plate. */
+  { id: 'brow', from: 4, bone: 'head',
+    shape: [['ax', 0, 0.074], ['y', 0.128, 0.162], ['z', 0.055, Infinity]] },
+  { id: 'jaw', from: 4, bone: 'head',
+    shape: [['ax', 0, 0.062], ['y', -0.014, 0.034], ['z', 0.045, Infinity]] },
+  { id: 'pauldron', from: 4, bone: 'chest',
+    shape: [['ax', 0.150, Infinity], ['y', 0.035, 0.185], ['z', -0.120, 0.120]] },
+  { id: 'thigh', from: 4, bone: ['thighL', 'thighR'], under: true,
+    shape: [['yL', 0.28, 0.52], ['face', 0, 1, 0.25]] },
+];
+
+/** The man's own mark: a band on the OUTSIDE of each shin, mid-greave. */
+export const MARK_REGIONS = [
+  { id: 'shin', bone: ['shinL', 'shinR'], under: true,
+    shape: [['yL', 0.44, 0.60], ['face', 1, 0, 0.45]] },
+];
+
+/** The second mark: a ring a third of the way down the right forearm. */
+export const BAND_REGIONS = [
+  { id: 'fore', bone: 'foreR', under: true,
+    shape: [['yL', 0.30, 0.42]] },
+];
+
+/**
+ * A body with none of the bones above — a walker, a droideka's baked group.
+ * The rank goes round the top of whatever trunk it has, the marks lower down,
+ * so every rung of both ladders can wear all three and a man the player
+ * marked can always be found.
+ */
+export const FALLBACK_REGIONS = {
+  rank: { id: 'crown', bone: ['chest', 'spine', 'body', 'hips'], under: true, shape: [['yL', 0.72, 1.0]] },
+  mark: { id: 'waist', bone: ['chest', 'spine', 'body', 'hips'], under: true, shape: [['yL', 0.30, 0.44]] },
+  band: { id: 'belt', bone: ['chest', 'spine', 'body', 'hips'], under: true, shape: [['yL', 0.50, 0.62]] },
+};
+
+/** The record each paint method leaves on the body, by the name the checks read. */
+export const PAINT_SLOTS_OF = { rank: '_cmdPaint', mark: '_cmdMark', band: '_cmdBand' };
+
+/**
+ * Which surfaces take paint, decided off the material's OWN texture rather
+ * than off a palette handle — `Enemy._build` keeps `built.palette` but a
+ * `buildFigure` stub does not, and one rule for both is what keeps the deck
+ * and the field agreeing.
+ *
+ *   'plate'  the armour bake at armour metalness. `armorMat` is 0.08–0.25
+ *            across every body in Bodies.js; `leatherMat`, `scorchMat` and
+ *            `boneMat` share the armour BAKE at 0.02–0.04, and none of those
+ *            is a surface a sprayer would touch. tools/checks/worn-paint.mjs
+ *            builds a trooper and holds this rule to its palette: plate and
+ *            accent in, gear, scorch, visor and undersuit out.
+ *   'under'  the cloth bake — the undersuit a region with `under: true` reaches
+ *            beneath its plate.
+ *   null     everything else: glass, metal, a photoreceptor (an emissive with
+ *            no map at all), a flame, a blade.
+ */
+export function paintSurface(mat) {
+  if (!mat || Array.isArray(mat) || !mat.isMeshStandardMaterial) return null;
+  if (mat.transparent || (mat.blending !== undefined && mat.blending !== THREE.NormalBlending)) return null;
+  const bake = mat.map?.userData?.saberBake;
+  if (!bake) return null;
+  if (bake === 'armor' && (mat.metalness ?? 0) >= 0.06) return 'plate';
+  if (bake === 'cloth') return 'under';
+  return null;
+}
+
+const _pp = new THREE.Vector3();
+const _pn = new THREE.Vector3();
+const _pm = new THREE.Matrix4();
+const _pnm = new THREE.Matrix3();
+
+/**
+ * Signed distance from `p` (bone-local metres) to the boundary of `reg`:
+ * positive inside, in metres, and the minimum over the shape's constraints.
+ * `S` is the body scale, `L` the bone's length, `side` ±1 (see RANK_REGIONS).
+ */
+export function regionDist(reg, p, S, L, side) {
+  let d = Infinity;
+  for (const c of reg.shape) {
+    let t;
+    switch (c[0]) {
+      case 'x': t = Math.min(p.x - c[1] * S, c[2] * S - p.x); break;
+      case 'y': t = Math.min(p.y - c[1] * S, c[2] * S - p.y); break;
+      case 'z': t = Math.min(p.z - c[1] * S, c[2] * S - p.z); break;
+      case 'ax': {
+        /* A stripe astride the centreline has ONE edge, not two: with lo = 0
+         * the naive form made x = 0 a boundary, so the chip mask ate the
+         * middle of every crest and the refiner split the whole centre strip
+         * of the helmet — 9 350 triangles became 232 000. */
+        const a = Math.abs(p.x);
+        t = c[1] > 0 ? Math.min(a - c[1] * S, c[2] * S - a) : c[2] * S - a;
+        break;
+      }
+      case 'yL': t = Math.min(p.y - c[1] * L, c[2] * L - p.y); break;
+      case 'u': {
+        const n = Math.hypot(c[1], c[2], c[3]) || 1;
+        const u = c[1] * p.x + c[2] * p.y + c[3] * p.z;
+        t = Math.min(u - c[4] * S, c[5] * S - u) / n;
+        break;
+      }
+      case 'face': {
+        const r = Math.hypot(p.x, p.z);
+        const dot = r > 1e-6 ? (c[1] * side * p.x + c[2] * p.z) / r : -1;
+        /* An angle, made a length by the radius it is measured at, so the chip
+         * mask sees metres here as everywhere else. */
+        t = (dot - c[3]) * Math.max(r, 0.02);
+        break;
+      }
+      default: t = -Infinity;
+    }
+    if (t < d) d = t;
+  }
+  return d;
+}
+
+/** Is this vertex bare — outside the wandering edge, or a chip near it? */
+function chippedAway(x, y, z, d, seed) {
+  const w = WEAR.wear(x, y, z, PAINT.cell, seed);
+  if (d <= PAINT.chip * ((w - 0.5) * 2 + PAINT.bite)) return true;
+  if (d < PAINT.edge && WEAR.hash3(x, y, z, PAINT.cell * 0.6, seed + 3) > 0.955) return true;
+  return false;
+}
+
+/**
+ * The multiplier that makes a vertex RENDER as `want` on `mat`.
+ *
+ * The shader draws `material.color × vColor × map`, and Bodies.js authored
+ * every armour tint looking at the result of `color × map` — so a paint
+ * written straight into the channel would come out at the map's mean, 0.668,
+ * on the plate and at 0.35 on a droid's steel. `lit`/`note` record each
+ * material's `mapMean`; the paint is scaled so it renders at the ARMOUR
+ * convention on every surface, which is what "the same red on the shin and
+ * on the strut" means. The undersuit's tint is 0x191c21, so a red over it is
+ * a ×60 on one channel; `PAINT.ceiling` bounds that.
+ */
+function carrierOf(mat) {
+  const mean = mat.userData?.mapMean || (mat.map ? MEAN_ALBEDO.armor : [1, 1, 1]);
+  const A = MEAN_ALBEDO.armor;
+  return [A[0] / mean[0], A[1] / mean[1], A[2] / mean[2]];
+}
+
+function vColorFor(out, k, want, r, g, b, c) {
+  const cr = c.r > 1e-4 ? c.r : 1e-4, cg = c.g > 1e-4 ? c.g : 1e-4, cb = c.b > 1e-4 ? c.b : 1e-4;
+  out[k] = Math.min(PAINT.ceiling, want[0] * r / cr);
+  out[k + 1] = Math.min(PAINT.ceiling, want[1] * g / cg);
+  out[k + 2] = Math.min(PAINT.ceiling, want[2] * b / cb);
+}
+
+/** `side` for a bone name: -1 on the left, +1 on the right or on the axis. */
+const sideOf = (name) => (/L$/.test(name) ? -1 : 1);
+
+/**
+ * Every mesh a region reaches on a body: the bone's own direct children that
+ * take paint — the primary tube (when `under`) and the Kit bakes hanging on
+ * it. Child BONES are objects too and are skipped by `userData.boneChild`.
+ * A group body (no rig) is walked as one bone whose length is its height.
+ */
+function eachRegionMesh(e, reg, fn) {
+  const rig = e.rig;
+  const names = Array.isArray(reg.bone) ? reg.bone : [reg.bone];
+  const S = rig?.scale ?? e.A?.scale ?? 1;
+  let hit = false;
+  if (rig?.get) {
+    for (const name of names) {
+      const b = rig.get(name);
+      if (!b || !b.obj) continue;
+      for (const m of b.obj.children) {
+        if (!m.isMesh || m.userData.boneChild || m.userData.mergedSkinL2 || m.userData.jetFlame) continue;
+        const surf = paintSurface(m.material);
+        if (!surf || (surf === 'under' && !reg.under)) continue;
+        const g = m.geometry;
+        if (!g?.attributes?.position || (g.morphAttributes && Object.keys(g.morphAttributes).length)) continue;
+        hit = true;
+        fn(m, S, b.length || 0.2, sideOf(name), 0);
+      }
+      if (hit && reg.first) break;
+    }
+    return hit;
+  }
+  if (e.group) {
+    const box = new THREE.Box3().setFromObject(e.group);
+    const H = Math.max(0.1, box.max.y - box.min.y);
+    e.group.traverse((m) => {
+      if (!m.isMesh || m.userData.jetFlame) return;
+      const surf = paintSurface(m.material);
+      if (!surf || (surf === 'under' && !reg.under)) return;
+      hit = true;
+      fn(m, S, H, 1, box.min.y);
+    });
+  }
+  return hit;
+}
+
+/** Vertex `i` of `m`, in the bone's frame (`lift` is the group fallback's floor). */
+function boneSpace(m, i, P, lift) {
+  _pp.fromBufferAttribute(P, i).applyMatrix4(_pm);
+  _pp.y -= lift;
+  return _pp;
+}
+
+/**
+ * Split every triangle that straddles a region's boundary band until its
+ * longest edge is under `PAINT.fine`. In place, on the mesh's own geometry —
+ * the mesh, `_lodParts`, `bone.primary` and `userData.limb` all keep their
+ * handles, only the buffers grow. Returns true if anything was split.
+ *
+ * Attributes are interpolated generically (normals renormalised) so a
+ * geometry with a `uv1` or a colour channel keeps it. Midpoints are shared
+ * between the two triangles on an edge; a midpoint on an edge whose other
+ * triangle did NOT split is a T-junction, and those only ever sit on the rim
+ * of the band where the colour is the same on both sides — the header says
+ * why that cannot show.
+ */
+function refineBand(m, distAt, band) {
+  const geo = m.geometry;
+  let did = false;
+  for (let level = 0; level < PAINT.levels; level++) {
+    const P = geo.attributes.position;
+    const n = P.count;
+    const idx = geo.index ? Array.from(geo.index.array) : Array.from({ length: n }, (_, i) => i);
+    const d = new Float64Array(n);
+    for (let i = 0; i < n; i++) d[i] = distAt(P.getX(i), P.getY(i), P.getZ(i));
+    const names = Object.keys(geo.attributes);
+    const arrs = {}, sizes = {};
+    for (const k of names) { arrs[k] = Array.from(geo.attributes[k].array); sizes[k] = geo.attributes[k].itemSize; }
+    let count = n;
+    const mids = new Map();
+    const dl = [];
+    const px = (i) => arrs.position[i * 3], py = (i) => arrs.position[i * 3 + 1], pz = (i) => arrs.position[i * 3 + 2];
+    const edge = (a, b) => Math.hypot(px(a) - px(b), py(a) - py(b), pz(a) - pz(b));
+    const mid = (a, b) => {
+      const key = a < b ? a * 4194304 + b : b * 4194304 + a;
+      let k = mids.get(key);
+      if (k !== undefined) return k;
+      k = count++;
+      for (const nm of names) {
+        const sz = sizes[nm], A = arrs[nm];
+        for (let j = 0; j < sz; j++) A.push((A[a * sz + j] + A[b * sz + j]) * 0.5);
+        if (nm === 'normal') {
+          const o = k * 3, l = Math.hypot(A[o], A[o + 1], A[o + 2]) || 1;
+          A[o] /= l; A[o + 1] /= l; A[o + 2] /= l;
+        }
+      }
+      dl.push(distAt(px(k), py(k), pz(k)));
+      mids.set(key, k);
+      return k;
+    };
+    const dist = (i) => (i < n ? d[i] : dl[i - n]);
+    const out = [];
+    let split = 0;
+    for (let t = 0; t < idx.length; t += 3) {
+      const a = idx[t], b = idx[t + 1], c = idx[t + 2];
+      const da = dist(a), db = dist(b), dc = dist(c);
+      const lo = Math.min(da, db, dc), hi = Math.max(da, db, dc);
+      const straddles = lo < band && hi > -band;
+      if (!straddles || Math.max(edge(a, b), edge(b, c), edge(c, a)) <= PAINT.fine) {
+        out.push(a, b, c);
+        continue;
+      }
+      const ab = mid(a, b), bc = mid(b, c), ca = mid(c, a);
+      out.push(a, ab, ca, ab, b, bc, ca, bc, c, ab, bc, ca);
+      split++;
+    }
+    if (!split) break;
+    did = true;
+    for (const nm of names) {
+      geo.setAttribute(nm, new THREE.BufferAttribute(new Float32Array(arrs[nm]), sizes[nm]));
+    }
+    geo.setIndex(new THREE.BufferAttribute(count > 65535 ? new Uint32Array(out) : new Uint16Array(out), 1));
+  }
+  if (did) { geo.computeBoundingSphere(); geo.computeBoundingBox(); }
+  return did;
+}
+
+/** A neutral channel for a geometry that has none — Bodies.js `white()`, here. */
+function ensureChannel(geo) {
+  if (!geo?.attributes?.position || geo.attributes.color) return;
+  geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 3).fill(1), 3));
+}
+
+/**
+ * READY A BODY FOR PAINT, ONCE.
+ *
+ * Refines the boundary bands of EVERY region — all four ranks, both marks —
+ * so a promotion or a new mark later never changes a vertex count, which is
+ * what lets src/game/MergedSkin.js and the deck's wash treat the topology as
+ * fixed. Also finds the plate the fade leans toward: the paintable armour
+ * material carrying the most vertices, which on a trooper is the plate by
+ * construction. Idempotent; returns the prep record.
+ */
+export function prepPaint(e) {
+  if (!e) return null;
+  if (e._paintPrep) return e._paintPrep;
+  const prep = { plate: [0.8, 0.8, 0.8], flipped: new Set(), split: 0 };
+  const tables = [RANK_REGIONS, MARK_REGIONS, BAND_REGIONS, ...Object.values(FALLBACK_REGIONS).map((r) => [r])];
+  const votes = new Map();
+  for (const table of tables) {
+    for (const reg of table) {
+      eachRegionMesh(e, reg, (m, S, L, side, lift) => {
+        m.updateMatrix();
+        _pm.copy(m.matrix);
+        const distAt = (x, y, z) => {
+          _pp.set(x, y, z).applyMatrix4(_pm);
+          _pp.y -= lift;
+          return regionDist(reg, _pp, S, L, side);
+        };
+        if (refineBand(m, distAt, PAINT.edge)) prep.split++;
+        if (paintSurface(m.material) === 'plate') {
+          votes.set(m.material, (votes.get(m.material) || 0) + m.geometry.attributes.position.count);
+        }
+      });
+    }
+  }
+  let best = null, bestN = -1;
+  for (const [mat, n] of votes) if (n > bestN) { best = mat; bestN = n; }
+  if (best) {
+    const a = best.userData?.authored;
+    prep.plate = a ? [a[0], a[1], a[2]] : [best.color.r, best.color.g, best.color.b];
+  }
+  e._paintPrep = prep;
+  return prep;
+}
+
+/**
+ * Turn the channel on for a material the paint has reached, and give every
+ * geometry that shares the material a channel to be read — three renders a
+ * `vertexColors` material over a colour-less geometry BLACK, and a Kit bucket
+ * of bare rivets has no channel until somebody hands it one.
+ */
+function flipVertexColors(e, mat, prep) {
+  if (prep.flipped.has(mat)) return;
+  prep.flipped.add(mat);
+  const roots = [e.rig?.root, e.group].filter(Boolean);
+  for (const root of roots) {
+    root.traverse((o) => { if (o.isMesh && o.material === mat) ensureChannel(o.geometry); });
+  }
+  if (!mat.vertexColors) { mat.vertexColors = true; mat.needsUpdate = true; }
+}
+
+/** Put the vertices a record painted back to what they were. */
+function restorePaint(rec) {
+  if (!rec?.geos) return;
+  for (const [geo, g] of rec.geos) {
+    const col = geo.attributes.color;
+    if (!col || col.count !== g.count) continue;   // the geometry moved under us; nothing to give back
+    for (let k = 0; k < g.idx.length; k++) col.setXYZ(g.idx[k], g.orig[k * 3], g.orig[k * 3 + 1], g.orig[k * 3 + 2]);
+    col.needsUpdate = true;
+  }
+}
+
+/** Write a record's `want` into the channel against the materials AS THEY ARE NOW. */
+function writePaint(rec) {
+  if (!rec?.geos) return;
+  const out = [0, 0, 0];
+  for (const [geo, g] of rec.geos) {
+    const col = geo.attributes.color;
+    if (!col || col.count !== g.count) continue;
+    const c = g.mat.color, [kr, kg, kb] = carrierOf(g.mat);
+    for (let k = 0; k < g.idx.length; k++) {
+      vColorFor(out, 0, [g.want[k * 3], g.want[k * 3 + 1], g.want[k * 3 + 2]], kr, kg, kb, c);
+      col.setXYZ(g.idx[k], out[0], out[1], out[2]);
+    }
+    col.needsUpdate = true;
+  }
+}
+
+/**
+ * PAINT ONE SLOT — the whole mechanism, shared by the three public methods.
+ *
+ * Restores whatever this slot painted before, then for each region in turn
+ * walks the meshes it reaches, classifies every vertex, and records what it
+ * wrote (`idx`), what it was (`orig`) and what it should RENDER as (`want`,
+ * linear rgb before the material is divided out) — so a material recoloured
+ * later (`refreshPaint`) or a rank that changes again can be re-derived
+ * without touching a mesh.
+ *
+ * Returns the record, or null when no region reached a vertex.
+ */
+function paintSlot(e, slotName, color, regions, seedBase, fallback) {
+  const prep = prepPaint(e);
+  if (!prep) return null;
+  const key = PAINT_SLOTS_OF[slotName];
+  restorePaint(e[key]);
+  const asked = new THREE.Color(color);
+  const paint = [
+    lerp(asked.r, prep.plate[0], PAINT.fade),
+    lerp(asked.g, prep.plate[1], PAINT.fade),
+    lerp(asked.b, prep.plate[2], PAINT.fade),
+  ];
+  const rec = {
+    kind: slotName, color: asked, emissive: new THREE.Color(0x000000), emissiveIntensity: 0,
+    paint, regions: [], count: 0, geos: new Map(), key: `${slotName}:${asked.getHexString()}`,
+  };
+  const want = [0, 0, 0];
+  const out = [0, 0, 0];
+  const runRegion = (reg, seed) => {
+    let painted = 0;
+    eachRegionMesh(e, reg, (m, S, L, side, lift) => {
+      const geo = m.geometry;
+      ensureChannel(geo);
+      m.updateMatrix();
+      _pm.copy(m.matrix);
+      _pnm.getNormalMatrix(_pm);
+      const P = geo.attributes.position, N = geo.attributes.normal, C = geo.attributes.color;
+      let g = rec.geos.get(geo);
+      const idx = [], orig = [], wants = [];
+      const mat = m.material;
+      const c = mat.color, [kr, kg, kb] = carrierOf(mat);
+      const s2 = seed + side * 7;
+      for (let i = 0; i < P.count; i++) {
+        const p = boneSpace(m, i, P, lift);
+        const d = regionDist(reg, p, S, L, side);
+        if (d <= -PAINT.chip) continue;
+        if (chippedAway(p.x, p.y, p.z, d, s2)) continue;
+        if (N) _pn.fromBufferAttribute(N, i).applyMatrix3(_pnm);
+        else _pn.set(0, 1, 0);
+        /* What the plate already carries — the creases — and the dirt the
+         * paint adds on top of it. */
+        const r0 = C.getX(i), g0 = C.getY(i), b0 = C.getZ(i);
+        const ao = Math.min(1, (r0 + g0 + b0) / 3);
+        const crease = Math.pow(Math.max(0, ao), 1.5);
+        const wn = WEAR.wear(p.x, p.y, p.z, 0.05, s2 + 5);
+        const near = clamp(1 - d / PAINT.edge, 0, 1);
+        const down = _pn.y < -0.2 ? 1 : 0;
+        const grime = 1 - PAINT.grime * clamp(0.10 + 0.35 * wn + 0.35 * near + 0.20 * down, 0, 1);
+        want[0] = paint[0] * crease * grime; want[1] = paint[1] * crease * grime; want[2] = paint[2] * crease * grime;
+        vColorFor(out, 0, want, kr, kg, kb, c);
+        idx.push(i); orig.push(r0, g0, b0); wants.push(want[0], want[1], want[2]);
+        C.setXYZ(i, out[0], out[1], out[2]);
+      }
+      if (!idx.length) return;
+      painted += idx.length;
+      C.needsUpdate = true;
+      flipVertexColors(e, mat, prep);
+      if (!g) rec.geos.set(geo, (g = { mesh: m, mat, count: P.count, idx: [], orig: [], want: [] }));
+      for (let k = 0; k < idx.length; k++) {
+        g.idx.push(idx[k]);
+        g.orig.push(orig[k * 3], orig[k * 3 + 1], orig[k * 3 + 2]);
+        g.want.push(wants[k * 3], wants[k * 3 + 1], wants[k * 3 + 2]);
+      }
+    });
+    if (painted) { rec.regions.push(reg.id); rec.count += painted; }
+    return painted;
+  };
+  let seed = seedBase;
+  for (const reg of regions) runRegion(reg, seed += 13);
+  if (!rec.count && fallback) runRegion(fallback, seed + 101);
+  for (const g of rec.geos.values()) {
+    g.idx = Uint32Array.from(g.idx); g.orig = Float32Array.from(g.orig); g.want = Float32Array.from(g.want);
+  }
+  if (!rec.count) { e[key] = null; return null; }
+  e[key] = rec;
+  e._paintRev = (e._paintRev || 0) + 1;
+  e._paintKey = ['rank', 'mark', 'band'].map((k) => e[PAINT_SLOTS_OF[k]]?.color?.getHexString?.() || '-').join('|');
+  return rec;
+}
+
+/**
+ * Re-derive every painted vertex against the materials as they are NOW. The
+ * deck recolours a whole material (`DeckEdit.wearPaint`'s paint slots); a
+ * vertex that was written as `want ÷ oldColour` would then render as
+ * `want × new ÷ old`. Cheap: no mesh is walked, only the records.
+ */
+export function refreshPaint(e) {
+  if (!e) return 0;
+  let n = 0;
+  for (const key of Object.values(PAINT_SLOTS_OF)) {
+    const rec = e[key];
+    if (!rec?.geos) continue;
+    writePaint(rec);
+    n++;
+  }
+  if (n) e._paintRev = (e._paintRev || 0) + 1;
+  return n;
+}
+
+/** Take one slot's paint off the body (a cleared mark) and drop its record. */
+export function clearPaint(e, slotName) {
+  const key = PAINT_SLOTS_OF[slotName];
+  if (!e || !e[key]) return false;
+  restorePaint(e[key]);
+  e[key] = null;
+  e._paintRev = (e._paintRev || 0) + 1;
+  e._paintKey = ['rank', 'mark', 'band'].map((k) => e[PAINT_SLOTS_OF[k]]?.color?.getHexString?.() || '-').join('|');
+  return true;
+}
+
+/**
+ * What the body is wearing, as a sorted list of `slot:region=vertices` — the
+ * shape tools/checks/worn-paint.mjs compares between an Enemy and a parade
+ * figure of the same man.
+ */
+export function paintReport(e) {
+  const out = [];
+  for (const [slot, key] of Object.entries(PAINT_SLOTS_OF)) {
+    const rec = e?.[key];
+    if (!rec?.geos) continue;
+    const per = new Map();
+    for (const g of rec.geos.values()) {
+      const name = g.mesh.parent?.userData?.bone?.name || 'group';
+      per.set(name, (per.get(name) || 0) + g.idx.length);
+    }
+    for (const [bone, n] of per) out.push(`${slot}:${bone}=${n}`);
+    out.push(`${slot}:regions=${rec.regions.join('+')}`);
+  }
+  return out.sort();
+}
+
+/** The rank whose colour this is, for a caller that only has the colour. */
+function rankOfColor(color) {
+  const i = RANKS.findIndex((r) => r.color != null && r.color === color);
+  return i > 0 ? i : 1;
 }
 
 /** The rank index this much experience has earned. */
@@ -3608,32 +4300,16 @@ const _slot = new THREE.Vector3();
 const _hide = new THREE.Vector3();
 
 /**
- * The rank insignia, as two shared geometries.
- *
- * SHARED, and that is the whole reason they are module-level constants rather
- * than built per body: `installPlates` allocates a fresh `plateGeo` for every
- * plate on every elite and disposes none of them, which is a pre-existing leak
- * this mode declines to copy. A campaign promotes a dozen bodies five times
- * each; sixty geometries for two shapes is sixty geometries too many.
- *
- * The crest is a thin fin along the crown — the shape the helmet already has,
- * in the rank's colour, standing a few millimetres proud. The bell is a shallow
- * cap over the shoulder. Both are LOW POLY on purpose: they are 4-8 triangles
- * apiece against a body of 11 342, and they exist to be a colour at ninety
- * metres rather than a shape at two.
+ * A wound made visible: a shallow scorch chip on the chest plate. The ONE
+ * shape still bolted onto a body by this file. The rank crest, the shoulder
+ * bells, the shin stripe and the forearm band that used to sit beside it are
+ * paint now — see `PAINT` — but a scorch is not a marking, it is a burn, and
+ * a matte chip standing a few millimetres proud is what a burn through a
+ * plastoid plate looks like. Shared, for the reason the old note gave:
+ * `installPlates` allocates a fresh geometry per plate and disposes none,
+ * which is a leak this mode declines to copy.
  */
-const CREST_GEO = new THREE.BoxGeometry(0.026, 0.052, 0.150);
-/** A man's own stripe — see `MARKS`. Wider than it is tall, and shallow. */
-const MARK_GEO = new THREE.BoxGeometry(0.030, 0.110, 0.075);
-/** The second place a mark can go — a ring's worth of band on a forearm. */
-const BAND_GEO = new THREE.BoxGeometry(0.062, 0.052, 0.062);
-/** A wound made visible: a shallow scorch chip on the chest plate. */
 const SCORCH_GEO = new THREE.BoxGeometry(0.075, 0.055, 0.020);
-const BELL_GEO = (() => {
-  const g = new THREE.SphereGeometry(0.088, 8, 4, 0, TAU, 0, Math.PI * 0.42);
-  g.scale(1.15, 0.8, 1.05);
-  return g;
-})();
 
 /**
  * ENLIST A SPAWNED BODY.
@@ -9224,213 +9900,69 @@ export class CommandDirector extends WaveDirector {
   }
 
   /**
-   * PUT THE RANK ON THE BODY.
+   * PUT THE RANK ON THE BODY — as paint, in the plate's own vertices.
    *
-   * THE OBVIOUS VERSION DOES NOT WORK, and the reason is worth recording rather
-   * than discovering twice. `buildTrooper` returns `{ rig, palette: { plate,
-   * under, accent, … } }`, and `accent` is precisely the material that lands on
-   * the crest, the shoulder bells and the knees — the three pieces every
-   * reference plate of this battle paints a unit colour onto. So "recolour
-   * `palette.accent`" is the right instinct. But `Enemy._build` does not keep
-   * the palette: `const built = A.build(opts)` is a local, and only
-   * `built.palette.robe` is ever read back out of it. There is no handle on the
-   * accent material from outside Bodies.js, and Bodies.js is not this mode's to
-   * edit. (The one-word fix is in the handover at the foot of this file.)
+   * See the header over `PAINT`. This used to bolt a crest box and two bell
+   * caps onto the bones in a flat, faintly emissive material, and the reason
+   * it did is worth keeping: `Enemy._build` did not keep the builder's
+   * palette, so there was no handle on the accent material from outside
+   * Bodies.js. There still is none needed — the paint goes into the colour
+   * channel of whatever armour hangs on the named bones, found by
+   * `paintSurface` off the material's own texture, and the same call on a
+   * `buildFigure` stub does exactly the same thing.
    *
-   * The second instinct — recolour every material whose hex happens to equal the
-   * archetype's authored accent — needs a table of "what colour is each
-   * archetype's accent", beside the builders that actually decide it. That is
-   * the hand-maintained-twin defect this repository has been bitten by eight
-   * times, and it would be wrong the first time somebody retunes a swatch.
+   * THE AMOUNT OF PAINT IS THE RANK, as it was on Phase I plate: a Veteran
+   * wears the crest stripe and the shoulder bells, a Sergeant adds the cheeks
+   * and the biceps bands, a Captain the sternum bar and the clavicles, a
+   * Commander the brow, the chin, the pauldron and the thighs — `RANK_REGIONS`
+   * with `from`. The rank is passed when the caller has it (`enlistBody`,
+   * `_promoteTrooper`), read off `e.trooper` when the body carries one, and
+   * looked up from the colour otherwise: a parade stub is handed only the
+   * colour, and `RANKS` colours are unique per rung.
    *
-   * So the rank is BOLTED ON instead, in exactly the way `MODIFIERS` already
-   * bolts a standard onto a leader and plates onto an armoured body: shared
-   * geometry, one material per body pushed to `_modMaterials` (which
-   * `Enemy.dispose` frees), parented to bones. Three pieces, and they are the
-   * three the references use:
+   * Idempotent, and CONSTANT IN MESHES: a second call with another colour
+   * restores what the first wrote and paints again. Nothing is added to the
+   * scene, nothing goes on `_modMeshes`, and there is nothing to free — the
+   * paint is in geometry the rig already owns and `Rig.dispose` already walks.
    *
-   *   the CREST     a flash along the crown of the helmet — the single most
-   *                 legible rank mark in every clone plate, because it is the
-   *                 part of the silhouette that is against the sky.
-   *   the BELLS     a cap over each shoulder. Two of them, so the mark survives
-   *                 the body being seen from either side.
-   *
-   * A body with no `head`/`clav` bones (a droideka is a baked group, a walker
-   * has no clavicles) gets a band at the top of whatever bone it does have, so
-   * every rung of both ladders can wear a rank.
-   *
-   * @returns true if the insignia actually went on.
+   * @returns true if any vertex took the colour.
    */
-  repaint(e, color) {
+  repaint(e, color, rank = null) {
     if (!e || color == null) return false;
-    if (e._cmdPaint) { e._cmdPaint.color.setHex(color); e._cmdPaint.emissive?.setHex(color); return true; }
-    const rig = e.rig;
-    const S = e.A?.scale ?? 1;
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.42, metalness: 0.2 });
-    // Faintly self-lit, because this has to read across a dust plain at ninety
-    // metres in the flat light this level is authored for, and a matte chip in
-    // shadow reads as dirt. 0.22 is under the emissive floor anything in this
-    // game glows at — it is legibility, not a light source.
-    mat.emissive = new THREE.Color(color);
-    mat.emissiveIntensity = 0.22;
-    e._cmdPaint = mat;
-    (e._modMaterials || (e._modMaterials = [])).push(mat);
-    const meshes = e._modMeshes || (e._modMeshes = []);
-    let on = 0;
-    const bolt = (boneName, geo, y, z, scale) => {
-      const b = rig?.get?.(boneName);
-      if (!b) return;
-      const m = new THREE.Mesh(geo, mat);
-      m.scale.setScalar(S * (scale ?? 1));
-      m.position.set(0, y * (b.length || 0.2), z * S);
-      m.castShadow = true;
-      b.obj.add(m);
-      meshes.push(m);
-      on++;
-    };
-    bolt('head', CREST_GEO, 0.86, -0.02, 1);
-    bolt('clavL', BELL_GEO, 0.55, 0, 1);
-    bolt('clavR', BELL_GEO, 0.55, 0, 1);
-    if (!on) {
-      // Nothing humanoid to hang it on. The chest, the spine, or — for a baked
-      // group like a droideka — the group itself, so the rank is never invisible
-      // just because the chassis is unusual.
-      bolt('chest', BELL_GEO, 0.62, 0.06, 1.6);
-      if (!on && e.group) {
-        const m = new THREE.Mesh(BELL_GEO, mat);
-        m.scale.setScalar(S * 2.0);
-        m.position.set(0, 1.1 * S, 0);
-        e.group.add(m);
-        meshes.push(m);
-        on++;
-      }
-    }
-    return on > 0;
+    const r = rank ?? (typeof e.trooper?.rank === 'number' ? e.trooper.rank : rankOfColor(color));
+    const regions = RANK_REGIONS.filter((reg) => reg.from <= Math.max(1, r | 0));
+    const rec = paintSlot(e, 'rank', color, regions, 100, FALLBACK_REGIONS.rank);
+    if (rec) rec.rank = r;
+    return !!rec;
   }
 
   /**
    * A MAN'S OWN MARK, painted low where nothing else is.
    *
-   * See `MARKS` for what this is and what it deliberately is not. The one thing
-   * worth restating at the call site: it is a SECOND material and a second pair
-   * of meshes, never a recolour of `_cmdPaint`. A mark that overwrote the rank
-   * paint would make a Captain the player had marked blue read as a Sergeant at
-   * every distance the rank is legible at, and the rank is the more important
-   * of the two sentences.
+   * See `MARKS` for what this is and what it deliberately is not. It is a
+   * SECOND record (`_cmdMark`) over a second set of regions, never a recolour
+   * of the rank's: `MARK_REGIONS` is the outside of each shin and
+   * `RANK_REGIONS` never goes below the thigh, so a Captain the player marked
+   * blue reads as a Captain at every distance the rank is legible at.
    *
-   * Both meshes go on `_modMeshes`/`_modMaterials`, which is what the body's
-   * own teardown walks — a mark that outlived its Enemy would be a leak of one
-   * material and two meshes per man per area boundary.
+   * `under: true` on the shin region is what keeps the mark on him past
+   * thirty metres — see the note over `RANK_REGIONS`.
    */
   markUp(e, color) {
     if (!e || color == null) return false;
-    if (e._cmdMark) { e._cmdMark.color.setHex(color); e._cmdMark.emissive?.setHex(color); return true; }
-    const rig = e.rig;
-    const S = e.A?.scale ?? 1;
-    /* The same 0.22 the rank paint carries, and for the same reason its note
-     * gives: a matte chip in shadow reads as dirt at ninety metres in this
-     * game's flat light. It is legibility and not a light source. */
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.15 });
-    mat.emissive = new THREE.Color(color);
-    mat.emissiveIntensity = 0.22;
-    e._cmdMark = mat;
-    (e._modMaterials || (e._modMaterials = [])).push(mat);
-    const meshes = e._modMeshes || (e._modMeshes = []);
-    let on = 0;
-    const band = (boneName, side) => {
-      const b = rig?.get?.(boneName);
-      if (!b) return;
-      const m = new THREE.Mesh(MARK_GEO, mat);
-      m.scale.setScalar(S);
-      /* Half way down the bone and proud of its outside face — a stripe you
-       * can see from the side and from behind, which is where a commander sees
-       * their own line from. POSITIVE y, because a bone's local +y runs ALONG
-       * it toward its child (`rest: [0,-1,…]` is the world-space rest
-       * direction, not the local axis) — the same sign `repaint` uses to put a
-       * pauldron above the clavicle. Negative here would bury both stripes in
-       * the thighs. */
-      m.position.set(side * 0.055 * S, 0.5 * (b.length || 0.4), 0);
-      m.castShadow = false;
-      b.obj.add(m);
-      meshes.push(m);
-      on++;
-    };
-    band('shinL', -1);
-    band('shinR', 1);
-    if (!on) {
-      /* Nothing with shins on it — a droideka, a walker. The mark goes on the
-       * chest instead rather than being silently dropped: a man the player
-       * marked and cannot find is the defect this feature exists to fix. */
-      const b = rig?.get?.('chest');
-      if (b) {
-        const m = new THREE.Mesh(MARK_GEO, mat);
-        m.scale.setScalar(S * 1.4);
-        m.position.set(0, 0.1, 0.09 * S);
-        b.obj.add(m); meshes.push(m); on++;
-      } else if (e.group) {
-        const m = new THREE.Mesh(MARK_GEO, mat);
-        m.scale.setScalar(S * 2.2);
-        m.position.set(0, 0.55 * S, 0);
-        e.group.add(m); meshes.push(m); on++;
-      }
-    }
-    return on > 0;
+    return !!paintSlot(e, 'mark', color, MARK_REGIONS, 300, FALLBACK_REGIONS.mark);
   }
 
   /**
-   * THE SECOND MARK — a band on the right forearm, from the same palette.
-   *
-   * `markUp`'s rules verbatim, one bone over: its own material and mesh, never
-   * a recolour of the rank paint or the shin mark, registered on
-   * `_modMeshes`/`_modMaterials` so the body's own teardown frees it, and
-   * re-applied at every area boundary because bodies are rebuilt. The forearm
-   * because it is the one paintable site the reserved language does not use —
-   * the crest and bells are the rank's, the shins are the mark's — and because
-   * an arm is what a commander sees raised when a man is firing.
+   * THE SECOND MARK — a ring a third of the way down the right forearm, from
+   * the same palette. `markUp`'s rules verbatim, one bone over: its own
+   * record, its own regions, and a body with no forearm gets it round the
+   * trunk rather than not at all — a man the player painted and cannot find
+   * is the defect this exists to fix.
    */
   bandUp(e, color) {
     if (!e || color == null) return false;
-    if (e._cmdBand) { e._cmdBand.color.setHex(color); e._cmdBand.emissive?.setHex(color); return true; }
-    const rig = e.rig;
-    const S = e.A?.scale ?? 1;
-    const mat = new THREE.MeshStandardMaterial({ color, roughness: 0.5, metalness: 0.15 });
-    mat.emissive = new THREE.Color(color);
-    mat.emissiveIntensity = 0.22;
-    e._cmdBand = mat;
-    (e._modMaterials || (e._modMaterials = [])).push(mat);
-    const meshes = e._modMeshes || (e._modMeshes = []);
-    let on = 0;
-    const b = rig?.get?.('foreR');
-    if (b) {
-      const m = new THREE.Mesh(BAND_GEO, mat);
-      m.scale.setScalar(S);
-      /* A third of the way down the forearm — clear of the vambrace plate and
-       * of the hand, and positive y for `markUp`'s reason: a bone's local +y
-       * runs along it toward its child. */
-      m.position.set(0, 0.35 * (b.length || 0.3), 0);
-      m.castShadow = false;
-      b.obj.add(m);
-      meshes.push(m);
-      on++;
-    }
-    if (!on) {
-      /* No forearm — a droideka, a walker. The chest, then the group, exactly
-       * as the shin mark falls back: a man the player painted and cannot find
-       * is the defect both of these exist to fix. */
-      const c = rig?.get?.('chest');
-      if (c) {
-        const m = new THREE.Mesh(BAND_GEO, mat);
-        m.scale.setScalar(S * 1.3);
-        m.position.set(0.09 * S, 0.3 * (c.length || 0.3), 0.06 * S);
-        c.obj.add(m); meshes.push(m); on++;
-      } else if (e.group) {
-        const m = new THREE.Mesh(BAND_GEO, mat);
-        m.scale.setScalar(S * 2.0);
-        m.position.set(0.3 * S, 0.7 * S, 0);
-        e.group.add(m); meshes.push(m); on++;
-      }
-    }
-    return on > 0;
+    return !!paintSlot(e, 'band', color, BAND_REGIONS, 500, FALLBACK_REGIONS.band);
   }
 
   /**

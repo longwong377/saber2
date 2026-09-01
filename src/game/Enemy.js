@@ -282,7 +282,7 @@ const CHEEK_ROLL = 0.18, CHEEK_NOD = 0.08;
  * The weapon's own `grip` says where that is on the weapon; `PALM` says where
  * it is on the hand. Neither the pose nor the hold has to know the other.
  */
-function seatWeapon(weapon, S) {
+export function seatWeapon(weapon, S) {
   const grip = weapon.userData.grip || _w1.set(0, 0, 0);
   weapon.quaternion.copy(GRIP_R_INV);
   weapon.position.copy(PALM).multiplyScalar(S).sub(_w1.copy(grip).applyQuaternion(GRIP_R_INV));

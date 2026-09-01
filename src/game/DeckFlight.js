@@ -61,6 +61,7 @@ import { transportModel } from './Arrivals.js';
 import { audio } from '../engine/Audio.js';
 import { clamp, lerp, smoothstep } from '../engine/MathUtil.js';
 import { launchSequence, damagedArrival } from './DeckAudio.js';
+import { makeShovable } from '../physics/Shovable.js';
 /* Read inside functions only — Hangar.js imports this file. */
 import { DECK, DEPLOY_RAMP, deckFaction } from './Hangar.js';
 
@@ -76,8 +77,16 @@ const _q = new THREE.Quaternion();
  * a company sitting in a hull for ever.
  */
 export const FLIGHT = {
-  /** The hull's centre over the pad's top. `Extraction`'s own 1.15. */
-  hover: 1.15,
+  /**
+   * The hull's centre over the pad's top WHEN NOTHING BETTER IS KNOWN. The
+   * parked hull is stood on its belly: `dressDeckFlight` measures the model
+   * (its lowest hull mesh, ramp and doors hidden) and writes `st.hover` so the
+   * belly touches the pad. This was `Extraction`'s 1.15, which put the belly
+   * 0.9 m INTO the pad and the ramp's foot two metres under the deck.
+   */
+  hover: 2.1,
+  /** The ramp leaf, hinge to foot. The transports' own 2.6. */
+  ramp: 2.6,
   /** The pad's own height, so the ramp foot lands on something walkable. */
   padHeight: 0.45,
   seal: 1.6,
@@ -143,6 +152,8 @@ export function dressDeckFlight(world, opts = {}) {
   const pad = padAt();
   const st = {
     group, model, fires, side,
+    /** The centre's height over the pad, so the belly sits on it. */
+    hover: model ? hullBelly(model) + 0.04 : FLIGHT.hover,
     bay: model?.userData?.bay || { halfW: 1.2, floor: -0.95, roof: 1.1, front: -1.6, back: 3.3 },
     seats: model?.userData?.seats || [],
     pad,
@@ -184,7 +195,7 @@ export function dressDeckFlight(world, opts = {}) {
 /** Put the hull on its pad, nose to the aperture. */
 function parkAt(st) {
   const p = st.pad;
-  st.group.position.set(p.x, p.y + FLIGHT.hover, p.z);
+  st.group.position.set(p.x, p.y + st.hover, p.z);
   st.group.rotation.set(0, p.yaw, 0);
   st.group.updateMatrixWorld(true);
 }
@@ -228,10 +239,59 @@ function unsolidify(world, st) {
   st.solids.length = 0;
 }
 
-/** The ramp's angle for the current hover: `Extraction._hatch`'s own rule. */
+/**
+ * The ramp's angle: the leaf is hinged at the bay's floor and its foot RESTS
+ * ON THE PAD, so the angle is whatever the drop from the hinge to the pad's
+ * top asks for. `Extraction._hatch` derives its angle from the hover the same
+ * way; the deck's difference is that the pad is a known height.
+ */
 function rampAngle(st) {
-  const drop = Math.max(0, FLIGHT.hover + 1.05 - 0.0);
-  return clamp(Math.asin(clamp(drop / 2.6, 0, 0.98)), 0.35, 1.15);
+  const hinge = st.hover + (st.bay?.floor ?? -0.95) - 0.02;
+  const drop = Math.max(0, hinge - 0.0);
+  return clamp(Math.asin(clamp(drop / FLIGHT.ramp, 0, 0.98)), 0.12, 1.15);
+}
+
+/**
+ * How far the model's hull hangs below its origin, ramp and doors hidden —
+ * the number the hover is set from so a parked transport stands on the pad
+ * rather than in it. Measured once per dress.
+ */
+function hullBelly(model) {
+  const u = model.userData || {};
+  const hide = [u.ramp, u.doorL, u.doorR].filter(Boolean);
+  const was = hide.map((h) => h.visible);
+  for (const h of hide) h.visible = false;
+  model.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(model);
+  hide.forEach((h, i) => { h.visible = was[i]; });
+  return Number.isFinite(box.min.y) ? Math.max(0.6, -box.min.y) : FLIGHT.hover;
+}
+
+/**
+ * THE FLOOR UNDER A MAN ON THE RAMP OR IN THE BAY, in world height, or null
+ * when the point is on neither. `Hangar.deckFloorAt` asks this first, so the
+ * company walks UP the ramp rather than along the deck under it, and a man
+ * put down in the bay stands on its floor. Only while the hull is on its pad:
+ * a hull in the air has no floor anybody on the deck can stand on.
+ */
+export function hullFloorAt(world, x, z) {
+  const st = world?._deckFlight;
+  if (!st || !st.group?.parent) return null;
+  if (![PHASE.PARKED, PHASE.BOARD, PHASE.OPEN, PHASE.UNLOAD].includes(st.phase)) return null;
+  const B = st.bay;
+  _v3.set(x, 0, z);
+  st.group.worldToLocal(_v3);
+  const lx = _v3.x, lz = _v3.z;
+  if (Math.abs(lx) > B.halfW + 0.35) return null;
+  const gy = st.group.position.y;
+  if (lz >= B.front - 0.2 && lz <= B.back) return gy + B.floor + 0.02;
+  const a = rampAngle(st);
+  const reach = Math.cos(a) * FLIGHT.ramp;
+  if (lz > B.back && lz <= B.back + reach + 0.05) {
+    const d = Math.min(FLIGHT.ramp, (lz - B.back) / Math.cos(a));
+    return Math.max(FLIGHT.padHeight, gy + B.floor - 0.02 - Math.sin(a) * d);
+  }
+  return null;
 }
 
 /** How open the ship is, 0..1: the ramp's hinge and the doors' travel. */
@@ -271,7 +331,8 @@ function stepFlames(st, total) {
 export function rampFoot(world, out = new THREE.Vector3()) {
   const st = world?._deckFlight;
   const B = st?.bay || { back: 3.3 };
-  out.set(0, -1.15, B.back + 2.4);
+  const reach = st ? Math.cos(rampAngle(st)) * FLIGHT.ramp : 2.4;
+  out.set(0, -1.15, B.back + reach + 0.25);
   if (st) st.group.localToWorld(out);
   else out.set(DEPLOY_RAMP.x, 0, DEPLOY_RAMP.z);
   out.y = FLIGHT.padHeight;
@@ -336,6 +397,14 @@ export function depart(world) {
       row.start = c.t + i * 0.55;
       row.man.facing = Math.PI;
       row.slot = slot;
+      /* HIS BODY COMES OFF FOR THE WALK. The file forms where the player is
+       * standing — at the ramp's foot, by definition of the dwell — and a
+       * dynamic box walked into his capsule is woken and shoved by
+       * `Player._collide`, which put the first pair on their backs at the
+       * foot of the ramp every time. `takeAboard` disposes it anyway;
+       * `putAshore` stands a new one up. */
+      try { row.shove?.dispose(); } catch {}
+      row.shove = null;
     }
     c.mustered = false;
   }
@@ -381,6 +450,8 @@ function putAshore(world, st, row, i) {
   row.halted = false;
   row.start = (c?.t ?? 0) + i * 0.7;
   row.man.facing = row.home.facing;
+  /* And a body again, asleep, walked along by `stepRow` like everyone's. */
+  try { makeShovable(world, [row]); row.shove?.retarget(row.pos); } catch {}
 }
 
 /** Seat the player where he stands in the bay; he eases to the door slot. */
@@ -452,6 +523,13 @@ export function stepDeckFlight(world, dt) {
   const g = st.group;
   const pad = st.pad;
 
+  /* AN ARRIVAL SEATS THE PLAYER THE FRAME HE EXISTS. `embarkCompany` runs
+   * from `dressHangar`, and `World.loadLevel` spawns the player AFTER the
+   * level is dressed — so the seat it offered was to nobody, and the man
+   * flew in standing in the lift car at the far end of the deck. */
+  if (!st.seated && world.player && !world.player.riding
+    && (st.phase === PHASE.APPROACH || st.phase === PHASE.TURN)) seatPlayer(world, st, true);
+
   switch (st.phase) {
     case PHASE.PARKED: break;
 
@@ -500,7 +578,7 @@ export function stepDeckFlight(world, dt) {
     case PHASE.LIFT: {
       const k = clamp(st.t / FLIGHT.lift, 0, 1);
       setThrust(st, 0.4 + k * 0.6);
-      g.position.y = pad.y + FLIGHT.hover + smoothstep(0, 1, k) * 3.6;
+      g.position.y = pad.y + st.hover + smoothstep(0, 1, k) * 3.6;
       g.rotation.x = -0.03 * k;
       if (k >= 1) { st.phase = PHASE.RUN; st.t = 0; st.runFrom = g.position.clone(); }
       break;
@@ -560,7 +638,7 @@ export function stepDeckFlight(world, dt) {
       const k = clamp(st.t / FLIGHT.approach, 0, 1);
       const e = 1 - Math.pow(1 - k, 2.2);
       const z = lerp(DECK.lip + FLIGHT.far, pad.z, e);
-      const y = lerp(46, pad.y + FLIGHT.hover + 3.0, Math.pow(e, 0.8));
+      const y = lerp(46, pad.y + st.hover + 3.0, Math.pow(e, 0.8));
       const x = lerp(0, pad.x, smoothstep(0.5, 1, k));
       g.position.set(x, y, z);
       g.rotation.set(0.10 * (1 - e), 0, 0);
@@ -584,7 +662,7 @@ export function stepDeckFlight(world, dt) {
       const k = clamp(st.t / FLIGHT.turn, 0, 1);
       const e = smoothstep(0, 1, k);
       g.rotation.set(0, e * pad.yaw, 0);
-      g.position.y = lerp(pad.y + FLIGHT.hover + 3.0, pad.y + FLIGHT.hover, e);
+      g.position.y = lerp(pad.y + st.hover + 3.0, pad.y + st.hover, e);
       setThrust(st, 0.5 * (1 - e) + 0.1);
       if (k >= 1) {
         parkAt(st);

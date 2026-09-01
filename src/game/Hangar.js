@@ -67,12 +67,13 @@ import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll, load as companyLoad } from './Company.js';
 import { lineup } from './Muster.js';
 import { BipedAnimator } from './Rig.js';
+import { attachTrooperCape } from './Cloth.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt,
   drainBlasts, bootStride, deckChant } from './DeckAudio.js';
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift } from './DeckLift.js';
 import { dressDeckMirror, stepDeckMirror, undressDeckMirror } from './DeckMirror.js';
-import { dressDeckFlight, stepDeckFlight, undressDeckFlight, embarkCompany } from './DeckFlight.js';
+import { dressDeckFlight, stepDeckFlight, undressDeckFlight, embarkCompany, hullFloorAt } from './DeckFlight.js';
 import { stepDeckEdit } from './DeckEdit.js';
 import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead, musterPlan, OPENING_STRENGTH, ARMIES, MARKS } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
@@ -1116,6 +1117,41 @@ export function deckFaction(world) {
  * bulkhead to the aperture's jamb and the ceiling closes the top, so the
  * room is bounded on six sides by something the player can see.
  */
+/**
+ * THE TWO PADS, as the floor knows them: pad A is the transport's, pad B the
+ * shuttle's. One table, read by the colliders below, by `deckFloorAt`, and
+ * by `dressStructure` through `DEPLOY_RAMP` — so the drawn disc, the plate
+ * you stand on and the height the company walks at cannot disagree.
+ */
+export const PADS = {
+  get a() { return { x: DEPLOY_RAMP.x, z: DEPLOY_RAMP.padZ, r: 15, h: 0.45 }; },
+  b: { x: 44, z: 96, r: 15, h: 1.2 },
+};
+
+/**
+ * THE FLOOR UNDER A POINT OF THE DECK, in world height. The heightfield is
+ * flat; what stands proud of it is the two pads and — when a transport is on
+ * its pad — the ramp and the bay floor, which `DeckFlight.hullFloorAt` owns.
+ * Installed on the world as `floorAt` by `dressHangar`, so `Shovable`, the
+ * company's walk and the gait solver's foot placement all ask one question
+ * of one function. Reading only the heightfield walked the company along the
+ * deck UNDER the ramp and stood every man on the pad 0.45 m into it.
+ */
+export function deckFloorAt(world, x, z) {
+  const h = hullFloorAt(world, x, z);
+  if (h != null) return h;
+  const A = PADS.a, B = PADS.b;
+  if ((x - A.x) * (x - A.x) + (z - A.z) * (z - A.z) <= A.r * A.r) return A.h;
+  if ((x - B.x) * (x - B.x) + (z - B.z) * (z - B.z) <= B.r * B.r) return B.h;
+  return world?.terrain ? world.terrain.height(x, z) : 0;
+}
+
+/** The floor for a walker: the level's hook if it has one, else the ground. */
+function floorY(world, x, z) {
+  if (world?.floorAt) return world.floorAt(x, z);
+  return world?.terrain ? world.terrain.height(x, z) : 0;
+}
+
 function deckColliders(world) {
   const P = world.physics;
   if (!P?.addStaticBox) return;
@@ -1142,8 +1178,19 @@ function deckColliders(world) {
   /* Pad A is LOW — 0.45 m, under the player's 0.45 m step, so he walks up
    * onto it and up the ramp of the hull that stands on it. Pad B keeps its
    * height: nothing on it is anybody's to board. */
-  box(DEPLOY_RAMP.x, 0.225, DEPLOY_RAMP.padZ, 15, 0.225, 15);
-  box(44, 0.6, 96, 15, 0.6, 15);
+  /* THE PADS ARE DISCS, so their colliders are: three boxes a third of a
+   * turn apart make a twelve-sided plate the walkable width of the disc,
+   * where one square box put an invisible 0.45 m step at each corner five
+   * metres past the drawn edge. `deckFloorAt` answers the same disc. */
+  const disc = (cx, cy, cz, r, hy) => {
+    for (let i = 0; i < 3; i++) {
+      const yaw = (i * Math.PI) / 3;
+      P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(r, hy, r * Math.cos(Math.PI / 12)),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), { friction: 0.7 });
+    }
+  };
+  disc(DEPLOY_RAMP.x, PADS.a.h / 2, DEPLOY_RAMP.padZ, PADS.a.r, PADS.a.h / 2);
+  disc(PADS.b.x, PADS.b.h / 2, PADS.b.z, PADS.b.r, PADS.b.h / 2);
   /* THE PIT: four kerbs, so a player can walk to the edge and look in but
    * cannot fall into a hole with no floor authored under it. */
   for (const [dx, dz, w, d] of PIT_KERBS) box(dx, 0.5, dz, w / 2, 0.5, d / 2);
@@ -1313,6 +1360,12 @@ export function dressHangar(world) {
    */
   /* THE TRANSPORT ON ITS PAD — the real hull, ramp down — before the men, so
    * a company arriving on it has a bay to be stood in. */
+  /* `_deckArrival` is main.js's flag; `settings.deckArrival` is a check's,
+   * because a headless boot has no hook between construction and dressing. */
+  if (world.settings?.deckArrival) world._deckArrival = true;
+  /* THE FLOOR, before anything stands on it: the transport's ramp, the
+   * company's bodies and the crowd's all read `world.floorAt`. */
+  world.floorAt = (x, z) => deckFloorAt(world, x, z);
   dressDeckFlight(world, { arrival: !!world._deckArrival });
   /* THE COMPANY, because the window's faction comes off the roll that is
    * actually standing in the room. */
@@ -1571,6 +1624,7 @@ export class HangarDirector {
     try { undressDeckLift(this.world); } catch {}
     try { undressDeckMirror(this.world); } catch {}
     try { undressDeckFlight(this.world); } catch {}
+    if (this.world.floorAt) this.world.floorAt = null;
     this.world._deckAudio = null;
     dismissCompany(this.world);
   }
@@ -1895,6 +1949,23 @@ export function callTheCompany(world, opts = {}) {
       halted: true, merged: null, squad: 0, lead: false,
       loop: spot.loop ? { a: [spot.x, spot.z], b: spot.loop, dwell: 3 + rng() * 6, at: 0 } : null,
     };
+    /**
+     * ══ HIS CAPE IS CLOTH ═══════════════════════════════════════════════════
+     *
+     * "are the capes for troopers even actual cloth like my capes? they look
+     *  completely solid." The builder publishes the half-cape's rigid plates
+     * and which shoulder they hang from; `Cloth.attachTrooperCape` hangs a
+     * simulated sheet there and hides the plates. BEFORE the merge, because
+     * the bake photographs what is visible and a plate that is hidden now is
+     * left out of the fold — a plate baked in would stand under the cloth for
+     * the life of the figure.
+     */
+    row.cape = null;
+    if (fig.cape && world.scene) {
+      try {
+        row.cape = attachTrooperCape(world.scene, fig.rig, { scale: fig.rig?.scale ?? 1, ...fig.cape });
+      } catch { row.cape = null; }
+    }
     /* HE IS FOLDED WHERE HE STANDS. The bake is a photograph of the rig; the
      * gait keeps writing the bones under it, so a merged man still walks. */
     row.merged = mergeFigure(fig, { castShadow: true });
@@ -1953,7 +2024,21 @@ export const MAX_ON_DECK = 24;
  * solver has him the drawn figure copies the body — a WALKER second, and only
  * once he has halted does `Parade` pose him.
  */
+/* The cloth, after the rig's matrices are current. `refreshColliders` reads
+ * the bones it was pinned to; the wind on a deck is nought. */
+const _noWind = new THREE.Vector3();
+function stepCape(row, dt) {
+  const cape = row.cape;
+  if (!cape) return;
+  try { row.fig.rig?.updateMatrices?.(); cape.update(dt, cape.refreshColliders(), _noWind); } catch {}
+}
+
 function stepRow(world, c, row, dt) {
+  stepRowInner(world, c, row, dt);
+  stepCape(row, dt);
+}
+
+function stepRowInner(world, c, row, dt) {
   const { fig, man } = row;
   /* IN THE HULL: the ship owns him. Posed where he stands, and nothing else. */
   if (row.aboard) {
@@ -1986,9 +2071,29 @@ function stepRow(world, c, row, dt) {
      * under it. */
     const speed = MARCH_SPEED * row.pace;
     const step = Math.min(dist, speed * dt);
-    const nx = dx / dist, nz = dz / dist;
+    let nx = dx / dist, nz = dz / dist;
+    /* HE WALKS ROUND THE PLAYER, not through him. A man whose line crosses
+     * the commander inside two metres sidesteps to whichever side the
+     * commander is not on, and re-aims at his mark next frame; in the last
+     * metre he takes his mark regardless, or a player standing on it would
+     * have a man circling him for ever. Without this the file to the ramp
+     * formed through the player standing at its foot. */
+    const P = world.player;
+    if (P && !P.riding && dist > 1.2) {
+      const px = P.position.x - row.pos.x, pz = P.position.z - row.pos.z;
+      const along = px * nx + pz * nz;
+      if (along > -0.2 && along < 1.8) {
+        const lat = -px * nz + pz * nx;
+        if (Math.abs(lat) < 0.9) {
+          const side = lat >= 0 ? -1 : 1;
+          const ax = nx - side * nz * 1.4, az = nz + side * nx * 1.4;
+          const al = Math.hypot(ax, az) || 1;
+          nx = ax / al; nz = az / al;
+        }
+      }
+    }
     row.pos.x += nx * step; row.pos.z += nz * step;
-    row.pos.y = world.terrain ? world.terrain.height(row.pos.x, row.pos.z) : 0;
+    row.pos.y = floorY(world, row.pos.x, row.pos.z);
     row.vel.set(nx * speed, 0, nz * speed);
     const facing = Math.atan2(nx, nz);
     if (row.anim) {
@@ -1997,7 +2102,7 @@ function stepRow(world, c, row, dt) {
       row.anim.setFacing(facing);
       row.anim.update(dt, {
         position: row.pos, facing, velocity: row.vel, grounded: true,
-        groundAt: (x, z) => (world.terrain ? world.terrain.height(x, z) : 0),
+        groundAt: (x, z) => floorY(world, x, z),
         crouch: 0, accelForward: 1, deferMatrices: false,
       });
     } else {
@@ -2021,7 +2126,7 @@ function stepRow(world, c, row, dt) {
   if (!row.halted) {
     /* THE HALT. The root goes onto the mark, the pose is Parade's again. */
     row.halted = true;
-    row.pos.set(row.mark.x, world.terrain ? world.terrain.height(row.mark.x, row.mark.z) : 0, row.mark.z);
+    row.pos.set(row.mark.x, floorY(world, row.mark.x, row.mark.z), row.mark.z);
     fig.root.position.copy(row.pos);
     fig.root.quaternion.identity();
     row.vel.set(0, 0, 0);
@@ -2217,6 +2322,7 @@ export function dismissCompany(world) {
   if (!c) return;
   for (const row of [...c.men, ...c.crowd]) {
     try { row.shove?.dispose(); } catch {}
+    try { row.cape?.dispose?.(); } catch {}
     try { row.merged?.dispose?.(); } catch {}
     row.fig?.root?.parent?.remove(row.fig.root);
     try { row.fig?.rig?.dispose?.(); } catch {}

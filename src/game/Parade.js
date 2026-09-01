@@ -52,7 +52,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { BipedAnimator, limbScale, SOLE_BIAS } from './Rig.js';
 import { smoothstep, TAU } from '../engine/MathUtil.js';
-import { ARCHETYPES } from './Enemy.js';
+import { ARCHETYPES, seatWeapon } from './Enemy.js';
 import { bodyOptsFor, kitOptsFrom, buildBlaster } from './Bodies.js';
 import { RANKS, rankFor, markById, CommandDirector } from './Command.js';
 
@@ -921,11 +921,14 @@ export function buildFigure(man, opts = {}) {
   if (A.weapon && hand && opts.rifle !== false) {
     try {
       rifle = buildBlaster(A.weapon);
-      const S = A.scale ?? 1;
       hand.obj.add(rifle);
-      rifle.position.set(0, 0.06 * S, 0.02);
-      rifle.rotation.x = -0.2;
+      /* SEATED THE WAY THE FIGHT SEATS IT — `Enemy.seatWeapon` puts the grip
+       * in the palm off the weapon's own published hold points — so the man on
+       * the deck holds his rifle exactly where the man on the field does. */
+      seatWeapon(rifle, A.scale ?? 1);
     } catch { rifle = null; }
   }
-  return { root, rig, man, _stub: stub, palette: built.palette ?? null, rifle };
+  /* AND HIS CAPE, if the kit gave him one: `{ sx, rigid }` from the builder,
+   * for a caller that owns a scene to hang cloth on (`Cloth.attachTrooperCape`). */
+  return { root, rig, man, _stub: stub, palette: built.palette ?? null, rifle, cape: built.cape ?? null };
 }

@@ -311,7 +311,22 @@ const menu = new Menu(settings, {
     enemies: world ? world.enemies.length : 0,
     wave: world && world.director ? (world.director.wave ?? '-') : '-',
   }),
-  onRetry: () => { cancelDeathCard(); menu.hideDeath(); deploy().catch((e) => console.error('deploy failed', e)); },
+  onRetry: () => {
+    cancelDeathCard(); menu.hideDeath();
+    /* ON THE FLIGHT DECK THE CARD'S FIRST BUTTON IS "BACK TO THE DECK": the
+     * run is over and the man is standing on the ship's deck with the report
+     * in his hand; the ship for the next run is twenty metres away. */
+    if (world && world.settings?.mode === 'hangar') {
+      screens.overlay = null;
+      screens.state = 'playing';
+      input.enabled = true;
+      input.requestLock();
+      const btn = document.getElementById('btn-retry');
+      if (btn) btn.textContent = 'Rise again';
+      return;
+    }
+    deploy().catch((e) => console.error('deploy failed', e));
+  },
   // The renderer takes the tier immediately; the live world takes what it can
   // (see World.applyQuality — emission is live, buffers are next deploy).
   onQualityChange: (q) => { engine.setQuality(q); engine.setBloom(qualityBloom()); world?.applyQuality(q); },
@@ -902,6 +917,24 @@ async function enterHangar(arrival = null) {
    * world and the deck's one has to be put down properly: its director owns a
    * twenty-five node audio graph and a body per man.
    */
+  if (world && arrival) {
+    /**
+     * THE CARD, ON THE DECK. `DeckFlight` raises `onDeckArrived` the frame
+     * the ramp is down and the player is off it. The report is the one the
+     * battlefield would have shown; the difference is that "Rise again" is
+     * "Back to the deck" here, because the deck is the place a finished run
+     * puts you and the ship is right there when you want another.
+     */
+    world.onDeckArrived = () => {
+      const btn = document.getElementById('btn-retry');
+      if (btn) { btn.textContent = 'Back to the deck'; btn.classList.remove('hidden'); }
+      screens.state = 'dead';
+      screens.overlay = { state: 'dead', show: arrival.card };
+      input.enabled = false;
+      input.exitLock();
+      try { arrival.card(); } catch (e) { console.error('the after-action card failed', e); }
+    };
+  }
   if (world) {
     /**
      * THE LIFT IS THE WAY BACK TO THE MENU. `DeckLift` raises this at the
@@ -911,7 +944,7 @@ async function enterHangar(arrival = null) {
      */
     world.onDeckLeave = () => { leaveHangar(); };
     world.onDeckDeploy = () => {
-      leaveHangar();
+      leaveHangar({ toMenu: false });
       deploy().catch((e) => console.error('deploy from the deck failed', e));
     };
   }
@@ -956,7 +989,7 @@ async function enterHangar(arrival = null) {
  * written, so every room inherits the last fight's kill deltas and a queue of
  * dead `Enemy` references.
  */
-function leaveHangar() {
+function leaveHangar(opts = {}) {
   screens.clear();
   hud.show(false);
   document.getElementById('hud')?.classList.remove('deck');
@@ -971,6 +1004,10 @@ function leaveHangar() {
   // disposed. */
   if (world) leaveDeck(world);
   if (world) { world.dispose(); world = null; }
+  /* TO THE MENU, unless the caller is about to build the next world — a
+   * deploy from the ramp goes straight to the loading plate, not through a
+   * frame of the front screen. */
+  if (opts.toMenu === false) return;
   menu.showMenu();
   screens.set('menu');
 }
@@ -1871,6 +1908,37 @@ function gameOver(stats) {
   // Remembered before it is shown: 2.6 seconds is a long time for the only exit
   // from a state to be in flight, and a throw in there used to leave the player
   // watching their own corpse with nothing on screen. Escape asks for it again.
+  /**
+   * ══ A RUN THAT ENDS WITH YOU STANDING ENDS ON THE FLIGHT DECK ═══════════
+   *
+   * "when you retreat/finish a mode/match you will board a ship, leave the
+   *  atmosphere and do all that in reverse and land in the hanger. From where
+   *  you can go to main menu or do whatever you want."
+   *
+   * A withdrawal has already put the player on the transport and flown it
+   * out (`Extraction._withdrew` ends on the climb); a won battle sealed its
+   * manifest with him on the ground. Either way he is ALIVE, and a card over
+   * a frozen battlefield is not where an alive man ends up. So the hangar is
+   * built with `_deckArrival`: `DeckFlight` brings the hull in through the
+   * aperture with him and his company aboard, lands it, drops the ramp — and
+   * the after-action card is raised on the deck when he steps off, with the
+   * same rows it would have carried over the battlefield. A wipe, a death, a
+   * session and a lesson keep the card where it was: a dead man does not fly
+   * home, and a client's world is not his to leave.
+   */
+  const alive = !!world?.player?.alive;
+  const homeward = alive && !session && !world?.training
+    && (stats.ended === 'withdrew' || won)
+    && !MODES[sessionOr('mode')]?.dojo && sessionOr('mode') !== 'hangar' && sessionOr('mode') !== 'sandbox';
+  if (homeward) {
+    document.getElementById('btn-retry')?.classList.remove('hidden');
+    enterHangar({ card, ended: stats.ended, won }).catch((e) => {
+      console.error('flying home failed', e);
+      screens.overlay = { state: 'dead', show: card };
+      card();
+    });
+    return;
+  }
   screens.overlay = { state: 'dead', show: card };
   cardAfter(2600, 'the death card', card);
 }

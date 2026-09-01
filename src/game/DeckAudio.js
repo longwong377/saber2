@@ -324,8 +324,15 @@ export function pressureAt(x, z) {
  * derived from it is fired at the real geometry by the check.
  */
 export const GEOM = {
-  /** The rack walls: x = ±DECK.lip × this. `WALL = 56` against a lip of 144. */
-  rack: 56 / 144,
+  /**
+   * The rack walls: x = ±DECK.lip × this. READ OFF `DECK.wall`, lazily — a
+   * getter rather than a literal, because this object is built at import and
+   * `DECK` is in the temporal dead zone then (the import cycle `frame()`
+   * documents in DeckLife.js). `56 / 144` sat here as a literal while the
+   * walls moved to 80, which is exactly the four-independent-copies-of-56
+   * defect the audit named.
+   */
+  get rack() { return DECK.wall / DECK.lip; },
   /** How far the rack run reaches, as fractions of the depth aft of `DECK.aft`. */
   rackFrom: 0.03, rackTo: 0.69,
   /** The bulkhead's inboard face, the same way. The ribs stand at aft + 6…8 m. */
