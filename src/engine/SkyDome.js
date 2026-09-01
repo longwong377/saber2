@@ -310,9 +310,535 @@ CEL_BAND_GLSL,
     float shape = fbm5(p + w * 0.75 + wind * 0.012);
     return shape - thr;
   }
+`,
+/* glsl */`
+/* ══ THE VIEW OUT OF A SHIP ═══════════════════════════════════════════════
+ *
+ * Everything below draws only when uOrbit is 1, and uOrbit is 1 only when a
+ * level hands atmosphere.orbit an object. Every other level takes the branch
+ * in main() that was always there, evaluates none of this, and renders the
+ * same bits it rendered before — see the note on configureOrbit for why the
+ * gate is a uniform and not a #define.
+ *
+ * WHY IT IS ALL IN THIS FRAGMENT. A hangar is a room whose entire content is
+ * the view out of it, and that view has to cost nothing, because the room it
+ * is seen from is already spending the draw budget. A geometry planet needs
+ * its own depth range, its own fog exemption and its own line in the ink pass;
+ * a Points starfield is a second draw call that fades by opacity instead of by
+ * band, which is the one thing this renderer does not do. The dome is already
+ * here, already direction-only, already banded, already excluded from the ink
+ * prepass because it is transparent. Planet, stars and fleet cost ZERO new
+ * draw calls and zero new geometry between them.
+ *
+ * AND THE PALETTE IS THE LEVEL'S. Not one line of it is typed here: the land
+ * is TERRAIN_PRESETS[L.terrain].sandColor, the highlands its rockColor,
+ * the basins its gritColor, the sea L.water.deep (or the light a lava sea
+ * throws, L.water.sky, when kind is lava), the cloud deck the level's own
+ * cloudCover/cloudLit/cloudDark, the limb its skyColor and the star
+ * its sunColor. Same construction as Menu._levelArt, one layer down: pick
+ * the ice map and there is an ice world outside the window, and no new art
+ * data exists anywhere to make that true.
+ */
+uniform float uOrbit;        /* 0 = this dome is a sky; 1 = it is a window */
+uniform float uOrbitT;       /* the clock everything scripted below runs on */
+uniform float uOrbitKey;     /* radiance a white face square to the star returns */
+uniform vec3  uSpaceCol;     /* the void, off the level's own bgColor */
+uniform vec3  uStarCol;      /* the star, as a hue: the level's sunColor */
 
+uniform vec3  uPlanetDir;    /* unit; where the disc is, drifted on the CPU */
+uniform vec3  uPlanetAxis;   /* unit; the planet's own spin axis */
+uniform float uPlanetCos;    /* cos of its angular radius */
+uniform float uPlanetSin;    /* sin of it, so the limb costs no trig per pixel */
+uniform float uPlanetSpin;   /* surface rotation, radians */
+uniform float uCloudSpin;    /* cloud rotation, radians, and always the slower */
+uniform vec3  uLandCol;      /* the terrain's own sand albedo */
+uniform vec3  uRockCol;      /* …its rock, for the highlands */
+uniform vec3  uBasinCol;     /* …its grit, for the low ground round a coast */
+uniform vec3  uSeaCol;       /* water.deep, or what a lava sea throws up */
+uniform float uSeaAmt;       /* how much of the disc is under it */
+uniform float uSeaGlow;      /* 1 when that sea is lava and does not go out */
+uniform float uCapAmt;       /* polar ice */
+uniform float uCloudAmt;     /* the level's own cloudCover */
+uniform vec3  uPlanetLit;    /* its cloudLit, as a hue */
+uniform vec3  uPlanetDark;   /* its cloudDark, as a hue */
+uniform vec3  uAtmoCol;      /* the limb: the level's own skyColor, as a hue */
+
+uniform float uStars;        /* starfield gain */
+uniform float uStarSpin;     /* the ship's attitude — this is the parallax */
+uniform float uFleet;        /* fleet gain */
+uniform vec3  uFleetDir;     /* unit; the bearing of the action */
+uniform vec3  uBoltCol;      /* our turbolasers */
+uniform vec3  uFoeCol;       /* theirs */
+uniform float uDeathSpan;    /* seconds a capital ship takes to die */
+
+/* The plane of the arm we are looking along. One direction, so the band is a
+ * band and not a wash — a nebula everywhere is a fog, and fog in vacuum is the
+ * same bug as haze in a hangar. */
+const vec3 ARM_AXIS = vec3(0.34, 0.88, -0.33);
+
+float hash11(float n) {
+  n = fract(n * 0.1031);
+  n *= n + 33.33;
+  n *= n + n;
+  return fract(n);
+}
+
+/* Deliberately not a sin() hash. sin() past a few thousand is a different
+ * number on different drivers, and every position below is a function of a
+ * clock that runs for as long as the player stands there. */
+float hash13(vec3 p) {
+  p = fract(p * 0.1031);
+  p += dot(p, p.zyx + 31.32);
+  return fract((p.x + p.y) * p.z);
+}
+
+float vnoise3(vec3 p) {
+  vec3 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  float a0 = mix(hash13(i), hash13(i + vec3(1.0, 0.0, 0.0)), f.x);
+  float a1 = mix(hash13(i + vec3(0.0, 1.0, 0.0)), hash13(i + vec3(1.0, 1.0, 0.0)), f.x);
+  float b0 = mix(hash13(i + vec3(0.0, 0.0, 1.0)), hash13(i + vec3(1.0, 0.0, 1.0)), f.x);
+  float b1 = mix(hash13(i + vec3(0.0, 1.0, 1.0)), hash13(i + vec3(1.0, 1.0, 1.0)), f.x);
+  return mix(mix(a0, a1, f.y), mix(b0, b1, f.y), f.z);
+}
+
+/* Three octaves for the thing being described and two for the thing modifying
+ * it. Sums to 0.875 and 0.75 respectively, both centred near six-tenths of
+ * that — the thresholds below are stated against those numbers, not against
+ * a nominal 0..1, which is how a noise threshold quietly becomes a flat wash. */
+float orbFbm(vec3 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 3; i++) { s += a * vnoise3(p); p = p * 2.07 + 13.1; a *= 0.5; }
+  return s;
+}
+float orbFbm2(vec3 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 2; i++) { s += a * vnoise3(p); p = p * 2.11 + 7.7; a *= 0.5; }
+  return s;
+}
+
+/* Rodrigues. The planet turns under its own weather and the sky turns under
+ * the ship, and both are one rotation of a unit vector about a unit axis. */
+vec3 spinAbout(vec3 v, vec3 ax, float ang) {
+  float c = cos(ang), sn = sin(ang);
+  return v * c + cross(ax, v) * sn + ax * (dot(ax, v) * (1.0 - c));
+}
+
+vec2 rot2(vec2 v, float a) {
+  float c = cos(a), sn = sin(a);
+  return vec2(v.x * c - v.y * sn, v.x * sn + v.y * c);
+}
+
+/**
+ * ONE STAR PER CELL, AND THE CELL IS NEVER SEARCHED.
+ *
+ * The usual direction-hash starfield walks the 3x3x3 neighbourhood so a star
+ * near a cell wall is not clipped in half — twenty-seven hashes a pixel for a
+ * field that is 95% empty. Keeping every star inside the middle 56% of its own
+ * cell makes clipping impossible by construction, so this is ONE hash for the
+ * gate and three more only for the cells that actually hold a star.
+ *
+ * Brightness comes off the same hash that gates it, so a rarer star is a
+ * brighter one and the field has a magnitude distribution rather than a
+ * uniform sprinkle of identical dots.
+ */
+float starAt(vec3 v, float scale, float thr, float rad, out float tone) {
+  vec3 p = v * scale;
+  vec3 i = floor(p);
+  float h = hash13(i);
+  tone = 0.0;
+  if (h < thr) return 0.0;
+  vec3 c = vec3(hash13(i + 11.3), hash13(i + 27.7), hash13(i + 41.1)) * 0.56 + 0.22;
+  tone = hash13(i + 59.9);
+  float dd = length(fract(p) - c) / rad;
+  return max(0.0, 1.0 - dd * dd) * (0.30 + 0.70 * (h - thr) / (1.0 - thr));
+}
+
+/**
+ * The field, and the arm behind it.
+ *
+ * QUANTISED, not faded. The dome bands every other thing it draws and a smooth
+ * point-spread would be the one gradient in the frame; three plateaus give a
+ * star a flat core with a drawn edge, which is what the reference frames do
+ * with the single glowing point in plate 2.
+ *
+ * The whole field is sampled through the ship's attitude and the planet is
+ * drifted separately on the CPU. That is the parallax: the sky is very nearly
+ * fixed and the world slides across it, which is the only cue in the frame
+ * that says the thing you are standing on is moving.
+ */
+vec3 starField(vec3 dir) {
+  vec3 v = spinAbout(dir, ARM_AXIS, uStarSpin);
+  float t1, t2;
+  float a = starAt(v, 340.0, 0.918, 0.30, t1);
+  float b = starAt(v, 97.0, 0.945, 0.21, t2);
+  a = saberCelQuant(clamp(a, 0.0, 1.0), 3.0);
+  b = saberCelQuant(clamp(b, 0.0, 1.0), 3.0);
+  /* Three hues, not a spectrum: a cool white, a plain white and an amber. */
+  vec3 ca = mix(vec3(0.74, 0.83, 1.0), vec3(1.0, 0.85, 0.63), saberCelQuant(t1, 2.0));
+  vec3 cb = mix(vec3(0.74, 0.83, 1.0), vec3(1.0, 0.85, 0.63), saberCelQuant(t2, 2.0));
+  vec3 col = ca * a * 0.85 + cb * b * 2.1;
+
+  /* The arm: a broad band of unresolved stars along one great circle, banded
+   * to three plates so it reads as drawn rather than as a photograph. */
+  float band = 1.0 - smoothstep(0.0, 0.42, abs(dot(v, ARM_AXIS)));
+  float dust = orbFbm2(v * 2.6 + 4.0);
+  float arm = saberCelQuant(clamp((dust - 0.30) * 2.6 * band, 0.0, 1.0), 3.0);
+  col += mix(uAtmoCol, vec3(1.0), 0.4) * arm * 0.030;
+  return col * uStars;
+}
+
+/**
+ * A WARSHIP, AS A SILHOUETTE.
+ *
+ * A wedge that is widest at the stern and comes to a point, with one dorsal
+ * block aft. At the angular size these sit at — a capital ship is about three
+ * degrees long here — that block is the entire difference between a warship
+ * and a grey lozenge, and it costs one more rectangle.
+ *
+ * The edges are smoothstepped over a screen-space width rather than stepped,
+ * because a two-pixel shape with a hard edge crawls; the shading either side
+ * of the edge is still the two flat tones rule 1 asks for.
+ */
+float hullMask(vec2 h, float L, float W, float aa) {
+  float t01 = clamp((h.x + L) / (2.0 * L), 0.0, 1.0);
+  float beam = W * (1.0 - t01 * 0.90);
+  float body = smoothstep(aa, -aa, max(abs(h.x) - L, abs(h.y) - beam));
+  float tower = smoothstep(aa, -aa,
+    max(abs(h.x + L * 0.52) - L * 0.24, abs(h.y - W * 0.86) - W * 0.52));
+  return max(body, tower);
+}
+
+/**
+ * Where hull i is, in the tangent plane, at time t.
+ *
+ * BOUNDED OSCILLATION ONLY. A linear drift term looks right for ninety seconds
+ * and then the fleet has left the sky, and a scene somebody stands in for
+ * twenty minutes cannot have a term in it that only holds for one. Two
+ * incommensurate rates keep a hull from ever retracing its own path, and the
+ * slowest is a four-minute period — slow reads as big, and these are the
+ * biggest things in the frame.
+ */
+vec2 shipAt(float i, float t) {
+  float a = hash11(i * 1.31 + 0.17), b = hash11(i * 2.77 + 0.41), c = hash11(i * 4.13 + 0.83);
+  vec2 home = vec2((a - 0.5) * 0.72, (b - 0.5) * 0.26 + 0.03);
+  return home + vec2(sin(t * 0.0231 + a * 6.2832), sin(t * 0.0157 + b * 6.2832))
+              * (0.018 + c * 0.022);
+}
+
+float segDist(vec2 p, vec2 a, vec2 b) {
+  vec2 pa = p - a, ba = b - a;
+  float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1.0e-9), 0.0, 1.0);
+  return length(pa - ba * h);
+}
+
+/**
+ * ══ THE FLEET ACTION ══════════════════════════════════════════════════════
+ *
+ * Layered by distance, and distance here is stated as SIZE AND RATE rather
+ * than as haze, because there is no air out there to state it with: the
+ * capitals are eight times the length of a fighter and move a hundred times
+ * slower, and that is the whole depth cue.
+ *
+ *   · three capitals and four cruisers, as silhouettes with two tones
+ *   · turbolaser tracers between them, six to nine seconds a shot — long and
+ *     slow, because a bolt that crosses the gap in a frame reads as a spark
+ *     off a grinder and one that takes eight seconds reads as a gun the size
+ *     of a house
+ *   · a shield bloom where each one lands, and an ion flash on the hull
+ *   · twelve fighters as points of light on fast bounded paths
+ *   · ONE capital dying over uDeathSpan seconds: fires that spread, a list
+ *     that rolls, a break amidships, then a debris field that keeps tumbling
+ *   · distant detonations, with no sound, because there is none
+ *
+ * ALL OF IT IS A FUNCTION OF t. There is no per-frame RNG and no state, so a
+ * reload puts the battle back exactly where the fiction says it is, and two
+ * players in the same room at the same clock see the same fight.
+ */
+vec4 fleetScene(vec2 q, float aa, float t, vec2 sq) {
+  vec3 hullAcc = vec3(0.0), glow = vec3(0.0);
+  float cov = 0.0;
+
+  /* Hulls are lit by the same star as everything else, and their shade side is
+   * the same air colour the planet's limb is. That is what keeps the fleet
+   * inside the level's own hue family rather than putting a second grey scheme
+   * in the frame — rule 5. */
+  vec3 lit = uStarCol * uOrbitKey * 0.30;
+  vec3 shade = uAtmoCol * uOrbitKey * 0.045;
+  vec3 emCol = mix(uAtmoCol, vec3(1.0), 0.55);
+  float dt = fract(t / uDeathSpan);
+
+  for (int i = 0; i < 7; i++) {
+    float fi = float(i);
+    float big = fi < 2.5 ? 1.0 : 0.44;
+    vec2 c = shipAt(fi, t);
+    float L = 0.050 * big, W = 0.0115 * big;
+    float head = hash11(fi * 7.31 + 1.7) * 6.2832;
+
+    /* The one that is dying rolls as it goes. Squared, so the list is barely
+     * there for the first minute and unmistakable by the end. */
+    float brk = 0.0;
+    if (i == 0) { head += dt * dt * 1.15; brk = max(dt - 0.80, 0.0) / 0.20; }
+
+    vec2 h = rot2(q - c, -head);
+    float hull;
+    if (i == 0) {
+      /* Two pieces. At brk = 0 they are exactly the two halves of one hull and
+       * the seam at h.x = 0 is invisible; at brk = 1 the bow has tumbled a
+       * third of a hull length clear of the stern. */
+      float mAft = hullMask(h, L, W, aa) * smoothstep(aa, -aa, h.x);
+      vec2 hf = rot2(h + vec2(brk * L * 0.62, -brk * W * 2.4), -brk * 0.5);
+      float mFore = hullMask(hf, L, W, aa) * smoothstep(-aa, aa, hf.x);
+      hull = max(mAft, mFore);
+    } else {
+      hull = hullMask(h, L, W, aa);
+    }
+
+    if (hull > 0.002) {
+      float t01 = clamp((h.x + L) / (2.0 * L), 0.0, 1.0);
+      float beam = W * (1.0 - t01 * 0.90);
+      vec2 sh = rot2(sq, -head);
+      /* The hull is a plate, so it has no normal. Treating it as a cylinder
+       * about its own keel is one divide and gives the terminator somewhere to
+       * fall — a flat silhouette with no light on it is a hole. */
+      float ndl = clamp((h.y / max(beam, 1.0e-5)) * sh.y * 1.15 + sh.x * 0.35, -1.0, 1.0);
+      hullAcc = mix(hullAcc, mix(shade, lit, step(0.02, ndl)), hull);
+      cov = max(cov, hull);
+    }
+
+    /* Engines. Three at the stern, and they are the brightest thing on a hull
+     * that is not on fire. */
+    float eng = smoothstep(aa * 2.0 + W * 0.24, 0.0,
+      max(abs(h.x + L * 1.00) - L * 0.05, abs(h.y) - W * 0.62));
+    glow += emCol * eng * 1.5 * big;
+
+    /* Fires, on the one that is dying. A cell along the keel lights when the
+     * clock passes its own hash, so the burn SPREADS from a couple of hits to
+     * the length of the ship rather than fading up everywhere at once. */
+    if (i == 0) {
+      float cell = floor((h.x + L) / (L * 0.14));
+      float fh = hash13(vec3(cell, 0.0, 3.0));
+      float burn = step(fh, max(dt - 0.22, 0.0) * 1.5) * hull;
+      float flick = 0.62 + 0.38 * sin(t * (5.0 + fh * 8.0) + fh * 30.0);
+      glow += vec3(1.0, 0.40, 0.11) * burn * flick * 1.9;
+      /* …and the moment it goes. One flash, four seconds wide, at the break. */
+      float f = max(1.0 - abs(dt - 0.815) * uDeathSpan * 0.5, 0.0);
+      glow += vec3(1.0, 0.82, 0.55) * f * f * hullMask(h, L * 1.6, W * 2.4, aa) * 5.5;
+    }
+  }
+
+  /* ── turbolasers ──────────────────────────────────────────────────────
+   * Between the capitals and the cruisers, one bolt per gun per cycle, and the
+   * cycle is long. The bolt occupies a sixth of the gap, so what the eye sees
+   * is a bar of light crossing a gulf, which is the only way scale reads out
+   * there. */
+  for (int k = 0; k < 6; k++) {
+    float fk = float(k);
+    vec2 a = shipAt(mod(fk, 3.0), t);
+    vec2 b = shipAt(3.0 + mod(fk * 1.7, 4.0), t);
+    float per = 6.4 + fk * 1.37;
+    float ph = fract(t / per + hash11(fk * 3.71 + 0.9));
+    vec3 bolt = mod(fk, 2.0) < 0.5 ? uBoltCol : uFoeCol;
+    if (mod(fk, 2.0) >= 0.5) { vec2 sw = a; a = b; b = sw; }
+    float u = ph / 0.62;
+    if (u <= 1.0) {
+      vec2 tip = mix(a, b, u), tail = mix(a, b, max(u - 0.17, 0.0));
+      float dd = segDist(q, tail, tip);
+      glow += bolt * (smoothstep(0.0021, 0.0007, dd) * 3.2 + exp(-dd / 0.0055) * 0.45);
+    } else {
+      /* The bloom where it landed. A shield does not absorb a shot quietly —
+       * it rings, and the ring is what says the target is still up. */
+      float age = (ph - 0.62) * per;
+      if (age < 0.6) {
+        float r = 0.005 + age * 0.052;
+        float dd = abs(length(q - b) - r);
+        float fade = 1.0 - age / 0.6;
+        glow += mix(bolt, vec3(1.0), 0.45)
+              * exp(-dd * dd / (0.0000075 + age * age * 0.00022)) * fade * fade * 2.6;
+      }
+    }
+  }
+
+  /* ── fighters ─────────────────────────────────────────────────────────
+   * Points of light, and fast. Nothing about a fighter at this range is a
+   * shape; what identifies it is that it is the only thing in the frame that
+   * moves quickly, which is exactly the depth cue the capitals cannot give. */
+  for (int k = 0; k < 12; k++) {
+    float fk = float(k);
+    float a = hash11(fk * 1.73 + 2.3), b = hash11(fk * 3.31 + 5.1), c = hash11(fk * 5.91 + 7.7);
+    float sp = 0.11 + c * 0.19;
+    vec2 p = vec2((a - 0.5) * 0.56 + sin(t * sp + a * 6.2832) * (0.10 + b * 0.16),
+                  (b - 0.5) * 0.20 + sin(t * sp * 0.71 + b * 6.2832) * (0.04 + c * 0.06));
+    float dd = length(q - p);
+    float f = exp(-dd * dd / 1.3e-6);
+    glow += mix(vec3(1.0), c < 0.5 ? uBoltCol : uFoeCol, 0.45) * f
+          * (0.55 + 0.55 * sin(t * 9.0 + a * 20.0)) * 1.3;
+  }
+
+  /* ── what is left of the one that broke ───────────────────────────────
+   * The tumble is the point. A plate turning end over end in vacuum flashes as
+   * it catches the star, so brightness is |sin| on its own rate, quantised to
+   * three plates — a smooth pulse reads as a fade and a fade reads as fog. */
+  vec2 wreck = shipAt(0.0, t);
+  float age = max(dt - 0.80, 0.0);
+  for (int k = 0; k < 16; k++) {
+    float fk = float(k);
+    float a = hash11(fk * 1.13 + 0.7), b = hash11(fk * 2.29 + 1.9), c = hash11(fk * 3.71 + 3.3);
+    vec2 p = wreck + vec2((a - 0.5) * 2.0, (b - 0.5) * 0.9) * (0.006 + age * 0.34);
+    float dd = max(abs(q.x - p.x) - 0.0016 - c * 0.0022, abs(q.y - p.y) - 0.0012 - c * 0.0016);
+    float chunk = smoothstep(aa, -aa, dd);
+    float tum = saberCelQuant(0.16 + 0.84 * abs(sin(t * (0.5 + c * 1.5) + a * 6.2832)), 3.0);
+    hullAcc = mix(hullAcc, lit * tum, chunk * step(0.001, age));
+    cov = max(cov, chunk * step(0.001, age));
+  }
+
+  /* ── something else going up, a long way off ──────────────────────────── */
+  for (int k = 0; k < 3; k++) {
+    float fk = float(k);
+    float a = hash11(fk * 9.13 + 4.7), b = hash11(fk * 6.29 + 8.9);
+    float per = 21.0 + fk * 13.0;
+    float ph = fract(t / per + a);
+    if (ph < 0.12) {
+      float ag = ph / 0.12;
+      vec2 p = vec2((a - 0.5) * 0.86, (b - 0.5) * 0.30);
+      float dd = length(q - p);
+      float r = 0.003 + ag * 0.038;
+      float core = smoothstep(r, r * 0.25, dd) * (1.0 - ag) * (1.0 - ag);
+      float ring = exp(-(dd - r) * (dd - r) / 2.2e-5) * (1.0 - ag);
+      glow += mix(vec3(1.0, 0.86, 0.58), uBoltCol, 0.25) * (core * 3.4 + ring * 1.6);
+    }
+  }
+
+  return vec4(hullAcc * cov + glow * uFleet, cov * uFleet);
+}
+
+/**
+ * ══ THE WORLD OUTSIDE ═════════════════════════════════════════════════════
+ *
+ * An analytic disc on dot(dir, uPlanetDir), with the surface normal recovered
+ * from the impact parameter — no ray-sphere intersection, no geometry, no
+ * second depth range. At the sub-viewer point the normal is -uPlanetDir and at
+ * the limb it is the ray's own perpendicular, and everything between is one
+ * sqrt.
+ *
+ * SHADED IN PLATES. The terminator is a quantised N·L, so the day side is
+ * three flat fields with the star's direction still legible across them, and
+ * the boundary between them is drawn rather than smeared. Rule 1 says two
+ * tones and a crisp edge; a body this size gets three, for the same reason the
+ * cloud deck does — the range from the sub-solar point to the terminator is
+ * wide enough that two plates put the only boundary in the middle of the disc.
+ */
+vec3 orbitScene(vec3 dir) {
+  /* Both derivatives are taken here, ahead of every branch below. fwidth in
+   * non-uniform control flow is undefined, and every guard from this point on
+   * is a per-pixel test. */
+  vec3 F = uFleetDir;
+  vec3 R = normalize(cross(vec3(0.0, 1.0, 0.0), F));
+  vec3 U = cross(F, R);
+  float w = dot(dir, F);
+  vec2 q = vec2(dot(dir, R), dot(dir, U)) / max(w, 1.0e-3);
+  float aa = (fwidth(q.x) + fwidth(q.y)) * 0.6;
+
+  float d = dot(dir, uPlanetDir);
+  vec3 perp = dir - uPlanetDir * d;
+  float pl = length(perp);
+  /* The impact parameter, normalised: 0 at the centre of the disc, 1 at the
+   * limb, and it keeps going past 1 into the air outside. */
+  float s = pl / max(uPlanetSin, 1.0e-4);
+  float aaS = fwidth(s) * 0.75 + 1.0e-5;
+
+  vec3 col = uSpaceCol + starField(dir);
+
+  if (d > 0.0 && s < 1.30) {
+    vec3 e = perp / max(pl, 1.0e-6);
+    vec3 n = normalize(e * s - uPlanetDir * sqrt(max(1.0 - s * s, 0.0)));
+    float ndl = dot(n, uSunDir);
+    float day = saberCelQuant(clamp(smoothstep(-0.16, 0.20, ndl), 0.0, 1.0), 3.0);
+
+    /* The surface, in the planet's own frame. Turning it under the ray is what
+     * makes the same disc a different disc four minutes later. */
+    vec3 bp = spinAbout(n, uPlanetAxis, uPlanetSpin);
+    float cont = orbFbm(bp * 1.9);
+    float relief = orbFbm2(bp * 5.3 + 21.7);
+    float seaThr = mix(0.34, 0.50, uSeaAmt);
+    float sea = 1.0 - smoothstep(seaThr - 0.012, seaThr + 0.012, cont);
+
+    vec3 land = mix(uLandCol, uRockCol, smoothstep(0.34, 0.54, relief));
+    land = mix(land, uBasinCol, smoothstep(seaThr + 0.09, seaThr, cont) * 0.55);
+    /* Ice, at whatever latitude this world keeps it. The relief breaks the
+     * line so a cap is a coastline and not a circle drawn with a compass. */
+    float lat = abs(dot(n, uPlanetAxis));
+    float cap = uCapAmt * smoothstep(0.62, 0.84, lat + (relief - 0.40) * 0.36);
+    vec3 albedo = mix(mix(land, uSeaCol, sea * (1.0 - uSeaGlow)), uAtmoCol * 0.78, cap);
+
+    vec3 body = albedo * uOrbitKey * uStarCol * day;
+    /* A night side is not black. It is lit by the star's light scattered
+     * through the world's own air, which is why this term carries the limb's
+     * colour and not a grey. */
+    body += albedo * uOrbitKey * uAtmoCol * 0.035;
+    /* …and a lava sea does not go out at the terminator. This is the single
+     * term that makes the Ember Shelf and the Ash Flats read as themselves
+     * from orbit, and it costs one noise field. */
+    float vein = smoothstep(0.38, 0.60, orbFbm2(bp * 13.0 + 5.5));
+    body += uSeaCol * sea * uSeaGlow * uOrbitKey * (0.25 + 0.90 * vein) * (1.0 - day * 0.55);
+
+    /* The deck, in the planet's other frame — slower than the surface, so the
+     * weather visibly shears across the land it is over. */
+    vec3 cp = spinAbout(n, uPlanetAxis, uCloudSpin);
+    float cThr = mix(0.56, 0.30, uCloudAmt);
+    float cm = smoothstep(cThr, cThr + 0.075, orbFbm(cp * 3.1 + 9.4));
+    cm *= smoothstep(1.0, 0.90, s);
+    vec3 cloudCol = (uPlanetLit * uStarCol * day * 0.95 + uPlanetDark * uAtmoCol * 0.14)
+                  * uOrbitKey;
+    body = mix(body, cloudCol, cm * 0.92);
+
+    /* The air, thickening toward the limb: the path through it is longest
+     * where you are looking along it. */
+    float rim = smoothstep(0.52, 1.0, s);
+    body += uAtmoCol * uOrbitKey * rim * rim * max(ndl, 0.0) * 0.60;
+
+    body = saberCelBand(body, 3.0);
+    float pcov = smoothstep(1.0 + aaS, 1.0 - aaS, s);
+    col = mix(col, body, pcov);
+
+    /* …and the same air seen past the edge of the world, where there is no
+     * ground behind it. Quantised, because this is the one place in the frame
+     * where a soft ramp would look like a lens artefact rather than like a
+     * drawn shape. */
+    float outAir = smoothstep(1.13, 1.00, s) * smoothstep(1.0 - aaS, 1.0 + aaS, s);
+    col += uAtmoCol * uOrbitKey * outAir * saberCelQuant(clamp(dot(e, uSunDir), 0.0, 1.0), 3.0) * 0.9;
+  }
+
+  if (uFleet > 0.002 && w > 0.60) {
+    vec2 sq = normalize(vec2(dot(uSunDir, R), dot(uSunDir, U)) + vec2(1.0e-4, 0.0));
+    vec4 f = fleetScene(q, aa, uOrbitT, sq);
+    col = col * (1.0 - f.a) + f.rgb;
+  }
+  return col;
+}
+`,
+/* glsl */`
   void main() {
     vec3 dir = normalize(vDir);
+
+    /* THE ONE BRANCH THAT SEPARATES A SKY FROM A WINDOW.
+     *
+     * uOrbit is 0 for every level that has ever shipped, so this is a uniform
+     * test that no shipped frame takes: no cost, and — because everything the
+     * orbit path reads is a uniform nothing else writes — no way for it to
+     * move a single bit of what the seven grounds already draw. It returns
+     * before the horizon, the deck and the front, because out there none of
+     * the three is a thing that exists.
+     *
+     * Alpha is flat, and that is deliberate: space is not a translucent
+     * medium. The dome is the only thing painting these pixels, so the
+     * scene background behind it never shows through and a level cannot half
+     * dissolve its own sky by authoring an opacity it forgot about. */
+    if (uOrbit > 0.5) {
+      gl_FragColor = vec4(orbitScene(dir), uOpacity);
+      return;
+    }
+
     float el = dir.y;
 
     /* A FRONT, as distinct from the air merely not being perfectly still.
@@ -656,6 +1182,41 @@ export class SkyDome {
         // it, so a dome built without an Engine still draws something sane.
         uSkyBand:      { value: null },
         uHazeHue:      { value: new THREE.Color(1, 1, 1) },
+
+        /* ── the window (see configureOrbit) ──────────────────────────────
+         * uOrbit is the whole gate. Every default below is what a dome built
+         * with no Engine and no level draws if somebody turns it on by hand:
+         * a temperate world under a white star, a fleet in the middle of a
+         * fight. Nothing here is read while uOrbit is 0. */
+        uOrbit:        { value: 0 },
+        uOrbitT:       { value: 0 },
+        uOrbitKey:     { value: 0.58 },
+        uSpaceCol:     { value: new THREE.Color(0.006, 0.008, 0.014) },
+        uStarCol:      { value: new THREE.Color(1, 1, 1) },
+        uPlanetDir:    { value: new THREE.Vector3(0.62, 0.28, -0.74).normalize() },
+        uPlanetAxis:   { value: new THREE.Vector3(0.16, 0.96, 0.22).normalize() },
+        uPlanetCos:    { value: Math.cos(0.32) },
+        uPlanetSin:    { value: Math.sin(0.32) },
+        uPlanetSpin:   { value: 0 },
+        uCloudSpin:    { value: 0 },
+        uLandCol:      { value: new THREE.Color(0x8a7f6e) },
+        uRockCol:      { value: new THREE.Color(0x5c5044) },
+        uBasinCol:     { value: new THREE.Color(0x4a4238) },
+        uSeaCol:       { value: new THREE.Color(0x123a4e) },
+        uSeaAmt:       { value: 0.55 },
+        uSeaGlow:      { value: 0 },
+        uCapAmt:       { value: 0.35 },
+        uCloudAmt:     { value: 0.42 },
+        uPlanetLit:    { value: new THREE.Color(1, 1, 1) },
+        uPlanetDark:   { value: new THREE.Color(1, 1, 1) },
+        uAtmoCol:      { value: new THREE.Color(1, 1, 1) },
+        uStars:        { value: 1 },
+        uStarSpin:     { value: 0 },
+        uFleet:        { value: 1 },
+        uFleetDir:     { value: new THREE.Vector3(0.20, 0.16, -0.97).normalize() },
+        uBoltCol:      { value: new THREE.Color(0x35b0ff) },
+        uFoeCol:       { value: new THREE.Color(0xff2a18) },
+        uDeathSpan:    { value: 240 },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,

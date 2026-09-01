@@ -48,7 +48,7 @@
  * menu; the menu is faster and this is the one that means something.
  */
 
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
   addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
   makeConsole, makeCrate, addHullSection, addFloorSlab } from '../world/Props.js';
