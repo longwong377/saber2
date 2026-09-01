@@ -67,8 +67,10 @@ await page.evaluate(() => {
   }));
 });
 await page.reload({ waitUntil: 'domcontentloaded' });
-await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
-await page.click('#btn-deploy');
+await page.waitForSelector('#menu:not(.hidden)', { timeout: 600000 });
+/* Under contention this box takes minutes to reach an interactive menu and
+ * playwright's 30 s default fires while the page is still booting. */
+await page.click('#btn-deploy', { timeout: 600000 });
 await page.waitForSelector('#hud:not(.hidden)', { timeout: 300000 });
 
 const info = await page.evaluate(async ([world, t, yaw, pitch, fov, size, extra, settle, aim]) => {

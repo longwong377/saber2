@@ -85,28 +85,63 @@ Status: `·` not started · `~` partial · `✓` done and driven
 ## THE PLANET
 
 - `✓` Fills 30–40% of the visible space, curvature edge visible, terminator.
+  A 39° disc, and the terminator is three concentric plates over 40° of sphere
+  rather than one edge, which is what makes it a ball and not a circle.
 - `✓` Biome-driven per map selection: ice, forest, desert, volcanic, urban, ocean.
-- `~` Slow orbital drift — visibly moves over 2–3 minutes.
-- `~` Cloud layer with a second slower rotation.
+  Every swatch derived, none typed: `sandColor`/`rockColor`/`gritColor` for the
+  ground, `water.deep` (or `water.sky` when the sea is lava), `cloudCover`/
+  `cloudLit`/`cloudDark` for the weather, `skyColor` for the limb, `sunColor`
+  for the star. Ice line solved from the ground swatch's own brightness and
+  blue-over-red: alpine 1.00, wood/colosseum/drifts 0.10, the lava pair 0.
+- `✓` Slow orbital drift — visibly moves over 2–3 minutes. **17.7° in 180 s**,
+  measured (`tools/_orbitprobe.mjs`), as a ±24° station-keeping sway so the
+  world always comes back into the aperture. `sway: 0` gives a true lap.
+- `✓` Cloud layer with a second slower rotation. Surface 36.0°/180 s, deck
+  22.3°/180 s — 0.62×, measured.
 - `✓` Atmospheric rim glow, biome-tinted.
-- `·` City lights on the night side for inhabited maps.
-- `·` Landing craft as tiny specks descending toward it in strings.
+- `✓` City lights on the night side for inhabited maps. Two gates so they
+  cluster, occluded by the cloud over them, quantised to three. Which worlds
+  is derived from `L.party` — the spectator field, the only thing a level
+  record carries that asserts non-combatants live there. **This is the weakest
+  derivation in the feature**; a real settlement flag should replace it.
+- `✓` Landing craft as tiny specks descending toward it in strings — three
+  lanes of four, aimed at the near limb, and the last sixth of the trip is an
+  entry streak that lengthens, warms and goes out.
 
 ## THE BATTLE
 
 - `✓` Layered by distance: capital ships as huge slow silhouettes, cruisers
-  midground, fighters as fast points of light near you.
+  midground, fighters as fast points of light near you. Distance is stated as
+  size and RATE, because vacuum has no haze to state it with: a capital is 5.7°
+  long and drifts at a four-minute period, a fighter is two pixels and crosses
+  the field in two and a half seconds.
 - `✓` Turbolaser exchanges between capital ships — long, slow tracer bolts. Slow
-  = big.
-- `·` Distant explosions with no sound, then a delayed muffled thump through the
-  hull.
-- `~` One capital ship visibly dying over the whole session: fires spreading,
-  listing, breaking apart.
-- `~` Debris field with slowly tumbling wreckage.
-- `·` Fighter dogfights that pass close to the shield and streak past.
-- `·` Ion flashes, shield impact blooms on friendly hulls.
-- `·` Atmospheric entry streaks going down toward the planet.
+  = big. Six guns, 6.4–13.3 s a shot, the bolt a sixth of the gap.
+- `✓` Distant explosions with no sound, then a delayed muffled thump through the
+  hull. The schedule is on the CPU (`SkyDome._blasts`) and the shader is a
+  consumer of it, so the flash can be subscribed to: each one pushes
+  `{ kind, strength, delay, at }` onto `ground.orbit.events` — a queue to
+  drain, capped at 12 — which is exactly `hullThump(world, strength, {delay})`.
+  Delay 0.9–2.1 s, dramatic rather than physical, for the reason `DeckAudio`
+  writes down. **Nothing drains it yet.**
+- `✓` One capital ship visibly dying over the whole session: fires spreading,
+  listing, breaking apart. 240 s: the list rolls as t², fires light cell by
+  cell along the keel as the clock passes each one's own hash, and at 0.80 the
+  hull is drawn as two pieces that separate and tumble.
+- `✓` Debris field with slowly tumbling wreckage — 16 chunks, brightness |sin|
+  on each one's own rate quantised to three plates, so a plate catching the
+  star is a step and not a fade.
+- `✓` Fighter dogfights that pass close to the shield and streak past. Four
+  passes, in pairs, one on the other's tail with bolts between them, crossing
+  the whole aperture in 2.5 s every 15–31 s. Drawn as segments from where the
+  craft was to where it is — the only reason something that fast is visible.
+- `✓` Ion flashes, shield impact blooms on friendly hulls. The bloom is a
+  crescent shell facing where the shot came in, not a ring; the ion flash takes
+  the whole hull blue-white for a fifth of a second.
+- `✓` Atmospheric entry streaks going down toward the planet.
 - `✓` Starfield behind all of it, dense, with parallax against the orbital drift.
+  The field turns at 5.9°/180 s against the world's 17.7° — three to one, which
+  is the parallax.
 
 ## SOUND
 

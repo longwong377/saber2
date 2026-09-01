@@ -22,7 +22,11 @@ import { armKinetic, KINETIC_BODY } from './Impact.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
 import { walkScale } from '../engine/Bindings.js';
-import { RankSet, rankScale } from './Waves.js';
+/* `MODES` for one question and one only: is the world this body woke up in a
+ * place, rather than a fight. `World.loadLevel` asks it the same way — see
+ * `hosting` — and asking it off the same table is what stops the deck and the
+ * player disagreeing about which room they are in. */
+import { MODES, RankSet, rankScale } from './Waves.js';
 import { parryScale, TOUGHNESS, impactDamage, RETURN_CONE } from './Combat.js';
 /* THE OTHER HALF OF THE FORCE CONTEST, IMPORTED RATHER THAN RE-DERIVED. The
  * three constants that decide what a point of pool buys live over
@@ -739,6 +743,37 @@ const SWING_WHOOSH = 8.5;
  *  accident. Radius and impulse take it once, damage twice — the blade is what
  *  makes the difference and the blade is a damage term. */
 const DIVE_LAND = 1.45;
+
+/**
+ * HOW FAR INSIDE THE HEIGHTFIELD'S EDGE A BODY IS HELD, in metres. See the
+ * clamp at the foot of `_collide`.
+ *
+ * Six, and on a battlefield six is right for a reason that has nothing to do
+ * with taste: past the last row of a 300 m heightfield there is no ground, no
+ * collider and no world, so a player who reaches the edge is a player falling
+ * through the map, and the six metres are the distance at which that stops
+ * being possible with a dash and a slope in hand.
+ *
+ * ON THE FLIGHT DECK THOSE SIX METRES ARE THE WHOLE COMPOSITION. `DECK.lip`
+ * IS `terrain.half` — 64 — because that room's one structural idea is that the
+ * heightfield's own edge is the deck's edge and the ship genuinely runs out
+ * under your feet. The strobes stand 2.5 m inside it, the field plane stands
+ * ON it, and a static barrier 2 m thick stands outside it. So the level has
+ * already answered "what stops you leaving", with something you can walk up to
+ * and lean against, and this clamp was a SECOND, weaker answer six metres
+ * further in — the two-copies-of-one-rule shape, with the copies disagreeing.
+ *
+ * MEASURED, four bearings out of the deck, 34 s of held forward each:
+ *
+ *     x=0   stopped at z 58.00     x=9    stopped at z 58.00
+ *     x=20  stopped at z 58.00     x=-9   stopped at z 58.00
+ *
+ * Six metres short of the lip, on every bearing, dead, with no collider
+ * anywhere near — which is exactly "walk to the shield edge and stand there"
+ * being answered by an invisible wall. `hosting` takes the margin to nought
+ * and hands the question back to the barrier, which is a thing that exists.
+ */
+const EDGE_MARGIN = 6;
 
 /**
  * FORCE LIGHTNING, as an arc. See `forceLightning` and `_lightningArc`.
@@ -2857,6 +2892,64 @@ export function defaultBoonMods() {
   };
 }
 
+/**
+ * ══ WHAT THE FLIGHT DECK ANSWERS NO TO, AND IN WHAT WORDS ═══════════════════
+ *
+ * The deck runs an ALLOW-list, not a deny-list — see the `hosting` branch in
+ * `_readInput`, which reads five keys and nothing else — so strictly this table
+ * is unnecessary and every key not in that branch would already do nothing.
+ *
+ * NOTHING is exactly what it must not do. This file deletes silent returns on
+ * sight ("a bare `return` here was the second of the file's two silent
+ * refusals"), for the reason `_refuse`'s own header gives: a power that appears
+ * to do nothing reads as a broken button, and the wheel in the HUD advertises
+ * all twelve whatever room you are standing in. So the eight the deck does not
+ * want say so, once every 0.7 s, with a sound and a reason.
+ *
+ * ── WHY THESE EIGHT, AND WHY THE OTHER FIVE ARE IN ───────────────────────
+ *
+ * One rule decides it: A POWER IS ON THE DECK IF WHAT IT DOES IS SOMETHING
+ * THIS ROOM CAN SHOW YOU. Push, pull, grip, stasis and unleash all act on
+ * BODIES, and the deck is full of bodies — six loose crates, whatever the props
+ * fracture into, and the company itself the day a figure carries a collider.
+ * That is "pick up crates and ships, throw them at the shield" and "shove the
+ * line over" verbatim, and it is the whole of the ask.
+ *
+ * The eight below split three ways and each way is a different argument:
+ *
+ *  · `ignite` and `throw` are the BLADE. The deck's premise is that you have
+ *    walked into a room full of your own men with your weapon down, and a
+ *    lightsaber thrown down a line of troopers standing to attention is not a
+ *    stronger version of shoving them over — it is a different act. This is the
+ *    one refusal that is a rule about the fiction rather than about the engine.
+ *  · `lightning`, `compel` and `rend` are the three powers HANGAR.md measured
+ *    as degrading to NO-OPS with an empty `ctx.enemies`. They are also, in
+ *    order, burning a man, taking his mind and pulling him apart. Both reasons
+ *    point the same way, which is rare enough to be worth saying.
+ *  · `sense`, `heal` and `shield` WORK here and have nothing to work on. Sense
+ *    lights up hostiles and there are none; the mend costs 40 Force to repair
+ *    damage nothing on this deck can do; the barrier's entire content is what
+ *    it stops, and nothing here is shooting. Each would spend a full bar to
+ *    produce a screen effect, which is the definition of a power that appears
+ *    to do nothing.
+ *
+ * `unleash` is the one that could have gone either way and it is IN, because
+ * `push` is a 0.72-radian cone and the ask says "shove the LINE over": standing
+ * in the middle of the formation and throwing everything outward at once is the
+ * moment that sentence describes, and `_shockwave` already applies it to every
+ * dynamic body in the radius.
+ */
+const OFF_THE_DECK = {
+  ignite: 'your blade stays down among your own men',
+  throw: 'you would be throwing it down your own line',
+  lightning: 'there is nobody here to burn',
+  compel: 'there is nobody here to turn',
+  rend: 'nothing on this deck is fighting you',
+  sense: 'there is nobody aboard to find',
+  heal: 'nothing here has hurt you',
+  shield: 'nothing on this deck is shooting at you',
+};
+
 export class Player {
   constructor(world, opts = {}) {
     this.world = world;
@@ -3045,6 +3138,53 @@ export class Player {
     this.shield = { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 };
     /** The `Crew` this player is at the controls of, or null. See Driving.js. */
     this.driving = null;
+    /**
+     * ══ YOU ARE ABOARD, AND NOBODY IS SHOOTING ════════════════════════════
+     *
+     * The flight deck is a MODE — see `MODES.hangar` and `enterHangar` — and
+     * this is the whole of what that mode means to this class: the same body,
+     * the same camera, the same legs, a blade that stays down, and the five
+     * Force verbs that act on things rather than on people. `_readInput` is
+     * where it is spent, in a branch shaped exactly like `driving`'s.
+     *
+     * ── WHY THE MODE AND NOT A FLAG SOMEBODY SETS ───────────────────────
+     *
+     * A `player.hosting = true` written by the deck at spawn would be a second
+     * writer of a fact `World.loadLevel` already derives — it builds the
+     * `HangarDirector` off `MODES[settings.mode]?.level === 'hangar'` and
+     * nothing else — and the day the two disagreed the player would be walking
+     * round a fight with his blade down or standing on the deck able to throw
+     * it. One derivation, off the one table, asked once.
+     *
+     * ONCE, and not a getter, because a world's mode is fixed for its life:
+     * `buildWorld` constructs a new `World` per destination and `enterHangar`
+     * passes the mode as an OVERRIDE rather than writing `settings` (which is
+     * what keeps a visit out of the run history). Nothing can flip this under a
+     * live body, so re-reading it sixty times a second would be sixty answers
+     * to a question with one. It is derived rather than stored, so a reload
+     * cannot lose it and a save cannot carry it.
+     */
+    this.hosting = MODES[world?.settings?.mode]?.level === 'hangar';
+    /**
+     * AND THE BLADE BUTTON HAS NO MEANING IN A ROOM WITH NO BLADE IN IT.
+     *
+     * `SaberController.applyInput` decides per scheme what the guard button
+     * does with the mouse, and under `'free'` the sense is INVERTED — bladeHeld
+     * is `!input.act('blade')`, so the default state is blade mode and the
+     * camera gets nothing at all unless the button is held. That is survivable
+     * in a fight, where holding the guard is what you are doing anyway. It is
+     * not survivable here: the deck's entire content is the view out of it, and
+     * a player on the wrong scheme would walk onto it and find that the mouse
+     * does not turn his head.
+     *
+     * `'directional'` is the shipped default and the one scheme that never
+     * takes the mouse (`bladeMode = !directional && …`), so this is not a
+     * fourth behaviour — it is the room asking for the answer two thirds of
+     * players already have. It is set on the CONTROLLER, which is built per
+     * player and thrown away with the world, so nothing is written to disk and
+     * the scheme the player chose is exactly what they get on the next deploy.
+     */
+    if (this.hosting) this.control.scheme = 'directional';
     this.dashDir = new THREE.Vector3();
     /** Seconds left of an air dodge's somersault, and the horizontal axis it
      *  turns about. Zero on the ground: a dodge with a foot down is a step. */
@@ -3618,6 +3758,94 @@ export class Player {
       this.camera.addPitch(look.pitch);
       if (input.actHit('drive')) this.takeControls(ctx);
       if (input.actHit('view')) { this.camera.firstPerson = !this.camera.firstPerson; this._applyViewMode(); }
+      return;
+    }
+
+    /**
+     * ══ AND ON THE FLIGHT DECK YOU ARE A MAN IN A ROOM ════════════════════
+     *
+     * The branch above's shape, one difference at a time, because the two modes
+     * are the same trick pointed in opposite directions: driving is a body that
+     * cannot walk and keeps its fight, and this is a body that walks and has no
+     * fight at all.
+     *
+     *  · THE WHEEL IS CLAIMED UNCONDITIONALLY, as it is above and unlike the
+     *    ordinary path below, which only takes it while something is held. With
+     *    no blade lit there is no wrist roll for it to collide with, so the
+     *    notch can simply BE the grip's distance control — which is the one
+     *    thing a room built around carrying crates about wants it to be.
+     *  · THE LOOK GOES THROUGH `control.applyInput`, the same single door, for
+     *    the same reason: a second reader of `mouse.dx` here would be the
+     *    two-copies-of-one-rule defect this file keeps deleting.
+     *  · `_move` IS NOT SUPPRESSED. That is the whole difference from `driving`
+     *    and it is why this returns from `_readInput` rather than from
+     *    `update`: everything below this line is a KEY, and everything the body
+     *    does — the walk, the sprint, the crouch, the jump, the gait, the
+     *    collision, the camera — is downstream and untouched. You walk to the
+     *    lip of the deck and stand there, which is the one thing the whole room
+     *    is composed to reward.
+     *  · THE BLADE GOES DOWN AND STAYS DOWN. `World.spawnPlayer` ends with an
+     *    unconditional `p.saber.ignite(); p.hum.ignite();` — it has no notion
+     *    of a destination that is not a fight — so this is the first frame
+     *    downstream of it that can answer, and it answers every frame because
+     *    `retract()` on an unlit blade is a field already false. Measured: the
+     *    ignition ramp is 6.5/s up, so one frame of it is 0.11 of a blade, and
+     *    the retract that follows runs at 8.5/s. Nothing is drawn. The HILT
+     *    stays in the hand — `saberDown` is "your hands are empty" and is a
+     *    different sentence.
+     *
+     * ── THE FIVE KEYS ──────────────────────────────────────────────────────
+     *
+     * `view`, and then the verbs that act on bodies: grip, push, pull, stasis,
+     * unleash, and `hurl` — which is not a sixth power but the release for the
+     * two holds, and without it "throw them at the shield" is a hand that can
+     * only put things down. Dash is here because it is locomotion that happens
+     * to cost stamina, and it is the only movement key `_move` does not own.
+     *
+     * Everything else refuses out loud rather than falling silent. See
+     * `OFF_THE_DECK` for which eight and for the argument.
+     */
+    if (this.hosting) {
+      this._wheel = input.mouse.wheel;
+      input.mouse.wheel = 0;
+      if (this.saber.lit) { this.saber.retract(); this.hum.retract(); }
+      const look = this.control.applyInput(input, dt, {
+        stamina: this.stamina / this.maxStamina,
+        attackRate: this.boonMods.attackRate,
+        /* THE DRIVE BRANCH'S EXEMPTION, MEANING THE SAME THING. `applyInput`
+         * raises `onSpin`, `onStrain` and `onThrust` where an attack costs
+         * something and lets the caller price it, and `controls.mjs` holds
+         * every caller to paying — unless the ctx SAYS it cannot reach a
+         * hooked verb, which is what this pair of fields is. It is true here
+         * for the same reason it is true in a cockpit: there is no blade in
+         * this hand, so there is no attack, so there is nothing to bill. The
+         * alternative is charging a man stamina for waving an unlit hilt about
+         * on his own flight deck. */
+        grounded: true, moving: 0,
+      });
+      this.camera.addYaw(look.yaw);
+      this.camera.addPitch(look.pitch);
+      if (input.actHit('view')) { this.camera.firstPerson = !this.camera.firstPerson; this._applyViewMode(); }
+      if (input.actHit('push')) this.forcePush(ctx);
+      if (input.actHit('pull')) this.forcePull(ctx);
+      if (input.actHit('grip')) this.toggleGrip(ctx);
+      if (input.actHit('stasis')) this.toggleStasis(ctx);
+      if (input.actHit('unleash')) this.forceUnleash(ctx);
+      /* The same one meaning `hurl` has everywhere else — send what I am
+       * holding at what I am looking at — reached through the same two doors,
+       * so a crate thrown at the field on the deck is thrown by the code that
+       * throws one at a droid. */
+      if (input.actHit('hurl')) {
+        if (this.gripBody || this.gripEnemy) this.hurlGripped(ctx);
+        else if (this.stasis.active) this.releaseStasis(ctx, true);
+      }
+      if (input.actHit('dash') && this.cooldowns.dash <= 0) this._tryDash(ctx);
+      /* AND THE EIGHT THAT ARE NOT WELCOME SAY SO. `_refuse` carries its own
+       * 0.7 s per-name gate, so a held key is one notice and one blip rather
+       * than sixty. */
+      for (const key in OFF_THE_DECK) {
+        if (input.actHit(key)) this._refuse(key, OFF_THE_DECK[key]);
+      }
       return;
     }
 
@@ -4686,8 +4914,11 @@ export class Player {
       }
     }
 
-    if (terrain && !terrain.inBounds(this.position.x, this.position.z, 6)) {
-      const h = terrain.half - 6;
+    /* See EDGE_MARGIN. Nought on the deck, where the edge is the point and the
+     * field is what stops you; six everywhere else, where the edge is a hole. */
+    const edge = this.hosting ? 0 : EDGE_MARGIN;
+    if (terrain && !terrain.inBounds(this.position.x, this.position.z, edge)) {
+      const h = terrain.half - edge;
       this.position.x = clamp(this.position.x, -h, h);
       this.position.z = clamp(this.position.z, -h, h);
     }

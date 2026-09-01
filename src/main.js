@@ -838,7 +838,9 @@ async function enterHangar() {
     const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
     await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label), null,
       { mode: 'hangar', level: 'hangar', allies: 0 });
-    if (world) world._pickedTheatre = outside;
+    /* THE RECORD, not the key: `Hangar.js` imports no levels — see
+     * `outsideLevel` — so the world carries what its window is looking at. */
+    if (world) world._pickedLevel = LEVELS[outside] || null;
   } catch (e) {
     console.error('hangar failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }

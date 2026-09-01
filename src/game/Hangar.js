@@ -54,7 +54,6 @@ import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
 import { squadPlan, leadOf, SQUAD } from './Command.js';
-import { LEVELS, LEVEL_ORDER } from './Levels.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Kit, propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
   addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
@@ -446,13 +445,11 @@ export function dressHangar(world) {
    * an ice world outside. `dressHangar` runs at stage 6, after
    * `applyAtmosphere` at stage 4, so this is the last word.
    */
-  const key = pickedTheatre(world);
-  const shown = LEVELS[key];
+  const shown = outsideLevel(world);
   world.engine?.sky?.configureOrbit?.({
     level: shown,
     terrain: TERRAIN_PRESETS[shown?.terrain],
   });
-  world._orbitLevel = key;
 
   callTheCompany(world);
   /* THE ROOM'S SOUND, and it is not decoration: the pressure differential at
@@ -822,24 +819,25 @@ export function deckOrder(world, id) {
 
 
 /**
- * WHICH WORLD IS OUTSIDE — the theatre the player last chose, and never this
- * room's own ground.
+ * ══ WHICH WORLD IS OUTSIDE ════════════════════════════════════════════════
  *
- * `world.settings.level` is what the menu wrote, and `enterHangar` deliberately
- * overrides `level` to `'hangar'` so `World` builds the deck; the SELECTION is
- * still on the player's saved settings underneath, which is where this reads
- * it. A mode that owns its ground (Command declares Geonosis) wins, because
- * that is the ground the next run will actually be fought on and therefore the
- * planet this ship is actually over.
+ * The record is HANDED IN, never looked up, and that is the whole reason this
+ * file does not import `Levels.js`. It did for one commit: `Levels.js` imports
+ * `Hangar.js` for the level record, so the pair was a cycle — and a cycle in
+ * ES modules does not throw on every path, it throws on the first import order
+ * that reaches the wrong half first. It ran green for hours and then died with
+ * `Cannot access 'HANGAR_LEVEL' before initialization` in one suite.
+ *
+ * Registering from this side instead was worse: the ground then exists only if
+ * something has imported this file, and two suites that read `LEVELS` directly
+ * went red saying a mode names a ground the game does not have.
+ *
+ * So the dependency points one way — `Levels.js` owns the roster and knows
+ * about the deck; the deck knows about no levels at all — and `main.js`, which
+ * already imports both, resolves the player's theatre through `theatreFor` (the
+ * same resolver `deploy` uses, so a mode that owns its ground wins) and stashes
+ * the RECORD on the world before the dressing runs.
  */
-export function pickedTheatre(world) {
-  const s = world?.settings || {};
-  const modeLevel = s.pickedLevel || s.theatre || null;
-  const k = modeLevel || s.chosenLevel || s.orbitLevel || null;
-  if (k && LEVELS[k] && k !== 'hangar') return k;
-  /* `enterHangar` stashes it, because by the time the world exists its own
-   * `settings.level` says 'hangar'. */
-  const stashed = world?._pickedTheatre;
-  if (stashed && LEVELS[stashed] && stashed !== 'hangar') return stashed;
-  return LEVEL_ORDER[0];
+export function outsideLevel(world) {
+  return world?._pickedLevel || world?.level || null;
 }

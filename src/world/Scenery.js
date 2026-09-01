@@ -600,6 +600,26 @@ export const ground = {
    * and the aerial-perspective checks would go quietly red. */
   skyBand: null,
 
+  /* THE WORLD OUTSIDE THE SHIP, as SkyDome.configureOrbit derived it, or null
+   * on every ground under an open sky:
+   *
+   *   { dir, sun: Vector3 · colour: Color · key, bounce: number · events: [] }
+   *
+   * Published for the same reason skyBand is, one deck up: a hangar in orbit
+   * is lit from OUTSIDE, by a planet that is the biggest thing in its frame,
+   * and a key light aimed by hand at a planet the shader is drawing somewhere
+   * else is a seam in the one place the whole room is pointed at. `dir` is
+   * toward the planet, so a directional standing in for it goes at +dir;
+   * `bounce` is the radiance it actually throws, which is what a fill wants.
+   *
+   * `events` is a QUEUE TO DRAIN — { kind, strength, delay, at } — raised as
+   * each detonation out there fires. Light arrives now and the thump arrives
+   * through the hull `delay` seconds later; that is the deck's to play, and
+   * publishing the event rather than calling anything is what keeps the sky
+   * from importing the audio. Capped at 12, oldest dropped, so nothing here
+   * depends on somebody remembering to consume it. */
+  orbit: null,
+
   /** Where the frame is centred — published by `frame` every tick. */
   focus: new THREE.Vector3(),
 

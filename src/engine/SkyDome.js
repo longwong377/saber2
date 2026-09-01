@@ -601,16 +601,27 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
    * the same air colour the planet's limb is. That is what keeps the fleet
    * inside the level's own hue family rather than putting a second grey scheme
    * in the frame — rule 5. */
-  vec3 lit = uStarCol * uOrbitKey * 0.30;
-  vec3 shade = uAtmoCol * uOrbitKey * 0.045;
+  vec3 lit = uStarCol * uOrbitKey * 0.32;
+  /* The shade side is PLANETSHINE, and the number is not a guess: the disc
+   * subtends about a steradian and a half at this angular size and returns its
+   * own albedo of what lands on it, which _publishOrbit works out at four to
+   * five per cent of the key. A hull with a black shadow side beside a world
+   * that bright is the same error as a cloud base painted black under an open
+   * sky, one file up. */
+  vec3 shade = uAtmoCol * uOrbitKey * 0.095;
   vec3 emCol = mix(uAtmoCol, vec3(1.0), 0.55);
   float dt = fract(t / uDeathSpan);
 
   for (int i = 0; i < 7; i++) {
     float fi = float(i);
-    float big = fi < 2.5 ? 1.0 : 0.44;
+    /* 0.55 rather than 0.44, and the beam went 0.0115 to 0.0160. At the old
+     * numbers a cruiser was four pixels across a forty-degree field and simply
+     * could not be seen: the midground layer was being paid for and not
+     * delivered, which is the same fault the fighters had. Three to one in
+     * plan is about what a warship is. */
+    float big = fi < 2.5 ? 1.0 : 0.55;
     vec2 c = shipAt(fi, t);
-    float L = 0.050 * big, W = 0.0115 * big;
+    float L = 0.050 * big, W = 0.0160 * big;
     float head = hash11(fi * 7.31 + 1.7) * 6.2832;
 
     /* The one that is dying rolls as it goes. Squared, so the list is barely
@@ -637,18 +648,30 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
       float beam = W * (1.0 - t01 * 0.90);
       vec2 sh = rot2(sq, -head);
       /* The hull is a plate, so it has no normal. Treating it as a cylinder
-       * about its own keel is one divide and gives the terminator somewhere to
-       * fall — a flat silhouette with no light on it is a hole. */
-      float ndl = clamp((h.y / max(beam, 1.0e-5)) * sh.y * 1.15 + sh.x * 0.35, -1.0, 1.0);
+       * about its own keel gives one: the visible surface sweeps from one beam
+       * to the other across the silhouette, with a constant nose-on component
+       * for the bow. NORMALISED, and that is the fix — the first cut summed
+       * the two terms raw, so a ship whose heading happened to put the star
+       * along its keel got the same small number over its whole hull and came
+       * out as a flat black wedge. A unit normal against a unit sun cannot do
+       * that: a hull lit from ahead is simply all lit, which is true. */
+      vec2 nrm = normalize(vec2(0.45, clamp(h.y / max(beam, 1.0e-5), -1.0, 1.0)));
+      float ndl = dot(nrm, sh);
       hullAcc = mix(hullAcc, mix(shade, lit, step(0.02, ndl)), hull);
       cov = max(cov, hull);
     }
 
-    /* Engines. A soft bar at the stern rather than a box: the first cut was a
-     * hard rectangle brighter than anything else in the frame, which reads as a
-     * missing texture. Warm-white against the hull's own cool shade. */
-    float engD = max(abs(h.x + L * 1.02) - L * 0.03, abs(h.y) - W * 0.55);
-    glow += emCol * exp(-max(engD, 0.0) / (W * 0.42 + aa)) * 0.85 * big;
+    /* Engines. A soft bar at the stern, and the distance it falls off along is
+     * the ROUNDED box distance rather than the Chebyshev one.
+     *
+     * That is not a nicety. max(dx, dy) has square level sets, so an
+     * exponential falloff off it is a four-pointed star — and every engine in
+     * the fleet came out as a little white sparkle with spikes, which reads as
+     * a lens flare, which is the one thing a drawn frame must not have in it.
+     * length(max(d, 0)) is the real box SDF and its level sets are rounded
+     * rectangles, which is what a glow around a bar looks like. */
+    vec2 engD = vec2(abs(h.x + L * 1.02) - L * 0.03, abs(h.y) - W * 0.55);
+    glow += emCol * exp(-length(max(engD, 0.0)) / (W * 0.42 + aa)) * 0.85 * big;
 
     /* ── ION FLASH AND SHIELD BLOOM, ON OUR OWN HULLS ──────────────────
      * A shot that lands on somebody the player is meant to be on the side of
@@ -656,15 +679,31 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
      * bloom is the shell lighting up a hull-length out; the ion flash is the
      * hull itself going blue-white for a fifth of a second, which is what an
      * ion hit looks like from far enough away that you cannot see the arcs. */
-    float hitPh = fract(t / (14.0 + fi * 3.7) + hash11(fi * 5.53 + 2.9));
-    float hitAge = hitPh * (14.0 + fi * 3.7);
-    if (hitAge < 0.9) {
-      float shell = abs(length(q - c) - (L * 0.9 + hitAge * L * 1.4));
-      float fade = 1.0 - hitAge / 0.9;
+    float hitPer = 14.0 + fi * 3.7;
+    float hitN = floor(t / hitPer + hash11(fi * 5.53 + 2.9));
+    float hitAge = t - (hitN - hash11(fi * 5.53 + 2.9)) * hitPer;
+    if (hitAge >= 0.0 && hitAge < 0.65) {
+      /* A SHELL, NOT A CIRCLE. The first cut lit the whole ring evenly and
+       * what came back was a hard geometric annulus with a ship in the middle
+       * of it — a no-entry sign, and the most conspicuous thing in the frame.
+       * A shield lights where the shot came IN: a crescent facing one way,
+       * widening and dimming as it goes, quantised to three so it reads as a
+       * drawn shape rather than as a soft glow. The direction comes off the
+       * hit index, so each one arrives from somewhere else. */
+      vec2 rel = q - c;
+      float rr = length(rel);
+      float r0 = L * 0.80 + hitAge * L * 2.0;
+      float wdt = L * (0.09 + hitAge * 0.40);
+      float inA = hash11(fi * 3.91 + hitN * 0.317) * 6.2832;
+      float face = 0.20 + 0.80 * max(dot(rel / max(rr, 1.0e-5), vec2(cos(inA), sin(inA))), 0.0);
+      float shellM = exp(-(rr - r0) * (rr - r0) / (wdt * wdt + 1.0e-10)) * face;
+      float fade = 1.0 - hitAge / 0.65;
       glow += vec3(0.52, 0.78, 1.0)
-            * exp(-shell * shell / (L * L * 0.006 + 1.0e-7)) * fade * fade * 1.7;
+            * saberCelQuant(clamp(shellM, 0.0, 1.0), 3.0) * fade * fade * 1.4;
+      /* …and the hull itself goes blue-white for a fifth of a second, which is
+       * what an ion hit is from far enough away that the arcs do not resolve. */
       float ion = max(1.0 - hitAge * 5.0, 0.0);
-      glow += vec3(0.62, 0.84, 1.0) * ion * ion * hull * 2.2;
+      glow += vec3(0.62, 0.84, 1.0) * ion * ion * hull * 2.0;
     }
 
     /* Fires, on the one that is dying. A cell along the keel lights when the
@@ -689,8 +728,13 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
    * there. */
   for (int k = 0; k < 6; k++) {
     float fk = float(k);
+    /* floor(), and it is not cosmetic: mod(fk * 1.7, 4.0) is 1.7, 3.4, 0.8 …
+     * so five of the six guns were firing at a ship index that is not an
+     * integer — a position no hull is ever drawn at. Bolts crossing to a point
+     * in empty space is exactly the kind of fault that looks like ambience
+     * until you notice it and then cannot stop noticing it. */
     vec2 a = shipAt(mod(fk, 3.0), t);
-    vec2 b = shipAt(3.0 + mod(fk * 1.7, 4.0), t);
+    vec2 b = shipAt(3.0 + floor(mod(fk * 1.7, 4.0)), t);
     float per = 6.4 + fk * 1.37;
     float ph = fract(t / per + hash11(fk * 3.71 + 0.9));
     vec3 bolt = mod(fk, 2.0) < 0.5 ? uBoltCol : uFoeCol;
@@ -963,7 +1007,12 @@ vec3 orbitScene(vec3 dir) {
      * a lens flare and nothing else. */
     if (uCityAmt > 0.002) {
       float grid = orbFbm2(bp * 34.0 + 3.3);
-      float lamp = smoothstep(0.44, 0.56, grid) * smoothstep(0.30, 0.46, orbFbm2(bp * 7.0 + 61.0));
+      /* Two gates, and the coarse one is what makes them CLUSTER. People do
+       * not live in an even sprinkle over a hemisphere; they live in a few
+       * regions, and inside those they live in dots. At (0.30, 0.46) the
+       * coarse gate passed about half the night side and the result was a
+       * uniform dusting that read as noise on the image. */
+      float lamp = smoothstep(0.46, 0.58, grid) * smoothstep(0.38, 0.52, orbFbm2(bp * 7.0 + 61.0));
       lamp *= (1.0 - sea) * (1.0 - cap) * (1.0 - day) * (1.0 - cm * 0.80) * uCityAmt;
       body += vec3(1.0, 0.80, 0.48) * saberCelQuant(clamp(lamp, 0.0, 1.0), 3.0)
             * uOrbitKey * 0.42;
@@ -1569,13 +1618,38 @@ export class SkyDome {
    * @param {number} [spec.period]   seconds for one cycle of the ship's drift
    * @param {number} [spec.sway]     radians of that drift; 0 = a true sweep
    * @param {number} [spec.day]      seconds for one rotation of the planet
+   * @param {number} [spec.cloud]    override the derived cloud coverage
+   * @param {number} [spec.key]      override the derived radiance outright
    * @param {number} [spec.stars]    starfield gain, 0 = none
    * @param {number} [spec.fleet]    fleet gain, 0 = an empty sky
+   * @param {number} [spec.landing]  landing-craft gain, 0 = nobody going down
+   * @param {number} [spec.city]     override the derived night-side lights
+   * @param {number} [spec.sea]      override the derived sea fraction
+   * @param {number} [spec.caps]     override the derived ice line
+   * @param {number} [spec.phase]    dot(planet, star); -1 full, 0 half
+   * @param {number} [spec.rise]     wanted elevation of the disc, as sin
+   * @param {number[]} [spec.at]     place the disc outright, ignoring phase
+   * @param {number} [spec.deathSpan] seconds a capital takes to die
    * @param {number} [spec.gain]     multiplier on the derived exposure
+   *
+   * ── WHAT IT PUBLISHES ─────────────────────────────────────────────────
+   *
+   * `ground.orbit` — see the note on _publishOrbit and the field's own note in
+   * Scenery.js. The room is lit from outside by the thing this draws, and the
+   * detonations it schedules are things the deck can hear a couple of seconds
+   * later; both are read off the broker rather than reached for through this
+   * object, so nothing downstream has to hold a reference to the dome.
    */
   configureOrbit(spec) {
     const u = this.mat.uniforms;
-    if (!spec) { u.uOrbit.value = 0; this._orbit = null; return; }
+    if (!spec) {
+      u.uOrbit.value = 0;
+      this._orbit = null;
+      /* A ground deployed after a hangar visit must not find a planet still
+       * published on the broker and light itself off it. */
+      if (ground.orbit) ground.orbit = null;
+      return;
+    }
     const o = this._orbit = Object.assign({}, this._orbit, spec);
     const L = o.level || {};
     const A = L.atmosphere || {};
@@ -1720,8 +1794,122 @@ export class SkyDome {
      * reload with the same seed replays the same battle frame for frame. */
     if (spec.time != null) this._orbitT = spec.time;
     else if (this._orbitT == null) this._orbitT = 0;
+    this._blastSeen = null;
+    /* Called on its own — from a level's dress, after applyAtmosphere has
+     * already run — this is the only thing that can put the dome back on
+     * screen, because configure()'s visibility test has been and gone. */
+    if (u.uOpacity.value > 0.001) this.mesh.visible = true;
     this._orbitTick(0);
   }
+
+  /**
+   * ══ WHAT THE DECK CAN SEE AND HEAR ════════════════════════════════════
+   *
+   * Published on `ground`, the same broker `skyBandTexture` already hands the
+   * drawn sky to Scenery through, and for the same reason: there is one
+   * derivation of where the world is and what colour it throws, and everything
+   * that needs to agree with the view reads THAT rather than deriving a second
+   * one that is right until somebody edits one of them.
+   *
+   *     ground.orbit = {
+   *       dir:    Vector3, unit, FROM the deck TOWARD the planet. A directional
+   *               light standing in for the planet goes at +dir and points back.
+   *       colour: Color, unit luminance — the hue of the light the lit side
+   *               throws, which is the star through that world's own air.
+   *       key:    number, the radiance a white face square to the star returns.
+   *               Planetshine is a fraction of it; `bounce` is that fraction.
+   *       bounce: number, the radiance a white face turned toward the planet
+   *               actually gets from it — the number a fill light wants.
+   *       sun:    Vector3, unit, toward the star.
+   *       events: an array to DRAIN. Each is { kind, strength, delay, at }.
+   *     }
+   *
+   * `events` is the hook the deck's audio wants: a detonation out there is
+   * silent, and what arrives is a thump through the hull a couple of seconds
+   * later. `delay` is that couple of seconds, derived from how far off the
+   * flash was; the consumer decides what to do with it and this file neither
+   * knows nor imports anything that does. Drain it — nothing here empties it
+   * except the cap, which drops the oldest at 12 so an unattended queue cannot
+   * grow without bound.
+   */
+  _publishOrbit() {
+    const u = this.mat.uniforms;
+    const o = ground.orbit || (ground.orbit = { events: [] });
+    o.dir = (o.dir || new THREE.Vector3()).copy(u.uPlanetDir.value);
+    o.sun = (o.sun || new THREE.Vector3()).copy(u.uSunDir.value);
+    /* The hue is the star seen through that world's air and bounced off its
+     * ground — the same three swatches the disc is painted with, weighted the
+     * way the disc actually shows them. */
+    const c = (o.colour || (o.colour = new THREE.Color()));
+    c.copy(u.uStarCol.value)
+      .lerp(_scratch.copy(u.uAtmoCol.value), 0.45)
+      .lerp(_scratch.copy(u.uLandCol.value), 0.20 * (1 - u.uCloudAmt.value));
+    unitLum(c);
+    o.key = u.uOrbitKey.value;
+    /* What a planet this big actually throws back. It subtends about a
+     * steradian and a half at this angular size and returns its own albedo of
+     * what lands on it, so the fill is a few per cent of the key — small, and
+     * the reason the shade side of a hull out there is not black. */
+    const alb = _lum(_scratch.copy(u.uLandCol.value)) * (1 - u.uCloudAmt.value)
+      + 0.62 * u.uCloudAmt.value;
+    const solid = 1 - u.uPlanetCos.value;
+    o.bounce = o.key * alb * solid * 2.0;
+    return o;
+  }
+
+  /**
+   * The detonation schedule. Three slots, each on its own long period, and the
+   * whole of it is a pure function of the clock — so this is not a second
+   * timeline standing beside the shader's, it IS the shader's, read on the CPU
+   * and handed down as three vec4s.
+   *
+   * Periods are unequal and share no small factor (53, 76, 99 s) so the three
+   * never fall into step: three flashes together once a minute is a rhythm,
+   * and a rhythm out there reads as a loop. About one detonation every
+   * twenty-seven seconds between them, which is often enough that the room is
+   * never quiet for long and rare enough that each one is an event.
+   */
+  _blasts(t) {
+    const u = this.mat.uniforms;
+    const slots = u.uBlast.value;
+    for (let k = 0; k < 3; k++) {
+      const per = 53 + k * 23;
+      const seed = (k * 0.3137 + 0.11) % 1;
+      const n = Math.floor(t / per + seed);
+      const age = t - (n - seed) * per;
+      const h = ((Math.sin(n * 12.9898 + k * 78.233) * 43758.5453) % 1 + 1) % 1;
+      const h2 = ((Math.sin(n * 39.3468 + k * 11.135) * 24634.6345) % 1 + 1) % 1;
+      const v = slots[k];
+      v.x = (h - 0.5) * 0.92;
+      v.y = (h2 - 0.5) * 0.34;
+      v.w = 0.55 + h2 * 0.85;
+      v.z = age >= 0 && age < 1 ? age : -1;
+      /* Fire the event once, on the frame the flash starts. `_blastSeen` holds
+       * the last detonation index each slot raised, so a clock that is seeded
+       * forward — a reload, a level that starts the battle at t = 600 — does
+       * not fire a hundred stale thumps into the room. */
+      if (this._blastSeen == null) this._blastSeen = [n, n, n];
+      else if (n !== this._blastSeen[k]) {
+        this._blastSeen[k] = n;
+        const o = this._publishOrbit();
+        /* THE DELAY IS DRAMATIC, NOT PHYSICAL, and that is a deliberate choice
+         * rather than an approximation. These detonations are drawn at
+         * capital-ship distance; the sound of one genuinely that far off
+         * arrives fifteen to twenty seconds later, by which time it is four
+         * flashes ago and the ear has nothing to bind it to — and the binding
+         * is the entire content of the effect. About a second, stretched with
+         * how far across the frame the flash was, is the longest a person will
+         * still hear a bang as belonging to a light they saw. The band lands
+         * where the deck's own thump wants it without this file knowing
+         * anything about the deck. */
+        const r = Math.hypot(v.x, v.y);
+        o.events.push({ kind: 'blast', strength: v.w, delay: 0.9 + r * 2.4, at: t });
+        while (o.events.length > 12) o.events.shift();
+      }
+    }
+  }
+
+
 
   /**
    * Solve for a placement with a given phase and the highest elevation that
@@ -1782,6 +1970,21 @@ export class SkyDome {
     u.uPlanetSpin.value = t * day;
     u.uCloudSpin.value = t * day * 0.62;
     u.uStarSpin.value = t * w * 0.11;
+    this._blasts(t);
+    /* The ship coming apart is the loudest thing in the session and it happens
+     * once per uDeathSpan. Raised the same way a detonation is, off an index
+     * rather than off a threshold crossing, so a seeded clock cannot fire it
+     * retroactively and a paused world cannot fire it twice. */
+    const span = Math.max(u.uDeathSpan.value, 1);
+    const dn = Math.floor(t / span - 0.815);
+    if (this._breakSeen == null) this._breakSeen = dn;
+    else if (dn !== this._breakSeen) {
+      this._breakSeen = dn;
+      const o = this._publishOrbit();
+      o.events.push({ kind: 'breakup', strength: 2.4, delay: 1.9, at: t });
+      while (o.events.length > 12) o.events.shift();
+    }
+    this._publishOrbit();
   }
 
   /**
@@ -1861,5 +2064,11 @@ export class SkyDome {
     this.mat.dispose();
     this._band?.dispose();
     this._band = null;
+    /* The broker is module-global and outlives every dome that ever publishes
+     * to it, so a dead dome's planet left standing there is a reference the
+     * next world reads and a corpse nothing frees. Same reason skyBand is
+     * rebuilt per level rather than accumulated. */
+    this._orbit = null;
+    ground.orbit = null;
   }
 }

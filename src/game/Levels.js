@@ -4880,18 +4880,25 @@ LEVELS.geonosis = {
  * ══ AND ONE GROUND THAT IS NOT A THEATRE ══════════════════════════════════
  *
  * The flight deck is a place you go to look at your men, not a place you fight
- * on, so it is in `LEVELS` — `World.loadLevel` resolves its ground and its
+ * on. It is in `LEVELS` — `World.loadLevel` resolves its ground and its
  * dressing through the same door as everything else — and deliberately NOT in
- * `LEVEL_ORDER` below.
+ * `LEVEL_ORDER` below, which is what the theatre grid draws from and what
+ * forty-seven suites walk asking about weather, ground cover, spawn legality
+ * and generated fronts. Every one of those is a question about a battlefield.
  *
- * That is the whole of its opt-out and it is a large one: `LEVEL_ORDER` is
- * what the theatre grid draws from, and it is also what forty-seven suites
- * walk asking about weather, ground cover, spawn legality, generated fronts
- * and wave composition. Every one of those questions is about a battlefield.
- * A deck in orbit answers none of them and would be red on all of them, so it
- * is held to `tools/checks/hangar.mjs` instead — which asks the questions this
- * room actually has to answer, starting with the one this file has recorded
- * three deletions about: whether it is a box.
+ * IT REGISTERS ITSELF, from `Hangar.js`, and the direction matters: that file
+ * needs `LEVELS` to answer which world is outside the window, so a `import
+ * { HANGAR_LEVEL } from './Hangar.js'` here was a cycle. It did not throw on
+ * every path — module order decides which half of a cycle is undefined — so it
+ * ran green for hours and then died with `Cannot access 'HANGAR_LEVEL' before
+ * initialization` the first time a suite imported the two in the other order.
+ * The dependency points one way and this is that way: `Levels.js` owns the
+ * roster and knows about the deck; `Hangar.js` imports no levels at all and is
+ * HANDED the record for whatever world is outside its window. The two other
+ * arrangements were both tried and both were worse — importing the record here
+ * was a cycle that ran green for hours before dying on one suite's import
+ * order, and registering from the far side made the ground exist only if
+ * something had imported that file.
  */
 LEVELS.hangar = HANGAR_LEVEL;
 
