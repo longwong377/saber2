@@ -99,11 +99,28 @@
  * the thing happens, because this file cannot see any of them:
  *
  *     hullThump(world, strength, {delay|range})   an explosion outside
+ *     drainBlasts(world)                          …or every one the player
+ *                                                 actually SAW, off the queue
+ *                                                 `SkyDome` already publishes
  *     repulsorPass(world, {from, to, speed, …})   a ship crossing
+ *     launchSequence(world, {x, z, speed})        a ship leaving, in four beats
+ *     damagedArrival(world, {x, z, speed})        one coming back in a state
+ *     bootStride(world, man, pos, dt)             one man walking, per frame
  *     bootFall(world, pos) / bootHalt(world, at, n)   the muster
+ *     deckChant(world, {army, men})               the company, on command
  *     paCall(world) / ventBurst(world, at)        on demand, if the schedules
  *                                                 are turned off
  *     cuePaint / cueAttach / cueDetach / cueName  a man being changed
+ *
+ * ── WHAT `Hangar.js` HAS TO ADD ──────────────────────────────────────────
+ *
+ * Two of those had no caller anywhere in `src/` and both are one line in code
+ * that already runs every frame:
+ *
+ *     HangarDirector.update, on the line after `stepDeckAudio(...)`
+ *         drainBlasts(this.world);
+ *     stepCompany, in the `if (p < 1)` branch after the position is written
+ *         bootStride(world, row, fig.root.position, dt);
  *
  * ── SILENT AND SAFE HEADLESS ──────────────────────────────────────────────
  *
@@ -128,6 +145,11 @@ import { clamp, damp, smoothstep, makeRng } from '../engine/MathUtil.js';
  * inside a call that happens after both modules have finished evaluating
  * cannot be that, whichever order the loader picks. */
 import { DECK } from './Hangar.js';
+/* THE SAME RULE, FOR THE SAME REASON. `ground` is `Scenery.js`'s published
+ * singleton and `SkyDome` writes the battle's flashes onto it; it is read
+ * inside `drainBlasts` and nowhere at module scope, so nothing here depends on
+ * which of the two modules the loader evaluates first. */
+import { ground } from '../world/Scenery.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE BED — what a capital ship sounds like from the inside             */
@@ -259,6 +281,71 @@ export function pressureAt(x, z) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  WHERE THE ROOM'S SURFACES ARE                                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ EVERY EMITTER IN THIS FILE IS A FRACTION OF `DECK`, AND HERE IS WHY ═══
+ *
+ * `d1e3a92` doubled the room — aft −46 → −104, lip 64 → 144, the ground
+ * 128 m → 288 — and nothing in this file moved, because nothing in it referred
+ * to the room: it referred to a set of coordinates that had been true OF the
+ * room. Three things were wrong the moment that commit landed and all three
+ * were silent:
+ *
+ *   THE TANNOY CAME OFF THE WALLS. The bulkhead pair sat at z = −43.5, 60 m
+ *     forward of the bulkhead they were named after, with nothing inside 40 m
+ *     of them but the deck 9.5 m below — measured by ray against the built
+ *     scene, which is what `deck-audio.mjs` does now.
+ *   THREE VENTS HISSED OVER A HOLE. `hangardeck.height` puts a 3.2 m pit
+ *     around x = −52; the port vents were in it.
+ *   THE TRAFFIC LANE CAME INDOORS. `z: [96, 138]` was outside a lip at 64 and
+ *     is the front third of a room whose lip is at 144, so every "distant"
+ *     pass flew through the hangar at 14–34 m while being filtered as though
+ *     it were behind the shield.
+ *
+ * None of it could go red, because the check built its world as
+ * `{ terrain: null }` and typed the old spawn in thirteen places while reading
+ * the live `DECK.lip`. That is the root cause of the whole class, so the fix
+ * is in two halves and the one that matters is the check: coordinates derived
+ * here can still be wrong, and the ray probe is what says so.
+ *
+ * WHAT THE FRACTIONS ARE OF. `DECK.aft` and `DECK.lip` are the room's two ends
+ * and `DECK.roof` is its top, so the depth, the half-width and the overhead
+ * are the three rulers everything below is measured with. `rack` is the one
+ * ratio taken of a number this file cannot see — `Hangar.js`'s `WALL`, a local
+ * const rather than a field of `DECK` — which is exactly why every position
+ * derived from it is fired at the real geometry by the check.
+ */
+export const GEOM = {
+  /** The rack walls: x = ±DECK.lip × this. `WALL = 56` against a lip of 144. */
+  rack: 56 / 144,
+  /** How far the rack run reaches, as fractions of the depth aft of `DECK.aft`. */
+  rackFrom: 0.03, rackTo: 0.69,
+  /** The bulkhead's inboard face, the same way. The ribs stand at aft + 6…8 m. */
+  face: 0.030,
+  /** The cantilevered plates and the blast channel, as fractions of the half-width. */
+  lipBand: 6 / 144, grateBand: 14 / 144,
+  /** The grating apron at the bulkhead doors: half-width, and how far out. */
+  apron: 0.15, apronTo: 0.12,
+  /** How far off a wall an emitter hangs, so it is ON it and not IN it. */
+  standoff: 1.4 / 144,
+  /** The horns: how far outboard of the doors, and how high up each surface. */
+  hornX: 0.30, hornBulk: 0.30, hornRack: 0.25, hornZ: 0.35,
+  /** The vents: how far inboard of the wall, and where along the run. */
+  ventX: 0.028, ventAt: [0.18, 0.22, 0.60, 0.52],
+};
+
+/** The room's length, which is what most of the fractions above are of. */
+const deckDepth = () => DECK.lip - DECK.aft;
+/** A fraction of the way forward from the bulkhead. */
+const alongDeck = (f) => DECK.aft + deckDepth() * f;
+/** Where the rack walls stand. */
+const rackX = () => DECK.lip * GEOM.rack;
+/** The bulkhead's inboard face — the only solid surface in the level. */
+const faceZ = () => alongDeck(GEOM.face);
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  THE DECK UNDERFOOT                                                    */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -282,17 +369,34 @@ export function pressureAt(x, z) {
  * method. Every existing reader picks it up, nobody is edited, and it goes away
  * with the terrain rather than with a flag somebody has to remember.
  *
- * The three zones are what a flight deck actually is:
+ * The three zones are what a flight deck actually is, and every one of them is
+ * a FRACTION OF `DECK` rather than a distance — see `GEOM`:
  *
- *   `plate`   everything from the bulkhead out to 14 m short of the edge, plus
- *             the middle of the room where the company forms up.
- *   `grating` a ring 8 m wide inside the lip — the blast channel, which every
- *             deck open to a drive wash has and which is grating because it
- *             has to drain and vent. Also the service walkway down the port
- *             side under the gantry, where the ship on jacks is being worked
- *             on, so the material change is not only a thing that happens at
- *             the edge.
- *   `lip`     the last 6 m. Cantilevered steel with nothing under it.
+ *   `plate`   everything from the bulkhead out to the blast channel, plus the
+ *             middle of the room where the company forms up.
+ *   `grating` a ring inside the lip — the blast channel, which every deck open
+ *             to a drive wash has and which is grating because it has to drain
+ *             and vent. Also the apron immediately outside the bulkhead doors,
+ *             which is a drain and a boot scraper on any deck anybody has to
+ *             walk out onto, so the material change is not only a thing that
+ *             happens at the edge — and it is the one the COMPANY crosses,
+ *             because the company files out of those doors.
+ *   `lip`     the last plates. Cantilevered steel with nothing under it.
+ *
+ * THE APRON REPLACES A WALKWAY THAT NO LONGER EXISTS, and the replacement is
+ * chosen for where it can be TRUE. This zone used to name a gantry at x = −34
+ * that `d1e3a92` deleted, and half of what was left of it lay over the pit
+ * `hangardeck.height` cuts around x = −52 — a patch of open steel bar reported
+ * over a 3.2 m hole in the deck. The obvious repair, a lane at each rack-wall
+ * foot, walks straight back into it: the port wall stands at x = −56 and the
+ * pit runs from −69 to −35, so that lane would cross the same hole.
+ *
+ * A PURE FUNCTION OF (x, z) CANNOT SEE THE GROUND, so it must not claim a
+ * surface where the ground is free to move. The apron is at the doors, where
+ * this room has a solid bulkhead and flat plate and always will, and
+ * `deck-audio.mjs` samples every zone this function reports against
+ * `terrain.height` — so if a future pit is cut under one of them, that is red
+ * rather than a walkway over a void.
  *
  * WHY A RING AND NOT A STRIPE. The player walks out to the field on whatever
  * bearing he feels like; a stripe across the front of the room is a change he
@@ -309,11 +413,13 @@ export function pressureAt(x, z) {
  */
 export function deckSurfaceAt(x, z) {
   const e = edgeOf(x, z);
-  if (e < 6) return 'lip';
-  if (e < 14) return 'grating';
-  /* The port work bay's service walkway: under the gantry at x = -34, from
-   * the machine at z = -22 up past both scaffolds. See `Hangar.dressDeck`. */
-  if (x > -42 && x < -26 && z > -26 && z < 12) return 'grating';
+  if (e < DECK.lip * GEOM.lipBand) return 'lip';
+  if (e < DECK.lip * GEOM.grateBand) return 'grating';
+  /* The apron outside the bulkhead doors — a drain and a scraper, and the
+   * plate the company walks out onto. `dressStructure` puts the doors on the
+   * centreline of the bulkhead; this is the deck in front of them. */
+  if (Math.abs(x) < DECK.lip * GEOM.apron
+      && z > alongDeck(GEOM.face) && z < alongDeck(GEOM.apronTo)) return 'grating';
   return 'plate';
 }
 
@@ -447,12 +553,37 @@ export const PA_VOICE = {
 };
 
 /**
- * Where the horns are. Four of them, high on the bulkhead and out on the two
- * inboard spars, so the PA has a PLACE — which is what makes it get quieter and
- * duller as the player walks away from the ship and toward the field, for free,
- * through the panner it is already on and the chain it already sits in.
+ * ══ WHERE THE HORNS ARE, AND THEY ARE ON SOMETHING ════════════════════════
+ *
+ * Four of them: a pair high on the bulkhead outboard of the doors, and a pair
+ * on the two rack walls level with the middle of the room. The PA has a PLACE,
+ * which is what makes it get quieter and duller as the player walks away from
+ * the ship and toward the field, for free, through the panner it is already on
+ * and the chain it already sits in.
+ *
+ * THAT ARGUMENT ONLY HOLDS IF THE HORNS ARE BOLTED TO THE SHIP. Written as
+ * four literals for a 128 m room they survived the rebuild unchanged and the
+ * bulkhead pair ended up hanging in mid-air 60 m forward of the bulkhead, with
+ * nothing inside 40 m of them but the deck 9.5 m below. A tannoy in open space
+ * still gets quieter with distance — a panner does that to anything — and it
+ * is quieter from the wrong place, which is worse than being non-positional,
+ * because the ear is being told a wall is somewhere there is no wall.
+ *
+ * Derived rather than typed, so the next rescale carries them, and probed by
+ * ray against the real scene in `deck-audio.mjs`, so a derivation that is
+ * wrong is red rather than quiet.
  */
-const HORNS = [[-28, 9.5, -43.5], [28, 9.5, -43.5], [-56, 14, 6], [56, 14, 6]];
+function hornSites() {
+  const off = DECK.lip * GEOM.standoff;
+  const rx = rackX() - off;
+  const fz = faceZ() + off;
+  return [
+    [-DECK.lip * GEOM.hornX, DECK.roof * GEOM.hornBulk, fz],
+    [DECK.lip * GEOM.hornX, DECK.roof * GEOM.hornBulk, fz],
+    [-rx, DECK.roof * GEOM.hornRack, alongDeck(GEOM.hornZ)],
+    [rx, DECK.roof * GEOM.hornRack, alongDeck(GEOM.hornZ)],
+  ];
+}
 
 /** How long between announcements. Long, because a tannoy that talks is a radio. */
 const PA_GAP = [26, 74];
@@ -475,17 +606,62 @@ const PA_GAP = [26, 74];
  * .hiss` is the plant that never stops, non-positional, sharing a source with
  * the rest of the bed and costing nothing.
  *
- * Placed at things that are actually built (`Hangar.dressDeck`): the pipe run
- * down the port side with its valves, the two tanks, the starboard machine and
- * the deck office. A vent hissing where there is no pipe is the class of detail
- * that reads as an AI game.
+ * ── AND A VENT NEEDS DECK UNDER IT ───────────────────────────────────────
+ *
+ * Four literals aimed at props `dressStructure` no longer builds put three of
+ * these over the pit `hangardeck.height` cuts around x = −52: a coolant line
+ * letting go 3.2 m above the nearest plate, which is a sound with no object
+ * under it. The pit is TERRAIN, so no amount of care with the dressing could
+ * have found it and no table of positions written here can be right about it —
+ * the pit is free to move, and the same commit that moved the room moved it.
+ *
+ * So the sites are derived at the wall feet, where a deck of this shape puts
+ * its trunking, and then each one ASKS THE GROUND: `world.terrain.height` at
+ * the site, and if the answer is a hole the site slides along the wall until
+ * it is on plate. That is the whole of it, it runs once per visit, and it is
+ * the difference between a position that was right when it was typed and one
+ * that is right now.
  */
-const VENTS = [
-  { at: [-52, 1.2, -8], gap: [14, 46] },
-  { at: [-46, 1.8, -21], gap: [18, 55] },
-  { at: [44, 1.4, -26], gap: [16, 50] },
-  { at: [26, 1.0, -27], gap: [22, 62] },
-];
+/** How far below the deck plane counts as "not deck". Half a step. */
+const ON_DECK = 0.6;
+
+/** What the ground is doing at (x, z), or 0 with no terrain to ask. */
+function deckUnder(world, x, z) {
+  const t = world?.terrain;
+  return (t && typeof t.height === 'function') ? t.height(x, z) : 0;
+}
+
+/** The nearest z along the wall at `x` that has deck under it, or null. */
+function onDeckZ(world, x, z0) {
+  if (Math.abs(deckUnder(world, x, z0)) < ON_DECK) return z0;
+  const near = alongDeck(GEOM.rackFrom), far = alongDeck(GEOM.rackTo);
+  for (let d = 3; d <= deckDepth() * 0.3; d += 3) {
+    for (const s of [-1, 1]) {
+      const z = z0 + s * d;
+      if (z <= near || z >= far) continue;
+      if (Math.abs(deckUnder(world, x, z)) < ON_DECK) return z;
+    }
+  }
+  return null;
+}
+
+/** The four vent sites for this world, on the deck, at the wall feet. */
+function ventSites(world) {
+  const x0 = rackX() - DECK.lip * GEOM.ventX;
+  const gaps = [[14, 46], [18, 55], [16, 50], [22, 62]];
+  const out = [];
+  for (let i = 0; i < GEOM.ventAt.length; i++) {
+    const x = (i % 2 ? 1 : -1) * x0;
+    const z = onDeckZ(world, x, alongDeck(GEOM.ventAt[i]));
+    if (z === null) continue;
+    /* THE ONE NUMBER HERE THAT IS NOT A FRACTION, and it is written down so it
+     * is a decision rather than an oversight: a valve is at the height of the
+     * hand that closes it. A person does not scale with the room, so a vent
+     * keyed to `DECK.roof` would be at 3 m in a room twice this tall. */
+    out.push({ at: [x, 1.4, z], gap: gaps[i % gaps.length] });
+  }
+  return out;
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE WAR, THROUGH THE HULL                                             */
@@ -626,8 +802,38 @@ export const REPULSOR = {
   max: 2,
 };
 
-/** Unattended traffic, outside the field, on a loose loop. See `dressDeckAudio`. */
-const TRAFFIC = { gap: [50, 112], speed: [72, 118], z: [96, 138], y: [14, 34], gain: 4.5 };
+/**
+ * ══ UNATTENDED TRAFFIC, AND IT HAS TO BE OUTSIDE ══════════════════════════
+ *
+ * Every one of these passes is opened with `outside: true`, which halves its
+ * cutoff and cuts its level to 0.45 on the argument that it is being heard
+ * THROUGH the boundary. That argument is a statement about where the ship is,
+ * and the lane was written as `z: [96, 138]` when the lip was at 64. The lip
+ * is at 144 now, so the lane was inside the room: repulsorlifts crossing the
+ * hangar's forward third at 14–34 m altitude, muffled as if there were a
+ * shield between them and the player, with the actual shield behind them.
+ *
+ * So the lane is stated in LIPS. `out` is how far past the field the ship
+ * flies and its floor is above 1, which is the whole invariant — a pass is
+ * outside iff `z > DECK.lip` or `|x| > DECK.lip`, and `deck-audio.mjs` samples
+ * every derived path and asserts it. `run` is how long the run is, also in
+ * lips, so a bigger room gets a longer approach rather than a ship that pops
+ * into existence abeam.
+ *
+ * TWO BEARINGS, because the player's brief is field on three sides: most
+ * traffic crosses the aperture he is looking through, and some of it crosses a
+ * flank, which is the cheapest way to say the ship is in a lane rather than on
+ * a loop.
+ */
+const TRAFFIC = {
+  gap: [50, 112], speed: [72, 118], gain: 4.5,
+  /** How far beyond the field, and how long the run, in DECK.lip. */
+  out: [1.10, 1.85], run: 2.1,
+  /** How high, as a fraction of the overhead. */
+  y: [0.25, 0.75],
+  /** How often it is a flank pass rather than one across the aperture. */
+  flank: 0.35,
+};
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  STATE                                                                 */
@@ -660,14 +866,20 @@ function newState(world, opts) {
     bloom: 0,
     /* Scratch — see the note above. */
     _p: new THREE.Vector3(), _q: new THREE.Vector3(), _v: new THREE.Vector3(),
-    /* Announcements. */
-    army: 'republic', paAt: 0, paPlan: [], horn: 0,
+    /* Announcements, and the horns they come out of — derived at dress. */
+    army: 'republic', paAt: 0, paPlan: [], horn: 0, horns: [],
     /* Coalesced boots. See `BOOT`. */
     boot: { n: 0, x: 0, y: 0, z: 0, at: 0, run: false },
-    /* Vents, thumps, traffic. */
-    ventAt: VENTS.map(() => 0),
+    /* Vents, thumps, traffic. The vent sites are derived at dress too, because
+     * where there is deck is a question about the ground and not about this
+     * file — see `ventSites`. */
+    ventSites: [], ventAt: [],
     thumpAt: 0, pending: [],
     passes: [], trafficAt: 0,
+    /* The phases of a launch or an arrival, held on the deck's own clock. */
+    cues: [],
+    /* When the graph may be tried again. See `stepDeckAudio`'s first section. */
+    armAt: 0,
     /* What the caller asked for. */
     pa: opts.pa !== false, vents: opts.vents !== false,
     battle: opts.battle !== false, traffic: opts.traffic !== false,
@@ -676,6 +888,7 @@ function newState(world, opts) {
   };
   for (let i = 0; i < 12; i++) st.paPlan.push({ f: 0, sy: 0, gap: 0, f1: 0, f2: 0, last: false });
   for (let i = 0; i < 8; i++) st.pending.push({ live: false, at: 0, strength: 1 });
+  for (let i = 0; i < 8; i++) st.cues.push({ live: false, at: 0, kind: '', x: 0, y: 0, z: 0, k: 1 });
   for (let i = 0; i < REPULSOR.max; i++) {
     st.passes.push({ live: false, v: null, t: 0, dur: 0, power: 1, outside: false, spin: true,
       from: new THREE.Vector3(), to: new THREE.Vector3(), vel: new THREE.Vector3(),
@@ -709,6 +922,9 @@ const between = (st, r) => r[0] + st.rng() * (r[1] - r[0]);
  * unmuffled at the lip while the room it is bolted to went quiet — the one
  * arrangement that sounds broken rather than distant.
  */
+/** Seconds between attempts to build the graph. See `stepDeckAudio`'s §0. */
+const REARM = 1.0;
+
 function buildGraph(st) {
   const ctx = audio.ctx;
   if (!ctx || !audio.ready || !audio.ambBus) return false;
@@ -888,12 +1104,19 @@ export function dressDeckAudio(world, opts = {}) {
   st.sendBase = audio.room?.send ?? 0.16;
   buildGraph(st);
 
+  /* ── WHERE THE ROOM'S SOUNDS COME FROM, derived here rather than written
+   * down: the horns off `DECK`, the vents off `DECK` and then off the ground
+   * they would be standing on. Once per visit. See `GEOM`. */
+  st.horns = hornSites();
+  st.ventSites = ventSites(world);
+  st.ventAt = st.ventSites.map(() => 0);
+
   /* First events, spread so nothing arrives in the load's first second — a
    * tannoy that fires as the level fades in reads as a cutscene. */
   st.paAt = between(st, [8, 26]);
   st.thumpAt = between(st, THUMP.gap);
   st.trafficAt = between(st, [18, 60]);
-  for (let i = 0; i < VENTS.length; i++) st.ventAt[i] = between(st, VENTS[i].gap) * 0.6;
+  for (let i = 0; i < st.ventSites.length; i++) st.ventAt[i] = between(st, st.ventSites[i].gap) * 0.6;
   return st;
 }
 
@@ -960,6 +1183,27 @@ export function stepDeckAudio(world, dt, camera) {
    * runs with no context at all, so the only version anybody could measure
    * would be the one nobody plays. The entry points it calls are each their
    * own no-op without a graph. */
+  /* ── 0. RE-ARM, WHICH IS THE DIFFERENCE BETWEEN A FAILURE AND A VISIT.
+   *
+   * `buildGraph` was called once, in `dress`, and its return value was
+   * discarded. It returns false whenever there is no context yet — and that is
+   * the ORDINARY case in a browser, not an edge: a page may not open an
+   * `AudioContext` until a gesture has landed, and the deck can be dressed by a
+   * level load that begins before the click that started it is delivered. One
+   * false there left `st.ctx` null for the whole visit: the schedules below all
+   * went on ticking, the announcements came round, the vents let go, the
+   * thumps drained, and every one of them reached a no-op. A silent room and
+   * nothing in the console.
+   *
+   * So it is retried, on a slow clock, because the only thing that can change
+   * the answer is the engine coming up. `st.p` is reset so the pressure filter
+   * writes its first value against the new graph rather than against the
+   * position it happened to be at when the old one failed. */
+  if (!st.ctx && !st.torn && audio.ready && st.t >= st.armAt) {
+    st.armAt = st.t + REARM;
+    if (buildGraph(st)) st.p = -1;
+  }
+
   const live = audio.ready && !!st.ctx;
   const now = live ? st.ctx.currentTime : st.t;
 
@@ -1007,6 +1251,15 @@ export function stepDeckAudio(world, dt, camera) {
     fireThump(st, q.strength);
   }
 
+  /* ── 4b. THE PHASES OF A LAUNCH OR AN ARRIVAL. A sequence is four events
+   * over about eight seconds and the caller fires it once; the deck holds the
+   * rest on its own clock. Slots, not closures — see `newState`. */
+  for (const q of st.cues) {
+    if (!q.live || st.t < q.at) continue;
+    q.live = false;
+    fireCue(world, st, q);
+  }
+
   /* ── 5. THE TANNOY. */
   if (st.pa && st.t >= st.paAt) {
     st.paAt = st.t + between(st, PA_GAP);
@@ -1015,10 +1268,10 @@ export function stepDeckAudio(world, dt, camera) {
 
   /* ── 6. THE PERIPHERY. */
   if (st.vents) {
-    for (let i = 0; i < VENTS.length; i++) {
+    for (let i = 0; i < st.ventSites.length; i++) {
       if (st.t < st.ventAt[i]) continue;
-      st.ventAt[i] = st.t + between(st, VENTS[i].gap);
-      ventBurst(world, VENTS[i].at);
+      st.ventAt[i] = st.t + between(st, st.ventSites[i].gap);
+      ventBurst(world, st.ventSites[i].at);
     }
   }
 
@@ -1032,9 +1285,20 @@ export function stepDeckAudio(world, dt, camera) {
   if (st.traffic && st.t >= st.trafficAt) {
     st.trafficAt = st.t + between(st, TRAFFIC.gap);
     const dir = st.rng() < 0.5 ? 1 : -1;
-    const z = between(st, TRAFFIC.z), y = between(st, TRAFFIC.y);
-    st._q.set(-dir * 175, y, z);
-    st._v.set(dir * 175, y * 0.8, z - 22);
+    const out = DECK.lip * between(st, TRAFFIC.out);
+    const run = DECK.lip * TRAFFIC.run;
+    const y = DECK.roof * between(st, TRAFFIC.y);
+    /* ACROSS THE APERTURE, or up a flank. Both ends of both paths are past the
+     * lip on the axis that decides it, which is what makes `outside: true`
+     * below a true statement rather than a filter setting. */
+    if (st.rng() < TRAFFIC.flank) {
+      const side = st.rng() < 0.5 ? -1 : 1;
+      st._q.set(side * out, y, -dir * run);
+      st._v.set(side * out, y * 0.86, dir * run);
+    } else {
+      st._q.set(-dir * run, y, out);
+      st._v.set(dir * run, y * 0.86, out);
+    }
     repulsorPass(world, { from: st._q, to: st._v, speed: between(st, TRAFFIC.speed),
       power: 0.9, outside: true, gain: TRAFFIC.gain });
   }
@@ -1139,6 +1403,54 @@ function fireThump(st, s) {
   });
 }
 
+/**
+ * ══ THE FLASHES THE PLAYER ACTUALLY SAW ═══════════════════════════════════
+ *
+ * `HANGAR-SPEC`: "Distant explosions with no sound, then a delayed muffled
+ * thump through the hull." The delay is the whole effect and the BINDING is
+ * the whole content of it — a bang the ear can attach to a light it saw is an
+ * event, and the same bang two seconds off any flash is weather.
+ *
+ * `SkyDome._blasts` already publishes exactly that, and it has since it was
+ * written: each detonation pushes `{ kind, strength, delay, at }` onto
+ * `ground.orbit.events`, capped at 12 with the oldest dropped. NOTHING DRAINED
+ * IT. So the room still thumped — `THUMP.gap` fires one every 9 to 34 seconds
+ * whether or not anything happened — and every one of those was uncorrelated
+ * with every flash in the window. The feature the spec ticks was two calls
+ * apart the whole time: the queue existed, the consumer existed, and no line
+ * anywhere joined them.
+ *
+ * WHY IT IS EXPORTED RATHER THAN CALLED FROM `stepDeckAudio`. A queue with two
+ * drains is a queue with a race in it, and the one call that must exist is in
+ * the room's own update. `HangarDirector.update` is the room's update. Put
+ * `drainBlasts(this.world);` on the line after `stepDeckAudio(...)` there.
+ *
+ * The strengths are taken as published and not rescaled: a detonation arrives
+ * at 0.55–1.40, which is the band `hullThump` was written for, and the capital
+ * ship breaking up arrives at 2.4, which clamps to 1.5 and is the loudest
+ * thing in the session. That is the right answer and it is an accident worth
+ * not disturbing.
+ *
+ * @returns how many thumps were scheduled.
+ */
+export function drainBlasts(world) {
+  const q = ground.orbit?.events;
+  if (!q || !q.length) return 0;
+  const st = world?._deckAudio;
+  /* A deck that is not dressed still EMPTIES it. Twelve stale detonations held
+   * across a level change would all arrive in the first second of the next
+   * visit, bound to nothing at all. */
+  if (!st || st.torn) { q.length = 0; return 0; }
+  let n = 0;
+  while (q.length) {
+    const e = q.shift();
+    if (!e) continue;
+    const hold = Number.isFinite(e.delay) ? e.delay : between(st, THUMP.delay);
+    if (hullThump(world, e.strength, { delay: hold })) n++;
+  }
+  return n;
+}
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE TANNOY                                                            */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1192,7 +1504,7 @@ export function paCall(world, opts = {}) {
   }
   span += 0.34;
 
-  const h = HORNS[st.horn % HORNS.length];
+  const h = st.horns[st.horn % Math.max(st.horns.length, 1)] || hornSites()[0];
   st.horn++;
   st._q.set(h[0], h[1], h[2]);
 
@@ -1406,6 +1718,75 @@ function flushBoot(st) {
 }
 
 /**
+ * ══ A MAN WALKING, WITHOUT A GAIT SOLVER ══════════════════════════════════
+ *
+ * `bootFall` had no caller in `src/` at all. `Hangar.stepCompany` moves
+ * `fig.root.position` with two eases and a lerp — there is no leg cycle in it
+ * and no event anywhere that could be called a footfall — so twenty-four men
+ * crossed the deck in silence and the only thing that ever sounded was the
+ * `bootHalt` at the end. "The filing in sells it more than the standing" is
+ * the muster's own brief, and the filing in was the half with no sound.
+ *
+ * A GAIT SOLVER IS NOT THE ANSWER TO THAT, and it would cost more than the
+ * walk it had to drive. A footfall is a DISTANCE, not a time: a man puts a
+ * boot down once per stride length he covers, whichever speed he covers it at,
+ * which is why a walk and a run leave the same footprints at different rates.
+ * So this integrates the ground each walker has actually crossed and lands a
+ * boot every time the total passes a stride — off the position the caller was
+ * writing anyway, with no clock, no phase, and nothing stored in `Hangar.js`.
+ *
+ * AND IT COSTS ALMOST NOTHING BECAUSE THE BOOTS COALESCE. Twenty-four men at a
+ * brisk 5.4 m/s put down about a hundred boots a second between them, which is
+ * seven times the chatter band's entire ceiling. `bootFall` folds everything
+ * inside `BOOT.window` into one footfall at the centroid, at the saturated
+ * mass of the men who landed — so what the pool actually sees is at most one
+ * voice per 55 ms whatever the company is doing, and what the ear hears is a
+ * mass crossing a deck rather than twenty-four cursors ticking.
+ *
+ * @param who any per-man object — used only as an identity, never written to,
+ *            and held in a `WeakMap` so a company that goes away takes its
+ *            phases with it
+ * @param pos where he is THIS frame
+ * @param dt  the frame, if the caller has it: it is only used to decide
+ *            whether he is running, which lengthens the stride
+ * @returns true if a boot landed this frame
+ */
+export const STRIDE = {
+  /** Metres of deck per boot, marching and running. */
+  walk: 0.82, run: 1.30,
+  /** Over this many metres a second he is running. */
+  runAt: 4.2,
+  /** A jump further than this is a man being PLACED, not a man walking. */
+  jump: 3.0,
+};
+
+const GAIT = new WeakMap();
+
+export function bootStride(world, who, pos, dt = 0) {
+  if (!who || !pos) return false;
+  let g = GAIT.get(who);
+  if (!g) { g = { x: pos.x, z: pos.z, d: 0 }; GAIT.set(who, g); return false; }
+  const dx = pos.x - g.x, dz = pos.z - g.z;
+  g.x = pos.x; g.z = pos.z;
+  const step = Math.sqrt(dx * dx + dz * dz);
+  /* A TELEPORT IS NOT A WALK. A man set down at the doors, or snapped onto his
+   * mark at the halt, would otherwise cash the whole jump in as a rank of
+   * boots — which is the one artefact this could produce and the reason the
+   * accumulator is reset rather than clamped. */
+  if (!(step > 0) || step > STRIDE.jump) { g.d = 0; return false; }
+  const run = dt > 0 && step / dt > STRIDE.runAt;
+  g.d += step;
+  const stride = run ? STRIDE.run : STRIDE.walk;
+  if (g.d < stride) return false;
+  /* One boot per frame at most: a frame long enough to have covered two
+   * strides is a frame the player did not see anyway, and two footfalls at the
+   * same instant are one sound with the level of two. */
+  g.d = Math.min(g.d - stride, stride);
+  bootFall(world, pos, { run });
+  return true;
+}
+
+/**
  * THE HALT — the one moment the muster is worth hearing.
  *
  * A company coming to a stop does not take a last step, it STAMPS: every boot
@@ -1582,6 +1963,526 @@ function stepPasses(st, dt, now) {
       p.air.frequency.setTargetAtTime(clamp(top, 220, REPULSOR.top), now, 0.08);
     } catch { /* a param that will not take it leaves the pass where it was */ }
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE COMPANY, SINGING                                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ TROOPS SING ON COMMAND, AND STILL SAY NOTHING ═════════════════════════
+ *
+ * `HANGAR-SPEC`: "Troops sing/chant on command, faction-specific." It is the
+ * same problem the PA has and it takes the same answer for the same reason —
+ * there are no words anywhere in this file and there never will be — but it is
+ * NOT the same sound, and the difference is the whole design:
+ *
+ *   A PA IS ONE VOICE AND NEVER REPEATS. `paCall` re-plans every announcement
+ *     so no two are alike, because a tannoy a player recognises is a tannoy he
+ *     has exhausted.
+ *   A CHANT IS MANY VOICES AND IS NOTHING BUT REPETITION. A figure of four or
+ *     six beats, said again, and again, is what makes a body of men one thing
+ *     — and a chant that never repeated would not be a chant, it would be a
+ *     crowd. So the figure is planned once and repeated, and the only thing
+ *     that moves across a performance is that the last bar falls.
+ *
+ * ── HOW A CHOIR IS BUILT OUT OF FOUR OSCILLATORS ──────────────────────────
+ *
+ * Detuning. Several larynxes on one note are never on one note: they sit
+ * within a couple of percent of each other and beat, and that beating IS the
+ * sound of a number of people. Four saws spread ±2.1% through one pair of
+ * formant bandpasses is a section of men; the same four at zero spread is one
+ * man with a thick tone. `spread` is therefore how many people are in the room
+ * and it is the single most important number in the table.
+ *
+ * ── AND THE TWO FACTIONS ARE TWO SPECIES ──────────────────────────────────
+ *
+ *   `republic` men. 104 Hz, four voices, a wide spread, a 4.6 Hz vibrato,
+ *     open vowels, an unhurried four-beat figure that falls at the end. A
+ *     unit shouting a cadence.
+ *   `separatist` machines. 74 Hz, three voices, almost no spread (a network
+ *     does not have members), no vibrato at all, a narrow nasal formant pair,
+ *     six fast beats and no fall — because a fall is a breath, and nothing
+ *     over there is breathing.
+ */
+export const CHANT = {
+  republic: {
+    f0: 104, voices: 4, spread: 0.021, type: 'sawtooth',
+    vib: 4.6, vibDepth: 0.011,
+    formants: [[430, 950], [560, 1180]],
+    hp: 95, lp: 2300,
+    /** The figure: one entry a beat, as a ratio on `f0`. Repetition is the point. */
+    figure: [1, 1, 1.122, 1],
+    beat: 0.54, bars: 5, drop: 0.84,
+    gain: 2.6, air: 0.045,
+  },
+  separatist: {
+    f0: 74, voices: 3, spread: 0.0016, type: 'square',
+    vib: 0, vibDepth: 0,
+    formants: [[300, 1660], [330, 1600]],
+    hp: 190, lp: 1500,
+    figure: [1, 1, 1, 1.059, 1, 1],
+    beat: 0.33, bars: 7, drop: 1.0,
+    gain: 2.2, air: 0.010,
+  },
+};
+
+/**
+ * ORDER THE COMPANY TO SING. One voice from the pool for the whole
+ * performance, at the line, through the deck's own chain — so it hushes with
+ * the room when the player walks to the field, which is right: the men are
+ * behind him and so is the air that carries them.
+ *
+ * @param opts.army 'republic' | 'separatist'. Defaults to the company's.
+ * @param opts.men  how many are singing. Moves the level and the spread, and
+ *                  nothing else: a hundred men are not ten times ten men.
+ * @param opts.at   where they are. Defaults to the muster line.
+ */
+export function deckChant(world, opts = {}) {
+  const st = world?._deckAudio;
+  if (!st || st.torn) return false;
+  const V = CHANT[opts.army] || CHANT[st.army] || CHANT.republic;
+  const men = clamp(Math.round(opts.men ?? 12) || 1, 1, 60);
+  /* SATURATION, the same shape `BOOT.fold` uses and for the same reason: a
+   * body of men is heard as one bigger thing, not as a sum. */
+  const body = Math.min(1 + Math.log(men) * 0.30, 2.4);
+  const at = opts.at || { x: 0, y: 1.6, z: DECK.line };
+  st._q.set(at.x ?? at[0] ?? 0, at.y ?? at[1] ?? 1.6, at.z ?? at[2] ?? DECK.line);
+
+  const beats = V.figure.length * V.bars;
+  const span = beats * V.beat + 0.6;
+  return audio.shape({
+    dur: span, gain: V.gain * body, pos: st._q, prio: PRIO.chatter, dest: st.chain,
+    build(ctx, out, t0, pitch) {
+      /* ── THE THROAT. Two formants in parallel, one lowpass over both, and a
+       * highpass under them so a chorus of saws does not put a rumble into the
+       * bed it is standing on. */
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = V.lp; lp.Q.value = 0.8;
+      const hp = ctx.createBiquadFilter();
+      hp.type = 'highpass'; hp.frequency.value = V.hp; hp.Q.value = 0.7;
+      lp.connect(hp); hp.connect(out);
+      const env = ctx.createGain(); env.gain.setValueAtTime(0.0001, t0);
+      env.connect(lp);
+      const f1 = ctx.createBiquadFilter();
+      f1.type = 'bandpass'; f1.frequency.value = V.formants[0][0] * pitch; f1.Q.value = 5.5;
+      const f2 = ctx.createBiquadFilter();
+      f2.type = 'bandpass'; f2.frequency.value = V.formants[0][1] * pitch; f2.Q.value = 8;
+      const g1 = ctx.createGain(); g1.gain.value = 0.34;
+      const g2 = ctx.createGain(); g2.gain.value = 0.16;
+      f1.connect(g1); g1.connect(env);
+      f2.connect(g2); g2.connect(env);
+
+      /* ── THE MEN. `voices` larynxes spread either side of the pitch. */
+      const srcs = [];
+      const oscs = [];
+      for (let v = 0; v < V.voices; v++) {
+        const o = ctx.createOscillator();
+        o.type = V.type;
+        const k = V.voices === 1 ? 0 : (v / (V.voices - 1)) * 2 - 1;
+        o.frequency.setValueAtTime(V.f0 * pitch * (1 + k * V.spread), t0);
+        o.connect(f1); o.connect(f2);
+        oscs.push({ o, k });
+        srcs.push(o);
+      }
+      /* THE VIBRATO IS ONE LFO FOR ALL OF THEM, because a section breathes
+       * together — that is what being drilled sounds like. Zero depth on the
+       * droid row leaves the node out entirely rather than modulating by nothing. */
+      if (V.vib > 0 && V.vibDepth > 0) {
+        const l = ctx.createOscillator();
+        l.type = 'sine'; l.frequency.value = V.vib;
+        for (const { o } of oscs) {
+          const d = ctx.createGain(); d.gain.value = o.frequency.value * V.vibDepth;
+          l.connect(d); d.connect(o.frequency);
+        }
+        srcs.push(l);
+      }
+      /* A little breath over the top. Band-limited well above the formants so
+       * it can never be mistaken for a consonant. */
+      const air = ctx.createBufferSource();
+      air.buffer = audio.noiseBuffer(true); air.loop = true; air.playbackRate.value = 1.03;
+      const af = ctx.createBiquadFilter();
+      af.type = 'bandpass'; af.frequency.value = 1900; af.Q.value = 0.8;
+      const ag = ctx.createGain(); ag.gain.value = V.air;
+      air.connect(af); af.connect(ag); ag.connect(env);
+      srcs.push(air);
+
+      /* ── SAY IT, AND SAY IT AGAIN. */
+      let t = t0;
+      for (let b = 0; b < V.bars; b++) {
+        const last = b === V.bars - 1;
+        for (let i = 0; i < V.figure.length; i++) {
+          const tail = last && i === V.figure.length - 1;
+          const r = V.figure[i] * (tail ? V.drop : 1);
+          for (const { o, k } of oscs) {
+            o.frequency.setValueAtTime(V.f0 * pitch * r * (1 + k * V.spread), t);
+          }
+          const F = V.formants[i % V.formants.length];
+          f1.frequency.setValueAtTime(F[0] * pitch, t);
+          f2.frequency.setValueAtTime(F[1] * pitch, t);
+          /* Each beat is attack, hold, release — a shout, not a note. The last
+           * one is held longer, which is how a phrase ends. */
+          const len = V.beat * (tail ? 1.5 : 0.78);
+          env.gain.setValueAtTime(0.0001, t);
+          env.gain.linearRampToValueAtTime(1, t + 0.035);
+          env.gain.setValueAtTime(1, t + Math.max(len - 0.06, 0.05));
+          env.gain.linearRampToValueAtTime(0.0001, t + len);
+          t += V.beat;
+        }
+      }
+      return srcs;
+    },
+  });
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  A LAUNCH, AND AN ARRIVAL THAT DID NOT GO WELL                         */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ FOUR EVENTS OVER EIGHT SECONDS ════════════════════════════════════════
+ *
+ * `HANGAR-SPEC`: "Launches: clamps release, repulsor spin-up whine, taxi,
+ * punch through." That is four events and it is a SEQUENCE, which is the only
+ * thing about it that is hard — a launch played as one sound is a whoosh, and
+ * the reason the four-beat version reads is that each beat explains the next.
+ *
+ * The caller fires it once and the deck holds the rest on its own clock, in
+ * pre-allocated slots (`st.cues`) drained by `stepDeckAudio` beside the hull
+ * thumps. No closures, no timers, nothing that outlives an unload.
+ *
+ * THE PUNCH IS THE ONE SOUND IN THE ROOM THAT DOES NOT GO THROUGH THE ROOM.
+ * Everything else here is on `st.chain` and hushes as the player walks to the
+ * boundary. The punch happens AT the boundary — it is the boundary being
+ * crossed — so it hangs off `st.out` for the same reason `PRESSURE.hush` does:
+ * filtering it with the room would take away the loudest thing about standing
+ * where it happens.
+ */
+export const LAUNCH = {
+  /** How many clamps let go, and how far apart. A ship is held by several. */
+  clamps: 3, clampGap: 0.115,
+  /** Seconds from the clamps letting go to the lift taking the weight. */
+  spool: 1.15,
+  /** How fast it taxis out, and how far past the lip it is gone, in lips. */
+  speed: 24, out: 1.25,
+  /** Where it starts, as a fraction of the depth, and how high it rides. */
+  from: 0.30, y: 0.055,
+  gain: 3.4,
+};
+
+/** An arrival, which is a launch backwards and worse. */
+export const ARRIVE = {
+  /** Where it comes in from and how fast, and where it puts down. */
+  speed: 32, at: 0.42,
+  /** How far through the approach the engine misses. */
+  cough: [0.35, 0.62],
+  /** The mass that lands, as a multiple of `Audio.REF_MASS`. */
+  mass: 220,
+  gain: 3.6,
+};
+
+/** Hold `kind` for `hold` seconds. Slots, so a frame allocates nothing. */
+function queueCue(st, hold, kind, x, y, z, k = 1) {
+  for (const q of st.cues) {
+    if (q.live) continue;
+    q.live = true; q.at = st.t + Math.max(hold, 0);
+    q.kind = kind; q.x = x; q.y = y; q.z = z; q.k = k;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * A SHIP LEAVES. Clamps, spool-up, taxi, and through.
+ *
+ * @param opts.x/.z where it is standing. Defaults to a pad off the port wall.
+ * @param opts.speed how fast it taxis out.
+ */
+export function launchSequence(world, opts = {}) {
+  const st = world?._deckAudio;
+  if (!st || st.torn) return false;
+  const x = Number.isFinite(opts.x) ? opts.x : -rackX() * 0.5;
+  const z0 = Number.isFinite(opts.z) ? opts.z : alongDeck(LAUNCH.from);
+  const y = Number.isFinite(opts.y) ? opts.y : DECK.roof * LAUNCH.y;
+  const speed = clamp(Number.isFinite(opts.speed) ? opts.speed : LAUNCH.speed, 4, 200);
+  clampRelease(st, x, y, z0);
+  const travel = Math.max(DECK.lip - z0, 1) / speed;
+  queueCue(st, LAUNCH.spool, 'spool', x, y, z0, speed);
+  queueCue(st, LAUNCH.spool + travel, 'punch', x, y, DECK.lip, 1);
+  return true;
+}
+
+/**
+ * A SHIP COMES BACK IN A STATE. It crosses the field, its lift misses on the
+ * way down, and it does not land, it ARRIVES — which is the whole of what
+ * `HANGAR-SPEC` means by "hard landing".
+ *
+ * The smoke trail and the fire crew are geometry and are somebody else's;
+ * what is here is the three sounds that make the geometry read.
+ */
+export function damagedArrival(world, opts = {}) {
+  const st = world?._deckAudio;
+  if (!st || st.torn) return false;
+  const x = Number.isFinite(opts.x) ? opts.x : rackX() * 0.45;
+  const z1 = Number.isFinite(opts.z) ? opts.z : alongDeck(ARRIVE.at);
+  const speed = clamp(Number.isFinite(opts.speed) ? opts.speed : ARRIVE.speed, 4, 200);
+  const z0 = DECK.lip * LAUNCH.out;
+  const hi = DECK.roof * 0.22, lo = DECK.roof * LAUNCH.y;
+  st._q.set(x, hi, z0);
+  st._v.set(x, lo, z1);
+  /* NOT `outside`, and not a spin-up: it is already flying and it is already
+   * on this side by the time most of the pass is audible. `power` is low
+   * because a lift that is failing is not making its rated noise. */
+  repulsorPass(world, { from: st._q, to: st._v, speed, power: 0.68, gain: ARRIVE.gain, spin: false });
+  const travel = Math.max(z0 - z1, 1) / speed;
+  queueCue(st, Math.max(z0 - DECK.lip, 0) / speed, 'punch', x, hi, DECK.lip, 0.8);
+  queueCue(st, travel * ARRIVE.cough[0], 'cough', x, (hi + lo) * 0.5, (z0 + z1) * 0.5, 1);
+  queueCue(st, travel * ARRIVE.cough[1], 'cough', x, lo * 1.4, z1 + (z0 - z1) * 0.3, 0.7);
+  queueCue(st, travel, 'touch', x, 0, z1, clamp(opts.mass ?? ARRIVE.mass, 40, 4000));
+  return true;
+}
+
+/** One held phase of a launch or an arrival. See `queueCue`. */
+function fireCue(world, st, q) {
+  if (q.kind === 'spool') {
+    st._q.set(q.x, q.y, q.z);
+    st._v.set(q.x, q.y * 1.6, DECK.lip * LAUNCH.out);
+    repulsorPass(world, { from: st._q, to: st._v, speed: q.k, power: 1.15,
+      gain: LAUNCH.gain, spin: true });
+  } else if (q.kind === 'punch') fieldPunch(st, q);
+  else if (q.kind === 'touch') hardLanding(st, q);
+  else if (q.kind === 'cough') engineCough(st, q);
+}
+
+/**
+ * THE CLAMPS. Three of them, a tenth of a second apart, because a ship held by
+ * one clamp would fall over — and because three staggered bangs are a MACHINE
+ * letting go of something heavy while one bang is a door.
+ *
+ * One noise source carries every clack, retuned and re-enveloped per clamp, so
+ * three events cost one voice and no extra nodes.
+ */
+function clampRelease(st, x, y, z) {
+  const n = LAUNCH.clamps;
+  const span = n * LAUNCH.clampGap + 0.7;
+  st._q.set(x, y, z);
+  return audio.shape({
+    dur: span, gain: 1.4, pos: st._q, prio: PRIO.world, dest: st.chain,
+    build(ctx, out, t0, pitch) {
+      const clack = ctx.createBufferSource();
+      clack.buffer = audio.noiseBuffer(false); clack.loop = true; clack.playbackRate.value = 1.0;
+      const cf = ctx.createBiquadFilter();
+      cf.type = 'bandpass'; cf.Q.value = 5.5;
+      const cg = ctx.createGain(); cg.gain.value = 0;
+      clack.connect(cf); cf.connect(cg); cg.connect(out);
+      /* The mass under each one: a steel jaw the size of a man swinging clear. */
+      const body = ctx.createOscillator();
+      body.type = 'triangle';
+      const bg = ctx.createGain(); bg.gain.value = 0;
+      body.connect(bg); bg.connect(out);
+      /* And the line that was holding the pressure. */
+      const hiss = ctx.createBufferSource();
+      hiss.buffer = audio.noiseBuffer(false); hiss.loop = true; hiss.playbackRate.value = 1.0;
+      const hf = ctx.createBiquadFilter();
+      hf.type = 'highpass'; hf.frequency.value = 2600 * pitch; hf.Q.value = 0.7;
+      const hg = ctx.createGain(); hg.gain.value = 0;
+      hiss.connect(hf); hf.connect(hg); hg.connect(out);
+
+      cg.gain.setValueAtTime(0.0001, t0);
+      bg.gain.setValueAtTime(0.0001, t0);
+      hg.gain.setValueAtTime(0.0001, t0);
+      let t = t0;
+      for (let i = 0; i < n; i++) {
+        /* No two clamps are the same jaw: each is a little lower and a little
+         * later than the last, which is what stops three bangs being a flam. */
+        const f = (2100 - i * 240) * pitch;
+        cf.frequency.setValueAtTime(f, t);
+        cg.gain.setValueAtTime(0.0001, t);
+        cg.gain.linearRampToValueAtTime(0.085, t + 0.004);
+        cg.gain.setTargetAtTime(0.0001, t + 0.005, 0.020);
+        body.frequency.setValueAtTime((190 - i * 16) * pitch, t + 0.006);
+        body.frequency.exponentialRampToValueAtTime((72 - i * 5) * pitch, t + 0.13);
+        bg.gain.setValueAtTime(0.0001, t + 0.006);
+        bg.gain.linearRampToValueAtTime(0.062, t + 0.016);
+        bg.gain.setTargetAtTime(0.0001, t + 0.016, 0.052);
+        t += LAUNCH.clampGap * (1 + i * 0.16);
+      }
+      cg.gain.linearRampToValueAtTime(0.0001, t0 + span);
+      bg.gain.linearRampToValueAtTime(0.0001, t0 + span);
+      /* The pressure goes last and it is the tell that it was a MACHINE that
+       * let go rather than something breaking. */
+      hg.gain.setValueAtTime(0.0001, t);
+      hg.gain.linearRampToValueAtTime(0.040, t + 0.03);
+      hg.gain.setTargetAtTime(0.0001, t + 0.05, 0.16);
+      hg.gain.linearRampToValueAtTime(0.0001, t0 + span);
+      return [clack, body, hiss];
+    },
+  });
+}
+
+/**
+ * THROUGH THE FIELD. `HANGAR-SPEC` calls it "pop, shockwave ring, engine wash"
+ * and all three are here — the crack of the boundary being opened and shut, a
+ * sub-bass ring that is the pressure step, and the wash of the drive going
+ * away through the hole it made.
+ *
+ * ON `st.out`, past the pressure filter, because this IS the pressure
+ * boundary. A player standing at the lip when a ship comes through should be
+ * hit by it, not have it muffled by the same numbers that are muffling the
+ * room behind him.
+ */
+function fieldPunch(st, q) {
+  st.bloom = Math.min(st.bloom + THUMP.bloom * 0.6 * q.k, 0.28);
+  st._q.set(q.x, q.y, q.z);
+  return audio.shape({
+    dur: 1.6, gain: 1.6 * q.k, pos: st._q, prio: PRIO.world, dest: st.out || st.chain,
+    build(ctx, out, t0, pitch) {
+      /* THE POP. Sixty milliseconds, falling hard, and it is the only bright
+       * thing in the sound. */
+      const pop = ctx.createBufferSource();
+      pop.buffer = audio.noiseBuffer(false); pop.loop = true; pop.playbackRate.value = 1.0;
+      const pf = ctx.createBiquadFilter();
+      pf.type = 'bandpass'; pf.Q.value = 0.9;
+      pf.frequency.setValueAtTime(3600 * pitch, t0);
+      pf.frequency.exponentialRampToValueAtTime(900 * pitch, t0 + 0.09);
+      const pg = ctx.createGain(); pg.gain.value = 0;
+      pg.gain.setValueAtTime(0.0001, t0);
+      pg.gain.linearRampToValueAtTime(0.090, t0 + 0.006);
+      pg.gain.setTargetAtTime(0.0001, t0 + 0.008, 0.030);
+      pg.gain.linearRampToValueAtTime(0.0001, t0 + 1.5);
+      pop.connect(pf); pf.connect(pg); pg.connect(out);
+
+      /* THE RING. The pressure step, which is felt rather than heard. */
+      const ring = ctx.createOscillator();
+      ring.type = 'sine'; ring.frequency.setValueAtTime(124 * pitch, t0);
+      ring.frequency.exponentialRampToValueAtTime(38 * pitch, t0 + 0.55);
+      const rg = ctx.createGain(); rg.gain.value = 0;
+      rg.gain.setValueAtTime(0.0001, t0);
+      rg.gain.linearRampToValueAtTime(0.088, t0 + 0.018);
+      rg.gain.setTargetAtTime(0.0001, t0 + 0.020, 0.24);
+      rg.gain.linearRampToValueAtTime(0.0001, t0 + 1.5);
+      ring.connect(rg); rg.connect(out);
+
+      /* THE WASH. The drive, going away through the hole — it SWELLS, because
+       * what you hear is the air behind the ship arriving after it. */
+      const wash = ctx.createBufferSource();
+      wash.buffer = audio.noiseBuffer(true); wash.loop = true; wash.playbackRate.value = 0.9;
+      const wf = ctx.createBiquadFilter();
+      wf.type = 'bandpass'; wf.Q.value = 0.6;
+      wf.frequency.setValueAtTime(1500 * pitch, t0 + 0.04);
+      wf.frequency.exponentialRampToValueAtTime(380 * pitch, t0 + 1.1);
+      const wg = ctx.createGain(); wg.gain.value = 0;
+      wg.gain.setValueAtTime(0.0001, t0 + 0.04);
+      wg.gain.linearRampToValueAtTime(0.052, t0 + 0.26);
+      wg.gain.linearRampToValueAtTime(0.0001, t0 + 1.45);
+      wash.connect(wf); wf.connect(wg); wg.connect(out);
+      return [pop, ring, wash];
+    },
+  });
+}
+
+/**
+ * IT DID NOT LAND, IT ARRIVED. Gear, then the airframe, then the scrape of it
+ * settling on a deck it hit too hard — three events inside a third of a second,
+ * which is the difference between a hard landing and a crash.
+ *
+ * `q.k` is the mass. It moves the pitch of the thud the way `footfall` moves a
+ * boot's, because it is the same physics and there is no reason for this file
+ * to have a second opinion about it.
+ */
+function hardLanding(st, q) {
+  const m = clamp(q.k / 80, 1, 40);
+  const drop = Math.pow(m, -0.22);
+  st.bloom = Math.min(st.bloom + THUMP.bloom * 0.8, 0.28);
+  st._q.set(q.x, q.y, q.z);
+  return audio.shape({
+    dur: 1.5, gain: 1.5, pos: st._q, prio: PRIO.world, dest: st.chain,
+    build(ctx, out, t0, pitch) {
+      /* THE GEAR. Steel taking the whole weight in one go. */
+      const gear = ctx.createBufferSource();
+      gear.buffer = audio.noiseBuffer(false); gear.loop = true; gear.playbackRate.value = 1.0;
+      const gf = ctx.createBiquadFilter();
+      gf.type = 'bandpass'; gf.frequency.value = 1400 * drop * pitch; gf.Q.value = 3.4;
+      const gg = ctx.createGain(); gg.gain.value = 0;
+      gg.gain.setValueAtTime(0.0001, t0);
+      gg.gain.linearRampToValueAtTime(0.095, t0 + 0.006);
+      gg.gain.setTargetAtTime(0.0001, t0 + 0.008, 0.045);
+      /* THE BOUNCE. It came down harder than it should have, so it comes back
+       * up — and the second contact is the one that says so. */
+      gg.gain.setValueAtTime(0.0001, t0 + 0.19);
+      gg.gain.linearRampToValueAtTime(0.045, t0 + 0.198);
+      gg.gain.setTargetAtTime(0.0001, t0 + 0.200, 0.035);
+      gg.gain.linearRampToValueAtTime(0.0001, t0 + 1.4);
+      gear.connect(gf); gf.connect(gg); gg.connect(out);
+
+      /* THE MASS. What the deck says about it, an octave under everything. */
+      const thud = ctx.createOscillator();
+      thud.type = 'sine'; thud.frequency.setValueAtTime(84 * drop * pitch, t0);
+      thud.frequency.exponentialRampToValueAtTime(29 * drop * pitch, t0 + 0.5);
+      const tg = ctx.createGain(); tg.gain.value = 0;
+      tg.gain.setValueAtTime(0.0001, t0);
+      tg.gain.linearRampToValueAtTime(0.105, t0 + 0.022);
+      tg.gain.setTargetAtTime(0.0001, t0 + 0.024, 0.22);
+      tg.gain.linearRampToValueAtTime(0.0001, t0 + 1.4);
+      thud.connect(tg); tg.connect(out);
+
+      /* THE SCRAPE. It is not stopped yet. */
+      const sc = ctx.createBufferSource();
+      sc.buffer = audio.noiseBuffer(false); sc.loop = true; sc.playbackRate.value = 1.06;
+      const sf = ctx.createBiquadFilter();
+      sf.type = 'bandpass'; sf.Q.value = 1.2;
+      sf.frequency.setValueAtTime(2400 * pitch, t0 + 0.05);
+      sf.frequency.exponentialRampToValueAtTime(520 * pitch, t0 + 0.72);
+      const sg = ctx.createGain(); sg.gain.value = 0;
+      sg.gain.setValueAtTime(0.0001, t0 + 0.05);
+      sg.gain.linearRampToValueAtTime(0.036, t0 + 0.10);
+      sg.gain.linearRampToValueAtTime(0.0001, t0 + 0.80);
+      sc.connect(sf); sf.connect(sg); sg.connect(out);
+      return [gear, thud, sc];
+    },
+  });
+}
+
+/**
+ * A LIFT MISSING. Half a second of a drive that is not running properly: the
+ * whine drops away, catches, and comes back short. It is the only thing in the
+ * arrival that says the ship is DAMAGED rather than merely landing.
+ */
+function engineCough(st, q) {
+  st._q.set(q.x, q.y, q.z);
+  return audio.shape({
+    dur: 0.75, gain: 1.5 * q.k, pos: st._q, prio: PRIO.chatter, dest: st.chain,
+    build(ctx, out, t0, pitch) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(REPULSOR.a.f * pitch, t0);
+      o.frequency.exponentialRampToValueAtTime(REPULSOR.a.f * 0.42 * pitch, t0 + 0.16);
+      o.frequency.exponentialRampToValueAtTime(REPULSOR.a.f * 0.86 * pitch, t0 + 0.34);
+      const f = ctx.createBiquadFilter();
+      f.type = 'lowpass'; f.frequency.value = 1600 * pitch; f.Q.value = 3.2;
+      const g = ctx.createGain(); g.gain.value = 0;
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.062, t0 + 0.02);
+      g.gain.linearRampToValueAtTime(0.018, t0 + 0.17);
+      g.gain.linearRampToValueAtTime(0.050, t0 + 0.36);
+      g.gain.setTargetAtTime(0.0001, t0 + 0.38, 0.10);
+      g.gain.linearRampToValueAtTime(0.0001, t0 + 0.72);
+      o.connect(f); f.connect(g); g.connect(out);
+
+      /* THE MISFIRE ITSELF: a burst of broadband where the burn should be. */
+      const bang = ctx.createBufferSource();
+      bang.buffer = audio.noiseBuffer(true); bang.loop = true; bang.playbackRate.value = 0.85;
+      const bf = ctx.createBiquadFilter();
+      bf.type = 'bandpass'; bf.frequency.value = 420 * pitch; bf.Q.value = 1.0;
+      const bg = ctx.createGain(); bg.gain.value = 0;
+      bg.gain.setValueAtTime(0.0001, t0 + 0.14);
+      bg.gain.linearRampToValueAtTime(0.058, t0 + 0.155);
+      bg.gain.setTargetAtTime(0.0001, t0 + 0.158, 0.055);
+      bg.gain.linearRampToValueAtTime(0.0001, t0 + 0.72);
+      bang.connect(bf); bf.connect(bg); bg.connect(out);
+      return [o, bang];
+    },
+  });
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
