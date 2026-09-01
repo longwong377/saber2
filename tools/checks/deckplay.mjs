@@ -272,9 +272,12 @@ export async function run({ check, assert, THREE }) {
     const { world } = await deck();
     try {
       const p = world.player;
-      /* HALFWAY BETWEEN TWO STROBES. `dressDeck` stands a stanchion every 18 m
-       * along the lip, one of them at x=0, so a walk straight up the centreline
-       * measures a lamp post rather than the edge. x=9 is the gap. */
+      /* HALFWAY BETWEEN TWO STROBES. `addField` stands one every 16 m along
+       * the lip, one of them at x=0, so a walk straight up the centreline
+       * measures a marker rather than the edge. x=9 is the gap. (This said
+       * `dressDeck`, a function deleted two rewrites ago along with the
+       * stanchions it named; the strobes it describes did not exist at all for
+       * a while, and this comment was the only record that they should.) */
       const start = new THREE.Vector3(9, world.terrain.height(9, DECK.start.z), DECK.start.z);
       p.position.copy(start);
       p.velocity.set(0, 0, 0);
@@ -284,8 +287,22 @@ export async function run({ check, assert, THREE }) {
       step(world, 4, walk(idleInput()));
       const moved = p.position.z - z0;
       assert(moved > 8, `four seconds of forward moved the player ${moved.toFixed(1)} m — he cannot walk`);
-      /* Long enough to cross the whole deck twice at 4.6 m/s. */
-      step(world, 40, walk(idleInput()));
+      /**
+       * LONG ENOUGH FOR THE WALK THIS ROOM ACTUALLY IS, DERIVED.
+       *
+       * This was a literal 40 s under a comment saying "long enough to cross
+       * the whole deck twice at 4.6 m/s" — true of the 98 m walk this check
+       * was written against, and false the moment the room was rescaled:
+       * `DECK.start.z` went to -84 and `DECK.lip` to 144, so the walk is 228 m
+       * and takes 49.6 s. The check would have reported the player stopping
+       * 15 m short of an edge he simply had not reached yet.
+       *
+       * 4.6 m/s is `Player`'s own base walk with no sprint, no crouch and no
+       * boon, which is all `walk(idleInput())` presses. The 1.2 is the damp
+       * ramp plus room to be wrong.
+       */
+      const need = (DECK.lip - DECK.start.z) / 4.6 * 1.2;
+      step(world, need - 4, walk(idleInput()));
       assert(p.position.z < DECK.lip + 1,
         `the player walked to z=${p.position.z.toFixed(1)} against a lip at ${DECK.lip} — he is off the ship`);
       /**

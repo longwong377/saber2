@@ -96,8 +96,19 @@ export const DECK = {
   aft: -104,
   /** The lip, on every other side: the heightfield's own edge. */
   lip: 144,
-  /** Where the player is put down, looking forward down the length of it. */
-  start: new THREE.Vector3(0, 0, -74),
+  /**
+   * WHERE THE PLAYER IS PUT DOWN, and every metre of it is answering to
+   * something.
+   *
+   * He stands 18 m forward of the bulkhead doors, so the company comes out
+   * BEHIND him and marches past — which is what "file in from off-camera"
+   * means from a first-person camera and is the one thing the brief says sells
+   * the whole scene. And he is 30 m from the line, inside `ORDER_REACH`'s 34,
+   * so he can give an order where he lands but only just: walk three paces the
+   * wrong way and they stop hearing you, which is the reach rule teaching
+   * itself in the room built for learning it.
+   */
+  start: new THREE.Vector3(0, 0, -78),
   /** Where the line forms up, facing him. */
   line: -48,
   /** The overhead field. 64 m, which is the height ref 6's catwalk implies. */

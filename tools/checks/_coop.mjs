@@ -184,6 +184,33 @@ export async function stubEngine() {
     scene.add(L);
     stub.lightPool.push(L);
   }
+  /**
+   * ══ AND A REAL `skyDome`, BECAUSE ITS ABSENCE HID THE WORST BUG IN THE
+   *    FLIGHT DECK FOR THE WHOLE OF ITS DEVELOPMENT ═══════════════════════
+   *
+   * `Hangar.dressHangar` called `world.engine?.sky?.configureOrbit?.()`. The
+   * orbit window lives on `engine.skyDome`; `engine.sky` is three's Preetham
+   * `Sky` mesh and has no such method. The optional chain swallowed it, so the
+   * planet, the starfield and the entire fleet action outside that room never
+   * rendered — seventeen bullets of `HANGAR-SPEC.md` ticked against a shader
+   * that had never once run in the game.
+   *
+   * IT SURVIVED BECAUSE THIS STUB HAD NEITHER PROPERTY. The suites took
+   * exactly the same silent no-op path the browser took, so every check that
+   * booted the deck agreed with the browser about a room that was empty. A
+   * stub that is missing the member under test does not test it; it agrees
+   * with any caller, including a misspelled one.
+   *
+   * So the stub carries the REAL `SkyDome`. It is a mesh and a shader — no GL
+   * context needed to construct one — and now a check can read
+   * `engine.skyDome._orbit` and find out whether the window was ever
+   * configured. Which `tools/checks/hangar.mjs` does.
+   */
+  const { SkyDome } = await import('../../src/engine/SkyDome.js');
+  stub.skyDome = new SkyDome(scene);
+  /* AND `sky` IS PRESENT TOO, for the same reason: a stub missing the member
+   * that WAS being called cannot report that the call went nowhere. */
+  stub.sky = { visible: false, material: { uniforms: {} } };
   return stub;
 }
 

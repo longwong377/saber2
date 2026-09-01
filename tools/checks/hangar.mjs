@@ -362,4 +362,54 @@ export async function run({ check, assert }) {
       return `${meshes} meshes empty, against 395 for the room that was deleted`;
     } finally { world.unload(); }
   });
+
+  check('hangar: the window outside is actually configured, which it never once was', async () => {
+    /**
+     * ══ THE CHECK THAT WAS NOT WRITTEN, AND COST SEVENTEEN BULLETS ════════
+     *
+     * `dressHangar` called `engine.sky.configureOrbit(...)`. The orbit window
+     * lives on `engine.skyDome`; `engine.sky` is three's Preetham `Sky` mesh
+     * and has no such method. The optional call swallowed it in silence, so
+     * `SkyDome._orbit` stayed null, `uOrbit` stayed 0, and with
+     * `atmosphere.sky === false` the dome was never even visible: outside the
+     * field there was a background colour and nothing else. No planet, no
+     * starfield, no fleet, no turbolasers, no dying capital ship, no city
+     * lights, no landing craft. Every bullet of `HANGAR-SPEC.md`'s PLANET and
+     * BATTLE sections — all seventeen, all ticked — described a shader that
+     * had never run in the game.
+     *
+     * Two things let it live and this kills both. The stub engine had NEITHER
+     * property, so the suites took exactly the same no-op path the browser
+     * did; `_coop.stubEngine` carries a real `SkyDome` now. And the numbers in
+     * the spec came from `tools/_orbitprobe.mjs`, which constructs a `SkyDome`
+     * by hand and calls the method on it directly — a probe that builds its
+     * own subject can test the subject and never the wiring to it.
+     *
+     * SO THIS ASSERTS THE WIRING AND NOTHING ELSE: that dressing the room left
+     * an orbit on the dome the engine actually owns, and that the faction went
+     * with it, without which a Separatist player watches his own fleet fire
+     * Republic blue.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'hangar',
+      settings: { mode: 'hangar', level: 'hangar', allies: 0, army: 'separatist' },
+    });
+    try {
+      const dome = world.engine?.skyDome;
+      assert(dome, 'the stub engine has no skyDome, so this check cannot see the bug it exists for');
+      assert(dome._orbit,
+        'dressing the flight deck left no orbit on engine.skyDome, so the window outside is a '
+        + 'background colour. That is the exact shape of the original bug: the call went to '
+        + 'engine.sky, which has no configureOrbit, and the optional chain ate it');
+      assert(dome.mat?.uniforms?.uOrbit?.value === 1,
+        'the orbit uniform is off, so nothing outside the field is drawn whatever _orbit says');
+      assert(dome._orbit.faction === 'separatist',
+        'the window was configured with faction ' + JSON.stringify(dome._orbit.faction)
+        + ' on a separatist deck. SkyDome colours the friendly bolts off this, so the player '
+        + 'would watch his own fleet fire the enemy colour');
+      return 'orbit on, faction ' + dome._orbit.faction + ', level '
+        + (dome._orbit.level?.name || 'none');
+    } finally { world.unload(); }
+  });
 }
