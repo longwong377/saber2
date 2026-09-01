@@ -49,6 +49,10 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
+import { buildFigure, paradeMan, poseParade, salute, turnTo, stagger, STANCES } from './Parade.js';
+import { mergeFigure } from './MergedSkin.js';
+import { loadAll as companyLoadAll } from './Company.js';
+import { squadPlan, leadOf, SQUAD } from './Command.js';
 import { propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
   addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
   makeConsole, makeCrate, addHullSection, addFloorSlab } from '../world/Props.js';
@@ -374,6 +378,11 @@ export function dressHangar(world) {
   dressBulkhead(world, M);
   dressDeck(world, M);
   lightDeck(world);
+  /* AND THE COMPANY IS ALREADY WALKING IN when the room opens. The player's
+   * first frame on the deck is his men coming through the doors, not an empty
+   * floor with a button on it — "the filing in sells it more than the
+   * standing", and it cannot sell anything if it has already happened. */
+  callTheCompany(world);
 }
 
 /**
@@ -444,5 +453,278 @@ export class HangarDirector {
 
   state() { return { progress: 0, need: Infinity }; }
 
-  update() {}
+  /**
+   * THE ONE THING ON THIS DECK THAT MOVES BY ITSELF. `World.update` steps the
+   * director every frame and this is the only hook the room has that is not a
+   * body or a prop — the company walking in, halting and breathing goes
+   * through here.
+   */
+  update(dt) { stepCompany(this.world, dt); }
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE COMPANY, ON THE DECK                                                  */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THE MEN WALK ON ═══════════════════════════════════════════════════════
+ *
+ * "Troops file in from off-camera in a loose column, then snap to formation.
+ *  **The filing in sells it more than the standing.** Staggered arrival — they
+ *  don't all take the same number of steps. Slight timing offsets on the
+ *  snap-to."
+ *
+ * That is the whole design of this half and it is right: a line that is simply
+ * THERE when you turn round is a menu with a floor under it. The men come
+ * through the bulkhead doors in a loose column, break for their places, and
+ * arrive over about eight seconds — and no two of them take the same number of
+ * steps, because the walk is the real gait solver moving a real body toward a
+ * mark and not a lerp.
+ *
+ * ── THE MARKS ────────────────────────────────────────────────────────────
+ *
+ * By SQUAD, in the order `squadPlan` deals them, which is the order they form
+ * in the fight — so the shape you are walking down is the shape that will be
+ * on the ground. Squads are separated by a gap wider than the interval inside
+ * one, because that gap is the only thing that says "these five are a unit"
+ * without a label.
+ *
+ * They face AFT, toward the player, with the aperture and the planet behind
+ * them. That is the shot: your men in front of you, the war behind them.
+ */
+export const MUSTER = {
+  /** Between two men of the same squad. */
+  interval: 2.1,
+  /** Between one squad and the next. Deliberately more than double. */
+  gap: 5.4,
+  /** How far apart the ranks are if the company needs two. */
+  depth: 2.8,
+  /** Men in one rank before it wraps. Past this a line stops being legible. */
+  perRank: 12,
+  /** Seconds from the order to the last man halting. */
+  formUp: 8.5,
+  /** Where they come from: the bulkhead doors, off to either side of centre. */
+  door: { z: -44, spread: 7 },
+};
+
+/**
+ * THE PACE, off `MUSTER.formUp` and the longest walk in the room rather than
+ * typed. The far corner of the widest line is about 36 m from the doors; at
+ * 8.5 s minus the last man's start offset that is a brisk double-time, which is
+ * what a company crossing a deck to a call actually moves at.
+ */
+const MARCH_SPEED = 5.4;
+
+/** Where man `i` of `n` stands, by squad. Pure, so a check can ask it. */
+export function markFor(i, n, squad, squads) {
+  const wide = Math.min(n, MUSTER.perRank);
+  const rank = Math.floor(i / MUSTER.perRank);
+  const col = i % MUSTER.perRank;
+  /* THE SQUAD GAPS ARE PART OF THE WIDTH, or the line is not centred: a
+   * company of two squads laid out on interval alone sits off to one side of
+   * the room by half a gap. */
+  const gaps = Math.max(0, (squads | 0) - 1) * (MUSTER.gap - MUSTER.interval);
+  const span = (wide - 1) * MUSTER.interval + gaps;
+  const before = Math.max(0, squad | 0) * (MUSTER.gap - MUSTER.interval);
+  return {
+    x: -span / 2 + col * MUSTER.interval + before,
+    z: DECK.line + rank * MUSTER.depth,
+  };
+}
+
+/**
+ * ══ CALL THEM ═════════════════════════════════════════════════════════════
+ *
+ * Reads the player's own roll through `Company.loadAll` — the same door the
+ * Company tab reads, so the men standing here are the men on that page, with
+ * their ranks, their wounds, their kit and the gaps where last run's dead used
+ * to stand.
+ *
+ * ONE ARMY AT A TIME. A player who has fought for both sides has two rolls and
+ * they must never be in the same room: `HANGAR-SPEC` is explicit that one
+ * wrong-faction asset kills the illusion, and two whole companies of them is
+ * not a subtle version of that. The army is the one whose roll has men on it,
+ * preferring the one the player last fielded.
+ */
+export function callTheCompany(world, opts = {}) {
+  const rolls = companyLoadAll().filter((r) => (r?.men || []).length);
+  if (!rolls.length) return null;
+  const want = opts.army || world?.settings?.army;
+  const roll = rolls.find((r) => r.army === want) || rolls[0];
+  const men = roll.men.slice(0, MAX_ON_DECK);
+
+  /* THE SHAPE THE FIGHT WOULD DEAL THEM, not a fresh one. `squadPlan` is the
+   * pure derivation the Company tab's order of battle already draws and the
+   * director already uses; asking it here is what makes the line on the deck
+   * the line on the ground. */
+  const plan = squadPlan(men, SQUAD);
+  const bySquad = new Map();
+  for (const [m, k] of plan) {
+    if (!bySquad.has(k)) bySquad.set(k, []);
+    bySquad.get(k).push(m);
+  }
+  const order = [...bySquad.keys()].sort((a, b) => a - b);
+
+  const company = { army: roll.army, men: [], byMan: new Map(), t: 0, at: 0, stance: 'attention' };
+  let i = 0;
+  for (const k of order) {
+    const squad = bySquad.get(k);
+    for (let j = 0; j < squad.length; j++) {
+      const rec = squad[j];
+      const fig = buildFigure(rec);
+      if (!fig) continue;
+      const man = paradeMan(fig.rig, { designation: rec.designation || rec.name || `m${i}` });
+      /* FACING AFT — at the player, with the aperture behind them. */
+      man.facing = Math.PI;
+      man.stance = 'attention';
+      const mark = markFor(i, men.length, order.indexOf(k), order.length);
+      /* THEY COME FROM THE DOORS, not from their marks. `stagger` is the
+       * per-man offset that stops the column arriving as one organism; the
+       * side they come in on alternates so the column splits at the threshold
+       * the way a real one does. */
+      const side = (i % 2) ? 1 : -1;
+      fig.root.position.set(side * MUSTER.door.spread, 0, MUSTER.door.z);
+      fig.root.rotation.y = Math.PI;
+      world.scene.add(fig.root);
+      const rowMan = {
+        rec, fig, man, mark, squad: k, lead: false,
+        /* Each man's own walk: when he starts and how long he takes. The
+         * spread is what makes it a company and not a chorus line. */
+        /* THE THREE THINGS THAT MAKE IT A COMPANY AND NOT A CHORUS LINE, and
+         * they are deliberately three: when he starts (the column does not
+         * leave the threshold as one), how fast he walks, and how far he has to
+         * go. Any one of them alone still reads as a formation animation. */
+        start: 0.10 + (i % 3) * 0.18 + (stagger(man) % 1) * 0.55,
+        pace: 0.88 + (stagger(man) % 1) * 0.26,
+        from: fig.root.position.clone(),
+        merged: null,
+      };
+      company.men.push(rowMan);
+      company.byMan.set(rec.designation || rec.name, rowMan);
+      i++;
+    }
+    const lead = leadOf(bySquad.get(k).map((m) => ({ ...m, alive: true })));
+    const row = company.men.find((r) => r.rec.designation === lead?.designation);
+    if (row) row.lead = true;
+  }
+  world._company = company;
+  return company;
+}
+
+/** How many men the deck will stand at once. See `MergedSkin` for the cost. */
+export const MAX_ON_DECK = 24;
+
+
+/**
+ * ══ THE FILING IN, WHICH IS THE PART THAT SELLS IT ════════════════════════
+ *
+ * Stepped once a frame. Each man walks from the doors to his mark on his own
+ * clock — his own start, his own pace — and halts. Nobody takes the same number
+ * of steps as anybody else, because the distances differ, the paces differ and
+ * the marks differ, which is the whole of "staggered arrival" and costs one
+ * multiply per man.
+ *
+ * THE HALT IS A SNAP AND THE SNAP IS OFFSET. `smoothstep` to the mark, then the
+ * facing swings to the front over the last fifth of his walk — so the line
+ * squares up in a ripple rather than all at once, which is what a company
+ * halting actually looks like and what a single eased transform never does.
+ *
+ * ── THE MERGE HAPPENS WHEN HE STOPS ──────────────────────────────────────
+ *
+ * `mergeFigure` folds 54 meshes into about 7 and `BAKES_PER_FRAME` is 1, so
+ * twenty-four men bake over twenty-four frames. Doing it AT THE HALT rather
+ * than at the build spreads those frames across the walk-on, when the player is
+ * watching men move and cannot see a bake, instead of stacking them on the
+ * frame the room opens.
+ */
+export function stepCompany(world, dt) {
+  const c = world?._company;
+  if (!c) return;
+  c.t += dt;
+  for (const row of c.men) {
+    const { fig, man, mark } = row;
+    const local = Math.max(0, c.t - row.start) * row.pace;
+    /* HOW LONG HIS OWN WALK IS: the distance he has to cover at his own pace.
+     * A fixed duration would have the far men sprint and the near men crawl. */
+    const dist = Math.hypot(mark.x - row.from.x, mark.z - row.from.z);
+    /* HIS OWN SPEED, DERIVED FROM THE ONE NUMBER THAT IS A DESIGN DECISION.
+     * `MUSTER.formUp` is how long the whole thing takes and it is the only
+     * figure anybody should ever tune; the pace falls out of the longest walk
+     * on the deck so a company of four and a company of twenty-four both form
+     * up in about the same time. Measured before this was derived: a hard
+     * 3.1 m/s put the last man on his mark at fourteen seconds, which is a
+     * wait rather than an arrival. */
+    const span = Math.max(0.8, dist / MARCH_SPEED);
+    const p = Math.min(1, local / span);
+    if (p < 1) {
+      /* THE COLUMN BREAKS FOR ITS PLACES rather than sliding to them: the
+       * first two thirds of the walk is down the centreline toward the line's
+       * own z, and the last third is the man stepping out to his file. It is
+       * one extra ease and it is the difference between men and cursors. */
+      const along = smoothstepIn(Math.min(1, p / 0.66));
+      const across = smoothstepIn(Math.max(0, (p - 0.5) / 0.5));
+      fig.root.position.x = row.from.x + (mark.x - row.from.x) * across;
+      fig.root.position.z = row.from.z + (mark.z - row.from.z) * along;
+      /* Facing where he is going, then squaring to the front at the end. */
+      const turnIn = smoothstepIn(Math.max(0, (p - 0.8) / 0.2));
+      fig.root.rotation.y = Math.PI;
+      man.stance = 'attention';
+      man.marching = turnIn < 1;
+    } else if (!row.halted) {
+      row.halted = true;
+      fig.root.position.set(mark.x, 0, mark.z);
+      fig.root.rotation.y = Math.PI;
+      /* HE IS STANDING STILL NOW, so he can be folded. See the note above. */
+      if (!row.merged) row.merged = mergeFigure(fig, { castShadow: true });
+    }
+    man.stance = c.stance;
+    poseParade(man, c.t + stagger(man));
+    row.merged?.update?.(c.t);
+  }
+}
+
+/* `smoothstep` from MathUtil takes an edge pair; this is the 0..1 form the
+ * walk wants and it is one line rather than a second import shape. */
+function smoothstepIn(x) { const t = Math.max(0, Math.min(1, x)); return t * t * (3 - 2 * t); }
+
+/**
+ * ══ AN ORDER, ON THE DECK ═════════════════════════════════════════════════
+ *
+ * "In the hangar you give a certain order (audibly, it'll be similar in
+ *  carrying out to a stratagem), and that calls your troops."
+ *
+ * And then: "at ease, present arms, dismissed", multiple salutes, and singing.
+ * These are the same verbs the fight has, which is the point of putting them
+ * here — the deck is where the command interface is learned, in a place where
+ * getting it wrong costs nothing.
+ *
+ * `ORDERS` here is deliberately NOT `Command.FORMATIONS`: a formation is a
+ * shape a line fights in and these are things a company does standing still.
+ * What they share is the door — one call, one id, one announcement — so a
+ * player who learns "press this, they do that" learns the real one.
+ */
+export const DECK_ORDERS = {
+  fallin: { name: 'Fall in', bark: 'COMPANY — FALL IN', stance: 'attention' },
+  ease: { name: 'At ease', bark: 'STAND AT — EASE', stance: 'ease' },
+  present: { name: 'Present arms', bark: 'PRESENT — ARMS', stance: 'present' },
+  salute: { name: 'Salute', bark: 'COMPANY — SALUTE', salute: true },
+  dismissed: { name: 'Dismissed', bark: 'COMPANY — DISMISSED', dismiss: true },
+};
+
+/** Give one. Returns false for an id nobody answers to. */
+export function deckOrder(world, id) {
+  const O = DECK_ORDERS[id];
+  const c = world?._company;
+  if (!O || !c) return false;
+  if (O.stance) c.stance = O.stance;
+  if (O.salute) {
+    /* NOT ALL AT ONCE. A company saluting on one frame is a machine; each man
+     * comes up on his own beat off his own seed, inside about a third of a
+     * second, which is what a drilled company actually looks like. */
+    for (const row of c.men) salute(row.man, c.t + (stagger(row.man) % 1) * 0.34);
+  }
+  if (O.dismiss) c.dismissed = c.t;
+  world.notify?.(O.bark, `${c.men.length} ${c.men.length === 1 ? 'man' : 'men'}`);
+  return true;
 }

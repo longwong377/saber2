@@ -49,6 +49,16 @@ await page.evaluate(() => {
   localStorage.setItem('saber.settings.v2', JSON.stringify({
     level: 'geonosis', mode: 'command', quality: 'low', instantSpawn: true, allies: 0,
   }));
+  /* A ROLL TO STAND UP. The deck's whole subject is the player's own company
+   * and a fresh profile has none, so the shot would be of an empty floor. */
+  const men = Array.from({ length: 12 }, (_, i) => ({
+    designation: 'CT-' + (1000 + i), name: 'CT-' + (1000 + i), type: 'trooper',
+    army: 'republic', xp: i * 40, kills: i * 2, areas: 2, wounds: i % 3,
+    look: { mark: null, band: null, kit: {}, paint: {} }, squad: null, alive: true,
+  }));
+  localStorage.setItem('saber.company.v1', JSON.stringify({
+    v: 1, republic: { army: 'republic', men, fallen: [], runs: 1 },
+  }));
 });
 await page.reload({ waitUntil: 'domcontentloaded', timeout: 90000 });
 
@@ -86,6 +96,8 @@ const SHOT = { timeout: 180000 };
 if (!info.fail) {
   const shots = [
     ['deck-forward', { yaw: 0, pitch: -0.05, x: 0, y: 1.7, z: -34 }],
+    ['deck-line', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -26 }],
+    ['deck-line-close', { yaw: 0, pitch: 0, x: -6, y: 1.7, z: -17 }],
     ['deck-lip', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: 54 }],
     ['deck-port', { yaw: -1.35, pitch: -0.02, x: 0, y: 1.7, z: -14 }],
     ['deck-aft', { yaw: Math.PI, pitch: 0.05, x: 0, y: 1.7, z: -14 }],

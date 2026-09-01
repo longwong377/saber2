@@ -66,6 +66,8 @@ const _WHITE = new THREE.Color(1, 1, 1);
 const _scratch = new THREE.Color();
 const _UP = new THREE.Vector3(0, 1, 0);
 const _axis = new THREE.Vector3();
+const _spare = new THREE.Vector3();
+const _scratchV = new THREE.Vector3();
 
 /**
  * An authored swatch, demoted to a tint: renormalised to unit luminance so it
@@ -360,6 +362,7 @@ uniform vec3  uSeaCol;       /* water.deep, or what a lava sea throws up */
 uniform float uSeaAmt;       /* how much of the disc is under it */
 uniform float uSeaGlow;      /* 1 when that sea is lava and does not go out */
 uniform float uCapAmt;       /* polar ice */
+uniform float uCityAmt;      /* lights on the night side, for a settled world */
 uniform float uCloudAmt;     /* the level's own cloudCover */
 uniform vec3  uPlanetLit;    /* its cloudLit, as a hue */
 uniform vec3  uPlanetDark;   /* its cloudDark, as a hue */
@@ -372,6 +375,18 @@ uniform vec3  uFleetDir;     /* unit; the bearing of the action */
 uniform vec3  uBoltCol;      /* our turbolasers */
 uniform vec3  uFoeCol;       /* theirs */
 uniform float uDeathSpan;    /* seconds a capital ship takes to die */
+/* THE DETONATIONS ARE SCHEDULED ON THE CPU AND CONSUMED HERE, and the reason
+ * is one line long: the deck has to hear them. A muffled thump through the
+ * hull two seconds after a flash is the single cheapest thing in this whole
+ * view that says the ship you are standing on is a physical object in the same
+ * space as the fight — and a schedule that exists only inside a fragment
+ * shader cannot be subscribed to. So the timeline lives in _orbitTick, which
+ * raises an event as each one fires and hands the shader the same three slots
+ * it is about to draw. One schedule, two consumers; not two schedules that
+ * agree until somebody edits one. xy = where, z = seconds since the flash
+ * (negative = not lit), w = how big. */
+uniform vec4  uBlast[3];
+uniform float uLanding;      /* strings of landing craft going down */
 
 /* The plane of the arm we are looking along. One direction, so the band is a
  * band and not a wash — a nebula everywhere is a fog, and fog in vacuum is the
@@ -416,6 +431,18 @@ float orbFbm(vec3 p) {
 float orbFbm2(vec3 p) {
   float s = 0.0, a = 0.5;
   for (int i = 0; i < 2; i++) { s += a * vnoise3(p); p = p * 2.11 + 7.7; a *= 0.5; }
+  return s;
+}
+/* FOUR, for the one field the eye actually reads as a place.
+ *
+ * At three octaves the continents came out as half a dozen rounded blobs with
+ * smooth coasts — graphic in the wrong way, a logo rather than a world. The
+ * fourth octave is a sixteenth of the amplitude and costs eight more hashes,
+ * and what it buys is the scale between a landmass and a bay, which is the
+ * scale a coastline is legible at. */
+float orbFbm4(vec3 p) {
+  float s = 0.0, a = 0.5;
+  for (int i = 0; i < 4; i++) { s += a * vnoise3(p); p = p * 2.03 + 11.3; a *= 0.5; }
   return s;
 }
 
@@ -481,12 +508,21 @@ vec3 starField(vec3 dir) {
   vec3 cb = mix(vec3(0.74, 0.83, 1.0), vec3(1.0, 0.85, 0.63), saberCelQuant(t2, 2.0));
   vec3 col = ca * a * 0.85 + cb * b * 2.1;
 
-  /* The arm: a broad band of unresolved stars along one great circle, banded
-   * to three plates so it reads as drawn rather than as a photograph. */
-  float band = 1.0 - smoothstep(0.0, 0.42, abs(dot(v, ARM_AXIS)));
-  float dust = orbFbm2(v * 2.6 + 4.0);
-  float arm = saberCelQuant(clamp((dust - 0.30) * 2.6 * band, 0.0, 1.0), 3.0);
-  col += mix(uAtmoCol, vec3(1.0), 0.4) * arm * 0.030;
+  /* The arm: unresolved stars along one great circle, banded to three plates
+   * so it reads as drawn rather than as a photograph.
+   *
+   * THE FREQUENCY IS THE WHOLE OF IT. At v * 2.6 the field has about three
+   * cells across the visible sky, so the band came out as a handful of pale
+   * amoebas the size of a fist held at arm's length — a lens smear, not a
+   * galaxy. At v * 11 a cell is under two degrees and what the eye reads is
+   * mottling inside a band, which is what unresolved stars actually look
+   * like. Narrower too (0.20 rather than 0.42 of the sphere), and a third the
+   * level: this is the faintest thing in the frame by construction, because
+   * anything brighter competes with the planet for the same eye. */
+  float band = 1.0 - smoothstep(0.0, 0.20, abs(dot(v, ARM_AXIS)));
+  float dust = orbFbm2(v * 11.0 + 4.0);
+  float arm = saberCelQuant(clamp((dust - 0.34) * 3.2 * band, 0.0, 1.0), 3.0);
+  col += mix(uAtmoCol, vec3(1.0), 0.4) * arm * 0.011;
   return col * uStars;
 }
 
@@ -557,7 +593,7 @@ float segDist(vec2 p, vec2 a, vec2 b) {
  * reload puts the battle back exactly where the fiction says it is, and two
  * players in the same room at the same clock see the same fight.
  */
-vec4 fleetScene(vec2 q, float aa, float t, vec2 sq) {
+vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
   vec3 hullAcc = vec3(0.0), glow = vec3(0.0);
   float cov = 0.0;
 
@@ -608,11 +644,28 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq) {
       cov = max(cov, hull);
     }
 
-    /* Engines. Three at the stern, and they are the brightest thing on a hull
-     * that is not on fire. */
-    float eng = smoothstep(aa * 2.0 + W * 0.24, 0.0,
-      max(abs(h.x + L * 1.00) - L * 0.05, abs(h.y) - W * 0.62));
-    glow += emCol * eng * 1.5 * big;
+    /* Engines. A soft bar at the stern rather than a box: the first cut was a
+     * hard rectangle brighter than anything else in the frame, which reads as a
+     * missing texture. Warm-white against the hull's own cool shade. */
+    float engD = max(abs(h.x + L * 1.02) - L * 0.03, abs(h.y) - W * 0.55);
+    glow += emCol * exp(-max(engD, 0.0) / (W * 0.42 + aa)) * 0.85 * big;
+
+    /* ── ION FLASH AND SHIELD BLOOM, ON OUR OWN HULLS ──────────────────
+     * A shot that lands on somebody the player is meant to be on the side of
+     * is the difference between a light show and a fight going badly. The
+     * bloom is the shell lighting up a hull-length out; the ion flash is the
+     * hull itself going blue-white for a fifth of a second, which is what an
+     * ion hit looks like from far enough away that you cannot see the arcs. */
+    float hitPh = fract(t / (14.0 + fi * 3.7) + hash11(fi * 5.53 + 2.9));
+    float hitAge = hitPh * (14.0 + fi * 3.7);
+    if (hitAge < 0.9) {
+      float shell = abs(length(q - c) - (L * 0.9 + hitAge * L * 1.4));
+      float fade = 1.0 - hitAge / 0.9;
+      glow += vec3(0.52, 0.78, 1.0)
+            * exp(-shell * shell / (L * L * 0.006 + 1.0e-7)) * fade * fade * 1.7;
+      float ion = max(1.0 - hitAge * 5.0, 0.0);
+      glow += vec3(0.62, 0.84, 1.0) * ion * ion * hull * 2.2;
+    }
 
     /* Fires, on the one that is dying. A cell along the keel lights when the
      * clock passes its own hash, so the burn SPREADS from a couple of hits to
@@ -672,9 +725,88 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq) {
     vec2 p = vec2((a - 0.5) * 0.56 + sin(t * sp + a * 6.2832) * (0.10 + b * 0.16),
                   (b - 0.5) * 0.20 + sin(t * sp * 0.71 + b * 6.2832) * (0.04 + c * 0.06));
     float dd = length(q - p);
-    float f = exp(-dd * dd / 1.3e-6);
+    /* 2.6e-6 rather than 1.3e-6, and that is a legibility fix, not a taste
+     * one: at the old width a fighter was a single pixel at a 34-degree field
+     * and vanished entirely at 58, so the layer the whole depth cue depends on
+     * was being paid for and not delivered. */
+    float f = exp(-dd * dd / 2.6e-6);
     glow += mix(vec3(1.0), c < 0.5 ? uBoltCol : uFoeCol, 0.45) * f
           * (0.55 + 0.55 * sin(t * 9.0 + a * 20.0)) * 1.3;
+  }
+
+  /* ── THE ONES THAT COME PAST YOU ──────────────────────────────────────
+   *
+   * Everything else out there is slow on purpose, and a scene where nothing
+   * moves quickly has no scale at the near end: the eye has nothing to measure
+   * the capitals' slowness AGAINST. So four passes, in pairs, crossing the
+   * whole field in two and a half seconds — one running, one on its tail,
+   * bolts going between them. They are drawn as SEGMENTS from where the craft
+   * was to where it is, which is the cheapest honest motion blur there is and
+   * the only reason something moving this fast is visible at all.
+   *
+   * Bounded to a pass every fifteen to thirty seconds each, so they are an
+   * event rather than traffic. */
+  for (int k = 0; k < 4; k++) {
+    float fk = float(k);
+    float per = 15.0 + fk * 5.1;
+    float ph = fract(t / per + hash11(fk * 8.13 + 1.3));
+    if (ph < 0.17) {
+      float u = ph / 0.17;
+      float a = hash11(fk * 2.71 + 0.5), b = hash11(fk * 4.93 + 3.1);
+      float side = a < 0.5 ? -1.0 : 1.0;
+      vec2 from = vec2(side * -1.25, (b - 0.5) * 0.85);
+      vec2 to = vec2(side * 1.25, (b - 0.5) * 0.85 + (a - 0.5) * 0.72);
+      /* the runner, then the one behind him */
+      for (int j = 0; j < 2; j++) {
+        float uj = u - float(j) * 0.055;
+        if (uj <= 0.0) continue;
+        vec2 tip = mix(from, to, uj), tl = mix(from, to, max(uj - 0.045, 0.0));
+        float dd = segDist(q, tl, tip);
+        vec3 cCol = j < 1 ? uFoeCol : uBoltCol;
+        glow += mix(vec3(1.0), cCol, 0.40)
+              * (smoothstep(0.0038, 0.0009, dd) * 2.4 + exp(-dd / 0.008) * 0.35);
+      }
+      /* and he is shooting at him */
+      float shot = fract(u * 7.0);
+      if (shot < 0.42) {
+        float su = u - 0.055 + shot * 0.13;
+        vec2 bt = mix(from, to, clamp(su, 0.0, 1.0));
+        vec2 bh = mix(from, to, clamp(su + 0.020, 0.0, 1.0));
+        glow += uBoltCol * smoothstep(0.0022, 0.0006, segDist(q, bt, bh)) * 2.6;
+      }
+    }
+  }
+
+  /* ── DOWN TO THE SURFACE ──────────────────────────────────────────────
+   *
+   * Landing craft leave the line in strings and go down, and the last stretch
+   * of that trip is through air: the speck lengthens into a streak, warms, and
+   * goes out at the limb. Three lanes of four, on one flattened loop rather
+   * than two nested ones, because a nested loop here is twelve more registers
+   * for nothing.
+   *
+   * The target is the near EDGE of the disc rather than its centre — a craft
+   * that appears to fly into the middle of a world is a craft flying at the
+   * camera, and the whole point of this layer is that it is going away. */
+  if (uLanding > 0.002) {
+    vec2 toW = pq - shipAt(1.0, t);
+    vec2 aim = pq - normalize(toW + vec2(1.0e-5, 0.0)) * pr * 0.86;
+    for (int k = 0; k < 12; k++) {
+      float fk = float(k);
+      float lane = floor(fk / 4.0), slot = mod(fk, 4.0);
+      vec2 org = shipAt(lane, t);
+      vec2 tgt = aim + vec2(hash11(lane * 3.3) - 0.5, hash11(lane * 5.9) - 0.5) * pr * 0.5;
+      float u = fract(t / (34.0 + lane * 9.0) + slot * 0.16 + hash11(lane * 7.7));
+      vec2 p = mix(org, tgt, u);
+      float dd = length(q - p);
+      /* a speck for most of the way, a streak once it is in the air */
+      float burn = smoothstep(0.80, 0.94, u) * (1.0 - smoothstep(0.965, 1.0, u));
+      vec2 back = mix(org, tgt, max(u - 0.030 * burn - 0.004, 0.0));
+      float sd = segDist(q, back, p);
+      glow += mix(vec3(1.0), vec3(1.0, 0.62, 0.28), burn)
+            * (exp(-dd * dd / 1.4e-6) * (0.35 + 0.25 * burn)
+             + smoothstep(0.0016, 0.0004, sd) * burn * 2.2) * uLanding;
+    }
   }
 
   /* ── what is left of the one that broke ───────────────────────────────
@@ -694,20 +826,25 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq) {
     cov = max(cov, chunk * step(0.001, age));
   }
 
-  /* ── something else going up, a long way off ──────────────────────────── */
+  /* ── something else going up, a long way off ────────────────────────────
+   *
+   * Read from uBlast rather than scheduled here — see the note on that uniform.
+   * z is the age in seconds and negative means this slot is idle, so the whole
+   * layer is three compares when nothing is happening.
+   *
+   * NO SOUND, and that is the point of it: light arrives now and the shock
+   * arrives through the hull a couple of seconds later, which is a thing the
+   * player feels rather than sees. The delay is the deck's to play; what is
+   * published from here is the event and how big it was. */
   for (int k = 0; k < 3; k++) {
-    float fk = float(k);
-    float a = hash11(fk * 9.13 + 4.7), b = hash11(fk * 6.29 + 8.9);
-    float per = 21.0 + fk * 13.0;
-    float ph = fract(t / per + a);
-    if (ph < 0.12) {
-      float ag = ph / 0.12;
-      vec2 p = vec2((a - 0.5) * 0.86, (b - 0.5) * 0.30);
-      float dd = length(q - p);
-      float r = 0.003 + ag * 0.038;
+    vec4 blast = uBlast[k];
+    float ag = blast.z;
+    if (ag >= 0.0 && ag < 1.0) {
+      float dd = length(q - blast.xy);
+      float r = (0.004 + ag * 0.055) * blast.w;
       float core = smoothstep(r, r * 0.25, dd) * (1.0 - ag) * (1.0 - ag);
-      float ring = exp(-(dd - r) * (dd - r) / 2.2e-5) * (1.0 - ag);
-      glow += mix(vec3(1.0, 0.86, 0.58), uBoltCol, 0.25) * (core * 3.4 + ring * 1.6);
+      float ring = exp(-(dd - r) * (dd - r) / (2.6e-5 * blast.w * blast.w)) * (1.0 - ag);
+      glow += mix(vec3(1.0, 0.86, 0.58), uBoltCol, 0.25) * (core * 3.4 + ring * 1.6) * blast.w;
     }
   }
 
@@ -755,13 +892,32 @@ vec3 orbitScene(vec3 dir) {
     vec3 e = perp / max(pl, 1.0e-6);
     vec3 n = normalize(e * s - uPlanetDir * sqrt(max(1.0 - s * s, 0.0)));
     float ndl = dot(n, uSunDir);
-    float day = saberCelQuant(clamp(smoothstep(-0.16, 0.20, ndl), 0.0, 1.0), 3.0);
+    /* THE TERMINATOR HAS TO BE WIDE ENOUGH TO HAVE PLATES IN IT.
+     *
+     * Ramped over (-0.16, 0.20) and quantised to three, the two middle plates
+     * covered about nine degrees of the sphere between them — slivers — and
+     * what was left was a binary edge. A binary edge on a gibbous disc IS
+     * geometrically an ellipse, and it still read as a straight cut, because
+     * one boundary is a line and a BALL is what you get from a nest of them:
+     * three arcs at different radii is the whole of why a cel-shaded sphere
+     * looks like a sphere and a cel-shaded circle does not.
+     *
+     * (-0.25, 0.55) puts the two middle plates over about forty degrees, so
+     * the day side is a set of concentric crescents that close on the
+     * sub-solar point. Same three-plate count the cloud deck uses; the range
+     * is what changed. */
+    float day = saberCelQuant(clamp(smoothstep(-0.25, 0.55, ndl), 0.0, 1.0), 3.0);
 
     /* The surface, in the planet's own frame. Turning it under the ray is what
      * makes the same disc a different disc four minutes later. */
     vec3 bp = spinAbout(n, uPlanetAxis, uPlanetSpin);
-    float cont = orbFbm(bp * 1.9);
-    float relief = orbFbm2(bp * 5.3 + 21.7);
+    /* The coast is torn at a frequency an order of magnitude above the landmass
+     * it bounds — the same trick, and the same reason, as the cloud deck's
+     * erosion term twenty lines up: the outline of a real thing is not the
+     * level set of a smooth field. Zero mean, so it cannot move the sea
+     * fraction the threshold below is calibrated against. */
+    float cont = orbFbm4(bp * 1.9) + (orbFbm2(bp * 17.0) - 0.375) * 0.060;
+    float relief = orbFbm(bp * 5.3 + 21.7);
     float seaThr = mix(0.34, 0.50, uSeaAmt);
     float sea = 1.0 - smoothstep(seaThr - 0.012, seaThr + 0.012, cont);
 
@@ -773,7 +929,12 @@ vec3 orbitScene(vec3 dir) {
     float cap = uCapAmt * smoothstep(0.62, 0.84, lat + (relief - 0.40) * 0.36);
     vec3 albedo = mix(mix(land, uSeaCol, sea * (1.0 - uSeaGlow)), uAtmoCol * 0.78, cap);
 
-    vec3 body = albedo * uOrbitKey * uStarCol * day;
+    /* …and the ground itself dims toward the limb, where the light leaves
+     * through a long slant of the same air the rim glow is made of. Applied to
+     * the SURFACE only: the air over it goes the other way, and the two
+     * together are what separate a lit edge from a pasted-on ring. */
+    float slant = mix(1.0, 0.66, smoothstep(0.58, 1.0, s));
+    vec3 body = albedo * uOrbitKey * uStarCol * day * slant;
     /* A night side is not black. It is lit by the star's light scattered
      * through the world's own air, which is why this term carries the limb's
      * colour and not a grey. */
@@ -781,8 +942,8 @@ vec3 orbitScene(vec3 dir) {
     /* …and a lava sea does not go out at the terminator. This is the single
      * term that makes the Ember Shelf and the Ash Flats read as themselves
      * from orbit, and it costs one noise field. */
-    float vein = smoothstep(0.38, 0.60, orbFbm2(bp * 13.0 + 5.5));
-    body += uSeaCol * sea * uSeaGlow * uOrbitKey * (0.25 + 0.90 * vein) * (1.0 - day * 0.55);
+    float vein = smoothstep(0.44, 0.62, orbFbm2(bp * 13.0 + 5.5));
+    body += uSeaCol * sea * uSeaGlow * uOrbitKey * (0.05 + 0.95 * vein) * (1.0 - day * 0.80);
 
     /* The deck, in the planet's other frame — slower than the surface, so the
      * weather visibly shears across the land it is over. */
@@ -790,14 +951,48 @@ vec3 orbitScene(vec3 dir) {
     float cThr = mix(0.56, 0.30, uCloudAmt);
     float cm = smoothstep(cThr, cThr + 0.075, orbFbm(cp * 3.1 + 9.4));
     cm *= smoothstep(1.0, 0.90, s);
-    vec3 cloudCol = (uPlanetLit * uStarCol * day * 0.95 + uPlanetDark * uAtmoCol * 0.14)
+    vec3 cloudCol = (uPlanetLit * uStarCol * day * 0.95 + uPlanetDark * uAtmoCol * 0.10)
                   * uOrbitKey;
     body = mix(body, cloudCol, cm * 0.92);
+
+    /* ── CITY LIGHTS ──────────────────────────────────────────────────
+     * The one thing on a night side that is not the star's light bounced off
+     * something. Sparse, warm, on land only, under the cloud that is over it,
+     * and quantised to three so a conurbation is a SHAPE with a couple of
+     * outliers rather than a smooth glow — a soft blob on a dark limb reads as
+     * a lens flare and nothing else. */
+    if (uCityAmt > 0.002) {
+      float grid = orbFbm2(bp * 34.0 + 3.3);
+      float lamp = smoothstep(0.44, 0.56, grid) * smoothstep(0.30, 0.46, orbFbm2(bp * 7.0 + 61.0));
+      lamp *= (1.0 - sea) * (1.0 - cap) * (1.0 - day) * (1.0 - cm * 0.80) * uCityAmt;
+      body += vec3(1.0, 0.80, 0.48) * saberCelQuant(clamp(lamp, 0.0, 1.0), 3.0)
+            * uOrbitKey * 0.42;
+    }
 
     /* The air, thickening toward the limb: the path through it is longest
      * where you are looking along it. */
     float rim = smoothstep(0.52, 1.0, s);
-    body += uAtmoCol * uOrbitKey * rim * rim * max(ndl, 0.0) * 0.60;
+    body += uAtmoCol * uOrbitKey * rim * rim * max(ndl, 0.0) * 0.40;
+
+    /* ── A SHOULDER, AND IT IS LOAD-BEARING ───────────────────────────
+     *
+     * saberCelBand quantises sqrt(luminance), so its nodes are at 1/9 and 4/9
+     * and 1, and the plate ABOVE 1.0 is 1.96 times the one below it. A field
+     * that drifts across that node does not brighten, it JUMPS — and this is
+     * the biggest flat field in the frame, so what you get is a white hole
+     * with a hard rim across the middle of a lit hemisphere, which is exactly
+     * what the White Pass drew before this line existed and exactly what the
+     * Ash Flats drew twice over once its lava was added on top.
+     *
+     * It is also the same claim Engine's skyShoulder makes about the dome and
+     * for the same second reason: the bloom pass thresholds at 1.8 and a
+     * highlight effect handed a third of the frame is a veil. Asymptote 0.96,
+     * knee 0.52 — so a lit surface keeps every bit of its range up to where
+     * the top plate begins and can approach the node without ever reaching it.
+     * The things that ARE allowed to bloom out here are small and additive and
+     * come after this: a turbolaser, a detonation, a hull on fire. */
+    float bl = dot(body, LUM_W);
+    if (bl > 0.52) body *= (0.52 + (bl - 0.52) / (1.0 + (bl - 0.52) / 0.44)) / max(bl, 1.0e-4);
 
     body = saberCelBand(body, 3.0);
     float pcov = smoothstep(1.0 + aaS, 1.0 - aaS, s);
@@ -807,13 +1002,33 @@ vec3 orbitScene(vec3 dir) {
      * ground behind it. Quantised, because this is the one place in the frame
      * where a soft ramp would look like a lens artefact rather than like a
      * drawn shape. */
+    /* THE PRODUCT IS QUANTISED, NOT THE TERMS. Banding the lit term on its own
+     * bands dot(e, sun), which is LINEAR across the disc, so the boundaries
+     * came out as straight chords cutting a thin annulus — two little
+     * rectangular notches on the limb that read as a rasteriser fault rather
+     * than as a drawn edge. Quantising the product puts the boundaries on
+     * contours of the halo itself, which follow the rim, which is the shape
+     * the eye is expecting a band to follow. */
     float outAir = smoothstep(1.13, 1.00, s) * smoothstep(1.0 - aaS, 1.0 + aaS, s);
-    col += uAtmoCol * uOrbitKey * outAir * saberCelQuant(clamp(dot(e, uSunDir), 0.0, 1.0), 3.0) * 0.9;
+    col += uAtmoCol * uOrbitKey * 0.62
+         * saberCelQuant(clamp(outAir * dot(e, uSunDir), 0.0, 1.0), 3.0);
   }
 
-  if (uFleet > 0.002 && w > 0.60) {
+  /* 0.35 rather than 0.60, and it is the dogfights that moved it: they cross
+   * the WHOLE aperture, and a cone that only just contains the line of battle
+   * clipped them off halfway. The gnomonic scale factor is 1/w, so 0.35 is
+   * where the projection is still under three to one and a hull drawn near the
+   * edge of it is not visibly stretched. */
+  if (uFleet > 0.002 && w > 0.35) {
     vec2 sq = normalize(vec2(dot(uSunDir, R), dot(uSunDir, U)) + vec2(1.0e-4, 0.0));
-    vec4 f = fleetScene(q, aa, uOrbitT, sq);
+    /* Where the world is, in the same plane the fleet is drawn in, so the
+     * landing craft have something to descend to. Guarded: with the world
+     * behind the action there is nothing to descend to and the strings are
+     * aimed off the near side instead. */
+    float pw = dot(uPlanetDir, F);
+    vec2 pq = vec2(dot(uPlanetDir, R), dot(uPlanetDir, U)) / max(pw, 0.25);
+    float pr = uPlanetSin / max(uPlanetCos, 0.05);
+    vec4 f = fleetScene(q, aa, uOrbitT, sq, pq, pr);
     col = col * (1.0 - f.a) + f.rgb;
   }
   return col;
@@ -1219,6 +1434,12 @@ export class SkyDome {
         uBoltCol:      { value: new THREE.Color(0x35b0ff) },
         uFoeCol:       { value: new THREE.Color(0xff2a18) },
         uDeathSpan:    { value: 240 },
+        uCityAmt:      { value: 0.3 },
+        uLanding:      { value: 1 },
+        /* Three slots, filled by _orbitTick. z < 0 is an idle slot. */
+        uBlast:        { value: [new THREE.Vector4(0, 0, -1, 1),
+                                 new THREE.Vector4(0, 0, -1, 1),
+                                 new THREE.Vector4(0, 0, -1, 1)] },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
@@ -1432,7 +1653,21 @@ export class SkyDome {
 
     u.uStars.value = o.stars ?? 1;
     u.uFleet.value = o.fleet ?? 1;
+    u.uLanding.value = o.landing ?? 1;
     u.uDeathSpan.value = o.deathSpan ?? 240;
+
+    /* WHICH WORLDS HAVE THEIR LIGHTS ON, and the record does answer it — but
+     * this is the weakest derivation in the file and it is worth saying so.
+     * There is no `urban` field anywhere in `Levels.js`, so what stands in for
+     * one is `party`: the spectator field, the only thing a level record
+     * carries that asserts there are people on this ground who are not
+     * fighting. A world with a crowd on it has cities. A world with water has
+     * somebody living beside it. A world whose sea is lava does not.
+     *
+     * `city` overrides it outright, and a level that ever grows a real
+     * settlement flag should be read here instead of this. */
+    u.uCityAmt.value = o.city
+      ?? (lava ? 0 : (L.party ? 1 : (W ? 0.34 : 0.12)));
 
     /* Geometry. The disc is stated as an angular RADIUS and everything the
      * shader needs off it is the sine and the cosine, so the per-pixel limb
@@ -1442,8 +1677,26 @@ export class SkyDome {
     const rad = o.size ?? 0.34;
     u.uPlanetCos.value = Math.cos(rad);
     u.uPlanetSin.value = Math.sin(rad);
-    this._planetHome = (this._planetHome || new THREE.Vector3())
-      .fromArray(o.at ?? [0.60, 0.22, -0.77]).normalize();
+    /* WHERE THE WORLD SITS IS DERIVED FROM WHERE THE STAR IS, and that is the
+     * difference between a planet and a decal.
+     *
+     * A disc placed at a fixed bearing takes whatever phase the level's sun
+     * happens to give it: the Flight Deck's sun is at azimuth 0 and a planet
+     * authored at -Z came out at FULL phase — a flat white circle with the
+     * terminator hidden round the back, which is the one thing that says the
+     * thing you are looking at is a sphere. So the default is stated as a
+     * PHASE and solved for: dot(planet, sun) = -0.45 puts the terminator about
+     * a fifth of the way in from the limb, which is the gibbous every
+     * photograph of a world from orbit is.
+     *
+     * The roll about the star's own axis is then free — it cannot change the
+     * phase — so it is spent on getting the disc up out of the deck and into
+     * the aperture. `at` overrides the whole thing for a level that wants the
+     * world somewhere specific. */
+    this._planetHome = (this._planetHome || new THREE.Vector3());
+    this._derivePlace = !o.at;
+    if (o.at) this._planetHome.fromArray(o.at).normalize();
+    else this._placeByPhase(o.phase ?? -0.45, o.rise ?? 0.26);
     u.uPlanetAxis.value.fromArray(o.axis ?? [0.19, 0.94, 0.29]).normalize();
     this._orbitPeriod = o.period ?? 1200;
     /* THE DRIFT IS A SWAY, NOT A LAP, AND THAT IS A FRAMING DECISION.
@@ -1468,6 +1721,36 @@ export class SkyDome {
     if (spec.time != null) this._orbitT = spec.time;
     else if (this._orbitT == null) this._orbitT = 0;
     this._orbitTick(0);
+  }
+
+  /**
+   * Solve for a placement with a given phase and the highest elevation that
+   * phase allows.
+   *
+   * Rotating about the star's own direction leaves dot(planet, star) — and so
+   * the phase — exactly where it was, so the two constraints do not fight:
+   * the phase is set by construction and the roll is a free parameter spent
+   * entirely on elevation. Twenty-four samples of a one-dimensional family,
+   * once per level, is cheaper than any closed form is worth here.
+   */
+  _placeByPhase(phase, rise) {
+    const sun = _scratchV.copy(this.mat.uniforms.uSunDir.value).normalize();
+    _axis.set(-sun.z, 0, sun.x);
+    if (_axis.lengthSq() < 1e-6) _axis.set(1, 0, 0);
+    _axis.normalize();
+    const home = this._planetHome;
+    let best = -Infinity;
+    for (let i = 0; i < 24; i++) {
+      _spare.copy(sun).multiplyScalar(phase)
+        .addScaledVector(_axis, Math.sqrt(Math.max(1 - phase * phase, 0)))
+        .normalize()
+        .applyAxisAngle(sun, (i / 24) * TAU);
+      /* Closest to the wanted elevation, and never below the deck: a world
+       * under your feet is a world you cannot see out of a hangar door. */
+      const score = -Math.abs(_spare.y - rise) - (_spare.y < 0.02 ? 10 : 0);
+      if (score > best) { best = score; home.copy(_spare); }
+    }
+    return home;
   }
 
   /**
@@ -1539,7 +1822,20 @@ export class SkyDome {
     if (land) this.mat.uniforms.uHorizonColor.value.copy(land);
   }
 
-  setSun(dir) { this.mat.uniforms.uSunDir.value.copy(dir).normalize(); }
+  /**
+   * …and the window follows it. `Engine.applyAtmosphere` calls configure()
+   * BEFORE setSun(), so a placement solved for the phase at configure time was
+   * solved against the PREVIOUS level's star. Re-solving here makes the answer
+   * independent of the order the two are called in, which is the only way it
+   * can be right for both the atmosphere block and a later configureOrbit.
+   */
+  setSun(dir) {
+    this.mat.uniforms.uSunDir.value.copy(dir).normalize();
+    if (this._orbit && this._derivePlace) {
+      this._placeByPhase(this._orbit.phase ?? -0.45, this._orbit.rise ?? 0.26);
+      this._orbitTick(0);
+    }
+  }
 
   /**
    * Keep the dome centred on the camera so it never has parallax, and read the

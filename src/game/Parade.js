@@ -52,6 +52,9 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { BipedAnimator, limbScale, SOLE_BIAS } from './Rig.js';
 import { smoothstep, TAU } from '../engine/MathUtil.js';
+import { ARCHETYPES } from './Enemy.js';
+import { bodyOptsFor, kitOptsFrom } from './Bodies.js';
+import { RANKS, rankFor, markById, CommandDirector } from './Command.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 /* Scratch, module-level and reused, for the reason Rig.js gives over its own:
@@ -856,3 +859,50 @@ export function gripFrame(man, out = {}) {
  * removes it.
  */
 export function stagger(man) { return draw(man.seed, 11) * 40; }
+
+
+/**
+ * ══ ONE MAN, BUILT — the only place a figure is made from a record ═════════
+ *
+ * This was `Menu.buildParadeFigure` and it had to move, for a reason that is
+ * about architecture and not about tidiness: the flight deck needs a figure and
+ * `Menu.js` imports `Levels.js` which imports `Hangar.js`, so a game module
+ * reaching back into the UI for its bodies is a cycle. Everything the function
+ * actually needs — `ARCHETYPES`, `bodyOptsFor`, `kitOptsFrom`, `RANKS`,
+ * `markById`, the four paint methods — was already in `src/game`. The only
+ * thing that was not is the stance, and this file is the stance.
+ *
+ * `Menu.js` re-exports it and passes its own `standPreviewFigure` so the
+ * Company tab's framing is unchanged to the pixel. Two callers, one builder.
+ *
+ * THE PAINT GOES ON THROUGH THE GAME'S OWN METHODS, on a three-field stub —
+ * the pattern `company.mjs` uses to prove a mark is paint rather than a label.
+ * `this` is unused in all four.
+ */
+export function buildFigure(man, opts = {}) {
+  const A = ARCHETYPES[man.type];
+  if (!A?.build) return null;
+  let built;
+  try {
+    /* THE MAN'S OWN KIT, over the rung's — the same merge `Enemy._build` does,
+     * so the figure standing on the deck is the body that will land. */
+    built = A.build({
+      scale: A.scale ?? 1,
+      ...(bodyOptsFor(man.type) || {}),
+      ...kitOptsFrom(man.look, man.kind === 'steel' ? 'steel' : 'flesh'),
+    });
+  } catch { return null; }
+  const rig = built.rig ?? null;
+  const root = rig?.root ?? built.group ?? null;
+  if (!root) return null;
+  if (rig && opts.stand) opts.stand(rig);
+  const stub = { rig, A: { scale: A.scale ?? 1 }, group: root };
+  const R = RANKS[rankFor(man.xp | 0)];
+  if (R?.color != null) CommandDirector.prototype.repaint.call(null, stub, R.color);
+  const mark = markById(man.look?.mark)?.color;
+  if (mark != null) CommandDirector.prototype.markUp.call(null, stub, mark);
+  const band = markById(man.look?.band)?.color;
+  if (band != null) CommandDirector.prototype.bandUp.call(null, stub, band);
+  if ((man.wounds | 0) > 0) CommandDirector.prototype.scorchUp.call(null, stub, man.wounds | 0);
+  return { root, rig, man, _stub: stub, palette: built.palette ?? null };
+}

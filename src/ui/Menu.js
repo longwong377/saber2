@@ -192,6 +192,7 @@ import { AREAS, ARMIES, ARMY_IDS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_O
          DUTIES, dutiesAt, holds, leadOf, squadPlan,
          armyToLead, CommandDirector,
          musterPlan, versusCommandConfig, VERSUS_WINS, VERSUS_LIMITS } from '../game/Command.js';
+import { buildFigure } from '../game/Parade.js';
 /* THE MUSTER SLATE — the pre-rolled recruits the next run will field, and the
  * one resolver (`lineup`) of who deploys. The barracks renders it; main.js
  * fields it; the two agree because they are one call. See Muster.js. */
@@ -3401,37 +3402,22 @@ export function paradeSlots(n) {
  * raycast hits. A chassis with no biped rig (a droideka a contingent run
  * banked) stands as built; nothing here may throw over an exotic veteran.
  */
+/**
+ * ONE MAN, BUILT — and the builder itself is `Parade.buildFigure` now.
+ *
+ * It moved because the flight deck needs the same figure and `Menu.js` imports
+ * `Levels.js` which imports `Hangar.js`: a game module reaching back into the
+ * UI for its bodies is a cycle. Everything it needed was already in `src/game`
+ * except the stance, and `Parade.js` IS the stance.
+ *
+ * This wrapper exists so the Company tab's framing is unchanged to the pixel:
+ * `standPreviewFigure` plants the feet by running sixty frames of the real
+ * `BipedAnimator` at zero velocity, and `framePreviewCamera` measures what it
+ * produced. Two callers, one builder, and the caller that cares about the
+ * stance passes its own.
+ */
 export function buildParadeFigure(man) {
-  const A = ARCHETYPES[man.type];
-  if (!A?.build) return null;
-  let built;
-  try {
-    /* THE MAN'S OWN KIT, over the rung's — the same merge `Enemy._build` does,
-     * so the figure on the parade ground is the body that will land. */
-    built = A.build({
-      scale: A.scale ?? 1,
-      ...(bodyOptsFor(man.type) || {}),
-      ...kitOptsFrom(man.look, man.kind === 'steel' ? 'steel' : 'flesh'),
-    });
-  } catch { return null; }
-  const rig = built.rig ?? null;
-  const root = rig?.root ?? built.group ?? null;
-  if (!root) return null;
-  if (rig) standPreviewFigure(rig);
-  /**
-   * The paint, through the game's own methods on a stub body — the pattern
-   * `company.mjs` uses to prove a mark is paint. `this` is unused in all
-   * four; the stub carries the three fields they read.
-   */
-  const stub = { rig, A: { scale: A.scale ?? 1 }, group: root };
-  const R = RANKS[rankFor(man.xp | 0)];
-  if (R?.color != null) CommandDirector.prototype.repaint.call(null, stub, R.color);
-  const mark = markById(man.look?.mark)?.color;
-  if (mark != null) CommandDirector.prototype.markUp.call(null, stub, mark);
-  const band = markById(man.look?.band)?.color;
-  if (band != null) CommandDirector.prototype.bandUp.call(null, stub, band);
-  if ((man.wounds | 0) > 0) CommandDirector.prototype.scorchUp.call(null, stub, man.wounds | 0);
-  return { root, rig, man, _stub: stub, palette: built.palette ?? null };
+  return buildFigure(man, { stand: standPreviewFigure });
 }
 
 /**

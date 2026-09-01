@@ -20,10 +20,11 @@ const WORLD = flag('world', 'alpine');
 const NAME = flag('out', 'orbit');
 const T = parseFloat(flag('t', '40'));
 const YAW = parseFloat(flag('yaw', '0'));
-const PITCH = parseFloat(flag('pitch', '0.10'));
+const PITCH = parseFloat(flag('pitch', '0'));
 const FOV = parseFloat(flag('fov', '58'));
 const SIZE = flag('size', '');
 const EXTRA = flag('extra', '{}');
+const AIM = flag('aim', 'planet');
 const SETTLE = parseInt(flag('settle', '4'), 10);
 const WIDTH = parseInt(flag('width', '1280'), 10);
 const HEIGHT = parseInt(flag('height', '720'), 10);
@@ -70,7 +71,7 @@ await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
 await page.click('#btn-deploy');
 await page.waitForSelector('#hud:not(.hidden)', { timeout: 300000 });
 
-const info = await page.evaluate(async ([world, t, yaw, pitch, fov, size, extra, settle]) => {
+const info = await page.evaluate(async ([world, t, yaw, pitch, fov, size, extra, settle, aim]) => {
   const S = window.SABER, w = S.world, p = w.player;
   const { LEVELS } = await import('/src/game/Levels.js');
   const { TERRAIN_PRESETS } = await import('/src/world/Terrain.js');
@@ -96,34 +97,92 @@ const info = await page.evaluate(async ([world, t, yaw, pitch, fov, size, extra,
     if (c === dome.mesh) continue;
     if (c.isMesh || c.isPoints || c.isLine || c.isGroup) c.visible = false;
   }
+  for (const c of S.engine.camera.children) c.visible = false;
+  p.saber?.retract?.();
+  p.camera.firstPerson = true;
+  S.input.enabled = false;
   S.hud.show(false);
-  document.getElementById('hud')?.classList.add('hidden');
+  for (const el of document.querySelectorAll('body > *')) {
+    if (el.tagName !== 'CANVAS' && !el.querySelector('canvas')) el.style.display = 'none';
+  }
 
   const cam = S.engine.camera;
+  const u0 = dome.mat.uniforms;
   cam.fov = fov; cam.updateProjectionMatrix();
-  const pd = dome.mat.uniforms.uPlanetDir.value;
-  // Look between the planet and the fleet, which is where the composition is.
-  const yawTo = Math.atan2(pd.x, pd.z) + yaw;
-  cam.position.set(0, 2, 0);
-  cam.rotation.set(0, 0, 0, 'YXZ');
-  cam.rotation.y = yawTo; cam.rotation.x = pitch;
-  cam.updateMatrixWorld();
-  dome.mesh.position.copy(cam.position);
-
+  /* `home` aims at the UNDRIFTED placement, so two shots at different clocks
+   * share one camera and the only thing that moved is the world. */
+  const pd = aim === 'fleet' ? dome.mat.uniforms.uFleetDir.value
+    : aim === 'home' ? dome._planetHome
+    : dome.mat.uniforms.uPlanetDir.value;
+  /* three's camera looks down -Z, so a rotation.y of t points it at
+   * (-sin t, 0, -cos t). Getting this backwards puts the camera exactly 180
+   * degrees from the subject and the shot comes back empty. */
+  const yawTo = Math.atan2(-pd.x, -pd.z) + yaw;
+  const pitchTo = Math.asin(Math.max(-1, Math.min(1, pd.y))) + pitch;
+  /* Drive the RIG, not the camera. CameraRig writes yaw/pitch into the camera
+   * every frame, so a rotation set here is gone before the next present and
+   * the shot comes back looking wherever the player was facing. */
   for (let i = 0; i < settle; i++) {
-    await new Promise((r) => requestAnimationFrame(r));
+    p.camera.yaw = yawTo; p.camera.pitch = pitchTo;
+    p.saber?.retract?.();
     cam.fov = fov; cam.updateProjectionMatrix();
-    cam.rotation.set(pitch, yawTo, 0, 'YXZ'); cam.updateMatrixWorld();
-    dome.mesh.position.copy(cam.position);
+    for (const c of S.engine.scene.children) {
+      if (c === dome.mesh) continue;
+      if (c.isMesh || c.isPoints || c.isLine || c.isGroup) c.visible = false;
+    }
+    S.engine.scene.traverse((o) => {
+      if (o !== dome.mesh && (o.isMesh || o.isPoints || o.isLine || o.isSprite)) o.visible = false;
+    });
+    await new Promise((r) => requestAnimationFrame(r));
   }
+  /* Read the presented frame back. Display luminance, not radiance — what is
+   * being asked is what the player sees, and the tone curve is most of the
+   * answer at both ends of the range. */
+  const gl = S.engine.renderer.domElement;
+  const c2 = document.createElement('canvas');
+  c2.width = gl.width; c2.height = gl.height;
+  const g2 = c2.getContext('2d');
+  g2.drawImage(gl, 0, 0);
+  const im = g2.getImageData(0, 0, c2.width, c2.height).data;
+  const lumAt = (x, y) => { const i = ((y * c2.width) + x) * 4;
+    return (0.2126 * im[i] + 0.7152 * im[i + 1] + 0.0722 * im[i + 2]) / 255; };
+  const scan = [];
+  for (let x = 0; x < c2.width; x += Math.round(c2.width / 32)) {
+    scan.push(+lumAt(x, Math.round(c2.height * 0.48)).toFixed(3));
+  }
+  let hot = 0, mid = 0, dark = 0;
+  for (let i = 0; i < im.length; i += 4 * 7) {
+    const l = (0.2126 * im[i] + 0.7152 * im[i + 1] + 0.0722 * im[i + 2]) / 255;
+    if (l > 0.90) hot++; else if (l > 0.06) mid++; else dark++;
+  }
+  const tot = hot + mid + dark;
+
+  /* ── frame cost, orbit on against orbit off ────────────────────────────
+   * Same scene, same camera, same everything: the only difference is the one
+   * uniform the branch tests, so what comes out is the cost of the window and
+   * nothing else. Sixteen frames a side because swiftshader's variance is
+   * large and its first frame after a uniform change includes a flush. */
+  const timeFrames = async (n) => {
+    for (let i = 0; i < 3; i++) await new Promise((r) => requestAnimationFrame(r));
+    const t0 = performance.now();
+    for (let i = 0; i < n; i++) await new Promise((r) => requestAnimationFrame(r));
+    return (performance.now() - t0) / n;
+  };
+  const onMs = await timeFrames(16);
+  u0.uOrbit.value = 0;
+  const offMs = await timeFrames(16);
+  u0.uOrbit.value = 1;
+  await timeFrames(2);
+
   const u = dome.mat.uniforms;
   const r = S.engine.renderer.info.render;
-  return { calls: r.calls, tris: r.triangles, orbit: u.uOrbit.value,
+  return { onMs: +onMs.toFixed(1), offMs: +offMs.toFixed(1), scan, blown: +(hot / tot * 100).toFixed(2), lit: +(mid / tot * 100).toFixed(1),
+    calls: r.calls, tris: r.triangles, orbit: u.uOrbit.value,
     key: +u.uOrbitKey.value.toFixed(3), planetDir: pd.toArray().map((v) => +v.toFixed(3)),
     cap: +u.uCapAmt.value.toFixed(3), seaAmt: u.uSeaAmt.value, seaGlow: u.uSeaGlow.value,
     land: u.uLandCol.value.getHexString(), sea: u.uSeaCol.value.getHexString(),
     atmo: u.uAtmoCol.value.getHexString(), t: +u.uOrbitT.value.toFixed(1) };
-}, [WORLD, T, YAW, PITCH, FOV, SIZE, EXTRA, SETTLE]);
+}, [WORLD, T, YAW, PITCH, FOV, SIZE, EXTRA, SETTLE, AIM]);
 
 const file = join(OUT, `${NAME}.png`);
 await page.screenshot({ path: file, timeout: 300000 });
