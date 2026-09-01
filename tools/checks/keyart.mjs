@@ -574,23 +574,78 @@ export async function run({ check, assert }) {
     assert(sites.length >= 1,
       'nothing writes #menu-record at all — the failure notice is gone, and a deploy that dies '
       + 'now says nothing anywhere the player can read it');
-    for (const at of sites) {
-      let depth = 0, open = -1;
+    /** The brace that opens the block this offset sits directly inside. */
+    const blockAt = (at) => {
+      let depth = 0;
       for (let i = at; i >= 0; i--) {
         if (code[i] === '}') depth++;
-        else if (code[i] === '{') { if (depth === 0) { open = i; break; } depth--; }
+        else if (code[i] === '{') { if (depth === 0) return i; depth--; }
       }
+      return -1;
+    };
+    const isCatch = (open) =>
+      open > 0 && /catch\s*(\([^)]*\))?\s*$/.test(code.slice(Math.max(0, open - 80), open));
+
+    for (const at of sites) {
+      const open = blockAt(at);
       assert(open > 0, 'a #menu-record write is not inside any block');
-      assert(/catch\s*(\([^)]*\))?\s*$/.test(code.slice(Math.max(0, open - 80), open)),
+      /**
+       * ══ OR INSIDE A HELPER NOTHING BUT A CATCH CALLS ══════════════════
+       *
+       * The rule this check exists for is "main.js touches that element only
+       * to report a failure". Lexically-inside-a-catch was the whole of it
+       * while there was exactly one door that could fail. There are two now —
+       * Ignite and the flight deck — and `pause-card.mjs` separately requires
+       * that main.js keep exactly ONE writer, so that two inline copies is not
+       * an available answer either.
+       *
+       * A named helper called only from catches satisfies both, and satisfies
+       * the actual invariant better than a duplicated line does. So the rule
+       * grows one clause rather than being weakened: if the write is in a
+       * function, EVERY call site of that function must itself be inside a
+       * catch. That is the same guarantee, established the same way.
+       */
+      if (!isCatch(open)) {
+        const head = code.slice(Math.max(0, open - 200), open);
+        const fn = /function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*$/.exec(head);
+        assert(fn, `a #menu-record writer at ${at} is neither inside a catch nor inside a named `
+          + 'function — there is nothing to establish that only a failure reaches it');
+        const name = fn[1];
+        const calls = [...code.matchAll(new RegExp(`\\b${name}\\s*\\(`, 'g'))]
+          .map((m) => m.index)
+          .filter((i) => i < open - 200 || i > at);
+        assert(calls.length >= 1, `${name} writes #menu-record and nothing calls it`);
+        for (const c of calls) {
+          assert(isCatch(blockAt(c)),
+            `${name} writes #menu-record and is called from outside a catch at ${c} — a writer `
+            + 'reachable on an unconditional path is a permanent line under the title of the game');
+        }
+        continue;
+      }
+      assert(isCatch(open),
         `a #menu-record writer at ${at} is not inside a catch — see tools/checks/session.mjs, `
         + 'which requires a failed deploy to say so somewhere the player can read it, and ONLY a '
         + 'failed one. A writer on an unconditional path is a permanent line under the title.');
     }
-    /* AND ONE OF THEM IS STILL `deploy`'s, because that is the door
-     * `session.mjs` names. */
+    /**
+     * AND `deploy` STILL SAYS SO WHEN IT FAILS, because that is the door
+     * `session.mjs` names by name.
+     *
+     * It used to be enough to look for the `getElementById` inside `deploy`.
+     * With the write moved into a helper — see the clause above, and the two
+     * doors that can now fail — what has to be true is that deploy's own catch
+     * still reaches it. So the question is asked of the call rather than of
+     * the DOM lookup.
+     */
     const body = functionBody(code, 'function deploy(');
-    assert(body.includes("getElementById('menu-record')"),
-      "deploy() no longer writes #menu-record — the failed-deploy notice is gone");
+    const writer = /function\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*\{[^}]{0,200}getElementById\('menu-record'\)/
+      .exec(code);
+    const reaches = body.includes("getElementById('menu-record')")
+      || (writer && new RegExp(`\\b${writer[1]}\\s*\\(`).test(body));
+    assert(reaches,
+      'deploy() no longer says anything when it fails — neither a #menu-record write of its own '
+      + `nor a call to the one that does${writer ? ` (${writer[1]})` : ''}. A deploy that dies in `
+      + 'silence is the same black screen this notice exists to prevent');
     /* …and the thing it stopped displaying is still there to display. */
     const prog = await read('src/game/Progress.js');
     assert(/export function progressLines\b/.test(prog),
