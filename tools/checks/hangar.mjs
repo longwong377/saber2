@@ -285,15 +285,19 @@ export async function run({ check, assert }) {
        * who wants the wheel on some other screen will reach for `command`
        * first — I did — and this is the sentence that catches them. */
       const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
-      /* FROM THE DECLARATION TO THE FIRST `return`, which is where every gate
-       * in that function lives. The first attempt matched to the first line
-       * that is a lone `}`, and `bank` has no such line inside three thousand
-       * characters — so the window was EMPTY and the assertion below tested a
-       * regex against the empty string. It would have failed for ever, which
-       * is at least the safe direction, but a check that cannot pass is not a
-       * check. */
-      const at = mainSrc.indexOf('function bank(');
-      const gate = at < 0 ? '' : mainSrc.slice(at, at + 2600);
+      /**
+       * THE WHOLE FUNCTION, READ TO ITS REAL END.
+       *
+       * Two wrong ways first, both instructive. A regex matching to the first
+       * line that is a lone brace found nothing — `bank` has no such line —
+       * so the window was EMPTY and the assertion tested a pattern against the
+       * empty string; it could not pass. Then a fixed 2600-character slice,
+       * which `tools/checks/determinism.mjs` correctly refuses: a window is
+       * right only until somebody adds a line, and it fails silently in both
+       * directions. `functionBody` counts braces.
+       */
+      const { functionBody } = await import('./_source.mjs');
+      const gate = functionBody(mainSrc, 'function bank(');
       assert(/if\s*\(!d \|\| d\.deck/.test(gate),
         'main.bank() no longer returns early for a deck adapter — the flight deck sets '
         + '`world.command` to open the order wheel, and bank() executes the roll of any world '
@@ -451,7 +455,11 @@ export async function run({ check, assert }) {
      */
     const THREE = await import('three');
     const src = await readFile(new URL('../../vendor/three/three.module.js', import.meta.url), 'utf8');
-    const fn = /function refreshUniformsCommon\([\s\S]{0,6000}?\n\t\}/.exec(src)?.[0] || '';
+    /* THE WHOLE FUNCTION, by brace count — a fixed window over a VENDORED file
+     * is the worst version of the guess `determinism.mjs` bans, because the
+     * next vendor bump moves every line in it. */
+    const { functionBody } = await import('./_source.mjs');
+    const fn = functionBody(src, 'function refreshUniformsCommon(');
     assert(fn, 'refreshUniformsCommon is not where it was in the vendored three — this check '
       + 'derives its rule from that function and cannot make one up');
     /* Every `if (material.X)` whose body touches `uniforms.X`. Those are the

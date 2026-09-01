@@ -110,11 +110,16 @@ export async function run({ check, assert }) {
      * That is the shape this whole suite exists to catch and it caught none of
      * it, because it measured the two swatches and not the material.
      */
-    const { Terrain } = await import('../../src/world/Terrain.js');
     const src = (await readFile(new URL('../../src/world/Terrain.js', import.meta.url), 'utf8'));
-    const at = src.indexOf('const gloss = this.preset.gloss');
-    const win = at < 0 ? '' : src.slice(at, at + 1800);
-    assert(win, 'the terrain material is no longer built where this check looks for it');
+    /* THE WHOLE METHOD, by brace count. A fixed 1800-character window was the
+     * first attempt and `tools/checks/determinism.mjs` refuses it by name: a
+     * window is right only until somebody adds a line to the method, and it
+     * fails silently in both directions — passing on a rule that has moved out
+     * of view, or failing on one that has not changed at all. */
+    const { functionBody } = await import('./_source.mjs');
+    const win = functionBody(src, '_buildMesh(scene) {');
+    assert(win.includes('const gloss = this.preset.gloss'),
+      'the terrain material is no longer built in _buildMesh, where this check looks for it');
     assert(/metalness:\s*0\b/.test(win),
       'the ground material is metallic. A metal takes its colour from the environment rather '
       + 'than from its albedo, so on this level — sky:false, environment a flat colour — a deck '
