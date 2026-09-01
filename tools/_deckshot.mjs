@@ -198,8 +198,11 @@ if (!info.fail) {
     ['11-up', { yaw: Math.PI, pitch: 1.2, x: 0, y: 1.7, z: -30 }],
     /* TWO FROM ABOVE, because "rows and rows" is a claim about the plan of the
      * room and no eye-level shot can confirm or refute it. */
-    ['12-over', { yaw: Math.PI, pitch: -0.45, x: 0, y: 46, z: -130, fly: true }],
-    ['13-over-wide', { yaw: Math.PI - 0.5, pitch: -0.34, x: -96, y: 36, z: -120, fly: true }],
+    /* INSIDE THE CANYON, looking down its length. The first pair stood at
+     * x = -96, which is outside the rack walls entirely — so the "plan" shot
+     * was a picture of the back of a wall. */
+    ['12-over', { yaw: Math.PI, pitch: -0.40, x: 0, y: 40, z: -100, fly: true }],
+    ['13-over-wide', { yaw: Math.PI - 0.35, pitch: -0.30, x: -30, y: 30, z: -95, fly: true }],
   ];
 
   for (const [name, v] of shots) {

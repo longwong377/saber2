@@ -139,7 +139,11 @@ function fieldMaterial(color) {
       /* HOW HARD THE HEX READS. A bubble round one body is 2 m across and its
        * weave is a texture; a plane 128 m across at the same frequency is a
        * moiré field. The scale is a uniform so the two uses can disagree. */
-      uWeave: { value: 0.55 },
+      /* 1.9 puts a cell at about three metres. 0.55 was eleven, and from any
+       * distance that reads as a wall of blue blobs rather than as the faint
+       * interference a containment field has. The references barely show the
+       * field at all — what you see through the opening is stars. */
+      uWeave: { value: 1.9 },
     },
     vertexShader: /* glsl */`
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
@@ -173,7 +177,11 @@ function fieldMaterial(color) {
            a surface you can stand next to. */
         float hexes = sin(vP.x * uWeave) * sin(vP.y * uWeave);
         float ripple = 0.5 + 0.5 * sin(vP.y * 0.10 - uTime * 0.9);
-        float raw = fres * 0.62 + max(hexes, 0.0) * 0.20 + ripple * 0.06;
+        /* THE WEAVE IS A WHISPER. At 0.20 it was the loudest thing in the
+           plane and the field read as decoration hung across the opening;
+           the fresnel is what says "there is a surface here" and the weave
+           only has to keep it from being a flat wash. */
+        float raw = fres * 0.62 + max(hexes, 0.0) * 0.085 + ripple * 0.05;
         float e = max(fwidth(raw) * 0.5, 0.004);
         float s1 = smoothstep(0.14 - e, 0.14 + e, raw);
         float s2 = smoothstep(0.34 - e, 0.34 + e, raw);
@@ -762,8 +770,15 @@ function lightDeck(world) {
   /* THE BULKHEAD WASH — cool, where the orange one was. The aft third is the
    * one part of the room the aperture cannot reach, and a hole there reads as
    * an unfinished level rather than as depth. */
-  const fill = new THREE.PointLight(LAMP, 30, 90, 2);
-  fill.position.set(0, 16, DECK.aft + 10);
+  /**
+   * AND IT IS SMALL AND HIGH, because at 30/90 from 16 m it was a pool of
+   * light on the deck twenty metres across — and the player spawns in it. The
+   * first frame of this room was a pale wash under his feet, which is the one
+   * thing reference rule 2 is about not having. It lifts the doorway and the
+   * plate immediately outside it, and stops.
+   */
+  const fill = new THREE.PointLight(LAMP, 13, 50, 2);
+  fill.position.set(0, 24, DECK.aft + 10);
   world.scene.add(fill); world.levelLights.push(fill);
 
   /**
