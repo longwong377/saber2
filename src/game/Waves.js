@@ -294,6 +294,32 @@ export const MODES = {
    * to describe as still present. Nothing was lost with it: the room was the
    * one thing the lessons never read.)
    */
+  /**
+   * ══ THE FLIGHT DECK — a mode with no wave, no enemy and no ending ═══════
+   *
+   * It is a MODE and not a screen for the reason `training` is: `World` is the
+   * only thing in this game that can build a place — terrain, atmosphere, post
+   * chain, physics, a body you walk with, Force that works on what is standing
+   * in front of you — and a second renderer in the menu would be all of that
+   * reimplemented and none of it as good. The parade stage in the Company tab
+   * is the right answer for a PORTRAIT and the wrong one for a PLACE.
+   *
+   * `level: 'hangar'` is honoured by `World.loadLevel` as a ground override, so
+   * the theatre the player picked has no say in where the deck is — but it
+   * does decide what is outside it, which is the whole point of the view.
+   *
+   * `insertion: false` for the sandbox's reason, sharpened: you are already
+   * aboard. A 28-second orbital descent to reach the deck of the ship you are
+   * standing on would be a contradiction as well as a wait.
+   */
+  hangar: {
+    name: 'The Flight Deck',
+    blurb: 'Your company on the deck of the ship carrying them, with the war outside the field.',
+    level: 'hangar',
+    fixedTheatre: true,
+    insertion: false,
+    fixedRules: 'Nothing is composed here: there is no wave, no enemy and no ending on the deck.',
+  },
   training: {
     name: 'Training',
     /* TEN, and it was eleven while only ten could be reached. The last rung

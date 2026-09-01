@@ -198,6 +198,7 @@ import { Corpses, CORPSE_BUDGET } from './Corpses.js';
 import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
+import { HangarDirector } from './Hangar.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
@@ -912,6 +913,29 @@ export class World {
      * with no writer: a condition that could never be true, sitting in front of
      * the one that decides. A dead disjunct reads like a supported path.
      */
+    /**
+     * ══ THE FLIGHT DECK HAS NO DIRECTOR AT ALL ═══════════════════════════
+     *
+     * There is no wave here, no enemy, no ending and no score — and there is
+     * emphatically no `CommandDirector`, which is not a tidiness point but the
+     * one thing standing between this room and a wiped company. `main.js`'s
+     * `bank()` fires on any world with a `command` and treats every deployed
+     * man not on an extraction manifest as dead; a deck world that built one
+     * would kill the entire roll on the way out, silently, every visit.
+     *
+     * `HangarDirector` exists only because the HUD dereferences
+     * `world.director.wave`, `.active`, `.intermission` and `.state()` with no
+     * optional chaining, and there has never been a directorless world for it
+     * to have been written against. Four fields and an empty `update` is a
+     * smaller change than putting four `?.` into the shipped HUD for the
+     * benefit of one room.
+     */
+    if (MODES[this.settings.mode]?.level === 'hangar') {
+      this.director = new HangarDirector(this);
+      this.running = true;
+      this.over = false;
+      return L;
+    }
     if (MODES[this.settings.mode]?.dojo) {
       this.director = new DojoDirector(this);
       this.training = true;

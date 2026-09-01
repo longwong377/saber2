@@ -682,6 +682,96 @@ export const TERRAIN_PRESETS = {
     rockAt(x, z, slope) { return clamp(slope * 5.0 - 0.5, 0, 1); },
   },
 
+  /**
+   * ══ THE FLIGHT DECK — one wall, no ceiling, and it ENDS ═══════════════════
+   *
+   * `warship` above is a hangar too, and it is the wrong shape for this one on
+   * purpose. It is a hull in PLAN: 46 m of wall along every bearing, a room
+   * you are inside. `Levels.js`'s deletion note is about exactly that room —
+   * "a roof plus four walls at the draw budget this engine has is a box, and a
+   * box is the one shape that cannot be anywhere" — and six interiors were cut
+   * on it, this file's `warship` among the survivors only because no level
+   * uses it.
+   *
+   * So this deck is the counter, and the counter is a SHAPE rather than a
+   * dressing budget. There is one wall. It is behind you. The other three
+   * sides of the deck run out to the edge of the heightfield and stop, because
+   * the terrain is only 128 m across and there is no ground past it — the deck
+   * genuinely ends, in the ground the player walks, and what is beyond it is
+   * space. Nothing has to be hidden, faked or fogged out, which is what every
+   * previous interior was doing at its walls.
+   *
+   * WHAT KEEPS THE PLAYER ON IT is not terrain. It is the shield: three field
+   * planes standing on the lip and one over the top, and they are the room's
+   * only enclosure. See `Hangar.js`.
+   *
+   * THE PALETTE IS `warship`'s, and it is kept for its own stated reason — a
+   * cool durasteel held low and desaturated "so that red has somewhere to be".
+   * The brightest thing in this scene is a planet, and everything the deck is
+   * made of has to sit under it.
+   */
+  hangardeck: {
+    /* 128, not 300. The scale IS the composition: the heightfield's own edge
+     * is the deck's edge, so a player who walks forward runs out of ship. A
+     * larger sheet would need a wall or a fog bank to end it, and both are the
+     * thing being avoided. */
+    scale: 128, res: 128, waterLevel: -999, flat: true,
+    sandColor: 0x474e58, rockColor: 0x333a45,
+    maps: 'deck',
+    gritColor: 0x39424f, rockColor2: 0x22272f,
+    dustColor: 0x5d6570, crustColor: 0x3a4048,
+    slopeBands: [0.05, 0.20, 0.010, 0.045],
+    stoneSlope: 0.2,
+    crust: 0.0, strataH: 2.2,
+    wind: [0, 1],
+    macro: [76, 0.34, 0.22, 0.85],
+    lagColor: 0x282e37, sheetColor: 0x616a76,
+    /* A DECK REMEMBERS BURNS AND NOTHING ELSE, `warship`'s reading exactly:
+     * 1.5 cm of shed carbon and a very long memory for a scorch. On this one
+     * the burns are not from a fight in the room — they are what came back on
+     * the hulls, which is the whole story the deck tells about the war. */
+    loose: { depth: 0.015, refill: 220, tilt: 0.5, tint: 0.28, soot: 1.0 },
+    packedColor: 0x1b2027,
+    ripple: 0.4, ripAspect: 1.0,
+    texScale: [0.40, 0.25, 0.32],
+    detail: [1.6, 26],
+    height(x, z) {
+      /**
+       * THE ONE WALL. Aft, behind where the player stands, rising 34 m over
+       * 9 m of run — 75°, which is past the 63° `descent.mjs` calls unwalkable,
+       * so it is a bulkhead and not a ramp. It is also the only surface in this
+       * level that an interior check could call a wall, and that is deliberate:
+       * everything else is field or void.
+       */
+      const bulk = smoothstep(-46, -55, z) * 34;
+
+      /* Deck plate on a 6 m module, half a centimetre of relief — `warship`'s
+       * seam verbatim, for the same reason: enough for the ink pass to find and
+       * for a raking lamp to catch. */
+      const px = Math.abs(fract(x / 6) - 0.5), pz = Math.abs(fract(z / 6) - 0.5);
+      const seam = -smoothstep(0.40, 0.5, Math.max(px, pz)) * 0.055;
+
+      /**
+       * THE LAUNCH TRENCH, port side, running fore-and-aft. 1.4 m deep on 16°
+       * banks — a lip to step over, never a wall — and it is TERRAIN rather
+       * than a prop for `warship`'s reason: the ground the nav walks and the
+       * ground the player walks have to be one thing. It gives the deck a
+       * direction, which is the cheapest thing a flat floor can be given.
+       */
+      const trench = -smoothstep(7.0, 4.2, Math.abs(x + 34)) * 1.4
+        * smoothstep(-44, -36, z);
+
+      /* AND THE LIP FALLS. The last 2 m before the heightfield ends drop 0.6 m
+       * so the edge reads as a plate that stops rather than as a cut, and a
+       * raking light finds it from inside. */
+      const d = Math.max(Math.abs(x), Math.abs(z)) / 64;
+      const lip = -smoothstep(0.965, 1.0, d) * 0.6;
+
+      return bulk + seam + trench + lip + fbm2(x * 0.09, z * 0.09, 2) * 0.03;
+    },
+    rockAt() { return 1; },
+  },
+
   hangar: {
     scale: 300, res: 160, waterLevel: -999, flat: true,
     sandColor: 0x4e535c, rockColor: 0x33373e,

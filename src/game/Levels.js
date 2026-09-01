@@ -34,6 +34,7 @@ import { addHorizon, makeCoverField, ground, BODY_FADE } from '../world/Scenery.
 import { registerDestructible } from '../world/Destruction.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
+import { HANGAR_LEVEL } from './Hangar.js';
 /* The IG-100 general's set-piece is registered at the bottom of this file —
  * see the
  * note there. These three edges add nothing to anybody's static import graph
@@ -4875,6 +4876,25 @@ LEVELS.geonosis = {
  * That is the third time the same instruction has been given about the same
  * class of level, and this file has now stopped arguing with it. Every level
  * below is open sky. */
+/**
+ * ══ AND ONE GROUND THAT IS NOT A THEATRE ══════════════════════════════════
+ *
+ * The flight deck is a place you go to look at your men, not a place you fight
+ * on, so it is in `LEVELS` — `World.loadLevel` resolves its ground and its
+ * dressing through the same door as everything else — and deliberately NOT in
+ * `LEVEL_ORDER` below.
+ *
+ * That is the whole of its opt-out and it is a large one: `LEVEL_ORDER` is
+ * what the theatre grid draws from, and it is also what forty-seven suites
+ * walk asking about weather, ground cover, spawn legality, generated fronts
+ * and wave composition. Every one of those questions is about a battlefield.
+ * A deck in orbit answers none of them and would be red on all of them, so it
+ * is held to `tools/checks/hangar.mjs` instead — which asks the questions this
+ * room actually has to answer, starting with the one this file has recorded
+ * three deletions about: whether it is a box.
+ */
+LEVELS.hangar = HANGAR_LEVEL;
+
 export const LEVEL_ORDER = ['scoria', 'mustafar', 'colosseum', 'wood', 'drifts', 'alpine',
   'geonosis'];
 
