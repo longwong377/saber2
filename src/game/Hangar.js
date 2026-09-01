@@ -56,9 +56,27 @@ import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './Dec
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
 import { squadPlan, leadOf, SQUAD } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
-import { Kit, propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
-  addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
-  makeConsole, makeCrate, addHullSection, addFloorSlab } from '../world/Props.js';
+/**
+ * ONE PROP FROM THE OUTDOOR LIBRARY, AND IT IS THE ONE THE PLAYER THROWS.
+ *
+ * Everything else in this room comes from `DeckKit.js`. The first dressing was
+ * built out of `Props.js` on the strength of a survey saying it "has every
+ * part" — it does, for a BATTLEFIELD: `addWall` paints in bombed masonry,
+ * `addLamp` is a street lamp on a pole, and `addScaffold`, `addTank` and
+ * `addCrateStack` are a ruined settlement's furniture. Put on a flat plain they
+ * make exactly what they are, and the first frame of this room was a bombed
+ * street with a shield over it.
+ *
+ * That is the same failure `Levels.js` records against all six interiors it has
+ * deleted, and the lesson is not "use fewer props": A ROOM ON A SHIP NEEDS
+ * SHIPBOARD PARTS, and there were none in the tree until `DeckKit.js`.
+ *
+ * `makeCrate` stays because `_grippableBody` needs a real dynamic PROP-layer
+ * body to pick up, and a crate is a crate on a deck as much as in a village.
+ */
+import { makeCrate } from '../world/Props.js';
+import { Paint, DeckBuild, DECK_PAINT, deckMats, hullBay, floodBank, tieDown,
+  servicingRig, ordnanceTrolley, ladderStand, cableSpool, chock } from './DeckKit.js';
 
 /* The deck runs from the bulkhead aft to the lip forward. Named rather than
  * inlined because six things below have to agree about where the room stops,
@@ -156,117 +174,6 @@ function fieldPlane(world, mat, centre, size, quat) {
 }
 
 /**
- * ══ THE SPARS — what makes it read as inside without a ceiling ════════════
- *
- * A rank of ribs springing from the deck edge and arcing up and INWARD, cut off
- * by the top of the frame long before they meet. That is the whole trick: the
- * eye completes an enclosure it is never shown, and the one plane that would
- * make it a box is never drawn.
- *
- * They stop at 62 m against the field's 90, so there is always sky between the
- * highest structure and the top of the shot. A spar that met its opposite
- * number would be an arch, and an arch is a ceiling with a hole in it.
- */
-function addSpars(world, M) {
-  const steel = M.darkSteel || M.metal;
-  /**
-   * ── FOURTEEN RIBS, ONE DRAW CALL ─────────────────────────────────────
-   *
-   * MEASURED, and it is why this composes: fourteen `addPipeRun` calls emitted
-   * on their own came to **70 meshes** — more than the bulkhead and the whole
-   * port-side job put together, for structure that is deliberately background.
-   * The first real reading of the finished room in a browser was 988 meshes and
-   * **1035 draw calls**, against 225 for Geonosis and the 395 that Hangar Bay
-   * Nine was deleted at, and the ink pass rasterises every opaque object a
-   * second time.
-   *
-   * `Kit` is the answer and it is the file's own: every maker takes an
-   * `opts.kit` and bins its geometry by MATERIAL instead of emitting, so
-   * everything here that is the same steel comes out as one mesh. The ribs
-   * never move, never break and are never touched again — there is nothing a
-   * separate object would buy them.
-   */
-  const kit = new Kit(4242);
-  for (let i = 0; i < 7; i++) {
-    const z = -30 + i * 15;
-    for (const sx of [-1, 1]) {
-      const pts = [];
-      /* A quarter of an ellipse, 60 m of run against 62 of rise, leaning in
-       * about 14 m over its length — enough that the pair converge visibly and
-       * nowhere near enough to close. */
-      for (let k = 0; k <= 7; k++) {
-        const t = k / 7;
-        pts.push(new THREE.Vector3(
-          sx * (62 - Math.sin(t * Math.PI * 0.5) * 14),
-          Math.sin(t * Math.PI * 0.5) * 62,
-          z + Math.sin(t * Math.PI) * 1.6));
-      }
-      addPipeRun(world, pts, { radius: 0.55, mat: steel, count: 1, supports: false, kit });
-      /* One tie back to the deck at the springing, so the rib has a foot
-       * rather than growing out of the floor. */
-      addPipeRun(world, [
-        new THREE.Vector3(sx * 62, 0.4, z),
-        new THREE.Vector3(sx * 54, 6.5, z),
-      ], { radius: 0.30, mat: steel, count: 1, supports: false, kit });
-    }
-  }
-  /* NO COLLIDERS AND NO SHADOWS. A rib springs from the deck edge at 62 m and
-   * arcs away over the void; nothing can reach one, and a shadow cast from
-   * sixty metres up by a 0.55 m tube is a smear the cascades pay three passes
-   * for. Both are the same argument: this is a silhouette against the sky. */
-  kit.emit(world, new THREE.Vector3(0, 0, 0), new THREE.Quaternion(),
-    { collide: false, castShadow: false });
-}
-
-/**
- * ══ THE BULKHEAD — the only interior surface in the level ═════════════════
- *
- * Everything a room needs to say "this is a ship" is put on this one face,
- * because it is the only face there is: blast doors, a lit console rank, cable
- * runs, and the memorial.
- *
- * IT IS DRESSED IN DEPTH RATHER THAN IN DETAIL. Three planes at 2 m of relief
- * read as a hull section from twenty metres; a flat wall with more geometry on
- * it reads as wallpaper, which is exactly what the deleted interiors did.
- */
-function dressBulkhead(world, M) {
-  const steel = M.darkSteel || M.metal;
-  const z = DECK.aft + 2.2;
-  /* ONE WALL, ONE MESH PER MATERIAL — see `addSpars` for the measurement that
-   * made every static assembly in this room compose. The doors, the jamb and
-   * the console rank are the only things here anybody can touch, and the doors
-   * are what a player walks into, so the SLABS carry their colliders and the
-   * cable runs do not. */
-  const kit = new Kit(1717);
-
-  /* THE DOORS. Two leaves and a lit threshold, centred, because the deck needs
-   * one place a man could plausibly have walked in from — the troop line files
-   * in through here and it has to come from somewhere. */
-  kit.slab(steel, 15, 11, 0.9, 0, 5.5, z + 0.3);
-  for (const sx of [-1, 1]) kit.slab(steel, 7.6, 9.2, 0.6, sx * 4.4, 4.6, z);
-  /* The lit threshold is its own material, so it is its own bin and its own
-   * draw call whatever else happens — which is correct: it is the only warm
-   * emissive on this wall and the eye goes to it. */
-  const lit = new THREE.MeshStandardMaterial({
-    color: 0x14181f, emissive: 0xff9a20, emissiveIntensity: 2.4, roughness: 0.5 });
-  kit.put(new THREE.BoxGeometry(16.4, 0.34, 0.34), lit, 0, 9.5, z - 0.5);
-
-  /* THE WATCH. A rank of consoles along the wall with somebody's job on them,
-   * lit from below — the only warm light in a room whose every other source is
-   * a planet or a field. */
-  for (let i = -3; i <= 3; i++) {
-    if (Math.abs(i) < 2) continue;
-    makeConsole(world, new THREE.Vector3(i * 7.5, 0, z + 1.6));
-  }
-  for (const sx of [-1, 1]) {
-    addLamp(world, new THREE.Vector3(sx * 26, 0, z + 2.0), { height: 9, reach: 3.2, kit });
-    addCableRun(world, new THREE.Vector3(sx * 30, 8.2, z + 0.4),
-      new THREE.Vector3(sx * 12, 7.4, z + 0.4), { sag: 0.5, kit });
-  }
-  kit.emit(world, new THREE.Vector3(0, 0, 0));
-}
-
-/**
  * ══ THE FIELD ENVELOPE — three walls and a lid, none of them solid ════════
  *
  * Forward, port and starboard, standing ON the lip, plus one overhead at 90 m.
@@ -311,76 +218,165 @@ function addField(world) {
 }
 
 /**
- * ══ THE DECK — worked, not decorated ══════════════════════════════════════
+ * ══ THE SPARS — what makes it read as inside without a ceiling ════════════
  *
- * The rule this whole side of the room is built on, taken from the transport
- * bay's own design note: a hangar is a WORKSHOP, and a workshop reads as one
- * because of what is half-done in it, not because of how many objects are on
- * the floor. So the port side is one job in progress and the starboard side is
- * the stores it is being done out of, and there is a great deal of empty deck
- * between them — which is where the company forms up, and which is what makes
- * the room feel large.
+ * A rank of ribs springing from the deck edge and arcing up and INWARD, cut off
+ * by the top of the frame long before they meet. The eye completes an enclosure
+ * it is never shown, and the one plane that would make it a box is never drawn.
  *
- * EVERYTHING IS OUT OF THE PLAYER'S EYELINE FORWARD. The whole point of the
- * composition is that looking forward is planet, field and men; a prop between
- * the player and the aperture is a prop in front of the only view there is.
+ * They stop at 62 m against the field's 90, so there is always sky between the
+ * highest structure and the top of the shot. A spar that met its opposite
+ * number would be an arch, and an arch is a ceiling with a hole in it.
  */
-function dressDeck(world, M) {
-  const steel = M.darkSteel || M.metal;
-  /**
-   * ── EVERYTHING STATIC IN ONE KIT, and the exceptions are named ─────────
-   *
-   * See `addSpars` for the measurement. What stays out of the kit is what has
-   * to keep its own identity: the loose crates, because a merged crate cannot
-   * be gripped and thrown, which is half the reason to be in this room at all.
-   */
-  const kit = new Kit(909);
+function addSpars(kit, M) {
+  for (let i = 0; i < 7; i++) {
+    const z = -30 + i * 15;
+    for (const sx of [-1, 1]) {
+      /* Eight segments of an ellipse quarter, each a box turned to the chord —
+       * a swept tube would be five times the triangles for a silhouette this
+       * is only ever seen as. */
+      for (let k = 0; k < 8; k++) {
+        const t0 = k / 8, t1 = (k + 1) / 8;
+        const x0 = sx * (62 - Math.sin(t0 * Math.PI * 0.5) * 14);
+        const y0 = Math.sin(t0 * Math.PI * 0.5) * 62;
+        const x1 = sx * (62 - Math.sin(t1 * Math.PI * 0.5) * 14);
+        const y1 = Math.sin(t1 * Math.PI * 0.5) * 62;
+        const len = Math.hypot(x1 - x0, y1 - y0);
+        const g = new THREE.BoxGeometry(1.1, len, 1.1);
+        g.rotateZ(Math.atan2(x1 - x0, y1 - y0) * -1);
+        kit.geoAt(M.hull, g, (x0 + x1) / 2, (y0 + y1) / 2, z);
+      }
+      /* A tie back to the deck at the springing, so the rib has a foot. */
+      kit.slabAt(M.hull, sx * 58, 3.4, z, 0.7, 7, 0.7, 0);
+    }
+  }
+}
 
-  /* ── PORT: the job. A gantry over the launch trench with a hull section
-   * under it on jacks, scaffolding up its flank, and the tools left where a
-   * shift left them. One ship being worked on says more about a war than six
-   * parked ones, and it is the only honest thing this engine can do with a
-   * hull: nothing here has a parked pose or a bay that opens. */
-  addGantry(world, new THREE.Vector3(-34, 0, -6), { length: 34, height: 11, width: 4.2, bays: 5, kit });
-  addHullSection(world, new THREE.Vector3(-34, 3.4, -6), { length: 26, radius: 5.2, kit });
-  addScaffold(world, new THREE.Vector3(-27, 0, -14), { lifts: 3, width: 3.2, kit });
-  addScaffold(world, new THREE.Vector3(-27, 0, 4), { lifts: 2, width: 3.2, kit });
-  addMachine(world, new THREE.Vector3(-24, 0, -22), { kit });
-  addTank(world, new THREE.Vector3(-46, 0, -24), { kit });
-  addTank(world, new THREE.Vector3(-46, 0, -18), { kit });
-  addPipeRun(world, [
-    new THREE.Vector3(-52, 1.1, -30), new THREE.Vector3(-52, 1.1, 6),
-    new THREE.Vector3(-44, 1.1, 14),
-  ], { radius: 0.26, mat: steel, count: 3, spread: 0.7, valves: true, kit });
+/**
+ * ══ THE BULKHEAD — the only interior surface in the level ═════════════════
+ *
+ * Six structural bays across the aft face, a heavy door frame in the middle,
+ * and a stencilled bay number over it. Not one flat surface anywhere: a hull
+ * seen from inside is ribs and recessed panel banks, and the depth between them
+ * is what makes it read as ship. The version this replaces was `addWall` with
+ * `M.duracrete` — one box with a brick bake on it.
+ */
+function dressBulkhead(kit, paint, M) {
+  const z = DECK.aft + 2.2;
+  const H = 17;
+  /* Six bays across, with the middle two left for the doors. */
+  for (let i = -3; i <= 2; i++) {
+    if (i === -1 || i === 0) continue;
+    hullBay(kit, i * 17 + 8.5, H / 2, z, 16.4, H);
+  }
+  /* THE DOORS. A heavy recessed frame with a lit threshold — the one place a
+   * man could plausibly have walked in from, which the troop line needs. */
+  kit.slabAt(M.dark, 0, 6, z + 0.5, 17, 12, 1.0);
+  for (const sx of [-1, 1]) {
+    kit.slabAt(M.hull, sx * 9.6, 6.4, z + 0.9, 2.4, 12.8, 1.6);
+  }
+  kit.slabAt(M.hull, 0, 12.6, z + 0.9, 21, 1.4, 1.6);
+  kit.slabAt(M.glow, 0, 11.7, z + 0.2, 16.4, 0.16, 0.16);
+  /* And the bay number over the door, in the same stencil the deck is painted
+   * with — the piece that says a person numbered this room. */
+  for (let i = 0; i < 2; i++) {
+    kit.slabAt(M.stencil, -1.4 + i * 2.8, 14.4, z + 0.95, 0.9, 1.5, 0.08);
+  }
+  /* THE CATWALK. A mezzanine along the aft face at 8 m with a rail, which is
+   * the single strongest signal of scale in the room: a walkway a person could
+   * be standing on tells you how big the wall behind it is. */
+  kit.slabAt(M.dark, 0, 7.9, z + 2.6, 96, 0.3, 2.4);
+  for (let i = -23; i <= 23; i++) {
+    kit.slabAt(M.hull, i * 2.1, 8.55, z + 3.7, 0.07, 1.0, 0.07);
+  }
+  kit.slabAt(M.hull, 0, 9.05, z + 3.7, 96, 0.09, 0.09);
+  for (let i = -7; i <= 7; i++) {
+    kit.slabAt(M.hull, i * 6.6, 4, z + 3.6, 0.26, 8, 0.26);
+  }
+  /* Flood banks hung under the catwalk, washing the deck. */
+  for (let i = -3; i <= 3; i++) floodBank(kit, i * 15, 7.2, z + 4.4, { width: 5 });
+  paint.hazard(DECK_PAINT.caution, -48, z + 5.2, 48, z + 5.2, 0.9, 1.0);
+}
 
-  /* ── STARBOARD: the stores. Racks, crates, a loading slab and the deck
-   * office. Stacked to different heights on purpose — a level line of crates
-   * is a wall, and a wall is the thing this room is not allowed to grow. */
-  addFloorSlab(world, new THREE.Vector3(36, 0, -4), new THREE.Vector2(22, 30), { kit });
-  addCrateStack(world, new THREE.Vector3(30, 0, -20), { tiers: 3, columns: 3, kit });
-  addCrateStack(world, new THREE.Vector3(38, 0, -10), { tiers: 2, columns: 2, kit });
-  addCrateStack(world, new THREE.Vector3(33, 0, 6), { tiers: 4, columns: 2, kit });
-  addMachine(world, new THREE.Vector3(44, 0, -26), { kit });
-  makeConsole(world, new THREE.Vector3(26, 0, -26));
+/**
+ * ══ THE DECK — worked, and PAINTED ════════════════════════════════════════
+ *
+ * The paint is the thing. A military flight deck is covered in it — landing
+ * circles, bay numerals a metre and a half tall, guide lines the length of the
+ * room, hazard bands at every edge — and nothing else identifies the room as
+ * fast. There was no way to paint a ground in this repo until `DeckKit.Paint`.
+ *
+ * Everything standing on it is LOW, WIDE and BOXY: servicing rigs, an ordnance
+ * trolley, ladder stands, spools, chocks. A ruined-village kit has nothing that
+ * shape — its furniture is tall, thin and broken, which is exactly why a deck
+ * dressed from it reads as rubble.
+ */
+function dressDeck(kit, paint, M) {
+  const P = DECK_PAINT;
 
-  /* LOOSE CRATES, and they are loose on purpose: `_grippableBody` takes a
-   * PROP-layer dynamic body, so these are what the player picks up and throws
-   * at the field. A hangar you cannot pick anything up in is a diorama. */
-  for (const [x, z] of [[22, -30], [24, -27], [19, -33], [-18, -30], [-14, -34], [16, 2]]) {
-    makeCrate(world, new THREE.Vector3(x, 0.5, z), 0.8);
+  /* ── THE PAINT ──────────────────────────────────────────────────────── */
+
+  /* Two landing bays, numbered, with their circles and keep-out rings. */
+  for (const [bx, bz, n] of [[-30, 16, 1], [30, 16, 2]]) {
+    paint.ring(P.caution, bx, bz, 11, 0.42);
+    paint.ring(P.caution, bx, bz, 10.2, 0.16);
+    paint.ring(P.stencil, bx, bz, 3.2, 0.22);
+    for (let a = 0; a < 4; a++) {
+      const th = a * Math.PI / 2 + Math.PI / 4;
+      paint.line(P.caution, bx + Math.sin(th) * 3.6, bz + Math.cos(th) * 3.6,
+        bx + Math.sin(th) * 9.6, bz + Math.cos(th) * 9.6, 0.24);
+    }
+    paint.number(P.stencil, n, bx, bz - 6.4, 2.6);
   }
 
-  /* ── THE LIP. Strobes and nothing else — no railing, on instruction and on
-   * principle: the drop is the point, and a handrail is a level telling you it
-   * does not trust its own edge. They are stanchions rather than lamps so they
-   * read as deck furniture at knee height and never light the room. */
-  for (let i = -3; i <= 3; i++) {
-    addStanchion(world, new THREE.Vector3(i * 18, 0, DECK.lip - 2.5), { kit });
-    if (Math.abs(i) === 3) continue;
-    addStanchion(world, new THREE.Vector3(-DECK.lip + 2.5, 0, i * 18), { kit });
-    addStanchion(world, new THREE.Vector3(DECK.lip - 2.5, 0, i * 18), { kit });
+  /* The taxi line down the middle of the room, dashed, and the two solid
+   * guides that walk a ship off the lip. */
+  paint.dashed(P.stencil, 0, DECK.aft + 8, 0, DECK.lip - 6, 0.24);
+  paint.line(P.caution, -14, -6, -14, DECK.lip - 4, 0.2);
+  paint.line(P.caution, 14, -6, 14, DECK.lip - 4, 0.2);
+
+  /* HAZARD BANDS AT EVERY EDGE — the most recognisable paint on any deck. */
+  const L = DECK.lip - 2.0;
+  paint.hazard(P.caution, -L, L, L, L, 1.4, 1.3);
+  paint.hazard(P.caution, -L, -L, -L, L, 1.4, 1.3);
+  paint.hazard(P.caution, L, -L, L, L, 1.4, 1.3);
+
+  /* The trench is a hole in the floor and is painted as one. */
+  paint.line(P.keepOut, -41, -36, -41, DECK.lip - 6, 0.3);
+  paint.line(P.keepOut, -27, -36, -27, DECK.lip - 6, 0.3);
+  paint.hazard(P.keepOut, -41, -36, -27, -36, 0.8, 0.9);
+
+  /* The muster ground, boxed and numbered, so the line has a place that was
+   * marked for it rather than a spot on an empty floor. */
+  paint.line(P.stencil, -26, DECK.line, 26, DECK.line, 0.16);
+  paint.line(P.stencil, -26, DECK.line, -26, DECK.line + 3.2, 0.16);
+  paint.line(P.stencil, 26, DECK.line, 26, DECK.line + 3.2, 0.16);
+
+  /* TIE-DOWNS ON A GRID. Small, dark, everywhere — the detail that says a ship
+   * is parked here when it is not being flown. */
+  for (let gx = -6; gx <= 6; gx++) {
+    for (let gz = -4; gz <= 6; gz++) tieDown(kit, gx * 9, gz * 9);
   }
-  kit.emit(world, new THREE.Vector3(0, 0, 0));
+
+  /* ── AND WHAT STANDS ON IT ──────────────────────────────────────────── */
+
+  /* Port: the bay being worked. Rigs round the mark, a stand at the nose. */
+  servicingRig(kit, -38, 8, { yaw: 0.3 });
+  servicingRig(kit, -22, 20, { yaw: -1.2 });
+  ladderStand(kit, -30, 5, { height: 3.1, yaw: 0.2 });
+  cableSpool(kit, -35, 2);
+  for (const [cx, cz] of [[-33, 20], [-27, 20], [-33, 12], [-27, 12]]) chock(kit, cx, cz);
+
+  /* Starboard: the stores end. Ordnance and a second rig. */
+  ordnanceTrolley(kit, 34, 4, { yaw: 0.1 });
+  ordnanceTrolley(kit, 38, 8, { yaw: -0.4 });
+  servicingRig(kit, 42, -6, { yaw: 1.4 });
+  ladderStand(kit, 26, 20, { height: 2.6, yaw: -0.6 });
+  cableSpool(kit, 44, 2);
+
+  /* Aft corners, out of the eyeline: the deck's own stores. */
+  servicingRig(kit, -48, -30, { yaw: 0.9 });
+  servicingRig(kit, 48, -30, { yaw: -0.9 });
 }
 
 /**
@@ -420,12 +416,28 @@ export const __deckParts = { field: addField, spars: addSpars, bulkhead: dressBu
 
 /** The one dress entry the level record names. */
 export function dressHangar(world) {
-  const M = propMaterials();
   addField(world);
-  addSpars(world, M);
-  dressBulkhead(world, M);
-  dressDeck(world, M);
+  /* ONE BUILDER AND ONE PAINT SHOP FOR THE WHOLE ROOM. Every static part goes
+   * into these two and comes out as five meshes and four — measured, the
+   * outdoor dressing this replaced emitted 193. */
+  const kit = new DeckBuild();
+  const paint = new Paint();
+  const M = deckMats();
+  addSpars(kit, M);
+  dressBulkhead(kit, paint, M);
+  dressDeck(kit, paint, M);
+  world._deckKit = kit.build(world);
+  world._deckPaint = paint.build(world);
   lightDeck(world);
+
+  /* LOOSE CRATES, and they are loose on purpose: `_grippableBody` takes a
+   * PROP-layer dynamic body, so these are what the player picks up and throws
+   * at the field. They cannot go in the kit — a merged crate cannot be
+   * gripped. */
+  for (const [x, z] of [[20, -28], [23, -25], [17, -31], [-16, -28], [-12, -32], [15, 4]]) {
+    makeCrate(world, new THREE.Vector3(x, 0.5, z), 0.8);
+  }
+
   /* AND THE COMPANY IS ALREADY WALKING IN when the room opens. The player's
    * first frame on the deck is his men coming through the doors, not an empty
    * floor with a button on it — "the filing in sells it more than the
