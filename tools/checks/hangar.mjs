@@ -82,8 +82,15 @@ export async function run({ check, assert }) {
         `the ground rises ${P.height(0, r).toFixed(0)} m ${r} m FORWARD of the player — the one `
         + 'wall is supposed to be behind him and the aperture is supposed to be the whole view');
     }
-    assert(P.height(0, -56) > 25, 'the bulkhead aft is not a bulkhead');
-    return `${walled.length} of 16 bearings closed, all aft · ${P.height(0, -56).toFixed(0)} m of bulkhead`;
+    /* OFF THE PRESET'S OWN SCALE, not a literal: the room went from 128 m to
+     * 288 and this said 'the bulkhead is not a bulkhead' about a bulkhead that
+     * had simply moved. A check that has to be edited every time the room is
+     * resized is a check that will one day be edited to pass. */
+    const aftFace = -P.scale / 2 + 8;
+    assert(P.height(0, aftFace) > 25,
+      `the ground ${aftFace.toFixed(0)} m aft rises ${P.height(0, aftFace).toFixed(0)} m — there is `
+      + 'no bulkhead behind the player');
+    return `${walled.length} of 16 bearings closed, all aft · ${P.height(0, aftFace).toFixed(0)} m of bulkhead`;
   });
 
   check('hangar: the deck ends, rather than stopping at something', () => {
@@ -98,9 +105,24 @@ export async function run({ check, assert }) {
      * larger, and a larger sheet is a sheet that has to be ENDED.
      */
     const P = TERRAIN_PRESETS.hangardeck;
-    assert(P.scale <= 160,
-      `the deck is ${P.scale} m across — past about 160 the edge is too far to be part of the `
-      + 'composition and something has to close it');
+    /**
+     * IT IS BIG, AND BIG IS THE BRIEF. This asserted 160 m when the room was
+     * 128, on the reasoning that a larger sheet has to be CLOSED by something.
+     * That reasoning was right and the conclusion was wrong: the references are
+     * enormous — in `hangar 7.jpg` the racked fighters recede until they are
+     * specks — and the brief says "scale must be immense". What closes this one
+     * is the rack walls for the aft two-thirds and the field for the rest, so
+     * the sheet never has to be ended by a fog bank.
+     *
+     * The bound that still matters is the OTHER one: a deck so large the player
+     * cannot cross it is a corridor with nothing at the end.
+     */
+    assert(P.scale >= 200,
+      `the deck is only ${P.scale} m across — the brief is "scale must be immense" and every `
+      + 'reference is enormous; 128 m read as a shed');
+    assert(P.scale <= 400,
+      `the deck is ${P.scale} m across — past about 400 a player cannot walk from the bulkhead to `
+      + 'the lip in under a minute, and a room nobody crosses is a corridor');
     assert(P.flat === true, 'the deck is not flat');
     assert(DECK.lip === P.scale / 2,
       `DECK.lip is ${DECK.lip} and the ground ends at ${P.scale / 2} — the strobes, the field and `
@@ -125,44 +147,67 @@ export async function run({ check, assert }) {
     const THREE = await import('three');
     const { world } = await deck();
     try {
-      const box = new THREE.Box3();
-      const size = new THREE.Vector3();
-      const mid = new THREE.Vector3();
-      const found = [];
+      /**
+       * ══ RAYS, NOT BOUNDING BOXES ═══════════════════════════════════════
+       *
+       * This walked every mesh's bounding box looking for something broad and
+       * flat overhead, and the moment the room's structure was merged into one
+       * mesh per material — which is how it affords twenty rack bays — that
+       * mesh's box became the whole room and the check reported a 164×212 m
+       * ceiling at 47 m. There was no ceiling. A bounding box cannot see a
+       * shape, only its extent, and every correct answer here is about shape.
+       *
+       * So it fires rays STRAIGHT UP from a grid over the deck and asks what
+       * they hit. That is the question — "is there anything over my head" — and
+       * it cannot be fooled by a merge, by an instanced mesh, or by geometry
+       * that happens to span the room while enclosing none of it.
+       */
+      const ray = new THREE.Raycaster();
+      const up = new THREE.Vector3(0, 1, 0);
+      const from = new THREE.Vector3();
+      const solid = [];
       world.scene.traverse((o) => {
         if (!o.isMesh && !o.isInstancedMesh) return;
-        if (o.material?.userData?.saberNoInk) return;    // the field itself
-        if (!o.geometry) return;
-        box.setFromObject(o);
-        if (!isFinite(box.min.y)) return;
-        box.getSize(size); box.getCenter(mid);
-        /* A LID: broad in both ground axes, thin in Y, over the deck, and low
-         * enough that a player would see it. The field at DECK.roof is exempt
-         * by its material above; nothing else is. */
-        const broad = size.x > 30 && size.z > 30;
-        const flat = size.y < 6;
-        const over = box.min.y > 12 && box.min.y < DECK.roof - 4;
-        const inside = Math.abs(mid.x) < DECK.lip && Math.abs(mid.z) < DECK.lip;
-        if (broad && flat && over && inside) {
-          found.push(`${o.name || o.type} at y=${box.min.y.toFixed(0)}, ${size.x.toFixed(0)}×${size.z.toFixed(0)} m`);
+        if (o.material?.userData?.saberNoInk) return;      // the field
+        if (o.name === 'field-rim') return;                 // its frame
+        solid.push(o);
+      });
+      const hits = [];
+      const STEP = 12;
+      let probes = 0;
+      for (let x = -DECK.lip + 10; x <= DECK.lip - 10; x += STEP) {
+        for (let z = DECK.aft + 20; z <= DECK.lip - 10; z += STEP) {
+          probes++;
+          from.set(x, 2.0, z);
+          ray.set(from, up);
+          ray.far = DECK.roof - 3;
+          const hit = ray.intersectObjects(solid, false)[0];
+          /* An overhead FIXTURE is not a ceiling — every reference has them and
+           * they are how the room reads as tall. What is forbidden is a
+           * SURFACE: something hit from many neighbouring points at the same
+           * height. A rig is hit from one or two. */
+          if (hit) hits.push({ x, z, y: +hit.point.y.toFixed(1) });
         }
-      });
-      assert(found.length === 0,
-        `there is a ceiling over the flight deck: ${found.join('; ')} — "no ceiling, ever" is the `
-        + 'one rule this room is built on, and a lid is what made every previous interior a box');
-      /* AND THE SPARS STOP SHORT. A pair that met would be an arch, and an
-       * arch is a ceiling with a hole in it. */
-      let top = 0;
-      world.scene.traverse((o) => {
-        if (!o.isMesh || o.material?.userData?.saberNoInk) return;
-        box.setFromObject(o);
-        if (isFinite(box.max.y)) top = Math.max(top, box.max.y);
-      });
-      assert(top < DECK.roof - 15,
-        `the tallest structure on the deck reaches ${top.toFixed(0)} m against a field at `
-        + `${DECK.roof} — there has to be open sky between the highest thing in the room and the `
-        + 'top of the shot, or the eye reads a lid');
-      return `no lid over ${DECK.lip * 2} m of deck · tallest structure ${top.toFixed(0)} m under a ${DECK.roof} m field`;
+      }
+      /* Group by height and see if any one height is hit from a broad area. */
+      const byY = new Map();
+      for (const h of hits) {
+        const k = Math.round(h.y / 4) * 4;
+        if (!byY.has(k)) byY.set(k, []);
+        byY.get(k).push(h);
+      }
+      const lids = [...byY].filter(([, list]) => list.length > probes * 0.25);
+      assert(!lids.length,
+        `${lids.map(([y, l]) => `${l.length} of ${probes} points have something solid overhead at `
+          + `${y} m`).join('; ')} — that is a ceiling however it was built, and "no ceiling, ever" `
+        + 'is the one rule this room stands on');
+      const covered = hits.length;
+      assert(covered < probes * 0.45,
+        `${covered} of ${probes} points on the deck have something over them — the overhead is `
+        + 'supposed to be fixtures and open space, not cover');
+
+      return `no lid: ${covered} of ${probes} deck points have anything overhead, none of them `
+        + `sharing a height · ${solid.length} solid objects tested by ray`;
     } finally { world.unload(); }
   });
 

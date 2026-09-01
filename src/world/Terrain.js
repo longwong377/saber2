@@ -715,17 +715,48 @@ export const TERRAIN_PRESETS = {
      * is the deck's edge, so a player who walks forward runs out of ship. A
      * larger sheet would need a wall or a fog bank to end it, and both are the
      * thing being avoided. */
-    scale: 128, res: 128, waterLevel: -999, flat: true,
-    sandColor: 0x474e58, rockColor: 0x333a45,
+    /**
+     * ══ 288 m, BECAUSE THE SCALE WAS THE FIRST THING WRONG ════════════════
+     *
+     * This was 128 m and the room read as a shed. Every reference is enormous:
+     * in `hangar 7.jpg` the racked fighters march back until they are specks
+     * and the troopers are four pixels tall; in `hangar 5.webp` a thousand men
+     * in ranks do not fill the floor. The player's brief says it in one line —
+     * "scale must be immense" — and 128 m is a tennis court.
+     *
+     * The heightfield's own edge is still the deck's edge, which is what lets
+     * the ship simply run out under your feet instead of ending at a wall. It
+     * is just that the run is now long enough to be a capital ship's.
+     */
+    scale: 288, res: 200, waterLevel: -999, flat: true,
+    /**
+     * ══ A BLACK MIRROR, WHICH IS RULE 2 OF SEVEN OUT OF SEVEN ═════════════
+     *
+     * `assets/reference/REFERENCES.md`: every hangar floor in every reference
+     * is near-black, glossy, and throws the light strips and the ships back as
+     * long vertical smears. In `hangar 5.webp` the reflection is HALF THE
+     * IMAGE — the thousand men in ranks are doubled in the deck under them.
+     *
+     * This was 0x474e58 at L=0.31: a mid-grey that reflects nothing, which is
+     * exactly the "no detail on the ground" the player named on the first
+     * render. A deck is not a lit surface, it is a dark one that gives every
+     * light in the room back to you.
+     *
+     * L=0.11 and gloss 0.55. The gloss is the deck's own field because the
+     * material is built by `Terrain._mapSet` from these swatches and there is
+     * nowhere else to say it.
+     */
+    sandColor: 0x171b21, rockColor: 0x101318,
+    gloss: 0.55,
     maps: 'deck',
-    gritColor: 0x39424f, rockColor2: 0x22272f,
-    dustColor: 0x5d6570, crustColor: 0x3a4048,
+    gritColor: 0x14171c, rockColor2: 0x0c0f13,
+    dustColor: 0x232830, crustColor: 0x15181e,
     slopeBands: [0.05, 0.20, 0.010, 0.045],
     stoneSlope: 0.2,
     crust: 0.0, strataH: 2.2,
     wind: [0, 1],
     macro: [76, 0.34, 0.22, 0.85],
-    lagColor: 0x282e37, sheetColor: 0x616a76,
+    lagColor: 0x0d1014, sheetColor: 0x2c333c,
     /* A DECK REMEMBERS BURNS AND NOTHING ELSE, `warship`'s reading exactly:
      * 1.5 cm of shed carbon and a very long memory for a scorch. On this one
      * the burns are not from a fight in the room — they are what came back on
@@ -743,7 +774,9 @@ export const TERRAIN_PRESETS = {
        * level that an interior check could call a wall, and that is deliberate:
        * everything else is field or void.
        */
-      const bulk = smoothstep(-46, -55, z) * 34;
+      /* THE ONE WALL, aft, and it is 58 m — the height a person standing at
+       * its foot reads as four pixels against, which is rule 5. */
+      const bulk = smoothstep(-104, -122, z) * 58;
 
       /* Deck plate on a 6 m module, half a centimetre of relief — `warship`'s
        * seam verbatim, for the same reason: enough for the ink pass to find and
@@ -758,16 +791,20 @@ export const TERRAIN_PRESETS = {
        * ground the player walks have to be one thing. It gives the deck a
        * direction, which is the cheapest thing a flat floor can be given.
        */
-      const trench = -smoothstep(7.0, 4.2, Math.abs(x + 34)) * 1.4
-        * smoothstep(-44, -36, z);
+      /* THE PIT. Every reference has a lit recess in the deck — the Falcon's
+       * bay in 1, the elevator well in 7 — and it is the one thing that says
+       * there is a ship UNDER this one. Rectangular, 3.2 m down, with walls
+       * steep enough to read as an opening rather than a dip. */
+      const px2 = Math.max(Math.abs(x + 52) / 17, Math.abs(z - 6) / 24);
+      const pit = -smoothstep(1.0, 0.86, px2) * 3.2;
 
       /* AND THE LIP FALLS. The last 2 m before the heightfield ends drop 0.6 m
        * so the edge reads as a plate that stops rather than as a cut, and a
        * raking light finds it from inside. */
-      const d = Math.max(Math.abs(x), Math.abs(z)) / 64;
+      const d = Math.max(Math.abs(x), Math.abs(z)) / 144;
       const lip = -smoothstep(0.965, 1.0, d) * 0.6;
 
-      return bulk + seam + trench + lip + fbm2(x * 0.09, z * 0.09, 2) * 0.03;
+      return bulk + seam + pit + lip + fbm2(x * 0.09, z * 0.09, 2) * 0.012;
     },
     rockAt() { return 1; },
   },
@@ -3541,8 +3578,27 @@ export class Terrain {
       uHaze: { value: new THREE.Vector2(0.8, 0.7) },   // re-read every frame
     };
 
+    /**
+     * ══ A DECK IS A POLISHED FLOOR AND EVERY OTHER GROUND IS NOT ══════════
+     *
+     * `roughness: 1, metalness: 0` is right for sand, soil, snow and rock —
+     * every outdoor ground in the game — and it is the reason the flight deck's
+     * first render had "no detail on the ground": a fully rough surface returns
+     * nothing, so a dark deck is just dark.
+     *
+     * All seven hangar references disagree. `assets/reference/REFERENCES.md`
+     * rule 2: the floor is a black MIRROR, and in `hangar 5.webp` the
+     * reflection of a thousand men and the light strips is half the image. That
+     * is not a texture, it is a specular response, and it needs the two numbers
+     * three actually reads.
+     *
+     * OFF THE PRESET, so no outdoor ground changes by a hair: `gloss` is
+     * absent everywhere but `hangardeck`, and absent means the ground this
+     * engine has always rendered.
+     */
+    const gloss = this.preset.gloss ?? 0;
     const mat = new THREE.MeshStandardMaterial({
-      roughness: 1, metalness: 0,
+      roughness: 1 - gloss, metalness: gloss * 0.7,
       color: 0xffffff,
       dithering: true,
     });

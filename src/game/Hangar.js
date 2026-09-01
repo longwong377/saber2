@@ -75,23 +75,34 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
  * body to pick up, and a crate is a crate on a deck as much as in a village.
  */
 import { makeCrate } from '../world/Props.js';
-import { Paint, DeckBuild, DECK_PAINT, deckMats, hullBay, floodBank, tieDown,
-  servicingRig, ordnanceTrolley, ladderStand, cableSpool, chock } from './DeckKit.js';
+import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig,
+  catwalk, crates } from './DeckKit.js';
 
 /* The deck runs from the bulkhead aft to the lip forward. Named rather than
  * inlined because six things below have to agree about where the room stops,
  * and `hangardeck.height` is the seventh. */
 export const DECK = {
-  /** Aft face of the bulkhead — the one wall. */
-  aft: -46,
-  /** The lip, on every other side: the heightfield's own edge at scale/2. */
-  lip: 64,
-  /** Where the player is put down, looking forward. */
-  start: new THREE.Vector3(0, 0, -34),
+  /**
+   * ══ THE ROOM, AND EVERY NUMBER IN IT COMES OFF THE REFERENCES ═══════════
+   *
+   * The first version was 128 m across with a 34 m wall and it read as a shed.
+   * `hangar 7.jpg` is the target composition and nothing in it is small: the
+   * racked fighters recede until they are specks, the troopers are four pixels,
+   * and the overhead is out of frame. "Scale must be immense" is the brief and
+   * it is the first thing a number can get wrong.
+   */
+  /** Aft face of the bulkhead — the one solid surface in the level. */
+  aft: -104,
+  /** The lip, on every other side: the heightfield's own edge. */
+  lip: 144,
+  /** Where the player is put down, looking forward down the length of it. */
+  start: new THREE.Vector3(0, 0, -74),
   /** Where the line forms up, facing him. */
-  line: -12,
-  /** How high the overhead field sits. Read by the spars, which stop short. */
-  roof: 90,
+  line: -48,
+  /** The overhead field. 64 m, which is the height ref 6's catwalk implies. */
+  roof: 64,
+  /** How far out the solid structure runs before the walls become field. */
+  bays: 46,
 };
 
 /**
@@ -205,6 +216,50 @@ function addField(world) {
   fieldPlane(world, mat, new THREE.Vector3(0, H, 0), new THREE.Vector2(L * 2, L * 2),
     q(1, 0, 0, -Math.PI / 2));
 
+  /**
+   * ══ THE RIM, AND IT IS THE MOST IMPORTANT OBJECT IN THE ROOM ══════════
+   *
+   * `assets/reference/REFERENCES.md` rule 1, agreed by all seven images: the
+   * opening is bordered by a continuous, intensely bright white band. It is the
+   * brightest thing in every one of those frames — brighter than anything it
+   * lights — and it is what says the vacuum is on the other side.
+   *
+   * WITHOUT IT THE FIELD IS INVISIBLE. Measured, in the first render of this
+   * room: three translucent additive planes against black space returned almost
+   * nothing, so the aperture read as a hole in the dark. A field seen face-on
+   * has no rim of its own to catch the light — the emitter housing is what you
+   * actually see, and every reference draws it as a fat glowing strip.
+   *
+   * Ours borders THREE field planes and the overhead rather than one window,
+   * because the player's brief is "space/force field on 3 sides and the
+   * ceiling" — more open than any reference. So the rim runs the whole lip of
+   * the deck and up the two corners, which is the same object doing the same
+   * job on a more open room.
+   */
+  const rimMat = new THREE.MeshStandardMaterial({
+    color: 0x0a0d12, emissive: 0xdceaff, emissiveIntensity: 3.4, roughness: 0.35,
+  });
+  rimMat.name = 'field-rim';
+  const rim = (cx, cy, cz, w, h, d) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), rimMat);
+    m.position.set(cx, cy, cz);
+    m.name = 'field-rim';
+    m.renderOrder = 2;
+    world.scene.add(m);
+    world.statics.push(m);
+    return m;
+  };
+  /* ALONG THE LIP, where the deck stops — the band a player standing at the
+   * edge is looking straight down the length of. */
+  rim(0, 0.55, L, L * 2, 1.1, 1.1);
+  for (const sx of [-1, 1]) rim(sx * L, 0.55, 0, 1.1, 1.1, L * 2);
+  /* UP THE TWO FORWARD CORNERS, so the aperture is framed vertically as well —
+   * a band on the floor alone reads as a kerb. */
+  for (const sx of [-1, 1]) rim(sx * L, H / 2, L, 1.1, H, 1.1);
+  /* AND ACROSS THE TOP, closing the frame against the overhead field. */
+  rim(0, H, L, L * 2, 1.1, 1.1);
+  for (const sx of [-1, 1]) rim(sx * L, H, 0, 1.1, 1.1, L * 2);
+
   /* THE BARRIER, and it is four boxes rather than the planes themselves — a
    * plane has no thickness and a character controller resolves through one. */
   const th = 2;
@@ -218,165 +273,119 @@ function addField(world) {
 }
 
 /**
- * ══ THE SPARS — what makes it read as inside without a ceiling ════════════
+ * ══ THE ROOM, BUILT AGAINST `hangar 7.jpg` ════════════════════════════════
  *
- * A rank of ribs springing from the deck edge and arcing up and INWARD, cut off
- * by the top of the frame long before they meet. The eye completes an enclosure
- * it is never shown, and the one plane that would make it a box is never drawn.
+ * That image is the target composition and this is it, part for part:
  *
- * They stop at 62 m against the field's 90, so there is always sky between the
- * highest structure and the top of the shot. A spar that met its opposite
- * number would be an arch, and an arch is a ceiling with a hole in it.
+ *   TWO WALLS OF RACKED FIGHTERS receding to a vanishing point — ten a side,
+ *     each in its own canted alcove with a full-height light strip. This is
+ *     rule 3 and it is the piece the first two dressings did not have at all.
+ *     It is also what "rows and rows of different ships" means: the floor stays
+ *     clear and the ships live in the walls.
+ *   ONE SOLID WALL, aft, 58 m of it, with a catwalk across at 22 m for scale.
+ *   THE OVERHEAD IS HANGING FIXTURES coming down out of frame with red status
+ *     lamps on them — never a ceiling.
+ *   THE DECK IS A BLACK MIRROR and it is mostly EMPTY. Every reference keeps
+ *     the middle of the floor clear; what is on it is crate clusters and a lit
+ *     pit, at the edges.
+ *
+ * AND THE WALLS STOP. The player's brief is field on three sides and overhead,
+ * which is more open than any reference — so the racks run the aft two-thirds
+ * and the last third of the room is open to space on both flanks. Standing at
+ * the lip you have vacuum in front of you and to both sides, with the ranks
+ * receding behind you.
  */
-function addSpars(kit, M) {
+function dressStructure(kit, paint) {
+  const M = deckMats();
+  const L = DECK.lip;
+
+  /* ── THE RACK WALLS. Ten a side, 18 m apart, from the bulkhead forward to
+   * where the structure ends and the field begins. */
+  const first = DECK.aft + 16;
+  const n = 10;
+  const pitch = (DECK.bays * 2 + 60) / n;
+  for (let i = 0; i < n; i++) {
+    const z = first + i * pitch;
+    for (const s of [-1, 1]) {
+      /* The wall itself, behind the bays — dark, so the lit recesses read as
+       * openings in something rather than as panels on nothing. */
+      kit.slabAt(M.dark, s * (L - 6), 21, z, 12, 42, pitch * 0.98);
+      rackBay(kit, s * (L - 13), 15, z, { side: s, width: pitch * 0.9, height: 21 });
+      /* A second tier above the first, which is what makes the wall read as
+       * tall — `hangar 7.jpg` stacks them and `hangar 6.jpg` hangs them. */
+      rackBay(kit, s * (L - 13), 38, z, { side: s, width: pitch * 0.9, height: 19 });
+    }
+  }
+  /* THE WALL CAPS. Where the structure ends the section is shown — a hull that
+   * simply stopped would read as a wall that had been deleted. */
+  for (const s of [-1, 1]) {
+    const zEnd = first + n * pitch;
+    kit.slabAt(M.hull, s * (L - 6), 24, zEnd, 13, 48, 3);
+    kit.slabAt(M.strip, s * (L - 12.5), 24, zEnd + 1.7, 0.5, 44, 0.6);
+  }
+
+  /* ── THE BULKHEAD. One solid face, ribbed, with the doors and a catwalk. */
+  const bz = DECK.aft + 4;
+  for (let i = -6; i <= 6; i++) {
+    if (Math.abs(i) < 2) continue;
+    kit.slabAt(M.dark, i * 22, 28, bz, 20, 56, 3.2);
+    kit.slabAt(M.hull, i * 22 - 10.5, 28, bz + 2.0, 2.4, 58, 4);
+    kit.slabAt(M.strip, i * 22, 28, bz + 2.4, 1.0, 46, 0.7);
+  }
+  /* The doors, recessed, with a lit head — where the company walks in. */
+  kit.slabAt(M.deep, 0, 13, bz + 1.0, 42, 26, 3);
+  for (const s of [-1, 1]) kit.slabAt(M.hull, s * 22.5, 14, bz + 2.6, 5, 28, 4);
+  kit.slabAt(M.hull, 0, 27.5, bz + 2.6, 50, 3, 4);
+  kit.slabAt(M.strip, 0, 25.6, bz + 1.2, 40, 0.7, 0.7);
+  catwalk(kit, 0, 22, bz + 5.5, L * 1.6);
+  catwalk(kit, 0, 40, bz + 5.5, L * 1.6);
+
+  /* ── THE OVERHEAD. Fixtures down the centreline and over each wall, coming
+   * out of frame. Nothing is ever drawn across the top. */
   for (let i = 0; i < 7; i++) {
-    const z = -30 + i * 15;
-    for (const sx of [-1, 1]) {
-      /* Eight segments of an ellipse quarter, each a box turned to the chord —
-       * a swept tube would be five times the triangles for a silhouette this
-       * is only ever seen as. */
-      for (let k = 0; k < 8; k++) {
-        const t0 = k / 8, t1 = (k + 1) / 8;
-        const x0 = sx * (62 - Math.sin(t0 * Math.PI * 0.5) * 14);
-        const y0 = Math.sin(t0 * Math.PI * 0.5) * 62;
-        const x1 = sx * (62 - Math.sin(t1 * Math.PI * 0.5) * 14);
-        const y1 = Math.sin(t1 * Math.PI * 0.5) * 62;
-        const len = Math.hypot(x1 - x0, y1 - y0);
-        const g = new THREE.BoxGeometry(1.1, len, 1.1);
-        g.rotateZ(Math.atan2(x1 - x0, y1 - y0) * -1);
-        kit.geoAt(M.hull, g, (x0 + x1) / 2, (y0 + y1) / 2, z);
-      }
-      /* A tie back to the deck at the springing, so the rib has a foot. */
-      kit.slabAt(M.hull, sx * 58, 3.4, z, 0.7, 7, 0.7, 0);
-    }
+    const z = DECK.aft + 30 + i * 34;
+    overheadRig(kit, 0, z, { top: DECK.roof, drop: 18, radius: 3.4 });
+    for (const s of [-1, 1]) overheadRig(kit, s * (L * 0.55), z, { top: DECK.roof, drop: 13, radius: 2.4 });
   }
-}
 
-/**
- * ══ THE BULKHEAD — the only interior surface in the level ═════════════════
- *
- * Six structural bays across the aft face, a heavy door frame in the middle,
- * and a stencilled bay number over it. Not one flat surface anywhere: a hull
- * seen from inside is ribs and recessed panel banks, and the depth between them
- * is what makes it read as ship. The version this replaces was `addWall` with
- * `M.duracrete` — one box with a brick bake on it.
- */
-function dressBulkhead(kit, paint, M) {
-  const z = DECK.aft + 2.2;
-  const H = 17;
-  /* Six bays across, with the middle two left for the doors. */
-  for (let i = -3; i <= 2; i++) {
-    if (i === -1 || i === 0) continue;
-    hullBay(kit, i * 17 + 8.5, H / 2, z, 16.4, H);
+  /* ── ON THE DECK: crate clusters at the edges, and the pit's rim. Nothing in
+   * the middle — the middle is where the company stands and where every
+   * reference leaves the floor clear. */
+  crates(kit, -L + 26, -70, 6, 3);
+  crates(kit, L - 30, -60, 5, 7);
+  crates(kit, L - 24, 20, 7, 11);
+  crates(kit, -L + 34, 60, 4, 13);
+  /* The pit, lit from inside, exactly as `hangar 1.webp` and `hangar 7.jpg`
+   * have it — the one thing that says there is more ship under this one. */
+  for (const [dx, dz, w, d] of [[-52, -18, 34, 1.6], [-52, 30, 34, 1.6],
+    [-69, 6, 1.6, 48], [-35, 6, 1.6, 48]]) {
+    kit.slabAt(M.hull, dx, 0.35, dz, w, 0.7, d);
+    kit.slabAt(M.strip, dx, 0.1, dz, w * 0.9, 0.16, d * 0.9);
   }
-  /* THE DOORS. A heavy recessed frame with a lit threshold — the one place a
-   * man could plausibly have walked in from, which the troop line needs. */
-  kit.slabAt(M.dark, 0, 6, z + 0.5, 17, 12, 1.0);
-  for (const sx of [-1, 1]) {
-    kit.slabAt(M.hull, sx * 9.6, 6.4, z + 0.9, 2.4, 12.8, 1.6);
-  }
-  kit.slabAt(M.hull, 0, 12.6, z + 0.9, 21, 1.4, 1.6);
-  kit.slabAt(M.glow, 0, 11.7, z + 0.2, 16.4, 0.16, 0.16);
-  /* And the bay number over the door, in the same stencil the deck is painted
-   * with — the piece that says a person numbered this room. */
-  for (let i = 0; i < 2; i++) {
-    kit.slabAt(M.stencil, -1.4 + i * 2.8, 14.4, z + 0.95, 0.9, 1.5, 0.08);
-  }
-  /* THE CATWALK. A mezzanine along the aft face at 8 m with a rail, which is
-   * the single strongest signal of scale in the room: a walkway a person could
-   * be standing on tells you how big the wall behind it is. */
-  kit.slabAt(M.dark, 0, 7.9, z + 2.6, 96, 0.3, 2.4);
-  for (let i = -23; i <= 23; i++) {
-    kit.slabAt(M.hull, i * 2.1, 8.55, z + 3.7, 0.07, 1.0, 0.07);
-  }
-  kit.slabAt(M.hull, 0, 9.05, z + 3.7, 96, 0.09, 0.09);
-  for (let i = -7; i <= 7; i++) {
-    kit.slabAt(M.hull, i * 6.6, 4, z + 3.6, 0.26, 8, 0.26);
-  }
-  /* Flood banks hung under the catwalk, washing the deck. */
-  for (let i = -3; i <= 3; i++) floodBank(kit, i * 15, 7.2, z + 4.4, { width: 5 });
-  paint.hazard(DECK_PAINT.caution, -48, z + 5.2, 48, z + 5.2, 0.9, 1.0);
-}
 
-/**
- * ══ THE DECK — worked, and PAINTED ════════════════════════════════════════
- *
- * The paint is the thing. A military flight deck is covered in it — landing
- * circles, bay numerals a metre and a half tall, guide lines the length of the
- * room, hazard bands at every edge — and nothing else identifies the room as
- * fast. There was no way to paint a ground in this repo until `DeckKit.Paint`.
- *
- * Everything standing on it is LOW, WIDE and BOXY: servicing rigs, an ordnance
- * trolley, ladder stands, spools, chocks. A ruined-village kit has nothing that
- * shape — its furniture is tall, thin and broken, which is exactly why a deck
- * dressed from it reads as rubble.
- */
-function dressDeck(kit, paint, M) {
+  /* ── THE PAINT. Rule 7: large, pale, sparse, and RED where it is coloured at
+   * all — there is no yellow in any of the seven. Long guide runs down the
+   * length of the deck, a marked muster ground, and thin red boxes at the
+   * edges the way `hangar 5.webp` has them. */
   const P = DECK_PAINT;
-
-  /* ── THE PAINT ──────────────────────────────────────────────────────── */
-
-  /* Two landing bays, numbered, with their circles and keep-out rings. */
-  for (const [bx, bz, n] of [[-30, 16, 1], [30, 16, 2]]) {
-    paint.ring(P.caution, bx, bz, 11, 0.42);
-    paint.ring(P.caution, bx, bz, 10.2, 0.16);
-    paint.ring(P.stencil, bx, bz, 3.2, 0.22);
-    for (let a = 0; a < 4; a++) {
-      const th = a * Math.PI / 2 + Math.PI / 4;
-      paint.line(P.caution, bx + Math.sin(th) * 3.6, bz + Math.cos(th) * 3.6,
-        bx + Math.sin(th) * 9.6, bz + Math.cos(th) * 9.6, 0.24);
+  paint.dashed(P.stencil, 0, DECK.aft + 20, 0, L - 20, 0.5, 5.5, 4.5);
+  for (const s of [-1, 1]) {
+    paint.line(P.stencil, s * 34, DECK.aft + 20, s * 34, L - 20, 0.35);
+  }
+  /* The muster ground, boxed — the line has a place painted for it. */
+  paint.line(P.stencil, -46, DECK.line - 2, 46, DECK.line - 2, 0.3);
+  paint.line(P.stencil, -46, DECK.line + 9, 46, DECK.line + 9, 0.3);
+  for (const s of [-1, 1]) paint.line(P.stencil, s * 46, DECK.line - 2, s * 46, DECK.line + 9, 0.3);
+  /* Red keep-outs at the rack feet and the pit, which is the only colour any
+   * reference paints on a deck. */
+  for (let i = 0; i < n; i++) {
+    const z = first + i * pitch;
+    for (const s of [-1, 1]) {
+      paint.line(P.keepOut, s * (L - 22), z - pitch * 0.4, s * (L - 22), z + pitch * 0.4, 0.28);
     }
-    paint.number(P.stencil, n, bx, bz - 6.4, 2.6);
   }
-
-  /* The taxi line down the middle of the room, dashed, and the two solid
-   * guides that walk a ship off the lip. */
-  paint.dashed(P.stencil, 0, DECK.aft + 8, 0, DECK.lip - 6, 0.24);
-  paint.line(P.caution, -14, -6, -14, DECK.lip - 4, 0.2);
-  paint.line(P.caution, 14, -6, 14, DECK.lip - 4, 0.2);
-
-  /* HAZARD BANDS AT EVERY EDGE — the most recognisable paint on any deck. */
-  const L = DECK.lip - 2.0;
-  paint.hazard(P.caution, -L, L, L, L, 1.4, 1.3);
-  paint.hazard(P.caution, -L, -L, -L, L, 1.4, 1.3);
-  paint.hazard(P.caution, L, -L, L, L, 1.4, 1.3);
-
-  /* The trench is a hole in the floor and is painted as one. */
-  paint.line(P.keepOut, -41, -36, -41, DECK.lip - 6, 0.3);
-  paint.line(P.keepOut, -27, -36, -27, DECK.lip - 6, 0.3);
-  paint.hazard(P.keepOut, -41, -36, -27, -36, 0.8, 0.9);
-
-  /* The muster ground, boxed and numbered, so the line has a place that was
-   * marked for it rather than a spot on an empty floor. */
-  paint.line(P.stencil, -26, DECK.line, 26, DECK.line, 0.16);
-  paint.line(P.stencil, -26, DECK.line, -26, DECK.line + 3.2, 0.16);
-  paint.line(P.stencil, 26, DECK.line, 26, DECK.line + 3.2, 0.16);
-
-  /* TIE-DOWNS ON A GRID. Small, dark, everywhere — the detail that says a ship
-   * is parked here when it is not being flown. */
-  for (let gx = -6; gx <= 6; gx++) {
-    for (let gz = -4; gz <= 6; gz++) tieDown(kit, gx * 9, gz * 9);
-  }
-
-  /* ── AND WHAT STANDS ON IT ──────────────────────────────────────────── */
-
-  /* Port: the bay being worked. Rigs round the mark, a stand at the nose. */
-  servicingRig(kit, -38, 8, { yaw: 0.3 });
-  servicingRig(kit, -22, 20, { yaw: -1.2 });
-  ladderStand(kit, -30, 5, { height: 3.1, yaw: 0.2 });
-  cableSpool(kit, -35, 2);
-  for (const [cx, cz] of [[-33, 20], [-27, 20], [-33, 12], [-27, 12]]) chock(kit, cx, cz);
-
-  /* Starboard: the stores end. Ordnance and a second rig. */
-  ordnanceTrolley(kit, 34, 4, { yaw: 0.1 });
-  ordnanceTrolley(kit, 38, 8, { yaw: -0.4 });
-  servicingRig(kit, 42, -6, { yaw: 1.4 });
-  ladderStand(kit, 26, 20, { height: 2.6, yaw: -0.6 });
-  cableSpool(kit, 44, 2);
-
-  /* Aft corners, out of the eyeline: the deck's own stores. */
-  servicingRig(kit, -48, -30, { yaw: 0.9 });
-  servicingRig(kit, 48, -30, { yaw: -0.9 });
+  paint.line(P.keepOut, -71, -20, -33, -20, 0.3);
+  paint.line(P.keepOut, -71, 32, -33, 32, 0.3);
 }
 
 /**
@@ -412,20 +421,17 @@ function lightDeck(world) {
  * anonymous `Mesh` and tells you nothing you can act on; building them one at a
  * time on a bare scene is the only reading that names a caller.
  */
-export const __deckParts = { field: addField, spars: addSpars, bulkhead: dressBulkhead, deck: dressDeck };
+export const __deckParts = { field: addField, structure: dressStructure };
 
 /** The one dress entry the level record names. */
 export function dressHangar(world) {
   addField(world);
-  /* ONE BUILDER AND ONE PAINT SHOP FOR THE WHOLE ROOM. Every static part goes
-   * into these two and comes out as five meshes and four — measured, the
-   * outdoor dressing this replaced emitted 193. */
+  /* ONE BUILDER AND ONE PAINT SHOP FOR THE WHOLE ROOM — twenty rack bays with
+   * a fighter in each, seven overhead rigs, two catwalks and the bulkhead come
+   * out as six meshes and three. */
   const kit = new DeckBuild();
   const paint = new Paint();
-  const M = deckMats();
-  addSpars(kit, M);
-  dressBulkhead(kit, paint, M);
-  dressDeck(kit, paint, M);
+  dressStructure(kit, paint);
   world._deckKit = kit.build(world);
   world._deckPaint = paint.build(world);
   lightDeck(world);
@@ -434,8 +440,8 @@ export function dressHangar(world) {
    * PROP-layer dynamic body, so these are what the player picks up and throws
    * at the field. They cannot go in the kit — a merged crate cannot be
    * gripped. */
-  for (const [x, z] of [[20, -28], [23, -25], [17, -31], [-16, -28], [-12, -32], [15, 4]]) {
-    makeCrate(world, new THREE.Vector3(x, 0.5, z), 0.8);
+  for (const [x, z] of [[26, -66], [30, -62], [22, -70], [-24, -66], [-19, -71], [20, -30]]) {
+    makeCrate(world, new THREE.Vector3(x, 0.5, z), 0.9);
   }
 
   /* AND THE COMPANY IS ALREADY WALKING IN when the room opens. The player's

@@ -275,214 +275,6 @@ function mergeFlat(geos) {
   return out;
 }
 
-/* ══════════════════════════════════════════════════════════════════════════ */
-/*  THE STRUCTURE                                                             */
-/* ══════════════════════════════════════════════════════════════════════════ */
-
-const _mats = { hull: null, dark: null, glow: null, caution: null, stencil: null };
-/** The room's five materials. Exported so the level can hand them round. */
-export function deckMats() { return mats(); }
-function mats() {
-  if (_mats.hull) return _mats;
-  _mats.hull = new THREE.MeshStandardMaterial({ color: DECK_PAINT.hull, roughness: 0.62, metalness: 0.55 });
-  _mats.dark = new THREE.MeshStandardMaterial({ color: DECK_PAINT.hullDark, roughness: 0.7, metalness: 0.45 });
-  _mats.caution = new THREE.MeshStandardMaterial({ color: DECK_PAINT.caution, roughness: 0.8, metalness: 0.1 });
-  _mats.stencil = new THREE.MeshStandardMaterial({ color: DECK_PAINT.stencil, roughness: 0.85, metalness: 0.05 });
-  /* THE ONLY EMISSIVE IN THE ROOM THAT IS NOT THE FIELD. A deck's light comes
-   * from strips and panels, so the strips have to BE bright rather than be lit
-   * — a lamp that needs a light to see it is a lamp that reads as a box. */
-  _mats.glow = new THREE.MeshStandardMaterial({
-    color: 0x0d1014, emissive: 0xa8c4e0, emissiveIntensity: 2.6, roughness: 0.4,
-  });
-  return _mats;
-}
-
-/**
- * ══ A STRUCTURAL BAY — the only kind of wall this room has ════════════════
- *
- * Not a surface. A hull seen from inside is a rank of RIBS with recessed panel
- * banks between them, and the depth between the two is what makes it read as
- * ship rather than as masonry. Three planes: the rib faces forward, the panel
- * bank sits 0.55 m behind it, and a conduit run crosses at shoulder height.
- *
- * MEASURED AGAINST THE THING IT REPLACES: `addWall` with `M.duracrete` is one
- * box with a brick bake on it — 32 triangles and a masonry surface, which is
- * why the first frame of this room had a brick wall in it. This is 9 boxes and
- * a stencil per bay, merged, and it is the difference between a building and a
- * ship.
- */
-export function hullBay(kit, x, y, z, w, h, opts = {}) {
-  const M = mats();
-  const yaw = opts.yaw || 0;
-  const depth = opts.depth ?? 0.55;
-  const rib = Math.min(0.9, w * 0.16);
-
-  /* The panel bank, set back. */
-  kit.slabAt(M.dark, x, y, z, w, h, 0.6, yaw);
-  /* Two horizontal bands across it — the seam every hull plate section has. */
-  for (const f of [0.34, 0.68]) {
-    kit.slabAt(M.hull, x, y - h / 2 + h * f, z + depth * 0.4, w * 0.98, h * 0.045, 0.22, yaw);
-  }
-  /* The ribs, proud of it, at both edges. */
-  for (const sx of [-1, 1]) {
-    kit.slabAt(M.hull, x + sx * (w / 2 - rib / 2), y, z + depth, rib, h, 0.7, yaw);
-  }
-  /* A conduit run at shoulder height, which is the detail that says somebody
-   * maintains this. */
-  kit.slabAt(M.dark, x, y - h / 2 + 2.4, z + depth * 1.3, w * 0.86, 0.34, 0.34, yaw);
-  /* And the strip light under it, washing the deck rather than the wall. */
-  if (opts.lit !== false) {
-    kit.slabAt(M.glow, x, y - h / 2 + 2.1, z + depth * 1.4, w * 0.7, 0.12, 0.12, yaw);
-  }
-  return kit;
-}
-
-/**
- * ══ AN OVERHEAD FLOOD BANK ════════════════════════════════════════════════
- *
- * What lights a deck. A boxed housing hung off a spar with four lamp faces in
- * it, pointing DOWN — no pole, no stalk, nothing at head height. `addLamp`'s
- * craning street-lamp head is the exact thing this exists to never be.
- *
- * The light itself is the caller's: this is the fixture you can see, and a room
- * with more fixtures than lights is how a deck is actually lit.
- */
-export function floodBank(kit, x, y, z, opts = {}) {
-  const M = mats();
-  const w = opts.width ?? 4.2;
-  kit.slabAt(M.dark, x, y, z, w, 0.5, 1.5);
-  for (let i = 0; i < 4; i++) {
-    const fx = x + ((i / 3) - 0.5) * w * 0.78;
-    kit.slabAt(M.glow, fx, y - 0.3, z, w * 0.16, 0.14, 1.1);
-  }
-  /* The hanger, up out of frame — a bank with nothing holding it floats. */
-  kit.slabAt(M.hull, x, y + 1.6, z, 0.22, 3.2, 0.22);
-  return kit;
-}
-
-/**
- * ══ A TIE-DOWN RING ═══════════════════════════════════════════════════════
- *
- * The smallest thing on this list and one of the most identifying: a deck is
- * covered in them on a grid, and nothing else explains what stops a parked ship
- * sliding when the ship it is parked in manoeuvres. Recessed, so it is a dark
- * socket with a bar across it rather than a bump.
- */
-export function tieDown(kit, x, z) {
-  const M = mats();
-  kit.slabAt(M.dark, x, 0.012, z, 0.42, 0.024, 0.42);
-  kit.slabAt(M.hull, x, 0.05, z, 0.30, 0.05, 0.07);
-  return kit;
-}
-
-/**
- * ══ A SERVICING RIG ═══════════════════════════════════════════════════════
- *
- * The deck's workhorse and the shape of everything on it: LOW, WIDE, BOXY,
- * PAINTED. A ruined-village kit has nothing this shape — its furniture is
- * tall, thin and broken, which is why a deck dressed from it reads as rubble.
- *
- * A chassis on castors, a bank of gauges, a hose reel, and a caution stripe
- * down the side. Nothing on it is above chest height.
- */
-export function servicingRig(kit, x, z, opts = {}) {
-  const M = mats();
-  const yaw = opts.yaw || 0;
-  const w = opts.width ?? 2.6, d = opts.depth ?? 1.5, h = opts.height ?? 1.15;
-  kit.slabAt(M.hull, x, h / 2, z, w, h, d, yaw);
-  kit.slabAt(M.caution, x, h * 0.78, z, w * 1.01, h * 0.16, d * 1.01, yaw);
-  kit.slabAt(M.dark, x, h + 0.12, z, w * 0.5, 0.24, d * 0.7, yaw);
-  /* The reel on the end, which is the piece that reads at distance. */
-  const rg = new THREE.CylinderGeometry(0.34, 0.34, 0.5, 12);
-  rg.rotateZ(Math.PI / 2);
-  kit.geoAt(M.dark, rg, x + Math.cos(yaw) * (w / 2 + 0.2), h * 0.62, z - Math.sin(yaw) * (w / 2 + 0.2));
-  for (const sx of [-1, 1]) {
-    for (const sz of [-1, 1]) {
-      const c = new THREE.CylinderGeometry(0.13, 0.13, 0.26, 8);
-      c.rotateZ(Math.PI / 2);
-      kit.geoAt(M.dark, c, x + sx * w * 0.36, 0.13, z + sz * d * 0.32);
-    }
-  }
-  return kit;
-}
-
-/**
- * ══ AN ORDNANCE TROLLEY ═══════════════════════════════════════════════════
- *
- * A low cradle with three shells on it, hazard-striped. It is here because a
- * hangar in a war has ammunition being moved across it, and because a long low
- * horizontal with three bright cylinders on it is instantly legible at forty
- * metres in a way a crate never is.
- */
-export function ordnanceTrolley(kit, x, z, opts = {}) {
-  const M = mats();
-  const yaw = opts.yaw || 0;
-  kit.slabAt(M.dark, x, 0.42, z, 3.0, 0.22, 1.0, yaw);
-  kit.slabAt(M.caution, x, 0.30, z, 3.02, 0.14, 1.02, yaw);
-  for (let i = 0; i < 3; i++) {
-    const g = new THREE.CylinderGeometry(0.17, 0.17, 2.4, 10);
-    g.rotateZ(Math.PI / 2);
-    if (yaw) g.rotateY(yaw);
-    kit.geoAt(M.stencil, g, x, 0.68, z + (i - 1) * 0.3);
-  }
-  for (const sx of [-1, 1]) {
-    const c = new THREE.CylinderGeometry(0.16, 0.16, 0.2, 8);
-    c.rotateZ(Math.PI / 2);
-    kit.geoAt(M.dark, c, x + sx * 1.2, 0.16, z);
-  }
-  return kit;
-}
-
-/**
- * ══ A LADDER STAND ════════════════════════════════════════════════════════
- *
- * Wheeled steps up to a platform with a handrail, which is how a crew reaches a
- * cockpit and is the one TALL thing a deck legitimately has. It replaces
- * `addScaffold`, which is builder's scaffolding: poles, boards and diagonal
- * bracing, i.e. a building site.
- */
-export function ladderStand(kit, x, z, opts = {}) {
-  const M = mats();
-  const yaw = opts.yaw || 0;
-  const h = opts.height ?? 2.6;
-  const steps = Math.max(3, Math.round(h / 0.34));
-  for (let i = 0; i < steps; i++) {
-    const t = i / (steps - 1);
-    kit.slabAt(M.hull, x - Math.sin(yaw) * (1.1 - t * 1.1), 0.16 + t * h,
-      z - Math.cos(yaw) * (1.1 - t * 1.1), 0.9, 0.06, 0.3, yaw);
-  }
-  kit.slabAt(M.hull, x, h + 0.2, z + 0.5, 1.1, 0.08, 1.2, yaw);
-  for (const sx of [-1, 1]) {
-    kit.slabAt(M.hull, x + sx * 0.5, h + 0.72, z + 0.5, 0.06, 1.0, 0.06, yaw);
-  }
-  kit.slabAt(M.caution, x, h + 1.2, z + 0.5, 1.1, 0.07, 0.07, yaw);
-  return kit;
-}
-
-/**
- * ══ A CABLE SPOOL AND A CHOCK ═════════════════════════════════════════════
- *
- * The two smallest pieces, and they are here for the same reason the tie-downs
- * are: the floor of a working deck is never empty, and what is on it is small,
- * heavy and painted.
- */
-export function cableSpool(kit, x, z) {
-  const M = mats();
-  for (const dy of [0, 0.62]) {
-    const g = new THREE.CylinderGeometry(0.62, 0.62, 0.07, 16);
-    kit.geoAt(M.dark, g, x, 0.35 + dy, z);
-  }
-  const drum = new THREE.CylinderGeometry(0.4, 0.4, 0.6, 14);
-  kit.geoAt(M.hull, drum, x, 0.66, z);
-  return kit;
-}
-
-export function chock(kit, x, z, yaw = 0) {
-  const M = mats();
-  kit.slabAt(M.caution, x, 0.09, z, 0.5, 0.18, 0.34, yaw);
-  return kit;
-}
-
 /**
  * ══ THE BUILDER EVERY PART ABOVE EMITS INTO ═══════════════════════════════
  *
@@ -529,4 +321,175 @@ export class DeckBuild {
 
   /** How many primitives went in, for a check that wants to price the room. */
   get count() { let n = 0; for (const g of this.bins.values()) n += g.length; return n; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE STRUCTURE — every part measured off assets/reference/misc             */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+const _mats = {};
+/** The room's materials. Six of them, and six is the discipline. */
+export function deckMats() {
+  if (_mats.hull) return _mats;
+  /* MONOCHROME BLUE-GREY, rule 6. Not one of these is warm and not one is
+   * saturated: in seven references the only colour is a red status lamp. */
+  _mats.hull = new THREE.MeshStandardMaterial({ color: 0x545d68, roughness: 0.66, metalness: 0.35 });
+  _mats.dark = new THREE.MeshStandardMaterial({ color: 0x272d35, roughness: 0.72, metalness: 0.3 });
+  _mats.deep = new THREE.MeshStandardMaterial({ color: 0x14181e, roughness: 0.8, metalness: 0.2 });
+  /**
+   * THE STRIP. Rule 4: light in these rooms is thin bright bars set into the
+   * structure, in ranks, and there is not one visible lamp head in any of the
+   * seven images. So the strip is EMISSIVE — it is the thing you see, not a
+   * thing that is lit — and it is the only white in the room.
+   */
+  _mats.strip = new THREE.MeshStandardMaterial({
+    color: 0x0b0e12, emissive: 0xdae8ff, emissiveIntensity: 3.0, roughness: 0.4,
+  });
+  /* The only colour. Status lamps on the overhead fixtures, exactly as in
+   * `hangar 7.jpg`, and nothing else in the room is allowed any. */
+  _mats.status = new THREE.MeshStandardMaterial({
+    color: 0x1a0c0c, emissive: 0xff3418, emissiveIntensity: 2.4, roughness: 0.5,
+  });
+  /* What a parked fighter is: near-black panels on a grey spine. */
+  _mats.wing = new THREE.MeshStandardMaterial({ color: 0x1c2128, roughness: 0.58, metalness: 0.45 });
+  return _mats;
+}
+
+/**
+ * ══ A RACK BAY — the thing that makes this a hangar ════════════════════════
+ *
+ * `assets/reference/REFERENCES.md` rule 3, and it is the piece the first two
+ * dressings of this room did not have at all. In `hangar 7.jpg` both side walls
+ * are ranks of ANGLED ALCOVES receding to a vanishing point, each holding a
+ * fighter, dozens of them. In 3, 4 and 6 the same thing with the fighters on
+ * overhead mounts. **That is what "rows and rows of ships" is** — the floor
+ * stays clear and the ships are stored in the walls.
+ *
+ * The first version parked three ships on the deck and called it a hangar. Ten
+ * per side, receding, is a different room.
+ *
+ * ONE BAY IS: a canted back panel, two ribs framing it, a full-height light
+ * strip in the recess between them (rule 4), a mount arm, and a fighter hung
+ * off it. Everything merges, so a wall of ten costs what one costs.
+ */
+export function rackBay(kit, x, y, z, opts = {}) {
+  const M = deckMats();
+  const s = opts.side ?? 1;              // -1 port, +1 starboard
+  const w = opts.width ?? 15;
+  const h = opts.height ?? 21;
+  const cant = opts.cant ?? 0.16;        // the lean that makes the wall read
+
+  /* The recess: a dark back panel set into the wall, canted out at the top. */
+  kit.slabAt(M.deep, x - s * 1.2, y, z, 1.6, h, w * 0.92, -s * cant);
+  /* The ribs either side of it, proud, which is what gives the wall its rhythm
+   * when ten of them recede. */
+  for (const dz of [-1, 1]) {
+    kit.slabAt(M.hull, x, y, z + dz * w * 0.47, 3.2, h * 1.04, w * 0.06, -s * cant);
+  }
+  /* THE STRIP, full height in the recess. Ten of these down a wall is the
+   * single most recognisable thing in `hangar 1.webp` and `hangar 5.webp`. */
+  kit.slabAt(M.strip, x - s * 2.0, y, z, 0.5, h * 0.78, 0.9, -s * cant);
+  /* The mount arm out of the recess, and the fighter on it. */
+  kit.slabAt(M.hull, x - s * 3.6, y + h * 0.06, z, 4.4, 1.1, 1.1);
+  if (opts.ship !== false) parkedFighter(kit, x - s * 7.2, y + h * 0.06, z, s);
+  return kit;
+}
+
+/**
+ * ══ A PARKED FIGHTER, IN SILHOUETTE ═══════════════════════════════════════
+ *
+ * Two big flat panels and a body between them — the TIE read, which is what
+ * every one of the four references with fighters in it shows: at rack distance
+ * a fighter is a pair of dark hexagonal slabs and a ball. Modelling more would
+ * be modelling what the haze eats.
+ *
+ * `Vehicles.js` has real hulls and they are the wrong tool here: each is
+ * transform-owned per frame by a director, none has a parked pose, and twenty
+ * of them is twenty times the geometry for a shape that is 30 px wide at the
+ * far end of the wall.
+ */
+function parkedFighter(kit, x, y, z, s) {
+  const M = deckMats();
+  const w = 7.4, t = 0.55;
+  for (const dz of [-1, 1]) {
+    /* The panel, canted in at the top the way a TIE's wing is. */
+    kit.slabAt(M.wing, x, y, z + dz * 3.4, w * 0.62, w, t, 0);
+  }
+  /* The pylon and the ball. */
+  kit.slabAt(M.dark, x, y, z, 1.5, 1.5, 6.4);
+  const ball = new THREE.SphereGeometry(1.9, 10, 8);
+  kit.geoAt(M.dark, ball, x, y, z);
+  /* The one bright spot on it — the cockpit, catching the strip behind. */
+  const eye = new THREE.CylinderGeometry(1.05, 1.05, 0.3, 10);
+  eye.rotateZ(Math.PI / 2);
+  kit.geoAt(M.hull, eye, x - s * 1.75, y, z);
+  return kit;
+}
+
+/**
+ * ══ AN OVERHEAD FIXTURE ═══════════════════════════════════════════════════
+ *
+ * `hangar 7.jpg`: massive cylinders dropping from above with clusters of red
+ * status lamps, cut off by the top of the frame. They are how the overhead
+ * reads as enormous WITHOUT a ceiling ever being drawn — the eye follows them
+ * up and out, and the room is as tall as it wants to be.
+ *
+ * This is the one thing the first version got right, as spars. These are
+ * heavier and they carry the only colour in the room.
+ */
+export function overheadRig(kit, x, z, opts = {}) {
+  const M = deckMats();
+  const top = opts.top ?? 64;
+  const drop = opts.drop ?? 16;
+  const r = opts.radius ?? 3.1;
+  const g = new THREE.CylinderGeometry(r, r * 0.86, drop, 12);
+  kit.geoAt(M.dark, g, x, top - drop / 2, z);
+  /* The collar, and the lamps round it. */
+  const c = new THREE.CylinderGeometry(r * 1.24, r * 1.24, 1.4, 12);
+  kit.geoAt(M.hull, c, x, top - drop + 1.2, z);
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + 0.4;
+    kit.slabAt(M.status, x + Math.cos(a) * r * 1.3, top - drop + 1.2, z + Math.sin(a) * r * 1.3,
+      0.5, 0.5, 0.5);
+  }
+  /* And the shaft continuing up out of frame — no cap, ever. */
+  const up = new THREE.CylinderGeometry(r * 0.7, r * 0.7, 40, 10);
+  kit.geoAt(M.dark, up, x, top + 18, z);
+  return kit;
+}
+
+/**
+ * ══ A CATWALK ═════════════════════════════════════════════════════════════
+ *
+ * `hangar 6.jpg` puts a single figure on one, halfway up the back wall, and it
+ * is the whole scale of that image. A walkway a person could be standing on
+ * tells you how big the wall behind it is, and nothing else in a room this
+ * empty does.
+ */
+export function catwalk(kit, x, y, z, len, opts = {}) {
+  const M = deckMats();
+  const yaw = opts.yaw ?? 0;
+  kit.slabAt(M.dark, x, y, z, len, 0.5, 3.0, yaw);
+  kit.slabAt(M.hull, x, y + 1.0, z + 1.4, len, 0.12, 0.12, yaw);
+  const n = Math.max(2, Math.round(len / 5));
+  for (let i = 0; i <= n; i++) {
+    const t = (i / n - 0.5) * len;
+    kit.slabAt(M.hull, x + Math.cos(yaw) * t, y + 0.55, z - Math.sin(yaw) * t + 1.4, 0.1, 1.0, 0.1);
+  }
+  /* Under-lighting, which is what makes a catwalk read at distance. */
+  kit.slabAt(M.strip, x, y - 0.34, z, len * 0.94, 0.12, 0.4, yaw);
+  return kit;
+}
+
+/** A crate cluster — `hangar 7.jpg` has them in loose groups, low and dark. */
+export function crates(kit, x, z, n = 5, seed = 1) {
+  const M = deckMats();
+  let r = seed * 9301;
+  const rnd = () => ((r = (r * 9301 + 49297) % 233280) / 233280);
+  for (let i = 0; i < n; i++) {
+    const w = 1.6 + rnd() * 1.4, h = 1.2 + rnd() * 1.0;
+    kit.slabAt(i % 3 ? M.dark : M.hull, x + (rnd() - 0.5) * 7, h / 2, z + (rnd() - 0.5) * 7,
+      w, h, w * 0.8, rnd() * 0.6);
+  }
+  return kit;
 }
