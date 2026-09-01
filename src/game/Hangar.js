@@ -905,7 +905,7 @@ export function dressHangar(world) {
    * wheel could never be built, `main.orderKeys` returned on its first line,
    * and every one of `DECK_ORDERS` was unreachable by any input the game has.
    */
-  world.command = deckCommand(world);
+  world.orders = deckCommand(world);
 
   /* THE ROOM'S SOUND, and it is not decoration: the pressure differential at
    * the field is measured at −12.1 dB A-weighted from the spawn to the lip,

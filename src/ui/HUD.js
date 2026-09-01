@@ -2621,7 +2621,27 @@ export class HUD {
      * director does and there is nothing for it to say in a mode with no
      * troops in it.
      */
-    if (world.command && this.el.orderwheel) {
+    /**
+     * ══ WHATEVER ANSWERS THE WHEEL, WHICH IS NOT ALWAYS `command` ═════════
+     *
+     * `world.command` does not mean "there is an order wheel"; everywhere else
+     * in this project it means "this is a commanded fight, with a roster, a
+     * manifest and an ending". `main.js` alone branches on it a dozen times —
+     * to seal a manifest, to file a run report, to bank the permadeath roll,
+     * to open the muster panel — and the flight deck is none of those things.
+     *
+     * Setting `command` on the deck to get the wheel open was tried and it
+     * took `buildWorld` straight into the CommandDirector branch, where
+     * `d.roster.summary()` threw on an adapter that has no roster: the room
+     * would not load at all. `bank()` was the one that got noticed; there were
+     * eleven more behind it.
+     *
+     * So the wheel gets its own handle. A fight sets `command` and nothing
+     * else; the deck sets `orders` and nothing else; this line is the only
+     * place the two meet.
+     */
+    const wheelDir = world.command || world.orders;
+    if (wheelDir && this.el.orderwheel) {
       /**
        * THE TABLE COMES OFF THE DIRECTOR, so the flight deck can put its own
        * orders in the same wheel.
@@ -2635,22 +2655,22 @@ export class HUD {
        *
        * `ORDERS` stays the default, so every existing caller is unchanged.
        */
-      const table = world.command.orders || ORDERS;
+      const table = wheelDir.orders || ORDERS;
       if (!this.orders || this._orderTable !== table) {
         this.orders?.close?.();
         this.orders = new OrderWheel(this.el.orderwheel, table);
         this._orderTable = table;
       }
-      this.orders.director = world.command;
+      this.orders.director = wheelDir;
       const o = this.orders.update(input, this);
       if (o) {
-        if (o.kind === 'hold') world.command.hold?.();
-        else if (o.kind === 'squad') world.command.cycleSquad?.();
-        else if (o.kind === 'detach') world.command.detachNearest?.();
+        if (o.kind === 'hold') wheelDir.hold?.();
+        else if (o.kind === 'squad') wheelDir.cycleSquad?.();
+        else if (o.kind === 'detach') wheelDir.detachNearest?.();
         /* …AND THE ORDER CARRIES ITS TARGET. `selectedSquad` is null unless the
          * player has chosen one on this same wheel, and null is the whole army
          * — which is the behaviour every existing caller had and keeps. */
-        else world.command.order?.(o.id, null, world.command.selectedSquad);
+        else wheelDir.order?.(o.id, null, wheelDir.selectedSquad);
       }
     } else if (this.orders) {
       this.orders.close();

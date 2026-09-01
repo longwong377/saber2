@@ -2403,7 +2403,9 @@ function fallbackMuster(d) {
 
 function orderKeys() {
   if (screens.state !== 'playing') return;
-  const cmd = world?.command;
+  /* THE SAME TWO HANDLES `HUD` READS, and for the reason written there: the
+   * deck answers the wheel without being a commanded fight. */
+  const cmd = world?.command || world?.orders;
   if (!cmd) return;
   /**
    * ── WHO THE NEXT ORDER IS FOR, ON ITS OWN KEY ─────────────────────────

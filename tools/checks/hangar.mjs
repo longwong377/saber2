@@ -250,36 +250,40 @@ export async function run({ check, assert }) {
     });
     try {
       /**
-       * AND THE ASSERTION IS ABOUT `bank`, NOT ABOUT `world.command`.
+       * THIS CHECK WAS RIGHT AND I WAS WRONG TO WEAKEN IT.
        *
-       * It used to be `assert(!world.command)`, which was a proxy: at the time
-       * the only thing that ever set that field was a `CommandDirector`, so
-       * "no command" and "bank cannot fire" were the same sentence. They are
-       * not any more — the deck sets it deliberately, because `HUD.update`
-       * gates the order wheel on it and the brief asks for the real wheel in
-       * this room.
+       * Wanting the real order wheel on the deck, I set `world.command` to a
+       * small adapter and rewrote this assertion to allow it — reasoning that
+       * "no command" was only ever a proxy for "bank cannot fire". It is not.
+       * `world.command` means "this is a commanded fight, with a roster, a
+       * manifest and an ending" in a dozen places, and the very next thing to
+       * read it was `buildWorld`, which calls `d.roster.summary()` on it: the
+       * room threw on load and did not appear at all. `bank()` executing the
+       * permadeath roll was the second consequence, not the only one.
        *
-       * A proxy that stops being true is worse than no check: it goes red on
-       * a change that is correct and tempts whoever is holding the change to
-       * delete it. So this asserts the thing that actually matters, which is
-       * that `bank()` refuses this world — and it asserts it against `bank`'s
-       * own gate rather than restating it, because a restatement is the second
-       * copy of the rule and would pass while the real one rotted.
+       * So the assertion is back exactly as it was, and the wheel got its own
+       * handle instead. `world.orders` is read by `HUD.update` and
+       * `main.orderKeys` and by nothing else.
        */
-      assert(!(world.command instanceof CommandDirector),
-        `the flight deck built a ${world.command?.constructor?.name} — a real director on this `
-        + 'deck brings a roster, a manifest and an ending with it');
-      assert(world.command?.deck === true,
-        'the deck\'s command adapter does not declare itself a deck. `main.bank()` returns early '
-        + 'on `d.deck`, and its rule for a deployed man who is not on an extraction manifest is '
-        + 'that he is dead — so without that flag, walking out of this room strikes the whole '
-        + 'permadeath roll, silently, every single visit');
+      assert(!world.command,
+        'the flight deck set world.command — every other reader of that field takes it to mean a '
+        + 'commanded fight with a roster and an ending. buildWorld calls d.roster.summary() on it '
+        + 'and bank() treats every deployed man not on an extraction manifest as dead, so this is '
+        + 'both a room that will not load and a roll that gets struck off on the way out');
+      assert(world.orders?.deck === true,
+        'the deck has no order adapter on world.orders, so HUD cannot build the order wheel and '
+        + 'every one of DECK_ORDERS is unreachable by any input the game has');
+      assert(!(world.orders instanceof CommandDirector),
+        'the deck put a real CommandDirector on world.orders — it brings a roster, a manifest '
+        + 'and an ending with it, none of which exist in a room where nothing is shooting');
       assert(world.director instanceof HangarDirector,
         `the deck built a ${world.director?.constructor?.name} instead of a HangarDirector`);
       assert(!world.manifest, 'the deck sealed a manifest');
-      /* AND THE GATE IS READ FROM `main.js` ITSELF, so this check fails the day
-       * somebody deletes the `d.deck` term rather than the day somebody
-       * notices. A test that owns its own copy of the rule tests its copy. */
+      /* AND `bank`'s OWN GATE STILL CARRIES THE `d.deck` TERM, which is belt
+       * and braces now rather than the load-bearing guard: nothing assigns the
+       * adapter to `world.command` any more. It stays because the next person
+       * who wants the wheel on some other screen will reach for `command`
+       * first — I did — and this is the sentence that catches them. */
       const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
       /* FROM THE DECLARATION TO THE FIRST `return`, which is where every gate
        * in that function lives. The first attempt matched to the first line
@@ -294,7 +298,7 @@ export async function run({ check, assert }) {
         'main.bank() no longer returns early for a deck adapter — the flight deck sets '
         + '`world.command` to open the order wheel, and bank() executes the roll of any world '
         + 'that has one');
-      return 'allies forced to 8: no CommandDirector, no manifest, and bank() refuses the deck';
+      return 'allies forced to 8: no command, no manifest, wheel on world.orders, bank() still refuses a deck';
     } finally { world.unload(); }
   });
 
