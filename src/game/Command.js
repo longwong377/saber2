@@ -2977,8 +2977,16 @@ export function commandConfig(settings) {
      * ZERO IS OFF and is the default, so every mode is exactly what it was
      * until the player asks for something else. `MODES.command`, `skirmish` and
      * `campaign` lead an army whatever this says: their army is the mode.
+     *
+     * AND A MODE MAY REFUSE ONE. `solo` says the mode IS one body against one
+     * body, so the slider cannot field a line in it however the player left it
+     * set — the same shape as `alwaysVersus` directly above, for the same
+     * reason: a persisted global carried in from another card. See
+     * `MODES.duel.solo` for what six troopers did to a ladder.
      */
-    contingent: clamp(Math.round(Number(s.allies) || 0), 0, MAX_STRENGTH),
+    contingent: MODES[s.mode]?.solo
+      ? 0
+      : clamp(Math.round(Number(s.allies) || 0), 0, MAX_STRENGTH),
     /**
      * WHAT THE CONTINGENT IS MADE OF, as an index into the army's own ladder.
      *

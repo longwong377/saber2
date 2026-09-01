@@ -275,6 +275,69 @@ export async function run({ check, assert }) {
       + 'the top of the ladder shown and refused';
   });
 
+  /**
+   * …AND A MODE THAT IS ONE BODY AGAINST ONE BODY FIELDS NOBODY, HOWEVER THE
+   * SLIDER WAS LEFT.
+   *
+   * The defect this check exists for, measured on the shipped build: `allies`
+   * is a PERSISTED GLOBAL. A player who dialled six troopers up in the Trial
+   * carried six into the Duel, `commandConfig` read the number with no mode
+   * gate, and `World.loadLevel` built a `CommandDirector` for a ladder. Six
+   * rifles cleared wave 1, and by wave 4 the run was the troopers’ — the
+   * player could stand still and win. `MODES.duel.blurb` says "No blasters, no
+   * crowd."
+   *
+   * WHY NO CHECK SAW IT: every other check in this file constructs its settings
+   * and passes `allies` explicitly, so no fixture ever carried a number in from
+   * a mode the player had left. `commandConfig`’s own note names this class —
+   * "a sticky global is exactly the class of bug a fresh fixture cannot find" —
+   * about `commandVersus`, one field up, and the same shape was under it.
+   *
+   * DERIVED AND NOT NAMED. The modes are read off the table by their own `solo`
+   * declaration, so the second ladder mode is held to this the day it is
+   * written and nothing here says "duel". The list is asserted non-empty first:
+   * a loop over nothing passes, and a check that passes when the feature is
+   * deleted is not a check.
+   *
+   * AND THE CONVERSE IS ASSERTED IN THE SAME BREATH. If `contingent` came back
+   * 0 for every mode — the slider broken outright — the first half of this
+   * would pass and the feature would be gone, so a mode WITHOUT the flag is
+   * driven through the same call with the same settings and has to field the
+   * six.
+   */
+  await check('a duel is one body against one body, whatever the ally slider was left at', async () => {
+    const { MODES } = await import('../../src/game/Waves.js');
+    const { commandConfig } = await import('../../src/game/Command.js');
+    const { idleInput } = await import('./_coop.mjs');
+    const solo = Object.keys(MODES).filter((k) => MODES[k].solo);
+    assert(solo.length >= 1, 'no mode declares `solo` — nothing refuses a contingent');
+    /* THE SETTINGS OBJECT IS THE POINT: one sticky global, carried across every
+     * mode exactly as a save file carries it. */
+    const sticky = { allies: 6, allyUnit: 0, allyArmy: -1 };
+    for (const k of solo) {
+      const cfg = commandConfig({ ...sticky, mode: k });
+      assert(cfg.contingent === 0,
+        `${MODES[k].name} took a contingent of ${cfg.contingent} off the sticky slider`);
+    }
+    const open = Object.keys(MODES).find((k) => !MODES[k].solo && !MODES[k].dojo
+      && !MODES[k].campaignOnly && k !== 'hangar' && k !== 'sandbox');
+    assert(open, 'every mode refuses a contingent — the slider does nothing at all');
+    assert(commandConfig({ ...sticky, mode: open }).contingent === 6,
+      `${open} lost the six the slider asked for — the gate is refusing everybody`);
+    /* AND THROUGH THE WORLD, because `commandConfig` returning 0 is only the
+     * first half: `World.loadLevel` is what turns a number into a director and
+     * bodies, and that is the layer the player met. */
+    const { w } = await world(solo[0], 'scoria', sticky);
+    try {
+      assert(!w.command, `${MODES[solo[0]].name} built a ${w.command?.constructor?.name} off the sticky slider`);
+      w.director?.start?.(1);
+      for (let i = 0; i < 4 * 30; i++) w.update(DT, idleInput());
+      const troops = w.enemies.filter((e) => e.trooper && !e.dead);
+      assert(troops.length === 0, `${troops.length} troopers walked into the ${MODES[solo[0]].name}`);
+      return `${solo.join(', ')} refuse a sticky 6 · ${open} still fields it · no trooper on the duel floor`;
+    } finally { w.dispose?.(); }
+  });
+
   await check('allies deploy in a mode and on a ground that never had them', async () => {
     const { canHarm } = await import('../../src/game/Player.js');
     const { idleInput } = await import('./_coop.mjs');

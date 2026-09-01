@@ -942,11 +942,13 @@
           hurts nobody; at 100% it can cost you a name off the roster. It scales damage only — a push still
           throws your sergeant as far as it throws a B1, and a grip still lifts him.</p>
         <label class="slider">Allied troops <input type="range" id="opt-allies" min="0" max="24" step="1" value="0"><b></b></label>
-        <p class="hint">How many named troopers deploy with you, in any mode on any ground. They carry ranks
-          and serials, take the seven formation orders on the order keys, and stay dead when they fall. Waves
-          are composed against the army standing in them, so more men mean a bigger fight, not an easier one;
-          losses are replaced one man every two waves cleared, never above the number set here. <b>0 is off.</b>
-          Command, Skirmish and Campaign ignore this — their army comes with the mode.</p>
+        <p class="hint">How many named troopers deploy with you, in any mode that fights a wave, on any ground.
+          They carry ranks and serials, take the seven formation orders on the order keys, and stay dead when
+          they fall. Waves are composed against the army standing in them, so more men mean a bigger fight, not
+          an easier one; losses are replaced one man every two waves cleared, never above the number set here.
+          <b>0 is off.</b> Command, Skirmish and Campaign ignore this — their army comes with the mode. The
+          <b>Duel</b> and <b>Training</b> refuse it — a ladder is one body against one body, and a lesson has no
+          line in it — and this row greys out and says so when you pick one.</p>
         <!-- The word is an element because Menu._syncVersusBox rewrites it, the
              same way the bloom box's is: this setting is a persisted global and
              a meeting's opposing army is deployed by a PERSON, so a solo player

@@ -4639,6 +4639,9 @@ export class Menu {
     /* …AND A MODE THAT NEEDS OTHER PEOPLE SAYS SO HERE, for the same reason and
      * at the same moment. See `_syncSessionNeed`. */
     this._syncSessionNeed();
+    /* …and a mode that refuses the contingent, which is the same statement
+     * about a slider instead of a card. See `_syncAlliesRow`. */
+    this._syncAlliesRow();
     // A mode can pick its own theatre, and the theatre is what vetoes a rule.
     this._syncRules();
     // …and the Codex's purse table is the same director's answer to a different
@@ -5182,6 +5185,48 @@ export class Menu {
     }
     const row = document.getElementById('opt-command-versus-row');
     if (row) row.classList.toggle('overruled', !live);
+  }
+
+  /**
+   * THE SLIDER THAT THE MODE THROWS AWAY, SAYING SO BEFORE THE PLAYER DEPLOYS.
+   *
+   * `settings.allies` is a persisted global and `MODES.duel.solo` refuses it,
+   * so a player who left the slider at six and pressed Duel got a control set
+   * to "6 of 24" and a run with nobody in it. That is exactly the defect
+   * `_syncVersusBox` was written for one screen up — a lit control that the
+   * mode overrules in silence — and it gets the same three answers: the handle
+   * goes dead, the readout says the mode's name, and the row greys.
+   *
+   * NOT `disabled` ON THE SLIDER ALONE. `_slider` writes the `<b>` readout from
+   * the value, so a disabled range still reads "6 of 24" and the player has to
+   * infer the rest. The readout is the sentence — and it lives in the FORMATTER
+   * bound above, not stamped on the node here, because `_set` rewrites that
+   * node from the formatter on every write from anywhere.
+   *
+   * Read off `MODES[mode].solo` and never off `mode === 'duel'`, for the reason
+   * every other branch here gives: the table is what knows, and the next ladder
+   * mode gets this line free.
+   */
+  _syncAlliesRow() {
+    const slider = document.getElementById('opt-allies');
+    if (!slider) return;
+    const M = MODES[this.s.mode];
+    const barred = !!(M?.solo || M?.dojo);
+    slider.disabled = barred;
+    slider.parentElement?.classList.toggle('overruled', barred);
+    /* Repaint through `_set` rather than by writing the `<b>`, so the sentence
+     * comes off the one formatter that every other writer also goes through.
+     * `silent` — this is not the player moving the handle and it must not save
+     * or make a sound. */
+    this._set('allies', this.s.allies, true);
+    /* The two rows built by `_buildContingentControls` describe the contingent's
+     * shape, so they are as meaningless as the purse when there is no purse. */
+    for (const id of ['opt-ally-unit', 'opt-ally-army']) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      el.disabled = barred;
+      el.parentElement?.classList.toggle('overruled', barred);
+    }
   }
 
   /**
@@ -6231,11 +6276,21 @@ export class Menu {
        * never deploy one — a control that lies in the most expensive way this
        * tab can. The sentence stays honest and stops there. Read off the
        * mode's own declaration; see `dojo` in Waves.js.
+       *
+       * `solo` is the second declaration and it bars the door for the same
+       * reason with a different sentence: the Duel refuses a contingent in
+       * `commandConfig`, so this button set a slider that the mode then threw
+       * away — ten men named, saved, shown here and never landed. See
+       * `MODES.duel.solo`.
        */
-      if (M2?.dojo) {
-        hint(`${M2?.name || this.s.mode} is run by the dojo and fields no line at all. `
-          + 'Nothing you name here would land in it — pick a mode with an army and '
-          + 'the muster fills.');
+      if (M2?.dojo || M2?.solo) {
+        hint(M2?.solo
+          ? `${M2?.name || this.s.mode} is one body against one body and fields no line at all. `
+            + 'Nothing you name here would walk in with you — pick a mode with an army '
+            + 'and the muster fills.'
+          : `${M2?.name || this.s.mode} is run by the dojo and fields no line at all. `
+            + 'Nothing you name here would land in it — pick a mode with an army and '
+            + 'the muster fills.');
         return;
       }
       hint(`${M2?.name || this.s.mode} fields no army of yours. Raise a line and it `
@@ -8933,8 +8988,16 @@ export class Menu {
      * is 0 and not `OPENING_STRENGTH`, because 0 is what "no allies, the mode
      * as it was" means and it has to be reachable. */
     this._range('opt-allies', 0, MAX_STRENGTH, 1, 'allies');
-    this._slider('opt-allies', 'allies',
-      v => (v <= 0 ? 'none' : `${Math.round(v)} of ${MAX_STRENGTH}`));
+    /* THE READOUT CARRIES THE REFUSAL, and it is in the FORMATTER rather than
+     * written once by `_syncAlliesRow`, because `_set` repaints this `<b>` from
+     * `entry.fmt` on every write from anywhere — a sentence stamped on the node
+     * would be the correct answer until the next call and wrong afterwards. See
+     * `_syncAlliesRow`. */
+    this._slider('opt-allies', 'allies', (v) => {
+      const M = MODES[this.s.mode];
+      if (M?.solo || M?.dojo) return `not in ${M?.name || this.s.mode}`;
+      return v <= 0 ? 'none' : `${Math.round(v)} of ${MAX_STRENGTH}`;
+    });
     /* WHAT THE CONTINGENT IS MADE OF, AND WHOSE IT IS — the two halves the
      * shipped control could not say. Both rows are built HERE rather than in
      * index.html, off `ARMIES`, because every word in them is a fact about the
@@ -8949,6 +9012,7 @@ export class Menu {
     this._range('opt-ally-army', -1, ARMY_IDS.length - 1, 1, 'allyArmy');
     this._slider('opt-ally-army', 'allyArmy', v => contingentArmyName(Math.round(v)));
     this._check('opt-command-versus', 'commandVersus');
+    this._syncAlliesRow();
     this._syncVersusBox();
     /**
      * THE COMMANDER BATTLE'S FOUR, and every bound off the table that clamps

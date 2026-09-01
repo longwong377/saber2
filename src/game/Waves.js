@@ -244,6 +244,33 @@ export const MODES = {
      */
     ladder: true,
     /**
+     * ONE BODY AGAINST ONE BODY — AND SIX TROOPERS WALKED IN WITH THE PLAYER.
+     *
+     * `settings.allies` is a PERSISTED GLOBAL slider. A player who dialled a
+     * contingent up once in Waves carried it into every mode afterwards, and
+     * `commandConfig` read it with no mode gate at all, so `World.loadLevel`
+     * built a `CommandDirector` for the duel and dropped the contingent on the
+     * floor of a ladder. Measured at `allies: 6`: six trooper bodies on the
+     * ground, wave 1 cleared by blaster fire with no duellist dead by the
+     * player's hand, and by wave 4 the run was the troopers' — the player
+     * stood still and the ladder climbed itself.
+     *
+     * The card above says the mode IS one duel: "No blasters, no crowd." A
+     * crowd of six with rifles is the card lying, and the menu made it a
+     * one-click lie — the muster tab's "Take 10 troopers into Duel" button
+     * offered it as the fix for an empty page.
+     *
+     * A FLAG ON THE ROW rather than a `mode === 'duel'` test in `commandConfig`,
+     * for the reason `alwaysVersus` is one: the table is the one place that
+     * knows what a mode is, and the next ladder mode inherits the answer
+     * without naming itself anywhere. This is the same defect as the sticky
+     * `commandVersus` global that `alwaysVersus` was added to end, in the same
+     * function, one field down — see `commandConfig`'s own note, which says a
+     * sticky global is exactly the class of bug a fresh fixture cannot find,
+     * because every check passes `allies` explicitly per world.
+     */
+    solo: true,
+    /**
      * THE RUN RULES ARE LIT, WRITTEN TO SETTINGS AND THEN THROWN AWAY HERE.
      *
      * index.html promises without qualification that the rules "are in force

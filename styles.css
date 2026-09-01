@@ -804,6 +804,12 @@ h3::after{content:"";flex:1;height:2px;background:var(--panel-hi)}
   transform:translate(-50%,-50%) rotate(42deg)}
 .check.overruled{opacity:.55}
 .check input:disabled{cursor:not-allowed}
+/* A SLIDER THE MODE HAS OVERRULED, greyed exactly like the checkbox above and
+   for the same reason: `Menu._syncAlliesRow` kills the handle when the mode
+   refuses a contingent, and a live-looking control that ignores you reads as
+   the picker being broken. The readout beside it says which mode. */
+.slider.overruled{opacity:.55}
+.slider input:disabled{cursor:not-allowed}
 
 /* buttons ─────────────────────────────────────────────────────────────
    IGNITE IS THE LOUDEST OBJECT ON THE FRONT SCREEN, and it should be: it is
