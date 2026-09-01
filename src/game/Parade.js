@@ -70,6 +70,7 @@ const _hand = new THREE.Vector3();
 const _hand2 = new THREE.Vector3();
 const _axis = new THREE.Vector3();
 const _back = new THREE.Vector3();
+const _up = new THREE.Vector3();
 const _e = new THREE.Euler();
 const _q = new THREE.Quaternion();
 const _qa = new THREE.Quaternion();
@@ -166,6 +167,33 @@ export function paradeMan(rig, opts = {}) {
     grip: { pos: new THREE.Vector3(), dir: new THREE.Vector3(0, 1, 0) },
     /** Deferred matrices unless the caller says it is going to read bones. */
     readback: !!opts.readback,
+    /**
+     * ── THE FIGURE'S OWN FRAME, AND WHY IT IS CARRIED ────────────────────
+     *
+     * `Rig.solveIK` and `Rig.aimBoneWorld` are WORLD-space: the first reads
+     * `upper.obj.matrixWorld` for the chain root and the second composes
+     * against `getWorldQuaternion`. Everywhere else in the game that is free,
+     * because `BipedAnimator` writes the pelvis in world coordinates onto a
+     * bone under a rig root that is permanently identity at the origin.
+     *
+     * A parade figure is the one body in the game for which that is FALSE. The
+     * Company tab hangs each man off a holder at his slot and spins the whole
+     * formation on a pivot above them (`Menu._startStage`), so the root carries
+     * a translation and a rotation and both are live. Authored in the rig's own
+     * frame and handed straight to the solver, the first man in the rank
+     * reaches for a target four metres to his left: measured, a heel that
+     * should have been 1 mm off the deck ended 600 mm up with the leg at full
+     * stretch, and the error grew with the man's distance from the middle of
+     * the line, which is exactly what it looks like when a frame is missing.
+     *
+     * So everything in this file is authored in the FIGURE'S frame and
+     * converted at the three boundaries that need world — the IK targets and
+     * poles, the aim directions, and the bone positions read back — through
+     * these. Nothing else has to know.
+     */
+    _wm: new THREE.Matrix4(),
+    _wi: new THREE.Matrix4(),
+    _wq: new THREE.Quaternion(),
   };
 }
 
@@ -367,17 +395,17 @@ function plantFoot(rig, m, side, x, z, yaw) {
   if (!rig.get(upper) || !rig.get(lower)) return;
   _toe.set(Math.sin(yaw), 0, Math.cos(yaw));
   _pole.set(x, 0.46 * m.s, z).addScaledVector(_toe, 0.34 * m.s);
-  rig.freshPos(upper, _hip);
+  rig.freshPos(upper, _hip).applyMatrix4(m._wi);
   _pole.addScaledVector(_left, -_d.subVectors(_pole, _hip).dot(_left) - side * m.kneeIn);
   _ank.set(x, m.ankleY, z);
-  rig.solveIK(upper, lower, _ank, _pole);
+  rig.solveIK(upper, lower, _ank.applyMatrix4(m._wm), _pole.applyMatrix4(m._wm));
   if (!rig.get(foot)) return;
   /* The sole's bias is a rotation about the axis across the foot, which for a
    * level deck is `up × toe`. Level ground has no other tilt in it, so the
    * animator's contact-plane projection collapses to this one line. */
   _axis.crossVectors(UP, _toe).normalize();
-  _toe.applyAxisAngle(_axis, SOLE_BIAS);
-  rig.aimBoneWorld(foot, _toe, UP);
+  _toe.applyAxisAngle(_axis, SOLE_BIAS).applyQuaternion(m._wq);
+  rig.aimBoneWorld(foot, _toe, _up.copy(UP).applyQuaternion(m._wq));
 }
 
 /**
@@ -419,14 +447,15 @@ function bend(rig, name, px, py, pz) {
  * faces — and are rotated onto his yaw here, so every call site reads as a
  * body part instead of as world coordinates.
  */
-function hangArm(rig, side, yaw, out, flex, o = {}) {
+function hangArm(rig, m, side, yaw, out, flex, o = {}) {
   const arm = side > 0 ? 'armL' : 'armR';
   const fore = side > 0 ? 'foreL' : 'foreR';
   if (!rig.get(arm)) return;
-  _d.set(side * out, -1, o.back ?? 0).normalize().applyAxisAngle(UP, yaw);
+  _d.set(side * out, -1, o.back ?? 0).normalize().applyAxisAngle(UP, yaw).applyQuaternion(m._wq);
   rig.aimBoneWorld(arm, _d, null);
   if (!rig.get(fore)) return;
-  _d.set(side * (o.foreOut ?? out * 0.55), -1, flex).normalize().applyAxisAngle(UP, yaw);
+  _d.set(side * (o.foreOut ?? out * 0.55), -1, flex).normalize()
+    .applyAxisAngle(UP, yaw).applyQuaternion(m._wq);
   rig.aimBoneWorld(fore, _d, null);
 }
 
@@ -437,18 +466,20 @@ function hangArm(rig, side, yaw, out, flex, o = {}) {
  * `finger` is where the hand's own +Y is then aimed, or null to leave the hand
  * at whatever the forearm gave it.
  */
-function reachArm(rig, side, wrist, pole, finger) {
+function reachArm(rig, m, side, wrist, pole, finger) {
   const arm = side > 0 ? 'armL' : 'armR';
   const fore = side > 0 ? 'foreL' : 'foreR';
   const hand = side > 0 ? 'handL' : 'handR';
   if (!rig.get(arm) || !rig.get(fore)) return;
-  rig.solveIK(arm, fore, wrist, pole);
-  if (finger && rig.get(hand)) rig.aimBoneWorld(hand, finger, null);
+  rig.solveIK(arm, fore, wrist.applyMatrix4(m._wm), pole.applyMatrix4(m._wm));
+  if (finger && rig.get(hand)) rig.aimBoneWorld(hand, finger.applyQuaternion(m._wq), null);
 }
 
 /** Where the chest is, once the torso has been written. */
 function chestAt(m, out) {
-  return m.rig.get('chest') ? m.rig.freshPos('chest', out) : out.set(0, m.hip + 0.42 * m.s, 0);
+  return m.rig.get('chest')
+    ? m.rig.freshPos('chest', out).applyMatrix4(m._wi)
+    : out.set(0, m.hip + 0.42 * m.s, 0);
 }
 
 /* ── the stances ──────────────────────────────────────────────────────── */
@@ -516,11 +547,11 @@ export function attention(man, p) {
      * a few degrees of flex because a locked elbow reads as a mannequin. */
     for (const side of [1, -1]) {
       const f = side === idle.fidgetSide ? idle.fidget : 0;
-      hangArm(rig, side, yaw, 0.085 + f * 0.055, 0.055 + f * 0.16, { back: -0.015 });
+      hangArm(rig, m, side, yaw, 0.085 + f * 0.055, 0.055 + f * 0.16, { back: -0.015 });
     }
     /* No rifle: the fists are closed at the seams, and that is where a caller
      * hanging a sidearm would put it. */
-    if (rig.get('handR')) rig.freshPos('handR', man.grip.pos);
+    if (rig.get('handR')) rig.freshPos('handR', man.grip.pos).applyMatrix4(m._wi);
     man.grip.dir.set(0, -1, 0);
   }
   return man;
@@ -548,10 +579,10 @@ function portArms(man, p) {
   /* Elbows down and a little out — a rifle carried with the elbows winged is
    * a rifle nobody is holding. */
   _pole.copy(_chest).addScaledVector(_left, 0.62 * A).addScaledVector(UP, -0.72 * A);
-  reachArm(rig, 1, _hand, _pole, _d.copy(man.grip.dir).negate());
+  reachArm(rig, man, 1, _hand, _pole, _d.copy(man.grip.dir).negate());
   _pole.copy(_chest).addScaledVector(_left, -0.66 * A).addScaledVector(UP, -0.68 * A)
     .addScaledVector(_fwd, -0.10 * A);
-  reachArm(rig, -1, _hand2, _pole, _d.copy(man.grip.dir).negate());
+  reachArm(rig, man, -1, _hand2, _pole, _d.copy(man.grip.dir).negate());
 }
 
 /**
@@ -606,10 +637,10 @@ export function atEase(man, p) {
    * forearms clear the hips rather than folding through them. */
   _pole.copy(_chest).addScaledVector(_left, 0.80 * A).addScaledVector(UP, -0.62 * A)
     .addScaledVector(_fwd, -0.24 * A);
-  reachArm(rig, 1, _hand, _pole, null);
+  reachArm(rig, man, 1, _hand, _pole, null);
   _pole.copy(_chest).addScaledVector(_left, -0.80 * A).addScaledVector(UP, -0.62 * A)
     .addScaledVector(_fwd, -0.24 * A);
-  reachArm(rig, -1, _hand2, _pole, null);
+  reachArm(rig, man, -1, _hand2, _pole, null);
   return man;
 }
 
@@ -649,9 +680,9 @@ export function presentArms(man, p) {
   man.grip.pos.copy(_hand2);
   man.grip.dir.set(0, 1, 0);
   _pole.copy(_chest).addScaledVector(_left, 0.72 * A).addScaledVector(UP, -0.70 * A);
-  reachArm(rig, 1, _hand, _pole, _d.set(0, -1, 0));
+  reachArm(rig, man, 1, _hand, _pole, _d.set(0, -1, 0));
   _pole.copy(_chest).addScaledVector(_left, -0.72 * A).addScaledVector(UP, -0.70 * A);
-  reachArm(rig, -1, _hand2, _pole, _d.set(0, -1, 0));
+  reachArm(rig, man, -1, _hand2, _pole, _d.set(0, -1, 0));
   return man;
 }
 
@@ -683,7 +714,7 @@ function applySalute(man, p, k) {
   if (handR) _qc.copy(handR.obj.quaternion);
   axes(p.yaw);
   chestAt(man, _chest);
-  if (rig.get('head')) rig.freshPos('head', _head);
+  if (rig.get('head')) rig.freshPos('head', _head).applyMatrix4(man._wi);
   else _head.copy(_chest).addScaledVector(UP, 0.32 * A);
   /* The brow of the helmet, on the right side of it. */
   _hand.copy(_head).addScaledVector(_left, -0.085 * A)
@@ -696,7 +727,7 @@ function applySalute(man, p, k) {
    * in one straight line. */
   _pole.copy(_chest).addScaledVector(_left, -1.05 * A)
     .addScaledVector(UP, 0.14 * A).addScaledVector(_fwd, 0.34 * A);
-  reachArm(rig, -1, _hand2, _pole, _d);
+  reachArm(rig, man, -1, _hand2, _pole, _d);
   armR.obj.quaternion.slerp(_qa, 1 - k);
   foreR.obj.quaternion.slerp(_qb, 1 - k);
   if (handR) handR.obj.quaternion.slerp(_qc, 1 - k);
@@ -733,6 +764,15 @@ const _idle = {};
 export function poseParade(man, t, opts = {}) {
   const rig = man.rig;
   if (!rig) return man;
+  /* The figure's frame, as it stands THIS frame — the holder may have moved
+   * and the stage's pivot certainly has. `updateWorldMatrix(true, false)`
+   * walks UP to the scene and recomposes this one node, which is the ancestry
+   * the answer depends on and nothing below it; the note over `Rig.solveIK`
+   * makes the same argument about the same call. */
+  rig.root.updateWorldMatrix(true, false);
+  man._wm.copy(rig.root.matrixWorld);
+  man._wi.copy(man._wm).invert();
+  man._wm.decompose(_ank, man._wq, _d);
   turnState(man, t, _turn);
   idleOf(man, t, _idle);
   const p = {

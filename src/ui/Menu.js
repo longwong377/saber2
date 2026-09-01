@@ -3431,7 +3431,7 @@ export function buildParadeFigure(man) {
   const band = markById(man.look?.band)?.color;
   if (band != null) CommandDirector.prototype.bandUp.call(null, stub, band);
   if ((man.wounds | 0) > 0) CommandDirector.prototype.scorchUp.call(null, stub, man.wounds | 0);
-  return { root, rig, man, _stub: stub };
+  return { root, rig, man, _stub: stub, palette: built.palette ?? null };
 }
 
 /**

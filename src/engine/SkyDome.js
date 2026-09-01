@@ -64,6 +64,8 @@ import { clamp, smoothstep, TAU, DEG } from './MathUtil.js';
 const _lum = (c) => c.r * 0.2126 + c.g * 0.7152 + c.b * 0.0722;
 const _WHITE = new THREE.Color(1, 1, 1);
 const _scratch = new THREE.Color();
+const _UP = new THREE.Vector3(0, 1, 0);
+const _axis = new THREE.Vector3();
 
 /**
  * An authored swatch, demoted to a tint: renormalised to unit luminance so it
@@ -1265,7 +1267,238 @@ export class SkyDome {
     u.uHorizonColor.value.set(a.horizonColor ?? 0x6d6152);
     u.uWindDir.value = a.cloudWindDir ?? 0.7;
     u.uWindSpeed.value = a.cloudWindSpeed ?? 1;
-    this.mesh.visible = a.sky !== false && u.uOpacity.value > 0.001;
+    /* The void, for the orbit path, and it is the ROOM's colour rather than
+     * the planet's: a hangar already authors what the dark behind its aperture
+     * is, and two numbers for the same dark is how a seam appears along the
+     * lip of the opening. Halved, because bgColor is what an unlit corner of
+     * the deck reads as and space is darker than any corner. */
+    this._bg = a.bgColor ?? 0x0b0e14;
+    /* A level with no orbit block clears the mode outright rather than
+     * inheriting the last one's planet — configure() is the per-level entry
+     * point and the one place that is allowed to forget. */
+    this._orbit = null;
+    this.configureOrbit(a.orbit === true ? {} : a.orbit);
+    /* An interior with a window is still visible. Everything else is exactly
+     * the test that was here: a sky, and something to draw on it. */
+    this.mesh.visible = (a.sky !== false || this._orbit !== null)
+      && u.uOpacity.value > 0.001;
+  }
+
+  /**
+   * ══ THE WINDOW ════════════════════════════════════════════════════════
+   *
+   * Turn this dome into the view out of a ship in orbit: a planet, a
+   * starfield and a fleet action, all inside the fragment that was already
+   * being drawn, for zero new draw calls and zero new geometry.
+   *
+   *     sky.configureOrbit({ level: LEVELS[k], terrain: TERRAIN_PRESETS[t] })
+   *
+   * or, from a level record, so the mode is on from the moment
+   * `Engine.applyAtmosphere` runs:
+   *
+   *     atmosphere: { sky: false, bgColor: 0x05070c, orbit: true }
+   *
+   * `orbit: true` is the same as `orbit: {}` — defaults, a temperate world —
+   * and the level then calls this from its `dress` to say which world.
+   *
+   * ── IT TAKES THE LEVEL RECORD, NOT THE KEY, AND THAT IS NOT LAZINESS ──
+   *
+   * `Levels.js` imports Props, Scenery, Terrain, Enemy, Waves, Command,
+   * Vehicles and thirty more; `Engine` imports this file. Resolving a key here
+   * would close that ring, and the one cycle this file already has is safe
+   * only because every symbol in it is a hoisted function declaration. The
+   * caller has both tables in hand at the call site — it is one line there and
+   * a module graph here.
+   *
+   * ── EVERY SWATCH IS DERIVED ───────────────────────────────────────────
+   *
+   * Nothing about the world outside is authored. The land is the terrain's own
+   * `sandColor` — the same number `Terrain` hands the ground the player walks
+   * on — the highlands its `rockColor`, the low ground its `gritColor`, the
+   * sea `water.deep`, the ice line a function of how bright and how cold that
+   * ground swatch is, the weather the level's own `cloudCover`, the limb its
+   * `skyColor` and the star its `sunColor`. Measured over the roster:
+   *
+   *     level       ground albedo   b/r    ice    sea
+   *     alpine          0.512       1.29   1.00   dry
+   *     colosseum       0.273       0.27   0.10   dry
+   *     drifts          0.216       0.12   0.10   dry
+   *     geonosis        0.148       0.11   0.10   dry
+   *     wood            0.037       0.41   0.10   water
+   *     scoria          0.037       0.78   0     lava
+   *     mustafar        0.020       0.66   0     lava
+   *
+   * — so the White Pass really does put an ice world outside the window and
+   * the Ash Flats a black one with lava in the seams, and there is no new art
+   * data anywhere that had to be written for either.
+   *
+   * ── MERGE, NOT REPLACE ────────────────────────────────────────────────
+   *
+   * Calls fold into the stored spec, so the load order a level actually has —
+   * `applyAtmosphere` at stage 4 turning the mode on, `dress` at stage 6
+   * naming the theatre — works without either half having to know the other's
+   * fields. `configure` is the only thing that clears it.
+   *
+   * @param {object|null} spec
+   * @param {object} [spec.level]    a LEVELS record: the theatre outside
+   * @param {object} [spec.terrain]  its TERRAIN_PRESETS row
+   * @param {string} [spec.faction]  whose guns are which colour
+   * @param {number} [spec.time]     seconds into the battle; the clock runs on
+   * @param {number} [spec.size]     angular RADIUS of the disc, radians
+   * @param {number} [spec.period]   seconds for one cycle of the ship's drift
+   * @param {number} [spec.sway]     radians of that drift; 0 = a true sweep
+   * @param {number} [spec.day]      seconds for one rotation of the planet
+   * @param {number} [spec.stars]    starfield gain, 0 = none
+   * @param {number} [spec.fleet]    fleet gain, 0 = an empty sky
+   * @param {number} [spec.gain]     multiplier on the derived exposure
+   */
+  configureOrbit(spec) {
+    const u = this.mat.uniforms;
+    if (!spec) { u.uOrbit.value = 0; this._orbit = null; return; }
+    const o = this._orbit = Object.assign({}, this._orbit, spec);
+    const L = o.level || {};
+    const A = L.atmosphere || {};
+    const P = o.terrain || {};
+    const W = L.water || null;
+    const lava = !!W && W.kind === 'lava';
+
+    u.uOrbit.value = 1;
+    /* clouds:false is the switch for NO WEATHER IN THIS SKY and it means the
+     * cloud deck. It cannot be allowed to zero the window as well, so the
+     * orbit path states its own opacity. */
+    u.uOpacity.value = o.opacity ?? 1;
+
+    /* Albedo, in the renderer's linear space, exactly as Terrain reads the
+     * same three swatches. A planet is a lit body, so what a level authors is
+     * what fraction of the star it returns, and the LEVEL of it comes from
+     * uOrbitKey below — the same separation the cloud deck makes between a
+     * swatch and a radiance, and for the same reason. */
+    u.uLandCol.value.set(P.sandColor ?? L.groundColor ?? 0x8a7f6e);
+    u.uRockCol.value.set(P.rockColor ?? P.sandColor ?? 0x5c5044);
+    u.uBasinCol.value.set(P.gritColor ?? P.sandColor ?? 0x4a4238);
+    /* A lava sea is not a colour you see, it is a light you see BY, so it
+     * takes what the level says that light is — `water.sky`, the cast a lava
+     * field throws into the air above it — demoted to a hue like every other
+     * emissive swatch in this file. Water takes its own deep colour, which is
+     * an albedo and stays one. */
+    if (lava) unitLum(u.uSeaCol.value.set(W.sky ?? W.shallow ?? 0xdc4206));
+    else u.uSeaCol.value.set(W ? (W.deep ?? 0x123a4e) : (P.gritColor ?? 0x4a4238));
+    u.uSeaGlow.value = lava ? 1 : 0;
+    /* `water.level` is a HEIGHT on a heightfield, not a coverage — mustafar
+     * and the bog both sit at 0.0 and both are drowned — so what the record
+     * can honestly answer is whether this world has a sea at all. A world with
+     * one is about half water; a world without still has low ground, and 14%
+     * of basin is what stops a dry planet reading as one flat field. */
+    u.uSeaAmt.value = o.sea ?? (W ? 0.55 : 0.14);
+
+    /* THE ICE LINE, off the ground swatch and nothing else. A world is capped
+     * where its own surface is bright AND cold: alpine's snow is 0.512 linear
+     * at blue-over-red 1.29 and takes the caps to the tropics, the two lava
+     * grounds are 0.02-0.04 and warm and get none, and everything between
+     * keeps the 0.10 floor — every world with weather has poles. */
+    const g = _scratch.set(P.sandColor ?? L.groundColor ?? 0x8a7f6e);
+    u.uCapAmt.value = o.caps ?? (lava ? 0 : clamp(0.10
+      + 1.40 * smoothstep(0.16, 0.50, _lum(g))
+             * smoothstep(0.45, 1.15, g.b / Math.max(g.r, 1e-4)), 0, 1));
+
+    u.uCloudAmt.value = o.cloud ?? (A.cloudCover ?? 0.42);
+    tint(u.uPlanetLit.value.set(A.cloudLit ?? 0xfff6e6), 0.55);
+    tint(u.uPlanetDark.value.set(A.cloudDark ?? 0x9aa8bd), 0.30);
+    /* The limb IS the level's sky. That is not an analogy — the colour of the
+     * air seen edge-on from outside and the colour of it seen from underneath
+     * are the same scattering, and the level already states it. */
+    unitLum(u.uAtmoCol.value.set(A.skyColor ?? 0xbcd8ff));
+    unitLum(u.uStarCol.value.set(A.sunColor ?? 0xfff0d8));
+    u.uSpaceCol.value.set(o.space ?? this._bg ?? 0x0b0e14).multiplyScalar(0.5);
+
+    /* WHAT A WHITE FACE SQUARE TO THE STAR RETURNS, in the same radiance units
+     * as the rest of the frame — the planet's half of what uCloudSun is for
+     * the deck. 0.16 rather than 1/pi: a planet is a diffuse body seen at
+     * every phase at once, and metering it as one flat plate at normal
+     * incidence put alpine's 0.512 snow at 1.11 linear against a bloom
+     * threshold of 1.8, which is a white disc with no shading left in it.
+     * 0.16 lands the same snow at 0.56 — inside the range Engine's own note
+     * measures the White Pass's real snow at, 0.24 to 0.39, with the caps and
+     * the cloud tops above it and room under the threshold for a turbolaser to
+     * be the thing that blooms. */
+    u.uOrbitKey.value = o.key ?? ((A.sunIntensity ?? 3.6) * 0.16 * (o.gain ?? 1));
+
+    /* Two accents and no third. `BOLT_COLORS` is the game's own answer to what
+     * a blaster looks like; naming the pair here rather than importing it
+     * keeps Bolts.js out of Engine's import ring for two constants. */
+    const ours = o.faction === 'separatist' ? 0xff2a18 : 0x35b0ff;
+    u.uBoltCol.value.set(o.boltColor ?? ours);
+    u.uFoeCol.value.set(o.foeColor ?? (ours === 0x35b0ff ? 0xff2a18 : 0x35b0ff));
+
+    u.uStars.value = o.stars ?? 1;
+    u.uFleet.value = o.fleet ?? 1;
+    u.uDeathSpan.value = o.deathSpan ?? 240;
+
+    /* Geometry. The disc is stated as an angular RADIUS and everything the
+     * shader needs off it is the sine and the cosine, so the per-pixel limb
+     * test costs no trig at all. 0.34 rad is a 39° disc: the ask is 30-40% of
+     * the visible sky and a 39° body fills 39/60 of a 60° field across, which
+     * is a planet you cannot look past. */
+    const rad = o.size ?? 0.34;
+    u.uPlanetCos.value = Math.cos(rad);
+    u.uPlanetSin.value = Math.sin(rad);
+    this._planetHome = (this._planetHome || new THREE.Vector3())
+      .fromArray(o.at ?? [0.60, 0.22, -0.77]).normalize();
+    u.uPlanetAxis.value.fromArray(o.axis ?? [0.19, 0.94, 0.29]).normalize();
+    this._orbitPeriod = o.period ?? 1200;
+    /* THE DRIFT IS A SWAY, NOT A LAP, AND THAT IS A FRAMING DECISION.
+     *
+     * A true orbit takes the planet all the way round and out of the aperture,
+     * which is correct and useless: a room whose whole content is one view
+     * cannot have that view leave. A station-keeping yaw of ±24° over twenty
+     * minutes peaks at 0.126°/s — 23° of travel in three minutes, against a
+     * doorframe that is not moving — so the planet is unmistakably in motion
+     * every time you look, and it always comes back. `sway: 0` gives the lap
+     * instead, for a scene that wants one.
+     *
+     * The bob is a second rotation at an incommensurate rate and a fifth of
+     * the amplitude, so the path is a slow open figure rather than a line the
+     * eye can predict. */
+    this._orbitSway = o.sway ?? 0.42;
+    this._daySpan = o.day ?? 1800;
+    this._fleetOff = o.fleetOffset ?? 0.44;
+    /* The clock. Seeded once so a caller can put the fight where the fiction
+     * says it is, then advanced by update() — one number, no state, and a
+     * reload with the same seed replays the same battle frame for frame. */
+    if (spec.time != null) this._orbitT = spec.time;
+    else if (this._orbitT == null) this._orbitT = 0;
+    this._orbitTick(0);
+  }
+
+  /**
+   * Where the world is this frame. On the CPU rather than in the shader
+   * because the drift is four trig calls a FRAME here and would be four a
+   * PIXEL there, and because a caller that wants to point a light or a camera
+   * at the planet can then read uPlanetDir and get the truth.
+   */
+  _orbitTick(dt) {
+    const u = this.mat.uniforms;
+    this._orbitT += dt;
+    const t = this._orbitT;
+    u.uOrbitT.value = t;
+    const w = TAU / Math.max(this._orbitPeriod, 1);
+    const yaw = this._orbitSway > 0 ? Math.sin(t * w) * this._orbitSway : t * w;
+    const bob = Math.sin(t * w * 0.61 + 1.1) * Math.max(this._orbitSway, 0.35) * 0.20;
+    const dir = u.uPlanetDir.value.copy(this._planetHome);
+    dir.applyAxisAngle(_UP, yaw);
+    _axis.set(-dir.z, 0, dir.x).normalize();
+    dir.applyAxisAngle(_axis, bob).normalize();
+    /* The action sits beside the world rather than opposite it, so hulls cross
+     * the disc and read as silhouettes against something. It rides the same
+     * drift, because it is at the same distance. */
+    u.uFleetDir.value.copy(dir).applyAxisAngle(_UP, this._fleetOff).normalize();
+    /* The surface turns, the weather turns slower, and the sky behind both
+     * turns slower again — the last of those is the ship's own attitude and is
+     * the whole of the parallax between the planet and the stars. */
+    const day = TAU / Math.max(this._daySpan, 1);
+    u.uPlanetSpin.value = t * day;
+    u.uCloudSpin.value = t * day * 0.62;
+    u.uStarSpin.value = t * w * 0.11;
   }
 
   /**
@@ -1322,6 +1555,7 @@ export class SkyDome {
   update(dt, camera) {
     this.mat.uniforms.uTime.value += dt;
     this.mat.uniforms.uStorm.value = ground.weather ? ground.weather.intensity : 0;
+    if (this._orbit) this._orbitTick(dt);
     if (camera) this.mesh.position.copy(camera.position);
   }
 
