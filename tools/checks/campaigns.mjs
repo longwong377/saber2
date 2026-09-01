@@ -305,7 +305,20 @@ export async function run({ check, assert }) {
      */
     const { TERRAIN_PRESETS } = await import('../../src/world/Terrain.js');
     const { LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js');
-    const used = new Set(LEVEL_ORDER.map((k) => LEVELS[k]?.terrain));
+    /**
+     * EVERY LEVEL, NOT JUST THE ROSTER — because the question this check asks
+     * is whether a player can REACH the preset, and `LEVEL_ORDER` is only the
+     * grounds a fight can pick.
+     *
+     * The flight deck is the first level in this project that is reachable
+     * without being choosable: it is in `LEVELS`, deliberately out of
+     * `LEVEL_ORDER` (a hangar is not a theatre you can fight on, and putting
+     * it in the roster subscribes it to forty-seven suites about weather and
+     * spawn legality), and reached by a button on the Company page. Deriving
+     * from the roster called its ground orphaned while a player was standing
+     * on it.
+     */
+    const used = new Set(Object.values(LEVELS).map((L) => L?.terrain));
     const orphans = Object.keys(TERRAIN_PRESETS).filter((k) => !used.has(k)).sort();
     for (const k of used) assert(TERRAIN_PRESETS[k], `a level is built on '${k}', which is not a preset`);
     /**
