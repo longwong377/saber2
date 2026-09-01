@@ -134,24 +134,31 @@ console.log('deck:', JSON.stringify(info));
 const SHOT = { timeout: 180000 };
 if (!info.fail) {
   const shots = [
-    /* THE DECK IS 288 M ACROSS NOW with the aft bulkhead at z=-104 and the lip
-     * at z=+144, so the old camera list — every station inside a 40 m box —
-     * framed one bay and called it the room. These are the angles a person
-     * walking in actually gets. */
-    ['01-start', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -74 }],
-    ['02-start-aft', { yaw: Math.PI, pitch: 0.06, x: 0, y: 1.7, z: -74 }],
-    ['03-line', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -60 }],
-    ['04-mid', { yaw: 0, pitch: 0, x: 0, y: 1.7, z: -10 }],
-    ['05-port', { yaw: Math.PI / 2, pitch: 0.04, x: 0, y: 1.7, z: -30 }],
-    ['06-stbd', { yaw: -Math.PI / 2, pitch: 0.04, x: 0, y: 1.7, z: -30 }],
-    ['07-port-close', { yaw: Math.PI / 2, pitch: 0.05, x: -20, y: 1.7, z: 10 }],
-    ['08-lip', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: 120 }],
-    ['09-up', { yaw: 0, pitch: 1.2, x: 0, y: 1.7, z: -30 }],
-    ['10-diag', { yaw: 0.7, pitch: -0.02, x: -60, y: 1.7, z: -80 }],
+    /**
+     * AND THE FIRST ONE IS WHERE THE GAME ACTUALLY PUTS HIM.
+     *
+     * Every station here used to be a teleport to `DECK.start`, a constant no
+     * file in `src/` read — the level record declared no spawn, so the engine
+     * dropped the player 82 m away facing the other way, and every frame this
+     * room has ever been judged by was taken from a place the game does not
+     * put anyone. `00-spawn` takes no position at all: it is whatever the
+     * player was handed. The rest are the walk.
+     */
+    ['00-spawn', { keep: true }],
+    ['01-start-left', { yaw: -0.7, pitch: 0.02, keep: true }],
+    ['02-start-right', { yaw: 0.7, pitch: 0.02, keep: true }],
+    ['03-aft', { yaw: Math.PI, pitch: 0.10, keep: true }],
+    ['04-line', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -60 }],
+    ['05-mid', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: -10 }],
+    ['06-port', { yaw: Math.PI / 2, pitch: 0.10, x: 0, y: 1.7, z: -30 }],
+    ['07-port-close', { yaw: Math.PI / 2, pitch: 0.14, x: -34, y: 1.7, z: 0 }],
+    ['08-apron', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: 86 }],
+    ['09-lip', { yaw: 0, pitch: 0.04, x: 0, y: 1.7, z: 138 }],
+    ['10-up', { yaw: 0, pitch: 1.2, x: 0, y: 1.7, z: -30 }],
     /* TWO FROM ABOVE, because "rows and rows" is a claim about the plan of the
      * room and no eye-level shot can confirm or refute it. */
-    ['11-over', { yaw: 0, pitch: -0.55, x: 0, y: 46, z: -96, fly: true }],
-    ['12-over-wide', { yaw: 0, pitch: -0.35, x: -90, y: 34, z: -100, fly: true }],
+    ['11-over', { yaw: 0, pitch: -0.5, x: 0, y: 52, z: -120, fly: true }],
+    ['12-over-wide', { yaw: 0.5, pitch: -0.38, x: -100, y: 40, z: -110, fly: true }],
   ];
 
   for (const [name, v] of shots) {
@@ -159,7 +166,8 @@ if (!info.fail) {
       const raf = () => new Promise((r) => requestAnimationFrame(r));
       const p = window.SABER?.world?.player;
       if (p) {
-        p.position.set(v.x, v.y, v.z);
+        /* `keep` LEAVES HIM WHERE THE GAME PUT HIM. See the note on the list. */
+        if (!v.keep) p.position.set(v.x, v.y, v.z);
         if (p.camera) { p.camera.yaw = v.yaw; p.camera.pitch = v.pitch; }
         if (p.control) { p.control.yaw = v.yaw; p.control.pitch = v.pitch; }
       }

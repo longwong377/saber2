@@ -281,7 +281,15 @@ export async function run({ check, assert }) {
        * somebody deletes the `d.deck` term rather than the day somebody
        * notices. A test that owns its own copy of the rule tests its copy. */
       const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
-      const gate = /function bank\([^)]*\)\s*\{[\s\S]{0,3000}?\n\}/.exec(mainSrc)?.[0] || '';
+      /* FROM THE DECLARATION TO THE FIRST `return`, which is where every gate
+       * in that function lives. The first attempt matched to the first line
+       * that is a lone `}`, and `bank` has no such line inside three thousand
+       * characters — so the window was EMPTY and the assertion below tested a
+       * regex against the empty string. It would have failed for ever, which
+       * is at least the safe direction, but a check that cannot pass is not a
+       * check. */
+      const at = mainSrc.indexOf('function bank(');
+      const gate = at < 0 ? '' : mainSrc.slice(at, at + 2600);
       assert(/if\s*\(!d \|\| d\.deck/.test(gate),
         'main.bank() no longer returns early for a deck adapter — the flight deck sets '
         + '`world.command` to open the order wheel, and bank() executes the roll of any world '
