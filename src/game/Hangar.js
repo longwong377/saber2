@@ -52,6 +52,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { buildFigure, paradeMan, poseParade, salute, turnTo, stagger, STANCES } from './Parade.js';
 import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
+import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
 import { squadPlan, leadOf, SQUAD } from './Command.js';
 import { propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
   addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
@@ -383,6 +384,12 @@ export function dressHangar(world) {
    * floor with a button on it — "the filing in sells it more than the
    * standing", and it cannot sell anything if it has already happened. */
   callTheCompany(world);
+  /* THE ROOM'S SOUND, and it is not decoration: the pressure differential at
+   * the field is measured at −12.1 dB A-weighted from the spawn to the lip,
+   * with the energy under 200 Hz going 90% → 99%. Walking toward the shield
+   * audibly changes, which is the one thing that says a wall of light is
+   * holding out vacuum. */
+  dressDeckAudio(world, { army: world?._company?.army });
 }
 
 /**
@@ -459,7 +466,13 @@ export class HangarDirector {
    * body or a prop — the company walking in, halting and breathing goes
    * through here.
    */
-  update(dt) { stepCompany(this.world, dt); }
+  update(dt) {
+    stepCompany(this.world, dt);
+    /* AFTER the listener has moved, which is `World.update`'s own ordering —
+     * the pressure filter and every Doppler ratio are functions of where the
+     * player is standing THIS frame. */
+    stepDeckAudio(this.world, dt, this.world?.player?.camera?.obj || this.world?.player);
+  }
 }
 
 
@@ -673,6 +686,13 @@ export function stepCompany(world, dt) {
       man.marching = turnIn < 1;
     } else if (!row.halted) {
       row.halted = true;
+      c.halted = (c.halted | 0) + 1;
+      /* THE COMPANY HALTING IS ONE SOUND, not eleven. `bootHalt` coalesces
+       * inside a 55 ms window — shorter than the 64 ms it takes the sound to
+       * cross from the line to the player, so it can never be heard as
+       * latency — and ten men come out +11.8 dB on one with the sub share
+       * going 0% → 91%. Eleven separate footfalls would be a stutter. */
+      if (c.halted === c.men.length) bootHalt(world, { x: 0, y: 0, z: DECK.line }, c.men.length);
       fig.root.position.set(mark.x, 0, mark.z);
       fig.root.rotation.y = Math.PI;
       /* HE IS STANDING STILL NOW, so he can be folded. See the note above. */

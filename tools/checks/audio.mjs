@@ -115,6 +115,25 @@ class FakeCtx {
   createBiquadFilter() {
     const n = new Node(this, 'biquad');
     n.type = 'lowpass'; n.frequency = new Param(350); n.Q = new Param(1); n.detune = new Param(0);
+    /* A REAL `BiquadFilterNode` HAS FOUR AudioParams AND THIS HAD THREE. `gain`
+     * is the one the shelving and peaking types are steered by, and it exists
+     * on every biquad whatever the type is — so a caller reaching for it on a
+     * `lowshelf` (the flight deck's pressure tilt) or a `peaking` (the deck
+     * tannoy's horn resonance) threw `Cannot read properties of undefined`
+     * against this fake and worked in every browser. A fake that is missing a
+     * param is a fake that fails the code it is supposed to be measuring. */
+    n.gain = new Param(0);
+    return n;
+  }
+  /**
+   * The only nonlinearity in the project — see `DeckAudio.paCall`, which drives
+   * its PA through a soft-clip curve because that is what makes a tannoy a
+   * tannoy. Modelled to the extent the rest of this fake is: the curve is kept
+   * so a check can assert one was set, and nothing here computes samples.
+   */
+  createWaveShaper() {
+    const n = new Node(this, 'shaper');
+    n.curve = null; n.oversample = 'none';
     return n;
   }
   createDynamicsCompressor() {
