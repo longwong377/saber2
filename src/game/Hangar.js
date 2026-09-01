@@ -2119,6 +2119,21 @@ function stepRowInner(world, c, row, dt) {
         }
       }
     }
+    /* AND ROUND THE PIT, along its kerb. A straight line from the pad to a
+     * crowd spot on the port side crosses the pit; the kerb is a metre high
+     * and the body walked into it stayed in `Shovable`'s BACK state for
+     * ever. A step that would land inside the pit's zone is turned along
+     * the kerb toward the mark's side, and the corner is turned when the
+     * next step is clear again. */
+    {
+      const Z = DECK_ZONES.pit, M = 1.2;
+      const px = row.pos.x + nx * step, pz = row.pos.z + nz * step;
+      if (px >= Z.x0 - M && px <= Z.x1 + M && pz >= Z.z0 - M && pz <= Z.z1 + M) {
+        const x = row.pos.x, z = row.pos.z;
+        if (x > Z.x1 || x < Z.x0) { nx = 0; nz = Math.sign(dz) || 1; }
+        else { nz = 0; nx = Math.sign(dx) || 1; }
+      }
+    }
     row.pos.x += nx * step; row.pos.z += nz * step;
     /* THE FLOOR, AT A CLIMBING PACE. A pad's edge is a 0.45 m kerb and the
      * bay's floor is a metre over the ramp's foot; the feet are planted on
