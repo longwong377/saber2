@@ -162,7 +162,30 @@ export async function run({ check, assert }) {
     const second = squads[1].map((t) => t.body).filter(Boolean);
     for (const e of first) e.position.set(60, 0, 0);
     second.forEach((e, i) => e.position.set(0, 0, i < 2 ? 2 : 200));
-    d.order('cover', c, 0);
+    /**
+     * AND THE ORDER IS GIVEN FROM WHERE THEY ARE STANDING, THEN HE WALKS BACK.
+     *
+     * `cover` is a per-squad order on a non-advancing formation, so it is asked
+     * of both gates `order()` now keeps. The reach: `ORDER_REACH` is 34 m from
+     * the commander's body or from his pace anchor, and 1st Squad is 60 m out,
+     * so shouted from the origin every man in it refuses `out of reach`. And
+     * `unled`: an unsupervised hold wants a Sergeant in the squad or the
+     * general inside `RELAY_REACH` — 20 m — of its centroid, and 60 m is
+     * neither. Refused, `order()` writes nothing, no ground is planted, and the
+     * control arm would be measuring a squad that was never given ground rather
+     * than one standing on ground it was told to hold.
+     *
+     * So the general walks the 60 m, gives it at 0 m, and walks back. The plant
+     * is taken from the SQUAD's centroid at the moment the order lands and not
+     * from his body, so it stays at (60, 0, 0) after he leaves — which is the
+     * standing order the quorum reads, and the only version of it worth
+     * testing: a post the general has walked away from.
+     */
+    me.position.set(60, 0, 0);
+    const gave = d.order('cover', c, 0);
+    me.position.set(0, 0, 0);
+    assert(gave === true, 'the standing order the whole A/B is measured against was refused — '
+      + `${d.orderRefused || 'no reason recorded'}`);
     assert(d.lineGathered(c),
       'the line was down with 1st Squad standing on the ground it was ordered to hold and before '
       + 'any objective existed — the control arm is broken');

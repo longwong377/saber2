@@ -559,6 +559,30 @@ node tools/smoke.mjs --shots                     # real browser, real render
 
 ## 2. Traps. Read this before writing a tool.
 
+### 2.0 The two that cost the most time, every single session
+
+**`git checkout <file>` restores from the INDEX, not from HEAD.** So a mutation
+runner that ends each case with `git checkout -- src/game/Foo.js` silently
+throws away every UNCOMMITTED edit in that file. This has eaten real work three
+times in one session: a `Number.isInteger` fix, a whole `fate` field, and a
+`_unbury` method that then failed its own brand-new check with *"is not a
+function"*. **Commit before you mutate.** Always. And never leave a mutation
+runner going in the background while you edit the same file — it reverts
+underneath you between cases, and the failure looks like your edit was wrong.
+
+**`pkill -f "<pattern>"` matches the shell running it.** `pkill -f
+"tools/verify"` inside a command whose own line contains `tools/verify` kills
+that command. It has happened three times here, each time reported as an
+unexplained `exit 144` on a job that was working. Find the PID first
+(`pgrep -f`), then `kill` it, and keep the pattern out of the line that does the
+killing.
+
+**A full `verify.mjs` run is a snapshot of the tree AT ITS START.** Suites are
+imported lazily but `src/` modules are cached on first import, so editing source
+mid-run gives a mixed-state result: a check written against the new code runs
+against the old. A red from a run whose tree moved under it proves nothing. Kill
+it and start again on a clean tree.
+
 ### 2.1 Two copies of three
 
 `npm run verify` is `node --import ./tools/register.mjs tools/verify.mjs`. The
