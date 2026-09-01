@@ -9391,28 +9391,6 @@ export class CommandDirector extends WaveDirector {
      * — is a fact about the ground the moment the camera opens, not something
      * that appears after the first muster. See `marchTo`. */
     this.marchTo(this.areaNumber);
-    /**
-     * …AND NOBODY IS LEFT INSIDE WHAT IT RAISED.
-     *
-     * `marchFront` sites plates, wrecks and barricades knowing nothing about
-     * bodies, and it used to be sited on an empty field because the whole army
-     * had been withdrawn a moment earlier. Now the survivors are standing on
-     * that field while it is re-dressed.
-     *
-     * MEASURED across 5 seeds, 943 open sample points each within 30 m of the
-     * origin: **0.59 % of open ground becomes `placementClear`-blocked** by the
-     * engagement-5 march. With eight survivors that is roughly a one-in-twenty
-     * boundary putting one man inside a fresh wreck — small, real, and cheap
-     * to close. Terrain height under a survivor moved at most 0.23 m and
-     * bodies re-ground every frame, so craters need nothing.
-     *
-     * A RING SEARCH AND NOT A REDEPLOY: he keeps his body, his name and his
-     * wounds, and he steps out of the thing that was built on top of him. If
-     * no clear metre is found inside 6 m he is left where he is, because a man
-     * standing in a wreck is a worse picture than a man teleported across the
-     * field is a fix.
-     */
-    for (const c of this.commanders) this._unbury(c);
   }
 
   /**
@@ -11318,6 +11296,28 @@ export class CommandDirector extends WaveDirector {
      * changes under a player who is standing on it, which is §1's fifth line
      * and the mode's one-way visible variable. See `marchTo`. */
     this.marchTo(this.areaNumber);
+    /**
+     * …AND NOBODY IS LEFT INSIDE WHAT IT RAISED.
+     *
+     * `marchFront` sites plates, wrecks and barricades knowing nothing about
+     * bodies, and it used to be sited on an empty field because the whole army
+     * had been withdrawn a moment earlier. Now the survivors are standing on
+     * that field while it is re-dressed.
+     *
+     * MEASURED across 5 seeds, 943 open sample points each within 30 m of the
+     * origin: **0.59 % of open ground becomes `placementClear`-blocked** by the
+     * engagement-5 march. With eight survivors that is roughly a one-in-twenty
+     * boundary putting one man inside a fresh wreck — small, real, and cheap
+     * to close. Terrain height under a survivor moved at most 0.23 m and
+     * bodies re-ground every frame, so craters need nothing.
+     *
+     * A RING SEARCH AND NOT A REDEPLOY: he keeps his body, his name and his
+     * wounds, and he steps out of the thing that was built on top of him. If
+     * no clear metre is found inside 6 m he is left where he is, because a man
+     * standing in a wreck is a worse picture than a man teleported across the
+     * field is a fix.
+     */
+    for (const c of this.commanders) this._unbury(c);
     /* The card comes down on every OTHER machine too, and this is the half a
      * client cannot do for itself: the host's player pressing Done is the only
      * thing that ends the muster, so a peer sitting on an open card would sit

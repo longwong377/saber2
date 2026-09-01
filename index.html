@@ -1892,7 +1892,25 @@
      it is allowed to say.
      ═══════════════════════════════════════════════════════════════════════ -->
 <div id="meditation" class="screen hidden">
+  <!-- THE MENU'S OWN PLATE, AND ONLY FROM THE MENU.
+
+       "when looking at the holocron in the main menu the background should be
+       the same background that the main menu has (game title still at the top)
+       right now it has it's own thing."
+
+       It did: from the Temple the Holocron fell back to `.screen`'s near-black
+       wash, which is nothing in particular — a screen with no place behind it.
+       Mid-run it is correctly the world you knelt in (`.over-world`), and that
+       stays exactly as it was; this is the other door. Same image, same
+       overlay, same wordmark, so walking from the menu into the Holocron is
+       one room with a rack in it rather than two unrelated screens.
+
+       Both are hidden by `.over-world` in the stylesheet rather than by a
+       branch in SkillTree.js: the class already distinguishes the two ways in
+       and is set in one place. -->
+  <div class="menu-bg med-plate"></div>
   <div class="med-wrap">
+    <div class="logo small med-logo"><h1 class="wm"><img class="wordmark" src="./assets/menu/logo.webp" width="1729" height="470" alt="Battlefield Borz" decoding="async"></h1></div>
     <header class="med-head">
       <div>
         <h2 id="med-title">Connect to the Force</h2>

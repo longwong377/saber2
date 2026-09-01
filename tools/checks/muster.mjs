@@ -535,7 +535,12 @@ export async function run({ check, assert }) {
       const others = A.d.led(A.c).filter((t) => t !== one && t.body
         && clear(A.w, t.body.position.x, t.body.position.y, t.body.position.z))
         .map((t) => [t, t.body.position.clone()]);
+      const vec = one.body.position;
       const moved = A.d._unbury(A.c);
+      assert(one.body.position === vec,
+        'he was given a NEW position vector rather than moved — anything else holding a '
+        + 'reference to the old one (a plant, a slot, a physics body) is now looking at a '
+        + 'point he is not standing on');
       assert(moved >= 1, 'a man standing inside a wreck the front raised on him was left in it');
       assert(one.body === was, 'he was rebuilt rather than moved — his name and his wounds go with the body');
       assert(one.body.position.distanceTo(at) > 1,
@@ -613,6 +618,19 @@ export async function run({ check, assert }) {
     const { readFile } = await import('node:fs/promises');
     const { functionBody } = await import('./_source.mjs');
     const src = await readFile(new URL('../../src/game/Command.js', import.meta.url), 'utf8');
+    /* AND THE MARCH IS THE CALLER THAT DIGS THEM OUT. `_unbury` is driven
+     * directly above, which is blind to whether anything calls it: measured,
+     * deleting the call from `closeMuster` passed every assertion. The march
+     * is the one moment the ground is re-dressed under men who are standing on
+     * it, so that is where it has to be, immediately after `marchTo`. */
+    const closer = functionBody(src, '  closeMuster(');
+    const march = closer.indexOf('this.marchTo(');
+    const dig = closer.indexOf('_unbury(');
+    assert(march >= 0, 'closeMuster no longer marches the front');
+    assert(dig > march,
+      'nothing digs the survivors out after the front marches over them — `marchFront` sites '
+      + 'wrecks knowing nothing about bodies, and it used to run on an empty field');
+
     const boundary = functionBody(src, '  _areaClear(');
     const calls = [...boundary.matchAll(/this\.recall\(([^)]*)\)/g)].map((m) => m[1]);
     assert(calls.length === 1,

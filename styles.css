@@ -2178,6 +2178,15 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    overridden here, and the thin one is asked for by name.
    ══════════════════════════════════════════════════════════════════════ */
 #meditation{ z-index:44; }
+/* THE PLATE AND THE WORDMARK ARE THE MENU'S, and they are on only when the
+   menu is what you came from. `.menu-bg` carries the image and the wash; this
+   only has to place it behind the lattice and take both away again when the
+   Holocron is opened mid-run, where the place behind it is the world. */
+.med-plate{z-index:0}
+.med-logo{position:relative;z-index:2;margin:0 auto 4px;flex:0 0 auto}
+.med-logo .wordmark{max-width:min(340px,52vw);height:auto}
+#meditation.over-world .med-plate,
+#meditation.over-world .med-logo{display:none}
 #meditation.over-world{
   /* Thin, and NO BLUR — a blur is the one operator that takes a place away,
      and the place is the point. Two flat washes on a diagonal instead, so
@@ -2186,7 +2195,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
     linear-gradient(200deg,rgba(160,125,255,.10) 0 30%,transparent 30.4%),
     linear-gradient(0deg,rgba(4,5,12,.80),rgba(4,5,12,.62));
 }
-.med-wrap{display:flex;flex-direction:column;width:min(1180px,96vw);height:min(880px,94vh);
+/* POSITIONED, so it sits over `.med-plate`. `.menu-bg` is absolute with a
+   z-index, which makes it a stacking context that paints above any static
+   sibling — without this the plate covers the lattice entirely. */
+.med-wrap{position:relative;z-index:2;
+  display:flex;flex-direction:column;width:min(1180px,96vw);height:min(880px,94vh);
   padding:18px 20px 14px;gap:10px;animation:riseIn .6s cubic-bezier(.22,1,.36,1) both}
 .med-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;
   padding-bottom:10px;border-bottom:2px solid var(--panel-hi)}
