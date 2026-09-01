@@ -1835,11 +1835,25 @@ part of finishing, not something to ask about.
 1. **Uncommitted in the working tree:** `_army.mjs`'s new `army(mode)`
    parameter, `muster.mjs`'s real-Line boundary check, `_supervised`'s second
    mouth (`c._paceAnchor`), and `reach.16` (the constant relationships). All
-   four are written and `reach` is green at 16/16 and `muster` at 21/21.
-   **`theline` had not finished when the session ended** — it is the one suite
-   that could plausibly be moved by the `_supervised` change, so run it before
-   trusting the commit:
-   `node --import ./tools/register.mjs tools/_one.mjs theline`
+   four shipped in `a2cc1df`. Green at the time of the commit:
+
+       command 49/49 · licence 9/9 · squads 13/13 · reach 16/16
+       dig-in 6/6 · objectives 10/10 · muster 21/21 · controls 46/46
+       report 18/18 · session 11/11 · menu 31/31 · modes 4/4 · claims 16/16
+       spectacle 19/19 · touch 16/16 · hud-events 30/30
+
+   **`theline` IS THE ONE THAT WAS NOT RUN TO COMPLETION.** It timed out at
+   900 s twice, on a box carrying three headless-Chromium auditors — load
+   average 11 on 4 cores, which is §2.6b's law again. It is not red; it never
+   finished. It is also the one suite that could plausibly be moved by the
+   `_supervised` change (`c._paceAnchor` as a second mouth), so **run it on a
+   quiet box before trusting that commit**:
+
+       node --import ./tools/register.mjs tools/_one.mjs theline
+
+   If it is red, `_supervised` in `src/game/Command.js` is where to look — the
+   change makes supervision easier to satisfy, never harder, so a red there
+   would be a check asserting a refusal that no longer happens.
 2. **Three adversarial auditors were still running** on the HANGAR, launched
    after the fixes above: (a) the room's wiring and sky, re-verifying the six
    fixes the first hangar audit forced; (b) deck life, the company inspection
