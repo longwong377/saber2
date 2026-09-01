@@ -1868,4 +1868,68 @@ export async function run({ check, assert }) {
         + 'gone on release, every reading the world\'s own number';
     } finally { restore(); }
   });
+
+  check('hud: two messages on one frame are both said, and neither destroys the other', () => {
+    /**
+     * ══ THE DEFECT THIS EXISTS FOR, AND WHY NOTHING COULD SEE IT ══════════
+     *
+     * `#hud-center-msg` is one element with one timer. Four callers write it,
+     * and an audit of the order system found three separate places where two
+     * of them fire on the SAME FRAME and the second silently destroys the
+     * first. Every time, the loser carried the new information:
+     *
+     *   - `CommandDirector.order` says "2 OF 5 TOOK IT — three men are out of
+     *     reach, press again to send a runner", returns true, and `main.js`
+     *     writes "CHARGE / 2nd Squad" over it. The player sees an order
+     *     confirmed and three men who do not move, with no reason given.
+     *   - "THE ORDER DIED WITH HIM" is clobbered by "TROOPER DOWN" sixty lines
+     *     later in the same synchronous `onDeath` call. That sentence is the
+     *     whole reason the runner is a body rather than a timer, and it had
+     *     never been on screen for a single frame.
+     *   - "SQUAD 2 HAS THE GROUND" goes the same way.
+     *
+     * None of the three was visible to any check, because every check asked
+     * whether the CALLER fired — and all of them did. The loss happened one
+     * layer below, in a DOM write with no queue behind it. So this asks the
+     * question at the element: after two messages in one frame, has the second
+     * one erased the first, or is the first still going to be shown?
+     */
+    const { hud, restore } = hudOn();
+    try {
+      hud.message('2 OF 5 TOOK IT', 'Charge — 3 men — too far to hear you');
+      const first = hud.el.center.innerHTML;
+      assert(first.includes('2 OF 5'), 'the first message never reached the element at all');
+
+      // The same frame, the way main.js does it right after order() returns.
+      hud.message('CHARGE', '2nd Squad');
+      assert(hud.el.center.innerHTML === first,
+        'the second message on the same frame overwrote the first. One element, one timer, no '
+        + 'queue: the loser is always the line carrying the new information, and a player sees '
+        + 'an order confirmed with no word of the men who refused it');
+
+      // …and it is not merely dropped. It arrives when the first has had its turn.
+      /* `update` wants a world with a director on it; `stubWorld` is this
+       * file's own fixture for exactly that. Nine seconds is past any tier's
+       * duration, so the first message has certainly had its turn. */
+      hud.update(9, stubWorld({}), player(), null);
+      assert(hud.el.center.innerHTML.includes('CHARGE'),
+        'the queued message never arrived — queueing that silently drops the second message is '
+        + 'the same defect wearing the opposite mask');
+
+      /* AN ALARM DOES NOT WAIT ITS TURN. A threat you are standing in must not
+       * queue behind a level name. */
+      hud.message('LEVEL', 'somewhere');
+      hud.message('INCOMING', 'now', undefined, 'alarm');
+      assert(hud.el.center.innerHTML.includes('INCOMING'),
+        'an alarm queued behind a flavour line — an alarm that arrives late is not an alarm');
+
+      /* AND THE SAME LINE TWICE IS ONE LINE, because several callers fire on a
+       * repeating tick and would otherwise queue themselves forever. */
+      const before = hud._msgQ.length;
+      hud.message('INCOMING', 'now', undefined, 'alarm');
+      assert(hud._msgQ.length === before, 'a repeat of the line already showing was queued again');
+
+      return 'two on one frame: both said, in order; alarms preempt; repeats collapse';
+    } finally { restore(); }
+  });
 }

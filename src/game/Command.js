@@ -4866,8 +4866,11 @@ export class CommandDirector extends WaveDirector {
         ? `${F.name} — ${line.text}`
         : `${F.name} — nobody left to take it`;
       if (mine) {
-        this.world?.notify?.('NOT TAKEN', this.orderRefused
-          + (line?.why === 'out of reach' ? '. Press it again to send a runner.' : ''));
+        /* THE REMEDY IS IN THE LINE NOW, for every reason and not just for
+         * distance — see `_refusalLine`. The runner sentence was the only one
+         * that ever told a player what to do, which made the other three read
+         * as the game malfunctioning. */
+        this.world?.notify?.('NOT TAKEN', line ? `${F.name} — ${line.full}` : this.orderRefused, 'threat');
       }
       return false;
     }
@@ -4875,8 +4878,21 @@ export class CommandDirector extends WaveDirector {
     for (const r of ask.refused) r.t.order = before.get(r.t) || null;
     if (line && mine) {
       this.orderRefused = `${F.name} — ${line.text}`;
-      this.world?.notify?.(`${ask.took.length} OF ${total} TOOK IT`, this.orderRefused
-        + (line.why === 'out of reach' ? '. Press it again to send a runner.' : ''));
+      /**
+       * A PARTIAL REFUSAL IS THE COMMON ONE, and it was the one nobody saw.
+       *
+       * `line` is 27.7 m wide against a 34 m reach, so any squad centred near
+       * the boundary splits — this is the ORDINARY shape of a refusal, not the
+       * exotic one. `order()` returns true here, `main.js` then writes its own
+       * "CHARGE / 2nd Squad" confirmation, and with one banner element and no
+       * queue that second write destroyed this one on the same frame. The
+       * player saw an order confirmed and three men who did not move.
+       *
+       * `HUD.message` has a queue now, so both are said in turn; this one is
+       * raised to `threat` so it is not the one dropped if the queue fills.
+       */
+      this.world?.notify?.(`${ask.took.length} OF ${total} TOOK IT`,
+        `${F.name} — ${line.full}`, 'threat');
     } else if (mine) {
       this.orderRefused = null;
     }
@@ -5171,7 +5187,41 @@ export class CommandDirector extends WaveDirector {
     let why = null, n = 0;
     for (const [k, v] of by) if (v > n) { why = k; n = v; }
     const who = n === 1 ? (refused.find((r) => r.why === why)?.t?.name || 'one man') : `${n} men`;
-    return { why, n, text: `${who} — ${why}`, all: refused.length, total };
+    /**
+     * ══ AND EVERY REASON SAYS WHAT TO DO ABOUT IT ═════════════════════════
+     *
+     * The four reasons were printed as bare words — "3 men — unled" — and one
+     * of them is jargon that appears nowhere else in the game: not in the
+     * help, not in a tooltip, not in the coach. A player meeting it has been
+     * told an order failed, given a word they have never seen, and offered no
+     * verb.
+     *
+     * "Out of reach" was the only one with a remedy attached, and the
+     * asymmetry is the bug: it made the OTHER three look like the game being
+     * broken rather than the game having a rule. A refusal a player cannot act
+     * on is indistinguishable from a bug, which is the exact sentence this
+     * file's own header uses about the reach rule it was written to justify.
+     *
+     * So the remedy travels with the reason. `ORDER_REACH` and `RELAY_REACH`
+     * are read rather than typed, so a tuning change moves the sentence too.
+     */
+    const FIX = {
+      'out of reach': `too far to hear you — get within ${ORDER_REACH} m, or press it again to send a runner`,
+      shaken: 'too badly shaken to move — they will steady near you, or near a man they trust',
+      alone: 'nobody of theirs is near enough — bring them back to the line first',
+      unled: `nobody in that squad can hold this order without you — stand within ${RELAY_REACH} m of them, or promote a sergeant`,
+    };
+    return {
+      why,
+      n,
+      text: `${who} — ${why}`,
+      /* The same line with the remedy on it, for anywhere there is room to
+       * say it. `text` stays short for the places there is not. */
+      full: `${who} — ${FIX[why] || why}`,
+      fix: FIX[why] || null,
+      all: refused.length,
+      total,
+    };
   }
 
   /** Everything this commander leads, flat — his squads' troopers in order. */

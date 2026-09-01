@@ -1184,6 +1184,9 @@ export class HUD {
     this._rosterKey = null;
     this.hpGhostValue = 1;
     this.centerTimer = 0;
+    /* The centre banner's queue and what is on it. See `message`. */
+    this._msgQ = [];
+    this._msgNow = null;
     this._buildPowers();
     this._marks = [];
     /** Pooled nameplate nodes, one per living trooper. See `_nameplates`. */
@@ -1881,11 +1884,28 @@ export class HUD {
     const army = ARMIES[summary.army];
     if (this.el.rpArmy) this.el.rpArmy.textContent = army ? army.name : String(summary.army ?? '');
 
-    // A signature, so a summary that has not changed costs no innerHTML write.
-    // onRoster fires on every promotion and every death; the panel is cheap but
-    // it is not free, and a rebuild throws away the arrival animation.
+    /**
+     * A signature, so a summary that has not changed costs no innerHTML write.
+     * onRoster fires on every promotion and every death; the panel is cheap but
+     * it is not free, and a rebuild throws away the arrival animation.
+     *
+     * ══ AND `heard` IS IN IT, WHICH FROZE THE ONE READOUT THAT MOVES ══════
+     *
+     * `Command._announceRoster` publishes `row.heard` four times a second
+     * precisely so a player can see WHICH SQUADS ARE OUT OF EARSHOT before
+     * pressing an order — the whole answer to "a rule you can only discover by
+     * having an order fail is a rule that reads as the game being broken".
+     * `heard` was not in this key, so the early return threw every one of those
+     * updates away and the "out of reach" tag only ever appeared if somebody
+     * simultaneously died, scored a kill or was promoted. During the quiet
+     * repositioning phase — the only time you would read it — it never moved.
+     *
+     * The suite missed it because it drives `_announceRoster` and `rosterHtml`
+     * directly and asserts the callback FIRES. It was tested one call short of
+     * the screen.
+     */
     const key = `${summary.army}|${summary.points}|`
-      + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}`).join(',');
+      + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}${t.heard === false ? 'x' : ''}`).join(',');
     if (key === this._rosterKey) return;
     this._rosterKey = key;
 
@@ -2542,7 +2562,15 @@ export class HUD {
     // ── center message
     if (this.centerTimer > 0) {
       this.centerTimer -= dt;
-      if (this.centerTimer <= 0) el.center.classList.remove('on');
+      if (this.centerTimer <= 0) {
+        /* AND THE NEXT ONE TAKES THE ELEMENT. See `message` for why there is a
+         * queue at all: without it, two callers on one frame meant the second
+         * silently destroyed the first, and the loser was always the line
+         * carrying the new information. */
+        const next = this._msgQ && this._msgQ.shift();
+        if (next) this._showMessage(next);
+        else { this._msgNow = null; el.center.classList.remove('on'); }
+      }
     }
 
     // ── floating marks
@@ -2893,17 +2921,74 @@ export class HUD {
    * attached and the browser went and fetched the URL.
    */
   message(title, sub, duration, kind = 'flavour') {
-    /* THREE TIERS, ONE ELEMENT. The class is what the stylesheet reads; the
-     * DURATION is part of the tier too, because an alarm that hangs for the
-     * same 2.4 s as a level name is an alarm you scroll past. See World.notify
-     * for what each tier means. */
+    /**
+     * ══ THREE TIERS, ONE ELEMENT — AND NOW A QUEUE BEHIND IT ══════════════
+     *
+     * The class is what the stylesheet reads; the DURATION is part of the tier
+     * too, because an alarm that hangs for the same 2.4 s as a level name is an
+     * alarm you scroll past. See `World.notify` for what each tier means.
+     *
+     * THE QUEUE IS NOT A FLOURISH. It is the fix for a whole class of bug that
+     * an audit of the order system found three separate instances of, all with
+     * the same shape: two callers write this element on the SAME FRAME and the
+     * second one silently destroys the first. Every time, the loser was the
+     * message carrying the new information.
+     *
+     *   - `CommandDirector.order` says "2 OF 5 TOOK IT — three men are out of
+     *     reach, press again to send a runner", returns true, and `main.js`
+     *     then writes "CHARGE / 2nd Squad" over it. The player sees an order
+     *     confirmed and three men who do not move.
+     *   - "THE ORDER DIED WITH HIM" is written by `onDeath` and clobbered by
+     *     the generic "TROOPER DOWN" banner sixty lines later in the same
+     *     synchronous call. That sentence is the entire reason the runner is a
+     *     body instead of a timer, and it has never been on screen for a frame.
+     *   - "SQUAD 2 HAS THE GROUND" goes the same way.
+     *
+     * Fixing those one at a time would be three special cases and a fourth bug
+     * next month. One element with no queue is the defect; the callers were
+     * all behaving reasonably.
+     *
+     * WHAT THE QUEUE DOES: a message arriving while one is showing waits its
+     * turn rather than overwriting, and gets its own full duration. Two rules
+     * keep that from becoming a backlog you read after the moment has passed:
+     * an ALARM preempts anything softer immediately (a threat you are inside is
+     * not queued behind a level name), and the queue is capped — past three
+     * waiting the oldest flavour line is dropped, because a stale caption is
+     * worth less than a current one. A repeat of the line already showing is
+     * ignored outright.
+     */
     const k = kind === 'alarm' || kind === 'threat' ? kind : 'flavour';
+    const secs = duration ?? (k === 'alarm' ? 1.8 : k === 'threat' ? 2.6 : 2.4);
+    const item = { title, sub, secs, k };
+    this._msgQ = this._msgQ || [];
+
+    /* THE SAME LINE TWICE IS ONE LINE. Several callers fire on a repeating
+     * tick and would otherwise re-queue themselves forever. */
+    const same = (a, b) => a && b && a.title === b.title && a.sub === b.sub;
+    if (same(this._msgNow, item) || same(this._msgQ[this._msgQ.length - 1], item)) return;
+
+    /* AN ALARM DOES NOT WAIT. Anything softer showing is cut off. */
+    if (k === 'alarm' || this.centerTimer <= 0) { this._showMessage(item); return; }
+
+    this._msgQ.push(item);
+    if (this._msgQ.length > 3) {
+      /* Drop the oldest flavour line rather than the newest anything: past
+       * three deep the queue has become history. */
+      const i = this._msgQ.findIndex((m) => m.k === 'flavour');
+      this._msgQ.splice(i >= 0 ? i : 0, 1);
+    }
+  }
+
+  /** Put one on the element. The only writer of `#hud-center-msg`. */
+  _showMessage(item) {
     const el = this.el.center;
+    if (!el) return;
     el.classList.remove('flavour', 'threat', 'alarm');
-    el.classList.add(k);
-    el.innerHTML = `<b>${esc(title)}</b>${sub ? `<span>${esc(sub)}</span>` : ''}`;
+    el.classList.add(item.k);
+    el.innerHTML = `<b>${esc(item.title)}</b>${item.sub ? `<span>${esc(item.sub)}</span>` : ''}`;
     el.classList.add('on');
-    this.centerTimer = duration ?? (k === 'alarm' ? 1.8 : k === 'threat' ? 2.6 : 2.4);
+    this._msgNow = item;
+    this.centerTimer = item.secs;
   }
 
   floating(worldPos, text, color = '#fff') {
