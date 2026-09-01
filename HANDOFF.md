@@ -1815,6 +1815,66 @@ centre.
   sentence but still no pre-warning. Consider folding it into the standing-order
   confirmation rather than the refusal channel.
 
+### The build audit — and the thing it found that nothing else would have
+
+A third auditor was pointed at THE SHIPPED ARTEFACT rather than at any
+subsystem: build it, boot both the packed file and the raw repo in a real
+headless Chromium over HTTP, capture every console error in four modes, and
+hunt the black-screen class (bare specifiers, case mismatches, absolute paths).
+
+**The black-screen hypothesis was false.** 110 files scanned: zero bare
+specifiers, every import relative and case-exact against `readdirSync`, no
+importmap in the browser, all 12 `src`/`href` in index.html and both `url()` in
+styles.css resolve exact-case, no `<base>` tag so the `/saber2/` subpath is
+safe. Rapier's wasm is base64-embedded, so there is no separate fetch. **Raw
+repo: zero console errors, zero warnings, zero page errors, zero 404s** across
+boot, menu, waves, command, duel and hangar. All four modes render real
+gameplay, not a lit canvas.
+
+**What it did find is the one thing no subsystem audit could see.**
+
+**CI HAS BEEN RED FOR 19+ HOURS AND THE SITE SHIPPED IT.** `pages.yml` and
+`verify.yml` are INDEPENDENT workflows — a red gate has never blocked a deploy
+and still does not. 0 of the last 30 `verify (fast tier)` runs passed, back to
+2026-08-31T23:30. **If you change nothing else about the process, know this
+one: green Pages does not mean green checks.**
+
+The failure was `tools/checks/movement.mjs`, and it is worth reading as a
+specimen. A Command trooper 37.1 m behind an army that walked 35 m — and the
+check's WEDGE half PASSED the whole time, which is exactly what hid it. He was
+not stuck on anything. **His SLOT never came.** `_coverSite` caches an
+ABSOLUTE world point against an epoch: right for the two callers it was written
+for (an ordered hunt re-solves on `_coverEpoch`, a man under fire on his own
+burst count), and a permanent pin for the third. `careful` — the `holds` trait,
+added later — takes the reactive branch with `at = e._fireEpoch`, and a man
+nobody has ever shot at has an epoch of 0 for the whole battle. He was pinned
+to the first crate he found at spawn, with `cmdSlotDist` 1.1 so `steer` was
+satisfied and he simply stopped.
+
+That is failure shape (4) in its purest form — a trait wired into a cache keyed
+on something that only moves under fire — and the fix is the function's own
+invariant rather than a new key: `_coverSite` only ever moves a slot to a lee
+within `hunt` of it, so a cached point further than that from the slot being
+solved now is a point it could not have produced. Furthest man 37.1 → 14.8 m.
+
+**AND THE DEPLOYED TREE CARRIED A SECOND COPY OF THE GAME.** `--min`, 12.24 MB,
+tracked at the repo root since 2026-08-31, a complete PLAYABLE stale single-file
+build, served live at `/saber2/--min`. A botched `node tools/pack.mjs --min`
+took the flag as the output filename and `.gitignore` only knew the intended
+name (`borz-play.html`). CLAUDE.md forbids exactly this in as many words:
+*"That is the only one. No artifacts, no clones, no second copy anywhere."*
+With `assets/assets/` — 157 files, 63.9 MB, every one a byte-identical
+duplicate referenced by nothing — that was **38% of the deployed tree**. Both
+deleted.
+
+**A LESSON FOR THE PACKER.** It stripped `rel="icon"` along with
+`rel="preload"`, so every load of the single-file build 404'd on
+`/favicon.ico`, which falsified the notice that same build prints about itself
+fourteen lines above ("nothing was fetched and nothing can 404"). The
+`leftover` guard could not catch it: it only inspects `assets/` paths, and this
+was a request for a file the page never named. **A guard that only looks at
+paths you wrote cannot see a request the browser makes on its own.**
+
 ### WHERE THIS SESSION STOPPED — read this first if you are picking it up
 
 **Branch `claude/troop-management-redesign-5vovlm`. Six commits past the last
