@@ -134,14 +134,26 @@ console.log('deck:', JSON.stringify(info));
 const SHOT = { timeout: 180000 };
 if (!info.fail) {
   const shots = [
-    ['deck-forward', { yaw: 0, pitch: -0.05, x: 0, y: 1.7, z: -34 }],
-    ['deck-line', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -26 }],
-    ['deck-line-close', { yaw: 0, pitch: 0, x: -6, y: 1.7, z: -17 }],
-    ['deck-lip', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: 54 }],
-    ['deck-port', { yaw: -1.35, pitch: -0.02, x: 0, y: 1.7, z: -14 }],
-    ['deck-aft', { yaw: Math.PI, pitch: 0.05, x: 0, y: 1.7, z: -14 }],
-    ['deck-up', { yaw: 0, pitch: 0.85, x: 0, y: 1.7, z: 0 }],
+    /* THE DECK IS 288 M ACROSS NOW with the aft bulkhead at z=-104 and the lip
+     * at z=+144, so the old camera list — every station inside a 40 m box —
+     * framed one bay and called it the room. These are the angles a person
+     * walking in actually gets. */
+    ['01-start', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -74 }],
+    ['02-start-aft', { yaw: Math.PI, pitch: 0.06, x: 0, y: 1.7, z: -74 }],
+    ['03-line', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -60 }],
+    ['04-mid', { yaw: 0, pitch: 0, x: 0, y: 1.7, z: -10 }],
+    ['05-port', { yaw: Math.PI / 2, pitch: 0.04, x: 0, y: 1.7, z: -30 }],
+    ['06-stbd', { yaw: -Math.PI / 2, pitch: 0.04, x: 0, y: 1.7, z: -30 }],
+    ['07-port-close', { yaw: Math.PI / 2, pitch: 0.05, x: -20, y: 1.7, z: 10 }],
+    ['08-lip', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: 120 }],
+    ['09-up', { yaw: 0, pitch: 1.2, x: 0, y: 1.7, z: -30 }],
+    ['10-diag', { yaw: 0.7, pitch: -0.02, x: -60, y: 1.7, z: -80 }],
+    /* TWO FROM ABOVE, because "rows and rows" is a claim about the plan of the
+     * room and no eye-level shot can confirm or refute it. */
+    ['11-over', { yaw: 0, pitch: -0.55, x: 0, y: 46, z: -96, fly: true }],
+    ['12-over-wide', { yaw: 0, pitch: -0.35, x: -90, y: 34, z: -100, fly: true }],
   ];
+
   for (const [name, v] of shots) {
     await page.evaluate(async (v) => {
       const raf = () => new Promise((r) => requestAnimationFrame(r));
@@ -151,7 +163,17 @@ if (!info.fail) {
         if (p.camera) { p.camera.yaw = v.yaw; p.camera.pitch = v.pitch; }
         if (p.control) { p.control.yaw = v.yaw; p.control.pitch = v.pitch; }
       }
-      for (let i = 0; i < 40; i++) await raf();
+      /* A SHOT FROM 46 M UP IS NOT SOMEWHERE THE PLAYER CAN STAND: gravity
+       * puts him back on the deck inside two frames and the plan shot comes
+       * back as a picture of the floor. There is no noclip flag on this body,
+       * so the position is simply re-pinned every frame for the fly stations. */
+      for (let i = 0; i < 40; i++) {
+        await raf();
+        if (v.fly) {
+          const q = window.SABER?.world?.player;
+          if (q) { q.position.set(v.x, v.y, v.z); if (q.velocity) q.velocity.set(0, 0, 0); }
+        }
+      }
     }, v);
     await page.screenshot({ path: `${OUT}/${name}.png`, ...SHOT }).catch((e) => console.log(name, 'shot:', e.message));
     say(`wrote ${name}`);

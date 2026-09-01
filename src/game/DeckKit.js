@@ -252,6 +252,17 @@ function mergeFlat(geos) {
   const pos = new Float32Array(verts * 3);
   const nor = new Float32Array(verts * 3);
   const uv = new Float32Array(verts * 2);
+  /**
+   * AND COLOUR, WHICH THIS DROPPED. Every gradient in this file lives in a
+   * `color` attribute — the reflection smears and the lamp pools are geometry
+   * fades, deliberately, so they cost no texture — and a merge that copies
+   * only position/normal/uv throws all of it away silently. The mesh still
+   * draws; it draws flat, at full brightness, which is a bright rectangle on
+   * the floor where a reflection should be. Absent on a source geometry means
+   * white, so an uncoloured slab merged beside a faded quad is unchanged.
+   */
+  const wantsColor = geos.some((g) => g.attributes.color);
+  const col = wantsColor ? new Float32Array(verts * 3).fill(1) : null;
   const ind = verts > 65535 ? new Uint32Array(idx) : new Uint16Array(idx);
   let vo = 0, io = 0;
   for (const g of geos) {
@@ -259,6 +270,7 @@ function mergeFlat(geos) {
     pos.set(p.array, vo * 3);
     if (n) nor.set(n.array, vo * 3);
     if (u) uv.set(u.array, vo * 2);
+    if (col && g.attributes.color) col.set(g.attributes.color.array, vo * 3);
     const gi = g.index ? g.index.array : null;
     if (gi) for (let i = 0; i < gi.length; i++) ind[io + i] = gi[i] + vo;
     else for (let i = 0; i < p.count; i++) ind[io + i] = i + vo;
@@ -269,6 +281,7 @@ function mergeFlat(geos) {
   const out = new THREE.BufferGeometry();
   out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
   out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  if (col) out.setAttribute('color', new THREE.BufferAttribute(col, 3));
   out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   out.setIndex(new THREE.BufferAttribute(ind, 1));
   out.computeBoundingSphere();
@@ -352,7 +365,105 @@ export function deckMats() {
   });
   /* What a parked fighter is: near-black panels on a grey spine. */
   _mats.wing = new THREE.MeshStandardMaterial({ color: 0x1c2128, roughness: 0.58, metalness: 0.45 });
+  /**
+   * ══ THE SMEAR, AND IT IS THE FLOOR'S ONLY REAL TRICK ══════════════════
+   *
+   * Rule 2 says the deck is a black mirror and in `hangar 5.webp` the
+   * reflection is half the picture. A real reflection is not available here:
+   * `Reflector` is a second render of the whole room per plane, and a metal
+   * deck with no environment map renders BLACK — which is exactly what the
+   * first render of this room was, a floor with `metalness: 0.385` and nothing
+   * for it to reflect.
+   *
+   * So the reflection is DRAWN. Every wall strip gets a flat additive quad
+   * lying on the deck beneath it, running inward, bright at the wall foot and
+   * gone by the far end. That is the shape a vertical light actually makes on
+   * a wet floor, it costs one quad, and it is the difference between a deck
+   * and a car park.
+   */
+  _mats.smear = new THREE.MeshBasicMaterial({
+    color: 0x9fc4ff, transparent: true, opacity: 0.5, depthWrite: false,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide, vertexColors: true,
+  });
+  _mats.smear.userData.saberNoInk = true;
+  /**
+   * THE RIM AND THE NEAR STRIPS ARE UNLIT. A `MeshStandardMaterial` with a
+   * high `emissiveIntensity` is still shaded, still tone-mapped and still
+   * loses to a dark ambient; the brightest object in every reference cannot be
+   * something the lighting gets a vote on. `MeshBasicMaterial` at full white
+   * is the only thing that survives a dark room, and rule 1 says the rim is
+   * brighter than anything it lights.
+   */
+  _mats.glow = new THREE.MeshBasicMaterial({ color: 0xeaf3ff });
+  _mats.glow.userData.saberNoInk = true;
+  /* Same, dimmed, for the ranks that recede — a hundred strips all at full
+   * white is a wall of paper. */
+  _mats.glowDim = new THREE.MeshBasicMaterial({ color: 0x9dbbe4 });
+  _mats.glowDim.userData.saberNoInk = true;
   return _mats;
+}
+
+/**
+ * ══ A REFLECTION SMEAR ════════════════════════════════════════════════════
+ *
+ * One quad, flat on the deck, pointing away from the wall it belongs to. It is
+ * built from a plane whose vertex colours fade along its length, so the bright
+ * end is at the strip's foot and the far end is nothing — a gradient in
+ * geometry rather than a texture, because a texture is a fetch and a decode
+ * and this is four vertices.
+ */
+export function smear(kit, x, z, len, wide, dirX, dirZ) {
+  const M = deckMats();
+  const g = new THREE.PlaneGeometry(wide, len, 1, 3);
+  g.rotateX(-Math.PI / 2);
+  /* Point it down the wall's normal. `atan2` rather than a branch so a smear
+   * off an angled wall works the same as one off a square one. */
+  g.rotateY(Math.atan2(dirX, dirZ));
+  const pos = g.attributes.position;
+  const col = new Float32Array(pos.count * 3);
+  /* The fade, along the quad's own length before it was moved. */
+  let minT = Infinity, maxT = -Infinity;
+  const t = [];
+  for (let i = 0; i < pos.count; i++) {
+    const d = pos.getX(i) * dirX + pos.getZ(i) * dirZ;
+    t.push(d); if (d < minT) minT = d; if (d > maxT) maxT = d;
+  }
+  for (let i = 0; i < pos.count; i++) {
+    const f = maxT > minT ? (t[i] - minT) / (maxT - minT) : 0;
+    /* Squared, because a linear falloff reads as a painted stripe and a
+     * reflection is brightest right at the object and dies fast. */
+    const a = (1 - f) * (1 - f);
+    col[i * 3] = a; col[i * 3 + 1] = a; col[i * 3 + 2] = a;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return kit.geoAt(M.smear, g, x + dirX * len * 0.5, 0.05, z + dirZ * len * 0.5);
+}
+
+/**
+ * ══ A DECK UPLIGHT ════════════════════════════════════════════════════════
+ *
+ * `hangar 3.jpg` has them scattered across the floor — small white domes set
+ * flush, each throwing a short pool. At eye level they are what tells you the
+ * floor is a surface and not a void, and they are the cheapest scale ruler in
+ * the room because you know how big one is.
+ */
+export function deckLamp(kit, x, z) {
+  const M = deckMats();
+  const g = new THREE.CylinderGeometry(0.42, 0.55, 0.22, 8);
+  kit.geoAt(M.glow, g, x, 0.11, z);
+  /* The pool it throws, as a flat disc — additive, so it lifts the plate
+   * around it instead of painting a grey circle on it. */
+  const pool = new THREE.CircleGeometry(2.6, 12);
+  pool.rotateX(-Math.PI / 2);
+  const pc = new Float32Array(pool.attributes.position.count * 3);
+  for (let i = 0; i < pool.attributes.position.count; i++) {
+    /* Vertex 0 is the centre of a CircleGeometry fan; everything else is rim. */
+    const a = i === 0 ? 0.55 : 0.0;
+    pc[i * 3] = a; pc[i * 3 + 1] = a; pc[i * 3 + 2] = a;
+  }
+  pool.setAttribute('color', new THREE.BufferAttribute(pc, 3));
+  kit.geoAt(M.smear, pool, x, 0.04, z);
+  return kit;
 }
 
 /**
@@ -386,12 +497,67 @@ export function rackBay(kit, x, y, z, opts = {}) {
   for (const dz of [-1, 1]) {
     kit.slabAt(M.hull, x, y, z + dz * w * 0.47, 3.2, h * 1.04, w * 0.06, -s * cant);
   }
-  /* THE STRIP, full height in the recess. Ten of these down a wall is the
-   * single most recognisable thing in `hangar 1.webp` and `hangar 5.webp`. */
-  kit.slabAt(M.strip, x - s * 2.0, y, z, 0.5, h * 0.78, 0.9, -s * cant);
+  /**
+   * THE STRIPS, full height in the recess, and there are THREE of them
+   * because that is what the references show. `hangar 6.jpg` puts a group of
+   * slotted bars in every wall bay; `hangar 1.webp` a rank of tall angled
+   * ones. One thin bar per bay reads as a seam. Three read as a light.
+   *
+   * `glowDim` and not `strip`: an emissive standard material is still shaded,
+   * and in a room this dark the ranks came out grey. These are unlit.
+   */
+  for (const d of [-0.30, 0, 0.30]) {
+    kit.slabAt(M.glowDim, x - s * 2.0, y, z + d * w, 0.5, h * 0.74, w * 0.10, -s * cant);
+  }
+  /* The header run over the bay — rule 4's long horizontal, which is what ties
+   * a rank of bays into a wall instead of leaving them as separate boxes. */
+  kit.slabAt(M.glowDim, x - s * 1.4, y + h * 0.50, z, 0.4, 0.5, w * 0.86, -s * cant);
   /* The mount arm out of the recess, and the fighter on it. */
   kit.slabAt(M.hull, x - s * 3.6, y + h * 0.06, z, 4.4, 1.1, 1.1);
-  if (opts.ship !== false) parkedFighter(kit, x - s * 7.2, y + h * 0.06, z, s);
+  if (opts.ship !== false) parkedFighter(kit, x - s * 7.2, y + h * 0.06, z, s, opts.kind ?? 0);
+  return kit;
+}
+
+/**
+ * ══ THE SHUTTLE ON THE PAD ════════════════════════════════════════════════
+ *
+ * `hangar 7.jpg`'s focal object and `hangar 5.webp`'s: one big craft on a
+ * raised platform in the middle distance, wings folded UP, dwarfing the men
+ * beside it. Everything else in this room is either a wall or a speck; without
+ * one object at a readable size between the two there is no scale ladder, and
+ * a room with no ladder reads flat however far away its far wall is.
+ */
+export function shuttlePad(kit, x, z, opts = {}) {
+  const M = deckMats();
+  const yaw = opts.yaw ?? 0;
+  const r = opts.radius ?? 16;
+  /* The pad: a low disc with a lit kerb, standing 1.2 m proud of the deck. */
+  const pad = new THREE.CylinderGeometry(r, r * 1.04, 1.2, 16);
+  kit.geoAt(M.dark, pad, x, 0.6, z);
+  const kerb = new THREE.TorusGeometry(r * 0.99, 0.22, 6, 24);
+  kerb.rotateX(-Math.PI / 2);
+  kit.geoAt(M.glowDim, kerb, x, 1.2, z);
+  /* The hull: a long wedge, nose forward. */
+  const hull = new THREE.CylinderGeometry(0.6, 3.4, 22, 6);
+  hull.rotateZ(Math.PI / 2);
+  hull.rotateY(yaw);
+  kit.geoAt(M.hull, hull, x, 5.4, z);
+  kit.slabAt(M.hull, x, 4.2, z, 9, 2.4, 7, yaw);
+  /* THE WINGS, FOLDED UP — the silhouette the whole shape exists for. Three
+   * blades: one dorsal, two canted off the shoulders, all of them tall. */
+  kit.slabAt(M.wing, x - Math.sin(yaw) * 2, 15.5, z - Math.cos(yaw) * 2, 1.0, 20, 5.5, yaw);
+  for (const sx of [-1, 1]) {
+    const g = new THREE.BoxGeometry(0.9, 19, 5.0);
+    g.rotateZ(sx * 0.20); g.rotateY(yaw);
+    kit.geoAt(M.wing, g, x + sx * Math.cos(yaw) * 4.6, 14.4, z - sx * Math.sin(yaw) * 4.6);
+  }
+  /* The ramp down, because a ship you could walk into is a ship. */
+  kit.slabAt(M.hull, x + Math.sin(yaw) * 12, 1.6, z + Math.cos(yaw) * 12, 4.2, 0.3, 8, yaw);
+  /* Two landing lamps under it — the reference's craft are always lit from
+   * beneath by their own pad. */
+  for (const sx of [-1, 1]) {
+    kit.slabAt(M.glow, x + sx * Math.cos(yaw) * 6, 1.5, z - sx * Math.sin(yaw) * 6, 1.2, 0.3, 1.2, yaw);
+  }
   return kit;
 }
 
@@ -408,8 +574,45 @@ export function rackBay(kit, x, y, z, opts = {}) {
  * of them is twenty times the geometry for a shape that is 30 px wide at the
  * far end of the wall.
  */
-function parkedFighter(kit, x, y, z, s) {
+function parkedFighter(kit, x, y, z, s, kind = 0) {
   const M = deckMats();
+  /**
+   * THREE HULLS, NOT ONE. "Rows and rows of different ships" is the brief and
+   * a wall of one mesh repeated ninety times is a wall of one mesh: the eye
+   * finds the repeat in about a second and the room stops being a place. The
+   * kinds are cheap — the same six primitives arranged three ways — and at
+   * rack distance three silhouettes is all the variety there is room for.
+   */
+  if (kind === 1) {
+    /* A GUNSHIP: flat body, stub wings out, twin engines aft. */
+    kit.slabAt(M.wing, x, y, z, 5.0, 1.7, 8.6);
+    for (const dz of [-1, 1]) kit.slabAt(M.wing, x, y - 0.3, z + dz * 5.2, 4.0, 0.5, 3.4, dz * 0.12);
+    for (const dz of [-1, 1]) {
+      const e = new THREE.CylinderGeometry(0.85, 0.85, 4.2, 8);
+      e.rotateX(Math.PI / 2);
+      kit.geoAt(M.dark, e, x, y + 0.9, z + dz * 2.4);
+    }
+    const nose = new THREE.CylinderGeometry(0.4, 1.7, 4.0, 6);
+    nose.rotateZ(Math.PI / 2);
+    kit.geoAt(M.hull, nose, x - s * 4.2, y, z);
+    return kit;
+  }
+  if (kind === 2) {
+    /* AN INTERCEPTOR: a long spine with four swept blades. */
+    const body = new THREE.CylinderGeometry(0.55, 1.5, 11, 7);
+    body.rotateZ(Math.PI / 2);
+    kit.geoAt(M.hull, body, x - s * 1.5, y, z);
+    for (const dz of [-1, 1]) for (const dy of [-1, 1]) {
+      const g = new THREE.BoxGeometry(4.6, 0.35, 5.4);
+      g.rotateX(dz * dy * 0.5);
+      kit.geoAt(M.wing, g, x + s * 1.4, y + dy * 2.0, z + dz * 2.6);
+    }
+    const eye2 = new THREE.SphereGeometry(1.1, 8, 6);
+    kit.geoAt(M.dark, eye2, x - s * 5.4, y, z);
+    return kit;
+  }
+  /* THE STANDARD: two big flat panels and a ball between them — the TIE read,
+   * which is what four of the seven references park in their walls. */
   const w = 7.4, t = 0.55;
   for (const dz of [-1, 1]) {
     /* The panel, canted in at the top the way a TIE's wing is. */

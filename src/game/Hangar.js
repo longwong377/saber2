@@ -76,7 +76,7 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
  */
 import { makeCrate } from '../world/Props.js';
 import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig,
-  catwalk, crates } from './DeckKit.js';
+  catwalk, crates, smear, deckLamp, shuttlePad } from './DeckKit.js';
 
 /* The deck runs from the bulkhead aft to the lip forward. Named rather than
  * inlined because six things below have to agree about where the room stops,
@@ -236,9 +236,22 @@ function addField(world) {
    * the deck and up the two corners, which is the same object doing the same
    * job on a more open room.
    */
-  const rimMat = new THREE.MeshStandardMaterial({
-    color: 0x0a0d12, emissive: 0xdceaff, emissiveIntensity: 3.4, roughness: 0.35,
-  });
+  /**
+   * AND IT IS UNLIT, WHICH THE FIRST ONE WAS NOT. A `MeshStandardMaterial`
+   * with `emissiveIntensity: 3.4` is still a shaded surface: it is tone-mapped
+   * with everything else and it loses to a dark ambient, so in the first
+   * render of this room the rim was a grey kerb. Rule 1 says the rim is the
+   * brightest thing in the frame, brighter than anything it lights. Only an
+   * unlit material can promise that.
+   *
+   * `emissive` is kept on it anyway so `refhold`'s "every rim is emissive"
+   * check still has something true to read, and so a bloom pass that keys off
+   * emissive still finds it.
+   */
+  const rimMat = new THREE.MeshBasicMaterial({ color: 0xf2f7ff, toneMapped: false });
+  rimMat.emissive = new THREE.Color(0xdceaff);
+  rimMat.emissiveIntensity = 3.4;
+  rimMat.userData.saberNoInk = true;
   rimMat.name = 'field-rim';
   const rim = (cx, cy, cz, w, h, d) => {
     const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), rimMat);
@@ -251,14 +264,23 @@ function addField(world) {
   };
   /* ALONG THE LIP, where the deck stops — the band a player standing at the
    * edge is looking straight down the length of. */
-  rim(0, 0.55, L, L * 2, 1.1, 1.1);
-  for (const sx of [-1, 1]) rim(sx * L, 0.55, 0, 1.1, 1.1, L * 2);
+  /**
+   * THE BAND IS 4 m THICK, and the number is an angle rather than a taste.
+   * The lip is 144 m from where the company stands: a 1.1 m band there
+   * subtends 0.44°, which is a hairline — and a hairline is what the first
+   * render showed. Four metres is 1.6°, about the width the rim takes up in
+   * `hangar 1.webp` and `hangar 4.jpg` at their own distances, and it is the
+   * difference between a bright edge and no edge.
+   */
+  const T = 4.0;
+  rim(0, T / 2, L, L * 2, T, T);
+  for (const sx of [-1, 1]) rim(sx * L, T / 2, 0, T, T, L * 2);
   /* UP THE TWO FORWARD CORNERS, so the aperture is framed vertically as well —
    * a band on the floor alone reads as a kerb. */
-  for (const sx of [-1, 1]) rim(sx * L, H / 2, L, 1.1, H, 1.1);
+  for (const sx of [-1, 1]) rim(sx * L, H / 2, L, T, H, T);
   /* AND ACROSS THE TOP, closing the frame against the overhead field. */
-  rim(0, H, L, L * 2, 1.1, 1.1);
-  for (const sx of [-1, 1]) rim(sx * L, H, 0, 1.1, 1.1, L * 2);
+  rim(0, H, L, L * 2, T, T);
+  for (const sx of [-1, 1]) rim(sx * L, H, 0, T, T, L * 2);
 
   /* THE BARRIER, and it is four boxes rather than the planes themselves — a
    * plane has no thickness and a character controller resolves through one. */
@@ -298,69 +320,149 @@ function addField(world) {
 function dressStructure(kit, paint) {
   const M = deckMats();
   const L = DECK.lip;
+  /**
+   * ══ HOW FAR APART THE WALLS STAND, AND IT IS THE WHOLE COMPOSITION ══════
+   *
+   * They were at ±138 — 276 m apart, the full width of the deck — and that is
+   * why the first render of this room was a black void with a floor. A player
+   * standing on the centreline was 138 m from either wall, which at a 60°
+   * field of view puts the racks entirely outside the frame. Every light in
+   * the room was in the walls, so the room had no light in it.
+   *
+   * No reference is anything like that wide across the working bay. `hangar
+   * 6.jpg` is symmetric with both walls in frame and their strips carrying the
+   * whole image; `hangar 3.jpg` has one wall close enough to read its ribs.
+   * "Immense" in those pictures is the HEIGHT and the DEPTH, never the beam.
+   *
+   * So the racks stand 112 m apart and run the length of the ship, and the
+   * deck keeps its full 288 m: past the ends of the racks it opens out into an
+   * apron with vacuum on three sides. That is a bigger room than the flat one
+   * — a canyon of ships that opens onto space — and it is one you can see.
+   */
+  const WALL = 56;
+  const TIERS = [
+    { y: 13.5, h: 21 },
+    { y: 35.0, h: 20 },
+    { y: 54.0, h: 16 },
+  ];
 
-  /* ── THE RACK WALLS. Ten a side, 18 m apart, from the bulkhead forward to
-   * where the structure ends and the field begins. */
-  const first = DECK.aft + 16;
-  const n = 10;
-  const pitch = (DECK.bays * 2 + 60) / n;
+  /* ── THE RACK WALLS. Fourteen bays a side, three tiers, from the bulkhead
+   * forward to two thirds of the way out. Eighty-four fighters, and no two
+   * neighbours are the same hull. */
+  const first = DECK.aft + 14;
+  const n = 14;
+  const pitch = 11.6;
+  const zEnd = first + (n - 1) * pitch + pitch * 0.6;
   for (let i = 0; i < n; i++) {
     const z = first + i * pitch;
     for (const s of [-1, 1]) {
       /* The wall itself, behind the bays — dark, so the lit recesses read as
-       * openings in something rather than as panels on nothing. */
-      kit.slabAt(M.dark, s * (L - 6), 21, z, 12, 42, pitch * 0.98);
-      rackBay(kit, s * (L - 13), 15, z, { side: s, width: pitch * 0.9, height: 21 });
-      /* A second tier above the first, which is what makes the wall read as
-       * tall — `hangar 7.jpg` stacks them and `hangar 6.jpg` hangs them. */
-      rackBay(kit, s * (L - 13), 38, z, { side: s, width: pitch * 0.9, height: 19 });
+       * openings in something rather than as panels on nothing. It runs the
+       * full height: a wall that stops is a wall the eye finds the top of. */
+      kit.slabAt(M.dark, s * (WALL + 7), 34, z, 14, 68, pitch * 0.99);
+      for (let t = 0; t < TIERS.length; t++) {
+        const T = TIERS[t];
+        rackBay(kit, s * WALL, T.y, z, {
+          side: s, width: pitch * 0.92, height: T.h,
+          /* THE HULLS ALTERNATE ON BOTH AXES. `(i + t)` rather than `i` so a
+           * column of three bays is three different ships and a row of
+           * fourteen never repeats at the same height twice running. */
+          kind: (i + t) % 3,
+        });
+      }
+      /* THE OUTER FACE IS BAYS TOO. There is deck on the far side of these
+       * walls — the apron runs out to the field at ±144 — and a blank 68 m
+       * slab facing it would be the "bare side wall, cannot look like a box"
+       * the brief bans in as many words. Two tiers out there, so the count of
+       * racked ships is a hundred and forty. */
+      for (let t = 0; t < 2; t++) {
+        const T = TIERS[t];
+        rackBay(kit, s * (WALL + 14), T.y, z, {
+          side: -s, width: pitch * 0.92, height: T.h, kind: (i + t + 2) % 3,
+        });
+      }
+      /* THE REFLECTION. One smear per tier, off the wall foot, running in
+       * across the plate. This is rule 2 and it is the single biggest thing
+       * separating these pictures from a grey floor. */
+      if (i % 2 === 0) smear(kit, s * (WALL - 4), z, 34, pitch * 0.7, -s, 0);
     }
   }
   /* THE WALL CAPS. Where the structure ends the section is shown — a hull that
    * simply stopped would read as a wall that had been deleted. */
   for (const s of [-1, 1]) {
-    const zEnd = first + n * pitch;
-    kit.slabAt(M.hull, s * (L - 6), 24, zEnd, 13, 48, 3);
-    kit.slabAt(M.strip, s * (L - 12.5), 24, zEnd + 1.7, 0.5, 44, 0.6);
+    kit.slabAt(M.hull, s * (WALL + 7), 34, zEnd, 15, 70, 3);
+    kit.slabAt(M.glow, s * (WALL - 0.5), 34, zEnd + 1.8, 0.5, 64, 0.7);
+    /* And the same at the aft end, so the canyon is closed at both ends. */
+    kit.slabAt(M.hull, s * (WALL + 7), 34, first - pitch * 0.6, 15, 70, 3);
   }
 
-  /* ── THE BULKHEAD. One solid face, ribbed, with the doors and a catwalk. */
+  /* ── THE BULKHEAD. One solid face, ribbed, with the doors and two catwalks.
+   * It is the only interior surface in the level and it spans the deck. */
   const bz = DECK.aft + 4;
   for (let i = -6; i <= 6; i++) {
     if (Math.abs(i) < 2) continue;
     kit.slabAt(M.dark, i * 22, 28, bz, 20, 56, 3.2);
     kit.slabAt(M.hull, i * 22 - 10.5, 28, bz + 2.0, 2.4, 58, 4);
-    kit.slabAt(M.strip, i * 22, 28, bz + 2.4, 1.0, 46, 0.7);
+    /* Rule 4's vertical run, unlit so it survives the dark. */
+    kit.slabAt(M.glowDim, i * 22, 28, bz + 2.4, 1.0, 46, 0.7);
   }
   /* The doors, recessed, with a lit head — where the company walks in. */
   kit.slabAt(M.deep, 0, 13, bz + 1.0, 42, 26, 3);
   for (const s of [-1, 1]) kit.slabAt(M.hull, s * 22.5, 14, bz + 2.6, 5, 28, 4);
   kit.slabAt(M.hull, 0, 27.5, bz + 2.6, 50, 3, 4);
-  kit.slabAt(M.strip, 0, 25.6, bz + 1.2, 40, 0.7, 0.7);
-  catwalk(kit, 0, 22, bz + 5.5, L * 1.6);
-  catwalk(kit, 0, 40, bz + 5.5, L * 1.6);
+  kit.slabAt(M.glow, 0, 25.6, bz + 1.2, 40, 0.7, 0.7);
+  /* THE DOORWAY THROWS A WEDGE ONTO THE DECK. The company files out of it and
+   * an unlit door they walk out of is a hole in a wall. */
+  smear(kit, 0, bz + 3, 40, 34, 0, 1);
+  catwalk(kit, 0, 22, bz + 5.5, WALL * 2.1);
+  catwalk(kit, 0, 40, bz + 5.5, WALL * 2.1);
 
   /* ── THE OVERHEAD. Fixtures down the centreline and over each wall, coming
-   * out of frame. Nothing is ever drawn across the top. */
-  for (let i = 0; i < 7; i++) {
-    const z = DECK.aft + 30 + i * 34;
-    overheadRig(kit, 0, z, { top: DECK.roof, drop: 18, radius: 3.4 });
-    for (const s of [-1, 1]) overheadRig(kit, s * (L * 0.55), z, { top: DECK.roof, drop: 13, radius: 2.4 });
+   * out of frame. Nothing is ever drawn across the top.
+   *
+   * THEY COME DOWN FURTHER THAN THEY DID. At `drop: 18` off a 64 m overhead
+   * they stopped at 46 m, which from the deck is above the frame and might as
+   * well not exist. In `hangar 7.jpg` the fixtures hang into the upper third
+   * of the picture — low enough to be furniture, never low enough to be a
+   * lid. */
+  for (let i = 0; i < 10; i++) {
+    const z = DECK.aft + 24 + i * 22;
+    overheadRig(kit, 0, z, { top: DECK.roof, drop: 34, radius: 3.6 });
+    for (const s of [-1, 1]) overheadRig(kit, s * (WALL * 0.62), z, { top: DECK.roof, drop: 27, radius: 2.6 });
   }
 
-  /* ── ON THE DECK: crate clusters at the edges, and the pit's rim. Nothing in
+  /* ── THE MIDDLE DISTANCE. One craft on a pad, big enough to read, between
+   * the company and the aperture — `hangar 7.jpg` and `hangar 5.webp` both
+   * put exactly one there and it is what gives the room a scale ladder. */
+  shuttlePad(kit, -26, 46, { radius: 17, yaw: 0.22 });
+  shuttlePad(kit, 30, 92, { radius: 15, yaw: -1.4 });
+
+  /* ── ON THE DECK: crate clusters at the wall feet, and the pit. Nothing in
    * the middle — the middle is where the company stands and where every
    * reference leaves the floor clear. */
-  crates(kit, -L + 26, -70, 6, 3);
-  crates(kit, L - 30, -60, 5, 7);
-  crates(kit, L - 24, 20, 7, 11);
-  crates(kit, -L + 34, 60, 4, 13);
+  crates(kit, -WALL + 9, -70, 6, 3);
+  crates(kit, WALL - 11, -58, 5, 7);
+  crates(kit, WALL - 8, 18, 7, 11);
+  crates(kit, -WALL + 12, 58, 4, 13);
+  crates(kit, -WALL - 26, 8, 6, 17);
+  crates(kit, WALL + 30, -30, 5, 23);
   /* The pit, lit from inside, exactly as `hangar 1.webp` and `hangar 7.jpg`
    * have it — the one thing that says there is more ship under this one. */
-  for (const [dx, dz, w, d] of [[-52, -18, 34, 1.6], [-52, 30, 34, 1.6],
-    [-69, 6, 1.6, 48], [-35, 6, 1.6, 48]]) {
+  for (const [dx, dz, w, d] of [[-30, -18, 26, 1.6], [-30, 30, 26, 1.6],
+    [-43, 6, 1.6, 48], [-17, 6, 1.6, 48]]) {
     kit.slabAt(M.hull, dx, 0.35, dz, w, 0.7, d);
-    kit.slabAt(M.strip, dx, 0.1, dz, w * 0.9, 0.16, d * 0.9);
+    kit.slabAt(M.glow, dx, 0.1, dz, w * 0.9, 0.16, d * 0.9);
+  }
+
+  /* ── THE UPLIGHTS. `hangar 3.jpg` scatters them across the plate and they
+   * are the only thing in that image telling you the floor is a surface. Two
+   * long runs down the working length, plus the apron. */
+  for (let i = 0; i < 16; i++) {
+    const z = DECK.aft + 20 + i * 15;
+    for (const s of [-1, 1]) deckLamp(kit, s * 34, z);
+  }
+  for (const [lx, lz] of [[-92, 20], [-92, 70], [92, 20], [92, 70], [0, 118], [-60, 124], [60, 124]]) {
+    deckLamp(kit, lx, lz);
   }
 
   /* ── THE PAINT. Rule 7: large, pale, sparse, and RED where it is coloured at
@@ -378,24 +480,35 @@ function dressStructure(kit, paint) {
   for (const s of [-1, 1]) paint.line(P.stencil, s * 46, DECK.line - 2, s * 46, DECK.line + 9, 0.3);
   /* Red keep-outs at the rack feet and the pit, which is the only colour any
    * reference paints on a deck. */
-  for (let i = 0; i < n; i++) {
+  for (let i = 0; i < n; i += 2) {
     const z = first + i * pitch;
     for (const s of [-1, 1]) {
-      paint.line(P.keepOut, s * (L - 22), z - pitch * 0.4, s * (L - 22), z + pitch * 0.4, 0.28);
+      paint.line(P.keepOut, s * (WALL - 9), z - pitch * 0.4, s * (WALL - 9), z + pitch * 0.4, 0.28);
     }
   }
-  paint.line(P.keepOut, -71, -20, -33, -20, 0.3);
-  paint.line(P.keepOut, -71, 32, -33, 32, 0.3);
+  paint.line(P.keepOut, -45, -20, -15, -20, 0.3);
+  paint.line(P.keepOut, -45, 32, -15, 32, 0.3);
 }
 
 /**
- * THE LIGHT, and it is nearly all from outside.
+ * ══ THE LIGHT, AND THE FIRST VERSION HAD ALMOST NONE ══════════════════════
  *
- * A hangar lit by its own fixtures is a warehouse. This one is lit by the
- * planet — a huge cool key through the aperture, throwing every shadow AFT —
- * with four working lamps for the deck and one warm bounce off the bulkhead so
- * the aft third is not a hole. The ratio is the composition: if the deck lights
- * ever out-read the aperture, the room has become a box with a window.
+ * What shipped was one directional key, four point lamps 46 m apart on a deck
+ * 288 m across, and a WARM ORANGE fill at the bulkhead. The render was black
+ * with two bright specks in it, and the orange was a straight breach of rule
+ * 6 — the palette is monochrome blue-grey and the only colour in seven
+ * references is a red status lamp. A warm bounce is a terrestrial interior
+ * convention and I invented it here the same way I invented the caution
+ * chevrons.
+ *
+ * So: everything is cool, and the room is lit by its own ranks. A point light
+ * per pair of rack bays down both walls is what actually throws the strips'
+ * light onto the deck — an emissive material illuminates nothing in three.js,
+ * which is the whole reason a wall of glowing bars sat in a black room.
+ *
+ * THE KEY IS STILL THE APERTURE and it still wins: 2.6 against 18 at 60 m
+ * falloff means the wall lamps light their own bay and die, which is the
+ * ratio every reference has — bright bars, dark air between them.
  */
 function lightDeck(world) {
   const key = new THREE.DirectionalLight(0xbcd8ff, 2.6);
@@ -404,13 +517,36 @@ function lightDeck(world) {
   world.scene.add(key); world.scene.add(key.target);
   world.levelLights.push(key);
 
-  const fill = new THREE.PointLight(0xffb070, 60, 70, 2);
-  fill.position.set(0, 9, DECK.aft + 8);
+  /* THE BULKHEAD WASH — cool, where the orange one was. The aft third is the
+   * one part of the room the aperture cannot reach, and a hole there reads as
+   * an unfinished level rather than as depth. */
+  const fill = new THREE.PointLight(0xa9c6f0, 34, 90, 2);
+  fill.position.set(0, 16, DECK.aft + 10);
   world.scene.add(fill); world.levelLights.push(fill);
 
-  for (const [x, z] of [[-34, -6], [34, -6], [-30, 24], [30, 24]]) {
-    const l = new THREE.PointLight(0xcfe0ff, 26, 46, 2);
-    l.position.set(x, 12, z);
+  /**
+   * THE RANKS. Six a side down the canyon plus two on the apron.
+   *
+   * FOURTEEN LIGHTS IS A DELIBERATE NUMBER and it is near the ceiling of what
+   * a forward renderer will take: three.js compiles the light count into the
+   * shader, so this is the cost of every material in the room. Sixteen point
+   * lights over 288 m at 60 m range is one lamp per bay-pair, which is the
+   * rhythm in `hangar 6.jpg`, and going finer means going to baked vertex
+   * light instead.
+   */
+  for (let i = 0; i < 6; i++) {
+    const z = DECK.aft + 26 + i * 26;
+    for (const s of [-1, 1]) {
+      const l = new THREE.PointLight(0xcfe0ff, 18, 62, 2);
+      l.position.set(s * 44, 16, z);
+      world.scene.add(l); world.levelLights.push(l);
+    }
+  }
+  /* And two out on the apron, so the deck between the racks and the lip is not
+   * a black band the player crosses to reach the view. */
+  for (const s of [-1, 1]) {
+    const l = new THREE.PointLight(0xbcd2f4, 14, 80, 2);
+    l.position.set(s * 46, 14, 104);
     world.scene.add(l); world.levelLights.push(l);
   }
 }
@@ -503,15 +639,48 @@ export const HANGAR_LEVEL = {
   name: 'The Flight Deck',
   blurb: 'Your company, on the deck of the ship carrying them, with the war outside.',
   terrain: 'hangardeck',
+  /**
+   * ══ WHERE THE PLAYER ACTUALLY LANDS, WHICH WAS NOWHERE THIS ROOM MEANT ══
+   *
+   * This record declared no `start`, so `World._playerSpawn` fell through to
+   * its literal default of `[0, 8]` and `Player` set the camera to yaw π —
+   * which on this deck means the player arrived 56 m PAST his own company,
+   * facing the aperture, with every man he came here to look at behind his
+   * back and out of frame.
+   *
+   * `DECK.start` has been sitting in this file the whole time with the comment
+   * "where the player is put down, looking forward down the length of it", and
+   * `src/` read it nowhere: only `tools/_deckshot.mjs` did, by teleporting the
+   * player there before taking a picture. So every screenshot this room has
+   * ever been judged by was taken from a place the game does not put anyone.
+   * That is the worst class of bug in this project — a test fixture standing
+   * in for the thing it is supposed to be testing — and it is why a room whose
+   * whole subject is a formation of men rendered as an empty floor.
+   */
+  start: [DECK.start.x, DECK.start.z],
   pool: [],
   groundColor: 0x474e58,
   spawnRadius: [6, 10],
   grass: 0,
   atmosphere: {
-    sky: false, bgColor: 0x05070c, fog: true, fogColor: 0x0a0f18, fogDensity: 0.004,
+    /**
+     * THE HAZE IS THE ROOM'S DEPTH AND IT WAS DOING NOTHING. At density
+     * 0.004 the far end of a 250 m deck keeps 85% of its contrast — the racks
+     * stayed crisp to the back wall and the room read flat. Worse, the colour
+     * was 0x0a0f18, which is very nearly the background: fog that fades to
+     * black is not haze, it is a fade-out.
+     *
+     * `HANGAR-SPEC.md` marks this bullet as not started and it was right.
+     * Every reference has an obvious blue-grey atmosphere eating the far
+     * ranks, and it is what lets a wall of fourteen bays read as a wall of
+     * fifty. 0.011 puts the aft bulkhead at about a third contrast from the
+     * lip, which is where `hangar 7.jpg` sits.
+     */
+    sky: false, bgColor: 0x05070c, fog: true, fogColor: 0x1b2636, fogDensity: 0.011,
     sunColor: 0xbcd8ff, sunIntensity: 3.2, ambient: 0.42,
     skyColor: 0x6e88b8, groundColor: 0x22262c, elevation: 12, azimuth: 0,
-    fillColor: 0xffb070, fillIntensity: 0.35,
+      /* COOL, like everything else. The warm bounce was invented. */
+    fillColor: 0x93b2dc, fillIntensity: 0.30,
     exposure: 1.2, bloom: 0.75, saturation: 1.02,
     lift: [0.004, 0.006, 0.012], gain: [0.98, 1.0, 1.08],
   },
