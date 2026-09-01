@@ -106,9 +106,20 @@ appears.
   the deck plane, dark (0.18 head-on to 0.45 grazing), smeared along the
   vertical, once per frame, off on the lowest tier, half-res on medium.
   Suite: `deckmirror` (11 checks).
-- `✅` The insignia is the army's: Separatist hex-and-bars, Republic hub-and-
-  spokes without the wheel ring (`DeckKit.insigniaParts`); the ground and
-  wall marks are the same parts.
+- `✅` The insignia is the army's — Separatist hex-and-bars, Republic hub-and-
+  spokes without the wheel ring (`DeckKit.insigniaParts`) — and it is on the
+  bulkhead only, 14 m, small: the references carry no floor emblem and the
+  player asked for the wheel on the ground to go. `faction.mjs` fails if a
+  floor crest comes back.
+- `✅` **The look, rebuilt against the seven references** (1 Sep, after the
+  player asked whether the room he was given is what would be built from
+  scratch): pale grey steel under white light (Republic warm, Separatist
+  cool), walls of 10 m slabs with pilasters and one vertical light strip
+  each, a gallery at 30 m, control booths and service doors at deck level,
+  a rounded-rectangle aperture (`DECK.aperture`) with a continuous 3 m
+  bright white rim, a clean black mirror floor with thin guide lines, pad
+  rings and 152 recessed marker lights, a strip-light grid on the ceiling
+  plate, fog the colour of the walls.
 - `✅` Haze solved off `DECK` rather than typed; the field planes fog with the
   rim on them.
 
