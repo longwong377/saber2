@@ -1950,6 +1950,13 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    reference. `b-mission own` is set by the report, not guessed from the text. */
 .muster-interlude li.b-mission b{color:var(--accent-warm)}
 .muster-interlude li.b-mission.own b{color:var(--danger)}
+/* A LICENCE THE COMPANY LOST. Dim rather than accented: it is the one beat in
+   the report about something the company can no longer DO, and it belongs to
+   the death two lines above it rather than standing as an event of its own.
+   The voice is the exception and carries `own` — losing the last man who could
+   steady a squad you are not standing in changes every order you give after. */
+.muster-interlude li.b-lost-licence b{color:var(--dim)}
+.muster-interlude li.b-lost-licence.own b{color:var(--danger)}
 @keyframes beatIn{from{opacity:0;transform:translateX(-10px)}to{opacity:1;transform:none}}
 /* Inert while the report is running. `pointer-events:none` is the half that
    makes "no input" true; the dimming is the half that says so. */

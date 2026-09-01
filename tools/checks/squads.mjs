@@ -585,4 +585,92 @@ export async function run({ check, assert, THREE: T }) {
     } finally { restore(); }
   });
 
+  /**
+   * ══ A WIPED SQUAD'S ORDER IS GIVEN UP, WHATEVER IT WAS ═════════════════
+   *
+   * `_vacancy` drops a squad's order only when the order PLANTED — and seven
+   * of the nine formations are `advance` and plant nothing. Measured through
+   * the real `order()` and the real `onDeath`:
+   *
+   *     cover   plants     "Havoc — take cover"    → dropped ✓
+   *     charge  plants not "Havoc — charge"        → kept for ever ✗
+   *     line    plants not "Havoc — line abreast"  → kept for ever ✗
+   *
+   * So for seven of nine orders `c.squadOrders` kept an entry for a squad with
+   * nobody alive in it, `_formationFor` went on reading it, and the panel went
+   * on naming a dead squad until the area boundary.
+   *
+   * EVERY FORMATION, DERIVED. The list is `FORMATIONS` itself rather than the
+   * two that were known to be broken: the defect was that a property of the
+   * order decided whether the bookkeeping happened, and the only way to hold
+   * that closed is to drive all of them.
+   */
+  check('squads: whatever a wiped squad was told, it is given up', () => {
+    const kept = [];
+    for (const id of Object.keys(FORMATIONS)) {
+      const { d, c } = deployed();
+      const men = d.squadsOf(c)[0];
+      assert(men?.length, `the fixture has no squad 0 for ${id}`);
+      /* In earshot, so the order lands rather than being refused for distance.
+       * `_ask`'s fear and isolation terms are satisfied by a full squad at
+       * full morale, which is what `deploy()` produces. */
+      for (const t of men) if (t.body) t.body.position.set(-4, 0, 0);
+      c.player.position.set(0, 0, 0);
+      if (!d.order(id, c, 0)) continue;                 // refused: nothing to give up
+      assert(c.squadOrders?.get('0') === id,
+        `${id} did not write squad 0's own order`);
+      /* THROUGH `onDeath`, ONE AT A TIME, which is the only way a squad is ever
+       * actually wiped. `squads()` slices the LIVING list, so killing the
+       * records first and then reporting one death asks about a squad that no
+       * longer exists and `_squadKeyOf` comes back null — a fixture that could
+       * not reach the branch it is about. */
+      for (const t of men.slice()) d.onDeath(t.body, null);
+      assert(!men.some((t) => t.alive !== false), `${id} left men alive in a wiped squad`);
+      if (c.squadOrders?.has('0')) kept.push(`${id} (${FORMATIONS[id].advance ? 'advance' : 'plants'})`);
+    }
+    assert(!kept.length,
+      `${kept.length} of ${Object.keys(FORMATIONS).length} orders survived the squad that was `
+      + `under them: ${kept.join(', ')}`);
+    return `all ${Object.keys(FORMATIONS).length} formations give the squad up when it is wiped`;
+  });
+
+  /**
+   * ══ THE DOOR NORMALISES THE INDEX, BECAUSE IT IS THE DOOR ══════════════
+   *
+   * `order()`'s own note calls itself "the door every path goes through" and
+   * trusted its callers to hand it an integer. Measured: `order('cover', c,
+   * 1.7)` returned TRUE, ordered squad 1's men — `squadsOf(c)[Number(squad) |
+   * 0]` truncates — and wrote `squadOrders['1.7']` and `squadPlanted['1.7']`,
+   * keys `_formationFor(c, 1)` looks up under `'1'` and can never read. The
+   * order landed and the squad's memory of it went into a slot nothing opens.
+   * `order('cover', c, -1)` was refused with a message naming "Squad 0", a
+   * squad that exists and had nothing to do with it.
+   *
+   * Latent — the wire door validates and no local caller computes an index —
+   * and latent is what this shape is until the day something does.
+   */
+  check('squads: an index that is not a squad number is not half-obeyed', () => {
+    const { d, c } = deployed();
+    const men = d.squadsOf(c)[1];
+    for (const t of men) if (t.body) t.body.position.set(-4, 0, 0);
+    c.player.position.set(0, 0, 0);
+    assert(d.order('cover', c, 1.7), 'the fixture could not order squad 1');
+    const keys = [...(c.squadOrders?.keys() || [])];
+    assert(keys.length === 1 && keys[0] === '1',
+      `a fractional index wrote ${JSON.stringify(keys)} — a key nothing reads`);
+    assert([...(c.squadPlanted?.keys() || [])].every((k) => k === '1'),
+      `the plant went under ${JSON.stringify([...c.squadPlanted.keys()])}`);
+
+    /* …AND A NUMBER BELOW THE FLOOR IS REFUSED WITHOUT BLAMING A REAL SQUAD. */
+    const before = new Map(c.squadOrders);
+    assert(d.order('cover', c, -1) === false, 'an order for squad -1 was taken');
+    assert(!/Squad 1\b/.test(d.orderRefused || ''),
+      `the refusal for index -1 says "${d.orderRefused}" — a squad that exists`);
+    assert(c.squadOrders.size === before.size, 'the refused order still wrote a key');
+    /* AND NEVER SILENTLY THE WHOLE ARMY: `null` means every squad here, so an
+     * index nobody can answer to must not become one. */
+    assert(d.order('cover', c, NaN) === false, 'an order for NaN was taken by the whole army');
+    return `1.7 → key "1" · -1 refused as "${d.orderRefused}" · NaN refused, not army-wide`;
+  });
+
 }

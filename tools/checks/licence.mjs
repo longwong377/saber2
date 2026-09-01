@@ -46,6 +46,7 @@ import { MORALE } from '../../src/game/Morale.js';
 import * as Company from '../../src/game/Company.js';
 import * as Muster from '../../src/game/Muster.js';
 import { army } from './_army.mjs';
+import { interludeBeats } from '../../src/game/Session.js';
 
 /** Run `fn` against an empty company and an empty slate; put the player's back. */
 function withCleanStore(fn) {
@@ -451,4 +452,82 @@ export async function run({ check, assert }) {
       return 'the seat round-trips for a Sergeant; a forged one is dropped at the roll and '
         + 'refused at the tab';
     }));
+
+  /**
+   * ══ WHAT THE COMPANY LOST IS IN THE REPORT, AND THE PROMISE IS THE
+   *    LICENCE'S ═════════════════════════════════════════════════════════
+   *
+   * Two defects an audit measured in one sitting, and they are the same
+   * defect from both ends — the licence talking about itself without asking
+   * itself anything.
+   *
+   * ONE. `_vacancy` writes `ground-lost`, `post-lost` and `voice-lost`, and
+   * NOTHING IN `src/` READ ONE OF THEM. `Session.interludeBeats` handled
+   * `fell`, `steps-up`, `promote`, `mission`, `delegate`, `area`, `lost` and
+   * `won`; the Menu's own reader handled `steps-up`/`promote`/`commend`. So
+   * the entire vacancy was a 2.4-second toast in a firefight and the
+   * after-action report never said the company had lost a capability. The
+   * check above asserts the row is WRITTEN — which is exactly as far as it
+   * went — while its own prose claims the vacancy is spoken "on this frame, in
+   * the log, and out loud".
+   *
+   * TWO. The delegation confirmation ended `…and they stay there without you`
+   * on EVERY plant. That is the HOLDS licence talking, and a rank-0 company
+   * holds no HOLDS — so the sentence was false as written on a fresh company,
+   * and `_vacancy` contradicted it out loud one casualty later.
+   *
+   * Both are driven through the shipped functions, and the report is asked
+   * for the SENTENCE a player would read rather than for the row.
+   */
+  check('licence: the report says what the company can no longer do, and the promise is honest',
+    () => {
+      const { d, c } = army();
+      const sq = d.squadsOf(c)[0];
+      for (const t of sq) if (t.body) t.body.position.set(-60, 0, 0);
+      c.player.position.set(-60, 0, 0);
+
+      /* ── THE PROMISE, ON A COMPANY THAT CANNOT KEEP IT. Every man rank 0. */
+      d.world.notes.length = 0;
+      assert(d.order('cover', c, 0) === true, `a fresh squad refused cover: ${d.orderRefused}`);
+      const raw = d.world.notes.find(([a]) => /HAS THE GROUND/.test(a));
+      assert(raw, `no confirmation was said: ${d.world.notes.map(([a]) => a).join()}`);
+      assert(!/stay there without you/.test(raw[1]),
+        `a rank-0 squad was promised "${raw[1]}" and the licence takes it back on the next death`);
+
+      /* ── …AND ON ONE THAT CAN. A Veteran HOLDS, so the promise is true. */
+      const { d: d2, c: c2 } = army();
+      const sq2 = d2.squadsOf(c2)[0];
+      for (const t of sq2) if (t.body) t.body.position.set(-60, 0, 0);
+      c2.player.position.set(-60, 0, 0);
+      sq2[1].award(Cmd.RANKS[1].xp);
+      d2.world.notes.length = 0;
+      assert(d2.order('cover', c2, 0) === true, `the licensed squad refused: ${d2.orderRefused}`);
+      const kept = d2.world.notes.find(([a]) => /HAS THE GROUND/.test(a));
+      assert(kept && /stay there without you/.test(kept[1]),
+        `a squad with a Veteran in it was told "${kept?.[1]}" — the promise it can keep`);
+
+      /* ── THE REPORT. Kill the leader of the unlicensed squad and read the
+       * beats the player would actually see. */
+      const since = d.log.length;
+      d.onDeath(sq[0].body, null);
+      assert(d.log.some((e) => e.t === 'ground-lost'), 'the ledger did not record the loss');
+      const res = interludeBeats(d.log, since, { name: 'Test', brief: '' },
+        { got: 0, points: 0, strength: 1, max: 10 });
+      const said = res.beats.map((b) => `${b.kind}|${b.text}|${b.sub}`).join('\n');
+      const beat = res.beats.find((b) => b.kind === 'lost-licence');
+      assert(beat, `the report never mentions the vacancy:\n${said}`);
+      assert(/licensed to hold it/.test(beat.sub),
+        `the beat says "${beat.sub}" and not what was lost`);
+      /* THE PLAYER'S OWN NAME FOR IT, resolved in the director where the names
+       * live — a report that called Havoc "1st Squad" is the same squad under
+       * two names. */
+      d.squadNames = ['Havoc'];
+      const named = interludeBeats(
+        [{ t: 'ground-lost', squad: 0, after: 'CT-1', label: d.squadLabel(0, c) }], 0,
+        { name: 'Test' }, {});
+      assert(named.beats.some((b) => b.kind === 'lost-licence' && b.text === 'Havoc'),
+        'the report does not use the name the player typed');
+      return `"${raw[1].slice(-46)}" for a rank-0 squad · the Veteran's squad really stays `
+        + `· the report says "${beat.text} — ${beat.sub.slice(0, 34)}…"`;
+    });
 }

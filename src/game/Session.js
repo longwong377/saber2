@@ -339,6 +339,15 @@ export const INTERLUDE = Object.freeze({
    */
   delegate: 0.95,
   /**
+   * A LICENCE THE COMPANY NO LONGER HOLDS — the ground, the seat or the voice.
+   *
+   * The same length as a delegation because it is the same size of fact said
+   * back the other way round: what you handed off, and what came back. Not as
+   * long as a casualty — the man is already on the fallen list above and this
+   * is the second thing his death cost, not a second death.
+   */
+  lostLicence: 0.95,
+  /**
    * AN ORDER FROM ABOVE, AND WHAT THE PLAYER DID WITH IT.
    *
    * As long as a casualty when it caught your own men and as short as a
@@ -490,6 +499,45 @@ export function interludeBeats(log, since, area, tally = {}) {
   for (const e of held.values()) {
     at('delegate', e.name || `${ordinal(e.squad | 0)} Squad`,
       `held the ground on their own — ${e.n} ${e.n === 1 ? 'man' : 'men'}`, INTERLUDE.delegate);
+  }
+  /**
+   * ══ AND WHAT THE COMPANY CAN NO LONGER DO ══════════════════════════════
+   *
+   * `_vacancy` writes three rows — `ground-lost`, `post-lost`, `voice-lost` —
+   * and until this loop NOTHING IN `src/` READ ONE OF THEM. The whole of the
+   * vacancy was a 2.4-second toast in the middle of a firefight, and a player
+   * who was looking at the thing shooting at them lost a capability without
+   * ever being told. The suite asserted the rows were WRITTEN and stopped
+   * there, while the check's own prose claimed the vacancy is spoken "on this
+   * frame, in the log, and out loud".
+   *
+   * BELOW the delegations on purpose, and it reads as the answer to them: the
+   * player is told what they handed off, and then what came back. A licence is
+   * the only thing in this mode that is lost without a body being lost — every
+   * other beat here has a name attached to a death — so it is the one line the
+   * report can add that is not already in the casualty list.
+   *
+   * ONE BEAT PER SQUAD for the ground, same reason `delegate` deduplicates: a
+   * squad that lost its hold, got it back and lost it again lost one thing.
+   * The seat and the voice are already at most one each per man.
+   */
+  const lost = new Map();
+  for (const e of slice.filter((x) => x.t === 'ground-lost')) lost.set(e.squad | 0, e);
+  for (const e of lost.values()) {
+    at('lost-licence', e.label || `${ordinal(e.squad | 0)} Squad`,
+      `gave up the ground when ${e.after} fell — nobody left in it was licensed to hold it`,
+      INTERLUDE.lostLicence);
+  }
+  for (const e of slice.filter((x) => x.t === 'post-lost')) {
+    at('lost-licence', e.name,
+      e.to ? `held the post you gave him — it falls to ${e.to}`
+        : 'held the post you gave him — there is nobody left in the squad to give it to',
+      INTERLUDE.lostLicence);
+  }
+  for (const e of slice.filter((x) => x.t === 'voice-lost')) {
+    at('lost-licence', e.name,
+      'was the last voice that could steady a squad you are not standing in',
+      INTERLUDE.lostLicence, true);
   }
 
   at('tally', `+${tally.got | 0} reinforcement points`, `${tally.points | 0} in hand`, INTERLUDE.tally);

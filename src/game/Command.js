@@ -7029,6 +7029,37 @@ export class CommandDirector extends WaveDirector {
    */
   order(id, cmdr = null, squad = null) {
     /**
+     * ── THE INDEX IS NORMALISED ON THE WAY IN, ONCE ──────────────────────
+     *
+     * This method's own note calls itself "the door every path goes through"
+     * and then trusted its callers to hand it an integer. `order('cover', c,
+     * 1.7)` returned TRUE, ordered squad 1's men — `squadsOf(c)[Number(squad)
+     * | 0]` truncates — and wrote `squadOrders['1.7']` and
+     * `squadPlanted['1.7']`, keys that `_formationFor(c, 1)` looks up under
+     * `'1'` and will never read. The order landed and the squad's memory of it
+     * went into a slot nothing opens. `-1` was refused with a message naming
+     * "Squad 0".
+     *
+     * No local caller passes a float today and the wire door already validates
+     * (`World.applyOrder` tests `Number.isInteger`), so this is a latent defect
+     * rather than a live one — which is exactly the shape that becomes live the
+     * day something computes an index. It is fixed HERE and not at the three
+     * call sites, for the reason the door exists at all.
+     *
+     * TRUNCATED AND NOT CLAMPED, and never mapped to `null`: `null` means THE
+     * WHOLE ARMY here, so quietly turning an index nobody can answer to into
+     * an army-wide order would be the worst possible reading of a mistake.
+     * An index out of range falls through to the refusal below — `squadsOf`
+     * returns `undefined` for it and "nobody answers" is the honest sentence.
+     * A number that is not one at all (`NaN`, a string) is the one case with
+     * nothing to say, and it is refused rather than obeyed.
+     */
+    if (squad != null) {
+      const k = Math.trunc(Number(squad));
+      if (!Number.isFinite(k)) { this.orderRefused = 'that is not a squad'; return false; }
+      squad = k;
+    }
+    /**
      * THREE KINDS OF ORDER THROUGH ONE DOOR, and the door is not widened by
      * restating what each kind is anywhere else.
      *
@@ -7265,10 +7296,33 @@ export class CommandDirector extends WaveDirector {
       const lead = this.leaderOf(men);
       const n = men.filter((t) => t.alive !== false).length;
       if (lead) {
+        /**
+         * …AND THE PROMISE IS THE LICENCE'S, NOT THE ORDER'S.
+         *
+         * "and they stay there without you" was printed on every plant. It is
+         * the HOLDS licence talking, and `_vacancy` takes the ground away the
+         * moment nobody left in the squad holds it — so on a fresh rank-0
+         * company the sentence was false as it was written. Measured: a
+         * general walks over, orders cover, reads "5 men, and they stay there
+         * without you", and one casualty later reads "SQUAD 2 GIVES UP THE
+         * GROUND". A confirmation that contradicts itself one death later is
+         * worse than no confirmation.
+         *
+         * `licensedIn` is the same reader `_vacancy` drops the plant with, so
+         * the two cannot disagree: if somebody in the squad holds HOLDS, they
+         * really do stay; if nobody does, the sentence says what they will
+         * actually do and what it would take, which is the whole of what a
+         * player can act on.
+         */
+        const keeps = this.licensedIn(men.filter((t) => t.alive !== false), 'HOLDS').length;
         this.world?.notify?.(
           `${this.squadLabel(Number(squad) | 0, c).toUpperCase()} HAS THE GROUND`,
           `${lead.rankRec.title.toLowerCase()} ${lead.name} — ${F.name.toLowerCase()}, `
-          + `${n} ${n === 1 ? 'man' : 'men'}, and they stay there without you`);
+          + `${n} ${n === 1 ? 'man' : 'men'}, `
+          + (keeps
+            ? 'and they stay there without you'
+            : 'and they hold it while he lives — nobody in the squad is licensed to keep it '
+              + 'without him'));
       }
       this.log.push({ t: 'delegate', formation: id, squad: Number(squad) | 0,
                       name: lead?.name || null, n, area: this.areaNumber, wave: this.wave });
@@ -8921,13 +8975,50 @@ export class CommandDirector extends WaveDirector {
        * `HUD.setOrder`. */
       this.onOrder?.({ id: null, name: null }, this.liveSquads(c).length,
         { squad: Number(key) | 0, name: null });
+      /* THE NAME THE PLAYER GAVE IT, resolved HERE and not in the report: the
+       * squad names are the menu's, they reach this director through `run` and
+       * `Session.interludeBeats` is handed a log and nothing else. A report
+       * that called Havoc "2nd Squad" would be the same squad under two names,
+       * which is the whole complaint `squadLabel` answers. */
       this.log.push({ t: 'ground-lost', squad: Number(key) | 0, after: t.name,
+                      label: this.squadLabel(Number(key) | 0, c),
                       area: this.areaNumber, wave: this.wave });
       this.world?.notify?.(`${this.squadLabel(Number(key) | 0, c).toUpperCase()} GIVES UP THE GROUND`,
         living.length
           ? `${t.name} was holding it — nobody left in the squad is licensed to, and they are `
             + 'coming back to you'
           : `${t.name} was the last of them, and the position is nobody's`);
+    }
+
+    /**
+     * ── THE ORDER, WHEN THERE IS NOBODY LEFT TO BE UNDER IT ──────────────
+     *
+     * The clause above is about a HOLD that is lost while men remain, and it
+     * is gated on `planted` — which SEVEN OF THE NINE formations never write,
+     * because they are `advance` and an advancing squad has no ground. So a
+     * squad told to charge and then wiped kept its entry in `squadOrders` and
+     * its line on the order panel for the rest of the run. Measured:
+     *
+     *     cover   plants     "Havoc — take cover"    → "2 squads"  ✓
+     *     charge  plants not "Havoc — charge"        → "Havoc — charge"  ✗
+     *     line    plants not "Havoc — line abreast"  → unchanged   ✗
+     *
+     * `HUD.setOrder`'s own note claims it closed "the two places nobody was
+     * telling this panel about" and `_areaClear` calls itself a third. This is
+     * the fourth and it is the common one — an order that plants nothing is
+     * the ordinary case.
+     *
+     * DEAD MEN, NOT A LOST LICENCE, so there is nothing conditional about it:
+     * when the last man in a squad falls, whatever that squad was told stops
+     * being true of anybody. Idempotent — the clause above may already have
+     * dropped it, and `has` is what keeps this from announcing a second time.
+     */
+    if (key != null && !living.length && c.squadOrders?.has(key)) {
+      c.squadOrders.delete(key);
+      c.squadPlanted?.delete(key);
+      c.digs?.delete(key);
+      this.onOrder?.({ id: null, name: null }, this.liveSquads(c).length,
+        { squad: Number(key) | 0, name: null });
     }
 
     /* ── THE SEAT ──────────────────────────────────────────────────────── */
@@ -8985,6 +9076,11 @@ export class CommandDirector extends WaveDirector {
    */
   squadLabel(k, c = this.commander) {
     const i = k | 0;
+    /* A NUMBER NO SQUAD CAN HAVE IS NOT SQUAD 1. `-1 | 0` is `-1` and the last
+     * line read it as "Squad 0", so a refusal for an index below the floor
+     * named a squad that exists and blamed it. Nothing here can say which
+     * squad was meant, so it says that. */
+    if (i < 0) return 'that squad';
     /* A DETACHED MAN IS NOT A SQUAD. `squads()` puts solo groups past
      * `SQUAD_SLOTS` precisely so their index can never be a squad's, and a
      * name typed for 3rd Squad must never end up over one man who was pulled
