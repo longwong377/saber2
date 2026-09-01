@@ -21,7 +21,17 @@ import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
  * §2.3), and the first repaint of an insignia would make the HUD disagree with
  * the model wearing it.
  */
-import { RANKS, ARMIES, ORDERS } from '../game/Command.js';
+import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
+/* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
+ * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
+ * the rule that stops a man advancing is `braveryOf(body) < SHAKEN_AT` (0.30)
+ * over `morale*0.72 + rank/4*0.28 + rally`. The two agree by luck at rank 0 and
+ * disagree at every rung above it: measured, a Sergeant refuses below 0.222
+ * morale and the plate called him shaken below 0.400, and a Commander refuses
+ * below 0.028. The one pre-press signal the player has flagged obedient men and
+ * stayed silent about frightened ones, and either number moving would have
+ * widened the gap in silence. */
+import { braveryOf } from '../game/Reactions.js';
 import { DIR_GLYPH, callPhrase } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
 import { supportCost } from '../game/Stratagems.js';
@@ -848,7 +858,20 @@ export class OrderWheel extends RadialWheel {
     const d = this.director;
     if (item.kind === 'squad') {
       if (!d) return item.blurb;
-      const n = d.squadsOf?.(d.commander)?.length ?? 0;
+      /* OFF `liveSquads` AND NOT OFF `squadsOf().length`.
+       *
+       * `squadsOf` is indexed by squad NUMBER and padded to `SQUAD_SLOTS`, so
+       * its length is a count of SLOTS and is 5 on every army that ever gets
+       * built. Measured on a ten-man company: this caption read "All 5 squads"
+       * with two squads on the field, and went on reading "All 5 squads" after
+       * one of them was wiped — and the `n <= 1` branch below was unreachable
+       * for the life of the game.
+       *
+       * That is the same rescaling `liveSquads` was written for: the order
+       * panel and the target slot were moved onto it and the wheel was left
+       * behind. There is now one reader of "how many squads are there" and
+       * this is it. */
+      const n = d.liveSquads?.(d.commander)?.length ?? 0;
       if (n <= 1) return 'One squad. Everything you order goes to it.';
       const sel = d.selectedSquad;
       /* BY THE SQUAD'S OWN NAME, through the director's one reader — a squad
@@ -1632,7 +1655,7 @@ export class HUD {
       P.node.classList.toggle('aimed', isAimed);
       P.node.classList.toggle('far', dist > 40);
       P.node.classList.toggle('hurt', hp < 0.35);
-      P.node.classList.toggle('shaken', mo < 0.4);
+      P.node.classList.toggle('shaken', braveryOf(e) < SHAKEN_AT);
       P.node.classList.toggle('broken', !!t.broken);
     }
   }
@@ -1903,11 +1926,56 @@ export class HUD {
      * The suite missed it because it drives `_announceRoster` and `rosterHtml`
      * directly and asserts the callback FIRES. It was tested one call short of
      * the screen.
+     *
+     * ══ AND SO ARE `squad` AND `detached`, FOR THE SAME REASON ═══════════
+     *
+     * `summary()` added both "so the roster column, the nameplates and the
+     * minimap could group by squad" — and this key threw the grouping away.
+     * Measured: `detachNearest()`, then `rosterHtml(summary)` produces a
+     * `Detached — 1` heading and `#rp-list` does not; the column files him
+     * under his old squad for the rest of the run. Detaching a man is the
+     * owner's literal request and the one in-game view of it did not move.
+     *
+     * A KEY THAT DOES NOT CARRY EVERY FIELD THE HTML READS is a cache that
+     * shows a stale screen, and that is now twice. The rule for anything added
+     * to `roll` after this line: if `rosterHtml` reads it, it belongs here.
      */
     const key = `${summary.army}|${summary.points}|`
-      + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}${t.heard === false ? 'x' : ''}`).join(',');
+      + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}`
+        + `${t.heard === false ? 'x' : ''}${t.detached ? 'd' : ''}${t.squad ?? '-'}`).join(',');
     if (key === this._rosterKey) return;
     this._rosterKey = key;
+    /* ══ AND THE ORDER PANEL LEARNS WHO IS LEFT FROM THE SAME ARRIVAL ═════
+     *
+     * `_squadCount` was written only by `setOrder`, whose only caller is the
+     * director's `onOrder` — so "2 squads" was refreshed by GIVING AN ORDER
+     * and by nothing else. Measured: wipe 1st Squad of two and the panel reads
+     * "2 squads" until you next press an order key, which may be never.
+     *
+     * The roll is the right clock for it. `_announceRoster` publishes four
+     * times a second on change, it is the same object the column is drawn
+     * from, and a squad with nobody alive in it is a fact about the roll and
+     * not about orders. Same reading as `CommandDirector.liveSquads`, which is
+     * what `onOrder` hands over — the two cannot drift.
+     *
+     * IT ALSO DROPS A DEAD SQUAD'S STANDING ORDER, which is the panel half of
+     * the same defect: `_vacancy` only gives a squad's order up when the order
+     * PLANTED it, and seven of the nine formations plant nothing, so the
+     * subtitle went on naming a wiped squad's charge for the rest of the run.
+     * The director now gives it up itself (see `_vacancy`); this is the second
+     * mouth, because a panel that can see the roll should never be the last to
+     * know who is dead. */
+    const live = new Set();
+    for (const t of summary.roll) {
+      if (t.alive !== false && !t.detached && Number.isInteger(t.squad)) live.add(t.squad);
+    }
+    const before = this._squadCount | 0;
+    this._squadCount = live.size;
+    let dropped = false;
+    for (const k of [...(this._squadOrders || new Map()).keys()]) {
+      if (!live.has(k)) { this._squadOrders.delete(k); dropped = true; }
+    }
+    if (dropped || this._squadCount !== before) this._paintOrderSub();
 
     const { living, fallen } = rosterSides(summary);
     if (this.el.rpStrength) this.el.rpStrength.textContent = `${living.length}/${summary.roll.length}`;
@@ -3242,9 +3310,24 @@ export function trooperRow(t) {
   const chip = rec && rec.color != null
     ? `#${(rec.color >>> 0).toString(16).padStart(6, '0')}` : '';
   const right = t.alive ? String(t.kills | 0) : `A${t.diedIn ?? '?'}`;
+  /**
+   * …AND THE MAN WHO HOLDS THE SQUAD'S SEAT IS MARKED.
+   *
+   * `summary()` has carried `post` since the licence was written and NOTHING
+   * rendered it — `grep -c post src/ui/HUD.js` was 0. The post is the one
+   * decision the whole licence system asks the player to make, and during a
+   * fight there was no way to see who held it: the only in-fight mention was
+   * the obituary ("X HELD THE POST"), so you learned who had the seat by
+   * losing him.
+   *
+   * A GLYPH AND NOT A WORD, because this row is 23px of rank, a name that
+   * already ellipses, and a kill count — there is no room for a sixth column.
+   * The title attribute carries the sentence.
+   */
+  const post = t.post && t.alive ? ' <i class="rp-post" title="Holds this squad">◆</i>' : '';
   return `<div class="rp-row${t.alive ? '' : ' gone'}" title="${esc(t.rankTitle)} · ${esc(t.unit)}">`
     + `<i${chip ? ` style="background:${chip}"` : ''}></i>`
-    + `<b>${esc(t.rank)}</b><span>${esc(t.name)}</span><em>${esc(right)}</em></div>`;
+    + `<b>${esc(t.rank)}</b><span>${esc(t.name)}${post}</span><em>${esc(right)}</em></div>`;
 }
 
 /**
@@ -3316,10 +3399,19 @@ export function rosterHtml(summary, squadNames = null, word = 'Squad') {
     return deaf === known.length ? ' <i class="rp-far">out of reach</i>'
       : ` <i class="rp-far">${known.length - deaf}/${known.length} in earshot</i>`;
   };
+  /* …AND WHO HOLDS IT, on the heading, because that is where you are already
+   * looking to find out what a squad is. Same field as the row's mark; the
+   * heading is where it is legible without hunting down a column. Silent when
+   * nobody in the squad has been given the seat, which is every fresh company
+   * — the licence has to be earned before there is anything to say. */
+  const holder = (men) => {
+    const t = men.find((m) => m.post);
+    return t ? ` · ${esc(t.name)}` : '';
+  };
   const body = squads.length > 1 || (named && squads.length) || loose.length
     ? squads.map((k) => {
       const men = keyed.filter((t) => t.squad === k);
-      return `<div class="rp-div">${esc(label(k))} — ${men.length}${earshot(men)}</div>`
+      return `<div class="rp-div">${esc(label(k))} — ${men.length}${holder(men)}${earshot(men)}</div>`
         + men.map(trooperRow).join('');
     }).join('') + (loose.length
       ? `<div class="rp-div">Detached — ${loose.length}${earshot(loose)}</div>`

@@ -954,4 +954,98 @@ export async function run({ check, assert }) {
     return 'per-man `heard` on the summary · "out of reach" · "2/5 in earshot" · one squad and '
       + 'the detached both marked · silent without it · repaints when they cross, not on a timer';
   });
+
+  /**
+   * ══ reach.14 THE ONE PRE-PRESS FEAR SIGNAL IS THE REFUSAL RULE'S OWN ═════
+   *
+   * `_takers` refuses an advance when `braveryOf(body) < SHAKEN_AT` — 0.30
+   * over `morale*0.72 + rank/4*0.28 + rally`. The nameplate, which is the only
+   * thing on screen that says a man is frightened BEFORE you press anything,
+   * carried `mo < 0.4`: a typed literal against raw morale, importing neither
+   * term. Resolved, they were two different rules:
+   *
+   *     rank            refuses an advance below   the plate said "shaken" below
+   *     0 Trooper       morale 0.417               0.400
+   *     2 Sergeant      morale 0.222               0.400
+   *     4 Commander     morale 0.028               0.400
+   *
+   * So the plate flagged obedient Sergeants and Commanders as shaken and was
+   * approximately right for exactly one rung — and either number moving would
+   * have widened the gap in silence, because nothing tied them together.
+   *
+   * ASSERTED AS AN AGREEMENT AND NOT AS A NUMBER. The check does not know what
+   * 0.30 is; it walks the morale axis at every rank, asks the DIRECTOR whether
+   * an advance is refused and asks the HUD's own class whether the plate is
+   * lit, and holds the two to the same crossing. Retune `SHAKEN_AT`, the
+   * bravery weights or the rank ladder and this stays green; let the plate
+   * drift off the rule again and it turns red with the rank that disagreed.
+   */
+  check('reach.14 a plate that says "shaken" is a man who would refuse to advance', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const { HUD } = await import('../../src/ui/HUD.js');
+    const { makeDocument } = await import('./_page.mjs');
+    const THREE = await import('three');
+    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const { d, c, me, w } = army();
+    const men = d.squadsOf(c).flat().filter((t) => t.alive !== false);
+    assert(men.length >= 2, `the fixture deployed ${men.length} men`);
+    /* ONE MAN UNDER TEST and one friend standing on him, because `alone` is the
+     * other advance refusal and it is not what is measured here. Everyone else
+     * goes off the roll so `live[0]` is the man whose plate is read. */
+    const t = men[0];
+    const mate = men[1];
+    for (const o of men.slice(2)) { o.alive = false; if (o.body) o.body.dead = true; }
+    t.body.position.set(0, 0, 3);
+    mate.body.position.set(1, 0, 3);
+    mate.morale = 1;
+    /* IN REACH, so `out of reach` is never the refusal that answers. */
+    me.position.set(0, 0, 0);
+    w.settings.troopNames = 'all';
+    w.command = d;
+    const doc = makeDocument(INDEX);
+    const restore = doc.install();
+    try {
+      const hud = new HUD(doc);
+      /* A REAL CAMERA, because `_nameplates` projects the head through one and
+       * that is how a plate gets a screen position at all. Looking down +Z at
+       * the two men standing 3 m out, so both are on screen. */
+      const cam = new THREE.PerspectiveCamera(60, 16 / 9, 0.1, 500);
+      cam.position.set(0, 1.6, -2);
+      cam.lookAt(0, 1.6, 3);
+      cam.updateMatrixWorld(true);
+      const player = { team: 0, position: me.position, aimDir: null, camera: { pos: cam.position } };
+      const rows = [];
+      /* THE RUNG IS SET THROUGH XP, because `rank` is a getter over `RANKS`. A
+       * rung written directly would be a rung the game cannot produce. */
+      for (const rank of [0, 2, 4]) {
+        t.xp = Cmd.RANKS[rank].xp;
+        assert(t.rank === rank, `xp ${t.xp} came back as rung ${t.rank}, not ${rank}`);
+        let ruleCross = null;
+        let plateCross = null;
+        for (let m = 100; m >= 0; m--) {
+          t.morale = m / 100;
+          /* THE RULE, ASKED THROUGH THE DOOR THE PLAYER PRESSES. `charge` is an
+           * `advance` formation, so `_takers` reaches the fear term. `order()`
+           * reports who refused and why. */
+          const ask = d._ask(Cmd.FORMATIONS.charge, c, [t, mate], null);
+          const refused = ask.refused.some((r) => r.t === t && r.why === 'shaken');
+          /* THE PLATE, PAINTED. Not the expression re-typed here — the real
+           * `_nameplates` on a real page, and the class it actually set. */
+          hud._nameplates(w, player, cam);
+          const P = hud._plates.find((x) => x.name?.textContent === t.name);
+          assert(P, `no plate was painted for ${t.name}`);
+          const lit = P.node.classList.contains('shaken');
+          if (refused && ruleCross === null) ruleCross = m / 100;
+          if (lit && plateCross === null) plateCross = m / 100;
+          assert(refused === lit,
+            `rank ${rank} at morale ${(m / 100).toFixed(2)}: the order is `
+            + `${refused ? 'refused as shaken' : 'taken'} and the plate `
+            + `${lit ? 'says shaken' : 'says nothing'}`);
+        }
+        rows.push(`rank ${rank} → ${ruleCross == null ? 'never' : ruleCross.toFixed(2)}`);
+        assert(ruleCross === plateCross, `rank ${rank}: the rule crosses at ${ruleCross} and the plate at ${plateCross}`);
+      }
+      return `${rows.join(' · ')} — the plate and the refusal cross together at every rung`;
+    } finally { restore(); }
+  });
 }

@@ -40,6 +40,8 @@
 import * as Cmd from '../../src/game/Command.js';
 import { FORMATIONS } from '../../src/game/Command.js';
 import { army as deployed } from './_army.mjs';
+import { HUD, OrderWheel } from '../../src/ui/HUD.js';
+import { makeDocument } from './_page.mjs';
 
 export async function run({ check, assert, THREE: T }) {
   const { clocked } = await import('./_shared.mjs');
@@ -491,6 +493,96 @@ export async function run({ check, assert, THREE: T }) {
     assert(d.readout(c).squads === 1,
       `the readout says ${d.readout(c).squads} squads with one standing`);
     return '2 → 1 as a squad is lost, on the panel and in the readout';
+  });
+
+  /**
+   * ══ AND THE SCREEN IS DRIVEN, NOT THE DIRECTOR ═════════════════════════
+   *
+   * The check above asserts `onOrder`'s `n` and `readout().squads`. Its own
+   * header names *the wheel's caption* as one of the two readers of the wrong
+   * number — and then does not touch it. An audit measured what the player
+   * actually saw, on a real page, through the real HUD:
+   *
+   *   the wheel's Target caption      "All 5 squads."   with two on the field
+   *                                   "All 5 squads."   with one
+   *   the order panel's second line   "2 squads"        with one standing
+   *   the roster column after detach  no Detached heading, ever
+   *   the roster column's `post`      not rendered anywhere at all
+   *
+   * Four separate readings, all wrong, all downstream of a suite that stopped
+   * at the director. So this one starts at `roster.summary()` — the object
+   * that actually crosses to the UI — and reads the HTML the player would.
+   *
+   * ON THE REAL `index.html`, because `#rp-list` and the wheel's host are ids
+   * in that file and a bag of fake nodes can only ever agree with itself.
+   * Synchronous between install and restore, for the reason `hud-events.mjs`
+   * gives: the runner starts the next check the moment this one suspends.
+   */
+  check('squads: the wheel, the panel and the column all count the same squads', async () => {
+    const { readFile } = await import('node:fs/promises');
+    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const { d, c } = deployed();
+    const doc = makeDocument(INDEX);
+    const restore = doc.install();
+    try {
+      const hud = new HUD(doc);
+      const wheel = new OrderWheel(doc.getElementById('order-wheel'), FORMATIONS);
+      wheel.director = d;
+      const target = wheel.items.find((i) => i.kind === 'squad');
+      assert(target, 'the wheel has no Target slot');
+      const cap = () => wheel.captionFor(target);
+      const list = () => doc.getElementById('rp-list').innerHTML;
+      const sub = () => doc.getElementById('rp-order-sub').textContent;
+
+      /* TWO SQUADS, AND EVERY SURFACE SAYS TWO. */
+      assert(d.liveSquads(c).length === 2, `the fixture deployed ${d.liveSquads(c).length} squads`);
+      hud.setRoster(d.roster.summary());
+      assert(/All 2 squads/.test(cap()),
+        `the wheel says "${cap()}" with two squads on the field`);
+      assert(/2 squads/.test(sub()), `the panel says "${sub()}" with two squads standing`);
+
+      /* …AND A SQUAD UNDER AN ORDER THAT PLANTS NOTHING. `charge` is one of the
+       * seven `advance` formations, which is the case `_vacancy` could not see.
+       * `order()` is the real door; the HUD hears it through `onOrder` exactly
+       * as main.js wires it. */
+      d.onOrder = (F, n, one) => hud.setOrder(F.id, F.name, n, one);
+      d.selectedSquad = 0;
+      assert(d.order('charge', c, 0), 'the fixture could not order squad 0 to charge');
+      assert(/charge/i.test(sub()), `the panel says "${sub()}" after squad 0 was told to charge`);
+
+      /* ── WIPE IT. Nothing calls an order key again — which is the point: the
+       * panel used to be repainted by `setOrder` and by nothing else. */
+      for (const t of d.squadsOf(c)[0]) { t.alive = false; if (t.body) t.body.dead = true; }
+      hud.setRoster(d.roster.summary());
+      assert(/One squad/.test(cap()),
+        `the wheel says "${cap()}" with one squad left — the count is of slots`);
+      assert(!/charge/i.test(sub()),
+        `the panel still says "${sub()}" for a squad with nobody alive in it`);
+      assert(!/2 squads/.test(sub()), `the panel says "${sub()}" with one squad standing`);
+
+      /* ── DETACH A MAN and the column regroups. The cache key carried neither
+       * `squad` nor `detached`, so `rosterHtml` produced a Detached heading and
+       * `#rp-list` did not — for the rest of the run. */
+      const live = d.squadsOf(c).find((sq) => sq.some((t) => t.alive !== false));
+      const loose = live.find((t) => t.alive !== false);
+      assert(c.roster.detach(loose, true), 'the fixture could not detach a man');
+      hud.setRoster(d.roster.summary());
+      assert(/Detached/.test(list()), 'the column never regrouped a detached man');
+
+      /* ── AND THE POST IS ON SCREEN. `summary()` has carried it since the
+       * licence was written and `grep -c post src/ui/HUD.js` was 0: the one
+       * decision the licence asks the player to make was invisible in a fight
+       * until the man holding it died. */
+      const seat = d.squadsOf(c).flat().find((t) => t.alive !== false && t !== loose);
+      seat.xp = 999;
+      const got = c.roster.appoint(seat, true);
+      assert(got.ok, `the fixture could not give the post: ${got.reason}`);
+      hud.setRoster(d.roster.summary());
+      assert(list().includes(seat.name) && /rp-post/.test(list()),
+        'the man who holds the squad is unmarked on the roster column');
+      return `wheel 2 → one squad · the panel drops a wiped squad's charge with no order pressed `
+        + `· a detached man regroups · ${seat.name} is marked as holding the squad`;
+    } finally { restore(); }
   });
 
 }

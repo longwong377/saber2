@@ -1283,6 +1283,12 @@ button{font-family:inherit}
    heading it sits on and not styled as an alarm: a squad out of earshot is a
    fact about where you are standing, not a casualty. */
 .rp-far{font-style:normal;color:var(--dim);letter-spacing:.12em}
+/* THE MAN WHO HOLDS THE SQUAD'S SEAT. The rank chip already carries the rung;
+   this carries the appointment, which is a different fact — a company can have
+   four Sergeants and one post. Warm, small and after the name, so it reads as a
+   mark on him rather than a second column. */
+.rp-post{font-style:normal;font-size:8px;color:var(--accent-warm);vertical-align:1px}
+.rp-row.gone .rp-post{display:none}
 .rp-foot{display:flex;align-items:baseline;gap:11px;padding:6px 11px 7px;
   border-top:2px solid var(--stroke);background:var(--panel-2);
   font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
