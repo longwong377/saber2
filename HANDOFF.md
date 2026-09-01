@@ -1670,6 +1670,42 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
+## 5.000 What THIS session changed — 1 Sep, evening: V11, the hub
+
+The player's V11 list (PLAYTEST.md, top entry). The room is closed now —
+`hangar.mjs`'s shape checks hold five sides, a forward opening with the planet
+in it, and a lid above the walls with structure under it. Read
+`HANGAR-SPEC.md` "V11 — THE HUB" for what each item is and which check holds it.
+
+**Traps this session added or found:**
+
+- **`world.floorAt(x, z)` is the one floor query on the deck.** Pads, the
+  transport's ramp and bay (`DeckFlight.hullFloorAt`), else the heightfield.
+  `Shovable`, the company's walk and the gait solver's `groundAt` all read it.
+  Anything that reads `terrain.height` directly on the deck stands a man 0.45 m
+  into a pad. Installed by `dressHangar`, cleared by `HangarDirector.dispose`.
+- **A staggered start is a man STANDING.** `stepRowInner` used to fall
+  through to the halt when `start` was in the future, which put him on his
+  mark at once — so "filing in from the crowd" was one man walking and nine
+  teleporting, and every check that timed a walk was timing a teleport. If a
+  walk suddenly takes longer than a check allows, that is why.
+- **`Box3.setFromObject(root)` on a deck figure includes the hidden L2 skin.**
+  `MergedSkin` bakes in the crowd and the mesh keeps its bake-time bounds while
+  hidden inside 62 m, so once the men really walked, every man's box ran 50 m
+  back to the wall. `DeckEdit.pickMan` boxes visible, non-merged meshes only.
+- **"Behind the ramp" is +Z in the HULL's frame.** The parked transport is
+  yawed π; adding to world z put the boarding file under the hull. Use
+  `DeckFlight.rampSpot(world, back, side)`.
+- **The ramp's dwell re-boards an arriving player.** `releasePlayer` sets
+  `world._rampArmed = false`; `stepRamp` counts nothing until he has walked
+  out of `DEPLOY_RAMP.reach` once.
+- **`spawnPlayer` runs AFTER `L.dress`.** Anything in a level's dress that
+  wants the player (the arrival's seat) has to do it on the first frame.
+- **Three lanes died at a usage limit mid-edit** (life, paint — relaunched as
+  `v11-lanes-c` with the NPC lane). Their half-state was committed as-is
+  (`799cbae`) rather than lost; if a suite in `decklife`/`deckcast`/`barracks`
+  paint rows is red, look at that lane's report first.
+
 ## 5.00 What THIS session changed — 1 Sep: the audit round
 
 The session's own instruction, given three times and the source of the anger

@@ -230,7 +230,7 @@ const _dir = new THREE.Vector3();
 const _p = new THREE.Vector3();
 const _hit = new THREE.Vector3();
 const _box = new THREE.Box3();
-const _box2 = new THREE.Box3();
+const _p3 = new THREE.Vector3();
 const _col = new THREE.Color();
 const FWD = new THREE.Vector3(0, 0, -1);
 
@@ -322,19 +322,21 @@ export function pickMan(world, opts = {}) {
      * one walk of two dozen bodies once — against caching a box per man, which
      * would have to be invalidated by the walk-on, the step-out, a shove and a
      * rebuild, and would be wrong on whichever of those was forgotten. */
-    /* THE DRAWN MAN, NOT HIS FAR SKIN. `Box3.setFromObject` takes every
-     * child whatever its visibility, and the merged L2 skin under the root
-     * is hidden inside 62 m with its bake-time bounds — baked in the crowd,
-     * so once the company had really WALKED to the line every box ran 50 m
-     * back to the wall and the pick took the file beside the man. */
+    /* THE MAN IS HIS SKELETON. A deck figure is drawn as its merged skin
+     * (`mergeFigure`) with the source meshes hidden, and a skinned mesh's CPU
+     * bounds are its bake-time bounds — baked in the crowd, so once the
+     * company had really WALKED to the line `Box3.setFromObject(root)` ran
+     * every man's box 50 m back to the wall and the pick took the file beside
+     * him. The bones are where he is this frame, whatever is drawn on them. */
     _box.makeEmpty();
-    root.updateWorldMatrix(true, true);
-    root.traverse((o) => {
-      if (!o.isMesh || !o.visible || o.userData?.mergedSkinL2) return;
-      if (!o.geometry) return;
-      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
-      _box.union(_box2.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld));
-    });
+    const rig = row.fig?.rig;
+    if (rig?.list?.length) {
+      root.updateWorldMatrix(true, true);
+      for (const b of rig.list) { if (b.obj) _box.expandByPoint(b.obj.getWorldPosition(_p3)); }
+      _box.expandByScalar(0.34);
+    } else {
+      _box.setFromObject(root);
+    }
     if (_box.isEmpty()) continue;
     if (!ray.intersectBox(_box, _hit)) continue;
     /* MEASURED FROM THE MAN'S FEET TO THE PLAYER'S, not along the ray from the
@@ -717,40 +719,103 @@ function paintSlots(type, kind) {
   return out;
 }
 
+/**
+ * ══ WHAT A PAINT CHANGE TOUCHES, AND WHAT IT IS BECOMING ═══════════════════
+ *
+ * Two kinds of entry, because the room has two kinds of paint:
+ *
+ *   A MATERIAL ENTRY `{ mat, from, to }` — a paint slot (plate, unit flash,
+ *   visor, a droid's shell) recolours a whole material, and the wash carries
+ *   `mat.color` from one colour to the other. Vertices the rank, the mark or
+ *   the band have PAINTED on that material are left alone by it: their colour
+ *   is the paint's, not the plate's, and `CommandDirector.renewPaint` re-fits
+ *   them to the new plate when the edge has passed.
+ *
+ *   A VERTEX ENTRY `{ vertex, slot, geos }` — a mark or a band is per-vertex
+ *   colour in the plate's own channel (src/game/Command.js `PAINT`), so the
+ *   wash carries every painted VERTEX from what it was to what the brush
+ *   wrote, and the mark washes ON — out of the bare plate the first time,
+ *   out of the old colour on a change, and back to bare plate when it is
+ *   dialled off. The channel follows the edge as it goes, so the source
+ *   geometry and the merged buffer agree on every frame and a re-bake
+ *   mid-wash could reproduce the frame.
+ */
+
+/** A copy of the colour channel of every geometry a paint record touched. */
+function snapshotChannels(rec) {
+  const out = new Map();
+  if (!rec?.geos) return out;
+  for (const [geo] of rec.geos) {
+    const col = geo.attributes.color;
+    if (col && !out.has(geo)) out.set(geo, Float32Array.from(col.array));
+  }
+  return out;
+}
+
+/** Per geometry, which vertices any of the three paint records own. */
+function paintedMask(stub) {
+  const mask = new Map();
+  for (const key of ['_cmdPaint', '_cmdMark', '_cmdBand']) {
+    const rec = stub?.[key];
+    if (!rec?.geos) continue;
+    for (const [geo, g] of rec.geos) {
+      let m = mask.get(geo);
+      if (!m) mask.set(geo, (m = new Uint8Array(g.count)));
+      for (let k = 0; k < g.idx.length; k++) m[g.idx[k]] = 1;
+    }
+  }
+  return mask;
+}
+
 /** The live materials a paint change touches, and what they are becoming. */
 function wearPaint(world, row, op, was, look, kind) {
   const entries = [];
+  const stub = row.fig?._stub;
   if (op === 'mark' || op === 'band') {
-    /* The rank chip and the two bolt-on marks are `CommandDirector`'s, and
-     * `buildFigure` already put them on through the same three calls. Asking
-     * it again with a new colour is `repaint`'s own idempotent path — it
-     * re-uses `_cmdMark`/`_cmdBand` rather than bolting a second pair of
-     * meshes on — so the only thing that changes is the colour, which is
-     * exactly what a wash wants to interpolate. */
-    const stub = row.fig._stub;
-    const fn = op === 'mark' ? CommandDirector.prototype.markUp : CommandDirector.prototype.bandUp;
-    const slot = op === 'mark' ? '_cmdMark' : '_cmdBand';
+    if (!stub) { cue(cuePaint, world, row); return; }
+    const key = op === 'mark' ? '_cmdMark' : '_cmdBand';
     const to = markById(look?.[op])?.color;
+    const old = stub[key];
+    /* THE CHANNEL AS HE WEARS IT, taken before the brush moves: a re-coloured
+     * mark puts the bare plate back and paints again, so its record's `orig`
+     * is the plate and not the colour he had on a moment ago. */
+    const snap = snapshotChannels(old);
+    let rec = null, clear = false;
     if (to == null) {
-      /* CLEARED. There is no "unbolt" on the director and a mark that vanished
-       * would need the meshes taken off the bones; the honest answer for a
-       * cleared mark is the one the store already gives — it is gone from the
-       * record, and the body shows it on the next rebuild. */
-      cue(cuePaint, world, row);
-      return;
+      /* DIALLED OFF. The wash runs the other way — back to what was under
+       * the paint — and the record is dropped when the edge has cleared him. */
+      if (!old) { cue(cuePaint, world, row); return; }
+      rec = old; clear = true;
+    } else {
+      const fn = op === 'mark' ? CommandDirector.prototype.markUp : CommandDirector.prototype.bandUp;
+      fn.call(null, stub, to);
+      rec = stub[key];
     }
-    /* A MARK HE HAS NEVER WORN HAS NO OLD COLOUR, so it washes on out of the
-     * ARMOUR — the stripe is painted onto the shin rather than switched on.
-     * `markUp` bolts the meshes at the colour it is given, so the material is
-     * put back to the plate's before the wash starts. */
-    const fresh = !stub?.[slot];
-    if (fresh) fn.call(null, stub, to);
-    const mat = stub?.[slot];
-    if (mat) {
-      const from = (fresh ? row.fig.palette?.plate?.color : mat.color)?.clone()
-        ?? mat.color.clone();
-      if (fresh) mat.color.copy(from);
-      entries.push({ mat, from, to: new THREE.Color(to) });
+    if (rec?.geos) {
+      const geos = new Map();
+      const mats = new Set();
+      for (const [geo, g] of rec.geos) {
+        const col = geo.attributes.color;
+        if (!col || col.count !== g.count) continue;
+        const n = g.idx.length;
+        const from = new Float32Array(n * 3), toArr = new Float32Array(n * 3);
+        const prev = snap.get(geo);
+        for (let k = 0; k < n; k++) {
+          const i = g.idx[k], o = k * 3;
+          if (prev) { from[o] = prev[i * 3]; from[o + 1] = prev[i * 3 + 1]; from[o + 2] = prev[i * 3 + 2]; }
+          else { from[o] = g.orig[o]; from[o + 1] = g.orig[o + 1]; from[o + 2] = g.orig[o + 2]; }
+          if (clear) { toArr[o] = g.orig[o]; toArr[o + 1] = g.orig[o + 1]; toArr[o + 2] = g.orig[o + 2]; }
+          else { toArr[o] = col.getX(i); toArr[o + 1] = col.getY(i); toArr[o + 2] = col.getZ(i); }
+          /* And the channel starts where the wash starts, or the first
+           * frame is the answer — which is the pop this whole section is
+           * here to refuse. */
+          col.setXYZ(i, from[o], from[o + 1], from[o + 2]);
+        }
+        col.needsUpdate = true;
+        mats.add(g.mat);
+        geos.set(geo, { mat: g.mat, idx: g.idx, from, to: toArr });
+      }
+      if (geos.size) entries.push({ vertex: true, slot: op, clear, geos, mats: [...mats] });
     }
   } else {
     const slots = paintSlots(row.rec.type, kind);
@@ -779,6 +844,9 @@ function wearPaint(world, row, op, was, look, kind) {
   if (entries.length) startSweep(world, row, entries);
 }
 
+/** Every material an entry moves, for telling two washes apart. */
+const matsOf = (e) => (e.vertex ? e.mats : [e.mat]);
+
 /** Arm a wash over this man, bottom to top. */
 function startSweep(world, row, entries) {
   const st = editState(world);
@@ -790,15 +858,56 @@ function startSweep(world, row, entries) {
   const hi = (row.man?.hip || 0.95) * 1.95;
   /* Drop any wash already running on the same materials, or two edges cross
    * and the second one paints back over the first's `from`. */
-  st.sweeps = st.sweeps.filter((s) => s.row !== row || !s.mats.some((m) => entries.some((e) => e.mat === m)));
+  const mats = entries.flatMap(matsOf);
+  st.sweeps = st.sweeps.filter((s) => s.row !== row || !s.mats.some((m) => mats.includes(m)));
   st.sweeps.push({
     row,
-    mats: entries.map((e) => e.mat),
+    mats,
     entries,
+    /* Which vertices are paint rather than plate, so a plate wash goes round
+     * them. Taken now: the records do not change under a running wash. */
+    mask: paintedMask(row.fig?._stub),
     at: c.t,
     lo: -SWEEP.soft,
     hi: hi + SWEEP.soft,
   });
+}
+
+/** Write a vertex entry's channel at blend `k` (0 = from, 1 = to), flat. */
+function writeVertexEntry(e, k) {
+  for (const [geo, g] of e.geos) {
+    const col = geo.attributes.color;
+    if (!col || col.count < g.idx.length) continue;
+    for (let i = 0; i < g.idx.length; i++) {
+      const o = i * 3;
+      col.setXYZ(g.idx[i],
+        g.from[o] + (g.to[o] - g.from[o]) * k,
+        g.from[o + 1] + (g.to[o + 1] - g.from[o + 1]) * k,
+        g.from[o + 2] + (g.to[o + 2] - g.from[o + 2]) * k);
+    }
+    col.needsUpdate = true;
+  }
+}
+
+/** Hand a geometry's channel to the merged buffer: `mat.color × channel`, on the vertices given. */
+function syncVertices(skin, geo, g) {
+  for (let i = 0; i < skin.meshes.length; i++) {
+    const col = skin.meshes[i].geometry.attributes.color;
+    let start = 0;
+    for (const src of skin.sources[i]) {
+      const count = src.geometry.attributes.position.count;
+      if (src.geometry === geo) {
+        const c = src.material.color, ch = geo.attributes.color;
+        for (let k = 0; k < g.idx.length; k++) {
+          const v = g.idx[k];
+          col.setXYZ(start + v, c.r * ch.getX(v), c.g * ch.getY(v), c.b * ch.getZ(v));
+        }
+        col.needsUpdate = true;
+        return;
+      }
+      start += count;
+    }
+  }
 }
 
 /**
@@ -814,9 +923,23 @@ function stepSweep(world, s, t) {
   const u = (t - s.at) / SWEEP.dur;
   const done = u >= 1;
   const skin = s.row.merged?.skin || null;
+  const stub = s.row.fig?._stub;
   if (done) {
-    for (const e of s.entries) e.mat.color.copy(e.to);
+    for (const e of s.entries) {
+      if (e.vertex) {
+        writeVertexEntry(e, 1);
+        if (e.clear) CommandDirector.prototype.unpaint.call(null, stub, e.slot);
+      } else {
+        e.mat.color.copy(e.to);
+      }
+    }
+    /* The paint re-fitted to the plate it now sits on, THEN the buffer:
+     * `syncPaint` follows a material whose colour moved and reads the
+     * channel as it is, so the order is what makes a painted vertex come out
+     * as the paint and not as `want × new ÷ old`. */
+    if (s.entries.some((e) => !e.vertex)) CommandDirector.prototype.renewPaint.call(null, stub);
     s.row.merged?.paint?.();
+    if (skin) for (const e of s.entries) if (e.vertex) for (const [geo, g] of e.geos) syncVertices(skin, geo, g);
     return true;
   }
   const k = smoothstep(0, 1, Math.max(0, u));
@@ -824,19 +947,15 @@ function stepSweep(world, s, t) {
   if (!skin) {
     /* NOT MERGED YET — he is still walking on. Same clock, same easing, no
      * spatial edge, because there is no shared buffer to write one into. */
-    for (const e of s.entries) e.mat.color.copy(e.from).lerp(e.to, k);
+    for (const e of s.entries) {
+      if (e.vertex) writeVertexEntry(e, k);
+      else e.mat.color.copy(e.from).lerp(e.to, k);
+    }
     return false;
   }
-  /**
-   * WHAT THE BUFFER COULD NOT ANSWER FOR.
-   *
-   * A mark the player has never given this man is bolted on AFTER the bake —
-   * `CommandDirector.markUp` parents two new meshes to his shins — so its
-   * material is in no span of the merged skin and no amount of writing that
-   * buffer would move it. Those materials take the same clock as a colour ramp,
-   * which is what the unmerged path does anyway. Tracked rather than assumed,
-   * so a material that IS in the buffer is never done twice.
-   */
+  /* A material that is in no span of the merged skin — nothing a figure
+   * wears today, since every paint is in the bake, but tracked rather than
+   * assumed — takes the same clock as a colour ramp. */
   const painted = new Set();
   for (let i = 0; i < skin.meshes.length; i++) {
     const geo = skin.meshes[i].geometry;
@@ -846,25 +965,47 @@ function stepSweep(world, s, t) {
     let start = 0, dirty = false;
     for (const src of skin.sources[i]) {
       const count = src.geometry.attributes.position.count;
-      const e = s.entries.find((x) => x.mat === src.material);
+      const e = s.entries.find((x) => !x.vertex && x.mat === src.material);
       if (e) {
         /* THE BAKE IS IN THE RIG ROOT'S FRAME (`buildMergedSkin` multiplies by
          * `rootInv`), so a vertex's y IS its height above the man's boots —
-         * which is what the wash is a function of, and needs no transform. */
+         * which is what the wash is a function of, and needs no transform.
+         * The source's own channel rides along — creases, and the paint's
+         * neighbours — and the painted vertices themselves are stepped over. */
+        const skip = s.mask.get(src.geometry);
+        const C = src.material.vertexColors ? src.geometry.attributes.color : null;
         for (let v = 0; v < count; v++) {
+          if (skip && skip[v]) continue;
           const a = smoothstep(edge - SWEEP.soft, edge + SWEEP.soft, pos.getY(start + v));
           _col.copy(e.to).lerp(e.from, a);
-          col.setXYZ(start + v, _col.r, _col.g, _col.b);
+          if (C) col.setXYZ(start + v, _col.r * C.getX(v), _col.g * C.getY(v), _col.b * C.getZ(v));
+          else col.setXYZ(start + v, _col.r, _col.g, _col.b);
         }
         dirty = true;
         painted.add(e.mat);
+      }
+      for (const x of s.entries) {
+        if (!x.vertex || !x.geos.has(src.geometry)) continue;
+        const g = x.geos.get(src.geometry);
+        const c = g.mat.color, ch = src.geometry.attributes.color;
+        for (let j = 0; j < g.idx.length; j++) {
+          const v = g.idx[j], o = j * 3;
+          const a = smoothstep(edge - SWEEP.soft, edge + SWEEP.soft, pos.getY(start + v));
+          const r = g.to[o] + (g.from[o] - g.to[o]) * a;
+          const gg = g.to[o + 1] + (g.from[o + 1] - g.to[o + 1]) * a;
+          const b = g.to[o + 2] + (g.from[o + 2] - g.to[o + 2]) * a;
+          ch.setXYZ(v, r, gg, b);
+          col.setXYZ(start + v, c.r * r, c.g * gg, c.b * b);
+        }
+        ch.needsUpdate = true;
+        dirty = true;
       }
       start += count;
     }
     if (dirty) col.needsUpdate = true;
   }
   for (const e of s.entries) {
-    if (!painted.has(e.mat)) e.mat.color.copy(e.from).lerp(e.to, k);
+    if (!e.vertex && !painted.has(e.mat)) e.mat.color.copy(e.from).lerp(e.to, k);
   }
   return false;
 }

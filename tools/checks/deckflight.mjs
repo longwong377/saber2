@@ -18,7 +18,7 @@
  * the crowd.
  */
 
-import { DECK, DEPLOY_RAMP } from '../../src/game/Hangar.js';
+import { DECK, DEPLOY_RAMP, MARCH_SPEED } from '../../src/game/Hangar.js';
 import { FLIGHT, PHASE, flightPhase, rampFoot, rampSpot, inBay } from '../../src/game/DeckFlight.js';
 
 async function deck(extra = {}) {
@@ -158,7 +158,13 @@ export async function run({ check, assert, THREE }) {
       assert(Math.hypot(p.position.x - hull.x, p.position.z - hull.z) > Math.hypot(foot.x - hull.x, foot.z - hull.z),
         'the player was put down under the hull rather than behind the ramp');
       assert(c.men.every((r) => !r.aboard), 'men still aboard after the ramp came down');
-      step(world, 24, idle);
+      /* As long as the farthest man's walk takes at his pace, plus the file's
+       * stagger — they WALK back, at the march, not a teleport. */
+      let longest = 0;
+      c.men.forEach((r, i) => {
+        longest = Math.max(longest, Math.hypot(r.pos.x - r.home.x, r.pos.z - r.home.z) / (MARCH_SPEED * (r.pace || 1)) + i * 0.7);
+      });
+      step(world, longest + 4, idle);
       const home = c.men.filter((r) => Math.hypot(r.pos.x - r.home.x, r.pos.z - r.home.z) < 1.0).length;
       assert(home >= c.men.length - 1, `${home} of ${c.men.length} men walked back into the crowd`);
       assert(st.solids.length >= 5, 'the landed hull has no colliders');

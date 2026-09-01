@@ -65,33 +65,115 @@ appears.
 
 ## THE ROOM
 
-- `✓` Aft bulkhead is the only real *hull* surface — but this is now honestly
-  three surfaces, not one. Two rack walls stand 112 m apart down the length of
-  the ship. The first version put them 276 m apart, the full width of the deck,
-  which meant a player on the centreline was 138 m from either one and the
-  racks were entirely outside his field of view. Every light in the room was in
-  those walls, so the room had no light in it and the first render was a black
-  void with a floor. Past the ends of the racks the deck opens onto an apron
-  with vacuum on three sides.
-- `✓` Deck extends out toward the shield and just ends. **Warning strobes at
-  the lip, no railing.** The strobes did not exist at all until the audit —
-  the word appeared nowhere in `src/` for the hangar — while two files carried
-  prose describing where they stood. One instanced mesh, pulsing out of phase
-  so the flash runs along the rank rather than blinking together.
-- `✓` **No ceiling, ever.** And the thing that broke it was the one object the
-  no-ceiling check was written to skip: a 288 × 288 m field plane lying flat at
-  64 m, whose fresnel shader is *dimmest* looking straight up at it and
-  *brightest* at exactly the grazing angles an overhead is viewed from. It was
-  a glowing lid, exempted by material flag and by name. Gone; the invisible
-  physics box that stops a player leaving through the top stays.
-- `✓` **No bare side walls. It cannot look like a box.** Bays face both ways —
-  inboard onto the working deck, outboard onto the apron.
-- `✓` Haze so far rows dissolve. It existed and was driven, tuned for a 128 m
-  room: at the old density the aperture rim 218 m away was 99.5% extinguished,
-  so the haze was eating the brightest object in the room, both rack walls and
-  the bulkhead. Solved off `DECK` rather than typed. The field planes are now
-  fogged too — they were the one thing at full contrast at 220 m while the rim
-  sitting on them faded, so the shield read as nearer than its own frame.
+> V11, 1 Sep: *"the hangar was too big outside of the side walls like you had
+> decent looking side walls but you were able to go behind them and it's just a
+> janky mess on the edges, also ships were going through the side walls, give the
+> hangar a solid ceiling (but very high up even higher than the side walls) but
+> the ceiling can't make the hangar look like a shitty box"*. The rule this file
+> carried for five versions — one wall, no ceiling, ever — was the wrong rule,
+> and it was the player who said so. `tools/checks/hangar.mjs` now holds HIS
+> room, by ray, on the real scene.
+
+- `✅` **Closed on five sides, open on the sixth.** Two rack walls run the full
+  length at x = ±80 (collider face ±72.5), the bulkhead is aft at −104 with the
+  lift lobby cut into it, the lid is at y = 96. Thirteen of sixteen bearings
+  out of the middle of the deck are stopped inside 170 m; the three forward
+  ones reach space. There is nothing behind the walls to walk to. Check:
+  `hangar: a room closed on five sides and open on the sixth, which is forward`.
+- `✅` **A lid, not a box.** The ceiling plate is above the walls, and under it
+  girders, beams, cable runs, crane rails and hung fighters: a fifth of the
+  deck's up-rays stop on hanging structure well below the plate, the rest on
+  the plate. `deckColliders` closes the top at the same height, so nothing
+  leaves that way. Check: `hangar: a lid, high over the walls, and busy
+  underneath — not a box`.
+- `✅` **The opening is the whole view, and the planet is in it.** 24 of 25
+  forward rays from thirty metres inside the lip reach space; the SkyDome's
+  planet bearing is read off the real dome and has to be forward (z > 0.85):
+  `SkyDome._placeByPhase` takes the aperture's azimuth and scores the orbit's
+  candidates against it. Check: `hangar: the deck ends at the field, and the
+  planet is in the opening`.
+- `✅` The deck is 288 m long, flat, and `DECK.lip` is the heightfield's edge;
+  the field, the rim, the strobes and the forward barrier all stand off it.
+- `✅` **Two pads, one table.** `PADS` in Hangar.js: pad A (the transport's) at
+  (−30, 14) r 15, 0.45 m proud; pad B (the shuttle's) at (44, 96) r 15, 1.2 m
+  proud. Each collider is three boxes a third of a turn apart — a twelve-sided
+  plate the width of the drawn disc — and `deckFloorAt` answers the same disc,
+  so a man on the pad stands on it rather than in it. `world.floorAt` is the
+  one floor query on the deck: pads, the transport's ramp and bay
+  (`DeckFlight.hullFloorAt`), else the heightfield. `Shovable` reads it under
+  the whole body box, not the centre.
+- `✅` **A mirror floor.** `DeckMirror.js`: a planar reflection of the room in
+  the deck plane, dark (0.18 head-on to 0.45 grazing), smeared along the
+  vertical, once per frame, off on the lowest tier, half-res on medium.
+  Suite: `deckmirror` (11 checks).
+- `✅` The insignia is the army's: Separatist hex-and-bars, Republic hub-and-
+  spokes without the wheel ring (`DeckKit.insigniaParts`); the ground and
+  wall marks are the same parts.
+- `✅` Haze solved off `DECK` rather than typed; the field planes fog with the
+  rim on them.
+
+## V11 — THE HUB (1 Sep)
+
+The player's V11 notes, and where each one stands. Each `✅` names the check
+that goes red without it.
+
+- `✅` **Fresh troops on a fresh run.** A company with nothing on its roll is
+  minted from the muster slate (`Muster.lineup`, `saber.muster.v1`) so the
+  deck has men to customise before any mode has been played; a dressed
+  recruit survives a re-mint. Checks: `deckedit` (6 veterans + recruits),
+  `barracks: a dressed recruit survives a remint`.
+- `✅` **You arrive by lift.** `DeckLift.js`: the spawn is inside the car with
+  the doors shut, the shaft streams past the panes at 46 m/s, the doors part,
+  you walk out on your own feet, the doors close and the car leaves. The call
+  key at the doors brings it back, and riding it out raises `onDeckLeave` —
+  the main menu. Suite: `decklift` (3 checks, driven: no step out of the car
+  is larger than a walking step).
+- `✅` **You leave by ship, and come home by it.** `DeckFlight.js`: the army's
+  real transport stands on pad A on its belly with its ramp on the pad; the
+  dwell at the ramp's foot sends the company up it in file, seats you when you
+  walk into the bay, seals, lifts, runs out through the field (with its ripple)
+  and asks main.js for the deploy only past `DECK.lip + 200`, where the
+  insertion's own orbit phase carries the capital ship astern and shrinking,
+  the planet growing, and the atmosphere entry it already had. A run that ends
+  with you standing (`withdrew` or won, not a session, not a dojo) comes home:
+  `enterHangar({card})` builds the deck with `deckArrival`, the hull comes in
+  from 640 m out, turns, lands, drops the ramp, puts you off and the company
+  walks back into the crowd, and the run's card is raised on the deck. The
+  dwell will not board you again until you have walked away from the ramp.
+  Suite: `deckflight` (3 checks). `main.js gameOver` → `homeward`.
+- `✅` **The company waits in the crowd and files in on the order.** The deck
+  stands a crowd of other troopers (`CROWD`, 18, in `crowdL`/`crowdR`); your
+  men stand among them at port arms until `fallin`, then walk to the line with
+  the real gait (`BipedAnimator`), rifles seated by the field's own
+  `seatWeapon`, cloth capes (`attachTrooperCape`). A staggered start is a man
+  standing until his turn — it used to teleport him to the line. They walk
+  round you, not through you, and climb the pads' kerbs at a step's pace.
+  Checks: `deckflight: the dwell boards the company…` (no man moves more than
+  0.3 m in a frame), `deckedit`, `trooper-cape`.
+- `✅` **Not bowling pins.** A man on his post is planted: a brush from the
+  player's capsule under `SHOVE.shove` (3.2 m/s) is undone and he is put back
+  on his mark; a Force push or a hurled crate still puts him over. `Shovable`
+  reads the floor under the whole body box. Check: `deckplay` shove rows.
+- `✅` **The blade is yours on the deck.** It comes out down as you leave the
+  lift; the ignite key lights it; a stroke meets every body on a `Shovable`
+  (`Hangar.deckBladeTargets`) and puts him over, and the plate scars under it.
+  `throw` and six powers still refuse out loud. Check: `deckplay: the blade
+  comes out down, the ignite key lights it, and a stroke puts a man on the
+  deck`.
+- `✅` **No solid UI backgrounds.** Every screen over a live world is the game
+  through an 18% scrim (the pause card is over the paused game); every screen
+  with no world carries the menu plate. Suites: `backdrop`, `pause-card`.
+- `✅` **Troopers hold their rifles.** `Enemy.seatWeapon`/`_poseRifle`: the
+  stock in the shoulder pocket, the bore on the target, the support hand on
+  the foregrip read off the weapon's own hold points; blasters rebuilt to
+  reference lengths. Suite: `rifle-hold`.
+- `⚠️` **Density, real ships, workers with physics, receding traffic, PA
+  lines** — `DeckLife.js`/`DeckCast.js`, in progress on the life lane as this
+  is written; `decklife`/`deckcast` are the checks. **Lived-in paint** —
+  `Command.js` paint tables, in progress on the paint lane; `worn-paint` is the
+  check. **Every NPC against its reference** — the NPC lane;
+  `reference-fidelity` is the check. See PLAYTEST.md's V11 table for the
+  state at the end of the session.
 
 ## THE COMPANY
 

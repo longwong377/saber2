@@ -1186,14 +1186,20 @@ function deckColliders(world) {
   /* Pad A is LOW — 0.45 m, under the player's 0.45 m step, so he walks up
    * onto it and up the ramp of the hull that stands on it. Pad B keeps its
    * height: nothing on it is anybody's to board. */
-  /* THE PADS ARE DISCS, so their colliders are: three boxes a third of a
-   * turn apart make a twelve-sided plate the walkable width of the disc,
-   * where one square box put an invisible 0.45 m step at each corner five
-   * metres past the drawn edge. `deckFloorAt` answers the same disc. */
+  /* THE PADS ARE DISCS, so their colliders are: six slabs a twelfth of a
+   * turn apart, each the disc's diameter long and just wide enough that
+   * its corners sit ON the drawn edge — their union is a twelve-pointed
+   * plate that never reaches past the disc. (Three rotated SQUARES were
+   * tried first: their union is a star whose points reach 1.4 r, and every
+   * man who walked off the drawn pad stood inside a collider he could not
+   * see and was thrown by the solver.) `deckFloorAt` answers the same disc.
+   */
   const disc = (cx, cy, cz, r, hy) => {
-    for (let i = 0; i < 3; i++) {
-      const yaw = (i * Math.PI) / 3;
-      P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(r, hy, r * Math.cos(Math.PI / 12)),
+    const half = r * Math.cos(Math.PI / 12);
+    const wide = half * Math.tan(Math.PI / 12);
+    for (let i = 0; i < 6; i++) {
+      const yaw = (i * Math.PI) / 6;
+      P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(half, hy, wide),
         new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), { friction: 0.7 });
     }
   };
@@ -1747,7 +1753,7 @@ export const MUSTER = {
  * THE PACE, off `MUSTER.formUp` and the longest walk in the room rather than
  * typed: the far corner of the crowd to the far end of the widest line.
  */
-const MARCH_SPEED = (() => {
+export const MARCH_SPEED = (() => {
   const wide = (MUSTER.perRank - 1) * MUSTER.interval / 2 + MUSTER.gap * 2;
   const far = Math.hypot(DECK_ZONES.crowdR.x1 - (-wide), DECK.line - DECK_ZONES.crowdR.z0);
   return far / Math.max(1, MUSTER.formUp - MUSTER.spread);
