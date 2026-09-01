@@ -1013,9 +1013,25 @@ function lightDeck(world) {
   const sep = world._deckFaction === 'separatist';
   const KEY = sep ? 0xaec6f2 : 0xcadcf6;
   const LAMP = sep ? 0xb9cef4 : 0xdbe6fb;
+  /**
+   * ══ STEEP, NOT FLAT — THE FIRST KEY SHADOWED THE WHOLE AFT THIRD ═══════
+   *
+   * It stood at 42 m over the lip and aimed at the bulkhead: about sixteen
+   * degrees of elevation across a 250 m room. Everything tall in here is
+   * between that light and the deck — two 68 m rack walls, two shuttles, the
+   * overhead rigs, the company itself — so every one of them threw a shadow
+   * the length of the ship, they merged, and the aft third of the deck (which
+   * is where the player lands and where his line stands) was a black band with
+   * a hard edge across it.
+   *
+   * The aperture is still the key and still throws everything AFT; it is just
+   * high enough now that a wall casts a shadow the length of a wall. About
+   * fifty degrees, which is also what the light through a hangar opening
+   * actually does when the ship is nose-on to a star.
+   */
   const key = new THREE.DirectionalLight(KEY, 2.6);
-  key.position.set(0, 42, DECK.lip);
-  key.target.position.set(0, 0, DECK.aft);
+  key.position.set(0, 150, DECK.lip * 0.85);
+  key.target.position.set(0, 0, DECK.aft * 0.35);
   world.scene.add(key); world.scene.add(key.target);
   world.levelLights.push(key);
 
