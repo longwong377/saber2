@@ -614,9 +614,19 @@ export function dressStructure(kit, paint) {
    * over-use the one thing that carries faction.
    */
   insigniaPanel(kit, 0, 36, bz + 3.4, 22, { faction: kit.faction });
-  /* THE DOORWAY THROWS A WEDGE ONTO THE DECK. The company files out of it and
-   * an unlit door they walk out of is a hole in a wall. */
-  smear(kit, 0, bz + 3, 40, 34, 0, 1);
+  /**
+   * THE DOORWAY THROWS A WEDGE ONTO THE DECK. The company files out of it and
+   * an unlit door they walk out of is a hole in a wall.
+   *
+   * AND IT IS 24 x 20 m, NOT 34 x 40. At the larger size this additive quad
+   * covered the entire lower half of the frame from the player's own spawn —
+   * which is eighteen metres in front of the door, inside it — so the first
+   * thing anyone saw of this room was a pale grey wash under his feet. I spent
+   * three wrong diagnoses on that floor (the map, the metalness, the ambient,
+   * all three real problems and none of them this one) before looking at where
+   * the quad actually reaches. A light spill is the size of the door.
+   */
+  smear(kit, 0, bz + 3, 20, 24, 0, 1);
   /**
    * ══ THE MEMORIAL, ON THE ONE REAL WALL YOU WALK PAST ═══════════════════
    *

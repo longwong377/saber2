@@ -662,7 +662,10 @@ export function deckMats(faction) {
    * and a car park.
    */
   M.smear = new THREE.MeshBasicMaterial({
-    color: P.smear, transparent: true, opacity: 0.5, depthWrite: false,
+    /* 0.30, NOT 0.50. These are a reflection, which is by definition dimmer
+     * than the thing reflected — at a half they were brighter than the deck
+     * they lie on and read as painted panels rather than as light. */
+    color: P.smear, transparent: true, opacity: 0.30, depthWrite: false,
     blending: THREE.AdditiveBlending, side: THREE.DoubleSide, vertexColors: true,
   });
   M.smear.userData.saberNoInk = true;
