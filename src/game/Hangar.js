@@ -1321,7 +1321,24 @@ export const HANGAR_LEVEL = {
     /* 0.24: enough that a near-black plate is a surface rather than a hole,
      * far short of the 0.42 that was painting it pale. */
     sunColor: 0xbcd8ff, sunIntensity: 3.2, ambient: 0.24,
-    skyColor: 0x39485f, groundColor: 0x191d23, elevation: 12, azimuth: 0,
+    /**
+     * ══ 55 DEGREES, NOT 12 — THE ELEVATION WAS THE BLACK BAND ══════════════
+     *
+     * `elevation` is what `applyAtmosphere` gives the ENGINE's sun, and that
+     * sun is the one with the shadow cascades on it: the deck key in
+     * `lightDeck` never casts. At 12 degrees across a 250 m room every tall
+     * thing in here — two 68 m rack walls, the shuttles, the overhead rigs —
+     * threw a shadow the length of the ship, they merged, and the aft third
+     * (where the player lands and where his line stands) was a black band with
+     * a dead-straight cascade edge across it.
+     *
+     * I chased that band through the terrain map, the metalness, the ambient,
+     * the deck lamps and the deck key before finding it in one number on the
+     * atmosphere block. Each of those was a real defect and none of them was
+     * this. A twelve-degree sun is a sunset, and this room is nose-on to a
+     * star with the light coming down through an opening.
+     */
+    skyColor: 0x39485f, groundColor: 0x191d23, elevation: 55, azimuth: 0,
       /* COOL, like everything else. The warm bounce was invented. */
     fillColor: 0x93b2dc, fillIntensity: 0.30,
     exposure: 1.2, bloom: 0.75, saturation: 1.02,
