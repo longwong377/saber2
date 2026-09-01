@@ -978,6 +978,33 @@ both directions at once. Use `window.__play(gameSeconds, …)`, not a frame coun
 Timing checks (`prefracture`, `frame-budget`) will blow if anything else is
 using the CPU. Don't run the suite next to a browser.
 
+### 2.6e AN AGENT'S `nohup … &` OUTLIVES THE AGENT, AND NOTHING TELLS YOU
+
+Two hangar auditors launched their browser probes as
+`nohup timeout 2400 node probe.mjs > log 2>&1 &`. Both agents finished and
+reported. **Both probes kept running** — 18 minutes each, each holding a full
+headless Chromium with a GPU process, a network service, two renderers and a
+crashpad handler. Fourteen chrome processes in total, on a 4-core box, with
+nothing in the session saying so: `ListAgents` showed the agents completed, the
+task notifications said completed, and `ps` was the only thing that knew.
+
+The cost was not theoretical. Load average sat at **11.5 on 4 cores** and
+`theline` timed out at 900 s three separate times — and the first two of those
+were read as "the suite is slow" rather than "there are two invisible browsers
+on this machine". That is most of an hour spent on a symptom.
+
+- **After any agent that drives a browser finishes, run
+  `ps -eo pid,etime,comm | grep -E "chrome|node"`.** Its completion is not a
+  statement about its children.
+- Kill by PID, and kill the browsers explicitly — killing the node parent does
+  not reliably take a Playwright browser launched over a pipe with it:
+  `kill -9 <pids>` then `pkill -9 -f playwright_chromiumdev_profile`.
+- **Do not read a slow suite as a slow suite until the box is quiet.** §2.6b is
+  the law; this is the way it hides.
+- If you brief an agent to drive a browser, tell it to run the probe in the
+  FOREGROUND (it has its own timeout) rather than detaching it, so the probe
+  dies with the turn that started it.
+
 ### 2.6b …AND TWELVE LANES ON ONE BOX IS "ANYTHING ELSE"
 
 The line above says "don't run the suite next to a browser". The version of it
@@ -2150,7 +2177,11 @@ hud-events 30 · hangar 9 · deckplay 10 · decklife 13 · deck-audio 25 · deck
 
 1. **`theline` was never run to completion.** It timed out at 900 s three
    times, every time on a box carrying headless-Chromium auditors — load
-   average 11 on 4 cores, §2.6b's law. **It is not red; it never finished.** It
+   average 11 on 4 cores. And the reason it stayed loaded is **§2.6e**: both
+   auditors had detached their probes with `nohup … &`, so the browsers
+   outlived the agents by twenty minutes with nothing in the session saying so.
+   Read that section before you read a slow suite as a slow suite.
+   **`theline` is not red; it never finished.** It
    is also the suite most likely to be moved by `_supervised`'s second mouth
    (`c._paceAnchor`), so run it on a QUIET box before trusting `a2cc1df`:
 
@@ -2190,6 +2221,7 @@ decides whether a shipped system is real.
 **PROCESS LESSONS WORTH MORE THAN ANY OF IT:**
 
 1. **~40 concurrent agents took the container down.** Three is the ceiling.
+   And three is not enough if their work outlives them — see §2.6e.
 2. **An audit run BEFORE the fixes, on one subsystem, is not an audit.**
 3. **Green Pages is not green checks** — `pages.yml` and `verify.yml` are
    independent, and the site shipped a red gate for 19 hours.
