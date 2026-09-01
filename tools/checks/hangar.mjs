@@ -424,4 +424,81 @@ export async function run({ check, assert }) {
         + (dome._orbit.level?.name || 'none');
     } finally { world.unload(); }
   });
+
+  check('hangar: no material carries a field its own shader has no uniform for', async () => {
+    /**
+     * ══ THE CHECK FOR THE ONE CLASS OF BUG NOTHING HERE CAN SEE ═══════════
+     *
+     * Not one of this project's two thousand checks renders a frame, so a
+     * crash inside `WebGLRenderer.render` is invisible to all of them. This
+     * room shipped one: the field rim was an unlit `MeshBasicMaterial` — the
+     * only kind that can promise reference rule 1's "brighter than anything it
+     * lights" — and an `emissive` property had been hung on it purely to keep
+     * an older check quiet. three's uniform refresh does
+     *
+     *     if (material.emissive) uniforms.emissive.value.copy(...)
+     *
+     * and `MeshBasicMaterial`'s uniform set has no `emissive`. Every frame that
+     * drew the rim threw. Eight suites green, and the room could not draw.
+     *
+     * THE GUARD LIST IS READ OUT OF THE VENDORED THREE rather than typed here.
+     * A hand-written list of "fields that need a uniform" is the second copy of
+     * a rule three already states, and it would go stale on the next vendor
+     * bump in the direction nobody checks — the instrument disagreeing with the
+     * game and manufacturing a defect, or worse, missing one.
+     */
+    const THREE = await import('three');
+    const src = await readFile(new URL('../../vendor/three/three.module.js', import.meta.url), 'utf8');
+    const fn = /function refreshUniformsCommon\([\s\S]{0,6000}?\n\t\}/.exec(src)?.[0] || '';
+    assert(fn, 'refreshUniformsCommon is not where it was in the vendored three — this check '
+      + 'derives its rule from that function and cannot make one up');
+    /* Every `if (material.X)` whose body touches `uniforms.X`. Those are the
+     * pairs where having the field without the uniform is a throw. */
+    const guarded = new Set();
+    for (const m of fn.matchAll(/if\s*\(\s*material\.(\w+)\s*\)\s*\{([\s\S]{0,240}?)\n\t\t\}/g)) {
+      if (new RegExp('uniforms\\.' + m[1] + '\\b').test(m[2])) guarded.add(m[1]);
+    }
+    assert(guarded.size >= 4,
+      `only ${guarded.size} guarded field(s) found in refreshUniformsCommon — the parse is wrong `
+      + 'and this check would pass on anything');
+
+    const SHADER = {
+      MeshBasicMaterial: 'basic', MeshLambertMaterial: 'lambert', MeshPhongMaterial: 'phong',
+      MeshStandardMaterial: 'standard', MeshPhysicalMaterial: 'physical',
+      MeshMatcapMaterial: 'matcap', PointsMaterial: 'points', SpriteMaterial: 'sprite',
+      LineBasicMaterial: 'basic', LineDashedMaterial: 'dashed',
+    };
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'hangar', settings: { mode: 'hangar', level: 'hangar', allies: 0 },
+    });
+    try {
+      const bad = [];
+      const seen = new Set();
+      let n = 0;
+      world.scene.traverse((o) => {
+        for (const m of (Array.isArray(o.material) ? o.material : [o.material])) {
+          if (!m || seen.has(m.uuid)) continue;
+          seen.add(m.uuid);
+          const key = SHADER[m.type];
+          /* A ShaderMaterial owns its own uniforms and answers for itself. */
+          if (!key) continue;
+          const u = THREE.ShaderLib[key]?.uniforms;
+          if (!u) continue;
+          n++;
+          for (const f of guarded) {
+            if (m[f] !== undefined && m[f] !== null && u[f] === undefined) {
+              bad.push(`${m.name || m.type}.${f} (a ${m.type} has no uniforms.${f})`);
+            }
+          }
+        }
+      });
+      assert(!bad.length,
+        `${bad.length} material(s) carry a field their own shader has no uniform for: `
+        + `${bad.slice(0, 5).join(', ')}. three's refreshUniformsCommon reads the uniform for any `
+        + 'material that has the field, so every frame drawing one of these throws inside '
+        + 'WebGLRenderer.render — in the browser only, which is the one place nothing here looks');
+      return `${n} materials against ${guarded.size} guarded fields (${[...guarded].join(', ')})`;
+    } finally { world.unload(); }
+  });
 }

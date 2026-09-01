@@ -284,13 +284,23 @@ function addField(world) {
    * brightest thing in the frame, brighter than anything it lights. Only an
    * unlit material can promise that.
    *
-   * `emissive` is kept on it anyway so `refhold`'s "every rim is emissive"
-   * check still has something true to read, and so a bloom pass that keys off
-   * emissive still finds it.
+   * AND IT CARRIES NO `emissive`, WHICH IT DID FOR ONE COMMIT AND SHOULD NOT
+   * HAVE. I set one on it purely so `refhold`'s "every rim is emissive" check
+   * would keep passing — bending the room to satisfy the instrument, which is
+   * the exact failure this whole effort has been correcting. It also does not
+   * work: three's `refreshUniformsCommon` does
+   *
+   *     if (material.emissive) uniforms.emissive.value.copy(...)
+   *
+   * and a `MeshBasicMaterial`'s uniform set HAS NO `emissive` — so every frame
+   * that drew the rim threw inside `WebGLRenderer.render`. In the browser, and
+   * only in the browser: no headless check renders, so all eight suites were
+   * green over a room that could not draw a frame.
+   *
+   * The check asks the right question now instead: is the rim bright, by
+   * either route.
    */
   const rimMat = new THREE.MeshBasicMaterial({ color: 0xf2f7ff, toneMapped: false });
-  rimMat.emissive = new THREE.Color(0xdceaff);
-  rimMat.emissiveIntensity = 3.4;
   rimMat.userData.saberNoInk = true;
   rimMat.name = 'field-rim';
   const rim = (cx, cy, cz, w, h, d) => {

@@ -57,7 +57,15 @@ const browser = await chromium.launch({
 });
 say('browser up');
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
-page.on('pageerror', (e) => console.log('PAGE ERROR:', e.message));
+/* THE STACK, NOT THE MESSAGE. A bare `e.message` on a per-frame throw is
+ * "Cannot read properties of undefined" sixty times a second and names
+ * nothing; the frame that matters is the first one, with its stack. */
+let _pe = 0;
+page.on('pageerror', (e) => {
+  if (_pe++ > 2) return;
+  console.log('PAGE ERROR:', e.message);
+  console.log((e.stack || '').split('\n').slice(0, 14).join('\n'));
+});
 page.on('console', (m) => { if (m.type() === 'error') console.log('console:', m.text().slice(0, 200)); });
 
 say('goto');

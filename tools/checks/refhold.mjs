@@ -119,15 +119,48 @@ export async function run({ check, assert }) {
       assert(rims.length >= 3,
         `${rims.length} lit rim(s) on the field edges — every reference borders its opening with a `
         + 'continuous bright band, and without one a translucent plane is invisible against space');
+      /**
+       * BRIGHT BY EITHER ROUTE, AND THE FIRST VERSION OF THIS CHECK ONLY KNEW
+       * ONE — WHICH BROKE THE GAME.
+       *
+       * It asserted `m.emissive && m.emissiveIntensity > 1.2`, i.e. that the
+       * rim was a `MeshStandardMaterial`. When the rim was correctly moved to
+       * an UNLIT material — which is the only kind that can promise rule 1's
+       * "brighter than anything it lights", since an emissive standard surface
+       * is still shaded and still tone-mapped — this check went red, and the
+       * response was to hang an `emissive` property on the basic material to
+       * keep it quiet.
+       *
+       * That is bending the room to satisfy the instrument, and it did not
+       * even work: three's `refreshUniformsCommon` does `if (material.emissive)
+       * uniforms.emissive.value.copy(...)`, and a `MeshBasicMaterial` has no
+       * such uniform, so every frame that drew the rim threw inside the
+       * renderer. Nothing here could see it, because no check in this project
+       * renders a frame.
+       *
+       * So the question is the one that was always meant: is this surface
+       * BRIGHT — unlit, or emissive hard enough to read as unlit.
+       */
       let lit = 0;
+      const how = [];
       for (const r of rims) {
         const m = Array.isArray(r.material) ? r.material[0] : r.material;
-        if (m?.emissive && m.emissiveIntensity > 1.2) lit++;
+        if (!m) continue;
+        const unlit = m.isMeshBasicMaterial === true || m.type === 'MeshBasicMaterial';
+        const glowing = !!m.emissive && (m.emissiveIntensity ?? 1) > 1.2;
+        if (unlit || glowing) { lit++; how.push(unlit ? 'unlit' : 'emissive'); }
+        /* AND AN UNLIT MATERIAL MUST NOT CARRY `emissive`, for the reason
+         * above. This is the assertion that would have caught the crash. */
+        assert(!(unlit && m.emissive),
+          'a rim is an unlit material carrying an `emissive` property. three\'s '
+          + 'refreshUniformsCommon reads uniforms.emissive.value for any material with that '
+          + 'field, MeshBasicMaterial has no such uniform, and every frame drawing this rim '
+          + 'throws inside WebGLRenderer.render — in the browser only, where no check looks');
       }
       assert(lit === rims.length,
-        `${rims.length - lit} of ${rims.length} rims are not emissive — the rim has to be the `
-        + 'brightest thing in the room, not a lit surface');
-      return `${rims.length} rims, all emissive`;
+        `${rims.length - lit} of ${rims.length} rims are neither unlit nor brightly emissive — `
+        + 'the rim has to be the brightest thing in the room, not a lit surface');
+      return `${rims.length} rims, all bright (${[...new Set(how)].join(' + ')})`;
     } finally { world.unload(); }
   });
 
