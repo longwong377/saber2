@@ -425,7 +425,14 @@ function addField(world) {
  * the lip you have vacuum in front of you and to both sides, with the ranks
  * receding behind you.
  */
-function dressStructure(kit, paint) {
+/**
+ * EXPORTED, because two different callers legitimately want two different
+ * things from this pass: `deckcost.mjs` prices it against a real World, and
+ * `faction.mjs` builds it into a bare kit twice to compare the two armies'
+ * materials without booting anything. `__deckParts.structure` is the first
+ * shape; this is the second.
+ */
+export function dressStructure(kit, paint) {
   /* OFF THE KIT, NEVER BARE. `deckMats()` with no argument hands back the
    * default palette, so one bare call in here was enough to mix five Republic
    * materials into a Separatist room — which is the exact failure the brief
@@ -673,14 +680,41 @@ const _strobeCol = new THREE.Color();
  * because a player with no roll at all still has an alignment.
  */
 export function deckFaction(world) {
-  const want = world?.settings?.army;
-  if (want) return factionOf(want);
+  /**
+   * AND IT DOES NOT ASK `settings.army`, BECAUSE NOTHING WRITES IT.
+   *
+   * Three files reached for that setting and `tools/checks/controls.mjs`
+   * caught all three: it is read by shipped code, defaulted nowhere, written
+   * nowhere, and has no control in the menu. A setting like that is invisible
+   * to every other check in that file — it needs no reader declaration and no
+   * control and nothing complains — so it reads like a real answer and is
+   * always undefined.
+   *
+   * The two real answers are the roll (whose company is standing here) and
+   * `armyToLead` (whose side the player's chosen order fights for), and
+   * `order` IS a setting, with a default and a control.
+   */
+  /**
+   * THE ORDER FIRST, THE ROLL SECOND — and the order of those two is the whole
+   * rule, not a preference.
+   *
+   * A player who has fought for both sides has TWO rolls, and asking the rolls
+   * first makes the room's army depend on which one happens to be stored
+   * first: `rolls[0]`, an arbitrary answer to a question the brief says one
+   * wrong asset ruins. The order they lead is unambiguous, is a real setting
+   * with a default and a control, and is the same lever the menu already gives
+   * — jedi leads the republic, sith the separatists.
+   *
+   * The roll only answers when there is no order to read, which is a save so
+   * fresh it has no alignment at all.
+   */
+  const led = (() => {
+    try { return factionOf(armyToLead(world?.settings?.order)); } catch { return null; }
+  })();
+  if (led) return led;
   const rolls = companyLoadAll().filter((r) => (r?.men || []).length);
   if (rolls.length) return factionOf(rolls[0].army);
-  /* NO ROLL YET. `armyToLead` is the fight's own answer to "whose side is this
-   * player on", derived from the order they follow, so a fresh save still gets
-   * a coherent room rather than a default. */
-  try { return factionOf(armyToLead(world?.settings?.order)); } catch { return factionOf(null); }
+  return factionOf(null);
 }
 
 /**
@@ -814,7 +848,26 @@ function lightDeck(world) {
  * anonymous `Mesh` and tells you nothing you can act on; building them one at a
  * time on a bare scene is the only reading that names a caller.
  */
-export const __deckParts = { field: addField, structure: dressStructure };
+export const __deckParts = {
+  field: addField,
+  /**
+   * AND `structure` TAKES A WORLD, like everything else in this table.
+   *
+   * `dressStructure(kit, paint)` was put here raw, and `deckcost.mjs` calls
+   * every entry as `fn(world, materials)` — so the one pass that actually
+   * builds the room reported `THREW kit.slabAt is not a function` and had done
+   * since the rebuild. The check still passed, because its job is to print a
+   * cost breakdown rather than to assert one, so the single largest number in
+   * the room's budget has been the word THREW in a green line.
+   */
+  structure: (world) => {
+    const kit = new DeckBuild(world._deckFaction || deckFaction(world));
+    const paint = new Paint(kit.faction);
+    dressStructure(kit, paint);
+    kit.build(world);
+    paint.build(world);
+  },
+};
 
 /** The one dress entry the level record names. */
 export function dressHangar(world) {
@@ -866,7 +919,12 @@ export function dressHangar(world) {
    * three stay back by the line so there is something to shove near the men.
    */
   for (const [x, z] of [
-    [26, 112], [31, 108], [-28, 116],
+    /* MEASURED, NOT GUESSED: `deckplay` throws one and reports how far it
+     * actually goes — 27.7 m off a 40 m/s hurl. From z = 112 that lands 4 m
+     * short of a lip at 144, which is the same "you have to carry it seventy
+     * metres first" defect one order of magnitude smaller. From 122 it goes
+     * through. */
+    [26, 122], [31, 118], [-28, 124],
     [26, -66], [-24, -66], [20, -30],
   ]) {
     makeCrate(world, new THREE.Vector3(x, 0.5, z), 0.9);
@@ -1242,7 +1300,9 @@ export function markFor(i, n, squad, squads) {
  */
 export function callTheCompany(world, opts = {}) {
   const rolls = companyLoadAll().filter((r) => (r?.men || []).length);
-  const want = opts.army || world?.settings?.army;
+  /* THE ROOM'S ONE ANSWER, not a fourth opinion — and specifically not
+   * `settings.army`, which nothing in this project writes. */
+  const want = opts.army || world?._deckFaction || deckFaction(world);
   if (!rolls.length) {
     /**
      * AND A PLAYER WITH NO ROLL IS TOLD WHY, rather than left on an empty

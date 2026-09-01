@@ -386,7 +386,11 @@ export async function run({ check, assert }) {
     for (const f of K.FACTIONS) {
       const kit = new K.DeckBuild(f);
       const paint = new K.Paint(f);
-      H.__deckParts.structure(kit, paint);
+      /* THE PASS ITSELF, not the `__deckParts` entry: that table's contract is
+       * `fn(world, materials)` — `deckcost.mjs` calls every row that way — and
+       * `structure` is the one row that also needs a bare-kit form. Both exist
+       * and this is the one that takes a kit. */
+      H.dressStructure(kit, paint);
       const armies = new Map();
       for (const m of kit.bins.keys()) {
         const hit = /^deck-(republic|separatist)-/.exec(String(m.name || ''));
@@ -432,7 +436,11 @@ export async function run({ check, assert }) {
     for (const f of K.FACTIONS) {
       const kit = new K.DeckBuild(f);
       const paint = new K.Paint(f);
-      H.__deckParts.structure(kit, paint);
+      /* THE PASS ITSELF, not the `__deckParts` entry: that table's contract is
+       * `fn(world, materials)` — `deckcost.mjs` calls every row that way — and
+       * `structure` is the one row that also needs a bare-kit form. Both exist
+       * and this is the one that takes a kit. */
+      H.dressStructure(kit, paint);
       const wall = [...kit.bins.keys()].some((m) => m.name === `deck-${f}-mark`);
       const deck = paint.byColor.has(K.FACTION_PALETTE[f].mark);
       assert(wall || deck,
@@ -464,7 +472,25 @@ export async function run({ check, assert }) {
     const { bootWorld } = await import('./_coop.mjs');
     const { world } = await bootWorld({
       level: 'hangar',
-      settings: { mode: 'hangar', level: 'hangar', allies: 0, army },
+      /**
+       * DRIVEN THE WAY THE GAME DRIVES IT, WHICH IS NOT `settings.army`.
+       *
+       * This used to hand the room `army` as a setting, and the room used to
+       * read one — but nothing in the whole project ever WRITES `settings.army`,
+       * which is precisely what `tools/checks/controls.mjs` flags: a setting
+       * with no default, no writer and no control is invisible to every other
+       * check and reads like a real answer while always being undefined. So a
+       * check that steers by it is steering by a handle no player has.
+       *
+       * The two real answers are the roll and the order the player leads.
+       * `order` is a genuine setting with a default and a control, and jedi
+       * leads the republic while sith leads the separatists (`Databank`
+       * `FACTIONS[*].order`) — so this is the same lever the menu gives.
+       */
+      settings: {
+        mode: 'hangar', level: 'hangar', allies: 0,
+        order: army === 'separatist' ? 'sith' : 'jedi',
+      },
     });
     return world;
   };

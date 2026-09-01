@@ -146,8 +146,25 @@ const FACTION_ALIAS = new Map([
 export function factionOf(v) {
   if (typeof v === 'string') return FACTION_ALIAS.get(v.toLowerCase()) || DEFAULT_FACTION;
   if (v && typeof v === 'object') {
-    const named = v.faction ?? v.army ?? v._company?.army ?? v.settings?.army;
+    /* `_deckFaction` FIRST AND `settings.army` NOT AT ALL. The room resolves
+     * its army once, in `Hangar.deckFaction`, and hangs the answer there; the
+     * setting this used to fall back to is read by shipped code, written
+     * nowhere and defaulted nowhere, which `tools/checks/controls.mjs` calls
+     * out by name. A fallback that is always undefined is not a fallback. */
+    const named = v.faction ?? v._deckFaction ?? v.army ?? v._company?.army;
     if (typeof named === 'string') return factionOf(named);
+    /**
+     * AND AN ARMY RECORD IS AN OBJECT WITH AN `id`.
+     *
+     * `Command.armyToLead` returns `ARMIES[...]` — the record, not the key —
+     * and every clause above tests for a STRING, so the whole faction
+     * resolution silently fell through to the default. Driven: `armyToLead
+     * ('sith')` correctly answered the Separatist army and this function
+     * turned it back into `republic`, so a Sith player's hangar was a Republic
+     * hangar, wall to wall, and the faction suite could not steer it at all.
+     */
+    if (typeof v.id === 'string') return factionOf(v.id);
+    if (typeof named === 'object' && typeof named?.id === 'string') return factionOf(named.id);
   }
   return DEFAULT_FACTION;
 }

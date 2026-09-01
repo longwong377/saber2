@@ -405,7 +405,9 @@ export async function run({ check, assert }) {
     const { bootWorld } = await import('./_coop.mjs');
     const { world } = await bootWorld({
       level: 'hangar',
-      settings: { mode: 'hangar', level: 'hangar', allies: 0, army: 'separatist' },
+      /* STEERED BY THE ORDER, which is the lever the player has. `settings.army`
+       * is read by nothing and written by nothing — see `Hangar.deckFaction`. */
+      settings: { mode: 'hangar', level: 'hangar', allies: 0, order: 'sith' },
     });
     try {
       const dome = world.engine?.skyDome;

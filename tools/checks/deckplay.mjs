@@ -80,8 +80,24 @@ function aimAt(world, from, at, step, idle, THREE) {
   p.position.copy(from);
   p.velocity.set(0, 0, 0);
   p.body?.setTransform?.(new THREE.Vector3(from.x, from.y + 0.9, from.z), null);
+  /**
+   * AIMED FROM THE CHEST, NOT FROM THE BOOM — AND THAT IS A FIX TO THIS
+   * HELPER, NOT TO THE GAME.
+   *
+   * This solved the look direction from `camera.pos`, which in third person is
+   * about three metres behind the head and MOVES IN RESPONSE to the pitch it
+   * is being handed. That is a feedback loop, and at close range it diverges:
+   * driven against a crate four metres away it walked the boom up to y = 3.14
+   * and the pitch to -0.56 over four iterations, so the ray left the camera
+   * steeply downward and passed over the crate entirely. Two of the six crates
+   * on this deck could not be gripped by this helper and all six can be
+   * gripped by hand.
+   *
+   * The chest does not move when the camera turns, so solving from it
+   * converges in one step. It is also what a player is actually pointing with.
+   */
   const look = () => {
-    const eye = p.camera.pos ?? p.headPos ?? p.chest;
+    const eye = p.chest ?? p.camera.pos;
     const d = new THREE.Vector3().subVectors(at, eye).normalize();
     p.camera.yaw = Math.atan2(-d.x, -d.z);
     p.camera.pitch = Math.max(-1.28, Math.min(1.16, Math.asin(d.y)));

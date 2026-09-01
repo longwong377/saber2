@@ -1101,7 +1101,9 @@ export function dressDeckAudio(world, opts = {}) {
   st.army = PA_VOICE[opts.army] ? opts.army
     : PA_VOICE[world._deckFaction] ? world._deckFaction
       : PA_VOICE[world._company?.army] ? world._company.army
-        : PA_VOICE[world.settings?.army] ? world.settings.army : 'republic';
+        /* NOT `settings.army`: nothing in the project writes it — see
+         * `Hangar.deckFaction`. The room's one answer is `_deckFaction`. */
+        : PA_VOICE[world._deckFaction] ? world._deckFaction : 'republic';
 
   /* ── THE DECK UNDERFOOT. See `deckSurfaceAt` for why this is an override on
    * the INSTANCE and not a second footstep system. */
