@@ -66,7 +66,7 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
-import { SET_PIECE, DOJO_MIX } from '../../src/game/Waves.js';
+import { SET_PIECE, DOJO_MIX, MODES } from '../../src/game/Waves.js';
 import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 
 const ROOT = new URL('../..', import.meta.url).pathname;
@@ -439,10 +439,31 @@ export function run({ check, assert }) {
      * key in LEVEL_ORDER must resolve, and every level in the table must be
      * reachable from the menu — a level present in LEVELS but missing from
      * LEVEL_ORDER is content that shipped and cannot be chosen. */
+    /**
+     * …AND THERE ARE TWO DOORS NOW, which is a widening of the population and
+     * not of the rule. The rule is UNREACHABLE CONTENT: a level that shipped
+     * and that no player can get to. `LEVEL_ORDER` is the theatre grid and it
+     * was the only way in until the flight deck, which is a place you go to
+     * look at your men rather than a ground you fight on — it is deliberately
+     * out of the grid (a hangar offered as a theatre is the shape `Levels.js`
+     * has deleted three times) and reached from the Company tab by a door.
+     *
+     * A DESTINATION IS A MODE THAT NAMES A LEVEL. `World.loadLevel` honours
+     * `MODES[mode].level` as a ground override, so that field is the second
+     * door and it is machine-readable. A level in neither is still exactly the
+     * thing this check has always caught.
+     */
+    const byMode = new Set(Object.values(MODES).map((M) => M.level).filter(Boolean));
     const missing = LEVEL_ORDER.filter((k) => !LEVELS[k]);
-    const orphan = Object.keys(LEVELS).filter((k) => !LEVEL_ORDER.includes(k));
+    const orphan = Object.keys(LEVELS).filter((k) => !LEVEL_ORDER.includes(k) && !byMode.has(k));
+    const bare = [...byMode].filter((k) => !LEVELS[k]);
     assert(!missing.length, `LEVEL_ORDER names ${missing.join(', ')}, which LEVELS does not have`);
-    assert(!orphan.length, `${orphan.join(', ')} exist but are not in LEVEL_ORDER — unreachable content`);
+    assert(!bare.length,
+      `${bare.join(', ')} is named by a mode as its ground and is not in LEVELS — the mode would `
+      + 'fall back to whatever the player last picked');
+    assert(!orphan.length,
+      `${orphan.join(', ')} exist but are in neither LEVEL_ORDER nor any mode's \`level\` — `
+      + 'unreachable content');
     /* SEVEN, and the floor is here to catch an accidental deletion rather than
      * a deliberate one. It was 8 against a roster of 13; six were cut on the
      * player's word — the ground broke the art direction, or the room was a
@@ -456,7 +477,8 @@ export function run({ check, assert }) {
       assert(typeof LEVELS[k].name === 'string' && LEVELS[k].name.length > 0, `${k} has no display name`);
       assert(typeof LEVELS[k].terrain === 'string', `${k} names no terrain`);
     }
-    return `${LEVEL_ORDER.length} levels, all named and all reachable: ${LEVEL_ORDER.join(', ')}`;
+    return `${LEVEL_ORDER.length} theatres, all named and all reachable: ${LEVEL_ORDER.join(', ')}`
+      + `; ${Object.keys(LEVELS).length - LEVEL_ORDER.length} reached by a door instead`;
   });
 
   check('roster: every archetype the game has is an archetype a player can meet', () => {
