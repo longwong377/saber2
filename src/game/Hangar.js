@@ -54,6 +54,8 @@ import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
 import { squadPlan, leadOf, SQUAD } from './Command.js';
+import { LEVELS, LEVEL_ORDER } from './Levels.js';
+import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Kit, propMaterials, addWall, addStatic, addGantry, addPipeRun, addCableRun,
   addCrateStack, addScaffold, addMachine, addTank, addStanchion, addLamp,
   makeConsole, makeCrate, addHullSection, addFloorSlab } from '../world/Props.js';
@@ -428,6 +430,30 @@ export function dressHangar(world) {
    * first frame on the deck is his men coming through the doors, not an empty
    * floor with a button on it — "the filing in sells it more than the
    * standing", and it cannot sell anything if it has already happened. */
+  /**
+   * ══ THE WINDOW, AND IT IS THE THEATRE THE PLAYER PICKED ═══════════════
+   *
+   * This is the whole reason the room can exist: the deck is a foreground and
+   * the view is the scene. `SkyDome.configureOrbit` puts a planet, a starfield
+   * and a fleet action into the dome's own fragment for ZERO new draw calls,
+   * and it derives every colour in them from a level record — the land off
+   * `sandColor`, the highlands off `rockColor`, the sea off `water.deep`, the
+   * cloud deck off the atmosphere block, the limb off `skyColor`.
+   *
+   * SO IT IS SET HERE AND NOT ON THE LEVEL. `HANGAR_LEVEL.atmosphere` is
+   * applied at load and would hard-code one world; what is wanted is the one
+   * the player has selected in the menu, so picking the ice map really does put
+   * an ice world outside. `dressHangar` runs at stage 6, after
+   * `applyAtmosphere` at stage 4, so this is the last word.
+   */
+  const key = pickedTheatre(world);
+  const shown = LEVELS[key];
+  world.engine?.sky?.configureOrbit?.({
+    level: shown,
+    terrain: TERRAIN_PRESETS[shown?.terrain],
+  });
+  world._orbitLevel = key;
+
   callTheCompany(world);
   /* THE ROOM'S SOUND, and it is not decoration: the pressure differential at
    * the field is measured at −12.1 dB A-weighted from the spawn to the lip,
@@ -792,4 +818,28 @@ export function deckOrder(world, id) {
   if (O.dismiss) c.dismissed = c.t;
   world.notify?.(O.bark, `${c.men.length} ${c.men.length === 1 ? 'man' : 'men'}`);
   return true;
+}
+
+
+/**
+ * WHICH WORLD IS OUTSIDE — the theatre the player last chose, and never this
+ * room's own ground.
+ *
+ * `world.settings.level` is what the menu wrote, and `enterHangar` deliberately
+ * overrides `level` to `'hangar'` so `World` builds the deck; the SELECTION is
+ * still on the player's saved settings underneath, which is where this reads
+ * it. A mode that owns its ground (Command declares Geonosis) wins, because
+ * that is the ground the next run will actually be fought on and therefore the
+ * planet this ship is actually over.
+ */
+export function pickedTheatre(world) {
+  const s = world?.settings || {};
+  const modeLevel = s.pickedLevel || s.theatre || null;
+  const k = modeLevel || s.chosenLevel || s.orbitLevel || null;
+  if (k && LEVELS[k] && k !== 'hangar') return k;
+  /* `enterHangar` stashes it, because by the time the world exists its own
+   * `settings.level` says 'hangar'. */
+  const stashed = world?._pickedTheatre;
+  if (stashed && LEVELS[stashed] && stashed !== 'hangar') return stashed;
+  return LEVEL_ORDER[0];
 }

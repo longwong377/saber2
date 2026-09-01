@@ -830,8 +830,15 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null, override 
  */
 async function enterHangar() {
   try {
+    /* THE THEATRE THE PLAYER PICKED goes with them, because the deck's whole
+     * view is the world this ship is over and `level` has to be `'hangar'` for
+     * `World` to build the deck at all. `theatreFor` is the same resolver
+     * `deploy` uses, so a mode that owns its ground (Command declares Geonosis)
+     * puts Geonosis outside — which is the planet the next run is fought on. */
+    const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
     await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label), null,
       { mode: 'hangar', level: 'hangar', allies: 0 });
+    if (world) world._pickedTheatre = outside;
   } catch (e) {
     console.error('hangar failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
