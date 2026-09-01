@@ -685,6 +685,59 @@ export async function run({ check, assert }) {
       + 'last area was not flown back');
     assert(needing >= 1, 'nobody needed a ship, so this proves nothing about the wounded man');
 
+    /**
+     * ══ AND A SHIP THAT LANDS A MAN WHO IS ALREADY STANDING PUTS DOWN NOTHING ══
+     *
+     * `recall` takes every record out of `_inbound` because a withdrawn man is
+     * not inbound, and it CANNOT take him off the ship — a flight belongs to
+     * the `ArrivalDirector` and has no per-record cancel. So the gunship lands
+     * anyway, and without a guard the man getting off it is a SECOND body
+     * carrying `e.trooper` while `t.body` points elsewhere: its eventual death
+     * strikes a living man off the roll through `onDeath`.
+     *
+     * The blunt fix — `arrivals.clear()` at the boundary — takes the enemy
+     * pipeline with it. MEASURED: it left `arrivals.pending` non-zero fourteen
+     * seconds into the next area, red on a check that has always asserted the
+     * boundary quiesces. So the second body is caught where it lands, in the
+     * one function every body this director hands out goes through.
+     */
+    {
+      const { army: army4 } = await import('./_army.mjs');
+      const A = army4();
+      const man = A.d.led(A.c).find((t) => t.body && !t.body.dead);
+      const his = man.body;
+      const late = A.w.spawnEnemy(man.type, his.position.clone());
+      const took = A.d._landBody(man, late, A.c);
+      assert(took === false,
+        `${man.name} took a second body off a late gunship — he is now two men, and the death `
+        + 'of either strikes him off the roll');
+      assert(man.body === his, 'the record changed hands to the late body');
+      assert(late.trooper == null, 'the spare body still carries a name');
+      assert(late.dead === true && late.dying > 1000,
+        'the spare body was left standing on the field instead of leaving through the door '
+        + 'every other withdrawn body leaves by');
+      /* AND THE FIRST ONE IS STILL TAKEN, or this guard has closed the door
+       * every replacement comes through. */
+      const fresh = A.c.roster.living.find((t) => !t.body);
+      if (fresh) {
+        const body = A.w.spawnEnemy(fresh.type, his.position.clone());
+        assert(A.d._landBody(fresh, body, A.c) === true,
+          'a man with no body was refused one');
+        assert(fresh.body === body, 'the record did not take the body it was given');
+      }
+      /* AND IT IS THE ONE DOOR. `deploy`'s arrival closure has to go through
+       * it — a second `enlistBody` call anywhere in that method is a second
+       * door into the rule this function exists to be. */
+      const { readFile: rf } = await import('node:fs/promises');
+      const { functionBody: fb } = await import('./_source.mjs');
+      const dep = fb(await rf(new URL('../../src/game/Command.js', import.meta.url), 'utf8'),
+        '  deploy(c = this.commander');
+      assert(!/enlistBody\s*\(/.test(dep),
+        'deploy calls enlistBody directly — the one-man-one-body rule has a second door in the '
+        + 'method that hands out every body');
+      assert(/_landBody\s*\(/.test(dep), 'deploy no longer lands its bodies through the rule');
+    }
+
     /* AND THE FULL WITHDRAWAL IS STILL A WITHDRAWAL. */
     d.recall();
     const end = d.led(c).filter((t) => t.body && !t.body.dead).length;

@@ -5082,6 +5082,44 @@ export class CommandDirector extends WaveDirector {
     return Math.hypot(at.x - x, at.z - z) <= RELAY_REACH;
   }
 
+  /**
+   * ══ ONE MAN, ONE BODY — AND THIS IS WHERE THE SECOND ONE ARRIVES ═════════
+   *
+   * Every body this director hands to a record goes through here, whether it
+   * was placed on the spot or flown in four seconds later, so the rule that a
+   * record has exactly one body is a function rather than a habit.
+   *
+   * WHY THERE CAN BE A SECOND. `recall` takes every record out of `_inbound`
+   * because a withdrawn man is not inbound — and it CANNOT take him off the
+   * ship: a flight belongs to the `ArrivalDirector` and has no per-record
+   * cancel. `closeMuster` then puts him down again, and the gunship that was
+   * already carrying him lands anyway.
+   *
+   * THE BLUNT FIX IS WORSE. `arrivals.clear()` at the boundary takes the enemy
+   * pipeline with it — measured, it left `arrivals.pending` non-zero fourteen
+   * seconds into the next area and turned red a check that has always asserted
+   * the boundary quiesces. The second body is caught where it lands instead.
+   *
+   * IT LEAVES THE WAY A WITHDRAWAL LEAVES: `trooper` detached first so
+   * `onDeath` reads no casualty, then `dying` past the ceiling so `World`'s
+   * enemy loop disposes it on the next frame through the door every other body
+   * leaves by, and `Corpses` spends nothing on it. No casualty, no name, no
+   * dust — nobody was ever meant to see this one.
+   *
+   * @returns true if the record took the body.
+   */
+  _landBody(t, e, c) {
+    if (!t || !e) return false;
+    if (t.body && !t.body.dead && t.body !== e) {
+      e.trooper = null;
+      e.dead = true;
+      e.dying = 1e6;
+      return false;
+    }
+    enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
+    return true;
+  }
+
   /** Step any of this commander's men out of a static the front just raised on them. */
   _unbury(c) {
     const w = this.world;
@@ -6580,10 +6618,7 @@ export class CommandDirector extends WaveDirector {
       /* THE COMMANDER'S SIDE, not the world's one constant. `world.partyTeam`
        * is the LOCAL player's side and there is one of it; a second army on it
        * would be an ally of the first, which is the whole question. */
-      const enlist = (e) => {
-        this._inbound.delete(t);
-        enlistBody(e, t, { team: c.side, teamDamage: this.teamDamage, director: this, cmdr: c });
-      };
+      const enlist = (e) => { this._landBody(t, e, c); };
       /* 18 m, and the check holds it under 30: a gunship that sets your line
        * down at the far edge of the spawn ring has not reinforced you, it has
        * started them on a walk. */
@@ -6810,9 +6845,10 @@ export class CommandDirector extends WaveDirector {
      *
      * Not reproduced in 9 000 frames of natural play, which is the honest
      * caveat and not a reason to leave a claim about a method that does not
-     * exist standing in the file. `_areaClear` cancels the flights for real
-     * now; this set is emptied here because it is per commander and the ships
-     * are not.
+     * exist standing in the file. THE FLIGHT IS NOT CANCELLED — it cannot be,
+     * short of `arrivals.clear()`, which takes the enemy pipeline with it and
+     * re-times every arrival in the next engagement. The second body is caught
+     * where it lands instead: see `deploy`'s `enlist`.
      */
     for (const t of c.roster.all) this._inbound.delete(t);
     let n = 0;
@@ -11009,11 +11045,6 @@ export class CommandDirector extends WaveDirector {
      * only the replacements.
      */
     this.recall(null, { keepStanding: true });
-    /* AND THE SHIPS THAT WERE STILL IN THE AIR GO WITH THEM — see `recall`'s
-     * note on `_inbound` for the orphan a flight that outlives its record
-     * makes. Once, here, because `arrivals` is the world's and not any one
-     * commander's. */
-    this.arrivals?.clear?.();
     /**
      * …AND THE GROUND EVERY SQUAD WAS HOLDING IS GIVEN BACK.
      *
