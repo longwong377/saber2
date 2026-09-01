@@ -1341,7 +1341,15 @@ export const HANGAR_LEVEL = {
     skyColor: 0x39485f, groundColor: 0x191d23, elevation: 55, azimuth: 0,
       /* COOL, like everything else. The warm bounce was invented. */
     fillColor: 0x93b2dc, fillIntensity: 0.30,
-    exposure: 1.2, bloom: 0.75, saturation: 1.02,
+    /**
+     * BLOOM 0.30, NOT 0.75. `tools/checks/saber-bloom.mjs` measured the curve:
+     * the blown-white run across a blade is 16 px at 0.30 and 14 px at 0.26
+     * against a 13 px floor with the pass switched off entirely, so past about
+     * 0.30 it has flattened and everything above is spend with nothing bought.
+     * I typed 0.75 reaching for the glow around the light strips; the strips
+     * are unlit materials at full white and they do not need it.
+     */
+    exposure: 1.2, bloom: 0.30, saturation: 1.02,
     lift: [0.004, 0.006, 0.012], gain: [0.98, 1.0, 1.08],
   },
   /* A DECK IS NOT SILENT AND IT HAS NO WIND. The bed is the hull: a low drone
