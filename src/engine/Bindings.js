@@ -440,6 +440,33 @@ export const ACTIONS = [
    */
   { id: 'squadtarget', group: 'Command',  label: 'Target a squad',   keys: ['Comma'],      pad: 'PadRB+PadLeft' },
   /**
+   * ── THE TWO VERBS THAT ARE NOT FORMATIONS ───────────────────────────────
+   *
+   * `registerOrders` builds a row for every FORMATION, so the nine shapes each
+   * got a key, a chip on the HUD strip, a line in the controls list and a
+   * rebind. Hold ground and Detach are not formations — they are a modifier on
+   * one and a change to who is in a squad — so they were slots on the order
+   * WHEEL and nothing else: reachable only by a hold-aim-release, on no list a
+   * player reads, unrebindable, and absent from the controls card. That is the
+   * same door `squadtarget` directly above was pulled out of the wheel to fix,
+   * and it is the same argument: the mode's verbs cannot be discoverable only
+   * by sweeping a radial menu.
+   *
+   * PERIOD AND SLASH, beside Comma, under the hand that already holds the nine
+   * formation keys — `.` for the thing you do to the whole line and `/` for the
+   * thing you do to one man, in the reading order of the wheel itself. They are
+   * the last two free keys on the punctuation row (`;` is Rank ahead, `'` is
+   * Dig in, `-` is Charge, `=` is Hold fire), which is the row this mode has
+   * always spilled onto.
+   *
+   * `hold` GOES THROUGH `order()`, which is why it is not in `ORDER_ACTIONS`
+   * but reads exactly like one to a player: `order('hold')` is the toggle the
+   * wheel presses and the wire sends, and `main.js` calls the same door. There
+   * is no second dispatch to keep in step.
+   */
+  { id: 'holdground', group: 'Command',   label: 'Hold ground (toggle)', keys: ['Period'], pad: 'PadRB+PadY' },
+  { id: 'detachman',  group: 'Command',   label: 'Detach the nearest man', keys: ['Slash'], pad: 'PadRB+PadRight' },
+  /**
    * ONE BINDING FOR EVERY SUPPORT CALL THERE WILL EVER BE.
    *
    * Hold it and the movement keys stop moving you and start SPELLING — see

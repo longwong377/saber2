@@ -1642,12 +1642,20 @@ export class HUD {
        * does not move between squads mid-fight except by being detached, and
        * a DOM write per plate per frame is twenty-four of them at sixty hertz.
        */
-      const sq = t.detached ? 'detached'
+      /* …AND A MAN CARRYING AN ORDER SAYS SO INSTEAD. He is the one body on the
+       * field doing something no formation explains — he has left the line, he
+       * is walking somewhere nobody else is, and until this there was nothing
+       * anywhere that said why. It takes the squad's place rather than sitting
+       * beside it because it is the more urgent of the two facts and the plate
+       * has one line: he is back in his squad the moment he arrives. */
+      const errand = t.runner ? `carrying ${(ORDERS[t.runner]?.name || t.runner).toLowerCase()}` : '';
+      const sq = errand || (t.detached ? 'detached'
         : (Number.isInteger(t.squad)
           ? ((this._squadNames && this._squadNames[t.squad])
             || `${this._squadWord || 'Squad'} ${t.squad + 1}`)
-          : '');
+          : ''));
       if (P._squad !== sq) { P._squad = sq; P.squad.textContent = sq; }
+      P.node.classList.toggle('runner', !!errand);
       const hp = clamp((e.hp ?? 1) / Math.max(1, e.maxHp ?? 1), 0, 1);
       const mo = clamp(t.morale ?? 1, 0, 1);
       P.hp.style.width = `${hp * 100}%`;
@@ -1942,7 +1950,8 @@ export class HUD {
      */
     const key = `${summary.army}|${summary.points}|`
       + summary.roll.map(t => `${t.id}${t.rank}${t.kills}${t.alive ? 1 : 0}${t.diedIn ?? ''}`
-        + `${t.heard === false ? 'x' : ''}${t.detached ? 'd' : ''}${t.squad ?? '-'}`).join(',');
+        + `${t.heard === false ? 'x' : ''}${t.detached ? 'd' : ''}${t.squad ?? '-'}`
+        + `${t.post ? 'p' : ''}${t.runner ?? ''}`).join(',');
     if (key === this._rosterKey) return;
     this._rosterKey = key;
     /* ══ AND THE ORDER PANEL LEARNS WHO IS LEFT FROM THE SAME ARRIVAL ═════
@@ -2138,6 +2147,17 @@ export class HUD {
     const t = cap('squadtarget', null,
       'Target — step through your squads; the next order is for that one alone');
     t.classList.add('rp-key-target');
+    /* …AND THE TWO VERBS THAT ARE NOT FORMATIONS, for the same reason and in
+     * the same place. `registerOrders` builds a row per FORMATION, so hold and
+     * detach were wheel slots and nothing else — no key, no chip, no rebind,
+     * and on a phone no way to reach them at all, because the order wheel is a
+     * HELD key and there is no button to hold. `Touch.bindWheel` makes anything
+     * with a `data-action` tappable, so these two lines are the whole of the
+     * touch path. See `holdground`/`detachman` in Bindings.js. */
+    for (const [action, title] of [
+      ['holdground', 'Hold ground — they stay where they are put; press again to bring them with you'],
+      ['detachman', 'Detach — pull the nearest man out of his squad, or send him back'],
+    ]) cap(action, null, title).classList.add('rp-key-target');
     this._lightOrder();
   }
 
@@ -3325,9 +3345,14 @@ export function trooperRow(t) {
    * The title attribute carries the sentence.
    */
   const post = t.post && t.alive ? ' <i class="rp-post" title="Holds this squad">◆</i>' : '';
+  /* AND THE MAN WHO IS OUT CARRYING AN ORDER. He is off in the open on his own
+   * and the column is where you would look to find out who is missing from a
+   * shape — see `rosterHtml`, which groups him under Detached while he runs. */
+  const run = t.runner && t.alive
+    ? ` <i class="rp-run" title="Carrying ${esc(ORDERS[t.runner]?.name || t.runner)}">▸</i>` : '';
   return `<div class="rp-row${t.alive ? '' : ' gone'}" title="${esc(t.rankTitle)} · ${esc(t.unit)}">`
     + `<i${chip ? ` style="background:${chip}"` : ''}></i>`
-    + `<b>${esc(t.rank)}</b><span>${esc(t.name)}${post}</span><em>${esc(right)}</em></div>`;
+    + `<b>${esc(t.rank)}</b><span>${esc(t.name)}${post}${run}</span><em>${esc(right)}</em></div>`;
 }
 
 /**

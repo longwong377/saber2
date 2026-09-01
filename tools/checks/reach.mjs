@@ -1048,4 +1048,70 @@ export async function run({ check, assert }) {
       return `${rows.join(' · ')} — the plate and the refusal cross together at every rung`;
     } finally { restore(); }
   });
+
+  /**
+   * ══ reach.15 A RUNNER IS A MAN ON THE FIELD, AND HE CAN SEE TROUBLE ══════
+   *
+   * The one mechanic in this mode that turns a message into a BODY, and both
+   * halves of that were missing.
+   *
+   * HE COULD NOT DEFEND HIMSELF. `leashFor`'s runner branch gives him
+   * `LEASH_FLOOR` with a comment saying it is "so he still shoots what walks
+   * into him — a man who cannot defend himself at all is a delivery animation
+   * with a health bar". `targetFor` centres that disc on `slotFor(e)`, and
+   * `slotFor`'s runner branch returns `RUN.to` — his DESTINATION. So the 10 m
+   * disc sat on ground he had not reached and a droid standing on his toes was
+   * rejected for being outside it. A load-bearing comment asserting the
+   * opposite of the code is the shape that hides real bugs, so the check asks
+   * the shipped `targetFor` rather than reading either.
+   *
+   * AND NOTHING MARKED HIM. `grep -rn runner src/ui/` came back empty: no
+   * plate change, no glyph, no colour. `onRunner` was where that was meant to
+   * go and nothing ever wired it — it is gone, and `summary()` carries the
+   * errand instead, because "a man is carrying an order" is a STATE that has
+   * to end when he arrives and a fire-once hook cannot say that.
+   */
+  check('reach.15 a runner defends himself and the field can see him', () => {
+    const { w, d, c, squads } = field();
+    const k = 1, men = squads[k];
+    d._pending = null; c._pending = null;
+    put(d, men, 150, 150);
+    assert(d.order('charge', c, k) === false, 'a squad 210 m out took an order');
+    w.time += 1;
+    assert(d.order('charge', c, k) === true, 'the second press sent nobody');
+    const man = d.led(c).find((t) => t.runner);
+    assert(man, 'nobody was sent');
+    const e = man.body;
+
+    /* ── HE SHOOTS WHAT WALKS INTO HIM. A hostile one metre from his BODY and
+     * two hundred metres from his destination: under the old centre the disc
+     * was on the destination and this was rejected. */
+    const near = { position: new (e.position.constructor)(e.position.x + 1, 0, e.position.z),
+                   dead: false, hp: 10, team: 1, trooper: null };
+    const got = d.targetFor(e, [near]);
+    assert(got === near,
+      'a hostile standing on the runner is not a target — his leash disc is on ground he has '
+      + 'not reached, and he is the delivery animation his own comment disclaims');
+    /* …AND THE DISC IS STILL SMALL. He is running an errand, not fighting his
+     * way across: something out past the floor is still not his problem. */
+    const far = { position: new (e.position.constructor)(e.position.x + Cmd.LEASH_FLOOR + 6, 0,
+                                                        e.position.z),
+                  dead: false, hp: 10, team: 1, trooper: null };
+    assert(d.targetFor(e, [far]) !== far,
+      `a runner picked a fight ${Cmd.LEASH_FLOOR + 6} m away — the errand is not a patrol`);
+
+    /* ── AND THE ROLL SAYS HE IS CARRYING IT, which is what the plate and the
+     * column draw from. It has to STOP saying so: the errand is a state, and
+     * the whole reason `onRunner` was deleted rather than wired is that a
+     * fire-once hook cannot end one. */
+    const row = () => c.roster.summary().roll.find((r) => r.id === man.id);
+    assert(row()?.runner === 'charge',
+      `the roll says the runner is carrying ${JSON.stringify(row()?.runner)}`);
+    assert(c.roster.summary().roll.filter((r) => r.runner).length === 1,
+      'more than one man on the roll is carrying an order');
+    man.runner = null;
+    assert(row()?.runner === null, 'the roll still marks a man who has stopped carrying it');
+    return 'a hostile on his toes is a target, one past the floor is not, and the roll marks '
+      + 'him only while he carries it';
+  });
 }

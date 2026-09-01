@@ -1877,9 +1877,19 @@ export const CODEX = [
       + 'that one alone, and stepping past the last hands the line back whole. The squad '
       + 'you land on is named out loud, and you name the squads themselves on the Company '
       + 'tab. Also a slot on the wheel, and a chip on the order strip for a thumb.' },
-  { keys: ['orderwheel'], hold: true,
-    text: () => '<b>Detach</b> (on the wheel) — pull the nearest man out of his squad to '
-      + 'take his own orders, or send him back.' },
+  /* …AND THEY HAVE KEYS NOW. Both were wheel slots and nothing else — no key,
+   * no chip, no rebind, no row here — which made the two verbs that are not
+   * formations the two verbs a player could only find by sweeping a radial
+   * menu. See `holdground`/`detachman` in Bindings.js. */
+  { keys: ['holdground'],
+    text: () => '<b>Hold ground</b> — a toggle over whatever formation is up: they stay '
+      + 'where they are put instead of following you, and still turn and fight. Press it '
+      + 'again to bring them with you. Not the same thing as <b>Hold fire</b>, which is a '
+      + 'formation.' },
+  { keys: ['detachman'],
+    text: () => '<b>Detach</b> — pull the nearest man out of his squad to take his own '
+      + 'orders, or send him back. A detached man is his own group: target him with the '
+      + 'squad key like any other.' },
   ...ORDER_ACTIONS.map(o => ({
     keys: [o.action],
     text: () => `<b>${o.name}</b> — ${o.blurb}`,

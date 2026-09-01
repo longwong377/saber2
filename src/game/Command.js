@@ -2708,6 +2708,20 @@ export class CommandRoster {
         squad: Number.isInteger(t.squad) ? t.squad : null,
         detached: !!t.detached,
         post: !!t.post,
+        /**
+         * …AND WHETHER HE IS CARRYING AN ORDER. Nothing on the field marked a
+         * runner — no plate change, no glyph, no colour; `grep -rn runner
+         * src/ui/` came back empty — so the one mechanic in this mode that
+         * turns a message into a MAN was invisible as a man. You pressed a key,
+         * a toast said a name, and then there was a company of identical
+         * troopers one of whom was doing something different for the next
+         * thirty seconds.
+         *
+         * THE ORDER'S ID AND NOT A BOOLEAN, because what he is carrying is the
+         * interesting half: "carrying charge" tells you what is about to happen
+         * to that squad if he lives.
+         */
+        runner: t.runner ? t.runner.id : null,
       })),
     };
   }
@@ -4998,7 +5012,18 @@ export class CommandDirector extends WaveDirector {
      * would print "CHARGE — 2nd Squad" over a squad that is still standing
      * where it was, with a runner halfway there. */
     this.runnerAt = this.world?.time ?? 0;
-    this.onRunner?.(man, F, squad);
+    /* `onRunner` WAS HERE AND NOTHING EVER WIRED IT. A repo-wide grep found
+     * exactly this line — not declared beside `onRoster`/`onOrder`/`onMuster`
+     * in the constructor, not read in `main.js`, not read anywhere. Optional
+     * chaining swallowed it in silence, which is the shape a stub takes when it
+     * has agreed with a caller that does not exist.
+     *
+     * It is deleted rather than given a consumer, because the thing it would
+     * have carried is not an event: "a man is carrying an order" is a STATE
+     * that has to end when he arrives, dies or times out, and a fire-once hook
+     * cannot say any of those. `summary()` carries `runner` instead, on the
+     * same 4 Hz roll the squad, the post and the earshot ride on, so the plate
+     * and the column stop marking him the frame he stops carrying it. */
     return true;
   }
 
@@ -8675,7 +8700,24 @@ export class CommandDirector extends WaveDirector {
      * `wish = null` on a null target and `steer` supplies whatever is left. */
     if (e.trooper && e.trooper.morale < MORALE.REFUSE) return null;
     const leash = this.leashFor(F, e);
-    const slot = leash === Infinity ? null : this.slotFor(e, _slot);
+    /**
+     * …AND A RUNNER'S DISC IS CENTRED ON HIM, NOT ON WHERE HE IS GOING.
+     *
+     * `leashFor` gives a runner `LEASH_FLOOR` with a comment saying it is "so
+     * he still shoots what walks into him — a man who cannot defend himself at
+     * all is a delivery animation with a health bar". He could not. `slotFor`'s
+     * runner branch returns `RUN.to`, his DESTINATION, so the 10 m disc sat on
+     * ground he had not reached and everything actually beside him — the thing
+     * shooting at him included — was rejected for being outside it. He was
+     * precisely the delivery animation the comment disclaims, and the comment
+     * asserting the opposite is the shape that hides a real bug.
+     *
+     * The same expression the Infinity case already uses: a null slot means
+     * "measure from where he is standing", which for a man crossing open
+     * ground is the only honest centre. His leash is unchanged and small on
+     * purpose — he is running an errand, not fighting his way across.
+     */
+    const slot = (leash === Infinity || e.trooper?.runner) ? null : this.slotFor(e, _slot);
     const ax = slot ? slot.x : e.position.x;
     const az = slot ? slot.z : e.position.z;
     const leash2 = leash === Infinity ? Infinity : leash * leash;

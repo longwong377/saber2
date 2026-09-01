@@ -275,6 +275,12 @@ export async function run({ check, assert, THREE: T }) {
      * joining player's selection was dropped at the wire.
      */
     const { defaultBindings, ORDER_ACTIONS } = await import('../../src/engine/Bindings.js');
+    const { WHEEL_EXTRAS } = await import('../../src/ui/HUD.js');
+    /* WHICH ACTION EACH WHEEL SLOT IS. The slot ids are the wheel's own words
+     * and the action ids are the bindings table's; this is the one place they
+     * are joined, and a slot missing from it fails the assertion below rather
+     * than being quietly skipped. */
+    const EXTRA_ACTION = { hold: 'holdground', squad: 'squadtarget', detach: 'detachman' };
     const b = defaultBindings();
     assert(Array.isArray(b.squadtarget) && b.squadtarget.length,
       'there is no binding for targeting a squad, so the only door is still the wheel');
@@ -290,13 +296,36 @@ export async function run({ check, assert, THREE: T }) {
       const hud = new HUD(document, {});
       hud.setBindings(b);
       const chips = [...doc.querySelectorAll('#rp-orders .rp-key')];
-      assert(chips.length === ORDER_ACTIONS.length + 1,
-        `${chips.length} chips for ${ORDER_ACTIONS.length} orders and a target`);
+      /* THE COUNT IS DERIVED FROM BOTH TABLES, and the second one is the point.
+       * `+ 1` was written when Target was the only wheel slot with a key, and
+       * it went stale the day Hold ground and Detach got theirs — the same
+       * hand-maintained `+ 1` that `WHEEL_EXTRAS`' own note says it was
+       * exported to abolish, one file over. A fourth wheel slot with no chip is
+       * red here now instead of silently uncounted. */
+      assert(chips.length === ORDER_ACTIONS.length + WHEEL_EXTRAS.length,
+        `${chips.length} chips for ${ORDER_ACTIONS.length} orders and `
+        + `${WHEEL_EXTRAS.length} wheel verbs`);
       assert(chips.every((ch) => ch.dataset.action),
         'a chip carries no data-action, so `Touch.bindWheel` cannot make it pressable and '
         + 'a phone player cannot give that order at all');
-      assert(chips.some((ch) => ch.dataset.action === 'squadtarget'),
-        'the target is not on the strip');
+      /**
+       * EVERY VERB ON THE WHEEL THAT IS NOT A FORMATION HAS A KEY AND A CHIP.
+       *
+       * `registerOrders` builds a row per FORMATION, so the nine shapes each
+       * got a key, a chip, a controls row and a rebind — and Hold ground and
+       * Detach, which are not formations, got a wheel slot and nothing else.
+       * Reachable only by hold-aim-release, on no list a player reads,
+       * unrebindable, and unreachable on a phone (the wheel is a HELD key and
+       * a phone has no button to hold). Target had exactly this defect and was
+       * pulled out of the wheel for exactly this reason; these two were left.
+       *
+       * DERIVED FROM `WHEEL_EXTRAS` so the next one cannot be forgotten. */
+      const byAction = new Set(chips.map((ch) => ch.dataset.action));
+      const orphan = WHEEL_EXTRAS.filter((x) => !EXTRA_ACTION[x.id]
+        || !byAction.has(EXTRA_ACTION[x.id]) || !b[EXTRA_ACTION[x.id]]?.length);
+      assert(!orphan.length,
+        `${orphan.map((x) => x.name).join(', ')} — on the wheel with no key, no chip or both, `
+        + 'which makes it a control a player can only find by sweeping a radial menu');
     } finally { restore(); }
 
     /* THE WIRE. A client's order used to carry the formation alone. */

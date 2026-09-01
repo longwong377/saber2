@@ -1289,6 +1289,10 @@ button{font-family:inherit}
    mark on him rather than a second column. */
 .rp-post{font-style:normal;font-size:8px;color:var(--accent-warm);vertical-align:1px}
 .rp-row.gone .rp-post{display:none}
+/* …and the man who is out carrying one. Same warm accent as the plate's, so
+   the mark on the column and the mark over his head are one thing. */
+.rp-run{font-style:normal;font-size:8px;color:var(--accent-warm);letter-spacing:0}
+.rp-row.gone .rp-run{display:none}
 .rp-foot{display:flex;align-items:baseline;gap:11px;padding:6px 11px 7px;
   border-top:2px solid var(--stroke);background:var(--panel-2);
   font:var(--mono);font-size:9px;font-weight:700;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
@@ -2460,6 +2464,12 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .tplate .tp-mor i{background:var(--accent-warm)}
 .tplate.hurt .tp-hp i{background:#cf4d33}
 .tplate.shaken .tp-mor i{background:#cf4d33}
+/* A MAN CARRYING AN ORDER. He is the one body on the field doing something no
+   formation explains — out of the line, crossing open ground, alone — and
+   until now nothing anywhere marked him. Warm, because it is a thing the
+   PLAYER sent him to do, and the same accent the delegation beat wears in the
+   report for the same reason. */
+.tplate.runner .tp-squad{color:var(--accent-warm)}
 /* The one under your reticle is the one you are talking to. */
 .tplate.aimed .tp-name{color:var(--accent)}
 .tplate.aimed{font-size:11px}

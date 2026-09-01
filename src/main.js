@@ -2453,6 +2453,12 @@ function orderKeys() {
    * it landed on, so this needs no message of its own.
    */
   if (input.actHit('squadtarget')) cmd.cycleSquad?.();
+  /* THE TWO VERBS THAT ARE NOT FORMATIONS, on keys of their own — see
+   * `holdground`/`detachman` in Bindings.js for why they could not stay on the
+   * wheel alone. `hold` goes through `order()`, which is the same door the
+   * wheel and the wire use, so a joining commander's hold still crosses. */
+  if (input.actHit('holdground')) cmd.order?.('hold', null, null);
+  if (input.actHit('detachman')) cmd.detachNearest?.();
   for (const o of ORDER_ACTIONS) {
     if (!input.actHit(o.action)) continue;
     /**
