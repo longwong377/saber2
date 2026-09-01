@@ -54,7 +54,7 @@ import { mergeFigure } from './MergedSkin.js';
 import { loadAll as companyLoadAll } from './Company.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt } from './DeckAudio.js';
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
-import { squadPlan, leadOf, SQUAD, ORDER_REACH } from './Command.js';
+import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead } from './Command.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 /**
  * ONE PROP FROM THE OUTDOOR LIBRARY, AND IT IS THE ONE THE PLAYER THROWS.
@@ -77,7 +77,7 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { makeCrate } from '../world/Props.js';
 import { makeShovable } from '../physics/Shovable.js';
 import { Paint, DeckBuild, DECK_PAINT, deckMats, rackBay, overheadRig,
-  catwalk, crates, smear, deckLamp, shuttlePad } from './DeckKit.js';
+  catwalk, crates, smear, deckLamp, shuttlePad, factionOf, insigniaPanel } from './DeckKit.js';
 
 /* The deck runs from the bulkhead aft to the lip forward. Named rather than
  * inlined because six things below have to agree about where the room stops,
@@ -406,7 +406,12 @@ function addField(world) {
  * receding behind you.
  */
 function dressStructure(kit, paint) {
-  const M = deckMats();
+  /* OFF THE KIT, NEVER BARE. `deckMats()` with no argument hands back the
+   * default palette, so one bare call in here was enough to mix five Republic
+   * materials into a Separatist room — which is the exact failure the brief
+   * says kills the illusion, arriving through the least visible line in the
+   * file. */
+  const M = deckMats(kit.faction);
   const L = DECK.lip;
   /**
    * ══ HOW FAR APART THE WALLS STAND, AND IT IS THE WHOLE COMPOSITION ══════
@@ -499,6 +504,16 @@ function dressStructure(kit, paint) {
   for (const s of [-1, 1]) kit.slabAt(M.hull, s * 22.5, 14, bz + 2.6, 5, 28, 4);
   kit.slabAt(M.hull, 0, 27.5, bz + 2.6, 50, 3, 4);
   kit.slabAt(M.glow, 0, 25.6, bz + 1.2, 40, 0.7, 0.7);
+  /**
+   * THE INSIGNIA, WHICH IS THE ONLY THING IN THE ROOM THAT SAYS WHOSE IT IS.
+   *
+   * Rule 7: large, pale, sparse — so it is one mark above the doors at the
+   * scale a ship's own crest is painted, and one on the deck where the company
+   * falls in. Not a badge on every surface; there is no insignia at all in any
+   * of the seven references, which is exactly why the temptation is to
+   * over-use the one thing that carries faction.
+   */
+  insigniaPanel(kit, 0, 36, bz + 3.4, 22, { faction: kit.faction });
   /* THE DOORWAY THROWS A WEDGE ONTO THE DECK. The company files out of it and
    * an unlit door they walk out of is a hole in a wall. */
   smear(kit, 0, bz + 3, 40, 34, 0, 1);
@@ -562,6 +577,10 @@ function dressStructure(kit, paint) {
   for (const s of [-1, 1]) {
     paint.line(P.stencil, s * 34, DECK.aft + 20, s * 34, L - 20, 0.35);
   }
+  /* AND ON THE GROUND THE LINE FORMS ON. Big, pale and alone — the men stand
+   * on their own crest, which is the one place a deck marking in these
+   * pictures is ever allowed to be a shape rather than a line. */
+  paint.insignia(0, DECK.line + 26, 30, { faction: kit.faction });
   /* The muster ground, boxed — the line has a place painted for it. */
   paint.line(P.stencil, -46, DECK.line - 2, 46, DECK.line - 2, 0.3);
   paint.line(P.stencil, -46, DECK.line + 9, 46, DECK.line + 9, 0.3);
@@ -604,6 +623,41 @@ function stepStrobes(world, dt) {
   if (S.mesh.instanceColor) S.mesh.instanceColor.needsUpdate = true;
 }
 const _strobeCol = new THREE.Color();
+
+/**
+ * ══ WHOSE SHIP THIS IS, ASKED ONCE ════════════════════════════════════════
+ *
+ * "Ship classes, trooper models, deck insignia, PA voice, lighting colour
+ *  temperature, and the enemy capital ships in the battle outside all swap
+ *  together. Never mix — if the player sees one wrong-faction asset the whole
+ *  illusion dies."
+ *
+ * That is the brief, and until now the room had no idea whose it was:
+ * `DeckKit.js` contained the word `faction` zero times, so a hundred and forty
+ * fighters built to the Separatist silhouette stood on the walls of a Republic
+ * player's hangar — the loudest possible wrong-faction asset, and the dominant
+ * visual element in the room.
+ *
+ * ONE FUNCTION, AND EVERY CONSUMER TAKES ITS ANSWER. The kit, the paint, the
+ * insignia, the lights, the company, the PA and the fleet outside all read
+ * this, so there is no second opinion anywhere for them to disagree over.
+ *
+ * IT CANNOT ASK `_company`, which is the trap: `dressStructure` runs before
+ * `callTheCompany`, so at the moment the room is built there is no company to
+ * ask. It reads the same roll `callTheCompany` will read, by the same door,
+ * and falls back to whichever side the player's chosen order fights for —
+ * because a player with no roll at all still has an alignment.
+ */
+export function deckFaction(world) {
+  const want = world?.settings?.army;
+  if (want) return factionOf(want);
+  const rolls = companyLoadAll().filter((r) => (r?.men || []).length);
+  if (rolls.length) return factionOf(rolls[0].army);
+  /* NO ROLL YET. `armyToLead` is the fight's own answer to "whose side is this
+   * player on", derived from the order they follow, so a fresh save still gets
+   * a coherent room rather than a default. */
+  try { return factionOf(armyToLead(world?.settings?.order)); } catch { return factionOf(null); }
+}
 
 /**
  * ══ WHAT YOU CANNOT WALK THROUGH ══════════════════════════════════════════
@@ -669,7 +723,21 @@ function deckColliders(world) {
  * ratio every reference has — bright bars, dark air between them.
  */
 function lightDeck(world) {
-  const key = new THREE.DirectionalLight(0xbcd8ff, 2.6);
+  /**
+   * AND THE COLOUR TEMPERATURE SWAPS WITH EVERYTHING ELSE, because the brief
+   * lists it in the same breath as the ship classes and the PA voice.
+   *
+   * Both are cool — rule 6 allows nothing else — so the difference is where in
+   * the cool they sit: the Republic deck is lit near-white with the faintest
+   * warmth left in it, the Separatist one is pushed hard to steel blue. Held
+   * to a few hundred kelvin of each other on purpose. A faction swap that
+   * changes the light to a DIFFERENT COLOUR reads as a filter over the same
+   * room; one that changes it by a shade reads as a different ship.
+   */
+  const sep = world._deckFaction === 'separatist';
+  const KEY = sep ? 0xaec6f2 : 0xcadcf6;
+  const LAMP = sep ? 0xb9cef4 : 0xdbe6fb;
+  const key = new THREE.DirectionalLight(KEY, 2.6);
   key.position.set(0, 42, DECK.lip);
   key.target.position.set(0, 0, DECK.aft);
   world.scene.add(key); world.scene.add(key.target);
@@ -678,7 +746,7 @@ function lightDeck(world) {
   /* THE BULKHEAD WASH — cool, where the orange one was. The aft third is the
    * one part of the room the aperture cannot reach, and a hole there reads as
    * an unfinished level rather than as depth. */
-  const fill = new THREE.PointLight(0xa9c6f0, 34, 90, 2);
+  const fill = new THREE.PointLight(LAMP, 30, 90, 2);
   fill.position.set(0, 16, DECK.aft + 10);
   world.scene.add(fill); world.levelLights.push(fill);
 
@@ -695,7 +763,7 @@ function lightDeck(world) {
   for (let i = 0; i < 6; i++) {
     const z = DECK.aft + 26 + i * 26;
     for (const s of [-1, 1]) {
-      const l = new THREE.PointLight(0xcfe0ff, 18, 62, 2);
+      const l = new THREE.PointLight(LAMP, 18, 62, 2);
       l.position.set(s * 44, 16, z);
       world.scene.add(l); world.levelLights.push(l);
     }
@@ -703,7 +771,7 @@ function lightDeck(world) {
   /* And two out on the apron, so the deck between the racks and the lip is not
    * a black band the player crosses to reach the view. */
   for (const s of [-1, 1]) {
-    const l = new THREE.PointLight(0xbcd2f4, 14, 80, 2);
+    const l = new THREE.PointLight(KEY, 14, 80, 2);
     l.position.set(s * 46, 14, 104);
     world.scene.add(l); world.levelLights.push(l);
   }
@@ -723,8 +791,10 @@ export function dressHangar(world) {
   /* ONE BUILDER AND ONE PAINT SHOP FOR THE WHOLE ROOM — twenty rack bays with
    * a fighter in each, seven overhead rigs, two catwalks and the bulkhead come
    * out as six meshes and three. */
-  const kit = new DeckBuild();
-  const paint = new Paint();
+  const faction = deckFaction(world);
+  world._deckFaction = faction;
+  const kit = new DeckBuild(faction);
+  const paint = new Paint(faction);
   dressStructure(kit, paint);
   world._deckKit = kit.build(world);
   world._deckPaint = paint.build(world);
@@ -822,7 +892,9 @@ export function dressHangar(world) {
   world.engine?.skyDome?.configureOrbit?.({
     level: shown,
     terrain: TERRAIN_PRESETS[shown?.terrain],
-    faction: world?._company?.army || world?.settings?.army || 'republic',
+    /* THE ROOM'S ONE ANSWER, not a third opinion. `deckFaction` is what the
+     * kit, the paint, the insignia, the lights and the PA all read. */
+    faction: world._deckFaction,
   });
 
   /**
@@ -840,7 +912,10 @@ export function dressHangar(world) {
    * with the energy under 200 Hz going 90% → 99%. Walking toward the shield
    * audibly changes, which is the one thing that says a wall of light is
    * holding out vacuum. */
-  dressDeckAudio(world, { army: world?._company?.army });
+  /* THE SAME ANSWER AGAIN. This read `_company?.army`, which is undefined for
+   * a player with no roll — so a fresh save got the default PA voice on a deck
+   * that had already been built in the other faction's colours. */
+  dressDeckAudio(world, { army: world._deckFaction });
   /* AND THE ROOM WORKS. Droids on three jobs, a trolley on the gantry, a tech
    * welding, a sled crossing, crew as silhouettes in the haze, vents, and the
    * field reacting to what hits it. Measured at 0.016 ms of frame at steady
