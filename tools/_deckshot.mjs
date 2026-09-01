@@ -27,6 +27,13 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
  * global that does not exist", and twice it looked identical to a dead box. */
 const say = (m) => process.stderr.write(`▸ ${m}\n`);
 say('start');
+/* THE LOCK IS TAKEN HERE and not by a wrapper script, because a wrapper only
+ * works if every caller remembers it and measured they do not — four browser
+ * jobs put this box at load 25 and a ninety-second shot took twenty minutes. */
+const { hold } = await import('./_lock.mjs');
+say('waiting for the render lock');
+await hold('deckshot');
+say('lock held');
 await mkdir(OUT, { recursive: true });
 const server = createServer(async (req, res) => {
   try {
