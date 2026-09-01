@@ -68,7 +68,16 @@ export async function run({ check, assert }) {
     assert(/menu\.showMenu\(\)/.test(c) && /screens\.set\('menu'\)/.test(c),
       'a failed deploy does not put the player back in the menu');
     assert(/world = null/.test(c), 'a half-built world is left in the module variable after a failure');
-    assert(/menu-record|netStatus|showDeath/.test(c),
+    /**
+     * AND `sayOnTheMenu` COUNTS, because that is where the writer moved to.
+     *
+     * The front screen's notice is allowed exactly one writer in `main.js`
+     * (`pause-card.mjs`) and every writer has to be inside a catch
+     * (`keyart.mjs`), and there are two doors that can fail now — Ignite and
+     * the flight deck. One named helper called only from catches is the only
+     * shape that satisfies both, so the token this looks for is the call.
+     */
+    assert(/menu-record|sayOnTheMenu|netStatus|showDeath/.test(c),
       'a failed deploy says nothing to the player — an invisible failure is the same black screen');
     return 'build → catch → restore the menu; the menu only goes once there is a world behind it';
   });
