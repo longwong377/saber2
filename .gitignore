@@ -35,3 +35,4 @@ tools/_dbg*.mjs
 # The ones worth keeping get a name without the underscore.
 tools/_linewho.mjs
 .wf/
+.shots-orbit/
