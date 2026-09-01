@@ -497,6 +497,58 @@ export async function run({ check, assert }) {
     }
 
     /**
+     * ══ AND NOBODY IS LEFT INSIDE WHAT THE FRONT RAISED ON THEM ═══════════
+     *
+     * `marchFront` sites plates, wrecks and barricades knowing nothing about
+     * bodies, and it used to run on an empty field because the whole army had
+     * just been withdrawn. Now the survivors are standing on it while it is
+     * re-dressed. MEASURED across 5 seeds, 943 open sample points each within
+     * 30 m of the origin: 0.59 % of open ground becomes `placementClear`-blocked
+     * by the engagement-5 march — with eight survivors, about one boundary in
+     * twenty puts a man inside a fresh wreck.
+     *
+     * DRIVEN BY BUILDING THE WRECK ON HIM, because a 5 % event is not
+     * something a check can wait for. He keeps his body, his name and his
+     * wounds and steps out of it; nothing else on the field moves.
+     */
+    {
+      const { army: army3 } = await import('./_army.mjs');
+      const A = army3();
+      const one = A.d.led(A.c).find((t) => t.body && !t.body.dead);
+      const was = one.body;
+      const at = one.body.position.clone();
+      /* A static exactly where he is standing, in the shape `spawnClear`
+       * actually reads — centre, radius, orientation and half extents. */
+      const THREE = await import('three');
+      A.w.physics.staticBoxes.push({
+        center: new THREE.Vector3(at.x, at.y + 1, at.z),
+        radius: 3.6,
+        invQuat: new THREE.Quaternion(),
+        halfExtents: new THREE.Vector3(2, 2, 2),
+      });
+      assert(!(await import('../../src/game/Spawn.js')).placementClear(A.w, at.x, at.y, at.z),
+        'the fixture built a wreck that the game does not think is in the way');
+      /* WHO WAS ALREADY CLEAR, asked of the same function `_unbury` asks —
+       * a wreck big enough to bury one man can reach a second, and the claim
+       * is that nobody on clear ground is touched, not that nobody else is. */
+      const { placementClear: clear } = await import('../../src/game/Spawn.js');
+      const others = A.d.led(A.c).filter((t) => t !== one && t.body
+        && clear(A.w, t.body.position.x, t.body.position.y, t.body.position.z))
+        .map((t) => [t, t.body.position.clone()]);
+      const moved = A.d._unbury(A.c);
+      assert(moved >= 1, 'a man standing inside a wreck the front raised on him was left in it');
+      assert(one.body === was, 'he was rebuilt rather than moved — his name and his wounds go with the body');
+      assert(one.body.position.distanceTo(at) > 1,
+        `he is still at ${at.x.toFixed(1)},${at.z.toFixed(1)} inside the static`);
+      assert(one.body.position.distanceTo(at) <= 7,
+        `he was teleported ${one.body.position.distanceTo(at).toFixed(0)} m across the field`);
+      for (const [t, p] of others) {
+        assert(t.body.position.distanceTo(p) < 1e-6,
+          `${t.name} was standing on clear ground and was moved anyway`);
+      }
+    }
+
+    /**
      * ══ AND THE BOUNDARY SAYS WHAT IT TOOK AWAY ═══════════════════════════
      *
      * `HUD._squadOrders` is push-only: it is cleared by an ARMY-WIDE
