@@ -333,6 +333,68 @@ export async function run({ check, assert }) {
     } finally { world.unload?.(); }
   });
 
+  /**
+   * ══ A CACHED COVER POINT IS ONLY GOOD WHERE IT WAS SOLVED ═══════════════
+   *
+   * The arm above went red for nineteen hours and the wedge half of it PASSED
+   * the whole time — the man was not stuck on anything, his SLOT never came.
+   * Measured on the shipped Geonosis, seed 7: nine slots tracked the anchor to
+   * z≈27-35 and CT-8188's stayed at (-1.8, 1.8), the first crate he found at
+   * spawn. His `cmdSlotDist` was 1.1, so `steer` was satisfied and he stopped
+   * where he was, 37 m behind an army that had walked away.
+   *
+   * `_coverSite` caches an ABSOLUTE world point against an epoch. That is
+   * right for the two callers it was written for — an ordered hunt re-solves
+   * on `_coverEpoch`, a man under fire on his own burst count — and it is a
+   * PERMANENT PIN for the third: `careful` (the `holds` trait, added later)
+   * takes the reactive branch with `at = e._fireEpoch`, and a man nobody has
+   * ever shot at has an epoch of 0 for the whole battle.
+   *
+   * This is the unit statement of it, so the failure is named here rather than
+   * inferred from a march. It asks `_coverSite` the same question twice with
+   * the same epoch and the slot moved 40 m between, and holds it to answering
+   * about the slot it was given rather than about the one it saw first.
+   */
+  check('navigation: a cover point cached under a still epoch does not pin a man to old ground',
+    async () => {
+      const { bootWorld } = await import('./_coop.mjs');
+      const THREE = await import('three');
+      const { world } = await bootWorld({
+        level: 'geonosis',
+        settings: { mode: 'command', level: 'geonosis', order: 'jedi', seed: 7, difficulty: 'knight' },
+      });
+      try {
+        const d = world.command;
+        const boxes = world.physics?.staticBoxes || [];
+        assert(boxes.length > 20, `the level has ${boxes.length} static boxes to hide behind`);
+        /* A slot ON a box, so the hunt below has something to find. */
+        const box = boxes.find((b) => b.halfExtents.y >= 0.55
+          && Math.max(b.halfExtents.x, b.halfExtents.z) >= 0.5);
+        assert(box, 'no box on this level is big enough to be cover');
+        const A = { pos: new THREE.Vector3(box.center.x, 0, box.center.z), yaw: 0 };
+        const body = { _fireEpoch: 0 };
+        const near = new THREE.Vector3(box.center.x, 0, box.center.z);
+        /* FIRST LOOK: he finds the lee of the box he is standing at. */
+        d._coverSite(body, near, A, 4.5, 0, 1);
+        assert(body._coverPt, 'the fixture found no cover at all, so nothing is being cached');
+        const found = body._coverPt.clone();
+
+        /* SECOND LOOK, SAME EPOCH, 40 m AWAY. This is the march: the anchor
+         * walked, the slot walked with it, and nobody shot at him — so the key
+         * has not moved and the old branch handed back the old point. */
+        const far = new THREE.Vector3(box.center.x, 0, box.center.z + 40);
+        const asked = far.clone();
+        d._coverSite(body, far, A, 4.5, 0, 1);
+        const drift = Math.hypot(far.x - asked.x, far.z - asked.z);
+        assert(drift <= 4.5,
+          `the slot was solved at ${asked.z.toFixed(1)} and came back ${drift.toFixed(1)} m away, `
+          + `at ${far.z.toFixed(1)} — that is the point cached for a slot 40 m behind, and the `
+          + 'man standing on it is 40 m behind an army that walked off');
+        return `a lee found at ${found.z.toFixed(1)} is not handed back for a slot 40 m away `
+          + `(drift ${drift.toFixed(1)} m, bound 4.5)`;
+      } finally { world.unload?.(); }
+    });
+
   /* ── the blade cursor itself ───────────────────────────────────────── */
 
   check('blade: a pixel of mouse means the same angle whichever way you push it', () => {

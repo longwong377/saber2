@@ -8087,9 +8087,37 @@ export class CommandDirector extends WaveDirector {
      * common case rather than the rare one. A null is a decision: there was
      * nothing to get behind when this man last looked, and he looks again when
      * the order changes or the next burst arrives. */
+    /**
+     * …AND A CACHED POINT IS ONLY GOOD WHERE IT WAS SOLVED.
+     *
+     * `_coverPt` is an ABSOLUTE world point and the key is an epoch, so a
+     * cached lee is returned for as long as the epoch stands still — which is
+     * fine for the two callers this was written for (an order re-solves on
+     * `_coverEpoch`, a man under fire re-solves on his own burst count) and is
+     * a permanent pin for the third.
+     *
+     * `careful` — a man with the `holds` trait — takes the reactive branch
+     * with `at = e._fireEpoch`, and a man nobody has ever shot at has an epoch
+     * of 0 for the whole battle. Measured on the shipped Geonosis, seed 7, ten
+     * men in Column with the commander walking 35 m: CT-8188's slot stayed at
+     * (-1.8, 1.8) — the first crate he found at spawn — while the other nine
+     * slots tracked the anchor to z≈27-35. His `cmdSlotDist` was 1.1, so
+     * `steer` was satisfied and he simply stopped, 37 m behind an army that
+     * had walked away. He was not stuck on anything; his slot never came.
+     * `lineGathered` counts him out of place for the rest of the run.
+     *
+     * THE INVARIANT AND NOT A NEW KEY. This function only ever moves a slot to
+     * a lee WITHIN `hunt` of it — that is the whole of the loop below — so a
+     * cached point further than `hunt` from the slot being solved now is a
+     * point this function could not have produced for it. Rejecting it is the
+     * cache asking whether it is still answering the same question, and it
+     * closes the same hole for the ordered hunt: a squad told to take cover
+     * and then given ground somewhere else re-solves instead of walking back.
+     */
     if (K._coverAt === at && K._coverFor === mode) {
-      if (K._coverPt) out.copy(K._coverPt);
-      return;
+      if (!K._coverPt) return;
+      const dx = K._coverPt.x - out.x, dz = K._coverPt.z - out.z;
+      if (dx * dx + dz * dz <= hunt * hunt) { out.copy(K._coverPt); return; }
     }
     K._coverAt = at; K._coverFor = mode; K._coverPt = null;
     const boxes = this.world?.physics?.staticBoxes;

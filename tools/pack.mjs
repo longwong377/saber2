@@ -384,11 +384,31 @@ body = must(body, /location\.protocol === 'file:'/, CAPABLE,
 
 const head = (page.match(/<head[^>]*>([\s\S]*?)<\/head>/) || [, ''])[1]
   .replace(/<meta[^>]*charset[^>]*>/i, '')
-  /* …and the PRELOAD goes with the icon. It asks the browser to start fetching
-   * the title plate early, and the plate is a data URI in the <style> above by
-   * the time this runs — so the tag is a second, redundant request for a file
-   * that is no longer fetched at all. */
-  .replace(TAG, (m) => (/rel=["'](?:icon|preload)["']/i.test(m) ? '' : m));
+  /* THE PRELOAD GOES. It asks the browser to start fetching the title plate
+   * early, and the plate is a data URI in the <style> above by the time this
+   * runs — so the tag is a second, redundant request for a file that is no
+   * longer fetched at all.
+   *
+   * THE ICON STAYS, AND IT USED TO GO WITH IT. `rel="icon"` was swept up by
+   * the same test, and index.html's icon is a self-contained `data:` SVG
+   * (index.html:8) that costs no request at all — so stripping it bought
+   * nothing and cost the packed build its tab icon plus a 404 on
+   * `/favicon.ico` on EVERY load, which is the browser's fallback when a page
+   * declares no icon. That 404 also made this build's own notice false: it
+   * prints "nothing was fetched and nothing can 404" fourteen lines above.
+   *
+   * The `leftover` guard could not catch it — it only inspects `assets/`
+   * paths, and this request is for a file the page never named.
+   *
+   * AN ICON THAT IS A FILE WOULD STILL HAVE TO GO, and this does not handle
+   * that case because there is no such tag: the test is `data:`, so a future
+   * icon that IS a request is stripped exactly as the preload is, rather than
+   * being left to 404 in a single-file build. */
+  .replace(TAG, (m) => {
+    if (/rel=["']preload["']/i.test(m)) return '';
+    if (/rel=["']icon["']/i.test(m)) return /href=["']data:/i.test(m) ? m : '';
+    return m;
+  });
 
 /**
  * THE ASSET MAP AND ITS RESOLVER, ahead of the modules that read them.
