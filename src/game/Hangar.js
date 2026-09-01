@@ -489,7 +489,11 @@ function dressStructure(kit, paint) {
       /* THE REFLECTION. One smear per tier, off the wall foot, running in
        * across the plate. This is rule 2 and it is the single biggest thing
        * separating these pictures from a grey floor. */
-      if (i % 2 === 0) smear(kit, s * (WALL - 4), z, 34, pitch * 0.7, -s, 0);
+      /* EVERY BAY, not every other. This is the room's only reflection and
+       * it is drawn: at half the bays the deck read as a floor with a few
+       * bright patches on it rather than as a wet plate under a wall of
+       * lights. */
+      smear(kit, s * (WALL - 4), z, 30, pitch * 0.86, -s, 0);
     }
   }
   /* THE WALL CAPS. Where the structure ends the section is shown — a hull that
@@ -992,8 +996,23 @@ export const HANGAR_LEVEL = {
      * lip, which is where `hangar 7.jpg` sits.
      */
     sky: false, bgColor: 0x05070c, fog: true, fogColor: 0x1b2636, fogDensity: 0.011,
-    sunColor: 0xbcd8ff, sunIntensity: 3.2, ambient: 0.42,
-    skyColor: 0x6e88b8, groundColor: 0x22262c, elevation: 12, azimuth: 0,
+    /**
+     * ══ THE AMBIENT WAS PAINTING THE FLOOR ════════════════════════════════
+     *
+     * A hemisphere light's SKY half points straight down at a deck, so on a
+     * flat floor it is the dominant term — and at 0.42 with a sky colour of
+     * 0x6e88b8 it lifted a near-black plate to a pale grey sheen at every
+     * grazing angle, which is where a player actually looks at a floor. The
+     * plan shots proved it: from 46 m up, looking nearly straight down, the
+     * same deck rendered BLACK. It was never the albedo, the map or the
+     * metalness — it was the light.
+     *
+     * Every reference is lit by its own strips and by the aperture, with the
+     * air between them dark. So the ambient is a fill of last resort here,
+     * and the sixteen lamps down the ranks do the work.
+     */
+    sunColor: 0xbcd8ff, sunIntensity: 3.2, ambient: 0.18,
+    skyColor: 0x39485f, groundColor: 0x191d23, elevation: 12, azimuth: 0,
       /* COOL, like everything else. The warm bounce was invented. */
     fillColor: 0x93b2dc, fillIntensity: 0.30,
     exposure: 1.2, bloom: 0.75, saturation: 1.02,

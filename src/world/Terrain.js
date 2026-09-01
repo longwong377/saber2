@@ -747,7 +747,11 @@ export const TERRAIN_PRESETS = {
      * nowhere else to say it.
      */
     sandColor: 0x171b21, rockColor: 0x101318,
-    gloss: 0.55,
+    /* 0.46, not 0.55. At 0.55 the grazing sheen is a mirror blur across the
+     * whole plate and it swamps the drawn smears that are supposed to BE the
+     * reflection; a shade rougher and the smears read as the bright thing on
+     * a dark floor, which is the arrangement in all seven references. */
+    gloss: 0.46,
     maps: 'deck',
     gritColor: 0x14171c, rockColor2: 0x0c0f13,
     dustColor: 0x232830, crustColor: 0x15181e,

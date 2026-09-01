@@ -172,30 +172,34 @@ if (!info.fail) {
   });
   const shots = [
     /**
-     * AND THE FIRST ONE IS WHERE THE GAME ACTUALLY PUTS HIM.
+     * YAW pi IS FORWARD ON THIS DECK, AND YAW 0 IS AFT.
      *
-     * Every station here used to be a teleport to `DECK.start`, a constant no
-     * file in `src/` read — the level record declared no spawn, so the engine
-     * dropped the player 82 m away facing the other way, and every frame this
-     * room has ever been judged by was taken from a place the game does not
-     * put anyone. `00-spawn` takes no position at all: it is whatever the
-     * player was handed. The rest are the walk.
+     * The first list had it the other way round, so `04-line` — the station
+     * whose entire purpose is to look at the company — was pointed at the
+     * empty deck behind it, and the frames were used to conclude the troops
+     * were not there. They were; the camera was facing the wrong way. The
+     * spawn's own yaw is pi (`Player.js` sets it), and the read-back in the
+     * log is what settles it: at station 00 the boom sits at z = -81 with the
+     * body at -78, so the view runs toward +z.
      */
-    ['00-spawn', { keep: true }],
-    ['01-start-left', { yaw: -0.7, pitch: 0.02, keep: true }],
-    ['02-start-right', { yaw: 0.7, pitch: 0.02, keep: true }],
-    ['03-aft', { yaw: Math.PI, pitch: 0.10, keep: true }],
-    ['04-line', { yaw: 0, pitch: -0.02, x: 0, y: 1.7, z: -60 }],
-    ['05-mid', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: -10 }],
-    ['06-port', { yaw: Math.PI / 2, pitch: 0.10, x: 0, y: 1.7, z: -30 }],
-    ['07-port-close', { yaw: Math.PI / 2, pitch: 0.14, x: -34, y: 1.7, z: 0 }],
-    ['08-apron', { yaw: 0, pitch: 0.02, x: 0, y: 1.7, z: 86 }],
-    ['09-lip', { yaw: 0, pitch: 0.04, x: 0, y: 1.7, z: 138 }],
-    ['10-up', { yaw: 0, pitch: 1.2, x: 0, y: 1.7, z: -30 }],
+    ['00-spawn', { keep: true }],   // no yaw, no pitch: exactly as handed over
+    ['01-start-left', { yaw: Math.PI - 0.7, pitch: 0.02, keep: true }],
+    ['02-start-right', { yaw: Math.PI + 0.7, pitch: 0.02, keep: true }],
+    ['03-aft', { yaw: 0, pitch: 0.10, keep: true }],
+    /* THE LINE, from close enough to see a man's face and from the range an
+     * order is given at. This is what the room is FOR. */
+    ['04-line', { yaw: Math.PI, pitch: 0, x: 0, y: 1.7, z: -62 }],
+    ['05-line-close', { yaw: Math.PI, pitch: 0.02, x: -4, y: 1.7, z: -54 }],
+    ['06-mid', { yaw: Math.PI, pitch: 0.02, x: 0, y: 1.7, z: -10 }],
+    ['07-port', { yaw: -Math.PI / 2, pitch: 0.10, x: 0, y: 1.7, z: -30 }],
+    ['08-port-close', { yaw: -Math.PI / 2, pitch: 0.14, x: -34, y: 1.7, z: 0 }],
+    ['09-apron', { yaw: Math.PI, pitch: 0.02, x: 0, y: 1.7, z: 86 }],
+    ['10-lip', { yaw: Math.PI, pitch: 0.04, x: 0, y: 1.7, z: 138 }],
+    ['11-up', { yaw: Math.PI, pitch: 1.2, x: 0, y: 1.7, z: -30 }],
     /* TWO FROM ABOVE, because "rows and rows" is a claim about the plan of the
      * room and no eye-level shot can confirm or refute it. */
-    ['11-over', { yaw: 0, pitch: -0.5, x: 0, y: 52, z: -120, fly: true }],
-    ['12-over-wide', { yaw: 0.5, pitch: -0.38, x: -100, y: 40, z: -110, fly: true }],
+    ['12-over', { yaw: Math.PI, pitch: -0.45, x: 0, y: 46, z: -130, fly: true }],
+    ['13-over-wide', { yaw: Math.PI - 0.5, pitch: -0.34, x: -96, y: 36, z: -120, fly: true }],
   ];
 
   for (const [name, v] of shots) {
@@ -221,8 +225,28 @@ if (!info.fail) {
             p.body?.setTransform?.(new window.THREE_V3(v.x, v.y + 0.9, v.z), null);
           }
         }
-        if (p.camera) { p.camera.yaw = v.yaw; p.camera.pitch = v.pitch; }
-        if (p.control) { p.control.yaw = v.yaw; p.control.pitch = v.pitch; }
+        /**
+         * ONLY IF THERE IS A NUMBER TO ASSIGN — AND THIS IS WHAT BROKE THE
+         * WHOLE TOOL.
+         *
+         * `00-spawn` deliberately carries no yaw: the point of that station is
+         * to photograph exactly what the game hands the player. This wrote
+         * `undefined` into the rig, every later composition of the boom went
+         * NaN, and the body came back clamped to the corner of the heightfield
+         * at (-144, -144). Every subsequent station then set a good yaw into a
+         * rig that was already poisoned, and the tool wrote thirteen files and
+         * called all of them successes.
+         *
+         * A photograph is not a place to be clever about defaults.
+         */
+        if (typeof v.yaw === 'number') {
+          if (p.camera) p.camera.yaw = v.yaw;
+          if (p.control) p.control.yaw = v.yaw;
+        }
+        if (typeof v.pitch === 'number') {
+          if (p.camera) p.camera.pitch = v.pitch;
+          if (p.control) p.control.pitch = v.pitch;
+        }
       }
       /* A SHOT FROM 46 M UP IS NOT SOMEWHERE THE PLAYER CAN STAND: gravity
        * puts him back on the deck inside two frames and the plan shot comes
@@ -246,6 +270,8 @@ if (!info.fail) {
     const at = await page.evaluate(() => {
       const c = window.SABER?.engine?.camera;
       const p = window.SABER?.world?.player;
+      const bad = (o) => !o || !Number.isFinite(o.x) || !Number.isFinite(o.y) || !Number.isFinite(o.z);
+      if (bad(c?.position) || bad(p?.position)) return { nan: true };
       return {
         cam: c ? [c.position.x, c.position.y, c.position.z].map((n) => +n.toFixed(1)) : null,
         man: p ? [p.position.x, p.position.y, p.position.z].map((n) => +n.toFixed(1)) : null,
@@ -253,7 +279,8 @@ if (!info.fail) {
       };
     });
     await page.screenshot({ path: `${OUT}/${name}.png`, ...SHOT }).catch((e) => console.log(name, 'shot:', e.message));
-    say(`wrote ${name} · cam ${JSON.stringify(at.cam)} man ${JSON.stringify(at.man)} state ${at.paused}`);
+    if (at.nan) say(`!! ${name} — the camera or the body is NaN; this frame is not of anywhere`);
+    else say(`wrote ${name} · cam ${JSON.stringify(at.cam)} man ${JSON.stringify(at.man)} state ${at.paused}`);
     console.log('wrote', `${OUT}/${name}.png`);
   }
 }
