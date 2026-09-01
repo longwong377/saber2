@@ -543,11 +543,34 @@ export async function run({ check, assert }) {
     /* Dynamic, the way every other check in this file reaches the harness. */
     const { bootWorld } = await import('./_coop.mjs');
     const rows = [];
+    /**
+     * AND ONE MODE HAS NO WAVE TO CLEAR, WHICH IS ITS WHOLE POINT.
+     *
+     * The flight deck is a place, not a fight: no enemy, no wave, no ending
+     * and no score, and `HangarDirector` is deliberately not a `WaveDirector`
+     * subclass precisely so it cannot grow a spawn queue or a clear signal.
+     * Demanding `onWaveClear` of it is demanding income from a room whose
+     * promise is that nothing happens in it unless you ask.
+     *
+     * It still has to have the LEDGER — a player who kneels on the deck must
+     * see what he has — so it is exempted from the earning half only, and the
+     * two assertions below are split so that stays true.
+     */
+    const NO_WAVE = {
+      hangar: 'a deck has no wave to clear; you walk onto it to look at your men',
+    };
     for (const mode of Object.keys(MODES)) {
       const level = MODES[mode]?.level || 'geonosis';
       const { world } = await bootWorld({ level, settings: { mode, difficulty: 'knight' } });
       try {
         assert(world.communion, `${mode}: no Insight ledger at all`);
+        if (NO_WAVE[mode]) {
+          assert(!world.director?.onWaveClear,
+            `${mode} is on the no-wave list and has grown a clear signal — either it is a fight `
+            + 'now and the exemption is stale, or something has given a room a wave');
+          rows.push(`${mode}: ledger only (${NO_WAVE[mode]})`);
+          continue;
+        }
         assert(typeof world.director?.onWaveClear === 'function',
           `${mode}: the director fires no wave-clear signal, so the Holocron can never be paid`);
         const before = world.communion.insight;

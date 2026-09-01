@@ -71,6 +71,13 @@ export function run({ check, assert }) {
     const REFUSED = {
       training: 'nothing in the lessons can kill you, so there is no run to record',
       sandbox: 'a room with a slider — "deepest 99 waves" would mean somebody typed 99',
+      /* THE FLIGHT DECK IS NOT A RUN AND MUST NEVER FILE AS ONE. There is no
+       * wave on it, no enemy, no ending and no score; `HangarDirector` exists
+       * to answer the four fields the HUD dereferences and to do nothing else.
+       * Recording a visit would evict a real run from the forty-deep recent
+       * list, and "deepest reached" would count a room you walked into. This
+       * is why `quitToMenu` branches to `leaveHangar` before `record()`. */
+      hangar: 'a visit is not a run — you walk onto the deck to look at your men',
     };
     const recorded = [], refused = [];
     await withCleanStore(() => {

@@ -781,7 +781,11 @@ function stepRamp(world, dt) {
   const R = DEPLOY_RAMP;
   const d = Math.hypot(p.position.x - R.x, p.position.z - R.z);
   if (d > R.reach) {
-    if (world._rampHold) { world._rampHold = 0; world.notify?.('', ''); }
+    /* STEPPING OFF JUST FORGETS. An empty `notify` is still a toast — the HUD
+     * raises the element and animates it — so clearing the countdown by
+     * sending two empty strings put a blank card on screen every time the
+     * player walked past the ship. */
+    world._rampHold = 0;
     return;
   }
   world._rampHold = (world._rampHold || 0) + dt;

@@ -454,6 +454,22 @@ function mintRunSeed() {
     : (Math.random() * 0xffffffff) >>> 0;
 }
 
+/**
+ * ══ THE ONE LINE ON THE MENU THAT SAYS A DOOR DID NOT OPEN ════════════════
+ *
+ * `#menu-record` is allowed exactly ONE writer, and `tools/checks/pause-card.mjs`
+ * counts them: the element used to carry a run summary as well, that summary
+ * was deleted for being history rather than a currency, and what survives is
+ * the failure notice alone. Two doors can fail — Deploy and the flight deck —
+ * so the notice is a function rather than a second `getElementById`.
+ *
+ * A failure the player cannot see is the same thing as a black screen.
+ */
+function sayOnTheMenu(text) {
+  const el = document.getElementById('menu-record');
+  if (el) el.textContent = text;
+}
+
 async function buildWorld(levelKey, onProgress = null, runSeed = null, override = null, opts = null) {
   if (world) { world.dispose(); world = null; }
   /**
@@ -867,8 +883,7 @@ async function enterHangar() {
     input.enabled = false;
     menu.showMenu();
     screens.set('menu');
-    const el = document.getElementById('menu-record');
-    if (el) el.textContent = `Could not reach the deck: ${e.message || e}`;
+    sayOnTheMenu(`Could not reach the deck: ${e.message || e}`);
     return;
   }
   /**
@@ -1000,8 +1015,7 @@ async function deploy() {
     screens.set('menu');
     // Said out loud on the one line of the main menu this file already owns,
     // because a failure the player cannot see is the same black screen.
-    const el = document.getElementById('menu-record');
-    if (el) el.textContent = `Could not deploy: ${e.message || e}`;
+    sayOnTheMenu(`Could not deploy: ${e.message || e}`);
     return;
   }
 
