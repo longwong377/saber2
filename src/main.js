@@ -871,6 +871,22 @@ async function enterHangar() {
     if (el) el.textContent = `Could not reach the deck: ${e.message || e}`;
     return;
   }
+  /**
+   * AND THE DECK HAS A DOOR OUT THAT IS NOT THE MENU.
+   *
+   * "Deploy for the run by walking up the gunship's ramp." `Hangar` watches
+   * the apron at the foot of the near pad's ramp and raises this; what a run
+   * IS — the mode, the theatre, the seed — is main.js's to know, so the room
+   * asks and this answers. `leaveHangar` first, because `deploy` builds a
+   * world and the deck's one has to be put down properly: its director owns a
+   * twenty-five node audio graph and a body per man.
+   */
+  if (world) {
+    world.onDeckDeploy = () => {
+      leaveHangar();
+      deploy().catch((e) => console.error('deploy from the deck failed', e));
+    };
+  }
   cancelDeathCard();
   menu.hideMenu();
   menu.hideDeath();

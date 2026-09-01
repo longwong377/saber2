@@ -115,9 +115,42 @@ export const DECK = {
   line: -48,
   /** The overhead field. 64 m, which is the height ref 6's catwalk implies. */
   roof: 64,
-  /** How far out the solid structure runs before the walls become field. */
-  bays: 46,
+  /**
+   * ══ WHERE THE RACK WALLS STAND, AND IT IS ONE NUMBER NOW ═══════════════
+   *
+   * This said `bays: 46` under a comment about something else entirely, was
+   * read by nothing, and was wrong — the walls stand at ±56. Meanwhile
+   * `dressStructure` kept the real figure as a local `const WALL = 56` that no
+   * other file could see, so `DeckAudio` had to site its horns as a ratio of a
+   * number it could not read and guard the result with a ray probe.
+   *
+   * One name, exported, and the local is gone.
+   */
+  wall: 56,
+  /** Kept as an alias for one release: `bays` was the old, wrong spelling. */
+  get bays() { return this.wall; },
 };
+
+/**
+ * ══ WHERE YOU LEAVE FROM ══════════════════════════════════════════════════
+ *
+ * The near pad's craft, and the patch of deck at the foot of its ramp. Both
+ * derived from the same pair of numbers so the trigger cannot drift off the
+ * geometry — which is exactly what happened to the muster doors, the crane
+ * rail, the scaffold and the PA horns, all in one commit.
+ */
+export const DEPLOY_RAMP = {
+  x: -26,
+  padZ: 46,
+  /* The ramp comes down 12 m aft of the pad's centre; `shuttlePad` puts it
+   * there off the same yaw. Standing within `reach` of this is the trigger. */
+  get z() { return this.padZ + 12; },
+  reach: 4.2,
+  /* How long you have to stand on it. A trigger that fires the instant you
+   * cross it takes the run away from a player who was walking past. */
+  hold: 1.1,
+};
+const P_RAMP = { stencil: 0xb9bec6 };
 
 /**
  * THE FIELD. One material, four planes, and it is the only thing between the
@@ -146,15 +179,20 @@ function fieldMaterial(color) {
       uWeave: { value: 1.9 },
     },
     vertexShader: /* glsl */`
+      #include <fog_pars_vertex>
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main() {
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        /* three's fog_vertex chunk reads a local named mvPosition. */
+        vec4 mvPosition = mv;
         vN = normalize(normalMatrix * normal);
         vV = normalize(-mv.xyz);
         vP = position;
         gl_Position = projectionMatrix * mv;
+        #include <fog_vertex>
       }`,
     fragmentShader: /* glsl */`
+      #include <fog_pars_fragment>
       uniform vec3 uColor; uniform float uTime; uniform float uPower; uniform float uWeave;
       varying vec3 vN; varying vec3 vV; varying vec3 vP;
       void main() {
@@ -189,10 +227,40 @@ function fieldMaterial(color) {
         float band = (0.05 + s1 * 0.16 + s2 * 0.22 + s3 * 0.30);
         float a = band * uPower;
         gl_FragColor = vec4(uColor * (a * 1.9), a);
+        /* AN ADDITIVE SURFACE FADES BY LOSING ITS OWN LIGHT, not by taking on
+           the fog's colour: mixing toward fogColor on a blend that ADDS
+           would make the far field brighter the further away it got. So the
+           extinction multiplies instead. */
+        #ifdef USE_FOG
+          #ifdef FOG_EXP2
+            float fogF = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+          #else
+            float fogF = smoothstep(fogNear, fogFar, vFogDepth);
+          #endif
+          gl_FragColor.rgb *= (1.0 - fogF);
+          gl_FragColor.a *= (1.0 - fogF);
+        #endif
       }`,
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
     side: THREE.DoubleSide,
+    /**
+     * AND IT IS FOGGED, WHICH INVERTED THE DEPTH CUE WHILE IT WAS NOT.
+     *
+     * A raw `ShaderMaterial` gets no fog unless it asks, so the field planes
+     * were the one thing in this room at full contrast at 220 m — while the
+     * `MeshBasicMaterial` rim sitting ON them was extinguished like everything
+     * else. The frame around the opening faded and the opening did not, so the
+     * shield read as NEARER than its own frame, which is the one relationship
+     * a player reads distance from.
+     *
+     * `fog: true` puts three's fog uniforms into the program; the chunks are
+     * pasted into the shader below.
+     */
+    fog: true,
   });
+  /* THE UNIFORMS THE FOG CHUNKS READ. `UniformsLib.fog` is three's own block,
+   * merged rather than typed, so a vendor bump cannot leave this behind. */
+  Object.assign(mat.uniforms, THREE.UniformsLib.fog);
   mat.userData.saberNoInk = true;
   return mat;
 }
@@ -433,6 +501,7 @@ function addField(world) {
  * shape; this is the second.
  */
 export function dressStructure(kit, paint) {
+  _dressFaction = kit.faction || 'republic';
   /* OFF THE KIT, NEVER BARE. `deckMats()` with no argument hands back the
    * default palette, so one bare call in here was enough to mix five Republic
    * materials into a Separatist room — which is the exact failure the brief
@@ -459,7 +528,7 @@ export function dressStructure(kit, paint) {
    * apron with vacuum on three sides. That is a bigger room than the flat one
    * — a canyon of ships that opens onto space — and it is one you can see.
    */
-  const WALL = 56;
+  const WALL = DECK.wall;
   const TIERS = [
     { y: 13.5, h: 21 },
     { y: 35.0, h: 20 },
@@ -548,6 +617,47 @@ export function dressStructure(kit, paint) {
   /* THE DOORWAY THROWS A WEDGE ONTO THE DECK. The company files out of it and
    * an unlit door they walk out of is a hole in a wall. */
   smear(kit, 0, bz + 3, 40, 34, 0, 1);
+  /**
+   * ══ THE MEMORIAL, ON THE ONE REAL WALL YOU WALK PAST ═══════════════════
+   *
+   * The player's line, and it is the only thing in the brief that is about the
+   * men who are NOT standing on the deck. The roll carries its dead —
+   * `Company.load` keeps a capped `fallen` list with each man's designation,
+   * his rank, where he fell and who killed him — and until now nothing in the
+   * game had ever drawn it anywhere.
+   *
+   * It is a recessed panel on the bulkhead beside the doors, at head height,
+   * with one lit bar per name. NOT a wall of text: the deck is a place, and a
+   * player who wants the names has the Company page. What this has to do is be
+   * a thing you walk past on the way to your line and understand — a rank of
+   * short bright marks, one for each man who is not in the formation, getting
+   * longer as the war goes on.
+   *
+   * NO NAMES IN THE GEOMETRY, deliberately. `Paint.digit` can stencil a
+   * numeral and that is the wrong instinct twice over: rule 7 says the
+   * references carry no numerals at all, and a name rendered as a 2 m stencil
+   * on a bulkhead is a label, not a memorial.
+   */
+  const fallen = memorialRoll();
+  if (fallen.length) {
+    const mx = -34, my = 6.4, mz = bz + 2.9;
+    /* The recess it is set into, so it reads as part of the ship. */
+    kit.slabAt(M.deep, mx, my, mz - 0.5, 15, 6.4, 1.2);
+    kit.slabAt(M.hull, mx, my + 3.4, mz, 15.6, 0.5, 1.8);
+    kit.slabAt(M.hull, mx, my - 3.4, mz, 15.6, 0.5, 1.8);
+    /* ONE BAR A MAN, in rows, and the rows fill from the top the way a plaque
+     * does. Twenty-eight fit; a company that has lost more than that has lost
+     * more than a wall can say and the bars simply stop. */
+    const per = 14;
+    for (let i = 0; i < Math.min(fallen.length, per * 2); i++) {
+      const col = i % per, row = (i / per) | 0;
+      kit.slabAt(M.glow, mx - 6.5 + col * 1.0, my + 1.4 - row * 2.2, mz + 0.35,
+        0.34, 1.5, 0.3);
+    }
+    /* And a single dimmer bar under them, the length of the whole roll. */
+    kit.slabAt(M.glowDim, mx, my - 2.6, mz + 0.3, 13, 0.18, 0.3);
+  }
+
   catwalk(kit, 0, 22, bz + 5.5, WALL * 2.1);
   catwalk(kit, 0, 40, bz + 5.5, WALL * 2.1);
 
@@ -568,7 +678,25 @@ export function dressStructure(kit, paint) {
   /* ── THE MIDDLE DISTANCE. One craft on a pad, big enough to read, between
    * the company and the aperture — `hangar 7.jpg` and `hangar 5.webp` both
    * put exactly one there and it is what gives the room a scale ladder. */
-  shuttlePad(kit, -26, 46, { radius: 17, yaw: 0.22 });
+  /**
+   * ══ AND THIS ONE IS THE WAY OUT ═══════════════════════════════════════
+   *
+   * "Deploy for the run by walking up the gunship's ramp." The nearer pad's
+   * craft is the one you leave on, and its ramp faces aft — toward the line,
+   * so the walk is from your own company to the ship, which is the order those
+   * two things happen in.
+   *
+   * `DEPLOY_RAMP` is where `HangarDirector` watches for the player. It is
+   * derived from the pad rather than typed, because a pad that moves and a
+   * trigger that does not is the defect this file has now paid for four times.
+   */
+  shuttlePad(kit, DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, { radius: 17, yaw: 0.22 });
+  /* A painted apron at its foot, so the one square metre of deck that does
+   * something is a place rather than a trap. */
+  paint.line(P_RAMP.stencil, DEPLOY_RAMP.x - 5, DEPLOY_RAMP.z - 4,
+    DEPLOY_RAMP.x + 5, DEPLOY_RAMP.z - 4, 0.32);
+  paint.line(P_RAMP.stencil, DEPLOY_RAMP.x - 5, DEPLOY_RAMP.z + 4,
+    DEPLOY_RAMP.x + 5, DEPLOY_RAMP.z + 4, 0.32);
   shuttlePad(kit, 30, 92, { radius: 15, yaw: -1.4 });
 
   /* ── ON THE DECK: crate clusters at the wall feet, and the pit. Nothing in
@@ -629,6 +757,46 @@ export function dressStructure(kit, paint) {
 }
 
 /**
+ * ══ STANDING AT THE FOOT OF THE RAMP IS HOW YOU LEAVE ═════════════════════
+ *
+ * "Deploy for the run by walking up the gunship's ramp." The only way off this
+ * deck was the pause card's Menu button, which disposes the room — so the
+ * player's own line for how a visit ends had no implementation at all, and the
+ * room was a cul-de-sac you backed out of.
+ *
+ * A DWELL, NOT A TRIPWIRE. `DEPLOY_RAMP.hold` seconds standing on the apron,
+ * with the countdown shown, so walking past the ship on your way to the shield
+ * does not launch a run. Step off and it forgets — a commitment you can change
+ * your mind about is the difference between a door and a trapdoor.
+ *
+ * IT ASKS RATHER THAN DEPLOYS. `main.js` owns what a run IS — the mode, the
+ * theatre, the seed, the session — and this file has spent this whole rewrite
+ * learning not to hold a second opinion about anything. So it raises
+ * `world.onDeckDeploy` and main.js decides; a build with nothing listening
+ * simply has a ship you can stand under.
+ */
+function stepRamp(world, dt) {
+  const p = world?.player;
+  if (!p || world._deckLaunched) return;
+  const R = DEPLOY_RAMP;
+  const d = Math.hypot(p.position.x - R.x, p.position.z - R.z);
+  if (d > R.reach) {
+    if (world._rampHold) { world._rampHold = 0; world.notify?.('', ''); }
+    return;
+  }
+  world._rampHold = (world._rampHold || 0) + dt;
+  const left = R.hold - world._rampHold;
+  if (left > 0) {
+    /* The countdown is the whole of the interface. */
+    world.notify?.('BOARDING', `hold — ${left.toFixed(1)}s`, 'flavour');
+    return;
+  }
+  world._deckLaunched = true;
+  world.notify?.('DEPLOYING', 'the company forms up on the ramp', 'alarm');
+  world.onDeckDeploy?.();
+}
+
+/**
  * THE LIP PULSES, AND IT RUNS RATHER THAN BLINKING.
  *
  * A rank of markers flashing in unison is a decoration; one where the pulse
@@ -654,6 +822,25 @@ function stepStrobes(world, dt) {
   if (S.mesh.instanceColor) S.mesh.instanceColor.needsUpdate = true;
 }
 const _strobeCol = new THREE.Color();
+
+/**
+ * WHO IS NOT ON THE DECK. The roll's own capped list of the dead, for the
+ * memorial — read through the same door `callTheCompany` reads the living
+ * through, so the two can never disagree about which army's ship this is.
+ */
+function memorialRoll() {
+  try {
+    const rolls = companyLoadAll();
+    const want = _dressFaction;
+    const roll = rolls.find((r) => r.army === want) || null;
+    return (roll?.fallen || []).filter((f) => f && f.designation);
+  } catch { return []; }
+}
+/* WHOSE ROOM IS BEING BUILT RIGHT NOW. `dressStructure` takes a kit and a
+ * paint shop and nothing else — that signature is what lets `faction.mjs`
+ * build both armies' rooms without a World — so the one thing it needs from
+ * outside is passed the only way that does not change it. */
+let _dressFaction = 'republic';
 
 /**
  * ══ WHOSE SHIP THIS IS, ASKED ONCE ════════════════════════════════════════
@@ -737,7 +924,7 @@ function deckColliders(world) {
   const box = (cx, cy, cz, hx, hy, hz) =>
     P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(hx, hy, hz), q, { friction: 0.7 });
 
-  const WALL = 56, first = DECK.aft + 14, n = 14, pitch = 11.6;
+  const WALL = DECK.wall, first = DECK.aft + 14, n = 14, pitch = 11.6;
   const zEnd = first + (n - 1) * pitch + pitch * 0.6;
   const mid = (first - pitch * 0.6 + zEnd) / 2;
   const half = (zEnd - (first - pitch * 0.6)) / 2;
@@ -1156,6 +1343,7 @@ export class HangarDirector {
   }
 
   update(dt) {
+    stepRamp(this.world, dt);
     stepStrobes(this.world, dt);
     stepCompany(this.world, dt);
     /**
