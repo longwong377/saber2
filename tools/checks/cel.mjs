@@ -46,7 +46,7 @@
  * behaviour cannot tell you whether it measured anything.
  */
 
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import * as THREE from 'three';
 import {
   CEL, CEL_KEY, celTone, celShadow, celAlbedo, celBand, celDistance, lambertTone, bandCount,
@@ -1754,6 +1754,83 @@ export function run({ check, assert, near }) {
   });
 
   /* ══ 7. THE MECHANISM IS AT THE ROOT ═══════════════════════════════════ */
+
+  check('cel: nothing is drawn by a lit program the cel model does not reach', () => {
+    /**
+     * THE HOLE THE PLAYER FOUND BY LOOKING AT IT.
+     *
+     * "the graves when done and the holes during have a real PBR look to them
+     *  like they aren't cell shaded, is that something you see?"
+     *
+     * He was right, and the check above could not have caught it, because it
+     * asks whether the cel model is installed and whether anything SWAPS a
+     * material — not whether every lit material in the game is compiled
+     * against the program the model patches.
+     *
+     * `installCelShading` rewrites exactly one lit program. `subProgram` says
+     * so in its own note: `meshphysical_frag`,
+     * `ShaderLib.standard.fragmentShader` and `ShaderLib.physical.fragmentShader`,
+     * which on r169 are one string object. Every other lit program three ships
+     * — lambert, phong, toon — has its own fragment shader and is untouched,
+     * so a material built from one takes three's stock smooth N·L and is the
+     * one object in the frame with no band on it.
+     *
+     * There were five. Four were `src/world/Graves.js` (the marker, the hole
+     * floor, the spoil ring and the mound) and the fifth was the thrown
+     * grenade in `src/game/Reactions.js`. Nothing had ever asked the question.
+     *
+     * BASIC IS NOT ON THE LIST and that is deliberate: `MeshBasicMaterial` is
+     * unlit by definition, it has no N·L to band, and 53 of them are doing
+     * exactly what they should — the sky, the HUD sprites, the bolt cores.
+     * The three named here are the ones that TAKE a light and shade it wrong.
+     */
+    const UNREACHED = ['MeshLambertMaterial', 'MeshPhongMaterial', 'MeshToonMaterial'];
+    /**
+     * THE FILES THE GAME ACTUALLY LOADS, walked from `src/main.js` through its
+     * own import statements — not every file under `src/`, and not a list.
+     *
+     * A named list goes stale the day somebody adds a file, which is exactly
+     * how this defect survived: `Graves.js` did not exist when the cel model
+     * was written. And a blind walk of `src/` is wrong in the other direction
+     * — `src/toon/Toon.js` builds a `MeshToonMaterial` on purpose, because it
+     * IS the material-swap approach, kept as the lab notebook for `toon.html`
+     * and stated in its own header to be "NOT wired into the game". Following
+     * the imports settles both: a file is in scope exactly when the game loads
+     * it, so the A/B page is out today and is IN the moment anything under
+     * `src/game` or `src/engine` imports it.
+     */
+    const SRC = new URL('../../src/', import.meta.url);
+    const seen = new Set(), files = [];
+    const visit = (url) => {
+      const key = url.pathname;
+      if (seen.has(key)) return;
+      seen.add(key);
+      let src;
+      try { src = readFileSync(url, 'utf8'); } catch { return; }
+      files.push({ url, name: key.split('/src/')[1] || key });
+      for (const m of src.matchAll(/(?:^|\n)\s*(?:import|export)[^'"\n]*from\s*['"](\.[^'"]+)['"]/g)) {
+        if (m[1].endsWith('.js')) visit(new URL(m[1], url));
+      }
+    };
+    visit(new URL('main.js', SRC));
+    void readdirSync;
+    const bad = [];
+    for (const f of files) {
+      const src = readFileSync(f.url, 'utf8');
+      for (const kind of UNREACHED) {
+        /* CONSTRUCTED, not merely named — this file's own header quotes it and
+         * the note above names the class twice, and a check that counted those
+         * would be red on its own explanation. */
+        const n = (src.match(new RegExp(`new THREE\\.${kind}\\(`, 'g')) || []).length;
+        if (n) bad.push(`${f.name} builds ${n} ${kind}`);
+      }
+    }
+    assert(!bad.length,
+      `${bad.length} lit material(s) are compiled from a program installCelShading does not patch, `
+      + `so they are the only unbanded surfaces in the frame: ${bad.join('; ')}`);
+    return `${files.length} source files, 0 lambert/phong/toon materials — every lit surface `
+      + 'in the game compiles from the physical program the cel model rewrites';
+  });
 
   check('cel: the whole game is cel shaded because the BRDF is, not because materials were swapped', () => {
     /* The argument the player made, and the reason this is not Toon.js.

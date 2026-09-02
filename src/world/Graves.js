@@ -266,9 +266,32 @@ export class GraveField {
     if (!scene) return this;
     this.scene = scene;
     this.terrain = terrain;
+    /**
+     * STANDARD AND NOT LAMBERT, AND IT IS THE WHOLE OF "THESE LOOK PBR".
+     *
+     * The player, having played the burial: *"the graves when done and the
+     * holes during have a real PBR look to them like they aren't cell shaded,
+     * is that something you see?"* He is exactly right, for a reason that is
+     * one word long.
+     *
+     * `src/toon/Cel.js` does not swap materials — it rewrites three's own
+     * shader source, and every substitution it makes is against the PHYSICAL
+     * program: `meshphysical_frag`, `ShaderLib.standard.fragmentShader` and
+     * `ShaderLib.physical.fragmentShader` (see `subProgram`, which exists
+     * precisely because those three are one string object). A
+     * `MeshLambertMaterial` compiles from `ShaderLib.lambert`, which is none
+     * of them, so it takes three's stock smooth N·L and never sees a band.
+     *
+     * There were five Lambert materials in the game and FOUR OF THEM WERE
+     * THIS FILE — the marker, the hole floor, the spoil ring and the mound.
+     * He found the one system that was not cel shaded by looking at it.
+     *
+     * `roughness: 1, metalness: 0` is dirt and wood asked for plainly, and it
+     * is what keeps `cel: nothing in the FRAME is shiny` green.
+     */
     const mk = (geo, colour) => {
       const m = new THREE.InstancedMesh(geo,
-        new THREE.MeshLambertMaterial({ color: colour }), GRAVE_MAX);
+        new THREE.MeshStandardMaterial({ color: colour, roughness: 1, metalness: 0 }), GRAVE_MAX);
       m.count = 0;
       m.castShadow = false;
       m.receiveShadow = false;
@@ -317,10 +340,10 @@ export class GraveField {
     const y = this.terrain?.height ? this.terrain.height(h.x, h.z) : (h.y ?? 0);
     h.y = y;
     const floor = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 0.75, 0.06, 12),
-      new THREE.MeshLambertMaterial({ color: 0x241c14 }));
+      new THREE.MeshStandardMaterial({ color: 0x241c14, roughness: 1, metalness: 0 }));
     floor.position.y = 0.02;
     const spoil = new THREE.Mesh(new THREE.TorusGeometry(1.15, 0.22, 6, 14),
-      new THREE.MeshLambertMaterial({ color: 0x4a3b2a }));
+      new THREE.MeshStandardMaterial({ color: 0x4a3b2a, roughness: 1, metalness: 0 }));
     spoil.rotation.x = Math.PI / 2;
     spoil.scale.y = 0.8;
     spoil.position.y = 0.06;
@@ -342,7 +365,7 @@ export class GraveField {
     const y = this.terrain?.height ? this.terrain.height(h.x, h.z) : (h.y ?? 0);
     h.y = y;
     const mound = new THREE.Mesh(new THREE.SphereGeometry(1.0, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
-      new THREE.MeshLambertMaterial({ color: 0x3e3123 }));
+      new THREE.MeshStandardMaterial({ color: 0x3e3123, roughness: 1, metalness: 0 }));
     mound.scale.set(0.75, 0.28, 1.05);
     mound.position.set(h.x, y - 0.02, h.z);
     mound.castShadow = false;
