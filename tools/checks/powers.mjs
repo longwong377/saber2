@@ -1640,4 +1640,83 @@ export async function run({ check, assert }) {
     assert(p.restoring, 'off the deck the same call does not cast');
     return 'both refused on the deck, restore casts the moment you are off it';
   });
+  check('push: a push against something solid throws YOU the other way', async () => {
+    /**
+     * "when you look down or have the curson down and you force push it should
+     *  throw you into the air … like an airbender … totally dependent on where
+     *  you're aiming … like real trajectories/physics. and that repelling force
+     *  should be based on your distance and force strength … should work in
+     *  the air too depending on how close you are to the ground"
+     *
+     * Five properties, and every one is in that sentence.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis', settings: { mode: 'waves', level: 'geonosis', quality: 'low' },
+    });
+    try {
+      const p = world.player;
+      const ctx = world._frameCtx || { world, enemies: world.enemies, physics: world.physics,
+        particles: world.particles, terrain: world.terrain, bolts: world.bolts };
+      const ground = world.terrain.height(0, 0);
+      /* `chest` is written once a frame by the update; a fixture that moves the
+       * body and pushes in the same tick would be firing from where he was. */
+      const set = (h, ax, ay, az) => {
+        p.position.set(0, ground + h, 0);
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.velocity.set(0, 0, 0);
+        p.grounded = h < 0.2;
+        p.force = p.maxForce = 400;
+        p.cooldowns.push = 0;
+        p.aimDir.set(ax, ay, az).normalize();
+      };
+      const kick = () => { const v = p.velocity.clone(); p.forcePush(ctx); return p.velocity.clone().sub(v); };
+
+      /* 1. AIMED AT THE GROUND FROM ON IT: up, and harder than a jump (7.4). */
+      set(0.05, 0, -1, 0);
+      const down = kick();
+      assert(down.y > 8, `a push straight down lifted ${down.y.toFixed(2)} m/s — a jump is 7.4`);
+      assert(Math.hypot(down.x, down.z) < 0.01, 'it threw him sideways off a level floor');
+
+      /* 2. ALONG THE AIM, NEGATED — not "up". Aimed down and BEHIND, he goes
+       *    up and FORWARD, which is the whole of what he asked for. */
+      set(0.05, 0, -0.7071, 0.7071);
+      const back = kick();
+      assert(back.y > 5 && back.z < -5,
+        `aimed down-and-behind he went (${back.x.toFixed(1)}, ${back.y.toFixed(1)}, ${back.z.toFixed(1)}) `
+        + '— it should be up and forward');
+      assert(Math.abs(back.y + back.z) < 0.2, 'the kick is not along the reversed aim');
+
+      /* 3. NOTHING TO PUSH OFF, NOTHING HAPPENS. */
+      set(0.05, 0, 1, 0);
+      assert(kick().length() < 0.01, 'a push at open sky launched him off nothing');
+
+      /* 4. THE DISTANCE TERM, which is also "it works in the air": the further
+       *    the surface, the less it gives, and past the push's own reach it
+       *    gives nothing. */
+      const curve = [];
+      for (const h of [0.05, 5, 9, 20]) { set(h, 0, -1, 0); curve.push(kick().y); }
+      assert(curve[0] > curve[1] && curve[1] > curve[2],
+        `the lift does not fall with height: ${curve.map((n) => n.toFixed(2)).join(' → ')}`);
+      assert(curve[3] < 0.01,
+        `still launched from 20 m up, past the push's own reach (${curve[3].toFixed(2)} m/s)`);
+
+      /* 5. FORCE STRENGTH, and the cap that stops it running away — `range`
+       *    already carries a sqrt(P), so taking the speed linearly too would
+       *    be a Jedi who never comes down. */
+      const byPower = [];
+      for (const P of [1, 2, 4]) {
+        world.settings.forcePower = P;
+        set(0.05, 0, -1, 0);
+        byPower.push(kick().y);
+      }
+      assert(byPower[1] > byPower[0] && byPower[2] >= byPower[1],
+        `force strength does not raise the launch: ${byPower.map((n) => n.toFixed(2)).join(' → ')}`);
+      assert(byPower[2] <= 18.01, `the launch is uncapped at ${byPower[2].toFixed(2)} m/s`);
+      return `straight down ${down.y.toFixed(2)} m/s up against a 7.4 jump; down-and-behind gives `
+        + `(${back.y.toFixed(1)} up, ${(-back.z).toFixed(1)} forward); nothing off open sky; `
+        + `${curve.map((n) => n.toFixed(1)).join('/')} by height; ${byPower.map((n) => n.toFixed(1)).join('/')} by force power`;
+    } finally { world.unload?.(); }
+  });
+
 }

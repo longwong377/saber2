@@ -829,6 +829,23 @@ const SWING_WHOOSH = 8.5;
 const DIVE_LAND = 1.45;
 
 /**
+ * WHAT A PUSH DOES TO THE PERSON WHO THREW IT — see `Player._pushRecoil`.
+ *
+ * `peak` is the speed at contact range on a default bar, and it is set against
+ * the two numbers already in the movement code rather than to taste: a ground
+ * leap leaves at 7.4 m/s and an air leap at 6.9. Eleven is a launch you can
+ * feel is bigger than a jump without being a different kind of object.
+ *
+ * `cap` is what stops `sqrt(forceScale)` running away. At forcePower 4 the
+ * push's own `range` has already doubled, so the uncapped launch would be 22
+ * m/s over twice the reach — a Jedi who never comes down. 18 is a 13.5 m apex
+ * against a jump's 2.3, which is the ceiling this movement model was built to
+ * land from (`DIVE_LAND`, the fall damage curve and `_collide`'s sweep all sit
+ * under it).
+ */
+const PUSH_RECOIL = { peak: 11, cap: 18 };
+
+/**
  * HOW FAR INSIDE THE HEIGHTFIELD'S EDGE A BODY IS HELD, in metres. See the
  * clamp at the foot of `_collide`.
  *
@@ -7387,7 +7404,125 @@ export class Player {
         ctx.particles?.sandPuff(_v1.setY(ctx.terrain.height(_v1.x, _v1.z)), 1.4, _v1.y, ctx.groundColor);
       }
     }
+    this._pushRecoil(ctx, origin, dir, range, P);
     this.world.engine.setRadial?.(0.35);
+  }
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  AND IT PUSHES YOU BACK — the third law, aimed
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * The player, V13:
+   *
+   *   "when you look down or have the curson down and you force push it should
+   *    throw you into the air … like an airbender … so imagine if I'm standing
+   *    still and look down and force push I force myself in the opposite
+   *    direction like it should be totally dependent on where you're aiming …
+   *    like real trajectories/physics. and that repelling force should be based
+   *    on your distance and force strength … should work in the air too
+   *    depending on how close you are to the ground"
+   *
+   * Four properties, and every one of them is in that paragraph:
+   *
+   *   ALONG THE AIM, NEGATED. Not "up" — `-aimDir`, so looking straight down
+   *   throws you straight up, looking down and behind throws you up and
+   *   forward, and a wall at eye level throws you off it sideways. There is no
+   *   special case for the ground; the ground is just the surface most often
+   *   under the reticle.
+   *
+   *   SCALED BY DISTANCE, off the same `range` and the same `1 - d/range`
+   *   falloff the shove itself uses, so what launches you is the same curve
+   *   that would have thrown a body standing there.
+   *
+   *   SCALED BY FORCE STRENGTH, as `sqrt(P)` rather than `P`. `range` already
+   *   carries a `sqrt(P)`, so at four the reach is doubled; taking the speed
+   *   linearly as well would make the launch four times faster over twice the
+   *   distance, and a Jedi at forcePower 4 would leave the level. The cap is
+   *   the second half of that argument and is stated as a speed rather than a
+   *   height because it is a speed that the rest of the movement code reads.
+   *
+   *   IN THE AIR TOO, for free: it is a raycast, so how close the ground is
+   *   IS the distance term. A push aimed at ground five metres below you gives
+   *   most of the launch; the same push at forty gives none, because the ray
+   *   does not reach.
+   *
+   * AND YOU CANNOT PUSH OFF SOMETHING THAT MOVES. A hit on a dynamic body is
+   * refused: the shove above already spent itself throwing that crate, and
+   * taking the recoil as well would be getting the impulse twice. Terrain and
+   * static geometry are what you can brace against. That is one line, it is
+   * physics rather than balance, and it is what stops a Jedi standing on a
+   * barrel and pushing it to fly.
+   */
+  _pushRecoil(ctx, origin, dir, range, P) {
+    if (!this.isLocal || this.riding || this.held) return 0;
+    _v1.copy(dir);
+    /**
+     * TWO RAYCASTERS, AND THE GROUND IS THE ONE THAT MATTERS.
+     *
+     * `physics.raycast` answers for props, walls and hulls — and NOT for the
+     * ground. Measured: fired straight down from the chest on Geonosis at
+     * 0.05 m off the surface, unfiltered, over 20 m, it MISSES, because the
+     * heightfield is not a Rapier collider. The terrain carries its own
+     * marcher (`Terrain.raycast`, a coarse march then twelve bisections) and
+     * that is the one that knows where the floor is.
+     *
+     * So both are asked and the NEARER hit wins, which is also the physically
+     * right answer when a crate is standing on the ground you aimed at.
+     */
+    let dist = Infinity, movable = false, normal = null, point = null;
+    const phys = ctx.physics;
+    if (phys?.raycast) {
+      const h = phys.raycast(origin, _v1, range, (rec) => rec && rec.body !== this.body);
+      if (h && h.distance < dist) {
+        dist = h.distance;
+        movable = !!(h.body && h.body.invMass > 0);
+        normal = h.normal || null;
+        point = h.point || null;
+      }
+    }
+    if (ctx.terrain?.raycast) {
+      const t = ctx.terrain.raycast(origin, _v1, range, _v3, _v4);
+      if (t != null && t < dist) {
+        dist = t;
+        movable = false;                      // the ground does not move
+        normal = _v4.clone();
+        point = _v3.clone();
+      }
+    }
+    if (!Number.isFinite(dist)) return 0;
+    /* You cannot push off something that moves — see the note above. */
+    if (movable) return 0;
+    const k = 1 - dist / range;
+    if (k <= 0) return 0;
+    const hit = { distance: dist, normal, point };
+    const speed = Math.min(PUSH_RECOIL.cap, PUSH_RECOIL.peak * k * Math.sqrt(P));
+    /* THE KICK, along the aim reversed. Added to the velocity rather than
+     * written over it, so a push while already moving composes the way a
+     * player expects and a second push mid-arc builds on the first — which is
+     * the whole of "it should work in the air too". */
+    this.velocity.addScaledVector(dir, -speed);
+    if (this.velocity.y > 0.5) {
+      /* Off the floor, and the leap's own bookkeeping with it: `coyote` is
+       * what lets a jump fire just after leaving the ground, and a launch that
+       * left it armed would hand the player a free jump out of a push. */
+      this.grounded = false;
+      this.coyote = 0;
+      this.jumpHeld = 0;
+    }
+    /* AND IT LOOKS LIKE SOMETHING. The dust goes at the surface, not at the
+     * player — the reaction is at the far end, which is where the eye is. */
+    this.camera.addShake(0.18 * k);
+    if (ctx.particles && hit.point) {
+      const n = hit.normal || _v6.copy(dir).negate();
+      for (let i = 0; i < 14; i++) {
+        _v5.copy(n).multiplyScalar(4 + rng() * 7);
+        _v5.x += (rng() - 0.5) * 6; _v5.y += (rng() - 0.5) * 4; _v5.z += (rng() - 0.5) * 6;
+        ctx.particles.dust.spawn(_v6.copy(hit.point), _v5,
+          { life: 0.55, size: 0.42, drag: 2.4, gravity: 0.4, color: 0xded6c4, alpha: 0.18 });
+      }
+    }
+    return speed;
   }
 
   forcePull(ctx) {
