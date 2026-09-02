@@ -215,7 +215,7 @@ export const FACTION_PALETTE = {
    * only dark thing on a wall.
    */
   republic: {
-    hull: 0x918e88, dark: 0x64635f, deep: 0x2a2b2c, wing: 0x8f8d88,
+    hull: 0x8e8d8a, dark: 0x636260, deep: 0x2a2b2c, wing: 0x8f8d88,
     strip: 0xfff8f0, glow: 0xfffaf4, glowDim: 0xe6e2dc, smear: 0xe0dcd6,
     mark: 0x87898c, status: 0xff3418,
   },
