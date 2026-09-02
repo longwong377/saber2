@@ -1369,9 +1369,9 @@ function lightDeck(world) {
    * deck, blue-white on the Separatist one — a few hundred kelvin apart. */
   const KEY = sep ? 0xe6eeff : 0xfff6ea;
   const LAMP = sep ? 0xdae8ff : 0xfff3e2;
-  const AIR = sep ? 0x76828f : 0x87857f;
+  const AIR = sep ? 0x6c7784 : 0x7b7974;
   const AMB = sep ? 0xb8c4d4 : 0xcfcac2;
-  const key = new THREE.DirectionalLight(KEY, 2.4);
+  const key = new THREE.DirectionalLight(KEY, 1.5);
   key.position.set(0, 150, DECK.lip * 0.85);
   key.target.position.set(0, 0, DECK.aft * 0.35);
   world.scene.add(key); world.scene.add(key.target);

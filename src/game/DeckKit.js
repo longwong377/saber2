@@ -215,12 +215,12 @@ export const FACTION_PALETTE = {
    * only dark thing on a wall.
    */
   republic: {
-    hull: 0xa09d97, dark: 0x6f6e6a, deep: 0x2a2b2c, wing: 0x8f8d88,
+    hull: 0x918e88, dark: 0x64635f, deep: 0x2a2b2c, wing: 0x8f8d88,
     strip: 0xfff8f0, glow: 0xfffaf4, glowDim: 0xe6e2dc, smear: 0xe0dcd6,
     mark: 0x87898c, status: 0xff3418,
   },
   separatist: {
-    hull: 0x808b9a, dark: 0x545d69, deep: 0x1c2027, wing: 0x22262d,
+    hull: 0x74808e, dark: 0x4c5560, deep: 0x1c2027, wing: 0x22262d,
     strip: 0xe4f1ff, glow: 0xecf5ff, glowDim: 0xc9d8e8, smear: 0xbfd2e8,
     mark: 0x6f7c8b, status: 0xff3418,
   },
