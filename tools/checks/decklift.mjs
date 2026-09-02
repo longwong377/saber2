@@ -50,7 +50,7 @@ function walk(idle, dir = 1) {
 /** Everything drawn except the shaft's streaming scene and the car's glass. */
 function solids(THREE, world, st, { keepPanes = false } = {}) {
   world.scene.updateMatrixWorld(true);
-  const skip = new Set([...st.scene.kinds.map((k) => k.mesh), ...st.scene.turbines.map((t) => t.mesh)]);
+  const skip = new Set(st.scene.kinds.map((k) => k.mesh));
   if (!keepPanes) for (const p of st.panes) skip.add(p);
   const out = [];
   world.scene.traverse((o) => { if ((o.isMesh || o.isInstancedMesh) && !skip.has(o)) out.push(o); });

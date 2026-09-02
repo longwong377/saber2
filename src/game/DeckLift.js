@@ -447,22 +447,20 @@ export function dressDeckLift(world, opts = {}) {
   readout.mesh.rotation.y = -Math.PI / 2;
   car.add(readout.mesh);
 
-  /* ── THE PANES: dark glass, transparent enough to see the shaft through. */
-  const panes = [];
+  /* ── THE PANES: dark glass, transparent enough to see the shaft through.
+   * Three planes, one mesh. */
+  const paneGeos = [];
   for (const s of [-1, 1]) {
     const g = new THREE.PlaneGeometry(hd * 2 - post * 2, paneY1 - paneY0);
     g.rotateY(s * Math.PI / 2);
-    const p = new THREE.Mesh(g, glass);
-    p.name = 'car-pane';
-    p.position.set(cx + s * (hw - 0.02), (paneY0 + paneY1) / 2, cz);
-    car.add(p); panes.push(p);
+    g.translate(cx + s * (hw - 0.02), (paneY0 + paneY1) / 2, cz);
+    paneGeos.push(g);
   }
-  {
-    const p = new THREE.Mesh(new THREE.PlaneGeometry(hw * 2 - 0.8, paneY1 - paneY0), glass);
-    p.name = 'car-pane';
-    p.position.set(cx, (paneY0 + paneY1) / 2, zA + 0.02);
-    car.add(p); panes.push(p);
-  }
+  paneGeos.push(new THREE.PlaneGeometry(hw * 2 - 0.8, paneY1 - paneY0).translate(cx, (paneY0 + paneY1) / 2, zA + 0.02));
+  const paneMesh = new THREE.Mesh(mergeBoxes(paneGeos), glass);
+  paneMesh.name = 'car-pane';
+  car.add(paneMesh);
+  const panes = [paneMesh];
 
   /* ── THE DOORS. Two inner leaves in the car, two outer in the lobby face.
    * Each leaf: body, inset panel, kick, seam glow, a dark window slit. */
@@ -474,7 +472,7 @@ export function dressDeckLift(world, opts = {}) {
     B.box(M.dark, -s * 0.15, DH / 2 + 0.25, 0, W - 0.7, DH - 1.3, T + 0.02);
     B.box(M.dark, 0, 0.13, 0, W, 0.26, T + 0.02);
     B.box(M.glowDim, -s * (W / 2 - 0.03), DH / 2, 0, 0.05, DH - 0.2, T + 0.02);
-    B.box(M.deep, -s * 0.45, 2.15, 0, 0.36, 1.3, T + 0.03);
+    B.box(M.dark, -s * 0.45, 2.15, 0, 0.36, 1.3, T + 0.03);
     B.box(slitMat, -s * 0.45, 2.15, 0, 0.24, 1.14, T + 0.04);
     B.box(M.hull, s * 0.5, 1.1, 0, 0.06, 0.4, T + 0.04);
     B.build(g, prefix, key);
@@ -794,15 +792,9 @@ function buildShaft(world, M, lightMat, phases) {
         lamps.push(slot(f, base + 2.6, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.08, 1.6));
       }
       if (t === MACH) {
-        /* The machinery bay: a turbine spinning in the opening, one mesh
-         * per bay because it has to rotate. */
-        const tg = turbineGeometry();
-        const tm = new THREE.Mesh(tg, M.dark);
-        tm.name = 'shaft-turbine';
-        tm.frustumCulled = false;
-        tm.castShadow = false;
-        group.add(tm);
-        turbines.push({ mesh: tm, f, base: base + 2.2, d: dep(f, FAR - 0.9, 0.5, 0.25), spin: hash(seed, 5) * 6 });
+        /* The machinery bay: a turbine spinning in the opening. Its slot
+         * carries a spin the frame advances; `layScene` composes it. */
+        turbines.push(slot(f, base + 2.2, dep(f, FAR - 0.9, 0.5, 0.25), 0, 1, 1, 1, { spin: hash(seed, 5) * 6 }));
         lamps.push(slot(f, base + 0.6, dep(f, FAR - 0.5, 0.4, 0.15), -2.2));
         lamps.push(slot(f, base + 0.6, dep(f, FAR - 0.5, 0.4, 0.15), 2.2));
       }
@@ -842,11 +834,12 @@ function buildShaft(world, M, lightMat, phases) {
   kind('rung', new THREE.BoxGeometry(0.05, 0.05, 0.62), M.hull, rungs);
   kind('tie', new THREE.BoxGeometry(0.14, 0.14, 4.7), M.hull, ties);
   const barsK = kind('bar', new THREE.BoxGeometry(0.34, 0.16, 5.6), barMat, bars, { sweep: true });
+  const turbK = kind('turbine', turbineGeometry(), M.dark, turbines, { spins: true });
   /* Plate brightness is fixed per slot; bars are recoloured per frame. */
   plates.forEach((p, i) => plateK.mesh.setColorAt(i, _c.set(lightMat.color).multiplyScalar(p.lit)));
   bars.forEach((_, i) => barsK.mesh.setColorAt(i, _c.setScalar(1)));
 
-  return { group, faces, kinds, turbines, bars: barsK.mesh, barsPerFace, slabW };
+  return { group, faces, kinds, turbines: turbK, bars: barsK.mesh, barsPerFace, slabW };
 }
 
 /** A parked fighter's shape, flat, in the along/up plane, ~3.6 m across. */
@@ -910,7 +903,8 @@ function layScene(st, s) {
         if (!SEVEN[d][o.seg]) sx = sy = sz = 0;
       }
       _s.set(sx, sy, sz);
-      mesh.setMatrixAt(i, _m.compose(_v, f.q, _s));
+      if (k.spins) mesh.setMatrixAt(i, _m.compose(_v, _q.copy(f.q).multiply(_q2.setFromAxisAngle(_X, o.spin)), _s));
+      else mesh.setMatrixAt(i, _m.compose(_v, f.q, _s));
       if (k.sweep) {
         /* The lamp's sweep: a bar brightens as it crosses the window and
          * flares at the sill line. */
@@ -922,20 +916,24 @@ function layScene(st, s) {
     if (k.sweep && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
   _s.set(1, 1, 1);
-  for (const t of sc.turbines) {
-    const w = wrap(t.base);
-    t.mesh.position.copy(t.f.o).addScaledVector(t.f.out, t.d);
-    t.mesh.position.y = H2 + w;
-    t.mesh.quaternion.copy(t.f.q).multiply(_q2.setFromAxisAngle(_X, t.spin));
-  }
   st.laid = s;
 }
 
-/** Spin the turbines, whatever the car is doing. */
+/** Spin the turbines, whatever the car is doing: advance the spins, and
+ * when the scene is otherwise still, recompose just their matrices. */
 function spinTurbines(st, dt) {
-  for (const t of st.scene.turbines) {
-    t.spin += dt * 4.5;
-    t.mesh.quaternion.copy(t.f.q).multiply(_q2.setFromAxisAngle(_X, t.spin));
+  const k = st.scene.turbines;
+  for (const o of k.slots) o.spin += dt * 4.5;
+  if (st.scroll === st.laid) {
+    const H2 = LIFT.height / 2, s = st.scroll;
+    for (let i = 0; i < k.slots.length; i++) {
+      const o = k.slots[i], f = o.f;
+      const w = ((o.base + s) % SPAN + SPAN) % SPAN - SPAN / 2;
+      _v.copy(f.o).addScaledVector(f.out, o.d).addScaledVector(f.along, o.a);
+      _v.y = H2 + w;
+      k.mesh.setMatrixAt(i, _m.compose(_v, _q.copy(f.q).multiply(_q2.setFromAxisAngle(_X, o.spin)), _s));
+    }
+    k.mesh.instanceMatrix.needsUpdate = true;
   }
 }
 
@@ -1189,8 +1187,8 @@ export function stepDeckLift(world, dt) {
    * turbines turn, the car sways with its speed, the light dips and
    * recovers, and the readout counts. */
   setReadout(st);
-  if (st.scroll !== st.laid) layScene(st, st.scroll);
   spinTurbines(st, dt);
+  if (st.scroll !== st.laid) layScene(st, st.scroll);
   const k = Math.min(1, Math.abs(st.v) / RIDE.speed);
   const tt = st.t;
   st.car.position.set(
