@@ -34,6 +34,7 @@ import { buildFigure } from '../../src/game/Parade.js';
 import * as Company from '../../src/game/Company.js';
 import * as Edit from '../../src/game/DeckEdit.js';
 import { MUSTER } from '../../src/game/Hangar.js';
+import { clocked } from './_shared.mjs';
 
 const KEY = 'saber.company.v1';
 const dir = CommandDirector.prototype;
@@ -59,6 +60,10 @@ const figureOf = (xp, type = 'trooper', kind = 'flesh') => buildFigure({
 });
 
 export async function run({ check, assert }) {
+  /* This file builds Enemies to read the paint off their vertices, and an
+   * Enemy draws from the shared stream — so take the seed-and-restore pair
+   * for the whole file rather than seeding each body by hand. */
+  check = await clocked(check);
   check('worn-paint: a painted trooper carries distinct regions, in the vertices, on no added mesh', () => {
     const bare = figureOf(0);
     const fig = figureOf(12);

@@ -339,12 +339,12 @@ export const DATABANK = {
   heavy: {
     faction: 'republic',
     weapon: 'Z-6 rotary blaster cannon',
-    /* AND THE GAME PUTS A DC-15 IN HIS HANDS — see the note on `rocket`.
-     * `buildBlaster` has a third branch and its own comment calls it "heavy
-     * repeater: three barrels in a shroud, drum magazine, carry handle", which
-     * is a Z-6; nothing reaches it, because Command.js declares `weapon:
-     * 'dc15'` here. One word in another lane's file. */
-    heldMesh: 'dc15',
+    /* AND THE GAME NOW PUTS ONE IN HIS HANDS. This entry used to carry
+     * `heldMesh: 'dc15'` because `buildBlaster`'s repeater branch — three
+     * barrels in a shroud, drum magazine, carry handle, 1.20 m — was
+     * unreachable: Command.js declared `weapon: 'dc15'` here, one word in
+     * another lane's file. The archetype says `'heavy'` now, so the model and
+     * the page name the same gun and the declaration is gone with the defect. */
     text: 'A trooper who has been handed a Z-6 and told to hold a line. A rotary '
       + 'cannon is not a rifle that hits harder, it is a rifle that does not stop — '
       + 'nine rounds at 0.07 seconds against a line trooper\'s three at 0.11 — and '
@@ -364,7 +364,7 @@ export const DATABANK = {
   },
   jet: {
     faction: 'republic',
-    weapon: 'DC-15 rifle, jump pack',
+    weapon: 'DC-15S blaster carbine, jump pack',
     text: 'Republic airborne, used to take ground that has nothing underneath it. A '
       + 'jet trooper sits a metre and a third off the deck, which puts him over '
       + 'cover, over the crowd, and inside your blade\'s arc from an angle nothing '
@@ -374,7 +374,7 @@ export const DATABANK = {
   },
   arc: {
     faction: 'republic',
-    weapon: 'DC-15 rifle, twin sidearms',
+    weapon: 'DC-15S blaster carbine, twin sidearms',
     text: 'Advanced Recon Commando: trained by Jango Fett himself, off the standard '
       + 'clone template rather than the flattened one, and very nearly destroyed in '
       + 'the batch for it — they came out independent, which was the point and also '

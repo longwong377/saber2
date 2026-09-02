@@ -9,5 +9,9 @@
     "verify": "node --import ./tools/register.mjs tools/verify.mjs",
     "verify:fast": "SABER_CHECK_TIER=fast node --import ./tools/register.mjs tools/verify.mjs",
     "smoke": "node tools/smoke.mjs --shots"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2",
+    "playwright-core": "^1.62.1"
   }
 }

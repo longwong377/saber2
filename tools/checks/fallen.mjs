@@ -168,8 +168,13 @@ export async function run({ check, assert }) {
      * must be exact is that nobody was lost, which is the pair below. */
     assert(field.count >= kept.length,
       `${kept.length} men fell and the field is drawing ${field.count} of them a minute later`);
-    assert(world.corpses.torn === kept.length,
-      `${kept.length} bodies were torn down by the world and the ledger noticed ${world.corpses.torn}`);
+    /* A FLOOR, for the same reason `field.count` is one: `_sandboxUpdate` keeps
+     * the room populated for the whole minute, and a body it spawned and lost
+     * while this check was driving went through the same door and was counted.
+     * Written as an equality this read the room's turnover as a lost man. */
+    assert(world.corpses.torn >= kept.length,
+      `${kept.length} bodies were torn down by the world and the ledger noticed only `
+      + `${world.corpses.torn}`);
     assert(world.corpses.buried === world.corpses.torn,
       `${world.corpses.torn - world.corpses.buried} of ${world.corpses.torn} men the world took away left `
       + 'nothing on the ground — they are simply gone from the field');
@@ -178,7 +183,8 @@ export async function run({ check, assert }) {
      * every figure at the origin would satisfy everything above. */
     const m = new THREE.Matrix4(), p = new THREE.Vector3();
     const q = new THREE.Quaternion(), sc = new THREE.Vector3();
-    let placed = 0, offGround = 0, adrift = 0, far = 0;
+    let placed = 0, offGround = 0, adrift = 0, near = 0, far = 0;
+    const cover = sites.map(() => Infinity);
     for (const im of field.meshes) {
       for (let i = 0; i < im.count; i++) {
         im.getMatrixAt(i, m);
@@ -189,15 +195,30 @@ export async function run({ check, assert }) {
          * either way rather than restating the constant. */
         if (Math.abs(p.y - g) > 0.1) offGround++;
         const d = Math.min(...sites.map((s) => Math.hypot(p.x - s.x, p.z - s.z)));
-        if (d > 8) adrift++;
+        if (d > 8) adrift++; else near++;
+        for (let k = 0; k < sites.length; k++) {
+          const sd = Math.hypot(p.x - sites[k].x, p.z - sites[k].z);
+          if (sd < cover[k]) cover[k] = sd;
+        }
         far = Math.max(far, d);
       }
     }
     assert(placed === field.count, `the field says ${field.count} and is drawing ${placed}`);
     assert(offGround === 0, `${offGround} of ${placed} men are not lying on the ground`);
-    assert(adrift === 0,
-      `${adrift} of ${placed} men were laid down more than 8 m from anywhere anybody died — the `
-      + `furthest is ${far.toFixed(1)} m, so the resting place is not being carried through the teardown`);
+    /* SCOPED TO OUR DEAD, the way the ledger above is. The room's own turnover
+     * is also lying on this field and it did not die at one of our sites, so
+     * `adrift` alone read the room's man as a mislaid one. The claim is that
+     * EVERY site this check killed somebody at has a body on it, and that as
+     * many bodies as we killed are lying at one — which a field that put its
+     * figures at the origin fails on both counts. */
+    const uncovered = cover.filter((d) => d > 8).length;
+    assert(uncovered === 0,
+      `${uncovered} of the ${sites.length} places a man died has no body lying within 8 m of it — `
+      + `the furthest site is ${Math.max(...cover).toFixed(1)} m from the nearest body, so the `
+      + 'resting place is not being carried through the teardown');
+    assert(near >= kept.length,
+      `${kept.length} men fell and only ${near} of the ${placed} bodies on the field are lying within `
+      + `8 m of anywhere anybody died — the furthest is ${far.toFixed(1)} m`);
 
     /* THE PRICE, AS THE TWO NUMBERS IT IS — read before the teardown below
      * detaches the field, because a check that quotes its own teardown reports
@@ -207,8 +228,8 @@ export async function run({ check, assert }) {
       `the field costs ${calls} draw calls; Fallen.js is two geometries and one material and cannot `
       + 'honestly cost more');
     world.dispose?.();
-    return `${kept.length} men fell, the world tore down all ${kept.length} bodies, and ${standing} of `
-      + `them are still lying on the field for ${calls} draw calls`;
+    return `${kept.length} men fell, the world tore down every one of their bodies, and ${standing} `
+      + `dead are lying on the field where they fell for ${calls} draw calls`;
   });
 
   check('fallen: the ground goes dark where men fell, and a heap is darker than a man', async () => {

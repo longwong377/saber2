@@ -163,7 +163,11 @@ export async function run({ check, assert }) {
      * page says DC-15 is a page a player can catch the game out on.
      */
     const wrong = [];
-    const RIFLE = { e5: /E-5/, dc15: /DC-15/ };
+    /* The clone rifle and the carbine are two different models on two
+     * different bodies — a DC-15A is 1.05 m and a DC-15S 0.70 — so the
+     * long one's pattern refuses the short one's name rather than
+     * swallowing it. */
+    const RIFLE = { e5: /E-5/, dc15s: /DC-15S/, dc15: /DC-15(?!S)/ };
     let declared = 0;
     for (const [key, A] of Object.entries(ARCHETYPES)) {
       const e = DATABANK[key];
@@ -184,12 +188,11 @@ export async function run({ check, assert }) {
        * …AND THE TWO BODIES WHOSE MODEL AND ARMAMENT DISAGREE SAY SO.
        *
        * `weapon` on an archetype is a builder key into `buildBlaster`, and
-       * Command.js gives the clone heavy gunner `'dc15'` and the rocket droid
-       * `'e5'` — a clone rifle for a unit whose cadence is a Z-6's, and a B1
-       * carbine for one that fires a single 44-damage round on a telegraph.
-       * `heldMesh` is the databank stating that mismatch instead of either
-       * printing a weapon the model contradicts or quietly describing the wrong
-       * gun.
+       * Command.js gives the rocket droid `'e5'` — a B1 carbine for a unit that
+       * fires a single 44-damage round on a telegraph. `heldMesh` is the
+       * databank stating that mismatch instead of either printing a weapon the
+       * model contradicts or quietly describing the wrong gun. The clone heavy
+       * gunner used to be the second one; he holds the repeater now.
        *
        * IT IS A TRIPWIRE, NOT AN EXEMPTION. It must equal the shipped builder
        * key, so the day somebody gives the heavy gunner a repeater this goes red
