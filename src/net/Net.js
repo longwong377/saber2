@@ -1146,6 +1146,10 @@ export const SESSION_KEYS = [
   /* WHO MAY HURT WHOM. The worst possible thing for two machines to disagree
    * about, because it decides damage. */
   'pvp', 'commandVersus', 'teamDamage',
+  /* WHO CAN BE HURT BY WHAT. `stratagemOnly` decides whether a walker takes a
+   * blade at all — two machines disagreeing about that is the damage
+   * disagreement above wearing a different hat. */
+  'stratagemOnly',
   /* WHETHER THERE IS AN ARMY AT ALL, and what it is made of. `allies` is the
    * one that picks the DIRECTOR CLASS, so a disagreement here is not a
    * difference of degree. */

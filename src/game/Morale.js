@@ -70,6 +70,52 @@ export const MORALE = {
    * fights over its own dead is worse for it and is not doomed by it.
    */
   PASSED_GRAVE: -0.03,
+  /**
+   * …AND A GRAVE THEY DUG THEMSELVES IS THE OTHER SIGN.
+   *
+   * The player, on the burial order: "graves for your dead allies automatically
+   * appear but maybe it should be an active order … the reason you would give
+   * this order is because it significantly increases morale (makes sense)".
+   * So a marker is one of two things now. A man the line LEFT where he fell
+   * (a grave the run drew for a body nobody buried — none exist any more, but
+   * the term stays for a run whose record predates the order) costs
+   * `PASSED_GRAVE`; a man the line put in the ground itself is a small steady
+   * positive, because the ground he is under is ground the squad chose to
+   * hold long enough to do it. `Graves.mark` stamps `dug` on the record and
+   * `_gravesFelt` reads it — one field, two signs.
+   */
+  PASSED_OWN_GRAVE: 0.02,
+  /**
+   * ── THE BURIAL ITSELF — the reward the order exists for ─────────────────
+   *
+   * "it significantly increases morale (makes sense) … maybe it heals your
+   * troops too." Two terms because two circles of men watched it happen: every
+   * man inside `BURIED_NEAR` sees a mate go into the ground properly, and the
+   * dead man's OWN squad, wherever it is standing, gets the larger share —
+   * they are the ones who carried him. Both are one-shot events, which is the
+   * only kind of term that can carry a body ABOVE `PRESENCE_CAP`; a burial
+   * between waves is the one thing on the field that lifts a line rather than
+   * steadies it. Compare `WAVE_CLEAR` at 0.34: a squad burying its sergeant is
+   * worth most of a wave. The heal that rides with it is `Command.BURY.heal`.
+   */
+  BURIED: 0.12,
+  BURIED_SQUAD: 0.25,
+  BURIED_NEAR: 25,
+  /**
+   * ── ONE MAN STEADYING ANOTHER — Reactions' rally touch ───────────────────
+   *
+   * "a particularly brave/motivated soldier motivating disheartened troops".
+   * A man with high RESOLVE and BOND (Attributes.js) and morale above
+   * `RALLY_FROM`, when a squadmate near him drops toward `BREAK`, walks to him
+   * and says something, and this is what the saying is worth. Larger than a
+   * squad kill and smaller than a wave: it is meant to be the thing that keeps
+   * a man on the line for one more minute, not a wave cleared. Rate-limited on
+   * the RALLIER (`Reactions.RALLY.again`), so one steady man is a resource
+   * the squad spends rather than a fountain.
+   */
+  RALLY_TOUCH: 0.18,
+  /** How steady the rallier himself has to be to have anything to give. */
+  RALLY_FROM: 0.7,
   /** Per second within `NEAR` of a living commander who is on their side. */
   LEADER_NEAR: 0.055,
   /**

@@ -84,6 +84,12 @@ import { audio } from '../engine/Audio.js';
  * leaf (MathUtil and Morale, nothing else), so this import cannot cycle.
  */
 import { nerveOf as ledgerNerve } from './Nerve.js';
+/* THE ATTRIBUTES, and this is the file that makes them decide something. Every
+ * behaviour below carries the id of the attribute that scales it — see
+ * `BEHAVIOUR` — and `scaleOf(trooper, id)` is Attributes.js's own door, so a
+ * man with no record (the horde) answers 1.0 everywhere and is exactly what he
+ * was. Attributes.js is a leaf (MathUtil only), so no cycle. */
+import { scaleOf } from './Attributes.js';
 
 /**
  * HOW LONG A GRENADE BURNS, in seconds.
@@ -323,15 +329,19 @@ class LiveGrenade {
       m.damage?.(GRENADE.damage * 3, site, this.owner, 'explosion');
       S?.blast?.(ctx, site, GRENADE.radius * 0.6, GRENADE.force * SMOTHER_SHARE,
         GRENADE.damage * SMOTHER_SHARE,
-        { core: 0, crater: GRENADE.crater * 0.5, source: this.owner });
+        { core: 0, crater: GRENADE.crater * 0.5, source: this.owner, kind: 'force' });
       this.field.stats.smothered++;
     } else {
       /* `source` IS THE THROWER. See `Stratagems.blast`: without it every kill
        * a soldier's grenade makes is credited to the player, who did not throw
        * it — and in Command that is a rank and a promotion going to the wrong
        * man's record. */
+      /* `kind: 'force'` — A GRENADE IS NOT A SUPPORT CALL. `blast` sends
+       * `'stratagem'` unless told otherwise, and under the ARMOUR rule
+       * (Enemy.STRATAGEM_ONLY) that is the difference between a thermal
+       * detonator scratching a walker and killing it. */
       S?.blast?.(ctx, site, GRENADE.radius, GRENADE.force, GRENADE.damage,
-        { core: GRENADE.core, crater: GRENADE.crater, source: this.owner });
+        { core: GRENADE.core, crater: GRENADE.crater, source: this.owner, kind: 'force' });
     }
     this.field.stats.blown++;
     this.dispose();
@@ -581,7 +591,17 @@ export function chooseReaction(body, g, ctx) {
    * fuse left to be worth trying — a man who tries it at 0.6 is the man the
    * player asked for ("sometimes killing themselves"), because nothing here
    * stops the fuse. */
-  if (g.grounded && d < 4.2 && left > 0.55 && nerve > NERVE.throwBack && !g.carrier) {
+  /* …AND WHO TRIES IT IS HIS NERVE AND HIS REFLEX, not only his morale. The
+   * player: "their stats/innate attributes should make them more or less
+   * likely to do certain things". `nerve` multiplies the bravery the record
+   * already has (a steady man at 0.78–1.24 of it), so the gate is the same
+   * number read through the man; `reflex` is how much fuse he needs to see
+   * before he thinks he can reach it (a slow man, ×1.34, needs a third more).
+   * See `BEHAVIOUR.throwback`. */
+  const T = body.trooper;
+  const nerveK = T ? scaleOf(T, 'nerve') : 1;
+  const reflexK = T ? scaleOf(T, 'reflex') : 1;
+  if (g.grounded && d < 4.2 && left > 0.55 * reflexK && nerve * nerveK > NERVE.throwBack && !g.carrier) {
     return { kind: 'throwback', t: 0, g };
   }
   /* GET OUT. Always available, and the only one with no gate at all. */
@@ -678,7 +698,10 @@ export function stepReaction(body, dt, ctx) {
     /* HE IS NOT A MARKSMAN, and this is the second half of "sometimes killing
      * themselves": a hurried throw scatters, and a scatter that lands short is
      * a grenade back among his own feet. */
-    const err = (1 - braveryOf(body)) * 5.5;
+    /* …AND HOW WIDE HE SCATTERS IS HIS REFLEX: a slow man (reflex ×1.34) is a
+     * third worse with the thing in his hand, a quick one (×0.70) is a third
+     * better. Same table entry as the gate above. */
+    const err = (1 - braveryOf(body)) * 5.5 * (body.trooper ? scaleOf(body.trooper, 'reflex') : 1);
     to.x += (jitterOf(body) - 0.5) * err;
     to.z += (jitterOf(body) * 1.7 % 1 - 0.5) * err;
     _v1.copy(body.position);
@@ -720,6 +743,12 @@ export function stepReaction(body, dt, ctx) {
    * taking his mate somewhere; a grab is a man refusing to let his mate be
    * taken. Same fistful of collar, same two numbers. */
   if (R.kind === 'grab') return stepGrab(body, R);
+  /* THE SECOND NOTE'S ANSWERS — see the BEHAVIOUR table below. */
+  if (R.kind === 'roll') return stepRoll(body, dt, R);
+  if (R.kind === 'flee') return stepFlee(body, dt, ctx, R);
+  if (R.kind === 'heal') return stepHeal(body, dt, ctx, R);
+  if (R.kind === 'rally') return stepRally(body, dt, ctx, R);
+  if (R.kind === 'salvage') return stepSalvage(body, dt, R);
 
   body.reaction = null;
   return false;
@@ -756,7 +785,10 @@ export function stepReaction(body, dt, ctx) {
  * a fistful of collar, and at 12 the body arrives ahead of the person pulling
  * it.
  */
-const DRAG = { reach: 1.4, speed: 0.45, safe: 9, look: 11, haul: 4.2 };
+const DRAG = { reach: 1.4, speed: 0.45, safe: 9, look: 11, haul: 4.2,
+  /** How long a bearer keeps hold of a dead man on the way to his grave —
+   *  forty metres at a third of a walk is most of a minute. */
+  corpseTime: 75 };
 /** How long a claim on a casualty survives its claimant. See `startDrag`. */
 export const DRAG_LEASE = 0.5;
 /** How hurt a man has to be before somebody goes back for him. See
@@ -789,8 +821,26 @@ export function findCasualty(body, ctx) {
   return best;
 }
 
-export function startDrag(body, casualty, ctx) {
+export function startDrag(body, casualty, ctx, opts = null) {
   if (!casualty || casualty.beingDragged) return false;
+  /**
+   * A CORPSE, TO A HOLE — the burial detail's use of the same fistful of
+   * collar. `opts.to` is the grave that has been dug for him and `opts.corpse`
+   * lets `stepDrag` keep hold of a body that is dead, which the wounded-man
+   * drag refuses on its first line (a casualty who dies mid-drag is let go of,
+   * which is right for a fight and wrong for a burial). The claim is the same
+   * `beingDragged` lease, so a bearer who is shot lets go the same way. See
+   * `Command.BURY`.
+   */
+  if (opts?.corpse) {
+    casualty.beingDragged = body;
+    casualty.dragLease = DRAG_LEASE;
+    body.reaction = {
+      kind: 'drag', t: 0, casualty, corpse: true, to: opts.to.clone(),
+      reach: opts.reach ?? 1.2, onArrive: opts.onArrive ?? null,
+    };
+    return true;
+  }
   /* WHERE SAFETY IS: away from whatever he is facing, which is where the
    * shooting is coming from. A drag toward a named piece of cover would need a
    * cover system this game does not have; away from the enemy is what a man
@@ -826,9 +876,9 @@ function stepDrag(body, dt, ctx, R) {
     body.dragWhy = why;
     return false;
   };
-  if (!c || c.dead) return stop('lost');
+  if (!c || (c.dead && !R.corpse) || c.disposed) return stop('lost');
   if (!c.actor?.ragdolled) return stop('up');
-  if (R.t > 12) return stop('timeout');
+  if (R.t > (R.corpse ? DRAG.corpseTime : 12)) return stop('timeout');
   const d = body.position.distanceTo(c.position);
   if (d > DRAG.reach + 0.4) {
     if (!body.wish) body.wish = new THREE.Vector3();
@@ -841,7 +891,18 @@ function stepDrag(body, dt, ctx, R) {
   if (!body.wish) body.wish = new THREE.Vector3();
   body.wish.subVectors(R.to, body.position).setY(0);
   const left = body.wish.length();
-  if (left < 1.2) return stop('safe');
+  if (left < (R.reach ?? 1.2)) {
+    /* THE HOLE. A burial's drag ends with the body handed to the man who dug
+     * it — `onArrive` is Command's — and the lease is kept, because the
+     * lowering that follows drives the same ragdoll through the same claim. */
+    if (R.corpse) {
+      body.reaction = null;
+      body.dragWhy = 'delivered';
+      R.onArrive?.(c, R);
+      return false;
+    }
+    return stop('safe');
+  }
   body.wish.normalize();
   body.speed = (body.A?.speed ?? 4) * DRAG.speed;
   body.crouch = 0.45;
@@ -1082,21 +1143,36 @@ function stepGrab(body, R) {
  * behind that.
  */
 export function senseDanger(body, dt, ctx) {
-  const field = body.world?.grenades;
   /* `noReact` is a body that must not: a training remote, and the control arm
    * of any measurement that wants this system's contribution isolated —
    * `tools/checks/reactions.mjs` runs the same scene twice and the difference
    * IS the feature, which cannot be measured by clearing `reaction` every
    * frame (that leaves the body mid-leap with its velocity already spent). */
   if (body.noReact) return;
+  if (senseGrenade(body, dt, ctx)) return;
+  /* NOTHING ROLLING AT HIS FEET. The other three dangers are read in the
+   * order of how much warning each gives: a support call has seconds of it
+   * and a ring on the ground, a charging animal has a second, a bolt has a
+   * fifth of one. Each is a scan on its own short clock rather than every
+   * frame — see the `scan` fields in `BEHAVIOUR` — because none of them is a
+   * single distance test the way the grenade is. */
+  if (body.reaction) return;
+  if (senseMark(body, dt, ctx)) return;
+  if (senseCharge(body, dt, ctx)) return;
+  senseBolt(body, dt, ctx);
+}
+
+/** @returns true while a live grenade holds this body's attention. */
+function senseGrenade(body, dt, ctx) {
+  const field = body.world?.grenades;
   /* `_sawG` GOES WITH IT. Clearing only the clock left every body on the field
    * holding a pointer to the last grenade that went off, for the rest of its
    * life — a retained reference to a disposed object, and worse, a body whose
    * `_sawG` still matches would skip its own reaction time if that object were
    * ever reused. */
-  if (!field || !field.list.length) { body._dangerT = 0; body._sawG = null; return; }
+  if (!field || !field.list.length) { body._dangerT = 0; body._sawG = null; return false; }
   const g = field.nearest(body.position, NOTICE);
-  if (!g || g.dead) { body._dangerT = 0; body._sawG = null; return; }
+  if (!g || g.dead) { body._dangerT = 0; body._sawG = null; return false; }
   if (body._sawG !== g) {
     body._sawG = g;
     body._dangerT = 0;
@@ -1113,8 +1189,8 @@ export function senseDanger(body, dt, ctx) {
       + jitterOf(body) * LAG.jitter;
   }
   body._dangerT += dt;
-  if (body._dangerT < body._lag) return;
-  if (body.reaction) return;
+  if (body._dangerT < body._lag) return true;
+  if (body.reaction) return true;
 
   /* THE SHOUT. The first man to act on it yells, and everybody of his side who
    * can hear him has their own lag cut to `LAG.heard`. One shout per grenade,
@@ -1144,4 +1220,571 @@ export function senseDanger(body, dt, ctx) {
     body.reaction = R;
     if (R.kind === 'dive') field.stats.dived++;
   }
+  return true;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE SECOND NOTE — "don't stop there, I want you to go above and beyond"
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ *   "I have asked for dynamic troop stuff like them dragging their wounded,
+ *    medic healing others, diving here and there, combat rolls, throwing
+ *    grenades back, a particularly brave/motivated soldier motivating
+ *    disheartened troops etc. like don't stop there I want you to go above
+ *    and beyond, their stats/innate attributes should make them more or less
+ *    likely to do certain things or act certain ways."
+ *
+ * ── THE RULE THIS TABLE ENFORCES ─────────────────────────────────────────
+ *
+ * Every row names the ATTRIBUTE that scales it, and the scaling is read
+ * through `scaleOf` — Attributes.js's own door, the same one `enlistBody`
+ * uses for hit points and pace. That is the whole of "their stats should
+ * make them more or less likely": no behaviour here has a private roll, a
+ * private personality byte or a flag on the archetype. A man's reflex score
+ * decides whether he rolls under a bolt; the same score decided how fast he
+ * took your last order. So a player who reads a card on the Company page has
+ * read what the man will do under fire, which is what a card is for.
+ *
+ * ── WHAT IS HERE, AND WHERE THE OTHER HALF OF EACH LIVES ─────────────────
+ *
+ *   roll      a sideways combat roll under an inbound bolt         reflex
+ *   flee      out of the ring of an incoming support call          reflex
+ *   charge    a dive off the line of a charging beast              reflex
+ *   throwback (above) the gate and the scatter of a thrown-back    nerve, reflex
+ *   heal      the squad's MEDIC kneels and works on a wounded man  hardiness+resolve
+ *   rally     a steady man walks to a shaken one and steadies him  resolve, bond
+ *   drag      (Command.js) how likely a man is to go back for one  bond, nerve
+ *   crawl     a downed man drags himself away from the shooting    hardiness
+ *   salvage   a man takes a fallen mate's heavier rifle            aim
+ *   ranks     (Command.js) a squad closes up when its leader falls discipline
+ *   shout     "INCOMING!" cuts his neighbours' reaction time       —
+ *
+ * The decisions are made HERE and the consequences that need the roster (a
+ * morale record, a squad, a rank) are made in Command.js through callbacks,
+ * because Command imports this file and not the other way round.
+ *
+ * ── A DIE, AND WHY IT IS NOT `Math.random` ───────────────────────────────
+ *
+ * Several rows are a CHANCE rather than a gate, because a chance is the only
+ * shape in which "more or less likely" can be measured — a gate makes the
+ * best man do a thing every time and the second-best never. The chance is
+ * rolled off `dieOf`, a hash of the body's own name and a counter it carries,
+ * so two runs of the same seed roll the same dice (`determinism.mjs`) and so
+ * a check can drive a hundred trials and read a rate off them.
+ */
+export const BEHAVIOUR = {
+  roll: {
+    attr: 'reflex', chance: 0.55, eta: [0.05, 0.6], miss: 0.9, again: 2.4, scan: 0.12,
+    speed: 6.6, launch: 0.12, prone: 0.30, up: 0.24, look: 14,
+  },
+  flee: { attr: 'reflex', pad: 2.0, run: 1.55, clear: 1.5, scan: 0.15, lag: 0.4 },
+  charge: { attr: 'reflex', chance: 0.7, width: 3.2, ahead: 15, scan: 0.15, again: 1.6 },
+  throwback: { attr: 'nerve+reflex' },
+  heal: {
+    attr: 'hardiness+resolve', look: 14, reach: 1.7, seconds: 4.0, share: 0.45,
+    hurt: 0.6, again: 6, scan: 0.5,
+  },
+  rally: { attr: 'resolve*bond', chance: 0.5, look: 12, reach: 1.9, again: 20, scan: 1.0, walk: 1.25 },
+  drag: { attr: 'bond*nerve', chance: 0.6 },
+  crawl: { attr: 'hardiness', speed: 0.34, max: 6, haul: 2.6, foe: 34 },
+  salvage: { attr: 'aim', chance: 0.5, reach: 6, take: 0.45, better: 1.15, scan: 1.0, again: 30 },
+  ranks: { attr: 'discipline', seconds: 6, tighten: 0.5, pace: 1.35 },
+  shout: { boost: 1.5, heard: 1.2 },
+};
+
+/**
+ * WHAT HAPPENED, COUNTED — so a check can price a behaviour rather than
+ * assert a state name. Reset by `resetReactionStats`; never read by the game.
+ */
+export const REACTION_STATS = {
+  rolled: 0, fled: 0, dodgedCharge: 0, healed: 0, rallied: 0, crawled: 0, salvaged: 0,
+  shouted: 0, refusedDrag: 0,
+};
+export function resetReactionStats() { for (const k in REACTION_STATS) REACTION_STATS[k] = 0; }
+
+/**
+ * A DIE THAT ANSWERS THE SAME WAY TWICE. See the table's note. `salt` keeps
+ * two behaviours from reading the same roll on the same frame.
+ */
+export function dieOf(body, salt = 0) {
+  const n = (body._dieN = ((body._dieN | 0) + 1) | 0);
+  const s = (body.trooper?.name ?? body.id ?? 'x') + ':' + n + ':' + salt;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return ((h >>> 0) % 10000) / 10000;
+}
+
+/** The attribute term for a body: 1 for the horde, the record's scale otherwise. */
+const attrK = (body, id) => (body.trooper ? scaleOf(body.trooper, id) : 1);
+
+/**
+ * THE CHANCE A MAN ROLLS UNDER A BOLT THAT IS GOING TO HIT HIM.
+ *
+ * Exported so the rate can be READ rather than inferred: `reactions.mjs` asks
+ * this for a record at reflex 10 and at reflex 90 and asserts the two are a
+ * long way apart. `reflex`'s scale is a multiplier on REACTION TIME (1.34
+ * slow, 0.70 quick), so the chance divides by it — the quick man rolls ×1.43
+ * as often, the slow man ×0.75 — and a shout he heard in the last second
+ * lifts it by `shout.boost`.
+ */
+export function rollChance(body, time = 0) {
+  const R = BEHAVIOUR.roll;
+  const heard = body._heardAt !== undefined && time - body._heardAt < BEHAVIOUR.shout.heard;
+  return clamp(R.chance / attrK(body, 'reflex') * (heard ? BEHAVIOUR.shout.boost : 1), 0, 0.98);
+}
+
+const _threats = [];
+
+/**
+ * A BOLT IS COMING, AND HE IS QUICK ENOUGH TO DO SOMETHING ABOUT IT.
+ *
+ * `BoltPool.threatsNear` is the same read the player's Focus uses to find a
+ * bolt worth slowing time for — a bolt whose path passes within 2.2 m — and
+ * it is asked on a short clock (`scan`) rather than every frame, because it
+ * walks the pool. A body only rolls for a bolt that would HIT (`miss` is the
+ * perpendicular miss distance that counts as a hit on a standing man), from
+ * the other side, with an ETA inside the window a body can move in.
+ *
+ * The roll is SIDEWAYS — perpendicular to the bolt's line, the side chosen
+ * off the die — because a man cannot outrun a bolt and does not try to; he
+ * gets his body off its line. It moves him `~1.6 m`: `speed × launch` in the
+ * air and the rest damped on the ground. Measured in `reactions.mjs`.
+ */
+function senseBolt(body, dt, ctx) {
+  const R = BEHAVIOUR.roll;
+  body._rollCd = Math.max(0, (body._rollCd ?? 0) - dt);
+  if (body._rollCd > 0) return false;
+  body._boltScan = (body._boltScan ?? jitterOf(body) * R.scan) - dt;
+  if (body._boltScan > 0) return false;
+  body._boltScan = R.scan;
+  const pool = body.world?.bolts;
+  if (!pool?.threatsNear || body.actor?.ragdolled || body.downed) return false;
+  const at = body.chest ?? body.position;
+  const list = pool.threatsNear(at, R.look, _threats);
+  let hit = null;
+  for (const th of list) {
+    const b = th.bolt;
+    if (b.team === body.team && !b.turned) continue;
+    if (th.offset > R.miss) continue;
+    if (th.eta < R.eta[0] || th.eta > R.eta[1]) continue;
+    hit = th; break;
+  }
+  _threats.length = 0;
+  if (!hit) return false;
+  body._rollCd = R.again;
+  if (dieOf(body, 1) > rollChance(body, ctx?.time ?? 0)) return false;
+  /* Perpendicular to the bolt, on the ground, the side off the die. */
+  _v1.copy(hit.bolt.vel).setY(0);
+  if (_v1.lengthSq() < 1e-6) return false;
+  _v1.normalize();
+  const side = dieOf(body, 2) < 0.5 ? 1 : -1;
+  body.reaction = { kind: 'roll', t: 0, dir: new THREE.Vector3(-_v1.z * side, 0, _v1.x * side) };
+  REACTION_STATS.rolled++;
+  return true;
+}
+
+function stepRoll(body, dt, R) {
+  const B = BEHAVIOUR.roll;
+  if (R.t < B.launch) {
+    body.velocity.x = R.dir.x * B.speed;
+    body.velocity.z = R.dir.z * B.speed;
+    body.wish = null;
+    body.crouch = 1;
+  } else if (R.t < B.launch + B.prone) {
+    /* THE ROLL ITSELF. `crouch` at 1 is as low as the rig goes; the lateral
+     * velocity carrying him through it is what reads as a roll rather than a
+     * drop — a body low AND moving sideways is the one silhouette the gait
+     * does not otherwise produce. */
+    body.crouch = 1;
+    body.wish = null;
+    body.velocity.x = damp(body.velocity.x, 0, 8, dt);
+    body.velocity.z = damp(body.velocity.z, 0, 8, dt);
+  } else if (R.t < B.launch + B.prone + B.up) {
+    body.crouch = damp(body.crouch ?? 1, 0, 9, dt);
+    body.wish = null;
+  } else {
+    body.crouch = 0;
+    body.reaction = null;
+    return false;
+  }
+  return true;
+}
+
+/**
+ * ── AN INCOMING SUPPORT CALL, AND WHO IS STANDING IN IT ──────────────────
+ *
+ * "your troops should actively avoid being within the range of an incoming
+ * stratagem after you aimed it (dive out the way etc)."
+ *
+ * `Stratagems._commit` queues a call as `{ site, radius, t, mark, owner }`
+ * and paints its ring for `mark` seconds — the same ring the player sees. So
+ * the men read what the player reads: every pending call of THEIR OWN SIDE
+ * (a droid does not run from your barrage; that would be the stratagem
+ * dodging itself), not flagged `safe` (smoke, rally, resupply, reinforcements
+ * and the beachhead hurt nobody), whose ring plus `pad` metres covers them.
+ *
+ * The answer is to RUN OUT RADIALLY at `run` × walk until `clear` metres past
+ * the ring, then go flat — the dive the grenade already has, pointed the same
+ * way — so the picture is a line scattering out of a circle and dropping. The
+ * first man to notice shouts INCOMING and the rest of his side hears it on
+ * the grenade's own `_heardAt`, which is also what lifts the roll chance for
+ * a second afterwards: a warned man is a quicker man.
+ *
+ * MEASURED in `stratagems.mjs`: a barrage marked on a line from four seconds
+ * out, 0 of N men inside the ring at impact.
+ */
+function pendingCalls(body) {
+  const w = body.world;
+  const list = w?.players?.length ? w.players : (w?.player ? [w.player] : null);
+  return list;
+}
+
+export function markOver(body, ctx) {
+  const list = pendingCalls(body);
+  if (!list) return null;
+  const F = BEHAVIOUR.flee;
+  let best = null, bestT = Infinity;
+  for (const p of list) {
+    const S = p?.stratagems;
+    if (!S?.pending?.length) continue;
+    if (p.team !== undefined && p.team !== body.team) continue;
+    for (const P of S.pending) {
+      if (P.t <= 0 || P.s?.safe) continue;
+      const r = (P.radius ?? P.s?.radius ?? 7.5) + F.pad;
+      const d2 = body.position.distanceToSquared(P.site);
+      if (d2 > r * r) continue;
+      if (P.t < bestT) { bestT = P.t; best = P; }
+    }
+  }
+  return best;
+}
+
+function senseMark(body, dt, ctx) {
+  const F = BEHAVIOUR.flee;
+  body._markScan = (body._markScan ?? jitterOf(body) * F.scan) - dt;
+  if (body._markScan > 0) return false;
+  body._markScan = F.scan;
+  if (body.actor?.ragdolled || body.downed) return false;
+  const P = markOver(body, ctx);
+  if (!P) { body._markLag = 0; return false; }
+  const t = ctx?.time ?? 0;
+  /* THE SHOUT, once per side per call — `_heardAt` is the same stamp the
+   * grenade's shout writes, so a man who heard either is quick to both. */
+  if (!P._shouted) P._shouted = new Set();
+  if (!P._shouted.has(body.team)) {
+    P._shouted.add(body.team);
+    for (const o of (ctx?.enemies || body.world?.enemies || [])) {
+      if (o.dead || o.team !== body.team) continue;
+      if (o.position.distanceToSquared(body.position) > 900) continue;   // 30 m
+      o._heardAt = t;
+    }
+    body.world?.notifyFloating?.(body.position, 'INCOMING!', 0xffb347);
+    audio.tone({ freq: 340, freqEnd: 240, dur: 0.24, gain: 0.10, type: 'square', pos: body.position });
+    REACTION_STATS.shouted++;
+  }
+  /* HIS OWN REACTION TIME, off his reflex, and cut by the shout. */
+  const heard = body._heardAt !== undefined && t - body._heardAt < BEHAVIOUR.shout.heard && body._heardAt !== t;
+  const lag = (heard ? LAG.heard : F.lag) * attrK(body, 'reflex');
+  body._markLag = (body._markLag ?? 0) + F.scan;
+  if (body._markLag < lag) return false;
+  _v1.subVectors(body.position, P.site).setY(0);
+  if (_v1.lengthSq() < 1e-4) _v1.set(Math.cos(jitterOf(body) * 6.283), 0, Math.sin(jitterOf(body) * 6.283));
+  body.reaction = { kind: 'flee', t: 0, P, dir: _v1.normalize().clone(),
+                    r: (P.radius ?? P.s?.radius ?? 7.5) + F.pad + F.clear };
+  REACTION_STATS.fled++;
+  return true;
+}
+
+function stepFlee(body, dt, ctx, R) {
+  const F = BEHAVIOUR.flee;
+  const P = R.P;
+  const d = Math.hypot(body.position.x - P.site.x, body.position.z - P.site.z);
+  /* IT HAS LANDED, OR HE IS OUT. Either way the last thing he does is go
+   * flat, facing away — the dive the grenade already owns. */
+  if (P.t <= 0 || d >= R.r) {
+    body.reaction = { kind: 'dive', t: 0, g: null, dir: R.dir };
+    return true;
+  }
+  if (!body.wish) body.wish = new THREE.Vector3();
+  body.wish.copy(R.dir);
+  body.speed = Math.max(body.speed, (body.A?.speed ?? 4) * F.run);
+  body.crouch = 0.25;
+  return true;
+}
+
+/**
+ * ── A CHARGING BEAST, AND THE LINE IT IS ON ─────────────────────────────
+ *
+ * The acklay's CHARGE (`BEAST_MOVES.charge`) fixes `lungeDir` at `aimUntil`
+ * and drives along it for a second and a quarter. A man standing inside
+ * `width` of that line and `ahead` metres down it is the man it is going to
+ * hit, and he can see it coming — it roars. So he dives off the line, the
+ * side away from it, with the same chance-by-reflex the bolt uses.
+ */
+function senseCharge(body, dt, ctx) {
+  const C = BEHAVIOUR.charge;
+  body._chargeCd = Math.max(0, (body._chargeCd ?? 0) - dt);
+  body._chargeScan = (body._chargeScan ?? jitterOf(body) * C.scan) - dt;
+  if (body._chargeScan > 0 || body._chargeCd > 0) return false;
+  body._chargeScan = C.scan;
+  if (body.actor?.ragdolled || body.downed) return false;
+  for (const o of (ctx?.enemies || body.world?.enemies || [])) {
+    if (o === body || o.dead || o.team === body.team) continue;
+    if (o.state !== 'charge' || !o.lungeDir) continue;
+    _v1.subVectors(body.position, o.position).setY(0);
+    const along = _v1.dot(o.lungeDir);
+    if (along < 0 || along > C.ahead) continue;
+    _v2.copy(o.lungeDir).setY(0).normalize();
+    const side = _v1.x * -_v2.z + _v1.z * _v2.x;          // signed distance off the line
+    if (Math.abs(side) > C.width) continue;
+    body._chargeCd = C.again;
+    if (dieOf(body, 3) > clamp(C.chance / attrK(body, 'reflex'), 0, 0.98)) return false;
+    const s = side >= 0 ? 1 : -1;
+    body.reaction = { kind: 'dive', t: 0, g: null, dir: new THREE.Vector3(-_v2.z * s, 0, _v2.x * s) };
+    REACTION_STATS.dodgedCharge++;
+    return true;
+  }
+  return false;
+}
+
+/**
+ * ── THE MEDIC ────────────────────────────────────────────────────────────
+ *
+ * "medic healing others". Command.js names one man per squad — the highest
+ * `hardiness + resolve` in it, which is the man who has the most to give and
+ * gets the most of it back — and stamps `trooper.medic`. This is what he does
+ * with it: finds the worst-hurt man of his side inside `look`, runs to him,
+ * KNEELS (the crouch the rig already has, at 0.8, which is a knee and not a
+ * prone) and works on him for `seconds`, putting `share` of the patient's
+ * health back over that time with a small green flicker off the particle
+ * ring so the player can see who is being worked on. A downed man is a
+ * patient too — `Enemy._tickDown` counts a medic beside him as two men.
+ *
+ * Interruptible in every way a drag is: the patient dies or stands, the medic
+ * is hit or has a grenade land beside him, and he is up and shooting again.
+ */
+export function findPatient(body, ctx) {
+  const H = BEHAVIOUR.heal;
+  const list = ctx?.enemies || body.world?.enemies || [];
+  let best = null, bestS = Infinity;
+  const r2 = H.look * H.look;
+  for (const o of list) {
+    if (o === body || o.dead || o.team !== body.team) continue;
+    if (o._medicOn && o._medicOn !== body && !o._medicOn.dead) continue;
+    const frac = o.downed ? 0 : (o.hp / Math.max(1, o.maxHp ?? 1));
+    if (frac >= H.hurt) continue;
+    const d2 = o.position.distanceToSquared(body.position);
+    if (d2 > r2) continue;
+    /* Worst first, distance as the tie-break. */
+    const s = frac * 100 + Math.sqrt(d2);
+    if (s < bestS) { bestS = s; best = o; }
+  }
+  return best;
+}
+
+export function startHeal(body, patient) {
+  if (!patient || patient.dead || body.reaction) return false;
+  patient._medicOn = body;
+  body.reaction = { kind: 'heal', t: 0, patient, at: -1, given: 0 };
+  return true;
+}
+
+function stepHeal(body, dt, ctx, R) {
+  const H = BEHAVIOUR.heal;
+  const c = R.patient;
+  const stop = (why) => {
+    if (c && c._medicOn === body) c._medicOn = null;
+    body.reaction = null;
+    body.healWhy = why;
+    body.crouch = 0;
+    return false;
+  };
+  if (!c || c.dead || body.dead) return stop('lost');
+  const d = body.position.distanceTo(c.position);
+  if (R.at < 0) {
+    if (d > H.reach) {
+      if (!body.wish) body.wish = new THREE.Vector3();
+      body.wish.subVectors(c.position, body.position).setY(0).normalize();
+      body.speed = Math.max(body.speed, (body.A?.speed ?? 4) * 1.2);
+      if (R.t > 8) return stop('far');
+      return true;
+    }
+    R.at = R.t;
+  }
+  if (d > H.reach + 1.2) return stop('moved');
+  /* ON ONE KNEE, WORKING. */
+  body.wish = null;
+  body.crouch = 0.8;
+  body.velocity.x = damp(body.velocity.x, 0, 8, dt);
+  body.velocity.z = damp(body.velocity.z, 0, 8, dt);
+  if (!c.downed) {
+    const tick = (c.maxHp ?? 100) * H.share / H.seconds * dt;
+    const was = c.hp;
+    c.hp = Math.min(c.maxHp ?? c.hp, c.hp + tick);
+    R.given += c.hp - was;
+  }
+  /* THE FLICKER. A few green sparks a frame off the particle ring — the one
+   * that already draws every impact — so the man being worked on is the man
+   * with the light on him. Nothing allocated: `_v1`/`_v2` are the file's. */
+  const P = ctx?.particles ?? body.world?.particles;
+  if (P?.sparks && (R.t * 10 | 0) !== ((R.t - dt) * 10 | 0)) {
+    _v1.copy(c.position).setY(c.position.y + 0.6 + jitterOf(body) * 0.3);
+    _v2.set((jitterOf(c) - 0.5) * 0.6, 0.9, (jitterOf(body) - 0.5) * 0.6);
+    P.sparks.spawn(_v1, _v2, { life: 0.45, size: 0.08, drag: 2, gravity: -0.4, color: 0x8fffc0, alpha: 0.9 });
+  }
+  if (R.t - R.at >= H.seconds || (!c.downed && c.hp >= (c.maxHp ?? c.hp))) {
+    REACTION_STATS.healed++;
+    body.world?.notifyFloating?.(c.position, 'PATCHED UP', 0x8fffc0);
+    return stop('done');
+  }
+  return true;
+}
+
+/**
+ * ── THE RALLY TOUCH ──────────────────────────────────────────────────────
+ *
+ * "a particularly brave/motivated soldier motivating disheartened troops".
+ * Command.js finds the pair (a man above `MORALE.RALLY_FROM` whose
+ * `resolve × bond` has him high on the die, and a squadmate sliding toward
+ * `BREAK`) and hands this the bodies and a callback; this walks the one to
+ * the other, has him say something (`cry('cheer')`, the bark the rally
+ * stratagem already uses, and a floating line) and calls back, which is
+ * where `MORALE.RALLY_TOUCH` lands. The morale arithmetic stays in the file
+ * that owns morale.
+ */
+export function rallyChance(trooper) {
+  return clamp(BEHAVIOUR.rally.chance * (trooper ? scaleOf(trooper, 'resolve') * scaleOf(trooper, 'bond') : 1), 0, 0.98);
+}
+
+export function startRally(body, mate, onTouch) {
+  if (!body || !mate || mate.dead || body.reaction) return false;
+  body.reaction = { kind: 'rally', t: 0, mate, onTouch };
+  return true;
+}
+
+function stepRally(body, dt, ctx, R) {
+  const B = BEHAVIOUR.rally;
+  const m = R.mate;
+  const stop = (why) => { body.reaction = null; body.rallyWhy = why; return false; };
+  if (!m || m.dead || body.dead) return stop('lost');
+  if (R.t > 7) return stop('far');
+  const d = body.position.distanceTo(m.position);
+  if (d > B.reach) {
+    if (!body.wish) body.wish = new THREE.Vector3();
+    body.wish.subVectors(m.position, body.position).setY(0).normalize();
+    body.speed = Math.max(body.speed, (body.A?.speed ?? 4) * B.walk);
+    return true;
+  }
+  /* A HAND ON HIS SHOULDER, AND A WORD. */
+  body.wish = null;
+  body.cry?.('cheer', 1.2);
+  body.world?.notifyFloating?.(body.position, 'ON YOUR FEET', 0xffe08a);
+  audio.tone({ freq: 420, freqEnd: 520, dur: 0.18, gain: 0.08, type: 'triangle', pos: body.position });
+  R.onTouch?.(m, body);
+  REACTION_STATS.rallied++;
+  return stop('done');
+}
+
+/**
+ * ── A WOUNDED MAN CRAWLS ─────────────────────────────────────────────────
+ *
+ * A downed man is a limp body on a bleed-out clock (`Enemy._goDown`) and
+ * until now he lay exactly where he fell until somebody reached him. He
+ * drags himself now — away from the nearest enemy, the same direction the
+ * drag calls "safety" — through `Ragdoll.suspend` at a crawl, `speed` metres
+ * a second scaled by HARDINESS (the same attribute that lengthens his bleed;
+ * a man with more in him uses it), up to `max` metres. Only while nobody is
+ * helping him and there is something to crawl from inside `foe` metres — a
+ * man on his own on an empty field lies still and saves it.
+ *
+ * Called from `Enemy._tickDown`, once per frame per downed body.
+ */
+export function crawlStep(body, dt, ctx) {
+  const C = BEHAVIOUR.crawl;
+  if (!body.downed || body.dead || body.beingDragged) return 0;
+  if ((body._crawled ?? 0) >= C.max) return 0;
+  if (!body.actor?.ragdolled) return 0;
+  body._crawlScan = (body._crawlScan ?? 0) - dt;
+  if (body._crawlScan <= 0) {
+    body._crawlScan = 0.5;
+    const foe = foeNear(body, ctx);
+    if (!foe || foe.position.distanceToSquared(body.position) > C.foe * C.foe) { body._crawlDir = null; return 0; }
+    (body._crawlDir ||= new THREE.Vector3()).subVectors(body.position, foe.position).setY(0);
+    if (body._crawlDir.lengthSq() < 1e-4) body._crawlDir.set(1, 0, 0);
+    body._crawlDir.normalize();
+  }
+  if (!body._crawlDir) return 0;
+  const v = C.speed * attrK(body, 'hardiness');
+  _v3.copy(body.position).addScaledVector(body._crawlDir, 0.7);
+  _v3.y = body.position.y;
+  if (!body.actor.suspend(_v3, dt, C.haul)) return 0;
+  body.actor.centre?.(body.position);
+  body._crawled = (body._crawled ?? 0) + v * dt;
+  REACTION_STATS.crawled += v * dt;
+  return v * dt;
+}
+
+/**
+ * ── HE TAKES HIS MATE'S RIFLE ────────────────────────────────────────────
+ *
+ * A dead man of his own side inside `reach` with a heavier weapon than his —
+ * `attackDamage`, the number every bolt he fires carries — and a marksman's
+ * eye for it (AIM: the scale is on his spread, so the chance divides by it,
+ * a good shot wants the better gun and a poor one does not know the
+ * difference). He walks over, takes a knee for `take` seconds, and stands up
+ * with the dead man's damage. Once per body — `_rifleTaken` — and a body
+ * whose rifle has gone is no worse a corpse.
+ */
+export function findRifle(body, ctx) {
+  const S = BEHAVIOUR.salvage;
+  const list = ctx?.enemies || body.world?.enemies || [];
+  const r2 = S.reach * S.reach;
+  let best = null, bestD = r2;
+  for (const o of list) {
+    if (o === body || !o.dead || o.team !== body.team || o._rifleTaken || o.disposed) continue;
+    if (!(o.attackDamage > (body.attackDamage ?? 0) * S.better)) continue;
+    const d2 = o.position.distanceToSquared(body.position);
+    if (d2 < bestD) { bestD = d2; best = o; }
+  }
+  return best;
+}
+
+export function salvageChance(body) {
+  return clamp(BEHAVIOUR.salvage.chance / attrK(body, 'aim'), 0, 0.98);
+}
+
+export function startSalvage(body, corpse) {
+  if (!body || !corpse || body.reaction || corpse._rifleTaken) return false;
+  corpse._rifleTaken = body;
+  body.reaction = { kind: 'salvage', t: 0, corpse, at: -1 };
+  return true;
+}
+
+function stepSalvage(body, dt, R) {
+  const S = BEHAVIOUR.salvage;
+  const c = R.corpse;
+  const stop = (why, took) => {
+    if (c && !took && c._rifleTaken === body) c._rifleTaken = null;
+    body.reaction = null; body.crouch = 0; body.salvageWhy = why; return false;
+  };
+  if (!c || c.disposed || body.dead) return stop('lost');
+  if (R.t > 6) return stop('far');
+  if (R.at < 0) {
+    if (body.position.distanceTo(c.position) > 1.3) {
+      if (!body.wish) body.wish = new THREE.Vector3();
+      body.wish.subVectors(c.position, body.position).setY(0).normalize();
+      return true;
+    }
+    R.at = R.t;
+  }
+  body.wish = null;
+  body.crouch = 0.7;
+  if (R.t - R.at < S.take) return true;
+  body.attackDamage = c.attackDamage;
+  body.tookRifle = c.fallenRec?.name || c.A?.label || 'a fallen man';
+  c._rifleTaken = body;
+  REACTION_STATS.salvaged++;
+  body.world?.notifyFloating?.(body.position, 'TOOK HIS RIFLE', 0xd9d0b8);
+  return stop('done', true);
 }

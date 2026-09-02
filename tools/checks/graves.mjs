@@ -25,7 +25,7 @@
  */
 
 import * as THREE from 'three';
-import { GraveField, GRAVE_MAX, GRAVE_READ } from '../../src/world/Graves.js';
+import { GraveField, GRAVE_MAX, GRAVE_READ, HELMETS, helmetKindOf } from '../../src/world/Graves.js';
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
 const man = (name, x, z, extra = {}) => ({ name, rank: 'Cpl', unit: 'Clone Trooper',
@@ -83,25 +83,76 @@ export async function run({ check, assert }) {
     return `two graves, two readings, ${GRAVE_READ} m to hear one`;
   });
 
-  check('graves: however many there are, they are two draw calls', () => {
+  check('graves: however many there are, they are a handful of draw calls', () => {
+    /**
+     * IT WAS TWO, AND IT IS ONE PER HELMET KIND PLUS THE RIFLE — the player
+     * asked for "whatever specific helmet/head that npc had on a stick", so
+     * the helmet is an instanced mesh per kind (HELMETS) and a kind nobody
+     * has died in costs a count of 0, which the renderer skips. Seventy-six
+     * clone graves are still two calls; a mixed field is at most one more
+     * per kind. Still nothing beside a corpse at twenty-six.
+     */
     const scene = new THREE.Scene();
     const f = new GraveField().attach(scene);
     for (let i = 0; i < GRAVE_MAX + 12; i++) f.mark(man(`CT-${1000 + i}`, i * 3, 0));
     const drawn = [];
     scene.traverse((o) => { if (o.isMesh) drawn.push(o); });
-    assert(drawn.length === 2,
-      `${GRAVE_MAX + 12} graves cost ${drawn.length} draw calls — the corpse budget is a few dozen `
+    const live = drawn.filter((m) => m.count > 0);
+    assert(live.length === 2,
+      `${GRAVE_MAX + 12} clone graves cost ${live.length} live draw calls — the corpse budget is a few dozen `
       + 'bodies at 26 calls each and this must not compete with it');
+    assert(drawn.length <= 1 + Object.keys(HELMETS).length,
+      `${drawn.length} meshes for ${Object.keys(HELMETS).length} helmet kinds and a rifle`);
     assert(drawn.every((m) => m.isInstancedMesh), 'a grave is drawn as an ordinary mesh');
-    assert(drawn.every((m) => m.count === GRAVE_MAX),
-      `${drawn.map((m) => m.count).join('/')} instances against a ${GRAVE_MAX} cap — the oldest `
+    assert(live.every((m) => m.count === GRAVE_MAX),
+      `${live.map((m) => m.count).join('/')} instances against a ${GRAVE_MAX} cap — the oldest `
       + 'markers stop being DRAWN and the names stay on the record');
     assert(f.length === GRAVE_MAX + 12,
       `the record lost names to the drawing cap: ${f.length} of ${GRAVE_MAX + 12}`);
     assert(drawn.every((m) => !m.castShadow),
       'a grave casts a shadow — a memorial that costs a shadow map per casualty is one the frame '
       + 'budget deletes exactly when the run is going badly enough to have several');
-    return `${GRAVE_MAX + 12} names, ${GRAVE_MAX} drawn, ${drawn.length} calls`;
+    return `${GRAVE_MAX + 12} names, ${GRAVE_MAX} drawn, ${live.length} live calls of ${drawn.length} meshes`;
+  });
+
+  check('graves: the marker wears the man\'s own helmet, and it is the builder\'s helmet', () => {
+    /**
+     * "it should be whatever specific helmet/head that npc had on a stick,
+     * right now it's generic blob on a stick". So: a clone's marker draws in
+     * the clone bucket, an ARC's in the ARC bucket (the same bucket with the
+     * rangefinder stalk), a B1's in the B1 snout, a B2's in the wedge — and
+     * the clone bucket is not a sphere: it is `buildTrooper`'s own seven
+     * plates, which is why it has a fin along the crown and cheeks wider
+     * than the dome, neither of which a hemisphere has.
+     */
+    const scene = new THREE.Scene();
+    const f = new GraveField().attach(scene);
+    f.mark(man('CT-1', 0, 0, { kind: 'trooper', army: 'flesh' }));
+    f.mark(man('CT-2', 3, 0, { kind: 'arc', army: 'flesh' }));
+    f.mark(man('CC-3', 6, 0, { kind: 'officer', army: 'flesh' }));
+    f.mark(man('B1-4', 9, 0, { kind: 'b1', army: 'steel' }));
+    f.mark(man('B2-5', 12, 0, { kind: 'b2', army: 'steel' }));
+    f.mark(man('X-6', 15, 0, { kind: 'somethingnew', army: 'steel' }));
+    f.mark(man('CT-7', 18, 0, { kind: 'heavy', army: 'flesh', look: { kit: { rangefinder: 'stalk' } } }));
+    const d = f.drawn();
+    assert(d.clone === 1 && d.arc === 2 && d.commander === 1 && d.b1 === 2 && d.b2 === 1,
+      `drawn as ${JSON.stringify(d)} — expected clone 1, arc 2 (the ARC and the heavy with a stalk on his kit), `
+      + 'commander 1, b1 2 (the B1 and an unknown steel type), b2 1');
+    assert(helmetKindOf({ kind: 'nobody', army: 'flesh' }) === 'clone', 'an unknown flesh type is not a clone');
+    const helm = f.meshes.clone.geometry;
+    helm.computeBoundingBox();
+    const bb = helm.boundingBox;
+    const w = bb.max.x - bb.min.x, h = bb.max.y - bb.min.y, dd = bb.max.z - bb.min.z;
+    assert(h > w * 1.05 && dd > w * 1.2,
+      `the clone helmet is ${w.toFixed(3)} wide, ${h.toFixed(3)} tall, ${dd.toFixed(3)} deep — a helmet is `
+      + 'taller than it is wide and longer than it is wide, and a hemisphere is neither');
+    assert(helm.attributes.position.count > 200,
+      `${helm.attributes.position.count} vertices — that is a blob, not seven plates`);
+    const b1 = f.meshes.b1.geometry; b1.computeBoundingBox();
+    const snout = b1.boundingBox.max.z - b1.boundingBox.min.z;
+    assert(snout > 0.25, `the B1 head is ${snout.toFixed(2)} m front to back — a B1 is a snout`);
+    return `clone ${w.toFixed(2)}×${h.toFixed(2)}×${dd.toFixed(2)} m, B1 snout ${snout.toFixed(2)} m; `
+      + Object.entries(d).map(([k, v]) => `${k}:${v}`).join(' ');
   });
 
   check('graves: the markers are rebuilt onto whatever ground the run is on now', () => {
@@ -110,7 +161,8 @@ export async function run({ check, assert }) {
     f.mark(man('CT-1147', 10, -10));
     let meshes = [];
     one.traverse((o) => { if (o.isInstancedMesh) meshes.push(o); });
-    assert(meshes.length === 2 && meshes[0].count === 1, 'the first ground drew nothing');
+    const live = () => meshes.filter((m) => m.count > 0).length;
+    assert(meshes.length >= 2 && live() === 2, 'the first ground drew nothing');
     assert(Math.abs(f.entries[0].y - 4.25) < 1e-6,
       `the marker was planted at y=${f.entries[0].y} rather than on the ground it fell on`);
 
@@ -125,16 +177,20 @@ export async function run({ check, assert }) {
     f.attach(two);
     meshes = [];
     two.traverse((o) => { if (o.isInstancedMesh) meshes.push(o); });
-    assert(meshes.length === 2 && meshes[0].count === 1,
+    assert(meshes.length >= 2 && live() === 2,
       'the next ground does not carry the graves of the last one — a run that forgets its dead '
       + 'between engagements is the corpse budget with extra steps');
     return 'one name, two grounds, still standing on the same coordinates';
   });
 
-  check('graves: a run that leads an army buries its dead, and one that does not has none', async () => {
+  check('graves: a run that leads an army keeps its dead where they fell, and one that does not has none', async () => {
     /**
      * THE WIRE, END TO END, on a real World: a real trooper is killed through
-     * the door every death in the game comes through and the ground keeps him.
+     * the door every death in the game comes through. The ground does NOT
+     * draw a marker for him any more — "graves for your dead allies
+     * automatically appear but maybe it should be an active order" — it
+     * keeps the body, and the commander keeps the record a burial will need
+     * (`c.fallen`). The order itself is measured in `burial.mjs`.
      */
     const { bootWorld } = await import('./_coop.mjs');
     const { world } = await bootWorld({
@@ -147,15 +203,21 @@ export async function run({ check, assert }) {
     d.deploy?.();
     const t = d.roster.living.find((x) => x.body && !x.body.dead);
     assert(t, 'the fixture mustered nobody to lose');
-    const where = t.body.position.clone();
+    const body = t.body;
+    const where = body.position.clone();
     const before = world.graves.length;
-    world.onEnemyKilled(t.body, null, 'blaster');
-    assert(world.graves.length === before + 1,
-      'a named man died on a real world and the ground kept nothing');
-    const g = world.graves.entries[world.graves.length - 1];
-    assert(Math.hypot(g.x - where.x, g.z - where.z) < 0.01,
-      `he is buried ${Math.hypot(g.x - where.x, g.z - where.z).toFixed(1)} m from where he fell`);
-    assert(g.name && g.rank, `the marker reads "${g.rank} ${g.name}"`);
+    world.onEnemyKilled(body, null, 'blaster');
+    assert(world.graves.length === before,
+      'a named man died and a marker appeared on its own — the grave is the burial detail\'s to make');
+    const rec = d.commander.fallen?.[d.commander.fallen.length - 1];
+    assert(rec && rec.name === t.name && !rec.buried,
+      'the commander kept no record of the man he lost, so nobody can ever be sent for him');
+    assert(body.keepBody === true,
+      'the body is not flagged to stay — it would be gone in forty seconds like a droid');
+    assert(Math.hypot(rec.x - where.x, rec.z - where.z) < 0.01,
+      `the record says he fell ${Math.hypot(rec.x - where.x, rec.z - where.z).toFixed(1)} m from where he fell`);
+    assert(rec.kind === t.type, `the record says he was a ${rec.kind} and he was a ${t.type} — the wrong helmet`);
+    const g = rec;
     world.unload();
 
     /* …and a mode with no roll has no names to lose. */
@@ -165,7 +227,7 @@ export async function run({ check, assert }) {
     assert(!duel.graves,
       'a duel builds a grave field — a grave is a name off a roll and that mode has no roll');
     duel.unload();
-    return `${g.rank} ${g.name} is standing where he fell; a duel has no field at all`;
+    return `${g.rank} ${g.name} is lying where he fell, unburied, ${g.kind} on the record; a duel has no field at all`;
   });
 
   check('graves: the line minds its own dead, and only so often', async () => {

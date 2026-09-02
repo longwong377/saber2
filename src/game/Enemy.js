@@ -52,7 +52,7 @@ import { scaleOf } from './Attributes.js';
  * it has to happen in a wave, a duel and a colosseum, none of which has a
  * CommandDirector in them at all. So it is asked here, once per body the Force
  * is actually holding, and never for anybody else. */
-import { senseDanger, stepReaction, reachForHelp, GRENADE } from './Reactions.js';
+import { senseDanger, stepReaction, reachForHelp, crawlStep, GRENADE } from './Reactions.js';
 import { audio } from '../engine/Audio.js';
 
 /**
@@ -1436,7 +1436,85 @@ export const RESIST_PER_FORCE = 1.4;
 export const RESIST_CAP = 0.55;
 export const RESIST_BEATEN = 0.35;
 /** The kinds that are the Force, and are therefore answerable by it. */
-export const FORCE_KINDS = /^(force|lightning|choke|grip|rend)$/;
+/* `stratagem` IS ON THIS LIST because a support call is an answer from the
+ * same hand: it is answered by a body's Force pool the way a shove is (the
+ * blow arrives through `applyKnockback`, pre-resisted), it breaks a cast the
+ * way a shove does, and — the reading Command.js cares about — a barrage the
+ * Jedi painted onto his own line is a DECISION, which is what `BETRAYED` was
+ * written for. Before this it arrived as `'force'` and said the same thing
+ * without saying which. */
+export const FORCE_KINDS = /^(force|lightning|choke|grip|rend|stratagem)$/;
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  ARMOUR — "certain super enemies only be able to be killed by certain
+ *  stratagems"
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ *   "lets explore the idea of certain super enemies (like major ones
+ *    mechs/monsters etc.) only be able to be killed by certain stratagems,
+ *    right now there's not really a reason to ever use all the cool
+ *    stratagems we have. Maybe make this a setting you can toggle while we
+ *    see if it's a good idea."
+ *
+ * `settings.stratagemOnly` (Menu.js, off by default, host-authoritative —
+ * Net.SESSION_KEYS) is the toggle. With it on, a body of ARMOUR class —
+ * anything the roster calls `boss` or `big`, and anything running the beast
+ * brain, which is the walker, the acklay, the reek and nexu, the Jedi Master
+ * and every giant in Vehicles.GIANT_TYPES — takes `other` of any blow that
+ * did not come from a support call, and a support call's blow in full. The
+ * blow knows what it is because `Stratagems.blast` sends `kind: 'stratagem'`
+ * through `applyKnockback` and names the call (`_hitCall`), so the table
+ * below can say WHICH call is the answer to WHICH body and pay `best` for
+ * it. That table is the whole reason to have the setting: the mass driver
+ * exists for a walker, the ion pulse for a droid giant, the bombardment for
+ * something with legs, and a player who has never had cause to spell the
+ * longer codes now has one.
+ *
+ * The first time the player lands a blunted hit on one, the HUD says so —
+ * "ARMOUR — call it in" — once per world, because a rule the player cannot
+ * see is a health bar that is mysteriously not moving.
+ */
+export const STRATAGEM_ONLY = {
+  /** The share of a blade, bolt or power an armoured body takes with the rule on. */
+  other: 0.15,
+  /** What the RIGHT support call is worth against it. */
+  best: 2.0,
+  /**
+   * WHICH CALL OPENS WHICH BODY. Read top to bottom, first match wins; the
+   * predicate is the roster's own words (`custom`, `big`, `boss`, toughness)
+   * and never a type name, so a new walker is a walker.
+   */
+  answers: [
+    { name: 'walker',      when: (A) => A.custom === 'walker',                       calls: ['driver', 'strike'] },
+    { name: 'beast',       when: (A) => A.custom === 'beast',                        calls: ['bombard', 'cluster'] },
+    { name: 'droid giant', when: (A) => A.big && (A.toughness ?? 0) >= TOUGHNESS.droid, calls: ['ion', 'driver'] },
+    { name: 'giant',       when: (A) => A.big,                                       calls: ['driver', 'bombard'] },
+    { name: 'master',      when: (A) => A.boss,                                      calls: ['strike', 'driver'] },
+  ],
+};
+
+/** Is this body one the rule protects? The roster's own flags, and nothing typed here. */
+export function armourClass(A) {
+  if (!A || A.training) return false;
+  return !!(A.boss || A.big || A.custom === 'beast' || A.custom === 'walker');
+}
+
+/** The multiplier a support call `call` earns against archetype `A` under the rule. */
+export function armourAnswer(A, call) {
+  if (!call) return 1;
+  for (const row of STRATAGEM_ONLY.answers) {
+    if (!row.when(A)) continue;
+    return row.calls.includes(call) ? STRATAGEM_ONLY.best : 1;
+  }
+  return 1;
+}
+
+/** The calls that answer this body, for the HUD line. */
+export function armourAnswers(A) {
+  for (const row of STRATAGEM_ONLY.answers) if (row.when(A)) return row.calls;
+  return [];
+}
 
 /** How long a living body lies still before it picks itself up, in seconds.
  *
@@ -4075,6 +4153,28 @@ export class Enemy {
      */
     const incoming = amount;
     if (!preResisted) amount = Math.max(0, amount - this.resistForce(amount, kind, source));
+    /**
+     * ARMOUR — see STRATAGEM_ONLY. Off by default; with the setting on, a
+     * boss, a big body or a beast takes `other` of anything that is not a
+     * support call and `best` of the call the table names for it. After the
+     * Force answer and before the ledger, so what the pool paid to blunt is
+     * still what it paid and what reaches the health bar is the rule's.
+     */
+    if (amount > 0 && this.world?.settings?.stratagemOnly && armourClass(this.A)) {
+      if (kind === 'stratagem') {
+        amount *= armourAnswer(this.A, this._hitCall);
+      } else {
+        amount *= STRATAGEM_ONLY.other;
+        const w = this.world;
+        if (w && !w._armourSaid && (source === w.player || source?.isLocal || source?.owner === w.player)) {
+          w._armourSaid = true;
+          const calls = armourAnswers(this.A);
+          w.notify?.('ARMOUR — CALL IT IN',
+            `${this.A.label || 'that'} only comes apart under a support call`
+            + (calls.length ? ` — ${calls.join(' or ')}` : ''), 'alarm');
+        }
+      }
+    }
     // A power lands, a power answers it, and the answer costs the caster the
     // cast it was in the middle of. Chip damage does not — see CAST_FLINCH_FLOOR.
     if (this._castTimer > 0 || this.casting) {
@@ -5294,7 +5394,13 @@ export class Enemy {
     audio.jet?.(this.position, this._jetShow, this.id);
   }
 
-  applyKnockback(impulse, damage, source, gentle) {
+  /**
+   * `kind` and `call` are the blow's own name for itself — `'force'` for every
+   * shove and held power, `'stratagem'` plus the call's id for a support
+   * call's blast (see STRATAGEM_ONLY). Both default to what every existing
+   * caller meant, so nothing that omits them changed.
+   */
+  applyKnockback(impulse, damage, source, gentle, kind = 'force', call = null) {
     if (this.dead) {
       // `impulse` is legitimately null — `_sustain` bills damage with no shove
       // behind it — and this line dereferenced it, so a held power that outlived
@@ -5336,7 +5442,19 @@ export class Enemy {
     // together. `stun` below only fires past 12 m/s and never on a boss, which
     // is why this cannot be left to it.
     if (!gentle) this.breakCast();
-    if (dmg > 0) this.damage(dmg, this.position, source, 'force', true);
+    if (dmg > 0) {
+      /* THE CALL'S NAME RIDES ON THE BODY FOR THE ONE CALL. `damage` reads
+       * `_hitCall` to price the right stratagem against the right armour and
+       * it is cleared on the way out, so a bolt that lands next frame is not
+       * credited to the mass driver. */
+      this._hitCall = call;
+      /* Two literal kinds rather than one variable, because `controls.mjs`
+       * reads every `damage(` site for a literal — the way it caught
+       * `Player._land` passing 'fall' as the SOURCE. */
+      if (kind === 'stratagem') this.damage(dmg, this.position, source, 'stratagem', true);
+      else this.damage(dmg, this.position, source, 'force', true);
+      this._hitCall = null;
+    }
     if (!gentle && impulse && impulse.length() > 12 && this.actor && !this.A.boss) {
       // hit hard enough to leave its feet — and the impulse IS the direction
       this.stun(1.2, impulse, 1.4);
@@ -5529,7 +5647,12 @@ export class Enemy {
     for (const o of list) {
       if (o === this || o.dead || o.downed || o.team == null) continue;
       const d2 = o.position.distanceToSquared(this.position);
-      if (o.team === this.team) { if (d2 <= help2) help++; }
+      /* THE MEDIC IS TWO MEN. `trooper.medic` is Command's — the squad's
+       * highest hardiness+resolve — and a man kneeling over a casualty with
+       * a kit is worth two riflemen standing over him. That is the whole of
+       * how the triage prefers him: no second clock, the same `DOWN_REVIVE`
+       * reached in half the time. */
+      if (o.team === this.team) { if (d2 <= help2) help += o.trooper?.medic ? 2 : 1; }
       else if (d2 <= fin2) foe = true;
     }
     for (const p of (this.world?.players || [])) {
@@ -5542,6 +5665,9 @@ export class Enemy {
       return;
     }
     this._downHelp = 0;
+    /* NOBODY IS COMING YET, SO HE CRAWLS — away from the shooting, at a pace
+     * his HARDINESS sets. See `Reactions.crawlStep`. */
+    crawlStep(this, dt, this.world?._frameCtx);
     this.bleed -= dt * (foe ? FINISH_RATE : 1);
     if (this.bleed <= 0) {
       /**
@@ -5927,7 +6053,18 @@ export class Enemy {
         if (hand) this.saber.setHiltPose(hand.position, hand.quaternion);
         this.saber.update(dt, ctx.time, this.velocity);
       }
-      return this.dying < 40;
+      /**
+       * A NAMED MAN STAYS WHERE HE FELL. `keepBody` is stamped by
+       * `CommandDirector.onDeath` on one of the roster's own: the player
+       * asked that "your dead troops stay ragdolled dead on the field in the
+       * manner in which they died" until the line is ordered to bury them —
+       * see `Command.BURY` — so the forty-second ceiling does not apply to
+       * him. What still does: `Corpses`' budget (the farthest kept body is
+       * retired into the instanced field when the budget is over, and the
+       * record notes it), and the wave count moving on twice, which clears
+       * the flag from Command. Nothing else in this branch changed.
+       */
+      return this.dying < 40 || !!this.keepBody;
     }
 
     this.stateTime += dt;

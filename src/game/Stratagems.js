@@ -422,7 +422,7 @@ export const STRATAGEMS = [
     blurb: 'A lance from orbit, on the thing you painted. It follows what you '
       + 'marked. Five seconds of warning, for you and for them.',
     fire: (ctx, site, S, s) => S.blast(ctx, site, s.radius, 150, 300,
-      { core: 0.35, shake: 1.0, size: 3.6, crater: 2.1 }),
+      { core: 0.35, shake: 1.0, size: 3.6, crater: 2.1, call: 'strike' }),
   },
   {
     id: 'strafe', name: 'Strafing run',
@@ -467,7 +467,7 @@ export const STRATAGEMS = [
         const at = _v2.copy(site).addScaledVector(bear, t)
           .addScaledVector(_v3.set(-bear.z, 0, bear.x), across).clone();
         S.after(i * 0.17, () => S.blast(ctx, at, 6.5, 70, 120,
-          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9,
+          { core: 0.25, shake: 0.30, size: 1.7, crater: 0.9, call: 'barrage',
             /* Twelve shells share one explosion's spark allowance — SHELLS is
              * this loop's own bound, so the two can never disagree. */
             sparkShare: 1 / Math.sqrt(SHELLS) }));
@@ -475,7 +475,7 @@ export const STRATAGEMS = [
     },
   },
   {
-    id: 'smoke', name: 'Smoke screen',
+    id: 'smoke', name: 'Smoke screen', safe: true,
     /**
      * WAY BIGGER, on the player's word: "the smoke screen needs to be way
      * bigger and more useful". The radius here is the DESIGNATION ring — how
@@ -491,7 +491,7 @@ export const STRATAGEMS = [
     cadence: (ctx, site, S) => S.canisters(ctx, site),
   },
   {
-    id: 'reinforce', name: 'Reinforcements', commandOnly: true,
+    id: 'reinforce', name: 'Reinforcements', commandOnly: true, safe: true,
     cost: 30, cooldown: 34, lead: 0.4, at: 'self',
     words: ['send', 'bodies'],
     blurb: 'A gunship, and four more of yours off the ramp. They come down beside '
@@ -499,7 +499,7 @@ export const STRATAGEMS = [
     fire: (ctx, site, S) => S.reinforce(ctx, 4),
   },
   {
-    id: 'rally', name: 'Rally', commandOnly: true,
+    id: 'rally', name: 'Rally', commandOnly: true, safe: true,
     cost: 18, cooldown: 20, lead: 0, at: 'self',
     words: ['hold', 'the', 'line'],
     blurb: 'Steady the line. Everyone of yours inside the shout stops breaking and '
@@ -507,7 +507,7 @@ export const STRATAGEMS = [
     fire: (ctx, site, S) => S.rally(ctx, 22),
   },
   {
-    id: 'resupply', name: 'Resupply',
+    id: 'resupply', name: 'Resupply', safe: true,
     cost: 16, cooldown: 24, lead: 2.0, at: 'self',
     words: ['drop', 'supply'],
     blurb: 'A pod on your position: health for you, and it wakes the wounded around '
@@ -708,7 +708,7 @@ export const STRATAGEMS = [
      * B1 has spent 62.5 of support on a B1.
      */
     fire: (ctx, site, S, s) => S.blast(ctx, site, s.radius, 300, 2200,
-      { core: 0.70, shake: 1.4, size: 4.0, crater: 4.2 }),
+      { core: 0.70, shake: 1.4, size: 4.0, crater: 4.2, call: 'driver' }),
   },
 
   /* ══ FLEET ASSETS — released at 230, about wave 14 ════════════════════
@@ -746,7 +746,7 @@ export const STRATAGEMS = [
     cadence: (ctx, site, S) => S.station(ctx, site),
   },
   {
-    id: 'beachhead', name: 'Beachhead', commandOnly: true, earn: RELEASE.DEEP,
+    id: 'beachhead', name: 'Beachhead', commandOnly: true, safe: true, earn: RELEASE.DEEP,
     cost: 35, cooldown: 48, lead: 0.4, at: 'aim',
     words: ['take', 'that', 'ground'],
     blurb: 'Six of yours off a ramp on the ground you painted, up to ninety metres '
@@ -1439,7 +1439,13 @@ export class Stratagems {
      * the player, and for anything that learns to read it. Carried on the
      * pending record rather than as a separate list, because it is a property
      * of the inbound call and dies with it. */
-    const P = { s, site, t: lead, mark: lead > 0.4 ? lead : 0, lock: s.track ? lock : null };
+    /* `radius` and `owner` ride on the record for the men: `Reactions.markOver`
+     * reads every pending call of its own side and gets out of the ring —
+     * "your troops should actively avoid being within the range of an
+     * incoming stratagem after you aimed it". The ring the men run from is
+     * the ring the player sees painted. */
+    const P = { s, site, t: lead, mark: lead > 0.4 ? lead : 0, lock: s.track ? lock : null,
+                radius: s.radius ?? MARK_RADIUS, owner: p };
     this.pending.push(P);
     /* AND NOW SOMETHING IS ACTUALLY COMING. See src/game/Sorties.js: the lead
      * used to be a number with nothing in it, and the whole of note #31's
@@ -1927,7 +1933,12 @@ export class Stratagems {
        * share is on the damage term alone. */
       const plated = (e.A?.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.heavy;
       _v1.subVectors(e.position, site).setY(0.7).normalize().multiplyScalar(force * k);
-      e.applyKnockback(_v1, damage * k * (plated ? hard : 1), p);
+      /* …AND THE BLOW SAYS WHAT IT IS. `kind: 'stratagem'` and the call's id
+       * are what `Enemy.damage` reads under the ARMOUR rule (STRATAGEM_ONLY):
+       * a grenade is a grenade (`opts.kind` = 'force', no call) and a mass
+       * driver is the answer to a walker. Attribution is unchanged. */
+      e.applyKnockback(_v1, damage * k * (plated ? hard : 1), p, false,
+        opts.kind ?? 'stratagem', opts.call ?? null);
     }
     /**
      * AND IT DOES NOT SPARE YOU, OR ANYONE OF YOURS.
@@ -2082,7 +2093,7 @@ export class Stratagems {
           at.y = this._groundAt(c, at);
           this._gunPair(c, from.clone(), at);
           this.blast(c, at, 5.5, 55, 130,
-            { core: 0.25, shake: 0.22, size: 1.2, crater: 0.6 });
+            { core: 0.25, shake: 0.22, size: 1.2, crater: 0.6, call: 'strafe' });
         },
       });
     }
@@ -2208,7 +2219,7 @@ export class Stratagems {
         fn: (from, c) => {
           at.y = this._groundAt(c, at);
           this.blast(c, at, 14, 140, 9,
-            { core: 0.45, shake: 0.34, size: 1.6, crater: 0.25,
+            { core: 0.45, shake: 0.34, size: 1.6, crater: 0.25, call: 'concussion',
               sparkShare: 1 / Math.sqrt(WALL_BURSTS) });
         },
       });
@@ -2338,7 +2349,7 @@ export class Stratagems {
        * Force pool. A pulse that billed `damage()` directly would be the one
        * hit in the game a Force user could not resist. */
       _v1.subVectors(e.position, site).setY(0.2).normalize().multiplyScalar(3);
-      e.applyKnockback(_v1, ION_DAMAGE, this.owner);
+      e.applyKnockback(_v1, ION_DAMAGE, this.owner, false, 'stratagem', 'ion');
       e.stun?.(ION_STUN);
       hit++;
       dealt += Math.max(0, hp0 - e.hp);
@@ -2444,7 +2455,7 @@ export class Stratagems {
         if (!trip) continue;
         this._mines.splice(i, 1);
         this.blast(ctx, m.at, 6.4, 150, 170,
-          { core: 0.4, shake: 0.4, size: 1.5, crater: 1.1, sparkShare: 0.6 });
+          { core: 0.4, shake: 0.4, size: 1.5, crater: 1.1, sparkShare: 0.6, call: 'mines' });
       }
       if (!this._mines.length) { this._mining = false; return false; }
       this._paintCharges(ctx);
@@ -2485,7 +2496,7 @@ export class Stratagems {
         fn: (from, c) => {
           at.y = this._groundAt(c, at);
           this.blast(c, at, 4.4, 55, 105,
-            { core: 0.35, shake: 0.14, size: 0.9, crater: 0.3, hard: CLUSTER_HARD,
+            { core: 0.35, shake: 0.14, size: 0.9, crater: 0.3, hard: CLUSTER_HARD, call: 'cluster',
               sparkShare: 1 / Math.sqrt(CLUSTER_N) });
         },
       });
@@ -2587,7 +2598,7 @@ export class Stratagems {
           at.y = this._groundAt(c, at);
           this._gunPair(c, from.clone(), at);
           this.blast(c, at, 4.5, 70, 130,
-            { core: 0.3, shake: 0.18, size: 1.1, crater: 0.5,
+            { core: 0.3, shake: 0.18, size: 1.1, crater: 0.5, call: 'overwatch',
               sparkShare: 1 / Math.sqrt(STATION_BURSTS) });
         },
       });
@@ -2667,7 +2678,7 @@ export class Stratagems {
        * `applyKnockback` — one door, and it is what answers a Force pool. */
       for (const e of this._near(ctx, _v1, STORM_R)) {
         _v3.subVectors(e.position, _v1).setY(0.6).normalize().multiplyScalar(24);
-        e.applyKnockback(_v3, STORM_DAMAGE, this.owner);
+        e.applyKnockback(_v3, STORM_DAMAGE, this.owner, false, 'stratagem', 'storm');
         e.stun?.(0.5);
         reached.add(e.id ?? e);
       }
@@ -2708,7 +2719,7 @@ export class Stratagems {
         fn: (from, c) => {
           at.y = this._groundAt(c, at);
           this.blast(c, at, 13, 190, 240,
-            { core: 0.35, shake: 0.8, size: 2.6, crater: 1.7,
+            { core: 0.35, shake: 0.8, size: 2.6, crater: 1.7, call: 'bombard',
               sparkShare: 1 / Math.sqrt(SIEGE_N) });
         },
       });

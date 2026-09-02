@@ -104,7 +104,8 @@ import { MORALE, HURT_AT } from './Morale.js';
 import { applyLevy } from './Levy.js';
 import { applyArmour } from './Armour.js';
 import { shakeNerve } from './Nerve.js';
-import { findCasualty, startDrag, braveryOf } from './Reactions.js';
+import { findCasualty, startDrag, braveryOf, findPatient, startHeal, startRally, rallyChance,
+  findRifle, startSalvage, salvageChance, dieOf, BEHAVIOUR, REACTION_STATS } from './Reactions.js';
 import { marchFront } from '../world/Front.js';
 /* THE SHAPE OF ONE SITTING — how long it is and which ground it crosses.
  * A leaf: Session.js imports nothing from here, which is what lets the
@@ -2221,6 +2222,32 @@ export const FORMATIONS = {
       return out.set(file * (3.4 + (k % 2) * 1.1), 0, 1.2 - rank * 2.0);
     },
   },
+  /**
+   * BURY THE FALLEN — see `BURY` above for the whole of it.
+   *
+   * `Backspace`, because the orders' own cluster is full: Digit6 to Digit0,
+   * Minus, Equal, Semicolon and Quote are the nine already, and every letter
+   * on the board is taken (`defaultBindings`). Backspace is free, it is on
+   * the same right hand the cluster is under, and it is a key nobody presses
+   * by accident in a fight — which for an order that takes a third of the
+   * line off the guns is the property that matters. Wheel-reachable too
+   * (`HUD.TERSE.bury`). `buries: true` is what `_troops` and `order` read.
+   *
+   * `advance: false` — the order is PLANTED where it was given, like `digin`
+   * and `cover`: a burial party that followed the commander around the field
+   * would carry its holes with it. The ring is the men NOT detailed, standing
+   * guard over the work at the same radius `circle` uses.
+   */
+  bury: {
+    id: 'bury', name: 'Bury the fallen', key: 'Backspace',
+    blurb: 'A third of them put the dead in the ground; the rest stand over them. It lifts the line, and it stops the moment contact comes.',
+    leash: 1.0, advance: false, fire: 1, buries: true,
+    slot(i, n, k, out) {
+      const a = (i * 2.399963) % TAU;
+      const r = 5.0 + (i % 2) * 1.6 + (k % 2) * 0.8;
+      return out.set(Math.sin(a) * r, 0, Math.cos(a) * r);
+    },
+  },
 };
 
 export const FORMATION_IDS = Object.keys(FORMATIONS);
@@ -2717,6 +2744,8 @@ function h2(b) { return Math.max(b.halfExtents.x, b.halfExtents.z); }
 
 /** Squared plan distance between two positions. */
 function dist2(a, b) { const dx = a.x - b.x, dz = a.z - b.z; return dx * dx + dz * dz; }
+/** Scratch for the burial's target points — nothing allocated per frame. */
+const _bury = new THREE.Vector3();
 
 /**
  * The most a body may exceed its own `speed` while walking back into position.
@@ -2878,6 +2907,69 @@ export function garrisonBand(area) {
  *  a rifleman who is not shooting, and the point of the behaviour is that it
  *  costs the line something. */
 const DRAG_AGAIN = 26;
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  BURY THE FALLEN — an order, not an automatic
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ *   "right now graves for your dead allies automatically appear but maybe it
+ *    should be an active order like your dead troops stay ragdolled dead on
+ *    the field in the manner in which they died but you can give the order to
+ *    your men to bury the dead, some will drag the dead in the near area while
+ *    others will dig holes, the bodies will be dragged into the holes and
+ *    there will be an animation or whatever and then the grave will appear …
+ *    the reason you would give this order is because it significantly
+ *    increases morale (makes sense) … it has to be done quickly as it is
+ *    something you would do when you have time to breathe between waves …
+ *    obviously not all the troops will be doing this just a portion as it is
+ *    still a risky thing to do, maybe it heals your troops too."
+ *
+ * ── WHAT CHANGED, IN ONE SENTENCE EACH ───────────────────────────────────
+ *
+ *   · `onDeath` no longer calls `graves.mark`. It writes a RECORD onto the
+ *     commander (`c.fallen`) and stamps `keepBody` on the corpse, so the man
+ *     lies where he fell, as he fell, past the forty-second ceiling every
+ *     other body has (Enemy.update's dead branch). `Corpses`' budget still
+ *     applies — the farthest kept body is retired into the instanced field
+ *     and the record says `retired` — and two waves after his death the flag
+ *     is lifted and he retires like anybody (`_buryTick`).
+ *   · `FORMATIONS.bury` is the order. A THIRD of the men it reaches (never
+ *     fewer than `min`), chosen by NERVE — the steadiest men, because it is
+ *     the job with the least shooting in it — are detailed; half dig, half
+ *     bear. The rest stand the ring the order's `slot` gives them.
+ *   · Diggers walk to a row of holes laid `back` metres behind the anchor
+ *     and work each one for `dig` seconds on one knee (`_burySteer`);
+ *     `Graves.dig` draws the open hole. Bearers find the nearest unburied
+ *     record inside `look` and drag the body to a dug hole through the SAME
+ *     `startDrag`/`stepDrag` the wounded-man drag uses, with `corpse: true`.
+ *   · A body at its hole is LOWERED over `lower` seconds (the ragdoll driven
+ *     down through `suspend`), the corpse is retired without being laid, the
+ *     hole becomes a mound (`Graves.fill`) and only THEN `graves.mark` — with
+ *     the man's own helmet on the rifle, off `kind` (Graves.js).
+ *   · The reward is `MORALE.BURIED` to every man inside `BURIED_NEAR` and
+ *     `BURIED_SQUAD` to the men who were in his squad when he fell, plus a
+ *     heal of `heal` × maxHp to the detail and that squad.
+ *   · THE RISK: a man carrying a body is not shooting (`stepDrag` stops his
+ *     fire; the fire gate in `_troops` holds the diggers'), and the order
+ *     CANCELS ITSELF THE MOMENT A WAVE ARRIVES — the detail drops what it
+ *     carries and goes back to the line. So it is an order for the breath
+ *     between waves, which is what the player asked for.
+ */
+export const BURY = {
+  /** What share of the men ordered are detailed, and the fewest that is. */
+  share: 1 / 3, min: 2,
+  /** How far from the line a bearer will go for a body, in metres. */
+  look: 40,
+  /** Seconds on one knee per hole, and seconds a body takes to go into it. */
+  dig: 9, lower: 1.5,
+  /** The heal a burial pays the detail and the dead man's squad, of maxHp. */
+  heal: 0.15,
+  /** Where the holes go: this far behind the anchor, this far apart, at most this many. */
+  back: 5, gap: 2.4, maxHoles: 6,
+  /** How many waves a kept body outlasts before it retires like any other. */
+  waves: 2,
+};
 
 /**
  * THE TABLE ITSELF MOVED TO A LEAF — src/game/Morale.js — and is re-exported
@@ -8041,6 +8133,8 @@ export class CommandDirector extends WaveDirector {
        * which is what stops "dig in, charge, dig in" being a way to have the
        * position without ever standing still for it. See `_digTick`. */
       c.digs?.delete(key);
+      if (F.buries) this._buryStart(c, ask.took, squad);
+      else if (c.burial && c.burial.squad === (Number(squad) | 0)) this._buryStop(c, 'order');
     } else {
       const all = this.led(c).filter((t) => t.alive !== false);
       const ask = this._ask(F, c, all, null);
@@ -8052,6 +8146,8 @@ export class CommandDirector extends WaveDirector {
       c.squadPlanted?.clear();
       c.digs?.clear();
       c.formation = id;
+      if (F.buries) this._buryStart(c, ask.took, null);
+      else this._buryStop(c, 'order');
     }
     // A formation that does not advance is planted where the commander was
     // STANDING when the order was given — see `_anchorFor`. So is one the
@@ -9274,6 +9370,15 @@ export class CommandDirector extends WaveDirector {
      * can actually see leading the others out.
      */
     if (t.broken || t.rout) {
+      /* A MAN WHOSE NERVE HAS GONE DOES NOT GO BACK FOR ANYBODY, and this is
+       * where that is SAID rather than merely true: the drag below is under
+       * this branch, so he never reaches it — `dragWhy` and the counter make
+       * the refusal something a check can read. See `BEHAVIOUR.drag`. */
+      e._dragCd = Math.max(0, (e._dragCd ?? 0) - dt);
+      if (e._dragCd <= 0) {
+        e._dragCd = 2.5;
+        if (findCasualty(e, this.world?._frameCtx)) { e.dragWhy = 'broken'; REACTION_STATS.refusedDrag++; }
+      }
       /**
        * …AND SOME ARMIES DO NOT RUN — PLAN.md §4.6's Stand Fast.
        *
@@ -9337,18 +9442,85 @@ export class CommandDirector extends WaveDirector {
      * the player could have picked out from his nameplate. Both are the same
      * shape as the smother gate in Reactions.js and for the same reason.
      */
+    const ctx = this.world?._frameCtx;
     e._dragCd = Math.max(0, (e._dragCd ?? 0) - dt);
     if (!e.reaction && e._dragCd <= 0 && t.morale > MORALE.BREAK + 0.12) {
-      const hurt = findCasualty(e, this.world?._frameCtx);
-      if (hurt && startDrag(e, hurt, this.world?._frameCtx)) {
-        e._dragCd = DRAG_AGAIN;
-        this.world?.notifyFloating?.(e.position, 'MAN DOWN', 0x9bb862);
+      const hurt = findCasualty(e, ctx);
+      if (hurt) {
+        /**
+         * WILL HE? `BEHAVIOUR.drag`: the chance is BOND × NERVE off the die —
+         * a loyal, steady man goes nearly every time (0.6 × 1.34 × 1.24 =
+         * 1.0), a man with little of either about a quarter of the time
+         * (0.6 × 0.62 × 0.78 = 0.29). A man who decided against it does not
+         * decide again for a third of the cooldown, so the field does not
+         * re-roll him sixty times a second until he says yes.
+         */
+        const will = dieOf(e, 6) < clamp(BEHAVIOUR.drag.chance * t.scale('bond') * t.scale('nerve'), 0, 0.98);
+        if (will && startDrag(e, hurt, ctx)) {
+          e._dragCd = DRAG_AGAIN;
+          this.world?.notifyFloating?.(e.position, 'MAN DOWN', 0x9bb862);
+          return;
+        }
+        if (!will) { e.dragWhy = 'unwilling'; REACTION_STATS.refusedDrag++; e._dragCd = DRAG_AGAIN * 0.35; }
+        else e._dragCd = 0.8;
+      } else {
+        /* A refused attempt still costs him the look, or every frame is a scan
+         * of the whole field. */
+        e._dragCd = 0.8;
+      }
+    }
+    /**
+     * THE MEDIC — `t.medic` is `_medicOf`'s, one man per squad. He goes to
+     * the worst-hurt man in reach and works on him; see `Reactions.stepHeal`.
+     * `healWhy` is how the reaction reports back, and the cooldown after a
+     * finished job is longer than after an interrupted one.
+     */
+    if (e.healWhy) { e._medicCd = e.healWhy === 'done' ? BEHAVIOUR.heal.again : BEHAVIOUR.heal.scan; e.healWhy = null; }
+    e._medicCd = Math.max(0, (e._medicCd ?? 0) - dt);
+    if (t.medic && !e.reaction && e._medicCd <= 0 && !t.burying) {
+      const patient = findPatient(e, ctx);
+      if (patient && startHeal(e, patient)) {
+        this.world?.notifyFloating?.(e.position, 'MEDIC', 0x8fffc0);
+        this.log.push({ t: 'medic', name: t.name, on: patient.trooper?.name ?? null, area: this.areaNumber, wave: this.wave });
         return;
       }
-      /* A refused attempt still costs him the look, or every frame is a scan
-       * of the whole field. */
-      if (!hurt) e._dragCd = 0.8;
+      e._medicCd = BEHAVIOUR.heal.scan;
     }
+    /**
+     * THE RALLY TOUCH — a man above `MORALE.RALLY_FROM` with RESOLVE and
+     * BOND enough to pass the die walks to a squadmate sliding toward BREAK
+     * and steadies him. The morale is paid HERE, through `shake`, when the
+     * reaction says he arrived; Reactions.js owns the walk and the word.
+     */
+    e._rallyCd = Math.max(0, (e._rallyCd ?? 0) - dt);
+    if (!e.reaction && e._rallyCd <= 0 && t.morale > MORALE.RALLY_FROM && !t.burying) {
+      e._rallyCd = BEHAVIOUR.rally.scan;
+      const m = this._shakenMate(t, e, c);
+      if (m && dieOf(e, 4) < rallyChance(t)) {
+        const ok = startRally(e, m.body, () => {
+          this.shake(m, 'RALLY_TOUCH', c);
+          this.log.push({ t: 'rallied', name: m.name, by: t.name, area: this.areaNumber, wave: this.wave });
+        });
+        if (ok) { e._rallyCd = BEHAVIOUR.rally.again; return; }
+      }
+    }
+    /**
+     * HIS MATE'S RIFLE — a dead man of his side inside `salvage.reach` with a
+     * heavier weapon, and an eye (AIM) for the difference. See `findRifle`.
+     */
+    e._salvCd = Math.max(0, (e._salvCd ?? 0) - dt);
+    if (!e.reaction && e._salvCd <= 0 && !t.burying) {
+      e._salvCd = BEHAVIOUR.salvage.scan;
+      const corpse = findRifle(e, ctx);
+      if (corpse && dieOf(e, 5) < salvageChance(e) && startSalvage(e, corpse)) {
+        e._salvCd = BEHAVIOUR.salvage.again;
+        this.log.push({ t: 'salvaged', name: t.name, from: corpse.fallenRec?.name ?? null, area: this.areaNumber, wave: this.wave });
+        return;
+      }
+    }
+    /* THE BURIAL DETAIL steers itself — see `_burySteer`. A detailed man
+     * with nothing left to do falls through to the ring like everybody. */
+    if (t.burying && this._burySteer(e, t, c, dt)) return;
     /* The squad's own order if it has one — see `formationFor`. */
     const F = FORMATIONS[this.formationFor(c, e?.cmdSquad, e?.trooper)] || FORMATIONS[DEFAULT_FORMATION];
     /* A live target it is allowed to engage buys it the whole leash; otherwise
@@ -9375,7 +9547,11 @@ export class CommandDirector extends WaveDirector {
      * of men roughly where they were told. Divided, because a higher score is
      * a smaller tolerance. */
     const disc = e.trooper?.scale ? e.trooper.scale('discipline') : 1;
-    const limit = (fighting ? this.leashFor(F, e) : FORM_TOLERANCE) / disc;
+    let limit = (fighting ? this.leashFor(F, e) : FORM_TOLERANCE) / disc;
+    /* CLOSING RANKS — the squad has just lost its leader (`onDeath`), and for
+     * `BEHAVIOUR.ranks.seconds` × his discipline every man holds half the
+     * slack on his mark and runs to it. */
+    if (t._closeRanks > 0) { t._closeRanks -= dt; limit *= BEHAVIOUR.ranks.tighten; }
     if (d <= limit) {
       /* ON HIS MARK. Fighting from it is the whole job; NOT fighting from it is
        * a man standing in the open with nothing to do, and that is 54-63% of
@@ -9423,7 +9599,8 @@ export class CommandDirector extends WaveDirector {
      * exactly one `_move` call — `installCommand` puts it back afterwards — so
      * the rank multipliers on `speed` are never compounded and a boost can never
      * survive the frame that asked for it. */
-    const want = this.followSpeed(e, d);
+    let want = this.followSpeed(e, d);
+    if (t._closeRanks > 0) want = Math.max(want, (e.A?.speed ?? e.speed ?? 4) * BEHAVIOUR.ranks.pace);
     if (want > e.speed) e.speed = want;
   }
 
@@ -9741,12 +9918,29 @@ export class CommandDirector extends WaveDirector {
          * `fell` values rather than re-derived, so the marker and the report
          * can never say two different things.
          */
-        this.world?.graves?.mark?.({
+        /**
+         * …AND THE GROUND DOES NOT KEEP HIM YET. The grave was drawn here,
+         * on the frame he died. It is drawn now by the men who bury him —
+         * see `BURY` — so what this writes is the RECORD a burial will need
+         * (the same fields the marker carries, plus who he was standing
+         * with and what he wore on his head) and a flag on the body that
+         * keeps it lying where it fell until then. `mates` are record ids
+         * and never bodies, for the same reason `killer` is a name.
+         */
+        const rec = {
           name: t.name, rank: t.rankRec.short, unit: t.label,
           killer: killerName(source),
           at: Math.round((this.world?.time || 0) * 10) / 10,
           x: e.position.x, y: e.position.y, z: e.position.z,
-        });
+          kind: t.type, army: t.kind, look: t.look || null,
+          wave: this.wave, area: this.areaNumber,
+          mates: squad.filter((x) => x !== t).map((x) => x.id),
+          e, buried: false, bearer: null, retired: false,
+        };
+        (c.fallen || (c.fallen = [])).push(rec);
+        e.keepBody = true;
+        e.fallenRec = rec;
+        this.log.push({ t: 'unburied', name: t.name, area: this.areaNumber, wave: this.wave });
         this.world?.notify?.(`${t.rankRec.title.toUpperCase()} DOWN`,
           `${t.name} — ${t.kills} kill${t.kills === 1 ? '' : 's'}, ${c.roster.strength} still standing`);
         this.shake(squad, wasLeader ? 'LEADER_FELL' : 'COMRADE_FELL', c);
@@ -9755,8 +9949,17 @@ export class CommandDirector extends WaveDirector {
          * SAY so, which is the half a player can act on, and pay the field
          * promotion that makes taking over worth something. */
         if (wasLeader) {
+          /* …AND THE SQUAD CLOSES UP. `BEHAVIOUR.ranks`: for `seconds` × his
+           * DISCIPLINE every man of the squad holds half the slack on his
+           * slot and moves to it at a run — a squad that has just lost its
+           * sergeant tightens on whoever has it now. `steer` reads it. */
+          for (const m of squad) {
+            if (m === t || !m.alive) continue;
+            m._closeRanks = BEHAVIOUR.ranks.seconds * m.scale('discipline');
+          }
           const heir = this.leaderOf(squad);
           if (heir) {
+            if (heir.body && !heir.body.dead) this.world?.notifyFloating?.(heir.body.position, 'CLOSE UP', 0xffe08a);
             const rose = heir.award(1);
             if (rose) this._promoteTrooper(heir, heir.body);
             this.log.push({ t: 'steps-up', name: heir.name, after: t.name, area: this.areaNumber });
@@ -10942,6 +11145,7 @@ export class CommandDirector extends WaveDirector {
        * different places and hand the frame to whichever loop ran last. */
       const squads = this.squadsOf(c);
       this._gravesFelt(dt, c);
+      this._buryTick(dt, c);
       let i = 0;
       let n = 0;
       for (const sq of squads) n += sq.length;
@@ -10975,6 +11179,7 @@ export class CommandDirector extends WaveDirector {
          * was answering it with the army's answer. */
         const Fk = FORMATIONS[this.formationFor(c, k)] || F;
         const digging = Fk.digs ? this._digTick(dt, c, k, squads[k]) : false;
+        this._medicOf(squads[k]);
         const lead = this.leaderOf(squads[k]);
         const focus = (lead && lead.body && !lead.body.dead) ? lead.body.target : null;
         /* …AND THE LEADER DOES NOT FOLLOW HIMSELF. Stamping the focus on every
@@ -11123,7 +11328,10 @@ export class CommandDirector extends WaveDirector {
            * for a beat. `Fk` is what the squad was told; `e.cmdOrder` is what
            * this man is doing about it yet. */
           const Fe = FORMATIONS[e.cmdOrder] || Fk;
-          if ((Fe.fire <= 0 || digging) && !this._closing) {
+          /* …AND A MAN ON THE BURIAL DETAIL HAS A SHOVEL OR A COLLAR IN HIS
+           * HANDS. `t.burying` is `_buryStart`'s, and it is the risk the
+           * player named: the third of the line doing this is not shooting. */
+          if ((Fe.fire <= 0 || digging || t.burying) && !this._closing) {
             /**
              * …AND A POORLY DISCIPLINED MAN BREAKS IT WHEN HE IS BEING SHOT AT.
              *
@@ -11179,6 +11387,318 @@ export class CommandDirector extends WaveDirector {
    * cooldown the reaction is rate-limited by. A man cannot walk past a grave
    * without being asked, and nothing is asked twice.
    */
+  /**
+   * ONE MEDIC PER SQUAD — the man with the most HARDINESS + RESOLVE in it.
+   * Derived every frame from the living, like `leaderOf`, so the squad always
+   * has one while it has anybody: when he falls the next-best man is the
+   * medic on the same frame. `trooper.medic` is what `steer` and
+   * `Enemy._tickDown` read.
+   */
+  _medicOf(squad) {
+    let best = null, bestS = -1;
+    for (const t of squad) {
+      if (!t.alive || !t.body || t.body.dead) continue;
+      const s = t.attr('hardiness') + t.attr('resolve');
+      if (s > bestS) { bestS = s; best = t; }
+    }
+    for (const t of squad) t.medic = (t === best);
+    return best;
+  }
+
+  /** A squadmate of `t` sliding toward BREAK, with a body inside `rally.look`. */
+  _shakenMate(t, e, c) {
+    const r2 = BEHAVIOUR.rally.look * BEHAVIOUR.rally.look;
+    let best = null, bestM = MORALE.BREAK + 0.1;
+    for (const m of this.squadOf(t, c)) {
+      if (m === t || !m.alive || !m.body || m.body.dead || m.body.downed) continue;
+      if (m.morale >= MORALE.BREAK + 0.1) continue;
+      if (dist2(m.body.position, e.position) > r2) continue;
+      if (m.morale < bestM) { bestM = m.morale; best = m; }
+    }
+    return best;
+  }
+
+  /* ── the burial — see BURY ─────────────────────────────────────────── */
+
+  /** This commander's unburied dead inside `BURY.look` of `at` (his own position by default). */
+  _buryable(c, at = null) {
+    const list = c?.fallen;
+    if (!list?.length) return [];
+    const from = at || c.player?.position || c.anchor;
+    if (!from) return [];
+    const r2 = BURY.look * BURY.look;
+    const out = [];
+    for (const rec of list) {
+      if (rec.buried) continue;
+      const dx = rec.x - from.x, dz = rec.z - from.z;
+      if (dx * dx + dz * dz <= r2) out.push(rec);
+    }
+    return out;
+  }
+
+  /**
+   * DETAIL THE PARTY. `men` are the records the order reached (`_ask.took`),
+   * so a refuser is not detailed. A third by NERVE, highest first; half of
+   * them dig and the rest bear, the odd man digging. The holes are laid in a
+   * row `BURY.back` behind the anchor, across the commander's facing.
+   */
+  _buryStart(c, men, squad) {
+    if (c.burial) this._buryStop(c, 'again');
+    const at = this._anchorFor(FORMATIONS.bury, c, squad)?.pos || c.player?.position || c.anchor;
+    if (!at) return false;
+    const dead = this._buryable(c, at);
+    /* NOBODY TO BURY. The order still lands — the men stand the ring, which
+     * is a legal thing to ask for — and the field says why nobody moved. */
+    if (!dead.length) {
+      if (c === this.commander) this.world?.notify?.('NOBODY TO BURY', `none of ours is lying within ${BURY.look} m of here`);
+      return false;
+    }
+    const able = men.filter((t) => t.alive !== false && t.body && !t.body.dead && !t.body.downed);
+    if (!able.length) return false;
+    able.sort((a, b) => b.attr('nerve') - a.attr('nerve'));
+    const n = Math.min(able.length, Math.max(BURY.min, Math.round(able.length * BURY.share)));
+    const detail = able.slice(0, n);
+    const diggers = Math.ceil(n / 2);
+    detail.forEach((t, i) => { t.burying = i < diggers ? 'dig' : 'bear'; t._bearing = null; t._carrying = false; });
+    /* THE ROW. Behind the anchor is away from where the commander is looking;
+     * a Jedi with no facing (a bench) buries them to the south. */
+    const p = c.player;
+    let bx = p?.aimDir ? -p.aimDir.x : 0, bz = p?.aimDir ? -p.aimDir.z : 1;
+    const bl = Math.hypot(bx, bz) || 1;
+    bx /= bl; bz /= bl;
+    const ax = -bz, az = bx;
+    const k = Math.min(dead.length, BURY.maxHoles);
+    const T = this.world?.terrain;
+    const holes = [];
+    for (let i = 0; i < k; i++) {
+      const off = (i - (k - 1) / 2) * BURY.gap;
+      const x = at.x + bx * BURY.back + ax * off, z = at.z + bz * BURY.back + az * off;
+      holes.push({ x, z, y: T?.height ? T.height(x, z) : (at.y ?? 0), t: 0, dug: false, digger: null,
+                   claim: null, body: null, lower: 0, filled: false, mesh: null });
+    }
+    c.burial = { t: 0, wave: this.wave, active0: this.active, was: c.formation === 'bury' ? DEFAULT_FORMATION : c.formation,
+                 squad: squad == null ? null : (Number(squad) | 0), at: at.clone(), holes, detail, done: 0 };
+    const bearers = n - diggers;
+    this.log.push({ t: 'bury', n, dig: diggers, bear: bearers, dead: dead.length, area: this.areaNumber, wave: this.wave });
+    if (c === this.commander) {
+      this.world?.notify?.('BURY THE FALLEN',
+        `${n} detailed — ${diggers} digging, ${bearers} bringing in ${dead.length} of ours. They are off the guns until it is done.`);
+    }
+    return true;
+  }
+
+  /** Everybody back on the line. The holes not yet filled are abandoned. */
+  _buryStop(c, why) {
+    const B = c?.burial;
+    if (!B) return false;
+    for (const t of this.led(c)) {
+      if (!t.burying) continue;
+      t.burying = null;
+      t._carrying = false;
+      const rec = t._bearing;
+      if (rec && !rec.buried) rec.bearer = null;
+      t._bearing = null;
+      const e = t.body;
+      if (e?.reaction?.corpse) {
+        if (e.reaction.casualty) e.reaction.casualty.beingDragged = null;
+        e.reaction = null;
+      }
+    }
+    for (const h of B.holes) {
+      if (h.body && !h.filled) {
+        /* A man half in the ground when contact came stays there; the hole
+         * is filled over him on the spot, because leaving a body in an open
+         * grave is worse than any version of finishing. */
+        this._buryComplete(c, h, h.body, null);
+      } else if (!h.filled) this.world?.graves?.abandon?.(h);
+    }
+    if (c.formation === 'bury') c.formation = FORMATIONS[B.was] ? B.was : DEFAULT_FORMATION;
+    if (B.squad != null && c.squadOrders?.get(String(B.squad)) === 'bury') c.squadOrders.set(String(B.squad), B.was);
+    c.burial = null;
+    this.log.push({ t: 'bury-end', why, buried: B.done, area: this.areaNumber, wave: this.wave });
+    if (c === this.commander && why !== 'order' && why !== 'again') {
+      this.world?.notify?.(why === 'contact' ? 'CONTACT — THE DEAD CAN WAIT' : 'THE DEAD ARE BURIED',
+        why === 'contact' ? `${B.done} in the ground; the detail drops the rest and comes back to the line`
+                          : `${B.done} of ours under a marker. The line is better for it.`);
+    }
+    return true;
+  }
+
+  /**
+   * ONE FRAME OF THE BURIAL: the two-wave retirement of kept bodies, the
+   * contact rule, and the lowering of any body at its hole.
+   */
+  _buryTick(dt, c) {
+    const list = c?.fallen;
+    if (list?.length) {
+      for (const rec of list) {
+        if (rec.buried || rec.retired) continue;
+        const e = rec.e;
+        if (!e || e.disposed) { rec.retired = true; rec.e = null; continue; }
+        if (e.keepBody && this.wave >= rec.wave + BURY.waves) { e.keepBody = false; rec.retired = true; }
+      }
+    }
+    const B = c?.burial;
+    if (!B) return;
+    B.t += dt;
+    /* A WAVE ARRIVED. `active` goes true when `start` runs — see Waves.js —
+     * and an order given in the intermission is over the moment it does. */
+    if (this.active && (this.wave !== B.wave || !B.active0)) { this._buryStop(c, 'contact'); return; }
+    for (const h of B.holes) {
+      if (!h.body || h.filled) continue;
+      const rec = h.body;
+      const e = rec.e;
+      h.lower += dt;
+      if (e && !e.disposed && e.actor?.ragdolled) {
+        e.dragLease = 0.5;
+        const k = Math.min(1, h.lower / BURY.lower);
+        _bury.set(h.x, h.y - 0.9 * k, h.z);
+        e.actor.suspend(_bury, dt, 3.0);
+        e.actor.centre?.(e.position);
+      }
+      if (h.lower >= BURY.lower) this._buryComplete(c, h, rec, h.claimBy || null);
+    }
+    if (!this._buryable(c, B.at).some((r) => !r.buried)) this._buryStop(c, 'done');
+  }
+
+  /**
+   * THE GRAVE APPEARS. The body is retired without being laid (`_noLay` —
+   * the instanced field must not draw him on top of his own mound), the hole
+   * becomes a mound, the record is marked with `dug`, and the reward is paid.
+   */
+  _buryComplete(c, h, rec, bearer) {
+    if (rec.buried) return;
+    const e = rec.e;
+    if (e && !e.disposed) {
+      e.keepBody = false;
+      e._noLay = true;
+      e.beingDragged = null;
+      e.dying = 1e6;
+      if (e.rig?.root) e.rig.root.visible = false;
+    }
+    rec.buried = true;
+    rec.bearer = null;
+    rec.e = null;
+    h.filled = true;
+    h.body = null;
+    const G = this.world?.graves;
+    G?.fill?.(h);
+    G?.mark?.({ name: rec.name, rank: rec.rank, unit: rec.unit, killer: rec.killer, at: rec.at,
+                x: h.x, y: h.y, z: h.z, kind: rec.kind, army: rec.army, look: rec.look, dug: true });
+    const B = c.burial;
+    if (B) B.done++;
+    /* THE REWARD — see MORALE.BURIED. */
+    const near = [], mates = [];
+    const r2 = MORALE.BURIED_NEAR * MORALE.BURIED_NEAR;
+    for (const t of this.led(c)) {
+      if (!t.alive) continue;
+      const b = t.body;
+      const mate = rec.mates?.includes(t.id);
+      if (mate) mates.push(t);
+      else if (b && !b.dead && dist2(b.position, h) <= r2) near.push(t);
+      if (b && !b.dead && (mate || t.burying)) b.hp = Math.min(b.maxHp, b.hp + b.maxHp * BURY.heal);
+    }
+    this.shake(near, 'BURIED', c);
+    this.shake(mates, 'BURIED_SQUAD', c);
+    this.buried = (this.buried | 0) + 1;
+    this.log.push({ t: 'buried', name: rec.name, by: bearer?.trooper?.name ?? null, near: near.length, mates: mates.length,
+                    area: this.areaNumber, wave: this.wave, at: Math.round((this.world?.time || 0) * 10) / 10 });
+    if (c === this.commander) {
+      this.world?.notify?.(`${rec.rank} ${rec.name} BURIED`,
+        `${mates.length} of his squad and ${near.length} others stood for it`);
+    }
+  }
+
+  /**
+   * WHAT A DETAILED MAN DOES THIS FRAME. Returns true while the detail owns
+   * his feet; false hands him back to the ring.
+   */
+  _burySteer(e, t, c, dt) {
+    const B = c?.burial;
+    if (!B) { t.burying = null; return false; }
+    const ctx = this.world?._frameCtx;
+    const walkTo = (x, z, reach, pace = 1.1) => {
+      const dx = x - e.position.x, dz = z - e.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d <= reach) return true;
+      if (!e.wish) e.wish = new THREE.Vector3();
+      e.wish.set(dx / d, 0, dz / d);
+      if (!e.toTarget) e.toTarget = new THREE.Vector3();
+      e.toTarget.copy(e.wish);
+      const want = (e.A?.speed ?? e.speed ?? 4) * pace;
+      if (want > e.speed) e.speed = want;
+      this._crouch(e, dt, 0);
+      return false;
+    };
+    if (t.burying === 'dig') {
+      let h = B.holes.find((x) => x.digger === t && !x.dug);
+      if (!h) { h = B.holes.find((x) => !x.digger && !x.dug); if (h) h.digger = t; }
+      if (!h) { t.burying = 'bear'; return this._burySteer(e, t, c, dt); }
+      if (!walkTo(h.x, h.z, 1.6)) return true;
+      /* ON ONE KNEE, DIGGING. The crouch is the work animation the rig has;
+       * the hole opens in the ground when the seconds are paid. */
+      e.wish = null;
+      this._crouch(e, dt, 0.7);
+      h.t += dt;
+      if (h.t >= BURY.dig) {
+        h.dug = true;
+        h.digger = null;
+        this.world?.graves?.dig?.(h);
+        this.log.push({ t: 'grave-dug', name: t.name, area: this.areaNumber, wave: this.wave });
+      }
+      return true;
+    }
+    if (t.burying === 'bear') {
+      if (e.reaction) return true;
+      let rec = t._bearing;
+      if (!rec || rec.buried || (rec.bearer && rec.bearer !== t)) {
+        rec = null;
+        let bestD = Infinity;
+        for (const r of this._buryable(c, B.at)) {
+          if (r.bearer && r.bearer.alive !== false && r.bearer.burying) continue;
+          if (B.holes.some((x) => x.body === r)) continue;
+          const d = dist2(r, e.position);
+          if (d < bestD) { bestD = d; rec = r; }
+        }
+        if (!rec) { t.burying = null; return false; }
+        rec.bearer = t;
+        t._bearing = rec;
+        t._carrying = false;
+      }
+      const hole = B.holes.find((x) => x.dug && !x.body && !x.filled && (!x.claim || x.claim === rec || x.claim.buried));
+      const live = rec.e && !rec.e.disposed && !rec.retired && rec.e.actor?.ragdolled;
+      if (live) {
+        const body = rec.e;
+        if (!hole) {
+          /* Nothing dug yet: he goes to the body and waits over it, low. */
+          if (walkTo(body.position.x, body.position.z, 2.0)) { e.wish = null; this._crouch(e, dt, 0.5); }
+          return true;
+        }
+        hole.claim = rec;
+        if (body.beingDragged && body.beingDragged !== e) return true;
+        _bury.set(hole.x, hole.y, hole.z);
+        startDrag(e, body, ctx, { corpse: true, to: _bury, reach: 1.4,
+          onArrive: () => { hole.body = rec; hole.lower = 0; hole.claimBy = e; body.beingDragged = e; body.dragLease = 0.5; } });
+        return true;
+      }
+      /* NO BODY TO DRAG — he was retired into the field, or was never drawn
+       * (a record from before the ground changed). The bearer walks to
+       * where he fell, picks him up, and carries him to the hole. */
+      if (!t._carrying) {
+        if (!walkTo(rec.x, rec.z, 1.5)) return true;
+        t._carrying = true;
+      }
+      if (!hole) { e.wish = null; this._crouch(e, dt, 0.5); return true; }
+      hole.claim = rec;
+      if (!walkTo(hole.x, hole.z, 1.4, 0.55)) { this._crouch(e, dt, 0.3); return true; }
+      t._carrying = false;
+      this._buryComplete(c, hole, rec, e);
+      return true;
+    }
+    t.burying = null;
+    return false;
+  }
+
   _gravesFelt(dt, c) {
     const graves = this.world?.graves?.entries;
     if (!graves?.length) return;
@@ -11199,7 +11719,8 @@ export class CommandDirector extends WaveDirector {
        * hand him one. The name is the only identity a grave keeps. */
       if (g.name === t.name) continue;
       t._graveT = MORALE.GRAVE_COOLDOWN;
-      this.shake(t, 'PASSED_GRAVE', c);
+      /* HIS OWN SQUAD'S WORK, OR A MAN THEY LEFT. See `MORALE.PASSED_OWN_GRAVE`. */
+      this.shake(t, g.dug ? 'PASSED_OWN_GRAVE' : 'PASSED_GRAVE', c);
       return;
     }
   }

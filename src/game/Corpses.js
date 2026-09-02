@@ -347,6 +347,11 @@ export class Corpses {
      * where it ends up; a body the world has already torn down keeps the rest
      * taken at `take` or at settle, which is the whole reason it is kept. */
     const e = c.e;
+    /* A MAN THE LINE PUT IN THE GROUND IS NOT LAID ON TOP OF IT. `_noLay` is
+     * `CommandDirector._buryComplete`'s: the grave marker stands where he
+     * went in, and an instanced sprawl on the same spot would be the body
+     * lying beside its own grave. He was buried; that is the whole record. */
+    if (e?._noLay) return false;
     if (e && !e.disposed) { if (restOf(e, this.world, c.rest)) c.hasRest = true; }
     if (!c.hasRest) return false;
     const f = this.world?.fallen;
@@ -378,7 +383,13 @@ export class Corpses {
     const near = 1 / (1 + d * 0.08);
     const recent = 1 / (1 + c.t * 0.35);
     const ahead = d > 0.001 ? (dx * fwd.x + dz * fwd.z) / d : 1;
-    return near * recent * (ahead > 0 ? 1 : 0.5);
+    /* A NAMED MAN WAITING TO BE BURIED OUTRANKS THE HORDE — `keepBody` is
+     * Command's (see BURY) — so when the budget is over it is the droids that
+     * go into the instanced field first, and the farthest of the kept only
+     * after every one of them. Two, because `near × recent × ahead` is at
+     * most 1 and the order of the kept among themselves still has to be by
+     * distance. */
+    return near * recent * (ahead > 0 ? 1 : 0.5) + (c.e.keepBody ? 2 : 0);
   }
 
   update(dt) {
@@ -507,7 +518,14 @@ export class Corpses {
     const live = this.list.filter((c) => c.sink <= 0);
     if (live.length > this.budget) {
       live.sort((a, b) => this.worth(a, eye, fwd) - this.worth(b, eye, fwd));
-      for (let i = 0; i < live.length - this.budget; i++) live[i].sink = SINK_TIME;
+      for (let i = 0; i < live.length - this.budget; i++) {
+        const c = live[i];
+        c.sink = SINK_TIME;
+        /* THE CAP RETIRES A KEPT BODY INTO THE INSTANCED FIELD, and says so on
+         * the record: a bearer sent for him walks to the spot and carries
+         * rather than drags. See `Command._burySteer`. */
+        if (c.e.keepBody) { c.e.keepBody = false; if (c.e.fallenRec) c.e.fallenRec.retired = true; }
+      }
     }
   }
 

@@ -613,6 +613,15 @@ export const DEFAULT_SETTINGS = {
    * makes "this has no control" a question anybody can ask.
    */
   commandVersus: false,
+  /**
+   * ARMOUR — "certain super enemies only be able to be killed by certain
+   * stratagems … Maybe make this a setting you can toggle while we see if
+   * it's a good idea." Off, so nothing changed until somebody turns it on.
+   * Read by `Enemy.damage` (the one door every blow goes through) against
+   * `Enemy.STRATAGEM_ONLY`; a RULE about who can be hurt, so it is the
+   * host's — Net.SESSION_KEYS.
+   */
+  stratagemOnly: false,
   /* ── the commander battle (MODES.versus) ───────────────────────────────
    *
    * All four are the HOST's, and they are on `Net.SESSION_KEYS` for that
@@ -1065,6 +1074,7 @@ export const SETTING_READERS = {
    * and `MODES[mode].alwaysVersus` for the mode that IS a meeting — so the
    * reader this setting has is the half that mentions it. */
   commandVersus:   ['game/Command.js', '!!s.commandVersus'],
+  stratagemOnly:   ['game/Enemy.js', 'settings?.stratagemOnly'],
   /* The meeting's four, and `versusCommandConfig` is the only reader of any of
    * them — the same rule `commandConfig` and `sandboxConfig` are held to. */
   versusStrength:  ['game/Command.js', 's.versusStrength'],
@@ -9125,6 +9135,9 @@ export class Menu {
     this._range('opt-ally-army', -1, ARMY_IDS.length - 1, 1, 'allyArmy');
     this._slider('opt-ally-army', 'allyArmy', v => contingentArmyName(Math.round(v)));
     this._check('opt-command-versus', 'commandVersus');
+    /* ARMOUR. Read at the moment a blow lands, so it takes effect on the next
+     * hit without a restart. */
+    this._check('opt-stratagem-only', 'stratagemOnly');
     this._syncAlliesRow();
     this._syncVersusBox();
     /**

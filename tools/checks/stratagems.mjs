@@ -1292,7 +1292,9 @@ export async function run({ check, assert, THREE: T }) {
       'a trooper of yours three metres from the centre of your own orbital strike was unharmed');
     assert(shaken.length,
       'the line was never told — `onFriendlyHit` did not fire, so nothing can shake');
-    assert(/^(force|lightning|choke|grip|rend)$/.test(shaken[0].kind ?? ''),
+    /* `stratagem` is on `Enemy.FORCE_KINDS` now — a support call is the same
+     * deliberate hand as a shove, and it says which. */
+    assert(/^(force|lightning|choke|grip|rend|stratagem)$/.test(shaken[0].kind ?? ''),
       `the hit arrived as kind "${shaken[0].kind}", which Command reads as an accident rather `
       + 'than as a decision — MORALE.BETRAYED will not fire');
     return `3 m from the centre: ${(hp0 - ally.hp).toFixed(0)} hp off one of yours, `
