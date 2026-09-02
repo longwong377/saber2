@@ -855,6 +855,21 @@ float slotBig(float i) {
   return (i < 1.5 || (i > 3.5 && i < 5.5) || i > 7.5) ? 1.0 : 0.62;
 }
 
+/* A slot by number. A chain of constant indices rather than uSlot[int(i)],
+ * because ESSL 1.00 lets a fragment index an array only by a constant and
+ * this literal has to compile under both versions the harness can hand it. */
+vec4 slotAt(float i) {
+  if (i < 0.5) return uSlot[0];
+  if (i < 1.5) return uSlot[1];
+  if (i < 2.5) return uSlot[2];
+  if (i < 3.5) return uSlot[3];
+  if (i < 4.5) return uSlot[4];
+  if (i < 5.5) return uSlot[5];
+  if (i < 6.5) return uSlot[6];
+  if (i < 7.5) return uSlot[7];
+  return uSlot[8];
+}
+
 /* When slot i goes back into hyperspace. Its arrival rides in uSlot. */
 float slotLeave(float i) {
   return T_JUMPOUT + hash11(i * 3.7 + 1.1) * 2.8;
@@ -1106,7 +1121,7 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
       float oBase = side < 0.5 ? 4.0 : 0.0;
       float dst = oBase + floor(mod(fi * 1.7 + 1.0, 4.0));
       if (abs(dst - victim) < 0.5 && tc > T_BREAK) dst = oBase + mod(dst - oBase + 1.0, 4.0);
-      vec4 D = uSlot[int(dst)];
+      vec4 D = slotAt(dst);
       if (tc >= D.w + 1.1) {
         vec2 b = D.xy;
         bool dVic = abs(dst - victim) < 0.5;
@@ -1224,7 +1239,7 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
     if (abs(tgt - victim) < 0.5) tgt = tgt + 1.0;
     if (bAge > 0.0 && bAge < 11.7) {
     vec4 Fs = uSide < 0.5 ? uSlot[2] : uSlot[7];
-    vec4 Ts = uSlot[int(tgt)];
+    vec4 Ts = slotAt(tgt);
     vec2 pF = Fs.xy, pT = Ts.xy;
     float hT = Ts.z;
     if (bAge < 9.0) {
