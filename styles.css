@@ -2312,6 +2312,16 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
 .med-logo .wordmark{max-width:min(340px,52vw);height:auto}
 #meditation.over-world .med-plate,
 #meditation.over-world .med-logo{display:none}
+/* …AND THE BODY STAYS IN THE FRAME. "you should adjust the holocron menu so
+   that the player model is still visible, or make it more transparent." The
+   rack is not made transparent — the plates carry their own panel fill so the
+   type reads on any frame (backdrop.mjs holds that) — it is moved: over the
+   world the whole Holocron docks to the right and gives up the left third of
+   the screen, and the camera (CameraRig.beginMeditationShot) puts the seated
+   figure there. Layout only: nothing here paints, so the 18% scrim is still
+   the whole of what stands between the player and the place they knelt in. */
+#meditation.over-world{justify-content:flex-end;padding-right:1.5vw}
+#meditation.over-world .med-wrap{width:min(880px,64vw)}
 /* And still NO BLUR — a blur is the one operator that takes a place away,
    and the place is the point. */
 /* POSITIONED, so it sits over `.med-plate`. `.menu-bg` is absolute with a

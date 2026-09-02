@@ -1351,6 +1351,28 @@ const pause = () => screens.pause();
  */
 const COMMUNE = { hold: 1.0, clear: 14, still: 0.6 };
 
+/**
+ * THE BODY SITS. "when you use the holocron in game you should sit cross
+ * legged and meditate as if you're connecting to the force" — and it never
+ * did: the commune was the crouch key, so the figure crouched. The pose is
+ * `Player.setMeditation` (which pose is `settings.meditation`, the Jedi tab's
+ * own row), fed from HERE because this is the one place that knows the key is
+ * being held and the Holocron is up: the ring's fill drives the ease in
+ * during the hold, the open Holocron holds it at 1, and while the world is
+ * stopped under the Holocron `meditateFrame` gives the seated body the frame
+ * `world.update` no longer does. The camera's part is `beginMeditationShot`.
+ */
+function driveMeditation(dt, want) {
+  const p = world?.player;
+  if (!p) return;
+  if (screens.state === 'meditation') {
+    p.setMeditation(1, settings.meditation);
+    p.meditateFrame(dt, world.time);
+    return;
+  }
+  p.setMeditation(want, settings.meditation);
+}
+
 const communePrompt = {
   el: document.getElementById('commune'),
   fill: document.getElementById('commune-fill'),
@@ -1390,6 +1412,7 @@ function communeTick(dt) {
   const el = communePrompt.el;
   const ok = canCommune();
   if (!ok) {
+    driveMeditation(dt, 0);
     communePrompt.charge = 0;
     if (communePrompt.shown && el) { el.classList.add('hidden'); communePrompt.shown = false; }
     return;
@@ -1414,6 +1437,8 @@ function communeTick(dt) {
   if (communePrompt.fill) {
     communePrompt.fill.style.height = `${Math.round(100 * clamp(communePrompt.charge / COMMUNE.hold, 0, 1))}%`;
   }
+  // The body sinks with the ring — see driveMeditation.
+  driveMeditation(dt, clamp(communePrompt.charge / COMMUNE.hold, 0, 1));
   if (communePrompt.charge >= COMMUNE.hold) {
     communePrompt.charge = 0;
     if (el) { el.classList.add('hidden'); communePrompt.shown = false; }
@@ -1463,6 +1488,11 @@ function openMeditation() {
     // Through Screens, exactly as the draft goes: the world stops, the overlay
     // is remembered, and a throw anywhere inside lands on the pause card.
     screens.take('meditation', () => tree.show(communeContext(true)));
+    /* The body is already most of the way down (the hold drove it); the
+     * camera pulls back and round so the seated figure is in the clear third
+     * of the frame the docked Holocron leaves. See CameraRig. */
+    world.player?.setMeditation(1, settings.meditation);
+    world.player?.camera?.beginMeditationShot?.();
     return;
   }
   // Between runs there is no world to stop and no Insight to spend. It is a
@@ -1476,6 +1506,10 @@ function closeMeditation() {
   // The overlay is forgotten FIRST, or resume() would put the Holocron straight
   // back on the screen. Same idiom as answering a draft.
   tree.hide();
+  // …and the body stands up over MEDITATION_EASE, on the playing frames that
+  // follow; the camera is handed back at once.
+  world.player?.setMeditation(0);
+  world.player?.camera?.endMeditationShot?.();
   screens.overlay = null;
   screens.state = 'paused';
   resume();

@@ -1215,6 +1215,7 @@ export const LOCAL_KEYS = {
   colorIndex: 'your crystal', lightningColor: 'your lightning', hiltStyle: 'your hilt',
   species: 'your face', face: 'your face', robeCut: 'your clothes', robeIndex: 'your clothes',
   wardrobe: 'your clothes', skinIndex: 'your skin', hairIndex: 'your hair', build: 'your build',
+  meditation: 'how YOUR body sits when you commune; nobody else\'s knees',
   bladeLength: 'your blade — re-clamped against the SESSION\'s ceiling, see worldSettings',
   coreWidth: 'your blade',
   troopNames: 'whose name is over whose head, on YOUR screen',

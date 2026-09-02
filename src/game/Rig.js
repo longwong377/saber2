@@ -1963,3 +1963,257 @@ export class BipedAnimator {
 
   setFacing(f) { this._facing = f; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE MEDITATION — how a body sits when it communes                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "at the start of this project I asked that when you use the holocron in
+ * game you should sit cross legged and meditate as if you're connecting to
+ * the force… I doubt the character is actually sitting on the floor cross
+ * legged. Also you should be able to choose from a couple different
+ * meditation poses in the Jedi customization screen, the options should be
+ * sit crossed legged on the floor, take a knee and bow your head, stay
+ * standing and raise your hands high in the air holding them together in
+ * prayer, and any others you can think of."
+ *
+ * They were right to doubt it. The commune was a crouch key held for a
+ * second — the body crouched, because that is what the key does, and the
+ * Holocron came up over a Jedi standing in a half-squat. Nothing in the tree
+ * could sit: every pose in this game is SOLVED (there are no clips, see the
+ * header), and the solver is a gait, which knows how to put feet on the
+ * ground and a pelvis over them and nothing else.
+ *
+ * So this is a second, small solver for a body that is not going anywhere.
+ * Each pose is a handful of targets in the CHARACTER'S OWN FRAME — x to the
+ * figure's left, y up, z the way it faces, all in metres of the reference
+ * figure and scaled by the rig — and the same two-bone IK the gait uses puts
+ * the limbs on them: ankles for the legs with a knee pole that says which way
+ * the knee folds, wrists for the arms with an elbow pole, and the feet and
+ * hands aimed afterwards. The pelvis is simply PLACED, which is the one
+ * thing the gait can never do: a gait's pelvis hangs off its feet, and a
+ * sitting body's feet hang off its pelvis.
+ *
+ * BLENDED, NOT SWITCHED. `blend` is 0..1 and the pose is applied at full
+ * strength and then slerped back toward whatever the gait had just written,
+ * bone by bone, so the ease in and out is a property of the caller's clock
+ * and not of the pose — the same figure sinks into the lotus over the
+ * second the commune key is held, and stands back up out of it over the
+ * same tenths of a second when the Holocron closes. At blend 0 nothing is
+ * touched at all.
+ *
+ * The numbers were measured on the reference figure (1.69 m, feet on y=0):
+ * the lotus puts the hip joint 0.16 m up and the crown at 0.98; the kneel's
+ * hip is 0.46 up over the grounded knee; the prayer keeps the gait's own
+ * standing pelvis and puts the joined hands 1.93 m up. tools/checks/
+ * meditation.mjs prints each pose's hip, hands, feet and head and holds the
+ * lotus's pelvis under 0.35 m — a figure "sitting" with its pelvis at hip
+ * height is exactly the defect the player described.
+ */
+export const MEDITATION_POSES = [
+  { id: 'lotus', name: 'Lotus',
+    blurb: 'Cross-legged on the floor, hands resting on the knees.' },
+  { id: 'kneel', name: 'Take a knee',
+    blurb: 'One knee to the ground, head bowed, an arm across the raised knee.' },
+  { id: 'pray', name: 'Supplication',
+    blurb: 'Standing, arms raised high, hands joined above the head.' },
+  { id: 'float', name: 'Levitation',
+    blurb: "Cross-legged, held a hand's breadth off the ground, drifting." },
+  { id: 'prostrate', name: 'Prostration',
+    blurb: 'Both knees down, brow to the floor, arms stretched out ahead.' },
+];
+
+/** The pose record, or the lotus for an id the table does not carry. */
+export function meditationPose(id) {
+  return MEDITATION_POSES.find((p) => p.id === id) || MEDITATION_POSES[0];
+}
+
+const _md1 = new THREE.Vector3(), _md2 = new THREE.Vector3(), _md3 = new THREE.Vector3();
+const _md4 = new THREE.Vector3(), _md5 = new THREE.Vector3(), _mdF = new THREE.Vector3();
+const _mdL = new THREE.Vector3(), _mdO = new THREE.Vector3();
+const _mdq = new THREE.Quaternion(), _mdq2 = new THREE.Quaternion();
+const _mde = new THREE.Euler();
+const _mdSnap = new Map();
+const _ZERO_V = new THREE.Vector3();
+
+/**
+ * THE TARGETS, per pose, in the character frame and reference metres.
+ *
+ * `hip` is the pelvis; `lean` bends the spine and chest forward (radians,
+ * split between them); `bow` pitches the head. Each leg is an ankle, a knee
+ * pole and a toe direction; each arm is a wrist, an elbow pole and a hand
+ * direction. `arms` may be a function of the solved knees, because a hand
+ * resting on a knee has to be put where the knee ended up rather than where
+ * a table guessed it would be. `t` is a clock for the poses that breathe.
+ */
+const POSE_SPECS = {
+  lotus: (t) => ({
+    hip: [0, 0.16, 0.02], hipPitch: 0.06, lean: 0.10, bow: 0.22,
+    legs: {
+      L: { ankle: [-0.13, 0.085, 0.31], pole: [0.62, 0.12, 0.30], toe: [-0.75, -0.25, 0.60] },
+      R: { ankle: [0.12, 0.13, 0.27], pole: [-0.62, 0.12, 0.30], toe: [0.75, -0.25, 0.60] },
+    },
+    arms: (knee) => ({
+      L: { wrist: [knee.L.x + 0.02, knee.L.y + 0.05, knee.L.z + 0.03], pole: [0.55, 0.35, -0.25], hand: [0.15, -0.35, 0.92] },
+      R: { wrist: [knee.R.x - 0.02, knee.R.y + 0.05, knee.R.z + 0.03], pole: [-0.55, 0.35, -0.25], hand: [-0.15, -0.35, 0.92] },
+    }),
+    breathe: 0.006 * Math.sin(t * 1.9),
+  }),
+  float: (t) => {
+    const l = POSE_SPECS.lotus(t);
+    const rise = 0.20 + 0.025 * Math.sin(t * 1.3);
+    l.hip[1] += rise;
+    l.legs.L.ankle[1] += rise; l.legs.R.ankle[1] += rise;
+    l.legs.L.pole[1] += rise; l.legs.R.pole[1] += rise;
+    l.lean = 0.02; l.bow = 0.10;
+    /* Palms up, held out over the knees rather than resting on them. */
+    const arms = l.arms;
+    l.arms = (knee) => {
+      const a = arms(knee);
+      a.L.wrist[1] += 0.06; a.R.wrist[1] += 0.06;
+      a.L.hand = [0.10, 0.35, 0.93]; a.R.hand = [-0.10, 0.35, 0.93];
+      return a;
+    };
+    return l;
+  },
+  kneel: (t) => ({
+    hip: [0, 0.47, -0.06], hipPitch: 0.18, lean: 0.34, bow: 0.72,
+    legs: {
+      L: { ankle: [0.15, 0.07, 0.31], pole: [0.15, 0.75, 0.62], toe: [0.05, -0.2, 1] },
+      R: { ankle: [-0.12, 0.07, -0.47], pole: [-0.12, 0.30, 0.55], toe: [-0.05, -0.55, -0.85] },
+    },
+    arms: (knee) => ({
+      L: { wrist: [knee.L.x + 0.04, knee.L.y + 0.06, knee.L.z + 0.02], pole: [0.55, 0.55, -0.10], hand: [0.1, -0.5, 0.86] },
+      R: { wrist: [-0.24, 0.22, 0.02], pole: [-0.60, 0.50, -0.25], hand: [-0.2, -0.95, 0.2] },
+    }),
+    breathe: 0.004 * Math.sin(t * 1.9),
+  }),
+  pray: (t) => ({
+    hip: null, hipPitch: -0.04, lean: -0.10, bow: -0.36,
+    legs: {
+      L: { ankle: [0.10, 0.072, 0.0], pole: [0.10, 0.45, 0.6], toe: [0.08, -0.2, 1] },
+      R: { ankle: [-0.10, 0.072, 0.0], pole: [-0.10, 0.45, 0.6], toe: [-0.08, -0.2, 1] },
+    },
+    arms: () => ({
+      L: { wrist: [0.035, 1.93, 0.04], pole: [0.75, 1.55, -0.15], hand: [-0.05, 1, 0.02] },
+      R: { wrist: [-0.035, 1.93, 0.04], pole: [-0.75, 1.55, -0.15], hand: [0.05, 1, 0.02] },
+    }),
+    breathe: 0.008 * Math.sin(t * 1.9),
+  }),
+  prostrate: (t) => ({
+    hip: [0, 0.34, -0.12], hipPitch: 0.55, lean: 1.15, bow: 0.55,
+    legs: {
+      L: { ankle: [0.11, 0.07, -0.58], pole: [0.11, 0.35, 0.5], toe: [0.05, -0.55, -0.85] },
+      R: { ankle: [-0.11, 0.07, -0.58], pole: [-0.11, 0.35, 0.5], toe: [-0.05, -0.55, -0.85] },
+    },
+    arms: () => ({
+      L: { wrist: [0.17, 0.07, 0.72], pole: [0.45, 0.65, 0.35], hand: [0.05, -0.15, 1] },
+      R: { wrist: [-0.17, 0.07, 0.72], pole: [-0.45, 0.65, 0.35], hand: [-0.05, -0.15, 1] },
+    }),
+    breathe: 0.003 * Math.sin(t * 1.9),
+  }),
+};
+
+/**
+ * Put `rig` in a meditation pose, at `blend` of full strength.
+ *
+ * @param rig    a humanoid Rig (the Jedi's — see humanoidSkeleton for the bones)
+ * @param id     a MEDITATION_POSES id; anything else is the lotus
+ * @param blend  0..1 — how far from whatever the rig was just posed in
+ * @param opts.position  where the FEET stand, world (the Player's `position`)
+ * @param opts.facing    yaw the body faces, radians
+ * @param opts.time      a clock for the breathing, seconds
+ * @param opts.standHip  the gait's own standing pelvis height above the feet,
+ *                       for the pose that stays standing; measured off the
+ *                       rig when absent
+ * @returns the pose record actually used
+ */
+export function poseMeditation(rig, id, blend = 1, opts = {}) {
+  const pose = meditationPose(id);
+  blend = clamp(blend, 0, 1);
+  if (blend <= 0 || !rig?.hipsBone) return pose;
+  const s = rig.scale ?? 1;
+  const t = opts.time ?? 0;
+  const spec = POSE_SPECS[pose.id](t);
+  const o = _mdO.copy(opts.position ?? _ZERO_V);
+  const f = opts.facing ?? 0;
+  const fwd = _mdF.set(Math.sin(f), 0, Math.cos(f));
+  const left = _mdL.set(Math.cos(f), 0, -Math.sin(f));
+  /* character frame → world; `p` is [x, y, z] in reference metres */
+  const at = (p, out) => {
+    out.copy(o).addScaledVector(left, p[0] * s).addScaledVector(fwd, p[2] * s);
+    out.y = o.y + p[1] * s;
+    return out;
+  };
+  const dir = (p, out) => out.set(0, 0, 0)
+    .addScaledVector(left, p[0]).addScaledVector(fwd, p[2]).setY(p[1]).normalize();
+
+  /* ── remember what the gait wrote, so the blend has something to go back to */
+  const partial = blend < 1;
+  if (partial) {
+    _mdSnap.clear();
+    for (const b of rig.list) _mdSnap.set(b.name, b.obj.quaternion.clone());
+    _md5.copy(rig.hipsBone.obj.position);
+  }
+
+  /* ── the pelvis: placed, and the one bone whose local frame IS the world */
+  const hips = rig.hipsBone.obj;
+  if (spec.hip) {
+    at(spec.hip, hips.position);
+    hips.position.y += (spec.breathe || 0) * s;
+  } else {
+    /* A standing pose keeps the pelvis where the gait stands it, less the
+     * gait's own sway — measured off the rig rather than typed, so a small
+     * species stands on its own legs. */
+    const stand = opts.standHip ?? (hips.position.y - o.y);
+    hips.position.copy(o); hips.position.y = o.y + stand + (spec.breathe || 0) * s;
+  }
+  hips.quaternion.setFromAxisAngle(YAXIS, f)
+    .multiply(_mdq.setFromEuler(_mde.set(spec.hipPitch || 0, 0, 0, 'XYZ')));
+
+  /* ── the trunk: the lean split between spine and chest, the head bowed */
+  const spine = rig.get('spine'), chest = rig.get('chest');
+  if (spine) spine.obj.quaternion.copy(spine.restQuat).multiply(_mdq.setFromEuler(_mde.set(spec.lean * 0.55, 0, 0, 'XYZ')));
+  if (chest) chest.obj.quaternion.copy(chest.restQuat).multiply(_mdq.setFromEuler(_mde.set(spec.lean * 0.45, 0, 0, 'XYZ')));
+  const neck = rig.get('neck'), head = rig.get('head');
+  if (neck) neck.obj.quaternion.copy(neck.restQuat).multiply(_mdq.setFromEuler(_mde.set(spec.bow * 0.4, 0, 0, 'XYZ')));
+  if (head) head.obj.quaternion.copy(head.restQuat).multiply(_mdq.setFromEuler(_mde.set(spec.bow * 0.6, 0, 0, 'XYZ')));
+  /* The girdle at rest: the attack layer drives the clavicles every frame and
+   * a shoulder still chambered for a cut would put the arms' roots off. */
+  for (const n of ['clavL', 'clavR']) { const b = rig.get(n); if (b) b.obj.quaternion.copy(b.restQuat); }
+
+  /* ── legs, then the knees they ended up with */
+  const knee = { L: _md3, R: _md4 };
+  for (const side of ['L', 'R']) {
+    const L = spec.legs[side];
+    if (!rig.get('thigh' + side)) continue;
+    rig.solveIK('thigh' + side, 'shin' + side, at(L.ankle, _md1), at(L.pole, _md2));
+    if (rig.get('foot' + side)) rig.aimBoneWorld('foot' + side, dir(L.toe, _md1), YAXIS);
+  }
+  rig.updateMatrices();
+  rig.tipPos('thighL', knee.L); rig.tipPos('thighR', knee.R);
+  /* …back into the character frame, so the arm table can be written in it */
+  const local = (w) => {
+    _md1.subVectors(w, o);
+    return { x: _md1.dot(left) / s, y: _md1.y / s, z: _md1.dot(fwd) / s };
+  };
+  const arms = spec.arms({ L: local(knee.L), R: local(knee.R) });
+  for (const side of ['L', 'R']) {
+    const A = arms[side];
+    if (!rig.get('arm' + side)) continue;
+    rig.solveIK('arm' + side, 'fore' + side, at(A.wrist, _md1), at(A.pole, _md2));
+    if (rig.get('hand' + side)) rig.aimBoneWorld('hand' + side, dir(A.hand, _md1), fwd);
+  }
+
+  /* ── the blend: slerp every bone back toward what the gait had written */
+  if (partial) {
+    for (const b of rig.list) {
+      const was = _mdSnap.get(b.name);
+      if (was) b.obj.quaternion.copy(was.slerp(b.obj.quaternion, blend));
+    }
+    hips.position.lerpVectors(_md5, hips.position, blend);
+  }
+  rig.updateMatrices();
+  return pose;
+}

@@ -13,7 +13,7 @@ import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
 import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor, wearableFor,
          KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom } from '../game/Bodies.js';
-import { BipedAnimator, limbScale } from '../game/Rig.js';
+import { BipedAnimator, limbScale, MEDITATION_POSES, poseMeditation } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
 // binding at module scope — `handPoseOnHilt` is a hoisted function declaration
@@ -420,6 +420,19 @@ export const DEFAULT_SETTINGS = {
    */
   face: { preset: FACE_PRESETS[0]?.id ?? 'even', hair: 'temple', beard: 'none', age: 0, muscle: 0.5 },
   robeCut: 'temple',
+  /**
+   * HOW THE BODY SITS WHEN IT COMMUNES — a MEDITATION_POSES id.
+   *
+   * "you should be able to choose from a couple different meditation poses in
+   * the Jedi customization screen, the options should be sit crossed legged
+   * on the floor, take a knee and bow your head, stay standing and raise your
+   * hands high in the air holding them together in prayer, and any others you
+   * can think of." Read by main.js's commune, which hands it to
+   * `Player.setMeditation`; the row is under the robe cut on the Jedi tab and
+   * the preview takes the pose while a card is hovered. Personal, so it is in
+   * Net.LOCAL_KEYS.
+   */
+  meditation: 'lotus',
   robeIndex: 1,
   /**
    * THE REST OF THE CLOTHES, and it is ONE object for the reason `face` is.
@@ -1010,6 +1023,7 @@ export const SETTING_READERS = {
   species:         ['game/World.js', 'species: this.settings.species'],
   face:            ['game/World.js', 'face: this.settings.face'],
   robeCut:         ['game/World.js', 'robeCut: this.settings.robeCut'],
+  meditation:      ['main.js', 'settings.meditation'],
   robeIndex:       ['game/World.js', 'robeIndex: this.settings.robeIndex'],
   /**
    * The rest of the clothes, read HERE rather than in World.spawnPlayer — and
@@ -3187,6 +3201,12 @@ export function assemblePreview(host, built, saber, s = {}) {
   if (host && rig.root.parent !== host) host.add(rig.root);
   standPreviewFigure(rig);
   poseSaberArm(rig, saber);
+  /* THE POSE GOES ON BEFORE THE CLOTHES, so the robe settles on the seated
+   * body rather than being folded under it. `s.pose` is a MEDITATION_POSES id
+   * and is only ever set by the Jedi tab's pose row — see `_previewMeditation`.
+   * The hilt stays in the right hand: the saber root is parented to the hand
+   * bone by `poseSaberArm`, so it goes where the hand goes. */
+  if (s.pose) poseMeditation(rig, s.pose, 1, { position: new THREE.Vector3(0, 0, 0), facing: 0 });
   const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut, s.wardrobe);
   const pts = [];
   clothPoints(cloak, pts);
@@ -4909,6 +4929,34 @@ export class Menu {
      * floor and the widths run 0.468 m to 0.749 m. See the preview note above.
      */
     this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS, () => this._refreshPreview(true));
+    /**
+     * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.
+     *
+     * A card row like the cut's, off `MEDITATION_POSES` in Rig.js — the same
+     * table `poseMeditation` solves from, so a pose added there is a card
+     * here with nothing typed twice. The preview takes the pose while a card
+     * is hovered or has just been picked and stands back up when the pointer
+     * leaves the row: a pose you cannot see is a word, and this screen is a
+     * character creator. It is a full rebuild (`_refreshPreview(true)`),
+     * because the robe has to settle on the SEATED body — a cloak settled on
+     * a standing figure and then folded under it is a tent; see
+     * `assemblePreview`, which poses before it dresses.
+     */
+    this._cardRow('meditation-list', 'h-meditation', 'meditation', MEDITATION_POSES,
+      (it) => this._previewMeditation(it.id));
+    {
+      const host = document.getElementById('meditation-list');
+      if (host && !host.dataset.poseHover) {
+        host.dataset.poseHover = '1';
+        host.addEventListener('mouseover', (e) => {
+          const card = e.target?.closest?.('.diff');
+          if (!card) return;
+          const i = [...host.children].indexOf(card);
+          if (i >= 0 && MEDITATION_POSES[i]) this._previewMeditation(MEDITATION_POSES[i].id);
+        });
+        host.addEventListener('mouseleave', () => this._previewMeditation(null));
+      }
+    }
     this._swatchRow('skin-list', 'skinIndex', this._skinRack(), () => this._refreshPreview(true));
     this._swatchRow('hair-list', 'hairIndex', HAIR_COLORS, () => this._refreshPreview(true));
 
@@ -5665,6 +5713,13 @@ export class Menu {
       { pitch: p.pitch, aspect: w / h, zoom: p.zoom, focus: p.focus });
   }
 
+  /** Sit the preview figure in `id`, or stand it back up for null. */
+  _previewMeditation(id) {
+    if ((this._previewPose || null) === (id || null)) return;
+    this._previewPose = id || null;
+    this._refreshPreview(true);
+  }
+
   _refreshPreview(rebuild = false) {
     if (!this.preview) return;
     const p = this.preview;
@@ -5725,7 +5780,13 @@ export class Menu {
       // -90° roll that pointed the blade out of the back of the figure, and
       // there was no cloth on the body at all for a cut to change.
       if (p.figure) {
+        /* The pose row's hover rides in on the settings object for the one
+         * call and is taken straight back off: `pose` is never a setting
+         * (nothing saves between these two lines) and `assemblePreview` is
+         * still handed the live settings, which preview.mjs pins by shape. */
+        if (this._previewPose) this.s.pose = this._previewPose;
         const a = assemblePreview(p.pivot, p.figure, p.saber, this.s);
+        delete this.s.pose;
         if (a.cloak) p.cloth.push(a.cloak);
         if (a.skirt) p.cloth.push(a.skirt);
         if (a.lekku) for (const l of a.lekku.parts) p.cloth.push(l);
@@ -5738,8 +5799,9 @@ export class Menu {
         p.content = { y0: -0.2, y1: this.s.bladeLength ?? 1.15, radius: 0.2 };
       }
       p.saber.trail.visible = false;
-      p.saber.ignite();
-      p.saber.ignition = 1;
+      /* A blade is not lit in a meditation; the hilt stays in the hand. */
+      if (this._previewPose) { p.saber.retract?.(); p.saber.ignition = 0; }
+      else { p.saber.ignite(); p.saber.ignition = 1; }
       p.group.rotation.copy(spin);
       p.group.updateMatrixWorld(true);
     } else {

@@ -13,7 +13,7 @@ import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.
 import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf, hoodCut } from './Bodies.js';
-import { Rig, BipedAnimator, aimY, limbScale } from './Rig.js';
+import { Rig, BipedAnimator, aimY, limbScale, poseMeditation } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
@@ -269,6 +269,15 @@ export const ALLY_WARD = { hold: 6, reach: 18, cone: 0.94, cooldown: 14 };
  * bargain stated in this power's numbers.
  */
 export const RESTORE = { radius: 12, fraction: 0.5, time: 3, cooldown: 75 };
+
+/**
+ * How long the body takes to sit down, and to stand back up, in seconds.
+ * The commune key is held for one second (main.js COMMUNE.hold) and the ease
+ * runs inside it, so the figure is on the floor by the time the Holocron
+ * opens; on the way out it is the same 0.6 s, which is a person standing up
+ * rather than a cut. See `Player.setMeditation`.
+ */
+export const MEDITATION_EASE = 0.6;
 
 /**
  * THE SABER, OFF THE HAND — catching it, lighting it, and flying it.
@@ -1991,6 +2000,51 @@ export class CameraRig {
     return k.amp * Math.pow(k.left / k.dur, 0.6);
   }
 
+  /**
+   * THE MEDITATION SHOT — the Holocron over the body, not instead of it.
+   *
+   * "you should adjust the holocron menu so that the player model is still
+   * visible, or make it more transparent."
+   *
+   * The panel docks to the right of the frame (styles.css, `.over-world`), so
+   * the camera's job is to put the seated figure in the third that is left:
+   * the boom pulls back to `dist`, the shoulder offset widens so the body
+   * lands left of centre, and the yaw drifts a little way round so the shot
+   * is three-quarter rather than over-the-shoulder — a figure seen from
+   * behind is a hood. Written as TARGETS and left to the rig's own damping,
+   * like the death shot above; `endMeditationShot` puts every number back,
+   * and first person is left for the length of it because there is no
+   * body to see from inside one.
+   */
+  beginMeditationShot(opts = {}) {
+    if (this.medShot) return this.medShot;
+    this.medShot = {
+      yaw0: this.yaw, pitch0: this.pitch, fp0: this.firstPerson,
+      dist0: this.targetDistance, height0: this.height, shoulder0: this.shoulder,
+      yaw: this.yaw + (opts.turn ?? 0.55) * (this.shoulderSide >= 0 ? 1 : -1),
+      pitch: opts.pitch ?? -0.14,
+    };
+    this.firstPerson = false;
+    this.targetDistance = opts.dist ?? 4.4;
+    this.height = opts.height ?? 1.05;
+    this.shoulder = opts.shoulder ?? 1.35;
+    return this.medShot;
+  }
+
+  /** The frame back to the player. Idempotent. */
+  endMeditationShot() {
+    const m = this.medShot;
+    if (!m) return false;
+    this.medShot = null;
+    this.yaw = m.yaw0;
+    this.pitch = m.pitch0;
+    this.firstPerson = m.fp0;
+    this.targetDistance = m.dist0;
+    this.height = m.height0;
+    this.shoulder = m.shoulder0;
+    return true;
+  }
+
   /** Give the rig back. Idempotent — respawn and dispose may both call it. */
   endShot() {
     const s = this.shot;
@@ -2132,6 +2186,13 @@ export class CameraRig {
      * as well: a first-person death has to come out of the head, or the shot is
      * three seconds of the inside of your own skull.
      */
+    /* The meditation's turn — eased here so it rides the same clock the
+     * boom's damping does, and stops the moment `endMeditationShot` restores
+     * the yaw it started from. */
+    if (this.medShot && !this.shot) {
+      this.yaw = damp(this.yaw, this.medShot.yaw, 3.5, dt);
+      this.pitch = damp(this.pitch, this.medShot.pitch, 3.5, dt);
+    }
     const shot = this.shot;
     if (shot) {
       shot.t = Math.min(shot.dur, shot.t + Math.max(dt, 0));
@@ -3219,6 +3280,14 @@ export class Player {
     this.ward = { body: null, t: 0, power: 0, stopped: 0, lastHit: -99, restore: null };
     /** The group heal in flight, or null — see `RESTORE` and `forceRestore`. */
     this.restoring = null;
+    /**
+     * THE MEDITATION — see `setMeditation`. `want` is where the body is asked
+     * to be (0 standing, 1 in the pose), `blend` is where it is, `pose` the
+     * MEDITATION_POSES id the settings chose. Driven by main.js's commune,
+     * which is the only thing that knows the key is held or the Holocron is
+     * up; posed by `_poseMeditation`, at the end of the body pass.
+     */
+    this.meditation = { want: 0, blend: 0, pose: 'lotus' };
     /** The `Crew` this player is at the controls of, or null. See Driving.js. */
     this.driving = null;
     /**
@@ -6476,6 +6545,12 @@ export class Player {
     }
     rig.updateMatrices();
 
+    /* THE MEDITATION, over everything above and under the cloth below: the
+     * gait, the blade and the head have all been written, and this is the one
+     * layer that is allowed to overrule all three, because a body that is
+     * sitting down is not walking, guarding or looking at anything. It runs
+     * before the garments so the robe settles on the seated figure. */
+    this._poseMeditation(dt, ctx);
     // the cloak hangs off the finished pose, and feels the wind and the run —
     // computed outside the branch because the hood's fall below reads it too
     _v1.set(0, 0, 0).addScaledVector(this.velocity, -0.85);
@@ -6530,6 +6605,75 @@ export class Player {
         this.hoodDrape.update(dt, this.hoodDrape.refreshColliders(), _v1);
       }
     }
+  }
+
+  /**
+   * ASK THE BODY TO SIT — or to stand back up.
+   *
+   * "when you use the holocron in game you should sit cross legged and
+   * meditate as if you're connecting to the force… I doubt the character is
+   * actually sitting on the floor cross legged."
+   *
+   * `want` is 0..1: the commune hold in main.js hands it the ring's own fill,
+   * so the figure sinks into the pose as the second is held and comes back
+   * out of it if the key is let go early, and the open Holocron holds it at 1.
+   * `pose` is the settings' MEDITATION_POSES id. Nothing here poses anything
+   * — that is `_poseMeditation`, on the body pass — so this is safe to call
+   * from any frame, including the ones a stopped world does not give the
+   * Player.
+   */
+  setMeditation(want, pose = null) {
+    const M = this.meditation;
+    M.want = clamp(want ?? 0, 0, 1);
+    if (pose) M.pose = pose;
+  }
+
+  /** How far into the pose the body is, 0..1 — the HUD and the checks read it. */
+  get meditating() { return this.meditation.blend; }
+
+  /**
+   * ONE FRAME OF THE POSE, easing toward `want` over MEDITATION_EASE seconds
+   * each way and then handing the rig to `poseMeditation` at that blend. At
+   * a blend of zero the gait's own pose stands untouched, which is the whole
+   * of "the gait must resume cleanly": there is no state to unwind, the
+   * layer simply stops writing.
+   */
+  _poseMeditation(dt, ctx) {
+    const M = this.meditation;
+    const step = dt / MEDITATION_EASE;
+    M.blend = M.want > M.blend ? Math.min(M.want, M.blend + step) : Math.max(M.want, M.blend - step);
+    if (M.blend <= 0.0005) { M.blend = 0; return; }
+    const eased = smoothstep(0, 1, M.blend);
+    poseMeditation(this.rig, M.pose, eased, {
+      position: this.position, facing: this.facing,
+      time: ctx?.time ?? this.world?.time ?? 0,
+      standHip: this.animator?.standHip,
+    });
+  }
+
+  /**
+   * THE FRAME A STOPPED WORLD DOES NOT GIVE US.
+   *
+   * `Screens.take('meditation')` pauses the world, so `update` — and with it
+   * the body pass — stops the moment the Holocron is up, and the figure would
+   * freeze wherever the last playing frame left it: a second into the ease,
+   * half way to the floor. main.js's commune calls this once a frame while
+   * the state is 'meditation', and it runs exactly the two things the seated
+   * body needs: the pose, and the cloth that hangs off it. Nothing else — no
+   * input, no physics, no blade — which is what "the world is stopped" has
+   * to keep meaning.
+   */
+  meditateFrame(dt, time = null) {
+    if (!this.alive || !this.rig) return;
+    const ctx = { time: time ?? this.world?.time ?? 0 };
+    this._poseMeditation(dt, ctx);
+    _v1.set(0, 0, 0);
+    _v1.x += Math.sin(ctx.time * 0.7) * 0.6;
+    _v1.z += Math.cos(ctx.time * 0.53) * 0.6;
+    if (this.skirt) this.skirt.update(dt, this.skirt.refreshColliders(), _v1);
+    if (this.cloak) this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
+    if (this.hoodDrape) this.hoodDrape.update(dt, this.hoodDrape.refreshColliders(), _v1);
+    this.hoodShell?.update(dt);
   }
 
   _updateCamera(dt, ctx) {
@@ -9284,7 +9428,9 @@ export class Player {
     this.ward.lastHit = -99;
     this._wardInstall(ally);
     this._gesture('cast', this._enemyPoint(ally, _v2));
-    this._forceVoice?.('shield');
+    /* Its own pool first, the barrier's if Voice.js has not been given one:
+     * "Behind me" is the right thing to say to a man you have just covered. */
+    if (!this._forceVoice?.('ward')) this._forceVoice?.('shield');
     audio.force(this.chest, 'pull');
     audio.tone({ freq: 180, freqEnd: 560, dur: 0.35, gain: 0.12, type: 'sine', pos: ally.position });
     this.world?.notify?.('WARDED', ally.trooper?.name || ally.A?.label || 'an ally');
@@ -9408,7 +9554,7 @@ export class Player {
     /* Written at the cast, exactly once — the unbound seam. */
     this.cooldowns.restore = this._recover('restore', RESTORE.cooldown);
     this._gesture('unleash');
-    this._forceVoice?.('heal');
+    if (!this._forceVoice?.('restore')) this._forceVoice?.('heal');
     audio.force(this.chest, 'pull');
     audio.tone({ freq: 220, freqEnd: 660, dur: 0.6, gain: 0.14, type: 'sine', pos: this.chest });
     this.cloak?.impulse(_g1.set(0, 1, 0), 1.2); this.skirt?.impulse(_g1.set(0, 1, 0), 1.2);
