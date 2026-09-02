@@ -1771,6 +1771,77 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
+## 4.9 The close of V12 — the way home, and the gate
+
+**THE ROUND TRIP IS THE HEADLINE, and it was three separate defects wearing one
+complaint.** The player: *"when retreating you don't fly out of the atmosphere,
+into space, and back into the hangar — you just get a menu on planet"*, and
+*"when you leave the capital ship you now completely skip the entering the
+atmosphere and landing portion entirely"*.
+
+1. **There was no leg to space at all.** `Extraction._liftoff` ran straight into
+   `_withdrew` → `_finish()`, which puts every passenger back on the ground —
+   so a withdrawal ended where it started with a card over it. There is an
+   `away` phase now (`AWAY = 8.0`): the ship climbs to `ORBIT_ALT`, `_setSpace`
+   drains the sky, the stars come up, and `_placeCapital` grows the hull astern
+   until the deck opens on it.
+2. **The entry was being SKIPPED BY A KEY THE PLAYER NEVER PRESSED FOR IT.**
+   `act('jump')` is a held-state read. One press during the eleven-second deck
+   fly-out was still held when the world it flew into came up, and `_orbit`,
+   `_entry` and `_transit` each read the same key as their skip. Three
+   sequences skipped across two worlds from one press.
+3. **So every skip is gone.** All four paths deleted — the three in
+   `Extraction.js` and the jump-to-skip block in `DeckFlight.js`, which now
+   carries a `NO SKIP` comment where it was. `extraction.mjs`'s skip check is
+   INVERTED: it asserts that nothing can be skipped. *"remove the skip option
+   entirely I don't want you skipping anything actually."*
+
+**Verified end to end**: `gameOver` calls `bank(stats)` before `enterHangar`, so
+the roll the deck reads is already the survivors — you disembark with the men
+who lived, not with the men you left with.
+
+**THE FOG WAS THE ONE MEASURED FINDING WORTH REPEATING.** Every level drew its
+distance at hue 203–226° whatever sky it stood in — Geonosis authored 26° and
+rendered 217°. `Engine.hazeRadiance` sampled the RAW Preetham sky while the
+drawn dome and the ambient were both rotated onto the level's authored colour
+(`skyProbeTurn`/`skyTurn`). One line, and Geonosis converges on orange, Mustafar
+on red, the wood on green. `cel.mjs` had ENCODED the bug by holding the haze to
+the same raw sky it was reading — a check that agreed with the defect.
+
+**THE GATE.** Six suites were red from this session's own work and are fixed:
+`creator` and `hoods` (the rebuilt head moved the eye sockets on the outline and
+the cowl needed the new cranium's radius), `grooming`, `levels-quality` (the
+landform skin `Props.fitStaticBoxes` puts on alpine was being read as a floating
+deck), `databank` ×2, `command-pvp`, `prefracture-budget`, `force`, `downed` and
+`extraction`. Three that were red BEFORE this session are fixed too:
+`worn-paint` never seeded the stream it drew Enemies from, `packed` could not
+build `--min` because `esbuild` was not installed (it is a devDependency now),
+and `fallen` asserted its ledger against the sandbox room's own turnover.
+
+**`levers` IS STILL RED AND IT IS A REAL DEFECT — here is the measurement, so
+the next session does not have to take it again.** `tools/_levprobe.mjs`
+reproduces it: geonosis, `runSeed` 9, ten men in a circle of radius 4, twelve
+shells, then twenty-five seconds in which nothing else happens.
+
+    after   alive 5   gathered false
+    t+5     alive 2   e1 d48  e6 d40
+    t+25    alive 2   e1 d49  e6 d19
+
+Two things are wrong and only one of them is subtle. **e6 walks home at about
+1.2 m/s of ground covered against a `speed` of 3.8** — he needs thirty seconds
+to cross what he should cross in thirteen. **e1 never arrives at all**: he
+circles a ring about 0.4 m across at (40.8, 26.4) for the whole twenty-five
+seconds, with a `wish` of (-0.76, 0, -0.64) pointing correctly at the anchor and
+a velocity of 4.2 m/s that never becomes ground. He is NOT wedged in geometry —
+0 of the 248 static boxes overlap his chest — and `_stuckT` never latches
+because by its own measure he is moving. **The suspect is `limitBackpedal`
+against a stale `toTarget`**: with every hostile removed his facing target is no
+longer his wish, so the component pointing at the anchor is scaled away as a
+backpedal and only the strafe survives. Start there, and do not start in
+`lineGathered` — the quorum is reading the field correctly.
+
+---
+
 ## 5.000 What THIS session changed — 1–2 Sep: V11, the hub
 
 The player's V11 list (PLAYTEST.md, top entry — every row carries its check).

@@ -75,6 +75,20 @@ file. Every ✅ names its check. The table is filled in as each row lands.
 | An order that enrages the troops: desecrate the enemy fallen for a killing frenzy | ✅ | `desecrate` (5) — `FORMATIONS.desecrate` on Delete, the burial's mirror: the least disciplined third go out to THEIR dead, tear limbs off the ragdoll with real impulses, and every man who sees it goes into a frenzy (`Enemy.FURY`: harder, faster, and wider-shooting for 22 s). A Jedi company loses morale for watching; a Sith company gains it |
 | "Inspect your men" button is grey | ✅ | `menu` — the button had a class no stylesheet knew; it is `.secondary` now |
 | The Jedi tab reads Jedi whatever order you picked | ✅ | `menu` — `Menu._syncOrderTab`, the tab is named for the order |
+| A full review of the whole game, written by the model that built it | ✅ | `REVIEW-V12.md` — 56 items, ten starred, each with the file it lives in and what it would cost; the ten the player picked are the rows below |
+| Long cooldowns are invisible on the power strip | ✅ | `hud-events` — a sweep on the plate for anything over 20 s, so Restore's 75 reads as a wait and not as a dead key (review 18) |
+| A hostile whose nerve breaks gives no tell | ✅ | `reactions` — he cries panic once and drops into a half crouch as he goes, so a broken man is a thing you can see break (review 22) |
+| Fire discipline is a switch, not a dial | ✅ | `command` — `rank` fires at half rate rather than holding fire outright, and a volley waits for 50% of the squad to bear (review 27) |
+| You cannot tell which squad is selected | ✅ | `hud-events` — the picked squad's plate is tinted and its men carry the same tint (review 28) |
+| The Trial's rule is stated once and then forgotten | ✅ | `hud-events` — `#hud-rule` carries the run's draft for as long as it applies (review 35) |
+| A transport leaps off the deck the instant the bay seals | ✅ | `deckflight` — a 3 s taxi to the aperture between the seal and the lift (review 40) |
+| The men say nothing when you spend a big power | ✅ | `force-voice` — a man within 22 m answers Unleash, Lightning, Restore, the ward and a push, at most one every 7 s (review 50) |
+| A co-op partner's men have no morale on your screen | ✅ | `command-pvp` — morale and nerve ride the remote avatar (review 52) |
+| The body budget is invisible until it bites | ✅ | `hud-events` — the perf report prints bodies against the cap and says when it is over (review 54) |
+| A corpse that sinks takes its severed limbs with it | ✅ | `corpses` — `Ragdoll.dispose({ keepPieces })`, so what was cut off stays on the field (review 55) |
+| Every level's distance was the same blue-grey whatever sky it stood in | ✅ | `cel` — `Engine.hazeRadiance` sampled the raw Preetham sky while the dome and the ambient were rotated onto each level's authored colour; one line, and Geonosis converges on orange, Mustafar on red, the wood on green (review 24) |
+| Retreating gives a menu on the planet instead of flying home | ✅ | `extraction` — a new `away` phase: the ship climbs out of the atmosphere, the sky drains to stars, the capital ship grows astern, and the deck opens with your men aboard |
+| Leaving the capital ship skips the entry and the landing | ✅ | `extraction`, `deckflight` — one held jump key during the fly-out was being read as a skip in the world it flew into; every skip path is deleted, and the check now asserts that nothing can be skipped |
 
 ## 1 Sep — SABER GAME NOTES AND IMPROVEMENTS V11
 
