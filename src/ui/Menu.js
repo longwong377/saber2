@@ -5461,6 +5461,7 @@ export class Menu {
    */
   _syncKennel() {
     this._wireCompanionDress();
+    this._syncKennelCoop();
     const el = document.getElementById('companion-state');
     if (!el) return;
     const k = loadKennel();
@@ -5600,6 +5601,32 @@ export class Menu {
         this._syncKennel();
       });
     }
+  }
+
+  /**
+   * WHAT A SESSION DOES TO YOUR COMPANION, SAID BEFORE YOU JOIN.
+   *
+   * The settled position is FIELD IT FOR EVERYBODY, FOLD IT FOR NOBODY: one
+   * companion per connected player, and `keepCompanion` returns early in a
+   * session — no bond earned, no death recorded, no epitaph, and a client's
+   * stored animal untouched. It neither gains a run nor loses its life.
+   *
+   * That is the conservative answer and the only one that cannot cause a
+   * durable loss the player did not cause. But a player who discovers it
+   * AFTERWARDS has been cheated of an evening, which is the same argument
+   * `notSaving()` makes one panel across: a player who is told is not being
+   * cheated.
+   */
+  _syncKennelCoop() {
+    const el = document.getElementById('companion-coop');
+    if (!el) return;
+    const live = !!this._netMode;
+    const has = this.s.companion && this.s.companion !== 'none';
+    el.textContent = (live && has)
+      ? 'In a session your companion comes with you and nothing that happens to it is kept — '
+        + 'it will not earn a rung, and it cannot be lost.'
+      : '';
+    el.style.display = el.textContent ? '' : 'none';
   }
 
   _syncVersusBox() {
@@ -7041,7 +7068,12 @@ export class Menu {
      * thing the player could not be told about — the silent failure the store
      * was rewritten to end, one layer further out.
      */
-    const stuck = [companyNotSaving() && 'the roll', Muster.notSaving() && 'the muster']
+    /* …AND THE KENNEL, which is the third durable store and lives in three
+     * rooms rather than one. `notSaving()` was one sentence on one panel; a
+     * companion is on the deck and on the field as well, and silent data loss
+     * is the only unacceptable failure mode in a permadeath game. */
+    const stuck = [companyNotSaving() && 'the roll', Muster.notSaving() && 'the muster',
+      kennelNotSaving() && 'the kennel']
       .filter(Boolean);
     const notSaved = stuck.length
       ? `<p class="hint company-cut"><b>NOT SAVING.</b> This browser has refused to write
@@ -10002,6 +10034,10 @@ export class Menu {
      * `_syncVersusBox`. */
     this._netMode = mode || null;
     this._syncVersusBox();
+    /* …AND WHAT A SESSION DOES TO YOUR COMPANION, which is only true while
+     * one is live and has to appear the moment you host or join rather than
+     * the next time the Jedi tab is drawn. */
+    this._syncKennelCoop();
     /* …AND THE SIDE LIST, which is greyed out of a session and live in one —
      * the same signal, the same reason. And the line under the mode list, which
      * is the same fact asked the other way round. */

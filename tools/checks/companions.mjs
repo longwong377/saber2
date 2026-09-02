@@ -722,4 +722,46 @@ export async function run({ check, assert }) {
     } finally { world.unload(); }
   });
 
+  check('companion: a session is told to you before you join, not discovered after', async () => {
+    /**
+     * FIELD IT FOR EVERYBODY, FOLD IT FOR NOBODY. `keepCompanion` returns
+     * early in a session — no bond earned, no death recorded, no epitaph, and
+     * a client's stored animal untouched. It neither gains a run nor loses its
+     * life. That is the conservative answer and the only one that cannot cause
+     * a durable loss the player did not cause.
+     *
+     * BUT A PLAYER WHO FINDS OUT AFTERWARDS HAS BEEN CHEATED OF AN EVENING,
+     * which is the argument `notSaving()` makes one panel across. So it is
+     * said on the screen where you host or join, the moment you do, and only
+     * when there is an animal for it to be true of.
+     */
+    const { makeDocument } = await import('./_page.mjs');
+    const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const doc = makeDocument(html);
+    const restore = doc.install();
+    try {
+      const settings = { ...structuredClone(DEFAULT_SETTINGS), companion: 'massiff' };
+      const menu = new Menu(settings, {});
+      const line = () => doc.getElementById('companion-coop')?.textContent || '';
+      menu._syncKennel();
+      assert(!line(), `solo, the screen says "${line()}" about a session`);
+      menu.netSession('host');
+      const said = line();
+      assert(/not kept|nothing that happens to it is kept/i.test(said),
+        `hosting with a companion, the screen says "${said}"`);
+      assert(/cannot be lost|will not earn/i.test(said),
+        'it says the run is not kept but not that the animal is also safe — both halves matter');
+      /* AND IT IS NOT SAID WHEN THERE IS NOTHING TO SAY IT ABOUT. */
+      settings.companion = 'none';
+      menu._syncKennelCoop();
+      assert(!line(), `with no companion it still says "${line()}"`);
+      menu.netSession(null);
+      settings.companion = 'massiff';
+      menu._syncKennelCoop();
+      assert(!line(), 'it warns about a session when there is no session');
+      return `silent solo, silent with no animal, and hosting it says: "${said.slice(0, 80)}…"`;
+    } finally { restore(); }
+  });
+
 }
