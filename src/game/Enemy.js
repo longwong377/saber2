@@ -9322,9 +9322,40 @@ export class Enemy {
     /* ── the cheek weld: the head drops toward the stock and nods onto the
      *    sights. A roll about the head's own forward axis and a nod about its
      *    across axis, both scaled by how far the rifle is up. */
+    /**
+     * …AND IT IS WRITTEN FROM REST, WHICH IS THE WHOLE OF "MY TROOPS' HEADS
+     * SPIN AND SOME OF THEM LOOK HEADLESS".
+     *
+     * The player, V13: *"a portion of my troops almost looked headless and I
+     * noticed a couple more had heads that would constantly spin so I think
+     * the headless ones just had heads that stopped rotating upside down"* —
+     * and that last clause is the correct diagnosis, arrived at from the
+     * outside.
+     *
+     * This was a bare `multiply`, under the note above that says the gait
+     * writes these bones every frame so an offset never accumulates. That note
+     * is true of the CHEST and the NECK and it was never true of the HEAD.
+     * `Rig` writes hips, spine, chest and neck each frame, every one of them
+     * `.copy(restQuat).multiply(...)`, and it deliberately leaves the head
+     * alone — its own comment says "the head has to end up square to the
+     * shoulders", which is the head bone at rest under a neck that has already
+     * taken the twist out.
+     *
+     * So nothing reset it and this line added `|(0.08, 0, 0.18)|` = 0.197 rad
+     * to it on every frame it aimed: 5.9 rad a second, a full revolution every
+     * 1.07 s, for as long as a body held its rifle up. Measured on a real
+     * Command world with `tools/_headspin.mjs`: **21 of 60 heads turned more
+     * than 20 radians in twenty seconds and 20 of 60 finished upside down.**
+     * A man who stops aiming keeps whatever angle he had got to, and half of
+     * those are inverted — a helmet turned inside out at twelve metres reads
+     * as no head at all.
+     */
     const headB = rig.get('head');
-    if (headB && !custom && k > 1e-3) {
-      headB.obj.quaternion.multiply(_rq[8].setFromEuler(_re.set(CHEEK_NOD * k, 0, CHEEK_ROLL * k, 'XYZ')));
+    if (headB && !custom) {
+      headB.obj.quaternion.copy(headB.restQuat);
+      if (k > 1e-3) {
+        headB.obj.quaternion.multiply(_rq[8].setFromEuler(_re.set(CHEEK_NOD * k, 0, CHEEK_ROLL * k, 'XYZ')));
+      }
     }
     rig.updateMatrices();
   }

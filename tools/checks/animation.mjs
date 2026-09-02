@@ -1230,4 +1230,93 @@ export function run({ check, assert, near, THREE: T }) {
     }
     return rows.join('; ');
   });
+  check('animation: a head is posed from rest, so it never winds up', async () => {
+    /**
+     * THE PLAYER FOUND THIS ONE BY LOOKING AT HIS OWN MEN, and his diagnosis
+     * from the outside was exactly right:
+     *
+     *   "a portion of my troops almost looked headless and I noticed a couple
+     *    more had heads that would constantly spin so I think the headless ones
+     *    just had heads that stopped rotating upside down"
+     *
+     * `Enemy._poseRifle`'s cheek weld was a bare `quaternion.multiply` on the
+     * HEAD bone, under a note saying the gait rewrites these bones every frame
+     * so an offset cannot accumulate. That is true of the chest and the neck —
+     * `Rig` writes both `.copy(restQuat).multiply(...)` — and it was never true
+     * of the head, which the gait deliberately leaves at rest so that it ends
+     * up square to the shoulders. The weld therefore added |(0.08, 0, 0.18)| =
+     * 0.197 rad on every aiming frame: 5.9 rad a second, a revolution every
+     * 1.07 s, and a man who stopped aiming froze wherever he had got to.
+     *
+     * Measured before the fix on a real Command world (`tools/_headspin.mjs`):
+     * **21 of 60 heads turned more than 20 radians in twenty seconds and 20 of
+     * 60 finished upside down.** After it: 0 and 0.
+     *
+     * THE BAR IS THE WELD'S OWN MAGNITUDE, and that is why this check is worth
+     * having rather than a re-statement of the fix. The cheek weld is the ONLY
+     * thing in the humanoid path licensed to write this bone, so the head's
+     * distance from rest may not exceed what that one offset can ask for. Any
+     * future writer that forgets to start from rest lands here, whatever it is.
+     * Measured envelope on the fixed build: head 0.197 against neck 0.805 and
+     * chest 1.693, which are written from rest by the gait and are allowed to
+     * be large.
+     *
+     * NOT A GENERAL "no bone accumulates" CHECK, and the first cut of this was
+     * exactly that and was wrong: an IK-solved limb legitimately reaches pi
+     * from rest and oscillates there all day. Measured, 247 "offenders", every
+     * one of them a thigh, a shin or a forearm doing its job.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const idle = idleInput();
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      /* NOT `quality: 'low'`, and that is not a preference. The first cut of
+       * this check carried it and PASSED ON THE BROKEN BUILD: at the low tier
+       * the LOD spares distant bodies their rifle pose, `k` never leaves zero,
+       * and the accumulator this check exists to catch never runs. A check that
+       * cannot fail is HANDOFF 2.3b, and this one proved it on itself. */
+      settings: { mode: 'command', level: 'geonosis', order: 'jedi', allies: 12 },
+      runSeed: 5,
+    });
+    try {
+      world.command?.start?.(1);
+      const STEP = 1 / 30;
+      for (let i = 0; i < 30; i++) world.update(STEP, idle);
+      const WELD = 0.197, BAR = 0.25;
+      let worst = 0, worstOf = '', heads = 0, seen = 0;
+      const q = new THREE.Quaternion(), up = new THREE.Vector3();
+      let inverted = 0;
+      for (let i = 0; i < 30 * 20; i++) {
+        world.update(STEP, idle);
+        if (i % 2) continue;
+        for (const e of world.enemies) {
+          const b = e.rig?.get?.('head');
+          if (!b?.obj || b.severed || !b.restQuat) continue;
+          seen++;
+          const a2 = b.restQuat.angleTo(b.obj.quaternion);
+          if (a2 > worst) { worst = a2; worstOf = `${e.A?.label || e.type} ${e.id}`; }
+        }
+      }
+      for (const e of world.enemies) {
+        const b = e.rig?.get?.('head');
+        if (!b?.obj || b.severed) continue;
+        heads++;
+        b.obj.getWorldQuaternion(q);
+        up.set(0, 1, 0).applyQuaternion(q);
+        if (up.y < 0) inverted++;
+      }
+      assert(seen > 2000, `only ${seen} head samples — the fixture fielded nobody`);
+      assert(heads > 10, `only ${heads} heads standing at the end`);
+      assert(worst <= BAR,
+        `a head reached ${worst.toFixed(3)} rad from rest (${worstOf}) against a cheek weld worth `
+        + `${WELD} — something is writing the head bone without starting from rest, which is the `
+        + 'defect that made every aiming trooper spin his head off');
+      assert(inverted === 0,
+        `${inverted} of ${heads} heads are upside down — an inverted helmet at twelve metres is `
+        + 'what the player reported as "almost looked headless"');
+      return `${seen} head samples over 20 s of a real fight: worst ${worst.toFixed(3)} rad from rest `
+        + `against the ${WELD} the cheek weld may ask for; ${heads} heads standing, none inverted`;
+    } finally { world.unload?.(); }
+  });
+
 }
