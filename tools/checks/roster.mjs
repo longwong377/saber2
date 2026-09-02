@@ -66,6 +66,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { ARCHETYPES } from '../../src/game/Enemy.js';
+/* The Kennel's own door — see the fifth-door note below. */
+import { COMPANION_KINDS, COMPANION_ORDER } from '../../src/game/CompanionKinds.js';
 import { SET_PIECE, DOJO_MIX, MODES } from '../../src/game/Waves.js';
 import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 
@@ -519,6 +521,28 @@ export function run({ check, assert }) {
     for (const t of Object.keys(ARCHETYPES)) {
       if (ARCHETYPES[t].saddle && named.has(t)) named.add(ARCHETYPES[t].saddle);
     }
+    /**
+     * A FIFTH DOOR, AND IT IS A DOOR RATHER THAN AN EXEMPTION.
+     *
+     * A companion is met through the KENNEL: the player picks a kind, it is
+     * fielded beside them, and it is with them in every mode. That is a way to
+     * meet a body and this check exists to find bodies with no way to be met,
+     * so it belongs on the list beside the pool, the rung, the dojo and the
+     * saddle.
+     *
+     * WHAT MAKES IT A DOOR AND NOT A HOLE: the archetype has to be named by a
+     * real `COMPANION_KINDS` row, and the row's `archetype` field is what is
+     * added here. A body carrying `companion: true` that no row names is still
+     * content that shipped and cannot be met, and it still goes red — which is
+     * exactly what this check would lose if the flag alone were the exemption.
+     *
+     * It failed on the massiff the day that row landed, which is the check
+     * working: the animal existed and nothing could reach it.
+     */
+    for (const id of COMPANION_ORDER) {
+      const a = COMPANION_KINDS[id]?.archetype;
+      if (a && ARCHETYPES[a]) named.add(a);
+    }
     const orphan = Object.keys(ARCHETYPES)
       .filter((t) => !ARCHETYPES[t].training && !named.has(t));
     assert(!orphan.length,
@@ -536,7 +560,9 @@ export function run({ check, assert }) {
 
     const training = Object.keys(ARCHETYPES).filter((t) => ARCHETYPES[t].training);
     return `${Object.keys(ARCHETYPES).length} archetypes: ${named.size} named by a pool, a rung or a `
-      + `saddle, ${training.length} dojo-only (${training.join(', ')}); ${SET_PIECE.length} rungs all live`;
+      + `saddle, ${training.length} dojo-only (${training.join(', ')}); ${SET_PIECE.length} rungs all live; `
+      + `${COMPANION_ORDER.filter((id) => ARCHETYPES[COMPANION_KINDS[id].archetype]).length} of `
+      + `${COMPANION_ORDER.length} companion kinds have a body`;
   });
 
   check('roster: every field an archetype declares is a field something reads', () => {

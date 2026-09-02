@@ -56,6 +56,8 @@
  * still content that shipped and cannot be met, and it still goes red.
  */
 import { ARCHETYPES } from './Enemy.js';
+import { TOUGHNESS } from './Combat.js';
+import { buildQuadruped } from './Bodies.js';
 
 /**
  * THE PACE CAP, WHICH IS THE MECHANISM AND NOT A FLAVOUR NOTE.
@@ -344,6 +346,269 @@ export function kindHasDuty(kind, duty) {
  * could spend a companion archetype would put your own animal on the other side
  * of the field, which is the faction defect `factions.mjs` exists to stop.
  */
-export const COMPANION_UNITS = {};
+export const COMPANION_UNITS = {
+
+  /**
+   * THE TOOKA KIT — the second companion, and the one that is worth nothing.
+   *
+   * The massiff's row says a companion archetype is "the only archetype in
+   * the game that a wave may never spend" and explains `companion: true`,
+   * `score: 0`, `threat: 0` and `unlockAt: 99` once; this row carries the
+   * same four for the same reasons and does not restate them. What is worth
+   * writing down is the two places this animal is not a small massiff.
+   *
+   * SCALE 0.34 — the smallest number in the file by a factor of three, under
+   * the massiff's 0.95, the training remote's 1.0 and the B1's 1.02. It puts
+   * the back at 0.235 m and the crown near 0.30 m: below the knee of every
+   * other body on the field, which is why a stray shot that was aimed at a
+   * man goes over it and a grenade that was aimed at nobody kills it. That
+   * asymmetry is COMPANIONS.md's `frag` rule made out of geometry before any
+   * multiplier is applied — it dies to the thermal you did not see, not to
+   * the bolt you were supposed to have blocked.
+   *
+   * 24 hp, AND THE HONEST VERSION OF "LOWEST IN THE GAME". It is the lowest
+   * on anything that fights: under the B1's 28, an eighth of the massiff's
+   * 210. Two lower numbers exist and neither is a body — the dojo's training
+   * remote at 4 and the unpainted foundry shell at 6. A single B1 burst is
+   * 3 x 9 = 27, so the first shooter that gets a line on this animal kills it
+   * inside one trigger pull, with no phase to watch and no window to react
+   * in. That IS the design: the fight does not give you time to notice, so
+   * the only defence is the one you arranged beforehand — you picked it up.
+   *
+   * 3 kg, and it is load-bearing rather than flavour. The reek's row explains
+   * that `force.mjs` holds the grip cap above the heaviest body in the table;
+   * this is the other end of the same rule and the reason the carry mechanic
+   * costs nothing to add. At 3 kg the existing Force grip lifts a tooka at
+   * the bottom of its own range — the lightest mass in ARCHETYPES, level with
+   * the training remote — so "you can pick it up" needs no new cost row and
+   * no POWERS entry. The one thing carrying it spends is your off-hand.
+   *
+   * 4.6 m/s IS THE PLAYER'S WALK, exactly, and that is the number chosen
+   * rather than a fraction of anything. COMPANIONS.md caps a companion at
+   * 0.85 of your sprint; the massiff sits at 5.2 and is already left behind
+   * by every good decision you make. This one is slower still and it is
+   * slower at a legible speed: walk and it is at your heel, sprint and it is
+   * gone. Caveat, stated rather than hidden — `_beastBrain` raises `speed` by
+   * 22% per phase, so at phase 3 this reads 6.6 and briefly beats the cap. At
+   * 24 hp phase 3 lasts about as long as the burst that caused it, and the
+   * alternative was a special case in the brain for one archetype.
+   *
+   * `melee: true` WITH `damage: 0`, and the pair is not a contradiction.
+   * `melee` is not "this thing attacks" — it is the routing flag: `_meleeBrain`
+   * is the only door to `_beastBrain`, and a creature with `melee: false`
+   * goes to `_rangedBrain` and looks for a weapon it does not have. So the
+   * flag says "brain: beast" and the empty move set in CREATURE_PLANS says
+   * "verbs: none". `damage: 0` is the belt to that braces: nothing reads it
+   * while the move list is empty, and if anything ever does, the number it
+   * finds is zero.
+   *
+   * `preferred: [0.8, 1.6]` is the tightest band in the game — the massiff's
+   * 1.4-2.6 is jaws and has to arrive to matter. This has nothing to arrive
+   * with, so the band is not a fighting distance at all; it is how close the
+   * animal wants to be to you, which is as close as the collision allows.
+   */
+  tooka: {
+    label: 'Tooka Kit', build: (o) => buildQuadruped({ ...o, kind: 'tooka' }),
+    scale: 0.34, hp: 24, mass: 3,
+    speed: 4.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 0, preferred: [0.8, 1.6], score: 0, threat: 0,
+    companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE TUK'ATA WHELP — the one that outruns you into trouble.
+   *
+   * `speed: 6.3` IS THE ARCHETYPE. The companion pace rule caps a kind at 0.85
+   * of the player's own sprint, and the player's sprint is 7.45 m/s — measured
+   * off a real Player by `tools/checks/dodgeable.mjs` and quoted in the
+   * BEAST_MOVES header — so 6.33 is the ceiling and this sits one hundredth
+   * under it. Nothing else in the set is near it: the massiff trots at 5.2 and
+   * is left behind by every good decision you make with your own body, and
+   * that is the massiff's design. This one arrives with you, which means it
+   * also arrives at things you were not going to fight. The Nexu's 8.6 is the
+   * other side of the same line — a creature that genuinely outruns the player
+   * is an enemy, and no companion may be one.
+   *
+   * 90 hp is the second number and it pays for the first. The massiff's 210 is
+   * already argued as "it dies if you leave it"; this is under half of that,
+   * so a whelp that follows a sprint into a firefight is a whelp you lose. It
+   * is NOT the floor — the tooka kit is designed to hold the lowest pool in
+   * the game — and leaving room under it is the difference between a fragile
+   * animal and a special case.
+   *
+   * `damage: 14` against the massiff's 22 and the Nexu's 26, and the rake
+   * carries 0.62 of it: about nine points a swipe. It is not a weapon. The
+   * pounce knocking a body flat is what you sent it for and the blade is still
+   * yours. `preferred: [1.2, 2.4]` is inside the massiff's [1.4, 2.6] because
+   * a claw at 0.85 scale reaches less far than jaws at 0.95 do.
+   *
+   * `moves` is deliberately absent: src/game/Bodies.js declares pounce and
+   * rake on the plan and argues for them there, and a copy here would be the
+   * twin HANDOFF §2.3 is about — the same reason the reek carries none.
+   */
+  tuk: {
+    label: "Tuk'ata Whelp", build: (o) => buildQuadruped({ ...o, kind: 'tuk' }),
+    /* 0.85 against the massiff's 0.95, and the plan's hip of 0.62 still stands
+     * it 0.53 m — taller than the massiff at 0.42 on a smaller body, which is
+     * where the pace is read from. Well under the player's eye line, which the
+     * massiff's row states as the companion rule. */
+    scale: 0.85, hp: 90, mass: 45,
+    speed: 6.3, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 14, preferred: [1.2, 2.4], score: 0, threat: 0,
+    /* NEVER COMPOSED INTO A WAVE — see the massiff's note; the flag is the
+     * whole mechanism and nothing tests for the string 'tuk'. */
+    companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE RANCOR PUP — the second companion, and the one where the growth
+   * question gets answered in the open.
+   *
+   * `scale` is the field the kind is about. COMPANIONS.md puts the pup's
+   * scale on `runs`, and hp and damage do not move a point when it does — the
+   * body gets visibly bigger and hits nothing harder. 0.55 is where that
+   * starts, not where it stays, so it is the one number here a reader should
+   * expect to see written over at runtime. At 0.55 the plan stands it 0.43 m
+   * at the hip and near a metre at the crown: the massiff's height to within
+   * a centimetre, for the massiff's reason.
+   *
+   * 240 hp against the massiff's 210, and the 30 is bought by geometry rather
+   * than by wanting it to live. `slam` aims at ITSELF — see BEAST_MOVES —
+   * so this is the only companion whose own attack is a reason to be standing
+   * inside a fight rather than at the edge of one. It still dies if you leave
+   * it, which is the half of the brief that has to survive.
+   *
+   * 150 kg on a body shorter than the massiff's 110 kg is the whole read: a
+   * block, not a dog. Nowhere near the lift cap the big rows argue about.
+   *
+   * 3.6 m/s is a walk. The massiff's 5.2 is a trot and already below your
+   * sprint; this is barely above the Rancor's own 3.4, so the pup is the one
+   * companion that is always behind you and never catching up. That is the
+   * cost of the verb.
+   *
+   * 12 damage is a little over half the massiff's 22 and the lowest melee
+   * number on any body in the table. Deliberate, and stated in COMPANIONS.md:
+   * the value is the terrain and the lift. A wrecker that also killed things
+   * would make the crate it shattered beside the point.
+   *
+   * `preferred` [1.0, 2.2] against the massiff's [1.4, 2.6], because the slam
+   * is a radius and not a swing: 2.05 of scale is 1.13 m here, so the band
+   * has to sit inside its own blast or the move never resolves. Jaws have to
+   * arrive; this has to be already there.
+   */
+  pup: {
+    label: 'Rancor Pup', build: (o) => buildQuadruped({ ...o, kind: 'pup' }),
+    scale: 0.55, hp: 240, mass: 150,
+    speed: 3.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 12, preferred: [1.0, 2.2], score: 0, threat: 0,
+    /* Never composed into a wave, for the reason stated on the massiff. */
+    companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE TAUNTAUN — the first mount in the companion set, and the first
+   * archetype in the game that is rideable without being `big`.
+   *
+   * `mount: true` is the flag, for the reason `companion: true` is one on the
+   * massiff above: the seat, the deck row and the licence ladder all filter on
+   * it and nothing anywhere tests for the string 'taun'. It is inert on its
+   * own — `_measurePlatform` gates on `A.big` today, and COMPANIONS.md argues
+   * that line and its price rather than this row.
+   *
+   * AND `big` IS ABSENT ON PURPOSE, which is the one thing a reader will want
+   * to add. `A.big` is four unrelated decisions wearing one name: the movement
+   * proxy, `heavyLimit` in Waves, `armourClass` and STRATAGEM_ONLY. A
+   * tauntaun wants none of them — it is not a heavy, it is not armoured, and
+   * it can never be composed into a wave at all (see the massiff's note on
+   * `companion`).
+   *
+   * The numbers are a fast, fragile animal that is not a weapon:
+   *
+   *   speed 6.1  = PLAYER_SPRINT × the kind row's `pace` of 0.82, the same
+   *                arithmetic that makes the massiff's 0.70 into 5.2. Fastest
+   *                companion in the set bar the tuk'ata, which is on the cap.
+   *                Unridden it still cannot open ground on you; the point of
+   *                it is what it does with you on top.
+   *   hp 340     = above the massiff's 210 because it is three times the mass
+   *                and because it comes apart underneath you, and nowhere near
+   *                a reek's 1250 because it is not meant to survive contact.
+   *                COMPANIONS.md's answer to being shot at is that it PANICS
+   *                first, which is a behaviour and not a health bar.
+   *   mass 420   = the nexu's, on a comparably sized body, and a long way
+   *                under the 1760 kg lift cap the reek's note explains.
+   */
+  taun: {
+    label: 'Tauntaun', build: (o) => buildQuadruped({ ...o, kind: 'taun' }),
+    scale: 1.45, hp: 340, mass: 420,
+    speed: 6.1, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    /* damage 0 AND NO `moves`. The verb list is declared once, on the plan row
+     * in src/game/Bodies.js, and it is empty; `beastMoveSet` prefers an
+     * archetype's list, so declaring one here — even a copy — would be the
+     * twin the brute's note warns about, and declaring a non-empty one would
+     * silently arm the mount. 0 is here so that a verb added later cannot
+     * inherit a damage number nobody chose.
+     *
+     * `preferred` [6.0, 12.0] is the widest band in the game against the
+     * massiff's [1.4, 2.6] — "it has to arrive to matter" is exactly what is
+     * not true of this one. It is set outside the reach of every weapon on
+     * the field, so the only thing it can do at the distance it holds is
+     * exist, which is the whole of its contribution unridden. */
+    damage: 0, preferred: [6.0, 12.0], score: 0, threat: 0,
+    mount: true, companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE BLURRG — the mount that is also a weapon, and the only one of the
+   * three that can hurt anything.
+   *
+   * `mount: true` IS THE WHOLE NEW WORD ON THIS ROW, and it is not `big`.
+   * `big` is what gives a body a measured deck today, and it also picks the
+   * movement proxy, counts against Waves' heavy limit and forces an armour
+   * class — none of which belongs on an animal a player owns. So the flag is
+   * its own, exactly as `companion: true` is its own rather than a name test,
+   * and `Enemy._measurePlatform`'s gate is the single line that has to read it.
+   *
+   * NO `saddle`. The reek and the rancor carry crew through Riders.js and are
+   * priced with `saddleThreat`; this one is ridden by the PLAYER through
+   * Driving, so there is no passenger to pay for and `threat` is 0 beside
+   * `score` 0 for the reason the massiff's row already gives.
+   *
+   * 5.1 m/s is not chosen here — it is `paceOf('blurrg')`, which is 0.68 of
+   * the player's sprint off the kind row in CompanionKinds.js, and the massiff
+   * row sets the precedent of writing the same answer in both places. It is
+   * below the tauntaun's 0.82 by design: this is the slow mount, and what it
+   * buys with the difference is teeth.
+   *
+   * 340 hp against the massiff's 210 and the wampa's 560. Above the massiff
+   * because a mount that dies under you takes the dismount decision away from
+   * you, and well below the wampa because if it reached that the safest place
+   * in a firefight would be on its back — which would make riding an answer to
+   * combat rather than a trade against it.
+   *
+   * 20 damage is UNDER the massiff's 22, and that is the one number here a
+   * reader will want to raise. The massiff's 22 is a dedicated fighting
+   * animal's number, spent by a companion that has to arrive and survive to
+   * use it. This bite is taken from a body you are already standing on, at no
+   * risk to the thing biting and with no ground given by you. A free hit is
+   * priced as one. `preferred` at [1.6, 3.0] is the massiff's jaws band
+   * ([1.4, 2.6]) carried out by the extra scale — still jaws, still has to
+   * arrive, and short of the nexu's [1.8, 3.4] because this animal has no
+   * reach at all.
+   *
+   * 640 kg: the nexu is 420 at the identical scale and is a lean cat, and this
+   * is that scale with two thirds again the barrel and the heaviest legs in
+   * the table. It is nowhere near the 1760 kg force-grip ceiling the reek's
+   * row explains, which matters more here than there — a mount you cannot pull
+   * over is a mount an enemy Force user cannot answer.
+   */
+  blurrg: {
+    label: 'Blurrg', build: (o) => buildQuadruped({ ...o, kind: 'blurrg' }),
+    scale: 1.7, hp: 340, mass: 640,
+    speed: 5.1, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 20, preferred: [1.6, 3.0], score: 0, threat: 0,
+    /* Never composed into a wave, for the reason the massiff's row states. */
+    companion: true, mount: true, unlockAt: 99,
+  },
+};
 
 Object.assign(ARCHETYPES, COMPANION_UNITS);

@@ -8658,6 +8658,665 @@ export const CREATURE_PLANS = {
      * field whose impulse points at the animal instead of away from it. */
     moves: ['stab', 'snatch', 'sweep'],
   },
+
+  /**
+   * THE TOOKA KIT — the animal that cannot do anything, and the row is the
+   * argument that it does not need to.
+   *
+   * Every other plan in this table is a delivery system for a verb: the reek
+   * is a wall built to carry a horn, the acklay is a tripod built to reach
+   * past your blade, the massiff is a spine built to close two metres. This
+   * one is built to be PICKED UP. Its `moves` is empty on purpose (below),
+   * so the whole row is silhouette and nothing else, and the silhouette has
+   * exactly one job: to be the smallest, roundest, softest thing on the sand,
+   * so that a player looking at it decides on their own that it will not last
+   * the next thirty seconds. See COMPANIONS.md, "The twelve kinds" — it is
+   * the control case for the protection loop.
+   *
+   * SMALLEST IN THE GAME, and the archetype's 0.34 is what makes the numbers
+   * here read oddly next to the massiff's. At 0.34 the hip below stands
+   * 0.119 m and the back 0.235 m — a kitten a walking man does not see. The
+   * massiff was already argued down to 0.42 m at the hip because "a companion
+   * you have to look down at reads as a companion"; this one is a third of
+   * that again, which is the difference between a dog at your knee and a
+   * thing you would step on.
+   */
+  tooka: {
+    /* The only non-predator palette in the table. Every other eye here is a
+     * hunting colour — 0xd8a832, 0xffb03a, 0x66ff9a, 0xffdd44, 0xff6a2a —
+     * and `emissiveMat` at 2.8 makes all of them lamps in the dark. A pale
+     * blue is the one hue in that set of six nobody has used, so the tooka is
+     * separable from the nexu at range on colour alone, and eyeshine on a
+     * kitten is a thing cats actually do rather than a threat display. The
+     * belly is the palest in the file (0xe2dac8 against the massiff's
+     * 0x9a8f79) because the underside is what you see when you are holding
+     * it, which is where this animal spends the fights it survives. */
+    hide: 0xa89c8a, plate: 0xbdb2a0, belly: 0xe2dac8, eye: 0x74c8ff,
+    hip: 0.35, trunk: [0.08, -0.06, 0.62], pitch: 0.02, girth: 0.26,
+    /* ROUND IS THE POINT, and it is the girth-to-trunk ratio that says so:
+     * 0.26/0.62 = 0.42 against the massiff's 0.28/0.86 = 0.33 and the nexu's
+     * 0.33/1.72 = 0.19. The nexu is a line, the massiff is a spine, this is a
+     * ball with legs. Length was the cheapest thing to cut — 0.62 of trunk
+     * against the massiff's 0.86 — because a short body is what makes the
+     * head (below) read as too big for it without the head itself growing. */
+    /* Both swells are LOW and WIDE, which is the inverse of every other row:
+     * the massiff's shoulder is 0.30 tall and 0.20 across, this one is 0.14
+     * tall and 0.34 across. A swell that stands up is a muscle and a muscle
+     * is a thing that hits you; spread flat it is just fat over the ribs. The
+     * haunch is the larger of the two (0.24 against 0.14) for the one honest
+     * anatomical reason on this animal — a kitten is heavier behind than in
+     * front — and not because anything is ever going to push off it. */
+    swells: [[0.58, 0.14, 0.34], [0.24, 0.24, 0.38]],
+    /* n0 2.0 IS A TRUE ELLIPSE, and it is the only row that asks for one. The
+     * header rejects a body of revolution — "it reads as a barrel from any
+     * angle" — and that judgement is about a two-tonne animal that needs a
+     * shoulder and a keel to look like it can work. This is the one body in
+     * the table for which "reads as a barrel" is the correct answer, so the
+     * superellipse is dialled all the way back to round and the three shaping
+     * terms are switched OFF rather than left on their defaults: `back` 0.05
+     * flattens the spine into a saddle, `keel` 0.02 puts a sternum ridge under
+     * it and `waist` pinches the flanks, and all three are what a working
+     * animal's section looks like. Explicit zeros, because `bodySection`'s
+     * own defaults are non-zero and an omitted field here would quietly give
+     * a kitten a keel. */
+    section: { n0: 2.0, n1: 2.2, back: 0, keel: 0, waist: 0 },
+    /* THE HEAD IS WIDER THAN THE BODY, which is the whole read and is bought
+     * with the trunk rather than with the skull: 'horned-ape' builds a sphere
+     * of 0.30 scaled (1.10, 0.94, 0.86), so the head is 0.224 wide against
+     * this trunk's 0.26 girth and 0.52 long against its 0.62 — nine tenths
+     * the width of the body and five sixths its length. On the wampa (scale
+     * 2.0, trunk 0.62, girth 0.46) the same head is half the body's width;
+     * the geometry is untouched and only the animal under it changed.
+     *
+     * ── WHY 'horned-ape' AND NOT 'fanged', WHICH IS THE OTHER CAT ────────
+     * `buildCreatureHead` branches on four strings and an else, and none of
+     * them was authored for a kitten, so this is the nearest fit and it is a
+     * fit rather than a compromise:
+     *   the SKULL. 'horned-ape' is a wide flat FACE that looks at you from
+     *   the front; 'fanged' is a muzzle scaled (0.94, 0.68, 1.30) — long, low
+     *   and pointed, which is a predator's head and reads as one at any size.
+     *   A flat face with the eyes on the front of it is the single strongest
+     *   cue for "young animal" there is.
+     *   the EYES. 'horned-ape' places ONE pair. 'fanged' places two — four
+     *   eyes, and its own comment says that is "the single most alien thing
+     *   about the animal", which is the exact opposite of what this row wants.
+     *   the RUFF. Three fur clumps round the jaw, and they are what carries
+     *   the head's outline into the `back: 'shag'` below. The two treatments
+     *   were authored as a pair on the wampa and they are kept as a pair.
+     *   the HORNS. Tapered tubes swept 0.56 OUT and forward off the temples,
+     *   which on this body are 0.19 m long on a 0.235 m animal. That is the
+     *   one piece being deliberately re-read: the only thing that stands that
+     *   far off a kitten's temples is an EAR, and an oversized ear pair is a
+     *   tooka's other read after the head. It is not new vocabulary and it is
+     *   not a new branch; it is the existing horn geometry doing an ear's job
+     *   because the proportions happen to be an ear's proportions.
+     * The underbite fangs are the one piece that stays wrong. Three per side
+     * at 0.14 of scale — 48 mm — so at this size they read as an open mouth
+     * rather than as teeth, and the alternative was inventing a fifth branch,
+     * which this row is not allowed to do and does not need. */
+    headAt: [0.18, 0.52], neck: [1, 0.10, 0.16, 0.10, 0], head: 'horned-ape',
+    /* ONE neck segment, and the shortest in the file at 0.10 against the
+     * massiff's two of 0.14. A kit has no neck — the head sits straight on
+     * the shoulders, which is the second half of "the head is too big for
+     * it". `nCurl` is 0 for the same reason the rancor's is: there is not
+     * enough neck for a curve to happen in. */
+    /* FUR, and it is the only soft outline the builder can make. The four
+     * dorsal treatments are a spine of spikes, bony bosses, raked quills and
+     * this; the first three are armour and this one is a coat. It is also
+     * scale-invariant — every clump is a fraction of S — so the fringe that
+     * breaks a 1.76 m wampa's edge breaks this 0.235 m one identically, and a
+     * fuzzy silhouette is what stops a 0.34-scale animal reading as a
+     * low-poly pebble at twenty metres. */
+    back: 'shag',
+    /* THE TAIL IS LONGER THAN THE ANIMAL: 1.10 of reach against 0.62 of
+     * trunk. The nexu's is 2.40 and is argued as the thing that makes a low
+     * body unmistakable at range; the same argument is worth more here,
+     * because at 0.34 scale the body is 80 mm across and the tail is the only
+     * part of this creature with any length in it at all. It is also the
+     * THINNEST in the file — r0 0.030 against the nexu's 0.085 and the
+     * massiff's 0.09 — since a tooka's tail is a whip of fur and not a
+     * rudder, and a thin tail on a round body exaggerates the body.
+     *
+     * `pitch0` 0.55 with a POSITIVE curl is the only tail in the table that
+     * goes up and keeps going up (the massiff's is 0.12 falling to -0.38, the
+     * nexu's 0.26 falling). Six segments carry it from 0.55 to 0.85 rad, so
+     * it stands off the croup and recurves forward over the back. A tail held
+     * high is the one posture cue a person reads as "this animal is pleased
+     * to see you" without being taught it, and it costs a sign. */
+    tail: [6, 1.10, 0.030, 0.55, 0.06],
+    limbs: [
+      /* THE TRACK IS NARROWER THAN THE HIPS, and this row is the only one
+       * that does it: `plant` 0.15 inside a hip at x 0.17, where the massiff
+       * plants 0.34 outside a hip at 0.24 and the acklay plants 1.90 outside
+       * 0.54. Every other animal here braces — a wide stance is what you
+       * stand on to take a hit or throw one, and this one is never going to
+       * do either. A cat places its feet nearly on a single line, so the legs
+       * lean IN under the body, which `solveIK` handles as ordinary reach and
+       * which reads as delicate from any angle.
+       *
+       * Legs 0.22 + 0.24 against a 0.35 hip and a 0.027 ankle: 0.323 m of
+       * drop into 0.46 m of leg, so 70% extended — the massiff's own 66% and
+       * deliberately not straighter, because a straight leg reads as a stance
+       * and a bent one reads as a crouch. */
+      { role: 'leg', x: 0.17, y: 0.05, z: 0.34, plant: 0.15, femur: 0.22, tibia: 0.24, tarsus: 0.09,
+        girth: 0.92, pole: [0.14, 0.26, 0.66], foot: 'paw',
+        femurRest: [0.16, -0.90, 0.28], tibiaRest: [0.04, -0.96, -0.22] },
+      /* Hind heavier than fore — 0.96 against 0.92 — which INVERTS the
+       * massiff's 0.92/0.86. A dog carries its weight on the forehand and a
+       * cat's mass is behind; it is two hundredths and it is the difference
+       * between the two animals' outlines from the side. */
+      { role: 'leg', x: 0.18, y: 0.03, z: -0.26, plant: 0.16, femur: 0.23, tibia: 0.25, tarsus: 0.09,
+        girth: 0.96, pole: [0.16, 0.30, -0.70], foot: 'paw',
+        femurRest: [0.16, -0.88, -0.32], tibiaRest: [0.04, -0.95, 0.24] },
+    ],
+    /* PAW, and it is chosen for the ankle rather than for the toes. `ANKLE_UP`
+     * rides a claw or a hoof at 0.84-0.90 of the tarsus and a paw at 0.30, so
+     * a paw is the one foot in the table that sets the body DOWN — and
+     * `stanceOf` then gives it `toe: 0.75`, a sole that lies along the ground
+     * instead of dropping onto a point. That is what a small animal sitting
+     * low looks like. The geometry agrees: a paw is a broad flat plate with
+     * three short toes, against the claw's three 0.26 hooks. The nexu is the
+     * other cat here and it wears claws, correctly — it is a thing that rakes.
+     * This one has nothing to rake with, so it should not be wearing the
+     * hardware for it. */
+    step: 0.44, lift: 0.20, rear: 0.10,
+    /* Stride 0.44 against 0.46 of leg — 0.90, where the massiff runs 0.96 of
+     * its own leg. Slightly short and therefore quicker per metre, which is
+     * what a small animal keeping up with you looks like. `lift` is the one
+     * number here that is proportionally the LARGEST in the table: 0.20/0.44
+     * is 0.45 of the stride against the massiff's 0.35 and the reek's 0.35.
+     * A kitten picks its feet up much higher than it needs to. It is one
+     * number, it is free, and it is the only thing in this row that animates. */
+    /* `rear` is the smallest in the file at 0.10 because it is very nearly
+     * dead: `_poseWalker` spends it as `ST.rear * rise` and `rise` only ever
+     * leaves zero inside a BEAST_MOVES pose, of which this animal has none.
+     * It is not zero for the reason given under `moves` — if the brain's
+     * fallback ever does fire, the tooka must not answer it by rearing up
+     * like a war-dog. */
+
+    /* ZERO VERBS, DECLARED HERE AND NOWHERE ELSE.
+     *
+     * This is the one row in the table whose move list is an assertion rather
+     * than an inventory. Everything above it is a body that affords something
+     * — the reek's horn, the acklay's reach, the massiff's jaws — and the
+     * whole of this body affords nothing: the head has no weapon on it that
+     * is not a milk tooth, the feet are soles, the tail is a fur whip, and
+     * there is no mass anywhere to put behind any of them. An empty array is
+     * the accurate reading of the anatomy, which is why it belongs on the
+     * PLAN and not on the archetype — see the header on the two authorities,
+     * and COMPANIONS.md's own line that the combat answer is "enforced rather
+     * than tuned". A tooka with `damage: 0` and a lunge would still be an
+     * animal that throws itself at people; a tooka with no verbs cannot.
+     *
+     * `[]` survives the handoff: `buildQuadruped` returns `P.moves || null`
+     * and an empty array is truthy, and `beastMoveSet` prefers `built.moves`
+     * over `DEFAULT_BEAST_MOVES` on the same test, so the floor that gives
+     * the unlisted creatures a lunge is not reached. What DOES need one line
+     * is `_beastBrain`'s pick — `moves[floor(rng() * moves.length)] ||
+     * 'lunge'` — where an empty list falls through the `||` and hands this
+     * animal the massiff's opener. That line is the only thing standing
+     * between this row and a kitten that mauls people, and it is stated in
+     * Enemy.js beside the pick, not here. */
+    moves: [],
+  },
+
+  /**
+   * THE TUK'ATA WHELP — the Sith hound pup, and the cheapest row in the set.
+   *
+   * It is the NEXU'S SILHOUETTE AT A THIRD OF THE SIZE and it is written that
+   * way on purpose: `stalker` already ships the long-low-horizontal cat — the
+   * poles, the rest pair, the claw foot and the forward-carried head — and
+   * re-authoring any of that would be inventing a difference the animal does
+   * not have. What changes here is the two things that are actually different
+   * about a whelp: it is BONIER and it is LEGGIER.
+   *
+   * Bonier is `girth` 0.21 against the nexu's 0.33 and the massiff's 0.28 —
+   * the thinnest trunk in the table — with the swells halved (0.20/0.15
+   * against the nexu's 0.34/0.26) and the section squared up to 3.0/3.4. A
+   * thin body on a round section is a tube; the same body on a near-square
+   * section keeps a corner along the flank, which is what makes it read as
+   * angular rather than as small. `waist` 0.12 is the highest in the table by
+   * a fifth: the ribcage ends and then there is nothing, which is the read the
+   * whole design word "fragile" has to survive at forty metres.
+   *
+   * Leggier is `hip` 0.62 on a 1.06 trunk. At its archetype's 0.85 scale that
+   * stands it 0.53 m at the hip against the massiff's 0.42 — TALLER THAN THE
+   * MASSIFF WHILE BEING A SMALLER ANIMAL — because leg-to-body is where pace
+   * is read from a distance, and this is the only companion that keeps up with
+   * a sprint. Femur+tibia+tarsus is 1.48 of the hip height, between the
+   * massiff's 1.45 and above the nexu's 1.40.
+   *
+   * WHAT IT DOES NOT GET IS THE TAIL AND THE MANE. The nexu's row says the
+   * tail IS the read at range — 2.40 of scale, nearly five metres — and the
+   * mane is the other half of it. Give a small cat both and you have not built
+   * a whelp, you have built a nexu the player thinks is standing further away,
+   * which is the same defect `BODYGUARD_KITS` measures at 0.658 IoU and calls
+   * out. So: a 0.70 whip tail, and `back: 'ridge'`, which is bone standing off
+   * the spine rather than quills raked off the shoulders.
+   */
+  tuk: {
+    hide: 0x4a4038, plate: 0x9a9282, belly: 0x6b5f52, eye: 0xff3a2a,
+    hip: 0.62, trunk: [0.09, -0.36, 1.06], pitch: 0.09, girth: 0.21,
+    /* Shoulder and haunch at half the nexu's amplitude. A pup's mass has not
+     * arrived yet; what is on the shoulder is scapula, and a gaussian big
+     * enough to read as muscle would be the one thing on the body arguing
+     * against the health bar. */
+    swells: [[0.76, 0.20, 0.20], [0.24, 0.15, 0.22]],
+    section: { n0: 3.0, n1: 3.4, back: 0.06, keel: 0.05, waist: 0.12 },
+    /* headAt is the nexu's 0.686 of trunk length, unchanged — a cat carries
+     * its head off the front of the body, and that ratio is the pose. `neck`
+     * keeps the nexu's three segments and its curl and shortens the segment
+     * from 0.24 to 0.15; pitch 0.10 against 0.06 carries the skull a little
+     * above the spine line, which is the one place a pup differs from the
+     * adult and the reason it is visible over the cover it is running past. */
+    headAt: [0.16, 0.72], neck: [3, 0.15, 0.13, 0.10, 0.02], head: 'fanged',
+    /* `ridge` and not `mane`: see the note above on not building a small nexu.
+     * The ridge is also the one dorsal treatment that goes into the trunk's
+     * PRIMARY mesh rather than the silhouette kit, so the spines survive the
+     * LOD rung that a companion spends most of its life on — it is behind you
+     * at thirty metres more often than it is in front of you at ten. */
+    back: 'ridge', tail: [4, 0.70, 0.06, 0.10, -0.12],
+    limbs: [
+      /* The nexu's fore leg, shortened and thinned. `pole` keeps its direction
+       * and loses its length with the body; `femurRest`/`tibiaRest` are
+       * COPIED EXACTLY, because a bind pose is a direction and not a size —
+       * nothing about being small changes which way a cat's elbow faces, and
+       * the header's own warning is about rest pairs authored for one animal
+       * being worn by another. `plant` 0.26 against the nexu's 0.34 and the
+       * massiff's 0.34 is the narrowest track in the table: a narrow track is
+       * what a runner has, and it is 0.22 m of stance at 0.85 scale. */
+      { role: 'leg', x: 0.20, y: 0.04, z: 0.53, plant: 0.26, femur: 0.38, tibia: 0.42, tarsus: 0.12,
+        girth: 0.72, pole: [0.18, 0.38, 0.86], foot: 'claw',
+        femurRest: [0.10, -0.88, 0.42], tibiaRest: [0.04, -0.94, -0.30] },
+      { role: 'leg', x: 0.22, y: 0.02, z: -0.45, plant: 0.28, femur: 0.40, tibia: 0.44, tarsus: 0.12,
+        girth: 0.78, pole: [0.18, 0.44, -0.90], foot: 'claw',
+        femurRest: [0.10, -0.82, -0.50], tibiaRest: [0.04, -0.92, 0.36] },
+    ],
+    /* `step` 0.86 is 0.73 m of stride at scale against the nexu's 2.04 and the
+     * massiff's 0.49 — short strides taken fast, which is what a small thing
+     * moving at 6.3 m/s has to look like. `lift` 0.34 sits above the massiff's
+     * trot and below the nexu's: it bounds.
+     *
+     * `rear` is the one number NOT scaled down with the body, and deliberately.
+     * It is metres of hip travel per unit of an attack's `rise` and it is
+     * multiplied by scale, so the nexu's own 0.42 would buy 0.36 m here. The
+     * pounce coils to rise -0.9 and the coil is the whole telegraph — the move
+     * is answered in the last tenth of it (see BEAST_MOVES.pounce) — so a
+     * gather the player cannot see from across the room is a window that does
+     * not exist. 0.46 buys 0.39 m of drop on a 0.53 m hip. */
+    step: 0.86, lift: 0.34, rear: 0.46,
+    /* Two verbs, for the reason the massiff's row states and does not need
+     * restating here. They are the nexu's first two minus the charge: a
+     * fifty-kilo pup does not run anything down — the POUNCE is how it arrives
+     * (it commits at the launch, so it closes ground it could not walk) and
+     * the RAKE is the only thing it can do once it is there. Its damage is on
+     * the archetype and it is small; the point of the pair is that the pounce
+     * knocks a body over for your blade, not that it kills. */
+    moves: ['pounce', 'rake'],
+  },
+
+  /**
+   * THE RANCOR PUP — the wrecker, and the second body in the table that is
+   * not a level's problem but yours.
+   *
+   * It is the `brute` pattern and it is meant to be recognisable as one: two
+   * plantigrade hind legs off `hips`, two `role: 'arm'` limbs off `body`, no
+   * neck, a tail. Nothing about that layout is new — `creatureSkeleton`
+   * spans it for the rancor and the gundark already, and the arms buy the
+   * swing-and-throw path in `_poseWalker` for free, which is the whole reason
+   * the wrecker is a plan row and not a behaviour.
+   *
+   * WHAT MAKES IT A PUP IS PROPORTION, NOT SCALE. Dropping the archetype's
+   * scale alone gives a small rancor, which is a rancor seen from further
+   * away. A juvenile is a big head on a short barrel with stumpy limbs, and
+   * `buildCreatureHead` sizes the 'tusked' skull off S with no per-plan knob,
+   * so the only lever that exists is shrinking everything the head is
+   * measured AGAINST: the trunk is 0.62 against the rancor's 0.74, the arms
+   * come to 0.94 of reach against 1.16, and the head stays where S puts it.
+   * The skull is 1.5 trunk-radii wide here against the rancor's 1.26.
+   *
+   * The height is chosen against the massiff and not against the rancor. Hip
+   * 0.78 at the archetype's 0.55 scale is 0.43 m, which is the massiff's
+   * 0.42 m to within a centimetre — the shipped companion argues for being
+   * below the player's eye line and that argument is not re-run here, it is
+   * matched. Crown lands near 0.97 m: the rancor's silhouette at a sixth of
+   * its height, which is the joke the kind is for.
+   */
+  pup: {
+    /* Lighter than the rancor's 0x6b6152 hide and 0x585044 plate, because
+     * every one of those greys is weathering and this animal has not had
+     * any yet; the eye keeps the family's amber but paler. */
+    hide: 0x7d7360, plate: 0x6a6152, belly: 0x9c9280, eye: 0xffe08a,
+    hip: 0.78, trunk: [0.10, -0.08, 0.62],
+    /* LESS upright than the rancor's 1.02, which looks backwards and is not.
+     * The pose the reference is always in puts the knuckles on the sand, and
+     * this one's arms are 0.81 of the rancor's proportional reach — pitching
+     * the trunk up would hang them in the air. Lowering the shoulder is what
+     * lets a short arm still touch the ground. */
+    pitch: 0.88, girth: 0.50,
+    /* The masses swap ends. The rancor carries 0.44 over the shoulder because
+     * that is where a slam is thrown from; a pup's bulk is gut — 0.30 at the
+     * shoulder and 0.34 at the haunch, the only row in the table where the
+     * back mass is the larger of the two. */
+    swells: [[0.78, 0.30, 0.28], [0.30, 0.34, 0.36]],
+    /* ROUNDER THAN ANYTHING SHIPPED. The nexu is the current floor at
+     * 2.4/2.8 and the rancor sits at 2.6/3.2; 2.0 would be a plain ellipse,
+     * so 2.1/2.4 is as round as the section goes while still being a
+     * superellipse. The waist drops to 0.02 from the rancor's 0.04 for the
+     * same reason: a barrel does not pinch. */
+    section: { n0: 2.1, n1: 2.4, back: 0.03, keel: 0.04, waist: 0.02 },
+    headAt: [0.54, 0.30], neck: [1, 0.10, 0.30, 0.30, 0], head: 'tusked',
+    back: 'ridge',
+    /* Shorter, and shorter than the shrink: 0.72 of reach against the
+     * rancor's 1.30 is 1.16 trunk-lengths where the rancor is 1.76. A tail
+     * as long as the adult's would be the one part of the outline that read
+     * as full-grown, and the tail is drawn as one swept tube, so it costs
+     * nothing to have less of. The tighter curl (-0.18 against -0.14) keeps
+     * the tip off the sand on a body this low. */
+    tail: [4, 0.72, 0.14, 0.12, -0.18],
+    limbs: [
+      /* The hind legs. Still plantigrade and still poled FORWARD and low —
+       * the rancor's argument holds and is not repeated. Femur and tibia
+       * come down to 0.42/0.44 from 0.52/0.54 to stand a 0.78 hip instead of
+       * a 0.92 one, but the tarsus only goes 0.26 → 0.24: the sole stays big
+       * relative to the leg, which is both what a juvenile's foot looks like
+       * and what a body that slams needs to stand on. `girth` 1.45 against
+       * the rancor's 1.30 is the same thought — this is a stumpy leg, not a
+       * scaled one. Plant 0.44 on a 0.78 hip is a wider stance than the
+       * rancor's 0.46 on 0.92, because the base under a slam does not scale
+       * down with the animal doing it. */
+      { role: 'leg', x: 0.30, y: 0.02, z: -0.08, plant: 0.44, femur: 0.42, tibia: 0.44, tarsus: 0.24,
+        girth: 1.45, pole: [0.30, 0.52, 1.05], foot: 'paw',
+        femurRest: [0.16, -0.90, 0.34], tibiaRest: [0.04, -0.96, -0.26] },
+      /* The arms, and they are the short part. 0.94 of reach against the
+       * rancor's 1.16 — the knuckles come down near the sand rather than
+       * onto it, which is the pitch's problem above and is why it is 0.88.
+       * `hand` is required, not decorative: `_poseWalker` only runs the
+       * arm-swing-and-throw branch for a limb that has one. It is drawn in
+       * to [0.54, -0.16, 0.54] from [0.62, -0.22, 0.66] — proportionally
+       * forward of the rancor's hang, so the arms read as held rather than
+       * dangling, without going to the gundark's raised reach. */
+      { role: 'arm', x: 0.40, y: 0.32, z: 0.20, femur: 0.36, tibia: 0.38, tarsus: 0.20,
+        girth: 1.00, pole: [0.52, -0.08, -0.80], foot: 'talon',
+        femurRest: [0.16, -0.96, 0.22], tibiaRest: [0.06, -0.98, 0.16],
+        hand: [0.54, -0.16, 0.54] },
+    ],
+    /* A waddle. Step 0.58 on legs of 0.42/0.44 is a shorter stride per unit
+     * of leg than the rancor's 0.72 on 0.52/0.54, and the lift comes down
+     * with it — this animal does not pick its feet up. `rear` goes the other
+     * way, 0.34 against 0.30, and that is deliberate: rear is metres of hip
+     * travel per unit of an attack's `rise` ×scale, so at 0.55 scale the
+     * slam's 1.5 rise buys 0.28 m of hip. Against a 0.43 m hip that is
+     * two thirds of its own standing height, which is the only way a slam
+     * telegraph stays legible on a body this small. */
+    step: 0.58, lift: 0.26, rear: 0.34,
+    /* Its verbs, declared HERE and not in the archetype — the massiff's
+     * precedent rather than the rancor's, and the difference is real: the
+     * rancor's set is a level designer's statement about a set-piece, and no
+     * level ever composes a companion, so there is nobody upstream to
+     * disagree with. SLAM is the kind (COMPANIONS.md: the only companion
+     * whose attack changes the level rather than the enemy), TOSS is the
+     * game's biggest upward impulse borrowed at a sixth of the size, and
+     * LUNGE is the floor every animal has. There is no rake and no charge:
+     * a thing that weighs 150 kg and moves at 3.6 m/s does not run anything
+     * down, and it has hands rather than claws. */
+    moves: ['slam', 'toss', 'lunge'],
+  },
+
+  /**
+   * THE TAUNTAUN — the first RIDEABLE body in CREATURE_PLANS, and the only row
+   * in the table that declares no verbs at all.
+   *
+   * COMPANIONS.md ("The twelve kinds") settles what it is: "PACE ON FLAT
+   * GROUND AND NOTHING ELSE. Fastest of the three mounts, useless in battle
+   * exactly as asked." Everything below is that sentence turned into numbers,
+   * and the two shapes it has to hold are (a) a body a player sits ON, and
+   * (b) a two-legged outline nobody mistakes for the wampa at forty metres,
+   * since those are the only two bipeds in the table.
+   *
+   * ONE LIMB ENTRY, WHICH IS TWO LEGS. `creatureSkeleton` expands every entry
+   * left and right, so the brute and the pouncer each declare one 'leg' pair
+   * plus one 'arm' pair. This declares the leg pair and stops: no arms, which
+   * is the whole silhouette difference from the pouncer. That animal is a
+   * vertical barrel (pitch 1.32) with its hands out; this is a horizontal one
+   * on stilts with a counterweight behind it. Same shag, same head branch,
+   * nothing alike in profile.
+   *
+   * LONG LEGS STATED AS A RATIO, because that is what the eye reads. hip 0.98
+   * against a 0.95 trunk — the hip stands as high as the body is long, where
+   * the massiff's hip is half its trunk and the stalker's is exactly half of
+   * its 1.72. It is above the brute's 0.92 and below the acklay's 1.62, which
+   * is right: the acklay's height is a tripod's clearance, this is a runner's.
+   * At scale 1.45 (the archetype) that is 1.42 m at the hip and a back at
+   * about 1.85 m — a saddle you climb onto, not one you step over.
+   *
+   * IT CANNOT TAKE GRADES, and that is the varactyl's job rather than a
+   * number here — see COMPANIONS.md. Nothing in this row encodes it.
+   */
+  taun: {
+    /* Grey-white over tan, the only pale hide in the table: six creatures in
+     * this file are sand and rust, and the animal you own has to be findable
+     * on the same sand they are fought on. The EYE is the deliberate one —
+     * 0x8a5a2e is the dimmest in the table by a wide margin, against the
+     * stalker's 0x66ff9a and the acklay's 0xffdd44. Those are warning lights
+     * on predators. `emissiveMat` runs at 2.8 either way, and a lamp burning
+     * on the head of the thing you are sitting behind is a lantern pointed at
+     * your own night route. */
+    hide: 0xb9b2a4, plate: 0x8e8577, belly: 0xd8d2c4, eye: 0x8a5a2e,
+    hip: 0.98, trunk: [0.12, -0.40, 0.95], pitch: -0.10, girth: 0.34,
+    /* THE SWELLS ARE REVERSED FROM EVERY SHIPPED ROW, and it is the one
+     * anatomical claim in here. The charger is [[0.74, 0.52, …], [0.24, 0.24,
+     * …]] and the massiff, stalker, brute, pouncer and acklay are all the same
+     * shape: shoulder big, haunch small, because they are quadrupeds that
+     * drive from the front. A two-legged runner puts its engine at the BACK —
+     * haunch 0.44 against a shoulder of 0.30 — and without that the body reads
+     * as a quadruped that has lost its forelegs. */
+    swells: [[0.72, 0.30, 0.22], [0.22, 0.44, 0.30]],
+    /* t runs rear to front (see the lathe's capY0/capY1), so n0 is the
+     * haunch and n1 the chest. 3.0 → 2.6 is boxy at the back and rounder
+     * forward, which is the opposite direction to every other row and is
+     * chosen for the saddle: the rider sits over the hips, so the slab-sided
+     * section belongs where his knees are and the deep round chest can stay a
+     * chest. `back` 0.07 is the highest in the table (massiff and stalker
+     * 0.04, charger 0.02) — `_measurePlatform` takes the highest vertex
+     * inside the central 60% of the hull, and a circular section gives it a
+     * crown one vertex wide, which is a ridgepole rather than a seat. `waist`
+     * 0.10 matches the stalker's, the deepest pinch shipped, for the same
+     * reason from the other side: at girth 0.34 the widest part of the animal
+     * would otherwise be exactly under the rider's knees. */
+    section: { n0: 3.0, n1: 2.6, back: 0.07, keel: 0.08, waist: 0.10 },
+    headAt: [0.20, 0.84], neck: [3, 0.20, 0.17, 0.62, -0.22], head: 'horned-ape',
+    /* THE NECK GOES UP, and it is the only one that does. The massiff (-0.30),
+     * the charger (-0.44) and the acklay (-0.30) all sweep DOWN because they
+     * carry a weapon in front of their eyes and have to aim it; the stalker is
+     * level at 0.06. This one starts at 0.62 and curls -0.22 a segment, so it
+     * stands out of the withers and then levels off — three segments of 0.20
+     * is 0.87 m of neck at scale. A head carried at the height of the thing
+     * behind it is a head the rider looks OVER rather than through.
+     *
+     * `horned-ape` is the nearest existing branch and it is not a perfect fit
+     * — see the report. It buys the two things that matter: horns curving
+     * sideways off the temples rather than forward, and the fur ruff round the
+     * jaw that carries the head's outline into the coat. What it costs is a
+     * short broad face where a tauntaun has a muzzle, and an underbite of
+     * fangs on an animal that does not bite anything. No new string was
+     * invented for it. */
+    back: 'shag', tail: [4, 0.80, 0.15, 0.10, -0.06],
+    /* THE TAIL IS THE COUNTERWEIGHT AND IS SIZED AS ONE. r0 0.15 is the
+     * brute's 0.16 and not the stalker's 0.085 — the nexu's tail is a whip
+     * and its read is length (2.40), this one is a mass and its read is
+     * thickness. curl -0.06 is the flattest in the table (massiff -0.10,
+     * brute -0.14) so it holds out behind instead of drooping: a two-legged
+     * body whose tail hangs reads as standing up, and this one never does. */
+    limbs: [
+      /* THE ONE PAIR. Poled BACK and high — [0.26, 0.70, -1.35], further back
+       * than the stalker's hind at -1.20 — so the hock stands behind the
+       * animal and the leg reads as a bird's. The alternative was the brute's
+       * plantigrade forward pole, and it was rejected on the same ground the
+       * swells were: a rancor stands, and this thing only ever runs.
+       *
+       * 0.58 + 0.62 + 0.22 = 1.42 of leg under a 0.98 hip. The ratio 1.45 is
+       * deliberately the brute's and the stalker's (both 1.43) rather than
+       * something longer, because that ratio is KNEE BEND and not leg length:
+       * straighten it further and `solveIK` has no room to fold, so the
+       * fastest thing in the roster would be the one whose gait stops
+       * bending. The length is bought with `hip` instead, which is where it
+       * belongs.
+       *
+       * plant 0.30 against the pouncer's 0.42 and the brute's 0.46 — the
+       * narrowest stance of any biped here. A body running on two legs tracks
+       * its feet toward the centreline; splayed, it waddles. girth 1.02 sits
+       * between the stalker's 0.96 and the pouncer's 1.20: it is not a
+       * cat's leg, because it carries a rider, and it is not a wampa's,
+       * because it has to swing at speed. */
+      { role: 'leg', x: 0.24, y: 0.03, z: -0.02, plant: 0.30, femur: 0.58, tibia: 0.62, tarsus: 0.22,
+        girth: 1.02, pole: [0.26, 0.70, -1.35], foot: 'claw',
+        femurRest: [0.12, -0.88, -0.44], tibiaRest: [0.04, -0.93, 0.36] },
+    ],
+    /* The longest stride in the table after the acklay's: 1.30 × 1.45 is
+     * 1.89 m against the stalker's 2.04 at 8.6 m/s. It moves at 6.1 (the
+     * archetype), so the cadence is slower than the nexu's on a stride nearly
+     * as long, which is a bound rather than a scurry and is what the legs
+     * were bought for. lift 0.46 is above the stalker's 0.44 for the same
+     * reason: a hock that high has to clear.
+     *
+     * `rear` 0.12 is the lowest in the table — under the acklay's 0.26 — and
+     * it is low BECAUSE of `moves` below. `rear` is metres of hip travel per
+     * unit of an attack's `rise`, and with no attack there is nothing to
+     * telegraph; what is left of it is flinches and the topple, and every
+     * centimetre of that is a rider being lifted out of a seat that is
+     * written from this body's own platform. */
+    step: 1.30, lift: 0.46, rear: 0.12,
+    /* NO VERBS, AND THE EMPTY ARRAY IS THE ENFORCEMENT RATHER THAN A NOTE.
+     * `beastMoveSet` returns the first truthy of archetype, plan, default, and
+     * `[]` is truthy — so a declared empty set reaches `_beastBrain`, which
+     * filters it by phase and finds nothing to reach for at any health. The
+     * archetype deliberately declares no `moves` of its own, so this line is
+     * the only statement of it in the game.
+     *
+     * The alternative was `lunge` "so it can defend itself", and it is the
+     * one thing this animal must not have: the brief is that arriving at a
+     * fight is something you DISMOUNT to do, and a mount that trades on its
+     * own makes the dismount optional. The blurrg is the mount that bites,
+     * and it is a different row. */
+    moves: [],
+  },
+
+  /**
+   * THE BLURRG — the second of the three mounts, and the only body in the
+   * table that is ridden AND bites.
+   *
+   * TWO LEGS, ONE LIMB ENTRY. `limbs[]` is expanded left and right by
+   * `creatureSkeleton`, so a two-legged animal is one row and needs nothing
+   * written; the rancor and the wampa are the proof that a plan with a single
+   * leg pair already walks. What makes this one unmistakable from the other
+   * two mounts at forty metres is not the leg COUNT — the rancor has two as
+   * well — it is where the mass sits: the haunch swell is 0.58, the largest
+   * single swell in the table against the reek's shoulder at 0.52, and the
+   * shoulder is 0.18, the smallest. Every animal above this carries its mass
+   * over the front legs it has. This one has none, so the barrel hangs off
+   * the hips and the head is thrown out in front on a short neck to pay for
+   * it. That is a two-legged outline before the legs are visible at all.
+   *
+   * `pitch: 0.45` is the only mid value in the table — the reek is level at
+   * -0.13 and the rancor stands at 1.02 — and it is the one number that makes
+   * it a MOUNT. A level spine gives a shelf and a vertical one gives a wall;
+   * a 26-degree spine gives a back that rises from the hips to the shoulder,
+   * which is the shape a saddle sits in the top of. `trunk[1]` is -0.26, the
+   * most rearward trunk mount in the table (the reek is -0.20 across four
+   * legs), because a biped whose barrel starts at the hip joint puts every
+   * kilo of it in front of the only two feet it has.
+   *
+   * The rider is why `back` is `'ridge'` and not one of the other three, and
+   * the reason is stated above `if (P.back === 'ridge')` rather than repeated
+   * here: the ridge is the only dorsal treatment that goes into the trunk's
+   * PRIMARY mesh, and `Enemy._measurePlatform` measures a deck off the body
+   * bone's parts. A mane, scutes or shag would stand over the hull the rider
+   * is measured against instead of being part of it, so the saddle would sit
+   * inside the animal. A blurrg's back is a low bony line rather than a crest,
+   * so it is written as one — the ridge here is 0.30 of scale of relief where
+   * the massiff's is the animal's whole read.
+   */
+  blurrg: {
+    hide: 0x77685f, plate: 0x8e8175, belly: 0xa4988a, eye: 0xb8452c,
+    /* Scale 1.7 is declared on the archetype and is deliberately the NEXU's,
+     * to the digit: same size, opposite proportions, so the pair says out loud
+     * that these rows are the animal and not its bounding box. Against that
+     * nexu — hip 0.86, girth 0.33, trunk 1.72 long — this is hip 0.86, girth
+     * 0.44 and a trunk 1.10 long. Two thirds the length at a third again the
+     * barrel: squat and wide, from three numbers. */
+    hip: 0.86, trunk: [0.10, -0.26, 1.10], pitch: 0.45, girth: 0.44,
+    /* Shoulder nearly flat, haunch enormous. The reek's pair is [0.74, 0.52]
+     * and [0.24, 0.24] — mass forward — and this is that inverted. */
+    swells: [[0.62, 0.18, 0.26], [0.26, 0.58, 0.34]],
+    /* Rounder than the reek's 2.8/3.4 so it reads as a barrel rather than a
+     * slab; `back: 0.07` is the largest dorsal flattening in the table and it
+     * is here for one reason — it is the only body a person sits on, and a
+     * seat wants a facet. It costs about 5 cm of deck height at this scale,
+     * which is cheaper than a rider perched on a cylinder. `keel: 0.10` is the
+     * gut, and `waist: 0.02` is nearly nothing: the nexu's 0.10 pinch is a
+     * cat's flank and this animal has no waist to pinch. */
+    section: { n0: 2.4, n1: 2.9, back: 0.07, keel: 0.10, waist: 0.02 },
+    /* THE NECK PITCHES DOWN OUT OF A SPINE THAT PITCHES UP, and that is the
+     * bite. -0.55 against the trunk's +0.45 leaves the head hanging level and
+     * forward with the jaw at about a standing man's chest, so what the animal
+     * can reach while you are on its back is a body on the GROUND beside it.
+     * A neck that followed the spine would put the jaws at the height of the
+     * rider's own shoulder, which is a mount that can only bite other mounts.
+     * Two segments at 0.16 — shorter than the massiff's 2 x 0.14 in fraction
+     * of body, because a heavy head on a long neck on two legs is a pendulum. */
+    headAt: [0.40, 0.86], neck: [2, 0.16, 0.24, -0.55, -0.12], head: 'tusked',
+    back: 'ridge', tail: [3, 0.46, 0.17, -0.10, -0.12],
+    limbs: [
+      /* ONE PAIR, and it carries a rider as well as the animal. `girth: 1.45`
+       * is the heaviest limb in the table — the rancor's 1.30 is the current
+       * maximum, on a body twice this scale — because two legs are doing what
+       * four do everywhere else in this file.
+       *
+       * THE STANCE IS THE HANDLING. `plant: 0.56` off a hip mounted at 0.38 is
+       * the widest track any biped here stands on (the rancor plants at 0.46,
+       * the wampa at 0.42), and a wide-tracked body pivots badly for the same
+       * reason it is stable: the feet are a long way from the axis. The turn
+       * rate itself is the rider's number and lives with the rider; this is
+       * the silhouette that has to agree with it, so a player who has been
+       * told it turns like a barge can SEE the barge.
+       *
+       * Poled forward and OUT at 0.55 against the wampa's 0.36, so the knees
+       * stand outside the trunk instead of under it. Digitigrade, hence
+       * `foot: 'claw'` and not the two uprights' `'paw'`: `ANKLE_UP` rides a
+       * claw at 0.86 of the tarsus and a paw at 0.30, so the choice is a
+       * standing posture and not a decoration. Measured against the rancor,
+       * the shipped biped at the same hip height: its chain spans 0.87 m of
+       * 1.06 and this one spans 0.71 of 0.96, so the leg sits at 0.74 of full
+       * extension against the rancor's 0.82 — a deeper permanent crouch, which
+       * is the squat read and is also where the animal's whole spring is. */
+      { role: 'leg', x: 0.38, y: 0.02, z: -0.04, plant: 0.56, femur: 0.46, tibia: 0.50, tarsus: 0.22,
+        girth: 1.45, pole: [0.55, 0.55, 1.05], foot: 'claw',
+        femurRest: [0.24, -0.86, 0.28], tibiaRest: [0.06, -0.94, -0.32] },
+    ],
+    /* A SHORT, LOW, FAST GAIT, and two of these three exist because of the
+     * saddle. `step: 0.62` is under everything but the massiff's 0.52, so at
+     * the 5.1 m/s the archetype declares the cycle turns over quickly — a
+     * waddle rather than the reek's 0.80 lope. `lift: 0.22` is the lowest of
+     * any long-legged body here (the reek 0.28, the nexu 0.44): a high foot
+     * lift under a saddle is a rider being thrown around by the animation.
+     * `rear: 0.18` is the lowest number in the table full stop. It is metres
+     * of hip travel per unit of an attack's `rise`, `lunge` crouches at -0.55,
+     * so the deck drops about 0.17 m when it bites — felt, and not a launch.
+     * The massiff's 0.22 was the floor and this goes under it for the one
+     * reason that one does not have: somebody is standing on this. */
+    step: 0.62, lift: 0.22, rear: 0.18,
+    /* ONE VERB, which is one more than the other two mounts have and is the
+     * entire difference between them. It is `lunge` and not `rake`, `gore` or
+     * `snatch` because this animal has a jaw and nothing else — no horn, no
+     * claw that leaves the ground, no reach — and because a mount whose attack
+     * travelled would take the rider with it. `lunge` drives 0.5 m and closes;
+     * the rider stays over the hips. The second verb every other fighting body
+     * here carries is deliberately absent: see the massiff's note on giving a
+     * companion the reek's move list. */
+    moves: ['lunge'],
+  },
+
 };
 
 /**
