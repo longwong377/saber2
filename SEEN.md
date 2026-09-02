@@ -260,6 +260,23 @@ a 3.2 ms world intercept, against 0.0119 ms an instanced man. One real body
 costs ten instanced men.** The seam may not raise the 40–60 ceiling; it only
 decides which bodies are real.
 
+**AND IT IS NOT PROVEN. This is the part of the plan to be honest about.**
+All four designs were then attacked by three skeptics each — the frame budget,
+the integrity of the fiction, and co-op/determinism — and the attacks are
+landing **fatal**, not survivable. The sharpest of them:
+
+> *"Promotion does not change what DRAWS a man. It changes what he DOES, and in
+> the one mode this ships in it changes it into nothing."*
+
+and, on the arithmetic:
+
+> *"The design prices a promoted man as a FAR body and then spends the entire
+> feature putting him at the player's elbow. Every per-body cost in this engine
+> that is bought back by distance is now paid."*
+
+**So Move 3 is a hypothesis with two day-one measurements attached, not a
+commitment.** Take the measurements first; they cost a day and they decide it.
+
 **Their honest doubts, kept rather than buried:**
 
 - **Demotion is harder to hide than promotion.** A body put exactly where its
@@ -312,13 +329,16 @@ Taken three times on three builds — 47 / 30 / 22 hits — always 100% own-team
 nobody had counted what it was doing. **A rank that will not fire through its
 own men is the single highest-value change on this page.**
 
-**3. The wave director is deleting 62% of every wave in Command — and the
-decision is yours.** `WaveDirector._watchdog` scores a body's progress as its
+**3. The wave director is deleting 62% of every wave in Command, the patch has
+been sitting in the tree since 27 August, and the decision is yours.** `WaveDirector._watchdog` scores a body's progress as its
 distance to the nearest live *player*; in Command the horde's fight is your
 *army*, so with no player near them every enemy reads stalled and is retired.
 Measured: **39.4 retirements a wave against the 10.5 bodies the line actually
-shot.** It fires every frame after the commander goes down. **The fix is 63
-lines and it is already sitting in the tree at `tools/_watchdog.patch`.** It is
+shot.** It fires every frame after the commander goes down. **The fix is 63 lines,
+3,465 bytes, and it has been sitting in the tree at `tools/_watchdog.patch`
+since 27 August.** The blunter way to say what it means: *the game already
+plays itself to victory when the player is not there, and somebody measured it,
+wrote it down, wrote the fix, and left the fix out of the tree on purpose.* It is
 not applied because with it the unaided line is wiped on every seed and a
 shipped check goes red at 0.0 of 10 — so landing it lands a difficulty re-tune,
 and which knob gives (wave budget, `RULE_MAX`, morale, or the target) is a
@@ -479,6 +499,37 @@ kill the move above it before any of it is built.
 - **The Column** — you can already drive the thing you would be escorting.
   `whyNotDrive` has four refusals and no mode axis, and its rule is *"a tank
   your army brought to the field is a tank you are entitled to"*.
+
+---
+
+## 8b. And if you want a new mode anyway — there is exactly one honest answer
+
+Of the twelve candidates, **one is both moderate in cost and provably isolated
+by construction rather than by argument: THE GAUNTLET.**
+
+One seed a day, the same for everybody, a fixed loadout, a score, a run that
+ends, and a shareable seed string so you can hand somebody the exact run you
+just played.
+
+**Why it cannot break anything, as a matter of structure and not of care:**
+declared `solo: true` it never builds a `CommandDirector` — so `bank()` returns
+early at `main.js:1774`, and `Company.keep()`, the muster and permadeath are
+*unreachable from it*. That is precisely what you meant by "doesn't touch other
+things".
+
+Three of its four pillars already exist — the seed, the ground roll, the score.
+The fourth, a run that ends on a number, has no field a mode can declare yet.
+
+And the surprise underneath it: **`seedWorld()` is exported from
+`src/game/World.js:245` for exactly this purpose**, its own note explains at
+length what an unpinned stream cost — *"four consecutive readings of one build
+spanned 1.3 to 6.0"* — and that note ends: ***"nothing in `src/` calls this."***
+The determinism a daily seed needs is written, exported, documented, and dead.
+
+It is the least ambitious idea in this document. It is also the only one whose
+isolation is a fact about the architecture rather than a promise about the
+implementation, and it is the one to build if what you want is a new card that
+cannot possibly cost you anything you already have.
 
 ---
 
