@@ -347,7 +347,7 @@ export async function run({ check, assert }) {
       inside('the trolley', life.trolley.run.x0, life.trolley.run.z);
       for (const H of life.traffic.plan.hulls) inside(`the ${H.kind}'s pad`, H.pad.x, H.pad.z);
       for (const H of life.traffic.plan.hulls) {
-        if (!inZone('apron', H.pad.x, H.pad.z)) bad.push(`the ${H.kind}'s pad is off the apron at (${H.pad.x}, ${H.pad.z})`);
+        if (!inZone('apron', H.pad.x, H.pad.z) && !inZone('padB', H.pad.x, H.pad.z)) bad.push(`the ${H.kind}'s pad is off the apron and off pad B at (${H.pad.x}, ${H.pad.z})`);
       }
       assert(bad.length === 0, `sited outside DECK: ${bad.join(', ')}`);
       /* AND THE CANYON THIS FILE ASSUMES IS THE ONE `dressStructure` BUILT:
