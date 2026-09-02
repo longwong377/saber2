@@ -112,13 +112,47 @@ export async function run({ check, assert }) {
        * and the bone is never flagged the way a live cut flags it. */
       const gone = torn.actor?.severedCount ?? 0;
       assert(gone >= 1, 'the body was marked worked and nothing came off it');
+      /**
+       * …AND THE HEAD IS AMONG THEM, which the player asked for by name —
+       * "take off real limbs/heads" — and which was missing: the bone list was
+       * eight entries of arms and legs, so the one piece everybody pictures
+       * when they hear this order never came off anything.
+       *
+       * READ OFF `bone.cutT`, not off `isSevered`. `cutRagdoll` shortens the
+       * bone with `bone.cutT *= t` and does NOT set the severed flag a live
+       * cut sets — see the note above — so `cutT < 1` is the only per-bone
+       * record that a piece came off this corpse.
+       */
+      const cutT = (n) => torn.rig?.get?.(n)?.cutT ?? 1;
+      assert(cutT('head') < 1,
+        'every limb came off and the head stayed on — DESECRATE.headBelow is not reaching anybody');
+      /**
+       * AND THE COUNT IS THE COUNT. `_desecrateFinish` used to increment
+       * `took` off `cutRagdoll`'s return value, which reports whether a JOINT
+       * broke rather than whether a piece came off; on a corpse the joints are
+       * often already gone, so it cut the limb, reported false, and walked the
+       * whole eight-bone list. Measured: every worked body lost every limb
+       * while `DESECRATE.limbs` said two.
+       *
+       * So: the far ends go and the roots stay, which is what the bone list is
+       * ordered for — "there is something left to recognise".
+       */
+      const off = ['foreL', 'foreR', 'shinL', 'shinR', 'armL', 'armR', 'thighL', 'thighR']
+        .filter((n) => cutT(n) < 1);
+      assert(off.length <= DESECRATE.limbs,
+        `${off.length} limbs came off against a stated ${DESECRATE.limbs} (${off.join(', ')}) — `
+        + 'the count is being taken off something other than what came off');
+      const roots = ['armL', 'armR', 'thighL', 'thighR'].filter((n) => cutT(n) < 1);
+      assert(roots.length < 4,
+        'every root joint came off too — there is nothing left of him to recognise');
       /* And the line has its blood up. */
       const furious = d.led(c).filter((t) => (t.body?.furyTimer ?? 0) > 0);
       assert(furious.length >= 2, `${furious.length} men felt it`);
       const best = Math.max(...furious.map((t) => t.body.furyTimer));
       assert(best > FURY.seconds * 0.5, `the frenzy was ${best.toFixed(1)} s of ${FURY.seconds}`);
       return `${detail.length} of ${men.length} detailed (discipline ${dOut.toFixed(0)} vs ${dIn.toFixed(0)}), `
-        + `${gone} limbs off, ${furious.length} men in a frenzy for ${best.toFixed(0)} s`;
+        + `${off.length} limbs off and the head with them, ${furious.length} men in a frenzy `
+        + `for ${best.toFixed(0)} s`;
     } finally { world.unload(); }
   });
 
