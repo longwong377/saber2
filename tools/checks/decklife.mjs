@@ -109,7 +109,9 @@ const CANYON = DECK.wall - 7.5;
 function paths(life) {
   const out = [];
   for (const w of life.workers) if (w.job.path) out.push([`worker ${w.i}`, ...w.job.path]);
-  for (const d of life.droids) if (d.job.path) out.push([`${d.kind} ${d.i}`, ...d.job.path]);
+  for (const d of life.droids) if (d.job.path && !d.lead) out.push([`${d.kind} ${d.i}`, ...d.job.path]);
+  /* The crowd's walkers and carriers — no bodies, but the same rules. */
+  for (const S of life.sils || []) if (S.job.path && !S.lead) out.push([`silhouette ${S.i}`, ...S.job.path]);
   for (const R of life.sleds.runs) {
     if (R.along === 'x') out.push(['a sled', R.x0, R.z, R.x1, R.z]);
     else out.push(['a sled', R.x, R.z0, R.x, R.z1]);
@@ -153,6 +155,9 @@ export async function run({ check, assert }) {
       for (const c of life.cranes) sit('a crane bridge', c.body.position.x + 0.5, c.body.position.y + 2.2, c.body.position.z, 1.6);
       for (const d of life.droids) sit(`${d.kind} ${d.i}`, d.kn.at.x, d.kn.at.y, d.kn.at.z, 0.6);
       for (const w of life.workers) sit(`worker ${w.i}`, w.pos.x, w.pos.y, w.pos.z, 0.9);
+      /* The crowd, gallery included: a man thirty metres up with no plank
+       * under him is the scaffold welder again. */
+      for (const S of life.sils) sit(`silhouette ${S.i} (${S.job.pose || 'walker'})`, S.x, S.y, S.z, 0.9);
       /* And the vents, which is the one that put three coolant jets four
        * metres over the floor of a pit. */
       for (let i = 0; i < life.vents.length; i++) {
@@ -162,7 +167,7 @@ export async function run({ check, assert }) {
       assert(bad.length === 0,
         `${bad.length} prop(s) placed on nothing:\n      ${bad.join('\n      ')}`);
       return `the welder, the trolley, ${life.cranes.length} cranes, ${life.droids.length} droids, `
-        + `${life.workers.length} workers and ${life.vents.length} vents all standing on real geometry`;
+        + `${life.workers.length} workers, ${life.sils.length} silhouettes and ${life.vents.length} vents all standing on real geometry`;
     } finally { world.unload(); }
   });
 
@@ -343,6 +348,7 @@ export async function run({ check, assert }) {
       };
       for (const d of life.droids) inside(`${d.kind} ${d.i}`, d.kn.at.x, d.kn.at.z);
       for (const w of life.workers) inside(`worker ${w.i}`, w.pos.x, w.pos.z);
+      for (const S of life.sils) inside(`silhouette ${S.i}`, S.x, S.z);
       for (let i = 0; i < life.vents.length; i++) inside(`vent ${i}`, life.vents[i][0], life.vents[i][2]);
       inside('the trolley', life.trolley.run.x0, life.trolley.run.z);
       for (const H of life.traffic.plan.hulls) inside(`the ${H.kind}'s pad`, H.pad.x, H.pad.z);
@@ -359,7 +365,7 @@ export async function run({ check, assert }) {
       assert(/const WALL = DECK\.wall;/.test(block),
         'DeckLife\'s frame() does not read the rack half-beam off DECK.wall — a second copy of '
         + 'that number is the defect the audit named four times');
-      return `${life.droids.length + life.workers.length + life.vents.length + 3} placements inside the room, `
+      return `${life.droids.length + life.workers.length + life.sils.length + life.vents.length + 3} placements inside the room, `
         + `canyon half-beam agrees at ${DECK.wall.toFixed(1)} m, both pads on the apron`;
     } finally { world.unload(); }
   });
@@ -382,7 +388,7 @@ export async function run({ check, assert }) {
     /* The tables. `techMark`, `crewRuns` and `sledRun` are gone with the
      * posed tech, the silhouettes and the single sled; `workerJobs`,
      * `craneRuns` and `sledRuns` are what replaced them. */
-    const tables = ['function droidJobs', 'function workerJobs', 'function trolleyRun', 'function craneRuns',
+    const tables = ['function droidJobs', 'function workerJobs', 'function silJobs', 'function trolleyRun', 'function craneRuns',
       'function sledRuns', 'function ventTable', 'function trafficPlan'];
     const missing = tables.filter((t) => !src.includes(t));
     assert(missing.length === 0, `these placement tables are gone: ${missing.join(', ')}`);
@@ -479,16 +485,16 @@ export async function run({ check, assert }) {
      * regression is attributable rather than showing up as "the room got
      * bigger".
      *
-     * What is in it, after the workers have baked: 1 haze, 1 glows, 2 rings,
-     * 4-5 kit, 5 droid chassis (instanced), 6 astromech domes and legs, 12
-     * welder arm parts, 2 trolley, 4 crane, 1 sleds (instanced), 13 workers at
-     * one skinned mesh each, 3 hulls at up to 3 meshes each, 2 silhouette
-     * meshes (instanced). Measured: 71 visible on a Republic deck.
-     *
-     * The bound is set just above that rather than at a round number, because
-     * the whole point is to notice the next thing that forgets to compose —
-     * a worker that did not bake is 34 draws, a droid kind that stopped
-     * instancing is 3 to 4 more per droid.
+     * BEFORE the order-of-magnitude pass this was 63 meshes and 121k
+     * triangles: fifteen droids, thirteen workers, three hulls, nine
+     * silhouettes. AFTER: ~96 meshes and ~270k triangles for 111 droids of
+     * nine kinds, 20 real workers, 89 crew silhouettes, seven modelled hulls
+     * (four flying, two parked, one taxiing), a fighter on a lift, three
+     * cranes, six sleds, twenty-five jobs. The task's budget is 140 meshes
+     * and 450k triangles; the bound is set at that so the next thing that
+     * forgets to compose is named — a droid kind that stopped instancing is
+     * a dozen draws, a pose mesh that stopped freeing its slots is 400k
+     * triangles (which is exactly what happened on the first cut).
      */
     const { world, life, input } = await deck();
     try {
@@ -502,33 +508,40 @@ export async function run({ check, assert }) {
       for (const r of life.rings) mine.add(r.mesh);
       for (const m of life.bay.meshes) walk(m);
       for (const im of Object.values(life.droidMeshes)) walk(im);
-      for (const d of life.droids) walk(d.group);
+      for (const im of Object.values(life.droidParts)) walk(im);
       walk(life.trolley.body);
       for (const c of life.cranes) walk(c.body);
       walk(life.sleds.mesh);
       for (const w of life.workers) walk(w.root);
+      for (const im of Object.values(life.silMeshes)) walk(im);
       walk(life.traffic.farF); walk(life.traffic.farS);
       for (const H of life.traffic.plan.hulls) H.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); });
+      for (const P of life.parked) { if (P.cast) P.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); }); if (P.plat) walk(P.plat); }
+      if (life.taxi) life.taxi.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); });
       let tris = 0;
       for (const o of mine) {
         const g = o.geometry;
         const t = g.index ? g.index.count / 3 : g.attributes.position.count / 3;
         tris += t * (o.isInstancedMesh ? o.count : 1);
       }
-      assert(mine.size <= 90,
-        `${mine.size} meshes of deck life, doubled by the ink pass. It was 71 with fifteen droids, thirteen `
-        + 'workers, three hulls and nine silhouettes all in — something new is emitting per-prop instead of '
-        + 'merging or instancing, or a worker did not bake');
+      assert(mine.size <= 140,
+        `${mine.size} meshes of deck life, doubled by the ink pass. It was 96 with 111 droids, 20 workers, 89 `
+        + 'silhouettes and seven hulls all in — something new is emitting per-prop instead of merging or '
+        + 'instancing, or a worker did not bake');
+      assert(tris <= 450000,
+        `${Math.round(tris)} triangles of deck life against a 450k budget. It was ~270k; a pose mesh that stopped `
+        + 'freeing its slots or a droid kind that grew a skirt of detail is the usual cause');
       const inst = [...mine].filter((o) => o.isInstancedMesh);
-      assert(inst.length >= 8,
-        `${inst.length} InstancedMesh in deck life. Five droid kinds, the sleds, two silhouette meshes and the `
-        + 'emitters are all supposed to be instanced; one of them has been unpicked into per-object meshes');
+      assert(inst.length >= 30,
+        `${inst.length} InstancedMesh in deck life. Nine droid kinds, five turning parts, fifteen crew poses, the `
+        + 'sleds, two silhouette meshes and the emitters are all supposed to be instanced; one of them has been unpicked');
       const baked = life.workers.filter((w) => w.merged.skin).length;
       assert(baked === life.workers.length, `${life.workers.length - baked} workers did not bake to a skinned mesh`);
-      assert(mine.size >= 45, `${mine.size} meshes is not a room with this much work going on in it`);
+      assert(mine.size >= 80, `${mine.size} meshes is not a room with this much work going on in it`);
       let scene = 0;
       world.scene.traverse((o) => { if ((o.isMesh || o.isInstancedMesh) && on(o)) scene++; });
-      return `${mine.size} meshes (${inst.length} instanced), ${Math.round(tris)} triangles rasterised, in a scene of ${scene} visible`;
+      return `${mine.size} meshes (${inst.length} instanced), ${Math.round(tris)} triangles rasterised (was 63 / 121490), `
+        + `in a scene of ${scene} visible`;
     } finally { world.unload(); }
   });
 

@@ -70,19 +70,27 @@ export async function run({ check, assert }) {
         for (const r of life.rings) add('rings', r.mesh);
         for (const m of life.bay.meshes) add('jobs', m);
         for (const im of Object.values(life.droidMeshes)) add('droids', im);
-        for (const d of life.droids) add('droids', d.group);
+        for (const im of Object.values(life.droidParts)) add('droid-parts', im);
         add('trolley', life.trolley.body);
         for (const c of life.cranes) add('cranes', c.body);
         add('sleds', life.sleds.mesh);
         for (const w of life.workers) add('workers', w.root);
+        for (const im of Object.values(life.silMeshes)) add('crowd', im);
         add('silhouettes', life.traffic.farF); add('silhouettes', life.traffic.farS);
         for (const Hh of life.traffic.plan.hulls) Hh.cast.group.traverse((m) => { if (m.isMesh) add('hulls', m); });
+        for (const P of life.parked) { if (P.cast) P.cast.group.traverse((m) => { if (m.isMesh) add('parked', m); }); if (P.plat) add('parked', P.plat); }
+        if (life.taxi) life.taxi.cast.group.traverse((m) => { if (m.isMesh) add('taxi', m); });
       }
-      for (const k of ['droids', 'workers', 'hulls', 'silhouettes', 'jobs', 'cranes', 'sleds', 'emitters']) {
+      for (const k of ['droids', 'droid-parts', 'workers', 'crowd', 'hulls', 'parked', 'taxi', 'silhouettes', 'jobs', 'cranes', 'sleds', 'emitters']) {
         assert(fam[k] && fam[k].meshes > 0, `DeckLife built no ${k} — a family of the deck's life is gone`);
       }
       const mine = Object.values(fam).reduce((a, f) => a + f.meshes, 0);
-      return `${total} visible · DeckLife ${mine}: `
+      const tris = Object.values(fam).reduce((a, f) => a + f.tris, 0);
+      /* THE ORDER-OF-MAGNITUDE PASS, measured: this line used to read
+       * "DeckLife 58: … droids=23/8768t … workers=13/95472t" for fifteen
+       * droids and thirteen men. The before/after is printed so the next
+       * reader has both numbers in one place. */
+      return `${total} visible · DeckLife ${mine} meshes / ${tris}t (was 58 / 118k before the order-of-magnitude pass): `
         + Object.entries(fam).map(([k, f]) => `${k}=${f.meshes}/${f.tris}t`).join(' ')
         + ` · room ${parts.join(' ')} · ` + rows.map(([k, n]) => `${k || '(unnamed)'}=${n}`).join(' ');
     } finally { try { world.unload(); } catch {} }

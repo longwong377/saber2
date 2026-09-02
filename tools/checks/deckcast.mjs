@@ -7,8 +7,10 @@
  * measurable claims. Each is a check here, and each FAILS without the code it
  * is about:
  *
- *   DENSITY     at least twelve droids of at least four kinds, at least ten
- *               workers, four repair jobs, two crane bridges, three sleds.
+ *   DENSITY     "all by an order of magnitude": a hundred droids of nine
+ *               kinds with floors per kind, twenty real workers, eighty
+ *               crew silhouettes, three cranes, six sleds, four flying hulls,
+ *               three parked, a taxiing shuttle.
  *   BODIES      every droid and every worker is a dynamic PROP-layer body
  *               the Force can grip, asleep at its station; a thrown one gets
  *               up and goes back.
@@ -153,19 +155,35 @@ export async function run({ check, assert }) {
   /*  2 · DENSITY, AND EVERY ONE A BODY                                 */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('deck cast: twelve droids of four kinds and ten workers, every one a dynamic body the Force can take', async () => {
+  check('deck cast: a hundred droids of nine kinds, twenty workers, eighty in the crowd — every body the Force can take', async () => {
+    /**
+     * THE FLOORS, per kind, from the order-of-magnitude pass: the deck had
+     * 15 droids (3 astro, 4 welder, 3 pit, 3 mouse, 2 gonk) and 13 workers.
+     * A floor a kind, so a kind that quietly empties is named.
+     */
     const { world, life } = await deck();
     try {
       const { LAYER } = await import('../../src/physics/RapierWorld.js');
       const kinds = new Set(life.droids.map((d) => d.kind));
-      assert(life.droids.length >= 12, `${life.droids.length} droids on the deck — "literally tons of it"`);
-      assert(kinds.size >= 4, `${kinds.size} kinds of droid (${[...kinds].join(', ')}) — four at least`);
-      assert(kinds.has('astro'), 'no astromech on the deck — "I see no R2 units"');
-      assert(life.droids.filter((d) => d.kind === 'astro' && d.job.path).length >= 2,
-        'the astromechs do not roll anywhere');
-      assert(life.workers.length >= 10, `${life.workers.length} workers — ten at least`);
-      assert(life.cranes.length >= 2, `${life.cranes.length} crane bridges on the ceiling rails`);
-      assert(life.sleds.runs.length >= 3, `${life.sleds.runs.length} loader sleds`);
+      const n = (k) => life.droids.filter((d) => d.kind === k).length;
+      const FLOORS = { astro: 20, welder: 8, pit: 8, pitup: 12, mouse: 15, gonk: 8, tread: 6, proto: 4, lifter: 6 };
+      for (const [k, floor] of Object.entries(FLOORS)) assert(n(k) >= floor, `${n(k)} ${k} droids — the floor is ${floor} (was ${{ astro: 3, welder: 4, pit: 3, mouse: 3, gonk: 2 }[k] ?? 0})`);
+      assert(life.droids.length >= 100, `${life.droids.length} droids on the deck — a hundred at least, from fifteen`);
+      assert(kinds.size >= 9, `${kinds.size} kinds of droid (${[...kinds].join(', ')}) — nine at least`);
+      assert(life.droids.filter((d) => d.kind === 'astro' && d.job.path).length >= 8, 'fewer than eight astromechs roll anywhere');
+      assert(new Set(life.droids.filter((d) => d.kind === 'astro').map((d) => d.color)).size >= 5, 'the astromechs are all one colour scheme');
+      assert(life.droids.filter((d) => d.kind === 'mouse' && d.lead).length >= 10, 'the mouse droids do not run in threes');
+      assert(life.workers.length >= 20, `${life.workers.length} workers — twenty at least, from thirteen`);
+      assert(life.sils.length >= 80, `${life.sils.length} crew silhouettes — eighty at least`);
+      assert(life.sils.filter((S) => S.job.path).length >= 24, 'fewer than twenty-four of the crowd walk anywhere');
+      assert(Object.keys(life.silMeshes).length >= 15, `${Object.keys(life.silMeshes).length} crew poses — fifteen at least`);
+      assert(life.cranes.length >= 3, `${life.cranes.length} crane bridges on the ceiling rails — three, one lowering a hull`);
+      assert(life.cranes.some((c) => c.load), 'no crane is lowering a hull');
+      assert(life.sleds.runs.length >= 6, `${life.sleds.runs.length} loader sleds — six lanes`);
+      assert(life.traffic.plan.hulls.length >= 4, `${life.traffic.plan.hulls.length} flying hulls — four`);
+      assert(life.parked.length >= 3, `${life.parked.length} parked hulls — a shuttle bay, a second cradle, a lift`);
+      assert(life.taxi && life.taxi.cast.group.visible, 'no shuttle taxiing');
+      assert(life.floods.length >= 10, `${life.floods.length} floodlights — ten at least`);
       const bodies = new Set(world.physics.bodies);
       const player = world.player;
       let asleep = 0, grip = 0;
@@ -181,8 +199,9 @@ export async function run({ check, assert }) {
       assert(!player || grip === all.length, `the Force could take ${grip} of ${all.length} — the rest are holograms`);
       /* The jobs: four assemblies at least, and the kit that draws them. */
       assert(life.bay && life.bay.meshes.length >= 3, 'the jobs\' kit did not build');
-      return `${life.droids.length} droids (${[...kinds].join(', ')}), ${life.workers.length} workers, `
-        + `${life.cranes.length} cranes, ${life.sleds.runs.length} sleds — ${all.length} bodies, all asleep, all grippable`;
+      const per = [...kinds].map((k) => `${k} ${n(k)}`).join(', ');
+      return `${life.droids.length} droids (${per}; was 15), ${life.workers.length} workers (was 13), ${life.sils.length} in the crowd (was 0), `
+        + `${life.cranes.length} cranes, ${life.sleds.runs.length} sleds, ${life.traffic.plan.hulls.length}+${life.parked.length}+1 hulls — ${all.length} bodies, all asleep, all grippable`;
     } finally { world.unload(); }
   });
 
@@ -214,6 +233,40 @@ export async function run({ check, assert }) {
         if (w.job.path) along(w.job.path[0], w.job.path[1], w.job.path[2], w.job.path[3], 16, (x, z) => site(`worker ${w.i}'s path`, x, z));
         else site(`worker ${w.i}`, w.pos.x, w.pos.z);
       }
+      /* THE CROWD keeps off the traffic's ground too — the apron and pad B
+       * are the flight's — and stands on something, the gallery men on the
+       * catwalk's plank thirty metres up. */
+      const sil = (label, x, z) => {
+        site(label, x, z);
+        if (!clearOf(['apron', 'padB'], x, z)) bad.push(`${label} at (${x.toFixed(1)}, ${z.toFixed(1)}) is on the flight's ground`);
+      };
+      for (const S of life.sils) {
+        sit(`silhouette ${S.i} (${S.job.pose || 'walker'})`, S.x, S.y, S.z, 0.9);
+        if (S.job.path) { if (!S.lead) along(S.job.path[0], S.job.path[1], S.job.path[2], S.job.path[3], 16, (x, z) => sil(`silhouette ${S.i}'s path`, x, z)); }
+        else sil(`silhouette ${S.i}`, S.x, S.z);
+      }
+      const up = life.sils.filter((S) => S.y > 20).length;
+      assert(up >= 8, `${up} of the crowd are on the gallery — the catwalks are empty`);
+      /* AND NOTHING STANDS IN ANYTHING ELSE: two standing bodies closer than
+       * a metre push each other apart for ever (a thrown droid could not get
+       * home for exactly this), and a man on a sled's lane is run down. */
+      const stands = [];
+      for (const d of life.droids) if (!d.job.path) stands.push([`${d.kind} ${d.i}`, d.x, d.z, 0.8]);
+      for (const w of life.workers) if (!w.job.path) stands.push([`worker ${w.i}`, w.pos.x, w.pos.z, 0.8]);
+      for (const S of life.sils) if (!S.job.path && S.y < 20) stands.push([`silhouette ${S.i}`, S.x, S.z, 0.8]);
+      for (let i = 0; i < stands.length; i++) for (let j = i + 1; j < stands.length; j++) {
+        const dd = Math.hypot(stands[i][1] - stands[j][1], stands[i][2] - stands[j][2]);
+        if (dd < 0.9) bad.push(`${stands[i][0]} and ${stands[j][0]} are ${dd.toFixed(2)} m apart`);
+      }
+      for (const R of life.sleds.runs) {
+        const ax = R.along === 'x' ? R.x0 : R.x, az = R.along === 'x' ? R.z : R.z0;
+        const bx = R.along === 'x' ? R.x1 : R.x, bz = R.along === 'x' ? R.z : R.z1;
+        for (const st of stands) {
+          let m = 1e9;
+          along(ax, az, bx, bz, 60, (x, z) => { m = Math.min(m, Math.hypot(st[1] - x, st[2] - z)); });
+          if (m < 2.2) bad.push(`${st[0]} stands ${m.toFixed(1)} m from a sled's lane`);
+        }
+      }
       for (const R of life.sleds.runs) {
         const ax = R.along === 'x' ? R.x0 : R.x, az = R.along === 'x' ? R.z : R.z0;
         const bx = R.along === 'x' ? R.x1 : R.x, bz = R.along === 'x' ? R.z : R.z1;
@@ -240,8 +293,94 @@ export async function run({ check, assert }) {
        * is where the player stands to look at his men — see workerJobs. */
       const near = life.workers.filter((w) => Math.hypot(w.pos.x, w.pos.z - DECK.line) < 60).length;
       assert(near >= 10, `${near} workers within 60 m of the line — the rest are the far midground again`);
-      return `${life.droids.length} droids, ${life.workers.length} workers, ${life.sleds.runs.length} lanes, `
-        + `${life.cranes.length} bridges: all on something, all clear of ${KEEP_OFF.join('/')}, ${near} men within 60 m`;
+      return `${life.droids.length} droids, ${life.workers.length} workers, ${life.sils.length} in the crowd (${up} on the gallery), ${life.sleds.runs.length} lanes, `
+        + `${life.cranes.length} bridges: all on something, all clear of ${KEEP_OFF.join('/')}, none in another, ${near} men within 60 m`;
+    } finally { world.unload(); }
+  });
+
+  check('deck cast: every instanced kind moves between frames, nothing is NaN, and the step costs under 1.5 ms', async () => {
+    /**
+     * A hundred and eleven droids and eighty-nine men are instance
+     * matrices, and an instance matrix that is never rewritten is a statue
+     * — so every kind that is meant to move is sampled over two seconds and
+     * asked to have moved: the chassis of each rolling kind, the domes and
+     * legs, the welder's arm, the crew's walk frames, the crane's hull, the
+     * lift. NaN anywhere in an instance buffer is a vanished mesh, so every
+     * instanced buffer of the deck is scanned. And the CPU: the whole of
+     * `stepDeckLife`, timed around itself over 300 frames of a live world,
+     * has to average under 1.5 ms — measured 1.0 on this box with 131
+     * bodies, 20 gaits and 250 instances a frame.
+     */
+    const { world, life, input } = await deck();
+    try {
+      const { stepDeckLife } = await import('../../src/game/DeckLife.js');
+      const { run } = await import('./_coop.mjs');
+      run(world, 2, input);
+      const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      const snap = () => {
+        const out = new Map();
+        const take = (im, tag) => { for (let i = 0; i < im.count; i++) { im.getMatrixAt(i, m); m.decompose(p, q, s); if (s.x > 0.01) out.set(`${tag}:${i}`, [p.x, p.y, p.z, q.x, q.y, q.z, q.w]); } };
+        for (const [k, im] of Object.entries(life.droidMeshes)) take(im, `droid-${k}`);
+        for (const [k, im] of Object.entries(life.droidParts)) take(im, `part-${k}`);
+        for (const [k, im] of Object.entries(life.silMeshes)) take(im, `crew-${k}`);
+        take(life.sleds.mesh, 'sled');
+        return out;
+      };
+      const a = snap();
+      const hullY0 = life.cranes.find((c) => c.load).load.position.y;
+      const liftY0 = life.parked.find((P) => P.plat).plat.position.y;
+      run(world, 2, input);
+      const b = snap();
+      const moved = new Set();
+      for (const [k, va] of a) {
+        const vb = b.get(k);
+        if (!vb) { moved.add(k.split(':')[0]); continue; }
+        if (va.some((v, i) => Math.abs(v - vb[i]) > 1e-3)) moved.add(k.split(':')[0]);
+      }
+      const want = ['droid-astro', 'droid-mouse', 'droid-gonk', 'droid-tread', 'droid-proto', 'droid-lifter', 'droid-pitup', 'droid-pit',
+        'part-dome', 'part-leg', 'part-turret', 'part-boom', 'part-fore', 'sled', 'crew-walk0', 'crew-walk3'];
+      const still = want.filter((k) => !moved.has(k));
+      assert(still.length === 0, `these instanced kinds did not move in two seconds: ${still.join(', ')}`);
+      /* The convoys: the three mouse droids on one path are in a line, not a heap. */
+      const trio = life.droids.filter((d) => d.kind === 'mouse').slice(0, 3);
+      const gaps = [Math.hypot(trio[0].x - trio[1].x, trio[0].z - trio[1].z), Math.hypot(trio[1].x - trio[2].x, trio[1].z - trio[2].z)];
+      assert(gaps.every((g) => g > 0.5 && g < 3.0), `the first mouse convoy's gaps are ${gaps.map((g) => g.toFixed(2)).join(' / ')} m`);
+      /* NaN: every instance buffer the deck owns. */
+      let nan = 0, buffers = 0;
+      world.scene.traverse((o) => {
+        if (!o.isInstancedMesh || !/^deck-/.test(o.name)) return;
+        buffers++;
+        const arr = o.instanceMatrix.array;
+        for (let i = 0; i < o.count * 16; i++) if (!Number.isFinite(arr[i])) nan++;
+        if (o.instanceColor) for (let i = 0; i < o.count * 3; i++) if (!Number.isFinite(o.instanceColor.array[i])) nan++;
+      });
+      assert(buffers >= 30 && nan === 0, `${nan} NaN values across ${buffers} instance buffers`);
+      assert(life.glows.count <= 128 && life.glows.count >= 50, `${life.glows.count} emitters lit — a dozen floodlights, ten arcs, two dozen eyes, the bells`);
+      /* THE STEP'S COST, around the step itself, in a live world. */
+      let sum = 0, worst = 0;
+      for (let i = 0; i < 300; i++) {
+        world.update(1 / 60, input);
+        const t0 = performance.now();
+        stepDeckLife(world, 1 / 60);
+        const t = performance.now() - t0;
+        sum += t; worst = Math.max(worst, t);
+      }
+      const avg = sum / 300;
+      assert(avg < 1.5, `stepDeckLife averages ${avg.toFixed(2)} ms over 300 frames — the budget is 1.5`);
+      /* The crane's hull rides its cable between `drop` and `drop + lower`
+       * below the crab, and the lift platform between the deck and its
+       * rise; both were read before the 300 frames and are read again. */
+      const crane = life.cranes.find((c) => c.load);
+      const hullY1 = crane.load.position.y;
+      assert(hullY1 <= -crane.run.drop + 1e-6 && hullY1 >= -(crane.run.drop + crane.run.lower) - 1e-6,
+        `the crane's hull hangs ${(-hullY1).toFixed(1)} m under the crab, outside ${crane.run.drop}..${crane.run.drop + crane.run.lower}`);
+      const lift = life.parked.find((P) => P.plat);
+      const liftY1 = lift.plat.position.y;
+      assert(Number.isFinite(hullY0) && Number.isFinite(liftY0) && Number.isFinite(liftY1), 'a crane or lift height is NaN');
+      const { LIFTP: LP } = { LIFTP: { rise: 2.6 } };
+      assert(liftY1 >= -0.01 && liftY1 <= LP.rise + 1.5, `the lift platform is at ${liftY1.toFixed(2)} m`);
+      return `${moved.size} instanced kinds moved, ${buffers} buffers NaN-free, ${life.glows.count} emitters; `
+        + `step ${avg.toFixed(2)} ms avg / ${worst.toFixed(1)} worst over 300 frames`;
     } finally { world.unload(); }
   });
 
@@ -398,7 +537,7 @@ export async function run({ check, assert }) {
       const n0 = world.notify.bind(world);
       world.notify = (a, b, k) => { if (/^PA\b/.test(String(a))) heard.push({ t: life.t, a, b, k, horn: st.horn }); return n0(a, b, k); };
       for (let i = 0; i < 60 * 150; i++) world.update(1 / 60, input);
-      assert(heard.length >= 4, `${heard.length} announcements in 150 s of a deck with two hulls cycling`);
+      assert(heard.length >= 8, `${heard.length} announcements in 150 s of a deck with four hulls cycling and a taxiing shuttle`);
       for (let i = 1; i < heard.length; i++) {
         assert(heard[i].t - heard[i - 1].t >= 14 - 1e-6,
           `announcements ${(heard[i].t - heard[i - 1].t).toFixed(1)} s apart — the gap is 14`);
@@ -424,7 +563,7 @@ export async function run({ check, assert }) {
     for (const name of ['DECK_ZONES', 'DECK.lip', 'DECK.aft', 'DECK.wall', 'DECK.roof', 'DECK.line', 'DECK.start.z']) {
       assert(fr.includes(name), `frame() never reads ${name}`);
     }
-    for (const t of ['function droidJobs', 'function workerJobs', 'function craneRuns', 'function sledRuns',
+    for (const t of ['function droidJobs', 'function workerJobs', 'function silJobs', 'function craneRuns', 'function sledRuns',
       'function trafficPlan', 'function ventTable', 'function trolleyRun']) {
       const body = functionBody(src, t);
       assert(/frame\(\)/.test(body), `${t} does not read the frame — it is siting things on its own`);
@@ -440,6 +579,6 @@ export async function run({ check, assert }) {
     const cast = await readFile(new URL('../../src/game/DeckCast.js', import.meta.url), 'utf8');
     assert(/import \{ SHOVE, STATE \} from '\.\.\/physics\/Shovable\.js'/.test(cast),
       'Knockable does not read its clock off SHOVE — a second copy of "how long is being knocked over"');
-    return 'seven placement tables through frame(), frame() off DECK and DECK_ZONES, none eager; the cues on the hull clock';
+    return 'eight placement tables through frame(), frame() off DECK and DECK_ZONES, none eager; the cues on the hull clock';
   });
 }
