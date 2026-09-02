@@ -512,7 +512,10 @@ export function dressDeckLift(world, opts = {}) {
   }
   const rideLen = Math.round(dist / LEVEL) * LEVEL;
   const nLev = SPAN / LEVEL;
-  const landing = Math.round(rideLen / LEVEL) % nLev;
+  /* The wrap puts the window at residue SPAN/2, not 0 — see `layScene` —
+   * so the level in the window at the stop is the ride's level count plus
+   * half a wrap. */
+  const landing = (Math.round(rideLen / LEVEL) + nLev / 2) % nLev;
   const phases = [0, 3, 5].map((w) => ((w - landing) % nLev + nLev) % nLev);
 
   /* ── THE SHAFT SCENE the panes look into. */
@@ -654,16 +657,30 @@ function buildShaft(world, M, lightMat, phases) {
   const cx = L.x, cz = L.z, hw = L.halfW, hd = L.halfD, H = L.height;
   const group = new THREE.Group();
   group.name = 'deck-lift-shaft';
+  /**
+   * HOW DEEP EACH FACE IS. The side faces look 4.6 m out to the far wall.
+   * The back face cannot: the deck's heightfield rises steeply behind
+   * `DECK.aft` (1.35 m up at one metre behind the car, 7.8 m at four), so a
+   * back shaft that deep would be drawn inside rock. It is ONE metre deep,
+   * with every layer's depth scaled by `k` and a plinth across its foot that
+   * hides the wedge of ground — the back window shows the same ship going
+   * by, closer, above a dark sill. The side scenes stop at z = −103.6, where
+   * the ground is still flat, behind a corner pillar at each aft end.
+   */
   const FAR = 4.6;
   const faces = [
-    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), o: new THREE.Vector3(cx - hw, H / 2, cz - 0.7), half: 2.9, phase: phases[0] },
-    { q: new THREE.Quaternion(), o: new THREE.Vector3(cx + hw, H / 2, cz - 0.7), half: 2.9, phase: phases[1] },
-    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), o: new THREE.Vector3(cx, H / 2, cz - hd), half: 3.4, phase: phases[2] },
+    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), o: new THREE.Vector3(cx - hw, H / 2, cz - 0.2), half: 2.4, far: FAR, phase: phases[0] },
+    { q: new THREE.Quaternion(), o: new THREE.Vector3(cx + hw, H / 2, cz - 0.2), half: 2.4, far: FAR, phase: phases[1] },
+    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), o: new THREE.Vector3(cx, H / 2, cz - hd), half: 3.0, far: 1.0, phase: phases[2] },
   ];
   for (const f of faces) {
     f.out = new THREE.Vector3(1, 0, 0).applyQuaternion(f.q);
     f.along = new THREE.Vector3(0, 0, 1).applyQuaternion(f.q);
+    f.k = f.far / FAR;
   }
+  /** A depth on a face: the side faces' figure scaled to this face, never
+   * nearer the pane than `lo` nor inside the far wall. */
+  const dep = (f, d, lo = 0.2, margin = 0.06) => Math.max(lo, Math.min(d * f.k, f.far - margin));
 
   /* ── THE BOX, static: far walls, guide rails, ladder rails, cable trays,
    * vertical pipe runs. Merged per material. */
@@ -677,20 +694,32 @@ function buildShaft(world, M, lightMat, phases) {
     B.geoAt(mat, g, _v.x, _v.y, _v.z);
   };
   for (const f of faces) {
-    for (const a of [-2.2, 2.2]) stat(M.hull, f, 0.55, a, 0, 0.16, tall, 0.16);
-    for (const a of [-0.3, 0.3]) stat(M.dark, f, 1.5, a, 0, 0.06, tall, 0.06);
-    stat(M.dark, f, 2.9, -2.2, 0, 0.12, tall, 0.5);
-    for (const a of [2.35, 2.65]) stat(M.hull, f, 2.9, a, 0, 0.18, tall, 0.18);
+    for (const a of [-2.2, 2.2]) stat(M.hull, f, dep(f, 0.55), a, 0, 0.16, tall, 0.16);
+    for (const a of [-0.3, 0.3]) stat(M.dark, f, dep(f, 1.5, 0.3), a, 0, 0.06, tall, 0.06);
+    stat(M.dark, f, dep(f, 2.9, 0.4), -2.2, 0, 0.12, tall, 0.5);
+    for (const a of [2.35, 2.65]) stat(M.hull, f, dep(f, 2.9, 0.4), a, 0, 0.18, tall, 0.18);
   }
   /* The box: its walls are the far walls of all three faces, their inner
    * faces exactly `FAR` out from the panes so the lit plates sit on them.
    * The side walls run aft past the back face to close the corners, and
    * stop short of the lobby face at the front — nothing in the box reaches
    * z = LIFT.door, where the deck could see it. */
-  const zBack = cz - hd - FAR - 0.15;
+  const backFar = faces[2].far;
+  const zBack = cz - hd - backFar - 0.15;
   const zFront = L.door - 0.4;
-  for (const s of [-1, 1]) B.box(M.deep, cx + s * (hw + FAR + 0.15), 0, (zBack - 0.15 + zFront) / 2, 0.3, tall, zFront - zBack + 0.15);
+  const zPillar = cz - 0.2 - faces[0].half; /* the side scenes' aft end */
+  for (const s of [-1, 1]) {
+    B.box(M.deep, cx + s * (hw + FAR + 0.15), 0, (zBack - 0.15 + zFront) / 2, 0.3, tall, zFront - zBack + 0.15);
+    /* The corner pillar: from the side scene's aft end to the back wall,
+     * the full width between the car's wall and the far wall. */
+    B.box(M.deep, cx + s * (hw + 0.12 + (FAR + 0.03) / 2), 0, (zPillar + zBack - 0.15) / 2, FAR + 0.03, tall, zPillar - zBack + 0.15);
+  }
   B.box(M.deep, cx, 0, zBack, hw * 2 + FAR * 2 + 0.6, tall, 0.3);
+  /* The back face's plinth: a dark sill housing across the foot of the back
+   * shaft, up to 1.45 m, which is the height of the ground wedge at the far
+   * wall; the back window looks out over it. */
+  B.box(M.deep, cx, (1.45 - 30) / 2, (cz - hd - 0.04 + zBack) / 2, hw * 2 + 0.3, 31.45, (cz - hd - 0.04) - zBack + 0.15);
+  B.box(M.hull, cx, 1.47, (cz - hd - 0.04 + zBack) / 2, hw * 2 + 0.3, 0.06, (cz - hd - 0.04) - zBack + 0.15);
   const key = (mat) => (mat.name || '').replace(/^deck-\w+-/, '') || 'mat';
   B.build(group, 'shaft', key);
 
@@ -730,39 +759,39 @@ function buildShaft(world, M, lightMat, phases) {
       const base = i * LEVEL + slabW;
       const t = levelAt(f, i);
       const seed = faces.indexOf(f) * 16 + i;
-      slabs.push(slot(f, base, FAR - 0.7, 0, 1, 1, f.half / 2.9));
+      slabs.push(slot(f, base, dep(f, FAR - 0.7, 0.5, 0.1), 0, f.k, 1, f.half / 2.9));
       if (t === ROOM || t === HANGAR || t === MACH) {
         /* The lit opening. Rooms are bright and warm-white; a hangar mouth
          * is dimmer and bluer, a machinery bay dimmer still. */
         const lit = t === ROOM ? 1.0 : t === HANGAR ? 0.55 : 0.35;
-        plates.push(slot(f, base + 1.75, FAR - 0.05, 0, 1, t === HANGAR ? 1.1 : 1, f.half / 2.9, { lit }));
+        plates.push(slot(f, base + 1.75, f.far - 0.05, 0, 1, t === HANGAR ? 1.1 : 1, f.half / 2.9, { lit }));
       }
       if (t === ROOM) {
         const n = 2 + (hash(seed, 1) > 0.45 ? 1 : 0);
         for (let j = 0; j < n; j++) {
           const a = -1.4 + j * 1.15 + (hash(seed, 2 + j) - 0.5) * 0.5;
           const h = 0.92 + hash(seed, 7 + j) * 0.14;
-          figures.push(slot(f, base + 0.25 + 0.875 * h, FAR - 0.35 - hash(seed, 12 + j) * 0.3, a, 1, h, 1));
+          figures.push(slot(f, base + 0.25 + 0.875 * h, dep(f, FAR - 0.35 - hash(seed, 12 + j) * 0.3, 0.5, 0.16), a, 1, h, 1));
         }
       }
       if (t === HANGAR) {
-        fighters.push(slot(f, base + 1.55, FAR - 0.4, 0.2, 1, 1, f.half / 2.9));
-        figures.push(slot(f, base + 0.25 + 0.85, FAR - 0.3, -2.1 + hash(seed, 3) * 0.4, 1, 0.97, 1));
+        fighters.push(slot(f, base + 1.55, dep(f, FAR - 0.4, 0.5, 0.12), 0.2, 1, 1, f.half / 2.9));
+        figures.push(slot(f, base + 0.25 + 0.85, dep(f, FAR - 0.3, 0.5, 0.16), -2.1 + hash(seed, 3) * 0.4, 1, 0.97, 1));
       }
       if (t === BULK) {
         /* The bulkhead crossing: a huge dark beam close in, with its deck
          * number lit on the face nearest the window. Two digits of seven
          * segments each; which are lit is decided per frame. */
-        beams.push(slot(f, base + 1.6, 2.8, 0, 1, 1, f.half / 2.9));
+        beams.push(slot(f, base + 1.6, dep(f, 2.8, 0.4), 0, f.k, 1, f.half / 2.9));
         for (let dgt = 0; dgt < 2; dgt++) {
           for (let sgm = 0; sgm < 7; sgm++) {
             const [u, v, horiz] = SEG_AT(0.6, 1.1)[sgm];
-            digits.push(slot(f, base + 1.6 + v, 1.45, (dgt === 0 ? -0.45 : 0.45) + u,
+            digits.push(slot(f, base + 1.6 + v, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.05, (dgt === 0 ? -0.45 : 0.45) + u,
               1, horiz ? 1 : 5.5, horiz ? 5.5 : 1, { digit: dgt, seg: sgm }));
           }
         }
-        lamps.push(slot(f, base + 2.6, 1.42, -1.6));
-        lamps.push(slot(f, base + 2.6, 1.42, 1.6));
+        lamps.push(slot(f, base + 2.6, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.08, -1.6));
+        lamps.push(slot(f, base + 2.6, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.08, 1.6));
       }
       if (t === MACH) {
         /* The machinery bay: a turbine spinning in the opening, one mesh
@@ -773,29 +802,29 @@ function buildShaft(world, M, lightMat, phases) {
         tm.frustumCulled = false;
         tm.castShadow = false;
         group.add(tm);
-        turbines.push({ mesh: tm, f, base: base + 2.2, d: FAR - 0.9, spin: hash(seed, 5) * 6 });
-        lamps.push(slot(f, base + 0.6, FAR - 0.5, -2.2));
-        lamps.push(slot(f, base + 0.6, FAR - 0.5, 2.2));
+        turbines.push({ mesh: tm, f, base: base + 2.2, d: dep(f, FAR - 0.9, 0.5, 0.25), spin: hash(seed, 5) * 6 });
+        lamps.push(slot(f, base + 0.6, dep(f, FAR - 0.5, 0.4, 0.15), -2.2));
+        lamps.push(slot(f, base + 0.6, dep(f, FAR - 0.5, 0.4, 0.15), 2.2));
       }
       if (t === FUEL) {
-        pipes.push(slot(f, base + 2.0, 3.0, 0, 3.6, 3.6, f.half / 2.9 + 0.1));
-        pipes.push(slot(f, base + 3.4, 3.4, 0, 1.6, 1.6, f.half / 2.9 + 0.1));
-        lamps.push(slot(f, base + 2.75, 2.45, -1.2));
+        pipes.push(slot(f, base + 2.0, dep(f, 3.0, 0.6), 0, 3.6 * f.k, 3.6, f.half / 2.9 + 0.1));
+        pipes.push(slot(f, base + 3.4, dep(f, 3.4, 0.7), 0, 1.6 * f.k, 1.6, f.half / 2.9 + 0.1));
+        lamps.push(slot(f, base + 2.75, dep(f, 2.45, 0.5), -1.2));
       }
       /* Conduit junction lamps, one a level, on the mid layer's tray. */
-      lamps.push(slot(f, base + 4.6, 2.5, -1.9));
+      lamps.push(slot(f, base + 4.6, dep(f, 2.5, 0.5), -1.9));
     }
     /* MID: girders every three metres, pipe crossings every four. */
-    for (let j = 0; j < SPAN / 3; j++) girders.push(slot(f, j * 3 + 0.5, 2.0, 0, 1, 1, f.half / 2.9));
-    for (let j = 0; j < SPAN / 4; j++) pipes.push(slot(f, j * 4 + 2.3, 2.6, 0, 1, 1, f.half / 2.9 + 0.1));
+    for (let j = 0; j < SPAN / 3; j++) girders.push(slot(f, j * 3 + 0.5, dep(f, 2.0, 0.45), 0, 1, 1, f.half / 2.9));
+    for (let j = 0; j < SPAN / 4; j++) pipes.push(slot(f, j * 4 + 2.3, dep(f, 2.6, 0.6), 0, 1, 1, f.half / 2.9 + 0.1));
   }
   /* NEAR: the ladder's rungs, the rails' ties, and the light bars. */
   const rungs = [], ties = [], bars = [];
   const barsPerFace = 30;
   for (const f of faces) {
-    for (let j = 0; j < SPAN / 0.4; j++) rungs.push(slot(f, j * 0.4, 1.5, 0));
-    for (let j = 0; j < SPAN / 2; j++) ties.push(slot(f, j * 2 + 1, 0.55, 0, 1, 1, 1));
-    for (let j = 0; j < barsPerFace; j++) bars.push(slot(f, j * (SPAN / barsPerFace), 0.85, 0, 1, 1, f.half / 2.9));
+    for (let j = 0; j < SPAN / 0.4; j++) rungs.push(slot(f, j * 0.4, dep(f, 1.5, 0.3), 0));
+    for (let j = 0; j < SPAN / 2; j++) ties.push(slot(f, j * 2 + 1, dep(f, 0.55), 0, 1, 1, 1));
+    for (let j = 0; j < barsPerFace; j++) bars.push(slot(f, j * (SPAN / barsPerFace), dep(f, 0.85, 0.3), 0, 1, 1, f.half / 2.9));
   }
 
   /* Geometries, canonical: x out, z along, sized for a 2.9 half face; a slot's
