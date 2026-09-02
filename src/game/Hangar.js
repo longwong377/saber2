@@ -962,22 +962,55 @@ const PIT_KERBS = [[-52, -18, 34, 1.6], [-52, 30, 34, 1.6], [-69, 6, 1.6, 48], [
 function liftLobby(kit, M, paint, bz) {
   const { w, h, depth } = LIFT.lobby;
   const cz = LIFT.door;
-  /* The recess back face, which is the shaft's face: dark, with the door
-   * opening left as a darker slot behind the leaves. */
-  kit.slabAt(M.deep, 0, h / 2, cz - 0.6, w, h, 1.2);
+  /**
+   * THE DOORWAY'S NUMBERS, derived from `LIFT` exactly as `DeckLift.DOOR`
+   * derives them (it cannot be imported here without widening the circular
+   * import): half-width `halfW - 0.6`, height `height - 0.7`. The front of
+   * the car is an assembly the two files build between them, from the car
+   * outward:
+   *
+   *   z  door-0.9 … door-0.7   the car's reveal and lintel      (DeckLift)
+   *   z  door-0.7 … door-0.4   the INNER leaves' pocket         (DeckLift)
+   *   z  door-0.4 … door-0.2   the mid plate, between pockets   (here)
+   *   z  door-0.2 … door+0.05  the OUTER leaves' pocket         (DeckLift)
+   *   z  door+0.05 … door+0.8  the door frame, proud             (here)
+   *
+   * The first lobby ran its shaft face straight across the car's mouth —
+   * "it's just a bare colour wall you just phase through" — so the face is
+   * cut round the doorway now and the car opens into the lobby through it.
+   */
+  const DW = LIFT.halfW - 0.6, DH = LIFT.height - 0.7;
+  const PW = DW + DW + 0.4;   /* the pockets' outboard reach: a leaf's width past the opening */
+  /* The recess back face — the shaft's face — in three pieces round the
+   * doorway: a band above it, a flank either side, and between the door
+   * pockets a plate that closes the inner pocket from the outer. */
+  kit.slabAt(M.deep, 0, (h + DH + 1.1) / 2, cz - 0.6, w, h - DH - 1.1, 1.2);
+  for (const s of [-1, 1]) {
+    kit.slabAt(M.deep, s * (PW + (w / 2 - PW) / 2), (DH + 1.1) / 2, cz - 0.6, w / 2 - PW, DH + 1.1, 1.2);
+    kit.slabAt(M.deep, s * (DW + (PW - DW) / 2), (DH + 1.1) / 2, cz - 0.3, PW - DW, DH + 1.1, 0.2);
+  }
   /* The header and the jambs framing the recess. */
   kit.slabAt(M.hull, 0, h + 0.8, bz + 1.6, w + 3, 1.6, depth + 1.2);
   for (const s of [-1, 1]) kit.slabAt(M.hull, s * (w / 2 + 0.8), h / 2, bz + 1.6, 1.6, h + 2, depth + 1.2);
-  /* The lit header over the doors, rule 4's bar. */
-  kit.slabAt(M.glow, 0, LIFT.height + 0.6, cz + 0.3, LIFT.halfW * 2 + 0.6, 0.35, 0.35);
-  /* The door frame proper, proud of the shaft face. */
-  for (const s of [-1, 1]) kit.slabAt(M.hull, s * (LIFT.halfW + 0.45), LIFT.height / 2, cz + 0.2, 0.9, LIFT.height + 0.4, 0.8);
-  kit.slabAt(M.hull, 0, LIFT.height + 0.2, cz + 0.2, LIFT.halfW * 2 + 1.8, 0.5, 0.8);
+  /* The door frame proper: a jamb proud of the face at each edge of the
+   * opening, a flush cheek outboard of it covering the outer pocket, and a
+   * lintel across the top. What a closed lift is from the deck: a door in
+   * a frame. */
+  for (const s of [-1, 1]) {
+    kit.slabAt(M.hull, s * (DW + 0.4), DH / 2 + 0.25, cz + 0.3, 0.8, DH + 0.5, 1.0);
+    kit.slabAt(M.hull, s * (DW + 0.8 + (PW - DW - 0.8) / 2), (DH + 0.4) / 2, cz + 0.275, PW - DW - 0.8, DH + 0.4, 0.45);
+    /* A thin dark line down the jamb's face: the frame's own seam. */
+    kit.slabAt(M.dark, s * (DW + 0.72), DH / 2, cz + 0.6, 0.06, DH - 0.4, 0.5);
+  }
+  kit.slabAt(M.hull, 0, DH + 0.65, cz + 0.2, PW * 2, 1.3, 0.8);
+  /* The lit header over the doors, rule 4's bar, on a bracket off the face. */
+  kit.slabAt(M.hull, 0, DH + 1.6, cz + 0.1, LIFT.halfW * 2 + 1.6, 0.6, 0.3);
+  kit.slabAt(M.glow, 0, DH + 1.6, cz + 0.3, LIFT.halfW * 2 + 1.2, 0.35, 0.35);
   /* The call panel, with its lamp: red while the car is away. `DeckLift`
    * swaps the lamp's colour, so it is a separate small mesh there. */
   kit.slabAt(M.hull, LIFT.halfW + 1.6, 1.3, cz + 0.5, 0.5, 0.7, 0.3);
   /* And the recess floor's own smear, so the doorway throws light out. */
-  smear(kit, 0, cz + 0.4, 14, LIFT.halfW * 2, 0, 1);
+  smear(kit, 0, cz + 0.4, 14, DW * 2, 0, 1);
 }
 
 /**
