@@ -8670,13 +8670,33 @@ export const CREATURE_PLANS = {
     headAt: [0.16, 0.74], neck: [2, 0.14, 0.19, -0.30, -0.06], head: 'fanged',
     /* The ridge is the animal's whole outline from the side, so it is the one
      * feature that is not scaled down with the rest of it. */
-    back: 'ridge', tail: [3, 0.40, 0.09, 0.12, -0.10],
+    /**
+     * SCUTES AND NOT A RIDGE, WHICH IS WHAT ITS OWN DESIGN SAYS — COMPANIONS.md
+     * writes this animal as "`back: 'scutes'`, `foot: 'paw'`, plate swells at
+     * the shoulder", and the row had drifted to the tuk'ata's spined ridge and
+     * clawed foot.
+     *
+     * IT IS ALSO WHAT SEPARATES THEM. `_creature.mjs` measures the worst
+     * silhouette overlap between any two bodies and calls a pair above 0.5
+     * "two animals that share a body plan"; the massiff and the tuk'ata
+     * measured 0.507, because they were wearing the same three choices —
+     * `fanged` + `ridge` + `claw`. Fixing the row that drifted fixes both
+     * problems with one edit, which is why it is here and not on the other
+     * animal: the tuk'ata's spines are its own design's word for it and were
+     * never the thing that was wrong.
+     *
+     * A PLATED BACK IS ALSO THE RIGHT READ FOR THE JOB. This is the BLOCKER —
+     * it puts itself between you and the nearest hostile and takes hits inside
+     * a cone — and armour plate says that from forty metres in a way a row of
+     * spikes does not.
+     */
+    back: 'scutes', tail: [3, 0.40, 0.09, 0.12, -0.10],
     limbs: [
       { role: 'leg', x: 0.24, y: 0.04, z: 0.46, plant: 0.34, femur: 0.26, tibia: 0.28, tarsus: 0.10,
-        girth: 0.92, pole: [0.20, 0.34, 0.90], foot: 'claw',
+        girth: 0.92, pole: [0.20, 0.34, 0.90], foot: 'paw',
         femurRest: [0.18, -0.88, 0.30], tibiaRest: [0.04, -0.97, -0.20] },
       { role: 'leg', x: 0.26, y: 0.02, z: -0.38, plant: 0.36, femur: 0.26, tibia: 0.30, tarsus: 0.10,
-        girth: 0.86, pole: [0.20, 0.34, -0.90], foot: 'claw',
+        girth: 0.86, pole: [0.20, 0.34, -0.90], foot: 'paw',
         femurRest: [0.18, -0.88, -0.30], tibiaRest: [0.04, -0.97, 0.20] },
     ],
     step: 0.52, lift: 0.18, rear: 0.22,
@@ -9105,7 +9125,36 @@ export const CREATURE_PLANS = {
    */
   tuk: {
     hide: 0x4a4038, plate: 0x9a9282, belly: 0x6b5f52, eye: 0xff3a2a,
-    hip: 0.62, trunk: [0.09, -0.36, 1.06], pitch: 0.09, girth: 0.21,
+    /**
+     * LEGGY, AND THAT IS BOTH THE DESIGN AND THE MEASUREMENT.
+     *
+     * "THE ONE THAT OUTRUNS YOU INTO TROUBLE — the only companion fast enough
+     * to follow a sprint". It sits exactly on the pace cap in
+     * `CompanionKinds.js`, and an animal that runs at 6.33 m/s should read as
+     * built for it: a greyhound against the massiff's bulldog.
+     *
+     * IT IS ALSO WHAT SEPARATES THE TWO SILHOUETTES, and three cheaper things
+     * were tried first and are written down so nobody repeats them.
+     * `_creature.mjs` calls a pair above 0.5 "two animals that share a body
+     * plan"; massiff/tuk'ata measured 0.507.
+     *
+     *   GIVING THE TUK'ATA A MANE reached 0.450, and was WRONG: the design's
+     *   own word for this animal is "bony, angular, SPINED", and a mane is the
+     *   opposite read.
+     *
+     *   GIVING THE MASSIFF ITS OWN `scutes` + `paw` (which COMPANIONS.md says
+     *   it should have had all along, and which it keeps) made them WORSE, at
+     *   0.542 — low bosses change an outline less than spikes do, and a paw
+     *   and a claw are nearly the same shape at range. The document's own
+     *   choice is the right one for that animal and does nothing for this
+     *   problem.
+     *
+     * So the separation is where it should have been from the start: the two
+     * animals are different SHAPES. The hip goes 0.62 → 0.86 and the legs
+     * lengthen with it, so this one stands over the massiff instead of beside
+     * it, and the trunk comes up to match rather than hanging off the new hip.
+     */
+    hip: 0.86, trunk: [0.09, -0.22, 1.06], pitch: 0.09, girth: 0.19,
     /* Shoulder and haunch at half the nexu's amplitude. A pup's mass has not
      * arrived yet; what is on the shoulder is scapula, and a gaussian big
      * enough to read as muscle would be the one thing on the body arguing
@@ -9124,27 +9173,13 @@ export const CREATURE_PLANS = {
      * PRIMARY mesh rather than the silhouette kit, so the spines survive the
      * LOD rung that a companion spends most of its life on — it is behind you
      * at thirty metres more often than it is in front of you at ten. */
-    /**
-     * A MANE AND NOT A RIDGE, AND THE TOOL CAUGHT WHY.
-     *
-     * `_creature.mjs` measures the worst silhouette overlap between any two
-     * animals and its own header says a pair above 0.5 "share a body plan".
-     * The tuk'ata and the massiff measured 0.507 — they were wearing the same
-     * three choices, `fanged` + `ridge` + `claw`, and the improved dorsal and
-     * foot treatments pushed two already-similar outlines past the line.
-     *
-     * The design's own note for this animal is that it is a variant of the
-     * shipped `stalker` — the nexu — and the nexu's dorsal is `mane`: long,
-     * and the OUTLINE BROKEN, which is the opposite read to a ridge's row of
-     * hard spines. So this is the more faithful choice as well as the one that
-     * separates them, and the tail is lengthened to 1.15 on the same argument
-     * the nexu's 2.40 makes: on a low body the tail is the part that carries
-     * at range.
-     *
-     * A SILHOUETTE DECISION AND NOT A BUILDER ONE, which is why it is here in
-     * the plan row rather than in the treatment.
-     */
-    back: 'mane', tail: [5, 1.15, 0.055, 0.16, -0.14],
+    /* SPINED, and it stays spined: the design's own word for this animal is
+     * "bony, angular, spined", and a mane is the opposite read. The overlap it
+     * shared with the massiff is fixed on the MASSIFF's row instead — see the
+     * note there — because that is the row that had drifted. The longer tail
+     * stays: on a low body the tail is the part that carries at range, which
+     * is the nexu's own argument at 2.40. */
+    back: 'ridge', tail: [5, 1.15, 0.055, 0.16, -0.14],
     limbs: [
       /* The nexu's fore leg, shortened and thinned. `pole` keeps its direction
        * and loses its length with the body; `femurRest`/`tibiaRest` are
@@ -9154,10 +9189,10 @@ export const CREATURE_PLANS = {
        * being worn by another. `plant` 0.26 against the nexu's 0.34 and the
        * massiff's 0.34 is the narrowest track in the table: a narrow track is
        * what a runner has, and it is 0.22 m of stance at 0.85 scale. */
-      { role: 'leg', x: 0.20, y: 0.04, z: 0.53, plant: 0.26, femur: 0.38, tibia: 0.42, tarsus: 0.12,
+      { role: 'leg', x: 0.20, y: 0.04, z: 0.53, plant: 0.26, femur: 0.52, tibia: 0.58, tarsus: 0.16,
         girth: 0.72, pole: [0.18, 0.38, 0.86], foot: 'claw',
         femurRest: [0.10, -0.88, 0.42], tibiaRest: [0.04, -0.94, -0.30] },
-      { role: 'leg', x: 0.22, y: 0.02, z: -0.45, plant: 0.28, femur: 0.40, tibia: 0.44, tarsus: 0.12,
+      { role: 'leg', x: 0.22, y: 0.02, z: -0.45, plant: 0.28, femur: 0.55, tibia: 0.61, tarsus: 0.16,
         girth: 0.78, pole: [0.18, 0.44, -0.90], foot: 'claw',
         femurRest: [0.10, -0.82, -0.50], tibiaRest: [0.04, -0.92, 0.36] },
     ],
@@ -9332,7 +9367,30 @@ export const CREATURE_PLANS = {
      * on the head of the thing you are sitting behind is a lantern pointed at
      * your own night route. */
     hide: 0xb9b2a4, plate: 0x8e8577, belly: 0xd8d2c4, eye: 0x8a5a2e,
-    hip: 0.98, trunk: [0.12, -0.40, 0.95], pitch: -0.10, girth: 0.34,
+    /**
+     * IT STANDS LIKE A RUNNER NOW, AND IT WAS HANGING NOSE-DOWN.
+     *
+     * Three numbers were fighting each other and the arithmetic says so:
+     *
+     *   `trunk[1]` was −0.40, hanging the barrel that far BELOW the hip on a
+     *   body 0.95 long — which drops the chest to the ankles.
+     *
+     *   `pitch` was −0.10, which then aims the nose at the sand.
+     *
+     * Both pushed the same way, which is why it read as an animal sagging
+     * rather than one standing. A tauntaun is the FASTEST thing you own and
+     * the one you get ON — it has to look like it is about to move, and it has
+     * to have a back you would believe a saddle sits on.
+     *
+     * AND `plant` IS NOT THE THIRD NUMBER, which is worth writing down because
+     * the name invites the mistake: it is the foot's LATERAL stance —
+     * `x: (L.plant ?? L.x) * S * side` — not how far the leg extends. Raising
+     * it from 0.30 to 0.92 to "straighten the leg" widened the animal from
+     * 1.68 m across to 3.07 and changed its height by nothing at all. Measured,
+     * reverted, and recorded here so the next person reads it instead of
+     * measuring it again.
+     */
+    hip: 0.98, trunk: [0.12, -0.14, 0.95], pitch: 0.02, girth: 0.34,
     /* THE SWELLS ARE REVERSED FROM EVERY SHIPPED ROW, and it is the one
      * anatomical claim in here. The charger is [[0.74, 0.52, …], [0.24, 0.24,
      * …]] and the massiff, stalker, brute, pouncer and acklay are all the same
