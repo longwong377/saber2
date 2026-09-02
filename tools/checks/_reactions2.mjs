@@ -84,7 +84,10 @@ export function behaviours({ check, assert, squad, boot }) {
     };
     const slow = rate(5), quick = rate(95);
     assert(quick > slow + 0.2, `reflex 95 rolled ${quick}, reflex 5 rolled ${slow} — the attribute is not deciding`);
-    assert(Math.abs(R.rollChance(stub('x', { reflex: 95 })) - 0.55 / 0.70) < 1e-3, 'rollChance is not chance / reflex scale');
+    const { scaleOf } = await import('../../src/game/Attributes.js');
+    const q = stub('x', { reflex: 95 });
+    assert(Math.abs(R.rollChance(q) - R.BEHAVIOUR.roll.chance / scaleOf(q.trooper, 'reflex')) < 1e-6,
+      'rollChance is not chance / reflex scale');
     /* THE ROLL ITSELF, in a real world: a bolt fired at a quick man, and he is a body-width off its line. */
     const { world, input, men } = await squad(1);
     const m = men[0];
@@ -106,7 +109,7 @@ export function behaviours({ check, assert, squad, boot }) {
     }
     assert(rolled, 'a quick man was shot at eight times and never rolled');
     assert(low >= 0.9, `he rolled at crouch ${low.toFixed(2)} — a roll is a body on the ground`);
-    assert(lateral > 1.2, `he moved ${lateral.toFixed(2)} m sideways — the design is 1.6`);
+    assert(lateral > 1.3, `he moved ${lateral.toFixed(2)} m sideways — the design is 1.6`);
     return `rate reflex 5 → ${slow}, reflex 95 → ${quick}; rolled ${lateral.toFixed(1)} m off the bolt's line at crouch ${low.toFixed(1)}`;
   });
 
@@ -176,12 +179,15 @@ export function behaviours({ check, assert, squad, boot }) {
     patient.body.hp = patient.body.maxHp * 0.3;
     const hp0 = patient.body.hp;
     R.resetReactionStats();
-    let knelt = 0, lit = false;
+    let knelt = 0, lit = false, who = null;
     const took = step(world, input, 14, () => {
-      if (medic.body.reaction?.kind === 'heal') { knelt = Math.max(knelt, medic.body.crouch || 0); lit = true; }
+      const healer = d.roster.living.find((t) => t.body?.reaction?.kind === 'heal' && t.body.reaction.patient === patient.body);
+      if (healer) { knelt = Math.max(knelt, healer.body.crouch || 0); lit = true; who = healer; }
       return R.REACTION_STATS.healed > 0;
     });
-    assert(lit, 'the medic never went to him');
+    assert(lit, 'no medic ever went to him');
+    assert(who.medic === true, `${who.name} worked on him and he is not a squad's medic`);
+    assert(who === medic, `${who.name} of another squad worked on him while his own squad's medic ${medic.name} stood by`);
     assert(R.REACTION_STATS.healed > 0, `the medic did not finish a job in ${took} s`);
     assert(knelt >= 0.7, `he worked at crouch ${knelt.toFixed(2)} — a medic kneels`);
     const gained = patient.body.hp - hp0;
@@ -210,9 +216,13 @@ export function behaviours({ check, assert, squad, boot }) {
     let jump = 0, was = mate.morale;
     const took = step(world, input, 12, () => {
       jump = Math.max(jump, mate.morale - was);
+      if (R.REACTION_STATS.rallied > 0) return true;
+      /* Held: presence alone lifts a shaken man out of the window in a second
+       * or two, which is the design and not what is being measured here. */
+      mate.morale = MORALE.BREAK + 0.04;
       was = mate.morale;
       rallier.morale = 0.9;
-      return R.REACTION_STATS.rallied > 0;
+      return false;
     });
     assert(R.REACTION_STATS.rallied > 0, 'nobody rallied him in twelve seconds');
     const entry = d.log.find((l) => l.t === 'rallied');
@@ -251,13 +261,15 @@ export function behaviours({ check, assert, squad, boot }) {
     for (const t of men) if (t !== hardy && t !== frail) t.body.position.x += 90;
     world.player.position.x += 90;
     frail.body.position.copy(hardy.body.position).z += 6;
-    const foe = world.spawnEnemy('dummy', hardy.body.position.clone().add(V(-14, 0, 3)));
+    const foeAt = hardy.body.position.clone().add(V(-14, 0, 3));
+    const foe = world.spawnEnemy('b1', foeAt);
     assert(foe && foe.team !== hardy.body.team, 'no hostile to crawl from');
     for (const t of [hardy, frail]) t.body.damage(t.body.hp + 5, t.body.position, null, 'bolt');
     assert(hardy.body.downed && frail.body.downed, 'the men did not go down');
     const h0 = hardy.body.position.clone(), f0 = frail.body.position.clone();
     R.resetReactionStats();
-    step(world, input, 8);
+    /* The droid is a thing to crawl from, not a thing that finishes them: held where it is, fire held. */
+    step(world, input, 8, () => { foe.position.copy(foeAt); foe.stopFiring?.(); foe.attackTimer = 9; return false; });
     const hm = hardy.body.position.distanceTo(h0), fm = frail.body.position.distanceTo(f0);
     assert(hm > 0.6, `the hardy man crawled ${hm.toFixed(2)} m in eight seconds`);
     assert(hm > fm * 1.3, `hardiness 95 crawled ${hm.toFixed(2)} m and hardiness 5 crawled ${fm.toFixed(2)} m`);
@@ -278,9 +290,15 @@ export function behaviours({ check, assert, squad, boot }) {
     dead.body.position.copy(shot.body.position).x += 3;
     dead.body.attackDamage = shot.body.attackDamage * 2;
     const want = dead.body.attackDamage, had = shot.body.attackDamage;
+    const beside = shot.body.position.clone();
     dead.body.damage(dead.body.hp + 1e3, dead.body.position, null, 'sever');
     R.resetReactionStats();
-    const took = step(world, input, 12, () => R.REACTION_STATS.salvaged > 0);
+    /* Held beside the body until he decides — the formation would walk him
+     * out of reach in three seconds, and what is measured is the decision. */
+    const took = step(world, input, 12, () => {
+      if (!shot.body.reaction) shot.body.position.copy(beside);
+      return R.REACTION_STATS.salvaged > 0;
+    });
     assert(R.REACTION_STATS.salvaged > 0, 'nobody took the rifle in twelve seconds');
     assert(shot.body.attackDamage === want, `he carries ${shot.body.attackDamage} against the ${want} on the ground`);
     assert(d.log.some((l) => l.t === 'salvaged' && l.name === shot.name && l.from === dead.name), 'the log does not say whose rifle');

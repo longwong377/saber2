@@ -1282,7 +1282,9 @@ function senseGrenade(body, dt, ctx) {
 export const BEHAVIOUR = {
   roll: {
     attr: 'reflex', chance: 0.55, eta: [0.05, 0.6], miss: 0.9, again: 2.4, scan: 0.12,
-    speed: 6.6, launch: 0.12, prone: 0.30, up: 0.24, look: 14,
+    /* 8.5 m/s for 0.15 s and the ground takes the rest: measured 1.6 m off
+     * the bolt's line on a clone trooper (6.6 × 0.12 gave 1.08). */
+    speed: 8.5, launch: 0.15, prone: 0.30, up: 0.24, look: 14,
   },
   flee: { attr: 'reflex', pad: 2.0, run: 1.55, clear: 1.5, scan: 0.15, lag: 0.4 },
   charge: { attr: 'reflex', chance: 0.7, width: 3.2, ahead: 15, scan: 0.15, again: 1.6 },
@@ -1582,11 +1584,28 @@ export function findPatient(body, ctx) {
     if (frac >= H.hurt) continue;
     const d2 = o.position.distanceToSquared(body.position);
     if (d2 > r2) continue;
-    /* Worst first, distance as the tie-break. */
-    const s = frac * 100 + Math.sqrt(d2);
+    /* ANOTHER SQUAD'S MAN IS HIS OWN MEDIC'S FIRST. Measured without this:
+     * the next squad's medic, scanning a quarter-second earlier, took a man
+     * whose own medic was standing beside him. A squad's medic is a
+     * property of the squad; he only crosses to a squad that has no medic
+     * in reach of the man. */
+    const own = body.cmdSquad != null && o.cmdSquad === body.cmdSquad;
+    if (!own && o.cmdSquad != null && ownMedicNear(o, list, r2)) continue;
+    /* Worst first, distance as the tie-break, his own squad ahead of another's. */
+    const s = frac * 100 + Math.sqrt(d2) + (own ? 0 : 40);
     if (s < bestS) { bestS = s; best = o; }
   }
   return best;
+}
+
+/** Does this man's own squad have a living medic inside `r2` of him? */
+function ownMedicNear(o, list, r2) {
+  for (const m of list) {
+    if (m === o || m.dead || m.downed || m.team !== o.team || m.cmdSquad !== o.cmdSquad) continue;
+    if (!m.trooper?.medic) continue;
+    if (m.position.distanceToSquared(o.position) <= r2) return true;
+  }
+  return false;
 }
 
 export function startHeal(body, patient) {

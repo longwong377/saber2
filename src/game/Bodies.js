@@ -2034,7 +2034,10 @@ export function dressHumanoid(rig, style) {
  */
 
 /** The eight numbers a face is. 0 is the face this file shipped with. */
-const FACE_KEYS = ['skull', 'brow', 'cheek', 'jaw', 'chin', 'nose', 'eyes', 'mouth'];
+/* …and a ninth, `wear`: the years as LINES rather than as masses — the
+ * nasolabial fold, the crow's feet, the forehead — baked as darker vertex
+ * colour on the skull. Age drives it (AGE_FACE) and a preset may carry it. */
+const FACE_KEYS = ['skull', 'brow', 'cheek', 'jaw', 'chin', 'nose', 'eyes', 'mouth', 'wear'];
 
 /**
  * Six faces, not fifty sliders.
@@ -2054,6 +2057,12 @@ export const FACE_PRESETS = [
   { id: 'broad', name: 'Broad', face: { skull: -1.0, brow: 0.35, cheek: 1.0, jaw: 0.70, chin: -0.30, nose: 0.35, eyes: 0.95, mouth: 0.85 } },
   { id: 'gaunt', name: 'Gaunt', face: { skull: 0.70, brow: 0.75, cheek: 1.0, jaw: -0.85, chin: 0.90, nose: 0.75, eyes: -0.45, mouth: -0.20 } },
   { id: 'round', name: 'Round', face: { skull: -0.75, brow: -1.0, cheek: -0.65, jaw: -0.30, chin: -0.85, nose: -0.55, eyes: -0.35, mouth: -0.25 } },
+  /* Three more, now that the surface can carry them: a hawk's nose on a
+   * narrow face, a square jaw, and a face that has been outdoors for forty
+   * years — the first preset to spend `wear`. */
+  { id: 'hawk',   name: 'Hawk',   face: { skull: 0.40, brow: 0.55, cheek: 0.60, jaw: -0.45, chin: 0.30, nose: 1.0, eyes: -0.30, mouth: -0.20 } },
+  { id: 'square', name: 'Square', face: { skull: -0.50, brow: 0.30, cheek: 0.20, jaw: 0.95, chin: 0.85, nose: 0.10, eyes: 0.30, mouth: 0.50 } },
+  { id: 'weathered', name: 'Weathered', face: { skull: 0.20, brow: 0.60, cheek: 0.80, jaw: 0.10, chin: 0.40, nose: 0.50, eyes: -0.25, mouth: 0.0, wear: 1.0 } },
 ];
 
 /**
@@ -2280,7 +2289,7 @@ function sheetOf(opts = {}) {
  * deliberately NOT a wrinkle map: rule 6 again, and a 1 mm crease is an eighth
  * of a pixel.
  */
-const AGE_FACE = { brow: 0.55, cheek: 0.72, jaw: -0.30, chin: 0.34, nose: 0.38, eyes: -0.22, skull: 0.10 };
+const AGE_FACE = { brow: 0.55, cheek: 0.72, jaw: -0.30, chin: 0.34, nose: 0.38, eyes: -0.22, skull: 0.10, wear: 0.85 };
 
 /** Grey. Hair goes white from the temples in, so the whole mass shifts. */
 const GREY = 0xdcd6c8;
@@ -2572,68 +2581,200 @@ function vaultOf(F) {
 }
 
 /**
- * The skull, as twelve overlapping masses driven by the eight face numbers.
+ * THE TWELVE MASSES, as [rx, ry, rz, cx, cy, cz] at scale `s`.
  *
- * This is the same union of ellipsoids buildJedi has always assembled — the
- * proportions in it (head breadth 15.1 cm, the eye line at half the head's
- * height, a jaw carried below the maxilla) were measured once and are not up
- * for negotiation. What is new is that every radius and offset now carries a
- * term, and every term is written so that ZERO IS THE IDENTITY: `r * (1 + g*p)`
- * with p = 0 is `r * 1`, and `y + g*p` is `y + 0`. buildJedi() with no face
- * argument therefore emits the same floats it always did, which is asserted
- * against the previous build rather than hoped for.
+ * These are the ellipsoids `skullGeo` assembled for as long as there has been a
+ * face parameter — the proportions (head breadth 15.1 cm, the eye line at half
+ * the head's height, a jaw carried below the maxilla) were measured once and
+ * are not up for negotiation, and every radius and offset carries its face
+ * term with ZERO AS THE IDENTITY. What changed is what is done with them: they
+ * are no longer twelve meshes overlapping, they are the field one surface is
+ * sculpted from. See `skullGeo`.
+ */
+function headMasses(s, F) {
+  const { w: vaultW, h: vaultH, d: vaultD, faceW } = vaultOf(F);
+  const m = (rx, ry, rz, x, y, z) => [rx * s, ry * s, rz * s, x * s, y * s, z * s];
+  return [
+    // braincase, and the occiput carried back off it
+    m(0.0755 * vaultW, 0.0985 * vaultH, 0.0930 * vaultD, 0, 0.098, -0.012),
+    m(0.0640 * vaultW, 0.0620 * vaultH, 0.0700 * vaultD, 0, 0.104, -0.048),
+    // maxilla — the mid-face, forward of the braincase
+    m(0.0705 * faceW * (1 + 0.055 * F.jaw + 0.045 * F.cheek), 0.0780, 0.0820 * (1 + 0.025 * F.nose), 0, 0.055, 0.012),
+    // the jaw, as ONE wide mass, then tapering forward and down to the chin
+    m(0.0600 * faceW * (1 + 0.210 * F.jaw), 0.0560 * (1 + 0.10 * F.chin), 0.0690 * (1 + 0.085 * F.jaw), 0, 0.026, 0.022),
+    m(0.0455 * faceW * (1 + 0.250 * F.jaw), 0.0390 * (1 + 0.12 * F.chin), 0.0570 * (1 + 0.075 * F.chin), 0, 0.008, 0.034),
+    m(0.0250 * (1 + 0.230 * F.jaw), 0.0285 * (1 + 0.340 * F.chin), 0.0330 * (1 + 0.220 * F.chin),
+      0, -0.006 - 0.0075 * F.chin, 0.044 + 0.006 * F.chin),
+    // brow ridge and the root of the nose
+    m(0.0580 * faceW, 0.0210 * (1 + 0.420 * F.brow), 0.0330 * (1 + 0.400 * F.brow), 0, 0.101, 0.055 + 0.006 * F.brow),
+    m(0.0180 * (1 + 0.30 * F.nose), 0.0350 * (1 + 0.18 * F.nose), 0.0270 * (1 + 0.26 * F.nose), 0, 0.086, 0.064),
+    // the nose: a dorsum running down off the root, and a tip wide enough to
+    // carry the wings
+    m(0.0175 * (1 + 0.32 * F.nose), 0.0280 * (1 + 0.20 * F.nose), 0.0270 * (1 + 0.28 * F.nose), 0, 0.065, 0.074 + 0.005 * F.nose),
+    m(0.0200 * (1 + 0.34 * F.nose), 0.0165 * (1 + 0.22 * F.nose), 0.0205 * (1 + 0.30 * F.nose), 0, 0.049, 0.076 + 0.006 * F.nose),
+    // cheekbones
+    m(0.0270 * (1 + 0.44 * F.cheek), 0.0250 * (1 + 0.20 * F.cheek), 0.0270 * (1 + 0.34 * F.cheek),
+      0.0390 * faceW * (1 + 0.10 * F.cheek), 0.073 + 0.004 * F.cheek, 0.0400 + 0.004 * F.cheek),
+    m(0.0270 * (1 + 0.44 * F.cheek), 0.0250 * (1 + 0.20 * F.cheek), 0.0270 * (1 + 0.34 * F.cheek),
+      -0.0390 * faceW * (1 + 0.10 * F.cheek), 0.073 + 0.004 * F.cheek, 0.0400 + 0.004 * F.cheek),
+  ];
+}
+
+/* The skull grid. 28 × 22 is 1176 triangles and 667 vertices — fewer
+ * triangles than the twelve balls it replaces (1324) and one mesh instead of
+ * one, so the whole head lands under what it cost before once the eyes and
+ * the lips are counted. `characters` caps a body at 13 000 and the Jedi is at
+ * 12 796; there is no room above, only beside. */
+const SKULL_COLS = 28, SKULL_ROWS = 22;
+/* Where the rows crowd (t0, as a fraction of the pole-to-pole run) and by how
+ * much (A): the face band from the eye line to the chin is t ∈ [0.43, 0.83]
+ * seen from the skull's centre, and A = 0.12 quadruples the row density at
+ * its middle while the crown under the hair goes at a quarter. The warp is
+ * written so it is exactly 0 at the top pole and exactly 1 at the bottom one,
+ * whatever A and t0 are. */
+const SKULL_ROW_AT = 0.62, SKULL_ROW_GAIN = 0.12, SKULL_COL_GAIN = 0.10;
+
+/**
+ * THE SKULL, AS ONE SCULPTED SURFACE.
  *
- * Which terms are big and which are small is not styling. At 8 m one pixel is
- * 8.6 mm, so `skull` — the vault's breadth, worth ±8 mm a side — gets the
- * largest gain in the function, and `nose`, which can only ever be worth two
- * or three millimetres, gets a gain that makes it read in the menu preview and
- * nowhere else. That is an honest description of what a nose is.
+ * "can we substantially increase the detail and fidelity of all the possible
+ * faces in the game (player faces)? … they're really crude right now."
+ *
+ * What was crude was not the numbers, it was the construction: twelve
+ * ellipsoids at 7–14 segments, overlapping, merged into one geometry but not
+ * into one SURFACE. Every place two of them crossed was a hard crease the ink
+ * pass drew as a line — the portrait before this had a black outline round the
+ * nose, round each cheekbone, across the brow and under the jaw, which is the
+ * "jank" the player is being generous about — and the surface itself was
+ * faceted at the segment count of whichever ball it happened to be.
+ *
+ * This is a lat-long sphere warped to spend its rows on the face and its
+ * columns on the front (see SKULL_ROW_AT), and each vertex is pushed out along
+ * its own direction from the skull's centre to the FARTHEST EXIT of the union
+ * of the twelve masses along that ray. That fills the hollows between the balls
+ * — a nose-to-cheek gap is inside the head, which it should be — and gives one
+ * closed, star-shaped surface the same twelve numbers still drive, with every
+ * face term still the identity at zero. Two passes of smoothing over the grid
+ * then turn the ball seams into skin, and the nose is restored underneath so
+ * the smoothing cannot blunt it.
+ *
+ * On top of that go the things balls cannot make: eye sockets as real
+ * hollows (the lids and the eyeball sit IN them), nostrils, a philtrum, the
+ * mound the lips sit on, and the nasolabial fold — each a smooth displacement
+ * field, so the surface stays one thing. The occlusion bake is the one this
+ * file always had, plus `F.wear`: age lines as darker colour along the fold and
+ * at the crow's feet, which age also drives through AGE_FACE.
+ *
+ * `covered` is the scalp cut — see the bake below, whose argument is unchanged.
  */
 function skullGeo(s, F, sp, covered = sp.hair) {
-  const ball = (rx, ry, rz, w = 12, h = 9) => {
-    const g = new THREE.SphereGeometry(1, w, h); g.scale(rx * s, ry * s, rz * s); return g;
+  const M = headMasses(s, F);
+  const COLS = SKULL_COLS, ROWS = SKULL_ROWS;
+  const CX = 0, CY = 0.070 * s, CZ = 0.012 * s;
+  const nV = (COLS + 1) * (ROWS + 1);
+  const R = new Float32Array(nV), D = new Float32Array(nV * 3), UV = new Float32Array(nV * 2);
+  const A = SKULL_ROW_GAIN, t0 = SKULL_ROW_AT, B = SKULL_COL_GAIN;
+  // the nose masses, kept as a floor under the smoothing
+  const NOSE = [7, 8, 9];
+  const RN = new Float32Array(nV);
+  const exitOf = (m, dx, dy, dz) => {
+    const px = (CX - m[3]) / m[0], py = (CY - m[4]) / m[1], pz = (CZ - m[5]) / m[2];
+    const qx = dx / m[0], qy = dy / m[1], qz = dz / m[2];
+    const a = qx * qx + qy * qy + qz * qz, b = px * qx + py * qy + pz * qz, c = px * px + py * py + pz * pz - 1;
+    const disc = b * b - a * c;
+    if (disc < 0) return 0;
+    return (-b + Math.sqrt(disc)) / a;
   };
-  const { w: vaultW, h: vaultH, d: vaultD, faceW } = vaultOf(F);
-  const g = assemble([
-    // braincase, and the occiput carried back off it
-    [ball(0.0755 * vaultW, 0.0985 * vaultH, 0.0930 * vaultD, 14, 10), [0, 0.098 * s, -0.012 * s]],
-    // the occiput's DEPTH follows the vault too, and that is not symmetry for
-    // its own sake: left fixed, a wide-vault preset pushed the back of the
-    // skull 1mm through the hair cap, which is one bare vertex of the 117
-    // behind the hairline and exactly the poke-through this shape was rebuilt
-    // to eliminate.
-    [ball(0.0640 * vaultW, 0.0620 * vaultH, 0.0700 * vaultD, 8, 6),   [0, 0.104 * s, -0.048 * s]],
-    // maxilla — the mid-face, forward of the braincase
-    [ball(0.0705 * faceW * (1 + 0.055 * F.jaw + 0.045 * F.cheek), 0.0780, 0.0820 * (1 + 0.025 * F.nose), 12, 9),
-      [0, 0.055 * s, 0.012 * s]],
-    // the jaw, as ONE wide mass overlapping the maxilla by most of its own
-    // height, then tapering forward and down to the chin
-    [ball(0.0600 * faceW * (1 + 0.210 * F.jaw), 0.0560 * (1 + 0.10 * F.chin), 0.0690 * (1 + 0.085 * F.jaw), 12, 8),
-      [0, 0.026 * s, 0.022 * s]],
-    [ball(0.0455 * faceW * (1 + 0.250 * F.jaw), 0.0390 * (1 + 0.12 * F.chin), 0.0570 * (1 + 0.075 * F.chin), 10, 7),
-      [0, 0.008 * s, 0.034 * s]],
-    [ball(0.0250 * (1 + 0.230 * F.jaw), 0.0285 * (1 + 0.340 * F.chin), 0.0330 * (1 + 0.220 * F.chin), 8, 6),
-      [0, (-0.006 - 0.0075 * F.chin) * s, (0.044 + 0.006 * F.chin) * s]],
-    // brow ridge and the root of the nose. The brow's DEPTH is what shades the
-    // eye band, so it carries the biggest gain on the face.
-    [ball(0.0580 * faceW, 0.0210 * (1 + 0.420 * F.brow), 0.0330 * (1 + 0.400 * F.brow), 10, 5),
-      [0, 0.101 * s, (0.055 + 0.006 * F.brow) * s]],
-    [ball(0.0180 * (1 + 0.30 * F.nose), 0.0350 * (1 + 0.18 * F.nose), 0.0270 * (1 + 0.26 * F.nose), 8, 6),
-      [0, 0.086 * s, 0.064 * s]],
-    // the nose: a dorsum running down off the root, and a tip wide enough
-    // to carry the wings without needing two more balls for them
-    [ball(0.0175 * (1 + 0.32 * F.nose), 0.0280 * (1 + 0.20 * F.nose), 0.0270 * (1 + 0.28 * F.nose), 8, 6),
-      [0, 0.065 * s, (0.074 + 0.005 * F.nose) * s]],
-    [ball(0.0200 * (1 + 0.34 * F.nose), 0.0165 * (1 + 0.22 * F.nose), 0.0205 * (1 + 0.30 * F.nose), 8, 6),
-      [0, 0.049 * s, (0.076 + 0.006 * F.nose) * s]],
-    // cheekbones, which is what stops the face being a smooth egg in
-    // three-quarter light
-    [ball(0.0270 * (1 + 0.44 * F.cheek), 0.0250 * (1 + 0.20 * F.cheek), 0.0270 * (1 + 0.34 * F.cheek), 7, 5),
-      [0.0390 * faceW * (1 + 0.10 * F.cheek) * s, (0.073 + 0.004 * F.cheek) * s, (0.0400 + 0.004 * F.cheek) * s]],
-    [ball(0.0270 * (1 + 0.44 * F.cheek), 0.0250 * (1 + 0.20 * F.cheek), 0.0270 * (1 + 0.34 * F.cheek), 7, 5),
-      [-0.0390 * faceW * (1 + 0.10 * F.cheek) * s, (0.073 + 0.004 * F.cheek) * s, (0.0400 + 0.004 * F.cheek) * s]],
-  ], 'head');
-  const eyeX = 0.0335 * (1 + 0.30 * F.eyes);
+  for (let i = 0; i <= ROWS; i++) {
+    const t = i / ROWS;
+    const th = Math.PI * (t - A * (Math.sin(2 * Math.PI * (t - t0)) + Math.sin(2 * Math.PI * t0)));
+    for (let j = 0; j <= COLS; j++) {
+      const u = j / COLS;
+      const ph = 2 * Math.PI * (u - B * Math.sin(2 * Math.PI * u));
+      const dx = Math.sin(th) * Math.sin(ph), dy = Math.cos(th), dz = Math.sin(th) * Math.cos(ph);
+      const k = i * (COLS + 1) + j;
+      D[k * 3] = dx; D[k * 3 + 1] = dy; D[k * 3 + 2] = dz;
+      UV[k * 2] = u; UV[k * 2 + 1] = 1 - t;
+      let r = 0, rn = 0;
+      for (let q = 0; q < M.length; q++) {
+        const e = exitOf(M[q], dx, dy, dz);
+        if (e > r) r = e;
+        if (NOSE.includes(q) && e > rn) rn = e;
+      }
+      R[k] = r; RN[k] = rn;
+    }
+  }
+  // smoothing over the grid, poles held; then the nose put back under it
+  const R2 = new Float32Array(nV);
+  for (let pass = 0; pass < 2; pass++) {
+    for (let i = 0; i <= ROWS; i++) {
+      for (let j = 0; j <= COLS; j++) {
+        const k = i * (COLS + 1) + j;
+        if (i === 0 || i === ROWS) { R2[k] = R[k]; continue; }
+        const jl = (j + COLS - 1) % COLS, jr = (j + 1) % COLS;
+        const n = R[(i - 1) * (COLS + 1) + j] + R[(i + 1) * (COLS + 1) + j] + R[i * (COLS + 1) + jl] + R[i * (COLS + 1) + jr];
+        R2[k] = 0.5 * R[k] + 0.125 * n;
+      }
+    }
+    // the seam column shares the wrap's value so the mesh stays closed
+    for (let i = 0; i <= ROWS; i++) R2[i * (COLS + 1) + COLS] = R2[i * (COLS + 1)];
+    R.set(R2);
+  }
+  for (let k = 0; k < nV; k++) if (RN[k] * 0.985 > R[k]) R[k] = RN[k] * 0.985;
+
+  /* ── the features balls cannot make, as displacement fields on the radius */
+  const eyeX = 0.0335 * (1 + 0.30 * F.eyes) * s;
+  const gauss = (d2, sig) => Math.exp(-d2 / (sig * sig));
+  const fields = [
+    // eye sockets: a hollow 4.5 mm deep and 2 cm across, the eyeball sits in it
+    (x, y, z) => -0.0045 * s * (gauss((x - eyeX) ** 2 + (y - 0.084 * s) ** 2 + (z - 0.058 * s) ** 2, 0.019 * s)
+                                 + gauss((x + eyeX) ** 2 + (y - 0.084 * s) ** 2 + (z - 0.058 * s) ** 2, 0.019 * s)),
+    // nostrils, under the wings of the tip
+    (x, y, z) => -0.0026 * s * (1 + 0.2 * F.nose) * (gauss((x - 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2 + (z - 0.070 * s) ** 2, 0.0062 * s)
+                                 + gauss((x + 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2 + (z - 0.070 * s) ** 2, 0.0062 * s)),
+    // the philtrum: a groove from the columella down to the lip
+    (x, y, z) => -0.0013 * s * gauss(x * x, 0.0038 * s) * gauss((y - 0.040 * s) ** 2, 0.0065 * s) * clamp((z / s - 0.050) / 0.015, 0, 1),
+    // the mound the lips sit on, and the fold beside it running down from the
+    // wing of the nose to the corner of the mouth
+    (x, y, z) => 0.0016 * s * gauss(x * x, 0.014 * s) * gauss((y - 0.031 * s) ** 2, 0.0085 * s) * clamp((z / s - 0.045) / 0.02, 0, 1),
+    (x, y, z) => {
+      let f = 0;
+      for (const sx of [-1, 1]) {
+        // the fold as a line segment from the wing to the corner
+        const ax = sx * 0.0150 * s, ay = 0.049 * s, az = 0.069 * s, bx = sx * 0.0205 * s, by = 0.028 * s, bz = 0.058 * s;
+        const vx = bx - ax, vy = by - ay, vz = bz - az, l2 = vx * vx + vy * vy + vz * vz;
+        const t = clamp(((x - ax) * vx + (y - ay) * vy + (z - az) * vz) / l2, 0, 1);
+        f += gauss((x - ax - vx * t) ** 2 + (y - ay - vy * t) ** 2 + (z - az - vz * t) ** 2, 0.0045 * s);
+      }
+      return -0.0009 * s * (1 + 0.8 * Math.max(0, F.wear)) * f;
+    },
+  ];
+  const pos = new Float32Array(nV * 3);
+  const P = new THREE.Vector3();
+  for (let k = 0; k < nV; k++) {
+    const dx = D[k * 3], dy = D[k * 3 + 1], dz = D[k * 3 + 2];
+    P.set(CX + dx * R[k], CY + dy * R[k], CZ + dz * R[k]);
+    let dr = 0;
+    for (const f of fields) dr += f(P.x, P.y, P.z);
+    const r = R[k] + dr;
+    pos[k * 3] = CX + dx * r; pos[k * 3 + 1] = CY + dy * r; pos[k * 3 + 2] = CZ + dz * r;
+  }
+  const idx = new Uint16Array(COLS * ROWS * 6);
+  let n = 0;
+  for (let i = 0; i < ROWS; i++) {
+    for (let j = 0; j < COLS; j++) {
+      const a = i * (COLS + 1) + j, b = a + COLS + 1;
+      // the pole rows collapse to a point; those triangles are dropped
+      if (i > 0) { idx[n++] = a; idx[n++] = b; idx[n++] = a + 1; }
+      if (i < ROWS - 1) { idx[n++] = a + 1; idx[n++] = b; idx[n++] = b + 1; }
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(UV, 2));
+  g.setIndex(new THREE.BufferAttribute(idx.subarray(0, n), 1));
+  g.computeVertexNormals();
+  const wear = Math.max(0, F.wear || 0);
   // Occlusion, baked where a face has it: under the jaw and the cheekbones,
   // in the eye sockets, at the temples and at the wings of the nose. Skin
   // on a single sun with a hemisphere fill has no other way to know that
@@ -2652,14 +2793,12 @@ function skullGeo(s, F, sp, covered = sp.hair) {
     creaseAt(0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
     creaseAt(-0.048 * s, 0.020 * s, -0.028 * s, 0.048 * s, 0.55, 0.7),
     // eye sockets. The eye line is at HALF the head's height — crown
-    // 19.7cm, menton -3.5cm, so 8.4cm — not the 10.0 the features here
-    // were laid out at, which gave a forehead a third too short and put
-    // the whole face too high in the skull.
-    creaseAt(eyeX * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
-    creaseAt(-eyeX * s, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
+    // 19.7cm, menton -3.5cm, so 8.4cm.
+    creaseAt(eyeX, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
+    creaseAt(-eyeX, 0.084 * s, 0.048 * s, 0.030 * s, 0.50, 0.55),
     // the brow's own shadow, which only exists on a face that has a brow
-    creaseAt(eyeX * s, 0.088 * s, 0.052 * s, 0.034 * s, 1 - 0.34 * Math.max(0, F.brow), 0.6),
-    creaseAt(-eyeX * s, 0.088 * s, 0.052 * s, 0.034 * s, 1 - 0.34 * Math.max(0, F.brow), 0.6),
+    creaseAt(eyeX, 0.088 * s, 0.052 * s, 0.034 * s, 1 - 0.34 * Math.max(0, F.brow), 0.6),
+    creaseAt(-eyeX, 0.088 * s, 0.052 * s, 0.034 * s, 1 - 0.34 * Math.max(0, F.brow), 0.6),
     // and the hollow UNDER the cheekbone, which is the only way a cheekbone
     // reads at all on a surface lit by one sun
     creaseAt(0.044 * s, 0.046 * s, 0.044 * s, 0.030 * s, 1 - 0.30 * Math.max(0, F.cheek), 0.5),
@@ -2667,10 +2806,23 @@ function skullGeo(s, F, sp, covered = sp.hair) {
     // temples
     creaseAt(0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
     creaseAt(-0.068 * s, 0.104 * s, 0.026 * s, 0.032 * s, 0.66, 0.6),
-    // either side of the nose, and the crease under the lower lip
+    // either side of the nose, the nostrils, and the crease under the lower lip
     creaseAt(0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
     creaseAt(-0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
+    creaseAt(0.0095 * s, 0.042 * s, 0.071 * s, 0.007 * s, 0.40, 0.3),
+    creaseAt(-0.0095 * s, 0.042 * s, 0.071 * s, 0.007 * s, 0.40, 0.3),
     creaseAt(0, 0.022 * s, 0.064 * s, 0.019 * s, 0.66, 0.5),
+    /* THE YEARS, AS LINES. `wear` darkens the nasolabial fold, the crow's feet
+     * and the lines across the forehead — colour rather than geometry, because
+     * a 1 mm crease is an eighth of a pixel at 8 m and its shadow is not. Age
+     * drives it through AGE_FACE; a preset may carry it; zero is the identity
+     * because creaseAt(…, 1) returns 1. */
+    creaseAt(0.0175 * s, 0.040 * s, 0.064 * s, 0.014 * s, 1 - 0.30 * wear, 0.5),
+    creaseAt(-0.0175 * s, 0.040 * s, 0.064 * s, 0.014 * s, 1 - 0.30 * wear, 0.5),
+    creaseAt(eyeX + 0.020 * s, 0.083 * s, 0.040 * s, 0.013 * s, 1 - 0.26 * wear, 0.5),
+    creaseAt(-eyeX - 0.020 * s, 0.083 * s, 0.040 * s, 0.013 * s, 1 - 0.26 * wear, 0.5),
+    (x, y, z) => 1 - 0.14 * wear * clamp((z / s - 0.040) / 0.02, 0, 1) * clamp(1 - Math.abs(y / s - 0.118) / 0.014, 0, 1)
+      * (0.5 + 0.5 * Math.cos(y / s * 900)),
     // THE SCALP.
     //
     // This is not subtle occlusion, it is insurance. The hair is a union of
@@ -2704,6 +2856,165 @@ function skullGeo(s, F, sp, covered = sp.hair) {
         return 1 - 0.22 * behind * low;
       },
   ), { floor: 0.30 });
+}
+
+/* ── the features of a face, each one mesh ───────────────────────────── */
+
+/**
+ * AN EYEBALL, with the iris and the pupil in its vertex colour.
+ *
+ * It used to be two spheres — a sclera and a 5 mm iris ball sitting on it —
+ * and two materials, so two meshes a side. One sphere whose rows are crowded at
+ * the pole carries the pupil (black), the iris (the species' colour, lighter
+ * inside and dark at the limbal ring) and the sclera as colour, and one
+ * catchlight vertex up and to the outside, which is the only specular a cel
+ * shader that has deleted its GGX lobe will ever give an eye. The pole is +Y so
+ * `Kit.aim` can point it down the gaze. 140 triangles.
+ */
+function eyeGeo(s, sp, side) {
+  const r = 0.0115 * s;
+  const rows = [0, 0.17, 0.36, 0.60, 0.95, 1.45, 2.05, 2.60, Math.PI];
+  const COLS = 10;
+  const nV = (rows.length) * (COLS + 1);
+  const pos = new Float32Array(nV * 3), col = new Float32Array(nV * 3), uv = new Float32Array(nV * 2);
+  const iris = new THREE.Color(sp.eye ?? 0x2c1d12), sclera = new THREE.Color(sp.sclera ?? 0xece7dd);
+  const c = new THREE.Color();
+  for (let i = 0; i < rows.length; i++) {
+    const th = rows[i];
+    for (let j = 0; j <= COLS; j++) {
+      const ph = (j / COLS) * Math.PI * 2;
+      const k = i * (COLS + 1) + j;
+      pos[k * 3] = r * Math.sin(th) * Math.cos(ph); pos[k * 3 + 1] = r * Math.cos(th); pos[k * 3 + 2] = r * Math.sin(th) * Math.sin(ph);
+      uv[k * 2] = j / COLS; uv[k * 2 + 1] = 1 - th / Math.PI;
+      if (i <= 1) c.setRGB(0.012, 0.010, 0.010);
+      else if (i === 2) c.copy(iris).multiplyScalar(1.35);
+      else if (i === 3) c.copy(iris).multiplyScalar(0.55);
+      else c.copy(sclera);
+      // the catchlight: one vertex on the inner iris ring, up and outboard
+      if (i === 2 && j === (side === 'L' ? 7 : 3)) c.setRGB(1, 1, 1);
+      col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+    }
+  }
+  const idx = [];
+  for (let i = 0; i < rows.length - 1; i++) {
+    for (let j = 0; j < COLS; j++) {
+      const a = i * (COLS + 1) + j, b = a + COLS + 1;
+      if (i > 0) idx.push(a, a + 1, b);
+      if (i < rows.length - 2) idx.push(a + 1, b + 1, b);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/**
+ * THE LIDS: two curved bands on a sphere a hair larger than the eyeball, built
+ * in head space about the eye's own centre. The upper band's margin row is
+ * baked near-black — that is the lash line, which used to be a separate plate
+ * and a separate mesh. `blink` rotates the upper lid down over the cornea, so
+ * the same builder at blink = 1 is the morph target; see `buildHead`.
+ */
+function lidGeo(s, sx, eye, blink = 0) {
+  const R = 0.0115 * s * 1.10;
+  const f = new THREE.Vector3(0, 0, 1), up = new THREE.Vector3(0, 1, 0), right = new THREE.Vector3(1, 0, 0);
+  const band = (psi0, psi1, om0, om1, rowsN, colsN, lash, rot) => {
+    const nV = (rowsN + 1) * (colsN + 1);
+    const pos = new Float32Array(nV * 3), col = new Float32Array(nV * 3), uv = new Float32Array(nV * 2);
+    const p = new THREE.Vector3(), q = new THREE.Quaternion().setFromAxisAngle(right, rot);
+    for (let i = 0; i <= rowsN; i++) {
+      const psi = psi0 + (psi1 - psi0) * (i / rowsN);
+      for (let j = 0; j <= colsN; j++) {
+        const om = om0 + (om1 - om0) * (j / colsN);
+        p.copy(f).multiplyScalar(Math.cos(psi))
+          .addScaledVector(right, Math.sin(psi) * Math.cos(om)).addScaledVector(up, Math.sin(psi) * Math.sin(om))
+          .applyQuaternion(q).multiplyScalar(R).add(eye);
+        const k = i * (colsN + 1) + j;
+        pos[k * 3] = p.x; pos[k * 3 + 1] = p.y; pos[k * 3 + 2] = p.z;
+        uv[k * 2] = j / colsN; uv[k * 2 + 1] = i / rowsN;
+        // the lash line on the margin, and the lid a touch warmer than the cheek
+        const v = lash && i === 0 ? 0.16 : (lash && i === 1 ? 0.62 : 0.92);
+        col[k * 3] = v; col[k * 3 + 1] = v * 0.96; col[k * 3 + 2] = v * 0.94;
+      }
+    }
+    const idx = [];
+    for (let i = 0; i < rowsN; i++) {
+      for (let j = 0; j < colsN; j++) {
+        const a = i * (colsN + 1) + j, b = a + colsN + 1;
+        idx.push(a, b, a + 1, a + 1, b, b + 1);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  };
+  // the upper lid: margin 0.40 rad off the gaze, back to 1.25 rad under the
+  // brow; the outboard corner sits a little lower than the inboard one
+  const upper = band(0.40, 1.25, Math.PI * 0.08, Math.PI * 0.92, 2, 8, true, -blink * 1.15);
+  const lower = band(0.52, 0.95, Math.PI * 1.10, Math.PI * 1.90, 1, 8, false, 0);
+  return mergeGeos([{ geo: upper, matrix: new THREE.Matrix4() }, { geo: lower, matrix: new THREE.Matrix4() }]);
+}
+
+/**
+ * AN EAR: a helix rim as a tube round an ellipse, and the concha as a plate
+ * inside it, authored in a frame whose X runs front-to-back along the head, Y
+ * is the ear's own normal and Z is up. About 90 triangles; the old ear was a
+ * scaled sphere, which is a lump.
+ */
+function earGeo(s, sx, hg) {
+  const e = new THREE.Vector3(sx, -0.05, -0.12).normalize();
+  const seat = onSurface(hg, e, 0.0030 * s, new THREE.Vector3(0, 0.076 * s, -0.012 * s));
+  const Y = e.clone();
+  const Z = new THREE.Vector3(0, 1, 0).addScaledVector(Y, -Y.y).normalize();
+  const X = new THREE.Vector3().crossVectors(Y, Z).normalize();
+  const m = new THREE.Matrix4().makeBasis(X, Y, Z).setPosition(seat[0], seat[1], seat[2]);
+  const nodes = [];
+  const N = 9;
+  for (let i = 0; i < N; i++) {
+    const t = (i / (N - 1)) * Math.PI * 1.55 - Math.PI * 0.35;     // open at the lobe's front
+    const a = 0.0105 * s, b = 0.0165 * s;
+    // the helix folds back on itself at the top and thins to the lobe
+    const r = (0.0024 - 0.0008 * Math.max(0, Math.sin(t))) * s;
+    nodes.push([Math.cos(t) * a * 0.9 - 0.001 * s, 0.0055 * s + 0.0015 * s * Math.sin(t), Math.sin(t) * b + 0.002 * s, r]);
+  }
+  const rim = tubeGeo(nodes, 4, { tip: 0.6 });
+  const concha = plateGeo(0.0150 * s, 0.0040 * s, 0.0230 * s, 0.0012 * s, 1);
+  concha.translate(-0.0005 * s, 0.0028 * s, 0.001 * s);
+  const g = mergeGeos([{ geo: rim, matrix: new THREE.Matrix4() }, { geo: concha, matrix: new THREE.Matrix4() }]);
+  g.applyMatrix4(m);
+  return g;
+}
+
+/**
+ * THE LIPS: two rolls across the mouth with the seam between them, seated on
+ * the skull's own surface and standing a millimetre proud of it. The upper roll
+ * thins at the middle (the bow) and the lower one is fuller; the width is
+ * `F.mouth`. It used to be a slab, which read as a sticker.
+ */
+function lipGeo(s, F, hg) {
+  const w = 0.0135 * (1 + 0.30 * F.mouth) * s;
+  const roll = (y, radii, proud) => {
+    const nodes = [];
+    const N = radii.length;
+    for (let i = 0; i < N; i++) {
+      const x = -w + (2 * w * i) / (N - 1);
+      const d = new THREE.Vector3(x * 0.35, y - 0.060 * s, 1).normalize();
+      const p = onSurface(hg, d, -proud, new THREE.Vector3(x * 0.65, 0.060 * s, 0.020 * s));
+      nodes.push([p[0], p[1], p[2], radii[i] * s]);
+    }
+    return tubeGeo(nodes, 5, { tip: 0.2 });
+  };
+  const upper = roll(0.0335 * s, [0.0010, 0.0026, 0.0022, 0.0026, 0.0010], 0.0009 * s);
+  const lower = roll(0.0262 * s, [0.0010, 0.0030, 0.0034, 0.0030, 0.0010], 0.0011 * s);
+  return mergeGeos([{ geo: upper, matrix: new THREE.Matrix4() }, { geo: lower, matrix: new THREE.Matrix4() }]);
 }
 
 /**
@@ -4679,93 +4990,61 @@ export function buildJedi(opts = {}) {
     headGeo: () => skullGeo(HS, F, sp, sp.hair && G.hair.crown !== false),
     buildHead(headObj, _s, hg) {
       const s = HS;
-      // Every feature is raycast onto the assembled skull. Authored against a
-      // nominal sphere radius they went missing four separate times — both
-      // eyes, both pupils, both brows and the nose had literally never been
-      // drawn — because the face mass reaches further forward than the cranium
-      // at eye height, so clearing one still leaves you inside the other.
-      const sclera = new THREE.MeshStandardMaterial({ color: sp.sclera ?? 0xece7dd, roughness: 0.24 });
-      const iris = new THREE.MeshStandardMaterial({ color: sp.eye ?? 0x2c1d12, roughness: 0.18 });
+      /* ── THE FEATURES, EIGHT MESHES AT MOST: two eyes, two lids, the brows,
+       * the lips, the ears, and the skull they sit in. It was fourteen. */
+      const eye = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.16, metalness: 0, vertexColors: true });
       const lip = new THREE.MeshStandardMaterial({ color: 0x9a6558, roughness: 0.70 });
-      // Kit.aim's frame, which every offset below depends on: local +Y goes
-      // along the normal, local +X is ref × normal and local +Z closes the
-      // basis. For a sideways normal and world-up as the reference that puts
-      // local X front-to-back and local Z straight DOWN — so an ear authored
-      // as (thin, tall, deep) comes out (deep, thin, tall) and sticks 5cm out
-      // of the skull, which is exactly what the first pass did.
-      //
-      // One Kit per side rather than one for the pair. Merging both eyes into
-      // a single mesh puts that mesh's centre on the nose, which is neither
-      // where it is nor anywhere a burial check can reason about.
       const eyeD = new THREE.Vector3(0, 0, 1);
       // Eye spacing is the one face parameter that moves a feature rather than
-      // a mass, so it moves the PROBE ORIGIN: the eyeball, the iris, the lash
-      // and the brow are all seated by raycasting the assembled skull from
-      // behind the socket, so widening the eyes re-seats every one of them on
-      // the surface that is actually there rather than sliding four parts
-      // sideways off a face that curves away underneath them.
+      // a mass, so it moves the PROBE ORIGIN: the eyeball, the lids and the
+      // brow are all seated by raycasting the skull from behind the socket, so
+      // widening the eyes re-seats every one of them on the surface that is
+      // actually there rather than sliding parts sideways off a face that
+      // curves away underneath them.
       const eyeX = 0.0335 * (1 + 0.30 * F.eyes);
+      const tag = (m, name) => { m.userData.feature = name; return m; };
       for (const sx of sp.eyes === false ? [] : [-1, 1]) {
+        const side = sx < 0 ? 'L' : 'R';
         const k = new Kit();
-        // Probed straight forward from a point directly behind the eye. An
-        // angled ray exits off the meridian and lands the eyeball on the side
-        // of the nose, which is what the first pass did; forward, the exit is
-        // by construction the frontmost point of the face at that x and y.
+        // Probed straight forward from a point directly behind the eye, into
+        // the socket the skull now has: the ball is set 6.4 mm into the
+        // surface, which with a 4.5 mm hollow leaves the cornea and the iris
+        // standing clear and the white mostly under the lids.
         const o = new THREE.Vector3(sx * eyeX * s, 0.084 * s, 0.010 * s);
-        // A real eyeball is 12mm across and mostly buried; a ball sitting proud
-        // of the skull reads as an insect. Set into the socket so the brow does
-        // the work, with only the iris standing clear.
-        k.aim(sclera, new THREE.SphereGeometry(1, 8, 6),
-          onSurface(hg, eyeD, 0.0058 * s, o), eyeD,
-          [0.0108 * s, 0.0082 * s, 0.0098 * s]);
-        k.aim(iris, new THREE.SphereGeometry(1, 6, 5),
-          onSurface(hg, eyeD, 0.0022 * s, o), eyeD,
-          [0.0050 * s, 0.0050 * s, 0.0050 * s]);
-        // The lash line — the single feature that stops an eye being a bead in
-        // a hole. On a real face the upper lid overhangs the cornea and lays a
-        // hard dark edge across the top third of it; without one the eyeball is
-        // a full sphere sitting in a socket and reads as a doll's, which is
-        // exactly what the portrait showed. Two millimetres of geometry.
-        //
-        // Kit.aim's frame again: local +Y goes along the normal and local +Z
-        // points DOWN, so a slab authored (w, h, d) comes out (across the
-        // face, out of it, down it). Authored the other way round it is a
-        // 5mm spike standing out of the eye.
-        const ld = new THREE.Vector3(sx * 0.06, 0.30, 0.95).normalize();
-        k.aim(brow, plateGeo(0.0200 * s, 0.0032 * s, 0.0036 * s, 0.0010 * s, 1),
-          onSurface(hg, ld, 0.0018 * s, o), ld);
-        // brow, laid on the ridge above the eye and swept in toward the nose.
-        // Twi'lek, Togruta, Nautolan and Kel Dor have none — a species with no
-        // hair on its scalp wearing two dark human eyebrows was the single
-        // loudest thing wrong with the first pass at the head.
-        if (sp.brows !== false) {
-          const b = new THREE.Vector3(sx * 0.13, 0.17, 0.98).normalize();
-          k.aim(brow, plateGeo(0.0265 * s, 0.0045 * s, 0.0085 * s, 0.0018 * s, 1),
-            onSurface(hg, b, -0.0022 * s, new THREE.Vector3(sx * (eyeX - 0.0015) * s, 0.093 * s, 0.020 * s)), b);
-        }
-        // ear, on the side of the cranium where the cranium actually is.
-        // A Togruta hears through its montrals and a Nautolan has none at all,
-        // and on both of them the ear landed exactly where the species' own
-        // geometry roots — a 15mm lump inside the base of a head-tail.
-        if (sp.ears !== false) {
-          const e = new THREE.Vector3(sx, -0.05, -0.12).normalize();
-          k.aim(skin, (() => { const g = new THREE.SphereGeometry(1, 8, 6);
-            g.scale(0.0150 * s, 0.0080 * s, 0.0230 * s); return g; })(),
-            onSurface(hg, e, 0.0035 * s, new THREE.Vector3(0, 0.076 * s, -0.012 * s)), e);
-        }
-        k.bake(headObj);
+        const at = onSurface(hg, eyeD, 0.0064 * s, o);
+        k.aim(eye, eyeGeo(s, sp, side), at, eyeD);
+        tag(k.bake(headObj)[0], 'eye' + side);
+        // the lids, with the blink as a morph on the mesh — see lidGeo
+        const centre = new THREE.Vector3(at[0], at[1], at[2]);
+        const lids = addShapeMorph(lidGeo(s, sx, centre, 0), lidGeo(s, sx, centre, 1), 'blink');
+        tag(mesh(lids, skin, headObj), 'lids' + side);
       }
-      // The mouth is a shallow crease with a lip over it. As a separate
-      // coloured slab standing off the face it read as a sticker. Its width is
-      // the `mouth` parameter and nothing else: a mouth is 26mm of geometry on
-      // a head 24 pixels tall at gameplay range, so this is a preview-range
-      // feature and the comment says so rather than pretending otherwise.
-      if (sp.mouth !== false) {
-        const m = new THREE.Vector3(0, -0.05, 1).normalize();
-        mesh(plateGeo(0.026 * (1 + 0.30 * F.mouth) * s, 0.0050 * s, 0.006 * s, 0.002 * s, 1), lip, headObj,
-          onSurface(hg, m, -0.0012 * s, new THREE.Vector3(0, 0.030 * s, 0.030 * s)),
-          [0.06, 0, 0]);
+      // the brows: a tapered tube along the ridge, both in one mesh
+      if (sp.brows !== false) {
+        const kb = new Kit();
+        for (const sx of [-1, 1]) {
+          const nodes = [];
+          const N = 5;
+          for (let i = 0; i < N; i++) {
+            const t = i / (N - 1);                              // 0 at the nose, 1 at the temple
+            const x = sx * (eyeX - 0.014 + 0.040 * t);
+            const d = new THREE.Vector3(x * 0.9, 0.16 + 0.06 * t, 1).normalize();
+            const p = onSurface(hg, d, -0.0016 * s, new THREE.Vector3(x * s, 0.086 * s, 0.020 * s));
+            // thick over the inner half, tapering to a point at the temple
+            const r = (0.0028 + 0.0010 * Math.sin(t * Math.PI) - 0.0018 * t) * s;
+            nodes.push([p[0], p[1] + (0.0095 - 0.0025 * t) * s, p[2], Math.max(0.0008 * s, r)]);
+          }
+          kb.add(brow, tubeGeo(nodes, 4, { tip: 0.3 }));
+        }
+        tag(kb.bake(headObj)[0], 'brows');
       }
+      // the ears: one mesh for the pair
+      if (sp.ears !== false) {
+        const g = mergeGeos([{ geo: earGeo(s, -1, hg), matrix: new THREE.Matrix4() }, { geo: earGeo(s, 1, hg), matrix: new THREE.Matrix4() }]);
+        tag(mesh(g, skin, headObj), 'ears');
+      }
+      // the mouth: lips as two rolls with a seam, not a slab
+      if (sp.mouth !== false) tag(mesh(lipGeo(s, F, hg), lip, headObj), 'lips');
 
       /**
        * THE HAIR IS BUILT BEFORE THE SPECIES' OWN HEAD FURNITURE, AND ADDED
