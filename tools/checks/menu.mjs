@@ -71,6 +71,10 @@ const PICKER_HOSTS = ['level-list', 'diff-list', 'mode-list', 'opt-quality', 'op
  * without ever yielding.
  */
 let INDEX_HTML = '';
+/* The menu's own source, for the two checks that assert a control EXISTS
+ * rather than what it does — a button with no markup is a button nobody can
+ * press, and a jsdom fixture only proves the ones that were drawn. */
+let MENU_SRC = '';
 function menuOn(overrides = {}) {
   const doc = makeDocument(INDEX_HTML);
   const restore = doc.install();
@@ -107,6 +111,7 @@ const over = (src, a, dst) => src.map((c, i) => Math.round(c * a + dst[i] * (1 -
 
 export async function run({ check, assert }) {
   INDEX_HTML = await read('index.html');
+  MENU_SRC = await read('src/ui/Menu.js');
   const CSS = await read('styles.css');
   const MAIN = await read('src/main.js');
 
@@ -1787,8 +1792,30 @@ export async function run({ check, assert }) {
       /* THE BUTTON'S OWN ROOT, taken the way the button takes it. */
       const panel = btn.closest('[data-panel="saber"]');
       assert(panel, 'the button is not inside the wardrobe panel it walks');
-      const rows = () => choiceRows(panel);
-      const ranges = () => [...panel.querySelectorAll('input[type="range"]')];
+      /**
+       * …EXCEPT THE ROWS THAT BELONG TO A DIFFERENT BUTTON.
+       *
+       * The wardrobe panel grew a SECOND owner: the companion picker and its
+       * colours sit under `[data-panel="saber"]` with their own Trust in the
+       * Force. This check's claim is "every control THIS button owns", and the
+       * companion's are not among them — deliberately, because randomising the
+       * picker would change WHICH ANIMAL YOU TAKE, and picking a different
+       * kind retires the one you have. That is the only control on this page
+       * that is not cosmetic.
+       *
+       * The exclusion is read from the same selector list `_wireTrust` passes
+       * as `skip`, so the two cannot drift: a row this check ignores is
+       * exactly a row that button refuses to touch. `menu: Trust in the Force
+       * randomises everything of YOURS and nothing of the animal's` holds the
+       * other end of it and asserts the fence is load-bearing.
+       */
+      const SKIP = ['#companion-list', '#companion-dress', '#companion-dress-host'];
+      const owned = (el) => !SKIP.some((sel) => {
+        const host = doc.querySelector(sel);
+        return host && (host === el || host.contains(el));
+      });
+      const rows = () => choiceRows(panel).filter(owned);
+      const ranges = () => [...panel.querySelectorAll('input[type="range"]')].filter(owned);
       assert(rows().length >= 15,
         `only ${rows().length} rows of choices under the button — the fixture is not building the wardrobe`);
       assert(ranges().length >= 5,
@@ -1959,6 +1986,119 @@ export async function run({ check, assert }) {
       return `${told.length} modes name the six they field (${told.join(', ')}); ${quiet.length} refuse a `
         + `contingent and stay quiet (${quiet.join(', ')}); at zero allies all ${modes.length} say nothing`;
     } finally { close(); }
+  });
+
+  check('menu: Trust in the Force randomises everything of YOURS and nothing of the animal\'s', () => {
+    /**
+     * "there should also be a randomize button that randomizes EVERY SINGLE
+     *  customization … maybe call it something cool like 'Trust in the Force'"
+     *
+     * TWO CLAUSES, AND THEY PULL AGAINST EACH OTHER. "every single" is why the
+     * walker is deliberately broad — `.cards, .swatches, .kit-chips` under
+     * whatever root it is handed, so it works on nine rows without a list and
+     * on the tenth the day somebody adds it. That breadth is the feature.
+     *
+     * AND IT IS ALSO THE HAZARD, which this check exists for. The Jedi panel
+     * grew a SECOND owner: the companion picker and its colours sit under
+     * `[data-panel="saber"]`, which is exactly the root the player's button
+     * walks. Unfenced, pressing "randomize my appearance" would randomise
+     * WHICH ANIMAL YOU TAKE — and picking a different kind retires the one you
+     * have. That is the only control on this screen that is not cosmetic, and
+     * it would have been the one the button reached.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const panel = doc.querySelector('[data-panel="saber"]');
+      assert(panel, 'there is no Jedi panel');
+      const list = doc.getElementById('companion-list');
+      assert(list, 'the companion picker is not on the page');
+      assert(panel.contains(list),
+        'the companion picker has moved off the Jedi panel — this check is now testing nothing, '
+        + 'and the skip it guards may be dead');
+
+      /* THE PLAYER'S BUTTON MOVES THE PLAYER. */
+      const before = { colorIndex: menu.s.colorIndex, robeIndex: menu.s.robeIndex,
+        hiltStyle: menu.s.hiltStyle, species: menu.s.species };
+      const companionBefore = menu.s.companion;
+      const n = menu._trustInTheForce(panel, {
+        first: ['order-list', 'species-list'],
+        skip: ['#companion-list', '#companion-dress', '#companion-dress-host'],
+      });
+      assert(n > 0, 'Trust in the Force chose nothing at all');
+      const moved = Object.keys(before).filter((k) => menu.s[k] !== before[k]);
+      assert(moved.length, `it clicked ${n} rows and not one of them changed a setting`);
+      /* …AND LEAVES THE ANIMAL ALONE. */
+      assert(menu.s.companion === companionBefore,
+        `it changed your companion from "${companionBefore}" to "${menu.s.companion}" — `
+        + 'picking a different kind retires the one you have');
+
+      /* AND THE SKIP IS LOAD-BEARING: without it, the same call reaches the
+       * picker. Asserted rather than assumed, so that removing the fence is a
+       * red check and not a silent regression. */
+      menu.s.companion = 'none';
+      let reached = false;
+      for (let i = 0; i < 12 && !reached; i++) {
+        menu._trustInTheForce(panel, {});
+        if (menu.s.companion !== 'none') reached = true;
+      }
+      assert(reached,
+        'even with no skip the walker never reached the companion picker — the fence is not '
+        + 'what is protecting it, so this check is not testing what it says it is');
+      /**
+       * …AND THE OTHER HALF OF THE ASK, WHICH IS A SEPARATE SURFACE.
+       *
+       * "add the same randomize button for npc troop custimization as well" —
+       * so there are two buttons, on two screens, and this asserts the second
+       * exists and is wired to the same walker rather than to a copy of it.
+       * The companion's own third button is asserted by the companions suite.
+       */
+      const src = MENU_SRC;
+      for (const id of ['btn-trust', 'company-trust', 'companion-trust']) {
+        assert(src.includes(`'${id}'`) || src.includes(`"${id}"`) || src.includes(`id="${id}"`),
+          `there is no ${id} — the player asked for this button on his own screen, on the troops' `
+          + 'and it belongs on the companion\'s too');
+      }
+      const calls = (src.match(/_trustInTheForce\(/g) || []).length;
+      assert(calls >= 4,
+        `_trustInTheForce is called ${calls} times — one definition and three buttons is four`);
+      return `${n} rows chosen, ${moved.length} of the player's own settings moved `
+        + `(${moved.join(', ')}), the companion untouched — and without the fence it is reached; `
+        + `3 buttons on 3 surfaces, all through one walker`;
+    } finally { close(); }
+  });
+
+  check('menu: the deploy card says how many troops are coming with you', () => {
+    /**
+     * "I tried to play trial of waves and noticed that I still had troops in
+     *  that mode, is that a feature or bug?"
+     *
+     * A FEATURE, AND THE DEFECT WAS THE SILENCE. `settings.allies` is a
+     * PERSISTED GLOBAL — one slider on the Army tab, kept across sessions —
+     * and `commandConfig` fields it in every mode that does not declare `solo`
+     * or `dojo`. He had set it once, on another card, and it followed him.
+     *
+     * SAID RATHER THAN REMOVED: nothing about a contingent is wrong in the
+     * Trial, and taking it away would answer a question with a confiscation.
+     * What was wrong is that no screen said it before Ignite.
+     */
+    const said = (over) => {
+      const { menu, doc, close } = menuOn(over);
+      try { menu._syncSessionNeed?.(); return doc.getElementById('mode-need')?.textContent || ''; }
+      finally { close(); }
+    };
+    const withFour = said({ mode: 'waves', allies: 4 });
+    assert(/\b4\b/.test(withFour) && /troopers?/i.test(withFour),
+      `Trial of Waves with 4 allies says "${withFour}"`);
+    assert(/Army tab|remembered/i.test(withFour),
+      'it says the number but not where the number came from, which is the actual surprise');
+    const withNone = said({ mode: 'waves', allies: 0 });
+    assert(!/trooper/i.test(withNone), `with no allies it still says "${withNone}"`);
+    /* AND THE TWO MODES THAT REFUSE A CONTINGENT DO NOT PROMISE ONE. */
+    for (const mode of ['duel', 'training']) {
+      const t = said({ mode, allies: 4 });
+      assert(!/taking \d+ allied/i.test(t), `${mode} refuses a contingent and still says "${t}"`);
+    }
+    return `waves+4 → "${withFour.slice(0, 90)}…"; waves+0 says nothing; duel and training say nothing`;
   });
 
 }

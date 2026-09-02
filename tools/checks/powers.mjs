@@ -1869,4 +1869,123 @@ export async function run({ check, assert }) {
     } finally { world.unload?.(); }
   });
 
+  check('push: aiming at the ground throws YOU the other way, harder the closer you are', async () => {
+    /**
+     * "when you look down or have the cursor down and you force push it should
+     *  throw you into the air you know what I mean? like push you off the
+     *  ground (kind of like an airbender) … it should be totally dependent on
+     *  where you're aiming you know what I mean? like real trajectories/physics.
+     *  and that repelling force should be based on your distance and force
+     *  strength, it should work in the air too depending on how close you are
+     *  to the ground"
+     *
+     * FIVE CLAUSES, AND EACH ONE IS A MEASUREMENT BELOW: the direction is the
+     * opposite of the aim; the magnitude falls off with distance; it scales
+     * with Force strength; it works in the air; and something that MOVES gives
+     * you nothing back, which is what makes it physics rather than a jump
+     * button pointed downward.
+     *
+     * THE HEIGHTFIELD IS NOT A RAPIER COLLIDER, which is why `_pushRecoil`
+     * asks `phys.raycast` AND `ctx.terrain.raycast` and takes the nearer hit.
+     * A version that asked only the physics world got nothing back from open
+     * ground — the exact case the player is describing.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+      runSeed: 8,
+    });
+    try {
+      void idleInput;
+      const p = world.player;
+      /* THE WORLD'S OWN FRAME CONTEXT, not one assembled here. `forcePush`
+       * reads more off it than a hand-built object obviously carries, and a
+       * fixture that guesses the shape measures the guess: the first version
+       * of this check built its own and read 0.00 m/s off ground the player
+       * was standing on. */
+      const ctx = world._frameCtx || { world, enemies: world.enemies, physics: world.physics,
+        particles: world.particles, terrain: world.terrain, bolts: world.bolts };
+      p.maxForce = 400;
+      /** Push straight down from `h` metres up and answer the velocity it gave. */
+      /**
+       * "that repelling force should be based on your distance and force
+       *  strength" — and FORCE STRENGTH IS THE SETTING, not the pool.
+       *
+       * `Player.forceScale` reads `world.settings.forcePower`, and
+       * `_pushRecoil` scales by `sqrt` of it. The first version of this check
+       * varied `p.force` — how much Force you have left right now — and
+       * measured 9.52 both times, correctly, because that is not what the
+       * recoil is a function of. A player with a full bar and a player with a
+       * quarter of one get the same shove; a player who turned Force Power up
+       * gets a bigger one.
+       */
+      const shove = (h, force = 1) => {
+        world.settings.forcePower = force;
+        p.position.set(0, world.terrain.height(0, 0) + h, 0);
+        p.velocity.set(0, 0, 0);
+        p.grounded = h < 0.2;
+        p.force = p.maxForce;
+        p.cooldowns.push = 0;
+        /* `chest` IS WRITTEN ONCE A FRAME by `_update`, and the push fires
+         * FROM it. A fixture that moves the body and pushes in the same tick
+         * casts its ray from where the player WAS — which is how the first
+         * version of this check measured 0.00 m/s off ground it was standing
+         * on, and read as the feature being dead. */
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.aimDir.set(0, -1, 0);
+        p.forcePush(ctx);
+        return p.velocity.clone();
+      };
+      const low = shove(0.1);
+      assert(low.y > 1, `aiming at the ground from 10 cm gave ${low.y.toFixed(2)} m/s upward`);
+      /* THE DIRECTION IS THE OPPOSITE OF THE AIM, on every axis and not just
+       * up: aim down-and-forward and you go up-and-back. */
+      p.velocity.set(0, 0, 0); p.force = p.maxForce; p.cooldowns.push = 0;
+      p.position.set(0, world.terrain.height(0, 0) + 0.1, 0);
+      p.chest.copy(p.position).setY(p.position.y + 1.25);
+      p.aimDir.set(0, -0.8, 0.6).normalize();
+      p.forcePush(ctx);
+      const v = p.velocity.clone();
+      assert(v.y > 0 && v.z < 0,
+        `aimed down-and-forward and went (${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)}) — `
+        + 'it is not answering the aim');
+      /* CLOSER IS HARDER. */
+      const near = shove(0.5).length(), far = shove(6).length();
+      assert(near > far, `0.5 m gave ${near.toFixed(2)} and 6 m gave ${far.toFixed(2)}`);
+      /* IT WORKS IN THE AIR — the clause that makes it a movement tool rather
+       * than a ground-only trick. */
+      const air = shove(4);
+      assert(air.y > 0.5, `four metres up it gave ${air.y.toFixed(2)}`);
+      /* AND FORCE STRENGTH SCALES IT. */
+      const strong = shove(0.5, 2).length(), weak = shove(0.5, 1).length();
+      assert(strong > weak,
+        `Force Power 2 gave ${strong.toFixed(2)} and Force Power 1 gave ${weak.toFixed(2)}`);
+      world.settings.forcePower = 1;
+      /* AND IT IS CAPPED, so a push into a wall at point-blank is not a launch
+       * into orbit. */
+      const { PUSH_RECOIL } = await import('../../src/game/Player.js');
+      const blank = shove(0.01, 8).length();
+      assert(blank <= PUSH_RECOIL.cap + 1e-6,
+        `point blank at Force Power 8 gave ${blank.toFixed(2)} against a cap of ${PUSH_RECOIL.cap}`);
+      world.settings.forcePower = 1;
+      /* AND IT RUNS OUT. Beyond the push's own range there is nothing to
+       * shove off, which is what stops it being a jump button: aim at the sky
+       * and you stay where you are. */
+      const sky = (() => {
+        p.position.set(0, world.terrain.height(0, 0) + 40, 0);
+        p.velocity.set(0, 0, 0); p.grounded = false;
+        p.force = p.maxForce; p.cooldowns.push = 0;
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.aimDir.set(0, -1, 0);
+        p.forcePush(ctx);
+        return p.velocity.length();
+      })();
+      assert(sky === 0, `forty metres up it still gave ${sky.toFixed(2)} — the falloff never reaches zero`);
+      return `10 cm → ${low.y.toFixed(1)} m/s up; 0.5 m ${near.toFixed(1)} vs 6 m ${far.toFixed(1)}; `
+        + `4 m up still ${air.y.toFixed(1)}; Force Power 2 ${strong.toFixed(1)} vs 1 ${weak.toFixed(1)}; `
+        + `capped at ${PUSH_RECOIL.cap}; and 40 m up it gives nothing`;
+    } finally { world.unload(); }
+  });
+
 }

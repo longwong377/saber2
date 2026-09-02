@@ -5266,7 +5266,13 @@ export class Menu {
       audio.ui('click');
       /* The Order and the Species redraw what comes after them — see the note
        * over `_trustInTheForce`. */
-      const n = this._trustInTheForce(panel, { first: ['order-list', 'species-list'] });
+      /* THE COMPANION IS NOT PART OF YOUR APPEARANCE. Its picker and its
+       * colours share this panel and have their own button — see `opts.skip`
+       * for what pressing this one would otherwise do to your animal. */
+      const n = this._trustInTheForce(panel, {
+        first: ['order-list', 'species-list'],
+        skip: ['#companion-list', '#companion-dress', '#companion-dress-host'],
+      });
       this._refreshPreview(true);
       saveSettings(this.s);
       btn.textContent = n ? 'Trust in the Force' : 'Nothing to choose';
@@ -5885,14 +5891,46 @@ export class Menu {
     for (const id of (opts.first || [])) {
       oneOf(document.getElementById(id));
     }
+    /**
+     * …AND WHAT THIS BUTTON MUST NOT REACH.
+     *
+     * `opts.skip` is a selector for subtrees under the same root that belong
+     * to somebody else's button. It exists because the Jedi panel grew a
+     * SECOND owner: the companion picker and its colours sit under
+     * `[data-panel="saber"]`, which is exactly the root `_wireTrust` walks.
+     *
+     * Without this, pressing the player's own Trust in the Force would
+     * randomise WHICH ANIMAL YOU TAKE — and picking a different kind retires
+     * the one you have, so a button labelled "randomize my appearance" would
+     * quietly put your companion back in the kennel and adopt another. That is
+     * not a cosmetic surprise; it is the one thing on this screen that is not
+     * cosmetic at all.
+     *
+     * COMPANIONS.md names this trap by name, and it names it because the
+     * walker is deliberately broad — `.cards, .swatches, .kit-chips` under
+     * whatever root it is handed — which is what makes it work on nine
+     * different rows without a list. The breadth is the feature; the skip is
+     * how a second owner coexists with it.
+     */
+    const skipped = new Set();
+    for (const sel of (opts.skip || [])) {
+      for (const node of root.querySelectorAll(sel)) {
+        node.querySelectorAll?.('.cards, .swatches, .kit-chips, input[type="range"]')
+          .forEach((x) => skipped.add(x));
+        skipped.add(node);
+      }
+    }
     /* …and then everything, re-queried. `.cards` is a card row, `.swatches` a
      * colour rack, `.kit-chips` a row of kit options on a trooper's page —
      * three class names against the whole wardrobe, because they are what the
      * markup already uses to mean "a row of choices". */
-    for (const row of root.querySelectorAll('.cards, .swatches, .kit-chips')) oneOf(row);
+    for (const row of root.querySelectorAll('.cards, .swatches, .kit-chips')) {
+      if (!skipped.has(row)) oneOf(row);
+    }
     /* Sliders take a random NOTCH rather than a random float, so a frame or a
      * blade length lands on a value the control can actually show. */
     for (const el of root.querySelectorAll('input[type="range"]')) {
+      if (skipped.has(el)) continue;
       const lo = Number(el.min), hi = Number(el.max), step = Number(el.step) || 0.01;
       if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) continue;
       const notches = Math.max(1, Math.round((hi - lo) / step));

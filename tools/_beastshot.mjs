@@ -72,7 +72,13 @@ await page.evaluate((lv) => localStorage.setItem('saber.settings.v2', JSON.strin
 await page.reload({ waitUntil: 'domcontentloaded' });
 await waitFramesFor(page, '#btn-deploy', { frames: 60 });
 await deployAndWait(page, { settle: 4 });
-await page.evaluate(() => { for (const el of document.querySelectorAll('#hud, .overlay, #title, .banner')) el.style.display = 'none'; });
+/* EVERY OVERLAY, not a list of four ids. The game's coach line ("Hold L Ctrl
+ * to kneel…") is none of them and sat across the middle of every shot the
+ * first run took. Anything that is not the canvas is chrome, and a shot tool
+ * wants none of it. */
+await page.evaluate(() => {
+  for (const el of document.body.children) if (el.tagName !== 'CANVAS') el.style.display = 'none';
+});
 
 // Drive the camera from a plain object the shot loop writes, exactly as
 // portrait.mjs does: the engine owns the camera every frame and a camera set
@@ -139,9 +145,30 @@ for (const type of types) {
       }
     });
     // where the head bone actually ended up, so the head shot aims at a head
+    /* THE SKULL'S CENTRE, NOT THE HEAD BONE'S ORIGIN. `buildCreatureHead`
+     * sweeps a neck FORWARD out of that bone and hangs the skull at the far
+     * end of it, so the bone itself sits between the shoulder blades — a
+     * camera aimed there is inside the animal, which is exactly where the
+     * first run's head shots were taken from. Averaging the head mesh's own
+     * world-space corners lands on the skull. */
     const hb = e.rig?.get?.('head');
     let head = null;
-    if (hb?.obj) { const v = new (window.SABER.world.player.position.constructor)(); hb.obj.getWorldPosition(v); head = [v.x, v.y, v.z]; }
+    if (hb?.obj) {
+      const V = window.SABER.world.player.position.constructor;
+      let n = 0, ax = 0, ay = 0, az = 0;
+      hb.obj.updateMatrixWorld(true);
+      hb.obj.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+        const bb = o.geometry.boundingBox;
+        for (const sx of [bb.min.x, bb.max.x]) for (const sy of [bb.min.y, bb.max.y]) for (const sz of [bb.min.z, bb.max.z]) {
+          const q = o.localToWorld(new V(sx, sy, sz));
+          ax += q.x; ay += q.y; az += q.z; n++;
+        }
+      });
+      if (n) head = [ax / n, ay / n, az / n];
+      else { const v = new V(); hb.obj.getWorldPosition(v); head = [v.x, v.y, v.z]; }
+    }
     const tb = e.rig?.get?.('tarsus0');
     let foot = null;
     if (tb?.obj) { const v = new (window.SABER.world.player.position.constructor)(); tb.obj.getWorldPosition(v); foot = [v.x, v.y, v.z]; }
@@ -154,27 +181,33 @@ for (const type of types) {
   const D = Math.max(0.4, box.zh - box.zl);          // nose to tail (it faces +Z)
   const cx = (box.xl + box.xh) / 2, cz = (box.zl + box.zh) / 2, cy = box.lo + H * 0.5;
   /** Distance that fits `span` metres vertically at `fov`, with a margin. */
-  const fit = (span, fov, margin = 1.18) => (span * margin) / (2 * Math.tan((fov * Math.PI) / 180 / 2));
+  const fit = (span, fov, margin = 1.30) => (span * margin) / (2 * Math.tan((fov * Math.PI) / 180 / 2));
+  /* THE SPAN IS THE WHOLE ANIMAL, both ways. The viewport is square, so the
+   * horizontal field equals the vertical one and a 2.1 m long massiff framed
+   * on its 1.25 m height is cropped at both ends — which is what the first
+   * run produced. max(H, D) with a 1.30 margin is the smallest frame that
+   * cannot cut the subject whichever way round it is. */
+  const whole = Math.max(H, D, W);
   const head = box.head || [cx, box.hi - H * 0.15, box.zh - D * 0.1];
   const foot = box.foot || [cx, box.lo, cz];
   const headSpan = Math.max(0.35, H * 0.42);
 
   const views = [
     // the flank: the animal faces +Z, so its side is along ±X
-    ['flank', { p: [cx + fit(Math.max(H, D * 0.62), 34), cy, cz], t: [cx, cy, cz], fov: 34 }],
+    ['flank', { p: [cx + fit(whole, 34), cy, cz], t: [cx, cy, cz], fov: 34 }],
     // three-quarter front high, which is the read a player standing over a
     // companion actually gets
-    ['three', { p: [cx + fit(Math.max(H, D * 0.7), 34) * 0.72, cy + H * 0.95, cz + fit(Math.max(H, D * 0.7), 34) * 0.72],
+    ['three', { p: [cx + fit(whole, 34) * 0.76, cy + whole * 0.42, cz + fit(whole, 34) * 0.66],
       t: [cx, cy, cz], fov: 34 }],
-    ['head', { p: [head[0] + fit(headSpan, 30) * 0.80, head[1] + headSpan * 0.30, head[2] + fit(headSpan, 30) * 0.62],
+    ['head', { p: [head[0] + fit(headSpan, 30) * 0.78, head[1] + headSpan * 0.28, head[2] + fit(headSpan, 30) * 0.64],
       t: head, fov: 30 }],
     // over the spine from behind and above: the one view a dorsal ridge or a
     // row of scutes can be judged from at all
-    ['back', { p: [cx + D * 0.30, box.hi + Math.max(H, D) * 0.75, cz - fit(D * 0.9, 34)],
-      t: [cx, box.hi - H * 0.12, cz], fov: 34 }],
-    ['feet', { p: [foot[0] + fit(H * 0.42, 32) * 0.8, box.lo + H * 0.30, foot[2] + fit(H * 0.42, 32) * 0.6],
-      t: [foot[0], box.lo + H * 0.10, foot[2]], fov: 32 }],
-    ['far', { p: [cx + 34, box.lo + H * 0.6, cz + 20], t: [cx, box.lo + H * 0.45, cz], fov: 26 }],
+    ['back', { p: [cx + whole * 0.30, box.hi + whole * 0.60, cz - fit(whole, 34) * 0.85],
+      t: [cx, box.hi - H * 0.18, cz], fov: 34 }],
+    ['feet', { p: [foot[0] + fit(H * 0.55, 32) * 0.82, box.lo + H * 0.34, foot[2] + fit(H * 0.55, 32) * 0.58],
+      t: [foot[0], box.lo + H * 0.16, foot[2]], fov: 32 }],
+    ['far', { p: [cx + 30, box.lo + H * 0.55, cz + 18], t: [cx, box.lo + H * 0.45, cz], fov: 26 }],
   ];
   for (const [name, v] of views) {
     await page.evaluate((v) => { window.__shot = v; }, v);

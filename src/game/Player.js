@@ -846,7 +846,10 @@ const DIVE_LAND = 1.45;
  * land from (`DIVE_LAND`, the fall damage curve and `_collide`'s sweep all sit
  * under it).
  */
-const PUSH_RECOIL = { peak: 11, cap: 18 };
+/* Exported so the check can pin the cap against the number rather than a copy
+ * of it — HANDOFF §2.4, and a cap asserted against a literal is a cap that
+ * agrees with itself. */
+export const PUSH_RECOIL = { peak: 11, cap: 18 };
 
 /**
  * HOW FAR INSIDE THE HEIGHTFIELD'S EDGE A BODY IS HELD, in metres. See the

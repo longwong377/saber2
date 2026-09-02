@@ -9794,14 +9794,24 @@ export function buildQuadruped(opts = {}) {
    * against a 13k cap is the cheapest legibility in the file.
    */
   ks.pair((sx) => ks.row(4, (i, t) => {
-    const at = 0.16 + t * 0.58;
+    const at = 0.18 + t * 0.54;
     const nodes = [];
-    for (let j = 0; j < 5; j++) {
-      const phi = 0.55 + (j / 4) * 1.55;
-      const p = hull(at, sx * phi, 0.030 * S);
-      nodes.push([p[0], p[1], p[2], (0.055 - j * 0.009) * S]);
+    for (let j = 0; j < 6; j++) {
+      const u = j / 5;
+      const phi = 0.80 + u * 1.30;
+      /* A BELL AND NOT A TAPER, and sunk almost to its own crown. A rib
+       * disappears under the spinal muscle at the top and under the sternum
+       * at the bottom, so a tube that is fattest in the middle and fines away
+       * at both ends leaves a raised band on the flank rather than a claw
+       * hanging off it — which is what the first pass of this looked like
+       * rendered: eight pale hooks down the animal's sides. `sink` at 0.048·S
+       * against a 0.040·S peak radius means only the top fifth of the tube
+       * ever leaves the hide. */
+      const r = (0.014 + 0.026 * Math.sin(Math.PI * u)) * S;
+      const p = hull(at, sx * phi, 0.048 * S);
+      nodes.push([p[0], p[1], p[2], r]);
     }
-    ks.add(plate, tubeGeo(nodes, 6, { tip: 0.3 }), [0, 0, 0]);
+    ks.add(plate, tubeGeo(nodes, 6, { tip: 0.1 }), [0, 0, 0]);
   }));
   {
     const p = fwd(0.44);
@@ -9844,7 +9854,15 @@ export function buildQuadruped(opts = {}) {
 
   /* ── the head ── */
   const head = rig.get('head');
-  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth });
+  /* THE SHOULDER THE NECK COMES OUT OF, MEASURED. `headAt[1]` is the head
+   * bone's offset down the spine in plan units and `trunk[2]` is the spine's
+   * length in the same units, so their ratio is where along the lathe the
+   * neck leaves — and `hull` at a right angle to the spine there is the
+   * animal's own half-width at that station, swells and superellipse and all.
+   * See the neck's own note for what it is used for and what typing a number
+   * here instead cost. */
+  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth,
+    trunkR: Math.abs(hull(P.headAt[1] / P.trunk[2], Math.PI / 2)[0]) });
 
   /* ── the limbs ── */
   for (let i = 0; i < P.limbs.length * 2; i++) {
@@ -10078,34 +10096,53 @@ function buildCreatureHead(rig, P, S, M) {
    * segment so the curl is a curve rather than a dogleg, and swept from a
    * TRAPEZIUS at the root to `nR` under the jaw.
    *
-   * The root radius is 1.45×nR and clamped to 0.95 of the trunk's own girth.
-   * Measured against the plans rather than picked: nR sits at 0.44–0.68 of
-   * `girth` across all twelve rows, so 1.45×nR lands within a few per cent of
-   * the trunk's shoulder radius on every one of them — a neck exactly as thick
-   * as the shoulder it grows out of — and the clamp catches the two rows
-   * (acklay, varactyl) whose necks are proportionally longest.
+   * The root radius is 1.45×nR, clamped to the trunk's OWN half-width where
+   * the neck leaves it — `M.trunkR`, raycast off the lathe by the caller, and
+   * not `P.girth`. That distinction is the whole of this paragraph and it was
+   * got wrong: `girth` is the lathe's nominal radius at its widest, and the
+   * lathe tapers to 0.72 of it at the front and is then reshaped by a
+   * superellipse. On the massiff the clamp let the neck out to 0.266·S where
+   * the shoulder it grows from is 0.20·S wide, so the "trapezius" left the
+   * body as a flat triangular sail standing proud of the animal on both
+   * sides — a cowl, not a neck, and the single most conspicuous thing on the
+   * rendered body. The measured seat cannot be wrong by construction, in the
+   * same way and for the same reason `onLimb` is used instead of typing a
+   * radius. 0.92 of it, so the neck arrives just inside the shoulder's
+   * outline rather than exactly on it.
    *
-   * And it STARTS BEHIND THE HEAD BONE, 0.55 of a segment back down its own
-   * pitch, which puts the root ring inside the trunk lathe. A tube that begins
-   * on the shoulder's surface still shows a rim; one that begins inside it
-   * cannot. Nothing downstream reads the neck's mesh extent — `head.radius` is
-   * set from S below, as it always was.
+   * And it STARTS BEHIND THE HEAD BONE, a full segment back down its own
+   * pitch, which puts the root ring well inside the trunk lathe. A tube that
+   * begins on the shoulder's surface still shows a rim; one that begins
+   * inside it cannot. (0.55 of a segment was not enough on the four plans
+   * whose necks are shortest — the flare decays over a fixed fraction of the
+   * TUBE, so a 0.28·S neck spends its taper in the first 0.09·S and the rim
+   * lands outside the hide.) Nothing downstream reads the neck's mesh
+   * extent — `head.radius` is set from S below, as it always was.
    */
   const RN = Math.max(4, segs * 3 + 1);       // rings, not segments
   const nodes = [];
-  const root = Math.min(nR * 1.45, P.girth * 0.95) * S;
+  const root = Math.min(nR * 1.45 * S, (M.trunkR ?? P.girth * S) * 0.92);
   let hy = 0, hz = 0, pitch = nPitch;
   {
-    const step = (nLen * S * segs) / (RN - 1);
-    // back down the first segment's own direction, so the root is buried
-    let y = -Math.sin(nPitch) * nLen * S * 0.55, z = -Math.cos(nPitch) * nLen * S * 0.55;
-    let a = nPitch;
+    /* BACK is how many of the plan's own segments the tube starts BEHIND the
+     * head bone, and the walk is extended by exactly that much so the tip
+     * still lands where the skull hangs — a tube that buried its root without
+     * lengthening would leave the last centimetres of neck missing and the
+     * head floating clear of it. The start angle is wound back by the same
+     * amount of curl, so at the bone's own origin the tube is travelling at
+     * `nPitch` and reaches `nPitch + nCurl * segs` at the tip: the two walks
+     * agree at both ends by construction rather than by arithmetic. */
+    const back = 1.0;
+    const span = segs + back;
+    const step = (nLen * S * span) / (RN - 1);
+    let a = nPitch - nCurl * back;
+    let y = -Math.sin(a) * nLen * S * back, z = -Math.cos(a) * nLen * S * back;
     for (let i = 0; i < RN; i++) {
       const u = i / (RN - 1);
       // the flare is concentrated at the base: ²·² decays to nothing by a
       // third of the way up, which is where a trapezius stops.
       nodes.push([0, y, z, nR * S * 0.95 + (root - nR * S * 0.95) * (1 - u) ** 2.2]);
-      z += Math.cos(a) * step; y += Math.sin(a) * step; a += (nCurl * segs) / (RN - 1);
+      z += Math.cos(a) * step; y += Math.sin(a) * step; a += (nCurl * span) / (RN - 1);
     }
     // where the neck ARRIVES, which is where every branch below hangs its
     // skull. Walked separately at the plan's own resolution so the numbers the
