@@ -1935,4 +1935,8 @@ export async function run({ check, assert, THREE: T }) {
     assert(out !== first, `${first.id} was spelled to completion with no army`);
     return `${gated.join(', ')} hidden solo, offered in Command`;
   });
+
+  /* ARMOUR and AVOIDANCE — the third note. See _stratagems2.mjs. */
+  const { armour } = await import('./_stratagems2.mjs');
+  armour({ check, assert, bench });
 }

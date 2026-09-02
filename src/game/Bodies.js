@@ -2869,11 +2869,11 @@ function skullGeo(s, F, sp, covered = sp.hair) {
  * inside and dark at the limbal ring) and the sclera as colour, and one
  * catchlight vertex up and to the outside, which is the only specular a cel
  * shader that has deleted its GGX lobe will ever give an eye. The pole is +Y so
- * `Kit.aim` can point it down the gaze. 140 triangles.
+ * `Kit.aim` can point it down the gaze. 120 triangles.
  */
 function eyeGeo(s, sp, side) {
   const r = 0.0115 * s;
-  const rows = [0, 0.17, 0.36, 0.60, 0.95, 1.45, 2.05, 2.60, Math.PI];
+  const rows = [0, 0.17, 0.36, 0.60, 0.95, 1.50, 2.20, Math.PI];
   const COLS = 10;
   const nV = (rows.length) * (COLS + 1);
   const pos = new Float32Array(nV * 3), col = new Float32Array(nV * 3), uv = new Float32Array(nV * 2);
@@ -3010,7 +3010,7 @@ function lipGeo(s, F, hg) {
       const p = onSurface(hg, d, -proud, new THREE.Vector3(x * 0.65, 0.060 * s, 0.020 * s));
       nodes.push([p[0], p[1], p[2], radii[i] * s]);
     }
-    return tubeGeo(nodes, 5, { tip: 0.2 });
+    return tubeGeo(nodes, 4, { tip: 0.2 });
   };
   const upper = roll(0.0335 * s, [0.0010, 0.0026, 0.0022, 0.0026, 0.0010], 0.0009 * s);
   const lower = roll(0.0262 * s, [0.0010, 0.0030, 0.0034, 0.0030, 0.0010], 0.0011 * s);
