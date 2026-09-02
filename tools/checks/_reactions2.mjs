@@ -255,21 +255,28 @@ export function behaviours({ check, assert, squad, boot }) {
   check('behaviours: a downed man crawls away from the shooting, further when he is hardy', async () => {
     const R = await import('../../src/game/Reactions.js');
     const { world, d, input } = await quietLine(14);
+    const { holdFire } = await import('../../src/game/Waves.js');
     const men = d.roster.living.filter((t) => t.body && !t.body.dead);
     const hardy = men[0], frail = men[1];
     hardy.attrs.hardiness = 95; frail.attrs.hardiness = 5;
+    /* Everybody else, and the Jedi, out of helping reach — a man with help
+     * beside him is being revived, not crawling. The two stay where they
+     * stand: a body teleported and then ragdolled is a ragdoll where it WAS. */
     for (const t of men) if (t !== hardy && t !== frail) t.body.position.x += 90;
     world.player.position.x += 90;
-    frail.body.position.copy(hardy.body.position).z += 6;
     const foeAt = hardy.body.position.clone().add(V(-14, 0, 3));
     const foe = world.spawnEnemy('b1', foeAt);
     assert(foe && foe.team !== hardy.body.team, 'no hostile to crawl from');
+    foe.noReact = true;
     for (const t of [hardy, frail]) t.body.damage(t.body.hp + 5, t.body.position, null, 'bolt');
     assert(hardy.body.downed && frail.body.downed, 'the men did not go down');
+    /* The droid is a thing to crawl from, not a thing that finishes them: held where it is, fire held. */
+    const hold = () => { foe.position.copy(foeAt); holdFire(foe); foe.attackTimer = 9; return false; };
+    step(world, input, 0.5, hold);                    // the ragdoll settles onto the body's own position
     const h0 = hardy.body.position.clone(), f0 = frail.body.position.clone();
     R.resetReactionStats();
-    /* The droid is a thing to crawl from, not a thing that finishes them: held where it is, fire held. */
-    step(world, input, 8, () => { foe.position.copy(foeAt); foe.stopFiring?.(); foe.attackTimer = 9; return false; });
+    step(world, input, 8, hold);
+    assert(hardy.body && frail.body && hardy.body.downed && frail.body.downed, 'a downed man died inside eight seconds');
     const hm = hardy.body.position.distanceTo(h0), fm = frail.body.position.distanceTo(f0);
     assert(hm > 0.6, `the hardy man crawled ${hm.toFixed(2)} m in eight seconds`);
     assert(hm > fm * 1.3, `hardiness 95 crawled ${hm.toFixed(2)} m and hardiness 5 crawled ${fm.toFixed(2)} m`);

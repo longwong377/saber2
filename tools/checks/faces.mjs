@@ -84,8 +84,13 @@ export async function run({ check, assert }) {
       const kinds = new Set(features.map((f) => f.userData.feature));
       if (sp.eyes !== false) assert(kinds.has('eyeL') && kinds.has('eyeR') && kinds.has('lidsL') && kinds.has('lidsR'), `${sp.id}: eyes or lids missing`);
       if (sp.mouth !== false) assert(kinds.has('lips'), `${sp.id}: no lips`);
-      if (sp.brows !== false) assert(kinds.has('brows'), `${sp.id}: no brows`);
-      if (sp.ears !== false) assert(kinds.has('ears'), `${sp.id}: no ears`);
+      if (sp.ears !== false) assert(kinds.has('earL') && kinds.has('earR'), `${sp.id}: no ears`);
+      // the brows ride the hair mesh (see buildHead); a species with brows
+      // has a hair mesh carrying more than the cut alone
+      if (sp.brows !== false) {
+        const hair = head.obj.children.find((o) => o.isMesh && o.userData.silhouette && !o.userData.feature);
+        assert(hair, `${sp.id}: no hair mesh to carry the brows`);
+      }
       rows.push(`${sp.id} 1+${features.length}/${head.obj.children.length}`);
     }
     return rows.join('  ');
@@ -130,12 +135,22 @@ export async function run({ check, assert }) {
     const { features } = headOf({ species: 'human', face: 'even' });
     const eye = features.find((f) => f.userData.feature === 'eyeR');
     const c = eye.geometry.attributes.color;
-    let dark = 0, white = 0, mid = 0;
-    for (let i = 0; i < c.count; i++) {
-      const l = (c.getX(i) + c.getY(i) + c.getZ(i)) / 3;
-      if (l < 0.05) dark++; else if (l > 0.8) white++; else mid++;
-    }
-    assert(dark >= 6 && mid >= 6 && white >= 20, `pupil ${dark}, iris ${mid}, sclera ${white} vertices`);
+    // three populations by colour, not by brightness: a brown iris is nearly
+    // as dark as its pupil, so what separates them is that they are DIFFERENT
+    const key = (i) => `${c.getX(i).toFixed(3)},${c.getY(i).toFixed(3)},${c.getZ(i).toFixed(3)}`;
+    const pop = new Map();
+    for (let i = 0; i < c.count; i++) pop.set(key(i), (pop.get(key(i)) || 0) + 1);
+    const sorted = [...pop.entries()].sort((a, b) => b[1] - a[1]);
+    const white = sorted[0][1];                              // the sclera is most of the ball
+    const lum = (k) => k.split(',').reduce((a, v) => a + +v, 0) / 3;
+    const darkest = Math.min(...[...pop.keys()].map(lum));
+    const dark = [...pop.entries()].filter(([k]) => lum(k) === darkest).reduce((a, [, n]) => a + n, 0);
+    const mid = c.count - white - dark;
+    // …and the iris is visibly lighter than the pupil it rings
+    const irisLum = [...pop.entries()].filter(([k, n]) => lum(k) !== darkest && n !== white).map(([k]) => lum(k));
+    assert(pop.size >= 4, `the eye is ${pop.size} colours — a pupil, an iris ring, a limbal ring and a white are four`);
+    assert(dark >= 11 && mid >= 11 && white >= 30, `pupil ${dark}, iris ${mid}, sclera ${white} vertices`);
+    assert(Math.max(...irisLum) > darkest * 3, `the iris (${Math.max(...irisLum).toFixed(3)}) is as dark as the pupil (${darkest.toFixed(3)})`);
     const lids = features.find((f) => f.userData.feature === 'lidsR');
     const morph = lids.geometry.morphAttributes.position;
     assert(morph && morph.length === 1 && morph[0].name === 'blink', 'the lids carry no blink morph');
@@ -191,18 +206,26 @@ export async function run({ check, assert }) {
       if (d < Math.cos(Math.PI / 4)) sharp++;
     }
     assert(faces > 200 && sharp / faces < 0.08, `${sharp} of ${faces} face triangles turn more than 45° across an edge`);
-    // every feature's centre is within a centimetre and a half of the skull
-    const tri = new THREE.Triangle(), q = new THREE.Vector3();
+    // every feature sits ON the skull: the mean distance of its vertices to
+    // the surface is under a centimetre (a lid's back rows are inside the
+    // socket by design; an ear's rim stands off by its own thickness)
+    const tri = new THREE.Triangle(), q = new THREE.Vector3(), v = new THREE.Vector3();
     for (const f of features) {
-      f.geometry.computeBoundingBox();
-      const c = f.geometry.boundingBox.getCenter(new THREE.Vector3()).applyMatrix4(f.matrix);
-      let best = Infinity;
-      for (let i = 0; i < idx.count; i += 3) {
-        tri.a.fromBufferAttribute(p, idx.getX(i)); tri.b.fromBufferAttribute(p, idx.getX(i + 1)); tri.c.fromBufferAttribute(p, idx.getX(i + 2));
-        tri.closestPointToPoint(c, q);
-        best = Math.min(best, q.distanceTo(c));
+      const fp = f.geometry.attributes.position;
+      let sum = 0;
+      for (let k = 0; k < fp.count; k += 3) {
+        v.fromBufferAttribute(fp, k).applyMatrix4(f.matrix);
+        let best = Infinity;
+        for (let i = 0; i < idx.count; i += 3) {
+          tri.a.fromBufferAttribute(p, idx.getX(i)); tri.b.fromBufferAttribute(p, idx.getX(i + 1)); tri.c.fromBufferAttribute(p, idx.getX(i + 2));
+          tri.closestPointToPoint(v, q);
+          const d = q.distanceTo(v);
+          if (d < best) best = d;
+        }
+        sum += best;
       }
-      assert(best < 0.015, `${f.userData.feature} sits ${(best * 1000).toFixed(0)} mm off the skull`);
+      const mean = sum / Math.ceil(fp.count / 3);
+      assert(mean < 0.010, `${f.userData.feature} sits ${(mean * 1000).toFixed(1)} mm off the skull on average`);
     }
     return `${(size.x * 100).toFixed(1)} × ${(size.y * 100).toFixed(1)} × ${(size.z * 100).toFixed(1)} cm, ${sharp}/${faces} sharp face edges, ${features.length} features seated`;
   });

@@ -2620,12 +2620,11 @@ function headMasses(s, F) {
   ];
 }
 
-/* The skull grid. 28 × 22 is 1176 triangles and 667 vertices — fewer
- * triangles than the twelve balls it replaces (1324) and one mesh instead of
- * one, so the whole head lands under what it cost before once the eyes and
- * the lips are counted. `characters` caps a body at 13 000 and the Jedi is at
+/* The skull grid. 30 × 22 is 1260 triangles and 713 vertices — fewer
+ * triangles than the twelve balls it replaces (1324), so the whole head lands
+ * near what it cost before once the eyes and the lips are counted. `characters` caps a body at 13 000 and the Jedi is at
  * 12 796; there is no room above, only beside. */
-const SKULL_COLS = 28, SKULL_ROWS = 22;
+const SKULL_COLS = 30, SKULL_ROWS = 22;
 /* Where the rows crowd (t0, as a fraction of the pole-to-pole run) and by how
  * much (A): the face band from the eye line to the chin is t ∈ [0.43, 0.83]
  * seen from the skull's centre, and A = 0.12 quadruples the row density at
@@ -2633,6 +2632,7 @@ const SKULL_COLS = 28, SKULL_ROWS = 22;
  * written so it is exactly 0 at the top pole and exactly 1 at the bottom one,
  * whatever A and t0 are. */
 const SKULL_ROW_AT = 0.62, SKULL_ROW_GAIN = 0.12, SKULL_COL_GAIN = 0.10;
+const _skD = new THREE.Vector3(), _skO = new THREE.Vector3(), _skP = new THREE.Vector3();
 
 /**
  * THE SKULL, AS ONE SCULPTED SURFACE.
@@ -2722,31 +2722,39 @@ function skullGeo(s, F, sp, covered = sp.hair) {
   }
   for (let k = 0; k < nV; k++) if (RN[k] * 0.985 > R[k]) R[k] = RN[k] * 0.985;
 
-  /* ── the features balls cannot make, as displacement fields on the radius */
+  /* ── the features balls cannot make, as displacement fields on the radius.
+   *
+   * WRITTEN IN THE FRONTAL PLANE — (x, y), masked to the front of the head —
+   * and not as points in space, because where the face surface IS along z
+   * moves with every preset and is nowhere near where a guess puts it: the
+   * cheek at the mouth's height is at z = 87 mm, the nose tip at 96, the eye
+   * seat at 80. A socket authored as a ball at z = 58 mm sat two centimetres
+   * inside the head and did nothing. A frontal field lands on the surface
+   * wherever the surface is. */
   const eyeX = 0.0335 * (1 + 0.30 * F.eyes) * s;
   const gauss = (d2, sig) => Math.exp(-d2 / (sig * sig));
+  const front = (z, from = 0.030, over = 0.020) => clamp((z / s - from) / over, 0, 1);
   const fields = [
     // eye sockets: a hollow 4.5 mm deep and 2 cm across, the eyeball sits in it
-    (x, y, z) => -0.0045 * s * (gauss((x - eyeX) ** 2 + (y - 0.084 * s) ** 2 + (z - 0.058 * s) ** 2, 0.019 * s)
-                                 + gauss((x + eyeX) ** 2 + (y - 0.084 * s) ** 2 + (z - 0.058 * s) ** 2, 0.019 * s)),
+    (x, y, z) => -0.0045 * s * front(z) * (gauss((x - eyeX) ** 2 + (y - 0.084 * s) ** 2, 0.019 * s)
+                                        + gauss((x + eyeX) ** 2 + (y - 0.084 * s) ** 2, 0.019 * s)),
     // nostrils, under the wings of the tip
-    (x, y, z) => -0.0026 * s * (1 + 0.2 * F.nose) * (gauss((x - 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2 + (z - 0.070 * s) ** 2, 0.0062 * s)
-                                 + gauss((x + 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2 + (z - 0.070 * s) ** 2, 0.0062 * s)),
+    (x, y, z) => -0.0026 * s * (1 + 0.2 * F.nose) * front(z, 0.060, 0.015)
+      * (gauss((x - 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2, 0.0062 * s) + gauss((x + 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2, 0.0062 * s)),
     // the philtrum: a groove from the columella down to the lip
-    (x, y, z) => -0.0013 * s * gauss(x * x, 0.0038 * s) * gauss((y - 0.040 * s) ** 2, 0.0065 * s) * clamp((z / s - 0.050) / 0.015, 0, 1),
-    // the mound the lips sit on, and the fold beside it running down from the
-    // wing of the nose to the corner of the mouth
-    (x, y, z) => 0.0016 * s * gauss(x * x, 0.014 * s) * gauss((y - 0.031 * s) ** 2, 0.0085 * s) * clamp((z / s - 0.045) / 0.02, 0, 1),
+    (x, y, z) => -0.0013 * s * front(z, 0.060, 0.015) * gauss(x * x, 0.0038 * s) * gauss((y - 0.040 * s) ** 2, 0.0065 * s),
+    // the mound the lips sit on
+    (x, y, z) => 0.0016 * s * front(z, 0.060, 0.015) * gauss(x * x, 0.014 * s) * gauss((y - 0.031 * s) ** 2, 0.0085 * s),
+    // and the fold beside it, from the wing of the nose to the corner of the mouth
     (x, y, z) => {
       let f = 0;
       for (const sx of [-1, 1]) {
-        // the fold as a line segment from the wing to the corner
-        const ax = sx * 0.0150 * s, ay = 0.049 * s, az = 0.069 * s, bx = sx * 0.0205 * s, by = 0.028 * s, bz = 0.058 * s;
-        const vx = bx - ax, vy = by - ay, vz = bz - az, l2 = vx * vx + vy * vy + vz * vz;
-        const t = clamp(((x - ax) * vx + (y - ay) * vy + (z - az) * vz) / l2, 0, 1);
-        f += gauss((x - ax - vx * t) ** 2 + (y - ay - vy * t) ** 2 + (z - az - vz * t) ** 2, 0.0045 * s);
+        const ax = sx * 0.0150 * s, ay = 0.049 * s, bx = sx * 0.0215 * s, by = 0.028 * s;
+        const vx = bx - ax, vy = by - ay, l2 = vx * vx + vy * vy;
+        const t = clamp(((x - ax) * vx + (y - ay) * vy) / l2, 0, 1);
+        f += gauss((x - ax - vx * t) ** 2 + (y - ay - vy * t) ** 2, 0.0045 * s);
       }
-      return -0.0009 * s * (1 + 0.8 * Math.max(0, F.wear)) * f;
+      return -0.0009 * s * (1 + 0.8 * Math.max(0, F.wear)) * front(z, 0.050, 0.02) * f;
     },
   ];
   const pos = new Float32Array(nV * 3);
@@ -2775,6 +2783,17 @@ function skullGeo(s, F, sp, covered = sp.hair) {
   g.setIndex(new THREE.BufferAttribute(idx.subarray(0, n), 1));
   g.computeVertexNormals();
   const wear = Math.max(0, F.wear || 0);
+  /* Where the years' lines go, PROBED on the surface just built rather than
+   * typed — a crease authored at a z the face is not at is a crease nobody
+   * sees (see the note over `fields`). Each is the outermost hit along a ray
+   * from behind the face. */
+  const _at = (x, y, z, dx = 0, dy = 0, dz = 1) => {
+    const p = surfacePoint(g, _skD.set(dx, dy, dz), _skO.set(x * s, y * s, z * s), _skP, true);
+    return p ? [p.x, p.y, p.z] : [x * s, y * s, z * s];
+  };
+  const foldL = _at(-0.0175, 0.040, 0.02), foldR = _at(0.0175, 0.040, 0.02);
+  const crowL = _at(-(eyeX / s + 0.020), 0.083, 0.0, -0.4, 0, 1), crowR = _at(eyeX / s + 0.020, 0.083, 0.0, 0.4, 0, 1);
+  const nosL = _at(-0.0095, 0.0425, 0.02), nosR = _at(0.0095, 0.0425, 0.02);
   // Occlusion, baked where a face has it: under the jaw and the cheekbones,
   // in the eye sockets, at the temples and at the wings of the nose. Skin
   // on a single sun with a hemisphere fill has no other way to know that
@@ -2809,18 +2828,18 @@ function skullGeo(s, F, sp, covered = sp.hair) {
     // either side of the nose, the nostrils, and the crease under the lower lip
     creaseAt(0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
     creaseAt(-0.020 * s, 0.052 * s, 0.066 * s, 0.019 * s, 0.62, 0.5),
-    creaseAt(0.0095 * s, 0.042 * s, 0.071 * s, 0.007 * s, 0.40, 0.3),
-    creaseAt(-0.0095 * s, 0.042 * s, 0.071 * s, 0.007 * s, 0.40, 0.3),
+    creaseAt(nosL[0], nosL[1], nosL[2], 0.0075 * s, 0.40, 0.3),
+    creaseAt(nosR[0], nosR[1], nosR[2], 0.0075 * s, 0.40, 0.3),
     creaseAt(0, 0.022 * s, 0.064 * s, 0.019 * s, 0.66, 0.5),
     /* THE YEARS, AS LINES. `wear` darkens the nasolabial fold, the crow's feet
      * and the lines across the forehead — colour rather than geometry, because
      * a 1 mm crease is an eighth of a pixel at 8 m and its shadow is not. Age
      * drives it through AGE_FACE; a preset may carry it; zero is the identity
      * because creaseAt(…, 1) returns 1. */
-    creaseAt(0.0175 * s, 0.040 * s, 0.064 * s, 0.014 * s, 1 - 0.30 * wear, 0.5),
-    creaseAt(-0.0175 * s, 0.040 * s, 0.064 * s, 0.014 * s, 1 - 0.30 * wear, 0.5),
-    creaseAt(eyeX + 0.020 * s, 0.083 * s, 0.040 * s, 0.013 * s, 1 - 0.26 * wear, 0.5),
-    creaseAt(-eyeX - 0.020 * s, 0.083 * s, 0.040 * s, 0.013 * s, 1 - 0.26 * wear, 0.5),
+    creaseAt(foldR[0], foldR[1], foldR[2] + 0.004 * s, 0.014 * s, 1 - 0.30 * wear, 0.5),
+    creaseAt(foldL[0], foldL[1], foldL[2] + 0.004 * s, 0.014 * s, 1 - 0.30 * wear, 0.5),
+    creaseAt(crowR[0] + 0.002 * s, crowR[1], crowR[2] + 0.003 * s, 0.013 * s, 1 - 0.26 * wear, 0.5),
+    creaseAt(crowL[0] - 0.002 * s, crowL[1], crowL[2] + 0.003 * s, 0.013 * s, 1 - 0.26 * wear, 0.5),
     (x, y, z) => 1 - 0.14 * wear * clamp((z / s - 0.040) / 0.02, 0, 1) * clamp(1 - Math.abs(y / s - 0.118) / 0.014, 0, 1)
       * (0.5 + 0.5 * Math.cos(y / s * 900)),
     // THE SCALP.
@@ -2886,9 +2905,13 @@ function eyeGeo(s, sp, side) {
       const k = i * (COLS + 1) + j;
       pos[k * 3] = r * Math.sin(th) * Math.cos(ph); pos[k * 3 + 1] = r * Math.cos(th); pos[k * 3 + 2] = r * Math.sin(th) * Math.sin(ph);
       uv[k * 2] = j / COLS; uv[k * 2 + 1] = 1 - th / Math.PI;
+      /* The iris is LIFTED: the species' iris hex is authored dark (a human's
+       * is 0x2c1d12, a linear 0.02) because it used to be a whole ball that
+       * needed to read against the white, and as a ring beside a black pupil
+       * it needs to be lighter than the pupil by a margin an eye can see. */
       if (i <= 1) c.setRGB(0.012, 0.010, 0.010);
-      else if (i === 2) c.copy(iris).multiplyScalar(1.35);
-      else if (i === 3) c.copy(iris).multiplyScalar(0.55);
+      else if (i === 2) c.copy(iris).multiplyScalar(2.8).addScalar(0.02);
+      else if (i === 3) c.copy(iris).multiplyScalar(1.2).addScalar(0.01);
       else c.copy(sclera);
       // the catchlight: one vertex on the inner iris ring, up and outboard
       if (i === 2 && j === (side === 'L' ? 7 : 3)) c.setRGB(1, 1, 1);
@@ -2980,14 +3003,14 @@ function earGeo(s, sx, hg) {
   const N = 9;
   for (let i = 0; i < N; i++) {
     const t = (i / (N - 1)) * Math.PI * 1.55 - Math.PI * 0.35;     // open at the lobe's front
-    const a = 0.0105 * s, b = 0.0165 * s;
+    const a = 0.0115 * s, b = 0.0180 * s;
     // the helix folds back on itself at the top and thins to the lobe
-    const r = (0.0024 - 0.0008 * Math.max(0, Math.sin(t))) * s;
-    nodes.push([Math.cos(t) * a * 0.9 - 0.001 * s, 0.0055 * s + 0.0015 * s * Math.sin(t), Math.sin(t) * b + 0.002 * s, r]);
+    const r = (0.0026 - 0.0008 * Math.max(0, Math.sin(t))) * s;
+    nodes.push([Math.cos(t) * a * 0.9 - 0.001 * s, 0.0090 * s + 0.0020 * s * Math.sin(t), Math.sin(t) * b + 0.002 * s, r]);
   }
   const rim = tubeGeo(nodes, 4, { tip: 0.6 });
-  const concha = plateGeo(0.0150 * s, 0.0040 * s, 0.0230 * s, 0.0012 * s, 1);
-  concha.translate(-0.0005 * s, 0.0028 * s, 0.001 * s);
+  const concha = plateGeo(0.0160 * s, 0.0060 * s, 0.0250 * s, 0.0012 * s, 1);
+  concha.translate(-0.0005 * s, 0.0045 * s, 0.001 * s);
   const g = mergeGeos([{ geo: rim, matrix: new THREE.Matrix4() }, { geo: concha, matrix: new THREE.Matrix4() }]);
   g.applyMatrix4(m);
   return g;
@@ -5019,29 +5042,47 @@ export function buildJedi(opts = {}) {
         const lids = addShapeMorph(lidGeo(s, sx, centre, 0), lidGeo(s, sx, centre, 1), 'blink');
         tag(mesh(lids, skin, headObj), 'lids' + side);
       }
-      // the brows: a tapered tube along the ridge, both in one mesh
+      /* THE BROWS GO INTO THE HAIR'S OWN GEOMETRY, the way a beard does —
+       * they are hair, they take the hair's colour and its grey, and it costs
+       * no mesh. Two reasons beyond the count: `creator: no face preset buries
+       * a feature` reasons about a mesh by its centre, and a pair of brows in
+       * one mesh has its centre on the bridge of the nose, 2 mm inside the
+       * skull; and a species with no scalp hair has no brows either, so the
+       * one case that would need a mesh of its own never occurs. */
+      const browParts = [];
       if (sp.brows !== false) {
-        const kb = new Kit();
         for (const sx of [-1, 1]) {
           const nodes = [];
           const N = 5;
           for (let i = 0; i < N; i++) {
             const t = i / (N - 1);                              // 0 at the nose, 1 at the temple
             const x = sx * (eyeX - 0.014 + 0.040 * t);
-            const d = new THREE.Vector3(x * 0.9, 0.16 + 0.06 * t, 1).normalize();
-            const p = onSurface(hg, d, -0.0016 * s, new THREE.Vector3(x * s, 0.086 * s, 0.020 * s));
+            // probed AT the ridge's height, straight out through it, and set a
+            // hair proud of whatever the preset made of the ridge — a brow
+            // lifted from a point under it ended inside a heavy brow
+            const y = 0.0965 - 0.0030 * t;
+            const d = new THREE.Vector3(x * 0.6, 0.10, 1).normalize();
+            const p = onSurface(hg, d, -0.0012 * s, new THREE.Vector3(x * s, y * s, 0.020 * s));
             // thick over the inner half, tapering to a point at the temple
             const r = (0.0028 + 0.0010 * Math.sin(t * Math.PI) - 0.0018 * t) * s;
-            nodes.push([p[0], p[1] + (0.0095 - 0.0025 * t) * s, p[2], Math.max(0.0008 * s, r)]);
+            nodes.push([p[0], p[1], p[2], Math.max(0.0008 * s, r)]);
           }
-          kb.add(brow, tubeGeo(nodes, 4, { tip: 0.3 }));
+          browParts.push([tubeGeo(nodes, 4, { tip: 0.3 })]);
         }
-        tag(kb.bake(headObj)[0], 'brows');
+        // a species with brows and no hair mass to carry them (none today)
+        // gets them as one mesh on the brow material
+        if (!sp.hair) {
+          const kb = new Kit();
+          for (const [g] of browParts) kb.add(brow, g);
+          tag(kb.bake(headObj)[0], 'brows');
+          browParts.length = 0;
+        }
       }
-      // the ears: one mesh for the pair
+      // the ears, one mesh a side: a mesh is reasoned about by its centre
+      // downstream, and a pair's centre is in the middle of the head
       if (sp.ears !== false) {
-        const g = mergeGeos([{ geo: earGeo(s, -1, hg), matrix: new THREE.Matrix4() }, { geo: earGeo(s, 1, hg), matrix: new THREE.Matrix4() }]);
-        tag(mesh(g, skin, headObj), 'ears');
+        tag(mesh(earGeo(s, -1, hg), skin, headObj), 'earL');
+        tag(mesh(earGeo(s, 1, hg), skin, headObj), 'earR');
       }
       // the mouth: lips as two rolls with a seam, not a slab
       if (sp.mouth !== false) tag(mesh(lipGeo(s, F, hg), lip, headObj), 'lips');
@@ -5086,7 +5127,7 @@ export function buildJedi(opts = {}) {
                   gap: sp.horns ? sp.horns.gap : 0 };
       const cut = sp.hair ? (HAIR_CUTS[G.hair.id] || HAIR_CUTS.temple)(s, V, R) : null;
       const beard = sp.hair ? beardParts(s, hg, G.beard) : null;
-      const parts = sp.hair ? [...cut.parts, ...beard.parts] : [];
+      const parts = sp.hair ? [...cut.parts, ...beard.parts, ...browParts] : [];
       let hairGeo = null;
       if (parts.length) {
         hairGeo = assemble(parts, 'hair');

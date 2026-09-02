@@ -1737,9 +1737,8 @@ function stepRally(body, dt, ctx, R) {
  */
 export function crawlStep(body, dt, ctx) {
   const C = BEHAVIOUR.crawl;
-  if (!body.downed || body.dead || body.beingDragged) return 0;
+  if (!body.downed || body.dead || body.beingDragged || body.gripped) return 0;
   if ((body._crawled ?? 0) >= C.max) return 0;
-  if (!body.actor?.ragdolled) return 0;
   body._crawlScan = (body._crawlScan ?? 0) - dt;
   if (body._crawlScan <= 0) {
     body._crawlScan = 0.5;
@@ -1751,10 +1750,29 @@ export function crawlStep(body, dt, ctx) {
   }
   if (!body._crawlDir) return 0;
   const v = C.speed * attrK(body, 'hardiness');
-  _v3.copy(body.position).addScaledVector(body._crawlDir, 0.7);
-  _v3.y = body.position.y;
-  if (!body.actor.suspend(_v3, dt, C.haul)) return 0;
-  body.actor.centre?.(body.position);
+  /* A downed man is a ragdoll for `GET_UP` seconds and a posed body after —
+   * `_tickGetUp` recovers the rig, `_pose` keeps him on the ground — so the
+   * crawl moves whichever he is: the ragdoll slid as a whole (see
+   * `Ragdoll.slide`), the posed body by its own position. Either way it is
+   * `v` metres a second along the ground. */
+  const T = ctx?.terrain ?? body.world?.terrain;
+  if (body.actor?.ragdolled) {
+    /* A LIVING RAGDOLL IS IN THE SOLVER, so it is pulled (`suspend`) and not
+     * slid: a body teleported through Rapier arrives as a kinetic contact,
+     * and a downed man is at 0.01 hp — measured, the frail man was killed
+     * by his own crawl. Only a corpse the solver has let go of is slid. */
+    _v3.copy(body.position).addScaledVector(body._crawlDir, 0.7);
+    _v3.y = body.position.y;
+    if (body.actor.slept) body.actor.slide(_v3, dt, v);
+    else body.actor.suspend(_v3, dt, C.haul * attrK(body, 'hardiness'));
+    body.actor.centre?.(body.position);
+  } else {
+    /* ON THE GROUND, and kept on it: a position walked along a slope
+     * without its height is a body under the field, which the watchdog
+     * retires as a body nothing can reach. */
+    body.position.addScaledVector(body._crawlDir, v * dt);
+    if (T?.height) body.position.y = T.height(body.position.x, body.position.z);
+  }
   body._crawled = (body._crawled ?? 0) + v * dt;
   REACTION_STATS.crawled += v * dt;
   return v * dt;

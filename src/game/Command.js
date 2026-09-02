@@ -9332,6 +9332,20 @@ export class CommandDirector extends WaveDirector {
     if (e.reaction) return;
     const c = this.commanderOf(e);
     /**
+     * HOLD STILL, HE IS WORKING ON YOU. `_medicOn` is `Reactions.startHeal`'s
+     * claim; a patient the formation walked out from under a kneeling medic
+     * was the first thing the medic check found (`stop('moved')` on every
+     * job). A man being patched up stays down beside his medic for the
+     * seconds it takes, and the formation has him back after.
+     */
+    const M = e._medicOn;
+    if (M && !M.dead && M.reaction?.kind === 'heal' && M.reaction.patient === e && M.reaction.at >= 0
+        && dist2(M.position, e.position) <= 9) {
+      e.wish = null;
+      this._crouch(e, dt, 0.6);
+      return;
+    }
+    /**
      * A BROKEN MAN DOES NOT HOLD THE LINE — the first of morale's two
      * consequences, and the reason the whole system is worth having.
      *
