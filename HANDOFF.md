@@ -1820,25 +1820,42 @@ and `fallen` asserted its ledger against the sandbox room's own turnover.
 
 **`levers` IS STILL RED AND IT IS A REAL DEFECT — here is the measurement, so
 the next session does not have to take it again.** `tools/_levprobe.mjs`
-reproduces it: geonosis, `runSeed` 9, ten men in a circle of radius 4, twelve
-shells, then twenty-five seconds in which nothing else happens.
+reproduces it and its header carries the whole finding: geonosis, `runSeed` 9,
+ten men in a circle of radius 4, twelve shells, then twenty-five seconds in
+which nothing else happens.
 
     after   alive 5   gathered false
-    t+5     alive 2   e1 d48  e6 d40
-    t+25    alive 2   e1 d49  e6 d19
+    t+5     alive 2   e1 48m crouch 0.45   e6 40m crouch 0.80
+    t+25    alive 2   e1 41m crouch 0.45   e6 19m crouch 0.80
 
-Two things are wrong and only one of them is subtle. **e6 walks home at about
-1.2 m/s of ground covered against a `speed` of 3.8** — he needs thirty seconds
-to cross what he should cross in thirteen. **e1 never arrives at all**: he
-circles a ring about 0.4 m across at (40.8, 26.4) for the whole twenty-five
-seconds, with a `wish` of (-0.76, 0, -0.64) pointing correctly at the anchor and
-a velocity of 4.2 m/s that never becomes ground. He is NOT wedged in geometry —
-0 of the 248 static boxes overlap his chest — and `_stuckT` never latches
-because by its own measure he is moving. **The suspect is `limitBackpedal`
-against a stale `toTarget`**: with every hostile removed his facing target is no
-longer his wish, so the component pointing at the anchor is scaled away as a
-backpedal and only the strafe survives. Start there, and do not start in
-`lineGathered` — the quorum is reading the field correctly.
+**Two separate things are wrong, and only one of them is navigation.**
+
+**The one who cannot get past something.** Thrown 48 m clear, e1 meets a rock
+on the way home and went round it FOREVER: a 77-frame closed circuit between
+(40.8, 26.3) and (36.8, 26.5), the same three decimal places every lap, walked
+at 4 m/s while `_stuckT` read zero the whole time because he was covering
+ground. `_move`'s own note says why nothing there could see it — "a stuck-timer
+cannot break a deadlock that is itself moving" — and the cause was that
+`_wallSide`, the latch that is supposed to commit a body to one way round, was
+cleared 0.3 s after the last touch along with the normal. Off the end of the
+rock, turn back, meet the same rock, pick the other side. **`SIDE_HOLD` (4 s)
+and `SIDE_JUDGE`/`SIDE_GAIN` (every 2.5 s, has this side bought 1.5 m in the
+direction I set out in?) close that**, and `movement` is 11/11 with them: the
+exact loop is gone and he makes net ground. He still bounces between 37 and
+46 m, so the side he commits to is still not always the way past — that is
+what is left of this half.
+
+**The one who is in no hurry, and this is most of why the check is red.** e6 is
+on 7 of 46 hp and crouched at 0.80, and he creeps: a wish for a few frames, a
+metre of ground, then several seconds with no wish at all. 48 m to 19 m in
+twenty-five seconds is **1.16 m/s against a `speed` of 3.8**. He is not stuck,
+not broken (`nerve` 1.00) and not obstructed. Whether a badly hurt man should
+hurry is a DESIGN question and not a bug: §4.3 asks that a lever buy time
+rather than the battle, and at this pace one barrage buys the battle. Decide
+that before touching the code — either the crouch-creep lifts once nothing is
+shooting, or the check's twenty-five seconds is the wrong window.
+
+Do not start in `lineGathered`. The quorum is reading the field correctly.
 
 ---
 

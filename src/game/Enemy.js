@@ -207,6 +207,22 @@ const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vect
  * two reads is `Ragdoll.centre`, and handing a shared scratch to a method that
  * may one day want one is the defect World.js's `_bolt4` note already paid for
  * once (5,585 of 13,320 fanned bolts changed their answer). */
+/**
+ * How long a body remembers WHICH WAY ROUND it was going, in seconds.
+ *
+ * Longer than one lap of anything on a level — see the note in `_move` where
+ * it is spent. The normal is stale after 0.3 s and is cleared on that clock;
+ * the SIDE is a decision and it survives the gaps between touches.
+ */
+const SIDE_HOLD = 4.0;
+/**
+ * How often a held side is asked what it has bought, and the metres it has to
+ * have bought in the direction the body set out in. 2.5 s is longer than the
+ * time it takes to walk round anything small and shorter than a body's
+ * patience; 1.5 m is a stride and a half, which nothing making real progress
+ * fails to cover.
+ */
+const SIDE_JUDGE = 2.5, SIDE_GAIN = 1.5;
 const _wasAt = new THREE.Vector3();
 const _v7 = new THREE.Vector3();
 
@@ -3195,6 +3211,13 @@ export class Enemy {
      *  its length — see the note in `_move`, where taking it every frame is
      *  what left men standing against rocks for the whole of a 35 m march. */
     this._wallSide = 0;
+    /* …ON ITS OWN CLOCK, and it is longer than the normal's. See SIDE_HOLD. */
+    this._sideT = 0;
+    /* Where the body was, and which way it wanted to go, when it took the side
+     * it is holding — the two facts a progress test needs. See SIDE_JUDGE. */
+    this._sideAt = new THREE.Vector3();
+    this._sideDir = new THREE.Vector3();
+    this._sideClock = 0;
     this._stuckT = 0;
     this._prevPos = new THREE.Vector3();
     /** Time left on a Leader's aura. Refreshed by whoever is leading. */
@@ -8403,7 +8426,15 @@ export class Enemy {
             const tx = -_v6.z, tz = _v6.x;          // the face itself, in XZ
             const along = this.wish.x * tx + this.wish.z * tz;
             const meant = Math.abs(along) > SLIDE_TANGENT;
-            if (!this._wallSide) this._wallSide = meant ? Math.sign(along) : (this.strafeDir || 1);
+            if (!this._wallSide) {
+              this._wallSide = meant ? Math.sign(along) : (this.strafeDir || 1);
+              /* …and the side is now on trial. See SIDE_JUDGE below. */
+              this._sideAt.copy(this.position);
+              this._sideDir.copy(this.wish).setY(0);
+              if (this._sideDir.lengthSq() > 1e-6) this._sideDir.normalize();
+              this._sideClock = 0;
+            }
+            this._sideT = SIDE_HOLD;
             /* Off the latched side, or too short to steer on: take the face. */
             if (!meant || along * this._wallSide < 0) {
               this.wish.set(tx, 0, tz).multiplyScalar(this._wallSide);
@@ -8436,7 +8467,55 @@ export class Enemy {
      * covered, because velocity can be healthy while the collision loop puts
      * the body straight back where it was. */
     this._wallT -= dt;
-    if (this._wallT <= 0) { this._wallN.set(0, 0, 0); this._wallSide = 0; }
+    if (this._wallT <= 0) this._wallN.set(0, 0, 0);
+    /**
+     * …AND THE SIDE OUTLIVES THE CONTACT, which is the loop this file's own
+     * note said a stuck timer cannot break: "A stuck-timer cannot break a
+     * deadlock that is itself moving."
+     *
+     * The latch was cleared with the normal, 0.3 s after the last touch — so a
+     * body that slides off the end of a rock, turns back toward where it is
+     * going, and meets the SAME rock again picks its side afresh and picks the
+     * other one. That is not a wedge and no per-frame measure can see it: it is
+     * a closed circuit, walked at full speed, that returns the body to where it
+     * started. Measured on the shipped Geonosis, a survivor of a barrage 48 m
+     * out from his line ran a 77-frame loop between (40.8, 26.3) and (36.8,
+     * 26.5) and back — the same three decimal places every lap — for as long as
+     * anything watched him, while `_stuckT` read zero the whole time because he
+     * was covering four metres a second.
+     *
+     * SIDE_HOLD is longer than a lap. A body that has started round something
+     * goes on round it even across the gaps where it is not touching it, and
+     * only forgets the side once it has been clear of everything for that long.
+     */
+    this._sideT -= dt;
+    if (this._sideT <= 0) { this._wallSide = 0; this._sideClock = 0; }
+    /**
+     * AND THE SIDE IS JUDGED ON WHETHER IT IS GETTING ANYWHERE.
+     *
+     * Holding the side across the gaps stops the exact closed loop above, and
+     * on its own it buys a bigger one: a body can go round the long way, and
+     * a rock it must pass has a long way. What decides a side is not how it
+     * feels frame to frame but whether the body is nearer to where it was
+     * headed than when it committed — so every SIDE_JUDGE seconds the two are
+     * compared, and a side that has bought less than SIDE_GAIN metres in the
+     * direction the body set out in is dropped for the other one.
+     *
+     * Measured against the direction at the moment of commitment rather than
+     * the current wish, because the current wish is the thing the slide has
+     * been rewriting: judging by it would be asking the slide to mark its own
+     * work.
+     */
+    if (this._wallSide && this._sideDir.lengthSq() > 1e-6) {
+      this._sideClock += dt;
+      if (this._sideClock >= SIDE_JUDGE) {
+        const gain = (this.position.x - this._sideAt.x) * this._sideDir.x
+          + (this.position.z - this._sideAt.z) * this._sideDir.z;
+        if (gain < SIDE_GAIN) this._wallSide = -this._wallSide;
+        this._sideAt.copy(this.position);
+        this._sideClock = 0;
+      }
+    }
     if (canMove && this.wish && this.wish.lengthSq() > 0.25) {
       const moved = Math.hypot(this.position.x - this._prevPos.x, this.position.z - this._prevPos.z);
       if (moved < this.speed * dt * 0.3) this._stuckT += dt;
