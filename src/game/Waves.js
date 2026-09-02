@@ -678,80 +678,12 @@ export const MODES = {
      */
     lineAdvances: true,
   },
-  /**
-   * THE FRONT — hundreds against hundreds, and the mode that finally fields it.
-   *
-   * The player, across several sessions and in the end flatly: *"I still have
-   * yet to experience a single giant battle like what I've asked for… I asked
-   * for a mode with hundreds of troops vs hundreds of troops."* They were
-   * right, and `src/game/Mass.js`'s header carries the arithmetic that says why
-   * every mode above this row is incapable of it: full `Enemy` bodies cost
-   * ~0.13 ms each and are linear, `MAX_STRENGTH` is 24, and The Line fields ten
-   * of yours against thirty-odd. Three hundred and twenty real bodies is 42.8
-   * ms of simulation before a triangle is drawn.
-   *
-   * So this mode is the one that deploys the RANK tier — twenty men simulated
-   * as one entity and drawn as cohort instances, firing real bolts through the
-   * same `BoltPool.fire` every trooper uses. Measured on Geonosis: 480 men on
-   * the field, both armies, at a fraction of what the same count of bodies
-   * costs.
-   *
-   * ── WHY IT IS A MODE AND NOT A SETTING ON ANOTHER ONE ────────────────
-   *
-   * Because the mass and the real bodies do not share ground. `Mass.PROMOTE`
-   * is 90 m and a rank is never planted inside it — the promotion seam, where
-   * a rank you walk toward dissolves into real bodies, is not solved, and that
-   * file says so out loud. A mode that fielded mass alone would leave the
-   * player in ninety metres of empty ground watching a war they cannot reach.
-   *
-   * This one therefore runs BOTH: the ordinary wave director for the close
-   * fight and the mass for the battle behind it. That combination is the whole
-   * content of the mode — you are one Jedi in a real battle, with bodies you
-   * can cut apart at your elbow and hundreds of men exchanging fire past you —
-   * and it is why the row declares no `battles`, no `crossing` and no `ladder`.
-   * Nothing about the escalation, the boons, the Insight or the ending changes;
-   * what changes is what is standing behind the wave.
-   *
-   * ── `massBattle` IS THE SIZE, DECLARED HERE AND READ THERE ───────────
-   *
-   * `Mass.openFront` reads this object and names no mode, exactly as
-   * `World.loadLevel` reads `objectives` and `fireMissions` — so a second mass
-   * mode is a row in this table and no edit anywhere else. `blocks` is per
-   * side and every block is `Mass.RANK_MEN` strong; `gap` is the no-man's-land
-   * the two lines OPEN at, not the range they fight at — see `Mass.STAND_OFF`
-   * for why the lines close before they can hit anything.
-   *
-   * The blurb says "hundreds against hundreds" and that is a claim:
-   * `tools/checks/mass.mjs` boots this mode through the real World and holds
-   * the count to it, both sides, rather than trusting the sentence.
-   */
-  thefront: {
-    name: 'The Front',
-    blurb: 'Hundreds against hundreds. Two armies exchanging fire across open ground with you '
-      + 'somewhere in the middle of it — one Jedi in a real battle, cutting apart the men who '
-      + 'reach you while the lines fight it out behind.',
-    /**
-     * `gap` 150 → 90, and the number came off a measured ground profile.
-     *
-     * 150 put their line 250 m out. Sampled along the chosen bearing on
-     * geonosis, the ground is flat to two hundred metres and then climbs:
-     *
-     *     0m −1 · 50m 0 · 100m 2 · 150m 0 · 200m 1 · 250m 3 · 275m 10 · 300m 25
-     *
-     * The centre was fine. A twelve-block line is 192 m of frontage, so at
-     * 250 m the FLANKS reached into the rise — measured, mean ground under your
-     * line 1.9 m and under theirs 31.7 m, with four of nine opposing pairs
-     * blocked by up to 33 m of rock. A thirty-metre height advantage is not a
-     * battle, it is a firing range, and it produced 122 v 202 from an even
-     * start while flat ground produced 225 v 239.
-     *
-     * Nothing is lost by closing it. `Mass.STAND_OFF` is 55 m: the two lines
-     * WALK toward each other and stand at fifty-five whatever they opened at,
-     * so the gap is an approach and not a range. Ninety puts their line at
-     * 190 m, inside the flat, and gets the battle in front of you sooner.
-     */
-    massBattle: { blocks: 12, gap: 90 },
-  },
+  /* THE FRONT (`thefront`, the mass tier of instanced ranks behind a wave
+   * mode) WAS REMOVED on the player's instruction in V12: "get rid of The
+   * Front mode entirely; it was the one where you made npc silhouettes in the
+   * background to simulate a massive battle, it was complete shit". Mass.js
+   * went with it. The large battle now lives in the sky over the hangar and
+   * the orbit (`SkyDome`), where it is a picture and says so. */
   /**
    * SKIRMISH — the one run in this game that can be WON, anywhere.
    *

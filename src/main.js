@@ -1209,21 +1209,6 @@ async function deploy(opts = {}) {
      * for the reason `battles` above is: the branch belongs to the property,
      * not to the one mode that has it today. */
     } else if (MODES[settings.mode]?.picksCampaign) world.beginCampaign();
-    /**
-     * …AND THIS ONE LINE IS ALSO WHAT STARTS THE NEAR HALF OF A MASS BATTLE.
-     *
-     * `MODES.thefront` is two fights at once — the wave director's real bodies
-     * inside `Mass.PROMOTE` and hundreds of instanced men outside it — and this
-     * is the line that starts the first of them. It needs no branch of its own:
-     * the mode is an ordinary wave mode with a war behind it.
-     *
-     * THE MASS ITSELF IS NOT ARMED HERE. It was for one build, and that made
-     * the battle a property of THIS deploy path rather than of the mode — a
-     * world booted any other way, a check or a co-op client, had no front at
-     * all. `World.loadLevel` arms it now off `MODES[mode].massBattle`, beside
-     * `objectives` and `fireMissions`, which is where a branch gated on a
-     * declared field belongs.
-     */
     else world.director.start(1);
   }
   /**
@@ -2277,11 +2262,15 @@ function wireNet() {
     if (world) {
       // A world already stands, in some level that is no longer the session's.
       // Tear it down without leaving the session — quitToMenu would close the
-      // connection — and land in the new one.
+      // connection — and land in the new one. A client standing on his own
+      // flight deck when the host's start arrives is put down the deck's own
+      // way (the HUD's deck class, the photo mode, the announcer), then
+      // deployed onto the host's ground.
+      if (world.settings?.mode === 'hangar') leaveHangar({ toMenu: false });
       cancelDeathCard();
       menu.hideDeath();
       screens.clear();
-      world.dispose(); world = null;
+      if (world) { world.dispose(); world = null; }
     }
     deploy();
   });

@@ -158,10 +158,8 @@ const blank = () => ({
  * complain about, so a mode added to `MODES` simply falls through to "not
  * recorded" and nobody finds out.
  *
- *   `thefront`  an ordinary wave mode with a war behind it — `MODES` says so
- *               in as many words — so a run of it is a run of `waves` with
- *               hundreds more men on the field. There was never an argument
- *               for refusing it; it was just never decided about.
+ *   `thefront`  was one of them; the mode was removed in V12 and its record
+ *               row with it (a saved run of it is simply an unknown mode).
  *   `versus`    a commander battle is ONE engagement, so its depth is always
  *               1 and that is honest rather than uninformative: what a meeting
  *               produces is a win, a loss and a body count, and `runs`, `wins`
@@ -173,7 +171,7 @@ const blank = () => ({
  * nothing in the lessons can kill you, and the sandbox is a room with a slider.
  */
 const RECORDED = new Set(['roguelite', 'waves', 'duel', 'command', 'theline', 'skirmish',
-  'campaign', 'thefront', 'versus']);
+  'campaign', 'versus']);
 
 function read() {
   try {

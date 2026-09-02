@@ -33,7 +33,9 @@ const strip = (t) => t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$
 function fnBody(text, name) {
   const i = text.indexOf(`function ${name}(`);
   if (i < 0) return null;
-  const open = text.indexOf('{', i);
+  /* The body's brace, not the first brace: `deploy(opts = {})` has one in
+   * its defaults, and reading `{}` as the body called deploy gone. */
+  const open = text.indexOf('{', text.indexOf(')', i));
   let depth = 0;
   for (let j = open; j < text.length; j++) {
     if (text[j] === '{') depth++;
@@ -115,7 +117,8 @@ export async function run({ check, assert }) {
         `${exit}() does not cancel a card that is already in flight — it lands 2.6 s later, over `
         + (exit === 'deploy' ? 'the new run' : 'the main menu'));
     }
-    assert(/onRetry:[^\n]*cancelDeathCard\(\)/.test(main),
+    /* The handler's first statement, whether or not it shares the line. */
+    assert(/onRetry:\s*\(\)\s*=>\s*\{\s*cancelDeathCard\(\)/.test(main),
       "'Rise again' does not cancel the card that is already scheduled");
     return 'one handle, cleared on retry, deploy and quit, and refused if the state moved on';
   });
