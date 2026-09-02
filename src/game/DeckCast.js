@@ -14,12 +14,25 @@
  *
  * Three families, and each is a builder here and a schedule over there:
  *
- *   DROIDS   five kinds. An astromech (dome, photoreceptor, two legs and a
+ *   DROIDS   nine kinds. An astromech (dome, photoreceptor, two legs and a
  *            third that drops when it rolls), the tracked welder the room
- *            already had, a folded pit droid, a mouse droid, and a gonk. Each
- *            kind is ONE vertex-coloured geometry, so a whole kind draws as
- *            one `InstancedMesh` whatever the count; the parts that turn —
- *            a dome, a boom — are the only per-droid meshes.
+ *            already had, a pit droid folded and a pit droid up and working,
+ *            a mouse droid, a gonk, a treadwell on its wheel, a protocol
+ *            droid, and a binary load-lifter with a crate. Each kind is ONE
+ *            vertex-coloured geometry, so a whole kind draws as one
+ *            `InstancedMesh` whatever the count; the parts that turn — a
+ *            dome, a leg, a welder's arm — are instanced too, one mesh per
+ *            part for the whole deck (DeckLife composes their matrices).
+ *   PAINT    a droid whose vertices are PURE WHITE takes its colour from the
+ *            instance — `castMaterials().tint` reads `instanceColor` only
+ *            where the vertex colour is (1, 1, 1) — so twenty-four
+ *            astromechs in six panel schemes are one draw call, and eighty
+ *            crew silhouettes in three suit tones are one per pose.
+ *   CREW SILHOUETTES  `crewSilhouettes` poses the game's own skeleton with
+ *            `BipedAnimator` — the same gait every worker walks — and bakes
+ *            each pose to a two-hundred-triangle man of bone boxes, so the
+ *            crowd past thirty metres flips through six frames of the real
+ *            walk for one draw call a frame.
  *   WORKERS  humanoids on the game's own skeleton (`Rig.humanoidSkeleton`),
  *            dressed by the same `dressHumanoid` every trooper and Jedi goes
  *            through, in a jumpsuit rather than plate: cap, headset, tool
@@ -61,7 +74,7 @@ import { TAU } from '../engine/MathUtil.js';
 import { mergeGeos } from '../world/Props.js';
 import { Body, LAYER, box, boxSpheres } from '../physics/RapierWorld.js';
 import { SHOVE, STATE } from '../physics/Shovable.js';
-import { Rig, humanoidSkeleton } from './Rig.js';
+import { Rig, humanoidSkeleton, BipedAnimator } from './Rig.js';
 import { dressHumanoid } from './Bodies.js';
 import { DeckBuild, deckMats, parkedFighter, factionOf } from './DeckKit.js';
 
@@ -103,6 +116,19 @@ export function castMaterials(faction) {
    * carry no fog term at all and DeckLife darkens them by distance itself.
    */
   M.far = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.30, fog: false });
+  /**
+   * THE PAINTED SURFACE. The same lit material, with one change in the
+   * vertex shader: three's `color_vertex` multiplies EVERY vertex by
+   * `instanceColor`, which would tint an astromech's white can and black
+   * treads along with its panels. Here a vertex takes the instance colour
+   * only if its own colour is pure white — `PAINT` — and keeps its vertex
+   * colour otherwise. So one geometry, one draw call, and a colour a droid.
+   * `customProgramCacheKey` so three compiles this once and does not share
+   * the program with `cast`.
+   */
+  M.tint = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.30 });
+  M.tint.onBeforeCompile = paintCompile;
+  M.tint.customProgramCacheKey = () => 'deck-cast-paint';
   /* A canopy: dark glass, a little transparent so the seat frame reads
    * through it at close range. `saberNoInk` — a pane has no silhouette of its
    * own worth a second rasterisation. */
@@ -120,6 +146,23 @@ export function castMaterials(faction) {
   for (const k of Object.keys(M)) if (M[k] && M[k].isMaterial) M[k].name = `deck-${id}-cast-${k}`;
   _mats.set(id, M);
   return M;
+}
+
+/** The vertex colour that means "take the instance's colour". */
+export const PAINT = 0xffffff;
+
+/** The one shader edit `castMaterials().tint` makes; see there. */
+function paintCompile(shader) {
+  shader.vertexShader = shader.vertexShader.replace('#include <color_vertex>', /* glsl */`
+    vColor = vec3( 1.0 );
+    #ifdef USE_COLOR
+      vColor *= color;
+    #endif
+    #ifdef USE_INSTANCING_COLOR
+      float paint = step( 2.97, color.r + color.g + color.b );
+      vColor.xyz = mix( vColor.xyz, instanceColor.xyz, paint );
+    #endif
+  `);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -206,9 +249,25 @@ export const DROID_KINDS = {
   astro:  { half: [0.50, 0.62, 0.40], mass: 32, speed: 1.6, rolls: true },
   welder: { half: [0.62, 0.50, 0.80], mass: 140, speed: 0, rolls: false },
   pit:    { half: [0.30, 0.60, 0.26], mass: 18, speed: 0, rolls: false },
+  /** A pit droid UP and working: taller, lighter on its feet, and it stands. */
+  pitup:  { half: [0.26, 0.60, 0.22], mass: 18, speed: 0, rolls: false },
   mouse:  { half: [0.18, 0.12, 0.26], mass: 6, speed: 3.4, rolls: true },
   gonk:   { half: [0.42, 0.62, 0.36], mass: 95, speed: 0.55, rolls: true },
+  /** A treadwell: a box of tools on a column on one wheel, and it rolls. */
+  tread:  { half: [0.34, 0.70, 0.34], mass: 40, speed: 0.9, rolls: true },
+  /** A protocol droid: a man's size, a man's weight, walks at a man's pace. */
+  proto:  { half: [0.28, 0.86, 0.20], mass: 70, speed: 1.1, rolls: true },
+  /** A binary load-lifter with a crate: heavy, slow, and the Force does not lift it. */
+  lifter: { half: [0.60, 1.20, 0.55], mass: 260, speed: 0.6, rolls: true },
 };
+
+/**
+ * ASTROMECH PANEL SCHEMES. The can is off-white on all of them; the panels,
+ * the dome's panels and the shoulder studs are `PAINT` and take one of these
+ * per instance. Blue first, because an R2 unit is blue before it is anything
+ * else; the rest are the schemes every hangar reference has a few of.
+ */
+export const ASTRO_SCHEMES = [0x2f5fa8, 0xb8352a, 0x2e7d4f, 0xd07a1e, 0x5a3b8a, 0x2a2f36, 0xc9b23a];
 
 /**
  * THE ASTROMECH. A cylinder with a dome, two legs on shoulders, and the
@@ -226,16 +285,16 @@ export function astromechChassis() {
   /* Panel lines and the recessed blue panels round the body. */
   for (let i = 0; i < 6; i++) {
     const th = (i / 6) * TAU;
-    a.box(D.blue, 0.22, 0.28, 0.04, Math.sin(th) * 0.49, 1.10, Math.cos(th) * 0.49, 0, th, 0);
+    a.box(PAINT, 0.22, 0.28, 0.04, Math.sin(th) * 0.49, 1.10, Math.cos(th) * 0.49, 0, th, 0);
     a.box(D.dark, 0.16, 0.05, 0.04, Math.sin(th) * 0.49, 0.72, Math.cos(th) * 0.49, 0, th, 0);
   }
   /* The front tool bays and the power bus ladder. */
   a.box(D.dark, 0.30, 0.16, 0.06, 0, 1.30, 0.49);
-  a.box(D.blue, 0.10, 0.06, 0.05, 0, 0.62, 0.50);
+  a.box(PAINT, 0.10, 0.06, 0.05, 0, 0.62, 0.50);
   /* Shoulders and legs, either side. */
   a.pair((s) => {
     a.cyl(D.white, 0.22, 0.22, 0.16, s * 0.58, 1.18, 0, 0, 0, Math.PI / 2, 12);
-    a.box(D.blue, 0.10, 0.14, 0.14, s * 0.66, 1.18, 0);
+    a.box(PAINT, 0.10, 0.14, 0.14, s * 0.66, 1.18, 0);
     a.box(D.white, 0.16, 0.86, 0.26, s * 0.58, 0.72, -0.06);
     a.box(D.dark, 0.18, 0.10, 0.20, s * 0.58, 0.32, -0.02);
     /* The foot: a wedge on rollers. */
@@ -255,7 +314,7 @@ export function astromechDome() {
   /* Blue panels on the dome and the holoprojector nub. */
   for (let i = 0; i < 4; i++) {
     const th = (i / 4) * TAU + 0.4;
-    a.box(D.blue, 0.14, 0.05, 0.16, Math.sin(th) * 0.32, 0.36, Math.cos(th) * 0.32, -0.7, th, 0);
+    a.box(PAINT, 0.14, 0.05, 0.16, Math.sin(th) * 0.32, 0.36, Math.cos(th) * 0.32, -0.7, th, 0);
   }
   a.cyl(D.steel, 0.05, 0.05, 0.10, 0.22, 0.44, 0.10, 0, 0, 0, 8);
   return { geo: a.merge(), prims: a.prims };
@@ -352,9 +411,114 @@ export function gonkDroid() {
   return { geo: a.merge(), prims: a.prims };
 }
 
+/**
+ * THE PIT DROID, UP. Standing on its bird legs, the flat head up, one arm
+ * reaching for the work and the other holding a panel: what a gang of four
+ * round a hull looks like from thirty metres. The arms are PAINT so a gang
+ * can be told apart by a stripe.
+ */
+export function pitDroidUp() {
+  const a = new Assembly();
+  a.box(D.tan, 0.34, 0.40, 0.26, 0, 0.98, 0);                      // torso
+  a.box(D.dark, 0.28, 0.08, 0.05, 0, 1.06, 0.14);                  // chest louvre
+  a.cyl(D.rust, 0.05, 0.05, 0.16, 0, 1.26, 0, 0, 0, 0, 6);         // neck
+  a.box(D.tan, 0.30, 0.12, 0.40, 0, 1.40, 0.06, -0.15, 0, 0);      // the flat head, up
+  a.cyl(D.lens, 0.05, 0.05, 0.06, 0, 1.40, 0.28, Math.PI / 2, 0, 0, 8);
+  a.pair((s) => {
+    a.box(PAINT, 0.08, 0.34, 0.08, s * 0.24, 1.02, 0.08, s > 0 ? -1.1 : -0.3, 0, s * 0.25);   // upper arm
+    a.box(D.tan, 0.07, 0.30, 0.07, s * 0.30, 0.98 + (s > 0 ? 0.20 : -0.10), s > 0 ? 0.34 : 0.20, s > 0 ? -1.4 : 0.4, 0, 0);
+    a.box(D.tan, 0.10, 0.46, 0.10, s * 0.12, 0.56, 0.02, 0.25, 0, s * 0.08);                  // thigh
+    a.box(D.tan, 0.08, 0.36, 0.08, s * 0.14, 0.22, -0.06, -0.5, 0, 0);                         // shin, knee back
+    a.box(D.dark, 0.14, 0.05, 0.26, s * 0.15, 0.03, 0.04);                                     // foot
+  });
+  a.box(D.rust, 0.30, 0.05, 0.30, 0, 0.78, 0);                     // hip plate
+  /* The panel in the left hand. */
+  a.box(D.grey, 0.04, 0.50, 0.40, -0.40, 0.92, 0.18, 0, 0, 0.2);
+  return { geo: a.merge(), prims: a.prims };
+}
+
+/**
+ * THE TREADWELL. One fat wheel in a fork, a thin column, a box of a head
+ * with two eyestalks and a rack of tools on the column: the WED droid every
+ * Rebel hangar shot has one of, rolling somewhere slowly.
+ */
+export function treadwell() {
+  const a = new Assembly();
+  a.cyl(D.dark, 0.30, 0.30, 0.22, 0, 0.30, 0, 0, 0, Math.PI / 2, 12);          // the wheel
+  a.pair((s) => a.box(D.steel, 0.05, 0.40, 0.30, s * 0.15, 0.48, 0));           // the fork
+  a.box(D.steel, 0.40, 0.10, 0.44, 0, 0.70, 0);                                 // the fork's bridge
+  a.cyl(D.steel, 0.05, 0.05, 0.70, 0, 1.08, 0, 0, 0, 0, 8);                     // the column
+  a.box(PAINT, 0.36, 0.26, 0.30, 0, 1.52, 0);                                   // the head, painted
+  a.pair((s) => {
+    a.cyl(D.steel, 0.02, 0.02, 0.22, s * 0.10, 1.74, 0.06, -0.3, 0, s * 0.35, 5);   // eyestalk
+    a.ball(D.lens, 0.045, s * 0.16, 1.84, 0.12, 6, 5);                              // eye
+    a.box(D.trim, 0.06, 0.06, 0.34, s * 0.24, 1.10, 0.06, 0, 0, 0);                 // tool rack
+    a.cyl(D.dark, 0.03, 0.03, 0.30, s * 0.24, 1.10, 0.28, Math.PI / 2, 0, 0, 5);    // a tool in it
+  });
+  a.box(D.dark, 0.24, 0.14, 0.20, 0, 1.30, 0);                                  // the junction box
+  a.cyl(D.steel, 0.03, 0.03, 0.44, 0.06, 1.30, 0.26, 0.9, 0, 0, 5);             // the manipulator
+  return { geo: a.merge(), prims: a.prims };
+}
+
+/**
+ * THE PROTOCOL DROID. Gold plate over a wire midriff, a face with two eyes,
+ * arms straight at the sides, and it walks the stiff walk — the instance's
+ * pitch and a little roll are the whole gait, which is the joke of the
+ * character. Nothing on it articulates. The plate is PAINT: gold as built,
+ * silver or red on another instance.
+ */
+export function protocolDroid() {
+  const a = new Assembly();
+  a.box(PAINT, 0.36, 0.44, 0.24, 0, 1.24, 0);                       // chest
+  a.box(D.dark, 0.26, 0.20, 0.18, 0, 0.92, 0);                       // the wire midriff
+  for (let i = 0; i < 3; i++) a.cyl(D.steel, 0.012, 0.012, 0.22, -0.09 + i * 0.09, 0.92, 0.10, 0, 0, 0, 4);
+  a.box(PAINT, 0.32, 0.16, 0.22, 0, 0.78, 0);                       // pelvis
+  a.cyl(PAINT, 0.09, 0.10, 0.28, 0, 1.62, 0, 0, 0, 0, 10);         // head
+  a.box(D.lens, 0.16, 0.05, 0.05, 0, 1.66, 0.09);                    // the eye band
+  a.pair((s) => {
+    a.ball(D.trim, 0.025, s * 0.04, 1.66, 0.10, 5, 4);               // eye
+    a.box(PAINT, 0.09, 0.34, 0.09, s * 0.24, 1.24, 0, 0, 0, s * 0.06);   // upper arm
+    a.box(PAINT, 0.08, 0.32, 0.08, s * 0.26, 0.92, 0.02, -0.15, 0, 0);   // forearm
+    a.box(D.dark, 0.06, 0.10, 0.05, s * 0.27, 0.72, 0.06);              // hand
+    a.box(PAINT, 0.11, 0.40, 0.11, s * 0.10, 0.52, 0);                  // thigh
+    a.box(PAINT, 0.10, 0.36, 0.10, s * 0.10, 0.16, 0);                  // shin
+    a.box(D.dark, 0.10, 0.05, 0.22, s * 0.10, 0.03, 0.04);              // foot
+  });
+  a.cyl(D.steel, 0.05, 0.05, 0.10, 0, 1.44, 0, 0, 0, 0, 8);           // the neck
+  return { geo: a.merge(), prims: a.prims };
+}
+
+/**
+ * THE LOAD-LIFTER. A binary load-lifter: two thick legs, a box of a torso,
+ * a small head, and both arms forward under a cargo crate. It walks slowly
+ * with the crate held out — the instance rocks — and it is 260 kg, which is
+ * what a crate's carrier ought to weigh.
+ */
+export function loadLifter() {
+  const a = new Assembly();
+  a.box(D.steel, 0.70, 0.90, 0.46, 0, 1.55, 0);                      // torso
+  a.box(PAINT, 0.72, 0.16, 0.48, 0, 1.20, 0);                        // hazard band, painted
+  a.box(D.dark, 0.30, 0.22, 0.26, 0, 2.14, 0.06);                    // head
+  a.box(D.lens, 0.20, 0.05, 0.04, 0, 2.16, 0.20);                    // visor
+  a.pair((s) => {
+    a.box(D.steel, 0.20, 0.60, 0.20, s * 0.50, 1.50, 0.30, -1.5, 0, 0);   // upper arm, forward
+    a.box(D.steel, 0.16, 0.60, 0.16, s * 0.50, 1.20, 0.72, -0.4, 0, 0);   // forearm, under the crate
+    a.box(D.dark, 0.28, 0.80, 0.30, s * 0.28, 0.66, 0);                    // thigh
+    a.box(D.steel, 0.24, 0.50, 0.26, s * 0.28, 0.25, -0.02);               // shin
+    a.box(D.dark, 0.30, 0.10, 0.44, s * 0.28, 0.05, 0.06);                 // foot
+  });
+  a.cyl(D.steel, 0.12, 0.12, 0.20, 0, 2.00, 0, 0, 0, 0, 8);          // neck
+  /* THE CRATE, held out front: a big bevelled box with a strap. */
+  a.box(0x8a7048, 1.10, 0.90, 0.90, 0, 1.30, 0.86);
+  a.box(0x4a3a26, 1.14, 0.08, 0.94, 0, 1.30, 0.86);
+  a.box(0x4a3a26, 0.10, 0.94, 0.94, 0, 1.30, 0.86);
+  return { geo: a.merge(), prims: a.prims };
+}
+
 /** Every chassis builder by kind, so DeckLife can build a fleet from a row. */
 export const DROID_BUILDERS = {
-  astro: astromechChassis, welder: welderChassis, pit: pitDroid, mouse: mouseDroid, gonk: gonkDroid,
+  astro: astromechChassis, welder: welderChassis, pit: pitDroid, pitup: pitDroidUp, mouse: mouseDroid,
+  gonk: gonkDroid, tread: treadwell, proto: protocolDroid, lifter: loadLifter,
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -638,6 +802,157 @@ export function bindPose(rig) {
     b.obj.quaternion.copy(b.restQuat);
   }
   rig.touchMatrices?.();
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  THE CREW SILHOUETTES — the real gait, frozen, two hundred triangles  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ EIGHTY MEN PAST THIRTY METRES, FOR FIFTEEN DRAW CALLS ═════════════════
+ *
+ * "increase the amount of troops … all by an order of magnitude". A deck
+ * crewman on the skeleton is 7,300 triangles and a draw call, and at thirty
+ * metres a 0.9 m leg is a dozen pixels — so the men past the player's own
+ * ground are these: the same `humanoidSkeleton`, walked by the same
+ * `BipedAnimator` every worker and trooper walks with, and baked at a pose
+ * to ONE box per bone. About 240 triangles a man; the cap and the belt are
+ * what say "crew" at that range.
+ *
+ * A walk is six frames of the real cycle, captured at phase k/6; a carrier
+ * is four with the arms out under a crate; the rest stand, kneel, sit, point
+ * or lean. DeckLife holds one `InstancedMesh` per pose and a walker flips
+ * through the six — the flip-book `Cohorts.js` does with a texture, done
+ * with a mesh swap because the poses here are a dozen and not a palette.
+ *
+ * Suit = `PAINT`, so an instance's colour is its suit tone under
+ * `castMaterials().tint`; skin, boots, cap and belt keep their own.
+ */
+export const CREW_POSES = {
+  walk: ['walk0', 'walk1', 'walk2', 'walk3', 'walk4', 'walk5'],
+  carry: ['carry0', 'carry1', 'carry2', 'carry3'],
+  still: ['stand', 'kneel', 'sit', 'point', 'lean'],
+};
+
+/** Bone boxes: [width, depth] by bone, and what paints them. */
+const SIL_BONES = {
+  hips: [0.30, 0.20, PAINT], spine: [0.30, 0.20, PAINT], chest: [0.34, 0.22, PAINT],
+  neck: [0.10, 0.10, 0xc79a76], head: [0.19, 0.21, 0xc79a76],
+  clavL: [0.08, 0.10, PAINT], clavR: [0.08, 0.10, PAINT],
+  armL: [0.10, 0.10, PAINT], armR: [0.10, 0.10, PAINT], foreL: [0.09, 0.09, PAINT], foreR: [0.09, 0.09, PAINT],
+  handL: [0.07, 0.05, 0xc79a76], handR: [0.07, 0.05, 0xc79a76],
+  thighL: [0.14, 0.15, PAINT], thighR: [0.14, 0.15, PAINT], shinL: [0.12, 0.13, PAINT], shinR: [0.12, 0.13, PAINT],
+  footL: [0.10, 0.09, 0x2a2621], footR: [0.10, 0.09, 0x2a2621],
+};
+
+/** Bake the rig's current pose to bone boxes, root at the origin, facing +Z. */
+function bakeSilhouette(rig, at, extra) {
+  rig.updateMatrices();
+  const a = new Assembly();
+  for (const b of rig.list) {
+    const row = SIL_BONES[b.name];
+    if (!row) continue;
+    const [w, d, hex] = row;
+    const len = b.name === 'head' ? 0.23 : b.length;
+    const g = new THREE.BoxGeometry(w, len, d);
+    g.translate(0, len / 2, 0);
+    g.applyMatrix4(b.obj.matrixWorld);
+    a.put(g, hex);
+  }
+  /* The cap: a short cylinder on the crown, with the peak forward. */
+  const head = rig.get('head').obj;
+  const cap = new THREE.CylinderGeometry(0.105, 0.11, 0.07, 10);
+  cap.translate(0, 0.21, 0); cap.applyMatrix4(head.matrixWorld);
+  a.put(cap, 0x2a2621);
+  const peak = new THREE.BoxGeometry(0.15, 0.014, 0.10);
+  peak.translate(0, 0.18, 0.11); peak.applyMatrix4(head.matrixWorld);
+  a.put(peak, 0x2a2621);
+  /* The belt, and the pouch on its back. */
+  const hips = rig.get('hips').obj;
+  const belt = new THREE.BoxGeometry(0.33, 0.05, 0.23);
+  belt.translate(0, 0.06, 0); belt.applyMatrix4(hips.matrixWorld);
+  a.put(belt, 0x2a2621);
+  if (extra) extra(a);
+  const geo = a.merge();
+  geo.translate(-at.x, 0, -at.z);
+  return { geo, prims: a.prims };
+}
+
+/**
+ * Build every pose. Fresh geometry per call — a World disposes what it
+ * draws — and a few milliseconds: the animator is stepped through three
+ * seconds of walk before the first frame is taken, at 120 Hz.
+ */
+export function crewSilhouettes() {
+  const rig = new Rig(humanoidSkeleton(1), { scale: 1 });
+  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  anim.setFacing(0);
+  const pos = new THREE.Vector3(), vel = new THREE.Vector3();
+  const p = { position: pos, facing: 0, velocity: vel, grounded: true, groundAt: () => 0, crouch: 0, accelForward: 0.26, deferMatrices: false };
+  const dt = 1 / 120;
+  const out = {};
+  const walk = (seconds) => { for (let i = 0, n = Math.round(seconds / dt); i < n; i++) { pos.z += vel.z * dt; anim.update(dt, p); anim.swingArms(dt, vel.z, 1); } };
+  const aim = (name, x, y, z) => rig.aimBoneWorld(name, _v.set(x, y, z).normalize(), null);
+  /* THE WALK, six frames at phase k/6, once the gait has settled. */
+  vel.set(0, 0, 1.3);
+  walk(3);
+  const frames = (names, extra, arms) => {
+    let k = 0, last = anim.phase;
+    for (let i = 0; i < 1200 && k < names.length; i++) {
+      pos.z += vel.z * dt; anim.update(dt, p); anim.swingArms(dt, vel.z, 1);
+      const want = k / names.length;
+      const ph = anim.phase;
+      /* Did the phase cross `want` this step? A wrap (ph < last) crosses
+       * everything from `last` to 1 and from 0 to `ph`. */
+      const crossed = ph < last ? (want >= last || want <= ph) : (last < want && want <= ph) || (k === 0 && last === 0);
+      if (crossed) {
+        if (arms) arms();
+        out[names[k++]] = bakeSilhouette(rig, pos, extra);
+      }
+      last = anim.phase;
+    }
+  };
+  frames(CREW_POSES.walk, null, null);
+  /* THE CARRIER: the walk with both arms out under the end of a crate. */
+  const crate = (a) => {
+    const g = new THREE.BoxGeometry(0.60, 0.44, 0.70);
+    g.translate(pos.x, 0.86, pos.z + 0.62);
+    a.put(g, 0x8a7048);
+  };
+  frames(CREW_POSES.carry, crate, () => {
+    aim('armL', 0.15, -0.55, 0.8); aim('armR', -0.15, -0.55, 0.8);
+    aim('foreL', 0.05, -0.15, 1); aim('foreR', -0.05, -0.15, 1);
+  });
+  /* STANDING, and everything that starts from standing. */
+  vel.set(0, 0, 0);
+  walk(2);
+  out.stand = bakeSilhouette(rig, pos, null);
+  /* POINTING: the right arm up and out, the way an officer walks a rank. */
+  aim('armR', -0.25, 0.30, 0.9); aim('foreR', -0.10, 0.25, 1);
+  out.point = bakeSilhouette(rig, pos, null);
+  /* LEANING on a rail: both forearms forward at chest height. */
+  walk(0.5);
+  aim('armL', 0.2, -0.75, 0.6); aim('armR', -0.2, -0.75, 0.6);
+  aim('foreL', 0.1, 0.05, 1); aim('foreR', -0.1, 0.05, 1);
+  out.lean = bakeSilhouette(rig, pos, null);
+  /* KNEELING at a panel: the animator's own crouch, hands on the work. */
+  p.crouch = 1;
+  walk(2);
+  aim('armL', 0.2, -0.6, 0.8); aim('armR', -0.2, -0.6, 0.8);
+  aim('foreL', 0.05, -0.3, 1); aim('foreR', -0.05, -0.3, 1);
+  out.kneel = bakeSilhouette(rig, pos, null);
+  /* SITTING on a cot half a metre up: thighs forward, shins down, hands on
+   * the knees. The animator cannot sit, so this is posed by hand off the
+   * stand — a bone at a time, no numbers the skeleton does not carry. */
+  p.crouch = 0;
+  walk(2);
+  aim('thighL', 0.12, 0, 1); aim('thighR', -0.12, 0, 1);
+  aim('shinL', 0, -1, 0.05); aim('shinR', 0, -1, 0.05);
+  aim('armL', 0.2, -0.7, 0.55); aim('armR', -0.2, -0.7, 0.55);
+  aim('foreL', 0.05, -0.55, 0.8); aim('foreR', -0.05, -0.55, 0.8);
+  rig.get('hips').obj.position.y = 0.50;
+  out.sit = bakeSilhouette(rig, pos, null);
+  return out;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
