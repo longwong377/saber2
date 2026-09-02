@@ -3349,8 +3349,6 @@ export class Player {
        */
       this._setHalf0 = this.saberSet === 'staff'
         ? Math.asin(clamp((this.sidearm.span / 2) / GUARD.radius, 0, 1)) : 0;
-      this.control.setHalf = this._setHalf0;
-      this.control.set = this.saberSet;
     }
     /** …and the same for each forearm's own twist. See _rollForearm. */
     this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
@@ -3366,6 +3364,26 @@ export class Player {
        * leaving it at a human's did to the small frame. */
       reachScale: this.limbs.arm,
     });
+    /**
+     * …AND THE SET IS TOLD TO THE CONTROLLER HERE, AFTER IT EXISTS.
+     *
+     * These two lines were written twenty lines up, inside the block that
+     * builds the sidearm — and `this.control` is not assigned until this
+     * statement, so constructing a player with a staff or a pair threw
+     * `Cannot set properties of undefined (setting 'setHalf')` in the Player
+     * CONSTRUCTOR. Every mode, every check, every deploy.
+     *
+     * It survived being written because the single blade skips the block
+     * entirely: `saberSet === 'single'` leaves `sidearm` null and never
+     * reaches the write, so the default path — which is the path every check
+     * and every existing save takes — was clean and the two new weapons were
+     * unreachable from the first frame.
+     *
+     * `_setHalf0` stays where it is computed, beside the geometry it is
+     * measured off; only the handover moves.
+     */
+    this.control.setHalf = this._setHalf0 ?? 0;
+    this.control.set = this.saberSet;
     this.hum = audio.createHum(this.saber.color.getHex());
 
     // ── movement state

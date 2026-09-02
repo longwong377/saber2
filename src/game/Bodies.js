@@ -9565,6 +9565,51 @@ export function buildQuadruped(opts = {}) {
   // lifts the front of it — 1.02 rad stands the rancor up.
   const trunkRot = [Math.PI / 2 - P.pitch, 0, 0];
   const trunkParts = [[spine, [0, 0, 0], trunkRot]];
+
+  /**
+   * ── WHERE THE ANIMAL'S SURFACE ACTUALLY IS ───────────────────────────
+   *
+   * Every dorsal and flank feature below used to be placed at a CONSTANT
+   * standoff from the spine axis — `0.12 * S` above it for the ridge,
+   * `p[1] + 0.32 * S` for the scutes, `R * 0.92` sideways for the ribs — and
+   * the trunk is a superellipse lathe with two gaussian swells on it, so the
+   * surface is nowhere near constant. Measured on the massiff, whose shoulder
+   * swell is +30%: the ribs stand 4 cm proud of the flank at the waist and
+   * 3 cm inside it over the shoulder, and the ridge is buried to the gums at
+   * both ends of the back and only shows over the middle third. That is the
+   * complaint's second line exactly — plates that do not follow the back's
+   * curve, reading as cardboard glued on rather than as bone growing out.
+   *
+   * The file already answers this question for helmets, visors and vents, and
+   * the answer is `surfacePoint`: fire a ray from the axis and take the point
+   * where it leaves the hull. So this asks the lathe. `t` runs 0→1 along the
+   * body and `phi` is the azimuth from straight up — 0 is the spine, ±π/2 the
+   * flank, ±π the belly — and `sink` pushes the seat back INTO the hide so a
+   * scute is set into the back rather than balanced on it.
+   *
+   * IT PROBES `spine` IN THE LATHE'S OWN FRAME AND ROTATES THE ANSWER, rather
+   * than probing the assembled trunk. The lathe is authored +Y along the body
+   * and `trunkRot` is a rotation about X by (π/2 − pitch), which takes lathe
+   * −Z to the animal's up — so "up" is a fixed direction in lathe space
+   * whatever the plan's pitch is, and one probe serves a level massiff and a
+   * reared rancor with no branch. Rotating a point is three multiplies;
+   * re-probing an assembled, rotated hull would need the ray rotated instead
+   * and would pick up whatever else had been merged into it by then.
+   */
+  const _hullO = new THREE.Vector3(), _hullD = new THREE.Vector3(), _hullP = new THREE.Vector3();
+  const hull = (t, phi, sink = 0) => {
+    _hullD.set(Math.sin(phi), 0, -Math.cos(phi));
+    _hullO.set(0, clamp(t, 0, 1) * L, 0);
+    const p = surfacePoint(spine, _hullD, _hullO, _hullP, true) || _hullO;
+    const cs = Math.cos(P.pitch), sn = Math.sin(P.pitch);
+    const x = p.x - _hullD.x * sink, y = p.y - _hullD.y * sink, z = p.z - _hullD.z * sink;
+    return [x, y * sn - z * cs, y * cs + z * sn];
+  };
+  /** The outward normal at that seat, in the body bone's frame. */
+  const hullN = (phi) => {
+    const cs = Math.cos(P.pitch), sn = Math.sin(P.pitch);
+    return [Math.sin(phi), Math.cos(phi) * cs, -Math.cos(phi) * sn];
+  };
   /* The dorsal structure goes in the PRIMARY for the plated animals and only
    * for them: `Enemy._measurePlatform` measures a rideable deck as the
    * highest vertex inside the middle 60% of the hull, and asserts (in
@@ -9572,13 +9617,27 @@ export function buildQuadruped(opts = {}) {
    * so on a body that carries a rider the ridge has to be part of the hull it
    * is measured against, not a second mesh standing over it. */
   if (P.back === 'ridge') {
-    const n = 7;
+    /* SEATED ON THE BACK, AND THEREFORE ON THE BACK'S CURVE. The old line
+     * stood every spine at 0.12·S above the spine AXIS; the massiff's hull is
+     * 0.24·S over the loin and 0.31·S over the shoulder swell, so the middle
+     * spines showed a third of themselves and the two at each end were
+     * entirely inside the animal. The plan row says "a ridge of spines from
+     * the crown to the tail root" and the build delivered four bumps over the
+     * ribs.
+     *
+     * `h` is 0.62 of what it was because the seat changed: what the player
+     * sees is the part standing OUT of the hide, the old burial was an
+     * accident of the swell profile, and 0.62 with a deliberate 0.25·h root
+     * inside the skin puts the tallest spine within a few millimetres of the
+     * height it used to reach — while the eleven others, which used to be
+     * invisible or nearly so, now show. Nothing about the outline's PEAK
+     * moves; what arrives is the line between the peaks. */
+    const n = 9;
     for (let i = 0; i < n; i++) {
       const t = i / (n - 1);
-      const y = Math.cos(P.pitch) * (0.12 + t * 0.02) * S + Math.sin(P.pitch) * (t - 0.1) * L;
-      const z = Math.cos(P.pitch) * (t - 0.1) * L - Math.sin(P.pitch) * 0.12 * S;
-      const h = (0.30 - Math.abs(t - 0.55) * 0.26) * S;
-      trunkParts.push([clawGeo(h, 0.075 * S, 0.012 * S, -0.45, 5, 3), [0, y, z], [0.55 - t * 0.9 - P.pitch, 0, 0]]);
+      const h = (0.30 - Math.abs(t - 0.55) * 0.26) * S * 0.62;
+      trunkParts.push([clawGeo(h, 0.070 * S, 0.011 * S, -0.45, 5, 3),
+        hull(0.06 + t * 0.88, 0, h * 0.25), [0.55 - t * 0.9 - P.pitch, 0, 0]]);
     }
   }
   const bm = mesh(assemble(trunkParts, 'trunk'), hide, body.obj);
@@ -9591,11 +9650,26 @@ export function buildQuadruped(opts = {}) {
   const ks = new Kit();
   const fwd = (t) => [0, Math.sin(P.pitch) * t * L + 0.10 * S, Math.cos(P.pitch) * t * L];
   if (P.back === 'scutes') {
-    // low bony bosses down the spine, biggest over the shoulder
-    ks.row(6, (i, t) => {
-      const p = fwd(t * 0.92 - 0.02);
-      ks.add(plate, plateGeo((0.52 - Math.abs(t - 0.72) * 0.34) * S, 0.10 * S, 0.20 * S, 0.03 * S, 1),
-        [0, p[1] + 0.32 * S, p[2]], [0.08 - P.pitch, 0, 0]);
+    /* LOW BONY BOSSES DOWN THE SPINE, biggest over the shoulder — and they
+     * are BOSSES now rather than slabs. `plateGeo` is a rounded cuboid, so
+     * six of them laid at a fixed 0.32·S above the axis with a fixed pitch
+     * rotation are six cards standing on a curved back: each one meets the
+     * hide along one edge and lifts clear of it along the other, and the gap
+     * is the thing the eye reads. A scute is a swelling of the same skin, so
+     * this is a squashed ellipsoid, seated by `hull` and aimed down the
+     * surface's own normal, sunk 40% of its own depth into the hide. The
+     * width curve is the old one halved, because these are half-widths.
+     *
+     * They stay OUT of the primary, which is deliberate and is the one thing
+     * that separates this treatment from `ridge` above: `_measurePlatform`
+     * takes a rideable deck off the primary hull, and the varactyl is ridden.
+     * A saddle that sat on top of the scutes would be a saddle 10 cm above
+     * the animal. */
+    ks.row(7, (i, t) => {
+      const w = (0.26 - Math.abs(t - 0.72) * 0.17) * S;
+      const at = 0.04 + t * 0.88;
+      ks.aim(plate, new THREE.SphereGeometry(1, 9, 7), hull(at, 0, 0.038 * S), hullN(0),
+        [w, 0.095 * S, 0.115 * S]);
     });
   } else if (P.back === 'mane') {
     /* THE MANE, and it is the nexu's whole read at range. Quills raked back
@@ -9628,21 +9702,75 @@ export function buildQuadruped(opts = {}) {
    * bury five pairs of end caps inside themselves, which is 60% of the
    * triangles on geometry nobody can see (see tubeGeo). */
   if (P.tail[0] > 0) {
+    /**
+     * ── AND IT IS RESAMPLED, FOR THE NECK'S REASON AND NOT A NEW ONE ────
+     *
+     * `tubeGeo` interpolates nothing: it puts one ring at each node and joins
+     * them with flat quads. `P.tail[0]` is a count of SEGMENTS — 3 on the
+     * massiff, 4 on the varactyl — so a three-segment tail was four rings on
+     * a polyline that turns 0.10 rad at each of them, which is a chain of
+     * short prisms with a visible crease at every joint. The complaint calls
+     * it "a chain of visibly hard cubes" and at seven radial segments and
+     * four rings that is very nearly literally what it was.
+     *
+     * Same fix the neck already carries thirty lines down: at least three
+     * rings a segment, walked along the SAME arc — the total turn is still
+     * `curl * n` and the total length still `reach * S`, both spread over the
+     * finer step — so a plan's tail arrives where its author put it. The
+     * radius law is the old one written continuously: at u = i/n it is
+     * identically `r0 * S * (1 - i / (n + 1.2))`, so no tail changes girth.
+     *
+     * The ring goes to 9 from 7 because a tail is a cylinder seen against the
+     * sky from the side, where a 7-gon shows its facets on the top edge, and
+     * because tubeGeo carries no duplicated seam column — two more columns is
+     * two more vertices a ring and nothing else.
+     */
     const [n, reach, r0, pitch0, curl] = P.tail;
+    const RT = Math.max(5, n * 3 + 1);
     const nodes = [];
     let y = 0.06 * S, z = -0.06 * S, a = pitch0;
-    const seg = (reach * S) / n;
-    for (let i = 0; i <= n; i++) {
-      nodes.push([0, y, z, r0 * S * (1 - i / (n + 1.2))]);
-      z -= Math.cos(a) * seg; y += Math.sin(a) * seg; a += curl;
+    const step = (reach * S) / (RT - 1);
+    for (let i = 0; i < RT; i++) {
+      const u = i / (RT - 1);
+      nodes.push([0, y, z, r0 * S * (1 - (u * n) / (n + 1.2))]);
+      z -= Math.cos(a) * step; y += Math.sin(a) * step; a += (curl * n) / (RT - 1);
     }
-    ks.add(hide, tubeGeo(nodes, 7), [0, 0, 0]);
+    ks.add(hide, tubeGeo(nodes, 9), [0, 0, 0]);
   }
-  // ribbed flanks and a soft belly — the one place a blade meets flesh
+  /**
+   * ── RIBBED FLANKS, AND THEY ARE RIBS NOW ───────────────────────────────
+   *
+   * This was four `plateGeo` slabs a side at a FIXED `x = ±R * 0.92`, and it
+   * is the worst-looking thing on the animal — the rendered massiff shows
+   * four pale rectangles floating clear of its shoulder like luggage labels.
+   * Two faults compound:
+   *
+   *   R IS THE PLAN'S GIRTH AND NOT THE ANIMAL'S WIDTH. The lathe is
+   *   superellipse-sectioned and carries two gaussian swells; on the massiff
+   *   the hull runs 0.72·R at the loin to 1.30·R over the shoulder. One x for
+   *   all four puts the front pair well outside the skin and the back pair
+   *   well inside it, and a rib you can see daylight under is a sticker.
+   *
+   *   A RIB IS NOT FLAT AND IT IS NOT VERTICAL. It leaves the spine, wraps
+   *   the barrel and turns under toward the sternum, and it tapers the whole
+   *   way. A 0.34·S tall slab hung on the widest point of the flank is a
+   *   cross-section of that, drawn as a card.
+   *
+   * So each one is a tapered tube through five points ON the hull, from just
+   * beside the spine (φ 0.55) to under the flank (φ 2.10), sunk far enough
+   * that only the crown of it stands out of the hide. It costs about 60
+   * triangles a rib against the slab's 12, which on a body that runs 4–6k
+   * against a 13k cap is the cheapest legibility in the file.
+   */
   ks.pair((sx) => ks.row(4, (i, t) => {
-    const p = fwd(0.12 + t * 0.66);
-    ks.add(plate, plateGeo(0.05 * S, 0.34 * S, 0.15 * S, 0.02 * S, 1),
-      [sx * R * 0.92, p[1] - 0.04 * S, p[2]], [0, 0, sx * 0.2]);
+    const at = 0.16 + t * 0.58;
+    const nodes = [];
+    for (let j = 0; j < 5; j++) {
+      const phi = 0.55 + (j / 4) * 1.55;
+      const p = hull(at, sx * phi, 0.030 * S);
+      nodes.push([p[0], p[1], p[2], (0.055 - j * 0.009) * S]);
+    }
+    ks.add(plate, tubeGeo(nodes, 6, { tip: 0.3 }), [0, 0, 0]);
   }));
   {
     const p = fwd(0.44);
@@ -9924,15 +10052,45 @@ function buildCreatureHead(rig, P, S, M) {
     return [g, [x * S, hy + y * S, hz + z * S]];
   };
 
+  /**
+   * ── AND THE FIVE BRANCHES BELOW NOW CALL THEM ────────────────────────
+   *
+   * `muzzle()` and `cheek()` were written, argued for at length, and then not
+   * wired in: every one of the five heads still hung its jaw off `plateGeo`
+   * and its skull off a bare `SphereGeometry`, which is the exact pair of
+   * calls the two headers above name as the defect. Rendered, that reads as a
+   * grey slab with teeth in it floating off the front of a ball — "the head
+   * reads as a detached rectangular box", said of the massiff, and it was
+   * true of all twelve plans because all twelve go through these five
+   * branches.
+   *
+   * What changes below is only the SHAPE of three pieces per head — cranium,
+   * muzzle, cheeks. Every horn, tusk, eye, fang, quill, crest and ruff keeps
+   * the coordinates it was authored at, because those were authored by eye
+   * against the old boxes' extents and moving them would re-aim five faces at
+   * once. Where a new lathe's extent had to differ from the box it replaces,
+   * it is stated on the line.
+   *
+   * The muzzle's ROOT is its hinge, not its centre — a plateGeo was placed at
+   * its middle — so every `z` below is the old box's centre minus half its
+   * old depth, and the length is the old depth plus however much snout the
+   * animal is owed. That arithmetic is why the numbers look unfamiliar next
+   * to the git history: they are the same head.
+   */
   if (K === 'horned') {
     /* THE REEK. The skull is a wide low wedge and everything that matters is
      * carried in FRONT of the eyes: a frill across the brow, two cheek horns
      * curving down and forward, and the nasal horn that is the thing which
      * actually hits you. Head-on it is a wall rather than a face, which is
      * the whole counter-play — you do not meet this one from the front. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.28 * S, 12, 9); g.scale(1.02, 0.80, 1.16); return g; })(),
-      [0, hy + 0.02 * S, hz + 0.22 * S]]);
-    parts.push([plateGeo(0.30 * S, 0.13 * S, 0.42 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.32 * S], [0.08, 0, 0]]);
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.26 * S, 12, 9); g.scale(1.06, 0.84, 1.04); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.16 * S]]);
+    /* BLUNT, and that is the whole reek: `flat` 0.88 and w1 within a hair of
+     * w0, so the muzzle is a squared-off box-end of bone rather than a snout.
+     * It runs 0.11 → 0.55 where the old plate ran 0.11 → 0.53, so the nasal
+     * horn seated at 0.40–0.74 still leaves the face where it always did. */
+    parts.push(muzzle(0.44, 0.165, 0.150, -0.13, 0.11, 0.05, { flat: 0.88, n: 3.2, chin: 0.13, crown: 0.10 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.16, -0.03, 0.18, 0.135, 1.0, 0.86, 1.30));
     k.add(M.plate, plateGeo(0.92 * S, 0.58 * S, 0.11 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.02 * S], [-0.34, 0, 0]);
     k.add(M.plate, tubeGeo([[0, hy + 0.06 * S, hz + 0.40 * S, 0.095 * S],
       [0, hy + 0.30 * S, hz + 0.60 * S, 0.055 * S], [0, hy + 0.52 * S, hz + 0.74 * S, 0.012 * S]], 7));
@@ -9948,9 +10106,16 @@ function buildCreatureHead(rig, P, S, M) {
      * of eyes on it reads as wrong from further away than any amount of horn
      * — over a mouth that is wider than the skull, with the fangs standing
      * OUTSIDE the lip line the way the reference photograph has them. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.24 * S, 12, 9); g.scale(0.94, 0.68, 1.30); return g; })(),
-      [0, hy + 0.02 * S, hz + 0.20 * S]]);
-    parts.push([plateGeo(0.44 * S, 0.14 * S, 0.40 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.28 * S], [0.14, 0, 0]]);
+    /* THE BRAINCASE PULLS BACK AND THE SNOUT DOES THE REACHING. The old
+     * ellipsoid was stretched 1.30 on Z and ran to 0.51 on its own, so the
+     * jaw box sat entirely INSIDE it and the animal had no muzzle at all —
+     * one smooth egg with a slab hung under it. This is a braincase (1.05 on
+     * Z, front at 0.33) plus a real snout that carries the face out to 0.51,
+     * which is where the head used to end. Same reach, a face on it. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.22 * S, 12, 9); g.scale(0.98, 0.82, 1.05); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.10 * S]]);
+    parts.push(muzzle(0.48, 0.20, 0.105, -0.05, 0.03, 0.10, { flat: 0.68, n: 3.0, chin: 0.18, crown: 0.10 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.14, -0.02, 0.11, 0.125, 1.0, 0.88, 1.25));
     k.pair((sx) => {
       k.add(M.eye, new THREE.SphereGeometry(0.042 * S, 7, 6), [sx * 0.11 * S, hy + 0.10 * S, hz + 0.26 * S]);
       k.add(M.eye, new THREE.SphereGeometry(0.030 * S, 6, 5), [sx * 0.16 * S, hy + 0.03 * S, hz + 0.16 * S]);
@@ -9970,10 +10135,19 @@ function buildCreatureHead(rig, P, S, M) {
      * tusks standing up out of the lower jaw past the upper lip, which is the
      * thing every photograph of one is showing. Two small deep-set eyes above
      * a brow shelf, and lumps of bone over the crown. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.34 * S, 12, 9); g.scale(0.86, 0.86, 1.20); return g; })(),
-      [0, hy + 0.04 * S, hz + 0.16 * S]]);
-    parts.push([plateGeo(0.52 * S, 0.20 * S, 0.52 * S, 0.06 * S, 1), [0, hy - 0.20 * S, hz + 0.26 * S], [0.16, 0, 0]]);
-    parts.push([plateGeo(0.46 * S, 0.16 * S, 0.30 * S, 0.05 * S, 1), [0, hy + 0.26 * S, hz + 0.02 * S], [-0.24, 0, 0]]);
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.32 * S, 12, 9); g.scale(0.90, 0.90, 1.14); return g; })(),
+      [0, hy + 0.04 * S, hz + 0.14 * S]]);
+    /* THE WIDEST MUZZLE IN THE TABLE and barely tapered — 0.26 to 0.21 half
+     * width over half a metre of jaw — because the rancor's read is that its
+     * mouth is as wide as its skull. 0.00 → 0.52 against the old box's
+     * 0.00 → 0.52: the tusks at 0.42–0.50 sit exactly where they did. */
+    parts.push(muzzle(0.52, 0.26, 0.21, -0.21, 0.00, 0.05, { flat: 0.80, n: 3.4, chin: 0.16, crown: 0.06 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.21, -0.06, 0.14, 0.185, 1.0, 0.84, 1.20));
+    /* The brow shelf, which was the third plateGeo on this head. A shelf is a
+     * ridge of bone over the eyes and not a plank: an ellipsoid squashed flat
+     * on Y keeps the overhang and loses the four corners. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.23 * S, 10, 8); g.scale(1.02, 0.38, 0.68); return g; })(),
+      [0, hy + 0.26 * S, hz + 0.06 * S], [-0.24, 0, 0]]);
     k.pair((sx) => {
       // the tusks: up out of the lower jaw, past the lip
       k.add(M.tooth, tubeGeo([[sx * 0.20 * S, hy - 0.24 * S, hz + 0.42 * S, 0.055 * S],
@@ -9995,8 +10169,17 @@ function buildCreatureHead(rig, P, S, M) {
      * and a fur ruff round the jaw that carries the head's outline into the
      * shoulders. */
     parts.push([(() => { const g = new THREE.SphereGeometry(0.30 * S, 12, 9); g.scale(1.10, 0.94, 0.86); return g; })(),
-      [0, hy + 0.04 * S, hz + 0.10 * S]]);
-    parts.push([plateGeo(0.40 * S, 0.20 * S, 0.26 * S, 0.05 * S, 1), [0, hy - 0.18 * S, hz + 0.20 * S], [0.20, 0, 0]]);
+      [0, hy + 0.04 * S, hz + 0.08 * S]]);
+    /* SHORT AND DEEP — 0.30 of snout on a 0.26-wide hinge — because this
+     * branch is a FACE and not a muzzle, and a long lathe here would turn the
+     * wampa into a dog. It runs 0.07 → 0.37 where the old box ran 0.07 → 0.33;
+     * the four centimetres it gains are a nose, and the fangs at 0.26 and the
+     * ruff at −0.02 are both untouched. Three plans that are genuinely
+     * long-snouted — taun, blurrg, varac — share this branch and are the
+     * argument for a sixth one, recorded here and not acted on: a new branch
+     * is a new silhouette for three shipped bodies. */
+    parts.push(muzzle(0.30, 0.19, 0.135, -0.17, 0.07, 0.11, { flat: 0.76, n: 3.0, chin: 0.18, crown: 0.08 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.18, -0.07, 0.10, 0.155, 1.0, 0.88, 1.05));
     k.pair((sx) => {
       k.add(M.plate, tubeGeo([[sx * 0.26 * S, hy + 0.18 * S, hz - 0.02 * S, 0.060 * S],
         [sx * 0.46 * S, hy + 0.20 * S, hz + 0.10 * S, 0.040 * S],
@@ -10014,9 +10197,17 @@ function buildCreatureHead(rig, P, S, M) {
      * over the shoulders — in the reference the crest is the biggest single
      * shape on the animal and the old build had none of it. Mandibles sweep
      * forward and in from the corners of the jaw. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.26 * S, 12, 9); g.scale(0.78, 0.72, 1.52); return g; })(),
-      [0, hy + 0.02 * S, hz + 0.30 * S], [0.28, 0, 0]]);
-    parts.push([plateGeo(0.28 * S, 0.13 * S, 0.44 * S, 0.05 * S, 1), [0, hy - 0.13 * S, hz + 0.36 * S], [0.32, 0, 0]]);
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.24 * S, 12, 9); g.scale(0.82, 0.76, 1.10); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.16 * S], [0.28, 0, 0]]);
+    /* THE NARROWEST AND THE LONGEST — 0.11 at the hinge over 0.56 of jaw, and
+     * `flat` 0.60 so it is deeper than it is wide. That is the one shape an
+     * insect's head has and a mammal's never does, and it is what the old
+     * 1.52-on-Z ellipsoid was reaching for with a stretched ball. The lathe
+     * carries the same droop the box did (0.32) plus the cranium's own tilt,
+     * and runs 0.14 → 0.70 against the old box's 0.14 → 0.58: the extra is
+     * jaw the mandibles at 0.44–0.70 were already sweeping past. */
+    parts.push(muzzle(0.56, 0.115, 0.062, -0.11, 0.14, 0.30, { flat: 0.60, n: 2.8, chin: 0.12, crown: 0.06 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.11, 0.00, 0.16, 0.105, 1.0, 0.90, 1.45));
     // the crest: two swept plates rather than one, so it has a ridge down it
     k.pair((sx) => {
       k.add(M.plate, plateGeo(0.40 * S, 0.06 * S, 0.86 * S, 0.04 * S, 2),
