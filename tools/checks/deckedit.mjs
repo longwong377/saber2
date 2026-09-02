@@ -691,4 +691,63 @@ export async function run({ check, assert, THREE }) {
       + 'way too, and the menu is the surface that has to keep up');
     return `${[...deckOps].sort().join(', ')} on both surfaces`;
   });
+  check('deckedit: looking at a man NAMES him and the key, before anything is pressed', async () =>
+    withRoll(4, async () => {
+      /**
+       * THE DEFECT WAS THAT NOTHING SAID SO. The player, V13:
+       *
+       *   "is there a way to customize your troops while you're in the hangar
+       *    or am I just missing it"
+       *
+       * He was missing it, and there was nothing to find. Everything this file
+       * does — he breaks attention, turns, salutes, and the wheel dials his
+       * mark, his band, his paint and his kit — was reachable only by pressing
+       * a key nobody had been told about, at somebody. `tag()` fired the moment
+       * a man was HELD, which is one press after the discovery has to happen.
+       *
+       * So: with a man under the reticle and NOTHING pressed, the deck already
+       * says his name and what to press. Asserted through the same `pickMan`
+       * the keypress uses — a prompt sourced from a second opinion about who
+       * you are looking at is a prompt that will one day lie.
+       */
+      const { world } = await deck();
+      try {
+        formUp(world, idle);
+        /* READ AT `world.notify`, NOT AT `#deck-tag`. `tag()` speaks through
+         * both — the world first, the element second — and the element only
+         * exists on a page. The world's door is the one that is always there,
+         * and it is the one the HUD listens on. */
+        const said = [];
+        world.notify = (name, note) => said.push([name, note]);
+        const st = world._deckEdit;
+
+        /* LOOKING AT NOBODY. Stood well back, past `REACH`, so the pick has
+         * nothing to take. */
+        const one = world._company.men[Math.floor(world._company.men.length / 2)];
+        standBefore(world, one, Edit.REACH + 8, THREE, idle);
+        for (let i = 0; i < 10; i++) { Edit.stepDeckEdit(world, 1 / 60); world.update(1 / 60, idle); }
+        const named = said.filter(([n]) => n);
+        assert(!named.length,
+          `the deck named somebody with nobody in reach: ${named.map((x) => x[0]).join(', ')}`);
+        said.length = 0;
+
+        /* LOOKING AT A MAN, PRESSING NOTHING. */
+        standBefore(world, one, 2.4, THREE, idle);
+        assert(Edit.pickMan(world) === one, 'the fixture is not looking at the man it thinks it is');
+        let note = null, name = null;
+        for (let i = 0; i < 16 && note === null; i++) {
+          Edit.stepDeckEdit(world, 1 / 60);
+          world.update(1 / 60, idle);
+          const hit = said.find(([n]) => n);
+          if (hit) { name = hit[0]; note = hit[1]; }
+        }
+        assert(note !== null,
+          'a man under the reticle and the deck said nothing — that is the defect, not the fix');
+        assert(!st.held, 'the prompt only appeared because a man was already held');
+        assert(name, 'the prompt fired with no name on it');
+        assert(/\S/.test(note), 'it gave a name and never said what to press');
+        return `looking at ${name}: "${note}" — and nothing at ${(Edit.REACH + 8).toFixed(0)} m`;
+      } finally { world.unload(); }
+    }));
+
 }
