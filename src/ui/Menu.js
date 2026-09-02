@@ -28,8 +28,8 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
  * its rows straight through so a fourth set is a row there and nothing here. */
 import { SABER_SETS } from '../game/SaberSet.js';
 /* The twelve kinds and their rows — the card list below IS this table. */
-import { COMPANION_KINDS, COMPANION_ORDER, rungOf } from '../game/CompanionKinds.js';
-import { load as loadKennel, notSaving as kennelNotSaving } from '../game/Kennel.js';
+import { COMPANION_KINDS, COMPANION_LOOK, COMPANION_ORDER, rungOf } from '../game/CompanionKinds.js';
+import { load as loadKennel, notSaving as kennelNotSaving, dressCompanion } from '../game/Kennel.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
@@ -5038,7 +5038,7 @@ export class Menu {
     this._cardRow('companion-list', 'h-companion', 'companion',
       [{ id: 'none', name: 'None', blurb: 'You go in alone, as you always have.' },
         ...COMPANION_ORDER.map((id) => COMPANION_KINDS[id])],
-      () => this._syncKennel());
+      () => { this._syncKennel(); this._wireCompanionDress(); });
     /**
      * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.
      *
@@ -5454,6 +5454,7 @@ export class Menu {
    * an accidental tap here costs a named thing that cannot come back.
    */
   _syncKennel() {
+    this._wireCompanionDress();
     const el = document.getElementById('companion-state');
     if (!el) return;
     const k = loadKennel();
@@ -5487,6 +5488,112 @@ export class Menu {
     }
     el.textContent = lines.join('  ');
     el.style.display = lines.length ? '' : 'none';
+  }
+
+  /**
+   * ══ DRESSING A COMPANION ═══════════════════════════════════════════════
+   *
+   * "you can customize their appearance to a degree"
+   *
+   * THIS LIGHTS CODE THAT HAS SHIPPED FOR MONTHS AND HAS NEVER BEEN REACHED.
+   * `buildQuadruped` accepts `opts.hide`, `opts.plate`, `opts.belly` and
+   * `opts.eye` — `hideMat(opts.hide ?? P.hide, 0.92)` and three siblings — and
+   * NOTHING in the tree has ever passed it anything but the plan's own
+   * defaults. Every creature in the game is wearing its factory colours
+   * because there was no door. This is the door.
+   *
+   * IT IS NOT `_dressingHtml`, AND THAT IS A DECISION RATHER THAN LAZINESS.
+   * That renderer is built around `KIT_FIELDS`, `PAINT_SLOTS` and
+   * `wearableFor` — a clone's armour slots and the hardware bolted to them —
+   * and a companion has neither: four flat colour overrides and no kit at all.
+   * Worse, `WEARS` is deliberately PERMISSIVE, so a type it does not know gets
+   * its kind's whole vocabulary, and a companion routed through it would be
+   * offered nine clone-armour rows that store a value, light up and change
+   * nothing. That is the exact dead control that table exists to prevent.
+   *
+   * WHAT IS REUSED IS THE PART THAT MATTERS: the same `.kit-row`,
+   * `.kit-name`, `.swatches` and `.swatch` classes, so there is one stylesheet
+   * and one look; the same `PAINTS` palette, so a re-tuned colour reaches the
+   * companions already wearing it; and ids stored rather than colours.
+   *
+   * AND ITS OWN ROOT, WHICH IS THE TRAP COMPANIONS.md NAMES BY NAME.
+   * `_trustInTheForce` walks `.cards, .swatches, .kit-chips` under whatever
+   * root it is handed. A companion block sharing a root with the Jedi
+   * wardrobe would be randomised by the player's own button — so this block
+   * is its own node with its own button, and pressing one does not touch the
+   * other.
+   */
+  _companionDressHtml(kind, look = {}) {
+    const K = COMPANION_KINDS[kind];
+    if (!K) return '';
+    const slots = COMPANION_LOOK[K.look] || [];
+    if (!slots.length) return '';
+    const swatch = (p, on, field) => `<i class="swatch${on ? ' sel' : ''}"
+        data-cmp="${escKey(field)}" data-hue="${escKey(p ? p.id : '')}"
+        title="${escKey(p ? p.name : 'As it was born')}"
+        style="background:${p ? `#${p.color.toString(16).padStart(6, '0')}` : 'transparent'};
+               ${p ? '' : 'border-style:dashed'}"></i>`;
+    const rows = slots.map((field) => `
+      <div class="kit-row"><span class="kit-name">${escKey(field)}</span>
+        <span class="swatches">
+          ${swatch(null, !look[field], field)}
+          ${PAINTS.map((p) => swatch(p, look[field] === p.id, field)).join('')}
+        </span></div>`).join('');
+    return `<div class="kit-list" id="companion-dress">${rows}
+      <button class="secondary" id="companion-trust">Trust in the Force</button></div>`;
+  }
+
+  /**
+   * Draw and bind the companion's colours. Rebuilt whole on every kind change,
+   * because a hawk and a wookiee do not wear the same words and a row left
+   * over from the last pick is a control that writes a slot the builder will
+   * never read.
+   */
+  _wireCompanionDress() {
+    const host = document.getElementById('companion-dress-host');
+    if (!host) return;
+    const k = loadKennel();
+    const kind = (k.live && k.live.kind) || (this.s.companion !== 'none' ? this.s.companion : null);
+    if (!kind || !k.live || k.live.kind !== kind) {
+      /* NOTHING TO DRESS UNTIL THERE IS AN ANIMAL. The record is created at
+       * deploy — see `fieldFromKennel` — so before the first run there is a
+       * kind chosen and no body to paint, and saying so is better than a row
+       * of swatches that write into nothing. */
+      host.innerHTML = kind
+        ? '<div class="note">Its colours are yours to set once you have taken it out once.</div>'
+        : '';
+      return;
+    }
+    host.innerHTML = this._companionDressHtml(kind, k.live.look || {});
+    const write = (field, hue) => {
+      const look = { ...(loadKennel().live?.look || {}) };
+      if (hue) look[field] = hue; else delete look[field];
+      dressCompanion(k.live.id, { look });
+      this._wireCompanionDress();
+      this._syncKennel();
+    };
+    for (const el of host.querySelectorAll('.swatch')) {
+      this._activate(el, () => {
+        audio.ui('click');
+        write(el.dataset.cmp, el.dataset.hue || null);
+      });
+    }
+    const trust = document.getElementById('companion-trust');
+    if (trust) {
+      this._activate(trust, () => {
+        audio.ui('click');
+        /* ITS OWN ROOT, so the Jedi wardrobe's button and this one cannot
+         * randomise each other — see `_companionDressHtml`. */
+        this._trustInTheForce(host, {});
+        const look = {};
+        for (const el of host.querySelectorAll('.swatch.sel')) {
+          if (el.dataset.hue) look[el.dataset.cmp] = el.dataset.hue;
+        }
+        dressCompanion(k.live.id, { look });
+        this._wireCompanionDress();
+        this._syncKennel();
+      });
+    }
   }
 
   _syncVersusBox() {

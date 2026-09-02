@@ -8504,6 +8504,37 @@ function creatureSkeleton(S, P) {
  *   rear     metres of hip travel per unit of an attack's `rise`, ×scale.
  *   moves    the verbs its anatomy affords. See the header.
  */
+/**
+ * A COMPANION'S OWN COLOURS, AS BUILDER OPTIONS — the wire that finally passes
+ * something to `buildQuadruped`'s `opts.hide` / `plate` / `belly` / `eye`.
+ *
+ * Those four have been accepted since the day the creature builder was
+ * written — `hideMat(opts.hide ?? P.hide, 0.92)` and three siblings — and
+ * NOTHING in the tree has ever handed them anything but the plan's own
+ * defaults. Every creature in the game wears its factory colours because
+ * there was no door.
+ *
+ * IT CANNOT BE `kitOptsFrom`, which is the door a trooper's look goes
+ * through: `KIT_FIELDS` and `PAINT_FIELDS` have exactly two keys, `flesh` and
+ * `steel`, and a creature is neither — a saved creature colour would be
+ * dropped before it ever reached the builder.
+ *
+ * IDS IN, COLOURS OUT. The record stores a palette id so a re-tuned palette
+ * reaches the animals already wearing it; `paintById` answers null for an id
+ * this build does not have, and a null slot is simply absent, which the
+ * builder reads as the plan's own colour. So an unknown id is the animal's
+ * factory hide rather than a black one.
+ */
+export function companionOptsFrom(look) {
+  const out = {};
+  if (!look) return out;
+  for (const f in look) {
+    const p = paintById(look[f]);
+    if (p) out[f] = p.color;
+  }
+  return out;
+}
+
 export const CREATURE_PLANS = {
   /**
    * THE REEK — `assets/reference/units/creatures/Reek.jpeg`.

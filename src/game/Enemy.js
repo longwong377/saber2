@@ -13,7 +13,7 @@ import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, kitOptsFrom, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
-  hoodCut, postureOf } from './Bodies.js';
+  hoodCut, postureOf , companionOptsFrom } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { WEIGHT as TOKEN_WEIGHT } from './Tokens.js';
 import { dropSaber } from './Dropped.js';
@@ -3008,6 +3008,11 @@ export class Enemy {
      * your own line.
      */
     this.look = opts?.look ?? null;
+    /* A COMPANION'S OWN COLOUR SLOTS, read at BUILD time and therefore taken
+     * from the spawn options rather than written by the pack — `adopt` runs
+     * after the body exists, and a hide chosen after the mesh is built is a
+     * hide nobody ever sees. See `companionOptsFrom`. */
+    this._cmpLook = opts?.companionLook ?? null;
     /* Which chassis's vocabulary his kit is written in — the `Trooper` record
      * has carried `kind` since attributes existed, so the spawn hands it over
      * rather than this file guessing from an archetype name. */
@@ -3444,6 +3449,12 @@ export class Enemy {
       scale: A.scale,
       ...(bodyOptsFor(this.type) || {}),
       ...kitOptsFrom(this.look, this.lookKind || 'flesh'),
+      /* …AND A COMPANION'S OWN FOUR SLOTS, which `kitOptsFrom` cannot carry:
+       * its tables are keyed `flesh` and `steel` and a creature is neither, so
+       * a saved hide would be dropped on the way in. `companionOptsFrom` is
+       * that door and it is empty for every body that is not one, so this
+       * costs a spread of `{}` on every other spawn in the game. */
+      ...companionOptsFrom(this._cmpLook),
     };
     /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
      * to be a special case on this line, spread AFTER the man's own kit, so a

@@ -621,4 +621,76 @@ export async function run({ check, assert }) {
     } finally { world.unload(); }
   });
 
+  check('companion: the colours you pick reach the geometry, and an unknown id does not', async () => {
+    /**
+     * "you can customize their appearance to a degree"
+     *
+     * THIS LIGHTS CODE THAT HAS SHIPPED FOR MONTHS AND HAS NEVER BEEN REACHED.
+     * `buildQuadruped` accepts `opts.hide`, `opts.plate`, `opts.belly` and
+     * `opts.eye` and NOTHING in the tree had ever handed it anything but the
+     * plan's own defaults — every creature in the game was wearing its factory
+     * colours because there was no door.
+     *
+     * DRIVEN ONE SLOT AT A TIME. Painting all four at once and finding the
+     * body changed would not tell you whether four slots are wired or one is:
+     * so each is painted alone, and each has to move the body on its own and
+     * move it DIFFERENTLY for a different colour.
+     *
+     * AND THE EYE IS EMISSIVE, which the first version of this missed
+     * completely. It collected `material.color` only, so the eye slot read as
+     * "adds nothing" and looked like a dead control — it is `emissiveMat`, and
+     * its colour lives on `material.emissive`. A check that reads half the
+     * material is a check that reports half the truth.
+     */
+    const { paintById } = await import('../../src/game/Bodies.js');
+    const { fieldCompanion } = await import('../../src/game/Companions.js');
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+      runSeed: 4,
+    });
+    try {
+      const input = idleInput();
+      for (let i = 0; i < 30; i++) world.update(STEP, input);
+      const hues = (e) => {
+        const out = new Set();
+        const eat = (o) => {
+          if (!o.isMesh || !o.material) return;
+          if (o.material.color) out.add('c' + o.material.color.getHex());
+          if (o.material.emissive) out.add('e' + o.material.emissive.getHex());
+        };
+        e.group?.traverse?.(eat);
+        e.rig?.root?.traverse?.(eat);
+        return out;
+      };
+      const put = (look) => hues(fieldCompanion(world, world.player, 'massiff', { rec: { xp: 9, look } }));
+      const factory = put(undefined);
+      const said = [];
+      for (const f of K.COMPANION_LOOK.creature) {
+        const a = [...put({ [f]: 'sky' })].filter((h) => !factory.has(h));
+        const b = [...put({ [f]: 'blood' })].filter((h) => !factory.has(h));
+        assert(a.length, `the ${f} slot changes nothing on the body — it is a dead control`);
+        assert(a.join() !== b.join(),
+          `the ${f} slot paints the same thing for Sky and for Blood — it stores a value and ignores it`);
+        said.push(`${f} ${a.join()}/${b.join()}`);
+      }
+      /* THE SAME CHOICE IS THE SAME ANIMAL, twice running. */
+      const r1 = [...put({ hide: 'sun' })].sort().join();
+      const r2 = [...put({ hide: 'sun' })].sort().join();
+      assert(r1 === r2, 'the same colour built two different bodies');
+      /* AND AN ID THIS BUILD DOES NOT HAVE IS THE FACTORY HIDE, NOT BLACK.
+       * `paintById` answers null for an unknown id and a null slot is simply
+       * absent, which the builder reads as the plan's own colour — so a save
+       * from a build with a wider palette degrades to the animal it was born
+       * as rather than to a silhouette. */
+      const bad = [...put({ hide: 'nonesuch' })].sort().join();
+      assert(bad === [...factory].sort().join(),
+        'an unknown colour id built something other than the factory animal');
+      assert(paintById('nonesuch') === null, 'paintById invented a colour');
+      return `${said.length} slots each move the body and move it differently `
+        + `(${said.join(', ')}); the same pick is stable; an unknown id is the factory hide`;
+    } finally { world.unload(); }
+  });
+
 }

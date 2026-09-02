@@ -906,7 +906,10 @@ export function fieldCompanion(world, owner, kind, opts = {}) {
     owner.position.z - Math.cos(yaw) * HEEL.back,
   );
   _v2.y = world.terrain?.height ? world.terrain.height(_v2.x, _v2.z) : owner.position.y;
-  const e = world.spawnEnemy(K.archetype, _v2);
+  /* THE LOOK RIDES THE SPAWN, because the builder reads it and the builder
+   * runs inside the constructor — see `Enemy._cmpLook`. Everything else about
+   * the animal is hung on afterwards by `adopt`; its colours cannot be. */
+  const e = world.spawnEnemy(K.archetype, _v2, { companionLook: opts.rec?.look || null });
   if (!e) return null;
   /* THE TEAM IS THE WHOLE OF "IT IS ON YOUR SIDE" — Command.js's own header
    * says so: the only things that make a body yours are a team number and the
