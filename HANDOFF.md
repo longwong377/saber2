@@ -24,7 +24,87 @@ Playable two ways:
 
 ---
 
-## 0. V12 — WHAT LANDED, AND WHAT TO DO FIRST
+## 0. V13 — WHAT LANDED, AND WHAT TO DO FIRST
+
+Branch `claude/saber-game-improvements-v12-6f83co`. The player's V13 list is in
+`PLAYTEST.md`'s top entry with a check named on every row. Two new design
+documents were settled BEFORE any code: `COMPANIONS.md` and `SABERFORMS.md`.
+
+**The three headline items.**
+
+- **THE COMPANION.** `companions` (20). One body that is yours in every mode
+  without ever being on the roll. `CompanionKinds.js` is twelve ROWS and
+  nothing anywhere switches on a kind's name; `Companions.js` is the sim;
+  `Kennel.js` is the durable record with its own fold; `CompanionDeck.js` is
+  the hangar body. **Command.js and World.js gained ZERO lines** — the Levy
+  seam (a `_think` wrap that substitutes `ctx.pickTarget` for ONE body and
+  answers from `world._hostilesFor`) is what makes a companion find enemies
+  in the nine modes that build no CommandDirector.
+- **THE THREE SABER SETS.** `saberforms` (5). The single blade is held against
+  a 600-frame RECORDING of the pre-change tree — 9 600 floats, worst drift
+  0.00e+0 — and `Saber.js`/`Combat.js` gained nothing at all.
+- **The five smaller rows**, each with its check: the randomize button, the
+  graves, the head spin, the desecration, the push that throws you.
+
+**WHAT IS NOT DONE, and it is the first thing to pick up.** Four of the twelve
+companion kinds have no body — the hawk, the astromech, the medical droid and
+the wookiee — and the deck representation covers the eight `deck: 'walker'`
+kinds only. `roster.mjs` reports the count honestly ("N of 12 companion kinds
+have a body") and a kind with no deck body is absent from the room rather than
+drawn wrong. The visual quality of the creature bodies was being worked when
+this was written; see §0.1.
+
+### 0.1 The defects this round found by LOOKING and by DRIVING
+
+Every one of these was live in the shipped tree and none was caught by a
+check, which is why each now has one.
+
+- **`this.control.setHalf` was written twenty lines above the statement that
+  assigns `this.control`** — so a staff or a paired-blade player threw in the
+  Player CONSTRUCTOR, every mode, every deploy. Invisible because the single
+  blade skips that whole block, so the default path was clean and both new
+  weapons were unreachable from the first frame.
+- **`keepCompanion` read `world._companion` while the pack lives at
+  `_companions`** — a truthy marker passed the guard, `body0` came back
+  undefined, and every SURVIVING companion was folded as dead.
+- **`CompanionPack` had `dispose()` and not `destroy()`**, which is what
+  `World.unload` calls — tearing down any level with a companion threw.
+- **The deck's rename path had zero callers.** `beginNaming`/`typeName`/
+  `commitName` were written, argued and correct since the deck editor landed,
+  and `callsign` was in `EDIT_OPS` and never offered by `optionsFor`. The
+  equality check passed the whole time because both surfaces agreed about the
+  WORD while one had no way to reach it.
+- **The player's Trust in the Force would have swapped your pet.** The
+  companion picker sits under `[data-panel="saber"]`, which is exactly the
+  root that button walks — and picking a different kind RETIRES the one you
+  have. `opts.skip` is the fence and the check proves the fence is
+  load-bearing by removing it.
+- **`underFire` only ever went up** on a body outside a squad: written by
+  `installTeamDamage`, decayed only inside `_troops`' walk over `squadsOf`.
+- **A companion's blow could never land on an NPC.** `hitTarget` resolves
+  against the point the target stood on at the wind-up — the rule that makes a
+  telegraph dodgeable, argued and measured against a real PLAYER. A B1 does
+  not dodge, it walks, so it was two metres outside a 0.71 m footprint through
+  no decision of its own: 0 blows in 60 s at 0.2 m closest.
+- **Your own blade dismembered your own animal** with friendly fire OFF and
+  `canHarm` answering false, because `takeCut` subtracts from `hp` directly
+  and never sees the friendly-fire scaling: 420 hp in one frame.
+- **`tools/portrait.mjs --enemy` had never once worked** — `new window.THREE_V3
+  ? a : b` parses as `new (cond ? a : b)` against a global nothing exports.
+  That is why nobody had LOOKED at a creature body in a long time.
+
+### 0.2 Two fixture mistakes worth more than the fixes
+
+- **A kill test measured a corpse.** The probe's player was shot dead at 24.5 s
+  and the remaining 35 s recorded a companion heeling to a body: it reported
+  as a 33.7 m drag against an 8 m leash and 35% follow, and NONE of it was the
+  leash. Keep a fixture player alive when the fixture is not about dying.
+- **A push check read 0.00 m/s off ground the player was standing on.**
+  `chest` is written once a frame and the push fires FROM it, so a fixture that
+  moves the body and pushes in the same tick casts its ray from where the
+  player WAS. And "force strength" is the `forcePower` SETTING, not the pool.
+
+## 0z. V12 — what landed the round before
 
 Branch `claude/saber-game-improvements-v12-6f83co`, everything pushed. The
 player's V12 list is in `PLAYTEST.md`'s top entry with a check named on every
