@@ -1657,4 +1657,47 @@ export async function run({ check, assert }) {
     } finally { close(); }
   });
 
+  check('menu: the deploy card says who is coming with you, in every mode that takes them', () => {
+    /**
+     * "I tried to play trial of waves and noticed that I still had troops in
+     *  that mode, is that a feature or bug?"
+     *
+     * A feature, and an invisible one. `settings.allies` is a PERSISTED GLOBAL
+     * — one slider on the Army tab — and `commandConfig` fields it in every
+     * mode that does not declare `solo` or `dojo`. Set it once on any card and
+     * it follows you onto all of them, and until now no screen said so before
+     * Ignite. `_syncAlliesRow` was already written for the mirror image (a lit
+     * control the mode overrules in silence); this is the mode HONOURING it in
+     * silence, which is the same surprise from the other side.
+     *
+     * Asserted on the two directions that matter and off the mode's own
+     * fields, never off a mode's name.
+     */
+    const { menu, settings, doc, close } = menuOn({ allies: 6, mode: 'waves' });
+    try {
+      menu.selectMode?.('waves');
+      const el = doc.getElementById('mode-need');
+      assert(el, 'the deploy card has no line to say it on');
+      const said = el.textContent || '';
+      assert(/\b6\b/.test(said) && /troop/i.test(said),
+        `six allied troopers are coming and the Trial's card says "${said.trim() || '(nothing)'}"`);
+
+      /* NOBODY COMING, NOTHING SAID — a card that always carries a sentence is
+       * a card nobody reads. */
+      settings.allies = 0;
+      menu.selectMode?.('waves');
+      assert(!/troop/i.test(doc.getElementById('mode-need').textContent || ''),
+        'it promises troopers when the slider is at zero');
+
+      /* AND THE TWO MODES THAT REFUSE A CONTINGENT DO NOT CLAIM ONE. They have
+       * their own sentence, in the slider's own readout. */
+      settings.allies = 6;
+      menu.selectMode?.('duel');
+      assert(!/troop/i.test(doc.getElementById('mode-need').textContent || ''),
+        'the Duel is solo and its card offers to take six men in');
+      return 'the Trial names the six it is taking, says nothing at zero, and the Duel — which '
+        + 'refuses a contingent — never claims one';
+    } finally { close(); }
+  });
+
 }

@@ -5291,10 +5291,41 @@ export class Menu {
     const el = document.getElementById('mode-need');
     if (!el) return;
     const M = MODES[this.s.mode];
-    el.textContent = (M?.needsSession && !this._netMode)
-      ? `${M.name} is fought against another commander — host or join a session under `
-        + 'Co-op first. Deployed alone it stands the meeting down and fights the composed wave.'
-      : '';
+    const lines = [];
+    if (M?.needsSession && !this._netMode) {
+      lines.push(`${M.name} is fought against another commander — host or join a session under `
+        + 'Co-op first. Deployed alone it stands the meeting down and fights the composed wave.');
+    }
+    /**
+     * …AND WHO IS COMING WITH YOU, WHICH IS THE OTHER HALF OF THE SAME
+     * PROMISE — and it was missing.
+     *
+     * The player, V13: *"I tried to play trial of waves and noticed that I
+     * still had troops in that mode, is that a feature or bug?"*
+     *
+     * A feature. `settings.allies` is a PERSISTED GLOBAL — one slider on the
+     * Army tab, kept across sessions — and `commandConfig` fields it in every
+     * mode that does not declare `solo` or `dojo`. He had set it once, on
+     * another card, and it followed him. `_syncAlliesRow` one screen up was
+     * written for the mirror-image defect (a lit control the mode overrules in
+     * silence); this is the case where the mode HONOURS it in silence, which
+     * is the same surprise from the other side.
+     *
+     * SAID RATHER THAN REMOVED. Nothing about a contingent is wrong in the
+     * Trial and taking it away would be answering a question with a
+     * confiscation — the player asked what it was, not for it to stop. What
+     * was wrong is that no screen said it before Ignite.
+     *
+     * On the mode's own fields, so it is right in the eleven modes and in the
+     * twelfth: `solo`/`dojo` are the two that refuse a contingent, and they
+     * already have their own sentence in the slider's readout.
+     */
+    const n = Math.round(Number(this.s.allies) || 0);
+    if (n > 0 && !M?.solo && !M?.dojo) {
+      lines.push(`You are taking ${n} allied ${n === 1 ? 'trooper' : 'troopers'} in with you — `
+        + 'the Allied troops slider on the Army tab, which is remembered across every mode.');
+    }
+    el.textContent = lines.join(' ');
   }
 
   _syncVersusBox() {
@@ -9224,6 +9255,9 @@ export class Menu {
      * `_syncAlliesRow`. */
     this._slider('opt-allies', 'allies', (v) => {
       const M = MODES[this.s.mode];
+      /* The deploy card says who is coming with you, and this is the handle
+       * that changes the answer — see `_syncSessionNeed`. */
+      this._syncSessionNeed?.();
       if (M?.solo || M?.dojo) return `not in ${M?.name || this.s.mode}`;
       return v <= 0 ? 'none' : `${Math.round(v)} of ${MAX_STRENGTH}`;
     });
