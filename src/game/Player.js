@@ -1833,12 +1833,14 @@ export class CameraRig {
      * WHICH SIDE THE CAMERA STANDS ON, as a sign rather than a distance.
      *
      * `shoulder` is the offset and it was written once in this constructor and
-     * never again by anything in the project, so the camera stood over the same
-     * shoulder into every corner in the game. Splitting the sign off the
-     * magnitude is what lets the swap be a smooth ease of one number rather
-     * than a teleport, and it is what `_resolveShoulder` moves.
+     * never again by anything in the project. It is written by NOTHING in the
+     * game now — see `_resolveShoulder`, which used to flip it on a wall
+     * raycast and was the reticle-drift bug. It stays a field so a future
+     * swap key can set it deliberately; a wall may not.
      */
     this.shoulderSide = 1;
+    /** 0..1: how much of the shoulder offset the wall behind leaves room for. */
+    this._shoulderRoom = 1;
     this.shoulderAt = this.shoulder;
     /** The death shot, or null. See beginDeathShot. */
     this.shot = null;
@@ -1952,11 +1954,24 @@ export class CameraRig {
    * constant ANGLE instead of a constant distance, which is the thing the eye
    * actually reads.
    *
-   * And the side is now a decision rather than a constant. If the wall is on
-   * the right and not on the left, the camera steps to the left — the same
-   * thing a player would do with a manual swap and the same thing every
-   * third-person game has done for fifteen years. Hysteresis (the 0.6 m) stops
-   * it flapping in a doorway.
+   * THE SIDE IS FIXED, AND THE OFFSET GIVES WAY INSTEAD. This used to swap
+   * the camera to the other shoulder whenever a wall was nearer on the aiming
+   * side — silently, on a raycast every sixth frame, with 0.6 m of
+   * hysteresis. It was the bug the player reported across five builds and
+   * could never pin to a move: "the game will start with the cursor to the
+   * right of the player's head and suddenly you notice things feel strange
+   * and you notice that the cursor is now to the left of the player's head",
+   * and "if you keep playing it will somehow revert back to normal". Every
+   * word of that is a wall raycast flipping `shoulderSide` and flipping it
+   * back. The blade's aim, the deflection cone and every bit of the player's
+   * muscle memory hang off which side of the head the reticle sits, so the
+   * side is not the camera's to decide.
+   *
+   * What a wall gets now is the OFFSET, not the side: when the ray on the
+   * aiming shoulder is short the camera eases in toward the centreline by as
+   * much as the wall took, and eases back out when it is clear. The head
+   * comes across the reticle for the length of a doorway and the reticle
+   * stays where it was.
    */
   _resolveShoulder(dt, base, fwd, right, ctx) {
     // The shot owns the frame; a corpse is not aiming past its own shoulder.
@@ -1964,25 +1979,21 @@ export class CameraRig {
       this.shoulderAt = damp(this.shoulderAt, 0, 3.2, dt);
       return this.shoulderAt;
     }
-    // Two extra raycasts a frame to answer a question that changes on the scale
-    // of a doorway is waste; six frames is a tenth of a second and the ease
-    // below is slower than that anyway.
+    // One raycast every sixth frame answers a question that changes on the
+    // scale of a doorway; the ease below is slower than that anyway.
     this._sideTick = (this._sideTick | 0) + 1;
     if (ctx.physics && this.shoulder > 0.01 && (this._sideTick % 6) === 0) {
       const reach = this.targetDistance + 0.42;
       const filter = (b) => b.static || b.layer === LAYER.PROP;
       _c2.copy(fwd).negate();
-      let r = reach, l = reach;
-      _c1.copy(base).addScaledVector(right, this.shoulder);
-      const hr = ctx.physics.raycast(_c1, _c2, reach, filter);
-      if (hr) r = hr.distance;
-      _c1.copy(base).addScaledVector(right, -this.shoulder);
-      const hl = ctx.physics.raycast(_c1, _c2, reach, filter);
-      if (hl) l = hl.distance;
-      if (this.shoulderSide > 0 && l > r + 0.6) this.shoulderSide = -1;
-      else if (this.shoulderSide < 0 && r > l + 0.6) this.shoulderSide = 1;
+      _c1.copy(base).addScaledVector(right, this.shoulder * this.shoulderSide);
+      const h = ctx.physics.raycast(_c1, _c2, reach, filter);
+      /* How much of the shoulder survives: all of it in the open, less as the
+       * wall closes on the aiming side, never any of the other side. */
+      this._shoulderRoom = h ? clamp(h.distance / reach, 0, 1) : 1;
     }
-    this.shoulderAt = damp(this.shoulderAt, this.shoulder * this.shoulderSide, 5, dt);
+    const room = this._shoulderRoom ?? 1;
+    this.shoulderAt = damp(this.shoulderAt, this.shoulder * this.shoulderSide * room, 5, dt);
     return this.shoulderAt;
   }
 
