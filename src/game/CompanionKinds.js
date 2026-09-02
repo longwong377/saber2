@@ -57,7 +57,11 @@
  */
 import { ARCHETYPES } from './Enemy.js';
 import { TOUGHNESS } from './Combat.js';
-import { buildQuadruped } from './Bodies.js';
+import { buildQuadruped, buildB1 } from './Bodies.js';
+/* The bolt palette, so the reprogrammed B1's shot is the same red every other
+ * E-5 in the game fires — one table, and a companion that fired a colour
+ * nothing else fires would read as a different weapon. */
+import { BOLT_COLORS } from './Bolts.js';
 
 /**
  * THE PACE CAP, WHICH IS THE MECHANISM AND NOT A FLAVOUR NOTE.
@@ -347,6 +351,69 @@ export function kindHasDuty(kind, duty) {
  * of the field, which is the faction defect `factions.mjs` exists to stop.
  */
 export const COMPANION_UNITS = {
+  /**
+   * THE VARACTYL — the third mount, and the reason there are three rather than
+   * one: it is NOT ABOUT SPEED. The tauntaun makes the map faster; this makes
+   * the map a different SHAPE, because it takes a grade the player's own
+   * character controller refuses.
+   *
+   * `grade` IS THE WHOLE ARCHETYPE. `_move` reads it as the steepest ground
+   * the body is built for in `slopeAt`'s own units (1 − n.y, so 0 is a table
+   * and 1 is a wall) and falls the pace off over the top 45% of it rather than
+   * at a threshold. 0.82 is the highest in the game — an acklay is built for
+   * broken ground and this is built for the rock beside it.
+   *
+   * SLOWEST OF THE THREE MOUNTS ON THE FLAT, at 4.3 against the tauntaun's
+   * 6.1, and that is the trade stated as a number: pace on the level is what
+   * it gives up for the only route in the game nothing else has.
+   *
+   * ITS ONLY ATTACK HURTS NOTHING — the shipped `sweep` row at `damage: 0`
+   * through this archetype, so a tail that knocks a body flat and takes not
+   * one point off it. That is the honest reading of "useless in battle" for an
+   * animal that is two metres of muscle: it can move you, it cannot kill you.
+   */
+  varac: {
+    label: 'Varactyl', build: (o) => buildQuadruped({ ...o, kind: 'varac' }),
+    scale: 1.35, hp: 300, mass: 420,
+    speed: 4.3, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 0, preferred: [1.8, 3.4],
+    moves: ['sweep'],
+    grade: 0.82,
+    mount: true,
+    companion: true, score: 0, threat: 0, unlockAt: 99,
+  },
+
+  /**
+   * THE REPROGRAMMED B1 — CHEAPEST BODY IN THE SET BY A WIDE MARGIN, and the
+   * one kind that borrows another's.
+   *
+   * `buildB1` verbatim: zero new body code, zero new pose path, BipedAnimator
+   * works, `DROID_RANK_REGIONS` already paints it and Presence already voices
+   * it. That is the whole reason this is the kind to prototype the RANGED path
+   * on — it is the only companion with a rifle, so it is the only one on
+   * `_shoot`, the cover hunt and the `preferred` band, and it never reaches
+   * `_beastBrain` at all.
+   *
+   * WHY IT IS ITS OWN ARCHETYPE AND NOT `ARCHETYPES.b1`. A companion carries
+   * `companion: true, score: 0, threat: 0` so no wave can ever compose it —
+   * and pointing the kind row at `b1` would give the ENEMY's b1 those fields,
+   * which is every B1 in the game falling out of the wave composer at once.
+   * One shared BUILDER, two archetypes, and the flag on exactly one of them.
+   *
+   * IT IS A BAD GUN, deliberately: "it dies to two bolts and it will stand in
+   * the open, because that is what a B1 does". Its accuracy is a third of the
+   * line's — `spread` 0.075 → 0.22 — and its rate is slower, so what it
+   * contributes is presence and a running commentary rather than damage.
+   */
+  b1c: {
+    label: 'Reprogrammed B1', build: buildB1, scale: 1.02, hp: 40, mass: 52,
+    speed: 4.3, toughness: TOUGHNESS.droid, ranged: true, weapon: 'e5',
+    fireRate: 2.2, burst: 2, burstGap: 0.16, spread: 0.22, damage: 8,
+    preferred: [7, 15], boltColor: BOLT_COLORS.red,
+    hipHeight: 0.96,
+    companion: true, score: 0, threat: 0, unlockAt: 99,
+  },
+
 
   /**
    * THE TOOKA KIT — the second companion, and the one that is worth nothing.

@@ -12,7 +12,9 @@ const { world } = await bootWorld({
 const STEP = 1 / 30;
 for (let i = 0; i < 30; i++) world.update(STEP, idle);
 const p = world.player;
-for (const id of ['massiff', 'tooka', 'tuk', 'pup', 'taun', 'blurrg']) {
+/* EVERY KIND THE TABLE DECLARES, not a hand-kept list — so a kind that gains
+ * a body is measured the day it lands and one that has none says so. */
+for (const id of Object.keys(COMPANION_KINDS)) {
   const K = COMPANION_KINDS[id];
   if (!ARCHETYPES[K.archetype]) { console.log(`${id.padEnd(8)} NO ARCHETYPE`); continue; }
   let e = null, err = null;

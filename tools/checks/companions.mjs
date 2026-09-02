@@ -248,9 +248,20 @@ export async function run({ check, assert }) {
      */
     const cap = K.PLAYER_SPRINT * K.PACE_CAP;
     const rows = [];
+    /**
+     * A KIND WITH NO BODY IS NAMED, NOT SKIPPED.
+     *
+     * `continue` on a missing archetype is exactly the vacuous shape a check
+     * should never have: as kinds gained bodies this loop would go on passing
+     * with a floor of six while the real count was twelve, and the day
+     * somebody DELETED a body it would pass too. The missing ones are counted
+     * and printed in the result, so the gap is a number on the screen every
+     * time the gate runs rather than something you have to go and look for.
+     */
+    const missing = [];
     for (const id of K.COMPANION_ORDER) {
       const A = (await import('../../src/game/Enemy.js')).ARCHETYPES[K.COMPANION_KINDS[id].archetype];
-      if (!A) continue;
+      if (!A) { missing.push(id); continue; }
       const { world, e } = await field(id, { xp: 99 });
       try {
         assert(e, `${id} would not field`);
@@ -260,7 +271,13 @@ export async function run({ check, assert }) {
       } finally { world.unload(); }
     }
     assert(rows.length >= 6, `only ${rows.length} kinds have a body to measure`);
-    return `${rows.length} bodies, cap ${cap.toFixed(2)} m/s: ${rows.join(', ')}`;
+    /* AND EVERY BODY THAT EXISTS IS MEASURED — the floor above is a floor, and
+     * this is the equality that makes the count honest. */
+    assert(rows.length + missing.length === K.COMPANION_ORDER.length,
+      `${rows.length} measured + ${missing.length} missing is not ${K.COMPANION_ORDER.length} kinds`);
+    return `${rows.length} of ${K.COMPANION_ORDER.length} kinds have a body, cap ${cap.toFixed(2)} m/s: `
+      + `${rows.join(', ')}`
+      + (missing.length ? ` — STILL WITHOUT A BODY: ${missing.join(', ')}` : '');
   });
 
   check('companion: it finds enemies in a mode with no army at all', async () => {
