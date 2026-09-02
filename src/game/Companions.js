@@ -218,15 +218,23 @@ export const COMPANION_ORDERS = {
  * slot that says why it is cold must never be able to disagree. Returns null
  * when the order is legal, and the refusal otherwise.
  */
+/** 'a' or 'an', off the sound the word starts with rather than off the letter
+ *  — there are no 'hour'-shaped kind names in the table and there is no reason
+ *  to write a pronunciation dictionary for twelve rows. */
+const article = (w) => (/^[aeiou]/i.test(w || '') ? 'an' : 'a');
+
 export function refuseOrder(e, id) {
   const O = COMPANION_ORDERS[id];
   if (!O) return 'no such order';
   const K = COMPANION_KINDS[e?._cmpKind];
   if (!K) return 'nothing of yours is out';
   if (!kindHasDuty(K.id, id === 'ward' ? 'ward' : id)) {
-    return id === 'ward'
-      ? `a ${K.label.toLowerCase()} has nothing to meet them with`
-      : `a ${K.label.toLowerCase()} does not do that`;
+    /* THE ARTICLE IS PART OF THE SENTENCE. "a astromech has nothing to meet
+     * them with" is a refusal a player reads as a bug in the game rather than
+     * a rule of it, and this string is printed on the wheel under the cursor —
+     * the one place the game speaks to the player about their own animal. */
+    const n = `${article(K.label)} ${K.label.toLowerCase()}`;
+    return id === 'ward' ? `${n} has nothing to meet them with` : `${n} does not do that`;
   }
   const rec = e._cmpRec;
   if (!holdsCompanion(rec, O.holds)) {

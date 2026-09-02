@@ -22,6 +22,10 @@ import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
  * the model wearing it.
  */
 import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
+/* The six orders and the one reader that says whether a slot is live and why
+ * not — see `CompanionWheel`. */
+import { COMPANION_ORDERS, refuseOrder } from '../game/Companions.js';
+import { COMPANION_KINDS } from '../game/CompanionKinds.js';
 /* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
  * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
  * the rule that stops a man advancing is `braveryOf(body) < SHAKEN_AT` (0.30)
@@ -896,6 +900,86 @@ export const TERSE = {
   squad: 'Which squad hears you',
   detach: 'One man, his own orders',
 };
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE COMPANION WHEEL
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * "you can give them a limited set of orders such as attacking/killing a
+ *  specific enememy that you target, attacking anything that gets within a
+ *  certain range of you, etc."
+ *
+ * SIX SLOTS, AND THE ONLY REASON THIS IS A WHEEL AND NOT SIX KEYBINDS IS THE
+ * CAPTION.
+ *
+ * Four of the six are LICENSED BY RUNG, and a cold slot that does not say why
+ * it is cold is a control the player concludes is broken. `refuseOrder` is the
+ * one reader for both halves — whether the slot is live and what the refusal
+ * says — so a lit slot and its sentence can never disagree, and the sentence
+ * is the animal's own: "not until it is trusted", not "locked".
+ *
+ * AND ONE SLOT MEANS TWELVE DIFFERENT THINGS. The verb reads its label and its
+ * caption off `COMPANION_KINDS[kind].verb`, so the wheel says SLICE for an
+ * astromech and CRY for a tooka and BLOCK for a massiff. That is what stops
+ * twelve kinds being twelve reskins, and it is the whole reason the label is
+ * `null` in the order table rather than a string.
+ *
+ * THE DEADZONE IS HEEL, AND THAT IS NOT A CONVENIENCE. `emoteIndexAt` already
+ * returns -1 inside EMOTE_DEADZONE — open the wheel, let go in the middle, and
+ * every other wheel in the game does nothing. Here the middle is the one order
+ * you want when you have no time to aim: come back. It is unrefusable at every
+ * rung for the same reason, so the panic verb is available in the first minute
+ * of the first run and costs a tap with no aim at all.
+ */
+export class CompanionWheel extends RadialWheel {
+  constructor(host) {
+    /* THE SLOTS ARE THE ORDER TABLE, IN ITS OWN ORDER. Never a list typed
+     * here: a seventh order would be a row in Companions.js and nothing in
+     * this file, and `HEEL` is deliberately absent from the ring because it is
+     * the deadzone. */
+    const items = Object.values(COMPANION_ORDERS)
+      .filter((O) => O.id !== 'heel')
+      .map((O) => ({ id: O.id, name: O.label || '—', blurb: O.caption || '', kind: 'cmp' }));
+    super(host, { items, action: 'companionwheel', cls: 'em cw' });
+    /* The live body, set by whoever ticks the HUD. Null in every mode where
+     * nothing of yours is out, which is most of them. */
+    this.body = null;
+  }
+
+  /** The verb slot wears the live animal's own name. */
+  titleFor(item) {
+    if (item.id !== 'verb') return item.name;
+    return COMPANION_KINDS[this.body?._cmpKind]?.verb?.label || 'VERB';
+  }
+
+  /**
+   * THE LIVE CAPTION, and it is three different sentences depending on what is
+   * true — which is the part a bare keybinding could never do.
+   *
+   *   nothing of yours is out   → say so once, on every slot, rather than
+   *                               offering six orders to nobody.
+   *   the rung refuses it       → the refusal, in the animal's own terms.
+   *   it is live                → what the order will actually do, and for a
+   *                               standing order whether it is ALREADY on, so
+   *                               the wheel is a readout as well as a control.
+   */
+  captionFor(item) {
+    const e = this.body;
+    if (!e || e.dead) return 'Nothing of yours is out';
+    const why = refuseOrder(e, item.id);
+    if (why) return why;
+    if (item.id === 'verb') {
+      return COMPANION_KINDS[e._cmpKind]?.verb?.caption || item.blurb;
+    }
+    if (e._cmpDuty?.id === item.id) return `${item.blurb} — on now, again to lift`;
+    if (item.id === 'ward') {
+      const r = COMPANION_KINDS[e._cmpKind]?.ward || 0;
+      return r > 0 ? `Meet anything inside ${r} m of ME` : item.blurb;
+    }
+    return item.blurb;
+  }
+}
 
 export class OrderWheel extends RadialWheel {
   constructor(host, formations) {
