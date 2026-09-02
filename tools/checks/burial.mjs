@@ -162,6 +162,10 @@ export async function run({ check, assert }) {
         rise = mate.morale - mateWas; r2 = (near?.morale ?? 0) - nearWas; healed = mate.body.hp - hpWas;
         return true;
       }
+      /* Held at a half so the jump is not eaten by the clamp at 1 — presence
+       * has every record at the cap by the time the bearer arrives. */
+      mate.morale = 0.5; if (near) near.morale = 0.5;
+      mate.body.hp = mate.body.maxHp * 0.5;          // …and the medic is not the one being measured
       mateWas = mate.morale; nearWas = near?.morale ?? 0; hpWas = mate.body.hp;
       return false;
     });

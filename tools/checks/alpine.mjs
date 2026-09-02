@@ -80,9 +80,10 @@ function build() {
     const solidIdx = new Set(im.userData.solid || []);
     for (let i = 0; i < im.count; i++) {
       const box = boundsOf(im, i);
-      const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
-      const crest = box.max.y - terrain.height(cx, cz);
       const mtx = new THREE.Matrix4(); im.getMatrixAt(i, mtx);
+      // over the ground it was PLACED on — the dressing's own measure — not
+      // the ground under the middle of a lopsided bounding box on a hillside
+      const crest = box.max.y - terrain.height(mtx.elements[12], mtx.elements[14]);
       const proxy = new THREE.Mesh(im.geometry);
       proxy.matrixWorld.copy(im.matrixWorld).multiply(mtx); proxy.matrixAutoUpdate = false;
       proxy.userData.crest = crest; proxy.userData.box = box;
