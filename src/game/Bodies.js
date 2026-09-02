@@ -9581,6 +9581,23 @@ export function buildQuadruped(opts = {}) {
   const belly = hideMat(opts.belly ?? P.belly, 0.94);
   const eye = emissiveMat(opts.eye ?? P.eye, 2.8);
   const tooth = boneMat(0xd6cbb0, 0.34);
+  /**
+   * THE PUPIL, and it is the cheapest character in the file.
+   *
+   * Every creature's eye is one `emissiveMat` sphere, and an emissive under
+   * the cel program solves to a SINGLE FLAT COLOUR — so what the player sees
+   * is a coloured disc with no centre and no direction, which is the one
+   * feature that decides whether an animal is looking at him. A dark bead
+   * standing 15% proud of that disc gives it a pupil, and because it is
+   * offset FORWARD along the head's own +Z it also gives it a gaze: the eye
+   * reads as aimed the way the muzzle is.
+   *
+   * One material, so one extra merged mesh on the head bone and nothing
+   * anywhere else. `hideMat` and not `emissiveMat`: a pupil that glows is a
+   * headlight, which is exactly the mistake the tauntaun's row spends a
+   * paragraph refusing for the iris.
+   */
+  const pupil = hideMat(0x140f0b, 0.30);
 
   /* ── the trunk ──
    * ONE lathe, laid along the animal's spine and reshaped by a superellipse
@@ -9861,7 +9878,7 @@ export function buildQuadruped(opts = {}) {
    * animal's own half-width at that station, swells and superellipse and all.
    * See the neck's own note for what it is used for and what typing a number
    * here instead cost. */
-  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth,
+  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth, pupil,
     trunkR: Math.abs(hull(P.headAt[1] / P.trunk[2], Math.PI / 2)[0]) });
 
   /* ── the limbs ── */
@@ -10218,6 +10235,27 @@ function buildCreatureHead(rig, P, S, M) {
   };
 
   /**
+   * AN EYE, WITH SOMETHING BEHIND IT.
+   *
+   * Six eyes across five branches were each one `emissiveMat` sphere placed
+   * by hand, and this is those six calls with the pupil from `M.pupil` in the
+   * same call — one place that knows how big a pupil is relative to an eye
+   * and how far in front of it the bead sits, rather than six. `r` is the
+   * eye's radius in plan units exactly as the old literals were, so the eyes
+   * do not move or change size.
+   *
+   * The bead is pushed +Z (the way the face points) rather than along a
+   * normal, for the reason the muzzle's droop is a bone-frame number: these
+   * heads are authored in the bone's frame and nothing here knows which way
+   * a given skull is tipped.
+   */
+  const eyeAt = (x, y, z, r) => {
+    k.add(M.eye, new THREE.SphereGeometry(r * S, 7, 6), [x * S, hy + y * S, hz + z * S]);
+    k.add(M.pupil, new THREE.SphereGeometry(r * 0.52 * S, 6, 5),
+      [x * S * 1.04, hy + y * S, hz + (z + r * 0.72) * S]);
+  };
+
+  /**
    * ── AND THE FIVE BRANCHES BELOW NOW CALL THEM ────────────────────────
    *
    * `muzzle()` and `cheek()` were written, argued for at length, and then not
@@ -10263,7 +10301,7 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.20 * S, hy + 0.08 * S, hz + 0.20 * S, 0.085 * S],
         [sx * 0.34 * S, hy - 0.06 * S, hz + 0.46 * S, 0.050 * S],
         [sx * 0.32 * S, hy + 0.06 * S, hz + 0.68 * S, 0.010 * S]], 7));
-      k.add(M.eye, new THREE.SphereGeometry(0.046 * S, 7, 6), [sx * 0.18 * S, hy + 0.10 * S, hz + 0.20 * S]);
+      eyeAt(sx * 0.18, 0.10, 0.20, 0.046);
     });
   } else if (K === 'fanged') {
     /* THE NEXU. FOUR EYES in two pairs — one line of geometry and the single
@@ -10282,17 +10320,28 @@ function buildCreatureHead(rig, P, S, M) {
     parts.push(muzzle(0.48, 0.20, 0.105, -0.05, 0.03, 0.10, { flat: 0.68, n: 3.0, chin: 0.18, crown: 0.10 }));
     for (const sx of [1, -1]) parts.push(cheek(sx * 0.14, -0.02, 0.11, 0.125, 1.0, 0.88, 1.25));
     k.pair((sx) => {
-      k.add(M.eye, new THREE.SphereGeometry(0.042 * S, 7, 6), [sx * 0.11 * S, hy + 0.10 * S, hz + 0.26 * S]);
-      k.add(M.eye, new THREE.SphereGeometry(0.030 * S, 6, 5), [sx * 0.16 * S, hy + 0.03 * S, hz + 0.16 * S]);
+      eyeAt(sx * 0.11, 0.10, 0.26, 0.042);
+      eyeAt(sx * 0.16, 0.03, 0.16, 0.030);
       k.row(4, (i, t) => {
-        k.add(M.tooth, clawGeo((0.18 - t * 0.06) * S, 0.030 * S, 0.005 * S, 0.35, 4, 2),
+        /* SIX SIDES AND THREE RINGS, not four and two. A fang is 2 cm long
+         * and stands OUTSIDE the lip where nothing hides its silhouette, and
+         * at rings 2 it is two prisms end to end — the rendered massiff has
+         * a mouthful of flat white wedges. Three rings on the same 0.35 rad
+         * of bend is a curve; six sides round the shaft is the difference
+         * between a tooth and a shard. */
+        k.add(M.tooth, clawGeo((0.18 - t * 0.06) * S, 0.028 * S, 0.004 * S, 0.35, 6, 3),
           [sx * (0.10 + t * 0.09) * S, hy - 0.10 * S, hz + (0.40 - t * 0.16) * S], [0.9 + t * 0.5, 0, 0]);
-        k.add(M.tooth, clawGeo((0.15 - t * 0.05) * S, 0.026 * S, 0.005 * S, 0.35, 4, 2),
+        k.add(M.tooth, clawGeo((0.15 - t * 0.05) * S, 0.024 * S, 0.004 * S, 0.35, 6, 3),
           [sx * (0.10 + t * 0.09) * S, hy - 0.02 * S, hz + (0.40 - t * 0.16) * S], [2.35 - t * 0.4, 0, 0]);
       });
-      // the quill whiskers either side of the jaw
-      k.add(M.plate, tubeGeo([[sx * 0.14 * S, hy + 0.02 * S, hz + 0.10 * S, 0.020 * S],
-        [sx * 0.40 * S, hy + 0.12 * S, hz - 0.10 * S, 0.004 * S]], 5, { capRoot: false }));
+      /* The quill whiskers either side of the jaw — THREE nodes and not two.
+       * `tubeGeo` puts one ring per node, so a two-node quill is a five-sided
+       * cone: seen from the side it is a flat pale blade lying across the
+       * cheek, which on the tooka's small head is the biggest thing on it.
+       * A mid node at a third of the radius makes it a taper. */
+      k.add(M.plate, tubeGeo([[sx * 0.14 * S, hy + 0.02 * S, hz + 0.10 * S, 0.016 * S],
+        [sx * 0.28 * S, hy + 0.08 * S, hz + 0.01 * S, 0.008 * S],
+        [sx * 0.42 * S, hy + 0.13 * S, hz - 0.11 * S, 0.003 * S]], 6, { capRoot: false }));
     });
   } else if (K === 'tusked') {
     /* THE RANCOR. No neck: the skull is a wedge sitting straight on the
@@ -10321,7 +10370,7 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.tooth, tubeGeo([[sx * 0.11 * S, hy - 0.26 * S, hz + 0.46 * S, 0.040 * S],
         [sx * 0.12 * S, hy - 0.08 * S, hz + 0.50 * S, 0.024 * S],
         [sx * 0.12 * S, hy + 0.06 * S, hz + 0.48 * S, 0.006 * S]], 6));
-      k.add(M.eye, new THREE.SphereGeometry(0.040 * S, 6, 5), [sx * 0.16 * S, hy + 0.14 * S, hz + 0.30 * S]);
+      eyeAt(sx * 0.16, 0.14, 0.30, 0.040);
       k.add(M.plate, clawGeo(0.26 * S, 0.070 * S, 0.014 * S, -0.5, 5, 2),
         [sx * 0.20 * S, hy + 0.32 * S, hz - 0.06 * S], [-0.7, 0, sx * 0.4]);
       k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.11 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
@@ -10349,7 +10398,7 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.26 * S, hy + 0.18 * S, hz - 0.02 * S, 0.060 * S],
         [sx * 0.46 * S, hy + 0.20 * S, hz + 0.10 * S, 0.040 * S],
         [sx * 0.56 * S, hy + 0.06 * S, hz + 0.22 * S, 0.008 * S]], 6));
-      k.add(M.eye, new THREE.SphereGeometry(0.038 * S, 6, 5), [sx * 0.13 * S, hy + 0.08 * S, hz + 0.24 * S]);
+      eyeAt(sx * 0.13, 0.08, 0.24, 0.038);
       k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.14 * S, 0.026 * S, 0.005 * S, 0.3, 4, 2),
         [sx * (0.07 + t * 0.08) * S, hy - 0.18 * S, hz + 0.26 * S], [0.4 + t * 0.3, 0, 0]));
       // the ruff — fur clumps round the jaw, which is where the wampa's
@@ -10380,7 +10429,7 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.16 * S, hy + 0.10 * S, hz + 0.14 * S, 0.055 * S],
         [sx * 0.30 * S, hy - 0.12 * S, hz + 0.44 * S, 0.034 * S],
         [sx * 0.20 * S, hy - 0.20 * S, hz + 0.70 * S, 0.008 * S]], 6));
-      k.add(M.eye, new THREE.SphereGeometry(0.048 * S, 7, 6), [sx * 0.14 * S, hy + 0.12 * S, hz + 0.22 * S]);
+      eyeAt(sx * 0.14, 0.12, 0.22, 0.048);
       k.row(4, (i, t) => {
         k.add(M.tooth, clawGeo(0.10 * S, 0.021 * S, 0.004 * S, 0.3, 4, 2),
           [sx * 0.11 * S, hy - 0.20 * S, hz + (0.24 + t * 0.34) * S], [0.5, 0, 0]);

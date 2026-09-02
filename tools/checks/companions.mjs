@@ -764,4 +764,77 @@ export async function run({ check, assert }) {
     } finally { restore(); }
   });
 
+  check('companion: it is on the deck with you, it follows, and it sits down', async () => {
+    /**
+     * "They will be with you in the hangar as well"
+     *
+     * TWO REPRESENTATIONS OF ONE RECORD, and the refusal is verified rather
+     * than assumed: the hangar World deliberately has NO CommandDirector,
+     * because `main.bank()` treats any world with `.command` as a battle and
+     * would strike the whole roll on every hangar visit. Putting a live
+     * `Enemy` in that room drags `_think`, targeting, the LOD ladder and the
+     * death path into a scene built without any of them. So the deck body is
+     * its own thing and the Kennel record is the only thing that crosses.
+     *
+     * AND IT SITS, which is the pose that has no home anywhere in this tree:
+     * every walker advances `walkPhase` at a floor of 0.1, so a standing
+     * quadruped cycles its legs on the spot forever. On a battlefield nobody
+     * looks long enough to notice. In a room you walk around for minutes it is
+     * the whole difference between a companion and a prop that jogs in place.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    Kn.clear();
+    Kn.adopt('massiff', 'Borz');
+    const { world } = await bootWorld({
+      level: 'hangar',
+      settings: { mode: 'hangar', level: 'hangar', allies: 0, quality: 'low' },
+      runSeed: 2,
+    });
+    try {
+      const input = idleInput();
+      for (let i = 0; i < 60; i++) world.update(STEP, input);
+      const fig = world._companionDeck;
+      assert(fig, 'nothing of yours came up in the lift');
+      assert(fig.rec.name === 'Borz', `the deck body is "${fig.rec.name}" and not the animal in the kennel`);
+      const p = world.player;
+      const gap = () => fig.root.position.distanceTo(p.position);
+      /* IT ARRIVES AT YOUR HEEL. `callTheCompanion` runs while the ROOM is
+       * built and the player is placed after it, so without the arrival snap
+       * the body starts at the world origin — measured at 92.9 m, jogging in
+       * from the far bulkhead every time you step off the lift. */
+      assert(gap() < 6, `it came up in the lift and is ${gap().toFixed(1)} m away`);
+      const sat = fig.sit;
+      assert(sat > 0.8, `standing still beside you it is only ${sat.toFixed(2)} sat down`);
+
+      /* IT FOLLOWS, and it stands up to do it. The deck's own walls stop the
+       * player after a couple of metres in this fixture, which is enough:
+       * what is measured is that the gap is HELD and that the sit lifts. */
+      let minSit = 1, moved = 0;
+      const from = p.position.clone();
+      for (let i = 0; i < 30 * 3; i++) {
+        p.position.x += 4 * STEP;
+        world.update(STEP, input);
+        minSit = Math.min(minSit, fig.sit);
+        moved = p.position.distanceTo(from);
+      }
+      assert(moved > 1, `the fixture only moved the player ${moved.toFixed(2)} m — it proves nothing`);
+      assert(minSit < 0.8, `it stayed ${minSit.toFixed(2)} sat down while you walked ${moved.toFixed(1)} m`);
+      assert(gap() < 6, `after walking it is ${gap().toFixed(1)} m behind`);
+
+      /* AND IT SITS BACK DOWN. */
+      for (let i = 0; i < 30 * 5; i++) world.update(STEP, input);
+      assert(fig.sit > 0.8, `you stopped and it is still only ${fig.sit.toFixed(2)} sat`);
+
+      /* AND IT IS PUSHABLE AND CUTTABLE THROUGH A PUBLISHED EXTENSION POINT
+       * NOTHING IN src/ HAD EVER WRITTEN. `Hangar.deckBladeTargets` already
+       * reads `world._deckProps` with an absent-array guard and World.js
+       * already consumes it; this is its first writer. */
+      assert((world._deckProps || []).some((x) => x.kind === 'companion'),
+        'it is not offered to the deck blade — you can walk through your own dog');
+      return `arrived ${gap().toFixed(1)} m off your heel, sat ${sat.toFixed(2)}; walking `
+        + `${moved.toFixed(1)} m stood it up to ${minSit.toFixed(2)}; stopping sat it again at `
+        + `${fig.sit.toFixed(2)}; and it is on the deck's blade list`;
+    } finally { world.unload(); Kn.clear(); }
+  });
+
 }

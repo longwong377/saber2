@@ -74,6 +74,8 @@ import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt,
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift } from './DeckLift.js';
 import { dressDeckMirror, stepDeckMirror, undressDeckMirror } from './DeckMirror.js';
+/* The companion that came up in the lift with you — CompanionDeck.js. */
+import { callTheCompanion, stepCompanionDeck, dismissCompanion } from './CompanionDeck.js';
 import { dressDeckFlight, stepDeckFlight, undressDeckFlight, embarkCompany, hullFloorAt } from './DeckFlight.js';
 import { stepDeckEdit } from './DeckEdit.js';
 import { squadPlan, leadOf, SQUAD, ORDER_REACH, armyToLead, musterPlan, OPENING_STRENGTH, ARMIES, MARKS } from './Command.js';
@@ -1568,6 +1570,9 @@ export function dressHangar(world) {
   /* THE COMPANY, because the window's faction comes off the roll that is
    * actually standing in the room. */
   callTheCompany(world);
+  /* …AND THE ONE THAT IS NOT ON THE ROLL. After the company, because it
+   * stands off the PLAYER rather than in the line and needs the room built. */
+  callTheCompanion(world);
   /* AND IF THEY CAME HOME ON THE SHIP, THEY ARE STILL IN IT. */
   if (world._deckArrival) embarkCompany(world);
   const shown = outsideLevel(world);
@@ -1823,6 +1828,7 @@ export class HangarDirector {
     try { undressDeckLift(this.world); } catch {}
     try { undressDeckMirror(this.world); } catch {}
     try { undressDeckFlight(this.world); } catch {}
+    dismissCompanion(this.world);
     if (this.world.floorAt) this.world.floorAt = null;
     if (this.world.deckBladeTargets) this.world.deckBladeTargets = null;
     this.world._deckAudio = null;
@@ -1850,6 +1856,11 @@ export class HangarDirector {
     stepDeckLife(this.world, dt);
     stepDeckLift(this.world, dt);
     stepDeckMirror(this.world, dt);
+    /* AND WHAT CAME UP IN THE LIFT WITH YOU. After `stepCompany` and the
+     * edit, for the same reason `stepDeckFlight` is: a body that follows the
+     * player has to be moved once the player has moved, or it is permanently
+     * one frame behind. See CompanionDeck.js. */
+    stepCompanionDeck(this.world, dt);
     /* THE SHIP, after the men: a man who halted on his slot this frame is
      * taken aboard this frame. */
     stepDeckFlight(this.world, dt);
