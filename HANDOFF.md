@@ -24,6 +24,41 @@ Playable two ways:
 
 ---
 
+## 0. WHERE V12 STOPPED — 2 Sep, at a usage limit. READ THIS FIRST.
+
+Branch `claude/saber-game-improvements-v12-6f83co`, everything pushed. The
+player's V12 list (PLAYTEST.md, top entry) is built to the row marks there.
+
+**Landed and green (each with its suite):** the hub — every mode starts on the
+deck and every alive ending flies home (`hub`); the capital ship at real scale
+round the room and astern in orbit (`DeckExterior.js`, `hub`, `extraction`);
+the seam is a still of the sealed bay; the shoulder-flip bug (`shoulder`); the
+lift rebuilt (`decklift` 6); the deck life ×10 (`deckcast`, `decklife`); the
+four hulls rebuilt with a hangar-mouth contract (`hulls`); planets and the
+scripted orbital battle (`orbit-battle`, `sky`); the ward and Restore powers
+(`powers` 32) with voices (`force-voice`); five meditation poses
+(`meditation`); the order wheel trimmed; The Front and Mass.js deleted; the
+version tag; the menu fixes; co-op suites green (`coop` 48, `command-pvp` 25,
+`session` 11); `REVIEW-V12.md` (56 items).
+
+**Committed as WIP, NOT verified (2eff944 and the commit after it):** lane F —
+attribute-driven troop behaviours, BURY THE FALLEN, the ARMOUR
+(`stratagemOnly`) setting, friendly avoidance of a called stratagem
+(`68c27cc` is its own commit; the snapshot holds its later deltas); lane G —
+alpine colliders/colours and the merged-face pipeline
+(`Levels.js`/`Props.js`/`Bodies.js`, `alpine.mjs`, `faces.mjs`). Those two
+snapshots may not parse. FIRST THING NEXT SESSION: `node --check` each of
+`src/game/Command.js Reactions.js Enemy.js Stratagems.js Levels.js
+src/world/Props.js src/game/Bodies.js`, run `reactions`, `graves`, `burial`,
+`stratagems`, `alpine`, `faces`, `command`, `theline`, then the fast tier, then
+merge to the default. The default branch carries `fdb3e38` (everything above
+the WIP) if the merge below was made.
+
+**Not done:** the hub browser probe (`tools/_hubprobe.mjs`) never finished a
+fly-out under software GL — the new sky shader costs ~3.3 s a frame there;
+the fly-out/orbit shots are unseen. The faces item is in the WIP. Handoff
+§5.000-style narrative for V12 is not written; PLAYTEST.md's V12 table is.
+
 ## 1. State
 
 ### 1.0 START HERE — the shortest true statement of where this is
