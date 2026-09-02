@@ -525,6 +525,33 @@ export const FORCE_LINES = {
    * centre and on duration rather than on shape, which is why both numbers are
    * pushed rather than one.
    */
+  /**
+   * WARD — the barrier on somebody else. The same key as the barrier, so the
+   * lines have to say who it is for: a name called across a line, not a word
+   * for yourself. Short, level, and the second beat carried.
+   */
+  ward: [
+    /* the call — low, HIGH, low: the barrier's lines are level or settle and
+     * the sense's are two beats, so this is three and jumps */
+    { gain: 0.74, words: 'On you. Now.', syll: [[0.86, 0.40, 0.5], [1.36, 0.62, 1.0], [0.90, 0.42, 0.5]] },
+    /* the order — four beats stepping DOWN to a long low one */
+    { gain: 0.72, words: 'Hold there. Hold.', syll: [[1.32, 0.50, 1.0], [1.18, 0.45, 0.8], [1.02, 0.45, 0.6], [0.86, 0.92, 0.5]] },
+    /* four short beats stepping up, the last held */
+    { gain: 0.76, words: 'I have him.', syll: [[0.92, 0.48, 0.6], [1.10, 0.48, 0.7], [1.38, 0.52, 0.8], [1.14, 1.10, 1.0]] },
+  ],
+  /**
+   * RESTORE — the circle. The longest cooldown in the game and the most Force
+   * of any cast, said to everybody inside twelve metres at once. Where the
+   * heal FALLS over three beats, these RISE to a held last beat, so the ear
+   * tells the two mends apart.
+   */
+  restore: [
+    { gain: 0.60, words: 'All of you, up.', syll: [[0.90, 0.55, 0.6], [1.02, 0.65, 0.7], [1.28, 1.70, 1.0]] },
+    /* the one that opens long and drops away */
+    { gain: 0.58, words: 'Breathe with me.', syll: [[1.20, 1.30, 1.0], [0.96, 0.45, 0.5], [0.86, 0.50, 0.5]] },
+    /* four beats, alternating, the last held */
+    { gain: 0.62, words: 'Nobody stays down.', syll: [[1.00, 0.50, 0.6], [1.22, 0.55, 0.9], [0.92, 0.60, 0.6], [1.30, 1.40, 1.0]] },
+  ],
   shield: [
     /* the call back — level, weight on the held second beat */
     { gain: 0.78, words: 'Behind me.', syll: [[1.10, 0.62, 0.7], [1.08, 1.05, 1.0]] },

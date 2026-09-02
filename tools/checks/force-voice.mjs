@@ -309,6 +309,30 @@ const FIRE = {
   compel: (b) => b.p.forceCompel(b.ctx),
   rend: (b) => b.p.forceDisassemble(b.ctx),
   unleash: (b) => b.p.forceUnleash(b.ctx),
+  /* THE WARD IS THE BARRIER'S KEY AIMED AT ONE OF YOUR OWN: stand a trooper
+   * on the player's team in the cone first, or the same key speaks the
+   * barrier's lines. Restore wants somebody hurt in its circle — `rearm`
+   * already leaves the player at half. */
+  ward: (b) => {
+    const p = b.p;
+    if (!b.mate || b.mate.dead) {
+      b.mate = new Enemy(b.w, 'trooper', V(0, 0, -6));
+      b.mate.team = p.team;
+      b.w.enemies.push(b.mate);
+      b.mate.update(1 / 60, b.ctx);
+    }
+    p.aimDir.copy(b.mate.chest || b.mate.position).sub(p.chest).normalize();
+    const r = p.forceWard(b.ctx);
+    /* AND TAKE HIM AWAY AGAIN, or the barrier's next cast on this bench finds
+     * him in the cone and wards instead of shielding. */
+    b.mate.dead = true;
+    const i = b.w.enemies.indexOf(b.mate);
+    if (i >= 0) b.w.enemies.splice(i, 1);
+    b.mate = null;
+    if (p.ward?.body) p._endWard();
+    return r;
+  },
+  restore: (b) => b.p.forceRestore(b.ctx),
 };
 
 /**

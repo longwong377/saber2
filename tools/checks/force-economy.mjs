@@ -197,6 +197,17 @@ export async function run({ check, assert }) {
         for (let i = 0; i < 2; i++) b.step(1);
       };
       const aim = () => { if (droid) p.aimDir.copy(p._enemyPoint(droid, at.clone())).sub(p.chest).normalize(); };
+      /* AN ALLY IN THE CONE for the ward, which is the barrier's key aimed at
+       * one of your own: a trooper on the player's team, and the aim on him. */
+      let mate = null;
+      const ally = () => {
+        if (!mate || mate.dead) {
+          mate = world.spawnEnemy('trooper', at.clone());
+          if (mate) mate.team = p.team;
+        }
+        if (mate) p.aimDir.copy(p._enemyPoint(mate, at.clone())).sub(p.chest).normalize();
+        return mate;
+      };
       const fire = {
         push: () => p.forcePush(world),
         pull: () => p.forcePull(world),
@@ -210,6 +221,11 @@ export async function run({ check, assert }) {
         compel: () => p.forceCompel(world),
         rend: () => p.forceDisassemble(world),
         unleash: () => p.forceUnleash(world),
+        /* The ward wants an ally under the reticle; the check's `ally()` helper
+         * below stands one up and aims. Restore wants somebody hurt inside its
+         * circle — the player himself will do. */
+        ward: () => { const a = ally(); if (a) p.forceWard(world); },
+        restore: () => { p.hp = p.maxHp * 0.5; p.forceRestore(world); },
       };
       const undriven = Object.keys(POWER_COST).filter(k => !fire[k]);
       assert(!undriven.length, `this check has no way to fire ${undriven.join(', ')}`);
