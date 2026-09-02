@@ -1829,7 +1829,10 @@ export class HangarDirector {
     dismissCompany(this.world);
   }
 
-  update(dt) {
+  update(dt, ctx = null) {
+    /* The frame's input, for the one thing on the deck that answers a key
+     * outside the interact key: the run out's skip (DeckFlight, PHASE.OUT). */
+    this.world._deckInput = ctx?.input || null;
     stepRamp(this.world, dt);
     stepStrobes(this.world, dt);
     stepCompany(this.world, dt);
