@@ -24,41 +24,99 @@ Playable two ways:
 
 ---
 
-## 0. WHERE V12 STOPPED — 2 Sep, at a usage limit. READ THIS FIRST.
+## 0. V12 — WHAT LANDED, AND WHAT TO DO FIRST
 
 Branch `claude/saber-game-improvements-v12-6f83co`, everything pushed. The
-player's V12 list (PLAYTEST.md, top entry) is built to the row marks there.
+player's V12 list is in `PLAYTEST.md`'s top entry with a check named on every
+row. `REVIEW-V12.md` is the other new document: 56 improvement items read cold
+across the whole game, ten starred, with a closing paragraph on what not to
+touch.
 
-**Landed and green (each with its suite):** the hub — every mode starts on the
-deck and every alive ending flies home (`hub`); the capital ship at real scale
-round the room and astern in orbit (`DeckExterior.js`, `hub`, `extraction`);
-the seam is a still of the sealed bay; the shoulder-flip bug (`shoulder`); the
-lift rebuilt (`decklift` 6); the deck life ×10 (`deckcast`, `decklife`); the
-four hulls rebuilt with a hangar-mouth contract (`hulls`); planets and the
-scripted orbital battle (`orbit-battle`, `sky`); the ward and Restore powers
-(`powers` 32) with voices (`force-voice`); five meditation poses
-(`meditation`); the order wheel trimmed; The Front and Mass.js deleted; the
-version tag; the menu fixes; co-op suites green (`coop` 48, `command-pvp` 25,
-`session` 11); `REVIEW-V12.md` (56 items).
+**How it was run.** Seven lanes with disjoint file ownership, three at a time
+(hulls · lift · sky · deck life · powers+poses · troops+burial+stratagems ·
+alpine+faces), an orchestrator on `main.js`/`DeckFlight`/`DeckExterior`/the
+hub, and a browser probe that never paid off (see the traps).
 
-**Committed as WIP, NOT verified (2eff944 and the commit after it):** lane F —
-attribute-driven troop behaviours, BURY THE FALLEN, the ARMOUR
-(`stratagemOnly`) setting, friendly avoidance of a called stratagem
-(`68c27cc` is its own commit; the snapshot holds its later deltas); lane G —
-alpine colliders/colours and the merged-face pipeline
-(`Levels.js`/`Props.js`/`Bodies.js`, `alpine.mjs`, `faces.mjs`). Those two
-snapshots may not parse. FIRST THING NEXT SESSION: `node --check` each of
-`src/game/Command.js Reactions.js Enemy.js Stratagems.js Levels.js
-src/world/Props.js src/game/Bodies.js`, run `reactions`, `graves`, `burial`,
-`stratagems`, `alpine`, `faces`, `command`, `theline`, then the fast tier, then
-merge to the default. The default branch (the play link) was fast-forwarded to `fdb3e38` —
-everything above the WIP — after the fast tier passed on it (17 suites,
-83.7 s).
+**What landed, by area:**
 
-**Not done:** the hub browser probe (`tools/_hubprobe.mjs`) never finished a
-fly-out under software GL — the new sky shader costs ~3.3 s a frame there;
-the fly-out/orbit shots are unseen. The faces item is in the WIP. Handoff
-§5.000-style narrative for V12 is not written; PLAYTEST.md's V12 table is.
+- **The hub.** `deploy()` routes through `enterHangar` unless the mode is a
+  room you are not flown to, you are a co-op client, or a check asked for
+  `instantSpawn` (`hangarFirst`). The deck's own transport is the one caller
+  that builds the battlefield (`fromDeck`). Every ending you are ALIVE for
+  flies home — `homeward` is no longer gated on a win or a withdrawal. The
+  seam is a still of the sealed bay (`Screens.loading(frac, label, {still})`)
+  and your look carries over (`world._deckHandoff`). `hub` (4).
+- **The ship round the room.** `DeckExterior.js` stands the faction's capital
+  ship at real scale (x100) with its published hangar mouth on the aperture,
+  drawn only past the lip, unfogged, far plane 6500. `Extraction._placeCapital`
+  flies the same hull at real scale 1.4-14 km astern, turned so the mouth you
+  left faces you. The run out is 11 s / 1400 m with the bay OPEN, sealing in
+  the last 1.6 s, and it answers the cruise's skip key after 2.5 s.
+- **The lift** — a room: panelled walls, a back window, coffered ceiling,
+  tread floor, a counting deck readout, four door leaves (inner and shaft),
+  and a three-layer instanced shaft scene. `decklift` (6).
+- **The deck alive** — 111 droids of 9 kinds, 20 real men and 89 silhouettes,
+  25 repair jobs, 7 hulls, in 70 drawn meshes at 1.0 ms a frame. `deckcast`
+  (10), `decklife` (12).
+- **The hulls** — the LAAT/i and the Sheathipede rebuilt as connected ships
+  with canopies, pilots, gunners and real seats; the Acclamator and a
+  Lucrehulk with `length` and a published `hangars` list. `hulls` (6).
+- **The sky** — per-level seeded planets (continents, cloud self-shadow,
+  cyclones, scatter rim, glint, city lights, lava, a ring) and a 12-minute
+  scripted fleet action with five real silhouettes. `orbit-battle` (6).
+- **Two powers** — the ward (the barrier's key aimed at an ally) and Restore
+  (the whole line, 70 Force, 75 s). `powers` (32), with voices.
+- **Five meditation poses**, chosen on the Jedi tab, the Holocron docked aside
+  so the body stays in frame. `meditation` (5).
+- **The army** — attribute-driven behaviours (`reactions`, 20), BURY THE
+  FALLEN (`burial` 5, `graves` 7), DESECRATE THE FALLEN and the killing
+  frenzy (`desecrate` 5), the ARMOUR setting and friendly avoidance of a
+  called stratagem (`stratagems` 30).
+- **The ground and the faces** — fitted colliders and cold colour on the ice
+  level (`alpine` 7), one displaced head surface instead of twelve ellipsoids
+  (`faces` 7).
+- **Gone** — The Front and `src/game/Mass.js`.
+
+**Three defects worth keeping, all found by a check and measured with a
+throwaway probe rather than reasoned about:**
+
+- **A patient marched out from under his own kneeling medic**, so every heal
+  ended in `stop('moved')`. He holds still once his squad's medic has
+  committed, inside the medic's own look radius.
+- **An approach that gives up on a clock gives up on the wrong thing.** The
+  medic crossing ten metres through his own squad makes about a metre a
+  second; a flat eight-second timeout fired two metres short, every time. The
+  rule is now four seconds without getting CLOSER.
+- **A downed man is at 0 hp, so any damage at all kills him** — and the new
+  crawl hauls his own ragdoll, which bills 0.2 of sourceless `force` back
+  through `applyKnockback`. A trooper with 8.7 s of bleed left died at 5.4 s
+  of dragging himself. A downed body ignores SOURCELESS damage now.
+
+**Traps this session added:**
+
+- **`Ragdoll.cutRagdoll(bone, impulse)` does nothing visible without the third
+  argument.** With the default `t = 0` it breaks the joint, leaves the limb
+  full length, never increments `severedCount` and never sets `severed`. Pass
+  a stump fraction (0.3). And on a CORPSE, `cut()` routes to `cutRagdoll` on
+  purpose, so `isSevered` stays false there by design — measure `severedCount`.
+- **`CommandDirector.active` is a plain field the wave machinery writes every
+  frame.** A check that sets it true to fake contact is overwritten before the
+  next tick; drive the rule instead.
+- **A browser probe of the deck flight is not affordable under software GL.**
+  The new sky shader is ~3.3 s a frame there, so `tools/_hubprobe.mjs` reached
+  the deck shot and never finished a fly-out in twenty minutes. The hub is
+  covered by `hub` (4) instead. The fly-out and orbit shots are UNSEEN, and a
+  run on real hardware is the one thing that would settle them.
+- **A per-visit fact rides `world.run`, never `settings`** (carried from V11).
+
+**Still open:**
+
+- The fly-out and the look back have never been LOOKED at, only measured.
+- `REVIEW-V12.md` items 1 (the fog is the wrong colour on every level) and 14
+  (the new powers cannot see a co-op partner) are the two highest-value
+  unstarted things in the tree.
+- `tools/portrait.mjs` needs `instantSpawn: true` on any level that inserts
+  from orbit (carried from V11).
 
 ## 1. State
 
