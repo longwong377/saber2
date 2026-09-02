@@ -21,8 +21,19 @@ for (const id of Object.keys(COMPANION_KINDS)) {
   try { e = fieldCompanion(world, p, id, { rec: { xp: 99 } }); } catch (x) { err = x; }
   if (err) { console.log(`${id.padEnd(8)} THREW ON BUILD: ${err.message}`); continue; }
   if (!e) { console.log(`${id.padEnd(8)} SPAWN REFUSED`); continue; }
+  /* THE MESHES ARE UNDER `rig.root`, NOT `group`. A creature has no `.group`
+   * at all — it is a rigged body — so this counted zero for every companion
+   * and printed "0 meshes 0 tris" beside twelve real animals. Both are walked
+   * now, because the droid kinds DO carry a group. */
   let tris = 0, meshes = 0;
-  e.group?.traverse?.((o) => { if (o.isMesh) { meshes++; const g = o.geometry; tris += (g?.index ? g.index.count : (g?.attributes?.position?.count || 0)) / 3; } });
+  const eat = (o) => {
+    if (!o.isMesh) return;
+    meshes++;
+    const g = o.geometry;
+    tris += (g?.index ? g.index.count : (g?.attributes?.position?.count || 0)) / 3;
+  };
+  e.rig?.root?.traverse?.(eat);
+  if (e.group && e.group !== e.rig?.root) e.group.traverse?.(eat);
   const bones = e.rig ? [...e.rig.bones.keys()].length : 0;
   const legs = e.rig ? [...e.rig.bones.keys()].filter((n) => /thigh|shin|femur|tibia|tarsus|foot/i.test(n)).length : 0;
   let ticks = 0, thrown = null;
