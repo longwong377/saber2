@@ -42,6 +42,91 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
+## 2 Sep — SABER GAME NOTES AND IMPROVEMENTS V13
+
+Handed over with: *"You will finish everything on this list to perfection,
+every single thing I talked about. This list is not in order but a stream of
+consciousness so you will finish/group it in whatever order makes most sense
+for you"* — and, before it, *"what have we accomplished today with all these
+tasks? give me a summary."*
+
+**Logged verbatim before any work started**, which is the rule V6 broke and
+this file's own margin records. The player's words, in his order:
+
+> *"Heavily invest in this and optimize it to be perfect, go above and beyond
+> what I ask. I want you to build companions, this is a feature seperate from
+> your troops this is like a pet/close personal companion/protector that you
+> can choose to go into battle with and have with you, the companion will get
+> stronger over time just like you do imagine this almost like a mini-player
+> like it's going to be a really good dynamic thing, so imagine that they stay
+> close to you at all times but you can give them a limited set of orders such
+> as attacking/killing a specific enememy that you target, attacking anything
+> that gets within a certain range of you, etc. but obviously they're going to
+> be less mobile than you so protecting the companions and keeping them safe
+> is another thing the player can choose to worry about, you can customize
+> their appearance to a degree and choose from different ones, the companions
+> all play differently from one another, possible ones are an R2/Astromech
+> unit, an alien hawk/owl thing that only flys, a cat like alien, an armored
+> dog beast, something incredibly cute and adorable that is useless in battle
+> and needs constant protecting but is incredibly cute, a rancor pup, a
+> reprogrammed battle droid, a medical droid, a large wookie (with melee and
+> ranged weapons potentially), a Tauntaun you ride/mount and can follow you
+> but is useless in battle, a Blurgg you ride/mount and can follow you, and a
+> Varactyl you ride/mount and can follow you. They will be with you in the
+> hangar as well and follow you on/off ships like they're going to be with you
+> the whole time if you have them, this relationship between player and
+> companion should be really cool and if they surive they need to persist
+> between runs/games like your troops do"*
+
+> *"in the menu section where you customize your own appearenace there should
+> also be a randomize button that randomizes every single customization for the
+> people who prefer it that way, add the same randomize button for npc troop
+> custimization as well, maybe call it something cool like "Trust in the Force"
+> or something of that nature instead of randomize"*
+
+> *"the burying the fallen order is really cool and I like it a lot but I
+> noticed that the graves when done and the holes during have a real PBR look
+> to them like they aren't cell shaded, is that something you see? I want it to
+> be in keeping with the aesthetic of the game"*
+
+> *"is there a way to customize your troops while you're in the hangar or am I
+> just missing it"*
+
+> *"when you look down or have the curson down and you force push it should
+> throw you into the air you know what I mean? like push you off the ground
+> (kind of like an airbender) so imagine if I'm standing still and look down
+> and force push I force myself in the opposite direction like it should me
+> totally dependent on where you're aiming you know what I mean? like real
+> trajectories/phyics. and that repelling force should be based on your
+> distance and force strength, it should look really cool when doing it, should
+> work in the air too depending on how close you are to the ground"*
+
+> *"in the mode I was playing (I forgot what it was) a portion of my troops
+> almost looked headless and I noticed a couple more had heads that would
+> constantly spin so I think the headless ones just had heads that stopped
+> rotating upside down anyway just fix the bug"*
+
+> *"I tried to play trial of waves and noticed that I still had troops in that
+> mode, is that a feature or bug?"*
+
+**Two of the seven are questions, and this file's own reading of this player is
+that his questions are defect reports** — two of the three questions in the
+earliest surviving round turned out to be things that did not exist at all. So
+"is there a way to customize your troops in the hangar" and "is that a feature
+or a bug" are both treated as findings until measured otherwise.
+
+| Note | Mark | Where |
+|---|---|---|
+| Companions — a persistent personal companion, twelve kinds, orders, growth, customisation, in the hangar and on the ships | ⏳ | |
+| "Trust in the Force" — a randomize button on the player's own customisation and on NPC troop customisation | ⏳ | |
+| The graves and the dug holes read PBR rather than cel shaded | ⏳ | |
+| No way to customise troops from inside the hangar | ⏳ | |
+| Force push should launch YOU when you aim at the ground — real trajectories, scaled by distance and Force strength, in the air too | ⏳ | |
+| Troops with missing heads, and heads that spin | ⏳ | |
+| Trial of Waves fields troops | ⏳ | |
+
+---
+
 ## 2 Sep — SABER GAME NOTES AND IMPROVEMENTS V12
 
 Handed over with: *"You will finish everything on this list to perfection,
