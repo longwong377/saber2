@@ -743,6 +743,7 @@ function catalogue() {
     ['addOutcrop', (o) => P.addOutcrop(o, V(0, 0, 0), { size: 7 })],
     ['addRockArch', (o) => P.addRockArch(o, V(0, 0, 0))],
     ['addBoulderCluster', (o) => P.addBoulderCluster(o, V(0, 0, 0), { count: 14, size: 1.3 })],
+    ['addRockOutcrop', (o) => P.addRockOutcrop(o, V(0, 0, 0), { count: 4, size: 2.4, seed: 5 })],
     ['addScree', (o) => P.addScree(o, V(0, 0, 0), { radius: 10, count: 60 })],
     ['addPipeRun', (o) => P.addPipeRun(o, [V(0, 3, 0), V(8, 3.2, 0), V(16, 2.6, 2)], { count: 3 })],
     ['addCableRun', (o) => P.addCableRun(o, V(0, 8, 0), V(20, 7, 0), { count: 4 })],
