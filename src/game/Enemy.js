@@ -2194,7 +2194,10 @@ const GUARD_REFRESH = 6.0;
  */
 const WIND_TAKE = 0.14;      // share of max health inside the window that opens it
 const WIND_DECAY = 0.12;     // share of max health the tally sheds per second
-const WIND_OPEN = 2.4;       // seconds the body is open for
+/* Exported because `Companions.js` has to know when a window has closed on a
+ * body whose brain is not being serviced — see the note on `CompanionPack.update`.
+ * One number, two readers, and HANDOFF §2.4 is why it is not two numbers. */
+export const WIND_OPEN = 2.4;       // seconds the body is open for
 const WIND_GAP = 7;          // seconds before it can be opened again
 /** Does this body keep a `recentDamage` tally at all? One predicate, four readers. */
 const keepsWind = (A) => !!(A.boss || A.custom === 'beast');

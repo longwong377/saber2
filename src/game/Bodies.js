@@ -8429,6 +8429,54 @@ export const CREATURE_PLANS = {
    * is why the hip is 0.88 where the old shared value was 1.6: at 2.4 scale
    * that is 2.11 m at the hip instead of 3.84, and 3.84 m is a giraffe.
    */
+  /**
+   * THE MASSIFF — the first companion, and the cheapest true body in the set.
+   *
+   * A lean reptilian war-dog off Tatooine and Geonosis: about a metre at the
+   * shoulder and twice that long, all jaw and spine, with a ridge of spines
+   * from the crown to the tail root and a low slung gait that keeps the belly
+   * a hand off the sand. The Republic used them as sentries, which is exactly
+   * the job a companion does, and it is the one animal in the reference
+   * material a person would plausibly keep.
+   *
+   * IT IS A PLAN ROW AND NOTHING ELSE, which is the point. The row buys the
+   * skeleton, the superellipse trunk, the dorsal outline, the head, the feet,
+   * the belly weak spot, the stance the gait reads, three LOD rungs, a cohort,
+   * the topple and a voice — so almost nothing about the first companion is
+   * new code, and what IS new is only the part that makes it yours.
+   *
+   * Small numbers throughout against the reek's: hip 0.44 where a reek is
+   * 0.74, trunk 0.86 long where a reek is 1.24, and a `girth` under half. At
+   * scale 0.95 that stands it 0.42 m at the hip and about 1.6 m nose to tail,
+   * which is the reference photograph and is deliberately BELOW the player's
+   * eye line — a companion you have to look down at reads as a companion.
+   */
+  massiff: {
+    hide: 0x6f6455, plate: 0x8b7f68, belly: 0x9a8f79, eye: 0xd8a832,
+    hip: 0.44, trunk: [0.10, -0.10, 0.86], pitch: -0.06, girth: 0.28,
+    /* Shoulder and haunch, both slight: this animal is a spine with a head on
+     * it and the silhouette should read as length rather than as bulk. */
+    swells: [[0.52, 0.30, 0.20], [0.20, 0.18, 0.24]],
+    section: { n0: 2.4, n1: 2.9, back: 0.04, keel: 0.06, waist: 0.05 },
+    headAt: [0.16, 0.74], neck: [2, 0.14, 0.19, -0.30, -0.06], head: 'fanged',
+    /* The ridge is the animal's whole outline from the side, so it is the one
+     * feature that is not scaled down with the rest of it. */
+    back: 'ridge', tail: [3, 0.40, 0.09, 0.12, -0.10],
+    limbs: [
+      { role: 'leg', x: 0.24, y: 0.04, z: 0.46, plant: 0.34, femur: 0.26, tibia: 0.28, tarsus: 0.10,
+        girth: 0.92, pole: [0.20, 0.34, 0.90], foot: 'claw',
+        femurRest: [0.18, -0.88, 0.30], tibiaRest: [0.04, -0.97, -0.20] },
+      { role: 'leg', x: 0.26, y: 0.02, z: -0.38, plant: 0.36, femur: 0.26, tibia: 0.30, tarsus: 0.10,
+        girth: 0.86, pole: [0.20, 0.34, -0.90], foot: 'claw',
+        femurRest: [0.18, -0.88, -0.30], tibiaRest: [0.04, -0.97, 0.20] },
+    ],
+    step: 0.52, lift: 0.18, rear: 0.22,
+    /* Two verbs and no more. A massiff is a set of jaws that closes the last
+     * two metres fast; it does not gore, toss, slam or pounce, and giving a
+     * companion the reek's move list would make it a reek that follows you. */
+    moves: ['lunge', 'rake'],
+  },
+
   charger: {
     hide: 0x6a5f4e, plate: 0x9a8b6c, belly: 0x8d8168, eye: 0xffb03a,
     hip: 0.74, trunk: [0.16, -0.20, 1.24], pitch: -0.13, girth: 0.44,
