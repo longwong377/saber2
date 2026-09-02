@@ -90,14 +90,31 @@ export async function run({ check, assert }) {
     return o;
   };
 
-  check('downed: the mode declares it, and the one that runs the quorum is the one that has it', () => {
-    assert(MODES.theline?.downed === true,
-      'The Line does not declare `downed` — the mode whose whole advance rule is a quorum is the '
-      + 'one the bleed-out window is in tension with');
-    assert(!MODES.command?.downed,
-      'Command declares `downed`. Without a quorum there is nothing for the window to be in '
-      + 'tension with, so it would be a free second health bar on every trooper');
-    return 'theline: downed · command: not';
+  check('downed: the mode declares how long the window is, and the quorum mode has the longest', () => {
+    /**
+     * THIS CHECK USED TO SAY "THE LINE, AND NOBODY ELSE", and the argument
+     * for that is in `MODES.theline.downed`: without a quorum to price the
+     * walk, a window is a free second health bar. The answer was that the
+     * objection is right about a BIT and wrong about a NUMBER — `downed` is
+     * the window's LENGTH now, as a multiple of `DOWN_BLEED`.
+     *
+     * So what this holds is the shape of the table rather than one member of
+     * it: the mode that runs the quorum has the longest window, every mode
+     * that has one at all has a real one, and the modes with no army do not
+     * have one to give.
+     */
+    const line = MODES.theline?.downed;
+    assert(line === 1, `The Line declares ${line} — the quorum mode carries the full window`);
+    for (const [k, want] of [['command', 0.6], ['skirmish', 0.6]]) {
+      const got = MODES[k]?.downed;
+      assert(got === want, `${k} declares ${got}, not ${want}`);
+      assert(got > 0 && got < line,
+        `${k}'s window is not shorter than the quorum mode's — it is priced by permanence, not by a quorum`);
+    }
+    for (const k of ['waves', 'roguelite', 'duel', 'sandbox', 'training']) {
+      assert(!MODES[k]?.downed, `${k} has no army and declares a bleed-out window`);
+    }
+    return `theline ×${line} · command ×${MODES.command.downed} · skirmish ×${MODES.skirmish.downed}`;
   });
 
   check('downed: a named man does not die at zero, he goes down on a clock', async () => {
@@ -153,7 +170,20 @@ export async function run({ check, assert }) {
   check('downed: something standing over him finishes it, and it is a rate and not an instant', async () => {
     const { world, e } = await mk();
     e.die(null, null, 'bolt');
-    foe(world, DOWN_FINISH - 1, 0);
+    /**
+     * STANDING OVER HIM, which is what the title says and what the rule is
+     * about. This used to place the hostile at `DOWN_FINISH - 1` — a metre
+     * inside the radius — and that stopped being a finisher when the downed
+     * man learned to CRAWL (V12: "a downed man crawls away from the
+     * shooting"). At 0.34 m/s he clears the last metre of a six-metre radius
+     * in about three seconds and the finish takes 3.3, so the check was
+     * measuring an escape and calling it a broken rate.
+     *
+     * Dragging yourself out from under a man who is about to finish you is
+     * the crawl doing its job; it is why the crawl exists. So the finisher
+     * stands ON him, where no crawl can help.
+     */
+    foe(world, 1, 0);
     e._tickDown(1 / 30);
     assert(!e.dead,
       'a hostile within reach killed him on the first frame — an instant finish makes the window '

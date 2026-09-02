@@ -380,37 +380,42 @@ export async function run({ check, assert }) {
     return `${rode} men rode the bay, ${mine.length} standing on the new ground, 0 in the commander's swing`;
   });
 
-  check('extraction: the cruise cannot be skipped into a stall', async () => {
+  check('extraction: the cruise cannot be skipped at all, and the rebuild still lands', async () => {
     /**
-     * The skip is the answer to "a long unskippable cutscene every round is its
-     * own failure mode", and its gate is the whole reason it is safe: the
-     * cruise may only be collapsed once the rotate has LANDED, so pressing the
-     * key early can never put the player in front of the rebuild it was there
-     * to hide. Driven with the key held from the first frame.
+     * THE SKIP IS GONE, on the player's instruction: *"remove the skip option
+     * entirely, I don't want you skipping anything"*.
+     *
+     * It carried a defect that is worth keeping written down, because it is
+     * the reason he found it. The key was read as a HELD STATE and not as an
+     * edge, so it did not stop at the sequence it belonged to: one press
+     * during the flight deck's fly-out ran on into the world built a moment
+     * later, where `_orbit` and `_entry` read the same key the same way. One
+     * press, three sequences skipped, across two worlds — *"you now
+     * completely skip the entering the atmosphere and landing on the planet
+     * portion entirely"*.
+     *
+     * What this check holds now is the other half of what it always held:
+     * the ground still changes under the cloud, and the journey still ends on
+     * the new level. The key is held from the first frame and must do
+     * NOTHING.
      */
     const { world, H } = await boot('skirmish', 'colosseum');
-    const X = await import('../../src/game/Extraction.js');
     const held = { ...H.idleInput(), act: (a) => a === 'jump' };
     world._groundPending = 'drifts';
-    let skipAt = null, swapAt = null;
-    until(world, held, 90, (w, tt) => !w.extraction.active && tt > 1, (w) => {
-      const L = w.extraction.log;
-      if (skipAt === null) skipAt = L.find(e => e.phase === 'skip')?.at ?? null;
-      if (swapAt === null) swapAt = L.find(e => e.phase === 'swap')?.at ?? null;
-      walkToRamp(w);
-    });
+    until(world, held, 90, (w, tt) => !w.extraction.active && tt > 1, (w) => { walkToRamp(w); });
     const L = world.extraction.log;
     const skip = L.find(e => e.phase === 'skip');
     const swap = L.find(e => e.phase === 'swap');
-    assert(skip, 'the jump key was held through the whole cruise and the skip never took');
+    assert(!skip, `the jump key was held and something still logged a skip at ${skip?.at}`);
     assert(swap, 'the ground never changed');
-    assert(skip.at >= swap.at,
-      `the cruise was skipped at ${skip.at.toFixed(2)} s, before the swap landed at ${swap.at.toFixed(2)} s — `
-      + 'the player can put themselves in front of the rebuild');
-    assert(world.levelKey === 'drifts', `a skipped journey finished on ${world.levelKey}`);
+    assert(world.levelKey === 'drifts', `the journey finished on ${world.levelKey}`);
     const done = L.find(e => e.phase === 'done');
-    return `held from frame one: skip took at ${skip.at.toFixed(1)} s, after the swap at ${swap.at.toFixed(1)} s, `
-      + `whole sequence ${done.at.toFixed(1)} s`;
+    assert(done, 'the sequence never finished');
+    /* AND IT TOOK THE FULL CRUISE. A skip that had merely stopped logging
+     * would still show up here as a short journey. */
+    assert(done.at > swap.at + 1, `the whole sequence was ${done.at.toFixed(1)} s — that is not a full cruise`);
+    return `held from frame one and nothing was skipped: swap at ${swap.at.toFixed(1)} s, `
+      + `whole sequence ${done.at.toFixed(1)} s on ${world.levelKey}`;
   });
 
   check('extraction: nobody is left on the ground when the ship will not wait forever', async () => {
