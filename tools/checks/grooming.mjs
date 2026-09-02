@@ -757,6 +757,14 @@ export async function run({ check, assert, near }) {
      * as one getting dearer; the point of pinning it is that it moves for a
      * reason somebody wrote down.
      *
+     * AND IT IS 12 920 IN 62 NOW, for the V12 face pass: the head was twelve
+     * overlapping ellipsoids and is one displaced surface with modelled eyes,
+     * lids, lips, ears and a brow. TWO FEWER MESHES — the binding cost, which
+     * is the number this check actually guards — and 124 more triangles, which
+     * is the half the derivation below says may move. `characters` caps the
+     * same figure at 13 000 triangles in 76 meshes and still has 80 triangles
+     * and 14 meshes of headroom over it.
+     *
      * The bound on the reachable set is derived rather than ratcheted, and the
      * derivation is the one the capped check's own comment makes: "each one
      * costs a draw call per material per bone, doubled by the shadow pass...
@@ -775,8 +783,8 @@ export async function run({ check, assert, near }) {
      *     only in a frame time.
      */
     const plain = cost(unit({}).rig.root);
-    assert(plain.tris === 12796 && plain.meshes === 64,
-      `buildJedi() with no sheet is ${plain.tris}/${plain.meshes}, not the 12796/64 every other check measures`);
+    assert(plain.tris === 12920 && plain.meshes === 62,
+      `buildJedi() with no sheet is ${plain.tris}/${plain.meshes}, not the 12920/62 every other check measures`);
     let worst = { tris: 0, meshes: 0, at: '' }, worstM = { meshes: 0, at: '' };
     for (const h of HAIR_STYLES) for (const b of BEARD_STYLES) {
       for (const extra of [{}, { age: 1, muscle: 1 }]) {

@@ -4052,7 +4052,7 @@ export const HOOD_CUTS = [
      * against a 85% bar.
      */
     facet: true,
-    shell: { r: 0.153, w: 28, h: 10, open: 0.60, theta: 0.80,
+    shell: { r: 0.153, w: 28, h: 10, open: 0.60, crown: 0.34, theta: 0.80,
              sx: 0.93, sy: 1.05, sz: 1.10, taper: 0.13, lean: 0.044,
              flute: 7, fluteAmp: 0.270,
              y: 0.042, z: -0.020, line: 0.93, dark: 0.42 },
@@ -4092,7 +4092,7 @@ export const HOOD_CUTS = [
      * ball-cluster it replaced, and the tightest hood in the set is the one
      * that finds that out. Measured, the cowl left 25% of the cranium bare;
      * `hoods.mjs` holds every cut to covering 78% of it. */
-    shell: { r: 0.146, w: 26, h: 11, open: 0.38, theta: 0.84,
+    shell: { r: 0.146, w: 26, h: 11, open: 0.38, crown: 0.34, theta: 0.84,
              sx: 0.98, sy: 1.21, sz: 1.07, taper: 0.07, lean: 0.022,
              flute: 8, fluteAmp: 0.150,
              y: 0.042, z: -0.030, line: 0.94, dark: 0.34 },
@@ -4162,7 +4162,7 @@ export const HOOD_CUTS = [
      * gathers, the deepest taper and the strongest lean, because this is the
      * one cut that is supposed to look like a weight of cloth. */
     facet: true,
-    shell: { r: 0.170, w: 26, h: 11, open: 0.66, theta: 0.68,
+    shell: { r: 0.170, w: 26, h: 11, open: 0.66, crown: 0.34, theta: 0.68,
              sx: 0.99, sy: 1.08, sz: 1.24, taper: 0.16, lean: 0.058,
              flute: 6, fluteAmp: 0.260,
              y: 0.052, z: -0.052, line: 0.92, dark: 0.30 },
@@ -4368,13 +4368,35 @@ function headProfile(headObj, yLo, yHi) {
 function fitHoodToHead(g, prof, oy, oz, gap) {
   if (!prof) return;
   const p = g.attributes.position;
+  const yTop = prof.lo + prof.span;
   let moved = 0;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i) + oy, z = p.getZ(i) + oz;
+    /**
+     * ABOVE THE CROWN THERE IS NOTHING TO CLEAR, and this guard is what makes
+     * the cap over the cranium survivable.
+     *
+     * `cellOf` CLAMPS a height above the head into the top band, and the band
+     * pass propagates the widest radius upward (0.92 of the band below), so a
+     * vertex sitting over the crown is told it must stand 6 cm off an axis it
+     * is 2 mm from — a scale of thirty, applied to its height as well, because
+     * the push is radial. On a shell with a closed cap that is a metre-tall
+     * spike out of the top of the hood: measured, the Sith cowl's own geometry
+     * ran to y 1.280 in a frame whose head tops out at 0.195.
+     *
+     * The fit is a HORIZONTAL clearance and it is only a claim about heights
+     * the head actually occupies. Over the crown the shell is clear by height
+     * and is left exactly where its cut put it.
+     */
+    if (y >= yTop) continue;
     const need = prof.r[prof.cellOf(x, z, y)] + gap;
     const r = Math.hypot(x, z);
     if (r >= need || r < 1e-6) continue;
-    const k = need / r;
+    /* …and even under the crown the correction is bounded. A vertex close to
+     * the axis takes an unbounded scale from the same arithmetic, and one
+     * vertex flung out of a smooth shell is a spike whatever height it is at.
+     * Nothing legitimate needs to double. */
+    const k = Math.min(need / r, 2);
     /**
      * RADIALLY FROM THE HEAD'S CORE, AND NOT SIDEWAYS. This one line was the
      * whole of "a hood you can see the head through".
@@ -4410,12 +4432,61 @@ function fitHoodToHead(g, prof, oy, oz, gap) {
 
 function hoodShell(S, s) {
   const len = Math.PI * (2 - S.open);
-  // centred on +Z: three puts phi = 0 at -X, so a run of `len` is centred on
-  // the face when it begins at 1.5π - len/2. Typed, this is the 0.80π that
-  // both shipped cowls carry and neither explains in the same words.
-  const g = new THREE.SphereGeometry(S.r * s, S.w, S.h,
-    S.open > 0 ? 1.5 * Math.PI - len / 2 : 0, S.open > 0 ? len : Math.PI * 2,
-    0, Math.PI * S.theta);
+  /**
+   * AND THE OPENING STARTS AT THE BROW, NOT AT THE POLE — which is `crown`,
+   * and it is the whole of "a hood you can see the head through" the second
+   * time that sentence was true.
+   *
+   * A sphere segment's phi opening runs the WHOLE length of the segment, so a
+   * 68° slot for the face is also a 68° slot over the top of the skull, and
+   * everything the wedge crosses on its way up is bare. Nothing showed it
+   * while the cut was tuned because the head it was tuned on was twelve
+   * overlapping ellipsoids with a lower, flatter crown; the V12 head is one
+   * displaced surface that reaches 0.195 in the bone's own frame, and it came
+   * straight up through the slot. Measured on the shipped Sith cowl: 75.0% of
+   * the cranium covered against a bar of 78, with every uncovered vertex in a
+   * 5 cm disc at the very top and a ray fired straight up out of the braincase
+   * hitting NOTHING at all.
+   *
+   * So the shell is built as a FULL revolution and the wedge is cut out of it
+   * below `crown` — a fraction of π down from the pole. What is left is a
+   * closed cap over the cranium continuous with an open cowl below it, in one
+   * geometry, so `taper`, `lean` and `flute` still shape the whole of it and
+   * the cut costs the triangles it always did minus the ones it removes.
+   * `crown: 0` (or absent) is the old behaviour exactly.
+   */
+  const crown = S.open > 0 ? (S.crown || 0) : 0;
+  const g = crown > 0
+    ? new THREE.SphereGeometry(S.r * s, S.w, S.h, 0, Math.PI * 2, 0, Math.PI * S.theta)
+    // centred on +Z: three puts phi = 0 at -X, so a run of `len` is centred on
+    // the face when it begins at 1.5π - len/2. Typed, this is the 0.80π that
+    // both shipped cowls carry and neither explains in the same words.
+    : new THREE.SphereGeometry(S.r * s, S.w, S.h,
+      S.open > 0 ? 1.5 * Math.PI - len / 2 : 0, S.open > 0 ? len : Math.PI * 2,
+      0, Math.PI * S.theta);
+  if (crown > 0) {
+    /* The wedge, by the two angles that define it and no convention: how far
+     * a face lies from the pole, and how far its bearing lies from +Z. Read
+     * off the triangle's own centroid, so a triangle straddling either edge
+     * stays — a hole is worse than a millimetre of extra cloth. */
+    const p = g.attributes.position, idx = g.index;
+    const half = Math.PI * S.open / 2, capAt = Math.PI * crown;
+    const keep = [];
+    for (let i = 0; i < idx.count; i += 3) {
+      let cx = 0, cy = 0, cz = 0;
+      for (let j = 0; j < 3; j++) {
+        const k2 = idx.getX(i + j);
+        cx += p.getX(k2); cy += p.getY(k2); cz += p.getZ(k2);
+      }
+      cx /= 3; cy /= 3; cz /= 3;
+      const r = Math.hypot(cx, cy, cz) || 1;
+      const down = Math.acos(Math.max(-1, Math.min(1, cy / r)));   // 0 at the pole
+      const off = Math.abs(Math.atan2(cx, cz));                    // 0 on the face
+      if (down > capAt && off < half) continue;
+      keep.push(idx.getX(i), idx.getX(i + 1), idx.getX(i + 2));
+    }
+    g.setIndex(keep);
+  }
   g.scale(S.sx, S.sy, S.sz);
   /* AND THEN IT STOPS BEING A SPHERE, which is the whole complaint.
    *
