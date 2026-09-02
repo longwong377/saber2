@@ -559,4 +559,8 @@ export async function run({ check, assert }) {
     return `${bodies} bodies, ${quiet} searches over ${FRAMES} empty frames, ${searches} in the 20 `
       + 'after a grenade landed';
   });
+
+  /* THE SECOND NOTE — "don't stop there". See _reactions2.mjs. */
+  const { behaviours } = await import('./_reactions2.mjs');
+  behaviours({ check, assert, squad, boot });
 }
