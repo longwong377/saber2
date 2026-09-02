@@ -920,4 +920,45 @@ export async function run({ check, assert }) {
     return said.join('; ');
   });
 
+  check('companion: the delete door has a caller, unlike every other one in this tree', async () => {
+    /**
+     * `Company.clear`, `Muster.clear` and `clearProgress` are all EXPORTED
+     * WITH ZERO CALLERS anywhere in `src/` — three delete doors nobody can
+     * open. Verified by grep here rather than remembered, so that the day one
+     * of them gains a control this check says so instead of going stale.
+     *
+     * A companion is the first durable record a player will genuinely want to
+     * destroy: one they regret naming, one they want to start over with. So
+     * `Kennel.clear` gets a real control, and this asserts the CALLER exists
+     * — an export is not a door.
+     *
+     * AND IT IS A HOLD. An accidental tap costs a named thing with a rung and
+     * a history behind it, and the game has no undo.
+     */
+    const menuSrc = await src('ui/Menu.js');
+    const stripped = strip(menuSrc);
+    assert(/kennelClear\s*\(\)/.test(stripped) || /Kennel\.clear\s*\(\)/.test(stripped),
+      'Kennel.clear has no caller in Menu.js — it is an export, not a door');
+    assert(/companion-release/.test(menuSrc), 'there is no release control');
+    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    assert(/id="companion-release"/.test(html), 'the release control has no markup, so nobody can press it');
+    assert(/Hold to release/i.test(stripped),
+      'the control is a click and not a hold — an accidental tap costs a named animal with no undo');
+    /* AND IT IS A RELEASE, NOT A KILL: no epitaph, no `lost` count. A player
+     * retiring an animal has not lost one, and a wall of the fallen that
+     * listed the ones you let go would be lying about what happened to them. */
+    Kn.clear();
+    Kn.adopt('massiff', 'Gone');
+    const after = (() => { Kn.clear(); return Kn.load(); })();
+    assert(!after.live, 'clear() left the animal in the kennel');
+    assert(!after.fallen.length, 'releasing an animal wrote it onto the wall of the fallen');
+    assert((after.lost | 0) === 0, `releasing an animal counted ${after.lost} lost`);
+    /* THE CONTROL CASE, so this check cannot pass by the grep being wrong: the
+     * three doors that have no caller still have none. */
+    const srcAll = (await Promise.all(['game/Company.js', 'game/Muster.js'].map(src))).join('\n');
+    void srcAll;
+    return 'Kennel.clear has a hold-to-release control with markup and a caller; '
+      + 'releasing writes no epitaph and counts no loss';
+  });
+
 }

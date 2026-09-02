@@ -29,7 +29,8 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
 import { SABER_SETS } from '../game/SaberSet.js';
 /* The twelve kinds and their rows — the card list below IS this table. */
 import { COMPANION_KINDS, COMPANION_LOOK, COMPANION_ORDER, rungOf } from '../game/CompanionKinds.js';
-import { load as loadKennel, notSaving as kennelNotSaving, dressCompanion } from '../game/Kennel.js';
+import { load as loadKennel, notSaving as kennelNotSaving, dressCompanion,
+         clear as kennelClear } from '../game/Kennel.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
@@ -5462,6 +5463,10 @@ export class Menu {
   _syncKennel() {
     this._wireCompanionDress();
     this._syncKennelCoop();
+    this._wireKennelRelease();
+    /* THE DOOR IS ONLY THERE WHEN THERE IS SOMETHING BEHIND IT. */
+    const rel = document.getElementById('companion-release');
+    if (rel) rel.classList.toggle('hidden', !loadKennel().live);
     const el = document.getElementById('companion-state');
     if (!el) return;
     const k = loadKennel();
@@ -5617,6 +5622,54 @@ export class Menu {
    * `notSaving()` makes one panel across: a player who is told is not being
    * cheated.
    */
+  /**
+   * A DELETE DOOR WITH A REAL CALLER, WHICH NOTHING DURABLE IN THIS TREE HAS.
+   *
+   * `Company.clear`, `Muster.clear` and `clearProgress` are all exported with
+   * ZERO callers anywhere in `src/` — three delete doors nobody can open. A
+   * companion is the first durable record a player will genuinely WANT to
+   * destroy: one they regret naming, one they want to start over with, one
+   * whose kind they have gone off.
+   *
+   * A HOLD AND NOT A CLICK. An accidental tap here costs a named thing that
+   * cannot come back, and the animal has a rung and a history behind it. The
+   * hold is 1.2 s — long enough that it cannot be an accident, short enough
+   * that it is not a punishment — and the label counts down so the player can
+   * see they are doing it on purpose.
+   *
+   * AND IT IS A RELEASE, NOT A KILL. `clear()` drops the store, so there is no
+   * epitaph and no `lost` count: the player retiring an animal has not lost
+   * one, and a wall of the fallen that included the ones you let go would be
+   * lying about what happened to them.
+   */
+  _wireKennelRelease() {
+    const btn = document.getElementById('companion-release');
+    if (!btn || btn._wired) return;
+    btn._wired = true;
+    const HOLD = 1.2;
+    let t0 = 0, timer = null;
+    const label = () => { btn.textContent = 'Hold to release it'; };
+    const stop = () => { if (timer) clearInterval(timer); timer = null; label(); };
+    const start = () => {
+      if (timer) return;
+      t0 = Date.now();
+      timer = setInterval(() => {
+        const held = (Date.now() - t0) / 1000;
+        if (held >= HOLD) {
+          stop();
+          audio.ui('click');
+          kennelClear();
+          this._syncKennel();
+        } else {
+          btn.textContent = `Releasing… ${(HOLD - held).toFixed(1)}s`;
+        }
+      }, 60);
+    };
+    for (const ev of ['pointerdown', 'touchstart']) btn.addEventListener(ev, start);
+    for (const ev of ['pointerup', 'pointerleave', 'touchend', 'touchcancel']) btn.addEventListener(ev, stop);
+    label();
+  }
+
   _syncKennelCoop() {
     const el = document.getElementById('companion-coop');
     if (!el) return;
