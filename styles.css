@@ -399,6 +399,10 @@ b{font-weight:800}
 .menu-wrap{position:relative;z-index:2;width:min(1180px,94vw);height:min(770px,92vh);
   display:flex;flex-direction:column;animation:stampIn .5s cubic-bezier(.22,1,.36,1) both}
 .menu-head{text-align:center;padding:4px 0 12px}
+/* The version, top right, barely visible: small, dim, out of the layout. */
+.version-tag{position:absolute;top:10px;right:14px;z-index:3;font-size:11px;letter-spacing:.08em;
+  color:var(--ink,#e8dcc8);opacity:.28;pointer-events:none;user-select:none}
+.version-tag:empty{display:none}
 .menu-head .logo{justify-content:center}
 /* NO TAGLINE AND NO BYLINE. Both were removed on instruction — a menu that is
    one keypress from the game does not need to describe the game, and the

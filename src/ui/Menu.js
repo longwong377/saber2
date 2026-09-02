@@ -67,6 +67,7 @@ import { FOCUS } from '../game/Focus.js';
 // is the same eleven.
 import { LESSONS } from '../game/Dojo.js';
 import { fellLine } from '../game/Session.js';
+import { VERSION } from '../version.js';
 import { MODES, playableModes, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
          DRAFT_EVERY, BOSS_EVERY, boonById,
          CONDITIONS, CONDITION_KEYS, RULE_MAX, hazardPay, WaveDirector } from '../game/Waves.js';
@@ -3546,7 +3547,11 @@ export class Menu {
     // is re-answered when the window changes. Registered once, on the object
     // that lives as long as the page.
     globalThis.addEventListener?.('resize', () => this._onPanelShown());
-    this.el.build.textContent = 'r1.0';
+    this.el.build.textContent = `r${VERSION}`;
+    /* THE VERSION TAG, top right of the title screen, always on. */
+    const vt = document.getElementById('version-tag');
+    if (vt) vt.textContent = `v${VERSION}`;
+    this._syncOrderTab();
     // …and neither the build id nor the adapter string is on screen until the
     // player asks for the instruments. See _syncDiag.
     this._syncDiag();
@@ -3678,6 +3683,18 @@ export class Menu {
    * overlap at any viewport, which is what that row was built to guarantee
    * after `#btn-commune` was found floating over `#gpu-line` at six sizes.
    */
+  /**
+   * THE TAB IS NAMED FOR THE ORDER YOU ARE. "the Jedi tab on the main menu
+   * reads as Jedi regardless of the order you have selected" — a Sith's page
+   * says Sith, a Grey's says Grey.
+   */
+  _syncOrderTab() {
+    const t = document.getElementById('tab-order');
+    if (!t) return;
+    const o = ORDERS.find((x) => x.id === this.s.order);
+    t.textContent = o?.name || 'Jedi';
+  }
+
   _syncDiag() {
     const on = !!this.s.showPerf;
     this.el.gpu?.classList.toggle('hidden', !on);
@@ -4792,6 +4809,7 @@ export class Menu {
       if (o.robes && !o.robes.includes(this.s.robeIndex)) this.s.robeIndex = o.robeDefault ?? this.s.robeIndex;
       this._buildSaber();
       this._refreshPreview(true);
+      this._syncOrderTab();
     });
 
     /**
@@ -6033,7 +6051,7 @@ export class Menu {
              which is a SIBLING of onDeploy - see enterHangar in main.js for the
              five things a deploy does that walking onto a deck must not.
              No backticks in here: this block is inside a template literal. -->
-        <button id="btn-hangar" class="btn wide">Inspect your men</button>
+        <button id="btn-hangar" class="secondary wide">Inspect your men</button>
         <p class="hint">On the deck of the ship carrying them, with the war outside.</p>
       </div>
       <div class="col wide company-page" id="company-page"></div>`;

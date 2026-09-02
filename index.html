@@ -569,6 +569,8 @@
 <!-- ══════════════════════ MENU ══════════════════════ -->
 <div id="menu" class="screen hidden">
   <div class="menu-bg"></div>
+  <!-- THE VERSION, top right, barely there. src/version.js; Menu stamps it. -->
+  <span id="version-tag" class="version-tag" aria-label="build version"></span>
   <div class="menu-wrap">
     <header class="menu-head">
       <!-- THE WORDMARK ALONE. The blade glyph, the tagline and the byline were
@@ -601,7 +603,7 @@
 
     <nav class="menu-tabs">
       <button class="tab active" data-tab="play">Deploy</button>
-      <button class="tab" data-tab="saber">Jedi</button>
+      <button class="tab" data-tab="saber" id="tab-order">Jedi</button>
       <button class="tab" data-tab="coop">Co-op</button>
       <!-- THE TWO REFERENCE PAGES COME BEFORE THE SETTINGS, and the key is
            `codex` rather than `train`.

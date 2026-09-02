@@ -42,6 +42,18 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
+## 2 Sep — SABER GAME NOTES AND IMPROVEMENTS V12
+
+Handed over with: *"You will finish everything on this list to perfection,
+every single thing I talked about."* Marks per the rule at the top of this
+file. Every ✅ names its check. The table is filled in as each row lands.
+
+| Note | Mark | Where |
+|---|---|---|
+| Small version number top right of the main menu, bumped on every playtest push | ✅ | `version` — `src/version.js`, `#version-tag`, major held to this log's newest round |
+| "Inspect your men" button is grey | ✅ | `menu` — the button had a class no stylesheet knew; it is `.secondary` now |
+| The Jedi tab reads Jedi whatever order you picked | ✅ | `menu` — `Menu._syncOrderTab`, the tab is named for the order |
+
 ## 1 Sep — SABER GAME NOTES AND IMPROVEMENTS V11
 
 Handed over with: *"You will finish everything on this list to perfection,
