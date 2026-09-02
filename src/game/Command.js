@@ -2247,11 +2247,22 @@ export const FORMATIONS = {
   desecrate: {
     id: 'desecrate', name: 'Desecrate the fallen', key: 'Delete',
     blurb: 'A third of them go out and take the enemy dead apart. What the rest see of it puts the line in a frenzy — and a Jedi company hates itself for it.',
-    leash: 1.0, advance: false, fire: 1, rends: true,
+    /* A LONGER LEASH AND A DIFFERENT SHAPE FROM THE BURIAL, and both for the
+     * same reason: their dead are lying where they fell, which is FORWARD of
+     * the line, while your holes are dug behind it. So the men not detailed
+     * stand a wide arc pushed out toward the bodies rather than a tight ring
+     * round a grave, and the whole order reaches further (1.6 against the
+     * burial's 1.0). `command.mjs` holds both facts — an order that places
+     * every man exactly where another one does is one order wearing two
+     * names, and it caught this file copying the burial's slot verbatim. */
+    leash: 1.6, advance: false, fire: 1, rends: true,
     slot(i, n, k, out) {
-      const a = (i * 2.399963) % TAU;
-      const r = 5.0 + (i % 2) * 1.6 + (k % 2) * 0.8;
-      return out.set(Math.sin(a) * r, 0, Math.cos(a) * r);
+      /* A forward arc: 140 degrees of it, opening away from the commander,
+       * at a radius that steps out with the rank rather than jittering. */
+      const half = 1.22;
+      const a = n > 1 ? -half + (i / (n - 1)) * half * 2 : 0;
+      const r = 7.5 + (i % 3) * 1.4 + (k % 2) * 1.1;
+      return out.set(Math.sin(a) * r, 0, Math.cos(a) * r + 2.5);
     },
   },
   bury: {
