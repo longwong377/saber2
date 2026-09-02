@@ -355,6 +355,14 @@ const deckDepth = () => DECK.lip - DECK.aft;
 const alongDeck = (f) => DECK.aft + deckDepth() * f;
 /** Where the rack walls stand. */
 const rackX = () => DECK.lip * GEOM.rack;
+/**
+ * THE WALL'S REAL FACE. The V11 look rebuilt the side walls as slabs whose
+ * collider stands at `DECK.wall - 7.5` (`Hangar.deckColliders`), inboard of
+ * where the old rack wall was — so a horn derived from the lip hung INSIDE
+ * the wall mass, 7 m from the nearest surface in every direction, and
+ * `deck-audio` said so for a session. The horns and vents hang off this.
+ */
+const wallFace = () => DECK.wall - 7.5;
 /** The bulkhead's inboard face — the only solid surface in the level. */
 const faceZ = () => alongDeck(GEOM.face);
 
@@ -588,7 +596,7 @@ export const PA_VOICE = {
  */
 function hornSites() {
   const off = DECK.lip * GEOM.standoff;
-  const rx = rackX() - off;
+  const rx = wallFace() - off;
   const fz = faceZ() + off;
   return [
     [-DECK.lip * GEOM.hornX, DECK.roof * GEOM.hornBulk, fz],
@@ -660,7 +668,7 @@ function onDeckZ(world, x, z0) {
 
 /** The four vent sites for this world, on the deck, at the wall feet. */
 function ventSites(world) {
-  const x0 = rackX() - DECK.lip * GEOM.ventX;
+  const x0 = wallFace() - DECK.lip * GEOM.ventX;
   const gaps = [[14, 46], [18, 55], [16, 50], [22, 62]];
   const out = [];
   for (let i = 0; i < GEOM.ventAt.length; i++) {
