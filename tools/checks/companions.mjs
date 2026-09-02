@@ -748,6 +748,15 @@ export async function run({ check, assert }) {
       assert(!line(), `solo, the screen says "${line()}" about a session`);
       menu.netSession('host');
       const said = line();
+      /* AND A CLIENT IS TOLD SOMETHING ELSE, because a client gets something
+       * else: `fieldFromKennel` returns early on a client, since a body
+       * spawned there is a GHOST no other screen has. "Your companion comes
+       * with you" would be exactly the false promise this line prevents. */
+      menu.netSession('client');
+      const asClient = line();
+      assert(/kennel|host/i.test(asClient) && asClient !== said,
+        `a client is told "${asClient}", which is what the host is told`);
+      menu.netSession('host');
       assert(/not kept|nothing that happens to it is kept/i.test(said),
         `hosting with a companion, the screen says "${said}"`);
       assert(/cannot be lost|will not earn/i.test(said),
@@ -760,7 +769,8 @@ export async function run({ check, assert }) {
       settings.companion = 'massiff';
       menu._syncKennelCoop();
       assert(!line(), 'it warns about a session when there is no session');
-      return `silent solo, silent with no animal, and hosting it says: "${said.slice(0, 80)}…"`;
+      return `silent solo, silent with no animal; hosting: "${said.slice(0, 60)}…"; `
+        + `joining: "${asClient.slice(0, 60)}…"`;
     } finally { restore(); }
   });
 

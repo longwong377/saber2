@@ -1907,6 +1907,31 @@ function fieldFromKennel(w, player) {
   const M = MODES[w.settings?.mode];
   if (M?.dojo || M?.solo) return null;
   /**
+   * A CLIENT DOES NOT FIELD ONE, AND THIS IS A LIMITATION RATHER THAN A RULE.
+   *
+   * COMPANIONS.md's settled position is "each commander brings one", and it is
+   * not what ships here. Two things pull against it and both are structural:
+   *
+   *   THE BODY IS THE HOST'S. `spawnEnemy` on a client produces a GHOST — the
+   *   world's own word, at World.js:3400 — because bodies are host-authoritative
+   *   and a client that spawned a real one would be simulating something
+   *   nobody else can see. So a client fielding its own animal gets a puppet
+   *   that its own screen believes in and no other screen has.
+   *
+   *   AND `companion` IS ON `SESSION_KEYS`, which means ONE value for the
+   *   whole session — the host's. Fielding one per player off a shared key
+   *   would give every commander the HOST's kind, which is not "each
+   *   commander brings one", it is one kind wearing four bodies.
+   *
+   * The honest v1 is the host's companion, fielded once, visible to everybody
+   * — and SAYING SO on the lobby line rather than letting a client discover
+   * their animal is missing. Making it per-player needs `companion` split into
+   * a per-peer field on the roster beside `look` and `side`, and a host-side
+   * spawn per peer; that is a real change to the wire and it is written down
+   * here rather than half-done.
+   */
+  if (w.netMode === 'client') return null;
+  /**
    * THE SETTING PICKS THE KIND; THE RECORD IS THE ANIMAL — and this is the one
    * place the two meet.
    *

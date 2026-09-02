@@ -5622,10 +5622,17 @@ export class Menu {
     if (!el) return;
     const live = !!this._netMode;
     const has = this.s.companion && this.s.companion !== 'none';
-    el.textContent = (live && has)
-      ? 'In a session your companion comes with you and nothing that happens to it is kept — '
-        + 'it will not earn a rung, and it cannot be lost.'
-      : '';
+    /* AND THE TWO ROLES ARE TOLD DIFFERENT TRUTHS, because they get different
+     * things. A host's animal is on the field; a client's stays in the kennel,
+     * for the reason `fieldFromKennel` gives — a body spawned on a client is a
+     * ghost nobody else can see. Telling a client "your companion comes with
+     * you" would be the false promise this line exists to prevent. */
+    el.textContent = !(live && has) ? ''
+      : this._netMode === 'client'
+        ? 'In a session only the host\u2019s companion takes the field. Yours stays in the kennel — '
+          + 'it will not earn a rung, and it cannot be lost.'
+        : 'In a session your companion comes with you and nothing that happens to it is kept — '
+          + 'it will not earn a rung, and it cannot be lost.';
     el.style.display = el.textContent ? '' : 'none';
   }
 
