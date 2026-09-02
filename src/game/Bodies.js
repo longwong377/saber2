@@ -10244,15 +10244,20 @@ function buildCreatureHead(rig, P, S, M) {
    * eye's radius in plan units exactly as the old literals were, so the eyes
    * do not move or change size.
    *
-   * The bead is pushed +Z (the way the face points) rather than along a
-   * normal, for the reason the muzzle's droop is a bone-frame number: these
-   * heads are authored in the bone's frame and nothing here knows which way
-   * a given skull is tipped.
+   * The bead is pushed OUTWARD ALONG THE EYE'S OWN RADIUS — the direction
+   * from where the neck arrives to where the eye is placed — and not along
+   * +Z. That distinction is visible: an eye set on the side of a long skull
+   * with its pupil shoved forward shows the bead on the front corner of the
+   * iris, which reads as a squint. The radius is the one direction that is
+   * correct for a four-eyed nexu, a rancor's deep-set pair and a reek's
+   * horn-flanked eyes alike, because it is derived from where each of them
+   * was put rather than assumed about all of them.
    */
   const eyeAt = (x, y, z, r) => {
     k.add(M.eye, new THREE.SphereGeometry(r * S, 7, 6), [x * S, hy + y * S, hz + z * S]);
-    k.add(M.pupil, new THREE.SphereGeometry(r * 0.52 * S, 6, 5),
-      [x * S * 1.04, hy + y * S, hz + (z + r * 0.72) * S]);
+    const d = Math.hypot(x, y, z) || 1;
+    k.add(M.pupil, new THREE.SphereGeometry(r * 0.50 * S, 6, 5),
+      [(x + (x / d) * r * 0.62) * S, hy + (y + (y / d) * r * 0.62) * S, hz + (z + (z / d) * r * 0.62) * S]);
   };
 
   /**

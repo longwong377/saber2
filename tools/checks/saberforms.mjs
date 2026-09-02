@@ -208,4 +208,73 @@ export async function run({ check, assert }) {
     assert(S.setById(undefined).id === 'single', 'a missing set id is not the single blade');
     return `default '${DEFAULT_SETTINGS.saberSet}', local not shared, and an unknown id falls back to one blade`;
   });
+  check('saberforms: measured on real bodies, each set covers and pays differently', () => {
+    /**
+     * THE TABLE SAYS THEY DIFFER; THIS ASSERTS THE BODIES DO.
+     *
+     * The trade check above reads `SABER_SETS` and can only prove the rows are
+     * not copies of each other. This one builds all three and measures the two
+     * things the player's ask is actually about — how much ground the blades
+     * cover, and how wide a guard answers.
+     *
+     * THE PAIR FAILED THIS BEFORE IT EXISTED. Measured: against the single
+     * blade its tip-to-tip span was −30% and its extra guard rose was +0.0°,
+     * while it paid a shorter off blade, 55% of the cut and a hand. That is
+     * the single blade with a handicap and a second hilt — the "only better or
+     * only worse" collapse in the worse direction — and the player's ask for
+     * that set was the opposite: "blocking bolts is easier or area that you
+     * can cover is larger".
+     *
+     * The fix is a `cross` on the Sidearm and a `setHalf` derived from it, off
+     * the carrier's own arm rather than a typed number, which is why this
+     * check measures a built body instead of reading a constant.
+     */
+    return (async () => {
+      const rows = [];
+      for (const set of S.SABER_SETS) {
+        const { world, p, input } = await boot(set.id);
+        try {
+          /* THE BLADE HAS NO ENDPOINTS UNTIL IT HAS BEEN POSED. `base` and
+           * `tip` are written by `setHiltPose`/`update` on the world's own
+           * frame, so a fixture that measures at frame zero measures two zero
+           * vectors and reports every span as 0.00 m. */
+          for (let i = 0; i < 60; i++) world.update(STEP, input);
+          const blades = bladesOf(p);
+          rows.push({
+            id: set.id,
+            span: blades.length > 1 ? blades[0].tip.distanceTo(blades[1].tip)
+              : blades[0].base.distanceTo(blades[0].tip),
+            half: p.control.setHalf ?? 0,
+            hands: set.hands,
+          });
+        } finally { world.unload(); }
+      }
+      const one = rows.find((r) => r.id === 'single');
+      const staff = rows.find((r) => r.id === 'staff');
+      const pair = rows.find((r) => r.id === 'pair');
+      assert(one.half === 0, `the single blade answers a ${one.half.toFixed(3)} rad wider rose — it changed`);
+      /* THE STAFF COVERS MORE GROUND. Its far end is a whole blade beyond the
+       * grip, so tip to tip it is more than twice one blade. */
+      assert(staff.span > one.span * 2,
+        `the staff spans ${staff.span.toFixed(2)} m against one blade's ${one.span.toFixed(2)} — `
+        + 'a saberstaff whose two ends are not further apart than one blade is a reskin');
+      /* AND BOTH SETS ANSWER A WIDER GUARD THAN ONE BLADE. */
+      for (const r of [staff, pair]) {
+        assert(r.half > 0.05,
+          `${r.id} answers a ${(r.half * 57.3).toFixed(1)}° wider rose than one blade — `
+          + 'that is not a second bearing, it is a second decoration');
+      }
+      /* AND THE STAFF'S IS THE WIDER OF THE TWO, which is the trade between
+       * them: a quarterstaff answers more ground than two short swords, and
+       * what the pair buys instead is the free hand. */
+      assert(staff.half > pair.half,
+        `the pair answers ${(pair.half * 57.3).toFixed(1)}° against the staff's `
+        + `${(staff.half * 57.3).toFixed(1)}° — two short swords should not out-cover a polearm`);
+      assert(pair.hands < staff.hands, 'the pair does not free a hand, which is the whole of what it buys');
+      return `span: one ${one.span.toFixed(2)} m, staff ${staff.span.toFixed(2)}, pair ${pair.span.toFixed(2)}; `
+        + `extra rose: staff +${(staff.half * 57.3).toFixed(1)}°, pair +${(pair.half * 57.3).toFixed(1)}°; `
+        + `hands ${one.hands}/${staff.hands}/${pair.hands}`;
+    })();
+  });
+
 }

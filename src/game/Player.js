@@ -3350,8 +3350,24 @@ export class Player {
        * the ten hilts do not agree about it. So a Warden staff answers a wider
        * rose than a Shoto staff, by exactly the metal each of them has.
        */
+      /**
+       * THE EXTRA HALF-WIDTH THIS SET'S GUARD ANSWERS, off the built weapon's
+       * own geometry in both cases and never a typed number — so a Warden
+       * staff answers a wider rose than a Shoto staff by exactly the metal
+       * each of them has, and a small frame covers less ground with two blades
+       * than a tall one does by exactly the arm each of them has.
+       *
+       * BOTH SETS HAVE ONE NOW. The pair's was 0 and it should not have been:
+       * measured against the single blade it covered THIRTY PER CENT LESS
+       * ground and answered no wider a rose, while paying a shorter off blade,
+       * 55% of the cut and a hand. That is the single blade with a handicap,
+       * and the player's ask for this set was the opposite — "blocking bolts
+       * is easier or area that you can cover is larger".
+       */
       this._setHalf0 = this.saberSet === 'staff'
-        ? Math.asin(clamp((this.sidearm.span / 2) / GUARD.radius, 0, 1)) : 0;
+        ? Math.asin(clamp((this.sidearm.span / 2) / GUARD.radius, 0, 1))
+        : this.saberSet === 'pair'
+          ? Math.asin(clamp((this.sidearm.cross / 2) / GUARD.radius, 0, 1)) : 0;
     }
     /** …and the same for each forearm's own twist. See _rollForearm. */
     this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
@@ -4440,7 +4456,14 @@ export class Player {
     /* THE STAFF'S HALF-STANCE IS THE SAME KEY AND THE SAME SENTENCE. With one
      * end retracted the rose is a single blade's, so the addend goes with it —
      * a player who needs a hand free CHOOSES to give one up. */
-    if (this.sidearm) this.control.setHalf = (!wantOne && this.saberSet === 'staff') ? this._setHalf0 : 0;
+    /* THE PAIR KEEPS ITS ROSE ONE-HANDED, and the staff does not. A staff
+     * held in one hand is a staff you are not controlling; two blades in two
+     * hands IS the one-handed grip — `hands: 1` is the set's own answer to
+     * `handsOnHilt`, so `wantOne` is the pair's normal state and zeroing the
+     * rose on it would delete the set's only defensive advantage. */
+    if (this.sidearm) {
+      this.control.setHalf = (this.saberSet === 'pair' || !wantOne) ? this._setHalf0 : 0;
+    }
 
     // force powers
     if (input.actHit('push')) this.forcePush(ctx);

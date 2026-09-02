@@ -224,6 +224,19 @@ export const ENVELOPES = {
 export const OFFHAND = { drop: 0.28, lagStart: 0.35, lagSpan: 0.65, settle: 12 };
 
 /**
+ * HOW FAR APART THE TWO FISTS ARE CARRIED IN THE PAIR, in metres on a
+ * standard arm, before `reachScale` is applied.
+ *
+ * 0.42 m is a fighting stance rather than a shrug: the off hand is carried out
+ * and low (see `OFFHAND.drop`), not tucked at the hip. It is deliberately
+ * SMALLER than the saberstaff's shaft — measured at 0.20 m of grip either side
+ * of centre plus two blades — because a quarterstaff answers a wider rose than
+ * two short swords do, and what the pair buys instead is the free hand and a
+ * blade it can throw without disarming itself.
+ */
+export const PAIR_CROSS = 0.42;
+
+/**
  * THE ORBIT — the saberstaff spun round the chest by pure telekinesis.
  *
  * *"the double bladed user can use pure telekinesis to spin the staff at high
@@ -298,6 +311,38 @@ export class Sidearm {
     this.offset = this.set.id === 'staff' ? 2 * (main.hiltFloor ?? -0.085) : 0;
     this.span = this.set.id === 'staff'
       ? (main.emitterY ?? 0) - (this.offset - (this.saber.emitterY ?? 0)) : 0;
+
+    /**
+     * ── THE PAIR'S OWN SPAN, AND WHY IT IS A SEPARATE FIELD ──────────────
+     *
+     * "maybe with dual wielding blocking bolts is easier or area that you can
+     *  cover is larger … Dual-wielding lightsabers generally provides
+     *  increased offensive capabilities and mobility, making it effective
+     *  against multiple opponents"
+     *
+     * MEASURED WITHOUT THIS, and it is the finding that put the field here:
+     * against one blade, the pair's tip-to-tip span was **−30%** and its extra
+     * guard rose was **+0.0°**. It had a shorter second blade cutting at 55%,
+     * one hand instead of two, and NOTHING back — the set was the single blade
+     * with a handicap and a second hilt, which is exactly the "only better or
+     * only worse" collapse the trade check exists to prevent, in the worse
+     * direction.
+     *
+     * A STAFF'S SPAN IS METAL AND A PAIR'S IS ARMS, and that is why the two
+     * cannot share one number. The staff's is the shaft: fixed, rigid, and
+     * measured off the two built hilts (above). The pair's is how far apart
+     * the two FISTS are carried — `GRIP_PAIR.R - GRIP_PAIR.L` scaled by the
+     * carrier's own arm, because a small frame covers less ground with two
+     * blades than a tall one does and the whole point of `reachScale` in
+     * `GRIPS` is that the guard is held at arm's length.
+     *
+     * IT IS NARROWER THAN THE STAFF'S, which is right and is the trade: a
+     * quarterstaff answers a wider rose than two short swords, and what the
+     * pair buys instead is the free hand (`hands: 1`) and the blade it can
+     * throw without disarming itself.
+     */
+    this.cross = this.set.id === 'pair'
+      ? Math.abs((owner?.limbs?.arm ?? 1) * PAIR_CROSS) : 0;
 
     /**
      * THE OFF BLADE'S OWN THROW STATE, and it is a NEW FIELD rather than a
