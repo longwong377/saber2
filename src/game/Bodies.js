@@ -2732,12 +2732,29 @@ function skullGeo(s, F, sp, covered = sp.hair) {
    * inside the head and did nothing. A frontal field lands on the surface
    * wherever the surface is. */
   const eyeX = 0.0335 * (1 + 0.30 * F.eyes) * s;
+  /**
+   * ── THE SOCKET TRAVELS LESS THAN THE EYE IN IT ───────────────────────────
+   *
+   * `eyes` is a preview feature by design — `creator.mjs` holds it under 12
+   * outline and 40 shaded pixels at eight metres, because a face parameter
+   * that reshapes a skull across a battlefield is a deformity and not a
+   * likeness. The rebuilt head broke that: the socket is now a hollow cut
+   * into the head's own surface rather than a separate mesh, so moving it
+   * ±10 mm dragged a 19 mm shadow across the face and measured 50 shaded
+   * pixels at range.
+   *
+   * The eyeball meshes keep the full spacing — they are what a player sees
+   * move in the preview, and the same check demands they still do — while
+   * the BONE it sits in travels half as far. That is also the truer of the
+   * two: an orbit is a shallower thing than the eye it holds.
+   */
+  const socketX = 0.0335 * (1 + 0.14 * F.eyes) * s;
   const gauss = (d2, sig) => Math.exp(-d2 / (sig * sig));
   const front = (z, from = 0.030, over = 0.020) => clamp((z / s - from) / over, 0, 1);
   const fields = [
     // eye sockets: a hollow 4.5 mm deep and 2 cm across, the eyeball sits in it
-    (x, y, z) => -0.0045 * s * front(z) * (gauss((x - eyeX) ** 2 + (y - 0.084 * s) ** 2, 0.019 * s)
-                                        + gauss((x + eyeX) ** 2 + (y - 0.084 * s) ** 2, 0.019 * s)),
+    (x, y, z) => -0.0045 * s * front(z) * (gauss((x - socketX) ** 2 + (y - 0.084 * s) ** 2, 0.019 * s)
+                                        + gauss((x + socketX) ** 2 + (y - 0.084 * s) ** 2, 0.019 * s)),
     // nostrils, under the wings of the tip
     (x, y, z) => -0.0026 * s * (1 + 0.2 * F.nose) * front(z, 0.060, 0.015)
       * (gauss((x - 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2, 0.0062 * s) + gauss((x + 0.0095 * s) ** 2 + (y - 0.043 * s) ** 2, 0.0062 * s)),
@@ -4070,7 +4087,12 @@ export const HOOD_CUTS = [
      * rather than cloth hanging off one. The base scales come down as the
      * gathers go on, because a flute only ever pushes OUT. */
     facet: true,
-    shell: { r: 0.138, w: 26, h: 11, open: 0.38, theta: 0.84,
+    /* r 0.138 → 0.146: the rebuilt skull (V12 — one displaced surface rather
+     * than twelve overlapping ellipsoids) carries a fuller vault than the
+     * ball-cluster it replaced, and the tightest hood in the set is the one
+     * that finds that out. Measured, the cowl left 25% of the cranium bare;
+     * `hoods.mjs` holds every cut to covering 78% of it. */
+    shell: { r: 0.146, w: 26, h: 11, open: 0.38, theta: 0.84,
              sx: 0.98, sy: 1.21, sz: 1.07, taper: 0.07, lean: 0.022,
              flute: 8, fluteAmp: 0.150,
              y: 0.042, z: -0.030, line: 0.94, dark: 0.34 },

@@ -743,7 +743,21 @@ export async function run({ check, assert }) {
     for (const key of LEVEL_ORDER) {
       const { world } = await level(key);
       const T0 = world.terrain;
-      if (world.physics.staticBoxes.some((b) => !b.disabled && b.halfExtents.y < 0.5
+      /**
+       * A DECK IS ARCHITECTURE, NOT LANDFORM. `Props.fitStaticBoxes` skins a
+       * MESH with a compound of thin slabs — that is how the ice level's snow
+       * massifs got colliders that follow their lumps (V12) — and one of
+       * those slabs, sitting on the shoulder of a mound with the ground
+       * falling away under its centre, is wide, thin and well above the
+       * terrain: this discovery pass called it a deck. It then failed the
+       * tighter test below, because it is not one.
+       *
+       * Every fitted box says so in its own userData, so the question this
+       * pass asks is now the question it meant: is there a BUILT platform
+       * here. A landform's skin is skipped in both passes.
+       */
+      if (world.physics.staticBoxes.some((b) => !b.disabled && !b.userData?.fitted
+        && b.halfExtents.y < 0.5
         && b.halfExtents.x > 1.5 && b.halfExtents.z > 1.5
         && b.center.y - T0.height(b.center.x, b.center.z) > 2.0)) deckLevels.push(key);
     }
@@ -753,6 +767,7 @@ export async function run({ check, assert }) {
       const decks = [];
       for (const b of world.physics.staticBoxes) {
         if (b.disabled) continue;
+        if (b.userData?.fitted) continue;               // landform skin, not a deck
         const h = b.halfExtents;
         if (h.y > 0.35) continue;                       // not a deck: a wall
         if (h.x * h.z < 6) continue;                    // not a deck: a sill
