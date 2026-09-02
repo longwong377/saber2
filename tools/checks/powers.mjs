@@ -1120,7 +1120,7 @@ export async function run({ check, assert }) {
      *                         would exist and never be used; at 1 hp the next
      *                         bolt does it, which is the risk it is for.
      */
-    const { UNBOUND, UNLEASH_TOLL, unboundId } = await import('../../src/game/Powers.js');
+    const { UNBOUND, UNBOUND_OF, UNLEASH_TOLL, unboundId } = await import('../../src/game/Powers.js');
     const { BOONS, boonById } = await import('../../src/game/Waves.js');
     const Tree = await import('../../src/game/LivingForce.js');
 
@@ -1154,7 +1154,11 @@ export async function run({ check, assert }) {
     const covered = new Set(UNBOUND.map((u) => u.key));
     for (const key of written) {
       if (key === 'dash') continue;                    // movement, not a Force power
-      assert(covered.has(key),
+      /* THE WARD RIDES THE BARRIER'S CARD — it is the barrier's key aimed at
+       * somebody else, and `UNBOUND_OF` is where Powers.js says so. A key
+       * aliased to a card that does not exist is the same defect as a key
+       * with no card, so the alias has to land on a covered row. */
+      assert(covered.has(UNBOUND_OF[key] ?? key),
         `${key} writes a cooldown and has no unbound card — every power with a clock is meant `
         + 'to have one');
     }
@@ -1443,5 +1447,197 @@ export async function run({ check, assert }) {
     world.update(1 / 60, input);
     assert(p.healing === null, 'a hit landed on the healer and the mend carried on regardless');
     return 'a hostile is not a patient; a hit on the healer ends it';
+  });
+
+  /* ══════════════════════════════════════════════════════════════════
+   *  THE ALLY WARD AND RESTORE — the two powers the player asked for
+   * ══════════════════════════════════════════════════════════════════ */
+
+  /** A quiet field with the player and `n` troopers of his own at `spots`. */
+  async function squad(spots) {
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { world } = await H.bootWorld({
+      level: 'colosseum', settings: { mode: 'waves', quality: 'low', instantSpawn: true },
+    });
+    const input = H.idleInput();
+    const p = world.player;
+    const ctx = { input, physics: world.physics, terrain: world.terrain, particles: world.particles,
+      enemies: world.enemies, players: world.players };
+    const mates = spots.map(([dx, dz]) => {
+      const at = new THREE.Vector3(p.position.x + dx, p.position.y, p.position.z + dz);
+      const m = world.spawnEnemy('trooper', at);
+      assert(m, 'no trooper spawned');
+      m.team = p.team;
+      return m;
+    });
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);
+    p.force = p.maxForce = 500;
+    const aimAt = (e) => { p.aimDir.subVectors(e.position, p.chest).normalize(); };
+    const aimAway = () => { p.aimDir.set(0, 0.6, 1).normalize(); };
+    return { world, input, p, ctx, mates, aimAt, aimAway, THREE };
+  }
+
+  check('powers: the barrier key wards the ally under the reticle, never you, and one bubble at a time', async () => {
+    /**
+     * "the ally bubble can be the same button as the personal bubble but if
+     * you're aiming at an ally within a certain distance then it bubbles
+     * them, you cannot bubble yourself and an ally at the same time."
+     *
+     * One key, three presses: at a man, at the sky, at the man again. The
+     * first is his bubble and not yours; the second is yours and takes his
+     * down; the third is his again and takes yours down. And with nobody on
+     * the field `_wardTarget` answers null — it cannot pick you, because you
+     * are skipped by name before the cone is even measured.
+     */
+    const { Player: P } = await import('../../src/game/Player.js');
+    const { p, ctx, mates, aimAt, aimAway } = await squad([[0, -6]]);
+    const mate = mates[0];
+    const f0 = p.force;
+    aimAt(mate);
+    assert(p._wardTarget(ctx) === mate, 'the man six metres ahead is not under the reticle');
+    p.forceShield(ctx);
+    assert(p.ward.body === mate, 'aimed at an ally, the key raised something other than his ward');
+    assert(!p.shield.up, 'the ward went up AND the personal barrier came up with it');
+    const spent = f0 - p.force;
+    assert(Math.abs(spent - p._priceOf(POWER_COST.ward)) < 0.5,
+      `the ward cost ${spent.toFixed(1)}, not the ${POWER_COST.ward} on the table`);
+    /* …and it is not you. */
+    const alone = { ...ctx, enemies: [] };
+    assert(p._wardTarget(alone) === null, 'with nobody on the field the ward found somebody');
+
+    aimAway();
+    p.forceShield(ctx);
+    assert(p.shield.up, 'aimed at the sky, the key did not raise the personal barrier');
+    assert(!p.ward.body, 'raising your own barrier left the ward standing on the ally');
+    assert(p.cooldowns.ward > 0, 'the ward came down and owes no recovery');
+
+    p.cooldowns.ward = 0;
+    aimAt(mate);
+    p.forceShield(ctx);
+    assert(p.ward.body === mate, 'with your barrier up and a man in your sights the key did not ward him');
+    assert(!p.shield.up, 'warding an ally left the personal barrier up — two bubbles on one bar');
+    return `key at ally → ward (${spent.toFixed(0)} Force), at sky → barrier and ward down, `
+      + 'at ally → ward and barrier down';
+  });
+
+  check('powers: a bolt aimed at a warded man dies on his bubble and is billed to you', async () => {
+    /**
+     * The absorb goes through the ally's OWN damage door — `Enemy.damage`,
+     * wrapped on the body for the ward's six seconds and put back exactly as
+     * it was found. Driven with `damage()` itself, which is where every bolt,
+     * blast and blade an Enemy takes already arrives, so the test is the path
+     * and not a re-implementation of it.
+     */
+    const { SHIELD, ALLY_WARD } = await import('../../src/game/Player.js');
+    const { world, input, p, ctx, mates, aimAt } = await squad([[0, -6]]);
+    const mate = mates[0];
+    const ownBefore = Object.prototype.hasOwnProperty.call(mate, 'damage');
+    const doorBefore = mate.damage;
+    aimAt(mate);
+    p.forceShield(ctx);
+    assert(p.ward.body === mate, 'no ward');
+    for (let i = 0; i < 20; i++) world.update(1 / 60, input);   // the bubble rises
+    assert(p.ward.power >= 0.25, `the ward is still at ${p.ward.power.toFixed(2)} power after a third of a second`);
+    const hp0 = mate.hp, f0 = p.force;
+    const at = mate.position.clone(); at.y += 1;
+    mate.damage(20, at, null, 'bolt');
+    assert(Math.abs(mate.hp - hp0) < 1e-6, `a bolt got through the ward: ${hp0.toFixed(1)} → ${mate.hp.toFixed(1)}`);
+    assert(p.ward.stopped === 1, `the ward counted ${p.ward.stopped} bolts stopped, not 1`);
+    assert(Math.abs((f0 - p.force) - p._priceOf(SHIELD.bolt)) < 0.5,
+      `the bolt cost the caster ${(f0 - p.force).toFixed(1)}, not SHIELD.bolt = ${SHIELD.bolt}`);
+    /* A blade comes through, blunted. */
+    mate.damage(20, at, null, 'melee');
+    const took = hp0 - mate.hp;
+    assert(took > 0 && took < 20,
+      `a melee blow on a warded man took ${took.toFixed(1)} — the ward should blunt it by ${SHIELD.blunt}, not stop it`);
+    /* It times out, owes its recovery, and gives the man his door back. */
+    for (let i = 0; i < Math.ceil((ALLY_WARD.hold + 0.5) * 60); i++) world.update(1 / 60, input);
+    assert(!p.ward.body, `the ward is still up after ${ALLY_WARD.hold + 0.5} s`);
+    assert(Math.abs(p.cooldowns.ward - (ALLY_WARD.cooldown - 0.5)) < 0.6,
+      `the ward's recovery reads ${p.cooldowns.ward.toFixed(1)} against a ${ALLY_WARD.cooldown} s table`);
+    assert(Object.prototype.hasOwnProperty.call(mate, 'damage') === ownBefore,
+      'the ward left a wrapper on the ally after it came down');
+    assert(mate.damage === doorBefore, 'the ally\'s damage door is not the one he had before the ward');
+    const hp1 = mate.hp;
+    mate.damage(20, at, null, 'bolt');
+    assert(mate.hp < hp1, 'with the ward down a bolt still did nothing to the man');
+    return `bolt: 0 hp, ${p._priceOf(SHIELD.bolt)} Force to the caster; melee: ${took.toFixed(1)} of 20; `
+      + `down after ${ALLY_WARD.hold} s, ${ALLY_WARD.cooldown} s to recover, door restored`;
+  });
+
+  check('powers: Restore heals everyone inside the radius, nobody outside, and stands the fallen up', async () => {
+    /**
+     * "a group/proximity heal, the group heal should have a really long
+     * cooldown and use a lot of force."
+     *
+     * Two men at five metres, one of them on the ground, one at twenty, and
+     * you at half health. One press: the two inside and you go up by half a
+     * maximum over three seconds, the man outside does not move, the man on
+     * the ground is standing, and the key is dead for 75 s — which is asserted
+     * to be the longest recovery Player.js writes anywhere.
+     */
+    const { RESTORE } = await import('../../src/game/Player.js');
+    const { world, input, p, ctx, mates } = await squad([[3, -4], [-3, -4], [0, -20]]);
+    const [a, b, far] = mates;
+    for (const m of mates) m.hp = m.maxHp * 0.3;
+    b.actor?.goRagdoll?.(b.velocity.clone(), null);
+    p.hp = p.maxHp * 0.5;
+    const f0 = p.force;
+    p.forceRestore(ctx);
+    assert(p.restoring, 'the burst did not open');
+    assert(Math.abs((f0 - p.force) - p._priceOf(POWER_COST.restore)) < 0.5,
+      `restore cost ${(f0 - p.force).toFixed(1)}, not the ${POWER_COST.restore} on the table`);
+    assert(Math.abs(p.cooldowns.restore - RESTORE.cooldown) < 1e-6,
+      `the cooldown was written as ${p.cooldowns.restore}, not ${RESTORE.cooldown}`);
+    assert(!b.actor?.ragdolled, 'the man on the ground is still on the ground');
+    for (let i = 0; i < Math.ceil((RESTORE.time + 0.3) * 60); i++) world.update(1 / 60, input);
+    assert(!p.restoring, 'the burst is still running after its three seconds');
+    const frac = (m) => m.hp / m.maxHp;
+    for (const m of [a, b]) {
+      assert(frac(m) > 0.3 + RESTORE.fraction * 0.8,
+        `a man inside the radius went 0.30 → ${frac(m).toFixed(2)} of his maximum`);
+    }
+    assert(Math.abs(frac(far) - 0.3) < 0.02, `the man at 20 m went 0.30 → ${frac(far).toFixed(2)} — outside the radius`);
+    assert(frac(p) > 0.95, `the caster went 0.50 → ${frac(p).toFixed(2)}`);
+    /* And again is refused for a long time. */
+    a.hp = a.maxHp * 0.3;
+    const f1 = p.force;
+    p.forceRestore(ctx);
+    assert(!p.restoring && p.force === f1, 'a second press inside the cooldown cast anyway');
+    /* THE LONGEST RECOVERY IN THE GAME, measured off the file rather than said. */
+    const src = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    const waits = [...src.matchAll(/_recover\('(\w+)',\s*([\d.]+|[A-Z_.]+)\)/g)];
+    let longest = 0, who = '';
+    for (const [, key, n] of waits) {
+      const v = Number(n);
+      if (Number.isFinite(v) && v > longest) { longest = v; who = key; }
+    }
+    assert(RESTORE.cooldown > longest,
+      `Restore's ${RESTORE.cooldown} s is not the longest — ${who} recovers in ${longest}`);
+    return `inside ×2: 0.30 → ${frac(a).toFixed(2)}/${frac(b).toFixed(2)}, outside 0.30 → ${frac(far).toFixed(2)}, `
+      + `self 0.50 → ${frac(p).toFixed(2)}; ${POWER_COST.restore} Force, ${RESTORE.cooldown} s > next longest ${longest} s (${who})`;
+  });
+
+  check('powers: on the flight deck the ward and the restore refuse like the rest', async () => {
+    /**
+     * `OFF_THE_DECK` refuses eight keys at the input; the two methods refuse
+     * on `hosting` themselves as well, so a call that reaches them by any
+     * other route — the pad, a check, a future wheel — cannot spend a bar on
+     * a deck where nothing shoots and nothing is hurt.
+     */
+    const { p, ctx, mates, aimAt } = await squad([[0, -6]]);
+    p.hosting = true;
+    mates[0].hp = mates[0].maxHp * 0.3;
+    const f0 = p.force;
+    aimAt(mates[0]);
+    p.forceWard(ctx);
+    assert(!p.ward.body && p.force === f0, 'the ward went up on the flight deck');
+    p.forceRestore(ctx);
+    assert(!p.restoring && p.force === f0 && !(p.cooldowns.restore > 0), 'restore cast on the flight deck');
+    p.hosting = false;
+    p.forceRestore(ctx);
+    assert(p.restoring, 'off the deck the same call does not cast');
+    return 'both refused on the deck, restore casts the moment you are off it';
   });
 }
