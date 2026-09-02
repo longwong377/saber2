@@ -2061,8 +2061,12 @@ export const FORMATIONS = {
    */
   rank: {
     id: 'rank', name: 'Rank ahead', key: 'Semicolon',
-    blurb: 'One rank across your front. You stand behind the line you are holding up.',
-    leash: 1.5, advance: true, fire: 1,
+    blurb: 'One rank across your front, holding their fire until it will tell. You stand behind the line you are holding up.',
+    /* A VOLLEY, which is what a rank is for: they hold until the target is
+     * inside `VOLLEY_AT * 0.5` = 25 m and then all fire together. It is the
+     * one order that uses the graded value, and it is what makes it a
+     * different order from `line` rather than a differently shaped one. */
+    leash: 1.5, advance: true, fire: 0.5,
     slot(i, n, k, out) {
       /* Centred on the commander ACROSS and ahead of them along, so an odd
        * roster puts one more man on the left exactly as `line` does. */
@@ -3033,6 +3037,21 @@ export const BURY = {
  * is off the guns, out in front where the bodies are rather than behind the
  * line where the holes are, and contact ends it.
  */
+/**
+ * ── FIRE DISCIPLINE IS A RANGE NOW, NOT A BIT ────────────────────────────
+ *
+ * `FORMATIONS[*].fire` was 1 or 0 — shoot, or do not — so "volley" and "at
+ * will" could not be different orders however they were described. A value
+ * strictly between the two means HOLD UNTIL THEY ARE THIS CLOSE: the gate is
+ * `VOLLEY_AT * fire` metres, so 0.5 is the twenty-five the rank waits for.
+ *
+ * The two ends are unchanged and every existing order keeps its value, so
+ * this is a mechanism plus exactly one order that uses it. A man whose
+ * discipline is poor still breaks the hold the same way he always did — the
+ * accumulator below is untouched; what changed is only WHEN the hold applies.
+ */
+export const VOLLEY_AT = 50;
+
 export const DESECRATE = {
   /** What share of the men ordered are detailed, and the fewest that is. */
   share: 1 / 3, min: 2,
@@ -11004,10 +11023,33 @@ export class CommandDirector extends WaveDirector {
            */
           const lean = scaleOf(t, 'bond');
           let near = false, presence = 0;
-          if (jedi?.position) {
-            const w = share(dist2(e.position, jedi.position));
-            if (w > 0) { presence += MORALE.JEDI_NEAR * w * lean; near = true; }
+          /**
+           * ── EVERY JEDI ON YOUR SIDE, NOT ONLY THIS COMMANDER'S OWN ──────
+           *
+           * `jedi` is `c.player`. In co-op a partner is a `RemoteAvatar` in
+           * `world.players` and is nobody's `c.player`, so a second Jedi
+           * standing in the middle of your line was worth exactly nothing to
+           * it — the strongest morale term in the game (`JEDI_NEAR`, 0.085/s)
+           * paid for one man and ignored the other.
+           *
+           * THE NEAREST, NOT THE SUM. Two Jedi shoulder to shoulder do not
+           * steady a line twice as hard; taking the best weight keeps the
+           * term exactly as strong as it has always been and simply lets the
+           * other man carry it. Nothing new is written to the avatar: what
+           * this reads is position, team and alive, which it already has.
+           */
+          let jw = 0;
+          if (jedi?.position && jedi.alive !== false) jw = share(dist2(e.position, jedi.position));
+          const ps = this.world?.players;
+          if (ps) {
+            for (const p of ps) {
+              if (!p || p === jedi || p.alive === false || !p.position) continue;
+              if (p.team !== undefined && e.team !== undefined && p.team !== e.team) continue;
+              const w = share(dist2(e.position, p.position));
+              if (w > jw) jw = w;
+            }
           }
+          if (jw > 0) { presence += MORALE.JEDI_NEAR * jw * lean; near = true; }
           if (lead && lead !== t && lead.body && !lead.body.dead) {
             const w = share(dist2(e.position, lead.body.position));
             if (w > 0) { presence += MORALE.LEADER_NEAR * w * lean; near = true; }
@@ -11443,7 +11485,18 @@ export class CommandDirector extends WaveDirector {
           /* …AND A MAN ON THE BURIAL DETAIL HAS A SHOVEL OR A COLLAR IN HIS
            * HANDS. `t.burying` is `_buryStart`'s, and it is the risk the
            * player named: the third of the line doing this is not shooting. */
-          if ((Fe.fire <= 0 || digging || t.burying) && !this._closing) {
+          /* A GRADED ORDER HOLDS UNTIL THEY ARE INSIDE ITS RANGE. See
+           * VOLLEY_AT. `fire >= 1` is at will and never gates; `fire <= 0`
+           * never fires; between them the gate is a distance, and the target
+           * is the one this body has already chosen this frame. */
+          const gate = Fe.fire > 0 && Fe.fire < 1;
+          let waiting = false;
+          if (gate) {
+            const tg = e.target;
+            const far = !tg || dist2(tg.position, e.position) > (VOLLEY_AT * Fe.fire) ** 2;
+            waiting = far;
+          }
+          if ((Fe.fire <= 0 || waiting || digging || t.burying) && !this._closing) {
             /**
              * …AND A POORLY DISCIPLINED MAN BREAKS IT WHEN HE IS BEING SHOT AT.
              *

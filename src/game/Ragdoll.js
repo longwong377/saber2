@@ -541,7 +541,19 @@ export class Actor {
     }
   }
 
-  dispose() {
+  /**
+   * @param opts.keepPieces  leave the severed limbs on the ground.
+   *
+   * A CORPSE THAT RETIRES SHOULD NOT GROW ITS ARM BACK. The body sinks into
+   * `FallenField`'s instanced pose, which is a whole man; the pieces the
+   * blade took off it were disposed on the same frame, so a butchered body
+   * tidied itself up as it went and the ground forgot the fight. Kept, they
+   * simply stay where they fell — and they are already bounded, because a
+   * piece's bodies are `LAYER.DEBRIS` and `finalise` gives each one an
+   * `onCull` hook, so the physics world's own oldest-debris cull reclaims
+   * them when it needs the room. Nothing new owns them and nothing leaks.
+   */
+  dispose(opts = {}) {
     for (const b of this.bodies.values()) this.physics.remove(b);
     /**
      * MATERIALS TOO — EVERY CORPSE IN THE GAME LEAKED ITS OWN.
@@ -561,7 +573,7 @@ export class Actor {
       releaseTree(h, false);
       this.scene.remove(h);
     }
-    for (const p of this.pieces) p.dispose();
+    if (!opts.keepPieces) for (const p of this.pieces) p.dispose();
     this.pieces.length = 0;
     this.scene.remove(this.rig.root);
     this.rig.dispose();

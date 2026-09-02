@@ -505,6 +505,10 @@ export class Corpses {
         fade(e, k);
         if (c.sink <= 0) {
           if (!c.laid && this.bury(c)) this.instanced++;
+          /* THE LIMBS STAY. The body is about to become a whole man in the
+           * instanced field; what the blade took off it lies where it fell.
+           * See `Ragdoll.dispose`'s `keepPieces`. */
+          e._keepPieces = true;
           try { e.dispose?.(); } catch { /* a corpse that cannot be disposed is still gone from here */ }
           this.list.splice(i, 1);
           this.retired++;

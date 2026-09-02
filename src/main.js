@@ -310,6 +310,17 @@ const menu = new Menu(settings, {
     grass: settings.grassScale,
     enemies: world ? world.enemies.length : 0,
     wave: world && world.director ? (world.director.wave ?? '-') : '-',
+    /* THE BODY BUDGET, AND WHAT IT HAS REFUSED. `RapierWorld.add` culls the
+     * oldest debris when the world is full and, when there is no debris left
+     * to cull, drops the body and counts it in `stats.overBudget` — silently.
+     * A corpse is nineteen bodies, so a busy field can hit the ceiling and
+     * the only symptom is a ragdoll that never appears. The instruments say
+     * so now, which is the whole of the fix: the budget is right, its failure
+     * was invisible. */
+    bodies: world?.physics
+      ? `${world.physics.bodies.length} / ${world.physics.maxBodies}`
+        + (world.physics.stats?.overBudget ? `  (${world.physics.stats.overBudget} refused)` : '')
+      : '-',
   }),
   onRetry: () => {
     cancelDeathCard(); menu.hideDeath();

@@ -6584,6 +6584,23 @@ export class Enemy {
      * that breaks peels rather than reversing.
      */
     if (!this.trooper && nerveBroken(this)) {
+      /**
+       * ── AND HE LOOKS LIKE A MAN WHO HAS BROKEN ────────────────────────
+       *
+       * The whole of `Nerve.js` was invisible from the outside: a hostile
+       * whose nerve had gone turned and ran, and so does a hostile
+       * repositioning, so "walk into them and they come apart" — the point of
+       * the system — read as ordinary movement. Nameplates are drawn for your
+       * own side only, so there was no other channel.
+       *
+       * Two tells, both cheap and both legible at fifty metres: he CRIES OUT
+       * once, on the frame he goes (`_brokeSaid` is the edge, cleared when he
+       * steadies, so a body on the boundary does not stutter), and he runs
+       * HUNCHED — `crouch` is the same channel the gait already reads, so it
+       * costs a number and no new pose.
+       */
+      if (!this._brokeSaid) { this._brokeSaid = true; this.cry?.('panic', 2.0); }
+      this.crouch = Math.max(this.crouch || 0, 0.35);
       _v3.copy(this.toTarget).multiplyScalar(-1).addScaledVector(side, 0.45);
       if (_v3.lengthSq() > 1e-6) _v3.normalize();
       this.wish = this._wishBuf.copy(_v3);
@@ -6597,6 +6614,8 @@ export class Enemy {
       this._rangedBrain(dt, ctx, dist);
       return;
     }
+    /* He steadied: the cry may be spent again the next time he goes. */
+    this._brokeSaid = false;
 
     if (A.melee) this._meleeBrain(dt, ctx, dist);
     else this._rangedBrain(dt, ctx, dist);
@@ -9742,7 +9761,11 @@ export class Enemy {
     if (this.skirt) this.skirt.dispose();
     if (this.telegraphArc) this.telegraphArc.dispose();
     if (this.laser) { this.world.scene.remove(this.laser); this.laser.geometry.dispose(); this.laser.material.dispose(); }
-    if (this.actor) this.actor.dispose();
+    /* A RETIRING CORPSE LEAVES ITS LIMBS BEHIND — `Corpses` passes
+     * `keepPieces` when a body sinks into the instanced field, because that
+     * pose is a whole man and the arm the blade took off it is not. See
+     * `Ragdoll.dispose`. Every other caller disposes them as before. */
+    if (this.actor) this.actor.dispose(this._keepPieces ? { keepPieces: true } : undefined);
     else if (this.rig) { this.world.scene.remove(this.rig.root); this.rig.dispose(); }
     if (this.group) this.world.scene.remove(this.group);
     if (!this.bodyRemoved) this.world.physics.remove(this.body);

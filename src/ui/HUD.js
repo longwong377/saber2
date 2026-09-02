@@ -1131,6 +1131,7 @@ export class HUD {
       // text node the HUD used to reach for by position — see the wave block
       // in update() for the session-long 'LESSON' that cost.
       waveWord: root.getElementById('hud-wave-word'),
+      rule: root.getElementById('hud-rule'),
       level: root.getElementById('hud-level'),
       diff: root.getElementById('hud-diff'),
       remaining: root.getElementById('hud-remaining'),
@@ -1607,6 +1608,8 @@ export class HUD {
      * where the camera and the aim are not the same ray. */
     const aim = player.aimDir;
     const eye = player.camera ? player.camera.pos : player.position;
+    /* Null unless the player has stepped the target through to one squad. */
+    const selSquad = cmd?.selectedSquad ?? null;
     let aimed = null, bestDot = 0.986;                     // ≈ 9.5° cone
     const live = [];
     for (const c of cmd.commanders || []) {
@@ -1702,6 +1705,11 @@ export class HUD {
       P.hp.style.width = `${hp * 100}%`;
       P.mor.style.width = `${mo * 100}%`;
       P.node.classList.toggle('aimed', isAimed);
+      /* THE SQUAD YOUR NEXT ORDER IS FOR, on the men rather than in a caption.
+       * `selectedSquad` was text on the wheel and a line under the order
+       * strip and nowhere on the field, so choosing a squad and then looking
+       * at your line told you nothing about which men had been chosen. */
+      P.node.classList.toggle('picked', selSquad != null && t.squad === selSquad);
       P.node.classList.toggle('far', dist > 40);
       P.node.classList.toggle('hurt', hp < 0.35);
       P.node.classList.toggle('shaken', braveryOf(e) < SHAKEN_AT);
@@ -2362,6 +2370,26 @@ export class HUD {
      */
     el.wave.textContent = world.director.wave;
     if (el.waveWord) el.waveWord.textContent = world.training ? 'LESSON' : 'WAVE';
+    /**
+     * THE RULE THE MODE IS PLAYED UNDER, where the player can read it.
+     *
+     * Trial of Waves and Path of the Blade differ in one declared field —
+     * `drafts` — and that difference is the whole reason to pick one over the
+     * other. It was written in the mode card's blurb, on a screen you leave
+     * before the first wave, and nowhere else. This is one line under the
+     * wave number, written on change, blank for every mode with nothing
+     * extra to say.
+     */
+    if (el.rule) {
+      /* `DRAFT_MODES` is the one list that says who drafts — read off the
+       * director, which has already resolved it, rather than re-deriving it
+       * here from the mode name and drifting from `budgetFor`. */
+      const mode = world.settings?.mode;
+      const txt = world.training ? ''
+        : (world.director.drafts ? 'A BOON EVERY 2ND WAVE'
+          : (mode === 'waves' ? 'NO BOONS — the Holocron is your power' : ''));
+      if (el.rule._last !== txt) { el.rule._last = txt; el.rule.textContent = txt; }
+    }
     /* ── the figure and the word under it ─────────────────────────────
      *
      * One line used to carry both ("7 remaining") in one 10.5 px string, under

@@ -2537,6 +2537,15 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    already answers "who is that", and this is the other half of the question a
    player asks when they are about to order one squad and not the other. */
 .tplate .tp-squad{color:var(--dim);font-weight:700;margin-left:5px;font-size:.86em}
+/* THE SQUAD YOUR NEXT ORDER IS FOR. A rule on the plate rather than a word in
+   it: the men who will hear the order are lit, and the rest are not. */
+.tplate.picked{background:rgba(232,167,101,.14);box-shadow:0 0 0 1px var(--accent) inset}
+.tplate.picked .tp-squad{color:var(--accent)}
+/* The mode's own rule, under the wave number: small, dim, and out of the
+   layout entirely when the mode has nothing extra to say. */
+.wave-rule{margin-top:2px;font:var(--mono);font-size:8.5px;letter-spacing:.16em;
+  text-transform:uppercase;color:var(--dim);opacity:.75}
+.wave-rule:empty{display:none}
 .tplate .tp-squad:empty{display:none}
 /* HEALTH AND NERVE ARE TWO BARS AND THEY ARE DIFFERENT WIDTHS ON PURPOSE. A
    man at half health and a man who is about to break are two different

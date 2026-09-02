@@ -91,6 +91,14 @@ export const FLIGHT = {
   /** The pad's own height, so the ramp foot lands on something walkable. */
   padHeight: 0.45,
   seal: 1.6,
+  /**
+   * THE TAXI. A landed hull spun up and went straight up off its pad, which
+   * is the one beat of a launch nobody does: it rolls out to a mark first.
+   * Three seconds of it, on the deck, before the climb — the pad is a place
+   * you park, the mark is the place you leave from, and `taxiTo` is how far
+   * forward along the deck's axis that is.
+   */
+  taxi: 3.0, taxiTo: 16,
   lift: 2.6,
   run: 5.2,
   /**
@@ -115,7 +123,7 @@ export const FLIGHT = {
 };
 
 export const PHASE = {
-  PARKED: 'parked', BOARD: 'board', SEAL: 'seal', LIFT: 'lift', RUN: 'run', OUT: 'out',
+  PARKED: 'parked', BOARD: 'board', SEAL: 'seal', TAXI: 'taxi', LIFT: 'lift', RUN: 'run', OUT: 'out',
   GONE: 'gone', APPROACH: 'approach', TURN: 'turn', OPEN: 'open', UNLOAD: 'unload',
 };
 
@@ -605,11 +613,26 @@ export function stepDeckFlight(world, dt) {
       if (u?.ramp) u.ramp.rotation.x = (1 - smoothstep(0, 1, st.t / FLIGHT.seal)) * rampAngle(st);
       setThrust(st, 0.2);
       if (st.t >= FLIGHT.seal) {
-        st.phase = PHASE.LIFT; st.t = 0;
+        st.phase = PHASE.TAXI; st.t = 0;
+        st.taxiFrom = g.position.clone();
         unsolidify(world, st);
         try { launchSequence(world, { x: pad.x, z: pad.z, speed: (DECK.lip - pad.z) / FLIGHT.run }); } catch {}
         audio.noise?.({ dur: 2.2, gain: 0.13, type: 'bandpass', freq: 190, q: 0.8, pos: g.position });
       }
+      break;
+    }
+
+    case PHASE.TAXI: {
+      /* ROLLING OUT TO THE MARK, still on its gear: a slow crawl forward
+       * along the deck's axis with the nose coming round onto the centreline,
+       * the engines idling rather than lifting. */
+      const k = clamp(st.t / FLIGHT.taxi, 0, 1);
+      const e = smoothstep(0, 1, k);
+      setThrust(st, 0.12 + e * 0.16);
+      g.position.z = lerp(st.taxiFrom.z, st.taxiFrom.z + FLIGHT.taxiTo, e);
+      g.position.x = lerp(st.taxiFrom.x, st.taxiFrom.x * 0.55, e);
+      g.position.y = st.taxiFrom.y;
+      if (k >= 1) { st.phase = PHASE.LIFT; st.t = 0; }
       break;
     }
 
@@ -618,6 +641,12 @@ export function stepDeckFlight(world, dt) {
       setThrust(st, 0.4 + k * 0.6);
       g.position.y = pad.y + st.hover + smoothstep(0, 1, k) * 3.6;
       g.rotation.x = -0.03 * k;
+      /* The taxi moved it; the climb keeps that ground rather than snapping
+       * back over the pad. */
+      if (st.taxiFrom) {
+        g.position.z = st.taxiFrom.z + FLIGHT.taxiTo;
+        g.position.x = st.taxiFrom.x * 0.55;
+      }
       if (k >= 1) { st.phase = PHASE.RUN; st.t = 0; st.runFrom = g.position.clone(); }
       break;
     }

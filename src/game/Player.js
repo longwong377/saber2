@@ -209,6 +209,17 @@ export const HOLD_COST = { prop: { base: 7, rise: 6 }, person: { base: 11, rise:
  *            is what makes it worth raising over a wounded man you are mending;
  *            narrow enough that a squad cannot shelter in it.
  */
+/**
+ * WHICH CASTS THE LINE ANSWERS, and it is the ones they can SEE happen: a
+ * shove that clears a street, a storm, a bubble over one of them, and the
+ * burst that puts them back on their feet. Grip, sense and the rest are not
+ * on this list because a man beside you cannot tell they happened.
+ */
+export const ANSWERED_BY_THE_LINE = new Set(['unleash', 'lightning', 'restore', 'ward', 'push']);
+/** How far a man has to be to have seen it, and how often the line answers. */
+export const ANSWER_REACH = 22;
+export const ANSWER_EVERY = 7;
+
 export const SHIELD = { hold: 6, bolt: 4, blunt: 0.35, radius: 2.1, rise: 0.18, fall: 0.3 };
 
 /**
@@ -3822,6 +3833,8 @@ export class Player {
     this.comboTimer -= dt;
     if (this.comboTimer <= 0 && this.combo > 0) { this.combo = 0; }
     for (const k in this.cooldowns) this.cooldowns[k] = Math.max(0, this.cooldowns[k] - dt);
+    /* The line's own answering clock — see `_menAnswer`. */
+    if (this._answerCd > 0) this._answerCd = Math.max(0, this._answerCd - dt);
     this.invuln = Math.max(0, this.invuln - dt);
     this.riposteTimer = Math.max(0, this.riposteTimer - dt);
     this.staggerTimer = Math.max(0, this.staggerTimer - dt);
@@ -6810,7 +6823,42 @@ export class Player {
      * is `AudioEngine.forceLine`, drawn off the one seeded stream the audio
      * engine keeps. See its note for why it is not in this file. */
     const line = audio.forceLine(power);
-    return line ? announcer.say(this.world.settings, line, this.chest) === true : false;
+    const said = line ? announcer.say(this.world.settings, line, this.chest) === true : false;
+    /* AND THE MEN ANSWER THE BIG ONES — see `_menAnswer`. After the Jedi's own
+     * line, so the two do not land on the same frame. */
+    if (said && ANSWERED_BY_THE_LINE.has(power)) this._menAnswer();
+    return said;
+  }
+
+  /**
+   * ── SOMEBODY IN THE LINE SAYS SOMETHING ──────────────────────────────────
+   *
+   * Twelve pools of Force lines and every one of them is the player's: the
+   * Jedi shouted and forty men watched a mountain move in complete silence.
+   * The men already have a voice — `Enemy.cry`, `Voice.ENEMY_LINES` — and a
+   * 'cheer' in it, and `Announcer`'s gap budget already stops a crowd from
+   * talking over itself.
+   *
+   * ONE MAN, THE NEAREST, ON A COOLDOWN. Not the whole line: forty cheers is
+   * a football crowd, and the thing being sold is that somebody standing next
+   * to you saw it. `cry`'s own `gap` argument stops him answering twice in a
+   * row, and `_answerCd` stops the line answering every cast in a firefight.
+   */
+  _menAnswer() {
+    if ((this._answerCd ?? 0) > 0) return false;
+    const list = this.world?.enemies;
+    if (!list) return false;
+    let best = null, bestD = ANSWER_REACH * ANSWER_REACH;
+    for (const e of list) {
+      if (!e || e.dead || e === this || !e.cry) continue;
+      if (!sameSide(this, e)) continue;
+      const d = e.position.distanceToSquared(this.position);
+      if (d < bestD) { bestD = d; best = e; }
+    }
+    if (!best) return false;
+    this._answerCd = ANSWER_EVERY;
+    best.cry('cheer', 2.5);
+    return true;
   }
 
   /**
