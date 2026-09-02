@@ -142,7 +142,7 @@ export function dressDeckLift(world, opts = {}) {
    * pale strip on its lid, because the deck's lamps are twenty metres away
    * and the bulkhead is between them and the car. One point light, short
    * range, on the level's list so it goes with the level. */
-  const glow = new THREE.PointLight(0xdbe6fb, 7, 11, 2);
+  const glow = new THREE.PointLight(0xdbe6fb, 90, 12, 2);
   glow.position.set(cx, H - 0.5, cz);
   world.scene.add(glow);
   world.levelLights?.push(glow);
