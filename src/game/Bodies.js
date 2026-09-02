@@ -9124,7 +9124,27 @@ export const CREATURE_PLANS = {
      * PRIMARY mesh rather than the silhouette kit, so the spines survive the
      * LOD rung that a companion spends most of its life on — it is behind you
      * at thirty metres more often than it is in front of you at ten. */
-    back: 'ridge', tail: [4, 0.70, 0.06, 0.10, -0.12],
+    /**
+     * A MANE AND NOT A RIDGE, AND THE TOOL CAUGHT WHY.
+     *
+     * `_creature.mjs` measures the worst silhouette overlap between any two
+     * animals and its own header says a pair above 0.5 "share a body plan".
+     * The tuk'ata and the massiff measured 0.507 — they were wearing the same
+     * three choices, `fanged` + `ridge` + `claw`, and the improved dorsal and
+     * foot treatments pushed two already-similar outlines past the line.
+     *
+     * The design's own note for this animal is that it is a variant of the
+     * shipped `stalker` — the nexu — and the nexu's dorsal is `mane`: long,
+     * and the OUTLINE BROKEN, which is the opposite read to a ridge's row of
+     * hard spines. So this is the more faithful choice as well as the one that
+     * separates them, and the tail is lengthened to 1.15 on the same argument
+     * the nexu's 2.40 makes: on a low body the tail is the part that carries
+     * at range.
+     *
+     * A SILHOUETTE DECISION AND NOT A BUILDER ONE, which is why it is here in
+     * the plan row rather than in the treatment.
+     */
+    back: 'mane', tail: [5, 1.15, 0.055, 0.16, -0.14],
     limbs: [
       /* The nexu's fore leg, shortened and thinned. `pole` keeps its direction
        * and loses its length with the body; `femurRest`/`tibiaRest` are
@@ -11097,6 +11117,11 @@ export const BODY_KITS = {
   master: { rank: 'master' },
   /* the separatist chassis — see B1_KITS */
   b1: { kit: 'line' },
+  /* THE REPROGRAMMED B1 wears what a B1 wears — it IS a B1, `buildB1`
+   * verbatim, and the only thing that differs is whose side it is on. A
+   * separate kit would be a second answer to a question the body already
+   * answers. */
+  b1c: { kit: 'line' },
   /* FLAGSHIP §6's third body class, on the B1 chassis and the B1 kit. The
    * conscript differs from a B1 in its NUMBERS and its paint, not in what it
    * carries — see `ARCHETYPES.conscript`, which passes the colours through to
@@ -11140,6 +11165,7 @@ export const BODY_KITS = {
  */
 export const POSTURES = {
   b1: { crouch: 0.10 },
+  b1c: { crouch: 0.10 },
   conscript: { crouch: 0.12 },
   rocket: { crouch: 0.10 },
   bx: { crouch: 0.32 },

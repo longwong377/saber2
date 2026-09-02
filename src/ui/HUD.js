@@ -24,7 +24,7 @@ import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
 import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
 /* The six orders and the one reader that says whether a slot is live and why
  * not — see `CompanionWheel`. */
-import { COMPANION_ORDERS, refuseOrder } from '../game/Companions.js';
+import { COMPANION_ORDERS, orderCompanion, refuseOrder } from '../game/Companions.js';
 import { COMPANION_KINDS, rungOf as rungOfCompanion } from '../game/CompanionKinds.js';
 /* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
  * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
@@ -1368,6 +1368,10 @@ export class HUD {
       mapKey: root.getElementById('minimap-key'),
       emotes: root.getElementById('emote-wheel'),
       orderwheel: root.getElementById('order-wheel'),
+      /* THE COMPANION'S RING — its own node beside the order wheel's, for the
+       * reason in the block that drives it: it must exist in the nine modes
+       * that have no order wheel at all. */
+      companionwheel: root.getElementById('companion-wheel'),
       // The free camera's own line lives OUTSIDE #hud, because #hud is the
       // thing it hides — a legend inside it would go away with everything else
       // and leave a player flying a detached camera with no way to learn how to
@@ -3105,6 +3109,79 @@ export class HUD {
     } else if (this.orders) {
       this.orders.close();
     }
+
+    /**
+     * ══ AND THE COMPANION'S OWN RING ═════════════════════════════════════
+     *
+     * A SEPARATE WHEEL ON A SEPARATE KEY, and not a slot on the order wheel —
+     * because the order wheel exists only where `world.command || world.orders`
+     * does, which is two of the eleven modes, and a companion is with you in
+     * every one of them. Hanging it off that wheel would be a companion you
+     * can only command in the two modes that already give you an army.
+     *
+     * IT IS BUILT LAZILY AND ONLY WHERE THERE IS AN ANIMAL, so a mode with no
+     * companion pays nothing and the node stays out of the layout.
+     *
+     * THE DEADZONE IS HEEL, which is what `emoteIndexAt` already answers -1
+     * for. Every other wheel in the game treats -1 as "did nothing"; here it
+     * is the one order you want when you have no time to aim, and it is
+     * unrefusable at every rung.
+     */
+    /**
+     * ── WHAT THE ORDER IS POINTED AT, READ FROM THE RETICLE ──────────────
+     *
+     * `RadialWheel` has no argument channel and adding one would be a second
+     * targeting system. The thing you are looking at IS the thing you mean —
+     * strictly better than a target-cycler for the same reason a reticle beats
+     * a tab key — so SEEK and the kind's own verb take the body under the aim
+     * and HOLD takes the ground under it.
+     *
+     * THE BODY IS PICKED BY ANGLE AND NOT BY DISTANCE. Nearest-to-you would
+     * send the animal at whatever is closest whichever way you were looking,
+     * which is not an order, it is a suggestion. This walks
+     * `world._hostilesFor` — the same unconditional door the companion's own
+     * targeting uses, so the wheel can never offer a body the animal would
+     * then refuse — and takes the smallest angle off the aim, with a cone
+     * wide enough to be usable at speed and tight enough to be a choice.
+     */
+    const reticleBody = () => {
+      const p = player || world.player;
+      if (!p?.aimDir || !world._hostilesFor) return null;
+      let best = null, bestDot = Math.cos(0.22);
+      for (const o of world._hostilesFor(p)) {
+        if (!o || o.dead) continue;
+        _hv.subVectors(o.position, p.chest || p.position);
+        const d = _hv.length();
+        if (d < 0.5 || d > 90) continue;
+        const dot = _hv.multiplyScalar(1 / d).dot(p.aimDir);
+        if (dot > bestDot) { bestDot = dot; best = o; }
+      }
+      return best;
+    };
+    const reticleGround = () => {
+      const p = player || world.player;
+      if (!p?.aimDir || !world.terrain?.raycast) return null;
+      const from = (p.chest || p.position);
+      const t = world.terrain.raycast(from, p.aimDir, 120, _hp, _hn);
+      return t == null ? null : _hp.clone();
+    };
+    const cmpBody = this.companionWheel?.body || null;
+    if (this.el.companionwheel) {
+      if (!this.companionWheel) this.companionWheel = new CompanionWheel(this.el.companionwheel);
+      const pick = this.companionWheel.update(input, this);
+      if (pick !== undefined && cmpBody) {
+        /* -1 IS THE MIDDLE, AND THE MIDDLE IS HEEL. */
+        const id = pick === -1 || !pick ? 'heel' : pick.id;
+        const arg = id === 'hold' ? reticleGround()
+          : (id === 'seek' || id === 'verb') ? reticleBody() : null;
+        const why = orderCompanion(cmpBody, id, arg);
+        /* A REFUSED ORDER SAYS SO, in the animal's own words — the same
+         * sentence the wheel's caption was already printing under the cursor.
+         * An order that is silently dropped is a control the player concludes
+         * is broken. */
+        if (why) world.notify?.(cmpBody._cmpRec?.name?.toUpperCase() || 'YOUR COMPANION', why);
+      }
+    }
   }
 
   /**
@@ -3528,6 +3605,9 @@ const SEVER_LABEL = {
 const _screen = new THREE.Vector2();
 
 /** Titles come from archetype labels, which are data. Data goes in as text. */
+const _hv = new THREE.Vector3();
+const _hp = new THREE.Vector3();
+const _hn = new THREE.Vector3();
 const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
 /**

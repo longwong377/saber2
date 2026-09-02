@@ -1972,6 +1972,28 @@ export const CODEX = [
    * appears the day it is authored"; it was reading the wrong table, and the
    * two Force verbs authored with it appeared in no list a player could read —
    * not here, not in the teaching panel, nowhere but a wheel caption. */
+  /**
+   * THE COMPANION, TAUGHT — and it was on no page at all.
+   *
+   * A player who picks one off the Jedi tab was told nothing: not which key
+   * opens the ring, not that the middle of the ring means COME BACK, not that
+   * four of the six orders are licensed by a rung it has to earn, and not that
+   * standing on a downed one picks it up. Every one of those is a thing you
+   * would otherwise find out by losing an animal.
+   *
+   * ONE ROW AND NOT SIX, because the wheel prints its own live captions —
+   * including the refusals, in the animal's own words — so what this page owes
+   * the player is the SHAPE: there is a ring, the middle of it is safety, the
+   * rest is earned, and it can be picked up. `codexTeaching` fills the numbers.
+   */
+  { keys: ['companionwheel'], hold: true,
+    text: k => 'Your companion — hold to open its ring. Let go in the MIDDLE and it '
+      + `comes back to you, which is the one order it will always take. `
+      + '<b>Away</b> breaks it off a fight, <b>ward</b> makes it meet anything that comes near '
+      + 'YOU, <b>seek</b> sends it at whatever is under your reticle, <b>hold</b> plants it on '
+      + 'ground you pick, and the last slot is its own — a massiff blocks, a tooka cries, an '
+      + 'astromech slices. The four it has not earned yet say so when you point at them. '
+      + `It goes down before it dies: stand on it to pick it up${k ? '' : ''}.` },
   { keys: ['orderwheel'], hold: true,
     text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders, `
       + '<b>hold ground</b>, <b>target</b> and <b>detach</b>, on one key. Hold it, aim at a '
