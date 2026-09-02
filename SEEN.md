@@ -260,10 +260,30 @@ a 3.2 ms world intercept, against 0.0119 ms an instanced man. One real body
 costs ten instanced men.** The seam may not raise the 40–60 ceiling; it only
 decides which bodies are real.
 
-**AND IT IS NOT PROVEN. This is the part of the plan to be honest about.**
-All four designs were then attacked by three skeptics each — the frame budget,
-the integrity of the fiction, and co-op/determinism — and the attacks are
-landing **fatal**, not survivable. The sharpest of them:
+**AND IT DID NOT SURVIVE. This is the part of the plan to be honest about, and
+the honest answer got worse as the evidence came in.**
+
+Four independent designs — the dissolve, the budget-as-allocator,
+identity-first, and one that refused the premise outright — were each attacked
+by three skeptics: the frame budget, the integrity of the fiction, and
+co-op/determinism. **Twelve attacks. Twelve fatal. Not one design survived a
+single lens.** Every refutation is kept in `FLEETS.md`.
+
+The three failures are the same three every time:
+
+- **The frame budget is aimed at the wrong cost.** *"The amortisation covers
+  one cost out of six, and it covers the only one this repo had already solved
+  for it."* A promoted man is priced as a far body and then put at your elbow,
+  where every cost distance was buying back is paid again.
+- **The fiction does not survive the swap.** *"An instanced man has no hit
+  points and is killed by any hostile bolt that reaches him."* The two tiers
+  are not the same men made cheaper; they are different objects with different
+  ledgers, and the HUD shows the ledgers.
+- **The wire has no vocabulary for it.** Every design claimed promotion needs
+  no new message. Every one of them was wrong in the same direction, and one
+  design's cited precedent turned out to be invented.
+
+The sharpest single line:
 
 > *"Promotion does not change what DRAWS a man. It changes what he DOES, and in
 > the one mode this ships in it changes it into nothing."*
@@ -274,8 +294,12 @@ and, on the arithmetic:
 > feature putting him at the player's elbow. Every per-body cost in this engine
 > that is bought back by distance is now paid."*
 
-**So Move 3 is a hypothesis with two day-one measurements attached, not a
-commitment.** Take the measurements first; they cost a day and they decide it.
+**So Move 3 is not a plan. It is a dead end with two useful measurements at the
+mouth of it.** Take those measurements — the exchange rate and the pixel test,
+a day between them — before anybody designs a fifth approach, because all four
+of the first ones died on arithmetic that a day of measuring would have shown
+them. The mass battle can still come back under Move 2 as a *mission*; what
+cannot come back on this evidence is the idea that you walk into it.
 
 **Their honest doubts, kept rather than buried:**
 
