@@ -41,6 +41,7 @@ import { MODES, playableModes, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMIS
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../../src/game/Extraction.js';
 import { READ_SECONDS, SENSE_RATE } from '../../src/game/FireMission.js';
+import { ALLY_WARD, RESTORE } from '../../src/game/Player.js';
 /* The Codex's teaching half is generated off these, and the check reads the
  * same tables rather than a transcription of what they said on the day. */
 import { DIFFICULTY, GRADE_NAME, SPEED_GRADE, PARRY_GRADE, parryScale, CATCH } from '../../src/game/Combat.js';
@@ -987,6 +988,11 @@ export async function run({ check, assert }) {
        * able from a typed one, which is why the 4 was flagged while the 12
        * beside it happened to collide with a Force order's timer and was not. */
       `${READ_SECONDS}`, `${(READ_SECONDS / SENSE_RATE).toFixed(0)}`,
+      /* THE WARD'S WAIT AND THE RESTORE'S. Both rows print their cooldown off
+       * the table the power reads (`Player.ALLY_WARD`, `Player.RESTORE`), and
+       * neither is scaled by difficulty — a cooldown is a cooldown on every
+       * tier — so they are the same case as the withdrawal's two. */
+      `${ALLY_WARD.cooldown}`, `${RESTORE.cooldown}`,
     ]);
     const stray = times.map(m => m[1]).filter(v => !derivable.has(v));
     assert(!stray.length,

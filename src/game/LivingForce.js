@@ -418,7 +418,11 @@ export const FACETS = [
     jedi: 'Skirmish Order', sith: 'Loose Rein' },
   { id: 'triage', axis: 'bond', to: ['unity', 'unbound-heal'],
     jedi: 'Triage', sith: 'Blood Debt' },
-  { id: 'suffusion', axis: 'bond', to: ['unity'],
+  /* …and the unbound RESTORE hangs off it: the group heal is Suffusion done to
+   * everybody at once, so the facet about mending the man beside you is where
+   * a player would look for the card that takes the wait off mending all of
+   * them. See the row in Powers.UNBOUND. */
+  { id: 'suffusion', axis: 'bond', to: ['unity', 'unbound-restore'],
     jedi: 'Force Suffusion', sith: 'Siphoned Vitality' },
   { id: 'vow', axis: 'bond', to: ['unity', 'standfast'],
     jedi: "Guardian's Vow", sith: 'Blood Pact' },
@@ -473,11 +477,12 @@ export const FACETS = [
    * The JOINS are written from the OTHER end, above, and not from here: that is
    * this table's own convention — each pair is written once, from the facet
    * nearer the root — and reading them there is also the honest picture of the
-   * shape. Eight of the ten hang off their own technique (the unbound throw off
+   * shape. Nine of the eleven hang off their own technique (the unbound throw off
    * Cleaving Throw, the unbound lightning off Force Lightning, the unbound
-   * Disassemble off Dissolution), which is where a player would look for them;
-   * the two the lattice has no facet for — the barrier's and the cry's — hang
-   * off their current's mastery. `to: []` because a leaf is a leaf: the tier
+   * Disassemble off Dissolution, the unbound Restore off Force Suffusion),
+   * which is where a player would look for them; the two the lattice has no
+   * facet for — the barrier's and the cry's — hang off their current's
+   * mastery. `to: []` because a leaf is a leaf: the tier
    * does not chain into itself, so taking one is never a step towards
    * another. */
   ...UNBOUND.map((u) => ({

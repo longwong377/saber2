@@ -171,6 +171,14 @@ export const POWERS = [
    * call without a row here draws nothing and prices eleven against ten
    * slots. hud-events counts exactly that, which is how it was caught. */
   ['unleash', 'unleash'],
+  /* THE ALLY WARD, on the barrier's own key. Two slots for one button, and
+   * that is the honest picture: the two have separate cooldowns (a breath for
+   * the barrier, a real wait for the ward — see Player.ALLY_WARD), and a slot
+   * that showed one of them would lie about the other. The binding column is
+   * `shield` because that IS the key. */
+  ['ward', 'shield'],
+  /* Restore — the group heal. Its own key, its own price, its own 75 s. */
+  ['restore', 'restore'],
 ];
 
 /**
@@ -222,6 +230,12 @@ const POWER_ICONS = {
      from push in the row. */
   unleash: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/>'
     + '<path d="M12 7.5V3M12 16.5V21M7.5 12H3M16.5 12H21M8.8 8.8L5.6 5.6M15.2 8.8l3.2-3.2M8.8 15.2l-3.2 3.2M15.2 15.2l3.2 3.2"/></svg>',
+  /* The barrier's dome over a SECOND figure, off to the side: the ward is the
+     same shape thrown at somebody else, and the icon says so. */
+  ward: '<svg viewBox="0 0 24 24"><path d="M8 16a6 6 0 0 1 12 0"/><circle cx="14" cy="11" r="1.6"/><path d="M14 13v4"/><path d="M3 12l3-3 3 3"/></svg>',
+  /* Heal's cross, ringed by the men around it: a plus with four dots at the
+     compass points, which is "everybody near you" at 21 px. */
+  restore: '<svg viewBox="0 0 24 24"><path d="M12 8v8M8 12h8"/><circle cx="12" cy="3.5" r="1.4"/><circle cx="12" cy="20.5" r="1.4"/><circle cx="3.5" cy="12" r="1.4"/><circle cx="20.5" cy="12" r="1.4"/></svg>',
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -1138,6 +1152,7 @@ export class HUD {
       score: root.getElementById('hud-score'),
       targetOpen: root.getElementById('target-open'),
       mendCue: root.getElementById('mend-cue'),
+      wardCue: root.getElementById('ward-cue'),
       withdrawRing: root.getElementById('withdraw-ring'),
       center: root.getElementById('hud-center-msg'),
       drivePrompt: root.getElementById('drive-prompt'),
@@ -1756,6 +1771,14 @@ export class HUD {
    * repaint half the screen back to keyboard letters.
    */
   /** The key the player would actually press to mend, from the live bindings. */
+  /** The live label of any action, or `fallback` with no bindings loaded. */
+  _keyFor(action, fallback) {
+    const b = this._bindings;
+    if (!b) return fallback;
+    const dev = this._pad && this._pad.device === 'pad' ? 'pad' : 'key';
+    return keyLabel(codesFor(b, action, dev)[0], (this._pad && this._pad.family) || 'xbox') || fallback;
+  }
+
   _mendKeyLabel() {
     const b = this._bindings;
     if (!b) return 'HEAL';
@@ -2384,6 +2407,12 @@ export class HUD {
      * because `power` is the visual ease and lingers for a third of a second
      * after the barrier is down. */
     this._power('shield', cd.shield, this._afford(player, 'shield'), !!player.shield?.up);
+    /* THE WARD lights while an ally is carrying it — `ward.body` is the ally,
+     * and null the moment the bubble comes down — and its shutter is its own
+     * cooldown, not the barrier's. */
+    this._power('ward', cd.ward, this._afford(player, 'ward'), !!player.ward?.body);
+    /* Restore lights for the three seconds the burst is landing. */
+    this._power('restore', cd.restore, this._afford(player, 'restore'), !!player.restoring);
 
     // ── reticle & blade cursor
     this._drivePrompt(world, player);
@@ -2460,6 +2489,33 @@ export class HUD {
       this._withdrawShown = h > 0;
     }
 
+    /**
+     * …AND THE MAN YOU COULD PUT A BUBBLE ON.
+     *
+     * The ward shares the barrier's key and picks its target off the reticle
+     * (`Player._wardTarget`), so the one thing the player needs to know is
+     * WHICH the key will do this frame. Drawn off the same authority the
+     * power reads — HANDOFF §2.4 — and named, because a prompt that says
+     * "ally" about a line of forty men says nothing.
+     */
+    if (el.wardCue) {
+      const W = player.ward;
+      const held = W?.body && !W.body.dead ? W.body : null;
+      const t = held || player._wardTarget?.({ enemies: world.enemies });
+      const name = t ? (t.trooper?.name || t.A?.label || 'ally') : null;
+      const key = t ? `${held ? 'h' : 'a'}:${name}` : null;
+      if (t && this._wardKey !== key) {
+        this._wardKey = key;
+        el.wardCue.firstChild.textContent = held ? 'WARDED' : 'ALLY IN REACH';
+        el.wardCue.lastChild.textContent = held
+          ? String(name).toUpperCase()
+          : `${this._keyFor('shield', 'WARD')} TO WARD ${String(name).toUpperCase()}`;
+        el.wardCue.classList.remove('hidden');
+      } else if (!t && this._wardKey !== null) {
+        this._wardKey = null;
+        el.wardCue.classList.add('hidden');
+      }
+    }
     if (el.mendCue) {
       const t = player.healTarget || player._mendTarget?.({ enemies: world.enemies });
       /**

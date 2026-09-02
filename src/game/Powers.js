@@ -70,7 +70,52 @@ export const POWER_COST = {
    * balance between you and the volley.
    */
   shield: 18,
+  /**
+   * THE ALLY WARD — the barrier's own button, thrown onto somebody else.
+   *
+   * "force bubble for a teammate/ally for a limited time … the ally bubble can
+   * be the same button as the personal bubble but if you're aiming at an ally
+   * within a certain distance then it bubbles them, you cannot bubble yourself
+   * and an ally at the same time."
+   *
+   * The SAME 18, and that is the design rather than a shortcut: it is one key,
+   * and a key whose price changes with what happens to be under the reticle is
+   * a key the player cannot budget for. What separates the two is everything
+   * after the raise — the ward is TIMED (`Player.ALLY_WARD.hold`) where the
+   * barrier is held, and it carries a real cooldown where the barrier's is a
+   * breath, because a bubble you can keep on the man beside you for ever is a
+   * second health bar for him and no decision for you. A separate row rather
+   * than a reuse of `shield`, because `_afford`, the Codex chip and the wheel
+   * slot are all keyed on this table and the ward has a slot of its own.
+   */
+  ward: 18,
+  /**
+   * RESTORE — the group heal, and the most expensive thing on the table.
+   *
+   * "a group/proximity heal, the group heal should have a really long cooldown
+   * and use a lot of force."
+   *
+   * 70 is most of a base bar and past `unleash`'s 52, and it is charged up
+   * front rather than per frame like the mend, because a burst is what it is:
+   * every ally inside `Player.RESTORE.radius` and you with them get half their
+   * maximum health back over three seconds, and the men who are down get up.
+   * The cooldown is 75 s — see `Player.forceRestore` for the argument, which
+   * is the one the player made: a heal for the whole line has to be a thing
+   * you do once per fight, not once per volley.
+   */
+  restore: 70,
 };
+
+/**
+ * WHICH UNBOUND CARD FREES A POWER THAT HAS NO CARD OF ITS OWN.
+ *
+ * The ally ward shares the barrier's key, so it shares the barrier's card:
+ * `The Standing Ward` takes the cooldown off both, because a player who has
+ * unbound the button has unbound the button. `Player._recover` reads this
+ * before it reads `boonMods.unbound`, and it is the only alias there is —
+ * every other power in the tier is its own action with its own row below.
+ */
+export const UNBOUND_OF = { ward: 'shield' };
 
 /**
  * Powers a boon has to grant before any amount of Force will buy them.
@@ -183,9 +228,10 @@ export const UNLEASH_TOLL = {
 export const unboundId = (key) => `unbound-${key}`;
 
 /**
- * Ten powers, and the two that are missing are missing for a reason that is
+ * Eleven powers, and the two that are missing are missing for a reason that is
  * worth saying out loud rather than leaving as a gap: `grip` and `sense` HAVE
- * no cooldown. The grip is a channel billed per frame and Force Sense is a
+ * no cooldown. (The ally ward is the twelfth with a cooldown and has no row of
+ * its own — it rides the barrier's, see `UNBOUND_OF`.) The grip is a channel billed per frame and Force Sense is a
  * toggle billed per second, so there is nothing here for this tier to remove —
  * an "unbound" card for either would be a card that does nothing, which is the
  * one defect this codebase keeps deleting.
@@ -214,7 +260,10 @@ export const UNBOUND = [
   { key: 'shield', axis: 'guard', after: 'aegis', icon: '🔆',
     name: 'The Standing Ward', tag: 'Unbound — Barrier',
     jedi: 'The Standing Ward', sith: 'The Wall That Never Falls',
-    text: 'Force barrier loses its cooldown entirely. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
+    /* BOTH USES OF THE KEY. The ward on an ally is the same button aimed at
+     * somebody else (see `UNBOUND_OF`), so the card says so rather than
+     * leaving the player to find out that half of it was free. */
+    text: 'Force barrier loses its cooldown entirely — on you, and the ward it puts on an ally you aim at. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
   { key: 'unleash', axis: 'body', after: 'undying', icon: '💥',
     name: 'The Cry Unending', tag: 'Unbound — Unleash',
     jedi: 'The Cry Unending', sith: 'The Roar That Does Not Stop',
@@ -223,6 +272,16 @@ export const UNBOUND = [
     name: 'The Well That Does Not Empty', tag: 'Unbound — Mend',
     jedi: 'The Well That Does Not Empty', sith: 'Bleed For Them',
     text: 'Force heal loses its cooldown entirely. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
+  /* THE GROUP HEAL, off Force Suffusion — the facet about mending the person
+   * beside you — because that is what it does to everybody beside you. The
+   * cooldown it removes is 75 s, the longest in the game, so this is the
+   * furthest an unbound card moves anything: a restore you can cast on every
+   * bar is a line that does not die, which is why the toll on this one is the
+   * same blood as the rest and the Force surcharge is 105 on top of 70. */
+  { key: 'restore', axis: 'bond', after: 'suffusion', icon: '✨',
+    name: 'The Tide That Lifts All', tag: 'Unbound — Restore',
+    jedi: 'The Tide That Lifts All', sith: 'None Of Mine May Fall',
+    text: 'Force restore loses its cooldown entirely — the 75 s wait after healing the whole line is gone. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
   { key: 'lightning', axis: 'dark', after: 'lightning', icon: '⚡',
     name: 'The Storm Refused No Longer', tag: 'Unbound — Lightning',
     jedi: 'The Storm Refused No Longer', sith: 'The Endless Storm',

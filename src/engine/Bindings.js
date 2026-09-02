@@ -388,6 +388,25 @@ export const ACTIONS = [
    * this, and it is worth more than the tidy adjacency I wanted.
    */
   { id: 'shield',     group: 'Force',    label: 'Force barrier',     keys: ['KeyJ'], pad: 'PadRB+PadUp' },
+  /**
+   * ENTER, AND THE FOUR KEYS TRIED BEFORE IT ARE WHY THIS COMMENT EXISTS.
+   *
+   * The group heal wanted a digit beside `heal` and `compel`, and the digit
+   * row is gone twice over (see the barrier's note above). Every letter is
+   * taken — `authorise` took KeyK as "the last unbound letter on the board" —
+   * and so are both brackets, the backslash, comma, period and slash.
+   * Semicolon and Quote LOOK free in this table and are not: they are the
+   * eighth and ninth ORDER keys, derived off Command.FORMATIONS rather than
+   * typed here, and `controls.mjs` said so within one run ("Semicolon →
+   * restore + form.rank").
+   *
+   * So it is Enter: a big key under the right hand that nothing else in the
+   * game reads while a run is live, and a fair one for a power that is not a
+   * reflex — a 70-Force burst on a 75 s cooldown is a decision you make once
+   * a fight, and reaching for it is part of making it. `findConflicts` is
+   * what proves the key is free, not this paragraph.
+   */
+  { id: 'restore',    group: 'Force',    label: 'Force restore (group heal)', keys: ['Enter'], pad: 'PadBack+PadR3' },
   { id: 'scoreboard', group: 'Interface', label: 'Scoreboard',       keys: ['Tab'],        hold: true, pad: 'PadBack+PadY' },
   { id: 'view',       group: 'Interface', label: 'First / third person', keys: ['KeyV'], pad: 'PadBack+PadA' },
   // Digit5 for the wheel, on the same argument the guard stance made for
@@ -952,7 +971,7 @@ export function keyLabel(code, family = 'xbox') {
   if (code.startsWith('Arrow')) return code.slice(5);
   if (code.startsWith('Numpad')) return 'Num' + code.slice(6);
   return ({
-    Space: 'Space', ShiftLeft: 'L Shift', ShiftRight: 'R Shift',
+    Space: 'Space', Enter: 'Enter', ShiftLeft: 'L Shift', ShiftRight: 'R Shift',
     ControlLeft: 'L Ctrl', ControlRight: 'R Ctrl', AltLeft: 'L Alt', AltRight: 'R Alt',
     CapsLock: 'Caps', Tab: 'Tab', Escape: 'Esc', Backquote: '`', Minus: '-', Equal: '=',
     BracketLeft: '[', BracketRight: ']', Backslash: '\\', Semicolon: ';', Quote: '\'',

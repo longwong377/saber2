@@ -35,7 +35,7 @@ import { parryScale, TOUGHNESS, impactDamage, RETURN_CONE } from './Combat.js';
  * Enemy.js imports nothing from this file, so the edge is one-way. */
 import { forceResistance, gripClaim, gripHolders, gripRelease, gripSeize, heldMass, IMPULSE_AS_HP,
          limitBackpedal, addShove, newShoveFrame } from './Enemy.js';
-import { POWER_COST, SENSE_DRAIN, UNBOUND, UNLEASH_TOLL, unboundId } from './Powers.js';
+import { POWER_COST, SENSE_DRAIN, UNBOUND, UNBOUND_OF, UNLEASH_TOLL, unboundId } from './Powers.js';
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
@@ -208,6 +208,67 @@ export const HOLD_COST = { prop: { base: 7, rise: 6 }, person: { base: 11, rise:
  *            narrow enough that a squad cannot shelter in it.
  */
 export const SHIELD = { hold: 6, bolt: 4, blunt: 0.35, radius: 2.1, rise: 0.18, fall: 0.3 };
+
+/**
+ * THE ALLY WARD — the barrier, put on the man you are looking at.
+ *
+ * "force bubble for a teammate/ally for a limited time … the ally bubble can
+ * be the same button as the personal bubble but if you're aiming at an ally
+ * within a certain distance then it bubbles them, you cannot bubble yourself
+ * and an ally at the same time."
+ *
+ * Every rule of the personal barrier carries over — bolts die on it and each
+ * one costs `SHIELD.bolt` out of YOUR bar, it drains `SHIELD.hold` a second
+ * while it is up, a blade goes through it and a melee blow is blunted by
+ * `SHIELD.blunt` — and two things are different, both on purpose:
+ *
+ *   hold      it is TIMED. You cannot take it down from across the field the
+ *             way you drop your own, so it takes itself down: six seconds is
+ *             a volley and a half at the rates FireMission measures, long
+ *             enough to get a man out from under one and short enough that it
+ *             is a rescue and not a buff.
+ *   cooldown  it has a REAL one where the barrier's is a breath (1.2 s). The
+ *             barrier's cost is the decision of when to lower it; the ward
+ *             lowers itself, so the decision has to be whether to spend it at
+ *             all, and a 14 s wait is what makes "him or the next man" a
+ *             question.
+ *
+ * `reach` and `cone` are the mend's numbers (`MEND_REACH`, `MEND_CONE`), a
+ * little longer: a barrier is put up ahead of a volley, and the man who needs
+ * one is usually further away than the man who needs mending. The cone is
+ * the same 20° for the same reason — a trooper is a small thing at eighteen
+ * metres and this is a mercy rather than a shot.
+ *
+ * ONE BUBBLE AT A TIME, both ways: `forceWard` drops your own barrier and
+ * `forceShield` drops the ward. See the note on the personal barrier for why
+ * a bubble is a bank balance — two of them on one bar is two drains and one
+ * decision, which is one decision too few.
+ */
+export const ALLY_WARD = { hold: 6, reach: 18, cone: 0.94, cooldown: 14 };
+
+/**
+ * RESTORE — the group heal, and the longest cooldown in the game.
+ *
+ * "a group/proximity heal, the group heal should have a really long cooldown
+ * and use a lot of force."
+ *
+ * Every ally within `radius` of you, and you, get `fraction` of their MAXIMUM
+ * health back over `time` seconds, and every man down inside it stands up on
+ * the first frame. A burst rather than a channel: it is paid up front (70
+ * Force, `POWER_COST.restore`) and nothing interrupts it, because a heal for a
+ * whole line that a single bolt could break is a heal you would only ever cast
+ * after the fight.
+ *
+ * 75 SECONDS, and here is the argument. The mend recovers in 9 s and heals one
+ * man for 45%; this heals a squad for 50% each, and a support pod's Resupply
+ * — the only other thing in the game that stands a whole line up — is bought
+ * with support points earned over minutes. A wave is 60–90 s long on the
+ * director's own clock, so 75 s is "once per wave": you get one, you choose
+ * the moment, and the choice is the power. The unbound card (Powers.UNBOUND)
+ * removes it, at a 105-Force surcharge and blood, which is the tier's whole
+ * bargain stated in this power's numbers.
+ */
+export const RESTORE = { radius: 12, fraction: 0.5, time: 3, cooldown: 75 };
 
 /**
  * THE SABER, OFF THE HAND — catching it, lighting it, and flying it.
@@ -2959,6 +3020,9 @@ const OFF_THE_DECK = {
   sense: 'there is nobody aboard to find',
   heal: 'nothing here has hurt you',
   shield: 'nothing on this deck is shooting at you',
+  /* The ward is the barrier's key and is refused with it; the group heal is
+   * the mend's argument for a whole company: nothing here has hurt anyone. */
+  restore: 'nothing on this deck has hurt anyone',
 };
 
 export class Player {
@@ -3147,6 +3211,14 @@ export class Player {
      * what it has eaten this raise — see `SHIELD` and `shieldSphere`.
      */
     this.shield = { up: false, t: 0, power: 0, stopped: 0, lastHit: -99 };
+    /**
+     * THE WARD ON AN ALLY — see `ALLY_WARD`. `body` is the ally carrying it
+     * or null; `restore` puts their `damage` back the way `_wardInstall` found
+     * it; `power` is the visual ease the shared shader draws, exactly as
+     * `shield.power` is. */
+    this.ward = { body: null, t: 0, power: 0, stopped: 0, lastHit: -99, restore: null };
+    /** The group heal in flight, or null — see `RESTORE` and `forceRestore`. */
+    this.restoring = null;
     /** The `Crew` this player is at the controls of, or null. See Driving.js. */
     this.driving = null;
     /**
@@ -3318,7 +3390,11 @@ export class Player {
      * skipped it until then. Twelve powers have a cooldown; twelve keys.
      * `grip` has none by design — a hold you can re-take at once is what makes
      * the throw-and-catch reachable — and `sense` is a toggle. */
-    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0, shield: 0 };
+    this.cooldowns = { push: 0, pull: 0, throw: 0, sense: 0, dash: 0, lightning: 0, stasis: 0, rend: 0, heal: 0, compel: 0, unleash: 0, shield: 0,
+      /* Fourteen now: the ward's own wait and the restore's, declared here for
+       * the reason the barrier's had to be — a key this table does not carry
+       * is a cooldown nothing can clear by name. */
+      ward: 0, restore: 0 };
     /* The support calls. One per player, constructed here rather than lazily,
      * so `hud` and the checks can read the entry state on frame one instead of
      * guarding for its absence. */
@@ -4070,6 +4146,8 @@ export class Player {
      * use — because a barrier you must keep a finger on is a barrier you cannot
      * fight from, and everything else in this game is done with the same hand. */
     if (input.actHit('shield')) this.forceShield(ctx);
+    /* The group heal. One press, one burst — see `forceRestore`. */
+    if (input.actHit('restore')) this.forceRestore(ctx);
     if (input.actHit('rend')) this.forceDisassemble(ctx);
     if (input.actHit('compel')) this.forceCompel(ctx);
     if (input.actHit('unleash')) this.forceUnleash(ctx);
@@ -6622,7 +6700,9 @@ export class Player {
    * what you have left instead of by a clock.
    */
   _recover(key, seconds) {
-    if (!this.boonMods.unbound?.[key]) return seconds;
+    /* The ward has no card of its own — it is the barrier's key, so it is the
+     * barrier's card that frees it. See Powers.UNBOUND_OF. */
+    if (!this.boonMods.unbound?.[UNBOUND_OF[key] ?? key]) return seconds;
     /* The surcharge rides the same economy every other price does: the Force
      * Drain slider and `forceCost` reach it, because a build that made the
      * power cheap should make its surcharge cheap too — the bleed below is the
@@ -6690,7 +6770,7 @@ export class Player {
    * A getter rather than a second copy of the condition: the day a third
    * channel pauses regeneration, it is named here and every writer inherits it.
    */
-  get forceChannelling() { return !!(this.senseActive || this.shield?.up); }
+  get forceChannelling() { return !!(this.senseActive || this.shield?.up || this.ward?.body); }
 
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
@@ -9089,6 +9169,16 @@ export class Player {
    * moving is the game.
    */
   forceShield(ctx) {
+    /**
+     * THE SAME KEY, AND WHAT IS UNDER THE RETICLE DECIDES. An ally inside
+     * `ALLY_WARD.reach` and the cone gets the ward; nobody gets the barrier,
+     * which is what the key always did. Asked BEFORE the toggle-off below, so
+     * that with your own barrier up and a man in your sights the press is
+     * "bubble him" — the exclusion then drops yours — and never "drop mine and
+     * do nothing". Dropping your own is the same key aimed at empty air.
+     */
+    const ally = this._wardTarget(ctx);
+    if (ally) return this.forceWard(ctx, ally);
     if (this.shield.up) { this._endShield(); return; }
     if (this.cooldowns.shield > 0) {
       return this._refuse('force barrier', `recovering — ${this.cooldowns.shield.toFixed(1)}s`);
@@ -9097,6 +9187,8 @@ export class Player {
       return this._refuse('force barrier',
         `${this._priceOf(POWER_COST.shield)} Force needed, you have ${Math.round(this.force)}`);
     }
+    /* ONE BUBBLE AT A TIME — the other half of the rule `forceWard` keeps. */
+    if (this.ward.body) this._endWard('you raised your own');
     this.shield.up = true;
     this.shield.t = 0;
     this.shield.stopped = 0;
@@ -9104,6 +9196,258 @@ export class Player {
     this._forceVoice?.('shield');
     audio.force(this.chest, 'pull');
     audio.tone({ freq: 180, freqEnd: 520, dur: 0.35, gain: 0.12, type: 'sine', pos: this.chest });
+  }
+
+  /**
+   * THE ALLY UNDER THE RETICLE, or null for "the barrier goes on you".
+   *
+   * `_mendTarget`'s test with the wound taken out of it: on my side, alive,
+   * not me, inside `ALLY_WARD.reach`, inside the cone — a whole man wants a
+   * bubble as much as a hurt one, more, since it is what keeps him whole. The
+   * cone admits and the angle ranks, in that order, for the reason
+   * `_mendTarget`'s long note gives; the man already carrying the ward gets
+   * the mend's limp-man edge so a second press lands on HIM (and takes it
+   * off — see `forceWard`) rather than on whoever is standing beside him.
+   */
+  _wardTarget(ctx) {
+    const list = ctx?.enemies || this.world?.enemies;
+    if (!list) return null;
+    let best = null, bestScore = -Infinity;
+    for (const e of list) {
+      if (!e || e.dead || e === this) continue;
+      if (!sameSide(this, e)) continue;                 // see `sameSide`
+      _v1.subVectors(e.position, this.chest);
+      const d = _v1.length();
+      if (d > ALLY_WARD.reach || d < 1e-3) continue;
+      const dot = _v1.divideScalar(d).dot(this.aimDir);
+      if (dot < ALLY_WARD.cone) continue;
+      const score = dot + (e === this.ward.body ? MEND_LIMP_EDGE : 0);
+      if (score <= bestScore) continue;
+      bestScore = score;
+      best = e;
+    }
+    return best;
+  }
+
+  /**
+   * THE WARD — the barrier's key, landed on somebody else. See `ALLY_WARD`.
+   *
+   * ── HOW THE BUBBLE STOPS A BOLT THAT WAS AIMED AT HIM ─────────────────
+   *
+   * The personal barrier is a sphere the world's bolt test asks about
+   * (`shieldSphere`), because the world already had to decide whether a bolt
+   * reaches the player. An ally is an `Enemy`, and every injury an Enemy takes
+   * — bolt, blast, blade, fall — arrives through ONE door, `Enemy.damage`,
+   * which `Command.installTeamDamage` already wraps on every enlisted body to
+   * scale friendly fire. So this wraps the same door on the same body, and it
+   * is the least invasive route there is: no field on Enemy, no second hit
+   * test in World, and a body with the ward taken off it is byte-for-byte the
+   * body it was (`_wardInstall` records whether `damage` was its own property
+   * and restores exactly that). Enemy's own `shieldUp` was the other
+   * candidate and was refused: it is the droideka's, `dropShield` sets a
+   * deploy timer that means something to a droideka and nothing to a
+   * trooper, and `hitCapsules` would offer the bubble to the blade.
+   *
+   * What the wrapper does is the personal barrier's rule, verbatim: a bolt or
+   * a blast dies (`kind !== 'melee'`) and costs `SHIELD.bolt` out of YOUR bar;
+   * a melee blow comes through at `1 - SHIELD.blunt`; a fall is a fall. The
+   * exclusion is kept here and in `forceShield` both — one bubble at a time.
+   *
+   * CO-OP: local. Nothing about the personal barrier crosses the wire either
+   * (`Net.js` carries no `shield` field), so a peer sees a trooper stop taking
+   * damage and not the bubble. That is the same gap the barrier has and it is
+   * written down rather than papered over; the host's damage path is the one
+   * that decides, and this runs on the host's Player.
+   */
+  forceWard(ctx, ally = null) {
+    if (this.hosting) return this._refuse('ally ward', OFF_THE_DECK.shield);
+    ally = ally || this._wardTarget(ctx);
+    if (!ally) return this._refuse('ally ward', 'nobody of yours in your sights');
+    /* A second press on the warded man takes it off, the way a second press
+     * of the key drops your own. */
+    if (this.ward.body === ally) { this._endWard(); return; }
+    if (this.cooldowns.ward > 0) {
+      return this._refuse('ally ward', `recovering — ${this.cooldowns.ward.toFixed(1)}s`);
+    }
+    if (!this._spend(POWER_COST.ward)) {
+      return this._refuse('ally ward',
+        `${this._priceOf(POWER_COST.ward)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    /* ONE BUBBLE AT A TIME, both of the other two: your own comes down, and a
+     * ward already on somebody else moves to this man (silently — the old one
+     * is not a failure, it is the same power re-aimed). */
+    if (this.shield.up) this._endShield('you warded an ally');
+    if (this.ward.body) this._endWard(null, true);
+    this.ward.body = ally;
+    this.ward.t = 0;
+    this.ward.stopped = 0;
+    this.ward.lastHit = -99;
+    this._wardInstall(ally);
+    this._gesture('cast', this._enemyPoint(ally, _v2));
+    this._forceVoice?.('shield');
+    audio.force(this.chest, 'pull');
+    audio.tone({ freq: 180, freqEnd: 560, dur: 0.35, gain: 0.12, type: 'sine', pos: ally.position });
+    this.world?.notify?.('WARDED', ally.trooper?.name || ally.A?.label || 'an ally');
+  }
+
+  /** Put the ward's door on a body, and remember how to take it off again. */
+  _wardInstall(body) {
+    const own = Object.prototype.hasOwnProperty.call(body, 'damage');
+    const prev = body.damage;
+    if (typeof prev !== 'function') { this.ward.restore = null; return; }
+    const me = this;
+    body.damage = function (amount, point, source, kind, ...rest) {
+      if (me.ward.body === this && me.ward.power >= 0.25 && amount > 0) {
+        if (kind !== 'melee' && kind !== 'fall') { me.wardAbsorb(point, amount); return false; }
+        if (kind === 'melee') amount *= 1 - SHIELD.blunt;
+      }
+      return prev.call(this, amount, point, source, kind, ...rest);
+    };
+    this.ward.restore = () => { if (own) body.damage = prev; else delete body.damage; };
+  }
+
+  /**
+   * A BOLT DIED ON HIS BUBBLE — the ward's `shieldAbsorb`, charged to the
+   * caster, because what a barrier costs is what it is asked to do and this
+   * one is asked on somebody else's behalf. Running the pool dry drops it.
+   */
+  wardAbsorb(point, amount = 0) {
+    if (!this.ward.body) return false;
+    this.ward.stopped++;
+    this.ward.absorbed = (this.ward.absorbed || 0) + amount;
+    this.ward.lastHit = this.world?.time ?? 0;
+    if (point) this._shieldFlash(point);
+    if (!this._spend(SHIELD.bolt, true)) { this._endWard('the Force ran out'); return true; }
+    return true;
+  }
+
+  /** One frame of the ward. Called from `_updateForce` while it exists. */
+  _updateWard(dt, ctx) {
+    const W = this.ward;
+    if (W.body) {
+      W.t += dt;
+      if (W.body.dead) this._endWard('they fell');
+      else if (W.t >= ALLY_WARD.hold) this._endWard(null, true);
+      else if (!this._spend(SHIELD.hold * dt, true)) this._endWard('the Force ran out');
+    }
+    /* The droideka's own bubble, from `buildShieldBubble`, in a tint the
+     * barrier does not use — so whose it is reads at a glance. Built lazily
+     * for the barrier's reason. */
+    if (W.body && !this._wardMesh && this.world?.scene) {
+      const b = buildShieldBubble({ radius: SHIELD.radius, color: 0xa4ffd6 });
+      this._wardMesh = b.mesh;
+      this._wardMat = b.mat;
+      this.world.scene.add(b.mesh);
+    }
+    const want = W.body ? 1 : 0;
+    const rate = W.body ? 1 / SHIELD.rise : 1 / SHIELD.fall;
+    W.power = want > W.power ? Math.min(1, W.power + dt * rate) : Math.max(0, W.power - dt * rate);
+    if (this._wardMesh) {
+      const live = W.power > 0.002;
+      this._wardMesh.visible = live;
+      if (live) {
+        const at = W.body || this._wardLast;
+        if (at) {
+          if (at.shieldCentre) at.shieldCentre(this._wardMesh.position);
+          else this._wardMesh.position.copy(at.position).setY(at.position.y + 1.0);
+        }
+        const u = this._wardMat.uniforms;
+        u.uTime.value = ctx?.time ?? (u.uTime.value + dt);
+        const since = (this.world?.time ?? 0) - W.lastHit;
+        u.uPower.value = W.power * (0.7 + 0.6 * Math.exp(-since * 6));
+      }
+    }
+  }
+
+  /** Down, however it ended. Idempotent. `silent` skips the notice. */
+  _endWard(why = null, silent = false) {
+    const W = this.ward;
+    if (!W.body) return;
+    this._wardLast = W.body;                  // so the fade-out stays on him
+    W.restore?.();
+    W.restore = null;
+    W.body = null;
+    W.absorbed = 0;
+    this.cooldowns.ward = this._recover('ward', ALLY_WARD.cooldown);
+    if (why && !silent) this.world?.notify?.('WARD DOWN', why);
+  }
+
+  /**
+   * RESTORE — the group heal. See `RESTORE` for every number and the argument
+   * for the wait.
+   *
+   * Who it reaches is decided ONCE, here, and kept: a burst that re-swept its
+   * radius every frame would heal a man who walked in on the last frame for
+   * one frame, and stop healing a man carried out on a stretcher. The list is
+   * the men who were with you when you cast it. It refuses when nobody in it
+   * is hurt and nobody is down — including you — because 70 Force and 75 s
+   * on a whole line at full health is the one press a player would never
+   * mean.
+   */
+  forceRestore(ctx) {
+    if (this.hosting) return this._refuse('force restore', OFF_THE_DECK.restore);
+    if (this.restoring) return this._refuse('force restore', 'already restoring');
+    if (this.cooldowns.restore > 0) {
+      return this._refuse('force restore', `recovering — ${this.cooldowns.restore.toFixed(1)}s`);
+    }
+    const bodies = this._restoreCircle(ctx);
+    const hurt = bodies.filter((b) => b.hp < (b.maxHp ?? 0) - 0.01 || b.actor?.ragdolled);
+    if (!hurt.length) return this._refuse('force restore', 'nobody near you is hurt');
+    if (!this._spend(POWER_COST.restore)) {
+      return this._refuse('force restore',
+        `${this._priceOf(POWER_COST.restore)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    /* THE MEN WHO ARE DOWN STAND UP NOW, not in three seconds: a downed man is
+     * the emergency the power is for. `Enemy.recover` is the one door for
+     * that — `_endHeal` and `Command.reviveNear` go through it too. */
+    let stood = 0;
+    for (const b of bodies) {
+      if (b !== this && b.actor?.ragdolled && b.recover) { b.recover(); stood++; }
+    }
+    this.restoring = { t: 0, bodies, stood };
+    /* Written at the cast, exactly once — the unbound seam. */
+    this.cooldowns.restore = this._recover('restore', RESTORE.cooldown);
+    this._gesture('unleash');
+    this._forceVoice?.('heal');
+    audio.force(this.chest, 'pull');
+    audio.tone({ freq: 220, freqEnd: 660, dur: 0.6, gain: 0.14, type: 'sine', pos: this.chest });
+    this.cloak?.impulse(_g1.set(0, 1, 0), 1.2); this.skirt?.impulse(_g1.set(0, 1, 0), 1.2);
+    const others = bodies.length - 1;
+    this.world?.notify?.('RESTORING',
+      others ? `${others} ${others === 1 ? 'ally' : 'allies'} with you${stood ? `, ${stood} back up` : ''}` : 'yourself');
+  }
+
+  /** Everybody the burst reaches: you, and every live ally inside the radius. */
+  _restoreCircle(ctx) {
+    const out = [this];
+    const list = ctx?.enemies || this.world?.enemies;
+    if (!list) return out;
+    const r2 = RESTORE.radius * RESTORE.radius;
+    for (const e of list) {
+      if (!e || e.dead || e === this) continue;
+      if (!sameSide(this, e)) continue;
+      if (e.position.distanceToSquared(this.position) > r2) continue;
+      out.push(e);
+    }
+    return out;
+  }
+
+  _updateRestore(dt, ctx) {
+    const R = this.restoring;
+    if (!R) return;
+    R.t += dt;
+    const per = RESTORE.fraction / RESTORE.time * dt;
+    for (const b of R.bodies) {
+      if (b.dead || !(b.maxHp > 0)) continue;
+      b.hp = Math.min(b.maxHp, b.hp + b.maxHp * per);
+      if (ctx?.particles && rng() < 0.35) {
+        _v1.copy(b === this ? this.chest : b.position);
+        if (b !== this) _v1.y += (b.A?.hipHeight ?? 0.95) + 0.3;
+        ctx.particles.plasma.spawn(_v1, _v2.set((rng() - 0.5) * 0.8, 1.0, (rng() - 0.5) * 0.8),
+          { life: 0.5, size: 0.35, drag: 2, gravity: -0.2, color: 0x9fffd0, alpha: 0.35 });
+      }
+    }
+    if (R.t >= RESTORE.time) this.restoring = null;
   }
 
   /** Down, however it ended. Idempotent. */
@@ -10191,6 +10535,8 @@ export class Player {
     /* Stepped whenever it EXISTS rather than only while it is up, so the fade
      * out finishes and the mesh is hidden — `power` is what the shader draws. */
     if (this.shield.up || this.shield.power > 0) this._updateShield(dt, ctx);
+    if (this.ward.body || this.ward.power > 0) this._updateWard(dt, ctx);
+    if (this.restoring) this._updateRestore(dt, ctx);
     if (this.stasis.active || this.stasis.firing.length) this._updateStasis(dt, ctx);
     if (this.hurled.length) this._updateHurled(dt, ctx);
   }
@@ -10672,6 +11018,16 @@ export class Player {
       this._shieldMesh.geometry?.dispose();
       this._shieldMat?.dispose();
       this._shieldMesh = null; this._shieldMat = null;
+    }
+    /* AND THE WARD'S, which also has to give the ally his own `damage` back:
+     * a wrapper left on a body whose caster is gone would route his hits to a
+     * player that no longer exists. `_endWard` does both. */
+    this._endWard(null, true);
+    if (this._wardMesh) {
+      this.world.scene.remove(this._wardMesh);
+      this._wardMesh.geometry?.dispose();
+      this._wardMat?.dispose();
+      this._wardMesh = null; this._wardMat = null;
     }
     this.saber.dispose();
     if (this.actor) this.actor.dispose();

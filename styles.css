@@ -1206,6 +1206,10 @@ button{font-family:inherit}
    weight, so the two never read as the same prompt. */
 .targetopen.mend.far b{color:var(--dim)}
 .targetopen.mend.far i{opacity:.55}
+/* The ward cue is the barrier's colour and not the heal's: it is the same
+   power the bubble on your own chest is, thrown at the man you are looking at,
+   and a prompt in the mend's green would promise a heal. */
+.targetopen.mend.ward b{color:var(--force)}
 
 /* THE WITHDRAW RING ─────────────────────────────────────────────────────
    The one control that decides whether your company survives the run, and

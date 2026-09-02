@@ -19,7 +19,7 @@ import { BipedAnimator, limbScale } from '../game/Rig.js';
 // binding at module scope — `handPoseOnHilt` is a hoisted function declaration
 // and GRIP_AT is only ever read inside poseSaberArm, long after both modules
 // have finished evaluating, whichever of the two the browser reaches first.
-import { handPoseOnHilt, GRIP_AT, UNLEASH, SHIELD } from '../game/Player.js';
+import { handPoseOnHilt, GRIP_AT, UNLEASH, SHIELD, ALLY_WARD, RESTORE } from '../game/Player.js';
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
@@ -1788,6 +1788,24 @@ export const CODEX = [
       + `it is cover you are paying for by the second. It stops blaster fire, not blades: a melee `
       + `swing comes through at ${Math.round((1 - SHIELD.blunt) * 100)}% force. Press ${k('shield')} `
       + `again to drop it.` },
+  { keys: ['shield'], power: 'ward',
+    /* THE SAME KEY, AIMED AT SOMEBODY ELSE. The player asked for the two on
+     * one button, and a page that documented the button once would teach half
+     * of it. The ward is timed where the barrier is held — the card says the
+     * seconds and the wait, off the constants the power reads. */
+    text: k => `Ally ward — the same barrier put on the ally under your reticle, out to `
+      + `${ALLY_WARD.reach} m. It holds ${ALLY_WARD.hold} seconds and eats their bolts the way yours `
+      + `does, paid from your bar. One bubble at a time: warding a man drops yours, and raising `
+      + `yours drops his. ${k('shield')} on the same man again takes it off. Recovers in `
+      + `${ALLY_WARD.cooldown} s.` },
+  { keys: ['restore'],
+    /* THE GROUP HEAL. Radius, share and the wait are all READ, because 75 s
+     * is the longest cooldown in the game and a page that typed it would be
+     * the first thing to go stale when it is tuned. */
+    text: () => `Force restore — every ally within ${RESTORE.radius} m, and you, get `
+      + `${Math.round(RESTORE.fraction * 100)}% of their health back over ${RESTORE.time} seconds, and `
+      + `the men who are down get up. A burst, not a channel: it cannot be broken, and it is paid `
+      + `up front. Once a fight — it recovers in ${RESTORE.cooldown} s.` },
   { keys: ['rend'], text: () => 'Rend apart. Takes a mechanical enemy to pieces where it stands.' },
   { keys: ['lightning'], text: () => 'Force lightning — an arc that jumps between bodies.' },
   { keys: ['unleash'],
@@ -2133,7 +2151,12 @@ function powerChips(row) {
   if (row.force) {
     return `<em class="cost">${row.force.cost} Force</em><em class="cost gate">needs an army</em>`;
   }
-  const id = row.keys && row.keys.length === 1 ? row.keys[0] : null;
+  /* `power` names the price row when it is not the action's own name: the
+   * ally ward is cast off the barrier's key and priced as `ward`, so its
+   * Codex row says `keys: ['shield'], power: 'ward'` and gets the ward's chip
+   * rather than the barrier's — or nothing, which is what a twelfth power
+   * with a chip keyed on a key it shares would otherwise have printed. */
+  const id = row.power ?? (row.keys && row.keys.length === 1 ? row.keys[0] : null);
   const cost = id ? POWER_COST[id] : undefined;
   if (cost === undefined) return '';
   const boon = POWER_BOON[id] ? boonById(POWER_BOON[id]) : null;
