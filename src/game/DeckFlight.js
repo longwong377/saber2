@@ -62,6 +62,7 @@ import { audio } from '../engine/Audio.js';
 import { clamp, lerp, smoothstep } from '../engine/MathUtil.js';
 import { launchSequence, damagedArrival } from './DeckAudio.js';
 import { makeShovable } from '../physics/Shovable.js';
+import { dressDeckExterior, setExteriorSeen, undressDeckExterior } from './DeckExterior.js';
 /* Read inside functions only — Hangar.js imports this file. */
 import { DECK, DEPLOY_RAMP, deckFaction } from './Hangar.js';
 
@@ -92,12 +93,25 @@ export const FLIGHT = {
   seal: 1.6,
   lift: 2.6,
   run: 5.2,
-  out: 4.6,
+  /**
+   * BEYOND THE LIP, with the doors OPEN and the ship behind you. This was
+   * 4.6 s with the doors shutting in the first 1.2, which is why the player
+   * never saw the hull he had left: "all I see is a large rectangle getting
+   * smaller". The hull now flies `outRange` metres out over `out` seconds with
+   * the bay open, the capital ship standing round the deck behind
+   * (`DeckExterior`), and the camera the player's — turn round and look.
+   * The doors shut in the last `outSeal` seconds, and the same closed bay is
+   * the first frame of the orbit on the far side of the build.
+   */
+  out: 11.0,
+  outRange: 1400,
+  outSeal: 1.6,
   lastCall: 26,
   /** The arrival: from far out to the pad, the turn, the ramp, the walk off. */
   approach: 10.0, turn: 3.2, open: 1.6, unload: 5.0,
-  /** How far out the hull starts, beyond the lip. */
-  far: 640,
+  /** How far out the hull starts, beyond the lip. Far enough that the
+   *  capital ship it is flying into fills the view first. */
+  far: 1500,
 };
 
 export const PHASE = {
@@ -137,6 +151,8 @@ export function dressDeckFlight(world, opts = {}) {
   group.frustumCulled = false;
   let model = null;
   try { model = transportModel(side); } catch { model = null; }
+  /* THE SHIP ROUND THE ROOM, hidden until the camera is past the lip. */
+  try { dressDeckExterior(world); } catch (e) { console.warn('deck exterior', e); }
   const fires = [];
   if (model) {
     group.add(model);
@@ -635,14 +651,17 @@ export function stepDeckFlight(world, dt) {
     }
 
     case PHASE.OUT: {
-      /* Beyond the lip: the doors shut in the first second and the hull
-       * keeps accelerating away. The hangar shrinks in the door until it is
-       * closed, then main.js takes the world down and opens the next one in
-       * orbit — with the capital ship astern. */
+      /* Beyond the lip: the bay stays OPEN and the hull keeps accelerating
+       * away from the ship it left, which now stands round the deck at real
+       * scale — the deck is one lit mouth in a flank of them. The doors shut
+       * only in the last `outSeal` seconds, and the same shut bay is the
+       * first frame of the orbit after main.js has built the battlefield
+       * behind a still of this one. */
       const k = clamp(st.t / FLIGHT.out, 0, 1);
-      doors(st, 1 - clamp(st.t / 1.2, 0, 1));
-      const d = lerp(0, 520, k * k);
-      g.position.set(st.outFrom.x, st.outFrom.y + k * 40, st.outFrom.z + d);
+      const sealT = clamp((st.t - (FLIGHT.out - FLIGHT.outSeal)) / FLIGHT.outSeal, 0, 1);
+      doors(st, 1 - sealT);
+      const d = lerp(0, FLIGHT.outRange, k * k);
+      g.position.set(st.outFrom.x, st.outFrom.y + k * 60, st.outFrom.z + d);
       g.rotation.x = -0.08;
       setThrust(st, 1);
       if (k >= 1 && !st.launched) {
@@ -660,7 +679,7 @@ export function stepDeckFlight(world, dt) {
       const k = clamp(st.t / FLIGHT.approach, 0, 1);
       const e = 1 - Math.pow(1 - k, 2.2);
       const z = lerp(DECK.lip + FLIGHT.far, pad.z, e);
-      const y = lerp(46, pad.y + st.hover + 3.0, Math.pow(e, 0.8));
+      const y = lerp(70, pad.y + st.hover + 3.0, Math.pow(e, 0.8));
       const x = lerp(0, pad.x, smoothstep(0.5, 1, k));
       g.position.set(x, y, z);
       g.rotation.set(0.10 * (1 - e), 0, 0);
@@ -722,6 +741,9 @@ export function stepDeckFlight(world, dt) {
   stepFlames(st, st.total);
   if (st.phase !== PHASE.PARKED && st.phase !== PHASE.BOARD) flyPassengers(world, st, dt);
   else if (st.seated) flyPassengers(world, st, dt);
+  /* The ship round the room is drawn while the eye is past the lip. */
+  const camZ = world.engine?.camera?.position?.z;
+  setExteriorSeen(world, camZ !== undefined && camZ > DECK.lip - 2);
 }
 
 /**
@@ -745,6 +767,7 @@ export function embarkCompany(world) {
 export function flightPhase(world) { return world?._deckFlight?.phase ?? null; }
 
 export function undressDeckFlight(world) {
+  undressDeckExterior(world);
   const st = world?._deckFlight;
   if (!st) return;
   unsolidify(world, st);

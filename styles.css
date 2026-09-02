@@ -393,6 +393,16 @@ b{font-weight:800}
    or screen". It is a plain stack — backdrop, wordmark, bar — because it is on
    for between 350 ms and four seconds and has nothing to interact with. */
 #loading{display:grid;place-items:center}
+/* THE SEAM IN A FLIGHT: the last rendered frame, full bleed, the wordmark
+   gone, a thin bar and a small line along the bottom. Screens.loading sets
+   the picture; hideLoading clears it. The plate's own scrim stays under the
+   picture so a still that fails to decode is still the ordinary screen. */
+#loading.still{background-size:cover;background-position:center;place-items:end center}
+#loading.still .menu-bg{opacity:0}
+#loading.still .logo{display:none}
+#loading.still .load-wrap{width:min(420px,70vw);padding-bottom:26px}
+#loading.still .load-wrap .boot-bar{margin-top:0;height:4px;width:220px;opacity:.7}
+#loading.still .boot-msg{font-size:10px;opacity:.6}
 .load-wrap{position:relative;z-index:2;width:min(720px,88vw);text-align:center;
   animation:stampIn .35s cubic-bezier(.22,1,.36,1) both}
 .load-wrap .boot-bar{margin-top:30px}

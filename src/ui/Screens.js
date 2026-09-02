@@ -170,9 +170,29 @@ export class Screens {
    * `frac` is 0..1 and `label` is the stage the loader is in. Both are what the
    * boot screen's bar already takes, so the two screens read alike.
    */
-  loading(frac = 0, label = '') {
+  loading(frac = 0, label = '', opts = null) {
     const el = typeof document !== 'undefined' && document.getElementById('loading');
     if (!el) return;
+    /**
+     * A STILL OF THE LAST FRAME, when the load is a seam in a flight.
+     *
+     * The deploy from the flight deck ends with the bay sealed and the hull
+     * accelerating away, and the battlefield opens in the same sealed bay in
+     * orbit — but between them the world is rebuilt, and the menu plate with
+     * a bar over it was what the player saw: "the transition… is kind of
+     * janky like it isn't seamless". main.js captures the last rendered
+     * frame and hands it here; the screen is that picture with a thin bar
+     * along the bottom, and `hideLoading` puts the plate back. Passing no
+     * `still` (the ordinary deploy from the menu) is the old screen.
+     */
+    const still = opts?.still || null;
+    if (still && !el.classList.contains('still')) {
+      el.classList.add('still');
+      el.style.backgroundImage = `url(${still})`;
+    } else if (!still && el.classList.contains('still')) {
+      el.classList.remove('still');
+      el.style.backgroundImage = '';
+    }
     el.classList.remove('hidden');
     const fill = document.getElementById('load-fill');
     if (fill) fill.style.width = `${Math.round(Math.max(0, Math.min(1, frac)) * 100)}%`;
@@ -185,7 +205,7 @@ export class Screens {
   hideLoading() {
     if (typeof document === 'undefined') return;
     const el = document.getElementById('loading');
-    if (el) el.classList.add('hidden');
+    if (el) { el.classList.add('hidden'); el.classList.remove('still'); el.style.backgroundImage = ''; }
     this._loading = false;
   }
 

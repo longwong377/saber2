@@ -52,6 +52,7 @@ file. Every ✅ names its check. The table is filled in as each row lands.
 |---|---|---|
 | Small version number top right of the main menu, bumped on every playtest push | ✅ | `version` — `src/version.js`, `#version-tag`, major held to this log's newest round |
 | The cursor/player shifts from right of the head to left mid-game, then reverts | ✅ | `shoulder` (3) — `CameraRig._resolveShoulder` flipped the shoulder on a wall raycast every sixth frame; the side is fixed now and a wall takes the offset instead |
+| The win background is that bare brown background | 🔎 | Already gone in this build: every `.screen` is an 18% scrim over the live world or the menu plate, and `backdrop` (5) refuses an opaque one. The brown that remains is the CARD's own panel, not a wall behind it |
 | "Inspect your men" button is grey | ✅ | `menu` — the button had a class no stylesheet knew; it is `.secondary` now |
 | The Jedi tab reads Jedi whatever order you picked | ✅ | `menu` — `Menu._syncOrderTab`, the tab is named for the order |
 

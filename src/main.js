@@ -875,7 +875,7 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null, override 
  * card/take pair, and would buy nothing — `Screens.js`'s own header calls a
  * reachable state with no exit the bug the module exists to prevent.
  */
-async function enterHangar(arrival = null) {
+async function enterHangar(arrival = null, opts = {}) {
   try {
     /* THE THEATRE THE PLAYER PICKED goes with them, because the deck's whole
      * view is the world this ship is over and `level` has to be `'hangar'` for
@@ -944,8 +944,14 @@ async function enterHangar(arrival = null) {
      */
     world.onDeckLeave = () => { leaveHangar(); };
     world.onDeckDeploy = () => {
+      /* The seam: a still of the sealed bay for the load, and the player's
+       * look relative to the hull so the orbit opens on the same view. */
+      const p = world.player, hull = world._deckFlight?.group;
+      const hand = (p?.camera && hull)
+        ? { lookRel: p.camera.yaw - hull.rotation.y, pitch: p.camera.pitch } : null;
+      const still = captureStill();
       leaveHangar({ toMenu: false });
-      deploy().catch((e) => console.error('deploy from the deck failed', e));
+      deploy({ fromDeck: true, still, hand }).catch((e) => console.error('deploy from the deck failed', e));
     };
   }
   cancelDeathCard();
@@ -970,6 +976,12 @@ async function enterHangar(arrival = null) {
   input.enabled = true;
   input.requestLock();
   screens.set('playing');
+  /* A player who pressed Ignite is told, once he is out of the lift, where
+   * the run is: up the ramp of the transport on the near pad. */
+  if (opts.launch && world) {
+    const w = world;
+    setTimeout(() => { if (world === w) w.notify?.('TO DEPLOY', 'walk up the transport\'s ramp — the company boards with you'); }, 9000);
+  }
 }
 
 /**
@@ -1012,7 +1024,53 @@ function leaveHangar(opts = {}) {
   screens.set('menu');
 }
 
-async function deploy() {
+/**
+ * ══ EVERY RUN STARTS ON THE FLIGHT DECK ═══════════════════════════════════
+ *
+ * "I specifically asked you that the hangar should be the main hub for coming
+ *  in and out of the game… when I started each one I skipped the hangar
+ *  entirely and was in the transport ship coming down into the atmosphere, I
+ *  want you to start every game (other than sandbox/training) in the hangar…
+ *  even if you're in the main menu and start a mode you still have to go
+ *  through the hangar."
+ *
+ * So Ignite is a door onto the deck, not onto the ground: `deploy()` from the
+ * menu builds the hangar with the mode and theatre the player picked, and the
+ * deck's transport is what builds the battlefield — `DeckFlight` raises
+ * `onDeckDeploy` when the hull is clear of the field, and that is the one
+ * caller that passes `fromDeck`. The exceptions are the rooms you are not
+ * flown to (sandbox, the dojo, the deck itself), a co-op CLIENT (the host's
+ * `start` packet is the order and the host has already walked his own deck)
+ * and a headless check with `instantSpawn`, which is asking for a world and
+ * not a visit.
+ */
+function hangarFirst() {
+  const mode = sessionOr('mode');
+  const M = MODES[mode];
+  if (mode === 'hangar' || mode === 'sandbox' || M?.dojo || M?.insertion === false) return false;
+  if (net.enabled && net.connected && !net.isHost) return false;
+  if (settings.instantSpawn) return false;
+  return true;
+}
+
+/**
+ * The last rendered frame as a picture, for the seam between two worlds —
+ * see `Screens.loading`. Rendered once more here so the buffer is fresh in
+ * this task; null on any failure, which is the ordinary loading screen.
+ */
+function captureStill() {
+  try {
+    engine.render?.(0);
+    const c = engine.renderer?.domElement;
+    return c?.toDataURL?.('image/jpeg', 0.82) || null;
+  } catch { return null; }
+}
+
+async function deploy(opts = {}) {
+  if (!opts.fromDeck && hangarFirst()) {
+    await enterHangar(null, { launch: true });
+    return;
+  }
   // The PLAYER's settings, never the session's. `session` is a separate object
   // for exactly this line: this used to persist the host's level, difficulty
   // and mode into the joining player's save.
@@ -1055,7 +1113,7 @@ async function deploy() {
      * tab. The progress callback is the same shape the boot sequence's bar
      * already takes; `screens.loading` renders it if it exists, and a build
      * that finishes before the first paint simply never shows one. */
-    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label), runSeed);
+    await buildWorld(levelKey, (frac, label) => screens.loading?.(frac, label, opts.still ? { still: opts.still } : null), runSeed);
   } catch (e) {
     console.error('deploy failed', e);
     if (world) { try { world.dispose(); } catch {} world = null; }
@@ -1214,11 +1272,16 @@ async function deploy() {
    * session stopped on a state with nothing on screen.
    */
   const insert = () => {
+    /* THE LOOK CARRIES OVER FROM THE DECK — `Extraction.beginInsertion`
+     * reads it the frame it seats him. */
+    if (opts.hand) world._deckHandoff = opts.hand;
     const flew = world.extraction?.beginInsertion?.({ name: world.level.name });
     if (!flew) world.notify('MAY THE FORCE BE WITH YOU', world.level.name);
   };
   const cmd = world.command;
-  if (cmd?.crossing && !world.training) {
+  /* No card in front of a flight that started on the deck: the deck is where
+   * the ten names were inspected, and a card over the seam is the seam. */
+  if (cmd?.crossing && !world.training && !opts.fromDeck) {
     const card = deployCard({
       seed: world.runSeed,
       plan: cmd.plan,
@@ -1927,8 +1990,11 @@ function gameOver(stats) {
    * home, and a client's world is not his to leave.
    */
   const alive = !!world?.player?.alive;
+  /* EVERY ENDING YOU ARE STANDING FOR FLIES HOME — a win, a withdrawal, a
+   * lost line, a wiped army: "all modes should end with flying back into the
+   * hangar and getting off". Only a dead man is carded where he fell, and
+   * his Rise again is the deck too (`deploy` routes through it). */
   const homeward = alive && !session && !world?.training
-    && (stats.ended === 'withdrew' || won)
     && !MODES[sessionOr('mode')]?.dojo && sessionOr('mode') !== 'hangar' && sessionOr('mode') !== 'sandbox';
   if (homeward) {
     document.getElementById('btn-retry')?.classList.remove('hidden');
@@ -2877,4 +2943,6 @@ boot().then(() => requestAnimationFrame(frame), (err) => {
  */
 window.SABER = { engine, input, audio, get world() { return world; }, settings, net, menu, hud, touch,
   screens, resume, pause,
+  /* The two doors a probe drives the hub through — see tools/_hubprobe.mjs. */
+  deploy, enterHangar, hangarFirst,
   get fps() { return Math.round(fpsSmooth); } };

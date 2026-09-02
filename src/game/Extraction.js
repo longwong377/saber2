@@ -110,6 +110,7 @@ const rng = makeRng(48221);
 export function seedExtraction(seed) { rng.seed(seed); }
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE TIMING TABLE — one place, exported, and the check reads it         */
@@ -261,11 +262,22 @@ export const ORBIT_ALT = 2400;
 
 /** Where the capital ship is when the doors open on it, and where it has gone
  *  by the time the atmosphere does. It is the SHRINKING that is the shot. */
-export const CAPITAL_NEAR = 520;
-export const CAPITAL_FAR = 5200;
+/**
+ * THE CAPITAL SHIP IS REAL SIZE NOW, and the distance is where the deck's
+ * flight left it. `DeckFlight` flies the transport `FLIGHT.outRange` metres out
+ * of the hangar with the hull standing round the deck at ×100
+ * (`DeckExterior`), so the orbit opens with the same ship the same distance
+ * astern and recedes from there. The old numbers — a 1/100 model at 520 m
+ * growing to stay "a ship rather than a speck" — were the "large rectangle
+ * getting smaller" the player saw: a ten-unit wedge at nine degrees.
+ */
+export const CAPITAL_NEAR = 1400;
+export const CAPITAL_FAR = 14000;
+/** The builders are 1/100; the hull is drawn at real scale. */
+export const CAPITAL_SCALE = 100;
 
 /** Station-keeping in space, then the burn, then the fire. */
-export const ORBIT = 7.0;
+export const ORBIT = 9.0;
 export const ENTRY = 6.5;
 /** And the fall from the top of the atmosphere to the flare, which is longer
  *  than an extraction's descent because it starts eight times higher. */
@@ -736,6 +748,16 @@ export class ExtractionDirector {
      * from: the run has not started. This is the ONE place a seat may be taken
      * without a walk, and it is not a teleport — it is where the game begins. */
     for (const p of w.players) if (p?.isLocal && p.alive) this._seat(p, true);
+    /* THE VIEW CARRIES OVER FROM THE DECK. main.js hands the player's look
+     * relative to the hull he flew out in; the same relative look in this
+     * hull is the same view — the ship astern is where he left it. */
+    const hand = w._deckHandoff;
+    if (hand && w.player?.camera) {
+      const cam = w.player.camera;
+      if (Number.isFinite(hand.lookRel)) cam.yaw = this._yaw + hand.lookRel;
+      if (Number.isFinite(hand.pitch)) cam.pitch = hand.pitch;
+      w._deckHandoff = null;
+    }
     const team = w.player.team;
     const room = this._model?.userData?.seats?.length ?? BAY_SEATS;
     if (team !== undefined && w.enemies) {
@@ -795,22 +817,27 @@ export class ExtractionDirector {
     }
   }
 
-  /** Where the capital ship is this frame, and how big. See CAPITAL_NEAR. */
+  /** Where the capital ship is this frame. See CAPITAL_NEAR. */
   _placeCapital(k) {
     const c = this._capital;
     if (!c) return;
     const d = lerp(CAPITAL_NEAR, CAPITAL_FAR, k * k);
     /* ASTERN and a little above, in the SHIP'S OWN FRAME — so "look behind you"
      * is literally true whatever the transport is doing, which is the whole
-     * instruction. +Z is aft. */
-    c.position.set(0, d * 0.06, d);
-    /* THE MODEL IS 1/100 SCALE and the distance is what changes; scaling the
-     * model instead would put an 1,100-unit object in a scene whose terrain is
-     * 400 across and break every shadow cascade in the engine. It grows with
-     * distance only enough to stay a ship rather than a speck. */
-    const sc = 1 + d * 0.010;
-    c.scale.setScalar(sc);
-    c.rotation.set(0.02, Math.PI, 0);
+     * instruction. +Z is aft. The hull is stood so the hangar mouth the deck
+     * IS faces the transport: `userData.hangars[0]` (a point and an outward
+     * normal in model units), the same mouth `DeckExterior` put on the
+     * aperture, so the bay you just flew out of is the lit mouth you are
+     * looking back at. */
+    c.scale.setScalar(CAPITAL_SCALE);
+    const h = c.userData?.hangars?.[0];
+    const nx = h ? h.normal[0] : 1, ny = h ? h.normal[1] : 0, nz = h ? h.normal[2] : 0;
+    _v2.set(nx, ny, nz).normalize();
+    _q1.setFromUnitVectors(_v2, _v3.set(0, 0, -1));
+    c.quaternion.copy(_q1);
+    const px = h ? h.pos[0] : 0.9, py = h ? h.pos[1] : -0.05, pz = h ? h.pos[2] : 0.9;
+    _v2.set(px, py, pz).multiplyScalar(CAPITAL_SCALE).applyQuaternion(_q1);
+    c.position.set(-_v2.x, d * 0.02 - _v2.y, d - _v2.z);
     c.visible = k < 0.995;
   }
 
@@ -1046,12 +1073,15 @@ export class ExtractionDirector {
     const k = clamp(this.t / ORBIT, 0, 1);
     // Vacuum: no air, no sky, and far enough to hold the capital ship.
     this._setSpace(0);
-    /* AND THE SHIP IS SEALED. `_hatch` was driven by `_opening`, `_unload` and
-     * `_sealing` — the three phases that happen on the ground — and by nothing
-     * on the way down, so the ramp and both side doors sat at whatever state
-     * the model was built in for the whole descent. "Why would the side doors
-     * be open in space?" They would not. A transport crosses vacuum shut. */
+    /* THE RAMP IS UP AND THE SIDE DOORS ARE OPEN — for the look back. The
+     * deck's flight left the hangar with the bay open and the ship it left
+     * filling the view; this is the same view, the same distance astern,
+     * with the field's own containment shimmer in the doorway. The doors
+     * shut over the last two seconds of the orbit, so the burn and the
+     * descent are still flown sealed ("why would the side doors be open in
+     * space?" — for as long as there is something to see, and no longer). */
     this._hatch(0);
+    this._bay(1 - smoothstep(ORBIT - 2.0, ORBIT, this.t));
 
     /* A slow drift and a slow roll — a ship under way, not a ship parked. The
      * numbers are small because the frame of reference is the bay the player is
@@ -1406,6 +1436,15 @@ export class ExtractionDirector {
     if (u.doorL) u.doorL.position.z = e * slide;
     if (u.doorR) u.doorR.position.z = e * slide;
     this._open = e;
+  }
+
+  /** The side doors alone, 0 shut … 1 open — the ramp is `_hatch`'s. */
+  _bay(k) {
+    const u = this._model?.userData;
+    if (!u) return;
+    const e = smoothstep(0, 1, clamp(k, 0, 1));
+    if (u.doorL) u.doorL.position.z = e * 2.0;
+    if (u.doorR) u.doorR.position.z = e * 2.0;
   }
 
   _opening(dt, ctx) {
