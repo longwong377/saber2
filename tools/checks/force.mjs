@@ -1514,10 +1514,26 @@ export async function run({ check, assert, near }) {
     /* 1. it costs a lot — and more than anything else on the table, which is
      *    the difference between "expensive" and "the panic button". */
     assert(cost > 40, `unleash cost ${cost.toFixed(0)} Force`);
+    /**
+     * DEAREST OF THE THINGS YOU SPEND ON FIGHTING, and the exception is named
+     * rather than filtered out quietly.
+     *
+     * This read "dearer than everything else on the table", which was true of
+     * every power that existed when it was written. `restore` is the group
+     * heal the player asked for — "the group heal should have a really long
+     * cooldown and use a lot of force" — so it is priced at 70 ON PURPOSE, and
+     * a check that failed on it would be reporting that the ask landed. What
+     * the panic button has to be is the dearest way of DOING something to the
+     * people around you; the one power that costs more does not touch them.
+     */
+    const EXEMPT = new Set(['unleash', 'restore']);
     const dearest = Math.max(...Object.entries(POWER_COST)
-      .filter(([k]) => k !== 'unleash').map(([, v]) => v));
+      .filter(([k]) => !EXEMPT.has(k)).map(([, v]) => v));
     assert(POWER_COST.unleash > dearest,
       `unleash is ${POWER_COST.unleash} against a dearest-other of ${dearest}`);
+    assert(POWER_COST.restore > POWER_COST.unleash,
+      `the group heal is ${POWER_COST.restore} against unleash's ${POWER_COST.unleash} — `
+      + 'it was asked for as the expensive one and is not');
 
     /* 2. EVERYTHING went outward, front and back alike. */
     const moved = ring.map(({ e, a }, i) => ({

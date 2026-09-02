@@ -45,8 +45,9 @@ export const POWER_COST = {
    * arms out and push everything around you off (like in a scenario where
    * you're being overwhelmed)."
    *
-   * 52 is the most expensive thing on this table, past `heal`'s 40, and that
-   * is the whole design: a power that answers "there are eleven of them and
+   * 52 is the most expensive thing on this table you can point at somebody —
+   * past `heal`'s 40, and behind only `restore`, which is a group heal and
+   * touches nobody — and that is the whole design: a power that answers "there are eleven of them and
    * they are all inside my guard" has to cost enough that it cannot be the
    * answer to "there are two". At the base pool it is most of a bar, so using
    * it means choosing not to jump, dash-recover or heal for a while after —

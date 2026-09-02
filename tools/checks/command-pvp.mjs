@@ -747,6 +747,19 @@ export function run({ check, assert }) {
     assert(!before.has(name), `${name} was already on the joining player's casualty list`);
     doomed.hp = 0;
     doomed.die(doomed.position.clone(), null, 'check');
+    /**
+     * …AND FINISHED, because Command has a bleed-out window now.
+     *
+     * `MODES.command.downed` is 0.6, so a named trooper taken to zero goes to
+     * the ground alive on a bleed clock (`Enemy._goDown`) instead of becoming
+     * a casualty — which is the point of the window and is why this check went
+     * red without anything about replication changing: the host's own roll
+     * still had him standing. A man who is already down does not go down
+     * again, so the second call is the finisher, and it is the honest way to
+     * produce the casualty this check is about rather than a kind of death
+     * (`sever`, `cleave`) chosen to dodge the window.
+     */
+    if (doomed.downed) doomed.die(doomed.position.clone(), null, 'check');
     pump(2);
 
     const roll = client.command.readout().roll;

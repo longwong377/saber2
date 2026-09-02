@@ -326,6 +326,20 @@ export async function oneScreen({ mateAt = [2.4, 0, 1.6], aimAt = [0, 0, 0], ran
     if (!mate) throw new Error('no trooper spawned — the screen cannot be asked about a man who is not there');
     mate.position.y = ground(mateAt[0], mateAt[2]) + 0.02;
     mate.team = p.team;
+    /**
+     * AND HE STANDS THERE, because the subject is the screen and not the roll.
+     *
+     * V12 gave every trooper `Reactions.senseBolt` — a combat roll out of the
+     * line of a bolt that is about to arrive — and this fixture aims one
+     * straight at a man's chest from eighteen metres. He rolls: measured, 1.49
+     * m across the line inside half a second, so the bolt passes him, `arrived`
+     * is false and no Force is spent, which reads as a screen that did not
+     * work. `noReact` is the game's own flag for a body that must not react —
+     * the training remote and the control arm of `reactions.mjs` both carry it
+     * — and a check about the price of covering a man cannot measure that
+     * price on a man who has left.
+     */
+    mate.noReact = true;
 
     const input = {
       keys: new Set(), buttons: [false, false, false],
