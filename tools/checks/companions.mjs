@@ -837,4 +837,77 @@ export async function run({ check, assert }) {
     } finally { world.unload(); Kn.clear(); }
   });
 
+  check('companion: it goes down before it dies, and you can pick it up', async () => {
+    /**
+     * "protecting the companions and keeping them safe is another thing the
+     *  player can choose to worry about"
+     *
+     * AND IT WAS NOT POSSIBLE. `_mayGoDown` opened `if (this.downed ||
+     * !this.trooper …)` and a companion has no `trooper` BY DESIGN, so it did
+     * not go down — it DIED, outright, on the first lethal hit, in every mode.
+     * Measured before the fix: theline (which declares `downed: 1`) and
+     * command (`0.6`) both gave `downed=false dead=true` with the window the
+     * mode had declared sitting there unused.
+     *
+     * An animal that simply vanishes when its bar runs out is not something
+     * you can protect. It is something you notice is gone.
+     *
+     * EVERYTHING ELSE ON THE PATH WAS ALREADY GENERIC — `_goDown` reads the
+     * director's own `downedScale`, `_tickDown`'s clock knows nothing about a
+     * roster or a squad, and the revive is somebody standing over the body.
+     * The trooper test was the only thing in the way and it was testing for
+     * the wrong thing: what the window belongs to is a body on YOUR SIDE.
+     *
+     * AND THE MODE STILL DECIDES, which is the half that keeps `MODES[mode].
+     * downed` meaningful: a mode that declares no window kills outright, and
+     * that is the right answer for a room with no medicine in it.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { fieldCompanion } = await import('../../src/game/Companions.js');
+    const said = [];
+    for (const mode of ['theline', 'waves']) {
+      const { world } = await bootWorld({
+        level: 'geonosis',
+        settings: { mode, level: 'geonosis', allies: 0, quality: 'low' },
+        runSeed: 3,
+      });
+      try {
+        const input = idleInput();
+        for (let i = 0; i < 30; i++) world.update(STEP, input);
+        const e = fieldCompanion(world, world.player, 'massiff', { rec: { xp: 99 } });
+        assert(e, `${mode}: nothing fielded`);
+        const window = world.director?.downedMen;
+        e.damage(e.maxHp * 5, e.position, { team: 1, position: e.position }, 'bolt');
+        if (!window) {
+          /* THE CONTROL CASE, and it is not a skip: a mode that declared no
+           * window must still kill outright, or `MODES[mode].downed` has
+           * stopped meaning anything. */
+          assert(e.dead && !e.downed,
+            `${mode} declares no downed window and the companion still went down`);
+          said.push(`${mode}: no window, killed outright`);
+          continue;
+        }
+        assert(e.downed && !e.dead,
+          `${mode} declares a window and the companion died outright anyway`);
+        assert(e.bleed > 0, `${mode}: it is down with no clock on it`);
+        const clock = e.bleed;
+        /* NOW STAND ON IT. Every frame — the character controller moves the
+         * body, so a position written once is gone by the next tick, which is
+         * how the first version of this measured "still down" on a revive that
+         * works. */
+        let up = false, t = 0;
+        for (let i = 0; i < 30 * 20 && !up; i++) {
+          world.player.position.set(e.position.x, e.position.y, e.position.z);
+          world.player.hp = world.player.maxHp ?? 100;
+          world.update(STEP, input);
+          up = !e.downed && !e.dead;
+          t = i / 30;
+        }
+        assert(up, `${mode}: twenty seconds stood over it and it ${e.dead ? 'bled out' : 'stayed down'}`);
+        said.push(`${mode}: ${clock.toFixed(0)} s of clock, up in ${t.toFixed(1)} s`);
+      } finally { world.unload(); }
+    }
+    return said.join('; ');
+  });
+
 }

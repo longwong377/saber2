@@ -5683,7 +5683,35 @@ export class Enemy {
    * for a squadmate to run to.
    */
   _mayGoDown(kind) {
-    if (this.downed || !this.trooper || this.trooper.alive === false) return false;
+    /**
+     * …AND A COMPANION, WHICH HAS NO `trooper` BY DESIGN.
+     *
+     * This read `!this.trooper` and returned false, so a companion did not go
+     * down: it DIED, outright, in every mode. Measured on a fresh massiff in
+     * theline (`downedScale 1`) and command (`0.6`): `downed=false dead=true`
+     * on the first lethal hit, with the window the mode had declared for it
+     * sitting there unused.
+     *
+     * That is the whole of "protecting the companions and keeping them safe is
+     * another thing the player can choose to worry about". An animal that
+     * simply vanishes when its bar runs out is not something you can protect;
+     * it is something you notice is gone.
+     *
+     * EVERYTHING ELSE ON THIS PATH IS ALREADY GENERIC. `_goDown` reads
+     * `world.director.downedScale` and `DOWN_BLEED`, the clock in `_tickDown`
+     * runs off neither a roster nor a squad, and the revive is somebody
+     * standing over the body. The trooper test was the only thing in the way,
+     * and it was testing for the wrong thing: what the window belongs to is a
+     * body on YOUR SIDE, and a companion is exactly that.
+     *
+     * THE MODE STILL DECIDES. `downedMen` below is false wherever the mode
+     * declared no window — the dojo, the sandbox, Trial of Waves — so those
+     * still kill outright, which is the right answer for a room with no
+     * medicine in it and is `MODES[mode].downed` doing its job unchanged.
+     */
+    if (this.downed) return false;
+    if (!this.trooper && !this.companion) return false;
+    if (this.trooper && this.trooper.alive === false) return false;
     if (!this.world?.director?.downedMen) return false;
     if (kind === 'sever' || kind === 'cleave' || this.actor?.severedCount > 0) return false;
     return true;
