@@ -3755,6 +3755,11 @@ be pinning a scene rather than holding a rule.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
+2 Sep     2461 passed, 1 failed   → the one is `levers`, and it is a design
+                                    question rather than a defect: §4.9 has the
+                                    measurement and tools/_levprobe.mjs the
+                                    reproduction. Everything else on the tree
+                                    is green in one forward run. ~55 min.
 31 Aug    2177 passed, 2 failed   → both re-run alone and green; both were the
                                     harness, not the game, and both are fixed
                                     (§5.0: the two unpinned streams, and
