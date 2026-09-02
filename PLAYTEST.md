@@ -109,6 +109,33 @@ this file's own margin records. The player's words, in his order:
 > *"I tried to play trial of waves and noticed that I still had troops in that
 > mode, is that a feature or bug?"*
 
+And, added mid-session:
+
+> *"also add this to the list make sure than desecrating enemy corpses actually
+> works and that some of your troops actually pick up real dead enemy ragdolls
+> and tear them apart/take off real limbs/heads"*
+
+> *"I also want you to add A double-bladed lightsaber/saberstaff (combines a
+> long central hilt with an energy blade on both ends, functioning similarly to
+> a polearm or quarterstaff similar to the one darth maul used) and also dual
+> weilding (one lightsaber in each hand), these two differing player fighting
+> methods will require unique playstyles and have moves that are unique to
+> them, don't change anything with the default single blade usage, perhaps
+> there will be pluses and minuses to each like maybe with dual wielding
+> blacking bolts is easier or area that you can cover is larger idk you would
+> know better and maybe like with dual wielding you can throw one lightsaber
+> while still having one saber free to attack/block with, meanwhile the double
+> bladed user can use pure telekinesis to spin the staff at high speeds around
+> your body like a protective barrier, keeping your hands free to cast
+> whatever, the double bladed user will have more reach, maybe Dual-wielding
+> lightsabers generally provides increased offensive capabilities and mobility,
+> making it effective against multiple opponents, meanwhile The double-bladed
+> sword offers a significant advantage in two-tempo moves because the second
+> blade is instantly ready for a follow-up strike. You know best how to make
+> these differ and balanced. anyway at the end of this hving three different
+> saber options that directly effect gameplay and create more fighting styles
+> is good for the health of the game"*
+
 **Two of the seven are questions, and this file's own reading of this player is
 that his questions are defect reports** — two of the three questions in the
 earliest surviving round turned out to be things that did not exist at all. So
@@ -119,11 +146,13 @@ or a bug" are both treated as findings until measured otherwise.
 |---|---|---|
 | Companions — a persistent personal companion, twelve kinds, orders, growth, customisation, in the hangar and on the ships | ⏳ | |
 | "Trust in the Force" — a randomize button on the player's own customisation and on NPC troop customisation | ⏳ | |
-| The graves and the dug holes read PBR rather than cel shaded | ⏳ | |
+| The graves and the dug holes read PBR rather than cel shaded | ✅ | `cel` (28) — Cel.js rewrites the PHYSICAL program only; there were five `MeshLambertMaterial` in the game and four were this file. All five are Standard now, and a new check walks the game's own import graph from `main.js` so a lambert/phong/toon material cannot come back |
 | No way to customise troops from inside the hangar | ⏳ | |
 | Force push should launch YOU when you aim at the ground — real trajectories, scaled by distance and Force strength, in the air too | ⏳ | |
-| Troops with missing heads, and heads that spin | ⏳ | |
+| Troops with missing heads, and heads that spin | ✅ | `animation` (20) — `_poseRifle`'s cheek weld multiplied into a head bone the gait never resets, adding 0.197 rad every aiming frame: a revolution every 1.07 s, and a man who stopped aiming froze inverted. Measured 21 of 60 spinning and 20 of 60 upside down; now 0 and 0 |
 | Trial of Waves fields troops | ⏳ | |
+| Desecration must actually work — real troops, real enemy ragdolls, real limbs and heads coming off | ✅ | `desecrate` (5) — measured first: the detail, the ragdolls and the frenzy already worked. Two things did not: no head ever came off (the bone list was eight arms and legs) and `DESECRATE.limbs` was ignored, because `took` counted `cutRagdoll`'s joint-broke return rather than what came off, so every worked body lost every limb. Both fixed and asserted |
+| Three saber forms — the single blade untouched, a double-bladed saberstaff, and dual wielding, each with its own moves and its own trade | ⏳ | |
 
 ---
 
