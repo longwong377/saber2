@@ -86,6 +86,8 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
+import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf } from './CompanionKinds.js';
+import { award, temperSwing } from './Kennel.js';
 /* The friendly-fire scaling every ally in the game already gets — see
  * `fieldCompanion`, which is the one place it is installed. */
 import { installTeamDamage, TEAM_DAMAGE_DEFAULT } from './Command.js';
@@ -139,11 +141,204 @@ export const LEASH = 14;
 export const SETTLED = 0.55;
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE ORDERS                                                                */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * "you can give them a limited set of orders such as attacking/killing a
+ *  specific enememy that you target, attacking anything that gets within a
+ *  certain range of you, etc."
+ *
+ * SIX SLOTS, AND ONE OF THEM MEANS TWELVE DIFFERENT THINGS.
+ *
+ * Every field below is READ by the two wraps and by the wheel, and nothing
+ * anywhere switches on an order's id to decide what it does. `arg` is what the
+ * order needs pointing at, and it is the field the whole design turns on:
+ *
+ *   'none'  the order is the whole order (HEEL, AWAY)
+ *   'body'  a hostile, read from the RETICLE at wheel-close (SEEK, and the
+ *           verbs that name a target)
+ *   'point' the GROUND under the reticle (HOLD)
+ *
+ * READ FROM THE RETICLE AND NEVER FROM THE WHEEL. `RadialWheel` has no
+ * argument channel and adding one would be a second targeting system; the
+ * thing you are looking at is already the thing you mean, and it is strictly
+ * better than a target-cycler for the same reason a reticle beats a tab key.
+ *
+ * `holds` is the RUNG that licenses the slot. Below it the slot is cold and its
+ * caption says why — which is the part a bare keybind can never do, and the
+ * reason `CompanionWheel` reads live pack state rather than a static table.
+ *
+ * HEEL AND AWAY ARE UNREFUSABLE AT EVERY RUNG, and that is a rule and not a
+ * gap in the ladder: the two orders that make a companion SAFER must never be
+ * ones a fresh companion cannot take. Protection that needs a licence is not
+ * protection. `FORMATIONS.circle.always` (Command.js:1913) is the shipped
+ * precedent that an order which cannot be refused is legal.
+ *
+ * `standing` is whether the order survives being given — HEEL is a position
+ * you are put in and then released from, AWAY is a refusal held until
+ * cancelled. That distinction is the whole difference between the two and it
+ * is a field rather than a paragraph in each solver.
+ */
+export const COMPANION_ORDERS = {
+  heel: {
+    id: 'heel', label: 'HEEL', arg: 'none', standing: false, holds: 'heel',
+    caption: 'Come here and stay where I can see you',
+  },
+  away: {
+    id: 'away', label: 'AWAY', arg: 'none', standing: true, holds: 'away',
+    caption: 'Break off. Do not fight. Get behind me',
+  },
+  ward: {
+    id: 'ward', label: 'WARD', arg: 'none', standing: true, holds: 'ward',
+    caption: 'Meet anything that comes near ME',
+  },
+  seek: {
+    id: 'seek', label: 'SEEK', arg: 'body', standing: true, holds: 'seek',
+    caption: 'Kill the one under my reticle',
+  },
+  hold: {
+    id: 'hold', label: 'HOLD', arg: 'point', standing: true, holds: 'hold',
+    caption: 'Stand on that ground and meet what comes to it',
+  },
+  /* ONE SLOT, TWELVE MEANINGS. The label and the caption are read off the live
+   * companion's own row (`COMPANION_KINDS[kind].verb`) rather than from here,
+   * which is what stops twelve kinds being twelve reskins: the wheel says
+   * something different for every companion you own. */
+  verb: {
+    id: 'verb', label: null, arg: 'body', standing: true, holds: 'verb',
+    caption: null,
+  },
+};
+
+/**
+ * MAY THIS BODY BE GIVEN THIS ORDER, AND IF NOT, WHY NOT — IN A SENTENCE.
+ *
+ * One reader for both halves, because a wheel slot that is cold and a wheel
+ * slot that says why it is cold must never be able to disagree. Returns null
+ * when the order is legal, and the refusal otherwise.
+ */
+export function refuseOrder(e, id) {
+  const O = COMPANION_ORDERS[id];
+  if (!O) return 'no such order';
+  const K = COMPANION_KINDS[e?._cmpKind];
+  if (!K) return 'nothing of yours is out';
+  if (!kindHasDuty(K.id, id === 'ward' ? 'ward' : id)) {
+    return id === 'ward'
+      ? `a ${K.label.toLowerCase()} has nothing to meet them with`
+      : `a ${K.label.toLowerCase()} does not do that`;
+  }
+  const rec = e._cmpRec;
+  if (!holdsCompanion(rec, O.holds)) {
+    const want = COMPANION_RANKS.find((r) => r.orders.includes(O.holds));
+    return want ? `not until it is ${want.label.toLowerCase()}` : 'not yet';
+  }
+  return null;
+}
+
+/**
+ * GIVE AN ORDER. The argument is whatever the order's `arg` says it takes, and
+ * a wrong-shaped argument is a refused order rather than a silent no-op.
+ *
+ * HEEL IS THE ONE THAT CLEARS. It drops every standing order, the bid and the
+ * focus, and it cancels a seek mid-swing — which is why it is also what the
+ * game issues implicitly at every lifecycle boundary (deploy, area change,
+ * boarding, mounting, dismount). A companion can never be orphaned by a
+ * transition, because every transition says HEEL.
+ */
+export function orderCompanion(e, id, arg = null) {
+  if (!e) return 'nothing of yours is out';
+  const why = refuseOrder(e, id);
+  if (why) return why;
+  const O = COMPANION_ORDERS[id];
+  if (O.arg === 'body' && (!arg || arg.dead || arg.team === e.team)) return 'nothing under your reticle';
+  if (O.arg === 'point' && !arg?.isVector3) return 'no ground under your reticle';
+  if (id === 'heel') {
+    e._cmpDuty = null;
+    e._cmpBidden = null;
+    e._cmpPoint = null;
+    e.target = null;
+    return null;
+  }
+  e._cmpDuty = O;
+  e._cmpBidden = O.arg === 'body' ? arg : null;
+  e._cmpPoint = O.arg === 'point' ? arg.clone() : null;
+  /* AN ORDER THAT LANDED IS A DEED, and it is counted ONCE PER AREA rather
+   * than once per press — see `DEEDS.order`. A player who taps the wheel
+   * thirty times has not trained anything. */
+  if (e._cmpRec && !e._cmpOrderedHere) { e._cmpOrderedHere = true; award(e._cmpRec, 'order'); }
+  return null;
+}
+
+/**
+ * WHERE THE COMPANION IS SUPPOSED TO BE STANDING, WHICH IS THE ONE THING BOTH
+ * WRAPS HAVE TO AGREE ABOUT.
+ *
+ * The move wrap walks it home to this point and the aim wrap measures its
+ * leash from this point; two readers with two ideas of the station would be a
+ * companion that hunts round one place and walks to another. So it is one
+ * function, and the orders that move the station say so here rather than in
+ * either wrap.
+ *
+ * HOLD IS THE ONE THAT DETACHES IT FROM YOU. You gave it a place and then
+ * walked away from it, which is exactly why it is the last rung: a green
+ * companion physically cannot be abandoned by an order you gave it.
+ */
+export function stationFor(e, out) {
+  const D = e._cmpDuty;
+  if (D?.id === 'hold' && e._cmpPoint) return out.copy(e._cmpPoint);
+  const p = e._cmpOwner;
+  if (!p?.position) return out.copy(e._cmpHome || e.position);
+  const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
+  /* AWAY PUTS IT BEHIND YOU AND NOT BESIDE YOU. The side offset is what keeps
+   * an ordinary heel out from under your feet; a companion told to break off
+   * is a companion you want between you and nothing at all. */
+  const side = D?.id === 'away' ? 0 : HEEL.side * (e._cmpSide ?? 1);
+  const back = HEEL.back * (D?.id === 'away' ? 1.35 : 1);
+  return out.set(
+    p.position.x - Math.sin(yaw) * back - Math.cos(yaw) * side,
+    p.position.y,
+    p.position.z - Math.cos(yaw) * back + Math.sin(yaw) * side,
+  );
+}
+
+/**
+ * MAY THIS COMPANION TAKE THIS BODY, UNDER THE ORDER IT IS UNDER.
+ *
+ * The aim wrap's whole filter, in one place, so that adding an order is a row
+ * in the table above and a clause here rather than an edit to the wrap.
+ *
+ * @param home  the station, already computed — passed IN rather than recomputed
+ *              because the wrap needs it too and `stationFor` writes a vector.
+ */
+export function dutyAllows(e, foe, home, leash) {
+  const D = e._cmpDuty;
+  /* AWAY IS A REFUSAL TO FIGHT, HELD UNTIL CANCELLED. Not a position — the
+   * station moves too, but this is the half that makes it different from
+   * HEEL, and it is unconditional: there is no hostile close enough to
+   * override an order to break off. */
+  if (D?.id === 'away') return false;
+  if (D?.id === 'seek') return foe === e._cmpBidden;
+  /* WARD MEASURES FROM YOU AND NOT FROM ITSELF, and that distinction is the
+   * whole order: it makes the companion a tripwire around the PLAYER rather
+   * than a second wanderer. It is the brief's "attacking anything that gets
+   * within a certain range of you" said precisely. */
+  if (D?.id === 'ward') {
+    const p = e._cmpOwner;
+    const r = COMPANION_KINDS[e._cmpKind]?.ward || 0;
+    if (!p?.position || r <= 0) return false;
+    return foe.position.distanceToSquared(p.position) <= r * r;
+  }
+  return foe.position.distanceToSquared(home) <= leash * leash;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 /*  1. THE TWO WRAPS                                                          */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _v3 = new THREE.Vector3();
 
 /**
  * WHO THIS BODY IS ALLOWED TO FIGHT, ASKED OF THE WORLD.
@@ -198,17 +393,22 @@ function installCompanionAim(e) {
        * is the move wrap's job. Nothing here returns null that `_hostilesFor`
        * would not have returned null for.
        */
+      /* THE ORDER FIRST, IF IT NAMED A BODY. A companion told to take that one
+       * takes THAT one, which is the whole of "attacking a specific enemy that
+       * you target" — and `dutyAllows` refuses everything else under SEEK, so
+       * a seek is a seek and not a preference. */
       const bid = e._cmpBidden;
       if (bid && !bid.dead && bid.team !== e.team) return bid;
-      const home = e._cmpHome;
+      /* KEPT ON A LEASH ROUND ITS STATION AND NOT ROUND ITSELF. A companion
+       * that chased the nearest hostile would walk itself out of the fight one
+       * body at a time; measuring from where it is SUPPOSED to be is what
+       * keeps it beside you. `stationFor` is that one place — the same
+       * function the move wrap walks it home to, so the two can never disagree
+       * about where "supposed to be" is. */
+      const home = stationFor(e, _v3);
       for (const o of w._hostilesFor(e)) {
-        /* KEPT ON A LEASH ROUND ITS STATION AND NOT ROUND ITSELF. A companion
-         * that chased the nearest hostile would walk itself out of the fight
-         * one body at a time; measuring from where it is SUPPOSED to be is
-         * what keeps it beside you. */
-        const from = home || e.position;
-        const d = o.position.distanceToSquared(from);
-        if (d > leash * leash) continue;
+        if (!dutyAllows(e, o, home, leash)) continue;
+        const d = o.position.distanceToSquared(home);
         if (d < bestD) { bestD = d; best = o; }
       }
       return best;
@@ -300,16 +500,18 @@ function installCompanionMove(e) {
     if (!owned) {
       e._cmpHome = (e._cmpHome || new THREE.Vector3()).copy(e.position);
     }
-    if (owned) {
-      /* THE STATION: off the owner's back quarter, on the side it was born on
-       * so two companions in co-op do not stand in one place. */
-      const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
-      const side = e._cmpSide || 1;
-      _v1.set(
-        p.position.x - Math.sin(yaw) * HEEL.back + Math.cos(yaw) * HEEL.side * side,
-        p.position.y,
-        p.position.z - Math.cos(yaw) * HEEL.back - Math.sin(yaw) * HEEL.side * side,
-      );
+    /* HOLD IS THE ONE ORDER WITH NO OWNER IN IT. A companion standing on
+     * ground you gave it keeps its station whether you are alive, dead, or
+     * three hundred metres away — which is exactly what makes it the last
+     * rung, and it is why this is tested before `owned` rather than inside it.
+     * The branch above (an owner who is down) must not overwrite a held
+     * point with wherever the animal happens to be standing. */
+    const held = e._cmpDuty?.id === 'hold' && e._cmpPoint;
+    if (owned || held) {
+      /* THE STATION, from the one function both wraps read — see
+       * `stationFor`. Two readers with two ideas of where it is supposed to be
+       * would be a companion that hunts round one place and walks to another. */
+      stationFor(e, _v1);
       e._cmpHome = (e._cmpHome || new THREE.Vector3()).copy(_v1);
       const dx = _v1.x - e.position.x, dz = _v1.z - e.position.z;
       const d = Math.hypot(dx, dz);
@@ -317,7 +519,13 @@ function installCompanionMove(e) {
        * been dragged past the leash. A companion that abandoned a body it was
        * biting because you took a step would never finish anything. */
       const busy = !!e.target && !e.target.dead;
-      const dragged = d > (e._cmpLeash ?? LEASH);
+      /* THE TEMPERS MOVE THIS AND NOTHING ELSE. `reach` is metres it will
+       * break from station to take a body; `recall` is how much sooner it
+       * gives up and comes home. Both are read off the record through the one
+       * summing function rather than added up here — see `temperSwing`. */
+      const sw = e._cmpSwing;
+      const leashNow = Math.max(2, (e._cmpLeash ?? LEASH) + (sw ? sw.reach - sw.recall : 0));
+      const dragged = d > leashNow;
       if (dragged || !busy) {
         if (d > SETTLED) {
           e.wish = (e.wish || new THREE.Vector3()).set(dx / d, 0, dz / d);
@@ -455,7 +663,35 @@ export class CompanionPack {
     this.seen.add(e);
     e._cmpOwner = owner;
     e._cmpSide = opts.side ?? 1;
-    e._cmpLeash = opts.leash ?? LEASH;
+    /**
+     * THE RECORD IS WHAT MAKES IT THIS ANIMAL AND NOT ONE OF ITS KIND.
+     *
+     * `_cmpKind` is the row (what it can do), `_cmpRec` is the Kennel record
+     * (what it has done). Both are hung on the body rather than looked up
+     * through the pack, because the two wraps run inside `_think` and `_move`
+     * on a hot path and neither should have to search a list to answer a
+     * question about the body it is already holding.
+     *
+     * THE LEASH COMES OFF THE RUNG, and the rung comes off the record's xp. A
+     * companion with no record — the sandbox's, the dojo's, a check's — reads
+     * the bottom rung, which is the honest default: nothing it has not earned.
+     */
+    const K = COMPANION_KINDS[opts.kind || e.A?.companionKind || ''] || null;
+    e._cmpKind = K?.id || null;
+    e._cmpRec = opts.rec || null;
+    e._cmpSwing = temperSwing(opts.rec);
+    e._cmpLeash = opts.leash ?? rungOf(opts.rec).leash;
+    /* THE PACE CAP, APPLIED HERE AND NOWHERE ELSE. `paceOf` clamps a row to
+     * 0.85 of the player's sprint on the way out, so no rung, temper, phase or
+     * setting can produce a companion that outruns you — which is the whole
+     * mechanism the protection loop rests on. Written over the archetype's own
+     * `speed` because `Enemy` rolls a ±10% spread into `this.speed` at :3146
+     * and a spread on top of a cap is a cap that is exceeded one body in two. */
+    if (K) {
+      const cap = paceOf(K.id);
+      e.speed = Math.min(e.speed ?? cap, cap);
+      if (e.A) e.A = { ...e.A, speed: Math.min(e.A.speed ?? cap, cap) };
+    }
     e.companion = true;
     installCompanionAim(e);
     installCompanionMove(e);
@@ -528,7 +764,12 @@ export function attachCompanions(world) {
  */
 export function fieldCompanion(world, owner, kind = 'massiff', opts = {}) {
   if (!world?.spawnEnemy || !owner?.position) return null;
-  if (!ARCHETYPES[kind]) return null;
+  /* THE KIND IS A ROW AND THE ARCHETYPE IS A BODY, and they are two lookups
+   * because one kind deliberately borrows another's body: the reprogrammed B1
+   * is `buildB1` verbatim, which is the cheapest droid in the set by a wide
+   * margin and the reason it is the kind to prototype the ranged path on. */
+  const K = COMPANION_KINDS[kind];
+  if (!K || !ARCHETYPES[K.archetype]) return null;
   const pack = attachCompanions(world);
   const yaw = owner.aimDir ? Math.atan2(owner.aimDir.x, owner.aimDir.z) : 0;
   _v2.set(
@@ -537,7 +778,7 @@ export function fieldCompanion(world, owner, kind = 'massiff', opts = {}) {
     owner.position.z - Math.cos(yaw) * HEEL.back,
   );
   _v2.y = world.terrain?.height ? world.terrain.height(_v2.x, _v2.z) : owner.position.y;
-  const e = world.spawnEnemy(kind, _v2);
+  const e = world.spawnEnemy(K.archetype, _v2);
   if (!e) return null;
   /* THE TEAM IS THE WHOLE OF "IT IS ON YOUR SIDE" — Command.js's own header
    * says so: the only things that make a body yours are a team number and the
@@ -559,5 +800,5 @@ export function fieldCompanion(world, owner, kind = 'massiff', opts = {}) {
    * slider for this and asked for it by name; one table, one owner.
    */
   installTeamDamage(e, world.settings?.teamDamage ?? TEAM_DAMAGE_DEFAULT);
-  return pack.adopt(e, owner, opts);
+  return pack.adopt(e, owner, { ...opts, kind });
 }
