@@ -307,6 +307,49 @@ function calfSection(o = {}) {
   };
 }
 
+/**
+ * The plan section of a MUZZLE — wide, flat on top, full underneath.
+ *
+ * The four heads that have a mouth all built one out of `plateGeo`, and a
+ * rounded cuboid is the single worst shape available for the job: it has a
+ * flat front WALL, so the nose is a plane the animal stops at, and four hard
+ * vertical corners, so from three-quarters on it reads as the end of a crate.
+ * The complaint's first line — "the head reads as a detached rectangular box"
+ * — is that call and nothing else.
+ *
+ * A muzzle is not round either, which is why this is not just `ovalSection`.
+ * Four facts, each one a term:
+ *
+ *   IT IS WIDER THAN IT IS DEEP.  `flat` is the depth as a fraction of the
+ *   width — 0.72 on a dog, lower on anything that eats meat lying down.
+ *   IT HAS CHEEKS.  `n` above 2 fills the corners out into flat vertical
+ *   sides, which is what carries the light down the side of a jaw. An ellipse
+ *   has no side; it has a highlight that slides.
+ *   THE TOP IS A BRIDGE, NOT A DOME.  `crown` flattens the nasal bones.
+ *   THE BOTTOM IS FULLER THAN THE TOP.  `chin` — the lower jaw and the lip
+ *   carry more mass than the maxilla, and a muzzle that is symmetric top to
+ *   bottom reads as a tube.
+ *
+ * θ is measured from local +Z as everywhere else in this file. `muzzle()`
+ * rotates the lathe by +π/2 about X, which takes local +Z to world −Y — so
+ * cos θ > 0 is DOWNWARD on the finished animal and that is the half `chin`
+ * fattens. Getting this the wrong way round builds a head with a swollen brow
+ * and no jaw, which is a specific and recognisable kind of wrong.
+ */
+function muzzleSection(o = {}) {
+  const flat = o.flat ?? 0.72, n = o.n ?? 2.8;
+  const crown = o.crown ?? 0.07, chin = o.chin ?? 0.12;
+  return (th) => {
+    const si = Math.abs(Math.sin(th)), co = Math.abs(Math.cos(th));
+    let r = Math.pow(Math.pow(si, n) + Math.pow(co, n), -1 / n);
+    r *= flat + (1 - flat) * si * si;
+    const c = Math.cos(th);
+    if (chin) r *= 1 + chin * Math.max(0, c) ** 2;
+    if (crown) r *= 1 - crown * Math.max(0, -c) ** 2;
+    return r;
+  };
+}
+
 /** An oval limb — forearms, and any sleeve that has to match one. */
 function ovalSection(depth = 0.86, n = 2.4) {
   return (th) => {
@@ -8390,6 +8433,50 @@ function creatureSkeleton(S, P) {
       i++;
     }
   }
+  /**
+   * ── WINGS, AND THEY ARE NOT IN `limbs[]` — WHICH IS THE WHOLE DESIGN ─────
+   *
+   * A wing is a limb, `Rig.BONE_ROLES` has carried the role since the
+   * Geonosian, and the obvious thing to do is add `{ role: 'wing' }` to the
+   * plan's `limbs[]` and let the loop above expand it left and right. That is
+   * wrong for two measured reasons, and both of them bite silently.
+   *
+   *   THE INDEX IS AN INDEX INTO THE STANCE, NOT INTO THE RIG.
+   *   `Enemy._poseWalker` walks `for (i = 0; i < ST.limbs.length; i++)` and
+   *   solves `femur{i}` → `tibia{i}` against `ST.limbs[i]` — so the stance
+   *   array and the limb loop above have to agree POSITIONALLY. `stanceOf`
+   *   would have to emit a wing entry (and IK a wing at the floor), or skip it
+   *   (and slide every later leg onto the wrong plan row). A hawk whose wings
+   *   were `limbs[0]` would have its TALONS driven by its wings' pole vectors.
+   *   Nothing throws; the animal just walks on its wings.
+   *
+   *   `Flight.beatWings` READS THE NAME. It takes the side off
+   *   `b.name.endsWith('L')`, so a wing spelt `femur2` is a wing whose side is
+   *   always −1 — both wings rotate the same way, one up and one down, every
+   *   beat. Spelling them `wingL`/`wingR` is not decoration: it is the same
+   *   vocabulary `humanoidSkeleton(…, { wings: true })` already publishes, so
+   *   the flyer built here and the flyer built there beat with one function.
+   *
+   * TWO BONES A SIDE for `roleShare`'s sake, which is `humanoidSkeleton`'s own
+   * argument and is not restated: a cut at the root takes the whole wing and a
+   * cut past the elbow takes the fan.
+   *
+   * Off `body` and not `hips`: a wing root is a shoulder, and on a creature
+   * whose trunk pitches, a wing that stayed level with the pelvis would tear
+   * out of the back the moment the animal reared.
+   */
+  if (P.wings) {
+    const W = P.wings;
+    for (const side of [1, -1]) {
+      const L = side > 0 ? 'L' : 'R';
+      out.push({ name: `wing${L}`, parent: 'body',
+        offset: [side * W.x * s, W.y * s, W.z * s], length: W.arm * s,
+        rest: [side * W.rest[0], W.rest[1], W.rest[2]], role: 'wing' });
+      out.push({ name: `wingTip${L}`, parent: `wing${L}`,
+        offset: [0, W.arm * s, 0], length: W.fan * s,
+        rest: [side * W.fanRest[0], W.fanRest[1], W.fanRest[2]], role: 'wing' });
+    }
+  }
   return out;
 }
 
@@ -8451,6 +8538,97 @@ export const CREATURE_PLANS = {
    * which is the reference photograph and is deliberately BELOW the player's
    * eye line — a companion you have to look down at reads as a companion.
    */
+  /**
+   * THE VARACTYL — the only body in the game that takes a grade the player's
+   * own character controller refuses, and the row is built round that one fact.
+   *
+   * It is the third mount and it exists because the other two are about SPEED.
+   * A tauntaun makes the map faster; this makes the map a different SHAPE. So
+   * every number below is a climbing number rather than a running one: six
+   * points of contact instead of two, a long low body that keeps its weight
+   * against the rock, and a tail longer than the animal to hang off the far
+   * side of a ridge.
+   *
+   * SIX LEGS, AND NOT ONE LINE OF GAIT CODE. `creatureSkeleton` spans 2, 4 and
+   * 6 — the acklay is the proof, three `limbs[]` entries expanded left+right —
+   * and `_poseWalker` COUNTS the legs off the rig rather than restating the
+   * number, so a hexapod's phase offsets come out of the plan's own `step` and
+   * nothing is written. The acklay is the row this was measured against and
+   * the differences are all deliberate:
+   *
+   *   ITS LEGS SPLAY, THE ACKLAY'S TOWER. An acklay's `pole` is [1.40, 3.10]
+   *   — the knee is thrown three metres UP, which is what makes it a tripod
+   *   you walk under. This one's is [1.30, 0.55], so the knee goes OUT and
+   *   barely up: the body stays low and wide over its feet, which is what a
+   *   climbing lizard's does and what stops it reading as a small acklay.
+   *   `femurRest` follows — 0.86 out against 0.62, and y −0.10 against +0.72.
+   *
+   *   ITS FOOT IS A CLAW AND NOT A SPIKE. A spike is a point that plants; a
+   *   claw is what hooks rock, and it is the one piece of geometry on the
+   *   animal that says what it is for.
+   *
+   *   IT HAS A TAIL, AND THE ACKLAY HAS NONE. 2.6 of reach on a 1.30 trunk —
+   *   the longest tail-to-body ratio in the table — because a counterweight
+   *   swung out behind is what a climbing biped-turned-hexapod actually uses,
+   *   and because at forty metres a horizontal line half again the length of
+   *   the body is a silhouette nothing else in the game has.
+   *
+   * THE HEAD IS 'horned-ape' FOR THE FRILL, and this is a re-read rather than
+   * a compromise. The branch builds temple horns swept out and forward plus a
+   * jaw ruff; on a long low reptile head those two pieces are exactly a
+   * varactyl's swept crest and its cheek plumes. No fifth branch was invented,
+   * and none is needed — but if one is ever written, this row should move to
+   * it, which is written down here rather than left for somebody to guess.
+   */
+  varac: {
+    /* GREEN, and it is the only green animal in the table. Every other hide
+     * here is a brown or a grey — 0x6f6455, 0x6d5a4a, 0x8b6f52, 0x7a6a58 — so
+     * the one colour that reads instantly against Geonosian orange rock is the
+     * one nothing has used. The belly is warm and pale for the reason every
+     * belly in this file is: it is the surface you see from below, which on a
+     * mount is the surface you never see, and on a climbing animal on a cliff
+     * above you is the only surface you DO. */
+    hide: 0x5f7f46, plate: 0x86a057, belly: 0xd8cf9a, eye: 0xe8a03a,
+    /* LOW AND LONG: hip 0.92 on a 1.30 trunk, against the acklay's 1.62 on
+     * 1.06. The acklay is taller than it is long and this is the inverse,
+     * which is the first read at any distance. */
+    hip: 0.92, trunk: [0.12, -0.16, 1.30], pitch: -0.04, girth: 0.36,
+    /* Shoulder low and broad, haunch taller: a climber pulls with the front
+     * and pushes with the back, and the swells say which end does what. */
+    swells: [[0.62, 0.20, 0.30], [0.24, 0.30, 0.30]],
+    section: { n0: 2.6, n1: 3.1, back: 0.05, keel: 0.05, waist: 0.06 },
+    /* A LONG NECK, three segments and the longest curl in the file: the head
+     * has to be able to reach past the rock the front feet are on, and a mount
+     * whose head is up where the rider can see it is a mount you steer by. */
+    headAt: [0.10, 1.02], neck: [3, 0.26, 0.17, -0.22, -0.14], head: 'horned-ape',
+    /* SCUTES AND NOT A RIDGE: a plated back rather than a spine of spikes,
+     * because a rider sits on this one and a row of spikes down the seat is a
+     * silhouette that contradicts the saddle. */
+    back: 'scutes', tail: [4, 2.60, 0.12, 0.10, -0.16],
+    limbs: [
+      { role: 'leg', x: 0.34, y: 0.06, z: 0.62, plant: 0.68, femur: 0.44, tibia: 0.50, tarsus: 0.22,
+        girth: 0.80, pole: [1.30, 0.55, 0.80], foot: 'claw',
+        femurRest: [0.86, -0.10, 0.34], tibiaRest: [0.30, -0.92, -0.24] },
+      { role: 'leg', x: 0.36, y: 0.04, z: 0.02, plant: 0.72, femur: 0.46, tibia: 0.52, tarsus: 0.22,
+        girth: 0.84, pole: [1.34, 0.55, 0], foot: 'claw',
+        femurRest: [0.90, -0.08, 0], tibiaRest: [0.32, -0.90, 0] },
+      { role: 'leg', x: 0.34, y: 0.02, z: -0.60, plant: 0.68, femur: 0.44, tibia: 0.50, tarsus: 0.22,
+        girth: 0.80, pole: [1.30, 0.55, -0.80], foot: 'claw',
+        femurRest: [0.86, -0.10, -0.34], tibiaRest: [0.30, -0.92, 0.24] },
+    ],
+    /* A SHORT QUICK STRIDE, which is what six legs are for: 0.66 against the
+     * acklay's 1.40 on a body two thirds the length. It does not lope, it
+     * scurries, and on a slope that is the difference between keeping four
+     * feet on the rock and keeping one. */
+    step: 0.66, lift: 0.20, rear: 0.14,
+    /* ITS ONLY ATTACK HURTS NOTHING. The shipped `sweep` row at zero damage
+     * through the archetype — a tail that knocks a body flat and takes not one
+     * point off it, which is the honest reading of "useless in battle" for an
+     * animal that is two metres of muscle: it can move you, it cannot kill
+     * you. */
+    moves: ['sweep'],
+  },
+
   massiff: {
     hide: 0x6f6455, plate: 0x8b7f68, belly: 0x9a8f79, eye: 0xd8a832,
     hip: 0.44, trunk: [0.10, -0.10, 0.86], pitch: -0.06, girth: 0.28,
@@ -9613,17 +9791,138 @@ function buildCreatureHead(rig, P, S, M) {
   const head = rig.get('head');
   const [segs, nLen, nR, nPitch, nCurl] = P.neck;
   const parts = [];
+
+  /* ── THE NECK IS ONE SWEPT TUBE, AND IT LEAVES THE SHOULDERS FAT ──────
+   *
+   * It was `segs` separate limbGeo capsules laid nose to tail, each one CAPPED
+   * at both ends, and that shape is the whole reason the head read as a box
+   * stuck onto the body rather than as a head. Three faults, all of them the
+   * chain's:
+   *
+   *   EVERY JOINT WAS A PINCH. Each capsule domes out to capY 0.62 at both
+   *   ends and the next one starts at the previous one's ORIGIN, not at its
+   *   dome — so the surface went out, in, and out again once per segment. On
+   *   the massiff's two-segment neck that is one visible constriction directly
+   *   behind the skull, which is exactly where an animal's neck is thickest.
+   *
+   *   IT LEFT THE TRUNK AT NECK WIDTH. `nR` is the radius of the neck under
+   *   the jaw, and the first capsule started at that radius INSIDE the
+   *   shoulder — so the neck met the body as a peg in a hole. Nothing carried
+   *   the head's mass down into the trunk, and a head whose support is a peg
+   *   is a head that has been stuck on.
+   *
+   *   FIVE PAIRS OF CAPS WERE BURIED. The same argument the tail already makes
+   *   two hundred lines up (see tubeGeo's header): the interior caps are
+   *   triangles nobody can ever see. A three-segment neck spent 40% of itself
+   *   on them.
+   *
+   * So it is one `tubeGeo` down the same polyline the chain walked — same
+   * `nLen`, `nPitch` and `nCurl`, so every plan's neck still arrives at the
+   * same place and at the same angle — resampled to at least three rings a
+   * segment so the curl is a curve rather than a dogleg, and swept from a
+   * TRAPEZIUS at the root to `nR` under the jaw.
+   *
+   * The root radius is 1.45×nR and clamped to 0.95 of the trunk's own girth.
+   * Measured against the plans rather than picked: nR sits at 0.44–0.68 of
+   * `girth` across all twelve rows, so 1.45×nR lands within a few per cent of
+   * the trunk's shoulder radius on every one of them — a neck exactly as thick
+   * as the shoulder it grows out of — and the clamp catches the two rows
+   * (acklay, varactyl) whose necks are proportionally longest.
+   *
+   * And it STARTS BEHIND THE HEAD BONE, 0.55 of a segment back down its own
+   * pitch, which puts the root ring inside the trunk lathe. A tube that begins
+   * on the shoulder's surface still shows a rim; one that begins inside it
+   * cannot. Nothing downstream reads the neck's mesh extent — `head.radius` is
+   * set from S below, as it always was.
+   */
+  const RN = Math.max(4, segs * 3 + 1);       // rings, not segments
+  const nodes = [];
+  const root = Math.min(nR * 1.45, P.girth * 0.95) * S;
   let hy = 0, hz = 0, pitch = nPitch;
-  for (let i = 0; i < segs; i++) {
-    const len = nLen * S;
-    const r0 = nR * S - i * 0.024 * S;
-    parts.push([limbGeo(len * 1.12, r0, r0 * 0.9, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
-      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
-    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
-    pitch += nCurl;
+  {
+    const step = (nLen * S * segs) / (RN - 1);
+    // back down the first segment's own direction, so the root is buried
+    let y = -Math.sin(nPitch) * nLen * S * 0.55, z = -Math.cos(nPitch) * nLen * S * 0.55;
+    let a = nPitch;
+    for (let i = 0; i < RN; i++) {
+      const u = i / (RN - 1);
+      // the flare is concentrated at the base: ²·² decays to nothing by a
+      // third of the way up, which is where a trapezius stops.
+      nodes.push([0, y, z, nR * S * 0.95 + (root - nR * S * 0.95) * (1 - u) ** 2.2]);
+      z += Math.cos(a) * step; y += Math.sin(a) * step; a += (nCurl * segs) / (RN - 1);
+    }
+    // where the neck ARRIVES, which is where every branch below hangs its
+    // skull. Walked separately at the plan's own resolution so the numbers the
+    // five head branches were authored against do not move by a millimetre.
+    for (let i = 0; i < segs; i++) {
+      hy += Math.sin(pitch) * nLen * S; hz += Math.cos(pitch) * nLen * S;
+      pitch += nCurl;
+    }
   }
+  parts.push([tubeGeo(nodes, 9), [0, 0, 0]]);
+
   const k = new Kit();
   const K = P.head;
+
+  /**
+   * A MUZZLE, AND NOT A BOX.
+   *
+   * Every one of the five heads hung its jaw off a `plateGeo` — a rounded
+   * cuboid — and that single call is the "detached rectangular box" the
+   * complaint names. A plateGeo has four flat sides, four hard vertical
+   * corners and a FLAT FRONT WALL, so at any angle off dead-centre the animal
+   * is showing you the end of a crate. Rounding the corners harder does not
+   * help: the silhouette is still a rectangle, and the front face is still a
+   * wall the nose stops at.
+   *
+   * This is a tapered lathe instead, laid along the neck's own heading and
+   * reshaped by `muzzleSection` — so it is wide across the cheeks, flat over
+   * the nasal bridge, full under the jaw, and it comes to a rounded NOSE
+   * rather than to a plane. It is the same trick the trunk already uses and
+   * for the same stated reason: a body of revolution is a barrel, a
+   * superellipse is an animal.
+   *
+   *   len          nose-to-hinge, ×S
+   *   w0, w1       half-width at the hinge and at the nose, ×S
+   *   y, z         the hinge, relative to where the neck arrives
+   *   droop        radians nose-down, in the HEAD BONE's frame
+   *
+   * The droop is measured in the bone's frame and NOT off the neck's heading,
+   * which is the one thing worth arguing about here. The five branches below
+   * were authored by eye against a box that carried its own X rotation, so
+   * every jaw angle in this function is already a bone-frame number; folding
+   * the neck's accumulated curl into it would have silently re-aimed all five
+   * mouths the moment the neck changed shape, and re-aiming a mouth is not a
+   * thing a neck rewrite is allowed to do. `Math.PI / 2` lays the lathe's +Y
+   * down +Z (forward) and `droop` tips the nose under, so a branch passes the
+   * same number its plateGeo used to carry.
+   *
+   * `capY0: 0.22` keeps the back cap shallow so it tucks inside the cranium
+   * instead of pushing a second dome out through the cheek.
+   */
+  const muzzle = (len, w0, w1, y, z, droop, o = {}) => [
+    limbGeo(len * S, w0 * S, w1 * S, 10, true, {
+      rings: 4, capN: 3, capY0: 0.22, capY1: o.nose ?? 0.62,
+      section: muzzleSection(o),
+    }),
+    [0, hy + y * S, hz + z * S], [Math.PI / 2 + droop, 0, 0],
+  ];
+
+  /**
+   * THE CHEEK — the mass that makes the join a join.
+   *
+   * A cranium and a muzzle placed end to end are two shapes touching, however
+   * well each is shaped; what a skull actually has between them is the
+   * masseter, a wedge of muscle from the zygomatic arch down to the angle of
+   * the jaw, and it is the piece that carries the eye line into the mouth.
+   * One squashed ellipsoid a side, merged into the same shell, and the head
+   * stops coming apart at the eyes.
+   */
+  const cheek = (x, y, z, r, sx = 1.0, sy = 0.78, sz = 1.25) => {
+    const g = new THREE.SphereGeometry(r * S, 9, 7);
+    g.scale(sx, sy, sz);
+    return [g, [x * S, hy + y * S, hz + z * S]];
+  };
 
   if (K === 'horned') {
     /* THE REEK. The skull is a wide low wedge and everything that matters is

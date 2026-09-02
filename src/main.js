@@ -34,6 +34,10 @@ import { recordRun, loadProgress } from './game/Progress.js';
  * handed a plain list of records on its settings blob and hands back a
  * manifest; neither it nor Command.js knows a store exists. */
 import * as Company from './game/Company.js';
+/* The companion's durable record and its fold — see `foldCompanion`. */
+import { keepCompanion, load as loadKennel, rungOf, adopt as adoptCompanion } from './game/Kennel.js';
+import { fieldCompanion } from './game/Companions.js';
+import { COMPANION_KINDS } from './game/CompanionKinds.js';
 /* …AND THE SLATE, the company's other half: the pre-rolled recruits the next
  * run will field. Same split — this file owns the store boundary, the game is
  * handed plain records. See src/game/Muster.js for the whole argument. */
@@ -695,6 +699,33 @@ async function buildWorld(levelKey, onProgress = null, runSeed = null, override 
   // After spawnPlayer: the shake gate goes on this player's camera rig, and
   // there is no rig until there is a player.
   applyFeelSettings(world, settings);
+
+  /**
+   * AND WHAT COMES WITH YOU — *"they're going to be with you the whole time if
+   * you have them"*.
+   *
+   * HERE AND NOT IN `World.loadLevel`, for the reason COMPANIONS.md gives at
+   * length: World.js is meant to gain ZERO lines from this feature, and the
+   * one thing World genuinely cannot answer is whether the animal in the
+   * Kennel is alive — that is a durable record, and reading a store from
+   * inside a level loader would put a `localStorage` call on the path every
+   * headless check takes.
+   *
+   * THE SPAWN IS THE SECOND ARRIVAL ROUTE AND IT IS NOT AN AFTERTHOUGHT.
+   * `settings.instantSpawn` makes both `beginInsertion` and `begin` return
+   * false so nothing is ever seated — it is what the sandbox, the dojo and
+   * EVERY headless check set — and `MODES[mode].insertion === false` turns the
+   * flight off for training and sandbox entirely. So a companion that only
+   * ever arrived by transport would be absent from most of the game and from
+   * all of the checks. It is put down beside you at deploy, heeled, and the
+   * extraction seats it later if there is an extraction.
+   *
+   * `world.onGround` is NOT where this goes. A rotation is a transition and
+   * not a restart — the animal walks onto the next area with you, keeping its
+   * xp, its orders and its wounds — which is the whole of "with you the whole
+   * time" and is why `_companions` is hung on the world once.
+   */
+  fieldFromKennel(world, player);
 
   // `world.level`, not `LEVELS[levelKey]`: loadLevel is allowed to substitute
   // a level for a key it does not know, and the world is the only thing that
@@ -1824,10 +1855,99 @@ function bank(stats = null) {
   });
 }
 
+/**
+ * THE COMPANION'S OWN FOLD DOOR, and it is a sibling of `record()` rather than
+ * a passenger on `bank()`.
+ *
+ * `bank()` returns early on `!d || d.deck || d.versus || session`, so it never
+ * fires in a duel, the dojo, the sandbox, a roguelite with no contingent, the
+ * hangar or co-op. The brief says the companion is with you the whole time;
+ * that sentence and that guard cannot both be true. `record()` is the call
+ * site with the right shape — it fires everywhere, once per world, from BOTH
+ * endings — so this copies it exactly, down to its own flag.
+ *
+ * IT RUNS FIRST AND INDEPENDENTLY. `Store.js` writes one JSON object under one
+ * key, so a fold touching the roll and the Kennel is two `setItem` calls
+ * either of which can be refused alone; running the companion's first means a
+ * partial failure costs a companion record and never a man.
+ *
+ * `leaveHangar` must NOT reach this — walking off the deck is not a run,
+ * exactly as it already skips `record()` and `bank()`. `quitToMenu` MUST, on
+ * the same terms `bank()` is called there with no stats: if quitting were the
+ * safe way to keep a companion alive, the withdrawal would have been reopened
+ * by the back door, and REVIEW-V12.md:114 forbids that in as many words.
+ */
+function foldCompanion(stats = null) {
+  if (!world || world._compBanked) return;
+  if (!world._companions) return;
+  world._compBanked = true;
+  const out = keepCompanion(world, stats);
+  if (!out) return;
+  const name = out.rec?.name || 'your companion';
+  if (out.kept) {
+    world.notify?.(`${name.toUpperCase()} CAME BACK`, 'it is in the kennel when you next deploy');
+  } else {
+    world.notify?.(`${name.toUpperCase()} IS GONE`,
+      'the kennel keeps the name and the ground; it does not keep the animal');
+  }
+}
+
+/**
+ * Put the Kennel's live animal down beside a player, if there is one and the
+ * mode allows it.
+ *
+ * A COMPANION IS REFUSED WHERE THE MODE REFUSES EVERYTHING ELSE. The dojo and
+ * the duel are the two that take nothing in with you — `MODES[mode].dojo` and
+ * `.solo` are the same two flags `commandConfig` reads to refuse a contingent,
+ * called rather than restated, so a twelfth mode gets the same answer without
+ * this line being edited.
+ */
+function fieldFromKennel(w, player) {
+  if (!w || !player) return null;
+  const M = MODES[w.settings?.mode];
+  if (M?.dojo || M?.solo) return null;
+  /**
+   * THE SETTING PICKS THE KIND; THE RECORD IS THE ANIMAL — and this is the one
+   * place the two meet.
+   *
+   *   the setting says NONE          → nothing comes with you, whatever is in
+   *                                    the kennel. The record is left alone,
+   *                                    so a companion you stabled is still
+   *                                    there when you pick it again.
+   *   the setting names a kind and
+   *   the kennel holds that kind     → THAT animal, with its name, its rung,
+   *                                    its tempers and its history.
+   *   the setting names a kind and
+   *   the kennel holds nothing       → a fresh one is adopted here. This is
+   *                                    how you get your first.
+   *   the setting names a kind and
+   *   the kennel holds a DIFFERENT
+   *   one                            → the stored one is left where it is and
+   *                                    a fresh one of the chosen kind is
+   *                                    adopted. `adopt` writes `live`, so the
+   *                                    old animal is retired rather than
+   *                                    killed: no epitaph, no `lost` count.
+   *                                    Swapping pets is not a death.
+   */
+  const want = w.settings?.companion;
+  if (!want || want === 'none' || !COMPANION_KINDS[want]) return null;
+  const k = loadKennel();
+  const rec = (k.live && k.live.kind === want) ? k.live : adoptCompanion(want);
+  if (!rec) return null;
+  const e = fieldCompanion(w, player, rec.kind, { rec });
+  if (!e) return null;
+  w._companion = w._companions;
+  const name = rec.name || COMPANION_KINDS[rec.kind]?.label || 'your companion';
+  w.notify?.(`${name.toUpperCase()} IS WITH YOU`, `${rungOf(rec).label.toLowerCase()} — ${rec.runs} run(s) together`);
+  return e;
+}
+
 function record(stats = null) {
   if (!world) return;
   if (world._recorded) return;
   world._recorded = true;
+  /* BEFORE the run is filed, for the ordering reason in `foldCompanion`. */
+  foldCompanion(stats);
   recordRun({
     ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
                    kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),

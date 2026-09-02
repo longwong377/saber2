@@ -27,6 +27,9 @@ import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
 /* The three sets the Jedi tab offers — one table, and the card row below reads
  * its rows straight through so a fourth set is a row there and nothing here. */
 import { SABER_SETS } from '../game/SaberSet.js';
+/* The twelve kinds and their rows — the card list below IS this table. */
+import { COMPANION_KINDS, COMPANION_ORDER, rungOf } from '../game/CompanionKinds.js';
+import { load as loadKennel, notSaving as kennelNotSaving } from '../game/Kennel.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
@@ -905,6 +908,24 @@ export const DEFAULT_SETTINGS = {
    */
   saberSet: 'single',
   /**
+   * WHICH COMPANION YOU TAKE — and `'none'` is the default because a companion
+   * is a thing you choose to worry about.
+   *
+   * *"a pet/close personal companion/protector that you CAN CHOOSE to go into
+   * battle with"* — the player's own verb. A player who never opens this page
+   * plays the game they already had.
+   *
+   * THE CHOICE IS A SETTING AND THE ANIMAL IS A RECORD, and the split is
+   * load-bearing rather than tidy. `loadSettings` falls back to
+   * `{...DEFAULT_SETTINGS}` on any parse failure and spreads the stored blob
+   * over the defaults wholesale — so a companion that LIVED in that blob would
+   * be silently RESURRECTED by a corrupt save or a version bump, which is
+   * `Company.keep()` reopened by accident. This key says which KIND you want;
+   * `Kennel.js` holds whether the animal is alive, what it is called and what
+   * it has done, in its own store with its own fold.
+   */
+  companion: 'none',
+  /**
    * THE MINIMAP, on by default and switchable off.
    *
    * On because a fight against 25 bodies with no idea where the other 24 are is
@@ -1170,6 +1191,7 @@ export const SETTING_READERS = {
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
   troopNames:      ['ui/HUD.js', "world.settings?.troopNames ?? 'aimed'"],
   saberSet:        ['game/World.js', 'saberSet: this.settings.saberSet'],
+  companion:       ['main.js', 'const want = w.settings?.companion'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -5003,6 +5025,21 @@ export class Menu {
     this._cardRow('saberset-list', 'h-saberset', 'saberSet', SABER_SETS,
       () => this._refreshPreview(true));
     /**
+     * AND WHAT COMES WITH YOU. Twelve kinds and a NONE, built straight off
+     * `COMPANION_ORDER` so a thirteenth would be a row in CompanionKinds.js
+     * and nothing here, and each card printing that kind's own one sentence
+     * rather than a second copy of it on a screen.
+     *
+     * THE NONE ROW IS FIRST AND IT IS A REAL CHOICE, not an empty state. The
+     * whole feature is opt-in — see DEFAULT_SETTINGS.companion — and a list
+     * whose only exit was picking something would be a list that conscripts
+     * you into looking after an animal.
+     */
+    this._cardRow('companion-list', 'h-companion', 'companion',
+      [{ id: 'none', name: 'None', blurb: 'You go in alone, as you always have.' },
+        ...COMPANION_ORDER.map((id) => COMPANION_KINDS[id])],
+      () => this._syncKennel());
+    /**
      * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.
      *
      * A card row like the cut's, off `MEDITATION_POSES` in Rig.js — the same
@@ -5389,6 +5426,62 @@ export class Menu {
         + 'the Allied troops slider on the Army tab, which is remembered across every mode.');
     }
     el.textContent = lines.join(' ');
+  }
+
+  /**
+   * WHAT THE KENNEL ACTUALLY HOLDS, under the picker.
+   *
+   * THREE SENTENCES AND A DOOR, and every one of them is a thing the player
+   * would otherwise have to deduce:
+   *
+   *   WHICH animal it is — its name, its rung and how many runs you have had
+   *   together, because a rung is metres of leash and the ladder is invisible
+   *   otherwise.
+   *
+   *   THAT IT IS NOT SAVING, when the store is refused. `notSaving()` is one
+   *   sentence on one panel of the Company tab today and the companion lives
+   *   in three rooms; silent data loss is the one unacceptable failure mode in
+   *   a permadeath game, so it is said wherever the animal is.
+   *
+   *   THE FALLEN, because the epitaph list is the whole of what survives an
+   *   animal and a wall nobody can see is not a wall.
+   *
+   * AND A DELETE DOOR WITH A REAL CALLER. `Company.clear`, `Muster.clear` and
+   * `clearProgress` are all exported with zero callers anywhere in `src/` —
+   * three delete doors nobody can open. A companion is the first durable
+   * record a player will genuinely want to destroy, so this one has a control.
+   * It is a HOLD and not a click, on `_activate`'s own confirm idiom, because
+   * an accidental tap here costs a named thing that cannot come back.
+   */
+  _syncKennel() {
+    const el = document.getElementById('companion-state');
+    if (!el) return;
+    const k = loadKennel();
+    const lines = [];
+    if (kennelNotSaving()) {
+      lines.push('THIS IS NOT BEING SAVED — the browser refused the write. '
+        + 'Anything your companion does this session is lost when the tab closes.');
+    }
+    const want = this.s.companion;
+    if (k.live && (!want || want === 'none' || k.live.kind === want)) {
+      const K = COMPANION_KINDS[k.live.kind];
+      const r = rungOf(k.live);
+      const nm = k.live.name || K?.label || 'it';
+      lines.push(`${nm} — ${K?.label ?? k.live.kind}, ${r.label.toLowerCase()}, `
+        + `${r.leash} m of leash, ${k.live.runs} run${k.live.runs === 1 ? '' : 's'} with you`
+        + (k.live.kills ? `, ${k.live.kills} of theirs` : '')
+        + (k.live.tempers?.length ? ` · ${k.live.tempers.join(' ')}` : ''));
+    } else if (want && want !== 'none') {
+      lines.push(`A ${COMPANION_KINDS[want]?.label?.toLowerCase() ?? want} will be waiting `
+        + 'when you deploy. It has done nothing yet.');
+    }
+    if (k.fallen?.length) {
+      lines.push('Lost: ' + k.fallen.map((f) =>
+        `${f.name || COMPANION_KINDS[f.kind]?.label || f.kind}`
+        + `${f.where ? ` on ${f.where}` : ''}${f.fate === 'left' ? ' (left behind)' : ''}`).join(' · '));
+    }
+    el.textContent = lines.join('  ');
+    el.style.display = lines.length ? '' : 'none';
   }
 
   _syncVersusBox() {

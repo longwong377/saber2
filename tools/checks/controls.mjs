@@ -2029,7 +2029,12 @@ export async function run({ check, assert }) {
        * rule of the match, which is the same reading `Net.LOOK_KEYS` takes of
        * it. `this.s.saberSet` is written at the control site, which is what
        * the regex below is asking for. */
-      'saberSet'];
+      'saberSet',
+      /* WHICH COMPANION COMES WITH YOU — a card row built off COMPANION_ORDER
+       * with a real NONE row at its head, in the same `_cardRow` shape as the
+       * robe cut and the saber set. `this.s.companion` is written at the
+       * control site, which is what the regex below is asking for. */
+      'companion'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the

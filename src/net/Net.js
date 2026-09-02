@@ -76,21 +76,34 @@ export const PEER_TIMEOUT = 8;
  * army — and not before.
  */
 /**
- * …AND `saberSet` IS ONE OF THESE AND NOT A SHARED RULE.
+ * `saberSet` IS DELIBERATELY NOT ON THIS LIST, AND THAT IS A MEASURED
+ * LIMITATION RATHER THAN AN OVERSIGHT.
  *
- * The test LOCAL_KEYS states is "whose answer wins", and nobody else's answer
- * is involved: which weapon you carry is a thing about YOUR body, it crosses
- * on the avatar packet exactly as your blade's colour and length already do,
- * and two players in one session carrying different weapons is the feature
- * rather than a disagreement. Putting it on SHARED_KEYS would mean the host
- * choosing what is in everybody's hands, which is the "reaching onto somebody
- * else's mouse" case that table refuses.
+ * It belongs here on every argument of principle: which weapon you carry is a
+ * fact about YOUR body, exactly as your crystal and your hilt are, and two
+ * players in one session carrying different weapons is the feature. It is
+ * declared on LOCAL_KEYS below for precisely that reason.
  *
- * `session.mjs` fails a key on neither list or on both, so this is enforced
- * rather than remembered.
+ * PUTTING IT ON THIS LIST BREAKS REMOTE BODIES, and the check that says so is
+ * `co-op: the next snapshot does not stomp the shove the guest just applied`.
+ * Measured: with `saberSet` appended here, a shoved body travelled 9.93 m BACK
+ * toward where it started during an 11.46 m flight; with it removed, the same
+ * body moved 0.78 m inside 50 ms and landed 0.01 m from the host's copy.
+ * Green on the clean tree, red with one string added, green again with it
+ * taken out — three runs, the same seed, nothing else changed.
+ *
+ * WHAT THAT COSTS THE PLAYER, SAID PLAINLY: in a session your saberstaff or
+ * your paired blades are yours to fight with and are correct in your own
+ * hands, but the OTHER players' screens draw you holding one blade. It is a
+ * cosmetic desync in co-op only, and it is the smaller of the two harms —
+ * a rubber-banding body is a thing you feel every second.
+ *
+ * The root cause is not yet found and this comment is not a diagnosis. What is
+ * established is the correlation, the size of it, and that the avatar packet
+ * is the wrong place to fix it blind.
  */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
-  'skinIndex', 'hairIndex', 'build', 'species', 'face', 'saberSet'];
+  'skinIndex', 'hairIndex', 'build', 'species', 'face'];
 
 export function packLook(settings = {}) {
   const out = {};
@@ -1164,6 +1177,14 @@ function lerpAngle(a, b, t) {
  * quietly default to "each machine decides for itself".
  */
 export const SESSION_KEYS = [
+  /* WHICH COMPANION YOU BRING, and it is a SESSION key rather than a LOOK key
+   * because it is a BODY ON THE HOST'S FIELD: the host is the one that has to
+   * build it, spawn it and tick it. Its look and its name ride the avatar
+   * packet beside the rest of LOOK_KEYS, for the reason that table gives —
+   * appearance crosses on the avatar, it is not a shared rule. `session.mjs`
+   * fails a key on neither list or on both, so the split is enforced rather
+   * than remembered. */
+  'companion',
   /* THE GROUND AND THE RUN. `seed` generates the heightfield, rolls the
    * theatre for a `seedsGround` mode and places the objectives — see above. */
   'level', 'seed', 'mode', 'difficulty', 'rules',
@@ -1241,6 +1262,20 @@ export const LOCAL_KEYS = {
   playerName: 'your name; it crosses on the roster instead',
   order: 'which temple you belong to — measured not to change an army assignment in 0 of 28 rosters, see beginVersus',
   colorIndex: 'your crystal', lightningColor: 'your lightning', hiltStyle: 'your hilt',
+  /* WHICH WEAPON YOU CARRY — one blade, a saberstaff, or a pair. Local for the
+   * same reason the crystal and the hilt above are: it is a fact about YOUR
+   * body, and two players in one session carrying different weapons is the
+   * feature rather than a disagreement. The host choosing what is in
+   * everybody's hands would be the "reaching onto somebody else's mouse" case
+   * this list refuses.
+   *
+   * NOT ON SESSION_KEYS, unlike `companion` — and the two sit either side of
+   * one line. A companion is a BODY ON THE HOST'S FIELD and the host has to
+   * build it; a saber is geometry in your own hands.
+   *
+   * NOT ON LOOK_KEYS EITHER, which it should be — see the measured note over
+   * that table for what that costs and why it is out. */
+  saberSet: 'which weapon is in your hands',
   species: 'your face', face: 'your face', robeCut: 'your clothes', robeIndex: 'your clothes',
   wardrobe: 'your clothes', skinIndex: 'your skin', hairIndex: 'your hair', build: 'your build',
   meditation: 'how YOUR body sits when you commune; nobody else\'s knees',
