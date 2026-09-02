@@ -51,8 +51,9 @@ snapshots may not parse. FIRST THING NEXT SESSION: `node --check` each of
 `src/game/Command.js Reactions.js Enemy.js Stratagems.js Levels.js
 src/world/Props.js src/game/Bodies.js`, run `reactions`, `graves`, `burial`,
 `stratagems`, `alpine`, `faces`, `command`, `theline`, then the fast tier, then
-merge to the default. The default branch carries `fdb3e38` (everything above
-the WIP) if the merge below was made.
+merge to the default. The default branch (the play link) was fast-forwarded to `fdb3e38` —
+everything above the WIP — after the fast tier passed on it (17 suites,
+83.7 s).
 
 **Not done:** the hub browser probe (`tools/_hubprobe.mjs`) never finished a
 fly-out under software GL — the new sky shader costs ~3.3 s a frame there;
