@@ -28,17 +28,24 @@ Playable two ways:
 
 ### 1.0 START HERE — the shortest true statement of where this is
 
-> **1 Sep — THE AUDIT ROUND. See §5.00.** Three adversarial auditors read the
-> troop-management work against the four failure shapes and returned 44
-> findings; the substantive ones are closed and each fix was verified RED
-> against the code it replaced. **Two process traps are worth more than the
-> findings: (a) ~40 concurrent agents took the container down — three is the
-> ceiling, see §2.6b; (b) an audit run BEFORE the fixes, on one subsystem, is
-> not an audit.** What is still open is listed at the end of §5.00.
+> **1–2 Sep — V11, THE HUB. See §5.000.** The player's V11 list is built end
+> to end and on the link: the hangar is a closed, lit room rebuilt against his
+> seven references; you arrive by lift and leave by ship; the deck is alive;
+> the company files in from a crowd in cloth capes and worn paint; every droid
+> was reworked against its reference; the blade works on the deck. Fast tier
+> 385/385, every deck suite green, merged to the default at `f206f3c`. **Three
+> process traps from this session: (a) a usage limit kills every lane mid-edit
+> — commit the half-state rather than lose it; (b) three rendering lanes
+> contend for one render lock, and a screenshot then takes half an hour;
+> (c) a per-visit fact rides `world.run`, never `settings`.** What is still
+> open is at the end of §5.000.
 
+> *(1 Sep, earlier — THE AUDIT ROUND, §5.00: 44 findings, the substantive
+> ones closed and verified red-first.)*
 
-**Branch `claude/game-feature-verification-m5udbp`, merged to the default.
-See §5.0 for what this session did and §6.4 for the gate.**
+**Branch `claude/saber-game-improvements-v11-12k5n4`, merged to the default
+(fast-forward, `f206f3c`). See §5.000 for what this session did and §6.4 for
+the gate.**
 
 **HOW TO PLAY IT.** `node tools/pack.mjs out.html` builds the whole game as ONE
 self-contained file — no server, open it in a browser. **AND THE PAGES LINK IS
@@ -1670,12 +1677,98 @@ corrected *me* more often than they corrected the finders.
 
 ---
 
-## 5.000 What THIS session changed — 1 Sep, evening: V11, the hub
+## 5.000 What THIS session changed — 1–2 Sep: V11, the hub
 
-The player's V11 list (PLAYTEST.md, top entry). The room is closed now —
-`hangar.mjs`'s shape checks hold five sides, a forward opening with the planet
-in it, and a lid above the walls with structure under it. Read
-`HANGAR-SPEC.md` "V11 — THE HUB" for what each item is and which check holds it.
+The player's V11 list (PLAYTEST.md, top entry — every row carries its check).
+Read `HANGAR-SPEC.md` "THE ROOM" and "V11 — THE HUB" for what each item is.
+
+**How it was run.** One orchestrator on `Hangar.js`/`DeckFlight.js`/
+`DeckLift.js`/`Player.js`/`main.js` and the deck suites, plus eight lanes in
+three workflows with disjoint file ownership (UI backdrops · rifle hold + cloth
+capes · lived-in paint · deck life · mirror floor · NPC fidelity · deck look),
+three at a time. Two lanes (life, paint) died at a usage limit mid-edit and
+were relaunched against the committed half-state; both finished.
+
+**What landed, by area (all on the default branch):**
+
+- **The room** — closed on five sides, open forward with the planet in it
+  (`SkyDome._placeByPhase` scores the orbit against the aperture's azimuth),
+  a lid at `DECK.roof` above the walls with girders/rails/hung fighters under
+  it, 160 m wide. `hangar.mjs`'s three shape checks REVERSED: they held "one
+  wall, no ceiling, ever" and now hold the closed room by ray on the real
+  scene. Then the LOOK was rebuilt against `assets/reference/misc/hangar 1–7`
+  (the player asked whether the room he was given was what would be built
+  from scratch; it was not): pale steel palette per faction, slab walls with
+  pilasters and one vertical strip each, a gallery at 30 m, booths and doors,
+  a rounded-rectangle aperture (`DECK.aperture`) with a continuous 3 m rim
+  swept as four extruded bands, floor emblem and chevrons gone, thin guide
+  lines + 152 recessed markers, a strip-light grid on the ceiling plate, fog
+  the colour of the walls, key 1.5 / ambient 0.38. Looked at in 14 frames
+  (`tools/_deckshot.mjs`). `DeckMirror.js`: a planar reflection, dark, once a
+  frame, tier-gated (`deckmirror`, 11).
+- **The floor query.** `world.floorAt(x, z)` — pads (`PADS`, discs; colliders
+  are six slabs whose corners sit on the disc), the transport's ramp and bay
+  (`DeckFlight.hullFloorAt`), else the heightfield. `Shovable._deckY` reads
+  it under the whole body box.
+- **The company** — minted from the muster slate on a fresh roll (`Muster`),
+  waits in a crowd of 18 at port arms, files in on `fallin` with the real gait
+  (a staggered start used to TELEPORT — see the traps), rifles seated by
+  `Enemy.seatWeapon`, cloth capes (`attachTrooperCape`), planted against a
+  brush under 3.2 m/s, walks round the player and along the pit's kerb.
+  `DeckEdit.pickMan` boxes the skeleton. Paint is per-vertex with chipped
+  edges (`worn-paint`, 8); droids too; rank paint constant in mesh count.
+- **The hub** — `DeckLift.js` (arrival ride, walk out, call, ride out →
+  `onDeckLeave` → menu); `DeckFlight.js` (the army's real transport on its
+  belly on pad A, ramp resting on the pad, dwell → file up the ramp → seated →
+  seal/lift/run/out → `onDeckDeploy` in vacuum → the insertion's own orbit
+  phase with the capital ship astern; arrival the other way, `onDeckArrived`
+  → the run's card on the deck, the dwell disarmed until you walk away).
+  `main.js gameOver` → `homeward` → `enterHangar({card})`. The blade: down as
+  you leave the lift, the ignite key lights it, `Hangar.deckBladeTargets`
+  offers every `Shovable` body to the solver as a prop whose shatter is the
+  shove; `throw` and six powers still refuse (`OFF_THE_DECK`, seven).
+- **The deck alive** — `DeckLife.js`/`DeckCast.js`: 15 droids of 5 kinds, 13
+  humanoid workers with the real gait and a body each, 2 cranes, 3 sleds, 5
+  repair jobs, 3 modelled hulls with colliders (pad A is the flight's, pad B
+  the life's third hull), 7 patrol silhouettes, arrivals from 640+ m and
+  launches receding to 720 m unfogged (camera far 1008 in the hangar world),
+  PA lines through `notify` ≥ 14 s apart. 63 meshes for the lot.
+- **NPCs** — `Bodies.js`/`Enemy.js`/`Rig.js`: the right hand is a right hand
+  (chirality bug), blasters at reference lengths with hold points, rifles in
+  the shoulder pocket with the support hand on the foregrip, B1 snout and
+  recessed eyes and stoop, B2 hood/beak and a wrist gun that AIMS, droideka
+  copper cowl and a roll above 1.5 m/s, walker ball with its face forward,
+  geonosian horns and leaf wings that fold when downed, ARC mantle and
+  pistols, sonic blaster green. `reference-fidelity` (15).
+- **UI** — no solid backgrounds: the game through an 18% scrim over a live
+  world, the menu plate otherwise (`backdrop`, 5; `pause-card`, 10).
+
+**New instruments:** suites `decklift`, `deckflight`, `deckmirror`,
+`deckcast`, `worn-paint`, `reference-fidelity`, `backdrop`, `rifle-hold`,
+`trooper-cape`; `tools/_mirrorprobe.mjs` (A/B/A mirror cost in the browser);
+`tools/_deckshot.mjs` now falls the company in before shooting.
+
+**Numbers worth keeping:** hangar room 289–293 drawn meshes (bound 320) + 199
+for 28 men; deck life 63 meshes / 121k tris; browser 1393 draw calls, 2.47 M
+tris with the deck dressed at 960×540 low; mirror +11–13% draw calls, one
+render a frame, zero recompiles; a painted trooper 33k tris vs 9k bare
+(`PAINT.fine/levels/band`); lift cruise 46 m/s; transport hover per model
+from its own belly (2.1 m); ramp 26° on the pad.
+
+**Still open at the end of the session:**
+
+- A landed hull sits, spins up and lifts; no taxi to a launch mark.
+- MagnaGuard idle staff twirl, the beasts and the enemy Jedi robes were not
+  reworked (they already matched); the Phase I colour fins are the paint
+  lane's regions, not the body's.
+- The painted trooper's triangle cost (above) if the frame budget bites.
+- `deckedit.mjs bufferColour` averages painted vertices too; green today
+  because the seeded men are xp 0 — skip `_cmdPaint/_cmdMark/_cmdBand` idx if
+  rank paint ever lands on men[0].
+- `tools/portrait.mjs` needs `instantSpawn: true` on any level that inserts
+  from orbit, or every portrait is empty.
+- The walls read flat at distance (fog to the wall colour); one more pass
+  with a real GPU frame would settle the key/ambient pair.
 
 **Traps this session added or found:**
 
