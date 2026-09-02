@@ -961,4 +961,70 @@ export async function run({ check, assert }) {
       + 'releasing writes no epitaph and counts no loss';
   });
 
+  check('companion: the screen tells you how it is doing, and down is not red', async () => {
+    /**
+     * "protecting the companions and keeping them safe is another thing the
+     *  player can choose to worry about"
+     *
+     * YOU CANNOT WORRY ABOUT SOMETHING YOU CANNOT SEE. Before this the
+     * animal's health was legible only as a body you had to look at and judge
+     * by eye, and the whole loop the player asked for is NOTICING it is in
+     * trouble and doing something. A companion at 12% behind you is the single
+     * most important fact on the screen.
+     *
+     * IT IS A SIBLING NODE AND BOTH OTHER HOMES WERE WRONG. Inside `#roster`
+     * it would be hidden in every mode with no CommandDirector — nine of the
+     * eleven, and exactly where a companion is the only thing on your side.
+     * Appended to `#power-wheel` it would be counted by `hud-events.mjs`'s
+     * slot census.
+     *
+     * AND DOWN IS NOT THE REDDEST STATE. A downed animal is on a clock you can
+     * still beat by standing on it; a player who reads "gone" backs away, and
+     * backing away is the one thing that loses it.
+     */
+    const { makeDocument } = await import('./_page.mjs');
+    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const doc = makeDocument(html);
+    const restore = doc.install();
+    try {
+      const { CompanionPlate } = await import('../../src/ui/HUD.js');
+      const plate = new CompanionPlate(doc);
+      assert(plate.el, 'there is no companion plate in the markup');
+      const node = doc.getElementById('companion-plate');
+      /* IT IS NOT INSIDE THE ROSTER, which `setRoster` hides in nine modes. */
+      const roster = doc.getElementById('roster');
+      assert(!roster || !roster.contains(node),
+        'the plate is inside #roster, which is hidden in every mode with no CommandDirector — '
+        + 'which is exactly where a companion is the only thing on your side');
+      const wheel = doc.getElementById('power-wheel');
+      assert(!wheel || !wheel.contains(node), 'the plate is inside the power wheel, whose slots are counted');
+
+      plate.set(null);
+      assert(node.className.includes('hidden'), 'with nothing of yours out the plate is still up');
+      const K = (b, r) => { plate.set(b, { name: 'Borz' }, r); return node; };
+      const R = K({ hp: 180, maxHp: 210, dead: false, downed: false, A: { label: 'Massiff' },
+        _cmpDuty: { id: 'ward' } }, K3());
+      const healthy = R.textContent;
+      assert(/Borz/.test(healthy) && /180\/210/.test(healthy),
+        `a healthy companion reads "${healthy}"`);
+      assert(/ward/.test(healthy), 'the plate does not say what order it is under');
+      const hurt = K({ hp: 20, maxHp: 210, dead: false, downed: false, A: { label: 'Massiff' },
+        _cmpDuty: { id: 'heel' } }, K3()).innerHTML;
+      assert(/cmp-plate bad/.test(hurt), 'a companion at 10% is not marked as being in trouble');
+      const down = K({ hp: 1, maxHp: 210, dead: false, downed: true, bleed: 12.4,
+        A: { label: 'Massiff' } }, K3());
+      assert(/DOWN/.test(down.textContent) && /12s/.test(down.textContent),
+        `a downed companion reads "${down.textContent}" — it should say it is down and for how long`);
+      assert(/stand on it/i.test(down.textContent),
+        'it says the animal is down and not what to do about it');
+      assert(/cmp-plate down/.test(down.innerHTML) && !/cmp-plate bad/.test(down.innerHTML),
+        'down wears the near-death class — a player who reads "gone" backs away, and backing away '
+        + 'is the one thing that loses it');
+      return `hidden with nothing out; healthy "${healthy.trim()}"; 10% marked bad; `
+        + `down reads "${down.textContent.trim()}"`;
+    } finally { restore(); }
+
+    function K3() { return K.COMPANION_RANKS ? K.COMPANION_RANKS[2] : null; }
+  });
+
 }

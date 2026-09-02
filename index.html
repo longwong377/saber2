@@ -1562,6 +1562,13 @@
          not follow a rebind. Shown only while the map is a Force reading and
          cold; the map itself is the readout once it is warm. -->
     <div id="minimap-key" class="mapkey hidden"></div>
+    <!-- WHAT CAME WITH YOU, AND HOW IT IS DOING. A SIBLING of #power-wheel in
+         the .hud-br column and NOT inside #roster: `setRoster` hides that node
+         in every mode with no CommandDirector, which is nine of the eleven and
+         is exactly where a companion is most likely to be the only thing on
+         your side. Not appended to #power-wheel either — `hud-events.mjs`
+         counts its slots. Filled by HUD.setCompanion. -->
+    <div id="companion-plate" class="powers hidden" aria-hidden="true"></div>
     <div id="power-wheel" class="powers"></div>
   </div>
 

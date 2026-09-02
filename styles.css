@@ -3194,3 +3194,31 @@ body:has(#touch.on) .powers .pw{touch-action:none}
 #hud.deck > #hud-center-msg{display:block !important}
 #hud.deck > #order-wheel.hidden,
 #hud.deck > #emote-wheel.hidden{display:none !important}
+
+/* ══ THE COMPANION PLATE ══════════════════════════════════════════════════
+ *
+ * A sibling of the power wheel in the same column, wearing `.powers` for the
+ * plate and the type so there is one look. What it adds is a BAR, because the
+ * one thing the player has to be able to read at a glance is how much of the
+ * animal is left — "protecting the companions and keeping them safe is
+ * another thing the player can choose to worry about", and you cannot worry
+ * about a number you have to squint at.
+ *
+ * THE THREE STATES ARE THREE COLOURS AND `down` IS NOT THE REDDEST. A downed
+ * animal is on a clock you can still beat by standing on it, so it reads as
+ * URGENT-BUT-ANSWERABLE (amber) rather than as the near-death red — a player
+ * who reads "gone" backs away, and backing away is the one thing that loses
+ * it. Same reasoning the HUD already uses for a downed trooper.
+ */
+.cmp-plate { display: flex; flex-direction: column; gap: 2px; padding: 4px 7px;
+  min-width: 132px; text-align: right; }
+.cmp-plate b { font-size: 11px; letter-spacing: .08em; opacity: .92; }
+.cmp-plate .cmp-say { font-size: 9px; opacity: .62; letter-spacing: .04em; }
+.cmp-bar { display: block; height: 3px; background: rgba(255,255,255,.14); border-radius: 2px; overflow: hidden; }
+.cmp-bar i { display: block; height: 100%; background: #7fd4a0; transition: width .18s linear; }
+.cmp-plate.low .cmp-bar i { background: #e8c85a; }
+.cmp-plate.bad .cmp-bar i { background: #e3624a; }
+.cmp-plate.bad b { color: #e3624a; }
+.cmp-plate.down .cmp-bar i { background: #ffb03a; }
+.cmp-plate.down b { color: #ffb03a; }
+.cmp-plate.down .cmp-say { opacity: .95; }

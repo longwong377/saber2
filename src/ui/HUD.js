@@ -25,7 +25,7 @@ import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
 /* The six orders and the one reader that says whether a slot is live and why
  * not — see `CompanionWheel`. */
 import { COMPANION_ORDERS, refuseOrder } from '../game/Companions.js';
-import { COMPANION_KINDS } from '../game/CompanionKinds.js';
+import { COMPANION_KINDS, rungOf as rungOfCompanion } from '../game/CompanionKinds.js';
 /* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
  * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
  * the rule that stops a man advancing is `braveryOf(body) < SHAKEN_AT` (0.30)
@@ -932,6 +932,73 @@ export const TERSE = {
  * rung for the same reason, so the panic verb is available in the first minute
  * of the first run and costs a tap with no aim at all.
  */
+/**
+ * ══ WHAT CAME WITH YOU, AND HOW IT IS DOING ═══════════════════════════════
+ *
+ * "protecting the companions and keeping them safe is another thing the
+ *  player can choose to worry about"
+ *
+ * YOU CANNOT WORRY ABOUT SOMETHING YOU CANNOT SEE. Without this the animal's
+ * health was legible only as a body you had to look at and judge by eye —
+ * and the whole loop the player asked for is noticing it is in trouble and
+ * doing something. A companion at 12% behind you is the single most important
+ * fact on the screen and nothing was saying it.
+ *
+ * A SIBLING NODE, AND THE TWO PLACES IT COULD HAVE GONE ARE BOTH WRONG.
+ * Inside `#roster` it would be hidden in every mode with no CommandDirector —
+ * nine of the eleven, and exactly the modes where a companion is the only
+ * thing on your side. Appended to `#power-wheel` it would be counted by
+ * `hud-events.mjs`'s slot census. So it is its own node in the same column,
+ * wearing the same `.powers` class so there is one stylesheet.
+ *
+ * EVERY WRITE IS GUARDED ON CHANGE. This runs every frame and the values move
+ * a few times a minute; an unguarded `textContent` is a layout pass sixty
+ * times a second for a string that did not change.
+ */
+export class CompanionPlate {
+  constructor(root = document) {
+    this.el = root.getElementById ? root.getElementById('companion-plate') : null;
+    this._key = '';
+  }
+
+  /**
+   * @param body  the live companion, or null.
+   * @param rec   its Kennel record, for the name and the rung.
+   * @param rung  the rung row it stands on.
+   */
+  set(body, rec = null, rung = null) {
+    const el = this.el;
+    if (!el) return;
+    if (!body || body.dead) {
+      if (this._key !== 'none') { this._key = 'none'; el.classList.add('hidden'); el.textContent = ''; }
+      return;
+    }
+    const hp = Math.max(0, Math.round(body.hp));
+    const max = Math.max(1, Math.round(body.maxHp || 1));
+    const frac = hp / max;
+    const name = rec?.name || body.A?.label || 'Companion';
+    const duty = body._cmpDuty?.id || 'heel';
+    /* DOWN IS NOT "LOW HEALTH" AND MUST NOT READ AS IT. A downed animal is on
+     * a clock you can still beat by standing on it, and that is a different
+     * thing to do than backing off — so it gets its own word and its own
+     * number, the seconds it has left. */
+    const down = body.downed ? Math.max(0, body.bleed || 0) : 0;
+    const key = `${name}|${hp}|${max}|${duty}|${down.toFixed(0)}|${rung?.id || ''}`;
+    if (key === this._key) return;
+    this._key = key;
+    el.classList.remove('hidden');
+    const bar = Math.round(frac * 100);
+    const hurt = body.downed ? 'down' : frac < 0.34 ? 'bad' : frac < 0.67 ? 'low' : '';
+    el.innerHTML = `<div class="cmp-plate ${hurt}">`
+      + `<b>${escKey(name)}</b>`
+      + `<span class="cmp-bar"><i style="width:${bar}%"></i></span>`
+      + `<span class="cmp-say">${body.downed
+        ? `DOWN — ${down.toFixed(0)}s, stand on it`
+        : `${hp}/${max}${rung ? ` · ${escKey(rung.label.toLowerCase())}` : ''} · ${escKey(duty)}`}</span>`
+      + '</div>';
+  }
+}
+
 export class CompanionWheel extends RadialWheel {
   constructor(host) {
     /* THE SLOTS ARE THE ORDER TABLE, IN ITS OWN ORDER. Never a list typed
@@ -2332,6 +2399,23 @@ export class HUD {
   }
 
   update(dt, world, player, camera) {
+    /**
+     * WHAT CAME WITH YOU, EVERY FRAME. `CompanionPlate` guards its own writes
+     * on a key, so this costs one string build and a compare on a frame where
+     * nothing about the animal has changed — which is nearly all of them. See
+     * the class for why it is a sibling node and not part of the roster.
+     */
+    if (this._cmpPlate === undefined) this._cmpPlate = new CompanionPlate(document);
+    if (this._cmpPlate?.el) {
+      const pack = world?._companions;
+      const body = pack?.list?.find((e) => e && !e.disposed
+        && (!player || e._cmpOwner === player || !e._cmpOwner)) || null;
+      this._cmpPlate.set(body, body?._cmpRec || null,
+        body?._cmpRec ? rungOfCompanion(body._cmpRec) : null);
+      /* AND THE WHEEL IS POINTED AT THE SAME BODY, so what the ring says and
+       * what the plate says can never be about two different animals. */
+      if (this.companionWheel) this.companionWheel.body = body;
+    }
     /**
      * THE FREE CAMERA IS READ BEFORE THE EARLY RETURN, ON PURPOSE.
      *
