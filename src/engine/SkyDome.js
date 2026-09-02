@@ -332,6 +332,17 @@ export function battleSlots(t, side, out) {
   return out;
 }
 
+/** The two batteries a hull carries, as (period, phase) pairs. Constant per
+ *  slot; filled once so the fragment reads four numbers instead of hashing. */
+export function battleGuns(out) {
+  for (let i = 0; i < 9; i++) {
+    const gA = i * 2, gB = i * 2 + 1;
+    const hA = hash11(gA * 3.71 + 0.9), hB = hash11(gB * 3.71 + 0.9);
+    out[i].set(6.0 + hA * 4.0, hash11(gA * 1.13 + 2.2), 6.0 + hB * 4.0, hash11(gB * 1.13 + 2.2));
+  }
+  return out;
+}
+
 /* Assembled from three pieces rather than one literal, and the SHAPE of the
  * join matters: tools/verify.mjs walks each /* glsl *​/ literal from its own
  * marker to the first backtick that JS could legally be continuing from, and
@@ -588,6 +599,9 @@ uniform float uLanding;      /* strings of landing craft going down */
 /* THE SLOT TABLE: nine hulls as (x, y, heading, arrival), from battleSlots on
  * the CPU. See that function for why it is not computed here. */
 uniform vec4  uSlot[9];
+/* …and each hull's two batteries as (period A, phase A, period B, phase B),
+ * so no pixel hashes a gun's cadence. */
+uniform vec4  uGun[9];
 
 /* ── the script, in seconds into a round. One source: BATTLE in the JS. ── */
 const float ROUND       = ${BATTLE.round.toFixed(1)};
@@ -881,12 +895,16 @@ float segDist(vec2 p, vec2 a, vec2 b) {
   return length(pa - ba * h);
 }
 
+/* Rotate by a heading given as (cos, sin): no trig at the call. */
+vec2 rotBy(vec2 v, vec2 hd) { return vec2(v.x * hd.x - v.y * hd.y, v.x * hd.y + v.y * hd.x); }
+vec2 unrotBy(vec2 v, vec2 hd) { return vec2(v.x * hd.x + v.y * hd.y, -v.x * hd.y + v.y * hd.x); }
+
 /* A hyperspace streak: a line along the heading that contracts into the
  * hull's position (arriving) or stretches away from it (leaving), and a flash
  * at the point it resolves. The streak is what says the fleet came from
  * SOMEWHERE rather than fading up. */
-vec3 hyperStreak(vec2 q, vec2 pos, float head, float age, float leaving) {
-  vec2 dirn = vec2(cos(head), sin(head)) * (leaving > 0.5 ? 1.0 : -1.0);
+vec3 hyperStreak(vec2 q, vec2 pos, vec2 hd, float age, float leaving) {
+  vec2 dirn = hd * (leaving > 0.5 ? 1.0 : -1.0);
   float k = leaving > 0.5 ? smoothstep(0.0, 1.0, age / 0.9) : 1.0 - smoothstep(0.0, 1.0, age / 0.9);
   vec2 far = pos + dirn * (0.05 + 1.3 * k);
   float dd = segDist(q, pos, far);
@@ -981,8 +999,11 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
     float ta = S.w, tl = slotLeave(fi);
     float ageIn = tc - ta, ageOut = tc - tl;
     if (ageIn < 0.0) continue;
-    if (ageIn < 1.4) glow += hyperStreak(q, c, head, ageIn, 0.0);
-    if (!vic && ageOut > 0.0 && ageOut < 1.4) glow += hyperStreak(q, c, head, ageOut, 1.0);
+    /* the one trig pair this hull costs: everything in its frame goes
+     * through rotBy/unrotBy on these */
+    vec2 hd = vec2(cos(head), sin(head));
+    if (ageIn < 1.4) glow += hyperStreak(q, c, hd, ageIn, 0.0);
+    if (!vic && ageOut > 0.0 && ageOut < 1.4) glow += hyperStreak(q, c, hd, ageOut, 1.0);
     if (ageIn < 1.05 || (!vic && ageOut > 0.15)) continue;
 
     /* The one that is dying rolls as it goes, and keeps rolling after it has
@@ -992,6 +1013,7 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
     if (vic) {
       float list = smoothstep(T_LIST, T_BREAK + 40.0, tc);
       head += list * list * 1.35;
+      if (list > 0.0) hd = vec2(cos(head), sin(head));
       brk = clamp((tc - T_BREAK) / 40.0, 0.0, 1.0);
       burn = clamp((tc - T_BURN) / (T_BREAK - T_BURN), 0.0, 1.0);
       reactor = tc - T_REACTOR;
@@ -1002,7 +1024,7 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
     /* everything a hull IS is inside three lengths of it; what it fires
      * reaches further and is drawn below whatever this says */
     bool near = max(abs(q.x - c.x), abs(q.y - c.y)) < L * 3.4;
-    vec2 h = rot2(q - c, -head);
+    vec2 h = unrotBy(q - c, hd);
     float hull = 0.0, em = 0.0, raised = 0.0;
     if (near) {
     if (vic && brk > 0.0) {
@@ -1027,7 +1049,7 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
     if (hull > 0.002) {
       float t01 = clamp((h.x + L) / (2.0 * L), 0.0, 1.0);
       float beam = W * (1.0 - t01 * 0.90);
-      vec2 sh = rot2(sq, -head);
+      vec2 sh = unrotBy(sq, hd);
       /* The hull is a plate, so it has no normal. Treating it as a cylinder
        * about its own keel gives one: the visible surface sweeps from one beam
        * to the other across the silhouette, with a constant nose-on component
@@ -1074,7 +1096,7 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
        * white core that swells and cools to orange, and a shock ring that
        * runs out past the whole line. */
       if (reactor > 0.0 && reactor < 7.0) {
-        vec2 aftC = c + rot2(vec2(-L * 0.5, 0.0), head);
+        vec2 aftC = c + rotBy(vec2(-L * 0.5, 0.0), hd);
         float rr = length(q - aftC);
         float r0 = 0.006 + reactor * 0.045;
         float core = smoothstep(r0, r0 * 0.3, rr) * pow(1.0 - reactor / 7.0, 1.6);
@@ -1133,15 +1155,16 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
         vec3 boltB = boltA;
         if (side < 0.5) boltB = mix(boltA, vec3(0.35, 1.0, 0.45), 0.75);
         vec2 inD = normalize(c - b + vec2(1.0e-5, 0.0));
+        vec4 G = uGun[i];
         for (int g = 0; g < 2; g++) {
-          float fg = fi * 2.0 + float(g);
-          float gh = hash11(fg * 3.71 + 0.9);
-          if (gh > fire) continue;
+          float per = g < 1 ? G.x : G.z;
+          float phs = g < 1 ? G.y : G.w;
+          /* the batteries come on line with the engagement, longest-period last */
+          if ((per - 6.0) * 0.25 > fire) continue;
           vec3 bolt = g < 1 ? boltA : boltB;
-          float per = 6.0 + gh * 4.0;
-          float age = fract(tc / per + hash11(fg * 1.13 + 2.2)) * per;
+          float age = fract(tc / per + phs) * per;
           /* the battery sits a little off the keel, so the two do not overlap */
-          vec2 a = c + rot2(vec2(L * (0.2 - float(g) * 0.5), W * (float(g) - 0.5) * 0.8), head);
+          vec2 a = c + rotBy(vec2(L * (0.2 - float(g) * 0.5), W * (float(g) - 0.5) * 0.8), hd);
           for (int j = 0; j < 3; j++) {
             float u = (age - float(j) * 0.42) / 1.5;
             if (u <= 0.0 || u > 1.34) continue;
@@ -1204,7 +1227,8 @@ vec4 fleetScene(vec2 q, float aa, float t, vec2 sq, vec2 pq, float pr) {
       mat2 tm = mat2(ct, st, -st, ct);
       for (int k = 0; k < 12; k++) {
         float fk = float(k) + fs * 12.0;
-        float a = hash11(fk * 1.73 + 2.3), b = hash11(fk * 3.31 + 5.1), c = hash11(fk * 5.91 + 7.7);
+        float a = hash11(fk * 1.73 + 2.3);
+        float b = fract(a * 7.31 + 0.43), c = fract(a * 13.7 + 0.81);
         float rate = (1.1 + a * 0.9) * (c < 0.5 ? 1.0 : -1.0);
         float rr = 0.055 + 0.075 * (0.5 + 0.5 * sin(t * 0.31 + b * 6.2832));
         float th = t * rate + fk * 0.52;
@@ -2067,6 +2091,7 @@ export class SkyDome {
                                  new THREE.Vector4(0, 0, -1, 1)] },
         /* nine hulls, from battleSlots each tick */
         uSlot:         { value: Array.from({ length: 9 }, () => new THREE.Vector4(0, 0, 0, 1e9)) },
+        uGun:          { value: battleGuns(Array.from({ length: 9 }, () => new THREE.Vector4())) },
       },
       vertexShader: VERT,
       fragmentShader: FRAG,
