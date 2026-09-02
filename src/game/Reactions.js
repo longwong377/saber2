@@ -931,7 +931,13 @@ function stepDrag(body, dt, ctx, R) {
   if (gap > DRAG.reach * 0.65) {
     _v3.copy(body.position).addScaledVector(_v2.normalize(), -DRAG.reach * 0.65);
     _v3.y = c.position.y;
-    if (!c.actor?.suspend?.(_v3, dt, DRAG.haul)) {
+    /* A CORPSE IS SLID, NOT SUSPENDED. Its bodies have been taken out of the
+     * solver by `Corpses.sleepBodies` — see `Ragdoll.slide`. A living
+     * casualty is still in the solver and comes through the joint solve. */
+    const moved = (R.corpse || c.actor?.slept)
+      ? c.actor?.slide?.(_v3, dt, body.speed * 1.05)
+      : c.actor?.suspend?.(_v3, dt, DRAG.haul);
+    if (!moved) {
       /* No ragdoll to drive — a stand-in in a check, or a body whose actor has
        * gone. The capsule still moves, which is the old behaviour and is
        * better than the drag silently doing nothing. */

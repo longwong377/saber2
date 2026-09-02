@@ -358,11 +358,11 @@ export async function run({ check, assert }) {
     for (const p of B.freeHumps) {
       const box = p.userData.box;
       const cx = (box.min.x + box.max.x) / 2, cz = (box.min.z + box.max.z) / 2;
-      const ph = physRay(B, new THREE.Vector3(cx, box.max.y + 2, cz), new THREE.Vector3(0, -1, 0), 20);
+      const ph = physRay(B, new THREE.Vector3(cx, box.max.y + 40, cz), new THREE.Vector3(0, -1, 0), 60);
       if (!ph || !ph.box) { freeChecked++; continue; }
       // a box here belongs to something else standing over the hump, which
       // the visual set can say
-      const ray = new THREE.Raycaster(new THREE.Vector3(cx, box.max.y + 2, cz), new THREE.Vector3(0, -1, 0));
+      const ray = new THREE.Raycaster(new THREE.Vector3(cx, box.max.y + 40, cz), new THREE.Vector3(0, -1, 0), 0, 60);
       assert(ray.intersectObjects(B.solids, false).length > 0,
         `a ${p.userData.crest.toFixed(2)} m hump at (${cx.toFixed(0)}, ${cz.toFixed(0)}) carries a collider it should not`);
       freeChecked++;

@@ -484,6 +484,36 @@ export class Actor {
    * budget, and `clampLength` is what stops a grip across the arena arriving as
    * an explosion.
    */
+  /**
+   * DRAG A BODY THE SOLVER HAS LET GO OF — kinematically.
+   *
+   * `Corpses.sleepBodies` takes a settled corpse's bodies OUT of the physics
+   * world (invMass 0, removed) so a field of forty dead costs the solver
+   * nothing, which is right, and it means `suspend` on such a body is a
+   * velocity written to nothing — measured on the first burial: a bearer
+   * with a fistful of collar and a corpse that did not move a centimetre in
+   * sixty seconds. The burial detail drags corpses, so this moves every body
+   * of the ragdoll by the same delta, the chest toward `target` at `speed`
+   * metres a second, and syncs the holders. The pose is the pose he died in
+   * — "in the manner in which they died" — which is what a body being pulled
+   * by the collar looks like anyway. Returns false with no ragdoll to move.
+   */
+  slide(target, dt, speed = 1.6) {
+    if (!this.ragdolled) return false;
+    const b = this.bodies.get('chest') || this.bodies.get('spine') || this.bodies.get('hips');
+    if (!b) return false;
+    _v1.subVectors(target, b.position);
+    const d = _v1.length();
+    if (d < 1e-4) return true;
+    _v1.multiplyScalar(Math.min(d, speed * dt) / d);
+    for (const body of this.bodies.values()) {
+      body.position.add(_v1);
+      body.velocity?.set?.(0, 0, 0);
+    }
+    this.syncRagdoll();
+    return true;
+  }
+
   suspend(target, dt, strength = 12) {
     if (!this.ragdolled) return false;
     const b = this.bodies.get('chest') || this.bodies.get('spine') || this.bodies.get('hips');

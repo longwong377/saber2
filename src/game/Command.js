@@ -11553,7 +11553,9 @@ export class CommandDirector extends WaveDirector {
         e.dragLease = 0.5;
         const k = Math.min(1, h.lower / BURY.lower);
         _bury.set(h.x, h.y - 0.9 * k, h.z);
-        e.actor.suspend(_bury, dt, 3.0);
+        /* Slid, not suspended — see `Ragdoll.slide`: a settled corpse is out
+         * of the solver. 1.2 m/s is the chest following the hole's floor. */
+        e.actor.slide(_bury, dt, 1.2);
         e.actor.centre?.(e.position);
       }
       if (h.lower >= BURY.lower) this._buryComplete(c, h, rec, h.claimBy || null);
