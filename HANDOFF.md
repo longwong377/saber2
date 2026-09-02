@@ -1699,6 +1699,10 @@ in it, and a lid above the walls with structure under it. Read
 - **The ramp's dwell re-boards an arriving player.** `releasePlayer` sets
   `world._rampArmed = false`; `stepRamp` counts nothing until he has walked
   out of `DEPLOY_RAMP.reach` once.
+- **A per-visit fact rides `world.run`, never `settings`.** `controls.mjs`
+  demands a default, a reader and a control for every settings key; the
+  arrival flag (`run.deckArrival` for a check, `world._deckArrival` from
+  main.js) is not a setting and went red twice as one.
 - **`spawnPlayer` runs AFTER `L.dress`.** Anything in a level's dress that
   wants the player (the arrival's seat) has to do it on the first frame.
 - **Three lanes died at a usage limit mid-edit** (life, paint — relaunched as
