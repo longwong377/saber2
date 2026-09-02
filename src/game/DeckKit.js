@@ -220,7 +220,7 @@ export const FACTION_PALETTE = {
     mark: 0x87898c, status: 0xff3418,
   },
   separatist: {
-    hull: 0x74808e, dark: 0x4c5560, deep: 0x1c2027, wing: 0x22262d,
+    hull: 0x66717e, dark: 0x444c56, deep: 0x1c2027, wing: 0x22262d,
     strip: 0xe4f1ff, glow: 0xecf5ff, glowDim: 0xc9d8e8, smear: 0xbfd2e8,
     mark: 0x6f7c8b, status: 0xff3418,
   },
