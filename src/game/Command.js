@@ -9339,8 +9339,22 @@ export class CommandDirector extends WaveDirector {
      * seconds it takes, and the formation has him back after.
      */
     const M = e._medicOn;
-    if (M && !M.dead && M.reaction?.kind === 'heal' && M.reaction.patient === e && M.reaction.at >= 0
-        && dist2(M.position, e.position) <= 9) {
+    /* AND HE STOPS WHEN HE SEES HIM COMING, not when he is already kneeling.
+     * Measured (`tools/_medicprobe.mjs`): held only from the moment the medic
+     * ARRIVED, the first approach was a chase the medic loses — the patient
+     * marched from 8.3 m to 15.4 m over eight seconds, the walk timed out at
+     * `R.t > 8`, and the job that should have taken six seconds took fifteen
+     * across two attempts. A man who is hit sits down when help is six metres
+     * away; the medic then closes in about two.
+     *
+     * THE RADIUS IS THE MEDIC'S OWN LOOK, and it is read off `BEHAVIOUR.heal`
+     * so the two cannot drift: `findPatient` only ever commits to a man inside
+     * `look`, so "my medic is coming for me" and "I hold" are the same fact.
+     * It frames one man at a time — the one his own squad's medic has picked,
+     * who is under `hurt` of his health — and he is back in the line the frame
+     * the job ends. */
+    if (M && !M.dead && M.reaction?.kind === 'heal' && M.reaction.patient === e
+        && dist2(M.position, e.position) <= BEHAVIOUR.heal.look * BEHAVIOUR.heal.look) {
       e.wish = null;
       this._crouch(e, dt, 0.6);
       return;

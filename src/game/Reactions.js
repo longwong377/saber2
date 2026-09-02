@@ -1611,7 +1611,7 @@ function ownMedicNear(o, list, r2) {
 export function startHeal(body, patient) {
   if (!patient || patient.dead || body.reaction) return false;
   patient._medicOn = body;
-  body.reaction = { kind: 'heal', t: 0, patient, at: -1, given: 0 };
+  body.reaction = { kind: 'heal', t: 0, patient, at: -1, given: 0, best: undefined, gain: 0 };
   return true;
 }
 
@@ -1631,8 +1631,17 @@ function stepHeal(body, dt, ctx, R) {
     if (d > H.reach) {
       if (!body.wish) body.wish = new THREE.Vector3();
       body.wish.subVectors(c.position, body.position).setY(0).normalize();
-      body.speed = Math.max(body.speed, (body.A?.speed ?? 4) * 1.2);
-      if (R.t > 8) return stop('far');
+      body.speed = Math.max(body.speed, (body.A?.speed ?? 4) * 1.35);
+      /* HE GIVES UP WHEN HE STOPS GAINING, NOT ON A CLOCK. A flat `R.t > 8`
+       * failed every job measured on a real line (`tools/_medicprobe.mjs`):
+       * a medic crossing ten metres through his own squad makes about a metre
+       * a second — his velocity is 2.8 m/s and the crowd takes the rest — so
+       * he timed out two metres short, cooled down, and started again. The
+       * rule that means what the clock was for is "he is no longer getting
+       * closer": `best` is the nearest he has been, and four seconds without
+       * improving on it is a man who cannot reach. */
+      if (R.best === undefined || d < R.best - 0.25) { R.best = d; R.gain = R.t; }
+      else if (R.t - R.gain > 4) return stop('far');
       return true;
     }
     R.at = R.t;

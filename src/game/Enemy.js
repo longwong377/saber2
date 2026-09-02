@@ -4181,6 +4181,24 @@ export class Enemy {
       const flinch = Math.max(CAST_FLINCH_FLOOR, this.maxHp * CAST_FLINCH_FRAC);
       if (incoming >= flinch || FORCE_KINDS.test(kind ?? '')) this.breakCast();
     }
+    /**
+     * ── A MAN ON THE GROUND IS FINISHED ON PURPOSE, NEVER BY ACCIDENT ──────
+     *
+     * A downed body sits at exactly 0 hp on a bleed clock (`_goDown`,
+     * `DOWN_BLEED`), so ANY damage at all — a tenth of a point — takes it
+     * through `hp <= 0` and kills it. That was survivable while nothing
+     * touched a downed man; the crawl (`Reactions.crawlStep`, V12) hauls his
+     * own ragdoll, `Ragdoll.suspend` bills the impulse back through
+     * `applyKnockback`, and 0.2 of sourceless `force` killed him. Measured
+     * (`tools/_crawlprobe.mjs`): a downed trooper with 8.7 s of bleed left
+     * died at 5.37 s of crawling, of dragging himself.
+     *
+     * So a downed body ignores SOURCELESS damage. Everything deliberate keeps
+     * its bite — a bolt, a blade, a blast and the finish all carry a source,
+     * and the bleed clock is not damage at all — and the man is killed by
+     * somebody rather than by the floor.
+     */
+    if (this.downed && !source && amount > 0) return false;
     this.hp -= amount;
     /**
      * NOT `if (this.A.boss)`. The winded window — "the only safe time to go for
