@@ -1808,7 +1808,11 @@ kbd.sgc{letter-spacing:.22em;padding-right:calc(var(--kbd-pad, 6px) - .22em)}
    wheel. Same reading as .sg-row.off and for the same reason. */
 .em.ow.cold b{color:var(--muted)}
 .em.ow.cold{opacity:.5}
-.em.ow{width:150px}
+/* The order wheel: a name per slot, and the caption only under the cursor.
+   Twelve slots of prose was the mess; the ring reads as twelve words now. */
+.em.ow{width:126px;padding:6px 4px}
+.em.ow span{display:none}
+.em.ow.sel span{display:block;font-size:9px;letter-spacing:.08em}
 .em.ow b{letter-spacing:.16em}
 .em.ow.live b{color:var(--accent-warm)}
 .em.ow.live::after{content:"";position:absolute;left:50%;bottom:1px;width:26px;height:2px;

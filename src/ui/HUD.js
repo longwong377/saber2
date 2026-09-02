@@ -843,12 +843,42 @@ export const WHEEL_EXTRAS = [
     blurb: 'Pull the nearest trooper out of his squad, or send him back.' },
 ];
 
+/**
+ * THE WHEEL SAYS ONE THING PER SLOT, AND SAYS IT IN FOUR WORDS.
+ *
+ * "the troop order wheel is pretty convoluted right now like it's pretty
+ *  messy with just too much text so streamline it and make it more
+ *  pleasurable/brief"
+ *
+ * Twelve slots each carried a sentence from `FORMATIONS[id].blurb` — a ring of
+ * 150 px paragraphs. The blurbs are the codex's and stay where they are; the
+ * wheel gets this table instead: a name and a caption of a few words, and
+ * the caption is drawn ONLY on the slot under the cursor (styles.css hides
+ * `.em.ow span` off `.sel`). The live readings (which squad, who is near,
+ * recovering) are cut to the same length.
+ */
+export const TERSE = {
+  circle: 'Ring round you',
+  behind: 'Column behind you',
+  front: 'Screen ahead of you',
+  line: 'One rank beside you',
+  rank: 'One rank ahead',
+  cover: 'Go to ground here',
+  digin: 'Make this ground cover',
+  charge: 'Break and attack',
+  holdfire: 'Weapons down, close in',
+  bury: 'Bury the fallen',
+  hold: 'Stay put, still fighting',
+  squad: 'Which squad hears you',
+  detach: 'One man, his own orders',
+};
+
 export class OrderWheel extends RadialWheel {
   constructor(host, formations) {
     const items = Object.values(formations || {}).map((F) => ({
-      id: F.id, name: F.name, blurb: F.blurb, kind: 'form',
+      id: F.id, name: F.name, blurb: TERSE[F.id] || F.blurb, kind: 'form',
     }));
-    for (const x of WHEEL_EXTRAS) items.push({ ...x });
+    for (const x of WHEEL_EXTRAS) items.push({ ...x, blurb: TERSE[x.id] || x.blurb });
     super(host, { items, action: 'orderwheel', cls: 'em ow' });
     this.director = null;
   }
@@ -858,50 +888,27 @@ export class OrderWheel extends RadialWheel {
     const d = this.director;
     if (item.kind === 'squad') {
       if (!d) return item.blurb;
-      /* OFF `liveSquads` AND NOT OFF `squadsOf().length`.
-       *
-       * `squadsOf` is indexed by squad NUMBER and padded to `SQUAD_SLOTS`, so
-       * its length is a count of SLOTS and is 5 on every army that ever gets
-       * built. Measured on a ten-man company: this caption read "All 5 squads"
-       * with two squads on the field, and went on reading "All 5 squads" after
-       * one of them was wiped — and the `n <= 1` branch below was unreachable
-       * for the life of the game.
-       *
-       * That is the same rescaling `liveSquads` was written for: the order
-       * panel and the target slot were moved onto it and the wheel was left
-       * behind. There is now one reader of "how many squads are there" and
-       * this is it. */
       const n = d.liveSquads?.(d.commander)?.length ?? 0;
-      if (n <= 1) return 'One squad. Everything you order goes to it.';
+      if (n <= 1) return 'One squad hears everything';
       const sel = d.selectedSquad;
-      /* BY THE SQUAD'S OWN NAME, through the director's one reader — a squad
-       * the menu calls Havoc and the wheel calls 2nd is two squads as far as
-       * the player is concerned. `ordinal` was this file's own second copy of
-       * "what a squad is called". */
       const word = (d.commander?.army?.squadWord || 'squad').toLowerCase();
       return sel == null
-        ? `All ${n} ${word}s. Choose this to pick one.`
-        : `${d.squadLabel?.(sel) ?? `${ordinal(sel + 1)} Squad`} only. `
-          + 'Choose this again to step on.';
+        ? `All ${n} ${word}s — pick one`
+        : `${d.squadLabel?.(sel) ?? `${ordinal(sel + 1)} Squad`} — again to step on`;
     }
     if (item.kind === 'detach') {
       const t = d?.nearestTrooper?.();
-      if (!t) return 'Nobody of yours is near enough.';
-      return t.detached
-        ? `${t.designation} is on his own — send him back to his squad.`
-        : `Pull ${t.designation} out of the line to take his own orders.`;
+      if (!t) return 'Nobody near enough';
+      return t.detached ? `${t.designation} back to his squad` : `${t.designation} on his own`;
     }
     if (item.kind === 'hold' && d) {
-      return d.commander?.holding
-        ? 'Holding. Choose this again to bring them with you.'
-        : item.blurb;
+      return d.commander?.holding ? 'Holding — again to release' : item.blurb;
     }
     const f = this._force && this._force[item.id];
-    if (f && !f.ready) return f.cd > 0 ? `Recovering — ${f.cd.toFixed(1)}s` : 'Not enough Force';
+    if (f && !f.ready) return f.cd > 0 ? `${f.cd.toFixed(0)}s` : 'No Force';
     return item.blurb;
   }
 
-  /** Light whichever order is up, so the wheel says where you are. */
   onOpen() {
     const d = this.director;
     /* THE DIRECTOR'S OWN READINESS, read once per open rather than once per
