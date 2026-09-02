@@ -693,4 +693,33 @@ export async function run({ check, assert }) {
     } finally { world.unload(); }
   });
 
+  check('companion: a body in no squad still stops being under fire', async () => {
+    /**
+     * `underFire` IS WRITTEN BY ONE DOOR AND DECAYED IN ANOTHER, AND THE
+     * COMPANION ONLY GOES THROUGH THE FIRST.
+     *
+     * `installTeamDamage` writes it — every injury goes through that door,
+     * which is exactly why the companion gets the flag for free — and it is
+     * decayed in one place only: `CommandDirector._troops`' walk over
+     * `squadsOf(c)`. A companion is deliberately in no squad, so without this
+     * the flag latches at UNDER_FIRE and stays there for the rest of the level.
+     *
+     * It is not cosmetic. `_coverSite` puts a body that is under fire into
+     * cover-seeking with a lean, off a `_fireEpoch` that only advances when
+     * the spell ENDS — so a companion whose spell never ends hunts cover from
+     * a shot it took two minutes ago, and hunts the SAME crate all run.
+     */
+    const { world, input, e, p } = await field('massiff', { xp: 9 });
+    try {
+      e.damage(5, e.position, { team: 1, position: e.position }, 'bolt');
+      const lit = e.underFire;
+      assert(lit > 0, 'a hostile bolt did not mark it under fire at all');
+      tick(world, input, p, 30 * 12);
+      assert(e.underFire === 0,
+        `twelve seconds after one bolt it is still under fire at ${e.underFire.toFixed(2)} — `
+        + 'the flag has latched, and it will hunt cover from that shot for the rest of the level');
+      return `one hostile bolt → ${lit.toFixed(2)}; twelve seconds later → ${e.underFire.toFixed(2)}`;
+    } finally { world.unload(); }
+  });
+
 }

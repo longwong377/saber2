@@ -783,7 +783,7 @@ export class CompanionPack {
   /** Give it a body to take, or clear the order. */
   bid(e, target) { if (e) e._cmpBidden = target || null; }
 
-  update() {
+  update(dt = 1 / 60) {
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (!e || e.dead || e.disposed) { this.list.splice(i, 1); continue; }
@@ -816,6 +816,28 @@ export class CompanionPack {
        */
       if (e._extracting === 'aboard' || e.riding) this.aboard = true;
       else if (e._extracting === 'left') this.aboard = false;
+      /**
+       * AND `underFire` COMES BACK DOWN, which for a body outside a squad it
+       * never does.
+       *
+       * `installTeamDamage` WRITES it — every injury goes through that one
+       * door, which is why the companion gets it for free — and it is DECAYED
+       * in exactly one place: `CommandDirector._troops`' walk over
+       * `squadsOf(c)`. A companion is deliberately in no squad, so the flag
+       * latches at UNDER_FIRE and stays there for the rest of the level.
+       *
+       * What that costs, on a body that reads it: `_coverSite` puts a body
+       * that is under fire into cover-seeking with a lean, off a `_fireEpoch`
+       * that only advances when the spell ENDS. A companion whose spell never
+       * ends is a companion permanently hunting cover from a shot it took two
+       * minutes ago, and one whose epoch never advances hunts the same crate
+       * for the whole run.
+       *
+       * Two lines, in the pack's own tick, and ZERO lines in Command.js — the
+       * decay is the director's for a trooper and the pack's for its own body,
+       * which is the same split the whole feature is built on.
+       */
+      if (e.underFire > 0) e.underFire = Math.max(0, e.underFire - dt);
       /**
        * AND THE CLOCK KEEPS RUNNING ON AN ANIMAL WITH NOTHING TO FIGHT.
        *
