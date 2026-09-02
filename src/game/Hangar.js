@@ -510,23 +510,50 @@ function addField(world) {
    * is the rule, and a traverse cannot count edges inside a merge.
    */
   const T = 3.0, D = 2.4;
-  const groups = [[], [], [], []];
   const nSeg = pts.length;
+  /* ONE SWEPT BAND, in four pieces. Each outline point is pushed T/2 out
+   * and T/2 in along the average of its two edge normals, and each side's
+   * run of points becomes one polygon (outer run, then the inner run back)
+   * extruded D deep — so the corners are the arcs of the outline itself. A
+   * box per segment, lengthened to hide its joins, was tried first and the
+   * joins showed anyway as scallops on every corner from mid-deck. */
+  const outer = [], inner = [];
   for (let i = 0; i < nSeg; i++) {
-    const [ax, ay] = pts[i], [bx, by] = pts[(i + 1) % nSeg];
-    const len = Math.hypot(bx - ax, by - ay) + T * 0.6;
-    const g = new THREE.BoxGeometry(len, T, D);
-    g.rotateZ(Math.atan2(by - ay, bx - ax));
-    g.translate((ax + bx) / 2, (ay + by) / 2, 0);
-    /* Which side this piece belongs to: the corner arcs are split down the
-     * middle between the two edges they join. */
-    const per = APERTURE_SEG + 1;
-    const side = Math.floor(((i + Math.ceil(APERTURE_SEG / 2)) % nSeg) / per);
-    groups[Math.min(3, side)].push(g);
+    const [px, py] = pts[(i - 1 + nSeg) % nSeg], [x, y] = pts[i], [nx, ny] = pts[(i + 1) % nSeg];
+    let ex = x - px, ey = y - py; let l = Math.hypot(ex, ey) || 1; ex /= l; ey /= l;
+    let fx = nx - x, fy = ny - y; l = Math.hypot(fx, fy) || 1; fx /= l; fy /= l;
+    /* Left-hand normals of the two edges; the outline runs counter-clockwise
+     * so "out" is to the right of travel. */
+    let ox = (ey + fy) * 0.5, oy = -(ex + fx) * 0.5;
+    l = Math.hypot(ox, oy) || 1; ox /= l; oy /= l;
+    outer.push([x + ox * T * 0.5, y + oy * T * 0.5]);
+    inner.push([x - ox * T * 0.5, y - oy * T * 0.5]);
   }
-  for (const gs of groups) {
-    if (!gs.length) continue;
-    const rim = new THREE.Mesh(mergeGeometries(gs), rimMat);
+  /* Is the outline counter-clockwise? If not, the offsets above are inside
+   * out — swap them. */
+  let area = 0;
+  for (let i = 0; i < nSeg; i++) { const [x, y] = pts[i], [nx, ny] = pts[(i + 1) % nSeg]; area += x * ny - nx * y; }
+  const [OUTER, INNER] = area > 0 ? [outer, inner] : [inner, outer];
+  const per = APERTURE_SEG + 1;
+  const groups = [[], [], [], []];
+  for (let i = 0; i < nSeg; i++) {
+    const side = Math.min(3, Math.floor(((i + Math.ceil(APERTURE_SEG / 2)) % nSeg) / per));
+    groups[side].push(i);
+  }
+  for (const idx of groups) {
+    if (idx.length < 2) continue;
+    /* The run, in outline order, plus the next point so sides meet edge to edge. */
+    const run = [...idx, (idx[idx.length - 1] + 1) % nSeg];
+    const shape = new THREE.Shape();
+    run.forEach((_, k) => {
+      const [x, y] = OUTER[run[k]];
+      if (k === 0) shape.moveTo(x, y); else shape.lineTo(x, y);
+    });
+    for (let k = run.length - 1; k >= 0; k--) { const [x, y] = INNER[run[k]]; shape.lineTo(x, y); }
+    shape.closePath();
+    const g = new THREE.ExtrudeGeometry(shape, { depth: D, bevelEnabled: false, curveSegments: 1 });
+    g.translate(0, 0, -D / 2);
+    const rim = new THREE.Mesh(g, rimMat);
     rim.position.set(0, 0, L);
     rim.name = 'field-rim';
     rim.renderOrder = 2;
@@ -1342,7 +1369,7 @@ function lightDeck(world) {
    * deck, blue-white on the Separatist one — a few hundred kelvin apart. */
   const KEY = sep ? 0xe6eeff : 0xfff6ea;
   const LAMP = sep ? 0xdae8ff : 0xfff3e2;
-  const AIR = sep ? 0x8d9aab : 0x9f9d99;
+  const AIR = sep ? 0x76828f : 0x87857f;
   const AMB = sep ? 0xb8c4d4 : 0xcfcac2;
   const key = new THREE.DirectionalLight(KEY, 2.4);
   key.position.set(0, 150, DECK.lip * 0.85);
@@ -1355,7 +1382,7 @@ function lightDeck(world) {
    * `skyColor`, authored dark for the old room, and under the cel model the
    * ambient is one flat colour on everything, so this is the colour of every
    * shadow on the deck. */
-  const amb = new THREE.AmbientLight(AMB, 0.55);
+  const amb = new THREE.AmbientLight(AMB, 0.38);
   world.scene.add(amb); world.levelLights.push(amb);
 
   /* THE AIR: the fog takes the wall's colour. Set on the scene the engine
