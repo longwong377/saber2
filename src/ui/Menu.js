@@ -5467,6 +5467,11 @@ export class Menu {
       const K = COMPANION_KINDS[k.live.kind];
       const r = rungOf(k.live);
       const nm = k.live.name || K?.label || 'it';
+      /* AND WHETHER YOU CAN GET ON IT, which is the one fact about a kind that
+       * changes what the deploy is FOR rather than how it goes: three of the
+       * twelve are transport and the other nine are not, and a player who has
+       * to discover that on the field has been told nothing. */
+      if (K?.mount) lines.push('You can ride this one.');
       lines.push(`${nm} — ${K?.label ?? k.live.kind}, ${r.label.toLowerCase()}, `
         + `${r.leash} m of leash, ${k.live.runs} run${k.live.runs === 1 ? '' : 's'} with you`
         + (k.live.kills ? `, ${k.live.kills} of theirs` : '')

@@ -527,6 +527,12 @@ function installCompanionMove(e) {
        * been dragged past the leash. A companion that abandoned a body it was
        * biting because you took a step would never finish anything. */
       const busy = !!e.target && !e.target.dead;
+      /* HOW LOOSELY THIS KIND HOLDS ITS STATION. A tuk'ata ranges and a tooka
+       * clings, and `heel` is the row that says which — a multiple of the
+       * shared slack rather than a second distance, so the two cannot drift
+       * apart. Read here because this is the one place a station becomes a
+       * decision to walk. */
+      const slack = HEEL.slack * (COMPANION_KINDS[e._cmpKind]?.heel ?? 1);
       /* THE TEMPERS MOVE THIS AND NOTHING ELSE. `reach` is metres it will
        * break from station to take a body; `recall` is how much sooner it
        * gives up and comes home. Both are read off the record through the one
@@ -535,7 +541,7 @@ function installCompanionMove(e) {
       const leashNow = Math.max(2, (e._cmpLeash ?? LEASH) + (sw ? sw.reach - sw.recall : 0));
       const dragged = d > leashNow;
       if (dragged || !busy) {
-        if (d > SETTLED) {
+        if (d > SETTLED * slack) {
           e.wish = (e.wish || new THREE.Vector3()).set(dx / d, 0, dz / d);
           if (!e.toTarget) e.toTarget = new THREE.Vector3();
           e.toTarget.copy(e.wish);
@@ -812,7 +818,25 @@ export class CompanionPack {
     }
   }
 
+  /**
+   * `destroy` AND NOT ONLY `dispose`, and the difference is a crash.
+   *
+   * `World.unload` walks `this.props` and calls `destroy()` on every entry —
+   * not `dispose()`. A pack with only the second is a pack that throws
+   * `p.destroy is not a function` on the frame a level is torn down, which is
+   * every level change, every quit and every check that unloads its fixture.
+   * Found by the check suite doing exactly that nine times in a row.
+   */
+  destroy() { this.dispose(); }
+
   dispose() { this.list.length = 0; }
+
+  /**
+   * THE ONE BODY, for the fold to ask about. A getter rather than a field so
+   * there is no second place that can be stale: the list is the truth and this
+   * is a reading of it.
+   */
+  get body0() { return this.list[0] || null; }
 }
 
 /** Hang a pack on the world, once. */
@@ -832,7 +856,11 @@ export function attachCompanions(world) {
  * path as everything else — and then `team` and the two wraps are the whole of
  * what makes it yours.
  */
-export function fieldCompanion(world, owner, kind = 'massiff', opts = {}) {
+/* NO DEFAULT KIND. `kind = 'massiff'` was the one place this file knew a kind
+ * by name, and `companions: every kind is a row` caught it: a file with a
+ * favourite kind is a file that will grow an `else if` for the next one. The
+ * caller names what it wants or gets nothing. */
+export function fieldCompanion(world, owner, kind, opts = {}) {
   if (!world?.spawnEnemy || !owner?.position) return null;
   /* THE KIND IS A ROW AND THE ARCHETYPE IS A BODY, and they are two lookups
    * because one kind deliberately borrows another's body: the reprogrammed B1

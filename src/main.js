@@ -1936,7 +1936,6 @@ function fieldFromKennel(w, player) {
   if (!rec) return null;
   const e = fieldCompanion(w, player, rec.kind, { rec });
   if (!e) return null;
-  w._companion = w._companions;
   const name = rec.name || COMPANION_KINDS[rec.kind]?.label || 'your companion';
   w.notify?.(`${name.toUpperCase()} IS WITH YOU`, `${rungOf(rec).label.toLowerCase()} — ${rec.runs} run(s) together`);
   return e;

@@ -545,7 +545,11 @@ export function dressCompanion(id, look = {}) {
  * a run, exactly as it already skips `record()` and `bank()`.
  */
 export function keepCompanion(world, stats = null) {
-  const pack = world?._companion;
+  /* `_companions` IS THE PACK'S NAME, and reading `_companion` was a silent
+   * false: the guard passed on a truthy marker, `pack.body0` came back
+   * undefined, and every surviving companion was folded as dead. The check
+   * caught it as "alive and won: kept=false". One name. */
+  const pack = world?._companions;
   if (!pack) return null;
   /* CO-OP DOES NOT FOLD, and it is said on the lobby card before you join
    * rather than discovered afterwards. No bond earned, no death recorded, no
