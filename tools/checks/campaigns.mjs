@@ -319,7 +319,19 @@ export async function run({ check, assert }) {
      * on it.
      */
     const used = new Set(Object.values(LEVELS).map((L) => L?.terrain));
-    const orphans = Object.keys(TERRAIN_PRESETS).filter((k) => !used.has(k)).sort();
+    /**
+     * …AND A GENERATED PRESET IS NOT AUTHORED CONTENT. THE LINE lays its own
+     * ground per engagement and registers it as `front:<terrain>`
+     * (`Battlefield.js`, cleaned up by `World`'s `removeGround` on unload).
+     * If any suite in the process has built a Line world and not yet torn it
+     * down, that key is sitting in the table when this runs — and it is not "a
+     * hundred lines of authored landform nobody can reach", it is a runtime
+     * artifact of a level a player reaches by playing the mode. The question
+     * this check asks is about content somebody wrote and nobody can get to.
+     * `theline.mjs` already knows the prefix means generated.
+     */
+    const orphans = Object.keys(TERRAIN_PRESETS)
+      .filter((k) => !used.has(k) && !k.startsWith('front:')).sort();
     for (const k of used) assert(TERRAIN_PRESETS[k], `a level is built on '${k}', which is not a preset`);
     /**
      * THE BAR WENT UP ONCE, AND THE REASON IS RECORDED BECAUSE THE RULE SAYS

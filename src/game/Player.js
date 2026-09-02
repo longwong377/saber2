@@ -85,6 +85,8 @@ const rng = makeRng(1212);
 export function seedPlayerRng(seed) { rng.seed(seed >>> 0); return rng; }
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+/** The one buffer `Player._allyList` refills. Never handed out. */
+const _allies = [];
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion(), _q2 = new THREE.Quaternion();
 const _q3 = new THREE.Quaternion(), _q4 = new THREE.Quaternion();
@@ -9218,8 +9220,35 @@ export class Player {
    * Everything else is `_mendTarget`'s own test, in the same order, so the two
    * cannot disagree about who counts as a hurt ally.
    */
-  nearestWounded(ctx) {
+  /**
+   * ── WHO COUNTS AS ONE OF YOURS, AND IT WAS NEVER THE PERSON BESIDE YOU ───
+   *
+   * Four things ask this question — `nearestWounded`, `_mendTarget`,
+   * `_wardTarget` and `_restoreCircle` — and all four walked `world.enemies`
+   * and nothing else. A co-op partner is not in that list; they are in
+   * `world.players`. So the mend healed a trooper standing behind your
+   * friend, the ward bubbled a trooper instead of your friend, and Restore's
+   * circle paid out to everybody in it except the one person who could thank
+   * you for it. The two powers V12 added were the worst of it, because
+   * bubbling and reviving your friend is most of what they are for.
+   *
+   * ONE SCRATCH ARRAY, refilled per call and never handed out. These run on a
+   * keypress and (for the HUD's prompt) once a frame, so allocating a list
+   * each time is a list a frame; none of the four nests inside another, which
+   * is what makes one buffer safe.
+   */
+  _allyList(ctx) {
+    const out = _allies;
+    out.length = 0;
     const list = ctx?.enemies || this.world?.enemies;
+    if (list) for (const e of list) out.push(e);
+    const ps = this.world?.players;
+    if (ps) for (const p of ps) if (p !== this) out.push(p);
+    return out;
+  }
+
+  nearestWounded(ctx) {
+    const list = this._allyList(ctx);
     if (!list) return null;
     let best = null, bestD = Infinity;
     for (const e of list) {
@@ -9240,7 +9269,7 @@ export class Player {
   }
 
   _mendTarget(ctx) {
-    const list = ctx?.enemies || this.world?.enemies;
+    const list = this._allyList(ctx);
     if (!list) return null;
     let best = null, bestScore = -Infinity;
     for (const e of list) {
@@ -9354,7 +9383,7 @@ export class Player {
    * off — see `forceWard`) rather than on whoever is standing beside him.
    */
   _wardTarget(ctx) {
-    const list = ctx?.enemies || this.world?.enemies;
+    const list = this._allyList(ctx);
     if (!list) return null;
     let best = null, bestScore = -Infinity;
     for (const e of list) {
@@ -9566,7 +9595,7 @@ export class Player {
   /** Everybody the burst reaches: you, and every live ally inside the radius. */
   _restoreCircle(ctx) {
     const out = [this];
-    const list = ctx?.enemies || this.world?.enemies;
+    const list = this._allyList(ctx);
     if (!list) return out;
     const r2 = RESTORE.radius * RESTORE.radius;
     for (const e of list) {

@@ -1264,6 +1264,36 @@ export function hazeRadiance(a, out = new THREE.Color(), shoulder = null) {
   const side = sunPos.clone().setY(0).normalize()
     .cross(new THREE.Vector3(0, 1, 0)).setY(0.02).normalize();
   const haze = skyShoulder(skyRadiance(side, sunPos, a, new THREE.Color()), s.knee, s.ceil);
+  /**
+   * ── AND THE SKY IT FOLLOWS IS THE ONE ON SCREEN, NOT PREETHAM'S ──────────
+   *
+   * The rule below is right: aerial perspective is a hue shift toward the sky.
+   * What it was shifting toward was the RAW physical sky, and the sky the
+   * player is looking at is not that: `Engine.setAtmosphere` rotates the dome
+   * onto the level's authored `skyColor` (`uSkyTurn`, from `skyProbeTurn`),
+   * and `_linearSky` turns the ambient tint by the same angle. The haze was
+   * the one reader that never got the rotation, so distance converged on
+   * Preetham blue under a rust-coloured sky.
+   *
+   * Measured across the shipped atmospheres, the hue distance actually
+   * dissolved into, before this line:
+   *
+   *     geonosis   fog authored  26°, sky  26°  → rendered 207°
+   *     scoria                    9°,      11°  → rendered 206°
+   *     mustafar                 12°,       7°  → rendered 205°
+   *     wood                    126°,      96°  → rendered 206°
+   *     drifts                   39°,     219°  → rendered 203°
+   *
+   * Every level in the game, warm or cold, dissolved into the same cold
+   * blue-grey — and saturation collapsed with it (geonosis 0.57 → 0.08),
+   * because a swatch lerped 88% toward a hue that far away lands near the
+   * grey axis. The colosseum's came out NEGATIVE, which is out of gamut.
+   *
+   * One line, and it is the same call the dome and the ambient already make,
+   * so the three cannot disagree again. A level whose authored sky matches
+   * the physical one turns by zero and is byte-identical.
+   */
+  skyTurn(haze, skyProbeTurn(a), haze);
   // Half the HUE comes from the sky too. In a bright desert the haze is barely
   // brighter than the sand, so what actually reads as distance is losing
   // SATURATION into the sky, and a fog swatch authored the same tan as the sand

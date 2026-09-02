@@ -77,6 +77,7 @@ import { SHOVE, STATE } from '../physics/Shovable.js';
 import { Rig, humanoidSkeleton, BipedAnimator } from './Rig.js';
 import { dressHumanoid } from './Bodies.js';
 import { DeckBuild, deckMats, parkedFighter, factionOf } from './DeckKit.js';
+import { armKinetic, KINETIC_BODY } from './Impact.js';
 
 const _m = new THREE.Matrix4();
 const _e = new THREE.Euler();
@@ -584,6 +585,13 @@ export class Knockable {
       mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER,
     });
     this.body.userData.figure = this;
+    /* EVERYTHING WITH MASS IS A STRIKER — `contacts.mjs`, and it caught this
+     * body. A deck droid is not inert: the room is built to be shoved around
+     * ("countless things to throw around"), so a figure that goes over and
+     * lands on somebody registers the contact like any other body. Damage on
+     * the deck is a separate question and the deck answers it elsewhere;
+     * what this closes is a body that could hit somebody and did nothing. */
+    armKinetic(this.body, KINETIC_BODY);
     world.physics.add(this.body);
     this.body.sleep();
   }

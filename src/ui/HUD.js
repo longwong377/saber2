@@ -1235,6 +1235,15 @@ export class HUD {
     this._msgNow = null;
     this._buildPowers();
     this._marks = [];
+    /**
+     * THE POOL THE HIT LABELS COME OUT OF. `floating()` used to build a div
+     * per hit and drop it a second later — in a firefight that is a create
+     * and a destroy several times a second, for a node that is identical
+     * every time but for its text and colour. The list is capped at 26, so 26
+     * nodes is the whole population; they are parked here and reused, and the
+     * scratch vector each carries is reused with them.
+     */
+    this._markPool = [];
     /** Pooled nameplate nodes, one per living trooper. See `_nameplates`. */
     this._plates = [];
     this.whyTimer = 0;
@@ -1625,12 +1634,21 @@ export class HUD {
         name: node.querySelector('.tp-name'), squad: node.querySelector('.tp-squad'),
         hp: node.querySelector('.tp-hp i'), mor: node.querySelector('.tp-mor i') });
     }
+    /* SHOWN AND HIDDEN ON CHANGE. Every branch below used to write
+     * `style.display` on every frame, for every plate, including the ones it
+     * was hiding — so a roster of twenty dirtied twenty nodes sixty times a
+     * second to say nothing had changed. The flag is the node's own state. */
+    const show = (P, on) => {
+      if (P._shown === on) return;
+      P._shown = on;
+      P.node.style.display = on ? '' : 'none';
+    };
     for (let i = 0; i < this._plates.length; i++) {
       const P = this._plates[i];
       const t = live[i];
-      if (!t) { P.node.style.display = 'none'; continue; }
+      if (!t) { show(P, false); continue; }
       const isAimed = t === aimed;
-      if (mode === 'aimed' && !isAimed) { P.node.style.display = 'none'; continue; }
+      if (mode === 'aimed' && !isAimed) { show(P, false); continue; }
       const e = t.body;
       /* THE HEAD, not the origin: a plate at a body's feet reads as belonging
        * to the ground. `hipHeight` is the archetype's own and scales with it,
@@ -1638,8 +1656,8 @@ export class HUD {
       _v.set(e.position.x, e.position.y + (e.A?.hipHeight ?? 0.95) + 1.15, e.position.z);
       const dist = _v.distanceTo(eye);
       _v.project(camera);
-      if (_v.z > 1 || dist > 120) { P.node.style.display = 'none'; continue; }
-      P.node.style.display = '';
+      if (_v.z > 1 || dist > 120) { show(P, false); continue; }
+      show(P, true);
       P.node.style.left = `${(_v.x * 0.5 + 0.5) * 100}%`;
       P.node.style.top = `${(-_v.y * 0.5 + 0.5) * 100}%`;
       /* FADE WITH DISTANCE rather than cutting out: a label that pops off at a
@@ -2310,7 +2328,15 @@ export class HUD {
       el.combo.textContent = `${player.combo}×`;
       el.combo.classList.add('on');
     } else el.combo.classList.remove('on');
-    el.score.textContent = Math.floor(world.score + player.score).toLocaleString();
+    /* WRITTEN ON CHANGE, NOT ON EVERY FRAME. `toLocaleString` builds a
+     * formatter and a string sixty times a second for a number that moves a
+     * few times a minute, and assigning `textContent` at all dirties the node
+     * whether or not the text differs. One integer compared first. */
+    const score = Math.floor(world.score + player.score);
+    if (score !== this._scoreWas) {
+      this._scoreWas = score;
+      el.score.textContent = score.toLocaleString();
+    }
 
     /* ── wave, or lesson in Training ──────────────────────────────────
      *
@@ -2729,7 +2755,7 @@ export class HUD {
     for (let i = this._marks.length - 1; i >= 0; i--) {
       const m = this._marks[i];
       m.t += dt;
-      if (m.t > 1.05) { m.node.remove(); this._marks.splice(i, 1); continue; }
+      if (m.t > 1.05) { this._retireMark(m); this._marks.splice(i, 1); continue; }
       _v.copy(m.pos).project(camera);
       if (_v.z > 1) { m.node.style.display = 'none'; continue; }
       m.node.style.display = '';
@@ -3144,13 +3170,26 @@ export class HUD {
   }
 
   floating(worldPos, text, color = '#fff') {
-    const node = document.createElement('div');
-    node.className = 'hm';
-    node.textContent = text;
-    node.style.color = color;
-    this.el.hitmarks.appendChild(node);
-    this._marks.push({ node, pos: worldPos.clone(), t: 0 });
-    if (this._marks.length > 26) { const m = this._marks.shift(); m.node.remove(); }
+    let m = this._markPool.pop();
+    if (!m) {
+      const node = document.createElement('div');
+      node.className = 'hm';
+      m = { node, pos: new THREE.Vector3(), t: 0 };
+    }
+    m.t = 0;
+    m.pos.copy(worldPos);
+    if (m._text !== text) { m._text = text; m.node.textContent = text; }
+    if (m._color !== color) { m._color = color; m.node.style.color = color; }
+    this.el.hitmarks.appendChild(m.node);
+    this._marks.push(m);
+    if (this._marks.length > 26) this._retireMark(this._marks.shift());
+  }
+
+  /** Take one off the screen and put it back in the pool. */
+  _retireMark(m) {
+    if (!m) return;
+    m.node.remove();
+    if (this._markPool.length < 26) this._markPool.push(m);
   }
 
   /**

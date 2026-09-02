@@ -1340,6 +1340,20 @@ export function run({ check, assert, near }) {
         const side = sun.clone().setY(0).normalize()
           .cross(new THREE.Vector3(0, 1, 0)).setY(0.02).normalize();
         const skyline = E.skyShoulder(E.skyRadiance(side, sun, a, new THREE.Color()), disp.knee, disp.ceil);
+        /**
+         * THE SKY THE PLAYER IS LOOKING AT, NOT PREETHAM'S. This reference was
+         * the RAW physical sky, and the dome on screen is not that: the engine
+         * rotates it onto the level's authored `skyColor` (`uSkyTurn`, from
+         * `skyProbeTurn`). So this check was holding the haze to a blue it had
+         * been turned away from, and it is what kept `hazeRadiance` sampling
+         * the untuned sky — measured, distance on geonosis converged at hue
+         * 207 degrees under an authored sky of 26, and this check called that
+         * correct because both halves were reading the same wrong sky.
+         *
+         * Turned here, the property is the one the check's own title claims:
+         * the ground converges on the sky's own hue.
+         */
+        E.skyTurn(skyline, E.skyProbeTurn(a), skyline);
         const haze = E.hazeRadiance(a, new THREE.Color(), disp);
         const chromaOf = (c) => { const l = Math.max(lum([c.r, c.g, c.b]), 1e-4); return [c.r / l, c.g / l, c.b / l]; };
         const dist = (p, q) => Math.hypot(p[0] - q[0], p[1] - q[1], p[2] - q[2]);

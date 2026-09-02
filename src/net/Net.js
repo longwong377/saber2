@@ -941,7 +941,17 @@ export class RemoteAvatar {
     return false;
   }
 
-  /** A remote player heals on its own machine. Here so World's loops are safe. */
+  /**
+   * A remote player heals on its own machine — the authority for a body's
+   * health is the machine driving it, and the 24 Hz packet carries `hp` back.
+   * These stay no-ops for that reason.
+   *
+   * WHAT THEY ARE NOT is a reason to refuse to AIM at him. `Player._allyList`
+   * puts remote avatars in front of the mend, the ward and Restore, so your
+   * friend can be picked, bubbled and counted in the circle; what lands on him
+   * is his own machine's business, and `hp` on the next packet is what says
+   * whether it worked. A power that would not even select him was the defect.
+   */
   heal() {}
   addFlow() {}
 

@@ -3202,6 +3202,22 @@ export class Enemy {
     /** Seconds of killing frenzy left. See FURY and Command.DESECRATE. */
     this.furyTimer = 0;
     /**
+     * ── THE BRAIN'S TWO HEADINGS, OWNED ONCE ─────────────────────────────
+     *
+     * `wish` and `toTarget` were assigned a FRESH Vector3 every frame, in
+     * five places between them (`_think`, the strafe, the stand-off, the net
+     * duel): three vectors per body per frame, which at fifty bodies is nine
+     * thousand a second of pure garbage for two headings that never leave
+     * this object.
+     *
+     * They are buffers now and the fields point at them. `wish = null` still
+     * means "no heading this frame" and every one of the fourteen places that
+     * writes it is untouched — what changed is only where a heading is
+     * WRITTEN TO, never how it is read.
+     */
+    this._wishBuf = new THREE.Vector3();
+    this._toBuf = new THREE.Vector3();
+    /**
      * Time left on the DREAD a commander put on this body. Same shape as
      * `rallyTimer` on purpose — a timer that drains in `update` and is read as
      * a boolean wherever it bites — because a second idiom for "a battlefield
@@ -6199,7 +6215,7 @@ export class Enemy {
       while (d < -Math.PI) d += TAU;
       this.facing += d * Math.min(1, dt * 10);
       this.target = ctx.pickTarget(this);
-      if (this.target) this.toTarget = _v2.subVectors(this.target.position, this.position).setY(0).normalize().clone();
+      if (this.target) this.toTarget = this._toBuf.copy(_v2.subVectors(this.target.position, this.position).setY(0).normalize());
       this._applyNetDuel();
       this._syncBody();
       this._pose(dt, ctx);
@@ -6361,7 +6377,7 @@ export class Enemy {
     const dist = _v1.length();
     _v1.y = 0;
     if (_v1.lengthSq() > 1e-6) _v1.normalize();
-    this.toTarget = _v1.clone();
+    this.toTarget = this._toBuf.copy(_v1);
 
     if (this.gripped) {
       // held off the ground by something it cannot see. `cry` is gapped, so
@@ -6538,7 +6554,7 @@ export class Enemy {
       wish.addScaledVector(_v4.multiplyScalar(1 / d), (1 - d / want) * 1.5);
     }
     if (wish.lengthSq() > 1) wish.normalize();
-    this.wish = wish.clone();
+    this.wish = this._wishBuf.copy(wish);
 
     /**
      * ── AND A BODY THAT HAS LOST ITS NERVE STOPS HOLDING THE LINE ──────────
@@ -6570,7 +6586,7 @@ export class Enemy {
     if (!this.trooper && nerveBroken(this)) {
       _v3.copy(this.toTarget).multiplyScalar(-1).addScaledVector(side, 0.45);
       if (_v3.lengthSq() > 1e-6) _v3.normalize();
-      this.wish = _v3.clone();
+      this.wish = this._wishBuf.copy(_v3);
       /* A body that will not take an order will not take a shot either. Above
        * `REFUSE` it is still firing — badly, because `nerveAim` is reading the
        * same number — which is what a line falling back while shooting looks
@@ -6915,7 +6931,7 @@ export class Enemy {
     const want = _v3.copy(side).multiplyScalar(Math.sin(this.orbitPhase) > 0 ? 1 : -1);
     if (dist > this.A.preferred[1]) want.add(this.toTarget);
     else if (dist < this.A.preferred[0]) want.sub(this.toTarget);
-    this.wish = want.normalize().clone();
+    this.wish = this._wishBuf.copy(want.normalize());
 
     this.attackTimer -= dt;
     if (this.attackTimer <= 0) {
