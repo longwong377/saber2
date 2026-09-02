@@ -710,6 +710,10 @@ export class CompanionPack {
     this.hp = Infinity;
     this.seen = new WeakSet();
     this.list = [];
+    /** Did it get on the ship? See the note in `update`. */
+    this.aboard = false;
+    /** Who last hurt it, for the epitaph. Written by the damage wrap. */
+    this.lastKiller = null;
     /**
      * THE STUB BODY, AND IT IS NOT OPTIONAL. `World._resolveBlades` walks
      * `this.props` and reads `pr.body.position` BEFORE it asks for capsules,
@@ -786,6 +790,32 @@ export class CompanionPack {
       /* A BID ON A BODY THAT IS GONE IS NOT AN ORDER ANY MORE. Cleared here
        * rather than in the aim wrap so the wrap stays a pure reader. */
       if (e._cmpBidden && (e._cmpBidden.dead || e._cmpBidden.disposed)) e._cmpBidden = null;
+      /**
+       * DID IT GET ON THE SHIP — the flag the whole fold turns on.
+       *
+       * `Extraction.manifest` is `this._seated.map((b) => b.trooper).filter
+       * (Boolean)`, so a companion boards the transport and then does not
+       * exist on the list that decides who survived. That one `filter(Boolean)`
+       * is the entire gap between "the companion got on the ship" and "the
+       * companion is there next run", and `Company.keep` reads exactly that
+       * array and may not be reopened. So the manifest is left BYTE-IDENTICAL
+       * and the pack keeps its own flag.
+       *
+       * A POLL AND NOT AN `onPhase` SUBSCRIPTION, which the design proposed.
+       * Two things make the poll better rather than merely easier: the
+       * extraction is built long after the pack is, so a subscription needs a
+       * hook that fires on an object that does not exist yet; and `onPhase`
+       * fires on the SHIP's lifecycle while what the fold needs to know is
+       * about the BODY — a companion that is put ashore again, or that never
+       * queued, is answered here by reading it, and would need a second
+       * handler there to unset what the first one set.
+       *
+       * `_extracting` is Extraction's own field and is one of three strings —
+       * 'boarding', 'aboard', 'left' — read rather than restated. It survives
+       * the ship leaving, which is exactly what the fold reads it for.
+       */
+      if (e._extracting === 'aboard' || e.riding) this.aboard = true;
+      else if (e._extracting === 'left') this.aboard = false;
       /**
        * AND THE CLOCK KEEPS RUNNING ON AN ANIMAL WITH NOTHING TO FIGHT.
        *

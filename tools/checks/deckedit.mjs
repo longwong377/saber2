@@ -623,13 +623,31 @@ export async function run({ check, assert, THREE }) {
         const can = wearableFor(row.rec.type, kind);
         const paintRows = (PAINT_SLOTS[kind] || []).filter(([f]) => can.paint.includes(f)).length;
         const kitVals = can.kit.reduce((n, f) => n + (KIT_FIELDS[kind][f]?.values.length || 0), 0);
-        /* Two mark rows, every paint slot times the palette plus "as issued",
-         * and every legal value of every kit field. */
-        const want = MARKS.length * 2 + paintRows * (PAINTS.length + 1) + kitVals;
+        /**
+         * Two mark rows, every paint slot times the palette plus "as issued",
+         * every legal value of every kit field — AND THE ONE NOTCH THAT IS A
+         * VERB RATHER THAN A VALUE.
+         *
+         * `callsign` has been in `EDIT_OPS` since this file landed and
+         * `optionsFor` never offered it, so a listed op had no control — the
+         * dead-control defect `WEARS` exists to prevent, one file across, and
+         * the check below asserting EDIT_OPS equality could not see it because
+         * both surfaces agreed about the WORD while one of them had no way to
+         * reach it.
+         *
+         * It is `+ 1` and not a palette length because a name is FREE TEXT: a
+         * wheel has no letters, so the notch arms the typing fence instead of
+         * writing a value. Counted here explicitly so that a second verb-shaped
+         * op is a red check and somebody comes and argues it.
+         */
+        const VERB_OPS = 1;
+        const want = MARKS.length * 2 + paintRows * (PAINTS.length + 1) + kitVals + VERB_OPS;
         const list = Edit.optionsFor(row);
         assert(list.length === want,
           `the wheel offers ${list.length} changes and the tables describe ${want} — the deck and `
           + 'the Company tab are drawing different palettes');
+        assert(list.filter((o) => o.op === 'callsign').length === VERB_OPS,
+          'the callsign notch is gone — the rename is unreachable from the wheel again');
 
         standBefore(world, row, 2.2, THREE, idle);
         Edit.focusKey(world);
@@ -749,5 +767,54 @@ export async function run({ check, assert, THREE }) {
         return `looking at ${name}: "${note}" — and nothing at ${(Edit.REACH + 8).toFixed(0)} m`;
       } finally { world.unload(); }
     }));
+
+  check('deckedit: a man can actually be renamed on the deck, by a key a player has', async () => {
+    /**
+     * THE WHOLE RENAME PATH EXISTED AND NOTHING COULD REACH IT.
+     *
+     * `beginNaming`, `typeName` and `commitName` were written, argued and
+     * correct, with ZERO callers anywhere in `src/` — verified by grep — and
+     * `optionsFor` never offered the `callsign` op that `EDIT_OPS` lists. So
+     * the deck could paint a man and kit him and never name him, while
+     * `deckedit: the deck edits exactly what the menu edits` passed, because
+     * both surfaces agreed about the WORD.
+     *
+     * This drives the path a player actually walks: hold a man, arm the
+     * rename, type, commit — and then asserts the name is on the RECORD, which
+     * is the only place it counts.
+     */
+    const THREE = await import('three');
+    const { world } = await deck();
+    try {
+      formUp(world, idle);
+      const row = world._company.men[0];
+      standBefore(world, row, 2.2, THREE, idle);
+      Edit.focusKey(world);
+      assert(Edit.holding(world), 'nobody is held, so there is nobody to name');
+      assert(!Edit.naming(world), 'the rename armed itself');
+      assert(Edit.beginNaming(world), 'beginNaming refused with a man held');
+      assert(Edit.naming(world), 'beginNaming did not arm');
+      for (const ch of 'Wrecker') assert(Edit.typeName(world, ch), `the letter ${ch} was dropped`);
+      /* THE BACKSPACE IS PART OF TYPING A NAME, and a player will use it
+       * first. */
+      assert(Edit.typeName(world, 'Backspace'), 'backspace was dropped');
+      Edit.commitName(world);
+      assert(!Edit.naming(world), 'the fence did not close on commit');
+      const got = row.rec.look?.callsign;
+      assert(got === 'Wrecke', `the record says "${got}" after typing Wrecker and one backspace`);
+      /* AND THE WHEEL'S OWN NOTCH REACHES THE SAME FENCE rather than writing a
+       * null over the name somebody just gave. */
+      const was = row.rec.look?.callsign;
+      const notch = Edit.optionsFor(row).findIndex((o) => o.op === 'callsign');
+      assert(notch >= 0, 'the wheel does not offer the callsign');
+      world._deckEdit.pending = Edit.optionsFor(row)[notch];
+      Edit.commitWheel(world);
+      assert(Edit.naming(world), 'the wheel notch did not arm the rename');
+      assert(row.rec.look?.callsign === was,
+        `dialling the callsign notch overwrote the name with ${row.rec.look?.callsign}`);
+      return `held, armed, typed "Wrecker" less a backspace → the record reads "${got}"; `
+        + 'and the wheel notch arms the same fence without writing';
+    } finally { world.unload(); }
+  });
 
 }

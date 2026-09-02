@@ -40,7 +40,9 @@ import { POWER_COST, SENSE_DRAIN, UNBOUND, UNBOUND_OF, UNLEASH_TOLL, unboundId }
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
-import { focusKey as deckFocus, wheelEdit as deckWheel } from './DeckEdit.js';
+import { focusKey as deckFocus, wheelEdit as deckWheel,
+         naming as deckNaming, beginNaming as deckBeginNaming,
+         commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
 import { Stratagems, DIRS, DIR_ACTION } from './Stratagems.js';
 import { bodyOf } from '../engine/Presence.js';
 import { clamp, lerp, damp, smoothstep, dampVec, makeRng, TAU } from '../engine/MathUtil.js';
@@ -4193,12 +4195,52 @@ export class Player {
        * is nothing gripped for it to collide with, so the notch dials his kit
        * and is handed back the moment he is put down.
        */
+      /**
+       * ══ NAMING A MAN, AND THE ONE LINE THE RENAME PATH ASKED FOR ═════════
+       *
+       * `beginNaming`, `typeName` and `commitName` have been written, argued
+       * and correct in DeckEdit.js since the deck editor landed, with ZERO
+       * callers anywhere in `src/` — a verb listed in `EDIT_OPS`, asserted
+       * equal to the menu's list by `deckedit.mjs`, and unreachable. That
+       * function's own note names the missing piece exactly: "the caller must
+       * suppress the deck's own input for the duration — one line in
+       * `Player.js`'s hosting branch". This is that line, and the guard it
+       * asked for.
+       *
+       * WHY `rend`. Every letter near WASD is spoken for twice over and
+       * `controls.mjs` has caught three attempts to add a row to `Bindings.js`
+       * — so the key has to be one that already exists and means nothing here.
+       * `rend` is on OFF_THE_DECK: on the deck it is refused with "nothing on
+       * this deck is fighting you", so it is a key the player can press today
+       * and get a sentence from. WHILE A MAN IS HELD it names him instead, and
+       * when nobody is held it goes on refusing exactly as it did. One key,
+       * one meaning at a time, which is the pattern `swap`, `drive`, `hurl`
+       * and `throw` already use four times over.
+       *
+       * THE SUPPRESSION IS A `return` AND NOT A FLAG. While `naming()` is
+       * true the deck's whole input branch is skipped — no walking, no wheel,
+       * no blade, no refusals — because the letters a player is typing into a
+       * callsign are also W, A, S and D. `attachKeys` is listening on the
+       * document directly and calls `preventDefault`, which stops the browser
+       * scrolling but does nothing about this file's own reader.
+       */
+      if (deckNaming(this.world)) {
+        if (input.actHit('rend')) deckCommitName(this.world);
+        return;
+      }
       if (input.actHit('focus')) deckFocus(this.world);
+      if (input.actHit('rend') && deckBeginNaming(this.world)) return;
       if (deckWheel(this.world, this._wheel)) this._wheel = 0;
       /* AND THE SEVEN THAT ARE NOT WELCOME SAY SO. `_refuse` carries its own
        * 0.7 s per-name gate, so a held key is one notice and one blip rather
        * than sixty. */
       for (const key in OFF_THE_DECK) {
+        /* …EXCEPT THE ONE THAT HAS A JOB HERE. `rend` names the man you are
+         * holding (above), so it must not also print "nothing on this deck is
+         * fighting you" on the same press. With nobody held it refuses exactly
+         * as it always has, which is why the test is on the HOLD and not on
+         * the key. */
+        if (key === 'rend' && deckHolding(this.world)) continue;
         if (input.actHit(key)) this._refuse(key, OFF_THE_DECK[key]);
       }
       return;

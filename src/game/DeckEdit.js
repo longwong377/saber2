@@ -556,6 +556,16 @@ export function optionsFor(row) {
     out.push({ op: 'paint', field, value: null, label: `${field} as issued` });
     for (const p of PAINTS) out.push({ op: 'paint', field, value: p.id, label: `${field} ${p.name}` });
   }
+  /* THE CALLSIGN, WHICH `EDIT_OPS` HAS LISTED SINCE THE DAY THIS FILE LANDED
+   * AND THIS FUNCTION HAS NEVER OFFERED. `deckedit.mjs` asserts EDIT_OPS
+   * equals the menu's op list, so both surfaces agreed about the WORD while
+   * one of them had no way to reach it — a listed op with no control is the
+   * dead-control defect `WEARS` exists to prevent, one file across.
+   *
+   * It is a notch that ARMS the rename rather than a value, because a name is
+   * free text and a wheel has no letters: picking it is the same as pressing
+   * the naming key, which is what `applyEdit` routes it to. */
+  out.push({ op: 'callsign', value: null, label: 'Name him' });
   for (const field of can.kit) {
     const row2 = KIT_FIELDS[kind][field];
     if (!row2) continue;
@@ -595,6 +605,12 @@ export function commitWheel(world) {
   const o = st?.pending;
   if (!o || !st.held) { if (st) st.pending = null; return null; }
   st.pending = null;
+  /* THE CALLSIGN NOTCH ARMS THE RENAME; IT DOES NOT WRITE ONE. A name is free
+   * text and a wheel has no letters, so dialling it opens the typing fence —
+   * the same one the naming key opens — rather than committing `null`, which
+   * is what `applyEdit` would faithfully have done: erased the man's name for
+   * anybody who happened to scroll past the notch. */
+  if (o.op === 'callsign') { beginNaming(world); return null; }
   const look = applyEdit(world, o.op, o.field ? { [o.field]: o.value } : o.value);
   tag(world, nameOf(st.held.rec), o.label);
   return look;
@@ -1317,6 +1333,11 @@ export function leaveDeck(world) {
  * document to listen to.
  */
 export function naming(world) { return !!world?._deckEdit?.naming; }
+
+/** Is a man being held at all? Published for the same reason `naming` is: the
+ *  caller has to know, and a second copy of "is there a held row" in Player.js
+ *  is a second copy of this file's state. */
+export function holding(world) { return !!world?._deckEdit?.held; }
 
 export function beginNaming(world) {
   const st = editState(world);
