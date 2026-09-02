@@ -1653,6 +1653,16 @@ function stepHeal(body, dt, ctx, R) {
  * where `MORALE.RALLY_TOUCH` lands. The morale arithmetic stays in the file
  * that owns morale.
  */
+/**
+ * HOW LIKELY A MAN IS TO GO BACK FOR A DOWNED MATE — BOND × NERVE. Read by
+ * Command's drag branch; exported so the rate can be measured rather than
+ * inferred from a hundred worlds. A loyal, steady man is 1.0 (clamped to
+ * 0.98); a man with little of either is 0.29.
+ */
+export function dragChance(trooper) {
+  return clamp(BEHAVIOUR.drag.chance * (trooper ? scaleOf(trooper, 'bond') * scaleOf(trooper, 'nerve') : 1), 0, 0.98);
+}
+
 export function rallyChance(trooper) {
   return clamp(BEHAVIOUR.rally.chance * (trooper ? scaleOf(trooper, 'resolve') * scaleOf(trooper, 'bond') : 1), 0, 0.98);
 }

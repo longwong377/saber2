@@ -36,7 +36,7 @@ import { Body, LAYER, boxSpheres, capsuleSpheres, box, cylinder, compound, hullF
 import { armKinetic } from '../game/Impact.js';
 import { sliceGeometry, recenterGeometry, spheresForGeometry } from './Slice.js';
 import { registerDestructible } from './Destruction.js';
-import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps, sandMaps, MEAN_ALBEDO } from '../engine/Textures.js';
+import { metalMaps, duracreteMaps, rockMaps, armorMaps, clothMaps, sandMaps, snowMaps, MEAN_ALBEDO } from '../engine/Textures.js';
 import { plateGeo, limbGeo } from '../game/Bodies.js';
 import { makeCapMaterial } from '../game/Ragdoll.js';
 import { TOUGHNESS } from '../game/Combat.js';
@@ -285,6 +285,9 @@ export function propMaterials() {
   // The one map in this file that is not a stand-in for something else: the
   // drift IS the ground, so it gets the ground's own bake (see `drift` below).
   const sandy = sandMaps(2);
+  // The snow forms of the White Pass stand on the SNOW bake, for the reason
+  // the drift below stands on the sand one: they are the ground, piled.
+  const snow = snowMaps(2);
   /**
    * Which bake each material stands on, so mk() can record the product.
    *
@@ -298,7 +301,7 @@ export function propMaterials() {
    */
   const MEAN = new Map([[metal, MEAN_ALBEDO.metal], [crete, MEAN_ALBEDO.duracrete],
     [rock, MEAN_ALBEDO.rock], [armor, MEAN_ALBEDO.armor], [cloth, MEAN_ALBEDO.cloth],
-    [sandy, MEAN_ALBEDO.sand]]);
+    [sandy, MEAN_ALBEDO.sand], [snow, MEAN_ALBEDO.snow]]);
   const mk = (maps, color, rough, metalness) => {
     const m = readsVertexColour(new THREE.MeshStandardMaterial({
       color, map: maps.map, normalMap: maps.normalMap, roughnessMap: maps.roughnessMap,
@@ -429,8 +432,33 @@ export function propMaterials() {
      * Brighter than anything else in the table and tilted BLUE, which is not
      * decoration: snow is bright because its albedo is high, and its shadows
      * are blue because the only thing lighting them is the dome. The level's
-     * own atmosphere block makes the same argument about its ambient. */
-    snowPack: mk(sandy, lit(3.15, 3.32, 3.62), 0.93, 0.0),
+     * own atmosphere block makes the same argument about its ambient.
+     *
+     * ON THE SNOW MAP, NOT THE SAND ONE. "I don't know why the rocks are
+     * yellowish on the ice planet that doesn't really fit they should be
+     * greyish or something." They were yellow because this line stood on the
+     * SAND bake at lit(3.15, 3.32, 3.62): sand's mean is (0.578, 0.399, 0.190),
+     * so the product was (1.82, 1.32, 0.69) — red at nearly three times blue,
+     * clipped to a warm cream, with the desert's own ripple pattern under it.
+     * The blue tilt in the multiplier could not undo a base that is twice as
+     * red as it is blue. The snow bake is neutral grey at 0.389 and carries the
+     * sastrugi the terrain itself is painted with, so the multiplier is now a
+     * plain reading: a tenth brighter than the ground (0xb4bfca, 0.51) and
+     * tilted blue — albedo (0.545, 0.568, 0.615), b > r, which
+     * tools/checks/alpine.mjs holds. */
+    snowPack: mk(snow, lit(1.40, 1.46, 1.58), 0.93, 0.0),
+    /* BARE ROCK ON AN ICE WORLD — the outcrops the White Pass got back.
+     *
+     * `assets/reference/maps/alpine/more hoth.webp` and `more hoth 2.webp`
+     * settle the colour: where the snow gives out the rock is a dark, matte,
+     * blue-grey — a dark basalt in blue skylight, nowhere near the ochre of
+     * `stone` and nowhere near the bright snow-buried `stoneSnow` either. On
+     * the rock bake, whose mean is (0.110, 0.080, 0.059), this lands the
+     * albedo at (0.102, 0.116, 0.138): 0x5a6068 in linear, max channel a third
+     * of the 0.45 the check allows, blue the strongest channel. The snow
+     * dusting on top of each block is vertex colour, not this material — see
+     * `snowDust` — so one draw call carries both the rock and its cap. */
+    rockCold: mk(rock, lit(0.93, 1.45, 2.34), 0.96, 0.0),
     /* Wind-blown sand banked against anything that has stood still in a desert
      * long enough to matter. It is built on the SAND map, and the reason is a
      * textbook case of a mean hiding a distribution.
@@ -3135,6 +3163,240 @@ export function addInstanced(world, geo, mat, list, centre, opts = {}) {
 }
 
 /**
+ * COLLIDERS THAT FIT A LUMPY SHAPE, out of the one static primitive the
+ * solver offers.
+ *
+ * The complaint, on the White Pass: "all the boulders you see on the snow/ice
+ * level don't have physics like I would say the majority of the rocks on the
+ * ice level you can just walk through or you fall through". Every massif on
+ * that level carried exactly one `addStaticBox` — half-extents 0.66·w by
+ * 0.52·h by 0.52·w under a deformed icosahedron of radius w — and a box under
+ * a rounded hill is both halves of the report at once: at the skirt the hill
+ * reaches metres past the box (walk through), and along the box's own top
+ * edge the hill has already fallen away below it (fall through, or stand on
+ * air). Measured before this on the shipped level, ray grid from above: the
+ * physics surface was up to 3.1 m under the visual one and up to 1.4 m over
+ * it.
+ *
+ * `RapierWorld` offers boxes and nothing else for statics, and that is not a
+ * gap to fill: the player's and every droid's own capsule sweeps walk
+ * `physics.staticBoxes` directly and read `.halfExtents` off each record, so
+ * a trimesh handed to Rapier would be solid to a thrown crate and thin air to
+ * a body. What fits a hill out of boxes is a TILE of them — the surface seen
+ * from above, cut into cells, each cell carrying one box whose top face is
+ * the least-squares plane of the surface over it, thick enough to reach well
+ * underground. On a flank the plane tilts with the flank, so the box's own
+ * frame is the surface's and its footprint still covers the cell. Where the
+ * residual is over `tol` — the rim, where a hill curves down into the ground
+ * inside one cell — the cell splits in four, twice at most.
+ *
+ * Samples with no surface over them are the GROUND and are fitted as such,
+ * which is what pulls the rim boxes down onto the terrain instead of leaving
+ * a lip of physics standing out past the snow. A cell whose surface is
+ * nowhere `lip` above the ground is not fitted at all — the heightfield is
+ * already there.
+ *
+ * Cost: the raster is a barycentric test per triangle per sample in its own
+ * bounding box, ~10k tests for a 1280-face massif; the fit is a 3×3 solve per
+ * cell. A massif comes out at 60–140 boxes and the level at ~900, which the
+ * broad phase (`BoxIndex`) was written for. `tools/checks/alpine.mjs` rays
+ * every form on the level against its own physics and holds the answer to
+ * `tol` everywhere.
+ *
+ * Returns the box records it added.
+ */
+export function fitStaticBoxes(world, geo, matrix, opts = {}) {
+  assertOpts(fitStaticBoxes, opts);
+  const cell = opts.cell ?? 2.0;
+  const tol = opts.tol ?? 0.22;
+  const lip = opts.lip ?? 0.10;
+  const thick = opts.thick ?? 1.6;
+  const overlap = opts.overlap ?? 1.10;
+  const friction = opts.friction ?? 0.7;
+  const maxDepth = opts.depth ?? 2;
+  const groundAt = opts.groundAt || ((x, z) => groundY(world, x, z));
+  const physics = world.physics;
+  if (!physics || !physics.addStaticBox) return [];
+
+  // ── world-space triangles
+  const pa = geo.attributes.position, idx = geo.index;
+  const nv = pa.count;
+  const W = new Float32Array(nv * 3);
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+  for (let i = 0; i < nv; i++) {
+    _fv.fromBufferAttribute(pa, i).applyMatrix4(matrix);
+    W[i * 3] = _fv.x; W[i * 3 + 1] = _fv.y; W[i * 3 + 2] = _fv.z;
+    if (_fv.x < x0) x0 = _fv.x; if (_fv.x > x1) x1 = _fv.x;
+    if (_fv.z < z0) z0 = _fv.z; if (_fv.z > z1) z1 = _fv.z;
+  }
+  const nTri = (idx ? idx.count : nv) / 3;
+  const tri = (t, k) => idx ? idx.getX(t * 3 + k) : t * 3 + k;
+
+  // ── the surface seen from above, rasterised at half the SMALLEST cell the
+  // split can reach, so the deepest cell still holds a 3×3 of samples: a
+  // plane fitted through three samples is a guess, and the first build —
+  // which tied the raster to the top cell — stood a guessed plane 2.7 m
+  // over the snow on a flank
+  const fine = cell / Math.pow(2, maxDepth + 1);
+  const nx = Math.max(2, Math.ceil((x1 - x0) / fine) + 1);
+  const nz = Math.max(2, Math.ceil((z1 - z0) / fine) + 1);
+  const H = new Float32Array(nx * nz).fill(-Infinity);
+  for (let t = 0; t < nTri; t++) {
+    const a = tri(t, 0) * 3, b = tri(t, 1) * 3, c = tri(t, 2) * 3;
+    const ax = W[a], az = W[a + 2], bx = W[b], bz = W[b + 2], cx = W[c], cz = W[c + 2];
+    const det = (bx - ax) * (cz - az) - (cx - ax) * (bz - az);
+    if (Math.abs(det) < 1e-9) continue;
+    const i0 = Math.max(0, Math.floor((Math.min(ax, bx, cx) - x0) / fine));
+    const i1 = Math.min(nx - 1, Math.ceil((Math.max(ax, bx, cx) - x0) / fine));
+    const j0 = Math.max(0, Math.floor((Math.min(az, bz, cz) - z0) / fine));
+    const j1 = Math.min(nz - 1, Math.ceil((Math.max(az, bz, cz) - z0) / fine));
+    for (let j = j0; j <= j1; j++) {
+      const pz = z0 + j * fine;
+      for (let i = i0; i <= i1; i++) {
+        const px = x0 + i * fine;
+        const u = ((bx - px) * (cz - pz) - (cx - px) * (bz - pz)) / det;
+        const v = ((cx - px) * (az - pz) - (ax - px) * (cz - pz)) / det;
+        const w = 1 - u - v;
+        if (u < -1e-4 || v < -1e-4 || w < -1e-4) continue;
+        const y = u * W[a + 1] + v * W[b + 1] + w * W[c + 1];
+        if (y > H[j * nx + i]) H[j * nx + i] = y;
+      }
+    }
+  }
+
+  // ── cells, fitted and split where they do not fit
+  const out = [];
+  const xs = [], zs = [], ys = [];
+  const fit = (cx0, cz0, size, depth) => {
+    xs.length = zs.length = ys.length = 0;
+    let above = 0;
+    const i0 = Math.max(0, Math.round((cx0 - x0) / fine)), i1 = Math.min(nx - 1, Math.round((cx0 + size - x0) / fine));
+    const j0 = Math.max(0, Math.round((cz0 - z0) / fine)), j1 = Math.min(nz - 1, Math.round((cz0 + size - z0) / fine));
+    if (i1 < i0 || j1 < j0) return;
+    /* PROUD SAMPLES ONLY. The first build fitted the ground samples too, to
+     * pull the rim boxes down onto the terrain — and on a steep flank that
+     * fits a RAMP through the foot of the cliff and the top of it, standing
+     * metres over bare ground beside the form. A skirt under `lip` is the
+     * heightfield's, and a cell with nothing proud in it gets no box. */
+    for (let j = j0; j <= j1; j++) {
+      for (let i = i0; i <= i1; i++) {
+        const px = x0 + i * fine, pz = z0 + j * fine;
+        const y = H[j * nx + i];
+        if (!(y > groundAt(px, pz) + lip)) continue;
+        above++;
+        xs.push(px); zs.push(pz); ys.push(y);
+      }
+    }
+    if (above < 3) return;
+    // least squares y = a·x + b·z + c about the cell's centre
+    const mx = cx0 + size / 2, mz = cz0 + size / 2;
+    let sxx = 0, sxz = 0, szz = 0, sx = 0, sz = 0, sy = 0, sxy = 0, szy = 0, n = xs.length;
+    for (let k = 0; k < n; k++) {
+      const dx = xs[k] - mx, dz = zs[k] - mz, y = ys[k];
+      sxx += dx * dx; sxz += dx * dz; szz += dz * dz; sx += dx; sz += dz; sy += y; sxy += dx * y; szy += dz * y;
+    }
+    // 3×3 normal equations, solved by Cramer
+    const D = sxx * (szz * n - sz * sz) - sxz * (sxz * n - sz * sx) + sx * (sxz * sz - szz * sx);
+    let a = 0, b = 0, c = sy / n;
+    if (Math.abs(D) > 1e-9) {
+      a = (sxy * (szz * n - sz * sz) - sxz * (szy * n - sz * sy) + sx * (szy * sz - szz * sy)) / D;
+      b = (sxx * (szy * n - sz * sy) - sxy * (sxz * n - sz * sx) + sx * (sxz * sy - szy * sx)) / D;
+      c = (sxx * (szz * sy - sz * szy) - sxz * (sxz * sy - sz * sxy) + sxy * (sxz * sz - szz * sx)) / D;
+    }
+    _fn.set(-a, 1, -b).normalize();
+    /* …measured ALONG THE NORMAL, not vertically: on a 74° flank a vertical
+     * miss of 1.3 m is a plane 0.35 m off the surface, and it is the second
+     * number the body meets. */
+    /* …and the plane is then lifted or lowered to CENTRE its residual band:
+     * least squares minimises the mean square, and the biggest miss of a
+     * plane through a bump sits on one side of it. Halving the band is a
+     * split saved at every rim cell. */
+    let lo = Infinity, hi = -Infinity;
+    for (let k = 0; k < n; k++) {
+      const r = ys[k] - (a * (xs[k] - mx) + b * (zs[k] - mz) + c);
+      if (r < lo) lo = r; if (r > hi) hi = r;
+    }
+    c += (lo + hi) / 2;
+    let worst = (hi - lo) / 2 * _fn.y;
+    const split = () => {
+      const h = size / 2;
+      fit(cx0, cz0, h, depth + 1); fit(cx0 + h, cz0, h, depth + 1);
+      fit(cx0, cz0 + h, h, depth + 1); fit(cx0 + h, cz0 + h, h, depth + 1);
+    };
+    if (worst > tol && depth < maxDepth) { split(); return; }
+    // the box: top face on the plane, thick below it. Its own frame is the
+    // plane's — local X level and across the slope, local Z up the slope —
+    // and its extents are the bounding box OF THE SAMPLES in that frame, so a
+    // wall cell gets a wall-shaped box and nothing is extrapolated past what
+    // was measured. (Stretching by 1/n.y to cover the footprint was tried: on
+    // a near-vertical flank it stood a plane 3 m over the snow.)
+    /* The in-plane axes are WORLD X and Z laid onto the plane, not "across
+     * and up the slope": the cells are squares on world axes, and a frame
+     * turned 45° to them bounds a square cell with one √2 larger — which
+     * reached a metre into the next cell and stood its own plane 1.2 m over
+     * the neighbour's snow. */
+    _fx.set(1, 0, 0).addScaledVector(_fn, -_fn.x).normalize();   // world X, on the plane
+    _fz.crossVectors(_fx, _fn).normalize();                      // world Z, on the plane
+    let u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+    for (let k = 0; k < n; k++) {
+      const dx = xs[k] - mx, dz = zs[k] - mz;
+      const dy = a * dx + b * dz;                  // the sample, on the plane
+      const u = dx * _fx.x + dy * _fx.y + dz * _fx.z, v = dx * _fz.x + dy * _fz.y + dz * _fz.z;
+      if (u < u0) u0 = u; if (u > u1) u1 = u; if (v < v0) v0 = v; if (v > v1) v1 = v;
+    }
+    const pad = fine * 0.5 * overlap;
+    const hx = (u1 - u0) / 2 * overlap + pad, hz = (v1 - v0) / 2 * overlap + pad;
+    /* The box is a rectangle and the proud region is not, and on a plane
+     * tilted two ways the rectangle's footprint leans out of its cell: its
+     * corners reach over samples that are ground, skirt, or the NEXT cell's
+     * surface, and there the plane is an extrapolation. Every raster node
+     * under the rectangle is therefore held to `tol` — a proud one both ways,
+     * a ground one from above only, since a plane that dips under the terrain
+     * is the heightfield's — and a cell that fails splits. */
+    const uc = (u0 + u1) / 2, vc = (v0 + v1) / 2;
+    {
+      // the rectangle's footprint on the ground, which is a parallelogram
+      // that can lean out of the cell on a plane tilted two ways
+      const ex = hx * Math.abs(_fx.x) + hz * Math.abs(_fz.x), ez = hx * Math.abs(_fx.z) + hz * Math.abs(_fz.z);
+      const rx = mx + uc * _fx.x + vc * _fz.x, rz = mz + uc * _fx.z + vc * _fz.z;
+      const i0 = Math.max(0, Math.floor((rx - ex - x0) / fine)), i1 = Math.min(nx - 1, Math.ceil((rx + ex - x0) / fine));
+      const j0 = Math.max(0, Math.floor((rz - ez - z0) / fine)), j1 = Math.min(nz - 1, Math.ceil((rz + ez - z0) / fine));
+      for (let j = j0; j <= j1; j++) {
+        for (let i = i0; i <= i1; i++) {
+          const px = x0 + i * fine, pz = z0 + j * fine;
+          const dx = px - mx, dz = pz - mz, dy = a * dx + b * dz;
+          const u = dx * _fx.x + dy * _fx.y + dz * _fx.z, v = dx * _fz.x + dy * _fz.y + dz * _fz.z;
+          if (Math.abs(u - uc) > hx || Math.abs(v - vc) > hz) continue;
+          const g = groundAt(px, pz), y = H[j * nx + i];
+          const e = y > g + lip ? Math.abs(c + dy - y) * _fn.y : (c + dy - Math.max(y, g)) * _fn.y;
+          if (e > worst) worst = e;
+        }
+      }
+    }
+    if (worst > tol && depth < maxDepth) { split(); return; }
+    /* Thin on a steep cell. A thick box under a tilted plane pushes its
+     * down-slope END out through the surface below it: the bottom corner sits
+     * t·(n.y² − n_h²)/n.y under the surface, which is negative past 45°, and
+     * on a 60° flank a 0.45 m box stood 0.55 m out of the snow at the foot.
+     * n.y³ takes a 2 m slab to 0.25 m at 60° and 0.2 m — the floor, which is
+     * 12 m/s of capsule per step — on a wall. */
+    const t = clamp(thick * _fn.y * _fn.y * _fn.y, 0.2, thick);
+    _fm.makeBasis(_fx, _fn, _fz);
+    _fq.setFromRotationMatrix(_fm);
+    _fc.set(mx, c, mz).addScaledVector(_fx, uc).addScaledVector(_fz, vc).addScaledVector(_fn, -t / 2);
+    const rec = physics.addStaticBox(_fc, _fh.set(hx, t / 2, hz), _fq,
+      { friction, userData: { fitted: true, worst, cell: [cx0, cz0, size, above] } });
+    if (rec) out.push(rec);
+  };
+  const cx0 = Math.floor(x0 / cell) * cell, cz0 = Math.floor(z0 / cell) * cell;
+  for (let cz = cz0; cz < z1; cz += cell) for (let cx = cx0; cx < x1; cx += cell) fit(cx, cz, cell, 0);
+  return out;
+}
+const _fv = new THREE.Vector3(), _fn = new THREE.Vector3(), _fc = new THREE.Vector3(), _fh = new THREE.Vector3();
+const _fx = new THREE.Vector3(), _fz = new THREE.Vector3(), _fm = new THREE.Matrix4();
+const _fq = new THREE.Quaternion();
+
+/**
  * A sedimentary outcrop: one tall bedded mass — the beds are cut into the mass
  * itself, not stacked as separate discs, which is the difference between a
  * crag and a pile of plates — plus buttress spurs at its foot, a cap rock, and
@@ -3413,6 +3675,91 @@ export function addBoulderCluster(world, centre, opts = {}) {
       lists[v], centre, { colors: cols[v] }));
   }
   return out;
+}
+
+/**
+ * SNOW ON A STONE, as vertex colour. Every face that looks up takes the cap,
+ * fading out through the flanks, and the rest is the rock it is. One material,
+ * one draw, which is the whole reason it is a colour and not a second mesh.
+ * `cap` is the linear colour of the snow, `amount` how far down it reaches.
+ */
+export function snowDust(geo, cap = [0.62, 0.65, 0.72], amount = 0.55) {
+  if (!geo.attributes.normal) geo.computeVertexNormals();
+  const n = geo.attributes.normal, p = geo.attributes.position;
+  const col = new Float32Array(p.count * 3);
+  for (let i = 0; i < p.count; i++) {
+    const t = clamp((n.getY(i) - (1 - amount)) / amount, 0, 1);
+    const k = t * t * (3 - 2 * t);
+    // the rock's own multiplier is 1 (the material carries the colour); the
+    // cap multiplies UP toward the snow, which the material's dark albedo
+    // needs several times of to reach
+    const gain = [cap[0] / 0.102, cap[1] / 0.116, cap[2] / 0.138];
+    col[i * 3] = 1 + (gain[0] - 1) * k;
+    col[i * 3 + 1] = 1 + (gain[1] - 1) * k;
+    col[i * 3 + 2] = 1 + (gain[2] - 1) * k;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return geo;
+}
+
+/**
+ * A ROCK OUTCROP FOR AN ICE WORLD: a few big broken blocks, low and wide,
+ * dark under a dusting of snow, and SOLID.
+ *
+ * The White Pass had its stone taken out on an instruction ("get rid of the
+ * rocks in the white pass… it feels like a reskin of the dunes map") and the
+ * reading was right about the shapes and the colour and wrong about the
+ * quantity: `more hoth.webp` and `more hoth 2.webp` in the reference folder
+ * are full of dark rock where the wind has stripped the ridges bare. So this
+ * is a modest number of them, and they are not the dune sea's shapes — no
+ * spires, no bedded crags, no scree fans. Blocks out of `boulderGeo`, lying
+ * flat (the aspect is squashed to 0.55 in y before it is placed), sunk a
+ * quarter of their height into the pack, in `rockCold` with `snowDust` on the
+ * upward faces.
+ *
+ * Every block carries `fitStaticBoxes` colliders, because a rock you can
+ * walk through was the first half of the report this answers. Merged to one
+ * mesh per outcrop: one draw, and one thing for a bolt to hit.
+ */
+export function addRockOutcrop(world, pos, opts = {}) {
+  assertOpts(addRockOutcrop, opts);
+  const M = propMaterials();
+  const r = makeRng((opts.seed ?? 77) * 17 + 3);
+  const n = opts.count ?? 4;
+  const size = opts.size ?? 2.4;
+  const yaw = opts.yaw ?? 0;
+  const parts = [];
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), p = new THREE.Vector3();
+  for (let i = 0; i < n; i++) {
+    const v = (i + (opts.seed ?? 0)) % BOULDER_VARIANTS;
+    const g = boulderGeo(v, (opts.seed ?? 77) + i * 13);
+    // biggest in the middle, and the ring of smaller blocks tight against it
+    const t = i === 0 ? 0 : 0.55 + r() * 0.5;
+    const a = yaw + i * 2.1 + r() * 0.8;
+    const sc = size * (i === 0 ? 1 : 0.45 + r() * 0.4);
+    p.set(Math.cos(a) * t * size * 1.1, 0, Math.sin(a) * t * size * 1.1);
+    const gy = groundY(world, pos.x + p.x, pos.z + p.z) - pos.y;
+    // sunk: a quarter of its height, so it stands out of the pack rather than
+    // resting on it like a prop
+    p.y = gy - sc * 0.55 * 0.25;
+    q.setFromEuler(new THREE.Euler((r() - 0.5) * 0.3, a + r() * 1.5, (r() - 0.5) * 0.3));
+    s.set(sc * (1.0 + r() * 0.5), sc * 0.55 * (0.8 + r() * 0.4), sc * (0.9 + r() * 0.4));
+    m.compose(p, q, s);
+    g.applyMatrix4(m);
+    parts.push(g);
+  }
+  const geo = mergeGeos(parts);
+  geo.computeVertexNormals();
+  snowDust(geo, opts.cap ?? [0.62, 0.65, 0.72], 0.55);
+  const mesh = new THREE.Mesh(geo, opts.mat || M.rockCold);
+  mesh.name = 'rockOutcrop';
+  mesh.position.copy(pos);
+  mesh.castShadow = true; mesh.receiveShadow = true;
+  mesh.matrixAutoUpdate = false; mesh.updateMatrix();
+  world.scene.add(mesh);
+  world.statics.push(mesh);
+  mesh.userData.boxes = fitStaticBoxes(world, geo, mesh.matrix, { cell: 1.6, tol: 0.2, thick: 1.4, friction: 0.9, depth: 3 });
+  return mesh;
 }
 
 /* How a chip is allowed to sit. CHIP_LEAN is the wobble off the ground's own

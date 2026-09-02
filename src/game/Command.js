@@ -104,7 +104,7 @@ import { MORALE, HURT_AT } from './Morale.js';
 import { applyLevy } from './Levy.js';
 import { applyArmour } from './Armour.js';
 import { shakeNerve } from './Nerve.js';
-import { findCasualty, startDrag, braveryOf, findPatient, startHeal, startRally, rallyChance,
+import { findCasualty, startDrag, braveryOf, findPatient, startHeal, startRally, rallyChance, dragChance,
   findRifle, startSalvage, salvageChance, dieOf, BEHAVIOUR, REACTION_STATS } from './Reactions.js';
 import { marchFront } from '../world/Front.js';
 /* THE SHAPE OF ONE SITTING — how long it is and which ground it crosses.
@@ -9455,7 +9455,7 @@ export class CommandDirector extends WaveDirector {
          * decide again for a third of the cooldown, so the field does not
          * re-roll him sixty times a second until he says yes.
          */
-        const will = dieOf(e, 6) < clamp(BEHAVIOUR.drag.chance * t.scale('bond') * t.scale('nerve'), 0, 0.98);
+        const will = dieOf(e, 6) < dragChance(t);
         if (will && startDrag(e, hurt, ctx)) {
           e._dragCd = DRAG_AGAIN;
           this.world?.notifyFloating?.(e.position, 'MAN DOWN', 0x9bb862);

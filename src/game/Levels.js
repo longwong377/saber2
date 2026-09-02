@@ -29,6 +29,7 @@ import {
   addAntenna, addPlinth, addStair, addRailing, addFloorSlab, addSign, addRuinedGate,
   addMachine, addTank, addStanchion, addButtress, addBalcony, addCrowd, addStorm,
   addInstanced, slabGeo, tubeUv, paintGeo, mergeGeos, torusGeo,
+  addRockOutcrop, fitStaticBoxes,
 } from '../world/Props.js';
 import { addHorizon, makeCoverField, ground, BODY_FADE } from '../world/Scenery.js';
 import { registerDestructible } from '../world/Destruction.js';
@@ -712,9 +713,18 @@ function driftHumpGeo(seed) {
 
 /**
  * A massif: the big rounded white hill in the reference's mid-distance. It is
- * cover, so unlike everything else here it carries a collider — the ONLY
- * furniture on this level that does, which is the honest reading of a place
- * whose ground is otherwise unbroken.
+ * cover, so it carries colliders — and they FIT.
+ *
+ * "all the boulders you see on the snow/ice level don't have physics like I
+ * would say the majority of the rocks on the ice level you can just walk
+ * through or you fall through." What the player calls the boulders are these:
+ * each one carried a single `addStaticBox` of half-extents (0.66w, 0.52h,
+ * 0.52w) under a lumpy hill of radius w, so the skirt was walk-through for
+ * the last third of its width and the top edge of the box stood over air where
+ * the hill had already curved away. Measured on the shipped level, ray grid
+ * from above: physics 3.1 m under the snow at worst, 1.4 m over it at worst.
+ * `fitStaticBoxes` tiles the surface instead — see its note in Props.js — and
+ * `tools/checks/alpine.mjs` holds every form on this level to 0.25 m.
  */
 function addSnowMassif(world, pos, opts = {}) {
   const q = makeRng(opts.seed ?? 1);
@@ -722,24 +732,30 @@ function addSnowMassif(world, pos, opts = {}) {
   const g = new THREE.IcosahedronGeometry(1, 3);
   const p = g.attributes.position;
   const ph = [q() * TAU, q() * TAU, q() * TAU, q() * TAU];
+  /* ONE squash for the whole hill. This was `w * (0.7 + q() * 0.05)` INSIDE
+   * the loop, and the icosahedron is non-indexed — the same corner belongs to
+   * five or six triangles as five or six separate vertices — so every corner
+   * was scaled by a different draw and the triangles no longer met: cracks up
+   * to half a metre wide all over every massif, which is what a ray from
+   * above found when the fit check first ran (it fell straight through the
+   * top of the hill 2 m from its crown). */
+  const zk = w * (0.7 + q() * 0.05);
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
     const k = 1 + 0.20 * Math.sin(x * 1.3 + ph[0]) + 0.16 * Math.sin(z * 1.1 + ph[1])
                 + 0.11 * Math.sin(y * 2.0 + ph[2]) + 0.07 * Math.sin((x - z) * 2.7 + ph[3]);
-    p.setXYZ(i, x * k * w, y * k * h - h * 0.42, z * k * w * (0.7 + q() * 0.05));
+    p.setXYZ(i, x * k * w, y * k * h - h * 0.42, z * k * zk);
   }
   g.computeVertexNormals();
   const mesh = new THREE.Mesh(g, propMaterials().snowPack);
+  mesh.name = 'snowMassif';
   mesh.position.copy(pos);
   mesh.rotation.y = opts.yaw ?? 0;
   mesh.castShadow = true; mesh.receiveShadow = true;
   mesh.matrixAutoUpdate = false; mesh.updateMatrix();
   world.scene.add(mesh);
   world.statics.push(mesh);
-  world.physics?.addStaticBox?.(pos.clone().add(new THREE.Vector3(0, h * 0.12, 0)),
-    new THREE.Vector3(w * 0.66, h * 0.52, w * 0.52),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, mesh.rotation.y, 0)),
-    { friction: 0.62 });
+  mesh.userData.boxes = fitStaticBoxes(world, g, mesh.matrix, { cell: 2.4, tol: 0.22, thick: 2.0, friction: 0.62, depth: 4 });
   return mesh;
 }
 
@@ -793,9 +809,22 @@ function strewSnowForms(world, opts = {}) {
       new THREE.Vector3(), { name: 'snowSastruga' + v, castShadow: false })) calls++;
   }
 
-  /* ── drift humps, in clumps: the wind piles them where it is already piling. */
+  /* ── drift humps, in clumps: the wind piles them where it is already piling.
+   *
+   * AND THE BIG ONES ARE SOLID. The note under `strewSnowForms` used to say
+   * "nothing here is a collider and nothing is over a metre high", and the
+   * second half was the reason for the first: a hump you cannot trip on does
+   * not need physics. The large grade reaches 0.69 m, which is knee height on
+   * the figure and is exactly what the player walked through. Every hump whose
+   * crest stands over 0.6 m gets `fitStaticBoxes` at a metre cell; the small
+   * grade (crest 0.30 m at most) stays as it was, for the reason the old note
+   * gave. The sastrugi are ankle height and stay free too. */
   for (let v = 0; v < 2; v++) {
     const list = [];
+    const humpGeo = driftHumpGeo(seed + 40 + v);
+    humpGeo.computeBoundingBox();
+    const crest = humpGeo.boundingBox.max.y;
+    const solid = [];   // which instances got colliders, for the fit check
     drift(world, {
       field: (x, z) => field.at(x, z), count: Math.round((opts.humps ?? 1) * (v ? 28 : 46)),
       rmin: 4, rmax: R, clearance: 0, maxSlope: 0.45, tries: 7,
@@ -807,11 +836,17 @@ function strewSnowForms(world, opts = {}) {
         const s = (v ? 2.2 : 0.95) * (0.6 + q() * 0.9);
         _q.setFromAxisAngle(UPY, q() * TAU);
         _s.set(s, s * (0.7 + q() * 0.6), s * (0.72 + q() * 0.5));
-        list.push(_m.compose(_p.set(x, T ? T.height(x, z) : 0, z), _q, _s).clone());
+        const mtx = _m.compose(_p.set(x, T ? T.height(x, z) : 0, z), _q, _s).clone();
+        list.push(mtx);
+        if (crest * _s.y > 0.6) {
+          solid.push(list.length - 1);
+          fitStaticBoxes(world, humpGeo, mtx, { cell: 1.6, tol: 0.2, thick: 0.15, friction: 0.62, depth: 3 });
+        }
       }
     });
-    if (addInstanced(world, driftHumpGeo(seed + 40 + v), M.snowPack, list,
-      new THREE.Vector3(), { name: 'snowDrift' + v, castShadow: v === 1 })) calls++;
+    const im = addInstanced(world, humpGeo, M.snowPack, list,
+      new THREE.Vector3(), { name: 'snowDrift' + v, castShadow: v === 1 });
+    if (im) { im.userData.solid = solid; calls++; }
   }
   return calls;
 }
@@ -2551,10 +2586,29 @@ export const LEVELS = {
         addSnowMassif(world, site.pos, { size: 5.5 + rng() * 6, height: 4 + rng() * 5,
           seed: 700 + k, yaw: rng() * TAU });
       }
+      /* ── AND EIGHT ROCK OUTCROPS, WHICH IS NOT THE STONE FIELD COMING BACK.
+       *
+       * "the rocks are yellowish on the ice planet that doesn't really fit
+       * they should be greyish or something." The yellow was the massifs and
+       * the humps — `snowPack` stood on the sand bake, see Props.js — and that
+       * is fixed at the material. But the sentence also says the player
+       * expects ROCK on this level, and the two wider reference plates
+       * (`more hoth.webp`, `more hoth 2.webp`) agree: dark blue-grey blocks
+       * wherever the wind has stripped a ridge. So a modest number come back,
+       * low and wide so the field still fights, in `rockCold` under a snow
+       * cap, each with fitted colliders — `addRockOutcrop`. Eight, against the
+       * fourteen crags plus three-grade stone field this level used to strew;
+       * the shapes are blocks, not the dune sea's spires. */
+      for (let k = 0; k < 8; k++) {
+        const site = findSite(world, 24, 118, { angle: (k / 8) * TAU + 0.4 + rng() * 0.6, clearance: 9, maxSlope: 0.34, tries: 18 });
+        if (!site) continue;
+        addRockOutcrop(world, site.pos, { size: 2.1 + rng() * 1.5, count: 3 + (rng() * 3 | 0),
+          seed: 760 + k, yaw: rng() * TAU });
+      }
       /* THE GROUND ITSELF. Sastrugi combed along the level's own wind bearing,
        * and drift humps in clumps where the field says the wind is already
-       * piling. Nothing here is a collider and nothing is over a metre high: a
-       * snowfield you trip on is a snowfield you cannot fight in. */
+       * piling. The sastrugi and the small humps are free; the big humps —
+       * over 0.6 m, knee height — are solid, see `strewSnowForms`. */
       strewSnowForms(world, { seed: 9932, radius: 148, spread: 0.52 });
 
       /**
