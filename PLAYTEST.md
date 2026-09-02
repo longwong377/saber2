@@ -42,6 +42,76 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
+## 1 Sep — SABER GAME NOTES AND IMPROVEMENTS V11
+
+Handed over with: *"You will finish everything on this list to perfection,
+every single thing I talked about … refer back to past long instructions I've
+given you and make sure you have not missed anything."* And, mid-session:
+*"Opus 5 came up with the hangar that you received … look at the reference
+images … feel free to trash whatever you would like in the hangar and start
+over."*
+
+Marks per the rule at the top of this file. Every ✅ names its check.
+
+### The hangar as a room
+
+| Note | Mark | Where |
+|---|---|---|
+| Planet/war must face the field, in front of you | ✅ | `hangar: the deck ends at the field, and the planet is in the opening` — `SkyDome._placeByPhase` scores the orbit against the aperture's azimuth |
+| Too big outside the side walls, you could go behind them; ships through the walls | ✅ | `hangar: a room closed on five sides…` — walls the full length, colliders to match; traffic lanes inside `DECK_ZONES` (`deckcast`) |
+| A solid ceiling, very high, higher than the walls, not a box | ✅ | `hangar: a lid, high over the walls, and busy underneath — not a box` |
+| Remove the wheel/spoke logo on ground and wall; one per faction | ✅ | floor emblem gone; Republic roundel / Separatist hex on the bulkhead only (`faction: wears its mark`) |
+| Wider | ✅ | 160 m between the walls (was 112) |
+| PBR feel / not cel | ✅ | `cel` (27) — every deck material through the cel pipeline, no specular |
+| Reflective / mirror floor | ✅ | `deckmirror` (11) — a planar reflection, dark, once a frame, tier-gated |
+| More floor detail | ✅ | seam grid, thin guide lines, pad rings, 152 recessed marker lights; the giant paint gone (`hangar` cost check bounds it) |
+| Is it what would have been built from scratch against the references? | ✅ | Rebuilt: pale steel, slab walls with vertical strips, gallery, booths, doors, a rounded aperture with a 3 m bright rim, lit ceiling grid, wall-coloured haze. `hangar`, `faction`, `refhold`, `cel`. Looked at in six frames (spawn, mid, port, aft, up, lip). |
+
+### The deck alive
+
+| Note | Mark | Where |
+|---|---|---|
+| Countless ships, repairs, R2 units, droids; dense | ✅ | `decklife` (12), `deckcast` (9): 15 droids of 5 kinds, 13 workers, 2 cranes, 3 sleds, 5 repair jobs, 3 modelled hulls, 7 patrol silhouettes |
+| Nearby ships must be modelled, touchable | ✅ | `deckcast: every builder builds, and the hulls are modelled…` — 120+ primitive hulls with colliders on the pads |
+| Workers are 1/10 stand-ins with no physics | ✅ | humanoid crew with the real gait, a `Shovable` body each (`deckcast`) |
+| Countless things to throw around | ✅ | 28 PROP-layer bodies the Force grips (`deckcast`) |
+| Ships disappear after the field instead of receding | ✅ | `deckcast: six hulls in flight…receding to specks` — unfogged far leg to 720 m, camera far 1008 |
+| PA, announcements | ✅ | `deck-audio` (25): PA lines through `notify`, ≥ 14 s apart |
+| Other troopers besides mine | ✅ | a crowd of 18 in `crowdL`/`crowdR`; the company waits among them (`deckflight`, `deckedit`) |
+
+### The company
+
+| Note | Mark | Where |
+|---|---|---|
+| Customise / see troops on a FRESH run | ✅ | `barracks: a dressed recruit survives a remint`, `deckedit` (6 veterans + 4 recruits from the muster slate) |
+| File in from the crowd on the order | ✅ | `deckflight: the dwell boards the company…` (real walk, no frame > 0.3 m) — a staggered start used to teleport |
+| Bowling pins | ✅ | `deckplay` shove rows — planted under 3.2 m/s, over on a push |
+| Trooper capes as cloth | ✅ | `trooper-cape` (4), `cloth-cost` |
+| Customisation is crayony, not lived-in | ✅ | `worn-paint` (8): per-vertex paint with chipped edges, no emissive, droids too |
+| Survives promotions; works for Separatists | ✅ | `company` (28), `barracks` (35), `appearance` |
+| Troopers fire from their wrists | ✅ | `rifle-hold` (5): stock in the shoulder, bore on target; B2's wrist gun aims (`reference-fidelity`) |
+| Polish every NPC against its reference | ✅ | `reference-fidelity` (15): B1 head, B2 hood/beak, droideka copper cowl and roll, walker ball, geonosian horns and wings, ARC mantle, right hand a right hand |
+
+### The hub
+
+| Note | Mark | Where |
+|---|---|---|
+| Short solo elevator ride with windows, doors open, walk out, doors close and it leaves | ✅ | `decklift` (3) |
+| Board a ship to start any match; fly out through the field; capital ship shrinks; planet grows; atmosphere; the existing landing | ✅ | `deckflight` (3) → `onDeckDeploy` in vacuum → the insertion's own orbit phase (`Extraction`, capital ship astern per faction) |
+| Retreat/finish → land back in the hangar | ✅ | `deckflight: a run that ends with you standing lands you on the deck…`; `main.js gameOver` → `enterHangar({card})` |
+| Elevator = main menu | ✅ | `decklift: called from the doors…onDeckLeave` |
+| Different capital ship per faction | ✅ | `Vehicles.buildCapitalShip` by side, flown by `Extraction` |
+| Lightsaber can't damage anything in the hangar | ✅ | `deckplay: the blade comes out down, the ignite key lights it, and a stroke puts a man on the deck` |
+| Pause/menus with a solid background | ✅ | `backdrop` (5), `pause-card` (10) — the paused game through an 18% scrim, or the menu plate |
+
+### Left honestly open
+
+- ⚠️ A landed hull sits, spins up and lifts; it does not taxi to a launch mark.
+- ⚠️ MagnaGuard idle staff twirl, beasts, enemy Jedi robes: not reworked beyond
+  what already matched the references.
+- ⚠️ A painted trooper is 3.6× the triangles of a bare one (33k vs 9k); the
+  knobs are `PAINT.fine/levels/band` in Command.js if the frame budget bites.
+
 ## 31 Aug — "I want you to completely trash this screen"
 
 Handed over with: *"I have told Opus and you (Fable) at times to build a highly

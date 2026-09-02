@@ -200,7 +200,8 @@ function frame() {
     /* A third mark in the starboard corner: a fighter's half-span inside
      * `CLEAR`. Pad B would be the natural third pad, but `dressStructure`
      * stands its own parked shuttle on it. */
-    padS: { x: Math.min(Z.apron.x1 * 0.80, CLEAR - 8), z: (Z.apron.z0 + Z.apron.z1) * 0.5 - 2 },
+    /* Pad B itself (Hangar.PADS.b), now that nothing static stands on it. */
+    padS: { x: 44, z: 96 },
     crash: { x: 0, z: Z.apron.z0 + 6 },
   };
 

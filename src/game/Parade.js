@@ -54,7 +54,7 @@ import { BipedAnimator, limbScale, SOLE_BIAS } from './Rig.js';
 import { smoothstep, TAU } from '../engine/MathUtil.js';
 import { ARCHETYPES, seatWeapon } from './Enemy.js';
 import { bodyOptsFor, kitOptsFrom, buildBlaster } from './Bodies.js';
-import { RANKS, rankFor, markById, CommandDirector } from './Command.js';
+import { RANKS, rankFor, markById, CommandDirector, prepPaint } from './Command.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 /* Scratch, module-level and reused, for the reason Rig.js gives over its own:
@@ -897,6 +897,9 @@ export function buildFigure(man, opts = {}) {
   if (!root) return null;
   if (rig && opts.stand) opts.stand(rig);
   const stub = { rig, A: { scale: A.scale ?? 1 }, group: root };
+  /* His paint topology is fixed at build, so a recruit's first mark on the
+   * deck does not refine him after the bake and cost a re-bake. */
+  try { prepPaint(stub); } catch {}
   const R = RANKS[rankFor(man.xp | 0)];
   if (R?.color != null) CommandDirector.prototype.repaint.call(null, stub, R.color);
   const mark = markById(man.look?.mark)?.color;

@@ -873,7 +873,9 @@ export function dressStructure(kit, paint) {
    * ladder. The near pad is left EMPTY here: the army's real transport stands
    * on it, built by `DeckFlight`, because a ship you can walk into has to be
    * a ship. */
-  shuttlePad(kit, 44, 96, { radius: 15, yaw: -1.2 });
+  /* Pad B carries no static ship: DeckLife's third hull lands and launches
+   * from it, so what stands there is a real, moving craft. */
+  shuttlePad(kit, 44, 96, { radius: 15, yaw: -1.2, ship: false });
   shuttlePad(kit, DEPLOY_RAMP.x, DEPLOY_RAMP.padZ, { radius: 15, yaw: 0, ship: false, height: 0.45 });
   /* A painted apron at the ramp's foot, so the one square metre of deck that
    * does something is a place rather than a trap. */
