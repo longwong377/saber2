@@ -1387,7 +1387,16 @@ const FINGER_TABLE = {
  * than asserted here.
  */
 export function buildHand(side, S, opts = {}) {
-  const tw = side === 'L' ? 1 : -1;
+  /* THE THUMB IS ON THE OUTSIDE OF THE HAND, WHICH IS A CHIRALITY AND NOT A
+   * TASTE. Fingers point down local +Y and curl toward local +Z, so the palm
+   * faces +Z; for a RIGHT hand the thumb is then at fingers × palm = +X, and
+   * for a left hand at -X. This was the other way round — the 'R' hand was a
+   * left hand — and nothing looked at it until a rifle was put in it: the
+   * trigger hand's thumb, which `GRIP_R` in Enemy.js maps up the weapon's +Y,
+   * came out UNDER the receiver, and the support hand's pointed back along
+   * the fore-end instead of forward. `PALM` and the finger table are
+   * symmetric in X, so no hold point moved when it was put right. */
+  const tw = side === 'L' ? -1 : 1;
   const palmW = (opts.palmW ?? 0.086) * S;
   const palmL = (opts.palmL ?? 0.074) * S;
   const palmT = (opts.palmT ?? 0.030) * S;
@@ -5534,7 +5543,7 @@ function droidHandGeo(side, S, o = {}) {
 export const B1_KITS = {
   line: {},
   rocket: { pack: 'rocket' },
-  commando: { blade: 'vibro' },
+  commando: { blade: 'vibro', stoop: 0.22, head: -0.16 },
   target: { training: true },
 };
 
@@ -5567,21 +5576,28 @@ export function buildB1(opts = {}) {
   const bolt = boltGeo(0.008 * S, 0.008 * S);
 
   /** Cranium, snout, mandible and neck ring, as one geometry. */
+  /* THE B1 HEAD, AGAINST THE PLATE. A B1's head is a long, narrow, blunt
+   * SNOUT — about 28 cm nose to nape on a 12 cm-tall head — carried level on
+   * a thin neck: a small cranium at the back, and in front of it a flat-topped
+   * bar with squared flanks that tapers only a little and ends in a blunt face
+   * with the two photoreceptors set INTO it, looking straight ahead. What was
+   * here tapered that bar to an 18 mm point and hung the eyes off its flanks
+   * beside the cranium, so from any angle but dead-on it read as a beak with
+   * two mortarboards behind it. There are no ear vanes on a B1 either; the
+   * one thing standing off the skull is the antenna. */
   const headShell = (s) => assemble([
-    [(() => { const g = new THREE.SphereGeometry(0.050 * s, 10, 8); g.scale(0.94, 1.14, 1.10); return g; })(),
-      [0, 0.120 * s, -0.014 * s]],
-    [plateGeo(0.068 * s, 0.070 * s, 0.048 * s, 0.010 * s, 1), [0, 0.116 * s, -0.058 * s]],
-    [limbGeo(0.212 * s, 0.041 * s, 0.018 * s, 8, true,
-      { rings: 3, bulge: 0.07, bulgeAt: 0.18, capN: 2, capY0: 0.35, capY1: 0.55 }),
-      [0, 0.126 * s, 0.004 * s], [1.80, 0, 0]],
-    [limbGeo(0.148 * s, 0.023 * s, 0.012 * s, 6, true,
-      { rings: 2, bulge: 0, capN: 2, capY0: 0.3, capY1: 0.5 }),
-      [0, 0.086 * s, 0.008 * s], [1.99, 0, 0]],
+    // cranium: a small egg at the back, longer than it is wide
+    [(() => { const g = new THREE.SphereGeometry(0.052 * s, 10, 8); g.scale(0.92, 1.02, 1.22); return g; })(),
+      [0, 0.114 * s, -0.030 * s]],
+    // the snout: a rounded bar off the front of the cranium, a touch narrower
+    // and shallower toward the face, its nose dropped a few degrees
+    [plateGeo(0.066 * s, 0.056 * s, 0.215 * s, 0.020 * s, 2), [0, 0.108 * s, 0.092 * s], [0.10, 0, 0]],
+    [plateGeo(0.058 * s, 0.046 * s, 0.070 * s, 0.014 * s, 1), [0, 0.098 * s, 0.200 * s], [0.10, 0, 0]],
+    // the ridge along the crown, cranium to nose
+    [plateGeo(0.024 * s, 0.012 * s, 0.230 * s, 0.004 * s, 1), [0, 0.140 * s, 0.070 * s], [0.10, 0, 0]],
+    // the throat under the cranium, into the neck ring
+    [limbGeo(0.060 * s, 0.030 * s, 0.024 * s, 8, true, { rings: 2, bulge: 0, capN: 1 }), [0, 0.020 * s, -0.010 * s]],
     [bandGeo(0.026 * s, 0.040 * s, 0.030 * s, 0.047 * s, 0.034 * s, 10), [0, -0.010 * s, 0]],
-    // ear vanes: fixed coordinates, so they belong in the shell rather than in
-    // a decoration bucket of their own
-    [plateGeo(0.009 * s, 0.082 * s, 0.040 * s, 0.003 * s, 1), [0.052 * s, 0.108 * s, -0.014 * s], [0, 0, 0.18]],
-    [plateGeo(0.009 * s, 0.082 * s, 0.040 * s, 0.003 * s, 1), [-0.052 * s, 0.108 * s, -0.014 * s], [0, 0, -0.18]],
   ], 'head');
 
   dressHumanoid(rig, {
@@ -5610,35 +5626,38 @@ export function buildB1(opts = {}) {
 
     buildHead(headObj, s, hg) {
       const k = new Kit();
-      // A point on the snout's axis a third of the way along it. The obvious
-      // choice — the base of the snout — is also inside the cranium, and the
-      // nearest exit from there is the back of the cranium's own wall, which
-      // is where both photoreceptors ended up: 1.5cm from the centreline,
-      // completely swallowed.
-      const core = new THREE.Vector3(0, 0.103 * s, 0.101 * s);
+      /* THE PHOTORECEPTORS ARE IN THE FACE. Two recessed sockets on the blunt
+       * end of the snout, a hand's width apart, looking straight down the
+       * nose — probed from a point inside the nose block so the ray leaves
+       * through its front wall and not the cranium's. The lens sits a couple
+       * of millimetres back in its socket, which is what makes it a socket. */
+      const core = new THREE.Vector3(0, 0.098 * s, 0.170 * s);
       const d = new THREE.Vector3();
       k.pair((sx) => {
-        // out and up from the snout's spine, roughly square to its axis
-        d.set(sx * 0.76, 0.60, 0.24).normalize();
-        const p = onSurface(hg, d, 0.009 * s, core);
-        k.aim(joint, new THREE.CylinderGeometry(0.017 * s, 0.021 * s, 0.018 * s, 8), p, d);
-        const q = onSurface(hg, d, -0.003 * s, core);
-        k.aim(eye, new THREE.SphereGeometry(0.0115 * s, 7, 5), q, d, [1, 0.66, 1]);
-        k.row(3, (i) => k.add(joint, plateGeo(0.013 * s, 0.007 * s, 0.044 * s, 0.002 * s, 1),
-          [sx * 0.052 * s, (0.086 + i * 0.022) * s, -0.014 * s], [0, 0, sx * 0.18]));
-        k.add(joint, riv, [sx * 0.038 * s, 0.070 * s, 0.052 * s], [1.2, 0, 0]);
+        d.set(sx * 0.22, -0.06, 1).normalize();
+        const p = onSurface(hg, d, 0.004 * s, core);
+        k.aim(joint, new THREE.CylinderGeometry(0.016 * s, 0.019 * s, 0.016 * s, 10), p, d);
+        const q = onSurface(hg, d, -0.004 * s, core);
+        k.aim(eye, new THREE.CylinderGeometry(0.011 * s, 0.011 * s, 0.006 * s, 10), q, d);
       });
-      // A single brow ridge over both lenses, laid on the snout's spine — the
-      // per-eye hoods it replaces stood 12mm proud and read as mortarboards.
-      const up = new THREE.Vector3(0, 0.94, 0.34).normalize();
-      k.aim(joint, plateGeo(0.062 * s, 0.009 * s, 0.044 * s, 0.003 * s, 1),
-        onSurface(hg, up, 0.003 * s, core), up);
-      // crown vent stack and the seam down the snout
-      k.add(joint, ventGeo(0.034 * s, 0.030 * s, 0.008 * s, 3), [0, 0.150 * s, -0.052 * s], [0.9, 0, 0]);
-      k.add(joint, plateGeo(0.008 * s, 0.150 * s, 0.006 * s, 0.002 * s, 1), [0, 0.125 * s, 0.086 * s], [1.79, 0, 0]);
-      k.add(joint, limbGeo(0.085 * s, 0.0035 * s, 0.0018 * s, 4, true, { rings: 2, capN: 1 }),
-        [0, 0.150 * s, -0.058 * s], [-0.28, 0, 0]);
-      k.row(4, (i) => k.add(joint, riv, [((i % 2) ? 1 : -1) * 0.030 * s, (0.096 + Math.floor(i / 2) * 0.030) * s, -0.062 * s], [1.5708, 0, 0]));
+      // the shallow groove under the eyes, and the vent slots on the flanks
+      const nose = new THREE.Vector3(0, -0.30, 1).normalize();
+      k.face(joint, plateGeo(0.040 * s, 0.006 * s, 0.006 * s, 0.002 * s, 1),
+        onSurface(hg, nose, 0.001 * s, new THREE.Vector3(0, 0.086 * s, 0.170 * s)), nose);
+      k.pair((sx) => {
+        const side = new THREE.Vector3(sx, 0.05, 0).normalize();
+        k.face(joint, ventGeo(0.040 * s, 0.020 * s, 0.006 * s, 3),
+          onSurface(hg, side, 0.001 * s, new THREE.Vector3(0, 0.108 * s, 0.060 * s)), side);
+        k.add(joint, riv, [sx * 0.034 * s, 0.132 * s, 0.150 * s], [0, 0, sx * 1.5708]);
+      });
+      // the antenna off the crown — the one thing a B1 carries above its skull
+      k.add(joint, new THREE.CylinderGeometry(0.006 * s, 0.007 * s, 0.014 * s, 6), [0, 0.164 * s, -0.036 * s]);
+      k.add(joint, limbGeo(0.090 * s, 0.0032 * s, 0.0018 * s, 4, true, { rings: 2, capN: 1 }),
+        [0, 0.168 * s, -0.036 * s], [-0.22, 0, 0]);
+      // the seam where the cranium meets the snout, and the maintenance panel
+      // at the back of the skull
+      k.add(joint, bandGeo(0.030 * s, 0.034 * s, 0.030 * s, 0.034 * s, 0.056 * s, 10), [0, 0.108 * s, 0.006 * s], [1.5708, 0, 0]);
+      k.add(joint, ventGeo(0.034 * s, 0.028 * s, 0.006 * s, 3), [0, 0.106 * s, -0.088 * s], [0, Math.PI, 0]);
       k.bake(headObj);
     },
 
@@ -5832,6 +5851,9 @@ export function buildB1(opts = {}) {
       }
     },
   });
+  /* A B1 stands the way the plates draw it: shoulders ahead of the hips,
+   * the head carried level on the end of that long neck. */
+  leanTrunk(rig, K.stoop ?? 0.16, K.head ?? -0.13);
   return { rig, palette: { shell, joint, mark, scorch, eye } };
 }
 
@@ -5896,13 +5918,18 @@ export function buildB2(opts = {}) {
    * humanoid, and it is where the Iron Giant reading came from: a flat-topped
    * box head with a lit band across it is exactly that character.
    */
+  /* A B2 HAS NO HEAD TO SPEAK OF. The plate shows a low hood continuing the
+   * line of the cuirass between two huge shoulders, and out of the front of
+   * it a squared beak — the whole face — thrust forward and down. The ball
+   * that stood here was a helmet on a neck, which is a B1's silhouette. */
   const headShell = (s) => assemble([
-    // the dome, squashed a little front-to-back so it is not a ball
-    [new THREE.SphereGeometry(0.078 * s, 12, 8), [0, 0.086 * s, -0.004 * s], null, [1, 0.92, 0.94]],
-    // the beak: a wedge under the dome, tipped forward and down
-    [plateGeo(0.086 * s, 0.096 * s, 0.062 * s, 0.014 * s, 1), [0, 0.030 * s, 0.038 * s], [0.42, 0, 0]],
+    // the hood: a dome flattened to a third of its height and pushed back
+    [new THREE.SphereGeometry(0.084 * s, 12, 8), [0, 0.052 * s, -0.016 * s], null, [1.12, 0.58, 1.02]],
+    // the beak: long, squared, tipped down 30 degrees off the hood's front
+    [plateGeo(0.086 * s, 0.062 * s, 0.128 * s, 0.014 * s, 1), [0, 0.040 * s, 0.066 * s], [0.52, 0, 0]],
+    [plateGeo(0.066 * s, 0.040 * s, 0.050 * s, 0.010 * s, 1), [0, 0.010 * s, 0.122 * s], [0.52, 0, 0]],
     // and the collar it sits in — the cowl's own throat, not a neck
-    [plateGeo(0.116 * s, 0.042 * s, 0.100 * s, 0.014 * s, 1), [0, -0.006 * s, -0.004 * s]],
+    [plateGeo(0.124 * s, 0.042 * s, 0.108 * s, 0.014 * s, 1), [0, -0.006 * s, -0.004 * s]],
   ], 'head');
 
   dressHumanoid(rig, {
@@ -5957,7 +5984,7 @@ export function buildB2(opts = {}) {
      */
     buildHead(headObj, s, hg) {
       const k = new Kit();
-      const core = new THREE.Vector3(0, 0.086 * s, 0);
+      const core = new THREE.Vector3(0, 0.052 * s, -0.016 * s);
       const d = new THREE.Vector3(0, 0.18, 1).normalize();
       // the seam where the beak is bolted under the dome — a shadow, not a light
       k.aim(dark, plateGeo(0.090 * s, 0.010 * s, 0.008 * s, 0.002 * s, 1),
@@ -6029,7 +6056,7 @@ export function buildB2(opts = {}) {
        * and it is the only lit thing on the whole body — which is what makes
        * a B2 read as a machine with a sensor rather than as a face. */
       ko.add(eye, new THREE.SphereGeometry(0.011 * s, 6, 4),
-        [0.150 * s, 0.226 * s, 0.062 * s]);
+        [0.120 * s, 0.212 * s, 0.171 * s]);
       markSilhouette(ko.bake(chest));
       /**
        * THE RIBBED COLUMN. `waistR` is 0.082 now against a 0.228 chest, which
@@ -6151,6 +6178,9 @@ export function buildB2(opts = {}) {
       }
     },
   });
+  /* THE HUNCH: the whole cuirass rolled forward so the beak hangs between
+   * the shoulders and the arms swing ahead of the body. */
+  leanTrunk(rig, opts.stoop ?? 0.34, opts.head ?? 0.06);
   return { rig, palette: { shell, dark, hot, scorch, eye } };
 }
 
@@ -6407,7 +6437,10 @@ export const TROOPER_KITS = {
   /** The raider. Nothing on the arms — the pack is the whole read. */
   jet: { pack: 'jet', frame: 0.97 },
   /** The ARC: pauldron right, kama, twin holsters on the belt. */
-  arc: { pauldron: 'R', kama: 'long', holsters: true, frame: 1.07 },
+  /* An ARC's pauldron is a MANTLE — one dark plate over both shoulders with
+   * a yoke across the collar — and the helmet carries a rangefinder stalk;
+   * the two pistols ride the belt in every plate of the reference. */
+  arc: { pauldron: 'both', kama: 'long', holsters: true, rangefinder: 'stalk', frame: 1.07 },
   /**
    * The Commander. Everything the ARC has, mirrored, plus the two things a
    * command body has and a line body never does: the comms pack with its
@@ -6552,8 +6585,16 @@ export function buildTrooper(opts = {}) {
       // aim() puts the HEIGHT along the normal, which is how a visor authored
       // 4.8cm tall became a 4.8cm-deep slab bolted to the front of the face.
       const brow = new THREE.Vector3(0, 0.22, 1).normalize();
-      k.face(visor, plateGeo(0.128 * s, 0.036 * s, 0.026 * s, 0.005 * s, 1),
+      /* The bar of the T runs the WHOLE brow — 15 cm on a 17 cm face — and
+       * turns down at its ends into the cheeks; at 12.8 it stopped short of
+       * the flare and read as goggles. */
+      k.face(visor, plateGeo(0.150 * s, 0.036 * s, 0.026 * s, 0.005 * s, 1),
         onSurface(hg, brow, 0.010 * s, new THREE.Vector3(0, 0.108 * s, 0.055 * s)), brow);
+      k.pair((sx) => {
+        const drop = new THREE.Vector3(sx * 0.42, 0.10, 1).normalize();
+        k.face(visor, plateGeo(0.030 * s, 0.052 * s, 0.024 * s, 0.005 * s, 1),
+          onSurface(hg, drop, 0.010 * s, new THREE.Vector3(0, 0.096 * s, 0.055 * s)), drop);
+      });
       const nose = new THREE.Vector3(0, -0.20, 1).normalize();
       k.face(visor, plateGeo(0.046 * s, 0.098 * s, 0.026 * s, 0.005 * s, 1),
         onSurface(hg, nose, 0.010 * s, new THREE.Vector3(0, 0.070 * s, 0.055 * s)), nose);
@@ -6668,11 +6709,25 @@ export function buildTrooper(opts = {}) {
        * flank and one from the front — and the flank is the view a firing line
        * is met in. */
       if (K.pauldron) {
-        const sx = K.pauldron === 'L' ? -1 : 1;
-        ko.add(plate, plateGeo(0.132 * s, 0.052 * s, 0.186 * s, 0.020 * s, 2),
-          [sx * g(0.170) * s, 0.132 * s, -0.006 * s], [0, 0, sx * -0.40]);
-        ko.add(plate, plateGeo(0.104 * s, 0.044 * s, 0.150 * s, 0.016 * s, 2),
-          [sx * g(0.196) * s, 0.086 * s, -0.004 * s], [0, 0, sx * -0.52]);
+        const sides = K.pauldron === 'both' ? [-1, 1] : [K.pauldron === 'L' ? -1 : 1];
+        /* A mantle is the dark gear leather; a single pauldron is plate. */
+        const pm = K.pauldron === 'both' ? gear : plate;
+        /* A mantle rides ON TOP of the shoulder bells — a single pauldron is
+         * seated inboard of one, where the bell would swallow a mantle. */
+        const lift = K.pauldron === 'both' ? 0.096 * s : 0;
+        for (const sx of sides) {
+          ko.add(pm, plateGeo(0.132 * s, 0.052 * s, 0.186 * s, 0.020 * s, 2),
+            [sx * g(0.170) * s, 0.132 * s + lift, -0.006 * s], [0, 0, sx * -0.40]);
+          ko.add(pm, plateGeo(0.104 * s, 0.044 * s, 0.150 * s, 0.016 * s, 2),
+            [sx * g(0.196) * s, 0.086 * s + lift, -0.004 * s], [0, 0, sx * -0.52]);
+        }
+        if (K.pauldron === 'both') {
+          // the yoke the two halves hang from, over the collar, and the
+          // ammunition pouches down its front
+          ko.add(gear, plateGeo(g(0.360) * s, 0.034 * s, 0.170 * s, 0.014 * s, 2), [0, 0.222 * s, -0.010 * s]);
+          ko.add(gear, plateGeo(0.140 * s, 0.070 * s, 0.030 * s, 0.008 * s, 1),
+            onLimb(chestB, 0.150 * s, [0, 0, 1], -0.006 * s), [0.20, 0, 0]);
+        }
       }
       /* THE BRACE. A marksman's cheek-weld needs somewhere for the stock to
        * go, and it is the one piece that separates him from the line trooper
@@ -6805,18 +6860,16 @@ export function buildTrooper(opts = {}) {
           kp.add(gear, plateGeo(0.070 * s, 0.070 * s, 0.024 * s, 0.008 * s, 1),
             [0.070 * s, 0.176 * s, -0.212 * s], [0.20, -0.30, 0]);
         } else {
-          // ammunition box, power feed, and the Z-6's barrel bundle across it
+          // ammunition box and the power feed that runs down to the repeater
+          // IN HIS HANDS — the barrel bundle that used to be slung across
+          // this pack was a second Z-6 on a man already carrying one
           kp.add(plate, plateGeo(0.230 * s, 0.250 * s, 0.130 * s, 0.022 * s, 2), [0, 0.062 * s, -0.184 * s]);
           kp.add(gear, plateGeo(0.150 * s, 0.084 * s, 0.060 * s, 0.012 * s, 1), [0, -0.062 * s, -0.190 * s]);
           kp.add(gear, new THREE.CylinderGeometry(0.020 * s, 0.020 * s, 0.230 * s, 6),
             [0.096 * s, 0.062 * s, -0.150 * s], [0, 0, 0.24]);
-          // the slung weapon: three barrels and a drum, raked across the back
-          for (let i = 0; i < 3; i++) {
-            kp.add(gear, new THREE.CylinderGeometry(0.016 * s, 0.016 * s, 0.520 * s, 6),
-              [(i - 1) * 0.026 * s, 0.130 * s, -0.250 * s], [0.24, 0.34, 1.20]);
-          }
-          kp.add(gear, new THREE.CylinderGeometry(0.062 * s, 0.062 * s, 0.048 * s, 8),
-            [-0.070 * s, 0.030 * s, -0.244 * s], [0.24, 0.34, 1.20]);
+          // two spare drums clipped to the pack's flank
+          kp.pair((sx) => kp.add(gear, new THREE.CylinderGeometry(0.052 * s, 0.052 * s, 0.040 * s, 8),
+            [sx * 0.130 * s, 0.040 * s, -0.190 * s], [0, 0, 1.5708]));
         }
         markSilhouette(kp.bake(chestB.obj));
         /**
@@ -6906,6 +6959,12 @@ export function buildTrooper(opts = {}) {
         kh.pair((sx) => {
           kh.add(gear, plateGeo(0.048 * s, 0.130 * s, 0.062 * s, 0.010 * s, 1),
             [sx * 0.126 * s, -0.030 * s, 0.028 * s], [0.14, 0, sx * 0.24]);
+          // …and the pistol IN it: the grip standing out of the top of the
+          // holster, raked back, and the receiver's spine along the belt
+          kh.add(plate, plateGeo(0.022 * s, 0.070 * s, 0.032 * s, 0.006 * s, 1),
+            [sx * 0.134 * s, 0.052 * s, 0.006 * s], [0.62, 0, sx * 0.24]);
+          kh.add(plate, plateGeo(0.026 * s, 0.024 * s, 0.070 * s, 0.006 * s, 1),
+            [sx * 0.132 * s, 0.036 * s, 0.038 * s], [0.14, 0, sx * 0.24]);
         });
       }
       kh.bake(hipsB.obj);
@@ -7364,9 +7423,13 @@ export function buildAcolyte(opts = {}) {
 export function buildDroideka(opts = {}) {
   const S = opts.scale ?? 1.5;
   const group = new THREE.Group();
-  const shell = armorMat(opts.color ?? 0x93805f, 0.5, 0.5, 4.0);
+  /* BRONZE, NOT KHAKI. Every plate of the reference shows a destroyer in a
+   * burnt copper-brown shell over near-black joints — it is the one Trade
+   * Federation body that is not tan — and the 0x93805f that was here put it
+   * in a B1's paint. The dark is warmer too, for the same reason. */
+  const shell = armorMat(opts.color ?? 0x7a4a2e, 0.42, 0.56, 4.0);
   // was bare — every leg, every gun and the whole underside was flat plastic
-  const dark = metalMat(0x2f2b25, 0.5, 0.7, 4.0);
+  const dark = metalMat(0x2a2320, 0.5, 0.7, 4.0);
   const eye = emissiveMat(0x44ff88, 3);
   const hot = emissiveMat(0x66ff99, 1.4);
   const scorch = scorchMat();
@@ -7394,6 +7457,30 @@ export function buildDroideka(opts = {}) {
       [Math.sin(a) * 0.215 * S, 0.240 * S, Math.cos(a) * 0.215 * S]);
     kc.add(hot, new THREE.SphereGeometry(0.024 * S, 6, 4),
       [Math.sin(a) * 0.215 * S, 0.284 * S, Math.cos(a) * 0.215 * S]);
+  }
+  /* THE COWL — the read of a droideka from every angle. Behind and above the
+   * body a tall curved shell arcs up and over, the piece the droid curls into
+   * when it rolls; unfolded it stands the height of the body again above the
+   * carapace, ribbed, open at the front where the head and the guns come
+   * out. Without it what stood here was a squat drum on three legs. Two
+   * arcs of shell in the body's own material and three ribs on them, so it
+   * costs geometry and no draw calls. */
+  {
+    /* A SHELL, NOT AN EGG: a thin arc of sphere over the back and top only —
+     * the first cut was a 0.40·S cap over two thirds of the body and read as
+     * a boulder the droid was hiding behind. */
+    const cowl = new THREE.SphereGeometry(0.345 * S, 14, 9, Math.PI * 0.64, Math.PI * 0.72, 0, Math.PI * 0.50);
+    cowl.scale(0.94, 1.22, 1.00);
+    kc.add(shell, cowl, [0, 0.08 * S, -0.12 * S]);
+    const inner = new THREE.SphereGeometry(0.325 * S, 12, 8, Math.PI * 0.66, Math.PI * 0.68, 0, Math.PI * 0.46);
+    inner.scale(0.94, 1.22, 1.00);
+    kc.add(dark, inner, [0, 0.09 * S, -0.12 * S]);
+    // three ribs down the outside of it, which is the read from behind
+    for (const a of [-0.55, 0, 0.55]) {
+      kc.add(dark, arcGeo(0.350 * S, 0.340 * S, 0.026 * S, 1.50, 0.012 * S, 9),
+        [Math.sin(Math.PI + a) * 0.02 * S, 0.26 * S, -0.12 * S + Math.cos(Math.PI + a) * 0.02 * S],
+        [Math.PI / 2, 0, Math.PI + a], [1, 1.22, 1]);
+    }
   }
   // the rim the legs hang off, and its fasteners
   kc.add(dark, bandGeo(0.288 * S, 0.322 * S, 0.288 * S, 0.322 * S, 0.055 * S, 18), [0, -0.10 * S, 0]);
@@ -7580,114 +7667,121 @@ export function buildShieldBubble(opts = {}) {
  */
 export function buildWalker(opts = {}) {
   const S = opts.scale ?? 2.4;
-  const rig = new Rig(walkerSkeleton(S, 4), { scale: S });
-  const shell = armorMat(0x77746c, 0.6, 0.45, 3.0);
+  /* THE SPHERE ON LEGS. Levels.js names this body as the OG-9 homing spider
+   * droid — "a sphere on four very tall thin legs" — and the plates the
+   * roster was built from show its little brother, the dwarf spider droid:
+   * the same ball, two great red lenses on the front of it, one long cannon
+   * under them and a whip antenna on top. What stood here was an armoured
+   * TUB with a turret on the back — a tank on legs, and nothing in either
+   * plate. The body is a ball now, the face is the front of it, and the head
+   * bone sits there so the eyes and the gun track a target together. */
+  const rig = new Rig(walkerSkeleton(S, 4, { headAt: [0, 0.14, 0.34] }), { scale: S });
+  const shell = armorMat(0x6f6a60, 0.6, 0.45, 3.0);
   const dark = metalMat(0x2b2a27, 0.5, 0.72, 3.0);
   const mark = armorMat(0xa8621e, 0.1, 0.6, 3.0);
-  const glass = glassMat(0x121a20, 0.16);
-  const eye = emissiveMat(0xffaa22, 3);
+  const glass = glassMat(0x3a0c08, 0.16);
+  const eye = emissiveMat(0xff2a18, 2.6);
   const hot = emissiveMat(0xff6622, 1.2);
   const scorch = scorchMat();
 
   const riv = rivet(0.022 * S);
 
-  /* ── hull ── */
+  /* ── hull: the ball ── */
   const body = rig.get('body');
   const hull = assemble([
-    // main tub, sloped glacis at the front, and the engine deck behind
-    [plateGeo(1.06 * S, 0.46 * S, 1.30 * S, 0.10 * S, 2), [0, 0.10 * S, 0.02 * S]],
-    [plateGeo(0.92 * S, 0.34 * S, 0.46 * S, 0.07 * S, 1), [0, 0.19 * S, 0.66 * S], [0.62, 0, 0]],
-    [plateGeo(0.80 * S, 0.30 * S, 0.36 * S, 0.06 * S, 1), [0, -0.04 * S, 0.74 * S], [-0.5, 0, 0]],
-    [plateGeo(0.86 * S, 0.34 * S, 0.52 * S, 0.08 * S, 1), [0, 0.34 * S, -0.22 * S]],
-    [plateGeo(0.70 * S, 0.26 * S, 0.30 * S, 0.06 * S, 1), [0, 0.16 * S, -0.76 * S], [-0.4, 0, 0]],
+    [(() => { const g = new THREE.SphereGeometry(0.60 * S, 22, 16); g.scale(1.0, 0.92, 1.0); return g; })(), [0, 0.14 * S, 0]],
+    // the flat underbelly the legs socket into, and the chin under the face
+    [plateGeo(0.90 * S, 0.16 * S, 0.90 * S, 0.06 * S, 2), [0, -0.30 * S, 0]],
+    [plateGeo(0.62 * S, 0.22 * S, 0.30 * S, 0.06 * S, 1), [0, -0.16 * S, 0.44 * S], [0.5, 0, 0]],
   ], 'hull');
   const bm = mesh(hull, shell, body.obj);
   body.parts.push(bm); body.primary = bm; body.radius = 0.6 * S;
 
   const kb = new Kit();
-  // sensor block and viewport at the nose
-  kb.add(dark, plateGeo(0.54 * S, 0.16 * S, 0.10 * S, 0.02 * S, 1), [0, 0.20 * S, 0.86 * S], [0.62, 0, 0]);
-  kb.add(glass, plateGeo(0.44 * S, 0.10 * S, 0.05 * S, 0.012 * S, 1), [0, 0.215 * S, 0.90 * S], [0.62, 0, 0]);
+  // the seam round the ball's equator, and the hatch line over the crown
+  kb.add(dark, bandGeo(0.596 * S, 0.612 * S, 0.596 * S, 0.612 * S, 0.030 * S, 24), [0, 0.14 * S, 0]);
+  kb.add(dark, plateGeo(0.030 * S, 0.020 * S, 0.80 * S, 0.006 * S, 1), [0, 0.688 * S, -0.06 * S]);
+  // the whip antenna off the crown
+  kb.add(dark, new THREE.CylinderGeometry(0.030 * S, 0.036 * S, 0.06 * S, 8), [0.16 * S, 0.70 * S, -0.16 * S]);
+  kb.add(dark, new THREE.CylinderGeometry(0.006 * S, 0.012 * S, 0.90 * S, 6), [0.16 * S, 1.16 * S, -0.16 * S], [0.06, 0, -0.04]);
   kb.pair((sx) => {
-    kb.add(eye, new THREE.SphereGeometry(0.045 * S, 7, 5), [sx * 0.34 * S, 0.14 * S, 0.87 * S], null, [1, 0.8, 0.6]);
-    // sponsons over the hip sockets, and the fasteners along the flank
-    kb.add(shell, plateGeo(0.18 * S, 0.30 * S, 0.86 * S, 0.05 * S, 1), [sx * 0.55 * S, 0.06 * S, 0]);
-    kb.add(dark, ventGeo(0.34 * S, 0.20 * S, 0.05 * S, 4), [sx * 0.645 * S, 0.06 * S, -0.24 * S], [0, sx * 1.5708, 0]);
-    kb.row(5, (i, t) => kb.add(dark, riv, [sx * 0.648 * S, 0.20 * S, (t - 0.5) * 1.10 * S], [0, 0, -sx * 1.5708]));
-    // exhaust stacks off the engine deck
-    kb.add(dark, new THREE.CylinderGeometry(0.070 * S, 0.080 * S, 0.34 * S, 8), [sx * 0.26 * S, 0.62 * S, -0.34 * S], [0.18, 0, 0]);
-    kb.add(hot, new THREE.CylinderGeometry(0.055 * S, 0.062 * S, 0.05 * S, 8), [sx * 0.26 * S, 0.78 * S, -0.31 * S], [0.18, 0, 0]);
+    // the hip sponsons the legs hang off, low on the flanks
+    kb.add(shell, plateGeo(0.22 * S, 0.24 * S, 0.80 * S, 0.05 * S, 1), [sx * 0.50 * S, -0.22 * S, 0]);
+    kb.row(4, (i, t) => kb.add(dark, riv, [sx * 0.61 * S, -0.12 * S, (t - 0.5) * 0.60 * S], [0, 0, -sx * 1.5708]));
+    // exhaust stacks off the back of the ball
+    kb.add(dark, new THREE.CylinderGeometry(0.060 * S, 0.070 * S, 0.30 * S, 8), [sx * 0.22 * S, 0.36 * S, -0.56 * S], [-1.1, 0, 0]);
+    kb.add(hot, new THREE.CylinderGeometry(0.048 * S, 0.054 * S, 0.05 * S, 8), [sx * 0.22 * S, 0.43 * S, -0.70 * S], [-1.1, 0, 0]);
+    // unit flashes on the flanks
+    kb.add(mark, plateGeo(0.02 * S, 0.16 * S, 0.26 * S, 0.006 * S, 1), [sx * 0.596 * S, 0.20 * S, 0.06 * S], [0, 0, sx * 0.12]);
   });
-  // dorsal spine and a hull number
-  kb.add(dark, plateGeo(0.10 * S, 0.10 * S, 1.10 * S, 0.02 * S, 1), [0, 0.36 * S, 0.10 * S]);
-  kb.add(mark, plateGeo(0.24 * S, 0.02 * S, 0.30 * S, 0.006 * S, 1), [0, 0.425 * S, 0.30 * S]);
-  kb.pair((sx) => kb.add(mark, plateGeo(0.02 * S, 0.18 * S, 0.28 * S, 0.006 * S, 1), [sx * 0.652 * S, 0.10 * S, 0.26 * S]));
-  /**
-   * THE ENGINE DECK'S INTAKE, and it is the one place a blade can be put into a
-   * durasteel hull.
-   *
-   * `_boneToughness` plates this machine's `body` and `hips` to
-   * `TOUGHNESS.durasteel`, which is 42 — three times the `heavy` its own legs
-   * are and the toughest thing on the roster short of a blast door. That is
-   * correct for a hull and it makes the whole front and both flanks a wall, so
-   * a player facing one has nothing to aim at and the fight is its legs or
-   * nothing. There is a louvred hole in the back of it, three quarters of a
-   * metre across, with the exhaust stacks either side; it is on the plate, it
-   * is on the model, and it was as tough as the glacis.
-   *
-   * Declared out of the vent's own numbers — 0.60 S across at 0.34 S up and
-   * 0.50 S back — so the capsule is the hole. One rung down the material ladder
-   * from durasteel is `heavy`, a measured 3.00×, and the spot is behind the
-   * machine: the reward is for getting round it, which is the one thing a
-   * four-legged gun platform with a fixed turret arc is bad at answering.
-   */
-  kb.add(dark, ventGeo(0.60 * S, 0.28 * S, 0.06 * S, 5), [0, 0.34 * S, -0.50 * S], [0, Math.PI, 0]);
+  kb.add(dark, ventGeo(0.50 * S, 0.24 * S, 0.06 * S, 5), [0, 0.10 * S, -0.58 * S], [0, Math.PI, 0]);
   weakSpot(body, {
     key: 'intake', label: 'INTAKE',
-    p0: [-0.30 * S, 0.34 * S, -0.50 * S], p1: [0.30 * S, 0.34 * S, -0.50 * S],
+    p0: [-0.25 * S, 0.10 * S, -0.58 * S], p1: [0.25 * S, 0.10 * S, -0.58 * S],
     r: 0.16 * S,
-    at0: clamp(0.34 * S / (body.length || 1), 0, 1), at1: clamp(0.34 * S / (body.length || 1), 0, 1),
+    at0: clamp(0.10 * S / (body.length || 1), 0, 1), at1: clamp(0.10 * S / (body.length || 1), 0, 1),
   });
   // hull scoring: it has been shot at, and a boss should look like it
   for (let i = 0; i < 6; i++) {
-    const sx = rng() < 0.5 ? -1 : 1;
+    const a = rng() * Math.PI * 2, e = -0.2 + rng() * 0.9;
     const w = (0.10 + rng() * 0.18) * S;
+    const d = [Math.sin(a) * Math.cos(e), Math.sin(e), Math.cos(a) * Math.cos(e)];
     kb.aim(scorch, plateGeo(w, 0.006 * S, w * 0.65, 0.002 * S, 1),
-      [sx * 0.652 * S, (-0.02 + rng() * 0.28) * S, (rng() - 0.5) * 1.1 * S], [sx, 0.15, 0]);
+      [d[0] * 0.60 * S, 0.14 * S + d[1] * 0.55 * S, d[2] * 0.60 * S], d);
   }
   kb.bake(body.obj);
 
-  /* ── turret ── */
+  /* ── the face: the front of the ball, on the head bone so it turns ── */
   const head = rig.get('head');
   const turret = assemble([
-    [new THREE.CylinderGeometry(0.34 * S, 0.40 * S, 0.16 * S, 12), [0, 0.34 * S, 0]],
-    [plateGeo(0.60 * S, 0.34 * S, 0.66 * S, 0.08 * S, 2), [0, 0.50 * S, 0.10 * S]],
-    [plateGeo(0.50 * S, 0.22 * S, 0.24 * S, 0.05 * S, 1), [0, 0.60 * S, 0.40 * S], [-0.35, 0, 0]],
+    // a cap over the front upper quarter of the ball, standing a hair proud
+    [(() => { const g = new THREE.SphereGeometry(0.615 * S, 18, 10, -Math.PI * 0.42, Math.PI * 0.84, Math.PI * 0.18, Math.PI * 0.40); g.scale(1.0, 0.92, 1.0); return g; })(),
+      [0, 0, -0.34 * S]],
+    // the brow shelf the lenses sit under
+    [plateGeo(0.62 * S, 0.06 * S, 0.22 * S, 0.02 * S, 1), [0, 0.30 * S, 0.20 * S], [0.3, 0, 0]],
   ], 'turret');
   const hm = mesh(turret, shell, head.obj);
   head.primary = hm; head.parts.push(hm); head.radius = 0.34 * S;
 
   const kt = new Kit();
   kt.pair((sx) => {
-    kt.add(eye, new THREE.SphereGeometry(0.055 * S, 7, 5), [sx * 0.15 * S, 0.60 * S, 0.51 * S], null, [1, 0.8, 0.6]);
-    kt.add(dark, plateGeo(0.10 * S, 0.26 * S, 0.34 * S, 0.03 * S, 1), [sx * 0.32 * S, 0.50 * S, 0.06 * S]);
-    kt.add(dark, riv, [sx * 0.20 * S, 0.678 * S, -0.10 * S], null);
+    // the two great lenses: a dark ring, red glass, and the hot core behind it
+    const d = new THREE.Vector3(sx * 0.36, 0.20, 1).normalize();
+    const at = [sx * 0.21 * S, 0.14 * S, 0.24 * S];
+    kt.aim(dark, new THREE.CylinderGeometry(0.150 * S, 0.135 * S, 0.10 * S, 14), at, d);
+    kt.aim(glass, new THREE.SphereGeometry(0.135 * S, 14, 8), [at[0] + d.x * 0.04 * S, at[1] + d.y * 0.04 * S, at[2] + d.z * 0.04 * S], d, [1, 1, 0.40]);
+    // the hot core sits PROUD of the glass — inside it, the glass swallowed it
+    // and the lens read as a dark red dome
+    kt.aim(eye, new THREE.SphereGeometry(0.085 * S, 10, 6), [at[0] + d.x * 0.10 * S, at[1] + d.y * 0.10 * S, at[2] + d.z * 0.10 * S], d, [1, 1, 0.45]);
   });
-  kt.add(mark, plateGeo(0.20 * S, 0.02 * S, 0.20 * S, 0.006 * S, 1), [0, 0.678 * S, -0.10 * S]);
+  // the three small sensor pips between the lenses
+  kt.row(3, (i, t) => kt.add(eye, new THREE.SphereGeometry(0.020 * S, 6, 4), [(t - 0.5) * 0.12 * S, 0.10 * S, 0.38 * S]));
+  kt.add(mark, plateGeo(0.16 * S, 0.02 * S, 0.14 * S, 0.006 * S, 1), [0, 0.33 * S, 0.14 * S], [0.3, 0, 0]);
   kt.bake(head.obj);
 
   const cannons = [];
-  for (const sx of [-1, 1]) {
+  {
+    // THE GUN: one long barrel under the lenses, off a trunnion in the chin
     const kc = new Kit();
-    // trunnion, jacketed barrel with cooling rings, muzzle brake
-    kc.add(dark, new THREE.CylinderGeometry(0.090 * S, 0.090 * S, 0.16 * S, 8), [sx * 0.26 * S, 0.44 * S, 0.10 * S], [0, 0, 1.5708]);
-    kc.add(dark, new THREE.CylinderGeometry(0.070 * S, 0.085 * S, 0.90 * S, 10), [sx * 0.26 * S, 0.44 * S, 0.36 * S], [1.5708, 0, 0]);
-    kc.row(4, (i, t) => kc.add(shell, new THREE.CylinderGeometry(0.095 * S, 0.095 * S, 0.035 * S, 8),
-      [sx * 0.26 * S, 0.44 * S, (0.08 + t * 0.30) * S], [1.5708, 0, 0]));
-    kc.add(dark, new THREE.CylinderGeometry(0.085 * S, 0.075 * S, 0.12 * S, 8), [sx * 0.26 * S, 0.44 * S, 0.80 * S], [1.5708, 0, 0]);
+    kc.add(dark, new THREE.CylinderGeometry(0.110 * S, 0.110 * S, 0.30 * S, 10), [0, -0.10 * S, 0.22 * S], [0, 0, 1.5708]);
+    kc.add(dark, new THREE.CylinderGeometry(0.075 * S, 0.090 * S, 0.96 * S, 10), [0, -0.10 * S, 0.66 * S], [1.5708, 0, 0]);
+    kc.row(4, (i, t) => kc.add(shell, new THREE.CylinderGeometry(0.100 * S, 0.100 * S, 0.035 * S, 8),
+      [0, -0.10 * S, (0.34 + t * 0.34) * S], [1.5708, 0, 0]));
+    kc.add(dark, new THREE.CylinderGeometry(0.090 * S, 0.078 * S, 0.14 * S, 8), [0, -0.10 * S, 1.12 * S], [1.5708, 0, 0]);
     const meshes = kc.bake(head.obj);
-    const m = mesh(new THREE.CylinderGeometry(0.050 * S, 0.062 * S, 0.10 * S, 8), hot, head.obj,
-      [sx * 0.26 * S, 0.44 * S, 0.88 * S], [1.5708, 0, 0]);
+    const m = mesh(new THREE.CylinderGeometry(0.052 * S, 0.064 * S, 0.10 * S, 8), hot, head.obj,
+      [0, -0.10 * S, 1.20 * S], [1.5708, 0, 0]);
+    cannons.push({ barrel: meshes[0], muzzle: m });
+  }
+  {
+    // …and the light gun slung under the chin, which is the second voice
+    // `_muzzleWorld` alternates with
+    const kc = new Kit();
+    kc.add(dark, plateGeo(0.16 * S, 0.10 * S, 0.30 * S, 0.02 * S, 1), [0, -0.30 * S, 0.30 * S]);
+    kc.add(dark, new THREE.CylinderGeometry(0.030 * S, 0.036 * S, 0.50 * S, 8), [0, -0.30 * S, 0.62 * S], [1.5708, 0, 0]);
+    const meshes = kc.bake(head.obj);
+    const m = mesh(new THREE.CylinderGeometry(0.030 * S, 0.040 * S, 0.06 * S, 8), hot, head.obj,
+      [0, -0.30 * S, 0.90 * S], [1.5708, 0, 0]);
     cannons.push({ barrel: meshes[0], muzzle: m });
   }
 
@@ -8649,8 +8743,8 @@ export function buildGeonosian(opts = {}) {
     // braincase: an egg on its side, tipped back
     [(() => { const g = new THREE.SphereGeometry(0.062 * s, 10, 8); g.scale(0.86, 1.02, 1.34); return g; })(),
       [0, 0.100 * s, -0.020 * s]],
-    // the crest, running back and up off the crown — the read from the side
-    [plateGeo(0.026 * s, 0.150 * s, 0.100 * s, 0.008 * s, 1), [0, 0.150 * s, -0.078 * s], [-0.62, 0, 0]],
+    // the crest's root: a low ridge the two horns rise out of
+    [plateGeo(0.040 * s, 0.040 * s, 0.070 * s, 0.008 * s, 1), [0, 0.146 * s, -0.052 * s], [-0.50, 0, 0]],
     // brow shelf over the lenses
     [plateGeo(0.104 * s, 0.030 * s, 0.062 * s, 0.008 * s, 1), [0, 0.128 * s, 0.030 * s], [0.24, 0, 0]],
     // snout and the jaw under it
@@ -8707,10 +8801,12 @@ export function buildGeonosian(opts = {}) {
         k.add(tooth, clawGeo(0.058 * s, 0.011 * s, 0.003 * s, sx * 0.9, 5, 4),
           [sx * 0.030 * s, 0.048 * s, 0.062 * s], [0.6, 0, sx * -0.5]);
       });
-      // the crest's ridge line, and the two horn stubs at its root
-      k.add(dark, plateGeo(0.010 * s, 0.140 * s, 0.026 * s, 0.003 * s, 1), [0, 0.156 * s, -0.082 * s], [-0.62, 0, 0]);
-      k.pair((sx) => k.add(dark, plateGeo(0.014 * s, 0.044 * s, 0.020 * s, 0.005 * s, 1),
-        [sx * 0.032 * s, 0.148 * s, -0.040 * s], [-0.5, 0, sx * 0.3]));
+      /* THE HORNS. A Geonosian's skull carries TWO long horns, not a fin:
+       * they leave the crown either side of the midline, sweep back and up
+       * and curve inward at the tips, and from the flank they are as long as
+       * the head is. The single crest plate that stood here was neither. */
+      k.pair((sx) => k.add(dark, clawGeo(0.235 * s, 0.013 * s, 0.003 * s, -0.50, 6, 6),
+        [sx * 0.026 * s, 0.150 * s, -0.056 * s], [-0.78, 0, -sx * 0.26]));
       /* THE CREST SURVIVES THE CULL AND THE LENSES DO NOT, which is a draw-call
        * decision and not a taste one. `_applyLod` keeps one primary per bone
        * plus anything tagged `silhouette`, and `characters.mjs` caps a humanoid
@@ -8774,8 +8870,12 @@ export function buildGeonosian(opts = {}) {
           /* The membrane: one panel along the bone, widening away from the
            * body on the inner pair and tapering to a point on the outer. Two
            * millimetres thick at 1:1 — it is a film with veins in it. */
-          k.add(membrane, plateGeo(w1 * s, b.length, 0.004 * s, 0.004 * s, 1),
-            [sx * (w1 - w0) * 0.30 * s, b.length * 0.5, 0]);
+          /* A LEAF, not a board: a wing membrane is an ellipse drawn out along
+           * the spar, widest a third of the way out and tapering to the tip,
+           * and it is pale and thin — the plates show light through it. A
+           * flattened sphere in the tooth's bone colour, so no new material. */
+          k.add(tooth, new THREE.SphereGeometry(1, 8, 6),
+            [sx * (w1 - w0) * 0.30 * s, b.length * 0.5, 0], null, [w1 * 0.5 * s, b.length * 0.52, 0.003 * s]);
           // the leading spar, which is the edge the eye actually follows
           k.add(dark, limbGeo(b.length, 0.011 * s, 0.007 * s, 5, true, { rings: 2, capN: 1 }),
             [sx * w0 * 0.42 * s, 0, 0.004 * s]);
@@ -8812,11 +8912,35 @@ export function buildGeonosian(opts = {}) {
 }
 const _geoLean = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.13, 0, 0));
 
+/**
+ * A STOOP, BUILT INTO THE REST POSE. `stoop` pitches the trunk forward
+ * (split spine/chest) and `head` pitches the neck on top of it — negative
+ * lifts the gaze back up. In the REST quaternions rather than applied every
+ * frame, for the reason the Geonosian's lean is: the gait writes every trunk
+ * bone as rest × its own lean, so a rest-pose stoop survives a walk, and the
+ * cohort's frozen rung — which is captured off the rest — wears the same
+ * hunch as the live body it stands in for.
+ */
+function leanTrunk(rig, stoop = 0, head = 0) {
+  if (!stoop && !head) return;
+  for (const [n, a] of [['spine', stoop * 0.45], ['chest', stoop * 0.55], ['neck', head]]) {
+    const b = rig.get(n);
+    if (!b || !a) continue;
+    _leanQ.setFromAxisAngle(_leanX, a);
+    b.restQuat.multiply(_leanQ);
+    b.obj.quaternion.copy(b.restQuat);
+    rig.pose[n]?.copy(b.restQuat);
+  }
+}
+const _leanQ = new THREE.Quaternion();
+const _leanX = new THREE.Vector3(1, 0, 0);
+
 export function buildBodyguard(opts = {}) {
   /** See BODYGUARD_KITS — `banner` may also be passed directly. */
   const K = { ...(BODYGUARD_KITS[opts.kit] || BODYGUARD_KITS.chassis), ...opts };
   const S = opts.scale ?? 1.3;
-  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52, frame: K.frame ?? 1 });
+  // an IG-100 stands nearly straight — a spindle, not a hunch
+  const built = buildB2({ scale: S, color: opts.color ?? 0x4a4d52, frame: K.frame ?? 1, stoop: K.stoop ?? 0.10, head: K.head ?? -0.04 });
   const rig = built.rig;
   const dark = metalMat(0x24262a, 0.44, 0.92, 2.6);
   const trim = armorMat(0x8d3a20, 0.12, 0.52, 3.0);      // the one warm accent
@@ -8948,7 +9072,9 @@ export function buildBlaster(kind = 'e5') {
   const g = new THREE.Group();
   const body = metalMat(0x2c2f35, 0.48, 0.72, 6.0);
   const dark = leatherMat(0x15161a, 0.72);
-  const glow = emissiveMat(0xff4422, 1.6);
+  // a sonic blaster's charge is the acid green of the plate; everything else
+  // on the roster runs hot red
+  const glow = emissiveMat(kind === 'sonic' ? 0x8cff3c : 0xff4422, 1.6);
   const k = new Kit();
   const rib = (n, x, y, z0, dz, w, h) => k.row(n, (i, t) =>
     k.add(dark, plateGeo(w, h, 0.008, 0.002, 1), [x, y, z0 + t * dz]));
@@ -9169,6 +9295,32 @@ export const BODY_KITS = {
 };
 
 /** What an archetype wears, or null if it is not a body this file dresses. */
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  How each body carries itself                                          */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * THE STANDING CROUCH EACH CHASSIS HOLDS UNDER WHATEVER ITS BRAIN ASKS — read
+ * by `Enemy._pose` and handed to the gait, so a commando droid is a B1 held
+ * low and stays low on the march. The forward STOOP of a trunk is not here:
+ * it is built into the rest pose by `leanTrunk` in each builder (see it),
+ * because the cohort's frozen rung is captured off the rest and has to wear
+ * the same hunch as the body it replaces. Everything not listed stands at
+ * its rest, which is the identity `Enemy` reads when this table has nothing
+ * to say.
+ */
+export const POSTURES = {
+  b1: { crouch: 0.10 },
+  conscript: { crouch: 0.12 },
+  rocket: { crouch: 0.10 },
+  bx: { crouch: 0.32 },
+  b2: { crouch: 0.10 },
+  magna: { crouch: 0.06 },
+  bodyguard: { crouch: 0.06 },
+};
+const NO_POSTURE = Object.freeze({ crouch: 0 });
+export function postureOf(type) { return POSTURES[type] || NO_POSTURE; }
+
 export function bodyOptsFor(type) {
   return BODY_KITS[type] || null;
 }

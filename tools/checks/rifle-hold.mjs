@@ -266,8 +266,19 @@ export async function run({ check, assert }) {
     b2.rig.root.updateMatrixWorld(true);
     const from = b2._muzzleWorld(new THREE.Vector3());
     const wrist = b2.rig.tipPos('foreR', new THREE.Vector3());
-    assert(from.distanceTo(wrist) < 1e-6, `the B2 fires from ${from.distanceTo(wrist).toFixed(3)} m off its own wrist`);
-    assert(b2.aimBlend === undefined, 'the rifle pose ran on a B2');
+    /* The bolt leaves the wrist blaster's own barrel — `fore.muzzle`, the
+     * emissive ring buildB2 seats on the outside of the forearm — which is a
+     * hand's breadth off the wrist joint itself. Read it off the mesh, so a
+     * bolt that left the joint or the elbow would both fail here. */
+    const fore = b2.rig.get('foreR');
+    assert(fore.muzzle, 'the B2 forearm no longer carries its blaster muzzle');
+    const barrel = fore.muzzle.getWorldPosition(new THREE.Vector3());
+    assert(from.distanceTo(barrel) < 1e-6, `the B2 fires from ${from.distanceTo(barrel).toFixed(3)} m off its own wrist blaster`);
+    assert(from.distanceTo(wrist) < 0.12 * b2.bodyScale, `the B2's blaster sits ${from.distanceTo(wrist).toFixed(3)} m from its wrist — that is not on the forearm`);
+    /* No rifle frame on a B2: nothing bladed its chest and no weapon is in
+     * its hand. (`aimBlend` is shared with the wrist-gun pose now, so it is
+     * not the tell it was.) */
+    assert(!b2.weapon && b2.A.weapon == null, 'the rifle pose has something to hold on a B2');
     assert(ARCHETYPES.droideka.custom === 'droideka' && ARCHETYPES.droideka.weapon == null, 'the droideka changed');
     return 'B2 wrist blaster and droideka cannons untouched';
   });

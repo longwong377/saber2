@@ -308,6 +308,11 @@ export async function run({ check, assert }) {
       const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
       let minFlying = 1e9, maxZ = 0, samples = 0, insideBad = 0, outsideBad = 0, rings = 0;
       const fighter = P.hulls.find((H) => H.kind === 'fighter');
+      /* ITS FIRST CYCLE ONLY. The loop below runs longer than the fighter's
+       * cycle, and the next cycle's far leg starts 700 m out again — a jump
+       * that is not a ship reversing. `H.cycle` advances when the clock
+       * wraps, and this is what checks that it does. */
+      const c0 = fighter.cycle;
       const inZ = [], outZ = [];
       let landed = 0, solid = 0;
       const dt = 0.25;
@@ -338,12 +343,13 @@ export async function run({ check, assert }) {
         samples++;
         for (const r of life.rings) if (r.mesh.visible) rings++;
         /* The fighter's own far leg: closing on the lip, then receding. */
-        T.farF.getMatrixAt(6, m); m.decompose(p, q, s);
-        if (s.x > 0.5) {
+        T.farF.getMatrixAt(fighter.slot, m); m.decompose(p, q, s);
+        if (s.x > 0.5 && fighter.cycle === c0) {
           if (fighter.t < fighter.farIn) inZ.push(p.z);
           else outZ.push(p.z);
         }
       }
+      assert(fighter.cycle > c0, `the fighter's clock ran ${(longest + 30).toFixed(0)} s against a ${fighter.T.toFixed(0)} s cycle and never counted a second one — every arrival is the same arrival, and the damaged one is every one`);
       assert(minFlying >= 6, `only ${minFlying} hulls in flight at the quietest moment of ${samples} samples — six at least, always`);
       assert(outsideBad === 0, `${outsideBad} samples of a silhouette INSIDE the room — the outside leg came through a wall`);
       assert(insideBad === 0, `${insideBad} samples of a modelled hull past a wall, above the ceiling or outside the lip`);

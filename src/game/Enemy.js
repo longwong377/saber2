@@ -13,7 +13,7 @@ import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, kitOptsFrom, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
-  hoodCut } from './Bodies.js';
+  hoodCut, postureOf } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { WEIGHT as TOKEN_WEIGHT } from './Tokens.js';
 import { dropSaber } from './Dropped.js';
@@ -2884,6 +2884,8 @@ export class Enemy {
     this.id = 'e' + (_enemyId++);
     this.type = type;
     this.A = A;
+    /* The standing crouch this chassis holds — see POSTURES in Bodies.js. */
+    this.posture = postureOf(type);
     this.world = world;
     this.team = 1;
     this.dead = false;
@@ -6839,6 +6841,9 @@ export class Enemy {
     }
     if (this.rig) {
       const f = this.rig.get('foreR');
+      // a forearm-mounted gun publishes its own muzzle — the B2's wrist
+      // blaster; without one the bolt leaves the end of the forearm
+      if (f?.muzzle) return f.muzzle.getWorldPosition(out);
       if (f) return this.rig.tipPos('foreR', out);
     }
     return out.copy(this.position).setY(this.chestY);
@@ -8704,7 +8709,10 @@ export class Enemy {
          * behind a rock and a steady one taking a knee at his post are both
          * this number. Anything without a writer still reads exactly 0.
          */
-        grounded: this.grounded, groundAt, crouch: clamp(this.crouch || 0, 0, 1),
+        grounded: this.grounded, groundAt,
+        /* The archetype's own standing crouch UNDER whatever the brain asks —
+         * a commando droid is a B1 held low, and it stays low on the march. */
+        crouch: clamp((this.crouch || 0) + this.posture.crouch, 0, 1),
         accelForward: clamp(this.velocity.length() / 5, 0, 1),
         /* NOBODY IS GOING TO READ THIS BODY'S BONES THIS FRAME. Past LOD 1 the
          * body draws through `MergedSkin`, whose per-frame work reads
@@ -8804,6 +8812,74 @@ export class Enemy {
     if (this.muzzleFlash > 0) this.muzzleFlash -= dt;
   }
 
+  /**
+   * THE WRIST GUN. A B2 has no rifle: its blaster is built into the right
+   * forearm (`fore.muzzle`, see buildB2), and until now the arm it fires from
+   * swung at its side like a walker's while bolts left the wrist — the plate
+   * shows the arm thrown straight out at the target, elbow locked, the other
+   * arm hanging. So: past the gait's arm swing, the right arm is aimed down
+   * the line to the target as one straight limb, blended in and out on the
+   * same `aimBlend` the rifle uses, and the hand follows the forearm.
+   */
+  _poseWristGun(dt) {
+    const rig = this.rig;
+    const at = this.target ? aimAt(this.target, _r[3]) : null;
+    const dist = at ? at.distanceTo(this.position) : Infinity;
+    const want = !!at && !this.target.dead
+      && (dist < this.engageRange() || this.burstLeft > 0 || this.aimCharge > 0 || this.muzzleFlash > 0);
+    if (this.aimBlend === undefined) this.aimBlend = want ? 1 : 0;
+    this.aimBlend = damp(this.aimBlend, want ? 1 : 0, want ? 10 : 4, dt);
+    const k = this.aimBlend;
+    if (k < 1e-3) return;
+    const shR = rig.freshPos('armR', _r[4]);
+    // the raised line: from the shoulder to the target, or straight ahead
+    // when the target has just gone
+    const raise = at ? _r[5].subVectors(at, shR).normalize()
+      : _r[5].set(Math.sin(this.facing), 0, Math.cos(this.facing));
+    // …blended from wherever the swing left the arm, so it comes up rather
+    // than snapping
+    const armB = rig.get('armR');
+    armB.obj.getWorldQuaternion(_rq[1]);
+    const hang = _r[6].set(0, 1, 0).applyQuaternion(_rq[1]);
+    const d = _r[7].copy(hang).lerp(raise, k).normalize();
+    rig.aimBoneWorld('armR', d, null);
+    rig.aimBoneWorld('foreR', d, null);
+    rig.aimBoneWorld('handR', d, null);
+  }
+
+  /**
+   * THE WINGS FOLD. `Flight.beatWings` swings a wing about its root every
+   * frame, at rest as well as in the air — a grounded Geonosian sat with four
+   * wings spread and fluttering, which is a moth on a pin. On the ground the
+   * plate has them folded flat down the back, and they open as it lifts: the
+   * fold is a blend between where the beat left the bone and a line down the
+   * spine, driven by whether the body is flying, so a landing closes them and
+   * a take-off spreads them without either state machine knowing.
+   */
+  _poseWings(dt) {
+    const rig = this.rig;
+    const flying = (this.A.float ?? 0) > 0.3 && !this.toppled && !this.dead
+      && this._flightState !== 'downed' && this._flightState !== 'felled';
+    this.wingFold = damp(this.wingFold ?? (flying ? 0 : 1), flying ? 0 : 1, flying ? 5 : 3, dt);
+    const f = this.wingFold;
+    if (f < 1e-3) return;
+    const back = _r[10].set(-Math.sin(this.facing), 0, -Math.cos(this.facing));
+    for (const side of [1, -1]) {
+      const L = side > 0 ? 'L' : 'R';
+      const root = rig.get('wing' + L), tip = rig.get('wingTip' + L);
+      if (!root || root.severed) continue;
+      const rw = _r[11].set(side * 0.06, -0.86, 0).addScaledVector(back, 0.50).normalize();
+      root.obj.getWorldQuaternion(_rq[1]);
+      const cur = _r[12].set(0, 1, 0).applyQuaternion(_rq[1]);
+      rig.aimBoneWorld('wing' + L, _r[13].copy(cur).lerp(rw, f).normalize(), null);
+      if (!tip || tip.severed) continue;
+      const tw = _r[14].set(side * 0.02, -0.95, 0).addScaledVector(back, 0.30).normalize();
+      tip.obj.getWorldQuaternion(_rq[1]);
+      const curT = _r[15].set(0, 1, 0).applyQuaternion(_rq[1]);
+      rig.aimBoneWorld('wingTip' + L, _r[16].copy(curT).lerp(tw, f).normalize(), null);
+    }
+  }
+
   _poseArms(dt, ctx) {
     const rig = this.rig;
     if (!rig || this.lod > 1) return;
@@ -8811,12 +8887,16 @@ export class Enemy {
     const fwd = _v2.set(Math.sin(this.facing), 0, Math.cos(this.facing));
     const right = _v3.set(fwd.z, 0, -fwd.x);
 
+    if (rig.get('wingL')) this._poseWings(dt);
     if (this.saber) {
       this._poseSaber(dt, ctx, chest, fwd, right);
       return;
     }
     if (this.disarmed || !this.weapon) {
       this.animator?.swingArms(dt, this.velocity.length(), 1);
+      /* A ranged body with no weapon in its hand fires from its arm — the B2,
+       * and anything else built with a forearm muzzle. */
+      if (!this.disarmed && this.A.ranged && this.humanoid && rig.get('foreR')?.muzzle) this._poseWristGun(dt);
       this._stepGarments(dt);
       return;
     }
@@ -9331,18 +9411,34 @@ export class Enemy {
 
     const speed = Math.hypot(this.velocity.x, this.velocity.z);
     this.walkPhase = (this.walkPhase + dt * clamp(speed / 1.2, 0.05, 3)) % 1;
+    /* IT ROLLS. A destroyer covers ground as a wheel — legs tucked into the
+     * cowl, the whole body turning over — and unfolds to fight; walking on
+     * three legs is what it does for the last few metres. The brain moves it
+     * at one speed, so the wheel is read off that speed: past a brisk walk
+     * the legs fold up under the body, the arms fold back into the cowl and
+     * the core spins about its axle at the rate the ground goes by. It
+     * unfolds when it slows, which is the moment it can shoot. */
+    const S = b.scale ?? this.A.scale ?? 1;
+    const roll = clamp((speed - 1.5) / 1.0, 0, 1);
+    this.rollBlend = damp(this.rollBlend ?? 0, roll, roll > (this.rollBlend ?? 0) ? 5 : 7, dt);
+    const rb = this.rollBlend;
+    if (rb > 1e-3) this.rollSpin = (this.rollSpin ?? 0) + dt * (speed / (0.55 * S)) * rb;
+    b.core.rotation.x = (this.rollSpin ?? 0) * rb;
+    b.core.position.y = lerp(0.60 * S, 0.66 * S, rb);
     b.legs.forEach((leg, i) => {
       if (leg.gone) return;
       const ph = (this.walkPhase + i / 3) % 1;
-      leg.leg.rotation.x = Math.sin(ph * TAU) * 0.22;
-      leg.lower.rotation.x = -0.2 + Math.cos(ph * TAU) * 0.2;
+      leg.leg.rotation.x = lerp(Math.sin(ph * TAU) * 0.22, -1.35, rb);
+      leg.lower.rotation.x = lerp(-0.2 + Math.cos(ph * TAU) * 0.2, 1.55, rb);
+      leg.leg.position.y = lerp(0.50 * S, 0.62 * S, rb);
     });
+    let pitch = 0;
     if (this.target) {
       _v1.subVectors(aimAt(this.target, _aim), b.headG.getWorldPosition(_v2));
-      const pitch = Math.atan2(_v1.y, Math.hypot(_v1.x, _v1.z));
+      pitch = Math.atan2(_v1.y, Math.hypot(_v1.x, _v1.z));
       b.headG.rotation.x = clamp(-pitch, -0.5, 0.5);
-      for (const arm of b.arms) arm.arm.rotation.x = clamp(-pitch * 0.6, -0.5, 0.5);
     }
+    for (const arm of b.arms) arm.arm.rotation.x = lerp(clamp(-pitch * 0.6, -0.5, 0.5), 2.3, rb);
     if (b.shield.visible) {
       b.shieldMat.uniforms.uTime.value += dt;
       const u = b.shieldMat.uniforms.uPower;

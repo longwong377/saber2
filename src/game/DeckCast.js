@@ -525,7 +525,12 @@ export class Knockable {
     return this;
   }
 
-  _deckY(x, z) { return this.world.terrain ? this.world.terrain.height(x, z) : this.mark.y; }
+  /** The floor under a point: `world.floorAt` when the level installs one
+   *  (the deck's pads stand proud of its plate), else the terrain, else the mark. */
+  _deckY(x, z) {
+    if (this.world.floorAt) return this.world.floorAt(x, z);
+    return this.world.terrain ? this.world.terrain.height(x, z) : this.mark.y;
+  }
 
   _publish() {
     this.at.copy(this.body.position);
@@ -774,6 +779,14 @@ export function buildCastFighter(opts = {}) {
     A.ring(P.alloy, 0.92, 0.07, 0, 0, -3.7, 0, 0, 0, 14);
     A.ring(P.alloy, 0.96, 0.06, 0, 0, -2.9, 0, 0, 0, 14);
     bells.push({ x: 0, y: 0, z: -3.9, r: 0.85 });
+    /* Six radiator fins round the ball's aft, the belly lamp, two whip
+     * antennae off the crown: the greebles a hull is read by from two metres. */
+    for (let i = 0; i < 6; i++) {
+      const th = (i / 6) * TAU + 0.2;
+      A.box(P.alloy, 0.10, 0.10, 0.5, Math.cos(th) * 1.9, Math.sin(th) * 1.9, -0.9, 0, 0, th);
+    }
+    A.box(P.lamp, 0.12, 0.12, 0.12, 0, -2.05, 1.2);
+    A.pair((s) => A.cyl(P.alloy, 0.04, 0.04, 1.4, s * 1.2, 1.4, -1.5, 0.4 * s, 0, 0, 5));
     A.box(P.deep, 0.6, 0.4, 0.9, 0, 1.8, 0.8);
     for (let i = 0; i < 6; i++) A.box(P.deep, 0.6, 0.06, 0.05, 0, 1.2 - i * 0.45, 1.85 - i * 0.06);
     A.pair((s) => {
@@ -915,6 +928,15 @@ export function buildCastShuttle(opts = {}) {
     for (let i = 0; i < 6; i++) A.box(P.alloy, 4.6, 0.05, 0.08, 0, -1.3 + i * 0.3, -0.5);
     A.pair((s) => { for (let i = 0; i < 4; i++) A.box(P.alloy, 0.05, 0.4, 1.2, s * (0.8 + i * 0.35), 0.4, 6.0 - i * 1.3); });
     for (let i = 0; i < 4; i++) A.cyl(P.alloy, 0.03, 0.03, 1.4, -1.2 + i * 0.8, 1.6, -6.8, 0, 0, 0, 5);
+    /* Rivets down the nose ridge, louvres on the cabin flanks, wingtip lamps,
+     * a whip antenna and a belly rail: the two-metre detail. */
+    for (let i = 0; i < 8; i++) A.box(P.alloy, 0.07, 0.07, 0.07, 0, 0.85 + i * 0.115, 8.6 - i * 0.9);
+    A.pair((s) => {
+      for (let i = 0; i < 3; i++) A.box(P.deep, 0.06, 0.5, 0.4, s * 2.52, 0.3, -1.8 - i * 0.7);
+      A.box(P.lamp, 0.10, 0.10, 0.10, s * 3.9, 0.4, -1.0);
+    });
+    A.cyl(P.alloy, 0.03, 0.03, 1.6, 0.9, 1.2, -6.5, 0, 0, -0.5, 5);
+    A.box(P.deep, 0.5, 0.06, 0.06, 0, -1.5, 3.0);
   }
   const gearY = 2.2;
   const strut = (x, z, len) => {

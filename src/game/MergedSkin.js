@@ -439,7 +439,11 @@ export function buildMergedSkin(rig, opts = {}) {
  */
 function staleness(owner) {
   const a = owner.actor;
-  return `${a?.severedCount || 0}/${a?.ragdolled ? 1 : 0}/${owner.mod || '-'}`;
+  /* `_paintRev` is bumped by every paint the body takes (src/game/Command.js
+   * `paintSlot`): a Sergeant promoted in the field past 62 m is re-baked
+   * once, and wears the Lieutenant's paint at range instead of on the next
+   * area. */
+  return `${a?.severedCount || 0}/${a?.ragdolled ? 1 : 0}/${owner.mod || '-'}/${owner._paintRev || 0}`;
 }
 
 /**
@@ -637,11 +641,11 @@ export function disposeMergedSkin(owner) {
  * comfortable with it.
  *
  * 7.3x and not the ~12x a bare body gives, and the difference is worth naming:
- * a bare trooper folds to 5 bins, and the rank chip, the man's mark, his band
- * and his scorch are four more MATERIALS — each with its own emissive, which
- * `mergeBinKey` does not absorb — so a decorated veteran comes out at 7. That
- * is the price of the paint being real paint, and it is still 7 draw calls for
- * a man who cost 50.
+ * a bare trooper folds to 5 bins, and a decorated one folds to the SAME 5:
+ * the rank, the man's mark and his band are per-vertex colour in the plate's
+ * own channel now (src/game/Command.js `PAINT`), which `bakeBin` multiplies
+ * into the buffer, so they cost no bin. Only his scorch is still a material
+ * of its own, and a man with wounds comes out at 6.
  *
  * THE MERGE IS NOT A FREEZE. Weight 1.0 on one bone is exactly the rigid
  * parenting the graph was already doing, so the skeleton still drives the
@@ -694,6 +698,14 @@ function paintSpansOf(skin) {
     out.push({ spans, sole: mixed ? null : sole });
   }
   return out;
+}
+
+/** Has any source geometry changed vertex count since the spans were taken? */
+function spansMoved(bins) {
+  for (const bin of bins) {
+    for (const s of bin.spans) if (s.src.geometry.attributes.position.count !== s.count) return true;
+  }
+  return false;
 }
 
 /**
@@ -781,6 +793,14 @@ export function mergeFigure(figure, opts = {}) {
      * skin is what is drawing.
      */
     update(now = 0) {
+      /* THE TOPOLOGY MOVED UNDER THE BAKE. A recruit with no rank and no mark
+       * is never readied for paint at build (src/game/Command.js `prepPaint`
+       * refines a body's boundary bands the first time a brush touches it),
+       * so his first mark on the deck lands AFTER he folded — and the bake's
+       * spans then index a buffer that no longer matches its sources. Caught
+       * here off the spans' own counts and answered with a re-bake, which
+       * takes the same one-frame budget as the first. */
+      if (this.skin && this._bins && spansMoved(this._bins)) this.dispose();
       if (!this.ready) {
         if (!mayBakeAt(now)) return false;
         this.ready = true;

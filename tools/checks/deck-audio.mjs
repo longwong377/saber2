@@ -63,7 +63,7 @@ import {
   deckChant, launchSequence, damagedArrival,
   cuePaint, cueAttach, cueDetach, cueName,
 } from '../../src/game/DeckAudio.js';
-import { DECK, MUSTER, markFor } from '../../src/game/Hangar.js';
+import { DECK, DECK_ZONES, MUSTER, markFor } from '../../src/game/Hangar.js';
 import { TERRAIN_PRESETS } from '../../src/world/Terrain.js';
 import { ground } from '../../src/world/Scenery.js';
 import { OfflineCtx, bands, rms, dB, BANDS } from './_offline-audio.mjs';
@@ -788,21 +788,24 @@ export async function run({ check, assert }) {
     try {
       const world = fixture();
       dressDeckAudio(world, { pa: false, vents: false, battle: false, traffic: false });
-      /* THE REAL WALK. `MUSTER.door` and `markFor` are the shipped derivation
-       * of where they come from and where they stand, so the distance under
-       * test is the distance the company actually covers — 46 m now that the
-       * doors are at `DECK.aft + 8`, and it was 34 when this file last had an
-       * opinion about it. The pace is derived the way `stepCompany`'s own note
-       * says it is ("the pace falls out of the longest walk on the deck"),
-       * which lands on the same number as its `MARCH_SPEED` without this file
-       * holding a second copy of it. */
+      /* THE REAL WALK. The company waits in the CROWD at the rack walls now
+       * (`Hangar.crowdSpots` deals it the block at the starboard wall and
+       * the clusters on both flanks, inside `DECK_ZONES.crowdL/crowdR`) and
+       * walks from there to `markFor`'s marks, so the distance under test is
+       * the distance it actually covers — sixty-odd metres for the far man,
+       * which is `MUSTER.formUp`'s own stated reason. `MUSTER.door` was the
+       * bulkhead doors, and the doors are a lift now. The pace is derived the
+       * way `stepCompany`'s own note says it is ("the pace falls out of the
+       * longest walk on the deck"), which lands on the same number as its
+       * `MARCH_SPEED` without this file holding a second copy of it. */
       const N = 24;
       const men = [];
+      const CL = DECK_ZONES.crowdL, CR = DECK_ZONES.crowdR;
       for (let i = 0; i < N; i++) {
         const mark = markFor(i, N, Math.floor(i / 5), Math.ceil(N / 5));
         men.push({
           id: i,
-          from: { x: ((i % 2) ? 1 : -1) * MUSTER.door.spread, z: MUSTER.door.z },
+          from: (i % 2) ? { x: CR.x1 - 12, z: (CR.z0 + CR.z1) / 2 - 6 } : { x: CL.x0 + 14, z: CL.z1 - 12 },
           mark,
           start: 0.10 + (i % 3) * 0.18 + (i * 0.37 % 1) * 0.55,
           pace: 0.88 + (i * 0.61 % 1) * 0.26,

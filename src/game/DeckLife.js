@@ -197,6 +197,10 @@ function frame() {
   const APRON = {
     padL: { x: -Z.apron.x1 * 0.53, z: (Z.apron.z0 + Z.apron.z1) * 0.5 - 2 },
     padR: { x: Z.apron.x1 * 0.53, z: (Z.apron.z0 + Z.apron.z1) * 0.5 - 2 },
+    /* A third mark in the starboard corner: a fighter's half-span inside
+     * `CLEAR`. Pad B would be the natural third pad, but `dressStructure`
+     * stands its own parked shuttle on it. */
+    padS: { x: Math.min(Z.apron.x1 * 0.80, CLEAR - 8), z: (Z.apron.z0 + Z.apron.z1) * 0.5 - 2 },
     crash: { x: 0, z: Z.apron.z0 + 6 },
   };
 
@@ -263,7 +267,7 @@ function deckMaterials() {
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /** Fixed slots: every one has an owner for the life of the level. */
-const GLOW = { arc: 0, torch: 4, beacon: 5, engine: 8, eye: 12, count: 15 };
+const GLOW = { arc: 0, torch: 4, beacon: 5, engine: 8, eye: 14, count: 17 };
 
 function addGlows(world, life) {
   const M = deckMaterials();
@@ -430,8 +434,15 @@ function addDeckHaze(world, life) {
 /*  2 · THE GROUND, AND THE HOLE IN IT                                    */
 /* ══════════════════════════════════════════════════════════════════════ */
 
+/**
+ * THE FLOOR, NOT THE HEIGHTFIELD. `Hangar.dressHangar` installs
+ * `world.floorAt`, which knows the two pads stand 0.45 and 1.2 m proud of a
+ * flat plate and that a parked transport's ramp is a floor; the heightfield
+ * knows none of that. Everything here that stands or walks asks this.
+ */
 function groundAt(world, x, z) {
-  return world.terrain ? world.terrain.height(x, z) : 0;
+  if (world?.floorAt) return world.floorAt(x, z);
+  return world?.terrain ? world.terrain.height(x, z) : 0;
 }
 
 /** Find the pit by sampling the plate; never be told where it is. */
@@ -1148,7 +1159,9 @@ function workerJobs(world) {
     { job: 'kneel', x: CRADLE.x - 4.2 * cy, z: CRADLE.z + 4.2 * sy - 1.2, yaw: Math.PI / 2 - CRADLE.yaw },
     { job: 'watch', x: FLANK_R.x0 + 3, z: FLANK_R.z1 - 3, yaw: -Math.PI / 2 },
     { job: 'stand', x: FLANK_R.x1 - 9, z: (FLANK_R.z0 + FLANK_R.z1) * 0.5 + 3, yaw: Math.PI / 2 },
-    { job: 'walk', path: [BAND.x0 + 2, BAND.z1 - 1, BAND.x1, BAND.z1 - 1] },
+    /* Built at the port job's end of the band, which is inside sixty metres
+     * of the line; the far end of his walk is not. */
+    { job: 'walk', path: [BAND.x1, BAND.z1 - 1, BAND.x0 + 2, BAND.z1 - 1] },
     { job: 'hose', x: BOWSER.x + 2.2, z: BOWSER.z + 2.0, yaw: Math.atan2(HULL.x - BOWSER.x - 2.2, HULL.z - BOWSER.z - 2.0) },
     { job: 'hose', x: HULL.x - HULL.wide * 0.5 - 1.6, z: HULL.z + HULL.len * 0.1, yaw: Math.PI / 2 },
     { job: 'stand', x: STAND.x + 2.4, z: STAND.z + 1.8, yaw: Math.atan2(STAND.x - STAND.x - 2.4, STAND.z - STAND.z - 1.8) },
@@ -1606,16 +1619,24 @@ function trafficPlan(world) {
       { kind: 'fighter', pad: { x: APRON.padL.x, z: APRON.padL.z, y: gy(APRON.padL) },
         entry: { x: APRON.padL.x + 50, y: 30 }, farX: 90, farY: 130,
         farIn: 26, inDur: 9, sit: 30, spin: 4, out: 2.6, farOut: 26, gap: 12, t0: 14, flight: 7,
-        damagedEvery: 2 },
+        damagedEvery: 2, slot: 6, glow: 0 },
       /* THE SHUTTLE: starboard pad, entering from port. Longer everything. */
       { kind: 'shuttle', pad: { x: APRON.padR.x, z: APRON.padR.z, y: gy(APRON.padR) },
         entry: { x: APRON.padR.x - 50, y: 32 }, farX: -110, farY: 150,
         farIn: 28, inDur: 11, sit: 44, spin: 5, out: 3.0, farOut: 28, gap: 22, t0: 28 + 11 + 8, flight: 12,
-        damagedEvery: 0 },
+        damagedEvery: 0, slot: 1, glow: 1 },
+      /* THE SECOND FIGHTER: the starboard corner, entering from the centre
+       * line; starts its first cycle already down and smoking, so the deck
+       * has a damaged hull on it from the first frame. Every third of its
+       * arrivals is damaged, so the two fighters' bad days do not line up. */
+      { kind: 'fighter', pad: { x: APRON.padS.x, z: APRON.padS.z, y: gy(APRON.padS) },
+        entry: { x: APRON.padS.x - 40, y: 28 }, farX: 20, farY: 120,
+        farIn: 27, inDur: 9, sit: 36, spin: 4, out: 2.6, farOut: 27, gap: 16, t0: 27 + 9 + 4, flight: 3,
+        damagedEvery: 3, slot: 7, glow: 2 },
     ],
-    /* The far mesh slots: formation 0-3, pair 4-5, fighter's own leg 6;
-     * shuttle loop 0, shuttle's own leg 1. */
-    farFighters: 7, farShuttles: 2,
+    /* The far mesh slots: formation 0-3, pair 4-5, the fighters' own legs
+     * 6 and 7; shuttle loop 0, shuttle's own leg 1. */
+    farFighters: 8, farShuttles: 2,
   });
 }
 
@@ -1744,7 +1765,7 @@ function hullAt(life, H, x, y, z, yaw, pitch, roll, burn) {
   _eu.set(pitch, yaw, roll, 'YXZ');
   g.quaternion.setFromEuler(_eu);
   g.updateMatrixWorld(true);
-  const slot = GLOW.engine + (H.kind === 'fighter' ? 0 : 2);
+  const slot = GLOW.engine + H.glow * 2;
   for (let i = 0; i < 2; i++) {
     const b = H.cast.bells[Math.min(i, H.cast.bells.length - 1)];
     _mb.makeRotationX(Math.PI / 2).setPosition(b.x, b.y, b.z - 0.3);
@@ -1755,7 +1776,7 @@ function hullAt(life, H, x, y, z, yaw, pitch, roll, burn) {
 
 function hullAway(life, H) {
   H.cast.group.visible = false;
-  const slot = GLOW.engine + (H.kind === 'fighter' ? 0 : 2);
+  const slot = GLOW.engine + H.glow * 2;
   for (let i = 0; i < 2; i++) { glowPlace(life, slot + i, _m4.identity(), 0, 0); glowBurn(life, slot + i, 0, 0, 0); }
 }
 
@@ -1783,7 +1804,7 @@ function stepHull(world, life, H, dt) {
   const T = life.traffic, P = T.plan, O = P.outside;
   const fx = world.particles;
   const far = H.kind === 'fighter' ? T.farF : T.farS;
-  const slot = H.kind === 'fighter' ? 6 : 1;
+  const slot = H.slot;
   const t = H.t, was = H.last;
   const A = H.farIn, B = A + H.inDur, Cc = B + H.sit, D = Cc + H.spin, E = D + H.out, F = E + H.farOut;
   const gy = H.pad.y + H.cast.gearY;
@@ -1794,7 +1815,11 @@ function stepHull(world, life, H, dt) {
   if (t < A) {
     /* ── FAR IN. From `OUTSIDE.run` past the lip down to the entry point,
      * growing, decelerating to the inside leg's own speed. */
-    if (was >= A || was > t) {
+    /* `stepTraffic` marks a wrapped clock with `last = -1`; a clock that
+     * jumped backwards any other way reads the same. (`was >= A` never held
+     * here — the wrap put `was` below zero, not above A — so the cycle count
+     * stood at 1 for ever and every fighter arrival was the damaged one.) */
+    if (was < 0 || was > t) {
       /* The cycle begins: decide whether this one is damaged, and announce. */
       H.cycle++;
       H.damaged = H.damagedEvery > 0 && ((H.cycle - 1) % H.damagedEvery === 0);
@@ -1866,7 +1891,10 @@ function stepHull(world, life, H, dt) {
     return;
   }
   if (t < Cc) {
-    /* ── SIT. Touchdown once; then cooling on gear, solid. */
+    /* ── SIT. Touchdown once; then cooling on gear, solid. A hull whose clock
+     * STARTS on the pad never crosses B, so the collider is asked for
+     * directly: a ship you can walk through is the complaint, again. */
+    if (!H.collider) hullSolid(world, H, true);
     if (crossed(B)) {
       hullSolid(world, H, true);
       _v.set(px, gy - H.cast.gearY + 0.2, pz);

@@ -248,12 +248,16 @@ export function limbScale(rig) {
 }
 
 /** Four-legged / multi-legged frames for walkers and beasts. */
-export function walkerSkeleton(scale = 1, legs = 4) {
+export function walkerSkeleton(scale = 1, legs = 4, opts = {}) {
   const s = scale;
+  /* Where the head hangs off the body, in the body's own frame. The default
+   * is the old tub's turret ring at the back; a spherical chassis puts its
+   * face on the FRONT of the ball, which is what `headAt` is for. */
+  const headAt = opts.headAt ?? [0, 0.1, -0.6];
   const out = [
     { name: 'hips', parent: null, offset: [0, 0, 0], length: 0.5 * s, rest: [0, 1, 0], role: 'core' },
     { name: 'body', parent: 'hips', offset: [0, 0.25 * s, 0], length: 0.7 * s, rest: [0, 1, 0], role: 'core' },
-    { name: 'head', parent: 'body', offset: [0, 0.1 * s, -0.6 * s], length: 0.4 * s, rest: [0, 1, 0], role: 'head' },
+    { name: 'head', parent: 'body', offset: [headAt[0] * s, headAt[1] * s, headAt[2] * s], length: 0.4 * s, rest: [0, 1, 0], role: 'head' },
   ];
   for (let i = 0; i < legs; i++) {
     const side = i % 2 === 0 ? 1 : -1;

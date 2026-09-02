@@ -902,20 +902,25 @@ export async function run({ check, assert, THREE: T }) {
     const real = new Enemy(world, 'trooper', new THREE.Vector3(40, 0, 8));
     CommandDirector.prototype.repaint.call({}, real, RANKS[2].color);
     CommandDirector.prototype.markUp.call({}, real, MARKS.find((k) => k.id === 'blood').color);
-    const before = (real._modMeshes || []).length;
+    /* MOVED: this pinned "bandUp made meshes" when the band was a cube hung
+     * off the forearm. It is paint in the plate's own vertices now
+     * (src/game/Command.js `PAINT`), so what is pinned is the opposite —
+     * vertices written, nothing added, nothing to free. */
+    const meshesOf = (e) => { let n = 0; e.rig.root.traverse((o) => { if (o.isMesh) n++; }); return n; };
+    const before = meshesOf(real);
     assert(CommandDirector.prototype.bandUp.call({}, real, band.color),
       'bandUp painted nothing on a real trooper rig');
     assert(real._cmdBand && real._cmdBand.color.getHex() === band.color,
-      'the band material is not the colour that was asked for');
+      'the band record is not the colour that was asked for');
     assert(real._cmdBand !== real._cmdPaint && real._cmdBand !== real._cmdMark,
-      'the band shares a material with the rank paint or the shin mark — recolour one and a '
+      'the band shares a record with the rank paint or the shin mark — recolour one and a '
       + 'Captain stops reading as a Captain');
-    assert((real._modMeshes || []).length > before,
-      'bandUp made no meshes — nothing would be drawn and nothing would be freed');
-    assert((real._modMaterials || []).includes(real._cmdBand),
-      'the band material is not on _modMaterials — the body\'s own teardown will leak it');
+    assert(meshesOf(real) === before && !(real._modMeshes || []).length,
+      `bandUp added ${meshesOf(real) - before} mesh(es) — a band is paint on the forearm, not a ring round it`);
+    assert(real._cmdBand.count > 0 && real._cmdPaint.count > 0 && real._cmdMark.count > 0,
+      'a paint record wrote no vertices');
     return `${band.name} banded: gains x${plain.gain.maxHp.toFixed(2)} health either way, `
-      + `${(real._modMeshes || []).length - before} mesh(es) on the forearm, own material, on the teardown list`;
+      + `${real._cmdBand.count} vertices on the forearm, own record, ${before} meshes before and after`;
   });
 
   check('barracks: the wound writer writes, and a scar is history made visible', () => {
@@ -956,10 +961,12 @@ export async function run({ check, assert, THREE: T }) {
     const stub = fig._stub;
     assert(stub._cmdPaint && stub._cmdMark && stub._cmdBand,
       'this fixture needs the three mark channels painted before the scar goes on');
-    const before = stub._modMeshes.length;
+    /* The paint is in the vertices and bolts nothing on, so a painted stub has
+     * no `_modMeshes` at all until the scorch — the one bolted shape left. */
+    const before = (stub._modMeshes || []).length;
     assert(CommandDirector.prototype.scorchUp.call({}, stub, 0) === false,
       'a man with no wounds was given a scar anyway');
-    assert(!stub._cmdScorch && stub._modMeshes.length === before,
+    assert(!stub._cmdScorch && (stub._modMeshes || []).length === before,
       'the refused scorch still left a material or a mesh behind');
     assert(CommandDirector.prototype.scorchUp.call({}, stub, 2) === true,
       'scorchUp painted nothing for two wounds');

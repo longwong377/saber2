@@ -1369,21 +1369,29 @@ export async function run({ check, assert }) {
 
     /* AND IT REALLY REACHES THE BODY. The stub above proves `enlistBody` asks;
      * this proves the director can answer, through the shipped method, on a
-     * real rig — the meshes and the material land on `_modMeshes` and
-     * `_modMaterials`, which is what the body's own teardown walks. */
+     * real rig — AS PAINT IN THE VERTICES, not as a mesh. This used to assert
+     * that the mark ADDED meshes, because a mark that made nothing was a mark
+     * nobody could see; a marking is a colour the plate has now
+     * (src/game/Command.js `PAINT`), so the same sentence is "it wrote
+     * vertices and added nothing": the record on `_cmdMark` counts what it
+     * painted and the mesh count is the same before and after. */
     const real = new Enemy(world, 'trooper', new THREE.Vector3(40, 0, 0));
-    const before = (real._modMeshes || []).length;
+    const meshesOf = (e) => { let n = 0; e.rig.root.traverse((o) => { if (o.isMesh) n++; }); return n; };
+    const before = meshesOf(real);
     const { CommandDirector } = await import('../../src/game/Command.js');
     const painted = CommandDirector.prototype.markUp.call({}, real, mark.color);
     assert(painted, 'markUp painted nothing on a real trooper rig');
-    assert((real._modMeshes || []).length > before,
-      'markUp made no meshes, so nothing would be drawn and nothing would be freed');
+    assert(meshesOf(real) === before,
+      `markUp added ${meshesOf(real) - before} mesh(es) — a mark is paint on the plate, not a lump on it`);
+    assert((real._modMeshes || []).length === 0, 'markUp bolted something onto the body');
     assert(real._cmdMark && real._cmdMark.color.getHex() === mark.color,
-      'the mark material is not the colour that was asked for');
-    /* …and it is a SECOND material, never a recolour of the rank paint: a
+      'the mark record is not the colour that was asked for');
+    assert(real._cmdMark.count > 0, 'the mark record wrote no vertices');
+    /* …and it is a SECOND record, never a recolour of the rank paint: a
      * marked Captain must still read as a Captain at every distance. */
-    assert(real._cmdMark !== real._cmdPaint, 'the mark and the rank paint are the same material');
-    return `${mark.name} painted on ${(real._modMeshes || []).length - before} mesh(es); `
-      + `enlisting gained x${plain.gain.maxHp.toFixed(2)} health either way; rank paint untouched`;
+    assert(real._cmdMark !== real._cmdPaint, 'the mark and the rank paint are the same record');
+    return `${mark.name} painted on ${real._cmdMark.count} vertices (${real._cmdMark.regions.join('+')}), `
+      + `${before} meshes before and after; enlisting gained x${plain.gain.maxHp.toFixed(2)} health `
+      + 'either way; rank paint untouched';
   });
 }

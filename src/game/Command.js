@@ -228,7 +228,7 @@ export const COMMAND_UNITS = {
   heavy: {
     label: 'Clone Heavy Gunner', build: (o) => buildTrooper({ ...o, accent: o.accent ?? 0x8a8f98 }),
     scale: 1.06, hp: 78, mass: 96,
-    speed: 2.9, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
+    speed: 2.9, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'heavy',
     fireRate: 2.6, burst: 9, burstGap: 0.07, spread: 0.09, damage: 9,
     preferred: [11, 22], boltColor: BOLT_COLORS.blue, score: 300, threat: 3,
     hipHeight: 0.95, unlockAt: 3,
@@ -248,7 +248,7 @@ export const COMMAND_UNITS = {
   jet: {
     label: 'Jet Trooper', build: (o) => buildTrooper({ ...o, accent: o.accent ?? 0xc85a22 }),
     scale: 0.98, hp: 54, mass: 70,
-    speed: 6.2, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
+    speed: 6.2, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15s',
     fireRate: 2.2, burst: 2, burstGap: 0.16, spread: 0.06, damage: 17, float: 1.35,
     preferred: [8, 17], boltColor: BOLT_COLORS.blue, score: 420, threat: 4,
     hipHeight: 0.95, unlockAt: 5,
@@ -264,7 +264,7 @@ export const COMMAND_UNITS = {
   arc: {
     label: 'ARC Trooper', build: (o) => buildTrooper({ ...o, accent: o.accent ?? 0x2f6fbe }),
     scale: 1.02, hp: 130, mass: 84,
-    speed: 5.0, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15',
+    speed: 5.0, toughness: TOUGHNESS.plastoid, ranged: true, weapon: 'dc15s',
     fireRate: 0.95, burst: 3, burstGap: 0.09, spread: 0.035, damage: 15,
     preferred: [4, 11], boltColor: BOLT_COLORS.blue, score: 900, threat: 6,
     /* AN ARC THROWS ONE AND LANDS IT. `threat: 6` divides the scatter hardest
@@ -973,17 +973,24 @@ export function markById(id) {
  *           stop; dust, not soot. Soot is `scorchUp`'s.
  *   fade    0.12 toward the plate. Enough that a blood-red stripe is a
  *           campaign old, not enough to read as pink.
- *   edge    30 mm. The band along a boundary that wears hardest and that the
- *           refinement works on.
- *   fine    12 mm. The longest edge a triangle straddling a boundary may keep.
- *   levels  4 halvings — a 23 cm strip reaches `fine` in four.
+ *   edge    30 mm. The band along a boundary that wears hardest — the grime
+ *           leans on it.
+ *   band    16 mm. The band along a boundary the refinement works on: the
+ *           chip's own wander plus half a triangle. Measured on a trooper at
+ *           every rank, mark and band: refining the full 30 mm edge instead
+ *           cost 106 000 triangles a body against 9 350 bare; this band at
+ *           `fine` 20 mm costs 33 400 (a B1 22 700 against 6 600), and a
+ *           company of twenty-four is 800 000 rather than 2.5 million.
+ *   fine    20 mm. The longest edge a triangle straddling a boundary may keep
+ *           — a chip is one or two vertices wide, which is what a chip is.
+ *   levels  3 halvings — the cuirass's 20 cm rows reach 2.5 cm in three.
  *   ceiling the largest multiplier a vertex may carry. A paint over the
  *           undersuit's 0x191c21 is a ×60 on the red channel; the cap is a
  *           guard against a black material, not a tuning.
  */
 export const PAINT = {
   chip: 0.009, cell: 0.016, bite: 0.18, grime: 0.24, fade: 0.12,
-  edge: 0.030, fine: 0.012, levels: 4, ceiling: 96,
+  edge: 0.030, band: 0.016, fine: 0.020, levels: 3, ceiling: 96,
 };
 
 /**
@@ -1059,7 +1066,7 @@ export const RANK_REGIONS = [
   { id: 'jaw', from: 4, bone: 'head',
     shape: [['ax', 0, 0.062], ['y', -0.014, 0.034], ['z', 0.045, Infinity]] },
   { id: 'pauldron', from: 4, bone: 'chest',
-    shape: [['ax', 0.150, Infinity], ['y', 0.035, 0.185], ['z', -0.120, 0.120]] },
+    shape: [['ax', 0.154, Infinity], ['y', 0.060, 0.200], ['z', -0.120, 0.120]] },
   { id: 'thigh', from: 4, bone: ['thighL', 'thighR'], under: true,
     shape: [['yL', 0.28, 0.52], ['face', 0, 1, 0.25]] },
 ];
@@ -1087,6 +1094,59 @@ export const FALLBACK_REGIONS = {
   mark: { id: 'waist', bone: ['chest', 'spine', 'body', 'hips'], under: true, shape: [['yL', 0.30, 0.44]] },
   band: { id: 'belt', bone: ['chest', 'spine', 'body', 'hips'], under: true, shape: [['yL', 0.50, 0.62]] },
 };
+
+/**
+ * THE SAME LADDER ON A DROID. A B1 has no cloth under its plate, no cheeks
+ * and no shoulder bells — what it has is a breastplate, a pack, a beak and a
+ * head ridge, and the unit flash on a battle droid is a PANEL on those (the
+ * OOM's yellow: a stripe down the breast, the top of the head, the shoulder
+ * tops). Bone-local metres at scale 1, from `buildB1`'s measured shell; a
+ * B2 is the same skeleton 1.18 larger and the `S` multiplier follows it.
+ * The photoreceptor is an emissive with no map, so `paintSurface` never lets
+ * paint near it; the mark and the band use the shin and forearm tables
+ * above, which are written in fractions of the bone and fit any leg.
+ */
+export const DROID_RANK_REGIONS = [
+  { id: 'crest', from: 1, bone: 'head',
+    shape: [['ax', 0, 0.016], ['y', 0.100, Infinity], ['z', -0.090, 0.090]] },
+  { id: 'breast', from: 1, bone: 'chest',
+    shape: [['ax', 0, 0.030], ['y', 0.020, 0.190], ['z', 0.000, Infinity]] },
+  { id: 'shoulder', from: 2, bone: ['armL', 'armR'],
+    shape: [['y', 0.020, 0.100]] },
+  { id: 'pack', from: 2, bone: 'chest',
+    shape: [['ax', 0, 0.050], ['y', 0.030, 0.190], ['z', -Infinity, -0.100]] },
+  { id: 'beak', from: 3, bone: 'head',
+    shape: [['ax', 0, 0.016], ['y', 0.060, Infinity], ['z', 0.090, Infinity]] },
+  { id: 'flank', from: 3, bone: 'chest',
+    shape: [['ax', 0.070, 0.135], ['y', 0.040, 0.180], ['z', -0.020, 0.070]] },
+  { id: 'thigh', from: 4, bone: ['thighL', 'thighR'],
+    shape: [['yL', 0.12, 0.30], ['face', 0, 1, 0.20]] },
+  { id: 'hip', from: 4, bone: 'hips',
+    shape: [['y', 0.060, 0.140], ['z', 0.000, Infinity]] },
+];
+
+/**
+ * Which ladder a body wears, read off the BODY and not off a kind string,
+ * because `repaint` is handed a parade stub that carries neither: a chassis
+ * with an undersuit under its plate is a man in armour, one with plate and
+ * no cloth is a droid. A body with neither (a robe, a beast) is 'flesh' and
+ * falls through to `FALLBACK_REGIONS`.
+ */
+export function paintKindOf(e) {
+  let under = false, plate = false;
+  const root = e?.rig?.root || e?.group;
+  root?.traverse?.((m) => {
+    if (!m.isMesh) return;
+    const s = paintSurface(m.material);
+    if (s === 'under') under = true; else if (s === 'plate') plate = true;
+  });
+  return under || !plate ? 'flesh' : 'steel';
+}
+
+/** The three tables a body of this kind paints from. */
+export function regionTablesFor(kind) {
+  return { rank: kind === 'steel' ? DROID_RANK_REGIONS : RANK_REGIONS, mark: MARK_REGIONS, band: BAND_REGIONS };
+}
 
 /** The record each paint method leaves on the body, by the name the checks read. */
 export const PAINT_SLOTS_OF = { rank: '_cmdPaint', mark: '_cmdMark', band: '_cmdBand' };
@@ -1171,7 +1231,7 @@ export function regionDist(reg, p, S, L, side) {
 function chippedAway(x, y, z, d, seed) {
   const w = WEAR.wear(x, y, z, PAINT.cell, seed);
   if (d <= PAINT.chip * ((w - 0.5) * 2 + PAINT.bite)) return true;
-  if (d < PAINT.edge && WEAR.hash3(x, y, z, PAINT.cell * 0.6, seed + 3) > 0.955) return true;
+  if (d < PAINT.band && WEAR.hash3(x, y, z, PAINT.cell * 0.6, seed + 3) > 0.955) return true;
   return false;
 }
 
@@ -1265,15 +1325,23 @@ function boneSpace(m, i, P, lift) {
  * of the band where the colour is the same on both sides — the header says
  * why that cannot show.
  */
-function refineBand(m, distAt, band) {
+function refineBand(m, fns, band) {
   const geo = m.geometry;
   let did = false;
+  const R = fns.length;
   for (let level = 0; level < PAINT.levels; level++) {
     const P = geo.attributes.position;
     const n = P.count;
     const idx = geo.index ? Array.from(geo.index.array) : Array.from({ length: n }, (_, i) => i);
-    const d = new Float64Array(n);
-    for (let i = 0; i < n; i++) d[i] = distAt(P.getX(i), P.getY(i), P.getZ(i));
+    /* One signed distance per boundary per vertex; a triangle is split when
+     * it straddles ANY of them, and once per mesh rather than once per region
+     * — measured, the per-region form copied every attribute of the chest
+     * fourteen times over and took 700 ms a body. */
+    const d = new Float64Array(n * R);
+    for (let i = 0; i < n; i++) {
+      const x = P.getX(i), y = P.getY(i), z = P.getZ(i);
+      for (let r = 0; r < R; r++) d[i * R + r] = fns[r](x, y, z);
+    }
     const names = Object.keys(geo.attributes);
     const arrs = {}, sizes = {};
     for (const k of names) { arrs[k] = Array.from(geo.attributes[k].array); sizes[k] = geo.attributes[k].itemSize; }
@@ -1295,18 +1363,31 @@ function refineBand(m, distAt, band) {
           A[o] /= l; A[o + 1] /= l; A[o + 2] /= l;
         }
       }
-      dl.push(distAt(px(k), py(k), pz(k)));
+      for (let r = 0; r < R; r++) dl.push(fns[r](px(k), py(k), pz(k)));
       mids.set(key, k);
       return k;
     };
-    const dist = (i) => (i < n ? d[i] : dl[i - n]);
+    const dist = (i, r) => (i < n ? d[i * R + r] : dl[(i - n) * R + r]);
     const out = [];
     let split = 0;
     for (let t = 0; t < idx.length; t += 3) {
       const a = idx[t], b = idx[t + 1], c = idx[t + 2];
-      const da = dist(a), db = dist(b), dc = dist(c);
-      const lo = Math.min(da, db, dc), hi = Math.max(da, db, dc);
-      const straddles = lo < band && hi > -band;
+      let straddles = false;
+      for (let r = 0; r < R && !straddles; r++) {
+        const da = dist(a, r), db = dist(b, r), dc = dist(c, r);
+        straddles = Math.min(da, db, dc) < band && Math.max(da, db, dc) > -band;
+        /* A REGION THINNER THAN THE TRIANGLE has all three corners outside
+         * it and the whole stripe in the middle: a B2's shin tube has one
+         * ring at 16.5 cm and the next at 33, and an 8 cm band between them
+         * touched no vertex at all. So the edges' midpoints are asked too,
+         * and a corner-outside triangle with a midpoint inside still splits. */
+        if (!straddles && Math.max(da, db, dc) <= -band) {
+          const f = fns[r];
+          for (const [i, j] of [[a, b], [b, c], [c, a]]) {
+            if (f((px(i) + px(j)) * 0.5, (py(i) + py(j)) * 0.5, (pz(i) + pz(j)) * 0.5) > -band) { straddles = true; break; }
+          }
+        }
+      }
       if (!straddles || Math.max(edge(a, b), edge(b, c), edge(c, a)) <= PAINT.fine) {
         out.push(a, b, c);
         continue;
@@ -1345,24 +1426,39 @@ function ensureChannel(geo) {
 export function prepPaint(e) {
   if (!e) return null;
   if (e._paintPrep) return e._paintPrep;
-  const prep = { plate: [0.8, 0.8, 0.8], flipped: new Set(), split: 0 };
-  const tables = [RANK_REGIONS, MARK_REGIONS, BAND_REGIONS, ...Object.values(FALLBACK_REGIONS).map((r) => [r])];
+  const kind = paintKindOf(e);
+  const prep = { kind, tables: regionTablesFor(kind), plate: [0.8, 0.8, 0.8], flipped: new Set(), split: 0 };
+  /* Every boundary that can ever land on each mesh, gathered first, so the
+   * refinement runs once per mesh. The fallbacks are refined only where the
+   * ladder they stand in for reached nothing — on a trooper the crown, waist
+   * and belt rings would otherwise cut the whole trunk into centimetres. */
+  const jobs = new Map();
+  const gather = (regs) => {
+    let hit = false;
+    for (const reg of regs) {
+      if (eachRegionMesh(e, reg, (m, S, L, side, lift) => {
+        let j = jobs.get(m);
+        if (!j) jobs.set(m, (j = []));
+        j.push({ reg, S, L, side, lift });
+      })) hit = true;
+    }
+    return hit;
+  };
+  for (const slot of ['rank', 'mark', 'band']) {
+    if (!gather(prep.tables[slot])) gather([FALLBACK_REGIONS[slot]]);
+  }
   const votes = new Map();
-  for (const table of tables) {
-    for (const reg of table) {
-      eachRegionMesh(e, reg, (m, S, L, side, lift) => {
-        m.updateMatrix();
-        _pm.copy(m.matrix);
-        const distAt = (x, y, z) => {
-          _pp.set(x, y, z).applyMatrix4(_pm);
-          _pp.y -= lift;
-          return regionDist(reg, _pp, S, L, side);
-        };
-        if (refineBand(m, distAt, PAINT.edge)) prep.split++;
-        if (paintSurface(m.material) === 'plate') {
-          votes.set(m.material, (votes.get(m.material) || 0) + m.geometry.attributes.position.count);
-        }
-      });
+  for (const [m, list] of jobs) {
+    m.updateMatrix();
+    const M = m.matrix.clone();
+    const fns = list.map(({ reg, S, L, side, lift }) => (x, y, z) => {
+      _pp.set(x, y, z).applyMatrix4(M);
+      _pp.y -= lift;
+      return regionDist(reg, _pp, S, L, side);
+    });
+    if (refineBand(m, fns, PAINT.band)) prep.split++;
+    if (paintSurface(m.material) === 'plate') {
+      votes.set(m.material, (votes.get(m.material) || 0) + m.geometry.attributes.position.count);
     }
   }
   let best = null, bestN = -1;
@@ -9930,7 +10026,9 @@ export class CommandDirector extends WaveDirector {
   repaint(e, color, rank = null) {
     if (!e || color == null) return false;
     const r = rank ?? (typeof e.trooper?.rank === 'number' ? e.trooper.rank : rankOfColor(color));
-    const regions = RANK_REGIONS.filter((reg) => reg.from <= Math.max(1, r | 0));
+    const prep = prepPaint(e);
+    if (!prep) return false;
+    const regions = prep.tables.rank.filter((reg) => reg.from <= Math.max(1, r | 0));
     const rec = paintSlot(e, 'rank', color, regions, 100, FALLBACK_REGIONS.rank);
     if (rec) rec.rank = r;
     return !!rec;
@@ -9950,7 +10048,8 @@ export class CommandDirector extends WaveDirector {
    */
   markUp(e, color) {
     if (!e || color == null) return false;
-    return !!paintSlot(e, 'mark', color, MARK_REGIONS, 300, FALLBACK_REGIONS.mark);
+    const prep = prepPaint(e);
+    return !!prep && !!paintSlot(e, 'mark', color, prep.tables.mark, 300, FALLBACK_REGIONS.mark);
   }
 
   /**
@@ -9962,8 +10061,24 @@ export class CommandDirector extends WaveDirector {
    */
   bandUp(e, color) {
     if (!e || color == null) return false;
-    return !!paintSlot(e, 'band', color, BAND_REGIONS, 500, FALLBACK_REGIONS.band);
+    const prep = prepPaint(e);
+    return !!prep && !!paintSlot(e, 'band', color, prep.tables.band, 500, FALLBACK_REGIONS.band);
   }
+
+  /**
+   * TAKE ONE SLOT OFF. The deck clears a mark by dialling "none"; what was
+   * under the paint goes back exactly (`restorePaint`) and the record is
+   * dropped, so a cleared mark is a bare shin on the next frame and not on
+   * the next rebuild. `slot` is 'rank', 'mark' or 'band'.
+   */
+  unpaint(e, slot) { return clearPaint(e, slot); }
+
+  /**
+   * RE-DERIVE THE PAINT against the materials as they are now. The deck's
+   * paint slots recolour a whole material, and a painted vertex is written as
+   * `want ÷ material`; without this it would render as `want × new ÷ old`.
+   */
+  renewPaint(e) { return refreshPaint(e); }
 
   /**
    * WHAT SURVIVING LOOKS LIKE. One shallow scorch chip on the chest plate per
