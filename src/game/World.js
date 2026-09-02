@@ -1518,6 +1518,14 @@ export class World {
       species: this.settings.species,
       face: this.settings.face,
       order: this.settings.order,
+      /* WHICH WEAPON HE CARRIES, and it travels with the body for exactly the
+       * reason `team` two comments down does: a Player built without it is a
+       * Player holding one blade, and in a duel or in co-op that would be the
+       * host silently disarming somebody's second hand. `setById` answers the
+       * single blade for anything it does not know, so an older save, a
+       * missing key and a hand-edited string all land on the weapon the game
+       * has always given you. */
+      saberSet: this.settings.saberSet,
       sensitivity: this.settings.sensitivity,
       followStrength: this.settings.camFollow,
       scheme: this.settings.scheme,

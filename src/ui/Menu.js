@@ -24,6 +24,9 @@ import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
          garmentTone } from '../game/Cloth.js';
+/* The three sets the Jedi tab offers — one table, and the card row below reads
+ * its rows straight through so a fourth set is a row there and nothing here. */
+import { SABER_SETS } from '../game/SaberSet.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
@@ -890,6 +893,18 @@ export const DEFAULT_SETTINGS = {
    */
   troopNames: 'aimed',
   /**
+   * WHICH WEAPON YOU CARRY — and `'single'` is the default in the strongest
+   * sense the word has here.
+   *
+   * *"don't change anything with the default single blade usage"* is the
+   * player's own clause, and this line is half of how it is kept: every
+   * existing save, every check that does not name a set, and every player who
+   * never opens this control gets the blade the game has always given them,
+   * along the code path it has always taken. `tools/checks/saberforms.mjs`
+   * holds the other half against a 600-frame recording of it.
+   */
+  saberSet: 'single',
+  /**
    * THE MINIMAP, on by default and switchable off.
    *
    * On because a fight against 25 bodies with no idea where the other 24 are is
@@ -1154,6 +1169,7 @@ export const SETTING_READERS = {
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
   troopNames:      ['ui/HUD.js', "world.settings?.troopNames ?? 'aimed'"],
+  saberSet:        ['game/World.js', 'saberSet: this.settings.saberSet'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -1744,6 +1760,35 @@ export const CODEX = [
     text: () => `<b>Focus</b> — hold to bend time. The world slows to `
       + `${(FOCUS.heldScale * 100).toFixed(0)}% of real time, you barely do. Burns `
       + `${FOCUS.drain} Force a second, so pick your volleys.` },
+  /**
+   * THE TWO SET MOVES, AND THEY ARE ON THIS PAGE BECAUSE THEY ARE PRICED.
+   *
+   * `Powers.js` said of the staff's spin that it "has no card and needs none",
+   * and `menu: the Codex prices the kit off the price list, not off prose`
+   * disagreed the moment the price landed — it names every entry in
+   * POWER_COST that this grid does not print, and it named `orbit`. The check
+   * is right and the comment was wrong: a thing that spends the same pool as
+   * push and unleash is a thing the player has to be able to compare against
+   * push and unleash, and the whole argument for the price being a NUMBER in a
+   * chip is that the eye can run down the column.
+   *
+   * Both rows are keyed on `power` rather than on their key, because both are
+   * cast off `throw` — one key, one meaning per set, which is the pattern
+   * `swap`, `drive` and `hurl` already use — so the chip has to be told which
+   * price row to read or it would print the thrown blade's.
+   *
+   * They print in every set, including the single blade's. A card that
+   * appeared and disappeared with a menu choice would be a page that teaches
+   * you the game you are currently holding rather than the game; the sets are
+   * named in the prose instead.
+   */
+  { keys: ['throw'], power: 'orbit',
+    text: k => 'Saberstaff — ${k} sets the staff spinning around you on '
+      + 'telekinesis alone. It answers what comes at you while your hands stay '
+      + 'free to cast.'.replace('${k}', k('throw')) },
+  { keys: ['throw'], power: 'throwOff',
+    text: k => `Paired blades — ${k('throw')} throws the off blade only. You `
+      + 'keep the main one, so you are still armed and can still block while it is gone.' },
   { keys: ['push'], text: () => 'Force push.' },
   { keys: ['pull'], text: () => 'Force pull.' },
   { keys: ['grip'],
@@ -4939,6 +4984,24 @@ export class Menu {
      * floor and the widths run 0.468 m to 0.749 m. See the preview note above.
      */
     this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS, () => this._refreshPreview(true));
+    /**
+     * WHAT YOU CARRY — the third fighting style, and it goes on the JEDI tab
+     * beside the blade's own colour, length and hilt rather than under
+     * Gameplay.
+     *
+     * It is a thing about your character and not a rule of the match, which is
+     * the same reading `Net.LOOK_KEYS` takes of it: two players in one session
+     * carrying different weapons is the feature. A control under Gameplay
+     * would sit beside friendly fire and the ally slider and read as something
+     * the host decides.
+     *
+     * `SABER_SETS` is the table and this passes it straight through, so a
+     * fourth set would be a row there and nothing here — and the blurb the
+     * card prints is the row's own sentence rather than a second copy on a
+     * screen.
+     */
+    this._cardRow('saberset-list', 'h-saberset', 'saberSet', SABER_SETS,
+      () => this._refreshPreview(true));
     /**
      * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.
      *

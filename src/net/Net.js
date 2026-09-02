@@ -75,8 +75,22 @@ export const PEER_TIMEOUT = 8;
  * this one exists to catch. It becomes worth sending the day there is a third
  * army — and not before.
  */
+/**
+ * …AND `saberSet` IS ONE OF THESE AND NOT A SHARED RULE.
+ *
+ * The test LOCAL_KEYS states is "whose answer wins", and nobody else's answer
+ * is involved: which weapon you carry is a thing about YOUR body, it crosses
+ * on the avatar packet exactly as your blade's colour and length already do,
+ * and two players in one session carrying different weapons is the feature
+ * rather than a disagreement. Putting it on SHARED_KEYS would mean the host
+ * choosing what is in everybody's hands, which is the "reaching onto somebody
+ * else's mouse" case that table refuses.
+ *
+ * `session.mjs` fails a key on neither list or on both, so this is enforced
+ * rather than remembered.
+ */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
-  'skinIndex', 'hairIndex', 'build', 'species', 'face'];
+  'skinIndex', 'hairIndex', 'build', 'species', 'face', 'saberSet'];
 
 export function packLook(settings = {}) {
   const out = {};
