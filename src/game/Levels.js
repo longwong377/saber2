@@ -2347,6 +2347,14 @@ export const LEVELS = {
       // the ground, so painting it the colour of the sand is painting the wrong
       // light source.
       cloudCover: 0.38, cloudLit: 0xffeed0, cloudDark: 0xa4adba,
+      /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. A dune
+       * world: tan and ochre under thin weather, with shallow seas between the
+       * ergs and the towns that sit beside them lit at night. */
+      planet: {
+        seed: 2, land: 0xc9a05c, highland: 0x8a6a3e, basin: 0xe0c088,
+        sea: 0x1e4a6a, seaAmt: 0.30, ice: 0.14, cloudCover: 0.30, cities: 0.35,
+        scatter: 0xb8cef0, haze: 0.18, storms: 0.25, glint: 1,
+      },
       cloudWindDir: 4.05, cloudWindSpeed: 1.1,
       horizonAmount: 1.0, horizonScale: 0.8, horizonColor: 0xa8875e,
       exposure: 0.86, saturation: 1.02,
@@ -2464,6 +2472,16 @@ export const LEVELS = {
       // the cirque floor so the number reads back the same wherever you fight.
       fogColor: 0xb6cbee, fogDensity: 0.0072, fogHeight: 40, fogBase: 18,
       cloudCover: 0.66, cloudLit: 0xf2f6fd, cloudDark: 0x7e8ea6,
+      /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. An ice
+       * world: white to the tropics, grey rock where the caps give out at the
+       * equator, frozen seas, heavy weather with cyclones in it, and the one
+       * ring in the roster — ice, like the rest of it. */
+      planet: {
+        seed: 3, land: 0xd4e2f8, highland: 0x5c6470, basin: 0xb4c8e2,
+        sea: 0x1c3550, seaAmt: 0.30, ice: 0.85, cloudCover: 0.70, cities: 0.05,
+        scatter: 0xbcd6ff, haze: 0, storms: 0.55, glint: 0.6,
+        ring: { tilt: 0.42, inner: 1.35, outer: 2.15, color: 0xd8e6f4, amount: 0.75 },
+      },
       cloudWindDir: 5.62, cloudWindSpeed: 2.6,   // radians
       horizonAmount: 1.3, horizonScale: 1.5, horizonColor: 0x8fa2bb,
       exposure: 0.88, saturation: 0.94,
@@ -2857,6 +2875,14 @@ export const LEVELS = {
        * weather, it is the ash the vents are putting up, and the small amount
        * of sky that shows through it is the only blue this level is allowed. */
       cloudCover: 0.96, cloudLit: 0xff8a30, cloudDark: 0x2e1a16,
+      /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. Ash and
+       * ember: a dark crust, lava in the seams that does not go out at night,
+       * a smoke deck over most of it and an orange rim. Nobody lives here. */
+      planet: {
+        seed: 13, land: 0x2a2422, highland: 0x4e3c33, basin: 0x1c1816,
+        sea: 0xff7a2a, lava: true, seaAmt: 0.30, ice: 0, cloudCover: 0.80, cities: 0,
+        scatter: 0xc46a30, haze: 0.40, storms: 0.1, glint: 0,
+      },
       cloudWindDir: 2.32, cloudWindSpeed: 1.9,
       // What the dome meets the ground at: the far shore of the sea, glowing.
       horizonColor: 0x7c3a18,
@@ -3197,6 +3223,13 @@ export const LEVELS = {
       /* A ceiling of smoke, not a deck of cloud, lit from BELOW — so the lit
        * swatch is the river's colour and the dark swatch is very dark. */
       cloudCover: 0.92, cloudLit: 0xff7a26, cloudDark: 0x2a1512,
+      /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. Black
+       * crust, lava veins glowing through it, an orange-brown air. */
+      planet: {
+        seed: 11, land: 0x141010, highland: 0x2a1f1a, basin: 0x0c0a0a,
+        sea: 0xff6a1a, lava: true, seaAmt: 0.45, ice: 0, cloudCover: 0.55, cities: 0,
+        scatter: 0xd0703a, haze: 0.35, storms: 0, glint: 0,
+      },
       cloudWindDir: 0.68, cloudWindSpeed: 1.6,
       horizonColor: 0x6e2f12,
       /* NO PAINTED RANGES. The heightfield's own rim climbs 54 m from 150 to
@@ -3637,6 +3670,14 @@ export const LEVELS = {
       exposure: 0.92, bloom: 0.34, saturation: 1.10,
       lift: [0.003, 0.005, 0.012], gain: [1.0, 1.0, 1.01],
       cloudCover: 0.30, cloudLit: 0xfff6e8, cloudDark: 0x98a2b2,
+      /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. The
+       * arena world: dry ochre continents, real seas, thin cloud, and the one
+       * genuinely settled night side in the roster — a city on every coast. */
+      planet: {
+        seed: 17, land: 0xa88a5c, highland: 0x7a6a5c, basin: 0x6a5030,
+        sea: 0x1a4460, seaAmt: 0.40, ice: 0.18, cloudCover: 0.34, cities: 1.0,
+        scatter: 0xa4c4f2, haze: 0.08, storms: 0.3, glint: 1,
+      },
       cloudWindDir: 0.9, cloudWindSpeed: 0.7,
       /* NO PAINTED RANGES. The bowl's own arcade stands 54 m over the floor at
        * a radius of 120, which subtends 24° — so a painted curtain at 340 m
@@ -4058,6 +4099,13 @@ export const LEVELS = {
       exposure: 1.20, bloom: 0.38, saturation: 1.06,
       lift: [0.005, 0.010, 0.008], gain: [0.98, 1.02, 0.98],
       cloudCover: 0.72, cloudLit: 0xd6e0b8, cloudDark: 0x4a5840,
+      /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. A swamp
+       * world: green land, blue-green shallows, most of it under cloud. */
+      planet: {
+        seed: 5, land: 0x2e5a34, highland: 0x4a6a44, basin: 0x1f4a3e,
+        sea: 0x0f3a48, seaAmt: 0.60, ice: 0.12, cloudCover: 0.80, cities: 0.25,
+        scatter: 0x8fb8b0, haze: 0.05, storms: 0.6, glint: 0.8,
+      },
       cloudWindDir: 1.47, cloudWindSpeed: 0.5,
       /* NO PAINTED RANGES, for the meadow's reason and more so: at half-light
        * 33 m the ground is 100% dissolved by 110 m, so the edge of the world
@@ -4615,6 +4663,14 @@ LEVELS.geonosis = {
      * is banded brown-orange cloud with the sun burning through it rather than
      * open air. */
     cloudCover: 0.52, cloudLit: 0xffdda6, cloudDark: 0xa8825e,
+    /* THE WORLD FROM ORBIT — see SkyDome.configureOrbit, `planet`. Rust-red
+     * rock cut by dark canyons, almost no water, a thin dust haze over the
+     * day side and a few sparse lights on the night side. */
+    planet: {
+      seed: 7, land: 0x9a5c34, highland: 0xb8704a, basin: 0x4a2a1c,
+      sea: 0x6e3f22, seaAmt: 0.06, ice: 0.04, cloudCover: 0.18, cities: 0.12,
+      scatter: 0xd9a058, haze: 0.55, storms: 0.15, glint: 0,
+    },
     cloudWindDir: 0.35, cloudWindSpeed: 0.9,
     /* The painted ranges: distant mesas, which the terrain's own far rim rises
      * into so they stand ON something instead of floating at the edge of a
