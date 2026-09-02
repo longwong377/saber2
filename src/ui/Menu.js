@@ -5154,6 +5154,25 @@ export class Menu {
    * uses. A player who loads a blob and then plays should not have to be told
    * to refresh first.
    */
+  /**
+   * The button, wired once. It is OUTSIDE the lists `_buildSaber` rewrites, so
+   * it survives every rebuild its own presses cause.
+   */
+  _wireTrust() {
+    const btn = document.getElementById('btn-trust');
+    if (!btn) return;
+    const panel = btn.closest('[data-panel="saber"]') || btn.parentElement;
+    this._activate(btn, () => {
+      audio.ui('click');
+      /* The Order and the Species redraw what comes after them — see the note
+       * over `_trustInTheForce`. */
+      const n = this._trustInTheForce(panel, { first: ['order-list', 'species-list'] });
+      this._refreshPreview(true);
+      saveSettings(this.s);
+      btn.textContent = n ? 'Trust in the Force' : 'Nothing to choose';
+    });
+  }
+
   _wirePortable() {
     const box = document.getElementById('opt-portable');
     const said = document.getElementById('portable-said');
@@ -5521,6 +5540,71 @@ export class Menu {
    * Hides its own heading when the list is empty, so a module that exports
    * nothing yet leaves no titled empty box behind it.
    */
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  TRUST IN THE FORCE — the randomise button, by its own name
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * "there should also be a randomize button that randomizes every single
+   *  customization for the people who prefer it that way … maybe call it
+   *  something cool like 'Trust in the Force' or something of that nature
+   *  instead of randomize"
+   *
+   * IT DRIVES THE CONTROLS, NOT THE SETTINGS, and that is the whole design.
+   *
+   * The obvious version is a table of every appearance key with a list of its
+   * legal values, and it would be a second copy of `_buildSaber` — wrong the
+   * first time a swatch is added and silently wrong forever after, which is
+   * the defect HANDOFF 2.3 calls "a hand-maintained table beside its generated
+   * twin". Instead this walks the panel and clicks a random child of every row
+   * it finds. A card row added tomorrow is randomised tomorrow, by nobody.
+   *
+   * It also means every pick goes through the SAME door a person's click goes
+   * through — `_activate`'s handler, which writes the setting, re-marks the
+   * selection, runs the row's own `onPick` and saves. Nothing here knows what
+   * a robe is, and nothing here can forget a side effect.
+   *
+   * THREE PASSES, BECAUSE TWO ROWS REBUILD THE PAGE UNDER YOU. Picking an
+   * Order runs `_buildSaber()` — it re-homes the crystal, the hilt and the
+   * robe and redraws every list — and picking a Species re-homes the skin
+   * rack. A single pass over one NodeList would be clicking elements that had
+   * already been thrown away. So: the order, then the species, then everything
+   * else re-queried from scratch.
+   */
+  _trustInTheForce(root, opts = {}) {
+    if (!root) return 0;
+    let n = 0;
+    const oneOf = (row) => {
+      if (!row) return false;
+      const kids = [...row.children].filter((c) => c.nodeType === 1);
+      if (kids.length < 2) return false;
+      kids[(Math.random() * kids.length) | 0].click();
+      n++;
+      return true;
+    };
+    /* The two that redraw what comes after them, in the order they redraw it. */
+    for (const id of (opts.first || [])) {
+      oneOf(document.getElementById(id));
+    }
+    /* …and then everything, re-queried. `.cards` is a card row, `.swatches` a
+     * colour rack, `.kit-chips` a row of kit options on a trooper's page —
+     * three class names against the whole wardrobe, because they are what the
+     * markup already uses to mean "a row of choices". */
+    for (const row of root.querySelectorAll('.cards, .swatches, .kit-chips')) oneOf(row);
+    /* Sliders take a random NOTCH rather than a random float, so a frame or a
+     * blade length lands on a value the control can actually show. */
+    for (const el of root.querySelectorAll('input[type="range"]')) {
+      const lo = Number(el.min), hi = Number(el.max), step = Number(el.step) || 0.01;
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) continue;
+      const notches = Math.max(1, Math.round((hi - lo) / step));
+      el.value = String(lo + step * ((Math.random() * (notches + 1)) | 0));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      n++;
+    }
+    return n;
+  }
+
   _cardRow(hostId, headId, key, list, onPick) {
     const host = document.getElementById(hostId);
     const head = headId && document.getElementById(headId);
@@ -7217,6 +7301,11 @@ export class Menu {
         pattern that copied them would delete it. A droid gets whatever part of a
         clone's pattern a droid can wear.</p>
       <div class="issue-row">
+        ${/* TRUST IN THE FORCE, on a man rather than on the Jedi. Same button,
+             same name, same walk over the rows — see `_trustInTheForce`. It
+             sits with the issue buttons because it is the same kind of act:
+             something you do to a whole page of choices at once. */''}
+        <button class="secondary" id="company-trust">Trust in the Force</button>
         ${/* ONLY WHEN HE IS IN ONE. Every man on a fresh slate is dealt no
             squad at all, so "his squad" and "the whole company" would be the
             same set and the page would be offering one button twice — which
@@ -7251,6 +7340,23 @@ export class Menu {
     }
     const kit = { ...(look?.kit || {}) };
     const paint = { ...(look?.paint || {}) };
+    /**
+     * TRUST IN THE FORCE, on this man. Wired BEFORE the rows below so that the
+     * clicks it fires land on handlers that already exist — the walk clicks the
+     * real controls, and a control that has not been given its handler yet is a
+     * control that does nothing.
+     *
+     * Scoped to the page rather than to the document: `.kit-list` is what wraps
+     * both racks here, and a wider root would reach the Jedi's own wardrobe on
+     * a tab that happens to be built.
+     */
+    const trust = document.getElementById('company-trust');
+    if (trust) {
+      this._activate(trust, () => {
+        audio.ui('click');
+        for (const list of document.querySelectorAll('.kit-list')) this._trustInTheForce(list);
+      }, 'Trust in the Force');
+    }
     for (const el of document.querySelectorAll('.company-paints .swatch')) {
       this._activate(el, () => {
         audio.ui('click');
@@ -9277,6 +9383,7 @@ export class Menu {
     document.getElementById('opt-fullscreen')?.closest('label')
       ?.classList.toggle('hidden', !canFullscreen());
     this._wirePortable();
+    this._wireTrust();
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._syncBloomBox();
     this._check('opt-showperf', 'showPerf', () => this._syncDiag());

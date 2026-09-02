@@ -1610,4 +1610,51 @@ export async function run({ check, assert }) {
       return 'solo: leave hidden, restart shown · host: both · client: leave only; onLeave fires';
     } finally { close(); }
   });
+  check('menu: Trust in the Force rolls the whole wardrobe, through the real controls', () => {
+    /**
+     * "there should also be a randomize button that randomizes every single
+     *  customization for the people who prefer it that way … maybe call it
+     *  something cool like 'Trust in the Force' or something of that nature
+     *  instead of randomize"
+     *
+     * TWO PROPERTIES, and the second is the one worth a check.
+     *
+     * It exists and it is not called "randomize" — trivial, asserted below in
+     * one line because the player named it.
+     *
+     * AND IT MOVES A LOT OF SETTINGS AT ONCE. `_trustInTheForce` deliberately
+     * does not know what a robe is: it walks the panel, finds every row of
+     * choices and every slider, and CLICKS them, so a wardrobe row added later
+     * is rolled by nobody's effort. The failure that would follow from writing
+     * it the other way — a private table of appearance keys drifting from the
+     * page — is invisible to a check that only looks at the button. So this
+     * counts how many settings actually changed value across one press.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      const btn = doc.getElementById('btn-trust');
+      assert(btn, 'no Trust in the Force button on the wardrobe page');
+      assert(!/random/i.test(btn.textContent),
+        `the button reads "${btn.textContent.trim()}" — he asked for it NOT to say randomize`);
+      /* Every appearance-ish key, snapshotted by value. `face` is an object —
+       * the character sheet — so it is compared as JSON. */
+      const snap = () => JSON.stringify(settings);
+      const before = snap();
+      const rows = [...doc.querySelectorAll('.cards, .swatches')].filter((r) => r.children.length > 1);
+      assert(rows.length >= 8,
+        `only ${rows.length} rows of choices on the page — the fixture is not building the wardrobe`);
+      btn.click();
+      const after = snap();
+      assert(after !== before, 'a press changed nothing at all');
+      /* HOW MUCH it moved, counted key by key, because "something changed" is
+       * satisfied by one swatch and the ask was every row. */
+      const a = JSON.parse(before), b = JSON.parse(after);
+      const moved = Object.keys(b).filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+      assert(moved.length >= 5,
+        `one press moved ${moved.length} settings (${moved.join(', ')}) — it is meant to roll the page`);
+      return `${rows.length} rows of choices on the page; one press moved ${moved.length} settings `
+        + `(${moved.slice(0, 6).join(', ')}${moved.length > 6 ? ', …' : ''})`;
+    } finally { close(); }
+  });
+
 }
