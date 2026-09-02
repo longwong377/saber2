@@ -294,7 +294,10 @@ squad is… your job is to be the reason the line is still standing."* Five
 seeds, three arms — no player, player with blade, player with the blade
 disabled — **15 of 15 rows identical**: 3/3/3 waves cleared, 1/1/1 areas taken,
 37.4 / 36.8 / 36.4 enemies killed. The only columns that move are the clock
-(207 → 321 → 467 s) and **your own dead (0 → 7.2 → 7.4)**. A Jedi holding
+(207 → 321 → 467 s) and **your own dead (0 → 7.2 → 7.4)**. Put the other way
+round, which is the way that stings: an engagement fought with no Jedi at all
+leaves **6.7 of ten men standing; with a Jedi in the line, 4.7.** The line is
+standing more often when nobody comes. A Jedi holding
 station a hundred metres away costs the line exactly as many men as one
 standing in it. Three separate fixes were built against this — OPEN, THE
 SCREEN, BREAK — and all three measured flat or negative; BREAK fires at 0.00%
@@ -342,6 +345,77 @@ written, clamped and has one caller: the settings slider. The wire between the
 reading and the knob does not exist. Both of your sub-10-fps reports were
 reports of a game that had quietly stopped running in real time, and nothing in
 the build could have told you.
+
+---
+
+## 5b. What is actually absent, and the death all three deleted modes died
+
+Eleven modes are **eleven win conditions over one verb.** In every playable
+mode you are a Force user on foot, outdoors, killing bodies that walk at you,
+until a counter says stop. What differs between two modes is a boolean.
+
+The absences are not content. They are registers:
+
+- **Objective variety.** Every engagement in every mode is *clear what
+  arrives.* There is no escort, no retrieval, no timed escape, no destruct
+  target, no pursuit, no defence-of-a-thing. **This is exactly what Move 2
+  delivers** — an objective is a flag a mission declares.
+- **Downtime.** The whole game's rest state is 5.5 seconds. The one place built
+  for a quiet register — the Flight Deck, with 111 droids, 20 real men, 89
+  silhouettes and 25 repair jobs — is `hidden: true`, has *"no wave, no enemy
+  and no ending"*, and gives you nothing to do standing in it.
+- **Choice of risk.** One binary fork exists in the whole game, in half the
+  seeds of one mode.
+- **The chase.** Ten hours produces a list of personal bests in localStorage.
+  Seeds are shareable and nothing compares two.
+- **Who you are.** Always the same body: a saber and fifteen Force keys.
+
+**And the warning that binds the whole plan.** Three things have been deleted
+from this game — the Descent, The Front, and six indoor levels — and *all three
+died the same death: their content was a place or a picture rather than a rule
+or a roster.*
+
+**Move 1 is a picture.** That is its risk, stated plainly: making the existing
+battle visible is not the same as giving you something to do in it, and a mode
+that stopped there would die the way the other three did. The repo's own phrase
+for the difference is the best sentence anyone produced for this document:
+
+> **A wall you look at is a diorama. A wall you can run into is a moment.**
+
+Move 1 makes the war visible. Move 2 gives it things to be about. Move 3 lets
+you run into it. None of the three is worth building alone.
+
+---
+
+## 5c. The five moments this engine could produce and does not
+
+Every one is built from parts that already ship, and the two hard lessons under
+them are the same: **the frame is 93–99% draw, so scale is bought in draw calls
+and never in bodies** — any proposal that adds simulated bodies is spending on
+the wrong axis — and a diorama is not a moment.
+
+1. **The far army becomes real men under your blade.** Two hundred instanced
+   troopers marching at two hundred more at 200 m, firing real bolts you can
+   deflect; you sprint at the line and twenty of them resolve into full,
+   cuttable bodies as you arrive. **This is Move 3, and it is the single
+   highest-value image in the game.**
+2. **A capital ship comes down on the ground you are standing on.** The same
+   752 m hull whose hangar deck you walk, whose aperture you fly out of, whose
+   flank you look back at — burning, listing, breaking, and then being the
+   terrain for the rest of the sitting.
+3. **A hundred-metre animal walks through the line.** The Zillo — already
+   starred in this repo's own backlog as *"⭐ RECOMMENDED, and it is the honest
+   reading of the note"*, because the audit of your giants request found that
+   *"five machines were built and no creature."*
+   Its plates are proof against blaster fire, so the whole army's volume of
+   fire does nothing; its underbelly is not; and its death is a topple.
+4. **A thirty-five-metre siege gun plants, and you are either driving it or
+   underneath it.** The SPHA banks 1.6 s of stillness before it may fire, holds
+   station through a 2.6 s charge tone, and **cannot depress its gun.**
+5. **Your own barrage walks across your own men and you watch them run out of
+   it.** Forty-two metres wide, nine seconds long, seven seconds of warning,
+   measured at 21 of 22 bodies — and the ground still black there next
+   engagement. **This one is built today and reachable from one mode card.**
 
 ---
 
