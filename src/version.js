@@ -12,4 +12,4 @@
  * file goes red. `tools/pack.mjs` prints it, so the file you send says what
  * it is.
  */
-export const VERSION = '13.0';
+export const VERSION = '13.1';
