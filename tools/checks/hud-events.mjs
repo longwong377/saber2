@@ -1474,8 +1474,14 @@ export async function run({ check, assert }) {
       assert(target.length === 1,
         `${target.length} target chips on the order strip — the only door to a per-squad `
         + 'order is on it once or not at all');
-      assert(chips.length === ORDER_ACTIONS.length + 1,
-        `${chips.length} keycaps for ${ORDER_ACTIONS.length} orders and a target`);
+      /* …AND THE TWO VERBS THAT ARE NOT FORMATIONS. Hold ground and Detach got
+       * keys (91156f5) and a chip each on the strip beside the target; this
+       * assertion was written for the strip before that and stayed red for a
+       * session. The count is the orders plus the three verbs. */
+      const verbs = chips.filter((c) => ['holdground', 'detachman'].includes(c.dataset.action));
+      assert(verbs.length === 2, `${verbs.length} verb chips (hold ground, detach) on the order strip`);
+      assert(chips.length === ORDER_ACTIONS.length + 3,
+        `${chips.length} keycaps for ${ORDER_ACTIONS.length} orders, a target and two verbs`);
       assert(chips.every((c) => c.dataset.action),
         'a chip on the order strip carries no action, so a thumb cannot press it');
       for (let i = 0; i < ORDER_ACTIONS.length; i++) {
