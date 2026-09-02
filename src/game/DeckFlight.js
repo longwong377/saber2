@@ -686,16 +686,20 @@ export function stepDeckFlight(world, dt) {
        * only in the last `outSeal` seconds, and the same shut bay is the
        * first frame of the orbit after main.js has built the battlefield
        * behind a still of this one. */
-      /* AND YOU CAN SKIP IT, the way the cruise and the orbit can: the same
-       * key, after two and a half seconds so a press left over from the ramp
-       * cannot eat the look back. The run jumps to its last `outSeal` seconds
-       * — the doors still shut before the seam. REVIEW-V12 item 37. */
-      const skip = st.t > 2.5 && st.t < FLIGHT.out - FLIGHT.outSeal
-        && world._deckInput?.act?.('jump');
-      if (skip) st.t = FLIGHT.out - FLIGHT.outSeal;
+      /**
+       * NO SKIP. This had one for a build — the cruise's own key, after two
+       * and a half seconds — and it is gone on the player's instruction: "I
+       * don't want you skipping anything". It also carried a defect worth
+       * recording, because a skip key that is READ AS A HELD STATE and not as
+       * an edge does not stop at the sequence it belongs to: a press here ran
+       * on into the world built a moment later, where `_orbit` and `_entry`
+       * read the same key the same way, and the player arrived on the ground
+       * having seen neither space nor the atmosphere. One press, three
+       * sequences skipped, across two worlds.
+       */
       if (!st.toldSkip && st.t > 2.5) {
         st.toldSkip = true;
-        world.notify?.('CLEAR OF THE SHIP', 'look back — or jump to press on', 'flavour');
+        world.notify?.('CLEAR OF THE SHIP', 'look back — that is the ship you came out of', 'flavour');
       }
       const k = clamp(st.t / FLIGHT.out, 0, 1);
       const sealT = clamp((st.t - (FLIGHT.out - FLIGHT.outSeal)) / FLIGHT.outSeal, 0, 1);

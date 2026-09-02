@@ -435,7 +435,11 @@ export const MODES = {
    */
   command: {
     name: 'Command',
-    blurb: 'Lead an army across Geonosis. Your troops have names, they earn rank, and when they die they are gone.',
+    blurb: 'Lead an army across Geonosis. Your troops have names, they earn rank, and when they go down you have moments to reach them.',
+    /* A SHORTER WINDOW THAN THE LINE'S — see `MODES.theline.downed` for the
+     * whole argument. 0.6 of `DOWN_BLEED`, priced by permanence rather than
+     * by a quorum. */
+    downed: 0.6,
     fixedTheatre: 'Command is fought on Geonosis: five areas, one crossing, and the ground does not change.',
     /**
      * THE ONLY MODE THAT CAN BE A MEETING — and this field is what stopped a
@@ -640,11 +644,29 @@ export const MODES = {
      * a downed man does NOT count toward the quorum. So the bleed-out window
      * and the advance rule are in direct tension — to take ground you must
      * physically recover your wounded, under fire, while the thing that wounded
-     * them is still there. That is why this is declared on The Line and not on
-     * Command: without a quorum there is nothing for it to be in tension with,
-     * and it would be a free second health bar on every trooper.
+     * them is still there. That is why this was declared on The Line ALONE:
+     * without a quorum there is nothing for it to be in tension with, and it
+     * would be a free second health bar on every trooper.
+     *
+     * ── AND THE ANSWER TO THAT, WHICH IS WHY COMMAND HAS IT NOW ────────────
+     *
+     * The objection is right about a BIT and wrong about a NUMBER. `downed`
+     * is the length of the window as a multiple of `Enemy.DOWN_BLEED`, so a
+     * mode says how long a man has rather than whether he gets one at all.
+     *
+     * Command was the one mode in the game where a named man with a rank and
+     * a record — the mode's whole subject — simply died, with no moment in
+     * which anything could be done about it. Everything V12 built around the
+     * wounded (the squad medic, the drag, the crawl, Restore, the ward) paid
+     * out in The Line and could not fire in Command at all. What prices it
+     * there is not a quorum but PERMANENCE: going to him is time not spent
+     * advancing, and a man you do not reach is gone from the roster for good.
+     *
+     * The Line keeps the full window because its quorum already charges for
+     * the walk. Command and Skirmish get 0.6 of it — long enough to be a
+     * decision, short enough that it is not a second health bar.
      */
-    downed: true,
+    downed: 1,
     /**
      * THE INVERSION, as a field. `CommandDirector` reads exactly this and
      * nothing else to tell the two modes apart: `_endCampaign` computes `won`
@@ -789,6 +811,8 @@ export const MODES = {
   },
   skirmish: {
     name: 'Skirmish',
+    /* The same shortened window Command takes; see `MODES.theline.downed`. */
+    downed: 0.6,
     blurb: 'One battle, fought over changing ground. You lead an army, they field one, '
       + 'and it ends in a victory or a defeat — not in a high score.',
     rotates: true,

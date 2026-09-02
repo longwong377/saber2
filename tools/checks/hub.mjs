@@ -129,6 +129,61 @@ export async function run({ check, assert, THREE }) {
     } finally { world.unload(); }
   });
 
+  check('hub: a withdrawal climbs out of the atmosphere with you aboard, and ends in space', async () => {
+    const X = await import('../../src/game/Extraction.js');
+    const { bootWorld, idleInput, run: step } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'theline', level: 'geonosis', order: 'jedi', quality: 'low', instantSpawn: true },
+      runSeed: 7,
+    });
+    try {
+      const input = idleInput();
+      step(world, 0.3, input);
+      const p = world.player;
+      const ground = world.terrain.height(p.position.x, p.position.z);
+      let ended = null;
+      world.onGameOver = (st) => { ended = st; };
+      assert(world.withdraw(), 'the withdrawal refused');
+      const X0 = world.extraction;
+      /* Fly the whole thing. The ramp waits for him; `lastCall` pulls him
+       * aboard, which is the shipped behaviour for a player who does not walk. */
+      const seen = new Set();
+      let t = 0;
+      while (X0.active && t < 200) {
+        step(world, 0.05, input); t += 0.05;
+        if (X0.phase) seen.add(X0.phase);
+      }
+      assert(seen.has('away'),
+        `the withdrawal never climbed out — phases: ${[...seen].join(', ')}`);
+      assert(ended, 'the run never ended');
+      assert(ended.ended === 'withdrew', `the run ended as ${ended.ended}`);
+      /* THE TWO THINGS THE PLAYER REPORTED. He must not be standing on the
+       * ground he left, and the sequence must have reached space. */
+      const up = p.position.y - ground;
+      assert(up > 800, `the run ended ${up.toFixed(0)} m above the ground — he fell out of the ship`);
+      assert(p.riding, 'he was put down before the run ended');
+      return `phases ${[...seen].join(' → ')}; ended at ${(up / 1000).toFixed(1)} km, still aboard`;
+    } finally { world.unload?.(); }
+  });
+
+  check('hub: nothing in a flight can be skipped', async () => {
+    const ex = await src('src/game/Extraction.js');
+    const df = await src('src/game/DeckFlight.js');
+    for (const [name, text] of [['Extraction.js', ex], ['DeckFlight.js', df]]) {
+      const hits = [...text.matchAll(/act\??\.?\(\s*'jump'\s*\)/g)];
+      assert(!hits.length, `${name} still reads the skip key ${hits.length} time(s)`);
+    }
+    /* AND THE REASON, so it is not put back: a skip key read as a HELD state
+     * rather than an edge does not stop at its own sequence. One press during
+     * the deck's fly-out ran on into the world built a moment later, where
+     * the orbit and the entry read the same key the same way — three
+     * sequences skipped across two worlds, which is the "you completely skip
+     * entering the atmosphere and landing" the player saw. */
+    assert(/NO SKIP/.test(ex) && /NO SKIP/.test(df), 'the reason is not written down');
+    return 'no jump-to-skip in either flight';
+  });
+
   check('hub: hiding the exterior gives the far plane back, never below the deck\'s own', async () => {
     const { world, idle } = await deck();
     try {

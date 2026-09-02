@@ -284,6 +284,29 @@ export const ENTRY = 6.5;
 export const FALL = 9.0;
 
 /**
+ * ── THE WAY OUT, AND IT DID NOT EXIST ────────────────────────────────────
+ *
+ * The player: *"when retreating you don't fly out of the atmosphere, into
+ * space, and back into the hangar — instead you just get a menu on planet
+ * that says you're done"*, and *"right now you kind of just fall out of the
+ * ship on planet and the game is over"*.
+ *
+ * Both are one defect. `_liftoff` ended a withdrawal by calling `_withdrew`,
+ * which handed the hull off as set dressing and ran `_finish` — and `_finish`
+ * PUTS EVERYBODY BACK ON THE GROUND. So the ship you had just boarded flew
+ * away without you, you were standing on the planet again, and the card came
+ * up over it. The whole return trip the hub was built for started after a
+ * seam that dropped you before it.
+ *
+ * `away` is the missing leg: the climb keeps going, the air thins out, the
+ * stars come up, the ship you are going back to grows ahead of you, and only
+ * then does the run end — with you still aboard, which is what lets the
+ * hangar's own arrival (`DeckFlight`, `_deckArrival`) carry you in and put
+ * you down on the deck with your company.
+ */
+export const AWAY = 8.0;
+
+/**
  * HOW LONG THE SHIP THAT JUST DROPPED YOU TAKES TO GET OUT OF SIGHT.
  *
  * The inbound leg used to end at `_teardown`, which is `parent.remove(g)` — so
@@ -344,6 +367,7 @@ export const BAY_SEATS = 6;
  * than for where in the flight they happen. `this.leg` says which.
  */
 export const PHASES = ['orbit', 'entry', 'aftermath', 'called', 'inbound', 'opening',
+  'away',
   'boarding', 'sealing', 'liftoff', 'transit', 'descent', 'unload', 'done'];
 
 /**
@@ -969,6 +993,7 @@ export class ExtractionDirector {
       case 'boarding': this._boarding(dt, ctx); break;
       case 'sealing': this._sealing(dt, ctx); break;
       case 'liftoff': this._liftoff(dt, ctx); break;
+      case 'away': this._away(dt, ctx); break;
       case 'transit': this._transit(dt, ctx); break;
       case 'descent': this._descent(dt, ctx); break;
       case 'unload': this._unload(dt, ctx); break;
@@ -1099,7 +1124,9 @@ export class ExtractionDirector {
      * cruise skips the orbit, after a second and a half so it cannot be eaten
      * by a keypress left over from the menu. The sequence still HAPPENS; you
      * arrive on a ramp either way, which is the part that was asked for. */
-    if (this.t > 1.5 && ctx?.input?.act?.('jump')) { this._toFall(); return; }
+    /* NO SKIP — the player's instruction, and see `DeckFlight`'s note on what
+     * a held-state skip key did across two worlds. The orbit is the shot the
+     * whole sequence exists for. */
     if (this.t >= ORBIT) {
       this._enter('entry');
       this.world.notify?.('ATMOSPHERIC ENTRY', 'Hold on');
@@ -1160,7 +1187,7 @@ export class ExtractionDirector {
       this._wash.scale.setScalar(0.7 + heat * 0.5);
     }
     this.world.feelOn?.('entry');
-    if (this.t > 0.8 && ctx?.input?.act?.('jump')) { this._toFall(); return; }
+    /* NO SKIP — see `_orbit`. */
     if (this.t >= ENTRY) this._toFall();
   }
 
@@ -2118,7 +2145,17 @@ export class ExtractionDirector {
        * a run that is ending has no next ground, so the climb IS the ending.
        * The ship is handed to `_departing` first so it keeps climbing behind
        * the card rather than vanishing at the moment the run closes. */
-      if (this.withdrawing) { this._withdrew(); return; }
+      /* A WITHDRAWAL CLIMBS OUT OF THE ATMOSPHERE — see `AWAY`. It used to
+       * end here, on the ground it had just left. */
+      if (this.withdrawing) {
+        /* THE STARS AND THE SHIP ARE BUILT FOR AN INSERTION ONLY. A
+         * withdrawal never called `_makeSpace`, so the climb out would have
+         * risen into an empty sky with nothing to be going back to. */
+        if (!this._stars) this._makeSpace();
+        this._enter('away');
+        this._away0 = g.position.clone();
+        return;
+      }
       this._enter('transit'); this._cruise0 = g.position.clone();
     }
   }
@@ -2130,8 +2167,72 @@ export class ExtractionDirector {
    * with it every seat on it. `World._endWithdrawal` owns what the list means —
    * this file's job is to say who was on board when the gear came up.
    */
+  /**
+   * ── OUT OF THE ATMOSPHERE, WITH YOU STILL IN IT ─────────────────────────
+   *
+   * See `AWAY`. The mirror of `_entry`, played backwards: the air thins, the
+   * stars come up, the heat glow fades, the hatch seals, and the ship you are
+   * going back to grows instead of receding — `_placeCapital` takes its
+   * distance parameter DOWN, so the same hull that shrank behind you on the
+   * way in fills the door on the way out.
+   *
+   * The player is a passenger for all of it (`_flyPassengers` runs on the
+   * director's own frame, as it does in every other phase), which is the
+   * whole point: the run may not end with him standing on the ground he was
+   * leaving.
+   */
+  _away(dt, ctx) {
+    const g = this.group;
+    if (!g) { this._withdrew(); return; }
+    const k = clamp(this.t / AWAY, 0, 1);
+    /* The air goes, in the same `k` the altitude comes on — `_entry`'s own
+     * sentence with the sign flipped. */
+    this._setSpace(1 - k);
+    this._hatch(0);
+    this._thrust = 0.85 - k * 0.35;
+    const from = this._away0 || this.down || g.position;
+    const away = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw));
+    const alt = lerp(from.y, (this.pad?.y ?? 0) + ORBIT_ALT, Math.pow(k, 1.35));
+    g.position.set(from.x - away.x * lerp(0, 120, k), alt, from.z - away.z * lerp(0, 120, k));
+    g.rotation.x = lerp(-0.14, -0.34, smoothstep(0, 1, k)) + Math.sin(this.t * 8) * 0.005 * (1 - k);
+    /* The stars arrive as the air leaves. */
+    if (this._stars) this._stars.material.opacity = smoothstep(0, 1, clamp((k - 0.25) / 0.5, 0, 1));
+    /* AND THE SHIP GROWS. 1 → 0 is `_placeCapital`'s "far → near". */
+    this._placeCapital(1 - k * 0.55);
+    if (this._wash) {
+      const heat = Math.sin(clamp(k * 1.2, 0, 1) * Math.PI);
+      this._wash.material.opacity = heat * 0.22;
+      this._wash.material.color.setHex(0xff9a4a);
+    }
+    this._wake(dt, ctx, 0);
+    if (k >= 1) this._withdrew();
+  }
+
   _withdrew() {
     const kept = this.manifest;
+    /**
+     * A MAN IN ORBIT IS NOT PUT DOWN ON THE GROUND HE LEFT.
+     *
+     * `_finish` releases every passenger onto the pad, which is right for a
+     * sequence that ends on a planet and catastrophic for one that ends two
+     * kilometres above it — it is the "you fall out of the ship and the game
+     * is over" the player saw, and it happened because the withdrawal ended
+     * at the top of the climb with `_finish` on the end of it.
+     *
+     * Coming out of `away` the run ends WITH HIM ABOARD: main.js answers
+     * `onGameOver` by building the hangar and flying this same company in
+     * (`enterHangar({card})` → `_deckArrival`), and the world he is standing
+     * in is disposed a moment later. If that fails, its own catch shows the
+     * card over a paused world with him seated in a ship, which is a better
+     * place to be told than falling.
+     */
+    if (this.phase === 'away') {
+      this.phase = 'done';
+      this._log.push({ phase: 'done', at: +this.total.toFixed(3) });
+      this.onPhase?.('done', this);
+      this.world?._endWithdrawal?.(kept);
+      return;
+    }
     this._handOffDeparture();
     this._finish();
     this.world?._endWithdrawal?.(kept);
@@ -2144,12 +2245,12 @@ export class ExtractionDirector {
     const g = this.group;
     this._thrust = 0.45;
     const dur = this._skip ? TRANSIT_MIN : TRANSIT;
-    /* THE SKIP, and its one gate. `_rotated` is the rotate having COMPLETED,
-     * so the cruise can never be collapsed into a stall. */
-    if (!this._skip && this._rotated && ctx?.input?.act?.('jump')) {
-      this._skip = true;
-      this._log.push({ phase: 'skip', at: +this.total.toFixed(3) });
-    }
+    /* NO SKIP. The cruise had one and it is gone with the other two: the
+     * player asked for none of it to be skippable, and the key was read as a
+     * held state rather than an edge, so one press crossed a world boundary
+     * and ate three sequences. `_skip` stays false for the life of a flight
+     * and `beatSheet({skip})` keeps its argument for the tables that quote
+     * the short cruise. */
     const span = Math.max(dur, SWAP_AT + VEIL_HOLD + 0.4);
     const k = clamp(this.t / span, 0, 1);
     const fwd = _v1.set(Math.cos(this.padYaw), 0, Math.sin(this.padYaw)).multiplyScalar(-lerp(0, 620, k));

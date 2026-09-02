@@ -5678,7 +5678,12 @@ export class Enemy {
      * than to the constant. 14 s at the bottom of the scale and 26 at the top,
      * against 20 flat. A body with no record keeps the constant.
      */
-    this.bleed = DOWN_BLEED * (this.trooper ? scaleOf(this.trooper, 'hardiness') : 1);
+    /* …AND THE MODE SAYS HOW LONG THE WINDOW IS. `downedScale` is 1 in The
+     * Line, whose quorum already charges for the walk, and 0.6 in Command and
+     * Skirmish, where what prices it is that the man is gone for good — see
+     * `MODES.theline.downed`. */
+    this.bleed = DOWN_BLEED * (this.trooper ? scaleOf(this.trooper, 'hardiness') : 1)
+      * (this.world?.director?.downedScale ?? 1);
     this.hp = 0.01;
     this.wish = null;
     this.target = null;

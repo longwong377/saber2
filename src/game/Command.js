@@ -5149,7 +5149,13 @@ export class CommandDirector extends WaveDirector {
     /* A NAMED MAN GOES DOWN BEFORE HE DIES — see `MODES.theline.downed` and
      * `Enemy._mayGoDown`. Read off the mode here, once, so `Enemy` asks the
      * director rather than reaching through it into the mode table. */
-    this.downedMen = !!MODES[this.mode]?.downed;
+    /* A NUMBER, NOT A BIT — see `MODES.theline.downed`. `downedMen` stays
+     * truthy/falsy for every existing reader; `downedScale` is how long the
+     * window is, so a mode says how long a man has rather than only whether
+     * he gets one. */
+    const dw = MODES[this.mode]?.downed;
+    this.downedMen = !!dw;
+    this.downedScale = typeof dw === 'number' ? dw : 1;
     /**
      * THE ROSTERS THIS DIRECTOR KEEPS — one per side-and-army. See `_rosterFor`
      * and `Commander.roster`.
@@ -11038,18 +11044,18 @@ export class CommandDirector extends WaveDirector {
            * other man carry it. Nothing new is written to the avatar: what
            * this reads is position, team and alive, which it already has.
            */
-          let jw = 0;
-          if (jedi?.position && jedi.alive !== false) jw = share(dist2(e.position, jedi.position));
+          let w = 0;
+          if (jedi?.position && jedi.alive !== false) w = share(dist2(e.position, jedi.position));
           const ps = this.world?.players;
           if (ps) {
             for (const p of ps) {
               if (!p || p === jedi || p.alive === false || !p.position) continue;
               if (p.team !== undefined && e.team !== undefined && p.team !== e.team) continue;
-              const w = share(dist2(e.position, p.position));
-              if (w > jw) jw = w;
+              const pw = share(dist2(e.position, p.position));
+              if (pw > w) w = pw;
             }
           }
-          if (jw > 0) { presence += MORALE.JEDI_NEAR * jw * lean; near = true; }
+          if (w > 0) { presence += MORALE.JEDI_NEAR * w * lean; near = true; }
           if (lead && lead !== t && lead.body && !lead.body.dead) {
             const w = share(dist2(e.position, lead.body.position));
             if (w > 0) { presence += MORALE.LEADER_NEAR * w * lean; near = true; }
