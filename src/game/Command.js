@@ -86,7 +86,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { ARCHETYPES, applyModifier, DREAD, FORCE_KINDS } from './Enemy.js';
+import { ARCHETYPES, applyModifier, DREAD, FORCE_KINDS, FURY } from './Enemy.js';
 import { rollSoldier, kindOfArmy, attrOf, scaleOf, hasFlag, shedTraits, ATTR_IDS } from './Attributes.js';
 import { buildTrooper, buildB1, buildB2, buildBodyguard } from './Bodies.js';
 import { TOUGHNESS } from './Combat.js';
@@ -2238,6 +2238,22 @@ export const FORMATIONS = {
    * would carry its holes with it. The ring is the men NOT detailed, standing
    * guard over the work at the same radius `circle` uses.
    */
+  /**
+   * DESECRATE THE FALLEN — see `DESECRATE`. `Delete` because it is the key
+   * beside `Backspace`, which is the burial's: the two orders are a pair and
+   * they sit under the same two fingers. `rends: true` is what `_troops` and
+   * `order` read, the mirror of `buries`.
+   */
+  desecrate: {
+    id: 'desecrate', name: 'Desecrate the fallen', key: 'Delete',
+    blurb: 'A third of them go out and take the enemy dead apart. What the rest see of it puts the line in a frenzy — and a Jedi company hates itself for it.',
+    leash: 1.0, advance: false, fire: 1, rends: true,
+    slot(i, n, k, out) {
+      const a = (i * 2.399963) % TAU;
+      const r = 5.0 + (i % 2) * 1.6 + (k % 2) * 0.8;
+      return out.set(Math.sin(a) * r, 0, Math.cos(a) * r);
+    },
+  },
   bury: {
     id: 'bury', name: 'Bury the fallen', key: 'Backspace',
     blurb: 'A third of them put the dead in the ground; the rest stand over them. It lifts the line, and it stops the moment contact comes.',
@@ -2969,6 +2985,56 @@ export const BURY = {
   back: 5, gap: 2.4, maxHoles: 6,
   /** How many waves a kept body outlasts before it retires like any other. */
   waves: 2,
+};
+
+/**
+ * ══ DESECRATE THE FALLEN — the other half of the same verb ════════════════
+ *
+ * The player: *"an order that makes your troops angrier/more enraged … my
+ * idea is 'desecrate the fallen' … instead of burying our dead and getting
+ * those buffs, certain troops go off and desecrate fallen ENEMIES like they
+ * tear them apart and take limbs off etc, real ragdoll physics stuff, but
+ * anyway this enrages the troops and gets them into a killing frenzy
+ * (definitely more of a Sith attuned command than the bury the fallen order
+ * which is more Jedi attuned, but you should be able to do either)."*
+ *
+ * So it is BURY's mirror, and it is deliberately built from the same parts:
+ * a third of the men detailed, walking to bodies inside a look radius, on one
+ * knee over each for a few seconds of work, and a payoff when the work lands.
+ * Four things differ, and each of them is the point:
+ *
+ *   THE BODIES ARE THEIRS.     `_rendable` walks the ragdolls of the other
+ *                              side rather than your own fallen record.
+ *   THE WORK TAKES THEM APART. `Ragdoll.cutRagdoll` on `limbs` bones, with an
+ *                              impulse — the same severance the blade uses,
+ *                              so what comes off is real geometry that falls
+ *                              and lies there for the rest of the run.
+ *   THE PAYOFF IS FURY.        Everything of yours inside `FURY.radius` of
+ *                              the work goes into a killing frenzy: harder,
+ *                              faster, wilder (`Enemy.FURY`).
+ *   IT COSTS A JEDI SOMETHING. A company under a Jedi pays `moraleJedi` for
+ *                              watching it; under a Sith it GAINS. Either
+ *                              order may give it — the player asked for that
+ *                              in as many words — and only one of them likes
+ *                              what it sees.
+ *
+ * The risk is the same risk and it is why the order is not free: the detail
+ * is off the guns, out in front where the bodies are rather than behind the
+ * line where the holes are, and contact ends it.
+ */
+export const DESECRATE = {
+  /** What share of the men ordered are detailed, and the fewest that is. */
+  share: 1 / 3, min: 2,
+  /** How far out a man will go for a body of theirs, in metres. */
+  look: 34,
+  /** Seconds of work per body, and how many pieces come off it. */
+  tear: 5, limbs: 2,
+  /** At most this many bodies are worked under one order. */
+  bodies: 6,
+  /** What one finished body does to the morale of a company of each order. */
+  moraleJedi: -0.10, moraleSith: 0.06,
+  /** The impulse a torn limb leaves with, in metres a second. */
+  fling: 7,
 };
 
 /**
@@ -8135,6 +8201,8 @@ export class CommandDirector extends WaveDirector {
       c.digs?.delete(key);
       if (F.buries) this._buryStart(c, ask.took, squad);
       else if (c.burial && c.burial.squad === (Number(squad) | 0)) this._buryStop(c, 'order');
+      if (F.rends) this._desecrateStart(c, ask.took, squad);
+      else if (c.rending && c.rending.squad === (Number(squad) | 0)) this._desecrateStop(c, 'order');
     } else {
       const all = this.led(c).filter((t) => t.alive !== false);
       const ask = this._ask(F, c, all, null);
@@ -8148,6 +8216,8 @@ export class CommandDirector extends WaveDirector {
       c.formation = id;
       if (F.buries) this._buryStart(c, ask.took, null);
       else this._buryStop(c, 'order');
+      if (F.rends) this._desecrateStart(c, ask.took, null);
+      else this._desecrateStop(c, 'order');
     }
     // A formation that does not advance is planted where the commander was
     // STANDING when the order was given — see `_anchorFor`. So is one the
@@ -9549,6 +9619,8 @@ export class CommandDirector extends WaveDirector {
     /* THE BURIAL DETAIL steers itself — see `_burySteer`. A detailed man
      * with nothing left to do falls through to the ring like everybody. */
     if (t.burying && this._burySteer(e, t, c, dt)) return;
+    /* …AND THE DESECRATION DETAIL, the same seam and the same rule. */
+    if (t.rending && this._desecrateSteer(e, t, c, dt)) return;
     /* The squad's own order if it has one — see `formationFor`. */
     const F = FORMATIONS[this.formationFor(c, e?.cmdSquad, e?.trooper)] || FORMATIONS[DEFAULT_FORMATION];
     /* A live target it is allowed to engage buys it the whole leash; otherwise
@@ -11174,6 +11246,7 @@ export class CommandDirector extends WaveDirector {
       const squads = this.squadsOf(c);
       this._gravesFelt(dt, c);
       this._buryTick(dt, c);
+      this._desecrateTick(dt, c);
       let i = 0;
       let n = 0;
       for (const sq of squads) n += sq.length;
@@ -11470,6 +11543,216 @@ export class CommandDirector extends WaveDirector {
    * them dig and the rest bear, the odd man digging. The holes are laid in a
    * row `BURY.back` behind the anchor, across the commander's facing.
    */
+  /**
+   * THE ENEMY DEAD WITHIN REACH OF THE ORDER — `DESECRATE`'s `_buryable`.
+   *
+   * A corpse is a body of the other side that is dead, still in the world and
+   * still has a ragdoll to take apart; one already worked is skipped by its
+   * own mark so two men never claim the same body and a second order does not
+   * re-tear what the first one tore.
+   */
+  _rendable(c, at = null) {
+    const from = at || c?.player?.position || c?.anchor;
+    const list = this.world?.enemies;
+    if (!from || !list?.length) return [];
+    const team = c?.player?.team ?? c?.team ?? 0;
+    const r2 = DESECRATE.look * DESECRATE.look;
+    const out = [];
+    for (const o of list) {
+      if (!o?.dead || o.disposed || o.team === team) continue;
+      if (o._rent || o._rentBy) continue;
+      if (!o.actor?.ragdolled) continue;
+      if (dist2(o.position, from) > r2) continue;
+      out.push(o);
+    }
+    return out;
+  }
+
+  /**
+   * DESECRATE THE FALLEN. See `DESECRATE` for the whole argument; this is the
+   * detail being told off, and it is `_buryStart` with the sign flipped.
+   *
+   * WHO GOES: the men with the LEAST discipline, where the burial takes the
+   * steadiest. It is the same sort at the other end of the list, and it says
+   * something true — the men who will do this are the ones who need least
+   * asking, and they are the ones you would rather not have left on the line.
+   */
+  _desecrateStart(c, men, squad) {
+    if (c.rending) this._desecrateStop(c, 'again');
+    const at = this._anchorFor(FORMATIONS.desecrate, c, squad)?.pos || c.player?.position || c.anchor;
+    if (!at) return false;
+    const dead = this._rendable(c, at);
+    if (!dead.length) {
+      if (c === this.commander) {
+        this.world?.notify?.('NOTHING OF THEIRS TO TAKE',
+          `none of them is lying within ${DESECRATE.look} m of here`);
+      }
+      return false;
+    }
+    const able = men.filter((t) => t.alive !== false && t.body && !t.body.dead && !t.body.downed && !t.burying);
+    if (!able.length) return false;
+    able.sort((a, b) => a.attr('discipline') - b.attr('discipline'));
+    const n = Math.min(able.length, Math.max(DESECRATE.min, Math.round(able.length * DESECRATE.share)));
+    const detail = able.slice(0, n);
+    for (const t of detail) { t.rending = true; t._rentTarget = null; }
+    c.rending = {
+      t: 0, wave: this.wave, squad: squad == null ? null : (Number(squad) | 0),
+      was: c.formation === 'desecrate' ? DEFAULT_FORMATION : c.formation,
+      at: at.clone(), detail, done: 0, left: Math.min(dead.length, DESECRATE.bodies),
+      /* Whether a wave was ALREADY on when the order was given: the contact
+       * rule ends a detail that a wave walks into, not one told off during a
+       * fight the commander has already accepted. The burial's own field. */
+      active0: this.active,
+    };
+    this.log.push({ t: 'desecrate', n, dead: dead.length, area: this.areaNumber, wave: this.wave });
+    if (c === this.commander) {
+      this.world?.notify?.('DESECRATE THE FALLEN',
+        `${n} detailed. They will take ${c.rending.left} of them apart, and the line will watch.`, 'alarm');
+    }
+    return true;
+  }
+
+  /** Everybody back on the line; a body half-worked is simply left. */
+  _desecrateStop(c, why) {
+    const D = c?.rending;
+    if (!D) return false;
+    for (const t of this.led(c)) {
+      if (!t.rending) continue;
+      t.rending = false;
+      const o = t._rentTarget;
+      if (o && o._rentBy === t) o._rentBy = null;
+      t._rentTarget = null;
+      if (t.body) { t.body.wish = null; t.body.crouch = 0; }
+    }
+    if (c.formation === 'desecrate') c.formation = FORMATIONS[D.was] ? D.was : DEFAULT_FORMATION;
+    if (D.squad != null && c.squadOrders?.get(String(D.squad)) === 'desecrate') c.squadOrders.set(String(D.squad), D.was);
+    c.rending = null;
+    this.log.push({ t: 'desecrate-end', why, done: D.done, area: this.areaNumber, wave: this.wave });
+    if (c === this.commander && why !== 'order' && why !== 'again') {
+      this.world?.notify?.(why === 'contact' ? 'CONTACT — LEAVE THEM' : 'IT IS DONE',
+        why === 'contact' ? `${D.done} taken apart; the detail comes back to the line`
+                          : `${D.done} of theirs in pieces. The line has its blood up.`, 'alarm');
+    }
+    return true;
+  }
+
+  /**
+   * ONE FRAME OF IT: the contact rule, and nothing else. The work itself is
+   * `_desecrateSteer`, one man at a time, because a body is claimed by the
+   * man standing over it and not by the order.
+   */
+  _desecrateTick(dt, c) {
+    const D = c?.rending;
+    if (!D) return;
+    D.t += dt;
+    /* CONTACT ENDS IT — the same rule the burial takes, and for the same
+     * reason: this is a thing you do in the quiet between waves. */
+    if (this.active && !D.active0 && D.t > 1.5) { this._desecrateStop(c, 'contact'); return; }
+    if (D.left <= 0) this._desecrateStop(c, 'done');
+  }
+
+  /**
+   * A DETAILED MAN STEERS HIMSELF. Returns true while he is busy, exactly as
+   * `_burySteer` does, so `_troops` hands him the frame.
+   */
+  _desecrateSteer(e, t, c, dt) {
+    const D = c?.rending;
+    if (!D) { t.rending = false; return false; }
+    let o = t._rentTarget;
+    if (!o || o.disposed || o._rent || (o._rentBy && o._rentBy !== t)) {
+      o = null;
+      let bestD = Infinity;
+      for (const cand of this._rendable(c, D.at)) {
+        const d = dist2(cand.position, e.position);
+        if (d < bestD) { bestD = d; o = cand; }
+      }
+      if (!o) { t.rending = false; return false; }
+      o._rentBy = t;
+      t._rentTarget = o;
+      t._rentT = 0;
+    }
+    const dx = o.position.x - e.position.x, dz = o.position.z - e.position.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 1.8) {
+      if (!e.wish) e.wish = new THREE.Vector3();
+      e.wish.set(dx / d, 0, dz / d);
+      if (!e.toTarget) e.toTarget = new THREE.Vector3();
+      e.toTarget.copy(e.wish);
+      const want = (e.A?.speed ?? e.speed ?? 4) * 1.15;
+      if (want > e.speed) e.speed = want;
+      this._crouch(e, dt, 0);
+      return true;
+    }
+    /* OVER IT, ON ONE KNEE, WORKING. */
+    e.wish = null;
+    this._crouch(e, dt, 0.75);
+    t._rentT = (t._rentT || 0) + dt;
+    if (t._rentT < DESECRATE.tear) return true;
+    this._desecrateFinish(c, t, e, o);
+    return true;
+  }
+
+  /**
+   * THE WORK LANDS: `limbs` bones come off the ragdoll with an impulse — the
+   * blade's own severance, so what falls is real geometry that stays on the
+   * field — and everything of yours inside `FURY.radius` goes into a frenzy.
+   */
+  _desecrateFinish(c, t, e, o) {
+    const D = c?.rending;
+    o._rent = true;
+    o._rentBy = null;
+    t._rentTarget = null;
+    t._rentT = 0;
+    /* THE PIECES. `cutRagdoll` is what the blade calls; the bones are named
+     * from the far end in so a body loses arms before it loses a spine. */
+    /* THE RIG'S OWN NAMES (`Rig.js`): arms are `armL`/`foreL`, legs are
+     * `thighL`/`shinL`. Far end first, so a body loses a forearm before it
+     * loses a thigh and there is something left to recognise. */
+    const bones = ['foreL', 'foreR', 'shinL', 'shinR', 'armL', 'armR', 'thighL', 'thighR'];
+    let took = 0;
+    for (const b of bones) {
+      if (took >= DESECRATE.limbs) break;
+      if (o.actor?.isSevered?.(b)) continue;
+      try {
+        /* A CLONE, NOT THE SCRATCH: `cutRagdoll` hands the impulse to a stub
+         * that keeps it, and `_v1` is the file's shared vector. Once per body
+         * torn apart, which is not a per-frame cost. */
+        const imp = new THREE.Vector3((rng() - 0.5) * 2, 0.6 + rng() * 0.6, (rng() - 0.5) * 2)
+          .normalize().multiplyScalar(DESECRATE.fling);
+        /* THE THIRD ARGUMENT IS THE STUMP, and it is not optional: with the
+         * default `t = 0` `cutRagdoll` only breaks the joint — the limb stays
+         * its full length, `severedCount` never moves and `isSevered` is
+         * false, so nothing came off and nothing said so. 0.3 leaves a third
+         * of the bone, which is the blade's own look. */
+        if (o.actor?.cutRagdoll?.(b, imp, 0.3)) took++;
+      } catch { /* a bone the rig does not carry is not a failure */ }
+    }
+    this.world?.notifyFloating?.(o.position, 'TORN APART', 0xd0443a);
+    try { e.cry?.('rage', 1.3); } catch {}
+    /* THE FRENZY, on everything of yours that can see it. */
+    const team = e.team;
+    let felt = 0;
+    for (const b of (this.world?.enemies || [])) {
+      if (!b || b.dead || b.team !== team) continue;
+      if (dist2(b.position, o.position) > FURY.radius * FURY.radius) continue;
+      b.furyTimer = Math.max(b.furyTimer || 0, FURY.seconds);
+      felt++;
+    }
+    /* AND WHAT IT COSTS. A company under the Jedi code pays for watching it;
+     * under the Sith it feeds them. `sideForOrder` is the one reader of which
+     * code this commander keeps. */
+    const sith = this.world?.settings?.order === 'sith';
+    const delta = sith ? DESECRATE.moraleSith : DESECRATE.moraleJedi;
+    for (const m of this.led(c)) {
+      if (!m.body || m.body.dead) continue;
+      if (dist2(m.body.position, o.position) > FURY.radius * FURY.radius) continue;
+      m.morale = clamp((m.morale ?? 0.6) + delta, 0, 1);
+    }
+    if (D) { D.done++; D.left--; }
+    this.log.push({ t: 'desecrated', name: t.name, limbs: took, felt,
+                    area: this.areaNumber, wave: this.wave });
+  }
+
   _buryStart(c, men, squad) {
     if (c.burial) this._buryStop(c, 'again');
     const at = this._anchorFor(FORMATIONS.bury, c, squad)?.pos || c.player?.position || c.anchor;

@@ -2508,6 +2508,40 @@ export const ENEMY_POWERS = {
 export const RALLY = { radius: 9.5, speed: 1.15, damage: 1.25, rate: 0.78, refresh: 0.25 };
 
 /**
+ * ── WHAT A KILLING FRENZY DOES TO ONE BODY ───────────────────────────────
+ *
+ * The player: *"an order that makes your troops angrier/more enraged like
+ * maybe makes them do more damage … certain troops go off and desecrate
+ * fallen enemies like they tear them apart and take limbs off … this enrages
+ * the troops and gets them into a killing frenzy."*
+ *
+ * `Command.DESECRATE` is the order — who goes, how long the work takes, what
+ * it costs a company that keeps the Jedi code. THIS is what the state does to
+ * a man, and it lives here for the reason `RALLY` does: a state's CONSEQUENCE
+ * belongs to the file that owns bodies, and a verb's PRICE to the file that
+ * owns orders. Two numbers in two files with one meaning between them is the
+ * defect this repository keeps deleting.
+ *
+ * It is RALLY turned up and pointed the other way. A rallied man is steadier —
+ * he shoots quicker and hits harder because somebody took hold of him. A man
+ * in a frenzy hits harder still and fires faster, and he pays for it: `aim` is
+ * the only figure here above 1, because a man screaming through a firing line
+ * does not group his shots. That is the trade the order is FOR, and it is why
+ * it is not simply a better rally.
+ *
+ * The two stack multiplicatively and deliberately: a rallied man in a frenzy
+ * is the most dangerous thing your line can field, for twenty-two seconds.
+ */
+export const FURY = {
+  /** How long one man stays in it. Longer than a rally by an order. */
+  seconds: 22,
+  /** How far the sight of it carries from the body being torn apart. */
+  radius: 26,
+  /** What it does: harder, faster, quicker on his feet — and wilder. */
+  damage: 1.45, rate: 0.70, speed: 1.12, aim: 1.35,
+};
+
+/**
  * WHAT DREAD DOES TO ONE BODY — the other end of `Command.js`'s DREAD verb.
  *
  * It is here rather than there for the same reason `RALLY` is: this file owns
@@ -3165,6 +3199,8 @@ export class Enemy {
     this._prevPos = new THREE.Vector3();
     /** Time left on a Leader's aura. Refreshed by whoever is leading. */
     this.rallyTimer = 0;
+    /** Seconds of killing frenzy left. See FURY and Command.DESECRATE. */
+    this.furyTimer = 0;
     /**
      * Time left on the DREAD a commander put on this body. Same shape as
      * `rallyTimer` on purpose — a timer that drains in `update` and is read as
@@ -5203,6 +5239,12 @@ export class Enemy {
       if (range > vis * 0.6) q *= 1 + clamp((range - vis * 0.6) / Math.max(8, vis), 0, 2.6);
     }
 
+    /* ── AND A MAN IN A FRENZY DOES NOT GROUP HIS SHOTS. The one figure in
+     * `FURY` above 1: he hits harder and fires faster and he sprays, which is
+     * the trade the order is for. `q` is a SPREAD multiplier here — bigger is
+     * worse — so this is the only term the frenzy makes worse. */
+    if (this.furyTimer > 0) q *= FURY.aim;
+
     // ── skill: the rank ladder, and elites
     const r = this.trooper ? this.trooper.rank : 0;
     q *= AIM_BY_RANK[Math.min(r, AIM_BY_RANK.length - 1)];
@@ -6062,6 +6104,7 @@ export class Enemy {
     newShoveFrame(this);
     this._updateElite(dt, ctx);
     if (this.rallyTimer > 0) this.rallyTimer = Math.max(0, this.rallyTimer - dt);
+    if (this.furyTimer > 0) this.furyTimer = Math.max(0, this.furyTimer - dt);
     if (this.dread > 0) this.dread = Math.max(0, this.dread - dt);
     if (this.dead) {
       this.dying += dt;
@@ -6671,7 +6714,7 @@ export class Enemy {
      * rifles falling back onto a ten-man line was the largest single source of
      * damage in the mode. `_levySlack` is 1 on every body that is not a loose
      * levy, including every conscript that can see a player. */
-    const rally = (this.rallyTimer > 0 ? RALLY.rate : 1) * (this._levySlack || 1);
+    const rally = (this.rallyTimer > 0 ? RALLY.rate : 1) * (this.furyTimer > 0 ? FURY.rate : 1) * (this._levySlack || 1);
     if (this.burstLeft > 0) {
       this.burstTimer -= dt;
       if (this.burstTimer <= 0) {
@@ -7071,7 +7114,7 @@ export class Enemy {
 
     ctx.bolts.fire(from, _v3, {
       speed: this.trainingBoltSpeed ?? speed,
-      damage: this.attackDamage * (this.rallyTimer > 0 ? RALLY.damage : 1),
+      damage: this.attackDamage * (this.rallyTimer > 0 ? RALLY.damage : 1) * (this.furyTimer > 0 ? FURY.damage : 1),
       color: A.boltColor ?? BOLT_COLORS.red,
       owner: this, team: this.team, big: !!A.big,
       length: A.big ? 2.4 : 1.15, radius: A.big ? 0.1 : 0.05,
@@ -7741,7 +7784,7 @@ export class Enemy {
     // and the floating label, all of which may hold on to it
     const best = _hit.clone();
     this._struck = true;
-    const dmg = this.attackDamage * duel.damageScale * (this.rallyTimer > 0 ? RALLY.damage : 1);
+    const dmg = this.attackDamage * duel.damageScale * (this.rallyTimer > 0 ? RALLY.damage : 1) * (this.furyTimer > 0 ? FURY.damage : 1);
     t.damage(dmg, best, this, 'saber');
 
     // shoved off the line, not merely dinged
@@ -8199,7 +8242,7 @@ export class Enemy {
        * the thirty-six archetypes and every measurement anybody has taken of
        * them.
        */
-      let speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1);
+      let speed = this.speed * (this.legsLost ? 0.45 : 1) * (this.rallyTimer > 0 ? RALLY.speed : 1) * (this.furyTimer > 0 ? FURY.speed : 1);
       if (A.grade != null && terrain?.slopeAt) {
         const s = terrain.slopeAt(this.position.x, this.position.z);
         speed *= 1 - smoothstep(A.grade * 0.55, A.grade, s);

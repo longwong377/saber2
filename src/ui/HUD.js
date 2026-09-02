@@ -882,6 +882,7 @@ export const TERSE = {
   charge: 'Break and attack',
   holdfire: 'Weapons down, close in',
   bury: 'Bury the fallen',
+  desecrate: 'Tear their dead apart',
   hold: 'Stay put, still fighting',
   squad: 'Which squad hears you',
   detach: 'One man, his own orders',
