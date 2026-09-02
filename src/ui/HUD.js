@@ -179,6 +179,15 @@ export const POWERS = [
   ['ward', 'shield'],
   /* Restore — the group heal. Its own key, its own price, its own 75 s. */
   ['restore', 'restore'],
+  /* THE TWO SABER-SET POWERS, and both ride the `throw` key — which is exactly
+   * why they need slots of their own. The key means three different things in
+   * the three sets (the disc, the saberstaff's orbit, the pair's shoto) and the
+   * one thing that must not follow is one slot drawing three prices; each has
+   * its own row in POWER_COST, so each gets its own `_afford` and its own
+   * readout. The binding column is `throw` because that IS the key, the same
+   * way the ward's is `shield`. See src/game/SaberSet.js. */
+  ['throwOff', 'throw'],
+  ['orbit', 'throw'],
 ];
 
 /**
@@ -2468,6 +2477,25 @@ export class HUD {
     this._power('ward', cd.ward, this._afford(player, 'ward'), !!player.ward?.body);
     /* Restore lights for the three seconds the burst is landing. */
     this._power('restore', cd.restore, this._afford(player, 'restore'), !!player.restoring);
+    /**
+     * THE TWO SABER-SET SLOTS, and both are on the `throw` key.
+     *
+     * A player only ever has ONE of them — the key means the disc, the orbit or
+     * the shoto depending on the set — and the slot that is not yours is dim
+     * for the honest reason: `_afford` says you cannot spend on it, because
+     * nothing in the set you are playing spends it. Drawing all three is what
+     * makes the wheel a readout of what the button does rather than a list of
+     * what exists, and the same argument the rend slot's own note makes applies
+     * here: a power that is bound, priced and castable and drawn NOWHERE is a
+     * power the player has to be told about out of band.
+     *
+     * The shoto's lit border is "the blade is out", exactly as the disc's is.
+     * The orbit's is "the ring is turning", which is the readout that matters
+     * most in the row — it is what tells the player two bars are draining.
+     */
+    this._power('throwOff', cd.throwOff, this._afford(player, 'throwOff'),
+      !!(player.sidearm && player.sidearm.throwState !== 'held'));
+    this._power('orbit', 0, this._afford(player, 'orbit'), player.throwState === 'orbit');
 
     // ── reticle & blade cursor
     this._drivePrompt(world, player);

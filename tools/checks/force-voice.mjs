@@ -301,6 +301,12 @@ const FIRE = {
   pull: (b) => b.p.forcePull(b.ctx),
   grip: (b) => b.p.toggleGrip(b.ctx),
   throw: (b) => b.p.throwOrRecall(b.ctx),
+  /* THE TWO SABER-SET VERBS. `throwOrRecall` is the key they ride, but the key
+   * is conditional on the set — see Player.throwOrRecall — so firing them
+   * through it here would only ever reach the single blade's disc. The methods
+   * are what the key dispatches to, and they are what this drives. */
+  throwOff: (b) => b.p.throwOffBlade(b.ctx),
+  orbit: (b) => b.p.spinBarrier(b.ctx),
   sense: (b) => b.p.toggleSense(b.ctx),
   lightning: (b) => b.p.forceLightning(b.ctx),
   stasis: (b) => b.p.toggleStasis(b.ctx),

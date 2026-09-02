@@ -605,9 +605,71 @@ function installCompanionHide(e) {
   const hurt = e.damage.bind(e);
   e.damage = function (amount, point, source, kind) {
     if (source && source !== e && !canHarm(source, e, e.world?.rules)) return false;
-    return hurt(amount, point, source, kind);
+    /**
+     * THE FRAGILE KINDS ARE FRAGILE LEGIBLY.
+     *
+     * `frag` multiplies incoming damage from AREA sources ONLY — a grenade, a
+     * quake, a blast, a fall — and NEVER from aimed fire. That asymmetry is
+     * the whole design of the field: a tooka dies to a thermal you did not
+     * see; it does not die to the bolt you were supposed to have blocked.
+     *
+     * It keeps every death explicable, which is SCOPE warning 1's actual
+     * requirement — a death the player cannot account for is a death they
+     * blame on the AI. A flat fragility multiplier would make the tooka die to
+     * things you WERE watching, and then losing it reads as the game cheating
+     * rather than as a thermal you did not see.
+     */
+    const K = COMPANION_KINDS[e._cmpKind];
+    let amt = amount;
+    if (K && K.frag !== 1 && AREA_KINDS.has(kind)) amt = amount * K.frag;
+    /**
+     * AND IT IS NOT SILENT WHEN YOU ARE THE ONE WHO DID IT.
+     *
+     * `installTeamDamage` catches blade, bolt, blast, fall and lightning at
+     * the one door and scales what lands — but it only SHOUTS through
+     * `this.commandOf`, which a companion deliberately does not have, and
+     * `onFriendlyHit` opens `if (!e.trooper) return;` anyway. So cutting your
+     * own dog was completely silent, in both directions.
+     *
+     * This is the single most memorable thing the whole feature can produce
+     * and it must not happen without the game saying so — by the NAME you gave
+     * it, which is the entire reason a companion has one.
+     *
+     * THROTTLED, because a blade in contact is a damage call a frame and a
+     * notice a frame is a scrolling wall rather than a fact.
+     */
+    if (amt > 0 && source && source !== e && source.team === e.team) {
+      const now = e.world?.elapsed ?? 0;
+      if (now - (e._cmpYelp || -9) > YELP_GAP) {
+        e._cmpYelp = now;
+        const who = e._cmpRec?.name || K?.label || 'your companion';
+        e.world?.notifyFloating?.(e.position, who.toUpperCase(), '#ffd88a');
+        e.world?.notify?.(`${who.toUpperCase()} — THAT WAS YOU`,
+          'it is on your side, and it does not know to get out of the way');
+      }
+    }
+    /* WHO GOT IT, FOR THE EPITAPH. Written on every hit rather than on the
+     * fatal one, because the fatal one often has no source at all — a bleed-out
+     * on the ground is nobody's, and "killed by nothing" is not a line worth
+     * keeping on a wall. */
+    if (amt > 0 && source && source !== e && source.team !== e.team) {
+      const pack = e.world?._companions;
+      if (pack) pack.lastKiller = source.A?.label || source.name || null;
+    }
+    return hurt(amt, point, source, kind);
   };
 }
+
+/**
+ * WHAT COUNTS AS AN AREA WEAPON, for `frag`. The four `kind` strings the
+ * damage paths already pass for something that went off rather than something
+ * that was aimed — read rather than restated, so a fifth added to the game is
+ * a line here and not a silent hole in every fragile companion's one rule.
+ */
+const AREA_KINDS = new Set(['blast', 'grenade', 'quake', 'fall']);
+
+/** How long between two "that was you" notices about the same animal. */
+const YELP_GAP = 4;
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  2. THE PACK                                                               */

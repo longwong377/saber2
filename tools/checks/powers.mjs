@@ -1719,4 +1719,154 @@ export async function run({ check, assert }) {
     } finally { world.unload?.(); }
   });
 
+  check('push: the recoil refuses a body with no mass behind it, composes with the velocity you '
+    + 'already had, and saturates at its cap', async () => {
+    /**
+     * THE THREE HALVES OF THE SAME SENTENCE THE CHECK ABOVE DOES NOT MEASURE —
+     * written after it, against the same world, because each of these fails in
+     * a way that reads as success from the outside.
+     *
+     *   "YOU CANNOT PUSH OFF SOMETHING THAT MOVES." A crate takes the shove and
+     *     goes; taking the launch as well is being paid the impulse twice. It
+     *     is the one property with no visible symptom — a Jedi standing on a
+     *     barrel and pushing it to fly looks exactly like a Jedi flying — so it
+     *     is measured as an A/B on ONE variable: the same box, at the same
+     *     place, at the same aim, once at mass 40 and once at mass 0. Nothing
+     *     else in the fixture moves between the two runs, so a difference in
+     *     the kick can only be the mass. The obvious alternative — reading
+     *     `_pushRecoil`'s `movable` branch out of the source — would pass
+     *     against a build where the raycast never reaches the box at all.
+     *
+     *   "IT SHOULD WORK IN THE AIR TOO." The height curve above shows the
+     *     launch falling with distance, which a man standing on a hill would
+     *     also produce. What "in the air" promises is two things a curve cannot
+     *     say: that being off the floor does not gate it, and that the kick is
+     *     ADDED to what you were already doing rather than replacing it, so a
+     *     second push mid-arc builds on the first. Measured by pushing a man
+     *     falling at 6 m/s and comparing his kick against a motionless man at
+     *     the same height, then checking the sum.
+     *
+     *   THE CAP IS A REAL CEILING, not a number in a table. The clause above
+     *     asserts <= 18.01 at forcePower 4 — which an entirely uncapped build
+     *     also satisfies, because at 4 the doubled `range` has moved the
+     *     distance term down to meet it. So this drives the bar far past any
+     *     plausible ceiling and asserts the launch STOPS MOVING: two different
+     *     strengths giving the same speed to the nanometre is what a clamp
+     *     looks like from outside, and nothing else produces it.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { Body, box } = await import('../../src/physics/RapierWorld.js');
+    const { world } = await bootWorld({
+      level: 'geonosis', settings: { mode: 'waves', level: 'geonosis', quality: 'low' },
+    });
+    try {
+      const p = world.player;
+      const ctx = world._frameCtx || { world, enemies: world.enemies, physics: world.physics,
+        particles: world.particles, terrain: world.terrain, bolts: world.bolts };
+      const ground = world.terrain.height(0, 0);
+      /* `chest` is written once a frame by the update, so a fixture that moved
+       * the body and pushed in the same tick would fire from where he was. */
+      const set = (h, ax, ay, az, vel = null) => {
+        p.position.set(0, ground + h, 0);
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.velocity.set(0, 0, 0);
+        if (vel) p.velocity.copy(vel);
+        p.grounded = h < 0.2;
+        p.force = p.maxForce = 400;
+        p.cooldowns.push = 0;
+        p.aimDir.set(ax, ay, az).normalize();
+      };
+      const kick = () => { const v = p.velocity.clone(); p.forcePush(ctx); return p.velocity.clone().sub(v); };
+      world.settings.forcePower = 1;
+
+      /* ── 1. A BOX WITH MASS IS NOT A FLOOR ──────────────────────────────
+       * Fired from 8 m up and aimed level, so the only thing in front of the
+       * ray is the box the clause puts there — the empty run below is the
+       * proof of that rather than an assumption about the ground. */
+      const at = V(0, ground + 8 + 1.25, -1.6);
+      /**
+       * ONE STEP AFTER THE ADD, and it is not decoration: Rapier's ray casts go
+       * through the query pipeline, and a collider created since the last step
+       * is not in it. Measured — the first cut of this clause put a box 1.6 m
+       * in front of the reticle and `physics.raycast` returned null for it at
+       * both masses, so the "a crate gives you nothing" assertion passed
+       * against a world with no crate in it. A quarter of a millisecond is
+       * short enough that the box has not moved (4 microns of fall) and long
+       * enough to be in the broad phase.
+       */
+      const crate = (mass) => {
+        const b = new Body({ position: at.clone(), shape: box(0.6, 0.6, 0.6), mass });
+        world.physics.add(b);
+        world.physics.step(1 / 240);
+        return b;
+      };
+      set(8, 0, 0, -1);
+      const empty = kick();
+      assert(empty.length() < 0.01,
+        'the fixture is not clean — a level push from 8 m up found something to brace against '
+        + `before any box was put there (${empty.length().toFixed(2)} m/s)`);
+
+      const heavy = crate(40);
+      set(8, 0, 0, -1);
+      const offCrate = kick();
+      world.physics.remove(heavy);
+
+      const anvil = crate(0);                     // the same box, no mass: static
+      set(8, 0, 0, -1);
+      const offAnvil = kick();
+      world.physics.remove(anvil);
+
+      assert(offAnvil.length() > 5,
+        `the same box at mass 0 gave only ${offAnvil.length().toFixed(2)} m/s — the ray never found it, `
+        + 'so the mass clause below would pass on a build with no mass test in it at all');
+      assert(offCrate.length() < 0.01,
+        `pushing a 40 kg crate launched him at ${offCrate.length().toFixed(2)} m/s — the shove already `
+        + 'spent itself throwing that crate, and this is the same impulse taken twice');
+
+      /* ── 2. IN THE AIR, AND ADDED TO WHAT HE WAS ALREADY DOING ────────── */
+      set(4, 0, -1, 0);
+      assert(!p.grounded, 'the fixture put him on the floor at 4 m — the air clause is measuring nothing');
+      const still = kick();
+      set(4, 0, -1, 0, V(0, -6, 0));
+      const before = p.velocity.clone();
+      const moving = kick();
+      const after = p.velocity.clone();
+      assert(still.y > 1,
+        `a push at ground 4 m below gave ${still.y.toFixed(2)} m/s — it does not reach off the floor`);
+      assert(Math.abs(moving.y - still.y) < 1e-6,
+        `falling at 6 m/s the same push gave ${moving.y.toFixed(3)} m/s against ${still.y.toFixed(3)} `
+        + 'standing still — the launch is reading his motion, not the ground');
+      assert(Math.abs(after.y - (before.y + moving.y)) < 1e-6,
+        'the kick overwrote his velocity instead of adding to it — a second push mid-arc would throw '
+        + 'the first one away');
+      assert(after.y > before.y,
+        `he was falling at ${(-before.y).toFixed(1)} m/s and the push left him at ${after.y.toFixed(1)} — `
+        + 'it did not beat the fall');
+
+      /* ── 3. THE CEILING BINDS ──────────────────────────────────────────── */
+      const plateau = [];
+      for (const P of [9, 16, 25]) {
+        world.settings.forcePower = P;
+        set(0.05, 0, -1, 0);
+        plateau.push(kick().y);
+      }
+      world.settings.forcePower = 1;
+      set(0.05, 0, -1, 0);
+      const base = kick().y;
+      assert(plateau[0] > base, 'more Force strength did not buy a bigger launch at all');
+      assert(Math.abs(plateau[0] - plateau[2]) < 1e-9,
+        `forcePower 9 launches at ${plateau[0].toFixed(3)} m/s and 25 at ${plateau[2].toFixed(3)} — `
+        + 'the launch is still climbing, so nothing is clamping it');
+      /* sqrt(25) is five bars' worth of speed on a bar-1 launch of `base`, and
+       * that is where a build with the clamp deleted would be. */
+      assert(plateau[2] < base * 5 - 1,
+        `at forcePower 25 he leaves at ${plateau[2].toFixed(2)} m/s against an unclamped `
+        + `${(base * 5).toFixed(2)} — the cap is not doing anything`);
+      return `40 kg crate ${offCrate.length().toFixed(2)} m/s against the same box at mass 0 `
+        + `${offAnvil.length().toFixed(2)} m/s; in the air ${still.y.toFixed(2)} m/s standing and `
+        + `${moving.y.toFixed(2)} falling, added onto a −6 m/s fall to leave ${after.y.toFixed(2)}; `
+        + `power 1 → ${base.toFixed(2)} m/s, 9/16/25 → ${plateau.map((n) => n.toFixed(2)).join('/')} (capped)`;
+    } finally { world.unload?.(); }
+  });
+
 }

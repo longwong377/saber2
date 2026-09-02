@@ -32,6 +32,35 @@
 
 export const POWER_COST = {
   push: 20, pull: 16, grip: 10, throw: 14, sense: 25,
+  /**
+   * ── THE TWO SET PRICES, AND THEY ARE ROWS RATHER THAN A CONDITION ON
+   *    `throw`. See src/game/SaberSet.js.
+   *
+   * The `throw` key means three different things in the three saber sets — the
+   * disc, the saberstaff's orbit, and the pair's shoto — and the one thing that
+   * must NOT follow from that is a price that changes with what you happen to be
+   * holding. This file's first thirty lines are a post-mortem of exactly that
+   * drift (the HUD's private copy carried lightning at 14 against a real 30),
+   * and `hud-events.mjs` still greps each spend out of Player.js to match it
+   * against the wheel. A conditional price is a number the player cannot budget
+   * for and a number no check can grep. So: three separate rows, and `throw`
+   * still costs a flat 14 in every set.
+   *
+   * `throwOff` 18 SITS IN THE EMPTY SLOT ABOVE `throw` 14 AND BELOW `push` 20,
+   * and the reason is monotone rather than felt: a throw that does not disarm
+   * you is strictly the better commitment — you keep a blade to attack and
+   * block with while the other one is out — so it costs strictly more than one
+   * that leaves your hands empty. Its cooldown is 3.0 s against the shipped
+   * 2.2, for the same reason and measured from the CATCH, which is the moment
+   * the throw is actually over.
+   *
+   * `orbit` 24 SITS BETWEEN `push` 20 AND `sense` 25, and it is the raise only:
+   * holding it costs `(TK.lit 9 + HOLD_COST.prop.base 7) × effort 0.85` = 13.6
+   * Force a second with the 7.5/s regen paused, which is the exact expression
+   * `pilotThrown` already bills, plus 1.2 stamina on the ordinary ladder for
+   * every bolt the ring answers. Two bars at once, and neither table changed.
+   */
+  throwOff: 18, orbit: 24,
   lightning: 30, stasis: 26, heal: 40, compel: 34,
   /* Rend was priced by a bare `38` inside Player.forceDisassemble and by
    * nothing here, so the HUD had no number for it and the refusal quoted a
@@ -258,6 +287,17 @@ export const UNBOUND = [
     name: 'The Blade That Returns', tag: 'Unbound — Throw',
     jedi: 'The Blade That Returns', sith: 'The Blade That Does Not Wait',
     text: 'The saber throw loses its cooldown entirely. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
+  /* THE SHOTO'S THROW, on the same path as the blade's own and hung off the
+   * same technique: it is the saber throw done with the hand that is not
+   * holding the sword. `orbit` has no card and needs none — it writes no
+   * cooldown at all, because what limits it is 13.6 Force a second and a hard
+   * 4.0 s cap, and the note over `grip` and `sense` above is the same argument:
+   * a card that removes a clock that does not exist is a card that does
+   * nothing. */
+  { key: 'throwOff', axis: 'blade', after: 'saberthrow', icon: '🗡',
+    name: 'The Second Blade Returns', tag: 'Unbound — Shoto Throw',
+    jedi: 'The Second Blade Returns', sith: 'Both Hands Are Free',
+    text: 'Throwing the off-hand blade loses its cooldown entirely. Every cast then costs half again as much Force and 6% of your maximum health, which cannot kill you — it stops at 1.' },
   { key: 'shield', axis: 'guard', after: 'aegis', icon: '🔆',
     name: 'The Standing Ward', tag: 'Unbound — Barrier',
     jedi: 'The Standing Ward', sith: 'The Wall That Never Falls',

@@ -9,7 +9,8 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { Saber, SABER_COLORS } from './Saber.js';
-import { SaberController, THRUST_STANDING_SPEED, SPIN } from './SaberController.js';
+import { SaberController, THRUST_STANDING_SPEED, SPIN, GUARD } from './SaberController.js';
+import { Sidearm, setById, ORBIT } from './SaberSet.js';
 import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf, hoodCut } from './Bodies.js';
@@ -1231,10 +1232,27 @@ const BORE_LEAD = Math.atan2(GRIP_BORE.z, GRIP_BORE.y);
  * Scaled here rather than at the call site because every caller has the same
  * problem and only one of them had noticed it.
  */
-export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handScale = 1) {
+export function handPoseOnHilt(side, hiltQuat, toward, outQuat, outWrist, handScale = 1, end = 1) {
   const L = side === 'L';
   const bore = _hp1.set(0, 1, 0).applyQuaternion(hiltQuat);      // the blade
-  const x = _hp2.copy(bore).multiplyScalar(L ? 1 : -1);          // thumb to the emitter
+  /**
+   * `end` IS WHICH EMITTER THE THUMB POINTS AT, AND IT DEFAULTS TO +1.
+   *
+   * A saberstaff's lower hand holds the same shaft with its thumb pointing at
+   * the LOWER emitter, which is the only thing about that hand that differs.
+   * `1 · x` is exact in IEEE 754, so every one of the seven callers that omits
+   * this argument — Menu.js's preview, four benches and both in-game call
+   * sites — gets the float it got before this parameter existed.
+   *
+   * And the sign then flows THROUGH `x` into the `applyAxisAngle(x, -BORE_LEAD)`
+   * composition below, which is the invariant the 119.6° palm repair
+   * established: GRIP_TWIST is applied about the thumb axis, which is what
+   * mirrors between hands. Applying the flip anywhere outside that composition
+   * re-creates the exact defect that note records — and `FP_TUNE.roll` was
+   * swept AFTER the repair, so changing the composition order would silently
+   * invalidate a swept constant.
+   */
+  const x = _hp2.copy(bore).multiplyScalar((L ? 1 : -1) * end);  // thumb to the emitter
   let ok = false;
   if (toward) {
     _hp3.copy(toward).addScaledVector(bore, -toward.dot(bore));  // across the blade
@@ -1664,6 +1682,55 @@ const GRIP_PAIR = { R: 0.050, L: -0.015 };
  * under it changes.
  */
 export const GRIP_AT = { ...GRIP_PAIR, FP: -0.075, ONE: (GRIP_PAIR.R + GRIP_PAIR.L) / 2 };
+
+/**
+ * WHERE THE TWO FISTS GO ON A SABERSTAFF, and it is not `GRIP_AT`.
+ *
+ * `GRIP_AT.R` +0.050 and `.L` −0.015 are 65 mm apart on a hilt whose grip
+ * section is that long. A saberstaff is TWO of those hilts pommel-to-pommel —
+ * 0.480 m emitter to emitter on a Graflex, measured — so the same pair would
+ * put both fists in the middle 65 mm of a half-metre shaft and leave 200 mm of
+ * metal empty either side, which is not how a quarterstaff is held.
+ *
+ * ±0.10 spreads them over the middle of the DOUBLED hilt with both fists still
+ * on metal at both ends: `tools/checks/hilts.mjs` holds R, L, FP and ONE inside
+ * every HILT_SPECS row's own measured extent with 12 mm of margin, and the
+ * staff clause holds these two the same way against the doubled extent.
+ *
+ * `GRIP_PAIR`, `GRIP_AT.ONE` and `GRIP_AT.FP` are byte-identical, so
+ * `FP_HAND_GAP` — which is measured from `GRIP_AT.R − GRIP_AT.L` — does not
+ * move, and neither does anything hilts.mjs already asserts.
+ */
+export const GRIP_STAFF = { R: 0.10, L: -0.10 };
+
+/**
+ * THE GRIP POINTS FOR A SET — identity default, one lookup.
+ *
+ * The pair's off hilt reuses `GRIP_AT` unchanged, because a shoto in one hand
+ * IS a one-handed hold and `GRIP_AT.ONE` is already the answer to that.
+ */
+export const GRIP_FOR = { single: GRIP_AT, staff: { ...GRIP_AT, ...GRIP_STAFF }, pair: GRIP_AT };
+
+/**
+ * HOW MANY FISTS EACH GRIP MODEL CLOSES ON ONE HILT, spelled as data.
+ *
+ * This is `this.control.grip !== 'two' ? 1 : 2` for the only three grip values
+ * that existed before the sets — enumerated, not sampled, in
+ * `tools/checks/saberforms.mjs` over every reachable combination of
+ * `saberDown`, `driving`, `throwState` and `gesture.kind`. It is NOT a set term
+ * inside the reader: `handsOnHilt`'s own note refuses that explicitly, having
+ * been burned once by an `fpHands` option that put a fist back on a hilt the
+ * game had taken a hand off. It is the same derivation from the grip model,
+ * written as a table so a fourth grip cannot be added without answering it.
+ *
+ *   staff  2 — a saberstaff genuinely is two hands on one hilt. The hilt is
+ *              just longer, which is why the shipped 340-line arm block runs
+ *              exactly as written for it with two different grip offsets and
+ *              one flipped thumb.
+ *   pair   1 — one hand on the main hilt and the other on its own. See
+ *              `offHandOn()`, which is where the second hilt is answered for.
+ */
+export const HANDS_ON = { two: 2, one: 1, rev: 1, staff: 2, pair: 1 };
 
 /**
  * …AND THE FIRST-PERSON GRIP IS THE HILT'S, NOT THE GAME'S.
@@ -3246,6 +3313,43 @@ export class Player {
      * IN a fist, and `buildHand` is called with the body scale — see
      * Saber.setGripScale for the measurement and for why it shrinks at all. */
     this.saber.setGripScale?.(this.limbs.torso);
+
+    /**
+     * ── THE SECOND WEAPON, OR NONE. See src/game/SaberSet.js.
+     *
+     * `saberSet` arrives from World.spawnPlayer, which reads it off the
+     * settings; a Player nobody told is a single-blade player, which is every
+     * enemy-facing construction in the tree and every headless check. `sidearm`
+     * is null in that case and stays null, so `player.saber` is the whole
+     * weapon exactly as it has always been — Player.js's own note about sixty
+     * call sites outside this file dereferencing it without a guard goes on
+     * being true, because only `offSaber` is conditional and it is reached
+     * solely through here.
+     */
+    this.saberSet = setById(opts.saberSet).id;
+    this.sidearm = null;
+    if (this.saberSet !== 'single') {
+      this.sidearm = new Sidearm(this, this.saberSet, {
+        colorIndex: opts.colorIndex ?? 0,
+        bladeLength: opts.bladeLength ?? 1.15,
+        coreWidth: opts.coreWidth ?? 1,
+        hiltStyle: opts.hiltStyle ?? 'Graflex',
+        order: opts.order ?? null,
+      });
+      /**
+       * AND THE STAFF'S EXTRA ARC IS COMPUTED FROM THE BUILT WEAPON, not typed.
+       *
+       * `asin((span/2) / GUARD.radius)`, exactly the way GUARD.centre's 20° is
+       * `asin(0.4/1.4)` — and `span` is measured off the two built hilts rather
+       * than derived from HILT_SPECS, because a hilt's extent is geometry and
+       * the ten hilts do not agree about it. So a Warden staff answers a wider
+       * rose than a Shoto staff, by exactly the metal each of them has.
+       */
+      this._setHalf0 = this.saberSet === 'staff'
+        ? Math.asin(clamp((this.sidearm.span / 2) / GUARD.radius, 0, 1)) : 0;
+      this.control.setHalf = this._setHalf0;
+      this.control.set = this.saberSet;
+    }
     /** …and the same for each forearm's own twist. See _rollForearm. */
     this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
       foreL: { q: new THREE.Quaternion(), have: false } };
@@ -3493,7 +3597,13 @@ export class Player {
       /* Fourteen now: the ward's own wait and the restore's, declared here for
        * the reason the barrier's had to be — a key this table does not carry
        * is a cooldown nothing can clear by name. */
-      ward: 0, restore: 0 };
+      ward: 0, restore: 0,
+      /* Fifteen. The shoto's own throw — a key this table does not carry is a
+       * cooldown nothing can clear by name, which is the reason the barrier's
+       * and the ward's are declared here rather than materialising on the first
+       * cast. `orbit` has no row because it has no clock: what limits the spin
+       * barrier is 13.6 Force a second and a hard 4.0 s cap. */
+      throwOff: 0 };
     /* The support calls. One per player, constructed here rather than lazily,
      * so `hud` and the checks can read the entry state on frame one instead of
      * guarding for its absence. */
@@ -3704,8 +3814,30 @@ export class Player {
    */
   handsOnHilt() {
     if (this.saberDown || this.driving || this.throwState !== 'held') return 0;
-    if (this.control.grip !== 'two' || this.gesture.kind) return 1;
-    return 2;
+    if (this.gesture.kind) return 1;
+    return HANDS_ON[this.control.grip] ?? 1;
+  }
+
+  /**
+   * WHICH WEAPON IS IN WHICH HAND — the question `handsOnHilt` cannot express
+   * and must not learn.
+   *
+   * `handsOnHilt` answers "how many fists are closed on a hilt", and for a
+   * saberstaff that is genuinely 2 (two hands, one shaft) and for the pair
+   * genuinely 1 (one hand on the main hilt; the other is on its OWN). Those two
+   * facts are the same answer as the single blade's and the reverse grip's, so
+   * they belong in the same reader. "There is a second lit hilt in your left
+   * hand" is a DIFFERENT fact, and putting it inside `handsOnHilt` is exactly
+   * the mistake the note above records being burned by once — an `fpHands`
+   * option that put a fist back on a hilt the game had taken a hand off.
+   *
+   * So it sits beside it. True only while the shoto is actually in the hand:
+   * throw it and this goes false for the flight, which is what costs the pair
+   * its whole defensive identity for five and a half seconds.
+   */
+  offHandOn() {
+    return !!(this.sidearm && this.sidearm.set.id === 'pair' && this.sidearm.inHand
+      && !this.saberDown && !this.driving && this.throwState === 'held');
   }
 
   /**
@@ -4227,7 +4359,25 @@ export class Player {
     if (input.actHit('grip2')) this.gripOneToggle = !this.gripOneToggle;
     const wantOne = this.gripOneToggle || this.saberThrown
       || !!this.gripBody || !!this.gripEnemy || this.stasis.active;
-    this.control.grip = wantOne ? 'one' : 'two';
+    /**
+     * ── AND THE SET NAMES THE ROW THE HAND IS NOT ALREADY DECIDING.
+     *
+     * `wantOne` is the five clauses above and every one of them is a hand that
+     * is genuinely full, so it wins in every set: a staff that has to hold
+     * something RETRACTS ONE END and fights on `GRIPS.one`, which is the trade
+     * the form is made of and the reason it is the only set that forces a
+     * choice between the Force and the sword. The pair drops to `one` for the
+     * same reason and gets the same looser grip.
+     *
+     * The single blade's row IS `'two'`, so a single-blade player's
+     * `control.grip` never takes a value it could not take before this line was
+     * written.
+     */
+    this.control.grip = wantOne ? 'one' : setById(this.saberSet).grip;
+    /* THE STAFF'S HALF-STANCE IS THE SAME KEY AND THE SAME SENTENCE. With one
+     * end retracted the rose is a single blade's, so the addend goes with it —
+     * a player who needs a hand free CHOOSES to give one up. */
+    if (this.sidearm) this.control.setHalf = (!wantOne && this.saberSet === 'staff') ? this._setHalf0 : 0;
 
     // force powers
     if (input.actHit('push')) this.forcePush(ctx);
@@ -5523,6 +5673,42 @@ export class Player {
     // is always current, and a blade nobody publishes one for reads as still.
     this.saber.carrierVel = this.velocity;
     this.saber.update(dt, ctx.time, this.velocity);
+    /**
+     * ── AND THE SECOND WEAPON, THROUGH THE SAME TWO PUBLIC CALLS.
+     *
+     * After the main blade and never before it: `Sidearm._poseOrbit` reads the
+     * main blade's own root and `_posePair` reads the guard the controller has
+     * just published, so a sidearm driven first would be posing against last
+     * frame's weapon. It is the same ordering `_bladeEntries` states for the
+     * blade list and for the same reason — the main blade is always first.
+     *
+     * THE HALF-STANCE RETRACTS THE LOWER END rather than hiding it: `retract`
+     * is the shipped animation, `ignition` falls through the same curve every
+     * other blade in the game uses, and `_bladeEntries` drops the record on the
+     * shipped `ignition <= 0.5` test with nothing new to say about it.
+     */
+    if (this.sidearm) {
+      const stow = this.saberDown || this.driving
+        || (this.saberSet === 'staff' && this.control.grip !== 'staff' && this.throwState !== 'orbit');
+      if (stow || !this.saber.lit) this.sidearm.retract();
+      else this.sidearm.ignite();
+      this.sidearm.update(dt, ctx);
+      if (stow && this.sidearm.saber.ignition <= 0.01) this.sidearm.setVisible(false);
+      /**
+       * AND THE RECOVERY STARTS WHEN THE BLADE IS BACK IN THE HAND, which is
+       * the argument the shipped throw's own cooldown note makes and it is
+       * form-independent: a cooldown that runs while the power is still going
+       * off is not a cooldown, it is a decoration. 3.0 s against the disc's
+       * 2.2, because a throw that leaves you armed is the better commitment.
+       */
+      if (this.sidearm.caught) {
+        this.sidearm.caught = false;
+        this.cooldowns.throwOff = this._recover('throwOff', 3.0);
+        this._foreRoll.foreL.have = false;
+        this._elbow.armL.have = false;
+        audio.clash(this.sidearm.saber.base, 0.4);
+      }
+    }
     const swing = this.saber.swingSpeed;
     this.hum.set(swing, this.saber.contactStrain);
     this.hum.move(this.saber.pointAt(0.5, _v1));
@@ -6981,7 +7167,11 @@ export class Player {
    * A getter rather than a second copy of the condition: the day a third
    * channel pauses regeneration, it is named here and every writer inherits it.
    */
-  get forceChannelling() { return !!(this.senseActive || this.shield?.up || this.ward?.body); }
+  /* …AND THE ORBIT IS A CHANNEL LIKE THE REST OF THEM. One OR term, so the
+   * 7.5/s regen is paused while the staff is spinning — which is what makes
+   * 13.6 Force/s a real clock (under five seconds from a full bar) rather than
+   * a rate the regen quietly pays half of. */
+  get forceChannelling() { return !!(this.senseActive || this.shield?.up || this.ward?.body || this.throwState === 'orbit'); }
 
   _regen(dt) {
     const combatHot = this.world.combatIntensity ?? 0;
@@ -8723,7 +8913,33 @@ export class Player {
     }
   }
 
+  /**
+   * ONE KEY, ONE MEANING AT A TIME — the pattern `swap`, `drive`, `hurl` and
+   * `throw` already use four times over, and the reason there are ZERO new
+   * bindings in this feature.
+   *
+   * Measured against the shipped table with FORMATIONS registered — 62 actions,
+   * 114 codes, 0 conflicts — there are no free keyboard letters of 26, no free
+   * digits of 10, no free punctuation of 11, no free mouse controls of 7
+   * including both wheel notches, and no usable bare pad buttons. And taking a
+   * key by moving a shipped default is the `settleBindings` trap: it gives a
+   * contested code back to whoever holds it BY DEFAULT, so the change reaches
+   * out of localStorage into the profile of everyone who has ever pressed
+   * Reset. So every set move rides an existing binding whose meaning is already
+   * conditional on state.
+   *
+   *   single   throw the blade, or recall it
+   *   staff    RAISE THE ORBIT, or bring it home. The ordinary throw is
+   *            unreachable in that set — one shaft, two blades, there is
+   *            nothing to keep — and that is a real cost, because the 26 m/s
+   *            disc is a genuine ranged answer the staff simply does not have.
+   *   pair     THROW THE SHOTO and keep the main blade. One blade in the air at
+   *            a time: if the shoto is out this recalls it, and the main blade
+   *            cannot be thrown until it is home.
+   */
   throwOrRecall(ctx) {
+    if (this.sidearm && this.saberSet === 'staff') return this.spinBarrier(ctx);
+    if (this.sidearm && this.saberSet === 'pair') return this.throwOffBlade(ctx);
     if (this.throwState === 'held') {
       // An empty hand throws nothing. `!this.saber.lit` already caught this by
       // accident — a dropped blade is out — but only by accident, and the
@@ -8823,7 +9039,160 @@ export class Player {
     return true;
   }
 
+  /**
+   * THROW ONE AND KEEP ONE — *"with dual wielding you can throw one lightsaber
+   * while still having one saber free to attack/block with."*
+   *
+   * THE WHOLE TRICK IS A NEW FIELD RATHER THAN A REWRITTEN ONE.
+   * `Player.throwState` is read by nine places and every one of them means "the
+   * weapon in your right hand is gone" — `handsOnHilt`, the `wantOne`
+   * derivation via `saberThrown`, `_updateBlade`'s pose and heat-haze gates, the
+   * arm block's own gate, the attack gate, `swapSaber`, `_dropSaber`,
+   * `_maybeDisarm` and HUD.js's active wheel border. Making a throw not empty
+   * your hands is a one-word change there and it would silently re-arm the
+   * single blade in all nine. So this does not touch it: `throwState` stays
+   * `'held'` and goes on being true, and the shoto gets its own state machine
+   * on the Sidearm, read by exactly two places — the pose, and `_bladeEntries`,
+   * where the off record disappears while the blade is in the air.
+   *
+   * PRICE: A NEW ROW, `POWER_COST.throwOff` = 18, and never a conditional price
+   * on `throw`. Powers.js's opening thirty lines are a post-mortem of exactly
+   * that drift, and hud-events.mjs still greps each spend out of this file to
+   * match it against the wheel. 18 sits in the empty slot above `throw`'s 14
+   * and below `push`'s 20, and the reason is monotone: a throw that leaves you
+   * armed is strictly the better commitment, so it costs strictly more. The
+   * cooldown is 3.0 s against the shipped 2.2 for the same reason.
+   *
+   * WHAT IT COSTS, AND IT IS WHAT MAKES IT A DECISION. While the shoto is out
+   * the pair loses its second `_bladeEntries` record — its entire defensive
+   * identity for the flight — `offHandOn()` goes false, and `GRIPS` drops from
+   * `pair` (kP 132, guardR 0.66) to `one` (kP 118, guardR 0.72). For those
+   * seconds you are a LOOSER single-blade fighter than a single-blade fighter,
+   * holding the game's shortest main blade.
+   */
+  throwOffBlade(ctx) {
+    const arm = this.sidearm;
+    if (!arm) return;
+    if (arm.throwState !== 'held') { arm.throwState = 'returning'; return; }
+    if (this.saberDown) return this._refuse('saber throw', 'your hands are empty');
+    if (!this.saber.lit) return this._refuse('saber throw', 'the blade is out — ignite it first');
+    if (this.cooldowns.throwOff > 0) {
+      return this._refuse('saber throw', `recovering — ${this.cooldowns.throwOff.toFixed(1)}s`);
+    }
+    if (!this._spend(POWER_COST.throwOff)) {
+      return this._refuse('saber throw', `${this._priceOf(POWER_COST.throwOff)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this._gesture('cast');
+    this._forceVoice('throwOff');
+    arm.throwState = 'flying';
+    arm.throwPos.copy(arm.saber.base);
+    arm.throwVel.copy(this.aimDir).multiplyScalar(26);
+    arm.throwTimer = 0;
+    arm.throwSpin = 0;
+    /* THE WRIST GOES BACK TO REST, and this is the asymmetry the note at the
+     * hand resets records: handL is put back to `restQuat` when the grip goes
+     * one-handed and handR only when the saber is on the ground. A shoto
+     * leaving the left hand is the first thing in this game that takes a hilt
+     * out of THAT hand, so it clears the same ratchets a respawn does — the
+     * alternative is the wrist freezing 167° off rest, which is the defect that
+     * comment is about. Do NOT raise FOREARM.rate instead: it was re-swept at
+     * 1370°/s against the viewmodel bench's 1250 ratchet and raising it
+     * re-opens the 10723°/s forearm spin `_rollForearm` exists for. */
+    this._foreRoll.foreL.have = false;
+    this._elbow.armL.have = false;
+    audio.force(arm.saber.base, 'push');
+    audio.swing(24, arm.saber.base);
+  }
+
+  /**
+   * THE SPINNING BARRIER — *"the double bladed user can use pure telekinesis to
+   * spin the staff at high speeds around your body like a protective barrier,
+   * keeping your hands free to cast whatever."*
+   *
+   * A FOURTH `throwState`, `'orbit'`, reachable only by a staff, on the
+   * existing `throw` binding. It is nearly free to build because the throw
+   * machine already IS it: both blades leave the hands and are driven round the
+   * chest by `setHiltPose`, exactly as the flying disc already is.
+   *
+   * HANDS FREE COSTS NOTHING AT ALL, and this is the part of the brief the
+   * shipped code already answers. `handsOnHilt()` returns 0 for `throwState !==
+   * 'held'`, so both fists come off the hilt through a reader that shipped
+   * years ago; `_openPalm` opens the left palm through the path that already
+   * exists; and all thirteen left-handed GESTURES become available with the
+   * whole arm.
+   *
+   * IT IS INSIDE THE ECONOMY, NOT BESIDE IT, and that is the critical decision.
+   * The orbiting blades stay in `_bladeEntries` and in the target sweep, so
+   * they genuinely deflect and genuinely cut through the ORDINARY paths at the
+   * ORDINARY prices. Not a new absorb shape queried before the body, not
+   * immunity, and no bolt skips `gradeCaught`. It needs no `GUARD_COST` row
+   * either: while it orbits `guarding` is false and the entries carry `guard:
+   * null, screen: null`, so every bolt it answers is a swept-quad contact off a
+   * blade nobody drove — a BLOCK at the shipped 1.2 stamina, the most expensive
+   * rung there is.
+   *
+   * WHAT IT GIVES UP, and this is what stops it being a strictly-better button:
+   * while it orbits you have NO GUARD ROSE AT ALL. `bladeHeld` is false,
+   * `guarding` is false, `_publishGuard` returns early with `zone = NONE` and
+   * `parry = false` — no directional zone, no PARRY window, no RETURN or
+   * PERFECT by timing. The orbit answers by geometry only, at the worst rung,
+   * and only what the circle happens to cross. The screen goes with it, so a
+   * staff user spinning is covering nobody but himself, and with 100 Force and
+   * the stamina bar both draining a duellist walks straight through it.
+   */
+  spinBarrier(ctx) {
+    if (this.throwState === 'orbit') { this.throwState = 'returning'; return; }
+    if (this.throwState !== 'held') { this.throwState = 'returning'; return; }
+    if (this.saberDown) return this._refuse('spin barrier', 'your hands are empty');
+    if (!this.saber.lit) return this._refuse('spin barrier', 'the blade is out — ignite it first');
+    if (!this._spend(POWER_COST.orbit)) {
+      return this._refuse('spin barrier', `${this._priceOf(POWER_COST.orbit)} Force needed, you have ${Math.round(this.force)}`);
+    }
+    this._gesture('cast');
+    this._forceVoice('orbit');
+    this.throwState = 'orbit';
+    this.throwPos.copy(this.saber.base);
+    this.throwTimer = 0;
+    if (this.sidearm) { this.sidearm.orbitT = 0; this.sidearm.orbitAngle = 0; }
+    /* The cloak reacts BY IMPULSE and not by colliders — the way the jump and
+     * the landing already do. Adding arm or weapon spheres to
+     * `refreshColliders` would move the cost of every garment on the roster,
+     * and cloth-cost.mjs prices the whole column as particles × colliders. */
+    this.cloak?.impulse?.(_v1.set(0, 1, 0), 0.6);
+    audio.force(this.saber.base, 'push');
+    this.world?.notify?.('SPIN BARRIER', 'both blades are up — your hands are free');
+  }
+
   _updateThrow(dt, ctx) {
+    /**
+     * THE ORBIT'S OWN BRANCH, and everything after it is the shipped throw.
+     *
+     * 13.6 Force/s = `(TK.lit 9 + HOLD_COST.prop.base 7) × effort 0.85`, the
+     * exact expression `pilotThrown` bills at its own hold, with the same
+     * graceful failure: run out and the staff comes home, it is not dropped.
+     * On top of that every bolt the ring answers is a 1.2-stamina BLOCK on the
+     * ordinary ladder, so at suppression.mjs's measured answering rate this is
+     * roughly 11 stamina/s on top of 13.6 Force/s against ZERO Force regen —
+     * under five seconds from a full bar under fire, on two bars at once. A
+     * panic button, not a stance, with a hard 4.0 s cap on top of the money.
+     */
+    if (this.throwState === 'orbit') {
+      const arm = this.sidearm;
+      if (!arm) { this.throwState = 'returning'; return; }
+      const cost = (TK.lit + HOLD_COST.prop.base) * 0.85;
+      if (arm.orbitT >= ORBIT.cap || !this._spend(cost * dt, true)) {
+        this.throwState = 'held';
+        this.world?.notify?.('BLADES HOME', arm.orbitT >= ORBIT.cap
+          ? 'the spin is done — you cannot hold it longer than that'
+          : 'not enough Force to keep them turning');
+        return;
+      }
+      /* The Sidearm poses BOTH halves, because the orbit is one weapon and its
+       * two ends are π apart on the ring — see `_poseOrbit`. This function's
+       * job here is the bill and the state, and nothing else. */
+      this.throwPos.copy(this.chest);
+      return;
+    }
     this.throwTimer += dt;
     this.throwSpin += dt * 27;
 

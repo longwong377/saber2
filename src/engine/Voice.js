@@ -475,6 +475,31 @@ export const FORCE_LINES = {
     { gain: 0.76, words: 'Now.', syll: [[1.30, 0.16, 1.0], [1.16, 0.16, 0.65]] },
   ],
   /**
+   * THROW OFF — the shoto, and the one throw where you keep a blade.
+   *
+   * The disc's pool above is a handoff: 'Take it', 'Catch', 'Now'. This one is
+   * not, because the line is not about the blade leaving — it is about the one
+   * that stays. So the contour is the throw's clipped two-beat with the weight
+   * on the SECOND beat rather than the first, which is where 'and I still have
+   * this' sits in a sentence.
+   */
+  throwOff: [
+    { gain: 0.80, words: 'Have that.', syll: [[1.02, 0.22, 0.65], [1.20, 0.28, 1.0]] },
+    { gain: 0.78, words: 'One of them.', syll: [[0.94, 0.26, 0.6], [1.16, 0.32, 1.0]] },
+    { gain: 0.82, words: 'I have another.', syll: [[1.16, 0.30, 1.0], [0.86, 0.62, 0.72], [0.70, 0.84, 0.80]] },
+  ],
+  /**
+   * ORBIT — the spin barrier, and it is the only line in this table spoken with
+   * NOTHING IN YOUR HANDS. Both blades are in the air, so it is not a command
+   * aimed at anybody: it is the effort of holding two lit blades on a circle by
+   * the Force, which is a low, held, falling contour rather than a bark.
+   */
+  orbit: [
+    { gain: 0.86, words: 'Come no closer.', syll: [[0.86, 0.52, 0.9], [0.70, 0.90, 1.0]] },
+    { gain: 0.84, words: 'Stay back.', syll: [[0.92, 0.44, 1.0], [0.74, 0.72, 0.86]] },
+    { gain: 0.90, words: 'Try it.', syll: [[1.00, 0.30, 0.8], [0.78, 0.66, 1.0]] },
+  ],
+  /**
    * SENSE — the one power that is not aimed at anybody, so it is the one line
    * that is not addressed to anybody: high, quiet, slow, and gently rising.
    * At 0.5 gain it is the softest thing the player's throat does.
