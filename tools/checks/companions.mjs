@@ -559,4 +559,66 @@ export async function run({ check, assert }) {
     return `${w.items.length} slots, ${labels.size} distinct verbs across ${K.COMPANION_ORDER.length} kinds; `
       + `empty reads "${empty}"; cold reads "${cold}"`;
   });
+  check('companion: it boards the transport, and the manifest is untouched', async () => {
+    /**
+     * "they will be with you in the hangar as well and follow you on/off ships"
+     *
+     * BOARDING IS FREE AND THE FOLD IS NOT. `Extraction._walkTroops` selects on
+     * `e.team !== team` with NO trooper test (verified at :1732), so the animal
+     * queues by distance with the line, has its `_boardPos` fixed once, climbs
+     * the ramp and is seated — not one line of that written for this feature.
+     *
+     * WHAT IS NOT FREE is that `Extraction.manifest` is
+     * `this._seated.map((b) => b.trooper).filter(Boolean)`, so the companion
+     * gets on the ship and then does not appear on the list that decides who
+     * survived. `Company.keep` reads exactly that array and may not be
+     * reopened, so this asserts BOTH halves: the animal is aboard, and the
+     * manifest is exactly the men it would have been without it.
+     */
+    const { world, input, e, p } = await field('massiff', { xp: 99 }, { instantSpawn: false, allies: 4 });
+    try {
+      assert(e, 'nothing fielded');
+      const X = world.extraction;
+      assert(X, 'no extraction to board');
+      const before = (X.manifest || []).length;
+      /* `begin` TAKES THE NEXT LEVEL'S KEY and answers false without one —
+       * calling it bare is how this check first "passed" by returning early. */
+      assert(X.begin('geonosis'), 'the extraction refused to begin');
+      const pack = world._companions;
+      let at = null;
+      for (let i = 0; i < 30 * 100 && !pack.aboard; i++) {
+        p.hp = p.maxHp ?? 100;
+        world.update(STEP, input);
+        if (pack.aboard) at = i / 30;
+        if (e.dead) break;
+      }
+      assert(!e.dead, 'it died before the ramp');
+      assert(pack.aboard, `it never got aboard — _extracting is "${e._extracting}"`);
+      /* AND THE MANIFEST IS THE MEN. A companion on it would be struck off by
+       * `keep()` as a name that deployed and did not come back, or worse would
+       * take a seat off a man who then is. */
+      /**
+       * THE PRECISE CLAIM, and "the manifest did not grow" is too weak to be
+       * it: with nobody else aboard the list is empty either way, and an empty
+       * list agrees with everything.
+       *
+       * What has to be true is BOTH at once — the animal is in `_seated`, so
+       * it genuinely got on the ship and is genuinely carried; and it is NOT
+       * on `manifest`, because that array is what `Company.keep` strikes the
+       * roll against, and a companion on it is a name that deployed and did
+       * not come back.
+       */
+      const seated = X._seated || [];
+      assert(seated.includes(e), `it reports aboard but is not in _seated (${seated.length} bodies)`);
+      const after = X.manifest || [];
+      assert(!after.includes(e), 'the companion is ON the manifest — keep() will judge it as a man');
+      assert(after.length === seated.filter((b) => b.trooper).length,
+        `the manifest is ${after.length} of ${seated.length} seated bodies — it should be exactly `
+        + 'the ones with a roster record');
+      return `queued with the line and seated at ${at?.toFixed(1)} s (_extracting "${e._extracting}"); `
+        + `in _seated with ${seated.length - 1} other bodies, and the manifest is `
+        + `${after.length} roster records — not one of them the animal`;
+    } finally { world.unload(); }
+  });
+
 }

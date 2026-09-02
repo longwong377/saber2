@@ -9830,6 +9830,49 @@ export function buildQuadruped(opts = {}) {
       m.userData.limb = { r0: rr0, r1: rr1, seg: 8 };
       b.parts.push(m); b.primary = m; b.radius = rr0;
     }
+    /**
+     * ── THE SHOULDER, AND THE HAUNCH ─────────────────────────────────────
+     *
+     * `hipL{i}` is a 0.10·S socket tube and that was the entire junction: a
+     * 5 cm pipe of chitin poking out of a lathe. Close up the leg meets the
+     * trunk along a hard circular seam with nothing spanning it — the
+     * complaint's fifth line — and the reason is that a real one is spanned
+     * by MUSCLE that belongs to neither piece. A deltoid and a gluteal wrap
+     * the joint from the body side and taper onto the limb.
+     *
+     * So: one hide-coloured ellipsoid on the socket bone, centred on the
+     * joint and elongated along the limb's own axis. The socket bone's +Y IS
+     * the limb direction — `creatureSkeleton` gives it `rest: [side, …]`, so
+     * it leaves the body sideways — and the bone's origin sits within a
+     * centimetre or two of the flank on every plan in the table, so a mass
+     * centred there is half inside the trunk and half standing out of it,
+     * which is what a deltoid is. No plan-specific offset and no sign to get
+     * wrong: the skeleton has already put the frame where it belongs. It
+     * rides `hipL` rather
+     * than `femur`, which is what makes it a shoulder rather than a pauldron:
+     * `_poseWalker` swings the femur and leaves the socket where the body
+     * put it, so the mass stays welded to the flank while the leg moves under
+     * it. On the femur it would swing out of the animal at the top of a
+     * stride.
+     *
+     * It is NOT tagged `silhouette`. Past thirty metres `_collectLodParts`
+     * keeps one mesh a bone, and at thirty metres a 12 cm shoulder is inside
+     * the trunk's own outline — this is a piece that only exists to close a
+     * seam nobody can see from there. Tagging it would buy a draw call per
+     * body for nothing, against the horns and crests that earn theirs.
+     *
+     * Sized off `girth`, which is the plan's own word for how heavy this limb
+     * is, so an acklay's spider leg gets a small one and a rancor's arm a
+     * large one out of a number that was already written down.
+     */
+    const socket = rig.get(`hipL${i}`);
+    if (socket) {
+      const k = new Kit();
+      const w = (arm ? 0.19 : 0.22) * S * g;
+      k.add(hide, new THREE.SphereGeometry(1, 9, 6), [0, socket.length * 0.10, 0], null,
+        [w, (arm ? 0.24 : 0.28) * S * g, w * 1.06]);
+      k.bake(socket.obj);
+    }
     const femur = rig.get(`femur${i}`);
     if (femur) {
       const k = new Kit(); const len = femur.length;
@@ -9840,7 +9883,7 @@ export function buildQuadruped(opts = {}) {
     const tarsus = rig.get(`tarsus${i}`);
     if (tarsus) {
       const k = new Kit(); const len = tarsus.length;
-      buildFootFor(k, L2.foot, plate, tooth, S, g, len);
+      buildFootFor(k, L2.foot, plate, tooth, hide, S, g, len);
       markSilhouette(k.bake(tarsus.obj));
     }
   }
@@ -9880,28 +9923,82 @@ function markSilhouette(meshes) {
  * girth multiplier is a radius, and applying it to lengths grows the foot in
  * the two directions it must not grow in.
  */
-function buildFootFor(k, kind, plate, tooth, S, g, len) {
+/**
+ * ── AND EVERY ONE OF THEM NEEDED A FOOT UNDER IT ───────────────────────
+ *
+ * Rendered close, the massiff stands on three pale cubes. That is what the
+ * `claw` branch was: three `clawGeo` toes at `rings: 3` — three straight
+ * prisms with a 0.35-rad kink in each — hung directly off the end of the
+ * tarsus tube with nothing behind them. There is no foot; there are toes
+ * bolted to a shin.
+ *
+ * Two things fix it and neither is expensive:
+ *
+ *   A PAD. Every one of these animals plants on a mass of horn and fat, and
+ *   it is the piece that says "this is where the weight goes". A squashed
+ *   ellipsoid at the end of the tarsus, wide across and long fore-and-aft, is
+ *   both the metatarsus and the pad, and it is what the toes now grow out of
+ *   rather than being the whole of the foot.
+ *
+ *   RINGS. `clawGeo` merges one capped `limbGeo` per ring, so `rings: 3` on a
+ *   claw with 1.05 rad of bend turns 20° at a time and reads as a stack of
+ *   blocks. Five rings on the same curve is the same silhouette with the
+ *   corners off, for two more merged segments on a piece 3 cm long.
+ *
+ * The toes also splay and rise: `t` drives yaw as it did, and now also a
+ * small outward lift, so the three are three toes rather than one toe drawn
+ * three times.
+ *
+ * SIZED OFF THE CREATURE'S SCALE AND ONLY WIDENED BY THE LIMB'S GIRTH — the
+ * rule the header below already states, and the pad obeys it: `g` multiplies
+ * the pad's width and never its length or its height, for exactly the reason
+ * a 2.27 m foot was once below the floor.
+ */
+function buildFootFor(k, kind, plate, tooth, hide, S, g, len) {
   if (kind === 'spike') return;              // an acklay's leg ends in the leg
+  /** The pad: a flattened ellipsoid, `x`/`z` from the ankle, in plan units. */
+  const pad = (mat, w, h, d, x, z, y = 0.92) => k.add(mat, new THREE.SphereGeometry(1, 8, 6),
+    [x * S * g, len * y, z * S], null, [w * S * g, h * S, d * S]);
   if (kind === 'hoof') {
-    k.add(plate, new THREE.CylinderGeometry(0.10 * S * g, 0.13 * S * g, 0.12 * S, 8), [0, len * 0.92, 0.02 * S]);
-    k.add(plate, plateGeo(0.20 * S * g, 0.08 * S, 0.22 * S, 0.03 * S, 1), [0, len * 0.96, 0.05 * S]);
+    /* A HOOF IS A CONE OF HORN, not a cylinder with a lid. The lathe tapers
+     * to the ground and `capY1: 0.18` keeps the sole nearly flat, so the
+     * animal stands on a plane instead of on the equator of a drum. */
+    k.add(plate, limbGeo(0.15 * S, 0.135 * S * g, 0.105 * S * g, 9, true,
+      { rings: 3, capN: 3, capY0: 0.10, capY1: 0.18, bulge: 0.10, section: ovalSection(0.82, 2.6) }),
+    [0, len * 0.86, 0.03 * S], [Math.PI, 0, 0]);
+    k.add(plate, limbGeo(0.05 * S, 0.14 * S * g, 0.125 * S * g, 9, true,
+      { rings: 2, capN: 2, capY0: 0, capY1: 0.10, section: ovalSection(0.80, 2.8) }),
+    [0, len * 1.00, 0.03 * S], [Math.PI, 0, 0]);
     return;
   }
   if (kind === 'paw') {
-    // a broad flat sole with short toes — plantigrade, so it reads as standing
-    k.add(plate, plateGeo(0.24 * S * g, 0.07 * S, 0.34 * S, 0.04 * S, 1), [0, len * 0.94, 0.09 * S]);
-    k.row(3, (j, t) => k.add(tooth, clawGeo(0.12 * S, 0.028 * S, 0.006 * S, 0.6, 5, 2),
-      [(t - 0.5) * 0.17 * S * g, len * 0.92, 0.23 * S], [1.2, (t - 0.5) * 0.5, 0]));
+    /* PLANTIGRADE: one deep sole lying along the ground with three toe pads
+     * off the front of it and a claw out of each. The old sole was a
+     * `plateGeo` 0.34·S deep — a slab the animal stood on the corner of. */
+    pad(hide, 0.13, 0.050, 0.19, 0, 0.07);
+    k.row(3, (j, t) => {
+      pad(hide, 0.050, 0.040, 0.058, (t - 0.5) * 0.19, 0.22, 0.91);
+      k.add(tooth, clawGeo(0.13 * S, 0.026 * S, 0.005 * S, 0.7, 5, 3),
+        [(t - 0.5) * 0.19 * S * g, len * 0.90, 0.27 * S], [1.15, (t - 0.5) * 0.55, 0]);
+    });
     return;
   }
   if (kind === 'talon') {
     // four long fingers with hooks — the rancor's hand, which reaches its knee
-    k.row(4, (j, t) => k.add(plate, clawGeo(0.30 * S, 0.036 * S, 0.008 * S, 1.35, 5, 3),
-      [(t - 0.5) * 0.18 * S, len * 0.84, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
+    pad(hide, 0.115, 0.075, 0.085, 0, 0.01);
+    k.row(4, (j, t) => k.add(plate, clawGeo(0.30 * S, 0.036 * S, 0.008 * S, 1.35, 5, 5),
+      [(t - 0.5) * 0.18 * S, len * 0.86, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
     return;
   }
-  k.row(3, (j, t) => k.add(plate, clawGeo(0.26 * S, 0.030 * S, 0.007 * S, 1.05, 6, 3),
-    [(t - 0.5) * 0.12 * S, len * 0.90, 0], [0.15, (t - 0.5) * 0.7, 0]));
+  /* THE CLAW FOOT — a digitigrade pad with three hooked toes off the front of
+   * it: the massiff, the nexu, the tooka, the tuk'ata, the blurrg and the
+   * varactyl. HIDE-COLOURED PAD, PALE TOES. Everything here used to be
+   * `plate`, and `plate` on these plans is the light bone colour — which is
+   * how a dark-legged animal came to be standing on three bright cubes. The
+   * horn is the part that ought to be horn. */
+  pad(hide, 0.105, 0.060, 0.115, 0, 0.035);
+  k.row(3, (j, t) => k.add(plate, clawGeo(0.26 * S, 0.030 * S, 0.007 * S, 1.05, 6, 4),
+    [(t - 0.5) * 0.13 * S * g, len * 0.90, 0.055 * S], [0.15 - Math.abs(t - 0.5) * 0.3, (t - 0.5) * 0.9, 0]));
 }
 
 /**
