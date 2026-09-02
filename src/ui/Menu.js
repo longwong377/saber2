@@ -720,13 +720,6 @@ export const DEFAULT_SETTINGS = {
    */
   instantSpawn: false,
   /**
-   * A DECK BUILT FOR AN ARRIVAL: the transport starts far out with everybody
-   * aboard and lands (`DeckFlight`). Written per visit by `main.enterHangar`
-   * when a run comes home, never by a box; the default is the deck as you
-   * find it from the menu — you arrive by lift.
-   */
-  deckArrival: false,
-  /**
    * HOW MUCH WRECKAGE THE PHYSICS WORLD WILL HOLD AT ONCE.
    *
    * Read by World's RapierWorld constructor, which culled the oldest debris

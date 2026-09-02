@@ -12,7 +12,7 @@
  * dwell, the company walks up the ramp and is taken aboard, the player walks
  * into the bay and is seated, the ramp comes up, the hull lifts, runs out
  * through the aperture and raises `onDeckDeploy` in vacuum. The arrival is
- * the same director the other way: a world built with `deckArrival` starts
+ * the same director the other way: a world whose run bag carries `deckArrival` starts
  * with the hull far out and everybody aboard, lands it, and raises
  * `onDeckArrived` with the player off the ramp and the men walking back into
  * the crowd.
@@ -21,11 +21,14 @@
 import { DECK, DEPLOY_RAMP, MARCH_SPEED } from '../../src/game/Hangar.js';
 import { FLIGHT, PHASE, flightPhase, rampFoot, rampSpot, inBay } from '../../src/game/DeckFlight.js';
 
-async function deck(extra = {}) {
+async function deck(run = {}) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
   const { world } = await bootWorld({
     level: 'hangar',
-    settings: { mode: 'hangar', level: 'hangar', allies: 0, ...extra },
+    settings: { mode: 'hangar', level: 'hangar', allies: 0 },
+    /* The arrival is a fact about THIS visit, not a setting: it rides the
+     * run bag, where main.js's `_deckArrival` would put it. */
+    run,
   });
   return { world, idle: idleInput() };
 }

@@ -1525,9 +1525,9 @@ export function dressHangar(world) {
    */
   /* THE TRANSPORT ON ITS PAD — the real hull, ramp down — before the men, so
    * a company arriving on it has a bay to be stood in. */
-  /* `_deckArrival` is main.js's flag; `settings.deckArrival` is a check's,
+  /* `_deckArrival` is main.js's flag; `run.deckArrival` is a check's,
    * because a headless boot has no hook between construction and dressing. */
-  if (world.settings?.deckArrival) world._deckArrival = true;
+  if (world.run?.deckArrival) world._deckArrival = true;
   /* THE FLOOR, before anything stands on it: the transport's ramp, the
    * company's bodies and the crowd's all read `world.floorAt`. */
   world.floorAt = (x, z) => deckFloorAt(world, x, z);
