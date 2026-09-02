@@ -146,11 +146,24 @@ export async function run({ check, assert }) {
     const B = c.burial;
     const hole = B.holes[0];
     let dragged = false, lowered = false;
+    /* THE JUMP, FRAME TO FRAME: presence terms drift every record upward all
+     * the while (JEDI_NEAR alone is +0.085/s toward the cap), so the reward
+     * is read as the change on the ONE frame the grave appeared. */
+    const mate = mates[0];
+    const near = d.roster.living.find((t) => !rec.mates.includes(t.id) && t.body && !t.body.dead
+      && Math.hypot(t.body.position.x - hole.x, t.body.position.z - hole.z) <= MORALE.BURIED_NEAR);
+    let mateWas = mate.morale, nearWas = near?.morale ?? 0, hpWas = mate.body.hp;
+    let rise = 0, r2 = 0, healed = 0;
     const took = step(world, input, 60, () => {
       const bearer = d.roster.living.find((t) => t.body?.reaction?.corpse);
       if (bearer && e.position.distanceTo(fell) > 1.5) dragged = true;
       if (hole.body) lowered = true;
-      return world.graves.length > 0;
+      if (world.graves.length > 0) {
+        rise = mate.morale - mateWas; r2 = (near?.morale ?? 0) - nearWas; healed = mate.body.hp - hpWas;
+        return true;
+      }
+      mateWas = mate.morale; nearWas = near?.morale ?? 0; hpWas = mate.body.hp;
+      return false;
     });
     assert(dragged, 'no bearer ever moved the body — it was not dragged, it was teleported or ignored');
     assert(lowered, 'the body reached no hole — the lowering never happened');
@@ -167,22 +180,19 @@ export async function run({ check, assert }) {
     assert(e.rig?.root?.visible === false || e.disposed, 'the buried body is still lying on top of its own grave');
     assert(!world.graves.holes.some((h) => h.open), 'the hole is still open under a marker');
     /* THE REWARD. His squad got BURIED_SQUAD; men inside BURIED_NEAR got BURIED; both healed. */
-    const mate = mates[0];
-    const rise = mate.morale - moraleBefore[mate.id];
-    assert(rise >= MORALE.BURIED_SQUAD * 0.8 && rise <= MORALE.BURIED_SQUAD + 0.2,
-      `his squad's morale moved ${rise.toFixed(3)} against a table entry of ${MORALE.BURIED_SQUAD}`);
-    const near = d.roster.living.find((t) => !rec.mates.includes(t.id) && t.body && !t.body.dead
-      && Math.hypot(t.body.position.x - hole.x, t.body.position.z - hole.z) <= MORALE.BURIED_NEAR);
+    assert(rise >= MORALE.BURIED_SQUAD * 0.8 && rise <= MORALE.BURIED_SQUAD + 0.05,
+      `his squad's morale jumped ${rise.toFixed(3)} on the frame against a table entry of ${MORALE.BURIED_SQUAD}`);
     if (near) {
-      const r2 = near.morale - moraleBefore[near.id];
-      assert(r2 >= MORALE.BURIED * 0.8, `a man ${MORALE.BURIED_NEAR} m from the grave moved ${r2.toFixed(3)} against ${MORALE.BURIED}`);
+      assert(r2 >= MORALE.BURIED * 0.8 && r2 <= MORALE.BURIED + 0.05,
+        `a man inside ${MORALE.BURIED_NEAR} m of the grave jumped ${r2.toFixed(3)} against ${MORALE.BURIED}`);
     }
-    assert(mate.body.hp > mate.body.maxHp * 0.5 + 1,
-      `his squadmate is at ${(mate.body.hp / mate.body.maxHp * 100).toFixed(0)}% after the burial — it heals`);
+    assert(healed >= mate.body.maxHp * BURY.heal * 0.9,
+      `his squadmate healed ${healed.toFixed(1)} hp on the frame against ${(mate.body.maxHp * BURY.heal).toFixed(1)} — it heals`);
+    void moraleBefore;
     const log = d.log.filter((l) => l.t === 'buried');
     assert(log.length === 1 && log[0].name === dead.name, 'the log does not say who was buried');
     return `${dead.name} (${kind}) dragged from where he fell, lowered over ${BURY.lower} s, marker ${g.kind} at the hole; `
-      + `squad +${rise.toFixed(2)}, heal to ${(mate.body.hp / mate.body.maxHp * 100).toFixed(0)}%, ${took.toFixed(0)} s`;
+      + `squad +${rise.toFixed(2)}${near ? `, near +${r2.toFixed(2)}` : ''}, +${healed.toFixed(0)} hp, ${took.toFixed(0)} s`;
   });
 
   check('burial: a wave arriving cancels it — the detail drops the body and goes back to the line', async () => {
