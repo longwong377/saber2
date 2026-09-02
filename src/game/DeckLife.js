@@ -25,45 +25,58 @@
  * scaled a hull to zero the frame it crossed the lip. That last one is the
  * vanish he saw. None of it had a body.
  *
+ * ── AND THEN HE SAID IT AGAIN ─────────────────────────────────────────────
+ *
+ *   "the hangar itself is really good but I just want more going on, should
+ *    be pretty easy for you to do like just increase the amount of troops,
+ *    and repairs, and droids (love the droids btw they're all so cute)
+ *    significantly, like taste wise I think you did a really good job but
+ *    just fill it in more by a lot, like all by an order of magnitude
+ *    increased… turn up the volume way higher."
+ *
  * ── WHAT IT IS NOW ─────────────────────────────────────────────────────────
  *
- *   FIFTEEN DROIDS of five kinds — `DeckCast.DROID_KINDS` — three astromechs
- *     that ROLL between jobs on a third leg with the dome turning and the eye
- *     lit, four tracked welders at four seams, three folded pit droids, three
- *     mouse droids zipping the deck's edges, two gonks waddling. One
- *     `InstancedMesh` per kind for the chassis; the dome, the leg and the
- *     welder's three arm parts are the only per-droid meshes.
- *   THIRTEEN WORKERS — humanoids on the game's own skeleton, dressed by the
- *     same `dressHumanoid` every trooper goes through, in jumpsuits
- *     (`DeckCast.buildDeckCrew`). They WALK with `Rig.BipedAnimator`, the
- *     gait every enemy in the game walks with, kneel at panels, hold a hose,
- *     weld from a scaffold, watch a crane, and two of them run to a damaged
- *     landing. Each folds to one draw call through `MergedSkin.mergeFigure`
- *     the frame after he is built.
- *   FOUR REPAIR JOBS at once: the hull section on jacks under the gantry,
- *     a fighter on a cradle with its panels off and a droid in the open bay,
- *     a transport with an engine out on a stand, and a coolant bowser with
- *     a hose crew — plus a panel job at each wall foot.
- *   TWO CRANE BRIDGES on the ceiling rails at x = ±36, y 89, one carrying a
- *     hull plate and one an engine, on a slow pass the length of the room.
- *   THREE LOADER SLEDS on three lanes, one instanced mesh.
- *   THE TRAFFIC: two MODELLED hulls (`DeckCast.buildCastFighter/Shuttle`,
- *     140 and 120 primitives) that come in through the aperture, land on the
- *     apron, sit on gear with a collider you cannot walk through, spin up,
- *     and go out — and NINE silhouettes outside the field: a formation of
- *     four and a pair of fighters on patrol loops, a shuttle crossing, and
- *     the far leg of every arrival and departure, drawn UNFOGGED out to
- *     720 m past the lip, so a ship that leaves is a speck before it is
- *     gone. Every other fighter arrival is damaged: smoke, a sputtering
- *     bell, sparks at touchdown, the crash crew running.
- *   PHYSICS ON ALL OF IT. Every droid is a `DeckCast.Knockable`, every
- *     worker a `Shovable`: PROP-layer dynamic bodies, asleep at their
- *     stations, that the Force grips, throws and knocks over, that the
- *     player cannot walk through, and that get up again and go back to
- *     work — a droid rights itself on `SHOVE`'s own clock.
- *   THE PA ANNOUNCES IT: every launch, every arrival, the company falling
- *     in, the lift — `DeckAudio.paCall`'s wordless horn with a HUD line
- *     through `world.notify`, never closer than `PA.gap` seconds apart.
+ *   A HUNDRED AND ELEVEN DROIDS of nine kinds — `DeckCast.DROID_KINDS` —
+ *     twenty-four astromechs in seven panel schemes that ROLL between jobs
+ *     with the dome turning and the eye lit, ten tracked welders at ten
+ *     seams, eleven pit droids folded at panels and sixteen up and working
+ *     in gangs of four round the hulls, eighteen mouse droids scurrying in
+ *     threes, ten gonks waddling, eight treadwells on their wheels, six
+ *     protocol droids walking with a man each, eight load-lifters carrying
+ *     crates. One `InstancedMesh` per kind on the painted surface, one for
+ *     the domes, three for the welders' arm parts: fourteen draws for the
+ *     lot, where fifteen droids used to be twenty-three.
+ *   TWENTY WORKERS on the skeleton, walking with `Rig.BipedAnimator`, each
+ *     a `Shovable` body — kept to the pit's kerb, the flanks and the
+ *     centre's near end, the ground nearest the player's own path — AND A
+ *     CROWD OF EIGHTY-NINE: `DeckCast.crewSilhouettes`, the same skeleton
+ *     walked by the same animator and baked to bone boxes at twelve poses.
+ *     A ranked formation of twenty-four on the far apron with an officer
+ *     walking the front rank, a file of ten marching the room's length, a
+ *     medic tent with men on the cots, a briefing circle round a
+ *     holotable, twelve on the gallery thirty metres up, gangs round every
+ *     hull, three two-man teams carrying crates. Walkers flip through four
+ *     frames of the real walk as instances; every man who only stands is
+ *     one static mesh.
+ *   TWENTY-FIVE REPAIR JOBS: the section on jacks under the gantry, two
+ *     fighters on cradles with their panels off, a transport and a shuttle
+ *     with an engine out on a stand apiece, an engine bay with a bowser
+ *     hosed to it, a fighter on a lift platform that rises and settles,
+ *     three pallet stacks, four bowsers, eleven floodlights (lit faces on
+ *     the shared emitter, no point fixtures), a hull being lowered on a
+ *     third crane's cable, ten welding arcs throwing sparks.
+ *   THREE CRANE BRIDGES on the ceiling rails, SIX LOADER SLEDS on six lanes.
+ *   THE TRAFFIC: FOUR modelled hulls in and out through the aperture on
+ *     cycles about half as long as they were, three parked, a shuttle
+ *     TAXIING the forward centre on its repulsors with a collider that
+ *     moves with it, and nine silhouettes outside drawn unfogged to 720 m.
+ *   PHYSICS ON ALL OF IT that is near: every droid a `DeckCast.Knockable`,
+ *     every worker a `Shovable` — 131 PROP-layer bodies, asleep at their
+ *     stations, that the Force grips and throws and that get up and go back.
+ *     The crowd has no bodies: past thirty metres that is the honest trade.
+ *   THE PA ANNOUNCES IT: every launch, every arrival, the taxi, the company,
+ *     the lift, and ten lines of the deck's own chatter between — never
+ *     closer than `PA.gap` seconds.
  *
  * ── THE ROOM'S OWN RULES, ALL OF THEM ASKED RATHER THAN REMEMBERED ─────────
  *
@@ -78,11 +91,21 @@
  *
  * ── COST ──────────────────────────────────────────────────────────────────
  *
- * The ink pass rasterises every opaque object twice, so what is here is
- * composed: one instanced mesh per droid kind, one for the sleds, two for
- * the silhouettes outside, one for every emitter in the room, one merged
- * kit for every static piece of every job, one skinned mesh per worker.
- * `tools/checks/decklife.mjs` prices the file's share and `deckcost.mjs`
+ * The ink pass rasterises every opaque object twice, and `hangar.mjs`
+ * bounds the WHOLE scene at 320 draws with the room itself at ~248, so
+ * everything here is composed: one instanced mesh per droid kind and per
+ * turning part, one per crew pose for the walkers and one static mesh for
+ * every man who stands, one for the sleds, two for the silhouettes outside,
+ * one for every emitter in the room, four kit bins for every static piece
+ * of every job, one merged skin per worker, one mesh per parked hull.
+ *
+ *   before   63 meshes, 121k triangles: 15 droids, 13 men, 3 hulls
+ *   after    70 meshes, 266k triangles: 111 droids, 20 men, 89 in the
+ *            crowd, 7 hulls, 25 jobs — measured by `deckcost.mjs`
+ *   step     `stepDeckLife` 1.0 ms a frame over 300 live frames, timed by
+ *            `deckcast.mjs`; 131 bodies, 20 gaits, ~250 instances a frame
+ *
+ * `tools/checks/decklife.mjs` bounds the file's share and `deckcost.mjs`
  * prints it by family.
  *
  * ── THE API ───────────────────────────────────────────────────────────────
@@ -107,8 +130,9 @@ import { DeckBuild, deckMats, catwalk, crates } from './DeckKit.js';
 import { BipedAnimator } from './Rig.js';
 import { mergeFigure } from './MergedSkin.js';
 import {
-  castMaterials, Assembly, Knockable, DROID_KINDS, DROID_BUILDERS, ASTRO_SCHEMES, astromechDome, astromechLeg,
+  castMaterials, Assembly, Knockable, DROID_KINDS, DROID_BUILDERS, ASTRO_SCHEMES, astromechDome,
   buildDeckCrew, bindPose, buildCastFighter, buildCastShuttle, farHullGeometry, crewSilhouettes, CREW_POSES,
+  crewStillGeometry, foldCast,
 } from './DeckCast.js';
 /**
  * The sound of the traffic rides the traffic's own clocks — see `stepHull`.
@@ -688,7 +712,7 @@ function addJobs(world, life) {
   for (let i = 0; i < 3; i++) {
     kit.geoAt(M.hull, new THREE.CylinderGeometry(0.22, 0.22, 1.1, 8), APRON.crash.x - 0.7 + i * 0.7, kg + 1.2, APRON.crash.z - 2.5);
   }
-  kit.slabAt(M.status, APRON.crash.x, kg + 1.9, APRON.crash.z - 2.5, 0.3, 0.3, 0.3);
+  kit.slabAt(M.strip, APRON.crash.x, kg + 1.9, APRON.crash.z - 2.5, 0.3, 0.3, 0.3);
   box(APRON.crash.x, kg + 0.8, APRON.crash.z - 2.5, 1.1, 0.8, 0.6);
 
   /* ══ THE NEW JOBS — "way more repairs", twenty-five of them now ═══════
@@ -824,7 +848,7 @@ function addJobs(world, life) {
       kit.slabAt(M.dark, TENT.x + sx * TENT.w * 0.5, g + TENT.h * 0.5, TENT.z + sz * TENT.d * 0.5, 0.14, TENT.h, 0.14);
     }
     kit.slabAt(M.wing, TENT.x, g + TENT.h + 0.06, TENT.z, TENT.w + 0.8, 0.12, TENT.d + 0.8);
-    kit.slabAt(M.status, TENT.x, g + TENT.h + 0.4, TENT.z, 0.5, 0.5, 0.12);
+    kit.slabAt(M.strip, TENT.x, g + TENT.h + 0.4, TENT.z, 0.5, 0.5, 0.12);
     for (const sx of [-1, 1]) {
       kit.slabAt(M.dark, TENT.x + sx * 1.6, g + 0.25, TENT.z - 0.4, 0.9, 0.5, 2.2);
       box(TENT.x + sx * 1.6, g + 0.25, TENT.z - 0.4, 0.45, 0.25, 1.1);
@@ -864,12 +888,12 @@ function addParkedHulls(world, life) {
   const C = castMaterials(world._deckFaction);
   const P = deckMats(world._deckFaction);
   const park = (cast, x, z, yaw, lift) => {
+    foldCast(cast, C.cast);
     const g = cast.group;
     const gy = groundAt(world, x, z) + cast.gearY + lift;
     g.position.set(x, gy, z);
     g.rotation.y = yaw;
     g.visible = true;
-    cast.meshes.gear.visible = true;
     world.scene.add(g);
     world.statics.push(g);
     for (const m of Object.values(cast.meshes)) if (m) world.statics.push(m);
@@ -880,18 +904,18 @@ function addParkedHulls(world, life) {
   const parked = [];
   parked.push({ site: 'shuttle-bay', cast: park(buildCastShuttle({ faction: world._deckFaction }), SHUT.x, SHUT.z, SHUT.yaw, 0) });
   parked.push({ site: 'cradle-2', cast: park(buildCastFighter({ faction: world._deckFaction }), FX2.x, FX2.z, FX2.yaw, 0.3) });
-  /* THE LIFT: a slab on a mover, the silhouette fighter on it, nose to the aperture. */
+  /* THE LIFT: a slab on a mover with the silhouette fighter on it, nose to
+   * the aperture — one vertex-coloured mesh, the platform and the ship. */
   const plat = mover(world);
   const g = groundAt(world, LIFTP.x, LIFTP.z);
   plat.position.set(LIFTP.x, g, LIFTP.z);
-  const pb = new Bin();
-  pb.put(P.hull, slabGeo(LIFTP.w, 0.5, LIFTP.d, { bevel: 0.06, seg: 2, tile: 2 }), 0, 0.25, 0);
-  pb.put(P.dark, slabGeo(LIFTP.w * 0.92, 0.10, 0.5, { bevel: 0.02, seg: 1, tile: 1 }), 0, 0.55, 0);
-  pb.bake(world, plat);
+  const A = new Assembly();
+  A.box(P.hull.color.getHex(), LIFTP.w, 0.5, LIFTP.d, 0, 0.25, 0);
+  A.box(P.dark.color.getHex(), LIFTP.w * 0.92, 0.10, 0.5, 0, 0.55, 0);
   const fg = farHullGeometry(1, world._deckFaction);
-  const fm = castMesh(world, plat, fg.geo, C.cast, 'deck-lift-fighter');
-  fm.position.set(0, 0.5, 0);
-  fm.scale.setScalar(1.15);
+  fg.geo.scale(1.15, 1.15, 1.15); fg.geo.translate(0, 0.5, 0);
+  A.geos.push(fg.geo); A.prims += fg.prims;
+  castMesh(world, plat, A.merge(), C.cast, 'deck-lift-fighter');
   parked.push({ site: 'lift', plat, t: 0 });
   life.parked = parked;
 }
@@ -1144,10 +1168,7 @@ function addDroids(world, life) {
   /* …AND ONE PER TURNING PART: domes, third legs, the welder's three. */
   const nAstro = byKind.get('astro') || 0, nWeld = byKind.get('welder') || 0;
   const parts = {};
-  if (nAstro) {
-    parts.dome = instanced(world, astromechDome().geo, C.tint, nAstro, 'deck-astro-dome');
-    parts.leg = instanced(world, astromechLeg().geo, C.tint, nAstro, 'deck-astro-leg');
-  }
+  if (nAstro) parts.dome = instanced(world, astromechDome().geo, C.tint, nAstro, 'deck-astro-dome');
   if (nWeld) {
     const G = welderArmGeos();
     parts.turret = instanced(world, G.turret, M.steel, nWeld, 'deck-welder-turret');
@@ -1183,7 +1204,6 @@ function addDroids(world, life) {
     else if (J.kind === 'astro') {
       d.pi = astro++; d.slot = glowSlot(life);
       parts.dome.setColorAt(d.pi, _c.set(d.color));
-      parts.leg.setColorAt(d.pi, _c.set(d.color));
     }
     droids.push(d);
   }
@@ -1211,16 +1231,14 @@ function droidFromBody(d) {
   d.mesh.setMatrixAt(d.i, d.mat);
 }
 
-/** The dome and the third leg, off the chassis matrix. */
-function astroParts(life, d, domeYaw, legRot) {
+/** The dome, off the chassis matrix, and the eye on it. */
+function astroParts(life, d, domeYaw) {
   const P = life.droidParts;
   _m4.makeRotationY(domeYaw).setPosition(0, 1.46, 0).premultiply(d.mat);
   P.dome.setMatrixAt(d.pi, _m4);
   /* The eye: on the dome, forward. */
   _mb.makeRotationX(Math.PI / 2 - 0.6).setPosition(0, 0.30, 0.46).premultiply(_m4);
   glowPlace(life, d.slot, _mb, 0.06, 0.05);
-  _m4.makeRotationX(legRot).setPosition(0, 0.62, 0.30).premultiply(d.mat);
-  P.leg.setMatrixAt(d.pi, _m4);
 }
 
 /** The welder's three arm parts, off the chassis matrix; the tip in world. */
@@ -1253,9 +1271,9 @@ function stepDroids(world, life, dt) {
         glowBurn(life, d.slot, 0, 0, 0); d.heat = 0;
         welderParts(life, d, 0, J.lift, -J.reach);
       } else if (d.kind === 'astro') {
-        /* A thrown astromech folds its leg and the dome stops. */
+        /* A thrown astromech: the dome stops. */
         d.lean = lerp(d.lean, 0, 1 - Math.exp(-6 * dt));
-        astroParts(life, d, 0, lerp(-1.4, 0, d.lean));
+        astroParts(life, d, 0);
         glowBurn(life, d.slot, 0.4, 0.1, 0.05);
       }
       continue;
@@ -1302,8 +1320,8 @@ function stepDroids(world, life, dt) {
       d.x = x; d.z = z; d.yaw = yaw;
       droidPlace(d, x, y + bob, z, yaw, roll, pitch);
       if (d.kind === 'astro') {
-        /* The third leg drops when it rolls, the dome hunts, the eye blinks. */
-        astroParts(life, d, Math.sin(d.t * 0.7) * 0.9 + (moving ? 0 : Math.sin(d.t * 2.3) * 0.25), lerp(-1.4, 0, d.lean));
+        /* It tips back onto its third leg to roll, the dome hunts, the eye blinks. */
+        astroParts(life, d, Math.sin(d.t * 0.7) * 0.9 + (moving ? 0 : Math.sin(d.t * 2.3) * 0.25));
         const blink = (Math.sin(d.t * 3.1) > 0.85 ? 0.2 : 1) * (0.8 + 0.2 * Math.sin(d.t * 11));
         glowBurn(life, d.slot, 1.6 * blink, 0.35 * blink, 0.1 * blink);
         if (moving && (d.i & 3) === (life.frame & 3)) eng?.lightUp?.(_v.set(x, y + 1.7, z), 0xff6040, 2.0, 3, 0);
@@ -1314,8 +1332,8 @@ function stepDroids(world, life, dt) {
      * been knocked over — the body says where it landed. */
     if (!d.was) { droidPlace(d, d.x, d.y, d.z, d.yaw); d.was = true; }
     if (d.kind === 'astro') {
-      /* A parked astromech: dome hunting, eye lit, leg folded. */
-      astroParts(life, d, Math.sin(d.t * 0.7 + d.i) * 0.9, -1.4);
+      /* A parked astromech: dome hunting, eye lit. */
+      astroParts(life, d, Math.sin(d.t * 0.7 + d.i) * 0.9);
       const blink = (Math.sin(d.t * 3.1 + d.i) > 0.85 ? 0.2 : 1);
       glowBurn(life, d.slot, 1.6 * blink, 0.35 * blink, 0.1 * blink);
       continue;
@@ -1387,16 +1405,15 @@ function addTrolley(world, life) {
   bb.put(M.steel, slabGeo(1.30, 0.46, 0.84, { bevel: 0.04, seg: 2, tile: 1.1 }), 0, 0, 0);
   for (const sx of [-1, 1]) bb.put(M.steel, cylGeo(0.13, 0.13, 0.10, 8, 0.6), sx * 0.48, 0.28, 0, Math.PI / 2, 0, 0);
   bb.put(M.steel, slabGeo(0.30, 0.10, 0.30, { bevel: 0.02, seg: 1, tile: 0.6 }), 0, -0.26, 0);
+  /* The hoist and its load in the same mesh as the crab: one draw, no
+   * pendulum — the ceiling cranes swing theirs, and this one is 24 m up
+   * over a bay nobody stands under. */
+  bb.put(M.steel, cylGeo(0.028, 0.028, 2.60, 6, 0.6), 0, -0.28 - 1.30, 0);
+  bb.put(M.steel, torusGeo(0.26, 0.055, 5, 10, Math.PI * 1.5, 0.6), 0, -0.28 - 2.72, 0, Math.PI / 2, 0, 0.4);
+  bb.put(M.steel, slabGeo(1.10, 0.80, 0.90, { bevel: 0.05, seg: 2, tile: 1.1 }), 0, -0.28 - 3.35, 0);
+  bb.put(M.steel, slabGeo(1.16, 0.08, 0.96, { bevel: 0.02, seg: 1, tile: 0.6 }), 0, -0.28 - 3.72, 0);
   bb.bake(world, body);
-  const hoist = mover(world, body);
-  hoist.position.set(0, -0.28, 0);
-  const hb = new Bin();
-  hb.put(M.steel, cylGeo(0.028, 0.028, 2.60, 6, 0.6), 0, -1.30, 0);
-  hb.put(M.steel, torusGeo(0.26, 0.055, 5, 10, Math.PI * 1.5, 0.6), 0, -2.72, 0, Math.PI / 2, 0, 0.4);
-  hb.put(M.steel, slabGeo(1.10, 0.80, 0.90, { bevel: 0.05, seg: 2, tile: 1.1 }), 0, -3.35, 0);
-  hb.put(M.steel, slabGeo(1.16, 0.08, 0.96, { bevel: 0.02, seg: 1, tile: 0.6 }), 0, -3.72, 0);
-  hb.bake(world, hoist);
-  life.trolley = { run: T, body, hoist, t: 0, at: 0, dir: 1, swing: 0, swingV: 0, hold: 0, vel: 0 };
+  life.trolley = { run: T, body, hoist: null, t: 0, at: 0, dir: 1, swing: 0, swingV: 0, hold: 0, vel: 0 };
 }
 
 /** A crab on a rail: translate, and the load lags into the start and overshoots the stop. */
@@ -1417,6 +1434,7 @@ function stepCrab(T, R, dt, axis) {
   T.swingV *= Math.exp(-0.9 * dt);
   T.swing += T.swingV * dt;
   /* The pendulum swings along the travel: rotate about the OTHER axis. */
+  if (!T.hoist) return;
   if (axis === 'x') T.hoist.rotation.z = clamp(T.swing, -0.25, 0.25);
   else T.hoist.rotation.x = clamp(-T.swing, -0.25, 0.25);
 }
@@ -1483,40 +1501,43 @@ function addCranes(world, life) {
     A.box(0xc03a2c, 0.3, 0.3, 0.3, 0, 0.75, 0);
     A.box(0xb8842e, 3.3, 0.12, 0.2, 0, -0.62, 2.15);
     A.box(0xb8842e, 3.3, 0.12, 0.2, 0, -0.62, -2.15);
-    castMesh(world, body, A.merge(), C.cast, 'deck-crane');
-    const hoist = mover(world, body);
-    hoist.position.set(0, -1.3, 0);
-    const H = new Assembly();
+    /* The hull crane's winch block rides the crab: its cable and load are
+     * movers below, so nothing on the fixed part need swing. */
+    if (R.load === 'hull') A.box(dark, 1.6, 0.5, 0.6, 0, -1.5, 0);
+    /* THE PLATE AND THE ENGINE hang rigid from their crabs — one mesh each,
+     * no pendulum, at 88 m up; the hull crane's load is the one that
+     * moves on its cable and keeps a hoist of its own. */
+    const hoist = R.load === 'hull' ? mover(world, body) : null;
+    if (hoist) hoist.position.set(0, -1.3, 0);
+    const H = R.load === 'hull' ? new Assembly() : A;
+    const hy = R.load === 'hull' ? 0 : -1.3;
     if (R.load !== 'hull') {
-      H.cyl(0x6a7079, 0.05, 0.05, R.drop, 0.5, -R.drop / 2, 0, 0, 0, 0, 6);
-      H.cyl(0x6a7079, 0.05, 0.05, R.drop, -0.5, -R.drop / 2, 0, 0, 0, 0, 6);
-      H.box(dark, 2.0, 0.6, 0.6, 0, -R.drop - 0.2, 0);
-      H.ring(0x8d939b, 0.4, 0.08, 0, -R.drop - 0.8, 0, 0, Math.PI / 2, 0, 10);
-    } else {
-      /* The winch block only; the cable and the load are movers below. */
-      H.box(dark, 1.6, 0.5, 0.6, 0, -0.2, 0);
+      H.cyl(0x6a7079, 0.05, 0.05, R.drop, 0.5, hy - R.drop / 2, 0, 0, 0, 0, 6);
+      H.cyl(0x6a7079, 0.05, 0.05, R.drop, -0.5, hy - R.drop / 2, 0, 0, 0, 0, 6);
+      H.box(dark, 2.0, 0.6, 0.6, 0, hy - R.drop - 0.2, 0);
+      H.ring(0x8d939b, 0.4, 0.08, 0, hy - R.drop - 0.8, 0, 0, Math.PI / 2, 0, 10);
     }
-    if (R.load === 'hull') { /* nothing more on the fixed part */ }
+    if (R.load === 'hull') { /* nothing on the fixed part — see the crab */ }
     else if (R.load === 'plate') {
       /* A hull plate in slings: a big bevelled slab with a rib and a row of
        * fixing holes along one edge. */
-      H.box(wing, 6.0, 0.35, 4.0, 0, -R.drop - 2.4, 0);
-      H.box(dark, 6.0, 0.2, 0.4, 0, -R.drop - 2.1, 1.6);
-      for (let i = 0; i < 6; i++) H.box(dark, 0.2, 0.4, 0.2, -2.5 + i, -R.drop - 2.4, -1.7);
-      H.pair((s) => H.cyl(0x6a7079, 0.04, 0.04, 2.0, s * 2.6, -R.drop - 1.5, 0, 0, 0, s * 0.9, 5));
+      H.box(wing, 6.0, 0.35, 4.0, 0, hy - R.drop - 2.4, 0);
+      H.box(dark, 6.0, 0.2, 0.4, 0, hy - R.drop - 2.1, 1.6);
+      for (let i = 0; i < 6; i++) H.box(dark, 0.2, 0.4, 0.2, -2.5 + i, hy - R.drop - 2.4, -1.7);
+      H.pair((s) => H.cyl(0x6a7079, 0.04, 0.04, 2.0, s * 2.6, hy - R.drop - 1.5, 0, 0, 0, s * 0.9, 5));
     } else {
       /* An engine: a pod with a bell and three collars, hung by its lugs. */
-      H.cyl(dark, 1.2, 1.1, 5.0, 0, -R.drop - 3.0, 0, 0, 0, Math.PI / 2, 12);
-      H.cyl(0x1a1d22, 1.25, 0.9, 0.9, -2.9, -R.drop - 3.0, 0, 0, 0, Math.PI / 2, 12);
-      for (let i = 0; i < 3; i++) H.ring(0x8d939b, 1.22, 0.08, -1.5 + i * 1.5, -R.drop - 3.0, 0, 0, Math.PI / 2, 0, 14);
-      H.pair((s) => H.cyl(0x6a7079, 0.04, 0.04, 1.6, s * 1.4, -R.drop - 1.5, 0, 0, 0, s * 0.6, 5));
+      H.cyl(dark, 1.2, 1.1, 5.0, 0, hy - R.drop - 3.0, 0, 0, 0, Math.PI / 2, 12);
+      H.cyl(0x1a1d22, 1.25, 0.9, 0.9, -2.9, hy - R.drop - 3.0, 0, 0, 0, Math.PI / 2, 12);
+      for (let i = 0; i < 3; i++) H.ring(0x8d939b, 1.22, 0.08, -1.5 + i * 1.5, hy - R.drop - 3.0, 0, 0, Math.PI / 2, 0, 14);
+      H.pair((s) => H.cyl(0x6a7079, 0.04, 0.04, 1.6, s * 1.4, hy - R.drop - 1.5, 0, 0, 0, s * 0.6, 5));
     }
     const crane = { run: R, body, hoist, at: R.phase, dir: 1, hold: 0, swing: 0, swingV: 0, vel: 0, t: R.phase * 20, cable: null, load: null };
     if (R.load === 'hull') {
       /* THE HULL IN SLINGS: the racks' own fighter silhouette under a
-       * spreader, on a cable that is its own mesh so it can be paid out —
-       * scaled in y — while the load rides at the cable's end. */
-      castMesh(world, hoist, H.merge(), C.cast, 'deck-crane-load');
+       * spreader, one mesh, on a cable that is its own mesh so it can be
+       * paid out — scaled in y — while the load rides at the cable's end. */
+      H.geos = [];
       const cable = new Assembly();
       cable.cyl(0x6a7079, 0.05, 0.05, 1.0, 0.5, -0.5, 0, 0, 0, 0, 6);
       cable.cyl(0x6a7079, 0.05, 0.05, 1.0, -0.5, -0.5, 0, 0, 0, 0, 6);
@@ -1527,14 +1548,13 @@ function addCranes(world, life) {
       const L = new Assembly();
       L.box(dark, 4.0, 0.4, 0.6, 0, -0.2, 0);
       L.pair((s) => L.cyl(0x6a7079, 0.04, 0.04, 2.6, s * 1.8, -1.6, 0, 0, 0, s * 0.5, 5));
-      castMesh(world, load, L.merge(), C.cast, 'deck-crane-spreader');
       const fg = farHullGeometry(2, world._deckFaction);
-      const hm = castMesh(world, load, fg.geo, C.cast, 'deck-crane-hull');
-      hm.position.set(0, -3.6, 0);
+      fg.geo.translate(0, -3.6, 0);
+      L.geos.push(fg.geo); L.prims += fg.prims;
+      castMesh(world, load, L.merge(), C.cast, 'deck-crane-hull');
       crane.load = load;
-    } else {
-      castMesh(world, hoist, H.merge(), C.cast, 'deck-crane-load');
     }
+    castMesh(world, body, A.merge(), C.cast, 'deck-crane');
     cranes.push(crane);
   }
   life.cranes = cranes;
@@ -1962,7 +1982,7 @@ function silJobs() {
       rows.push({ pose: 'stand', x: FORM.cx + (f - (FORM.files - 1) * 0.5) * FORM.dx, z: FORM.cz + (r - (FORM.ranks - 1) * 0.5) * FORM.dz, yaw: Math.PI, tone: 1 });
     }
   }
-  rows.push({ walk: true, rest: 'point', path: [FORM.cx - 9, FORM.cz - 7, FORM.cx + 9, FORM.cz - 7], tone: 2, speed: 0.9 });
+  rows.push({ walk: true, rest: 'stand', path: [FORM.cx - 9, FORM.cz - 7, FORM.cx + 9, FORM.cz - 7], tone: 2, speed: 0.9 });
   /* THE FILE marching the room's length: ten men on the leader's clock. */
   rows.push({ walk: true, rest: 'stand', path: [FILE.x, FILE.z0, FILE.x, FILE.z1], tone: 1, speed: 1.3 });
   for (let i = 1; i < FILE.men; i++) rows.push({ walk: true, rest: 'stand', convoy: i, gap: FILE.gap, tone: 1 });
@@ -2011,9 +2031,9 @@ function silJobs() {
   const { PF: pf, CENTRE: ce } = frame();
   for (const J of droidJobs()) if (J.kind === 'proto') rows.push({ walk: true, rest: 'stand', path: J.path, tone: 2, speed: 1.1, phase: 0.5 });
   rows.push({ walk: true, rest: 'stand', path: [ce.x0 + 12, ce.z0 + 20, ce.x0 + 12, ce.z0 + 44], tone: 0, speed: 1.2 });
-  rows.push({ walk: true, rest: 'kneel', path: [W.x0 + 4, CRADLE.z + 22, W.x0 + 4, W.z1 - 16], tone: 1, speed: 1.15 });
+  rows.push({ walk: true, rest: 'stand', path: [W.x0 + 4, CRADLE.z + 22, W.x0 + 4, W.z1 - 16], tone: 1, speed: 1.15 });
   rows.push({ walk: true, rest: 'stand', path: [pf.x0 + 6, pf.z0 + 2, pf.x0 + 6, pf.z0 + 18], tone: 2, speed: 1.25 });
-  rows.push({ walk: true, rest: 'point', path: [ce.x0 + 26, ce.z1 - 14, ce.x0 + 2, ce.z1 - 14], tone: 0, speed: 1.05 });
+  rows.push({ walk: true, rest: 'stand', path: [ce.x0 + 26, ce.z1 - 14, ce.x0 + 2, ce.z1 - 14], tone: 0, speed: 1.05 });
   for (let i = 0; i < rows.length; i++) {
     const J = rows[i];
     if (!J.convoy) continue;
@@ -2036,13 +2056,20 @@ function addSilhouettes(world, life) {
    * that pose: a slot is taken when a man enters a pose and freed when he
    * leaves it (`silShow`), so the eighty men cost eighty instances across
    * the fifteen meshes, not fifteen times eighty. */
+  /* …and only the WALKERS are instanced: the five walk frames, the three
+   * carrying, and `stand` for a walker at the end of his path. Every man
+   * who only stands is baked, tone and all, into ONE static mesh below —
+   * `hangar.mjs` bounds the whole scene at 320 draws and this is where a
+   * crowd of eighty-nine fits under it. */
   const meshes = {};
-  for (const name of Object.keys(built)) {
-    const im = instanced(world, built[name].geo, C.tint, n, `deck-crew-${name}`, false);
+  const walkers = jobs.filter((J) => J.path).length;
+  for (const name of [...CREW_POSES.walk, ...CREW_POSES.carry, 'stand']) {
+    const im = instanced(world, built[name].geo, C.tint, Math.max(1, walkers), `deck-crew-${name}`, false);
     im.count = 0;
     im.userData.free = []; im.userData.top = 0;
     meshes[name] = im;
   }
+  const stills = [];
   const sils = [];
   for (let i = 0; i < n; i++) {
     const J = jobs[i];
@@ -2059,8 +2086,23 @@ function addSilhouettes(world, life) {
     };
     if (J.convoy) { S.lead = sils[J.leader]; S.rank = J.convoy; }
     S.tone = SIL_TONES[J.tone % SIL_TONES.length];
+    if (!J.path) {
+      _q.setFromAxisAngle(UP, yaw); _v.set(x, y, z); _s.set(1, 1, 1);
+      stills.push(crewStillGeometry(built[J.pose], _m.compose(_v, _q, _s), S.tone));
+      S.shown = 'still';
+    }
     sils.push(S);
   }
+  if (stills.length) {
+    const still = new THREE.Mesh(mergeGeos(stills), C.cast);
+    still.name = 'deck-crew-still';
+    still.castShadow = false; still.receiveShadow = true;
+    still.frustumCulled = false;
+    world.scene.add(still);
+    world.statics.push(still);
+    life.silStill = still;
+  }
+  for (const g of Object.values(built)) g.geo.dispose();
   life.sils = sils;
   life.silMeshes = meshes;
 }
@@ -2098,11 +2140,7 @@ function stepSilhouettes(world, life, dt) {
   for (const S of sils) {
     const J = S.job;
     S.t += dt;
-    if (!S.frames) {
-      /* A still: written once. */
-      if (!S.shown) silShow(life, S, S.pose, S.x, S.y, S.z, S.yaw);
-      continue;
-    }
+    if (!S.frames) continue;                 // a still is in the merged mesh
     const span = Math.hypot(J.path[2] - J.path[0], J.path[3] - J.path[1]);
     if (S.lead) {
       /* The file: `rank` gaps behind the leader, halting and about-turning
@@ -2746,9 +2784,9 @@ function stepHull(world, life, H, dt) {
  */
 function addTaxi(world, life) {
   const { TAXI } = frame();
-  const cast = buildCastShuttle({ faction: world._deckFaction });
+  const C = castMaterials(world._deckFaction);
+  const cast = foldCast(buildCastShuttle({ faction: world._deckFaction }), C.cast);
   cast.group.visible = true;
-  cast.meshes.gear.visible = true;
   world.scene.add(cast.group);
   world.statics.push(cast.group);
   for (const m of Object.values(cast.meshes)) if (m) world.statics.push(m);

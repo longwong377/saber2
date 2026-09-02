@@ -76,6 +76,7 @@ export async function run({ check, assert }) {
         add('sleds', life.sleds.mesh);
         for (const w of life.workers) add('workers', w.root);
         for (const im of Object.values(life.silMeshes)) add('crowd', im);
+        add('crowd', life.silStill);
         add('silhouettes', life.traffic.farF); add('silhouettes', life.traffic.farS);
         for (const Hh of life.traffic.plan.hulls) Hh.cast.group.traverse((m) => { if (m.isMesh) add('hulls', m); });
         for (const P of life.parked) { if (P.cast) P.cast.group.traverse((m) => { if (m.isMesh) add('parked', m); }); if (P.plat) add('parked', P.plat); }

@@ -291,6 +291,13 @@ export function astromechChassis() {
   /* The front tool bays and the power bus ladder. */
   a.box(D.dark, 0.30, 0.16, 0.06, 0, 1.30, 0.49);
   a.box(PAINT, 0.10, 0.06, 0.05, 0, 0.62, 0.50);
+  /* THE THIRD LEG, down. It was a mover that dropped when the droid rolled
+   * and folded when it stopped; with two dozen astromechs on a deck whose
+   * whole scene is bounded at 320 draws it is part of the can, and an
+   * astromech stands on three legs — the films' own do, most of the time. */
+  a.box(D.white, 0.14, 0.40, 0.14, 0, 0.42, 0.30);
+  a.box(D.white, 0.18, 0.14, 0.36, 0, 0.18, 0.34);
+  a.cyl(D.dark, 0.05, 0.05, 0.16, 0, 0.12, 0.48, 0, 0, Math.PI / 2, 8);
   /* Shoulders and legs, either side. */
   a.pair((s) => {
     a.cyl(D.white, 0.22, 0.22, 0.16, s * 0.58, 1.18, 0, 0, 0, Math.PI / 2, 12);
@@ -320,7 +327,8 @@ export function astromechDome() {
   return { geo: a.merge(), prims: a.prims };
 }
 
-/** The third leg, hinged at its top: rotates down out of the belly to roll. */
+/** The third leg as a part of its own — kept for a caller that wants it
+ *  hinged; the deck's astromechs carry it in the chassis now. */
 export function astromechLeg() {
   const a = new Assembly();
   a.box(D.white, 0.14, 0.40, 0.14, 0, -0.20, 0);
@@ -819,8 +827,8 @@ export function bindPose(rig) {
  * to ONE box per bone. About 240 triangles a man; the cap and the belt are
  * what say "crew" at that range.
  *
- * A walk is six frames of the real cycle, captured at phase k/6; a carrier
- * is four with the arms out under a crate; the rest stand, kneel, sit, point
+ * A walk is four frames of the real cycle, captured at phase k/4; a carrier
+ * is three with the arms out under a crate; the rest stand, kneel, sit, point
  * or lean. DeckLife holds one `InstancedMesh` per pose and a walker flips
  * through the six — the flip-book `Cohorts.js` does with a texture, done
  * with a mesh swap because the poses here are a dozen and not a palette.
@@ -829,10 +837,48 @@ export function bindPose(rig) {
  * `castMaterials().tint`; skin, boots, cap and belt keep their own.
  */
 export const CREW_POSES = {
-  walk: ['walk0', 'walk1', 'walk2', 'walk3', 'walk4', 'walk5'],
-  carry: ['carry0', 'carry1', 'carry2', 'carry3'],
+  walk: ['walk0', 'walk1', 'walk2', 'walk3'],
+  carry: ['carry0', 'carry1', 'carry2'],
   still: ['stand', 'kneel', 'sit', 'point', 'lean'],
 };
+
+/**
+ * One man of a pose at a world transform, his suit tone baked into the
+ * vertices, for DeckLife to merge every STANDING man into a single static
+ * mesh — a still needs no instance, and `tools/checks/hangar.mjs` bounds
+ * the whole scene at 320 meshes, deck life included.
+ */
+export function crewStillGeometry(pose, matrix, tone) {
+  const g = pose.geo.clone();
+  const col = g.attributes.color;
+  _c.set(tone);
+  for (let i = 0; i < col.count; i++) {
+    if (col.getX(i) + col.getY(i) + col.getZ(i) > 2.97) col.setXYZ(i, _c.r, _c.g, _c.b);
+  }
+  g.applyMatrix4(matrix);
+  return g;
+}
+
+/**
+ * A cast hull that never flies, folded to ONE mesh: body, canopy and gear
+ * merged, the canopy in its frame's dark colour rather than glass. A
+ * parked hull is looked at from sixty metres; a pane at that range is a
+ * dark panel, and a draw call is a draw call.
+ */
+export function foldCast(cast, material) {
+  const geos = [];
+  for (const k of ['body', 'glass', 'gear']) {
+    const m = cast.meshes[k];
+    if (!m) continue;
+    geos.push(m.geometry);
+    cast.group.remove(m);
+  }
+  const mesh = new THREE.Mesh(mergeGeos(geos), material);
+  mesh.name = 'hull'; mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+  cast.group.add(mesh);
+  cast.meshes = { body: mesh, glass: null, gear: null };
+  return cast;
+}
 
 /** Bone boxes: [width, depth] by bone, and what paints them. */
 const SIL_BONES = {

@@ -176,7 +176,8 @@ export async function run({ check, assert }) {
       assert(life.workers.length >= 20, `${life.workers.length} workers — twenty at least, from thirteen`);
       assert(life.sils.length >= 80, `${life.sils.length} crew silhouettes — eighty at least`);
       assert(life.sils.filter((S) => S.job.path).length >= 24, 'fewer than twenty-four of the crowd walk anywhere');
-      assert(Object.keys(life.silMeshes).length >= 15, `${Object.keys(life.silMeshes).length} crew poses — fifteen at least`);
+      assert(Object.keys(life.silMeshes).length >= 8, `${Object.keys(life.silMeshes).length} instanced crew poses — four walk frames, three carrying, and stand`);
+      assert(life.silStill && life.silStill.geometry.attributes.position.count > 5000, 'the standing crowd was not baked into its one mesh');
       assert(life.cranes.length >= 3, `${life.cranes.length} crane bridges on the ceiling rails — three, one lowering a hull`);
       assert(life.cranes.some((c) => c.load), 'no crane is lowering a hull');
       assert(life.sleds.runs.length >= 6, `${life.sleds.runs.length} loader sleds — six lanes`);
@@ -338,7 +339,7 @@ export async function run({ check, assert }) {
         if (va.some((v, i) => Math.abs(v - vb[i]) > 1e-3)) moved.add(k.split(':')[0]);
       }
       const want = ['droid-astro', 'droid-mouse', 'droid-gonk', 'droid-tread', 'droid-proto', 'droid-lifter', 'droid-pitup', 'droid-pit',
-        'part-dome', 'part-leg', 'part-turret', 'part-boom', 'part-fore', 'sled', 'crew-walk0', 'crew-walk3'];
+        'part-dome', 'part-turret', 'part-boom', 'part-fore', 'sled', 'crew-walk0', 'crew-walk3'];
       const still = want.filter((k) => !moved.has(k));
       assert(still.length === 0, `these instanced kinds did not move in two seconds: ${still.join(', ')}`);
       /* The convoys: the three mouse droids on one path are in a line, not a heap. */
@@ -354,7 +355,9 @@ export async function run({ check, assert }) {
         for (let i = 0; i < o.count * 16; i++) if (!Number.isFinite(arr[i])) nan++;
         if (o.instanceColor) for (let i = 0; i < o.count * 3; i++) if (!Number.isFinite(o.instanceColor.array[i])) nan++;
       });
-      assert(buffers >= 30 && nan === 0, `${nan} NaN values across ${buffers} instance buffers`);
+      assert(buffers >= 24 && nan === 0, `${nan} NaN values across ${buffers} instance buffers`);
+      for (const e of life.silStill.geometry.attributes.position.array) if (!Number.isFinite(e)) nan++;
+      assert(nan === 0, `${nan} NaN vertices in the standing crowd's mesh`);
       assert(life.glows.count <= 128 && life.glows.count >= 50, `${life.glows.count} emitters lit — a dozen floodlights, ten arcs, two dozen eyes, the bells`);
       /* THE STEP'S COST, around the step itself, in a live world. */
       let sum = 0, worst = 0;

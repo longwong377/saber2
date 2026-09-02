@@ -514,6 +514,7 @@ export async function run({ check, assert }) {
       walk(life.sleds.mesh);
       for (const w of life.workers) walk(w.root);
       for (const im of Object.values(life.silMeshes)) walk(im);
+      walk(life.silStill);
       walk(life.traffic.farF); walk(life.traffic.farS);
       for (const H of life.traffic.plan.hulls) H.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); });
       for (const P of life.parked) { if (P.cast) P.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); }); if (P.plat) walk(P.plat); }
@@ -524,20 +525,35 @@ export async function run({ check, assert }) {
         const t = g.index ? g.index.count / 3 : g.attributes.position.count / 3;
         tris += t * (o.isInstancedMesh ? o.count : 1);
       }
-      assert(mine.size <= 140,
-        `${mine.size} meshes of deck life, doubled by the ink pass. It was 96 with 111 droids, 20 workers, 89 `
-        + 'silhouettes and seven hulls all in — something new is emitting per-prop instead of merging or '
-        + 'instancing, or a worker did not bake');
+      /**
+       * THE BOUND IS THE ROOM'S, NOT THIS FILE'S. `hangar.mjs` counts every
+       * drawn mesh in the scene under 320 and the room itself is 243, so
+       * deck life gets 77 at that check's own sample frame (0.8 s in, with
+       * up to three flying hulls on their pads). The first cut of this pass
+       * drew 96 — 339 in the room — and was folded back: parked hulls and
+       * the taxi one mesh each, the standing crowd one static mesh, the
+       * trolley's and the plate and engine cranes' hoists on their crabs,
+       * the astromech's third leg in its can. This walk counts the two
+       * (hidden) field rings and every flying hull's meshes whether or not
+       * its clock has it in the room, so it reads about five over what is
+       * drawn: 75 here is 70 on screen. The bound is 80 for the same
+       * reason it was 90 before: just above the honest number, so the next
+       * per-prop mesh is named.
+       */
+      assert(mine.size <= 80,
+        `${mine.size} meshes of deck life, doubled by the ink pass. It was 75 with 111 droids, 20 workers, 89 `
+        + 'in the crowd and seven hulls all in, and the room has 77 to give under hangar.mjs — something new is '
+        + 'emitting per-prop instead of merging or instancing, or a worker did not bake');
       assert(tris <= 450000,
         `${Math.round(tris)} triangles of deck life against a 450k budget. It was ~270k; a pose mesh that stopped `
         + 'freeing its slots or a droid kind that grew a skirt of detail is the usual cause');
       const inst = [...mine].filter((o) => o.isInstancedMesh);
-      assert(inst.length >= 30,
-        `${inst.length} InstancedMesh in deck life. Nine droid kinds, five turning parts, fifteen crew poses, the `
+      assert(inst.length >= 22,
+        `${inst.length} InstancedMesh in deck life. Nine droid kinds, four turning parts, eight crew poses, the `
         + 'sleds, two silhouette meshes and the emitters are all supposed to be instanced; one of them has been unpicked');
       const baked = life.workers.filter((w) => w.merged.skin).length;
       assert(baked === life.workers.length, `${life.workers.length - baked} workers did not bake to a skinned mesh`);
-      assert(mine.size >= 80, `${mine.size} meshes is not a room with this much work going on in it`);
+      assert(mine.size >= 60, `${mine.size} meshes is not a room with this much work going on in it`);
       let scene = 0;
       world.scene.traverse((o) => { if ((o.isMesh || o.isInstancedMesh) && on(o)) scene++; });
       return `${mine.size} meshes (${inst.length} instanced), ${Math.round(tris)} triangles rasterised (was 63 / 121490), `
