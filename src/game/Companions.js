@@ -96,6 +96,12 @@ import { installTeamDamage, TEAM_DAMAGE_DEFAULT } from './Command.js';
 import { BEAST_MOVES, WIND_OPEN } from './Enemy.js';
 /* The one gate every damage path in the game answers to — see `installCompanionHide`. */
 import { canHarm } from './Player.js';
+/* The idle-and-reaction layer — one call, at the foot of `CompanionPack.update`,
+ * and everything it does is argued in that file. It runs from HERE and not from
+ * `Enemy._poseWalker` because props (world update order 6) run after enemies
+ * (2): the gait has already had the body, so the layer adds rather than
+ * competes. It is the whole of what a companion does between the actions. */
+import { stepCompanionLife } from './CompanionLife.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  The dial                                                                  */
@@ -867,6 +873,12 @@ export class CompanionPack {
           if (M && st >= M.done) { e.state = 'approach'; e._swiped = false; e.swingAt = null; }
         }
       }
+      /* AND IT IS ALIVE BETWEEN THE ACTIONS. Last in the loop, because the
+       * layer reads the state the four clauses above have just settled — a
+       * body whose `winded` window ended this frame is not winded to look at.
+       * See CompanionLife.js; it fences itself on `e.lod` and costs one
+       * comparison past 62 m. */
+      stepCompanionLife(e, dt, this.world);
     }
   }
 
