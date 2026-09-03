@@ -424,10 +424,16 @@ export async function run({ check, assert }) {
        * bound sits just above so the next thing that forgets to compose is
        * still caught.
        */
-      assert(meshes < 320,
+      /**
+       * 350, FROM 320. The fleet action outside (`DeckBattle`) stands fourteen
+       * instanced meshes — six hull classes in eight halves, turrets, bolts,
+       * flashes, debris, two navies of fighters — every one `saberNoInk`, so
+       * the ink pass does not double them. Measured at 330 with it standing.
+       */
+      assert(meshes < 350,
         `${meshes} meshes dressing the deck. It was 255 with the kit composed, the transport and `
-        + 'the lift standing; something new is emitting per-prop, and the ink pass doubles '
-        + 'whatever this is');
+        + 'the lift standing, 330 with the battle outside; something new is emitting per-prop, '
+        + 'and the ink pass doubles whatever this is');
       assert(meshes > 60, `${meshes} meshes is not a hangar, it is a floor`);
       return `${meshes} meshes of room drawn (${figures} for ${nMen} men on the deck), against 395 for the room that was deleted`;
     } finally { world.unload(); }
