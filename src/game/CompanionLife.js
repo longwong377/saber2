@@ -737,12 +737,13 @@ export function gazeFor(L, s, out) {
    * whose whole job is watching YOU, would have given up on you for standing
    * too close.
    */
-  const yLim = LIFE.look.yaw * (L.watch ? 1 : LIFE.look.reach);
-  const holds = (pt) => Math.abs(bearingTo(s, pt).yaw) <= yLim;
-  const take = () => { L.watch = 1; return out; };
-
+  const lim = LIFE.look.yaw * (L.watch ? 1 : LIFE.look.reach);
+  /* `holds` IS MODULE-LEVEL AND THE COMMITS ARE WRITTEN OUT RATHER THAN
+   * CLOSED OVER: `stepLife` runs once a frame for every companion on the field
+   * and again for the deck body, and `deck life: a step allocates nothing` is
+   * a shipped check that this rung would otherwise be paying into. */
   /* 2/3. THE FIELD OR THE OWNER, in the order `ward` puts them. */
-  if (wardHit && holds(out.copy(foe.position).setY(aimY(foe)))) return take();
+  if (wardHit && holds(s, out.copy(foe.position).setY(aimY(foe)), lim)) { L.watch = 1; return out; }
 
   if (near && owner) {
     /* THE OWNER'S AIM BEATS THE OWNER'S FACE, FOR A WHILE. A companion that
@@ -751,17 +752,17 @@ export function gazeFor(L, s, out) {
      * photograph. `s.aiming` is a WINDOW — see `LIFE.look`. */
     if (s.aiming && owner.aimDir) {
       const from = owner.chest || owner.position;
-      if (holds(out.copy(from).addScaledVector(owner.aimDir, LIFE.look.range))) return take();
+      if (holds(s, out.copy(from).addScaledVector(owner.aimDir, LIFE.look.range), lim)) { L.watch = 1; return out; }
     }
-    if (holds(out.copy(owner.chest || owner.position))) return take();
+    if (holds(s, out.copy(owner.chest || owner.position), lim)) { L.watch = 1; return out; }
   }
   /* 4/5. AND WHAT IS LEFT — the nearest hostile, then the owner from further
    *      off. A rung passed over above for being out of the neck's reach is
    *      passed over here for the same reason, which is what makes the
    *      fall-through mean "look at the nearest thing you CAN" rather than
    *      "look at the same thing again". */
-  if (foe && holds(out.copy(foe.position).setY(aimY(foe)))) return take();
-  if (owner && holds(out.copy(owner.chest || owner.position))) return take();
+  if (foe && holds(s, out.copy(foe.position).setY(aimY(foe)), lim)) { L.watch = 1; return out; }
+  if (owner && holds(s, out.copy(owner.chest || owner.position), lim)) { L.watch = 1; return out; }
   /* NOTHING IT CAN SEE WITHOUT CRANKING ITS NECK OVER: it looks ahead. An
    * animal standing at your heel while you face away is not straining round
    * at you for a minute and a half; it is standing there, breathing, and
@@ -783,6 +784,8 @@ export function gazeFor(L, s, out) {
  * something outside it puts the head straight back on the stop.
  */
 const _bear = { yaw: 0, pitch: 0 };
+/** Can the neck come round to this point at all, inside `lim` radians of yaw. */
+const holds = (s, pt, lim) => Math.abs(bearingTo(s, pt).yaw) <= lim;
 export function bearingTo(s, pt, out = _bear) {
   out.yaw = 0; out.pitch = 0;
   if (!pt || !s?.at) return out;
@@ -965,20 +968,22 @@ function beatGap(L) {
  * off the field and its head to the floor, and nothing here knows an order's
  * name, only whether one is standing.
  *
- * `null` FOR A BODY WITH NOTHING IT MAY DO ON DUTY, rather than a silent fall
- * back to the whole menu. No shipped kind is in that case — every flesh body
- * keeps `shake` and `stretch`, every droid keeps both of its rows — and a body
- * that is (a rig with a head and no trunk) genuinely has nothing it may do
- * while it is on your shoulder. The caller re-arms the timer and asks again.
+ * `null` IF THE NARROWING LEAVES NOTHING, AND IT FALLS OUT RATHER THAN BEING
+ * GUARDED. A `total` of zero makes `r` zero, the loop skips every row and
+ * `last` is still null — so the empty case is the same three lines as the full
+ * one, and there is no `if (total <= 0)` branch that no shipped body could
+ * ever reach. It is not reachable today: `glance` and the droid rows carry no
+ * `duty` mark, so every body with a head keeps something. The caller treats
+ * null as "not this time", re-arms the timer and asks again.
  */
 function pickBeat(L, duty) {
+  const may = (b) => !(duty && b.duty === false);
   let total = 0;
-  for (const b of L.menu) { if (duty && b.duty === false) continue; total += b.weight || 1; }
-  if (total <= 0) return null;
+  for (const b of L.menu) if (may(b)) total += b.weight || 1;
   let r = seedOf(L.id, 200 + ((L.pickN = (L.pickN | 0) + 1) % 97)) * total;
   let last = null;
   for (const b of L.menu) {
-    if (duty && b.duty === false) continue;
+    if (!may(b)) continue;
     last = b;
     r -= b.weight || 1;
     if (r <= 0) return b;
