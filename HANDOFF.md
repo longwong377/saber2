@@ -3983,6 +3983,9 @@ be pinning a scene rather than holding a rule.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
+3 Sep     2538 passed, 8 failed   → then eight fixed or explained; see the
+                                    three headings under this block. The V13
+                                    second round. ~70 min under load.
 2 Sep     2461 passed, 1 failed   → the one is `levers`, and it is a design
                                     question rather than a defect: §4.9 has the
                                     measurement and tools/_levprobe.mjs the
@@ -3995,6 +3998,34 @@ be pinning a scene rather than holding a rule.
 26 Aug    forward   1517 passed, 0 failed   18.7 min, clean worktree, quiet box
 26 Aug    reverse   1517 passed, 0 failed   SABER_CHECK_ORDER=reverse, same tree
 ```
+
+### The 3 Sep eight, one line each
+
+Five were instruments rather than the game, and they are written up in §0.1b–e.
+What is left, and who owns it:
+
+- **`levers`** — unchanged from V12. A design question, not a defect; §4.9 has
+  the measurement and `tools/_levprobe.mjs` the reproduction.
+- **`company: a bond to a dead man stops paying`** — RE-RUN ALONE AND GREEN,
+  28/0. Order-dependent, and this file's own rule above says that is not a
+  finding until it reproduces alone. It did not. Worth someone's afternoon to
+  find which stream it inherits, but it is not a bug in the bond.
+- **`deckcast: the step costs under 1.5 ms`** — **STILL RED AND I COULD NOT
+  SETTLE IT.** Five readings across the day: 1.57, 1.66, 1.85, 2.62, 2.09 ms,
+  tracking box load exactly, and NONE of them under the budget. But none of its
+  three files — `DeckCast.js`, `DeckLife.js`, `tools/checks/deckcast.mjs` —
+  has changed since before the V12 gate, where the same check was green. So
+  either this container is materially slower than the one V12 was measured on,
+  or something reachable from `stepDeckLife` got heavier by a route none of the
+  three files shows. `frame-budget`'s own budgets stayed green all day, which
+  argues against a uniformly slower box and is the reason this is written as
+  unsettled rather than dismissed.
+
+  **The first thing to do with it is measure on a genuinely quiet box**, with
+  nothing else running, and compare against `git stash`-ing the whole V13 diff.
+  If it is over there too, it is the box and the budget wants a calibration
+  loop rather than an absolute millisecond. If it is under, something in this
+  round reaches `stepDeckLife` and the diff will say what.
 
 **A RED LINE IN A FULL RUN IS NOT A FINDING UNTIL IT HAS BEEN RE-RUN ALONE**,
 and this round is the clearest case the repo has: two reds out of 2179, neither
