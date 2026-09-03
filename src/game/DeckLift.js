@@ -145,6 +145,8 @@ const _q = new THREE.Quaternion();
 const _q2 = new THREE.Quaternion();
 const _s = new THREE.Vector3(1, 1, 1);
 const _c = new THREE.Color();
+const _c2 = new THREE.Color();
+const _hsl = { h: 0, s: 0, l: 0 };
 const _X = new THREE.Vector3(1, 0, 0);
 
 /**
@@ -316,7 +318,7 @@ export function dressDeckLift(world, opts = {}) {
    * shut, and so a slit is a slit and not a hole). */
   const lightMat = M.glow.clone(); lightMat.name = 'car-light'; lightMat.userData.saberNoInk = true;
   lightMat.userData.key = 'light';
-  const glass = new THREE.MeshBasicMaterial({ color: 0x0c1220, transparent: true, opacity: 0.32,
+  const glass = new THREE.MeshBasicMaterial({ color: 0x0c1220, transparent: true, opacity: 0.18,
     depthWrite: false, side: THREE.DoubleSide, name: 'car-pane' });
   glass.userData.saberNoInk = true; glass.userData.key = 'pane';
   const slitMat = new THREE.MeshBasicMaterial({ color: 0x0f1622, name: 'car-slit' });
@@ -836,7 +838,7 @@ function buildShaft(world, M, lightMat, layout) {
       rot: o?.rot || 0, col, anim: o?.anim || A.NONE, rate: o?.rate || 1, ph: o?.ph || 0,
       amp: o?.amp || 0, span: o?.span || 0, edge: o?.edge || 0, wrap: !!o?.wrap,
       base2: o?.base2 ?? base, rot2: o?.rot2 ?? (o?.rot || 0), col2: o?.col2 ?? col,
-      digit: o?.digit ?? 0, seg: o?.seg ?? 0,
+      digit: o?.digit ?? 0, seg: o?.seg ?? 0, hue: o?.hue ?? col,
     };
     k.slots.push(s);
     return s;
@@ -869,10 +871,29 @@ function buildShaft(world, M, lightMat, layout) {
       else v = V[order[(lev - layout.lo + f.i * third) % order.length]];
       names.push(v.name);
       /* Every level: the floor slab, the ceiling slab. */
-      put(kindOf.box, f, base, FAR - 0.7, 0, 1.4, 0.5, 3.8, 0x8a8f96, { lo: 0.5, margin: 0.1 });
-      put(kindOf.box, f, base + LEVEL - 0.25, FAR - 0.5, 0, 1.0, 0.5, 3.8, 0x4a4e55, { lo: 0.5, margin: 0.1 });
+      const floorSlab = put(kindOf.box, f, base, FAR - 0.7, 0, 1.4, 0.5, 3.8, 0x8a8f96, { lo: 0.5, margin: 0.1 });
+      const ceilSlab = put(kindOf.box, f, base + LEVEL - 0.25, FAR - 0.5, 0, 1.0, 0.5, 3.8, 0x4a4e55, { lo: 0.5, margin: 0.1 });
+      const p0 = kindOf.plate.slots.length;
       const ctx = makeCtx(f, base, seed, put, kindOf, FAR);
       v.build(ctx, seed);
+      /* THE COLOUR HAS TO REACH THE WINDOW. The first frames showed the
+       * plate as a sliver behind pale slabs and rails: so the level's
+       * slabs take the plate's tint, and a strip of the same hue, lifted,
+       * runs under the ceiling close in — the room's light, not its wall. */
+      const plate = kindOf.plate.slots[p0];
+      if (plate) {
+        _c.setHex(plate.hue);
+        floorSlab.col = _c.clone().lerp(_c2.setHex(0x8a8f96), 0.35).getHex();
+        ceilSlab.col = _c.clone().lerp(_c2.setHex(0x2a2d33), 0.5).getHex();
+        _c.getHSL(_hsl);
+        _c.setHSL(_hsl.h, Math.max(_hsl.s, 0.55), Math.max(_hsl.l, 0.6));
+        const hue = _c.getHex();
+        put(kindOf.glow, f, base + LEVEL - 0.56, FAR - 1.5, 0, 0.3, 0.1, 3.6, hue, { lo: 0.4 });
+        /* And a lit jamb each side of the opening, full height, so the
+         * colour is in the window whatever part of the room is. */
+        for (const a of [-1.92, 1.92]) put(kindOf.glow, f, base + LEVEL / 2, FAR - 0.9, a, 0.12, LEVEL - 0.9, 0.08, hue, { lo: 0.4 });
+        put(kindOf.glow, f, base + 0.28, FAR - 1.3, 0, 0.6, 0.02, 3.6, _c.multiplyScalar(0.6).getHex(), { lo: 0.4 });
+      }
     }
     perFace.push(names);
   }
@@ -887,8 +908,8 @@ function buildShaft(world, M, lightMat, layout) {
   /* NEAR: the ladder's rungs, the rails' ties, and the light bars. */
   const barsPerFace = 30;
   for (const f of faces) {
-    for (let j = 0; j < SPAN / 0.4; j++) put(kindOf.box, f, j * 0.4, 1.5, 0, 0.05, 0.05, 0.62, 0x8a8f96, { wrap: true, lo: 0.3 });
-    for (let j = 0; j < SPAN / 2; j++) put(kindOf.box, f, j * 2 + 1, 0.55, 0, 0.14, 0.14, 4.7, 0x8a8f96, { wrap: true });
+    for (let j = 0; j < SPAN / 0.4; j++) put(kindOf.box, f, j * 0.4, 1.5, 0, 0.05, 0.05, 0.62, 0x3a3e46, { wrap: true, lo: 0.3 });
+    for (let j = 0; j < SPAN / 2; j++) put(kindOf.box, f, j * 2 + 1, 0.55, 0, 0.14, 0.14, 4.7, 0x3a3e46, { wrap: true });
     for (let j = 0; j < barsPerFace; j++) put(kindOf.glow, f, j * (SPAN / barsPerFace), 0.85, 0, 0.34, 0.16, 5.6 / f.ka, 0xbfd4ee, { wrap: true, lo: 0.3, anim: A.SWEEP });
   }
 
@@ -927,7 +948,15 @@ function makeCtx(f, base, seed, put, K, FAR) {
   const c = {
     f, seed, floor, roomH, FAR, rnd,
     /** The lit back wall, full opening, or a band `y0..y1` of it. */
-    plate(col, y0 = 0, y1 = roomH, o) { return put(K.plate, f, floor + (y0 + y1) / 2, FAR - 0.05, 0, 0.1, y1 - y0, 3.8, col, o); },
+    plate(col, y0 = 0, y1 = roomH, o) {
+      /* A dark plate is black through the pane in this renderer — the first
+       * frames read as machinery again — so every plate keeps its hue but
+       * is lifted to a floor of lightness and saturation: deep colour, not
+       * black. `col` stays the vignette's own for the slabs and strips. */
+      _c.setHex(col).getHSL(_hsl);
+      const lifted = _c.setHSL(_hsl.h, _hsl.l < 0.6 ? Math.max(_hsl.s, 0.55) : _hsl.s, Math.max(_hsl.l, 0.34)).getHex();
+      return put(K.plate, f, floor + (y0 + y1) / 2, FAR - 0.05, 0, 0.1, y1 - y0, 3.8, lifted, { ...(o || {}), hue: col });
+    },
     box(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.6, o) { return put(K.box, f, floor + y, d, a, sd, sh, sa, col, o); },
     glow(col, a, y, sa, sh, sd = 0.08, d = FAR - 0.3, o) { return put(K.glow, f, floor + y, d, a, sd, sh, sa, col, o); },
     glass(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.9, o) { return put(K.glass, f, floor + y, d, a, sd, sh, sa, col, o); },
