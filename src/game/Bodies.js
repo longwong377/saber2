@@ -8931,7 +8931,7 @@ export const CREATURE_PLANS = {
      * 0x9a8f79) because the underside is what you see when you are holding
      * it, which is where this animal spends the fights it survives. */
     hide: 0xa89c8a, plate: 0xbdb2a0, belly: 0xe2dac8, eye: 0x74c8ff,
-    hip: 0.35, trunk: [0.08, -0.06, 0.62], pitch: 0.02, girth: 0.26,
+    hip: 0.30, trunk: [0.07, -0.05, 0.52], pitch: 0.02, girth: 0.30,
     /* ROUND IS THE POINT, and it is the girth-to-trunk ratio that says so:
      * 0.26/0.62 = 0.42 against the massiff's 0.28/0.86 = 0.33 and the nexu's
      * 0.33/1.72 = 0.19. The nexu is a line, the massiff is a spine, this is a
@@ -8993,7 +8993,7 @@ export const CREATURE_PLANS = {
      * at 0.14 of scale — 48 mm — so at this size they read as an open mouth
      * rather than as teeth, and the alternative was inventing a fifth branch,
      * which this row is not allowed to do and does not need. */
-    headAt: [0.18, 0.52], neck: [1, 0.10, 0.16, 0.10, 0], head: 'horned-ape',
+    headAt: [0.18, 0.44], neck: [1, 0.09, 0.16, 0.10, 0], head: 'kitten',
     /* ONE neck segment, and the shortest in the file at 0.10 against the
      * massiff's two of 0.14. A kit has no neck — the head sits straight on
      * the shoulders, which is the second half of "the head is too big for
@@ -9006,7 +9006,7 @@ export const CREATURE_PLANS = {
      * breaks a 1.76 m wampa's edge breaks this 0.235 m one identically, and a
      * fuzzy silhouette is what stops a 0.34-scale animal reading as a
      * low-poly pebble at twenty metres. */
-    back: 'shag',
+    back: 'down',
     /* THE TAIL IS LONGER THAN THE ANIMAL: 1.10 of reach against 0.62 of
      * trunk. The nexu's is 2.40 and is argued as the thing that makes a low
      * body unmistakable at range; the same argument is worth more here,
@@ -9022,7 +9022,7 @@ export const CREATURE_PLANS = {
      * it stands off the croup and recurves forward over the back. A tail held
      * high is the one posture cue a person reads as "this animal is pleased
      * to see you" without being taught it, and it costs a sign. */
-    tail: [6, 1.10, 0.030, 0.55, 0.06],
+    tail: [6, 0.85, 0.080, 0.50, 0.075],
     limbs: [
       /* THE TRACK IS NARROWER THAN THE HIPS, and this row is the only one
        * that does it: `plant` 0.15 inside a hip at x 0.17, where the massiff
@@ -9037,15 +9037,15 @@ export const CREATURE_PLANS = {
        * drop into 0.46 m of leg, so 70% extended — the massiff's own 66% and
        * deliberately not straighter, because a straight leg reads as a stance
        * and a bent one reads as a crouch. */
-      { role: 'leg', x: 0.17, y: 0.05, z: 0.34, plant: 0.15, femur: 0.22, tibia: 0.24, tarsus: 0.09,
-        girth: 0.92, pole: [0.14, 0.26, 0.66], foot: 'paw',
+      { role: 'leg', x: 0.17, y: 0.05, z: 0.29, plant: 0.15, femur: 0.19, tibia: 0.21, tarsus: 0.09,
+        girth: 0.92, pole: [0.14, 0.26, 0.66], foot: 'mitt',
         femurRest: [0.16, -0.90, 0.28], tibiaRest: [0.04, -0.96, -0.22] },
       /* Hind heavier than fore — 0.96 against 0.92 — which INVERTS the
        * massiff's 0.92/0.86. A dog carries its weight on the forehand and a
        * cat's mass is behind; it is two hundredths and it is the difference
        * between the two animals' outlines from the side. */
-      { role: 'leg', x: 0.18, y: 0.03, z: -0.26, plant: 0.16, femur: 0.23, tibia: 0.25, tarsus: 0.09,
-        girth: 0.96, pole: [0.16, 0.30, -0.70], foot: 'paw',
+      { role: 'leg', x: 0.18, y: 0.03, z: -0.22, plant: 0.16, femur: 0.20, tibia: 0.22, tarsus: 0.09,
+        girth: 0.96, pole: [0.16, 0.30, -0.70], foot: 'mitt',
         femurRest: [0.16, -0.88, -0.32], tibiaRest: [0.04, -0.95, 0.24] },
     ],
     /* PAW, and it is chosen for the ankle rather than for the toes. `ANKLE_UP`
@@ -9868,7 +9868,7 @@ export const CREATURE_PLANS = {
  * above the floor instead — nearly all of it for a leg that comes down on a
  * point or a hoof, a third for a plantigrade sole that lies flat.
  */
-const ANKLE_UP = { spike: 0.90, claw: 0.86, hoof: 0.84, paw: 0.30, talon: 0.30, raptor: 0.62 };
+const ANKLE_UP = { spike: 0.90, claw: 0.86, hoof: 0.84, paw: 0.30, mitt: 0.30, talon: 0.30, raptor: 0.62 };
 
 /**
  * ── AND A BODY MAY PUBLISH NO LIMBS AT ALL, WHICH IS `tuck` ───────────────
@@ -9906,7 +9906,13 @@ function stanceOf(S, P) {
         pole: [L.pole[0] * S * side, L.pole[1] * S, L.pole[2] * S],
         hand: L.hand ? [L.hand[0] * S * side, L.hand[1] * S, L.hand[2] * S] : null,
         // a plantigrade sole lies along the ground; a hoof or a point drops
-        toe: L.foot === 'paw' || L.foot === 'talon' ? 0.75 : 0.30,
+        /* A plantigrade sole lies along the ground; a hoof or a point drops.
+         * `mitt` is `paw` with the claws sheathed (see buildFootFor) and is
+         * therefore the same sole and the same ankle — spelling it out in
+         * both tables rather than letting it fall through `?? 0.5` and the
+         * ternary's else, which would stand the tooka on its toes at a
+         * fifteenth of a millimetre's difference nobody would ever find. */
+        toe: L.foot === 'paw' || L.foot === 'mitt' || L.foot === 'talon' ? 0.75 : 0.30,
       });
     }
   }
@@ -10107,6 +10113,74 @@ export function buildQuadruped(opts = {}) {
       const p = fwd(0.74 + t * 0.20);
       ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 6, 3),
         [sx * 0.34 * S, p[1] + 0.24 * S, p[2]], [2.3, 0, sx * 1.25]);
+    }));
+  } else if (P.back === 'down') {
+    /**
+     * THE UNDERCOAT — the fifth dorsal treatment, and the only one that is
+     * not trying to break the animal's outline UP.
+     *
+     * The other four are all armour or threat: a `ridge` of spikes, bony
+     * `scutes`, a raked `mane`, and `shag` — which is a wampa's coat and is
+     * authored as fourteen clumps standing 0.30-0.34·S off the flanks at
+     * x = ±(0.30…0.44)·S. On a 0.46-girth wampa that is a fringe hanging just
+     * outside the shoulder. On the tooka, whose girth is 0.26 and whose hull
+     * half-width therefore peaks near 0.22·S, the SAME fourteen clumps stand
+     * 0.12·S clear of the skin with daylight under them — rendered
+     * (`tools/_soft.mjs`, side and top) they are a row of hard pale wedges
+     * along the spine and over the haunch, and they are most of the reason a
+     * kitten reads as an armoured beetle. The player's word for it was
+     * "squat armoured lump".
+     *
+     * Three differences, and each one is the same decision in a different
+     * place: FUR LIES DOWN.
+     *
+     *   IT IS SEATED ON THE HULL, not at a constant offset from the spine
+     *   axis. `hull()` and `hullN()` are already here for the scutes and the
+     *   ribs and the argument is identical — the trunk is a superellipse
+     *   lathe with two gaussian swells on it, so a fixed x is inside the
+     *   animal over the shoulder and outside it at the waist. A clump you can
+     *   see under is a card; a clump growing out of the skin is a coat.
+     *
+     *   IT IS RAKED AFT AND NOT AIMED OUT. `aim` along the hull normal is the
+     *   MANE's treatment — a quill standing off the back — and it is what
+     *   makes a coat read as spines. Mixing 0.55 of the normal with the
+     *   animal's own backward direction lays each clump down along the flank
+     *   at about 30° off the surface, which is what fur on a small mammal
+     *   does and is why the same geometry reads as soft here and as a crest
+     *   on the nexu.
+     *
+     *   IT IS MANY SMALL CLUMPS AND NOT A FEW BIG ONES. 0.18·S long against
+     *   shag's 0.30-0.34·S, and 28 of them against 14. A clump the eye can
+     *   resolve individually is a spike; a fringe it cannot is a texture, and
+     *   the outline is the only thing that survives at forty metres either
+     *   way. At (6, 3) — the sides and rings the massiff's fang argument
+     *   settled, carried here by the same reasoning — that is about 60
+     *   triangles a clump.
+     *
+     * AND THE RUFF IS THE HALF THAT DOES THE WORK ON A SMALL BODY. A kitten's
+     * head looks too big for it partly because there is a collar of longer
+     * fur behind the jaw; four clumps a side round the shoulder at φ 0.9-1.8
+     * put that collar on the silhouette, and they are the one place the coat
+     * is allowed to stand off the body — a ruff is fur that does NOT lie down.
+     */
+    const aft = [0, -Math.sin(P.pitch), -Math.cos(P.pitch)];
+    /** The hull normal at φ, laid back toward the tail by `1 - out`. */
+    const lie = (phi, out) => {
+      const n = hullN(phi);
+      return [n[0] * out + aft[0] * (1 - out), n[1] * out + aft[1] * (1 - out),
+        n[2] * out + aft[2] * (1 - out)];
+    };
+    ks.row(7, (i, t) => ks.pair((sx) => {
+      for (const [phi, len, out] of [[1.18, 0.19, 0.30], [1.62, 0.17, 0.26]]) {
+        const at = 0.08 + t * 0.78;
+        ks.aim(hide, clawGeo(len * S, 0.055 * S, 0.007 * S, 0.5, 6, 3),
+          hull(at, sx * phi, 0.035 * S), lie(sx * phi, out));
+      }
+    }));
+    ks.row(4, (i, t) => ks.pair((sx) => {
+      const phi = 0.78 + t * 1.05;
+      ks.aim(hide, clawGeo((0.32 - t * 0.06) * S, 0.080 * S, 0.010 * S, 0.45, 6, 3),
+        hull(0.90, sx * phi, 0.03 * S), lie(sx * phi, 0.62));
     }));
   } else if (P.back === 'plumage') {
     /**
@@ -10648,6 +10722,33 @@ function buildFootFor(k, kind, plate, tooth, hide, S, g, len) {
     });
     return;
   }
+  if (kind === 'mitt') {
+    /**
+     * THE SAME PAW WITH THE CLAWS IN — the tooka's foot, and the only one in
+     * this function that ends in nothing hard.
+     *
+     * `paw` is a plantigrade sole with three toe pads and a 0.13·S `clawGeo`
+     * hook out of each, in `tooth`: twelve pale spikes on a four-footed
+     * animal. That is right for the massiff, the wampa, the rancor and the
+     * pup, which all rake with them, and it is the same decision the head
+     * branch above refuses for the same body — the plan declares `moves: []`
+     * and the archetype `damage: 0`, so a claw here is hardware on an animal
+     * the design forbids from using it. Rendered at 0.34 scale
+     * (`tools/_soft.mjs`, three-quarter) the twelve hooks are the brightest
+     * thing on the silhouette below the eyes, which on the one body in the
+     * game whose entire brief is "cannot fight" is the worst place in the
+     * frame to put a weapon.
+     *
+     * A cat's claws are SHEATHED. Not filed off — sheathed, which is why this
+     * is the pad and the toes unchanged (same widths, same stations, same
+     * `y`) with the three `clawGeo` calls simply not made, and not a new
+     * shape. The toe pads get 15% more length to close the gap the claw used
+     * to fill, so the front of the foot still has a front.
+     */
+    pad(hide, 0.135, 0.052, 0.20, 0, 0.07);
+    k.row(3, (j, t) => pad(hide, 0.052, 0.042, 0.067, (t - 0.5) * 0.19, 0.235, 0.91));
+    return;
+  }
   if (kind === 'raptor') {
     /**
      * A BIRD OF PREY'S FOOT, AND IT IS NOT THE `claw` PAD WITH LONGER TOES.
@@ -11088,6 +11189,97 @@ function buildCreatureHead(rig, P, S, M) {
       // the ruff, at the join with the coat
       k.row(3, (i, t) => k.add(M.hide, clawGeo(0.30 * S, 0.090 * S, 0.015 * S, 0.55, 6, 3),
         [sx * (0.17 + t * 0.07) * S, hy - (0.04 + t * 0.09) * S, hz - 0.10 * S], [1.7 + t * 0.4, 0, sx * (1.0 - t * 0.3)]));
+    });
+  } else if (K === 'kitten') {
+    /**
+     * THE TOOKA — the seventh branch, and the only head in this function
+     * whose brief is a FEELING rather than an animal.
+     *
+     * The player's words for this companion are "something incredibly cute
+     * and adorable that is useless in battle and needs constant protecting".
+     * It shared `horned-ape` — a gundark's flat face, two horns swept
+     * sideways off the temples and an underbite of three fangs a side — and
+     * the row that chose it argued the horns could be read as ears "because
+     * the proportions happen to be an ear's proportions". Rendered at the
+     * archetype's own 0.34 scale they are not: `tools/_soft.mjs` front view
+     * shows two thin pale blades standing straight out of the temples with
+     * daylight under them, an underbite below a bare snout, and NO EYES AT
+     * ALL — the pair at (±0.13, 0.08, 0.24) with r 0.038 is entirely inside
+     * the cranium ellipsoid, whose surface at that x and y is z = 0.306
+     * against the eye's front face at 0.278. The single most important
+     * feature on a cute animal was buried 28 mm inside its own skull.
+     *
+     * WHAT CUTE IS, STRUCTURALLY, and every one of these is a number below:
+     *
+     *   THE EYES ARE THE WHOLE READ, and the lever is `eyeAt`'s radius. 0.105
+     *   on a 0.34 cranium is 0.31 of the skull — the largest eye-to-skull
+     *   ratio in the file, past the hawk's 0.055/0.20 = 0.275, which until now
+     *   held it and holds it for the opposite reason (a raptor's eye is big
+     *   because it hunts). They are set FORWARD (z 0.255, so 0.36 of the eye
+     *   stands clear of the cranium) and LOW (y 0.005 against a cranium centre
+     *   at 0.045), because an eye high on a skull reads as a brow and a brow
+     *   reads as an adult. Two of them 0.21 across on a face 0.71 wide is 59%
+     *   of the head's width in eye, which is a kitten and is nothing else.
+     *
+     *   THE EARS ARE MOST OF THE SILHOUETTE and it had none. Two flattened
+     *   lathes — `ovalSection(0.26)` squashes the local Z to a quarter of the
+     *   width, so each one is a triangular FLAP and not a horn — 0.30 long on
+     *   a 0.115 half-width base, standing up off the crown and tipped 0.38 rad
+     *   out. That is 0.60 of the cranium's own height added above it, which is
+     *   what makes the head read as bigger than it is without the skull
+     *   growing. Each carries a pale inner in `M.belly` set 0.7 of its length
+     *   and slightly forward, so from the front the ear is a light triangle
+     *   inside a dark one rather than a solid tab.
+     *
+     *   THE MUZZLE IS THE SHORTEST IN THE FILE — 0.17 against the hawk's bill
+     *   at 0.17·0.80 = 0.136 of scale and the gundark's 0.30 — and it is blunt
+     *   rather than pointed: w1/w0 is 0.87 where every predator here runs
+     *   0.52-0.81, and `flat: 0.96` with `n: 2.2` keeps the section round. A
+     *   muzzle that tapers is a snout and a snout is a hunting animal.
+     *
+     *   THE NOSE. One dark wedge in `M.pupil` — the darkest material on the
+     *   body — sunk into the end of the muzzle, for the reason the tauntaun's
+     *   nostrils are there: at forty metres it is two pixels of shadow, and it
+     *   is what stops a blunt muzzle reading as an amputation.
+     *
+     *   NOTHING SHARP ANYWHERE. No horns, no fangs, no quills, no brow shelf.
+     *   The plan declares `moves: []` and the archetype `damage: 0`, so every
+     *   one of those would be hardware on an animal that cannot use it — the
+     *   same argument the tauntaun's branch makes, and it is stronger here
+     *   because this body's ENTIRE job is to look like it cannot fight.
+     *
+     * The cheeks are round rather than the masseter wedge the other six use:
+     * `cheek()`'s default (1.0, 0.78, 1.25) is a chewing muscle stretched
+     * forward under the eye, and (1.06, 1.02, 1.00) is the same call spent on
+     * a cheek that is fat and not muscle. It is one line and it is the
+     * difference between a jaw and a face.
+     */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.34 * S, 12, 9); g.scale(1.04, 1.00, 0.88); return g; })(),
+      [0, hy + 0.045 * S, hz + 0.02 * S]]);
+    parts.push(muzzle(0.17, 0.150, 0.130, -0.085, 0.20, 0.02, { flat: 0.96, n: 2.2, chin: 0.30, crown: 0.20 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.185, -0.055, 0.14, 0.155, 1.06, 1.02, 1.00));
+    /* THE NOSE, on the centreline, so it is one part and not a pair. */
+    k.add(M.pupil, (() => { const g = new THREE.SphereGeometry(0.052 * S, 8, 6); g.scale(1.25, 0.85, 0.80); return g; })(),
+      [0, hy - 0.045 * S, hz + 0.355 * S]);
+    k.pair((sx) => {
+      /* THE EAR. `ovalSection` is the file's existing "flatten a lathe"
+       * vocabulary — it is what a forearm and a sleeve are shaped with — and
+       * 0.26 of depth turns a cone into a flap. The Z rotation tips it out,
+       * the X rotation rakes it a little forward; both are applied to a shape
+       * whose local +Y is up, which is the lathe's own axis. */
+      const earOuter = limbGeo(0.42 * S, 0.185 * S, 0.010 * S, 8, true,
+        { rings: 4, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
+      k.add(M.hide, earOuter, [sx * 0.185 * S, hy + 0.20 * S, hz - 0.02 * S], [0.08, 0, sx * -0.34]);
+      const earInner = limbGeo(0.29 * S, 0.120 * S, 0.008 * S, 7, true,
+        { rings: 3, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
+      k.add(M.belly, earInner, [sx * 0.190 * S, hy + 0.225 * S, hz + 0.010 * S], [0.08, 0, sx * -0.34]);
+      /* THE EYE, and it is the biggest in the file relative to its skull. */
+      eyeAt(sx * 0.148, 0.005, 0.255, 0.105);
+      /* THE WHISKER PAD — one soft swelling either side of the nose. A cat's
+       * muzzle is two pads and a nose, and without them the blunt lathe above
+       * ends in a flat wall. `M.belly` because a tooka's is pale. */
+      k.add(M.belly, (() => { const g = new THREE.SphereGeometry(0.062 * S, 8, 6); g.scale(1.0, 0.80, 0.85); return g; })(),
+        [sx * 0.058 * S, hy - 0.085 * S, hz + 0.315 * S]);
     });
   } else if (K === 'horned-ape') {
     /* THE GUNDARK. A wide flat FACE rather than a muzzle — the wampa's read

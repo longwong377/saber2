@@ -2549,12 +2549,60 @@ export class CompanionPack {
   get body0() { return this.list[0] || null; }
 }
 
+/**
+ * WHAT IT HAS KILLED, COUNTED — and counted from the world's own kill door
+ * rather than from a guess made beside the animal.
+ *
+ * `rec.kills` has been on the record, clamped by `readOne` and whitelisted by
+ * `COMPANION_FIELDS`, since the kennel was written, and nothing ever wrote it:
+ * a companion that had taken forty bodies apart across three runs read "0
+ * kills" on its own card. That is the one number on the plate a player would
+ * check, and it was furniture.
+ *
+ * IT IS AN INSTANCE WRAP OF `world.onEnemyKilled` AND NOT A LINE IN World.js,
+ * which is the same trade `installCompanionAim` makes for `_think` and
+ * `Levy.js:336` argues at length: the shipped method already answers "a body
+ * on the other side is down, and this is who did it", and the alternative is a
+ * companion clause inside the world's scoring path that every other subsystem
+ * has to read past. Nothing about the kill is changed — the original is called
+ * with the same arguments and its return passed through.
+ *
+ * IT PAYS NO XP, DELIBERATELY. `DEEDS` has four entries and a kill is not one
+ * of them, because COMPANIONS.md settles growth on what the animal did FOR YOU
+ * — crossings survived, orders that landed, coming to you when you fell — and
+ * a ladder that counts bodies is a ladder you climb by farming a wave. This is
+ * a story counter, and the fold carries it for the card to print.
+ *
+ * `source` IS THE ANIMAL ITSELF. A companion is an Enemy on your team, so it
+ * arrives here as the source exactly as a trooper does, and `_cmpRec` is the
+ * one field that says it is somebody's. A body in the pack with no record —
+ * the sandbox's, the dojo's, a check's — counts nothing, which is what having
+ * no record means everywhere else in this file.
+ */
+function installCompanionTally(world) {
+  if (!world || world._cmpTally) return;
+  world._cmpTally = true;
+  const killed = world.onEnemyKilled?.bind(world);
+  world.onEnemyKilled = function (enemy, source, kind) {
+    const rec = source?._cmpRec;
+    /* Your own casualties are not kills — the same line World.js draws two
+     * statements into its own method, read from here rather than restated:
+     * if the body that died was on the killer's side, nothing happened worth
+     * counting. */
+    if (rec && enemy && enemy !== source && enemy.team !== source.team) {
+      rec.kills = (rec.kills | 0) + 1;
+    }
+    return killed ? killed(enemy, source, kind) : undefined;
+  };
+}
+
 /** Hang a pack on the world, once. */
 export function attachCompanions(world) {
   if (!world || world._companions) return world?._companions || null;
   const pack = new CompanionPack(world);
   world._companions = pack;
   (world.props ||= []).push(pack);
+  installCompanionTally(world);
   return pack;
 }
 

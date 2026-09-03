@@ -1660,7 +1660,10 @@ export async function run({ check, assert }) {
           world.update(STEP, input);
           up = !e.downed && !e.dead;
         }
-        assert(up, `area ${area + 1}: twenty seconds stood over it and it never got up`);
+        assert(up, `area ${area + 1}: twenty seconds stood over it and it never got up — `
+          + `downed ${e.downed} dead ${e.dead} hp ${(e.hp ?? -1).toFixed(0)} bleed `
+          + `${(e.bleed ?? -1).toFixed(1)} over ${world.over} owner ${p.alive !== false} `
+          + `gap ${C.stationGap(e).toFixed(1)}`);
 
         /* AND THE BOUNDARY, through the shipped path: payWave → _areaClear.
          * The wave number has to climb, because `payWave` is a ledger and pays
@@ -1896,4 +1899,78 @@ export async function run({ check, assert }) {
   });
 
 
+
+
+  check('companion: the card counts what it killed, and it counts nothing else', async () => {
+    /**
+     * `rec.kills` HAD NO WRITER, and the card was already printing it.
+     *
+     * `Menu._syncKennel` renders "…, N of theirs" off `k.live.kills`,
+     * `Kennel.readOne` clamps the field and `COMPANION_FIELDS` whitelists it
+     * through the fold — the whole chain was there and nothing anywhere
+     * incremented the number, so an animal that had taken forty bodies apart
+     * across three runs read as having killed nobody. That is the one figure
+     * on the card a player would actually check.
+     *
+     * THREE CLAUSES, and the second and third are the ones worth having:
+     *
+     *   IT COUNTS A KILL. Driven through `world.onEnemyKilled`, which is the
+     *   world's own door for "a body on the other side is down and this is who
+     *   did it" — not a second kill path invented beside the animal.
+     *
+     *   IT COUNTS NOTHING ON YOUR OWN SIDE. A trooper of yours dying with the
+     *   companion as the source is a casualty, which is the line World.js
+     *   already draws for the player two statements into the same method.
+     *
+     *   AND IT PAYS NO EXPERIENCE, which is the load-bearing one. COMPANIONS.md
+     *   settles growth on what the animal did FOR YOU — crossings survived,
+     *   orders that landed, coming to you when you fell — and `DEEDS` has four
+     *   entries with no kill among them. A ladder you can climb by farming a
+     *   wave is a different design, and this asserts that we did not quietly
+     *   ship it.
+     */
+    const { world, input, e, p } = await field('massiff',
+      { id: 'k', kind: 'massiff', name: 'Borz', xp: 0, runs: 0, areas: 0, kills: 0,
+        saves: 0, downs: 0, orders: 0, ranged: 0, tempers: [], story: [], scars: [] });
+    try {
+      const rec = e._cmpRec;
+      assert(rec && rec.kills === 0, 'the fixture did not start on a record with no kills');
+      const xp0 = rec.xp | 0;
+      const put = (r, team) => {
+        const x = p.position.x + r, z = p.position.z;
+        const f = world.spawnEnemy('b1', new THREE.Vector3(x, world.terrain.height(x, z), z));
+        if (f) f.team = team;
+        return f;
+      };
+      const foes = [put(3, 1), put(4, 1), put(5, 1)].filter(Boolean);
+      assert(foes.length === 3, `only ${foes.length} hostiles spawned for the tally`);
+      for (const f of foes) world.onEnemyKilled(f, e, 'cut');
+      assert(rec.kills === 3, `three bodies through the world's own kill door counted ${rec.kills}`);
+
+      /* …AND THE TWO IT MUST NOT COUNT. */
+      world.onEnemyKilled(e, e, 'cut');
+      const mate = put(2, e.team);
+      assert(mate, 'nothing spawned on your own side');
+      world.onEnemyKilled(mate, e, 'cut');
+      assert(rec.kills === 3,
+        `the animal killing itself or one of yours moved the tally to ${rec.kills}`);
+
+      /* AND THE FENCE IS LOAD-BEARING. A body in the pack with NO record is
+       * the sandbox's animal, the dojo's and every check's, and it must count
+       * nothing rather than throw — proved by taking the record away and
+       * running the same door. */
+      const keep = e._cmpRec;
+      e._cmpRec = null;
+      const extra = put(6, 1);
+      world.onEnemyKilled(extra, e, 'cut');
+      e._cmpRec = keep;
+      assert(rec.kills === 3, 'a companion with no record wrote to a record anyway');
+
+      assert((rec.xp | 0) === xp0,
+        `four kills paid ${(rec.xp | 0) - xp0} experience — the ladder is not a body count`);
+      tick(world, input, p, 5);
+      return `3 hostiles → 3 on the card; itself, one of yours and one with no record → still 3; `
+        + `and xp unmoved at ${rec.xp | 0}`;
+    } finally { world.unload(); Kn.clear(); }
+  });
 }
