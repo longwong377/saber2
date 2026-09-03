@@ -83,8 +83,10 @@ function probe(root) {
   return { clear, total: eyes.length, per };
 }
 
+const ONLY = process.argv[2] ? process.argv[2].split(',') : null;
 const rows = [];
 for (const id of Object.keys(COMPANION_KINDS)) {
+  if (ONLY && !ONLY.includes(id)) continue;
   const K = COMPANION_KINDS[id];
   const A = ARCHETYPES[K.archetype];
   const built = A.build({ scale: A.scale ?? 1 });
@@ -95,6 +97,7 @@ for (const id of Object.keys(COMPANION_KINDS)) {
 console.log(rows.join('\n'));
 console.log('--- creature plans ---');
 for (const kind of Object.keys(B.CREATURE_PLANS)) {
+  if (ONLY && !ONLY.includes(kind)) continue;
   const built = B.buildQuadruped({ kind, scale: 1 });
   const r = probe(built.rig.root);
   console.log(`${kind.padEnd(9)} ${String(r.clear).padStart(4)}/${String(r.total).padEnd(5)} [${r.per.join(' ')}]`);

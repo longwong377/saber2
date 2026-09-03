@@ -1930,56 +1930,7 @@ function installCompanionAim(e) {
       if (b !== e) return pick(b);
       const w = e.world;
       if (!w?._hostilesFor) return pick(b);
-      let best = null, bestD = Infinity;
-      const leash = (e._cmpLeash ?? LEASH);
-      /* THE ORDER FIRST, IF THERE IS ONE AND IT IS STILL ALIVE. A companion
-       * told to take a body takes THAT body, which is the whole of "attacking
-       * a specific enemy that you target". */
-      /**
-       * THE LEASH IS ON ITS FEET, NOT ON ITS EYES, AND THE OTHER WAY ROUND
-       * COST THE ANIMAL ITS WHOLE FIGHT.
-       *
-       * The first version of this returned null the moment the companion was
-       * dragged past the leash, on the reasoning that a body which keeps its
-       * target fights its own steering. It does not: the move wrap below
-       * overrides the wish outright when `dragged`, so the pull home was never
-       * contested. What the null actually did was stop the brain.
-       *
-       * `Enemy._brain` returns on `if (!target)` before it ever reaches
-       * `_meleeBrain`, so a creature with no target is a creature whose state
-       * machine is NOT SERVICED — `stateTime` goes on climbing (Enemy.js:6175)
-       * and nothing reads it. Measured over one minute of the kill test: the
-       * animal froze mid-`lunge` with no target and stayed there, and a
-       * `winded` window that is 2.4 seconds long lasted TWELVE — from t=5 s to
-       * t=17 s, a fifth of the minute, standing still. It dealt 0 damage in
-       * 0 blows while getting to within 0.2 m of something it was hunting.
-       *
-       * The leash it actually needs is the one below: the search is measured
-       * from the STATION, so a hostile out of reach of where the animal is
-       * supposed to be is never a target in the first place, and the walk home
-       * is the move wrap's job. Nothing here returns null that `_hostilesFor`
-       * would not have returned null for.
-       */
-      /* THE ORDER FIRST, IF IT NAMED A BODY. A companion told to take that one
-       * takes THAT one, which is the whole of "attacking a specific enemy that
-       * you target" — and `dutyAllows` refuses everything else under SEEK, so
-       * a seek is a seek and not a preference. */
-      const bid = e._cmpBidden;
-      if (bid && !bid.dead && bid.team !== e.team) return bid;
-      /* KEPT ON A LEASH ROUND ITS STATION AND NOT ROUND ITSELF. A companion
-       * that chased the nearest hostile would walk itself out of the fight one
-       * body at a time; measuring from where it is SUPPOSED to be is what
-       * keeps it beside you. `stationFor` is that one place — the same
-       * function the move wrap walks it home to, so the two can never disagree
-       * about where "supposed to be" is. */
-      const home = stationFor(e, _v3);
-      for (const o of w._hostilesFor(e)) {
-        if (!dutyAllows(e, o, home, leash)) continue;
-        const d = o.position.distanceToSquared(home);
-        if (d < bestD) { bestD = d; best = o; }
-      }
-      return best;
-    };
+      return companionTarget(e);
     try { return think(dt, ctx); } finally { ctx.pickTarget = pick; }
   };
 }

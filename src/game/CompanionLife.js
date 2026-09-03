@@ -1086,17 +1086,30 @@ function nearestSeen(world, e) {
  * MOST.
  *
  * The hangar body is deliberately NOT an `Enemy` — CompanionDeck.js spends a
- * page on why — so it has no gait, no brain, no target and no LOD. Which means
- * that before this file the deck animal did not move a single bone. Its own
- * header describes it as "walked by a small gait follower off the plan's own
- * published `stance`", and the follower is not there: `stepCompanionDeck`
- * advances `fig.phase` every frame and `grep -rn '\.phase' src/game/` finds
- * exactly one line — the write. Nothing reads it. So the animal slid across
- * the deck plates with all four feet in the bind pose, and sat down.
+ * page on why — so it has no brain, no target and no LOD.
  *
- * That gait is not this file's to write. What IS this file's is everything
- * above the legs, and on the deck it is the whole of what moves: measured in
- * `companions.mjs`, the head 0.71 rad, the trunk 0.36, the ribs 7.5% at
+ * ── AND FOR ONE WHOLE ROUND IT HAD NO GAIT EITHER ─────────────────────────
+ *
+ * This paragraph used to say the deck animal did not move a single bone
+ * except through this file, and that CompanionDeck's own claim to be "walked
+ * by a small gait follower off the plan's own published `stance`" was untrue
+ * because `fig.phase` was written every frame and read nowhere. **That was
+ * right, and it has been fixed in the file that owned it.** `stepCompanionDeck
+ * ` now calls `Enemy.prototype._poseWalker` on a duck-typed subject (or
+ * `BipedAnimator`, on the three humanoid kinds) with `fig.phase` bound to the
+ * solver's own `walkPhase`, so the legs are solved by the same code the field
+ * uses and the sit folds hip, femur and shank rather than sinking the root.
+ *
+ * WHAT THAT CHANGES HERE IS THE ORDER AND NOTHING ELSE, and the order was
+ * already right: the gait runs first and this runs last, which is the same
+ * relationship this file has with `_poseWalker` on the field. The one thing
+ * it does change is that `head` now has a second writer on the deck as well
+ * as on the field — `_poseWalker`'s target track — and the "reset if nothing
+ * else wrote it" measurement above covers that case by construction rather
+ * than by knowing about it.
+ *
+ * What is this file's is everything above the legs, and it is measured in
+ * `companions.mjs`: the head 0.71 rad, the trunk 0.36, the ribs 7.5% at
  * 17.6 breaths a minute, three idle beats in forty seconds, from a baseline of
  * exactly zero on every one of them. And the deck is the room a player stands
  * in for minutes at a time looking at it.
@@ -1126,9 +1139,20 @@ export function stepCompanionDeckLife(fig, dt, world) {
   const p = world?.player || null;
   const sat = clamp(fig.sit ?? 0, 0, 1);
   const s = {
-    at: fig.root.position,
+    /* WHERE THE ANIMAL IS, AND IT IS NO LONGER THE ROOT. Both deck solvers
+     * write the pelvis in WORLD coordinates onto a bone parented to
+     * `rig.root`, which is only correct while that root is identity — so
+     * CompanionDeck.js zeroes it and keeps the ground point on `fig.pos`.
+     * Reading `fig.root.position` here would hand this layer the origin. */
+    at: fig.pos || fig.root.position,
     facing: fig.facing || 0,
-    eye: (fig.built.plan?.hip ?? 0.5) * (fig.built.scale ?? 1),
+    /* HOW HIGH ITS EYE IS, MEASURED RATHER THAN GUESSED WHERE IT CAN BE.
+     * The plan's `hip` is the right answer for a creature and there is no
+     * plan at all on the three humanoid bodies (`buildB1`, `buildWookiee`,
+     * `buildMedic` publish none), so `?? 0.5` stood a 2.22 m wookiee's eye
+     * half a metre off the plates and it looked at your shins. The head bone
+     * knows: it is the same reading `headHeight` takes on the field body. */
+    eye: deckEye(fig),
     target: null,
     foe: null,
     owner: p,
@@ -1154,6 +1178,29 @@ export function stepCompanionDeckLife(fig, dt, world) {
   stepLife(L, dt, s);
   fig.built.rig.touchMatrices?.();
   return L;
+}
+
+/**
+ * THE EYE HEIGHT OF A DECK BODY, OFF THE SKELETON WHERE THERE IS ONE.
+ *
+ * `rig.worldPos('head')` is where the head bone actually is this frame, and
+ * `fig.pos` is the ground under it, so the difference is the height the gaze
+ * ladder should aim from — the same subtraction `headHeight` makes on the
+ * field body, and the reason it is a measurement is that three of the twelve
+ * kinds publish no plan for a `hip` to be read out of.
+ *
+ * The plan's own hip is the fallback and not the other way round, because the
+ * measurement is only available once the body has been posed at least once:
+ * on the very first frame the bones are still at the bind pose about the
+ * origin and the subtraction would be a large negative number.
+ */
+function deckEye(fig) {
+  const P = fig.built?.plan;
+  const fallback = (P?.hip ?? 0.5) * (fig.built?.scale ?? 1);
+  const at = fig.pos || fig.root?.position;
+  if (!at) return fallback;
+  const h = fig.built.rig.worldPos('head', _v2).y - at.y;
+  return h > 0.05 ? h : fallback;
 }
 
 /**

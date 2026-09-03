@@ -11232,7 +11232,7 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.20 * S, hy + 0.08 * S, hz + 0.20 * S, 0.085 * S],
         [sx * 0.34 * S, hy - 0.06 * S, hz + 0.46 * S, 0.050 * S],
         [sx * 0.32 * S, hy + 0.06 * S, hz + 0.68 * S, 0.010 * S]], 7));
-      eyeAt(sx * 0.18, 0.10, 0.20, 0.046);
+      eyeAt(sx * 0.19, 0.14, 0.24, 0.046);
     });
   } else if (K === 'fanged') {
     /* THE NEXU. FOUR EYES in two pairs — one line of geometry and the single

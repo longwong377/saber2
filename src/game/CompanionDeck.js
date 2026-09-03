@@ -34,29 +34,84 @@
  * DeckLift, DeckMirror, DeckFlight and DeckEdit all already use, and the only
  * hook the room has that is not a body or a prop.
  *
- * ── WHAT IS BUILT HERE AND WHAT IS NOT, STATED PLAINLY ────────────────────
+ * ── THE BODY IS POSED BY THE SHIPPED SOLVERS, AND IT WAS NOT ──────────────
  *
- * BUILT: the creature and mount kinds — eight of the twelve — as a body built
- * by the same `ARCHETYPES[...].build` the field uses, walked by a small gait
- * follower off the plan's own published `stance`, following you at a heel,
- * SITTING when you stop, and offered to the deck's blade through the
- * `world._deckProps` extension point.
+ * WHAT THIS HEADER USED TO CLAIM: "walked by a small gait follower off the
+ * plan's own published `stance`". **There was no follower.** `grep -rn
+ * '\.phase\b' src/` found one line, the write in this file, and no reader
+ * anywhere; `stepCompanionDeckLife` touches the head, neck, chest, ribs and
+ * the appendage arrays and nothing else. Re-measured on the shipped deck with
+ * a massiff adopted and the player dragged 6.18 m: all sixteen leg bones
+ * (`hipL0`…`tarsus3`) moved **0.000000 rad** from rest over eight seconds,
+ * with `fig.phase` at 13.44 and the head at 0.802 rad. The animal slid across
+ * the plates in its bind pose, on the one screen a player stands still and
+ * looks at it for minutes. Its own check said so in its preamble and passed
+ * anyway, because nothing in it ever read a leg bone.
  *
- * NOT BUILT: the droid kinds' `Knockable` path and the wookiee's humanoid
- * `row`. Both are named in COMPANIONS.md with the shipped machinery they
- * should reuse; neither is here yet, and a kind whose deck body is missing
- * simply does not appear on the deck rather than appearing wrong. That is
- * written down instead of discovered.
+ * THE FOLLOWER IS NOT WRITTEN HERE EITHER, and that is the point. This file
+ * owns WHERE the body is — a mark off your back quarter, a pace, a turn, a
+ * sit blend — and hands the pose to whichever solver the FIELD would have
+ * used for that skeleton:
+ *
+ *   `Enemy.prototype._poseWalker`  for anything with `femur{i}` legs, called
+ *     on a small duck-typed subject (see `walkerSubject`). Same stance, same
+ *     cycle, same two-bone IK, same head clamp, same everything — a second
+ *     gait written here would be HANDOFF §2.4's defect, an instrument that
+ *     restates a rule and eventually disagrees with it.
+ *   `BipedAnimator`               for anything with `thighL`/`shinL`. This is
+ *     not a new choice: `Hangar.callTheCompany` routes on exactly that bone
+ *     test, and `stepRow` drives it exactly this way — root at identity while
+ *     the solver writes world-space bones.
+ *
+ * `fig.phase` IS the solver's `walkPhase` now, through an accessor, so the
+ * field that was written and never read is the one the gait runs on.
+ *
+ * ── WHY THE ROOT IS AT THE ORIGIN AND `fig.pos` IS WHERE THE ANIMAL IS ────
+ *
+ * Both solvers write the pelvis in WORLD coordinates onto a bone that is a
+ * child of `rig.root` — `BipedAnimator.update` does `hips.position.set(hipX,
+ * hipY, hipZ)` and `_poseWalker` does the same off `this.position` — which is
+ * correct only while that root is an identity transform. Enemy.js spends a
+ * page on what happens when it is not (a body drawn away from its own
+ * `position` by the distance to the origin times the angle), and `stepRow`
+ * zeroes the root on the frames it drives the animator for the same reason.
+ *
+ * So the root is no longer the carrier. `fig.pos` is the ground point the
+ * animal stands on and `fig.facing` is its yaw, and everything that used to
+ * read `fig.root.position` reads `fig.pos`.
+ *
+ * ── ALL TWELVE KINDS ARE IN THE ROOM ──────────────────────────────────────
+ *
+ * WHAT WAS HERE: `const BUILT = new Set(['walker'])` against the kind row's
+ * own `deck` word, so `b1c` and `astro` (`knockable`) and `wook` and `medic`
+ * (`row`) returned null from `callTheCompanion` and simply were not on the
+ * deck. Four of twelve. The deck check adopted a massiff and nothing else, so
+ * the gap was never once tested — HANDOFF §2.3 exactly, a hand-maintained
+ * table beside the thing that could have derived it.
+ *
+ * `K.deck` had ONE reader in the whole tree and it was that line. It is not
+ * read any more: which solver a body gets is asked of the SKELETON THE
+ * BUILDER RETURNED, because that is what each solver actually requires —
+ * `BipedAnimator` measures `thighL` and `shinL` in its constructor, and
+ * `_poseWalker` solves `femur{i}`→`tibia{i}` against the published stance. A
+ * routing word in a kind row can drift away from the body; a bone test cannot.
+ *
+ * The astromech deserves its own sentence, because it looks like an omission
+ * and is not: it publishes a stance with NO LIMBS IN IT (buildAstromech says
+ * why at length — an R-unit's legs are rigid struts on rollers and a gait
+ * solver has nothing to say about them), so `_poseWalker` places its hips,
+ * bobs its servos and turns its dome, and its legs correctly do not walk. It
+ * is on the walker path because that is the path the field gives it.
  */
 import * as THREE from '../../vendor/three/three.module.js';
-import { ARCHETYPES } from './Enemy.js';
+import { ARCHETYPES, Enemy } from './Enemy.js';
+import { BipedAnimator } from './Rig.js';
 import { COMPANION_KINDS } from './CompanionKinds.js';
 import { load as loadKennel } from './Kennel.js';
 import { companionOptsFrom } from './Bodies.js';
 /* The idle-and-reaction layer, shared verbatim with the field body — see
- * CompanionLife.js. On the deck it is the only thing that moves a bone at all:
- * this room has no gait, no brain and no target, and it is the room a player
- * stands in for minutes looking at the animal. */
+ * CompanionLife.js. It owns everything above the legs: the head, the neck,
+ * the trunk, the ribs and the idle beats. It runs LAST, after the gait. */
 import { stepCompanionDeckLife } from './CompanionLife.js';
 
 /** How far behind you it stands, and how close is close enough to stop. */
@@ -66,15 +121,55 @@ export const DECK_HEEL = { back: 2.2, side: 0.7, settled: 0.6 };
 export const DECK_PACE = 2.1;
 
 /**
- * WHICH KINDS HAVE A DECK BODY AT ALL — read off the row's own `deck` field,
- * never a list of names. A kind whose representation is not built yet is
- * absent from the room rather than drawn wrong, and the day the Knockable and
- * the humanoid row land this set grows by two words.
+ * HOW FAR THE HAUNCHES FOLD, AT A FULL SIT — three angles and no fourth.
+ *
+ * The sit used to be `root.position.y -= sit * hip * 0.35` and `root.rotation
+ * .x = sit * -0.12`: the whole animal sank into the plates and tipped, which
+ * is a rigid body being lowered by a crane and not an animal folding. Nothing
+ * about it moved a joint.
+ *
+ * These do. `hip` swings the socket, `femur` bends the thigh on top of it, so
+ * the knee comes forward and up by the sum of the two, and `tibia` takes the
+ * shank back past both so the hock ends on the deck behind the knee — which
+ * is the shape of every quadruped sitting down. They are POSE constants and
+ * not per-kind numbers: the fold is applied on the bones the plan already
+ * published, so a tooka's 0.34-scale leg folds through the same angles over a
+ * tenth of the distance and nobody types a second table.
+ *
+ * The drop itself is NOT here. It is `subject.planted = fig.sit`, which is
+ * `_poseWalker`'s own channel for a machine settling onto its legs — "metres
+ * of hip travel per unit of rise", the animal's own `rear` out of its own
+ * plan — so a body that sits and a body that plants use one code path and
+ * cannot disagree about where the hips are. On the massiff that is 0.209 m of
+ * drop out of a 0.418 m hip height, and the feet stay on the floor, so the
+ * front legs take it as a compression rather than as a hole in the deck.
  */
-const BUILT = new Set(['walker']);
+const HAUNCH = { hip: 0.34, femur: 0.58, tibia: 1.02 };
+
+/**
+ * AND HOW FAR A BIPED SETTLES, WHICH IS NOT A SIT.
+ *
+ * A wookiee, a B1 and a 2-1B do not fold their haunches; there is no fold in
+ * a leg with a knee that bends one way and a plantigrade foot under it. What
+ * they do when you stop is take the weight off — and that pose is already
+ * built, tested and shipped: `Rig.update`'s `crouch`, which drops the pelvis
+ * to `lerp(1, 0.68, crouch)` of standing and leans the spine into it.
+ * `CommandDirector.steer` is its other writer.
+ *
+ * 0.42 is 13% off the standing hip, which reads as weight-off-one-leg and not
+ * as a man hiding behind a rock. It is BLENDED on the same `fig.sit` the
+ * quadruped folds on, so there is no pose swap and therefore nothing to pop:
+ * the alternative — switching to `poseParade` at a threshold, which is what
+ * `stepRow` does — snaps a whole skeleton between two solvers on the frame
+ * you stop walking, and `stepRow` gets away with it because a parade halt is
+ * a halt and this is a body that shadows you round a room.
+ */
+const BIPED_SETTLE = 0.42;
 
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
+const _q1 = new THREE.Quaternion();
+const _RIGHT = new THREE.Vector3(1, 0, 0);
 
 /**
  * THE GROUND UNDER A POINT, AND ON A DECK THAT IS NOT THE TERRAIN.
@@ -91,6 +186,92 @@ function groundUnder(world, x, z) {
 }
 
 /**
+ * WHICH SOLVER THIS BODY GETS, ASKED OF THE BODY.
+ *
+ * Exported because the deck check drives off it rather than off a list of
+ * kind names — a typed list is precisely why four kinds sat outside this room
+ * unnoticed for a whole round, and a second one here would be the same defect
+ * wearing a different hat.
+ *
+ * The two tests are the two solvers' own preconditions, not a restatement of
+ * anybody's flag. `BipedAnimator`'s constructor measures `thighL` and `shinL`
+ * to get its leg length, its ankle and its stride; `Hangar.callTheCompany`
+ * already routes on the first of them for the same reason. `_poseWalker`
+ * needs a `hips` bone and reads `built.stance` (or counts `femur{i}` off the
+ * rig when a builder published none).
+ */
+export function deckPathFor(built) {
+  const rig = built?.rig;
+  if (!rig?.hipsBone) return 'root';
+  if (rig.get('thighL') && rig.get('shinL')) return 'biped';
+  return 'walker';
+}
+
+/**
+ * THE SUBJECT `Enemy._poseWalker` IS CALLED ON.
+ *
+ * Not an `Enemy` — the header above spends a page on why there is no live
+ * Enemy in this room — but everything `_poseWalker` and `_stance` read off
+ * `this`, and nothing else. Both are taken off `Enemy.prototype` rather than
+ * copied, so the deck animal and the field animal cannot walk differently:
+ * the day the gait changes, this changes with it, and if the method is ever
+ * renamed this throws on the first frame instead of silently freezing the
+ * feet, which is the failure this whole lane exists to close.
+ *
+ * `walkPhase` is an ACCESSOR onto `fig.phase`. The old code advanced that
+ * field by hand and nothing read it; now the shipped solver both advances it
+ * (off the body's own speed and scale, clamped to its own floor and ceiling)
+ * and spends it, so there is exactly one gait clock and it is the field's.
+ *
+ * `_stanceCache` is PRE-FILLED with a copy of the published stance, because
+ * the one thing this room asks of the gait that a battlefield never does is
+ * that it stop striding when the animal sits down. `step`, `lift` and `bob`
+ * are scaled by `1 - sit` every frame; `hipHeight`, `rear` and the limb table
+ * are the plan's, untouched. Without it a sat animal cycles its feet on the
+ * spot at the solver's 0.1 floor for ever — which is the exact sentence this
+ * file has always carried about why the sit exists at all.
+ */
+function walkerSubject(fig, A, built) {
+  const base = built.stance;
+  const stance = base
+    ? { ...base, limbs: base.limbs }
+    : null;
+  const subject = {
+    rig: built.rig, A, built,
+    position: fig.pos, velocity: fig.vel,
+    facing: 0, lod: 0, state: null, stateTime: 0, planted: 0, target: null,
+    _stanceCache: stance,
+    _stance: Enemy.prototype._stance,
+    _poseWalker: Enemy.prototype._poseWalker,
+    _base: base,
+  };
+  Object.defineProperty(subject, 'walkPhase', {
+    get: () => fig.phase,
+    set: (v) => { fig.phase = v; },
+  });
+  return subject;
+}
+
+/**
+ * WHICH LEGS ARE THE HIND PAIR, COUNTED OFF THE STANCE.
+ *
+ * The hindmost row and only the hindmost row: `L.z` is where that foot plants
+ * along the body's own forward axis, so the minimum is the back pair on a
+ * quadruped, the only pair on a two-legged hawk or tauntaun, and the rearmost
+ * two of a varactyl's six. Derived, so a body with a different number of legs
+ * needs nothing written here.
+ */
+function hindLegs(stance) {
+  const legs = [];
+  const L = stance?.limbs || [];
+  let minZ = Infinity;
+  for (const l of L) if (!l.arm && l.z < minZ) minZ = l.z;
+  if (!Number.isFinite(minZ)) return legs;
+  for (let i = 0; i < L.length; i++) if (!L[i].arm && L[i].z <= minZ + 1e-4) legs.push(i);
+  return legs;
+}
+
+/**
  * Build the deck body for the live record, or nothing.
  *
  * IT IS THE SAME BUILDER THE FIELD USES, handed the same colour options, so
@@ -102,7 +283,7 @@ export function callTheCompanion(world) {
   const rec = loadKennel().live;
   if (!rec) return null;
   const K = COMPANION_KINDS[rec.kind];
-  if (!K || !BUILT.has(K.deck)) return null;
+  if (!K) return null;
   const A = ARCHETYPES[K.archetype];
   if (!A?.build) return null;
 
@@ -113,32 +294,52 @@ export function callTheCompanion(world) {
   const p = world.player?.position || new THREE.Vector3();
   const at = new THREE.Vector3(p.x, 0, p.z - DECK_HEEL.back);
   at.y = groundUnder(world, at.x, at.z);
-  root.position.copy(at);
   world.scene.add(root);
 
+  const path = deckPathFor(built);
   const fig = {
-    rec, kind: K, built, root,
+    rec, kind: K, built, root, path,
+    /** WHERE THE ANIMAL IS. The root is at the origin on the two rig paths —
+     *  see the header — so this is the authority and `root.position` is not. */
+    pos: at.clone(),
     /** Where it is trying to be. Recomputed every frame off the player. */
     mark: at.clone(),
-    /** Gait phase, and the 0.1 floor every walker in the game uses — except
-     *  that a standing companion SITS instead, which is what `sit` is for. */
+    /** Metres a second, handed to the solver: it is what sets the stride. */
+    vel: new THREE.Vector3(),
+    /** Gait phase. `walkerSubject` binds the solver's `walkPhase` onto it. */
     phase: 0,
     /** 0 standing, 1 fully sat. Eased, so it folds rather than snaps. */
     sit: 0,
     facing: 0,
   };
+  /* THE FLOOR, AS THE SOLVERS ASK FOR IT. Both take a `terrain.height`-shaped
+   * probe; on the deck the honest answer is `floorAt` and not the plate. */
+  fig.ctx = { terrain: { height: (x, z) => groundUnder(world, x, z) }, time: 0 };
+  if (path === 'walker') {
+    fig.subject = walkerSubject(fig, A, built);
+    fig.hind = hindLegs(fig.subject._stance());
+  } else if (path === 'biped') {
+    /* The same construction `Hangar.callTheCompany` makes for a man on this
+     * deck, off the same bone measurements, with the archetype's own hip
+     * height where it declares one. */
+    fig.anim = new BipedAnimator(built.rig, {
+      scale: built.rig.scale ?? built.scale ?? 1,
+      hipHeight: A.hipHeight ?? 0.95,
+    });
+  } else {
+    root.position.copy(at);
+  }
   world._companionDeck = fig;
 
   /**
-   * AND IT IS PUSHABLE AND CUTTABLE WITH ZERO FILE CHANGES. `world._deckProps`
-   * is a published extension point that `Hangar.deckBladeTargets` already
-   * reads with an absent-array guard and that World.js already consumes — and
-   * that NOTHING in `src/` has ever written. This is its first writer.
+   * AND IT IS OFFERED TO THE DECK'S BLADE through `world._deckProps`, a
+   * published extension point that `Hangar.deckBladeTargets` already reads
+   * with an absent-array guard and that World.js already consumes.
    */
   (world._deckProps ||= []).push({
     fig: { root },
     kind: 'companion',
-    get position() { return root.position; },
+    get position() { return fig.pos; },
   });
   return fig;
 }
@@ -168,8 +369,7 @@ export function stepCompanionDeck(world, dt) {
   );
   fig.mark.y = groundUnder(world, fig.mark.x, fig.mark.z);
 
-  const root = fig.root;
-  _v1.subVectors(fig.mark, root.position).setY(0);
+  _v1.subVectors(fig.mark, fig.pos).setY(0);
   let d = _v1.length();
 
   /**
@@ -190,7 +390,7 @@ export function stepCompanionDeck(world, dt) {
   if (!fig.placed) {
     fig.placed = true;
     if (d > 20) {
-      root.position.copy(fig.mark);
+      fig.pos.copy(fig.mark);
       fig.facing = yaw;
       _v1.set(0, 0, 0);
       d = 0;
@@ -231,9 +431,13 @@ export function stepCompanionDeck(world, dt) {
   if (moving) {
     _v1.multiplyScalar(1 / d);
     const step = Math.min(d, DECK_PACE * dt);
-    root.position.addScaledVector(_v1, step);
-    root.position.y = groundUnder(world, root.position.x, root.position.z);
-    fig.phase += step * 2.4;
+    fig.pos.addScaledVector(_v1, step);
+    fig.pos.y = groundUnder(world, fig.pos.x, fig.pos.z);
+    /* THE SPEED THE SOLVER SEES IS THE SPEED IT TRAVELLED, so the stride is
+     * the body's own function of it — `clamp(speed / (1.1 * scale), 0.1, 2.4)`
+     * cycles a second — and a companion closing a gap at the last centimetre
+     * takes a shorter step rather than the same one. */
+    fig.vel.copy(_v1).multiplyScalar(step / Math.max(dt, 1e-6));
     /* IT TURNS THE SHORT WAY, and eases rather than snapping — a body that
      * spins 180° in a frame reads as a glitch even when the destination is
      * right. */
@@ -243,8 +447,9 @@ export function stepCompanionDeck(world, dt) {
     while (turn < -Math.PI) turn += Math.PI * 2;
     fig.facing += turn * Math.min(1, dt * 6);
   } else {
+    fig.vel.set(0, 0, 0);
     /* SAT, IT LOOKS AT YOU. The one thing a pet does that a prop does not. */
-    _v2.subVectors(p.position, root.position).setY(0);
+    _v2.subVectors(p.position, fig.pos).setY(0);
     if (_v2.lengthSq() > 1e-4) {
       const want = Math.atan2(_v2.x, _v2.z);
       let turn = want - fig.facing;
@@ -253,21 +458,105 @@ export function stepCompanionDeck(world, dt) {
       fig.facing += turn * Math.min(1, dt * 3);
     }
   }
-  root.rotation.y = fig.facing;
 
-  /* THE SIT ITSELF: the haunches drop and the front stays up, which is what a
-   * four-legged animal does and is expressible as one lean and one drop
-   * without a pose table. `hip` is the plan's own number, so a tooka sits by
-   * as much less as it is smaller. */
-  const hip = fig.built?.plan?.hip ?? 0.5;
-  root.position.y = groundUnder(world, root.position.x, root.position.z)
-    - fig.sit * hip * 0.35 * (fig.built?.scale ?? 1);
-  root.rotation.x = fig.sit * -0.12;
+  poseCompanionDeck(fig, dt);
 
-  /* AND THEN IT IS ALIVE. Last, after the root has been placed and turned, so
-   * the layer's own bone writes are the last thing to touch this body in the
-   * frame and nothing below overwrites them. */
+  /* AND THEN IT IS ALIVE. Last, after the gait has run, so the layer's own
+   * bone writes are the last thing to touch this body in the frame and
+   * nothing below overwrites them. */
   stepCompanionDeckLife(fig, dt, world);
+}
+
+/**
+ * THE POSE — one of the shipped solvers, then the fold.
+ *
+ * Split out of the step above so a probe or a check can hold the follower
+ * still and drive the pose alone; it is also the whole of what this lane
+ * added, and it reads better as one thing.
+ */
+export function poseCompanionDeck(fig, dt) {
+  const sit = fig.sit = Math.max(0, Math.min(1, fig.sit));
+  const rig = fig.built?.rig;
+
+  if (fig.path === 'walker') {
+    const s = fig.subject;
+    s.facing = fig.facing;
+    /* THE SIT'S OWN HIP DROP, through `_poseWalker`'s own settling channel —
+     * see HAUNCH above for why this is `planted` and not a subtraction here. */
+    s.planted = sit;
+    /* NO STRIDE AND NO BOB WHILE IT IS SAT. The limb table and the hip height
+     * are the plan's; these three are what a sitting animal has none of. */
+    const base = s._base;
+    if (base) {
+      const m = 1 - sit;
+      s._stanceCache.step = base.step * m;
+      s._stanceCache.lift = base.lift * m;
+      s._stanceCache.bob = base.bob * m;
+    }
+    s._poseWalker(dt, fig.ctx);
+    foldHaunches(fig, sit);
+    return;
+  }
+
+  if (fig.path === 'biped') {
+    /* ROOT AT IDENTITY WHILE THE SOLVER WRITES WORLD-SPACE BONES — `stepRow`'s
+     * own line, for the reason Enemy.js gives at length. */
+    fig.root.position.set(0, 0, 0);
+    fig.root.quaternion.identity();
+    fig.anim.setFacing(fig.facing);
+    fig.anim.update(dt, {
+      position: fig.pos, facing: fig.facing, velocity: fig.vel,
+      grounded: true, groundAt: fig.ctx.terrain.height,
+      crouch: sit * BIPED_SETTLE,
+      accelForward: Math.min(1, fig.vel.length() / 5),
+      deferMatrices: false,
+    });
+    return;
+  }
+
+  /* NO RIG AT ALL: the root carries the transform, which is all there is to
+   * carry. Nothing in COMPANION_KINDS reaches this today — every one of the
+   * twelve builds a skeleton — and it is here because `callTheCompanion` must
+   * put SOMETHING in the room rather than return null, which is the whole
+   * defect this lane closed. */
+  if (!rig) {
+    fig.root.position.copy(fig.pos);
+    fig.root.rotation.y = fig.facing;
+  }
+}
+
+/**
+ * THE HAUNCHES, FOLDED ON THE BONES AND NOT ON THE ROOT.
+ *
+ * Applied AFTER `_poseWalker`, because the IK assigns those quaternions
+ * outright: this post-multiplies a rotation about each bone's own lateral
+ * axis, which is what the joint does, so the leg folds from wherever the gait
+ * left it rather than from a pose written twice. `hipL{i}` swings the socket,
+ * `femur{i}` bends the thigh on top of it, and `tibia{i}` takes the shank
+ * back past both — the hock ends behind and below the knee, on the plates.
+ *
+ * ONLY THE HIND ROW, counted off the stance rather than named (see
+ * `hindLegs`): a sitting animal's forelegs stay under it and straight, and
+ * they take the hip drop as a compression through the IK because their feet
+ * are still planted on the floor.
+ *
+ * `touchMatrices` rather than `updateMatrices` — the life layer that runs next
+ * reads through `worldPos`, which ensures for itself, so the walk is paid for
+ * once by whoever actually asks. See the note over `Rig.updateMatrices`.
+ */
+const _fold = new THREE.Quaternion();
+function foldHaunches(fig, sit) {
+  if (sit < 1e-3 || !fig.hind?.length) return;
+  const rig = fig.built.rig;
+  for (const i of fig.hind) {
+    const hip = rig.get(`hipL${i}`);
+    if (hip && !hip.severed) hip.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, -HAUNCH.hip * sit));
+    const femur = rig.get(`femur${i}`);
+    if (femur && !femur.severed) femur.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, -HAUNCH.femur * sit));
+    const tibia = rig.get(`tibia${i}`);
+    if (tibia && !tibia.severed) tibia.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, HAUNCH.tibia * sit));
+  }
+  rig.touchMatrices?.();
 }
 
 /** Put it away. Called from the room's own teardown. */
