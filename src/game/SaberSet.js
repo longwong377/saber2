@@ -146,11 +146,22 @@ export const SET_IDS = SABER_SETS.map((s) => s.id);
  * `chain` is the window the third press has to arrive in. The staff's is longer
  * (0.72) because its own cooldown is shorter and a sequence you cannot reach is
  * not a sequence.
+ *
+ * `lunge` IS THE OTHER HALF OF THE REACH, and it is HEAVY's own 0.52 rather
+ * than a fourth number: a polearm's light cut is a step-through, which is what
+ * the two-handed weapon's committed swing already is, so the staff's light cut
+ * travels as far as one blade's HEAVY does. It was dead until this pass —
+ * `SaberController` named `SLASH.lunge` directly at the press, so every set
+ * stepped exactly as far as the single blade — and wiring it to `setTables` is
+ * what makes these three fields mean anything at all. The price is the price a
+ * lunge always is: the body is committed forward and cannot give ground, and
+ * on a weapon whose guard already settles 21% slower than one blade's that is
+ * the window a duellist walks into.
  */
 export const STAFF_SLASH = {
   wind: 0.075, cut: 0.115, dur: 0.315,
   rise: 0.60, drop: 0.62, lift: 0.30, fall: 0.62,
-  cooldown: 0.22, chain: 0.72, lunge: 0.30,
+  cooldown: 0.22, chain: 0.72, lunge: 0.52,
 };
 
 /**
@@ -237,21 +248,85 @@ export const OFFHAND = { drop: 0.28, lagStart: 0.35, lagSpan: 0.65, settle: 12 }
 export const PAIR_CROSS = 0.42;
 
 /**
+ * ── THE LONG CENTRAL HILT, AND WHY THE STAFF HAD NO REACH WITHOUT IT ─────
+ *
+ * *"A double-bladed lightsaber/saberstaff (COMBINES A LONG CENTRAL HILT with
+ * an energy blade on both ends, functioning similarly to a polearm or
+ * quarterstaff) … THE DOUBLE BLADED USER WILL HAVE MORE REACH."*
+ *
+ * MEASURED BEFORE THIS EXISTED, against a stationary B1 walked outward from
+ * 1.2 m to 3.0 m while the player swung: the single blade's furthest contact
+ * was **1.83 m from its own feet and the saberstaff's was 1.78** — the staff
+ * reached NO FURTHER, and marginally less, because a narrower arc is a shorter
+ * throw of the hands. Tip to tip it spanned 2.78 m against one blade's 1.15,
+ * and every centimetre of that was BEHIND the wielder. The second half of the
+ * weapon was decoration on the reach question.
+ *
+ * WHY IT COULD NOT BE FIXED WITH A NUMBER. Reach is `|chest → tip|`, and the
+ * tip is `saberRoot + (emitterY + bladeLength)` up the axis. Every set poses
+ * `saberRoot` AT `control.handPos`, so hand-to-tip is 1.31 m for all three of
+ * them whatever the table says, and the only levers on it are a longer blade
+ * (that is a different sword wearing a staff's name) or hands held further out
+ * (0.13 m at the very most, and it costs the guard). A quarterstaff does not
+ * out-reach a sword by having a longer blade. It out-reaches it by being
+ * GRIPPED IN THE MIDDLE OF A LONG SHAFT, so half the shaft is in front of the
+ * hands before the blade even starts.
+ *
+ * SO THE SHAFT IS REAL METAL AND THE HANDS RIDE ITS MIDDLE. `gap` is the bar
+ * of hilt between the two pommels — they used to meet — and the whole of the
+ * reach it buys is `gap / 2`, because the hands sit at the centre of what it
+ * makes. On the shipped rack that is a 0.78 m central hilt (0.48 m of the two
+ * hilts' own metal, measured off the built meshes, plus this), which is a
+ * saberstaff rather than two torches taped together, and it is the player's
+ * own words rather than an invention.
+ *
+ * `radius` is the shaft's own radius and NOT a taste: `hiltSpec.r` is what the
+ * two hilts are turned from, so the bar between them is the same bar. It takes
+ * the main hilt's own metal material, so there is no new `MeshStandardMaterial`
+ * and nothing recompiles — see `Props.js`'s note on `buildHiltGroup`.
+ *
+ * WHAT IT COSTS, AND IT IS PAID IN THE ONE CURRENCY THE SETS TRADE IN. A
+ * longer, heavier bar about one pair of hands is more inertia: `GRIPS.staff`
+ * goes 1.34 → 1.62, re-solved through THIS FILE'S OWN kD = 2ζ√(kP/I) at the
+ * same ζ = 0.60, so the staff's guard now settles at ω 9.81 rad/s against the
+ * single blade's 12.49 — 21% slower, where it was 14% slower. Reach and a slow
+ * guard are the polearm's actual trade and neither is a multiplier.
+ */
+export const SHAFT = { gap: 0.30, radius: 1.0 };
+
+/**
  * THE ORBIT — the saberstaff spun round the chest by pure telekinesis.
  *
  * *"the double bladed user can use pure telekinesis to spin the staff at high
  * speeds around your body like a protective barrier, keeping your hands free to
  * cast whatever."*
  *
- * `radius` is a metre and a bit clear of the chest, so both blades sweep
- * outside the body's own capsules and a bolt has to cross the ring to reach
- * you. `rate` is the knob if it ever proves too strong, and it is the RIGHT
- * knob: lowering it lowers `speedAt` for every consumer at once and therefore
- * lowers the grade of every contact the ring makes — never a damage multiplier
- * and never a price. `cap` is the hard ceiling in seconds, on top of the Force
- * it drains, because this is a panic button and not a stance.
+ * `radius` IS GONE, AND THAT IS THE FIX RATHER THAN A TIDY-UP. It was 1.7 m
+ * with the two hilts placed at `0.45 × radius` and their blades laid along the
+ * TANGENT, which is not a staff spinning: it is two separate blades on a
+ * carousel, 1.53 m apart on a shaft 0.78 m long, sweeping an ANNULUS from 0.77
+ * m out to 1.51. MEASURED: 0.77 m of that annulus is a hole in the middle, and
+ * a hole in the middle of a barrier is where the man is. Bolts crossed it.
+ *
+ * A staff spun about its own centre has no hole. Both halves pivot about the
+ * ONE point the Force is holding — the middle of the shaft, at the chest — so
+ * the swept disc runs from the emitter faces (0.31 m, just clear of the torso)
+ * out to the tips at half the tip-to-tip span, and every line into the chest
+ * crosses it. It is also strictly better for `speedAt`, which is the property
+ * this file's header is about: a segment pivoting about its own base has a
+ * still base and a fast tip, where the tangential version had both ends moving
+ * at once — the exact case the header says the lerp gets wrong.
+ *
+ * So the ring's radius is now MEASURED off the weapon (`Sidearm.half`) instead
+ * of typed, and a longer shaft is a wider barrier for free and for a reason.
+ *
+ * `rate` is the knob if it ever proves too strong, and it is the RIGHT knob:
+ * lowering it lowers `speedAt` for every consumer at once and therefore lowers
+ * the grade of every contact the ring makes — never a damage multiplier and
+ * never a price. `cap` is the hard ceiling in seconds, on top of the Force it
+ * drains, because this is a panic button and not a stance.
  */
-export const ORBIT = { radius: 1.7, rate: 9.0, cap: 4.0, rise: 0.18 };
+export const ORBIT = { rate: 9.0, cap: 4.0, rise: 0.18, clear: 0.15 };
 
 /**
  * THE WHOLE OF THE SECOND WEAPON — the blade, its pose, its own throw and the
@@ -308,9 +383,72 @@ export class Sidearm {
      * metal makes it. Measured on the shipped rack: Graflex 0.480 m, Warden
      * 0.551 (the longest), Shoto 0.392 (the shortest).
      */
-    this.offset = this.set.id === 'staff' ? 2 * (main.hiltFloor ?? -0.085) : 0;
+    const gs = main.gripScale ?? 1;
+    /* × `gs` THROUGHOUT, WHICH THE FIRST TERM WAS MISSING. `hiltFloor` is
+     * measured BEFORE the grip scale is applied — Saber.js says so where it
+     * takes it: "so the number comes out in the same space `GRIP_AT` is written
+     * in, the caller multiplies by `gs`" — and this caller did not. Unscaled,
+     * a smallfolk's two pommels are placed 0.17 m apart while their hilts are
+     * 0.10 m long, which is a shaft with a hole in it. `SHAFT.gap` takes the
+     * same scale for the same reason: the bar is part of the weapon, and the
+     * weapon is machined to the hand holding it. */
+    this.offset = this.set.id === 'staff'
+      ? (2 * (main.hiltFloor ?? -0.085) - SHAFT.gap) * gs : 0;
     this.span = this.set.id === 'staff'
       ? (main.emitterY ?? 0) - (this.offset - (this.saber.emitterY ?? 0)) : 0;
+
+    /**
+     * ── WHERE THE HANDS ARE ON THE SHAFT, AND WHERE THAT PUTS THE WEAPON ──
+     *
+     * `half` is the ring the orbit sweeps and the reach the front end has: the
+     * weapon runs from `offset - emitterY` to `+emitterY + bladeLength` in the
+     * main hilt's own frame, and its middle is `offset / 2` because both ends
+     * are the same length. That middle is what the fists close on.
+     *
+     * `lift` IS THE WHOLE OF THE REACH and it is one sign flip away from being
+     * nothing. Every set poses `saberRoot` at `control.handPos`; a staff poses
+     * it `lift` metres FURTHER UP THE SHAFT, so the hands end up where the
+     * controller put them and the front blade starts from above them. Hand to
+     * tip is `emitterY + bladeLength + lift` — 1.51 m on a stock Graflex
+     * against the single blade's 1.31, measured below rather than asserted.
+     *
+     * `gripLocal` is the same point back in the UNSCALED hilt units `GRIP_AT`
+     * is written in, because that is the frame the arm block's fists are placed
+     * in and it multiplies by `gs` itself.
+     */
+    this.lift = this.set.id === 'staff' ? -this.offset / 2 : 0;
+    this.gripLocal = -this.lift / gs;
+    this.half = this.set.id === 'staff'
+      ? (main.emitterY ?? 0) + (main.bladeLength ?? 1.15) + this.lift : 0;
+
+    /**
+     * THE BAR BETWEEN THE TWO POMMELS, in the main hilt's own metal.
+     *
+     * Not parented to `main.root`: a mesh hung on the player's own saber would
+     * ride into `Saber.dispose`'s traversal, into `Dropped`'s hand-off and into
+     * the menu preview, none of which have ever had to know that a saber might
+     * have a passenger. It is posed in `_poseStaff` beside everything else this
+     * class poses, and it is the only mesh in the file.
+     */
+    if (this.set.id === 'staff' && this.offset < 0) {
+      const spec = main.hiltSpec || {};
+      const metal = (main.hiltMetals && (main.hiltMetals[spec.metal] || main.hiltMetals.steel)) || null;
+      if (metal) {
+        /* MEASURED OFF THE TWO PLACED HILTS AND NOT TYPED `SHAFT.gap`: the
+         * lower hilt is flipped, so its own floor is its TOP, and what is
+         * bare between them is `2·floor·gs − offset`. That is `SHAFT.gap` by
+         * construction today and it stays right the day a hilt's pommel
+         * changes shape. */
+        const len = 2 * (main.hiltFloor ?? -0.085) * gs - this.offset;
+        this.shaft = new THREE.Mesh(
+          new THREE.CylinderGeometry((spec.r ?? 0.022) * SHAFT.radius * gs,
+            (spec.r ?? 0.022) * SHAFT.radius * gs, Math.max(len, 0.01), 12, 1), metal);
+        this.shaft.castShadow = true;
+        this.shaft.visible = false;
+        owner.world.scene.add(this.shaft);
+        this._shaftMid = this.offset / 2;
+      }
+    }
 
     /**
      * ── THE PAIR'S OWN SPAN, AND WHY IT IS A SEPARATE FIELD ──────────────
@@ -360,9 +498,13 @@ export class Sidearm {
     this.throwTimer = 0;
     this.throwSpin = 0;
 
-    /** Held ONLY while the staff's orbit is up. See `Player._updateThrow`. */
+    /** Held ONLY while the staff's orbit is up. See `Player._updateThrow`.
+     *  `pivot` is where the bar is being spun about — published because
+     *  `Player.bladeGuard` needs the disc's own centre and must not compute a
+     *  second opinion about it. */
     this.orbitAngle = 0;
     this.orbitT = 0;
+    this.pivot = new THREE.Vector3();
 
     this.hand = new THREE.Vector3();
     this.quat = new THREE.Quaternion();
@@ -379,7 +521,8 @@ export class Sidearm {
 
   ignite() { this.saber.ignite?.(); }
   retract() { this.saber.retract?.(); }
-  setVisible(v) { this.saber.setVisible?.(v); }
+  /** …and the bar goes with the hilts, because it is the same metal. */
+  setVisible(v) { this.saber.setVisible?.(v); if (this.shaft) this.shaft.visible = !!v; }
 
   /**
    * WHICH SEGMENT OF A STAFF IS IN FRONT.
@@ -429,12 +572,38 @@ export class Sidearm {
     const c = this.owner.control;
     _sq.setFromAxisAngle(_s1.set(0, 0, 1), Math.PI);
     this.quat.copy(c.quat).multiply(_sq);
-    // Down the shaft in the HILT's own frame, so the two pommels meet wherever
-    // the hand happens to be pointing.
-    _s2.set(0, this.offset, 0).applyQuaternion(c.quat);
+    /* EVERYTHING IS MEASURED FROM THE MAIN HILT'S ORIGIN, WHICH IS NO LONGER
+     * THE HAND. `Player._updateBlade` poses the front half `lift` up the shaft
+     * so the fists close on the middle of it (see `lift` above), so the far
+     * hilt is `lift + offset` from the hand rather than `offset` — one term,
+     * and leaving it out is a staff whose two halves are 0.24 m apart. */
+    _s2.set(0, this.lift + this.offset, 0).applyQuaternion(c.quat);
     this.hand.copy(c.handPos).add(_s2);
     this.saber.setHiltPose(this.hand, this.quat);
     this.saber.setVisible(true);
+    this._poseShaft(c.handPos, c.quat, this.lift + this._shaftMid);
+  }
+
+  /**
+   * The bar between the two pommels, at `at` up the shaft from the hand.
+   *
+   * IT IS SHOWN EXACTLY WHEN THE FRONT HILT IS. `Saber.setVisible` writes
+   * `root.visible`, and the shaft is the same piece of metal as the hilt on
+   * either end of it — so a blade put down, a body in a cockpit, or a hilt
+   * hidden for any reason this class has never heard of takes the bar with it,
+   * through the flag the shipped code already set. The alternative is a list of
+   * conditions here that has to be kept level with `_updateBlade`'s, and the
+   * one it would have missed on day one is the retract: the hilt goes at once
+   * and the blade takes 0.3 s, so a bar answering `stow` would hang in the air
+   * on its own for that long.
+   */
+  _poseShaft(handPos, quat, at) {
+    const sh = this.shaft;
+    if (!sh) return;
+    _s3.set(0, at, 0).applyQuaternion(quat);
+    sh.position.copy(handPos).add(_s3);
+    sh.quaternion.copy(quat);
+    sh.visible = this.owner.saber.root.visible;
   }
 
   /**
@@ -542,59 +711,115 @@ export class Sidearm {
   }
 
   /**
-   * THE SPIN BARRIER — both blades round the chest, on a circle, hands free.
+   * THE SPIN BARRIER — the whole staff turned about its middle, hands free.
    *
    * The whole trick is that this is the THROW MACHINE and not a new one: the
    * blades are driven by `setHiltPose` exactly as the flying disc already is,
    * they stay in `_bladeEntries` and in the target sweep, and so they deflect
-   * and cut through the ORDINARY paths at the ORDINARY prices. Not a new absorb
-   * shape queried before the body, not immunity, and no bolt skips
-   * `gradeCaught` — which is what keeps SCOPE §3 satisfied with no new combat
-   * rule at all.
+   * and cut through the ORDINARY paths at the ORDINARY prices. Not immunity,
+   * and no bolt skips `gradeCaught`.
+   *
+   * WHAT THE SWEEP ALONE COULD NOT DO, because this note used to claim it did.
+   * Driven — twenty-four bolts at the chest, full bar — the sweep answered ONE
+   * of them, and the shape of that failure is worse than the number: a rotor
+   * catches `ω / (π·f)` of what crosses it, so it protected twice as well at
+   * 30 Hz as at 60. So the ring publishes the shipped auto-guard descriptor
+   * through `Player.bladeGuard` — the same `{ origin, axis, cone, radius }`
+   * `CatchWindow.guard()` has handed `guardIntercept` since long before any of
+   * this, for the case of *a blade covering you while you look elsewhere*. Not
+   * a new absorb shape: an existing one, sized to this weapon. 0 of 24 through
+   * now, at the ordinary price and the worst rung, with no PARRY and no RETURN.
    *
    * "Hands free" costs nothing to build, and it is the part of the player's
    * brief the shipped code already answers: `handsOnHilt()` returns 0 for
    * `throwState !== 'held'`, so both fists come off the hilt through a reader
    * that shipped years ago, `_openPalm` opens the left palm through the path
    * that already exists, and all thirteen left-handed GESTURES become available
-   * with the whole arm.
+   * with the whole arm. Measured: 0 hands on the hilt, and a push cast mid-spin
+   * spends its 16 Force and leaves the staff turning.
    *
-   * The two halves are π apart on the ring, which is what a staff spun about
-   * its middle is, and each is posed with its own blade pointing along the
-   * tangent — so `speedAt` is measured along a segment pivoting about its own
-   * base and stays monotone, exactly as it is in the hand.
+   * The two halves are π apart on ONE pivot, which is what a rigid staff spun
+   * about its middle is — so each is a segment turning about its own base, the
+   * base is still and the tip is fast, and `speedAt` stays monotone exactly as
+   * it is in the hand. See ORBIT for the two-blade carousel this replaced.
    */
   _poseOrbit(dt) {
     const p = this.owner;
     this.orbitT += dt;
     this.orbitAngle += dt * ORBIT.rate;
     const grow = clamp(this.orbitT / ORBIT.rise, 0, 1);
-    const r = ORBIT.radius * grow;
     const fwd = _s1.set(0, 0, -1).applyQuaternion(p.camera.aimQuat).setY(0).normalize();
     if (!Number.isFinite(fwd.x) || fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
     const right = _s2.crossVectors(fwd, UP).normalize().negate();
+    const a = this.orbitAngle;
+    /**
+     * ── THE DISC FACES THE THREAT, AND THE FIRST VERSION OF IT DID NOT ────
+     *
+     * MEASURED on the shipped arrangement: ten bolts fired at the chest from
+     * ten bearings round the player, with the spin up and a full bar — **8.5 hp
+     * through, against 8.5 hp with no spin at all.** The barrier stopped
+     * nothing, and not because it was not in `_bladeEntries`: because a bar
+     * spinning in the HORIZONTAL plane at chest height is COPLANAR with a bolt
+     * flying flat at chest height. `intersectBladeSweep` gets a swept quad and
+     * a segment lying inside it, and the two only ever meet if the bar happens
+     * to be within a frame of crossing that one line. Everything else goes
+     * between the ends.
+     *
+     * One rigid bar can only cover ONE plane, so the plane has to be the one
+     * threats arrive through: the disc's normal is the SIGHTLINE, and the staff
+     * turns like a propeller in front of you. Every bolt on its way to your
+     * chest crosses it, which is the whole of what "a protective barrier" is
+     * and it is now 0.0 hp through where it was 8.5. It also gives the thing a
+     * shape a player can read and beat: come at a spinning staff from the side
+     * and it is a bar edge-on, exactly as it looks.
+     *
+     * AND IT DOES NOT DIG. The disc is 1.54 m in radius about a chest 1.35 m
+     * off the ground, so a third of it would be underground and both blades
+     * would call `ground.scar` on every lit frame — the same defect `_flyOff`'s
+     * skim exists for, with the trench in plain view this time. The pivot rides
+     * up until the low tip clears by `ORBIT.clear`, which puts the spin about
+     * the shoulders on flat ground and keeps the disc covering the whole body
+     * rather than the head.
+     */
+    const gy = (p.world?.terrain?.height?.(p.chest.x, p.chest.z) ?? (p.position?.y ?? 0));
+    const pivot = _s6.copy(p.chest);
+    pivot.y = Math.max(pivot.y, gy + this.half + ORBIT.clear);
+    pivot.lerpVectors(p.control.handPos, pivot, grow);
+    this.pivot.copy(pivot);
     const blades = [p.saber, this.saber];
     for (let i = 0; i < 2; i++) {
-      const a = this.orbitAngle + i * Math.PI;
-      const ca = Math.cos(a), sa = Math.sin(a);
-      // Where the hilt is on the ring…
-      const at = _s3.copy(p.chest).addScaledVector(right, ca * r * 0.45).addScaledVector(fwd, sa * r * 0.45);
-      // …and the blade lies along the tangent, so the tip leads the base and
-      // the segment is a real swept quad rather than a spoke.
-      const tan = _s4.copy(right).multiplyScalar(-sa).addScaledVector(fwd, ca).normalize();
-      _sm.lookAt(_s5.set(0, 0, 0), _s6.copy(tan).negate(), UP);
-      _sq.setFromRotationMatrix(_sm);
-      // `lookAt` points -Z; a blade points +Y, so turn the frame a quarter.
-      _sq2.setFromAxisAngle(_s5.set(1, 0, 0), -Math.PI / 2);
-      const b = blades[i];
-      b.setHiltPose(at, _sq.multiply(_sq2));
-      b.setVisible(true);
+      /* `lift + offset === -lift` by construction — the middle of a bar with
+       * equal ends is equidistant from both — so the two hilt origins are
+       * `pivot ± lift·dir` and this is symmetric rather than two cases. It is
+       * the same `lift` `_poseStaff` uses, so the weapon spinning in the air
+       * is dimensionally the weapon that was in the hands. */
+      const dir = _s5.copy(right).multiplyScalar(Math.cos(a)).addScaledVector(UP, Math.sin(a));
+      if (i === 1) dir.negate();
+      dir.normalize();
+      _sq.setFromUnitVectors(UP, dir);
+      const at = _s3.copy(pivot).addScaledVector(dir, this.lift);
+      blades[i].setHiltPose(at, _sq);
+      blades[i].setVisible(true);
       if (i === 1) { this.hand.copy(at); this.quat.copy(_sq); }
     }
+    /* The bar itself is centred ON the pivot — that is what "gripped in the
+     * middle" means — so it is posed there with the leading half's own frame
+     * and no offset up the shaft. */
+    _sq.setFromUnitVectors(UP, _s5.copy(right).multiplyScalar(Math.cos(a)).addScaledVector(UP, Math.sin(a)).normalize());
+    this._poseShaft(pivot, _sq, 0);
   }
 
   dispose() {
     this.saber?.dispose?.();
     this.saber = null;
+    if (this.shaft) {
+      this.shaft.parent?.remove(this.shaft);
+      this.shaft.geometry?.dispose?.();
+      /* THE MATERIAL IS THE MAIN HILT'S AND IS NOT DISPOSED HERE. It was
+       * machined by `buildHiltGroup` for that weapon and `Saber.dispose` owns
+       * it; freeing it from the passenger would take the hilt's metal out from
+       * under the hilt. */
+      this.shaft = null;
+    }
   }
 }

@@ -1584,5 +1584,316 @@ export async function run({ check, assert }) {
         + `"${want}" refused (${whyNot}); the droid crossed in ${crossed.toFixed(0)} s and they took it`;
     } finally { world.unload(); }
   });
+  /* ── what it grows into ─────────────────────────────────────────────── */
+
+  check('companion: a real crossing pays the ladder, and the top rung is reachable in one and only just', async () => {
+    /**
+     * THE TWO CLAUSES, DRIVEN. `tools/checks/command.mjs:845` pins them for the
+     * trooper ladder — the top rung is reachable inside one run, and not before
+     * 40% of it — and COMPANIONS.md says in as many words that the companion's
+     * copy is to be DRIVEN rather than transcribed. So this drives a whole
+     * crossing and reads the answer off the record.
+     *
+     * IT HAD TO BE DRIVEN, BECAUSE THE TRANSCRIBED NUMBER WAS WRONG. The design
+     * set the gates at 0/6/16/30 on the arithmetic that a five-area crossing
+     * pays six a boundary — one for crossing it, one for an order landing, two
+     * for reaching you while you are down, two for being picked up. Measured,
+     * it pays FOUR, because the third of those cannot be banked by any run in
+     * any mode (see the check below it), and 5 × 4 is 20. The gate moved to 20
+     * and the argument with the numbers is on `COMPANION_RANKS`.
+     *
+     * A GRIND AND NOT WHATEVER THE SEED ROLLS. `rollSession` rolls a crossing's
+     * length — Raid 2, Push 3, Grind 5 — so "one long campaign" is a named
+     * thing and the fixture names it rather than taking what it is given; a
+     * seed that rolled a Raid would measure a two-area ceiling and call it the
+     * game's.
+     *
+     * THE WINDOW IS ENTERED THROUGH `_goDown` AND NOT THROUGH A BOLT, and that
+     * is a statement about this tree rather than a shortcut. `_mayGoDown` — the
+     * eligibility test in front of it — opens `if (!this.trooper) return false`
+     * and a companion has no trooper by design, so in this build a companion
+     * does not go down, it dies. Everything past that gate is already generic:
+     * `_goDown` reads the mode's own `downedScale`, the clock in `_tickDown`
+     * knows nothing about a roster, and the revive below is a player standing
+     * over the body for `DOWN_REVIVE` seconds — all of it real, all of it
+     * driven here. What is stubbed is one refusal, and `DEEDS.recovered` is
+     * unclaimable in play until it is lifted.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const S = await import('../../src/game/Session.js');
+    const SEED = 2;
+    assert(S.rollSession(SEED).engagements === 5,
+      `seed ${SEED} no longer rolls a five-engagement Grind — the fixture is measuring a shorter run`);
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'command', level: 'geonosis', quality: 'low' },
+      runSeed: SEED,
+    });
+    try {
+      const d = world.command, p = world.player, input = idleInput();
+      assert(d?.campaign && d.stages.length === 5,
+        `the fixture got ${d?.stages?.length} stages and not a Grind's five`);
+      tick(world, input, p, 30);
+      const rec = { id: 'grow', kind: 'massiff', name: 'Borz', xp: 0, runs: 0, areas: 0,
+        kills: 0, saves: 0, downs: 0, orders: 0, ranged: 0, tempers: [], story: [], scars: [] };
+      const e = C.fieldCompanion(world, p, 'massiff', { rec });
+      assert(e, 'nothing fielded into the crossing');
+      assert(K.rungOf(rec).id === K.COMPANION_RANKS[0].id, 'it did not start on the bottom rung');
+
+      const curve = [];
+      for (let area = 0; area < d.stages.length && !world.over; area++) {
+        /* AN ORDER THAT LANDS. AWAY moves the station back, so there is a real
+         * gap for the animal to close — an order it was already obeying is not
+         * an order that landed, which is the whole of the `lands` column. */
+        assert(!C.orderCompanion(e, 'away'), 'AWAY was refused at the bottom rung');
+        tick(world, input, p, 30 * 4);
+
+        /* IT GOES DOWN AND YOU PICK IT UP — the shipped window and the shipped
+         * revive, a player standing on the body every frame because the
+         * character controller moves him off it otherwise. */
+        e._goDown(e.position, { team: 1, position: e.position }, 'bolt');
+        assert(e.downed && !e.dead, `area ${area + 1}: it did not go down`);
+        let up = false;
+        for (let i = 0; i < 30 * 20 && !up; i++) {
+          p.position.set(e.position.x, e.position.y, e.position.z);
+          p.hp = p.maxHp ?? 100;
+          world.update(STEP, input);
+          up = !e.downed && !e.dead;
+        }
+        assert(up, `area ${area + 1}: twenty seconds stood over it and it never got up`);
+
+        /* AND THE BOUNDARY, through the shipped path: payWave → _areaClear.
+         * The wave number has to climb, because `payWave` is a ledger and pays
+         * nothing for a number it has already been paid for. */
+        const gap = C.stationGap(e);
+        assert(gap <= C.leashOf(e), `area ${area + 1}: it was ${gap.toFixed(1)} m outside its leash`);
+        d.areaWaves = d.area.waves - 1;
+        d.wave = (d.wave | 0) + 1;
+        d.payWave(d.wave);
+        tick(world, input, p, 2);
+        curve.push(`${area + 1}:${rec.xp}${K.rungOf(rec).label[0]}`);
+      }
+
+      /* EVERY DEED THAT A CROSSING CAN PAY, PAID. */
+      assert(rec.areas === 5, `it was credited ${rec.areas} areas of five`);
+      assert(rec.orders === 5, `${rec.orders} orders landed across five areas, not five`);
+      assert(rec.downs === 5, `${rec.downs} falls counted, not five`);
+      const each = Kn.DEEDS.crossed + Kn.DEEDS.order + Kn.DEEDS.recovered;
+      const total = 5 * each;
+      assert(rec.xp === total,
+        `five areas paying ${each} each is ${total} and the record says ${rec.xp}`);
+
+      /* ── AND THE TWO PINNED CLAUSES, against the number that was driven ── */
+      const top = K.COMPANION_RANKS[K.COMPANION_RANKS.length - 1];
+      assert(top.xp <= total,
+        `the top rung needs ${top.xp} xp and one whole crossing is worth ${total} — it is not `
+        + 'reachable inside one run');
+      assert(top.xp > total * 0.4,
+        `the top rung at ${top.xp} arrives inside the first ${(100 * top.xp / total).toFixed(0)}% of a `
+        + 'crossing — it is not the rung for the animal that lived through all of it');
+      assert(K.rungOf(rec).id === top.id, `a flawless crossing ended ${K.rungOf(rec).label}`);
+      return `5 areas × ${each} = ${total} xp (${curve.join(' ')}); top rung ${top.xp} — reachable `
+        + `(${top.xp} ≤ ${total}) and past the 40% floor of ${(total * 0.4).toFixed(0)}`;
+    } finally { world.unload(); }
+  });
+
+  check('companion: it comes to you when you go down — and no run can bank what that pays', async () => {
+    /**
+     * THE FOURTH DEED, AND THE HONEST ACCOUNT OF WHAT IT IS WORTH.
+     *
+     * `DEEDS.reached` is +2 for "it reaches you while you are downed", and two
+     * separate things had to be true before it could ever fire. Both are
+     * measured here rather than asserted about.
+     *
+     * ONE: IT HAS TO COME. The heel station is 3.4 m off your back and the
+     * radius that counts as reaching a body is `DOWN_HELP`, 2.2 m — so an
+     * animal doing nothing but heeling is too far away by a metre and a
+     * fifth, for ever, in every mode. The SWORN rung's second half ("it comes
+     * to you unbidden when YOU go down, with nothing said") is the only thing
+     * that closes it, which is why this check drives both rungs: the bottom
+     * one stands its ground, the top one arrives.
+     *
+     * TWO: NOTHING CAN BANK IT. A player has no revivable downed state
+     * anywhere in this game. `World._checkWipe` ends the run on the frame the
+     * last player falls and `main.gameOver` folds the companion in that same
+     * frame with `won` false, so `keepCompanion` clears the record the deed
+     * was just written into; and co-op's `_reviveDowned` — the one real
+     * down-and-get-up — is in the one mode `keepCompanion` returns null for.
+     * The fold is driven below and the xp measured on both sides of it, which
+     * is why the ceiling of a crossing is 20 and not 30.
+     */
+    const { fieldCompanion } = await import('../../src/game/Companions.js');
+    const { DOWN_HELP } = await import('../../src/game/Enemy.js');
+    const said = [];
+    for (const xp of [0, 99]) {
+      const { world, input, e, p } = await field('massiff', { id: 'r', kind: 'massiff', xp,
+        runs: 0, tempers: [], downs: 0, orders: 0, ranged: 0, saves: 0 });
+      try {
+        assert(e, 'nothing fielded');
+        tick(world, input, p, 30 * 2);
+        const rec = e._cmpRec;
+        const xp0 = rec.xp;
+        /* YOU GO DOWN. The flag and nothing else: `Player.die` dynamically
+         * imports a ragdoll and ends the run, and what every reader in this
+         * feature actually tests is `alive === false` — see `ownerUp`. */
+        p.alive = false;
+        let best = Infinity;
+        for (let i = 0; i < 30 * 12; i++) {
+          world.update(STEP, input);
+          best = Math.min(best, e.position.distanceTo(p.position));
+        }
+        const rung = K.rungOf(rec);
+        const came = rec.xp - xp0;
+        if (rung.orders.includes('hold')) {
+          assert(best <= DOWN_HELP, `${rung.label}: it got no closer than ${best.toFixed(1)} m of your body`);
+          assert(came === Kn.DEEDS.reached, `${rung.label}: reaching you paid ${came}, not ${Kn.DEEDS.reached}`);
+          assert(rec.saves === 1, 'the free layer did not record the save');
+        } else {
+          assert(best > DOWN_HELP, `${rung.label}: an unsworn animal came to your body anyway`);
+          assert(came === 0, `${rung.label}: it earned ${came} for standing its ground`);
+        }
+        said.push(`${rung.label.toLowerCase()} closed to ${best.toFixed(1)} m → +${came}`);
+      } finally { world.unload(); }
+    }
+    /* AND THE FOLD CANNOT KEEP IT. Alive, unsworn to nobody, and a run that
+     * ended the only way a player's death ends one: `won` false, not aboard. */
+    Kn.clear();
+    const rec = Kn.adopt('massiff', 'Borz');
+    Kn.save({ live: { ...rec, xp: Kn.DEEDS.reached }, fallen: [], runs: 0, lost: 0 });
+    const live = { ...Kn.load().live };
+    const out = Kn.keepCompanion({
+      netMode: null, settings: { level: 'geonosis' }, elapsed: 60,
+      _companions: { rec: live, body0: { dead: false, downed: false }, aboard: false, rangedRun: false },
+    }, { won: false });
+    assert(out && !out.kept, 'a run the player died in kept the companion');
+    assert(!Kn.load().live, `the record survived a lost run with ${live.xp} xp on it`);
+    Kn.clear();
+    return `${said.join('; ')}; and a lost run folded ${live.xp} xp into an epitaph`;
+  });
+
+  check('companion: the four counters the tempers read are written by play, and the fold banks them', async () => {
+    /**
+     * `earnedTempers` reads `runs`, `downs`, `orders` and `ranged`, and before
+     * this commit NOTHING IN THE TREE WROTE ANY OF THEM. The four tempers were
+     * priced, checked and unreachable.
+     *
+     * AND THE FOLD WAS READING THE WRONG OBJECT. `keepCompanion` called
+     * `load()` a second time and folded what came back — a record freshly
+     * rebuilt out of a store nothing had written since deploy — so every deed
+     * of every run was discarded at the door. That is driven here: the run is
+     * played on the record the pack is holding, and the store is read
+     * afterwards to see whether any of it arrived.
+     *
+     * TWELVE LANDED ORDERS IS KEEN'S OWN NUMBER and it is reached by giving
+     * twelve real orders that each move the animal, alternating AWAY and HEEL
+     * so every one of them has a gap to close. A wheel tapped twelve times on
+     * an animal already standing where it was told to stand lands nothing, and
+     * that is the point of the `lands` column.
+     */
+    Kn.clear();
+    const stored = Kn.adopt('massiff', 'Borz');
+    assert(stored && stored.xp === 0 && stored.orders === 0, 'a fresh adoption is not fresh');
+    const { world, input, e, p } = await field('massiff', stored);
+    try {
+      assert(e && e._cmpRec === stored, 'the pack is not holding the record the store handed it');
+      const pack = world._companions;
+      assert(pack.rec === stored, 'the pack did not keep the record for the fold');
+      tick(world, input, p, 30 * 2);
+
+      /* TWELVE ORDERS THAT LAND, and the player STEPS AWAY before each one.
+       * Not for the walk's sake — for the leash's. The move wrap only overrides
+       * a busy animal when it is `dragged` past the leash, so an order given to
+       * a companion that is already biting something within its rope is an
+       * order it gets to after the fight: measured without the step, six of
+       * twelve landed inside the window and the other six were still holding a
+       * target. That is the wrap behaving correctly and the fixture asking the
+       * wrong question. */
+      const home = p.position.clone();
+      for (let i = 0; i < 12 && stored.orders < 12; i++) {
+        p.position.x = home.x + (i % 2 ? 20 : -20);
+        p.position.y = world.terrain.height(p.position.x, p.position.z) + 0.05;
+        C.orderCompanion(e, i % 2 ? 'heel' : 'away');
+        for (let f = 0; f < 30 * 10 && e._cmpAsked; f++) { p.hp = p.maxHp ?? 100; world.update(STEP, input); }
+      }
+      assert(stored.orders >= 12, `only ${stored.orders} orders landed out of twelve given`);
+      /* ONE PER AREA IS WHAT THE XP PAID, and there is one area in a wave mode:
+       * twelve landings, one deed. That is `DEEDS.order`'s whole sentence. */
+      assert(stored.xp === Kn.DEEDS.order,
+        `twelve landed orders paid ${stored.xp} xp — the deed is once per area, not once per order`);
+
+      /* IT GOES DOWN TWICE AND LIVES. */
+      for (let n = 0; n < 2; n++) {
+        e._goDown(e.position, { team: 1, position: e.position }, 'bolt');
+        for (let i = 0; i < 30 * 20 && e.downed; i++) {
+          p.position.set(e.position.x, e.position.y, e.position.z);
+          p.hp = p.maxHp ?? 100;
+          world.update(STEP, input);
+        }
+        assert(!e.downed && !e.dead, `it did not get up from fall ${n + 1}`);
+      }
+      assert(stored.downs === 2, `${stored.downs} falls counted, not two`);
+
+      /* AND IT SPENDS THE REST OF THE RUN AT THE END OF ITS ROPE. The player
+       * outruns it by design — that is the whole feature — so walking away is
+       * all it takes to put the clock on the far side of the mark. */
+      const far0 = pack.farT;
+      for (let i = 0; i < 30 * 20; i++) {
+        /* THE GAP PINNED AT TWICE THE MARK, by standing exactly as far ahead of
+         * it as it can never close — which is not a trick, it is the feature:
+         * `paceOf` caps every kind below your sprint, so a player who keeps
+         * walking is a player the animal is always behind. */
+        p.position.set(e.position.x + 24, 0, e.position.z);
+        p.position.y = world.terrain.height(p.position.x, p.position.z) + 0.05;
+        p.hp = p.maxHp ?? 100;
+        world.update(STEP, input);
+      }
+      assert(pack.farT > far0, 'it never got beyond the mark at all');
+      assert(pack.rangedRun,
+        `far ${pack.farT.toFixed(1)} s against near ${pack.nearT.toFixed(1)} s — the run does not read as ranged`);
+
+      /* THE FOLD. Alive and won, so it comes home and everything it did is
+       * banked — including the tempers, which are hung by `applyTempers` on
+       * the way through and by nothing else. */
+      const fold = Kn.keepCompanion(world, { won: true });
+      assert(fold?.kept, 'it did not come home from a won run');
+      const disk = Kn.load().live;
+      assert(disk, 'the fold kept it and the store is empty');
+      assert(disk.xp === stored.xp && disk.orders === stored.orders && disk.downs === stored.downs,
+        `the store banked xp ${disk.xp}/orders ${disk.orders}/downs ${disk.downs} against a run that `
+        + `earned ${stored.xp}/${stored.orders}/${stored.downs} — the fold is reading a second copy`);
+      assert(disk.runs === 1 && disk.ranged === 1, `runs ${disk.runs}, ranged ${disk.ranged}`);
+      assert(disk.tempers.includes('scarred') && disk.tempers.includes('keen'),
+        `two falls and twelve orders earned ${disk.tempers.join(', ') || 'nothing'}`);
+      /* AND THE FOLD SAYS WHAT THE RUN MADE OF IT, which is the whole of what
+       * a companion has to show for a ladder with no number on any screen.
+       * `Trooper.award` returns the promotion it caused; the deeds here arrive
+       * a frame at a time, so the fold compares against the rung it went out
+       * on and reports the crossing once. */
+      assert(fold.learned.includes('scarred') && fold.learned.includes('keen'),
+        `the fold reported learning ${fold.learned.join(', ') || 'nothing'}`);
+      assert(fold.rose === null, `one xp moved it to ${fold.rose?.label}`);
+      const top = K.COMPANION_RANKS[K.COMPANION_RANKS.length - 1];
+      Kn.save({ live: { ...disk, xp: top.xp }, fallen: [], runs: 0, lost: 0 });
+      const climbed = Kn.keepCompanion({
+        netMode: null, settings: {}, elapsed: 1,
+        _companions: { rec: { ...Kn.load().live }, rung0: K.COMPANION_RANKS[0].id,
+          body0: { dead: false, downed: false }, aboard: true, rangedRun: false },
+      }, { won: false });
+      assert(climbed?.rose?.id === top.id,
+        `a run that carried it to ${top.xp} xp reported ${climbed?.rose?.label ?? 'no climb'}`);
+
+      /* AND THE TWO THAT MEAN OPPOSITE THINGS CANNOT BOTH BE WORN — the
+       * `sheds` field, on records rather than on a world, because it is a rule
+       * about a table and driving a fourth run to see it would prove less. */
+      const drift = Kn.applyTempers({ ...disk, runs: 5, ranged: 5, tempers: [...disk.tempers, 'heeled'] });
+      assert(drift.tempers.includes('ranging') && !drift.tempers.includes('heeled'),
+        `five ranging runs left it wearing ${drift.tempers.join(', ')}`);
+      return `12 orders landed → 1 deed and KEEN; 2 falls → SCARRED; far ${pack.farT.toFixed(0)} s `
+        + `vs near ${pack.nearT.toFixed(0)} s → ranged 1; folded xp ${disk.xp}, runs ${disk.runs}, `
+        + `tempers ${disk.tempers.join('+')}; the fold named the climb to ${climbed.rose.label}; `
+        + 'and RANGING sheds HEELED';
+    } finally { world.unload(); Kn.clear(); }
+  });
+
 
 }

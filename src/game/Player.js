@@ -1709,6 +1709,18 @@ export const GRIP_AT = { ...GRIP_PAIR, FP: -0.075, ONE: (GRIP_PAIR.R + GRIP_PAIR
 export const GRIP_STAFF = { R: 0.10, L: -0.10 };
 
 /**
+ * …AND THEY ARE MEASURED FROM THE SHAFT'S MIDDLE, NOT FROM THE HILT'S ORIGIN.
+ *
+ * The note above was written when a saberstaff was two pommels touching and the
+ * hand was at the front hilt's origin; the numbers were right and the frame was
+ * not, and — measured — the constant had no caller at all, so the staff was
+ * held by `GRIP_AT.R` like every other weapon. It is now added to
+ * `Sidearm.gripLocal`, the centre of the bar the two hilts and `SHAFT.gap`
+ * make, so ±0.10 spreads the fists over 0.20 m of a 0.78 m shaft with a third
+ * of a metre of metal clear on both sides of them.
+ */
+
+/**
  * THE GRIP POINTS FOR A SET — identity default, one lookup.
  *
  * The pair's off hilt reuses `GRIP_AT` unchanged, because a shoto in one hand
@@ -3880,6 +3892,113 @@ export class Player {
   }
 
   /**
+   * ── THE SECOND BLADE, AS SOMETHING THE WORLD CAN RESOLVE ────────────────
+   *
+   * MEASURED BEFORE THIS EXISTED, and it is the finding this method is: a
+   * staff and a pair were TWO LIT SABERS AND ONE WEAPON. `World._bladeEntries`
+   * pushes `p.saber` and nothing else, and `World._resolveBlades` solves
+   * `p.saber` against the target list and nothing else — so across every set,
+   * driven for 90 frames against a stationary B1 at every distance from 1.0 m
+   * to 2.6 m, the off blade produced **0 contact events and deflected 0
+   * bolts**. `offDamage`, `Sidearm.blades()` and `Sidearm.frontBlade()` had no
+   * caller anywhere in the tree. The saberstaff's far end was a light.
+   *
+   * That is the whole of why the five clauses the player wrote could not be
+   * measured: a barrier that stops nothing, a thrown blade that leaves nothing
+   * behind, a follow-up strike with no second contact to time, and "effective
+   * against multiple opponents" with one blade doing all the work.
+   *
+   * IT IS PUBLISHED AS RECORDS RATHER THAN SOLVED HERE, and that is the
+   * decision. `World` owns the target list, the solver, the lock stand-down,
+   * the riding rule and the bolt ladder; every one of those is a rule that
+   * already exists and that a second copy in Player.js would eventually
+   * disagree with. So this answers one question — *which blades is this player
+   * fighting with, and what share of the cut does each take* — and the two
+   * shipped loops in World.js iterate it exactly as they iterate `p.saber`.
+   *
+   * `damage` is `SABER_SETS[].offDamage` and not a new number: 1 for the
+   * staff, whose far end is the same weapon on the same shaft, and the shipped
+   * 0.55 an Enemy's `_offhandStrike` already bills for the pair's shoto.
+   *
+   * THE THROWN SHOTO IS STILL ON THIS LIST, deliberately. The main blade cuts
+   * while it flies — `_resolveBlades` never asked `throwState` — so a shoto
+   * that stopped cutting the moment it left the hand would be the one throw in
+   * the game that is worse than not throwing. It is the same weapon; only the
+   * hand it is in changed.
+   */
+  /**
+   * ── WHAT SHAPE THIS PLAYER'S BLADES ANSWER WITH, and why a spinning bar
+   * needs one at all ──────────────────────────────────────────────────────
+   *
+   * MEASURED ON THE SPIN BARRIER BEFORE THIS EXISTED, with both halves in
+   * `_bladeEntries` and genuinely sweeping: ten bolts fired at the chest from
+   * ten bearings, full bar, spin up — **8.5 hp through, against 8.5 hp with no
+   * spin at all.** Two deflects out of twenty crossings. The barrier was a
+   * barrier in the notes and a strobe in the world.
+   *
+   * AND IT COULD NOT BE FIXED BY SPINNING FASTER, which is the finding that
+   * matters. A two-ended bar turning at ω answers the fraction of shots that
+   * arrive while it happens to be crossing them, and `intersectBladeSweep` is
+   * handed one frame of that sweep: 2·ω·Δt / 2π = ω / (π·f). At `ORBIT.rate` 9
+   * that is 4.8% at 60 Hz — and **9.5% at 30 Hz**. A protection that doubles
+   * when the machine slows down is the exact defect `cutting.mjs`'s own note is
+   * about ("60 Hz banked 2.42 and 144 Hz banked 1.68"), pointed at the player's
+   * survival instead of at cut work. Raising `rate` scales a frame-rate
+   * dependence rather than removing it, and takes `speedAt` — and therefore the
+   * grade of every contact the ring makes — up with it.
+   *
+   * SO IT ANSWERS THROUGH THE SHIPPED AUTO-GUARD SHAPE, which is not a new
+   * mechanic and not a new absorb volume: `CatchWindow.guard()` has published
+   * `{ origin, axis, cone, radius }` to `guardIntercept` since before any of
+   * this, for exactly the case of *a blade covering you while you are looking
+   * somewhere else*, and a staff spun by the Force with your hands free is that
+   * case in its purest form. `cone` is `GUARD.reach / 2` — the shipped 100°
+   * rose the guard already says you cannot see past, as a half-angle — so a
+   * bolt from the flank meets a bar edge-on and goes through, exactly as it
+   * looks. `radius` is the weapon's own `half`, so a longer shaft is a wider
+   * barrier for a reason rather than by a constant.
+   *
+   * WHAT IT STILL GIVES UP, and this is what stops it being strictly better
+   * than holding the blade. `entry.guard` is the AUTO path in `Bolts.update`:
+   * `zone` — the directional guard you are steering — is null while `guarding`
+   * is false, so there is no PARRY window, no RETURN and no PERFECT by timing,
+   * and every bolt it answers is billed on the ordinary ladder at the worst
+   * rung. It costs 13.6 Force/s against zero regen, caps at `ORBIT.cap`, and
+   * a duellist walks through it because a duellist is not a bolt.
+   */
+  bladeGuard() {
+    const arm = this.sidearm;
+    if (this.throwState === 'orbit' && arm && arm.half > 0) {
+      const g = this._orbitGuard || (this._orbitGuard =
+        { origin: new THREE.Vector3(), axis: new THREE.Vector3(), cone: GUARD.reach / 2, radius: 0 });
+      /* By reference into nothing: `guardIntercept` reads these synchronously
+       * inside the same frame's `Bolts.update`, exactly as `CatchWindow.guard`
+       * hands over its live origin and axis, so one object is reused and
+       * nothing is allocated per frame per bolt. */
+      g.origin.copy(arm.pivot);
+      g.axis.copy(this.aimDir);
+      g.radius = arm.half;
+      return g;
+    }
+    return this.boltCatch ? this.boltCatch.guard() : null;
+  }
+
+  offBlades(out = []) {
+    out.length = 0;
+    const arm = this.sidearm;
+    if (!arm || !arm.saber || !this.alive) return out;
+    /* THE SHIPPED IGNITION GATE AND NOT A NEW ONE. `_bladeEntries` drops a
+     * blade at `ignition <= 0.5` and `BladeContactSolver.solve` returns empty
+     * below 0.7; a half-stanced staff retracts its lower end through the
+     * ordinary curve, so the record disappears on its own with nothing here to
+     * say about it. This is the cheaper of the two, so both gates still get
+     * asked downstream by the code that owns them. */
+    if (arm.saber.ignition <= 0.5) return out;
+    out.push({ saber: arm.saber, damage: arm.set.offDamage });
+    return out;
+  }
+
+  /**
    * THIS BODY, AS SOMETHING A BLADE CAN FIND.
    *
    * A Player had no `capsules()` at all, and that single absence is most of why
@@ -5744,7 +5863,28 @@ export class Player {
        * one frame. The hilt is drawn iff it is in the hand. */
       if (this.saberDown) this.saber.setVisible(false);
       else {
-        this.saber.setHiltPose(this.control.handPos, this.control.quat);
+        /**
+         * ── AND A SABERSTAFF IS POSED UP ITS OWN SHAFT ────────────────────
+         *
+         * `lift` is 0 for every set but the staff, so this is the shipped line
+         * for the single blade and for the pair — the same expression, not a
+         * branch around it, which is what keeps `_singleblade.json` at 1e-9.
+         *
+         * For a staff it is the whole of the reach. Every weapon in this game
+         * poses its hilt ORIGIN at `control.handPos`, which is fine for a sword
+         * held at its pommel and wrong for a bar held at its middle: it put the
+         * front emitter 0.155 m above the fists when it should be 0.39, and the
+         * measured consequence was a 2.78 m weapon that could not touch a body
+         * one centimetre further away than a single blade could. Lifting the
+         * origin puts the FISTS where the controller asked for them — see
+         * `Sidearm.lift`, and the arm block below, which reads the same field
+         * so the drawn hands and the posed metal cannot disagree.
+         */
+        const lift = this.sidearm?.lift ?? 0;
+        if (lift) {
+          _v1.set(0, lift, 0).applyQuaternion(this.control.quat).add(this.control.handPos);
+          this.saber.setHiltPose(_v1, this.control.quat);
+        } else this.saber.setHiltPose(this.control.handPos, this.control.quat);
         this.saber.setVisible(true);
       }
     } else {
@@ -6499,10 +6639,37 @@ export class Player {
        * person already had a grip of its own for one hand and third person did
        * not: it held `GRIP_AT.R`, which is the top half of a two-handed pair,
        * with the whole lower grip section empty under it. See `GRIP_AT.ONE`. */
-      const fpR = fp ? fpGripOn(this.saber) + fpPair : (twoHanded ? GRIP_AT.R : GRIP_AT.ONE);
+      /**
+       * ── AND A SABERSTAFF'S FISTS ARE ON THE SHAFT, NOT ON THE EMITTER ───
+       *
+       * `GRIP_STAFF` was written for a doubled hilt and had NO CALLER: this
+       * line read `GRIP_AT.R` for every set, so a saberstaff was held by two
+       * fists 65 mm apart at the top of the front hilt — a quarterstaff gripped
+       * like a broadsword, with 0.6 m of bar hanging under the hands.
+       *
+       * `Sidearm.gripLocal` is the shaft's own middle in the unscaled hilt
+       * units `GRIP_AT` is written in, so `× gs` below carries it exactly as it
+       * carries everything else. It is the SAME number `_updateBlade` lifts the
+       * hilt by, negated: the metal is moved up so the hands land here, and
+       * both readers take it from the one field rather than each computing it.
+       *
+       * ±0.10 about that centre and not ±0.0325: `GRIP_STAFF`'s own note says
+       * why — 65 mm is what two fists straddle on a sword's grip section, and a
+       * bar you brace across you is held wider than that.
+       */
+      const staffGrip = this.sidearm?.set.id === 'staff' ? this.sidearm.gripLocal : null;
+      /* AND IT OUTRANKS THE FIRST-PERSON GRIP RATHER THAN SITTING UNDER IT.
+       * `fpGripOn` answers "how far down THIS HILT may a viewmodel fist sit
+       * without hanging over the emitter" — a question about one hilt, asked
+       * because §6.0's grip is over-constrained. A saberstaff is not held on a
+       * hilt at all: it is held on the bar between two of them, in every view,
+       * and there is nothing for that rule to be over-constrained about. */
+      const fpR = staffGrip !== null ? staffGrip + GRIP_STAFF.R
+        : (fp ? fpGripOn(this.saber) + fpPair : (twoHanded ? GRIP_AT.R : GRIP_AT.ONE));
       const gripR = this.saber.root.localToWorld(_v2.set(0, fpR * gs, 0));
       const gripL = this.saber.root.localToWorld(
-        _v3.set(0, (fp ? fpR - FP_HAND_GAP : GRIP_AT.L) * gs, 0));
+        _v3.set(0, (staffGrip !== null ? staffGrip + GRIP_STAFF.L
+          : (fp ? fpR - FP_HAND_GAP : GRIP_AT.L)) * gs, 0));
       /**
        * THE WRIST IS NOT THE GRIP. See GRIP_BORE.
        *
@@ -9210,21 +9377,27 @@ export class Player {
    * IT IS INSIDE THE ECONOMY, NOT BESIDE IT, and that is the critical decision.
    * The orbiting blades stay in `_bladeEntries` and in the target sweep, so
    * they genuinely deflect and genuinely cut through the ORDINARY paths at the
-   * ORDINARY prices. Not a new absorb shape queried before the body, not
-   * immunity, and no bolt skips `gradeCaught`. It needs no `GUARD_COST` row
-   * either: while it orbits `guarding` is false and the entries carry `guard:
-   * null, screen: null`, so every bolt it answers is a swept-quad contact off a
-   * blade nobody drove — a BLOCK at the shipped 1.2 stamina, the most expensive
-   * rung there is.
+   * ORDINARY prices. Not immunity, and no bolt skips `gradeCaught`. It needs no
+   * `GUARD_COST` row either: while it orbits `guarding` is false, so every bolt
+   * it answers is a BLOCK at the shipped 1.2 stamina, the most expensive rung
+   * there is.
    *
-   * WHAT IT GIVES UP, and this is what stops it being a strictly-better button:
-   * while it orbits you have NO GUARD ROSE AT ALL. `bladeHeld` is false,
-   * `guarding` is false, `_publishGuard` returns early with `zone = NONE` and
-   * `parry = false` — no directional zone, no PARRY window, no RETURN or
-   * PERFECT by timing. The orbit answers by geometry only, at the worst rung,
-   * and only what the circle happens to cross. The screen goes with it, so a
-   * staff user spinning is covering nobody but himself, and with 100 Force and
-   * the stamina bar both draining a duellist walks straight through it.
+   * THE SWEEP ALONE WAS NOT A BARRIER, AND THIS NOTE USED TO SAY IT WAS. Driven
+   * — twenty-four bolts at the chest, full bar, both halves genuinely in the
+   * entry list — it answered ONE, because a bar is mostly holes and a rotor
+   * catches `ω / (π·f)` of what crosses it, i.e. twice as much at 30 Hz as at
+   * 60. `bladeGuard()` is where that is answered and why; read it before
+   * touching this.
+   *
+   * WHAT IT STILL GIVES UP, and this is what stops it being a strictly-better
+   * button: while it orbits you have NO DIRECTIONAL GUARD. `bladeHeld` is
+   * false, `guarding` is false, `_publishGuard` returns early with `zone = NONE`
+   * and `parry = false` — no zone, no PARRY window, no RETURN or PERFECT by
+   * timing, and the whole contact ladder collapses to its bottom rung. The
+   * screen goes with it, so a staff user spinning is covering nobody but
+   * himself, and with 13.6 Force/s and the stamina bar both draining under a
+   * hard 4.0 s cap a duellist walks straight through it — a duellist is not a
+   * bolt and `guardIntercept` is only ever asked about bolts.
    */
   spinBarrier(ctx) {
     if (this.throwState === 'orbit') { this.throwState = 'returning'; return; }

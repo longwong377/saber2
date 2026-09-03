@@ -8703,7 +8703,17 @@ export const CREATURE_PLANS = {
     /* Two verbs and no more. A massiff is a set of jaws that closes the last
      * two metres fast; it does not gore, toss, slam or pounce, and giving a
      * companion the reek's move list would make it a reek that follows you. */
-    moves: ['lunge', 'rake'],
+    /* AND `charge` AT PHASE 3, which is the escalation this row did not have.
+     * `dodgeable.mjs` asks two things of a move set — at least two verbs in
+     * phase 1, which is two thirds of the health bar, and at least one that
+     * unlocks later so that hurting the animal CHANGES something — and
+     * [lunge, rake] answered the first and failed the second: a massiff at 10%
+     * fought exactly like a massiff at 100%. A charge is the right third verb
+     * for this body and not a filler: the whole of what a massiff does is
+     * occupy the thing it is on, and an animal that has been hurt badly enough
+     * stops holding station and commits. It is the same verb the nexu and the
+     * reek escalate into, at the same gate. */
+    moves: ['lunge', 'rake', 'charge'],
   },
 
   charger: {
@@ -9235,7 +9245,11 @@ export const CREATURE_PLANS = {
      * the RAKE is the only thing it can do once it is there. Its damage is on
      * the archetype and it is small; the point of the pair is that the pounce
      * knocks a body over for your blade, not that it kills. */
-    moves: ['pounce', 'rake'],
+    /* THE SAME THIRD VERB AND THE SAME GATE, for the opposite reason. This is
+     * the fastest thing the player can own and the one that outruns him into
+     * trouble; a whelp that has been opened up and still only pounces is an
+     * animal whose fight has one gear. `charge` at phase 3 is the gear. */
+    moves: ['pounce', 'rake', 'charge'],
   },
 
   /**
@@ -9690,7 +9704,19 @@ export const CREATURE_PLANS = {
      * the rider stays over the hips. The second verb every other fighting body
      * here carries is deliberately absent: see the massiff's note on giving a
      * companion the reek's move list. */
-    moves: ['lunge'],
+    /* THREE VERBS AND NOT ONE. A single-verb set fails `dodgeable.mjs` twice
+     * over — one phase-1 move IS the "they all attack the same way" complaint
+     * in the data, and with nothing above it the animal never escalates — and
+     * a blurrg is the one mount authored to fight, so it is the last body in
+     * the table that should have had a single loop.
+     *
+     * `toss` at phase 1 is what a blurrg's head does: 1.0 of reach against
+     * lunge's 0.75 and 0.85 damage, a wide throw of the skull rather than a
+     * snap, which is the move that makes a rider's mount dangerous to stand
+     * beside. `charge` at phase 3 is the escalation and it is also the animal:
+     * a blurrg comes round badly and commits straight, which is exactly the
+     * `drive` aim. */
+    moves: ['lunge', 'toss', 'charge'],
   },
 
   /**
@@ -9818,7 +9844,14 @@ export const CREATURE_PLANS = {
         femurRest: [0.12, -0.66, -0.74], tibiaRest: [0.02, -0.84, -0.54] },
     ],
     step: 0.20, lift: 0.10, rear: 0.16,
-    moves: ['pounce'],
+    /* RAKE AT PHASE 1 AND SWEEP AT 2, on the same argument as the blurrg's and
+     * with the bird's own anatomy deciding which. A raptor's two weapons are
+     * the stoop and the talons, so `pounce` and `rake` are one animal rather
+     * than a verb and a filler; `sweep` at phase 2 is the wing buffet, and it
+     * is the widest reach in the table at 1.15, which is what a two-and-a-half
+     * metre span is FOR. One phase-1 verb was a bird that did the same thing
+     * from full health to nearly dead. */
+    moves: ['pounce', 'rake', 'sweep'],
   },
 
 };

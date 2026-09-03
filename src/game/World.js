@@ -266,6 +266,12 @@ function nextFrame() {
 /** Scratch for the aim origin — see the `aimOrigin` note in _throwCaught. */
 const _aimFrom = new THREE.Vector3();
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
+/* `world.players` IS NOT ALL `Player`s. A `RemoteAvatar` is put in that list on
+ * purpose — it is what lets an enemy blade cut a joining player — and it holds
+ * one `Saber` and nothing else, so it answers no question about a second one.
+ * `?.` and this constant, rather than a method on Net.js's avatar that would
+ * have to return the same empty answer forever. */
+const NO_BLADES = Object.freeze([]);
 const _blastAt = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
 /** Wire precision. Centimetres for positions, milli-units for directions. */
@@ -4110,8 +4116,28 @@ export class World {
       // on `b.team === entry.team`, and in PvP a duellist is on side 2, 3 or 4.
       // Stamping every player's blade with the party's number told that test
       // the wrong side for three of the four. Same rule as `_onBoltDeflect`.
-      out.push({ saber: p.saber, owner: p, team: asTeam(p.team), guard: p.boltCatch ? p.boltCatch.guard() : null,
+      /* `bladeGuard()` IS `boltCatch.guard()` FOR EVERYBODY who is not spinning
+       * a saberstaff — it returns exactly that — so this line is unchanged for
+       * every player in every other set. A `RemoteAvatar` has neither, and gets
+       * the same null it always got. See `Player.bladeGuard`. */
+      out.push({ saber: p.saber, owner: p, team: asTeam(p.team),
+        guard: p.bladeGuard ? p.bladeGuard() : (p.boltCatch ? p.boltCatch.guard() : null),
         screen: this._screenFor(p) });
+      /* ── AND THE SECOND BLADE, WHICH ANSWERS BY GEOMETRY ONLY.
+       *
+       * `guard: null, screen: null` is the whole balance of both new sets on
+       * the bolt ladder and it is a fact rather than a difficulty knob: the
+       * directional zone and the auto-guard cone are things the CONTROLLER
+       * drives, and nobody is driving the off blade — it is carried, or spun,
+       * or in the air. So it catches exactly what its own swept quad crosses,
+       * at `_onBoltDeflect`'s worst rung, and the timing rungs (PARRY, RETURN)
+       * stay on the blade the player is actually pointing.
+       *
+       * `Player.offBlades` decides which blades those are; this loop knows
+       * only that a player may have more than one. */
+      for (const b of (p.offBlades?.(this._offBlades || (this._offBlades = [])) || NO_BLADES)) {
+        out.push({ saber: b.saber, owner: p, team: asTeam(p.team), guard: null, screen: null });
+      }
     }
     /* NO `screen` ON AN ENEMY BLADE, and it is a rule rather than an omission.
      * `_onBoltDeflect`'s enemy branch bats a bolt away with no grading and no
@@ -4568,6 +4594,24 @@ export class World {
 
       const events = this.bladeSolver.solve(p.saber, targets, dt, { power: p.boonMods.cutPower });
       for (const ev of events) this._applyBladeEvent(p, ev, dt);
+      /* ── AND EVERY OTHER BLADE THE SAME PLAYER IS FIGHTING WITH.
+       *
+       * The SAME target list, the SAME solver and the SAME event handler — so
+       * the riding rule, the friendly-fire gate, the duel's bodies, the deck's
+       * bodies and the weak-point ordering are asked once and answered once
+       * for both halves of the weapon. The solver's `progress` map is keyed
+       * `targetId:bone`, so two blades working the same forearm fill ONE
+       * budget between them and `cooldown` still bills the severance once:
+       * a saberstaff parts a limb sooner because two edges are on it, not
+       * twice over.
+       *
+       * `power` carries the set's own `offDamage` — 1 for the staff's far end,
+       * 0.55 for the pair's shoto — multiplied into the boon the main blade
+       * already gets, rather than a second multiplier of its own. */
+      for (const b of (p.offBlades?.(this._offSolve || (this._offSolve = [])) || NO_BLADES)) {
+        for (const ev of this.bladeSolver.solve(b.saber, targets, dt,
+          { power: p.boonMods.cutPower * b.damage })) this._applyBladeEvent(p, ev, dt);
+      }
     }
 
     // enemy blades vs the player, and blade-on-blade
@@ -5092,6 +5136,16 @@ export class World {
   _onBoltDeflect(bolt, entry, hit, bladePoint) {
     const owner = entry.owner;
     const isPlayer = owner instanceof Player;
+    /* THE BLADE THAT MET THE BOLT IS `entry.saber`, NOT `owner.saber`, and
+     * until a player could carry two of them those were the same object for
+     * every entry on the list — so the four reads below (`strain`,
+     * `captureSnapshot`, `bolts.hold`) were free to say either and said the
+     * wrong one. They are IDENTICAL for all ~30 enemy blades and for every
+     * single-blade player, which is why nothing moved when they were changed;
+     * they differ only for a saberstaff's far end and a pair's shoto, where
+     * grading the contact off the main blade's speed and pinning the caught
+     * bolt to the main blade would have been visibly wrong — the bolt would
+     * hang in the air a metre from the weapon that stopped it. */
     /**
      * "ALREADY OURS" IS A QUESTION ABOUT SIDES, NOT ABOUT THE CONSTANT 0.
      *
@@ -5148,7 +5202,7 @@ export class World {
       owner.screened = (owner.screened || 0) + 1;
       owner.strayed = (owner.strayed || 0) + 1;
       bolt.active = false;
-      owner.saber.strain(0.3);
+      entry.saber.strain(0.3);
       this.particles.sparkBurst(bladePoint, null, 8, { speed: 6 });
       audio.deflect(bladePoint, 0);
       this.onDeflectFeedback?.(GRADE.BLOCK, bladePoint, 'a stray off your own line, stopped');
@@ -5167,7 +5221,7 @@ export class World {
     }
 
     // Freeze the blade half of the grade NOW; the aim half waits for the throw.
-    const snap = captureSnapshot(bolt, owner.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto, screen: hit.screen });
+    const snap = captureSnapshot(bolt, entry.saber, { bladeT: hit.bladeT, point: bladePoint, auto: hit.auto, screen: hit.screen });
     const cw = owner.boltCatch;
 
     // ── CAUGHT. Only a driven blade takes hold of a bolt: `snap.caught` is the
@@ -5195,9 +5249,9 @@ export class World {
         incoming: snap.boltDir,
       });
       if (accepted) {
-        this.bolts.hold(bolt, owner.saber, clamp(hit.auto ? 0.55 : snap.bladeT, 0.15, 0.92), _v2);
+        this.bolts.hold(bolt, entry.saber, clamp(hit.auto ? 0.55 : snap.bladeT, 0.15, 0.92), _v2);
         if (owner.control) owner.control.catchHold = cw.t;
-        owner.saber.strain(0.35);
+        entry.saber.strain(0.35);
         this.particles.sparkBurst(bladePoint, snap.normal, hit.auto ? 6 : 12, { speed: 5.5 });
         audio.deflect(bladePoint, hit.auto ? 0 : 1);
         this.onDeflectFeedback?.(GRADE.DEFLECT, bladePoint,

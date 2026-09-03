@@ -351,6 +351,38 @@ export async function run({ check, assert }) {
     const rows = [];
     for (const type of BEASTS) {
       const set = movesOf(type);
+      /**
+       * …AND A BODY THAT CANNOT HURT YOU IS NOT A LOOP, IT IS SCENERY.
+       *
+       * This clause is a complaint about a repetitive THREAT — "they all attack
+       * the same way" — and it is the right complaint for the eight creatures
+       * the file was written against. Three of the twelve archetypes are now
+       * companion MOUNTS, and every one of them is authored at `damage: 0` on
+       * purpose: the tauntaun and the varactyl declare no bite at all, because
+       * the design's whole point is that arriving somewhere is their entire
+       * contribution and a mount that trades on its own makes the dismount
+       * optional. A varactyl with one 0-damage sweep at phase 2 was failing a
+       * check about how boring its attacks are to fight.
+       *
+       * So a zero-damage set is measured against the STRONGER claim instead of
+       * being waved through: nothing it declares may do a point of damage to
+       * anybody, ever. That is a real assertion — arm the varactyl and this
+       * goes red — and it is keyed on the numbers the roster actually carries
+       * rather than on a list of names, so the next mount is covered the day it
+       * is authored and the day one of them is given teeth it is not.
+       */
+      const hurts = (k) => (ARCHETYPES[type].damage || 0) * (BEAST_MOVES[k].damage ?? 0);
+      const armed = set.filter((k) => hurts(k) > 0);
+      if (!armed.length) {
+        /* `BEAST_MOVES[*].damage` is a MULTIPLIER on the archetype's own, so
+         * the varactyl's sweep reads 0.85 and lands 0.85 x 0 = nothing. The
+         * product is what a player feels and it is what is asserted. */
+        const worst = Math.max(0, ...set.map(hurts));
+        assert(worst === 0,
+          `${ARCHETYPES[type].label} was taken for unarmed and its worst move lands ${worst}`);
+        rows.push(`${type} unarmed [${set.join(' ') || 'no verbs'}]`);
+        continue;
+      }
       const p1 = set.filter((k) => BEAST_MOVES[k].unlock <= 1);
       assert(p1.length >= 2,
         `${ARCHETYPES[type].label} has ${p1.length} attack(s) at phase 1 (${p1.join(', ') || 'none'}) out of `

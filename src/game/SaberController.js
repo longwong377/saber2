@@ -705,18 +705,25 @@ export const GRIPS = {
    * in the note over `GRIPS` and re-deriving it is how a fourth row ends up
    * ringing.
    *
-   *   staff  kP 156, I 1.34  →  ω = √(kP/I) = 10.79 rad/s, kD = 2·0.60·ω = 12.95
+   *   staff  kP 156, I 1.62  →  ω = √(kP/I) =  9.81 rad/s, kD = 2·0.60·ω = 11.78
    *   pair   kP 132, I 0.80  →  ω = 12.85,                 kD = 2·0.58·ω = 14.90
    *
    * THE STAFF KEEPS `two`'s kP BECAUSE THE ARMS ARE THE SAME ARMS. What changes
-   * is the INERTIA — 1.34 against 1.00, because it is 2.3 m of metal about one
+   * is the INERTIA — 1.62 against 1.00, because it is 3.1 m of weapon about one
    * pair of hands rather than 1.3 — and the consequence is the two-tempo weapon
-   * in one row: its guard settles 14% SLOWER (ω 10.79 against 12.49) while its
+   * in one row: its guard settles 21% SLOWER (ω 9.81 against 12.49) while its
    * light cut repeats 36% FASTER (STAFF_SLASH.cooldown 0.22 against 0.30). The
    * cooldown governs the press and the inertia governs the spring, so those two
    * are not in conflict — and the slower spring is what costs the staff the
    * 0.20 s PARRY window more often than any other set, which is where the two
    * free rungs live.
+   *
+   * 1.34 → 1.62 IS THE PRICE OF `SHAFT.gap`, and it is arithmetic rather than
+   * taste: the weapon went from 2.78 m tip to tip to 3.08 with the extra length
+   * in the middle where the hands are, and a uniform bar about its centre goes
+   * as L², so 1.34·(3.08/2.78)² = 1.64. Rounded down to 1.62, re-solved for kD
+   * through the same ζ = 0.60 the other four rows sit at. The reach is bought
+   * with the guard, in the one currency this table trades in.
    *
    * THE PAIR REUSES `rev`'s kP AND ITS ζ rather than inventing numbers, because
    * `rev` is the shipped ONE-HANDED row and a shoto in one hand is a one-handed
@@ -733,7 +740,7 @@ export const GRIPS = {
    *
    * `GRIPS.two`, `.one` and `.rev` above are byte-identical.
    */
-  staff: { kP: 156, kD: 12.95, inertia: 1.34, guardR: 0.62, handExtend: 0.27, offset: new THREE.Vector3(0.055, -0.20, 0.02), lin: 118, linD: 15 },
+  staff: { kP: 156, kD: 11.78, inertia: 1.62, guardR: 0.62, handExtend: 0.27, offset: new THREE.Vector3(0.055, -0.20, 0.02), lin: 118, linD: 15 },
   pair:  { kP: 132, kD: 14.90, inertia: 0.80, guardR: 0.66, handExtend: 0.33, offset: new THREE.Vector3(0.140, -0.16, 0.01), lin: 104, linD: 14 },
 };
 
@@ -1909,8 +1916,14 @@ export class SaberController {
       // moving lunge and given 40% less reach for standing still. The fallback
       // stays for every other caller and is unchanged.
       this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
-      // Latched at the press, like `thrustStanding` and for the same reason.
-      this.thrustGain = lmb ? SLASH.lunge : 1;
+      /* Latched at the press, like `thrustStanding` and for the same reason —
+       * and read off THE SET'S OWN TABLE, which it was not. `SLASH.lunge` was
+       * named directly here, so `STAFF_SLASH.lunge` and `DUAL_SLASH.lunge`
+       * were fields no line in the tree read: every set's light cut stepped
+       * exactly as far as the single blade's. For `single` this expression IS
+       * `SLASH` — `setTables` returns the shipped object by reference — so the
+       * float is the same float and `_singleblade.json` does not move. */
+      this.thrustGain = lmb ? setTables(this.set).slash.lunge : 1;
       this.thrustCooldown = lmb
         ? SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1)
         : 0.42;

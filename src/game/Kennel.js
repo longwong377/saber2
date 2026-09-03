@@ -147,6 +147,34 @@ export const TEMPERS = [
 ];
 
 /**
+ * ── WHAT "BEYOND" MEANS FOR RANGING, AND WHO GETS TO SAY ──────────────────
+ *
+ * RANGING is earned off "five runs spent beyond twelve metres", and both
+ * halves of that sentence are numbers somebody has to own. They live HERE,
+ * beside the temper that is the only thing that reads them, rather than in the
+ * pack that does the counting — for `TEMPER_AXES`' reason one block down: a
+ * rule stated where it is measured is a rule that drifts from the rule it is
+ * measuring, and the pack already imports this file.
+ *
+ * TWELVE METRES IS NOT AN ARBITRARY RING. The heel station is 3.4 m off your
+ * back (`Companions.HEEL`) and the shortest leash on the ladder is 14 m, so a
+ * mark at 12 sits between "at your heel" and "at the end of its rope": an
+ * animal past it is one you have to go and look for, and one inside it is one
+ * you can see without turning round. Ten would have counted an ordinary charge
+ * at something shooting at you; sixteen would only ever have counted an animal
+ * that was already lost.
+ *
+ * AND "MOSTLY" IS A MAJORITY OF THE SECONDS, not a peak and not a mean
+ * distance. A peak is one bad moment in a whole run — every companion has one
+ * — and a mean is dragged past the mark by thirty seconds of a single chase.
+ * More of the run beyond the mark than inside it is the only reading of
+ * "spent beyond twelve metres" that a player would recognise as a description
+ * of how their animal actually behaves.
+ */
+export const RANGED_MARK = 12;
+export const rangedRun = (far, near) => far > near;
+
+/**
  * ── THE AXES, AND WHY THIS IS NOT `priceSwing` ────────────────────────────
  *
  * `tools/checks/attributes.mjs` exports `priceSwing`, and the instinct is to
@@ -379,12 +407,37 @@ export function clear() {
 /**
  * WHAT A DEED IS WORTH, on `Trooper.award()`'s shape (Command.js:3282).
  *
- * The gates are 0 / 6 / 16 / 30 and they put rung 3 at roughly 60-70% of one
- * long campaign. Two clauses are copied from `tools/checks/command.mjs:845` and
- * DRIVEN rather than transcribed: the top rung must be reachable inside one
- * run, and not before 40% of it. That satisfies Company.js:28's own amendment
- * exactly — a thing may cross runs if a single run could have produced it
- * unaided; persistence is a shortcut to a ceiling and never a new ceiling.
+ * The gates are 0 / 6 / 16 / 20. Two clauses are copied from
+ * `tools/checks/command.mjs:845` and DRIVEN rather than transcribed: the top
+ * rung must be reachable inside one run, and not before 40% of it. That
+ * satisfies Company.js:28's own amendment exactly — a thing may cross runs if
+ * a single run could have produced it unaided; persistence is a shortcut to a
+ * ceiling and never a new ceiling.
+ *
+ * THE DESIGN WROTE 30 AND THE DRIVEN NUMBER IS 20. The argument, with the
+ * measurement that forced it, is on COMPANION_RANKS in CompanionKinds.js —
+ * beside the row it moved — rather than here, because the gate is the rank
+ * table's number and a second account of it is a second place to disagree.
+ * The short version: a long crossing is five areas, only three of the four
+ * deeds pay into a record a run can bank, and 5 × (1 + 1 + 2) is 20.
+ *
+ * ── AND EVERY ONE OF THEM IS FIRED FROM THE PACK'S OWN TICK ───────────────
+ *
+ * `CompanionPack.update` is the only caller of `award` in the tree, and that
+ * is deliberate rather than convenient. Three of the four deeds are about a
+ * moment nothing raises an event for — an area boundary, a body arriving
+ * somewhere, an animal getting back up — and the alternative was a line in
+ * `CommandDirector._areaClear`, a line in `Enemy._getUpFromDown` and a line in
+ * `World._checkWipe`: three files learning the word companion, for a feature
+ * whose whole architecture is that none of them do. The pack already polls for
+ * `aboard` and already decays `underFire`, and its own note says why a poll
+ * beats a subscription here — the thing being watched is the BODY, and the
+ * body is what the pack is holding.
+ *
+ * NOTHING IS WRITTEN TO DISK MID-RUN. The deeds land on the record in memory
+ * and the FOLD banks them, for `keepCompanion`'s stated reason: there is one
+ * door, and a run that ended badly must not already have been paid out through
+ * a side door halfway through it.
  */
 export const DEEDS = {
   /** An area crossed with it alive and inside the leash at the transition. */
@@ -558,8 +611,31 @@ export function keepCompanion(world, stats = null) {
    * cannot cause a durable loss the player did not cause. */
   if (world.netMode) return null;
   const k = load();
-  const rec = k.live;
-  if (!rec) return null;
+  if (!k.live) return null;
+  /**
+   * THE ANIMAL THE RUN HAPPENED TO, AND NOT A FRESH READ OF THE DISK — and
+   * this one line is why nothing ever climbed a rung.
+   *
+   * `load()` builds a NEW object out of the store every time it is called.
+   * `main.fieldFromKennel` calls it at deploy and hands `k.live` to the pack,
+   * which hangs it on the body as `_cmpRec`; every deed of the run is then
+   * awarded onto THAT object. This function called `load()` a second time and
+   * folded the object it got back — a record identical to the one the run
+   * started with, because it had just been re-read from a store nothing had
+   * written since. Measured before this, on a driven five-area crossing with
+   * every deed firing: the record on the field ended at xp 20, SWORN was two
+   * rungs up from where it started, and the fold wrote xp 0 and rung STRANGE.
+   * The whole ladder existed and banked nothing.
+   *
+   * `pack.rec` is what the run was actually played with. The id has to match
+   * what is on disk or the disk wins: a player who deleted the companion from
+   * the Kennel page mid-run, or adopted a different one, must not have the
+   * animal they got rid of written back over the top by a body still standing
+   * on the field. That is `keep()`'s own foreign-manifest refusal, in the shape
+   * this file's owner is keyed in.
+   */
+  const rec = (pack.rec && pack.rec.id === k.live.id) ? pack.rec : k.live;
+  k.live = rec;
 
   const body = pack.body0 || null;
   const alive = !!body && !body.dead && !body.downed;
@@ -569,9 +645,25 @@ export function keepCompanion(world, stats = null) {
   k.runs = (k.runs | 0) + 1;
   if (out) {
     rec.runs = (rec.runs | 0) + 1;
+    /* AND WHETHER THIS WAS A RUN SPENT AWAY FROM YOU — the RANGING tally,
+     * asked of the pack rather than counted here. The pack holds the seconds
+     * because the pack is the only thing that sees every frame; the RULE for
+     * what those seconds mean is `rangedRun`, up beside the temper that is the
+     * only thing that reads them. On a KEPT run only, exactly as `runs` is: a
+     * run the animal did not come home from is not a run it spent anywhere. */
+    if (pack.rangedRun) rec.ranged = (rec.ranged | 0) + 1;
+    const worn = new Set(rec.tempers || []);
     applyTempers(rec);
     save(k);
-    return { kept: true, rec };
+    /* WHAT THE RUN CHANGED, for the one screen that says so. `Trooper.award`
+     * returns the promotion it caused and every caller in Command.js reads
+     * that answer; the companion's deeds arrive a frame at a time from the
+     * pack's ledger, so the comparison is made here, once, against the rung it
+     * deployed on. A ladder nobody is told they climbed is a ladder that only
+     * exists in a list, which is the thing this repository keeps deleting. */
+    const rose = pack.rung0 && rungOf(rec).id !== pack.rung0 ? rungOf(rec) : null;
+    const learned = (rec.tempers || []).filter((t) => !worn.has(t));
+    return { kept: true, rec, rose, learned };
   }
 
   k.lost = (k.lost | 0) + 1;

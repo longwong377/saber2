@@ -208,6 +208,293 @@ export async function run({ check, assert }) {
     assert(S.setById(undefined).id === 'single', 'a missing set id is not the single blade');
     return `default '${DEFAULT_SETTINGS.saberSet}', local not shared, and an unknown id falls back to one blade`;
   });
+  check('saberforms: the second blade cuts and stops things, which it did not', async () => {
+    /**
+     * THE FINDING THIS WHOLE PASS IS ABOUT, held as an assertion.
+     *
+     * `World._bladeEntries` pushed `p.saber` and nothing else, and
+     * `World._resolveBlades` solved `p.saber` against the target list and
+     * nothing else. So a staff and a pair were TWO LIT SABERS AND ONE WEAPON:
+     * measured against a stationary B1 across every distance from 1.0 m to
+     * 2.6 m, the off blade produced 0 contact events and deflected 0 bolts, and
+     * `SABER_SETS[].offDamage`, `Sidearm.blades()` and `Sidearm.frontBlade()`
+     * had no caller anywhere in the tree.
+     *
+     * Everything below this check — the barrier, the throw that keeps a blade,
+     * the follow-up strike, four bodies at once — is unmeasurable while that is
+     * true, because there is only ever one blade doing anything. So this is
+     * first, and it asserts the plumbing rather than the balance: does a
+     * contact off the SECOND blade exist at all.
+     */
+    const { bootSet } = await import('../_setfight.mjs');
+    const rows = [];
+    /**
+     * AND EACH SET IS ASKED WHERE ITS SECOND BLADE ACTUALLY IS, which is a
+     * different place in each and is not a detail. The staff's far end is
+     * rigidly OPPOSITE the near one, so a body in front of you is the one place
+     * it can never be — measured, 0 of 251 contacts there — and that is the
+     * weapon being correct rather than absent. Swept out to the quarters it is
+     * the ONLY thing answering at all: at 137° and 0.90 m, 21 contacts of 21
+     * came off the far end and none off the blade in front. That is the
+     * saberstaff's real gift and it is worth naming — a man at your back
+     * shoulder is answered with no second press and no turn.
+     *
+     * The pair's shoto is carried on the other side of the same front, so it is
+     * asked about the front.
+     */
+    for (const [id, bearing, dist] of [['staff', 2.4, 0.90], ['pair', 0, 1.20]]) {
+      const b = await bootSet(id);
+      try {
+        for (let i = 0; i < 300; i++) {
+          if (i % 30 === 0) { b.clear(); b.dummy(bearing, dist); }
+          if (i % 6 === 0) b.swing();
+          b.step(1);
+        }
+        const off = b.log.filter((e) => e.blade === 'off').length;
+        assert(off > 0,
+          `a ${id}'s second blade landed 0 of ${b.log.length} contacts on a body at `
+          + `${(bearing * 57.3) | 0}° and ${dist} m — it is a light, not a weapon`);
+        rows.push(`${id} ${off}/${b.log.length} at ${(bearing * 57.3) | 0}°`);
+      } finally { b.world.unload(); }
+    }
+    return `contacts off the second blade: ${rows.join(', ')}`;
+  });
+
+  check('saberforms: the staff reaches further than one blade, against a real body', async () => {
+    /**
+     * *"THE DOUBLE BLADED USER WILL HAVE MORE REACH."*
+     *
+     * MEASURED BEFORE `SHAFT`: the single blade's furthest contact on a body
+     * was 1.83 m from its own feet and the saberstaff's was 1.78 — the staff
+     * reached NO FURTHER, and marginally less. Tip to tip it spanned 2.78 m
+     * against one blade's 1.15 and every centimetre of that was behind the
+     * wielder, because every set poses its hilt ORIGIN at the hand and a bar
+     * held at its middle is not a sword held at its pommel.
+     *
+     * This is deliberately NOT `base.distanceTo(tip)`, which is the blade's own
+     * length and is 1.15 m in all three sets by construction. It is where a
+     * contact with a body actually happened, measured from the player's feet on
+     * the frame it happened — the only number a player can feel.
+     */
+    const { reachOf } = await import('../_setreach.mjs');
+    const one = await reachOf('single');
+    const staff = await reachOf('staff');
+    assert(staff.far > one.far * 1.08,
+      `the staff's furthest contact is ${staff.far.toFixed(2)} m against one blade's `
+      + `${one.far.toFixed(2)} — a polearm that cannot touch anything further away than a sword `
+      + 'is a longer model, not more reach');
+    return `furthest contact on a body: one blade ${one.far.toFixed(2)} m, `
+      + `staff ${staff.far.toFixed(2)} m (+${((staff.far / one.far - 1) * 100).toFixed(0)}%)`;
+  });
+
+  check('saberforms: the spin barrier stops bolts, and your hands stay free', async () => {
+    /**
+     * *"the double bladed user can use pure telekinesis to spin the staff at
+     * high speeds around your body like a protective barrier, KEEPING YOUR
+     * HANDS FREE TO CAST WHATEVER."*
+     *
+     * BOTH HALVES ARE MEASURED AND THE FIRST ONE FAILED TWICE. With the blades
+     * absent from `_bladeEntries` it stopped nothing because nothing asked it.
+     * With them present and genuinely sweeping it stopped 1 bolt in 24, because
+     * a bar spinning in the HORIZONTAL plane is coplanar with a bolt flying
+     * flat, and because a rotor answers ω/(π·f) of what crosses it — 4.8% at
+     * 60 Hz and 9.5% at 30, a protection that doubles when the machine slows
+     * down. See `Player.bladeGuard`, which is where both are answered.
+     *
+     * The control is the same twenty-four shots with the spin DOWN, on the same
+     * player in the same place, because "no bolts got through" means nothing
+     * unless they get through otherwise.
+     */
+    const { bootStaff, stream } = await import('../_spinprobe.mjs');
+    const b = await bootStaff('staff');
+    try {
+      const bare = stream(b, {});
+      assert(bare.landed > 4,
+        `only ${bare.landed} of ${bare.fired} bolts reached an unshielded player — `
+        + 'the bench is not delivering hits, so nothing below would mean anything');
+      const up = stream(b, { spin: true });
+      assert(up.up === up.fired, `the spin was only up for ${up.up} of ${up.fired} shots`);
+      assert(up.landed * 3 < bare.landed,
+        `${up.landed} of ${up.fired} bolts got through the barrier against ${bare.landed} with it down `
+        + '— that is a light show, not a barrier');
+      /* AND THE HANDS. `handsOnHilt` is 0 while it spins — through the reader
+       * that shipped years ago, not a new flag — and a power really goes off. */
+      b.p.force = b.p.maxForce;
+      if (b.p.throwState !== 'orbit') { b.p.throwState = 'held'; b.p.spinBarrier(b.ctx); b.step(12); }
+      assert(b.p.throwState === 'orbit', 'the barrier would not come up');
+      assert(b.p.handsOnHilt() === 0,
+        `${b.p.handsOnHilt()} hand(s) still on the hilt while the staff is spinning by itself`);
+      const before = b.p.force;
+      b.p.forcePush(b.ctx);
+      assert(b.p.force < before - 1,
+        'a push cast while the barrier was up spent nothing — the hands are not actually free');
+      assert(b.p.throwState === 'orbit', 'casting dropped the barrier — the hands were not free after all');
+      return `${up.landed}/${up.fired} bolts through with the spin up against ${bare.landed}/${bare.fired} `
+        + `with it down; hands on hilt 0, and a push spends ${(before - b.p.force).toFixed(0)} Force mid-spin`;
+    } finally { b.world.unload(); }
+  });
+
+  check('saberforms: throw one and you can still fight with the other', async () => {
+    /**
+     * *"WITH DUAL WIELDING YOU CAN THROW ONE LIGHTSABER WHILE STILL HAVING ONE
+     * SABER FREE TO ATTACK/BLOCK WITH."*
+     *
+     * Both verbs, both driven. ATTACK is contacts landed on a body over three
+     * seconds of the same mashed attack, with the shoto out against with it in
+     * hand. BLOCK is twelve bolts down the sightline — against the same player
+     * with the blade PUT DOWN, which is the control that says the blade is what
+     * was stopping them rather than the player being hard to hit.
+     */
+    const { bootSet } = await import('../_setfight.mjs');
+    const THREE = await import('three');
+    const b = await bootSet('pair');
+    try {
+      const shots = (n) => {
+        let landed = 0;
+        for (let i = 0; i < n; i++) {
+          b.p.force = b.p.maxForce; b.p.cooldowns.throwOff = 0;
+          if (b.p.sidearm && b.p.sidearm.throwState === 'held' && b._wantOut) b.p.throwOffBlade(b.ctx);
+          b.p.hp = b.p.maxHp;
+          const away = b.p.aimDir.clone().setY(0).normalize()
+            .applyAxisAngle(new THREE.Vector3(0, 1, 0), (i % 5 - 2) * 0.10);
+          b.world.bolts.fire(b.p.chest.clone().addScaledVector(away, 9), away.clone().negate(),
+            { speed: 60, team: 1, damage: 10 });
+          const hp = b.p.hp; b.step(11);
+          if (b.p.hp < hp - 1e-6) landed++;
+        }
+        return landed;
+      };
+      const swings = () => {
+        b.log.length = 0;
+        for (let i = 0; i < 180; i++) {
+          if (i % 30 === 0) { b.clear(); b.dummy(0, 1.20); }
+          if (i % 6 === 0) b.swing();
+          b.step(1);
+        }
+        return b.log.length;
+      };
+      const held = swings();
+      b.p.force = b.p.maxForce; b.p.cooldowns.throwOff = 0;
+      b.p.throwOffBlade(b.ctx);
+      assert(b.p.sidearm.throwState === 'flying', 'the shoto did not leave the hand');
+      assert(b.p.throwState === 'held',
+        "throwing the shoto emptied the main hand — `Player.throwState` is what nine readers "
+        + 'mean by "the weapon in your right hand is gone"');
+      const out = swings();
+      assert(out > held * 0.3,
+        `${out} contacts with the shoto in the air against ${held} with both blades — `
+        + 'the remaining blade is not attacking');
+      b._wantOut = true;
+      const through = shots(12);
+      b._wantOut = false;
+      b.p.saberDown = true;
+      b.step(20);
+      const bare = shots(12);
+      assert(through < bare,
+        `${through} of 12 bolts got through with the shoto out and ${bare} of 12 with no blade at all `
+        + '— the remaining blade is not blocking');
+      return `contacts in 3 s: ${held} both in hand, ${out} with the shoto out; `
+        + `bolts through: ${through}/12 shoto out, ${bare}/12 blade down`;
+    } finally { b.world.unload(); }
+  });
+
+  check('saberforms: the staff\'s follow-up lands sooner than one blade\'s', async () => {
+    /**
+     * *"THE DOUBLE-BLADED SWORD OFFERS A SIGNIFICANT ADVANTAGE IN TWO-TEMPO
+     * MOVES BECAUSE THE SECOND BLADE IS INSTANTLY READY FOR A FOLLOW-UP
+     * STRIKE."*
+     *
+     * The gap between the FIRST CONTACT of one landed strike and the first
+     * contact of the next, so it measures when the follow-up ARRIVES and not
+     * how long a blade lies in a body once it is there. A strike is the
+     * controller's own — `slashT` leaving −1, i.e. a press it accepted.
+     *
+     * TWO NUMBERS, because one sample is not a claim: the fastest follow-up the
+     * weapon managed at all, and the lower quartile of every follow-up in
+     * fifteen seconds of mashing.
+     */
+    const { bootSet, tempo } = await import('../_setfight.mjs');
+    const rows = {};
+    for (const id of ['single', 'staff']) {
+      const b = await bootSet(id);
+      try {
+        b.log.length = 0; b.strikes.length = 0;
+        for (let i = 0; i < 900; i++) {
+          if (i % 30 === 0) { b.clear(); b.dummy(0, 1.20); }
+          if (i % 6 === 0) b.swing();
+          b.step(1);
+        }
+        rows[id] = tempo(b.log, b.strikes);
+        assert(rows[id].landed > 6, `only ${rows[id].landed} strikes landed on a ${id} — nothing to time`);
+      } finally { b.world.unload(); }
+    }
+    assert(rows.staff.fastest < rows.single.fastest,
+      `the staff's quickest follow-up is ${rows.staff.fastest.toFixed(3)} s against one blade's `
+      + `${rows.single.fastest.toFixed(3)} — the far end is not answering any sooner`);
+    assert(rows.staff.quarter < rows.single.quarter,
+      `the staff's lower-quartile follow-up is ${rows.staff.quarter.toFixed(3)} s against one blade's `
+      + `${rows.single.quarter.toFixed(3)} — one fast pair of hits is luck, not a tempo`);
+    return `fastest follow-up: one blade ${rows.single.fastest.toFixed(3)} s, staff `
+      + `${rows.staff.fastest.toFixed(3)}; lower quartile ${rows.single.quarter.toFixed(3)} against `
+      + `${rows.staff.quarter.toFixed(3)}`;
+  });
+
+  check('saberforms: against four bodies at once the pair does the most work', async () => {
+    /**
+     * *"Dual-wielding lightsabers generally provides increased offensive
+     * capabilities and mobility, MAKING IT EFFECTIVE AGAINST MULTIPLE
+     * OPPONENTS."*
+     *
+     * Four bodies in the arc at −57°, −20°, +20° and +57°, replaced every half
+     * second — a B1 held at 1e9 hp does not die but it does come apart, and a
+     * torso on the floor is not an opponent. Cut work is the currency
+     * `BladeContactSolver` actually banks, so it is what is compared.
+     *
+     * AND THE COUNTER-FACT IS REPORTED RATHER THAN HIDDEN: the single blade
+     * answers marginally MORE of the four in a given half-second, because
+     * `SLASH`'s 0.80/0.82 arc is the widest in the game and both new sets pay
+     * for what they have with a narrower one. The pair's answer to four men is
+     * not a wider sweep, it is two edges working at once — which is why this
+     * check asserts about the work and reports about the spread.
+     */
+    const { bootSet } = await import('../_setfight.mjs');
+    const rows = {};
+    for (const id of ['single', 'staff', 'pair']) {
+      const b = await bootSet(id);
+      try {
+        b.log.length = 0;
+        for (let i = 0; i < 900; i++) {
+          if (i % 30 === 0) { b.clear(); for (const a of [-1.0, -0.35, 0.35, 1.0]) b.dummy(a, 1.20); }
+          if (i % 6 === 0) b.swing();
+          b.step(1);
+        }
+        const win = new Map();
+        for (const e of b.log) {
+          const k = Math.floor(e.t / 0.5);
+          if (!win.has(k)) win.set(k, new Set());
+          win.get(k).add(e.id);
+        }
+        const counts = [...win.values()].map((v) => v.size);
+        rows[id] = {
+          work: b.log.reduce((s, e) => s + e.work, 0),
+          spread: counts.reduce((a, c) => a + c, 0) / Math.max(counts.length, 1),
+          off: b.log.filter((e) => e.blade === 'off').length,
+        };
+      } finally { b.world.unload(); }
+    }
+    assert(rows.pair.work > rows.single.work * 1.2,
+      `against four bodies the pair banked ${rows.pair.work.toFixed(0)} of cut work and one blade `
+      + `${rows.single.work.toFixed(0)} — two blades that are not worth more than one against a `
+      + 'crowd are a second hilt and a handicap');
+    assert(rows.pair.off > rows.pair.work * 0.1,
+      'the pair out-works one blade with almost nothing coming off its second blade — '
+      + 'something other than the shoto is doing this');
+    return `cut work on four bodies: one ${rows.single.work.toFixed(0)}, staff ${rows.staff.work.toFixed(0)}, `
+      + `pair ${rows.pair.work.toFixed(0)} (+${((rows.pair.work / rows.single.work - 1) * 100).toFixed(0)}%, `
+      + `${rows.pair.off} contacts off the shoto); bodies answered per half-second `
+      + `${rows.single.spread.toFixed(2)}/${rows.staff.spread.toFixed(2)}/${rows.pair.spread.toFixed(2)}`;
+  });
+
   check('saberforms: measured on real bodies, each set covers and pays differently', () => {
     /**
      * THE TABLE SAYS THEY DIFFER; THIS ASSERTS THE BODIES DO.
