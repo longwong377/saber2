@@ -105,14 +105,15 @@ console.log('deck:', JSON.stringify(info));
 
 const SHOT = { timeout: 180000 };
 if (!info.fail) {
-  /* Yaw π is forward (the doors); π/2 and 3π/2 are the side panes; 0 the back. */
+  /* FIRST PERSON — the third-person body stood over the middle of the pane.
+   * Yaw π is forward (the doors); π/2 and 3π/2 are the side panes; 0 the back. */
   const shots = [
-    ['01-ride-1.5s-left', { at: 1.5, yaw: Math.PI / 2, pitch: 0.05 }],
-    ['02-ride-2.2s-right', { at: 2.2, yaw: -Math.PI / 2, pitch: 0.05 }],
-    ['03-ride-3.0s-back', { at: 3.0, yaw: 0, pitch: 0.05 }],
-    ['04-ride-4.0s-left', { at: 4.0, yaw: Math.PI / 2, pitch: 0.05 }],
-    ['05-stop-left', { stop: true, yaw: Math.PI / 2, pitch: 0.05 }],
-    ['06-stop-right', { stop: true, yaw: -Math.PI / 2, pitch: 0.05 }],
+    ['01-ride-1.5s-left', { at: 1.5, yaw: Math.PI / 2, pitch: 0.0 }],
+    ['02-ride-2.5s-right', { at: 2.5, yaw: -Math.PI / 2, pitch: 0.0 }],
+    ['03-ride-3.5s-back', { at: 3.5, yaw: 0, pitch: 0.0 }],
+    ['04-ride-4.5s-left', { at: 4.5, yaw: Math.PI / 2, pitch: 0.0 }],
+    ['05-stop-left', { stop: true, yaw: Math.PI / 2, pitch: 0.0 }],
+    ['06-stop-right', { stop: true, yaw: -Math.PI / 2, pitch: 0.0 }],
   ];
   for (const [name, v] of shots) {
     const at = await page.evaluate(async (v) => {
@@ -121,7 +122,7 @@ if (!info.fail) {
       const st = w?._deckLift;
       const p = w?.player;
       if (p) {
-        if (p.camera) { p.camera.yaw = v.yaw; p.camera.pitch = v.pitch; }
+        if (p.camera) { p.camera.firstPerson = true; p.camera.yaw = v.yaw; p.camera.pitch = v.pitch; }
         if (p.control) { p.control.yaw = v.yaw; p.control.pitch = v.pitch; }
       }
       /* Advance the lift's own clock to the moment asked for. */
