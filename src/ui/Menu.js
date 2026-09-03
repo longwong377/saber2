@@ -5095,9 +5095,29 @@ export class Menu {
      * whose only exit was picking something would be a list that conscripts
      * you into looking after an animal.
      */
+    /**
+     * `name`, NOT `label` — AND EVERY CARD IN THIS ROW READ "undefined".
+     *
+     * `_cardRow` prints `<b>${it.name}</b>`, and a COMPANION_KINDS row carries
+     * `label`. `SABER_SETS` uses `name`, which is why the saber row four lines
+     * above this one has always worked and this one never did: the picker that
+     * is the ONLY door into the whole companion feature rendered twelve cards
+     * reading "undefined" over the right blurb, from the day it landed.
+     *
+     * Forty-three green companion checks did not see it because none of them
+     * renders this row, and `menu.mjs`'s own companion-list check counted the
+     * cards without reading them. The check now asserts that every card in
+     * every `_cardRow` list renders a non-empty name, which is the general
+     * form of the bug and catches the next row that carries the wrong field.
+     *
+     * Mapped here rather than renaming `label` on the rows: `label` is what
+     * ARCHETYPES uses everywhere else in the game — the kill feed, the
+     * databank, the roster — and this is the one surface that wants the other
+     * spelling.
+     */
     this._cardRow('companion-list', 'h-companion', 'companion',
       [{ id: 'none', name: 'None', blurb: 'You go in alone, as you always have.' },
-        ...COMPANION_ORDER.map((id) => COMPANION_KINDS[id])],
+        ...COMPANION_ORDER.map((id) => ({ ...COMPANION_KINDS[id], name: COMPANION_KINDS[id].label }))],
       () => { this._syncKennel(); this._wireCompanionDress(); });
     /**
      * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.

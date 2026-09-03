@@ -40,6 +40,7 @@ import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
 import * as Company from '../../src/game/Company.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
+import { COMPANION_KINDS, COMPANION_ORDER } from '../../src/game/CompanionKinds.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { MODES, playableModes, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -2101,4 +2102,64 @@ export async function run({ check, assert }) {
     return `waves+4 → "${withFour.slice(0, 90)}…"; waves+0 says nothing; duel and training say nothing`;
   });
 
+
+
+  check('menu: every card in every picker has a NAME on it, and one row had twelve that said undefined', () => {
+    /**
+     * THE COMPANION PICKER RENDERED "undefined" TWELVE TIMES, FROM THE DAY IT
+     * LANDED, AND IT IS THE ONLY DOOR INTO THE WHOLE FEATURE.
+     *
+     * `_cardRow` prints `<b>${it.name}</b>`. `SABER_SETS` rows carry `name`;
+     * `COMPANION_KINDS` rows carry `label`, which is what ARCHETYPES uses
+     * everywhere else in the game. So the saber row four lines above it worked
+     * and the companion row below it showed twelve cards reading "undefined"
+     * over the right blurb.
+     *
+     * WHY NOTHING CAUGHT IT, which is the part worth keeping. Forty-three
+     * green companion checks never render this row — they drive the sim. The
+     * menu's own companion-list check asserts the list EXISTS and is on the
+     * Jedi panel, and the randomize-fence check counts the cards. Every one of
+     * them looked at the container and none at what was written in it.
+     *
+     * So this is asked of the whole page rather than of one row: every card
+     * `_cardRow` has built, in every picker, must carry a non-empty name that
+     * is not the string "undefined" or "null". A row whose data uses the wrong
+     * field name fails here whichever row it is, which is the general form of
+     * the defect rather than a patch to the one instance of it.
+     */
+    const { doc, close } = menuOn();
+    try {
+      /* Found by SHAPE, not by a list of ids: `_cardRow` is the only thing in
+       * the file that builds `.diff > .txt > b`, so every row it has ever made
+       * is here and a thirteenth needs nothing added. */
+      const cards = [...doc.querySelectorAll('.diff .txt b')];
+      assert(cards.length >= 20,
+        `only ${cards.length} picker cards rendered — the page did not build its rows, so this `
+        + 'check is looking at an empty document rather than at the menu');
+      const bad = [];
+      for (const b of cards) {
+        const text = (b.textContent || '').trim();
+        const row = b.closest('.diff');
+        const where = row?.parentElement?.id || row?.parentElement?.className || '?';
+        if (!text || text === 'undefined' || text === 'null') bad.push(`${where}: "${text}"`);
+      }
+      assert(!bad.length,
+        `${bad.length} card(s) render no name: ${[...new Set(bad)].slice(0, 6).join(', ')} — a picker `
+        + 'whose data carries the wrong field prints the word "undefined" at the player');
+
+      /* AND THE COMPANION ROW SPECIFICALLY SAYS WHAT THE TWELVE KINDS ARE
+       * CALLED, read off the table rather than typed here, so a rename moves
+       * both together. */
+      const list = doc.getElementById('companion-list');
+      assert(list, 'the companion picker is not on the page');
+      const shown = [...list.querySelectorAll('.diff .txt b')].map((b) => b.textContent.trim());
+      const want = ['None', ...COMPANION_ORDER.map((id) => COMPANION_KINDS[id].label)];
+      assert(shown.length === want.length,
+        `the companion picker drew ${shown.length} cards for ${want.length} choices`);
+      const wrong = want.filter((w, i) => shown[i] !== w);
+      assert(!wrong.length,
+        `the companion picker names ${wrong.join(', ')} differently from COMPANION_KINDS`);
+      return `${cards.length} picker cards, all named; the companion row reads ${shown.join(', ')}`;
+    } finally { close(); }
+  });
 }
