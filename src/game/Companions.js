@@ -87,13 +87,20 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf } from './CompanionKinds.js';
-import { award, temperSwing } from './Kennel.js';
+import { award, RANGED_MARK, rangedRun, temperSwing } from './Kennel.js';
 /* The friendly-fire scaling every ally in the game already gets — see
  * `fieldCompanion`, which is the one place it is installed. */
 import { installTeamDamage, TEAM_DAMAGE_DEFAULT } from './Command.js';
 /* The move table and the length of the winded window, both read rather than
  * restated — see `CompanionPack.update`. */
 import { BEAST_MOVES, WIND_OPEN } from './Enemy.js';
+/* HOW CLOSE "IT REACHED YOU" IS — see `DEEDS.reached` in the pack's ledger.
+ * `DOWN_HELP` is the radius the game already uses for one body kneeling over
+ * another, and its own note says "inside a body length: this is kneeling next
+ * to him, not walking past", which is exactly the sentence the deed is trying
+ * to be true of. A private number here would be a second opinion about the
+ * same act. */
+import { DOWN_HELP } from './Enemy.js';
 /* The one gate every damage path in the game answers to — see `installCompanionHide`. */
 import { canHarm } from './Player.js';
 
@@ -179,26 +186,56 @@ export const SETTLED = 0.55;
  * you are put in and then released from, AWAY is a refusal held until
  * cancelled. That distinction is the whole difference between the two and it
  * is a field rather than a paragraph in each solver.
+ *
+ * ── `lands`: WHAT IT WOULD LOOK LIKE FOR THIS ORDER TO HAVE WORKED ────────
+ *
+ * `DEEDS.order` pays for "the first time per area that an order you gave it
+ * actually lands", and the whole worth of that sentence is in the last two
+ * words. `tools/_cmporders.mjs` opens by saying it: an order that is accepted
+ * and does nothing is worse than one that is refused. Paying at the moment of
+ * the press pays for the press — and that is what the shipped code did before
+ * this column existed, so a rung-0 companion standing at your heel earned a
+ * deed for being told to heel, from one wheel tap, without moving.
+ *
+ * Two shapes cover all six, and neither one is an `if (id === …)`:
+ *
+ *   'target'   the animal has a body in front of it that THIS DUTY allows —
+ *              the one you named under SEEK, anything inside your ring under
+ *              WARD, the kind's own verb. `dutyAllows` is the reader, so the
+ *              order's own filter is what says it landed and there is no
+ *              second opinion anywhere about what SEEK means.
+ *   'station'  the animal is standing where the order MOVED it to, having not
+ *              been there when you gave it. HEEL is the case that forces the
+ *              second half: heel is the station it is already on nine frames
+ *              in ten, so without "it had to come" the safest order in the
+ *              game would land on the frame it was given and the deed would
+ *              be paying for a keypress again by another route.
+ *
+ * AWAY is 'station' rather than "it stopped fighting", because a refusal is
+ * not observable — an animal with nothing to fight looks exactly like an
+ * animal refusing to. What IS observable is that it came back behind you,
+ * which is the half of AWAY `stationFor` implements and the half a player
+ * actually watches for.
  */
 export const COMPANION_ORDERS = {
   heel: {
-    id: 'heel', label: 'HEEL', arg: 'none', standing: false, holds: 'heel',
+    id: 'heel', label: 'HEEL', arg: 'none', standing: false, holds: 'heel', lands: 'station',
     caption: 'Come here and stay where I can see you',
   },
   away: {
-    id: 'away', label: 'AWAY', arg: 'none', standing: true, holds: 'away',
+    id: 'away', label: 'AWAY', arg: 'none', standing: true, holds: 'away', lands: 'station',
     caption: 'Break off. Do not fight. Get behind me',
   },
   ward: {
-    id: 'ward', label: 'WARD', arg: 'none', standing: true, holds: 'ward',
+    id: 'ward', label: 'WARD', arg: 'none', standing: true, holds: 'ward', lands: 'target',
     caption: 'Meet anything that comes near ME',
   },
   seek: {
-    id: 'seek', label: 'SEEK', arg: 'body', standing: true, holds: 'seek',
+    id: 'seek', label: 'SEEK', arg: 'body', standing: true, holds: 'seek', lands: 'target',
     caption: 'Kill the one under my reticle',
   },
   hold: {
-    id: 'hold', label: 'HOLD', arg: 'point', standing: true, holds: 'hold',
+    id: 'hold', label: 'HOLD', arg: 'point', standing: true, holds: 'hold', lands: 'station',
     caption: 'Stand on that ground and meet what comes to it',
   },
   /* ONE SLOT, TWELVE MEANINGS. The label and the caption are read off the live
@@ -206,7 +243,7 @@ export const COMPANION_ORDERS = {
    * which is what stops twelve kinds being twelve reskins: the wheel says
    * something different for every companion you own. */
   verb: {
-    id: 'verb', label: null, arg: 'body', standing: true, holds: 'verb',
+    id: 'verb', label: null, arg: 'body', standing: true, holds: 'verb', lands: 'target',
     caption: null,
   },
 };
@@ -266,16 +303,55 @@ export function orderCompanion(e, id, arg = null) {
     e._cmpBidden = null;
     e._cmpPoint = null;
     e.target = null;
+    ask(e, O);
     return null;
   }
   e._cmpDuty = O;
   e._cmpBidden = O.arg === 'body' ? arg : null;
   e._cmpPoint = O.arg === 'point' ? arg.clone() : null;
-  /* AN ORDER THAT LANDED IS A DEED, and it is counted ONCE PER AREA rather
-   * than once per press — see `DEEDS.order`. A player who taps the wheel
-   * thirty times has not trained anything. */
-  if (e._cmpRec && !e._cmpOrderedHere) { e._cmpOrderedHere = true; award(e._cmpRec, 'order'); }
+  ask(e, O);
   return null;
+}
+
+/**
+ * WHAT WE ARE NOW WAITING TO SEE LAND — two fields, written at the one door
+ * every order comes through.
+ *
+ * `_cmpAsked` is the ORDER ROW and not its id, so `orderLanded` reads the
+ * row's own `lands` and nothing anywhere compares a string. `_cmpAskedFrom` is
+ * how far from its station the animal was standing WHEN YOU GAVE IT, and it is
+ * the whole of "an order that did something": a station order needs the gap to
+ * have been real and then to have closed. Recorded AFTER the duty is written,
+ * because HOLD's station is the order and HEEL's is the station the order goes
+ * back to — asking first would measure the station of the order the animal was
+ * under a moment ago.
+ */
+function ask(e, O) {
+  e._cmpAsked = O;
+  e._cmpAskedFrom = O.lands === 'station' ? stationGap(e) : 0;
+}
+
+/**
+ * HAS THE LAST ORDER YOU GAVE ACTUALLY LANDED?
+ *
+ * One reader, off the order's own `lands` row — see COMPANION_ORDERS. The pack
+ * asks it once a frame and it is the ONLY thing that decides `DEEDS.order` and
+ * the KEEN tally, so a wheel tap that changed nothing is worth nothing in both
+ * currencies at once rather than in one of them.
+ */
+export function orderLanded(e) {
+  const O = e?._cmpAsked;
+  if (!O || !e.position || e.dead || e.downed) return false;
+  if (O.lands === 'target') {
+    const t = e.target;
+    if (!t || t.dead) return false;
+    /* THE ORDER'S OWN FILTER DECIDES. Under SEEK `dutyAllows` answers true for
+     * exactly one body in the world; under WARD, for anything inside your
+     * ring. So "it landed" cannot come to mean something the order does not. */
+    return dutyAllows(e, t, stationFor(e, _v4), leashOf(e));
+  }
+  const band = settledBand(e);
+  return e._cmpAskedFrom > band && stationGap(e) <= band;
 }
 
 /**
@@ -297,6 +373,20 @@ export function stationFor(e, out) {
   if (D?.id === 'hold' && e._cmpPoint) return out.copy(e._cmpPoint);
   const p = e._cmpOwner;
   if (!p?.position) return out.copy(e._cmpHome || e.position);
+  /**
+   * A MAN ON THE GROUND HAS NO BACK QUARTER, so the station is HIM.
+   *
+   * Every other line of this function is about standing off the shoulder of
+   * somebody who is walking, turning and shooting — the whole reason the heel
+   * is a point rather than a radius. None of it is true of a body. Behind the
+   * back quarter of a corpse is 3.4 m of open ground chosen by whichever way
+   * he happened to be facing when he fell, and an animal that went to it would
+   * be standing three metres from the one thing on the field it is there for.
+   *
+   * This is what `DEEDS.reached` and the SWORN rung are both measured against
+   * — see the move wrap, which is the half that actually walks it there.
+   */
+  if (p.alive === false || p.dead) return out.copy(p.position);
   const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
   /* AWAY PUTS IT BEHIND YOU AND NOT BESIDE YOU. The side offset is what keeps
    * an ordinary heel out from under your feet; a companion told to break off
@@ -308,6 +398,59 @@ export function stationFor(e, out) {
     p.position.y,
     p.position.z - Math.cos(yaw) * back + Math.sin(yaw) * side,
   );
+}
+
+/**
+ * ── THE FOUR THINGS EVERYBODY ASKS ABOUT A COMPANION ──────────────────────
+ *
+ * Four one-line readers, and they exist because four callers were about to ask
+ * the same four questions in four spellings. The move wrap owns the animal's
+ * steering, the aim wrap owns its targeting, the pack owns its ledger and the
+ * checks own the measurement — and every one of them has to know how far the
+ * leash reaches, how close counts as arrived, how far from its station it is
+ * standing, and whether the owner is still on his feet.
+ *
+ * HANDOFF §2.4 in four functions: the second spelling of a rule is the one
+ * that goes wrong. `leashOf` is the proof — it was already written twice
+ * before the ledger needed it a third time, once in the aim wrap as
+ * `_cmpLeash ?? LEASH` and once in the move wrap with the temper swing added,
+ * and the two DISAGREED. An animal wearing KEEN searched a 14 m radius and was
+ * recalled at 18, so four of the metres that temper is priced for did not
+ * exist on the half of the loop that finds something to bite.
+ */
+
+/** How far it may go from its station, after every temper it wears. */
+export function leashOf(e) {
+  const sw = e?._cmpSwing;
+  return Math.max(2, (e?._cmpLeash ?? LEASH) + (sw ? sw.reach - sw.recall : 0));
+}
+
+/** Inside this of its station it is home. A multiple of the kind's own `heel`,
+ *  because a tuk'ata ranges and a tooka clings — one slack, one row. */
+export function settledBand(e) {
+  return SETTLED * HEEL.slack * (COMPANION_KINDS[e?._cmpKind]?.heel ?? 1);
+}
+
+/** How far it is standing from where it is supposed to be, on the ground. */
+export function stationGap(e) {
+  if (!e?.position) return 0;
+  stationFor(e, _v4);
+  return Math.hypot(_v4.x - e.position.x, _v4.z - e.position.z);
+}
+
+/**
+ * IS THE OWNER STILL ON HIS FEET? The move wrap's own test, given a name.
+ *
+ * A player has no downed state in this game — `World._checkWipe` ends the run
+ * on the frame the last one falls, and `_reviveDowned` is a co-op wave clear —
+ * so "you are down" is exactly `alive === false`, and the same three clauses
+ * decide where the animal stands (the move wrap), whether it is running to
+ * your body (`DEEDS.reached`) and whether the seconds it is spending away from
+ * you are seconds it spent away from anybody at all (the RANGING tally).
+ */
+export function ownerUp(e) {
+  const p = e?._cmpOwner;
+  return !!(p && p.alive !== false && !p.dead && p.position);
 }
 
 /**
@@ -347,6 +490,7 @@ export function dutyAllows(e, foe, home, leash) {
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
 const _v3 = new THREE.Vector3();
+const _v4 = new THREE.Vector3();
 
 /**
  * WHO THIS BODY IS ALLOWED TO FIGHT, ASKED OF THE WORLD.
@@ -484,8 +628,9 @@ function installCompanionMove(e) {
       }
     }
     let was = null;
-    const p = e._cmpOwner;
-    const owned = !!(p && p.alive !== false && !p.dead && p.position);
+    /* `ownerUp` and not a fourth spelling of the same three clauses — see the
+     * four readers above `dutyAllows`. */
+    const owned = ownerUp(e);
     /**
      * AN OWNER WHO IS DOWN LEAVES IT STANDING WHERE HE FELL, AND THIS IS THE
      * ONE BRANCH THE KILL TEST FOUND BY DYING.
@@ -505,7 +650,35 @@ function installCompanionMove(e) {
      * — around itself now instead of around you — and it goes on taking
      * anything that comes inside it. A dog over a body, not a statue.
      */
-    if (!owned) {
+    /**
+     * …UNLESS IT IS SWORN, IN WHICH CASE IT COMES TO YOU, WITH NOTHING SAID.
+     *
+     * The last rung's second half, and the only thing on the whole ladder that
+     * happens without an order: "+ HOLD. And it comes to you unbidden when YOU
+     * go down." Standing its ground (below) is the right answer for an animal
+     * that does not know you yet; an animal that has crossed a campaign at
+     * your heel comes and stands over you, and it is the difference the player
+     * is meant to feel at the moment they can least do anything about it.
+     *
+     * `holdsCompanion` and not a rung index — one table, one reader, and the
+     * licence that buys HOLD is the licence that buys this, so there is no
+     * second thing to keep in step with the rank rows.
+     *
+     * AND A HELD ANIMAL STAYS ON ITS GROUND. HOLD is the one order with no
+     * owner in it — the note below says so and the check drives it — so an
+     * order you gave about a piece of dirt is not quietly cancelled by your
+     * own death. That falls out of `stationFor` rather than out of a clause
+     * here: it answers `_cmpPoint` before it looks at the owner at all, so a
+     * sworn animal under HOLD walks to the ground you gave it and nowhere.
+     *
+     * THIS IS ALSO THE ONLY WAY `DEEDS.reached` CAN EVER FIRE. It pays for the
+     * animal arriving within `DOWN_HELP` (2.2 m) of you, and the heel station
+     * is 3.4 m off your back — so a companion doing nothing but heeling is,
+     * by construction, always too far away to earn it. A deed no rung can
+     * reach is a deed that is not in the game.
+     */
+    const sworn = !owned && !!e._cmpOwner?.position && holdsCompanion(e._cmpRec, 'hold');
+    if (!owned && !sworn) {
       e._cmpHome = (e._cmpHome || new THREE.Vector3()).copy(e.position);
     }
     /* HOLD IS THE ONE ORDER WITH NO OWNER IN IT. A companion standing on
@@ -515,7 +688,7 @@ function installCompanionMove(e) {
      * The branch above (an owner who is down) must not overwrite a held
      * point with wherever the animal happens to be standing. */
     const held = e._cmpDuty?.id === 'hold' && e._cmpPoint;
-    if (owned || held) {
+    if (owned || held || sworn) {
       /* THE STATION, from the one function both wraps read — see
        * `stationFor`. Two readers with two ideas of where it is supposed to be
        * would be a companion that hunts round one place and walks to another. */
@@ -527,21 +700,15 @@ function installCompanionMove(e) {
        * been dragged past the leash. A companion that abandoned a body it was
        * biting because you took a step would never finish anything. */
       const busy = !!e.target && !e.target.dead;
-      /* HOW LOOSELY THIS KIND HOLDS ITS STATION. A tuk'ata ranges and a tooka
-       * clings, and `heel` is the row that says which — a multiple of the
-       * shared slack rather than a second distance, so the two cannot drift
-       * apart. Read here because this is the one place a station becomes a
-       * decision to walk. */
-      const slack = HEEL.slack * (COMPANION_KINDS[e._cmpKind]?.heel ?? 1);
-      /* THE TEMPERS MOVE THIS AND NOTHING ELSE. `reach` is metres it will
-       * break from station to take a body; `recall` is how much sooner it
-       * gives up and comes home. Both are read off the record through the one
-       * summing function rather than added up here — see `temperSwing`. */
-      const sw = e._cmpSwing;
-      const leashNow = Math.max(2, (e._cmpLeash ?? LEASH) + (sw ? sw.reach - sw.recall : 0));
+      /* HOW LOOSELY THIS KIND HOLDS ITS STATION, and HOW FAR IT MAY GO — one
+       * reader each, for the reason those readers give. The tempers move
+       * `reach` and `recall` and `temperSwing` is the one place they are added
+       * up; the wrap that walks the animal home and the ledger that decides it
+       * crossed an area "inside the leash" must be reading the same rope. */
+      const leashNow = leashOf(e);
       const dragged = d > leashNow;
       if (dragged || !busy) {
-        if (d > SETTLED * slack) {
+        if (d > settledBand(e)) {
           e.wish = (e.wish || new THREE.Vector3()).set(dx / d, 0, dz / d);
           if (!e.toTarget) e.toTarget = new THREE.Vector3();
           e.toTarget.copy(e.wish);
@@ -715,6 +882,30 @@ export class CompanionPack {
     /** Who last hurt it, for the epitaph. Written by the damage wrap. */
     this.lastKiller = null;
     /**
+     * THE RECORD THE RUN IS HAPPENING TO, held by the pack as well as by the
+     * body — and it is the SAME OBJECT, never a copy.
+     *
+     * `keepCompanion` needs it after the body is gone: a dead animal is
+     * spliced out of `this.list` by the loop below, so `body0` is null at
+     * exactly the fold that has to write the epitaph. The fold reads this and
+     * checks its id against the disk before it trusts it — see the note there,
+     * which is also the note about why nothing ever climbed a rung.
+     */
+    this.rec = null;
+    /** The rung it deployed on. See `adopt`. */
+    this.rung0 = null;
+    /**
+     * HOW MUCH OF THE RUN IT SPENT AWAY FROM YOU, in seconds, for RANGING.
+     *
+     * Two clocks rather than one ratio, because a ratio has to be recomputed
+     * every frame and neither number is interesting until the fold asks. What
+     * counts as "away" and what counts as "mostly" are BOTH the temper's own:
+     * `RANGED_MARK` and `rangedRun` live beside RANGING in Kennel.js and this
+     * only holds the stopwatch.
+     */
+    this.farT = 0;
+    this.nearT = 0;
+    /**
      * THE STUB BODY, AND IT IS NOT OPTIONAL. `World._resolveBlades` walks
      * `this.props` and reads `pr.body.position` BEFORE it asks for capsules,
      * so a pack without one throws on the first frame a blade is out. Copied
@@ -761,6 +952,19 @@ export class CompanionPack {
     e._cmpRec = opts.rec || null;
     e._cmpSwing = temperSwing(opts.rec);
     e._cmpLeash = opts.leash ?? rungOf(opts.rec).leash;
+    if (opts.rec) this.rec = opts.rec;
+    /* THE RUNG IT WENT OUT ON, so the fold can say whether it came back a
+     * different animal. `Trooper.award` returns the promotion it caused and
+     * every caller in Command.js reads that answer; a companion's deeds are
+     * awarded a frame at a time from the ledger below, so the comparison has
+     * to be held from one end of the run to the other instead. Kept here
+     * rather than on the record because it is derived from xp and a derived
+     * field on a record is a second source of truth that goes stale. */
+    if (opts.rec) this.rung0 = rungOf(opts.rec).id;
+    /* HOW MUCH GROUND WAS ALREADY BEHIND YOU WHEN IT ARRIVED. A companion
+     * fielded in area three has not crossed areas one and two, and a counter
+     * that opened at zero would pay it for both on the next boundary. */
+    e._cmpAreas = this.world?.command?.areasTaken ?? 0;
     /* THE PACE CAP, APPLIED HERE AND NOWHERE ELSE. `paceOf` clamps a row to
      * 0.85 of the player's sprint on the way out, so no rung, temper, phase or
      * setting can produce a companion that outruns you — which is the whole
@@ -780,13 +984,197 @@ export class CompanionPack {
     return e;
   }
 
+  /**
+   * WAS THIS A RUN SPENT AWAY FROM YOU? The RANGING verdict — the seconds are
+   * this pack's, the rule for what they mean is the temper's.
+   */
+  get rangedRun() { return rangedRun(this.farT, this.nearT); }
+
   /** Give it a body to take, or clear the order. */
   bid(e, target) { if (e) e._cmpBidden = target || null; }
 
+  /**
+   * ═════════════════════════════════════════════════════════════════════════
+   *  WHAT IT DID, AND WHAT THAT IS WORTH
+   * ═════════════════════════════════════════════════════════════════════════
+   *
+   * THE FOUR DEEDS AND THE FOUR TALLIES, IN ONE PLACE, ON A BODY THIS METHOD
+   * IS ALREADY HOLDING.
+   *
+   * `Kennel.DEEDS` and `Kennel.earnedTempers` were both written, both checked,
+   * and both fed by NOTHING. `award` had one caller in the whole tree and it
+   * fired on the wheel press rather than on anything landing; `downs`,
+   * `orders` and `ranged` — the three counters `earnedTempers` reads — had no
+   * writer at all. So the ladder existed, the tempers existed, and a companion
+   * you played with for a hundred runs stayed STRANGE with an empty collar.
+   *
+   * ── WHY ALL SIX LIVE HERE AND NOT AT SIX EVENT SITES ─────────────────────
+   *
+   * Every one of them is a fact about a BODY over TIME — it arrived, it got
+   * up, it stayed inside the rope, it spent the afternoon forty metres away —
+   * and the pack's tick is the only thing in the tree that sees the body every
+   * frame. The alternative was a line in `_areaClear`, a line in
+   * `_getUpFromDown`, a line in `orderCompanion` and a line in `_checkWipe`:
+   * four files learning the word companion, for a feature built so that none
+   * of them do. The `aboard` note above already argues the poll-versus-
+   * subscription trade and this is the same trade for the same reason — what
+   * is being watched is the BODY, and the body is what the pack has.
+   *
+   * ── AND EVERY ONE IS LATCHED, BECAUSE A FRAME IS NOT AN EVENT ────────────
+   *
+   * A companion is inside its leash for thirty frames a second and down for
+   * six hundred of them. So every deed below fires on an EDGE rather than on a
+   * state, and the latch is per-area where the design says per area
+   * (`_cmpOrderedHere`), per-fall where the act is a fall (`_cmpWasDown`,
+   * `_cmpReached`) and per-boundary where the ground says so (`_cmpAreas`).
+   * Unlatched, `crossed` would pay a point a frame and the ladder would be
+   * over in four seconds.
+   */
+  _ledger(e, dt, taken) {
+    const rec = e._cmpRec;
+    /* NO RECORD, NO LEDGER — the sandbox's companion, the dojo's, a check's.
+     * The animal is real and behaves identically; nothing about it is being
+     * remembered, which is what having no record MEANS. */
+    if (!rec) return;
+    const p = e._cmpOwner;
+    const up = ownerUp(e);
+
+    /**
+     * AN ORDER YOU GAVE HAS LANDED.
+     *
+     * Two currencies off one event, counted deliberately differently.
+     * `DEEDS.order` is the design's "the first time PER AREA", so it is
+     * latched to the area: a player who taps the wheel thirty times has
+     * trained nothing. KEEN's tally is the design's "twelve orders landed",
+     * which counts ORDERS and not areas, so it takes every one — twelve landed
+     * orders is then two or three crossings of ordinary play rather than
+     * twelve areas, which is what the temper's own sentence asks for.
+     *
+     * `_cmpAsked` is cleared on the landing, so one order lands once however
+     * long the animal then holds it.
+     */
+    if (orderLanded(e)) {
+      e._cmpAsked = null;
+      rec.orders = (rec.orders | 0) + 1;
+      if (!e._cmpOrderedHere) { e._cmpOrderedHere = true; award(rec, 'order'); }
+    }
+
+    /**
+     * IT WENT DOWN — SCARRED's tally, and the flag `recovered` reads.
+     *
+     * On the EDGE into `downed`, so one fall is one fall however long it lies
+     * there, and it counts the FALL and not the death: a companion that bled
+     * out is a companion whose record is about to become an epitaph anyway.
+     * "…and lived" is enforced by the fold rather than restated here —
+     * `applyTempers` runs only on a run it came home from.
+     */
+    if (e.downed && !e._cmpWasDown) {
+      e._cmpWasDown = true;
+      e._cmpFellHere = true;
+      rec.downs = (rec.downs | 0) + 1;
+    } else if (!e.downed) e._cmpWasDown = false;
+
+    /**
+     * IT REACHED YOU WHILE YOU WERE DOWN.
+     *
+     * `DOWN_HELP` is the radius, imported rather than chosen — see the note on
+     * the import. Latched on the FALL and cleared the moment you are back on
+     * your feet, so one fall pays once and an animal cannot earn it twice by
+     * stepping over your body.
+     *
+     * AND THIS IS THE ONE DEED THE GAME AS SHIPPED MAKES ALMOST UNCLAIMABLE,
+     * which is recorded here rather than left to be discovered. A player has
+     * no revivable downed state: `World._checkWipe` ends the run on the frame
+     * the last one falls and `main.gameOver` folds the companion in that same
+     * frame, so in a solo run the animal is running towards a record that has
+     * already been closed. The one mode with a real down-and-get-up —
+     * co-op's `_reviveDowned` on a wave clear — is the one mode
+     * `keepCompanion` deliberately does not fold at all. It is written, it
+     * fires, and the check measures what it is worth rather than this file
+     * claiming it is worth two.
+     */
+    if (!up) {
+      if (!e._cmpReached && !e.downed && p?.position
+          && e.position.distanceTo(p.position) <= DOWN_HELP) {
+        e._cmpReached = true;
+        rec.saves = (rec.saves | 0) + 1;
+        award(rec, 'reached');
+      }
+    } else e._cmpReached = false;
+
+    /**
+     * HOW FAR AWAY IT IS SPENDING THE RUN — RANGING's tally.
+     *
+     * Measured from YOU and not from its station, because the temper's own
+     * sentence is "runs spent beyond twelve metres" and what a player means by
+     * that is twelve metres from themselves. The station is 3.4 m behind you
+     * and swings when you turn round; a ring measured off it would report an
+     * animal at your heel as three metres further out every time you looked
+     * over your shoulder.
+     *
+     * ONLY WHILE YOU ARE UP. Seconds spent standing over your body are not
+     * seconds it spent away from you, and a long death sequence would
+     * otherwise file the run as one at the end of its rope.
+     */
+    if (up) {
+      if (e.position.distanceTo(p.position) > RANGED_MARK) this.farT += dt;
+      else this.nearT += dt;
+    }
+
+    /**
+     * AND AN AREA IS BEHIND YOU — the two deeds only a boundary can pay.
+     *
+     * `crossed` wants it ALIVE and INSIDE THE LEASH at the transition, and the
+     * leash is measured from the station through `leashOf` and `stationGap` —
+     * the same two readers the move wrap steers on, so the rope the ledger
+     * pays for is the rope the animal is actually on.
+     *
+     * `recovered` wants an area it went down in, was picked up in, and then
+     * SURVIVED, and all three are in the one test: `_cmpFellHere` says it
+     * fell, standing here not-downed says somebody stood over it, and being at
+     * the boundary at all says it lived to the end of the area.
+     *
+     * `areas` is the free layer and is credited on a wider rule than the xp:
+     * every boundary it was alive for, in the rope or not. The history is what
+     * happened; the deed is what it was worth. COMPANIONS.md is explicit that
+     * most of the felt growth should live in the layer that costs nothing.
+     */
+    if (taken > (e._cmpAreas | 0)) {
+      e._cmpAreas = taken;
+      if (!e.dead && !e.downed) {
+        rec.areas = (rec.areas | 0) + 1;
+        if (stationGap(e) <= leashOf(e)) award(rec, 'crossed');
+        if (e._cmpFellHere) award(rec, 'recovered');
+      }
+      e._cmpFellHere = false;
+      e._cmpOrderedHere = false;
+    }
+  }
+
   update(dt = 1 / 60) {
+    /**
+     * HOW MUCH GROUND IS BEHIND YOU, ASKED ONCE A FRAME.
+     *
+     * `areasTaken` is the director's own reader — "a derived count rather than
+     * a second tally kept beside the first", counted off the ledger
+     * `_areaClear` writes as it crosses — and it is the right one of the three
+     * on offer. `areaNumber` is where you ARE and is one ahead of what you
+     * have taken. `areaIndex` never advances on the LAST area at all, because
+     * `_areaClear` returns into `_endCampaign` before it increments: an animal
+     * that fought a whole crossing would have been paid for four of the five
+     * areas it crossed, and the one it was missing the point for is the one it
+     * won.
+     *
+     * ZERO IN EVERY MODE WITHOUT A CAMPAIGN, and that is the honest answer
+     * rather than a hole. Nine of the eleven modes have no areas to cross, so
+     * there is no boundary to be alive at and this deed does not exist there.
+     * The other three do, and they carry those modes on their own.
+     */
+    const taken = this.world?.command?.areasTaken ?? 0;
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (!e || e.dead || e.disposed) { this.list.splice(i, 1); continue; }
+      this._ledger(e, dt, taken);
       /* A BID ON A BODY THAT IS GONE IS NOT AN ORDER ANY MORE. Cleared here
        * rather than in the aim wrap so the wrap stays a pure reader. */
       if (e._cmpBidden && (e._cmpBidden.dead || e._cmpBidden.disposed)) e._cmpBidden = null;

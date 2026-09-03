@@ -112,8 +112,65 @@ export const COMPANION_RANKS = [
   { id: 'strange', label: 'STRANGE', xp: 0, leash: 14, orders: ['heel', 'away'] },
   { id: 'known', label: 'KNOWN', xp: 6, leash: 18, orders: ['heel', 'away', 'ward'] },
   { id: 'trusted', label: 'TRUSTED', xp: 16, leash: 24, orders: ['heel', 'away', 'ward', 'seek', 'verb'] },
-  { id: 'sworn', label: 'SWORN', xp: 30, leash: 34, orders: ['heel', 'away', 'ward', 'seek', 'verb', 'hold'] },
+  { id: 'sworn', label: 'SWORN', xp: 20, leash: 34, orders: ['heel', 'away', 'ward', 'seek', 'verb', 'hold'] },
 ];
+
+/**
+ * ── WHY THE TOP GATE IS 20 AND NOT THE 30 THE DESIGN WROTE ────────────────
+ *
+ * COMPANIONS.md set the gates at 0/6/16/30 and said, in the same sentence,
+ * that two clauses were to be DRIVEN rather than transcribed: the top rung
+ * must be reachable inside one run, and not before 40% of it — the trooper
+ * ladder's own pins at `tools/checks/command.mjs:845`. They were driven, and
+ * 30 fails the first one. THE MEASUREMENT IS 20.
+ *
+ * A crossing is 2, 3 or 5 engagements — `rollSession` rolls the length — so
+ * "one long campaign" is a Grind at five. Driven on seed 2 (Grind: landing →
+ * plain → hailfire → spires → foundry), with an order landing in every area,
+ * the animal put down and picked up in every area, and it alive and inside
+ * its leash at every boundary — a flawless crossing, not a typical one — the
+ * record ended at
+ *
+ *     area 1  xp 4    STRANGE          area 4  xp 16   TRUSTED
+ *     area 2  xp 8    KNOWN            area 5  xp 20   SWORN
+ *     area 3  xp 12   KNOWN
+ *
+ * Four a boundary is the CEILING and not a sample: `crossed` is one per area,
+ * `order` is one per area by design ("the FIRST time per area"), `recovered`
+ * is two and cannot fire twice for one area either. 5 × 4 = 20, and there is
+ * no fifth deed and no sixth area.
+ *
+ * THE FOURTH DEED PAYS NOTHING A RUN CAN BANK, and that is the whole of the
+ * gap between 20 and the 30 the design assumed. `reached` (+2, "it reaches you
+ * while you are downed") is real and it fires — but a player has no revivable
+ * downed state anywhere in this game. `World._checkWipe` ends the run on the
+ * frame the last player falls and `main.gameOver` folds the companion in that
+ * same frame with `won` false, so the record the animal is running towards has
+ * already been closed and cleared; and the one mode with a genuine down-and-
+ * get-up, co-op's `_reviveDowned` on a wave clear, is the one mode
+ * `keepCompanion` deliberately does not fold at all. 6 a boundary was the
+ * arithmetic that made 30 look like 100% of a crossing; 4 is what a crossing
+ * actually pays.
+ *
+ * SO THE GATE MOVES AND THE DEEDS DO NOT. The deed table is the design stated
+ * verbatim and the four weights are not a balance dial; the gate is the number
+ * whose only job is to sit correctly against them, and it was sitting against
+ * an arithmetic nobody had run. At 20 the top rung is reachable in one long
+ * crossing AND ONLY JUST — which is `command.mjs`'s own sentence for the
+ * trooper ladder, "climbable in ONE campaign and only just, the top rung is
+ * for the body that lived through all of it" — and 20 is 100% of the run
+ * rather than the 40% floor's 8. An ordinary crossing — an order landing in
+ * every area but the animal only going down and being picked up in two of the
+ * five — pays 14, so SWORN is still a second crossing away and Company.js:28's
+ * amendment holds: a thing may cross runs when a single run COULD have
+ * produced it unaided.
+ *
+ * WHAT WOULD PUT IT BACK TO 30. Two things, and both are somebody's decision
+ * rather than a tuning: a revivable downed state for the player, which would
+ * make `reached` bankable and take the ceiling to 30; or a sixth deed. Until
+ * one of those exists, `tools/checks/companions.mjs` drives the crossing and
+ * fails on the number rather than on this comment.
+ */
 
 /**
  * WHICH RUNG A RECORD IS ON, AND WHETHER IT MAY BE GIVEN A DUTY.

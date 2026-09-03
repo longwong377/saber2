@@ -35,7 +35,8 @@ import { recordRun, loadProgress } from './game/Progress.js';
  * manifest; neither it nor Command.js knows a store exists. */
 import * as Company from './game/Company.js';
 /* The companion's durable record and its fold — see `foldCompanion`. */
-import { keepCompanion, load as loadKennel, rungOf, adopt as adoptCompanion } from './game/Kennel.js';
+import { keepCompanion, load as loadKennel, rungOf, temperById,
+  adopt as adoptCompanion } from './game/Kennel.js';
 import { fieldCompanion } from './game/Companions.js';
 import { COMPANION_KINDS } from './game/CompanionKinds.js';
 /* …AND THE SLATE, the company's other half: the pre-rolled recruits the next
@@ -1885,7 +1886,14 @@ function foldCompanion(stats = null) {
   if (!out) return;
   const name = out.rec?.name || 'your companion';
   if (out.kept) {
-    world.notify?.(`${name.toUpperCase()} CAME BACK`, 'it is in the kennel when you next deploy');
+    /* AND WHAT THE RUN MADE OF IT. The rung is the whole of what a companion
+     * grows into — no number, no bar, no screen to spend anything on — so the
+     * one moment it is worth saying out loud is the moment it changed. A run
+     * that changed nothing says what it always said. */
+    const grew = [out.rose ? `it is ${out.rose.label.toLowerCase()} now` : null,
+      ...(out.learned || []).map((t) => temperById(t)?.gain).filter(Boolean)].filter(Boolean);
+    world.notify?.(`${name.toUpperCase()} CAME BACK`,
+      grew.length ? grew.join(' — ') : 'it is in the kennel when you next deploy');
   } else {
     world.notify?.(`${name.toUpperCase()} IS GONE`,
       'the kennel keeps the name and the ground; it does not keep the animal');
