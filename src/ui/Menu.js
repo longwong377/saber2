@@ -2649,6 +2649,16 @@ export function databankPages() {
       hp: A.hp, threat: A.threat ?? 0, speed: A.speed ?? 0, mass: A.mass ?? 0,
       boss: !!A.boss, big: !!A.big, training: !!A.training,
       setPieceOnly: !!A.setPieceOnly,
+      /* A BODY YOU BRING IS NOT A BODY YOU MEET, and it needed the third
+       * branch rather than a pool entry. Eight of the twelve companion kinds
+       * are archetypes now, so the databank owes each a page — and `levels`
+       * for every one of them is `[]`, because no theatre's pool fields a
+       * companion and putting one in a pool to make a cell render would spawn
+       * the player's own animal as an enemy. `training` already had this shape
+       * (a dojo body is met in the dojo and in no pool), so this follows it:
+       * the flag is read off COMPANION_KINDS, which is the one table that
+       * decides what a companion kind is, and the page says the true thing. */
+      companion: !!COMPANION_KINDS[key],
       /* WHERE IT IS MET, derived from the pools — which is the question a player
        * actually has ("where do I go to fight one of these") and the one thing
        * on the page that no comment anywhere in the source already answers.
@@ -8618,6 +8628,7 @@ export class Menu {
     }
 
     const where = p.training ? 'The dojo, and nowhere else'
+      : p.companion ? 'Nowhere — this one you bring, to whichever theatre you take it to'
       : p.levels.length ? p.levels.join(' · ')
       : 'Nowhere — no theatre fields this one';
     /* The tags are facts off the archetype, not adjectives. `setPieceOnly` is
