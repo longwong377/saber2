@@ -190,6 +190,7 @@ export async function rose(set, snap, { bolts = 60, dist = 9, gap = 36, level = 
   scanFrom = 92, scanTo = 126, scanStep = 2 } = {}) {
   const { world, p } = await bootPinned(set, snap, { level, mode: 'sandbox', extra: { allies: 0 } });
   const input = scriptedInput({ guard: true });
+  const loose = pinScatter();
   try {
     const step = (n) => {
       for (let i = 0; i < n; i++) { world.update(STEP, input); world.enemies.length = 0; }
