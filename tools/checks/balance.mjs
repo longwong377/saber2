@@ -338,8 +338,19 @@ export async function run({ check, assert }) {
        * question (a thrown blade, a radial shove) are ones it cannot see even
        * once, let alone repeatedly. `saberthrow` directly above is the same
        * gap for the same power. They are measured in `powers.mjs`, on a real
-       * Player, by casting twenty times in a row and reading the bill. */
+       * Player, by casting twenty times in a row and reading the bill.
+       *
+       * `unbound-throwOff` IS THE SAME POWER IN THE OTHER HAND and therefore
+       * the same blind spot twice over. It removes the paired blades' 3.0 s
+       * `cooldowns.throwOff`, so it needs the clock this model does not have;
+       * and what it buys is that the SHOTO leaves while the main blade keeps
+       * fighting, which needs two weapons on one fighter — a term this model
+       * has even less of than a clock, since it fights one engaged target with
+       * one blade. Measured instead in `saberforms.mjs`, on a real Player with
+       * the shoto genuinely in the air: contacts landed and bolts through,
+       * against the same player with the blade put down. */
       'unbound-throw',
+      'unbound-throwOff',
       'unbound-unleash',
     ]);
     const missed = [];

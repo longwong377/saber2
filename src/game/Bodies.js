@@ -12812,6 +12812,41 @@ export function buildWookiee(opts = {}) {
    */
   const under = hideMat(new THREE.Color(opts.pelt ?? 0x6b4a2c).multiplyScalar(1.35).getHex(), 0.94);
   const face = skinMat(0x3a2b1e, 2.6);
+  /**
+   * ── THE MUZZLE MASK, AND IT IS THE WHOLE OF THE FACE COMPLAINT ────────
+   *
+   * The body lane's own verdict on this figure was "the face is a dark mass
+   * with amber eyes", and rendered head-on (`tools/_soft.mjs` with the frame
+   * on the head bone) that is exactly what it is: braincase, brow shelf,
+   * muzzle and both cheeks are ONE `assemble` wearing ONE material at
+   * 0x3a2b1e, so the four shapes that were built to give this head structure
+   * all solve to the same flat value under the cel ramp and none of them can
+   * be seen. The brow the geometry actually has is invisible. The nose was a
+   * sphere in the SAME material as the thing it sits on. There is no mouth.
+   * It is a black hole with two lamps in it, and the ramp is the reason: the
+   * bandolier's own note in this function already says it — "the one thing a
+   * cel ramp will not do is separate two dark values".
+   *
+   * So the fix is VALUE and not more geometry. Three materials over the one:
+   *
+   *   `snout` — the pale fur mask over the muzzle and the brow, which every
+   *   reference wookiee has and which is the thing that makes the face read
+   *   as a face rather than as a silhouette. Derived from the pelt by the
+   *   same `multiplyScalar` gain `under` uses and for the same argued reason:
+   *   a lerp toward white runs in linear space and comes back grey, and a
+   *   coat's pale half is lit fur rather than different fur. 2.4 against
+   *   `under`'s 1.35 because this one has to separate from `under` as well.
+   *
+   *   `snoutDark` — the nose and the lip line, and it is the darkest value on
+   *   the body by a distance (0x120d0a against the face's 0x3a2b1e). It is
+   *   flat and not derived, because a nose is wet skin and does not change
+   *   colour when the player repaints the coat.
+   *
+   * Two materials, two more merged meshes on the head bone, and the four
+   * shapes that were already there stop being one shape.
+   */
+  const snout = hideMat(new THREE.Color(opts.pelt ?? 0x6b4a2c).multiplyScalar(2.4).getHex(), 0.94);
+  const snoutDark = hideMat(0x120d0a, 0.62);
   /* 0x6a4a2e and not 0x4a3524: at the darker value the strap rendered as a
    * solid BLACK plank across the chest, because the one thing a cel ramp will
    * not do is separate two dark values. A bandolier is tan leather. */
@@ -12895,6 +12930,25 @@ export function buildWookiee(opts = {}) {
       const k = new Kit();
       const core = new THREE.Vector3(0, 0.096 * s, -0.010 * s);
       const d = new THREE.Vector3();
+      /**
+       * ── THE MASK OVER THE MUZZLE ──────────────────────────────────────
+       *
+       * A SLEEVE OVER THE LATHE THAT IS ALREADY THERE, and not the muzzle
+       * moved into the Kit, which was the first thing tried and is wrong:
+       * `headShell` is the geometry `onSurface` seats the eyes and every mane
+       * clump against (`hg` below), so taking a shape out of it re-aims eleven
+       * things that were authored against the shape it had. The sleeve is the
+       * same lathe at 1.10 of its radii, started 0.030 further forward so the
+       * dark hinge and the cheeks still show behind it, and it is fur over
+       * skin — which is what a wookiee's pale muzzle actually is.
+       *
+       * It costs 160 triangles, which is a tenth of what this head spends on
+       * mane and is the only part of the face a player can read at 3 m.
+       */
+      k.add(snout, limbGeo(0.098 * s, 0.076 * s, 0.052 * s, 10, true,
+        { rings: 3, capN: 3, capY0: 0.10, capY1: 0.52,
+          section: muzzleSection({ flat: 0.78, n: 2.8, chin: 0.20, crown: 0.10 }) }),
+      [0, 0.055 * s, 0.070 * s], [Math.PI / 2 + 0.10, 0, 0]);
       k.pair((sx) => {
         // deep-set eyes under the shelf
         d.set(sx * 0.40, 0.10, 0.91).normalize();
@@ -12902,9 +12956,44 @@ export function buildWookiee(opts = {}) {
         // the lower canine, standing out of the lip the way every reference has it
         k.add(tooth, clawGeo(0.030 * s, 0.007 * s, 0.002 * s, -0.35, 4, 3),
           [sx * 0.030 * s, 0.038 * s, 0.106 * s], [-0.30, 0, sx * 0.12]);
+        /**
+         * THE BROW, AS FUR. The shelf is in `headShell` and has been since
+         * this body landed — an ellipsoid squashed to 0.34 on Y and raked
+         * −0.26 over the sockets — and it is invisible for the reason the
+         * mask above exists: it is the same value as everything it stands
+         * proud of. A shadow line cannot be drawn under a flat ramp, so the
+         * brow is drawn instead, as four short clumps of `snout` fur raked
+         * FORWARD along its leading edge. Forward and not down: hair over an
+         * eyebrow points at what the animal is looking at, and a clump raked
+         * down would be another mane ring.
+         */
+        k.row(4, (i, t) => {
+          const th = sx * (0.16 + t * 0.42);
+          d.set(Math.sin(th) * 0.92, 0.34, Math.cos(th) * 0.92).normalize();
+          k.aim(snout, clawGeo((0.055 - t * 0.010) * s, 0.014 * s, 0.003 * s, 0.4, 3, 2),
+            onSurface(hg, d, -0.006 * s, core), [d.x * 0.5, 0.18, d.z * 0.5 + 0.55]);
+        });
       });
-      k.add(face, (() => { const g = new THREE.SphereGeometry(0.026 * s, 8, 6); g.scale(1.2, 0.8, 1); return g; })(),
-        [0, 0.082 * s, 0.150 * s]);
+      /* THE NOSE, in the darkest material on the body rather than in the same
+       * one as the face it sits on — which is what it was, and is why nothing
+       * was there. Two nostril creases sunk into it for the tauntaun's stated
+       * reason: at range a nose is two pixels of shadow. */
+      k.add(snoutDark, (() => { const g = new THREE.SphereGeometry(0.030 * s, 8, 6); g.scale(1.25, 0.82, 1); return g; })(),
+        [0, 0.081 * s, 0.152 * s]);
+      /**
+       * THE MOUTH, AND IT IS A LINE AND NOT A HOLE.
+       *
+       * There was none. A `plateGeo` slab 0.10 wide and 0.012 tall laid
+       * across the underside of the snout, standing 2 mm proud of it in
+       * `snoutDark`, is a lip line: under a two-step ramp a dark strip on a
+       * pale muzzle reads as a closed mouth from every angle that can see the
+       * face, and it is 92 triangles. A modelled opening would need an
+       * interior, a tongue and a jaw that moves, none of which this rig has.
+       * The two canines above already stand out of it, which is what makes
+       * the line read as a MOUTH rather than as a seam.
+       */
+      k.add(snoutDark, plateGeo(0.098 * s, 0.014 * s, 0.052 * s, 0.004 * s, 1),
+        [0, 0.036 * s, 0.128 * s], [0.34, 0, 0]);
       /**
        * THE MANE, and it is the head's whole outline. Two rings of clumps
        * raked back and down off the crown and the jaw, so the head's
