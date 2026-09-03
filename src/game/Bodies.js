@@ -12755,11 +12755,41 @@ export function buildMedic(opts = {}) {
  *   len,r0  the clump; `len` may be a function of t so a row can taper
  *   droop   0 straight out of the surface, 1 straight down the body
  */
+const _shagDn = new THREE.Vector3(), _shagInv = new THREE.Matrix4();
 function shagOn(k, mat, bone, n, o = {}) {
   if (!bone) return k;
   const y0 = o.y0 ?? 0.15, y1 = o.y1 ?? 0.85;
   const a0 = o.a0 ?? -1.2, a1 = o.a1 ?? 1.2;
   const r0 = o.r0 ?? 0.026, droop = o.droop ?? 0.72;
+  /**
+   * ── "STRAIGHT DOWN THE BODY" IS A WORLD DIRECTION AND WAS WRITTEN AS A
+   *    LOCAL ONE, AND ON THIS BODY THAT IS FOUR LIMBS OF FUR BRUSHED
+   *    BACKWARDS ─────────────────────────────────────────────────────────
+   *
+   * The aim was `[out.x·(1−droop), −droop, out.z·(1−droop)]` — literal local
+   * −Y — and the header above it says `droop` is "0 straight out of the
+   * surface, 1 straight down the body". Those two agree on the torso and
+   * disagree on every limb, because a bone's local +Y runs from its origin
+   * toward its CHILD: on `chest` and `hips` that is toward the head, so local
+   * −Y is world down and the sentence is true; on `armL`, `foreL`, `thighL`
+   * and `shinL` it is toward the hand and the foot, so local −Y is world UP.
+   *
+   * Measured on the shipped figure before this line, off the merged coat's own
+   * vertices: the shin's clumps are rooted between world y −0.671 and −1.105
+   * and the mesh reaches −0.519 — 0.076 m ABOVE the knee the topmost root sits
+   * under. Every clump on both arms, both forearms, both thighs and both shins
+   * was raked toward the body. That is fur combed the wrong way, and it is why
+   * the coat reads as spines from the front: a spike pointing up a limb is a
+   * quill, and the same clump pointing down it is hair.
+   *
+   * So the direction is MEASURED rather than assumed — world down, carried
+   * into whatever frame this bone happens to be in — which is the same answer
+   * `hull()`/`hullN()` give one builder over and `onLimb` gives here for the
+   * ROOT. The rest pose is the authoring frame for everything else in this
+   * file and it is the authoring frame for this too.
+   */
+  bone.obj.updateWorldMatrix(true, false);
+  _shagDn.set(0, -1, 0).transformDirection(_shagInv.copy(bone.obj.matrixWorld).invert()).normalize();
   const out = [0, 0, 0];
   return k.row(n, (i, t) => {
     const th = a0 + (a1 - a0) * (n === 1 ? 0.5 : t);
@@ -12787,7 +12817,8 @@ function shagOn(k, mat, bone, n, o = {}) {
      * under, and it is what pays for the shins and the feet below.
      */
     k.aim(mat, clawGeo(L, r0, r0 * 0.18, 0.5, 3, 2), root,
-      [out[0] * (1 - droop), -droop, out[2] * (1 - droop)]);
+      [out[0] * (1 - droop) + _shagDn.x * droop, _shagDn.y * droop,
+        out[2] * (1 - droop) + _shagDn.z * droop]);
   });
 }
 
@@ -13148,7 +13179,28 @@ export function buildWookiee(opts = {}) {
         k.bake(hips.obj);
       }
       for (const side of ['L', 'R']) {
-        const sx = side === 'L' ? 1 : -1;
+        /**
+         * ── THE OUTBOARD SIDE IS −1 ON THE LEFT, AND IT WAS +1 ────────────
+         *
+         * `shagOn`'s azimuth is in the BONE's frame, and every limb bone on
+         * this rig has its local +X pointing at world −X: measured off the
+         * built rest pose, `armL` and `armR` both give localX → (−0.95, ∓0.30,
+         * ∓0.03) and `shinL` gives (−1.00, 0, 0). So a positive azimuth is
+         * world −X, which is INBOARD on the left arm and inboard on the right
+         * one too, and the three rows this variable places were on the inside
+         * of both arms — the surface pressed against the body.
+         *
+         * Measured off the merged coat's own vertices before this line: the
+         * left upper arm's lathe spans world x 0.130–0.406 and its coat spans
+         * 0.044–0.331, so 7.5 cm of the OUTSIDE of the arm — the half a player
+         * standing next to this body is looking at — carried no hair at all,
+         * and 8.6 cm of coat was buried between the arm and the ribs. Same on
+         * the forearm (lathe 0.265–0.453, coat 0.191–0.355).
+         *
+         * One sign, and it is the difference between a coat and a coat nobody
+         * can see. The name says what it is for rather than which side it is.
+         */
+        const sx = side === 'L' ? -1 : 1;
         const arm = r.get('arm' + side);
         if (arm) {
           const k = new Kit();
@@ -13182,9 +13234,68 @@ export function buildWookiee(opts = {}) {
         const shin = r.get('shin' + side);
         if (shin) {
           const k = new Kit();
-          shagOn(k, under, shin, 3, { y0: 0.20, y1: 0.62, a0: 0.6, a1: 0.6,
-            len: 0.095 * s, r0: 0.022 * s, droop: 0.82, sink: 0.005 * s });
+          /**
+           * ── THE SHIN AND THE INSTEP, WHICH WERE THE OTHER HALF OF THE
+           *    COMPLAINT ────────────────────────────────────────────────
+           *
+           * "shins and feet are nearly bare", and the line above is why: ONE
+           * row of three clumps at a single azimuth (0.6), on the one limb of
+           * this body that is at a standing player's eye level when the
+           * wookiee is beside him. From the front and from behind the shin
+           * was a bare pipe — the same defect the arm's own note names three
+           * blocks up ("at two the arm was a bare pipe from every angle but
+           * one") and it was left standing on the leg.
+           *
+           * Three rows of four, at the front, the outside and the back, is
+           * the arm's answer applied to the leg. The inside is deliberately
+           * bare: it is the one azimuth that is never on a silhouette,
+           * because the other leg is behind it.
+           *
+           * AND THE FOOT IS COATED FROM THE SHIN AND NOT FROM THE FOOT BONE,
+           * which is anatomy rather than convenience. Hair over an instep
+           * grows out of the LEG and hangs across the foot — it does not
+           * sprout from the toes — so a skirt of six short clumps round the
+           * bottom of the shin covers the ankle and the top of the boot, and
+           * it bends with the shin, which is the joint that actually moves it.
+           * A clump rooted on `foot` would swing with the toe on every step
+           * and read as a brush glued to a shoe.
+           */
+          for (const a of [0.45, sx * 1.55, Math.PI - 0.45]) {
+            shagOn(k, under, shin, 4, { y0: 0.14, y1: 0.70, a0: a, a1: a,
+              len: (t) => (0.108 - t * 0.014) * s, r0: 0.024 * s, droop: 0.84, sink: 0.005 * s });
+          }
+          shagOn(k, under, shin, 7, { y0: 0.80, y1: 0.80, a0: -2.7, a1: 2.7,
+            len: 0.075 * s, r0: 0.022 * s, droop: 0.90, sink: 0.004 * s });
           k.bake(shin.obj);
+        }
+        const foot = r.get('foot' + side);
+        if (foot) {
+          const k = new Kit();
+          /* AND A LOW FRINGE ON THE FOOT ITSELF, round the outside of the
+           * boot. The skirt above hangs over the instep from the shin, which
+           * is where hair over a foot comes from — but the foot bone's own
+           * outline from the side is a bare slab, and the one row that has to
+           * be ON it is the row that breaks that edge. `droop` is NEGATIVE
+           * here and it is the only negative one in this body: the foot bone's
+           * local +Y runs from the ankle to the TOE (its child offset is
+           * [0, length, 0] and its rest is [0, -0.2, 1]), so `-droop` on Y
+           * points back up the leg, and hair on a foot lies toward the toe.
+           *
+           * TWO SIDE ROWS AND NOTHING OVER THE INSTEP, because the shin's
+           * skirt above already covers the instep and a clump that sits under
+           * another clump costs what one on the silhouette costs. What is
+           * bare from the side is the boot's own edge, so that is what these
+           * six break. `a` ±1.45 is measured and not reasoned: `footL`'s local
+           * +Z comes out at world (0, 0.98, 0.20) — the instep — so ±1.45 is
+           * the flank of the foot, and an arc centred on π would be the SOLE.
+           * The first cut of this row was centred on π and rendered as four
+           * spikes standing in the ground; the probe that settled it prints
+           * each bone's local axes in world space and took two minutes. */
+          for (const a of [1.45, -1.45]) {
+            shagOn(k, under, foot, 3, { y0: 0.10, y1: 0.52, a0: a, a1: a,
+              len: 0.036 * s, r0: 0.016 * s, droop: 0.10, sink: 0.004 * s });
+          }
+          k.bake(foot.obj);
         }
       }
     },
