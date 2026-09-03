@@ -119,6 +119,49 @@ check, which is why each now has one.
   ? a : b` parses as `new (cond ? a : b)` against a global nothing exports.
   That is why nobody had LOOKED at a creature body in a long time.
 
+### 0.0 IF YOU READ ONE THING — where V13 actually stands, and what to pick up
+
+**It is merged and the play link is deliberately DOWN.** `index.html` on the
+default branch is the holding page `7a5c2e2` made; the game is `index.play.html`
+and putting it back is one rename. The player asked for it down and has not
+asked for it back. **Do not put it back without being asked.**
+
+**Gate: 2551 passed, 3 failed** — see §6.4 for all three and who owns each. Two
+are documented non-findings; one (`deckcast`) is genuinely unsettled and §6.4
+says exactly which two measurements would settle it.
+
+**What to pick up first, in order.** Every one of these is a real gap that was
+measured and deliberately not closed, not a guess:
+
+1. **`Enemy._move` holds a settled body's last walking heading**, so a
+   companion stands at your heel facing ~104° away from you. That is the ROOT
+   of the gaze problem §0.1f describes — the fix in `CompanionLife` treats the
+   symptom correctly and cannot reach the cause. Same file, same trip: under
+   AWAY with no target, `toTarget` survives and `_move` keeps swinging the body
+   toward it.
+2. **The Geonosis spawn loop** (§0.1f). `fieldCompanion` drops the animal at
+   (0.00, 4.60) and `stationFor` puts its heel 0.90 m into a static face. Not
+   the stuck commit — `_stuckT` never exceeds 0.5 s — it is the wall slide's
+   closed circuit, and 0.4 m of clearance fixes it.
+3. **A guest's companion earns no experience in co-op.** Four of the six deeds
+   read fields the snapshot does not carry (`downed` is not sent at all). The
+   fix is the host running the ledger and reporting deltas.
+4. **`_extracting` is not on the wire**, so one ending diverges: an animal that
+   leaves on the ship in a run that is NOT won folds as abandoned on the guest
+   and kept on the host. One boolean.
+5. **The wookiee has no melee band.** It took the bowcaster and `melee` had to
+   come off in the same edit, because `_brain` picks one brain off that flag.
+   No body in this engine carries both — 0 of 49 — and a both-bands body is a
+   branch in `_brain` plus a stand-off rule, its own commit and its own
+   friendly-fire measurement.
+6. **The spin barrier is now total bolt immunity for 2.4 s from every
+   bearing.** 0 of 12 at all five. Paid for with the cap, the drain, two bars
+   and no parry or return — but if it plays too strong the knob is `cap`, not
+   `cone`.
+
+**And the pair came out of this round net stronger**: +8% pace and −20% bolts
+taken against −10% cut work. A real trade, asserted, but not a level one.
+
 ### 0.1b THE SECOND ROUND — six lanes, and what each one found
 
 - **A JOINING PLAYER HAS BEEN SPAWNING A PRIVATE COMPANION ON EVERY DEPLOY, and
