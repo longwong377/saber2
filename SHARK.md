@@ -3,7 +3,7 @@
 A plan, not a build. Version 2, 3 Sep, after the player's second brief. Written
 against this tree and against `longwong377/Opus-5` at
 `claude/aaa-game-development-j6y2ml` (7c3df7e). Every number is measured off one
-of the two repos. The person carrying it out is a different session; §14 is what
+of the two repos. The person carrying it out is a different session; §13 is what
 to hand them. **If a place, a rule or a number is not in this file, do not invent
 it — ask.**
 
@@ -523,7 +523,7 @@ is the honest trade". So the station is not a second hangar.
 
 ---
 
-## 13. PERFORMANCE — nothing about how it runs may change
+## 12. PERFORMANCE — nothing about how it runs may change
 
 The player's bar: *"still easily run this in the browser with no setup or
 installs — nothing about that should change — and it should still run well on
@@ -531,14 +531,14 @@ a good PC."* Every number below is the engine's own, from `PERF.md`,
 `frame-budget.mjs`, `frame-ledger.mjs`, `hangar.mjs` and `decklife.mjs`, and
 the station is held to them by check, not by intention.
 
-**13.1 The delivery does not change.** One `index.play.html` served from Pages,
+**12.1 The delivery does not change.** One `index.play.html` served from Pages,
 one `pack.mjs` file that opens from disk, no server, no install, no download at
 runtime, no CDN, no WASM fetched from anywhere but the page itself. The draco
 decoder and the three GLBs are inlined like every other asset; `packed.mjs`
 boots the single file with the station in it and fails if anything reaches
 the network. `wiring.mjs` keeps refusing bare specifiers and external URLs.
 
-**13.2 The budgets, in the engine's units.**
+**12.2 The budgets, in the engine's units.**
 
 | what | bound | where it comes from |
 |---|---|---|
@@ -551,10 +551,10 @@ the network. `wiring.mjs` keeps refusing bare specifiers and external URLs.
 | physics bodies | ≤ 1100 (`maxBodies` today), asleep unless touched | `RapierWorld` is constructed with the same cap; props sleep, and a place's props are re-slept when its door leaves 80 m |
 | station step (life, tram, events, clock) | ≤ 2.5 ms on the shared box, the same bound `decklife.mjs` holds the deck to | `stationlife.mjs` times it exactly as `deckcast.mjs` times `stepDeckLife` |
 | our JS per frame, browser | ≤ the hangar's today, by `tools/_frame.mjs` (`JS med`) | the same instrument, same quality, same drawing buffer, the station standing where the hangar stood |
-| GPU per frame on a real card | the player's own reading of `Profiler.js`'s GPU line beside the hangar's | the only true render number; §13.4 says how it is used |
+| GPU per frame on a real card | the player's own reading of `Profiler.js`'s GPU line beside the hangar's | the only true render number; §12.4 says how it is used |
 | memory | no unbounded growth across an in-game day: heap flat over 3 000 steps in node, as `deckbattle.mjs` already asserts for the fleet | the event table and the pool allocate nothing per frame |
 
-**13.3 How the station stays under them** — the rules that make the numbers
+**12.3 How the station stays under them** — the rules that make the numbers
 possible, so an executor does not discover them at step 6:
 - **Places are drawn by their doors.** The plan table gives every place its
   bounds; `Station.js` culls a place whole when its door is beyond ~80 m and the
@@ -571,7 +571,7 @@ possible, so an executor does not discover them at step 6:
 - **The Starfury's orbit level is cheap by construction**: a hull, the fleet the
   deck already pays for, no bodies.
 
-**13.4 The gate is a real PC, not this box.** There is no GPU where this is
+**12.4 The gate is a real PC, not this box.** There is no GPU where this is
 written; every render number above transfers as a COUNT, never as a
 millisecond. So the acceptance for each deck in §6 includes one reading from
 the player's machine: `Profiler.js`'s always-on frame/JS/GPU line at 1080p
@@ -583,7 +583,7 @@ quality tier — never the ink pass and never the ragdoll.
 
 ---
 
-## 14. What to hand the executing session
+## 13. What to hand the executing session
 
 - This file; `HANGAR.md` (the rulebook for an interior that is not a box);
   `HANDOFF.md` §2 (the tooling traps); the headers of `DeckLife.js`,
