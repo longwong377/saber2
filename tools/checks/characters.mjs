@@ -720,6 +720,70 @@ export async function run({ check, assert, near, THREE: T }) {
     return rows.join(' ') + ` — ${Math.round(tris)} tris, ${meshes} meshes total`;
   });
 
+  check('characters: and the twelve companion bodies are under the same roof', async () => {
+    /**
+     * `ALL` IS A TYPED LIST OF EIGHT BUILDERS, AND TWELVE BODIES WALKED ROUND
+     * THE OUTSIDE OF IT.
+     *
+     * The cost check above is the game's only triangle bound and it enumerates
+     * its subjects by hand: five humanoids plus the droideka, the walker and
+     * the beast. Every companion kind is built by a different door —
+     * `COMPANION_KINDS[*].archetype` into `ARCHETYPES`, most of them through
+     * `buildQuadruped` off a CREATURE_PLANS row — so not one of them was
+     * weighed. Measured when this was written: the wookiee at 13 732 triangles
+     * was over the shipped cap and nothing in the tree said so.
+     *
+     * AND THE BOUND IS THE SAME 13 000, WHICH IS THE ARGUABLE PART. The cap
+     * above is justified by "twenty of these are on screen at once", and there
+     * is exactly ONE companion. That reads like a licence to spend more, and it
+     * is the opposite: COMPANIONS.md's own honest-doubt section records that
+     * every rung of the LOD ladder keys on camera distance — the band select,
+     * the merged skin at 62 m, the cohort past L3_AT, `clothOn` against a
+     * clothCut of 30 — and a companion is inside 30 m of somebody FOREVER. It
+     * is permanently LOD 0: full skeletal solve every frame, every decoration
+     * mesh drawn, never merged, never cohorted. A trooper at 13 000 is 13 000
+     * that the ladder takes away as he walks off; a companion at 13 000 is
+     * 13 000 in every frame of the run, in exactly the frames that are already
+     * the worst ones. The same number is the right number, and it is a ceiling
+     * rather than a target.
+     *
+     * DRIVEN FROM `COMPANION_KINDS` AND NOT FROM A LIST, which is the whole
+     * reason the defect existed: the kind that lands tomorrow is weighed the
+     * day it lands.
+     */
+    const { COMPANION_KINDS } = await import('../../src/game/CompanionKinds.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+    const rows = [], over = [];
+    let tris = 0;
+    for (const id of Object.keys(COMPANION_KINDS)) {
+      const type = COMPANION_KINDS[id].archetype ?? id;
+      const A = ARCHETYPES[type];
+      assert(A, `${id} names archetype "${type}" and nothing registers it`);
+      assert(typeof A.build === 'function', `${type} has no builder to weigh`);
+      const built = A.build({ scale: A.scale ?? 1 });
+      const root = built?.rig?.root ?? built?.group;
+      assert(root, `${type} built neither a rig nor a group`);
+      root.updateMatrixWorld?.(true);
+      let t = 0, m = 0;
+      root.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        m++;
+        const g = o.geometry;
+        t += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+      });
+      if (t >= 13000) over.push(`${id} ${Math.round(t)}`);
+      if (m >= 76) over.push(`${id} ${m} meshes`);
+      tris += t;
+      rows.push(`${id} ${Math.round(t)}/${m}`);
+    }
+    assert(rows.length >= 12, `only ${rows.length} companion kinds were weighed of twelve`);
+    assert(!over.length,
+      `${over.join(', ')} — over the 13 000 triangle / 76 mesh cap the roster has kept for a body `
+      + 'that at least gets LOD relief, on a body that never leaves LOD 0');
+    return `${rows.length} companion bodies, ${Math.round(tris)} triangles between them: ${rows.join(' ')}`;
+  });
+
   check('characters: hands are hands, at the scale a hand is', () => {
     // The player's own gloves are the largest thing in a first-person frame and
     // both of them are one merged geometry, so nothing downstream can tell how
