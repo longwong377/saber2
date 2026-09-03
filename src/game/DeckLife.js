@@ -1304,7 +1304,7 @@ function droidJobs() {
     { kind: 'lifter', path: [W.x0 - 4, W.z0 + 10, W.x0 - 4, W.z0 + 22], yaw: 0, phase: 0.9 },
     { kind: 'lifter', path: [W.x1 - 6, W.z0 + 66, W.x1 - 6, W.z0 + 86], yaw: 0, phase: 0.2 },
     { kind: 'lifter', path: [PF.x0 + 6, PF.z0 + 22, PF.x0 + 6, PF.z0 + 38], yaw: 0, phase: 0.4 },
-    { kind: 'lifter', path: [CENTRE.x0 + 18, CENTRE.z0 + 36, CENTRE.x0 + 18, CENTRE.z0 + 46], yaw: 0, phase: 0.6 },
+    { kind: 'lifter', path: [CENTRE.x0 + 27, CENTRE.z0 + 36, CENTRE.x0 + 27, CENTRE.z0 + 46], yaw: 0, phase: 0.6 }, /* was x0 + 18: a 260 kg lifter parked on x = 8, the lip walk's line */
   ];
   /* Resolve the convoys: a follower takes its leader's path, offset. */
   for (let i = 0; i < rows.length; i++) {
