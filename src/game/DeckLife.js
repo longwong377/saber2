@@ -307,7 +307,8 @@ function frame() {
   /** The second formation, centre, near the corridor's end: helmeted, inspected. */
   const FORM2 = { cx: CENTRE.x0 + 16, cz: CENTRE.z0 + 30, files: 5, ranks: 4, dx: 1.6, dz: 2.2 };
   /** The holoscreen the nearest knot watches, at the centre's near end. */
-  const HOLO = { x: CENTRE.x0 + 9, z: CENTRE.z0 + 16 };
+  /** Off the centre line: a board on the line is a wall in the player's walk up from the muster. */
+  const HOLO = { x: CENTRE.x0 + 5, z: CENTRE.z0 + 14 };
   /** The cot row, between the tent and the centre's near end. */
   const COTS = { x0: CENTRE.x0 + 19, z: CENTRE.z0 + 50, n: 5, dx: 2.0 };
   /** The field kitchen and its chow line, port forward. */
@@ -315,11 +316,13 @@ function frame() {
   /** The card game on the port flank. */
   const CARD = { x: FLANK_L.x0 + 5, z: FLANK_L.z0 + 18 };
   /** The sparring pair and the chaplain's knot on the starboard flank. */
-  const SPAR = { x: FLANK_R.x1 - 3, z: FLANK_R.z0 + 3 };
+  /* Clear of the wall-foot crate cluster `Hangar.dressStructure` stands at (WALL - 14, -58). */
+  const SPAR = { x: FLANK_R.x1 - 3, z: FLANK_R.z0 + 12 };
   const CHAP = { x: FLANK_R.x0 + 5, z: FLANK_R.z0 + 3 };
   /** The droid bench and the ordnance carts, on the strip by pad B. */
   const BENCH = { x: SF.x1 - 10, z: SF.z0 + 9 };
-  const ORD = { x: SF.x0 + 17, z: SF.z0 + 10.5 };
+  /* …and of the cluster at (WALL - 30, 70), which the first siting put the carts inside. */
+  const ORD = { x: SF.x0 + 8, z: SF.z0 + 11 };
   /** A marshal at the foot of each apron mark, off the apron's ground. */
   const MARSHAL = [{ x: APRON.padL.x, z: Z.apron.z0 - 3, yaw: 0 }, { x: Z.padB.x0 - 1, z: Z.apron.z0 - 3, yaw: 0 }];
   /** The stretcher pair's run, centre. */
@@ -1948,7 +1951,7 @@ function workerJobs(world) {
     { job: 'kneel', x: Z.pit.x0 + 11, z: Z.pit.z0 - 2, yaw: 0 },
     { job: 'stand', x: Z.pit.x0 + 16, z: Z.pit.z1 + 2.5, yaw: Math.PI },
     { job: 'kneel', x: Z.pit.x0 + 23, z: Z.pit.z1 + 3, yaw: Math.PI },
-    { job: 'kneel', x: CENTRE.x0 + 5, z: CENTRE.z0 + 6, yaw: Math.PI / 2 },
+    { job: 'kneel', x: CENTRE.x0 + 3, z: CENTRE.z0 + 3, yaw: Math.PI / 2 },
     { job: 'crash', x: APRON.crash.x - 5.5, z: APRON.crash.z + 2.5, yaw: 0 },
     { job: 'crash', x: APRON.crash.x + 5.5, z: APRON.crash.z + 2.5, yaw: 0 },
   ]);
