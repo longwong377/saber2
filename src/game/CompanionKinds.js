@@ -57,11 +57,16 @@
  */
 import { ARCHETYPES } from './Enemy.js';
 import { TOUGHNESS } from './Combat.js';
-import { buildQuadruped, buildB1 } from './Bodies.js';
+import { buildQuadruped, buildB1, buildAstromech, buildMedic, buildWookiee } from './Bodies.js';
 /* The bolt palette, so the reprogrammed B1's shot is the same red every other
  * E-5 in the game fires — one table, and a companion that fired a colour
  * nothing else fires would read as a different weapon. */
 import { BOLT_COLORS } from './Bolts.js';
+/* THE FLIGHT PLAN'S OWN NUMBERS, read rather than copied — the hawk's `float`
+ * and its two engagement bands are `FLIGHT`'s and belong to the file that owns
+ * the cruise/stoop cycle. Flight.js imports Enemy.js and Bodies.js and nothing
+ * imports this file back, so the cycle the header warns about is not opened. */
+import { FLIGHT } from './Flight.js';
 
 /**
  * THE PACE CAP, WHICH IS THE MECHANISM AND NOT A FLAVOUR NOTE.
@@ -705,6 +710,194 @@ export const COMPANION_UNITS = {
     damage: 20, preferred: [1.6, 3.0], score: 0, threat: 0,
     /* Never composed into a wave, for the reason the massiff's row states. */
     companion: true, mount: true, unlockAt: 99,
+  },
+
+  /**
+   * THE VHAL'KIR HAWK — the only body a player owns that a blade cannot reach.
+   *
+   * `flight: 'hawk'` IS THE WHOLE MOVEMENT MODEL AND IT IS ONE FIELD.
+   * `Flight.installFlight` adopts on the PRESENCE of `A.flight` and nothing
+   * else — it copies the archetype per body, wraps `_move`, and from then on
+   * the cruise, the stoop, the dive and climb rates, the six seconds on the
+   * ground after a Force grip and the one-wing consequence are all its. The
+   * string is not switched on anywhere; it is a flag with a name on it, which
+   * is why a second flyer costs a line rather than a file.
+   *
+   * `float: FLIGHT.STOOP` and not `FLIGHT.CRUISE`, which is the Geonosian's
+   * own choice and its note argues it once: this is the altitude a body holds
+   * when NOTHING has installed a plan on it — a check fixture, a sandbox, a
+   * spawn path nobody has thought of. The failure mode of the other choice is
+   * a hawk permanently at 5.6 m that no player can ever touch. The degraded
+   * case is a low-hovering bird, never weather.
+   *
+   * IT IS NOT IN `FLIGHT_CANON`. That table is a contract against a stated
+   * reference dimension, and there is no plate of a Vhal'kir hawk with a
+   * number on it. A row there would be asserting something invented, which is
+   * the one thing that file says it will not do.
+   *
+   * ── THE NUMBERS ─────────────────────────────────────────────────────────
+   *
+   * 48 hp, which is under the B1's 28 doubled and above the tooka's 24. It is
+   * the second most fragile thing you can own and the reason is the altitude,
+   * not the animal: everything on the field with a gun has line of sight to a
+   * body in the air, so a health pool is the wrong place to defend it from.
+   * "Excellent in the open, suicidal in a crossfire" is a positional claim and
+   * this number is what makes it one.
+   *
+   * 6 kg — twice the tooka and a fortieth of the massiff, the second lightest
+   * body in ARCHETYPES. A hawk with a 2.6 m span is mostly feather.
+   *
+   * 5.9 m/s is `paceOf('hawk')` to within a hundredth (0.80 × the player's
+   * 7.45 sprint), written here as well as there for the reason the massiff's
+   * row sets: `fieldCompanion` clamps the spawned body to the kind row's pace
+   * and this is what the archetype would field at on any other path.
+   *
+   * `damage: 5` ON `pounce`, AND THAT IS THE VERB DOING THE WORK RATHER THAN
+   * THE NUMBER. BEAST_MOVES' pounce commits its landing point 0.55 s into the
+   * wind-up and arrives at 0.95 — a stoop, decided in advance, that a player
+   * can step out of. Five points is a quarter of the massiff's jaws: what the
+   * stoop does is STAGGER, and a hawk that killed things would make the SPOT
+   * verb the boring half of the kind.
+   *
+   * `preferred` is deliberately absent and `FLIGHT` writes it every frame:
+   * `flightStep` sets `A.preferred` to `bandHigh` on the cruise and `bandLow`
+   * on the stoop, which is the whole reason the low half of the cycle is a
+   * PASS instead of a lower hover. A band declared here would be overwritten
+   * on the first frame and would read as the archetype's when it is not — so
+   * the fallback the un-flighted body uses is the low band, stated once.
+   */
+  hawk: {
+    label: "Vhal'kir Hawk", build: (o) => buildQuadruped({ ...o, kind: 'hawk' }),
+    scale: 1.0, hp: 48, mass: 6,
+    speed: 5.9, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 5, preferred: FLIGHT.bandLow, score: 0, threat: 0,
+    float: FLIGHT.STOOP, flight: 'hawk',
+    /* Never composed into a wave, for the reason the massiff's row states. */
+    companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE ASTROMECH — it cannot fight at all, and every field here says so once.
+   *
+   * `moves: []` IS THE ENFORCEMENT AND `damage: 0` IS THE BELT. The tooka's
+   * row already argues the pair and it is not restated; what is new is that
+   * `_beastBrain` now READS an empty list (see Enemy.js) instead of falling
+   * through to a lunge, so this droid does not throw itself at anything. The
+   * arc-weld COMPANIONS.md gives it is a stun with no damage on it and lives
+   * with the pack, not on this row: a `damage` above zero here would be the
+   * one number a future contributor reads as permission.
+   *
+   * 2.9 m/s IS THE SLOWEST THING IN THE GAME THAT MOVES. `paceOf('astro')` is
+   * 0.40 of the player's sprint — under the rancor pup's 3.6, under the
+   * Rancor's own 3.4, and a third of what you cross ground at. That is the
+   * whole cost of bringing it and it is deliberately felt on every metre of
+   * every map rather than in a fight.
+   *
+   * 120 hp on 32 kg. Above the B1's 28 because it is a sealed steel drum and a
+   * long way under the massiff's 210 because it does not fight: it is meant to
+   * survive a stray bolt and lose to anything that means it.
+   *
+   * `preferred: [1.4, 3.0]` on a body with no attack is not a fighting band —
+   * it is how close it wants to be to whatever it is following, which for a
+   * machine that has to reach a door and work on it is arm's length plus the
+   * width of the door.
+   *
+   * `hipHeight` is NOT declared: `buildAstromech` publishes a stance and
+   * `_stance` prefers the builder's. One authority per body.
+   */
+  astro: {
+    label: 'Astromech', build: (o) => buildAstromech(o),
+    /* 1.0 is a real R-unit: the builder is authored at 1.05 m to the top of
+     * the dome, which puts it at the player's hip and is the reason a bolt
+     * meant for a man goes over it — the tooka's geometry argument, on a body
+     * that cannot be picked up. */
+    scale: 1.0, hp: 120, mass: 32,
+    speed: 2.9, toughness: TOUGHNESS.droid, melee: true, custom: 'beast',
+    moves: [], damage: 0, preferred: [1.4, 3.0], score: 0, threat: 0,
+    companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE 2-1B — the slowest thing you own after the astromech, and unarmed.
+   *
+   * WHAT MAKES IT UNARMED IS `melee: false` AND NO `weapon`, and that is worth
+   * being exact about because the astromech's row above is unarmed a different
+   * way. `melee: false` sends this body to `_rangedBrain`, which looks for a
+   * gun, finds none, and never fires; the astromech is `melee: true` and is
+   * disarmed by its empty move list instead. `moves: []` is here as the BELT:
+   * COMPANIONS.md says this one "must never be given a weapon", and the row
+   * that a future contributor flips to `melee: true` should not thereby
+   * acquire the default beast move set. It is not read today, and it is the
+   * one field on this row that is not.
+   *
+   * 3.1 m/s = 0.42 of your sprint. "It is deliberately the slowest thing you
+   * own, so the whole tension is whether it arrives" — that sentence is this
+   * number, and it is one hundredth over the astromech's because a droid that
+   * walks is faster than a droid that rolls over broken ground and slower than
+   * anything with a reason to hurry.
+   *
+   * 160 hp on 90 kg. Higher than the astromech because it is a bigger body
+   * with more of it in the open, and still under a clone trooper: it walks
+   * toward the wounded, which is by definition where the shooting just was,
+   * and it has to be able to be killed there or the tension is theatre.
+   *
+   * IT IS HUMANOID — no `custom` — which is what buys `BipedAnimator`,
+   * `POSTURES` and the parade path, and is also why it needs a `BODY_KITS`
+   * row (see Bodies.js). `melee: false` sends it to `_rangedBrain` with no
+   * weapon: it takes cover, it closes on nothing, and it never shoots, which
+   * is the correct behaviour for a body whose whole job is `findPatient`.
+   */
+  medic: {
+    label: '2-1B Medical Droid', build: (o) => buildMedic(o),
+    scale: 1.10, hp: 160, mass: 90,
+    speed: 3.1, toughness: TOUGHNESS.droid,
+    melee: false, moves: [], damage: 0, preferred: [1.2, 2.4],
+    score: 0, threat: 0,
+    companion: true, unlockAt: 99,
+  },
+
+  /**
+   * THE WOOKIEE — "the second soldier", and the most expensive body in this
+   * design on the frame, which its card says out loud.
+   *
+   * `scale: 1.32` IS THE ROW, and it is the design's 1.28 corrected by a
+   * measurement rather than a preference — see `buildWookiee`, which shortens
+   * the legs for the ape proportion and therefore needs the extra four
+   * hundredths to stand where COMPANIONS.md says this body stands. The built
+   * box is 2.22 m: the tallest walking body on the roster short of a machine,
+   * and the reason it can block a doorway you are standing in.
+   *
+   * 420 hp — twice the massiff, a third of a Reek. It is the only companion
+   * that is meant to be TRADED with rather than protected, and the number is
+   * the one that makes "a partner rather than a pet" true in a firefight.
+   *
+   * 200 kg at 1.28 scale, against a clone's 82 at 1.0. `guardFor` gives
+   * nothing under 300 kg a turned pass, so this is deliberately UNDER the line
+   * that would armour it against a lightsaber: your own blade cuts your own
+   * wookiee in one pass, and `installTeamDamage`'s notice is what tells you
+   * you did it.
+   *
+   * 4.8 m/s = 0.64 of your sprint. Slower than the massiff's 5.2 on much
+   * longer legs, which is the honest reading of a two-and-a-third-metre body
+   * that walks rather than trots.
+   *
+   * ── WHAT IS NOT HERE, AND IT IS THE HALF THIS ROW DOES NOT OWN ─────────
+   *
+   * NO `ranged`, NO `weapon`. COMPANIONS.md gives this kind both bands and a
+   * bowcaster, and a bowcaster is a WEAPON — `buildBlaster` has no such kind,
+   * `BLASTER_LENGTH` has no reference length for one, and `rifle-hold.mjs`
+   * holds every `weapon` archetype to a stock in the shoulder and both hands
+   * on the rifle. Handing this row `weapon: 'heavy'` would put a clone repeater
+   * in a wookiee's hands to satisfy a field, which is worse than an honest
+   * gap. The body is built and the gun is the weapons lane's; `melee: true`
+   * with the default beast verbs is what it fields with until then.
+   */
+  wook: {
+    label: 'Wookiee', build: (o) => buildWookiee(o),
+    scale: 1.32, hp: 420, mass: 200,
+    speed: 4.8, toughness: TOUGHNESS.flesh, melee: true,
+    damage: 26, preferred: [1.6, 3.0], score: 0, threat: 0,
+    companion: true, unlockAt: 99,
   },
 };
 

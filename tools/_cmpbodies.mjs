@@ -13,7 +13,9 @@ const STEP = 1 / 30;
 for (let i = 0; i < 30; i++) world.update(STEP, idle);
 const p = world.player;
 /* EVERY KIND THE TABLE DECLARES, not a hand-kept list — so a kind that gains
- * a body is measured the day it lands and one that has none says so. */
+ * a body is measured the day it lands and one that has none says so. A list
+ * typed here is a list that is wrong the next time a kind lands, which is
+ * exactly what happened twice in one session. */
 for (const id of Object.keys(COMPANION_KINDS)) {
   const K = COMPANION_KINDS[id];
   if (!ARCHETYPES[K.archetype]) { console.log(`${id.padEnd(8)} NO ARCHETYPE`); continue; }
@@ -26,6 +28,12 @@ for (const id of Object.keys(COMPANION_KINDS)) {
    * and printed "0 meshes 0 tris" beside twelve real animals. Both are walked
    * now, because the droid kinds DO carry a group. */
   let tris = 0, meshes = 0;
+  /* BOTH TREES, and `rig.root` first. `Enemy._build` adds `built.rig.root` to
+   * the scene for every rigged body and leaves `this.group` null — so walking
+   * `group` alone reported `0 meshes 0 tris` beside twelve real animals, which
+   * is the one column a body-plan harness exists to print. The droid kinds do
+   * carry a group, so both are walked and the guard stops a body that has the
+   * same object under both names from being counted twice. */
   const eat = (o) => {
     if (!o.isMesh) return;
     meshes++;
