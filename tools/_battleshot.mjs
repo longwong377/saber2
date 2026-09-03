@@ -24,6 +24,8 @@ import { chromium } from 'playwright-core';
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 const OUT = process.argv[2] || '/tmp/battle';
 const TIMES = (process.argv[3] || '100,200,238').split(',').map(Number);
+/* an optional station list, so a polish pass can re-shoot two frames and not twelve */
+const ONLY = process.argv[4] ? process.argv[4].split(',') : null;
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
   '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml',
@@ -129,7 +131,7 @@ if (!info.fail) {
   };
   const plan = [];
   for (const T of TIMES) {
-    const names = T === TIMES[0] ? Object.keys(stations) : ['lip-fwd', 'lip-right', 'mid-fwd'];
+    const names = ONLY || (T === TIMES[0] ? Object.keys(stations) : ['lip-fwd', 'lip-right', 'mid-fwd']);
     for (const n of names) plan.push([`t${T}-${n}`, T, stations[n]]);
   }
   let lastT = -1;
