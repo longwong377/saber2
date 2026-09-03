@@ -604,12 +604,39 @@ export function keepCompanion(world, stats = null) {
    * caught it as "alive and won: kept=false". One name. */
   const pack = world?._companions;
   if (!pack) return null;
-  /* CO-OP DOES NOT FOLD, and it is said on the lobby card before you join
-   * rather than discovered afterwards. No bond earned, no death recorded, no
-   * epitaph, and a client's stored companion is untouched — it neither gains a
-   * run nor loses its life. The conservative answer, and the only one that
-   * cannot cause a durable loss the player did not cause. */
-  if (world.netMode) return null;
+  /**
+   * CO-OP FOLDS, AND THE LINE THAT SAID IT DID NOT IS GONE.
+   *
+   * `if (world.netMode) return null` was the honest answer while the host's
+   * animal was the only one on the field: a client had nothing out there, so
+   * folding its record would have been filing a run it never played, and
+   * folding the HOST's against a body four people shared was worse. Now every
+   * commander brings one, every one of them is a real host-spawned body, and
+   * `pack.mine` is the local player's out of that list — so the two questions
+   * the fold asks ("is it alive", "did it get out") have the same answers on a
+   * client as they have on any other machine. They are the host's answers,
+   * which is the point: `dead` and `hp` are on the snapshot, so a client folds
+   * what the authority says happened rather than what its own screen guessed.
+   *
+   * WHAT REPLACES IT IS THE GUARD THE OLD LINE WAS REALLY MAKING — a fold must
+   * never turn a record the player still has into an epitaph because of
+   * something the NETWORK did. `pack.mine` is null when nothing of yours was
+   * fielded this run, and null is not the same fact as "it did not come back":
+   * a joining player whose animal was never put down (a host that fields none,
+   * a session that dropped before the body arrived, a mode that takes nothing
+   * in with you) leaves here with the kennel untouched, exactly as before.
+   * `undefined` is not `null`, which is what keeps the hand-built pack literals
+   * in the check suite folding on the terms they always did: they carry a
+   * `body0` and no `mine` at all, and this asks only about a real pack that has
+   * been given the chance to claim one and has not.
+   *
+   * WHAT IS STILL NOT FOLDED IN A SESSION IS THE XP. `CompanionPack._ledger`
+   * refuses to award anything off a net-driven body and says at length why, so
+   * a client's animal comes home with its run counted and its rung where it
+   * started. That is a hole with a floor under it; the alternative was a rung
+   * invented out of fields nothing writes.
+   */
+  if (pack.mine === null) return null;
   const k = load();
   if (!k.live) return null;
   /**

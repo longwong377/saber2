@@ -3001,4 +3001,430 @@ export async function run({ check, assert }) {
     assert(/hooks\.onName\?\.\(/.test(menu), 'the name field no longer raises onName at all');
     return 'host GENERAL and client SCOUT on all three rosters; an unchanged name sends nothing';
   });
+
+  /* ══ one companion per commander ═════════════════════════════════════════ */
+
+  /**
+   * A KENNEL RECORD AS A PEER WOULD SEND ONE. Hand-built rather than adopted,
+   * because `Kennel` is ONE localStorage store per process and a session of
+   * four cannot have four of them — see `bootSession`'s note, which is also
+   * why `adoptCompanionBody` takes the record as an argument.
+   */
+  const cmpCard = (id, kind, name, xp = 99) => ({ id, kind, name, look: {}, xp, runs: 2,
+    tempers: [], areas: 0, kills: 0, saves: 0, downs: 0, orders: 0, ranged: 0, story: [], scars: [] });
+
+  check('co-op: each commander brings their own animal, and every screen has all of them', async () => {
+    /**
+     * "each commander brings one" — COMPANIONS.md, and until this it was not
+     * what shipped. `companion` was one key on `SESSION_KEYS`, which is ONE
+     * VALUE for the whole session, and `fieldFromKennel` returned null on a
+     * client outright. So a four-player session fielded exactly one animal —
+     * the host's — and three players' kennels stayed shut.
+     *
+     * Four real Worlds, four real `Net` endpoints over the PeerJS stub, four
+     * DIFFERENT kinds. What is asserted is the whole of the claim:
+     *
+     *   FOUR BODIES, not one. One per commander who brought something.
+     *   THE RIGHT KIND EACH, so nobody is wearing the host's choice — which is
+     *     exactly what one shared key produced and is the defect being closed.
+     *     Measured by name too, because a kind is a row and a name is the
+     *     animal: a massiff called Borz is not the same fact as "a massiff".
+     *   ONE OWNER EACH, and no owner twice, so the pack is four commanders'
+     *     animals and not four copies of one.
+     *   EVERY BODY ON EVERY SCREEN. A client fielding its own would produce a
+     *     ghost visible on one machine; these are host-spawned, so the same
+     *     enemy id is in every world at the same coordinates. That is the test
+     *     that would fail if any of this were done client-side.
+     */
+    const H = await import('./_coop.mjs');
+    const kinds = ['massiff', 'tooka', 'blurrg', 'astro'];
+    const names = ['Borz', 'Pip', 'Duno', 'Ess'];
+    const cards = kinds.map((k, i) => cmpCard(`c${i}`, k, names[i]));
+    const s = await H.bootSession({
+      n: 4, level: 'colosseum',
+      settings: { mode: 'waves', allies: 0, instantSpawn: true },
+      cards, recs: cards.map((c) => ({ ...c })),
+    });
+    try {
+      const { fieldCompanion } = await import('../../src/game/Companions.js');
+      /* The host's own animal arrives the way `main.fieldFromKennel` puts it
+       * down at deploy; every other one is the host answering a card. */
+      assert(fieldCompanion(s.host.world, s.host.world.player, kinds[0], { rec: { ...cards[0] } }),
+        'the host could not field its own');
+      s.pump(3);
+
+      const pack = s.host.world._companions;
+      assert(pack.list.length === 4,
+        `${pack.list.length} companions on the host's field for four commanders — `
+        + `${pack.list.map((e) => e._cmpKind).join(', ')}`);
+      const owners = new Set(pack.list.map((e) => e._cmpOwner));
+      assert(owners.size === 4, `four animals share ${owners.size} owner(s)`);
+      const worn = pack.list.map((e) => `${e._cmpRec?.name}:${e._cmpKind}`).sort();
+      const want = kinds.map((k, i) => `${names[i]}:${k}`).sort();
+      assert(worn.join() === want.join(),
+        `the field carries ${worn.join(', ')} — expected ${want.join(', ')}. Every commander is `
+        + 'wearing the same kind, which is one shared setting and not four kennels');
+
+      /* AND EVERY ONE OF THEM IS ON EVERY MACHINE. Ids agree across the wire by
+       * construction (`packSnapshot` sends `e.id`), so a body that is missing
+       * here is a body only one screen has. */
+      const ids = pack.list.map((e) => e.id);
+      const far = [];
+      for (const nd of s.nodes) {
+        for (const id of ids) {
+          const there = nd.world.enemies.find((b) => b.id === id);
+          if (!there) { far.push(`${nd.name} has no ${id}`); continue; }
+          const here = s.host.world.enemies.find((b) => b.id === id);
+          const d = there.position.distanceTo(here.position);
+          if (d > 2) far.push(`${nd.name}'s ${id} is ${d.toFixed(1)} m from the host's`);
+        }
+      }
+      assert(!far.length, far.join('; '));
+
+      /* …AND EACH JOINING PLAYER'S OWN WHEEL IS POINTED AT ITS OWN ANIMAL.
+       * `pack.mine` is what HUD's plate and order ring read and what the fold
+       * asks about; a client that had not claimed one has neither. */
+      for (let i = 1; i < s.nodes.length; i++) {
+        const mine = s.mineOf(s.nodes[i]);
+        assert(mine, `${s.nodes[i].name} has an animal on the field and nothing on their own wheel`);
+        assert(mine._cmpKind === kinds[i] && mine._cmpRec?.name === names[i],
+          `${s.nodes[i].name}'s wheel is pointed at ${mine._cmpRec?.name}:${mine._cmpKind}`);
+        assert(mine.netDriven, `${s.nodes[i].name} is simulating its own animal — that is a puppet`);
+      }
+      return `4 commanders, 4 kinds (${worn.join(', ')}), ${ids.length * s.nodes.length} `
+        + 'body-sightings all within 2 m, and each guest\'s wheel on its own';
+    } finally { s.close(); }
+  });
+
+  check('co-op: a peer\'s animal carries the peer\'s own rung, and a forged card is clamped', async () => {
+    /**
+     * THE CARD IS A STRANGER'S CLAIM ABOUT A SAVE FILE, and the rung it names
+     * is not decoration: `rungOf(rec).leash` is the rope the animal hunts on,
+     * 14 m at the bottom and 34 at the top. A card taken on trust would let one
+     * peer field an animal with two and a half times everybody else's reach by
+     * editing one number, which is `Kennel.readOne`'s own stated case — "a
+     * stored 5000 is a companion that starts SWORN".
+     *
+     * So `fieldForPeers` reads the card with `readOne` and nothing else, and
+     * this drives all three answers through one four-player session:
+     *
+     *   xp 0     → STRANGE, 14 m. The peer's real rung, not the host's.
+     *   xp 5000  → clamped to 999. It IS the top rung — that is what the number
+     *              is worth — but it is the same top rung everybody else can
+     *              reach, and the record on the host says 999 rather than 5000.
+     *   a kind
+     *   that does
+     *   not exist → NO BODY AT ALL, and no `cmp` on the roster. An unreadable
+     *              record is null rather than a repaired one.
+     */
+    const H = await import('./_coop.mjs');
+    const { leashOf } = await import('../../src/game/Companions.js');
+    const { rungOf } = await import('../../src/game/CompanionKinds.js');
+    const cards = [null, cmpCard('a', 'tooka', 'Pip', 0), cmpCard('b', 'blurrg', 'Duno', 5000),
+      { id: 'c', kind: 'nosuchkind', name: 'Nothing', xp: 4 }];
+    const s = await H.bootSession({
+      n: 4, level: 'colosseum',
+      settings: { mode: 'waves', allies: 0, instantSpawn: true },
+      cards, recs: [null, { ...cards[1] }, { ...cards[2] }, null],
+    });
+    try {
+      s.pump(3);
+      const pack = s.host.world._companions;
+      const byOwner = new Map(pack.list.map((e) => [e._cmpOwner?.name, e]));
+      assert(pack.list.length === 2,
+        `${pack.list.length} bodies from two real cards, a nonsense one and a peer who brought nothing`);
+      assert(!byOwner.has('HOST'), 'the host fielded one it never asked for');
+      assert(!byOwner.has('CHARLIE'), 'a card naming a kind the game does not have put a body on the field');
+
+      const green = byOwner.get('ALPHA'), sworn = byOwner.get('BRAVO');
+      assert(green && sworn, `the two real cards produced ${[...byOwner.keys()].join(', ')}`);
+      assert(green._cmpRec.xp === 0 && rungOf(green._cmpRec).id !== rungOf(sworn._cmpRec).id,
+        'both peers\' animals came out on the same rung — the card\'s xp is not reaching the leash');
+      const lo = leashOf(green), hi = leashOf(sworn);
+      assert(lo < hi - 5,
+        `a green animal is on ${lo.toFixed(1)} m and a sworn one on ${hi.toFixed(1)} — the rung is not `
+        + 'the rope, so a peer\'s history changes nothing about the animal the host puts down');
+      assert(sworn._cmpRec.xp === 999,
+        `a card claiming 5000 xp reached the field with ${sworn._cmpRec.xp} — readOne is not the door`);
+
+      /* AND THE ROSTER SAYS WHOSE IS WHICH, for exactly the two that exist. */
+      const named = s.host.net.roster.filter((r) => r.cmp).map((r) => r.name).sort();
+      assert(named.join() === 'ALPHA,BRAVO',
+        `the roster names ${named.join(', ') || 'nobody'} as holding a body`);
+      return `xp 0 → ${rungOf(green._cmpRec).label} ${lo.toFixed(0)} m; xp 5000 → clamped 999, `
+        + `${rungOf(sworn._cmpRec).label} ${hi.toFixed(0)} m; an unknown kind → no body, no roster entry`;
+    } finally { s.close(); }
+  });
+
+  check('co-op: a peer\'s order moves that peer\'s animal and nobody else\'s', async () => {
+    /**
+     * THE WHEEL IS PRESSED ON A MACHINE THAT IS NOT HOLDING THE BODY, which is
+     * the same problem the six formation keys have and is answered the same
+     * way: `orderCompanion` sends `{t:'order', c}` up the existing peer→host
+     * channel and `applyCompanionOrder` decides. What makes it safe is that
+     * THERE IS NO BODY ID IN THE MESSAGE — the host finds the animal by owner,
+     * and the owner is `conn.peer`, the one field on this wire a sender cannot
+     * choose (Net._sender, and the two proven attacks in its note).
+     *
+     * Driven rather than asserted about, and the ORDER IS MEASURED IN METRES
+     * rather than in a flag, because a duty written on a body nothing steers is
+     * a duty that does nothing. AWAY moves the station from `HEEL.back` to
+     * `HEEL.back * 1.35` and drops the side offset, so an animal under it walks
+     * to a measurably different place behind its owner — and an animal that is
+     * NOT under it does not.
+     *
+     * AND THE CLIENT'S OWN COPY IS LEFT ALONE. It is the net-driven picture out
+     * of the snapshot; writing `_cmpDuty` on it would start a verb clock on a
+     * machine where the animal cannot move. The ask is the whole of what the
+     * client does.
+     */
+    const H = await import('./_coop.mjs');
+    const C = await import('../../src/game/Companions.js');
+    const cards = [null, cmpCard('a', 'massiff', 'Pip'), cmpCard('b', 'massiff', 'Duno')];
+    const s = await H.bootSession({
+      n: 3, level: 'colosseum',
+      settings: { mode: 'waves', allies: 0, instantSpawn: true },
+      cards, recs: [null, { ...cards[1] }, { ...cards[2] }],
+    });
+    try {
+      s.pump(3);
+      const pack = s.host.world._companions;
+      const on = (name) => pack.list.find((e) => e._cmpOwner?.name === name);
+      assert(on('ALPHA') && on('BRAVO'), 'both guests did not get a body');
+
+      const alpha = s.mineOf(s.clients[0]), bravo = s.mineOf(s.clients[1]);
+      assert(alpha && bravo, 'a guest has no animal on its own wheel to order');
+      /* BOTH ARE AT HEEL AND STAY THERE UNTIL SOMEBODY SAYS OTHERWISE. */
+      s.pump(4);
+      const gap = (e) => e.position.distanceTo(e._cmpOwner.position);
+      const a0 = gap(on('ALPHA')), b0 = gap(on('BRAVO'));
+
+      const why = C.orderCompanion(bravo, 'away');
+      assert(why === null, `BRAVO's own AWAY was refused on their own machine: "${why}"`);
+      s.pump(4);
+
+      assert(on('BRAVO')._cmpDuty?.id === 'away',
+        `BRAVO pressed AWAY and the host has their animal under "${on('BRAVO')._cmpDuty?.id ?? 'nothing'}"`);
+      assert(!on('ALPHA')._cmpDuty,
+        `BRAVO's order put ALPHA's animal under "${on('ALPHA')._cmpDuty?.id}" — one peer is `
+        + 'commanding another\'s');
+      assert(!bravo._cmpDuty && !alpha._cmpDuty,
+        'the joining player wrote the duty onto its own net-driven copy as well as asking the host — '
+        + 'that is a verb clock running on a picture');
+
+      const a1 = gap(on('ALPHA')), b1 = gap(on('BRAVO'));
+      assert(b1 > b0 + 0.5,
+        `BRAVO's animal stood ${b0.toFixed(1)} m off and is now ${b1.toFixed(1)} — AWAY moved the `
+        + 'station and nothing walked to it, so the order landed on paper only');
+      assert(Math.abs(a1 - a0) < 0.5,
+        `ALPHA's animal moved ${(a1 - a0).toFixed(1)} m on an order ALPHA never gave`);
+
+      /* …AND THE MESSAGE ITSELF NAMES NO BODY, which is why none of the above
+       * can be arranged by a peer with a text editor. */
+      const sent = [];
+      const real = s.clients[1].net.toHost.bind(s.clients[1].net);
+      s.clients[1].net.toHost = (m) => { sent.push(m); return real(m); };
+      C.orderCompanion(bravo, 'heel');
+      s.pump(0.5);
+      const ord = sent.find((m) => m.t === 'order' && m.c);
+      assert(ord, 'the wheel press sent no order at all');
+      assert(!('id' in ord) && !('b' in ord) && !('from' in ord),
+        `the companion order carries ${Object.keys(ord).join(', ')} — a body a peer can name is a `
+        + 'body a peer can steal');
+      assert(on('BRAVO')._cmpDuty === null, 'HEEL did not clear the standing order on the host');
+      return `AWAY from BRAVO: their animal ${b0.toFixed(1)} → ${b1.toFixed(1)} m, ALPHA's `
+        + `${a0.toFixed(1)} → ${a1.toFixed(1)}; the packet is {${Object.keys(ord).join(',')}}`;
+    } finally { s.close(); }
+  });
+
+  check('co-op: a joining player\'s kennel is their own, and it folds on their own machine', async () => {
+    /**
+     * `keepCompanion` USED TO BEGIN `if (world.netMode) return null`, and the
+     * lobby card said so: field it for everybody, fold it for nobody. That was
+     * the honest answer while the host's animal was the only one out there.
+     * With one per commander it is not: the body is the host's to simulate and
+     * the RECORD is per machine — a joining player brings their own animal,
+     * with their own name and rung on it, and files their own run.
+     *
+     * Three cases, all driven against a real session rather than a stub pack:
+     *
+     *   IT CAME HOME       kept, and `runs` climbs by one on the store.
+     *   IT DIED OUT THERE  the host killed it, `dead` crossed on the snapshot,
+     *                      and the client's fold writes the epitaph. This is
+     *                      the case that proves the fold is reading the HOST's
+     *                      answer and not this machine's guess.
+     *   NOTHING WENT OUT   `pack.mine` is null — a session that dropped before
+     *                      the body arrived, a host fielding none — and the
+     *                      kennel is left completely alone. That is the guard
+     *                      the old blanket refusal was really making, and it is
+     *                      the one thing here that must never regress: a
+     *                      network event must not turn a living record into an
+     *                      epitaph.
+     */
+    const H = await import('./_coop.mjs');
+    const Kn = await import('../../src/game/Kennel.js');
+    const C = await import('../../src/game/Companions.js');
+    const said = [];
+    for (const die of [false, true]) {
+      const cards = [null, cmpCard('a', 'massiff', 'Pip', 20)];
+      const s = await H.bootSession({
+        n: 2, level: 'colosseum',
+        settings: { mode: 'waves', allies: 0, instantSpawn: true },
+        cards, recs: [null, { ...cards[1] }],
+      });
+      try {
+        s.pump(3);
+        const guest = s.clients[0];
+        const mine = s.mineOf(guest);
+        assert(mine, 'the joining player never claimed the body the host put down for them');
+        assert(!s.host.world._companions.mine,
+          'the host claimed a guest\'s animal as its own — its fold would file somebody else\'s run');
+
+        Kn.clear();
+        Kn.save({ live: { ...cards[1] }, fallen: [], runs: 0, lost: 0 });
+        guest.world._companions.rec = Kn.load().live;
+        if (die) {
+          const hostCopy = s.host.world._companions.list[0];
+          hostCopy.damage(hostCopy.hp + 999, hostCopy.position, null, 'bolt');
+          s.pump(2);
+          assert(mine.dead, 'the host killed it and the joining player\'s copy is still alive');
+        }
+        const fold = Kn.keepCompanion(guest.world, { won: true });
+        assert(fold, 'a joining player\'s run folded nothing at all');
+        assert(fold.kept === !die,
+          `${die ? 'a dead' : 'a living'} animal folded kept=${fold.kept}`);
+        const after = Kn.load();
+        assert(!!after.live === !die, 'the store disagrees with the verdict');
+        if (die) assert(after.fallen[0]?.fate === 'kia',
+          `the epitaph says ${after.fallen[0]?.fate}`);
+        else assert(after.live.runs === 3,
+          `it came home from a run and the record says ${after.live.runs} runs, not 3`);
+        said.push(die ? `died → gone (${after.fallen[0]?.fate})` : `lived → kept, runs 2→${after.live.runs}`);
+      } finally { Kn.clear(); s.close(); }
+    }
+
+    /* AND THE ONE THAT MUST NEVER REGRESS. A client with a pack and nothing of
+     * its own in it — which is what a session that never fielded one leaves —
+     * folds NOTHING. Driven on a real World rather than a literal, because the
+     * whole question is what a real `CompanionPack` says when it is empty. */
+    const { world } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'waves', allies: 0 } });
+    try {
+      world.netMode = 'client';
+      C.attachCompanions(world);
+      assert(world._companions.mine === null, 'a fresh pack claims a body it was never given');
+      Kn.save({ live: cmpCard('a', 'massiff', 'Pip', 20), fallen: [], runs: 0, lost: 0 });
+      const none = Kn.keepCompanion(world, { won: false });
+      assert(none === null && !!Kn.load().live,
+        'a run in which nothing of yours was ever fielded killed the animal in your kennel');
+      said.push('nothing fielded → the kennel is untouched');
+    } finally { Kn.clear(); world.unload(); }
+    return said.join('; ');
+  });
+
+  check('co-op: which animal you bring is yours, and it crosses per peer on the roster', async () => {
+    /**
+     * THE FOUR THINGS A SETTING NEEDS, and the one that moved. `companion` was
+     * on `SESSION_KEYS` — one value for the whole session, the host's — which
+     * is why fielding one per player would have handed every commander the
+     * HOST's kind. It is a LOCAL key now, and the ANIMAL travels instead:
+     * per peer, on the roster, beside `look` and `team`, for the reason those
+     * two are there (identity for the length of a run, not per-frame state).
+     *
+     * `sessionPart` is the assertion that matters and not the list itself: it
+     * is what `start` and `welcome` actually carry, so a key that slipped back
+     * on would arrive as the host's answer on every machine.
+     */
+    const H = await import('./_coop.mjs');
+    const Net = await import('../../src/net/Net.js');
+    assert(!Net.SESSION_KEYS.includes('companion'),
+      'companion is back on SESSION_KEYS — every commander would field the host\'s kind');
+    assert(Net.LOCAL_KEYS.companion, 'companion is on neither list; session.mjs\'s totality rule');
+    assert(!('companion' in Net.sessionPart({ companion: 'massiff', level: 'colosseum' })),
+      'sessionPart still puts the host\'s companion on the wire');
+    assert(Net.packCompanionCard({ kind: 'massiff', name: 'Borz', xp: 4, secret: 1 })?.secret === undefined,
+      'packCompanionCard forwards fields nobody declared — the wire is not a whitelist');
+    assert(Net.packCompanionCard({ name: 'Nobody' }) === null, 'a card with no kind is still a card');
+
+    const cards = [cmpCard('h', 'massiff', 'Borz'), cmpCard('a', 'tooka', 'Pip')];
+    const s = await H.bootSession({ n: 2, level: 'colosseum', cards,
+      settings: { mode: 'waves', allies: 0, instantSpawn: true } });
+    try {
+      const seat = (net, name) => net.roster.find((r) => r.name === name);
+      for (const nd of s.nodes) {
+        assert(seat(nd.net, 'HOST')?.companion?.kind === 'massiff'
+          && seat(nd.net, 'ALPHA')?.companion?.kind === 'tooka',
+          `${nd.name}'s roster reads ${JSON.stringify(nd.net.roster.map((r) => r.companion?.kind))} — `
+          + 'the two commanders are not carrying two different animals');
+      }
+      /* AND IT CAN CHANGE MID-LOBBY, through `hello` and no new message — the
+       * shape `setName` already has, because a player adopts their first
+       * companion on the way out of the menu and the card sent at the
+       * handshake was a photograph of the kennel as it was then. */
+      assert(s.clients[0].net.setCompanion(cmpCard('a2', 'hawk', 'Vex')) === true,
+        'changing the animal mid-session changed nothing');
+      assert(s.clients[0].net.setCompanion(cmpCard('a2', 'hawk', 'Vex')) === false,
+        'sending the same card again is a wire cost for a fact nobody changed');
+      await s.settle();
+      for (const nd of s.nodes) {
+        assert(seat(nd.net, 'ALPHA')?.companion?.kind === 'hawk',
+          `${nd.name} still has ALPHA down for a ${seat(nd.net, 'ALPHA')?.companion?.kind}`);
+      }
+      /* …AND PUTTING IT BACK IN THE KENNEL IS SENDABLE. `look` is taken on
+       * truthiness one clause along and cannot be cleared; a card must be, or
+       * the host keeps fielding an animal its owner has stabled. */
+      s.clients[0].net.setCompanion(null);
+      await s.settle();
+      assert(!seat(s.host.net, 'ALPHA')?.companion,
+        'a player who stabled their animal is still down for it on the host\'s roster');
+      return 'companion is local; the card rides the roster per peer, can be changed mid-lobby '
+        + 'and can be taken back';
+    } finally { s.close(); }
+  });
+
+  check('co-op: nothing asks the world which end of the session it is before it has been told', async () => {
+    /**
+     * `world.netMode` HAS ONE WRITER — `World.attachNet` — AND `deploy()` CALLS
+     * IT AFTER `buildWorld` HAS RETURNED. So every read of it inside a build is
+     * a read of `undefined`, and this check exists because one of them shipped.
+     *
+     * `fieldFromKennel` opened with `if (w.netMode === 'client') return null`,
+     * under a comment explaining at length why a joining player must not spawn
+     * its own animal — and the line COULD NOT FIRE. A guest fielded a private
+     * companion on every deploy: a body the host had never heard of, in no
+     * snapshot, on no other screen, while the lobby card told the player their
+     * animal was staying in the kennel. HANDOFF §2.3b, in the one place whose
+     * whole job was to be a fence.
+     *
+     * THE FIX IS ONE READER, not a moved line: `netModeNow()` asks `net`, which
+     * has known since the lobby, and `attachNet`'s own guard is the same
+     * expression — so the two cannot answer differently.
+     *
+     * `functionBody` AND NOT A WINDOW, for §2.3d's reason: a fixed-length slice
+     * spelled as a regex reads past the end of the function and starts
+     * measuring the next one.
+     */
+    const main = await src('main.js');
+    const build = strip(functionBody(main, 'async function buildWorld('));
+    assert(build.length > 400, 'buildWorld was not found — this check is measuring nothing');
+    const reads = build.split('\n').filter((l) => /\bnetMode\b/.test(l));
+    assert(!reads.length,
+      `buildWorld reads netMode ${reads.length} time(s) — ${reads.map((l) => l.trim()).join(' | ')}`
+      + ' — and nothing has written it yet, so the test is unfailable');
+
+    const all = strip(main);
+    assert(/const netModeNow = \(\) =>/.test(all), 'netModeNow is gone; the two readers can diverge again');
+    assert(/world\.attachNet\(net, netModeNow\(\)\)/.test(all),
+      'attachNet no longer takes its mode from netModeNow — that is the second copy back');
+    /* AND THE FENCE THE DEFECT WAS FOUND IN IS STILL A FENCE. */
+    const field = strip(functionBody(main, 'function fieldFromKennel('));
+    assert(/netModeNow\(\) === 'client'/.test(field),
+      'fieldFromKennel no longer refuses to spawn on a client — a guest is fielding a ghost again');
+
+    /* …and the one writer is still the one writer, so the premise above holds. */
+    const world = strip(await src('game/World.js'));
+    const writers = (world.match(/this\.netMode\s*=(?!=)/g) || []).length;
+    assert(writers === 1, `World writes netMode in ${writers} places — the premise of this check`);
+    return 'buildWorld reads no netMode; one reader (netModeNow) answers attachNet and the '
+      + 'companion fence; World writes netMode in exactly one place';
+  });
 }

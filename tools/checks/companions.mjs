@@ -534,14 +534,37 @@ export async function run({ check, assert }) {
       }
       said.push(`${c.name} → ${out.kept ? 'kept' : `gone (${after.fallen[0]?.fate})`}`);
     }
-    /* AND CO-OP DOES NOT FOLD AT ALL — no bond earned, no death recorded, and
-     * a client's stored companion untouched. The conservative answer, and the
-     * only one that cannot cause a durable loss the player did not cause. */
+    /**
+     * AND A SESSION FOLDS NOW, WHICH IS A CHANGE OF ANSWER AND NOT A CHANGE OF
+     * RULE.
+     *
+     * `keepCompanion` used to open `if (world.netMode) return null` and the
+     * lobby card said so: field it for everybody, fold it for nobody. That was
+     * honest while the host's animal was the only one on the field — a client
+     * had nothing out there to fold. Each commander brings their own now, on
+     * their own record, and `pack.mine` is the one out of the pack that is
+     * yours, so the two questions above have answers on every machine.
+     * tools/checks/coop.mjs drives the whole of it against real endpoints; this
+     * is the unit statement of the two ends.
+     *
+     * WHAT REPLACED THE BLANKET REFUSAL IS THE GUARD IT WAS REALLY MAKING. A
+     * run that fielded nothing of yours — a session that dropped before the
+     * body arrived, a host that fields none — leaves the kennel completely
+     * alone, so a NETWORK event can never turn a living record into an
+     * epitaph. That is the clause that must not regress.
+     */
     Kn.save({ live: { ...rec }, fallen: [], runs: 0, lost: 0 });
-    const none = Kn.keepCompanion({ netMode: 'host', _companions: { body0: { dead: true } } }, { won: false });
-    assert(none === null && !!Kn.load().live, 'a session fold killed a companion');
+    const inSession = Kn.keepCompanion({ netMode: 'host', settings: { level: 'geonosis' },
+      elapsed: 90, _companions: { mine: { dead: true }, body0: { dead: true } } }, { won: false });
+    assert(inSession && inSession.kept === false && !Kn.load().live,
+      'a session no longer folds an animal that died in one');
+    Kn.save({ live: { ...rec }, fallen: [], runs: 0, lost: 0 });
+    const none = Kn.keepCompanion({ netMode: 'client',
+      _companions: { mine: null, body0: null } }, { won: false });
+    assert(none === null && !!Kn.load().live,
+      'a run in which nothing of yours was fielded killed the animal in your kennel');
     Kn.clear();
-    return said.join('; ') + '; a session folds nothing';
+    return said.join('; ') + '; a session folds what it fielded, and folds nothing it did not';
   });
 
   check('companion: there is one, and there is no door to a second', async () => {
@@ -766,16 +789,25 @@ export async function run({ check, assert }) {
 
   check('companion: a session is told to you before you join, not discovered after', async () => {
     /**
-     * FIELD IT FOR EVERYBODY, FOLD IT FOR NOBODY. `keepCompanion` returns
-     * early in a session — no bond earned, no death recorded, no epitaph, and
-     * a client's stored animal untouched. It neither gains a run nor loses its
-     * life. That is the conservative answer and the only one that cannot cause
-     * a durable loss the player did not cause.
+     * IT SAID SOMETHING ELSE, AND THE SOMETHING ELSE WAS TRUE AT THE TIME: "in
+     * a session only the host's companion takes the field. Yours stays in the
+     * kennel." One shared setting, one body, the host's — and the line existed
+     * so a joining player was told rather than left to find out their animal
+     * was missing.
      *
-     * BUT A PLAYER WHO FINDS OUT AFTERWARDS HAS BEEN CHEATED OF AN EVENING,
-     * which is the argument `notSaving()` makes one panel across. So it is
-     * said on the screen where you host or join, the moment you do, and only
-     * when there is an animal for it to be true of.
+     * EACH COMMANDER BRINGS ONE NOW, so the sentence changed with the feature
+     * and the two roles are told the SAME thing, because they get the same
+     * thing. That is the assertion: a line that still split host from guest
+     * would be describing a limitation that no longer exists, which is the
+     * defect this check is now pointed at.
+     *
+     * BOTH HALVES STILL HAVE TO BE SAID, and they are different halves now —
+     * your animal IS on the field, and what it does out there is not banked
+     * (`CompanionPack._ledger` refuses to award off a net-driven body and says
+     * why at length), and it CAN be lost, because the host is really
+     * simulating it. A player who finds any of that out afterwards has been
+     * cheated of an evening, which is `notSaving()`'s argument one panel
+     * across.
      */
     const { makeDocument } = await import('./_page.mjs');
     const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
@@ -790,19 +822,21 @@ export async function run({ check, assert }) {
       assert(!line(), `solo, the screen says "${line()}" about a session`);
       menu.netSession('host');
       const said = line();
-      /* AND A CLIENT IS TOLD SOMETHING ELSE, because a client gets something
-       * else: `fieldFromKennel` returns early on a client, since a body
-       * spawned there is a GHOST no other screen has. "Your companion comes
-       * with you" would be exactly the false promise this line prevents. */
       menu.netSession('client');
       const asClient = line();
-      assert(/kennel|host/i.test(asClient) && asClient !== said,
-        `a client is told "${asClient}", which is what the host is told`);
+      assert(asClient === said,
+        `a joining player is told "${asClient}" and a host "${said}" — they field the same thing `
+        + 'now, so a split line is a description of a limitation that is gone');
+      assert(!/stays in the kennel|only the host/i.test(said),
+        `the screen still says "${said}" — that was true of the build where one setting fielded `
+        + 'one animal, and it is not true of this one');
       menu.netSession('host');
-      assert(/not kept|nothing that happens to it is kept/i.test(said),
-        `hosting with a companion, the screen says "${said}"`);
-      assert(/cannot be lost|will not earn/i.test(said),
-        'it says the run is not kept but not that the animal is also safe — both halves matter');
+      assert(/comes with you/i.test(said) && /commander/i.test(said),
+        `hosting with a companion, the screen says "${said}" — it does not say the animal is `
+        + 'yours and on the field');
+      assert(/will not earn|not earn a rung/i.test(said) && /can be lost/i.test(said),
+        'it says the animal comes with you but not what a session does and does not keep — both '
+        + 'halves matter, and the second one is that it CAN be lost now');
       /* AND IT IS NOT SAID WHEN THERE IS NOTHING TO SAY IT ABOUT. */
       settings.companion = 'none';
       menu._syncKennelCoop();
@@ -811,8 +845,7 @@ export async function run({ check, assert }) {
       settings.companion = 'massiff';
       menu._syncKennelCoop();
       assert(!line(), 'it warns about a session when there is no session');
-      return `silent solo, silent with no animal; hosting: "${said.slice(0, 60)}…"; `
-        + `joining: "${asClient.slice(0, 60)}…"`;
+      return `silent solo, silent with no animal; both roles told the same: "${said.slice(0, 72)}…"`;
     } finally { restore(); }
   });
 
