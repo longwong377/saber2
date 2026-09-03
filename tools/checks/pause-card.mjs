@@ -109,7 +109,7 @@ function heard(fn) {
 }
 
 export async function run({ check, assert }) {
-  INDEX_HTML = await read('index.html');
+  INDEX_HTML = await read('index.play.html');
   const MENU_SRC = await read('src/ui/Menu.js');
   const MAIN_SRC = await read('src/main.js');
 

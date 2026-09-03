@@ -31,7 +31,7 @@ const MIN = process.argv.includes('--min');
 const rel = (p) => relative(ROOT, p);
 const exists = async (p) => { try { return (await stat(p)).isFile(); } catch { return false; } };
 
-const html = await readFile(`${ROOT}/index.html`, 'utf8');
+const html = await readFile(`${ROOT}/index.play.html`, 'utf8');
 const mapText = (html.match(/<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/) || [])[1];
 const vendorMap = mapText ? (JSON.parse(mapText).imports ?? {}) : {};
 

@@ -107,7 +107,7 @@ export async function run({ check, assert, THREE: T }) {
    * cannot interleave, so they cannot read a page or a roll they did not
    * build. Enemy.js and Menu.js are pulled dynamically so this file adds no
    * static edge through the Engine's once-only shader patches. */
-  const INDEX_HTML = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+  const INDEX_HTML = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
   const { enemyRng, Enemy } = await import('../../src/game/Enemy.js');
   const {
     Menu, DEFAULT_SETTINGS, paradeSlots, buildParadeFigure, paradeContent, PARADE_SHOTS,

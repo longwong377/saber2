@@ -300,7 +300,7 @@ async function run() {
   const server = createServer(async (req, res) => {
     try {
       const p = decodeURIComponent(req.url.split('?')[0]);
-      if (p === '/' || p === '/index.html') {
+      if (p === '/' || p === '/index.play.html') {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(PAGE(LEVELS)); return;
       }

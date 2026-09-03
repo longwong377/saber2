@@ -1383,7 +1383,7 @@ export async function run({ check, assert }) {
     const { makeDocument } = await import('./_page.mjs');
     const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
     const { readFile } = await import('node:fs/promises');
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const css = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
 
     /* The CSS half of "no input" — a class the stylesheet does not act on is a

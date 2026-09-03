@@ -1899,7 +1899,7 @@ export async function run({ check, assert, THREE: T }) {
     /* ── THE PAGE ITSELF, AND THE STYLESHEET ───────────────────────────── */
     /* index.html outside its comments: markup a player never sees is fine, TEXT
      * is not, and `#stratagem` is an id rather than a word on the screen. */
-    const html = readFileSync(root + 'index.html', 'utf8').replace(/<!--[\s\S]*?-->/g, ' ');
+    const html = readFileSync(root + 'index.play.html', 'utf8').replace(/<!--[\s\S]*?-->/g, ' ');
     const text = html.replace(/<[^>]*>/g, ' ');
     assert(!/stratagem/i.test(text),
       `index.html shows the word: "${(/[^<>]*stratagem[^<>]*/i.exec(text) || [''])[0].trim()}"`);

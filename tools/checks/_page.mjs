@@ -494,7 +494,7 @@ function isAttached(node, doc) {
 
 /** The real page, parsed. This is the only reason any of the above exists. */
 export async function loadIndexHtml() {
-  const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+  const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
   return makeDocument(html);
 }
 

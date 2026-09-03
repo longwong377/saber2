@@ -214,7 +214,7 @@ export async function run({ check, assert, THREE: T }) {
     const { readFile } = await import('node:fs/promises');
     const { makeDocument } = await import('./_page.mjs');
     const { HUD } = await import('../../src/ui/HUD.js');
-    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const doc = makeDocument(INDEX);
     const restore = doc.install();
     try {
@@ -289,7 +289,7 @@ export async function run({ check, assert, THREE: T }) {
     const { readFile } = await import('node:fs/promises');
     const { makeDocument } = await import('./_page.mjs');
     const { HUD } = await import('../../src/ui/HUD.js');
-    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const doc = makeDocument(INDEX);
     const restore = doc.install();
     try {
@@ -549,7 +549,7 @@ export async function run({ check, assert, THREE: T }) {
    */
   check('squads: the wheel, the panel and the column all count the same squads', async () => {
     const { readFile } = await import('node:fs/promises');
-    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const { d, c } = deployed();
     const doc = makeDocument(INDEX);
     const restore = doc.install();

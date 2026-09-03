@@ -1313,7 +1313,7 @@ export async function run({ check, assert }) {
      */
     const { makeDocument } = await import('./_page.mjs');
     const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const doc = makeDocument(html);
     const restore = doc.install();
     try {
@@ -1822,7 +1822,7 @@ export async function run({ check, assert }) {
     assert(/kennelClear\s*\(\)/.test(stripped) || /Kennel\.clear\s*\(\)/.test(stripped),
       'Kennel.clear has no caller in Menu.js — it is an export, not a door');
     assert(/companion-release/.test(menuSrc), 'there is no release control');
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     assert(/id="companion-release"/.test(html), 'the release control has no markup, so nobody can press it');
     assert(/Hold to release/i.test(stripped),
       'the control is a click and not a hold — an accidental tap costs a named animal with no undo');
@@ -1865,7 +1865,7 @@ export async function run({ check, assert }) {
      * backing away is the one thing that loses it.
      */
     const { makeDocument } = await import('./_page.mjs');
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const doc = makeDocument(html);
     const restore = doc.install();
     try {

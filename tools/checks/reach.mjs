@@ -986,7 +986,7 @@ export async function run({ check, assert }) {
     const { HUD } = await import('../../src/ui/HUD.js');
     const { makeDocument } = await import('./_page.mjs');
     const THREE = await import('three');
-    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const { d, c, me, w } = army();
     const men = d.squadsOf(c).flat().filter((t) => t.alive !== false);
     assert(men.length >= 2, `the fixture deployed ${men.length} men`);

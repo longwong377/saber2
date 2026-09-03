@@ -107,7 +107,7 @@ function geometry(el, { clientHeight, scrollHeight, scrollTop = 0, rect = null }
 const box = (top, height) => ({ top, bottom: top + height, height, left: 0, right: 292, width: 292, x: 0, y: top });
 
 export async function run({ check, assert }) {
-  INDEX_HTML = await read('index.html');
+  INDEX_HTML = await read('index.play.html');
   CSS = await read('styles.css');
 
   /* ══════════════════════════════════════════════════════════════════
@@ -773,12 +773,12 @@ export async function run({ check, assert }) {
 
       // Ranges still work, and a precondition that matches beats the range —
       // a client that already holds the bytes does not need them sent again.
-      const head = await at('/index.html', undefined, 'HEAD');
+      const head = await at('/index.play.html', undefined, 'HEAD');
       const tag = head.headers.get('etag');
-      const part = await at('/index.html', { Range: 'bytes=0-1' });
+      const part = await at('/index.play.html', { Range: 'bytes=0-1' });
       assert(part.status === 206, `a range request answered ${part.status}`);
       assert((await part.arrayBuffer()).byteLength === 2, 'the range came back the wrong length');
-      const both = await at('/index.html', { Range: 'bytes=0-1', 'If-None-Match': tag });
+      const both = await at('/index.play.html', { Range: 'bytes=0-1', 'If-None-Match': tag });
       assert(both.status === 304, `a range request with a matching validator answered ${both.status}`);
       await both.text();
 
@@ -786,7 +786,7 @@ export async function run({ check, assert }) {
       const a = await at('/styles.css'); await a.text();
       const b = await at('/styles.css'); await b.text();
       assert(a.headers.get('etag') === b.headers.get('etag'), 'the ETag changes between requests');
-      const other = await at('/index.html'); await other.text();
+      const other = await at('/index.play.html'); await other.text();
       assert(other.headers.get('etag') !== a.headers.get('etag'),
         'two different files share one ETag, so one of them is served for the other');
       return 'ETag + Last-Modified on every response, 304 on If-None-Match / If-Modified-Since, '

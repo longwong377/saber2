@@ -24,8 +24,8 @@ export async function run({ check, assert }) {
     const newest = Math.max(...rounds);
     const major = +VERSION.split('.')[0];
     assert(major === newest, `src/version.js says ${VERSION}; PLAYTEST.md's newest round is V${newest}`);
-    const html = await readFile(new URL('index.html', ROOT), 'utf8');
-    assert(html.includes('id="version-tag"'), 'index.html has no #version-tag');
+    const html = await readFile(new URL('index.play.html', ROOT), 'utf8');
+    assert(html.includes('id="version-tag"'), 'index.play.html has no #version-tag');
     const menu = await readFile(new URL('src/ui/Menu.js', ROOT), 'utf8');
     assert(menu.includes("getElementById('version-tag')") && menu.includes('`v${VERSION}`'),
       'Menu.js does not stamp VERSION onto #version-tag');

@@ -28,7 +28,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; cha
   '.mjs': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.png': 'image/png' };
 const server = createServer(async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
-  if (p === '/') p = '/index.html';
+  if (p === '/') p = '/index.play.html';
   const file = join(ROOT, normalize(p).replace(/^(\.\.[/\\])+/, ''));
   if (!file.startsWith(ROOT) || !existsSync(file) || !statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'content-type': MIME[extname(file)] || 'application/octet-stream' });

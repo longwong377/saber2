@@ -9,7 +9,7 @@ const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.
   '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.webp': 'image/webp',
   '.svg': 'image/svg+xml', '.wasm': 'application/wasm', '.mp3': 'audio/mpeg' };
 const server = createServer(async (req, res) => {
-  let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.html';
+  let p = decodeURIComponent(req.url.split('?')[0]); if (p === '/') p = '/index.play.html';
   const f = join(ROOT, normalize(p).replace(/^(\.\.[/\\])+/, ''));
   if (!f.startsWith(ROOT) || !existsSync(f) || !statSync(f).isFile()) { res.writeHead(404); res.end(); return; }
   res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });

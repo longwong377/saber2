@@ -111,7 +111,7 @@ const hex = (s) => {
 const over = (src, a, dst) => src.map((c, i) => Math.round(c * a + dst[i] * (1 - a)));
 
 export async function run({ check, assert }) {
-  INDEX_HTML = await read('index.html');
+  INDEX_HTML = await read('index.play.html');
   MENU_SRC = await read('src/ui/Menu.js');
   const CSS = await read('styles.css');
   const MAIN = await read('src/main.js');
@@ -779,7 +779,7 @@ export async function run({ check, assert }) {
     const { menu, settings, doc, close } = menuOn();
     try {
       const panel = doc.querySelector('section[data-panel="coop"]');
-      assert(panel, 'index.html has no Co-op panel at all');
+      assert(panel, 'index.play.html has no Co-op panel at all');
       const boxes = panel.querySelectorAll('input[type="checkbox"]');
       assert(boxes.length > 0,
         'the Co-op tab holds no switch of its own — a session has a code and no rules, and '
@@ -1218,7 +1218,7 @@ export async function run({ check, assert }) {
     const { menu, settings, doc, close } = menuOn();
     try {
       const field = doc.getElementById('opt-seed');
-      assert(field, 'index.html has no #opt-seed');
+      assert(field, 'index.play.html has no #opt-seed');
       const type = (v) => { field.value = v; field.dispatchEvent({ type: 'input' }); };
       const MAX = 0xFFFFFFFF;
       for (const typed of ['1234', String(MAX), String(MAX + 1), '9999999999', '12x34', '']) {
@@ -1511,7 +1511,7 @@ export async function run({ check, assert }) {
     try {
       const { fellLine, interludeBeats } = await import('../../src/game/Session.js');
       const host = doc.getElementById('death-roll');
-      assert(host, 'index.html has no #death-roll for the card to write');
+      assert(host, 'index.play.html has no #death-roll for the card to write');
 
       /* A MODE WITH NO ARMY SENDS NULL AND GETS NOTHING — the distinction
        * `runStats` reports null rather than [] for. A heading over nothing is a
@@ -1592,7 +1592,7 @@ export async function run({ check, assert }) {
     try {
       const leave = doc.getElementById('btn-leave');
       const restart = doc.getElementById('btn-restart');
-      assert(leave, 'index.html has no Leave button, so a connected player still cannot get out');
+      assert(leave, 'index.play.html has no Leave button, so a connected player still cannot get out');
       assert(restart, 'the pause card lost its Restart button');
       const hidden = (el) => el.classList.contains('hidden');
 

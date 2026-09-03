@@ -183,7 +183,7 @@ export async function run({ check, assert }) {
     const menu = await read('src/ui/Menu.js');
     assert(/_cardRow\('meditation-list',\s*'h-meditation',\s*'meditation',\s*MEDITATION_POSES/.test(menu),
       'the Jedi tab has no pose row off MEDITATION_POSES');
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     assert(html.includes('id="meditation-list"') && html.includes('id="h-meditation"'), 'the row has no markup');
     assert(/_previewMeditation\(/.test(menu) && /s\.pose\)\s*poseMeditation\(/.test(menu),
       'the preview does not take the pose while a card is hovered');

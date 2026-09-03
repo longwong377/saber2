@@ -50,12 +50,12 @@ const MIME = {
 const { createServer } = await import('node:http');
 const server = createServer(async (req, res) => {
   let p = decodeURIComponent(req.url.split('?')[0]);
-  if (p === '/') p = '/index.html';
+  if (p === '/') p = '/index.play.html';
   const file = join(ROOT, normalize(p).replace(/^(\.\.[/\\])+/, ''));
   if (!file.startsWith(ROOT) || !existsSync(file) || !statSync(file).isFile()) { res.writeHead(404); res.end(); return; }
   let body = await readFile(file);
   // Every script goes. main.js would boot a renderer to answer a layout question.
-  if (p === '/index.html') body = Buffer.from(String(body).replace(/<script[\s\S]*?<\/script>/g, ''), 'utf8');
+  if (p === '/index.play.html') body = Buffer.from(String(body).replace(/<script[\s\S]*?<\/script>/g, ''), 'utf8');
   res.writeHead(200, { 'Content-Type': MIME[extname(file)] || 'application/octet-stream' });
   res.end(body);
 });

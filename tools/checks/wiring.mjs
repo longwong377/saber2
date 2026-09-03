@@ -77,7 +77,7 @@ function computedImports(src) {
 
 /** Walk from the page's entry scripts the way the browser does. */
 async function graph() {
-  const html = await readFile(`${ROOT}/index.html`, 'utf8');
+  const html = await readFile(`${ROOT}/index.play.html`, 'utf8');
 
   const mapText = (html.match(/<script[^>]*type=["']importmap["'][^>]*>([\s\S]*?)<\/script>/) || [])[1];
   const map = mapText ? (JSON.parse(mapText).imports ?? {}) : {};
@@ -112,10 +112,10 @@ async function graph() {
     }
   }
 
-  for (const e of entries) await walk(resolve(ROOT, e), `${ROOT}/index.html`);
+  for (const e of entries) await walk(resolve(ROOT, e), `${ROOT}/index.play.html`);
   for (const a of assets) {
     const p = resolve(ROOT, a);
-    if (!await exists(p)) missing.push({ spec: rel(p), from: 'index.html' });
+    if (!await exists(p)) missing.push({ spec: rel(p), from: 'index.play.html' });
   }
   return { entries, assets, modules: seen.size, missing, bare, computed, map };
 }
@@ -129,7 +129,7 @@ export async function run({ check, assert }) {
      * lands here and nowhere else, because no other check imports enough of
      * the game to notice, and the browser's own report of it is a blank page.
      */
-    assert(g.entries.length > 0, 'index.html names no entry script — the page loads nothing at all');
+    assert(g.entries.length > 0, 'index.play.html names no entry script — the page loads nothing at all');
     assert(g.modules > 50,
       `only ${g.modules} modules reachable from ${g.entries.join(', ')} — the walk stopped early, `
       + 'which means this suite is measuring a fraction of the graph and reporting it as the whole');
@@ -169,7 +169,7 @@ export async function run({ check, assert }) {
   });
 
   check('wiring: the page\'s own assets are on disk', () => {
-    assert(g.assets.length > 0, 'index.html links no stylesheet — the game renders unstyled');
+    assert(g.assets.length > 0, 'index.play.html links no stylesheet — the game renders unstyled');
     return `${g.assets.length} linked asset(s) present: ${g.assets.join(', ')}`;
   });
 
@@ -254,9 +254,9 @@ export async function run({ check, assert }) {
       + `map, which is Chrome 89 / Firefox 108 / Safari 16.4:\n  ${offenders.slice(0, 10).join('\n  ')}`);
     /* …and the page must not carry a map either, or the next bare specifier is
      * invisible again in every browser that has one. */
-    const html = await readFile(new URL('index.html', root), 'utf8');
+    const html = await readFile(new URL('index.play.html', root), 'utf8');
     assert(!/<script[^>]*type=["']importmap["']/.test(html),
-      'index.html carries an import map again — a bare specifier would then work in a new browser '
+      'index.play.html carries an import map again — a bare specifier would then work in a new browser '
       + 'and fail in an old one, which is how this was missed the first time');
     return `${files.length} files the browser loads, no bare specifiers, no import map`;
   });

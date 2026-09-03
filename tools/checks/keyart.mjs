@@ -86,7 +86,7 @@ const BUDGET = 160 * 1024;
 
 export async function run({ check, assert }) {
   const CSS = await read('styles.css');
-  const HTML = await read('index.html');
+  const HTML = await read('index.play.html');
 
   /* ── what the stylesheet actually asks for ───────────────────────────── */
   const bg = rule(CSS, '.menu-bg');
@@ -210,7 +210,7 @@ export async function run({ check, assert }) {
      * otherwise arrive as a visible pop the moment the menu appears.
      */
     const link = /<link[^>]*rel=["']preload["'][^>]*>/i.exec(HTML)?.[0] ?? '';
-    assert(link, 'index.html has no <link rel=preload> for the title plate');
+    assert(link, 'index.play.html has no <link rel=preload> for the title plate');
     const href = /href=["']([^"']+)["']/.exec(link)?.[1] ?? '';
     assert(href === src, `the preload asks for "${href}" and .menu-bg asks for "${src}"`);
     assert(/as=["']image["']/.test(link), 'the preload does not declare as="image", so it is fetched twice');

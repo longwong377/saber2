@@ -360,7 +360,7 @@ export function audit({ css, html }) {
 
 export async function run({ check, assert }, files = null) {
   const css = files?.css ?? await read('styles.css');
-  const html = files?.html ?? await read('index.html');
+  const html = files?.html ?? await read('index.play.html');
   const main = files?.main ?? await read('src/main.js');
   const world = files?.world ?? await read('src/game/World.js');
   const A = audit({ css, html });

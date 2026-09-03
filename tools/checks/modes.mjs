@@ -75,7 +75,7 @@ export function run({ check, assert }) {
      */
     const { skirmishConfig, SKIRMISH } = await import('../../src/game/Waves.js');
     const { DEFAULT_SETTINGS, SETTING_READERS } = await import('../../src/ui/Menu.js');
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const main = await read('src/main.js');
 
     const picks = Object.keys(skirmishConfig(null));

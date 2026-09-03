@@ -160,7 +160,7 @@ function wheelPlayer(world) {
 }
 
 export async function run({ check, assert }) {
-  const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+  const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
   const PLAYER_SRC = await readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
   /* Read here rather than inside a check: `hudOnPage` installs a global
    * document and the note on it explains that the window between install and
@@ -661,7 +661,7 @@ export async function run({ check, assert }) {
       enemyVoices: 'opt-enemyvoices', enemyBody: 'opt-enemybody', popups: 'opt-popups',
       reticleShape: 'opt-ret-shape', reticleSize: 'opt-ret-size', reticleColor: 'opt-ret-color',
     };
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const menu = await read('src/ui/Menu.js');
     const bound = new Map([...menu.matchAll(/_(?:slider|check)\('(opt-[a-z0-9-]+)',\s*'([A-Za-z0-9_]+)'/g)]
       .map(m => [m[2], m[1]]));
@@ -692,7 +692,7 @@ export async function run({ check, assert }) {
     // The layout promise, as markup and as CSS. An event feed that drifts into
     // the centre of the screen is competing with HUD.message() and the wave
     // director for the same space, which is how a HUD stops being readable.
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const css = await read('styles.css');
     const tr = html.slice(html.indexOf('<div class="hud-tr">'), html.indexOf('<div class="hud-bl">'));
     assert(tr.includes('id="event-feed"'),

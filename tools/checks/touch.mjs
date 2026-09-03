@@ -144,7 +144,7 @@ function touch(root, type, points) {
 const mid = (k) => ({ x: (BOXES[k][0] + BOXES[k][2]) / 2, y: (BOXES[k][1] + BOXES[k][3]) / 2 });
 
 export async function run({ check, assert }) {
-  const INDEX = await read('index.html');
+  const INDEX = await read('index.play.html');
   const CSS = await read('styles.css');
   const TOUCH_SRC = await read('src/engine/Touch.js');
   const INPUT_SRC = await read('src/engine/Input.js');
@@ -569,7 +569,7 @@ export async function run({ check, assert }) {
   /* ── 6. the shipped page ──────────────────────────────────────────── */
 
   check('the page carries the overlay, the stylesheet hides it, and the packer keeps it', async () => {
-    assert(/id="touch"/.test(INDEX), 'index.html has no #touch for the pad to build into');
+    assert(/id="touch"/.test(INDEX), 'index.play.html has no #touch for the pad to build into');
     assert(/aria-hidden/.test(INDEX.match(/<div id="touch"[^>]*>/)?.[0] || ''),
       '#touch is not hidden from a screen reader — it is a set of unlabelled boxes');
     /* PAINTED ONLY WHEN THE LAYER IS AWAKE. The overlay sits over the play

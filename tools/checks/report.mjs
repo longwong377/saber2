@@ -293,7 +293,7 @@ export async function run({ check, assert }) {
      * remembered being open is a panel that hides Resume behind a list you
      * opened once, twenty minutes ago, and that is a property of the table.
      */
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const menu = await read('src/ui/Menu.js');
     const screens = await read('src/ui/Screens.js');
     assert(/id="btn-pause-report"[\s\S]{0,200}aria-controls="pause-report-box"/.test(html),
@@ -333,7 +333,7 @@ export async function run({ check, assert }) {
      */
     const { makeDocument } = await import('./_page.mjs');
     const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
-    const doc = makeDocument(await read('index.html'));
+    const doc = makeDocument(await read('index.play.html'));
     const restore = doc.install();
     try {
       const menu = new Menu({ ...structuredClone(DEFAULT_SETTINGS) }, {});
@@ -370,7 +370,7 @@ export async function run({ check, assert }) {
      */
     const { makeDocument } = await import('./_page.mjs');
     const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
-    const doc = makeDocument(await read('index.html'));
+    const doc = makeDocument(await read('index.play.html'));
     const restore = doc.install();
     try {
       const menu = new Menu({ ...structuredClone(DEFAULT_SETTINGS) }, {});
@@ -434,7 +434,7 @@ export async function run({ check, assert }) {
      * run has to be said here or nowhere. */
     const { makeDocument } = await import('./_page.mjs');
     const { Menu, DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
-    const doc = makeDocument(await read('index.html'));
+    const doc = makeDocument(await read('index.play.html'));
     const restore = doc.install();
     try {
       const menu = new Menu({ ...structuredClone(DEFAULT_SETTINGS) }, {});

@@ -63,7 +63,7 @@ const rowsIn = (doc) => [...doc.getElementById('databank-list').querySelectorAll
 const pageText = (doc) => doc.getElementById('databank-page').textContent.replace(/\s+/g, ' ').trim();
 
 export async function run({ check, assert }) {
-  INDEX_HTML = await read('index.html');
+  INDEX_HTML = await read('index.play.html');
   const CSS = await read('styles.css');
   const MENU_SRC = await read('src/ui/Menu.js');
   const BANK_SRC = await read('src/game/Databank.js');

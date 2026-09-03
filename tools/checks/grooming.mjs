@@ -1225,7 +1225,7 @@ export async function run({ check, assert, near }) {
     const world = await readFile(src('game/World.js'), 'utf8');
     const player = await readFile(src('game/Player.js'), 'utf8');
     const bodies = await readFile(src('game/Bodies.js'), 'utf8');
-    const html = await readFile(root('index.html'), 'utf8');
+    const html = await readFile(root('index.play.html'), 'utf8');
 
     assert(/face:\s*\{[^}]*hair:/.test(menu), 'DEFAULT_SETTINGS.face is not a character sheet');
     assert(menu.includes('this.s.face = characterSheet('), 'nothing in the menu writes the sheet');

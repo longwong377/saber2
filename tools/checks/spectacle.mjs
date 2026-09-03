@@ -247,7 +247,7 @@ function paceOf(seconds, ...ids) {
 }
 
 export async function run({ check, assert }) {
-  const INDEX = await read('index.html');
+  const INDEX = await read('index.play.html');
   const CSS = await read('styles.css');
   const PLAYER_SRC = await read('src/game/Player.js');
 
@@ -498,7 +498,7 @@ export async function run({ check, assert }) {
     // drives Minimap directly, which cannot tell whether anything ever calls it.
     const doc = makeDocument(INDEX);
     const el = doc.getElementById('minimap');
-    assert(el, 'index.html has no #minimap for the HUD to find');
+    assert(el, 'index.play.html has no #minimap for the HUD to find');
     assert(el.localName === 'canvas', `#minimap is a <${el.localName}>, and the map draws with a 2D context`);
     // The page shim models no canvas context; give the parsed element one so the
     // SHIPPED HUD can be driven end to end.
@@ -812,7 +812,7 @@ export async function run({ check, assert }) {
     probe.emote = ['F13'];
     assert(/<kbd>(?:Hold )?F13<\/kbd>/.test(codexHtml(probe)), 'the Codex never prints the wheel\'s binding');
     assert(CODEX.some(r => (r.keys || []).includes('emote')), 'no Codex row names the wheel');
-    assert(INDEX.includes('id="emote-wheel"'), 'index.html has no host for the wheel');
+    assert(INDEX.includes('id="emote-wheel"'), 'index.play.html has no host for the wheel');
     // No slot markup on the page: eight typed positions and one computed hit
     // test is two answers to where a slot is.
     const host = INDEX.slice(INDEX.indexOf('id="emote-wheel"'));
@@ -1166,7 +1166,7 @@ export async function run({ check, assert }) {
      * second is the one that keeps it honest a year from now: the wheel's
      * table is `FORMATIONS`, not a copy of it, so a seventh order appears on
      * it the day it is authored and cannot appear with the wrong words on. */
-    assert(INDEX.includes('id="order-wheel"'), 'index.html has no host for the order wheel');
+    assert(INDEX.includes('id="order-wheel"'), 'index.play.html has no host for the order wheel');
     const host = INDEX.slice(INDEX.indexOf('id="order-wheel"'));
     assert(!/class="em/.test(host.slice(0, host.indexOf('</div>'))),
       'the order wheel\'s slots are typed into the markup as well as computed from the table');

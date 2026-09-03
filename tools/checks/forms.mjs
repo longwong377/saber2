@@ -584,7 +584,7 @@ export async function run({ check, assert }) {
     const { makeDocument } = await import('./_page.mjs');
     const { HUD } = await import('../../src/ui/HUD.js');
     const { readFile } = await import('node:fs/promises');
-    const doc = makeDocument(await readFile(new URL('../../index.html', import.meta.url), 'utf8'));
+    const doc = makeDocument(await readFile(new URL('../../index.play.html', import.meta.url), 'utf8'));
     const restore = doc.install();
     try {
       const hud = new HUD(doc);

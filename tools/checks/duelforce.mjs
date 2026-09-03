@@ -244,7 +244,7 @@ export async function run({ check, assert }) {
      * one alone is a feature that does not draw.
      */
     const { readFile } = await import('node:fs/promises');
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const hud = await readFile(new URL('../../src/ui/HUD.js', import.meta.url), 'utf8');
     assert(/id="boss-force"/.test(html), 'there is no element for an enemy\'s Force reserve');
     assert(/id="boss-cast"/.test(html), 'there is no element for what they are casting');

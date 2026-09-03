@@ -54,14 +54,14 @@ const dirFor = (level, rules = []) => new Waves.WaveDirector(
   { mode: 'roguelite', pool: LEVELS[level].pool, rules });
 
 export async function run({ check, assert }) {
-  INDEX_HTML = await read('index.html');
+  INDEX_HTML = await read('index.play.html');
   ({ LEVELS, LEVEL_ORDER } = await import('../../src/game/Levels.js'));
 
   check('rules: every rule in the table is a card on the Deploy panel', () => {
     const { doc, close } = menuOn();
     try {
       const host = doc.getElementById('rule-list');
-      assert(host, 'index.html has no #rule-list — the rules column is not on the page at all');
+      assert(host, 'index.play.html has no #rule-list — the rules column is not on the page at all');
       const cards = [...host.children];
       assert(cards.length === Waves.CONDITION_KEYS.length,
         `${cards.length} rule cards against ${Waves.CONDITION_KEYS.length} entries in CONDITIONS — `
@@ -209,7 +209,7 @@ export async function run({ check, assert }) {
     const { settings, doc, close } = menuOn();
     try {
       const field = doc.getElementById('opt-seed');
-      assert(field, 'index.html has no #opt-seed — a run cannot be repeated');
+      assert(field, 'index.play.html has no #opt-seed — a run cannot be repeated');
       assert(settings.seed === null, `the shipped default seed is ${settings.seed}, not null`);
       field.value = '12x34';
       field.dispatchEvent({ type: 'input' });

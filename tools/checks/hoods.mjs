@@ -799,10 +799,10 @@ export async function run({ check, assert }) {
       'a blob off disk naming a hood that no longer exists is not normalised away');
 
     const menu = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     assert(/_wardrobeCards\('hood-list',[^)]*HOOD_CUTS\)/.test(menu),
       'the creator has no hood row, so the cuts exist and nobody can pick one');
-    assert(html.includes('id="hood-list"'), 'index.html has no host element for the hood row');
+    assert(html.includes('id="hood-list"'), 'index.play.html has no host element for the hood row');
     assert(/hood:\s*wardrobeOf\(this\.s\.wardrobe\)\.hood/.test(menu),
       'the creator preview ignores the hood, so the row is picked blind');
 

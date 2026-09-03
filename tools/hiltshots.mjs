@@ -34,7 +34,7 @@ const MIME = { '.html':'text/html','.js':'text/javascript','.mjs':'text/javascri
 const server = createServer(async (req, res) => {
   try {
     let p = decodeURIComponent(req.url.split('?')[0]);
-    if (p === '/') p = '/index.html';
+    if (p === '/') p = '/index.play.html';
     const f = join(ROOT, normalize(p).replace(/^(\.\.[/\\])+/, ''));
     if (!f.startsWith(ROOT) || !existsSync(f) || !statSync(f).isFile()) { res.writeHead(404); res.end(); return; }
     res.writeHead(200, { 'Content-Type': MIME[extname(f)] || 'application/octet-stream' });

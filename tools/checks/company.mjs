@@ -116,7 +116,7 @@ export async function run({ check, assert }) {
    * Sync bodies cannot interleave, so they cannot. `run` is async so the read
    * can happen before the first `check` is registered; nothing below awaits.
    */
-  const INDEX_HTML = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+  const INDEX_HTML = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
   check('company: a withdrawal keeps who got aboard and nobody else', () => withCleanStore(() => {
       const r = freshRoll(10);
       /* Nine walk up the ramp. The tenth is `left`, which is the whole

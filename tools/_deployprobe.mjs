@@ -33,7 +33,7 @@ const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.mjs': 'text/ja
   '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.svg': 'image/svg+xml', '.mp3': 'audio/mpeg' };
 const server = createServer(async (req, res) => {
   const p = normalize(decodeURIComponent(req.url.split('?')[0]));
-  const file = join(ROOT, p === '/' ? 'index.html' : p);
+  const file = join(ROOT, p === '/' ? 'index.play.html' : p);
   try {
     const body = await readFile(file);
     res.writeHead(200, { 'content-type': TYPES[extname(file)] || 'application/octet-stream' });
@@ -41,7 +41,7 @@ const server = createServer(async (req, res) => {
   } catch { res.writeHead(404); res.end('no'); }
 });
 await new Promise(r => server.listen(0, r));
-const url = `http://127.0.0.1:${server.address().port}/index.html`;
+const url = `http://127.0.0.1:${server.address().port}/index.play.html`;
 
 const browser = await chromium.launch({
   executablePath: '/opt/pw-browsers/chromium-1194/chrome-linux/chrome',

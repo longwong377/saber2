@@ -388,7 +388,7 @@ export async function run({ check, assert }) {
      * and 25% of it at the floor, which is the number a budget is about.
      */
     const { readFile } = await import('node:fs/promises');
-    const markup = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const markup = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const slider = /id="opt-particles"[^>]*min="([\d.]+)"[^>]*max="([\d.]+)"/.exec(markup);
     assert(slider, 'the Particles slider is gone from index.html, so its travel cannot be derived');
     const tiers = Object.values(QUALITY).map((q) => q.particles);

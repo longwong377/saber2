@@ -834,7 +834,7 @@ export async function run({ check, assert }) {
   });
 
   check('controls: the scoreboard overlay exists and Tab is what opens it', async () => {
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const main = await read('src/main.js');
     for (const id of ['scoreboard', 'score-stats', 'score-boons', 'score-roster']) {
       assert(html.includes(`id="${id}"`), `index.html has no #${id} for the scoreboard to fill`);
@@ -1165,7 +1165,7 @@ export async function run({ check, assert }) {
      */
     const { makeDocument } = await import('./_page.mjs');
     const { Menu } = await import('../../src/ui/Menu.js');
-    const INDEX = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const CSS = await readFile(new URL('../../styles.css', import.meta.url), 'utf8');
     assert(/\.bindrow b\.conflict\s*\{/.test(CSS), 'the clash paint rule is gone from styles.css');
 
@@ -1589,7 +1589,7 @@ export async function run({ check, assert }) {
     // a CONTROL with no setting does nothing either, and _slider and _check
     // both return quietly when the element they were given is not there — so a
     // renamed id in index.html silently unbinds a slider with no error at all.
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const menu = await readFile(src('ui/Menu.js'), 'utf8');
     const ids = new Set([
       ...[...html.matchAll(/id="(opt-[a-z0-9-]+)"/g)].map(m => m[1]),
@@ -1747,7 +1747,7 @@ export async function run({ check, assert }) {
     // defaultBindings(); the seventeenth told a player on a fresh profile
     // "M2 to hurl it", and M2 thrusts. A typed key cannot follow a rebind, so
     // the rule is that no key name is typed at all.
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const typed = [...html.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map(m => m[1]);
     assert(!typed.length,
       `index.html types ${typed.length} key names into the markup (${typed.join(', ')}) — `
@@ -1976,7 +1976,7 @@ export async function run({ check, assert }) {
     // `this.settings.bladeHold` into a per-frame controller flag and there was
     // no such setting and no such box.
     const menu = await readFile(src('ui/Menu.js'), 'utf8');
-    const html = await read('index.html');
+    const html = await read('index.play.html');
     const bound = new Map([...menu.matchAll(/_(?:slider|check)\('(opt-[a-z0-9-]+)',\s*'([A-Za-z0-9_]+)'/g)]
       .map(m => [m[2], m[1]]));
     /**

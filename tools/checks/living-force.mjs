@@ -1436,7 +1436,7 @@ export async function run({ check, assert }) {
     assert(/screens\.take\('meditation'/.test(main), 'the meditation is raised without Screens — it will not be remembered');
     assert(/screens\.card\('meditation'/.test(main), 'the meditation card is never registered with Screens');
     // Both doors: mid-run by kneeling, and from the Temple between runs.
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     for (const id of ['meditation', 'med-field', 'commune', 'btn-commune', 'btn-med-buy']) {
       assert(html.includes(`id="${id}"`), `#${id} is missing from index.html`);
       assert(main.includes(`'${id}'`) || (await read('ui/SkillTree.js')).includes(`'${id}'`),
@@ -1555,7 +1555,7 @@ export async function run({ check, assert }) {
      * is installed — the runner starts the next check the moment this one
      * suspends, and a globally installed document would follow it there.
      */
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const { SkillTree } = await import('../../src/ui/SkillTree.js');
     const doc = makeDocument(html);
     const restore = doc.install();
@@ -1625,7 +1625,7 @@ export async function run({ check, assert }) {
      * is that the rules have one implementation, and a check that re-derived
      * them would agree with itself and nothing else.
      */
-    const html = await readFile(new URL('../../index.html', import.meta.url), 'utf8');
+    const html = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
     const { SkillTree } = await import('../../src/ui/SkillTree.js');
     const doc = makeDocument(html);
     const restore = doc.install();
