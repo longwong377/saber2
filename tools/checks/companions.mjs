@@ -4382,12 +4382,12 @@ export async function run({ check, assert }) {
     let grown = 0;
     for (const k of Object.keys(COMPANION_KINDS)) {
       const a = bodyScaleOf(k, rec(k, 0)), b = bodyScaleOf(k, rec(k, 12)), c = bodyScaleOf(k, rec(k, 24)), d = bodyScaleOf(k, rec(k, 99));
-      assert(near(a, ARCHETYPES[COMPANION_KINDS[k].archetype].scale ?? 1, 1e-9), `${k} at 0 runs is not the archetype's scale`);
+      assert(Math.abs(a - (ARCHETYPES[COMPANION_KINDS[k].archetype].scale ?? 1)) < 1e-9, `${k} at 0 runs is not the archetype's scale`);
       if (COMPANION_KINDS[k].grow) {
         grown++;
-        assert(b > a * 1.2 && c > b && near(c, d, 1e-9), `${k}: ${a.toFixed(3)} → ${b.toFixed(3)} → ${c.toFixed(3)} → ${d.toFixed(3)} is not a curve that grows and caps`);
+        assert(b > a * 1.2 && c > b && Math.abs(c - d) < 1e-9, `${k}: ${a.toFixed(3)} → ${b.toFixed(3)} → ${c.toFixed(3)} → ${d.toFixed(3)} is not a curve that grows and caps`);
       } else {
-        assert(near(a, d, 1e-9), `${k} changes size with runs and has no grow row`);
+        assert(Math.abs(a - d) < 1e-9, `${k} changes size with runs and has no grow row`);
       }
     }
     assert(grown === 1, `${grown} kinds grow; the design puts the growth question on the pup alone`);
