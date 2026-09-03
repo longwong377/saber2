@@ -549,6 +549,74 @@ export async function run({ check, assert }) {
       + `${up.toFixed(2)} m up; dismounted, still yours, back at ${heel.toFixed(1)} m`;
   });
 
+  check('driving: on an animal the rider owns the heading, at the animal\'s own turn rate', async () => {
+    /**
+     * TWO THINGS THIS IS THE ONLY MEASUREMENT OF, AND BOTH ARE LOAD-BEARING.
+     *
+     * ── THE RATE. `DRIVE.turn` is 0.9 rad/s and its note says why: a
+     * twenty-five-metre Juggernaut you point somewhere as a decision you commit
+     * to. At 0.9 a tauntaun at 5.9 m/s has a 6.8 m turning circle, which on
+     * broken ground is a body you cannot aim at a gap. Each mount declares its
+     * own `steer` and the three are argued as RADII over `COMPANION_UNITS`;
+     * this measures the rate off the body and holds it to the row, so a mount
+     * added without one — or one silently falling back to the tank rate — is
+     * caught here rather than felt.
+     *
+     * ── AND WHO IS STEERING. A companion's move wrap writes `wish` every frame
+     * toward its station, which is the heel mark 3.4 m off its owner's back.
+     * While you are riding, the owner IS on the animal — so the station is
+     * three metres from the body it is steering and the wrap and the throttle
+     * are two hands on one rein. Measured with the wrap left running on a
+     * driven body: it wrote the wish on **60 of 60** frames, and it happened
+     * not to show in a straight-line race only because the fixture's camera and
+     * the animal's facing pointed the same way, which is the exact shape of a
+     * defect that ships. So this points the animal ACROSS the station — a
+     * quarter turn off where the rider is looking — and asks which of the two
+     * the body obeyed.
+     */
+    const rows = [];
+    for (const kind of ['taun', 'blurrg', 'varac']) {
+      const b = await rideBoot(kind);
+      const { p, e, stick, step, THREE } = b;
+      b.alongside();
+      step(2);
+      assert(p.takeControls(b.ctx), `${kind}: ${whyNotDrive(b.world, p, e)}`);
+
+      /* ── the rate, off one second of held steering. */
+      const was = e.facing;
+      stick.steer = 1;
+      step(30);
+      stick.steer = 0;
+      let turned = Math.abs(e.facing - was) % (Math.PI * 2);
+      if (turned > Math.PI) turned = Math.PI * 2 - turned;
+      const want = e.A.steer;
+      assert(Math.abs(turned - want) < 0.25,
+        `${kind}: a second of full steering turned it ${turned.toFixed(2)} rad and its row says ${want}`);
+      assert(Math.abs(turned - DRIVE.turn) > 0.25,
+        `${kind}: it turned at ${turned.toFixed(2)} rad/s, which is the tank rate — the row is not being read`);
+
+      /* ── and the heading, pointed a quarter turn off the station. */
+      const yaw = Math.atan2(p.aimDir.x, p.aimDir.z);
+      e.facing = yaw + Math.PI / 2;
+      const from = e.position.clone();
+      stick.fwd = 1;
+      step(90);
+      const went = new THREE.Vector3().subVectors(e.position, from).setY(0);
+      assert(went.length() > 4,
+        `${kind}: three seconds of throttle across its own station moved it ${went.length().toFixed(1)} m`);
+      const bearing = Math.atan2(went.x, went.z);
+      let off = Math.abs(bearing - e.facing) % (Math.PI * 2);
+      if (off > Math.PI) off = Math.PI * 2 - off;
+      assert(off < 0.45,
+        `${kind}: pointed at ${e.facing.toFixed(2)} and it travelled at ${bearing.toFixed(2)} — `
+        + `${(off * 57.3).toFixed(0)}° off, which is something other than the rider steering`);
+      rows.push(`${kind} ${turned.toFixed(2)} rad/s (row ${want}), ${went.length().toFixed(1)} m at `
+        + `${(off * 57.3).toFixed(0)}° off the nose`);
+      b.world.unload?.();
+    }
+    return rows.join(' · ');
+  });
+
   check('driving: the saddle is the animal\'s measured back, not a number off its nose', async () => {
     /**
      * `_measurePlatform` returns immediately on `if (!this.A.big || !this.rig)`

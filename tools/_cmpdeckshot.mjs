@@ -64,6 +64,11 @@ page.on('pageerror', (e) => {
   console.log((e.stack || '').split('\n').slice(0, 14).join('\n'));
 });
 page.on('console', (m) => { if (m.type() === 'error') console.log('console:', m.text().slice(0, 200)); });
+await page.addInitScript(() => {
+  window.__errs = [];
+  window.addEventListener('error', (e) => window.__errs.push(`${e.message} @ ${e.filename}:${e.lineno}`));
+  window.addEventListener('unhandledrejection', (e) => window.__errs.push(`rejection ${(e.reason && e.reason.stack) || e.reason}`));
+});
 await page.goto(`http://127.0.0.1:${port}/`, { waitUntil: 'domcontentloaded', timeout: 90000 });
 await page.evaluate(() => {
   localStorage.setItem('saber.settings.v2', JSON.stringify({
@@ -96,9 +101,11 @@ const info = await page.evaluate(async () => {
   const btn = document.getElementById('btn-hangar');
   if (!btn) return { fail: 'no #btn-hangar' };
   btn.click();
-  for (let i = 0; i < 5000 && !(window.SABER?.world?.terrain); i++) await raf();
+  let spun = 0;
+  for (let i = 0; i < 2000 && !(window.SABER?.world?.terrain); i++) { await raf(); spun = i; }
   const w = window.SABER?.world;
-  if (!w) return { fail: 'no world' };
+  if (!w) return { fail: 'no world', spun, errs: window.__errs };
+  if (!w.terrain) return { fail: 'no terrain', spun, errs: window.__errs };
   for (let i = 0; i < 240; i++) await raf();
   /* IN FRONT, NOT BEHIND — see the header. */
   const M = await import('/src/game/CompanionDeck.js');
@@ -107,6 +114,7 @@ const info = await page.evaluate(async () => {
   for (let i = 0; i < 200; i++) await raf();
   const fig = w._companionDeck;
   return {
+    spun, errs: window.__errs,
     fig: !!fig, path: fig?.path, sit: fig ? +fig.sit.toFixed(2) : null,
     pos: fig ? [fig.pos.x, fig.pos.y, fig.pos.z].map((n) => +n.toFixed(2)) : null,
     player: w.player ? [w.player.position.x, w.player.position.y, w.player.position.z].map((n) => +n.toFixed(2)) : null,

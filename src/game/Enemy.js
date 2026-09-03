@@ -3784,10 +3784,12 @@ export class Enemy {
    * STRATAGEM_ONLY — and an animal a player owns wants none of the four. So the
    * gate reads the SECOND flag rather than being widened to grant the first,
    * and `mount: true` is the whole of what the three rideable companion
-   * archetypes add here. Measured on a live geonosis world: the tauntaun's
-   * `body` bone lathe gives platformTop 1.11 m over the hips and a radius of
-   * 0.32 m, which is a saddle rather than a deck — narrow on purpose, for the
-   * reason the radius note below gives.
+   * archetypes add here. Measured on a live geonosis world, the three saddles
+   * come out at 1.12 / 1.52 / 0.65 m above the hips bone (taun / blurrg /
+   * varac) with radii of 0.54 / 0.96 / 0.51 — a back rather than a deck, narrow
+   * on purpose, for the reason the radius note below gives. In world terms that
+   * puts the tauntaun's back 2.59 m over the body's own position, against a
+   * crown of 3.12: the seat is the animal's back and not the top of its head.
    *
    * Nothing else in this method changes and nothing else needed to: the bone it
    * measures is `body`, which `creatureSkeleton` (Rig.js:281) builds for every

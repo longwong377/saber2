@@ -658,8 +658,10 @@ export const DATABANK = {
       + 'will not bite, and it cannot be ordered to. It is a mount, and arriving '
       + 'somewhere is the entire contribution. Get on it and the map gets '
       + 'smaller; get off it and you have left a large warm animal standing in '
-      + 'the open where anything can shoot at it. Past a certain amount of '
-      + 'damage it panics and runs, with or without you on it.',
+      + 'the open where anything can shoot at it. Ride it into a fight and it '
+      + 'panics — the hostiles it can see and the fire it is taking for you '
+      + 'both count — and past a threshold you are on the ground, stunned, '
+      + 'watching it go.',
   },
   blurrg: {
     faction: 'wild',

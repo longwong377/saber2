@@ -180,9 +180,20 @@ const SIT = { drop: 0.48, pitch: 0.30, hip: 0.34, femur: 0.58, tibia: 1.02 };
  */
 const BIPED_SETTLE = 0.42;
 
+/**
+ * WHAT A SHOVE ON THE DECK DOES TO IT.
+ *
+ * `give` converts `deckBladeTargets`' 6.5 into metres a second on a body of
+ * reference mass: 0.34 puts a clone-weight animal at 2.2 m/s, which is the
+ * deck pace, so a good hit costs it about a second of walking back and never
+ * throws it across the room. `shed` is how fast it plants its feet again —
+ * a third of a second to a stop, which is an animal absorbing a push rather
+ * than a crate sliding on ice.
+ */
+const SHOVE = { give: 0.34, shed: 3.2 };
+
 const _v1 = new THREE.Vector3();
 const _v2 = new THREE.Vector3();
-const _q1 = new THREE.Quaternion();
 const _RIGHT = new THREE.Vector3(1, 0, 0);
 
 /**
@@ -197,6 +208,34 @@ function groundUnder(world, x, z) {
   const f = world?.floorAt?.(x, z);
   if (Number.isFinite(f)) return f;
   return world?.terrain?.height?.(x, z) ?? 0;
+}
+
+/**
+ * WHERE IT STANDS WHEN YOU ARE STANDING — ONE FORMULA, TWO CALLERS.
+ *
+ * `callTheCompanion` used to build the body at `player.z - back`, which is the
+ * heel station only when the player happens to be facing down −z, and
+ * `stepCompanionDeck` then walked it to the real mark. Harmless on the old
+ * body, which had no legs to speak of; not harmless now. `BipedAnimator`
+ * holds its feet in WORLD coordinates and re-plants them over about half a
+ * second, and while they are catching up its pelvis falls onto the reach
+ * clamp's floor — `Math.max(hipY, position.y + 0.30 * s)` — so a freshly
+ * built B1 stood with its hips at 0.306 m of a standing 0.920 for sixteen
+ * frames and then popped upright. Building it where it is going to stand
+ * costs nothing and there is nothing to catch up.
+ */
+function deckMark(world, out) {
+  const p = world.player;
+  const at = p?.position;
+  if (!at) return out.set(0, 0, 0);
+  const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
+  out.set(
+    at.x - Math.sin(yaw) * DECK_HEEL.back + Math.cos(yaw) * DECK_HEEL.side,
+    0,
+    at.z - Math.cos(yaw) * DECK_HEEL.back - Math.sin(yaw) * DECK_HEEL.side,
+  );
+  out.y = groundUnder(world, out.x, out.z);
+  return out;
 }
 
 /**
@@ -237,13 +276,15 @@ export function deckPathFor(built) {
  * (off the body's own speed and scale, clamped to its own floor and ceiling)
  * and spends it, so there is exactly one gait clock and it is the field's.
  *
- * `_stanceCache` is PRE-FILLED with a copy of the published stance, because
+ * `_stanceCache` is PRE-FILLED with a COPY of the published stance, because
  * the one thing this room asks of the gait that a battlefield never does is
- * that it stop striding when the animal sits down. `step`, `lift` and `bob`
- * are scaled by `1 - sit` every frame; `hipHeight`, `rear` and the limb table
- * are the plan's, untouched. Without it a sat animal cycles its feet on the
- * spot at the solver's 0.1 floor for ever — which is the exact sentence this
- * file has always carried about why the sit exists at all.
+ * that the animal sit down: `step`, `lift`, `bob` and `hipHeight` are the
+ * four numbers a sitting body has less of, and `poseCompanionDeck` scales
+ * them off `fig.sit` every frame. `rear` and the limb table are the plan's,
+ * untouched, and `_base` is the plan's own copy so the scaling is never
+ * applied twice. Without the stride term a sat animal cycles its feet on the
+ * spot at the solver's 0.1 phase floor for ever — which is the exact sentence
+ * this file has always carried about why the sit exists at all.
  */
 function walkerSubject(fig, A, built) {
   const base = built.stance;
@@ -286,6 +327,27 @@ function hindLegs(stance) {
 }
 
 /**
+ * STAND IT UP BEFORE ANYBODY LOOKS AT IT.
+ *
+ * `BipedAnimator` carries a foot-plant state machine that has to find the
+ * floor before it can hold a body up, and on the frames after a body appears
+ * or is moved without walking it has not: measured on a freshly built B1, the
+ * pelvis sat at 0.306 m of a standing 0.920 — the reach clamp's own floor —
+ * for sixteen frames, with the feet 0.28 m off the plates, and then popped
+ * upright. Half a second of a droid crouching on the deck, every time.
+ *
+ * Sixteen solves against a stationary body is a fraction of a millisecond and
+ * it happens twice in a hangar visit. The walker path needs none of it and
+ * gets none: `_poseWalker` is stateless frame to frame — it places the hips
+ * off the stance and IKs the feet onto the floor under them — so a massiff is
+ * correct on its first solve and this returns immediately.
+ */
+function warm(fig) {
+  if (!fig?.anim) return;
+  for (let i = 0; i < 16; i++) poseCompanionDeck(fig, 1 / 30);
+}
+
+/**
  * Build the deck body for the live record, or nothing.
  *
  * IT IS THE SAME BUILDER THE FIELD USES, handed the same colour options, so
@@ -305,9 +367,7 @@ export function callTheCompanion(world) {
   const root = built?.rig?.root || built?.group;
   if (!root) return null;
 
-  const p = world.player?.position || new THREE.Vector3();
-  const at = new THREE.Vector3(p.x, 0, p.z - DECK_HEEL.back);
-  at.y = groundUnder(world, at.x, at.z);
+  const at = deckMark(world, new THREE.Vector3());
   world.scene.add(root);
 
   const path = deckPathFor(built);
@@ -325,6 +385,8 @@ export function callTheCompanion(world) {
     /** 0 standing, 1 fully sat. Eased, so it folds rather than snaps. */
     sit: 0,
     facing: 0,
+    /** What a shove left on it, in metres a second. Decays; see `SHOVE`. */
+    push: new THREE.Vector3(),
   };
   /* THE FLOOR, AS THE SOLVERS ASK FOR IT. Both take a `terrain.height`-shaped
    * probe; on the deck the honest answer is `floorAt` and not the plate. */
@@ -340,19 +402,58 @@ export function callTheCompanion(world) {
       scale: built.rig.scale ?? built.scale ?? 1,
       hipHeight: A.hipHeight ?? 0.95,
     });
+    warm(fig);
   } else {
     root.position.copy(at);
   }
   world._companionDeck = fig;
 
   /**
-   * AND IT IS OFFERED TO THE DECK'S BLADE through `world._deckProps`, a
-   * published extension point that `Hangar.deckBladeTargets` already reads
-   * with an absent-array guard and that World.js already consumes.
+   * AND IT IS OFFERED TO THE DECK'S BLADE — WHICH IT WAS NOT.
+   *
+   * `world._deckProps` is a published extension point that
+   * `Hangar.deckBladeTargets` reads with an absent-array guard, and this file
+   * has always been its only writer. What it wrote was `{ fig, kind, position
+   * }`, and `deckBladeTargets` opens `const sh = row?.shove; if (!sh …) return`
+   * — so every entry this file ever pushed was DROPPED on the first line of
+   * the function it was written for. The blade never met the animal, the
+   * Force never moved it, and the check that guarded it asserted only that
+   * the entry was in the array: HANDOFF §2.3b, a guard that reads a field
+   * nothing on the other side ever looks at.
+   *
+   * `shove` is the shape the deck's own bodies present — `Shovable` for a man,
+   * `DeckCast.Knockable` for a droid — and it needs three things: `at`, the
+   * point the capsule is built around; `down`, whether it is already on the
+   * floor; and `shove(dir, speed)`, what a hit does. This is a fourth
+   * implementation of that shape and it is deliberately the smallest one,
+   * because the other two carry a rigid-body tumble and a get-up clock and
+   * this body has no pose for lying on its side.
+   *
+   * `down` IS ALWAYS FALSE, and it is not a stub. A companion on the deck
+   * cannot be knocked flat because there is no pose in which it is flat: what
+   * a blow does instead is SHIFT it — the animal is knocked off its station
+   * and walks back to your heel, which is the whole of what the deck's shoves
+   * are for and reads correctly on a body that has legs under it the whole
+   * time.
+   *
+   * AND HOW FAR IT GOES IS ITS OWN MASS. `shatter` hands every deck body the
+   * same 6.5, because the men on this deck all weigh the same; these do not.
+   * 82 kg is a clone trooper, so the reference divides out and a 3 kg tooka
+   * is thrown three times as far as a man while a 640 kg blurrg leans into it
+   * and moves a fifth as far. Nobody types a per-kind number.
    */
   (world._deckProps ||= []).push({
     fig: { root },
     kind: 'companion',
+    shove: {
+      at: fig.pos,
+      down: false,
+      shove: (dir, speed = 4) => {
+        if (!dir || dir.lengthSq() < 1e-8) return;
+        const heft = Math.min(3, Math.max(0.2, 82 / (A.mass || 82)));
+        fig.push.copy(dir).setY(0).normalize().multiplyScalar(speed * heft * SHOVE.give);
+      },
+    },
     get position() { return fig.pos; },
   });
   return fig;
@@ -376,12 +477,16 @@ export function stepCompanionDeck(world, dt) {
    * the line — it stands off your back quarter wherever you are, which is the
    * same station the field body keeps and the same reason. */
   const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
-  fig.mark.set(
-    p.position.x - Math.sin(yaw) * DECK_HEEL.back + Math.cos(yaw) * DECK_HEEL.side,
-    0,
-    p.position.z - Math.cos(yaw) * DECK_HEEL.back - Math.sin(yaw) * DECK_HEEL.side,
-  );
-  fig.mark.y = groundUnder(world, fig.mark.x, fig.mark.z);
+  deckMark(world, fig.mark);
+
+  /* WHAT A SHOVE LEFT ON IT, SPENT BEFORE ANYTHING ELSE — so the gap to the
+   * mark that everything below reads is the gap it was actually knocked to. */
+  if (fig.push.lengthSq() > 1e-6) {
+    fig.pos.addScaledVector(fig.push, dt);
+    fig.pos.y = groundUnder(world, fig.pos.x, fig.pos.z);
+    fig.push.multiplyScalar(Math.max(0, 1 - dt * SHOVE.shed));
+    if (fig.push.lengthSq() < 1e-4) fig.push.set(0, 0, 0);
+  }
 
   _v1.subVectors(fig.mark, fig.pos).setY(0);
   let d = _v1.length();
@@ -408,6 +513,13 @@ export function stepCompanionDeck(world, dt) {
       fig.facing = yaw;
       _v1.set(0, 0, 0);
       d = 0;
+      /* AND THE FEET COME WITH IT. A `BipedAnimator` holds its feet in world
+       * coordinates, so a body teleported ninety metres leaves them behind
+       * and spends half a second with its pelvis on the reach clamp's floor
+       * while they walk in — see `deckMark`. Solving the stationary body a
+       * few times here is the same warm-up the build does, at the one other
+       * point in this file where the body moves without walking. */
+      warm(fig);
     }
   }
 

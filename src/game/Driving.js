@@ -320,9 +320,9 @@ export class Crew {
      * inside the central 60% of the torso's own footprint, bobbing with the
      * gait because it hangs off the hips bone. That is a better answer than
      * `chestY` for anything that publishes one, and for a mount it is the only
-     * honest one: `chestY` is `position.y + 1.15·bodyScale`, which on a
-     * tauntaun at 1.45 scale is 1.67 m — a rider floating 0.4 m above an animal
-     * whose measured back is at 1.11 m over the hips.
+     * honest one: measured on a live world, the three animals' backs sit 2.59 /
+     * 2.96 / 1.86 m over their own position and `chestY` is 0.92 / 1.00 / 0.31
+     * m away from that — a rider hanging most of a metre off a tauntaun.
      *
      * BEHIND THE SHOULDERS AND NOT AT THE NOSE. `+0.35·scale` down the facing
      * is a driver's cupola on a hull; a saddle sits BACK, which is the same

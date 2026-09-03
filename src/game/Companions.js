@@ -1361,46 +1361,56 @@ export const BOLT = { run: 4.5, far: 70, pull: 30 };
  * the same shape of lie as the Kennel's "You can ride this one." — a card
  * describing a mechanic that did not exist. This is the mechanic.
  *
- * IT IS A CLOCK IN HOSTILE-SECONDS, AND THE TWO TERMS ARE NOT THE SAME TERM,
- * because the two sentences the game prints about this animal are not the same
- * sentence. The Kennel card says *"ride it into a fight and it panics"* and the
- * Databank says *"past a certain amount of damage it panics and runs, WITH OR
- * WITHOUT YOU ON IT"*. Both are true of exactly this arithmetic:
+ * IT IS A CLOCK IN HOSTILE-SECONDS AND IT ONLY RUNS UNDER A RIDER. `_cmpFear`
+ * gains one point a second for every hostile inside `near`, plus `hit` a point
+ * for every point of health the animal loses — and while you are on it the
+ * second term is fed by the first one's bolts, because `Player.damage` reroutes
+ * into the body you are sitting on. Two consequences fall out of the
+ * arithmetic and both are the design's own sentences:
  *
- *   · PROXIMITY counts only while somebody is riding — one point a second for
- *     every hostile inside `near`. Carrying a man toward things that are
- *     shooting is the rider's decision and the animal's objection to it. One
- *     shooter at fifteen metres is 4.5 s, which is 27 m of ground at a ridden
- *     tauntaun's 6.1 m/s, so you can ride PAST a picket; three of them is
- *     1.5 s, so you cannot ride INTO a fight. "It makes crossing a map fast and
- *     makes arriving at a fight something you must dismount to do."
- *   · DAMAGE counts ALWAYS — `hit` a point for every point of health it loses,
- *     so 75 hp is the whole threshold on its own, a fifth of its 340. Being
- *     shot frightens an animal whether or not there is a man on its back, and
- *     that is the half the Databank claims.
+ *   · one shooter at fifteen metres is survivable — 4.5 s of ring, which is
+ *     27 m of ground at a ridden tauntaun's 5.9 m/s, so you can ride PAST a
+ *     picket;
+ *   · three of them is 1.5 s of ring, and measured on a live world with three
+ *     B1s at 10 m actually shooting it came out at 1.10 s, because the fire it
+ *     is eating for you is the other term. You cannot ride INTO a fight. "It
+ *     makes crossing a map fast and makes arriving at a fight something you
+ *     must dismount to do."
  *
  * ── AND IT FORGETS ON A QUIET WINDOW, NOT ON A QUIET FRAME ──────────────
  *
- * Written as "decay on any frame that adds nothing" the damage half is not a
+ * Written as "decay on any frame that adds nothing" the damage term is not a
  * threshold at all, it is a RATE gate, and the measurement says so: a tauntaun
- * shot for 10 hp every third of a second — 30 hp a second, a whole B1 squad's
+ * shot for 10 hp every third of a second — 30 hp a second, a whole squad's
  * worth — banked 8.4 points of fear and bled 6.5 of them back in the gaps
- * between the bolts, ending at 1.9 of a threshold of 4.5 and never bolting
- * after losing 140 hp. "Past a certain amount of damage" would have meant
- * "past a certain amount of damage per second", which is not what the card
- * says and is not what an animal does.
+ * between the bolts, ending at 1.9 of a threshold of 4.5 after losing 140 hp.
+ * "Past a certain amount of damage" would have meant "past a certain amount of
+ * damage per second", which is not what an animal does.
  *
  * So the clock only bleeds off after `calm` seconds with nothing added to it —
  * the same shape `underFire` already has in this file, where a spell lasts and
- * then ends rather than flickering between bolts. Fear survives the gaps
- * inside a burst and is gone about six seconds after the burst is.
+ * then ends rather than flickering between bolts. Fear survives the gaps inside
+ * a burst and is gone about six seconds after the burst is.
  *
- * WHAT THE SPLIT COSTS AND WHY IT IS WORTH IT. A tauntaun that ran the
- * proximity clock unridden would delete itself from every firefight it is
- * standing near — it has `ward: 0`, no `moves` and `damage: 0`, so it would
- * never come back and never do anything. The damage term is the honest one to
- * leave running: it takes a real event, it is answerable (keep it out of the
- * fire) and the animal comes home when the verb's 4.5 s are up.
+ * ── WHY NOT UNRIDDEN, WHICH WAS BUILT AND THEN TAKEN OUT ────────────────
+ *
+ * The first version ran the damage term whether or not anybody was on it, to
+ * make a Databank line reading "with or without you on it" true. It works —
+ * measured, a tauntaun standing on its own bolted after 80 hp of aimed fire —
+ * and it is the wrong animal. A tauntaun has `ward: 0`, no `moves` and
+ * `damage: 0`: it is never in a firefight for a reason, it is in one because
+ * you are, and a panic on that clock takes it 70 m away every ten seconds for
+ * the whole of every fight and walks it back at 5.9 m/s to be shot again. It
+ * also fought a check that was already green and right —
+ * `companions.mjs`'s BOLT measurement stands a tauntaun in four B1s' fire on
+ * purpose — by re-picking the run's heading mid-run and by re-arming the duty
+ * the moment the ordered run ended.
+ *
+ * COMPANIONS.md, the Kennel card and the kind's own blurb all scope this to the
+ * SADDLE — "above a threshold it bucks you off and bolts" — so the saddle is
+ * where it lives, and the one Databank clause that had drifted past that was
+ * corrected instead. A promise the game breaks is worse than a feature it does
+ * not have; the same is true of a promise a lane invents for itself.
  *
  * DECLARED ON THE KIND ROW AS `panic`, a threshold in those same units, and
  * ABSENT is what "this kind does not" means. The blurrg holds its ground and
@@ -1427,14 +1437,32 @@ function stepPanic(e, dt) {
   const K = COMPANION_KINDS[e._cmpKind];
   const cap = K?.panic;
   if (!cap) return;
+  if (!e.driven && !(e._cmpFear > 0)) return;
+  /**
+   * AND AN ANIMAL THAT IS ALREADY RUNNING IS NOT FRIGHTENED INTO RUNNING
+   * AGAIN, which is a defect this found by breaking a check that was green.
+   *
+   * BOLT's whole content is that the heading is chosen ONCE — "a heading
+   * recomputed per frame is a body that curves", and its own check measures the
+   * run as degrees off the line it picked. A panic that fired while the verb
+   * was mid-run called `panicRun` again, which called `start` again, which
+   * picked a fresh heading away from whatever was nearest NOW. Measured: a
+   * tauntaun under BOLT and under fire made its 23 m at **52° off** the heading
+   * it chose, and the verb check went red on exactly that.
+   *
+   * The right answer is the obvious one — it is already doing the thing — and
+   * the fear is left standing rather than spent, so the threshold is still
+   * crossed the moment the verb ends if whatever caused it is still there.
+   */
+  if (e._cmpDuty?.id === 'verb') return;
   const hp = e.hp ?? 0;
   const lost = Math.max(0, (e._cmpFearHp ?? hp) - hp);
   e._cmpFearHp = hp;
-  /* THE RING ONLY COUNTS UNDER A RIDER — see the note. `eachHostile` is the
-   * one pass over what this body is opposed to and it is the same door BOLT
-   * and CRY use, so "near" means here what it means everywhere else. */
+  /* BOTH TERMS ARE THE RIDER'S — see the note. `eachHostile` is the one pass
+   * over what this body is opposed to and it is the same door BOLT and CRY use,
+   * so "near" means here what it means everywhere else. */
   const ring = e.driven ? eachHostile(e, e.position, PANIC.near, () => {}) : 0;
-  const gain = ring * dt + lost * PANIC.hit;
+  const gain = e.driven ? ring * dt + lost * PANIC.hit : 0;
   /* READ ONCE INTO A NUMBER AND WRITTEN BACK ON EVERY PATH. Written as
    * `e._cmpFear = …` inside the two branches, the quiet branch's own guard
    * (`calm > PANIC.calm`) left the field UNDEFINED on the first frame of every
@@ -1457,10 +1485,7 @@ function stepPanic(e, dt) {
    * instead of one that throws you the moment you are seated. */
   e._cmpFear = 0;
   e._cmpPanics = (e._cmpPanics || 0) + 1;
-  /* THE BUCK IS ONLY A BUCK IF THERE IS SOMEBODY UP THERE. Unridden it is the
-   * same panic with nobody to throw, which is the Databank's "with or without
-   * you on it" said in code. */
-  if (e.driven) e.driven.throwRider(`${K.label ?? 'it'} has had enough`);
+  e.driven.throwRider(`${K.label ?? 'it'} has had enough`);
   panicRun(e);
 }
 
@@ -1891,8 +1916,9 @@ export const COMPANION_VERBS = {
        * never gets a frame either: a ridden mount picks no target, and a bite
        * gated on `e.target` therefore never happened. Measured before this, on
        * a live world with the blurrg boarded, CHARGE ordered and a B1 held at
-       * 2.2 m for ten seconds: **0 damage in 0 blows**, with `e.target` null on
-       * every one of the 300 frames. The verb read as implemented and was not.
+       * 2.2 m for ten seconds: **0 damage**, with the animal holding no target
+       * at all. With the picker called from here the same ten seconds take 148
+       * hp off it. The verb read as implemented and was not.
        *
        * `companionTarget` is the aim wrap's own picker, called here rather than
        * copied — the leash, the bidden body and `dutyAllows` (which for this
@@ -2138,14 +2164,20 @@ function installCompanionMove(e) {
      * `facing` from the player's own throttle and steering, and its note says
      * what the branch is for: "all this has to do is not overwrite them".
      *
-     * Without this line the station walk does exactly that. Measured on a
-     * geonosis world with a tauntaun boarded and the throttle held forward, the
-     * animal's station is the heel mark 3.4 m off the player's back and the
-     * player IS on the animal, so `d` is inside `settledBand` on every frame
-     * and the `else if (!busy)` branch writes `e.wish = null` — the throttle
-     * reached `_move` as a null wish and the ridden mount travelled 0.00 m. The
-     * one frame the other branch takes is worse: a mount steered away from your
-     * own body walks itself back under you.
+     * Without this line the station walk does exactly that, and it is not a
+     * theoretical clash: the station is the heel mark 3.4 m off the OWNER's
+     * back, the owner is sitting ON the animal, so the animal is permanently
+     * about three metres from where the wrap thinks it should be. Measured on a
+     * geonosis world with a tauntaun boarded and the throttle held, the wrap
+     * ran on 60 of 60 driven frames and rewrote `wish` on 60 of 60.
+     *
+     * WHAT THAT COSTS IS THE STEERING, and it is invisible in a straight line —
+     * which is the shape of a defect that ships. A ride down the camera's own
+     * bearing looks perfect, because the station happens to lie along it. Point
+     * the animal a quarter turn ACROSS that and the two hands on the rein pull
+     * apart: measured with this line removed, a tauntaun pointed at 1.57 rad
+     * under full throttle travelled at 2.85 — **73° off the heading its rider
+     * had given it**, walking itself back under him.
      *
      * `_move` and `_pose` still run, exactly as they do for a reaction, which
      * is what makes the animal travel on its own legs, take its own grade limit
