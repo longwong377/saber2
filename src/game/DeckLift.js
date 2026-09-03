@@ -324,88 +324,100 @@ export function dressDeckLift(world, opts = {}) {
   const slitMat = new THREE.MeshBasicMaterial({ color: 0x0f1622, name: 'car-slit' });
   slitMat.userData.saberNoInk = true; slitMat.userData.key = 'slit';
 
+  /* THE CAR'S WALLS ARE ITS OWN MATERIALS — clones of the kit's four — so
+   * they can be DIMMED for the ride without dimming the deck: with the car
+   * at full brightness the window was a small pale rectangle in a glaring
+   * white box, and the ship going past lost to the room you stood in. */
+  const CM = {};
+  for (const k of ['hull', 'dark', 'deep', 'glowDim']) {
+    const m = M[k].clone(); m.name = `car-${k}`; m.userData.key = k; m.userData.base = M[k].color.clone();
+    if (m.emissive) m.userData.baseEm = m.emissive.clone();
+    CM[k] = m;
+  }
   const B = new Bins(M.faction);
-  const paneY0 = 1.05, paneY1 = 3.45;
+  /* THE PANES: sill to ceiling strip, post to post. "The player must see the
+   * passing ship, not the car." */
+  const paneY0 = 0.9, paneY1 = 3.5;
   const inner = hw - 0.12;          /* the walls' inner face */
-  const post = 0.7;                 /* the wide post at each end of a side pane */
+  const post = 0.3;                 /* the post at each end of a side pane */
   const zF = cz + hd, zA = cz - hd; /* the car's front (doors) and aft (back wall) */
 
   /* ── THE SIDE WALLS. */
   for (const s of [-1, 1]) {
     const x = cx + s * hw, f = cx + s * inner;
-    B.box(M.hull, x, paneY0 / 2, cz, 0.24, paneY0, hd * 2);
-    B.box(M.hull, x, (H + paneY1) / 2, cz, 0.24, H - paneY1, hd * 2);
-    /* Posts: a wide one at each end, a mullion between two panes. */
-    B.box(M.hull, x, (paneY0 + paneY1) / 2, zF - post / 2, 0.26, paneY1 - paneY0, post);
-    B.box(M.hull, x, (paneY0 + paneY1) / 2, zA + post / 2, 0.26, paneY1 - paneY0, post);
-    B.box(M.hull, x, (paneY0 + paneY1) / 2, cz, 0.26, paneY1 - paneY0, 0.2);
+    B.box(CM.hull, x, paneY0 / 2, cz, 0.24, paneY0, hd * 2);
+    B.box(CM.hull, x, (H + paneY1) / 2, cz, 0.24, H - paneY1, hd * 2);
+    /* Posts at each end; one thin bar where the mullion was. */
+    B.box(CM.hull, x, (paneY0 + paneY1) / 2, zF - post / 2, 0.26, paneY1 - paneY0, post);
+    B.box(CM.hull, x, (paneY0 + paneY1) / 2, zA + post / 2, 0.26, paneY1 - paneY0, post);
+    B.box(CM.dark, x, (paneY0 + paneY1) / 2, cz, 0.26, paneY1 - paneY0, 0.05);
     /* The pane head trim and the sill. */
-    B.box(M.dark, f - s * 0.015, paneY1 + 0.03, cz, 0.05, 0.06, hd * 2 - 0.2);
-    B.box(M.glowDim, f - s * 0.04, paneY0 + 0.06, cz, 0.08, 0.08, hd * 2 - 0.4);
+    B.box(CM.dark, f - s * 0.015, paneY1 + 0.03, cz, 0.05, 0.06, hd * 2 - 0.2);
+    B.box(CM.glowDim, f - s * 0.04, paneY0 - 0.04, cz, 0.08, 0.08, hd * 2 - 0.4);
     /* Under the sill: the dado band, its ribs, the kick plate, the handrail. */
-    B.box(M.dark, f - s * 0.02, 0.62, cz, 0.04, 0.6, hd * 2 - 0.3);
-    for (let i = 0; i < 8; i++) B.box(M.hull, f - s * 0.045, 0.62, zA + 0.5 + i * 0.72, 0.05, 0.56, 0.08);
-    B.box(M.dark, f - s * 0.015, 0.07, cz, 0.03, 0.14, hd * 2);
-    B.box(M.hull, f - s * 0.09, 0.98, cz, 0.06, 0.06, hd * 2 - 0.5);
-    for (const dz of [-2.0, 0, 2.0]) B.box(M.dark, f - s * 0.045, 0.98, cz + dz, 0.09, 0.04, 0.06);
+    B.box(CM.dark, f - s * 0.02, 0.42, cz, 0.04, 0.44, hd * 2 - 0.3);
+    for (let i = 0; i < 8; i++) B.box(CM.hull, f - s * 0.045, 0.42, zA + 0.5 + i * 0.72, 0.05, 0.4, 0.08);
+    B.box(CM.dark, f - s * 0.015, 0.07, cz, 0.03, 0.14, hd * 2);
+    B.box(CM.hull, f - s * 0.09, 0.76, cz, 0.06, 0.06, hd * 2 - 0.5);
+    for (const dz of [-2.0, 0, 2.0]) B.box(CM.dark, f - s * 0.045, 0.76, cz + dz, 0.09, 0.04, 0.06);
     /* Over the pane: the light strip, recessed between two lips. */
-    B.box(M.deep, f - s * 0.025, 3.78, cz, 0.05, 0.03, hd * 2 - 0.5);
-    B.box(M.deep, f - s * 0.025, 3.56, cz, 0.05, 0.03, hd * 2 - 0.5);
+    B.box(CM.deep, f - s * 0.025, 3.78, cz, 0.05, 0.03, hd * 2 - 0.5);
+    B.box(CM.deep, f - s * 0.025, 3.56, cz, 0.05, 0.03, hd * 2 - 0.5);
     B.box(lightMat, f - s * 0.01, 3.67, cz, 0.02, 0.16, hd * 2 - 0.6);
     /* The panel lines on the upper wall. */
-    for (const dz of [-1.5, 1.5]) B.box(M.dark, f - s * 0.01, 3.98, cz + dz, 0.02, 0.24, 0.05);
+    for (const dz of [-1.5, 1.5]) B.box(CM.dark, f - s * 0.01, 3.98, cz + dz, 0.02, 0.24, 0.05);
   }
 
   /* ── THE BACK WALL, which is a window too. */
   {
     const z = zA, f = zA + 0.12;
-    B.box(M.hull, cx, paneY0 / 2, z, hw * 2 + 0.48, paneY0, 0.24);
-    B.box(M.hull, cx, (H + paneY1) / 2, z, hw * 2 + 0.48, H - paneY1, 0.24);
-    for (const s of [-1, 1]) B.box(M.hull, cx + s * (hw - 0.2), (paneY0 + paneY1) / 2, z, 0.4, paneY1 - paneY0, 0.3);
-    B.box(M.hull, cx, (paneY0 + paneY1) / 2, z, 0.2, paneY1 - paneY0, 0.26);
-    B.box(M.dark, cx, paneY1 + 0.03, f + 0.015, hw * 2 - 0.4, 0.06, 0.05);
-    B.box(M.glowDim, cx, paneY0 + 0.06, f + 0.04, hw * 2 - 0.6, 0.08, 0.08);
+    B.box(CM.hull, cx, paneY0 / 2, z, hw * 2 + 0.48, paneY0, 0.24);
+    B.box(CM.hull, cx, (H + paneY1) / 2, z, hw * 2 + 0.48, H - paneY1, 0.24);
+    for (const s of [-1, 1]) B.box(CM.hull, cx + s * (hw - 0.15), (paneY0 + paneY1) / 2, z, 0.3, paneY1 - paneY0, 0.3);
+    B.box(CM.dark, cx, (paneY0 + paneY1) / 2, z, 0.05, paneY1 - paneY0, 0.26);
+    B.box(CM.dark, cx, paneY1 + 0.03, f + 0.015, hw * 2 - 0.4, 0.06, 0.05);
+    B.box(CM.glowDim, cx, paneY0 - 0.04, f + 0.04, hw * 2 - 0.6, 0.08, 0.08);
     /* Dado either side of the crest plate, ribs, kick, handrail. */
     for (const s of [-1, 1]) {
-      B.box(M.dark, cx + s * 1.9, 0.62, f + 0.02, 1.9, 0.6, 0.04);
-      for (let i = 0; i < 2; i++) B.box(M.hull, cx + s * (1.3 + i * 0.8), 0.62, f + 0.045, 0.08, 0.56, 0.05);
+      B.box(CM.dark, cx + s * 1.9, 0.42, f + 0.02, 1.9, 0.44, 0.04);
+      for (let i = 0; i < 2; i++) B.box(CM.hull, cx + s * (1.3 + i * 0.8), 0.42, f + 0.045, 0.08, 0.4, 0.05);
     }
-    B.box(M.dark, cx, 0.62, f + 0.03, 1.4, 0.7, 0.06);
-    insigniaPanel(B, cx, 0.62, f + 0.075, 0.56, { faction: M.faction, thickness: 0.03 });
-    B.box(M.dark, cx, 0.07, f + 0.015, hw * 2, 0.14, 0.03);
-    B.box(M.hull, cx, 0.98, f + 0.09, hw * 2 - 0.5, 0.06, 0.06);
-    for (const dx of [-2.0, 0, 2.0]) B.box(M.dark, cx + dx, 0.98, f + 0.045, 0.06, 0.04, 0.09);
-    B.box(M.deep, cx, 3.78, f + 0.025, hw * 2 - 0.5, 0.03, 0.05);
-    B.box(M.deep, cx, 3.56, f + 0.025, hw * 2 - 0.5, 0.03, 0.05);
+    B.box(CM.dark, cx, 0.42, f + 0.03, 1.4, 0.56, 0.06);
+    insigniaPanel(B, cx, 0.42, f + 0.075, 0.46, { faction: M.faction, thickness: 0.03 });
+    B.box(CM.dark, cx, 0.07, f + 0.015, hw * 2, 0.14, 0.03);
+    B.box(CM.hull, cx, 0.76, f + 0.09, hw * 2 - 0.5, 0.06, 0.06);
+    for (const dx of [-2.0, 0, 2.0]) B.box(CM.dark, cx + dx, 0.76, f + 0.045, 0.06, 0.04, 0.09);
+    B.box(CM.deep, cx, 3.78, f + 0.025, hw * 2 - 0.5, 0.03, 0.05);
+    B.box(CM.deep, cx, 3.56, f + 0.025, hw * 2 - 0.5, 0.03, 0.05);
     B.box(lightMat, cx, 3.67, f + 0.01, hw * 2 - 0.6, 0.16, 0.02);
   }
 
   /* ── THE FRONT: reveal, lintel, and the glow along the frame's edge. */
   const DW = DOOR.halfW, DH = DOOR.height;
-  B.box(M.hull, cx, (H + DH) / 2, zF - 0.5, hw * 2, H - DH, 1.0);
+  B.box(CM.hull, cx, (H + DH) / 2, zF - 0.5, hw * 2, H - DH, 1.0);
   B.box(lightMat, cx, DH + 0.02, zF - 0.85, DW * 2 - 0.2, 0.04, 0.12);
   for (const s of [-1, 1]) {
-    B.box(M.hull, cx + s * (DW + 0.3), DH / 2, zF - 0.85, 0.6, DH, 0.3);
-    B.box(M.glowDim, cx + s * (DW + 0.02), DH / 2 - 0.1, zF - 0.85, 0.04, DH - 0.2, 0.12);
-    B.box(M.dark, cx + s * (DW + 0.3), 0.07, zF - 0.85, 0.6, 0.14, 0.32);
+    B.box(CM.hull, cx + s * (DW + 0.3), DH / 2, zF - 0.85, 0.6, DH, 0.3);
+    B.box(CM.glowDim, cx + s * (DW + 0.02), DH / 2 - 0.1, zF - 0.85, 0.04, DH - 0.2, 0.12);
+    B.box(CM.dark, cx + s * (DW + 0.3), 0.07, zF - 0.85, 0.6, 0.14, 0.32);
   }
   /* The threshold plate. */
-  B.box(M.hull, cx, 0.03, zF - 0.72, DW * 2, 0.06, 0.24);
+  B.box(CM.hull, cx, 0.03, zF - 0.72, DW * 2, 0.06, 0.24);
 
   /* ── THE CEILING: the slab, coffer beams, six lit panels, a hatch. */
   const ceilD = hd * 2 - 0.24;
   const czC = cz - 0.12;
-  B.box(M.hull, cx, H + 0.12, czC, hw * 2 + 0.48, 0.24, ceilD + 0.48);
-  for (const dx of [-1.05, 1.05]) B.box(M.dark, cx + dx, H - 0.06, czC, 0.16, 0.12, ceilD);
-  for (const dz of [-1.7, 0, 1.7]) B.box(M.dark, cx, H - 0.06, czC + dz, hw * 2, 0.12, 0.16);
+  B.box(CM.hull, cx, H + 0.12, czC, hw * 2 + 0.48, 0.24, ceilD + 0.48);
+  for (const dx of [-1.05, 1.05]) B.box(CM.dark, cx + dx, H - 0.06, czC, 0.16, 0.12, ceilD);
+  for (const dz of [-1.7, 0, 1.7]) B.box(CM.dark, cx, H - 0.06, czC + dz, hw * 2, 0.12, 0.16);
   for (const dx of [-2.0, 0, 2.0]) for (const dz of [-0.85, 0.85]) {
     if (dx === 0 && dz === -0.85) continue; /* the hatch's bay */
     B.box(lightMat, cx + dx, H - 0.015, czC + dz, 1.5, 0.03, 1.3);
   }
-  B.box(M.deep, cx, H - 0.02, czC - 0.85, 1.1, 0.04, 0.95);
+  B.box(CM.deep, cx, H - 0.02, czC - 0.85, 1.1, 0.04, 0.95);
   for (const s of [-1, 1]) {
-    B.box(M.hull, cx + s * 0.6, H - 0.04, czC - 0.85, 0.08, 0.08, 1.1);
-    B.box(M.hull, cx, H - 0.04, czC - 0.85 + s * 0.52, 1.28, 0.08, 0.08);
+    B.box(CM.hull, cx + s * 0.6, H - 0.04, czC - 0.85, 0.08, 0.08, 1.1);
+    B.box(CM.hull, cx, H - 0.04, czC - 0.85 + s * 0.52, 1.28, 0.08, 0.08);
   }
   /* AND A LIGHT IN THE CAR. The panels are what you see; this is what they
    * do to the walls. The first frame of this room was a black box with a
@@ -418,20 +430,20 @@ export function dressDeckLift(world, opts = {}) {
   world.levelLights?.push(glow);
 
   /* ── THE FLOOR: tread plate, and a lit strip round its edge. */
-  B.box(M.dark, cx, 0.012, cz - 0.1, hw * 2 - 0.2, 0.024, hd * 2 - 0.4);
+  B.box(CM.dark, cx, 0.012, cz - 0.1, hw * 2 - 0.2, 0.024, hd * 2 - 0.4);
   for (let i = 0; i < 7; i++) for (let j = 0; j < 8; j++) {
     const x = cx - 2.4 + i * 0.8 + (j % 2) * 0.4, z = zA + 0.55 + j * 0.66;
-    B.box(M.hull, x, 0.03, z, 0.34, 0.012, 0.06);
-    B.box(M.hull, x, 0.03, z + 0.14, 0.06, 0.012, 0.22);
+    B.box(CM.hull, x, 0.03, z, 0.34, 0.012, 0.06);
+    B.box(CM.hull, x, 0.03, z + 0.14, 0.06, 0.012, 0.22);
   }
-  B.box(M.glowDim, cx, 0.02, zF - 0.30, DW * 2, 0.02, 0.10);
-  B.box(M.glowDim, cx, 0.02, zA + 0.30, hw * 2 - 0.5, 0.02, 0.08);
-  for (const s of [-1, 1]) B.box(M.glowDim, cx + s * (inner - 0.16), 0.02, cz, 0.08, 0.02, hd * 2 - 0.6);
+  B.box(CM.glowDim, cx, 0.02, zF - 0.30, DW * 2, 0.02, 0.10);
+  B.box(CM.glowDim, cx, 0.02, zA + 0.30, hw * 2 - 0.5, 0.02, 0.08);
+  for (const s of [-1, 1]) B.box(CM.glowDim, cx + s * (inner - 0.16), 0.02, cz, 0.08, 0.02, hd * 2 - 0.6);
 
   /* ── THE CONTROL PANEL, by the doors on the right. */
   const px = cx + inner - 0.05, pz = zF - 1.35;
-  B.box(M.dark, px, 1.75, pz, 0.08, 1.5, 0.5);
-  B.box(M.hull, px - 0.03, 1.75, pz, 0.04, 1.56, 0.56);
+  B.box(CM.dark, px, 1.75, pz, 0.08, 1.5, 0.5);
+  B.box(CM.hull, px - 0.03, 1.75, pz, 0.04, 1.56, 0.56);
   const carMeshes = B.build(car, 'car', key);
   const buttons = new THREE.InstancedMesh(new THREE.BoxGeometry(0.03, 0.09, 0.09), M.glowDim, 6);
   buttons.frustumCulled = false;
@@ -460,7 +472,7 @@ export function dressDeckLift(world, opts = {}) {
     g.translate(cx + s * (hw - 0.02), (paneY0 + paneY1) / 2, cz);
     paneGeos.push(g);
   }
-  paneGeos.push(new THREE.PlaneGeometry(hw * 2 - 0.8, paneY1 - paneY0).translate(cx, (paneY0 + paneY1) / 2, zA + 0.02));
+  paneGeos.push(new THREE.PlaneGeometry(hw * 2 - 0.6, paneY1 - paneY0).translate(cx, (paneY0 + paneY1) / 2, zA + 0.02));
   const paneMesh = new THREE.Mesh(mergeBoxes(paneGeos), glass);
   paneMesh.name = 'car-pane';
   car.add(paneMesh);
@@ -472,13 +484,13 @@ export function dressDeckLift(world, opts = {}) {
     const g = new THREE.Group();
     g.position.set(cx + s * DOOR.leafW / 2, 0, z);
     const W = DOOR.leafW, T = 0.2;
-    B.box(M.hull, 0, DH / 2, 0, W, DH, T);
-    B.box(M.dark, -s * 0.15, DH / 2 + 0.25, 0, W - 0.7, DH - 1.3, T + 0.02);
-    B.box(M.dark, 0, 0.13, 0, W, 0.26, T + 0.02);
-    B.box(M.glowDim, -s * (W / 2 - 0.03), DH / 2, 0, 0.05, DH - 0.2, T + 0.02);
-    B.box(M.dark, -s * 0.45, 2.15, 0, 0.36, 1.3, T + 0.03);
+    B.box(CM.hull, 0, DH / 2, 0, W, DH, T);
+    B.box(CM.dark, -s * 0.15, DH / 2 + 0.25, 0, W - 0.7, DH - 1.3, T + 0.02);
+    B.box(CM.dark, 0, 0.13, 0, W, 0.26, T + 0.02);
+    B.box(CM.glowDim, -s * (W / 2 - 0.03), DH / 2, 0, 0.05, DH - 0.2, T + 0.02);
+    B.box(CM.dark, -s * 0.45, 2.15, 0, 0.36, 1.3, T + 0.03);
     B.box(slitMat, -s * 0.45, 2.15, 0, 0.24, 1.14, T + 0.04);
-    B.box(M.hull, s * 0.5, 1.1, 0, 0.06, 0.4, T + 0.04);
+    B.box(CM.hull, s * 0.5, 1.1, 0, 0.06, 0.4, T + 0.04);
     B.build(g, prefix, key);
     group.add(g);
     return g;
@@ -545,6 +557,10 @@ export function dressDeckLift(world, opts = {}) {
     car, outer, shaft: scene.group, scene, bars: scene.bars, doors, outerDoors, panes,
     lamp: carMeshes.find((m) => m.material === lightMat) || null,
     lightMat, lightBase: M.glow.color, glow, lampMat, call, readout, buttons, status, solids,
+    /** The car's own wall materials, dimmed for the ride. */
+    carMats: Object.values(CM),
+    /** How dim the car is, 0 lit to 1 riding; eased toward the speed. */
+    dimK: 0,
     N: scene.barsPerFace, SPAN, rideLen, tail, leaveLen, layout,
     /** Game seconds since the build, for the scene's animations. */
     time: 0,
@@ -779,7 +795,8 @@ function buildShaft(world, M, lightMat, layout) {
   };
   for (const f of faces) {
     for (const a of [-2.2, 2.2]) stat(M.hull, f, dep(f, 0.55), a, 0, 0.16, tall, 0.16);
-    for (const a of [-0.3, 0.3]) stat(M.dark, f, dep(f, 1.5, 0.3), a, 0, 0.06, tall, 0.06);
+    /* The ladder stands at the aft end of the pane, not across the middle of it. */
+    for (const a of [-2.05, -1.45]) stat(M.dark, f, dep(f, 1.5, 0.3), a, 0, 0.06, tall, 0.06);
     stat(M.dark, f, dep(f, 2.9, 0.4), -2.2, 0, 0.12, tall, 0.5);
     for (const a of [2.35, 2.65]) stat(M.hull, f, dep(f, 2.9, 0.4), a, 0, 0.18, tall, 0.18);
   }
@@ -871,8 +888,8 @@ function buildShaft(world, M, lightMat, layout) {
       else v = V[order[(lev - layout.lo + f.i * third) % order.length]];
       names.push(v.name);
       /* Every level: the floor slab, the ceiling slab. */
-      const floorSlab = put(kindOf.box, f, base, FAR - 0.7, 0, 1.4, 0.5, 3.8, 0x8a8f96, { lo: 0.5, margin: 0.1 });
-      const ceilSlab = put(kindOf.box, f, base + LEVEL - 0.25, FAR - 0.5, 0, 1.0, 0.5, 3.8, 0x4a4e55, { lo: 0.5, margin: 0.1 });
+      const floorSlab = put(kindOf.box, f, base, FAR - 0.7, 0, 1.4, 0.5, 4.7, 0x8a8f96, { lo: 0.5, margin: 0.1 });
+      const ceilSlab = put(kindOf.box, f, base + LEVEL - 0.25, FAR - 0.5, 0, 1.0, 0.5, 4.7, 0x4a4e55, { lo: 0.5, margin: 0.1 });
       const p0 = kindOf.plate.slots.length;
       const ctx = makeCtx(f, base, seed, put, kindOf, FAR);
       v.build(ctx, seed);
@@ -888,11 +905,33 @@ function buildShaft(world, M, lightMat, layout) {
         _c.getHSL(_hsl);
         _c.setHSL(_hsl.h, Math.max(_hsl.s, 0.55), Math.max(_hsl.l, 0.6));
         const hue = _c.getHex();
-        put(kindOf.glow, f, base + LEVEL - 0.56, FAR - 1.5, 0, 0.3, 0.1, 3.6, hue, { lo: 0.4 });
+        put(kindOf.glow, f, base + LEVEL - 0.56, FAR - 1.5, 0, 0.3, 0.1, 4.5, hue, { lo: 0.4 });
         /* And a lit jamb each side of the opening, full height, so the
          * colour is in the window whatever part of the room is. */
-        for (const a of [-1.92, 1.92]) put(kindOf.glow, f, base + LEVEL / 2, FAR - 0.9, a, 0.12, LEVEL - 0.9, 0.08, hue, { lo: 0.4 });
-        put(kindOf.glow, f, base + 0.28, FAR - 1.3, 0, 0.6, 0.02, 3.6, _c.multiplyScalar(0.6).getHex(), { lo: 0.4 });
+        for (const a of [-2.36, 2.36]) put(kindOf.glow, f, base + LEVEL / 2, FAR - 0.9, a, 0.12, LEVEL - 0.9, 0.08, hue, { lo: 0.4 });
+        put(kindOf.glow, f, base + 0.28, FAR - 1.3, 0, 0.6, 0.02, 4.5, _c.multiplyScalar(0.6).getHex(), { lo: 0.4 });
+        /* DENSITY: a few pieces of the room's own clutter — crates, a
+         * console, a duct — in its tint, seeded, so no glimpse is a bare
+         * plate with one thing in front of it. */
+        _c2.setHex(plate.hue).multiplyScalar(0.35);
+        const tint = _c2.getHex();
+        for (let j = 0; j < 3; j++) {
+          const ra = -2.1 + hash(seed, 900 + j) * 4.2, rh = 0.4 + hash(seed, 910 + j) * 1.2, rw = 0.4 + hash(seed, 920 + j) * 0.9;
+          put(kindOf.box, f, base + 0.25 + rh / 2, FAR - 0.5 - hash(seed, 930 + j) * 1.2, ra, 0.5, rh, rw, j === 0 ? 0x1a1c22 : tint, { lo: 0.3 });
+        }
+        put(kindOf.cyl, f, base + LEVEL - 0.9, FAR - 0.7, 0, 0.18, 0.18, 4.6, 0x2a2d33, { lo: 0.4 });
+        /* PARALLAX: something right at the glass on every level — a
+         * railing, and by turns a door frame or a person leaning on it —
+         * dark, close, and moving four times as fast as the far wall. */
+        put(kindOf.box, f, base + 0.25 + 1.05, 1.15, 0, 0.06, 0.06, 4.4, 0x14161c, { lo: 0.25 });
+        for (const a of [-2.0, -0.7, 0.7, 2.0]) put(kindOf.box, f, base + 0.25 + 0.55, 1.15, a, 0.05, 1.05, 0.05, 0x14161c, { lo: 0.25 });
+        const near = (lev - layout.lo) % 3;
+        if (near === 1) {
+          for (const a of [-1.3, 1.3]) put(kindOf.box, f, base + 0.25 + 1.6, 0.95, a, 0.16, 3.2, 0.18, 0x0e1014, { lo: 0.25 });
+          put(kindOf.box, f, base + 0.25 + 3.25, 0.95, 0, 0.16, 0.22, 2.8, 0x0e1014, { lo: 0.25 });
+        } else if (near === 2 && lev !== layout.landing) {
+          ctx.fig(hash(seed, 940) > 0.5 ? 'stand' : 'walk', (hash(seed, 950) - 0.5) * 2.6 / ctx.W, { d: 1.0, col: 0x000000, h: 1.0 });
+        }
       }
     }
     perFace.push(names);
@@ -908,7 +947,7 @@ function buildShaft(world, M, lightMat, layout) {
   /* NEAR: the ladder's rungs, the rails' ties, and the light bars. */
   const barsPerFace = 30;
   for (const f of faces) {
-    for (let j = 0; j < SPAN / 0.4; j++) put(kindOf.box, f, j * 0.4, 1.5, 0, 0.05, 0.05, 0.62, 0x3a3e46, { wrap: true, lo: 0.3 });
+    for (let j = 0; j < SPAN / 0.4; j++) put(kindOf.box, f, j * 0.4, 1.5, -1.75 / f.ka, 0.05, 0.05, 0.62 / f.ka, 0x3a3e46, { wrap: true, lo: 0.3 });
     for (let j = 0; j < SPAN / 2; j++) put(kindOf.box, f, j * 2 + 1, 0.55, 0, 0.14, 0.14, 4.7, 0x3a3e46, { wrap: true });
     for (let j = 0; j < barsPerFace; j++) put(kindOf.glow, f, j * (SPAN / barsPerFace), 0.85, 0, 0.34, 0.16, 5.6 / f.ka, 0xbfd4ee, { wrap: true, lo: 0.3, anim: A.SWEEP });
   }
@@ -945,8 +984,11 @@ function makeCtx(f, base, seed, put, K, FAR) {
   const floor = base + 0.25;
   const roomH = LEVEL - 0.75;
   const rnd = (i) => hash(seed, i);
+  /* The opening is 4.7 m wide now (the panes are), authored at 3.8: every
+   * along and along-size is widened by this. */
+  const W = 4.7 / 3.8;
   const c = {
-    f, seed, floor, roomH, FAR, rnd,
+    f, seed, floor, roomH, FAR, rnd, W,
     /** The lit back wall, full opening, or a band `y0..y1` of it. */
     plate(col, y0 = 0, y1 = roomH, o) {
       /* A dark plate is black through the pane in this renderer — the first
@@ -954,16 +996,16 @@ function makeCtx(f, base, seed, put, K, FAR) {
        * is lifted to a floor of lightness and saturation: deep colour, not
        * black. `col` stays the vignette's own for the slabs and strips. */
       _c.setHex(col).getHSL(_hsl);
-      const lifted = _c.setHSL(_hsl.h, _hsl.l < 0.6 ? Math.max(_hsl.s, 0.55) : _hsl.s, Math.max(_hsl.l, 0.34)).getHex();
-      return put(K.plate, f, floor + (y0 + y1) / 2, FAR - 0.05, 0, 0.1, y1 - y0, 3.8, lifted, { ...(o || {}), hue: col });
+      const lifted = _c.setHSL(_hsl.h, _hsl.l < 0.7 ? Math.max(_hsl.s, 0.7) : _hsl.s, Math.max(_hsl.l, 0.4)).getHex();
+      return put(K.plate, f, floor + (y0 + y1) / 2, FAR - 0.05, 0, 0.1, y1 - y0, 4.7, lifted, { ...(o || {}), hue: col });
     },
-    box(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.6, o) { return put(K.box, f, floor + y, d, a, sd, sh, sa, col, o); },
-    glow(col, a, y, sa, sh, sd = 0.08, d = FAR - 0.3, o) { return put(K.glow, f, floor + y, d, a, sd, sh, sa, col, o); },
-    glass(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.9, o) { return put(K.glass, f, floor + y, d, a, sd, sh, sa, col, o); },
+    box(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.6, o) { return put(K.box, f, floor + y, d, a * W, sd, sh, sa * W, col, o); },
+    glow(col, a, y, sa, sh, sd = 0.08, d = FAR - 0.3, o) { return put(K.glow, f, floor + y, d, a * W, sd, sh, sa * W, col, o); },
+    glass(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.9, o) { return put(K.glass, f, floor + y, d, a * W, sd, sh, sa * W, col, o); },
     /** A cylinder `len` along, radius `r`; `rot` π/2 stands it up. */
-    cyl(col, a, y, len, r, d = FAR - 0.8, o) { return put(K.cyl, f, floor + y, d, a, r * 2, r * 2, len, col, o); },
-    fan(col, a, y, s, rate, d = FAR - 1.0, o) { return put(K.fan, f, floor + y, d, a, s, s, s, col, { anim: A.SPIN, rate, ph: rnd(91), ...(o || {}) }); },
-    fighter(col, a, y, s, d = FAR - 0.4) { return put(K.fighter, f, floor + y, d, a, 1, s, s, col, { lo: 0.5, margin: 0.12 }); },
+    cyl(col, a, y, len, r, d = FAR - 0.8, o) { return put(K.cyl, f, floor + y, d, a * W, r * 2, r * 2, len * W, col, o); },
+    fan(col, a, y, s, rate, d = FAR - 1.0, o) { return put(K.fan, f, floor + y, d, a * W, s, s, s, col, { anim: A.SPIN, rate, ph: rnd(91), ...(o || {}) }); },
+    fighter(col, a, y, s, d = FAR - 0.4) { return put(K.fighter, f, floor + y, d, a * W, 1, s, s * W, col, { lo: 0.5, margin: 0.12 }); },
     /** A person: pose, along, options {col, h, d, anim (for the arm), rate}. */
     fig(pose, a, o = {}) {
       const P = POSES[pose] || POSES.stand;
@@ -971,6 +1013,7 @@ function makeCtx(f, base, seed, put, K, FAR) {
       const col = o.col ?? 0x05070b;
       const d = o.d ?? FAR - 0.5 - rnd(3) * 0.4;
       const y0 = o.y ?? 0;
+      a *= W;
       for (const [part, pa, py, pw, ph, prot, tag] of P.parts) {
         const opts = { rot: prot, lo: 0.3, margin: 0.14 };
         if (o.slide) Object.assign(opts, { anim: A.SLIDE, ph: rnd(11) }, o.slide);
@@ -984,6 +1027,7 @@ function makeCtx(f, base, seed, put, K, FAR) {
     /** A droid on wheels: a drum body, a dome, one lit eye. */
     astro(col, a, o = {}) {
       const d = o.d ?? FAR - 0.7;
+      a *= W;
       put(K.cyl, f, floor + 0.5, d, a, 0.6, 0.6, 0.8, col, { rot: Math.PI / 2, lo: 0.3, margin: 0.2 });
       put(K.head, f, floor + 0.95, d, a, 0.6, 0.6, 0.6, o.dome ?? 0xc0c6cc, { lo: 0.3, margin: 0.2 });
       put(K.glow, f, floor + 0.95, d - 0.3 * f.k, a + 0.1, 0.08, 0.08, 0.08, o.eye ?? 0xff3020, { anim: A.BLINK, rate: 1.5 + rnd(9), ph: rnd(10), lo: 0.28, margin: 0.1 });
@@ -1900,9 +1944,20 @@ export function stepDeckLift(world, dt) {
     k * 0.006 * Math.sin(tt * 3.1));
   st.dip *= Math.exp(-dt * 5.5);
   if (st.dip < 1e-3) st.dip = 0;
-  const lit = 1 - 0.55 * st.dip;
+  /* THE CAR GOES DARK FOR THE RIDE. Eased toward 1 while the shaft moves,
+   * back to 0 at the stop, so the lit openings outside own the window and
+   * the car is a dim box you look out of. The readout and the buttons are
+   * the kit's materials and stay lit. */
+  const want = Math.abs(st.v) > 0.5 ? 1 : 0;
+  st.dimK += (want - st.dimK) * Math.min(1, dt * (want ? 2.2 : 3.5));
+  const dim = 1 - 0.6 * st.dimK;
+  const lit = (1 - 0.55 * st.dip) * dim;
   st.glow.intensity = 90 * lit;
   st.lightMat.color.copy(st.lightBase).multiplyScalar(lit);
+  for (const m of st.carMats) {
+    m.color.copy(m.userData.base).multiplyScalar(dim);
+    if (m.emissive && m.userData.baseEm) m.emissive.copy(m.userData.baseEm).multiplyScalar(dim);
+  }
 }
 
 /** The state name, for a HUD or a check. */
