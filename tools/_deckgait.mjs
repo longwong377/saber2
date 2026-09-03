@@ -1,4 +1,16 @@
-/** Scratch probe: what the deck body's legs do. Not a check. */
+/**
+ * WHAT THE DECK BODY'S LEGS ACTUALLY DO — a probe, not a check.
+ *
+ *   node --import ./tools/register.mjs tools/_deckgait.mjs [kind]
+ *
+ * Boots the real hangar with the named kind adopted, drags the player so the
+ * animal has to follow, and prints every leg bone's widest departure from its
+ * BIND POSE while it walks and again once it has sat — then the world position
+ * of every joint in the sat pose, which is the only way to see whether a foot
+ * is on the deck or through it. The bind pose is `bone.restQuat` and not "the
+ * pose it happened to be in when this started": measured against the latter,
+ * a sat animal reads 0.004 rad and looks frozen when it is not.
+ */
 import './dom-shim.mjs';
 import * as THREE from 'three';
 const { bootWorld, idleInput } = await import('./checks/_coop.mjs');

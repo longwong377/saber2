@@ -1,4 +1,18 @@
-/** Scratch probe: what one deck companion costs per frame. Not a check. */
+/**
+ * WHAT ONE DECK COMPANION COSTS PER FRAME — every kind, walking and sat.
+ *
+ *   node --import ./tools/register.mjs tools/_deckcost.mjs [kind…]
+ *
+ * A probe and not a check: it prints, it has no bar, and nothing here is
+ * asserted. `deckcast.mjs` owns the deck's own budget and it times
+ * `stepDeckLife` — the crowd, the droids and the traffic — which does NOT
+ * include this body: `stepCompanionDeck` is its own entry in
+ * `HangarDirector.update`'s ordered list. So the only way to know what the
+ * gait added was to time the thing itself, around itself, on a live deck.
+ *
+ * It times `poseCompanionDeck` rather than the whole step, because the step is
+ * a mark, a lerp and a turn and the pose is the part this lane wrote.
+ */
 import './dom-shim.mjs';
 const { bootWorld, idleInput } = await import('./checks/_coop.mjs');
 const Kn = await import('../src/game/Kennel.js');

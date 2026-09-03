@@ -3419,19 +3419,30 @@ export async function run({ check, assert }) {
       const head = rig.get('head'), trunk = rig.get('body');
       assert(head && trunk, 'the deck body has no head or no trunk bone');
 
-      let hMax = 0, tMax = 0, ribLo = 9, ribHi = -9;
+      let hMax = 0, tLo = 9, tHi = -9, ribLo = 9, ribHi = -9;
       const beats = new Set();
       for (let i = 0; i < 30 * 40; i++) {
         world.update(STEP, input);
         hMax = Math.max(hMax, head.obj.quaternion.angleTo(head.restQuat));
-        tMax = Math.max(tMax, trunk.obj.quaternion.angleTo(trunk.restQuat));
+        /* THE TRUNK'S SPREAD AND NOT ITS OFFSET, and the difference is now
+         * load-bearing. `stepCompanionDeck` holds the spine 0.30 rad up while
+         * the animal is sat — that is the sit's own pitch — so a maximum
+         * against the REST pose is 0.30 whether this layer is running or
+         * frozen solid, and the assertion below would have stopped being able
+         * to fail on the day that landed. What only breathing produces is
+         * MOVEMENT, so what is measured is how far the trunk travels between
+         * its own extremes. */
+        const tAt = trunk.obj.quaternion.angleTo(trunk.restQuat);
+        tLo = Math.min(tLo, tAt); tHi = Math.max(tHi, tAt);
         const r = L.parts.ribs[0];
         if (r) { ribLo = Math.min(ribLo, r.mesh.scale.x); ribHi = Math.max(ribHi, r.mesh.scale.x); }
         if (L.beat) beats.add(L.beat.id);
       }
       assert(fig.sit > 0.8, `it never settled (sit ${fig.sit.toFixed(2)}) — nothing here is idle`);
       assert(hMax > 0.05, `the deck animal's head moved ${hMax.toFixed(3)} rad in forty seconds`);
-      assert(tMax > 0.005, `the deck animal's trunk moved ${tMax.toFixed(4)} rad in forty seconds`);
+      const tMax = tHi - tLo;
+      assert(tMax > 0.005, `the deck animal's trunk moved ${tMax.toFixed(4)} rad in forty seconds `
+        + `(it sat between ${tLo.toFixed(3)} and ${tHi.toFixed(3)} rad off rest and never budged)`);
       assert(ribHi - ribLo > 0.01,
         `the deck animal's ribcage swelled by ${((ribHi - ribLo) * 100).toFixed(2)}% — it is not breathing`);
       assert(beats.size >= 1, 'forty seconds sat beside you and it never once did anything');
