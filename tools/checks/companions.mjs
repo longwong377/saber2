@@ -371,6 +371,14 @@ export async function run({ check, assert }) {
     /**
      * TWO-SIDED, ON THE `bonded` PRECEDENT, AND PRICED NET ≤ 0.
      *
+     * `TEMPER_AXES` HAS NO COMBAT AXIS, AND IT STAYS THAT WAY NOW THAT THE
+     * RUNGS HAVE ONE. The ladder above buys hp, dmg and speed; a temper is the
+     * layer that says what an animal is LIKE — hold seconds and break metres —
+     * and putting a fourth multiplier here would be the same ladder a second
+     * time, unpriced against the first and earned on a different clock. One
+     * table buys the numbers; this one buys the behaviour, and the result line
+     * below says which is which every time the gate runs.
+     *
      * The first pricing of this table was WRONG and said so out loud: a
      * one-dimensional sum made three of the four profitable, because four more
      * metres of reach is KEEN's gain and RANGING's cost — the same number read
@@ -3205,6 +3213,7 @@ export async function run({ check, assert }) {
     const rows = [];
     for (const kind of ['massiff', 'tooka']) {
       const { world, input, e, p } = await calmField(kind);
+      let rest = null;
       try {
         assert(e, `${kind} would not field`);
         assert(e.rig?.get('head'), `${kind} has no head bone to turn`);
@@ -3262,7 +3271,21 @@ export async function run({ check, assert }) {
         const reach = spot.distanceTo(p.position);
         assert(ward === 0 || reach < ward,
           `the fixture put the hostile ${reach.toFixed(1)} m from the player, outside the ${ward} m ward`);
-        for (let i = 0; i < 30 * 5; i++) {
+        /**
+         * AND THE READING IS TAKEN ON A FRAME WITH NO IDLE BEAT RUNNING.
+         *
+         * The gaze is not the only thing writing the head: a `glance` swings
+         * it 0.45 rad off whatever it was watching, on the animal's own
+         * randomised timer, and a single-frame reading that lands inside one
+         * measures the beat rather than the ladder. The first run of this
+         * rewrite failed exactly that way — the tooka read 0.88 rad off an
+         * owner its gaze channel was holding at 0.40. So every beat-free frame
+         * of the last three seconds is a candidate and the last of them is the
+         * reading, which is the same body in the same state with one fewer
+         * channel on top of it.
+         */
+        let restFrame = -1;
+        for (let i = 0; i < 30 * 8; i++) {
           p.hp = p.maxHp ?? 100;
           e.facing = face;
           foe.hp = foe.maxHp; foe.dead = false; foe.downed = false;
@@ -3270,7 +3293,17 @@ export async function run({ check, assert }) {
           foe.velocity.set(0, 0, 0);
           foe.position.copy(spot);
           world.update(STEP, input);
+          if (i >= 30 * 5 && !e._life?.beat) {
+            restFrame = i;
+            const h = e.rig.worldPos('head', new THREE.Vector3());
+            const gg = gazeOf(e);
+            rest = { dFoe: Math.abs(wrap(gg - bearing(h, foe.position))),
+              dOwn: Math.abs(wrap(gg - bearing(h, p.position))),
+              turn: wrap(gg - face) };
+          }
         }
+        assert(restFrame >= 0 && rest,
+          `${kind} was mid-beat on all ninety frames of the reading window — nothing here can be read`);
         const ownOff = Math.abs(wrap(bearing(e.position, p.position) - face));
         const foeOff = Math.abs(wrap(bearing(e.position, foe.position) - face));
         assert(ownOff < LIFE.look.yaw && foeOff < LIFE.look.yaw,
@@ -3279,13 +3312,10 @@ export async function run({ check, assert }) {
           + 'at, which is the saturation this check used to ratify');
         assert(!e.target, `${kind} took a target under AWAY — this measures the gait, not the layer`);
         const head = e.rig.worldPos('head', new THREE.Vector3());
-        const g = gazeOf(e);
-        const dFoe = Math.abs(wrap(g - bearing(head, foe.position)));
-        const dOwn = Math.abs(wrap(g - bearing(head, p.position)));
         const split = Math.abs(wrap(bearing(head, foe.position) - bearing(head, p.position)));
         assert(split > 0.5,
           `the fixture put the owner and the hostile ${split.toFixed(2)} rad apart — it cannot tell them apart`);
-        rows.push({ kind, ward, dFoe, dOwn, turn: wrap(g - (e.facing || 0)) });
+        rows.push({ kind, ward, split, ...rest });
       } finally { world.unload(); }
     }
     const dog = rows.find((r) => r.ward > 0);

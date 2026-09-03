@@ -3418,7 +3418,7 @@ export class Player {
        * the only reader of either, for the bench on both sides of this line
        * and for the 120° ceiling.
        */
-      this._setReach0 = this.saberSet === 'pair' ? this._setHalf0 : 0;
+      this._setReach0 = 0;
     }
     /**
      * ── AND WHAT THE FREE HAND IS WORTH TO THE LEGS ────────────────────────

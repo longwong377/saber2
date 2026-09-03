@@ -700,16 +700,58 @@ export async function run({ check, assert }) {
       `the pair answers out to ${pair.shoulder}° against one blade's ${one.shoulder}° — two blades on `
       + 'two bearings have to reach further round your own side than a hilt both hands are on');
     /**
+     * ── AND THE SCAN IS ASKED FOR THE AREA, NOT ONLY FOR ITS FAR EDGE ──────
+     *
+     * `shoulder` is the LAST bearing answered and it is one number off a row of
+     * eighteen. The pair's row is deliberately not monotone — 100° refused,
+     * 102° answered, which is `guardZoneAccepts`' two gates interacting near
+     * the boundary — so the far edge alone can move by a step for a reason that
+     * is not the thing being measured. The set difference is the whole row: the
+     * bearings the pair answers that one blade does not, counted.
+     *
+     * This is the sharp instrument in this check. It is degrees of coverage,
+     * read off `guardZoneAccepts` by driving it, and it does not care how many
+     * bolts happened to be aimed where.
+     */
+    const answered = (r) => r.scan.split(' ').filter((s) => s.endsWith('+')).map((s) => parseInt(s, 10));
+    const oneReach = new Set(answered(one));
+    const extra = answered(pair).filter((d) => !oneReach.has(d));
+    assert(extra.length >= 3,
+      `the pair answers ${extra.length} bearing(s) one blade refuses (${extra.join('°, ') || 'none'}) — `
+      + 'two blades on two bearings buy AREA or they buy nothing, and the scan is where that shows');
+    /**
      * AND IT HAS TO SHOW IN BOLTS AND NOT ONLY IN DEGREES.
      *
-     * THE SCAN IS THE SHARP INSTRUMENT AND THIS ONE IS THE CORROBORATION, and
-     * the threshold says so. Even with every shared stream pinned the count
-     * carries about a bolt of run-to-run spread — the pair has read 14 and 15
-     * of 60 on the same code, and its scan row has come back both monotone and
-     * with a hole at 100°, which is the two gates interacting near the
-     * boundary. So the bound is 85% and not the 75% the measurement would
-     * support: it is set to fail on the tree this replaced, where the pair
-     * took 19 or 20 of one blade's 20, and to survive a bolt of weather.
+     * ── THIS BOUND WAS ONE UNLUCKY RUN FROM RED, AND THE CAUSE WAS NOT NOISE ─
+     *
+     * Four runs of this suite on unchanged code read the pair at 14, 17, 14 and
+     * 14 against a bound of 85% of the single blade's 20 — i.e. a ceiling of
+     * 17, hit exactly. The paragraph that used to stand here blamed "a bolt of
+     * weather" and widened the bound to absorb it, which is the wrong half of
+     * the trade: a threshold set to survive a spread nobody has explained is a
+     * check whose verdict is partly a coin toss (HANDOFF §2.1c).
+     *
+     * It was explained. Two runs of `tools/_setbench.mjs` STANDALONE — one
+     * process each, nothing interleaved, every module stream restored — read
+     * the pair at 14 and 16 while `single` and `staff` came back identical both
+     * times, so it was never this suite's interleave. It is
+     * `Combat.gradeCaught`'s outgoing direction, which draws a BLOCK's 0.55
+     * scatter from the bare global `Math.random()`: the one generator in the
+     * bolt path that is not a module `rng` and that `moduleSeed`,
+     * `register.mjs` and `restoreShared` therefore cannot touch. The pair feels
+     * it because the pair ANSWERS the most — 37 bolts turned against one
+     * blade's 31 — and every one of those is a scatter direction drawn from an
+     * unpinned stream in front of a player whose own health is the verdict.
+     *
+     * `rose` now borrows the global for the length of its measurement and hands
+     * it back in a `finally` whose window contains no `await` — see
+     * `pinScatter` in `_setbench.mjs`, which carries the proof. Measured after:
+     * two consecutive runs, pair 14/60 and shoulder 108° both times.
+     *
+     * SO THE BOUND STAYS AT 85% AND ITS MARGIN IS NOW REAL RATHER THAN
+     * HOPEFUL: 14 against a ceiling of 17, and it still fails on the tree this
+     * replaced, where the pair took 19 or 20 of one blade's 20. Widening it
+     * would have bought the same green with a worse instrument.
      */
     assert(pair.landed <= one.landed * 0.85,
       `sixty bolts round the circle: one blade took ${one.landed} and the pair ${pair.landed}. `
@@ -719,7 +761,8 @@ export async function run({ check, assert }) {
       + 'is supposed to answer at least as much');
     return `sixty bolts round the circle, guard held: one ${one.landed} landed, staff ${staff.landed}, `
       + `pair ${pair.landed} (−${(100 - pair.landed / one.landed * 100).toFixed(0)}%); `
-      + `shoulder line scanned at 2°: ${one.shoulder}°/${staff.shoulder}°/${pair.shoulder}°; `
+      + `shoulder line scanned at 2°: ${one.shoulder}°/${staff.shoulder}°/${pair.shoulder}°, `
+      + `the pair answering ${extra.length} bearings one blade refuses (${extra.join('°, ')}°); `
       + 'auto-guard cone shut on every round';
   });
 

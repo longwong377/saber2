@@ -694,15 +694,16 @@ export function stationGap(e) {
  *
  *     if (!this.campaign) { this._reinforce(); return fresh; }   Command.js
  *
- * So in Trial of Waves, Path of the Blade, Sandbox, Versus, Skirmish and the
- * contingent Command — the modes most people play — **a whole run paid at most
- * one xp**: the single `order` that could land before a latch nothing would
- * ever clear. Driven, forty waves of the Trial with an order landing every
- * wave and the animal alive throughout: `rec.xp === 1`. WARD is 6 xp and SEEK
- * and the kind's own verb are 16, so the two orders the player named BY NAME
- * were six and sixteen RUNS away, and "they all play differently" — the verb
- * slot, the whole reason twelve kinds are not twelve reskins — was sixteen
- * runs away in nine modes out of eleven.
+ * Three modes declare a crossing — `command`, `theline` and the campaign — and
+ * EIGHT DO NOT. So in Trial of Waves, Path of the Blade, Sandbox, Versus,
+ * Skirmish and the duel — the modes most people play — **a whole run paid at
+ * most one xp**: the single `order` that could land before a latch nothing
+ * would ever clear. Driven, twenty waves of the Trial with an order landing
+ * every wave and the animal alive throughout: `rec.xp === 1`. WARD is 6 xp and
+ * SEEK and the kind's own verb are 16, so the two orders the player named BY
+ * NAME were six and sixteen RUNS away, and "they all play differently" — the
+ * verb slot, the whole reason twelve kinds are not twelve reskins — was
+ * sixteen runs away in eight modes of eleven.
  *
  * ── THE BOUNDARY IS THE MODE'S OWN, AND THERE IS ONLY EVER ONE OF THEM ────
  *
@@ -712,7 +713,10 @@ export function stationGap(e) {
  * stage and put SWORN inside the first area, which is the 40% floor
  * `companions: a real crossing pays the ladder` pins. So the campaign's
  * measured arithmetic — 4 a boundary, 5 areas, 20 — is BYTE FOR BYTE what it
- * was, and the other eight modes get the deed they never had.
+ * was, and six of the eight that had nothing get the deed they never had. The
+ * other two are the hangar and the dojo, whose directors are not
+ * `WaveDirector`s at all and answer 0 — right, and not a hole: a lesson has no
+ * boundary and neither has a walk round a ship.
  *
  * `world.command` is the CommandDirector or null (World.js: `leadsArmy ?
  * this.director : null`), and `campaign` is the field `payWave` itself gates

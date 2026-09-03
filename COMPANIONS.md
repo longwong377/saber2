@@ -384,8 +384,8 @@ numbers. The second is that **the rungs were not arriving at all in most of the
 game.** `crossed` and `recovered` were paid off `areasTaken`, `payWave` returns
 above `_areaClear` whenever there is no campaign, and the latch that lets
 `order` be paid twice was cleared in that same unreachable block — so in the
-Trial of Waves, Path of the Blade, Sandbox, Versus, Skirmish and a contingent
-Command, **a whole run paid at most one xp**, WARD was six runs away and SEEK
+Trial of Waves, Path of the Blade, Sandbox, Versus, Skirmish and the duel —
+eight of the eleven modes — **a whole run paid at most one xp**, WARD was six runs away and SEEK
 plus the kind's own verb were sixteen. Measured before and after, twenty waves
 of the Trial: 1 xp and no rung ever, against WARD at wave 3, SEEK at wave 8 and
 SWORN at wave 10 flawlessly, or 5 / 15 / 19 on an ordinary curve. No deed

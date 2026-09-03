@@ -44,6 +44,7 @@
 import './dom-shim.mjs';
 import * as THREE from 'three';
 import { resolve } from 'node:path';
+import { makeRng } from '../src/engine/MathUtil.js';
 
 const H = await import('./checks/_coop.mjs');
 const SH = await import('./checks/_shared.mjs');
@@ -270,7 +271,53 @@ export async function rose(set, snap, { bolts = 60, dist = 9, gap = 36, level = 
     }
     return { set, fired: bolts, landed, turned, missed, coneOpen,
       far: +(far * DEG).toFixed(1), shoulder, scan: scan.join(' ') };
-  } finally { world.unload?.(); }
+  } finally { loose(); world.unload?.(); }
+}
+
+/**
+ * ── THE ONE STREAM IN THE BOLT PATH `_shared.mjs` CANNOT PIN ─────────────
+ *
+ * FOUND BY MEASURING, after this bench's own check was reported as straddling
+ * its threshold: four runs of `saberforms` on unchanged code read the pair at
+ * 14, 17, 14 and 14 of 60 against a bound set at 85% of the single blade's 20.
+ * Two runs of this file standalone — one process each, nothing interleaved,
+ * every module stream restored — read the pair at 14 and 16, with its 2° scan
+ * starting `92+` in one and `92-` in the other, while `single` and `staff` came
+ * back byte-identical both times. So it was never the suite's interleave and
+ * never a stream `_shared.mjs` had missed.
+ *
+ * It is `Combat.gradeCaught`'s outgoing direction: a BLOCK scatters 0.55 about
+ * the mirror and a caught throw jitters, and both draw from the bare global
+ * `Math.random()` — the one generator in the tree that is not a module `rng`
+ * and that `moduleSeed`, `register.mjs` and `restoreShared` therefore have no
+ * purchase on at all. The pair is the arm that feels it because the pair is the
+ * arm that ANSWERS the most: 37 bolts turned against the single blade's 31, and
+ * every one of those is a scatter direction drawn from an unpinned stream, in
+ * front of a player whose own health is the verdict.
+ *
+ * PROVED, three consecutive runs with the global replaced by a fixed sequence:
+ * pair 14/60 and shoulder 106° every time, where the same code unpinned gave
+ * 14–17 and 106–108. The single blade read 20/60 and the staff 18/60 either
+ * way, which is why nothing had noticed.
+ *
+ * WHY IT IS PINNED HERE AND NOT FIXED AT SOURCE: `Combat.js` gains ZERO lines
+ * in this feature — SABERFORMS.md says so and `saberforms: Saber.js and
+ * Combat.js gained nothing at all` asserts it against the shipped file — and a
+ * seedable scatter is a change to the game, not to the bench. This is the
+ * bench stating the phase it measures in, which is the same thing
+ * `_shared.mjs` does for the other thirteen streams.
+ *
+ * THE SWAP WINDOW CONTAINS NO `await`, WHICH IS THE WHOLE OF WHY IT IS SAFE.
+ * `rose` awaits exactly once, at its boot, and everything after that is
+ * synchronous to the return — so no other check can be running while the global
+ * is borrowed, and §2.9's rule ("a suite that borrows a singleton must hand
+ * back all of it") is kept by a `finally` that cannot be jumped over.
+ */
+function pinScatter(seed = 0x5CA77E5) {
+  const was = Math.random;
+  const rng = makeRng(seed);
+  Math.random = rng;
+  return () => { Math.random = was; };
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
