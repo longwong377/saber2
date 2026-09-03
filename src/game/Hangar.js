@@ -890,13 +890,13 @@ export function dressStructure(kit, paint) {
   /* ── ON THE DECK: crate clusters at the wall feet, and the pit. Nothing in
    * the middle — the middle is where the company stands and where every
    * reference leaves the floor clear. */
-  crates(kit, -WALL + 12, -70, 6, 3);
-  crates(kit, WALL - 14, -58, 5, 7);
-  crates(kit, WALL - 12, 18, 7, 11);
-  crates(kit, -WALL + 16, 58, 4, 13);
-  crates(kit, -WALL + 12, 104, 6, 17);
-  crates(kit, WALL - 12, 124, 5, 23);
-  crates(kit, WALL - 30, 70, 4, 29);
+  /* AND EVERY CRATE IS SOLID: the builder hands back what it placed and
+   * `deckColliders` boxes each one. Seven clusters you walked through. */
+  kit.crateBoxes = [];
+  for (const [x, z, n, seed] of [[-WALL + 12, -70, 6, 3], [WALL - 14, -58, 5, 7], [WALL - 12, 18, 7, 11],
+    [-WALL + 16, 58, 4, 13], [-WALL + 12, 104, 6, 17], [WALL - 12, 124, 5, 23], [WALL - 30, 70, 4, 29]]) {
+    kit.crateBoxes.push(...crates(kit, x, z, n, seed));
+  }
   /* The pit, lit from inside — the one thing that says there is more ship
    * under this one. Its kerbs are in `deckColliders` too. */
   for (const [dx, dz, w, d] of PIT_KERBS) {
@@ -1371,6 +1371,12 @@ function deckColliders(world) {
    * cannot fall into a hole with no floor authored under it. */
   for (const [dx, dz, w, d] of PIT_KERBS) box(dx, 0.5, dz, w / 2, 0.5, d / 2);
   world._deckSolids = 2 + 1 + 3 + 2 + 2 + 4;
+  /* THE CRATE CLUSTERS at the wall feet, one box a crate, yawed as drawn. */
+  for (const [cx, cy, cz, w, h, d, yaw] of world._deckCrateBoxes || []) {
+    P.addStaticBox(new THREE.Vector3(cx, cy, cz), new THREE.Vector3(w / 2, h / 2, d / 2),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw), { friction: 0.7 });
+    world._deckSolids++;
+  }
 }
 
 /**
@@ -1489,6 +1495,7 @@ export function dressHangar(world) {
   const kit = new DeckBuild(faction);
   const paint = new Paint(faction);
   dressStructure(kit, paint);
+  world._deckCrateBoxes = kit.crateBoxes || [];
   world._deckKit = kit.build(world);
   world._deckPaint = paint.build(world);
   lightDeck(world);

@@ -28,11 +28,15 @@
  *            where the vertex colour is (1, 1, 1) — so twenty-four
  *            astromechs in six panel schemes are one draw call, and eighty
  *            crew silhouettes in three suit tones are one per pose.
- *   CREW SILHOUETTES  `crewSilhouettes` poses the game's own skeleton with
+ *   CREW FIGURES  `crewFigures` dresses the crewman below, poses him with
  *            `BipedAnimator` — the same gait every worker walks — and bakes
- *            each pose to a two-hundred-triangle man of bone boxes, so the
- *            crowd past thirty metres flips through six frames of the real
- *            walk for one draw call a frame.
+ *            the WHOLE dressed man at fourteen poses, so a crowd of a
+ *            hundred and seventy flips through four frames of the real walk
+ *            for one draw call a pose, every man the real figure with a
+ *            face. `crewAccessories` are the helmets, tools, pads and loads
+ *            they carry, instanced off the poses' own bones.
+ *   LOOSE    a body with no post: the crates, drums, cones, tool boxes and
+ *            spare panels the deck is littered with, asleep until touched.
  *   WORKERS  humanoids on the game's own skeleton (`Rig.humanoidSkeleton`),
  *            dressed by the same `dressHumanoid` every trooper and Jedi goes
  *            through, in a jumpsuit rather than plate: cap, headset, tool
@@ -72,7 +76,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { TAU } from '../engine/MathUtil.js';
 import { mergeGeos } from '../world/Props.js';
-import { Body, LAYER, box, boxSpheres } from '../physics/RapierWorld.js';
+import { Body, LAYER, box, cylinder, boxSpheres } from '../physics/RapierWorld.js';
 import { SHOVE, STATE } from '../physics/Shovable.js';
 import { Rig, humanoidSkeleton, BipedAnimator } from './Rig.js';
 import { dressHumanoid } from './Bodies.js';
@@ -821,51 +825,333 @@ export function bindPose(rig) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  THE CREW SILHOUETTES — the real gait, frozen, two hundred triangles  */
+/*  THE CREW FIGURES — the real dressed man, frozen, one draw a pose     */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ EIGHTY MEN PAST THIRTY METRES, FOR FIFTEEN DRAW CALLS ═════════════════
+ * ══ A HUNDRED AND SEVENTY MEN, EVERY ONE THE REAL CREWMAN ════════════════
  *
- * "increase the amount of troops … all by an order of magnitude". A deck
- * crewman on the skeleton is 7,300 triangles and a draw call, and at thirty
- * metres a 0.9 m leg is a dozen pixels — so the men past the player's own
- * ground are these: the same `humanoidSkeleton`, walked by the same
- * `BipedAnimator` every worker and trooper walks with, and baked at a pose
- * to ONE box per bone. About 240 triangles a man; the cap and the belt are
- * what say "crew" at that range.
+ * "There are many humanoid figures with no detail and barely any physics
+ *  … nothing you can get close to and touch should look like shit."
  *
- * A walk is four frames of the real cycle, captured at phase k/4; a carrier
- * is three with the arms out under a crate; the rest stand, kneel, sit, point
- * or lean. DeckLife holds one `InstancedMesh` per pose and a walker flips
- * through the six — the flip-book `Cohorts.js` does with a texture, done
- * with a mesh swap because the poses here are a dozen and not a palette.
+ * The crowd used to be `bakeSilhouette`: the skeleton posed by the animator
+ * and baked to ONE BOX PER BONE — two hundred triangles, a cap and a belt,
+ * and from ten metres a man made of bricks. It is gone. What is baked now
+ * is `buildDeckCrew` itself — the lathe limbs, the jumpsuit, the yoke, the
+ * cap and its peak, the headset and its boom, the belt with its pouches
+ * and the spanner in it, the harness strap, the knee pads, the boots — at
+ * every pose, into one vertex-coloured geometry a pose, and instanced.
+ * About seven thousand triangles a man, the same man `buildDeckCrew`
+ * dresses for the rigged workers, so at arm's length the crowd and the
+ * worker beside it are the same figure.
  *
- * Suit = `PAINT`, so an instance's colour is its suit tone under
+ * And a FACE: two eyes set under the cap's peak and a brow line, dark, so
+ * a man looking at you reads as looking at you at ten metres.
+ *
+ * The suit is `PAINT`, so an instance's colour is its suit tone under
  * `castMaterials().tint`; skin, boots, cap and belt keep their own.
+ *
+ * ── THE ACCESSORIES ARE INSTANCED TOO ────────────────────────────────────
+ *
+ * A helmet, a tool, a datapad, a pilot's helmet under the arm, a crate, a
+ * hull panel, a stretcher and a marshal's wand: each ONE geometry in one
+ * `InstancedMesh`, placed off the BONE it belongs to. Every pose records
+ * where its head, hands and chest are (`bones`), so an accessory follows a
+ * walker through his four frames and a thrown man onto the deck for two
+ * matrix multiplies. Variants that cost geometry are therefore eight draws
+ * for the whole crowd, not eight per pose.
  */
 export const CREW_POSES = {
   walk: ['walk0', 'walk1', 'walk2', 'walk3'],
   carry: ['carry0', 'carry1', 'carry2'],
-  still: ['stand', 'kneel', 'sit', 'point', 'lean'],
+  still: ['stand', 'kneel', 'sit', 'point', 'lean', 'spar', 'lie'],
 };
 
+/** The bones an accessory can hang from, recorded per pose. */
+const CREW_ANCHORS = ['head', 'chest', 'handL', 'handR', 'hips'];
+
+/** A pose's `bones[name]` when the skeleton has no such bone. */
+const _ident = new THREE.Matrix4();
+
 /**
- * One man of a pose at a world transform, his suit tone baked into the
- * vertices, for DeckLife to merge every STANDING man into a single static
- * mesh — a still needs no instance, and `tools/checks/hangar.mjs` bounds
- * the whole scene at 320 meshes, deck life included.
+ * Bake the crew rig's current pose to one geometry, root at the origin,
+ * facing +Z, suit vertices `PAINT`. `post` is a matrix applied after the
+ * bake — the lying man is the standing man turned onto his back.
  */
-export function crewStillGeometry(pose, matrix, tone) {
-  const g = pose.geo.clone();
-  const col = g.attributes.color;
-  _c.set(tone);
-  for (let i = 0; i < col.count; i++) {
-    if (col.getX(i) + col.getY(i) + col.getZ(i) > 2.97) col.setXYZ(i, _c.r, _c.g, _c.b);
+function bakeFigure(crew, at, post) {
+  const rig = crew.rig;
+  rig.updateMatrices();
+  crew.root.updateMatrixWorld(true);
+  const a = new Assembly();
+  crew.root.traverse((o) => {
+    if (!o.isMesh || !o.visible || !o.geometry?.attributes?.position) return;
+    const mat = o.material;
+    const name = (mat && mat.name) || '';
+    const hex = /cast-suitB?$/.test(name) ? PAINT : (mat && mat.color ? mat.color.getHex() : 0x5a5f4c);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', o.geometry.attributes.position.clone());
+    if (o.geometry.attributes.normal) g.setAttribute('normal', o.geometry.attributes.normal.clone());
+    if (o.geometry.index) g.setIndex(o.geometry.index.clone());
+    g.applyMatrix4(o.matrixWorld);
+    a.put(g, hex);
+  });
+  /* THE FACE: two eyes under the peak and the brow over them. Dark, small,
+   * and the one thing that turns a mannequin into a man at ten metres. */
+  const head = rig.get('head').obj;
+  const s = rig.scale ?? 1;
+  for (const sx of [-1, 1]) {
+    const eye = new THREE.BoxGeometry(0.030 * s, 0.022 * s, 0.02 * s);
+    eye.translate(sx * 0.036 * s, 0.118 * s, 0.098 * s);
+    eye.applyMatrix4(head.matrixWorld);
+    a.put(eye, 0x1a1410);
   }
-  g.applyMatrix4(matrix);
-  return g;
+  const brow = new THREE.BoxGeometry(0.11 * s, 0.012 * s, 0.02 * s);
+  brow.translate(0, 0.138 * s, 0.096 * s);
+  brow.applyMatrix4(head.matrixWorld);
+  a.put(brow, 0x3a2a20);
+  const geo = a.merge();
+  const shift = _m.makeTranslation(-at.x, 0, -at.z);
+  geo.applyMatrix4(shift);
+  if (post) geo.applyMatrix4(post);
+  /* Where the accessories hang: each anchor's world matrix in the figure's
+   * own frame. */
+  const bones = {};
+  for (const n of CREW_ANCHORS) {
+    const b = rig.get(n);
+    const m = b ? new THREE.Matrix4().copy(b.obj.matrixWorld).premultiply(shift) : _ident.clone();
+    if (post) m.premultiply(post);
+    bones[n] = m;
+  }
+  return { geo, prims: a.prims, bones };
 }
+
+/**
+ * Build every pose. Fresh geometry per call — a World disposes what it
+ * draws — and a few tens of milliseconds: the animator is stepped through
+ * three seconds of walk before the first frame is taken, at 120 Hz.
+ */
+export function crewFigures(opts = {}) {
+  const crew = buildDeckCrew({ faction: opts.faction, tone: 0, scale: 1 });
+  const rig = crew.rig;
+  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
+  anim.setFacing(0);
+  const pos = new THREE.Vector3(), vel = new THREE.Vector3();
+  const p = { position: pos, facing: 0, velocity: vel, grounded: true, groundAt: () => 0, crouch: 0, accelForward: 0.26, deferMatrices: false };
+  const dt = 1 / 120;
+  const out = {};
+  const walk = (seconds) => { for (let i = 0, n = Math.round(seconds / dt); i < n; i++) { pos.z += vel.z * dt; anim.update(dt, p); anim.swingArms(dt, vel.z, 1); } };
+  const aim = (name, x, y, z) => rig.aimBoneWorld(name, _v.set(x, y, z).normalize(), null);
+  /* THE WALK, four frames at phase k/4, once the gait has settled. */
+  vel.set(0, 0, 1.3);
+  walk(3);
+  const frames = (names, arms) => {
+    let k = 0, last = anim.phase;
+    for (let i = 0; i < 1200 && k < names.length; i++) {
+      pos.z += vel.z * dt; anim.update(dt, p); anim.swingArms(dt, vel.z, 1);
+      const want = k / names.length;
+      const ph = anim.phase;
+      const crossed = ph < last ? (want >= last || want <= ph) : (last < want && want <= ph) || (k === 0 && last === 0);
+      if (crossed) {
+        if (arms) arms();
+        out[names[k++]] = bakeFigure(crew, pos, null);
+      }
+      last = anim.phase;
+    }
+  };
+  frames(CREW_POSES.walk, null);
+  /* THE CARRIER: the walk with both arms out under a load — the load is
+   * the `crate`, `panel` or `stretcher` accessory. */
+  frames(CREW_POSES.carry, () => {
+    aim('armL', 0.15, -0.55, 0.8); aim('armR', -0.15, -0.55, 0.8);
+    aim('foreL', 0.05, -0.15, 1); aim('foreR', -0.05, -0.15, 1);
+  });
+  /* STANDING, and everything that starts from standing. */
+  vel.set(0, 0, 0);
+  walk(2);
+  out.stand = bakeFigure(crew, pos, null);
+  /* LYING: the standing man turned onto his back, centred on the origin,
+   * a hand's breadth up so his back is on the cot and not in it. */
+  const lie = new THREE.Matrix4().makeRotationX(-Math.PI / 2);
+  lie.premultiply(_m.makeTranslation(0, 0.16, 0.85));
+  out.lie = bakeFigure(crew, pos, lie);
+  /* POINTING: the right arm up and out, the way an officer walks a rank. */
+  aim('armR', -0.25, 0.30, 0.9); aim('foreR', -0.10, 0.25, 1);
+  out.point = bakeFigure(crew, pos, null);
+  /* SPARRING: both fists up, elbows in. */
+  walk(0.5);
+  aim('armL', 0.15, -0.6, 0.55); aim('armR', -0.15, -0.6, 0.55);
+  aim('foreL', 0.05, 0.75, 0.55); aim('foreR', -0.05, 0.75, 0.55);
+  out.spar = bakeFigure(crew, pos, null);
+  /* LEANING on a rail: both forearms forward at chest height. */
+  walk(0.5);
+  aim('armL', 0.2, -0.75, 0.6); aim('armR', -0.2, -0.75, 0.6);
+  aim('foreL', 0.1, 0.05, 1); aim('foreR', -0.1, 0.05, 1);
+  out.lean = bakeFigure(crew, pos, null);
+  /* KNEELING at a panel: the animator's own crouch, hands on the work. */
+  p.crouch = 1;
+  walk(2);
+  aim('armL', 0.2, -0.6, 0.8); aim('armR', -0.2, -0.6, 0.8);
+  aim('foreL', 0.05, -0.3, 1); aim('foreR', -0.05, -0.3, 1);
+  out.kneel = bakeFigure(crew, pos, null);
+  /* SITTING on a cot or a crate half a metre up. */
+  p.crouch = 0;
+  walk(2);
+  aim('thighL', 0.12, 0, 1); aim('thighR', -0.12, 0, 1);
+  aim('shinL', 0, -1, 0.05); aim('shinR', 0, -1, 0.05);
+  aim('armL', 0.2, -0.7, 0.55); aim('armR', -0.2, -0.7, 0.55);
+  aim('foreL', 0.05, -0.55, 0.8); aim('foreR', -0.05, -0.55, 0.8);
+  rig.get('hips').obj.position.y = 0.50;
+  out.sit = bakeFigure(crew, pos, null);
+  /* The rig itself is scrap now: every pose is a copy of it. */
+  crew.root.traverse((o) => { if (o.isMesh) o.geometry.dispose(); });
+  return out;
+}
+
+/**
+ * ══ THE ACCESSORIES ═══════════════════════════════════════════════════════
+ *
+ * One geometry each, at the origin of the bone named by `bone`, offset by
+ * `at` in that bone's frame. A bone's y runs along it (a hand's from wrist
+ * to fingers, the head's from neck to crown) and z is forward.
+ */
+export const CREW_KIT = {
+  /** A trooper's helmet over the cap, dark visor forward. */
+  helmet: { bone: 'head', at: [0, 0.12, 0.0] },
+  /** A spanner in the right fist. */
+  tool: { bone: 'handR', at: [0, 0.04, 0.02] },
+  /** A datapad in the left hand. */
+  pad: { bone: 'handL', at: [0.02, 0.06, 0.05] },
+  /** A pilot's helmet under the left arm. */
+  pilothelm: { bone: 'handL', at: [0.14, -0.02, 0.0] },
+  /** A crate out in front, for a carrier. */
+  crate: { bone: 'chest', at: [0, 0.02, 0.58] },
+  /** A hull panel out in front, for a pair. */
+  panel: { bone: 'chest', at: [0, 0.05, 0.55] },
+  /** A stretcher: poles that run back to the second bearer. */
+  stretcher: { bone: 'chest', at: [0, -0.20, -0.30] },
+  /** A marshal's wand, lit at the tip (DeckLife adds the emitter). */
+  wand: { bone: 'handR', at: [0, 0.06, 0.03] },
+};
+
+export function crewAccessories() {
+  const out = {};
+  const A = () => new Assembly();
+  let a;
+  a = A();
+  a.ball(0xd9dde3, 0.135, 0, 0, 0, 12, 9);
+  a.box(0x1a2632, 0.20, 0.07, 0.06, 0, -0.01, 0.10);
+  a.box(0x8d939b, 0.04, 0.04, 0.12, 0, -0.06, 0.11);
+  out.helmet = a.merge();
+  a = A();
+  a.box(0x6a7079, 0.24, 0.028, 0.016, 0, 0, 0);
+  a.box(0x6a7079, 0.05, 0.06, 0.02, 0.12, 0, 0);
+  a.box(0x6a7079, 0.05, 0.06, 0.02, -0.12, 0, 0);
+  out.tool = a.merge();
+  a = A();
+  a.box(0x1e2126, 0.16, 0.016, 0.22, 0, 0, 0);
+  a.box(0x5fb2e8, 0.13, 0.006, 0.17, 0, 0.010, 0);
+  out.pad = a.merge();
+  a = A();
+  a.ball(0xd9dde3, 0.14, 0, 0, 0, 12, 9);
+  a.box(0x1a2632, 0.18, 0.08, 0.06, 0, 0.0, 0.11);
+  out.pilothelm = a.merge();
+  a = A();
+  a.box(0x8a7048, 0.60, 0.44, 0.70, 0, 0, 0);
+  a.box(0x4a3a26, 0.64, 0.05, 0.74, 0, 0.16, 0);
+  a.box(0x4a3a26, 0.64, 0.05, 0.74, 0, -0.16, 0);
+  out.crate = a.merge();
+  a = A();
+  a.box(0x8d939b, 1.30, 0.06, 0.90, 0, 0, 0, 0, 0, 0.35);
+  a.box(0x3a4149, 1.20, 0.03, 0.10, 0, 0.04, 0.30, 0, 0, 0.35);
+  out.panel = a.merge();
+  a = A();
+  a.pair((s) => a.cyl(0x6a7079, 0.025, 0.025, 2.2, s * 0.34, 0, 0, Math.PI / 2, 0, 0, 6));
+  a.box(0x4a4e5e, 0.62, 0.02, 1.9, 0, 0, 0);
+  out.stretcher = a.merge();
+  a = A();
+  a.cyl(0x2a2621, 0.018, 0.018, 0.14, 0, 0, 0, 0, 0, 0, 6);
+  a.cyl(0xffd8a0, 0.022, 0.022, 0.30, 0, 0.22, 0, 0, 0, 0, 6);
+  out.wand = a.merge();
+  return out;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  LOOSE — a thing on the deck that is just a body                       */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A CRATE DOES NOT GET UP AND WALK BACK ════════════════════════════════
+ *
+ * `Knockable` is the cycle for a thing with a POST — a droid, a man. A
+ * barrel, a tool box, a cone or a spare panel is a rigid body and nothing
+ * else: asleep where it was put, awake when something touches it, and it
+ * lies where it lands. The one thing it remembers is where it was, so a
+ * body that falls off the bottom of the world (`dead`) comes back to it.
+ *
+ * DeckLife draws each kind as one `InstancedMesh` and writes an instance's
+ * matrix off its body only while the body is awake, so a hundred and
+ * twenty of these cost the step nothing until one is thrown.
+ */
+export class Loose {
+  /**
+   * @param world  the live World (needs `.physics`)
+   * @param at     THREE.Vector3, the deck point its base rests on
+   * @param opts.half    [hx, hy, hz] half-extents
+   * @param opts.mass    kilograms
+   * @param opts.facing  yaw, radians
+   * @param opts.round   true for a drum: a cylinder, so it rolls
+   */
+  constructor(world, at, opts = {}) {
+    this.world = world;
+    const h = opts.half || [0.35, 0.35, 0.35];
+    this.half = new THREE.Vector3(h[0], h[1], h[2]);
+    this.mark = at.clone();
+    this.facing = opts.facing ?? 0;
+    this.body = new Body({
+      position: _v.copy(at).setY(at.y + this.half.y),
+      quaternion: _q.setFromAxisAngle(UP, this.facing),
+      shape: opts.round ? cylinder(this.half.y, Math.max(this.half.x, this.half.z)) : box(this.half.x, this.half.y, this.half.z),
+      spheres: boxSpheres(this.half.x, this.half.y, this.half.z),
+      mass: opts.mass ?? 20,
+      friction: 0.8, restitution: 0.08,
+      linearDamping: 0.1, angularDamping: 0.4,
+      layer: LAYER.PROP,
+      mask: LAYER.WORLD | LAYER.PROP | LAYER.DEBRIS | LAYER.RAGDOLL | LAYER.ENEMY | LAYER.PLAYER,
+    });
+    this.body.userData.figure = this;
+    this.body.userData.loose = true;
+    armKinetic(this.body, KINETIC_BODY);
+    world.physics.add(this.body);
+    this.body.sleep();
+  }
+
+  /** True when the drawing has to follow the body this frame. */
+  get moving() { return this.body.awake || this.body.dead; }
+
+  /** Back to its mark if it fell out of the world. Returns true if it moved. */
+  update() {
+    const b = this.body;
+    if (!b.dead) return b.awake;
+    b.setTransform(_v.copy(this.mark).setY(this.mark.y + this.half.y), _q.setFromAxisAngle(UP, this.facing));
+    b.velocity.set(0, 0, 0); b.angularVelocity.set(0, 0, 0);
+    this.world.physics.add(b);
+    b.sleep();
+    return true;
+  }
+
+  /** The drawing's matrix: the body's, with the origin at the base. */
+  matrix(out) {
+    const b = this.body;
+    out.compose(b.position, b.quaternion, _s1);
+    return out.multiply(_m.makeTranslation(0, -this.half.y, 0));
+  }
+
+  dispose() {
+    this.world.physics?.remove?.(this.body);
+    this.body.userData.figure = null;
+  }
+}
+const _s1 = new THREE.Vector3(1, 1, 1);
 
 /**
  * A cast hull that never flies, folded to ONE mesh: body, canopy and gear
@@ -886,127 +1172,6 @@ export function foldCast(cast, material) {
   cast.group.add(mesh);
   cast.meshes = { body: mesh, glass: null, gear: null };
   return cast;
-}
-
-/** Bone boxes: [width, depth] by bone, and what paints them. */
-const SIL_BONES = {
-  hips: [0.30, 0.20, PAINT], spine: [0.30, 0.20, PAINT], chest: [0.34, 0.22, PAINT],
-  neck: [0.10, 0.10, 0xc79a76], head: [0.19, 0.21, 0xc79a76],
-  clavL: [0.08, 0.10, PAINT], clavR: [0.08, 0.10, PAINT],
-  armL: [0.10, 0.10, PAINT], armR: [0.10, 0.10, PAINT], foreL: [0.09, 0.09, PAINT], foreR: [0.09, 0.09, PAINT],
-  handL: [0.07, 0.05, 0xc79a76], handR: [0.07, 0.05, 0xc79a76],
-  thighL: [0.14, 0.15, PAINT], thighR: [0.14, 0.15, PAINT], shinL: [0.12, 0.13, PAINT], shinR: [0.12, 0.13, PAINT],
-  footL: [0.10, 0.09, 0x2a2621], footR: [0.10, 0.09, 0x2a2621],
-};
-
-/** Bake the rig's current pose to bone boxes, root at the origin, facing +Z. */
-function bakeSilhouette(rig, at, extra) {
-  rig.updateMatrices();
-  const a = new Assembly();
-  for (const b of rig.list) {
-    const row = SIL_BONES[b.name];
-    if (!row) continue;
-    const [w, d, hex] = row;
-    const len = b.name === 'head' ? 0.23 : b.length;
-    const g = new THREE.BoxGeometry(w, len, d);
-    g.translate(0, len / 2, 0);
-    g.applyMatrix4(b.obj.matrixWorld);
-    a.put(g, hex);
-  }
-  /* The cap: a short cylinder on the crown, with the peak forward. */
-  const head = rig.get('head').obj;
-  const cap = new THREE.CylinderGeometry(0.105, 0.11, 0.07, 10);
-  cap.translate(0, 0.21, 0); cap.applyMatrix4(head.matrixWorld);
-  a.put(cap, 0x2a2621);
-  const peak = new THREE.BoxGeometry(0.15, 0.014, 0.10);
-  peak.translate(0, 0.18, 0.11); peak.applyMatrix4(head.matrixWorld);
-  a.put(peak, 0x2a2621);
-  /* The belt, and the pouch on its back. */
-  const hips = rig.get('hips').obj;
-  const belt = new THREE.BoxGeometry(0.33, 0.05, 0.23);
-  belt.translate(0, 0.06, 0); belt.applyMatrix4(hips.matrixWorld);
-  a.put(belt, 0x2a2621);
-  if (extra) extra(a);
-  const geo = a.merge();
-  geo.translate(-at.x, 0, -at.z);
-  return { geo, prims: a.prims };
-}
-
-/**
- * Build every pose. Fresh geometry per call — a World disposes what it
- * draws — and a few milliseconds: the animator is stepped through three
- * seconds of walk before the first frame is taken, at 120 Hz.
- */
-export function crewSilhouettes() {
-  const rig = new Rig(humanoidSkeleton(1), { scale: 1 });
-  const anim = new BipedAnimator(rig, { scale: 1, hipHeight: 0.95 });
-  anim.setFacing(0);
-  const pos = new THREE.Vector3(), vel = new THREE.Vector3();
-  const p = { position: pos, facing: 0, velocity: vel, grounded: true, groundAt: () => 0, crouch: 0, accelForward: 0.26, deferMatrices: false };
-  const dt = 1 / 120;
-  const out = {};
-  const walk = (seconds) => { for (let i = 0, n = Math.round(seconds / dt); i < n; i++) { pos.z += vel.z * dt; anim.update(dt, p); anim.swingArms(dt, vel.z, 1); } };
-  const aim = (name, x, y, z) => rig.aimBoneWorld(name, _v.set(x, y, z).normalize(), null);
-  /* THE WALK, six frames at phase k/6, once the gait has settled. */
-  vel.set(0, 0, 1.3);
-  walk(3);
-  const frames = (names, extra, arms) => {
-    let k = 0, last = anim.phase;
-    for (let i = 0; i < 1200 && k < names.length; i++) {
-      pos.z += vel.z * dt; anim.update(dt, p); anim.swingArms(dt, vel.z, 1);
-      const want = k / names.length;
-      const ph = anim.phase;
-      /* Did the phase cross `want` this step? A wrap (ph < last) crosses
-       * everything from `last` to 1 and from 0 to `ph`. */
-      const crossed = ph < last ? (want >= last || want <= ph) : (last < want && want <= ph) || (k === 0 && last === 0);
-      if (crossed) {
-        if (arms) arms();
-        out[names[k++]] = bakeSilhouette(rig, pos, extra);
-      }
-      last = anim.phase;
-    }
-  };
-  frames(CREW_POSES.walk, null, null);
-  /* THE CARRIER: the walk with both arms out under the end of a crate. */
-  const crate = (a) => {
-    const g = new THREE.BoxGeometry(0.60, 0.44, 0.70);
-    g.translate(pos.x, 0.86, pos.z + 0.62);
-    a.put(g, 0x8a7048);
-  };
-  frames(CREW_POSES.carry, crate, () => {
-    aim('armL', 0.15, -0.55, 0.8); aim('armR', -0.15, -0.55, 0.8);
-    aim('foreL', 0.05, -0.15, 1); aim('foreR', -0.05, -0.15, 1);
-  });
-  /* STANDING, and everything that starts from standing. */
-  vel.set(0, 0, 0);
-  walk(2);
-  out.stand = bakeSilhouette(rig, pos, null);
-  /* POINTING: the right arm up and out, the way an officer walks a rank. */
-  aim('armR', -0.25, 0.30, 0.9); aim('foreR', -0.10, 0.25, 1);
-  out.point = bakeSilhouette(rig, pos, null);
-  /* LEANING on a rail: both forearms forward at chest height. */
-  walk(0.5);
-  aim('armL', 0.2, -0.75, 0.6); aim('armR', -0.2, -0.75, 0.6);
-  aim('foreL', 0.1, 0.05, 1); aim('foreR', -0.1, 0.05, 1);
-  out.lean = bakeSilhouette(rig, pos, null);
-  /* KNEELING at a panel: the animator's own crouch, hands on the work. */
-  p.crouch = 1;
-  walk(2);
-  aim('armL', 0.2, -0.6, 0.8); aim('armR', -0.2, -0.6, 0.8);
-  aim('foreL', 0.05, -0.3, 1); aim('foreR', -0.05, -0.3, 1);
-  out.kneel = bakeSilhouette(rig, pos, null);
-  /* SITTING on a cot half a metre up: thighs forward, shins down, hands on
-   * the knees. The animator cannot sit, so this is posed by hand off the
-   * stand — a bone at a time, no numbers the skeleton does not carry. */
-  p.crouch = 0;
-  walk(2);
-  aim('thighL', 0.12, 0, 1); aim('thighR', -0.12, 0, 1);
-  aim('shinL', 0, -1, 0.05); aim('shinR', 0, -1, 0.05);
-  aim('armL', 0.2, -0.7, 0.55); aim('armR', -0.2, -0.7, 0.55);
-  aim('foreL', 0.05, -0.55, 0.8); aim('foreR', -0.05, -0.55, 0.8);
-  rig.get('hips').obj.position.y = 0.50;
-  out.sit = bakeSilhouette(rig, pos, null);
-  return out;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */

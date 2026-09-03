@@ -76,13 +76,16 @@ export async function run({ check, assert }) {
         add('sleds', life.sleds.mesh);
         for (const w of life.workers) add('workers', w.root);
         for (const im of Object.values(life.silMeshes)) add('crowd', im);
-        add('crowd', life.silStill);
+        for (const im of Object.values(life.kitMeshes)) add('crowd-kit', im);
+        for (const im of Object.values(life.looseMeshes)) add('loose', im);
+        if (life.beats) { add('beats', life.beats.rams); add('beats', life.beats.cable); add('beats', life.beats.load); if (life.beats.canopy) add('beats', life.beats.canopy); }
+        if (life.boards) add('boards', life.boards.mesh);
         add('silhouettes', life.traffic.farF); add('silhouettes', life.traffic.farS);
         for (const Hh of life.traffic.plan.hulls) Hh.cast.group.traverse((m) => { if (m.isMesh) add('hulls', m); });
         for (const P of life.parked) { if (P.cast) P.cast.group.traverse((m) => { if (m.isMesh) add('parked', m); }); if (P.plat) add('parked', P.plat); }
         if (life.taxi) life.taxi.cast.group.traverse((m) => { if (m.isMesh) add('taxi', m); });
       }
-      for (const k of ['droids', 'droid-parts', 'workers', 'crowd', 'hulls', 'parked', 'taxi', 'silhouettes', 'jobs', 'cranes', 'sleds', 'emitters']) {
+      for (const k of ['droids', 'droid-parts', 'workers', 'crowd', 'crowd-kit', 'loose', 'beats', 'boards', 'hulls', 'parked', 'taxi', 'silhouettes', 'jobs', 'cranes', 'sleds', 'emitters']) {
         assert(fam[k] && fam[k].meshes > 0, `DeckLife built no ${k} — a family of the deck's life is gone`);
       }
       const mine = Object.values(fam).reduce((a, f) => a + f.meshes, 0);

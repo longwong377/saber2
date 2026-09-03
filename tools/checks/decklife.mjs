@@ -76,7 +76,7 @@ function dropTo(world, x, y, z, ray) {
     const m = h.object.material;
     if (!m || m.userData?.saberNoInk || m.transparent) continue;
     const n = h.object.name || '';
-    if (/^deck-(droid|far|crew|astro|sleds|glows|fighter|shuttle)/.test(n) || n === 'hull' || n === 'gear'
+    if (/^deck-(droid|far|crew|astro|sleds|glows|fighter|shuttle|loose|rams|hoist|holo|canopy)/.test(n) || n === 'hull' || n === 'gear'
       || n.startsWith('mergedSkin') || h.object.isSkinnedMesh) continue;
     const d = (y + 0.4) - h.point.y;
     if (d >= -0.05 && d < best) best = d;
@@ -388,7 +388,7 @@ export async function run({ check, assert }) {
     /* The tables. `techMark`, `crewRuns` and `sledRun` are gone with the
      * posed tech, the silhouettes and the single sled; `workerJobs`,
      * `craneRuns` and `sledRuns` are what replaced them. */
-    const tables = ['function droidJobs', 'function workerJobs', 'function silJobs', 'function trolleyRun', 'function craneRuns',
+    const tables = ['function droidJobs', 'function workerJobs', 'function silJobs', 'function looseJobs', 'function trolleyRun', 'function craneRuns',
       'function sledRuns', 'function ventTable', 'function trafficPlan'];
     const missing = tables.filter((t) => !src.includes(t));
     assert(missing.length === 0, `these placement tables are gone: ${missing.join(', ')}`);
@@ -499,8 +499,10 @@ export async function run({ check, assert }) {
     const { world, life, input } = await deck();
     try {
       const { run } = await import('./_coop.mjs');
-      /* Let every worker bake: one per frame. */
-      run(world, 1, input);
+      /* Let every worker bake: ONE per frame across the whole world, and
+       * the company's men and the thirty-five workers share that budget —
+       * three seconds, where one used to do for twenty. */
+      run(world, 3, input);
       const mine = new Set();
       const on = (o) => { let v = o.visible; for (let p = o.parent; v && p; p = p.parent) v = p.visible; return v; };
       const walk = (o) => { if (!o) return; if ((o.isMesh || o.isInstancedMesh) && on(o)) mine.add(o); o.children.forEach(walk); };
@@ -514,7 +516,10 @@ export async function run({ check, assert }) {
       walk(life.sleds.mesh);
       for (const w of life.workers) walk(w.root);
       for (const im of Object.values(life.silMeshes)) walk(im);
-      walk(life.silStill);
+      for (const im of Object.values(life.kitMeshes)) walk(im);
+      for (const im of Object.values(life.looseMeshes)) walk(im);
+      if (life.beats) { walk(life.beats.rams); walk(life.beats.cable); walk(life.beats.load); }
+      if (life.boards) walk(life.boards.mesh);
       walk(life.traffic.farF); walk(life.traffic.farS);
       for (const H of life.traffic.plan.hulls) H.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); });
       for (const P of life.parked) { if (P.cast) P.cast.group.traverse((o) => { if (o.isMesh) mine.add(o); }); if (P.plat) walk(P.plat); }
@@ -540,12 +545,26 @@ export async function run({ check, assert }) {
        * reason it was 90 before: just above the honest number, so the next
        * per-prop mesh is named.
        */
-      assert(mine.size <= 80,
-        `${mine.size} meshes of deck life, doubled by the ink pass. It was 75 with 111 droids, 20 workers, 89 `
-        + 'in the crowd and seven hulls all in, and the room has 77 to give under hangar.mjs — something new is '
-        + 'emitting per-prop instead of merging or instancing, or a worker did not bake');
-      assert(tris <= 450000,
-        `${Math.round(tris)} triangles of deck life against a 450k budget. It was ~270k; a pose mesh that stopped `
+      /**
+       * 130, FROM 80 — THE DENSITY PASS, measured. The crowd is fourteen
+       * instanced poses now instead of eight and a static mesh (every man
+       * an instance, so every man can be thrown), plus eight accessory
+       * meshes, eleven loose-prop kinds, two more flying hulls (three
+       * meshes each), the rams, the hoist's cable and panel, the canopy
+       * and the boards: 75 → 122 walked here. Each of those is a KIND with
+       * a hundred things in it, which is the trade this bound exists to
+       * protect; the bound sits just above so the next per-prop mesh is
+       * still named.
+       */
+      assert(mine.size <= 130,
+        `${mine.size} meshes of deck life, doubled by the ink pass. It was 122 with 111 droids, 35 workers, 171 `
+        + 'in the crowd, 142 loose props and nine hulls all in — something new is emitting per-prop instead of '
+        + 'merging or instancing, or a worker did not bake');
+      /* 2.6 M, FROM 450 k: the crowd is the real 7,380-triangle crewman a
+       * head now, not 240 triangles of boxes — 171 of him is 1.26 M — and
+       * the player asked for exactly that. Measured 1.9 M. */
+      assert(tris <= 2600000,
+        `${Math.round(tris)} triangles of deck life against a 2.6 M budget. It was ~1.9 M; a pose mesh that stopped `
         + 'freeing its slots or a droid kind that grew a skirt of detail is the usual cause');
       const inst = [...mine].filter((o) => o.isInstancedMesh);
       assert(inst.length >= 22,
@@ -587,4 +606,214 @@ export async function run({ check, assert }) {
       return `four seconds stepped; far plane ${far0} → ${(DECK.lip - DECK.aft) + 760} → ${cam.far}; a step before dress and after unload is a no-op`;
     } finally { try { world.unload(); } catch {} }
   });
+
+  /* ══════════════════════════════════════════════════════════════════ */
+  /*  7 · THE DENSITY PASS — real figures, bodies on everything, beats  */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('deck life: the crowd is a hundred and fifty real dressed men, every one a body the Force can take', async () => {
+    /**
+     * "There are many humanoid figures with no detail and barely any
+     * physics." The crowd was eighty-nine men of bone boxes with no bodies.
+     * It is `DeckCast.crewFigures` now — the whole dressed crewman baked a
+     * pose, with a face — and every man is a `Knockable`. So: a hundred and
+     * fifty at least; every instance geometry is the real figure (thousands
+     * of triangles, eyes in it); every man has a dynamic PROP body at his
+     * feet, asleep; and the Force's own filter says yes to each.
+     */
+    const { world, life, input } = await deck();
+    try {
+      const { run } = await import('./_coop.mjs');
+      run(world, 1, input);
+      const { LAYER } = await import('../../src/physics/RapierWorld.js');
+      assert(life.sils.length >= 150, `${life.sils.length} in the crowd — a hundred and fifty at least (was 89)`);
+      assert(!life.silStill, 'the crowd is still baked into a static mesh — a still in a merged mesh cannot be thrown');
+      let poses = 0;
+      for (const [name, im] of Object.entries(life.silMeshes)) {
+        const g = im.geometry;
+        const tris = (g.index ? g.index.count : g.attributes.position.count) / 3;
+        assert(tris >= 3000, `pose ${name} is ${tris} triangles — that is the bone-box silhouette, not the dressed man`);
+        assert(g.attributes.color, `pose ${name} has no vertex colours — the suit tone cannot be painted per instance`);
+        poses++;
+      }
+      assert(poses >= 12, `${poses} pose meshes — four walk frames, three carrying, and the stills`);
+      const kinds = new Set(life.sils.map((S) => S.job.pose || (S.job.walk ? 'walk' : 'carry')));
+      for (const p of ['stand', 'kneel', 'sit', 'lie', 'lean', 'point', 'spar', 'walk', 'carry']) assert(kinds.has(p), `nobody in the crowd is in the '${p}' pose`);
+      const kits = Object.keys(life.kitMeshes);
+      assert(kits.length >= 6, `${kits.length} accessory kinds instanced (${kits.join(', ')}) — helmets, tools, pads, a pilot's helmet, loads, wands`);
+      const tones = new Set(life.sils.map((S) => S.tone));
+      assert(tones.size >= 4, `${tones.size} suit tones — four at least`);
+      const bodies = new Set(world.physics.bodies);
+      const player = world.player;
+      let asleep = 0, grip = 0, on = 0;
+      for (const S of life.sils) {
+        const b = S.kn.body;
+        assert(bodies.has(b), `crowd man ${S.i} has no body in the physics world`);
+        assert(b.invMass > 0 && !b.kinematic && !b.static && b.layer === LAYER.PROP, `crowd man ${S.i}'s body is not a dynamic PROP body`);
+        if (!b.awake) asleep++;
+        if (!player || player._grippableBody(b)) grip++;
+        if (Math.abs(b.position.y - S.kn.half.y - S.y) < 0.3) on++;
+      }
+      assert(asleep >= life.sils.length - 2, `${life.sils.length - asleep} crowd bodies awake at their posts — a formation costs the solver`);
+      assert(grip === life.sils.length, `the Force could take ${grip} of ${life.sils.length} — the rest are holograms`);
+      assert(on >= life.sils.length - 2, `${life.sils.length - on} crowd bodies are not at their men's feet`);
+      /* And one of them, thrown, goes over, lies, gets up and walks home —
+       * the droids' own cycle, and the instance follows the body. */
+      const S = life.sils.find((x) => x.job.pose === 'stand' && !x.job.flip);
+      const home = new THREE.Vector3(S.x, S.y, S.z);
+      S.kn.shove(new THREE.Vector3(1, 0, 0.4), 6);
+      const seen = new Set();
+      const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      let followed = 0, samples = 0;
+      for (let i = 0; i < 60 * 14; i++) {
+        world.update(1 / 60, input);
+        seen.add(S.kn.state);
+        if (S.kn.down) {
+          life.silMeshes[S.shown].getMatrixAt(S.slot, m); m.decompose(p, q, s);
+          samples++;
+          /* The instance's origin is the body's centre dropped by its half-height along its own up. */
+          const c = new THREE.Vector3(0, S.hy, 0).applyQuaternion(q).add(p);
+          if (c.distanceTo(S.kn.body.position) < 0.08) followed++;
+        }
+        if (S.kn.state === 'post' && i > 120) break;
+      }
+      for (const st of ['down', 'rest', 'rise', 'back', 'post']) assert(seen.has(st), `the thrown man never went through '${st}' — ${[...seen].join('→')}`);
+      assert(samples > 0 && followed === samples, `the man's figure followed his body on ${followed} of ${samples} down frames`);
+      assert(S.kn.at.distanceTo(home) < 0.5, `he got up ${S.kn.at.distanceTo(home).toFixed(1)} m from his post and stayed there`);
+      return `${life.sils.length} men in ${poses} poses (${[...kinds].join(', ')}), ${kits.length} accessory kinds, ${tones.size} tones; `
+        + `${asleep} bodies asleep, ${grip} grippable; one thrown: ${[...seen].join('→')}`;
+    } finally { world.unload(); }
+  });
+
+  check('deck life: eighty loose props at least, every one a dynamic body asleep, and every kit piece in the walkable ground is solid', async () => {
+    /**
+     * "Make everything you can touch real." The litter — crates, drums,
+     * tool boxes, cones, welding carts, helmets, pads, spare panels, droid
+     * parts, buckets, bombs — is `DeckCast.Loose`: a dynamic PROP body an
+     * instance, asleep. And the merged kit is solid: a downward ray into
+     * the PHYSICS world from over every cot, seat, counter, bench, lectern,
+     * cart, flood mast and wall-foot crate has to hit a static box before
+     * it hits the deck.
+     */
+    const { world, life, input } = await deck();
+    try {
+      const { run } = await import('./_coop.mjs');
+      run(world, 2, input);
+      const { LAYER } = await import('../../src/physics/RapierWorld.js');
+      assert(life.loose.length >= 80, `${life.loose.length} loose props — eighty at least`);
+      const kinds = new Set(life.loose.map((P) => P.kind));
+      assert(kinds.size >= 9, `${kinds.size} kinds of loose prop (${[...kinds].join(', ')}) — nine at least`);
+      const bodies = new Set(world.physics.bodies);
+      const player = world.player;
+      let asleep = 0, grip = 0, inst = 0;
+      const m = new THREE.Matrix4(), p = new THREE.Vector3(), q = new THREE.Quaternion(), s = new THREE.Vector3();
+      for (const P of life.loose) {
+        const b = P.body.body;
+        assert(bodies.has(b), `a loose ${P.kind} has no body in the physics world`);
+        assert(b.invMass > 0 && !b.kinematic && !b.static && b.layer === LAYER.PROP, `a loose ${P.kind}'s body is not a dynamic PROP body`);
+        if (!b.awake) asleep++;
+        if (!player || player._grippableBody(b)) grip++;
+        P.mesh.getMatrixAt(P.i, m); m.decompose(p, q, s);
+        if (s.x > 0.1 && Math.hypot(p.x - b.position.x, p.z - b.position.z) < 0.05) inst++;
+      }
+      assert(asleep >= life.loose.length - 3, `${life.loose.length - asleep} loose bodies awake after two seconds — the litter is jittering on the deck`);
+      assert(grip === life.loose.length, `the Force could take ${grip} of ${life.loose.length} loose props`);
+      assert(inst === life.loose.length, `${life.loose.length - inst} loose instances are not drawn where their bodies are`);
+      /* Thrown: it flies, lands, sleeps, and the instance went with it. */
+      const P = life.loose.find((x) => x.kind === 'crate');
+      const from = P.body.body.position.clone();
+      P.body.body.wake();
+      P.body.body.applyImpulse(new THREE.Vector3(80, 120, 30), null);
+      run(world, 6, input);
+      P.mesh.getMatrixAt(P.i, m); m.decompose(p, q, s);
+      const flew = P.body.body.position.distanceTo(from);
+      assert(flew > 1.5, `a crate thrown with 150 N·s moved ${flew.toFixed(2)} m`);
+      assert(p.distanceTo(P.body.body.position) < 1.0, 'the thrown crate\'s instance stayed where it was built');
+      assert(!P.body.body.awake, 'the thrown crate never went back to sleep');
+      /* THE KIT IS SOLID. Sample the furniture the crowd stands at. */
+      const F = life.sites;
+      const probes = [];
+      /* A cot is probed at its foot: over its middle the ray hits the sleeper's own body first. */
+      for (let i = 0; i < F.COTS.n; i++) probes.push([`cot ${i}`, F.COTS.x0 + i * F.COTS.dx, F.COTS.z + 1.0]);
+      probes.push(['the kitchen counter', F.CHOW.x, F.CHOW.z], ['the droid bench', F.BENCH.x, F.BENCH.z], ['the lectern', F.FORM.cx, F.FORM.cz - 11.6]);
+      for (let i = 0; i < 3; i++) probes.push([`ordnance cart ${i}`, F.ORD.x - 3 + i * 3, F.ORD.z]);
+      for (const [x, , z] of life.floods.slice(0, 6)) probes.push(['a flood mast', x, z]);
+      probes.push(['the holotable', F.RING.x, F.RING.z], ['a tent cot', F.TENT.x - 1.6, F.TENT.z - 0.4], ['the engine stand', F.ENG.x, F.ENG.z]);
+      for (const b of (world._deckCrateBoxes || []).slice(0, 8)) probes.push(['a wall-foot crate', b[0], b[2]]);
+      const bad = [];
+      for (const [label, x, z] of probes) {
+        const hit = world.physics.raycast(new THREE.Vector3(x, 6, z), new THREE.Vector3(0, -1, 0), 12);
+        const floor = world.floorAt ? world.floorAt(x, z) : 0;
+        if (!hit || !hit.box || hit.point.y < floor + 0.2) bad.push(`${label} at (${x.toFixed(1)}, ${z.toFixed(1)}): ${hit ? `hit at ${hit.point.y.toFixed(2)} (${hit.box ? 'box' : 'not a box'})` : 'nothing'}`);
+      }
+      assert(bad.length === 0, `${bad.length} kit pieces you can walk through:\n      ${bad.join('\n      ')}`);
+      return `${life.loose.length} loose props of ${kinds.size} kinds (${[...kinds].join(', ')}), ${asleep} asleep, ${grip} grippable; `
+        + `a thrown crate flew ${flew.toFixed(1)} m and slept; ${probes.length} kit pieces solid by ray`;
+    } finally { world.unload(); }
+  });
+
+  check('deck life: at every repair something moves — rams, hoist, canopy, engine run, strobes, boards', async () => {
+    /**
+     * "there's somehow still only 1 repair happening". A repair the eye
+     * reads is one where something MOVES. Each beat is sampled over its
+     * own clock and asked to have moved: the jacks' rams, the trolley's
+     * hoist paying out, the second cradle's canopy, the engine on the stand
+     * lighting, the rim strobes on a launch, the holo boards redrawing, the
+     * marshals' wands, the sparring pair, the cooks.
+     */
+    const { world, life, input } = await deck();
+    try {
+      const { run } = await import('./_coop.mjs');
+      const B = life.beats;
+      assert(B && B.rams && B.load && B.cable && B.fire && B.strobe, 'the beats were not built');
+      assert(B.canopy, 'the second cradle\'s fighter has no hinged canopy');
+      assert(life.boards && life.boards.mesh, 'no holo boards');
+      const samples = { ram: new Set(), hoist: new Set(), canopy: new Set(), fire: 0, strobe: 0, boards: 0 };
+      const flips = new Map();
+      const tex = life.boards.tex;
+      let lastVer = tex.version;
+      for (let t = 0; t < 70; t += 0.5) {
+        run(world, 0.5, input);
+        samples.ram.add(B.rams.position.y.toFixed(2));
+        samples.hoist.add(B.load.position.y.toFixed(1));
+        samples.canopy.add(B.canopy.rotation.x.toFixed(2));
+        if (B.fire.heat > 0.5) samples.fire++;
+        if (life.strobe > 0) samples.strobe++;
+        if (tex.version !== lastVer) { samples.boards++; lastVer = tex.version; }
+        for (const S of life.sils) if (S.job.flip) { if (!flips.has(S.i)) flips.set(S.i, new Set()); flips.get(S.i).add(S.shown); }
+      }
+      assert(samples.ram.size >= 4, `the jacks' rams held ${samples.ram.size} heights over 70 s — they are not pumping`);
+      assert(samples.hoist.size >= 4, `the trolley's hoist held ${samples.hoist.size} heights over 70 s — the panel is not paid out`);
+      assert(samples.canopy.size >= 4, `the canopy held ${samples.canopy.size} angles over 70 s — it does not open`);
+      assert(samples.fire > 4, `the engine on the stand was lit on ${samples.fire} of 140 samples — no test fire in 70 s`);
+      assert(samples.strobe > 0, 'the rim strobes never ran — no launch alert in 70 s');
+      assert(samples.boards >= 60, `the holo boards redrew ${samples.boards} times in 70 s — they should scroll twice a second`);
+      let flipped = 0;
+      for (const set of flips.values()) if (set.size >= 2) flipped++;
+      assert(flipped >= 5, `${flipped} of ${flips.size} flipping men changed pose — the marshals, cooks and sparring pair are statues`);
+      assert(life.trolley.hoist, 'the trolley has no hoist to swing');
+      return `rams ${samples.ram.size} heights, hoist ${samples.hoist.size}, canopy ${samples.canopy.size} angles, engine lit ${samples.fire}/140, `
+        + `strobes ${samples.strobe}/140, boards ${samples.boards} redraws, ${flipped} men flipping poses`;
+    } finally { world.unload(); }
+  });
+
+  check('deck life: thirty-five rigged workers, the nearest ones at the lobby doors and the holoscreen, and two more hulls in the cycle', async () => {
+    const { world, life } = await deck();
+    try {
+      assert(life.workers.length >= 35, `${life.workers.length} rigged workers — thirty-five at least (was 20)`);
+      const near = life.workers.filter((w) => Math.hypot(w.pos.x, w.pos.z - DECK.threshold) < 25).length;
+      assert(near >= 2, `${near} rigged workers within 25 m of the lobby's mouth — the guards are gone`);
+      const guards = life.workers.filter((w) => w.job.job === 'guard');
+      assert(guards.length >= 2, 'no guards at the lobby doors');
+      for (const g of guards) assert(!inZone('lobby', g.pos.x, g.pos.z) && !inZone('corridor', g.pos.x, g.pos.z), `a guard stands in the player's path at (${g.pos.x.toFixed(1)}, ${g.pos.z.toFixed(1)})`);
+      const crash = life.workers.filter((w) => w.job.job === 'crash').length;
+      assert(crash >= 4, `${crash} crash men — four at least`);
+      assert(life.traffic.plan.hulls.length >= 6, `${life.traffic.plan.hulls.length} hulls in the cycle — six at least (was 4)`);
+      assert(life.traffic.plan.hulls.filter((H) => H.damagedEvery > 0).length >= 3, 'fewer than three hulls ever come in damaged');
+      const F = life.sites;
+      for (const H of life.traffic.plan.hulls) assert(Math.abs(H.pad.x) < F.CLEAR - 4, `a pad at x ${H.pad.x.toFixed(0)} is inside a fighter's span of the wall`);
+      return `${life.workers.length} rigged workers (${near} within 25 m of the doors, ${guards.length} guards, ${crash} crash men), ${life.traffic.plan.hulls.length} hulls cycling`;
+    } finally { world.unload(); }
+  });
+
 }
