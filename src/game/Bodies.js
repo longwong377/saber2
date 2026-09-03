@@ -9080,12 +9080,31 @@ export const CREATURE_PLANS = {
      * `[]` survives the handoff: `buildQuadruped` returns `P.moves || null`
      * and an empty array is truthy, and `beastMoveSet` prefers `built.moves`
      * over `DEFAULT_BEAST_MOVES` on the same test, so the floor that gives
-     * the unlisted creatures a lunge is not reached. What DOES need one line
-     * is `_beastBrain`'s pick — `moves[floor(rng() * moves.length)] ||
-     * 'lunge'` — where an empty list falls through the `||` and hands this
-     * animal the massiff's opener. That line is the only thing standing
-     * between this row and a kitten that mauls people, and it is stated in
-     * Enemy.js beside the pick, not here. */
+     * the unlisted creatures a lunge is not reached.
+     *
+     * ── AND THE LINE THIS NOTE SAID WAS IN Enemy.js IS NOT THERE ──────────
+     *
+     * It read: "What DOES need one line is `_beastBrain`'s pick —
+     * `moves[floor(rng() * moves.length)] || 'lunge'` — where an empty list
+     * falls through the `||` and hands this animal the massiff's opener. That
+     * line is the only thing standing between this row and a kitten that mauls
+     * people, and it is stated in Enemy.js beside the pick, not here."
+     *
+     * The hazard is real and the guard was never written. Measured through the
+     * shipped brain over 90 seconds against a motionless target
+     * (tools/checks/beasts.mjs): a tooka entered the `lunge` state 49 times and
+     * resolved a blow on the player 48 times. It falls through the `||` exactly
+     * as feared, on this row and on the tauntaun's.
+     *
+     * WHAT ACTUALLY HOLDS IS `damage: 0` ON THE ARCHETYPE, and it holds
+     * completely: those 48 resolutions moved the target's health by 0.0. So the
+     * belt described on the archetype as bracing the empty move list is in fact
+     * the only thing carrying it, and the two of them are now measured together
+     * rather than assumed — the menagerie check asserts that a creature with an
+     * empty move set deals literally zero damage in every evasion, standing
+     * still included, which goes red the day anybody types a number over that
+     * zero. Enemy.js is where the fallback lives and this row cannot reach it;
+     * what this row can do is stop claiming a guard that does not exist. */
     moves: [],
   },
 
@@ -9319,12 +9338,47 @@ export const CREATURE_PLANS = {
      * rancor's set is a level designer's statement about a set-piece, and no
      * level ever composes a companion, so there is nobody upstream to
      * disagree with. SLAM is the kind (COMPANIONS.md: the only companion
-     * whose attack changes the level rather than the enemy), TOSS is the
-     * game's biggest upward impulse borrowed at a sixth of the size, and
+     * whose attack changes the level rather than the enemy), SWEEP is the
+     * arm arc the adult already carries and the phase-2 escalation, and
      * LUNGE is the floor every animal has. There is no rake and no charge:
      * a thing that weighs 150 kg and moves at 3.6 m/s does not run anything
-     * down, and it has hands rather than claws. */
-    moves: ['slam', 'toss', 'lunge'],
+     * down, and it has hands rather than claws.
+     *
+     * ── AND IT SAID `toss`, WHICH IS THE SLAM WEARING A DIFFERENT NAME ────
+     *
+     * COMPANIONS.md asks for slam/toss/lunge and gives the reason — the toss
+     * "reuses the biggest upward impulse in the game at a small scale", which
+     * is `lift: 2.4` against everything else's 0.5–1.5. The impulse is real.
+     * The WIND-UP is not: `slam` and `toss` are the only two rise-positive
+     * moves in BEAST_MOVES and their poses are 1.50 and 1.25 of rise on the
+     * identical quarter-sine curve, so on any body that carries both they are
+     * ONE GESTURE AT 83% AMPLITUDE. `rear` is a single scalar per animal —
+     * "metres of hip travel per unit of an attack's rise" — so there is no
+     * number in this row that can separate two moves whose only difference is
+     * how much rise they ask for.
+     *
+     * Measured on the built rig, posed by `_poseWalker` through each move's own
+     * wind-up (tools/checks/beasts.mjs): slam and toss were 46 mm apart at
+     * their widest, 11.2% of this animal's 0.408 m stance, against a roster
+     * floor of 16.5% — the adult Rancor's own slam and sweep, which is the
+     * tightest pair anything else in the game asks a player to read. It is the
+     * only pair below the floor on every denominator tried: 23.5% against 32.3%
+     * measured across the whole rig instead of the hips, and 16.6% against
+     * 32.8% measured as a fraction of the larger of the two travels. Nor does
+     * timing rescue it — the toss's wind-up is 0.70 s and the slam's 0.95, but
+     * in that shared first 0.70 s the two bodies are 27 mm apart, and by the
+     * time the durations differ the toss has already landed. You would learn
+     * which one it was by being hit.
+     *
+     * `sweep` is 1.00 of rise, so the gap to the slam is 0.50 — 22.9% of this
+     * animal's stance, above the floor and above the adult's own closest pair.
+     * It is the same arm the toss used, the adult Rancor already carries it,
+     * and `unlock: 2` makes it the escalation rather than a third opener. What
+     * is lost is the 2.4 lift on this one body; what is bought is that a player
+     * watching a rancor pup rear can tell which of the two things is coming.
+     * COMPANIONS.md's move list is the thing this diverges from, deliberately
+     * and with the measurement above; the doc is not edited from here. */
+    moves: ['slam', 'sweep', 'lunge'],
   },
 
   /**
@@ -9390,7 +9444,7 @@ export const CREATURE_PLANS = {
      * reverted, and recorded here so the next person reads it instead of
      * measuring it again.
      */
-    hip: 0.98, trunk: [0.12, -0.14, 0.95], pitch: 0.02, girth: 0.34,
+    hip: 0.98, trunk: [0.12, -0.46, 0.95], pitch: 0.50, girth: 0.34,
     /* THE SWELLS ARE REVERSED FROM EVERY SHIPPED ROW, and it is the one
      * anatomical claim in here. The charger is [[0.74, 0.52, …], [0.24, 0.24,
      * …]] and the massiff, stalker, brute, pouncer and acklay are all the same
@@ -9412,7 +9466,21 @@ export const CREATURE_PLANS = {
      * reason from the other side: at girth 0.34 the widest part of the animal
      * would otherwise be exactly under the rider's knees. */
     section: { n0: 3.0, n1: 2.6, back: 0.07, keel: 0.08, waist: 0.10 },
-    headAt: [0.20, 0.84], neck: [3, 0.20, 0.17, 0.62, -0.22], head: 'horned-ape',
+    /**
+     * …AND THE HEAD COMES UP, WHICH TOOK READING THE SCHEMA RATHER THAN
+     * GUESSING AT IT. `neck` is `[segs, length, radius, pitch, curl]`, and this
+     * row already asked for a strong upward pitch of 0.62 — it just had only
+     * 0.20 of neck to apply it to, which is the massiff's own length on an
+     * animal three times the size. A lever that short cannot lift anything, so
+     * the head sat on the shoulders and pointed at the sand whatever the pitch
+     * said.
+     *
+     * 0.52 is the longest neck in the table and it is what this animal is: the
+     * head is held HIGH and forward, which is what makes a tauntaun read as a
+     * runner from behind — and, when you are on it, is the difference between
+     * a mount you steer by and a barrel with a saddle.
+     */
+    headAt: [0.62, 0.86], neck: [2, 0.22, 0.21, 0.16, -0.02], head: 'snouted',
     /* THE NECK GOES UP, and it is the only one that does. The massiff (-0.30),
      * the charger (-0.44) and the acklay (-0.30) all sweep DOWN because they
      * carry a weapon in front of their eyes and have to aim it; the stalker is
@@ -9551,8 +9619,29 @@ export const CREATURE_PLANS = {
      * A neck that followed the spine would put the jaws at the height of the
      * rider's own shoulder, which is a mount that can only bite other mounts.
      * Two segments at 0.16 — shorter than the massiff's 2 x 0.14 in fraction
-     * of body, because a heavy head on a long neck on two legs is a pendulum. */
-    headAt: [0.40, 0.86], neck: [2, 0.16, 0.24, -0.55, -0.12], head: 'tusked',
+     * of body, because a heavy head on a long neck on two legs is a pendulum.
+     *
+     * AND `headAt[0]` IS 0.72 BECAUSE THE SPINE IS TILTED, which is the whole
+     * of what was wrong with this animal and with the tauntaun beside it. The
+     * head bone hangs off `body` at `[0, headAt[0]·s, headAt[1]·s]` and the
+     * BONE CHAIN IS NOT PITCHED — only the trunk MESH is, by `trunkRot`. So on
+     * a level-backed animal `headAt[0]` is height above the spine and reads as
+     * written, and on a pitched one the spine has already climbed
+     * `sin(pitch) · headAt[1]` by the time it reaches that station and
+     * `headAt[0]` is measured from the wrong place.
+     *
+     * At +0.45 over a station 0.86 down the body the spine is 0.374 up, and
+     * this row asked for 0.40: twenty-six millimetres of clearance on an
+     * animal 0.44 thick. The head was INSIDE the chest, and the render showed
+     * exactly that — a bean with a lump on the front and no face anywhere.
+     * 0.72 leaves 0.35, which is 0.79 of girth and lands this row in the band
+     * the eleven other plans occupy. `tools/checks/beasts.mjs` now pins the
+     * ratio for every plan, so the next pitched body fails a check instead of
+     * shipping with its head in its ribs.
+     *
+     * The rancor (0.62 of girth clear) and the wampa (1.01) were already
+     * compensated by hand by whoever authored them; nothing here moves them. */
+    headAt: [0.72, 0.86], neck: [2, 0.16, 0.24, -0.55, -0.12], head: 'tusked',
     back: 'ridge', tail: [3, 0.46, 0.17, -0.10, -0.12],
     limbs: [
       /* ONE PAIR, and it carries a rider as well as the animal. `girth: 1.45`
@@ -9812,14 +9901,26 @@ export function buildQuadruped(opts = {}) {
      * edge — so the shag is authored as tapered clumps standing off the
      * flanks and the shoulders rather than as a texture, which is the one
      * thing that survives being a silhouette. */
+    /* SIX SIDES AND THREE RINGS, and it is the massiff's fang argument applied
+     * to the thing that argument was never carried to. That note reads: "at
+     * rings 2 it is two prisms end to end — the rendered massiff has a
+     * mouthful of flat white wedges. Three rings on the same bend is a curve;
+     * six sides round the shaft is the difference between a tooth and a
+     * shard." A shag clump is the same geometry at four times the size and it
+     * was still at (5, 2), so every clump was a flat card: rendered on the
+     * tauntaun they read as loose white quads standing off the shoulders,
+     * which is the "janky garbage" complaint in one shape. The count of clumps
+     * and every position is untouched — this is the same coat, curved. It
+     * costs 14 triangles a clump on fourteen clumps, which `frame-budget`
+     * measures and passes. */
     ks.row(4, (i, t) => ks.pair((sx) => {
       const p = fwd(0.10 + t * 0.80);
-      ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 5, 2),
+      ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 6, 3),
         [sx * (0.30 + t * 0.10) * S, p[1] + 0.10 * S, p[2] - 0.06 * S], [1.9, 0, sx * (0.9 - t * 0.4)]);
     }));
     ks.row(3, (i, t) => ks.pair((sx) => {
       const p = fwd(0.74 + t * 0.20);
-      ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 5, 2),
+      ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 6, 3),
         [sx * 0.34 * S, p[1] + 0.24 * S, p[2]], [2.3, 0, sx * 1.25]);
     }));
   }
@@ -10458,6 +10559,84 @@ function buildCreatureHead(rig, P, S, M) {
         [sx * 0.20 * S, hy + 0.32 * S, hz - 0.06 * S], [-0.7, 0, sx * 0.4]);
       k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.11 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
         [sx * (0.08 + t * 0.10) * S, hy - 0.12 * S, hz + (0.30 + t * 0.14) * S], [2.5, 0, 0]));
+    });
+  } else if (K === 'snouted') {
+    /**
+     * THE TAUNTAUN — the sixth branch, and the one the fifth's own comment
+     * asked for and did not build.
+     *
+     * `horned-ape` says it out loud: "Three plans that are genuinely
+     * long-snouted — taun, blurrg, varac — share this branch and are the
+     * argument for a sixth one, recorded here and not acted on: a new branch
+     * is a new silhouette for three shipped bodies." That was the right call
+     * then and it is the wrong one now: the tauntaun is not a shipped enemy
+     * seen for four seconds across a wave, it is a COMPANION the player looks
+     * at for a whole deployment and rides. It was wearing a wampa's face.
+     *
+     * The gundark branch is a FACE — a flat wide front with the horns curving
+     * sideways off the temples, an underbite of fangs and a fur ruff, on a
+     * 0.30 snout that is deliberately short so a wampa does not read as a dog.
+     * Every one of those is wrong for this animal, and rendered it exactly as
+     * wrong as it sounds: an ape's head with two spikes, hung on the front of
+     * a running body.
+     *
+     * WHAT A TAUNTAUN'S HEAD IS, in the order the eye takes it:
+     *
+     *   THE SNOUT, which is the whole read. 0.62 long — the longest in the
+     *   file, past the acklay's 0.56 — on a 0.17 hinge tapering to 0.105, so
+     *   it is a taper and not a tube. `flat: 0.92` and `n: 2.6` keep the
+     *   section nearly round and soft-cornered: this is a woolly herbivore,
+     *   not a chitin jaw, and the acklay's 0.60 flat is what makes ITS head
+     *   read as an insect. The droop is 0.06, almost none — a browsing animal
+     *   carries its nose level and the gundark's 0.11 was already tipping it.
+     *
+     *   THE NOSTRILS, and nothing else in the file has them. Two dark
+     *   ellipsoids sunk into the end of the snout: at forty metres they are
+     *   two pixels of shadow on a pale muzzle, which is precisely the detail
+     *   that stops a snout reading as a peg.
+     *
+     *   THE HORNS, curving BACK over the crown rather than out from the
+     *   temples. Three nodes so it is a curve; the wampa's are two-node
+     *   spikes swept sideways, which is the one thing that made the shared
+     *   branch unmistakably not this animal.
+     *
+     *   NO FANGS. A tauntaun does not bite anything — the plan declares
+     *   `moves: []` and the archetype `damage: 0` — and a mouthful of tusks
+     *   on an animal that cannot use them is the kind of decoration that
+     *   makes a body read as parts. The lower jaw is a lip and a chin.
+     *
+     *   THE RUFF at the base of the skull, kept from the gundark because it
+     *   is right here for a different reason: the coat is the animal's other
+     *   read, `back: 'shag'` carries it down the spine, and a bare join
+     *   between a woolly body and a smooth head is the seam a player sees.
+     */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.245 * S, 12, 9); g.scale(0.94, 0.96, 1.02); return g; })(),
+      [0, hy + 0.03 * S, hz + 0.04 * S]]);
+    parts.push(muzzle(0.62, 0.17, 0.105, -0.06, 0.06, 0.06, { flat: 0.92, n: 2.6, chin: 0.22, crown: 0.14 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.15, -0.02, 0.13, 0.135, 1.0, 0.94, 1.15));
+    /* The jaw, as a lip rather than a mouthful: one shallow lathe under the
+     * snout's front third, so the profile has an underline and the head does
+     * not end in a cone. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.13 * S, 10, 8); g.scale(0.92, 0.52, 1.9); return g; })(),
+      [0, hy - 0.12 * S, hz + 0.34 * S], [0.06, 0, 0]]);
+    k.pair((sx) => {
+      /* THE HORN. Three nodes, off the crown and swept BACK and slightly out
+       * — 0.24 wide at the base curling to 0.30 at the tip over 0.46 of
+       * length going backwards, which is a ram's horn and not a spike. */
+      k.add(M.plate, tubeGeo([[sx * 0.16 * S, hy + 0.20 * S, hz + 0.02 * S, 0.055 * S],
+        [sx * 0.24 * S, hy + 0.30 * S, hz - 0.20 * S, 0.038 * S],
+        [sx * 0.30 * S, hy + 0.22 * S, hz - 0.44 * S, 0.010 * S]], 7));
+      /* Eyes high and to the SIDE of the skull, which is where a prey animal
+       * carries them and is the other half of "this is not a predator". */
+      eyeAt(sx * 0.175, 0.11, 0.10, 0.044);
+      /* THE NOSTRIL. Sunk into the end of the snout with the pupil material,
+       * which is the darkest thing on the body — two of them on a pale muzzle
+       * is the detail that reads at range. */
+      k.add(M.pupil, (() => { const g = new THREE.SphereGeometry(0.045 * S, 8, 6); g.scale(1.0, 1.35, 0.55); return g; })(),
+        [sx * 0.055 * S, hy - 0.02 * S, hz + 0.60 * S]);
+      // the ruff, at the join with the coat
+      k.row(3, (i, t) => k.add(M.hide, clawGeo(0.30 * S, 0.090 * S, 0.015 * S, 0.55, 6, 3),
+        [sx * (0.17 + t * 0.07) * S, hy - (0.04 + t * 0.09) * S, hz - 0.10 * S], [1.7 + t * 0.4, 0, sx * (1.0 - t * 0.3)]));
     });
   } else if (K === 'horned-ape') {
     /* THE GUNDARK. A wide flat FACE rather than a muzzle — the wampa's read
