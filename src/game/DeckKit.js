@@ -1243,14 +1243,22 @@ export function catwalk(kit, x, y, z, len, opts = {}) {
 }
 
 /** A crate cluster — `hangar 7.jpg` has them in loose groups, low and dark. */
+/**
+ * RETURNS THE BOXES IT PLACED — `[x, y, z, w, h, d, yaw]` each — so the
+ * caller can make every crate solid. Seven clusters of these stood at the
+ * wall feet with nothing under the merged mesh: a crate you walk through
+ * is the complaint "things still don't have physics", one cluster at a time.
+ */
 export function crates(kit, x, z, n = 5, seed = 1, opts = {}) {
   const M = deckMats(opts.faction ?? kit.faction);
   let r = seed * 9301;
   const rnd = () => ((r = (r * 9301 + 49297) % 233280) / 233280);
+  const out = [];
   for (let i = 0; i < n; i++) {
     const w = 1.6 + rnd() * 1.4, h = 1.2 + rnd() * 1.0;
-    kit.slabAt(i % 3 ? M.dark : M.hull, x + (rnd() - 0.5) * 7, h / 2, z + (rnd() - 0.5) * 7,
-      w, h, w * 0.8, rnd() * 0.6);
+    const cx = x + (rnd() - 0.5) * 7, cz = z + (rnd() - 0.5) * 7, yaw = rnd() * 0.6;
+    kit.slabAt(i % 3 ? M.dark : M.hull, cx, h / 2, cz, w, h, w * 0.8, yaw);
+    out.push([cx, h / 2, cz, w, h, w * 0.8, yaw]);
   }
-  return kit;
+  return out;
 }

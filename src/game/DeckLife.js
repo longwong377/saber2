@@ -46,18 +46,31 @@
  *     crates. One `InstancedMesh` per kind on the painted surface, one for
  *     the domes, three for the welders' arm parts: fourteen draws for the
  *     lot, where fifteen droids used to be twenty-three.
- *   TWENTY WORKERS on the skeleton, walking with `Rig.BipedAnimator`, each
- *     a `Shovable` body — kept to the pit's kerb, the flanks and the
- *     centre's near end, the ground nearest the player's own path — AND A
- *     CROWD OF EIGHTY-NINE: `DeckCast.crewSilhouettes`, the same skeleton
- *     walked by the same animator and baked to bone boxes at twelve poses.
- *     A ranked formation of twenty-four on the far apron with an officer
- *     walking the front rank, a file of ten marching the room's length, a
- *     medic tent with men on the cots, a briefing circle round a
- *     holotable, twelve on the gallery thirty metres up, gangs round every
- *     hull, three two-man teams carrying crates. Walkers flip through four
- *     frames of the real walk as instances; every man who only stands is
- *     one static mesh.
+ *   THIRTY-FIVE WORKERS on the skeleton, walking with `Rig.BipedAnimator`,
+ *     each a `Shovable` body — the guards at the lobby doors, the men at
+ *     the holoscreen, the pit's kerbs, the flanks and the centre's near
+ *     end: the ground nearest the player's own path — AND A CROWD OF A
+ *     HUNDRED AND SEVENTY-ONE: `DeckCast.crewFigures`, the REAL dressed
+ *     crewman (cap, headset, belt, pouches, knee pads, a face) baked at
+ *     fourteen poses and instanced, with helmets, tools, datapads, pilots'
+ *     helmets, crates, panels, a stretcher and lit wands instanced off
+ *     the poses' own bones. Two ranked formations under inspection, a
+ *     file of ten marching the room's length, a chow line at a field
+ *     kitchen, a card game on crates, men asleep on cots, a sparring
+ *     pair, a stretcher pair, a knot at a holoscreen, a chaplain's knot,
+ *     three techs at a droid bench, fuel crews, marshals waving fighters
+ *     onto the marks, mechanics on creepers, an ordnance party, pilots
+ *     walking out, twelve on the gallery, gangs round every hull. EVERY
+ *     MAN A `Knockable` BODY that the Force throws and that gets up.
+ *   A HUNDRED AND FORTY-TWO LOOSE PROPS — crates, drums, tool boxes,
+ *     cones, welding carts, helmets, pads, spare panels, droid parts,
+ *     buckets, bombs — `DeckCast.Loose`: eleven instanced kinds, a
+ *     dynamic body each, asleep until touched. And every kit piece a man
+ *     can walk into is a static box, the wall-foot crate clusters too.
+ *   THE BEATS (`addBeats`): the jacks' rams pump, the gantry hoist pays a
+ *     panel down, the second cradle's canopy opens, the engine on the
+ *     stand is test-fired, the rim strobes run red on every launch, five
+ *     holo boards scroll the deck's own lines, the kitchen steams.
  *   TWENTY-FIVE REPAIR JOBS: the section on jacks under the gantry, two
  *     fighters on cradles with their panels off, a transport and a shuttle
  *     with an engine out on a stand apiece, an engine bay with a bowser
@@ -66,14 +79,15 @@
  *     the shared emitter, no point fixtures), a hull being lowered on a
  *     third crane's cable, ten welding arcs throwing sparks.
  *   THREE CRANE BRIDGES on the ceiling rails, SIX LOADER SLEDS on six lanes.
- *   THE TRAFFIC: FOUR modelled hulls in and out through the aperture on
+ *   THE TRAFFIC: SIX modelled hulls in and out through the aperture on
  *     cycles about half as long as they were, three parked, a shuttle
  *     TAXIING the forward centre on its repulsors with a collider that
  *     moves with it, and nine silhouettes outside drawn unfogged to 720 m.
- *   PHYSICS ON ALL OF IT that is near: every droid a `DeckCast.Knockable`,
- *     every worker a `Shovable` — 131 PROP-layer bodies, asleep at their
- *     stations, that the Force grips and throws and that get up and go back.
- *     The crowd has no bodies: past thirty metres that is the honest trade.
+ *   PHYSICS ON ALL OF IT: every droid a `DeckCast.Knockable`, every worker
+ *     a `Shovable`, every crowd figure a `Knockable`, every loose prop a
+ *     `Loose` — 459 PROP-layer bodies, asleep at their stations, that the
+ *     Force grips and throws and that (the men and droids) get up and go
+ *     back. Nothing you can walk up to is a hologram any more.
  *   THE PA ANNOUNCES IT: every launch, every arrival, the taxi, the company,
  *     the lift, and ten lines of the deck's own chatter between — never
  *     closer than `PA.gap` seconds.
@@ -100,10 +114,13 @@
  * of every job, one merged skin per worker, one mesh per parked hull.
  *
  *   before   63 meshes, 121k triangles: 15 droids, 13 men, 3 hulls
- *   after    70 meshes, 266k triangles: 111 droids, 20 men, 89 in the
+ *   then     70 meshes, 266k triangles: 111 droids, 20 men, 89 in the
  *            crowd, 7 hulls, 25 jobs — measured by `deckcost.mjs`
- *   step     `stepDeckLife` 1.0 ms a frame over 300 live frames, timed by
- *            `deckcast.mjs`; 131 bodies, 20 gaits, ~250 instances a frame
+ *   now      ~122 meshes, ~1.9M triangles: 111 droids, 35 men, 171 in the
+ *            crowd (the real figure, 7,380 triangles a head), 142 loose
+ *            props, 9 hulls, 25 jobs and the beats
+ *   step     `stepDeckLife` 1.6-2.2 ms a frame over 300 live frames on a
+ *            loaded box, timed by `deckcast.mjs`; 459 bodies, 35 gaits
  *
  * `tools/checks/decklife.mjs` bounds the file's share and `deckcost.mjs`
  * prints it by family.
@@ -131,8 +148,8 @@ import { BipedAnimator } from './Rig.js';
 import { mergeFigure } from './MergedSkin.js';
 import {
   castMaterials, Assembly, Knockable, DROID_KINDS, DROID_BUILDERS, ASTRO_SCHEMES, astromechDome,
-  buildDeckCrew, bindPose, buildCastFighter, buildCastShuttle, farHullGeometry, crewSilhouettes, CREW_POSES,
-  crewStillGeometry, foldCast,
+  buildDeckCrew, bindPose, buildCastFighter, buildCastShuttle, farHullGeometry, crewFigures, crewAccessories, CREW_POSES,
+  CREW_KIT, Loose, foldCast,
 } from './DeckCast.js';
 /**
  * The sound of the traffic rides the traffic's own clocks — see `stepHull`.
@@ -284,6 +301,43 @@ function frame() {
   const TAXI = { z: Z.apron.z0 - 8, x0: CENTRE.x0 - 4, x1: CENTRE.x1 - 14, speed: 1.4, hold: 9 };
   /** Pallet stacks. */
   const PALLETS = [[W.x1 - 14, W.z0 + 60, 6, 41], [CENTRE.x0 + 24, CENTRE.z0 + 82, 5, 43], [PF.x0 + 34, PF.z1 - 8, 5, 47]];
+  /* ── THE DENSITY PASS: "make it even more dense and full of stuff
+   * happening". Every one of these is a rectangle or a point BETWEEN the
+   * zones, in the free ground named above, so `clearOf` can be asked. */
+  /** The second formation, centre, near the corridor's end: helmeted, inspected. */
+  const FORM2 = { cx: CENTRE.x0 + 16, cz: CENTRE.z0 + 30, files: 5, ranks: 4, dx: 1.6, dz: 2.2 };
+  /** The holoscreen the nearest knot watches, at the centre's near end. */
+  const HOLO = { x: CENTRE.x0 + 9, z: CENTRE.z0 + 16 };
+  /** The cot row, between the tent and the centre's near end. */
+  const COTS = { x0: CENTRE.x0 + 19, z: CENTRE.z0 + 50, n: 5, dx: 2.0 };
+  /** The field kitchen and its chow line, port forward. */
+  const CHOW = { x: PF.x0 + 16, z: PF.z0 + 16, queue: 8 };
+  /** The card game on the port flank. */
+  const CARD = { x: FLANK_L.x0 + 5, z: FLANK_L.z0 + 18 };
+  /** The sparring pair and the chaplain's knot on the starboard flank. */
+  const SPAR = { x: FLANK_R.x1 - 3, z: FLANK_R.z0 + 3 };
+  const CHAP = { x: FLANK_R.x0 + 5, z: FLANK_R.z0 + 3 };
+  /** The droid bench and the ordnance carts, on the strip by pad B. */
+  const BENCH = { x: SF.x1 - 10, z: SF.z0 + 9 };
+  const ORD = { x: SF.x0 + 17, z: SF.z0 + 10.5 };
+  /** A marshal at the foot of each apron mark, off the apron's ground. */
+  const MARSHAL = [{ x: APRON.padL.x, z: Z.apron.z0 - 3, yaw: 0 }, { x: Z.padB.x0 - 1, z: Z.apron.z0 - 3, yaw: 0 }];
+  /** The stretcher pair's run, centre. */
+  const STRETCH = { x: CENTRE.x0 + 4, z0: CENTRE.z0 + 74, z1: CENTRE.z0 + 102 };
+  /** Two more apron marks, outboard of the pads: a fighter's span inside `CLEAR`. */
+  APRON.padW = { x: -Z.apron.x1 * 0.82, z: (Z.apron.z0 + Z.apron.z1) * 0.5 + 4 };
+  APRON.padE = { x: Z.apron.x1 * 0.82, z: (Z.apron.z0 + Z.apron.z1) * 0.5 + 4 };
+  /** The launch strobes: the four corners of the aperture's rim, inside it. */
+  const STROBES = [[-WALL + 14, DECK.aperture.top - 8, DECK.lip - 3], [WALL - 14, DECK.aperture.top - 8, DECK.lip - 3],
+    [-WALL + 14, 7, DECK.lip - 3], [WALL - 14, 7, DECK.lip - 3]];
+  /** The holo boards: the watchers' screen, one by the kitchen, one by the holotable, two on the bulkhead over the crowd. */
+  const BOARDS = [
+    { x: HOLO.x, y: 2.6, z: HOLO.z, yaw: Math.PI, w: 5.0, h: 2.2, post: true },
+    { x: CHOW.x - 4.5, y: 2.4, z: CHOW.z + 2.4, yaw: -Math.PI / 2, w: 3.2, h: 1.5, post: true },
+    { x: RING.x - 4.5, y: 2.4, z: RING.z + 4.0, yaw: Math.PI * 0.75, w: 3.2, h: 1.5, post: true },
+    { x: -26, y: 7.5, z: DECK.aft + 7.6, yaw: 0, w: 9.0, h: 3.6, post: false },
+    { x: 26, y: 7.5, z: DECK.aft + 7.6, yaw: 0, w: 9.0, h: 3.6, post: false },
+  ];
   /* ── THE OUTSIDE. How far past the lip the far leg is drawn, and the
    * three patrol loops that never come in. */
   const OUTSIDE = {
@@ -299,6 +353,7 @@ function frame() {
     WALL, RUN, SPAN, NEAR, MID, CANYON, CLEAR, fwd, deep, across, Z, W, PORT, FLANK_R, FLANK_L, SLIVER, BAND,
     APRON, BAY, GANTRY, SCAFFOLD, CRADLE, HULL, STAND, BOWSER, OUTSIDE, FAR,
     CENTRE, PF, SF, GALLERY, LIFTP, ENG, SHUT, FX2, TENT, RING, FORM, FILE, TAXI, PALLETS,
+    FORM2, HOLO, COTS, CHOW, CARD, SPAR, CHAP, BENCH, ORD, MARSHAL, STRETCH, STROBES, BOARDS,
   });
 }
 
@@ -745,6 +800,9 @@ function addJobs(world, life) {
     head.rotateX(0.6); head.rotateY(yaw);
     kit.geoAt(M.hull, head, x + Math.sin(yaw) * 0.15, g + 4.4, z + Math.cos(yaw) * 0.15);
     floods.push([x, g + 4.4, z, yaw]);
+    /* Solid: the base you trip on and the mast you walk into. */
+    box(x, g + 0.12, z, 0.6, 0.12, 0.6, yaw);
+    box(x, g + 2.3, z, 0.12, 2.3, 0.12);
   };
   /** An engine pod on an A-frame trestle. */
   const engineStand = (x, z, yaw = 0) => {
@@ -846,6 +904,7 @@ function addJobs(world, life) {
     const g = groundAt(world, TENT.x, TENT.z);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
       kit.slabAt(M.dark, TENT.x + sx * TENT.w * 0.5, g + TENT.h * 0.5, TENT.z + sz * TENT.d * 0.5, 0.14, TENT.h, 0.14);
+      box(TENT.x + sx * TENT.w * 0.5, g + TENT.h * 0.5, TENT.z + sz * TENT.d * 0.5, 0.1, TENT.h * 0.5, 0.1);
     }
     kit.slabAt(M.wing, TENT.x, g + TENT.h + 0.06, TENT.z, TENT.w + 0.8, 0.12, TENT.d + 0.8);
     kit.slabAt(M.strip, TENT.x, g + TENT.h + 0.4, TENT.z, 0.5, 0.5, 0.12);
@@ -866,8 +925,129 @@ function addJobs(world, life) {
     floods.push([RING.x, g + 1.3, RING.z, 0, 'holo']);
   }
 
-  /* ── PALLETS: the room's own crate builder, three more stacks. */
-  for (const [px, pz, n, seed] of PALLETS) crates(kit, px, pz, n, seed);
+  /* ── PALLETS: the room's own crate builder, three more stacks — and
+   * every crate in them is solid, off the list the builder returns. */
+  for (const [px, pz, n, seed] of PALLETS) for (const b of crates(kit, px, pz, n, seed)) box(b[0], b[1], b[2], b[3] * 0.5, b[4] * 0.5, b[5] * 0.5, b[6]);
+
+  /* ══ THE DENSITY PASS — the furniture the new groups stand at ═════════
+   *
+   * A row of cots, a field kitchen with its counter and pots, crates as
+   * seats round the card game and the chow line, the droid bench, the PA
+   * officer's lectern, the ordnance carts, the holo boards' posts, the
+   * creepers by the cradle, the fire-test console. Same four bins; every
+   * piece a man can walk into is a static box.
+   */
+  const { COTS, CHOW, CARD, BENCH, FORM, ORD, BOARDS, STROBES } = frame();
+  /** A cot: a frame on four legs, a mattress, a blanket roll. Solid. */
+  const cot = (x, z, yaw) => {
+    const g = groundAt(world, x, z);
+    kit.slabAt(M.dark, x, g + 0.25, z, 0.9, 0.5, 2.2, yaw);
+    kit.slabAt(M.wing, x, g + 0.53, z, 0.86, 0.08, 2.1, yaw);
+    kit.slabAt(M.strip, x, g + 0.62, z - Math.cos(yaw) * 0.8, 0.6, 0.12, 0.3, yaw);
+    box(x, g + 0.28, z, 0.45, 0.28, 1.1, yaw);
+  };
+  for (let i = 0; i < COTS.n; i++) cot(COTS.x0 + i * COTS.dx, COTS.z, 0);
+  /* A crate as a seat: 0.5 high, the sit pose's own. */
+  const seat = (x, z, yaw) => {
+    const g = groundAt(world, x, z);
+    kit.slabAt(M.dark, x, g + 0.25, z, 0.7, 0.5, 0.7, yaw);
+    kit.slabAt(M.hull, x, g + 0.52, z, 0.74, 0.05, 0.74, yaw);
+    box(x, g + 0.26, z, 0.36, 0.26, 0.36, yaw);
+  };
+  seat(COTS.x0 + COTS.n * COTS.dx, COTS.z, Math.PI / 2);
+  /* THE FIELD KITCHEN: a counter with two pots on burners, a rack of
+   * trays behind, a lamp over it — and the steam is a vent (`ventTable`). */
+  {
+    const g = groundAt(world, CHOW.x, CHOW.z);
+    kit.slabAt(M.dark, CHOW.x, g + 0.5, CHOW.z, 6.4, 1.0, 1.0);
+    kit.slabAt(M.hull, CHOW.x, g + 1.02, CHOW.z, 6.6, 0.06, 1.1);
+    kit.slabAt(M.strip, CHOW.x, g + 0.55, CHOW.z - 0.52, 6.0, 0.08, 0.04);
+    for (const dx of [-2.2, -0.9, 0.6]) {
+      kit.geoAt(M.dark, new THREE.CylinderGeometry(0.34, 0.30, 0.42, 12), CHOW.x + dx, g + 1.25, CHOW.z);
+      kit.geoAt(M.hull, new THREE.CylinderGeometry(0.36, 0.36, 0.05, 12), CHOW.x + dx, g + 1.48, CHOW.z);
+    }
+    kit.slabAt(M.dark, CHOW.x + 2.4, g + 1.2, CHOW.z, 1.2, 0.36, 0.8);
+    kit.slabAt(M.dark, CHOW.x - 2.0, g + 0.8, CHOW.z + 3.2, 2.4, 1.6, 0.5);
+    for (let i = 0; i < 4; i++) kit.slabAt(M.hull, CHOW.x - 2.0, g + 0.3 + i * 0.36, CHOW.z + 3.2, 2.2, 0.04, 0.46);
+    for (const sx of [-1, 1]) kit.slabAt(M.dark, CHOW.x + sx * 3.4, g + 1.6, CHOW.z + 0.8, 0.1, 3.2, 0.1);
+    kit.slabAt(M.hull, CHOW.x, g + 3.25, CHOW.z + 0.8, 7.0, 0.1, 0.4);
+    floods.push([CHOW.x, g + 3.1, CHOW.z + 0.8, 0, 'lamp']);
+    box(CHOW.x, g + 0.5, CHOW.z, 3.3, 0.55, 0.55);
+    box(CHOW.x - 2.0, g + 0.8, CHOW.z + 3.2, 1.2, 0.8, 0.25);
+    for (let i = 0; i < 4; i++) seat(CHOW.x + 6 + i * 1.6, CHOW.z + 3.5 + 0.55, Math.PI);
+  }
+  /* THE CARD GAME's seats. */
+  for (let k = 0; k < 4; k++) {
+    const a = k * Math.PI / 2 + Math.PI / 4;
+    seat(CARD.x + Math.sin(a) * 1.15 - Math.sin(a) * 0.55, CARD.z + Math.cos(a) * 1.15 - Math.cos(a) * 0.55, a);
+  }
+  /* THE DROID BENCH: a table with a vice, a pit droid's legs and torso on
+   * it, a lamp bar over it. The dome and the rest are loose on the deck. */
+  {
+    const g = groundAt(world, BENCH.x, BENCH.z);
+    kit.slabAt(M.dark, BENCH.x, g + 0.45, BENCH.z, 3.2, 0.9, 1.2);
+    kit.slabAt(M.hull, BENCH.x, g + 0.94, BENCH.z, 3.4, 0.08, 1.3);
+    kit.slabAt(M.dark, BENCH.x - 1.2, g + 1.1, BENCH.z, 0.3, 0.3, 0.3);
+    kit.geoAt(M.hull, new THREE.CylinderGeometry(0.26, 0.24, 0.7, 10), BENCH.x + 0.3, g + 1.2, BENCH.z + 0.1);
+    kit.slabAt(M.dark, BENCH.x + 1.0, g + 1.05, BENCH.z - 0.3, 0.12, 0.5, 0.12);
+    kit.slabAt(M.dark, BENCH.x + 1.3, g + 1.05, BENCH.z + 0.3, 0.12, 0.5, 0.12);
+    for (const sx of [-1, 1]) kit.slabAt(M.dark, BENCH.x + sx * 1.8, g + 1.4, BENCH.z, 0.08, 2.8, 0.08);
+    kit.slabAt(M.strip, BENCH.x, g + 2.7, BENCH.z, 3.6, 0.08, 0.2);
+    floods.push([BENCH.x, g + 2.6, BENCH.z, 0, 'lamp']);
+    box(BENCH.x, g + 0.5, BENCH.z, 1.7, 0.5, 0.65);
+  }
+  /* THE LECTERN before the far formation, with the PA's mic and a lit face. */
+  {
+    const x = FORM.cx, z = FORM.cz - 11.6, g = groundAt(world, x, z);
+    kit.slabAt(M.dark, x, g + 0.6, z, 0.7, 1.2, 0.5);
+    kit.slabAt(M.hull, x, g + 1.24, z, 0.8, 0.06, 0.6, 0);
+    kit.slabAt(M.strip, x, g + 0.9, z + 0.26, 0.4, 0.3, 0.02);
+    kit.geoAt(M.dark, new THREE.CylinderGeometry(0.012, 0.012, 0.5, 5), x + 0.2, g + 1.5, z);
+    box(x, g + 0.62, z, 0.4, 0.62, 0.3);
+  }
+  /* THE ORDNANCE CARTS: three low trolleys with cradles for the bombs
+   * that lie on them (loose), and chocks. */
+  for (let i = 0; i < 3; i++) {
+    const x = ORD.x - 3 + i * 3, z = ORD.z, g = groundAt(world, x, z);
+    kit.slabAt(M.dark, x, g + 0.55, z, 2.0, 0.16, 1.0);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      const wh = new THREE.CylinderGeometry(0.22, 0.22, 0.16, 10);
+      wh.rotateZ(Math.PI / 2);
+      kit.geoAt(M.dark, wh, x + sx * 0.8, g + 0.22, z + sz * 0.55);
+    }
+    for (const sx of [-1, 1]) kit.slabAt(M.hull, x + sx * 0.6, g + 0.72, z, 0.1, 0.18, 0.9);
+    kit.slabAt(M.strip, x, g + 0.64, z + 0.55, 2.0, 0.04, 0.06);
+    box(x, g + 0.45, z, 1.0, 0.3, 0.5);
+  }
+  /* THE HOLO BOARDS' posts and frames; the lit face is `addBoards`. */
+  for (const B of BOARDS) {
+    const g = groundAt(world, B.x, B.z);
+    const c = Math.cos(B.yaw), sn = Math.sin(B.yaw);
+    kit.slabAt(M.dark, B.x, B.y, B.z - c * 0.08, B.w + 0.3, B.h + 0.3, 0.12, B.yaw);
+    if (B.post) {
+      for (const sx of [-1, 1]) {
+        const px = B.x + c * sx * (B.w * 0.5 - 0.3), pz = B.z - sn * sx * (B.w * 0.5 - 0.3);
+        kit.slabAt(M.dark, px, g + B.y * 0.5, pz, 0.12, B.y, 0.12);
+        box(px, g + B.y * 0.5, pz, 0.1, B.y * 0.5, 0.1);
+      }
+      kit.slabAt(M.dark, B.x, g + 0.08, B.z - c * 0.1, B.w * 0.5, 0.16, 0.8, B.yaw);
+    }
+  }
+  /* THE CREEPERS the mechanics lie on beside the first cradle. */
+  for (const [dx, dz, yaw] of [[-1.2, 1.2, -Math.PI / 2], [1.6, -1.0, Math.PI / 2]]) {
+    const x = CRADLE.x + dx, z = CRADLE.z + dz, g = groundAt(world, x, z);
+    kit.slabAt(M.dark, x, g + 0.09, z, 0.7, 0.06, 1.9, yaw);
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) kit.slabAt(M.dark, x + Math.cos(yaw) * sx * 0.3 + Math.sin(yaw) * sz * 0.8, g + 0.04, z - Math.sin(yaw) * sx * 0.3 + Math.cos(yaw) * sz * 0.8, 0.08, 0.08, 0.08);
+  }
+  /* THE FIRE-TEST CONSOLE at the engine stand, a man's length off the bell. */
+  {
+    const x = ENG.x + 4.5, z = ENG.z - 6.5, g = groundAt(world, x, z);
+    kit.slabAt(M.dark, x, g + 0.55, z, 1.2, 1.1, 0.6);
+    kit.slabAt(M.strip, x, g + 1.05, z + 0.2, 1.0, 0.3, 0.06);
+    box(x, g + 0.55, z, 0.6, 0.55, 0.3);
+  }
+  /* THE STROBES' housings on the rim. */
+  for (const [x, y, z] of STROBES) kit.slabAt(M.dark, x, y, z, 0.6, 0.6, 0.4);
 
   life.bay = { ground: g0, meshes: kit.build(world) };
   life.floods = floods;
@@ -887,8 +1067,8 @@ function addParkedHulls(world, life) {
   const { SHUT, FX2, LIFTP } = frame();
   const C = castMaterials(world._deckFaction);
   const P = deckMats(world._deckFaction);
-  const park = (cast, x, z, yaw, lift) => {
-    foldCast(cast, C.cast);
+  const park = (cast, x, z, yaw, lift, canopy) => {
+    if (canopy) hingeCanopy(cast, C.cast); else foldCast(cast, C.cast);
     const g = cast.group;
     const gy = groundAt(world, x, z) + cast.gearY + lift;
     g.position.set(x, gy, z);
@@ -903,7 +1083,12 @@ function addParkedHulls(world, life) {
   };
   const parked = [];
   parked.push({ site: 'shuttle-bay', cast: park(buildCastShuttle({ faction: world._deckFaction }), SHUT.x, SHUT.z, SHUT.yaw, 0) });
-  parked.push({ site: 'cradle-2', cast: park(buildCastFighter({ faction: world._deckFaction }), FX2.x, FX2.z, FX2.yaw, 0.3) });
+  /* The second cradle's fighter keeps its canopy as a hinged pane: it
+   * opens and closes on `stepBeats`' clock — one more draw, and a hull
+   * that is being WORKED ON rather than parked. */
+  const fx2 = park(buildCastFighter({ faction: world._deckFaction }), FX2.x, FX2.z, FX2.yaw, 0.3, true);
+  parked.push({ site: 'cradle-2', cast: fx2 });
+  life.canopy = fx2.meshes.glass || null;
   /* THE LIFT: a slab on a mover with the silhouette fighter on it, nose to
    * the aperture — one vertex-coloured mesh, the platform and the ship. */
   const plat = mover(world);
@@ -918,6 +1103,36 @@ function addParkedHulls(world, life) {
   castMesh(world, plat, A.merge(), C.cast, 'deck-lift-fighter');
   parked.push({ site: 'lift', plat, t: 0 });
   life.parked = parked;
+}
+
+/**
+ * Fold a cast hull's body and gear to one mesh but keep its canopy as its
+ * own mesh, pivoted on its rear edge so it can swing up. The pane keeps
+ * the glass material — it is looked at from a metre away on this cradle.
+ */
+function hingeCanopy(cast, material) {
+  const glass = cast.meshes.glass;
+  const geos = [];
+  for (const k of ['body', 'gear']) {
+    const m = cast.meshes[k];
+    if (!m) continue;
+    geos.push(m.geometry);
+    cast.group.remove(m);
+  }
+  const mesh = new THREE.Mesh(mergeGeos(geos), material);
+  mesh.name = 'hull'; mesh.castShadow = true; mesh.receiveShadow = true; mesh.frustumCulled = false;
+  cast.group.add(mesh);
+  if (glass) {
+    glass.geometry.computeBoundingBox();
+    const bb = glass.geometry.boundingBox;
+    const pivot = new THREE.Vector3(0, bb.min.y, bb.min.z);
+    glass.geometry.translate(-pivot.x, -pivot.y, -pivot.z);
+    glass.position.copy(pivot);
+    glass.name = 'deck-canopy';
+    glass.frustumCulled = false;
+  }
+  cast.meshes = { body: mesh, glass: glass || null, gear: null };
+  return cast;
 }
 
 function stepParked(world, life, dt) {
@@ -1392,7 +1607,9 @@ function trolleyRun(world) {
     y: g0 + GANTRY.beamY - 0.1 - 0.18 - 0.23,
     x0: BAY.x - GANTRY.half + 2.5,
     x1: BAY.x + GANTRY.half - 2.5,
-    speed: 0.9, hold: 4.0,
+    /* A long dwell: the hoist pays a panel down to the section and back
+     * while the crab stands (`stepBeats`). */
+    speed: 0.9, hold: 16.0,
   });
 }
 
@@ -1684,7 +1901,7 @@ function stepSleds(world, life, dt) {
 let WORKERS = null;
 function workerJobs(world) {
   if (WORKERS) return WORKERS;
-  const { BAY, SCAFFOLD, CRADLE, HULL, STAND, BOWSER, FLANK_R, FLANK_L, BAND, APRON, CENTRE, Z } = frame();
+  const { BAY, SCAFFOLD, CRADLE, HULL, STAND, BOWSER, FLANK_R, FLANK_L, BAND, APRON, CENTRE, Z, HOLO, FORM2 } = frame();
   const cy = Math.cos(CRADLE.yaw), sy = Math.sin(CRADLE.yaw);
   const g0 = groundAt(world, SCAFFOLD.x, SCAFFOLD.z);
   return (WORKERS = [
@@ -1714,6 +1931,26 @@ function workerJobs(world) {
     { job: 'kneel', x: Z.pit.x0 + 8, z: Z.pit.z1 + 2.5, yaw: Math.PI },
     { job: 'watch', x: Z.pit.x0 + 3, z: Z.pit.z1 + 4, yaw: Math.PI - 0.3 },
     { job: 'walk', path: [CENTRE.x0 + 20, CENTRE.z0 + 2, CENTRE.x1 - 2, CENTRE.z0 + 2] },
+    /* FIFTEEN MORE, all inside the ground nearest the player's own path —
+     * "what you get close to is fully animated": two guards flanking the
+     * lobby's mouth, the men watching the holoscreen at the centre's near
+     * end, the inspecting officer and two sergeants at the second
+     * formation, four more on the pit's kerbs, two more crash men. */
+    { job: 'guard', x: -Z.corridor.x1 - 1.6, z: Z.lobby.z1 + 1, yaw: 0.35 },
+    { job: 'guard', x: Z.corridor.x1 + 1.6, z: Z.lobby.z1 + 1, yaw: -0.35 },
+    { job: 'watch', x: HOLO.x - 3, z: HOLO.z - 3.5, yaw: 0 },
+    { job: 'watch', x: HOLO.x, z: HOLO.z - 3.5, yaw: 0 },
+    { job: 'watch', x: HOLO.x + 3, z: HOLO.z - 3.5, yaw: 0 },
+    { job: 'walk', path: [FORM2.cx - 5, FORM2.cz - 4.6, FORM2.cx + 5, FORM2.cz - 4.6] },
+    { job: 'stand', x: FORM2.cx - 6.5, z: FORM2.cz, yaw: Math.PI / 2 },
+    { job: 'stand', x: FORM2.cx + 6.5, z: FORM2.cz, yaw: -Math.PI / 2 },
+    { job: 'stand', x: Z.pit.x0 + 27, z: Z.pit.z0 - 2, yaw: 0 },
+    { job: 'kneel', x: Z.pit.x0 + 11, z: Z.pit.z0 - 2, yaw: 0 },
+    { job: 'stand', x: Z.pit.x0 + 16, z: Z.pit.z1 + 2.5, yaw: Math.PI },
+    { job: 'kneel', x: Z.pit.x0 + 23, z: Z.pit.z1 + 3, yaw: Math.PI },
+    { job: 'kneel', x: CENTRE.x0 + 5, z: CENTRE.z0 + 6, yaw: Math.PI / 2 },
+    { job: 'crash', x: APRON.crash.x - 5.5, z: APRON.crash.z + 2.5, yaw: 0 },
+    { job: 'crash', x: APRON.crash.x + 5.5, z: APRON.crash.z + 2.5, yaw: 0 },
   ]);
 }
 
@@ -1721,6 +1958,7 @@ function addWorkers(world, life) {
   const rng = makeRng(7717);
   const jobs = workerJobs(world);
   const workers = [];
+  let crashN = 0;
   for (let i = 0; i < jobs.length; i++) {
     const J = jobs[i];
     const fig = buildDeckCrew({ faction: world._deckFaction, tone: i % 2, scale: 0.97 + rng() * 0.06 });
@@ -1738,8 +1976,12 @@ function addWorkers(world, life) {
     const w = {
       i, job: J, fig, rig: fig.rig, root: fig.root, anim, shove, yaw, x, z, y,
       pos: new THREE.Vector3(x, y, z), vel: new THREE.Vector3(), prev: new THREE.Vector3(x, y, z),
-      at: rng(), dir: rng() < 0.5 ? -1 : 1, hold: rng() * 4, speed: 1.15 + rng() * 0.5, t: rng() * 6,
+      /* A crash man starts AT the station (`at` 0 is the station's end of
+       * his run); the draw is still made so every man after him lands
+       * where he did. */
+      at: J.job === 'crash' ? (rng(), 0) : rng(), dir: rng() < 0.5 ? -1 : 1, hold: rng() * 4, speed: 1.15 + rng() * 0.5, t: rng() * 6,
       run: false, target: null, wasDown: false, slot: J.job === 'torch' ? glowSlot(life) : -1,
+      crashN: J.job === 'crash' ? crashN++ : -1,
       merged: mergeFigure({ rig: fig.rig, root: fig.root, palette: null }, { castShadow: true }),
       /* The animator's argument bag, allocated ONCE. `Enemy._pose` builds a
        * literal a frame; at thirteen men that is eight hundred objects a
@@ -1803,7 +2045,10 @@ function stepWorkers(world, life, dt) {
       let ax, az, bx, bz, spd;
       if (w.run || w.target) {
         ax = J.x; az = J.z; bx = w.target.x; bz = w.target.z;
-        spd = w.run ? SPRINT : WALK;
+        /* Out at a sprint; back at a jog — four men walking forty metres
+         * home at strolling pace are still on the apron when the next
+         * hull spools. */
+        spd = w.run ? SPRINT : WALK * 1.5;
         const span = Math.hypot(bx - ax, bz - az);
         const want = w.run ? 1 : 0;
         if (w.at !== want) w.at = clamp(w.at + (spd / span) * (want > w.at ? 1 : -1) * dt, 0, 1);
@@ -1943,97 +2188,171 @@ function callCrashCrew(life, H, x, z, out) {
     if (w.job.job !== 'crash') continue;
     if (out) {
       if (!w.target) w.target = { x: 0, z: 0 };
-      w.target.x = x + (w.i % 2 ? 6 : -6); w.target.z = z - 7;
+      /* Four men, four marks: a pair at the gear and a pair behind them. */
+      const n = w.crashN & 3;
+      w.target.x = x + (n & 1 ? 6 : -6) * (n >= 2 ? 1.6 : 1); w.target.z = z - 7 - (n >= 2 ? 3 : 0);
       w.run = true;
     } else w.run = false;
   }
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
-/*  7b · THE CROWD — eighty men past thirty metres, fifteen draw calls    */
+/*  7b · THE CROWD — a hundred and seventy real men, every one a body     */
 /* ══════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ THE MEN WHO ARE NOT BODIES ════════════════════════════════════════════
+ * ══ THE MEN WHO USED TO BE BOXES ═════════════════════════════════════════
  *
- * "increase the amount of troops … by an order of magnitude". Twenty men
- * on the skeleton is what the gait solver and the physics can afford at
- * sixty hertz; the other eighty are `DeckCast.crewSilhouettes` — the same
- * skeleton walked by the same animator, baked at fifteen poses — placed
- * as instances. A man here is a matrix, a suit tone and a pose; a walker
- * flips through the six walk frames at the real cadence. Nothing here has
- * a body: the Force passes through them, which at thirty metres and more
- * from the player's ground is the honest trade, and every one of them is
- * `clearOf` the ground the player, the company and the traffic use.
+ *   "There are many humanoid figures with no detail and barely any physics
+ *    like nothing you can get close to and touch should look like shit."
+ *
+ * The crowd was `crewSilhouettes`: bone boxes, no bodies, "the honest
+ * trade past thirty metres". It is `DeckCast.crewFigures` now — the real
+ * dressed crewman baked at fourteen poses with a face — and EVERY man in
+ * it is a `Knockable`: an asleep PROP-layer body at his station the Force
+ * grips and throws, that lies where it lands, gets up and walks back to
+ * his post, exactly as the droids do. While he is down, the instance is
+ * written off the body.
  *
  * A row: `pose` (a still), or `walk`/`carry` with a `path`; `rest` is the
- * still a walker wears at the ends of his path. `convoy`/`gap` as the
- * droids: the file marches on its leader's clock.
+ * still a walker wears at the ends of his path. `flip: [a, b]` alternates
+ * two stills every `every` seconds (a marshal's wave, a cook's ladle, a
+ * sparring pair's jab). `kit` names an accessory from `DeckCast.CREW_KIT`
+ * (helmet, tool, pad, pilothelm, crate, panel, stretcher, wand) and
+ * `tone` a suit from `SIL_TONES`. `convoy`/`gap` as the droids: a file
+ * marches on its leader's clock.
+ *
+ * The groups, so a reader can find each: two ranked formations under
+ * inspection, a file marching the room, a chow line at a field kitchen, a
+ * card game on crates, men asleep on cots, a sparring pair with a ring of
+ * watchers, a stretcher pair, a knot round a holoscreen, a chaplain and
+ * his knot, a droid bench with three techs, fuel crews at the bowsers, a
+ * marshal waving a fighter onto each apron mark with lit wands, mechanics
+ * on creepers by the cradle, an ordnance party loading a shuttle, three
+ * pilots walking out with their helmets, the gallery watch, and gangs
+ * round every hull under repair.
  */
 let SILS = null;
 function silJobs() {
   if (SILS) return SILS;
-  const { FORM, FILE, TENT, RING, GALLERY, CRADLE, SHUT, FX2, HULL, LIFTP, PF, CENTRE, W, SF } = frame();
+  const { FORM, FORM2, FILE, TENT, RING, GALLERY, CRADLE, SHUT, FX2, HULL, LIFTP, PF, CENTRE, W, SF, ENG,
+    CHOW, CARD, COTS, SPAR, CHAP, BENCH, HOLO, MARSHAL, STRETCH, ORD, BOWSER } = frame();
   const rows = [];
-  /* THE FORMATION on the far apron: ranks facing aft, an officer walking
-   * the front rank with his arm up. */
-  for (let r = 0; r < FORM.ranks; r++) {
-    for (let f = 0; f < FORM.files; f++) {
-      rows.push({ pose: 'stand', x: FORM.cx + (f - (FORM.files - 1) * 0.5) * FORM.dx, z: FORM.cz + (r - (FORM.ranks - 1) * 0.5) * FORM.dz, yaw: Math.PI, tone: 1 });
+  const still = (pose, x, z, yaw, tone, extra) => rows.push(Object.assign({ pose, x, z, yaw, tone }, extra || {}));
+  /* THE FORMATIONS: ranks facing aft, an officer walking the front rank
+   * with his arm up, a datapad in the other hand. The second wears helmets. */
+  for (const [F, kit, tone] of [[FORM, null, 1], [FORM2, 'helmet', 0]]) {
+    for (let r = 0; r < F.ranks; r++) {
+      for (let f = 0; f < F.files; f++) {
+        still('stand', F.cx + (f - (F.files - 1) * 0.5) * F.dx, F.cz + (r - (F.ranks - 1) * 0.5) * F.dz, Math.PI, tone, kit ? { kit } : null);
+      }
     }
+    rows.push({ walk: true, rest: 'point', path: [F.cx - 7, F.cz - 7, F.cx + 7, F.cz - 7], tone: 5, speed: 0.9, kit: 'pad' });
   }
-  rows.push({ walk: true, rest: 'stand', path: [FORM.cx - 9, FORM.cz - 7, FORM.cx + 9, FORM.cz - 7], tone: 2, speed: 0.9 });
+  /* The PA officer at his lectern before the far formation. */
+  still('point', FORM.cx, FORM.cz - 10.5, 0, 5, { kit: 'pad' });
   /* THE FILE marching the room's length: ten men on the leader's clock. */
-  rows.push({ walk: true, rest: 'stand', path: [FILE.x, FILE.z0, FILE.x, FILE.z1], tone: 1, speed: 1.3 });
-  for (let i = 1; i < FILE.men; i++) rows.push({ walk: true, rest: 'stand', convoy: i, gap: FILE.gap, tone: 1 });
+  rows.push({ walk: true, rest: 'stand', path: [FILE.x, FILE.z0, FILE.x, FILE.z1], tone: 1, speed: 1.3, kit: 'helmet' });
+  for (let i = 1; i < FILE.men; i++) rows.push({ walk: true, rest: 'stand', convoy: i, gap: FILE.gap, tone: 1, kit: 'helmet' });
   /* THE MEDIC TENT: two sitting on the cots, a medic over one, one kneeling. */
-  rows.push({ pose: 'sit', x: TENT.x - 1.6, z: TENT.z - 0.9, yaw: 0, tone: 0, lift: 0 });
-  rows.push({ pose: 'sit', x: TENT.x + 1.6, z: TENT.z - 0.9, yaw: 0, tone: 1, lift: 0 });
-  rows.push({ pose: 'stand', x: TENT.x - 1.6, z: TENT.z + 1.4, yaw: Math.PI, tone: 3 });
-  rows.push({ pose: 'kneel', x: TENT.x + 1.6, z: TENT.z + 1.6, yaw: Math.PI, tone: 3 });
-  rows.push({ pose: 'stand', x: TENT.x + 4.2, z: TENT.z - 3.5, yaw: -1.2, tone: 0 });
+  still('sit', TENT.x - 1.6, TENT.z - 0.9, 0, 0);
+  still('sit', TENT.x + 1.6, TENT.z - 0.9, 0, 1);
+  still('stand', TENT.x - 1.6, TENT.z + 1.4, Math.PI, 3, { kit: 'pad' });
+  still('kneel', TENT.x + 1.6, TENT.z + 1.6, Math.PI, 3);
+  still('stand', TENT.x + 4.2, TENT.z - 3.5, -1.2, 0);
+  /* THE COTS: men asleep in a row, a medic sitting up at the end. */
+  for (let i = 0; i < COTS.n; i++) still('lie', COTS.x0 + i * COTS.dx, COTS.z, 0, i % 2, { y: 0.5 });
+  still('sit', COTS.x0 + COTS.n * COTS.dx, COTS.z, Math.PI / 2, 3, { kit: 'pad' });
   /* THE BRIEFING CIRCLE: seven round the holotable, one gap for the droid. */
   for (let k = 0; k < 8; k++) {
     if (k === 4) continue;
     const a = k * Math.PI / 4;
-    rows.push({ pose: k === 0 ? 'point' : 'stand', x: RING.x + Math.sin(a) * RING.r, z: RING.z + Math.cos(a) * RING.r, yaw: a + Math.PI, tone: k % 3 });
+    still(k === 0 ? 'point' : 'stand', RING.x + Math.sin(a) * RING.r, RING.z + Math.cos(a) * RING.r, a + Math.PI, k % 3, k === 0 ? { kit: 'pad' } : null);
   }
+  /* THE HOLOSCREEN: a knot watching the board, two rows deep. */
+  for (let i = 0; i < 4; i++) still('stand', HOLO.x - 3 + i * 2, HOLO.z - 5.5, 0, i % 3);
+  still('lean', HOLO.x - 2, HOLO.z - 7.5, 0, 2);
+  still('stand', HOLO.x + 1, HOLO.z - 7.5, 0, 0, { kit: 'helmet' });
+  /* THE CHOW LINE: two cooks behind the counter, a queue, four eating on crates. */
+  still('stand', CHOW.x - 2, CHOW.z + 1.6, Math.PI, 3, { flip: ['lean', 'stand'], every: 1.6 });
+  still('stand', CHOW.x + 1.5, CHOW.z + 1.6, Math.PI, 3, { flip: ['lean', 'stand'], every: 2.1 });
+  for (let i = 0; i < CHOW.queue; i++) still('stand', CHOW.x + 3 + i * 1.5, CHOW.z - 1.8, -Math.PI / 2, i % 3, i % 4 === 1 ? { kit: 'helmet' } : null);
+  for (let i = 0; i < 4; i++) still('sit', CHOW.x + 6 + i * 1.6, CHOW.z + 3.5, Math.PI, (i + 1) % 3);
+  /* THE CARD GAME: four on crates round a crate, a kibitzer standing. */
+  for (let k = 0; k < 4; k++) {
+    const a = k * Math.PI / 2 + Math.PI / 4;
+    still('sit', CARD.x + Math.sin(a) * 1.15, CARD.z + Math.cos(a) * 1.15, a + Math.PI, k % 3);
+  }
+  still('lean', CARD.x + 2.4, CARD.z - 0.6, -Math.PI / 2 - 0.4, 2);
+  /* THE SPARRING PAIR and the ring round them. */
+  still('spar', SPAR.x - 0.8, SPAR.z, Math.PI / 2, 0, { flip: ['spar', 'lean'], every: 0.7 });
+  still('spar', SPAR.x + 0.8, SPAR.z, -Math.PI / 2, 1, { flip: ['spar', 'lean'], every: 0.9 });
+  still('stand', SPAR.x - 2, SPAR.z + 2.3, Math.PI + 0.6, 2);
+  still('stand', SPAR.x + 2, SPAR.z + 2.3, Math.PI - 0.6, 0);
+  /* THE CHAPLAIN and the knot of men before him. */
+  still('point', CHAP.x, CHAP.z - 1.5, 0, 5);
+  for (const [dx, dz] of [[-1.6, 1.4], [0, 2.0], [1.6, 1.4], [-1, 3.5], [1, 3.5]]) still('stand', CHAP.x + dx, CHAP.z + dz, Math.PI, 2, dx > 0.5 ? { kit: 'helmet' } : null);
+  /* THE DROID BENCH: three techs over a pit droid in pieces. */
+  still('lean', BENCH.x - 1.4, BENCH.z + 1.6, Math.PI, 0, { kit: 'tool', flip: ['lean', 'stand'], every: 2.4 });
+  still('lean', BENCH.x + 1.4, BENCH.z + 1.6, Math.PI, 1, { kit: 'tool' });
+  still('kneel', BENCH.x, BENCH.z - 1.6, 0, 2, { kit: 'tool' });
+  /* FUEL CREWS at the bowsers that had none. */
+  still('kneel', ENG.bowser.x - 2.2, ENG.bowser.z + 1.2, Math.PI / 2, 2, { kit: 'tool' });
+  still('stand', ENG.bowser.x + 0.5, ENG.bowser.z - 2.4, 0, 0);
+  still('kneel', SHUT.bowser.x + 2.4, SHUT.bowser.z + 1.0, -Math.PI / 2, 2);
+  still('stand', SHUT.bowser.x - 0.6, SHUT.bowser.z + 2.6, Math.PI, 1, { kit: 'pad' });
+  still('stand', BOWSER.x - 2.4, BOWSER.z - 1.6, 0.6, 0, { kit: 'tool' });
+  /* THE MARSHALS: one at the foot of each apron mark, wands lit, waving. */
+  for (const M of MARSHAL) still('point', M.x, M.z, M.yaw, 2, { kit: 'wand', lit: true, flip: ['point', 'stand'], every: 0.9 });
+  /* MECHANICS ON CREEPERS beside the first cradle. */
+  still('lie', CRADLE.x - 1.2, CRADLE.z + 1.2, -Math.PI / 2, 0, { y: 0.12 });
+  still('lie', CRADLE.x + 1.6, CRADLE.z - 1.0, Math.PI / 2, 1, { y: 0.12 });
+  /* THE ORDNANCE PARTY: bombs on carts, a loader kneeling at the cart. */
+  still('kneel', ORD.x - 3.2, ORD.z - 1.6, 0, 1, { kit: 'tool' });
+  still('stand', ORD.x + 0.4, ORD.z - 2.0, 0, 0, { kit: 'pad' });
+  still('lean', ORD.x + 3.6, ORD.z - 1.6, 0, 2);
   /* THE GALLERY: pairs at the rail thirty metres up, both walls. */
   for (const sgn of [-1, 1]) {
     for (const z of GALLERY.z) {
-      rows.push({ pose: 'lean', x: sgn * GALLERY.x, z: z - 0.9, yaw: sgn * Math.PI / 2, tone: 0, y: GALLERY.y });
-      rows.push({ pose: 'stand', x: sgn * GALLERY.x, z: z + 0.9, yaw: -sgn * Math.PI / 2, tone: 1, y: GALLERY.y });
+      still('lean', sgn * GALLERY.x, z - 0.9, sgn * Math.PI / 2, 0, { y: GALLERY.y });
+      still('stand', sgn * GALLERY.x, z + 0.9, -sgn * Math.PI / 2, 1, { y: GALLERY.y, kit: 'helmet' });
     }
   }
   /* GANGS round the hulls under repair. */
   const cy = Math.cos(CRADLE.yaw), sy = Math.sin(CRADLE.yaw);
-  rows.push({ pose: 'kneel', x: CRADLE.x + 6.5 * cy, z: CRADLE.z - 6.5 * sy + 1.4, yaw: -Math.PI / 2 - CRADLE.yaw, tone: 0 });
-  rows.push({ pose: 'stand', x: CRADLE.x - 1, z: CRADLE.z + 8.5, yaw: Math.PI, tone: 1 });
-  rows.push({ pose: 'point', x: CRADLE.x + 2, z: CRADLE.z + 9.5, yaw: Math.PI + 0.4, tone: 2 });
-  rows.push({ pose: 'kneel', x: SHUT.x - 7.5, z: SHUT.z + 8, yaw: Math.PI / 2, tone: 0 });
-  rows.push({ pose: 'stand', x: SHUT.x - 9, z: SHUT.z - 6, yaw: Math.PI / 2, tone: 1 });
-  rows.push({ pose: 'stand', x: SHUT.x + 10, z: SHUT.z + 2, yaw: -Math.PI / 2 + 0.3, tone: 2 });
-  rows.push({ pose: 'point', x: SHUT.x + 11, z: SHUT.z - 1, yaw: -Math.PI / 2, tone: 0 });
-  rows.push({ pose: 'kneel', x: FX2.x + 5.5, z: FX2.z + 7, yaw: -Math.PI * 0.8, tone: 1 });
-  rows.push({ pose: 'stand', x: FX2.x - 3, z: FX2.z + 9, yaw: Math.PI, tone: 0 });
-  rows.push({ pose: 'stand', x: FX2.x - 1, z: FX2.z - 9, yaw: 0.2, tone: 2 });
-  rows.push({ pose: 'stand', x: HULL.x + 6, z: HULL.z + 4, yaw: -Math.PI / 2, tone: 1 });
-  rows.push({ pose: 'kneel', x: HULL.x + 6, z: HULL.z - 6, yaw: -Math.PI / 2, tone: 0 });
-  rows.push({ pose: 'stand', x: LIFTP.x - LIFTP.w * 0.5 - 4, z: LIFTP.z - 4, yaw: Math.PI / 2, tone: 2 });
-  rows.push({ pose: 'point', x: LIFTP.x + LIFTP.w * 0.5 + 3, z: LIFTP.z - 2, yaw: -Math.PI / 2, tone: 1 });
-  /* TWO-MAN TEAMS carrying a crate between them: the second is the first's convoy. */
-  const team = (path, tone) => { rows.push({ carry: true, rest: 'carry0', path, tone, speed: 1.0 }); rows.push({ carry: true, rest: 'carry0', convoy: 1, gap: 1.5, tone }); };
-  team([PF.x1 - 1, PF.z0 + 2, PF.x1 - 1, PF.z1 - 16], 0);
-  team([W.x0 - 5, SF.z0 - 2, W.x0 - 5, SF.z1 + 24], 1);
-  team([W.x1 - 12, W.z0 + 58, W.x1 - 12, W.z1 - 4], 2);
-  /* WALKERS: a man with each protocol droid (the droids' own paths), and
-   * a few on errands. */
+  still('kneel', CRADLE.x + 6.5 * cy, CRADLE.z - 6.5 * sy + 1.4, -Math.PI / 2 - CRADLE.yaw, 0, { kit: 'tool' });
+  still('stand', CRADLE.x - 1, CRADLE.z + 8.5, Math.PI, 1);
+  still('point', CRADLE.x + 2, CRADLE.z + 9.5, Math.PI + 0.4, 2, { kit: 'pad' });
+  still('kneel', SHUT.x - 7.5, SHUT.z + 8, Math.PI / 2, 0, { kit: 'tool' });
+  still('stand', SHUT.x - 9, SHUT.z - 6, Math.PI / 2, 1);
+  still('stand', SHUT.x + 10, SHUT.z + 2, -Math.PI / 2 + 0.3, 2);
+  still('point', SHUT.x + 11, SHUT.z - 1, -Math.PI / 2, 0, { kit: 'pad' });
+  still('kneel', FX2.x + 5.5, FX2.z + 7, -Math.PI * 0.8, 1, { kit: 'tool' });
+  still('stand', FX2.x - 3, FX2.z + 9, Math.PI, 0);
+  still('stand', FX2.x - 1, FX2.z - 9, 0.2, 2);
+  still('stand', HULL.x + 6, HULL.z + 4, -Math.PI / 2, 1);
+  still('kneel', HULL.x + 6, HULL.z - 6, -Math.PI / 2, 0, { kit: 'tool' });
+  still('stand', LIFTP.x - LIFTP.w * 0.5 - 4, LIFTP.z - 4, Math.PI / 2, 2);
+  still('point', LIFTP.x + LIFTP.w * 0.5 + 3, LIFTP.z - 2, -Math.PI / 2, 1, { kit: 'pad' });
+  /* TWO-MAN TEAMS carrying a load between them: the second is the first's convoy. */
+  const team = (path, tone, kit) => {
+    rows.push({ carry: true, rest: 'carry0', path, tone, speed: 1.0, kit });
+    rows.push({ carry: true, rest: 'carry0', convoy: 1, gap: 1.5, tone, kit: kit === 'stretcher' ? null : kit });
+  };
+  team([PF.x1 - 1, PF.z0 + 2, PF.x1 - 1, PF.z1 - 16], 0, 'crate');
+  team([W.x0 - 5, SF.z0 - 2, W.x0 - 5, SF.z1 + 24], 1, 'panel');
+  team([W.x1 - 12, W.z0 + 58, W.x1 - 12, W.z1 - 4], 2, 'crate');
+  team([STRETCH.x, STRETCH.z0, STRETCH.x, STRETCH.z1], 3, 'stretcher');
+  /* WALKERS: a man with each protocol droid (the droids' own paths), a few
+   * on errands, and three pilots walking out with their helmets. */
   const { PF: pf, CENTRE: ce } = frame();
-  for (const J of droidJobs()) if (J.kind === 'proto') rows.push({ walk: true, rest: 'stand', path: J.path, tone: 2, speed: 1.1, phase: 0.5 });
+  for (const J of droidJobs()) if (J.kind === 'proto') rows.push({ walk: true, rest: 'stand', path: J.path, tone: 2, speed: 1.1, phase: 0.5, kit: 'pad' });
   rows.push({ walk: true, rest: 'stand', path: [ce.x0 + 12, ce.z0 + 20, ce.x0 + 12, ce.z0 + 44], tone: 0, speed: 1.2 });
-  rows.push({ walk: true, rest: 'stand', path: [W.x0 + 4, CRADLE.z + 22, W.x0 + 4, W.z1 - 16], tone: 1, speed: 1.15 });
+  rows.push({ walk: true, rest: 'stand', path: [W.x0 + 4, CRADLE.z + 22, W.x0 + 4, W.z1 - 16], tone: 1, speed: 1.15, kit: 'tool' });
   rows.push({ walk: true, rest: 'stand', path: [pf.x0 + 6, pf.z0 + 2, pf.x0 + 6, pf.z0 + 18], tone: 2, speed: 1.25 });
-  rows.push({ walk: true, rest: 'stand', path: [ce.x0 + 26, ce.z1 - 14, ce.x0 + 2, ce.z1 - 14], tone: 0, speed: 1.05 });
+  rows.push({ walk: true, rest: 'stand', path: [ce.x0 + 26, ce.z1 - 14, ce.x0 + 2, ce.z1 - 14], tone: 4, speed: 1.05, kit: 'pilothelm' });
+  rows.push({ walk: true, rest: 'stand', convoy: 1, gap: 1.6, tone: 4, kit: 'pilothelm' });
+  rows.push({ walk: true, rest: 'stand', convoy: 2, gap: 1.6, tone: 4, kit: 'pilothelm' });
   for (let i = 0; i < rows.length; i++) {
     const J = rows[i];
     if (!J.convoy) continue;
@@ -2044,32 +2363,44 @@ function silJobs() {
   return (SILS = rows);
 }
 
-/** Suit tones, by `tone`: the two jumpsuits, a tan, and the medics' white. */
-const SIL_TONES = [0x5a5f4c, 0x4a4e5e, 0x7a6a4c, 0xcfd2cc];
+/** Suit tones, by `tone`: the two jumpsuits, a tan, the medics' white, a flight suit, an officer's dark. */
+const SIL_TONES = [0x5a5f4c, 0x4a4e5e, 0x7a6a4c, 0xcfd2cc, 0xa8552c, 0x2c2f38];
+
+/** A body's half-extents by pose: a man standing, crouched, sitting, or on his back. */
+const SIL_HALF = {
+  kneel: [0.30, 0.70, 0.40], sit: [0.30, 0.66, 0.30], lie: [0.34, 0.20, 0.88],
+};
+const SIL_STAND = [0.28, 0.87, 0.24];
+const SIL_MASS = 80;
 
 function addSilhouettes(world, life) {
   const C = castMaterials(world._deckFaction);
   const jobs = silJobs();
   const n = jobs.length;
-  const built = crewSilhouettes();
-  /* Every pose mesh can hold every man, but `count` is only the men IN
-   * that pose: a slot is taken when a man enters a pose and freed when he
-   * leaves it (`silShow`), so the eighty men cost eighty instances across
-   * the fifteen meshes, not fifteen times eighty. */
-  /* …and only the WALKERS are instanced: the five walk frames, the three
-   * carrying, and `stand` for a walker at the end of his path. Every man
-   * who only stands is baked, tone and all, into ONE static mesh below —
-   * `hangar.mjs` bounds the whole scene at 320 draws and this is where a
-   * crowd of eighty-nine fits under it. */
+  const built = crewFigures({ faction: world._deckFaction });
+  /* ONE INSTANCED MESH PER POSE, each with room for every man: `count` is
+   * only the men IN that pose. A slot is taken when a man enters a pose
+   * and freed when he leaves it (`silShow`), so a hundred and seventy men
+   * cost a hundred and seventy instances across fourteen meshes. Every
+   * man is an instance now — a still can be thrown, and a still baked
+   * into a static mesh could not. */
   const meshes = {};
-  const walkers = jobs.filter((J) => J.path).length;
-  for (const name of [...CREW_POSES.walk, ...CREW_POSES.carry, 'stand']) {
-    const im = instanced(world, built[name].geo, C.tint, Math.max(1, walkers), `deck-crew-${name}`, false);
+  for (const name of [...CREW_POSES.walk, ...CREW_POSES.carry, ...CREW_POSES.still]) {
+    const im = instanced(world, built[name].geo, C.tint, n, `deck-crew-${name}`, true);
     im.count = 0;
     im.userData.free = []; im.userData.top = 0;
     meshes[name] = im;
   }
-  const stills = [];
+  /* THE ACCESSORIES: one instanced mesh a kind, sized to the men who carry it. */
+  const kitGeo = crewAccessories();
+  const kitN = {};
+  for (const J of jobs) if (J.kit) kitN[J.kit] = (kitN[J.kit] | 0) + 1;
+  const kits = {};
+  for (const [k, cnt] of Object.entries(kitN)) {
+    kits[k] = instanced(world, kitGeo[k], C.cast, cnt, `deck-crew-kit-${k}`, true);
+    kits[k].userData.top = 0;
+  }
+  for (const [k, g] of Object.entries(kitGeo)) if (!kits[k]) g.dispose();
   const sils = [];
   for (let i = 0; i < n; i++) {
     const J = jobs[i];
@@ -2077,38 +2408,35 @@ function addSilhouettes(world, life) {
     const lo = J.followers ? J.followers * J.gap / span : 0;
     const at0 = J.convoy ? sils[J.leader].at - J.convoy * J.gap / span : Math.max(J.phase ?? (i * 0.37) % 1, lo);
     const x = J.path ? lerp(J.path[0], J.path[2], at0) : J.x, z = J.path ? lerp(J.path[1], J.path[3], at0) : J.z;
-    const y = J.y ?? groundAt(world, x, z);
+    const y = J.y != null ? (J.y > 5 ? J.y : groundAt(world, x, z) + J.y) : groundAt(world, x, z);
     const yaw = J.path ? Math.atan2(J.path[2] - J.path[0], J.path[3] - J.path[1]) : J.yaw;
+    const pose = J.pose || J.rest;
+    const half = SIL_HALF[pose] || SIL_STAND;
     const S = {
       i, job: J, x, y, z, yaw, pos: new THREE.Vector3(x, y, z), at: at0, lo,
-      dir: 1, hold: J.convoy ? 0 : (i % 5), t: (i * 1.7) % 6, frames: J.walk ? CREW_POSES.walk : J.carry ? CREW_POSES.carry : null,
-      pose: J.pose || J.rest, shown: null, slot: -1, lead: null, rank: 0, moving: false,
+      dir: 1, hold: J.convoy ? 0 : (i % 5) + 0.37, t: (i * 1.7) % 6, frames: J.walk ? CREW_POSES.walk : J.carry ? CREW_POSES.carry : null,
+      pose, shown: null, slot: -1, lead: null, rank: 0, moving: false, was: false, lag: 0,
+      hy: half[1], m: new THREE.Matrix4(), built,
+      kit: J.kit || null, ki: -1, kb: J.kit ? CREW_KIT[J.kit] : null, gslot: J.lit ? glowSlot(life) : -1,
+      /* HIS BODY: asleep at his post, thrown by the Force, back on his feet
+       * in `SHOVE.rise` and home at a walk. A lying man's box is long. */
+      kn: new Knockable(world, _v.set(x, y, z), { half, mass: SIL_MASS, facing: yaw, pace: 1.1 }),
     };
     if (J.convoy) { S.lead = sils[J.leader]; S.rank = J.convoy; }
     S.tone = SIL_TONES[J.tone % SIL_TONES.length];
-    if (!J.path) {
-      _q.setFromAxisAngle(UP, yaw); _v.set(x, y, z); _s.set(1, 1, 1);
-      stills.push(crewStillGeometry(built[J.pose], _m.compose(_v, _q, _s), S.tone));
-      S.shown = 'still';
-    }
+    if (S.kit) { S.ki = kits[S.kit].userData.top++; S.km = new THREE.Matrix4().makeTranslation(S.kb.at[0], S.kb.at[1], S.kb.at[2]); }
     sils.push(S);
   }
-  if (stills.length) {
-    const still = new THREE.Mesh(mergeGeos(stills), C.cast);
-    still.name = 'deck-crew-still';
-    still.castShadow = false; still.receiveShadow = true;
-    still.frustumCulled = false;
-    world.scene.add(still);
-    world.statics.push(still);
-    life.silStill = still;
-  }
-  for (const g of Object.values(built)) g.geo.dispose();
   life.sils = sils;
   life.silMeshes = meshes;
+  life.kitMeshes = kits;
+  life.silStill = null;
+  /* Every still is written once, now, so the first frame is a full room. */
+  for (const S of sils) if (!S.frames) silPlace(life, S);
 }
 
-/** Put one man in one pose mesh, taking him out of the one he was in. */
-function silShow(life, S, pose, x, y, z, yaw) {
+/** Put one man in one pose mesh at a matrix, taking him out of the one he was in. */
+function silShow(life, S, pose, m) {
   const M = life.silMeshes;
   if (S.shown !== pose) {
     if (S.shown) {
@@ -2125,13 +2453,33 @@ function silShow(life, S, pose, x, y, z, yaw) {
     im.instanceColor.needsUpdate = true;
     S.shown = pose;
   }
-  _q.setFromAxisAngle(UP, yaw);
-  _v.set(x, y, z); _s.set(1, 1, 1);
-  M[pose].setMatrixAt(S.slot, _m.compose(_v, _q, _s));
+  M[pose].setMatrixAt(S.slot, m);
   M[pose].instanceMatrix.needsUpdate = true;
+  /* And whatever he carries, off the pose's own bone. */
+  if (S.kit) {
+    const im = life.kitMeshes[S.kit];
+    _mb.copy(m).multiply(S.built[pose].bones[S.kb.bone]).multiply(S.km);
+    im.setMatrixAt(S.ki, _mb);
+    im.instanceMatrix.needsUpdate = true;
+    if (S.gslot >= 0) {
+      /* The wand's tip is an emitter: amber, and it flares on the wave. */
+      _m4.makeRotationX(Math.PI / 2).setPosition(0, 0.36, 0).premultiply(_mb);
+      glowPlace(life, S.gslot, _m4, 0.05, 0.05);
+      const b = 1.2 + 0.8 * Math.sin(S.t * 9);
+      glowBurn(life, S.gslot, 2.2 * b, 1.3 * b, 0.3 * b);
+    }
+  }
 }
 
-/** The walk's cadence: the animator's own period at 1.3 m/s, measured in `crewSilhouettes`' capture. */
+/** A still at his mark, in his pose. */
+function silPlace(life, S) {
+  _q.setFromAxisAngle(UP, S.yaw);
+  _v.set(S.x, S.y, S.z); _s.set(1, 1, 1);
+  silShow(life, S, S.pose, S.m.compose(_v, _q, _s));
+  S.was = true;
+}
+
+/** The walk's cadence: the animator's own period at 1.3 m/s, measured in `crewFigures`' capture. */
 const SIL_STRIDE = 0.77;
 
 function stepSilhouettes(world, life, dt) {
@@ -2140,7 +2488,35 @@ function stepSilhouettes(world, life, dt) {
   for (const S of sils) {
     const J = S.job;
     S.t += dt;
-    if (!S.frames) continue;                 // a still is in the merged mesh
+    const kn = S.kn;
+    /* HIS BODY. A still's is asked every third frame, staggered — a body
+     * asleep at its post has nothing to say, and there are a hundred and
+     * thirty of them. A walker's, every frame: it is being driven. */
+    S.lag += dt;
+    if (S.frames || kn.state !== 'post' || ((life.frame + S.i) % 3 === 0)) { kn.update(S.lag); S.lag = 0; }
+    /* ── KNOCKED OVER, GETTING UP, WALKING BACK: the body decides. */
+    if (kn.state !== 'post') {
+      const b = kn.body;
+      _s.set(1, 1, 1);
+      S.m.compose(b.position, b.quaternion, _s).multiply(_mb.makeTranslation(0, -S.hy, 0));
+      silShow(life, S, S.shown || S.pose, S.m);
+      S.was = false;
+      continue;
+    }
+    if (!S.frames) {
+      /* A still: written once, again after a fall, and on a flip's beat. */
+      if (J.flip) {
+        const k = Math.floor(S.t / J.every) & 1;
+        const want = J.flip[k];
+        if (want !== S.pose) { S.pose = want; S.was = false; }
+      }
+      if (!S.was) silPlace(life, S);
+      else if (S.gslot >= 0) {
+        const b = 1.2 + 0.8 * Math.sin(S.t * 9);
+        glowBurn(life, S.gslot, 2.2 * b, 1.3 * b, 0.3 * b);
+      }
+      continue;
+    }
     const span = Math.hypot(J.path[2] - J.path[0], J.path[3] - J.path[1]);
     if (S.lead) {
       /* The file: `rank` gaps behind the leader, halting and about-turning
@@ -2159,18 +2535,474 @@ function stepSilhouettes(world, life, dt) {
     const x = lerp(J.path[0], J.path[2], S.at), z = lerp(J.path[1], J.path[3], S.at);
     const y = groundAt(world, x, z);
     const yaw = Math.atan2((J.path[2] - J.path[0]) * S.dir, (J.path[3] - J.path[1]) * S.dir);
+    if (S.moving || S.x !== x || S.z !== z) kn.drive(x, z, yaw);
     if (!S.moving) {
       /* At an end: the rest pose, facing where he was going. */
-      if (S.shown !== J.rest || S.x !== x || S.z !== z) silShow(life, S, J.rest, x, y, z, S.yaw);
-      S.x = x; S.z = z;
+      if (S.shown !== J.rest || S.x !== x || S.z !== z || !S.was) {
+        _q.setFromAxisAngle(UP, S.yaw); _v.set(x, y, z); _s.set(1, 1, 1);
+        silShow(life, S, J.rest, S.m.compose(_v, _q, _s));
+        S.was = true;
+      }
+      S.x = x; S.z = z; S.y = y;
       continue;
     }
     /* THE FLIP-BOOK: the frame is the phase of a stride at his own speed. */
     const stride = SIL_STRIDE * 1.3 / J.speed;
     const k = Math.floor(((S.t / stride) % 1) * S.frames.length);
-    silShow(life, S, S.frames[k], x, y, z, yaw);
-    S.x = x; S.z = z; S.yaw = yaw;
+    _q.setFromAxisAngle(UP, yaw); _v.set(x, y, z); _s.set(1, 1, 1);
+    silShow(life, S, S.frames[k], S.m.compose(_v, _q, _s));
+    S.was = true;
+    S.x = x; S.z = z; S.y = y; S.yaw = yaw;
   }
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  7c · THE LOOSE PROPS — a hundred and twenty bodies, asleep            */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ EVERYTHING YOU CAN TOUCH IS A BODY ═══════════════════════════════════
+ *
+ * "many things in our current Battlefield Borz hangar still don't have
+ *  physics and are not real. Make everything you can touch real."
+ *
+ * The room's litter: crates on top of the stacks and beside every job,
+ * fuel drums by the bowsers, tool boxes at every panel, cones round the
+ * keep-outs, welding carts, helmets by the cots, datapads on the holotable
+ * and the bench, spare hull panels beside the hulls, an astromech's dome
+ * and legs in pieces on the droid bench, a mop bucket, and the bombs on
+ * the ordnance carts. Each kind is ONE vertex-coloured geometry in one
+ * `InstancedMesh`; each instance is a `DeckCast.Loose` — a dynamic
+ * PROP-layer body the Force grips and throws and the blade knocks, asleep
+ * on the deck until something touches it, and `stepLoose` rewrites an
+ * instance only while its body is awake.
+ *
+ * Every site is `clearOf` the ground the player, the company and the
+ * traffic use; a site that is not is dropped at build, and the check
+ * counts what stood.
+ */
+const LOOSE_KINDS = {
+  crate:  { half: [0.36, 0.32, 0.36], mass: 24 },
+  barrel: { half: [0.32, 0.46, 0.32], mass: 30, round: true },
+  toolbox:{ half: [0.30, 0.16, 0.18], mass: 9 },
+  cone:   { half: [0.18, 0.30, 0.18], mass: 3 },
+  rig:    { half: [0.30, 0.62, 0.42], mass: 55 },
+  helmet: { half: [0.14, 0.14, 0.14], mass: 1.5 },
+  pad:    { half: [0.10, 0.02, 0.14], mass: 0.6 },
+  panel:  { half: [0.60, 0.04, 0.45], mass: 14 },
+  dome:   { half: [0.40, 0.24, 0.40], mass: 8 },
+  bucket: { half: [0.18, 0.18, 0.18], mass: 4 },
+  bomb:   { half: [0.22, 0.22, 0.65], mass: 90 },
+};
+
+function looseGeometries(faction) {
+  const P = deckMats(faction);
+  const hull = P.hull.color.getHex(), dark = P.dark.color.getHex(), wing = P.wing.color.getHex(), red = 0x9a3226, bone = 0xb9bec6;
+  const G = {};
+  let a;
+  a = new Assembly();
+  a.box(0x8a7048, 0.72, 0.64, 0.72, 0, 0.32, 0);
+  a.box(0x4a3a26, 0.76, 0.06, 0.76, 0, 0.12, 0); a.box(0x4a3a26, 0.76, 0.06, 0.76, 0, 0.52, 0);
+  a.pair((s) => { a.box(0x4a3a26, 0.10, 0.66, 0.10, s * 0.33, 0.32, 0.33); a.box(0x4a3a26, 0.10, 0.66, 0.10, s * 0.33, 0.32, -0.33); });
+  G.crate = a.merge();
+  a = new Assembly();
+  a.cyl(dark, 0.30, 0.32, 0.92, 0, 0.46, 0, 0, 0, 0, 14);
+  a.cyl(0x8d939b, 0.335, 0.335, 0.05, 0, 0.24, 0, 0, 0, 0, 14); a.cyl(0x8d939b, 0.335, 0.335, 0.05, 0, 0.68, 0, 0, 0, 0, 14);
+  a.cyl(red, 0.325, 0.325, 0.14, 0, 0.46, 0, 0, 0, 0, 14);
+  a.cyl(0x8d939b, 0.05, 0.05, 0.04, 0.14, 0.93, 0, 0, 0, 0, 8);
+  G.barrel = a.merge();
+  a = new Assembly();
+  a.box(red, 0.60, 0.30, 0.36, 0, 0.15, 0);
+  a.box(dark, 0.62, 0.04, 0.38, 0, 0.16, 0);
+  a.box(dark, 0.20, 0.05, 0.03, 0, 0.32, 0);
+  a.box(0x8d939b, 0.06, 0.08, 0.02, 0, 0.14, 0.185);
+  G.toolbox = a.merge();
+  a = new Assembly();
+  a.box(dark, 0.36, 0.03, 0.36, 0, 0.015, 0);
+  a.cyl(red, 0.03, 0.17, 0.58, 0, 0.31, 0, 0, 0, 0, 10);
+  a.cyl(bone, 0.085, 0.115, 0.10, 0, 0.36, 0, 0, 0, 0, 10);
+  G.cone = a.merge();
+  a = new Assembly();
+  a.box(dark, 0.56, 0.08, 0.80, 0, 0.16, 0);
+  a.pair((s) => { a.cyl(0x1e2126, 0.14, 0.14, 0.10, s * 0.26, 0.14, -0.30, 0, 0, Math.PI / 2, 10); });
+  a.cyl(0x2e7d4f, 0.16, 0.16, 1.0, -0.15, 0.72, -0.10, 0, 0, 0, 12);
+  a.cyl(0x6a7079, 0.16, 0.16, 1.0, 0.15, 0.72, -0.10, 0, 0, 0, 12);
+  a.box(dark, 0.62, 0.06, 0.06, 0, 1.0, -0.10);
+  a.box(0x6a7079, 0.04, 0.70, 0.04, 0.30, 0.85, 0.34);
+  a.box(0x6a7079, 0.04, 0.70, 0.04, -0.30, 0.85, 0.34);
+  a.box(dark, 0.64, 0.04, 0.04, 0, 1.22, 0.34);
+  G.rig = a.merge();
+  a = new Assembly();
+  a.ball(0xd9dde3, 0.135, 0, 0.14, 0, 12, 9);
+  a.box(0x1a2632, 0.20, 0.07, 0.06, 0, 0.13, 0.11);
+  G.helmet = a.merge();
+  a = new Assembly();
+  a.box(0x1e2126, 0.20, 0.03, 0.28, 0, 0.015, 0);
+  a.box(0x5fb2e8, 0.16, 0.006, 0.22, 0, 0.032, 0);
+  G.pad = a.merge();
+  a = new Assembly();
+  a.box(wing, 1.20, 0.06, 0.90, 0, 0.03, 0);
+  a.box(hull, 1.10, 0.03, 0.10, 0, 0.07, 0.30);
+  a.box(hull, 1.10, 0.03, 0.10, 0, 0.07, -0.30);
+  for (let i = 0; i < 4; i++) a.box(dark, 0.06, 0.02, 0.06, -0.45 + i * 0.3, 0.075, 0);
+  G.panel = a.merge();
+  const dome = astromechDome();
+  dome.geo.translate(0, 0.0, 0);
+  a = new Assembly();
+  a.geos.push(dome.geo); a.prims += dome.prims;
+  G.dome = a.merge();
+  a = new Assembly();
+  a.cyl(0x6a7079, 0.16, 0.18, 0.34, 0, 0.17, 0, 0, 0, 0, 12);
+  a.cyl(0x1e2126, 0.15, 0.15, 0.02, 0, 0.35, 0, 0, 0, 0, 12);
+  a.cyl(0x8a7048, 0.015, 0.015, 1.3, 0.05, 0.8, -0.05, 0.25, 0, 0.1, 6);
+  a.box(0xb9bec6, 0.10, 0.16, 0.10, 0.32, 1.42, -0.20);
+  G.bucket = a.merge();
+  a = new Assembly();
+  a.cyl(dark, 0.20, 0.22, 1.1, 0, 0.22, 0, Math.PI / 2, 0, 0, 12);
+  a.cyl(red, 0.02, 0.20, 0.30, 0, 0.22, 0.70, Math.PI / 2, 0, 0, 12);
+  a.cyl(0x8d939b, 0.22, 0.14, 0.24, 0, 0.22, -0.67, Math.PI / 2, 0, 0, 12);
+  for (let i = 0; i < 4; i++) {
+    const an = i * Math.PI / 2;
+    a.box(hull, 0.03, 0.22, 0.30, Math.sin(an) * 0.28, 0.22 + Math.cos(an) * 0.28, -0.55, 0, 0, -an);
+  }
+  a.box(bone, 0.44, 0.02, 0.06, 0, 0.44, 0.1);
+  G.bomb = a.merge();
+  return G;
+}
+
+/**
+ * The litter, sited off the jobs: `[kind, x, z, yaw, scale]`. `scatter`
+ * puts `n` of a kind in a ring round a point on a seeded jitter.
+ */
+let LOOSE = null;
+function looseJobs() {
+  if (LOOSE) return LOOSE;
+  const { BAY, CRADLE, HULL, STAND, BOWSER, APRON, ENG, LIFTP, SHUT, FX2, TENT, RING, PALLETS, CHOW, CARD, COTS, BENCH,
+    HOLO, ORD, SPAR, CHAP, FORM, FORM2, W, PF, SF, CENTRE, FLANK_L, FLANK_R, Z } = frame();
+  const rows = [];
+  const rng = makeRng(4451);
+  const put = (kind, x, z, yaw = 0, scale = 1) => rows.push([kind, x, z, yaw, scale]);
+  const scatter = (kind, cx, cz, n, r, s0 = 1, s1 = 1) => {
+    for (let i = 0; i < n; i++) {
+      const a = rng() * TAU, d = r * (0.4 + 0.6 * rng());
+      put(kind, cx + Math.sin(a) * d, cz + Math.cos(a) * d, rng() * TAU, s0 + (s1 - s0) * rng());
+    }
+  };
+  /* Crates on top of the pallet stacks and round their feet. */
+  for (const [px, pz] of PALLETS) { scatter('crate', px, pz, 4, 5.5, 0.8, 1.25); put('barrel', px + 4.6, pz - 4.2); put('barrel', px + 4.0, pz - 4.9); }
+  /* Every job: a tool box or two at the panel, a cone at the keep-out, a drum by the bowser. */
+  const cy = Math.cos(CRADLE.yaw), sy = Math.sin(CRADLE.yaw);
+  put('toolbox', CRADLE.x + 4.6 * cy, CRADLE.z - 4.6 * sy + 2.4, CRADLE.yaw); put('toolbox', CRADLE.x - 2.6, CRADLE.z + 7.2, 0.4);
+  put('panel', CRADLE.x - 6.2 * cy, CRADLE.z + 6.2 * sy + 3.0, CRADLE.yaw + 0.3); put('panel', CRADLE.x + 7.5, CRADLE.z + 5.0, 1.2);
+  put('cone', CRADLE.x - 8, CRADLE.z - 8); put('cone', CRADLE.x + 9, CRADLE.z - 8); put('rig', CRADLE.x + 8, CRADLE.z + 8, -0.6);
+  put('toolbox', BAY.x + BAY.rad + 1.1, BAY.z + 5.0, -Math.PI / 2); put('toolbox', BAY.x - BAY.rad - 1.3, BAY.z - 6.5, 0.3);
+  put('barrel', BAY.x + 6.5, BAY.z - 6); put('barrel', BAY.x + 7.1, BAY.z - 5.3); put('cone', BAY.x - 9, BAY.z - 10); put('cone', BAY.x + 9, BAY.z + 12);
+  put('bucket', BAY.x + BAY.rad + 2.2, BAY.z + 7.5, 0.2);
+  put('toolbox', HULL.x + 5.2, HULL.z - 4.4, 1.2); put('panel', HULL.x + 5.6, HULL.z + 7.6, 0.2); put('barrel', BOWSER.x - 2.2, BOWSER.z + 1.4); put('barrel', BOWSER.x - 2.6, BOWSER.z + 2.2);
+  put('cone', STAND.x - 3.5, STAND.z + 3.5); put('toolbox', STAND.x + 2.6, STAND.z - 2.6, 0.7);
+  put('barrel', ENG.bowser.x + 2.4, ENG.bowser.z + 1.8); put('barrel', ENG.bowser.x + 3.1, ENG.bowser.z + 1.2); put('toolbox', ENG.x + 3.2, ENG.z + 3.4, 0.4);
+  put('cone', ENG.x - 4, ENG.z + 4.5); put('rig', ENG.x + 4.5, ENG.z - 3.5, 1.3);
+  put('cone', LIFTP.x - LIFTP.w * 0.5 - 2.0, LIFTP.z - LIFTP.d * 0.5 - 2.0); put('cone', LIFTP.x + LIFTP.w * 0.5 + 2.0, LIFTP.z + LIFTP.d * 0.5 + 2.0);
+  put('toolbox', LIFTP.x - LIFTP.w * 0.5 - 2.6, LIFTP.z + 1.5, 1.5);
+  put('barrel', SHUT.bowser.x - 2.2, SHUT.bowser.z - 1.6); put('barrel', SHUT.bowser.x - 2.9, SHUT.bowser.z - 1.0); put('toolbox', SHUT.x - 7.5, SHUT.z + 10.2, 0.2);
+  put('panel', SHUT.x + 10.5, SHUT.z + 7.0, 0.1); put('panel', SHUT.x + 11.6, SHUT.z + 7.4, -0.2); put('cone', SHUT.x - 13, SHUT.z - 12); put('cone', SHUT.x + 14, SHUT.z + 12);
+  put('rig', SHUT.x + 8.5, SHUT.z - 9.5, 0.4);
+  put('toolbox', FX2.x + 5.0, FX2.z + 8.6, 0.6); put('panel', FX2.x - 7.5, FX2.z + 6.5, 0.9); put('panel', FX2.x - 8.3, FX2.z + 7.4, 0.7);
+  put('cone', FX2.x - 10, FX2.z - 9); put('cone', FX2.x + 10, FX2.z - 9); put('rig', FX2.x + 9, FX2.z + 3, -1.2);
+  /* The tent and the cots: helmets by the beds, a pad on the medic's crate. */
+  put('helmet', TENT.x - 2.6, TENT.z - 2.2); put('helmet', TENT.x + 2.4, TENT.z - 2.3); put('pad', TENT.x - 0.4, TENT.z - 2.5, 0.6);
+  for (let i = 0; i < COTS.n; i++) put('helmet', COTS.x0 + i * COTS.dx + 0.5, COTS.z - 1.5, rng() * TAU);
+  put('crate', COTS.x0 + COTS.n * COTS.dx + 1.6, COTS.z + 1.4, 0.3, 0.9);
+  /* The briefing circle: a pad on the deck, cones at the ring's back. */
+  put('pad', RING.x + 3.6, RING.z + 3.2, 0.4); put('cone', RING.x - 5, RING.z - 5);
+  /* The chow line: drums as bins, crates as seats and tables, a bucket. */
+  put('barrel', CHOW.x - 4.4, CHOW.z + 3.0); put('barrel', CHOW.x - 5.1, CHOW.z + 2.4); put('bucket', CHOW.x - 4.0, CHOW.z - 1.2);
+  for (let i = 0; i < 4; i++) put('crate', CHOW.x + 6 + i * 1.6, CHOW.z + 5.0, 0, 0.75);
+  put('crate', CHOW.x + 8.4, CHOW.z + 5.9, 0.2, 1.1);
+  /* The card game: the crate they play on (their seats are the merged kit). */
+  put('crate', CARD.x, CARD.z, 0.3, 0.8); put('helmet', CARD.x + 1.9, CARD.z + 1.6); put('helmet', CARD.x - 2.0, CARD.z + 1.4);
+  /* The droid bench: a dome and pieces on the deck, a tool box, a pad. */
+  put('dome', BENCH.x + 3.2, BENCH.z + 0.6, 0.7); put('toolbox', BENCH.x - 3.0, BENCH.z + 0.4, 1.4); put('pad', BENCH.x + 2.5, BENCH.z - 2.2, 0.2);
+  put('rig', BENCH.x - 4.2, BENCH.z - 1.5, 0.3);
+  /* The holoscreen: a crate to sit on, a bucket. */
+  put('crate', HOLO.x + 4.2, HOLO.z - 6.0, 0.4, 0.85); put('bucket', HOLO.x - 5.0, HOLO.z - 4.0);
+  /* The ordnance party: bombs on and beside the carts. */
+  for (let i = 0; i < 3; i++) put('bomb', ORD.x - 3 + i * 3, ORD.z, Math.PI / 2, 1);
+  put('bomb', ORD.x - 4.5, ORD.z + 2.8, 0.3); put('bomb', ORD.x + 4.6, ORD.z + 2.6, -0.2); put('cone', ORD.x - 6, ORD.z - 3.5); put('cone', ORD.x + 6, ORD.z - 3.5);
+  /* Helmets at the sparring pair's feet, a crate and a drum for the chaplain's knot. */
+  put('helmet', SPAR.x - 2.8, SPAR.z - 1.6); put('helmet', SPAR.x + 2.8, SPAR.z - 1.6); put('crate', CHAP.x - 3.4, CHAP.z + 1.2, 0.5, 0.8); put('barrel', CHAP.x + 3.6, CHAP.z + 0.8);
+  /* The formations' kit piled at their flanks. */
+  scatter('crate', FORM.cx + 8, FORM.cz + 4, 3, 1.8, 0.8, 1.1); scatter('helmet', FORM.cx - 8, FORM.cz + 3, 4, 1.6);
+  scatter('crate', FORM2.cx - 8, FORM2.cz + 3, 3, 1.8, 0.8, 1.1); scatter('helmet', FORM2.cx + 8, FORM2.cz + 3, 4, 1.6);
+  /* The flanks and the free ground: drums, cones, crates along the wall feet. */
+  scatter('barrel', FLANK_L.x0 + 2, FLANK_L.z1 - 3, 4, 1.8); scatter('barrel', FLANK_R.x1 - 2, FLANK_R.z1 - 3, 4, 1.8);
+  scatter('crate', FLANK_R.x1 - 3, FLANK_R.z0 + 8, 3, 2.0, 0.8, 1.2); scatter('cone', W.x1 - 2, W.z0 + 10, 3, 2.5);
+  scatter('crate', PF.x0 + 2, PF.z1 - 3, 4, 2.4, 0.8, 1.3); scatter('barrel', PF.x0 + 2, PF.z0 + 30, 3, 1.6);
+  scatter('cone', SF.x0 + 2, SF.z1 - 1.5, 2, 1.2); scatter('crate', CENTRE.x1 - 3, CENTRE.z0 + 10, 3, 2.0, 0.8, 1.2);
+  scatter('barrel', CENTRE.x0 + 2, CENTRE.z1 - 5, 3, 1.6); scatter('cone', Z.pit.x0 - 3, Z.pit.z0 - 4, 2, 1.5); scatter('cone', Z.pit.x0 + 8, Z.pit.z1 + 6, 2, 1.5);
+  put('crate', APRON.crash.x - 4, APRON.crash.z - 2.5, 0.2, 0.9); put('barrel', APRON.crash.x + 3.6, APRON.crash.z - 2.5); put('cone', APRON.crash.x - 6, APRON.crash.z - 4); put('cone', APRON.crash.x + 6, APRON.crash.z - 4);
+  return (LOOSE = rows);
+}
+
+/** The ground the litter keeps off: the player's, the company's and the traffic's. */
+const LOOSE_KEEP_OFF = ['lobby', 'corridor', 'muster', 'padA', 'padB', 'pit', 'crowdL', 'crowdR', 'apron'];
+
+function addLoose(world, life) {
+  const C = castMaterials(world._deckFaction);
+  const { CANYON } = frame();
+  const G = looseGeometries(world._deckFaction);
+  const rows = looseJobs().filter(([, x, z]) => Math.abs(x) < CANYON - 1 && clearOf(LOOSE_KEEP_OFF, x, z, 0.5));
+  const byKind = new Map();
+  for (const r of rows) byKind.set(r[0], (byKind.get(r[0]) || 0) + 1);
+  const meshes = {}, next = {};
+  for (const [kind, n] of byKind) { meshes[kind] = instanced(world, G[kind], C.cast, n, `deck-loose-${kind}`, true); next[kind] = 0; }
+  for (const [kind, g] of Object.entries(G)) if (!meshes[kind]) g.dispose();
+  const loose = [];
+  for (const [kind, x, z, yaw, scale] of rows) {
+    const K = LOOSE_KINDS[kind];
+    const y = groundAt(world, x, z);
+    const i = next[kind]++;
+    const L = {
+      kind, i, mesh: meshes[kind], scale,
+      body: new Loose(world, _v.set(x, y, z), { half: K.half.map((h) => h * scale), mass: K.mass * scale, facing: yaw, round: !!K.round }),
+    };
+    /* Written once, at rest; the step rewrites it only while it moves. */
+    _s.set(scale, scale, scale);
+    L.body.matrix(_m);
+    _m.scale(_s);
+    L.mesh.setMatrixAt(i, _m);
+    loose.push(L);
+  }
+  for (const im of Object.values(meshes)) im.instanceMatrix.needsUpdate = true;
+  life.loose = loose;
+  life.looseMeshes = meshes;
+}
+
+function stepLoose(world, life, dt) {
+  const L = life.loose;
+  if (!L) return;
+  for (const P of L) {
+    if (!P.body.update()) continue;
+    _s.set(P.scale, P.scale, P.scale);
+    P.body.matrix(_m);
+    _m.scale(_s);
+    P.mesh.setMatrixAt(P.i, _m);
+    P.mesh.instanceMatrix.needsUpdate = true;
+  }
+  void dt;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  7d · THE BEATS — at every repair, something moves                     */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ REPAIRS ARE ACTIVITY, NOT FURNITURE ═══════════════════════════════════
+ *
+ *   "there's somehow still only 1 repair happening I think"
+ *
+ * A job the eye reads as a repair is one where SOMETHING IS MOVING. The
+ * welders' arcs and the crane's cable were the two the room had; these are
+ * the rest, each a mover of a few primitives or an emitter on a clock:
+ *
+ *   RAMS     the section's four hydraulic jacks pump — the rams rise and
+ *            settle a hand's breadth on a slow beat, staggered
+ *   HOIST    the gantry trolley pays a hull panel down to the section on
+ *            its cable while it dwells, and winds it back before it moves
+ *   CANOPY   the fighter on the second cradle opens and closes its canopy
+ *   FIRE     the engine on the work-zone stand is TEST-FIRED: the bell
+ *            lights, plasma pours off it, the deck is lit for eight
+ *            seconds in every forty-five, then it cools
+ *   STROBES  the aperture's four rim strobes run red from a launch's spool
+ *            to its crossing of the lip — the klaxon is `launchSequence`'s
+ *   BOARDS   five holo boards scroll the deck's own lines — the PA's last
+ *            call, the flight roster, the chow sitting — on one canvas
+ *            texture redrawn twice a second, one draw for the five
+ */
+function addBeats(world, life) {
+  const { BAY, ENG, STROBES } = frame();
+  const M = deckMaterials();
+  const C = castMaterials(world._deckFaction);
+  const g0 = groundAt(world, BAY.x, BAY.z);
+  /* THE RAMS: one mover, four cylinders, on the jacks' own marks. */
+  const rams = mover(world);
+  rams.position.set(BAY.x, g0 + BAY.jack + 0.2, BAY.z);
+  const A = new Assembly();
+  const jz = BAY.len * 0.32;
+  for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+    A.cyl(0x8d939b, 0.16, 0.16, 0.9, sx * (BAY.rad - 0.6), 0, sz * jz, 0, 0, 0, 10);
+    A.cyl(0x1e2126, 0.22, 0.22, 0.12, sx * (BAY.rad - 0.6), 0.5, sz * jz, 0, 0, 0, 10);
+  }
+  castMesh(world, rams, A.merge(), C.cast, 'deck-rams');
+  /* THE HOIST'S PANEL under the trolley: a cable that is scaled and a
+   * panel at its end, both movers on the crab. */
+  const T = life.trolley;
+  const hoist = mover(world, T.body);
+  hoist.position.set(0, -0.28 - 3.76, 0);
+  const cable = new Assembly();
+  cable.cyl(0x6a7079, 0.03, 0.03, 1.0, 0.3, -0.5, 0, 0, 0, 0, 6);
+  cable.cyl(0x6a7079, 0.03, 0.03, 1.0, -0.3, -0.5, 0, 0, 0, 0, 6);
+  const cableMesh = castMesh(world, hoist, cable.merge(), C.cast, 'deck-hoist-cable');
+  const load = mover(world, hoist);
+  const P = deckMats(world._deckFaction);
+  const L = new Assembly();
+  L.box(P.dark.color.getHex(), 1.4, 0.16, 0.3, 0, -0.1, 0);
+  L.box(P.wing.color.getHex(), 2.6, 0.12, 2.0, 0, -0.5, 0);
+  L.box(P.dark.color.getHex(), 2.6, 0.08, 0.2, 0, -0.42, 0.8);
+  L.pair((s) => L.cyl(0x6a7079, 0.03, 0.03, 0.5, s * 0.9, -0.3, 0, 0, 0, s * 0.8, 5));
+  castMesh(world, load, L.merge(), C.cast, 'deck-hoist-panel');
+  T.hoist = hoist;
+  /* THE FIRE: an emitter on the stand's bell, dark until the run. */
+  const eg = groundAt(world, ENG.x, ENG.z);
+  const fire = { slot: glowSlot(life), x: ENG.x, y: eg + 2.6, z: ENG.z - 2.9, t: 11, period: 45, burn: 8, heat: 0, tick: 0 };
+  _m4.makeRotationX(Math.PI / 2).setPosition(fire.x, fire.y, fire.z);
+  glowPlace(life, fire.slot, _m4, 1.0, 1.0);
+  glowBurn(life, fire.slot, 0, 0, 0);
+  /* THE STROBES: four emitters on the rim, off. */
+  const strobe = { slot: glowSlot(life, STROBES.length), n: STROBES.length };
+  for (let i = 0; i < STROBES.length; i++) {
+    const [x, y, z] = STROBES[i];
+    _m4.makeRotationY(Math.PI).setPosition(x, y, z - 0.25);
+    glowPlace(life, strobe.slot + i, _m4, 0.5, 0.5);
+    glowBurn(life, strobe.slot + i, 0, 0, 0);
+  }
+  life.strobe = 0;
+  life.beats = { rams, jz, ramY0: rams.position.y, cable: cableMesh, load, fire, strobe, t: 0, canopy: life.canopy || null };
+  void M;
+}
+
+function stepBeats(world, life, dt) {
+  const B = life.beats;
+  if (!B) return;
+  B.t += dt;
+  /* THE RAMS: each on its own phase, a slow pump with a dwell. */
+  const pump = (B.t / 6.5) % 1;
+  B.rams.position.y = B.ramY0 + (pump < 0.4 ? smoothstep(0, 0.4, pump) : pump < 0.55 ? 1 : 1 - smoothstep(0.55, 1, pump)) * 0.28;
+  /* THE HOIST: pays out while the crab dwells, in before it moves. */
+  const T = life.trolley;
+  const out = T.hold > 0 ? clamp((T.run.hold - T.hold) / Math.max(1, T.run.hold - 1.2), 0, 1) : 0;
+  const drop = 0.4 + 12.0 * smoothstep(0, 1, Math.min(out, 1 - out) * 2.2);
+  B.cable.scale.y = drop;
+  B.load.position.y = -drop;
+  /* THE CANOPY: open for a while, closed for a while. */
+  if (B.canopy) {
+    const k = (B.t / 34) % 1;
+    const open = k < 0.15 ? smoothstep(0, 0.15, k) : k < 0.55 ? 1 : k < 0.7 ? 1 - smoothstep(0.55, 0.7, k) : 0;
+    B.canopy.rotation.x = -0.85 * open;
+  }
+  /* THE FIRE. */
+  const F = B.fire;
+  F.t += dt;
+  const ph = F.t % F.period;
+  const on = ph < F.burn;
+  const want = on ? (ph < 0.6 ? ph / 0.6 : ph > F.burn - 1.2 ? (F.burn - ph) / 1.2 : 1) * (0.85 + 0.15 * Math.sin(F.t * 31)) : 0;
+  F.heat = lerp(F.heat, want, 1 - Math.exp(-6 * dt));
+  const b = 0.05 + F.heat * 4.5;
+  glowBurn(life, F.slot, b * 0.75, b * 0.85, b);
+  if (F.heat > 0.03) {
+    world.engine?.lightUp?.(_v.set(F.x, F.y, F.z - 3), 0xbcd8ff, 40 * F.heat, 22, 0);
+    F.tick += dt;
+    if (F.tick > 0.045) {
+      F.tick = 0;
+      const fx = world.particles;
+      _v.set(F.x + (Math.random() - 0.5) * 0.5, F.y + (Math.random() - 0.5) * 0.5, F.z - 0.6);
+      _v2.set((Math.random() - 0.5) * 3, (Math.random() - 0.5) * 2, -22 - Math.random() * 10);
+      fx?.plasma?.spawn(_v, _v2, { life: 0.28 + Math.random() * 0.2, size: 1.2 + F.heat, drag: 1.4, gravity: 0, color: 0xbfe6ff, alpha: 0.5 * F.heat, hdr: 2.6 });
+      if ((life.frame & 3) === 0) fx?.smoke?.spawn(_v, _v2.multiplyScalar(0.25), { life: 1.8, size: 1.6, drag: 1.2, gravity: -0.3, color: 0x6a7079, alpha: 0.18 });
+    }
+  }
+  /* THE STROBES: red at four a second while a launch is live. */
+  if (life.strobe > 0 || B.strobeWas) {
+    life.strobe = Math.max(0, life.strobe - dt);
+    const lit = life.strobe > 0 && ((life.t * 4) % 1) < 0.5;
+    for (let i = 0; i < B.strobe.n; i++) glowBurn(life, B.strobe.slot + i, lit ? 6 : 0, lit ? 0.6 : 0, lit ? 0.3 : 0);
+    B.strobeWas = life.strobe > 0;
+    if (lit && (life.frame & 1)) {
+      const { STROBES } = frame();
+      for (let i = 0; i < STROBES.length; i += 2) world.engine?.lightUp?.(_v.set(STROBES[i][0], STROBES[i][1], STROBES[i][2] - 2), 0xff3020, 24, 30, 0);
+    }
+  }
+}
+
+/* ══ THE HOLO BOARDS ═══════════════════════════════════════════════════ */
+
+/** What the boards say, in the tannoy's register; the PA's last call is added. */
+const BOARD_LINES = [
+  'FLIGHT 07 · PAD 2 · ON FINAL     FLIGHT 12 · PAD 1 · LAUNCH 04:10     FLIGHT 03 · PAD B · TURNAROUND',
+  'FIELD KITCHEN · SECOND SITTING 18:00 · WATCH TWO FIRST · NO HELMETS AT THE COUNTER',
+  'BAY SEVEN · ENGINE CHANGE 40% · CRADLE TWO · PANELS OFF · LIFT PLATFORM · CYCLING',
+  'ALL HANDS · FLIGHT DECK · LAUNCH ALERT IN EFFECT · STAND BEHIND THE LINE',
+  'DECK ROSTER · WATCH TWO ON · WATCH ONE TO THE COTS · CHAPLAIN AT THE STARBOARD WALL',
+];
+
+function addBoards(world, life) {
+  const { BOARDS } = frame();
+  let canvas = null, ctx = null;
+  try {
+    canvas = document.createElement('canvas');
+    canvas.width = 1024; canvas.height = 512;
+    ctx = canvas.getContext('2d');
+  } catch { canvas = null; ctx = null; }
+  if (!canvas || !ctx) return;
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.wrapS = tex.wrapT = THREE.ClampToEdgeWrapping;
+  const mat = new THREE.MeshBasicMaterial({ map: tex, toneMapped: false });
+  mat.name = 'deck-holo-board';
+  mat.userData.saberNoInk = true;
+  const rows = BOARDS.length;
+  const geos = [];
+  for (let i = 0; i < rows; i++) {
+    const B = BOARDS[i];
+    const g = new THREE.PlaneGeometry(B.w, B.h);
+    const uv = g.attributes.uv;
+    for (let k = 0; k < uv.count; k++) uv.setY(k, 1 - (i + 1 - uv.getY(k)) / rows);
+    g.rotateY(B.yaw);
+    g.translate(B.x + Math.sin(B.yaw) * 0.0, B.y, B.z);
+    geos.push(g);
+  }
+  const mesh = new THREE.Mesh(mergeGeos(geos), mat);
+  mesh.name = 'deck-holo-boards';
+  mesh.castShadow = false; mesh.receiveShadow = false;
+  mesh.frustumCulled = false;
+  world.scene.add(mesh);
+  world.statics.push(mesh);
+  life.boards = { mesh, canvas, ctx, tex, mat, t: 0, at: -1, rows, lines: BOARD_LINES.slice() };
+  drawBoards(life);
+}
+
+function drawBoards(life) {
+  const B = life.boards;
+  const ctx = B.ctx, W = B.canvas.width, H = B.canvas.height, rh = H / B.rows;
+  ctx.fillStyle = '#0b1420';
+  ctx.fillRect(0, 0, W, H);
+  ctx.font = 'bold 44px monospace';
+  ctx.textBaseline = 'middle';
+  for (let i = 0; i < B.rows; i++) {
+    const y0 = i * rh;
+    ctx.fillStyle = i === 3 && life.strobe > 0 ? '#3a0c0c' : '#0e1c2c';
+    ctx.fillRect(6, y0 + 6, W - 12, rh - 12);
+    ctx.fillStyle = '#1d3a55';
+    ctx.fillRect(6, y0 + 6, W - 12, 6);
+    const line = i === 0 && life.pa.lastTitle ? `${life.pa.lastTitle} · ${life.pa.lastSub} · ${B.lines[0]}` : B.lines[i];
+    const speed = 90 + i * 25;
+    const span = line.length * 26 + W;
+    const off = W - ((B.t * speed + i * 300) % span);
+    ctx.fillStyle = i === 3 ? '#ff8a6a' : '#7fd0ff';
+    ctx.fillText(line, off, y0 + rh * 0.55);
+    ctx.fillText(line, off + span, y0 + rh * 0.55);
+  }
+  B.tex.needsUpdate = true;
+}
+
+function stepBoards(life, dt) {
+  const B = life.boards;
+  if (!B) return;
+  B.t += dt;
+  /* Redrawn twice a second — a canvas upload a frame is a texture stream. */
+  if (B.t - B.at < 0.5) return;
+  B.at = B.t;
+  drawBoards(life);
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -2179,7 +3011,7 @@ function stepSilhouettes(world, life, dt) {
 
 /** [x, lift, z, dirX, dirY, dirZ, period, open, cold] — at surfaces, all of them. */
 function ventTable() {
-  const { across, deep, BAY, FLANK_L, WALL, W } = frame();
+  const { across, deep, BAY, FLANK_L, WALL, W, CHOW, ENG } = frame();
   return [
     /* The port rack foot, in the flank patch: nearest, and the only one the
      * player is close enough to hear as well as see. */
@@ -2192,6 +3024,10 @@ function ventTable() {
     [across(-0.47), 1.2, DECK.aft + 6, 0, 0.35, 1, 13.0, 1.0, 0],
     /* And one out in the midground, so the far half breathes too. */
     [WALL - 8.5, 1.5, deep(0.43), -1, 0.35, 0, 10.0, 1.6, 1],
+    /* The field kitchen's pots, warm, and the engine stand's coolant bleed. */
+    [CHOW.x - 2.2, 1.55, CHOW.z, 0, 1, 0, 3.6, 2.2, 0],
+    [CHOW.x - 0.9, 1.55, CHOW.z, 0, 1, 0.1, 4.1, 1.8, 0],
+    [ENG.x + 1.2, 2.2, ENG.z + 1.8, 0.8, 0.4, 0, 12.0, 1.4, 1],
   ];
 }
 
@@ -2421,10 +3257,22 @@ function trafficPlan(world) {
         entry: { x: APRON.padN.x - 55, y: 26 }, farX: -60, farY: 110,
         farIn: 14, inDur: 8, sit: 20, spin: 4, out: 2.6, farOut: 14, gap: 12, t0: 40, flight: 9,
         damagedEvery: 0, slot: 8, glow: 3 },
+      /* "DOUBLE THE TRAFFIC": two more fighters on the outboard marks,
+       * entering from the centre line so nothing crosses a wall. The port
+       * one comes in damaged every fourth cycle — a smoking hull every
+       * couple of minutes between the three that already do. */
+      { kind: 'fighter', pad: { x: APRON.padW.x, z: APRON.padW.z, y: gy(APRON.padW) },
+        entry: { x: APRON.padW.x + 50, y: 30 }, farX: 40, farY: 125,
+        farIn: 14, inDur: 8, sit: 17, spin: 4, out: 2.6, farOut: 14, gap: 9, t0: 26, flight: 4,
+        damagedEvery: 4, slot: 9, glow: 4 },
+      { kind: 'fighter', pad: { x: APRON.padE.x, z: APRON.padE.z, y: gy(APRON.padE) },
+        entry: { x: APRON.padE.x - 50, y: 29 }, farX: -30, farY: 135,
+        farIn: 14, inDur: 8, sit: 19, spin: 4, out: 2.6, farOut: 14, gap: 7, t0: 52, flight: 11,
+        damagedEvery: 0, slot: 10, glow: 5 },
     ],
     /* The far mesh slots: formation 0-3, pair 4-5, the fighters' own legs
-     * 6, 7 and 8; shuttle loop 0, shuttle's own leg 1. */
-    farFighters: 9, farShuttles: 2,
+     * 6 to 10; shuttle loop 0, shuttle's own leg 1. */
+    farFighters: 11, farShuttles: 2,
   });
 }
 
@@ -2722,6 +3570,8 @@ function stepHull(world, life, H, dt) {
       callCrashCrew(life, H, px, pz, false);
       launchSequence(world, { x: px, z: pz, speed: H.vOut });
       announce(world, life, `PA — FLIGHT ${H.flight} CLEARED TO LAUNCH`, 'clear the apron — stand behind the line');
+      /* THE LAUNCH ALERT: the rim's strobes run red for the spool and the launch. */
+      life.strobe = H.spin + H.out + 1.5;
     }
     const k = (t - Cc) / H.spin;
     const rise = smoothstep(0.5, 1, k) * 3.0;
@@ -2884,6 +3734,18 @@ const PA_IDLE = [
   ['PA — PIT CREW TO CRADLE TWO', 'panels off, bay open'],
   ['PA — WELDING, PORT WALL', 'eyes off the arc'],
   ['PA — GALLERY WATCH, CHANGE OVER', 'relief to the catwalks'],
+  ['PA — SECOND SITTING, FIELD KITCHEN', 'chow line forms on the port side'],
+  ['PA — ORDNANCE PARTY TO PAD B', 'live stores on the deck — no arcs'],
+  ['PA — ENGINE RUN, WORK ZONE', 'test fire in thirty seconds — clear the bell'],
+  ['PA — DROID BENCH, R-SERIES', 'dome and legs to the fitters'],
+  ['PA — STRETCHER PARTY TO THE CENTRE', 'medic to meet at the tent'],
+  ['PA — SECOND FORMATION, CENTRE', 'inspecting officer on the front rank'],
+  ['PA — MARSHALS TO THE MARKS', 'wands up — fighters inbound'],
+  ['PA — SPARE PANELS TO CRADLE ONE', 'creeper crew under the wing'],
+  ['PA — LIGHTS OUT, COT ROW', 'watch two sleeping — keep it down'],
+  ['PA — PILOTS TO THE APRON', 'flight of three walking out'],
+  ['PA — GUARD CHANGE, LOBBY DOORS', 'relief to the lift'],
+  ['PA — CHAPLAIN, STARBOARD FLANK', 'service at the wall'],
 ];
 
 function announce(world, life, title, sub) {
@@ -2923,6 +3785,7 @@ function stepPA(world, life, dt) {
     Q.made++;
     paCall(world);
     world.notify?.(title, sub, 'flavour');
+    Q.lastTitle = title.replace(/^PA — /, ''); Q.lastSub = sub.toUpperCase();
   }
   void dt;
 }
@@ -2962,10 +3825,12 @@ export function dressDeckLife(world) {
   const life = {
     t: 0, frame: 0, vt: 0, vents, vtick: vents.map(() => 0),
     next: 6, event: 0, brown: 0, brownFor: 1,
-    droids: [], rings: [], workers: [], sils: [], cranes: [], parked: [], floods: [], fog0: null, far0: null,
+    droids: [], rings: [], workers: [], sils: [], loose: [], cranes: [], parked: [], floods: [], fog0: null, far0: null,
     pa: { at: -99, n: 0, titles: [], subs: [], made: 0, mustered: false, lift: null, idle: 0 },
   };
   world._deckLife = life;
+  /* The site table, published for the checks: `life.frame` is the frame COUNT. */
+  life.sites = frame();
   life.holes = scanHoles(world);
   for (const V of life.vents) V[1] += groundAt(world, V[0], V[2]);
   addDeckHaze(world, life);
@@ -2978,6 +3843,9 @@ export function dressDeckLife(world) {
   addSleds(world, life);
   addWorkers(world, life);
   addSilhouettes(world, life);
+  addLoose(world, life);
+  addBeats(world, life);
+  addBoards(world, life);
   addTraffic(world, life);
   addTaxi(world, life);
   addFieldRings(world, life);
@@ -3028,9 +3896,12 @@ export function undressDeckLife(world) {
   if (cam && life.far0 != null) { cam.far = life.far0; cam.updateProjectionMatrix?.(); life.far0 = null; }
   for (const d of life.droids) { try { d.kn.dispose(); } catch {} }
   for (const w of life.workers) { try { w.shove.dispose(); } catch {} }
+  for (const S of life.sils) { try { S.kn.dispose(); } catch {} }
+  for (const P of life.loose || []) { try { P.body.dispose(); } catch {} }
+  if (life.boards) { try { life.boards.tex.dispose(); life.boards.mat.dispose(); } catch {} }
   if (life.traffic) for (const H of life.traffic.plan.hulls) { try { hullSolid(world, H, false); } catch {} }
   if (life.taxi?.collider) { try { world.physics?.removeStaticBox?.(life.taxi.collider); } catch {} life.taxi.collider = null; }
-  life.droids = []; life.workers = []; life.sils = [];
+  life.droids = []; life.workers = []; life.sils = []; life.loose = [];
 }
 
 /**
@@ -3049,6 +3920,9 @@ export function stepDeckLife(world, dt) {
   stepSleds(world, life, dt);
   stepWorkers(world, life, dt);
   stepSilhouettes(world, life, dt);
+  stepLoose(world, life, dt);
+  stepBeats(world, life, dt);
+  stepBoards(life, dt);
   stepParked(world, life, dt);
   stepVents(world, life, dt);
   stepTraffic(world, life, dt);

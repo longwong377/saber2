@@ -376,7 +376,11 @@ export async function run({ check, assert }) {
        * counted on its first frame is a room of forty unmerged rigs. Forty
        * frames is enough for the whole deck to bake; the game shows the room
        * after a lift ride longer than that. */
-      for (let i = 0; i < 48; i++) world.update(1 / 60, input);
+      /* 240 frames, from 48: `MergedSkin` bakes ONE figure a frame for the
+       * whole world, and the deck stands thirty-five rigged workers beside
+       * the company now. Four seconds is still shorter than the lift ride
+       * the room is shown after. */
+      for (let i = 0; i < 240; i++) world.update(1 / 60, input);
       /**
        * WHAT IS DRAWN, NOT WHAT IS IN THE GRAPH. The deck stands its company
        * and a crowd of troopers now, and every one of them is a rig of ~54
@@ -424,10 +428,18 @@ export async function run({ check, assert }) {
        * bound sits just above so the next thing that forgets to compose is
        * still caught.
        */
-      assert(meshes < 320,
-        `${meshes} meshes dressing the deck. It was 255 with the kit composed, the transport and `
-        + 'the lift standing; something new is emitting per-prop, and the ink pass doubles '
-        + 'whatever this is');
+      /**
+       * 380, FROM 320 — THE DENSITY PASS, measured at 352: the crowd is
+       * fourteen instanced poses and eight accessory kinds (from eight
+       * poses and a static mesh), the litter is eleven instanced kinds of
+       * loose prop, two more hulls fly, and the rams, hoist, canopy and
+       * boards move. Every one of those is a KIND holding a hundred
+       * things; the bound sits just above the honest number, as before.
+       */
+      assert(meshes < 380,
+        `${meshes} meshes dressing the deck. It was 352 with the kit composed, the transport, the lift, `
+        + 'the crowd, the litter and the beats all standing; something new is emitting per-prop, and the ink '
+        + 'pass doubles whatever this is');
       assert(meshes > 60, `${meshes} meshes is not a hangar, it is a floor`);
       return `${meshes} meshes of room drawn (${figures} for ${nMen} men on the deck), against 395 for the room that was deleted`;
     } finally { world.unload(); }
