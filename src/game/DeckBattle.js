@@ -146,7 +146,7 @@ class Parts {
     /* BAKED FORM: the toon bands flatten a lit plate to one tone, so the
      * belly is darkened in the vertex colour and the flanks between — a
      * hull reads as a solid from any angle, lit or not. Lamps keep theirs. */
-    const f = glow > 0 ? 1 : 0.55 + 0.45 * clamp(ny * 0.5 + 0.5, 0, 1) - 0.12 * Math.abs(nx);
+    const f = glow > 0 ? 1 : 0.68 + 0.32 * clamp(ny * 0.5 + 0.5, 0, 1) - 0.10 * Math.abs(nx);
     for (const p of tri) {
       this.pos.push(p[0], p[1], p[2]);
       this.nor.push(nx, ny, nz);
@@ -167,7 +167,7 @@ class Parts {
       this.pos.push(P.getX(i), P.getY(i), P.getZ(i));
       const ny = N ? N.getY(i) : 1;
       this.nor.push(N ? N.getX(i) : 0, ny, N ? N.getZ(i) : 0);
-      const f = glow > 0 ? 1 : 0.6 + 0.4 * clamp(ny * 0.5 + 0.5, 0, 1);
+      const f = glow > 0 ? 1 : 0.7 + 0.3 * clamp(ny * 0.5 + 0.5, 0, 1);
       if (hex != null || !Cc) this.col.push(_c.r * f, _c.g * f, _c.b * f);
       else this.col.push(Cc.getX(i) * f, Cc.getY(i) * f, Cc.getZ(i) * f);
       this.glo.push(glow);
@@ -181,7 +181,7 @@ class Parts {
   engine(dark, rim, glowHex, r, x, y, z, len = r * 1.1) {
     this.geo(new THREE.CylinderGeometry(r * 0.9, r, len, 12, 1, true), dark, 0, x, y, z + len / 2, Math.PI / 2, 0, 0);
     this.geo(new THREE.TorusGeometry(r, r * 0.09, 5, 14), rim, 0, x, y, z, 0, 0, 0);
-    this.geo(new THREE.CircleGeometry(r * 0.9, 14), glowHex, 4.6, x, y, z - r * 0.02, Math.PI, 0, 0);
+    this.geo(new THREE.CircleGeometry(r * 1.25, 14), glowHex, 5.0, x, y, z - r * 0.05, Math.PI, 0, 0);
     return this;
   }
 
@@ -207,9 +207,9 @@ class Parts {
 /*  THE HULLS — six classes, in real metres, +Z the bow                   */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-const REP = { hull: 0x8a8880, panel: 0x62615c, dark: 0x25272b, trim: 0x44464a, red: 0x7a2424, gold: 0xb08e3e,
+const REP = { hull: 0xa39c8f, panel: 0x7c766c, dark: 0x2a2b2e, trim: 0x55504a, red: 0x8c2626, gold: 0xc09a44, band: 0x8f887c,
   window: 0xffe2b0, engine: 0x7fd0ff, bay: 0x9fd8ff, rim: 0x505560 };
-const SEP = { hull: 0x66645a, panel: 0x484a4e, dark: 0x1f2124, trim: 0x3c4044, red: 0x2f4256, gold: 0x7e7048,
+const SEP = { hull: 0x4e5666, panel: 0x39404e, dark: 0x1c1f26, trim: 0xc9bfa2, red: 0x6b7a90, gold: 0x9a8c60, band: 0x5d6574,
   window: 0xffe8c0, engine: 0x9ff0ff, bay: 0xb0f0ff, rim: 0x42474c };
 
 /**
@@ -323,6 +323,7 @@ export const HULL_CLASSES = {
       const A = new Parts();
       A.slab(P.hull, 0, 270, 24, 18, -14, 14, -10, 10, 0, 0, 25);
       A.slab(P.dark, 0, 260, 26, 20, -3, 3, -3, 3, 0, 0, 25);
+      A.slab(P.band, 0, 250, 10, 6, 14, 20, 10, 14, 0, 0, 25);
       for (const sx of [1, -1]) {
         A.slab(P.hull, 0, 110, 12, 6, -9, 9, -4, 4, sx * 28, 0, 208, sx * 0.06);
         A.slab(P.panel, 0, 210, 20, 16, -9, 9, -7, 7, sx * 56, 0, -40);
@@ -353,29 +354,36 @@ export const HULL_CLASSES = {
       bow.slab(P.panel, 0, 580, 66, 22, -6, 8, -6, 8, 0, 10, 200);
       bow.slab(P.dark, 0, 560, 64, 20, -8, -2, -6, -2, 0, -30, 200);
       /* THE STERN BLOCK with its ears and the engine bank */
-      stern.slab(P.hull, 0, 200, 96, 82, -62, 62, -48, 48, 0, 0, -450);
-      stern.slab(P.dark, 0, 190, 100, 86, -8, 8, -8, 8, 0, 20, -450);
+      /* THE HAMMER-HEAD: the stern block is twice the hull's width, with the ears out past it */
+      stern.slab(P.hull, 0, 220, 130, 96, -66, 66, -48, 48, 0, 0, -450);
+      stern.slab(P.band, 0, 210, 134, 100, -10, 12, -10, 12, 0, 20, -450);
+      stern.slab(P.dark, 0, 200, 132, 98, -8, 8, -8, 8, 0, -30, -450);
       for (const sx of [1, -1]) {
-        stern.box(P.panel, 0, 24, 44, 150, sx * 106, 26, -440);
-        stern.box(P.dark, 0, 26, 10, 120, sx * 106, 0, -445);
+        stern.box(P.trim, 0, 30, 56, 170, sx * 150, 30, -440);
+        stern.box(P.dark, 0, 32, 12, 140, sx * 150, -4, -445);
       }
+      /* the dorsal ridge and flank bands the length of the hull */
+      stern.slab(P.band, 0, 290, 20, 16, 36, 50, 30, 42, 0, 0, -250);
+      bow.slab(P.band, 0, 580, 16, 6, 30, 42, 12, 18, 0, 0, 200);
+      bow.slab(P.trim, 0, 560, 66, 20, 2, 8, 0, 4, 0, 0, 200);
       stern.slab(P.panel, 0, 12, 92, 92, -58, 58, -58, 58, 0, 0, -546);
       for (const [x, y, r] of [[-60, 10, 18], [-20, 12, 20], [20, 12, 20], [60, 10, 18], [-40, -30, 12], [40, -30, 12]])
         stern.engine(P.dark, P.rim, P.engine, r, x, y, -552);
       /* THE DORSAL FIN AND THE BRIDGE ON IT; a smaller ventral fin. */
-      stern.slab(P.hull, 0, 260, 14, 8, 36, 170, 62, 110, 0, 0, -190);
-      stern.slab(P.panel, 0, 240, 16, 10, 100, 106, 100, 106, 0, 0, -190);
-      stern.box(P.panel, 0, 44, 16, 64, 0, 178, -230);
-      stern.box(P.trim, 0, 26, 8, 36, 0, 190, -234);
-      stern.box(P.window, 3.8, 34, 3, 2, 0, 178, -197);
-      stern.geo(new THREE.CylinderGeometry(1, 1.6, 50, 6), P.dark, 0, 0, 218, -250);
+      /* THE FIN: 200 m tall, the bridge riding its top */
+      stern.slab(P.hull, 0, 300, 16, 8, 36, 236, 66, 150, 0, 0, -200);
+      stern.slab(P.trim, 0, 280, 18, 10, 120, 130, 110, 118, 0, 0, -200);
+      stern.box(P.panel, 0, 64, 22, 90, 0, 246, -250);
+      stern.box(P.trim, 0, 36, 10, 50, 0, 262, -254);
+      stern.box(P.window, 3.8, 50, 5, 3, 0, 246, -204);
+      stern.geo(new THREE.CylinderGeometry(1.5, 2.5, 70, 6), P.dark, 0, 0, 302, -270);
       stern.slab(P.hull, 0, 200, 10, 6, -110, -36, -70, -36, 0, 0, -180);
       /* THE FLANK HANGARS, lit, and the window rows */
       for (const sx of [1, -1]) {
         for (const z of [40, 190]) {
           const w = 62 - (z + 100) * (62 - 18) / 600;
-          bow.box(P.dark, 0, 4, 20, 70, sx * (w + 1), 0, z, 0, 0);
-          bow.box(P.bay, 3.6, 2, 14, 56, sx * (w + 3), 0, z);
+          bow.box(P.dark, 0, 6, 30, 100, sx * (w + 1), 0, z, 0, 0);
+          bow.box(P.bay, 4.0, 3, 22, 84, sx * (w + 4), 0, z);
         }
         for (let i = 0; i < 4; i++) {
           const z = -380 + i * 60;
@@ -411,13 +419,19 @@ export const HULL_CLASSES = {
       A.geo(new THREE.CylinderGeometry(52, 52, 4, 18), P.dark, 0, 0, -10, 360, Math.PI / 2, 0, 0);
       A.geo(new THREE.CylinderGeometry(10, 16, 40, 8), P.trim, 0, 0, -10, 340, Math.PI / 2, 0, 0);
       /* THE SPINE: the tall stern fin, its mast, and the shorter fin below */
-      A.slab(P.hull, 0, 150, 9, 5, 22, 128, 40, 96, 0, 0, -170);
-      A.slab(P.panel, 0, 140, 11, 7, 60, 66, 60, 66, 0, 0, -170);
-      A.slab(P.window, 3.4, 100, 1.2, 1.2, 70, 118, 70, 90, 0, 0, -178);
-      A.box(P.panel, 0, 22, 12, 40, 0, 134, -200);
-      A.box(P.window, 3.8, 18, 3, 2, 0, 134, -179);
-      A.geo(new THREE.CylinderGeometry(0.8, 1.2, 70, 6), P.dark, 0, 0, 175, -220);
-      A.slab(P.hull, 0, 120, 7, 4, -90, -22, -60, -22, 0, 0, -160);
+      A.slab(P.hull, 0, 170, 12, 6, 22, 200, 50, 140, 0, 0, -170);
+      A.slab(P.trim, 0, 160, 14, 8, 80, 90, 80, 90, 0, 0, -170);
+      A.slab(P.window, 3.4, 120, 2, 2, 100, 170, 100, 128, 0, 0, -180);
+      A.box(P.panel, 0, 30, 16, 50, 0, 208, -210);
+      A.box(P.window, 3.8, 24, 4, 3, 0, 208, -184);
+      A.geo(new THREE.CylinderGeometry(1, 1.6, 90, 6), P.dark, 0, 0, 260, -230);
+      A.slab(P.hull, 0, 140, 9, 5, -130, -22, -80, -22, 0, 0, -160);
+      /* THE FORE BLADE: a vertical blade over the bow, the class's other tell */
+      A.slab(P.hull, 0, 200, 8, 3, 16, 110, 8, 40, 0, 0, 280);
+      A.slab(P.trim, 0, 190, 10, 5, 50, 58, 30, 36, 0, 0, 280);
+      /* the dorsal ridge and a flank band */
+      A.slab(P.band, 0, 580, 18, 12, 22, 34, 16, 24, 0, 0, 0);
+      A.slab(P.band, 0, 560, 48, 34, -10, 2, -8, 0, 0, 0, 0);
       /* engines */
       A.slab(P.panel, 0, 12, 40, 40, -20, 20, -20, 20, 0, 0, -298);
       A.engine(P.dark, P.rim, P.engine, 16, -22, 0, -304);
@@ -451,14 +465,18 @@ export const HULL_CLASSES = {
       for (const sx of [1, -1]) A.slab(P.hull, 0, 200, 14, 6, -12, 12, -6, 6, sx * 44, 0, 450, sx * -0.12);
       A.slab(P.hull, 0, 160, 12, 3, -10, 10, -3, 3, 0, 0, 520);
       /* THE STERN BLOCK and the four engines */
-      A.slab(P.hull, 0, 150, 118, 62, -46, 46, -30, 30, 0, 0, -425);
-      A.slab(P.dark, 0, 140, 122, 66, -6, 6, -6, 6, 0, 8, -425);
+      /* THE BROAD AFT: a 320 m stern block on a 60 m spindle */
+      A.slab(P.hull, 0, 190, 160, 70, -56, 56, -30, 30, 0, 0, -430);
+      A.slab(P.band, 0, 180, 164, 74, 10, 24, 6, 14, 0, 0, -430);
+      A.slab(P.dark, 0, 180, 164, 74, -8, 8, -8, 8, 0, -20, -430);
+      /* the ridge along the spindle */
+      A.slab(P.band, 0, 880, 14, 6, 26, 40, 10, 16, 0, 0, 100);
       A.box(P.panel, 0, 40, 14, 40, 0, 52, -420);
       A.box(P.window, 3.8, 30, 3, 2, 0, 52, -399);
       A.geo(new THREE.CylinderGeometry(1, 1.6, 40, 6), P.dark, 0, 0, 78, -440);
-      A.slab(P.panel, 0, 12, 114, 114, -42, 42, -42, 42, 0, 0, -498);
-      for (const [x, y, r] of [[-75, 4, 20], [-25, 6, 22], [25, 6, 22], [75, 4, 20], [-50, -28, 10], [50, -28, 10]])
-        A.engine(P.dark, P.rim, P.engine, r, x, y, -504);
+      A.slab(P.panel, 0, 12, 156, 156, -52, 52, -52, 52, 0, 0, -520);
+      for (const [x, y, r] of [[-105, 4, 24], [-35, 8, 26], [35, 8, 26], [105, 4, 24], [-70, -30, 12], [70, -30, 12]])
+        A.engine(P.dark, P.rim, P.engine, r, x, y, -526);
       for (const sx of [1, -1]) for (let i = 0; i < 4; i++) A.turret(sx * (34 - i * 4), 22 - i * 2, -270 + i * 184, sx, 0.3, 0);
       A.turret(0, 44, -380, 0, 1, 0); A.turret(0, 24, 320, 0, 1, 0);
       A.fire(0, 10, -100); A.fire(20, 0, 200); A.fire(0, 30, -425);
@@ -487,21 +505,22 @@ export const ROLES = {
  * cheated up at the far engagement so a fighter is a speck and not nothing.
  */
 export const ENGAGEMENTS = [
-  { id: 'line', az: -0.34, el: 0.27, r: 600, scale: 0.22, close: 160, fighters: 22, fscale: 1.4,
-    A: [{ role: 'carrier', at: [-140, 20, 30], fwd: [1, 0, 0.05] }, { role: 'assault', at: [-165, -45, -80], fwd: [1, 0, -0.08] }, { role: 'light', at: [-110, 70, 100], fwd: [1, 0.02, 0.1] }],
-    B: [{ role: 'assault', at: [150, 10, 20], fwd: [-1, 0, 0.06] }, { role: 'light', at: [190, -45, -90], fwd: [-1, 0, -0.1] }, { role: 'light', at: [130, 65, 110], fwd: [-1, 0, 0.12] }] },
-  { id: 'carrier', az: 0.36, el: 0.10, r: 560, scale: 0.18, close: 120, fighters: 52, fscale: 1.4, duel: true,
-    A: [{ role: 'carrier', at: [-110, 0, 60], fwd: [0.8, 0.02, -0.45] }, { role: 'light', at: [-200, 45, -70], fwd: [0.9, 0, -0.3] }],
-    B: [{ role: 'carrier', at: [120, -10, -20], fwd: [-0.8, 0, 0.5] }, { role: 'light', at: [210, 50, 90], fwd: [-0.9, 0, 0.3] }] },
-  { id: 'limb', az: 0.04, el: 0.42, r: 640, scale: 0.075, close: 60, fighters: 16, fscale: 0.6,
-    A: [{ role: 'carrier', at: [-60, 0, 0], fwd: [1, 0, 0] }, { role: 'assault', at: [-115, -20, 40], fwd: [1, 0, 0] }],
-    B: [{ role: 'carrier', at: [60, 5, 10], fwd: [-1, 0, 0] }, { role: 'assault', at: [120, -15, -30], fwd: [-1, 0, 0] }] },
+  { id: 'line', az: -0.36, el: 0.27, r: 600, scale: 0.22, close: 160, fighters: 22, fscale: 1.4,
+    A: [{ role: 'carrier', at: [-140, 20, 30], fwd: [1, 0, 0.05], roll: 0.30 }, { role: 'assault', at: [-165, -45, -80], fwd: [1, 0, -0.08], pitch: -0.18 }, { role: 'light', at: [-110, 70, 100], fwd: [1, 0.02, 0.1], roll: -0.42 }],
+    B: [{ role: 'assault', at: [150, 10, 20], fwd: [-1, 0, 0.06], roll: -0.22 }, { role: 'light', at: [190, -45, -90], fwd: [-1, 0, -0.1], pitch: 0.2 }, { role: 'light', at: [130, 65, 110], fwd: [-1, 0, 0.12], roll: 0.38 }] },
+  /* THE DUEL. Our carrier is pushed close and stood large — the one hull whose towers and turrets resolve from the deck. */
+  { id: 'carrier', az: 0.40, el: 0.09, r: 560, scale: 0.18, close: 120, fighters: 52, fscale: 1.4, duel: true,
+    A: [{ role: 'carrier', at: [-200, -24, -150], fwd: [0.72, 0.02, -0.55], scale: 0.30, roll: 0.14 }, { role: 'light', at: [-230, 50, -60], fwd: [0.9, 0, -0.3], roll: 0.3 }],
+    B: [{ role: 'carrier', at: [130, -10, -10], fwd: [-0.8, 0, 0.5], roll: -0.2 }, { role: 'light', at: [230, 50, 100], fwd: [-0.9, 0, 0.3], pitch: 0.16 }] },
+  { id: 'limb', az: 0.10, el: 0.50, r: 640, scale: 0.075, close: 60, fighters: 16, fscale: 0.6,
+    A: [{ role: 'carrier', at: [-60, 0, 0], fwd: [1, 0, 0] }, { role: 'assault', at: [-115, -20, 40], fwd: [1, 0, 0], roll: 0.25 }],
+    B: [{ role: 'carrier', at: [60, 5, 10], fwd: [-1, 0, 0], roll: -0.3 }, { role: 'assault', at: [120, -15, -30], fwd: [-1, 0, 0] }] },
   { id: 'port', az: -0.95, el: 0.12, r: 480, scale: 0.16, close: 90, fighters: 8, fscale: 1.2,
-    A: [{ role: 'light', at: [-70, 0, 0], fwd: [1, 0, 0.3] }],
-    B: [{ role: 'assault', at: [90, 10, 30], fwd: [-1, 0, 0.3] }] },
+    A: [{ role: 'light', at: [-70, 0, 0], fwd: [1, 0, 0.3], roll: 0.4 }],
+    B: [{ role: 'assault', at: [90, 10, 30], fwd: [-1, 0, 0.3], roll: 0.2 }] },
   { id: 'zenith', az: 0.85, el: 0.48, r: 520, scale: 0.14, close: 100, fighters: 12, fscale: 1.2,
-    A: [{ role: 'assault', at: [-90, 0, 0], fwd: [1, 0.1, 0] }],
-    B: [{ role: 'carrier', at: [100, 20, 40], fwd: [-1, 0, 0] }] },
+    A: [{ role: 'assault', at: [-90, 0, 0], fwd: [1, 0.1, 0], roll: -0.3 }],
+    B: [{ role: 'carrier', at: [100, 20, 40], fwd: [-1, 0, 0], roll: 0.35 }] },
 ];
 
 /** Pools. Sized here so the check can price them. */
@@ -706,17 +725,19 @@ export function dressDeckBattle(world) {
       const fwd = new THREE.Vector3().addScaledVector(R, spec.fwd[0]).addScaledVector(Uv, spec.fwd[1]).addScaledVector(D, spec.fwd[2]).normalize();
       const rank = isOurs ? rankA++ : rankB++;
       const h = {
-        cls, K, idx, eng, faction, ours: isOurs, role: spec.role, scale: E.scale,
+        cls, K, idx, eng, faction, ours: isOurs, role: spec.role, scale: spec.scale ?? E.scale,
         base, fwd, q0: new THREE.Quaternion(), q: new THREE.Quaternion(), pos: new THREE.Vector3(),
         m: [new THREE.Matrix4(), new THREE.Matrix4()], inv: new THREE.Matrix4(),
         arrive: arrive(isOurs, rank), depart: BATTLE.jumpOut + rank * 0.55 + hash(rank * 1.7 + 0.9) * 0.5,
         rank, shown: false, alive: true, victim: false, reinforcement: false, target: null,
         tStart: 0, tCount: 0, seedA: hash(ei * 7.1 + rank * 3.3 + 0.5), seedB: hash(ei * 3.7 + rank * 5.1 + 0.9),
-        len: K.C.len * E.scale, halfW: K.C.halfW * E.scale, halfH: K.C.halfH * E.scale, u: E.scale / 0.2,
+        len: K.C.len * (spec.scale ?? E.scale), halfW: K.C.halfW * (spec.scale ?? E.scale), halfH: K.C.halfH * (spec.scale ?? E.scale), u: (spec.scale ?? E.scale) / 0.2,
         burnAt: -1, dead: false, halfVis: [1, 1],
       };
       _m.lookAt(fwd, ZERO, UP);
       h.q0.setFromRotationMatrix(_m);
+      /* off the ecliptic: a line of battle is not a stack of parallel slabs */
+      if (spec.roll || spec.pitch) h.q0.multiply(_q.setFromEuler(_eu.set(spec.pitch || 0, 0, spec.roll || 0, 'YXZ')));
       h.pos.copy(base);
       eng.hulls.push(h);
       (isOurs ? eng.A : eng.B).push(h);
@@ -1016,13 +1037,13 @@ export function poseHull(st, h, tc, victimSide, sep) {
   h.q.copy(h.q0).multiply(_q.setFromEuler(_eu));
   /* the arrival: the hull grows out of the streak in a third of a second */
   const grow = smoothstep(arrive, arrive + 0.35, tc) * (1 - smoothstep(depart, depart + 0.35, tc));
-  _s.set(E.scale * grow * h.halfVis[0], E.scale * grow * h.halfVis[0], E.scale * grow * h.halfVis[0]);
+  _s.set(h.scale * grow * h.halfVis[0], h.scale * grow * h.halfVis[0], h.scale * grow * h.halfVis[0]);
   h.m[0].compose(h.pos, h.q, _s);
   if (h.K.halves.length > 1) {
     _v.copy(h.pos).addScaledVector(h.fwd, sternOff).addScaledVector(UP, sternDrop).addScaledVector(st.planetDir, -bowDrift * 0.6);
     _eu.set(pitch + sternPitch, -yawOff * 0.5, roll * 1.3, 'YXZ');
     _q2.copy(h.q0).multiply(_q.setFromEuler(_eu));
-    const sv = E.scale * grow * h.halfVis[1];
+    const sv = h.scale * grow * h.halfVis[1];
     _s.set(sv, sv, sv);
     h.m[1].compose(_v, _q2, _s);
   }

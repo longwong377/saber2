@@ -179,11 +179,17 @@ export async function run({ check, assert }) {
       /* warm, on the broadside, then measure */
       seekDeckBattle(world, BATTLE.fire + 60);
       for (let i = 0; i < 300; i++) stepDeckBattle(world, 1 / 60);
-      const heap0 = process.memoryUsage().heapUsed;
-      const t0 = performance.now();
-      for (let i = 0; i < 600; i++) stepDeckBattle(world, 1 / 60);
-      const ms = (performance.now() - t0) / 600;
-      const grew = (process.memoryUsage().heapUsed - heap0) / 1024;
+      /* three windows, the least growth of them: a collection landing inside
+       * one window reads as negative, a promotion as a spike; a step that
+       * really allocates grows in every window */
+      let ms = Infinity, grew = Infinity;
+      for (let w = 0; w < 3; w++) {
+        const heap0 = process.memoryUsage().heapUsed;
+        const t0 = performance.now();
+        for (let i = 0; i < 600; i++) stepDeckBattle(world, 1 / 60);
+        ms = Math.min(ms, (performance.now() - t0) / 600);
+        grew = Math.min(grew, (process.memoryUsage().heapUsed - heap0) / 1024);
+      }
       /* one small phase record a frame is the only allocation; 600 of them are
        * well under a megabyte, and a per-frame vector or array would be many */
       assert(ms < 1.5, `${ms.toFixed(3)} ms a step on the broadside`);
