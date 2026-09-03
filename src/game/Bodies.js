@@ -9732,9 +9732,40 @@ export const CREATURE_PLANS = {
      * animal 0.44 thick. The head was INSIDE the chest, and the render showed
      * exactly that — a bean with a lump on the front and no face anywhere.
      * 0.72 leaves 0.35, which is 0.79 of girth and lands this row in the band
-     * the eleven other plans occupy. `tools/checks/beasts.mjs` now pins the
-     * ratio for every plan, so the next pitched body fails a check instead of
-     * shipping with its head in its ribs.
+     * the eleven other plans occupy.
+     *
+     * ── AND THE CHECK THIS NOTE PROMISED DOES NOT EXIST, WHICH IS WORTH MORE
+     *    THAN THE PROMISE ─────────────────────────────────────────────────
+     *
+     * It used to end "`tools/checks/beasts.mjs` now pins the ratio for every
+     * plan, so the next pitched body fails a check instead of shipping with
+     * its head in its ribs". No such check was ever written — HANDOFF §2.3b's
+     * defect, one layer up: a claim about a guard, standing in the file, with
+     * nothing behind it.
+     *
+     * It is not written now either, and the reason is the more useful half.
+     * Three metrics were built and measured across all thirteen plans before
+     * giving up on it (`tools/_soft.mjs` beside a throwaway probe):
+     *
+     *   SKULL VERTICES INSIDE THE TRUNK HULL, by ray parity. The blurrg's
+     *   actual defect — headAt[0] 0.40, "a bean with a lump on the front and
+     *   no face anywhere" — measures 25.5%. The WAMPA, whose row deliberately
+     *   sinks "the head BETWEEN the shoulders", measures 52.7%. The design
+     *   case is twice the accident.
+     *   THE HEAD BONE'S SIGNED DISTANCE OUTSIDE THE HULL. Eleven of thirteen
+     *   plans are negative, because the head bone sits at the BASE of the neck
+     *   by construction and the neck tube carries out to the skull.
+     *   RADIAL DISTANCE FROM THE MEASURED LATHE AXIS OVER THE HULL RADIUS
+     *   THERE — the ratio this note is actually about. Blurrg-as-shipped 0.442,
+     *   wampa 0.146, tuk'ata 0.255. Again the design cases sit below the
+     *   accident.
+     *
+     * Any threshold that passes the wampa passes the blurrg's defect, so the
+     * check would be a check that cannot fail, which is worse than no check
+     * (HANDOFF §2.3b). What would separate them is a per-plan expectation, and
+     * a table of thirteen expected numbers beside the thirteen numbers that
+     * produce them is HANDOFF §2.3's hand-maintained twin. Recorded here so
+     * the next reader does not spend the afternoon this cost.
      *
      * The rancor (0.62 of girth clear) and the wampa (1.01) were already
      * compensated by hand by whoever authored them; nothing here moves them. */
@@ -10822,11 +10853,14 @@ function buildFootFor(k, kind, plate, tooth, hide, S, g, len) {
      * game whose entire brief is "cannot fight" is the worst place in the
      * frame to put a weapon.
      *
-     * A cat's claws are SHEATHED. Not filed off — sheathed, which is why this
-     * is the pad and the toes unchanged (same widths, same stations, same
-     * `y`) with the three `clawGeo` calls simply not made, and not a new
-     * shape. The toe pads get 15% more length to close the gap the claw used
-     * to fill, so the front of the foot still has a front.
+     * A cat's claws are SHEATHED. Not filed off — sheathed — so this is the
+     * `paw` branch with the three `clawGeo` calls simply not made, and not a
+     * new shape: same two `pad()` primitives, same three toe stations across
+     * the foot, same `y`. Two numbers move and both are the claw's absence
+     * being paid for rather than a redesign: each toe pad is 15% longer
+     * (0.058 → 0.067) and sits 1.5% further forward (0.22 → 0.235), so the
+     * front of the foot still reaches where the claw tips used to, and the
+     * sole grows with it (0.13 → 0.135 across, 0.19 → 0.20 fore-and-aft).
      */
     pad(hide, 0.135, 0.052, 0.20, 0, 0.07);
     k.row(3, (j, t) => pad(hide, 0.052, 0.042, 0.067, (t - 0.5) * 0.19, 0.235, 0.91));
@@ -13378,8 +13412,14 @@ export function buildWookiee(opts = {}) {
            * A clump rooted on `foot` would swing with the toe on every step
            * and read as a brush glued to a shoe.
            */
-          for (const a of [0.45, sx * 1.55, Math.PI - 0.45]) {
-            shagOn(k, under, shin, 4, { y0: 0.14, y1: 0.70, a0: a, a1: a,
+          /* All three azimuths carry `sx`, which the first cut got half right:
+           * with the middle row at `sx * 1.55` and the other two at a bare
+           * 0.45 and π − 0.45, the left leg's front row sat inboard and the
+           * right leg's sat outboard — the same body wearing two different
+           * coats. Signing all three puts front-outboard, outboard and
+           * back-outboard on both legs. */
+          for (const a of [0.45, 1.55, 2.70]) {
+            shagOn(k, under, shin, 4, { y0: 0.14, y1: 0.70, a0: sx * a, a1: sx * a,
               len: (t) => (0.108 - t * 0.014) * s, r0: 0.024 * s, droop: 0.84, sink: 0.005 * s });
           }
           shagOn(k, under, shin, 7, { y0: 0.80, y1: 0.80, a0: -2.7, a1: 2.7,
