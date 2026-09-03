@@ -529,6 +529,14 @@ export class Crew {
     v.team = this.wasTeam;
     v.speed = this.wasSpeed;
     v.wish = null;
+    /* …AND THE HEADING THE DRIVER WAS STEERING WITH GOES BACK TOO. `update`
+     * writes `toTarget` so the backpedal limiter measures the throttle against
+     * the driver's own intent rather than against whatever the brain last
+     * wanted; left behind, it is a stale unit vector aliased into a Crew that
+     * no longer exists, and the body walks away from it at BACKPEDAL until its
+     * brain next picks a target. Nulling is what a body with nothing in mind
+     * already looks like — `_move` guards on `if (this.toTarget)`. */
+    v.toTarget = null;
     v.driven = null;
     v.telegraphAim = null;
     p.driving = null;
