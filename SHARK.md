@@ -1,369 +1,498 @@
-# SHARK — the lift goes somewhere
+# SHARK — the station, the hub of the whole game
 
-A plan, not a build. Written 3 Sep against this tree and against
-`longwong377/Opus-5` at `claude/aaa-game-development-j6y2ml` (7c3df7e, "previews:
-every model rendered"). Every number is measured off one of the two repos.
-The person carrying it out is expected to be a different session; the last
-section is what to hand them.
+A plan, not a build. Version 2, 3 Sep, after the player's second brief. Written
+against this tree and against `longwong377/Opus-5` at
+`claude/aaa-game-development-j6y2ml` (7c3df7e). Every number is measured off one
+of the two repos. The person carrying it out is a different session; §12 is what
+to hand them. **If a place, a rule or a number is not in this file, do not invent
+it — ask.**
 
-The player's ask, in his words: *"making our elevator in battlefield borz
-connect to this larger ship (essentially replaces the relatively low effort
-venerator we have) … only take it if it's good and then plan on filling out
-the rest … I rather have a smaller actually working detailed and lived in
-ship than a giant expansive ship that is ultimately empty and repetitive …
-a home for the player, a habitat for the companions, like almost a game
-within a game."*
+The player, first brief: *"making our elevator in battlefield borz connect to
+this larger ship … only take it if it's good and then plan on filling out the
+rest … I rather have a smaller actually working detailed and lived in ship than
+a giant expansive ship that is ultimately empty and repetitive … a home for the
+player, a habitat for the companions, like almost a game within a game."*
 
----
-
-## 0. Verdict, in six lines
-
-1. **The idea is good and cheaper than it looks.** The lift already exists,
-   it already "goes" somewhere the player never sees, and the deck already
-   has the one thing a hub needs: a reason to come back (the company, the
-   kennel, the muster). A second floor on the same lift is the natural next
-   room. Do it.
-2. **Do not take the other game.** Take four files from it and its one good
-   idea. The Opus-5 package is 42 GLBs, 3.4 M triangles, 215 MB, 245
-   materials, 14 alien species — and it is, by its own author's measurement,
-   *"78 of 128 places from one generic kit"*, *"0 NPCs that travel, work, eat or
-   sleep"*, *"one room, five times"*. The previews confirm it. Most of it is
-   the empty, repetitive ship the player said he does not want.
-3. **Take: the Zocalo, the central corridor, the Starfury, the hull
-   exterior.** Judge everything else unworthy of a 28 MB single-file game
-   (§2). The crowd library is worse than what this engine already builds.
-4. **Build small: one ring, eight rooms, one lift, one fighter.** Everything
-   walkable is inside ~600 m of corridor and every room has people in it
-   doing something. A "home" and a "kennel" are two of the eight.
-5. **The flying is the one genuinely new system**, and it is worth it because
-   it closes a loop no other feature can: launch, fly round the ship, look into
-   your own hangar from outside, land. Port the flight model, not the Godot
-   scene.
-6. **Lore does not need fixing.** The player already answered it ("two
-   universes colliding … a strange charm"). One name and one line of
-   Databank text is all the cover it needs: the capital ship you serve on is
-   a *captured* alien station-hull that the Republic bolted a flight deck
-   onto. The alien architecture and the mixed crowd become the point, not the
-   problem.
+Second brief: *"the station will be the hub for the game and any other
+modes/games we build that will have their own characters/world but with no
+mixing other than in the station where they all live together … all our current
+battlefront borz npcs AND all the species from the other Opus 5 repo … everyone
+lives on the station if it makes sense … it really needs to feel like a
+functioning laid out station with anything an actual station might have …
+never copied and pasted, it all needs to be unique … everything actually
+modelled and with physics and interactable like any other body in Battlefield
+Borz — the space-physics/ragdoll sandbox feel."*
 
 ---
 
-## 1. What the other game actually is
+## 0. Verdict, in eight lines
 
-`longwong377/Opus-5` is a **Godot 4** project (Python generators →
-`.glb` → GDScript runtime). Nothing in it runs in a browser; its own
-`PLAY.md` says so (*"No, and not for a fixable reason"*). What crosses over is
-the `handoff/` folder: plain glTF 2.0, no engine dependency, with
-`manifest.json` (placements, triangles, bounds), `materials.json` (245
-material rows that bind by mesh-name fragment) and `textures/` (49 PNGs,
-33 MB). It was made for exactly this hand-over and it is competent.
-
-The **babylon5** repo (June) is an older three.js/TypeScript "Lethe Station"
-with a large NPC simulation in `src/sim/`. It has no models worth taking and
-its sim is TypeScript on a different world model. Ignore it for Shark.
-
-**What the Godot game's own author measured** (`docs/SHIP-PLAN.md`,
-amendment 4h): 16 distinct place builders over 128 places; 78 from the
-generic kit; one corridor generator for 70 ring decks; 0 dialogue; 0 NPCs
-that move to a job. The plan there is a plan to fix that inside Godot. It is
-not our problem and we should not inherit it.
-
-### 1.1 The inventory, judged from the previews
-
-| asset | tri | verdict | why |
-|---|---|---|---|
-| `zocalo.glb` | 98 k | **TAKE** | The one room with real architecture: a barrel-vaulted market hall, ribbed arches, galleries, kiosks, tables. Distinct, warm, legible. Becomes the ship's concourse. |
-| `shops_kiosks.glb` | 101 k | take with the Zocalo | Same hall's dressing. Cull to the stalls you can stand at. |
-| `central_corridor.glb` | 44 k | **TAKE** | A long ribbed corridor with signage frames and lit floor channel; the connective tissue. Loop it, do not tile it seventy times. |
-| `starfury.glb` | 4 k | **TAKE** | 16 named sections, 18 KB draco, thruster mounts in `starfury_manifest.json`. A real airframe, and the only vehicle. |
-| `hull.glb` | 388 k | TAKE, far only | 8 km hull with cobra bay, docking spheres, reactor spine, greebles. Good at 2-6 km as the thing you fly around; never walked. Needs a floating origin or a scale-model. |
-| `cnc.glb` | 19 k | maybe | A decent blue command room with a console dais. Could be the bridge if we want one; a room we can also build ourselves in a day. |
-| `obs_dome_1/2`, `obs_rotundas` | 26-42 k | maybe one | Round rooms with windows. Take ONE rotunda as the observation lounge; the others are the same room. |
-| `docking_bays.glb` | 33 k | no | A grey box with lamps. Our hangar is far better. |
-| `customs_north/south` | 40 k | no | Turnstiles in a grey hall. Nothing to do there without the identicard game. |
-| 5 bars/cafés | 6-7 k each | no | "One room, five times", flat-lit, red chairs. Build one cantina ourselves. |
-| 6 quarters modules | 28-95 k | no | Corridors of doors. Empty. |
-| `hydroponics`, `drum_*` | 57-174 k | no | A 1.8 km rotating garden. Beautiful idea, wrong scale for "small and lived in", and 300 KB+ of terrain we cannot fill. |
-| `crowd_library(.low)` | 1.36 M / 123 k | **no** | 14 species × costumes as untextured, low-poly, flat-shaded figures (`crowd_front.jpg`). This engine's `dressHumanoid`/`buildDeckCrew` figures are better in every way and already animate, ragdoll and dismember. |
-| `alien_sector`, `kosh_quarters`, plant rooms | 4-44 k | no | Dark boxes. |
-| `shuttle_car`, `core_shuttle` | 27-29 k | no | A tram. Our lift is the transport. |
-
-Roughly: **four files, ~530 k triangles before culling, ~2 MB draco.** That
-is the whole import.
+1. **The hub-of-worlds is the right structure, and better than the first Shark.**
+   Every mode stays clean; the station is the one place the whole cast is seen
+   at once. It also settles the lore for good: a crossroads port where people
+   from different universes live is a *setting*, not an apology.
+2. **Do not take the other game. Take three files and its data.** The Opus-5
+   package is 42 GLBs, 3.4 M triangles, 215 MB, and by its own author's audit
+   "78 of 128 places from one generic kit, 0 NPCs that move, one room five
+   times". Take the Zocalo hall, the transit corridor, the Starfury — and the
+   TABLES: 15 species' measured body ratios, name generators, daily rhythms,
+   40 jobs, factions. The crowd meshes are worse than what this engine builds.
+3. **The station is a battlefield with no war.** It is a level in sandbox mode
+   on the real `World`, so every resident is a real body that ragdolls, loses
+   limbs and is thrown, and every prop is a `Props` body. Not a second hangar.
+4. **It is laid out like a station**: a three-deck drum round an atrium void,
+   three decks with three characters and three corridor TYPES, a ring, a spine,
+   a tram, three lifts, 55 places in a gazetteer (§3), no two the same shape.
+5. **Everyone lives here where it makes sense** — every humanoid kind in Borz
+   off duty and unarmed, plus all 15 species, in quarters by people, mixing on
+   the concourse.
+6. **Future modes plug in by a contract**: a lift floor and a residents
+   manifest. No station file ever learns a mode's name.
+7. **The Starfury is the one truly new system** and closes a loop nothing else
+   can: launch, fly round the station, look into your own hangar, land.
+8. **The cost is population and places, not geometry.** Ship deck by deck.
 
 ---
 
-## 2. Why "small and lived in" is the only version that works here
+## 1. What the other repo actually is
 
-Three measured constraints in *this* repo decide the scale:
+`longwong377/Opus-5` is a **Godot 4** project (Python generators → `.glb` →
+GDScript). Nothing in it runs in a browser. What crosses over is `handoff/`:
+plain glTF 2.0 with `manifest.json`, `materials.json`, 49 textures, and the
+Python under `station/npc/` — which is where the value is.
 
-- **The game ships as one file.** `node tools/pack.mjs` writes **28.4 MB**
-  today (23.4 MB of modules, 25 inlined assets). Every byte of GLB and
-  texture goes in that file as base64. The full Opus-5 package would be
-  +11 MB draco (+33 MB textures) — a 70 MB page. Four files with the
-  engine's own materials is +2 MB.
-- **There is no GLTF loader in the tree.** `vendor/three/` carries
-  `three.module.js`, a few objects/postprocessing/shaders and nothing else;
-  `grep GLTFLoader src tools` returns nothing. Loading the handoff means
-  vendoring `GLTFLoader` (+ `DRACOLoader` and its WASM decoder, ~330 KB) —
-  see §5.1.
-- **The room budget is real.** `tools/checks/hangar.mjs` bounds the deck at
-  320 draw calls and the ink pass draws everything twice. A 98 k-triangle
-  hall in 44 meshes is fine; seventy generic decks streaming is not, and we
-  have no streaming.
+**Author's own measurement** (`docs/SHIP-PLAN.md` amendment 4h): 16 distinct
+place builders over 128 places; 78 from one generic kit; one corridor generator
+for 70 decks; 0 dialogue; 0 NPCs that move to a job. Their plan is to fix that
+inside Godot. Not our problem and not to be inherited.
 
-Against that, what makes a room "lived in" in this engine already exists and
-is expensive to build twice: `DeckLife.js` (111 droids, 20 rigged workers, a
-crowd, 25 jobs, PA, traffic), `DeckCast.js` (crew builders, Knockable bodies),
-`CompanionDeck.js` (your animal follows you round the deck), `Company.js`
-(the men, their looks, their record). **Every room Shark adds should be
-populated by reusing those systems**, which means the number of rooms is
-bounded by how many distinct *activities* we can give them, not by geometry.
-Eight rooms with people doing eight different things beats forty corridors.
+### 1.1 What to take
 
----
+| take | what | why |
+|---|---|---|
+| `handoff/draco/zocalo.glb` | 98 k tri, 44 meshes, 22 × 7.3 × 67 m, floor at y −0.1, +z the hall's length | the one room with real architecture — a barrel-vaulted market hall with galleries and stalls. It is the Concourse. |
+| `handoff/draco/central_corridor.glb` | 44 k tri, 37 meshes, 9.4 × 7.4 × 120 m, floor at −0.2 | a ribbed corridor with signage frames, shopfronts, a lit floor channel. It is ONE deck's corridor type, never all three. |
+| `handoff/draco/starfury.glb` + `starfury_manifest.json` | 4 k tri, 16 named sections, nine thruster mounts, cockpit volume | a real airframe, the only vehicle worth having |
+| `handoff/draco/hull.glb` | 388 k tri, 8 km | far only, from the Starfury; never walked |
+| `handoff/draco/cnc.glb`, one `obs_rotundas` room | 19 k / 42 k | Command and the Observation dome — both a day's kit work if the import disappoints |
+| `station/npc/body.py` `SPECIES` | 15 rows: stature, girth, cranium, limb ratios, measured off references | the species bodies' NUMBERS |
+| `station/npc/names.py` | per-species name generators (Narn stems, Centauri given/house, …) | residents' names |
+| `station/npc/schedule.py` | `RHYTHMS` per species (sleep, meals), 40+ `ROLES`, shift offsets, rotating workplaces | the day |
+| `station/npc/faction.py` | factions, flags (armband, psi, ranger, guild, sanctuary), verbs | who stands with whom |
 
-## 3. The ship — "BORZ STATION", eight rooms and a ring
+**Do not take:** `shops_kiosks.glb` (it IS `zocalo.glb` — identical 44 mesh
+names and bounds), the five bars, the six quarters modules, the drum and its
+1.8 km garden, the docking bays, customs, the crowd library (14 species as
+untextured low-poly figures — `dressHumanoid` beats every one), the identicard
+game from `THE-GAME.md`, streaming.
 
-Rename nothing the player already knows. The hangar stays the hangar. The
-lift's readout already counts decks (FLIGHT DECK is 32); Shark gives four of
-the other numbers a floor.
-
-```
-                 ┌────────────── OBSERVATION LOUNGE (deck 60) ──────────────┐
-                 │   the rotunda: a window wall onto the planet and the      │
-                 │   battle, benches, a bar, off-duty men, the holo news     │
-                 └──────────────────────────┬───────────────────────────────┘
-                                            │ lift
-   ┌── COBRA BAY (deck 12) ──┐   ┌──────────┴──────────┐   ┌── QUARTERS (deck 44) ──┐
-   │ the Starfury's launch   │   │  THE CONCOURSE      │   │ your cabin; the        │
-   │ well; a rack of two     ├───┤  (Zocalo, deck 40)  ├───┤ company's barracks;    │
-   │ fighters; the catapult  │   │  market, cantina,   │   │ the KENNEL habitat     │
-   └─────────────────────────┘   │  kiosks, the crowd  │   └────────────────────────┘
-                                 └──────────┬──────────┘
-                                            │ ring corridor (central_corridor, looped ~300 m)
-                              ┌─────────────┴──────────────┐
-                              │  MEDBAY · ARMOURY · BRIG   │  three small rooms off the ring
-                              └────────────────────────────┘
-                                            │ lift
-                                 ┌──────────┴──────────┐
-                                 │  FLIGHT DECK (32)   │  ← everything that exists today
-                                 └─────────────────────┘
-```
-
-**The one rule:** every room has a *verb* the player can do there and *people*
-doing something without him. If a room has neither it is not built.
-
-| room | source | what you do there | who is there (reusing what) |
-|---|---|---|---|
-| **Concourse** | `zocalo.glb` + `shops_kiosks.glb`, culled to one 67 m hall | Walk, browse. The kiosks are the game's existing menus made physical: the forge (hilt/blade), the quartermaster (kits/paint), the recruiter (Muster), the Databank as a library terminal, a cantina table where the company sits between runs. | Crowd from `DeckCast.crewSilhouettes`/the new baked crew, off-duty company men (`Company.js` looks, sitting/eating poses), droids, **a mixed crowd**: reskin 3-4 of the engine's own humanoid builders as "station locals" (the Opus species are unusable, but a Twi'lek/near-human variety pass on `dressHumanoid` is a day's work and matches the art). |
-| **Ring corridor** | `central_corridor.glb`, looped into a ~300 m ring with four doors | Get between rooms; meet traffic. | Walkers on errands (the same `walk` job rows DeckLife uses), a droid convoy, a patrol pair, a PA. |
-| **Your cabin** | built with `DeckKit` (do not import a quarters module) | The **home**: your saber on a stand, your kills on a wall, the campaign map on a table, a bunk that is the "sleep/advance the clock" verb, a window. Trophies from runs appear here (the ledger already records them). | Your companion sleeps here when not fielded. |
-| **The Kennel habitat** | `DeckKit` + `CompanionDeck` | Where the animals live. Walk in, your companion comes to you; retired/dead companions have a plaque; the pup is visibly bigger than last month. Feed/play/groom = the idle-beat layer already in `CompanionLife.js` triggered by an interact key. | Every kind you have ever kept, as deck bodies. |
-| **Barracks** | `DeckKit` | The company off duty: bunks, a card game, the muster slate as a physical board. The `Muster.js` slate becomes a thing on a wall. | Company men in sleeping/sitting poses. |
-| **Medbay** | `DeckKit` | The wounded from the last run in bacta (the `Injury.js` roll made visible); the 2-1B is here. | Injured men, the medic droid. |
-| **Armoury / Brig** | `DeckKit`, small | Armoury: the weapon racks are the loadout screen. Brig: captured droids/prisoners from runs behind a field — flavour, one interact. | A guard, a prisoner. |
-| **Observation lounge** | one `obs_rotundas` room, culled | Look at the battle §4 built; the holo-news plays the last run's summary. A bar. | Off-duty men, a bartender droid. |
-| **Cobra bay** | `DeckKit` + the launch well measured off `hull.glb`'s `cobra_bay_well` mesh | Board the Starfury. §4. | A ground crew, a second fighter on the rack. |
-
-Total walkable: ~600 m of corridor and eight rooms. Total imported geometry:
-~250 k triangles after culling. Total new geometry: kit rooms at DeckKit
-density, ~150 k. The whole ship is one `World` level like the hangar is
-(`Levels.js` registers `LEVELS.hangar = HANGAR_LEVEL`; Shark registers
-`LEVELS.station`), loaded when the lift ride ends on a deck that is not 32.
-
-**The lift is the seam.** `DeckLift.js` already runs a ride, a landing snap,
-doors and a readout. Shark adds a *floor selector* (the button column on the
-car's panel is already modelled and already lit — it becomes real) and a
-level swap during the ride: the car's interior is the same object in both
-worlds, so the swap happens behind closed doors at cruise and the player
-never sees a load. Under the hood it is `World.unload` + `World.load` of a
-different level with `_deckArrival`-style state, exactly what deploying does
-today.
+**The rooms are already upright** in their own frames (measured off the
+accessors). The handoff README's "+y points inward" is about placing rooms on
+THEIR station; ignore `placement`. Measure bbox min y and put the floor at 0.
 
 ---
 
-## 4. The Starfury — the new system, and why it is worth it
+## 2. The constraints that decide the scale
 
-Godot has `starfury.gd` (1771 lines) — a **checked port** of a Python 6-DOF
-Newtonian model: quaternion attitude, gyroscopic term, a thruster allocator
-over nine mounts, no velocity damping (the "hands off, it keeps rotating"
-premise). The nine mounts and their positions are in
-`starfury_manifest.json`. That model is ~250 lines of arithmetic once the
-Godot scaffolding is removed and it is worth porting **because this engine's
-existing flight (`Flight.js`, the hawk; `DeckFlight.js`, the scripted
-transport; `Driving.js`, ground vehicles) has nothing Newtonian in it**, and a
-Starfury that flies like a car would be the "low effort" thing the player is
-asking us to stop shipping.
+- **One file.** `node tools/pack.mjs` writes 28.6 MB today; three draco files
+  with the engine's own materials add ~2 MB. The 33 MB of textures never ship.
+- **No glTF loader in the tree.** `vendor/three/three.module.js` is r169;
+  vendor `GLTFLoader.js`, `DRACOLoader.js` and the draco wasm from the r169
+  examples exactly. `tools/pack.mjs` inlines only png/webp/jpg (`ASSET_IMG`) —
+  it must learn `.glb` (`model/gltf-binary`) and `.wasm`, and the decoder path
+  becomes a blob URL built from the inlined base64 at boot. **No CDN**:
+  `wiring.mjs` refuses external URLs and the packed game must work offline.
+- **Materials by prefix, not textures.** A 12-row table binds mesh-name prefixes
+  onto `deckMats`: `zoc_rib_*`, `zoc_gallery_*`, `zoc_stall_*`, `zoc_table_*`,
+  `zoc_chair_*`, `zoc_deck_*`, `wall_*`, `skirt`, `soffit` → hull/dark/deep;
+  `transit_*` (wall/deck/rib/rail/soffit/skirt/panel), `prop_*` (door, bench,
+  bollard, planter, locker, shopfront, babcom terminal) → the same; `light_*`,
+  `zoc_neon_*`, `sign_text` → the emissive strip. That is what makes an imported
+  room look like THIS game.
+- **Colliders are ours.** Imported meshes are visual. Flat `world.floorAt` per
+  room, `addStaticBox` walls from bounds, boxed props. Never a trimesh — the
+  corridor floor has a 66 mm channel a capsule wedges on.
+- **The frame budget is a wave's.** The frame ledger has 240 real bodies at
+  ~31 ms; the hangar's step is bounded at 2.5 ms. The station's live-body pool
+  is 60 (§11) and the rest is the baked crowd. If it does not hold, the pool is
+  the knob, and step 1 of §6 finds out on day one.
 
-What the loop is:
+---
 
-1. Walk into the cobra bay, climb in (the existing `Driving.whyNotDrive`/board
-   path — the Starfury is a `crew: 1` vehicle like a mount).
-2. Catapult launch out of the well (scripted 3 s, like `DeckFlight`'s run).
-3. Free flight in a bubble around the ship: **the hull from `hull.glb` at
-   scale-model distance**, the battle from §4 of the V14 work already out
-   there, the planet from `SkyDome`. Six axes, WASD/RF/arrows, kill-rotation,
-   kill-velocity, a chase cam and a cockpit cam (the cockpit clear volume is
-   in the manifest).
-4. **Fly past your own hangar and look in.** This is the shot the player
-   asked for and it costs nothing extra: `DeckExterior.js` already stands the
-   capital hull with the aperture mapped; from outside, the deck's lit
-   interior is visible through the field. The fighter passing the mouth is a
-   pass the deck already scripts for NPC traffic.
-5. Land: fly into the well, a tractor takes over inside 30 m (scripted
-   settle), climb out.
+## 3. THE STATION, LAID OUT
 
-**What it is not:** a combat mode. No guns in the first cut. If the player
-wants dogfights later, `Bolts.js` and the fighter swarm in the outside battle
-already have the pieces. Cutting guns keeps the first Starfury commit at
-"flight model + launch + land + cameras", which is one lane and one check
-suite (`flight-newton.mjs`: conservation of momentum with hands off, the
-allocator's nine mounts sum to the requested wrench, launch/land settle).
+### 3.1 The shape of the whole thing — the anti-box rules
 
-**Scale trick, stated once:** the hull is 8 km long. Do not fly 8 km. Stand
-it at 1/10 (800 m) with the cobra bay and the hangar mouth at true size on a
-locally-true patch, or keep it 1:1 and give the flight world a floating
-origin. The 1/10 diorama is what the outside battle lane already does for
-capital ships and it is the recommendation: the player is never more than
-~2 km from the deck and the far plane stays sane.
+`HANGAR.md` records the deletion of six interiors for being boxes: *"a roof
+plus four walls at the draw budget this engine has is a box, and a box is the
+one shape that cannot be anywhere."* These rules are the counter, written once.
+
+1. **A drum round a void.** The habitable part is a three-deck drum ~180 m
+   across, built round a central ATRIUM that runs through all three decks with
+   the Concourse vault at its floor. Every deck has a balcony onto it, so from
+   anywhere near the middle you see two other decks and the people on them. The
+   void is the landmark that makes the station one place, not a list of rooms.
+2. **Three decks, three characters**, so you always know where you are:
+   - **Deck 40 — the Concourse deck.** Warm: brass, terracotta, amber light. The
+     imported Zocalo vault and its market. Corridors are the imported ribbed
+     TRANSIT corridor with signage and shopfronts.
+   - **Deck 44 — the Living deck.** Cool: white, timber, blue-white light,
+     quieter. Corridors are a PROMENADE: a continuous window wall to space on
+     the outer side, doors on the inner, the tram guideway outside the glass.
+     Never the transit corridor again.
+   - **Deck 48 — the Working deck.** Dark: steel, red-orange service light,
+     exposed pipe. Corridors are a SERVICE WAY: grating floors, conduit, cutaways
+     into machinery. (Flight deck 32 and the Cobra bay 12 hang below the drum;
+     the Observation dome 60 sits above it.)
+3. **A ring, a spine and a tram.** Each deck has an outer RING walk. A SPINE
+   crosses each deck through the atrium balcony. A TRAM loop runs the drum's rim
+   at deck 44 with four stops — Arrivals, Concourse East, Quarters, Command —
+   cars you can ride, guideway visible from the promenade. Three lift shafts
+   (Arrivals, Atrium, Flight) use the existing car; the readout's numbers become
+   real floors.
+4. **No two places the same shape.** Every place has a listed shape: vault, drum,
+   split-level, mezzanine, cut-through, curved gallery, pit, terrace. Two places
+   may share a kit but never a plan. `station.mjs` measures pairwise silhouette
+   distinguishability of every place from its own door (the IoU instrument
+   `characters.mjs` uses on bodies) and fails any pair over 0.85.
+5. **Every place has a window onto another place** — the atrium, space, the
+   tram, the hangar, a machinery cut — so no room is sealed.
+6. **Everything is a body** (§11).
+
+### 3.2 The gazetteer — 55 places
+
+Every place: its shape and look (unique), who is there and on what rhythm, what
+happens without you, and the verb you have there. 50 are built with `DeckKit`;
+three are imports; two exist.
+
+| # | Deck | Place | Shape / look | Who / rhythm | Happens without you | Your verb |
+|---|---|---|---|---|---|---|
+| 1 | 32 | **Flight deck** | exists — the hangar | — | — | — |
+| 2 | 32 | **Deck control tower** | a glass box cantilevered over the hangar mouth, up a stair from the gallery; consoles, the traffic board | 4 controllers, 3 shifts | calls every launch and arrival you hear on the PA | read the board: what is inbound |
+| 3 | 32 | **Pilots' ready room** | low room under the tower: lockers, briefing screen, cots, coffee urn | 8 pilots between sorties | briefings before a launch cycle, sleepers, a card game | the Starfury cert is signed here (§4) |
+| 4 | 32 | **Fighter maintenance bay** | a pit two decks deep beside the flight deck, a fighter on a lift in it, gantries at three levels | 12 techs, droids | a fighter stripped and rebuilt across the day | walk the gantries, throw tools |
+| 5 | 12 | **Cobra bay** | the launch well: a vertical shaft with the Starfury on a rail, catapult rams, hazard chevrons, a blast wall you look through | 3 ground crew, a launch officer | test cycles; a fighter racked and unracked | board and launch (§4) |
+| 6 | 12 | **Fighter rack** | a cellar off the bay: two spare airframes on cradles, engines on stands, a parts wall | 4 techs | an engine test-fires on the stand | grip a spare engine bell and throw it |
+| 7 | 40 | **Arrivals hall** | curved; one long window onto the docking throat; a customs line of three gates; departures board; benches; a kiosk | 20 movements an hour, 2 customs officers, a guard | shuttles dock; new residents walk in with bags; a queue forms and clears | arrive here from the Arrivals shaft; read the board |
+| 8 | 40 | **Docking throat** | outside Arrivals: a shuttle nosed into a pressure collar, umbilicals, fuel line, loading ramp | 3 dockhands, a mouse-droid convoy | a shuttle every 6 min; cargo down the ramp | walk aboard a docked shuttle |
+| 9 | 40 | **The Concourse** | the imported Zocalo vault: 67 m barrel vault, galleries both sides, 14 stalls, the atrium opening at its centre | 60–90 at the busy hours, 20 at night | market cries, shift-change floods, a busker, a pickpocket chased by a guard, a spill cleaned by a droid | browse; every kiosk is a real menu (§5) |
+| 10 | 40 | **The Forge** | a stall grown into a shop: hilt parts on pegboard, a bench with a vice, a kyber cabinet lit from inside | a Wookiee smith | hammering, sparks | the hilt/blade menu, at a counter |
+| 11 | 40 | **Quartermaster's cage** | a wire cage under the gallery, racks of kit, a counter with a hatch | a clone QM and a droid | kit issued to men queuing | the kit/paint menu |
+| 12 | 40 | **Recruiting office** | glass-fronted, the Republic crest, a holoscreen of the war | a recruiter, a queue | recruits sworn in | the Muster slate |
+| 13 | 40 | **The Databank** | a round reading room, terminals in a ring, a holo globe at the centre | a librarian droid, 6 readers | the globe cycles the war's fronts | the Databank |
+| 14 | 40 | **Cantina "The Long Night"** | sunk half a deck below the concourse; a bar in the round, booths in the wall, a band's dais, coloured lights | a Drazi barkeep, 24 drinkers, a band | songs; a brawl once an hour the guards break up; a Sith acolyte drinking alone | sit, drink (a beat), talk to a resident |
+| 15 | 40 | **The Fresh Air** (restaurant) | a terrace over the atrium: white cloth, plants, a kitchen seen through the pass | a Centauri maître d', 16 diners, 4 cooks | service at meal hours, plates carried, the pass rings | eat; the company sits here after a run |
+| 16 | 40 | **Galley** | the working kitchen behind it: ranges, hanging pots, a walk-in cold room, steam | 6 cooks on shifts | prep, the meal rush, cleaning | throw pots |
+| 17 | 40 | **Food court / noodle bar** | counters in a row under a low ceiling, stools, neon, steam vents | 3 vendors, 20 eaters | the shift-change queue | eat cheap |
+| 18 | 40 | **The Pit** (gambling den) | a lower room off the cantina: sabacc tables, a dice cage, a cashier behind bars, one exit | a Brakiri house, 12 players, a bouncer | games; a cheat thrown out | watch and bet (a minigame is later) |
+| 19 | 40 | **Holo-theatre** | a fan-shaped auditorium of 60 seats facing a stage where the last run plays as a battle holo | 20–40 watching | shows on the hour | watch your last run |
+| 20 | 40 | **The Arena** (sparring hall) | a sunken ring with tiered benches, training remotes overhead, racks of practice sabers | 2 sparring, 12 watching, a marshal | bouts on a schedule | fight a bout (the Dojo, moved here) |
+| 21 | 40 | **Gym** | bars, weights, a running gallery round the atrium | 10 | drills | a beat |
+| 22 | 40 | **Chapel / meditation hall** | a dark drum with a single skylight to space, candles, mats, a Force shrine | a chaplain, kneelers | vigils; a memorial for the dead | kneel and connect (the existing verb) |
+| 23 | 40 | **Arboretum** | a cut through decks 40–44: real trees (`Trees.js`), a stream, benches, birds | 12 | watering droids; the hawk perches | walk, sit; the companion plays here |
+| 24 | 40 | **Security post** | a booth at the atrium bridge, screens, a cell behind glass | 2 guards | patrol pairs leave from here | report; the standing number lives here |
+| 25 | 40 | **Lost & found / notice board** | a wall of paper and holo notes, a droid | 1 | notices change daily | read (the ledger's story lines) |
+| 26 | 44 | **The Promenade** | the living deck's ring: window wall to space, the tram guideway outside | walkers on rhythm | the tram passes; the battle outside | walk |
+| 27 | 44 | **Your cabin** | two rooms, a real window, a saber stand, a trophy wall, the campaign map table, a bunk, a desk, a wardrobe | you; the companion sleeping | the trophies grow; a note on the desk | sleep (advances the day), dress, read |
+| 28 | 44 | **The Kennel habitat** | a high room with a mezzanine, straw, perches, a pool, a run onto the arboretum | every companion you ever kept; a handler | animals play, eat, sleep; plaques for the dead | feed / play / groom; pick your companion here |
+| 29 | 44 | **Company barracks** | a long bunk hall split by lockers into bays, a slate on the wall, a stove | your company off duty | cards, sleep, kit cleaning, a sergeant's inspection | the Muster slate as a board |
+| 30 | 44 | **Officers' quarters** | a curved corridor of doors, one open; wood and brass | 6 officers | comings and goings | knock (a line) |
+| 31 | 44 | **Human residential** | a stacked two-level cabin block round a light well | 30 | laundry lines, children, an argument | walk |
+| 32 | 44 | **Narn quarter** | red stone, braziers, a shrine, low ceilings | 16 Narn | prayer at dawn; a market of their own | walk, trade |
+| 33 | 44 | **Centauri quarter** | white, gilt, a fountain, portraits, a card room | 14 Centauri | intrigue; a duel of words | walk |
+| 34 | 44 | **Minbari quarter** | crystal, blue light, a triangular hall, silence | 12 Minbari | ritual at set hours | walk quietly |
+| 35 | 44 | **Drazi quarter** | a fighting pit, colours, noise | 14 Drazi | the green/purple brawl | walk; get pulled in |
+| 36 | 44 | **The methane quarter** (Gaim, Pak'ma'ra) | behind an airlock: yellow haze, walkways over pools | 10 in suits | suit checks | walk in a suit (a verb) |
+| 37 | 44 | **The Vorlon's door** | a sealed door at the end of a dead corridor: organic, a hum, one light | — | the light changes | stand there |
+| 38 | 44 | **Transient hostel** | capsule bunks in a wall, a desk | 20 travellers | turnover with each shuttle | rent a bunk (the co-op guest's home) |
+| 39 | 44 | **Laundry & showers** | steam, rows, a droid | 6 | cycles | a beat |
+| 40 | 44 | **Tram stations (4)** | four DIFFERENT platforms: Arrivals (glass), Concourse East (brass), Quarters (timber), Command (steel) | waiting crowds | trams every 90 s | ride |
+| 41 | 48 | **Command / CIC** | the imported CnC: the console dais, a tactical wall showing the battle outside, the comms pit | a commander, 8 officers, 3 shifts | the front moves on the wall; orders read out | the next campaign is briefed here (§8) |
+| 42 | 48 | **Comms & sensor room** | a dark drum of screens, a rotating dish through a window | 4 | traffic | listen to the fleet channel |
+| 43 | 48 | **Medbay** | a triage hall, six curtained bays, a surgery seen through glass, the 2-1B | 2 medics; the wounded from your last run | surgeries; a crash-cart run when a fighter comes in damaged | see your wounded — the injury roll made visible |
+| 44 | 48 | **Bacta ward** | a row of lit tanks with men suspended | 4 | tanks fill and drain | look |
+| 45 | 48 | **Morgue & memorial** | cold drawers, a wall of names (the memorial roll) | a mortician | the roll grows | read the names |
+| 46 | 48 | **Armoury** | cages of rifles, a saber vault, a bench, a range beyond a window | an armourer, 4 | issue; test-fire on the range | the loadout screen as racks; shoot on the range |
+| 47 | 48 | **The Brig** | a curved cell block round a guard desk, force-field doors | 2 guards, 6 prisoners (droids, a Sith) | meals; a transfer | wake here after a crime (§11) |
+| 48 | 48 | **Reactor hall** | a cathedral: the core a pulsing blue column three decks tall, catwalks spiralling round it, heat shimmer | 10 engineers, droids | power surges dim the deck; a coolant vent | walk the catwalks |
+| 49 | 48 | **Coolant & water plant** | a wet room of pipes and tanks, grating over water, turquoise light | 6 | pumps cycle | throw things in the water |
+| 50 | 48 | **Fabrication / machine shop** | lathes, a plasma cutter, sparks, a droid being rebuilt | 8 | parts made | cut with the blade — it is a shop |
+| 51 | 48 | **Droid pool** | astromechs in charging rows, a protocol droid on a bench | 30 droids | droids leave for jobs and return | the astromech companion lives here |
+| 52 | 48 | **Cargo hold** | a canyon of container stacks, a crane overhead, a lifter | 6 | stacks move | the sandbox: everything here is a body |
+| 53 | 48 | **Waste & recycling** | a pit, a compactor, a smell | 3 | the compactor crushes | throw a crate in and watch it die |
+| 54 | 60 | **Observation dome** | the imported rotunda: a glass dome onto the planet and the battle, a bar, benches, a telescope | 20 off duty | the reactor flash lights the room | watch the battle — the best seat |
+| 55 | — | **The station's outside** | from the Starfury: the hull, the drum, the flight deck's mouth, the docking throat, the dome | the fleet | §4 | fly |
+
+### 3.3 Who lives here
+
+**Everyone, where it makes sense** (the player's decision). Every humanoid kind in
+Borz is a resident off duty and unarmed — clone crew, the company, Jedi, Sith
+acolytes, reprogrammed and off-duty droids, the companions in the kennel — with
+a room, a job or a haunt, and a rhythm. "Where it makes sense" is the only
+filter: a droideka does not drink in the cantina; a magnaguard stands at a door.
+Mechanically: every archetype with a humanoid builder gets a residents row unless
+its row says `resident: false` with a reason.
+
+**Plus all 15 species** from `body.py` `SPECIES`: human, narn, centauri, minbari,
+drazi, brakiri, pakmara, vree, abbai, gaim, hyach, llort, grome, other, vorlon.
+Bodies on this engine's `dressHumanoid` path, tiered so it ships:
+
+- **Tier A — full authored heads and costume, one lane each:** Narn, Centauri,
+  Minbari, Drazi.
+- **Tier B — head variant + skin + costume palette:** Vree, Pak'ma'ra, Brakiri,
+  Gaim (the encounter suit — cheapest and most distinct).
+- **Tier C — near-human brow/ear/skin/hair variants:** Abbai, Hyach, Llort,
+  Grome, "other".
+- **Vorlon:** one encounter suit, one place (#37), never walks.
+
+Quarters by people (#31–37), mixing on deck 40. The concourse is where the game's
+whole cast is seen at once, and that is the point of the station.
+
+### 3.4 Life, so it functions rather than sits
+
+- **The clock.** `world.run.stationHour`, 1 game hour per 2 real minutes,
+  persisted in `Session` so a return visit is later in the day; the bunk (#27)
+  jumps it to the next morning. Everything in `StationCast` reads the hour and
+  nothing else keeps time.
+- **The rhythms** (ported from `schedule.py`): shift change at 06/14/22 floods
+  the ring and the concourse; meals at 07/13/19 fill #15, #16, #17; the cantina
+  peaks at 21; quarters sleep by species rhythm.
+- **Events on the clock**, one table: a shuttle arrival (Arrivals fills); a
+  damaged fighter (crash cart from Medbay to the flight deck); a cantina brawl
+  (→ Security); market day; a memorial at the chapel; a fire drill; a reactor
+  surge (the lights dip everywhere); a tram fault (crowds walk); a Drazi fight; a
+  fighter launch cycle (Cobra bay, tower, ready room all move at once).
+- **Routes are real.** Residents WALK between places on the ring, the spine and
+  the tram — the `walk` job rows already path men; the tram carries them.
+
+---
+
+## 4. The Starfury — the one new system
+
+Godot has `starfury.gd` (1771 lines), a checked port of `station/physics/
+starfury.py`: 6-DOF Newtonian, quaternion attitude, the gyroscopic term, a
+thruster allocator over nine mounts (in `starfury_manifest.json`), no velocity
+damping. ~250 lines of arithmetic once the scaffolding is off. Worth porting
+because nothing in this engine's flight (`Flight.js` the hawk, `DeckFlight.js`
+the scripted transport, `Driving.js`) is Newtonian, and a Starfury that flies
+like a car is the low-effort thing we are being asked to stop shipping.
+
+**The spike comes first.** Before any modelling: a one-day probe porting the
+Python to JS and proving conservation of momentum hands-off and the allocator's
+nine mounts in a node check (`starfury.mjs`), with no scene at all.
+
+The loop: walk into the Cobra bay (#5); board — the Starfury is a `crew: 1`
+vehicle seated through `Driving`'s `Crew.seat` like a mount, so no new "player
+in a vehicle" path is written; a scripted 3 s catapult launch; free flight in a
+new level `LEVELS.orbit` that stands `hull.glb` at 1/10 the way `DeckExterior`
+stands the capital hull, with the `DeckBattle` fleet and the `SkyDome` planet;
+six axes, kill-rotation, kill-velocity, chase and cockpit cameras (the cockpit
+clear volume is in the manifest); **fly past your own hangar and look in** —
+`DeckExterior` already maps the aperture, and the deck's lit interior is visible
+through the field; land — a tractor takes over inside 30 m of the well.
+
+Not a combat mode in the first cut. No guns. `Bolts.js` and the fleet's
+fighters exist if that changes.
 
 ---
 
 ## 5. The technical path
 
-### 5.1 Loading glTF in this engine
+### 5.1 Loading glTF (§2 has the constraints)
+Vendor r169 `GLTFLoader`/`DRACOLoader` + wasm; teach `pack.mjs` `.glb` and
+`.wasm`; decoder path as a blob URL; bind materials by the §2 prefix table; our
+own colliders; floor at 0.
 
-- Vendor `GLTFLoader.js` and `DRACOLoader.js` from three r16x examples
-  (match `vendor/three/three.module.js`'s version — check its header) plus
-  `draco_decoder.wasm` + `draco_wasm_wrapper.js` (~330 KB). The pack
-  inlines them as `data:` URLs like every other asset; `DRACOLoader.setDecoderPath`
-  must point at a blob/data URL, which `tools/pack.mjs` already knows how to
-  rewrite for `import.meta.url` → `location.href`. **Do not use the gstatic
-  CDN** the handoff README suggests: the packed game must work offline and
-  `wiring.mjs` will (rightly) refuse an external URL.
-- Ship the four GLBs draco-compressed, in `assets/station/`. Strip what is
-  not walked (`shops_kiosks` has 44 meshes; keep ~15).
-- **Materials:** do not import the 49 textures. Bind the engine's own
-  `propMaterials`/`deckMats` by mesh-name fragment, the same way
-  `materials.json` binds — a 30-line table mapping `bay_*`, `kiosk_*`,
-  `corridor_*` fragments onto the deck palette so the concourse is lit and
-  coloured like the hangar (same key/fill rig, same ink pass). This is what
-  makes an imported room look like *this* game rather than a visitor.
-- **Colliders:** the handoff says its meshes are visual, not colliders, and
-  its corridor floor has a 66 mm channel a capsule wedges on. Do what the
-  hangar does: a flat `world.floorAt` plane per room plus `addStaticBox`
-  walls from the room's bounds and a handful of boxed props. Never a trimesh.
-- **Scale/orientation:** metres, Y-up, room +y points *inward* on the
-  station (their floors are the outer wall). Each room is in its own local
-  frame near the origin — ignore `placement`; we are not assembling their
-  station. Rotate each room flat once at import and cache the matrix.
-
-### 5.2 The level
-
+### 5.2 The files
 - `src/game/Station.js` — `STATION_LEVEL` in the shape of `HANGAR_LEVEL`
-  (`terrain: flat deck preset`, `atmosphere: { sky: false }`, `dress`,
-  `lights`). Rooms are placed on a plan table (x, z, yaw, door edges), the
-  ring corridor is instanced from the corridor GLB's 120 m module bent into
-  four straights and four turns (build the turns from `DeckKit`; a bent GLB
-  is worse than a kit corner).
-- `src/game/StationLife.js` — reuses `DeckLife`'s job-row shape
-  (`{kind, x, z, path, phase}`) for the crowd, and `DeckCast`'s builders. One
-  table per room. Aim: 120 figures across the ship, 30 rigged near the
-  player's paths, the rest baked poses with Knockable bodies (the V14 hangar
-  lane is building exactly this).
-- `src/game/Home.js` — the cabin's state: trophies (read the ledger),
-  the saber stand (the current hilt), the map, the bunk verb.
-- `src/game/Habitat.js` — the kennel room over `CompanionDeck.js`: every
-  record in `Kennel` gets a body, the live one follows you, retired ones
-  have plaques; three interacts (feed/play/groom) that fire `CompanionLife`
-  beats and bank a small `story` line.
-- `DeckLift.js` — the floor selector and the swap. The ride's vignette strip
-  (V14) is authored so that the decks the player can stop at are real
-  vignettes at the right numbers.
-- `src/game/Starfury.js` — the flight model + cockpit/chase cameras;
-  `Vehicles.js` gets the airframe as a registered hull like the others.
+  (`terrain: flat`, `atmosphere: { sky: false }`, `dress`, `lights`), registered
+  as `LEVELS.station` and run in **sandbox mode** (§11). The drum, the atrium,
+  the three corridor types, the ring/spine, the tram guideway, the lift lobbies,
+  and the plan table: every place in §3.2 with (deck, x, z, yaw, shape, doors).
+- `src/game/StationKit.js` — the place builders, one function per place, each a
+  DIFFERENT plan (rule 4). They compose `DeckKit` and `Props.Kit` pieces; walls
+  and rings are static, furniture and stalls are destructible `Prop` bodies.
+- `src/game/StationCast.js` — the ported tables: species body parameters
+  (`body.py`), names (`names.py`), rhythms/roles/shifts (`schedule.py`), factions
+  (`faction.py`); the residents manifests every mode feeds (§10); a
+  `residents()` reader.
+- `src/game/StationLife.js` — the live-body pool (§11), the baked far crowd,
+  the job/route tables per place, the event table, the tram, the clock's
+  consumers. Reuses `DeckLife`'s job-row shape and `DeckCast`'s builders for the
+  far crowd only.
+- `src/game/Home.js` — the cabin's state: trophies (read the ledger), the saber
+  stand, the map, the bunk verb.
+- `src/game/Habitat.js` — the kennel room: every `Kennel` record gets a body,
+  the live one is the real animal via `fieldCompanion`, the dead have plaques;
+  feed/play/groom fire `CompanionLife` beats and bank a `story` line.
+- `src/game/Starfury.js` + a hull row in `Vehicles.js` + `LEVELS.orbit`.
+- `DeckLift.js` — the floor selector (the modelled button column; `liftKey`
+  cycles it) and `world.onDeckLift(floor)` raised at the end of `STATE.LEAVE`
+  when a floor other than the menu's was chosen. `main.js` (which already
+  answers `onDeckLeave` and `onDeckDeploy`) unloads and loads `LEVELS.station`
+  with `{ arrive: true, floor }`; the station dresses its own lift lobby from
+  the same `LIFT` constants and calls `dressDeckLift(world, { arrive: true })`.
+  First cut: two floors, FLIGHT DECK 32 and CONCOURSE 40; every vignette at a
+  real floor's number is that place.
+- **Kiosks open DOM menus from a pointer-locked deck**: a kiosk interact raises
+  `world.onKiosk(panelId)`; `main.js` releases pointer lock, opens that Menu
+  panel with a "back to the concourse" button, re-locks on close. One hook for
+  the forge, quartermaster, recruiter, databank, armoury and the muster board.
 
-### 5.3 Checks that can kill each step (the repo's rule)
-
-- `station.mjs`: every room reachable on foot from the lift (a ray-walk),
-  every door crossable, every floor at `floorAt` height, draw calls ≤ the
-  hangar's bound + 40, no external URL in any loader path.
-- `stationlife.mjs`: ≥ 100 figures, every one with a body, every room's job
-  table non-empty, step ≤ 1.5 ms.
-- `home.mjs`/`habitat.mjs`: the trophy wall reflects the ledger; the kennel
-  shows every record; the pup's size on the deck equals `bodyScaleOf`.
-- `starfury.mjs`: momentum conserved hands-off, allocator sums, launch ends
-  outside the well, land ends inside it, never through the hull.
-- `packed.mjs` (exists): the single file boots with the station in it; pack
-  size ≤ 34 MB.
-
----
-
-## 6. Build order — five commits a session could actually make
-
-Each step ends in something playable and a check that fails without it.
-
-1. **Loader + one room.** Vendor GLTF/Draco, pack support, the Zocalo
-   standing in a new `station` level lit with the deck palette, reachable by
-   the lift's new floor button. *Gate:* `station.mjs` walks it; pack ≤ 31 MB.
-2. **The ring and the kit rooms.** Corridor loop, cabin, barracks, medbay,
-   armoury, brig, lounge as DeckKit rooms with doors. Empty. *Gate:*
-   reachability from the lift to every door.
-3. **Life.** `StationLife` tables for every room; the company off duty; the
-   kennel habitat; the home's trophies and bunk. *Gate:* `stationlife.mjs`,
-   `home.mjs`, `habitat.mjs`. This is the step that makes it "lived in" and
-   it is the one to spend the most time on.
-4. **The Starfury.** Airframe, flight model, cobra bay, launch/land, the
-   pass by the hangar mouth. *Gate:* `starfury.mjs` + a screenshot from the
-   cockpit looking into the deck.
-5. **The mix.** Station locals (near-human variety on the engine's own
-   builders), the concourse kiosks wired to the existing menus, the holo-news
-   in the lounge reading the last run. *Gate:* `menu.mjs` still green (the
-   kiosks are the same panels), a browser sweep of every interact.
-
-Steps 1-2 are one session. Step 3 is the biggest. Step 4 is one lane on its
-own. Step 5 is polish that can trail.
+### 5.3 Checks that can kill each step
+- `station.mjs`: every place reachable on foot from a lift (a ray-walk of the
+  plan's doors); every door crossable; floor at `floorAt` height everywhere;
+  rule 4's distinguishability on every pair; draws under the bound; no external
+  URL in any loader path.
+- `stationcast.mjs`: every species in `SPECIES` has a builder, a name generator
+  that never returns a Borz name, a rhythm; no station file names a mode; every
+  manifest entry resolves to a builder; ≥ 8 residents placed per species.
+- `stationlife.mjs`: every place's job table non-empty at its busy hour; routes
+  walk end to end; the tram carries; events fire on the clock; step ≤ a wave's.
+- `station-sandbox.mjs` (§11): a resident ragdolls when thrown and gets up; a
+  limb comes off under the blade; a stall breaks into pieces; 60 live bodies +
+  crowd + rooms step inside the wave budget; attacking a resident summons a
+  guard within 10 s.
+- `home.mjs` / `habitat.mjs`: the trophy wall reflects the ledger; the kennel
+  shows every record; the pup's size on the station equals `bodyScaleOf`.
+- `starfury.mjs`: momentum conserved hands-off; allocator sums; launch ends
+  outside the well; land ends inside it; never through the hull.
+- `packed.mjs` (exists): the single file boots with the station in it;
+  pack ≤ 34 MB.
 
 ---
 
-## 7. What I would cut from the original Shark discussion, and why
+## 6. Build order — gated, deck by deck
 
-- **"Replace the Venator."** Don't replace the *ship*; replace the *idea that
-  the deck is a lobby*. The Republic hull outside the aperture stays (it is
-  the thing the extraction sequence flies away from). Shark's fiction is that
-  the hull the deck is bolted into is the alien station-hull; from outside,
-  `hull.glb`'s spine and the Venator-style flight deck read as one captured,
-  converted thing. Cheaper, and it is the "two universes" charm the player
-  named.
-- **The drum, the sectors, the 24 docking bays, the customs game.** All the
-  size with none of the life. Every one is a future *room* if a verb ever
-  needs it; none is a reason to exist now.
-- **The crowd library.** Worse than ours. Not a single mesh.
-- **The identicard/civil game from `THE-GAME.md`.** A different game. The
-  player's game is the war; the station is where you live between runs.
-- **Streaming.** Eight rooms in one level fit the budget. If they ever do
-  not, the lift is the load screen and always was.
+1. **Loader + the Concourse + the sandbox.** Vendor GLTF/Draco, pack support,
+   the Zocalo standing in a sandbox-mode `LEVELS.station` lit with the deck
+   palette, reached by the lift's new CONCOURSE floor — **with 20 real residents
+   you can throw**. *Gate:* `station.mjs` walks it; `station-sandbox.mjs`'s
+   ragdoll and limb checks; pack ≤ 31 MB. If the frame budget does not hold
+   here, the pool is the knob and it is known on day one.
+2. **The drum.** Atrium, the three corridor types, ring and spine on all three
+   decks, the tram and its four stations, the three lift lobbies. Empty.
+   *Gate:* reachability from every lift to every door on the plan.
+3. **Deck 40, all 19 places** (#7–#25), each landing WITH its life table and its
+   kiosk hook. *Gate:* rule 4 on the deck; every place populated at its busy
+   hour; the kiosks open their menus.
+4. **The cast, Tier A.** Narn, Centauri, Minbari, Drazi as archetypes on
+   `ARCHETYPES` with heads and costume; `StationCast` tables ported; the Borz
+   residents' manifest. *Gate:* `stationcast.mjs`; a `castshot` probe photographs
+   one of each.
+5. **Deck 44, all 15 places** (#26–#40) including the home and the habitat.
+   *Gate:* `home.mjs`, `habitat.mjs`, rule 4.
+6. **Deck 48, all 13 places** (#41–#53) and the dome (#54). *Gate:* rule 4; the
+   brig's consequence loop; the medbay reads the injury roll.
+7. **Flight ops** (#2–#6) and **the Starfury** (spike first, §4). *Gate:*
+   `starfury.mjs`; a cockpit screenshot looking into the deck.
+8. **Tiers B and C**, the event table's long tail, the holo-theatre's replay.
+   Trails; never blocks a deck.
+
+Steps 1–2 are one session. Steps 3, 5, 6 are one session each and are the
+work. Step 4 is four lanes. Step 7 is its own lane.
+
+---
+
+## 7. What is cut, and the warning
+
+- **The Republic hull outside stays.** Shark's fiction: the deck is bolted into
+  a hull nobody built; from outside, `hull.glb`'s spine and the Venator-style
+  flight deck read as one captured, converted thing.
+- **Cut:** the drum garden, the sectors, the 24 docking bays, the identicard
+  game, the crowd library, streaming (55 places in three decks fit one level;
+  if they ever do not, the lift is the load screen and always was).
+- **The warning:** population and places are the cost, not geometry. Fifteen
+  species with real heads is three or four sessions on their own, and 50 unique
+  places is more. Ship deck by deck with Tier A; never let the cast block a deck.
+
+---
 
 ## 8. Decisions only the player can make
 
-1. **Guns on the Starfury in the first cut?** Recommendation: no.
-2. **Lounge or bridge?** The `cnc.glb` room could be a bridge with an officer
-   who gives the next campaign. It is a ninth room; recommendation: later.
-3. **Locals' species.** Near-human reskins (recommended, a day) vs. authoring
-   two or three alien heads on `dressHumanoid` (a week, and a good one).
-4. **Does the clock advance at the bunk?** Sleeping to trigger a new
-   campaign day is the cleanest "game within a game" loop; it touches
-   `Campaigns`. Recommendation: yes, as the only way to start a new day.
+1. **Tier A four** — Narn, Centauri, Minbari, Drazi, or a different four.
+2. **Command briefs the next campaign** (#41) — a real door into `Campaigns`,
+   or flavour. Recommendation: real, as the only way to start a campaign day.
+3. **Guns on the Starfury** — recommendation: not in the first cut.
+4. **The Pit's minigame** — watch-and-bet first; sabacc later.
 
-## 9. What to hand the executing session
+*Decided:* everyone lives on the station where it makes sense (§3.3); sleeping in
+the bunk advances the day (§3.4).
 
-- This file, `HANGAR.md` (the rulebook for an interior that is not a box),
-  `HANDOFF.md` §2 (the tooling traps), `DeckLife.js`'s and `DeckLift.js`'s
-  headers.
-- The four files from `longwong377/Opus-5:handoff/draco/`
-  (`zocalo.glb`, `shops_kiosks.glb`, `central_corridor.glb`,
-  `starfury.glb`), `handoff/starfury_manifest.json`, and
-  `godot/scripts/starfury.gd` + `station/physics/starfury.py` for the port
-  (the Python is the source of truth; the GDScript is the readable one).
-- The order in §6 and the gates in §5.3, unchanged.
+---
+
+## 10. THE HUB OF WORLDS — the rule and the contract
+
+**The rule, once:** a mode never mixes casts. Battlefront Borz keeps its Star
+Wars cast; every future mode keeps its own world and its own people. The station
+mixes everything, and it is the only place that does.
+
+**The mode contract.** Every mode contributes to the station exactly two things:
+
+1. **A door** — a lift floor: its number, its label on the readout, the vignette
+   at that deck, and what `world.load` builds when the car stops there.
+2. **A residents manifest** — who from that mode lives on the station: builder
+   name, species/kind, name generator, job, home place (a # from §3.2), rhythm.
+
+A new mode is one world plus one manifest entry. No station file learns a mode's
+name — the same "rows, not names" rule `CompanionKinds.js` already keeps, and
+`stationcast.mjs` greps for it.
+
+**Lore, one line for the Databank:** the station is a crossroads port. The
+Republic bolted a flight deck onto a hull nobody built, and people from
+everywhere live here. That is the whole explanation and it is enough.
+
+---
+
+## 11. A BATTLEFIELD WITH NO WAR — the sandbox feel
+
+The player's bar: everything modelled, with physics, interactable like any other
+body in Battlefield Borz. The hangar does NOT meet that bar by design — its own
+header says so: instanced Knockables, no ragdoll, "past thirty metres no bodies
+is the honest trade". So the station is not a second hangar.
+
+- **The station is a level in sandbox mode.** `MODES.sandbox` already builds a
+  full `World` + `Player` with zero enemies (`Waves.js`; `meadow.html` proves
+  it). `LEVELS.station` runs on that path, so every system the battlefield has
+  is simply present: `spawnEnemy`, `Ragdoll.js`, dismemberment,
+  `Destruction.js`, `Props.js` bodies, Force grip/hurl/push/pull on everything,
+  `Reactions.js`, `Corpses.js`, voice.
+- **Every resident within ~40 m is a REAL body**: `world.spawnEnemy(archetype)`
+  with `team = player.team`, so it ragdolls, loses limbs, is gripped and thrown,
+  flinches and speaks exactly as a trooper does. Species are archetype rows in a
+  `STATION_UNITS` table assigned onto `ARCHETYPES` the way `COMPANION_UNITS` is,
+  so they get `MergedSkin` LODs and the frame ledger for free. Beyond ~40 m the
+  baked crowd (`DeckCast.crewFigures`) fills the far end of a hall and is swapped
+  for real bodies as you approach: a `StationLife` pool of ~60 live bodies that
+  re-seats itself round the player. Basis: 240 real bodies at ~31 ms in the
+  frame ledger; 60 live plus the crowd sits inside the budget a wave takes.
+- **Every prop is a `Props.Prop` body** through the `Kit` batcher with per-part
+  vertex ranges: grabbable, throwable, cuttable. Furniture and stalls are
+  destructible pieces; walls, rings and the tram guideway are static. No
+  Knockable instances inside the walkable rooms.
+- **Consequence, so a sandbox is not a griefing box.** Residents never fight
+  unless attacked. Cut or throw one and the nearest guards — real, armed bodies
+  — come. You wake in the Brig (#47), your station `standing` drops (one number
+  in `Session`), the kiosks refuse you for a day. Built on the existing
+  team/`canHarm` machinery.
+- **The companion is the real animal**: `fieldCompanion` on the station world.
+  The hangar needed `CompanionDeck` only because its World has no director; a
+  sandbox World has everything the pack needs — `companions.mjs`'s "finds
+  enemies in a mode with no army" check already runs on exactly this path.
+
+---
+
+## 12. What to hand the executing session
+
+- This file; `HANGAR.md` (the rulebook for an interior that is not a box);
+  `HANDOFF.md` §2 (the tooling traps); the headers of `DeckLife.js`,
+  `DeckCast.js`, `DeckLift.js`, `Companions.js`, `Waves.js`'s sandbox mode.
+- From `longwong377/Opus-5:handoff/draco/`: `zocalo.glb`, `central_corridor.glb`,
+  `starfury.glb`, `hull.glb`, and `cnc.glb`/`obs_rotundas.glb` to judge;
+  `handoff/starfury_manifest.json`.
+- From `longwong377/Opus-5:station/`: `npc/body.py`, `npc/names.py`,
+  `npc/schedule.py`, `npc/faction.py` (port as tables); `physics/starfury.py`
+  (the source of truth for the flight model) and `godot/scripts/starfury.gd`
+  (the readable port).
+- §3.2, §6 and §5.3 unchanged. **A place not in §3.2 is not built. A rule in
+  §3.1 is not bent. A gate in §5.3 is not skipped.**
