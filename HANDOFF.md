@@ -208,6 +208,54 @@ the fixes but the SHAPES.
   13. If you are pricing a set and the bench does not move, check whether the
   number you moved is reachable at all.
 
+### 0.1f A CHECK THAT PASSED BY READING THE BUG, and a note that misdiagnosed a real symptom
+
+Two from the judge's second round, and both are about instruments again.
+
+**`companion: it looks at things` ASSERTED THE SATURATION.** The companion's
+head sat pinned at exactly its 0.620 rad neck stop on 1950 of 1950 frames while
+standing at heel — a statue with its neck cranked over, in the state a player
+is in most of the time — and the check covering that behaviour was GREEN. Its
+fixture stood the owner 2.5 rad round behind the animal and asserted it "turns
+toward him, TO THE STOP". The saturation was the assertion.
+
+The cause is worth knowing because it is not in the life layer: the heel
+station is 3.4 m off the player's BACK quarter and `Enemy._move` holds a
+settled body's heading at whatever it last walked in on, so with the player
+still the owner is 103.8° round behind the animal's shoulder, outside a 0.62
+rad neck. The gaze ladder picked him anyway and the clamp did the rest. The fix
+moved the neck's reach from the END of the solve to the FRONT — a rung is taken
+only if the head can come round to it — and DELETED the yaw clamp, because with
+the envelope in front of the ladder it could never bite again and a clause that
+cannot fire is §2.3b.
+
+**AND `Enemy._move`'S FACING IS THE ROOT, NOT THE SYMPTOM.** A settled
+companion stands at your heel facing about 104° away from you. Fix that and it
+looks at you instead of past you. Not made — it is the army's movement code and
+it wants its own commit and its own measurement. Same file, same lane, one
+more: under AWAY with no target, `toTarget` survives and `_move` keeps swinging
+the body toward it.
+
+**AND THE GEONOSIS NOTE WAS A WRONG DIAGNOSIS OF A REAL SYMPTOM.** An earlier
+lane recorded "on Geonosis a companion never settles, `Enemy._move`'s stuck
+commit fighting terrain clutter". The symptom is real and the cause was not:
+
+  - It is not the planet. Five other positions on the shipped Geonosis all
+    settle — gap 0.04 m, 29.5 s of calm in 30, beats firing.
+  - It is the PLAYER'S SPAWN POINT and only that. `fieldCompanion` drops the
+    animal at (0.00, 4.60) and `stationFor` puts its heel 0.90 m dead in −X,
+    into a static face whose outward normal is +X. Over 40 s `_wallT` is alight
+    on 64% of frames at a mean 3.76 m/s.
+  - **It is NOT the stuck commit.** `_stuckT` never once exceeded 0.5 s — 0.0%
+    of frames. It is the closed circuit `Enemy._move`'s own note names, which
+    `_wallSide`/`SIDE_HOLD` were written to break and do not break this one.
+  - Start the animal 0.4 m further back and it converges immediately.
+
+The corrected measurement is in `calmField`'s note in `companions.mjs` and in
+`_cmplife.mjs`'s header, in place of the old sentence. **A diagnosis written
+into a comment outlives the session that guessed it** — if you did not measure
+the cause, say you measured the symptom.
+
 ### 0.1c A CHECK WHOSE VERDICT WAS A COIN TOSS, and it cost two lanes an investigation
 
 `companion: AWAY will not fight, SEEK fights one thing, WARD measures from YOU`
