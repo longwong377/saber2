@@ -112,16 +112,16 @@ export async function run({ check, assert, THREE }) {
       assert(st.readout.number > deck0, `the readout went from ${deck0} to ${st.readout.number} — it did not count`);
       assert(st.readout.caption === 'FLIGHT DECK', `at the stop the readout says "${st.readout.caption}"`);
       assert(st.car.position.length() < 1e-3, `the stopped car is still ${(st.car.position.length() * 100).toFixed(1)} cm off its rest`);
-      /* AND THE LEFT WINDOW LOOKS OUT ON PEOPLE: a silhouette stands at pane height beside the car. */
-      const fig = st.scene.kinds.find((k) => k.name === 'figure').mesh;
+      /* AND THE LEFT WINDOW LOOKS OUT ON PEOPLE: heads at pane height beside the car. */
+      const heads = st.scene.kinds.find((k) => k.name === 'head').mesh;
       const m = new THREE.Matrix4();
       let standing = 0;
-      for (let i = 0; i < fig.count; i++) {
-        fig.getMatrixAt(i, m);
+      for (let i = 0; i < heads.count; i++) {
+        heads.getMatrixAt(i, m);
         const x = m.elements[12], y = m.elements[13], z = m.elements[14];
-        if (x < LIFT.x - LIFT.halfW && Math.abs(y - 2.0) < 1.2 && Math.abs(z - LIFT.z) < LIFT.halfD) standing++;
+        if (x < LIFT.x - LIFT.halfW && Math.abs(y - 2.4) < 1.2 && Math.abs(z - LIFT.z) < LIFT.halfD) standing++;
       }
-      assert(standing >= 2, `${standing} silhouettes stand at the left window at the stop — the landing should be a lit corridor with people in it`);
+      assert(standing >= 2, `${standing} heads at the left window at the stop — the landing should be a lift landing with people waiting`);
       /* AND HE WALKS OUT, on his own feet, at a walking pace. */
       let biggest = 0, last = p.position.z;
       step(world, 3.0, walk(idle), () => { biggest = Math.max(biggest, Math.abs(p.position.z - last)); last = p.position.z; });
@@ -286,9 +286,9 @@ export async function run({ check, assert, THREE }) {
       let draws = 0;
       st.shaft.traverse((o) => { if (o.isMesh || o.isInstancedMesh) draws++; });
       assert(draws <= 24, `${draws} draws for the shaft — it is meant to be a dozen instanced meshes and a few statics`);
-      /* THREE WINDOWS: something of the far layer stands off each pane. */
+      /* THREE WINDOWS: a lit plate of the far layer stands off each pane. */
       const m = new THREE.Matrix4();
-      const slabs = kinds.find((k) => k.name === 'slab').mesh;
+      const slabs = kinds.find((k) => k.name === 'plate').mesh;
       let left = 0, right = 0, back = 0;
       for (let i = 0; i < slabs.count; i++) {
         slabs.getMatrixAt(i, m);
@@ -298,7 +298,7 @@ export async function run({ check, assert, THREE }) {
         else if (z < LIFT.z - LIFT.halfD - 0.3) back++;
       }
       assert(left >= 6 && right >= 6 && back >= 6, `deck levels: ${left} left, ${right} right, ${back} back — a window with nothing behind it`);
-      /* THEY MOVE WITH THE CAR. At cruise, the slab nearest the window
+      /* THEY MOVE WITH THE CAR. At cruise, the plate nearest the window
        * drops by exactly v·dt in one frame. */
       step(world, RIDE.settle + 1.6, idle);
       assert(Math.abs(st.v) > RIDE.speed * 0.9, `not at cruise: v=${st.v.toFixed(1)}`);
@@ -314,10 +314,10 @@ export async function run({ check, assert, THREE }) {
       slabs.getMatrixAt(best, m);
       const dy = m.elements[13] - y1;
       const want = -st.v / 60;
-      assert(Math.abs(dy - want) < 0.02, `the slab moved ${dy.toFixed(3)} m in a frame against v·dt = ${want.toFixed(3)}`);
+      assert(Math.abs(dy - want) < 0.02, `the plate moved ${dy.toFixed(3)} m in a frame against v·dt = ${want.toFixed(3)}`);
       /* And the light bars are still the check's old handle. */
       assert(st.bars?.isInstancedMesh && st.bars.count >= 60, 'the light bars are gone');
-      return `${kinds.length} kinds, ${total} instances, ${draws} draws; levels L${left}/R${right}/B${back}; slab moved ${dy.toFixed(3)} m at v·dt=${want.toFixed(3)}`;
+      return `${kinds.length} kinds, ${total} instances, ${draws} draws; levels L${left}/R${right}/B${back}; plate moved ${dy.toFixed(3)} m at v·dt=${want.toFixed(3)}`;
     } finally { world.unload(); }
   });
 
@@ -373,6 +373,95 @@ export async function run({ check, assert, THREE }) {
       }
       assert(leaks.length === 0, `with the doors open, ${leaks.length} sightlines reach the shaft other than through the doorway: ${leaks.join('; ')}`);
       return `shaft hidden from ${stations.length} deck stations at 4 targets with the doors shut; open, ${viaDoor} sightlines and all through the doorway; all 4 visible from the car`;
+    } finally { world.unload(); }
+  });
+
+  check('lift: the strip is dozens of distinct authored vignettes, longer than both rides, and nothing repeats on the way in', async () => {
+    /**
+     * "when you're using the elevator you still don't see imagined scenes
+     * from the rest of the station/ship you only see machinery buzzing by …
+     * imagine passing dozens and dozens of levels all unique". The far
+     * strip is authored per level per face from a list of vignettes; the
+     * list is at least forty long, the strip covers the ride in plus the
+     * ride out, and on any one face the levels the ride in passes are all
+     * different (the bulkhead crossing excepted — a bulkhead every eight
+     * decks is the ship's structure, and its number changes).
+     */
+    const { world } = await deck();
+    try {
+      const st = world._deckLift;
+      const sc = st.scene;
+      assert(sc.vignettes.length >= 40, `${sc.vignettes.length} vignettes authored — wanted at least 40`);
+      assert(new Set(sc.vignettes).size === sc.vignettes.length, 'two vignettes share a name');
+      const lay = st.layout;
+      const stripLen = (lay.hi - lay.lo + 1) * LEVEL;
+      assert(stripLen > st.rideLen + st.leaveLen,
+        `the far strip is ${stripLen} m for a ride in of ${st.rideLen} m and a ride out of ${st.leaveLen.toFixed(0)} m — it would have to repeat`);
+      /* NO WRAP on the far layer: every plate is an unwrapped slot. */
+      const plates = sc.kindOf.plate.slots;
+      assert(plates.length > 0 && plates.every((o) => !o.wrap), 'a far-layer plate wraps');
+      /* The ride in, per face: from the level in the window at the start to the landing. */
+      const report = [];
+      for (let fi = 0; fi < 3; fi++) {
+        const names = sc.perFace[fi];
+        const seen = names.slice(0 - lay.lo, lay.landing - lay.lo + 1);
+        const dup = seen.filter((n, i) => n !== 'bulkhead' && seen.indexOf(n) !== i);
+        assert(dup.length === 0, `face ${fi} shows ${dup.join(', ')} twice on the ride in`);
+        const distinct = new Set(names).size;
+        assert(distinct >= 40, `face ${fi} lays only ${distinct} distinct vignettes over its ${names.length} levels`);
+        report.push(`face ${fi}: ${seen.length} levels in, ${distinct} distinct over ${names.length}`);
+      }
+      /* The three faces do not agree at any level of the ride in. */
+      let same = 0;
+      for (let lev = 0; lev <= lay.landing; lev++) {
+        const i = lev - lay.lo;
+        const a = sc.perFace[0][i], b = sc.perFace[1][i], c = sc.perFace[2][i];
+        if (a !== 'bulkhead' && (a === b || a === c || b === c)) same++;
+      }
+      assert(same <= 2, `${same} levels of the ride in show the same vignette in two windows at once`);
+      return `${sc.vignettes.length} vignettes; strip ${stripLen} m vs ${st.rideLen}+${st.leaveLen.toFixed(0)} m; ${report.join('; ')}`;
+    } finally { world.unload(); }
+  });
+
+  check('lift: the people in the shaft have heads, bodies and limbs; the scene keeps moving when the car is still; and it is still nine draws', async () => {
+    const { world, idle } = await deck();
+    try {
+      const st = world._deckLift;
+      const K = st.scene.kindOf;
+      const heads = K.head.slots.length, parts = K.figure.slots.length;
+      assert(heads >= 100, `${heads} heads in the whole strip — the ship is empty`);
+      assert(parts >= heads * 3, `${parts} body parts for ${heads} heads — a figure is a torso, legs and arms, not a box`);
+      /* Coloured: the plates carry more than a handful of distinct hues. */
+      const hues = new Set(K.plate.slots.map((o) => o.col));
+      assert(hues.size >= 30, `${hues.size} plate colours across the strip — wanted a palette, got a tint`);
+      /* Animated slots exist in several kinds. */
+      const animated = st.scene.kinds.filter((k) => k.anims.length > 0).length;
+      assert(animated >= 4, `${animated} kinds carry animated slots`);
+      /* THE BUDGET: one mesh per kind and the statics. */
+      let draws = 0;
+      st.shaft.traverse((o) => { if (o.isMesh || o.isInstancedMesh) draws++; });
+      const instanced = st.scene.kinds.length;
+      assert(instanced <= 10, `${instanced} instanced kinds — the strip is meant to be nine`);
+      assert(draws <= 16, `${draws} draws for the whole shaft — wanted nine kinds and a few statics`);
+      /* AT THE STOP, WITH THE DOORS OPEN, THE FANS STILL TURN: some
+       * animated instance's matrix changes between two still frames. */
+      step(world, RIDE.settle + RIDE.ride + 0.6 + RIDE.doors + 0.3, idle);
+      assert(liftState(world) === STATE.OUT, `expected the car open and still, got ${liftState(world)}`);
+      const s0 = st.scroll;
+      const fan = K.fan.mesh;
+      const m0 = new THREE.Matrix4(), m1 = new THREE.Matrix4();
+      /* Any fan on the strip at all — collapsed ones read as zero, skip those. */
+      let idx = -1;
+      for (let i = 0; i < fan.count; i++) { fan.getMatrixAt(i, m0); if (m0.elements[0] !== 0 || m0.elements[1] !== 0 || m0.elements[2] !== 0) { idx = i; break; } }
+      assert(idx >= 0, 'no fan is laid anywhere in the box while the car stands');
+      fan.getMatrixAt(idx, m0);
+      step(world, 0.3, idle);
+      assert(st.scroll === s0, 'the scene scrolled while the car stood open');
+      fan.getMatrixAt(idx, m1);
+      let moved = 0;
+      for (let i = 0; i < 16; i++) moved = Math.max(moved, Math.abs(m0.elements[i] - m1.elements[i]));
+      assert(moved > 1e-3, 'a fan did not turn over 0.3 s with the car standing still');
+      return `${heads} heads, ${parts} parts, ${hues.size} plate colours, ${animated} animated kinds, ${instanced} kinds / ${draws} draws; a fan turned ${moved.toFixed(2)} while still`;
     } finally { world.unload(); }
   });
 }
