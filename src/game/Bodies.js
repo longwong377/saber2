@@ -13424,7 +13424,26 @@ export function buildWookiee(opts = {}) {
           }
           shagOn(k, under, shin, 7, { y0: 0.80, y1: 0.80, a0: -2.7, a1: 2.7,
             len: 0.075 * s, r0: 0.022 * s, droop: 0.90, sink: 0.004 * s });
-          k.bake(shin.obj);
+          /**
+           * ── AND THE SHIN IS MARKED SILHOUETTE, WHICH THE COAT'S OWN NOTE
+           *    ARGUES AGAINST FOR THE ARMS ────────────────────────────────
+           *
+           * That note reads: "Marked silhouette on the TRUNK and not on the
+           * limbs… four more merged meshes on the arms and thighs would buy
+           * an edge nobody can resolve at that range." It is right about the
+           * arms — they hang inside the trunk's own outline for most of a
+           * walk cycle — and wrong about the shins, because BELOW THE HIP
+           * SKIRT THERE IS NOTHING ELSE. `Enemy._applyLod` hides every mesh
+           * that is not a bone primary and not marked, so past 30 m the
+           * bottom third of this body is two bare tapered tubes and two
+           * boxes, and that third is 0.75 m of a 2.22 m silhouette.
+           *
+           * Four meshes (two shins, two feet) against the bandolier's two, on
+           * an archetype there is exactly one of on the field — it is a
+           * companion kind and nothing spawns it in a wave. `frame-budget`
+           * and `characters` both weigh it and both pass.
+           */
+          markSilhouette(k.bake(shin.obj));
         }
         const foot = r.get('foot' + side);
         if (foot) {
@@ -13453,7 +13472,7 @@ export function buildWookiee(opts = {}) {
             shagOn(k, under, foot, 3, { y0: 0.10, y1: 0.52, a0: a, a1: a,
               len: 0.036 * s, r0: 0.016 * s, droop: 0.10, sink: 0.004 * s });
           }
-          k.bake(foot.obj);
+          markSilhouette(k.bake(foot.obj));
         }
       }
     },
