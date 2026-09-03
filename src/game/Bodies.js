@@ -10073,10 +10073,11 @@ export const CREATURE_PLANS = {
    * IT NEVER LANDS, and that one sentence decides every number below. Three
    * things follow from it that are true of nothing else in this table:
    *
-   *   THE STANCE PUBLISHES NO LIMBS. `tuck: true` — argued over `stanceOf` —
-   *   so `_poseWalker`'s per-limb IK loop runs zero iterations and the legs
-   *   hold the rest pose this row authors. Without it the animal cruises with
-   *   two rigid spikes reaching 5.6 m down for a floor it is never on.
+   *   THE STANCE PUBLISHES ITS LIMBS AFTER ALL. `tuck: true` was the plan —
+   *   argued over `stanceOf` — and it is not in the row: the deck walks this
+   *   body at floor level and `companions.mjs` pins the no-limbs path to the
+   *   astromech alone. In the air the IK reaches for a floor it cannot get
+   *   to and the legs hang straight; on the deck they walk.
    *
    *   THE LEGS ARE AUTHORED FOLDED. `femurRest` is back and down and
    *   `tibiaRest` folds forward under it, so the talons are carried up under
@@ -10149,14 +10150,21 @@ export const CREATURE_PLANS = {
      * trunk, which rendered as a fat mammal with wings on. A hawk's body is
      * about a fifth of its own length across. 0.095 on a 0.64 trunk is 27 cm
      * over 64, and the keel carries the depth the width no longer has. */
-    hip: 0.30, trunk: [0.04, -0.12, 0.64], pitch: 0.06, girth: 0.095,
-    swells: [[0.64, 0.44, 0.26], [0.20, 0.10, 0.24]],
-    section: { n0: 2.2, n1: 2.6, back: 0.02, keel: 0.26, waist: 0.06 },
+    /* V15 — CHEST FORWARD, TAPERED AFT. The shoulder swell moved from 0.64 to
+     * 0.72 of the trunk and the haunch swell is nearly gone, so the mass is a
+     * teardrop with its point at the tail: seen from the flank the deepest
+     * part of the animal is under the wing root, not in the middle. 0.60 of
+     * trunk on 0.105 of girth is the same one-in-five a hawk is. */
+    hip: 0.30, trunk: [0.04, -0.12, 0.60], pitch: 0.08, girth: 0.092,
+    swells: [[0.72, 0.36, 0.22], [0.28, 0.04, 0.18]],
+    section: { n0: 2.2, n1: 2.6, back: 0.02, keel: 0.22, waist: 0.06 },
     /* A SHORT S-NECK CARRIED UP. `nPitch` 0.42 is the steepest in the table
      * (the varactyl's 0.62 is the only steeper one and it is a long neck) and
      * `nCurl` −0.30 turns it back over so the head finishes level and forward
      * — which is the S every bird's neck is, done in two segments. */
-    headAt: [0.15, 0.44], neck: [2, 0.070, 0.070, 0.40, -0.28], head: 'beak',
+    /* SHORTER STILL: 2 × 0.055 of neck (was 0.070), because a raptor's head
+     * sits ON its shoulders — the neck only shows as the S the head turns on. */
+    headAt: [0.14, 0.42], neck: [2, 0.055, 0.062, 0.42, -0.30], head: 'beak',
     back: 'plumage', tail: [0, 0, 0, 0, 0],
     /* `z` 0.36 IS THE SHOULDER AND IT WAS -0.04, WHICH WAS THE TAIL.
      * `creatureSkeleton` places a wing root in the BODY BONE's frame, where +Y
@@ -10172,8 +10180,24 @@ export const CREATURE_PLANS = {
      * the eye read the leading edge and nothing else. A soaring bird runs
      * about 4:1 span to chord and this is 5.5:1, which is still a long thin
      * wing and is now a SURFACE. */
-    wings: { x: 0.09, y: 0.07, z: 0.36, arm: 0.62, fan: 0.58, chord: 0.44,
-      rest: [0.88, 0.24, -0.40], fanRest: [0.94, 0.06, -0.34] },
+    /* V15 — A RAPTOR'S GLIDE, NOT A BAR. The arm goes out with a little
+     * dihedral and 17° of sweep; the hand is swept a further 40° back, so the
+     * planform is the bent-wrist M every soaring hawk holds and the flank view
+     * shows a wing lying along and behind the body rather than a spar sticking
+     * out of it. `Flight.beatWings` rotates each bone about the body's forward
+     * axis on top of these directions, so a flap is still a flap; the bone
+     * names and hinge points are the ones it reads. */
+    /* ── AND IT IS SWEPT HARD, WHICH IS THE FLANK VIEW'S WHOLE READ ──────
+     * Photographed square-out (`.smoke/b-hawk-hawk2-flank.png`) a spread wing
+     * seen from the side is a BAR: the whole surface is edge-on and the eye
+     * gets a stick with teeth. A hawk in a fast glide holds the arm back
+     * about 40° and the hand a further 25°, and from the side that lays the
+     * wing's surface along and behind the flank where a player at eye level
+     * can see it. `Flight.beatWings` only ever rotates these about the body's
+     * forward axis, so a swept wing still beats — it has no fold/unfold
+     * state, which is why the rest pose is a glide and not a fold. */
+    wings: { x: 0.09, y: 0.06, z: 0.36, arm: 0.52, fan: 0.46, chord: 0.40,
+      rest: [0.80, 0.10, -0.58], fanRest: [0.52, -0.12, -0.84] },
     limbs: [
       /* ONE PAIR, SHORT, AND FOLDED. 0.16 + 0.18 of leg on a 0.52 body is the
        * shortest limb-to-trunk ratio in the file; `girth` 0.55 is the thinnest.
@@ -10182,15 +10206,29 @@ export const CREATURE_PLANS = {
        * because they are what a future flightless variant of this plan would
        * need, and a row that is silently a different shape from every other row
        * in the table is how the next reader gets caught. */
-      { role: 'leg', x: 0.06, y: -0.03, z: 0.02, plant: 0.10, femur: 0.13, tibia: 0.15, tarsus: 0.075,
-        girth: 0.50, pole: [0.16, 0.20, 0.50], foot: 'raptor',
+      /* V15 — HEAVIER: girth 0.64 (was 0.50). A hawk's leg is its weapon and
+       * it is thick with feather to the hock; a 0.50 leg was a wire. */
+      { role: 'leg', x: 0.06, y: -0.02, z: 0.04, plant: 0.10, femur: 0.12, tibia: 0.14, tarsus: 0.07,
+        girth: 0.58, pole: [0.16, 0.20, 0.50], foot: 'raptor',
         /* TRAILING, NOT HANGING. The first pair pointed the femur back and the
          * tibia FORWARD again, which is a folded landing gear and rendered as
          * two stilts under the animal. Both segments now go back and down, so
          * the whole leg lies along the belly and the talons finish under the
          * tail — which is where a bird in cruise carries them. */
-        femurRest: [0.12, -0.66, -0.74], tibiaRest: [0.02, -0.84, -0.54] },
+        /* V15 — TRAILING UNDER THE TAIL, tighter than before: both segments
+         * lie nearly along the belly (photographed at the old -0.66/-0.84 the
+         * pair hung like a kangaroo's), and the tarsus's own rest drops the
+         * foot out from under the fan with the talons closed. */
+        femurRest: [0.12, -0.30, -0.95], tibiaRest: [0.02, -0.40, -0.92] },
     ],
+    /* NO `tuck`, WHATEVER THE HEADER ABOVE SAYS. V15 tried it: the legs held
+     * the trailing rest pair below and the flank read was right — and
+     * `companions.mjs` ("every one of the twelve kinds … walks") pins the
+     * no-limbs deck path to exactly one body, the astromech, because on the
+     * hangar deck this animal is at floor level and WALKS. So the stance
+     * publishes its pair, the deck gait moves them, and in the air
+     * `_poseWalker` still IKs them toward a floor they cannot reach. The
+     * rest pair is what shows on the first frame and past the solve range. */
     step: 0.20, lift: 0.10, rear: 0.16,
     /* RAKE AT PHASE 1 AND SWEEP AT 2, on the same argument as the blurrg's and
      * with the bird's own anatomy deciding which. A raptor's two weapons are
@@ -10638,7 +10676,11 @@ export function buildQuadruped(opts = {}) {
     ks.row(5, (i, t) => ks.pair((sx) => {
       const phi = sx * (0.30 + t * 0.34);
       const len = (0.30 - t * 0.10) * S;
-      ks.aim(plate, vane(0.085 * S, len, 0.009 * S),
+      /* V15 — `hide`, not `plate`: a pale mantle over a dark wing was a white
+       * saddle hiding the body's whole shape from above
+       * (`.smoke/b-hawk-hawk2h-back.png`). A hawk's back is dark; the pale
+       * scapular stripe below is what the eye gets. */
+      ks.aim(hide, vane(0.085 * S, len, 0.009 * S),
         behind(hull(0.14 + t * 0.74, phi, 0.020 * S), len), aft, null, V(hullN(phi)));
     }));
     // …and the scapulars, higher and shorter, closing the line into the wing root
@@ -10670,12 +10712,19 @@ export function buildQuadruped(opts = {}) {
      * carries it. It is the second largest shape on this animal from below,
      * which is the angle a player standing under it is looking from.
      */
-    const root = fwd(-0.04);
+    /* V15 — ROOTED ON THE TAIL END OF THE LATHE, NOT 10 cm OVER IT. `fwd`
+     * carries the mane's +0.10·S standoff, which put the fan's root above the
+     * animal's rump with air under it; the lathe's own rear pole is at the
+     * body bone's origin. Longer (0.34 on a 0.60 trunk — about half the body's
+     * length), wider vanes, and 0.62 rad of half-spread with a slight droop,
+     * so from the flank it is a fanned paddle behind the body and not a
+     * sprig. */
+    const root = [0, 0.010 * S, 0.010 * S];
     const up = [0, Math.cos(P.pitch), -Math.sin(P.pitch)];
     ks.row(11, (i, t) => {
-      const th = (t * 2 - 1) * 0.75;
-      const len = (0.30 - Math.abs(t * 2 - 1) * 0.10) * S;
-      const dir = [Math.sin(th), Math.cos(th) * aft[1], Math.cos(th) * aft[2]];
+      const th = (t * 2 - 1) * 0.62;
+      const len = (0.34 - Math.abs(t * 2 - 1) * 0.10) * S;
+      const dir = [Math.sin(th), Math.cos(th) * aft[1] - 0.14, Math.cos(th) * aft[2]];
       /* BARRED, which is one `%` and is the difference between a tail and a
        * doily. All eleven in `plate` came back as a solid white fan under the
        * level's own light — the brightest thing on the animal and the first
@@ -10683,8 +10732,19 @@ export function buildQuadruped(opts = {}) {
        * Alternating them against the hide is what every reference raptor's
        * tail does and it costs nothing: the Kit merges per material, so it is
        * the same two meshes either way. */
-      ks.aim(i % 2 ? hide : plate, vane(0.042 * S, len, 0.008 * S),
+      ks.aim(i % 2 ? hide : plate, vane(0.050 * S, len, 0.008 * S),
         [root[0] + dir[0] * len * 0.5, root[1] + dir[1] * len * 0.5, root[2] + dir[2] * len * 0.5],
+        dir, null, V(up));
+    });
+    /* …and the upper-tail coverts: a short dark sheaf over the fan's root,
+     * which is what closes the rump into the tail instead of leaving eleven
+     * quills stuck into the end of a lathe. */
+    ks.row(5, (i, t) => {
+      const th = (t * 2 - 1) * 0.40;
+      const len = 0.16 * S;
+      const dir = [Math.sin(th), Math.cos(th) * aft[1] - 0.10, Math.cos(th) * aft[2]];
+      ks.aim(hide, vane(0.052 * S, len, 0.010 * S),
+        [root[0] + dir[0] * len * 0.5, root[1] + 0.022 * S + dir[1] * len * 0.5, root[2] + dir[2] * len * 0.5],
         dir, null, V(up));
     });
   }
@@ -10949,7 +11009,18 @@ export function buildQuadruped(opts = {}) {
       k.bake(socket.obj);
     }
     const femur = rig.get(`femur${i}`);
-    if (femur) {
+    if (femur && L2.foot === 'raptor') {
+      /* V15 — THE TROUSERS. A hawk's thigh is a mass of feather to the hock,
+       * not a plated shin: one hide ellipsoid over the femur, wider than the
+       * bone, and three short vanes breaking its lower edge. The plate below
+       * is armour and belongs to the animals that have some. */
+      const k = new Kit(); const len = femur.length;
+      k.add(hide, new THREE.SphereGeometry(1, 9, 7), [0, len * 0.42, -0.010 * S], null,
+        [0.070 * S * g, len * 0.60, 0.080 * S * g]);
+      k.row(3, (j, t) => k.add(hide, clawGeo(0.075 * S, 0.026 * S, 0.005 * S, 0.35, 5, 2),
+        [(t - 0.5) * 0.06 * S * g, len * 0.72, -0.030 * S], [Math.PI - 0.55, 0, (t - 0.5) * 0.5]));
+      k.bake(femur.obj);
+    } else if (femur) {
       const k = new Kit(); const len = femur.length;
       k.add(plate, limbPlate(femur, len * 0.10, len * 0.66, arm ? 2.0 : 2.5,
         { thick: 0.024 * S * g, seg: 6, gap: 0.008 * S }), [0, len * 0.10, 0]);
@@ -11013,9 +11084,12 @@ export function buildQuadruped(opts = {}) {
       const LR = side > 0 ? 'L' : 'R';
       for (const [name, n, c0, c1, rake0, rake1, cov] of [
         // the arm: secondaries, short and square, under a sheet of coverts
-        [`wing${LR}`, 6, 0.62, 0.86, 0.10, 0.34, true],
-        // the hand: primaries, long and raked hard back, tapering to the tip
-        [`wingTip${LR}`, 7, 1.00, 0.58, 0.42, 0.95, false],
+        [`wing${LR}`, 6, 0.62, 0.86, 0.06, 0.26, true],
+        // the hand: primaries, long and raked back, tapering to the tip. The
+        // rakes are measured from the BONE, and the V15 bones are already
+        // swept 40-65° back, so these are gentler than the square-out wing's
+        // 0.42→0.95 or the primaries would cross behind the tail.
+        [`wingTip${LR}`, 7, 1.00, 0.58, 0.16, 0.56, false],
       ]) {
         const b = rig.get(name);
         if (!b) continue;
@@ -11069,7 +11143,24 @@ export function buildQuadruped(opts = {}) {
             [0, A * 0.50, -W.chord * S * 0.22], [0.12, 0, 0]);
           k.add(plate, vane(0.010 * S, A * 0.46, W.chord * S * 0.20),
             [0, A * 0.46, -W.chord * S * 0.05], [0.06, 0, 0]);
+          /* V15 — THE MEDIAN COVERTS: a row of dark vanes lying over the pale
+           * sheet, tips stepping back with the span. A wing is rows of
+           * feathers and the two panels above are one surface; this is the
+           * row that makes the surface read as feather from above. */
+          k.row(6, (i, t) => k.add(hide, vane(0.009 * S, 0.060 * S, W.chord * S * 0.14),
+            [0, (0.14 + t * 0.74) * A, -W.chord * S * (0.30 + t * 0.06)], [0.16 + t * 0.06, 0, 0.06]));
         } else {
+          /* V15 — THE WRIST. The one joint a folded or a spread wing shows,
+           * and the thing that says "this bends here": a knuckle of hide at
+           * the hand's root, and the alula — two short stiff feathers standing
+           * forward off it, which is what breaks the leading edge at the
+           * wrist on every hawk seen from above or below. */
+          k.add(hide, new THREE.SphereGeometry(0.046 * S, 8, 6), [0, 0.012 * S, 0.006 * S], null, [1.0, 1.15, 0.85]);
+          k.row(2, (i, t) => k.add(hide, vane(0.006 * S, 0.020 * S, 0.055 * S),
+            [0, (0.05 + t * 0.05) * A, 0.055 * S], [-0.55 - t * 0.20, 0, 0.30]));
+          // the primary coverts: a short row over the roots of the primaries
+          k.row(5, (i, t) => k.add(hide, vane(0.009 * S, 0.050 * S, W.chord * S * 0.13),
+            [0, (0.16 + t * 0.66) * A, -W.chord * S * (0.24 + t * 0.10)], [0.34 + t * 0.20, 0, 0.10]));
           /* On the hand the same idea at a third of the chord: the primaries
            * are long and mostly free, but their roots still have to be part of
            * a surface or the wing tip is a bundle of sticks. */
@@ -11245,7 +11336,10 @@ function buildFootFor(k, kind, plate, tooth, hide, S, g, len) {
      */
     k.add(plate, limbGeo(len * 0.30, 0.036 * S * g, 0.030 * S * g, 7, true,
       { rings: 2, capN: 2, capY0: 0.20, capY1: 0.20 }), [0, len * 0.62, 0]);
-    k.row(3, (j, t) => k.add(plate, clawGeo(0.19 * S, 0.020 * S * g, 0.005 * S, 1.5, 6, 5),
+    /* V15 — 1.15 of bend, not 1.5: the deck WALKS this body (see the row),
+     * and at 1.5 a standing hawk stood on its own knuckles. 1.15 is a foot
+     * that grips a perch and still reads closed in the air. */
+    k.row(3, (j, t) => k.add(plate, clawGeo(0.19 * S, 0.022 * S * g, 0.005 * S, 1.15, 6, 5),
       [(t - 0.5) * 0.075 * S * g, len * 0.90, 0.020 * S], [0.30, (t - 0.5) * 1.0, 0]));
     // the hallux: shorter, heavier, and pointing the other way
     k.add(plate, clawGeo(0.15 * S, 0.022 * S * g, 0.005 * S, 1.6, 6, 5),
@@ -12080,7 +12174,14 @@ function buildCreatureHead(rig, P, S, M) {
      * skull is the widest thing on it after the wing roots. It is one number
      * because the branch was built to be one number.
      */
-    const hk = 0.96, hS = S * hk;
+    /* ── V15: BACK DOWN TO 0.70 ──────────────────────────────────────────
+     * 0.96 was measured against a shoulder the mantle had grown, and rendered
+     * (`.smoke/b-hawk-hawk0-flank.png`) the skull is as big as the trunk it
+     * sits on: the whole animal reads as a head with a body hung off it. A
+     * hawk's head is about a third of its body's length; 0.70 puts the
+     * cranium at 0.28 across on a 0.60 trunk, and the hook, the brow and the
+     * two forward eyes are what make it read, not its size. */
+    const hk = 0.70, hS = S * hk;
     parts.push([(() => { const g = new THREE.SphereGeometry(0.20 * hS, 12, 9); g.scale(1.02, 0.94, 0.72); return g; })(),
       [0, hy + 0.02 * hS, hz + 0.04 * hS]]);
     /**
@@ -12103,26 +12204,40 @@ function buildCreatureHead(rig, P, S, M) {
      * bill's, and the opposite of the reek's 0.88 slab) and `crown` 0.22 keeps
      * the culmen — the ridge along the top of the bill — convex.
      */
-    const bill = muzzle(0.17 * hk, 0.070 * hk, 0.030 * hk, 0.02 * hk, 0.06 * hk, 0.34,
-      { flat: 0.52, n: 2.6, chin: 0.10, crown: 0.22, nose: 0.30 });
+    /* V15 — HIGHER, DEEPER, LESS DROOP. Photographed close
+     * (`.smoke/b-hawk-hawk2h-head.png`) the bill left the LOWER half of the
+     * face at 0.34 rad nose-down and the hook, placed at the cranium's
+     * centre line, floated 7 cm above the bill's own tip — a pale peg under
+     * the chin and a separate pale curl in front of it. The hinge is now at
+     * the face's centre (y 0.06), the droop 0.15, and the hook is seated
+     * where that bill actually ends. */
+    const bill = muzzle(0.18 * hk, 0.086 * hk, 0.040 * hk, 0.06 * hk, 0.05 * hk, 0.15,
+      { flat: 0.55, n: 2.6, chin: 0.10, crown: 0.28, nose: 0.30 });
     k.add(M.plate, bill[0], bill[1], bill[2]);
     // the lower mandible, shorter and tucked under: a bill closes short of its own hook
     k.add(M.plate, limbGeo(0.13 * hS, 0.052 * hS, 0.026 * hS, 8, true,
       { rings: 3, capN: 2, capY0: 0.20, capY1: 0.44, section: muzzleSection({ flat: 0.62, n: 2.4 }) }),
-    [0, hy - 0.035 * hS, hz + 0.06 * hS], [Math.PI / 2 + 0.42, 0, 0]);
+    [0, hy + 0.005 * hS, hz + 0.05 * hS], [Math.PI / 2 + 0.30, 0, 0]);
     /* THE HOOK. The furthest-forward point on the whole animal and the thing
      * the profile is read by — 1.35 rad of bend takes the tip down and under
      * past the lower mandible, and that overhang is the single feature that
      * says BIRD OF PREY rather than bird. */
-    k.add(M.plate, clawGeo(0.075 * hS, 0.030 * hS, 0.004 * hS, 1.35, 6, 5),
-      [0, hy + 0.045 * hS, hz + 0.215 * hS], [1.30, 0, 0]);
+    k.add(M.plate, clawGeo(0.105 * hS, 0.040 * hS, 0.004 * hS, 1.50, 6, 5),
+      [0, hy + 0.042 * hS, hz + 0.212 * hS], [1.35, 0, 0]);
     k.pair((sx) => {
       /* The eye, and a dark rim round it. Two spheres, and the rim is `plate`
        * — the pale horn colour — so the eye reads as a ring with a light in it
        * rather than as a bead stuck on a head. */
       k.add(M.plate, (() => { const g = new THREE.SphereGeometry(0.062 * hS, 8, 6); g.scale(1, 1, 0.55); return g; })(),
         [sx * 0.075 * hS, hy + 0.055 * hS, hz + 0.115 * hS]);
-      k.add(M.eye, new THREE.SphereGeometry(0.048 * hS, 8, 6), [sx * 0.075 * hS, hy + 0.055 * hS, hz + 0.145 * hS]);
+      k.add(M.eye, new THREE.SphereGeometry(0.048 * hS, 8, 6), [sx * 0.075 * hS, hy + 0.055 * hS, hz + 0.152 * hS]);
+      /* THE PUPIL — a dark bead standing proud of the disc, forward and a
+       * little inward so both eyes converge on what is in front of the bill.
+       * The other six heads get theirs from `eyeAt`; this branch seats its
+       * own eyes and had none, which is why the hawk's eyes read as two
+       * amber lamps rather than a gaze. */
+      k.add(M.pupil, new THREE.SphereGeometry(0.020 * hS, 6, 5),
+        [sx * 0.068 * hS, hy + 0.057 * hS, hz + 0.190 * hS]);
       /* THE BROW. A hawk's supraorbital ridge is why it looks angry, and it is
        * a real shelf of bone standing over the eye — one squashed ellipsoid a
        * side, raked down and forward over the socket. */
@@ -12161,7 +12276,7 @@ function buildCreatureHead(rig, P, S, M) {
        * triangles against the pair's 120, on a body 3 900 under its cap.
        */
       k.row(3, (i, t) => k.add(M.hide,
-        clawGeo((0.155 + (1 - Math.abs(t - 0.5) * 2) * 0.055) * hS, 0.022 * hS, 0.004 * hS, -0.30, 4, 3),
+        clawGeo((0.105 + (1 - Math.abs(t - 0.5) * 2) * 0.040) * hS, 0.020 * hS, 0.004 * hS, -0.30, 4, 3),
         [sx * (0.080 + t * 0.024) * hS, hy + (0.122 - t * 0.010) * hS, hz + (0.020 - t * 0.040) * hS],
         [-0.46 - t * 0.28, 0, sx * -(0.24 + t * 0.32)]));
       // the nape: three short feathers breaking the line into the neck
