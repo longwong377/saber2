@@ -1839,6 +1839,38 @@ function emissiveMat(color, intensity = 3) {
     color: 0x111111, emissive: color, emissiveIntensity: intensity, roughness: 0.4, metalness: 0.2,
   });
 }
+/**
+ * AN EYE, AND THE BODY SAYS SO.
+ *
+ * The same material, with one word of userData on it, and the word is the
+ * whole point: `tools/checks/characters.mjs` casts a ray along every eye
+ * triangle's own normal and fails a body whose eye is inside its own skull,
+ * and the only way to write that check without a typed list of animals is for
+ * the geometry to declare which of its meshes is an eye. It went unwritten
+ * for as long as it did because there was nothing to ask.
+ *
+ * IT IS DELIBERATELY NOT "the emissive parts". The medical droid's lit
+ * material also paints a readout on each forearm and one on the chest, and a
+ * readout tucked behind a housing is a decoration nobody misses, where an eye
+ * that is not there is the difference between an animal and a lump. Two
+ * different rules, so two different materials: a body that wants both
+ * declares both. On the two droids it costs nothing at all — the Kit merges
+ * per material PER BONE, and on both heads the eye was already the only lit
+ * thing on that bone, so the astromech is 24 meshes and the 2-1B 40 either
+ * way. What it buys is that a check no longer has to guess which lit plate
+ * was the face.
+ *
+ * An eye that is MEANT to be hidden — a blindfolded body, a sensor under a
+ * cowl — says `hidden` here and the check exempts it by that property. None
+ * does today, and the check reports the count so a silent exemption cannot
+ * accumulate.
+ */
+function eyeMat(color, intensity = 3, hidden = false) {
+  const m = emissiveMat(color, intensity);
+  m.userData.role = 'eye';
+  if (hidden) m.userData.hidden = true;
+  return m;
+}
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  Humanoid assembly                                                     */
@@ -6052,7 +6084,7 @@ export function buildB1(opts = {}) {
   const joint = metalMat(0x4b4438, 0.46, 0.62, 5.0);
   const mark = armorMat(opts.markColor ?? 0x9e3524, 0.08, 0.58, 5.0);
   const scorch = scorchMat();
-  const eye = emissiveMat(opts.eyeColor ?? 0xff3020, 4);
+  const eye = eyeMat(opts.eyeColor ?? 0xff3020, 4);
 
   const riv = rivet(0.0055 * S);
   const bolt = boltGeo(0.008 * S, 0.008 * S);
@@ -6380,7 +6412,7 @@ export function buildB2(opts = {}) {
   const dark = metalMat(0x2f2c27, 0.5);
   const hot = emissiveMat(0xff7a2a, 1.1);
   const scorch = scorchMat();
-  const eye = emissiveMat(0xff5522, 3);
+  const eye = eyeMat(0xff5522, 3);
 
   const riv = rivet(0.009 * S);
   const bolt = boltGeo(0.011 * S, 0.010 * S);
@@ -7627,7 +7659,7 @@ export function buildAcolyte(opts = {}) {
   const skin = skinMat(opts.skinColor ?? 0xb08a72);
   const maskMat = metalMat(0x767b87, 0.36, 0.45, 3.6);
   const trim = metalMat(0xb08f4c, 0.34, 0.80, 3.6);
-  const eye = emissiveMat(0xff2a1a, 5.0);
+  const eye = eyeMat(0xff2a1a, 5.0);
   // the cowl is an open shell — it has to be lit from the inside too
   const hoodMat = clothMat(0x121317, 0.95);
   hoodMat.side = THREE.DoubleSide;
@@ -7912,7 +7944,7 @@ export function buildDroideka(opts = {}) {
   const shell = armorMat(opts.color ?? 0x7a4a2e, 0.42, 0.56, 4.0);
   // was bare — every leg, every gun and the whole underside was flat plastic
   const dark = metalMat(0x2a2320, 0.5, 0.7, 4.0);
-  const eye = emissiveMat(0x44ff88, 3);
+  const eye = eyeMat(0x44ff88, 3);
   const hot = emissiveMat(0x66ff99, 1.4);
   const scorch = scorchMat();
 
@@ -8162,7 +8194,7 @@ export function buildWalker(opts = {}) {
   const dark = metalMat(0x2b2a27, 0.5, 0.72, 3.0);
   const mark = armorMat(0xa8621e, 0.1, 0.6, 3.0);
   const glass = glassMat(0x3a0c08, 0.16);
-  const eye = emissiveMat(0xff2a18, 2.6);
+  const eye = eyeMat(0xff2a18, 2.6);
   const hot = emissiveMat(0xff6622, 1.2);
   const scorch = scorchMat();
 
@@ -9038,6 +9070,13 @@ export const CREATURE_PLANS = {
      *   The one feature a cute animal is read by did not render at all, and
      *   the row's own paragraph on why the branch fits never mentions eyes
      *   being visible because nobody looked.
+     *   (This diagnosis was right and it was made about ONE branch. Three of
+     *   the seven had the same fault and two of them still did after this row
+     *   landed — the gundark's among them, so the varactyl that shares it went
+     *   on rendering no eye. `eyeAt` seats every eye on the skull's measured
+     *   surface now and `characters.mjs` fails a body whose eye is inside its
+     *   own head, which is the part of this note that was missing: a fix on
+     *   the branch somebody happened to be looking at.)
      *   THE HORNS WERE HORNS. Straight tapered tubes swept 0.56 out and
      *   FORWARD off the temples with a two-node polyline, so each is a flat
      *   pale blade standing clear of the head with daylight under it. An ear
@@ -10051,7 +10090,7 @@ export function buildQuadruped(opts = {}) {
   const hide = hideMat(opts.hide ?? P.hide, 0.92);
   const plate = chitinMat(opts.plate ?? P.plate, 0.52);
   const belly = hideMat(opts.belly ?? P.belly, 0.94);
-  const eye = emissiveMat(opts.eye ?? P.eye, 2.8);
+  const eye = eyeMat(opts.eye ?? P.eye, 2.8);
   const tooth = boneMat(0xd6cbb0, 0.34);
   /**
    * THE PUPIL, and it is the cheapest character in the file.
@@ -11149,17 +11188,24 @@ function buildCreatureHead(rig, P, S, M) {
    * So the DIRECTION stays authored and the DEPTH is measured. `(x, y, z)` is
    * read as a ray from where the neck arrives — the same ray the pupil has
    * always been pushed along — and the eye is seated where that ray leaves
-   * the skull, with `out` of its own radius standing proud of it. That is
-   * `onSurface`, which is the vocabulary this file already uses for every
-   * photoreceptor, visor, horn and vent that has to stay put when the shell
-   * under it changes shape; the heads were the last thing in here still
-   * typing a coordinate and hoping.
+   * the skull, standing `PROUD` of its own radius out of it. `surfacePoint`
+   * is the ray `onSurface` is built on, and that pair is the vocabulary this
+   * file already uses for every photoreceptor, visor, horn and vent that has
+   * to stay put when the shell under it changes shape; the heads were the
+   * last thing in here still typing a coordinate and hoping.
    *
-   * `out` defaults to 0.95 because that is where the two branches that
-   * rendered correctly already sat (+0.91r on the acklay, +0.97r on the
-   * nexu's upper pair) — the default is the shipped result that worked,
-   * rather than a fresh guess — and a branch that wants a deeper-set eye says
-   * so on its own line.
+   * PROUD IS 0.95 BECAUSE THAT IS WHERE THE TWO BRANCHES THAT RENDERED
+   * CORRECTLY ALREADY SAT — +0.91r on the acklay, +0.97r on the nexu's upper
+   * pair — so the number is the shipped result that worked rather than a
+   * fresh guess. It is one number and not a per-branch knob on purpose: a
+   * defaulted parameter no branch ever passes is a lever nobody is pulling
+   * and a claim nobody is checking, and the seven heads all want the same
+   * thing from it. The rancor's own note calls its eyes deep-set and it still
+   * takes 0.95 — what makes an eye deep-set is the brow shelf standing over
+   * it, which that branch builds, and not the eye being further inside the
+   * skull. Measured on the pup: 0.95 leaves 29 of 70 triangles clear an eye,
+   * 0.75 leaves 21 and 0.55 leaves 15, which is under the floor the check
+   * holds every body to.
    *
    * The bead is pushed OUTWARD ALONG THE EYE'S OWN RADIUS and not along +Z.
    * That distinction is visible: an eye set on the side of a long skull with
@@ -11169,7 +11215,8 @@ function buildCreatureHead(rig, P, S, M) {
    * eyes alike, because it is derived from where each of them was aimed
    * rather than assumed about all of them.
    */
-  const eyeAt = (x, y, z, r, out = 0.95) => {
+  const PROUD = 0.95;
+  const eyeAt = (x, y, z, r) => {
     _eyeD.set(x, y, z).normalize();
     _eyeO.set(0, hy, hz);
     /* NO FALLBACK. `onSurface` answers the ORIGIN when the ray misses, which
@@ -11180,7 +11227,7 @@ function buildCreatureHead(rig, P, S, M) {
      * for rather than shipping a face with its eyes in its throat. */
     const hitP = surfacePoint(shell(), _eyeD, _eyeO, _eyeP, true);
     if (!hitP) throw new Error(`buildCreatureHead: no skull surface along the ${K} eye at (${x}, ${y}, ${z})`);
-    hitP.addScaledVector(_eyeD, -r * S * (1 - out));
+    hitP.addScaledVector(_eyeD, -r * S * (1 - PROUD));
     k.add(M.eye, new THREE.SphereGeometry(r * S, 7, 6), [hitP.x, hitP.y, hitP.z]);
     k.add(M.pupil, new THREE.SphereGeometry(r * 0.50 * S, 6, 5),
       [hitP.x + _eyeD.x * r * 0.62 * S, hitP.y + _eyeD.y * r * 0.62 * S, hitP.z + _eyeD.z * r * 0.62 * S]);
@@ -11232,6 +11279,15 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.20 * S, hy + 0.08 * S, hz + 0.20 * S, 0.085 * S],
         [sx * 0.34 * S, hy - 0.06 * S, hz + 0.46 * S, 0.050 * S],
         [sx * 0.32 * S, hy + 0.06 * S, hz + 0.68 * S, 0.010 * S]], 7));
+      /* AIMED CLEAR OF ITS OWN CHEEK HORN, which is the second thing that was
+       * burying it and the one a surface seat cannot fix. The horn above roots
+       * at (±0.20, 0.08, 0.20) with an 8.5 cm shaft, and the eye was aimed at
+       * (±0.18, 0.10, 0.20) — 2.8 cm from that root, so half the ball came out
+       * of the skull INSIDE the horn. Measured on the rendered head: 0 of 140
+       * eye triangles unobstructed at the old aim, 38 with the depth measured
+       * alone, 48 once the ray also clears the horn. Up and forward is the
+       * direction that does it and it is where a reek's eye is anyway —
+       * above the cheek horns, either side of the nasal one. */
       eyeAt(sx * 0.19, 0.14, 0.24, 0.046);
     });
   } else if (K === 'fanged') {
@@ -11251,6 +11307,13 @@ function buildCreatureHead(rig, P, S, M) {
     parts.push(muzzle(0.48, 0.20, 0.105, -0.05, 0.03, 0.10, { flat: 0.68, n: 3.0, chin: 0.18, crown: 0.10 }));
     for (const sx of [1, -1]) parts.push(cheek(sx * 0.14, -0.02, 0.11, 0.125, 1.0, 0.88, 1.25));
     k.pair((sx) => {
+      /* AND THE SECOND PAIR WAS THE HALF THAT NEVER RENDERED. The note above
+       * calls four eyes "the single most alien thing about the animal"; the
+       * upper pair stood 0.97 of its own radius proud of the skull and the
+       * lower pair sat 1.08 radii INSIDE it, so every massiff, tuk'ata and
+       * nexu in the game has had two eyes since the branch was written. Both
+       * pairs are seated on the shell now: 68 of 280 triangles unobstructed
+       * before, 128 after, and the lower pair is 61 of them. */
       eyeAt(sx * 0.11, 0.10, 0.26, 0.042);
       eyeAt(sx * 0.16, 0.03, 0.16, 0.030);
       k.row(4, (i, t) => {
@@ -11278,8 +11341,20 @@ function buildCreatureHead(rig, P, S, M) {
     /* THE RANCOR. No neck: the skull is a wedge sitting straight on the
      * shoulders, and the read is the MOUTH — a jaw as wide as the head with
      * tusks standing up out of the lower jaw past the upper lip, which is the
-     * thing every photograph of one is showing. Two small deep-set eyes above
-     * a brow shelf, and lumps of bone over the crown. */
+     * thing every photograph of one is showing. Two small deep-set eyes UNDER
+     * a brow shelf, and lumps of bone over the crown.
+     *
+     * "Above a brow shelf" is what this line used to say and it was wrong in
+     * both halves. Measured off the built head: the shelf spans y 0.17→0.35
+     * and stops at z 0.21, and the eye is aimed at y 0.14, z 0.30 — BELOW the
+     * shelf and in front of it, which is what a brow ridge over a deep-set eye
+     * actually is and is the read this branch wants. And the muzzle, which the
+     * eye was said to be sitting on top of, is nowhere near it: its top edge
+     * is at y ≈ 0.02 under an eye at 0.14. The thing that buried this eye was
+     * the CRANIUM — 44 of the 70 triangles blocked by it, the cheek and the
+     * shelf between them accounting for 13 more — and the eye's outer face
+     * stood half its own radius inside the skull's surface. Nothing about the
+     * jaw or the brow was ever going to fix that; the depth was. */
     parts.push([(() => { const g = new THREE.SphereGeometry(0.32 * S, 12, 9); g.scale(0.90, 0.90, 1.14); return g; })(),
       [0, hy + 0.04 * S, hz + 0.14 * S]]);
     /* THE WIDEST MUZZLE IN THE TABLE and barely tapered — 0.26 to 0.21 half
@@ -11410,11 +11485,14 @@ function buildCreatureHead(rig, P, S, M) {
      *   on a 0.34 cranium is 0.31 of the skull — the largest eye-to-skull
      *   ratio in the file, past the hawk's 0.055/0.20 = 0.275, which until now
      *   held it and holds it for the opposite reason (a raptor's eye is big
-     *   because it hunts). They are set FORWARD (z 0.255, so 0.36 of the eye
-     *   stands clear of the cranium) and LOW (y 0.005 against a cranium centre
-     *   at 0.045), because an eye high on a skull reads as a brow and a brow
-     *   reads as an adult. Two of them 0.21 across on a face 0.71 wide is 59%
-     *   of the head's width in eye, which is a kitten and is nothing else.
+     *   because it hunts). They are aimed FORWARD and LOW — the bearing is
+     *   (0.148, 0.005, 0.255), so barely above a cranium centred at 0.045 —
+     *   because an eye high on a skull reads as a brow and a brow reads as an
+     *   adult. How far out they sit on that bearing is `eyeAt`'s measurement
+     *   and not a number here; this branch was authored 0.75 of an eye radius
+     *   proud of the shell and the shared seat puts it at 0.95, which is 2 mm
+     *   of plan and reads the same. Two of them 0.21 across on a face 0.71 wide
+     *   is 59% of the head's width in eye, which is a kitten and nothing else.
      *
      *   THE EARS ARE MOST OF THE SILHOUETTE and it had none. Two flattened
      *   lathes — `ovalSection(0.26)` squashes the local Z to a quarter of the
@@ -12394,7 +12472,13 @@ function domeKit(k, hg, s, M, o = {}) {
   d.set(0, o.eyeUp ?? 0.42, 1).normalize();
   k.aim(M.panels, new THREE.CylinderGeometry(er * 0.23, er * 0.29, er * 0.17, 12),
     onSurface(hg, d, -er * 0.10, core), d);
-  k.aim(M.photo, new THREE.CylinderGeometry(er * 0.17, er * 0.17, er * 0.09, 12),
+  /* `M.eye` AND NOT `M.photo`, and it is one merged mesh's worth of
+   * difference. Both are the same lit colour and they were the same material,
+   * so the droid's eye and its status pips were one geometry — and a check
+   * that has to answer "is this body's eye visible" off the built rig could
+   * then only ask about the pips as well. `eyeMat` is the declaration; see
+   * its note. The lens is the only thing in here that gets it. */
+  k.aim(M.eye, new THREE.CylinderGeometry(er * 0.17, er * 0.17, er * 0.09, 12),
     onSurface(hg, d, -er * 0.19, core), d);
   // the smaller secondary lenses either side of it, unlit
   k.pair((sx) => {
@@ -12472,8 +12556,15 @@ export function buildAstromech(opts = {}) {
   const shell = metalMat(opts.shell ?? 0xd7d3c8, 0.42, 0.62, 2.2);
   const trim = armorMat(opts.trim ?? 0x2f5fa8, 0.10, 0.46, 2.6);
   const panels = metalMat(opts.panels ?? 0x30343a, 0.44, 0.90, 2.8);
-  const photo = emissiveMat(opts.photoreceptor ?? 0xff5a3c, 3.0);
-  const M = { shell, trim, panels, photo };
+  /* THE DOME'S ONE LENS, and it is the only lit thing on this body — which is
+   * why the material it wears is `eyeMat` and there is no longer a separate
+   * `photo` beside it. `opts.photoreceptor` still names the colour, so the
+   * Kennel's look table repaints exactly what it always did; what changed is
+   * that the mesh now says it is an eye. Nothing on this droid moves and the
+   * mesh count is unchanged at 24 against a cap of 76, because there was one
+   * lit material before and there is one now. */
+  const eye = eyeMat(opts.photoreceptor ?? 0xff5a3c, 3.0);
+  const M = { shell, trim, panels, eye };
 
   /* THE SKELETON. Nine bones, and every one of them is a thing a blade can
    * take: the can, the dome, the whip, three struts and three feet. Free
@@ -12667,7 +12758,7 @@ export function buildAstromech(opts = {}) {
 
   return {
     rig, group: rig.root, scale: S,
-    palette: { shell, trim, panels, photo },
+    palette: { shell, trim, panels, eye },
     /**
      * THE EMPTY STANCE. `hipHeight` is where the hips bone rides above the
      * ground and the rest of the numbers are what `_poseWalker` reads to place
@@ -12736,6 +12827,12 @@ export function buildMedic(opts = {}) {
   const shell = metalMat(opts.shell ?? 0xb6ae9c, 0.44, 0.60, 2.2);
   const panels = metalMat(opts.panels ?? 0x24211d, 0.42, 0.90, 2.8);
   const photo = emissiveMat(opts.photoreceptor ?? 0x8fd8ff, 2.6);
+  /* THE RECEPTOR BAND AND THE DOME LENS ARE THE EYE; the forearm and chest
+   * readouts are not. Same colour, a separate material, and it costs NOTHING:
+   * the band and the lens are the only lit parts on the head bone, so that
+   * Kit baked one merged mesh under `photo` and bakes one under `eye`, and
+   * the body is 5 712 triangles over 40 meshes either way. See `eyeMat`. */
+  const eye = eyeMat(opts.photoreceptor ?? 0x8fd8ff, 2.6);
 
   /* `squash` 0.96 and not 0.86: at 0.86 on a 0.115 radius the cap came out
    * wider than it was tall on a neck a third of its width, and rendered as a
@@ -12786,8 +12883,17 @@ export function buildMedic(opts = {}) {
 
     buildHead(headObj, s, hg) {
       const k = new Kit();
-      domeKit(k, hg, s, { shell, trim: panels, panels, photo },
-        { r: 0.090, eyeUp: 0.10, panels: false, holo: false });
+      /* eyeUp 0.40 AND NOT 0.10, and the difference is one of the five
+       * segments of the band below. At 0.10 the dome's lens sits on the same
+       * bearing as the band's CENTRE plate — 0.03 rad apart on a 9 cm cap,
+       * which is 3 mm — so the lens and its housing stood directly over it
+       * and that segment measured 0 of its 12 triangles unobstructed: a
+       * receptor band with a hole punched in the middle of it, on the one
+       * feature this head is read by. 0.40 lifts the lens onto the brow of
+       * the cap, where the astromech's own default (0.42) puts it, and the
+       * band comes back even: 8/12, 4/12, 4/12, 4/12, 8/12 across the five. */
+      domeKit(k, hg, s, { shell, trim: panels, panels, eye },
+        { r: 0.090, eyeUp: 0.40, panels: false, holo: false });
       /* THE VISOR BAND, and it is what separates this head from the
        * astromech's. An R-unit has ONE eye and looks in one direction; a
        * medical droid's receptor is a band across the whole front of the cap,
@@ -12808,7 +12914,7 @@ export function buildMedic(opts = {}) {
       k.row(5, (i, t) => {
         const th = (t - 0.5) * 1.7;
         d.set(Math.sin(th) * 0.86, 0.06, Math.cos(th) * 0.86).normalize();
-        k.face(photo, plateGeo(0.040 * s, 0.028 * s, 0.008 * s, 0.003 * s, 1),
+        k.face(eye, plateGeo(0.040 * s, 0.028 * s, 0.008 * s, 0.003 * s, 1),
           onSurface(hg, d, -0.012 * s, core), d);
       });
       /* The two audio pickups either side. Small, dark, and NOT marked
@@ -12936,7 +13042,7 @@ export function buildMedic(opts = {}) {
    * still looking where it is going. */
   leanTrunk(rig, 0.14, -0.10);
 
-  return { rig, group: rig.root, scale: S, palette: { shell, trim, panels, photo } };
+  return { rig, group: rig.root, scale: S, palette: { shell, trim, panels, photo, eye } };
 }
 
 /**
@@ -13150,7 +13256,7 @@ export function buildWookiee(opts = {}) {
    * not do is separate two dark values. A bandolier is tan leather. */
   const leather = leatherMat(opts.braid ?? 0x6a4a2e, 0.68);
   const steel = metalMat(0x8b8880, 0.40, 0.90, 2.4);
-  const eye = emissiveMat(0xd8b25a, 1.4);
+  const eye = eyeMat(0xd8b25a, 1.4);
   const tooth = boneMat(0xe0d5b8, 0.36);
 
   /**
