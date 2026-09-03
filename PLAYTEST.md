@@ -42,6 +42,25 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
+## 3 Sep — SABER GAME NOTES AND IMPROVEMENTS V14
+
+Handed over with: *"This list is not in order but a stream of consciousness
+so you will finish/group it in whatever order makes most sense for you."*
+Five asks, in the player's words, and the mark each earned:
+
+| Ask | Mark | Check | What landed |
+|---|---|---|---|
+| *"take a look at all the new stuff … especially the companions and make sure they're not janky"* | ✅ | `companions` (50/50, was 47/2 on the merged tree) | Three of HANDOFF §0.0's own pick-up-first gaps closed at the root: the animal at your heel FACES YOU (the move wrap drops the walk-home vector and brings the body round; the old neck-stop check asserted the bug and now asserts the fix), the Geonosis spawn walks a ring of clear bearings instead of standing in a wall, and the rancor pup GROWS off `runs` — the card promised it, nothing wrote it, `bodyScaleOf` is the writer on both bodies. All twelve bodies photographed at LOD 0; the hawk was the one that did not read and was remodelled (see below). |
+| *"make sure the double bladed lightsaber and dual wielding work"* | 🔎 | `saberforms` (14/14), shots `fp-/tp-staff`, `fp-/tp-pair` | Photographed first- and third-person, both sets lit, both hands posed. No defect found; nothing changed. |
+| *"Make everything you can touch real … way more populated … there's still only 1 repair happening"* | ✅ | `decklife` 16/16 (4 new), `deckcast`, `hangar`, `deckcost` | The 89 bone-box silhouettes are gone: 171 REAL dressed crewmen (14 baked poses, 8 accessory kinds, eyes and brows) every one a Knockable body; rigged workers 20 → 35; 142 loose props of 11 kinds as dynamic bodies (6 before); static colliders on every kit piece you can reach; hulls flying 4 → 6; jack rams pump, the hoist pays a panel down, a canopy hinges, an engine test-fires, strobes on launch, five scrolling holo boards, steam, 13 new PA lines. PROP bodies 131 → 459. |
+| *"the greater battle outside still looks like big triangles shooting lasers … weirdly localized"* | ✅ | `deckbattle` (new, 5/5), `orbit-battle` | The shader fleet is gated off. `DeckBattle.js` stands six modelled hull classes (three a navy, forked bows, towers, fins, tilted off the ecliptic, two navy tones) in five engagements across the whole opening, 234 traversing turrets, ~200 bolts in flight, shield blooms, debris, 232 fighters in dogfight curves, bombers, near passes, and the dome's own six-minute round (arrivals, the burning carrier, the break, the reactor, the replacement). Fourteen instanced draws, 0.6 ms. |
+| *"passing dozens and dozens of levels all unique"* | ✅ | `decklift` 8/8 (2 new: ≥40 distinct vignettes; the strip is longer than both rides) | 55 authored vignettes on a 434 m strip that never repeats, each with its own colour, props and something moving; panes floor-to-ceiling, the car dims to 40% while it moves, figures have heads and limbs. |
+| *"the Shark plan … I want your opinion … feel free to overhaul"* | 🔎 | — | `SHARK.md`: take four files from the other repo, not the ship; eight rooms on a ring; the Starfury as the one new system; five gated steps. |
+
+Also this round: every browser tool and page-reading check pointed at
+`index.html`, which has been the holding page since `7a5c2e2` — they boot
+`index.play.html` now. The play link stays down as asked.
+
 ## 2 Sep — SABER GAME NOTES AND IMPROVEMENTS V13
 
 Handed over with: *"You will finish everything on this list to perfection,

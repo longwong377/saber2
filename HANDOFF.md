@@ -24,6 +24,39 @@ Playable two ways:
 
 ---
 
+## 0. V14 — WHAT LANDED, AND WHAT TO PICK UP
+
+Branch `claude/saber-game-improvements-wdf3vp`, 3 Sep. The player's V14 list
+is `PLAYTEST.md`'s top entry with a check on every row. Read `SHARK.md`
+before touching the lift again: it is where the lift is going.
+
+**Four lanes in four worktrees, merged in order** (lift, battle, hangar,
+hawk) and the seams are: `Hangar.js` gained four lines for `DeckBattle`; the
+hangar mesh bound in `hangar.mjs` is 400 = the density pass's 352 + the
+battle's 14, both measured on their own branch; `decklife.mjs`'s step bound
+is 2.5 ms (measured 1.68 on a box running three lanes — if it matters on real
+hardware, the stills' gait solve at 1/4 rate is the lever).
+
+**Still open, in the order to take them:**
+
+1. **The wookiee has no melee band** — unchanged from V13; a both-bands body
+   is a branch in `_brain` AND the rifle-pose gate, its own commit.
+2. **A guest's companion earns no experience in co-op; `_extracting` is not
+   on the wire** — both unchanged, both need the host to run the ledger.
+3. **The lift's back window is 1 m deep** and reads thinner than the sides;
+   the ground behind the car is the reason (`DeckLift.buildShaft`'s note).
+4. **Not built on the deck**: a second taxiing hull, a tug pushing a hull,
+   swinging floodlights, a klaxon of its own.
+5. **`HUD.js:2416` still holds its own copy** of "which body is mine".
+
+**Traps this round added to §2:** a browser tool that serves `/` →
+`index.html` serves the HOLDING PAGE and waits forever for a menu — every
+tool and check now reads `index.play.html`, and restoring the link must be
+`cp index.play.html index.html`, never a rename, or the tools break the other
+way. And the render lock is one lock for the whole box: three lanes with a
+probe each queued behind one baseline shot for forty minutes; kill the
+baseline, it is the least important picture.
+
 ## 0. V13 — WHAT LANDED, AND WHAT TO DO FIRST
 
 Branch `claude/saber-game-improvements-v12-6f83co`. The player's V13 list is in
