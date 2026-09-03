@@ -4031,9 +4031,14 @@ be pinning a scene rather than holding a rule.
 ## 6.4 What the gate is red on, and who owns each
 
 ```
-3 Sep     2538 passed, 8 failed   → then eight fixed or explained; see the
-                                    three headings under this block. The V13
-                                    second round. ~70 min under load.
+3 Sep     2551 passed, 3 failed   → the FINAL V13 run. `levers` (unchanged
+                                    from V12, a design question), `company`
+                                    (green alone at 28/0) and `deckcast` (see
+                                    below). ~70 min under load.
+3 Sep     2538 passed, 8 failed   → the run before it. Five of the eight were
+                                    instruments rather than the game and are
+                                    written up in 0.1b-f; the other three are
+                                    the line above.
 2 Sep     2461 passed, 1 failed   → the one is `levers`, and it is a design
                                     question rather than a defect: §4.9 has the
                                     measurement and tools/_levprobe.mjs the
