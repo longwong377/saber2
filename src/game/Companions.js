@@ -2754,11 +2754,12 @@ export class CompanionPack {
    * `keepCompanion` read both as "it did not come home". Now a death is a body
    * with `dead` set and an empty-handed run is `null`.
    *
-   * (`HUD.js:2416` asks the same question of the same list, in its own three
-   * clauses, so that it can put the plate and the order wheel on your animal
-   * rather than a peer's. It is the second copy of this rule and it is out of
-   * this change's blast radius; it is named here so the next hand that touches
-   * that file points it at this getter instead.)
+   * (`HUD.js` asked the same question of the same list in its own three
+   * clauses, so that it could put the plate and the order wheel on your animal
+   * rather than a peer's. It now reads this getter, and the divergence that
+   * copy had already grown is the argument for why: it dropped a body on the
+   * frame it died, so the plate vanished at exactly the moment it had
+   * something to say.)
    */
   get body0() { return this.mine; }
 }

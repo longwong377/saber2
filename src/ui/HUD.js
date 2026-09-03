@@ -2411,9 +2411,28 @@ export class HUD {
      */
     if (this._cmpPlate === undefined) this._cmpPlate = new CompanionPlate(document);
     if (this._cmpPlate?.el) {
+      /**
+       * WHICH BODY IS YOURS IS ASKED IN ONE PLACE, and this used to be the
+       * second one.
+       *
+       * A session puts up to four companions in `pack.list` — one per
+       * commander — and this file had its own three clauses for picking the
+       * local player's out of it, written beside `CompanionPack.body0`'s three
+       * clauses for the same question. That is HANDOFF §2.4's defect exactly,
+       * and the two had already diverged in a way that mattered: `body0` keeps
+       * pointing at an animal that has DIED, because the fold has to tell "it
+       * was killed" from "you never brought one", and this reading dropped a
+       * dead body on the frame `update` spliced it out of the list. So a
+       * companion's plate vanished the instant it was killed, where the design
+       * is that the last thing you see is what happened to it.
+       *
+       * `pack.mine` is written by `adopt` at the one door every companion comes
+       * through, and only for the animal the local player brought. Reading the
+       * getter is one property access against a `find` over the list, so it is
+       * also cheaper on every frame of a session.
+       */
       const pack = world?._companions;
-      const body = pack?.list?.find((e) => e && !e.disposed
-        && (!player || e._cmpOwner === player || !e._cmpOwner)) || null;
+      const body = pack?.body0 || null;
       this._cmpPlate.set(body, body?._cmpRec || null,
         body?._cmpRec ? rungOfCompanion(body._cmpRec) : null);
       /* AND THE WHEEL IS POINTED AT THE SAME BODY, so what the ring says and
