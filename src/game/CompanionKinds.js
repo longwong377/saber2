@@ -265,6 +265,13 @@ export const COMPANION_LOOK = {
  *   verb      the kind's own order: { id, label, caption }. ONE slot, twelve
  *             meanings, resolved off the row and never off a switch.
  *   mount     can be ridden, through `Driving.Crew` and never `Riders.js`.
+ *             A kind that declares it must also declare `crew` on its
+ *             archetype — that is the field `Driving` actually gates on, and
+ *             the two are bound to each other by a check in both directions.
+ *   panic     how much fear this kind will carry BEFORE IT THROWS YOU, in
+ *             hostile-seconds (see `PANIC` in Companions.js). Absent on eleven
+ *             of the twelve, and absent is the statement: only the tauntaun's
+ *             card claims it, and only the tauntaun does it.
  *   deck      how it is represented in the hangar: 'knockable' (a DeckCast
  *             prop, nearly free), 'row' (a Hangar humanoid row) or 'walker'
  *             (a stance-driven gait stepper).
@@ -350,9 +357,14 @@ const KINDS = [
   {
     id: 'taun', label: 'Tauntaun', archetype: 'taun',
     pace: 0.82, ward: 0, heel: 1.3, frag: 1.0, mount: true, deck: 'walker', look: 'mount',
+    /* THE ONLY ROW WITH A THRESHOLD ON IT, and the number is argued over
+     * `PANIC` in Companions.js: one shooter at fifteen metres is 4.5 s of
+     * riding, three of them is 1.5, and 75 hp of aimed fire is the whole of it
+     * on its own. Ride past a picket; do not ride into a fight. */
+    panic: 4.5,
     verb: { id: 'bolt', label: 'BOLT', caption: 'Run, and take their eyes with you' },
-    blurb: 'Pace on flat ground and nothing else. It panics, and above a threshold it '
-      + 'bucks you off and bolts.',
+    blurb: 'Pace on flat ground and nothing else. Ride it into a fight and it panics: '
+      + 'above a threshold it bucks you off and bolts.',
   },
   {
     id: 'blurrg', label: 'Blurrg', archetype: 'blurrg',
@@ -366,7 +378,14 @@ const KINDS = [
     /* NOT SPEED — ACCESS, which is the reason three mounts exist rather than
      * one: it takes a grade the player's own character controller refuses. */
     pace: 0.58, ward: 0, heel: 1.3, frag: 0.9, mount: true, deck: 'walker', look: 'mount',
-    verb: { id: 'climb', label: 'CLIMB', caption: 'Take us up that' },
+    /* "US" WAS A PROMISE THE WORK ROW DID NOT KEEP, and it is half kept now.
+     * CLIMB is `A.grade = 1` held for as long as the order stands, and `_move`
+     * reads that whether the animal is walking to the point on its own or
+     * carrying you there under your own steering — so the face genuinely opens
+     * for both. What it is NOT is a taxi: an order given while you are stood on
+     * the ground sends the animal up alone, exactly as every other station
+     * order does. The caption says which is which rather than assuming. */
+    verb: { id: 'climb', label: 'CLIMB', caption: 'Take that face — and me up it if I am on you' },
     blurb: 'It does not make the map faster, it makes the map a different shape.',
   },
 ];
@@ -411,6 +430,44 @@ export function kindHasDuty(kind, duty) {
  * unlockAt: 99` on every row so that NO wave can ever compose one: a wave that
  * could spend a companion archetype would put your own animal on the other side
  * of the field, which is the faction defect `factions.mjs` exists to stop.
+ *
+ * ── AND THE THREE MOUNTS CARRY TWO MORE FIELDS, WHICH IS ALL RIDING COSTS ──
+ *
+ * `crew: 1` AND WHY IT IS NOT A SECOND SPELLING OF `mount`. `Driving.crewOf`
+ * is the game's one answer to "is there a seat in this and how many bodies fit
+ * in it", `whyNotDrive` and `drivableNear` are its only gates, and the whole
+ * argument at the top of Driving.js is that there is NO second list of drivable
+ * things to fall out of step with it. A mount that announced itself with a
+ * third predicate would BE that second list. So the three rideable archetypes
+ * answer the question the roster already asks: one body fits, and it is you.
+ * `mount: true` goes on saying the other thing — that this is an ANIMAL with a
+ * saddle rather than a machine with a hatch — and four readers need exactly
+ * that distinction and not the seat count: `Enemy._measurePlatform`'s gate,
+ * `Crew.seat`'s saddle offset, `Crew.fire`'s outright refusal (a tauntaun has
+ * no trigger) and the boarding notice's wording. `tools/checks/driving.mjs`
+ * binds the pair in one direction and `companions.mjs` in the other, so
+ * neither field can be added without the other.
+ *
+ * `steer` IS RADIANS A SECOND AND IT IS NOT `DRIVE.turn`. That number is 0.9 —
+ * a twenty-five-metre Juggernaut, and its note says why it is deliberately
+ * slower than the AI's own yaw: "pointing it somewhere is a decision you commit
+ * to". An animal is the opposite claim. At 0.9 a ridden tauntaun running at
+ * 6.1 m/s has a turning circle of 6.8 m, which on Geonosis's broken ground is
+ * a body that cannot be aimed at a gap; the numbers below are chosen as turn
+ * RADII (speed ÷ steer) rather than as rates, because the radius is the thing
+ * the player feels:
+ *
+ *   taun    2.4 rad/s → 2.5 m at its 6.1 m/s. The fast one, and it turns.
+ *   blurrg  1.2 rad/s → 4.2 m at its 5.1 m/s. Exactly half the tauntaun's
+ *           rate, which is COMPANIONS.md's own line for this kind — "superb
+ *           across open ground, useless in a trench" is this number and
+ *           nothing else, and it is what it buys its teeth with.
+ *   varac   1.8 rad/s → 2.4 m at its 4.3 m/s. Slowest on the flat and nimble,
+ *           because a body whose whole contribution is a route up a face is a
+ *           body that has to be able to point at the face.
+ *
+ * Read in ONE place — `Crew.update`, as `A.steer ?? DRIVE.turn` — so a machine
+ * that declares nothing keeps the tank rate it was tuned with.
  */
 export const COMPANION_UNITS = {
   /**
@@ -441,7 +498,8 @@ export const COMPANION_UNITS = {
     damage: 0, preferred: [1.8, 3.4],
     moves: ['sweep'],
     grade: 0.82,
-    mount: true,
+    /* RIDEABLE, and the two fields are argued once over COMPANION_UNITS. */
+    mount: true, crew: 1, steer: 1.8,
     companion: true, score: 0, threat: 0, unlockAt: 99,
   },
 
@@ -713,7 +771,10 @@ export const COMPANION_UNITS = {
      * the field, so the only thing it can do at the distance it holds is
      * exist, which is the whole of its contribution unridden. */
     damage: 0, preferred: [6.0, 12.0], score: 0, threat: 0,
-    mount: true, companion: true, unlockAt: 99,
+    /* RIDEABLE. `crew: 1` is what `Driving.whyNotDrive` and `drivableNear`
+     * read; `steer` is the turn rate a rider gets instead of a tank's. Both
+     * are argued once over COMPANION_UNITS. */
+    mount: true, crew: 1, steer: 2.4, companion: true, unlockAt: 99,
   },
 
   /**
@@ -766,7 +827,9 @@ export const COMPANION_UNITS = {
     speed: 5.1, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
     damage: 20, preferred: [1.6, 3.0], score: 0, threat: 0,
     /* Never composed into a wave, for the reason the massiff's row states. */
-    companion: true, mount: true, unlockAt: 99,
+    /* RIDEABLE, and the slow turn is the whole of "useless in a trench" —
+     * exactly half the tauntaun's rate. Argued over COMPANION_UNITS. */
+    companion: true, mount: true, crew: 1, steer: 1.2, unlockAt: 99,
   },
 
   /**

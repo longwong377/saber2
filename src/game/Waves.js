@@ -34,9 +34,9 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: fifty-seven boons drafted every second wave, weighted
+ * And the player grows with it: fifty-eight boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
- * committed to an axis — and, one step past a mastery, eleven unbound powers gated
+ * committed to an axis — and, one step past a mastery, twelve unbound powers gated
  * harder still, each taking the cooldown off one Force power and charging Force
  * and blood for every cast. `budgetFor`'s one constant is derived from that
  * draft rate, because the two are one decision.

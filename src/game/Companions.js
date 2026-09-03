@@ -1353,6 +1353,100 @@ function sliceTarget(world, point) {
  */
 export const BOLT = { run: 4.5, far: 70, pull: 30 };
 
+/** ── THE PANIC ──────────────────────────────────────────────────────────
+ *
+ * The tauntaun's card, from the day it was written: *"It panics, and above a
+ * threshold it bucks you off and bolts."* Until this pass the word "buck"
+ * occurred nowhere in `src/` except inside "bucket", which made that sentence
+ * the same shape of lie as the Kennel's "You can ride this one." — a card
+ * describing a mechanic that did not exist. This is the mechanic.
+ *
+ * IT IS A CLOCK IN HOSTILE-SECONDS AND IT ONLY RUNS WHILE YOU ARE ON IT.
+ * `_cmpFear` gains one point a second for every hostile inside `near`, plus
+ * `hit` a point for every point of health the animal loses, and it eases back
+ * at `ease` a second the moment you are off. Two consequences fall out of that
+ * arithmetic and both are the design's own sentences:
+ *
+ *   · one shooter at fifteen metres is survivable — 4.5 s of it, which is 27 m
+ *     of ground at a ridden tauntaun's 6.1 m/s, so you can ride PAST a picket;
+ *   · three of them is 1.5 s, and 75 hp of aimed fire alone is the whole
+ *     threshold, so you cannot ride INTO a fight. "It makes crossing a map fast
+ *     and makes arriving at a fight something you must dismount to do."
+ *
+ * WHY IT DOES NOT RUN UNRIDDEN. A tauntaun standing beside you in a firefight
+ * that bolted on its own clock would be a companion that deletes itself from
+ * every fight it is in — and the sentence on the card is about the SADDLE.
+ * Nothing is claimed about an animal you are not sitting on, so nothing
+ * happens to it.
+ *
+ * DECLARED ON THE KIND ROW AS `panic`, a threshold in those same units, and
+ * ABSENT is what "this kind does not" means. The blurrg holds its ground and
+ * bites, the varactyl climbs; neither card says anything about being thrown, so
+ * neither row carries the field and nothing here tests a kind's name.
+ *
+ * AND WHAT IT DOES IS THE KIND'S OWN VERB, WHICH FOR THIS KIND IS BOLT. Not a
+ * second panic run written beside the one that already exists: `verbWork` is
+ * the one resolver, BOLT is what it answers for a tauntaun, and everything the
+ * verb already does — the heading chosen once, the eyes pulled off you, the
+ * pace it deliberately does not raise — is what a panicking tauntaun does.
+ */
+export const PANIC = { near: 15, hit: 0.06, ease: 1.4 };
+
+/**
+ * ONE FRAME OF BEING FRIGHTENED, for a kind that can be.
+ *
+ * Called from the pack's own tick rather than from either wrap, for the reason
+ * the verb tick beside it gives: `world.props` runs after every body has moved,
+ * so the ring is measured against a settled frame. It is two comparisons on a
+ * kind with no `panic` and nothing at all on a body nobody is riding.
+ */
+function stepPanic(e, dt) {
+  const cap = COMPANION_KINDS[e._cmpKind]?.panic;
+  if (!cap) return;
+  const hp = e.hp ?? 0;
+  const was = e._cmpFearHp;
+  e._cmpFearHp = hp;
+  if (!e.driven) {
+    e._cmpFear = Math.max(0, (e._cmpFear || 0) - PANIC.ease * dt);
+    return;
+  }
+  const lost = Math.max(0, (was ?? hp) - hp);
+  const near = eachHostile(e, e.position, PANIC.near, () => {});
+  e._cmpFear = (e._cmpFear || 0) + near * dt + lost * PANIC.hit;
+  if (e._cmpFear < cap) return;
+  /* AND IT IS SPENT. Zeroed rather than left over the line, so an animal you
+   * get straight back onto is one you get a whole threshold out of again
+   * instead of one that throws you the moment you are seated. */
+  e._cmpFear = 0;
+  e._cmpPanics = (e._cmpPanics || 0) + 1;
+  e.driven.throwRider(`${COMPANION_KINDS[e._cmpKind]?.label ?? 'it'} has had enough`);
+  panicRun(e);
+}
+
+/**
+ * IT BOLTS — its own verb, started by the animal instead of by you.
+ *
+ * `orderCompanion` is deliberately not the door: every refusal in that function
+ * is about what YOU may ask for — the rung that licenses the verb, the shape of
+ * the argument, whose machine the body is on — and none of them is a statement
+ * about what the animal does on its own account. A panic that could be refused
+ * because you have not earned rung 2 yet is a panic that is really a permission
+ * check. What IS shared is everything that makes a duty a duty: the verb comes
+ * off `verbWork`, the old one is closed through `endVerb`, and an instantaneous
+ * verb that answers 'done' ends before the frame does, exactly as it does when
+ * the wheel starts it.
+ */
+function panicRun(e) {
+  endVerb(e);
+  e.target = null;
+  e._cmpBidden = null;
+  e._cmpMate = null;
+  e._cmpPoint = null;
+  e._cmpDuty = COMPANION_ORDERS.verb;
+  const W = verbWork(e);
+  if (W?.start?.(e) === 'done') { endVerb(e); e._cmpDuty = null; }
+}
+
 /** ── CHARGE ─────────────────────────────────────────────────────────────
  *
  * "it bites what closes on you while you are riding, so you are not
@@ -1965,6 +2059,29 @@ function installCompanionMove(e) {
      * animate while the reaction owns it.
      */
     if (e.reaction) return move(dt, ctx);
+    /**
+     * …AND NEITHER IS A COMPANION SOMEBODY IS RIDING.
+     *
+     * The same deference, one line down, for the one case that is not a
+     * reaction. `Enemy.update`'s driven branch calls `_move` — which is THIS
+     * wrap — after `Crew.update` has already written `wish`, `speed` and
+     * `facing` from the player's own throttle and steering, and its note says
+     * what the branch is for: "all this has to do is not overwrite them".
+     *
+     * Without this line the station walk does exactly that. Measured on a
+     * geonosis world with a tauntaun boarded and the throttle held forward, the
+     * animal's station is the heel mark 3.4 m off the player's back and the
+     * player IS on the animal, so `d` is inside `settledBand` on every frame
+     * and the `else if (!busy)` branch writes `e.wish = null` — the throttle
+     * reached `_move` as a null wish and the ridden mount travelled 0.00 m. The
+     * one frame the other branch takes is worse: a mount steered away from your
+     * own body walks itself back under you.
+     *
+     * `_move` and `_pose` still run, exactly as they do for a reaction, which
+     * is what makes the animal travel on its own legs, take its own grade limit
+     * and animate while you are on it.
+     */
+    if (e.driven) return move(dt, ctx);
     let was = null;
     /* `ownerUp` and not a fourth spelling of the same three clauses — see the
      * four readers above `dutyAllows`. */
@@ -2703,6 +2820,10 @@ export class CompanionPack {
         const W = verbWork(e);
         if (W?.tick?.(e, dt) === 'done') { endVerb(e); e._cmpDuty = null; }
       }
+      /* AND IT IS FRIGHTENED, if it is a kind that can be and you are on it.
+       * AFTER the verb tick, so the BOLT a panic starts gets its first frame on
+       * the next one rather than being ticked by the clock that started it. */
+      stepPanic(e, dt);
       if (!e.target || e.target.dead) {
         const st = e.stateTime || 0;
         if (e.state === 'winded') { if (st > WIND_OPEN) e.state = 'approach'; }

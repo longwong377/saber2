@@ -21,8 +21,10 @@
  * would be a game rule that contradicts the thing the model is of, and the
  * whole point of "it makes sense" is that the player can tell which is which
  * by LOOKING at it. So `crew` is declared on the archetype as the canon number
- * of bodies inside, and the presence of that number is the whole rule. There is
- * no second list of drivable things to fall out of step with it.
+ * of bodies it seats, and the presence of that number is the whole rule. There
+ * is no second list of drivable things to fall out of step with it — including
+ * for the three mounts, which seat exactly one body and say so with the same
+ * field. See the mount section below.
  *
  * ── AND WHOSE MACHINE YOU MAY TAKE ───────────────────────────────────────
  *
@@ -47,10 +49,56 @@
  * That is deliberate and it is the same argument `Riders.js` makes one file
  * over: a driven tank you can be shot out of, whose legs can still be cut from
  * under you, is worth having; a driven tank that is a camera with a gun is not.
+ *
+ * ── AND THE THING YOU GET ON IS NOT ALWAYS A MACHINE ─────────────────────
+ *
+ * The player, in the companion list, three times over: *"a Tauntaun you
+ * ride/mount"*, *"a Blurgg you ride/mount"*, *"a Varactyl you ride/mount"*.
+ * Three of the twelve companion kinds exist ONLY to be got on, and until this
+ * pass riding was not in the game at all while three separate surfaces said it
+ * was — the Kennel card ("You can ride this one."), three Databank entries and
+ * the tauntaun's own blurb.
+ *
+ * IT IS THIS FILE AND NOT `Riders.js`, and COMPANIONS.md argues that at length.
+ * `Riders.crew()` is the only door into that pack's `bound` map, it can only
+ * `spawnEnemy` a FRESH body out of `ARCHETYPES[A.saddle]` — there is no bind
+ * for a body that already exists — and nothing in its update suppresses
+ * `Player._move`, so a player written to a seat there is walked straight off it
+ * on the next frame. `Crew` is already the right skeleton: both pointers, the
+ * seat written from `Enemy.update`'s driven branch rather than the player's own
+ * tick, throttle and steering off `input.moveAxis`, `Player.damage` rerouted
+ * into the body underneath you, and four clean exits including the thing dying
+ * under you.
+ *
+ * SO THERE IS NO SECOND BOARDING VERB AND NO SECOND RULE. A mount declares
+ * `crew: 1` like everything else with a seat in it, so `whyNotDrive`,
+ * `drivableNear`, the `drive` binding, `Player.takeControls` and
+ * `HUD._drivePrompt`'s live board prompt with its refusal reason all reach it
+ * with not one line changed. What `A.mount` is for is the four places an animal
+ * is genuinely NOT a machine, and they are all in this file bar one:
+ *
+ *   · `seat()` sits you on the measured platform behind the shoulders instead
+ *     of at the nose on `chestY` — a saddle, not a cupola;
+ *   · `update()` turns at the animal's own `steer` rate instead of a
+ *     twenty-five-metre hull's 0.9 rad/s;
+ *   · `fire()` REFUSES OUTRIGHT. A tauntaun is not a gun platform, it has no
+ *     trigger, and the blade is on your belt while you are on it — which is the
+ *     whole trade riding is: the map gets smaller and you arrive unarmed;
+ *   · and the boarding notice says what you got on rather than counting a crew.
+ *
+ * The fifth is `Enemy._measurePlatform`'s gate, which reads `A.mount` beside
+ * `A.big` for the reason its own note gives.
+ *
+ * WHAT RIDING DOES NOT CHANGE is everything that makes it your animal: it is
+ * still adopted by the companion pack, still under whatever order you gave it,
+ * still taking the friendly-fire discount, and still yours when you get off.
+ * The one thing the pack has to learn is to keep its hands off the wish while
+ * somebody is steering — see the note on `installCompanionMove`.
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
+import { throwClear, THROWN } from './Riders.js';
 import { audio } from '../engine/Audio.js';
 import { clamp, TAU } from '../engine/MathUtil.js';
 
@@ -81,6 +129,9 @@ export const DRIVE = {
   reach: 4.5,
   wreck: 0.25,
   board: 0.55,
+  /** The fallback turn rate, and every machine on the roster takes it. An
+   *  ANIMAL declares its own `steer` — see `update` and the note over
+   *  COMPANION_UNITS, which argues the three numbers as turning radii. */
   turn: 0.9,
   /** How much of its own pace a machine gives a driver, forward and reversing. */
   drive: 1.0,
@@ -232,8 +283,19 @@ export class Crew {
     if (player.senseActive) player.toggleSense?.(this.world);
     if (player.shield?.up) player._endShield?.('you took the controls');
     audio.thud?.(vehicle.position, 0.9);
-    this.world?.notify?.('AT THE CONTROLS',
-      `${vehicle.A?.label ?? 'the machine'} — ${crewOf(vehicle.type)} crew, and you are all of them`);
+    /* AND THE NOTICE SAYS WHAT YOU GOT ON. "1 crew, and you are all of them" is
+     * the right sentence about an AAT with a hatch and a silly one about an
+     * animal, and this is the one place in the file where the difference is
+     * cosmetic rather than mechanical — which is exactly why it is worth
+     * getting right: the boarding notice is the first thing the feature ever
+     * says to the player. */
+    if (vehicle.A?.mount) {
+      this.world?.notify?.('UP',
+        `${vehicle.A?.label ?? 'it'} — your hands are on the reins and your blade is on your belt`);
+    } else {
+      this.world?.notify?.('AT THE CONTROLS',
+        `${vehicle.A?.label ?? 'the machine'} — ${crewOf(vehicle.type)} crew, and you are all of them`);
+    }
   }
 
   /**
@@ -250,10 +312,30 @@ export class Crew {
   seat(out = _v1) {
     const v = this.vehicle;
     const s = v.A?.scale ?? 1;
+    /**
+     * ── AND A SADDLE IS MEASURED, NOT GUESSED ────────────────────────────
+     *
+     * `Enemy._measurePlatform` already answers "where is the flat part of this
+     * body you could stand on" off the BUILT GEOMETRY — the highest vertex
+     * inside the central 60% of the torso's own footprint, bobbing with the
+     * gait because it hangs off the hips bone. That is a better answer than
+     * `chestY` for anything that publishes one, and for a mount it is the only
+     * honest one: `chestY` is `position.y + 1.15·bodyScale`, which on a
+     * tauntaun at 1.45 scale is 1.67 m — a rider floating 0.4 m above an animal
+     * whose measured back is at 1.11 m over the hips.
+     *
+     * BEHIND THE SHOULDERS AND NOT AT THE NOSE. `+0.35·scale` down the facing
+     * is a driver's cupola on a hull; a saddle sits BACK, which is the same
+     * offset `Riders.crew` picks for the body it puts on a reek. Machines keep
+     * the nose, because that is where their cupola is and it is what the tank
+     * checks were measured against.
+     */
+    const plat = v.A?.mount ? v.platform?.() : null;
+    const fore = plat ? -0.34 * s : 0.35 * s;
     return out.set(
-      v.position.x + Math.sin(v.facing) * 0.35 * s,
-      v.chestY ?? (v.position.y + 1.4),
-      v.position.z + Math.cos(v.facing) * 0.35 * s);
+      v.position.x + Math.sin(v.facing) * fore,
+      plat ? plat.position.y + plat.extent.y : (v.chestY ?? (v.position.y + 1.4)),
+      v.position.z + Math.cos(v.facing) * fore);
   }
 
   /**
@@ -284,7 +366,10 @@ export class Crew {
     const axis = input.moveAxis ? input.moveAxis(_axis) : { x: 0, y: 0 };
     const throttle = clamp(axis.y, -1, 1);
     const steer = clamp(axis.x, -1, 1);
-    if (steer) v.facing = wrapAngle(v.facing - steer * DRIVE.turn * dt);
+    /* THE ANIMAL'S OWN RATE IF IT HAS ONE. One reader, one fallback — see
+     * DRIVE.turn, and the mount rows, which argue theirs as turning radii. */
+    const rate = v.A?.steer ?? DRIVE.turn;
+    if (steer) v.facing = wrapAngle(v.facing - steer * rate * dt);
     if (Math.abs(throttle) > 0.05) {
       _v2.set(Math.sin(v.facing), 0, Math.cos(v.facing)).multiplyScalar(Math.sign(throttle));
       v.wish = _v2.clone();
@@ -363,6 +448,28 @@ export class Crew {
   fire(ctx) {
     const v = this.vehicle;
     const A = v.A;
+    /**
+     * ── AND AN ANIMAL HAS NO TRIGGER, WHICH IS REFUSED OUT LOUD ──────────
+     *
+     * Everything below this line goes through the machine's own `_shoot` — its
+     * damage, its bolt colour, its muzzle, its shell length. A tauntaun has
+     * none of those, so on a body with no `weapon` and no `ranged` the call
+     * would either do nothing at all or, worse, fire whatever the beast's
+     * default happens to be from a body the player is sitting on.
+     *
+     * SILENCE IS THE DEFECT, NOT THE FIX. A bound key that does nothing and
+     * does not say why is the same lie `Player._refuse` was written for — its
+     * own note says so — so this refuses the way every Force key refuses, rate
+     * limited to one notice every 0.7 s because a held trigger is sixty
+     * refusals a second. The sentence is the trade riding IS: your blade is on
+     * your belt, both hands are on the reins, and arriving somewhere is the
+     * whole of what you bought.
+     */
+    if (A?.mount) {
+      this.player._refuse?.('fire', `${A.label ?? 'it'} is not a gun — your blade is on your belt`);
+      this.fireT = Math.max(this.fireT, DRIVE.gap);
+      return false;
+    }
     const at = this.aimPoint().clone();
     const wasTarget = v.target;
     const wasAim = v.telegraphAim;
@@ -411,6 +518,41 @@ export class Crew {
     }
     if (why) this.world?.notify?.('OUT', why);
     audio.thud?.(p.position, 0.5);
+    return true;
+  }
+
+  /**
+   * THROWN OFF, WHICH IS A DIFFERENT EVENT FROM CLIMBING DOWN.
+   *
+   * The tauntaun's card has always said *"above a threshold it bucks you off
+   * and bolts"* and until this pass the word "buck" occurred nowhere in `src/`
+   * except inside "bucket". This is the half of that sentence the seat owns;
+   * the threshold and the bolt are the companion pack's — see `PANIC` in
+   * Companions.js, which is the only caller.
+   *
+   * IT IS `leave` PLUS MOMENTUM AND NOTHING ELSE, because everything that makes
+   * getting off safe is already in `leave`: the team, the pace, the wish and
+   * both pointers are put back, the blade comes off your belt and lights again
+   * if it was lit, and you are set down clear of the body rather than inside
+   * its collision. A second exit that did any of that itself would be the two
+   * copies of one rule this file keeps deleting.
+   *
+   * AND THE NUMBERS ARE `Riders.THROWN`, not four fresh ones. A B2 whose reek
+   * was killed under it and a player whose tauntaun has had enough are the same
+   * event seen from two saddles: 0.8 of the mount's own momentum, 2.6 m/s up,
+   * 2.4 m/s out along its facing. The stun is spent in the player's currency
+   * rather than the enemy's — `staggerTimer`, because Player.js:4087's rule is
+   * that a player is never taken off the controls — and 0.7 s of it at the
+   * ×0.35 the stagger already costs a walk is enough to matter and short enough
+   * not to be a cutscene.
+   */
+  throwRider(why = null) {
+    const v = this.vehicle;
+    const p = this.player;
+    if (!this.leave(why)) return false;
+    throwClear(p, v, v.facing ?? 0);
+    p.staggerTimer = Math.max(p.staggerTimer ?? 0, THROWN.stun);
+    audio.thud?.(p.position, 0.9);
     return true;
   }
 }

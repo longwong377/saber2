@@ -3776,6 +3776,23 @@ export class Enemy {
    * both of them are large enough that leaping onto one and cutting down
    * through it is exactly what the shape of the thing invites.
    *
+   * ── AND `A.mount`, WHICH IS THE ONE LINE THAT MAKES A MOUNT CHEAP ────────
+   *
+   * A tauntaun is not `big` and must never be. `A.big` is four unrelated
+   * decisions wearing one name — it picks the movement proxy (:3313), it counts
+   * against `Waves.heavyLimit`, it forces an `armourClass`, and it makes a body
+   * STRATAGEM_ONLY — and an animal a player owns wants none of the four. So the
+   * gate reads the SECOND flag rather than being widened to grant the first,
+   * and `mount: true` is the whole of what the three rideable companion
+   * archetypes add here. Measured on a live geonosis world: the tauntaun's
+   * `body` bone lathe gives platformTop 1.11 m over the hips and a radius of
+   * 0.32 m, which is a saddle rather than a deck — narrow on purpose, for the
+   * reason the radius note below gives.
+   *
+   * Nothing else in this method changes and nothing else needed to: the bone it
+   * measures is `body`, which `creatureSkeleton` (Rig.js:281) builds for every
+   * creature exactly as the walker's skeleton does.
+   *
    * Measured off the built geometry rather than guessed, and measured over the
    * MIDDLE of the hull rather than at its highest point. The bounding box's top
    * is a turret or an antenna at the edge — on the walker that is 0.35 m above
@@ -3791,7 +3808,7 @@ export class Enemy {
   _measurePlatform() {
     this.platformTop = 0;
     this.platformRadius = 0;
-    if (!this.A.big || !this.rig) return;
+    if ((!this.A.big && !this.A.mount) || !this.rig) return;
     const bone = this.rig.get('body') || this.rig.hipsBone;
     const hips = this.rig.hipsBone;
     if (!bone?.parts?.length || !hips) return;
