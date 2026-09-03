@@ -7908,7 +7908,17 @@ export class Enemy {
     if (this._windTick(dt)) { this.wish = null; return; }
 
     this.attackTimer -= dt;
-    if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach') {
+    /* …AND `&& this.beastMoves(phase).length`, WHICH IS WHAT AN EMPTY MOVE
+     * LIST HAS TO MEAN. The pick below closes with `|| 'lunge'`, so a body
+     * that declares `moves: []` — the tooka kit, the astromech, the 2-1B, and
+     * every companion COMPANIONS.md describes as unable to defend itself —
+     * lunged anyway, at whatever `damage` happened to be sitting on its row.
+     * "It has no verbs" is a statement the brain has to be able to hear, and
+     * the resolver is where it is already written down (`beastMoveSet`); this
+     * is the one place that read it and then ignored it. Cheap: one Map-free
+     * property read on the frames an attack would otherwise start. */
+    if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach'
+      && this.beastMoves(phase).length) {
       /**
        * WHICH ATTACK, AND WHY IT IS A LIST RATHER THAN A LADDER OF `if`s.
        *
@@ -10023,6 +10033,40 @@ const SEVERANCE = {
    * written on the same day the first winged body was, and not after it.
    */
   wing: { budget: 0.80 },
+  /**
+   * A DOME, AND IT IS AXIAL BECAUSE IT IS WHERE THE DROID IS.
+   *
+   * `axial` prices a role flat — reaching it ends the body wherever along it
+   * you reach — and that is the honest description of an astromech's dome. It
+   * carries every sensor, the processor and the whole of what the machine is
+   * for; a can with the dome off is not a wounded droid, it is scrap. So it
+   * sits with `head` rather than with a limb, and it sits one hundredth under
+   * `head` for the one reason that survives being argued about: a skull is
+   * still the one place a body dies from FIRST, and a dome is a fraction less
+   * of the thing it tops than a head is.
+   *
+   * It is NOT `head`, and the reason is `roleOf` rather than taste — see the
+   * note over `BONE_ROLES`. Both numbers clear the 0.9 that `takeCut` turns a
+   * fight on, which `severance.mjs` pins for every axial bone on the roster.
+   */
+  dome: { axial: 0.94 },
+  /**
+   * AN ANTENNA IS THE CHEAPEST THING ON ANY BODY IN THE GAME, AND THAT IS THE
+   * POINT OF PRICING IT.
+   *
+   * `budget` 0.06 says the whole set of them is worth six per cent of the
+   * droid — level with the humanoid hand this table's own header measures at
+   * 0.06, and well under the cheapest leg on the roster (0.092, one of the
+   * SPHA's twelve). A blade that takes the whip off an astromech has taken a
+   * piece of wire off it and the game should bill it as one.
+   *
+   * The alternative was to leave it unpriced by not giving it a role, and
+   * there is no such thing: `Bone`'s constructor throws on a bone with no
+   * role, which is the guard working. The other alternative — spelling it
+   * `arm` — is priced at half a droid by the divisor, and is the defect this
+   * table's own header calls "an answer that looked like an answer".
+   */
+  antenna: { budget: 0.06 },
 };
 
 /**

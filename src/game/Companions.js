@@ -88,6 +88,8 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf } from './CompanionKinds.js';
 import { award, temperSwing } from './Kennel.js';
+/* The cruise/stoop model, for the one kind that never lands — see `adopt`. */
+import { installFlight } from './Flight.js';
 /* The friendly-fire scaling every ally in the game already gets — see
  * `fieldCompanion`, which is the one place it is installed. */
 import { installTeamDamage, TEAM_DAMAGE_DEFAULT } from './Command.js';
@@ -772,6 +774,24 @@ export class CompanionPack {
       e.speed = Math.min(e.speed ?? cap, cap);
       if (e.A) e.A = { ...e.A, speed: Math.min(e.A.speed ?? cap, cap) };
     }
+    /**
+     * A FLYER GETS ITS FLIGHT PLAN HERE, AND THAT IS THE WHOLE OF THE HAWK'S
+     * MOVEMENT MODEL.
+     *
+     * `installFlight` is idempotent, adopts on the presence of `A.flight` and
+     * refuses anything else, so this line is inert for eleven kinds and costs
+     * a property read. It is called from the pack rather than left to
+     * `FlightPack` for one measured reason: that pack is attached by a LEVEL
+     * whose pool has something winged in it, and a companion is with you in
+     * nine modes that build no such pool. A hawk fielded in the dojo would
+     * otherwise sit at `A.float` — the stoop altitude — for ever, which is a
+     * bird that hovers at chest height and never climbs.
+     *
+     * AFTER the pace clamp above, which matters: `installFlight` takes its own
+     * copy of the archetype, and a copy taken first would be the copy the clamp
+     * then failed to reach.
+     */
+    if (e.A?.flight) installFlight(e);
     e.companion = true;
     installCompanionAim(e);
     installCompanionMove(e);

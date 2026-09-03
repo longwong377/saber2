@@ -102,7 +102,29 @@ export function aimY(dir, ref, out = new THREE.Quaternion()) {
  * it decides TOPPLING, not lethality — but it is the next thing to route
  * through `bone.role`.
  */
-export const BONE_ROLES = ['core', 'neck', 'head', 'hull', 'leg', 'arm', 'wing'];
+/**
+ * ── AND TWO OF THEM ARE A DROID'S, WHICH IS NOT THE SAME WORD AS A HEAD ────
+ *
+ * `dome` and `antenna` arrive with the astromech (see `buildAstromech` in
+ * src/game/Bodies.js) and the case for them being their own words rather than
+ * `head` and `arm` is the divisor, not the flavour.
+ *
+ * `roleOf` counts how many of a role a body has, so a role is a REDUNDANCY
+ * CLASS before it is a name. An astromech's dome is a single axial mass with
+ * the whole machine's sensing in it and no partner to fall back on, which is
+ * what `head` already means and is why `dome` is priced beside it rather than
+ * under it. The antenna is the opposite end of the same argument and is the
+ * reason it cannot be `arm`: `severance` divides a limb budget by the count,
+ * so a whip antenna spelt `arm` on a body with no arms would be priced as a
+ * whole arm — half a droid for a piece of wire. Its own role, its own budget,
+ * counted on its own.
+ *
+ * Both are priced in `SEVERANCE` (src/game/Enemy.js) on the same day they were
+ * written here, because `severance()` and `Bone`'s constructor BOTH throw on a
+ * word the other list does not have — which is `severance.mjs`'s §2.3 tripwire
+ * working in the direction it was written for.
+ */
+export const BONE_ROLES = ['core', 'neck', 'head', 'hull', 'leg', 'arm', 'wing', 'dome', 'antenna'];
 
 /**
  * offset  — position relative to the parent bone's tip frame

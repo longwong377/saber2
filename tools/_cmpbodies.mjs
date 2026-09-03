@@ -12,7 +12,7 @@ const { world } = await bootWorld({
 const STEP = 1 / 30;
 for (let i = 0; i < 30; i++) world.update(STEP, idle);
 const p = world.player;
-for (const id of ['massiff', 'tooka', 'tuk', 'pup', 'taun', 'blurrg']) {
+for (const id of ['massiff', 'tooka', 'tuk', 'pup', 'taun', 'blurrg', 'hawk', 'astro', 'medic', 'wook']) {
   const K = COMPANION_KINDS[id];
   if (!ARCHETYPES[K.archetype]) { console.log(`${id.padEnd(8)} NO ARCHETYPE`); continue; }
   let e = null, err = null;
@@ -20,7 +20,12 @@ for (const id of ['massiff', 'tooka', 'tuk', 'pup', 'taun', 'blurrg']) {
   if (err) { console.log(`${id.padEnd(8)} THREW ON BUILD: ${err.message}`); continue; }
   if (!e) { console.log(`${id.padEnd(8)} SPAWN REFUSED`); continue; }
   let tris = 0, meshes = 0;
-  e.group?.traverse?.((o) => { if (o.isMesh) { meshes++; const g = o.geometry; tris += (g?.index ? g.index.count : (g?.attributes?.position?.count || 0)) / 3; } });
+  /* `rig.root` FIRST, and `group` only for a body that has no rig. `Enemy._build`
+   * adds `built.rig.root` to the scene for every rigged body and leaves
+   * `this.group` null — so this walked nothing at all and every companion in
+   * the table reported `0 meshes 0 tris`, which is the one column a body-plan
+   * harness exists to print. */
+  (e.rig?.root ?? e.group)?.traverse?.((o) => { if (o.isMesh) { meshes++; const g = o.geometry; tris += (g?.index ? g.index.count : (g?.attributes?.position?.count || 0)) / 3; } });
   const bones = e.rig ? [...e.rig.bones.keys()].length : 0;
   const legs = e.rig ? [...e.rig.bones.keys()].filter((n) => /thigh|shin|femur|tibia|tarsus|foot/i.test(n)).length : 0;
   let ticks = 0, thrown = null;
