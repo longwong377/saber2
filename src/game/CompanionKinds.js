@@ -378,14 +378,31 @@ const KINDS = [
     /* NOT SPEED — ACCESS, which is the reason three mounts exist rather than
      * one: it takes a grade the player's own character controller refuses. */
     pace: 0.58, ward: 0, heel: 1.3, frag: 0.9, mount: true, deck: 'walker', look: 'mount',
-    /* "US" WAS A PROMISE THE WORK ROW DID NOT KEEP, and it is half kept now.
-     * CLIMB is `A.grade = 1` held for as long as the order stands, and `_move`
-     * reads that whether the animal is walking to the point on its own or
-     * carrying you there under your own steering — so the face genuinely opens
-     * for both. What it is NOT is a taxi: an order given while you are stood on
-     * the ground sends the animal up alone, exactly as every other station
-     * order does. The caption says which is which rather than assuming. */
-    verb: { id: 'climb', label: 'CLIMB', caption: 'Take that face — and me up it if I am on you' },
+    /**
+     * "TAKE US UP THAT" WAS A PROMISE THE WORK ROW DID NOT KEEP.
+     *
+     * CLIMB is `A.grade = 1` held for as long as the order stands and put back
+     * when it ends — that is the whole verb — and its station is the point you
+     * gave it. Said "us", it read as a taxi: the animal walked to the point
+     * ALONE while the player stood where he had been standing, and the caption
+     * was the only thing in the game claiming otherwise.
+     *
+     * WHAT IS TRUE, AND IT IS NOW TRUE BOTH WAYS ROUND. The grade ceiling is
+     * read by `_move`, and `Enemy.update`'s driven branch calls `_move` — so
+     * the face opens for a ridden animal exactly as it does for one on its own
+     * feet, and the order is accepted on a body you are sitting on (measured on
+     * a live world: ordered from the saddle, `A.grade` reads 1). What it is not
+     * is a lift you can call from the ground. So the caption says which is
+     * which instead of assuming the flattering one.
+     *
+     * MEASURED, ONE HALF END TO END: unridden, +5.2 m up a face the player's
+     * own controller pushes him off, with the ceiling back at 0.3 the moment
+     * the order was lifted (`companions.mjs`). The ridden half is the same two
+     * lines of `_move` reached through the same field and is asserted at the
+     * order rather than at the top of a cliff; if that is ever worth more, it
+     * wants a fixture that can find a face, and it is not this lane's.
+     */
+    verb: { id: 'climb', label: 'CLIMB', caption: 'Take that face — with me on your back or without me' },
     blurb: 'It does not make the map faster, it makes the map a different shape.',
   },
 ];
