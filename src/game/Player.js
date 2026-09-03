@@ -10,7 +10,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController, THRUST_STANDING_SPEED, SPIN, GUARD } from './SaberController.js';
-import { Sidearm, setById, ORBIT } from './SaberSet.js';
+import { Sidearm, setById, paceOf, ORBIT } from './SaberSet.js';
 import { buildJedi, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf, hoodCut } from './Bodies.js';
@@ -3380,7 +3380,60 @@ export class Player {
         ? Math.asin(clamp((this.sidearm.span / 2) / GUARD.radius, 0, 1))
         : this.saberSet === 'pair'
           ? Math.asin(clamp((this.sidearm.cross / 2) / GUARD.radius, 0, 1)) : 0;
+      /**
+       * ── AND HOW FAR ROUND YOUR OWN SIDE THE PAIR ANSWERS ──────────────
+       *
+       * The rose above was not enough and it was measured not to be. Sixty
+       * bolts round a full circle into a planted, guarding player, the world
+       * pinned identical across the three arms (`tools/_setbench.mjs`):
+       * **single 20 of 60 landed, staff 18, pair 19, and all three stopped
+       * answering at the same 96° bearing.** Driving `setHalf` to its 135°
+       * ceiling left the pair at 19, because the bolts that were getting
+       * through were not being refused by the ROSE — they were being refused
+       * by `guardZoneAccepts`'s other line, `theta > guard.reach`, which is
+       * the 100° shoulder line and is the same for every set.
+       *
+       * So the pair buys the shoulder line and the staff buys the rose, which
+       * is not a fudge but the two weapons' own geometry: a saberstaff crosses
+       * your body and answers more BEARINGS; two blades in two hands answer
+       * FURTHER ROUND, because your left hand alone goes places a hilt both
+       * hands are on cannot. The staff gets none of this deliberately —
+       * SABERFORMS.md already settled that its rear segment does not eat bolts
+       * behind your back ("a blade eating bolts behind your own back is not a
+       * feature", which is why the swept quad pushes the front segment only),
+       * and the shoulder line is exactly that question.
+       *
+       * IT IS THE SAME MEASUREMENT AS `_setHalf0` ABOVE — `asin((cross/2) /
+       * GUARD.radius)` — and that is a deliberate refusal to invent a second
+       * number. `reach` is a SYMMETRIC half-angle: one value serves both
+       * flanks. The two fists straddle the centreline by `cross/2` each, so
+       * `cross/2` is the displacement either flank can actually claim, and
+       * charging the whole fist separation to both sides would be counting the
+       * left hand's metres on the right hand's side. 8.6° on a stock body,
+       * 100° → 108.6°, and a small frame gets less of it by exactly the arm it
+       * has because `cross` is arm-scaled.
+       *
+       * One measured span, two gates: the staff spends its on the rose and the
+       * pair spends its on the shoulder line. See `_publishGuard`, which is
+       * the only reader of either, for the bench on both sides of this line
+       * and for the 120° ceiling.
+       */
+      this._setReach0 = this.saberSet === 'pair' ? this._setHalf0 : 0;
     }
+    /**
+     * ── AND WHAT THE FREE HAND IS WORTH TO THE LEGS ────────────────────────
+     *
+     * `paceOf` is `1 + FREE_HAND_PACE · (SABER_SETS[0].hands - set.hands)` and
+     * SaberSet.js argues every term of it. Read ONCE, here, because a set is
+     * fixed for the life of a body: `_move` runs sixty times a second on every
+     * player in the world and this is a table lookup and a subtraction.
+     *
+     * It is the literal 1 for the single blade and for the saberstaff, so the
+     * multiply `_move` does with it returns the identical IEEE-754 float those
+     * two sets have always walked at. That is the whole reason the term is a
+     * function of `hands` rather than a fourth column of typed numbers.
+     */
+    this.setPace = paceOf(this.saberSet);
     /** …and the same for each forearm's own twist. See _rollForearm. */
     this._foreRoll = { foreR: { q: new THREE.Quaternion(), have: false },
       foreL: { q: new THREE.Quaternion(), have: false } };
@@ -3414,6 +3467,7 @@ export class Player {
      * measured off; only the handover moves.
      */
     this.control.setHalf = this._setHalf0 ?? 0;
+    this.control.setReach = this._setReach0 ?? 0;
     this.control.set = this.saberSet;
     this.hum = audio.createHum(this.saber.color.getHex());
 
@@ -4582,6 +4636,25 @@ export class Player {
      * rose on it would delete the set's only defensive advantage. */
     if (this.sidearm) {
       this.control.setHalf = (this.saberSet === 'pair' || !wantOne) ? this._setHalf0 : 0;
+      /**
+       * ── AND THE SHOULDER LINE IS THE ONE THING THE THROW TAKES BACK ────
+       *
+       * `setHalf` above survives `wantOne` for the pair, with its own note:
+       * two blades in two hands IS the one-handed grip, so the five clauses
+       * that force a hand free do not describe a dual wielder losing anything.
+       *
+       * `setReach` is a different claim and it does not survive the same test.
+       * The extra 17.5° exists because there is a second lit hilt out on the
+       * off side; throw it and there is not, and `offHandOn()` is the reader
+       * that already answers exactly that question — it is false for the whole
+       * five and a half seconds the shoto is in the air, and its own note says
+       * that flight is "what costs the pair its whole defensive identity".
+       * This is that sentence with a number behind it: the coverage goes with
+       * the blade, comes back with it, and a player who throws the shoto to
+       * kill something is standing in a single blade's shoulder line while it
+       * is gone.
+       */
+      this.control.setReach = this.offHandOn() ? this._setReach0 : 0;
     }
 
     // force powers
@@ -4906,7 +4979,20 @@ export class Player {
     const crouching = this.isLocal && input.act('crouch');
     this.crouch = damp(this.crouch, crouching ? 1 : 0, 12, dt);
 
-    const base = 4.6 * this.boonMods.moveSpeed;
+    /* ── AND THE ONE THING IN THIS FUNCTION THAT KNOWS WHAT IS IN YOUR HANDS.
+     *
+     * `setPace` is `paceOf(saberSet)`, read once in the constructor, and it is
+     * the literal 1 for the single blade and for the saberstaff — see the
+     * argument in SaberSet.js for why it is a function of the `hands` column
+     * and not a fourth row of typed numbers. It multiplies the BASE rather
+     * than any of the four paces below, so a dual wielder is 8% quicker
+     * walking, crouching, running and sprinting alike, which is what the
+     * player's word "mobility" means and what a term bolted onto the sprint
+     * alone would not have been.
+     *
+     * MEASURED, ten seconds of held-forward mashing on the colosseum floor
+     * (`tools/_setbench.mjs`): single 4.600 m/s, staff 4.600, pair 4.968. */
+    const base = 4.6 * this.boonMods.moveSpeed * this.setPace;
     /* THE SLOW WALK, note 22's "slow walk / aura farm". A held key, not a
      * toggle, and a factor on the base rather than a fifth branch: the four
      * paces are then walk 1.56 / crouch 2.21 / ordinary 4.60 / sprint 7.45 m/s

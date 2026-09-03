@@ -373,6 +373,35 @@ export class Crew {
     if (Math.abs(throttle) > 0.05) {
       _v2.set(Math.sin(v.facing), 0, Math.cos(v.facing)).multiplyScalar(Math.sign(throttle));
       v.wish = _v2.clone();
+      /**
+       * ── AND `toTarget` IS WHERE THE DRIVER IS GOING, WHICH COST 30% OF THE
+       *    PACE OF EVERYTHING EVER DRIVEN ────────────────────────────────
+       *
+       * `_move` ends with `if (this.toTarget) limitBackpedal(_v1, this.toTarget)`
+       * — nobody backpedals as fast as they run, and the AI writes `toTarget`
+       * every frame from `_think`. A DRIVEN body never reaches `_think`, so
+       * whatever heading the brain last wanted stays on the field and the
+       * driver's throttle is measured against it. Point the machine away from
+       * where its brain was last looking and the limiter takes the away
+       * component at BACKPEDAL for the whole run.
+       *
+       * Measured on a live tauntaun at full throttle in a straight line, with
+       * `speed` at its own 5.90 m/s: the body plateaued at **4.11 m/s** — 70%
+       * of it, on flat ground with nothing in the way — which was the whole
+       * reason a ridden mount lost a ten-second race to the player's own legs
+       * (15.6 m against 18.2). It is the same defect on every machine in the
+       * game and has been since the day driving landed; a tank whose brain had
+       * been walking north drove south at two thirds of its pace.
+       *
+       * Written rather than cleared, because `toTarget` is a UNIT HEADING the
+       * brain also steers with and a null is a different statement. Its own
+       * vector rather than a shared scratch, for `_toBuf`'s reason one file
+       * over: handing a per-frame temporary to a field somebody else reads next
+       * frame is the aliasing defect this codebase has already paid for once.
+       * And reversing stays slower — that is `DRIVE.reverse` on the line above,
+       * priced once and deliberately, instead of twice by accident.
+       */
+      v.toTarget = (this._to || (this._to = new THREE.Vector3())).copy(_v2);
       v.speed = this.wasSpeed * (throttle > 0 ? DRIVE.drive : DRIVE.reverse) * Math.abs(throttle);
     } else {
       v.wish = null;

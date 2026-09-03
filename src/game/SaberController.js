@@ -836,15 +836,25 @@ export class SaberController {
     /**
      * WHICH SABER SET THIS WEAPON IS, and the one number it buys.
      *
-     * `set` selects the envelope tables through `setTables` and nothing else;
-     * `setHalf` is the extra half-width the STAFF's rose answers, and it is 0
-     * for the single blade and for the pair. Both default to the single
-     * blade's values, so a controller nobody has told about a set — which is
-     * every controller in the headless checks, every enemy and every remote
-     * avatar — behaves exactly as it did. See _publishGuard.
+     * `set` selects the envelope tables through `setTables` and nothing else.
+     * The other two are the two DIFFERENT gates a guard descriptor carries,
+     * and the two sets buy one each — see `_publishGuard`, which is the only
+     * reader of either:
+     *
+     *   `setHalf`   extra half-width on the ROSE. The STAFF's, because a
+     *               quarterstaff crossing your body answers more BEARINGS at a
+     *               given angle off your aim.
+     *   `setReach`  extra angle on the SHOULDER LINE. The PAIR's, because a
+     *               blade in your left hand can be brought further round your
+     *               left side than a hilt both hands are on.
+     *
+     * All three default to the single blade's values, so a controller nobody
+     * has told about a set — which is every controller in the headless checks,
+     * every enemy and every remote avatar — behaves exactly as it did.
      */
     this.set = 'single';
     this.setHalf = 0;
+    this.setReach = 0;
 
     // Integrated blade state. handLocal is the hand offset from the chest and
     // is what actually gets integrated: a spring chasing a world-space target
@@ -2297,7 +2307,59 @@ export class SaberController {
     g.half = Math.min(GUARD.sector + GUARD.tolerance,
       GUARD.sector + this.zoneTol + (this.setHalf ?? 0));
     g.centre = GUARD.centre;
-    g.reach = GUARD.reach;
+    /**
+     * ── AND THE PAIR'S EXTRA COVERAGE IS BOUGHT ON THE OTHER GATE ────────
+     *
+     * `guardZoneAccepts` has TWO refusals and the note above only ever moved
+     * one of them. `half` prunes bearings WITHIN the shoulder line; `reach`
+     * IS the shoulder line — `if (theta > guard.reach) return false` — and it
+     * is the one that was throwing bolts away.
+     *
+     * MEASURED, before any of this, on `tools/_setbench.mjs`'s rose arm: sixty
+     * bolts fired one at a time round a full circle at 9 m into a planted,
+     * guarding player, in a world pinned identical for all three arms.
+     *
+     *     single   20 of 60 landed   furthest bearing answered  96°
+     *     staff    18                                           96°
+     *     pair     19                                           96°
+     *
+     * One bolt in sixty between one blade and two, and the SAME shoulder line
+     * in all three — which is the whole of the finding. Driving `setHalf` to
+     * its 135° ceiling on the pair moved that 19 to 19: the rose was never the
+     * gate refusing those bolts, because with the four zones tiling the circle
+     * a 103.5° half already answers every bearing inside the shoulder line
+     * that a held zone can be facing. The twenty that landed were the twenty
+     * fired from OUTSIDE 100°, and no width of rose reaches them.
+     *
+     * Driving `reach` instead: 120° took the pair to 15 of 60 and 150° to 6.
+     * So this is the lever, and 150° is why there is a ceiling below.
+     *
+     * ── HOW FAR ROUND, AND WHY THAT IS ARITHMETIC ───────────────────────
+     *
+     * `Player._setReach0` is `asin(cross / GUARD.radius)` off the BUILT
+     * weapon, exactly the way `GUARD.centre`'s 20° is `asin(0.4/1.4)` and
+     * `setHalf` is `asin((span/2)/1.4)`. `cross` is how far apart the two
+     * fists are carried, arm-scaled — `PAIR_CROSS` 0.42 m on a human — and it
+     * is the full separation rather than half of it because the claim is not
+     * that the pair's centre has moved: it is that the OFF HAND is carried
+     * that far further round its own flank than a two-handed grip's hands are,
+     * which is what `PAIR_CROSS`'s own note says it is ("the off hand is
+     * carried out and low, not tucked at the hip"). On a stock body that is
+     * asin(0.42/1.4) = 17.5°, so the shoulder line goes 100° → 117.5°, and a
+     * small frame gets less of it by exactly the arm it has.
+     *
+     * THE CEILING IS ONE CENTRE DISC PAST THE SHOULDER LINE — 120° — and it is
+     * `GUARD.centre` rather than a fourth number for the same reason the rose
+     * shares `GUARD.sector + GUARD.tolerance`: a later set must not be able to
+     * turn the guard into a sphere by growing its own geometry. A blade that
+     * answered a bolt from directly behind you would not be a guard.
+     *
+     * AND WITH `setReach` 0 THE SECOND ARGUMENT IS THE SMALLER, so the single
+     * blade and the saberstaff both return the literal `GUARD.reach` float
+     * this line has always returned. `GUARD.reach + 0 === GUARD.reach` in
+     * IEEE-754, so there is no drift to tolerance here at all.
+     */
+    g.reach = Math.min(GUARD.reach + GUARD.centre, GUARD.reach + (this.setReach ?? 0));
     g.radius = GUARD.radius;
     // Scaled by the tier, so a parry is genuinely more forgiving on Padawan and
     // genuinely tighter on Grandmaster. `deflectWindow` was four authored

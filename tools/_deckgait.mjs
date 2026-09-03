@@ -17,7 +17,7 @@ const fig = world._companionDeck;
 if (!fig) { console.log(kind, 'NO FIG'); process.exit(1); }
 const rig = fig.built.rig;
 const names = [...rig.bones.keys()].filter((n) => /^(hipL|femur|tibia|tarsus)\d+$|^(thigh|shin|foot)[LR]$/.test(n));
-const rest = new Map(names.map((n) => [n, rig.get(n).obj.quaternion.clone()]));
+const rest = new Map(names.map((n) => [n, rig.get(n).restQuat.clone()]));
 const maxRot = new Map(names.map((n) => [n, 0]));
 const p = world.player;
 const from = p.position.clone();

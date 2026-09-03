@@ -51,6 +51,47 @@ const tick = (world, input, p, n) => {
   for (let i = 0; i < n; i++) { if (p) p.hp = p.maxHp ?? 100; world.update(STEP, input); }
 };
 
+/**
+ * THE LEG BONES THIS SKELETON ACTUALLY HAS, NAMED — never a typed list.
+ *
+ * Counted off the rig, because the two solvers name them differently and the
+ * whole point of the checks below is that nothing decides anything from a
+ * kind's name: `creatureSkeleton` emits `hipL{i}`/`femur{i}`/`tibia{i}`/
+ * `tarsus{i}` per limb and `humanoidSkeleton` emits `thighL`/`shinL`. A body
+ * with neither comes back empty, and the caller has to say out loud what it
+ * is doing about that rather than skipping quietly.
+ */
+function legBonesOf(rig) {
+  const out = [];
+  for (let i = 0; rig.get(`femur${i}`); i++) out.push(`femur${i}`, `tibia${i}`);
+  if (out.length) return out;
+  for (const n of ['thighL', 'shinL', 'thighR', 'shinR']) if (rig.get(n)) out.push(n);
+  return out;
+}
+
+/**
+ * WHERE THE PELVIS IS AND HOW THE HIND SOCKET IS TURNED, THIS FRAME.
+ *
+ * Two numbers because the old sit satisfies exactly one of them and a sit that
+ * is a fold satisfies both: a root sinking by `sit * hip * 0.35` lowers the
+ * pelvis and turns nothing, and a fold that moved a joint without dropping the
+ * haunches would be a leg tucked under a body still standing at full height.
+ *
+ * `socket` is false on a body with no hind row to fold — the astromech, whose
+ * builder publishes a stance with no limbs in it and argues the case — so the
+ * caller can say which of the two it is asserting rather than quietly asking
+ * for less.
+ */
+function hipStateOf(fig) {
+  const rig = fig.built.rig;
+  const hind = fig.hind?.length ? rig.get(`hipL${fig.hind[0]}`) : null;
+  return {
+    socket: !!hind,
+    q: (hind || rig.hipsBone).obj.quaternion.clone(),
+    y: rig.worldPos('hips', new THREE.Vector3()).y - fig.pos.y,
+  };
+}
+
 export async function run({ check, assert }) {
   const { clocked } = await import('./_shared.mjs');
   check = await clocked(check);
@@ -882,7 +923,12 @@ export async function run({ check, assert }) {
       assert(fig, 'nothing of yours came up in the lift');
       assert(fig.rec.name === 'Borz', `the deck body is "${fig.rec.name}" and not the animal in the kennel`);
       const p = world.player;
-      const gap = () => fig.root.position.distanceTo(p.position);
+      /* `fig.pos` AND NOT `fig.root.position`: both deck solvers write the
+       * pelvis in world coordinates onto a bone parented to `rig.root`, which
+       * is only correct while that root is identity — so the root sits at the
+       * origin and the ground point is the fig's. Reading the root here would
+       * measure the distance from the player to the middle of the map. */
+      const gap = () => fig.pos.distanceTo(p.position);
       /* IT ARRIVES AT YOUR HEEL. `callTheCompanion` runs while the ROOM is
        * built and the player is placed after it, so without the arrival snap
        * the body starts at the world origin — measured at 92.9 m, jogging in
@@ -891,24 +937,82 @@ export async function run({ check, assert }) {
       const sat = fig.sit;
       assert(sat > 0.8, `standing still beside you it is only ${sat.toFixed(2)} sat down`);
 
+      /**
+       * AND ITS LEGS ARE IN THE BIND POSE, WHICH IS WHAT THIS CHECK COULD NOT
+       * SEE FOR A WHOLE ROUND.
+       *
+       * The preamble above has always said the deck animal "slid across the
+       * deck plates like a chess piece" and this check passed with the feet
+       * frozen, because not one line of it ever read a leg bone. Re-measured
+       * on the shipped tree before the fix: all sixteen of a massiff's leg
+       * bones moved 0.000000 rad from rest and 0.000000 rad frame to frame
+       * over eight seconds, while `fig.phase` reached 13.44 and the head
+       * moved 0.802. `fig.phase` had a writer in `stepCompanionDeck` and no
+       * reader anywhere in `src/`.
+       *
+       * THE FRAME-TO-FRAME DELTA IS THE ONE THAT MATTERS. A body posed once
+       * into a wrong constant pose shows a large deviation from rest and zero
+       * movement; only the per-frame step can tell a gait from a statue.
+       */
+      const rig0 = fig.built.rig;
+      const named = legBonesOf(rig0);
+      assert(named.length, 'the deck body has no leg bone this check knows how to name');
+      const prev = new Map(named.map((n) => [n, rig0.get(n).obj.quaternion.clone()]));
+      let legStep = 0, legRot = 0;
+
       /* IT FOLLOWS, and it stands up to do it. The deck's own walls stop the
        * player after a couple of metres in this fixture, which is enough:
        * what is measured is that the gap is HELD and that the sit lifts. */
       let minSit = 1, moved = 0;
+      /* THE STANDING SAMPLE IS TAKEN AT THE MOMENT IT IS MOST STANDING, and
+       * that is not "after the loop": the fixture's player hits a bulkhead
+       * two and a half metres in, stops, and the animal is fully sat again by
+       * the last frame — so a sample taken at the end compares the sit with
+       * itself and reads 0.004 rad, which is what the first cut of this
+       * measured and called a failure. */
+      let hipStand = hipStateOf(fig);
       const from = p.position.clone();
       for (let i = 0; i < 30 * 3; i++) {
         p.position.x += 4 * STEP;
         world.update(STEP, input);
+        if (fig.sit < minSit) hipStand = hipStateOf(fig);
         minSit = Math.min(minSit, fig.sit);
         moved = p.position.distanceTo(from);
+        for (const n of named) {
+          const b = rig0.get(n);
+          legStep = Math.max(legStep, b.obj.quaternion.angleTo(prev.get(n)));
+          legRot = Math.max(legRot, b.obj.quaternion.angleTo(b.restQuat));
+          prev.get(n).copy(b.obj.quaternion);
+        }
       }
       assert(moved > 1, `the fixture only moved the player ${moved.toFixed(2)} m — it proves nothing`);
       assert(minSit < 0.8, `it stayed ${minSit.toFixed(2)} sat down while you walked ${moved.toFixed(1)} m`);
       assert(gap() < 6, `after walking it is ${gap().toFixed(1)} m behind`);
+      assert(legStep > 0.01,
+        `walking ${moved.toFixed(1)} m, the widest one-frame move in [${named.join(', ')}] was `
+        + `${legStep.toFixed(6)} rad — the feet are frozen and the body is sliding`);
+      assert(legRot > 0.1,
+        `its legs never leave the bind pose: ${legRot.toFixed(6)} rad off rest at the widest`);
 
       /* AND IT SITS BACK DOWN. */
       for (let i = 0; i < 30 * 5; i++) world.update(STEP, input);
       assert(fig.sit > 0.8, `you stopped and it is still only ${fig.sit.toFixed(2)} sat`);
+
+      /**
+       * AND THE SIT IS A FOLD AND NOT A CRANE. What was there: the root sank
+       * by `sit * hip * 0.35` and tipped `sit * -0.12`, so not one joint in
+       * the animal moved and its feet went through the plates on the way
+       * down. Two measurements, because either alone is satisfied by the old
+       * code: the hind SOCKET has to have turned, and the pelvis has to be
+       * lower than it was standing.
+       */
+      const hipSat = hipStateOf(fig);
+      const fold = hipStand.q.angleTo(hipSat.q);
+      const sank = hipStand.y - hipSat.y;
+      assert(fold > 0.05,
+        `sat, its hind hip socket is ${fold.toFixed(4)} rad from where it stood — nothing folded`);
+      assert(sank > 0.02,
+        `sat, its pelvis is ${(sank * 100).toFixed(1)} cm lower than standing — the haunches did not drop`);
 
       /* AND IT IS PUSHABLE AND CUTTABLE THROUGH A PUBLISHED EXTENSION POINT
        * NOTHING IN src/ HAD EVER WRITTEN. `Hangar.deckBladeTargets` already
@@ -917,8 +1021,173 @@ export async function run({ check, assert }) {
       assert((world._deckProps || []).some((x) => x.kind === 'companion'),
         'it is not offered to the deck blade — you can walk through your own dog');
       return `arrived ${gap().toFixed(1)} m off your heel, sat ${sat.toFixed(2)}; walking `
-        + `${moved.toFixed(1)} m stood it up to ${minSit.toFixed(2)}; stopping sat it again at `
-        + `${fig.sit.toFixed(2)}; and it is on the deck's blade list`;
+        + `${moved.toFixed(1)} m stood it up to ${minSit.toFixed(2)} with its legs moving `
+        + `${legStep.toFixed(3)} rad a frame and ${legRot.toFixed(2)} off rest; stopping sat it `
+        + `again at ${fig.sit.toFixed(2)}, folding the hind socket ${fold.toFixed(2)} rad and `
+        + `dropping the pelvis ${(sank * 100).toFixed(0)} cm; and it is on the deck's blade list`;
+    } finally { world.unload(); Kn.clear(); }
+  });
+
+  check('companion: every one of the twelve kinds is in the room, and every one of them walks', async () => {
+    /**
+     * "They will be with you in the hangar as well and follow you on/off ships
+     *  like they're going to be with you the whole time if you have them"
+     *
+     * FOUR OF THE TWELVE WERE NOT IN THE ROOM AT ALL, and nothing could see
+     * it. `CompanionDeck` opened `const BUILT = new Set(['walker'])` and
+     * `callTheCompanion` returned null for any kind whose row said anything
+     * else — `knockable` for the B1 and the astromech, `row` for the wookiee
+     * and the 2-1B. The file said so in its own header, which is the honest
+     * half; the dishonest half is that the deck check adopted a massiff and
+     * nothing else, so a third of the feature was missing from the one room
+     * it is most visible in and every suite was green.
+     *
+     * THIS LOOP IS DRIVEN OFF `COMPANION_ORDER` AND NEVER OFF A LIST TYPED
+     * HERE, which is the entire lesson of that defect: the day a thirteenth
+     * kind lands, this fails on it until it is in the room, and nobody has to
+     * remember to add a line.
+     *
+     * ── WHAT IS ASSERTED, AND WHY THE ONE BRANCH IS NOT AN ESCAPE ─────────
+     *
+     * Every kind: a body, in the scene, offered to the deck's blade, with a
+     * leg bone that moves FRAME TO FRAME while it walks — the measurement a
+     * statue cannot pass, and the one the shipped tree failed at 0.000000 rad
+     * on all sixteen of a massiff's leg bones — and a pelvis that is lower
+     * sat than standing.
+     *
+     * The one branch is a body whose builder publishes a stance with NO LIMBS
+     * IN IT, and it is read off `built.stance` rather than off a name. There
+     * is exactly one today and the assertion below pins that number, so this
+     * cannot quietly become the path everything takes: `buildAstromech`
+     * spends a paragraph on it — an R-unit's legs are rigid struts on rollers,
+     * a gait solver has nothing to say about them, and dropping its hips onto
+     * legs that cannot fold would put its feet through the deck. What such a
+     * body is still held to is that it is PRESENT and that the life layer
+     * moves its dome, because "it does not walk" is not a licence to be a
+     * prop.
+     *
+     * ONE ROOM, TWELVE ANIMALS. `dismissCompanion` + `adopt` + a fresh
+     * `callTheCompanion` is the same door the game uses when you re-kit at
+     * the console; twelve hangar boots would be four minutes of gate for the
+     * same evidence.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const D = await import('../../src/game/CompanionDeck.js');
+    Kn.clear();
+    Kn.adopt('massiff', 'Borz');
+    const { world } = await bootWorld({
+      level: 'hangar',
+      settings: { mode: 'hangar', level: 'hangar', allies: 0, quality: 'low' },
+      runSeed: 2,
+    });
+    try {
+      const input = idleInput();
+      for (let i = 0; i < 60; i++) world.update(STEP, input);
+      const p = world.player;
+      const said = [];
+      const limbless = [];
+      for (const id of K.COMPANION_ORDER) {
+        D.dismissCompanion(world);
+        Kn.clear();
+        const rec = Kn.adopt(id, 'Borz');
+        assert(rec, `${id}: the kennel refused to adopt a kind that is in COMPANION_ORDER`);
+        const fig = D.callTheCompanion(world);
+        assert(fig, `${id} is not in the room at all — callTheCompanion returned nothing`);
+        assert(fig.root.parent === world.scene, `${id}: built, and never added to the deck`);
+        assert((world._deckProps || []).some((x) => x.fig?.root === fig.root),
+          `${id}: not offered to the deck's blade — you can walk through it`);
+        const rig = fig.built.rig;
+        assert(rig, `${id}: the deck body has no rig at all`);
+
+        /* SEND IT ON A WALK. Moving the ANIMAL is what makes this a gait
+         * measurement rather than a measurement of the fixture: the deck's
+         * own walls stop the player after two and a half metres, and eight
+         * metres of open plate in front of it is four seconds of stride. */
+        fig.pos.z += 8;
+        const named = legBonesOf(rig);
+        const prev = new Map(named.map((n) => [n, rig.get(n).obj.quaternion.clone()]));
+        let step = 0, offRest = 0, minSit = 1;
+        /* Sampled at the moment it is most standing — it arrives inside the
+         * four seconds and is sitting again by the last frame. */
+        let stand = hipStateOf(fig);
+        for (let i = 0; i < 30 * 4; i++) {
+          world.update(STEP, input);
+          if (fig.sit < minSit) stand = hipStateOf(fig);
+          minSit = Math.min(minSit, fig.sit);
+          for (const n of named) {
+            const b = rig.get(n);
+            step = Math.max(step, b.obj.quaternion.angleTo(prev.get(n)));
+            offRest = Math.max(offRest, b.obj.quaternion.angleTo(b.restQuat));
+            prev.get(n).copy(b.obj.quaternion);
+          }
+        }
+        assert(minSit < 0.5, `${id}: it never stood up to walk eight metres (sit floor ${minSit.toFixed(2)})`);
+        assert(fig.pos.distanceTo(p.position) < 6,
+          `${id}: it walked for four seconds and is still ${fig.pos.distanceTo(p.position).toFixed(1)} m away`);
+
+        const walks = (fig.built.stance?.limbs?.length ?? named.length) > 0;
+        for (let i = 0; i < 30 * 4; i++) world.update(STEP, input);
+        assert(fig.sit > 0.8, `${id}: it stopped and never settled (sit ${fig.sit.toFixed(2)})`);
+        const sat = hipStateOf(fig);
+        const sank = stand.y - sat.y;
+
+        if (!walks) {
+          /**
+           * THE ONE BODY WITH NO LEGS TO SOLVE. Still present, still moving.
+           *
+           * What it is held to is the thing its own builder promises in place
+           * of a gait: "`bob` is a real 12 mm of servo wobble, which is what
+           * stops a stationary droid reading as a prop". That number is in
+           * the stance it publishes and `_poseWalker` is the only thing that
+           * spends it, so this fails the moment the solver stops being called
+           * on this body — which is the whole point of measuring it here.
+           *
+           * NOT THE DOME. The gaze ladder puts a ward-0 kind's attention on
+           * its owner, and a sat companion has already turned its whole body
+           * to face the owner, so the head has nothing left to add: measured
+           * at 0.0079 rad over six seconds, on a layer that is working
+           * perfectly. A head that is already pointed at you is not evidence
+           * of anything either way.
+           */
+          limbless.push(id);
+          assert(fig._life, `${id}: no life record — the idle layer never ran on it`);
+          let lo = Infinity, hi = -Infinity;
+          for (let i = 0; i < 30 * 8; i++) {
+            world.update(STEP, input);
+            const y = rig.worldPos('hips', new THREE.Vector3()).y;
+            lo = Math.min(lo, y); hi = Math.max(hi, y);
+          }
+          assert(hi - lo > 0.004,
+            `${id} publishes no limbs, so nothing walks — and its hips moved `
+            + `${((hi - lo) * 1000).toFixed(2)} mm in eight seconds either, which makes it a prop`);
+          said.push(`${id}: no limbs, ${((hi - lo) * 1000).toFixed(0)} mm of servo bob`);
+          continue;
+        }
+
+        assert(named.length, `${id}: publishes limbs and this check can name none of its leg bones`);
+        assert(step > 0.01,
+          `${id}: walking, the widest one-frame move in [${named.slice(0, 4).join(', ')}…] was `
+          + `${step.toFixed(6)} rad — its feet are frozen and it is sliding`);
+        assert(offRest > 0.1, `${id}: its legs never leave the bind pose (${offRest.toFixed(6)} rad)`);
+        assert(sank > 0.02,
+          `${id}: sat, its pelvis is ${(sank * 100).toFixed(1)} cm lower than standing`);
+        if (sat.socket) {
+          const fold = stand.q.angleTo(sat.q);
+          assert(fold > 0.05, `${id}: sat, its hind hip socket is ${fold.toFixed(4)} rad off standing`);
+          said.push(`${id}:${fig.path} ${step.toFixed(2)}/frame fold ${stand.q.angleTo(sat.q).toFixed(2)} sank ${(sank * 100).toFixed(0)}cm`);
+        } else {
+          said.push(`${id}:${fig.path} ${step.toFixed(2)}/frame sank ${(sank * 100).toFixed(0)}cm`);
+        }
+      }
+      /* AND THE BRANCH IS PINNED. One body takes the no-limbs path today; if
+       * that number grows, somebody has quietly moved a kind onto the road
+       * that asserts less, and this fails until they say why. */
+      assert(limbless.length === 1,
+        `${limbless.length} of the twelve kinds now take the no-limbs path (${limbless.join(', ') || 'none'}) `
+        + '— that path asserts less than the other one and it is meant to hold exactly the astromech');
+      assert(said.length === K.COMPANION_ORDER.length,
+        `only ${said.length} of ${K.COMPANION_ORDER.length} kinds were measured`);
+      return `${said.length}/${K.COMPANION_ORDER.length} kinds in the room and walking — ${said.join('; ')}`;
     } finally { world.unload(); Kn.clear(); }
   });
 
@@ -1577,6 +1846,257 @@ export async function run({ check, assert }) {
 
       return said.join('; ');
     } finally { world.unload(); }
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * THE THREE THAT ARE ONLY FOR RIDING
+   *
+   * The player named them one at a time — "a Tauntaun you ride/mount", "a
+   * Blurgg you ride/mount", "a Varactyl you ride/mount" — and three of the
+   * twelve kinds exist for no other reason. `tools/checks/driving.mjs` drives
+   * the SEAT: boarding, the measured back, the race against the player's own
+   * legs, the dismount, the refused trigger. What is measured here is the half
+   * that belongs to the animal rather than to the saddle — the panic that
+   * throws you, and the bite that answers what closes while you are up there.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  /** A world with one of yours fielded, and a throttle this check owns. */
+  const mounted = async (kind) => {
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+      runSeed: 21,
+    });
+    const stick = { fwd: 0, steer: 0 };
+    const input = {
+      act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { const v = o || {}; v.x = stick.steer; v.y = stick.fwd; return v; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {},
+    };
+    const p = world.player;
+    const step = (n) => { for (let i = 0; i < n; i++) { p.hp = p.maxHp ?? 100; world.update(STEP, input); } };
+    step(30);
+    const e = C.fieldCompanion(world, p, kind, { rec: { id: `k-${kind}`, xp: 99, runs: 9, tempers: [] } });
+    assert(e, `setup: no ${kind} was fielded`);
+    step(30);
+    /** Put it an arm's length off and get on. */
+    const board = () => {
+      e.position.set(p.position.x + 1.5, e.position.y, p.position.z);
+      step(2);
+      return p.takeControls({ input });
+    };
+    /** A hostile at a bearing and a range from the ANIMAL. */
+    const put = (ang, r) => {
+      const x = e.position.x + Math.sin(ang) * r, z = e.position.z + Math.cos(ang) * r;
+      const f = world.spawnEnemy('b1', new THREE.Vector3(x, world.terrain.height(x, z), z));
+      if (f) f.team = 1;
+      return f;
+    };
+    return { world, p, e, input, stick, step, board, put };
+  };
+
+  check('companion: a frightened tauntaun throws you off and bolts, and a calm one does not', async () => {
+    /**
+     * THE CARD HAS SAID THIS SINCE THE ROW WAS WRITTEN — *"above a threshold it
+     * bucks you off and bolts"* — and until this lane the string "buck"
+     * occurred nowhere in `src/` except inside the word "bucket". A sentence on
+     * a card describing a mechanic that does not exist is the same lie as a
+     * dead checkbox, and it is the reason this suite would rather field the
+     * feature than delete the sentence.
+     *
+     * THREE MEASUREMENTS AND THE MIDDLE ONE IS THE POINT.
+     *
+     *  1. RIDDEN INTO THREE HOSTILES it throws you: the rider is on the ground,
+     *     stunned, moving, and the animal is under its own verb and gone.
+     *  2. RIDDEN WITH NOBODY NEAR IT DOES NOT, for as long again. A panic that
+     *     is really a countdown would pass (1) and fail here, and a countdown
+     *     is exactly what a fear value quietly implemented as a timer becomes.
+     *  3. AND IT DOES IT WITH NOBODY ON ITS BACK, on damage alone, which is the
+     *     Databank's own sentence: "past a certain amount of damage it panics
+     *     and runs, with or without you on it."
+     */
+    const P = C.PANIC;
+    const cap = K.COMPANION_KINDS.taun.panic;
+    assert(cap > 0, 'the tauntaun row has no panic threshold, so the card is claiming nothing');
+
+    /* ── 1. three of them, close, with you up. */
+    const a = await mounted('taun');
+    assert(a.board(), 'setup: could not get on');
+    for (let i = 0; i < 3; i++) a.put(i * 2.1, 10);
+    let t = 0, thrown = null;
+    for (let i = 0; i < 300 && thrown === null; i++) {
+      a.p.hp = a.p.maxHp; a.world.update(STEP, a.input); t += STEP;
+      if (!a.p.driving) thrown = t;
+    }
+    assert(thrown !== null,
+      `three hostiles at 10 m for ten seconds and the rider is still up — fear reached ${(a.e._cmpFear || 0).toFixed(2)} of ${cap}`);
+    /* Three hostiles is `cap / 3` seconds of ring, and it must not be much
+     * quicker than that or something other than the ring is deciding. */
+    assert(thrown > cap / 3 - 0.4 && thrown < cap / 3 + 1.5,
+      `it threw the rider at ${thrown.toFixed(2)} s, and three hostiles is ${(cap / 3).toFixed(2)} s of fear`);
+    assert(a.e._cmpPanics === 1, `it panicked ${a.e._cmpPanics} times over one threshold`);
+    assert(!a.p.grounded && a.p.velocity.length() > 1.5,
+      `the rider was set down tidily at ${a.p.velocity.length().toFixed(2)} m/s — he was not thrown`);
+    assert(a.p.staggerTimer >= 0.5,
+      `thrown off a running animal and ${a.p.staggerTimer.toFixed(2)} s of stagger`);
+    assert(a.e._cmpDuty?.id === 'verb' && a.e._cmpPoint,
+      'it threw its rider and then stood there — the card says it bolts');
+    const near0 = a.e.position.distanceTo(a.p.position);
+    for (let i = 0; i < 120; i++) { a.p.hp = a.p.maxHp; a.world.update(STEP, a.input); }
+    const ran = a.e.position.distanceTo(a.p.position);
+    assert(ran > near0 + 8,
+      `it "bolted" from ${near0.toFixed(1)} m to ${ran.toFixed(1)} m in four seconds`);
+    a.world.unload?.();
+
+    /* ── 2. the same ride with nothing near it, twice as long. */
+    const b = await mounted('taun');
+    assert(b.board(), 'setup: could not get on the calm one');
+    b.stick.fwd = 1;
+    for (let i = 0; i < 600; i++) {
+      b.p.hp = b.p.maxHp;
+      for (const o of b.world.enemies) if (!o.dead && !o.companion && o.team !== (b.p.team ?? 0)) { o.hp = 0; o.dead = true; }
+      b.world.update(STEP, b.input);
+    }
+    assert(b.p.driving,
+      `twenty seconds of empty ground and it still threw the rider — fear ${(b.e._cmpFear || 0).toFixed(2)}`);
+    assert(!b.e._cmpPanics, 'a calm ride panicked');
+    b.world.unload?.();
+
+    /* ── 3. and on damage alone, with nobody on it. */
+    const c = await mounted('taun');
+    let hurt = 0, bolted = null, u = 0;
+    for (let i = 0; i < 300 && bolted === null; i++) {
+      if (i % 5 === 0 && hurt < cap / P.hit + 40) { c.e.damage(10, c.e.position, null, 'bolt'); hurt += 10; }
+      c.p.hp = c.p.maxHp; c.world.update(STEP, c.input); u += STEP;
+      if (c.e._cmpDuty?.id === 'verb') bolted = u;
+    }
+    assert(!c.p.driving && !c.e.driven, 'setup: nobody was supposed to be riding this one');
+    assert(bolted !== null,
+      `${hurt} hp of aimed fire into a tauntaun standing on its own and it never ran — `
+      + `fear ${(c.e._cmpFear || 0).toFixed(2)} of ${cap}`);
+    c.world.unload?.();
+
+    return `ridden into 3 hostiles at 10 m: thrown at ${thrown.toFixed(2)} s `
+      + `(3 × ${cap} fear), ${a.p.staggerTimer.toFixed(2)} s stunned, bolted ${ran.toFixed(0)} m off; `
+      + `20 s of empty ground: still up, fear ${(b.e._cmpFear || 0).toFixed(2)}; `
+      + `unridden, ${hurt} hp of fire: bolted at ${bolted.toFixed(2)} s`;
+  });
+
+  check('companion: a blurrg bites what closes on you WHILE you are riding it', async () => {
+    /**
+     * COMPANIONS.md's line for this kind is *"the mount that is also a weapon
+     * … it bites what closes on you while you are riding, so you are not
+     * defenceless at a standstill"*, and `Companions.js` conceded in its own
+     * source that the half that matters was unreachable: *"Riding is not
+     * reachable today — no companion row declares `crew`, so
+     * `Driving.whyNotDrive` refuses every mount — and this is the line that
+     * will be right when it is."*
+     *
+     * IT WAS STILL NOT RIGHT WHEN RIDING LANDED, WHICH IS WHY THIS EXISTS.
+     * `Enemy.update`'s driven branch returns before `_think`, so a ridden mount
+     * never reaches the aim wrap either and `e.target` stays null for ever —
+     * and `charge.tick` opened on `if (!t) return`. Measured on a live world
+     * with the blurrg boarded, CHARGE ordered and a B1 held at 2.2 m for ten
+     * seconds: 0 damage. The verb read as implemented and did nothing.
+     *
+     * TWO BOUNDS AND BOTH ARE LOAD-BEARING. What is in its jaws loses health;
+     * what is at nine metres does not — that is the whole difference between
+     * CHARGE and WARD, and a mount that left the ground you are standing on
+     * would have taken the ride away from you. And the same close body under
+     * HEEL loses nothing, which is what says this is the ORDER biting rather
+     * than a brain that was running anyway.
+     */
+    const held = (b, foe, r, ang = Math.PI / 2) => {
+      foe.position.set(b.e.position.x + Math.sin(ang) * r, foe.position.y, b.e.position.z + Math.cos(ang) * r);
+    };
+    const run = async (order) => {
+      const b = await mounted('blurrg');
+      assert(b.board(), 'setup: could not get on the blurrg');
+      const why = C.orderCompanion(b.e, order);
+      assert(!why, `setup: ${order} refused — ${why}`);
+      const near = b.put(Math.PI / 2, 2.2);
+      const far = b.put(0, 9);
+      assert(near && far, 'setup: no hostiles');
+      near.hp = near.maxHp = 400; far.hp = far.maxHp = 400;
+      for (let i = 0; i < 300; i++) {
+        held(b, near, 2.2, Math.PI / 2);
+        held(b, far, 9, 0);
+        near.hp = Math.min(near.hp, 400); far.hp = Math.min(far.hp, 400);
+        b.p.hp = b.p.maxHp;
+        b.world.update(STEP, b.input);
+      }
+      const out = { near: 400 - near.hp, far: 400 - far.hp, up: !!b.p.driving };
+      b.world.unload?.();
+      return out;
+    };
+    const charged = await run('verb');
+    const heeled = await run('heel');
+    assert(charged.up, 'CHARGE threw the rider off — that is the tauntaun\'s verb, not this one');
+    assert(charged.near > 20,
+      `ten seconds with a body at 2.2 m and the blurrg took ${charged.near.toFixed(0)} hp off it`);
+    assert(charged.far === 0,
+      `it went for the one at 9 m for ${charged.far.toFixed(0)} hp — CHARGE never leaves the ground you are on`);
+    assert(heeled.near === 0,
+      `under HEEL the same close body still lost ${heeled.near.toFixed(0)} hp, so this measures the brain and not the order`);
+    return `ridden: CHARGE ${charged.near.toFixed(0)} hp onto the body at 2.2 m and `
+      + `${charged.far.toFixed(0)} onto the one at 9 m; the same body under HEEL ${heeled.near.toFixed(0)}`;
+  });
+
+  check('companion: nothing anywhere offers a ride the game then refuses', async () => {
+    /**
+     * THE DEFECT THIS CHECK IS THE ANSWER TO, stated plainly: for as long as
+     * the mounts have existed, `Menu.js` printed "You can ride this one." on
+     * the Kennel card, three Databank entries described getting on, and the
+     * tauntaun's blurb described being thrown off — while `whyNotDrive`
+     * answered, verbatim, "Tauntaun is a droid — the brain is the machine, and
+     * there is no seat in it". Four surfaces, one live rule, and the surfaces
+     * were the ones talking to the player.
+     *
+     * SO THE CLAIM IS DRIVEN AGAINST A REAL BODY, not read off a flag. Every
+     * kind whose row says `mount` is FIELDED, stood next to, and asked — and
+     * the refusal string is what fails the check, so a future change that
+     * closes the door leaves the reason in the failure message.
+     *
+     * AND THE OTHER NINE ARE ASKED TOO, which is the half that catches the
+     * opposite lie: a kind the card does NOT offer a ride on must be refused,
+     * or the flag has stopped meaning anything and the card has stopped being
+     * information.
+     */
+    const { drivableNear, whyNotDrive } = await import('../../src/game/Driving.js');
+    const menu = strip(await src('ui/Menu.js'));
+    const offer = /You can ride this one\./.test(menu);
+    assert(offer, 'the Kennel card no longer offers a ride; if that is deliberate this check is stale');
+    /* THE CARD'S OWN CONDITION, read out of the source rather than assumed, so
+     * a card that started offering rides on everything is caught here. */
+    assert(/K\?\.mount\b[\s\S]{0,80}You can ride this one\./.test(menu),
+      'the Kennel card offers a ride on something other than `mount`');
+
+    const rows = [];
+    for (const id of K.COMPANION_ORDER) {
+      const kind = K.COMPANION_KINDS[id];
+      const b = await mounted(id);
+      b.e.position.set(b.p.position.x + 1.5, b.e.position.y, b.p.position.z);
+      b.step(2);
+      const why = whyNotDrive(b.world, b.p, b.e);
+      const near = drivableNear(b.world, b.p);
+      if (kind.mount) {
+        assert(!why,
+          `the card says you can ride a ${kind.label} and standing 1.5 m off one it says: "${why}"`);
+        assert(near === b.e, `a ${kind.label} is rideable and the board prompt cannot find it`);
+        assert(b.p.takeControls({ input: b.input }),
+          `${kind.label}: the drive key was refused with no reason at all`);
+        assert(b.e.driven, `${kind.label}: the key was accepted and nobody is on it`);
+        rows.push(`${id} ✓`);
+      } else {
+        assert(why,
+          `the card offers no ride on a ${kind.label} and the game let one be boarded anyway`);
+        rows.push(`${id} refused`);
+      }
+      b.world.unload?.();
+    }
+    return `${K.COMPANION_ORDER.length} kinds asked on a live world: ${rows.join(' ')}`;
   });
 
   check('companion: RELAY carries an order past the end of your own voice', async () => {

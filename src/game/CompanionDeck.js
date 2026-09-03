@@ -121,30 +121,44 @@ export const DECK_HEEL = { back: 2.2, side: 0.7, settled: 0.6 };
 export const DECK_PACE = 2.1;
 
 /**
- * HOW FAR THE HAUNCHES FOLD, AT A FULL SIT — three angles and no fourth.
+ * THE SIT, AS FIVE NUMBERS AND NOT AS A CRANE.
  *
- * The sit used to be `root.position.y -= sit * hip * 0.35` and `root.rotation
- * .x = sit * -0.12`: the whole animal sank into the plates and tipped, which
- * is a rigid body being lowered by a crane and not an animal folding. Nothing
- * about it moved a joint.
+ * What was here: `root.position.y -= sit * hip * 0.35` and `root.rotation.x =
+ * sit * -0.12`. The whole animal sank into the plates and tipped over on its
+ * nose. Nothing about it moved a joint, the feet went through the deck on the
+ * way down, and the two lines were the entire idle inventory of the feature.
  *
- * These do. `hip` swings the socket, `femur` bends the thigh on top of it, so
- * the knee comes forward and up by the sum of the two, and `tibia` takes the
- * shank back past both so the hock ends on the deck behind the knee — which
- * is the shape of every quadruped sitting down. They are POSE constants and
- * not per-kind numbers: the fold is applied on the bones the plan already
- * published, so a tooka's 0.34-scale leg folds through the same angles over a
- * tenth of the distance and nobody types a second table.
+ * A quadruped sitting down does four things, and each of these is one of them.
  *
- * The drop itself is NOT here. It is `subject.planted = fig.sit`, which is
- * `_poseWalker`'s own channel for a machine settling onto its legs — "metres
- * of hip travel per unit of rise", the animal's own `rear` out of its own
- * plan — so a body that sits and a body that plants use one code path and
- * cannot disagree about where the hips are. On the massiff that is 0.209 m of
- * drop out of a 0.418 m hip height, and the feet stay on the floor, so the
- * front legs take it as a compression rather than as a hole in the deck.
+ *   `drop`   the pelvis comes down to a bit under half the height it rides at
+ *            walking. It is spent through the STANCE — `hipHeight` is exactly
+ *            "how high the hips ride" and `_poseWalker` reads it every frame —
+ *            so the front feet stay planted on the floor through their own IK
+ *            and take it as a compression, which is what a foreleg does while
+ *            the back end goes down. 0.48 leaves a massiff's hips at 0.22 m of
+ *            a walking 0.42 and its forefeet still on the plates.
+ *   `pitch`  and the spine comes UP. Without it the sit is a crouch: the head
+ *            drops by the whole of `drop` and the animal reads as cowering.
+ *            Applied to the TRUNK bone, which on `creatureSkeleton` carries
+ *            the neck, the head and any arms and carries no leg — the legs
+ *            hang off `hips` — so the chest lifts and not one foot moves.
+ *   `hip`    the hind socket swings,
+ *   `femur`  the thigh bends forward on top of it, so the knee comes forward
+ *            and up by the sum of the two, and
+ *   `tibia`  the shank goes back past both, so the hock ends behind and below
+ *            the knee. That is the shape, and it is the same shape at every
+ *            size: they are POSE angles applied to the bones the plan already
+ *            published, so a 0.34-scale tooka folds through the same angles
+ *            over a tenth of the distance and nobody types a second table.
+ *
+ * ONLY WHERE THERE ARE LEGS. A body whose published stance has no limbs in it
+ * — the astromech, whose builder argues the case at length: rigid struts on
+ * rollers, and a gait solver has nothing to say about them — has nothing to
+ * absorb a hip drop, so dropping its hips would put its feet through the deck.
+ * It settles by not striding, and its 12 mm of servo bob goes on, because that
+ * bob is not a stride and is the thing that stops it reading as a prop.
  */
-const HAUNCH = { hip: 0.34, femur: 0.58, tibia: 1.02 };
+const SIT = { drop: 0.48, pitch: 0.30, hip: 0.34, femur: 0.58, tibia: 1.02 };
 
 /**
  * AND HOW FAR A BIPED SETTLES, WHICH IS NOT A SIT.
@@ -481,20 +495,29 @@ export function poseCompanionDeck(fig, dt) {
   if (fig.path === 'walker') {
     const s = fig.subject;
     s.facing = fig.facing;
-    /* THE SIT'S OWN HIP DROP, through `_poseWalker`'s own settling channel —
-     * see HAUNCH above for why this is `planted` and not a subtraction here. */
-    s.planted = sit;
-    /* NO STRIDE AND NO BOB WHILE IT IS SAT. The limb table and the hip height
-     * are the plan's; these three are what a sitting animal has none of. */
+    /**
+     * THE SIT REACHES THE SOLVER AS A STANCE, WHICH IS THE SOLVER'S OWN INPUT.
+     *
+     * `_poseWalker` is handed `ST` and reads five numbers off it; four of them
+     * are what a sitting animal has less of. So the sit is spent by editing a
+     * COPY of the published stance rather than by second-guessing the solver
+     * afterwards — no stride, no foot lift, no walk bob, and the hips ride
+     * lower — and the limb table and `rear` are the plan's, untouched.
+     *
+     * Without the stride term a sat animal cycles its feet on the spot for
+     * ever at the solver's own 0.1 phase floor, which is the exact sentence
+     * this file has always carried about why the sit exists at all.
+     */
     const base = s._base;
-    if (base) {
+    if (base && fig.hind.length) {
       const m = 1 - sit;
       s._stanceCache.step = base.step * m;
       s._stanceCache.lift = base.lift * m;
       s._stanceCache.bob = base.bob * m;
+      s._stanceCache.hipHeight = base.hipHeight * (1 - SIT.drop * sit);
     }
     s._poseWalker(dt, fig.ctx);
-    foldHaunches(fig, sit);
+    foldSit(fig, sit);
     return;
   }
 
@@ -526,35 +549,65 @@ export function poseCompanionDeck(fig, dt) {
 }
 
 /**
- * THE HAUNCHES, FOLDED ON THE BONES AND NOT ON THE ROOT.
+ * THE SIT, FOLDED ON THE BONES AND NOT ON THE ROOT.
  *
- * Applied AFTER `_poseWalker`, because the IK assigns those quaternions
+ * Applied AFTER `_poseWalker`, because the IK assigns the leg quaternions
  * outright: this post-multiplies a rotation about each bone's own lateral
  * axis, which is what the joint does, so the leg folds from wherever the gait
- * left it rather than from a pose written twice. `hipL{i}` swings the socket,
- * `femur{i}` bends the thigh on top of it, and `tibia{i}` takes the shank
- * back past both — the hock ends behind and below the knee, on the plates.
+ * left it rather than from a pose written twice.
  *
  * ONLY THE HIND ROW, counted off the stance rather than named (see
  * `hindLegs`): a sitting animal's forelegs stay under it and straight, and
- * they take the hip drop as a compression through the IK because their feet
- * are still planted on the floor.
+ * they take the hip drop as a compression through their own IK because their
+ * feet are still planted on the floor.
+ *
+ * ── ASSIGN THE BONES WITH ONE OWNER, POST-MULTIPLY THE ONES WITH TWO, AND
+ *    THE DIFFERENCE IS NOT A STYLE ────────────────────────────────────────
+ *
+ * `solveIK` ASSIGNS `femur{i}` and `tibia{i}` every frame off a world-space
+ * target, so a rotation applied to those after it has run is spent and gone by
+ * the next one: post-multiplying is the only way to bend a joint the solver
+ * owns. **Nothing writes `hipL{i}` or the trunk at all** — the sockets are
+ * fixed to the gait and `_poseWalker` never touches `body` — so the same line
+ * there is an INTEGRATOR. Measured with the socket written that way: the hind
+ * hips wound up 3.135 rad from rest inside six seconds, the IK chased them,
+ * and the animal's back legs pointed at the ceiling. It is CompanionLife.js's
+ * own rule about two owners of one bone read the other way round, and both
+ * halves are here in four lines of each other.
+ *
+ * THE TRUNK IS ASSIGNED FROM REST AND THE LIFE LAYER STILL GETS IT, which is
+ * not luck: `layerBone` resets a bone to rest only when it still holds what
+ * that layer left on it last frame, and after this it does not — so the sway
+ * and the breath ride on top of the sit rather than erasing it, exactly as
+ * they ride on top of `_poseWalker`'s head track on the field.
  *
  * `touchMatrices` rather than `updateMatrices` — the life layer that runs next
  * reads through `worldPos`, which ensures for itself, so the walk is paid for
  * once by whoever actually asks. See the note over `Rig.updateMatrices`.
  */
 const _fold = new THREE.Quaternion();
-function foldHaunches(fig, sit) {
-  if (sit < 1e-3 || !fig.hind?.length) return;
+function foldSit(fig, sit) {
+  const legs = fig.hind;
+  if (!legs?.length) return;
   const rig = fig.built.rig;
-  for (const i of fig.hind) {
+
+  /* THE SPINE COMES UP AS THE PELVIS GOES DOWN. Assigned, because its only
+   * other writer is the life layer and that one rides on top. */
+  const trunk = rig.get('body');
+  if (trunk && !trunk.severed) {
+    trunk.obj.quaternion.copy(trunk.restQuat).multiply(_fold.setFromAxisAngle(_RIGHT, SIT.pitch * sit));
+  }
+
+  for (const i of legs) {
     const hip = rig.get(`hipL${i}`);
-    if (hip && !hip.severed) hip.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, -HAUNCH.hip * sit));
+    if (hip && !hip.severed) {
+      hip.obj.quaternion.copy(hip.restQuat).multiply(_fold.setFromAxisAngle(_RIGHT, SIT.hip * sit));
+    }
+    if (sit < 1e-3) continue;
     const femur = rig.get(`femur${i}`);
-    if (femur && !femur.severed) femur.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, -HAUNCH.femur * sit));
+    if (femur && !femur.severed) femur.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, SIT.femur * sit));
     const tibia = rig.get(`tibia${i}`);
-    if (tibia && !tibia.severed) tibia.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, HAUNCH.tibia * sit));
+    if (tibia && !tibia.severed) tibia.obj.quaternion.multiply(_fold.setFromAxisAngle(_RIGHT, -SIT.tibia * sit));
   }
   rig.touchMatrices?.();
 }

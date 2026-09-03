@@ -666,9 +666,9 @@ export const DATABANK = {
     weapon: 'Jaws',
     text: 'A blurrg: the other mount, and the only one that fights. It bites, '
       + 'hard, so what closes on you while you are riding gets answered without '
-      + 'your dismounting. It pays for that in the turn — a blurrg comes round '
-      + 'slowly enough that a corridor is a bad place to be on one, and a '
-      + 'reversal at speed is the commonest way riders come off.',
+      + 'your dismounting. It pays for that in the turn — it comes round at half '
+      + 'the rate a tauntaun does, which makes it superb across open ground and '
+      + 'a bad thing to be sitting on in a trench.',
   },
   varac: {
     faction: 'wild',

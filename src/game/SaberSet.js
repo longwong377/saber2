@@ -112,6 +112,97 @@ export function setById(id) {
 export const SET_IDS = SABER_SETS.map((s) => s.id);
 
 /* ══════════════════════════════════════════════════════════════════════ */
+/*  THE PACE                                                             */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ── "INCREASED … MOBILITY", AS A NUMBER THE LEGS READ ────────────────────
+ *
+ * *"Dual-wielding lightsabers generally provides increased offensive
+ * capabilities AND MOBILITY, making it effective against multiple
+ * opponents."*
+ *
+ * THE HALF OF THAT SENTENCE THIS FILE USED TO ANSWER WAS ONE WORD OF IT.
+ * Measured before this existed, on `tools/_setbench.mjs`'s pace arm — a player
+ * holding forward and mashing the light cut for ten seconds on the colosseum
+ * floor, ground covered per second of it:
+ *
+ *     single  4.600 m/s      staff  4.600 m/s      pair  4.600 m/s
+ *
+ * Three sets, one pace, to three decimals, because `Player._move` opens
+ * `const base = 4.6 * this.boonMods.moveSpeed` and NOTHING downstream of it —
+ * the slow walk, the sprint, the crouch, the stagger, the sense — has ever
+ * asked what is in your hands. The offensive half of the clause was real and
+ * measured (`saberforms`'s four-body check: the pair banks 86% more cut work
+ * than one blade), the mobility half was prose.
+ *
+ * ── WHY IT IS KEYED OFF `hands` AND NOT OFF A FOURTH COLUMN ──────────────
+ *
+ * The column that already carries this fact is `hands`. It is the one field on
+ * which the pair differs from BOTH of the others — the single blade and the
+ * saberstaff are each two hands on one hilt and the pair is one — and
+ * `saberforms: each set is a trade` already asserts `set.hands < single.hands`
+ * for exactly this set. So the pace is a function of it, and three things
+ * follow that a typed per-set column would not give:
+ *
+ *   THE SINGLE BLADE CANNOT MOVE, by construction rather than by an exception.
+ *   `SABER_SETS[0].hands - set.hands` is 0 for the single blade, so `paceOf`
+ *   returns `1 + k·0` — the literal 1 — and `4.6 * moveSpeed * 1` is the same
+ *   IEEE-754 float `4.6 * moveSpeed` was. There is no tolerance to argue
+ *   about and no way for a later hand to re-tune the pair's number into the
+ *   single blade's.
+ *
+ *   THE SABERSTAFF DOES NOT MOVE EITHER, and that is deliberate. A polearm is
+ *   a heavier weapon and the temptation is to charge its legs for it — but
+ *   every one of the staff's costs in SABERFORMS.md is already paid in the
+ *   weapon (a narrower arc, a slower guard, half the weapon surrendered to any
+ *   hand you need free), and a walking penalty on top would be a fourth price
+ *   for a set nobody asked to change. `hands: 2` says so without a clause.
+ *
+ *   AND IT IS THE SET'S OWN ROW, not the LIVE grip. `GRIPS.one` has inertia
+ *   0.74 — LOWER than the pair's 0.80 — so a pace derived from whatever the
+ *   hands are doing this frame would hand a single-blade player carrying a
+ *   crate a bigger bonus than the pair gets, which moves the single blade.
+ *
+ * ── HOW BIG, AND THE BOUND THAT SETS IT ─────────────────────────────────
+ *
+ * 8%. `Player._move`'s own ladder is walk 1.56 / crouch 2.21 / ordinary 4.60 /
+ * sprint 7.45 m/s, "each about half again the one below" — the smallest step
+ * between two PACES a player chooses is +48%. A set-level term has to sit far
+ * under that or it stops being a set and becomes a stance: at 8% the pair
+ * walks at 4.97 m/s, so a dual wielder at an ordinary walk is still 2.5 m/s
+ * slower than ANY set at a sprint and a crouched dual wielder (2.38) is still
+ * slower than any set walking. It multiplies `base`, so it is 8% at every one
+ * of the four paces rather than a bonus that only shows when you run — which
+ * is what "mobility" means and what a flat addend would not have been.
+ *
+ * ── AND IT IS PAID FOR IN THE ENVELOPE, ONE FIELD AWAY ──────────────────
+ *
+ * See `DUAL_SLASH` below: `rise`/`drop` 0.74/0.76 → 0.69/0.71, which off
+ * SLASH's own width table is about 1.2 m/s of tip — 8% softer per contact for
+ * the 8% the legs were given. FASTER FEET, SOFTER HANDS, one for one, in the
+ * currency the note over `STAFF_SLASH` says the two new sets are paid in.
+ *
+ * The cadence was tried first and withdrawn: `slash.cooldown` under 0.30 does
+ * not reach the weapon at all, because every light press also opens the stab
+ * and that line names `SLASH.cooldown` for every set. The measurement is over
+ * `DUAL_SLASH`.
+ */
+export const FREE_HAND_PACE = 0.08;
+
+/**
+ * How fast this set walks, as a multiple of `Player._move`'s own base.
+ *
+ * `SABER_SETS[0]` is the single blade and it is the datum on purpose: the
+ * question this answers is "how much of a hand does this set give back",
+ * and the answer has to be measured against the weapon the game has always
+ * given you rather than against a constant typed twice.
+ */
+export function paceOf(setId) {
+  return 1 + FREE_HAND_PACE * (SABER_SETS[0].hands - setById(setId).hands);
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
 /*  THE ENVELOPES                                                        */
 /* ══════════════════════════════════════════════════════════════════════ */
 
@@ -140,8 +231,10 @@ export const SET_IDS = SABER_SETS.map((s) => s.id);
  * player's "the second blade is instantly ready for a follow-up strike",
  * delivered by the shaft rather than by a number.
  *
- * THE PAIR sits between them at 0.74/0.76 and 0.26, because it genuinely is
- * between them: two lighter weapons, each on its own bearing.
+ * THE PAIR sits between them at 0.69/0.71 and 0.26, because it genuinely is
+ * between them: two lighter weapons, each on its own bearing. Its arc is
+ * narrower than it was first authored at — see `DUAL_SLASH` itself, where the
+ * 0.05 is what its 8% of pace is paid for with.
  *
  * `chain` is the window the third press has to arrive in. The staff's is longer
  * (0.72) because its own cooldown is shorter and a sequence you cannot reach is
@@ -179,11 +272,52 @@ export const STAFF_HEAVY = {
   rise: 0.86, drop: 0.90, lift: 0.10, fall: 0.62,
 };
 
-/** The pair's alternating cut. Between the single blade and the staff on every
- *  term, which is what the form is. */
+/**
+ * The pair's alternating cut. Between the single blade and the staff on every
+ * term, which is what the form is.
+ *
+ * ── `rise`/`drop` 0.74/0.76 → 0.69/0.71 IS WHAT THE PAIR'S FEET COST IT ──
+ *
+ * `paceOf` above hands this set 8% of pace at every one of the four paces, and
+ * nothing in this project is allowed to be only better. The price is charged
+ * on the arc because the arc is THE currency this file trades in — the note
+ * over `STAFF_SLASH` says so in as many words, and says why the alternatives
+ * are refused: a shorter `PARRY.cooldown`, a `SPEED_GRADE` move or a damage
+ * multiplier would every one of them be shared by every blade in the game.
+ *
+ * Read off SLASH's own shipped width table, which is 24.7 m/s of tip per unit
+ * of `rise` across its three measured rows: 0.05 narrower is about 1.2 m/s
+ * slower, so the pair's light cut goes from ~15.6 m/s to ~14.4 — down 8%, for
+ * the 8% the legs were given. FASTER FEET, SOFTER HANDS, and the exchange rate
+ * is one for one in the two currencies the form is written in. It still sits
+ * between the staff's 0.60 and the single blade's 0.80, which is the whole
+ * shape of the set.
+ *
+ * ── AND `cooldown` IS NOT THE PRICE, BECAUSE `cooldown` IS INERT HERE ────
+ *
+ * The first cut of this charged the pace to the cadence — 0.26 → 0.28 — and
+ * measured NOTHING. `SaberController.applyInput` gates a light cut on
+ * `slashCool <= 0 && thrustCooldown <= 0`, and every light press also opens
+ * the stab, which sets `thrustCooldown = SLASH.cooldown / attackRate` — the
+ * SINGLE BLADE's 0.30, in every set, because that line names `SLASH` directly.
+ * So any set whose own `slash.cooldown` is at or under 0.30 repeats at 0.30
+ * and its own number does not reach the weapon. Measured on
+ * `tools/_setbench.mjs`'s pace arm, ten seconds of mashing, the pair:
+ *
+ *     cooldown 0.26   25 strikes accepted
+ *     cooldown 0.30   25 strikes accepted      ← identical, to the strike
+ *     cooldown 0.45   13
+ *
+ * 0.26 is therefore left exactly as it shipped: a number that describes the
+ * form correctly and that the controller currently rounds up to 0.30. Moving
+ * it to 0.28 would have been a price the game does not charge, which is worse
+ * than no price at all. The masking itself is left alone deliberately — the
+ * fix lives in a line that reads `SLASH` for all three sets, and touching it
+ * moves the SABERSTAFF's tempo, which is measured and green.
+ */
 export const DUAL_SLASH = {
   wind: 0.075, cut: 0.115, dur: 0.315,
-  rise: 0.74, drop: 0.76, lift: 0.30, fall: 0.72,
+  rise: 0.69, drop: 0.71, lift: 0.30, fall: 0.72,
   cooldown: 0.26, chain: 0.62, lunge: 0.30,
 };
 

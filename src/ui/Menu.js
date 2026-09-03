@@ -98,10 +98,27 @@ import { DRIVE, crewOf } from '../game/Driving.js';
  * Typed here it would be a second list beside `crew` on the archetypes and one
  * roster change from being a lie — HANDOFF §2.3. Read off the same field
  * `Driving.isCrewed` reads, so the card and the rule cannot disagree.
+ *
+ * ── AND THE SEATED THINGS ARE NOW TWO POPULATIONS, NOT ONE LIST ──────────
+ *
+ * `crew` is the whole boarding rule and the three mounts declare it like
+ * everything else with a seat, so an unfiltered list put "Tauntaun (1 crew)"
+ * in the middle of a sentence about hulls and hatches. Two derivations off the
+ * same two fields rather than one list plus a hand-written exception: a
+ * MACHINE is a crewed body that is `big`, a MOUNT is one that declares
+ * `mount`, and no archetype is both — `tools/checks/driving.mjs` asserts that
+ * partition rather than trusting it, so a future row cannot land in neither
+ * list or in both and go unmentioned on a card that claims to name them all.
  */
 const DRIVABLE = () => Object.keys(ARCHETYPES)
-  .filter(k => crewOf(k) > 0)
+  .filter(k => crewOf(k) > 0 && ARCHETYPES[k].big)
   .map(k => `${ARCHETYPES[k].label} (${crewOf(k)} crew)`)
+  .join(', ') || 'nothing on this roster';
+
+/** …and the things with a saddle rather than a hatch. */
+const RIDEABLE = () => Object.keys(ARCHETYPES)
+  .filter(k => crewOf(k) > 0 && ARCHETYPES[k].mount)
+  .map(k => ARCHETYPES[k].label)
   .join(', ') || 'nothing on this roster';
 
 /**
@@ -1932,7 +1949,14 @@ export const CODEX = [
       + `displace. Your own side's any time; the enemy's only once you have put it under `
       + `${Math.round(DRIVE.wreck * 100)}% and the crew is dead. Move to drive, aim to lay the gun `
       + `(it turns faster than the hull, inside an arc off the nose), attack to fire. The hull `
-      + `takes the hits while you are in it, and when it dies you are put out on the ground.` },
+      + `takes the hits while you are in it, and when it dies you are put out on the ground. `
+      /* AND THE SAME KEY GETS YOU ONTO YOUR OWN ANIMAL, which is worth saying
+       * on the card rather than leaving a player to discover that the mount
+       * they were sold uses the vehicle binding. The names are derived off
+       * `mount` for the reason the machine list is derived off `crew`. */
+      + `<b>The same key mounts your companion</b> if it is one you can ride — ${RIDEABLE()} — `
+      + `and there is no gun on any of them: your blade goes on your belt for as long as you `
+      + `are up there, and the hits it takes are the animal's.` },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
   // The slot count is read off the table, so a ninth emote changes this line.

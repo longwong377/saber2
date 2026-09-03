@@ -1361,23 +1361,46 @@ export const BOLT = { run: 4.5, far: 70, pull: 30 };
  * the same shape of lie as the Kennel's "You can ride this one." — a card
  * describing a mechanic that did not exist. This is the mechanic.
  *
- * IT IS A CLOCK IN HOSTILE-SECONDS AND IT ONLY RUNS WHILE YOU ARE ON IT.
- * `_cmpFear` gains one point a second for every hostile inside `near`, plus
- * `hit` a point for every point of health the animal loses, and it eases back
- * at `ease` a second the moment you are off. Two consequences fall out of that
- * arithmetic and both are the design's own sentences:
+ * IT IS A CLOCK IN HOSTILE-SECONDS, AND THE TWO TERMS ARE NOT THE SAME TERM,
+ * because the two sentences the game prints about this animal are not the same
+ * sentence. The Kennel card says *"ride it into a fight and it panics"* and the
+ * Databank says *"past a certain amount of damage it panics and runs, WITH OR
+ * WITHOUT YOU ON IT"*. Both are true of exactly this arithmetic:
  *
- *   · one shooter at fifteen metres is survivable — 4.5 s of it, which is 27 m
- *     of ground at a ridden tauntaun's 6.1 m/s, so you can ride PAST a picket;
- *   · three of them is 1.5 s, and 75 hp of aimed fire alone is the whole
- *     threshold, so you cannot ride INTO a fight. "It makes crossing a map fast
- *     and makes arriving at a fight something you must dismount to do."
+ *   · PROXIMITY counts only while somebody is riding — one point a second for
+ *     every hostile inside `near`. Carrying a man toward things that are
+ *     shooting is the rider's decision and the animal's objection to it. One
+ *     shooter at fifteen metres is 4.5 s, which is 27 m of ground at a ridden
+ *     tauntaun's 6.1 m/s, so you can ride PAST a picket; three of them is
+ *     1.5 s, so you cannot ride INTO a fight. "It makes crossing a map fast and
+ *     makes arriving at a fight something you must dismount to do."
+ *   · DAMAGE counts ALWAYS — `hit` a point for every point of health it loses,
+ *     so 75 hp is the whole threshold on its own, a fifth of its 340. Being
+ *     shot frightens an animal whether or not there is a man on its back, and
+ *     that is the half the Databank claims.
  *
- * WHY IT DOES NOT RUN UNRIDDEN. A tauntaun standing beside you in a firefight
- * that bolted on its own clock would be a companion that deletes itself from
- * every fight it is in — and the sentence on the card is about the SADDLE.
- * Nothing is claimed about an animal you are not sitting on, so nothing
- * happens to it.
+ * ── AND IT FORGETS ON A QUIET WINDOW, NOT ON A QUIET FRAME ──────────────
+ *
+ * Written as "decay on any frame that adds nothing" the damage half is not a
+ * threshold at all, it is a RATE gate, and the measurement says so: a tauntaun
+ * shot for 10 hp every third of a second — 30 hp a second, a whole B1 squad's
+ * worth — banked 8.4 points of fear and bled 6.5 of them back in the gaps
+ * between the bolts, ending at 1.9 of a threshold of 4.5 and never bolting
+ * after losing 140 hp. "Past a certain amount of damage" would have meant
+ * "past a certain amount of damage per second", which is not what the card
+ * says and is not what an animal does.
+ *
+ * So the clock only bleeds off after `calm` seconds with nothing added to it —
+ * the same shape `underFire` already has in this file, where a spell lasts and
+ * then ends rather than flickering between bolts. Fear survives the gaps
+ * inside a burst and is gone about six seconds after the burst is.
+ *
+ * WHAT THE SPLIT COSTS AND WHY IT IS WORTH IT. A tauntaun that ran the
+ * proximity clock unridden would delete itself from every firefight it is
+ * standing near — it has `ward: 0`, no `moves` and `damage: 0`, so it would
+ * never come back and never do anything. The damage term is the honest one to
+ * leave running: it takes a real event, it is answerable (keep it out of the
+ * fire) and the animal comes home when the verb's 4.5 s are up.
  *
  * DECLARED ON THE KIND ROW AS `panic`, a threshold in those same units, and
  * ABSENT is what "this kind does not" means. The blurrg holds its ground and
@@ -1390,7 +1413,7 @@ export const BOLT = { run: 4.5, far: 70, pull: 30 };
  * verb already does — the heading chosen once, the eyes pulled off you, the
  * pace it deliberately does not raise — is what a panicking tauntaun does.
  */
-export const PANIC = { near: 15, hit: 0.06, ease: 1.4 };
+export const PANIC = { near: 15, hit: 0.06, ease: 1.4, calm: 3 };
 
 /**
  * ONE FRAME OF BEING FRIGHTENED, for a kind that can be.
@@ -1401,25 +1424,43 @@ export const PANIC = { near: 15, hit: 0.06, ease: 1.4 };
  * kind with no `panic` and nothing at all on a body nobody is riding.
  */
 function stepPanic(e, dt) {
-  const cap = COMPANION_KINDS[e._cmpKind]?.panic;
+  const K = COMPANION_KINDS[e._cmpKind];
+  const cap = K?.panic;
   if (!cap) return;
   const hp = e.hp ?? 0;
-  const was = e._cmpFearHp;
+  const lost = Math.max(0, (e._cmpFearHp ?? hp) - hp);
   e._cmpFearHp = hp;
-  if (!e.driven) {
-    e._cmpFear = Math.max(0, (e._cmpFear || 0) - PANIC.ease * dt);
-    return;
+  /* THE RING ONLY COUNTS UNDER A RIDER — see the note. `eachHostile` is the
+   * one pass over what this body is opposed to and it is the same door BOLT
+   * and CRY use, so "near" means here what it means everywhere else. */
+  const ring = e.driven ? eachHostile(e, e.position, PANIC.near, () => {}) : 0;
+  const gain = ring * dt + lost * PANIC.hit;
+  /* READ ONCE INTO A NUMBER AND WRITTEN BACK ON EVERY PATH. Written as
+   * `e._cmpFear = …` inside the two branches, the quiet branch's own guard
+   * (`calm > PANIC.calm`) left the field UNDEFINED on the first frame of every
+   * tauntaun's life — and `undefined < 4.5` is false, so the threshold test
+   * below fell straight through and every tauntaun bucked and bolted on the
+   * frame it was fielded. Measured: `panics: 1` at frame 0 with full health,
+   * zero hostiles and nobody in the saddle. One local, one write. */
+  let fear = e._cmpFear || 0;
+  if (gain > 0) {
+    fear += gain;
+    e._cmpCalm = 0;
+  } else {
+    e._cmpCalm = (e._cmpCalm || 0) + dt;
+    if (e._cmpCalm > PANIC.calm) fear = Math.max(0, fear - PANIC.ease * dt);
   }
-  const lost = Math.max(0, (was ?? hp) - hp);
-  const near = eachHostile(e, e.position, PANIC.near, () => {});
-  e._cmpFear = (e._cmpFear || 0) + near * dt + lost * PANIC.hit;
-  if (e._cmpFear < cap) return;
+  e._cmpFear = fear;
+  if (fear < cap) return;
   /* AND IT IS SPENT. Zeroed rather than left over the line, so an animal you
    * get straight back onto is one you get a whole threshold out of again
    * instead of one that throws you the moment you are seated. */
   e._cmpFear = 0;
   e._cmpPanics = (e._cmpPanics || 0) + 1;
-  e.driven.throwRider(`${COMPANION_KINDS[e._cmpKind]?.label ?? 'it'} has had enough`);
+  /* THE BUCK IS ONLY A BUCK IF THERE IS SOMEBODY UP THERE. Unridden it is the
+   * same panic with nobody to throw, which is the Databank's "with or without
+   * you on it" said in code. */
+  if (e.driven) e.driven.throwRider(`${K.label ?? 'it'} has had enough`);
   panicRun(e);
 }
 
@@ -1842,14 +1883,30 @@ export const COMPANION_VERBS = {
      * here restates a distance. */
     allows: (e, foe) => inJaws(e, foe),
     tick(e, dt) {
+      /**
+       * AND WHEN SOMEBODY IS DRIVING, NOTHING RAN THIS FRAME — NOT THE BRAIN
+       * AND NOT THE EYES, WHICH IS THE HALF THIS VERB WAS MISSING.
+       *
+       * `Enemy.update`'s driven branch returns before `_think`, so the aim wrap
+       * never gets a frame either: a ridden mount picks no target, and a bite
+       * gated on `e.target` therefore never happened. Measured before this, on
+       * a live world with the blurrg boarded, CHARGE ordered and a B1 held at
+       * 2.2 m for ten seconds: **0 damage in 0 blows**, with `e.target` null on
+       * every one of the 300 frames. The verb read as implemented and was not.
+       *
+       * `companionTarget` is the aim wrap's own picker, called here rather than
+       * copied — the leash, the bidden body and `dutyAllows` (which for this
+       * verb is `inJaws`) all decide it exactly as they do on an animal walking
+       * on its own feet. Only the caller is different, because only the caller
+       * had to be.
+       */
+      if (e.driven && (!e.target || e.target.dead)) e.target = companionTarget(e);
       const t = e.target;
       if (!t || t.dead) return undefined;
       /* IT DOES NOT WAIT ITS TURN. `attackTimer` is the brain's own pause
        * between blows; a mount that has something in its teeth takes it. */
       if (e.attackTimer > 0 && e.state === 'approach') e.attackTimer = 0;
-      /* AND WHEN SOMEBODY IS DRIVING, THE BRAIN NEVER RAN THIS FRAME. See the
-       * note above: the same function, called from the one tick that still
-       * runs. */
+      /* THE SAME FUNCTION, called from the one tick that still runs. */
       if (e.driven && typeof e._beastBrain === 'function') {
         const ctx = e.world?._frameCtx;
         if (ctx) e._beastBrain(dt, ctx, e.position.distanceTo(t.position));
@@ -1928,11 +1985,73 @@ function installCompanionAim(e) {
      * at length and this is the same trade. */
     ctx.pickTarget = (b) => {
       if (b !== e) return pick(b);
-      const w = e.world;
-      if (!w?._hostilesFor) return pick(b);
+      /* NOT ANOTHER PICKER — `companionTarget` is the one, and CHARGE calls the
+       * same function from the one tick that still runs while somebody is
+       * riding. Two answers to "what is this animal allowed to fight" is
+       * exactly the drift HANDOFF §2.4 is about. */
+      if (!e.world?._hostilesFor) return pick(b);
       return companionTarget(e);
+    };
     try { return think(dt, ctx); } finally { ctx.pickTarget = pick; }
   };
+}
+
+/**
+ * WHAT THIS COMPANION IS ALLOWED TO FIGHT, AND FROM WHERE — the one picker.
+ *
+ * Called from two places and it must stay one function: the aim wrap above,
+ * which is how the answer reaches `_think` on an animal on its own feet, and
+ * `charge`'s tick, which is how it reaches a mount whose brain is not running
+ * because you are sitting on it.
+ *
+ * THE ORDER FIRST, IF IT NAMED A BODY. A companion told to take that one takes
+ * THAT one, which is the whole of "attacking a specific enemy that you target"
+ * — and `dutyAllows` refuses everything else under SEEK, so a seek is a seek
+ * and not a preference.
+ *
+ * ── THE LEASH IS ON ITS FEET, NOT ON ITS EYES, AND THE OTHER WAY ROUND COST
+ *    THE ANIMAL ITS WHOLE FIGHT ──────────────────────────────────────────
+ *
+ * The first version of this returned null the moment the companion was dragged
+ * past the leash, on the reasoning that a body which keeps its target fights
+ * its own steering. It does not: the move wrap below overrides the wish
+ * outright when `dragged`, so the pull home was never contested. What the null
+ * actually did was stop the brain.
+ *
+ * `Enemy._brain` returns on `if (!target)` before it ever reaches
+ * `_meleeBrain`, so a creature with no target is a creature whose state machine
+ * is NOT SERVICED — `stateTime` goes on climbing (Enemy.js:6175) and nothing
+ * reads it. Measured over one minute of the kill test: the animal froze
+ * mid-`lunge` with no target and stayed there, and a `winded` window that is
+ * 2.4 seconds long lasted TWELVE — from t=5 s to t=17 s, a fifth of the
+ * minute, standing still. It dealt 0 damage in 0 blows while getting to within
+ * 0.2 m of something it was hunting.
+ *
+ * The leash it actually needs is this one: the search is measured from the
+ * STATION, so a hostile out of reach of where the animal is supposed to be is
+ * never a target in the first place, and the walk home is the move wrap's job.
+ * Nothing here returns null that `_hostilesFor` would not have returned null
+ * for.
+ *
+ * AND THE STATION IS THE RIGHT ORIGIN WHILE IT IS BEING RIDDEN TOO, for free:
+ * `stationFor` is the heel mark off the owner's back and the owner is ON the
+ * animal, so "where it is supposed to be" is where it is — which is exactly
+ * what CHARGE means by "it takes only what is already inside its own jaws".
+ */
+function companionTarget(e) {
+  const w = e.world;
+  if (!w?._hostilesFor) return null;
+  const bid = e._cmpBidden;
+  if (bid && !bid.dead && bid.team !== e.team) return bid;
+  const home = stationFor(e, _v3);
+  const leash = (e._cmpLeash ?? LEASH);
+  let best = null, bestD = Infinity;
+  for (const o of w._hostilesFor(e)) {
+    if (!dutyAllows(e, o, home, leash)) continue;
+    const d = o.position.distanceToSquared(home);
+    if (d < bestD) { bestD = d; best = o; }
+  }
+  return best;
 }
 
 /**
