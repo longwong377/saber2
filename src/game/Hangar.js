@@ -72,6 +72,7 @@ import { attachTrooperCape } from './Cloth.js';
 import { dressDeckAudio, stepDeckAudio, undressDeckAudio, bootHalt,
   drainBlasts, bootStride, deckChant } from './DeckAudio.js';
 import { dressDeckLife, stepDeckLife } from './DeckLife.js';
+import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift } from './DeckLift.js';
 import { dressDeckMirror, stepDeckMirror, undressDeckMirror } from './DeckMirror.js';
 /* The companion that came up in the lift with you — CompanionDeck.js. */
@@ -1649,6 +1650,8 @@ export function dressHangar(world) {
    * THE HAZE IS THE PIECE THAT MATTERS MOST and it is the cheapest: far rows
    * dissolve, so the deck never has to model what is behind them. */
   dressDeckLife(world);
+  /* THE FLEET ACTION OUTSIDE, in geometry — see DeckBattle.js. */
+  dressDeckBattle(world);
   /**
    * AND THE LIFT, WHICH IS WHERE THE PLAYER ACTUALLY IS. The spawn is inside
    * the car; `DeckLift` runs the ride, parts the doors, and later takes him
@@ -1828,6 +1831,7 @@ export class HangarDirector {
     try { undressDeckLift(this.world); } catch {}
     try { undressDeckMirror(this.world); } catch {}
     try { undressDeckFlight(this.world); } catch {}
+    try { undressDeckBattle(this.world); } catch {}
     dismissCompanion(this.world);
     if (this.world.floorAt) this.world.floorAt = null;
     if (this.world.deckBladeTargets) this.world.deckBladeTargets = null;
@@ -1854,6 +1858,7 @@ export class HangarDirector {
      * the pressure filter and every Doppler ratio are functions of where the
      * player is standing THIS frame. */
     stepDeckLife(this.world, dt);
+    stepDeckBattle(this.world, dt);
     stepDeckLift(this.world, dt);
     stepDeckMirror(this.world, dt);
     /* AND WHAT CAME UP IN THE LIFT WITH YOU. After `stepCompany` and the
