@@ -332,3 +332,55 @@ The mitigation I would actually want is a non-distance rung — a proximity-lock
 **THIRD, SMALL, REAL, AND NOBODY ASKED FOR IT.** `_friendNear` (Enemy.js:6218) counts anything with `o.team === e.team` and has no trooper test, so a companion standing beside a shaken trooper already suppresses the 'alone' refusal and the MORALE.ALONE drift — for free, in every mode, forever. That is a genuine buff to the army arriving inside a feature that is supposed to be separate from it, and nothing budgets for it. The honest fix is one line inside `_friendNear`, which is in the army brain and on the do-not-touch list for good reasons. So: measure it. Run the advance-order landing rate with and without a companion in the line. If it moves, take that one line to review as its own change with its own argument, rather than shipping a quiet buff hidden inside a pet.
 
 **FOURTH, AND THE ONE I CANNOT TEST FROM HERE: whether a licence ladder actually FEELS like growth.** "It does more of what I ask, further from me, for longer" is the law-clean answer and I believe it is the right one, but it is subtler than a bar filling and the whole design rests on it landing. The mitigation is that the wheel prints the refusal sentence on every cold slot, so the player sees the thing they cannot yet order every time they open it, and rung 1 arrives fast. If it still reads as nothing happening, the honest fix is not to add numbers — it is to make the rungs arrive sooner and the refusals louder.
+
+## What actually shipped, against this document
+
+Written after the build, so that the design above can be read as what was
+INTENDED and this as what was measured. Where the two disagree, this is right.
+
+**THE HONEST DOUBT'S FIRST WORRY WAS THE FRAME BUDGET, and the answer turned
+out to be that nothing was measuring it.** The section above argues at length
+that a companion is permanently LOD 0 and therefore costs a worst-case body's
+worth in every frame. That reasoning holds. What it did not anticipate is that
+`characters: no archetype has quietly doubled in cost` — the game's only
+triangle bound — enumerates its subjects from a hand-typed list of eight
+builders, and every companion kind reaches ARCHETYPES by a different door. Not
+one of the twelve was ever weighed. The wookiee was over the cap. There is now
+a sibling check driven off `COMPANION_KINDS`, and the whole set is under:
+wook 11 712, tooka 9 454, hawk 9 178, varac 10 262, massiff 9 550, tuk 8 938,
+pup 8 296, b1c 6 600, taun 6 452, medic 5 712, blurrg 5 656, astro 2 582.
+
+**THE SECOND WORRY — "twelve is too many for the body work" — was wrong, and
+the schedule it proposed was the right instinct anyway.** All twelve have a
+body. The hawk needed everything the section predicted (a wing dressing that
+was never written, a `beak` head, a `plumage` back, a `raptor` foot and a
+zero-limb `tuck` stance) and three more besides. What the section did not
+predict is that the bodies would need a SECOND pass for looks after the first
+one for existence: the tooka shipped as an armoured lump on a brief whose only
+word is "cute", and the tauntaun shipped wearing a wampa's face.
+
+**THE FOURTH WORRY — whether a licence ladder FEELS like growth — is still
+untested, and is still the one that cannot be tested from here.** What changed
+is that the ladder now actually turns: all four deeds fire from one ledger in
+real play, and the fold was banking a re-loaded record rather than the one the
+run was played on, so before this a full five-area crossing banked zero. SWORN
+moved 30 → 20 because a crossing pays four a boundary and not six — `reached`
+cannot be banked by any solo run, since `_checkWipe` ends the run on the frame
+you fall.
+
+**THE CO-OP SECTION'S "each commander brings one" IS NOW TRUE**, and the
+version of this document that said otherwise was describing a limitation that
+also hid a live bug: the client fence could never fire, so a guest had been
+spawning a private body nobody else could see. What is still not true is the
+sentence about a guest's animal growing — it does not, because four of the six
+deeds read fields the snapshot does not carry.
+
+**AND THE VERBS WERE THE HOLE NOBODY HAD NAMED.** This document specifies one
+verb per kind and the wheel printed all twelve from the day the rows landed;
+`orderCompanion` accepted them, `_cmpDuty` was written, and not one line
+downstream read it. Twelve labels and no verbs. They are all real now, each
+driven and measured, and three of them are honestly incomplete: SPOT's climb
+is a no-op until the hawk flies, CHARGE's bite-while-you-ride is unreachable
+because no row declares `crew`, and TEND does not make the droid worth two men
+because `_tickDown` reads `trooper.medic`.
+
