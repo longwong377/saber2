@@ -40,6 +40,8 @@ export async function run({ check, assert }) {
   const { clocked } = await import('./_shared.mjs');
   check = await clocked(check);
   const S = await import('../../src/game/SaberSet.js');
+  const S2 = await import('../../src/game/SaberController.js');
+  const { SLASH } = S2;
 
   check('saberforms: the single blade is the blade it was, to six decimals', async () => {
     /**
@@ -178,6 +180,48 @@ export async function run({ check, assert }) {
         assert(set.offDamage < 1, `the pair's off blade cuts at ${set.offDamage} — a free second sword`);
         assert(set.hands < single.hands, 'the pair still has two hands on the main hilt');
       }
+      /**
+       * ── AND THE PACE IS BOUGHT WITH THE ARC, ONE FOR ONE ────────────────
+       *
+       * `paceOf` gives a set with a free hand `FREE_HAND_PACE` of extra
+       * ground per second at EVERY pace — a body-level term, the first one in
+       * this game that has ever asked what is in your hands. Nothing in this
+       * project is allowed to be only better, and the currency the sets are
+       * paid in is the one the note over `STAFF_SLASH` names: arc width, which
+       * is tip speed, which is what a contact is worth.
+       *
+       * So the rule is an exchange rate rather than a direction: a set may
+       * keep no more of the single blade's arc than the pace it was given
+       * leaves it. The pair takes 8% of pace and its light cut is 0.72 of a
+       * guard unit against SLASH's 0.80, which is 90% — just inside the 92%
+       * the bound allows. Put its arc back to the 0.74 it was first authored
+       * at and this goes red, which is the whole point: the pace and the arc
+       * are one trade and not two separate gifts.
+       *
+       * AND THE BOUND IS A CEILING AND NOT A TARGET. Measured, the arc is a
+       * far dearer currency than SLASH's tip-speed table makes it look — it is
+       * also how much of the ring the blade crosses, so 0.05 off it took the
+       * pair's cut work against four bodies down 36% and turned two shipped
+       * checks in this very file red. See `DUAL_SLASH`, which carries the
+       * ladder. A price that deletes the feature is not a price.
+       *
+       * It is stated against `SLASH.rise` and not against a number typed here
+       * because `setTables('single').slash === SLASH` by reference, so there
+       * is exactly one single-blade arc in the tree and this reads it.
+       */
+      const arc = S2.setTables(set.id).slash.rise;
+      const pace = S.paceOf(set.id);
+      if (pace > 1) {
+        assert(arc <= SLASH.rise * (1 - S.FREE_HAND_PACE) + 1e-12,
+          `${set.id} walks ${((pace - 1) * 100).toFixed(0)}% faster than one blade and still swings `
+          + `${arc} of a guard unit against SLASH's ${SLASH.rise} — a set may keep no more of the `
+          + `single blade's arc than the pace it was given leaves it (${(SLASH.rise * (1 - S.FREE_HAND_PACE)).toFixed(3)})`);
+        down.push('arc');
+      }
+      /* AND THE SINGLE BLADE'S OWN PACE IS THE LITERAL 1. Not "within a
+       * tolerance of": `paceOf` is `1 + k·(hands - hands)` for it, so any
+       * other answer means somebody made the term a typed column. */
+      assert(S.paceOf('single') === 1, `the single blade's pace is ${S.paceOf('single')} — it moved`);
       if (set.id === 'staff') {
         assert(set.offScale === 1, "the staff's far end is not the same blade as its near one");
         assert(set.hands === single.hands, 'a saberstaff is two hands on one shaft');
@@ -493,6 +537,165 @@ export async function run({ check, assert }) {
       + `pair ${rows.pair.work.toFixed(0)} (+${((rows.pair.work / rows.single.work - 1) * 100).toFixed(0)}%, `
       + `${rows.pair.off} contacts off the shoto); bodies answered per half-second `
       + `${rows.single.spread.toFixed(2)}/${rows.staff.spread.toFixed(2)}/${rows.pair.spread.toFixed(2)}`;
+  });
+
+  check('saberforms: the pair covers more ground per second, and one blade does not', async () => {
+    /**
+     * *"Dual-wielding lightsabers generally provides increased offensive
+     * capabilities AND MOBILITY."*
+     *
+     * THE OFFENSIVE HALF OF THAT SENTENCE HAS BEEN MEASURED SINCE THE SETS
+     * LANDED — the four-body check above banks 86% more cut work off the pair
+     * than off one blade. The mobility half was prose, and this is what it
+     * measured before there was a term for it:
+     *
+     *     single 4.600 m/s      staff 4.600 m/s      pair 4.600 m/s
+     *
+     * Three sets, one pace, to three decimals, because `Player._move` opened
+     * `const base = 4.6 * this.boonMods.moveSpeed` and NOTHING below it — the
+     * slow walk, the sprint, the crouch, the stagger, the sense — ever asked
+     * what was in your hands. `grep -c saberSet src/game/Player.js` returned
+     * thirteen and every one of them was the sidearm, the grip row, `setHalf`
+     * or the throw key.
+     *
+     * The bench is a player HOLDING FORWARD AND MASHING THE LIGHT CUT for ten
+     * seconds, not one strolling with the blade down, because the clause is
+     * about a fighter. Ground covered is the horizontal path summed frame by
+     * frame; the body is topped up so the reading is the legs and not
+     * `staggerTimer` or the stamina regen. See tools/_setbench.mjs.
+     *
+     * ── WHAT WOULD MAKE THIS GO RED ────────────────────────────────────────
+     *
+     * `FREE_HAND_PACE` back to 0 — which is the tree this replaced — and the
+     * pair reads 4.600 like the other two, failing the first assertion by
+     * exactly the term that was added. Verified by doing it.
+     */
+    const B = await import('../_setbench.mjs');
+    const { snapshotShared } = await import('./_shared.mjs');
+    const snap = await snapshotShared();
+    const rows = {};
+    for (const id of B.SETS) rows[id] = await B.pace(id, snap);
+    const one = rows.single, staff = rows.staff, pair = rows.pair;
+    /* THE TWO-HANDED SETS ARE THE SAME BODY, and this is the half of the
+     * check that holds the single blade still. `paceOf` is a function of the
+     * `hands` column, so the saberstaff — two hands on one shaft, exactly as
+     * the single blade is — must read the identical float. A per-set column of
+     * typed numbers would pass the pair's assertion below and fail this one. */
+    assert(staff.mps === one.mps,
+      `the saberstaff covers ${staff.mps} m/s against one blade's ${one.mps} — the pace is keyed off `
+      + 'the free hand, and a saberstaff has no more free hands than one blade does');
+    assert(pair.mps > one.mps * 1.05,
+      `the pair covered ${pair.mps} m/s against one blade's ${one.mps} — that is `
+      + `${((pair.mps / one.mps - 1) * 100).toFixed(1)}%, and "increased mobility" is not a rounding error`);
+    /* AND IT IS THE GROUND AND NOT THE SWINGING. Both sets ran the same script
+     * at their own cadence; a pair that covered more ground because it swung
+     * less would be measuring the attack and not the legs. */
+    assert(pair.strikes >= one.strikes,
+      `the pair covered more ground while landing ${pair.strikes} presses against one blade's `
+      + `${one.strikes} — this bench is meant to be a fighter moving, not a fighter idling`);
+    return `ground per second of mashed attack: one ${one.mps.toFixed(3)} m/s, staff ${staff.mps.toFixed(3)}, `
+      + `pair ${pair.mps.toFixed(3)} (+${((pair.mps / one.mps - 1) * 100).toFixed(1)}%); `
+      + `presses accepted ${one.strikes}/${staff.strikes}/${pair.strikes}`;
+  });
+
+  check('saberforms: the pair answers bolts from bearings one blade cannot reach', async () => {
+    /**
+     * *"maybe with dual wielding BLOCKING BOLTS IS EASIER OR AREA THAT YOU CAN
+     * COVER IS LARGER."*
+     *
+     * SIXTY BOLTS, ONE AT A TIME, ROUND THE WHOLE CIRCLE, INTO A PLANTED
+     * GUARD — `_spinprobe.mjs`'s stream of 24 down one sightline, opened out
+     * to a rose, because the claim is about AREA and one bearing cannot see
+     * one. Health lost is the verdict: `GRADE_DAMAGE` gives an answered bolt
+     * no damage at all, so a bolt that costs you hp is exactly a bolt the
+     * guard did not answer.
+     *
+     * ── THE FINDING THIS CHECK EXISTS BECAUSE OF ───────────────────────────
+     *
+     * The pair's whole defensive gain used to be `setHalf` — 8.6° of extra
+     * ROSE — and the only thing holding it was `assert(r.half > 0.05)`, a
+     * geometric assertion on a published float. Driven, it bought nothing:
+     *
+     *     single 20 of 60 landed     staff 18     pair 19
+     *
+     * and all three stopped answering at the same 96° bearing. Driving the
+     * pair's `setHalf` to its 135° ceiling left it at 19. The rose was never
+     * the gate: `guardZoneAccepts` has two refusals and the bolts getting
+     * through were being thrown away by the other one, `theta > guard.reach` —
+     * the 100° shoulder line, identical in every set. With the four zones
+     * tiling the circle, a 103.5° half already answers every bearing inside
+     * that line a held zone can face, so no width of rose reaches past it.
+     *
+     * So the pair buys the SHOULDER LINE and the staff buys the ROSE, off one
+     * measured span each — see `Player._setReach0` and `_publishGuard`.
+     *
+     * ── AND THE AUTO-GUARD CONE IS WHY THE FIRST READING WAS NOISE ─────────
+     *
+     * `Bolts.update` falls through to `entry.guard` the moment the directional
+     * zone declines, and that is `CATCH.autoGuard` — 0.40 s of free cover any
+     * manual catch opens, which EVERY set has. A stream tight enough for the
+     * cone to still be open is mostly measuring a mechanic the three sets
+     * share. The bench leaves 0.60 s between rounds so it has shut, and
+     * `coneOpen` counts any round fired while it had not: asserted at zero
+     * below, so the isolation is proved rather than assumed.
+     *
+     * ── WHAT WOULD MAKE THIS GO RED ────────────────────────────────────────
+     *
+     * `Player._setReach0` back to 0 — the tree this replaced — and the pair's
+     * shoulder line comes back to the single blade's 100° and its 14 landed
+     * back to 19 or 20. Verified by doing it: the run reported
+     * "the pair answers out to 100° against one blade's 100°".
+     */
+    const B = await import('../_setbench.mjs');
+    const { snapshotShared } = await import('./_shared.mjs');
+    const snap = await snapshotShared();
+    const rows = {};
+    for (const id of B.SETS) rows[id] = await B.rose(id, snap);
+    const one = rows.single, staff = rows.staff, pair = rows.pair;
+    for (const r of [one, staff, pair]) {
+      assert(r.coneOpen === 0,
+        `${r.set} fired ${r.coneOpen} of its ${r.fired} rounds while the auto-guard cone was still `
+        + 'open — that cone is common to all three sets and would swamp the difference being measured');
+      assert(r.landed + r.turned + r.missed === r.fired,
+        `${r.set} fired ${r.fired} rounds and accounted for ${r.landed + r.turned + r.missed} — `
+        + 'the three verdicts are meant to tile the rose');
+      assert(r.landed > 0,
+        `${r.set} took nothing at all from sixty bolts — a bench where nobody can be hit measures nothing`);
+    }
+    /* THE SHOULDER LINE, READ OFF THE SHIPPED RULE. The scan walks one flank
+     * in 2° steps and reports the last bearing that was answered, which is
+     * what `guardZoneAccepts` actually did rather than what `GUARD.reach`
+     * says. It is a scan and not a bisection because the pair's own row is not
+     * monotone — 100° refused, 102° answered — which is the two gates
+     * interacting and is exactly what a bisection would have hidden. */
+    assert(staff.shoulder === one.shoulder,
+      `the saberstaff answers out to ${staff.shoulder}° and one blade to ${one.shoulder}° — the staff's `
+      + 'extra coverage is the rose, and a blade eating bolts behind your own back is not a feature');
+    assert(pair.shoulder >= one.shoulder + 6,
+      `the pair answers out to ${pair.shoulder}° against one blade's ${one.shoulder}° — two blades on `
+      + 'two bearings have to reach further round your own side than a hilt both hands are on');
+    /**
+     * AND IT HAS TO SHOW IN BOLTS AND NOT ONLY IN DEGREES.
+     *
+     * THE SCAN IS THE SHARP INSTRUMENT AND THIS ONE IS THE CORROBORATION, and
+     * the threshold says so. Even with every shared stream pinned the count
+     * carries about a bolt of run-to-run spread — the pair has read 14 and 15
+     * of 60 on the same code, and its scan row has come back both monotone and
+     * with a hole at 100°, which is the two gates interacting near the
+     * boundary. So the bound is 85% and not the 75% the measurement would
+     * support: it is set to fail on the tree this replaced, where the pair
+     * took 19 or 20 of one blade's 20, and to survive a bolt of weather.
+     */
+    assert(pair.landed <= one.landed * 0.85,
+      `sixty bolts round the circle: one blade took ${one.landed} and the pair ${pair.landed}. `
+      + 'That is inside the noise the old geometric assertion was hiding in');
+    assert(staff.landed <= one.landed,
+      `the saberstaff took ${staff.landed} of sixty against one blade's ${one.landed} — its wider rose `
+      + 'is supposed to answer at least as much');
+    return `sixty bolts round the circle, guard held: one ${one.landed} landed, staff ${staff.landed}, `
+      + `pair ${pair.landed} (−${(100 - pair.landed / one.landed * 100).toFixed(0)}%); `
+      + `shoulder line scanned at 2°: ${one.shoulder}°/${staff.shoulder}°/${pair.shoulder}°; `
+      + 'auto-guard cone shut on every round';
   });
 
   check('saberforms: measured on real bodies, each set covers and pays differently', () => {

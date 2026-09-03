@@ -2336,17 +2336,28 @@ export class SaberController {
      *
      * ── HOW FAR ROUND, AND WHY THAT IS ARITHMETIC ───────────────────────
      *
-     * `Player._setReach0` is `asin(cross / GUARD.radius)` off the BUILT
-     * weapon, exactly the way `GUARD.centre`'s 20° is `asin(0.4/1.4)` and
-     * `setHalf` is `asin((span/2)/1.4)`. `cross` is how far apart the two
-     * fists are carried, arm-scaled — `PAIR_CROSS` 0.42 m on a human — and it
-     * is the full separation rather than half of it because the claim is not
-     * that the pair's centre has moved: it is that the OFF HAND is carried
-     * that far further round its own flank than a two-handed grip's hands are,
-     * which is what `PAIR_CROSS`'s own note says it is ("the off hand is
-     * carried out and low, not tucked at the hip"). On a stock body that is
-     * asin(0.42/1.4) = 17.5°, so the shoulder line goes 100° → 117.5°, and a
-     * small frame gets less of it by exactly the arm it has.
+     * `Player._setReach0` is `asin((cross/2) / GUARD.radius)` off the BUILT
+     * weapon — the SAME measured span `setHalf` uses, on the other gate, and
+     * derived exactly the way `GUARD.centre`'s 20° is `asin(0.4/1.4)`. `cross`
+     * is how far apart the two fists are carried, arm-scaled: `PAIR_CROSS`
+     * 0.42 m on a human, so this is asin(0.21/1.4) = 8.6° and the shoulder
+     * line goes 100° → 108.6°. A small frame gets less of it by exactly the
+     * arm it has.
+     *
+     * HALF THE FIST SEPARATION AND NOT ALL OF IT, because `reach` is a
+     * SYMMETRIC half-angle: one value serves both flanks. The two fists
+     * straddle the centreline by `cross/2` each, so `cross/2` is what either
+     * flank can claim, and charging the whole separation to both sides would
+     * be counting the left hand's metres on the right hand's side. Driven at
+     * the full 0.42 — 17.5°, shoulder line 117.5° — the pair takes 12 of 60
+     * rather than 14, so this refusal costs two bolts and is worth them.
+     *
+     * MEASURED AFTER, on the same bench: single 20 of 60 landed, staff 18,
+     * pair 14, and a 2° scan of one flank reads the shoulder line off the
+     * shipped `guardZoneAccepts` at 100°/100°/108°. The scan is a scan and not
+     * a bisection because the pair's own row is not monotone — 100° refused,
+     * 102° answered — which is the two gates interacting and is exactly what a
+     * bisection would have hidden.
      *
      * THE CEILING IS ONE CENTRE DISC PAST THE SHOULDER LINE — 120° — and it is
      * `GUARD.centre` rather than a fourth number for the same reason the rose

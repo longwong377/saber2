@@ -195,9 +195,17 @@ export async function rose(set, snap, { bolts = 60, dist = 9, gap = 36, level = 
       for (let i = 0; i < n; i++) { world.update(STEP, input); world.enemies.length = 0; }
     };
     step(40);
-    let answered = 0;
+    /* `deflects` is the shipped callback's own count and `turned` is the
+     * per-ROUND verdict, and they are not the same number: one round can raise
+     * `onDeflect` twice — the pair has two blade entries and a bolt met by one
+     * of them can still be graded by the other — and a bolt can be met and
+     * still cost health. So the round is classified once, by health, and the
+     * three categories tile the sixty by construction. The first cut returned
+     * the raw counter under the name `answered` and its own accounting
+     * assertion went red at 61 of 60. */
+    let deflects = 0;
     const onDeflect = world.bolts.onDeflect;
-    world.bolts.onDeflect = (...a) => { answered++; return onDeflect.apply(world.bolts, a); };
+    world.bolts.onDeflect = (...a) => { deflects++; return onDeflect.apply(world.bolts, a); };
     /* THE AIM IS READ ONCE AND EVERY BEARING IS TAKEN OFF IT, so "in front"
      * means in front of the PLAYER — `_spinprobe.mjs` records the cost of
      * getting that backwards. */
@@ -215,21 +223,21 @@ export async function rose(set, snap, { bolts = 60, dist = 9, gap = 36, level = 
       const away = aim.clone().applyAxisAngle(UP, yaw);
       const from = p.chest.clone().addScaledVector(away, dist);
       const to = p.chest.clone(); to.y += at;
-      const hp = p.hp, a0 = answered;
+      const hp = p.hp, d0 = deflects;
       world.bolts.fire(from, to.sub(from).normalize(), { speed: 60, team: 1, damage: 10 });
       step(gap);
       if (p.hp < hp - 1e-6) return 'landed';
-      return answered === a0 ? 'missed' : 'answered';
+      return deflects === d0 ? 'missed' : 'turned';
     };
 
     /* ── (a) THE ROSE. Sixty bearings round the whole circle. */
-    let landed = 0, missed = 0, far = 0;
+    let landed = 0, missed = 0, turned = 0, far = 0;
     for (let i = 0; i < bolts; i++) {
       const yaw = -Math.PI + 2 * Math.PI * i / bolts;
       const r = shot(yaw, AIM_AT[i % AIM_AT.length]);
       if (r === 'landed') landed++;
       else if (r === 'missed') missed++;
-      else far = Math.max(far, Math.abs(yaw));
+      else { turned++; far = Math.max(far, Math.abs(yaw)); }
     }
 
     /**
@@ -256,10 +264,10 @@ export async function rose(set, snap, { bolts = 60, dist = 9, gap = 36, level = 
     let shoulder = 0;
     for (let d = scanFrom; d <= scanTo + 1e-9; d += scanStep) {
       const r = shot(d / DEG, 0);
-      scan.push(`${d}${r === 'answered' ? '+' : '-'}`);
-      if (r === 'answered') shoulder = d;
+      scan.push(`${d}${r === 'turned' ? '+' : '-'}`);
+      if (r === 'turned') shoulder = d;
     }
-    return { set, fired: bolts, landed, answered, missed, coneOpen,
+    return { set, fired: bolts, landed, turned, missed, coneOpen,
       far: +(far * DEG).toFixed(1), shoulder, scan: scan.join(' ') };
   } finally { world.unload?.(); }
 }
@@ -278,7 +286,7 @@ if (ENTRY) {
   console.log('\nROSE — sixty bolts round the circle at 9 m, one at a time, guard held');
   for (const s of SETS) {
     const r = await rose(s, snap);
-    console.log(`  ${s.padEnd(7)} ${r.landed}/${r.fired} landed · ${r.answered} answered · ${r.missed} never arrived`
+    console.log(`  ${s.padEnd(7)} ${r.landed}/${r.fired} landed · ${r.turned} turned · ${r.missed} never arrived`
       + ` · furthest bearing answered ${r.far}° · cone open on ${r.coneOpen}`);
     console.log(`          shoulder line, scanned at 2°: ${r.shoulder}°   ${r.scan}`);
   }

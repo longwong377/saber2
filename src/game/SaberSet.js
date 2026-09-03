@@ -178,10 +178,11 @@ export const SET_IDS = SABER_SETS.map((s) => s.id);
  *
  * ── AND IT IS PAID FOR IN THE ENVELOPE, ONE FIELD AWAY ──────────────────
  *
- * See `DUAL_SLASH` below: `rise`/`drop` 0.74/0.76 → 0.69/0.71, which off
- * SLASH's own width table is about 1.2 m/s of tip — 8% softer per contact for
- * the 8% the legs were given. FASTER FEET, SOFTER HANDS, one for one, in the
- * currency the note over `STAFF_SLASH` says the two new sets are paid in.
+ * See `DUAL_SLASH` below: `rise`/`drop` 0.74/0.76 → 0.72/0.74. The pair keeps
+ * 90% of one blade's arc for 108% of its pace, which costs it a MEASURED 10%
+ * of the cut work it banks against four bodies at once — the currency the note
+ * over `STAFF_SLASH` says the two new sets are paid in, and a much dearer
+ * currency than that note's tip-speed table makes it look.
  *
  * The cadence was tried first and withdrawn: `slash.cooldown` under 0.30 does
  * not reach the weapon at all, because every light press also opens the stab
@@ -231,10 +232,11 @@ export function paceOf(setId) {
  * player's "the second blade is instantly ready for a follow-up strike",
  * delivered by the shaft rather than by a number.
  *
- * THE PAIR sits between them at 0.69/0.71 and 0.26, because it genuinely is
+ * THE PAIR sits between them at 0.72/0.74 and 0.26, because it genuinely is
  * between them: two lighter weapons, each on its own bearing. Its arc is
  * narrower than it was first authored at — see `DUAL_SLASH` itself, where the
- * 0.05 is what its 8% of pace is paid for with.
+ * 0.02 is what its 8% of pace is paid for with, and where the measurement is
+ * that the arc is a far dearer currency than a tip speed.
  *
  * `chain` is the window the third press has to arrive in. The staff's is longer
  * (0.72) because its own cooldown is shorter and a sequence you cannot reach is
@@ -276,7 +278,7 @@ export const STAFF_HEAVY = {
  * The pair's alternating cut. Between the single blade and the staff on every
  * term, which is what the form is.
  *
- * ── `rise`/`drop` 0.74/0.76 → 0.69/0.71 IS WHAT THE PAIR'S FEET COST IT ──
+ * ── `rise`/`drop` 0.74/0.76 → 0.72/0.74 IS WHAT THE PAIR'S FEET COST IT ──
  *
  * `paceOf` above hands this set 8% of pace at every one of the four paces, and
  * nothing in this project is allowed to be only better. The price is charged
@@ -285,13 +287,33 @@ export const STAFF_HEAVY = {
  * are refused: a shorter `PARRY.cooldown`, a `SPEED_GRADE` move or a damage
  * multiplier would every one of them be shared by every blade in the game.
  *
- * Read off SLASH's own shipped width table, which is 24.7 m/s of tip per unit
- * of `rise` across its three measured rows: 0.05 narrower is about 1.2 m/s
- * slower, so the pair's light cut goes from ~15.6 m/s to ~14.4 — down 8%, for
- * the 8% the legs were given. FASTER FEET, SOFTER HANDS, and the exchange rate
- * is one for one in the two currencies the form is written in. It still sits
- * between the staff's 0.60 and the single blade's 0.80, which is the whole
- * shape of the set.
+ * 0.72 is 90% of SLASH's 0.80 for 108% of its pace, which is the exchange
+ * `saberforms: each set is a trade` now asserts as a BOUND rather than as a
+ * direction: a set may keep no more of the single blade's arc than the pace it
+ * was given leaves it.
+ *
+ * ── AND THE ARC IS FAR SHARPER THAN THE WIDTH TABLE MAKES IT LOOK ────────
+ *
+ * SLASH's own table reads the arc as tip speed, and on that reading 0.05 is
+ * about 1.2 m/s — 8% of a contact, which is what the first cut of this took.
+ * MEASURED, it is not what 0.05 does. A free swing on the real rig peaks the
+ * tip at 18.39 m/s at 0.74, 18.10 at 0.72 and 17.67 at 0.69 — so the width
+ * table's slope holds — but the arc is also HOW MUCH OF THE RING THE BLADE
+ * CROSSES, and against four bodies at 1.20 m that second effect is an order of
+ * magnitude louder. Cut work banked over the same 900 frames, same script,
+ * same bodies:
+ *
+ *     rise 0.74   173     ← as it shipped
+ *     rise 0.72   156     ← −10%, and this is the price
+ *     rise 0.71   135
+ *     rise 0.69   111     ← −36%, and TWO shipped checks go red
+ *
+ * At 0.69 `saberforms: against four bodies at once the pair does the most
+ * work` falls under its own +20% floor and `throw one and you can still fight
+ * with the other` falls under its 0.3 ratio — the set stops being the thing
+ * the player asked for. **A price that deletes the feature is not a price**,
+ * and the reason the first cut looked affordable is that it was priced off a
+ * table of tip speeds and the arc is not only a tip speed.
  *
  * ── AND `cooldown` IS NOT THE PRICE, BECAUSE `cooldown` IS INERT HERE ────
  *
@@ -314,10 +336,19 @@ export const STAFF_HEAVY = {
  * than no price at all. The masking itself is left alone deliberately — the
  * fix lives in a line that reads `SLASH` for all three sets, and touching it
  * moves the SABERSTAFF's tempo, which is measured and green.
+ *
+ * MEASURED EITHER SIDE, on `tools/_setbench.mjs`'s pace arm — ten seconds of
+ * held-forward mashing, the same script in all three sets:
+ *
+ *     before   single 4.600 m/s · 17 presses    pair 4.600 m/s · 25 presses
+ *     after    single 4.600 m/s · 17 presses    pair 4.967 m/s · 25 presses
+ *
+ * The single blade to three decimals and to the press, which is the point of
+ * keying the term off `hands`.
  */
 export const DUAL_SLASH = {
   wind: 0.075, cut: 0.115, dur: 0.315,
-  rise: 0.69, drop: 0.71, lift: 0.30, fall: 0.72,
+  rise: 0.72, drop: 0.74, lift: 0.30, fall: 0.72,
   cooldown: 0.26, chain: 0.62, lunge: 0.30,
 };
 
