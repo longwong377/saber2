@@ -405,6 +405,15 @@ const KINDS = [
      * damage so that it stays true either way round. */
     blurb: 'The only companion whose attacks change the LEVEL rather than the enemy. '
       + 'It gets visibly bigger across its life, and the size buys nothing.',
+    /* THE WRITER THE CARD NEVER HAD. The claim above stood for a whole round
+     * with no line anywhere reading `rec.runs` for a size — a field promised
+     * by a surface and written by nobody (HANDOFF §0.1b, the other way
+     * round). `bodyScaleOf` is that line: the pup spawns at the archetype's
+     * 0.55 on its first run and at 0.55 × `to` after `runs` runs, fast at
+     * first and slowing, and NOTHING that fights reads it — the combat
+     * numbers stay on `A.scale`, exactly as `Enemy.bodyScale` argues for a
+     * smallfolk Jedi. */
+    grow: { runs: 24, to: 1.75 },
   },
   {
     id: 'wook', label: 'Wookiee', archetype: 'wook',
@@ -532,6 +541,28 @@ export function paceOf(kind) {
   const K = COMPANION_KINDS[kind];
   const f = Math.max(0.1, Math.min(PACE_CAP, Number(K?.pace) || 0.5));
   return PLAYER_SPRINT * f;
+}
+
+/**
+ * THE SIZE A COMPANION'S BODY IS BUILT AT, off the record it is built from.
+ *
+ * The archetype's `scale` for every kind, times the kind's `grow` curve where
+ * it has one — read off `rec.runs`, which is the one number in the record
+ * that says how long the animal has been alive. Derived, never stored:
+ * `Kennel.js` says why a scale on disk is a pup filling the screen. Both
+ * bodies read it — `fieldCompanion` hands it through `spawnEnemy`, the deck
+ * figure hands it to the builder — so the animal that follows you on the
+ * deck is the same size as the one that fights.
+ */
+export function bodyScaleOf(kind, rec) {
+  const K = COMPANION_KINDS[kind];
+  const base = ARCHETYPES[K?.archetype]?.scale ?? 1;
+  const g = K?.grow;
+  if (!g) return base;
+  const runs = Math.max(0, Number(rec?.runs) || 0);
+  const k = Math.min(1, runs / Math.max(1, g.runs));
+  /* Fast early, slowing: most of the growing happens while it is still a pup. */
+  return base * (1 + (g.to - 1) * (1 - (1 - k) * (1 - k)));
 }
 
 /** Does this kind own this duty at all? Separate from whether the RUNG allows it. */

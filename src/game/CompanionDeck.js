@@ -106,7 +106,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES, Enemy } from './Enemy.js';
 import { BipedAnimator } from './Rig.js';
-import { COMPANION_KINDS } from './CompanionKinds.js';
+import { COMPANION_KINDS, bodyScaleOf } from './CompanionKinds.js';
 import { load as loadKennel } from './Kennel.js';
 import { companionOptsFrom } from './Bodies.js';
 /* The idle-and-reaction layer, shared verbatim with the field body — see
@@ -374,7 +374,7 @@ export function callTheCompanion(world) {
   const A = ARCHETYPES[K.archetype];
   if (!A?.build) return null;
 
-  const built = A.build({ scale: A.scale, ...companionOptsFrom(rec.look) });
+  const built = A.build({ scale: bodyScaleOf(rec.kind, rec), ...companionOptsFrom(rec.look) });
   const root = built?.rig?.root || built?.group;
   if (!root) return null;
 

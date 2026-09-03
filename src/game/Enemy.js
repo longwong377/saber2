@@ -3013,6 +3013,9 @@ export class Enemy {
      * after the body exists, and a hide chosen after the mesh is built is a
      * hide nobody ever sees. See `companionOptsFrom`. */
     this._cmpLook = opts?.companionLook ?? null;
+    /* …AND ITS SIZE, for the same reason the look does: the builder runs
+     * inside the constructor. `CompanionKinds.bodyScaleOf` is the one writer. */
+    this._cmpScale = opts?.companionScale ?? null;
     /* Which chassis's vocabulary his kit is written in — the `Trooper` record
      * has carried `kind` since attributes existed, so the spawn hands it over
      * rather than this file guessing from an archetype name. */
@@ -3455,6 +3458,10 @@ export class Enemy {
        * that door and it is empty for every body that is not one, so this
        * costs a spread of `{}` on every other spawn in the game. */
       ...companionOptsFrom(this._cmpLook),
+      /* A grown companion is built grown. `_build` then reads `bodyScale`
+       * off the rig it gets back, so anatomy follows; the combat numbers
+       * stay on `A.scale`, which is what "the size buys nothing" means. */
+      ...(this._cmpScale ? { scale: this._cmpScale } : {}),
     };
     /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
      * to be a special case on this line, spread AFTER the man's own kit, so a

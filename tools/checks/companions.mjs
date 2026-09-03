@@ -247,6 +247,15 @@ export async function run({ check, assert }) {
         const out = { rung: K.rungOf(recFor(xp)).label, maxHp: e.maxHp, dmg: e.attackDamage, speed: e.speed };
 
         const at = new THREE.Vector3(p.position.x + 2, p.position.y, p.position.z + 2);
+        /* BOTH BOUTS START ON THE SAME MARK. `fieldCompanion` walks a ring of
+         * bearings for a clear spawn now (the Geonosis note), and where that
+         * puts the animal is not this fixture's business: a SWORN body at
+         * ×1.03 speed that starts half a metre further off arrives a frame
+         * later and swings once less, and the totals stop being a comparison.
+         * So the animal is stood two metres from the dummy, the same two
+         * metres, before the first frame is stepped. */
+        e.position.set(at.x - 2.2, at.y, at.z - 0.3);
+        e._syncBody?.();
         const foe = world.spawnEnemy('b1', at);
         assert(foe, 'no hostile to hit');
         foe.team = 1;
@@ -3730,10 +3739,21 @@ export async function run({ check, assert }) {
       assert(gapMax < C.settledBand(e) && speedMax < 0.35,
         `the animal never settled (gap ${gapMax.toFixed(2)} m against a ${C.settledBand(e).toFixed(2)} `
         + `band, ${speedMax.toFixed(2)} m/s) — this window measures a walk, not an idle`);
+      /**
+       * THE ROOT IS CLOSED NOW, AND THIS HALF TURNED ROUND WITH IT. The move
+       * wrap's `faceOwner` brings a settled body round to its owner (see
+       * `installCompanionMove`), so the owner is no longer 1.8 rad round
+       * behind the shoulder — he is on the animal's nose, inside the neck,
+       * and the gaze has something it can reach. The assertion that used to
+       * stand here demanded the OLD geometry (owner outside the neck) and
+       * would have been a check that asserts the bug (HANDOFF §0.1f). What
+       * is asserted instead is the thing the player sees: the body faces
+       * you, and the head is still free on top of that.
+       */
       const owner = Math.abs(wrap(bearing(e.position, p.position) - (e.facing || 0)));
-      assert(owner > LIFE.look.yaw,
-        `the fixture left the owner ${owner.toFixed(2)} rad off the animal's nose, inside its `
-        + `${LIFE.look.yaw} rad neck — this window cannot show a saturated gaze at all`);
+      assert(owner < 0.35,
+        `settled at your heel the animal's body is ${owner.toFixed(2)} rad off you — the move wrap `
+        + 'is not bringing it round to face its owner');
 
       const frac = pinned / n;
       assert(frac < 0.05,
@@ -3745,7 +3765,7 @@ export async function run({ check, assert }) {
         + `${travel.toFixed(1)} rad in total) — not sitting on the stop is not the same thing as `
         + 'alive, and 0.12 rad is what a head that only counter-rotates the tail manages');
       return `${(frac * 100).toFixed(1)}% of ${(n / 30) | 0} s on the ${LIFE.look.yaw} rad stop with `
-        + `the owner ${owner.toFixed(2)} rad round behind it; the head still spans `
+        + `the body ${owner.toFixed(2)} rad off its owner; the head still spans `
         + `${(hHi - hLo).toFixed(2)} rad and travels ${travel.toFixed(1)} rad`;
     } finally { world.unload(); }
   });
@@ -4342,6 +4362,50 @@ export async function run({ check, assert }) {
         + `${((ribHi - ribLo) * 100).toFixed(1)}% at ${(L.breath * 60).toFixed(1)}/min, `
         + `${beats.size} beat(s) in 40 s — and sat, its head is ${off.toFixed(2)} rad off your chest`;
     } finally { world.unload(); Kn.clear(); }
+  });
+
+  check('companion: the pup GROWS off `runs`, and no other kind does', async () => {
+    /**
+     * THE CARD PROMISED IT AND NOBODY WROTE IT. The pup's blurb has said "it
+     * gets visibly bigger across its life" since the kind landed, and
+     * `Kennel.js` argues at length why the scale must be DERIVED from `runs`
+     * and never stored — but a grep of the tree found no line reading
+     * `rec.runs` for a size: a field promised by a surface and written by
+     * nobody. `bodyScaleOf` is the writer now, and this drives it on the two
+     * bodies a companion has — the fielded Enemy through `spawnEnemy` and
+     * the deck figure through the builder — so both are the same size.
+     */
+    const { COMPANION_KINDS, bodyScaleOf } = await import('../../src/game/CompanionKinds.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const rec = (kind, runs) => ({ id: 'g' + runs, kind, name: 'G', xp: 0, runs, areas: 0, kills: 0,
+      saves: 0, downs: 0, orders: 0, ranged: 0, tempers: [], story: [], scars: [] });
+    let grown = 0;
+    for (const k of Object.keys(COMPANION_KINDS)) {
+      const a = bodyScaleOf(k, rec(k, 0)), b = bodyScaleOf(k, rec(k, 12)), c = bodyScaleOf(k, rec(k, 24)), d = bodyScaleOf(k, rec(k, 99));
+      assert(near(a, ARCHETYPES[COMPANION_KINDS[k].archetype].scale ?? 1, 1e-9), `${k} at 0 runs is not the archetype's scale`);
+      if (COMPANION_KINDS[k].grow) {
+        grown++;
+        assert(b > a * 1.2 && c > b && near(c, d, 1e-9), `${k}: ${a.toFixed(3)} → ${b.toFixed(3)} → ${c.toFixed(3)} → ${d.toFixed(3)} is not a curve that grows and caps`);
+      } else {
+        assert(near(a, d, 1e-9), `${k} changes size with runs and has no grow row`);
+      }
+    }
+    assert(grown === 1, `${grown} kinds grow; the design puts the growth question on the pup alone`);
+    /* And the body: the same kind fielded at 0 and at 24 runs is two sizes. */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { fieldCompanion } = await import('../../src/game/Companions.js');
+    const sizes = [];
+    for (const runs of [0, 24]) {
+      const { world } = await bootWorld({ level: 'colosseum',
+        settings: { mode: 'waves', level: 'colosseum', allies: 0, quality: 'low' }, runSeed: 7 });
+      try {
+        const e = fieldCompanion(world, world.player, 'pup', { rec: rec('pup', runs) });
+        assert(e, 'no pup fielded');
+        sizes.push(e.bodyScale);
+      } finally { world.unload(); }
+    }
+    assert(sizes[1] > sizes[0] * 1.5, `a pup at 24 runs is ${sizes[1].toFixed(3)} against ${sizes[0].toFixed(3)} at 0 — it did not grow on the body`);
+    return `pup ${sizes[0].toFixed(2)} → ${sizes[1].toFixed(2)} on the body; ${grown} of ${Object.keys(COMPANION_KINDS).length} kinds grow`;
   });
 
 }

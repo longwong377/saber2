@@ -84,9 +84,11 @@
  * loyalty is the whole relationship.
  */
 
+import { TAU } from '../engine/MathUtil.js';
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
-import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf } from './CompanionKinds.js';
+import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf, bodyScaleOf } from './CompanionKinds.js';
+import { spawnClear } from './Spawn.js';
 import { award, RANGED_MARK, rangedRun, readOne, temperSwing } from './Kennel.js';
 /* The cruise/stoop model, for the one kind that never lands — see `adopt`. */
 import { installFlight } from './Flight.js';
@@ -2265,6 +2267,9 @@ function installCompanionMove(e) {
      */
     if (e.driven) return move(dt, ctx);
     let was = null;
+    /* Set on a frame the animal is settled at its station with nothing to do;
+     * `faceOwner` then turns it to you after `_move` has run. */
+    let heelFace = false;
     /* `ownerUp` and not a fourth spelling of the same three clauses — see the
      * four readers above `dutyAllows`. */
     const owned = ownerUp(e);
@@ -2356,6 +2361,21 @@ function installCompanionMove(e) {
           if (want > e.speed) { was = e.speed; e.speed = want; }
         } else if (!busy) {
           e.wish = null;
+          /**
+           * IT LOOKS AT YOU WHEN IT HAS ARRIVED. `Enemy._move` keeps a settled
+           * body's LAST WALKING HEADING — with no target and no velocity its
+           * `want` is its own `facing` — so an animal that trotted to your
+           * heel stood there facing wherever the last step pointed, measured
+           * at 104° off you (HANDOFF §0.0 item 1). The gaze layer in
+           * `CompanionLife` could turn the head but not the body. Two things
+           * close it here, at the root: the wish direction that walked it
+           * home is dropped from `toTarget` the frame it arrives (that vector
+           * survives the walk and `_move` keeps swinging the body toward it —
+           * the AWAY case in the same note), and `faceOwner` below brings the
+           * body round to you at a man's own turn gain.
+           */
+          e.toTarget = null;
+          heelFace = owned && !held;
         }
       }
     }
@@ -2367,8 +2387,30 @@ function installCompanionMove(e) {
      * 6.3 → 6.5 and never came down — a dog that gets permanently faster every
      * time you walk away from it.
      */
-    try { return move(dt, ctx); } finally { if (was !== null) e.speed = was; }
+    try { return move(dt, ctx); } finally {
+      if (was !== null) e.speed = was;
+      if (heelFace) faceOwner(e, dt);
+    }
   };
+}
+
+/**
+ * Bring a settled animal's body round to face its owner. Only ever called on
+ * a frame with no target, no wish and the station reached, so nothing it
+ * writes fights the brain, the walk or a driver. The gain is `_move`'s own
+ * for a man (8) scaled by the kind's `turnRate` where it declares one, so a
+ * heavy kind comes about at its own pace rather than snapping.
+ */
+function faceOwner(e, dt) {
+  const p = e._cmpOwner?.position;
+  if (!p || !(dt > 0)) return;
+  const dx = p.x - e.position.x, dz = p.z - e.position.z;
+  if (dx * dx + dz * dz < 0.09) return;
+  const want = Math.atan2(dx, dz);
+  let d = want - e.facing;
+  while (d > Math.PI) d -= TAU;
+  while (d < -Math.PI) d += TAU;
+  e.facing += d * Math.min(1, dt * (e.A?.turnRate ?? 8) * 0.75);
 }
 
 /**
@@ -3322,10 +3364,36 @@ export function fieldCompanion(world, owner, kind, opts = {}) {
     owner.position.z - Math.cos(yaw) * HEEL.back,
   );
   _v2.y = world.terrain?.height ? world.terrain.height(_v2.x, _v2.z) : owner.position.y;
+  /**
+   * AND NOT INSIDE A WALL. The heel point is 3.4 m off the owner's back, and
+   * on Geonosis the player's own spawn puts that point 0.90 m into a static
+   * face — the animal then spent forty seconds in the wall slide's closed
+   * circuit at 3.76 m/s, never settling, never idling (HANDOFF §0.1f). The
+   * fix the note asked for is 0.4 m of clearance; this asks `spawnClear`,
+   * the one question every other body placed near the player asks, and
+   * walks a ring of bearings at three radii until it answers yes. The heel
+   * itself is unchanged: the animal spawns off the shoulder it can and then
+   * walks to its station on its own legs.
+   */
+  if (!spawnClear(world, _v2.x, _v2.y, _v2.z, 0.6)) {
+    const h = (x, z) => (world.terrain?.height ? world.terrain.height(x, z) : owner.position.y);
+    let found = false;
+    for (const r of [HEEL.back, HEEL.back * 1.6, HEEL.back * 2.4]) {
+      for (let i = 0; i < 8 && !found; i++) {
+        const a = yaw + Math.PI + i * (TAU / 8);
+        const x = owner.position.x + Math.sin(a) * r, z = owner.position.z + Math.cos(a) * r;
+        if (spawnClear(world, x, h(x, z), z, 0.6)) { _v2.set(x, h(x, z), z); found = true; }
+      }
+      if (found) break;
+    }
+  }
   /* THE LOOK RIDES THE SPAWN, because the builder reads it and the builder
    * runs inside the constructor — see `Enemy._cmpLook`. Everything else about
    * the animal is hung on afterwards by `adopt`; its colours cannot be. */
-  const e = world.spawnEnemy(K.archetype, _v2, { companionLook: opts.rec?.look || null });
+  const e = world.spawnEnemy(K.archetype, _v2, {
+    companionLook: opts.rec?.look || null,
+    companionScale: bodyScaleOf(kind, opts.rec),
+  });
   if (!e) return null;
   /* THE TEAM IS THE WHOLE OF "IT IS ON YOUR SIDE" — Command.js's own header
    * says so: the only things that make a body yours are a team number and the
