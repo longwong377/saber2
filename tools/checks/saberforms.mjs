@@ -344,7 +344,7 @@ export async function run({ check, assert }) {
      * 60 Hz and 9.5% at 30, a protection that doubles when the machine slows
      * down. Then it answered a 100° WEDGE of the sightline and this check said
      * it was a barrier, because every shot the bench had ever fired was inside
-     * ±10° of that sightline — the one bearing the ordinary held guard already
+     * ±20° of that sightline — the one bearing the ordinary held guard already
      * covers in every set. Driven at five bearings on that tree:
      *
      *     bearing    0°     45°    90°   135°   180°

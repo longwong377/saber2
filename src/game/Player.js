@@ -3707,7 +3707,7 @@ export class Player {
        * cooldown nothing can clear by name, which is the reason the barrier's
        * and the ward's are declared here rather than materialising on the first
        * cast. `orbit` has no row because it has no clock: what limits the spin
-       * barrier is 13.6 Force a second and a hard 4.0 s cap. */
+       * barrier is 13.6 Force a second and a hard 2.4 s cap. */
       throwOff: 0 };
     /* The support calls. One per player, constructed here rather than lazily,
      * so `hud` and the checks can read the entry state on frame one instead of
@@ -4016,7 +4016,7 @@ export class Player {
    * meets a bar edge-on and goes through, exactly as it looks." What it did not
    * say is that the ask was *"spin the staff at high speeds AROUND YOUR
    * BODY"*, and that `tools/_spinprobe.mjs` fired every shipped shot inside
-   * ±10° of the sightline, so the check that called it a barrier was measuring
+   * ±20° of the sightline, so the check that called it a barrier was measuring
    * the one arc the ordinary held guard already covers in every set. Driven at
    * five bearings, twelve bolts each, bar refilled and ring re-raised before
    * every shot, spin-down control alongside:
@@ -9510,7 +9510,7 @@ export class Player {
    * timing, and the whole contact ladder collapses to its bottom rung. The
    * screen goes with it, so a staff user spinning is covering nobody but
    * himself, and with 13.6 Force/s and the stamina bar both draining under a
-   * hard 4.0 s cap a duellist walks straight through it — a duellist is not a
+   * hard 2.4 s cap a duellist walks straight through it — a duellist is not a
    * bolt and `guardIntercept` is only ever asked about bolts.
    */
   spinBarrier(ctx) {
@@ -9547,7 +9547,9 @@ export class Player {
      * ordinary ladder, so at suppression.mjs's measured answering rate this is
      * roughly 11 stamina/s on top of 13.6 Force/s against ZERO Force regen —
      * under five seconds from a full bar under fire, on two bars at once. A
-     * panic button, not a stance, with a hard 4.0 s cap on top of the money.
+     * panic button, not a stance, with a hard 2.4 s cap on top of the money — cut
+     * from 4.0 to pay for a barrier that answers every bearing rather than a
+     * 100° wedge of the sightline. See `ORBIT.cone`.
      */
     if (this.throwState === 'orbit') {
       const arm = this.sidearm;

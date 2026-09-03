@@ -209,13 +209,14 @@ async function pose(name, spec) {
   console.log('wrote', name);
 }
 
-/* FIVE, NOT EIGHT. A frame through swiftshader on a loaded box is seconds, and
+/* SIX, NOT EIGHT. A frame through swiftshader on a loaded box is seconds, and
  * a tool that takes forty minutes is a tool nobody runs. These are the five
  * that show a different channel each: the breath at both ends, the gaze, one
  * beat that moves the head and one that moves the whole spine. */
 await pose('rest-in', { tBreath: Math.PI / 2 });
 await pose('rest-out', { tBreath: -Math.PI / 2 });
 await pose('look', { yaw: 0.55, pitch: 0.18 });
+await pose('glance', { beat: 'glance', beat_t: 0.5 });
 await pose('sniff', { beat: 'sniff', beat_t: 0.5 });
 await pose('shake', { beat: 'shake', beat_t: 0.28 });
 

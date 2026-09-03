@@ -2745,6 +2745,14 @@ export class HUD {
      * feature that was asked not to move. A single-blade player's row is the
      * fourteen slots it has always been, in the order it has always had them.
      *
+     * AND THE CODEX DELIBERATELY DOES THE OPPOSITE — `Menu.js` prints both
+     * cards in every set, and its own note says why: "a card that appeared and
+     * disappeared with a menu choice would be a page that teaches you the game
+     * you are currently holding rather than the game." That is not an
+     * inconsistency to tidy away. A manual lists what exists; a wheel is a
+     * readout of what this hand can do this second, and the two answer
+     * different questions.
+     *
      * The shoto's lit border is "the blade is out", exactly as the disc's is.
      * The orbit's is "the ring is turning", which is the readout that matters
      * most in the row — it is what tells the player two bars are draining.

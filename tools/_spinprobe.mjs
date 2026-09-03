@@ -50,14 +50,15 @@ export async function bootStaff(set = 'staff') {
  * ── `bearing`, AND WHY THE VERSION WITHOUT IT MEASURED THE WRONG THING ────
  *
  * Every shot this file fired for its whole life was inside `spread` of the
- * player's own sightline — ±10° at the shipped 0.35 rad. That is the bearing
- * the ORDINARY held guard already covers in every set, so a barrier that
- * answered nothing anywhere else could pass a check that said it stopped bolts.
- * Driven at four more bearings on the tree this replaced:
+ * player's own sightline: `(i % 7 - 3) × spread / 3` puts the widest offset at
+ * the shipped 0.35 rad itself, which is ±20°. That is the bearing the ORDINARY
+ * held guard already covers in every set, so a barrier that answered nothing
+ * anywhere else could pass a check that said it stopped bolts. Driven at four
+ * more bearings on the tree this replaced, 12 rounds each:
  *
  *     bearing    0°     45°    90°   135°   180°
- *     spin      0/12   0/12   4/12  6/12   6/12   landed
- *     control   6/12   6/12   5/12  5/12   5/12
+ *     spin      0/12   2/12   4/12  6/12   6/12   landed
+ *     control   6/12   6/12   6/12  6/12   6/12
  *
  * — behind and off the rear flank the spin stopped NOTHING, because the guard
  * descriptor `Player.bladeGuard` publishes carried `cone = GUARD.reach / 2`,

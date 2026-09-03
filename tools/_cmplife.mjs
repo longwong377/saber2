@@ -7,13 +7,20 @@
  * on the frame it appears — because an idle beat only fires when nothing is
  * happening, and something is always happening in a wave.
  *
- * THE LEVEL DEFAULTS TO THE COLOSSEUM AND THAT IS NOT ARBITRARY. On Geonosis
- * a companion at heel never settles: driven for forty seconds with the field
- * cleared and the player standing still, it held a 1.30 m gap to its own
- * station at 4.25 m/s indefinitely, its `wish` alternating between the walk
- * home and a perpendicular — `Enemy._move`'s stuck commit against the terrain
- * clutter. Same fixture on the colosseum floor: gap 0.07 m, speed 0.000, calm
- * for 39.5 s of 40. Pass a level to see it either way.
+ * THE LEVEL DEFAULTS TO THE COLOSSEUM AND THAT IS NOT ARBITRARY — but the
+ * reason this file used to give was too big. It said "on Geonosis a companion
+ * at heel never settles". Re-measured, it is the PLAYER'S SPAWN POINT on
+ * Geonosis and nowhere else on it: `fieldCompanion` drops the animal at
+ * (0.00, 4.60) with its heel station 0.90 m away at (-0.90, 4.60), on the far
+ * side of a static face whose normal points +X, and `Enemy._move`'s wall slide
+ * walks a closed circuit round it — 64% of frames in wall contact, 3.76 m/s
+ * mean, a 1.98 m mean gap against a 0.61 m band, and `_stuckT` never once over
+ * 0.5 s because a body doing four metres a second is not stuck by its own
+ * measure. Stand the player anywhere else on the same level, or start the
+ * animal 0.4 m further back, and it settles at a 0.04 m gap and 0.000 m/s with
+ * beats firing; walk 18 m off the spawn and the loop ends inside five seconds.
+ * Colosseum floor: gap 0.07 m, speed 0.000, calm for 39.5 s of 40. Pass a
+ * level to see it either way.
  */
 import './dom-shim.mjs';
 const { bootWorld, idleInput } = await import('./checks/_coop.mjs');

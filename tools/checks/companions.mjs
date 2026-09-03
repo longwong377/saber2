@@ -422,12 +422,13 @@ export async function run({ check, assert }) {
      * NOTHING ANYWHERE ASSERTED A BLURB AGAINST THE ROW IT DESCRIBES, and one
      * of them was lying at the point of choice.
      *
-     * `ARCHETYPES.wook` is `melee: true` with no `ranged` and no `weapon`. Its
+     * `ARCHETYPES.wook` was `melee: true` with no `ranged` and no `weapon`. Its
      * blurb said "the only one with both bands", and the picker renders that
      * sentence verbatim. A player who took the wookiee for its gun got a body
-     * that has never fired one — and that is the worst place in the feature for
+     * that had never fired one — and that is the worst place in the feature for
      * a false sentence, because every other one costs a surprise and this one
-     * costs the pick.
+     * costs the pick. Both halves moved: the row took the bowcaster the bodies
+     * lane built, and the card claims exactly the one band the row has.
      *
      * ── WHY THIS IS A PROSE CHECK AND THAT IS NOT A MISTAKE ──────────────
      *
@@ -447,19 +448,18 @@ export async function run({ check, assert }) {
      * bolt would fail all four and teach the next person to delete the check.
      *
      * BOTH DIRECTIONS, because each catches the opposite defect:
-     *   a card that CLAIMS a band the row has not got — the wookiee, today
+     *   a card that CLAIMS a band the row has not got — what the wookiee did
      *   a row that HAS one and a card that never says so — a companion whose
      *     gun the player cannot find out about before they pick it, which is
      *     the same defect standing the other way up
-     * The second half is what makes the day the bowcaster lands a day this
-     * check goes red until the sentence is put back.
+     * The second half is what held while the bowcaster was still being built:
+     * a row that took the field without the sentence moving would have gone red
+     * on the way past.
      *
      * AND A CARD SAYS WHAT A BODY IS, NEVER WHAT IT IS NOT. A regular
-     * expression cannot read a negation, so "it has no gun yet" is a claim as
-     * far as this is concerned and the wookiee's card says "it fights in reach
-     * and nowhere else" instead — which is the better sentence anyway, and the
-     * constraint is written here so the next person spends a minute rather
-     * than an afternoon on it.
+     * expression cannot read a negation, so a card that wanted to say "it has
+     * no gun" would read here as a claim that it has one. Written down because
+     * it costs a minute to know and an afternoon to find out.
      */
     const { ARCHETYPES } = await import('../../src/game/Enemy.js');
     const CLAIM = /\b(both bands|ranged|rifle|carbine|bowcaster|blaster|gun)\b/i;
@@ -480,7 +480,9 @@ export async function run({ check, assert }) {
        * this is the repository's own invariant pinned rather than a new rule,
        * and it is what stops "give the row the field and let the builder meet
        * you there" from putting a bowcaster in a wookiee's hands that nothing
-       * ever pulls.
+       * ever pulls. Measured from the other side by the check below: with
+       * `melee: true` left standing beside the weapon, the animal fires ZERO
+       * times in a minute with a hostile eight metres away.
        */
       assert(!A.weapon || A.ranged,
         `${id} carries a '${A.weapon}' and is not ranged — its brain will never fire it`);
@@ -500,6 +502,123 @@ export async function run({ check, assert }) {
     assert(armed.length >= 1, 'no companion carries a gun at all — the equality above proves nothing');
     assert(armed.length < K.COMPANION_ORDER.length, 'every companion carries a gun — likewise');
     return `${K.COMPANION_ORDER.length} cards against their rows, ${armed.length} armed: ${rows.join(', ')}`;
+  });
+
+  check('companion: the one with a gun fires it, keeps its distance, and never at you', async () => {
+    /**
+     * A BAND IS A BEHAVIOUR, AND THE CHECK ABOVE ONLY READS THE TABLE.
+     *
+     * `ranged: true, weapon: 'bowcaster'` on the wookiee's row is a claim that
+     * this animal fights at a distance. Three things had to be true for that to
+     * be more than two fields, and every one of them is a thing that has
+     * actually been wrong in this feature before:
+     *
+     *   IT FIRES. `Enemy._brain` ends `if (A.melee) this._meleeBrain(…); else
+     *   this._rangedBrain(…)` — one band per body off one flag — so a row that
+     *   kept `melee: true` beside its new weapon would carry a bowcaster it
+     *   never pulls, and the rifle pose would never run (measured by the bodies
+     *   lane on a posed wookiee: a 47° bore against 0.26° through the ranged
+     *   brain). `_shoot` is wrapped and counted, so this is the shipped firing
+     *   door and not a bolt count that something else could have written.
+     *
+     *   IT STAYS OUT THERE. A shooter that walks into its own reach is a melee
+     *   animal wearing a gun. The MELEE CONTROL is the massiff in the same
+     *   fixture against the same hostile: it closes to about a metre and fires
+     *   nothing, which is what makes both halves of this measurement mean
+     *   something rather than one number with nothing to be compared to.
+     *
+     *   AND IT IS STILL ON THE ROPE. `preferred: [5, 12]` is bounded by the
+     *   LEASH and not by the weapon — a trooper stands off at [9, 19] and the
+     *   bottom rung's leash is 14 m from a station 3.4 m behind you — so the
+     *   station gap is asserted inside `leashOf` at BOTH rungs. A companion
+     *   that has to be recalled every time it takes a shot is not a second
+     *   soldier.
+     *
+     * AND NEVER AT YOU. `p.damage` is wrapped and filtered on the SOURCE being
+     * this body, so what is counted is the animal's own fire and not the
+     * hostile's — the hostile is shooting at the player throughout, and a
+     * wrapper that counted everything would report a friendly-fire disaster
+     * that is nothing of the kind. `_beastBrain.hitTarget` bills whatever the
+     * pick handed it with no team test of any kind, so this is a real risk on
+     * the melee side and a bolt is a real risk on this one.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+
+    async function bout(kind, xp) {
+      const { world } = await bootWorld({
+        level: 'geonosis',
+        settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+        runSeed: 21,
+      });
+      try {
+        const input = idleInput(), p = world.player;
+        tick(world, input, p, 30);
+        const e = C.fieldCompanion(world, p, kind,
+          { rec: { id: `gun-${kind}`, kind, xp, runs: 0, tempers: [] } });
+        assert(e, `${kind} would not field`);
+        const at = new THREE.Vector3(p.position.x + 8, p.position.y, p.position.z);
+        const foe = world.spawnEnemy('b1', at);
+        assert(foe, 'no hostile to shoot at');
+        foe.team = 1;
+        /**
+         * A DUMMY IT CANNOT KILL, and here that is not a convenience.
+         * A b1 has 28 hp and one bowcaster quarrel into the head bills 46, so
+         * the FIRST shot ended the fight: measured, the animal held a target
+         * for 35 frames of 1800 and fired once, and the check read "it is
+         * carrying a bowcaster it does not fire" over a body that had killed
+         * what it was given. The pool is raised so the window measures a
+         * minute of shooting instead of a second of it — the same device the
+         * rung bout above uses, for the same reason.
+         */
+        foe.maxHp = 4000; foe.hp = foe.maxHp;
+        let dealt = 0, shots = 0, onOwner = 0, closest = Infinity;
+        const rawFoe = foe.damage.bind(foe);
+        foe.damage = (a, ...r) => { dealt += a; const v = rawFoe(a, ...r); foe.hp = foe.maxHp; return v; };
+        const shoot = e._shoot.bind(e);
+        e._shoot = (...a) => { shots++; return shoot(...a); };
+        p.damage = (a, pt, src) => { if (src === e) onOwner += a; return 0; };
+        for (let i = 0; i < 30 * 60; i++) {
+          p.hp = p.maxHp ?? 100; foe.hp = foe.maxHp; foe.position.copy(at);
+          world.update(STEP, input);
+          const d = e.position.distanceTo(foe.position);
+          if (d < closest) closest = d;
+        }
+        return { shots, dealt, onOwner, closest, gap: C.stationGap(e), leash: C.leashOf(e) };
+      } finally { world.unload(); }
+    }
+
+    const A = ARCHETYPES[K.COMPANION_KINDS.wook.archetype];
+    assert(A.ranged && A.weapon === 'bowcaster' && !A.melee,
+      `the wookiee row is ranged=${!!A.ranged} weapon=${A.weapon} melee=${!!A.melee} — this check is `
+      + 'measuring a body that is no longer the one it was written for');
+
+    const top = K.COMPANION_RANKS[K.COMPANION_RANKS.length - 1].xp;
+    const sworn = await bout('wook', top);
+    const green = await bout('wook', 0);
+    const jaws = await bout('massiff', top);
+
+    for (const [name, r] of [['sworn', sworn], ['green', green]]) {
+      assert(r.shots >= 4, `a ${name} wookiee pulled the trigger ${r.shots} times in a minute with a `
+        + 'hostile eight metres away — it is carrying a bowcaster it does not fire');
+      assert(r.dealt > 0, `a ${name} wookiee fired ${r.shots} times and landed nothing at all`);
+      assert(r.onOwner === 0, `a ${name} wookiee put ${r.onOwner.toFixed(0)} points into its own owner`);
+      assert(r.closest > 3, `a ${name} wookiee closed to ${r.closest.toFixed(1)} m — that is a melee `
+        + 'animal wearing a gun');
+      assert(r.gap <= r.leash, `a ${name} wookiee finished ${r.gap.toFixed(1)} m from its station on a `
+        + `${r.leash.toFixed(0)} m leash — the band is outside the rope`);
+    }
+    /* THE MELEE CONTROL, WHICH IS WHAT MAKES THE NUMBERS ABOVE A MEASUREMENT. */
+    assert(jaws.shots === 0, `the massiff fired ${jaws.shots} times and it has no weapon — the counter `
+      + 'is not counting what it says it is');
+    assert(jaws.dealt > 0 && jaws.closest < 3,
+      `the massiff dealt ${jaws.dealt.toFixed(0)} at ${jaws.closest.toFixed(1)} m — the control did not fight`);
+
+    return `wookiee sworn ${sworn.shots} shots / ${sworn.dealt.toFixed(0)} dealt, closest `
+      + `${sworn.closest.toFixed(1)} m, station ${sworn.gap.toFixed(1)}/${sworn.leash} m; green `
+      + `${green.shots} / ${green.dealt.toFixed(0)}, closest ${green.closest.toFixed(1)} m, station `
+      + `${green.gap.toFixed(1)}/${green.leash} m; 0 onto the owner either way — massiff control `
+      + `${jaws.shots} shots, ${jaws.dealt.toFixed(0)} dealt at ${jaws.closest.toFixed(1)} m`;
   });
 
   check('companion: every kind is a row, and nothing switches on its name', async () => {
@@ -3130,23 +3249,47 @@ export async function run({ check, assert }) {
   /* ══════════════════════════════════════════════════════════════════════ */
 
   /**
-   * A WORLD THE ANIMAL CAN ACTUALLY STAND STILL IN.
+   * A WORLD THE ANIMAL CAN ACTUALLY STAND STILL IN — AND WHERE THE ONE THAT
+   * CANNOT IS, EXACTLY, BECAUSE "GEONOSIS" WAS TOO BIG AN ANSWER.
    *
    * `field()` above boots Geonosis, and that is right for everything it is
-   * used for. It is WRONG for an idle test, and the reason is a measurement
-   * rather than a preference: on Geonosis a companion at heel never settles.
-   * Driven for forty seconds with every hostile dead and the player standing
-   * still, the animal held a 1.30 m gap to its own station at 4.25 m/s
-   * indefinitely, its `wish` alternating between the walk home and a
-   * perpendicular — the stuck-commit inside `Enemy._move` fighting the terrain
-   * clutter it is standing in. Same fixture on the colosseum floor: gap 0.07 m,
-   * speed 0.000, calm for 39.5 s of 40.
+   * used for. It is wrong for an idle test, and this note used to say why in
+   * one sentence — "on Geonosis a companion at heel never settles" — which was
+   * a true observation and a false diagnosis. Re-measured properly:
    *
-   * So the idle checks run on the flat, and the Geonosis behaviour is written
-   * down here rather than left to be rediscovered. It is not CompanionLife's
-   * to fix — nothing in that file can move a body — but an idle beat is gated
-   * on the animal being still, so on broken ground a companion will breathe
-   * and track and flinch and never scratch.
+   *   THE LEVEL IS FINE. The same fixture with the player standing on any of
+   *   five other points on the shipped Geonosis — (20,30), (-25,-20), (40,10),
+   *   (10,-35) and the spawn itself with the animal placed 0.4 m further back
+   *   — settles at a 0.04 m gap and 0.00 m/s, calm for 29.5 s of 30, with idle
+   *   beats firing. It is not broken ground and it is not the terrain clutter.
+   *
+   *   IT IS THE PLAYER'S SPAWN POINT, AND ONLY THAT. `fieldCompanion` drops
+   *   the animal at (0.00, 4.60) and `stationFor` puts its heel at (-0.90,
+   *   4.60) — 0.90 m dead in −X, straight into a static face whose outward
+   *   normal is +X. `Enemy._move` slides the wish along that face, `_wallSide`
+   *   latches a direction, the body runs off in +Z until `_wallT` lapses,
+   *   turns back into the same face and starts again. Over forty seconds:
+   *   `_wallT` alight on 64% of frames, mean speed 3.76 m/s, mean gap 1.98 m
+   *   against a 0.61 m settled band, and `_stuckT` NEVER ONCE above 0.5 s —
+   *   0.0% of frames — because a body covering four metres a second is not
+   *   stuck by its own measure. That is not the stuck-commit "fighting terrain
+   *   clutter"; it is the closed circuit `Enemy._move`'s own note names in as
+   *   many words, walked at full speed, and the latch written to break it does
+   *   not break this one.
+   *
+   *   AND IT ENDS WHEN YOU WALK AWAY. Driven off the spawn and 18 m up the
+   *   diagonal, the animal settles inside five seconds — gap 0.09 m, speed
+   *   0.00 — and stays settled for the rest of the run, `calm` climbing past
+   *   28 s.
+   *
+   * SO IT IS STILL NOT CompanionLife's, AND NOW FOR A STATED REASON RATHER
+   * THAN A GENERALITY. The layer's `moving` sense reads `speed > 0.35` and the
+   * body is doing 3.76 — the read is TRUE, and softening it, or adding a
+   * settle hysteresis here, would buy an animal that scratches itself while
+   * sprinting. The fix is in `Enemy._move`'s wall slide (or in `stationFor`
+   * declining to put a heel inside a face), and both of those are other
+   * people's files. Written down here so the next person measures the spawn
+   * point rather than the planet.
    */
   const calmField = async (kind = 'massiff', rec = null) => {
     const { bootWorld, idleInput } = await import('./_coop.mjs');
@@ -3287,7 +3430,23 @@ export async function run({ check, assert }) {
         let restFrame = -1;
         for (let i = 0; i < 30 * 8; i++) {
           p.hp = p.maxHp ?? 100;
+          /**
+           * AND THE PIN HAS TO INCLUDE `toTarget`, WHICH IS THE HALF THAT
+           * ACTUALLY MOVES THE BODY.
+           *
+           * `Enemy._move` reads "face the target while fighting, face travel
+           * otherwise" off `toTarget` — a direction the brain leaves behind
+           * and which survives the target being refused — so writing `facing`
+           * alone is undone inside the same frame, before the life layer ever
+           * sees it. Measured: `facing` set to 0.400 came back 1.131, and both
+           * kinds then read as watching the hostile because the animal had
+           * quietly turned toward it. Clearing the leftover and the velocity
+           * with it is the same parking `_beastshot` does to a subject, and it
+           * is the only way this fixture can hold a bearing still.
+           */
           e.facing = face;
+          e.toTarget = null;
+          e.velocity.set(0, 0, 0);
           foe.hp = foe.maxHp; foe.dead = false; foe.downed = false;
           foe.speed = 0; foe.attackTimer = 1e9; foe.stunTimer = 1e9;
           foe.velocity.set(0, 0, 0);
@@ -3345,8 +3504,8 @@ export async function run({ check, assert }) {
     assert(dog.dFoe < 0.4,
       `a warding companion ended ${dog.dFoe.toFixed(2)} rad off the hostile inside its own ward`);
     assert(cat.dOwn < 0.4,
-      `a ward-0 companion ended ${cat.dOwn.toFixed(2)} rad off its OWNER standing 3.5 m in front of `
-      + 'it — the one thing a kind that cannot fight is supposed to be watching');
+      `a ward-0 companion ended ${cat.dOwn.toFixed(2)} rad off its OWNER standing in front of it — `
+      + 'the one thing a kind that cannot fight is supposed to be watching');
     /* AND EACH IS A LONG WAY OFF THE OTHER ONE'S BODY. Both are inside the
      * neck now, so the two bodies are only 0.85 rad apart rather than the 2.5
      * the old saturated fixture had — the separation asserted is a shade over
@@ -3526,8 +3685,16 @@ export async function run({ check, assert }) {
      *
      *   AND NOT DEAD. A head that never moves passes the first half perfectly,
      *   so the head BONE has to travel over the same window — which after the
-     *   fix is the idle beats and the carriage doing it, since the gaze itself
-     *   correctly has nothing it can reach.
+     *   fix is the idle beats doing it, since the gaze itself correctly has
+     *   nothing it can reach from where the animal is standing.
+     *
+     *   THE BAR ON THAT HALF IS 0.25 rad AND IT WAS MEASURED, not chosen. The
+     *   head is never quite still even with every beat suppressed: it
+     *   counter-rotates the tail's wag every frame by construction (see
+     *   `applyLife`), which is 11.5 rad of accumulated travel over a minute
+     *   inside a 0.12 rad envelope. Total travel therefore cannot tell a
+     *   living head from a wagging statue and a SPAN can — 0.61 rad with the
+     *   beats firing against 0.12 without them.
      *
      * `L.yaw` IS THE GAZE CHANNEL AND NOT THE BONE, deliberately: the bone
      * carries the beats on top, and a beat that swings the head past the stop
@@ -3573,9 +3740,10 @@ export async function run({ check, assert }) {
         `the gaze sat on its own ${LIFE.look.yaw} rad stop for ${(frac * 100).toFixed(1)}% of a `
         + `${(n / 30) | 0} s window (${pinned}/${n} frames) with the player standing still — `
         + 'that is a head jammed against its clamp, not a head tracking anything');
-      assert(travel > 1.0 && hHi - hLo > 0.05,
-        `the head moved ${travel.toFixed(2)} rad in total over ${(n / 30) | 0} s and spanned `
-        + `${(hHi - hLo).toFixed(3)} rad — not sitting on the stop is not the same thing as alive`);
+      assert(hHi - hLo > 0.25 && travel > 1.0,
+        `the head spanned ${(hHi - hLo).toFixed(3)} rad over ${(n / 30) | 0} s (travelling `
+        + `${travel.toFixed(1)} rad in total) — not sitting on the stop is not the same thing as `
+        + 'alive, and 0.12 rad is what a head that only counter-rotates the tail manages');
       return `${(frac * 100).toFixed(1)}% of ${(n / 30) | 0} s on the ${LIFE.look.yaw} rad stop with `
         + `the owner ${owner.toFixed(2)} rad round behind it; the head still spans `
         + `${(hHi - hLo).toFixed(2)} rad and travels ${travel.toFixed(1)} rad`;
@@ -3611,51 +3779,70 @@ export async function run({ check, assert }) {
      *   verb duty rather than through the flag, so what is proved is that the
      *   distinction survives in the code and not in this comment.
      */
-    const { BEATS } = await import('../../src/game/CompanionLife.js');
     const { world, input, e, p } = await calmField('massiff');
     try {
       assert(e, 'nothing fielded');
+      const L = e._life || (calmTick(world, input, p, 30), e._life);
+      assert(L, 'the body carries no life record at all');
+      /* THE ROWS THIS BODY MAY NOT DO ON DUTY, read off its own menu. If the
+       * table stopped marking any of them the second half of this check would
+       * be asserting nothing, which is HANDOFF §2.3b — so the fixture asserts
+       * it has something to discriminate before it discriminates. */
+      const barred = L.menu.filter((x) => x.duty === false).map((x) => x.id);
+      assert(barred.length,
+        'this body has no duty:false beat in its menu at all — the on-duty half of this check '
+        + 'cannot fail, whatever the code does');
+
+      /** Every beat this animal STARTS over a window, in order. */
+      const window = (secs) => {
+        const fired = new Set();
+        let n = 0, was = null;
+        for (let i = 0; i < 30 * secs; i++) {
+          calmTick(world, input, p, 1);
+          const b = e._life?.beat || null;
+          if (b && b !== was) { n++; fired.add(b.id); }
+          was = b;
+        }
+        return { n, fired };
+      };
+
+      /* 1. OFF DUTY, which is the control: the barred rows are live rows that
+       *    this animal really does perform, so their absence below is the duty
+       *    and not a beat nobody ever picks. */
+      const off = window(70);
+      assert(off.n >= 2, `seventy calm seconds off duty produced ${off.n} idle beats`);
+      const offBarred = [...off.fired].filter((id) => barred.includes(id));
+      assert(offBarred.length,
+        `off duty it never once did any of [${barred.join(',')}] — those are the rows the on-duty `
+        + 'half is about, so this fixture cannot tell the two states apart');
+
+      /* 2. UNDER WARD. Same animal, same world, same seeded pick stream. */
       assert(!C.orderCompanion(e, 'ward'), 'WARD was refused on a maxed record');
       assert(e._cmpDuty?.id === 'ward' && e._cmpDuty.standing === true,
         'the fixture is not actually under a standing order');
-
-      const seen = new Set();
-      let firings = 0, was = null;
-      for (let i = 0; i < 30 * 70; i++) {
-        calmTick(world, input, p, 1);
-        const b = e._life?.beat || null;
-        if (b && b !== was) firings++;
-        if (b) seen.add(b.id);
-        was = b;
-      }
+      const on = window(70);
       assert(!e.target, 'something came at it mid-window — that is a fight, not an idle');
       assert(e._cmpDuty?.id === 'ward', 'the order lapsed under the measurement');
-      assert(firings >= 2,
-        `seventy seconds under WARD with nothing to meet produced ${firings} idle beats — a warding `
+      assert(on.n >= 2,
+        `seventy seconds under WARD with nothing to meet produced ${on.n} idle beats — a warding `
         + 'animal is alert, not frozen, and 0 here is the whole layer switched off by an order flag');
-      for (const id of seen) {
-        assert(BEATS[id].duty !== false,
-          `it did a "${id}" while standing your ward — that row is marked duty:false because it puts `
-          + 'the animal\'s nose on the ground and its eyes off the field');
-      }
+      const onBarred = [...on.fired].filter((id) => barred.includes(id));
+      assert(!onBarred.length,
+        `it did [${onBarred.join(',')}] while standing your ward — those rows are marked duty:false `
+        + "because they put the animal's nose on the ground and its eyes off the field");
 
-      /* AND THE VERB STILL STOPS IT — the one order with work behind it. */
+      /* 3. AND WORK STILL STOPS IT — the verb is the one order that hands the
+       *    animal a job with a per-frame tick behind it. */
       assert(!C.orderCompanion(e, 'heel'), 'HEEL was refused, which it never may be');
       calmTick(world, input, p, 30 * 3);
       e._cmpDuty = C.COMPANION_ORDERS.verb;
-      let busyFirings = 0;
-      was = null;
-      for (let i = 0; i < 30 * 70; i++) {
-        calmTick(world, input, p, 1);
-        const b = e._life?.beat || null;
-        if (b && b !== was) busyFirings++;
-        was = b;
-      }
-      assert(busyFirings === 0,
-        `seventy seconds under its own verb produced ${busyFirings} idle beats — an animal with a `
-        + 'job in its hands does not stop to scratch');
-      return `${firings} beats [${[...seen].join(',')}] in 70 s under WARD, none of them a `
-        + 'duty:false row; 0 in the same 70 s under a verb';
+      const busy = window(60);
+      assert(busy.n === 0,
+        `sixty seconds under its own verb produced ${busy.n} idle beats — an animal with a job in `
+        + 'its hands does not stop to scratch');
+      return `off duty ${off.n} beats [${[...off.fired].join(',')}]; under WARD ${on.n} `
+        + `[${[...on.fired].join(',')}], none of the ${barred.join('/')} it does off duty; `
+        + `${busy.n} under a verb`;
     } finally { world.unload(); }
   });
 

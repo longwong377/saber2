@@ -411,65 +411,27 @@ const KINDS = [
     pace: 0.64, ward: 15, heel: 1.2, frag: 0.8, mount: false, deck: 'row', look: 'wookiee',
     verb: { id: 'breach', label: 'BREACH', caption: 'Take that cover apart' },
     /**
-     * THE CARD SAID "THE ONLY ONE WITH BOTH BANDS" OVER A ROW WITH ONE, AND
-     * THE CARD IS WHERE THE PLAYER CHOOSES.
+     * THE CARD SAID "THE ONLY ONE WITH BOTH BANDS" OVER A ROW WITH NEITHER
+     * `ranged` NOR `weapon`, AND THE CARD IS WHERE THE PLAYER CHOOSES.
      *
-     * COMPANIONS.md gives this kind a bowcaster at distance and a topple in
-     * reach, the brief asks for "a large wookie (with melee and ranged weapons
-     * potentially)", and this sentence was rendered straight into the picker
-     * over `COMPANION_UNITS.wook`, which declares `melee: true` and no
-     * `ranged` and no `weapon`. A player who picked this kind for its gun got
-     * a body that has never fired one. That is the worst place in the feature
-     * for a false sentence: every other lie costs a surprise, this one costs
-     * the pick.
+     * The picker renders this sentence verbatim. A player who took the wookiee
+     * for its gun got a body that had never fired one — the worst place in the
+     * feature for a false sentence, because every other one costs a surprise
+     * and this one costs the pick.
      *
-     * SO THE SENTENCE IS NOW THE ROW, AND `companions: a card's band claim is
-     * the row's band` binds the two in BOTH directions — a blurb that claims a
-     * band over a row without one goes red, and a row that grows `ranged` or
-     * `weapon` under a card that does not claim it goes red too. The day the
-     * second band is real this sentence has to change in the same commit,
-     * which is the whole reason the check reads the prose.
+     * IT IS TRUE OF ONE BAND NOW AND THE SENTENCE SAYS ONE BAND. The row
+     * carries `ranged: true, weapon: 'bowcaster'` and the melee half is gone,
+     * because `_brain` picks one brain off `A.melee` and no body in this game
+     * has ever carried both; the whole argument and the 47°-bore measurement
+     * that forced the pairing are on `COMPANION_UNITS.wook`.
      *
-     * ── AND THE SECOND BAND IS NOT A FIELD, IT IS A BEHAVIOUR ────────────
-     *
-     * THE GUN IS BUILT. `buildBlaster('bowcaster')` and `BLASTER_LENGTH`'s
-     * 0.95 m landed while this was being written, and `rifle-hold.mjs` holds
-     * it to the same stock/muzzle/hold-point reference as every other kind. So
-     * the honest reason this row still carries no `weapon` is not the geometry
-     * and is not a missing lane; it is that a gun in a hand is not a band, and
-     * that was DRIVEN rather than reasoned about.
-     *
-     * ONE: THE BRAIN ONLY EVER PICKS ONE. `Enemy._brain` ends `if (A.melee)
-     * this._meleeBrain(…); else this._rangedBrain(…)`, and `_meleeBrain` with
-     * no saber falls straight into `_beastBrain`, which has no firing path at
-     * all. Driven over the whole table with the companion rows loaded: **0 of
-     * the 49 archetypes in this game carry a `weapon` without `ranged`**, and
-     * none carries `melee` and `ranged` together. `weapon: 'bowcaster'` here
-     * on its own is HANDOFF §2.3b in the most visible medium the game has — a
-     * gun the player can SEE and the brain never pulls — and the check refuses
-     * it in as many words.
-     *
-     * TWO, AND IT IS THE ONE THAT SETTLES IT: THE ANIMAL WOULD NOT USE IT
-     * ANYWAY. Driven on a live world with the row handed the bowcaster, a
-     * `ranged: true` flag, a fire rate and a bolt colour at runtime, and a
-     * hostile put down at 9 m: the wookiee CLOSED to 1.7 m and bit it, 156
-     * points over 6 blows, all of them melee. Wrapping `_think` to hand the
-     * shipped `_rangedBrain` the frame whenever the target was outside the
-     * melee band changed the answer by nothing — 154 over the same 6 blows —
-     * because the body was never outside the band. A second band needs a
-     * STAND-OFF RULE: a decision about when this animal closes and when it
-     * holds its ground and shoots, which is a behaviour with its own argument,
-     * its own tuning and its own check, and it is not a field on this row.
-     *
-     * WHAT IT WOULD TAKE, so the next person costs it instead of rediscovering
-     * it: a both-bands branch in `_brain` (the army's hot path — its own commit
-     * and its own check) or a companion-owned sidearm in this feature's own
-     * pack (cheaper, a second firing door, and it must argue that it is not),
-     * plus the stand-off rule above, plus a friendly-fire measurement, because
-     * a companion that shoots past you is a companion that shoots you.
+     * AND `companions: a card's band claim is the row's band` BINDS THE TWO IN
+     * BOTH DIRECTIONS from here on — a card that promises a band over a row
+     * without one goes red, and a row that grows `ranged` under a card that
+     * never says so goes red too, so neither half can move alone again.
      */
-    blurb: 'A partner rather than a pet — the only one big enough to block a doorway '
-      + 'you are standing in. It fights in reach and nowhere else.',
+    blurb: 'The second soldier rather than a pet: a bowcaster at distance, and a body '
+      + 'big enough to block a doorway you are standing in.',
   },
   {
     id: 'hawk', label: "Vhal'kir hawk", archetype: 'hawk',
@@ -1166,22 +1128,66 @@ export const COMPANION_UNITS = {
    *
    * ── WHAT IS NOT HERE, AND IT IS THE HALF THIS ROW DOES NOT OWN ─────────
    *
-   * NO `ranged`, NO `weapon`, AND THE CARD NO LONGER SAYS OTHERWISE. The full
-   * argument — including the measurement that 0 archetypes in this game carry
-   * both bands, because `_brain` picks one off `A.melee` and `_beastBrain` has
-   * no firing path — is on this kind's `blurb` in the KINDS table, where the
-   * false sentence was. In short: `buildBlaster` has no 'bowcaster' branch and
-   * its final `else` is the clone HEAVY REPEATER, so a `weapon` field here
-   * today is a Republic drum gun in a wookiee's hands; and a `ranged` field
-   * here is a flag no code reads. The body is built, the gun is the weapons
-   * lane's and the BAND is a branch nobody has costed; `melee: true` with the
-   * default beast verbs is what it fields with, and the card says so.
+   * ── THE BAND IT HAS, AND THE ONE IT DOES NOT ─────────────────────────
+   *
+   * IT CARRIES A BOWCASTER AND IT FIRES IT. `buildBlaster('bowcaster')` and
+   * `BLASTER_LENGTH`'s 0.95 m landed with the bodies lane, and `rifle-hold.mjs`
+   * holds it to the same stock-in-the-shoulder, both-palms-on-the-weapon
+   * reference as every other kind on the roster. This row is the other half:
+   * `ranged: true, weapon: 'bowcaster'`, a two-band `preferred`, and the four
+   * numbers a shooter is made of.
+   *
+   * AND `melee: true` HAD TO GO IN THE SAME EDIT, WHICH IS THE PART THAT IS
+   * NOT OBVIOUS. `Enemy._brain` ends `if (A.melee) this._meleeBrain(…); else
+   * this._rangedBrain(…)` — one band per body, chosen by one flag — so `melee`
+   * left standing beside a `weapon` is not "both bands", it is a body that
+   * never enters the firing path at all. It is worse than inert: measured on a
+   * posed wookiee, the rifle pose never runs and the BORE COMES OUT 47° OFF,
+   * against 0.26° through the ranged brain. A gun in the hand and the flag
+   * pointing at the other brain is the visible version of HANDOFF §2.3b.
+   *
+   * SO THE MELEE BAND IS GONE, AND THAT IS A REAL LOSS STATED RATHER THAN
+   * HIDDEN. COMPANIONS.md wanted "a bowcaster at distance and a topple in
+   * reach"; the engine has no body that carries both — driven over the whole
+   * table with the companion rows loaded, **0 of 49 archetypes declare `melee`
+   * and `ranged` together**, because there is nowhere for the second one to be
+   * read. Between the two halves the gun is the one the player asked for by
+   * name ("a large wookie (with melee and ranged weapons potentially)"), it is
+   * the one that is built, and it is the one that makes this kind the SECOND
+   * SOLDIER rather than a large massiff. `moves` is deliberately left ABSENT
+   * rather than set to `[]` like the medic's: the day a both-bands branch
+   * exists this row should get the default beast verbs back, and an empty list
+   * would be a second thing to undo.
+   *
+   * THE FOUR NUMBERS, against the line they sit beside. A trooper's DC-15A is
+   * 12 × 3 a burst at 1.35 s — 26.7 a second — and the reprogrammed B1's E-5 is
+   * 8 × 2 at 2.2 s, 7.3 a second and deliberately bad. This is 22 in ONE
+   * quarrel at 2.4 s: 9.2 a second, between the two, and it arrives as a single
+   * heavy hit rather than a burst, which is what a crossbow is. `spread` 0.06
+   * against a trooper's 0.045 and the B1's 0.22 — a wookiee is a good shot with
+   * a weapon that is not a rifle.
+   *
+   * `preferred: [5, 12]` IS BOUNDED BY THE ROPE AND NOT BY THE WEAPON. A
+   * trooper stands off at [9, 19] and a sniper at [22, 42]; a companion cannot,
+   * because the leash at the bottom rung is 14 m measured from a station 3.4 m
+   * behind you, and a shooter that wanted to be nineteen metres from its target
+   * would spend the fight being recalled. Twelve keeps it inside the rope at
+   * every rung, and five keeps it out of its own blast when something closes.
+   *
+   * GREEN, off `BOLT_COLORS`, because it is the one weapon in the game that is
+   * not a blaster and the bolt is the only part of it a player sees at range.
    */
   wook: {
     label: 'Wookiee', build: (o) => buildWookiee(o),
     scale: 1.32, hp: 420, mass: 200,
-    speed: 4.8, toughness: TOUGHNESS.flesh, melee: true,
-    damage: 26, preferred: [1.6, 3.0], score: 0, threat: 0,
+    speed: 4.8, toughness: TOUGHNESS.flesh,
+    /* THE BAND, AND THE FLAG THAT PICKS IT. `melee: false` is not a statement
+     * that this body is unarmed — it is the ROUTING, and `_brain` reads it as
+     * "which of the two brains gets the frame". See the block above. */
+    ranged: true, weapon: 'bowcaster',
+    fireRate: 2.4, burst: 1, spread: 0.06, damage: 22,
+    preferred: [5, 12], boltColor: BOLT_COLORS.green,
+    score: 0, threat: 0,
     companion: true, unlockAt: 99,
   },
 };

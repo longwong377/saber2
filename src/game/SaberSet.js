@@ -531,7 +531,7 @@ export const SHAFT = { gap: 0.30, radius: 1.0 };
  *     control   6/12   6/12   6/12  6/12   6/12
  *
  * Off the rear flank it stopped nothing at all — and `tools/_spinprobe.mjs`
- * fired every one of its shipped shots inside ±10° of the sightline, which is
+ * fired every one of its shipped shots inside ±20° of the sightline, which is
  * the one bearing the ORDINARY held guard already covers in every set. The
  * check was green on the arc the feature did not need to exist for.
  *
