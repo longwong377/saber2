@@ -162,6 +162,52 @@ check, which is why each now has one.
   for the other end of that shape — a field read by a surface and written by
   nobody — before adding a field.
 
+### 0.1e THE JUDGE ROUND — what an outside critic found that the checks did not
+
+Six lenses were pointed at the player's verbatim words with every finding
+adversarially refuted before it counted. It returned FAIL with six blockers,
+and the four distinct ones were all real. What is worth carrying forward is not
+the fixes but the SHAPES.
+
+- **THE GAME PROMISED SOMETHING IT COULD NOT DO.** Three of the twelve
+  companion kinds exist only to be ridden, no archetype declared `crew`, and
+  `Menu.js` printed "You can ride this one." anyway. `Companions.js` conceded
+  it in a comment — "Riding is not reachable today" — while the menu said the
+  opposite to the player. **Grep the UI for sentences that promise a
+  capability, and check each against the code that would have to answer it.**
+  A stated hole is fine; a stated hole beside a UI string that denies it is
+  not.
+- **AN INSTRUMENT THAT ASSUMES A POWER IS A KEY.** `throwOff` and `orbit` ride
+  the `throw` binding because that key means three different things in the
+  three saber sets. Four suites broke on it, each in its own way:
+  `force-economy` had no way to fire them, `force-voice` fired them on a
+  single-blade player so they returned silently, `living-force` called a real
+  power "not an action", and `claims` counted eleven. `HUD.POWERS` is the
+  power → binding column and is the thing to import.
+- **A FIXTURE THAT SWAPS A BODY MUST CARRY ITS STATE.** Giving `force-voice`
+  a player who actually holds the pair fixed one check and broke another: a
+  fresh `Player` arrives at `maxForce`, and the refusal check deliberately
+  empties the bar. The fixture healed the player it replaced and the suite then
+  reported the game shouting on an empty bar.
+- **THE DIAGNOSIS CAN BE WRONG WHILE THE MEASUREMENT IS RIGHT.** The judge
+  measured three companions at 0/140 unobstructed eye triangles and blamed the
+  muzzle. It was the CRANIUM — 44 of 70 — and the muzzle's top sat 0.12 below
+  the eye. Six bodies were blind, not three, and the `fanged` branch's entire
+  LOWER eye pair had been buried since it was written, so the nexu's four eyes
+  have been two for as long as the branch has existed. **Reproduce the number,
+  then find the cause yourself.**
+- **A GEOMETRIC ASSERTION IS NOT A DRIVEN ONE.** The pair's whole blocking
+  claim rested on `assert(r.half > 0.05)`. Driving it: the rose at its 135°
+  ceiling moved 19 landed bolts to 19, because `guardZoneAccepts` has two
+  refusals and the bolts were being thrown out by the other one. The feature
+  had a number, a comment and a check, and did nothing.
+- **AND A WHOLE CLASS OF PRICES IS INERT.** `slash.cooldown` under 0.30 changes
+  nothing in any set — every light press also opens the stab, and that line
+  sets `thrustCooldown = SLASH.cooldown`, the single blade's 0.30, for all
+  three. Measured: 0.26 gives 25 accepted presses, 0.30 gives 25, 0.45 gives
+  13. If you are pricing a set and the bench does not move, check whether the
+  number you moved is reachable at all.
+
 ### 0.1c A CHECK WHOSE VERDICT WAS A COIN TOSS, and it cost two lanes an investigation
 
 `companion: AWAY will not fight, SEEK fights one thing, WARD measures from YOU`
