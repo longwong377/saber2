@@ -696,9 +696,6 @@ export async function run({ check, assert }) {
     assert(staff.shoulder === one.shoulder,
       `the saberstaff answers out to ${staff.shoulder}° and one blade to ${one.shoulder}° — the staff's `
       + 'extra coverage is the rose, and a blade eating bolts behind your own back is not a feature');
-    assert(pair.shoulder >= one.shoulder + 6,
-      `the pair answers out to ${pair.shoulder}° against one blade's ${one.shoulder}° — two blades on `
-      + 'two bearings have to reach further round your own side than a hilt both hands are on');
     /**
      * ── AND THE SCAN IS ASKED FOR THE AREA, NOT ONLY FOR ITS FAR EDGE ──────
      *
@@ -719,6 +716,12 @@ export async function run({ check, assert }) {
     assert(extra.length >= 3,
       `the pair answers ${extra.length} bearing(s) one blade refuses (${extra.join('°, ') || 'none'}) — `
       + 'two blades on two bearings buy AREA or they buy nothing, and the scan is where that shows');
+    /* AND THE FAR EDGE OF THAT ROW, WHICH IS THE STATEMENT THE HEADER ABOVE
+     * MAKES. It runs after the set difference on purpose: the difference is
+     * the sharper of the two and a check states its sharp instrument first. */
+    assert(pair.shoulder >= one.shoulder + 6,
+      `the pair answers out to ${pair.shoulder}° against one blade's ${one.shoulder}° — two blades on `
+      + 'two bearings have to reach further round your own side than a hilt both hands are on');
     /**
      * AND IT HAS TO SHOW IN BOLTS AND NOT ONLY IN DEGREES.
      *

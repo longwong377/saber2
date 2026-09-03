@@ -3347,12 +3347,16 @@ export async function run({ check, assert }) {
     assert(cat.dOwn < 0.4,
       `a ward-0 companion ended ${cat.dOwn.toFixed(2)} rad off its OWNER standing 3.5 m in front of `
       + 'it — the one thing a kind that cannot fight is supposed to be watching');
-    assert(cat.dFoe > dog.dFoe + 0.8,
-      `ward 0 is ${cat.dFoe.toFixed(2)} rad off the hostile and ward 9 is ${dog.dFoe.toFixed(2)} — `
-      + 'both kinds are watching the same thing, so the ward field is reordering nothing');
-    assert(dog.dOwn > cat.dOwn + 0.8,
-      `ward 9 is ${dog.dOwn.toFixed(2)} rad off the owner and ward 0 is ${cat.dOwn.toFixed(2)} — `
-      + 'the ward field is reordering nothing in the other direction either');
+    /* AND EACH IS A LONG WAY OFF THE OTHER ONE'S BODY. Both are inside the
+     * neck now, so the two bodies are only 0.85 rad apart rather than the 2.5
+     * the old saturated fixture had — the separation asserted is a shade over
+     * half of that, which no solver watching the same body twice can reach. */
+    assert(cat.dFoe > 0.5,
+      `ward 0 ended ${cat.dFoe.toFixed(2)} rad off the hostile with its owner 0.85 rad the other `
+      + 'way — a kind that cannot fight is watching the fight');
+    assert(dog.dOwn > 0.5,
+      `ward 9 ended ${dog.dOwn.toFixed(2)} rad off its owner — the ward field is reordering nothing `
+      + 'in the other direction either');
     assert(dog.turn * cat.turn < 0,
       `both heads turned the same way (${dog.turn.toFixed(2)} and ${cat.turn.toFixed(2)} rad off `
       + 'their own facing) — ward 0 is supposed to mean it turns AWAY from the fight, toward YOU');
