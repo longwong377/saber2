@@ -68,6 +68,27 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   // lathe profile: [radius, y], rounded at both ends
   const profile = [];
   const capN = cap ? (opts.capN ?? 4) : 0;
+  /**
+   * ── AND THE TWO ENDS MAY BE CAPPED DIFFERENTLY, WHICH IS `capN0` ────────
+   *
+   * `capN` was one number for both poles, and for every lathe in this file
+   * that is a limb, a muzzle or a horn that is right — both ends are surface.
+   * It is wrong for exactly one caller, and that caller is the most numerous
+   * geometry in the game: `clawGeo` merges one limbGeo PER RING and caps only
+   * the last of them, so on a claw, a fang, a quill or a coat clump with more
+   * than one ring the last segment's ROOT cap is a flat disc lying in the
+   * junction plane inside a tube of its own radius. It is interior surface by
+   * construction — the same defect `tubeGeo`'s own header names in this exact
+   * function ("a six-segment tail carries five pairs of end caps buried
+   * inside itself — 60% of its triangles are surface nobody can ever see").
+   *
+   * It costs `4·seg` triangles a clump, which on the wookiee's 142-clump coat
+   * at seg 3 is 1 704 triangles — 12% of a body that was over its cap.
+   *
+   * Defaulting to `capN` so every existing call is byte-identical, and
+   * `clawGeo` is the one place that passes it.
+   */
+  const capN0 = cap ? (opts.capN0 ?? capN) : 0;
   const capY0 = opts.capY0 ?? 0.62;
   const capY1 = opts.capY1 ?? 0.62;
   const rings = Math.max(2, Math.round(opts.rings ?? 3));
@@ -104,8 +125,8 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   // entirely — so the cap was left open with a hole of radius 0.38*r0 — and
   // then jumped from the last ring back out to the equator, revolving an
   // inverted cone through the cap it had just built.
-  for (let i = 0; i < capN; i++) {
-    const a = (i / capN) * Math.PI * 0.5;
+  for (let i = 0; i < capN0; i++) {
+    const a = (i / capN0) * Math.PI * 0.5;
     profile.push(new THREE.Vector2(Math.sin(a) * r0 * 0.999, -Math.cos(a) * r0 * capY0));
   }
   for (let i = 0; i < rings; i++) {
@@ -508,8 +529,13 @@ function clawGeo(len, r0, r1, bend, seg = 6, rings = 5) {
   const cur = new THREE.Matrix4();
   for (let i = 0; i < rings; i++) {
     const t0 = i / rings, t1 = (i + 1) / rings;
+    /* THE ROOT CAP ONLY ON THE FIRST SEGMENT. Every segment but the last is
+     * built uncapped, so on a multi-ring claw the last one's root cap is a
+     * flat disc closing a junction that is already inside the solid — see
+     * `capN0` over limbGeo. `i === 0` rather than a flag, because a one-ring
+     * claw IS its own first segment and keeps the base it always had. */
     const g = limbGeo(step * 1.06, lerp(r0, r1, t0), lerp(r0, r1, t1), seg, i === rings - 1,
-      { rings: 2, bulge: 0, capN: 2, capY0: 0, capY1: 0.9 });
+      { rings: 2, bulge: 0, capN: 2, capN0: i === 0 ? 2 : 0, capY0: 0, capY1: 0.9 });
     parts.push({ geo: g, matrix: cur.clone() });
     cur.multiply(m.makeTranslation(0, step, 0)).multiply(m.makeRotationX(bend / rings));
   }
@@ -12740,12 +12766,27 @@ function shagOn(k, mat, bone, n, o = {}) {
     out[0] = Math.sin(th); out[1] = 0; out[2] = Math.cos(th);
     const root = onLimb(bone, (y0 + (y1 - y0) * t) * bone.length, out, o.sink ?? 0);
     const L = typeof o.len === 'function' ? o.len(t) : (o.len ?? 0.12);
-    /* 4 SEGMENTS AND 2 RINGS, not 5 and 3. A coat is sixty of these and the
-     * wookiee measured 15 736 triangles against the 13 000 `characters.mjs`
-     * holds an archetype to — most of it hair nobody can count. At 4x2 a clump
+    /**
+     * 3 SEGMENTS AND 2 RINGS, and the count is the whole of this body's
+     * triangle budget.
+     *
+     * The note this replaces already made the argument once — "at 4x2 a clump
      * is 64 triangles instead of 200 and the silhouette is identical, because
-     * what a clump contributes at any range is its OUTLINE. */
-    k.aim(mat, clawGeo(L, r0, r0 * 0.18, 0.5, 4, 2), root,
+     * what a clump contributes at any range is its OUTLINE" — and stopped one
+     * step short. `characters.mjs`'s new companion check weighs this figure at
+     * 13 732 against a 13 000 cap, and a per-mesh census says where it is:
+     * 6 336 triangles of COAT out of 13 732, which is 46% of the body in hair.
+     *
+     * A `clawGeo` at (seg, 2) is `2·seg` triangles for the open ring plus
+     * `seg·5·2` for the capped tip — 48 at seg 4, 36 at seg 3. Across the 142
+     * clumps this body wears that is 1 704 triangles for a change nobody can
+     * see: the section goes from a square to a triangle on a shape 10 cm long
+     * and 2.6 cm across, and the widest a triangular section is ever narrower
+     * than a square one is half its own root radius, 13 mm, at one azimuth in
+     * three. Measured against the cap it is the difference between over and
+     * under, and it is what pays for the shins and the feet below.
+     */
+    k.aim(mat, clawGeo(L, r0, r0 * 0.18, 0.5, 3, 2), root,
       [out[0] * (1 - droop), -droop, out[2] * (1 - droop)]);
   });
 }
@@ -12834,8 +12875,15 @@ export function buildWookiee(opts = {}) {
    *   as a face rather than as a silhouette. Derived from the pelt by the
    *   same `multiplyScalar` gain `under` uses and for the same argued reason:
    *   a lerp toward white runs in linear space and comes back grey, and a
-   *   coat's pale half is lit fur rather than different fur. 2.4 against
-   *   `under`'s 1.35 because this one has to separate from `under` as well.
+   *   coat's pale half is lit fur rather than different fur. 2.0 against
+   *   `under`'s 1.35 because this one has to separate from `under` as well,
+   *   and 2.0 RATHER THAN THE 2.4 THIS WAS FIRST WRITTEN AT because of
+   *   `lit()`'s clamp: it divides the authored colour by the bake's mean
+   *   albedo, and duracrete's is 0.332 linear on red. At 2.4 the stock pelt
+   *   comes to 0.353 — 1.06 of the mean, so the red channel clamps to 1 while
+   *   green and blue do not, and the mask goes ORANGE and stays orange for
+   *   every pelt lighter than stock. 2.0 lands at 0.89 of the mean, which
+   *   leaves the head of room a repaintable colour needs.
    *
    *   `snoutDark` — the nose and the lip line, and it is the darkest value on
    *   the body by a distance (0x120d0a against the face's 0x3a2b1e). It is
@@ -12845,7 +12893,7 @@ export function buildWookiee(opts = {}) {
    * Two materials, two more merged meshes on the head bone, and the four
    * shapes that were already there stop being one shape.
    */
-  const snout = hideMat(new THREE.Color(opts.pelt ?? 0x6b4a2c).multiplyScalar(2.4).getHex(), 0.94);
+  const snout = hideMat(new THREE.Color(opts.pelt ?? 0x6b4a2c).multiplyScalar(2.0).getHex(), 0.94);
   const snoutDark = hideMat(0x120d0a, 0.62);
   /* 0x6a4a2e and not 0x4a3524: at the darker value the strap rendered as a
    * solid BLACK plank across the chest, because the one thing a cel ramp will
@@ -13009,7 +13057,7 @@ export function buildWookiee(opts = {}) {
         const th = (t - 0.5) * spread;
         d.set(Math.sin(th) * Math.cos(up), Math.sin(up), Math.cos(th) * Math.cos(up)).normalize();
         const root = onSurface(hg, d, -0.010 * s, core);
-        k.aim(pelt, clawGeo(len * s, r * s, r * 0.18 * s, 0.5, 4, 2), root,
+        k.aim(pelt, clawGeo(len * s, r * s, r * 0.18 * s, 0.5, 3, 2), root,
           [d.x * (1 - droop) - Math.sin(th) * 0.10, -droop, d.z * (1 - droop) - 0.45]);
       });
       mane(11, 4.4, 0.60, 0.150, 0.030, 0.44);

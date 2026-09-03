@@ -38,14 +38,6 @@ export async function bootStaff(set = 'staff') {
   return { world, p, ctx, input, shoot, step };
 }
 
-/** `n` bolts from `bearings`, and what reached the body. */
-export function volley(b, bearings, dist = 10) {
-  b.p.hp = b.p.maxHp;
-  for (const a of bearings) b.shoot(dist, a);
-  b.step(40);
-  return b.p.maxHp - b.p.hp;
-}
-
 /**
  * Bolts fired ONE AT A TIME down the sightline, and how many landed.
  *
