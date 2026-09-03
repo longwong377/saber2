@@ -32,27 +32,53 @@ documents were settled BEFORE any code: `COMPANIONS.md` and `SABERFORMS.md`.
 
 **The three headline items.**
 
-- **THE COMPANION.** `companions` (20). One body that is yours in every mode
+- **THE COMPANION.** `companions` (39). One body that is yours in every mode
   without ever being on the roll. `CompanionKinds.js` is twelve ROWS and
   nothing anywhere switches on a kind's name; `Companions.js` is the sim;
   `Kennel.js` is the durable record with its own fold; `CompanionDeck.js` is
-  the hangar body. **Command.js and World.js gained ZERO lines** — the Levy
-  seam (a `_think` wrap that substitutes `ctx.pickTarget` for ONE body and
-  answers from `world._hostilesFor`) is what makes a companion find enemies
-  in the nine modes that build no CommandDirector.
-- **THE THREE SABER SETS.** `saberforms` (5). The single blade is held against
+  the hangar body; `CompanionLife.js` is what it does between the actions.
+  **Command.js and World.js gained ZERO lines** — the Levy seam (a `_think`
+  wrap that substitutes `ctx.pickTarget` for ONE body and answers from
+  `world._hostilesFor`) is what makes a companion find enemies in the nine
+  modes that build no CommandDirector. **All twelve kinds have a body**, all
+  twelve kind VERBS do something, the ladder fires in real play, and every
+  commander in a session brings their own.
+- **THE THREE SABER SETS.** `saberforms` (12). The single blade is held against
   a 600-frame RECORDING of the pre-change tree — 9 600 floats, worst drift
-  0.00e+0 — and `Saber.js`/`Combat.js` gained nothing at all.
+  0.00e+0 — and `Saber.js`/`Combat.js` gained nothing at all. Every clause of
+  the ask is its own driven check: the staff's reach, the telekinetic spin
+  barrier that stops bolts with your hands free, throwing one blade and
+  fighting with the other, the staff's faster follow-up, and the pair doing
+  the most work against four bodies at once.
 - **The five smaller rows**, each with its check: the randomize button, the
   graves, the head spin, the desecration, the push that throws you.
 
-**WHAT IS NOT DONE, and it is the first thing to pick up.** Four of the twelve
-companion kinds have no body — the hawk, the astromech, the medical droid and
-the wookiee — and the deck representation covers the eight `deck: 'walker'`
-kinds only. `roster.mjs` reports the count honestly ("N of 12 companion kinds
-have a body") and a kind with no deck body is absent from the room rather than
-drawn wrong. The visual quality of the creature bodies was being worked when
-this was written; see §0.1.
+**WHAT IS NOT DONE, and it is the first thing to pick up.**
+
+- **A guest's companion earns no experience.** Four of the six deeds read
+  fields the snapshot does not carry — `downed` is not sent at all, and a
+  net-driven body's `target` is not the target the order was about — so
+  `_ledger` refuses to award off one, and a guest's animal comes home with its
+  run counted and its rung where it started. The fix is the host running the
+  ledger and reporting deltas back.
+- **One ending diverges.** `_extracting` is not on the wire, so a companion
+  that leaves on the ship in a run that is NOT won folds as abandoned on the
+  guest's machine and kept on the host's. Every other ending agrees. That one
+  is a boolean on the wire.
+- **A companion never settles on Geonosis** — 1.30 m of station gap held at
+  4.25 m/s indefinitely with the field cleared, `Enemy._move`'s stuck commit
+  fighting terrain clutter — so its idle beats never fire on that level. On
+  the colosseum the gap is 0.07 m and it is calm 39.5 s of 40.
+- **Three verbs are honest stubs.** SPOT's climb is one line and a no-op until
+  the hawk has `installFlight`; CHARGE's bite-while-you-ride is unreachable
+  because no companion row declares `crew`, so `Driving.whyNotDrive` refuses
+  every mount; TEND does not make the droid worth two men, because `_tickDown`
+  reads `trooper.medic` and a companion has no Trooper.
+- **`HUD.js` holds a second copy** of "which body in the pack is mine"
+  (`HUD.js:2416`), which `body0` now restates. One of them should go.
+- **The wookiee's arm and thigh coats are still culled past 30 m.** The shins
+  and feet were moved across that line and marked silhouette; the arms are a
+  judgement call left alone.
 
 ### 0.1 The defects this round found by LOOKING and by DRIVING
 
@@ -92,6 +118,82 @@ check, which is why each now has one.
 - **`tools/portrait.mjs --enemy` had never once worked** — `new window.THREE_V3
   ? a : b` parses as `new (cond ? a : b)` against a global nothing exports.
   That is why nobody had LOOKED at a creature body in a long time.
+
+### 0.1b THE SECOND ROUND — six lanes, and what each one found
+
+- **A JOINING PLAYER HAS BEEN SPAWNING A PRIVATE COMPANION ON EVERY DEPLOY, and
+  the fence written to stop it could never fire.** `fieldFromKennel` opens
+  `if (w.netMode === 'client') return null`. `world.netMode` has exactly one
+  writer, `World.attachNet`, and `deploy()` calls it THIRTY-FIVE LINES AFTER
+  `buildWorld` returns — and `fieldFromKennel` runs inside `buildWorld`. So a
+  guest got a real body the host never heard of, in no snapshot, on nobody
+  else's screen, while the lobby card told them their animal was in the
+  kennel. **This is the shape to look for anywhere else in the tree: a guard
+  reading a field whose only writer runs later in the same call.** §6.3b is a
+  whole section about the same family.
+- **`tools/_beastshot.mjs` photographed every creature at LOD 1.** It spawns
+  the animal 36.8 m from the player; `Enemy.update` picks the rung off
+  `ctx.camera.position` — the GAME camera — and the shot camera is a different
+  object, so moving the lens to within a metre never re-enters that line.
+  Every in-engine creature photograph in this repository has had its
+  non-silhouette detail culled, and at least one verdict written off these
+  pictures ("the wookiee's shins are nearly bare") was a reading of a coat
+  that was already there. Now pinned at LOD 0 with the property frozen,
+  because the shipped write is edge-triggered.
+- **`tools/_soft.mjs` painted every surface at roughly 1/mean-albedo.** `lit()`
+  divides the requested colour by the bake's mean so the shipped lighting
+  multiplies it back up; the tool read `material.color` — the divided number —
+  and drew it at full value. Read `material.userData.authored` instead.
+- **`trunk` is `[height above hips, forward of hips, length]`** and two
+  comments in `Bodies.js` said the opposite, which is how a tauntaun ended up
+  with its barrel mounted 0.14 behind a hip joint and 0.95 of body hanging in
+  front of the only two feet it has. It read as an animal falling on its face.
+- **`headAt[0]` is measured off a datum that moves.** The head bone hangs off
+  `body` and THE BONE CHAIN IS NOT PITCHED — only the trunk MESH is, by
+  `trunkRot`. On a level-backed animal `headAt[0]` is height above the spine
+  and reads as written; on a pitched one the spine has already climbed
+  `sin(pitch) * headAt[1]` first. The blurrg asked for 0.40 over a spine that
+  had risen 0.374 and rendered as a bean with a lump on the front and no face.
+- **`BEAST_MOVES[*].damage` is a MULTIPLIER on the archetype's own**, so the
+  varactyl's sweep reads 0.85 and lands 0.85 x 0 = nothing. Any check about
+  what an attack does must assert the product.
+- **`rec.kills` had no writer and the card was already printing it.** The
+  clamp, the whitelist and the render all existed; nothing incremented. Look
+  for the other end of that shape — a field read by a surface and written by
+  nobody — before adding a field.
+
+### 0.1c A CHECK WHOSE VERDICT WAS A COIN TOSS, and it cost two lanes an investigation
+
+`companion: AWAY will not fight, SEEK fights one thing, WARD measures from YOU`
+ran green alone and red inside the full suite, on identical code, twice in one
+session. Both times a lane stopped and investigated a defect that was not
+there.
+
+The cause: the pack clears `_cmpBidden` the moment the bidden body dies, which
+is correct — an order about a corpse is not an order. So the eight seconds it
+measured were two different things end to end: a companion under SEEK, and then
+a companion with NO order hunting whatever was nearest. Whether it passed turned
+on whether one particular B1 happened to survive a massiff for eight seconds,
+and suite order moves the RNG.
+
+**A fixture that lets a second variable move is not measuring the clause in its
+own name.** Hold everything the check is not about — here, top the bidden body
+up each frame — and add the assertion that says the fixture is doing its job
+(`assert(!want.dead, ...)`), so the hold cannot silently stop working.
+
+### 0.1d A COMMENT CLAIMED A CHECK THAT WAS NEVER WRITTEN
+
+A commit message and a `Bodies.js` comment both said "`tools/checks/beasts.mjs`
+now pins the ratio for every plan". No such check existed: it was built, its
+NEGATIVE CONTROL could not be made honest, and it was deleted without the
+sentence being deleted with it. Three candidate metrics were then measured
+across all thirteen plans and every one ranks the wampa's DELIBERATE
+head-between-the-shoulders below the blurrg's actual defect, so any threshold
+that passes the design case passes the bug. The file now carries the three
+measurements and why they fail, in place of the claim.
+
+**If you delete a check, grep for its name before you commit.** A false claim
+of coverage is worse than no coverage, because the next hand stops looking.
 
 ### 0.2 Two fixture mistakes worth more than the fixes
 
