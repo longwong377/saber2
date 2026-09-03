@@ -1,0 +1,86 @@
+{
+ "source": "station/starfury_geometry.py",
+ "frame": "+z forward, +y up, +x starboard (matches station/physics/starfury.py)",
+ "sections": {
+  "fuselage": 96,
+  "dorsal_deck": 96,
+  "nose": 48,
+  "retro_nozzle": 80,
+  "cockpit_canopy": 80,
+  "cockpit_glazing": 240,
+  "canopy_frame": 576,
+  "root_fairing": 320,
+  "boom": 256,
+  "engine_pod": 640,
+  "engine_bell": 448,
+  "boom_tip": 192,
+  "tip_vane": 192,
+  "rcs_sponson": 256,
+  "rcs_nozzle": 320,
+  "gun_pod": 128
+ },
+ "vertices": 2134,
+ "triangles": 3968,
+ "bounds": {
+  "length_m": 6.0,
+  "span_x_m": 9.262,
+  "span_y_m": 9.262,
+  "z": [
+   -2.45,
+   3.55
+  ]
+ },
+ "thruster_mounts": {
+  "main_ur": [
+   3.4,
+   3.4,
+   -2.1
+  ],
+  "main_lr": [
+   3.4,
+   -3.4,
+   -2.1
+  ],
+  "main_ul": [
+   -3.4,
+   3.4,
+   -2.1
+  ],
+  "main_ll": [
+   -3.4,
+   -3.4,
+   -2.1
+  ],
+  "rcs_lat_r": [
+   3.4,
+   0.0,
+   0.0
+  ],
+  "rcs_lat_l": [
+   -3.4,
+   0.0,
+   0.0
+  ],
+  "rcs_vert_u": [
+   0.0,
+   3.4,
+   0.0
+  ],
+  "rcs_vert_d": [
+   0.0,
+   -3.4,
+   0.0
+  ],
+  "rcs_retro": [
+   0.0,
+   0.0,
+   2.4
+  ]
+ },
+ "cockpit_clear_volume_m": {
+  "length": 1.918,
+  "width": 0.978,
+  "height": 1.022,
+  "rake_deg": 15.3
+ }
+}
