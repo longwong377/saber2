@@ -2563,6 +2563,21 @@ export class WaveDirector {
   get rungWave() { return Math.max(0, this.wave - this.floor); }
 
   /**
+   * HOW MANY WAVE BOUNDARIES ARE ACTUALLY BEHIND THIS RUN — the public reader
+   * for `payWave`'s ledger, and the sibling of `CommandDirector.areasTaken`.
+   *
+   * `wave` is where you ARE, and `restartWave` — the pause card's button, in
+   * every mode — hands this director the SAME number back and refights it, so
+   * anything paid off `wave` is paid again for every restart. That is the farm
+   * `payWave` was written to close, and `_paid` is the high-water mark it
+   * closed it with. Anything that wants "a boundary went past" rather than
+   * "which wave is this" asks HERE, so there is one ledger and no second tally
+   * beside it: `Companions.boundariesTaken` is the first caller and reads this
+   * where there is no crossing to read `areasTaken` off.
+   */
+  get wavesTaken() { return this._paid | 0; }
+
+  /**
    * THE RAMP, RE-DERIVED — and the derivation is one line of arithmetic, not a
    * feeling about how wave 20 ought to go.
    *

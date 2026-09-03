@@ -38,6 +38,19 @@ import { COMPANION_KINDS, rungOf as rungOfCompanion } from '../game/CompanionKin
 import { braveryOf } from '../game/Reactions.js';
 import { DIR_GLYPH, callPhrase } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+/**
+ * WHICH OF THE THREE THROW POWERS THIS PLAYER'S HANDS CAN ACTUALLY SPEND ON,
+ * asked of the table that decides it rather than restated here.
+ *
+ * `throwOrRecall` routes the ONE `throw` key three ways off `saberSet`, and
+ * `SABER_SETS[].throwKey` is the column that says which — so a wheel that
+ * wanted to know "is this slot mine" had exactly two choices: read that column,
+ * or grow a private copy of the routing. HANDOFF §2.4 is a post-mortem of the
+ * second choice, and this file is where §2.3's hand-maintained twin has already
+ * been found twice (lightning at 14 against a real 30; stasis at 30 against 26).
+ * `throwPowerOf` IS `throwOrRecall`'s own branch, spelled as data.
+ */
+import { THROW_POWERS, throwPowerOf } from '../game/SaberSet.js';
 import { supportCost } from '../game/Stratagems.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -1947,7 +1960,45 @@ export class HUD {
       this.el.powers.appendChild(d);
       this.powerEls[key] = { root: d, cd, label, tick, cost, glyph: gl };
     }
+    /* The row is rebuilt from scratch here, so whichever throw slot was showing
+     * is showing again — see `_setThrowSlot`, whose whole job is not to touch
+     * the DOM on the frames where nothing has changed. Forgetting this is one
+     * repaint late per rebind, and the rebind is the frame a player is looking
+     * at the wheel. */
+    this._throwSlot = null;
     this._bindings = bindings;
+  }
+
+  /**
+   * DRAW THE ONE THROW SLOT THIS SET HAS, AND NONE OF THE OTHERS.
+   *
+   * `_afford` already refuses to light a power the set cannot spend on; this is
+   * the other half, and the reason it is not merely cosmetic is the clause the
+   * whole feature was held to — *"don't change anything with the default single
+   * blade usage"*. Two extra squares that can never light, in the row a player
+   * reads at a glance for what they can do RIGHT NOW, is a change to the single
+   * blade's screen even though no float in the 600-frame recording moves. The
+   * fourteen slots that shipped are the fourteen slots a single-blade player
+   * gets, in their shipped order.
+   *
+   * Inline `display` rather than a class, because the class would have to be
+   * written into styles.css against a `.pw` rule that already sets `display`,
+   * and specificity — not the cascade order — decides that fight. This is the
+   * same trap `tools/checks/hud-events.mjs` records for the reticle, where a
+   * leftover `stroke:` in the stylesheet beat an SVG presentation attribute and
+   * pinned every player to white while the slider moved and nothing failed.
+   *
+   * Guarded on the value and not run every frame: the row is fourteen writes
+   * into layout, and `saberSet` changes on a deploy, never in a fight.
+   */
+  _setThrowSlot(player) {
+    const mine = throwPowerOf(player?.saberSet);
+    if (this._throwSlot === mine) return;
+    this._throwSlot = mine;
+    for (const key of THROW_POWERS) {
+      const el = this.powerEls[key];
+      if (el) el.root.style.display = key === mine ? '' : 'none';
+    }
   }
 
   /**
@@ -2669,21 +2720,36 @@ export class HUD {
     /* Restore lights for the three seconds the burst is landing. */
     this._power('restore', cd.restore, this._afford(player, 'restore'), !!player.restoring);
     /**
-     * THE TWO SABER-SET SLOTS, and both are on the `throw` key.
+     * THE THREE SLOTS ON THE `throw` KEY, OF WHICH YOU ARE DRAWN EXACTLY ONE.
      *
-     * A player only ever has ONE of them — the key means the disc, the orbit or
-     * the shoto depending on the set — and the slot that is not yours is dim
-     * for the honest reason: `_afford` says you cannot spend on it, because
-     * nothing in the set you are playing spends it. Drawing all three is what
-     * makes the wheel a readout of what the button does rather than a list of
-     * what exists, and the same argument the rend slot's own note makes applies
-     * here: a power that is bound, priced and castable and drawn NOWHERE is a
-     * power the player has to be told about out of band.
+     * The key means the disc, the saberstaff's orbit or the pair's shoto
+     * depending on `saberSet`, and each has its own row in `POWER_COST` — so
+     * the wheel needs three slots, or a spend would exist with no readout and
+     * one square would draw three prices in turn.
+     *
+     * THE PARAGRAPH THAT USED TO STAND HERE SAID THE SLOT THAT IS NOT YOURS IS
+     * DIM "because nothing in the set you are playing spends it", AND IT WAS
+     * NOT TRUE OF ANY LINE UNDER IT. `_afford` read `POWER_COST`, `POWER_BOON`
+     * and `_canSpend`, and `grep saberSet src/ui/HUD.js` returned nothing at
+     * all: every player got all three, and a single-blade player at 24 Force
+     * lit the saberstaff's orbit as READY for a power `throwOrRecall` cannot
+     * reach them by. The 600-frame single-blade recording could not see it —
+     * `tools/_trace.mjs` is sixteen blade, guard and stamina floats and no UI —
+     * which is exactly the shape §2.3b is about: a claim with no reader.
+     *
+     * So the filter is real now and it is in TWO places on purpose, because the
+     * defect had two halves. `_afford` answers READY, which is the lie a player
+     * acts on. `_setThrowSlot` answers DRAWN, because a wheel is a row you read
+     * at a glance and two permanently dead squares in it are a change to the
+     * single blade's screen — and the single blade is the one thing in this
+     * feature that was asked not to move. A single-blade player's row is the
+     * fourteen slots it has always been, in the order it has always had them.
      *
      * The shoto's lit border is "the blade is out", exactly as the disc's is.
      * The orbit's is "the ring is turning", which is the readout that matters
      * most in the row — it is what tells the player two bars are draining.
      */
+    this._setThrowSlot(player);
     this._power('throwOff', cd.throwOff, this._afford(player, 'throwOff'),
       !!(player.sidearm && player.sidearm.throwState !== 'held'));
     this._power('orbit', 0, this._afford(player, 'orbit'), player.throwState === 'orbit');
@@ -3403,6 +3469,32 @@ export class HUD {
     // refuses no matter how much Force is in the bar.
     const boon = POWER_BOON[key];
     if (boon && !player.boonMods?.[boon]) return false;
+    /**
+     * …AND THE SAME SHAPE ONE ROW DOWN: A POWER THIS SET'S HANDS NEVER SPEND.
+     *
+     * The `throw` key means three different things in the three sets and each
+     * has its own price, so the wheel carries three slots — and for a long time
+     * it carried them with NO per-player filter, which made two of the three a
+     * lie for every player alive. Measured on the shipped tree: a single-blade
+     * player at 24 Force lit `orbit` and `throwOff` as READY, for powers
+     * `Player.throwOrRecall` will never route them to, while the note over the
+     * two `_power` calls claimed "the slot that is not yours is dim … because
+     * nothing in the set you are playing spends it" — a comment contradicted by
+     * the four lines under it, which is precisely the failure the paragraph
+     * below this one records having already made once.
+     *
+     * It belongs beside the boon gate and not in a fourth place, because it is
+     * the same question in the same words: Force Lightning is drafted rather
+     * than learned and the key refuses however full the bar is; the saberstaff's
+     * orbit is a WEAPON you are not holding and the key refuses for exactly as
+     * long. Neither is an economy question and both decide READY.
+     *
+     * `throwPowerOf` is `throwOrRecall`'s own branch read off `SABER_SETS`, so
+     * the three-way routing has one statement in the tree and this reads it —
+     * and an unknown or missing `saberSet` is the single blade, which is what
+     * every save and every check that names no set is holding.
+     */
+    if (THROW_POWERS.includes(key) && key !== throwPowerOf(player.saberSet)) return false;
     // ONE gate for all nine — `_canSpend` is the single function Player uses to
     // decide, and it reads the drain slider and the boon multiplier live. There
     // used to be three gates here because three powers bypassed it; they do not

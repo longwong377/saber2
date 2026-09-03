@@ -102,41 +102,206 @@ export async function run({ check, assert }) {
 
   /* ── what it may never become ─────────────────────────────────────── */
 
-  check('companion: no rung buys a single point of anything that fights', async () => {
+  check('companion: the rung curve is real, and it is under the trooper ladder', async () => {
     /**
-     * THE FIELD DOES NOT EXIST, AND THAT IS THE ASSERTION.
+     * THIS CHECK USED TO ASSERT THE ABSENCE OF THE FIELD, AND THE ABSENCE WAS
+     * THE DEFECT.
      *
-     * Not "every multiplier is 1.00" — a field sitting at 1.00 is an
-     * invitation with a comment on it, and `company.mjs` already records what
-     * happened the last time a ladder carried one. COMPANY.md defends the
-     * trooper RANKS spread on two grounds: it is averaged across twenty-four
-     * bodies, and a fresh muster re-earns it inside one campaign. Neither half
-     * holds for a companion — there is exactly ONE and it is with you in modes
-     * that have no muster — so the rule here is stricter and is checked as an
-     * absence.
+     * It read: "no rung buys a single point of anything that fights … not one
+     * multiplier field", on COMPANY.md's argument that the trooper ladder's
+     * compression defence does not transfer. That argument is real and it was
+     * settled against the wrong sentence. The specification is the player's:
+     * "the companion will get stronger over time just like you do imagine this
+     * almost like a mini-player". A ladder that buys only rope and vocabulary
+     * is the right SECOND half of that and it was standing in for the first.
      *
-     * The forbidden names are the four axes a body fights on plus every word
-     * this repository has used for a multiplier, so a row that renamed its way
-     * around the rule still goes red.
+     * SO THE CHECK PINS THE CURVE INSTEAD OF THE FIELD'S NON-EXISTENCE — which
+     * is `command.mjs:833`'s shape for RANKS, and a check that can now fail in
+     * five directions where the old one could fail in one:
+     *
+     *   1  a rung that stops declaring one of the three
+     *   2  a rung that goes DOWN on any of the three
+     *   3  a bottom rung that is not exactly 1.00 — the archetype is the
+     *      archetype, and a fresh animal is what its row says it is
+     *   4  a top rung that reaches OR PASSES the trooper ladder's top on any
+     *      axis. Read off the imported `RANKS` and never off three typed
+     *      numbers, so compressing RANKS compresses this in the same commit —
+     *      HANDOFF §2.4, call the rule rather than restating it
+     *   5  a FOURTH multiplier. `enlistBody` reads exactly three fields; this
+     *      reads exactly three fields; armour, toughness, frag, ward, panic and
+     *      scale are still asserted absent, and always will be.
+     *
+     * The value of the spread is proved somewhere else on purpose — the check
+     * below this one drives two live bodies and measures which one wins. A
+     * table can be read; only a body can be out-fought.
      */
-    const BANNED = /^(hp|maxhp|damage|dmg|armour|armor|toughness|pace|speed|mult|multiplier|scale|power|strength|bonus)$/i;
+    const { RANKS } = await import('../../src/game/Command.js');
+    const AXES = ['hp', 'dmg', 'speed'];
+    /* Every word this repository has used for a multiplier, MINUS the three the
+     * ladder is now allowed to carry. A row that renames its way around the
+     * rule still goes red. */
+    const BANNED = /^(maxhp|damage|armour|armor|toughness|frag|ward|panic|pace|mult|multiplier|scale|power|strength|bonus)$/i;
+    const top = K.COMPANION_RANKS[K.COMPANION_RANKS.length - 1];
+    const troopTop = RANKS[RANKS.length - 1];
     for (const r of K.COMPANION_RANKS) {
       for (const f in r) {
-        assert(!BANNED.test(f), `rung ${r.id} carries a "${f}" — the ladder has become a power ladder`);
+        assert(!BANNED.test(f), `rung ${r.id} carries a "${f}" — that is a fourth axis nobody argued for`);
+      }
+      for (const a of AXES) {
+        assert(typeof r[a] === 'number' && r[a] >= 1,
+          `rung ${r.id} declares no ${a} — the ladder has stopped buying anything that fights`);
       }
       assert(typeof r.leash === 'number' && r.leash > 0, `rung ${r.id} has no leash`);
       assert(Array.isArray(r.orders), `rung ${r.id} licenses nothing`);
     }
-    /* AND IT IS MONOTONIC IN THE TWO THINGS IT DOES BUY, which is the shape
-     * `command.mjs:833` pins for RANKS — more leash and never fewer orders. */
+    /* THE BOTTOM RUNG IS THE ARCHETYPE, UNTOUCHED. */
+    for (const a of AXES) {
+      assert(K.COMPANION_RANKS[0][a] === 1,
+        `a fresh animal arrives at ${a} ×${K.COMPANION_RANKS[0][a]} — the bottom rung is the row it was built from`);
+    }
+    /* MONOTONIC IN EVERYTHING IT BUYS — leash, orders and the three numbers. */
     for (let i = 1; i < K.COMPANION_RANKS.length; i++) {
       const a = K.COMPANION_RANKS[i - 1], b = K.COMPANION_RANKS[i];
       assert(b.leash > a.leash, `${b.id} does not reach further than ${a.id}`);
       assert(b.xp > a.xp, `${b.id} costs no more than ${a.id}`);
       for (const o of a.orders) assert(b.orders.includes(o), `${b.id} lost ${o}`);
+      for (const ax of AXES) {
+        assert(b[ax] >= a[ax], `${b.id} is worse than ${a.id} at ${ax} (${b[ax]} < ${a[ax]})`);
+      }
+    }
+    /* AND IT ACTUALLY CLIMBS — a table of four 1.00s would satisfy everything
+     * above it and would be the old defect with a comment on it. */
+    for (const a of AXES) {
+      assert(top[a] > 1, `the top rung buys nothing at all on ${a}`);
+    }
+    /**
+     * THE CEILING, AND IT IS THE TROOPER LADDER'S OWN NUMBER.
+     *
+     * STRICTLY under, not equal: a companion is one body carried between modes
+     * with no muster and no wave budget to tune against, and COMPANY.md's
+     * "twenty-four bodies average out and one does not" is a reason for a
+     * smaller spread even though it was not a reason for none.
+     */
+    for (const a of AXES) {
+      assert(top[a] < troopTop[a],
+        `a SWORN companion buys ×${top[a]} ${a} against a Commander's ×${troopTop[a]} — the animal's `
+        + 'ladder has caught the army\'s');
     }
     return `${K.COMPANION_RANKS.length} rungs, ${K.COMPANION_RANKS.map((r) => r.leash).join('/')} m of leash, `
-      + `${K.COMPANION_RANKS.map((r) => r.orders.length).join('/')} orders, and not one multiplier field`;
+      + `${K.COMPANION_RANKS.map((r) => r.orders.length).join('/')} orders, and `
+      + AXES.map((a) => `${a} ${K.COMPANION_RANKS[0][a].toFixed(2)}→${top[a].toFixed(2)}`).join(', ')
+      + ` (Commander ${AXES.map((a) => troopTop[a].toFixed(2)).join('/')})`;
+  });
+
+  check('companion: a SWORN animal out-fights a STRANGE one, on a real body', async () => {
+    /**
+     * THE TABLE IS NOT THE EVIDENCE. THE BODY IS.
+     *
+     * `command.mjs` pins the trooper ladder's monotonicity off the table and
+     * that is enough there, because `enlistBody` is one function with one
+     * caller shape. A companion's multipliers are applied inside `adopt`,
+     * BEFORE `paceOf`'s clamp and on a body that a pack, a flight installer, a
+     * team-damage wrapper and two instance wraps all get their hands on
+     * afterwards — so "the row says 1.15" and "the animal is 15% harder to
+     * kill" are two different claims and this drives the second one.
+     *
+     * ── HOW THE FIGHT IS MADE FAIR ───────────────────────────────────────
+     *
+     * A DUMMY IT CANNOT KILL. Both bouts must get the same number of swings, so
+     * the hostile's hp is restored every frame and it is put back on its mark
+     * every frame. Let it die and the stronger animal simply stands in an empty
+     * field for the rest of the window and bills LESS — the measurement would
+     * invert on exactly the improvement it is looking for.
+     *
+     * AND THE COMPANION IS HELD UP TOO, for the same reason `tick` pins the
+     * player: an animal that fell at second nine turns the remaining twenty-one
+     * into a measurement of a corpse.
+     *
+     * WHAT IS COUNTED IS WHAT WAS BILLED — `foe.damage` is wrapped and the
+     * argument summed, so this is the damage the shipped attack path actually
+     * put through the shipped door, not `attackDamage` read back off the body.
+     *
+     * ── AND SURVIVAL IS COUNTED IN BOLTS, NOT IN HP ──────────────────────
+     *
+     * Twenty-point hits into a fresh body of each rung, through the real
+     * `damage()` with a hostile source, until it dies. That is the number a
+     * player experiences — "it took two more bolts" — and it is quantised,
+     * which is the honest form of the claim: 1.15 on 210 hp IS two more bolts
+     * and it is not two and a bit.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const recFor = (xp) => ({ id: 'fight' + xp, kind: 'massiff', name: 'Borz', xp, runs: 0,
+      areas: 0, kills: 0, saves: 0, downs: 0, orders: 0, ranged: 0, tempers: [], story: [], scars: [] });
+
+    async function bout(xp) {
+      const { world } = await bootWorld({
+        level: 'geonosis',
+        settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+        runSeed: 21,
+      });
+      try {
+        const input = idleInput(), p = world.player;
+        tick(world, input, p, 30);
+        const e = C.fieldCompanion(world, p, 'massiff', { rec: recFor(xp) });
+        assert(e, `nothing fielded at xp ${xp}`);
+        const out = { rung: K.rungOf(recFor(xp)).label, maxHp: e.maxHp, dmg: e.attackDamage, speed: e.speed };
+
+        const at = new THREE.Vector3(p.position.x + 2, p.position.y, p.position.z + 2);
+        const foe = world.spawnEnemy('b1', at);
+        assert(foe, 'no hostile to hit');
+        foe.team = 1;
+        let dealt = 0, blows = 0;
+        const raw = foe.damage.bind(foe);
+        foe.damage = (a, ...r) => { dealt += a; blows++; const v = raw(a, ...r); foe.hp = foe.maxHp; return v; };
+        for (let i = 0; i < 30 * 30; i++) {
+          p.hp = p.maxHp ?? 100; foe.hp = foe.maxHp; e.hp = e.maxHp;
+          foe.position.copy(at);
+          world.update(STEP, input);
+        }
+        out.dealt = dealt; out.blows = blows;
+
+        const e2 = C.fieldCompanion(world, p, 'massiff', { rec: recFor(xp) });
+        const src = { team: 1, position: e2.position.clone() };
+        let hits = 0;
+        while (!e2.dead && hits < 500) { e2.damage(20, e2.position.clone(), src, 'bolt'); hits++; }
+        assert(hits < 500, `a ${out.rung} massiff would not die to ten thousand points of fire`);
+        out.hits = hits;
+        return out;
+      } finally { world.unload(); }
+    }
+
+    const lo = await bout(0);
+    const hi = await bout(K.COMPANION_RANKS[K.COMPANION_RANKS.length - 1].xp);
+    assert(lo.rung === 'STRANGE' && hi.rung === 'SWORN',
+      `the two bouts were ${lo.rung} and ${hi.rung}, not the bottom and top rungs`);
+    assert(lo.blows > 0, 'the STRANGE animal never landed a blow — the fixture measured nothing');
+    /**
+     * THE TWO BOUTS HAVE TO HAVE SWUNG THE SAME NUMBER OF TIMES, or the totals
+     * are not a comparison. Said out loud rather than hoped for: the dummy is
+     * immortal and pinned so nothing can diverge, and if this ever trips it is
+     * the FIXTURE that has come apart and the message says so instead of the
+     * totals quietly answering a different question.
+     */
+    assert(hi.blows === lo.blows,
+      `the bouts swung ${lo.blows} and ${hi.blows} times — the totals are not comparable and the `
+      + 'fixture has stopped holding the fight still');
+    assert(hi.dealt > lo.dealt,
+      `SWORN billed ${hi.dealt.toFixed(0)} against STRANGE's ${lo.dealt.toFixed(0)} over the same thirty `
+      + `seconds and the same ${lo.blows} blows — the rung buys nothing that fights`);
+    assert(hi.hits > lo.hits,
+      `both rungs fall to ${lo.hits} bolts — the rung buys nothing that survives`);
+    /* AND THE GAIN IS THE ROW'S GAIN AND NOT SOMETHING ELSE'S. A ratio that
+     * ran away from the table would mean a second multiplier had got in. */
+    const R = K.COMPANION_RANKS[K.COMPANION_RANKS.length - 1];
+    const dealtR = hi.dealt / lo.dealt;
+    assert(Math.abs(dealtR - R.dmg) < 0.02,
+      `SWORN billed ×${dealtR.toFixed(3)} where the rung buys ×${R.dmg} — either something else is `
+      + 'scaling it, or the two bouts threw different moves and the totals are of different fights');
+    assert(Math.abs(hi.maxHp / lo.maxHp - R.hp) < 1e-6,
+      `SWORN carries ×${(hi.maxHp / lo.maxHp).toFixed(3)} hp where the rung buys ×${R.hp}`);
+    return `STRANGE ${lo.maxHp.toFixed(0)} hp, billed ${lo.dealt.toFixed(0)} over ${lo.blows} blows in 30 s, `
+      + `fell to ${lo.hits} bolts; SWORN ${hi.maxHp.toFixed(0)} hp, billed ${hi.dealt.toFixed(0)} `
+      + `(×${dealtR.toFixed(3)}), fell to ${hi.hits}`;
   });
 
   check('companion: neither new file has grown a currency', async () => {
@@ -243,6 +408,91 @@ export async function run({ check, assert }) {
   });
 
   /* ── what it is ───────────────────────────────────────────────────── */
+
+  check("companion: a card's band claim is the row's band, both ways round", async () => {
+    /**
+     * NOTHING ANYWHERE ASSERTED A BLURB AGAINST THE ROW IT DESCRIBES, and one
+     * of them was lying at the point of choice.
+     *
+     * `ARCHETYPES.wook` is `melee: true` with no `ranged` and no `weapon`. Its
+     * blurb said "the only one with both bands", and the picker renders that
+     * sentence verbatim. A player who took the wookiee for its gun got a body
+     * that has never fired one — and that is the worst place in the feature for
+     * a false sentence, because every other one costs a surprise and this one
+     * costs the pick.
+     *
+     * ── WHY THIS IS A PROSE CHECK AND THAT IS NOT A MISTAKE ──────────────
+     *
+     * §2.3c's lesson is that a reader which greps a whole tree for a bare word
+     * finds somebody else's field. This does not grep a tree: it reads ONE
+     * sentence per row, off the row, and matches a deliberately narrow list of
+     * BAND CLAIMS — the words a card can use to promise a gun. It is not a
+     * spell-check on a paragraph, it is the join between the two things that
+     * were never joined.
+     *
+     * THE LIST IS NARROW ON PURPOSE, and the near misses are the argument for
+     * how narrow. The medical droid's card says "where the SHOOTING just was"
+     * about the enemy; the blurrg's says "the mount that is also a WEAPON"
+     * about its teeth; the hawk's says "suicidal in a CROSSFIRE"; the
+     * tauntaun's says "it bucks you off and BOLTS". Not one of those is a claim
+     * that THIS body carries a gun, and a list containing shoot/weapon/fire/
+     * bolt would fail all four and teach the next person to delete the check.
+     *
+     * BOTH DIRECTIONS, because each catches the opposite defect:
+     *   a card that CLAIMS a band the row has not got — the wookiee, today
+     *   a row that HAS one and a card that never says so — a companion whose
+     *     gun the player cannot find out about before they pick it, which is
+     *     the same defect standing the other way up
+     * The second half is what makes the day the bowcaster lands a day this
+     * check goes red until the sentence is put back.
+     *
+     * AND A CARD SAYS WHAT A BODY IS, NEVER WHAT IT IS NOT. A regular
+     * expression cannot read a negation, so "it has no gun yet" is a claim as
+     * far as this is concerned and the wookiee's card says "it fights in reach
+     * and nowhere else" instead — which is the better sentence anyway, and the
+     * constraint is written here so the next person spends a minute rather
+     * than an afternoon on it.
+     */
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    const CLAIM = /\b(both bands|ranged|rifle|carbine|bowcaster|blaster|gun)\b/i;
+    const rows = [];
+    for (const id of K.COMPANION_ORDER) {
+      const kind = K.COMPANION_KINDS[id];
+      const A = ARCHETYPES[kind.archetype];
+      assert(A, `${id} names an archetype ${kind.archetype} that does not exist`);
+      assert(typeof kind.blurb === 'string' && kind.blurb.length > 20,
+        `${id} has no blurb, and the picker prints one`);
+      /**
+       * A GUN IT CANNOT FIRE IS NOT A BAND, AND THE TABLE ALREADY AGREES.
+       *
+       * `ranged` is the flag `Enemy._brain` routes on — `if (A.melee)
+       * this._meleeBrain(…); else this._rangedBrain(…)` — and `weapon` is only
+       * the thing in the hand. Driven over the whole table with the companion
+       * rows loaded: 0 of 49 archetypes carry a `weapon` without `ranged`, so
+       * this is the repository's own invariant pinned rather than a new rule,
+       * and it is what stops "give the row the field and let the builder meet
+       * you there" from putting a bowcaster in a wookiee's hands that nothing
+       * ever pulls.
+       */
+      assert(!A.weapon || A.ranged,
+        `${id} carries a '${A.weapon}' and is not ranged — its brain will never fire it`);
+      const claims = CLAIM.test(kind.blurb);
+      const armed = !!A.ranged;
+      assert(claims === armed,
+        claims
+          ? `the ${id} card promises a band — "${kind.blurb.match(CLAIM)[0]}" — over a row with `
+            + `ranged=${!!A.ranged} weapon=${A.weapon ?? 'none'}. The card is where the player chooses.`
+          : `the ${id} row is ranged${A.weapon ? ` with a '${A.weapon}'` : ''} and its card never says so — `
+            + 'a band the player cannot find out about before picking is a band that does not exist to them');
+      rows.push(`${id} ${armed ? (A.weapon || 'ranged') : 'reach only'}`);
+    }
+    /* AND AT LEAST ONE OF EACH, or the equality above is vacuous on a table
+     * where nothing is armed. */
+    const armed = K.COMPANION_ORDER.filter((id) => ARCHETYPES[K.COMPANION_KINDS[id].archetype].ranged);
+    assert(armed.length >= 1, 'no companion carries a gun at all — the equality above proves nothing');
+    assert(armed.length < K.COMPANION_ORDER.length, 'every companion carries a gun — likewise');
+    return `${K.COMPANION_ORDER.length} cards against their rows, ${armed.length} armed: ${rows.join(', ')}`;
+  });
 
   check('companion: every kind is a row, and nothing switches on its name', async () => {
     /**
@@ -727,28 +977,115 @@ export async function run({ check, assert }) {
     } finally { world.unload(); }
   });
 
-  check('companion: the colours you pick reach the geometry, and an unknown id does not', async () => {
+  check('companion: the colours you pick reach the geometry — every kind, every slot', async () => {
     /**
      * "you can customize their appearance to a degree"
      *
-     * THIS LIGHTS CODE THAT HAS SHIPPED FOR MONTHS AND HAS NEVER BEEN REACHED.
-     * `buildQuadruped` accepts `opts.hide`, `opts.plate`, `opts.belly` and
-     * `opts.eye` and NOTHING in the tree had ever handed it anything but the
-     * plan's own defaults — every creature in the game was wearing its factory
-     * colours because there was no door.
+     * THIS LIGHTS CODE THAT HAD SHIPPED FOR MONTHS UNREACHED. `buildQuadruped`
+     * accepts `opts.hide`, `opts.plate`, `opts.belly` and `opts.eye` and
+     * NOTHING in the tree had ever handed it anything but the plan's own
+     * defaults — every creature in the game was wearing its factory colours
+     * because there was no door.
      *
-     * DRIVEN ONE SLOT AT A TIME. Painting all four at once and finding the
-     * body changed would not tell you whether four slots are wired or one is:
-     * so each is painted alone, and each has to move the body on its own and
-     * move it DIFFERENTLY for a different colour.
+     * ── AND THEN THIS CHECK DROVE A QUARTER OF THE FEATURE IT IS NAMED FOR ──
+     *
+     * It looped `COMPANION_LOOK.creature` **on a massiff**: four slots, one
+     * kind, one of the four look rows. `COMPANION_LOOK` has FOUR rows and
+     * twelve kinds wear them, which is forty controls, and the other thirty-six
+     * were never touched. Driven across all twelve the first time this loop was
+     * widened, SEVEN were dead:
+     *
+     *   b1c   shell / trim / photoreceptor / panels — the whole droid row.
+     *         `buildB1` read `opts.color`, `opts.markColor` and `opts.eyeColor`,
+     *         which are three different words; `buildAstromech` and `buildMedic`
+     *         read the slot names and always had, so the defect was one builder
+     *         out of three and invisible from any of the other two.
+     *   taun / blurrg / varac   `blanket`. The word did not appear in
+     *         `Bodies.js` at all.
+     *
+     * `Menu._companionDressHtml` renders a swatch row per slot off the table
+     * regardless of whether anything reads it, and `Kennel.saneLook` persists
+     * all eleven names — so the player picked a colour, watched the game save
+     * it, and got the same body back. A check named "the colours you pick reach
+     * the geometry" passing on a quarter of the feature it names is HANDOFF
+     * §2.3b: a check that cannot fail over the part nobody was looking at.
+     *
+     * ── HOW IT IS DRIVEN NOW ─────────────────────────────────────────────
+     *
+     * `COMPANION_ORDER` → each kind's own `look` row → `COMPANION_LOOK` for
+     * the slots that row names → the kind's archetype builder, through
+     * `A.build({ scale: A.scale, ...companionOptsFrom(look) })`, which is the
+     * call `CompanionDeck.js:377` makes verbatim. Not a list of kinds and not a
+     * list of slots: a kind added tomorrow, or a slot added to a row tomorrow,
+     * is driven the day it lands, which is the whole reason the gap lasted.
+     *
+     * DRIVEN ONE SLOT AT A TIME. Painting all four at once and finding the body
+     * changed would not tell you whether four slots are wired or one is: so
+     * each is painted alone, and each has to move the body on its own and move
+     * it DIFFERENTLY for a different colour.
      *
      * AND THE EYE IS EMISSIVE, which the first version of this missed
      * completely. It collected `material.color` only, so the eye slot read as
      * "adds nothing" and looked like a dead control — it is `emissiveMat`, and
      * its colour lives on `material.emissive`. A check that reads half the
      * material is a check that reports half the truth.
+     *
+     * EVERY FAILURE IS COLLECTED RATHER THAN THROWN AT THE FIRST ONE. Seven
+     * dead slots reported one at a time is seven runs of this suite; the point
+     * of widening it was to see the whole surface at once.
      */
-    const { paintById } = await import('../../src/game/Bodies.js');
+    const { paintById, companionOptsFrom } = await import('../../src/game/Bodies.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+
+    const hues = (root) => {
+      const out = new Set();
+      root.traverse((o) => {
+        if (!o.isMesh || !o.material) return;
+        if (o.material.color) out.add('c' + o.material.color.getHex());
+        if (o.material.emissive) out.add('e' + o.material.emissive.getHex());
+      });
+      return out;
+    };
+
+    const dead = [], live = [];
+    let slots = 0;
+    for (const id of K.COMPANION_ORDER) {
+      const kind = K.COMPANION_KINDS[id];
+      const row = K.COMPANION_LOOK[kind.look];
+      assert(row?.length,
+        `${id} declares look row "${kind.look}" and COMPANION_LOOK has no such row — `
+        + 'the picker would render an empty dress panel for it');
+      const A = ARCHETYPES[kind.archetype ?? id];
+      assert(A && typeof A.build === 'function',
+        `${id} names archetype "${kind.archetype ?? id}" and nothing builds it`);
+      /* The shipped call, spelled the way CompanionDeck.js:377 spells it. */
+      const put = (look) => {
+        const built = A.build({ scale: A.scale ?? 1, ...companionOptsFrom(look) });
+        const root = built?.rig?.root ?? built?.group;
+        assert(root, `${id} built neither a rig nor a group`);
+        return hues(root);
+      };
+      const factory = put(undefined);
+      for (const f of row) {
+        slots++;
+        const a = [...put({ [f]: 'sky' })].filter((h) => !factory.has(h));
+        const b = [...put({ [f]: 'blood' })].filter((h) => !factory.has(h));
+        if (!a.length) { dead.push(`${id}.${f} paints nothing`); continue; }
+        if (a.join() === b.join()) { dead.push(`${id}.${f} paints Sky and Blood the same`); continue; }
+        live.push(`${id}.${f}`);
+      }
+    }
+    assert(!dead.length,
+      `${dead.length} of ${slots} shipped colour controls change nothing on the body the player owns — `
+      + `${dead.join('; ')}. Every one of them still draws a swatch row in the picker and is still `
+      + 'persisted by Kennel.saneLook.');
+    assert(live.length === slots, `${live.length} slots reported live out of ${slots} walked`);
+
+    /* ── AND THE SHIPPED FIELD PATH CARRIES ONE, which the loop above cannot
+     * say: it calls the builder directly. `fieldCompanion` goes through
+     * `Enemy._build`, which is where `companionOptsFrom(this._cmpLook)` is
+     * spread, and that is the door a look reaches the battlefield by. */
     const { fieldCompanion } = await import('../../src/game/Companions.js');
     const { bootWorld, idleInput } = await import('./_coop.mjs');
     const { world } = await bootWorld({
@@ -759,7 +1096,8 @@ export async function run({ check, assert }) {
     try {
       const input = idleInput();
       for (let i = 0; i < 30; i++) world.update(STEP, input);
-      const hues = (e) => {
+      const fielded = (look) => {
+        const e = fieldCompanion(world, world.player, 'massiff', { rec: { xp: 9, look } });
         const out = new Set();
         const eat = (o) => {
           if (!o.isMesh || !o.material) return;
@@ -770,32 +1108,28 @@ export async function run({ check, assert }) {
         e.rig?.root?.traverse?.(eat);
         return out;
       };
-      const put = (look) => hues(fieldCompanion(world, world.player, 'massiff', { rec: { xp: 9, look } }));
-      const factory = put(undefined);
-      const said = [];
-      for (const f of K.COMPANION_LOOK.creature) {
-        const a = [...put({ [f]: 'sky' })].filter((h) => !factory.has(h));
-        const b = [...put({ [f]: 'blood' })].filter((h) => !factory.has(h));
-        assert(a.length, `the ${f} slot changes nothing on the body — it is a dead control`);
-        assert(a.join() !== b.join(),
-          `the ${f} slot paints the same thing for Sky and for Blood — it stores a value and ignores it`);
-        said.push(`${f} ${a.join()}/${b.join()}`);
-      }
+      const stock = fielded(undefined);
+      const painted = [...fielded({ hide: 'sky' })].filter((h) => !stock.has(h));
+      assert(painted.length,
+        'a companion FIELDED with a saved hide is wearing its factory colours — the look never '
+        + 'reaches Enemy._build, so the whole feature is a hangar preview');
       /* THE SAME CHOICE IS THE SAME ANIMAL, twice running. */
-      const r1 = [...put({ hide: 'sun' })].sort().join();
-      const r2 = [...put({ hide: 'sun' })].sort().join();
+      const r1 = [...fielded({ hide: 'sun' })].sort().join();
+      const r2 = [...fielded({ hide: 'sun' })].sort().join();
       assert(r1 === r2, 'the same colour built two different bodies');
       /* AND AN ID THIS BUILD DOES NOT HAVE IS THE FACTORY HIDE, NOT BLACK.
        * `paintById` answers null for an unknown id and a null slot is simply
        * absent, which the builder reads as the plan's own colour — so a save
        * from a build with a wider palette degrades to the animal it was born
        * as rather than to a silhouette. */
-      const bad = [...put({ hide: 'nonesuch' })].sort().join();
-      assert(bad === [...factory].sort().join(),
+      const bad = [...fielded({ hide: 'nonesuch' })].sort().join();
+      assert(bad === [...stock].sort().join(),
         'an unknown colour id built something other than the factory animal');
       assert(paintById('nonesuch') === null, 'paintById invented a colour');
-      return `${said.length} slots each move the body and move it differently `
-        + `(${said.join(', ')}); the same pick is stable; an unknown id is the factory hide`;
+      return `${slots} controls over ${K.COMPANION_ORDER.length} kinds and `
+        + `${Object.keys(K.COMPANION_LOOK).length} look rows, every one of them moving its own body and `
+        + 'moving it differently for a different colour; the fielded body wears the saved hide; '
+        + 'the same pick is stable; an unknown id is the factory hide';
     } finally { world.unload(); }
   });
 
@@ -2382,6 +2716,125 @@ export async function run({ check, assert }) {
     } finally { world.unload(); }
   });
 
+  check('companion: a mode with no ground still pays the ladder', async () => {
+    /**
+     * THE LADDER ONLY TURNED IN THREE MODES OF ELEVEN, AND NOTHING SAID SO.
+     *
+     * The check above this one drives a five-area crossing and proves the
+     * gates sit correctly against the deeds. It proves it in a CAMPAIGN, which
+     * is `command`, `theline` and `campaign` — and the two deeds it measures
+     * were the only two that could ever fire, because they were paid off
+     * `world.command.areasTaken`, `areasTaken` counts records written by
+     * `CommandDirector._areaClear`, and `payWave` returns one line above the
+     * call that could reach it whenever there is no campaign:
+     *
+     *     if (!this.campaign) { this._reinforce(); return fresh; }
+     *
+     * The latch that lets `order` be paid a SECOND time is cleared in that same
+     * unreachable block. So in the Trial of Waves, Path of the Blade, Sandbox,
+     * Versus, Skirmish and a contingent Command, a whole run paid at most one
+     * xp for ever — measured below, with the boundary suppressed to exactly the
+     * answer the old reader gave in this mode. WARD is 6 xp and SEEK and the
+     * kind's own verb are 16: the two orders the player asked for BY NAME, and
+     * the whole "they all play differently" clause, were six and sixteen RUNS
+     * away in the modes most people play.
+     *
+     * ── WHY THE COUNTERFACTUAL IS DRIVEN AND NOT ASSERTED ────────────────
+     *
+     * The "before" half shadows `wavesTaken` with 0 rather than describing what
+     * used to happen. `world.command` is asserted null first, which is the
+     * actual reason the old reader answered zero here, so the suppressed run IS
+     * the old behaviour and not an impression of it. Both halves then run the
+     * same fixture, so the difference between them is the boundary and nothing
+     * else.
+     *
+     * ── AND TWO CURVES, BECAUSE A FLAWLESS RUN IS NOT A RUN ──────────────
+     *
+     * FLAWLESS pays both deeds every wave — an order lands (the animal is put
+     * out at the station's edge first, because an order it is already obeying
+     * is not an order that landed, which is what a wave of shooting does on its
+     * own) and it is alive and inside the rope at the boundary. ORDINARY pays
+     * only `crossed` after the first wave. The gates have to arrive inside one
+     * run on the first and still be a long run on the second, or this is a
+     * ladder that hands out SWORN for standing still.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const WAVES = 20;
+
+    async function drive({ suppress = false, flawless = true } = {}) {
+      const { world } = await bootWorld({
+        level: 'geonosis',
+        settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+        runSeed: 21,
+      });
+      try {
+        const p = world.player, input = idleInput(), d = world.director;
+        assert(!world.command,
+          'the Trial of Waves has grown a CommandDirector — this fixture is no longer measuring a mode with no army');
+        assert(d && typeof d.wavesTaken === 'number', 'the wave director publishes no ledger to read');
+        if (suppress) Object.defineProperty(d, 'wavesTaken', { get: () => 0, configurable: true });
+        tick(world, input, p, 30);
+        const rec = { id: 'trial', kind: 'massiff', name: 'Borz', xp: 0, runs: 0, areas: 0,
+          kills: 0, saves: 0, downs: 0, orders: 0, ranged: 0, tempers: [], story: [], scars: [] };
+        const e = C.fieldCompanion(world, p, 'massiff', { rec });
+        assert(e, 'nothing fielded into the Trial');
+        const at = {};
+        for (let w = 1; w <= WAVES; w++) {
+          if (flawless) {
+            const st = C.stationFor(e, new THREE.Vector3());
+            e.position.set(st.x + 9, e.position.y, st.z + 9);
+          }
+          assert(!C.orderCompanion(e, 'away'), `wave ${w}: AWAY was refused at the bottom rung`);
+          tick(world, input, p, 30 * 4);
+          /* THE BOUNDARY, THROUGH THE SHIPPED LEDGER. `payWave` is a
+           * high-water mark and pays nothing for a number it has already been
+           * paid for, so the wave has to climb — which is also why nothing
+           * here can be farmed by a restart. */
+          d.wave = (d.wave | 0) + 1;
+          assert(d.payWave(d.wave), `wave ${d.wave} would not pay`);
+          tick(world, input, p, 2);
+          for (const duty of ['ward', 'seek']) {
+            if (at[duty] == null && K.holdsCompanion(rec, duty)) at[duty] = w;
+          }
+          if (at.sworn == null && K.rungOf(rec).id === 'sworn') at.sworn = w;
+        }
+        return { xp: rec.xp, ...at };
+      } finally { world.unload(); }
+    }
+
+    const before = await drive({ suppress: true });
+    assert(before.xp <= 1,
+      `the suppressed run paid ${before.xp} xp — the fixture is no longer reproducing the old boundary`);
+    assert(before.ward == null && before.seek == null,
+      `WARD arrived at wave ${before.ward} with the boundary suppressed — nothing was broken to begin with`);
+
+    const flaw = await drive({ flawless: true });
+    const ord = await drive({ flawless: false });
+
+    /* WARD IS THE ONE THAT HAS TO ARRIVE FAST. COMPANIONS.md's own mitigation
+     * for the licence ladder is "rung 1 arrives fast", and a mode with no
+     * ground is where it never did. */
+    assert(flaw.ward != null && flaw.ward <= 5,
+      `WARD arrives at wave ${flaw.ward} of a flawless Trial — rung 1 is supposed to arrive fast`);
+    assert(ord.ward != null && ord.ward <= 8,
+      `WARD arrives at wave ${ord.ward} of an ordinary Trial`);
+    /* SEEK AND THE KIND'S VERB INSIDE ONE RUN — the clause the player named. */
+    assert(flaw.seek != null && ord.seek != null,
+      `SEEK is still ${flaw.seek == null ? 'unreachable' : 'unreachable on an ordinary run'} inside ${WAVES} waves`);
+    /* AND THE TOP RUNG IS STILL EARNED. `command.mjs:845`'s second clause said
+     * in the units an endless mode has: not in the opening third of the run
+     * the fixture drives, on either curve. */
+    assert(flaw.sworn != null, `SWORN is unreachable in ${WAVES} waves even flawlessly`);
+    for (const [name, r] of [['flawless', flaw], ['ordinary', ord]]) {
+      assert(r.sworn == null || r.sworn > WAVES * 0.4,
+        `SWORN arrives at wave ${r.sworn} of a ${name} ${WAVES}-wave run — inside the first 40%`);
+    }
+    assert(ord.xp < flaw.xp, 'an ordinary run pays what a flawless one pays');
+    return `${WAVES} waves: suppressed ${before.xp} xp and no rung at all; flawless ${flaw.xp} xp `
+      + `(WARD w${flaw.ward}, SEEK w${flaw.seek}, SWORN w${flaw.sworn}); ordinary ${ord.xp} xp `
+      + `(WARD w${ord.ward}, SEEK w${ord.seek}, SWORN w${ord.sworn ?? '—'})`;
+  });
+
   check('companion: it comes to you when you go down — and no run can bank what that pays', async () => {
     /**
      * THE FOURTH DEED, AND THE HONEST ACCOUNT OF WHAT IT IS WORTH.
@@ -2748,6 +3201,7 @@ export async function run({ check, assert }) {
      * point stated: an animal told to break off still watches what it was told
      * to break off from.
      */
+    const { LIFE } = await import('../../src/game/CompanionLife.js');
     const rows = [];
     for (const kind of ['massiff', 'tooka']) {
       const { world, input, e, p } = await calmField(kind);
@@ -2755,31 +3209,51 @@ export async function run({ check, assert }) {
         assert(e, `${kind} would not field`);
         assert(e.rig?.get('head'), `${kind} has no head bone to turn`);
         /**
-         * WHERE THE HOSTILE GOES, AND IT IS NOT ARBITRARY.
+         * WHERE THE HOSTILE GOES, AND WHERE THE OWNER IS — BOTH INSIDE THE
+         * NECK, AND THE SECOND HALF IS NEW.
          *
-         * A neck has a stop. `LIFE.look.yaw` is 0.62 rad and the shipped
-         * combat track's is 0.7, so a hostile 90° off the animal's shoulder
-         * SATURATES both — the head goes as far as it goes and the measured
-         * error to the target is the rest of the angle, whatever the code did.
-         * The first cut of this check put the body 6 m off the player's +X and
-         * measured 1.67 rad of "error" on an animal that was turning its head
-         * as far as a head turns.
+         * A neck has a stop. `LIFE.look.yaw` is 0.62 rad, and a body further
+         * than that off the animal's shoulder is one it cannot look at at all.
+         * The first cut of this check put the hostile 6 m off the player's +X
+         * and measured 1.67 rad of "error" on an animal that was turning its
+         * head as far as a head turns.
          *
-         * So the animal is settled first, its own facing is read, and the
-         * hostile is put 4 m out at 0.45 rad off that — inside the stop, so
-         * the ward branch can be judged on whether it ARRIVES rather than on
-         * how far a neck bends, and still inside the massiff's ward of 9 from
-         * the player (the heel is 3.4 m back, so 7.4 m at worst).
+         * The second cut fixed that for the HOSTILE and left the OWNER outside
+         * the stop — a companion at heel stands off your back quarter, so its
+         * owner is round behind it, 1.81 rad on this fixture — and then
+         * asserted that the ward-0 animal "turns toward him, TO THE STOP".
+         * That is a check that passes by reading a saturated solver, and it
+         * ratified a real defect: measured on this same fixture, the gaze
+         * channel sat at exactly 0.620 rad on 899 frames of 899, which is not
+         * an animal tracking its owner but a head jammed against its own limit
+         * for as long as anybody watches.
          *
-         * It is parked the way `_beastshot` parks a subject: speed zero, both
-         * timers out. A hostile that walks moves the bearing under the
-         * measurement, and one that shoots raises `underFire`, which is a
-         * different channel and not this one.
+         * So the animal's own facing is SET, once, with its owner 0.40 rad off
+         * its nose and the hostile 0.45 rad the other way — both inside the
+         * stop, 0.85 rad apart, and the massiff's hostile still inside its
+         * ward of 9 from the player (the heel is 3.4 m back, so 7.4 m at
+         * worst). Now neither branch of the ladder is judged on how far a neck
+         * bends: each is judged on whether the head ARRIVES on the thing that
+         * kind is supposed to be watching — including the ward-0 half, which
+         * the old check declared no correct implementation could satisfy.
+         *
+         * SETTING `facing` IS A FIXTURE PIN AND NOT A LIE. `Enemy._move` holds
+         * a body's facing when it has no target and is not travelling ("face
+         * the target while fighting, face travel otherwise"), so a settled
+         * companion keeps whatever heading it last walked in on. It is
+         * re-asserted every frame for the same reason the hostile's position
+         * is: a bearing that moves under the measurement measures nothing.
+         *
+         * The hostile is parked the way `_beastshot` parks a subject: speed
+         * zero, both timers out. One that walks moves the bearing, and one
+         * that shoots raises `underFire`, which is a different channel.
          */
         assert(!C.orderCompanion(e, 'away'), 'AWAY was refused — it is unrefusable at every rung');
         for (let i = 0; i < 30 * 3; i++) { p.hp = p.maxHp ?? 100; world.update(STEP, input); }
         const V = p.position.constructor;
-        const a = (e.facing || 0) + 0.45;
+        const face = bearing(e.position, p.position) + 0.40;
+        e.facing = face;
+        const a = face + 0.45;
         const spot = new V(e.position.x + Math.sin(a) * 4, e.position.y, e.position.z + Math.cos(a) * 4);
         const foe = world.spawnEnemy('b1', spot.clone());
         assert(foe, 'no hostile spawned');
@@ -2790,12 +3264,19 @@ export async function run({ check, assert }) {
           `the fixture put the hostile ${reach.toFixed(1)} m from the player, outside the ${ward} m ward`);
         for (let i = 0; i < 30 * 5; i++) {
           p.hp = p.maxHp ?? 100;
+          e.facing = face;
           foe.hp = foe.maxHp; foe.dead = false; foe.downed = false;
           foe.speed = 0; foe.attackTimer = 1e9; foe.stunTimer = 1e9;
           foe.velocity.set(0, 0, 0);
           foe.position.copy(spot);
           world.update(STEP, input);
         }
+        const ownOff = Math.abs(wrap(bearing(e.position, p.position) - face));
+        const foeOff = Math.abs(wrap(bearing(e.position, foe.position) - face));
+        assert(ownOff < LIFE.look.yaw && foeOff < LIFE.look.yaw,
+          `the fixture left the owner ${ownOff.toFixed(2)} rad and the hostile ${foeOff.toFixed(2)} rad `
+          + `off the animal's nose against a ${LIFE.look.yaw} rad neck — one of them cannot be looked `
+          + 'at, which is the saturation this check used to ratify');
         assert(!e.target, `${kind} took a target under AWAY — this measures the gait, not the layer`);
         const head = e.rig.worldPos('head', new THREE.Vector3());
         const g = gazeOf(e);
@@ -2811,38 +3292,51 @@ export async function run({ check, assert }) {
     const cat = rows.find((r) => r.ward === 0);
     assert(dog && cat, 'the fixture did not produce one warder and one non-warder');
     /**
-     * THE WARDER'S HALF IS ABSOLUTE; THE OTHER HALF IS A DIRECTION, and that
-     * asymmetry is a fact about the animal rather than a softened assertion.
+     * BOTH HALVES ARE NOW ABSOLUTE, AND THAT IS THE POINT OF THE REWRITE.
      *
-     * A companion at heel stands off your BACK quarter and faces the way you
-     * face, so its owner is BEHIND it — measured on this fixture, 2.5 rad
-     * round. No neck turns that far and the gaze stops at `LIFE.look.yaw`, so
-     * "the ward-0 animal's head points at its owner" is a thing no correct
-     * implementation could ever satisfy, and a check that demanded it would be
-     * demanding a defect. What ward 0 CAN be held to is the direction it turns
-     * in: away from the hostile, round toward the man behind it, to the stop.
+     * The old version of this check could only hold the ward-0 half to a
+     * DIRECTION — "it turns the other way, to the stop" — because its fixture
+     * left the owner 2.5 rad round behind an animal with a 0.62 rad neck. A
+     * direction is all you can assert about a solver you have saturated, and
+     * asserting it is what let the saturation ship.
      *
-     * So the two turns are compared by SIGN. The warder turns +0.45 onto the
-     * hostile; the other turns the other way entirely. One number each, and
-     * opposite — which no amount of tuning produces by accident.
+     * With both bodies inside the neck, each kind is held to ARRIVING on the
+     * thing its own row says it watches: the warder ends on the hostile, the
+     * ward-0 animal ends on its owner, and each is a long way off the other
+     * one's. The sign test is kept as well, because two heads that arrive on
+     * two different bodies must also have turned in two different directions,
+     * and a solver that satisfied the distances by accident could not satisfy
+     * that too.
      *
-     * (The DECK body has no such limit: `stepCompanionDeck` turns the whole
-     * animal to face you when it sits, which is why the hangar is the room
-     * where a companion looks you in the eye.)
+     * (The DECK body gets the same rung for free: `stepCompanionDeck` turns
+     * the whole animal to face you when it sits, which is why the hangar is
+     * the room where a companion looks you in the eye.)
      */
     assert(dog.dFoe < 0.4,
       `a warding companion ended ${dog.dFoe.toFixed(2)} rad off the hostile inside its own ward`);
+    assert(cat.dOwn < 0.4,
+      `a ward-0 companion ended ${cat.dOwn.toFixed(2)} rad off its OWNER standing 3.5 m in front of `
+      + 'it — the one thing a kind that cannot fight is supposed to be watching');
     assert(cat.dFoe > dog.dFoe + 0.8,
       `ward 0 is ${cat.dFoe.toFixed(2)} rad off the hostile and ward 9 is ${dog.dFoe.toFixed(2)} — `
       + 'both kinds are watching the same thing, so the ward field is reordering nothing');
+    assert(dog.dOwn > cat.dOwn + 0.8,
+      `ward 9 is ${dog.dOwn.toFixed(2)} rad off the owner and ward 0 is ${cat.dOwn.toFixed(2)} — `
+      + 'the ward field is reordering nothing in the other direction either');
     assert(dog.turn * cat.turn < 0,
       `both heads turned the same way (${dog.turn.toFixed(2)} and ${cat.turn.toFixed(2)} rad off `
       + 'their own facing) — ward 0 is supposed to mean it turns AWAY from the fight, toward YOU');
-    assert(Math.abs(cat.turn) > 0.3,
-      `the ward-0 animal only turned its head ${cat.turn.toFixed(2)} rad — it is looking at nothing`);
-    return `ward 9 turns ${dog.turn.toFixed(2)} rad onto the hostile and ends ${dog.dFoe.toFixed(2)} off `
-      + `it; ward 0 turns ${cat.turn.toFixed(2)} rad the other way, ${cat.dFoe.toFixed(2)} off the `
-      + `hostile, toward an owner that is ${cat.dOwn.toFixed(2)} rad round behind it`;
+    /* AND NEITHER OF THEM IS ON ITS STOP. Both were given something they could
+     * reach, so a head sitting on `LIFE.look.yaw` here is a solver that has
+     * saturated on something it should never have chosen. */
+    for (const r of [dog, cat]) {
+      assert(Math.abs(Math.abs(r.turn) - LIFE.look.yaw) > 0.02,
+        `the ward-${r.ward} animal's head is sitting on the ${LIFE.look.yaw} rad neck stop `
+        + `(${r.turn.toFixed(3)} rad) with a body 0.45 rad off its nose to look at`);
+    }
+    return `ward 9 turns ${dog.turn.toFixed(2)} rad onto the hostile, ending ${dog.dFoe.toFixed(2)} off `
+      + `it and ${dog.dOwn.toFixed(2)} off its owner; ward 0 turns ${cat.turn.toFixed(2)} rad the other `
+      + `way, ending ${cat.dOwn.toFixed(2)} off its owner and ${cat.dFoe.toFixed(2)} off the hostile`;
   });
 
   check('companion: it breathes, and its state is the RATE and not the pose', async () => {
@@ -2970,6 +3464,164 @@ export async function run({ check, assert }) {
       return `${seen.size} distinct beats [${[...seen].join(',')}] in 70 calm seconds, first at `
         + `${firstAt.toFixed(1)} s; a ${wasId} at ${wasW.toFixed(2)} weight was gone 0.5 s after `
         + 'the first round landed';
+    } finally { world.unload(); }
+  });
+
+  check('companion: standing still at your heel, its head is not jammed on its own stop', async () => {
+    /**
+     * THE COMMONEST THING A PLAYER WILL EVER SEE THIS FEATURE DO, and for a
+     * whole round it was the worst-looking.
+     *
+     * A companion at heel stands 3.4 m off your BACK quarter, and `Enemy._move`
+     * holds a settled body's facing at whatever heading it last walked in on —
+     * so with the player standing still, the owner sits round behind the
+     * animal's shoulder. Measured on this fixture: 1.812 rad (103.8°) against
+     * a 0.62 rad neck. The gaze ladder picked him anyway and `clamp` did the
+     * rest, so the gaze channel read EXACTLY 0.620 rad — `LIFE.look.yaw`, to
+     * three decimals — on 899 frames of 899. That is not a head tracking its
+     * owner. It is a head cranked to its limit and held there for as long as
+     * anybody watches, which is a statue with a crick in its neck.
+     *
+     * WHAT IS ASSERTED IS BOTH HALVES, because either one alone is satisfiable
+     * by a defect:
+     *
+     *   NOT PINNED. Over a sixty-second window with the player still, the gaze
+     *   must not sit on the stop. A handful of frames while something walks out
+     *   of reach would be tracking; a whole window is a jam, so the bar is 5%
+     *   of the window and the old behaviour scored 100%.
+     *
+     *   AND NOT DEAD. A head that never moves passes the first half perfectly,
+     *   so the head BONE has to travel over the same window — which after the
+     *   fix is the idle beats and the carriage doing it, since the gaze itself
+     *   correctly has nothing it can reach.
+     *
+     * `L.yaw` IS THE GAZE CHANNEL AND NOT THE BONE, deliberately: the bone
+     * carries the beats on top, and a beat that swings the head past the stop
+     * is an animal shaking itself off rather than a solver saturating. The
+     * thing that must never sit on the stop is the thing the stop is about.
+     */
+    const { LIFE } = await import('../../src/game/CompanionLife.js');
+    const { world, input, e, p } = await calmField('massiff');
+    try {
+      assert(e, 'nothing fielded');
+      const hb = e.rig.get('head');
+      assert(hb, 'no head bone to measure');
+      calmTick(world, input, p, 60);
+      const L = e._life;
+      assert(L, 'the body carries no life record at all');
+
+      let pinned = 0, n = 0, hLo = 9, hHi = -9, travel = 0, prev = null;
+      let gapMax = 0, speedMax = 0;
+      for (let i = 0; i < 30 * 60; i++) {
+        calmTick(world, input, p, 1);
+        n++;
+        if (Math.abs(Math.abs(L.yaw) - LIFE.look.yaw) < 1e-3) pinned++;
+        const a = hb.obj.quaternion.angleTo(hb.restQuat);
+        hLo = Math.min(hLo, a); hHi = Math.max(hHi, a);
+        if (prev !== null) travel += Math.abs(a - prev);
+        prev = a;
+        gapMax = Math.max(gapMax, C.stationGap(e));
+        speedMax = Math.max(speedMax, Math.hypot(e.velocity.x, e.velocity.z));
+      }
+      /* THE FIXTURE IS ONLY MEANINGFUL IF THE ANIMAL REALLY IS STANDING AT ITS
+       * HEEL — an animal still walking home is a different measurement, and it
+       * is the one the Geonosis note further up is about. */
+      assert(gapMax < C.settledBand(e) && speedMax < 0.35,
+        `the animal never settled (gap ${gapMax.toFixed(2)} m against a ${C.settledBand(e).toFixed(2)} `
+        + `band, ${speedMax.toFixed(2)} m/s) — this window measures a walk, not an idle`);
+      const owner = Math.abs(wrap(bearing(e.position, p.position) - (e.facing || 0)));
+      assert(owner > LIFE.look.yaw,
+        `the fixture left the owner ${owner.toFixed(2)} rad off the animal's nose, inside its `
+        + `${LIFE.look.yaw} rad neck — this window cannot show a saturated gaze at all`);
+
+      const frac = pinned / n;
+      assert(frac < 0.05,
+        `the gaze sat on its own ${LIFE.look.yaw} rad stop for ${(frac * 100).toFixed(1)}% of a `
+        + `${(n / 30) | 0} s window (${pinned}/${n} frames) with the player standing still — `
+        + 'that is a head jammed against its clamp, not a head tracking anything');
+      assert(travel > 1.0 && hHi - hLo > 0.05,
+        `the head moved ${travel.toFixed(2)} rad in total over ${(n / 30) | 0} s and spanned `
+        + `${(hHi - hLo).toFixed(3)} rad — not sitting on the stop is not the same thing as alive`);
+      return `${(frac * 100).toFixed(1)}% of ${(n / 30) | 0} s on the ${LIFE.look.yaw} rad stop with `
+        + `the owner ${owner.toFixed(2)} rad round behind it; the head still spans `
+        + `${(hHi - hLo).toFixed(2)} rad and travels ${travel.toFixed(1)} rad`;
+    } finally { world.unload(); }
+  });
+
+  check('companion: under a standing order it is ALERT, not switched off', async () => {
+    /**
+     * "Meet anything that comes near ME" — WARD, the protector order, and one
+     * of the two the player named by name.
+     *
+     * FOR A WHOLE ROUND IT SWITCHED THE IDLE LAYER OFF. `busy` read
+     * `_cmpDuty.standing`, which is true for five of the six orders, and a
+     * `busy` frame zeroes `calm` — so under WARD, on the flat, with the field
+     * cleared and the player standing still, the animal fired 0 idle beats in
+     * 70 seconds and `calm` never left 0.0 s. That is the state a companion
+     * spends most of a level in, and it was the one state where every one of
+     * these idle checks was measuring a body the layer had turned off.
+     *
+     * THREE THINGS ARE ASSERTED, and they are three different failures:
+     *
+     *   IT BEATS UNDER THE ORDER AT ALL. Same window, same world, same animal,
+     *   with the order given: the beats must still fire.
+     *
+     *   IT IS NOT INDIFFERENT TO THE ORDER. An animal on your shoulder does
+     *   not put its nose on the ground — `graze` and `sniff` carry `duty:
+     *   false`, and neither may be picked while a standing order is in force.
+     *   Without this half the fix would just be "delete the clause".
+     *
+     *   AND WORK STILL STOPS IT. The verb is the one order that hands the
+     *   animal a job with a per-frame tick behind it, and a companion slicing
+     *   a door does not stretch. Driven through `_cmpDuty` being an actual
+     *   verb duty rather than through the flag, so what is proved is that the
+     *   distinction survives in the code and not in this comment.
+     */
+    const { BEATS } = await import('../../src/game/CompanionLife.js');
+    const { world, input, e, p } = await calmField('massiff');
+    try {
+      assert(e, 'nothing fielded');
+      assert(!C.orderCompanion(e, 'ward'), 'WARD was refused on a maxed record');
+      assert(e._cmpDuty?.id === 'ward' && e._cmpDuty.standing === true,
+        'the fixture is not actually under a standing order');
+
+      const seen = new Set();
+      let firings = 0, was = null;
+      for (let i = 0; i < 30 * 70; i++) {
+        calmTick(world, input, p, 1);
+        const b = e._life?.beat || null;
+        if (b && b !== was) firings++;
+        if (b) seen.add(b.id);
+        was = b;
+      }
+      assert(!e.target, 'something came at it mid-window — that is a fight, not an idle');
+      assert(e._cmpDuty?.id === 'ward', 'the order lapsed under the measurement');
+      assert(firings >= 2,
+        `seventy seconds under WARD with nothing to meet produced ${firings} idle beats — a warding `
+        + 'animal is alert, not frozen, and 0 here is the whole layer switched off by an order flag');
+      for (const id of seen) {
+        assert(BEATS[id].duty !== false,
+          `it did a "${id}" while standing your ward — that row is marked duty:false because it puts `
+          + 'the animal\'s nose on the ground and its eyes off the field');
+      }
+
+      /* AND THE VERB STILL STOPS IT — the one order with work behind it. */
+      assert(!C.orderCompanion(e, 'heel'), 'HEEL was refused, which it never may be');
+      calmTick(world, input, p, 30 * 3);
+      e._cmpDuty = C.COMPANION_ORDERS.verb;
+      let busyFirings = 0;
+      was = null;
+      for (let i = 0; i < 30 * 70; i++) {
+        calmTick(world, input, p, 1);
+        const b = e._life?.beat || null;
+        if (b && b !== was) busyFirings++;
+        was = b;
+      }
+      assert(busyFirings === 0,
+        `seventy seconds under its own verb produced ${busyFirings} idle beats — an animal with a `
+        + 'job in its hands does not stop to scratch');
+      return `${firings} beats [${[...seen].join(',')}] in 70 s under WARD, none of them a `
+        + 'duty:false row; 0 in the same 70 s under a verb';
     } finally { world.unload(); }
   });
 

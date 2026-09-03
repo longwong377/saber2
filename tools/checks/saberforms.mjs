@@ -331,36 +331,60 @@ export async function run({ check, assert }) {
       + `staff ${staff.far.toFixed(2)} m (+${((staff.far / one.far - 1) * 100).toFixed(0)}%)`;
   });
 
-  check('saberforms: the spin barrier stops bolts, and your hands stay free', async () => {
+  check('saberforms: the spin barrier is a barrier ROUND you, and your hands stay free', async () => {
     /**
      * *"the double bladed user can use pure telekinesis to spin the staff at
-     * high speeds around your body like a protective barrier, KEEPING YOUR
+     * high speeds AROUND YOUR BODY like a protective barrier, KEEPING YOUR
      * HANDS FREE TO CAST WHATEVER."*
      *
-     * BOTH HALVES ARE MEASURED AND THE FIRST ONE FAILED TWICE. With the blades
-     * absent from `_bladeEntries` it stopped nothing because nothing asked it.
-     * With them present and genuinely sweeping it stopped 1 bolt in 24, because
-     * a bar spinning in the HORIZONTAL plane is coplanar with a bolt flying
-     * flat, and because a rotor answers ω/(π·f) of what crosses it — 4.8% at
+     * BOTH HALVES ARE MEASURED AND THE FIRST ONE HAS NOW FAILED THREE TIMES.
+     * With the blades absent from `_bladeEntries` it stopped nothing because
+     * nothing asked it. With them present and genuinely sweeping it stopped 1
+     * bolt in 24, because a rotor answers ω/(π·f) of what crosses it — 4.8% at
      * 60 Hz and 9.5% at 30, a protection that doubles when the machine slows
-     * down. See `Player.bladeGuard`, which is where both are answered.
+     * down. Then it answered a 100° WEDGE of the sightline and this check said
+     * it was a barrier, because every shot the bench had ever fired was inside
+     * ±10° of that sightline — the one bearing the ordinary held guard already
+     * covers in every set. Driven at five bearings on that tree:
      *
-     * The control is the same twenty-four shots with the spin DOWN, on the same
-     * player in the same place, because "no bolts got through" means nothing
-     * unless they get through otherwise.
+     *     bearing    0°     45°    90°   135°   180°
+     *     spin      0/12   2/12   4/12  6/12   6/12   landed
+     *     control   6/12   6/12   6/12  6/12   6/12
+     *
+     * — a bow wave, and behind you it stopped nothing at all. THE CLAIM IS
+     * COVERAGE, SO THE ASSERTION IS ABOUT COVERAGE: `_spinprobe.coverage` walks
+     * `BEARINGS` and every bearing carries its own control arm, because "no
+     * bolts got through" means nothing unless they get through otherwise, and
+     * one bearing's control cannot speak for another's.
+     *
+     * WHAT MAKES IT GO RED: `Player.bladeGuard`'s cone back to `GUARD.reach / 2`
+     * — the tree this replaced, byte for byte — reports
+     *
+     *     at 45° the barrier let 2 of 12 through against 6 with it down
+     *
+     * on the first bearing outside the sightline, and it worsens from there to
+     * 6 of 12 at the back. Verified by doing it.
+     *
+     * The rose is 12 shots a bearing and not 24 for time: the check pays 5×2×12
+     * rounds with the ring re-raised and the bar refilled before every one, and
+     * the 0° row is the same statement the old 24-shot stream made.
      */
-    const { bootStaff, stream } = await import('../_spinprobe.mjs');
+    const { bootStaff, coverage } = await import('../_spinprobe.mjs');
     const b = await bootStaff('staff');
     try {
-      const bare = stream(b, {});
-      assert(bare.landed > 4,
-        `only ${bare.landed} of ${bare.fired} bolts reached an unshielded player — `
-        + 'the bench is not delivering hits, so nothing below would mean anything');
-      const up = stream(b, { spin: true });
-      assert(up.up === up.fired, `the spin was only up for ${up.up} of ${up.fired} shots`);
-      assert(up.landed * 3 < bare.landed,
-        `${up.landed} of ${up.fired} bolts got through the barrier against ${bare.landed} with it down `
-        + '— that is a light show, not a barrier');
+      const rows = coverage(b);
+      for (const r of rows) {
+        assert(r.up === r.fired,
+          `at ${r.deg}° the spin was only up for ${r.up} of ${r.fired} shots`);
+        assert(r.control > 2,
+          `only ${r.control} of ${r.fired} bolts reached an UNSHIELDED player at ${r.deg}° — the bench `
+          + 'is not delivering hits from that bearing, so its spin row would mean nothing');
+        /* THE SAME RUNG THE FRONTAL ASSERTION ALWAYS USED, asked at every
+         * bearing rather than at the only one the old bench could see. */
+        assert(r.spin * 3 < r.control,
+          `at ${r.deg}° the barrier let ${r.spin} of ${r.fired} through against ${r.control} with it `
+          + 'down — a barrier you can walk round is a bow wave, and the word in the brief is AROUND');
+      }
       /* AND THE HANDS. `handsOnHilt` is 0 while it spins — through the reader
        * that shipped years ago, not a new flag — and a power really goes off. */
       b.p.force = b.p.maxForce;
@@ -373,8 +397,9 @@ export async function run({ check, assert }) {
       assert(b.p.force < before - 1,
         'a push cast while the barrier was up spent nothing — the hands are not actually free');
       assert(b.p.throwState === 'orbit', 'casting dropped the barrier — the hands were not free after all');
-      return `${up.landed}/${up.fired} bolts through with the spin up against ${bare.landed}/${bare.fired} `
-        + `with it down; hands on hilt 0, and a push spends ${(before - b.p.force).toFixed(0)} Force mid-spin`;
+      return `${rows[0].fired} bolts a bearing, spin up against spin down: `
+        + rows.map((r) => `${r.deg}° ${r.spin}/${r.control}`).join(', ')
+        + `; hands on hilt 0, and a push spends ${(before - b.p.force).toFixed(0)} Force mid-spin`;
     } finally { b.world.unload(); }
   });
 

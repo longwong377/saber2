@@ -35,6 +35,9 @@ import * as THREE from 'three';
 import { ACTIONS, ACTION_IDS, defaultBindings, conflicts, findConflicts, keyLabel,
   walkScale, WALK_SCALE } from '../../src/engine/Bindings.js';
 import { Input } from '../../src/engine/Input.js';
+/* The saber sets' own pace term — see `walker`. Aliased because this file
+ * already has a `paceOf`, which measures a gait rather than declaring one. */
+import { setById, paceOf as setPaceOf } from '../../src/game/SaberSet.js';
 import { LINES, LINE_KINDS, PLAYER_LINES, ENEMY_LINES, voiceAt } from '../../src/engine/Voice.js';
 import { Announcer, STREAKS, RETURNS, CHAMBERS, QUIP_GAP } from '../../src/ui/Announcer.js';
 import { HUD, Minimap, EmoteWheel, OrderWheel, WHEEL_EXTRAS, FreeCam, EMOTES, MINIMAP, MINIMAP_COLORS,
@@ -156,9 +159,31 @@ const mapPlayer = (x = 0, z = 0, yaw = 0) => ({
  * update that had stopped calling `_move` would make this whole measurement a
  * measurement of nothing.
  */
+/**
+ * A PLAYER WITH NO CONSTRUCTOR, AND EVERY FIELD `_move` READS DECLARED HERE.
+ *
+ * `Object.create(Player.prototype)` skips the constructor on purpose — this
+ * bench is about the gait ladder and building a real Player drags in a world,
+ * a saber, a physics body and a rig. The price is that every field `_move`
+ * touches has to be written below, and the day one is added upstream this
+ * object goes quietly wrong.
+ *
+ * It did. `_move`'s base became `4.6 * boonMods.moveSpeed * this.setPace` when
+ * the saber sets landed a pace term, `setPace` is assigned in the constructor
+ * this bench does not run, and `4.6 * 1 * undefined` is NaN — so the ladder
+ * measured NaN m/s and the check reported "the harness is not walking", which
+ * was exactly right and said nothing about why.
+ *
+ * `paceOf(setById(undefined).id)` rather than a typed 1: `setById` resolves the
+ * DEFAULT set, and `paceOf` is the same function the constructor calls, so this
+ * bench walks at whatever a default-set player walks at and follows the table
+ * if that ever changes. A literal here would be a second copy of a number that
+ * has already proved it can move.
+ */
 function walker(extra = {}) {
   return Object.assign(Object.create(Player.prototype), {
     isLocal: true,
+    setPace: setPaceOf(setById(undefined).id),
     position: new THREE.Vector3(), velocity: new THREE.Vector3(),
     camera: { yaw: 0 }, saber: { lit: false },
     boonMods: { moveSpeed: 1, jumpPower: 1, doubleJump: false },

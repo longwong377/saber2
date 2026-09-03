@@ -681,6 +681,82 @@ export function stationGap(e) {
 }
 
 /**
+ * ══ HOW MUCH GROUND IS BEHIND YOU, IN A MODE THAT HAS NO GROUND ═══════════
+ *
+ * THE DEFECT THIS EXISTS TO CLOSE, MEASURED BEFORE IT WAS TOUCHED.
+ *
+ * Two of the four deeds — `crossed` and `recovered` — could only be paid at an
+ * AREA boundary, and the latch that lets `order` be paid a second time
+ * (`_cmpOrderedHere`) was cleared in exactly the same place. The count came
+ * from `world.command.areasTaken`, which counts `area` records written by
+ * `CommandDirector._areaClear`, and `payWave` returns one line above the call
+ * that could reach it whenever there is no campaign:
+ *
+ *     if (!this.campaign) { this._reinforce(); return fresh; }   Command.js
+ *
+ * So in Trial of Waves, Path of the Blade, Sandbox, Versus, Skirmish and the
+ * contingent Command — the modes most people play — **a whole run paid at most
+ * one xp**: the single `order` that could land before a latch nothing would
+ * ever clear. Driven, forty waves of the Trial with an order landing every
+ * wave and the animal alive throughout: `rec.xp === 1`. WARD is 6 xp and SEEK
+ * and the kind's own verb are 16, so the two orders the player named BY NAME
+ * were six and sixteen RUNS away, and "they all play differently" — the verb
+ * slot, the whole reason twelve kinds are not twelve reskins — was sixteen
+ * runs away in nine modes out of eleven.
+ *
+ * ── THE BOUNDARY IS THE MODE'S OWN, AND THERE IS ONLY EVER ONE OF THEM ────
+ *
+ * A crossing's unit of progress is the AREA; an endless mode's is the cleared
+ * WAVE. This answers with whichever one the mode actually has, and never with
+ * both: paying an area AND its three waves would hand a campaign twelve xp a
+ * stage and put SWORN inside the first area, which is the 40% floor
+ * `companions: a real crossing pays the ladder` pins. So the campaign's
+ * measured arithmetic — 4 a boundary, 5 areas, 20 — is BYTE FOR BYTE what it
+ * was, and the other eight modes get the deed they never had.
+ *
+ * `world.command` is the CommandDirector or null (World.js: `leadsArmy ?
+ * this.director : null`), and `campaign` is the field `payWave` itself gates
+ * on — so the test here is the same fact `_areaClear` is behind, read rather
+ * than restated. A contingent Command has a director and no campaign, and it
+ * correctly falls to the wave.
+ *
+ * ── AND THE WAVE COUNT IS THE LEDGER, NOT `director.wave` ─────────────────
+ *
+ * `wave` is where you ARE and `restartWave` hands the director the same number
+ * back — the pause card's button, present in every mode — so a count taken off
+ * it would pay `crossed` again for every restart, which is exactly the farm
+ * Waves.js closed when it built `payWave`. `wavesTaken` is that ledger's own
+ * high-water mark, added beside it as the public reader `areasTaken` already
+ * is for the other half of this question. One rule, one owner, two readers.
+ *
+ * ── WHAT IT PAYS NOW, DRIVEN ─────────────────────────────────────────────
+ *
+ * A cleared wave pays `crossed` (+1, alive and inside the leash at the
+ * boundary) and re-opens the `order` latch (+1 when one lands in the next
+ * wave), so ordinary play pays 2 a wave — the same two deeds a campaign area
+ * pays, at the smaller unit the mode is made of. Measured on the Trial of
+ * Waves (`companions: a mode with no ground still pays the ladder`):
+ *
+ *                   BEFORE          FLAWLESS      ORDINARY
+ *     WARD   (6 xp)  6 runs          wave 3        wave 5
+ *     SEEK  (16 xp)  16 runs         wave 8        wave 15
+ *     SWORN (20 xp)  20 runs         wave 10       wave 19
+ *
+ * FLAWLESS is an order landing every wave and the animal alive and on the rope
+ * at every boundary; ORDINARY is `crossed` alone after the first. Twenty waves
+ * of the Trial pay 40 and 21 against the old 1. SWORN at wave 10 to 19 is
+ * "reachable inside one run and only just" said in the units an endless mode
+ * has, and it is past the 40% floor on both curves — which the check asserts
+ * rather than this comment claiming it. No deed weight and no gate moved to
+ * get there; only the boundary did.
+ */
+export function boundariesTaken(world) {
+  const cmd = world?.command;
+  if (cmd?.campaign) return cmd.areasTaken | 0;
+  return world?.director?.wavesTaken | 0;
+}
+
+/**
  * IS THE OWNER STILL ON HIS FEET? The move wrap's own test, given a name.
  *
  * A player has no downed state in this game — `World._checkWipe` ends the run
@@ -2548,7 +2624,59 @@ export class CompanionPack {
     e._cmpKind = K?.id || null;
     e._cmpRec = opts.rec || null;
     e._cmpSwing = temperSwing(opts.rec);
-    e._cmpLeash = opts.leash ?? rungOf(opts.rec).leash;
+    const R = rungOf(opts.rec);
+    e._cmpLeash = opts.leash ?? R.leash;
+    /**
+     * ══ THE RUNG'S THREE NUMBERS, ON THE SHAPE `enlistBody` ALREADY USES ══
+     *
+     * "the companion will get stronger over time just like you do imagine this
+     *  almost like a mini-player like it's going to be a really good dynamic
+     *  thing"
+     *
+     * `COMPANION_RANKS` carried no numeric field for four rounds and the check
+     * asserted the absence; the argument for that and the argument that
+     * reversed it are both on the table itself. What is HERE is the reading,
+     * and it is `enlistBody`'s (Command.js:4673) line for line — multipliers on
+     * what the archetype already gave the body, so a promoted massiff is still
+     * a massiff and the ladder makes a body better at what it IS rather than
+     * turning it into a different one.
+     *
+     * `attackDamage` and not `A.damage`, for the same reason Command reads it:
+     * it is the one field both bands bill through — `_beastBrain`'s move
+     * (`this.attackDamage * M.damage`) and the bolt (`damage:
+     * this.attackDamage * …`) — so one line covers a massiff's jaws and the
+     * reprogrammed B1's carbine without either being named.
+     *
+     * BEFORE THE PACE CLAMP TWENTY LINES DOWN, AND THAT ORDER IS THE WHOLE
+     * SAFETY OF IT. `paceOf` clamps to 0.85 of the player's sprint on the way
+     * out, so the rung's `speed` is an argument to the cap and never a way
+     * past it: the tuk'ata already sits on the cap and rung 3 moves it not one
+     * hundredth. `companions: it is slower than you` fields every kind at
+     * xp 99 and measures the spawned body, which is what makes it the pin for
+     * this clause.
+     *
+     * ONCE PER BODY, because `adopt` returns early on anything already in
+     * `seen` — a second call would compound the way `attributes.mjs` caught
+     * the archetype clone compounding, and there is no second call.
+     *
+     * A NET-DRIVEN COPY TAKES IT TOO, and has to: the client adopts the body
+     * the host spawned, off the SAME record with the same xp, so it computes
+     * the same maxHp the host did and the health bar over the animal reads
+     * what the host is simulating. `_ledger` refuses to award off a net-driven
+     * body; this is not an award, it is the same arithmetic run twice on the
+     * same input.
+     */
+    e.maxHp *= R.hp;
+    /* THE POOL SCALES AND THE FRACTION DOES NOT. `enlistBody` can write
+     * `e.hp = e.maxHp` because it only ever runs on a body that was made this
+     * frame; `adopt` also runs on the client's copy of a body the HOST spawned,
+     * which is already in a fight and already carrying a snapshot's hp. Scaling
+     * both by the same number is right for a fresh animal (hp is maxHp at
+     * construction, Enemy.js:3152) and right for one at half health, with no
+     * branch to get wrong. */
+    e.hp = Math.min(e.hp * R.hp, e.maxHp);
+    e.attackDamage *= R.dmg;
+    e.speed *= R.speed;
     /**
      * AND THE THREE FIELDS THE FOLD READS ARE CLAIMED ONLY BY *YOUR* ANIMAL.
      *
@@ -2778,7 +2906,13 @@ export class CompanionPack {
     }
 
     /**
-     * AND AN AREA IS BEHIND YOU — the two deeds only a boundary can pay.
+     * AND A BOUNDARY IS BEHIND YOU — the two deeds only a boundary can pay.
+     *
+     * WHAT A BOUNDARY IS depends on what the mode is made of and is answered
+     * once, by `boundariesTaken`: an area where there is ground to take, a
+     * cleared wave everywhere else. This block does not know which it was
+     * handed, which is the point — the deed is about the animal, not about the
+     * ground.
      *
      * `crossed` wants it ALIVE and INSIDE THE LEASH at the transition, and the
      * leash is measured from the station through `leashOf` and `stationGap` —
@@ -2793,7 +2927,11 @@ export class CompanionPack {
      * `areas` is the free layer and is credited on a wider rule than the xp:
      * every boundary it was alive for, in the rope or not. The history is what
      * happened; the deed is what it was worth. COMPANIONS.md is explicit that
-     * most of the felt growth should live in the layer that costs nothing.
+     * most of the felt growth should live in the layer that costs nothing. It
+     * counts BOUNDARIES rather than areas now — grounds walked, in whatever
+     * unit the mode walks them in — which is the honest reading of a counter
+     * that was reading zero for a whole run in eight modes; it is stored,
+     * unpriced and rendered nowhere, and nothing that fights reads it.
      */
     if (taken > (e._cmpAreas | 0)) {
       e._cmpAreas = taken;
@@ -2809,24 +2947,25 @@ export class CompanionPack {
 
   update(dt = 1 / 60) {
     /**
-     * HOW MUCH GROUND IS BEHIND YOU, ASKED ONCE A FRAME.
+     * HOW MUCH PROGRESS IS BEHIND YOU, ASKED ONCE A FRAME.
      *
-     * `areasTaken` is the director's own reader — "a derived count rather than
+     * `areasTaken` is the campaign's own reader — "a derived count rather than
      * a second tally kept beside the first", counted off the ledger
      * `_areaClear` writes as it crosses — and it is the right one of the three
-     * on offer. `areaNumber` is where you ARE and is one ahead of what you
-     * have taken. `areaIndex` never advances on the LAST area at all, because
-     * `_areaClear` returns into `_endCampaign` before it increments: an animal
-     * that fought a whole crossing would have been paid for four of the five
-     * areas it crossed, and the one it was missing the point for is the one it
-     * won.
+     * a crossing offers. `areaNumber` is where you ARE and is one ahead of what
+     * you have taken. `areaIndex` never advances on the LAST area at all,
+     * because `_areaClear` returns into `_endCampaign` before it increments: an
+     * animal that fought a whole crossing would have been paid for four of the
+     * five areas it crossed, and the one it was missing the point for is the
+     * one it won.
      *
-     * ZERO IN EVERY MODE WITHOUT A CAMPAIGN, and that is the honest answer
-     * rather than a hole. Nine of the eleven modes have no areas to cross, so
-     * there is no boundary to be alive at and this deed does not exist there.
-     * The other three do, and they carry those modes on their own.
+     * AND IT USED TO BE ZERO IN EVERY MODE WITHOUT A CAMPAIGN, which was not
+     * an honest answer — it was a ladder that only turned in three modes of
+     * eleven. `boundariesTaken` answers with the unit of progress the mode
+     * actually has, and the whole argument and the measured before-and-after
+     * are on it.
      */
-    const taken = this.world?.command?.areasTaken ?? 0;
+    const taken = boundariesTaken(this.world);
     for (let i = this.list.length - 1; i >= 0; i--) {
       const e = this.list[i];
       if (!e || e.dead || e.disposed) { this.list.splice(i, 1); continue; }

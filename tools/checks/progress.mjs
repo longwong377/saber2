@@ -197,13 +197,20 @@ export function run({ check, assert }) {
     const { recordRun, loadProgress } = await import('../../src/game/Progress.js');
     const out = await withCleanStore(() => {
       const written = [];
+      /* `record` closes over `foldCompanion` too — it folds the companion's
+       * durable record BEFORE filing the run, because the fold reads the
+       * outcome that filing is what writes. This lift compiles the body
+       * verbatim, so the name has to be supplied or the whole check dies on a
+       * ReferenceError. A no-op is right here: this file is about what reaches
+       * the STORE, and `history.mjs` is where the fold's own ordering and
+       * once-per-run guard are asserted. */
       // eslint-disable-next-line no-new-func
-      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings',
+      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion',
         `const world = scope.world;\n${body}\nreturn record;`);
       // The REAL `recordRun` behind a tap, so the store below is written by the
       // shipped path exactly once and the check can also read what was handed to it.
       const record = make({ world }, (s) => { written.push(s); return recordRun(s); },
-        () => 'command', { order: 'jedi', species: 'human' });
+        () => 'command', { order: 'jedi', species: 'human' }, () => {});
       record(summary);
       record();                       // the death card's own exit — once, not twice
       assert(written.length === 1, `a finished campaign wrote ${written.length} records`);
@@ -266,11 +273,18 @@ export function run({ check, assert }) {
     const { recordRun, loadProgress, progressLines } = await import('../../src/game/Progress.js');
     const out = await withCleanStore(() => {
       const written = [];
+      /* `record` closes over `foldCompanion` too — it folds the companion's
+       * durable record BEFORE filing the run, because the fold reads the
+       * outcome that filing is what writes. This lift compiles the body
+       * verbatim, so the name has to be supplied or the whole check dies on a
+       * ReferenceError. A no-op is right here: this file is about what reaches
+       * the STORE, and `history.mjs` is where the fold's own ordering and
+       * once-per-run guard are asserted. */
       // eslint-disable-next-line no-new-func
-      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings',
+      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion',
         `const world = scope.world;\n${body}\nreturn record;`);
       const record = make({ world }, (s) => { written.push(s); return recordRun(s); },
-        () => 'campaign', { order: 'jedi', species: 'human' });
+        () => 'campaign', { order: 'jedi', species: 'human' }, () => {});
       record();                        // quitToMenu, verbatim
       assert(written.length === 1, `quitting wrote ${written.length} records`);
       assert(written[0].won !== false,

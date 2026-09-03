@@ -4006,11 +4006,33 @@ export class Player {
    * `{ origin, axis, cone, radius }` to `guardIntercept` since before any of
    * this, for exactly the case of *a blade covering you while you are looking
    * somewhere else*, and a staff spun by the Force with your hands free is that
-   * case in its purest form. `cone` is `GUARD.reach / 2` — the shipped 100°
-   * rose the guard already says you cannot see past, as a half-angle — so a
-   * bolt from the flank meets a bar edge-on and goes through, exactly as it
-   * looks. `radius` is the weapon's own `half`, so a longer shaft is a wider
-   * barrier for a reason rather than by a constant.
+   * case in its purest form. `radius` is the weapon's own `half`, so a longer
+   * shaft is a wider barrier for a reason rather than by a constant.
+   *
+   * ── AND `cone` WAS `GUARD.reach / 2`, WHICH MADE IT A WEDGE ─────────────
+   *
+   * That is a 50° half-angle copied off `this.aimDir`: a frontal bow wave, and
+   * the sentence that used to stand here conceded it — "a bolt from the flank
+   * meets a bar edge-on and goes through, exactly as it looks." What it did not
+   * say is that the ask was *"spin the staff at high speeds AROUND YOUR
+   * BODY"*, and that `tools/_spinprobe.mjs` fired every shipped shot inside
+   * ±10° of the sightline, so the check that called it a barrier was measuring
+   * the one arc the ordinary held guard already covers in every set. Driven at
+   * five bearings, twelve bolts each, bar refilled and ring re-raised before
+   * every shot, spin-down control alongside:
+   *
+   *     bearing    0°     45°    90°   135°   180°
+   *     spin      0/12   2/12   4/12  6/12   6/12   landed
+   *     control   6/12   6/12   6/12  6/12   6/12
+   *
+   * `GUARD.reach` is a fact about a MAN — shoulders, elbows, eyes — and not one
+   * of its three reasons survives a weapon nobody is holding: `handsOnHilt()`
+   * is 0 while this runs, the Force is what is turning it, and the whole point
+   * of the button is that you are looking elsewhere with both palms open. So
+   * the cone is `ORBIT.cone`, π, the full sphere, and `radius` is left as the
+   * only thing deciding what the barrier reaches. `ORBIT` carries the price
+   * that pays for it and the plane that goes round with it; read that note
+   * before touching this one.
    *
    * WHAT IT STILL GIVES UP, and this is what stops it being strictly better
    * than holding the blade. `entry.guard` is the AUTO path in `Bolts.update`:
@@ -4024,12 +4046,18 @@ export class Player {
     const arm = this.sidearm;
     if (this.throwState === 'orbit' && arm && arm.half > 0) {
       const g = this._orbitGuard || (this._orbitGuard =
-        { origin: new THREE.Vector3(), axis: new THREE.Vector3(), cone: GUARD.reach / 2, radius: 0 });
+        { origin: new THREE.Vector3(), axis: new THREE.Vector3(), cone: ORBIT.cone, radius: 0 });
       /* By reference into nothing: `guardIntercept` reads these synchronously
        * inside the same frame's `Bolts.update`, exactly as `CatchWindow.guard`
        * hands over its live origin and axis, so one object is reused and
        * nothing is allocated per frame per bolt. */
       g.origin.copy(arm.pivot);
+      /* THE AXIS IS STILL WRITTEN AND A FULL SPHERE NO LONGER TURNS ON IT —
+       * `guardIntercept`'s `dot >= cos(π)` is true for every bearing including
+       * a zero vector. It stays because the descriptor's SHAPE is
+       * `CatchWindow.guard()`'s and every field of it is part of that contract:
+       * the day somebody narrows `ORBIT.cone` for balance, an axis that had
+       * quietly stopped being maintained would point wherever it was left. */
       g.axis.copy(this.aimDir);
       g.radius = arm.half;
       return g;

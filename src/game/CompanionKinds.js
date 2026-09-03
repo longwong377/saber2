@@ -88,23 +88,88 @@ export const PLAYER_SPRINT = 7.45;
 export const PACE_CAP = 0.85;
 
 /**
- * THE RUNGS, AND WHAT GROWS IS NOT A MULTIPLIER.
+ * THE RUNGS, AND WHAT A RUNG BUYS.
  *
- * COMPANIONS.md states the position in its own words and this table is the
- * enforcement: **the rank rows carry no numeric multiplier field at all** —
- * not a compressed one, not a 1.00 one. The field does not exist, and the
- * check asserts its ABSENCE rather than its value, because a field sitting at
- * 1.00 is an invitation with a comment on it.
+ * ── THE POSITION THIS TABLE HELD UNTIL NOW, AND WHY IT WAS WRONG ──────────
  *
- * That is stricter than the law troopers live under and the asymmetry is
- * argued: COMPANY.md defends the RANKS ladder on two grounds — it is averaged
- * across twenty-four bodies, and a fresh muster re-earns the whole thing
- * inside one campaign. Neither half holds here. There is exactly ONE companion
- * and it is with you in modes that have no muster, no roster and no wave
- * budget to tune against.
+ * For four rounds this table carried NO numeric field at all, and its own
+ * check asserted the ABSENCE — "not one multiplier field" — on the argument
+ * that COMPANY.md's defence of the trooper ladder does not transfer: RANKS is
+ * averaged across twenty-four bodies and a fresh muster re-earns it inside one
+ * campaign, and a companion is one body carried between modes that have no
+ * muster.
  *
- * SO WHAT GROWS IS THE LEASH, THE ORDER SET, AND HOW LONG AN ORDER SURVIVES
- * YOU. Nothing it does hits harder.
+ * THE ARGUMENT WAS REAL AND IT WAS SETTLED AGAINST THE WRONG SENTENCE. The
+ * specification is the player's:
+ *
+ *   "the companion will get stronger over time just like you do imagine this
+ *    almost like a mini-player like it's going to be a really good dynamic
+ *    thing"
+ *
+ * "just like you do" is the clause the absence contradicted. A ladder that
+ * buys only rope and vocabulary is a licence ladder, and a licence ladder is
+ * the RIGHT SECOND HALF of this design — but it was standing in for the first
+ * half rather than beside it. A SWORN massiff had the same 210 hp and the same
+ * 26-point bite as one adopted a minute earlier, and no amount of leash makes
+ * a player say the animal got stronger.
+ *
+ * ── AND BOTH HALVES OF THE OLD ARGUMENT CUT THE OTHER WAY WHEN DRIVEN ─────
+ *
+ * "TWENTY-FOUR BODIES AVERAGE OUT AND ONE DOES NOT." True, and it is a reason
+ * the companion's spread should be SMALLER, not a reason it should be zero. A
+ * trooper multiplier is spent twenty-four times a wave; a companion's is spent
+ * once, by one body that is at most one in forty on the field. The blast
+ * radius of this ladder is bounded by that body's share of the fight, which is
+ * the smallest share any ladder in this repository has.
+ *
+ * "A FRESH MUSTER RE-EARNS THE WHOLE THING INSIDE ONE CAMPAIGN." This ladder
+ * does that BETTER than RANKS does, and the check below the table is the proof
+ * — SWORN is 20 xp and one flawless crossing pays exactly 20, so the top rung
+ * is re-earnable inside a single run by an animal that has never been out
+ * before. That is Company.js:28's amendment satisfied exactly: a thing may
+ * cross runs when a single run could have produced it unaided. Persistence is
+ * a shortcut to a ceiling and never a new ceiling.
+ *
+ * ── THE CURVE, AND WHY THIS SPREAD ───────────────────────────────────────
+ *
+ * `enlistBody` (Command.js:4673) reads `RANKS[i].hp/dmg/speed` off the record
+ * and multiplies the archetype; this table is the same three fields read the
+ * same way at `adopt`, so there is one shape in the repository and not two.
+ *
+ *   RANKS      5 rungs   hp 1.00 → 1.20   dmg 1.00 → 1.12   speed 1.00 → 1.04
+ *   this       4 rungs   hp 1.00 → 1.15   dmg 1.00 → 1.09   speed 1.00 → 1.03
+ *
+ * STRICTLY UNDER THE TROOPER LADDER ON ALL THREE AXES, and the check pins that
+ * relation against the imported RANKS rather than against three typed numbers,
+ * so the day somebody compresses RANKS this table is compressed with it. Even
+ * spacing, because there is nothing to bend the curve towards: the leash and
+ * the order set already do the shaping, and a numeric ladder that also
+ * accelerated would be two claims on one rung.
+ *
+ * WHAT 1.15 / 1.09 IS WORTH, DRIVEN rather than reasoned (`companions.mjs`,
+ * "a SWORN animal out-fights a STRANGE one"): on a live massiff in a live
+ * world, SWORN bills 1.09x the damage into an immortal hostile over the same
+ * thirty seconds and takes 1.15x the aimed fire before it falls — 15 bolts of
+ * 20 against 13. That is a companion you can feel got better and is nowhere
+ * near a companion that solves a fight; a rung 3 massiff still loses to two
+ * B2s and still dies if you leave it.
+ *
+ * ── AND THE PACE CAP IS UNTOUCHED, BY CONSTRUCTION AND NOT BY CARE ────────
+ *
+ * `speed` here is a multiplier on the ARCHETYPE and `adopt` applies it BEFORE
+ * `paceOf`'s clamp, so the cap is the last word: the tuk'ata already sits on
+ * 0.85 of your sprint and rung 3 moves it not one hundredth. "Obviously they
+ * are going to be less mobile than you" holds at the top rung for every kind,
+ * and `companions: it is slower than you` measures it there — that check
+ * fields every kind at xp 99, which is what makes it the pin for this clause
+ * rather than a restatement of it.
+ *
+ * ── WHAT IS STILL REFUSED, AND WHY THE LIST IS SHORTER BY EXACTLY ONE ─────
+ *
+ * armour, toughness, frag, ward, panic, scale and every other field a row
+ * could grow: the check still asserts the ABSENCE of those, and it always
+ * will. Three axes is what `enlistBody` reads and three is what this reads. A
+ * fourth would be a ladder nobody has argued for.
  *
  * THE LEASH LADDER STARTS AT 14 AND NOT AT 8, AND THAT IS A MEASUREMENT.
  * The design's first draft opened at 8 m. `tools/_companion.mjs` ran a massiff
@@ -118,10 +183,14 @@ export const PACE_CAP = 0.85;
  * feel green; it is not meant to be furniture.
  */
 export const COMPANION_RANKS = [
-  { id: 'strange', label: 'STRANGE', xp: 0, leash: 14, orders: ['heel', 'away'] },
-  { id: 'known', label: 'KNOWN', xp: 6, leash: 18, orders: ['heel', 'away', 'ward'] },
-  { id: 'trusted', label: 'TRUSTED', xp: 16, leash: 24, orders: ['heel', 'away', 'ward', 'seek', 'verb'] },
-  { id: 'sworn', label: 'SWORN', xp: 20, leash: 34, orders: ['heel', 'away', 'ward', 'seek', 'verb', 'hold'] },
+  { id: 'strange', label: 'STRANGE', xp: 0, leash: 14, hp: 1.00, dmg: 1.00, speed: 1.00,
+    orders: ['heel', 'away'] },
+  { id: 'known', label: 'KNOWN', xp: 6, leash: 18, hp: 1.05, dmg: 1.03, speed: 1.01,
+    orders: ['heel', 'away', 'ward'] },
+  { id: 'trusted', label: 'TRUSTED', xp: 16, leash: 24, hp: 1.10, dmg: 1.06, speed: 1.02,
+    orders: ['heel', 'away', 'ward', 'seek', 'verb'] },
+  { id: 'sworn', label: 'SWORN', xp: 20, leash: 34, hp: 1.15, dmg: 1.09, speed: 1.03,
+    orders: ['heel', 'away', 'ward', 'seek', 'verb', 'hold'] },
 ];
 
 /**
@@ -179,6 +248,15 @@ export const COMPANION_RANKS = [
  * make `reached` bankable and take the ceiling to 30; or a sixth deed. Until
  * one of those exists, `tools/checks/companions.mjs` drives the crossing and
  * fails on the number rather than on this comment.
+ *
+ * AND THE ARITHMETIC ABOVE IS THE CAMPAIGN'S, WHICH IS THREE MODES OF ELEVEN.
+ * The other eight have no area to cross and were paying at most one xp for a
+ * whole run — six runs to WARD and sixteen to SEEK, in the modes most people
+ * play. The boundary a deed is paid at is now the mode's own: an AREA where
+ * there is a crossing, a cleared WAVE everywhere else. The argument, the
+ * ledger it reads and the measured before-and-after are on `boundariesTaken`
+ * in Companions.js, beside the code that does it. Nothing on this table moved
+ * for it, which is the point — the gates are what they were measured to be.
  */
 
 /**
@@ -318,15 +396,80 @@ const KINDS = [
     id: 'pup', label: 'Rancor pup', archetype: 'pup',
     pace: 0.46, ward: 8, heel: 0.9, frag: 0.7, mount: false, deck: 'walker', look: 'creature',
     verb: { id: 'wreck', label: 'WRECK', caption: 'Put that cover through the floor' },
+    /* THE CARD'S CLAIM IS ABOUT `scale`, AND IT SURVIVED THE RUNG LADDER
+     * GETTING NUMBERS — because `scale` is not on that ladder. The rung buys
+     * hp, dmg and speed and the same three for every kind; the pup's SIZE
+     * reads off `runs` and buys nothing at all, which is the whole point of
+     * putting the growth question on the one kind where a player would most
+     * expect the trap to have been taken. The sentence says size rather than
+     * damage so that it stays true either way round. */
     blurb: 'The only companion whose attacks change the LEVEL rather than the enemy. '
-      + 'It gets visibly bigger across its life and hits not one point harder.',
+      + 'It gets visibly bigger across its life, and the size buys nothing.',
   },
   {
     id: 'wook', label: 'Wookiee', archetype: 'wook',
     pace: 0.64, ward: 15, heel: 1.2, frag: 0.8, mount: false, deck: 'row', look: 'wookiee',
     verb: { id: 'breach', label: 'BREACH', caption: 'Take that cover apart' },
-    blurb: 'A partner rather than a pet — the only one with both bands, and the only '
-      + 'one big enough to block a doorway you are standing in.',
+    /**
+     * THE CARD SAID "THE ONLY ONE WITH BOTH BANDS" OVER A ROW WITH ONE, AND
+     * THE CARD IS WHERE THE PLAYER CHOOSES.
+     *
+     * COMPANIONS.md gives this kind a bowcaster at distance and a topple in
+     * reach, the brief asks for "a large wookie (with melee and ranged weapons
+     * potentially)", and this sentence was rendered straight into the picker
+     * over `COMPANION_UNITS.wook`, which declares `melee: true` and no
+     * `ranged` and no `weapon`. A player who picked this kind for its gun got
+     * a body that has never fired one. That is the worst place in the feature
+     * for a false sentence: every other lie costs a surprise, this one costs
+     * the pick.
+     *
+     * SO THE SENTENCE IS NOW THE ROW, AND `companions: a card's band claim is
+     * the row's band` binds the two in BOTH directions — a blurb that claims a
+     * band over a row without one goes red, and a row that grows `ranged` or
+     * `weapon` under a card that does not claim it goes red too. The day the
+     * second band is real this sentence has to change in the same commit,
+     * which is the whole reason the check reads the prose.
+     *
+     * ── AND THE SECOND BAND IS NOT A FIELD, IT IS A BEHAVIOUR ────────────
+     *
+     * THE GUN IS BUILT. `buildBlaster('bowcaster')` and `BLASTER_LENGTH`'s
+     * 0.95 m landed while this was being written, and `rifle-hold.mjs` holds
+     * it to the same stock/muzzle/hold-point reference as every other kind. So
+     * the honest reason this row still carries no `weapon` is not the geometry
+     * and is not a missing lane; it is that a gun in a hand is not a band, and
+     * that was DRIVEN rather than reasoned about.
+     *
+     * ONE: THE BRAIN ONLY EVER PICKS ONE. `Enemy._brain` ends `if (A.melee)
+     * this._meleeBrain(…); else this._rangedBrain(…)`, and `_meleeBrain` with
+     * no saber falls straight into `_beastBrain`, which has no firing path at
+     * all. Driven over the whole table with the companion rows loaded: **0 of
+     * the 49 archetypes in this game carry a `weapon` without `ranged`**, and
+     * none carries `melee` and `ranged` together. `weapon: 'bowcaster'` here
+     * on its own is HANDOFF §2.3b in the most visible medium the game has — a
+     * gun the player can SEE and the brain never pulls — and the check refuses
+     * it in as many words.
+     *
+     * TWO, AND IT IS THE ONE THAT SETTLES IT: THE ANIMAL WOULD NOT USE IT
+     * ANYWAY. Driven on a live world with the row handed the bowcaster, a
+     * `ranged: true` flag, a fire rate and a bolt colour at runtime, and a
+     * hostile put down at 9 m: the wookiee CLOSED to 1.7 m and bit it, 156
+     * points over 6 blows, all of them melee. Wrapping `_think` to hand the
+     * shipped `_rangedBrain` the frame whenever the target was outside the
+     * melee band changed the answer by nothing — 154 over the same 6 blows —
+     * because the body was never outside the band. A second band needs a
+     * STAND-OFF RULE: a decision about when this animal closes and when it
+     * holds its ground and shoots, which is a behaviour with its own argument,
+     * its own tuning and its own check, and it is not a field on this row.
+     *
+     * WHAT IT WOULD TAKE, so the next person costs it instead of rediscovering
+     * it: a both-bands branch in `_brain` (the army's hot path — its own commit
+     * and its own check) or a companion-owned sidearm in this feature's own
+     * pack (cheaper, a second firing door, and it must argue that it is not),
+     * plus the stand-off rule above, plus a friendly-fire measurement, because
+     * a companion that shoots past you is a companion that shoots you.
+     */
+    blurb: 'A partner rather than a pet — the only one big enough to block a doorway '
+      + 'you are standing in. It fights in reach and nowhere else.',
   },
   {
     id: 'hawk', label: "Vhal'kir hawk", archetype: 'hawk',
@@ -670,7 +813,10 @@ export const COMPANION_UNITS = {
    *
    * `scale` is the field the kind is about. COMPANIONS.md puts the pup's
    * scale on `runs`, and hp and damage do not move a point when it does — the
-   * body gets visibly bigger and hits nothing harder. 0.55 is where that
+   * body gets visibly bigger and the SIZE buys nothing. (The rung ladder does
+   * buy hp, dmg and speed, and it buys the same three for every kind; `scale`
+   * is not on it and never will be, which is what makes this kind the honest
+   * place to have asked the growth question.) 0.55 is where that
    * starts, not where it stays, so it is the one number here a reader should
    * expect to see written over at runtime. At 0.55 the plan stands it 0.43 m
    * at the hip and near a metre at the crown: the massiff's height to within
@@ -1020,14 +1166,16 @@ export const COMPANION_UNITS = {
    *
    * ── WHAT IS NOT HERE, AND IT IS THE HALF THIS ROW DOES NOT OWN ─────────
    *
-   * NO `ranged`, NO `weapon`. COMPANIONS.md gives this kind both bands and a
-   * bowcaster, and a bowcaster is a WEAPON — `buildBlaster` has no such kind,
-   * `BLASTER_LENGTH` has no reference length for one, and `rifle-hold.mjs`
-   * holds every `weapon` archetype to a stock in the shoulder and both hands
-   * on the rifle. Handing this row `weapon: 'heavy'` would put a clone repeater
-   * in a wookiee's hands to satisfy a field, which is worse than an honest
-   * gap. The body is built and the gun is the weapons lane's; `melee: true`
-   * with the default beast verbs is what it fields with until then.
+   * NO `ranged`, NO `weapon`, AND THE CARD NO LONGER SAYS OTHERWISE. The full
+   * argument — including the measurement that 0 archetypes in this game carry
+   * both bands, because `_brain` picks one off `A.melee` and `_beastBrain` has
+   * no firing path — is on this kind's `blurb` in the KINDS table, where the
+   * false sentence was. In short: `buildBlaster` has no 'bowcaster' branch and
+   * its final `else` is the clone HEAVY REPEATER, so a `weapon` field here
+   * today is a Republic drum gun in a wookiee's hands; and a `ranged` field
+   * here is a flag no code reads. The body is built, the gun is the weapons
+   * lane's and the BAND is a branch nobody has costed; `melee: true` with the
+   * default beast verbs is what it fields with, and the card says so.
    */
   wook: {
     label: 'Wookiee', build: (o) => buildWookiee(o),

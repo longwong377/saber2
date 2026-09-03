@@ -207,7 +207,39 @@ export const LIFE = Object.freeze({
    * which is also the right read: a dog watches where you point, and then it
    * watches you.
    */
-  look: { yaw: 0.62, pitch: 0.36, slew: 3.6, dwell: 0.40, idle: 4.0, near: 8, range: 30, scan: 0.20 },
+  /**
+   * AND `reach` IS THE ONE THAT MAKES `yaw` AND `pitch` A NECK RATHER THAN A
+   * CLAMP, which is a defect that shipped and was measured on the commonest
+   * thing a player ever sees.
+   *
+   * At heel, on the flat, with the player standing still, the gaze channel sat
+   * at exactly 0.620 rad — `look.yaw`, to three decimals — on 899 of 899
+   * frames. That is not a head tracking its owner. It is a head jammed against
+   * its own stop, held there for as long as anybody watches, because the owner
+   * of a companion at heel stands BEHIND it: measured on the colosseum
+   * fixture, 1.812 rad round (103.8°) against a 0.62 rad neck. The old ladder
+   * picked him anyway and `clamp` did the rest.
+   *
+   * So the envelope moved from the END of the solve to the FRONT of it: a rung
+   * is only taken if the head can actually rest on it, and what cannot be
+   * reached is passed over for the next thing that can — a hostile in front of
+   * it, or nothing at all and the animal looks ahead. `reach` is the fraction
+   * of the stop a NEW thing has to be inside before the animal will turn to
+   * it, and the band between `reach` and the stop itself is hysteresis: once
+   * it IS watching something it will follow it all the way out to the stop and
+   * only then let go, so a body drifting across the boundary does not make the
+   * head flicker on and off at frame rate. 0.85 of 0.62 is 0.53 rad, which is
+   * a 5° band — wider than anything walking pace crosses in a frame.
+   *
+   * THE YAW CLAMP IS GONE, and that is the point rather than a side effect.
+   * With the envelope on the front, a `clamp` on `yaw` at the back could never
+   * bite again, and a line that cannot bite is HANDOFF §2.3b whatever it is
+   * guarding. `pitch` is NOT in the envelope and its clamp is still live and
+   * still bites — the argument for the split is on `gazeFor`, and it is the
+   * difference between a stop a body can walk its way out of and one it
+   * cannot.
+   */
+  look: { yaw: 0.62, pitch: 0.36, reach: 0.85, slew: 3.6, dwell: 0.40, idle: 4.0, near: 8, range: 30, scan: 0.20 },
   /**
    * THE BREATH. `rate` is cycles a second for a body of `ref` kilograms and
    * the exponent is the allometric one — see the header for the three real
@@ -315,8 +347,10 @@ export const BEATS = {
     },
   },
   /** Nose to the ground, three short takes of it, and up again. */
+  /* AND NOT WHILE IT IS ON YOUR SHOULDER — see `pickBeat`. A nose on the
+   * ground is a pair of eyes off the field. */
   sniff: {
-    id: 'sniff', parts: ['head'], made: 'flesh', dur: 1.7, weight: 1.2,
+    id: 'sniff', parts: ['head'], made: 'flesh', duty: false, dur: 1.7, weight: 1.2,
     drive(o, u) {
       const e = env(u);
       o.pitch -= (0.46 + Math.sin(u * TAU * 5) * 0.07) * e;
@@ -349,11 +383,35 @@ export const BEATS = {
    *  a kind ROW rather than the body — `mount` is the field that says a player
    *  gets off this animal, and an animal you get off grazes. */
   graze: {
-    id: 'graze', parts: ['head'], made: 'flesh', mount: true, dur: 3.2, weight: 1.4,
+    id: 'graze', parts: ['head'], made: 'flesh', mount: true, duty: false, dur: 3.2, weight: 1.4,
     drive(o, u) {
       const e = Math.min(1, env(u) * 2.2);
       o.pitch -= 0.62 * e;
       o.yaw += Math.sin(u * TAU * 2.2) * 0.22 * e;
+    },
+  },
+  /**
+   * A LOOK ROUND. Head off to one side, a moment there, and back.
+   *
+   * ADDED WITH THE GAZE ENVELOPE AND FOR THE SAME MEASUREMENT. Once a head
+   * that cannot reach its owner stops cranking itself onto the stop, it rests
+   * dead ahead — and measured over sixty-five calm seconds at heel, that left
+   * the head bone at exactly its rest quaternion for every frame that was not
+   * inside one of the three beats the timer fired. "Not jammed" is not the
+   * same thing as "alive", and the fix for the second half is the mechanism
+   * this file already has for "it does something for a moment".
+   *
+   * It is the one beat that is RIGHT while on duty, which is the whole of what
+   * a standing order should look like from outside: an animal on your shoulder
+   * with nothing yet to meet looks about, and does not put its nose down.
+   */
+  glance: {
+    id: 'glance', parts: ['head'], made: 'flesh', dur: 1.4, weight: 1.3,
+    drive(o, u, s) {
+      const e = env(u);
+      o.yaw += s * 0.45 * e;
+      o.pitch += 0.08 * e;
+      o.roll += s * 0.07 * e;
     },
   },
   /** A sensor sweep. Machines get this and animals do not. */
@@ -568,6 +626,9 @@ export function lifeFor(id, rig, A = null, K = null, plan = null) {
     side: seedOf(id, 2) < 0.5 ? 1 : -1,
     /* Live state. */
     beat: null, beatT: 0, beatW: 0, beatSide: 0, next: 0, calm: 0,
+    /** Is the gaze committed to something — the one bit `gazeFor`'s envelope
+     *  widens on. See `LIFE.look.reach`. */
+    watch: 0,
     yaw: 0, pitch: 0, carriage: 0, swayA: 1,
     fl: 0, flYaw: 0, flCd: 0,
     scan: 0, seen: null,
@@ -637,18 +698,51 @@ function layerBone(bone, mem, wrote, off) {
  */
 export function gazeFor(L, s, out) {
   /* 1. WHAT IT IS FIGHTING. Handed in rather than looked up: on the field this
-   *    is `e.target`, which the aim wrap has already decided this frame. */
+   *    is `e.target`, which the aim wrap has already decided this frame.
+   *
+   *    NOT REACH-TESTED, AND IT IS THE ONE RUNG THAT MUST NOT BE. With a
+   *    target the gait owns the aim and this layer's gaze channel is zero
+   *    (see `stepLife`), so the point is returned for the sake of anyone
+   *    asking this function what the animal is watching, and nothing here
+   *    turns a bone with it. */
   if (s.target?.position && !s.target.dead) return out.copy(s.target.position).setY(aimY(s.target));
 
   const owner = s.owner;
   const near = owner?.position && s.at
     ? owner.position.distanceTo(s.at) <= LIFE.look.near : false;
-
-  /* 2/3. THE FIELD OR THE OWNER, in the order `ward` puts them. */
   const foe = s.foe;
   const wardHit = foe && L.ward > 0 && owner?.position
     && foe.position.distanceToSquared(owner.position) <= L.ward * L.ward;
-  if (wardHit) return out.copy(foe.position).setY(aimY(foe));
+
+  /**
+   * CAN THE HEAD ACTUALLY REST ON IT — the envelope, and the reason it is here
+   * rather than at the end of the solve is written out on `LIFE.look.reach`.
+   *
+   * `L.watch` is one bit of memory: was it watching something last frame. It
+   * widens the envelope from `reach` to the whole stop, which is the whole of
+   * the hysteresis — a thing you have committed to following is followed out
+   * to the stop, a thing you have not is only taken if it is comfortably
+   * inside it.
+   *
+   * YAW ONLY, AND PITCH IS STILL A CLAMP — the two stops are not the same kind
+   * of thing and treating them alike breaks the small end of the roster. A
+   * body has somewhere else to go in yaw: it turns round, which is why a head
+   * held at the yaw stop for a minute and a half reads as a jam rather than as
+   * an animal. Up and down there is nowhere else to go, and a cat looking up
+   * at a man standing two metres away with its head as far back as its neck
+   * goes is not jammed, it is looking up at him. Gating on pitch as well was
+   * tried and it is a measurement, not a preference: a tooka's eye is about
+   * 0.3 m off the plates and a player's chest is 1.3, so at the 3.5 m heel it
+   * asks 0.28 rad of a 0.36 stop and at 2 m it asks 0.46 — the ward-0 kinds,
+   * whose whole job is watching YOU, would have given up on you for standing
+   * too close.
+   */
+  const yLim = LIFE.look.yaw * (L.watch ? 1 : LIFE.look.reach);
+  const holds = (pt) => Math.abs(bearingTo(s, pt).yaw) <= yLim;
+  const take = () => { L.watch = 1; return out; };
+
+  /* 2/3. THE FIELD OR THE OWNER, in the order `ward` puts them. */
+  if (wardHit && holds(out.copy(foe.position).setY(aimY(foe)))) return take();
 
   if (near && owner) {
     /* THE OWNER'S AIM BEATS THE OWNER'S FACE, FOR A WHILE. A companion that
@@ -657,13 +751,48 @@ export function gazeFor(L, s, out) {
      * photograph. `s.aiming` is a WINDOW — see `LIFE.look`. */
     if (s.aiming && owner.aimDir) {
       const from = owner.chest || owner.position;
-      return out.copy(from).addScaledVector(owner.aimDir, LIFE.look.range);
+      if (holds(out.copy(from).addScaledVector(owner.aimDir, LIFE.look.range))) return take();
     }
-    return out.copy(owner.chest || owner.position);
+    if (holds(out.copy(owner.chest || owner.position))) return take();
   }
-  if (foe) return out.copy(foe.position).setY(aimY(foe));
-  if (owner) return out.copy(owner.chest || owner.position);
+  /* 4/5. AND WHAT IS LEFT — the nearest hostile, then the owner from further
+   *      off. A rung passed over above for being out of the neck's reach is
+   *      passed over here for the same reason, which is what makes the
+   *      fall-through mean "look at the nearest thing you CAN" rather than
+   *      "look at the same thing again". */
+  if (foe && holds(out.copy(foe.position).setY(aimY(foe)))) return take();
+  if (owner && holds(out.copy(owner.chest || owner.position))) return take();
+  /* NOTHING IT CAN SEE WITHOUT CRANKING ITS NECK OVER: it looks ahead. An
+   * animal standing at your heel while you face away is not straining round
+   * at you for a minute and a half; it is standing there, breathing, and
+   * every so often shaking itself off — which is the rest of this file. */
+  L.watch = 0;
   return null;
+}
+
+/**
+ * WHERE A POINT IS, IN THE HEAD'S OWN FRAME — yaw and pitch off the body's
+ * facing and the height of its eye, wrapped to ±π.
+ *
+ * ONE FUNCTION, TWO CALLERS, AND THAT IS THE WHOLE REASON IT EXISTS. The
+ * envelope above decides whether the head can rest on a point and `stepLife`
+ * turns the chosen point into the two angles it eases toward. Those are the
+ * same arithmetic, and two spellings of it is HANDOFF §2.4 — the second
+ * spelling is the one that goes wrong, and here it would go wrong in the worst
+ * possible way: an envelope that says yes and a solve that then asks for
+ * something outside it puts the head straight back on the stop.
+ */
+const _bear = { yaw: 0, pitch: 0 };
+export function bearingTo(s, pt, out = _bear) {
+  out.yaw = 0; out.pitch = 0;
+  if (!pt || !s?.at) return out;
+  const dx = pt.x - s.at.x, dz = pt.z - s.at.z;
+  const dy = pt.y - s.at.y - (s.eye ?? 0);
+  const flat = Math.hypot(dx, dz);
+  if (flat < 1e-4 && Math.abs(dy) < 1e-4) return out;
+  out.yaw = ((Math.atan2(dx, dz) - (s.facing || 0) + Math.PI * 3) % TAU) - Math.PI;
+  out.pitch = Math.atan2(dy, flat);
+  return out;
 }
 
 /** Where on a body a look lands: the chest if it publishes one, else the middle. */
@@ -690,6 +819,10 @@ const aimY = (b) => (b?.chest?.y ?? b?.position?.y ?? 0);
  *   winded    is it in the winded window
  *   moving    is it going anywhere
  *   busy      is anything happening at all — an idle beat is abandoned on it
+ *   duty      is a standing order in force. NOT the same question as `busy`,
+ *             and running the two together is the defect the field note in
+ *             `stepCompanionLife` records: on duty is ALERT, so it narrows
+ *             which beats the animal will do rather than stopping all of them
  */
 export function stepLife(L, dt, s) {
   if (!L || !(dt > 0)) return L;
@@ -701,14 +834,13 @@ export function stepLife(L, dt, s) {
   let wantYaw = 0, wantPitch = 0;
   const look = gazeFor(L, s, _v1);
   if (look && P.head) {
-    _v2.subVectors(look, s.at);
-    const flat = Math.hypot(_v2.x, _v2.z);
-    if (flat > 1e-4 || Math.abs(_v2.y) > 1e-4) {
-      let y = Math.atan2(_v2.x, _v2.z) - s.facing;
-      y = ((y + Math.PI * 3) % TAU) - Math.PI;
-      wantYaw = clamp(y, -LIFE.look.yaw, LIFE.look.yaw);
-      wantPitch = clamp(Math.atan2(_v2.y - (s.eye ?? 0), flat), -LIFE.look.pitch, LIFE.look.pitch);
-    }
+    /* AND NO YAW CLAMP. `gazeFor` only ever hands back a point the neck can
+     * come round to, so the yaw below is inside the stop by construction — see
+     * `LIFE.look.reach` for the 899-of-899 frames that were not, and for why
+     * pitch is the one of the two that is still clamped here. */
+    const b = bearingTo(s, look);
+    wantYaw = b.yaw;
+    wantPitch = clamp(b.pitch, -LIFE.look.pitch, LIFE.look.pitch);
   }
   /* WITH A TARGET THE GAIT ALREADY OWNS THE AIM. `_poseWalker` aims the head
    * at `this.target` and this layer must not aim it a second time — so the
@@ -779,7 +911,7 @@ export function stepLife(L, dt, s) {
   } else if (L.menu.length) {
     L.next -= dt;
     if (L.next <= 0 && L.calm > LIFE.beat.settle) {
-      L.beat = pickBeat(L);
+      L.beat = pickBeat(L, !!s.duty);
       L.beatT = 0; L.beatW = 0;
       L.next = beatGap(L);
       /* WHICH SIDE, AND IT IS THE BEAT'S AS WELL AS THE BODY'S. Drawn once
@@ -787,7 +919,7 @@ export function stepLife(L, dt, s) {
        * own `id`, so the ear an animal scratches is not forced to be the same
        * side its head sweeps to — one `side` for the whole individual made
        * every beat it owns lean the same way, which reads as a limp. */
-      L.beatSide = L.side * (seedOf(`${L.id}:${L.beat.id}`, 8) < 0.5 ? 1 : -1);
+      if (L.beat) L.beatSide = L.side * (seedOf(`${L.id}:${L.beat.id}`, 8) < 0.5 ? 1 : -1);
     }
   }
 
@@ -820,13 +952,38 @@ function beatGap(L) {
   return lerp(lo, hi, r) / L.nerve;
 }
 
-/** Which beat, off the same die, weighted by the row's own `weight`. */
-function pickBeat(L) {
+/**
+ * WHICH BEAT, off the same die, weighted by the row's own `weight` — and
+ * narrowed by whether the animal is on duty.
+ *
+ * "A WARDING ANIMAL IS ALERT, NOT FROZEN" IS TWO CLAIMS AND THIS IS THE
+ * SECOND. The first is that it beats at all, which is `busy` above. The second
+ * is that it does not beat as though it were off duty: a dog standing your
+ * ward does shift its weight, shake itself off and stretch, and it does not
+ * put its nose on the ground and graze. `duty: false` is the row saying which
+ * of the two it is — the field is on the two rows that take the animal's eyes
+ * off the field and its head to the floor, and nothing here knows an order's
+ * name, only whether one is standing.
+ *
+ * `null` FOR A BODY WITH NOTHING IT MAY DO ON DUTY, rather than a silent fall
+ * back to the whole menu. No shipped kind is in that case — every flesh body
+ * keeps `shake` and `stretch`, every droid keeps both of its rows — and a body
+ * that is (a rig with a head and no trunk) genuinely has nothing it may do
+ * while it is on your shoulder. The caller re-arms the timer and asks again.
+ */
+function pickBeat(L, duty) {
   let total = 0;
-  for (const b of L.menu) total += b.weight || 1;
+  for (const b of L.menu) { if (duty && b.duty === false) continue; total += b.weight || 1; }
+  if (total <= 0) return null;
   let r = seedOf(L.id, 200 + ((L.pickN = (L.pickN | 0) + 1) % 97)) * total;
-  for (const b of L.menu) { r -= b.weight || 1; if (r <= 0) return b; }
-  return L.menu[L.menu.length - 1];
+  let last = null;
+  for (const b of L.menu) {
+    if (duty && b.duty === false) continue;
+    last = b;
+    r -= b.weight || 1;
+    if (r <= 0) return b;
+  }
+  return last;
 }
 
 /**
@@ -983,13 +1140,40 @@ export function stepCompanionLife(e, dt, world) {
     effort: clamp(speed / Math.max(0.5, e.speed || 4), 0, 1),
     winded: e.state === 'winded',
     moving: speed > 0.35,
-    /* AN ORDER IS SOMETHING HAPPENING. A companion under a standing order is
-     * on duty; it does not stop to scratch. `_cmpDuty` is the field the wheel
-     * writes and the two wraps read, so this is a third reader of one flag and
-     * not a fourth idea of what "busy" means. HEEL clears it, which is exactly
-     * right: an animal you called back to your side is off duty. */
-    busy: !!(e._cmpDuty && e._cmpDuty.standing) || e.state === 'winded'
+    /**
+     * AN ORDER IS NOT SOMETHING HAPPENING, AND FOR ONE ROUND THIS FILE SAID IT
+     * WAS. `busy` used to read `_cmpDuty.standing` — true for five of the six
+     * orders — and that switched the entire idle layer off under every one of
+     * them. Measured on the colosseum floor with the field cleared and the
+     * player standing still: under WARD, 0 idle beats in 70 seconds, `calm`
+     * pinned at 0.0 s on every frame. WARD is the protector order, one of the
+     * two the player named by name, and it is the order a companion spends
+     * most of a level under.
+     *
+     * IT WAS DELIBERATE AND IT WAS WRONG. A warding animal is ALERT, not
+     * frozen: it is standing on your shoulder waiting for something to come,
+     * which is a dog's whole life and is full of shifting weight, shaking off
+     * and looking about. HOLD and AWAY are the same shape — a place to stand
+     * and a thing not to do.
+     *
+     * WHAT IS ACTUALLY WORK IS ALREADY READ, and reading it a second time
+     * through the duty was the mistake. An animal charging a body it was sent
+     * at is `moving`; one that has reached it has a `target`; one being shot
+     * at is `pinned`; one mid-reaction has `reaction`. The only thing left
+     * that the other senses cannot see is the VERB — the one order that hands
+     * the animal a job of its own with a per-frame tick behind it, and the
+     * only one that can have it standing perfectly still doing something:
+     * slicing a door, staunching a man, holding a line in front of you. That
+     * is what stays. (`id` is an ORDER's id, not a kind's — `stationFor` and
+     * `dutyAllows` both branch on the same field, and the kind rule the check
+     * enforces is about `COMPANION_KINDS` rows.)
+     */
+    busy: e._cmpDuty?.id === 'verb' || e.state === 'winded'
       || !!(e.reaction) || !!e.riding,
+    /* AND `standing` SURVIVES WITH THE MEANING IT SHOULD HAVE HAD: not "stop
+     * moving", but "you are on duty". It narrows the beat menu rather than
+     * emptying it — see `pickBeat`. */
+    duty: !!(e._cmpDuty && e._cmpDuty.standing),
   };
 
   /* THE NEAREST HOSTILE IT CAN SEE — on a clock, because it walks a list.
@@ -1166,6 +1350,10 @@ export function stepCompanionDeckLife(fig, dt, world) {
      * settled". Nothing here re-derives it from the position. */
     moving: sat < 0.5,
     busy: false,
+    /* NOTHING ON THE DECK IS UNDER AN ORDER. There is no wheel in the hangar
+     * and no `_cmpDuty` on a fig — the animal is off duty by construction, and
+     * saying so is the honest reading rather than a field left undefined. */
+    duty: false,
   };
   if (p?.aimDir) {
     const prev = p._cmpAimWas || (p._cmpAimWas = p.aimDir.clone());

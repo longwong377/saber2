@@ -111,6 +111,32 @@ export function setById(id) {
 /** Every set's id, for the menu, the orders and the checks. */
 export const SET_IDS = SABER_SETS.map((s) => s.id);
 
+/**
+ * ── THE THREE THINGS THE `throw` KEY CAN SPEND ON, AND WHO MAY SPEND THEM ──
+ *
+ * `Player.throwOrRecall` opens with two lines that route the one binding three
+ * ways off `saberSet`, and `throwKey` above is the column those two lines are
+ * written from. Everything else in the build that has to answer "is this power
+ * reachable in the set I am playing" — the wheel, its Codex chip, a check —
+ * asks HERE rather than re-deriving it, because there is exactly one honest
+ * source for that answer and a second copy of it is HANDOFF §2.3's signature
+ * defect. It cost this feature a real one: the wheel drew all three slots with
+ * no per-player filter at all, so a single-blade player holding 24 Force saw
+ * the saberstaff's orbit lit READY for a power `throwOrRecall` would never
+ * route them to, under a comment claiming the opposite.
+ *
+ * Derived from the rows and not typed, so a fourth set gets this for free and a
+ * renamed key cannot leave a stale word behind in five files.
+ */
+export const THROW_POWERS = SABER_SETS.map((s) => s.throwKey);
+
+/**
+ * The single power this set's `throw` key spends on — never undefined, for the
+ * same reason `setById` is total: an unknown or missing id is the single blade,
+ * which is the weapon every save and every check that names no set is holding.
+ */
+export function throwPowerOf(setId) { return setById(setId).throwKey; }
+
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  THE PACE                                                             */
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -490,8 +516,66 @@ export const SHAFT = { gap: 0.30, radius: 1.0 };
  * the grade of every contact the ring makes — never a damage multiplier and
  * never a price. `cap` is the hard ceiling in seconds, on top of the Force it
  * drains, because this is a panic button and not a stance.
+ *
+ * ── `cone`: IT IS A BARRIER ROUND THE BODY AND IT WAS A WEDGE IN FRONT OF IT ─
+ *
+ * *"spin the staff at high speeds AROUND YOUR BODY like a protective barrier"*
+ * — and what shipped answered a 100° arc of the sightline and nothing else.
+ * `Player.bladeGuard` published `cone: GUARD.reach / 2`, the rose a man holding
+ * a hilt cannot steer past, copied onto a weapon nobody is holding. Driven,
+ * twelve bolts a bearing at 9 m with the bar refilled and the ring re-raised
+ * before every shot, against the same player with the spin DOWN:
+ *
+ *     bearing    0°     45°    90°   135°   180°
+ *     spin      0/12   2/12   4/12  6/12   6/12   landed
+ *     control   6/12   6/12   6/12  6/12   6/12
+ *
+ * Off the rear flank it stopped nothing at all — and `tools/_spinprobe.mjs`
+ * fired every one of its shipped shots inside ±10° of the sightline, which is
+ * the one bearing the ORDINARY held guard already covers in every set. The
+ * check was green on the arc the feature did not need to exist for.
+ *
+ * `GUARD.reach` is a statement about a MAN: shoulders, elbows and eyes, and you
+ * cannot bring a blade to bear on something behind you. None of the three
+ * reasons survives a staff that is not in anybody's hands — the Force is what
+ * is holding it, `handsOnHilt()` is 0, and the whole point of the button is
+ * that you are looking somewhere else with both palms open. So the descriptor
+ * that answers for it is the full sphere: π, which makes `guardIntercept`'s
+ * `dot >= cos(cone)` accept every bearing and leaves `radius` — the weapon's
+ * own `half` — as the only thing deciding what it reaches. A longer shaft is a
+ * wider barrier, and it is now a barrier rather than a bow wave.
+ *
+ * ── `precess`: AND THE METAL GOES WHERE THE RULE SAYS IT DOES ────────────
+ *
+ * A shell answered by a bar lying in ONE plane would be a rule with no picture
+ * — the defect this file has already made once in the other direction, where
+ * the picture was a barrier and the rule was a strobe. One rigid bar cannot be
+ * everywhere at once, so the PLANE turns: `precess` walks the disc's normal
+ * round the body while the staff whirls in it, one full turn in exactly the
+ * seconds `cap` allows, so the weapon has crossed every bearing by the time the
+ * Force lets go. Derived from `cap` rather than typed, because the two are one
+ * statement — "it goes all the way round, once" — and a typed rate would drift
+ * off the cap the day the cap moves.
+ *
+ * ── AND WHAT THE COVERAGE COSTS, BECAUSE NOTHING HERE IS ONLY BETTER ─────
+ *
+ * The wedge covered (1 − cos 50°)/2 = 17.9% of the sphere. The shell covers all
+ * of it: 5.6× the bearings answered. `cap` pays for it — 4.0 s → 2.4, a 40%
+ * cut in the longest hold there is.
+ *
+ * IT IS THE ONLY KNOB THAT COSTS THE PLAYER ANYTHING, and that is why it is the
+ * one that moved. At 13.6 Force/s a full bar minus the 24 to raise it buys 5.6
+ * seconds of spin, so the CAP has always been what ends a hold and the Force
+ * price has never once been reached — raising the drain would have been a
+ * number that changed no hold in the game. Raising the entry price is not
+ * available either: `POWER_COST` is Powers.js's, one table, and a conditional
+ * price on a key is the drift its opening thirty lines are a post-mortem of.
  */
-export const ORBIT = { rate: 9.0, cap: 4.0, rise: 0.18, clear: 0.15 };
+export const ORBIT = { rate: 9.0, cap: 2.4, rise: 0.18, clear: 0.15, cone: Math.PI };
+/* One turn of the plane per hold — written here rather than in the literal
+ * because it is `cap`'s own value read back, and an object cannot cite itself
+ * while it is being built. */
+ORBIT.precess = 2 * Math.PI / ORBIT.cap;
 
 /**
  * THE WHOLE OF THE SECOND WEAPON — the blade, its pose, its own throw and the
@@ -915,6 +999,28 @@ export class Sidearm {
     const grow = clamp(this.orbitT / ORBIT.rise, 0, 1);
     const fwd = _s1.set(0, 0, -1).applyQuaternion(p.camera.aimQuat).setY(0).normalize();
     if (!Number.isFinite(fwd.x) || fwd.lengthSq() < 1e-6) fwd.set(0, 0, -1);
+    /**
+     * ── AND THE PLANE GOES ROUND THE BODY, WHICH IS THE WORD IN THE BRIEF ──
+     *
+     * The disc's normal was the sightline and stayed there, so the staff was a
+     * propeller nailed to the front of you: measured, twelve bolts a bearing,
+     * it stopped 0 of 12 at 0° and 6 of 12 at 180°, which is the control. What
+     * answers every bearing now is the guard descriptor `Player.bladeGuard`
+     * publishes — read `ORBIT.cone`, which is where that is argued — and a
+     * shell answered by metal that lies in ONE plane for the whole hold would
+     * be a rule with no picture. This is the picture: `precess` walks the
+     * normal round the body at one full turn per `ORBIT.cap`, so by the time
+     * the Force lets go the weapon has genuinely crossed every bearing, which
+     * is what *"spin the staff around your body"* says.
+     *
+     * OFF `orbitT` AND NOT OFF THE FRAME CLOCK, so a hold that starts on the
+     * same beat looks the same every time and a paused game does not precess.
+     * It rotates the NORMAL only: the disc still contains UP, so the low tip's
+     * clearance below — the whole reason the pivot rides up — is the same
+     * number at every phase, and both halves still pivot about their own base
+     * so `speedAt` stays monotone.
+     */
+    fwd.applyAxisAngle(UP, this.orbitT * ORBIT.precess);
     const right = _s2.crossVectors(fwd, UP).normalize().negate();
     const a = this.orbitAngle;
     /**
@@ -930,13 +1036,20 @@ export class Sidearm {
      * to be within a frame of crossing that one line. Everything else goes
      * between the ends.
      *
-     * One rigid bar can only cover ONE plane, so the plane has to be the one
-     * threats arrive through: the disc's normal is the SIGHTLINE, and the staff
-     * turns like a propeller in front of you. Every bolt on its way to your
-     * chest crosses it, which is the whole of what "a protective barrier" is
-     * and it is now 0.0 hp through where it was 8.5. It also gives the thing a
-     * shape a player can read and beat: come at a spinning staff from the side
-     * and it is a bar edge-on, exactly as it looks.
+     * One rigid bar can only cover ONE plane at a time, so the plane STARTS as
+     * the one threats arrive through — the disc's normal opens on the sightline
+     * and the staff turns like a propeller in front of you — and then walks
+     * round the body at `ORBIT.precess`, one full turn per hold. That took the
+     * frontal reading from 8.5 hp through to 0.0.
+     *
+     * WHAT IT DID NOT DO IS COVER A FLANK, and the sentence that used to close
+     * this paragraph said so as if it were a feature: "come at a spinning staff
+     * from the side and it is a bar edge-on, exactly as it looks." It also came
+     * at it from BEHIND, where a barrier the player asked to be spun *around
+     * their body* stopped 6 of 12 against a control of 6 — nothing at all. The
+     * plane is what the eye reads and it can only ever be one plane; what
+     * answers a bolt is the guard descriptor, and that is a shell. See
+     * `ORBIT.cone`, which carries the measurement and the price.
      *
      * AND IT DOES NOT DIG. The disc is 1.54 m in radius about a chest 1.35 m
      * off the ground, so a third of it would be underground and both blades

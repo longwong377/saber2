@@ -123,6 +123,13 @@ export async function run({ check, assert }) {
      * builder knows: the rung that should (the jet and the ARC) lives in
      * Command.js, which is another lane's file. */
     kinds.add('dc15s');
+    /* …AND THE BOWCASTER, for the same reason and with the same shape of gap
+     * on the other side of it: the row that should carry it is `wook` in
+     * CompanionKinds.js, which is another lane's file. The weapon is built and
+     * measured here the day it is built, so `weapon: 'bowcaster'` lands on a
+     * kind whose gun has already been held to the reference — rather than the
+     * two halves arriving together and neither having been looked at. */
+    kinds.add('bowcaster');
     for (const kind of kinds) {
       const spec = BLASTER_LENGTH[kind];
       assert(spec, `buildBlaster builds '${kind}' and BLASTER_LENGTH has no reference length for it`);

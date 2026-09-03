@@ -439,10 +439,20 @@ export function clear() {
  * door, and a run that ended badly must not already have been paid out through
  * a side door halfway through it.
  */
+/**
+ * AND "AN AREA" IS THE CAMPAIGN'S NAME FOR A BOUNDARY, NOT THE ONLY ONE.
+ *
+ * The design wrote these four against a crossing, and for four rounds a
+ * crossing was the only thing that could pay them: the count came off
+ * `areasTaken`, which is zero in every mode without a campaign, so eight modes
+ * of eleven paid a companion at most one xp for a whole run. What a boundary
+ * IS — an area where there is ground to take, a cleared wave everywhere else —
+ * is `Companions.boundariesTaken`, and the weights below did not move for it.
+ */
 export const DEEDS = {
-  /** An area crossed with it alive and inside the leash at the transition. */
+  /** A boundary crossed with it alive and inside the leash at the transition. */
   crossed: 1,
-  /** The first time per area that an order you gave it actually lands. */
+  /** The first time per boundary that an order you gave it actually lands. */
   order: 1,
   /** It reached you while you were down. */
   reached: 2,
