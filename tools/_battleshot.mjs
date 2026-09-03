@@ -124,7 +124,7 @@ if (!info.fail) {
     'lip-fwd': { yaw: FWD, pitch: 0.14, x: 0, y: 1.7, z: 132 },
     'lip-left': { yaw: FWD - 0.55, pitch: 0.22, x: -20, y: 1.7, z: 132 },
     'lip-right': { yaw: FWD + 0.50, pitch: 0.10, x: 20, y: 1.7, z: 132 },
-    'lip-up': { yaw: FWD + 0.30, pitch: 0.55, x: 0, y: 1.7, z: 132 },
+    'lip-up': { yaw: FWD + 0.30, pitch: 0.36, x: 0, y: 1.7, z: 138 },
     'lip-farleft': { yaw: FWD - 1.05, pitch: 0.12, x: -40, y: 1.7, z: 134 },
   };
   const plan = [];

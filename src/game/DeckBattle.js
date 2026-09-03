@@ -143,10 +143,14 @@ class Parts {
     let tri = [a, b, c, a, c, d];
     if (nx * qx + ny * qy + nz * qz < 0) { nx = -nx; ny = -ny; nz = -nz; tri = [a, c, b, a, d, c]; }
     _c.set(hex);
+    /* BAKED FORM: the toon bands flatten a lit plate to one tone, so the
+     * belly is darkened in the vertex colour and the flanks between — a
+     * hull reads as a solid from any angle, lit or not. Lamps keep theirs. */
+    const f = glow > 0 ? 1 : 0.55 + 0.45 * clamp(ny * 0.5 + 0.5, 0, 1) - 0.12 * Math.abs(nx);
     for (const p of tri) {
       this.pos.push(p[0], p[1], p[2]);
       this.nor.push(nx, ny, nz);
-      this.col.push(_c.r, _c.g, _c.b);
+      this.col.push(_c.r * f, _c.g * f, _c.b * f);
       this.glo.push(glow);
     }
   }
@@ -161,9 +165,11 @@ class Parts {
     if (hex != null) _c.set(hex);
     for (let i = 0; i < P.count; i++) {
       this.pos.push(P.getX(i), P.getY(i), P.getZ(i));
-      this.nor.push(N ? N.getX(i) : 0, N ? N.getY(i) : 1, N ? N.getZ(i) : 0);
-      if (hex != null || !Cc) this.col.push(_c.r, _c.g, _c.b);
-      else this.col.push(Cc.getX(i), Cc.getY(i), Cc.getZ(i));
+      const ny = N ? N.getY(i) : 1;
+      this.nor.push(N ? N.getX(i) : 0, ny, N ? N.getZ(i) : 0);
+      const f = glow > 0 ? 1 : 0.6 + 0.4 * clamp(ny * 0.5 + 0.5, 0, 1);
+      if (hex != null || !Cc) this.col.push(_c.r * f, _c.g * f, _c.b * f);
+      else this.col.push(Cc.getX(i) * f, Cc.getY(i) * f, Cc.getZ(i) * f);
       this.glo.push(glow);
     }
     if (g !== geo) g.dispose();
@@ -175,7 +181,7 @@ class Parts {
   engine(dark, rim, glowHex, r, x, y, z, len = r * 1.1) {
     this.geo(new THREE.CylinderGeometry(r * 0.9, r, len, 12, 1, true), dark, 0, x, y, z + len / 2, Math.PI / 2, 0, 0);
     this.geo(new THREE.TorusGeometry(r, r * 0.09, 5, 14), rim, 0, x, y, z, 0, 0, 0);
-    this.geo(new THREE.CircleGeometry(r * 0.86, 14), glowHex, 3.6, x, y, z - r * 0.02, Math.PI, 0, 0);
+    this.geo(new THREE.CircleGeometry(r * 0.9, 14), glowHex, 4.6, x, y, z - r * 0.02, Math.PI, 0, 0);
     return this;
   }
 
@@ -201,9 +207,9 @@ class Parts {
 /*  THE HULLS — six classes, in real metres, +Z the bow                   */
 /* ══════════════════════════════════════════════════════════════════════ */
 
-const REP = { hull: 0xb9b6ad, panel: 0x8f8d86, dark: 0x3a3c40, trim: 0x5a5c60, red: 0x8a2a2a, gold: 0xc7a44e,
+const REP = { hull: 0x8a8880, panel: 0x62615c, dark: 0x25272b, trim: 0x44464a, red: 0x7a2424, gold: 0xb08e3e,
   window: 0xffe2b0, engine: 0x7fd0ff, bay: 0x9fd8ff, rim: 0x505560 };
-const SEP = { hull: 0x8e8b7b, panel: 0x6a6c70, dark: 0x2e3034, trim: 0x565a5e, red: 0x3d5266, gold: 0x9a8a5c,
+const SEP = { hull: 0x66645a, panel: 0x484a4e, dark: 0x1f2124, trim: 0x3c4044, red: 0x2f4256, gold: 0x7e7048,
   window: 0xffe8c0, engine: 0x9ff0ff, bay: 0xb0f0ff, rim: 0x42474c };
 
 /**
@@ -245,7 +251,7 @@ export const HULL_CLASSES = {
         stern.slab(P.trim, 0, 46, 14, 12, 62, 126, 62, 122, sx * 78, 0, -410);
         stern.box(P.panel, 0, 76, 18, 34, sx * 78, 134, -410);
         stern.box(P.trim, 0, 40, 10, 22, sx * 78, 148, -416);
-        stern.box(P.window, 2.6, 66, 3.5, 2, sx * 78, 134, -392);
+        stern.box(P.window, 3.8, 66, 3.5, 2, sx * 78, 134, -392);
         stern.geo(new THREE.SphereGeometry(6, 8, 6), P.dark, 0, sx * 78 + sx * 26, 156, -418);
         stern.turret(sx * 78, 154, -404, 0, 1, 0, 1);
       }
@@ -259,13 +265,13 @@ export const HULL_CLASSES = {
         for (let i = 0; i < 5; i++) {
           const z = -420 + i * 110;
           const w = 272 - (z + 570) * (272 - 200) / 800;
-          (z < -120 ? stern : bow).slab(P.window, 2.2, 44, 2, 2, 14, 17, 14, 17, sx * (w + 2), 0, z);
-          (z < -120 ? stern : bow).slab(P.window, 1.8, 30, 2, 2, -20, -17.5, -20, -17.5, sx * (w + 2), 0, z + 40);
+          (z < -120 ? stern : bow).slab(P.window, 3.4, 44, 2, 2, 14, 17, 14, 17, sx * (w + 2), 0, z);
+          (z < -120 ? stern : bow).slab(P.window, 3.0, 30, 2, 2, -20, -17.5, -20, -17.5, sx * (w + 2), 0, z + 40);
         }
       }
       bow.box(P.dark, 0, 80, 6, 200, 0, -48, 0);
-      bow.box(P.bay, 2.4, 62, 2, 170, 0, -51, 0);
-      stern.box(P.bay, 2.0, 40, 2, 90, 0, -51, -300);
+      bow.box(P.bay, 3.6, 62, 2, 170, 0, -51, 0);
+      stern.box(P.bay, 3.2, 40, 2, 90, 0, -51, -300);
       /* TURRETS: eight a flank along the top edge, and two dorsal. */
       for (let i = 0; i < 8; i++) {
         const z = -470 + i * 120;
@@ -290,7 +296,7 @@ export const HULL_CLASSES = {
       A.slab(P.trim, 0, 70, 14, 10, 48, 120, 48, 112, 0, 0, -250);
       A.box(P.panel, 0, 88, 16, 36, 0, 128, -252);
       A.box(P.trim, 0, 40, 10, 20, 0, 141, -256);
-      A.box(P.window, 2.6, 76, 3, 2, 0, 128, -233);
+      A.box(P.window, 3.8, 76, 3, 2, 0, 128, -233);
       A.geo(new THREE.CylinderGeometry(1, 1.6, 40, 6), P.dark, 0, 0, 160, -262);
       for (const sx of [1, -1]) {
         A.slab(P.red, 0, 300, 4, 4, 33, 35, 17, 19, sx * 160, 0, -100, sx * -0.28);
@@ -298,7 +304,7 @@ export const HULL_CLASSES = {
         A.geo(new THREE.CylinderGeometry(15, 15, 2.4, 14), P.gold, 0, sx * 110, 33, -40);
         for (let i = 0; i < 4; i++) {
           const z = -300 + i * 130, w = 228 - (z + 376) * (228 - 14) / 752;
-          A.slab(P.window, 2.2, 36, 2, 2, 4, 7, 4, 7, sx * (w + 1), 0, z, sx * -0.28);
+          A.slab(P.window, 3.4, 36, 2, 2, 4, 7, 4, 7, sx * (w + 1), 0, z, sx * -0.28);
           A.turret(sx * (w - 12), 30, z, sx, 0.3, 0);
         }
       }
@@ -306,7 +312,7 @@ export const HULL_CLASSES = {
       for (const [x, y, r] of [[-120, 2, 22], [-40, 4, 24], [40, 4, 24], [120, 2, 22], [-190, 8, 10], [190, 8, 10]])
         A.engine(P.dark, P.rim, P.engine, r, x, y, -376);
       A.box(P.dark, 0, 90, 4, 150, 0, -31, 60);
-      A.box(P.bay, 2.4, 70, 2, 130, 0, -33, 60);
+      A.box(P.bay, 3.6, 70, 2, 130, 0, -33, 60);
       A.turret(0, 50, -20, 0, 1, 0); A.turret(0, 36, 180, 0, 1, 0);
       A.fire(40, 30, -100); A.fire(-80, 10, 100); A.fire(0, 60, -250);
       return { halves: [A] };
@@ -323,13 +329,13 @@ export const HULL_CLASSES = {
         A.slab(P.red, 0, 120, 3, 3, 9, 10.5, 7, 8.5, sx * 56, 0, -60);
         A.engine(P.dark, P.rim, P.engine, 9, sx * 50, 2, -146);
         A.engine(P.dark, P.rim, P.engine, 7, sx * 66, -4, -142);
-        A.slab(P.window, 2.2, 24, 1.5, 1.5, 2, 4, 2, 4, sx * 25, 0, 40);
+        A.slab(P.window, 3.4, 24, 1.5, 1.5, 2, 4, 2, 4, sx * 25, 0, 40);
         A.turret(sx * 24, 12, 90, sx, 0.4, 0);
         A.turret(sx * 56, 8, 10, sx, 0.4, 0);
       }
       A.box(P.panel, 0, 130, 10, 26, 0, 0, -60);
       A.box(P.panel, 0, 30, 14, 34, 0, 20, -70);
-      A.box(P.window, 2.6, 26, 2.5, 2, 0, 22, -52);
+      A.box(P.window, 3.8, 26, 2.5, 2, 0, 22, -52);
       A.geo(new THREE.CylinderGeometry(0.8, 1.2, 22, 6), P.dark, 0, 0, 36, -80);
       A.turret(0, 15, 60, 0, 1, 0); A.turret(0, -15, 20, 0, -1, 0);
       A.fire(0, 10, 0); A.fire(40, 0, -100);
@@ -361,7 +367,7 @@ export const HULL_CLASSES = {
       stern.slab(P.panel, 0, 240, 16, 10, 100, 106, 100, 106, 0, 0, -190);
       stern.box(P.panel, 0, 44, 16, 64, 0, 178, -230);
       stern.box(P.trim, 0, 26, 8, 36, 0, 190, -234);
-      stern.box(P.window, 2.6, 34, 3, 2, 0, 178, -197);
+      stern.box(P.window, 3.8, 34, 3, 2, 0, 178, -197);
       stern.geo(new THREE.CylinderGeometry(1, 1.6, 50, 6), P.dark, 0, 0, 218, -250);
       stern.slab(P.hull, 0, 200, 10, 6, -110, -36, -70, -36, 0, 0, -180);
       /* THE FLANK HANGARS, lit, and the window rows */
@@ -369,13 +375,13 @@ export const HULL_CLASSES = {
         for (const z of [40, 190]) {
           const w = 62 - (z + 100) * (62 - 18) / 600;
           bow.box(P.dark, 0, 4, 20, 70, sx * (w + 1), 0, z, 0, 0);
-          bow.box(P.bay, 2.4, 2, 14, 56, sx * (w + 3), 0, z);
+          bow.box(P.bay, 3.6, 2, 14, 56, sx * (w + 3), 0, z);
         }
         for (let i = 0; i < 4; i++) {
           const z = -380 + i * 60;
-          stern.slab(P.window, 2.2, 30, 2, 2, 20, 23, 20, 23, sx * 74, 0, z);
+          stern.slab(P.window, 3.4, 30, 2, 2, 20, 23, 20, 23, sx * 74, 0, z);
         }
-        stern.slab(P.window, 2.2, 90, 2, 2, 18, 21, 18, 21, sx * 98, 0, -450);
+        stern.slab(P.window, 3.4, 90, 2, 2, 18, 21, 18, 21, sx * 98, 0, -450);
         /* turrets: six a side along the hull top */
         for (let i = 0; i < 6; i++) {
           const z = -420 + i * 150;
@@ -400,16 +406,16 @@ export const HULL_CLASSES = {
       /* THE FORKED BOW with the dish between the prongs */
       for (const sx of [1, -1]) {
         A.slab(P.hull, 0, 240, 20, 10, -16, 16, -8, 8, sx * 62, 0, 420, sx * -0.14);
-        A.slab(P.window, 2.2, 60, 1.5, 1.5, 2, 4, 2, 4, sx * 40, 0, 360, sx * -0.14);
+        A.slab(P.window, 3.4, 60, 1.5, 1.5, 2, 4, 2, 4, sx * 40, 0, 360, sx * -0.14);
       }
       A.geo(new THREE.CylinderGeometry(52, 52, 4, 18), P.dark, 0, 0, -10, 360, Math.PI / 2, 0, 0);
       A.geo(new THREE.CylinderGeometry(10, 16, 40, 8), P.trim, 0, 0, -10, 340, Math.PI / 2, 0, 0);
       /* THE SPINE: the tall stern fin, its mast, and the shorter fin below */
       A.slab(P.hull, 0, 150, 9, 5, 22, 128, 40, 96, 0, 0, -170);
       A.slab(P.panel, 0, 140, 11, 7, 60, 66, 60, 66, 0, 0, -170);
-      A.slab(P.window, 2.2, 100, 1.2, 1.2, 70, 118, 70, 90, 0, 0, -178);
+      A.slab(P.window, 3.4, 100, 1.2, 1.2, 70, 118, 70, 90, 0, 0, -178);
       A.box(P.panel, 0, 22, 12, 40, 0, 134, -200);
-      A.box(P.window, 2.6, 18, 3, 2, 0, 134, -179);
+      A.box(P.window, 3.8, 18, 3, 2, 0, 134, -179);
       A.geo(new THREE.CylinderGeometry(0.8, 1.2, 70, 6), P.dark, 0, 0, 175, -220);
       A.slab(P.hull, 0, 120, 7, 4, -90, -22, -60, -22, 0, 0, -160);
       /* engines */
@@ -438,8 +444,8 @@ export const HULL_CLASSES = {
         const z = -300 + i * 92;
         A.box(i % 2 ? P.panel : P.hull, 0, 64 - i * 4, 42 - i * 2, 54, 0, 0, z);
         A.box(P.dark, 0, 66 - i * 4, 6, 8, 0, 0, z + 26);
-        A.slab(P.window, 2.0, 30, 1, 1, 8, 10, 8, 10, (33 - i * 2), 0, z);
-        A.slab(P.window, 2.0, 30, 1, 1, 8, 10, 8, 10, -(33 - i * 2), 0, z);
+        A.slab(P.window, 3.4, 30, 1, 1, 8, 10, 8, 10, (33 - i * 2), 0, z);
+        A.slab(P.window, 3.4, 30, 1, 1, 8, 10, 8, 10, -(33 - i * 2), 0, z);
       }
       /* THE FORWARD FORK and the prow */
       for (const sx of [1, -1]) A.slab(P.hull, 0, 200, 14, 6, -12, 12, -6, 6, sx * 44, 0, 450, sx * -0.12);
@@ -448,7 +454,7 @@ export const HULL_CLASSES = {
       A.slab(P.hull, 0, 150, 118, 62, -46, 46, -30, 30, 0, 0, -425);
       A.slab(P.dark, 0, 140, 122, 66, -6, 6, -6, 6, 0, 8, -425);
       A.box(P.panel, 0, 40, 14, 40, 0, 52, -420);
-      A.box(P.window, 2.6, 30, 3, 2, 0, 52, -399);
+      A.box(P.window, 3.8, 30, 3, 2, 0, 52, -399);
       A.geo(new THREE.CylinderGeometry(1, 1.6, 40, 6), P.dark, 0, 0, 78, -440);
       A.slab(P.panel, 0, 12, 114, 114, -42, 42, -42, 42, 0, 0, -498);
       for (const [x, y, r] of [[-75, 4, 20], [-25, 6, 22], [25, 6, 22], [75, 4, 20], [-50, -28, 10], [50, -28, 10]])
@@ -749,8 +755,10 @@ export function dressDeckBattle(world) {
   group.add(st.turret.mesh);
 
   /* ── bolts ───────────────────────────────────────────────────────── */
+  /* a unit-length capsule along +Z: the instance's z scale IS its length */
   const boltGeo = new THREE.CapsuleGeometry(1, 1, 2, 6);
   boltGeo.rotateX(Math.PI / 2);
+  boltGeo.scale(1, 1, 1 / 3);
   st.geometries.push(boltGeo);
   const NB = POOLS.bolts;
   st.bolts = {
@@ -1063,13 +1071,13 @@ function stepHulls(st, dt, tc, ph) {
     if (!wasShown && h.shown) {
       const L = 520;
       _v.copy(h.pos).addScaledVector(h.fwd, -L);
-      spawnBolt(st, _v.x, _v.y, _v.z, h.pos.x, h.pos.y, h.pos.z, L / 0.45, 1.6 * h.scale * 4, L, 2.6, 2.8, 3.2, 2, -1);
+      spawnBolt(st, _v.x, _v.y, _v.z, h.pos.x, h.pos.y, h.pos.z, L / 0.45, 1.2 * h.u, L, 2.6, 2.8, 3.2, 2, -1);
       spawnFlash(st, h.pos.x, h.pos.y, h.pos.z, h.halfW * 1.6, 0.7, 2.2, 2.4, 3.0);
     }
     if (h.shown && tc >= h.depart && tc < h.depart + dt * 1.5 && !h.victim) {
       const L = 700;
       _v.copy(h.pos).addScaledVector(h.fwd, L);
-      spawnBolt(st, h.pos.x, h.pos.y, h.pos.z, _v.x, _v.y, _v.z, L / 0.4, 1.6 * h.scale * 4, L, 2.6, 2.8, 3.2, 2, -1);
+      spawnBolt(st, h.pos.x, h.pos.y, h.pos.z, _v.x, _v.y, _v.z, L / 0.4, 1.2 * h.u, L, 2.6, 2.8, 3.2, 2, -1);
       spawnFlash(st, h.pos.x, h.pos.y, h.pos.z, h.halfW * 1.2, 0.5, 2.0, 2.2, 3.0);
     }
     /* ── THE VICTIM: burning, breaking, the reactor ─────────────── */
@@ -1096,9 +1104,9 @@ function stepHulls(st, dt, tc, ph) {
       if (was1 && !h.halfVis[1]) {
         /* THE REACTOR: the biggest light of the round */
         _v.setFromMatrixPosition(h.m[1]);
-        spawnFlash(st, _v.x, _v.y, _v.z, h.len * 2.6, 2.6, 6, 5.2, 4.0);
-        spawnFlash(st, _v.x, _v.y, _v.z, h.len * 1.0, 1.0, 9, 8, 7);
-        spawnFlash(st, _v.x, _v.y, _v.z, h.len * 0.5, 4.0, 3.2, 1.4, 0.4);
+        spawnFlash(st, _v.x, _v.y, _v.z, h.len * 1.5, 3.5, 4.5, 3.6, 2.6);
+        spawnFlash(st, _v.x, _v.y, _v.z, h.len * 0.6, 0.9, 8, 7, 6);
+        spawnFlash(st, _v.x, _v.y, _v.z, h.len * 0.45, 4.0, 3.2, 1.4, 0.4);
         burst(st, _v.x, _v.y, _v.z, 110, 40 * h.u, 3 * h.u, 60, 1, st.t + 7);
       }
     }
@@ -1169,8 +1177,8 @@ function stepTurrets(st, dt, fire) {
         _v4.set(rx / tg.scale, ry / tg.scale, rz / tg.scale).applyMatrix4(tg.m[0]);
         const c = h.faction === 'republic' ? cR : cS;
         const hullHit = tg.victim || hash(seed + 1.2) < 0.2;
-        spawnBolt(st, _v3.x, _v3.y, _v3.z, _v4.x, _v4.y, _v4.z, 230, 1.5 * h.u + 0.4, 22 * h.u + 8,
-          c.r * 3.2 + 0.4, c.g * 3.2 + 0.4, c.b * 3.2 + 0.4, 0, hullHit ? (tg.idx + 1) : 0);
+        spawnBolt(st, _v3.x, _v3.y, _v3.z, _v4.x, _v4.y, _v4.z, 260, 0.95 * h.u + 0.3, 11 * h.u + 4,
+          c.r * 3.0 + 0.2, c.g * 3.0 + 0.2, c.b * 3.0 + 0.2, 0, hullHit ? (tg.idx + 1) : 0);
         T.burst[ti]++;
         if (T.burst[ti] >= 3) { T.burst[ti] = 0; T.next[ti] = st.t + 2.2 + hash(seed + 2) * 3.4; }
         else T.next[ti] = st.t + 0.13;
@@ -1196,14 +1204,15 @@ function stepBolts(st, dt) {
         const x = B.to[i * 3], y = B.to[i * 3 + 1], z = B.to[i * 3 + 2];
         const w = B.w[i];
         if (B.hit[i] > 0) {
-          spawnFlash(st, x, y, z, w * 9, 0.55, 3.2, 1.5, 0.5);
-          burst(st, x, y, z, 5, 5 * w, 0.5 * w, 4, 1, st.t + i);
+          spawnFlash(st, x, y, z, w * 11, 0.55, 3.0, 1.3, 0.4);
+          burst(st, x, y, z, 5, 9 * w, 0.9 * w, 4, 1, st.t + i);
         } else {
+          /* the shield takes the bolt's own colour, paled a little */
           const c = IM.instanceColor;
-          spawnFlash(st, x, y, z, w * 12, 0.45, c.getX(i) * 0.45 + 0.9, c.getY(i) * 0.45 + 1.1, c.getZ(i) * 0.45 + 1.4);
+          spawnFlash(st, x, y, z, w * 14, 0.45, c.getX(i) * 0.7 + 0.35, c.getY(i) * 0.7 + 0.45, c.getZ(i) * 0.7 + 0.6);
         }
       } else if (B.kind[i] === 1 && B.hit[i] > 0) {
-        spawnFlash(st, B.to[i * 3], B.to[i * 3 + 1], B.to[i * 3 + 2], B.w[i] * 5, 0.25, 2.4, 1.6, 0.8);
+        spawnFlash(st, B.to[i * 3], B.to[i * 3 + 1], B.to[i * 3 + 2], B.w[i] * 8, 0.25, 2.4, 1.6, 0.8);
       }
       continue;
     }
@@ -1382,7 +1391,7 @@ function stepFighters(st, dt, tc, ph, fire) {
               const miss = hash(st.t + i) < 0.75 ? 1 : 0;
               const s = 6 * E.scale;
               spawnBolt(st, x, y, z, tx + (hash(i + t) - 0.5) * s * miss, ty + (hash(i + t + 1) - 0.5) * s * miss, tz + (hash(i + t + 2) - 0.5) * s * miss,
-                380, 0.5 * sc, 5 * sc, c.r * 3 + 0.3, c.g * 3 + 0.3, c.b * 3 + 0.3, 1, miss ? 0 : 1);
+                380, 0.3 * sc, 3.5 * sc, c.r * 2.6 + 0.15, c.g * 2.6 + 0.15, c.b * 2.6 + 0.15, 1, miss ? 0 : 1);
               F.nextFire[i] = st.t + (F.nextFire[i] > 0 && hash(i * 0.3 + st.t) < 0.6 ? 0.09 : 1.1 + hash(i + st.t) * 1.6);
             } else F.nextFire[i] = st.t + 0.4;
           }
