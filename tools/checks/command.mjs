@@ -1456,18 +1456,37 @@ export async function run({ check, assert }) {
      * order for eight seconds, so measuring at the end of the drive measures
      * the formation solver, not the gunship. Recorded on the frame each body
      * appears. */
+    /**
+     * …AND IT DRIVES UNTIL THE SKY IS EMPTY RATHER THAN FOR FOURTEEN SECONDS.
+     *
+     * A fixed clock here is a second fixture detail standing in for the thing
+     * being measured, and the same one that made the boundary above flaky: how
+     * long a landing takes depends on how many gunships `closeMuster` asked
+     * for, which depends on how many men were lost, which comes off Waves'
+     * unpinned stream. Measured on one arrangement that was failing at
+     * fourteen: every man was down and the whole check green by forty.
+     *
+     * So the bound is what the clause actually claims — they land, and they
+     * land in a reasonable time — with the cap generous enough that only a
+     * gunship which NEVER arrives can fail it. `far` is still recorded on the
+     * frame each body first appears, for the reason the note above gives.
+     */
+    const LAND_CAP = 40;
     let far = 0;
     const seen = new Set();
-    drive(world, Number(process.env.CMD_LAND || 14), input, () => {
+    const flew = drive(world, LAND_CAP, input, () => {
       for (const t of d.roster.living) {
         if (!t.body || seen.has(t)) continue;
         seen.add(t);
         far = Math.max(far, Math.hypot(t.body.position.x - world.player.position.x,
           t.body.position.z - world.player.position.z));
       }
-      return false;
+      return d.arrivals.pending === 0;
     });
-    assert(d.arrivals.pending === 0, `${d.arrivals.pending} troopers still in the air after fourteen seconds`);
+    assert(d.arrivals.pending === 0,
+      `${d.arrivals.pending} troopers still in the air after ${LAND_CAP} s — a gunship that never lands`);
+    assert(flew < LAND_CAP,
+      `the sky only emptied on the last frame of ${LAND_CAP} s, so this measured the cap and not the landing`);
 
     const after = live();
     assert(after === d.roster.strength,
