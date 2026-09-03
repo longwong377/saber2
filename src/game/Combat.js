@@ -11,7 +11,29 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { segmentSegment } from '../physics/Physics.js';
 import { clamp, lerp, smoothstep } from '../engine/MathUtil.js';
-import { segmentCapsule } from './Bolts.js';
+/**
+ * THE BOLT STREAM, AND IT IS BOLTS' OWN — the one generator in this path that
+ * was not one.
+ *
+ * `gradeCaught` scattered a BLOCK's outgoing direction off the bare global
+ * `Math.random()`, which is the only source in the whole bolt path that
+ * `moduleSeed`, `tools/register.mjs` and `restoreShared` cannot reach. Every
+ * check that measures what happens to a blocked bolt has therefore been
+ * drawing from a stream nothing in the harness can put back, and the cost was
+ * measured rather than theorised: `_setbench.mjs` read a dual-wielder blocking
+ * 14 bolts of 60 on one run and 16 on the next with every module stream
+ * restored and nothing interleaved, while the single blade and the staff came
+ * back byte-identical both times. The pair felt it because the pair answers
+ * the most — 37 bolts turned against one blade's 31 — so the noise landed
+ * exactly on the number a saber-set check was trying to compare.
+ *
+ * `rngBolts` is `Bolts.js`'s existing module stream, exported so that this
+ * file draws from the same one the bolts themselves do. That is deliberate
+ * rather than a new stream: a deflection and the bolt it came from are one
+ * event, `seedBolts(606)` is already in `restoreShared`'s list, and a second
+ * generator here would be a second thing to remember to seed.
+ */
+import { segmentCapsule, rngBolts } from './Bolts.js';
 /* MORALE is a leaf table (it imports nothing at all — see its own header), so
  * this edge cannot be part of a cycle. SCREEN.reach reads `MORALE.NEAR` rather
  * than repeating it: one radius for "this Jedi is with these men". */
@@ -1238,18 +1260,18 @@ export function gradeCaught(snap, ctx) {
     else if (ctx.aimDir) out.copy(ctx.aimDir).normalize();
     else out.copy(mirror);
     const jitter = (1 - clamp(ctx.flow ?? 0, 0, 1)) * (grade === GRADE.PERFECT ? 0.006 : 0.018);
-    out.x += (Math.random() - 0.5) * jitter;
-    out.y += (Math.random() - 0.5) * jitter;
-    out.z += (Math.random() - 0.5) * jitter;
+    out.x += (rngBolts() - 0.5) * jitter;
+    out.y += (rngBolts() - 0.5) * jitter;
+    out.z += (rngBolts() - 0.5) * jitter;
     out.normalize();
   } else if (grade === GRADE.BLOCK) {
     // A block is not aimed under any model — you got the blade in the way and
     // the bolt went somewhere. That is the whole difference from a deflect.
     out.copy(mirror);
     const scatter = 0.55;
-    out.x += (Math.random() - 0.5) * scatter;
-    out.y += (Math.random() - 0.5) * scatter + 0.12;
-    out.z += (Math.random() - 0.5) * scatter;
+    out.x += (rngBolts() - 0.5) * scatter;
+    out.y += (rngBolts() - 0.5) * scatter + 0.12;
+    out.z += (rngBolts() - 0.5) * scatter;
     out.normalize();
   } else if (mode === 'physical') {
     // PHYSICAL — the bolt mirrors off the blade's real surface and nothing
@@ -1275,9 +1297,9 @@ export function gradeCaught(snap, ctx) {
     if (target) {
       out.subVectors(target.point, snap.point).normalize();
       const jitter = (1 - clamp(ctx.flow ?? 0, 0, 1)) * (grade === GRADE.PERFECT ? 0.008 : 0.028);
-      out.x += (Math.random() - 0.5) * jitter;
-      out.y += (Math.random() - 0.5) * jitter;
-      out.z += (Math.random() - 0.5) * jitter;
+      out.x += (rngBolts() - 0.5) * jitter;
+      out.y += (rngBolts() - 0.5) * jitter;
+      out.z += (rngBolts() - 0.5) * jitter;
       out.normalize();
     } else if (ctx.aimDir) {
       // no victim, but a clean deflect still throws it down your sightline
