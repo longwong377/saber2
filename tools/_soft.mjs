@@ -82,8 +82,27 @@ const tris = [];
      * off `color` comes back as a black disc — which is exactly what an
      * astromech's photoreceptor looked like here before this line. */
     const emis = !!(o.material?.emissive && o.material.emissiveIntensity > 1);
+    /**
+     * AND THE AUTHORED HEX, NOT `material.color`, WHICH IS NOT THE COLOUR THE
+     * BODY WAS WRITTEN IN.
+     *
+     * `lit()` divides the requested colour by the bake's MEAN ALBEDO before it
+     * hands it to the material, so that the shipped lighting multiplies it back
+     * up. Reading `color` here therefore reads a pre-divided number and paints
+     * it at full value: measured, a 0xa07146 muzzle came back as saturated
+     * orange, and every judgement made about a body's VALUES off this tool was
+     * a judgement about roughly 1/mean-albedo of them.
+     *
+     * Every material `lit` builds stamps `userData.authored` with the linear
+     * [r, g, b] it was asked for. That is what a person looking at the picture is trying to
+     * see, so that is what is drawn — and a material without one (a plain
+     * MeshStandardMaterial somebody built by hand) falls through to `color`
+     * exactly as before.
+     */
+    const authored = o.material?.userData?.authored;
     const col = emis ? o.material.emissive
-      : (o.material?.color ? o.material.color : new THREE.Color(0x888888));
+      : (Array.isArray(authored) ? new THREE.Color().fromArray(authored)
+        : (o.material?.color ? o.material.color : new THREE.Color(0x888888)));
     for (let i = 0; i < n; i += 3) {
       const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
       a.fromBufferAttribute(pos, i0).applyMatrix4(o.matrixWorld);

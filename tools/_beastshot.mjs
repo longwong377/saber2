@@ -130,6 +130,35 @@ for (const type of types) {
     window.__pin = e;
     for (let i = 0; i < 6; i++) { e.facing = 0; await window.__frame(); }
     e.facing = 0;
+    /**
+     * …AND IT IS PINNED AT LOD 0, BECAUSE EVERY PICTURE THIS TOOL HAS EVER
+     * TAKEN WAS OF A CULLED BODY.
+     *
+     * `Enemy.update` picks the rung off `ctx.camera.position` — the GAME
+     * camera, sitting on the player — and this tool spawns the animal 26 m up
+     * each of two axes, which is 36.8 m, and `> 30` is LOD 1. The shot camera
+     * is a different camera and moving it does not re-enter that line, so the
+     * body stays culled however close the lens gets. Proved by forcing it: the
+     * same wookiee goes from bare arms and legs to a full coat.
+     *
+     * That is not a small defect in a screenshot tool. Every in-engine
+     * creature photograph in this repository has had its non-silhouette detail
+     * removed, and at least one verdict written off these pictures — "the
+     * shins and feet are nearly bare" — was a reading of a coat that was
+     * there. A body photographed at the distance the lens is actually at
+     * should be at the rung a player at that distance would see, and the lens
+     * here is metres away.
+     *
+     * The rung is applied once and then the property is pinned, because
+     * `Enemy.update`'s write is edge-triggered on `lod !== this.lod`: setting
+     * the field alone would be undone on the next frame, and letting the field
+     * climb while the meshes stay would leave `_poseWalker` skipping the limb
+     * solve on a body whose limbs are visible. A getter that answers 0 keeps
+     * the two agreeing.
+     */
+    e._applyLod(0);
+    Object.defineProperty(e, 'lod', { get: () => 0, set: () => {}, configurable: true });
+    await window.__frame();
     const root = e.rig ? e.rig.root : e.group;
     root.updateMatrixWorld(true);
     let lo = Infinity, hi = -Infinity, xl = Infinity, xh = -Infinity, zl = Infinity, zh = -Infinity;
