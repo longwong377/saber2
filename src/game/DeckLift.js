@@ -86,22 +86,26 @@
  *          flare as they pass the window, the sweep of a lamp going by;
  *   MID    girders every three metres, pipe crossings, a ladder with its
  *          rungs, a cable tray, conduit with red status lamps;
- *   FAR    the ship: a deck level every `LEVEL` metres — a floor slab edge
- *          and above it an opening. Some are lit corridors with two or
- *          three standing silhouettes, dark against the light. Some are
- *          hangar mouths with a parked fighter's shape in them. One is a
- *          bulkhead crossing — a huge dark beam with its deck number lit
- *          on it in metre-high digits, which count with the readout. One
- *          is a machinery bay with a turbine spinning behind a grille. One
- *          is a fuel main with a lamp on it.
+ *   FAR    the ship: a deck level every `LEVEL` metres — a floor slab, a
+ *          ceiling slab, and between them an opening onto a VIGNETTE: a
+ *          medbay, a brig, a reactor gallery, a firefight, a burning deck,
+ *          a cantina, a tram crossing, a bulkhead with its deck number lit
+ *          in metre-high digits that count with the readout … fifty-odd
+ *          of them (`vignettes()`), each with its own colour of light, its
+ *          own furniture, people in poses (a head, a torso, legs, arms — not
+ *          boxes), and something moving: fans turn, a tram slides across,
+ *          bolts flash, fires flicker, a man on the landing raises a hand.
  *
- * Every kind of element is ONE `InstancedMesh` whose matrices are laid out
- * along the wrap each frame (`layScene`, like the old `layBars`) — nothing
- * is allocated after the build. The three windows show the pattern at three
- * different phases, so the left, right and back never show the same thing
- * at once, and the ride ends SNAPPED to a level: the last 1.4 s of the ramp
- * down nudges the scroll onto a landing so the stopped car looks out on a
- * lit corridor with people in it rather than on half a girder.
+ * Every kind of element is ONE `InstancedMesh` — nine kinds for the whole
+ * strip, with `instanceColor` carrying each vignette's palette — whose
+ * matrices are laid out each frame (`layScene`); nothing is allocated after
+ * the build. THE FAR STRIP DOES NOT WRAP: it is laid for the whole ride in
+ * plus the whole ride out, and each of the three faces shuffles the
+ * vignettes in its own order, so no window shows the same level twice and
+ * the three windows never show the same thing at once. The ride ends SNAPPED
+ * to a level: the last 1.4 s of the ramp down nudges the scroll onto a
+ * landing so the stopped car looks out on a lift landing with people
+ * waiting for it rather than on half a girder.
  *
  * ── WHY THE CAR NEVER MOVES ────────────────────────────────────────────────
  *
@@ -152,8 +156,8 @@ const _X = new THREE.Vector3(1, 0, 0);
 export const RIDE = {
   /** Seconds before the shaft starts to move: the doors have just shut. */
   settle: 0.5,
-  /** Seconds of shaft going past. */
-  ride: 4.4,
+  /** Seconds of shaft going past: about thirty levels at cruise. */
+  ride: 5.5,
   /** How long the doors take to open or close. */
   doors: 1.1,
   /** Seconds after the player is clear before the doors close behind him. */
@@ -196,15 +200,13 @@ export const DOOR = {
   get leafW() { return this.halfW - 0.02; },
 };
 
-/** The shaft scene's pitch of deck levels, and its wrap: eight levels. */
-export const LEVEL = 6;
-const SPAN = 48;
+/** The shaft scene's pitch of deck levels: a room 6.25 m tall between slabs. */
+export const LEVEL = 7;
+/** The wrap of the NEAR and MID layers (rails, rungs, girders, light bars).
+ * The FAR strip — the levels — does not wrap; see `buildShaft`. */
+const SPAN = LEVEL * 7;
 /** The number on the readout when the car stops on the flight deck. */
 export const FLIGHT_DECK = 32;
-/** What a level is: a lit corridor, a hangar mouth, a bulkhead crossing, a
- * machinery bay, a fuel main. Eight over the wrap, rotated per face. */
-const ROOM = 0, HANGAR = 1, BULK = 2, MACH = 3, FUEL = 4;
-const LEVELS = [ROOM, HANGAR, BULK, ROOM, MACH, HANGAR, ROOM, FUEL];
 /** Seven-segment digits: a b c d e f g, clockwise from the top, g the middle. */
 const SEVEN = [
   [1, 1, 1, 1, 1, 1, 0], [0, 1, 1, 0, 0, 0, 0], [1, 1, 0, 1, 1, 0, 1], [1, 1, 1, 1, 0, 0, 1],
@@ -498,10 +500,9 @@ export function dressDeckLift(world, opts = {}) {
   /* ── HOW FAR THE RIDE GOES, so it can end on a landing. The speed profile
    * is integrated once here at the frame rate the game steps at; the ride
    * length is rounded to whole levels and the last `brake` seconds nudge the
-   * scroll onto it (see STATE.RIDE). Which level then sits in each window at
-   * the stop is fixed by that length, so the scene's phases are chosen from
-   * it: a lit corridor on the left (`LEVELS[0]`), another on the right
-   * (`LEVELS[3]`), a hangar mouth through the back (`LEVELS[5]`). */
+   * scroll onto it (see STATE.RIDE). The ride OUT is integrated the same way,
+   * and the far strip is laid long enough for both plus the box's height at
+   * each end, so no window shows a level twice. */
   let dist = 0, tail = 0;
   for (let t = 0; t < RIDE.ride; t += 1 / 60) {
     const k = smoothstep(0, 0.9, t) * (1 - smoothstep(RIDE.ride - RIDE.brake, RIDE.ride, t));
@@ -509,15 +510,17 @@ export function dressDeckLift(world, opts = {}) {
     if (t >= RIDE.ride - RIDE.brake) tail += RIDE.speed * k / 60;
   }
   const rideLen = Math.round(dist / LEVEL) * LEVEL;
-  const nLev = SPAN / LEVEL;
-  /* The wrap puts the window at residue SPAN/2, not 0 — see `layScene` —
-   * so the level in the window at the stop is the ride's level count plus
-   * half a wrap. */
-  const landing = (Math.round(rideLen / LEVEL) + nLev / 2) % nLev;
-  const phases = [0, 3, 5].map((w) => ((w - landing) % nLev + nLev) % nLev);
+  let leaveLen = 0;
+  for (let t = 0; t < RIDE.ride * 0.62; t += 1 / 60) leaveLen += RIDE.speed * smoothstep(0, 0.9, t) / 60;
+  const margin = Math.ceil(BOX_HALF / LEVEL) + 1;
+  const layout = {
+    lo: -margin,
+    landing: Math.round(rideLen / LEVEL),
+    hi: Math.round(rideLen / LEVEL) + Math.ceil(leaveLen / LEVEL) + margin,
+  };
 
   /* ── THE SHAFT SCENE the panes look into. */
-  const scene = buildShaft(world, M, lightMat, phases);
+  const scene = buildShaft(world, M, lightMat, layout);
   world.scene.add(car, outer, scene.group);
   world.statics.push(car, outer, scene.group);
 
@@ -540,7 +543,11 @@ export function dressDeckLift(world, opts = {}) {
     car, outer, shaft: scene.group, scene, bars: scene.bars, doors, outerDoors, panes,
     lamp: carMeshes.find((m) => m.material === lightMat) || null,
     lightMat, lightBase: M.glow.color, glow, lampMat, call, readout, buttons, status, solids,
-    N: scene.barsPerFace, SPAN, rideLen, tail,
+    N: scene.barsPerFace, SPAN, rideLen, tail, leaveLen, layout,
+    /** Game seconds since the build, for the scene's animations. */
+    time: 0,
+    /** The level last passed and when the last whoosh was, for the per-level cue. */
+    lastLev: 0, whooshAt: -1,
     /** 0 shut, 1 open. */
     open: 0,
     /** The shaft's speed past the window this frame, signed: + is the car
@@ -571,7 +578,7 @@ export function dressDeckLift(world, opts = {}) {
   if (!opts.arrive) shutDoors(world, st);
   else { st.scroll = -rideLen; }
   setReadout(st);
-  layScene(st, st.scroll);
+  layScene(st, st.scroll, 0, true);
   if (!opts.arrive) {
     /* The hum of a car in a shaft: a low band that lasts the ride. */
     audio.noise?.({ dur: RIDE.settle + RIDE.ride, gain: 0.09, type: 'lowpass', freq: 160, q: 0.6,
@@ -643,14 +650,89 @@ function setReadout(st) {
 
 /**
  * Every element lives in a FACE's local frame: `d` outward from the pane,
- * `a` along it, `w` up, where `w` is the wrap coordinate (world y less half
- * the car's height). A face is a quaternion that takes local +x to outward
- * and local +z to along, so one canonical geometry serves all three.
+ * `a` along it, `w` up, where `w` is the strip coordinate (world y less half
+ * the car's height, plus the scroll). A face is a quaternion that takes local
+ * +x to outward and local +z to along, so one canonical geometry serves all
+ * three.
  *
- * Each kind is `{ mesh, slots }`: slots are laid out at build (nothing after)
- * and `layScene` writes one matrix per slot per frame.
+ * NINE KINDS, and everything in the shaft is an instance of one of them:
+ *
+ *   box     a unit box, lit (standard) — slabs, girders, beams, ties, rungs,
+ *           and every piece of furniture; `instanceColor` tints it
+ *   plate   a unit box, unlit and bright — the coloured wall at the back of
+ *           every opening, which is the vignette's light
+ *   glow    a unit box, unlit — lamps, screens, bolts, flames, the light
+ *           bars, the deck digits: anything that shines
+ *   glass   a unit box, translucent — tanks, holograms, water, steam
+ *   cyl     a cylinder along `a` — pipes, warheads, drums, trunks
+ *   figure  a unit box, dark — a person's torso, legs and arms
+ *   head    a sphere, dark — a person's head, a droid's dome
+ *   fighter the parked fighter's outline
+ *   fan     a turbine — anything that spins
+ *
+ * A slot is laid once at build with its face, its `base` on the strip, its
+ * depth, its along, its scale, an optional rotation about the face's outward
+ * axis, its colour, and an ANIM code; `layScene` writes one matrix (and,
+ * when the anim asks for it, one colour) per slot per frame. Nothing is
+ * allocated after the build.
+ *
+ * THE FAR STRIP DOES NOT WRAP. Its levels run from a few below the start of
+ * the ride to a few past the end of the ride OUT, so no window ever shows a
+ * level twice; slots outside the box's height are collapsed to nothing. The
+ * near and mid layers — rails, rungs, ties, girders, light bars — wrap over
+ * `SPAN`, because a rung is a rung.
  */
-function buildShaft(world, M, lightMat, phases) {
+
+/** Animation codes a slot can carry. */
+const A = {
+  NONE: 0,
+  /** The light bars: brighten as they cross the window. */
+  SWEEP: 1,
+  /** A seven-segment digit: hidden unless its segment is lit for the number here. */
+  DIGIT: 2,
+  /** Turn about the outward axis at `rate`. */
+  SPIN: 3,
+  /** Slide along the opening, wrapping over `span`; hidden past `edge`. */
+  SLIDE: 4,
+  /** Step-noise brightness (and a little height jitter): fire, sparks, a bad lamp. */
+  FLICKER: 5,
+  /** Square-wave on/off. */
+  STROBE: 6,
+  /** Sine brightness. */
+  PULSE: 7,
+  /** Random on/off per half-second. */
+  BLINK: 8,
+  /** Visible for a flash of each period: a blaster bolt, an arc. */
+  BOLT: 9,
+  /** Height wobble: water, steam. */
+  WOBBLE: 10,
+  /** Two poses swapped on a slow square wave: an arm going up. */
+  ARM: 11,
+  /** Sweep along on a sine: a searchlight, a swinging pot. */
+  SWAY: 12,
+  /** Hue cycling: a cantina. */
+  CYCLE: 13,
+};
+
+/** The slab's centre in strip metres for level 0 when the scroll is 0. */
+const SLAB_W = -1.3;
+/** The half-height of the shaft box the far strip is drawn inside. */
+const BOX_HALF = SPAN / 2 + 6;
+
+/** The figure's parts for a pose, in metres for a 1.75 m person, feet at 0:
+ * [part, along, up, width(along), height, rot]. `part` is T torso, L leg,
+ * A arm; the head is added by `fig` itself at `headY`. */
+const POSES = {
+  stand: { headY: 1.62, parts: [['T', 0, 1.15, 0.42, 0.62, 0], ['L', -0.1, 0.42, 0.16, 0.84, 0], ['L', 0.1, 0.42, 0.16, 0.84, 0], ['A', -0.28, 1.12, 0.12, 0.6, 0], ['A', 0.28, 1.12, 0.12, 0.6, 0]] },
+  walk: { headY: 1.62, parts: [['T', 0, 1.15, 0.42, 0.62, 0], ['L', -0.14, 0.42, 0.16, 0.84, 0.35], ['L', 0.14, 0.42, 0.16, 0.84, -0.35], ['A', -0.28, 1.12, 0.12, 0.6, -0.4], ['A', 0.28, 1.12, 0.12, 0.6, 0.4]] },
+  sit: { headY: 1.27, parts: [['T', 0, 0.8, 0.42, 0.62, 0], ['L', 0.22, 0.5, 0.5, 0.16, 0], ['L', 0.44, 0.24, 0.16, 0.48, 0], ['A', -0.26, 0.8, 0.12, 0.5, 0], ['A', 0.26, 0.85, 0.12, 0.4, 0.6]] },
+  lie: { headY: 0.14, headA: -0.5, parts: [['T', 0, 0.14, 0.62, 0.28, 0], ['L', 0.72, 0.1, 0.84, 0.2, 0], ['A', 0.05, 0.3, 0.5, 0.1, 0]] },
+  kneel: { headY: 1.27, parts: [['T', 0, 0.85, 0.42, 0.62, 0], ['L', -0.05, 0.3, 0.16, 0.5, 0], ['L', 0.3, 0.08, 0.6, 0.14, 0], ['A', -0.24, 0.8, 0.12, 0.5, 0], ['A', 0.24, 0.8, 0.12, 0.5, 0]] },
+  raise: { headY: 1.62, parts: [['T', 0, 1.15, 0.42, 0.62, 0], ['L', -0.1, 0.42, 0.16, 0.84, 0], ['L', 0.1, 0.42, 0.16, 0.84, 0], ['A', -0.28, 1.12, 0.12, 0.6, 0], ['A', 0.34, 1.52, 0.12, 0.6, -0.3, 'up']] },
+  hang: { headY: 1.62, parts: [['T', 0, 1.15, 0.42, 0.62, 0], ['L', -0.1, 0.42, 0.16, 0.84, 0], ['L', 0.1, 0.42, 0.16, 0.84, 0], ['A', -0.2, 1.55, 0.12, 0.6, 0.15], ['A', 0.2, 1.55, 0.12, 0.6, -0.15]] },
+};
+
+function buildShaft(world, M, lightMat, layout) {
   const L = LIFT;
   const cx = L.x, cz = L.z, hw = L.halfW, hd = L.halfD, H = L.height;
   const group = new THREE.Group();
@@ -667,15 +749,17 @@ function buildShaft(world, M, lightMat, phases) {
    */
   const FAR = 4.6;
   const faces = [
-    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), o: new THREE.Vector3(cx - hw, H / 2, cz - 0.2), half: 2.4, far: FAR, phase: phases[0] },
-    { q: new THREE.Quaternion(), o: new THREE.Vector3(cx + hw, H / 2, cz - 0.2), half: 2.4, far: FAR, phase: phases[1] },
-    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), o: new THREE.Vector3(cx, H / 2, cz - hd), half: 3.0, far: 1.0, phase: phases[2] },
+    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI), o: new THREE.Vector3(cx - hw, H / 2, cz - 0.2), half: 2.4, far: FAR },
+    { q: new THREE.Quaternion(), o: new THREE.Vector3(cx + hw, H / 2, cz - 0.2), half: 2.4, far: FAR },
+    { q: new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), Math.PI / 2), o: new THREE.Vector3(cx, H / 2, cz - hd), half: 3.0, far: 1.0 },
   ];
-  for (const f of faces) {
+  faces.forEach((f, i) => {
+    f.i = i;
     f.out = new THREE.Vector3(1, 0, 0).applyQuaternion(f.q);
     f.along = new THREE.Vector3(0, 0, 1).applyQuaternion(f.q);
     f.k = f.far / FAR;
-  }
+    f.ka = f.half / 2.4;
+  });
   /** A depth on a face: the side faces' figure scaled to this face, never
    * nearer the pane than `lo` nor inside the far wall. */
   const dep = (f, d, lo = 0.2, margin = 0.06) => Math.max(lo, Math.min(d * f.k, f.far - margin));
@@ -683,7 +767,7 @@ function buildShaft(world, M, lightMat, phases) {
   /* ── THE BOX, static: far walls, guide rails, ladder rails, cable trays,
    * vertical pipe runs. Merged per material. */
   const B = new Bins(M.faction);
-  const tall = SPAN + 12;
+  const tall = BOX_HALF * 2;
   const at = (f, d, a, y) => _v.copy(f.o).addScaledVector(f.out, d).addScaledVector(f.along, a).setY(y);
   const stat = (mat, f, d, a, y, wd, h, wa) => {
     const g = new THREE.BoxGeometry(wd, h, wa);
@@ -697,149 +781,707 @@ function buildShaft(world, M, lightMat, phases) {
     stat(M.dark, f, dep(f, 2.9, 0.4), -2.2, 0, 0.12, tall, 0.5);
     for (const a of [2.35, 2.65]) stat(M.hull, f, dep(f, 2.9, 0.4), a, 0, 0.18, tall, 0.18);
   }
-  /* The box: its walls are the far walls of all three faces, their inner
-   * faces exactly `FAR` out from the panes so the lit plates sit on them.
-   * The side walls run aft past the back face to close the corners, and
-   * stop short of the lobby face at the front — nothing in the box reaches
-   * z = LIFT.door, where the deck could see it. */
   const backFar = faces[2].far;
   const zBack = cz - hd - backFar - 0.15;
   const zFront = L.door - 0.4;
-  const zPillar = cz - 0.2 - faces[0].half; /* the side scenes' aft end */
+  const zPillar = cz - 0.2 - faces[0].half;
   for (const s of [-1, 1]) {
     B.box(M.deep, cx + s * (hw + FAR + 0.15), 0, (zBack - 0.15 + zFront) / 2, 0.3, tall, zFront - zBack + 0.15);
-    /* The corner pillar: from the side scene's aft end to the back wall,
-     * the full width between the car's wall and the far wall. */
     B.box(M.deep, cx + s * (hw + 0.12 + (FAR + 0.03) / 2), 0, (zPillar + zBack - 0.15) / 2, FAR + 0.03, tall, zPillar - zBack + 0.15);
   }
   B.box(M.deep, cx, 0, zBack, hw * 2 + FAR * 2 + 0.6, tall, 0.3);
-  /* The back face's plinth: a dark sill housing across the foot of the back
-   * shaft, up to 1.45 m, which is the height of the ground wedge at the far
-   * wall; the back window looks out over it. */
   B.box(M.deep, cx, (1.45 - 30) / 2, (cz - hd - 0.04 + zBack) / 2, hw * 2 + 0.3, 31.45, (cz - hd - 0.04) - zBack + 0.15);
   B.box(M.hull, cx, 1.47, (cz - hd - 0.04 + zBack) / 2, hw * 2 + 0.3, 0.06, (cz - hd - 0.04) - zBack + 0.15);
   const key = (mat) => (mat.name || '').replace(/^deck-\w+-/, '') || 'mat';
   B.build(group, 'shaft', key);
 
-  /* ── THE KINDS. */
-  const figMat = new THREE.MeshBasicMaterial({ color: 0x05070b, side: THREE.DoubleSide, name: 'shaft-figure' });
-  figMat.userData.saberNoInk = true;
-  const barMat = new THREE.MeshBasicMaterial({ color: 0xbfd4ee, toneMapped: false, name: 'shaft-bar' });
-  barMat.userData.saberNoInk = true;
-  const plateMat = new THREE.MeshBasicMaterial({ color: 0xffffff, toneMapped: false, name: 'shaft-plate' });
-  plateMat.userData.saberNoInk = true;
-  const digitMat = new THREE.MeshBasicMaterial({ color: M.glow.color, toneMapped: false, name: 'shaft-digit' });
-  digitMat.userData.saberNoInk = true;
+  /* ── THE MATERIALS. All white, so `instanceColor` is the colour. */
+  const basic = (name, extra = {}) => {
+    const m = new THREE.MeshBasicMaterial({ color: 0xffffff, name, ...extra });
+    m.userData.saberNoInk = true;
+    return m;
+  };
+  const boxMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.7, metalness: 0.3, name: 'shaft-box' });
+  const plateMat = basic('shaft-plate', { toneMapped: false });
+  const glowMat = basic('shaft-glow', { toneMapped: false });
+  const glassMat = basic('shaft-glass', { toneMapped: false, transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
+  const cylMat = basic('shaft-cyl');
+  const figMat = basic('shaft-figure', { side: THREE.DoubleSide });
 
+  /* ── THE KINDS. */
   const kinds = [];
-  const kind = (name, geo, mat, slots, opts = {}) => {
-    const mesh = new THREE.InstancedMesh(geo, mat, Math.max(1, slots.length));
-    mesh.name = `shaft-${name}`;
-    mesh.frustumCulled = false;
-    mesh.castShadow = false; mesh.receiveShadow = false;
-    group.add(mesh);
-    const k = { name, mesh, slots, ...opts };
-    kinds.push(k);
+  const kindOf = {};
+  const kind = (name, geo, mat) => {
+    const k = { name, geo, mat, slots: [], mesh: null, anims: [], colour: false };
+    kinds.push(k); kindOf[name] = k;
     return k;
   };
-  /** A slot: face, wrap base, depth, along, scale, and an optional kind of level. */
-  const slot = (f, base, d, a, sx = 1, sy = 1, sz = 1, extra = null) => ({ f, base, d, a, sx, sy, sz, ...(extra || {}) });
+  kind('box', new THREE.BoxGeometry(1, 1, 1), boxMat);
+  kind('plate', new THREE.BoxGeometry(1, 1, 1), plateMat);
+  kind('glow', new THREE.BoxGeometry(1, 1, 1), glowMat);
+  kind('glass', new THREE.BoxGeometry(1, 1, 1), glassMat);
+  kind('cyl', new THREE.CylinderGeometry(1, 1, 1, 10).rotateX(Math.PI / 2), cylMat);
+  kind('figure', new THREE.BoxGeometry(1, 1, 1), figMat);
+  kind('head', new THREE.SphereGeometry(0.5, 8, 6), figMat);
+  kind('fighter', fighterGeometry(M.faction), figMat);
+  kind('fan', turbineGeometry(), figMat);
 
-  const nLevels = SPAN / LEVEL;
-  const levelAt = (f, i) => LEVELS[(i + f.phase) % nLevels];
-  const slabW = -1.3; /* a level's slab centre, in wrap metres, when scroll is a multiple of LEVEL */
+  /** Push a slot. `d` is a canonical depth (side-face metres out from the
+   * pane); `a` and `sa` are canonical along (scaled to the back face);
+   * `sd` is the depth extent. `col` is a hex. */
+  const put = (k, f, base, d, a, sd, sw, sa, col, o) => {
+    const s = {
+      f, base, d: dep(f, d, o?.lo ?? 0.2, o?.margin ?? 0.06), a: a * f.ka,
+      sx: Math.max(0.02, sd * f.k), sy: sw, sz: sa * f.ka,
+      rot: o?.rot || 0, col, anim: o?.anim || A.NONE, rate: o?.rate || 1, ph: o?.ph || 0,
+      amp: o?.amp || 0, span: o?.span || 0, edge: o?.edge || 0, wrap: !!o?.wrap,
+      base2: o?.base2 ?? base, rot2: o?.rot2 ?? (o?.rot || 0), col2: o?.col2 ?? col,
+      digit: o?.digit ?? 0, seg: o?.seg ?? 0,
+    };
+    k.slots.push(s);
+    return s;
+  };
 
-  /* FAR: the ship. */
-  const slabs = [], plates = [], figures = [], fighters = [], beams = [], digits = [], lamps = [], pipes = [], girders = [];
-  const turbines = [];
+  /* ── THE STRIP: one authored vignette per level per face. */
+  const V = vignettes();
+  /* The ones a level is FORCED to (the landing, the bulkheads) stay out of
+   * the shuffle, so a landing is only ever the one the car stops at. */
+  const FORCED = new Set(['landing', 'landing-warm', 'hangar-mouth', 'bulkhead']);
+  const bulkEvery = 8;
+  const perFace = [];
+  /* One shuffled order of the vignettes; each face reads it from a third of
+   * the way further round, so the three windows never agree and nothing on
+   * one face repeats inside `order.length` levels. */
+  const order = V.map((_, i) => i).filter((i) => !FORCED.has(V[i].name));
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(hash(i, 77) * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  const third = Math.floor(order.length / 3);
   for (const f of faces) {
-    for (let i = 0; i < nLevels; i++) {
-      const base = i * LEVEL + slabW;
-      const t = levelAt(f, i);
-      const seed = faces.indexOf(f) * 16 + i;
-      slabs.push(slot(f, base, dep(f, FAR - 0.7, 0.5, 0.1), 0, f.k, 1, f.half / 2.9));
-      if (t === ROOM || t === HANGAR || t === MACH) {
-        /* The lit opening. Rooms are bright and warm-white; a hangar mouth
-         * is dimmer and bluer, a machinery bay dimmer still. */
-        const lit = t === ROOM ? 1.0 : t === HANGAR ? 0.55 : 0.35;
-        plates.push(slot(f, base + 1.75, f.far - 0.05, 0, 1, t === HANGAR ? 1.1 : 1, f.half / 2.9, { lit }));
-      }
-      if (t === ROOM) {
-        const n = 2 + (hash(seed, 1) > 0.45 ? 1 : 0);
-        for (let j = 0; j < n; j++) {
-          const a = -1.4 + j * 1.15 + (hash(seed, 2 + j) - 0.5) * 0.5;
-          const h = 0.92 + hash(seed, 7 + j) * 0.14;
-          figures.push(slot(f, base + 0.25 + 0.875 * h, dep(f, FAR - 0.35 - hash(seed, 12 + j) * 0.3, 0.5, 0.16), a, 1, h, 1));
-        }
-      }
-      if (t === HANGAR) {
-        fighters.push(slot(f, base + 1.55, dep(f, FAR - 0.4, 0.5, 0.12), 0.2, 1, 1, f.half / 2.9));
-        figures.push(slot(f, base + 0.25 + 0.85, dep(f, FAR - 0.3, 0.5, 0.16), -2.1 + hash(seed, 3) * 0.4, 1, 0.97, 1));
-      }
-      if (t === BULK) {
-        /* The bulkhead crossing: a huge dark beam close in, with its deck
-         * number lit on the face nearest the window. Two digits of seven
-         * segments each; which are lit is decided per frame. */
-        beams.push(slot(f, base + 1.6, dep(f, 2.8, 0.4), 0, f.k, 1, f.half / 2.9));
-        for (let dgt = 0; dgt < 2; dgt++) {
-          for (let sgm = 0; sgm < 7; sgm++) {
-            const [u, v, horiz] = SEG_AT(0.6, 1.1)[sgm];
-            digits.push(slot(f, base + 1.6 + v, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.05, (dgt === 0 ? -0.45 : 0.45) + u,
-              1, horiz ? 1 : 5.5, horiz ? 5.5 : 1, { digit: dgt, seg: sgm }));
-          }
-        }
-        lamps.push(slot(f, base + 2.6, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.08, -1.6));
-        lamps.push(slot(f, base + 2.6, dep(f, 1.45, 0.4) - 1.35 * f.k - 0.08, 1.6));
-      }
-      if (t === MACH) {
-        /* The machinery bay: a turbine spinning in the opening. Its slot
-         * carries a spin the frame advances; `layScene` composes it. */
-        turbines.push(slot(f, base + 2.2, dep(f, FAR - 0.9, 0.5, 0.25), 0, 1, 1, 1, { spin: hash(seed, 5) * 6 }));
-        lamps.push(slot(f, base + 0.6, dep(f, FAR - 0.5, 0.4, 0.15), -2.2));
-        lamps.push(slot(f, base + 0.6, dep(f, FAR - 0.5, 0.4, 0.15), 2.2));
-      }
-      if (t === FUEL) {
-        pipes.push(slot(f, base + 2.0, dep(f, 3.0, 0.6), 0, 3.6 * f.k, 3.6, f.half / 2.9 + 0.1));
-        pipes.push(slot(f, base + 3.4, dep(f, 3.4, 0.7), 0, 1.6 * f.k, 1.6, f.half / 2.9 + 0.1));
-        lamps.push(slot(f, base + 2.75, dep(f, 2.45, 0.5), -1.2));
-      }
-      /* Conduit junction lamps, one a level, on the mid layer's tray. */
-      lamps.push(slot(f, base + 4.6, dep(f, 2.5, 0.5), -1.9));
+    const names = [];
+    for (let lev = layout.lo; lev <= layout.hi; lev++) {
+      const base = lev * LEVEL + SLAB_W;
+      const seed = f.i * 1000 + lev;
+      let v;
+      if (lev === layout.landing) v = V[V.findIndex((x) => x.name === (f.i === 2 ? 'hangar-mouth' : f.i === 0 ? 'landing' : 'landing-warm'))];
+      else if (((lev - layout.lo) % bulkEvery) === 3) v = V[V.findIndex((x) => x.name === 'bulkhead')];
+      else v = V[order[(lev - layout.lo + f.i * third) % order.length]];
+      names.push(v.name);
+      /* Every level: the floor slab, the ceiling slab. */
+      put(kindOf.box, f, base, FAR - 0.7, 0, 1.4, 0.5, 3.8, 0x8a8f96, { lo: 0.5, margin: 0.1 });
+      put(kindOf.box, f, base + LEVEL - 0.25, FAR - 0.5, 0, 1.0, 0.5, 3.8, 0x4a4e55, { lo: 0.5, margin: 0.1 });
+      const ctx = makeCtx(f, base, seed, put, kindOf, FAR);
+      v.build(ctx, seed);
     }
-    /* MID: girders every three metres, pipe crossings every four. */
-    for (let j = 0; j < SPAN / 3; j++) girders.push(slot(f, j * 3 + 0.5, dep(f, 2.0, 0.45), 0, 1, 1, f.half / 2.9));
-    for (let j = 0; j < SPAN / 4; j++) pipes.push(slot(f, j * 4 + 2.3, dep(f, 2.6, 0.6), 0, 1, 1, f.half / 2.9 + 0.1));
+    perFace.push(names);
+  }
+
+  /* MID: girders at the slab line, pipe crossings between, wrapped. */
+  const nLev = SPAN / LEVEL;
+  for (const f of faces) {
+    for (let j = 0; j < nLev; j++) put(kindOf.box, f, j * LEVEL + SLAB_W, 2.0, 0, 0.36, 0.5, 3.8, 0x2a2d33, { wrap: true, lo: 0.45 });
+    for (let j = 0; j < nLev / 2; j++) put(kindOf.cyl, f, j * LEVEL * 2 + SLAB_W + 3.4, 2.6, 0, 0.26, 0.26, 4.0, 0x6a6e76, { wrap: true, lo: 0.6 });
+    for (let j = 0; j < nLev; j++) put(kindOf.glow, f, j * LEVEL + 4.6, 2.5, -1.9, 0.14, 0.14, 0.14, 0xff3a2a, { wrap: true, lo: 0.5 });
   }
   /* NEAR: the ladder's rungs, the rails' ties, and the light bars. */
-  const rungs = [], ties = [], bars = [];
   const barsPerFace = 30;
   for (const f of faces) {
-    for (let j = 0; j < SPAN / 0.4; j++) rungs.push(slot(f, j * 0.4, dep(f, 1.5, 0.3), 0));
-    for (let j = 0; j < SPAN / 2; j++) ties.push(slot(f, j * 2 + 1, dep(f, 0.55), 0, 1, 1, 1));
-    for (let j = 0; j < barsPerFace; j++) bars.push(slot(f, j * (SPAN / barsPerFace), dep(f, 0.85, 0.3), 0, 1, 1, f.half / 2.9));
+    for (let j = 0; j < SPAN / 0.4; j++) put(kindOf.box, f, j * 0.4, 1.5, 0, 0.05, 0.05, 0.62, 0x8a8f96, { wrap: true, lo: 0.3 });
+    for (let j = 0; j < SPAN / 2; j++) put(kindOf.box, f, j * 2 + 1, 0.55, 0, 0.14, 0.14, 4.7, 0x8a8f96, { wrap: true });
+    for (let j = 0; j < barsPerFace; j++) put(kindOf.glow, f, j * (SPAN / barsPerFace), 0.85, 0, 0.34, 0.16, 5.6 / f.ka, 0xbfd4ee, { wrap: true, lo: 0.3, anim: A.SWEEP });
   }
 
-  /* Geometries, canonical: x out, z along, sized for a 2.9 half face; a slot's
-   * `sz` stretches them to the back face. */
-  const fightG = fighterGeometry(M.faction);
-  kind('slab', new THREE.BoxGeometry(1.4, 0.5, 5.8), M.hull, slabs);
-  const plateK = kind('plate', new THREE.BoxGeometry(0.1, 3.0, 4.6), plateMat, plates);
-  kind('figure', new THREE.BoxGeometry(0.3, 1.75, 0.46), figMat, figures);
-  kind('fighter', fightG, figMat, fighters);
-  kind('beam', new THREE.BoxGeometry(2.6, 1.6, 6.2), M.deep, beams);
-  kind('digit', new THREE.BoxGeometry(0.06, 0.1, 0.1), digitMat, digits, { digits: true });
-  kind('lamp', new THREE.BoxGeometry(0.14, 0.14, 0.14), M.status, lamps);
-  kind('girder', new THREE.BoxGeometry(0.36, 0.5, 5.8), M.dark, girders);
-  kind('pipe', new THREE.BoxGeometry(0.26, 0.26, 5.8), M.hull, pipes);
-  kind('rung', new THREE.BoxGeometry(0.05, 0.05, 0.62), M.hull, rungs);
-  kind('tie', new THREE.BoxGeometry(0.14, 0.14, 4.7), M.hull, ties);
-  const barsK = kind('bar', new THREE.BoxGeometry(0.34, 0.16, 5.6), barMat, bars, { sweep: true });
-  const turbK = kind('turbine', turbineGeometry(), M.dark, turbines, { spins: true });
-  /* Plate brightness is fixed per slot; bars are recoloured per frame. */
-  plates.forEach((p, i) => plateK.mesh.setColorAt(i, _c.set(lightMat.color).multiplyScalar(p.lit)));
-  bars.forEach((_, i) => barsK.mesh.setColorAt(i, _c.setScalar(1)));
+  /* ── THE MESHES, sized to their slots; colours written once, the animated
+   * slots listed so a still scene relays only those. */
+  for (const k of kinds) {
+    const n = Math.max(1, k.slots.length);
+    const mesh = new THREE.InstancedMesh(k.geo, k.mat, n);
+    mesh.name = `shaft-${k.name}`;
+    mesh.frustumCulled = false;
+    mesh.castShadow = false; mesh.receiveShadow = false;
+    if (k.slots.length === 0) mesh.setMatrixAt(0, _m.makeScale(0, 0, 0));
+    k.slots.forEach((s, i) => {
+      mesh.setColorAt(i, _c.setHex(s.col));
+      if (s.anim !== A.NONE && s.anim !== A.DIGIT) k.anims.push(i);
+      if (s.anim === A.DIGIT || s.anim === A.SWEEP) k.scrollColour = true;
+    });
+    if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    k.mesh = mesh;
+    group.add(mesh);
+  }
+  const zeroM = new THREE.Matrix4().makeScale(0, 0, 0);
+  return { group, faces, kinds, kindOf, bars: kindOf.glow.mesh, barsPerFace, slabW: SLAB_W, perFace, vignettes: V.map((v) => v.name), zeroM };
+}
 
-  return { group, faces, kinds, turbines: turbK, bars: barsK.mesh, barsPerFace, slabW };
+/**
+ * A vignette's drawing context: helpers bound to one face and one level, in
+ * room metres — `a` along the opening (±1.9 fits), `y` up from the room's
+ * floor, `d` out from the pane (4.6 is the far wall). Everything is pushed
+ * as slots of the nine kinds.
+ */
+function makeCtx(f, base, seed, put, K, FAR) {
+  const floor = base + 0.25;
+  const roomH = LEVEL - 0.75;
+  const rnd = (i) => hash(seed, i);
+  const c = {
+    f, seed, floor, roomH, FAR, rnd,
+    /** The lit back wall, full opening, or a band `y0..y1` of it. */
+    plate(col, y0 = 0, y1 = roomH, o) { return put(K.plate, f, floor + (y0 + y1) / 2, FAR - 0.05, 0, 0.1, y1 - y0, 3.8, col, o); },
+    box(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.6, o) { return put(K.box, f, floor + y, d, a, sd, sh, sa, col, o); },
+    glow(col, a, y, sa, sh, sd = 0.08, d = FAR - 0.3, o) { return put(K.glow, f, floor + y, d, a, sd, sh, sa, col, o); },
+    glass(col, a, y, sa, sh, sd = 0.6, d = FAR - 0.9, o) { return put(K.glass, f, floor + y, d, a, sd, sh, sa, col, o); },
+    /** A cylinder `len` along, radius `r`; `rot` π/2 stands it up. */
+    cyl(col, a, y, len, r, d = FAR - 0.8, o) { return put(K.cyl, f, floor + y, d, a, r * 2, r * 2, len, col, o); },
+    fan(col, a, y, s, rate, d = FAR - 1.0, o) { return put(K.fan, f, floor + y, d, a, s, s, s, col, { anim: A.SPIN, rate, ph: rnd(91), ...(o || {}) }); },
+    fighter(col, a, y, s, d = FAR - 0.4) { return put(K.fighter, f, floor + y, d, a, 1, s, s, col, { lo: 0.5, margin: 0.12 }); },
+    /** A person: pose, along, options {col, h, d, anim (for the arm), rate}. */
+    fig(pose, a, o = {}) {
+      const P = POSES[pose] || POSES.stand;
+      const h = (o.h ?? 1.0) * (0.94 + rnd(7 + Math.round(a * 10)) * 0.12);
+      const col = o.col ?? 0x05070b;
+      const d = o.d ?? FAR - 0.5 - rnd(3) * 0.4;
+      const y0 = o.y ?? 0;
+      for (const [part, pa, py, pw, ph, prot, tag] of P.parts) {
+        const opts = { rot: prot, lo: 0.3, margin: 0.14 };
+        if (o.slide) Object.assign(opts, { anim: A.SLIDE, ph: rnd(11) }, o.slide);
+        else if (tag === 'up' && o.anim) { opts.anim = A.ARM; opts.rate = o.rate || 0.4; opts.ph = rnd(5); opts.base2 = floor + y0 + 1.12 * h; opts.rot2 = 0; }
+        put(K.figure, f, floor + y0 + py * h, d, a + pa * h, part === 'T' ? 0.26 : 0.16, ph * h, pw * h, col, opts);
+      }
+      put(K.head, f, floor + y0 + P.headY * h, d, a + (P.headA || 0) * h, 0.26 * h, 0.26 * h, 0.26 * h, col,
+        o.slide ? { anim: A.SLIDE, ph: rnd(11), ...o.slide, lo: 0.3, margin: 0.14 } : { lo: 0.3, margin: 0.14 });
+      return c;
+    },
+    /** A droid on wheels: a drum body, a dome, one lit eye. */
+    astro(col, a, o = {}) {
+      const d = o.d ?? FAR - 0.7;
+      put(K.cyl, f, floor + 0.5, d, a, 0.6, 0.6, 0.8, col, { rot: Math.PI / 2, lo: 0.3, margin: 0.2 });
+      put(K.head, f, floor + 0.95, d, a, 0.6, 0.6, 0.6, o.dome ?? 0xc0c6cc, { lo: 0.3, margin: 0.2 });
+      put(K.glow, f, floor + 0.95, d - 0.3 * f.k, a + 0.1, 0.08, 0.08, 0.08, o.eye ?? 0xff3020, { anim: A.BLINK, rate: 1.5 + rnd(9), ph: rnd(10), lo: 0.28, margin: 0.1 });
+      return c;
+    },
+    /** A slot's animation options, for brevity. */
+    an(anim, rate = 1, extra = {}) { return { anim, rate, ph: rnd(40 + anim), ...extra }; },
+  };
+  return c;
+}
+
+/**
+ * THE VIGNETTES — one per level, each a themed glimpse with its own colour,
+ * its own furniture, and something moving where it makes sense. The player:
+ * "imagine passing dozens and dozens of levels all unique and you catch a
+ * glimpse of them as they go by … Take advantage of colors/themes."
+ *
+ * Each is a name and a builder over the context above. `y` is up from the
+ * room floor; the room is `roomH` (6.25 m) tall and the far wall is 4.6 m
+ * out, so anything at `d` < 4 stands in front of the coloured plate.
+ */
+function vignettes() {
+  const R = [];
+  const v = (name, build) => R.push({ name, build });
+
+  v('landing', (c) => {
+    c.plate(0xdfe8f0);
+    c.box(0x2a2e36, 0, 5.4, 3.8, 0.4, 0.3);
+    c.glow(0x3adf7a, 1.7, 1.6, 0.14, 0.14, 0.06, c.FAR - 0.1);
+    c.glow(0x9fb4d0, 0, 5.0, 1.6, 0.16, 0.1, c.FAR - 0.2);
+    c.fig('raise', -1.0, { anim: true, rate: 0.35 }).fig('stand', 0.1).fig('walk', 1.0, { h: 0.95 });
+    c.box(0x1e2228, 0, 0.0, 3.6, 0.06, 1.4, c.FAR - 1.0);
+  });
+  v('landing-warm', (c) => {
+    c.plate(0xf2dcc0);
+    c.box(0x2a2e36, 0, 5.4, 3.8, 0.4, 0.3);
+    c.box(0x3a3028, -1.2, 0.25, 1.3, 0.1, 0.4);
+    c.fig('sit', -1.35, { d: c.FAR - 0.7 }).fig('raise', 0.6, { anim: true, rate: 0.3 }).fig('stand', 1.3, { h: 0.9 });
+    c.glow(0xffb347, 1.7, 1.6, 0.14, 0.14, 0.06, c.FAR - 0.1);
+  });
+  v('hangar-mouth', (c) => {
+    c.plate(0x4a5870);
+    c.fighter(0x05070b, 0.2, 2.6, 1.0);
+    c.cyl(0xc0b070, -1.4, 0.4, 1.6, 0.06, c.FAR - 0.6);
+    c.cyl(0xc0b070, -1.9, 0.9, 0.12, 0.06, c.FAR - 0.6, { rot: Math.PI / 2 });
+    c.fig('stand', -1.6, { h: 0.95 });
+    c.glow(0xfff0d0, -1.2, 5.6, 0.5, 0.12, 0.2, c.FAR - 1.2);
+    c.glow(0xff3020, 1.6, 4.6, 0.14, 0.14, 0.14, c.FAR - 0.3, c.an(A.BLINK, 1.2));
+  });
+  v('bulkhead', (c) => {
+    /* The bulkhead crossing: a huge dark beam close in, its deck number lit
+     * on the face nearest the window in metre-high seven-segment digits,
+     * which count with the readout (`A.DIGIT`). */
+    const yB = 2.95;
+    c.plate(0x1a1c22);
+    c.box(0x14161c, 0, yB, 3.8, 2.4, 2.6, 2.8, { lo: 0.4 });
+    for (let dgt = 0; dgt < 2; dgt++) {
+      for (let sgm = 0; sgm < 7; sgm++) {
+        const [u, w, horiz] = SEG_AT(0.7, 1.3)[sgm];
+        c.glow(0x9fd0ff, (dgt === 0 ? -0.55 : 0.55) + u, yB + w, horiz ? 0.66 : 0.1, horiz ? 0.1 : 0.66, 0.06, 1.45,
+          { anim: A.DIGIT, digit: dgt, seg: sgm, lo: 0.3 });
+      }
+    }
+    c.glow(0xff3a2a, -1.6, yB + 1.4, 0.14, 0.14, 0.14, 1.4, { lo: 0.3 });
+    c.glow(0xff3a2a, 1.6, yB + 1.4, 0.14, 0.14, 0.14, 1.4, { lo: 0.3 });
+  });
+  v('medbay', (c) => {
+    c.plate(0xd6f0ea);
+    for (const a of [-1.2, 0.4]) {
+      c.box(0xc4ccd4, a, 0.4, 1.9, 0.22, 0.8);
+      c.box(0x5a6068, a, 0.15, 0.3, 0.3, 0.3);
+      c.fig('lie', a - 0.4, { y: 0.5, col: 0x141a22 });
+      c.glow(0x30d0b0, a + 0.6, 2.1, 0.5, 0.3, 0.06, c.FAR - 0.1, c.an(A.BLINK, 2));
+    }
+    c.fig('stand', 1.5, { col: 0xe0e6ee, h: 0.98 });
+    c.glow(0xffffff, 0, 5.3, 3.0, 0.1, 0.4, c.FAR - 0.8);
+  });
+  v('bacta', (c) => {
+    c.plate(0x0c2a24);
+    for (const a of [-1.1, 0.9]) {
+      c.glass(0x30ff9a, a, 1.7, 0.9, 2.6, 0.9);
+      c.cyl(0x2a3a38, a, 0.2, 0.4, 0.5, c.FAR - 0.9, { rot: Math.PI / 2 });
+      c.cyl(0x2a3a38, a, 3.2, 0.3, 0.5, c.FAR - 0.9, { rot: Math.PI / 2 });
+      c.fig('hang', a, { y: 0.6, h: 0.85, col: 0x061a14, d: c.FAR - 0.9 });
+      c.glow(0x60ffb0, a, 0.5, 0.7, 0.1, 0.7, c.FAR - 0.9, c.an(A.PULSE, 1.6));
+    }
+    c.glow(0x30d0a0, 0, 5.2, 0.6, 0.12, 0.06, c.FAR - 0.1, c.an(A.BLINK, 1));
+  });
+  v('barracks', (c) => {
+    c.plate(0x6a5e46);
+    for (const a of [-1.2, 0.9]) for (let i = 0; i < 3; i++) {
+      c.box(0x2a2620, a, 0.5 + i * 1.5, 1.9, 0.14, 0.8);
+      c.box(0x3a3630, a - 0.95, 0.5 + i * 1.5, 0.08, 1.3, 0.8);
+    }
+    c.fig('lie', -1.5, { y: 2.08, col: 0x100e0a });
+    c.fig('sit', 0.4, { y: 0.55, h: 0.95 });
+    c.fig('lie', 0.5, { y: 3.58, col: 0x100e0a });
+    c.glow(0xffc070, 0, 5.4, 0.3, 0.1, 0.3, c.FAR - 0.6);
+  });
+  v('mess', (c) => {
+    c.plate(0xffd9a0);
+    for (const a of [-1.0, 1.0]) {
+      c.box(0x5a4632, a, 0.85, 1.7, 0.08, 0.9);
+      c.box(0x4a3a2a, a, 0.4, 0.1, 0.8, 0.1);
+      c.fig('sit', a - 0.85, { h: 0.9, d: c.FAR - 0.9 });
+      c.fig('sit', a + 0.35, { h: 0.9, d: c.FAR - 0.9 });
+      c.glass(0xfff4e0, a, 1.5, 0.5, 0.6, 0.3, c.FAR - 0.9, c.an(A.WOBBLE, 1.2, { amp: 0.4 }));
+      c.glow(0xffc070, a, 4.2, 0.6, 0.12, 0.3, c.FAR - 1.0);
+      c.box(0x2a2018, a, 4.9, 0.04, 1.4, 0.04, c.FAR - 1.0);
+    }
+  });
+  v('armoury', (c) => {
+    c.plate(0x8a9099);
+    for (const a of [-1.4, -0.2, 1.0]) {
+      c.box(0x2a2c30, a, 1.6, 1.0, 3.0, 0.3, c.FAR - 0.4);
+      for (let i = 0; i < 4; i++) c.box(0x0a0b0e, a - 0.38 + i * 0.25, 1.6, 0.06, 1.2, 0.1, c.FAR - 0.7);
+    }
+    c.box(0x3a3c40, 1.5, 0.5, 0.9, 1.0, 0.8, c.FAR - 1.4);
+    c.fig('stand', 1.5, { d: c.FAR - 0.9 });
+    c.glow(0xff3020, -1.7, 4.0, 0.14, 0.14, 0.1, c.FAR - 0.2, c.an(A.BLINK, 0.8));
+  });
+  v('brig', (c) => {
+    c.plate(0x3a0c0c);
+    for (let i = 0; i < 7; i++) c.glow(0xff3030, -1.5 + i * 0.5, 2.0, 0.06, 4.0, 0.06, c.FAR - 1.3);
+    c.box(0x1a1010, 0, 0.6, 3.8, 0.06, 1.0, c.FAR - 1.3);
+    c.fig('sit', -0.9, { col: 0x000000, d: c.FAR - 0.6 });
+    c.fig('stand', 1.6, { d: c.FAR - 1.7, col: 0x0a0a10 });
+    c.glow(0xff8060, 0, 5.0, 0.3, 0.1, 0.3, c.FAR - 0.5, c.an(A.FLICKER, 6));
+  });
+  v('reactor', (c) => {
+    c.plate(0x061a3a);
+    c.glass(0x4090ff, 0, 3.0, 1.6, 4.4, 1.2, c.FAR - 1.2, c.an(A.PULSE, 1.2));
+    c.glow(0x80c0ff, 0, 3.0, 0.5, 3.6, 0.5, c.FAR - 1.2, c.an(A.PULSE, 1.2, { ph: 0.5 }));
+    for (const y of [1.2, 2.8, 4.4]) c.cyl(0x2a3a5a, 0, y, 2.2, 0.12, c.FAR - 1.2);
+    c.box(0x1a2030, 0, 1.0, 3.8, 0.08, 1.2, c.FAR - 2.0);
+    c.box(0x1a2030, 0, 3.6, 3.8, 0.08, 1.2, c.FAR - 2.0);
+    c.fig('stand', -1.5, { h: 0.8, d: c.FAR - 2.0 }).fig('walk', 1.4, { h: 0.8, y: 3.64, d: c.FAR - 2.0 });
+  });
+  v('foundry', (c) => {
+    c.plate(0x3a1a05);
+    c.cyl(0x2a2220, 0, 5.4, 3.8, 0.1, c.FAR - 1.0);
+    for (let i = 0; i < 4; i++) {
+      c.fig('hang', 0, { y: 3.4, h: 0.9, col: 0x2a2018, d: c.FAR - 1.0, slide: { rate: 0.09, span: 4.2, edge: 2.0, ph: i * 0.25 } });
+    }
+    for (let i = 0; i < 5; i++) c.glow(i % 2 ? 0xffa030 : 0xffe080, -1.4 + i * 0.7, 0.9 + c.rnd(20 + i) * 0.8, 0.12, 0.12, 0.12, c.FAR - 1.2 - c.rnd(30 + i), c.an(A.FLICKER, 14 + i, { ph: i * 0.3 }));
+    c.glow(0xff6010, 0, 0.3, 2.8, 0.3, 1.0, c.FAR - 1.1, c.an(A.FLICKER, 5));
+    c.fig('stand', 1.6, { d: c.FAR - 1.6 });
+  });
+  v('hydroponics', (c) => {
+    c.plate(0x2c1f2a);
+    for (let i = 0; i < 3; i++) c.glow(0xff5aa0, 0, 1.6 + i * 1.6, 3.6, 0.06, 0.2, c.FAR - 0.6, { lo: 0.3 });
+    for (let i = 0; i < 3; i++) {
+      c.box(0x2f9a3a, 0, 0.9 + i * 1.6, 3.4, 0.4, 0.8, c.FAR - 0.7);
+      c.box(0x4a4a50, 0, 0.6 + i * 1.6, 3.6, 0.1, 0.9, c.FAR - 0.7);
+    }
+    c.fig('kneel', 1.2, { d: c.FAR - 1.4 });
+  });
+  v('firefight', (c) => {
+    c.plate(0x5a3a2a);
+    c.fig('walk', -1.7, { d: c.FAR - 0.6 }).fig('kneel', -1.0, { d: c.FAR - 1.0 });
+    c.fig('walk', 1.5, { d: c.FAR - 0.8 }).fig('stand', 1.0, { d: c.FAR - 1.2, h: 0.95 });
+    c.fig('lie', 0.0, { col: 0x100c0a });
+    c.box(0x2a2018, 0.2, 0.4, 0.9, 0.8, 0.6, c.FAR - 1.0);
+    for (let i = 0; i < 6; i++) {
+      const left = i % 2 === 0;
+      c.glow(left ? 0xff2a1a : 0x3aa0ff, -0.6 + i * 0.25, 1.0 + c.rnd(50 + i) * 0.8, 1.0, 0.06, 0.06, c.FAR - 0.9 - c.rnd(60 + i) * 0.5,
+        { anim: A.BOLT, rate: 1.4 + c.rnd(70 + i), ph: c.rnd(80 + i), rot: (c.rnd(90 + i) - 0.5) * 0.3 });
+    }
+    c.glow(0xff9040, 0, 5.2, 0.4, 0.2, 0.2, c.FAR - 0.5, c.an(A.STROBE, 2.5));
+  });
+  v('breach', (c) => {
+    c.plate(0x02040c);
+    for (let i = 0; i < 16; i++) c.glow(0xffffff, -1.8 + c.rnd(100 + i) * 3.6, 0.3 + c.rnd(120 + i) * 5.5, 0.05, 0.05, 0.02, c.FAR - 0.08);
+    c.box(0x30343a, -1.6, 1.2, 1.2, 2.4, 0.3, c.FAR - 0.4, { rot: 0.5 });
+    c.box(0x30343a, 1.6, 4.4, 1.2, 2.8, 0.3, c.FAR - 0.4, { rot: -0.6 });
+    c.box(0x30343a, -0.4, 5.6, 2.0, 1.0, 0.3, c.FAR - 0.4, { rot: 0.2 });
+    for (let i = 0; i < 4; i++) c.box(0x8a8f96, -1.5 + i * 0.9, 2.0 + c.rnd(140 + i) * 2.5, 0.3, 0.3, 0.3, c.FAR - 1.4, { anim: A.SLIDE, rate: 0.12 + c.rnd(150 + i) * 0.1, span: 6, edge: 2.0, ph: c.rnd(160 + i), rot: c.rnd(170 + i) * 3 });
+    c.fig('hang', 0.5, { y: 2.0, h: 0.9, d: c.FAR - 1.6, col: 0x0a0c10 });
+    c.glow(0xffb020, -1.8, 5.8, 0.2, 0.2, 0.2, c.FAR - 1.0, c.an(A.STROBE, 1.5));
+    c.glow(0xffb020, 1.8, 5.8, 0.2, 0.2, 0.2, c.FAR - 1.0, c.an(A.STROBE, 1.5, { ph: 0.5 }));
+  });
+  v('fire', (c) => {
+    c.plate(0x3a1408);
+    for (let i = 0; i < 6; i++) c.glow(i % 2 ? 0xff7a20 : 0xffd040, -1.5 + i * 0.6, 0.6, 0.5, 1.2, 0.4, c.FAR - 0.5, c.an(A.FLICKER, 12 + i, { ph: i * 0.17 }));
+    for (let i = 0; i < 3; i++) c.glass(0x3a3030, -1.2 + i * 1.1, 3.6, 1.4, 2.2, 0.8, c.FAR - 0.9, c.an(A.WOBBLE, 0.6 + i * 0.2, { amp: 0.3, ph: i * 0.4 }));
+    c.fig('walk', 1.4, { d: c.FAR - 1.6 }).fig('walk', 0.7, { d: c.FAR - 1.8, h: 0.95 });
+    c.cyl(0x8a2a20, 0.4, 0.5, 2.4, 0.06, c.FAR - 1.7);
+    c.glow(0xa0d0ff, 0.0, 1.0, 0.7, 0.08, 0.08, c.FAR - 1.7, c.an(A.WOBBLE, 3, { amp: 0.5 }));
+  });
+  v('chapel', (c) => {
+    c.plate(0x2a1f3a);
+    c.glow(0xffe2b0, 0, 3.2, 0.4, 5.0, 0.1, c.FAR - 0.15);
+    for (let i = 0; i < 8; i++) c.glow(0xffc070, -1.6 + i * 0.45, 0.9 + (i % 2) * 0.3, 0.06, 0.12, 0.06, c.FAR - 0.4, c.an(A.FLICKER, 8 + i));
+    c.box(0x1a1420, 0, 0.6, 1.8, 0.8, 0.8, c.FAR - 0.5);
+    c.fig('kneel', -0.3, { d: c.FAR - 1.5 });
+    for (const a of [-1.4, 1.3]) c.box(0x1a1420, a, 0.3, 1.0, 0.5, 0.5, c.FAR - 1.6);
+  });
+  v('dojo', (c) => {
+    c.plate(0xe8e0c8);
+    c.box(0x6a3a2a, 0, 0.05, 3.6, 0.1, 1.6, c.FAR - 1.2);
+    c.fig('walk', -0.8, { d: c.FAR - 1.2 }).fig('walk', 0.8, { d: c.FAR - 1.2 });
+    c.glow(0x40c0ff, -0.35, 1.7, 0.08, 1.3, 0.08, c.FAR - 1.3, { anim: A.ARM, rate: 0.9, rot: 0.9, rot2: -0.5, base2: c.floor + 1.9 });
+    c.glow(0x60ff60, 0.35, 1.7, 0.08, 1.3, 0.08, c.FAR - 1.3, { anim: A.ARM, rate: 0.9, ph: 0.5, rot: -0.9, rot2: 0.5, base2: c.floor + 1.9 });
+    c.fig('sit', 1.7, { h: 0.9, d: c.FAR - 0.6 });
+  });
+  v('briefing', (c) => {
+    c.plate(0x0e1a2c);
+    c.box(0x1a2230, 0, 0.5, 2.0, 1.0, 1.2, c.FAR - 1.4);
+    c.glass(0x40a0ff, 0, 2.0, 1.6, 1.6, 1.0, c.FAR - 1.4, c.an(A.PULSE, 0.8));
+    c.glow(0x80d0ff, 0, 2.0, 0.6, 0.6, 0.6, c.FAR - 1.4, c.an(A.SPIN, 0.7));
+    c.fig('stand', -1.5, { d: c.FAR - 1.4 }).fig('stand', 1.5, { d: c.FAR - 1.4 }).fig('raise', -0.9, { d: c.FAR - 2.2, anim: true, rate: 0.5 });
+    c.glow(0x3a90ff, 0, 4.4, 2.6, 1.0, 0.06, c.FAR - 0.1, c.an(A.BLINK, 0.6));
+  });
+  v('magazine', (c) => {
+    c.plate(0x2a0a0a);
+    for (let r = 0; r < 3; r++) {
+      c.box(0x3a3a40, 0, 0.6 + r * 1.7, 3.6, 0.1, 1.0, c.FAR - 0.7);
+      for (let i = 0; i < 4; i++) c.cyl(0xb0b4bc, -1.35 + i * 0.9, 1.0 + r * 1.7, 0.8, 0.22, c.FAR - 0.7);
+    }
+    c.glow(0xff2020, -1.7, 5.4, 0.2, 0.2, 0.2, c.FAR - 0.3, c.an(A.BLINK, 0.5));
+    c.glow(0xff2020, 1.7, 5.4, 0.2, 0.2, 0.2, c.FAR - 0.3, c.an(A.BLINK, 0.5, { ph: 0.5 }));
+  });
+  v('kennel', (c) => {
+    c.plate(0x8a5a20);
+    c.box(0xc8a040, 0, 0.1, 3.6, 0.2, 1.4, c.FAR - 0.9);
+    for (let i = 0; i < 6; i++) c.box(0x1a1410, -1.7 + i * 0.68, 1.8, 0.06, 3.2, 0.06, c.FAR - 1.7);
+    for (const a of [-1.1, 0.6]) {
+      c.box(0x0a0806, a, 0.6, 1.3, 0.6, 0.5, c.FAR - 1.0);
+      c.box(0x0a0806, a + 0.7, 0.95, 0.5, 0.5, 0.4, c.FAR - 1.0);
+      c.glow(0xffd040, a + 0.85, 1.0, 0.08, 0.05, 0.04, c.FAR - 1.22, c.an(A.BLINK, 0.3));
+    }
+    c.glow(0xffb060, 0, 5.4, 0.4, 0.1, 0.3, c.FAR - 0.6, c.an(A.FLICKER, 3));
+  });
+  v('cargo', (c) => {
+    c.plate(0x5a5a48);
+    const cols = [0x6a5a3a, 0x4a4a5a, 0x7a4a2a, 0x5a6a4a];
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 5; j++) {
+      if (i === 2 && j > 2) continue;
+      c.box(cols[(i + j) % 4], -1.45 + i * 0.95, 0.5 + j * 1.05, 0.9, 1.0, 0.9, c.FAR - 0.6);
+    }
+    c.box(0x2a2a30, 1.5, 1.2, 0.6, 2.4, 0.6, c.FAR - 1.6, c.an(A.SLIDE, 0.08, { span: 5, edge: 2.0 }));
+    c.box(0x2a2a30, 1.5, 2.6, 1.4, 0.15, 0.4, c.FAR - 1.6, c.an(A.SLIDE, 0.08, { span: 5, edge: 2.0 }));
+    c.glow(0xffb020, 1.5, 2.55, 0.1, 0.1, 0.1, c.FAR - 1.9, c.an(A.SLIDE, 0.08, { span: 5, edge: 2.0 }));
+  });
+  v('command', (c) => {
+    c.plate(0x101c30);
+    for (let r = 0; r < 2; r++) {
+      c.box(0x1a2230, 0, 0.5 + r * 1.2, 3.6, 0.9, 0.8, c.FAR - 0.8 - r * 1.0);
+      for (let i = 0; i < 5; i++) c.glow(i % 3 ? 0x3a90ff : 0x60ffd0, -1.5 + i * 0.75, 1.15 + r * 1.2, 0.5, 0.3, 0.04, c.FAR - 1.2 - r * 1.0, c.an(A.BLINK, 0.8 + c.rnd(200 + i + r * 5)));
+      for (let i = 0; i < 3; i++) c.fig('sit', -1.4 + i * 1.3, { y: r * 1.2, h: 0.85, d: c.FAR - 1.6 - r * 1.0 });
+    }
+    c.glow(0x2a70ff, 0, 4.6, 3.0, 1.2, 0.06, c.FAR - 0.1, c.an(A.PULSE, 0.4));
+  });
+  v('observation', (c) => {
+    c.plate(0x03060f);
+    c.glow(0xd8a060, 0, 1.0, 3.8, 2.4, 0.06, c.FAR - 0.1);
+    c.glow(0xffd0a0, 0, 2.25, 3.8, 0.12, 0.06, c.FAR - 0.12);
+    for (let i = 0; i < 12; i++) c.glow(0xffffff, -1.8 + c.rnd(300 + i) * 3.6, 2.6 + c.rnd(320 + i) * 3.2, 0.05, 0.05, 0.02, c.FAR - 0.08);
+    c.box(0x2a2e36, 0, 1.1, 3.8, 0.06, 0.06, c.FAR - 1.6);
+    c.fig('stand', -1.2, { d: c.FAR - 1.9 }).fig('stand', 0.2, { d: c.FAR - 1.9, h: 0.9 }).fig('raise', 1.3, { d: c.FAR - 1.9, anim: true, rate: 0.25 });
+  });
+  v('coolant', (c) => {
+    c.plate(0x0a3a3a);
+    c.glass(0x30d0d0, 0, 0.6, 3.8, 1.2, 4.0, c.FAR - 2.2, c.an(A.WOBBLE, 1.5, { amp: 0.08 }));
+    for (let i = 0; i < 3; i++) c.glow(0x80ffff, -1.2 + i * 1.2, 1.22, 1.0, 0.03, 0.4, c.FAR - 2.0 - i * 0.4, c.an(A.WOBBLE, 1.0 + i * 0.3, { amp: 0.8, ph: i * 0.3 }));
+    for (const a of [-1.4, 1.4]) c.cyl(0x4a5a5a, a, 3.4, 4.6, 0.25, c.FAR - 0.8, { rot: Math.PI / 2 });
+    c.box(0x3a4a4a, 0, 1.4, 1.6, 0.1, 0.8, c.FAR - 1.0);
+    c.fig('stand', 0.2, { y: 1.45, h: 0.9, d: c.FAR - 1.0 });
+  });
+  v('fuel-main', (c) => {
+    c.plate(0x1a1a20);
+    c.cyl(0xa0905a, 0, 2.4, 3.8, 1.1, c.FAR - 1.6);
+    c.cyl(0x6a6058, 0, 4.6, 3.8, 0.4, c.FAR - 1.0);
+    for (const a of [-1.2, 0.8]) c.box(0x3a3a40, a, 2.4, 0.3, 2.6, 2.6, c.FAR - 1.6);
+    c.cyl(0x8a3a30, 0.2, 3.9, 0.6, 0.3, c.FAR - 1.6, { rot: Math.PI / 2 });
+    c.glow(0xffb020, -1.6, 4.0, 0.14, 0.14, 0.14, c.FAR - 2.6);
+    c.glow(0x30ff60, 1.6, 1.0, 0.14, 0.14, 0.14, c.FAR - 2.6, c.an(A.BLINK, 1));
+  });
+  v('tram', (c) => {
+    c.plate(0x202838);
+    c.cyl(0x50545c, 0, 0.5, 3.8, 0.08, c.FAR - 1.4);
+    c.cyl(0x50545c, 0, 5.4, 3.8, 0.08, c.FAR - 1.4);
+    const slide = { anim: A.SLIDE, rate: 0.55, span: 9, edge: 2.3, ph: c.rnd(400) };
+    c.box(0x4a5a70, 0, 1.6, 2.6, 1.8, 1.0, c.FAR - 1.6, slide);
+    c.box(0x2a3040, 0, 2.7, 2.7, 0.3, 1.0, c.FAR - 1.6, slide);
+    for (let i = 0; i < 3; i++) c.glow(0xffe0a0, -0.8 + i * 0.8, 1.8, 0.5, 0.6, 0.04, c.FAR - 2.14, slide);
+    c.glow(0xff3020, 1.35, 1.0, 0.06, 0.2, 0.2, c.FAR - 1.6, slide);
+    c.fig('stand', 1.7, { d: c.FAR - 0.6, h: 0.9 });
+  });
+  v('crawlway', (c) => {
+    c.plate(0x2a2418);
+    c.box(0x1a1814, 0, 4.4, 3.8, 3.7, 4.0, c.FAR - 2.0);
+    c.cyl(0x3a3630, 0, 2.2, 3.8, 0.12, c.FAR - 0.6);
+    c.cyl(0x3a3630, 0, 1.9, 3.8, 0.08, c.FAR - 0.8);
+    c.box(0x1a1c22, 0.4, 0.5, 0.6, 0.6, 0.5, c.FAR - 1.0);
+    c.box(0x1a1c22, 0.75, 0.9, 0.1, 0.6, 0.1, c.FAR - 1.0, { rot: 0.5 });
+    c.glow(0xa0d0ff, 0.95, 1.1, 0.16, 0.16, 0.16, c.FAR - 1.1, c.an(A.FLICKER, 18));
+    c.glow(0xffffff, 0.95, 1.1, 0.6, 0.6, 0.02, c.FAR - 0.2, c.an(A.FLICKER, 18, { ph: 0.1 }));
+  });
+  v('laundry', (c) => {
+    c.plate(0xc0c8d0);
+    for (let i = 0; i < 4; i++) {
+      c.box(0x6a7078, -1.35 + i * 0.9, 0.7, 0.8, 1.4, 0.8, c.FAR - 0.6);
+      c.glow(0xe0f0ff, -1.35 + i * 0.9, 0.8, 0.4, 0.4, 0.04, c.FAR - 1.02, c.an(A.SPIN, 3 + i));
+    }
+    for (let i = 0; i < 3; i++) c.glass(0xffffff, -1.0 + i * 1.0, 3.6, 1.2, 1.6, 0.8, c.FAR - 1.0, c.an(A.WOBBLE, 0.5 + i * 0.2, { amp: 0.4, ph: i * 0.3 }));
+    c.fig('walk', 1.4, { d: c.FAR - 1.5 });
+    c.box(0xe0e4ea, 1.4, 1.2, 0.5, 0.4, 0.4, c.FAR - 1.5);
+  });
+  v('cells', (c) => {
+    c.plate(0x3a3020);
+    for (let i = 0; i < 4; i++) {
+      const a = -1.45 + i * 0.95;
+      c.box(0x2a2620, a, 1.3, 0.75, 2.6, 0.2, c.FAR - 0.4);
+      c.glow(0xff3020, a, 2.0, 0.4, 0.06, 0.06, c.FAR - 0.5);
+      if (i === 1) c.fig('stand', a, { d: c.FAR - 0.5, col: 0x000000, h: 0.9 });
+      else c.glow(0xff3020, a, 1.3, 0.06, 0.6, 0.06, c.FAR - 0.5);
+    }
+    c.fig('walk', 0, { d: c.FAR - 1.6, slide: { rate: 0.07, span: 4.4, edge: 1.8 } });
+    c.glow(0xffc070, 0, 5.4, 0.5, 0.1, 0.3, c.FAR - 0.6);
+  });
+  v('morgue', (c) => {
+    c.plate(0x9fb0b8);
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      c.box(0x7a8a90, -1.5 + i * 0.85, 0.5 + j * 0.85, 0.8, 0.8, 0.5, c.FAR - 0.5);
+      c.glow(0xe0e8ea, -1.5 + i * 0.85, 0.5 + j * 0.85, 0.3, 0.05, 0.02, c.FAR - 0.77);
+    }
+    c.box(0xb0bcc4, 1.2, 0.6, 1.6, 0.1, 0.7, c.FAR - 1.2);
+    c.fig('lie', 0.8, { y: 0.65, col: 0xd0d8dc, d: c.FAR - 1.2 });
+    c.glow(0xdff4ff, 1.2, 4.8, 1.4, 0.08, 0.3, c.FAR - 1.2, c.an(A.FLICKER, 20));
+  });
+  v('kitchen', (c) => {
+    c.plate(0xffc890);
+    c.box(0x4a4a50, 0, 0.5, 3.6, 1.0, 1.0, c.FAR - 0.6);
+    for (let i = 0; i < 6; i++) c.cyl(0x808890, -1.5 + i * 0.6, 3.8, 0.3, 0.2, c.FAR - 1.0, { rot: Math.PI / 2, anim: A.SWAY, rate: 1.5 + i * 0.2, amp: 0.06, ph: i * 0.4 });
+    c.cyl(0x2a2a30, 0, 4.2, 3.6, 0.03, c.FAR - 1.0);
+    c.glow(0x60a0ff, -0.6, 1.05, 0.4, 0.1, 0.4, c.FAR - 0.6, c.an(A.FLICKER, 10));
+    c.glass(0xfff4e0, -0.6, 1.8, 0.6, 1.0, 0.4, c.FAR - 0.6, c.an(A.WOBBLE, 1.2, { amp: 0.4 }));
+    c.fig('stand', -0.6, { d: c.FAR - 1.5, col: 0x0a0a0c }).fig('walk', 1.3, { d: c.FAR - 1.6, h: 0.95 });
+  });
+  v('data-vault', (c) => {
+    c.plate(0x04101a);
+    for (let i = 0; i < 5; i++) {
+      const a = -1.5 + i * 0.75;
+      c.box(0x101820, a, 2.2, 0.6, 4.4, 0.7, c.FAR - 0.5);
+      for (let j = 0; j < 4; j++) c.glow(j % 2 ? 0x40ff80 : 0x40a0ff, a, 0.6 + j * 1.0, 0.3, 0.05, 0.02, c.FAR - 0.87, c.an(A.BLINK, 3 + c.rnd(500 + i * 4 + j) * 4));
+    }
+    c.fig('sit', 1.5, { d: c.FAR - 1.6, h: 0.9 });
+    c.glow(0x40a0ff, 1.9, 1.3, 0.5, 0.3, 0.04, c.FAR - 2.2, c.an(A.BLINK, 1));
+  });
+  v('plenum', (c) => {
+    c.plate(0x2a2a30);
+    c.fan(0x1a1c22, -1.0, 3.1, 1.15, 5, c.FAR - 0.9);
+    c.fan(0x1a1c22, 1.1, 3.1, 0.9, -7, c.FAR - 0.9);
+    c.cyl(0x4a4e56, -1.0, 3.1, 1.2, 1.55, c.FAR - 0.3);
+    c.cyl(0x4a4e56, 1.1, 3.1, 1.2, 1.25, c.FAR - 0.3);
+    for (let i = 0; i < 5; i++) c.box(0x3a3e46, 0, 0.6 + i * 1.3, 3.8, 0.06, 0.06, c.FAR - 1.5);
+    c.glow(0x80ffb0, 0, 5.6, 0.14, 0.14, 0.14, c.FAR - 1.0, c.an(A.BLINK, 0.7));
+  });
+  v('officers-mess', (c) => {
+    c.plate(0xffe0a0, 2.0, c.roomH);
+    c.plate(0x3a2a10, 0, 2.0);
+    c.box(0x3a2410, 0, 0.85, 2.8, 0.1, 1.0, c.FAR - 1.0);
+    for (let i = 0; i < 3; i++) c.fig('sit', -1.5 + i * 1.1, { d: c.FAR - 1.4, h: 0.92 });
+    for (let i = 0; i < 3; i++) c.glow(0xffd070, -0.5 + i * 0.5, 4.2 - Math.abs(i - 1) * 0.2, 0.2, 0.4, 0.2, c.FAR - 1.0, c.an(A.FLICKER, 2, { ph: i * 0.3 }));
+    c.box(0x6a4a20, 1.4, 3.6, 1.0, 1.4, 0.1, c.FAR - 0.15);
+    c.box(0x2a4a8a, 1.4, 3.6, 0.8, 1.2, 0.08, c.FAR - 0.1);
+  });
+  v('machine-shop', (c) => {
+    c.plate(0x6a6a60);
+    c.box(0x3a3c40, -0.6, 0.5, 2.4, 1.0, 0.8, c.FAR - 0.8);
+    c.cyl(0x8a8e96, -0.6, 1.3, 1.6, 0.15, c.FAR - 0.8);
+    c.fan(0x2a2c30, 0.2, 1.3, 0.35, 12, c.FAR - 0.8);
+    c.glow(0xffd080, 0.25, 1.3, 0.1, 0.1, 0.1, c.FAR - 1.1, c.an(A.FLICKER, 20));
+    c.fig('stand', -1.5, { d: c.FAR - 1.6 });
+    for (let i = 0; i < 3; i++) c.box(0x2a2c30, 1.5, 0.6 + i * 1.2, 0.8, 0.08, 0.6, c.FAR - 0.5);
+    c.glow(0xffffff, 0, 5.3, 2.0, 0.08, 0.3, c.FAR - 1.0);
+  });
+  v('shield-generator', (c) => {
+    c.plate(0x1a0a30);
+    for (const a of [-1.2, 1.2]) c.cyl(0x3a2a50, a, 2.2, 3.6, 0.6, c.FAR - 1.0, { rot: Math.PI / 2 });
+    c.glow(0xc080ff, 0, 2.2, 0.5, 0.5, 0.5, c.FAR - 1.0, c.an(A.PULSE, 2));
+    for (let i = 0; i < 6; i++) c.glow(0xb060ff, 0, 1.0 + i * 0.5, 2.2, 0.05, 0.05, c.FAR - 1.0, { anim: A.BOLT, rate: 2 + c.rnd(600 + i) * 3, ph: c.rnd(620 + i), rot: (c.rnd(640 + i) - 0.5) * 0.6 });
+    c.glow(0x8040ff, 0, 5.2, 3.0, 0.08, 0.06, c.FAR - 0.1, c.an(A.PULSE, 2, { ph: 0.3 }));
+  });
+  v('escape-pods', (c) => {
+    c.plate(0x30363c);
+    for (let i = 0; i < 4; i++) {
+      const a = -1.35 + i * 0.9;
+      c.cyl(0x9aa0a8, a, 1.4, 2.4, 0.38, c.FAR - 0.7, { rot: Math.PI / 2 });
+      c.box(0x50565e, a, 0.2, 0.9, 0.3, 0.9, c.FAR - 0.7);
+      c.glow(0x30ff60, a, 3.0, 0.3, 0.1, 0.1, c.FAR - 0.7, c.an(A.BLINK, 0.5 + i * 0.2));
+    }
+    c.glow(0xff3020, 0, 5.4, 0.6, 0.12, 0.06, c.FAR - 0.1, c.an(A.STROBE, 1));
+  });
+  v('gunnery', (c) => {
+    c.plate(0x3a2a1a);
+    c.cyl(0x505860, 0.3, 2.4, 2.8, 0.7, c.FAR - 1.0);
+    c.box(0x3a3e46, 0.3, 1.0, 1.4, 2.0, 1.4, c.FAR - 1.0);
+    c.fig('sit', -1.4, { y: 0.6, d: c.FAR - 1.6 }).fig('stand', 1.6, { d: c.FAR - 1.5 });
+    for (let i = 0; i < 3; i++) c.cyl(0xb0b4bc, -1.5 + i * 0.3, 0.4, 0.9, 0.12, c.FAR - 0.5);
+    c.glow(0xff2020, 0, 5.2, 0.3, 0.14, 0.14, c.FAR - 0.6, c.an(A.BLINK, 1.5));
+  });
+  v('dark-level', (c) => {
+    c.plate(0x0a0a0c);
+    c.glow(0xd0d0c0, 0, 5.4, 0.6, 0.08, 0.2, c.FAR - 0.6, c.an(A.FLICKER, 9));
+    c.glow(0x3a3a34, 0, 3.0, 2.0, 3.0, 0.06, c.FAR - 0.1, c.an(A.FLICKER, 9));
+    c.fig('stand', 0.1, { col: 0x000000, d: c.FAR - 1.4 });
+  });
+  v('cantina', (c) => {
+    c.plate(0x2a1030);
+    for (let i = 0; i < 6; i++) c.glow(0xff40a0, -1.6 + i * 0.64, 5.0, 0.3, 0.3, 0.3, c.FAR - 0.8, c.an(A.CYCLE, 0.4, { ph: i / 6 }));
+    c.box(0x3a1a30, -0.4, 0.5, 2.6, 1.0, 0.6, c.FAR - 0.7);
+    for (let i = 0; i < 5; i++) c.glow(i % 2 ? 0x60ff80 : 0xffd040, -1.4 + i * 0.5, 1.2, 0.08, 0.3, 0.08, c.FAR - 0.5);
+    c.fig('stand', -1.6, { d: c.FAR - 1.4 }).fig('raise', -0.6, { d: c.FAR - 1.5, anim: true, rate: 0.8 }).fig('sit', 0.5, { d: c.FAR - 1.4 }).fig('walk', 1.5, { d: c.FAR - 1.6 });
+  });
+  v('droid-pool', (c) => {
+    c.plate(0x203040);
+    const cols = [0x3a5aaa, 0xaa3a3a, 0x3aaa5a, 0xc8c8c8, 0xaa7a2a, 0x5a3aaa];
+    for (let i = 0; i < 6; i++) c.astro(cols[i], -1.6 + i * 0.64, { d: c.FAR - 0.7 - (i % 2) * 0.6, dome: i % 3 ? 0xc0c6cc : 0x2a2e36 });
+    c.glow(0x40a0ff, 0, 5.2, 2.6, 0.1, 0.06, c.FAR - 0.1);
+  });
+  v('arboretum', (c) => {
+    c.plate(0x8fd0ff);
+    for (const a of [-1.3, 0.1, 1.4]) {
+      c.cyl(0x4a3a20, a, 1.3, 2.6, 0.12, c.FAR - 1.0, { rot: Math.PI / 2 });
+      c.box(0x2f8a3a, a, 3.2, 1.3, 1.6, 1.2, c.FAR - 1.0);
+      c.box(0x3aa04a, a + 0.2, 3.9, 0.8, 0.8, 0.8, c.FAR - 1.0);
+    }
+    c.box(0x3a7a30, 0, 0.1, 3.8, 0.2, 1.6, c.FAR - 1.0);
+    c.fig('walk', 0.7, { d: c.FAR - 1.7 });
+  });
+  v('capacitor', (c) => {
+    c.plate(0x101a2a);
+    c.cyl(0x2a3040, 0, 3.0, 5.6, 0.7, c.FAR - 1.0, { rot: Math.PI / 2 });
+    for (let i = 0; i < 4; i++) c.glow(0x40ffe0, 0, 1.0 + i * 1.3, 1.8, 0.1, 1.8, c.FAR - 1.0, c.an(A.PULSE, 3, { ph: i * 0.25 }));
+    c.glow(0x40ffe0, 0, 5.6, 0.3, 0.3, 0.3, c.FAR - 1.0, c.an(A.PULSE, 3));
+  });
+  v('range', (c) => {
+    c.plate(0x505a50);
+    for (let i = 0; i < 3; i++) c.box(0x1a1c1a, 1.0 + i * 0.4, 1.3, 0.3, 1.8, 0.1, c.FAR - 0.3 + i * 0.05);
+    c.fig('kneel', -1.4, { d: c.FAR - 1.4 });
+    c.box(0x0a0a0c, -0.9, 0.95, 0.7, 0.07, 0.07, c.FAR - 1.4);
+    for (let i = 0; i < 3; i++) c.glow(0x40ff60, 0.2 + i * 0.4, 1.0, 0.8, 0.05, 0.05, c.FAR - 1.4, { anim: A.BOLT, rate: 1.2, ph: i * 0.33 });
+    c.glow(0xff3020, 1.4, 4.6, 0.14, 0.14, 0.14, c.FAR - 0.3, c.an(A.BLINK, 1));
+  });
+  v('cryo', (c) => {
+    c.plate(0x9ad0ff);
+    for (let i = 0; i < 4; i++) {
+      const a = -1.35 + i * 0.9;
+      c.glass(0x80c0ff, a, 1.4, 0.7, 2.2, 0.7, c.FAR - 0.7, { rot: 0.25 });
+      c.fig('hang', a, { y: 0.4, h: 0.8, col: 0x102030, d: c.FAR - 0.7 });
+      c.glow(0xffffff, a, 2.7, 0.2, 0.05, 0.05, c.FAR - 0.7, c.an(A.BLINK, 0.3 + i * 0.1));
+    }
+    c.glass(0xe0f0ff, 0, 0.4, 3.8, 0.5, 2.0, c.FAR - 1.5, c.an(A.WOBBLE, 0.4, { amp: 0.3 }));
+  });
+  v('comm-array', (c) => {
+    c.plate(0x0a1420);
+    c.fan(0x1a2030, 0.6, 3.4, 1.0, 0.6, c.FAR - 0.8);
+    c.cyl(0x3a4050, 0.6, 1.4, 2.8, 0.15, c.FAR - 0.8, { rot: Math.PI / 2 });
+    c.box(0x101820, -1.3, 2.0, 0.8, 4.0, 0.7, c.FAR - 0.5);
+    for (let j = 0; j < 5; j++) c.glow(0xff4030, -1.3, 0.5 + j * 0.8, 0.3, 0.05, 0.02, c.FAR - 0.87, c.an(A.BLINK, 2 + j));
+    c.glow(0xff4030, 0.6, 5.8, 0.1, 0.1, 0.1, c.FAR - 0.8, c.an(A.STROBE, 0.7));
+  });
+  v('muster', (c) => {
+    c.plate(0xb0c0d0);
+    for (let r = 0; r < 2; r++) for (let i = 0; i < 4; i++) c.fig('stand', -1.5 + i * 0.8 + r * 0.3, { col: 0xdde2ea, d: c.FAR - 0.5 - r * 0.8, h: 0.95 });
+    c.fig('raise', 1.7, { d: c.FAR - 1.9, anim: true, rate: 0.4 });
+    c.glow(0xff3020, 0, 5.3, 2.4, 0.1, 0.06, c.FAR - 0.1, c.an(A.STROBE, 0.5));
+  });
+  v('incinerator', (c) => {
+    c.plate(0x2a0c04);
+    c.cyl(0x3a3034, 0, 2.6, 3.0, 1.2, c.FAR - 1.0);
+    c.glow(0xff4010, 0, 2.6, 0.9, 0.9, 1.6, c.FAR - 1.0, c.an(A.FLICKER, 10));
+    c.glow(0xffa030, 0, 2.6, 0.5, 0.5, 1.7, c.FAR - 1.0, c.an(A.FLICKER, 13, { ph: 0.4 }));
+    c.box(0x2a2428, 0, 4.8, 1.0, 1.6, 1.0, c.FAR - 1.0);
+    c.fig('stand', -1.7, { d: c.FAR - 1.7 });
+  });
+  v('specimen-lab', (c) => {
+    c.plate(0x083030);
+    for (let i = 0; i < 3; i++) {
+      const a = -1.2 + i * 1.2;
+      c.glass(0x30a0c0, a, 2.4, 1.0, 2.0, 1.0, c.FAR - 0.7);
+      c.box(0x0a1a18, a + (i - 1) * 0.1, 2.0 + c.rnd(700 + i) * 0.8, 0.6, 0.3, 0.3, c.FAR - 0.7, c.an(A.SWAY, 0.5 + i * 0.2, { amp: 0.25, ph: i * 0.4 }));
+      c.box(0x1a2a2a, a, 1.2, 1.0, 0.4, 1.0, c.FAR - 0.7);
+    }
+    c.fig('stand', 1.7, { col: 0xe0e6ee, d: c.FAR - 1.6, h: 0.95 });
+  });
+  v('winch-room', (c) => {
+    c.plate(0x262a30);
+    c.fan(0x0e1014, -0.6, 3.6, 1.4, 2.5, c.FAR - 1.0);
+    c.fan(0x0e1014, 1.2, 3.6, 0.9, -3.8, c.FAR - 1.0);
+    for (const a of [-0.9, -0.3, 0.9, 1.5]) c.cyl(0x8a8e96, a, 1.5, 3.0, 0.04, c.FAR - 1.0, { rot: Math.PI / 2 });
+    c.box(0x3a3e46, 0, 0.6, 3.6, 1.2, 1.2, c.FAR - 0.8);
+    c.glow(0xffb020, -1.7, 1.0, 0.14, 0.14, 0.14, c.FAR - 1.5, c.an(A.BLINK, 0.8));
+  });
+  v('compactor', (c) => {
+    c.plate(0x2a2a20);
+    for (let i = 0; i < 9; i++) c.box(i % 2 ? 0x4a4a40 : 0x5a5040, -1.3 + (i % 3) * 0.9, 0.5 + Math.floor(i / 3) * 0.9, 0.7 + c.rnd(800 + i) * 0.4, 0.6, 0.7, c.FAR - 0.9, { rot: c.rnd(820 + i) * 1.2 });
+    c.box(0x30343a, 1.9, 1.6, 0.3, 3.0, 3.6, c.FAR - 1.9, c.an(A.SWAY, 0.25, { amp: 0.5 }));
+    c.glow(0xff2020, 0, 5.2, 0.2, 0.2, 0.2, c.FAR - 0.6, c.an(A.STROBE, 0.8));
+  });
+  v('searchlight', (c) => {
+    /* A dark maintenance level with a lamp sweeping it. */
+    c.plate(0x14161c);
+    c.glow(0xfff0d0, 0, 2.6, 0.7, 5.0, 0.1, c.FAR - 0.2, c.an(A.SWAY, 0.5, { amp: 1.5 }));
+    c.glow(0xfff0d0, 0, 5.6, 0.3, 0.3, 0.3, c.FAR - 1.0, c.an(A.SWAY, 0.5, { amp: 0.3 }));
+    for (let i = 0; i < 3; i++) c.box(0x2a2c30, -1.2 + i * 1.2, 1.2, 0.8, 2.4, 0.8, c.FAR - 0.6);
+    c.fig('walk', 0.4, { d: c.FAR - 1.5, col: 0x000000 });
+  });
+  v('turbine-hall', (c) => {
+    c.plate(0x3a3a44);
+    c.fan(0x1a1c22, 0, 3.0, 2.0, 4.5, c.FAR - 1.0);
+    c.cyl(0x6a6e76, 0, 3.0, 0.6, 2.4, c.FAR - 0.4);
+    c.box(0x2a2d33, 0, 0.6, 3.8, 0.08, 1.0, c.FAR - 1.8);
+    c.fig('stand', -1.6, { d: c.FAR - 1.8, h: 0.9 });
+    c.glow(0xff3a2a, -1.8, 0.9, 0.14, 0.14, 0.14, c.FAR - 2.0, c.an(A.BLINK, 1));
+    c.glow(0xff3a2a, 1.8, 0.9, 0.14, 0.14, 0.14, c.FAR - 2.0, c.an(A.BLINK, 1, { ph: 0.5 }));
+  });
+  v('bridge-corridor', (c) => {
+    c.plate(0xdde4ee);
+    for (let i = 0; i < 4; i++) c.glow(0xffffff, -1.5 + i * 1.0, 5.4, 0.7, 0.08, 0.3, c.FAR - 0.6);
+    c.fig('walk', -1.2, { d: c.FAR - 0.8 }).fig('walk', 0.2, { d: c.FAR - 1.2, h: 0.95 }).fig('stand', 1.5, { d: c.FAR - 0.6, col: 0xdde2ea });
+    c.box(0x2a2e36, 0, 0.0, 3.6, 0.06, 1.4, c.FAR - 1.0);
+    c.glow(0x40a0ff, -1.85, 1.6, 0.06, 0.4, 0.3, c.FAR - 0.2, c.an(A.BLINK, 0.7));
+  });
+  return R;
 }
 
 /** A parked fighter's shape, flat, in the along/up plane, ~3.6 m across. */
@@ -863,16 +1505,16 @@ function fighterGeometry(faction) {
   return g;
 }
 
-/** A turbine: a ring, a hub, six blades; normal along local x so it faces the pane. */
+/** A turbine: a ring, a hub, six blades; normal along local x so it faces the pane. Unit radius. */
 function turbineGeometry() {
   const parts = [];
-  const ring = new THREE.TorusGeometry(1.25, 0.1, 5, 28);
+  const ring = new THREE.TorusGeometry(1.0, 0.08, 5, 28);
   parts.push(ring);
-  const hub = new THREE.CylinderGeometry(0.28, 0.28, 0.3, 12); hub.rotateX(Math.PI / 2);
+  const hub = new THREE.CylinderGeometry(0.22, 0.22, 0.24, 12); hub.rotateX(Math.PI / 2);
   parts.push(hub);
   for (let i = 0; i < 6; i++) {
-    const b = new THREE.BoxGeometry(0.34, 1.05, 0.08);
-    b.translate(0, 0.72, 0);
+    const b = new THREE.BoxGeometry(0.27, 0.84, 0.06);
+    b.translate(0, 0.58, 0);
     b.rotateZ((i / 6) * Math.PI * 2);
     parts.push(b);
   }
@@ -881,60 +1523,80 @@ function turbineGeometry() {
   return g;
 }
 
-/** Lay every kind at scroll `s`, wrapped over SPAN. Allocates nothing. */
-function layScene(st, s) {
+/** Step noise in [0, 1) that changes `rate` times a second. */
+const stepNoise = (t, rate, ph) => hash(Math.floor(t * rate + ph * 977), 3);
+
+/**
+ * Lay every kind at scroll `s` and time `t`. With `full` false only the
+ * animated slots are recomposed — the scene is still, but its fans turn and
+ * its fires burn. Allocates nothing.
+ */
+function layScene(st, s, t, full = true) {
   const sc = st.scene;
   const H2 = LIFT.height / 2;
   const nAt = st.readout.number;
-  const wrap = (base) => ((base + s) % SPAN + SPAN) % SPAN - SPAN / 2;
+  const zeroM = sc.zeroM;
   for (const k of sc.kinds) {
     const mesh = k.mesh, slots = k.slots;
-    for (let i = 0; i < slots.length; i++) {
+    if (!slots.length) continue;
+    const list = full ? null : k.anims;
+    const n = full ? slots.length : list.length;
+    let colour = false;
+    for (let j = 0; j < n; j++) {
+      const i = full ? j : list[j];
       const o = slots[i], f = o.f;
-      const w = wrap(o.base);
-      _v.copy(f.o).addScaledVector(f.out, o.d).addScaledVector(f.along, o.a);
+      let w = o.wrap ? ((o.base + s) % SPAN + SPAN) % SPAN - SPAN / 2 : o.base + s;
+      if (w < -BOX_HALF + 0.6 || w > BOX_HALF - 0.6) { mesh.setMatrixAt(i, zeroM); continue; }
+      let a = o.a, sx = o.sx, sy = o.sy, sz = o.sz, rot = o.rot, bright = -1;
+      switch (o.anim) {
+        case A.SWEEP: { const g = Math.exp(-(w * w) / 1.8); _c.setHex(o.col).multiplyScalar(0.45 + 1.4 * g); bright = 1; break; }
+        case A.DIGIT: {
+          /* The number on this crossing: the readout's, plus the levels above the window. */
+          const m = Math.round((w - SLAB_W - 3.2) / LEVEL);
+          const num = Math.max(0, nAt + m);
+          const d = o.digit === 0 ? Math.floor(num / 10) % 10 : num % 10;
+          if (!SEVEN[d][o.seg]) sx = sy = sz = 0;
+          break;
+        }
+        case A.SPIN: rot += t * o.rate; break;
+        case A.SLIDE: {
+          const u = ((t * o.rate + o.ph) % 1 + 1) % 1;
+          a += (u - 0.5) * o.span * f.ka;
+          if (Math.abs(a) > o.edge * f.ka) sx = sy = sz = 0;
+          break;
+        }
+        case A.FLICKER: {
+          const nz = stepNoise(t, o.rate, o.ph);
+          _c.setHex(o.col).multiplyScalar(0.45 + 0.75 * nz); bright = 1;
+          sy *= 0.75 + 0.5 * nz;
+          break;
+        }
+        case A.STROBE: { const on = ((t * o.rate + o.ph) % 1) < 0.18; _c.setHex(o.col).multiplyScalar(on ? 1.6 : 0.12); bright = 1; break; }
+        case A.PULSE: { _c.setHex(o.col).multiplyScalar(0.55 + 0.5 * Math.sin((t * o.rate + o.ph) * Math.PI * 2)); bright = 1; break; }
+        case A.BLINK: { const on = stepNoise(t, o.rate, o.ph) > 0.5; _c.setHex(o.col).multiplyScalar(on ? 1.4 : 0.15); bright = 1; break; }
+        case A.BOLT: { const u = ((t * o.rate + o.ph) % 1 + 1) % 1; if (u > 0.09) sx = sy = sz = 0; break; }
+        case A.WOBBLE: { const g = Math.sin((t * o.rate + o.ph) * Math.PI * 2); sy *= 1 + 0.1 * o.amp * g; sz *= 1 + 0.05 * o.amp * g; _c.setHex(o.col).multiplyScalar(0.85 + 0.25 * g); bright = 1; break; }
+        case A.ARM: {
+          const up = ((t * o.rate + o.ph) % 1) < 0.5;
+          if (up) { w += o.base2 - o.base; rot = o.rot2; }
+          break;
+        }
+        case A.SWAY: { const g = Math.sin((t * o.rate + o.ph) * Math.PI * 2); a += o.amp * g * f.ka; rot += 0.15 * o.amp * g; break; }
+        case A.CYCLE: { _c.setHSL(((t * o.rate * 0.25 + o.ph) % 1 + 1) % 1, 0.9, 0.6); bright = 1; break; }
+        default: break;
+      }
+      _v.copy(f.o).addScaledVector(f.out, o.d).addScaledVector(f.along, a);
       _v.y = H2 + w;
-      let sx = o.sx, sy = o.sy, sz = o.sz;
-      if (k.digits) {
-        /* The number on this crossing: the readout's, plus the levels above the window. */
-        const m = Math.round((w - sc.slabW - 1.6) / LEVEL);
-        const num = Math.max(0, nAt + m);
-        const d = o.digit === 0 ? Math.floor(num / 10) % 10 : num % 10;
-        if (!SEVEN[d][o.seg]) sx = sy = sz = 0;
-      }
       _s.set(sx, sy, sz);
-      if (k.spins) mesh.setMatrixAt(i, _m.compose(_v, _q.copy(f.q).multiply(_q2.setFromAxisAngle(_X, o.spin)), _s));
+      if (rot) mesh.setMatrixAt(i, _m.compose(_v, _q.copy(f.q).multiply(_q2.setFromAxisAngle(_X, rot)), _s));
       else mesh.setMatrixAt(i, _m.compose(_v, f.q, _s));
-      if (k.sweep) {
-        /* The lamp's sweep: a bar brightens as it crosses the window and
-         * flares at the sill line. */
-        const g = Math.exp(-(w * w) / 1.8);
-        mesh.setColorAt(i, _c.setScalar(0.45 + 1.4 * g));
-      }
+      if (bright > 0) { mesh.setColorAt(i, _c); colour = true; }
     }
     mesh.instanceMatrix.needsUpdate = true;
-    if (k.sweep && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    if (colour && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   }
   _s.set(1, 1, 1);
   st.laid = s;
-}
-
-/** Spin the turbines, whatever the car is doing: advance the spins, and
- * when the scene is otherwise still, recompose just their matrices. */
-function spinTurbines(st, dt) {
-  const k = st.scene.turbines;
-  for (const o of k.slots) o.spin += dt * 4.5;
-  if (st.scroll === st.laid) {
-    const H2 = LIFT.height / 2, s = st.scroll;
-    for (let i = 0; i < k.slots.length; i++) {
-      const o = k.slots[i], f = o.f;
-      const w = ((o.base + s) % SPAN + SPAN) % SPAN - SPAN / 2;
-      _v.copy(f.o).addScaledVector(f.out, o.d).addScaledVector(f.along, o.a);
-      _v.y = H2 + w;
-      k.mesh.setMatrixAt(i, _m.compose(_v, _q.copy(f.q).multiply(_q2.setFromAxisAngle(_X, o.spin)), _s));
-    }
-    k.mesh.instanceMatrix.needsUpdate = true;
-  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -1171,7 +1833,9 @@ export function stepDeckLift(world, dt) {
       let k = 0;
       if (t > 0) k = smoothstep(0, 0.9, t);
       if (t > 0 && t - dt <= 0) st.dip = 1;
-      st.v = -st.dir * RIDE.speed * k;
+      /* The same way as the ride in — the bridge is above the flight deck —
+       * so the strip carries on past the landing into levels not yet seen. */
+      st.v = st.dir * RIDE.speed * k;
       st.scroll -= st.v * dt;
       if (t >= T && !st.left) {
         st.left = true;
@@ -1187,8 +1851,18 @@ export function stepDeckLift(world, dt) {
    * turbines turn, the car sways with its speed, the light dips and
    * recovers, and the readout counts. */
   setReadout(st);
-  spinTurbines(st, dt);
-  if (st.scroll !== st.laid) layScene(st, st.scroll);
+  st.time += dt;
+  /* A faint whoosh as each level goes by, at speed. */
+  const lev = Math.floor(st.scroll / LEVEL);
+  if (lev !== st.lastLev) {
+    st.lastLev = lev;
+    if ((st.state === STATE.RIDE || st.state === STATE.LEAVE) && Math.abs(st.v) > RIDE.speed * 0.35 && st.time - st.whooshAt > 0.11) {
+      st.whooshAt = st.time;
+      audio.noise?.({ dur: 0.09, gain: 0.04, type: 'bandpass', freq: 700 + hash(lev, 9) * 700, q: 1.8, pos: _v.set(L.x, 1.6, L.z) });
+    }
+  }
+  /* The scene: relaid whole when it has moved, its animated slots only when it has not. */
+  layScene(st, st.scroll, st.time, st.scroll !== st.laid);
   const k = Math.min(1, Math.abs(st.v) / RIDE.speed);
   const tt = st.t;
   st.car.position.set(
