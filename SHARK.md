@@ -421,6 +421,47 @@ the bunk advances the day (§3.4).
 
 ---
 
+## 9. TWO GUARANTEES — the look, and the kill switch
+
+**9.1 It is all cel-shaded Borz, or it is not shipped.** Nothing imported or
+built for the station may look like a visitor. The rules, and the check that
+holds them:
+- Every mesh in a walkable room takes the engine's own materials (`deckMats`,
+  `propMaterials`) through the §2 prefix table, and so takes the cel bands and
+  the ink pass exactly as the hangar's kit does. The 49 handoff textures never
+  ship. `MeshStandardMaterial` from a loader is replaced on import, never kept.
+- `saberNoInk` is allowed only where the deck already allows it: things seen
+  through glass at range (the fleet, the shaft scene). Inside a room, nothing.
+- Lighting is the deck's rig (`lightDeck`'s key/fill/fog pattern, per-deck
+  temperature from §3.1), never a loader's lights; imported light meshes become
+  the emissive strip.
+- Species heads and costumes are built on `dressHumanoid` with the same palette
+  and band discipline `characters.mjs` and `character-shading.mjs` already
+  hold every body to, and both suites run on every new archetype.
+- `station.mjs` asserts: no `MeshStandardMaterial`/`MeshPhysicalMaterial` from
+  a loader survives dress; no `saberNoInk` material inside any place's bounds;
+  every material in a place is one of the engine's own. A screenshot of the
+  Concourse beside a screenshot of the hangar is the judge-it-by picture, and
+  it is taken at step 1 before anything else is built.
+
+**9.2 It can be killed in one commit, and the game is exactly today's.** The
+whole station is additive and behind one switch:
+- All new code is new files (§5.2). The existing files change in exactly these
+  places, each behind `STATION_ENABLED` in `Levels.js`: the `LEVELS.station` /
+  `LEVELS.orbit` registrations; the lift's floor list (one row per door, §10);
+  the three `main.js` hooks (`onDeckLift`, `onKiosk`, and the orbit load);
+  two MIME rows in `pack.mjs`; the species rows assigned onto `ARCHETYPES`
+  (`unlockAt: 99`, `score: 0`, so no wave can ever compose one — the same fence
+  `COMPANION_UNITS` uses).
+- With the switch off, the lift has one floor, the tree behaves as it does
+  today, and `station.mjs` proves it the way `saberforms.mjs` proves the single
+  blade: a recorded trace of the hangar visit (the lift ride, the deck's first
+  600 frames, the pack's module list) must be identical with the switch off.
+- Killing it for good is: delete the new files, delete the assets folder,
+  revert the guarded lines. One commit; nothing else in the game moves.
+
+---
+
 ## 10. THE HUB OF WORLDS — the rule and the contract
 
 **The rule, once:** a mode never mixes casts. Battlefront Borz keeps its Star
