@@ -9022,7 +9022,7 @@ export const CREATURE_PLANS = {
      * it stands off the croup and recurves forward over the back. A tail held
      * high is the one posture cue a person reads as "this animal is pleased
      * to see you" without being taught it, and it costs a sign. */
-    tail: [6, 0.85, 0.080, 0.50, 0.075],
+    tail: [6, 0.82, 0.085, 0.42, 0.135],
     limbs: [
       /* THE TRACK IS NARROWER THAN THE HIPS, and this row is the only one
        * that does it: `plant` 0.15 inside a hip at x 0.17, where the massiff
@@ -10177,10 +10177,10 @@ export function buildQuadruped(opts = {}) {
           hull(at, sx * phi, 0.035 * S), lie(sx * phi, out));
       }
     }));
-    ks.row(4, (i, t) => ks.pair((sx) => {
-      const phi = 0.78 + t * 1.05;
-      ks.aim(hide, clawGeo((0.32 - t * 0.06) * S, 0.080 * S, 0.010 * S, 0.45, 6, 3),
-        hull(0.90, sx * phi, 0.03 * S), lie(sx * phi, 0.62));
+    ks.row(6, (i, t) => ks.pair((sx) => {
+      const phi = 0.60 + t * 1.25;
+      ks.aim(hide, clawGeo((0.23 - t * 0.04) * S, 0.105 * S, 0.030 * S, 0.45, 6, 3),
+        hull(0.90, sx * phi, 0.045 * S), lie(sx * phi, 0.52));
     }));
   } else if (P.back === 'plumage') {
     /**
@@ -11269,10 +11269,10 @@ function buildCreatureHead(rig, P, S, M) {
        * whose local +Y is up, which is the lathe's own axis. */
       const earOuter = limbGeo(0.42 * S, 0.185 * S, 0.010 * S, 8, true,
         { rings: 4, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
-      k.add(M.hide, earOuter, [sx * 0.185 * S, hy + 0.20 * S, hz - 0.02 * S], [0.08, 0, sx * -0.34]);
+      k.add(M.hide, earOuter, [sx * 0.180 * S, hy + 0.165 * S, hz - 0.02 * S], [0.08, 0, sx * -0.34]);
       const earInner = limbGeo(0.29 * S, 0.120 * S, 0.008 * S, 7, true,
         { rings: 3, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
-      k.add(M.belly, earInner, [sx * 0.190 * S, hy + 0.225 * S, hz + 0.010 * S], [0.08, 0, sx * -0.34]);
+      k.add(M.belly, earInner, [sx * 0.190 * S, hy + 0.205 * S, hz + 0.012 * S], [0.08, 0, sx * -0.34]);
       /* THE EYE, and it is the biggest in the file relative to its skull. */
       eyeAt(sx * 0.148, 0.005, 0.255, 0.105);
       /* THE WHISKER PAD — one soft swelling either side of the nose. A cat's
