@@ -8940,11 +8940,33 @@ export const CREATURE_PLANS = {
    *
    * SMALLEST IN THE GAME, and the archetype's 0.34 is what makes the numbers
    * here read oddly next to the massiff's. At 0.34 the hip below stands
-   * 0.119 m and the back 0.235 m — a kitten a walking man does not see. The
-   * massiff was already argued down to 0.42 m at the hip because "a companion
-   * you have to look down at reads as a companion"; this one is a third of
-   * that again, which is the difference between a dog at your knee and a
-   * thing you would step on.
+   * 0.102 m — a kitten a walking man does not see. The massiff was already
+   * argued down to 0.42 m at the hip because "a companion you have to look
+   * down at reads as a companion"; this one is a quarter of that, which is
+   * the difference between a dog at your knee and a thing you would step on.
+   *
+   * ── AND IT WAS NONE OF THAT, RENDERED ─────────────────────────────────
+   *
+   * Everything above is what the row INTENDED and almost none of it arrived.
+   * Four views off `tools/_soft.mjs` (the whole build in four seconds, no
+   * browser) show a squat armoured lump: a gundark's flat face with two
+   * spikes off the temples and NO VISIBLE EYES, a row of hard pale wedges
+   * along the spine and over the haunch, twelve bone claws under four feet, a
+   * bare needle of a tail, and a long body on long legs. The player asked for
+   * "something incredibly cute and adorable that is useless in battle and
+   * needs constant protecting"; what shipped reads closer to a beetle.
+   *
+   * The five things that were wrong were five different decisions and they
+   * are all in this row, each argued where it changed:
+   *
+   *   THE HEAD, which had no branch of its own and wore the wampa's — now
+   *   `kitten`, the seventh branch in `buildCreatureHead`.
+   *   THE COAT, which was `shag` at a wampa's standoff on a body a third the
+   *   girth — now `down`, the fifth dorsal treatment.
+   *   THE FEET, which wore three bone claws each on an animal with `moves: []`
+   *   — now `mitt`, the same paw with the claws sheathed.
+   *   THE TAIL, r0 0.030, the thinnest in the file, on a body 80 mm across.
+   *   THE PROPORTIONS: 0.26 of girth on 0.62 of trunk with 0.46 of leg.
    */
   tooka: {
     /* The only non-predator palette in the table. Every other eye here is a
@@ -8959,11 +8981,21 @@ export const CREATURE_PLANS = {
     hide: 0xa89c8a, plate: 0xbdb2a0, belly: 0xe2dac8, eye: 0x74c8ff,
     hip: 0.30, trunk: [0.07, -0.05, 0.52], pitch: 0.02, girth: 0.30,
     /* ROUND IS THE POINT, and it is the girth-to-trunk ratio that says so:
-     * 0.26/0.62 = 0.42 against the massiff's 0.28/0.86 = 0.33 and the nexu's
+     * 0.30/0.52 = 0.58 against the massiff's 0.28/0.86 = 0.33 and the nexu's
      * 0.33/1.72 = 0.19. The nexu is a line, the massiff is a spine, this is a
-     * ball with legs. Length was the cheapest thing to cut — 0.62 of trunk
-     * against the massiff's 0.86 — because a short body is what makes the
-     * head (below) read as too big for it without the head itself growing. */
+     * ball with legs. It was 0.26/0.62 = 0.42, which is rounder than anything
+     * else in the table and still reads as a small DOG from three-quarters —
+     * a body with a length to it, on legs. Both halves moved: 8 cm of trunk
+     * off and 4 cm of girth on, at the same 0.34 scale, so the animal is not
+     * smaller, it is rounder. That is what makes the head (below) read as too
+     * big for it without the head itself growing.
+     *
+     * `hip` 0.35 → 0.30 AND THE LEGS WITH IT (0.22+0.24 → 0.19+0.21), which
+     * is the same decision on the other axis: short legs are half of what
+     * says "young animal", and a 0.46 leg under a 0.52 body is a terrier.
+     * The extension is held where it was — 0.273 m of drop into 0.40 m of leg
+     * is 68% against the old 70% — because a straight leg reads as a stance
+     * and a bent one reads as a crouch, and that argument did not change. */
     /* Both swells are LOW and WIDE, which is the inverse of every other row:
      * the massiff's shoulder is 0.30 tall and 0.20 across, this one is 0.14
      * tall and 0.34 across. A swell that stands up is a muscle and a muscle
@@ -8985,69 +9017,88 @@ export const CREATURE_PLANS = {
      * own defaults are non-zero and an omitted field here would quietly give
      * a kitten a keel. */
     section: { n0: 2.0, n1: 2.2, back: 0, keel: 0, waist: 0 },
-    /* THE HEAD IS WIDER THAN THE BODY, which is the whole read and is bought
-     * with the trunk rather than with the skull: 'horned-ape' builds a sphere
-     * of 0.30 scaled (1.10, 0.94, 0.86), so the head is 0.224 wide against
-     * this trunk's 0.26 girth and 0.52 long against its 0.62 — nine tenths
-     * the width of the body and five sixths its length. On the wampa (scale
-     * 2.0, trunk 0.62, girth 0.46) the same head is half the body's width;
-     * the geometry is untouched and only the animal under it changed.
+    /**
+     * THE HEAD IS WIDER THAN THE BODY, and it now has a branch that means it.
      *
-     * ── WHY 'horned-ape' AND NOT 'fanged', WHICH IS THE OTHER CAT ────────
-     * `buildCreatureHead` branches on four strings and an else, and none of
-     * them was authored for a kitten, so this is the nearest fit and it is a
-     * fit rather than a compromise:
-     *   the SKULL. 'horned-ape' is a wide flat FACE that looks at you from
-     *   the front; 'fanged' is a muzzle scaled (0.94, 0.68, 1.30) — long, low
-     *   and pointed, which is a predator's head and reads as one at any size.
-     *   A flat face with the eyes on the front of it is the single strongest
-     *   cue for "young animal" there is.
-     *   the EYES. 'horned-ape' places ONE pair. 'fanged' places two — four
-     *   eyes, and its own comment says that is "the single most alien thing
-     *   about the animal", which is the exact opposite of what this row wants.
-     *   the RUFF. Three fur clumps round the jaw, and they are what carries
-     *   the head's outline into the `back: 'shag'` below. The two treatments
-     *   were authored as a pair on the wampa and they are kept as a pair.
-     *   the HORNS. Tapered tubes swept 0.56 OUT and forward off the temples,
-     *   which on this body are 0.19 m long on a 0.235 m animal. That is the
-     *   one piece being deliberately re-read: the only thing that stands that
-     *   far off a kitten's temples is an EAR, and an oversized ear pair is a
-     *   tooka's other read after the head. It is not new vocabulary and it is
-     *   not a new branch; it is the existing horn geometry doing an ear's job
-     *   because the proportions happen to be an ear's proportions.
-     * The underbite fangs are the one piece that stays wrong. Three per side
-     * at 0.14 of scale — 48 mm — so at this size they read as an open mouth
-     * rather than as teeth, and the alternative was inventing a fifth branch,
-     * which this row is not allowed to do and does not need. */
+     * `kitten` builds a 0.34 cranium scaled (1.04, 1.00, 0.88) — 0.71 wide
+     * against this trunk's 0.60 (2 × 0.30 of girth) and 0.60 long against its
+     * 0.52. Bigger than the body in both directions, which is the read.
+     *
+     * ── AND THE ROW SPENT A PAGE ARGUING FOR 'horned-ape' AND WAS WRONG ───
+     *
+     * The note this replaces made a careful case for sharing the gundark's
+     * branch: a flat forward face, one pair of eyes, a jaw ruff, and the
+     * temple horns "doing an ear's job because the proportions happen to be
+     * an ear's proportions". Every clause of it is defensible on paper and
+     * the render settles it against all of them:
+     *
+     *   THE EYES WERE INSIDE THE SKULL. `horned-ape` puts them at (±0.13,
+     *   0.08, 0.24) with r 0.038, and its cranium's surface at that x and y
+     *   is z = 0.306 against the eye's front face at 0.278. Not small — ABSENT.
+     *   The one feature a cute animal is read by did not render at all, and
+     *   the row's own paragraph on why the branch fits never mentions eyes
+     *   being visible because nobody looked.
+     *   THE HORNS WERE HORNS. Straight tapered tubes swept 0.56 out and
+     *   FORWARD off the temples with a two-node polyline, so each is a flat
+     *   pale blade standing clear of the head with daylight under it. An ear
+     *   is a flap with a pale inside, it is triangular, and it stands UP.
+     *   THE FANGS. The note called them "the one piece that stays wrong" and
+     *   accepted them. On an animal the design forbids from biting, three per
+     *   side is decoration that contradicts the whole row.
+     *
+     * So this is the seventh branch, and the tauntaun's is the precedent: a
+     * companion the player looks at for a whole deployment is worth a branch,
+     * where an enemy seen for four seconds across a wave is not. What it
+     * costs is one more `else if` in a function that already has six, and it
+     * touches no other body. See `buildCreatureHead` for the numbers. */
     headAt: [0.18, 0.44], neck: [1, 0.09, 0.16, 0.10, 0], head: 'kitten',
-    /* ONE neck segment, and the shortest in the file at 0.10 against the
+    /* ONE neck segment, and the shortest in the file at 0.09 against the
      * massiff's two of 0.14. A kit has no neck — the head sits straight on
      * the shoulders, which is the second half of "the head is too big for
      * it". `nCurl` is 0 for the same reason the rancor's is: there is not
-     * enough neck for a curve to happen in. */
-    /* FUR, and it is the only soft outline the builder can make. The four
-     * dorsal treatments are a spine of spikes, bony bosses, raked quills and
-     * this; the first three are armour and this one is a coat. It is also
-     * scale-invariant — every clump is a fraction of S — so the fringe that
-     * breaks a 1.76 m wampa's edge breaks this 0.235 m one identically, and a
-     * fuzzy silhouette is what stops a 0.34-scale animal reading as a
-     * low-poly pebble at twenty metres. */
+     * enough neck for a curve to happen in. `headAt[1]` came back from 0.52
+     * to 0.44 with the trunk: it is a station ALONG the spine in plan units,
+     * so leaving it at 0.52 on a 0.52 trunk would have hung the skull off the
+     * very tip of the lathe with nothing under it. */
+    /* FUR, AND IT IS NOT THE WAMPA'S. `shag` is the fourth dorsal treatment
+     * and was the obvious pick — it is the only soft one — and on a body this
+     * girth it is the thing that made the animal read as armoured: fourteen
+     * clumps at a fixed x of ±(0.30…0.44)·S, standing 0.12·S clear of a hull
+     * whose half-width peaks near 0.22·S, laid along the SPINE. Rendered they
+     * are plates. `down` is the fifth treatment and is the same idea seated on
+     * the hull, raked aft, half the length and twice the count; see it in
+     * `buildQuadruped`. The back itself carries nothing at all, which is what
+     * "a rounded, unarmoured back" means. */
     back: 'down',
-    /* THE TAIL IS LONGER THAN THE ANIMAL: 1.10 of reach against 0.62 of
-     * trunk. The nexu's is 2.40 and is argued as the thing that makes a low
-     * body unmistakable at range; the same argument is worth more here,
-     * because at 0.34 scale the body is 80 mm across and the tail is the only
-     * part of this creature with any length in it at all. It is also the
-     * THINNEST in the file — r0 0.030 against the nexu's 0.085 and the
-     * massiff's 0.09 — since a tooka's tail is a whip of fur and not a
-     * rudder, and a thin tail on a round body exaggerates the body.
+    /**
+     * THE TAIL IS LONGER THAN THE ANIMAL — 0.82 of reach against 0.52 of
+     * trunk — AND IT IS NO LONGER A WIRE.
      *
-     * `pitch0` 0.55 with a POSITIVE curl is the only tail in the table that
-     * goes up and keeps going up (the massiff's is 0.12 falling to -0.38, the
-     * nexu's 0.26 falling). Six segments carry it from 0.55 to 0.85 rad, so
-     * it stands off the croup and recurves forward over the back. A tail held
-     * high is the one posture cue a person reads as "this animal is pleased
-     * to see you" without being taught it, and it costs a sign. */
+     * The note this replaces argued the thickness the wrong way: "r0 0.030
+     * against the nexu's 0.085 and the massiff's 0.09 — since a tooka's tail
+     * is a whip of fur and not a rudder, and a thin tail on a round body
+     * exaggerates the body". The word doing the work in that sentence is
+     * "of fur", and 0.030 is the radius of the CORE with no fur on it: at
+     * 0.34 scale that is a 20 mm base tapering to 3 mm, and `tubeGeo` draws
+     * exactly that — a bare needle standing off the croup, which is what the
+     * four views show. It is the thinnest tail in the file on the one animal
+     * whose tail is supposed to be the softest thing about it.
+     *
+     * 0.085 is 28% of this body's own girth, where the nexu's 0.085 is 26% of
+     * its 0.33 and the massiff's 0.09 is 32% of its 0.28 — so in the only
+     * units that matter, the animal's own barrel, this is now the same tail
+     * those two have rather than a third of it. A thick tail on a round body
+     * exaggerates the body just as well as a thin one and it does not read as
+     * a rat.
+     *
+     * `pitch0` 0.42 with a POSITIVE curl is still the only tail in the table
+     * that goes up and keeps going up (the massiff's is 0.12 falling to −0.38,
+     * the nexu's 0.26 falling), and the curl is 0.135 a segment against 0.06:
+     * six segments carry it from 0.42 to 1.23 rad, so it stands off the croup
+     * and recurves forward over the back instead of leaving at a slant and
+     * staying there. A tail held high is the one posture cue a person reads as
+     * "this animal is pleased to see you" without being taught it, and it
+     * costs a sign. */
     tail: [6, 0.82, 0.085, 0.42, 0.135],
     limbs: [
       /* THE TRACK IS NARROWER THAN THE HIPS, and this row is the only one
@@ -9074,20 +9125,26 @@ export const CREATURE_PLANS = {
         girth: 0.96, pole: [0.16, 0.30, -0.70], foot: 'mitt',
         femurRest: [0.16, -0.88, -0.32], tibiaRest: [0.04, -0.95, 0.24] },
     ],
-    /* PAW, and it is chosen for the ankle rather than for the toes. `ANKLE_UP`
+    /* MITT, WHICH IS PAW WITH THE CLAWS IN — and the paragraph that used to
+     * stand here got the argument exactly right and then did not follow it:
+     * "The nexu is the other cat here and it wears claws, correctly — it is a
+     * thing that rakes. This one has nothing to rake with, so it should not be
+     * wearing the hardware for it." It was wearing the hardware for it. The
+     * `paw` branch hangs a 0.13·S `clawGeo` hook in `tooth` off each of three
+     * toe pads, so this row shipped twelve bone claws on an animal whose
+     * `moves` is `[]` and whose archetype deals 0.
+     *
+     * Everything else about the choice is unchanged and was right: `ANKLE_UP`
      * rides a claw or a hoof at 0.84-0.90 of the tarsus and a paw at 0.30, so
-     * a paw is the one foot in the table that sets the body DOWN — and
-     * `stanceOf` then gives it `toe: 0.75`, a sole that lies along the ground
-     * instead of dropping onto a point. That is what a small animal sitting
-     * low looks like. The geometry agrees: a paw is a broad flat plate with
-     * three short toes, against the claw's three 0.26 hooks. The nexu is the
-     * other cat here and it wears claws, correctly — it is a thing that rakes.
-     * This one has nothing to rake with, so it should not be wearing the
-     * hardware for it. */
+     * this is the one foot in the table that sets the body DOWN — and
+     * `stanceOf` gives it `toe: 0.75`, a sole that lies along the ground
+     * instead of dropping onto a point. `mitt` is spelled out in both of those
+     * tables rather than left to fall through their defaults; see them. */
     step: 0.44, lift: 0.20, rear: 0.10,
-    /* Stride 0.44 against 0.46 of leg — 0.90, where the massiff runs 0.96 of
-     * its own leg. Slightly short and therefore quicker per metre, which is
-     * what a small animal keeping up with you looks like. `lift` is the one
+    /* Stride 0.44 against 0.40 of leg — 1.10, where the massiff runs 0.96 of
+     * its own leg. The legs came down and the stride did not, so the cadence
+     * went UP: a small animal keeping up with a walking man takes more steps,
+     * not longer ones, and this is that in one ratio. `lift` is the one
      * number here that is proportionally the LARGEST in the table: 0.20/0.44
      * is 0.45 of the stride against the massiff's 0.35 and the reek's 0.35.
      * A kitten picks its feet up much higher than it needs to. It is one
