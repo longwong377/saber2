@@ -386,12 +386,37 @@ export async function run({ check, assert }) {
       const want = alive[alive.length - 1];
       assert(want, 'nothing left to seek');
       assert(!C.orderCompanion(e, 'seek', want), 'SEEK was refused');
+      /**
+       * THE BODY IT WAS SENT AT IS KEPT ALIVE, and this is not the fixture
+       * being kind to itself — it is the difference between measuring SEEK and
+       * measuring what happens AFTER seek.
+       *
+       * `CompanionPack.update` clears `_cmpBidden` the moment the bidden body
+       * dies, which is right: an order about a corpse is not an order. So the
+       * eight seconds below were measuring two different things end to end —
+       * a companion under SEEK, and then a companion with no order at all
+       * hunting whatever was nearest. It passed or failed on whether one
+       * particular B1 happened to survive the massiff for eight seconds, which
+       * is a coin toss: it ran green alone and red inside the full suite, on
+       * the same code, because suite order moves the RNG.
+       *
+       * A check whose verdict depends on that is not measuring the clause in
+       * its own name. Topping the body up each frame holds the ONE variable
+       * this check is about — does the aim wrap refuse every body but the
+       * bidden one — and `dutyAllows` is what answers, so nothing about the
+       * order path is faked by it. That the bid clears on death is the check
+       * below this one's business.
+       */
       let on = 0, off = 0;
       for (let i = 0; i < 30 * 8; i++) {
-        p.hp = p.maxHp ?? 100; world.update(STEP, input);
+        p.hp = p.maxHp ?? 100;
+        want.hp = want.maxHp ?? want.hp;
+        world.update(STEP, input);
         if (!e.target) continue;
         if (e.target === want) on++; else off++;
       }
+      assert(!want.dead, 'the body it was sent at died anyway — the fixture is not holding it');
+      assert(on > 0, 'SEEK never took the body it was sent at in eight seconds');
       assert(off === 0, `SEEK spent ${off} frames on a body it was not sent at`);
 
       C.orderCompanion(e, 'heel');
