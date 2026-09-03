@@ -24,7 +24,7 @@ import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
 import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
 /* The six orders and the one reader that says whether a slot is live and why
  * not — see `CompanionWheel`. */
-import { COMPANION_ORDERS, orderCompanion, refuseOrder } from '../game/Companions.js';
+import { COMPANION_ORDERS, orderArg, orderCompanion, refuseOrder } from '../game/Companions.js';
 import { COMPANION_KINDS, rungOf as rungOfCompanion } from '../game/CompanionKinds.js';
 /* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
  * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
@@ -3158,6 +3158,28 @@ export class HUD {
       }
       return best;
     };
+    /**
+     * …AND ONE OF YOUR OWN, for the two verbs that talk to your side rather
+     * than fight it. `_hostilesFor` is the wrong door for those — RELAY
+     * carries an order to a man of yours and TEND works on one — so the pass
+     * is over the same two lists the world keeps, filtered on team the way
+     * `Reactions.findPatient` filters, and picked by ANGLE for the reason
+     * `reticleBody` gives.
+     */
+    const reticleFriend = () => {
+      const p = player || world.player;
+      if (!p?.aimDir) return null;
+      let best = null, bestDot = Math.cos(0.22);
+      for (const o of world.enemies || []) {
+        if (!o || o.dead || o === cmpBody || o.team !== p.team) continue;
+        _hv.subVectors(o.position, p.chest || p.position);
+        const d = _hv.length();
+        if (d < 0.5 || d > 90) continue;
+        const dot = _hv.multiplyScalar(1 / d).dot(p.aimDir);
+        if (dot > bestDot) { bestDot = dot; best = o; }
+      }
+      return best;
+    };
     const reticleGround = () => {
       const p = player || world.player;
       if (!p?.aimDir || !world.terrain?.raycast) return null;
@@ -3172,8 +3194,24 @@ export class HUD {
       if (pick !== undefined && cmpBody) {
         /* -1 IS THE MIDDLE, AND THE MIDDLE IS HEEL. */
         const id = pick === -1 || !pick ? 'heel' : pick.id;
-        const arg = id === 'hold' ? reticleGround()
-          : (id === 'seek' || id === 'verb') ? reticleBody() : null;
+        /**
+         * WHICH SHAPE, ASKED OF THE ORDER RATHER THAN LISTED HERE.
+         *
+         * This read `id === 'hold' ? ground : (seek || verb) ? body : null`,
+         * and the second clause is wrong for eight of the twelve verbs: WRECK,
+         * BREACH, SLICE and CLIMB are pointed at GROUND, RELAY and TEND at a
+         * man of your own, and BLOCK, CRY, SPOT, BOLT and CHARGE at nothing at
+         * all. Handing a hostile to an astromech's SLICE refused it with "no
+         * ground under your reticle" — an order the wheel offered, the player
+         * aimed, and the game then said was aimed at nothing.
+         *
+         * `orderArg` is the order's own answer — one table, in the file that
+         * owns it — so a thirteenth verb is a row there and nothing here.
+         */
+        const shape = orderArg(cmpBody, id);
+        const arg = shape === 'point' ? reticleGround()
+          : shape === 'body' ? reticleBody()
+          : shape === 'friend' ? reticleFriend() : null;
         const why = orderCompanion(cmpBody, id, arg);
         /* A REFUSED ORDER SAYS SO, in the animal's own words — the same
          * sentence the wheel's caption was already printing under the cursor.

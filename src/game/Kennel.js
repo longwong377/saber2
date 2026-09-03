@@ -147,34 +147,6 @@ export const TEMPERS = [
 ];
 
 /**
- * ── WHAT "BEYOND" MEANS FOR RANGING, AND WHO GETS TO SAY ──────────────────
- *
- * RANGING is earned off "five runs spent beyond twelve metres", and both
- * halves of that sentence are numbers somebody has to own. They live HERE,
- * beside the temper that is the only thing that reads them, rather than in the
- * pack that does the counting — for `TEMPER_AXES`' reason one block down: a
- * rule stated where it is measured is a rule that drifts from the rule it is
- * measuring, and the pack already imports this file.
- *
- * TWELVE METRES IS NOT AN ARBITRARY RING. The heel station is 3.4 m off your
- * back (`Companions.HEEL`) and the shortest leash on the ladder is 14 m, so a
- * mark at 12 sits between "at your heel" and "at the end of its rope": an
- * animal that is past it is one you have to go and look for, and one that is
- * inside it is one you can see without turning round. Ten would have counted
- * an ordinary charge at something shooting at you; sixteen would only ever
- * have counted an animal that was already lost.
- *
- * AND "MOSTLY" IS A MAJORITY OF THE SECONDS, not a peak and not an average
- * distance. A peak is one bad moment in a whole run — every companion has one
- * — and a mean is dragged past the mark by thirty seconds of a single chase.
- * More of the run beyond the mark than inside it is the only reading of
- * "spent beyond twelve metres" that a player would recognise as a description
- * of how their animal actually behaves.
- */
-export const RANGED_MARK = 12;
-export const rangedRun = (far, near) => far > near;
-
-/**
  * ── THE AXES, AND WHY THIS IS NOT `priceSwing` ────────────────────────────
  *
  * `tools/checks/attributes.mjs` exports `priceSwing`, and the instinct is to
@@ -413,24 +385,6 @@ export function clear() {
  * run, and not before 40% of it. That satisfies Company.js:28's own amendment
  * exactly — a thing may cross runs if a single run could have produced it
  * unaided; persistence is a shortcut to a ceiling and never a new ceiling.
- *
- * ── AND EVERY ONE OF THEM IS FIRED FROM THE PACK'S OWN TICK ───────────────
- *
- * `CompanionPack.update` is the only caller of `award` in the tree, and that
- * is deliberate rather than convenient. Three of the four deeds are about a
- * moment nothing raises an event for — an area boundary, a body arriving
- * somewhere, an animal getting back up — and the alternative was a line in
- * `CommandDirector._areaClear`, a line in `Enemy._getUpFromDown` and a line in
- * `World._checkWipe`: three files learning the word companion, for a feature
- * whose whole architecture is that none of them do. The pack already polls for
- * `aboard` and already decays `underFire`, and its own note says why a poll
- * beats a subscription here — the thing being watched is the BODY, and the
- * body is what the pack is holding.
- *
- * NOTHING IS WRITTEN TO DISK MID-RUN. The deeds land on the record in memory
- * and the FOLD banks them, for `keepCompanion`'s stated reason: there is one
- * door, and a run that ends badly must not already have been paid out through
- * a side door halfway through it.
  */
 export const DEEDS = {
   /** An area crossed with it alive and inside the leash at the transition. */

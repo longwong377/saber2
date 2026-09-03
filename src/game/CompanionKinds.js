@@ -558,16 +558,46 @@ export const COMPANION_UNITS = {
    * the value is the terrain and the lift. A wrecker that also killed things
    * would make the crate it shattered beside the point.
    *
-   * `preferred` [1.0, 2.2] against the massiff's [1.4, 2.6], because the slam
-   * is a radius and not a swing: 2.05 of scale is 1.13 m here, so the band
-   * has to sit inside its own blast or the move never resolves. Jaws have to
+   * `preferred` [0.5, 0.8] against the massiff's [1.4, 2.6], because the slam
+   * is a radius and not a swing: 2.05 of scale is 1.13 m here, so the band has
+   * to sit inside its own blast or the move never resolves. Jaws have to
    * arrive; this has to be already there.
+   *
+   * ── AND IT SAID [1.0, 2.2], WHICH IS THE SENTENCE ABOVE WITH THE NUMBERS
+   *    DISAGREEING WITH IT ────────────────────────────────────────────────
+   *
+   * 2.2 is not inside 1.13. Measured through `_beastBrain` against a target
+   * standing perfectly still for 90 seconds (tools/checks/beasts.mjs): the
+   * animal held station at a median 1.65 m, planted for the slam's 0.95 s
+   * wind-up from wherever it happened to be — 1.39 m at the closest of ten —
+   * and detonated the move the whole kind is named after entirely outside its
+   * own footprint. TEN SLAMS, ZERO HITS, on a target that never moved. The
+   * WRECK verb is a radius centred on the animal; an animal that stands half a
+   * metre outside it is not slamming, it is stamping.
+   *
+   * The band is the ring's now, not the massiff's. Its far edge is 0.8 m —
+   * 71% of the 1.13 m footprint, where the adult Rancor's 6.0 m far edge is
+   * 86% of its own 6.97 m — and its near edge is UNDER the sum of the two
+   * bodies' radii (0.36 m of pup plus the player's), which is the tooka's
+   * argument for its own band said about a different animal: this is not a
+   * fighting distance, it is "as close as the collision allows". Measured, the
+   * animal now holds 0.77 m and the same ten slams land 13 of 14 on a
+   * motionless target, 14 of 14 on one circling at a sprint, and 0 of 14 on
+   * one that breaks straight out — which is the move's whole design statement
+   * ("answered by distance and by nothing else") finally being true of the
+   * small one as well as of the big one.
+   *
+   * Nothing else on the row moves. In particular the SCALE does not: 0.55 is
+   * COMPANIONS.md's number and the plan row's height argument depends on it,
+   * and the honest reading of the miss was never that the animal is too small
+   * — it is that its band was written against the massiff, which fights with
+   * jaws that have to arrive, instead of against its own blast.
    */
   pup: {
     label: 'Rancor Pup', build: (o) => buildQuadruped({ ...o, kind: 'pup' }),
     scale: 0.55, hp: 240, mass: 150,
     speed: 3.6, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
-    damage: 12, preferred: [1.0, 2.2], score: 0, threat: 0,
+    damage: 12, preferred: [0.5, 0.8], score: 0, threat: 0,
     /* Never composed into a wave, for the reason stated on the massiff. */
     companion: true, unlockAt: 99,
   },

@@ -96,6 +96,11 @@ import { installTeamDamage, TEAM_DAMAGE_DEFAULT } from './Command.js';
 import { BEAST_MOVES, WIND_OPEN } from './Enemy.js';
 /* The one gate every damage path in the game answers to — see `installCompanionHide`. */
 import { canHarm } from './Player.js';
+/* THE MEDIC'S OWN MACHINERY, imported rather than rewritten — see the TEND
+ * note. `startHeal` puts the body into the reaction `Enemy.update` already
+ * steps for every body in the game, so the walk, the kneel, the give-up rule
+ * and the flicker all arrive with the one call. */
+import { startHeal } from './Reactions.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  The dial                                                                  */
@@ -204,7 +209,14 @@ export const COMPANION_ORDERS = {
   /* ONE SLOT, TWELVE MEANINGS. The label and the caption are read off the live
    * companion's own row (`COMPANION_KINDS[kind].verb`) rather than from here,
    * which is what stops twelve kinds being twelve reskins: the wheel says
-   * something different for every companion you own. */
+   * something different for every companion you own.
+   *
+   * AND SO IS `arg`, for the same reason and through `argKind`: four of the
+   * twelve want a piece of ground, two a hostile, two a man of your own and
+   * four nothing at all, so one value written here would be wrong for eight
+   * of them. The 'body' below is the DEFAULT a verb with no work row would
+   * take, and `refuseOrder` refuses that case out loud rather than letting it
+   * happen — see the note on COMPANION_VERBS. */
   verb: {
     id: 'verb', label: null, arg: 'body', standing: true, holds: 'verb',
     caption: null,
@@ -223,7 +235,17 @@ export const COMPANION_ORDERS = {
  *  to write a pronunciation dictionary for twelve rows. */
 const article = (w) => (/^[aeiou]/i.test(w || '') ? 'an' : 'a');
 
-export function refuseOrder(e, id) {
+/**
+ * `arg` IS THIRD AND OPTIONAL, WHICH IS WHAT KEEPS THE WHEEL UNCHANGED.
+ *
+ * `CompanionWheel.captionFor` asks this with two arguments while the cursor is
+ * over a slot and nothing is aimed at yet, and it must keep getting the answer
+ * it gets today — the rung's refusal, or the caption. The verb's own refusal
+ * is about a THING (this cover, this man, this door) and can only be answered
+ * once there is one, so it is asked only when the order is actually given.
+ * Same door, same sentence, two moments.
+ */
+export function refuseOrder(e, id, arg) {
   const O = COMPANION_ORDERS[id];
   if (!O) return 'no such order';
   const K = COMPANION_KINDS[e?._cmpKind];
@@ -236,12 +258,66 @@ export function refuseOrder(e, id) {
     const n = `${article(K.label)} ${K.label.toLowerCase()}`;
     return id === 'ward' ? `${n} has nothing to meet them with` : `${n} does not do that`;
   }
+  /* A VERB THE TABLE HAS NO WORK FOR IS REFUSED AND NEVER SILENT. The join
+   * between a kind's `verb.id` and `COMPANION_VERBS` is total today and a
+   * check asserts it stays total; this is what a thirteenth kind gets on the
+   * commit before its work row lands, and it is a sentence rather than a wheel
+   * slot that says a word and does nothing. */
+  if (id === 'verb' && !verbWork(e)) {
+    return `${article(K.label)} ${K.label.toLowerCase()} cannot do that yet`;
+  }
   const rec = e._cmpRec;
   if (!holdsCompanion(rec, O.holds)) {
     const want = COMPANION_RANKS.find((r) => r.orders.includes(O.holds));
     return want ? `not until it is ${want.label.toLowerCase()}` : 'not yet';
   }
+  /* AND THE VERB'S OWN PRECONDITION, LAST, because it is the only one that
+   * needs the argument. A slice with no door under it, a relay with no army
+   * to carry to and a wreck with nothing there to wreck are all REFUSALS with
+   * a sentence — never an accepted order that does nothing, which is the exact
+   * defect the whole verb table exists to end. Asked when an argument was
+   * SUPPLIED — `undefined` is the wheel hovering with nothing aimed at, and a
+   * `null` is a verb whose `arg` is 'none', which still has preconditions. */
+  if (id === 'verb' && arg !== undefined) {
+    const said = verbWork(e)?.refuse?.(e, arg);
+    if (said) return said;
+  }
   return null;
+}
+
+/**
+ * WHAT THIS ORDER NEEDS POINTING AT — one vocabulary, two tables.
+ *
+ * Five of the six slots declare it on the order row and the sixth cannot: the
+ * verb means twelve things, and two of them want a hostile, four a piece of
+ * ground, two a man of YOUR OWN and four nothing at all. So the verb's `arg`
+ * is read off its work row and every other order's off the order row, and
+ * there is ONE word for each shape rather than a second convention for verbs.
+ *
+ * 'friend' IS THE ONE NEW WORD AND IT NAMES A REFUSAL THAT WAS ALREADY WRONG.
+ * The hostile test below is `arg.team === e.team → nothing under your
+ * reticle`, which is right for SEEK and exactly backwards for RELAY (it talks
+ * to your men) and TEND (it works on them). A value in the existing field is
+ * what stops that becoming two argument systems.
+ */
+function argKind(e, O) {
+  if (O.id !== 'verb') return O.arg;
+  return verbWork(e)?.arg ?? 'none';
+}
+
+/**
+ * WHAT THE RETICLE HAS TO FIND FOR THIS ORDER — the same answer, for the
+ * caller that has to go and get it.
+ *
+ * The wheel reads the reticle at close and hands `orderCompanion` whatever the
+ * order takes, so it has to know which of the four shapes to look for. It
+ * asks HERE rather than keeping a list, because a list in the HUD is a second
+ * copy of this table and the day they disagree is the day a wookiee is handed
+ * a hostile and refuses its own verb with "no ground under your reticle".
+ */
+export function orderArg(e, id) {
+  const O = COMPANION_ORDERS[id];
+  return O ? argKind(e, O) : 'none';
 }
 
 /**
@@ -256,21 +332,58 @@ export function refuseOrder(e, id) {
  */
 export function orderCompanion(e, id, arg = null) {
   if (!e) return 'nothing of yours is out';
-  const why = refuseOrder(e, id);
+  const why = refuseOrder(e, id, id === 'verb' ? arg : undefined);
   if (why) return why;
   const O = COMPANION_ORDERS[id];
-  if (O.arg === 'body' && (!arg || arg.dead || arg.team === e.team)) return 'nothing under your reticle';
-  if (O.arg === 'point' && !arg?.isVector3) return 'no ground under your reticle';
+  const A = argKind(e, O);
+  if (A === 'body' && (!arg || arg.dead || arg.team === e.team)) return 'nothing under your reticle';
+  if (A === 'friend' && (!arg || arg === e || arg.dead || arg.team !== e.team)) return 'nobody of yours under your reticle';
+  if (A === 'point' && !arg?.isVector3) return 'no ground under your reticle';
+  /* EVERY DOOR OUT OF A VERB GOES THROUGH `endVerb`, and this is two of the
+   * three: a different order, and a HEEL. Called before the new duty is
+   * written, so `stop` reads the verb it is putting back rather than the one
+   * that is about to replace it. */
+  endVerb(e);
+  /**
+   * AND THE BODY IT WAS ON GOES WITH THE ORDER IT WAS UNDER.
+   *
+   * HEEL has always done this — "it cancels a seek mid-swing" — and every
+   * other order needs it for the same reason: `dutyAllows` is the ORDER's own
+   * filter, so a target picked under the last one has never been asked whether
+   * this one allows it. On almost every frame that costs nothing, because
+   * `_think` re-picks before anything reads it.
+   *
+   * THE FRAME IT COSTS SOMETHING IS THE ONE WHERE `_think` DOES NOT RUN.
+   * `Enemy.update` skips the brain entirely while `stepReaction` owns the body
+   * — a dodge roll away from a bolt is about a third of a second — and a
+   * target written before the order then survives into it untouched. Measured
+   * after the move wrap learned to defer to a reaction (which is what let
+   * rolls run their length at all): a massiff given SEEK while mid-roll spent
+   * 10 frames holding the body it had been fighting under HEEL, and the check
+   * that says "SEEK takes the named body only" went red on exactly those ten.
+   *
+   * One line, at the one door every order comes through, and the rule is the
+   * one HEEL already stated: a new order is a new question.
+   */
+  e.target = null;
   if (id === 'heel') {
     e._cmpDuty = null;
     e._cmpBidden = null;
     e._cmpPoint = null;
-    e.target = null;
     return null;
   }
   e._cmpDuty = O;
-  e._cmpBidden = O.arg === 'body' ? arg : null;
-  e._cmpPoint = O.arg === 'point' ? arg.clone() : null;
+  e._cmpBidden = A === 'body' ? arg : null;
+  e._cmpMate = A === 'friend' ? arg : null;
+  e._cmpPoint = A === 'point' ? arg.clone() : null;
+  /* AND THE VERB STARTS. A verb whose whole content is instantaneous — CRY is
+   * a shout and not a posture — says so by returning 'done', and the duty is
+   * over before the frame is. That is why the wheel does not have to know
+   * which of the twelve are standing orders and which are not. */
+  if (id === 'verb') {
+    const W = verbWork(e);
+    if (W?.start?.(e, arg) === 'done') { endVerb(e); e._cmpDuty = null; }
+  }
   /* AN ORDER THAT LANDED IS A DEED, and it is counted ONCE PER AREA rather
    * than once per press — see `DEEDS.order`. A player who taps the wheel
    * thirty times has not trained anything. */
@@ -295,6 +408,24 @@ export function orderCompanion(e, id, arg = null) {
 export function stationFor(e, out) {
   const D = e._cmpDuty;
   if (D?.id === 'hold' && e._cmpPoint) return out.copy(e._cmpPoint);
+  /**
+   * AND FIVE OF THE TWELVE VERBS MOVE IT SOMEWHERE ELSE ENTIRELY — in front of
+   * you (BLOCK), at a piece of cover (WRECK, BREACH), at a door (SLICE), at
+   * one of your men (RELAY), or a long way off in one direction (BOLT).
+   *
+   * WRITTEN HERE AND NOT IN THE PACK TICK, for the reason this function exists
+   * at all: the aim wrap measures the leash from the station and the move wrap
+   * walks to it, and two readers with two ideas of where the animal is
+   * supposed to be is a companion that hunts round one place and walks to
+   * another. A verb that moves the station moves BOTH by saying so once.
+   *
+   * A hook that returns false has no opinion and the ordinary heel stands,
+   * which is what BLOCK does the moment there is nothing to stand in front of.
+   */
+  if (D?.id === 'verb') {
+    const W = verbWork(e);
+    if (W?.station && W.station(e, out)) return out;
+  }
   const p = e._cmpOwner;
   if (!p?.position) return out.copy(e._cmpHome || e.position);
   const yaw = p.aimDir ? Math.atan2(p.aimDir.x, p.aimDir.z) : (p.facing || 0);
@@ -308,6 +439,19 @@ export function stationFor(e, out) {
     p.position.y,
     p.position.z - Math.cos(yaw) * back + Math.sin(yaw) * side,
   );
+}
+
+/**
+ * IS THE OWNER STILL ON HIS FEET? The move wrap's own test, given a name.
+ *
+ * A player has no downed state in this game — `World._checkWipe` ends the run
+ * the frame the last one falls, and `_reviveDowned` is a co-op wave clear — so
+ * "you are down" is exactly `alive === false`, and one spelling of that test
+ * is what keeps the readers that ask it from disagreeing.
+ */
+export function ownerUp(e) {
+  const p = e?._cmpOwner;
+  return !!(p && p.alive !== false && !p.dead && p.position);
 }
 
 /**
@@ -337,8 +481,1087 @@ export function dutyAllows(e, foe, home, leash) {
     if (!p?.position || r <= 0) return false;
     return foe.position.distanceToSquared(p.position) <= r * r;
   }
+  /* AND A VERB MAY NARROW ITS OWN TARGETING, in the one place an order already
+   * does. CHARGE takes only what is inside its jaws' band because a mount does
+   * not leave the ground you are standing on; BOLT takes nothing at all
+   * because a panic run does not stop to fight. Neither of those is a clause
+   * in the wrap and neither is a switch on a kind. */
+  if (D?.id === 'verb') {
+    const W = verbWork(e);
+    if (W?.allows) return W.allows(e, foe, home, leash);
+  }
   return foe.position.distanceToSquared(home) <= leash * leash;
 }
+
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE TWELVE VERBS                                                          */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ONE SLOT, TWELVE MEANINGS — AND HERE IS WHERE THE MEANING LIVES.
+ *
+ * The wheel said SLICE on an astromech and CRY on a tooka from the day the
+ * rows landed, and neither one did anything: `COMPANION_ORDERS.verb` existed,
+ * `orderCompanion(e, 'verb', t)` accepted it, `_cmpDuty` was written, and not
+ * one line anywhere read it. An order that is ACCEPTED and does nothing is
+ * worse than one that is refused — `tools/_cmporders.mjs` opens with that
+ * sentence — so this table is the twelve answers.
+ *
+ * ── WHY A TABLE KEYED ON THE VERB AND NOT A HANDLER ON THE KIND'S ROW ─────
+ *
+ * Both are legal under the one rule this feature is built on: nothing may
+ * switch on a KIND's name. `tools/checks/companions.mjs` greps this file, the
+ * Kennel and the HUD for all twelve kind ids and goes red on any of them, and
+ * a verb id is not a kind id — `block` is not `massiff`, and the astromech's
+ * `slice` would still be `slice` if the row were renamed tomorrow.
+ *
+ * The row was the first shape tried and it is the wrong one for two reasons a
+ * reader will otherwise re-derive:
+ *
+ *   CompanionKinds.js IS A DATA FILE AND HAS TO STAY ONE. Its own header
+ *   records the temporal-dead-zone hazard that governs it — it `Object.assign`s
+ *   into `ARCHETYPES` and therefore may never be imported by `Enemy.js` or
+ *   `Bodies.js` — and the work below needs `Reactions.js` (the medic),
+ *   `world.destruction` (the two wreckers) and `Command.js` (the runner).
+ *   Hanging that import surface off the twelve rows puts the whole game's
+ *   machinery one edge away from the table `spawnEnemy` reads.
+ *
+ *   AND THE WORK IS PER-FRAME. Ten of the twelve need a tick — a walk to a
+ *   door, a clock on a bleed-out, a beat between two slams — and the pack's
+ *   own `update` is where a companion's per-frame work already lives. A
+ *   handler on a frozen row would be reaching back into the pack anyway.
+ *
+ * So the row keeps its three PLAYER-FACING fields (`id`, `label`, `caption` —
+ * what the wheel says) and this keeps the behaviour, joined on the id. The
+ * check asserts the join is total: a kind whose verb has no row here is a
+ * wheel slot that says a word and does nothing, which is exactly the defect
+ * being fixed.
+ *
+ * ── THE FIVE HOOKS, AND WHAT EACH ONE IS FOR ──────────────────────────────
+ *
+ *   arg      what the order needs pointing at, in the same vocabulary
+ *            `COMPANION_ORDERS` uses — 'none', 'body' (a hostile, from the
+ *            reticle), 'point' (the ground) — plus one this table adds:
+ *            'friend', a body on YOUR side. RELAY talks to your men and TEND
+ *            works on them, and `orderCompanion`'s hostile test refuses
+ *            exactly those two. It is a value in the existing field rather
+ *            than a second field, so there is one vocabulary and one reader.
+ *   refuse   why this order cannot be given RIGHT NOW, in a sentence, through
+ *            `refuseOrder` — which is the door the wheel's caption already
+ *            reads. A verb with no cover under the reticle, no army to carry
+ *            an order to and no door to turn must SAY so; the alternative is
+ *            the silence this whole table exists to end.
+ *   start    the whole order, for the ones that are instantaneous. Returning
+ *            'done' ends the duty on the spot, which is how CRY is a shout
+ *            rather than a standing order.
+ *   station  where the animal has to be standing for this verb, written into
+ *            `stationFor` so the aim wrap's leash and the move wrap's walk
+ *            read the same point. Return false and the ordinary heel stands.
+ *   tick     the per-frame work, from the pack's own update. 'done' ends it.
+ *   allows   whether it may take a body while this verb stands, through
+ *            `dutyAllows`, so a verb can narrow or refuse its own targeting
+ *            without the wrap learning about it.
+ *   stop     put back anything `start` changed. Called at EVERY door out of a
+ *            verb — a new order, a HEEL, the verb finishing itself — because
+ *            a grade ceiling raised for a climb and never lowered is a
+ *            companion that climbs walls for the rest of the run.
+ */
+
+/** Is the owner still on his feet? A player has no downed state — `World.
+ *  _checkWipe` ends the run the frame the last one falls — so "you are up" is
+ *  exactly these three clauses, and they are the move wrap's own. */
+function verbOwnerUp(e) {
+  const p = e?._cmpOwner;
+  return !!(p && p.alive !== false && !p.dead && p.position);
+}
+
+/** The work this animal's verb does, or null. One join, one place. */
+export function verbWork(e) {
+  return COMPANION_VERBS[COMPANION_KINDS[e?._cmpKind]?.verb?.id] || null;
+}
+
+/** Is this body under its own verb right now, and is it THIS verb? */
+function onVerb(e, id) {
+  return e?._cmpDuty?.id === 'verb' && COMPANION_KINDS[e._cmpKind]?.verb?.id === id;
+}
+
+/**
+ * EVERY DOOR OUT OF A VERB GOES THROUGH HERE.
+ *
+ * Three of them exist — a different order, a HEEL, and the verb saying it has
+ * finished — and `stop` has to run on all three or the one verb that changes
+ * the body (CLIMB, which lifts the grade ceiling) leaks. Written once and
+ * called from `orderCompanion` and from the pack tick rather than three times.
+ */
+function endVerb(e) {
+  if (e?._cmpDuty?.id === 'verb') verbWork(e)?.stop?.(e);
+  e._cmpVerbT = 0;
+  e._cmpCover = null;
+  e._cmpMate = null;
+}
+
+/** Everything this body is opposed to, inside `r` of a point. `_hostilesFor`
+ *  hands back a SHARED array, so it is walked here and never held. */
+function eachHostile(e, at, r, fn) {
+  const w = e.world;
+  if (!w?._hostilesFor || !at) return 0;
+  let n = 0;
+  const r2 = r * r;
+  for (const o of w._hostilesFor(e)) {
+    if (!o?.position || o.dead) continue;
+    if (o.position.distanceToSquared(at) > r2) continue;
+    if (fn(o) !== false) n++;
+  }
+  return n;
+}
+
+/** The nearest thing this body is opposed to, measured from a point. */
+function nearestHostile(e, at, r) {
+  let best = null, bestD = r * r;
+  eachHostile(e, at, r, (o) => {
+    const d = o.position.distanceToSquared(at);
+    if (d < bestD) { bestD = d; best = o; }
+    return false;
+  });
+  return best;
+}
+
+/**
+ * THE COVER UNDER THE RETICLE, WHATEVER IT IS MADE OF.
+ *
+ * "Cover" in this game is two different objects and the verbs that break it
+ * must not care which: a revetment, a wall or a pier is a `Destruction`
+ * structure with cells and a support graph, and a crate, a drum or a console
+ * is a `Prop` with an hp pool. WRECK and BREACH both want one of them and
+ * neither wants to learn the difference twice, so the test is here and both
+ * doors are the ones already shipped:
+ *
+ *   a structure  `damageSphere` takes a bite out of it (the same call
+ *                `Destruction.explosion` makes) and `collapse` lets the whole
+ *                piece go (the same call the support solver makes when what
+ *                was holding it up stops holding it up).
+ *   a prop       `damage` and `shatter`, which are what the blade and a
+ *                thrown body already reach it through.
+ *
+ * Nothing here re-implements breaking. It picks the nearest of the two and
+ * hands back the two verbs a wrecker needs.
+ */
+function coverAt(world, point, reach = COVER_FIND) {
+  if (!point) return null;
+  const s = world?.destruction?.structureAt?.(point, reach);
+  if (s) {
+    return {
+      what: 'a piece of the building', centre: s.centre,
+      gone: () => s.state === 'gone' || s.state === 'collapsed',
+      hit: (amount, dir, at) => world.destruction.damageSphere(at || s.centre, WRECK_BITE_R, amount, dir),
+      tear: (dir) => { s.collapse(dir); return true; },
+    };
+  }
+  let best = null, bestD = reach * reach;
+  for (const pr of world?.props || []) {
+    /**
+     * A PACK IS NOT A PIECE OF COVER, and `world.props` is full of them.
+     *
+     * `RiderPack`, `FlightPack` and this file's own `CompanionPack` are TICKS
+     * rather than objects in the world, and every one of them publishes the
+     * same duck type a prop does — `damage()`, `shatter()`, a stub `body` at
+     * the origin — with `hp: Infinity` and `mesh: null`, because
+     * `World._resolveBlades` reads `pr.body.position` before it asks for
+     * capsules and a pack without one throws. So a reticle near the origin
+     * would have found the companion pack itself, `hit` it forever (its
+     * `damage` returns false and it is never `gone`) and left the order
+     * standing on a thing that is not there.
+     *
+     * A REAL PIECE OF COVER HAS A MESH AND A FINITE POOL. Both, because either
+     * alone is one of the three packs' own shape.
+     */
+    if (!pr || pr.dead || !pr.mesh || !Number.isFinite(pr.hp) || pr.hp <= 0) continue;
+    if (typeof pr.damage !== 'function' || typeof pr.shatter !== 'function') continue;
+    const at = pr.body?.position || pr.mesh?.position;
+    if (!at) continue;
+    const d = at.distanceToSquared(point);
+    if (d < bestD) { bestD = d; best = pr; }
+  }
+  if (!best) return null;
+  const at = best.body?.position || best.mesh.position;
+  return {
+    what: best.kind || 'it', centre: at,
+    gone: () => best.dead || best.hp <= 0,
+    hit: (amount, dir, where) => best.damage(amount, where || at, dir),
+    tear: (dir, where) => { best.shatter(dir, where || at); return true; },
+  };
+}
+
+/**
+ * HOW FAR FROM THE RETICLE'S POINT A PIECE OF COVER STILL COUNTS AS THE ONE
+ * YOU MEANT. `Destruction.structureAt`'s own default is 3 m and it measures
+ * from the piece's BOX rather than its centre; a crate is measured from its
+ * centre and is about 0.8 m across, so the same number covers both without a
+ * player having to put the reticle on a specific texel.
+ */
+const COVER_FIND = 3;
+
+/** ── BLOCK ──────────────────────────────────────────────────────────────
+ *
+ * "it puts itself between you and the nearest hostile and takes hits inside a
+ *  cone, so the better it does its job the faster you lose it."
+ *
+ * TWO HALVES, AND ONLY ONE OF THEM IS MOVEMENT. The station is the easy half
+ * and it is written where every other station is written. The half that makes
+ * it a BLOCK rather than a place to stand is that a blow which would have
+ * landed on you lands on the animal instead — and the shipped precedent for
+ * that is three lines up the same method:
+ *
+ *     A MAN INSIDE A TANK IS NOT SHOT AT — THE TANK IS.  (Player.damage)
+ *
+ * `Player.damage` is the ONE sink every blow that reaches a player passes
+ * through — its own note says so and makes the same argument for putting the
+ * driving redirect there rather than at each source — so this is an instance
+ * wrap of that one method and nothing else in the game learns the word
+ * companion. It is a REDIRECT AND NOT AN IMMUNITY, exactly as the tank is: the
+ * damage is not discounted, it is billed to a body with 210 hp instead of one
+ * with 100, and the animal takes it on its own table with its own `frag` and
+ * its own death.
+ *
+ * THE CONE IS WHY IT IS NOT A SHIELD. A blocker can only be in one direction
+ * at a time, and the whole shape of the order is that you point it at the
+ * thing in front of you and take everything else on your own guard. 0.62 rad
+ * is a 71° arc — wide enough that a shooter drifting sideways does not walk
+ * out of it between two bursts, narrow enough that the man on your flank is
+ * still your problem. The axis is you → the animal, not you → its target, so
+ * what is covered is what the animal is STANDING in front of; a massiff that
+ * has been dragged off the line stops blocking on the frame it leaves.
+ *
+ * MEASURED (`tools/_cmpverbs.mjs`), one hostile at 9 m and six bolts of 9:
+ * the dog stands 2.7 m off you and 11° off the line to it, and takes 54 hp
+ * while you take 0. Six more from a second hostile BEHIND you put 8 on you
+ * and 0 on it. Lift the order and the next six are yours again.
+ */
+export const BLOCK = { hold: 2.6, cone: 0.62, see: 26 };
+
+/**
+ * Wrap the owner's one damage sink, once, for as long as he lives.
+ *
+ * INSTALLED ON THE OWNER AND GATED ON THE ORDER, rather than installed and
+ * removed with the order. A wrap that is added and taken off is a wrap that
+ * two orders in one frame can lose, and `Player.damage` may be wrapped by
+ * anything else in any order; the guard below reads the LIVE duty every blow,
+ * so lifting the order stops the redirect on the same frame with nothing to
+ * unwind. `blockerFor` walks the pack rather than closing over one animal, so
+ * a companion that dies and is replaced is answered by the list.
+ */
+function installBlockGuard(e) {
+  const p = e._cmpOwner;
+  const world = e.world;
+  if (!p || typeof p.damage !== 'function' || p._cmpGuard) return;
+  p._cmpGuard = true;
+  const hurt = p.damage.bind(p);
+  p.damage = function (amount, point, source, kind, preResisted) {
+    const b = blockerFor(world, p);
+    /**
+     * A BODY ON THE OTHER SIDE, AND NOTHING ELSE.
+     *
+     * Two things are excluded and both would be worse than not blocking. A
+     * blow with NO source is the environment — a fall, a drowning, the ground
+     * — and a dog cannot stand in front of gravity. And a blow from your own
+     * side would VANISH rather than move: the animal's own `damage` answers
+     * `canHarm`, which refuses a friendly hit whenever friendly fire is off,
+     * so redirecting your own trooper's stray bolt onto it would delete the
+     * bolt instead of paying for it.
+     */
+    const hostile = !!source && source.team !== undefined && source.team !== p.team;
+    if (b && amount > 0 && hostile && insideBlock(p, b, source, point)) {
+      /* HIS OWN DAMAGE PATH, so the animal's `frag`, its friendly-fire scaling
+       * and its "that was you" notice all apply to a redirected blow exactly
+       * as they apply to one aimed at it. */
+      b.damage(amount, point, source, kind);
+      b._cmpBlocked = (b._cmpBlocked || 0) + amount;
+      return false;
+    }
+    return hurt(amount, point, source, kind, preResisted);
+  };
+}
+
+/** The one body of yours that is under BLOCK right now, if there is one. */
+function blockerFor(world, p) {
+  const pack = world?._companions;
+  if (!pack) return null;
+  for (const b of pack.list) {
+    if (b?._cmpOwner === p && !b.dead && !b.downed && onVerb(b, 'block')) return b;
+  }
+  return null;
+}
+
+/** Did this blow come from inside the arc the animal is standing across? */
+function insideBlock(p, b, source, point) {
+  const from = source?.position || point;
+  if (!from || !p.position) return false;
+  /* IT HAS TO BE INTERPOSED, not merely alive. Past `hold × 2` it is somewhere
+   * else and the blow is yours. */
+  const dx = b.position.x - p.position.x, dz = b.position.z - p.position.z;
+  const d = Math.hypot(dx, dz);
+  if (d < 0.2 || d > BLOCK.hold * 2) return false;
+  const sx = from.x - p.position.x, sz = from.z - p.position.z;
+  const sd = Math.hypot(sx, sz);
+  if (sd < 0.2) return false;
+  return (dx * sx + dz * sz) / (d * sd) >= Math.cos(BLOCK.cone);
+}
+
+/** ── CRY ────────────────────────────────────────────────────────────────
+ *
+ * "the tooka pulls every hostile within 25 m onto ITSELF for 3 s — the useless
+ *  thing's one moment of use is being bait it will probably not survive."
+ *
+ * A TARGETING OVERRIDE AND NOT AN AGGRO SYSTEM, which is the design's own
+ * word for it. `Enemy._think` opens with
+ *
+ *     this.target = this.compelled?.target ?? ctx.pickTarget(this);
+ *
+ * and `compelled` is `{ target, t }`, decayed in `Enemy.update` and cleared
+ * when the clock runs out or the target dies. Force compel already writes it
+ * (Player.js) and this writes the same field with the same shape — so a
+ * hostile pulled by a tooka advances, takes cover, leads its shots and calls
+ * out exactly as it always did, at a cat. There is no second brain and there
+ * is nothing to unwind: the three seconds end themselves.
+ *
+ * 25 m AND 3 s ARE THE DESIGN'S NUMBERS AND ARE NOT TUNED HERE. What they buy
+ * is one exchange: the tooka's 24 hp is under a single B1 burst (3 × 9 = 27),
+ * so three seconds of being the only thing anybody is looking at is very
+ * often the last three seconds of it.
+ *
+ * MEASURED, four B1s at 8 m and two at 48: 4 of 4 inside the ring compelled
+ * and 0 of 2 outside it, 0 → 4 of them actually targeting the cat on the next
+ * frame, every compulsion cleared by itself four seconds later — and the cat
+ * did not survive being used, which is the row's own promise kept.
+ */
+export const CRY = { ring: 25, hold: 3 };
+
+/** ── FLUSH ──────────────────────────────────────────────────────────────
+ *
+ * "it pounces to knock a body flat instead of killing it — a setup for your
+ *  blade rather than a substitute for it."
+ *
+ * `Enemy.knockFlat` IS THE WHOLE OF IT. It is the shipped fall — the one a
+ * Force shove uses — and every rule it carries is one this verb wants and
+ * would otherwise have had to restate: not a boss, not anything `big` (so a
+ * whelp pointed at a spider droid achieves nothing, which is the lesson the
+ * design wants that order to teach), not a body already limp or held or being
+ * carried, and never from a body on the same side. It RECORDS the fall and
+ * `_move` takes it a frame later, which is the fix Enemy.js spent a page
+ * arguing for and which nothing here may go round.
+ *
+ * THE SHOVE IS ADDED TO `velocity` BECAUSE THAT IS WHERE `_takeFall` READS THE
+ * LAUNCH FROM: "`addShove` has already put the impulse into `velocity`, so
+ * handing the ragdoll the body's own velocity sends it the way it was thrown
+ * rather than dropping it where it stood." A `knockFlat` with no impulse in
+ * front of it is a body that goes limp on the spot.
+ *
+ * AND IT DOES NO DAMAGE AT ALL. The whelp still bites, because the bid puts
+ * the body in front of it and the brain does what a brain does — but the FLUSH
+ * itself takes nothing off, which is the difference between a setup and a
+ * substitute. 12 is the shove: `hitTarget` uses 16 for a blow that is meant to
+ * hurt, and this is meant to put a man on his back a metre away rather than
+ * across the room, because your blade has to be able to reach him.
+ *
+ * MEASURED, a whelp sent at a B1 seven metres off: on its back at 3.1 s, and
+ * the 9 hp it lost over those three seconds is the whelp's own bite and not
+ * the flush.
+ */
+export const FLUSH = { shove: 12, lift: 0.55 };
+
+/** How close the pounce has to be. The animal's OWN footprint — `pounce.reach`
+ *  off BEAST_MOVES times its scale, the same arithmetic `hitTarget` does — so
+ *  a bigger whelp reaches further and nothing here restates a reach. */
+function flushReach(e) {
+  const M = BEAST_MOVES.pounce || BEAST_MOVES.lunge;
+  return Math.max(1.4, (M.reach || 1) * (e.A?.scale ?? 1) * 1.6);
+}
+
+/** ── RELAY ──────────────────────────────────────────────────────────────
+ *
+ * "send it to a squad and it delivers a standing order to men outside your own
+ *  order range, which pays part of the distance cost the command system
+ *  already carries."
+ *
+ * THE RUNNER'S OWN DOOR, USED BY A BODY THAT IS NOT A TROOPER.
+ * `CommandDirector._runnerTick` delivers exactly like this and its note is the
+ * specification:
+ *
+ *     `_carrying` makes his own body the mouth for that one call, so the men
+ *     around him hear it and men fifty metres past them still do not.
+ *
+ * `_voices` reads `this._carrying?.position` FIRST, before the player and
+ * before the pace anchor, so setting it round one `order()` call is the whole
+ * of "the order was given from where the droid is standing". Nothing else is
+ * needed and nothing else is written: `t.runner` is a Trooper field on a
+ * Trooper record and a companion has neither, which is why the errand lives on
+ * the companion's own duty instead.
+ *
+ * WHAT IT CARRIES IS THE ORDER YOU ALREADY GAVE — `director.formation`, the
+ * live one — and not a second order chosen here. The B1 is a mouth, not a
+ * commander, and a wheel that could send a DIFFERENT order to a squad you
+ * cannot reach would be a way round the reach rule rather than a price for it.
+ *
+ * MEASURED, a squad of five walked to 87 m of a 34 m `ORDER_REACH`: the same
+ * order from the player's own mouth was refused — "Column — 5 men — out of
+ * reach" — and the droid crossed in 7 s and they took it. That is the whole
+ * claim, driven at both ends.
+ */
+export const RELAY = { deliver: 6 };
+
+/** ── WRECK and BREACH ───────────────────────────────────────────────────
+ *
+ * "the only companion whose attacks change the LEVEL rather than the enemy — a
+ *  scaled slam that shatters the crate a shooter is behind", and "it rips a
+ *  designated cover apart".
+ *
+ * TWO VERBS, TWO EXISTING DOORS, AND THE DIFFERENCE BETWEEN THEM IS THE POINT.
+ * A rancor pup SLAMS: `damageSphere` takes a bite out of a piece where the
+ * blow landed and leaves what is still supported standing, which is the same
+ * call `Destruction.explosion` makes and the reason a slam beside a revetment
+ * opens a hole rather than removing a building. A wookiee BREACHES: `collapse`
+ * detaches every cell at once and lets the support solver take whatever was
+ * resting on it, which is the difference between chipping cover and there
+ * being no cover.
+ *
+ * THE BITE IS SIZED ON THE PIECE AND NOT ON THE ANIMAL, and that is the one
+ * decision here a reader will want to reverse. The pup's `damage` is 12 — the
+ * lowest melee number in the table, deliberately, because "the value is the
+ * terrain and the lift" — and the cover it is being pointed at holds 40 hp (a
+ * crate) to 170 (a plan piece). Twelve points a slam is a verb that does
+ * nothing you can see, and raising the pup's damage to make its verb work
+ * would arm the one companion the design specifically disarmed. So the slam
+ * is priced as ARCHITECTURE DAMAGE, in the units the thing it hits is measured
+ * in, and it is deliberately not a number the animal carries into a fight.
+ *
+ * MEASURED: 190 puts a 0.9 m crate (34 hp) through the floor in ONE slam and
+ * takes a bite out of a plan piece (70–170 hp) in one or two, which is the
+ * shape wanted — a shooter's cover is gone in a beat and a building is not.
+ * A BREACH on the same class of piece measured "intact, 99 hp" → "collapsed"
+ * 0.2 s after the wookiee reached it, every cell detached at once. The two
+ * verbs are visibly different things and they share no code but the finder.
+ */
+export const WRECK = { bite: 190, beat: 1.1, reach: 3.4 };
+export const BREACH = { reach: 3.4 };
+/** The radius of one slam against a structure. `Destruction.explosion` uses
+ *  5.5 m for a charge going off; a pup's forearm is a fraction of that, and
+ *  the sphere has to sit inside its own `preferred` band ([1.0, 2.2]) or the
+ *  animal is standing outside the hole it is making. */
+const WRECK_BITE_R = 2.2;
+
+/** ── SPOT ───────────────────────────────────────────────────────────────
+ *
+ * "its verb SPOT climbs and paints every hostile within 60 m onto your HUD for
+ *  8 s — information you trade exposure for."
+ *
+ * THE HUD'S OWN MARKER PATH, AND NOT A SECOND ONE. `world.notifyFloating` is
+ * the one call the game already makes to put a word over a point in the world
+ * — PARRY, CHAMBER, GUARD BROKEN, PATCHED UP, and the companion's own "that
+ * was you" all go through it — and `HUD.floating` pools the nodes and retires
+ * them at 1.05 s. So a paint is a floating mark refreshed on a beat, and the
+ * eight seconds are the hawk holding the reading rather than one node with a
+ * long life: a mark that lasted eight seconds would sit where the body WAS,
+ * and the whole value of the verb is where they are.
+ *
+ * 0.85 s BETWEEN REFRESHES against a 1.05 s life. The overlap is deliberate —
+ * the mark for a body is replaced before the last one expires, so a hostile
+ * that stays inside the ring is painted continuously rather than blinking —
+ * and the HUD's own 26-mark ring buffer bounds the cost whatever the ring
+ * holds.
+ *
+ * AND IT CLIMBS IF IT HAS WINGS. `Flight.flightStep` reads `_flightState`,
+ * which is one of four strings, and drives the body toward the high cruise
+ * band when it is 'cruise'. Putting a stooping hawk back into 'cruise' is the
+ * one lever that file publishes and it is the whole of "it climbs"; a body
+ * with no flight installed has no such field and this is a no-op on it, which
+ * is what the verb has to be until the hawk has a body.
+ *
+ * MEASURED, six hostiles put down between 18 and 85 m: 10 beats over the
+ * reading, every one of them painting EXACTLY the hostiles inside 60 m of the
+ * owner and none of the eight body-beats outside it, 52 marks through the
+ * HUD's own path, and the last one at 7.8 s of an 8 s reading.
+ *
+ * AND THE CLOCK IS `dt` AND NOT FRAMES, which cost a red line to notice.
+ * `World.update` scales its own dt by `timeScale * focus.scale` before
+ * anything downstream sees it, so a Force focus is a slow-motion for
+ * everything in the frame. Counted in fixture frames the 8 s reading read as
+ * 9.6; counted in `world.time` — the second `stateTime`, `bleed` and
+ * `compelled.t` are all on — it is 7.8. The verb was right and the ruler was
+ * not, and a verb clocked on frames would run long exactly when the game is
+ * most crowded.
+ */
+export const SPOT = { ring: 60, hold: 8, beat: 0.85 };
+
+/** ── SLICE ──────────────────────────────────────────────────────────────
+ *
+ * "it rolls to a designated door, terminal or console-driven hazard and turns
+ *  it — the only companion order that changes the map instead of the fight."
+ *
+ * THE ONE TURNABLE THING IN THE TREE IS THE BLAST DOOR, and this is honest
+ * about that rather than pretending otherwise. `world.doors` holds them,
+ * `addDoor` is the one way in, and `BlastDoor.breach()` is the whole of
+ * "turned": it drops the collider (and REMOVES the Rapier cuboid, which is the
+ * difference between the player walking through and everything else in the
+ * game not), drops the slug, and fires the level's own `onBreach` — which on
+ * the magazine credits the support pool and prints ORDNANCE TAKEN. An
+ * astromech opening that door does exactly what twenty seconds of held blade
+ * does, and the level does not learn how it was opened.
+ *
+ * A CONSOLE AND A DEAD TURRET ARE NOT REFUSED — THEY ARE NOT THERE. There is
+ * no console in this game with a state to turn (`makeConsole` builds furniture)
+ * and no derelict turret at all, so a SLICE pointed at one gets the refusal
+ * sentence rather than a droid that walks over and stands there. When those
+ * exist, they are a second branch in `sliceTarget` and nothing else.
+ *
+ * NINE SECONDS AT THE PANEL, and it is the number that makes the order cost
+ * something. The blade opens the same door in a measured 18.8 s of contact
+ * while you are stood in front of it and cannot fight; this is half that, and
+ * the price is that you are not with the animal while it works — it is the
+ * slowest body you own, it cannot defend itself at all, and it is standing
+ * still beside a door somebody is holding.
+ *
+ * MEASURED, an astromech ordered at the magazine's own door from 4.5 m: shut
+ * at the order, open at 9.7 s, collider removed — the same breach and the
+ * same `onBreach` that twenty seconds of held blade buys.
+ */
+export const SLICE = { find: 4.5, reach: 3.2, work: 9 };
+
+/** The door under a designated point, or null. */
+function sliceTarget(world, point) {
+  if (!point) return null;
+  let best = null, bestD = SLICE.find * SLICE.find;
+  for (const d of world?.doors || []) {
+    const at = d?.mesh?.position;
+    if (!at || d.opened) continue;
+    const dd = at.distanceToSquared(point);
+    if (dd < bestD) { bestD = dd; best = d; }
+  }
+  return best;
+}
+
+/** ── TEND ───────────────────────────────────────────────────────────────
+ *
+ * "sends it to a designated downed body to work the bleed-out clock — turning
+ *  'somebody is down' from a timer you race into a position you defend."
+ *
+ * `Reactions.startHeal` AND NOTHING ELSE. The design says the medical droid
+ * "does not heal on a button: it reuses `findPatient` and `startHeal`", and
+ * this is the same sentence with the patient named by you instead of found by
+ * it. `stepReaction` is driven from `Enemy.update` for every body in the game,
+ * a companion included, so the walk, the kneel at `heal.reach`, the give-up
+ * rule ("he is no longer getting closer"), the green flicker and the PATCHED
+ * UP line all arrive with the one call.
+ *
+ * THE BLEED-OUT CLOCK IS WORKED BY BEING THERE. `Enemy._tickDown` counts every
+ * living body of the same side inside `DOWN_HELP` (2.2 m) as help and needs
+ * `DOWN_REVIVE` body-seconds of it; `heal.reach` is 1.7 m, so a droid that has
+ * knelt is inside the ring by half a metre. Nothing here touches the clock —
+ * it stands where the game already says a man is being helped, and the game
+ * does the rest. That is the difference between reusing the machinery and
+ * writing a second medicine.
+ *
+ * IT KEEPS TRYING WHILE THE ORDER STANDS, which is what makes it a position
+ * rather than an attempt: `stepHeal` ends a job at `heal.seconds` whether the
+ * patient is up or not, and a downed man needs several of those. The order
+ * ends when he is on his feet, when he is dead, or when you lift it.
+ *
+ * MEASURED, a man of yours put on the ground seven metres off with 14 s of
+ * bleed left: the droid knelt at 1.39 m — inside `DOWN_HELP`'s 2.2 by three
+ * quarters of a metre — and he was on his feet at 4.4 s with the quarter of
+ * his health `DOWN_UP_HP` gives back. Not one line of that clock is written
+ * here.
+ *
+ * AND THE MOVE WRAP HAD TO LEARN TO GET OUT OF THE WAY. Its station walk
+ * writes `wish` every frame and `stepHeal` writes its own; measured with both
+ * running, the droid's closest approach was 2.54 m and the man bled out. See
+ * `if (e.reaction) return move(dt, ctx)` in the wrap — which is
+ * `CommandDirector.steer`'s own first line, for a body with no Trooper.
+ */
+
+/** ── BOLT ───────────────────────────────────────────────────────────────
+ *
+ * "a panic run in a straight line that draws fire off you."
+ *
+ * TWO CLAIMS AND BOTH ARE MEASURED. The run is a station a long way off in one
+ * direction, written into `stationFor`, so the move wrap drives it there with
+ * everything `_move` already does — and the direction is chosen ONCE, at the
+ * order, which is the whole of "in a straight line". A heading recomputed per
+ * frame is a body that curves.
+ *
+ * THE FIRE IS `compelled` AGAIN — the same shipped override CRY uses, so there
+ * is one answer in this file to "something is looking at the wrong thing" —
+ * but pointed at a different population: only the hostiles that were ALREADY
+ * ON YOU. CRY is a shout at everybody near the cat; this is a bolting animal
+ * pulling the eyes that were on its owner, and the difference is exactly what
+ * makes one of them bait and the other one an escape.
+ *
+ * AND IT WRITES NO SPEED OF ITS OWN. The pace cap is the mechanism the whole
+ * protection loop rests on, so a panic verb that made the animal quick would
+ * be the first thing in the file to sell a way out of it. The run is the move
+ * wrap's ORDINARY station walk to a point a long way off — including the
+ * catch-up trot every station order gets when the gap is past the leash, which
+ * is not this verb's to widen or to invent. A panicking tauntaun is a tauntaun
+ * at a tauntaun's speed, going somewhere else.
+ *
+ * MEASURED, four B1s at 10 m with all four shooting at the player: all four
+ * switched to the tauntaun on the frame the order was given, and it covered
+ * 23.6 m of ground in 91% of the metres it walked, 0° off the heading it
+ * chose — the missing 9% is `_move`'s own wall slide and stuck commit, which
+ * is the navigation doing its job rather than the run curving.
+ */
+export const BOLT = { run: 4.5, far: 70, pull: 30 };
+
+/** ── CHARGE ─────────────────────────────────────────────────────────────
+ *
+ * "it bites what closes on you while you are riding, so you are not
+ *  defenceless at a standstill."
+ *
+ * WHAT MAKES THIS DIFFERENT FROM WARD, WHICH IS THE QUESTION TO ANSWER FIRST.
+ * WARD is a tripwire: anything inside the kind's ring OF YOU is met, and the
+ * animal leaves to meet it. CHARGE never leaves. It takes only what is already
+ * inside its own jaws' band — the archetype's `preferred` — so a shooter at
+ * eight metres is not its problem and one at two metres is. That is the
+ * mount's promise said precisely: you are on its back, you are not going
+ * anywhere, and it deals with what arrives.
+ *
+ * `allows` IS THE WHOLE FILTER and it is one line, because `dutyAllows` is
+ * already the one place an order narrows its own targeting. Nothing about the
+ * brain, the move set or the bite changes: the blurrg's `lunge` comes off
+ * BEAST_MOVES through `_beastBrain` exactly as it does when it is wild.
+ *
+ * AND WHEN SOMEBODY IS DRIVING IT, THE BRAIN DOES NOT RUN AT ALL.
+ * `Enemy.update`'s `driven` branch returns before `_think` — "all this has to
+ * do is not overwrite them" — so a ridden mount never reaches `_meleeBrain`
+ * and a move started for it would never resolve. So the verb steps the beast
+ * brain itself for exactly those frames, with the body's own target and its
+ * own distance: the SAME function, called from the one tick that still runs,
+ * rather than a second copy of a bite. Riding is not reachable today — no
+ * companion row declares `crew`, so `Driving.whyNotDrive` refuses every mount
+ * — and this is the line that will be right when it is.
+ *
+ * WHAT IS MEASURED IS THE HALF THAT IS REACHABLE: a blurrg under CHARGE took
+ * 35 hp off a hostile that closed to 2.2 m and spent ZERO frames on one
+ * standing at 9 m — which under WARD it would have crossed the ground for.
+ */
+
+/** ── CLIMB ──────────────────────────────────────────────────────────────
+ *
+ * "the only body in the game that takes a grade the player's own character
+ *  controller refuses. It does not make the map faster, it makes the map a
+ *  different shape."
+ *
+ * `A.grade` IS THE FIELD AND IT ALREADY DOES BOTH HALVES. Enemy.js's `_move`
+ * reads it twice — once as a pace term over the top 45% of the limit, and once
+ * as the flat refusal that stops a wheeled body stepping up onto a prop at all
+ * — and its note says `grade >= 1` is "the one value that means anything". So
+ * CLIMB is that value, held for as long as the order stands and PUT BACK when
+ * it ends, and the walk itself is the ordinary station walk up a hill.
+ *
+ * WHAT THE PLAYER CANNOT DO IS THE OTHER HALF OF THE SENTENCE, and it is not
+ * this file's to write: `Terrain.blockClimb` is the only thing in the game
+ * that refuses a face, it is called from `Player._collide` and from nothing
+ * else, and no body in `world.enemies` is subject to it. So the varactyl's
+ * route genuinely exists the moment its body does, and the check drives both
+ * ends of it — a face the player's own controller pushes him off, and an
+ * animal under CLIMB that gains height on it.
+ *
+ * THE ARCHETYPE IS REWRITTEN AND NOT THE INSTANCE. `A` is shared between every
+ * body of a kind, so `e.A.grade = 1` would give every varactyl on the field
+ * the order; the clone is what `adopt` already does to hold the pace cap, for
+ * the same reason.
+ *
+ * MEASURED on a face the fixture found by asking `blockClimb` itself — slope
+ * 0.77, which it pushes the player back off — with the animal's own ceiling
+ * set to 0.30: under CLIMB it reads 1 and the body gained 3.9 m of height on
+ * that face, and the ceiling was 0.30 again the moment the order was lifted.
+ */
+export const CLIMB = { done: 2.5 };
+
+/**
+ * IS THIS BODY ALREADY IN ITS TEETH?
+ *
+ * The archetype's own `preferred` upper edge plus a step, so a bigger animal
+ * reaches further and NOTHING here restates a distance — the massiff's jaws
+ * band is [1.4, 2.6] and the blurrg's is [1.6, 3.0] because those two rows say
+ * so. Two verbs read it, BLOCK and CHARGE, and both mean the same thing by it:
+ * this animal holds a place and takes what arrives at the place.
+ */
+function inJaws(e, foe) {
+  const band = (e.A?.preferred?.[1] ?? 2.6) + JAWS_STEP;
+  return foe.position.distanceToSquared(e.position) <= band * band;
+}
+
+/** The step past the band. A body walking at 4 m/s covers 13 cm a frame, and a
+ *  target the animal drops the moment it steps out of a hard edge is a body
+ *  that flickers in and out of the brain twice a second. */
+const JAWS_STEP = 1.2;
+
+/**
+ * WHAT EACH VERB LEAVES BEHIND ON THE BODY, AND WHY IT IS WRITTEN AT ALL.
+ *
+ * `_cmpBlocked`, `_cmpCried`, `_cmpFlat`, `_cmpRelayed`, `_cmpWrecked`,
+ * `_cmpBreached`, `_cmpSpotted`, `_cmpSliced`, `_cmpDrew` — a running tally of
+ * what the order actually did, on the animal it did it with. The pack already
+ * keeps one of these (`lastKiller`, "for the epitaph") and the argument is the
+ * same: a verb that changes the world leaves no trace on the world you can ask
+ * a question of afterwards, and "did that order do anything" is the question
+ * this whole table was written because nobody could answer.
+ *
+ * They are what `tools/checks/companions.mjs` and `tools/_cmpverbs.mjs`
+ * MEASURE — a check that asserted "the crate is gone" without knowing whether
+ * the pup broke it or a grenade did would pass on a build where the verb did
+ * nothing, which is the defect wearing a green tick. They are also the fields a
+ * companion card or an interlude line would read; nothing in the game reads
+ * them yet and none of them is load-bearing for behaviour.
+ */
+
+const _v5 = new THREE.Vector3();
+const _v6 = new THREE.Vector3();
+
+export const COMPANION_VERBS = {
+
+  block: {
+    arg: 'none',
+    refuse: (e) => (e._cmpOwner?.position ? null : 'there is nobody for it to stand in front of'),
+    start(e) { installBlockGuard(e); },
+    /**
+     * IT INTERPOSES; IT DOES NOT CHARGE — and this is the clause that makes
+     * the order work at all.
+     *
+     * Measured without it: the massiff was given BLOCK with one hostile at 9 m,
+     * the aim wrap handed it that body (its sworn leash is 34 m), the move wrap
+     * saw `busy` and stopped walking home, and the animal ended the order 9.2 m
+     * from its owner — which is to say nowhere near between him and anything.
+     * Ten bolts aimed at the player took 8 hp off the player and 0 off the dog.
+     * A blocker that leaves is not a blocker.
+     *
+     * So BLOCK takes only what has come inside its own jaws, exactly as CHARGE
+     * does, and for the same reason: the value of the order is the body being
+     * in one particular place. The animal still meets what walks into it —
+     * that is what the massiff's `grip` is for — and it stays on the line.
+     */
+    allows: (e, foe) => inJaws(e, foe),
+    /* BETWEEN YOU AND THE NEAREST OF THEM, and back at your heel when there is
+     * nothing to stand in front of — returning false is how a station hook
+     * says "the ordinary one". */
+    station(e, out) {
+      const p = e._cmpOwner;
+      if (!p?.position) return false;
+      const foe = nearestHostile(e, p.position, BLOCK.see);
+      if (!foe) return false;
+      const dx = foe.position.x - p.position.x, dz = foe.position.z - p.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d < 1e-3) return false;
+      out.set(p.position.x + (dx / d) * BLOCK.hold, p.position.y, p.position.z + (dz / d) * BLOCK.hold);
+      return true;
+    },
+  },
+
+  cry: {
+    arg: 'none',
+    start(e) {
+      const n = eachHostile(e, e.position, CRY.ring, (o) => {
+        o.compelled = { target: e, t: CRY.hold };
+      });
+      e._cmpCried = n;
+      e.world?.notifyFloating?.(e.position, 'HERE', '#ffd88a');
+      if (n) {
+        e.world?.notify?.(`${(e._cmpRec?.name || COMPANION_KINDS[e._cmpKind]?.label || 'IT').toUpperCase()} — BAIT`,
+          `${n} of them are looking at it and not at you`);
+      }
+      /* A SHOUT, NOT A POSTURE. It is over the moment it is given and the
+       * three seconds belong to the bodies it shouted at. */
+      return 'done';
+    },
+  },
+
+  flush: {
+    arg: 'body',
+    tick(e) {
+      const foe = e._cmpBidden;
+      if (!foe || foe.dead) return 'done';
+      const r = flushReach(e);
+      if (e.position.distanceToSquared(foe.position) > r * r) return undefined;
+      _v5.subVectors(foe.position, e.position).setY(0);
+      if (_v5.lengthSq() < 1e-6) _v5.set(0, 0, 1);
+      _v5.setY(FLUSH.lift).normalize().multiplyScalar(FLUSH.shove);
+      /* AND A FALL IT CANNOT TAKE ENDS THE ORDER RATHER THAN STANDING FOREVER.
+       * `knockFlat` refuses a boss, anything `big`, and a body already limp,
+       * held or being carried — every one of those is a reason this whelp is
+       * never going to put that thing down, and its own return value is the
+       * only reader of them. "Point it at a B2 and you have thrown it away" is
+       * the design's line; a whelp standing in front of a spider droid trying
+       * forever is not that lesson, it is a stuck order. */
+      if (!foe.knockFlat(_v5, e)) {
+        e.world?.notifyFloating?.(e.position, 'NO', '#ff9a3a');
+        return 'done';
+      }
+      foe.velocity?.add(_v5);
+      e.world?.notifyFloating?.(foe.position, 'FLAT', '#ffd88a');
+      e._cmpFlat = (e._cmpFlat || 0) + 1;
+      return 'done';
+    },
+  },
+
+  relay: {
+    arg: 'friend',
+    refuse(e, arg) {
+      const d = e.world?.command;
+      if (!d) return 'there is nobody under your command to carry it to';
+      if (!d.formation) return 'you have given no order for it to carry';
+      if (!arg?.position || arg.dead) return 'nothing of yours under your reticle';
+      return null;
+    },
+    station(e, out) {
+      const m = e._cmpMate;
+      if (!m?.position || m.dead) return false;
+      out.copy(m.position);
+      return true;
+    },
+    tick(e) {
+      const m = e._cmpMate, d = e.world?.command;
+      if (!m || m.dead || !d) return 'done';
+      if (e.position.distanceToSquared(m.position) > RELAY.deliver * RELAY.deliver) return undefined;
+      const c = d.commanderOf?.(m) || d.commander;
+      const was = d._carrying;
+      let ok = false;
+      d._carrying = e;
+      try { ok = !!d.order(d.formation, c, m.cmdSquad ?? null); } finally { d._carrying = was; }
+      e._cmpRelayed = ok;
+      e.world?.notify?.(ok ? 'ORDER DELIVERED' : 'IT GOT THERE AND THEY WOULD NOT',
+        ok ? 'it carried it further than your voice goes' : (d.orderRefused || 'refused'));
+      return 'done';
+    },
+  },
+
+  wreck: {
+    arg: 'point',
+    refuse: (e, arg) => (coverAt(e.world, arg) ? null : 'there is nothing there it can put through the floor'),
+    start(e, arg) { e._cmpCover = coverAt(e.world, arg); e._cmpVerbT = 0; },
+    station(e, out) {
+      const c = e._cmpCover;
+      if (!c) return false;
+      out.copy(c.centre);
+      return true;
+    },
+    tick(e, dt) {
+      const c = e._cmpCover;
+      if (!c) return 'done';
+      if (c.gone()) return 'done';
+      if (e.position.distanceToSquared(c.centre) > WRECK.reach * WRECK.reach) return undefined;
+      e._cmpVerbT = (e._cmpVerbT || 0) - dt;
+      if (e._cmpVerbT > 0) return undefined;
+      e._cmpVerbT = WRECK.beat;
+      _v5.subVectors(c.centre, e.position).setY(0);
+      if (_v5.lengthSq() > 1e-6) _v5.normalize(); else _v5.set(0, 0, 1);
+      /* THE BLOW LANDS BETWEEN THE TWO OF THEM and not at the piece's centre,
+       * which for a wall is inside the wall: `damageSphere` falls off with
+       * distance from the point it is given. */
+      _v6.copy(e.position).addScaledVector(_v5, Math.min(WRECK.reach, WRECK_BITE_R));
+      c.hit(WRECK.bite, _v5, _v6);
+      e._cmpWrecked = (e._cmpWrecked || 0) + 1;
+      e.world?.particles?.sandPuff?.(_v6.clone(), 1.8,
+        e.world.terrain?.height(_v6.x, _v6.z), e.world.groundColor);
+      return c.gone() ? 'done' : undefined;
+    },
+  },
+
+  breach: {
+    arg: 'point',
+    refuse: (e, arg) => (coverAt(e.world, arg) ? null : 'there is nothing there for it to take apart'),
+    start(e, arg) { e._cmpCover = coverAt(e.world, arg); },
+    station(e, out) {
+      const c = e._cmpCover;
+      if (!c) return false;
+      out.copy(c.centre);
+      return true;
+    },
+    tick(e) {
+      const c = e._cmpCover;
+      if (!c || c.gone()) return 'done';
+      if (e.position.distanceToSquared(c.centre) > BREACH.reach * BREACH.reach) return undefined;
+      _v5.subVectors(c.centre, e.position).setY(0);
+      if (_v5.lengthSq() > 1e-6) _v5.normalize(); else _v5.set(0, 0, 1);
+      c.tear(_v5, c.centre);
+      e._cmpBreached = true;
+      e.world?.notifyFloating?.(c.centre, 'DOWN', '#ffd88a');
+      return 'done';
+    },
+  },
+
+  spot: {
+    arg: 'none',
+    start(e) {
+      e._cmpVerbT = SPOT.hold;
+      e._cmpBeat = 0;
+      e._cmpSpotted = 0;
+      /* IT CLIMBS, if it is a body that flies. See the note above. */
+      if (e._flightState === 'stoop') e._flightState = 'cruise';
+    },
+    tick(e, dt) {
+      e._cmpVerbT = (e._cmpVerbT ?? SPOT.hold) - dt;
+      e._cmpBeat = (e._cmpBeat || 0) - dt;
+      if (e._cmpBeat <= 0) {
+        e._cmpBeat = SPOT.beat;
+        const from = (verbOwnerUp(e) ? e._cmpOwner.position : e.position);
+        e._cmpSpotted = eachHostile(e, from, SPOT.ring, (o) => {
+          _v5.copy(o.position).setY(o.position.y + (o.A?.hipHeight ?? 0.95) + 0.9);
+          e.world?.notifyFloating?.(_v5, o.A?.label ? o.A.label.toUpperCase() : 'CONTACT', '#a8f0ff');
+        });
+      }
+      return e._cmpVerbT <= 0 ? 'done' : undefined;
+    },
+  },
+
+  slice: {
+    arg: 'point',
+    refuse: (e, arg) => (sliceTarget(e.world, arg) ? null : 'there is nothing there it can turn'),
+    start(e, arg) { e._cmpCover = sliceTarget(e.world, arg); e._cmpVerbT = SLICE.work; },
+    station(e, out) {
+      const d = e._cmpCover;
+      if (!d?.mesh?.position) return false;
+      out.copy(d.mesh.position);
+      return true;
+    },
+    tick(e, dt) {
+      const d = e._cmpCover;
+      if (!d) return 'done';
+      if (d.opened) return 'done';
+      if (e.position.distanceToSquared(d.mesh.position) > SLICE.reach * SLICE.reach) return undefined;
+      e._cmpVerbT = (e._cmpVerbT ?? SLICE.work) - dt;
+      if (e._cmpVerbT > 0) return undefined;
+      d.breach();
+      e._cmpSliced = true;
+      return 'done';
+    },
+  },
+
+  tend: {
+    arg: 'friend',
+    refuse(e, arg) {
+      if (!arg?.position || arg.dead) return 'nothing of yours under your reticle';
+      if (!arg.downed && (arg.hp ?? 0) >= (arg.maxHp ?? 0)) return 'there is nothing wrong with him';
+      return null;
+    },
+    tick(e) {
+      const m = e._cmpMate;
+      if (!m || m.dead) return 'done';
+      if (!m.downed && (m.hp ?? 0) >= (m.maxHp ?? 0)) return 'done';
+      if (!e.reaction) startHeal(e, m);
+      return undefined;
+    },
+    /* THE JOB IS DROPPED WHEN THE ORDER IS. `_medicOn` is `startHeal`'s claim
+     * on the patient and a claim nobody released is a man no other medic will
+     * ever go to. */
+    stop(e) {
+      if (e.reaction?.kind === 'heal') {
+        if (e.reaction.patient?._medicOn === e) e.reaction.patient._medicOn = null;
+        e.reaction = null;
+        e.crouch = 0;
+      }
+    },
+  },
+
+  bolt: {
+    arg: 'none',
+    start(e) {
+      /* AWAY FROM WHATEVER IS NEAREST, and failing that away from you — a
+       * panic run has to go somewhere and "somewhere" is not toward the thing
+       * that caused it. Chosen ONCE: that is the straight line. */
+      const foe = nearestHostile(e, e.position, BOLT.pull);
+      const from = foe?.position || (verbOwnerUp(e) ? e._cmpOwner.position : null);
+      _v5.set(0, 0, 0);
+      if (from) _v5.subVectors(e.position, from).setY(0);
+      if (_v5.lengthSq() < 1e-6) _v5.set(Math.cos(e.facing || 0), 0, Math.sin(e.facing || 0));
+      _v5.normalize();
+      e._cmpPoint = new THREE.Vector3().copy(e.position).addScaledVector(_v5, BOLT.far);
+      e._cmpVerbT = BOLT.run;
+      /* AND THEIR EYES COME WITH IT — only the ones that were on YOU. */
+      const p = e._cmpOwner;
+      e._cmpDrew = p ? eachHostile(e, p.position, BOLT.pull, (o) => {
+        if (o.target !== p && o.compelled?.target !== p) return false;
+        o.compelled = { target: e, t: BOLT.run };
+      }) : 0;
+    },
+    /* THE RUN POINT IS THE STATION, so the move wrap drives it there with the
+     * wall slide, the stuck commit and the grade limit all still applying. */
+    station(e, out) {
+      if (!e._cmpPoint) return false;
+      out.copy(e._cmpPoint);
+      return true;
+    },
+    /* A PANIC RUN DOES NOT STOP TO FIGHT. */
+    allows: () => false,
+    tick(e, dt) {
+      e._cmpVerbT = (e._cmpVerbT ?? BOLT.run) - dt;
+      return e._cmpVerbT <= 0 ? 'done' : undefined;
+    },
+    stop(e) { e._cmpPoint = null; },
+  },
+
+  charge: {
+    arg: 'none',
+    /* ONLY WHAT IS ALREADY IN ITS JAWS' BAND — the archetype's own `preferred`
+     * upper edge, so a mount with a longer reach bites further and nothing
+     * here restates a distance. */
+    allows: (e, foe) => inJaws(e, foe),
+    tick(e, dt) {
+      const t = e.target;
+      if (!t || t.dead) return undefined;
+      /* IT DOES NOT WAIT ITS TURN. `attackTimer` is the brain's own pause
+       * between blows; a mount that has something in its teeth takes it. */
+      if (e.attackTimer > 0 && e.state === 'approach') e.attackTimer = 0;
+      /* AND WHEN SOMEBODY IS DRIVING, THE BRAIN NEVER RAN THIS FRAME. See the
+       * note above: the same function, called from the one tick that still
+       * runs. */
+      if (e.driven && typeof e._beastBrain === 'function') {
+        const ctx = e.world?._frameCtx;
+        if (ctx) e._beastBrain(dt, ctx, e.position.distanceTo(t.position));
+      }
+      return undefined;
+    },
+  },
+
+  climb: {
+    arg: 'point',
+    refuse: (e, arg) => (arg?.isVector3 ? null : 'no ground under your reticle'),
+    start(e) {
+      /* THE ARCHETYPE IS CLONED, never written through — see the note. */
+      if (e.A && e._cmpGrade === undefined) {
+        e._cmpGrade = e.A.grade ?? null;
+        e.A = { ...e.A, grade: 1 };
+      }
+    },
+    station(e, out) {
+      if (!e._cmpPoint) return false;
+      out.copy(e._cmpPoint);
+      return true;
+    },
+    /**
+     * ARRIVAL IS MEASURED IN THREE DIMENSIONS, and the plan distance is the
+     * whole reason why.
+     *
+     * Written as `hypot(dx, dz)` this called the job done the moment the
+     * animal was ABOVE OR BELOW the point rather than at it — which on the one
+     * kind of ground this verb exists for is exactly what happens. Measured:
+     * a varactyl sent at a 76° face walked into the hollow at its foot, ended
+     * 1.7 m from the point in plan and 7.4 m under it, and the order ended
+     * having climbed nothing. A verb about HEIGHT cannot measure arrival with
+     * the height thrown away.
+     */
+    tick(e) {
+      const at = e._cmpPoint;
+      if (!at) return 'done';
+      return at.distanceTo(e.position) <= CLIMB.done ? 'done' : undefined;
+    },
+    stop(e) {
+      if (e._cmpGrade === undefined) return;
+      if (e.A) e.A = { ...e.A, grade: e._cmpGrade ?? undefined };
+      e._cmpGrade = undefined;
+    },
+  },
+};
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  1. THE TWO WRAPS                                                          */
@@ -483,6 +1706,23 @@ function installCompanionMove(e) {
         e.swingAt.copy(t.position);
       }
     }
+    /**
+     * A COMPANION WORKING ON SOMEBODY IS NOT ALSO WALKING HOME.
+     *
+     * `CommandDirector.steer` opens with `if (e.reaction) return;` and its note
+     * is the whole argument: "everything below writes `wish`, `speed` and
+     * `crouch` from the slot he is supposed to be standing in, and a body that
+     * has just thrown itself flat would be walked back into the line while it
+     * lay there." This wrap is that same code for a body with no Trooper, so
+     * it owes the same deference — and it owes it to its own verb as well:
+     * TEND is `Reactions.startHeal`, which walks the droid to the patient and
+     * kneels it at 1.7 m, and a station walk written over the top of that is a
+     * medic sliding away from the man he is working on.
+     *
+     * `_move` and `_pose` still run, which is what makes the body travel and
+     * animate while the reaction owns it.
+     */
+    if (e.reaction) return move(dt, ctx);
     let was = null;
     const p = e._cmpOwner;
     const owned = !!(p && p.alive !== false && !p.dead && p.position);
@@ -859,6 +2099,25 @@ export class CompanionPack {
        * The two lengths come from the two tables that own them rather than
        * from numbers written here.
        */
+      /**
+       * AND THE KIND'S OWN VERB GETS ITS FRAME.
+       *
+       * Ten of the twelve need one — a walk to a door with nine seconds of
+       * work at the end of it, a beat between two slams, a clock on a bleed-out,
+       * eight seconds of paint — and this is the tick they get. It is here
+       * rather than in either wrap for the reason the pack exists: `world.props`
+       * runs after every body has moved and before anything draws, so a verb
+       * reads a settled frame instead of a half-stepped one.
+       *
+       * 'done' IS THE ONE RETURN VALUE, and it is the third door out of a verb:
+       * the animal has finished and goes back to your heel with no wheel press.
+       * That is what makes FLUSH a pounce rather than a posture and SLICE a job
+       * rather than a place to stand.
+       */
+      if (e._cmpDuty?.id === 'verb') {
+        const W = verbWork(e);
+        if (W?.tick?.(e, dt) === 'done') { endVerb(e); e._cmpDuty = null; }
+      }
       if (!e.target || e.target.dead) {
         const st = e.stateTime || 0;
         if (e.state === 'winded') { if (st > WIND_OPEN) e.state = 'approach'; }
