@@ -87,7 +87,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
 import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf } from './CompanionKinds.js';
-import { award, RANGED_MARK, rangedRun, temperSwing } from './Kennel.js';
+import { award, RANGED_MARK, rangedRun, readOne, temperSwing } from './Kennel.js';
 /* The cruise/stoop model, for the one kind that never lands — see `adopt`. */
 import { installFlight } from './Flight.js';
 /* The friendly-fire scaling every ally in the game already gets — see
@@ -378,6 +378,35 @@ export function orderCompanion(e, id, arg = null) {
   if (A === 'body' && (!arg || arg.dead || arg.team === e.team)) return 'nothing under your reticle';
   if (A === 'friend' && (!arg || arg === e || arg.dead || arg.team !== e.team)) return 'nobody of yours under your reticle';
   if (A === 'point' && !arg?.isVector3) return 'no ground under your reticle';
+  /**
+   * AND IF THE BODY IS NOT ON THIS MACHINE, THE ORDER TRAVELS INSTEAD.
+   *
+   * A joining player's animal is spawned, owned and ticked by the host — that
+   * is what makes it a body everybody can see rather than a puppet on one
+   * screen — so what stands here is the net-driven copy out of the snapshot,
+   * and writing `_cmpDuty` on it would move nothing. `Enemy.update` returns
+   * before `_think` and `_move` for a net-driven body, so both companion wraps
+   * are inert on it; the verb tick in the pack is not, and a verb started on a
+   * picture would run its clock, spend its work and finish, on a machine where
+   * the animal never moved.
+   *
+   * EVERY REFUSAL IS STILL DECIDED HERE, which is why this sits at the bottom
+   * of them rather than at the top of the function. The rung, the kind's duties
+   * and the shape of the argument are all facts about the record and the row —
+   * both of which the client is holding — so the player gets the same sentence
+   * under the same cursor at the same moment, and only orders that would have
+   * been obeyed cost a packet.
+   *
+   * IT IS THE `order` CHANNEL AND NOT A NEW ONE. Peer → host, stamped with
+   * `conn.peer` by `Net._sender`'s own rule, exactly as the six formation keys
+   * already are (`World.requestOrder`). `c` is what makes it a companion order;
+   * the host routes on it and answers with `applyCompanionOrder` below, and no
+   * peer can name a body — so nobody can order somebody else's animal.
+   */
+  if (e.netDriven) {
+    e.world?.net?.toHost?.({ t: 'order', c: id, a: wireArg(A, arg) });
+    return null;
+  }
   /* EVERY DOOR OUT OF A VERB GOES THROUGH `endVerb`, and this is two of the
    * three: a different order, and a HEEL. Called before the new duty is
    * written, so `stop` reads the verb it is putting back rather than the one
@@ -430,6 +459,76 @@ export function orderCompanion(e, id, arg = null) {
    * see `ask` and `DEEDS.order`. */
   ask(e, O);
   return null;
+}
+
+/**
+ * ── AN ORDER FOR AN ANIMAL ON SOMEBODY ELSE'S MACHINE ─────────────────────
+ *
+ * THREE SHAPES AND NOT FOUR, because `argKind` already reduced twelve verbs to
+ * four words and two of those four are the same thing on the wire: 'body' and
+ * 'friend' are both A BODY, and a body is its id. 'point' is three numbers and
+ * 'none' is nothing. So the encoding is read off the order's own answer rather
+ * than off a list kept here, which is the rule `orderArg` exists to state.
+ *
+ * AN ID AND NOT A POSITION for a body, because the two machines have agreed on
+ * enemy ids since the wire was written — `packSnapshot` sends `e.id` and
+ * `applySnapshot` writes the same string onto the replicated copy. Sending a
+ * position instead would mean the host guessing which of two droids standing
+ * together the player meant, at 90 ms of interpolation error.
+ */
+function wireArg(shape, arg) {
+  if (shape === 'point') return arg?.isVector3 ? [arg.x, arg.y, arg.z] : null;
+  if (shape === 'body' || shape === 'friend') return arg?.id ?? null;
+  return null;
+}
+
+/** The body a peer named, off the two lists the id could be in. */
+function bodyById(world, id) {
+  if (!world || typeof id !== 'string' || !id) return null;
+  return world.enemies?.find((b) => b.id === id)
+    || world.players?.find((b) => b.id === id) || null;
+}
+
+/**
+ * A PEER PRESSED ITS OWN COMPANION'S WHEEL — the host deciding, through the
+ * same `orderCompanion` every local wheel press goes through.
+ *
+ * `World.applyOrder` is the shape this copies and the sentence it makes is the
+ * same one: validation is NOT repeated here. `orderCompanion` already refuses
+ * an id that is not an order, an argument of the wrong shape and a duty the
+ * animal's rung or kind will not take, and it returns the refusal — writing a
+ * second copy of any of that on this side is how the two come to disagree
+ * about what an order is.
+ *
+ * WHAT THIS ADDS IS THE ONE THING THAT FUNCTION CANNOT KNOW: whose animal is
+ * whose. `peerId` is `conn.peer` — the connection the packet arrived on, which
+ * is the only thing on this wire a sender cannot choose (see `Net._sender`, and
+ * the two proven attacks in its note) — and the search is by OWNER, so a peer
+ * that sent every order in the game can only ever move the body the host put
+ * down for it. There is no body id in the message at all, which is the same
+ * reason `muster` carries a unit and never a purse.
+ *
+ * @returns {boolean} did an order actually land on a body
+ */
+export function applyCompanionOrder(world, peerId, msg) {
+  if (world?.netMode !== 'host' || !peerId || !msg?.c) return false;
+  const pack = world._companions;
+  if (!pack) return false;
+  const e = pack.list.find((b) => b && !b.dead && b._cmpOwner?.id === peerId);
+  if (!e) return false;
+  const a = msg.a;
+  /* THE GROUND HAS TO BE GROUND. Finite is not enough: a local HOLD is picked
+   * by a 120 m reticle raycast, and `[1e308, 0, 1e308]` is a perfectly finite
+   * point a peer can type. `stationFor` returns it, the move wrap walks to it,
+   * and the animal leaves the level for the rest of the run — its own, but on
+   * everybody's screen and in the host's simulation. The level's own bounds
+   * answer it, so this is the terrain's rule rather than a number chosen here;
+   * a point that fails falls through to `bodyById`, which cannot read an array,
+   * and the order comes back refused in the animal's own words. */
+  const point = Array.isArray(a) && a.length === 3 && a.every((n) => Number.isFinite(n))
+    && world.terrain?.inBounds?.(a[0], a[2]) !== false;
+  const arg = point ? new THREE.Vector3(a[0], a[1], a[2]) : bodyById(world, a);
+  return orderCompanion(e, msg.c, arg) === null;
 }
 
 /**
@@ -2110,7 +2209,30 @@ export class CompanionPack {
     this.hp = Infinity;
     this.seen = new WeakSet();
     this.list = [];
-    /** Did it get on the ship? See the note in `update`. */
+    /**
+     * Did it get on the ship? See the note in `update`.
+     *
+     * AND IN A SESSION A JOINING PLAYER CANNOT SEE THE SHIP, which is a stated
+     * hole rather than a bug in this line. `update` polls `_extracting`, which
+     * `Extraction` writes on the machine holding the body — the host — and no
+     * field on the snapshot carries it. So on a client this stays false for a
+     * run its animal really did leave on, and `keepCompanion`'s `alive && (won
+     * || aboard)` then reads a withdrawal as an abandonment.
+     *
+     * WHAT THAT COSTS, PLAINLY: a guest whose companion boards the transport
+     * on a run that is NOT won loses it, where the host in the same run keeps
+     * theirs. Every other ending agrees on both machines — a won run keeps it,
+     * a death kills it (`dead` and `hp` are on the snapshot), and a run nobody
+     * extracted from abandons it — so the divergence is exactly one ending in
+     * the modes that have an extraction at all.
+     *
+     * NOT PAPERED OVER HERE. The two fixes on offer are a `netMode` branch in
+     * the fold — the blanket refusal this feature just removed, wearing a
+     * narrower hat — or the host publishing the manifest, which is a new field
+     * on the wire for one boolean that changes once a run. The second is the
+     * right one and it is the next piece of work; inventing an answer in this
+     * line would be §2.3b, a field read as false because nothing writes it.
+     */
     this.aboard = false;
     /** Who last hurt it, for the epitaph. Written by the damage wrap. */
     this.lastKiller = null;
@@ -2125,6 +2247,23 @@ export class CompanionPack {
      * which is also the note about why nothing ever climbed a rung.
      */
     this.rec = null;
+    /**
+     * YOUR OWN ANIMAL, out of a list that now holds one per commander.
+     *
+     * A co-op host fields one body per peer that brought something, all in this
+     * one pack, because the host is the only machine that can spawn any of them
+     * — so `list[0]` stopped meaning "yours" the day a peer's animal could be
+     * put down first. `body0` reads this instead, and `keepCompanion` reads
+     * `body0`: a host who brought nothing and a guest who brought a massiff
+     * would otherwise have folded the HOST's stabled record against the GUEST's
+     * body and filed an epitaph for an animal that never left the kennel.
+     *
+     * `null` UNTIL SOMETHING CLAIMS IT, and that null is load-bearing rather
+     * than an initial value: it is the sentence "nothing of yours went out this
+     * run", which is what the fold has to be able to tell apart from "yours
+     * went out and did not come back". See `keepCompanion`.
+     */
+    this.mine = null;
     /** The rung it deployed on. See `adopt`. */
     this.rung0 = null;
     /**
@@ -2185,7 +2324,24 @@ export class CompanionPack {
     e._cmpRec = opts.rec || null;
     e._cmpSwing = temperSwing(opts.rec);
     e._cmpLeash = opts.leash ?? rungOf(opts.rec).leash;
-    if (opts.rec) this.rec = opts.rec;
+    /**
+     * AND THE THREE FIELDS THE FOLD READS ARE CLAIMED ONLY BY *YOUR* ANIMAL.
+     *
+     * `opts.mine` is false for a body the host is fielding on a PEER's behalf,
+     * and it has to be, because all of them live in this one pack. Without it
+     * the last peer to join overwrote `rec` and `rung0` with a card off
+     * somebody else's kennel, and `keepCompanion` — which reads `pack.rec` and
+     * refuses it unless its id matches the disk — would have fallen back to
+     * `k.live` and folded a run's worth of deeds into nothing. That is the
+     * exact defect the `pack.rec` line was added to fix, wearing a session.
+     *
+     * DEFAULTS TO TRUE, so every existing caller and every check that passes a
+     * record is byte for byte what it was: only the co-op host's per-peer spawn
+     * says otherwise, and it says so at the one call site that knows.
+     */
+    const mine = opts.mine !== false;
+    if (mine) this.mine = e;
+    if (opts.rec && mine) this.rec = opts.rec;
     /* THE RUNG IT WENT OUT ON, so the fold can say whether it came back a
      * different animal. `Trooper.award` returns the promotion it caused and
      * every caller in Command.js reads that answer; a companion's deeds are
@@ -2193,7 +2349,7 @@ export class CompanionPack {
      * to be held from one end of the run to the other instead. Kept here
      * rather than on the record because it is derived from xp and a derived
      * field on a record is a second source of truth that goes stale. */
-    if (opts.rec) this.rung0 = rungOf(opts.rec).id;
+    if (opts.rec && mine) this.rung0 = rungOf(opts.rec).id;
     /* HOW MUCH GROUND WAS ALREADY BEHIND YOU WHEN IT ARRIVED. A companion
      * fielded in area three has not crossed areas one and two, and a counter
      * that opened at zero would pay it for both on the next boundary. */
@@ -2287,6 +2443,30 @@ export class CompanionPack {
      * The animal is real and behaves identically; nothing about it is being
      * remembered, which is what having no record MEANS. */
     if (!rec) return;
+    /**
+     * AND NOTHING IS AWARDED OFF A NET-DRIVEN COPY, which is a stated hole and
+     * not an oversight.
+     *
+     * In a session your animal's BODY is the host's — it is spawned there, it
+     * is ticked there, and what reaches this machine is the snapshot: id, type,
+     * position, facing, hp, dead, velocity, team and a cast. Four of the six
+     * deeds below read fields that are NOT on that list. `downed` is not sent
+     * at all, so SCARRED's tally would count zero falls however many the animal
+     * took; `orderLanded` reads `e.target`, and a net-driven body's target is
+     * whatever `ctx.pickTarget` picked with the aim wrap switched off (the
+     * wrap lives inside `_think`, and `Enemy.update` returns before `_think`
+     * for a net-driven body), so it is not the target the order was about.
+     *
+     * A deed awarded off a field nothing writes is HANDOFF §2.3b exactly: the
+     * read degrades into a plausible wrong answer and the ladder fills up with
+     * xp the animal did not earn. So the honest answer is that in a session the
+     * animal's DEEDS are the host's field and do not cross, while everything
+     * the wire does carry — that it lived, that it died, that it got on the
+     * ship — is folded by `keepCompanion` on this machine as usual. A rung
+     * earned in co-op is the next piece of work; a rung invented in co-op would
+     * be worse than no rung at all.
+     */
+    if (e.netDriven) return;
     const p = e._cmpOwner;
     const up = ownerUp(e);
 
@@ -2539,14 +2719,36 @@ export class CompanionPack {
    */
   destroy() { this.dispose(); }
 
-  dispose() { this.list.length = 0; }
+  /* `mine` GOES WITH THE LIST, because it is a reading of it. `World.unload`
+   * destroys every prop and empties `props`, so a pack that survived a level
+   * change as a field on the world would otherwise hand `keepCompanion` a body
+   * that was disposed two levels ago — alive, undowned and gone. Null is the
+   * true sentence there: nothing of yours is on this field. */
+  dispose() { this.list.length = 0; this.mine = null; }
 
   /**
-   * THE ONE BODY, for the fold to ask about. A getter rather than a field so
-   * there is no second place that can be stale: the list is the truth and this
-   * is a reading of it.
+   * THE ONE BODY, for the fold to ask about — and "the one" is YOURS now that
+   * a session puts up to four of them in this list.
+   *
+   * It used to be `list[0]`, which was the same body for as long as there
+   * could only be one. `adopt` writes `mine` at the one door every companion
+   * comes through and only for the animal the local player brought, so this
+   * cannot pick a peer's.
+   *
+   * IT KEEPS POINTING AT A BODY THAT HAS DIED, which is the difference between
+   * this and the old reading and is the whole reason the fold can tell two
+   * cases apart. `update` splices a dead animal out of `list`, so `list[0]`
+   * went null on a death and null on a run where nothing was ever fielded, and
+   * `keepCompanion` read both as "it did not come home". Now a death is a body
+   * with `dead` set and an empty-handed run is `null`.
+   *
+   * (`HUD.js:2416` asks the same question of the same list, in its own three
+   * clauses, so that it can put the plate and the order wheel on your animal
+   * rather than a peer's. It is the second copy of this rule and it is out of
+   * this change's blast radius; it is named here so the next hand that touches
+   * that file points it at this getter instead.)
    */
-  get body0() { return this.list[0] || null; }
+  get body0() { return this.mine; }
 }
 
 /** Hang a pack on the world, once. */
@@ -2566,6 +2768,113 @@ export function attachCompanions(world) {
  * path as everything else — and then `team` and the two wraps are the whole of
  * what makes it yours.
  */
+/**
+ * ══ ONE COMPANION PER COMMANDER — THE HOST'S HALF ═══════════════════════════
+ *
+ * *"each commander brings one"* — COMPANIONS.md, and this is where it becomes
+ * true. The host is the only machine that can put down a body anybody else
+ * will ever see, so it fields every animal in the session: its own through
+ * `main.fieldFromKennel`, and one per peer here.
+ *
+ * IT IS HERE AND NOT IN main.js FOR THE REASON `World.applyHit` IS NOT IN
+ * main.js. That rule was eight lines of policy living in a closure inside the
+ * entry point, "where no check in the repository could reach it", and it spent
+ * the whole life of the protocol applying a shove as a bare number from
+ * nobody. A handler in main.js should route and nothing else; this is a rule
+ * about who owns which body, and `tools/checks/coop.mjs` drives it directly.
+ *
+ * THE PEER'S OWN RECORD BUILDS THE PEER'S OWN ANIMAL. The card crossed on the
+ * roster beside `look` and `team` (`Net.packCompanionCard`), so a guest's
+ * massiff arrives with the guest's name on it, the guest's coat, the guest's
+ * rung on its leash and the guest's tempers in its swing — not a copy of the
+ * host's, which is what one shared setting produced and is the whole defect
+ * this closes.
+ *
+ * `readOne` IS THE VALIDATION AND THERE IS NO SECOND COPY OF IT. A card off
+ * the wire is a stranger's claim about a save file, and that function is
+ * already the door every save file comes through: every field clamped, an
+ * unreadable record answered with null rather than a repaired one. Its own
+ * note gives the number that matters — a stored xp of 5000 is a companion that
+ * starts SWORN — and without it one peer could put a rope three times as long
+ * as anybody else's on its animal. Called, not restated (HANDOFF §2.4).
+ *
+ * `mine: false` IS THE OTHER LOAD-BEARING ARGUMENT. Every one of these bodies
+ * lives in the host's single `CompanionPack`, and that pack's `rec`, `rung0`
+ * and `mine` are what `keepCompanion` folds — they belong to the animal THIS
+ * machine owns. Without the flag the last peer to join overwrites them with a
+ * card off somebody else's kennel, and the host's own run folds into nothing.
+ *
+ * ONCE PER PEER, LATCHED ON THE AVATAR. A dead companion is spliced out of the
+ * pack's list, so "is one already out for this peer" cannot be answered by
+ * searching that list: it would field a fresh animal every time one died,
+ * which is a kennel nothing can be lost from and a body count with no ceiling.
+ *
+ * @param roster  `Net.roster` — the host's own ledger, so `companion` on it is
+ *                what each peer said it was bringing.
+ * @param selfId  the host's own peer id, skipped: the host's animal comes from
+ *                its kennel at deploy and not from a card it sent itself.
+ * @returns {Array<[string, string]>} peer id → the enemy id fielded for it,
+ *                for the caller to publish through `Net.setCompanionBodies`.
+ *                Empty on every call but the handful that put something down.
+ */
+export function fieldForPeers(world, roster = [], selfId = null) {
+  const out = [];
+  if (world?.netMode !== 'host') return out;
+  for (const r of roster) {
+    if (!r || !r.companion || (selfId && r.id === selfId)) continue;
+    const owner = world.remotes?.get(r.id);
+    if (!owner?.position || owner._cmpFielded) continue;
+    owner._cmpFielded = true;
+    const rec = readOne(r.companion);
+    if (!rec) continue;
+    const e = fieldCompanion(world, owner, rec.kind, { rec, mine: false });
+    if (e) out.push([r.id, e.id]);
+  }
+  return out;
+}
+
+/**
+ * ══ ONE COMPANION PER COMMANDER — THE JOINING PLAYER'S HALF ═════════════════
+ *
+ * Your animal is out there, spawned by the host, and on this machine it is an
+ * ordinary net-driven Enemy in `world.enemies` — one of thirty, with nothing on
+ * it to say whose it is. The roster says WHICH one (`cmp`, written by the host
+ * through `Net.setCompanionBodies`), and this turns that id back into your
+ * companion. Until it does:
+ *
+ *   the PLATE over it and the ORDER WHEEL both look for a body in `pack.list`
+ *   whose `_cmpOwner` is you (HUD.js), so a joining player has no wheel at all
+ *   — the animal is standing there and cannot be spoken to.
+ *   the FOLD reads `pack.mine`, so `keepCompanion` has nothing of yours to ask
+ *   about and correctly declines to touch the record.
+ *
+ * NOTHING IS SIMULATED BY ADOPTING IT, WHICH IS THE POINT. `Enemy.update`
+ * returns inside its net-driven branch before `_think` and `_move`, and both
+ * companion wraps are instance wraps of exactly those two — so the aim and the
+ * steering stay the host's. What adoption adds is the record, the kind row and
+ * the ownership: three facts and no authority.
+ *
+ * IT IS RETRIED rather than driven off one event, because the two halves
+ * arrive separately and their order is not ours to arrange: the roster
+ * carrying `cmp` goes out the moment the host spawns, and the BODY carrying
+ * that id arrives on the next snapshot after it. `pack.mine` set is the stop
+ * condition, so the cost after the first success is one property read.
+ *
+ * @param rec  the record out of THIS machine's kennel — the animal's history
+ *             is per machine and stays that way, which is why it is passed in
+ *             rather than looked up: this file does not read the store.
+ */
+export function adoptCompanionBody(world, roster = [], selfId = null, rec = null) {
+  if (world?.netMode !== 'client' || !world.player) return null;
+  if (world._companions?.mine) return world._companions.mine;
+  const seat = roster.find((r) => r && r.id === selfId);
+  if (!seat?.cmp) return null;
+  const body = world.enemies?.find((b) => b.id === seat.cmp);
+  if (!body) return null;
+  return attachCompanions(world).adopt(body, world.player,
+    { kind: rec?.kind || body.A?.companionKind, rec });
+}
+
 /* NO DEFAULT KIND. `kind = 'massiff'` was the one place this file knew a kind
  * by name, and `companions: every kind is a row` caught it: a file with a
  * favourite kind is a file that will grow an `else if` for the next one. The

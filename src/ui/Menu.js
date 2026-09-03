@@ -1192,7 +1192,10 @@ export const SETTING_READERS = {
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
   troopNames:      ['ui/HUD.js', "world.settings?.troopNames ?? 'aimed'"],
   saberSet:        ['game/World.js', 'saberSet: this.settings.saberSet'],
-  companion:       ['main.js', 'const want = w.settings?.companion'],
+  /* The kind you picked; `myCompanion` turns it into the animal, and it is the
+   * one reader — deploy, the co-op handshake and the joining player's own
+   * adoption all ask it rather than reading the key a second time. */
+  companion:       ['main.js', 'const want = s?.companion'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -5643,16 +5646,32 @@ export class Menu {
   /**
    * WHAT A SESSION DOES TO YOUR COMPANION, SAID BEFORE YOU JOIN.
    *
-   * The settled position is FIELD IT FOR EVERYBODY, FOLD IT FOR NOBODY: one
-   * companion per connected player, and `keepCompanion` returns early in a
-   * session — no bond earned, no death recorded, no epitaph, and a client's
-   * stored animal untouched. It neither gains a run nor loses its life.
+   * IT USED TO SAY SOMETHING ELSE, and the something else was true: "in a
+   * session only the host's companion takes the field. Yours stays in the
+   * kennel." That was the shape of the feature — one shared setting, one body,
+   * the host's — and the line existed so a joining player was told rather than
+   * left to discover their animal was missing.
    *
-   * That is the conservative answer and the only one that cannot cause a
-   * durable loss the player did not cause. But a player who discovers it
-   * AFTERWARDS has been cheated of an evening, which is the same argument
-   * `notSaving()` makes one panel across: a player who is told is not being
-   * cheated.
+   * COMPANIONS.md's position is *"each commander brings one"* and that is what
+   * ships now: the choice is per player (Net.LOCAL_KEYS), the card crosses on
+   * the roster, and the host fields one body per peer that brought something.
+   * So the sentence that has to be said changed with it, and the two halves of
+   * it are different halves:
+   *
+   *   YOUR ANIMAL IS THERE. On the field, beside you, on everybody's screen,
+   *   answering your own order wheel and nobody else's.
+   *   WHAT IT DOES THERE IS NOT KEPT. `keepCompanion` folds on your own
+   *   machine — the run counts, and an animal that dies out there is gone —
+   *   but no xp is earned, because the deeds are measured off a body this
+   *   machine is only watching. `CompanionPack._ledger` says why at length.
+   *
+   * BOTH ROLES ARE TOLD THE SAME THING NOW, because both get the same thing,
+   * and that is the whole point of the change. A line that still split them
+   * would be describing a limitation that no longer exists.
+   *
+   * A player who finds any of this out AFTERWARDS has been cheated of an
+   * evening, which is the argument `notSaving()` makes one panel across: a
+   * player who is told is not being cheated.
    */
   /**
    * A DELETE DOOR WITH A REAL CALLER, WHICH NOTHING DURABLE IN THIS TREE HAS.
@@ -5707,17 +5726,10 @@ export class Menu {
     if (!el) return;
     const live = !!this._netMode;
     const has = this.s.companion && this.s.companion !== 'none';
-    /* AND THE TWO ROLES ARE TOLD DIFFERENT TRUTHS, because they get different
-     * things. A host's animal is on the field; a client's stays in the kennel,
-     * for the reason `fieldFromKennel` gives — a body spawned on a client is a
-     * ghost nobody else can see. Telling a client "your companion comes with
-     * you" would be the false promise this line exists to prevent. */
     el.textContent = !(live && has) ? ''
-      : this._netMode === 'client'
-        ? 'In a session only the host\u2019s companion takes the field. Yours stays in the kennel — '
-          + 'it will not earn a rung, and it cannot be lost.'
-        : 'In a session your companion comes with you and nothing that happens to it is kept — '
-          + 'it will not earn a rung, and it cannot be lost.';
+      : 'In a session your companion comes with you — every commander brings their own, and the '
+        + 'host puts it on the field so everyone can see it. It will not earn a rung out there, '
+        + 'and it can be lost.';
     el.style.display = el.textContent ? '' : 'none';
   }
 

@@ -19,7 +19,7 @@ import { DIFFICULTY } from './game/Combat.js';
 import { HUD } from './ui/HUD.js';
 import { Menu, loadSettings, saveSettings, applyFeelSettings, bladeCeiling, BLADE_CAP,
   VICTORY_TITLE, LINE_LOST_TITLE } from './ui/Menu.js';
-import { Net, RemoteAvatar, packLook, sessionPart } from './net/Net.js';
+import { Net, RemoteAvatar, packCompanionCard, packLook, sessionPart } from './net/Net.js';
 import { boonById, drawBoons, BOSS_EVERY, MODES } from './game/Waves.js';
 import { theatreFor, LEVELS } from './game/Levels.js';
 /* THE SHAPE OF ONE SITTING — FLAGSHIP §5. A leaf that imports nothing of the
@@ -37,7 +37,8 @@ import * as Company from './game/Company.js';
 /* The companion's durable record and its fold — see `foldCompanion`. */
 import { keepCompanion, load as loadKennel, rungOf, temperById,
   adopt as adoptCompanion } from './game/Kennel.js';
-import { fieldCompanion } from './game/Companions.js';
+import { adoptCompanionBody, applyCompanionOrder, fieldCompanion,
+  fieldForPeers } from './game/Companions.js';
 import { COMPANION_KINDS } from './game/CompanionKinds.js';
 /* …AND THE SLATE, the company's other half: the pre-rolled recruits the next
  * run will field. Same split — this file owns the store boundary, the game is
@@ -1190,8 +1191,8 @@ async function deploy(opts = {}) {
   menu.hideDeath();
   screens.clear();
 
-  if (net.enabled && net.connected) {
-    world.attachNet(net, net.isHost ? 'host' : 'client');
+  if (netModeNow()) {
+    world.attachNet(net, netModeNow());
     // …and `world.levelKey` for the same reason: a host whose own key missed
     // and fell back would otherwise tell every client to load the key that
     // missed, and each of them would fall back independently. They would agree
@@ -1901,76 +1902,140 @@ function foldCompanion(stats = null) {
 }
 
 /**
- * Put the Kennel's live animal down beside a player, if there is one and the
- * mode allows it.
+ * WHICH ANIMAL YOU ARE TAKING — the setting and the store, in the one place
+ * they meet, and asked by four callers now instead of one.
  *
- * A COMPANION IS REFUSED WHERE THE MODE REFUSES EVERYTHING ELSE. The dojo and
- * the duel are the two that take nothing in with you — `MODES[mode].dojo` and
- * `.solo` are the same two flags `commandConfig` reads to refuse a contingent,
- * called rather than restated, so a twelfth mode gets the same answer without
- * this line being edited.
+ *   the setting says NONE          → nothing comes with you, whatever is in
+ *                                    the kennel. The record is left alone,
+ *                                    so a companion you stabled is still
+ *                                    there when you pick it again.
+ *   the setting names a kind and
+ *   the kennel holds that kind     → THAT animal, with its name, its rung,
+ *                                    its tempers and its history.
+ *   the setting names a kind and
+ *   the kennel holds nothing       → a fresh one is adopted here. This is
+ *                                    how you get your first.
+ *   the setting names a kind and
+ *   the kennel holds a DIFFERENT
+ *   one                            → the stored one is left where it is and
+ *                                    a fresh one of the chosen kind is
+ *                                    adopted. `adopt` writes `live`, so the
+ *                                    old animal is retired rather than
+ *                                    killed: no epitaph, no `lost` count.
+ *                                    Swapping pets is not a death.
+ *
+ * A COMPANION IS REFUSED WHERE THE MODE REFUSES EVERYTHING ELSE, and the test
+ * is here rather than at the four call sites for the reason it was here
+ * before: `MODES[mode].dojo` and `.solo` are the same two flags
+ * `commandConfig` reads to refuse a contingent, called rather than restated,
+ * so a twelfth mode gets the same answer without any of this being edited.
+ *
+ * IT TAKES A SETTINGS BLOB AND NOT A WORLD, because one of the four callers
+ * has no world: the card a joining player sends at the handshake is sent from
+ * the lobby, and the answer to "what am I bringing" is the same one either
+ * way. `world.settings` is `{...settings, ...session}` and `companion` is on
+ * neither list's shared half any more, so the two blobs agree about this key by
+ * construction — see Net.LOCAL_KEYS.
+ */
+function myCompanion(s = settings) {
+  const M = MODES[s?.mode];
+  if (M?.dojo || M?.solo) return null;
+  const want = s?.companion;
+  if (!want || want === 'none' || !COMPANION_KINDS[want]) return null;
+  const k = loadKennel();
+  return (k.live && k.live.kind === want) ? k.live : adoptCompanion(want);
+}
+
+/** It is standing beside you, and this is the one line that says so. */
+function greetCompanion(w, rec) {
+  const name = rec.name || COMPANION_KINDS[rec.kind]?.label || 'your companion';
+  w.notify?.(`${name.toUpperCase()} IS WITH YOU`,
+    `${rungOf(rec).label.toLowerCase()} — ${rec.runs} run(s) together`);
+}
+
+/**
+ * Put the Kennel's live animal down beside the LOCAL player, if there is one
+ * and the mode allows it.
+ *
+ * A CLIENT STILL DOES NOT SPAWN ONE, AND THAT IS NOW A RULE RATHER THAN A
+ * LIMITATION — and it is also the first time the rule has ever been in force.
+ * `spawnEnemy` on a client produces a body the host has never heard of: nobody
+ * else can see it, nothing bills damage for it and the next snapshot does not
+ * mention it. So the client says what it is bringing and the HOST puts it down
+ * — `fieldForPeers` — which is what makes it an animal in the session rather
+ * than a puppet on one screen. The body then comes back here in the snapshot
+ * like every other body and `adoptMyCompanion` claims it.
+ *
+ * `netModeNow()` AND NOT `w.netMode`, for the reason that reader's own note
+ * gives: this runs inside `buildWorld`, and nothing has told the world it is in
+ * a session yet. The old fence tested `w.netMode === 'client'` here and was
+ * therefore unfailable — a guest has been fielding a private ghost on every
+ * deploy for as long as the line has existed.
+ *
+ * The card is published rather than merely computed, because the one at the
+ * handshake was a photograph of the kennel as it was THEN: a player whose
+ * first companion is adopted on the way out of the menu — the third row of the
+ * table above — has nothing to send until this moment, and a player who
+ * stables one after joining has something to take back. `Net.setCompanion` is
+ * a no-op when nothing changed, so the common deploy sends nothing.
  */
 function fieldFromKennel(w, player) {
   if (!w || !player) return null;
-  const M = MODES[w.settings?.mode];
-  if (M?.dojo || M?.solo) return null;
-  /**
-   * A CLIENT DOES NOT FIELD ONE, AND THIS IS A LIMITATION RATHER THAN A RULE.
-   *
-   * COMPANIONS.md's settled position is "each commander brings one", and it is
-   * not what ships here. Two things pull against it and both are structural:
-   *
-   *   THE BODY IS THE HOST'S. `spawnEnemy` on a client produces a GHOST — the
-   *   world's own word, at World.js:3400 — because bodies are host-authoritative
-   *   and a client that spawned a real one would be simulating something
-   *   nobody else can see. So a client fielding its own animal gets a puppet
-   *   that its own screen believes in and no other screen has.
-   *
-   *   AND `companion` IS ON `SESSION_KEYS`, which means ONE value for the
-   *   whole session — the host's. Fielding one per player off a shared key
-   *   would give every commander the HOST's kind, which is not "each
-   *   commander brings one", it is one kind wearing four bodies.
-   *
-   * The honest v1 is the host's companion, fielded once, visible to everybody
-   * — and SAYING SO on the lobby line rather than letting a client discover
-   * their animal is missing. Making it per-player needs `companion` split into
-   * a per-peer field on the roster beside `look` and `side`, and a host-side
-   * spawn per peer; that is a real change to the wire and it is written down
-   * here rather than half-done.
-   */
-  if (w.netMode === 'client') return null;
-  /**
-   * THE SETTING PICKS THE KIND; THE RECORD IS THE ANIMAL — and this is the one
-   * place the two meet.
-   *
-   *   the setting says NONE          → nothing comes with you, whatever is in
-   *                                    the kennel. The record is left alone,
-   *                                    so a companion you stabled is still
-   *                                    there when you pick it again.
-   *   the setting names a kind and
-   *   the kennel holds that kind     → THAT animal, with its name, its rung,
-   *                                    its tempers and its history.
-   *   the setting names a kind and
-   *   the kennel holds nothing       → a fresh one is adopted here. This is
-   *                                    how you get your first.
-   *   the setting names a kind and
-   *   the kennel holds a DIFFERENT
-   *   one                            → the stored one is left where it is and
-   *                                    a fresh one of the chosen kind is
-   *                                    adopted. `adopt` writes `live`, so the
-   *                                    old animal is retired rather than
-   *                                    killed: no epitaph, no `lost` count.
-   *                                    Swapping pets is not a death.
-   */
-  const want = w.settings?.companion;
-  if (!want || want === 'none' || !COMPANION_KINDS[want]) return null;
-  const k = loadKennel();
-  const rec = (k.live && k.live.kind === want) ? k.live : adoptCompanion(want);
+  const rec = myCompanion(w.settings);
+  /* PUBLISHED BEFORE THE `!rec` RETURN, AND ON BOTH ENDS, because "I am
+   * bringing nothing" is a thing that has to be sendable. A player who joins
+   * with a massiff in the kennel and then stables it would otherwise leave the
+   * host holding the card they arrived with, and the host would field an animal
+   * its owner has put away — a body on everybody's screen with no plate over
+   * it, no wheel pointed at it and no fold to answer for it. `setCompanion` is
+   * a no-op when nothing changed and `packCompanionCard(null)` is null, so the
+   * common case sends nothing. Both ends because the roster is what the LOBBY
+   * lists, and a host whose own line said something else would be the only
+   * entry on it that was not true. */
+  if (netModeNow()) net.setCompanion(packCompanionCard(rec));
+  if (netModeNow() === 'client') return null;
   if (!rec) return null;
   const e = fieldCompanion(w, player, rec.kind, { rec });
   if (!e) return null;
-  const name = rec.name || COMPANION_KINDS[rec.kind]?.label || 'your companion';
-  w.notify?.(`${name.toUpperCase()} IS WITH YOU`, `${rungOf(rec).label.toLowerCase()} — ${rec.runs} run(s) together`);
+  greetCompanion(w, rec);
+  return e;
+}
+
+/**
+ * ONE COMPANION PER COMMANDER, ROUTED — the policy is in Companions.js.
+ *
+ * Both of these were written here first and both moved out, for the reason
+ * `World.applyHit` moved out of a closure in this file: a rule that lives in
+ * the entry point is a rule no check in the repository can reach, and this one
+ * decides which body belongs to which player in a four-way session. What is
+ * left here is what belongs here — the store, the wire and the notify:
+ *
+ *   `fieldForPeers` needs `Net.roster` (whose cards) and answers with the ids
+ *   the host must publish; `Net.setCompanionBodies` is the publishing.
+ *   `adoptCompanionBody` needs the record out of THIS machine's kennel, which
+ *   is a `localStorage` read and therefore this file's job by the same split
+ *   `Progress` and `Company` are kept on.
+ */
+function fieldForPeersHere(w) {
+  if (!w || w.netMode !== 'host' || !net.connected) return 0;
+  const put = fieldForPeers(w, net.roster, net.peer?.id);
+  /* AND THE HOST SAYS WHICH BODY EACH ONE BECAME. Until that reaches the peer,
+   * their animal is one more net-driven Enemy in their snapshot with nothing on
+   * it to say whose it is — no plate, no order wheel, and nothing for their own
+   * fold to ask about. Only when something was actually put down: this runs off
+   * the avatar packet, and a roster broadcast per packet per peer would be the
+   * cost of the wheel it is there to enable. */
+  if (put.length) net.setCompanionBodies(new Map([...net.cmpBodies, ...put]));
+  return put.length;
+}
+
+function adoptMyCompanion(w) {
+  if (!w || w.netMode !== 'client') return null;
+  if (w._companions?.mine) return w._companions.mine;
+  const rec = myCompanion(w.settings);
+  if (!rec) return null;
+  const e = adoptCompanionBody(w, net.roster, net.peer?.id, rec);
+  if (e) greetCompanion(w, rec);
   return e;
 }
 
@@ -2388,6 +2453,26 @@ function wireNet() {
      * to whoever is left on the same roll. See its note.
      */
     world.command?.dismissCommander?.(r);
+    /**
+     * …AND SO DOES THEIR ANIMAL, which is the same defect one class smaller.
+     *
+     * A companion's station, its leash, its ward ring and its whole ledger are
+     * measured from `_cmpOwner`, and two lines up that owner was disposed and
+     * taken out of `world.players`. Left alone the body goes on heeling to a
+     * drawing nothing updates — standing 3.4 m behind the last place a player
+     * who has gone home happened to be facing, for the rest of the run, on
+     * every machine in the session, because the host is the one simulating it.
+     *
+     * IT IS RETIRED AND NOT KILLED. `dispose` takes the body out of the world
+     * without a death: there is no epitaph here to write, because the record it
+     * belongs to is on the machine that just left and this one has never held
+     * it. The peer's own `keepCompanion` is what decides what became of it, and
+     * with `pack.mine` never set over there it correctly declines to decide
+     * anything at all.
+     */
+    for (const b of (world._companions?.list || [])) {
+      if (b?._cmpOwner === r) b.dispose?.();
+    }
     world.notify('A JEDI HAS FALLEN AWAY', `${r.name} left the fight`);
   });
   /**
@@ -2471,7 +2556,14 @@ function wireNet() {
     }
     deploy();
   });
-  net.on('snapshot', (msg) => world?.applySnapshot(msg));
+  net.on('snapshot', (msg) => {
+    world?.applySnapshot(msg);
+    /* AND OUR OWN ANIMAL, THE FRAME ITS BODY ARRIVES. The roster says which id
+     * is ours and the snapshot is what puts that id in `world.enemies`, so this
+     * is the first moment both halves exist. Returns on a set `pack.mine` after
+     * that, which is every snapshot but one. See `adoptMyCompanion`. */
+    adoptMyCompanion(world);
+  });
   net.on('claim', (peerId, msg) => world?.applyClaim(peerId, msg));
   /**
    * COMMAND, WHICH HAD NO WIRE AT ALL.
@@ -2487,7 +2579,21 @@ function wireNet() {
    * standing when the connection opened.
    */
   net.on('army', (msg) => world?.applyArmy(msg));
-  net.on('order', (peerId, msg) => world?.applyOrder(peerId, msg));
+  /**
+   * …AND THE SAME CHANNEL CARRIES A COMPANION ORDER, which is the other thing
+   * a player who is not holding the bodies can ask for.
+   *
+   * ONE MESSAGE TYPE AND NOT TWO, because it is one sentence — "I pressed an
+   * order key and the thing it moves is on your machine" — and because `order`
+   * is already the only peer→host message stamped by `conn.peer` for exactly
+   * the reason a companion order needs it: the host has to know WHOSE. `c` is
+   * the discriminator and the two branches are total, so neither reads the
+   * other's fields; that is the split `muster` argues at length in Net.js.
+   */
+  net.on('order', (peerId, msg) => {
+    if (msg?.c) applyCompanionOrder(world, peerId, msg);
+    else world?.applyOrder(peerId, msg);
+  });
   /* The meeting's own state — rounds, clock, who took the field. Host → peers
    * only; `Net` refuses it on the host for the reason its own note gives. */
   net.on('match', (rec) => world?.applyMatch(rec));
@@ -2578,17 +2684,62 @@ function wireNet() {
       }
     }
     r.push(msg, performance.now() / 1000);
+    /* …AND WHAT THEY BROUGHT WITH THEM. The third idempotent per-player thing
+     * the host owes a peer, and it is here for the reason the two above are:
+     * an animal is fielded BESIDE a body, and the body does not exist until
+     * this packet. Latched on the avatar, so it is one property read per
+     * packet once the peer's companion is out. See `Companions.fieldForPeers`. */
+    if (world.netMode === 'host') fieldForPeersHere(world);
   });
 }
 wireNet();
 
+/**
+ * WHICH END OF A SESSION THIS MACHINE IS — asked of `net`, because the WORLD
+ * does not know yet, and that is not a nicety.
+ *
+ * `world.netMode` has exactly one writer in the tree, `World.attachNet`, and
+ * `deploy()` calls it 35 lines AFTER `buildWorld` has returned. `buildWorld` is
+ * where the level is loaded, the player is spawned and the companion is put
+ * down — so every reader of `world.netMode` that runs during a build is reading
+ * `undefined`.
+ *
+ * WHAT THAT COST, AND IT IS §2.3b EXACTLY. `fieldFromKennel` opened with
+ * `if (w.netMode === 'client') return null` — the line whose comment explained
+ * at length why a joining player must not spawn its own animal — and that line
+ * COULD NOT FIRE. A guest fielded a private companion on every deploy: a body
+ * the host had never heard of, absent from every snapshot, invisible on every
+ * other screen, taking no damage anybody else could see, while the lobby card
+ * told the player their animal was staying in the kennel. A check that reads a
+ * field nothing has written yet reports the fallback and calls it a rule.
+ *
+ * ONE READER, TWO CALLERS, so the question cannot be answered two ways: this
+ * and `attachNet`'s own guard below are the same expression now.
+ */
+const netModeNow = () => (net.enabled && net.connected ? (net.isHost ? 'host' : 'client') : null);
+
 /** The character sheet this player carries into a session. See Net.LOOK_KEYS. */
 const localLook = () => packLook(settings);
+
+/**
+ * …AND THE ANIMAL THEY CARRY IN WITH IT. See Net.packCompanionCard.
+ *
+ * `myCompanion` and not `settings.companion`, because a kind is not an animal:
+ * the host has to build the one in YOUR kennel, with your name on it and your
+ * rung on its leash, and only the store knows which that is. It is the same
+ * reader `fieldFromKennel` uses at deploy, so the card you send and the animal
+ * you would field alone cannot come apart.
+ *
+ * NULL IN THE MODES THAT TAKE NOTHING IN WITH YOU, for free: `myCompanion`
+ * asks `MODES` first. A card sent from a lobby set to the dojo is a card the
+ * host would field into a mode that refuses it.
+ */
+const localCompanion = () => packCompanionCard(myCompanion());
 
 async function hostSession() {
   menu.netStatus('opening a session…');
   try {
-    const code = await net.host(playerName(), sessionPart(settings), localLook());
+    const code = await net.host(playerName(), sessionPart(settings), localLook(), localCompanion());
     menu.netCode(code);
     menu.netStatus('session open — share the code, then Ignite', 'ok');
     menu.netSession('host');
@@ -2616,7 +2767,7 @@ function leaveSession() {
 async function joinSession(code) {
   menu.netStatus(`connecting to ${code}…`);
   try {
-    await net.join(code, playerName(), localLook());
+    await net.join(code, playerName(), localLook(), localCompanion());
     menu.netCode(code);
     menu.netStatus('connected — the host starts the run', 'ok');
     // A client does not own the wave, so the pause card stops offering to
