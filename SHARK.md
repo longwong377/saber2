@@ -3,7 +3,7 @@
 A plan, not a build. Version 2, 3 Sep, after the player's second brief. Written
 against this tree and against `longwong377/Opus-5` at
 `claude/aaa-game-development-j6y2ml` (7c3df7e). Every number is measured off one
-of the two repos. The person carrying it out is a different session; §13 is what
+of the two repos. The person carrying it out is a different session; §15 is what
 to hand them. **If a place, a rule or a number is not in this file, do not invent
 it — ask.**
 
@@ -583,7 +583,82 @@ quality tier — never the ink pass and never the ragdoll.
 
 ---
 
-## 13. What to hand the executing session
+## 13. HOW TO WORK IT — for the session that builds this
+
+The Opus-5 repo's own post-mortem (`docs/SHIP-PLAN.md` 4h) is the warning:
+*"every gate measured coverage or correctness, and both are perfectly satisfied
+by one generic thing repeated seventy-eight times … stop sending agents at
+defects … a generator is finished when its OUTPUT is various, not when its
+output is correct."* So:
+
+1. **One place at a time, finished, looked at.** A place is done when it has its
+   geometry, its colliders, its bodies, its life table, its verb, AND a
+   screenshot at eye height from its door that the builder has looked at with
+   the Read tool and judged against §3.2's look line. Never "all the rooms'
+   shells, then all the life". Commit per place.
+2. **The player judges by pictures, per deck.** At the end of steps 1, 3, 5 and
+   6 the builder sends a contact sheet — every place on that deck from its door
+   at 13:00 station time — plus the pack. The player's verdict on the sheet
+   gates the next deck; a green suite does not.
+3. **Rule 4 is measured, not felt.** Run the distinguishability check on every
+   pair before calling a deck done; a pair over 0.85 is a place to redesign,
+   not a threshold to raise.
+4. **Lanes by deck, not by system**, and never more than three on the box (the
+   render lock is one lock; HANDOFF §2.6b). The cast lanes (Tier A) are the
+   exception: one species per lane, in worktrees, on `Bodies.js` only.
+5. **No new instrument for a new feature to look good in.** The checks in §5.3
+   reuse `characters.mjs`'s IoU, `deckcast.mjs`'s timing, `frame-ledger`'s
+   split, `_frame.mjs`'s browser line. A budget nobody has failed is not a
+   budget.
+6. **Commit the half-state** when a limit kills a lane (HANDOFF §5.000's first
+   trap); the remote is the only thing that survives the container.
+7. **Read `HANDOFF.md` §2 before touching a tool** — `--import
+   ./tools/register.mjs` always; `index.play.html` is the page; `pkill -f`
+   kills your own shell; frames are not seconds.
+
+## 14. EASY TO FORGET — and each one is the difference between built and lived in
+
+- **Sound.** Each deck has its own ambient bed (`DeckAudio`'s pattern: a bed,
+  vents, a PA with `gap`): the concourse's crowd murmur and market calls, the
+  promenade's hush and the tram's pass, the working deck's pumps and the
+  reactor's hum. The cantina has the band (the engine's music path), the arena
+  the crowd, the chapel silence. The PA on the station is the station's, not
+  the flight deck's: departures, shift calls, a name paged. Every event in
+  §3.4 has a sound. A silent room is a box with the lights on.
+- **Talking.** "Talk to a resident" needs lines. Per species and per Borz kind, a
+  bark table of ~20 lines in `StationCast` (greeting, busy, about the war,
+  about the station, about you by standing) through `Voice.js`'s existing
+  channel; the guard's warning and the brig's sentence are lines too. Names
+  from `names.py` on a nameplate when you look at someone.
+- **The interact prompt.** One key, one prompt style, on every verb in §3.2 —
+  the deck's `liftKey`/inspect pattern — so a player never wonders what is
+  usable. Every verb row in §3.2 is a prompt string.
+- **The first visit.** A fresh player arrives at Arrivals (#7) by the lift, and
+  a guide (a protocol droid) walks them the spine to the concourse once,
+  naming the decks. After that, never again. The Databank gets a station page.
+- **Persistence.** One `station` fold in `Session`: the clock, `standing`, the
+  home's state, which places have been visited. The kennel and the ledger
+  already persist. A return visit is the same station later in the day.
+- **Co-op.** Single-player first. The station in co-op is its own step after
+  §6.8: the guest arrives by the same lift, lives at the hostel (#38), and the
+  live-body pool is per host. Do not build it into steps 1–7; do not block on
+  it.
+- **Dying on the station.** You cannot, except by choice: the atrium's floor is
+  the concourse (a fall is a ragdoll and a bruise, and a story line), the
+  reactor and the compactor hurt, the range's bolts are real. Residents who die
+  to you are the brig's business (§11), and their names go on the memorial
+  wall (#45) — the roll is the same one the hangar reads.
+- **Companions everywhere.** The animal follows you through every place unless
+  a place refuses it (the methane quarter, the reactor catwalks) and waits at
+  the door; the kennel handler takes it when you sleep.
+- **The menu does not change.** The station is reached by the lift and nothing
+  else; no "Station" button, no second front door. That is the point.
+- **The hangar keeps working exactly as it does.** The flight deck is place #1
+  and nothing in §5.2 edits `DeckLife.js`, `DeckCast.js` or `Hangar.js`
+  beyond the lift's floor list; `hangar.mjs` and `decklife.mjs` stay green
+  untouched, and §9.2's recorded trace proves it.
+
+## 15. What to hand the executing session
 
 - This file; `HANGAR.md` (the rulebook for an interior that is not a box);
   `HANDOFF.md` §2 (the tooling traps); the headers of `DeckLife.js`,
