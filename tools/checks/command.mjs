@@ -1413,9 +1413,31 @@ export async function run({ check, assert }) {
     assert(before === Cmd.OPENING_STRENGTH, `${before} troopers on the field before the boundary`);
     const names = d.roster.all.map((t) => t.name).join('|');
 
+    /**
+     * THE BOUNDARY IS FORCED, AND `d.wave` IS NOT THE NUMBER TO FORCE IT WITH.
+     *
+     * `payWave` opens `if (!(wave > this._paid)) return false` — its dedupe,
+     * and correct. This read `d.payWave(d.wave)`, which is a request to pay the
+     * wave the director is CURRENTLY ON, and that is only unpaid if the two
+     * seconds of drive above happened to clear one. Whether they did is decided
+     * by Waves' own stream, which `clocked` deliberately does not put back —
+     * this file's own `commandWorld` note says so, and says the first seed it
+     * tried "turned 'the last wave of the area did not pay' red instead". So
+     * the check has always been one arrangement of the process away from
+     * failing on a fixture detail, and it is nothing to do with what it
+     * measures.
+     *
+     * What it measures is `recall()` across an area boundary. So it asks for
+     * the boundary in the terms the boundary is actually in: the next UNPAID
+     * wave, with `d.wave` moved to it first the way the director moves it when
+     * one clears. Same shipped path — payWave → _areaClear → recall →
+     * autoMuster → closeMuster → deploy — and no dependence on how far two
+     * seconds happened to get.
+     */
     d.areaWaves = d.area.waves - 1;
+    d.wave = Math.max(d.wave | 0, (d._paid | 0) + 1);
     const paid = d.payWave(d.wave);
-    assert(paid, 'the last wave of the area did not pay');
+    assert(paid, `the boundary would not pay: wave ${d.wave}, already paid ${d._paid}`);
     assert(d.areaIndex === 1, 'the area did not advance');
 
     /* AND THEY COME IN ON GUNSHIPS NOW, so the boundary is four seconds long.
@@ -1436,7 +1458,7 @@ export async function run({ check, assert }) {
      * appears. */
     let far = 0;
     const seen = new Set();
-    drive(world, 14, input, () => {
+    drive(world, Number(process.env.CMD_LAND || 14), input, () => {
       for (const t of d.roster.living) {
         if (!t.body || seen.has(t)) continue;
         seen.add(t);
