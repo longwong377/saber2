@@ -3,7 +3,7 @@
 A plan, not a build. Version 2, 3 Sep, after the player's second brief. Written
 against this tree and against `longwong377/Opus-5` at
 `claude/aaa-game-development-j6y2ml` (7c3df7e). Every number is measured off one
-of the two repos. The person carrying it out is a different session; §12 is what
+of the two repos. The person carrying it out is a different session; §14 is what
 to hand them. **If a place, a rule or a number is not in this file, do not invent
 it — ask.**
 
@@ -523,7 +523,67 @@ is the honest trade". So the station is not a second hangar.
 
 ---
 
-## 12. What to hand the executing session
+## 13. PERFORMANCE — nothing about how it runs may change
+
+The player's bar: *"still easily run this in the browser with no setup or
+installs — nothing about that should change — and it should still run well on
+a good PC."* Every number below is the engine's own, from `PERF.md`,
+`frame-budget.mjs`, `frame-ledger.mjs`, `hangar.mjs` and `decklife.mjs`, and
+the station is held to them by check, not by intention.
+
+**13.1 The delivery does not change.** One `index.play.html` served from Pages,
+one `pack.mjs` file that opens from disk, no server, no install, no download at
+runtime, no CDN, no WASM fetched from anywhere but the page itself. The draco
+decoder and the three GLBs are inlined like every other asset; `packed.mjs`
+boots the single file with the station in it and fails if anything reaches
+the network. `wiring.mjs` keeps refusing bare specifiers and external URLs.
+
+**13.2 The budgets, in the engine's units.**
+
+| what | bound | where it comes from |
+|---|---|---|
+| pack size | ≤ 34 MB (today 28.6) | §2; three draco files + loader ≈ 2 MB, engine materials not textures |
+| boot to menu | no slower than today, measured by `tools/_frame.mjs`'s boot line | the pack only grows by the assets; nothing loads until the station level is entered |
+| station level load | ≤ the hangar's, measured the same way (`World._loadSteps` stages) | one level, no streaming; the GLBs decode once and are cached for the session |
+| draw calls, any station view | ≤ 400 with the ink pass (the hangar's bound after V14) | `hangar.mjs`'s method: everything a KIND holding many things — instanced props, merged kit per material, `MergedSkin` bodies at 4 draws each, the baked far crowd |
+| triangles submitted | ≤ 3 M at 1080p (the deck's V14 figure) | places are culled by the plan table (a place is drawn when its door is inside ~80 m); the atrium is the one long sightline and is budgeted for that |
+| live real bodies | 60 in the pool, 20 per place at most (§11) | `PERF.md`: 120 bodies at 16.60 ms in the two-army front; a station has no O(bodies²) cross-army pass and no shooting, so 60 is under half the budget a wave takes |
+| physics bodies | ≤ 1100 (`maxBodies` today), asleep unless touched | `RapierWorld` is constructed with the same cap; props sleep, and a place's props are re-slept when its door leaves 80 m |
+| station step (life, tram, events, clock) | ≤ 2.5 ms on the shared box, the same bound `decklife.mjs` holds the deck to | `stationlife.mjs` times it exactly as `deckcast.mjs` times `stepDeckLife` |
+| our JS per frame, browser | ≤ the hangar's today, by `tools/_frame.mjs` (`JS med`) | the same instrument, same quality, same drawing buffer, the station standing where the hangar stood |
+| GPU per frame on a real card | the player's own reading of `Profiler.js`'s GPU line beside the hangar's | the only true render number; §13.4 says how it is used |
+| memory | no unbounded growth across an in-game day: heap flat over 3 000 steps in node, as `deckbattle.mjs` already asserts for the fleet | the event table and the pool allocate nothing per frame |
+
+**13.3 How the station stays under them** — the rules that make the numbers
+possible, so an executor does not discover them at step 6:
+- **Places are drawn by their doors.** The plan table gives every place its
+  bounds; `Station.js` culls a place whole when its door is beyond ~80 m and the
+  atrium sightline does not reach it. The three corridor types are instanced
+  modules, one draw each per material.
+- **Bodies are a pool, not a population.** 60 real bodies re-seated round the
+  player; everyone else is the baked crowd until you approach. A place's
+  headcount in §3.2 is who is THERE, not who is live at once.
+- **Nothing per frame.** The rule every deck file already keeps: scratch
+  vectors, Float32 pools sized at dress, no closures in the step.
+- **Quality tiers apply.** The existing `low/medium/high/ultra` settings scale
+  the station like the deck: the pool (30/45/60/60), the far crowd's LOD
+  distance, the mirror floor's share, shadow cascades.
+- **The Starfury's orbit level is cheap by construction**: a hull, the fleet the
+  deck already pays for, no bodies.
+
+**13.4 The gate is a real PC, not this box.** There is no GPU where this is
+written; every render number above transfers as a COUNT, never as a
+millisecond. So the acceptance for each deck in §6 includes one reading from
+the player's machine: `Profiler.js`'s always-on frame/JS/GPU line at 1080p
+`high`, standing in the Concourse at 13:00 station time (the busiest place at
+the busiest hour), beside the same reading in the hangar. **The station must
+not read worse than the hangar on that line.** If it does, the knobs are, in
+order: the pool, the far-crowd distance, the per-place draw cull radius, the
+quality tier — never the ink pass and never the ragdoll.
+
+---
+
+## 14. What to hand the executing session
 
 - This file; `HANGAR.md` (the rulebook for an interior that is not a box);
   `HANDOFF.md` §2 (the tooling traps); the headers of `DeckLife.js`,
