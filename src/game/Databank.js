@@ -690,6 +690,67 @@ export const DATABANK = {
       + 'owning one is deciding how far from cover it is allowed to be, and it '
       + 'will volunteer an opinion about that the entire time.',
   },
+
+  /* ── AND THE FOUR THAT LANDED LAST ──────────────────────────────────────
+   *
+   * Written on the same commit as the check that caught them, which is the
+   * only reason they exist: `factions.mjs` and `databank.mjs` both walk
+   * ARCHETYPES, four new bodies arrived through `COMPANION_UNITS` after the
+   * other eight entries were written, and both files went red naming all four
+   * by id. That is the instrument doing exactly what it is for — a body the
+   * game can put on the field is a body the player is owed a page for, and
+   * nobody has to remember to write one.
+   *
+   * `wild` for all four, on the argument the block above makes: the faction
+   * reads "Nothing here has a side, a rank or a reason to be on the field
+   * beyond the one that put it in a cage", and a companion is out because YOU
+   * brought it. Filing the two droids and the wookiee under a banner they
+   * have a plausible claim to would be worse than a nicety — `factionOf` is
+   * what the wave director reads to decide which side a body belongs on.
+   */
+  hawk: {
+    faction: 'wild',
+    weapon: 'Talons',
+    text: 'A vhal\'kir: a raptor the size of a large dog that never lands while '
+      + 'you are fighting. It is the only companion that cannot be shot at by '
+      + 'anything without a raised barrel, and the only one whose whole '
+      + 'contribution is SIGHT — sent up, it paints what it can see, including '
+      + 'the bodies behind the wall you were about to walk round. What it costs '
+      + 'is that a bird circling over you is a bird telling everyone where you '
+      + 'are. It fights with its feet and it does not fight for long.',
+  },
+  astro: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'An astromech: the slowest thing you can own, and the only one that '
+      + 'gets stuck on terrain you would vault without thinking. It has no '
+      + 'attack of any kind. What it has is a scomp link — sent at a blast '
+      + 'door it opens it, and the nine seconds it spends at the panel are nine '
+      + 'seconds you are standing over it with a blade. Everything about owning '
+      + 'one is knowing which door is worth those nine seconds.',
+  },
+  medic: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'A 2-1B surgical droid: the most valuable companion in a long '
+      + 'campaign and the least use in a duel. It walks to a man who is down '
+      + 'and works on him, which is the difference between a name on the wall '
+      + 'and a name on the roll, and it will do it under fire because nothing '
+      + 'in its programming knows what fire is. Two things follow: it is always '
+      + 'in the worst place on the field, and it cannot defend itself when it '
+      + 'gets there.',
+  },
+  wook: {
+    faction: 'wild',
+    weapon: 'Fists and a bandolier',
+    text: 'A wookiee: the heaviest thing that walks at your shoulder, and the '
+      + 'only companion that is a person. It does not take orders the way an '
+      + 'animal does — it takes them the way a soldier does, which in practice '
+      + 'means it arrives late to the ones it disagrees with. It hits harder '
+      + 'than anything else you can bring and it is the slowest of the four '
+      + 'that fight. What it is really for is the fights you should not have '
+      + 'taken: it is the only companion that can lose one and walk away.',
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */
