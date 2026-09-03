@@ -10926,6 +10926,10 @@ function buildFootFor(k, kind, plate, tooth, hide, S, g, len) {
  * reek still has horns and an acklay still has a crest at the range the
  * player was complaining about.
  */
+/* Scratch for the eye seat below — one set for the whole file, not one per
+ * eye per body per build. */
+const _eyeD = new THREE.Vector3(), _eyeO = new THREE.Vector3(), _eyeP = new THREE.Vector3();
+
 function buildCreatureHead(rig, P, S, M) {
   const head = rig.get('head');
   const [segs, nLen, nR, nPitch, nCurl] = P.neck;
@@ -11083,29 +11087,103 @@ function buildCreatureHead(rig, P, S, M) {
   };
 
   /**
-   * AN EYE, WITH SOMETHING BEHIND IT.
+   * THE SKULL'S OWN OUTSIDE, MERGED ONCE, SO AN EYE CAN BE SEATED ON IT.
+   *
+   * Every branch below pushes its cranium, its muzzle, its cheeks and
+   * whatever shelf or lip it owns into `parts` BEFORE it places a single eye,
+   * and nothing pushes to `parts` after. So at the moment the first eye is
+   * placed the shell is complete, and one merge answers every seat on the
+   * head for the cost of the merge the tail of this function was going to do
+   * anyway — `skull` below takes this geometry rather than building a second.
+   *
+   * The length guard is not decoration. If a branch is ever written that adds
+   * a mass to `parts` after its eyes, this shell is stale by exactly the mass
+   * that would have buried them, and a stale shell fails in the direction
+   * nobody looks — the eye still renders, it renders inside something. The
+   * comparison is one integer and it makes the reuse safe by construction
+   * instead of by a paragraph asking the next author to be careful.
+   */
+  let _shell = null, _shellN = -1;
+  const shell = () => {
+    if (_shell && _shellN === parts.length) return _shell;
+    _shellN = parts.length;
+    return (_shell = assemble(parts, 'skull'));
+  };
+
+  /**
+   * AN EYE, WITH SOMETHING BEHIND IT — AND ITS DEPTH MEASURED, NOT TYPED.
    *
    * Six eyes across five branches were each one `emissiveMat` sphere placed
-   * by hand, and this is those six calls with the pupil from `M.pupil` in the
+   * by hand, and this is those calls with the pupil from `M.pupil` in the
    * same call — one place that knows how big a pupil is relative to an eye
-   * and how far in front of it the bead sits, rather than six. `r` is the
-   * eye's radius in plan units exactly as the old literals were, so the eyes
-   * do not move or change size.
+   * and how far in front of it the bead sits, rather than six.
    *
-   * The bead is pushed OUTWARD ALONG THE EYE'S OWN RADIUS — the direction
-   * from where the neck arrives to where the eye is placed — and not along
-   * +Z. That distinction is visible: an eye set on the side of a long skull
-   * with its pupil shoved forward shows the bead on the front corner of the
-   * iris, which reads as a squint. The radius is the one direction that is
-   * correct for a four-eyed nexu, a rancor's deep-set pair and a reek's
-   * horn-flanked eyes alike, because it is derived from where each of them
-   * was put rather than assumed about all of them.
+   * ── AND THREE OF THE SEVEN BRANCHES HAD NO VISIBLE EYE AT ALL ─────────
+   *
+   * `(x, y, z)` used to be a POSITION, authored by eye against whatever the
+   * skull happened to be on the day, and every time a cranium was re-shaped
+   * under it — which this function has done twice, once when the five heads
+   * stopped being boxes and again when the tooka got its own branch — the
+   * eyes did not move with it. Measured off the built rig, by casting a ray
+   * along each eye triangle's own normal against every other triangle in the
+   * body, on the tree this replaces:
+   *
+   *     horned      (reek)                 0 of 140 triangles unobstructed
+   *     tusked      (rancor, pup, blurrg)  0 of 140
+   *     horned-ape  (gundark, varac)       0 of 140
+   *     fanged      lower pair             0 of 140   (upper pair 68 of 140)
+   *     snouted     (tauntaun)            21 of 140
+   *     kitten      (tooka)               33 of 140
+   *     mandibles   (acklay)              38 of 140
+   *
+   * Three whole branches — six of the thirteen shipped bodies, three of the
+   * twelve companions — rendered NO EYE. Not a small eye: the sphere was
+   * inside the cranium, every triangle of it facing another triangle of the
+   * animal's own head. The same arithmetic says why, in one number per
+   * branch: how far the eye's outer face stands proud of the skull, in units
+   * of the eye's own radius. −0.36r, −0.50r, −0.77r and −1.08r for the four
+   * that showed nothing; +0.50r, +0.75r, +0.91r and +0.97r for the four that
+   * showed something. The eyes that worked were the ones that happened to be
+   * outside.
+   *
+   * So the DIRECTION stays authored and the DEPTH is measured. `(x, y, z)` is
+   * read as a ray from where the neck arrives — the same ray the pupil has
+   * always been pushed along — and the eye is seated where that ray leaves
+   * the skull, with `out` of its own radius standing proud of it. That is
+   * `onSurface`, which is the vocabulary this file already uses for every
+   * photoreceptor, visor, horn and vent that has to stay put when the shell
+   * under it changes shape; the heads were the last thing in here still
+   * typing a coordinate and hoping.
+   *
+   * `out` defaults to 0.95 because that is where the two branches that
+   * rendered correctly already sat (+0.91r on the acklay, +0.97r on the
+   * nexu's upper pair) — the default is the shipped result that worked,
+   * rather than a fresh guess — and a branch that wants a deeper-set eye says
+   * so on its own line.
+   *
+   * The bead is pushed OUTWARD ALONG THE EYE'S OWN RADIUS and not along +Z.
+   * That distinction is visible: an eye set on the side of a long skull with
+   * its pupil shoved forward shows the bead on the front corner of the iris,
+   * which reads as a squint. The radius is the one direction that is correct
+   * for a four-eyed nexu, a rancor's deep-set pair and a reek's horn-flanked
+   * eyes alike, because it is derived from where each of them was aimed
+   * rather than assumed about all of them.
    */
-  const eyeAt = (x, y, z, r) => {
-    k.add(M.eye, new THREE.SphereGeometry(r * S, 7, 6), [x * S, hy + y * S, hz + z * S]);
-    const d = Math.hypot(x, y, z) || 1;
+  const eyeAt = (x, y, z, r, out = 0.95) => {
+    _eyeD.set(x, y, z).normalize();
+    _eyeO.set(0, hy, hz);
+    /* NO FALLBACK. `onSurface` answers the ORIGIN when the ray misses, which
+     * would seat the eye at the base of the skull and look like a body that
+     * built — HANDOFF §2.3b's "a missing thing answered with a plausible
+     * default". The ray starts inside the shell, so a miss means the shell is
+     * not closed round the head bone, and that is worth stopping the build
+     * for rather than shipping a face with its eyes in its throat. */
+    const hitP = surfacePoint(shell(), _eyeD, _eyeO, _eyeP, true);
+    if (!hitP) throw new Error(`buildCreatureHead: no skull surface along the ${K} eye at (${x}, ${y}, ${z})`);
+    hitP.addScaledVector(_eyeD, -r * S * (1 - out));
+    k.add(M.eye, new THREE.SphereGeometry(r * S, 7, 6), [hitP.x, hitP.y, hitP.z]);
     k.add(M.pupil, new THREE.SphereGeometry(r * 0.50 * S, 6, 5),
-      [(x + (x / d) * r * 0.62) * S, hy + (y + (y / d) * r * 0.62) * S, hz + (z + (z / d) * r * 0.62) * S]);
+      [hitP.x + _eyeD.x * r * 0.62 * S, hitP.y + _eyeD.y * r * 0.62 * S, hitP.z + _eyeD.z * r * 0.62 * S]);
   };
 
   /**
@@ -11616,7 +11694,11 @@ function buildCreatureHead(rig, P, S, M) {
     });
   }
 
-  const skull = assemble(parts, 'skull');
+  /* `shell()` and not a second `assemble(parts, 'skull')`: the eyes above
+   * have already merged exactly these parts under exactly this tag, and
+   * merging them twice is a second copy of every head in the game built to
+   * throw away. The guard inside it is what makes reuse safe. */
+  const skull = shell();
   const hm = mesh(skull, M.hide, head.obj);
   head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
   markSilhouette(k.bake(head.obj));
