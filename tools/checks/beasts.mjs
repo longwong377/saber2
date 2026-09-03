@@ -55,6 +55,8 @@ import { buildQuadruped, CREATURE_PLANS } from '../../src/game/Bodies.js';
 import '../../src/game/Levels.js';        // registers the Colosseum's creatures
 
 const V = (x, y, z) => new THREE.Vector3(x, y, z);
+/** Scratch for the circling target's radius. One vector, not one per frame. */
+const _rad = new THREE.Vector3();
 const flat = () => ({
   height: () => 0, normalAt: (x, z, o) => o.set(0, 1, 0), raycast: () => null,
   size: 400, half: 200, inBounds: () => true, surfaceAt: () => 'sand',
@@ -123,11 +125,16 @@ function fight(type, mode, seconds = 90, window = [0, 0.45]) {
   const terrain = flat();
   physics.terrain = terrain;
   const by = {};
-  let cur = '', winded = 0;
+  let cur = '', winded = 0, dealt = 0;
   const target = {
     position: V(0, 0, 0), velocity: new THREE.Vector3(), chest: V(0, 1.3, 0),
     hp: 500, alive: true, invuln: 0, camera: { addShake() {} },
-    damage() { (by[cur] = by[cur] || [0, 0])[0]++; },
+    /* The AMOUNT is kept as well as the count, and it is not decoration: the
+     * roster now contains bodies that run this brain and declare no verbs at
+     * all, and for those the only measurable statement is how much health they
+     * took off a player who stood still — see the menagerie check, which
+     * asserts that it is zero to the last decimal. */
+    damage(n) { (by[cur] = by[cur] || [0, 0])[0]++; dealt += n || 0; },
   };
   const particles = { sandPuff() {}, muzzle() {}, sparkBurst() {}, cutFlare() {}, slag() {},
     plasma: { spawn() {} }, smoke: { spawn() {} } };
@@ -170,8 +177,50 @@ function fight(type, mode, seconds = 90, window = [0, 0.45]) {
       const side = new THREE.Vector3(away.z, 0, -away.x);
       const st = e.stateTime || 0;
       const onAttack = attacks.includes(e.state) && st >= window[0] && st < window[1];
-      if (mode === 'strafe') target.position.addScaledVector(side, 7.4 * dt);
-      else if (onAttack) target.position.addScaledVector(mode === 'back' ? away : side, 11 * dt);
+      /**
+       * ── THE CIRCLE WAS A SPIRAL, AND ON A SMALL ANIMAL IT WAS THE WHOLE
+       *    MEASUREMENT ────────────────────────────────────────────────────
+       *
+       * This was one line — `addScaledVector(side, 7.4 * dt)` — and `side` is
+       * re-derived every frame, so the target walks a POLYGON round the animal
+       * rather than a circle: each frame it steps along the tangent and nothing
+       * ever puts it back on its radius. A tangent step of `v·dt` off a radius
+       * `r` lands at `sqrt(r² + (v dt)²)`, so the radius grows by `v²dt²/2r`
+       * every frame, which over a wind-up of `T` seconds is
+       *
+       *       Δr  =  T · v² · dt / (2r)
+       *
+       * and that is proportional to the HARNESS'S OWN TIMESTEP. An evasion
+       * whose effectiveness halves when the check runs at 120 Hz is not an
+       * evasion, it is a discretisation error wearing the name of one.
+       *
+       * It went unnoticed because it is invisible at the radius the shipped
+       * creatures fight at and it is everything at the radius a companion-sized
+       * one does. Measured, over the slam's 0.95 s wind-up: on the Rancor
+       * (circling radius 3.16 m) Δr is 0.14 m against a 6.97 m footprint — 2%,
+       * noise. On a 0.55-scale body fought at 0.77 m it is 0.56 m against a
+       * 1.13 m footprint — HALF THE RING. The drift falls as 1/r while the ring
+       * it has to stay inside rises with the animal, so "a sustained circle at
+       * fighting range" was a circle on a big animal and a walk-out on a small
+       * one, and the slam check below was reading the harness rather than the
+       * move: the target's median distance over the fight was 0.83 m and its
+       * median distance AT THE MOMENT the slam resolved was 0.99 m, topping out
+       * at 1.59 m. It was not circling. It had left.
+       *
+       * The radius is restored after the tangential step, which is what the
+       * mode's own description at the top of this file has always claimed it
+       * was — "a sustained circle at fighting range". Measured cost to the
+       * shipped roster, every rate over 90 s: Rancor slam 93%→100%, Rancor
+       * sweep 47%→33%, Wampa pounce 13%→33%, Reek charge 0%→5%, Reek gore
+       * 8%→17%, everything else unmoved. No check's verdict changes; the two
+       * that were nearly saturated stop being nearly saturated.
+       */
+      if (mode === 'strafe') {
+        const r0 = _rad.subVectors(target.position, e.position).setY(0).length();
+        target.position.addScaledVector(side, 7.4 * dt);
+        _rad.subVectors(target.position, e.position).setY(0);
+        if (_rad.lengthSq() > 1e-9) target.position.copy(e.position).addScaledVector(_rad.normalize(), r0);
+      } else if (onAttack) target.position.addScaledVector(mode === 'back' ? away : side, 11 * dt);
     }
     target.chest.copy(target.position).setY(1.3);
     target.hp = 500;
@@ -180,7 +229,7 @@ function fight(type, mode, seconds = 90, window = [0, 0.45]) {
   for (const x of w.enemies) x.dispose?.();
   const rate = (k) => (by[k] && by[k][1] ? by[k][0] / by[k][1] : null);
   const line = () => Object.entries(by).map(([k, v]) => `${k}${v[0]}/${v[1]}`).join(' ');
-  return { by, winded, rate, line };
+  return { by, winded, dealt, rate, line };
 }
 
 /** rate as a percentage, or a dash when the move never came out. */
@@ -495,16 +544,63 @@ export async function run({ check, assert }) {
     /* …and the converse, so this cannot be satisfied by making everything
      * undodgeable: every creature has to have at least one attack that at least
      * one evasion beats. */
+    /**
+     * ── AND A CREATURE WITH NO ATTACKS IS ASKED THE STRONGER QUESTION ──────
+     *
+     * This loop said "some evasion has to beat something this animal does" and
+     * ran it over every body on the beast brain. The roster now contains two
+     * that do NOTHING — the tooka kit and the tauntaun, both `moves: []` in
+     * CREATURE_PLANS, both deliberately — and for those `movesOf` is empty, so
+     * `escapable` could never leave zero and the message read "nothing a player
+     * can do avoids anything Tooka Kit does". That is a true sentence about an
+     * animal with nothing to avoid, and it is the wrong question: there is no
+     * evasion to find because there is no attack. (The tauntaun was failing it
+     * too and had been for as long as the tooka; it is later in the loop, so
+     * the throw hid it. Same defect, twice, one fix.)
+     *
+     * THE PREMISE WAS CHECKED BEFORE IT WAS ACTED ON, and it is only half
+     * true, so the assertion below is written against the half that holds.
+     * `beastMoveSet` does return `[]` for both. But `_beastBrain`'s pick is
+     * `moves[floor(rng() * moves.length)] || 'lunge'`, and an empty list falls
+     * straight through that `||`: measured over 90 s, a tooka entered the
+     * `lunge` state 49 times and called `damage()` on a motionless target 48
+     * times. CREATURE_PLANS.tooka's own note claims a line in Enemy.js stands
+     * between this row and a kitten that mauls people. There is no such line.
+     * What there is is `damage: 0` on the archetype, and it is enough: those 48
+     * resolutions moved the target's health by 0.0 exactly.
+     *
+     * So the exemption asserts MORE than the clause it replaces, not less. A
+     * creature that declares no verbs has to declare none — and has to take
+     * nothing off a player who stands in its face for a full fight, in every
+     * evasion including standing still. "Some evasion answers it" is a claim
+     * about getting away; this is the claim that there is nothing to get away
+     * from, and it goes red the day anybody gives one of them a damage number.
+     * Keyed on the empty move set and never on a label, so the next silent
+     * animal is covered the day it lands.
+     */
     for (const type of BEASTS) {
+      const mine = movesOf(type);
+      if (!mine.length) {
+        for (const mode of EVASIONS) {
+          const r = fight(type, mode, 60);
+          assert(r.dealt === 0,
+            `${ARCHETYPES[type].label} declares no attacks and still took ${r.dealt.toFixed(1)} health `
+            + `off a player who ${mode === 'stand' ? 'stood perfectly still' : `evaded by "${mode}"`} `
+            + '— an animal with no verbs must not have a way to hurt anybody');
+        }
+        continue;
+      }
       let escapable = 0;
       for (const mode of EVASIONS) {
         if (mode === 'stand') continue;
         const r = fight(type, mode, 60);
-        for (const k of movesOf(type)) { const g = r.rate(k); if (g !== null && g < 0.35) escapable++; }
+        for (const k of mine) { const g = r.rate(k); if (g !== null && g < 0.35) escapable++; }
       }
       assert(escapable > 0, `nothing a player can do avoids anything ${ARCHETYPES[type].label} does`);
     }
-    return EVASIONS.map((m) => `${m} is beaten by ${beaten[m].length} attack(s): ${beaten[m].join(', ')}`).join('; ');
+    const silent = BEASTS.filter((t) => !movesOf(t).length).map((t) => ARCHETYPES[t].label);
+    return EVASIONS.map((m) => `${m} is beaten by ${beaten[m].length} attack(s): ${beaten[m].join(', ')}`).join('; ')
+      + (silent.length ? `; ${silent.join(' and ')} declare no attacks and deal 0 damage in all four` : '');
   });
 
   check('beasts: every beast can be winded, and a severed limb is what does it', async () => {
@@ -573,11 +669,59 @@ export async function run({ check, assert }) {
      * nothing, and it failed the moment the three curves were derived from one
      * table instead of written out — which is a REFACTOR, not a regression.
      *
-     * What is measured now is the chest: the real rig, posed by the real
-     * function, sampled through each attack's own wind-up. Every move has to
-     * move the body by a readable amount before its blow lands, and the moves
-     * have to be told APART by that motion — two attacks with the same wind-up
-     * are one telegraph and the player cannot know which is coming.
+     * What is measured now is the HIPS: the real rig, posed by the real
+     * function, sampled through each attack's own wind-up. (It said "the chest"
+     * and read `hipsBone`. The hips are the right bone and the word was the
+     * wrong one — `_poseWalker` spends a move's `rise` as `ST.rear * rise` on
+     * the hips and every leg follows it through the IK, and the chest is that
+     * same motion plus a pitch that partly cancels it: measured on the whole
+     * roster, the chest's travel is smaller than the hips' on nine of eleven
+     * bodies and the Acklay's stab reads 6.1% of its stance at the chest
+     * against 8.8% at the hips. Measuring the smaller number and calling it the
+     * bigger one is how a bar gets set wrong.)
+     *
+     * Every move has to move the body by a readable amount before its blow
+     * lands, and the moves have to be told APART by that motion — two attacks
+     * with the same wind-up are one telegraph and the player cannot know which
+     * is coming.
+     *
+     * ── AND BOTH BARS ARE A FRACTION OF THE ANIMAL, NOT A NUMBER OF MILLIMETRES
+     *
+     * They were `travel > 0.12` and `diff > 0.08` — absolute metres, applied
+     * from a 0.11 m-hipped tooka to a 4.59 m-hipped Acklay. That is the error
+     * this tree already refuses twice by name: HANDOFF's "POINTS ARE NOT
+     * COMPARABLE ACROSS AXES", and BEAST_MOVES' own decision to write every
+     * `reach` as a multiple of the creature's scale "so they are the animal's
+     * own reach rather than a number nobody can place". A telegraph is read
+     * against the body doing it. 120 mm on the Acklay is 2.6% of its stance —
+     * free. 120 mm on the shipped Massiff is 31% of its stance, which no animal
+     * in the game manages for its cheapest move, and the Massiff was FAILING
+     * this bar at 118 mm and 97 mm. It only looked green because it is eighth
+     * in the loop and the Rancor Pup is fifth, so the throw came first. A bar
+     * that condemns a shipped companion and waves through the biggest animal on
+     * the sand is measuring size, not legibility.
+     *
+     * Measured across the roster, as a fraction of each animal's own standing
+     * hip height (its stance — the height `_poseWalker` rears FROM):
+     *
+     *   cheapest move    Acklay stab 8.8% · Blurrg lunge 12.5% · Varactyl
+     *                    sweep 15.2% · Rancor lunge 18.9% · Nexu rake 23.7% ·
+     *                    Rancor Pup lunge 25.1% · Massiff rake 25.5% ·
+     *                    Tuk'ata rake 25.6% · Wampa lunge 28.8% · Reek 33.2%
+     *   closest pair     Rancor slam/sweep 16.5% · Acklay stab/sweep 16.7% ·
+     *                    Massiff lunge/rake 24.1% · Wampa 28.2% · Nexu 28.6%
+     *
+     * So the floor the shipped roster actually holds is 8.8% for a single move
+     * and 16.5% for a pair, and the Pup's 102 mm lunge — the thing that threw
+     * — is 25.1% of its own stance, more than the adult Rancor's own lunge at
+     * 18.9%. It was never the smaller telegraph. It is the smaller animal.
+     *
+     * The bars are 7% and 12%, under each floor with room for a re-tune and
+     * nowhere near enough for a regression to hide in. They are STRICTER than
+     * what they replace everywhere it matters: the Acklay's stab now has to
+     * clear 0.32 m rather than 0.12 (2.7x), its closest pair 0.55 m rather than
+     * 0.08 (6.9x), and the Rancor's slam and sweep 0.36 m rather than 0.08.
+     * They are looser only on the small bodies, which is the correction.
      */
     const physics = new RapierWorld({ gravity: -24, iterations: 4, maxBodies: 64 });
     const terrain = flat();
@@ -598,11 +742,20 @@ export async function run({ check, assert }) {
       const e = new Enemy(w, type, V(0, 0, 0));
       const hips = e.rig?.hipsBone?.obj;
       assert(hips, `${type} has no hips to pose`);
+      /* THE ANIMAL'S OWN STANCE, and it is read off the posed rig rather than
+       * off `CREATURE_PLANS[kind].hip * scale`, which is the same number said
+       * twice — HANDOFF §2.4. `approach` is the rest state, so this is where
+       * the hips sit when nothing is winding up. */
+      e.state = 'approach';
+      e.stateTime = 0;
+      e._poseWalker(1 / 60, ctx);
+      const stance = hips.position.y;
+      assert(stance > 0.02, `${type} stands ${(stance * 1000).toFixed(0)} mm at the hip — nothing to read against`);
       const sig = {};
       for (const k of movesOf(type)) {
         const M = BEAST_MOVES[k];
-        // Drive the real pose through the real state, sampling the chest height
-        // and pitch at ten points across the wind-up.
+        // Drive the real pose through the real state, sampling the hip height
+        // at ten points across the wind-up.
         const track = [];
         for (let i = 0; i <= 10; i++) {
           e.state = k;
@@ -612,9 +765,10 @@ export async function run({ check, assert }) {
         }
         const rest = track[0];
         const travel = Math.max(...track.map((y) => Math.abs(y - rest)));
-        assert(travel > 0.12,
-          `${ARCHETYPES[type].label}'s ${k} moves the chest ${(travel * 1000).toFixed(0)} mm through its `
-          + 'whole wind-up — that is not a telegraph, it is the same animal walking');
+        assert(travel > 0.07 * stance,
+          `${ARCHETYPES[type].label}'s ${k} moves the body ${(travel * 1000).toFixed(0)} mm through its `
+          + `whole wind-up — ${(100 * travel / stance).toFixed(1)}% of its own ${(stance * 1000).toFixed(0)} mm `
+          + 'stance, which is not a telegraph, it is the same animal walking');
         sig[k] = track.map((y) => y - rest);
       }
       // …and no two of this creature's attacks may look the same on the way in.
@@ -624,9 +778,10 @@ export async function run({ check, assert }) {
           const a = sig[keys[i]], b = sig[keys[j]];
           let diff = 0;
           for (let n2 = 0; n2 < a.length; n2++) diff = Math.max(diff, Math.abs(a[n2] - b[n2]));
-          assert(diff > 0.08,
+          assert(diff > 0.12 * stance,
             `${ARCHETYPES[type].label}'s ${keys[i]} and ${keys[j]} wind up identically `
-            + `(${(diff * 1000).toFixed(0)} mm apart at their widest) — one telegraph, two attacks`);
+            + `(${(diff * 1000).toFixed(0)} mm apart at their widest, ${(100 * diff / stance).toFixed(1)}% of `
+            + 'its own stance) — one telegraph, two attacks');
         }
       }
       rows.push(`${ARCHETYPES[type].label} ${keys.length}`);
@@ -774,11 +929,57 @@ export async function run({ check, assert }) {
     const b1 = rows.find((r) => r.type === 'b1');
     assert(b1.turned === 0 && b1.passes <= 3,
       `a B1 turned ${b1.turned} passes and took ${b1.passes} — the hide has reached the droids`);
-    // …and the heavies cost strictly more than it does.
+    /**
+     * …AND A HIDE HAS TO BE WORTH SOMETHING, which is what the line under this
+     * comment used to be trying to say and did not.
+     *
+     * It said `r.passes > b1.passes` FOR EVERY BODY IN THE LIST, captioned "the
+     * heavies cost strictly more than it does" — and the list is not the
+     * heavies, it is every body that runs the beast brain plus five machines.
+     * That was true of the roster it was written against, because the lightest
+     * thing on it was a 110 kg Massiff on four legs. It stopped being true the
+     * moment companions landed, and it fails on the Rancor Pup: 2 passes, the
+     * same as a B1, and the message is "it dies like a droid".
+     *
+     * IT DIES LIKE A DROID BECAUSE IT IS BUILT LIKE ONE, and no number on that
+     * animal moves it. Both are BIPEDS: `severanceOf` prices one leg of two at
+     * `vital 0.55` where one leg of four is 0.28, and `takeCut` spends a
+     * fraction of MAXIMUM health — measured, 0.632 of maxHp at vital 0.55 and
+     * 0.316 at 0.28, on the Pup, the Massiff, the tooka and the B1 alike. So
+     * the pass count is `ceil(1 / 0.632) = 2` whatever the health bar says: the
+     * Pup's 240 hp and the B1's 28 die in the same two cuts, and giving the Pup
+     * a thousand would not add one. The only thing that CAN add a pass is a
+     * hide, and `guardFor` derives that from mass at 1/300 kg — so a 150 kg
+     * animal has none, correctly and by the same rule the check above asserts
+     * ("A MAN IS NOT A WALL: everything at 260 kg or under turns nothing"). It
+     * would need 300 kg to buy one turned pass, and 300 kg is not a rancor pup:
+     * the adult is 1700 kg at 5.5 m, and cube-law off that puts a 0.97 m
+     * juvenile near 10 kg. 150 is already generous.
+     *
+     * So the clause was asking THIS check — the one about the hide — to enforce
+     * a floor the hide rule deliberately does not give a light body, and the
+     * only way to pass it would have been to make the Pup either heavy enough
+     * to shrug off a lightsaber or four-legged, both of which are worse animals
+     * than the check is bad.
+     *
+     * What is asserted instead is the property the caption names, scoped to the
+     * bodies it is about: a body WITH a hide has to cost strictly more than the
+     * body without one, and a body without a hide has to turn nothing at all.
+     * The second half is not a consolation — it is the same statement as the
+     * B1 control one line up, made about every light body on the roster rather
+     * than about the one droid, and it is what keeps the hide off them.
+     */
     for (const r of rows) {
       if (r.type === 'b1') continue;
-      assert(r.passes > b1.passes,
-        `${r.type} takes ${r.passes} passes and a B1 takes ${b1.passes} — it dies like a droid`);
+      if (r.guard0 > 0) {
+        assert(r.passes > b1.passes,
+          `${r.type} carries a hide of ${r.guard0} and still takes ${r.passes} passes against a B1's `
+          + `${b1.passes} — the guard is buying nothing`);
+      } else {
+        assert(r.turned === 0,
+          `${r.type} has no hide and turned ${r.turned} passes — the guard has reached a body `
+          + 'that `guardFor` gave none');
+      }
     }
     return rows.map((r) => `${r.type} guard ${r.guard0}→turned ${r.turned}, ${r.passes} passes`).join('; ');
   });

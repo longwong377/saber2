@@ -15,6 +15,7 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { clamp, lerp, damp, smoothstep, shortestArc, quatToRotVec, Ema, TAU } from '../engine/MathUtil.js';
+import { ENVELOPES } from './SaberSet.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3();
@@ -696,7 +697,72 @@ export const GRIPS = {
   two:  { kP: 156, kD: 15.0, inertia: 1.00, guardR: 0.60, handExtend: 0.29, offset: new THREE.Vector3(0.055, -0.20, 0.02), lin: 118, linD: 15 },
   one:  { kP: 118, kD: 13.6, inertia: 0.74, guardR: 0.72, handExtend: 0.36, offset: new THREE.Vector3(0.185, -0.13, 0.0), lin: 92,  linD: 13 },
   rev:  { kP: 132, kD: 14.4, inertia: 0.86, guardR: 0.58, handExtend: 0.26, offset: new THREE.Vector3(-0.14, -0.06, 0.03), lin: 104, linD: 14 },
+  /**
+   * ── THE TWO SETS' ROWS. See src/game/SaberSet.js.
+   *
+   * Both are solved from THIS FILE'S OWN kD = 2ζ√(kP/I) at the damping ratio
+   * the three rows above already sit at, rather than picked: the arithmetic is
+   * in the note over `GRIPS` and re-deriving it is how a fourth row ends up
+   * ringing.
+   *
+   *   staff  kP 156, I 1.62  →  ω = √(kP/I) =  9.81 rad/s, kD = 2·0.60·ω = 11.78
+   *   pair   kP 132, I 0.80  →  ω = 12.85,                 kD = 2·0.58·ω = 14.90
+   *
+   * THE STAFF KEEPS `two`'s kP BECAUSE THE ARMS ARE THE SAME ARMS. What changes
+   * is the INERTIA — 1.62 against 1.00, because it is 3.1 m of weapon about one
+   * pair of hands rather than 1.3 — and the consequence is the two-tempo weapon
+   * in one row: its guard settles 21% SLOWER (ω 9.81 against 12.49) while its
+   * light cut repeats 36% FASTER (STAFF_SLASH.cooldown 0.22 against 0.30). The
+   * cooldown governs the press and the inertia governs the spring, so those two
+   * are not in conflict — and the slower spring is what costs the staff the
+   * 0.20 s PARRY window more often than any other set, which is where the two
+   * free rungs live.
+   *
+   * 1.34 → 1.62 IS THE PRICE OF `SHAFT.gap`, and it is arithmetic rather than
+   * taste: the weapon went from 2.78 m tip to tip to 3.08 with the extra length
+   * in the middle where the hands are, and a uniform bar about its centre goes
+   * as L², so 1.34·(3.08/2.78)² = 1.64. Rounded down to 1.62, re-solved for kD
+   * through the same ζ = 0.60 the other four rows sit at. The reach is bought
+   * with the guard, in the one currency this table trades in.
+   *
+   * THE PAIR REUSES `rev`'s kP AND ITS ζ rather than inventing numbers, because
+   * `rev` is the shipped ONE-HANDED row and a shoto in one hand is a one-handed
+   * hold. Its inertia is the lowest in the table (0.80) — two light weapons —
+   * so it is the only set whose guard settles FASTER than the single blade's,
+   * by 3%.
+   *
+   * `guardR`/`handExtend` are chest-to-hand DISTANCES scaled by `reachScale`:
+   * the staff is a longer weapon held CLOSER (0.62/0.27), and the pair sits
+   * between `two` (0.60/0.29) and `one` (0.72/0.36) at 0.66/0.33 because one
+   * hand on a hilt is further out than two and a hand that is answering for a
+   * second blade is not as far out as a hand alone. Per-row and per-instance,
+   * so nothing here exports to the ~30 enemy blades.
+   *
+   * `GRIPS.two`, `.one` and `.rev` above are byte-identical.
+   */
+  staff: { kP: 156, kD: 11.78, inertia: 1.62, guardR: 0.62, handExtend: 0.27, offset: new THREE.Vector3(0.055, -0.20, 0.02), lin: 118, linD: 15 },
+  pair:  { kP: 132, kD: 14.90, inertia: 0.80, guardR: 0.66, handExtend: 0.33, offset: new THREE.Vector3(0.140, -0.16, 0.01), lin: 104, linD: 14 },
 };
+
+/**
+ * WHAT A SET SWINGS — and `single` returns THE SHIPPED OBJECTS BY REFERENCE.
+ *
+ * `ENVELOPES.single` is `{ slash: null, heavy: null }` in SaberSet.js, and null
+ * resolves HERE to `SLASH` and `HEAVY` themselves. That is the whole reason
+ * this indirection is safe: there is not a second copy of a single-blade number
+ * anywhere in the diff, so `tools/checks/saberforms.mjs` can assert
+ * `setTables('single').slash === SLASH` with `===` and no later pass can
+ * re-space the ladder for one set while missing the other.
+ *
+ * A set with a null `heavy` — the pair, which holds no hilt with two hands and
+ * therefore cannot chamber — is answered with `null`, and the third press falls
+ * through to another light cut. Unreachable by construction rather than by a
+ * flag.
+ */
+export function setTables(set) {
+  const row = ENVELOPES[set] || ENVELOPES.single;
+  return { slash: row.slash ?? SLASH, heavy: row.heavy ?? HEAVY, chamber: row.chamber !== false };
+}
 
 export class SaberController {
   constructor(opts = {}) {
@@ -766,6 +832,29 @@ export class SaberController {
 
     this.grip = 'two';
     this.gripBlend = 1;
+
+    /**
+     * WHICH SABER SET THIS WEAPON IS, and the one number it buys.
+     *
+     * `set` selects the envelope tables through `setTables` and nothing else.
+     * The other two are the two DIFFERENT gates a guard descriptor carries,
+     * and the two sets buy one each — see `_publishGuard`, which is the only
+     * reader of either:
+     *
+     *   `setHalf`   extra half-width on the ROSE. The STAFF's, because a
+     *               quarterstaff crossing your body answers more BEARINGS at a
+     *               given angle off your aim.
+     *   `setReach`  extra angle on the SHOULDER LINE. The PAIR's, because a
+     *               blade in your left hand can be brought further round your
+     *               left side than a hilt both hands are on.
+     *
+     * All three default to the single blade's values, so a controller nobody
+     * has told about a set — which is every controller in the headless checks,
+     * every enemy and every remote avatar — behaves exactly as it did.
+     */
+    this.set = 'single';
+    this.setHalf = 0;
+    this.setReach = 0;
 
     // Integrated blade state. handLocal is the hand offset from the chest and
     // is what actually gets integrated: a spring chasing a world-space target
@@ -1639,7 +1728,12 @@ export class SaberController {
     if (this.comboTimer <= 0 && !this.heavyArmed && this.slashT < 0) this.comboStep = 0;
     if (this.slashT >= 0) {
       this.slashT += dt;
-      const T = this.isHeavy ? HEAVY : SLASH;
+      /* A TABLE LOOKUP WHOSE DEFAULT ROW IS THAT SAME SHIPPED PAIR. See
+       * `setTables`: for `single` this expression returns the `SLASH` and
+       * `HEAVY` objects themselves, by reference, so a single-blade player
+       * runs the identical arithmetic on the identical floats. */
+      const TB = setTables(this.set);
+      const T = this.isHeavy ? TB.heavy : TB.slash;
       if (this.slashT >= T.dur * (this.isHeavy ? 1 + this.heavyCharge * 0.5 : 1)) {
         this.slashT = -1; this.slash = 0; this.isHeavy = false;
       }
@@ -1764,16 +1858,21 @@ export class SaberController {
         : clamp((this.heavyHold - HEAVY.hold) / Math.max(1e-4, HEAVY.full - HEAVY.hold), 0, 1);
       /* The chamber pose, written as an offset exactly as the swing is, so the
        * blade is genuinely up rather than the animation pretending it is. */
-      const k = smoothstep(0, HEAVY.wind, Math.min(this.heavyHold, HEAVY.wind));
-      this._slX = clamp(lerp(this.gx, this.slashSide * -HEAVY.rise, k), -GX_MAX, GX_MAX) - this.gx;
-      this._slY = clamp(lerp(this.gy, HEAVY.lift, k), -GY_MIN, GY_MAX) - this.gy;
+      /* THE CHAMBER IS THE SET'S OWN, and everything else about the charge is
+       * HEAVY's: `hold`, `full`, `cutScale`, `rec`, `drain` and `reach` are all
+       * read from HEAVY below whatever the set, because the chamber is the same
+       * chamber and only the arc differs. */
+      const HB = setTables(this.set).heavy;
+      const k = smoothstep(0, HB.wind, Math.min(this.heavyHold, HB.wind));
+      this._slX = clamp(lerp(this.gx, this.slashSide * -HB.rise, k), -GX_MAX, GX_MAX) - this.gx;
+      this._slY = clamp(lerp(this.gy, HB.lift, k), -GY_MIN, GY_MAX) - this.gy;
       /* AND IT GOES ON RELEASE, or when the arm gives out. */
       if (!lmbHeld || ctx.stamina <= 0.12) {
         this.heavyArmed = false;
         this.isHeavy = true;
         this.slashT = 0;
         this.slashSide = -this.slashSide;
-        this.slashCool = (SLASH.cooldown * 1.5) / Math.max(0.2, ctx.attackRate ?? 1);
+        this.slashCool = (setTables(this.set).slash.cooldown * 1.5) / Math.max(0.2, ctx.attackRate ?? 1);
         this.thrustT = 0;
         this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
         this.thrustGain = HEAVY.reach;
@@ -1784,9 +1883,16 @@ export class SaberController {
       }
     } else if (lmb && this.slashCool <= 0 && this.thrustCooldown <= 0 && ctx.stamina > 0.12) {
       /* Advance the sequence if the window is open, otherwise start it again. */
+      const TB = setTables(this.set);
       this.comboStep = this.comboTimer > 0 ? (this.comboStep + 1) % 3 : 0;
-      this.comboTimer = SLASH.chain + SLASH.dur;
-      if (this.comboStep === 2) {
+      this.comboTimer = TB.slash.chain + TB.slash.dur;
+      /* THE PAIR CANNOT CHAMBER, AND IT IS NOT A FLAG SAYING SO. `chamber` is
+       * a fact about the weapon — the third press of a set with no second hand
+       * on the hilt has nothing to wind up against — so its sequence has two
+       * rungs and the third press is another light cut with both blades
+       * converging. HEAVY and the whole CHARGE block are unreachable in that
+       * set by construction. See DUAL_CROSS in SaberSet.js. */
+      if (this.comboStep === 2 && TB.chamber) {
         /* THE THIRD. Nothing swings yet — see the branch above. */
         this.heavyArmed = true;
         this.heavyHold = 0;
@@ -1797,7 +1903,7 @@ export class SaberController {
         // Alternate. The stroke you get is the opposite of the last one, so the
         // pair reads as a combination rather than as one animation replayed.
         this.slashSide = -this.slashSide;
-        this.slashCool = SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
+        this.slashCool = TB.slash.cooldown / Math.max(0.2, ctx.attackRate ?? 1);
       }
     }
     /* THE STEP DOES NOT FIRE ON THE PRESS THAT CHAMBERS. `lmb` used to open the
@@ -1820,8 +1926,14 @@ export class SaberController {
       // moving lunge and given 40% less reach for standing still. The fallback
       // stays for every other caller and is unchanged.
       this.thrustStanding = (ctx.moving ?? this.carrierSpeed > THRUST_STANDING_SPEED) ? 0 : 1;
-      // Latched at the press, like `thrustStanding` and for the same reason.
-      this.thrustGain = lmb ? SLASH.lunge : 1;
+      /* Latched at the press, like `thrustStanding` and for the same reason —
+       * and read off THE SET'S OWN TABLE, which it was not. `SLASH.lunge` was
+       * named directly here, so `STAFF_SLASH.lunge` and `DUAL_SLASH.lunge`
+       * were fields no line in the tree read: every set's light cut stepped
+       * exactly as far as the single blade's. For `single` this expression IS
+       * `SLASH` — `setTables` returns the shipped object by reference — so the
+       * float is the same float and `_singleblade.json` does not move. */
+      this.thrustGain = lmb ? setTables(this.set).slash.lunge : 1;
       this.thrustCooldown = lmb
         ? SLASH.cooldown / Math.max(0.2, ctx.attackRate ?? 1)
         : 0.42;
@@ -2162,9 +2274,103 @@ export class SaberController {
     if (!g.active) { g.zone = ZONE.NONE; g.parry = false; return; }
     g.zone = this.zone;
     g.rose = ZONE_ROSE[this.zone] ?? 0;
-    g.half = GUARD.sector + this.zoneTol;
+    /**
+     * ── AND THE STAFF'S EXTRA ARC IS BOUGHT IN THIS ONE PLACE ────────────
+     *
+     * `setHalf` is `asin((span/2) / GUARD.radius)`, computed by the Player from
+     * the BUILT weapon rather than typed — derived exactly the way GUARD.centre's
+     * 20° is `asin(0.4/1.4)`. On a Graflex saberstaff the measured emitter-to-
+     * emitter span is 0.480 m, so it is asin(0.240/1.4) = 9.9°, and the rose at
+     * Knight goes 103.5° → 113.4°: 61.7% of all directions answered against
+     * 69.7%, a relative gain of 13%.
+     *
+     * IT IS BILLED AT FULL PRICE AND IT IS NOT FREE COVERAGE. Every one of those
+     * extra bolts costs the shipped `GUARD_COST.stamina`, so the staff answers
+     * more and runs dry sooner — its suppression crossover moves DOWN, not up.
+     * And against a line directly in FRONT the gain is near zero anyway, because
+     * 103.5° already covers the whole frontal hemisphere: this is coverage for
+     * being FLANKED, priced whether or not you are.
+     *
+     * THE `min` SHARES THE SHIPPED 135° CEILING — `GUARD.sector +
+     * GUARD.tolerance`, chosen so 45+90 stops one degree short of the opposite
+     * zone at every tier — so no difficulty setting can be pushed past it by a
+     * set. And with `setHalf` 0 the second argument is ALWAYS the smaller,
+     * because `zoneTol = clamp(assist,0,1)·GUARD.tolerance ≤ GUARD.tolerance` by
+     * construction: the single blade's line returns the exact float it returned
+     * before this comment existed, at all four tiers.
+     *
+     * `GUARD.sector` stays 45°, so the four zones still tile the rose exactly
+     * and `guardZoneOf` still classifies against four fixed bearings. Widening
+     * `half` widens what a zone ANSWERS without changing what a zone IS, which
+     * is why directional.mjs's twin check is untouched.
+     */
+    g.half = Math.min(GUARD.sector + GUARD.tolerance,
+      GUARD.sector + this.zoneTol + (this.setHalf ?? 0));
     g.centre = GUARD.centre;
-    g.reach = GUARD.reach;
+    /**
+     * ── AND THE PAIR'S EXTRA COVERAGE IS BOUGHT ON THE OTHER GATE ────────
+     *
+     * `guardZoneAccepts` has TWO refusals and the note above only ever moved
+     * one of them. `half` prunes bearings WITHIN the shoulder line; `reach`
+     * IS the shoulder line — `if (theta > guard.reach) return false` — and it
+     * is the one that was throwing bolts away.
+     *
+     * MEASURED, before any of this, on `tools/_setbench.mjs`'s rose arm: sixty
+     * bolts fired one at a time round a full circle at 9 m into a planted,
+     * guarding player, in a world pinned identical for all three arms.
+     *
+     *     single   20 of 60 landed   furthest bearing answered  96°
+     *     staff    18                                           96°
+     *     pair     19                                           96°
+     *
+     * One bolt in sixty between one blade and two, and the SAME shoulder line
+     * in all three — which is the whole of the finding. Driving `setHalf` to
+     * its 135° ceiling on the pair moved that 19 to 19: the rose was never the
+     * gate refusing those bolts, because with the four zones tiling the circle
+     * a 103.5° half already answers every bearing inside the shoulder line
+     * that a held zone can be facing. The twenty that landed were the twenty
+     * fired from OUTSIDE 100°, and no width of rose reaches them.
+     *
+     * Driving `reach` instead: 120° took the pair to 15 of 60 and 150° to 6.
+     * So this is the lever, and 150° is why there is a ceiling below.
+     *
+     * ── HOW FAR ROUND, AND WHY THAT IS ARITHMETIC ───────────────────────
+     *
+     * `Player._setReach0` is `asin((cross/2) / GUARD.radius)` off the BUILT
+     * weapon — the SAME measured span `setHalf` uses, on the other gate, and
+     * derived exactly the way `GUARD.centre`'s 20° is `asin(0.4/1.4)`. `cross`
+     * is how far apart the two fists are carried, arm-scaled: `PAIR_CROSS`
+     * 0.42 m on a human, so this is asin(0.21/1.4) = 8.6° and the shoulder
+     * line goes 100° → 108.6°. A small frame gets less of it by exactly the
+     * arm it has.
+     *
+     * HALF THE FIST SEPARATION AND NOT ALL OF IT, because `reach` is a
+     * SYMMETRIC half-angle: one value serves both flanks. The two fists
+     * straddle the centreline by `cross/2` each, so `cross/2` is what either
+     * flank can claim, and charging the whole separation to both sides would
+     * be counting the left hand's metres on the right hand's side. Driven at
+     * the full 0.42 — 17.5°, shoulder line 117.5° — the pair takes 12 of 60
+     * rather than 14, so this refusal costs two bolts and is worth them.
+     *
+     * MEASURED AFTER, on the same bench: single 20 of 60 landed, staff 18,
+     * pair 14, and a 2° scan of one flank reads the shoulder line off the
+     * shipped `guardZoneAccepts` at 100°/100°/108°. The scan is a scan and not
+     * a bisection because the pair's own row is not monotone — 100° refused,
+     * 102° answered — which is the two gates interacting and is exactly what a
+     * bisection would have hidden.
+     *
+     * THE CEILING IS ONE CENTRE DISC PAST THE SHOULDER LINE — 120° — and it is
+     * `GUARD.centre` rather than a fourth number for the same reason the rose
+     * shares `GUARD.sector + GUARD.tolerance`: a later set must not be able to
+     * turn the guard into a sphere by growing its own geometry. A blade that
+     * answered a bolt from directly behind you would not be a guard.
+     *
+     * AND WITH `setReach` 0 THE SECOND ARGUMENT IS THE SMALLER, so the single
+     * blade and the saberstaff both return the literal `GUARD.reach` float
+     * this line has always returned. `GUARD.reach + 0 === GUARD.reach` in
+     * IEEE-754, so there is no drift to tolerance here at all.
+     */
+    g.reach = Math.min(GUARD.reach + GUARD.centre, GUARD.reach + (this.setReach ?? 0));
     g.radius = GUARD.radius;
     // Scaled by the tier, so a parry is genuinely more forgiving on Padawan and
     // genuinely tighter on Grandmaster. `deflectWindow` was four authored

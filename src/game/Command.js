@@ -3057,8 +3057,42 @@ export const DESECRATE = {
   share: 1 / 3, min: 2,
   /** How far out a man will go for a body of theirs, in metres. */
   look: 34,
-  /** Seconds of work per body, and how many pieces come off it. */
-  tear: 5, limbs: 2,
+  /**
+   * Seconds of work per body, and how many pieces come off it.
+   *
+   * FOUR, AND IT USED TO SAY TWO AND MEAN EIGHT. `_desecrateFinish` counted
+   * limbs off `cutRagdoll`'s return value, which reports whether a JOINT broke
+   * and not whether a piece came off, so on a corpse it cut the limb, reported
+   * false, and the loop walked the whole eight-bone list. Measured: every
+   * worked body lost every limb. The count is honest now, so this number is
+   * the number — and four is where it is set rather than two, because the
+   * player asked for bodies "torn apart" and two forearms is a wound. Four
+   * takes both forearms and both shins and leaves a torso you can still read.
+   */
+  tear: 5, limbs: 4,
+  /**
+   * …AND THE HEAD, WHICH IS NOT A LIMB AND IS NOT ON THE SAME LIST.
+   *
+   * The player asked for this by name — "take off real limbs/heads" — and it
+   * was missing: `_desecrateFinish`'s bone list was eight entries of arms and
+   * legs, so the one piece everybody pictures when they hear the order never
+   * came off anything. Measured before this: 32 pieces off four bodies and not
+   * a head among them.
+   *
+   * A SEPARATE ACT RATHER THAN A NINTH BONE, for two reasons. The list is
+   * ordered far-end-first on purpose ("a body loses a forearm before it loses
+   * a thigh and there is something left to recognise") and `limbs` is 2, so a
+   * head appended to the end would never be reached — it would be a line of
+   * code that reads as a feature and does nothing, which is the exact shape
+   * this repo keeps finding. And it should not be every body: a field of
+   * headless corpses is set dressing, one of them is an act.
+   *
+   * WHO DOES IT IS THE SAME AXIS THAT CHOSE THE DETAIL. `_desecrateStart`
+   * sorts by discipline and sends the steadiest men home, so the man working
+   * the body is already down the scale; this asks how far. Below `headBelow`
+   * on his own discipline he takes the head as well.
+   */
+  headBelow: 42,
   /** At most this many bodies are worked under one order. */
   bodies: 6,
   /** What one finished body does to the morale of a company of each order. */
@@ -11794,10 +11828,43 @@ export class CommandDirector extends WaveDirector {
          * its full length, `severedCount` never moves and `isSevered` is
          * false, so nothing came off and nothing said so. 0.3 leaves a third
          * of the bone, which is the blade's own look. */
-        if (o.actor?.cutRagdoll?.(b, imp, 0.3)) took++;
+        /**
+         * COUNTED ON WHAT CAME OFF, NOT ON WHAT `cutRagdoll` RETURNS.
+         *
+         * It returns `broke` — whether a JOINT was removed — and it shortens
+         * the bone on a separate line (`bone.cutT *= t; this.severedCount++`)
+         * that runs whether or not a joint was there to break. On a corpse the
+         * joints are frequently already gone, so it cut the limb and reported
+         * false, `took` never moved, and the loop ran all the way down an
+         * eight-bone list: measured, EVERY worked body lost EVERY limb while
+         * `DESECRATE.limbs` said two. A constant that is ignored is worse than
+         * a constant that is wrong, because the next reader believes it.
+         *
+         * `severedCount` is the ledger `cutRagdoll` actually keeps, so the
+         * delta across the call is the honest answer to "did a piece come off".
+         */
+        const before = o.actor?.severedCount ?? 0;
+        o.actor?.cutRagdoll?.(b, imp, 0.3);
+        if ((o.actor?.severedCount ?? 0) > before) took++;
       } catch { /* a bone the rig does not carry is not a failure */ }
     }
-    this.world?.notifyFloating?.(o.position, 'TORN APART', 0xd0443a);
+    /**
+     * AND THE HEAD, from the man who is far enough down the scale to do it.
+     * `t.attr('discipline')` is the same reader `_desecrateStart` sorted on,
+     * so the two decisions are one axis asked twice: who goes out, and who
+     * goes that far. The stump is the limbs' own 0.3 — see the note above it,
+     * because with the default the joint breaks and nothing comes off.
+     */
+    let tookHead = false;
+    if ((t.attr?.('discipline') ?? 100) < DESECRATE.headBelow && !o.actor?.isSevered?.('head')) {
+      try {
+        const imp = new THREE.Vector3((rng() - 0.5) * 2, 0.8 + rng() * 0.5, (rng() - 0.5) * 2)
+          .normalize().multiplyScalar(DESECRATE.fling * 1.15);
+        tookHead = !!o.actor?.cutRagdoll?.('head', imp, 0.3);
+      } catch { /* a rig with no head bone is not a failure */ }
+    }
+    this.world?.notifyFloating?.(o.position, tookHead ? 'HEAD TAKEN' : 'TORN APART',
+      tookHead ? 0xe4553a : 0xd0443a);
     try { e.cry?.('rage', 1.3); } catch {}
     /* THE FRENZY, on everything of yours that can see it. */
     const team = e.team;

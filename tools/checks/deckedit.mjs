@@ -623,13 +623,31 @@ export async function run({ check, assert, THREE }) {
         const can = wearableFor(row.rec.type, kind);
         const paintRows = (PAINT_SLOTS[kind] || []).filter(([f]) => can.paint.includes(f)).length;
         const kitVals = can.kit.reduce((n, f) => n + (KIT_FIELDS[kind][f]?.values.length || 0), 0);
-        /* Two mark rows, every paint slot times the palette plus "as issued",
-         * and every legal value of every kit field. */
-        const want = MARKS.length * 2 + paintRows * (PAINTS.length + 1) + kitVals;
+        /**
+         * Two mark rows, every paint slot times the palette plus "as issued",
+         * every legal value of every kit field — AND THE ONE NOTCH THAT IS A
+         * VERB RATHER THAN A VALUE.
+         *
+         * `callsign` has been in `EDIT_OPS` since this file landed and
+         * `optionsFor` never offered it, so a listed op had no control — the
+         * dead-control defect `WEARS` exists to prevent, one file across, and
+         * the check below asserting EDIT_OPS equality could not see it because
+         * both surfaces agreed about the WORD while one of them had no way to
+         * reach it.
+         *
+         * It is `+ 1` and not a palette length because a name is FREE TEXT: a
+         * wheel has no letters, so the notch arms the typing fence instead of
+         * writing a value. Counted here explicitly so that a second verb-shaped
+         * op is a red check and somebody comes and argues it.
+         */
+        const VERB_OPS = 1;
+        const want = MARKS.length * 2 + paintRows * (PAINTS.length + 1) + kitVals + VERB_OPS;
         const list = Edit.optionsFor(row);
         assert(list.length === want,
           `the wheel offers ${list.length} changes and the tables describe ${want} — the deck and `
           + 'the Company tab are drawing different palettes');
+        assert(list.filter((o) => o.op === 'callsign').length === VERB_OPS,
+          'the callsign notch is gone — the rename is unreachable from the wheel again');
 
         standBefore(world, row, 2.2, THREE, idle);
         Edit.focusKey(world);
@@ -691,4 +709,112 @@ export async function run({ check, assert, THREE }) {
       + 'way too, and the menu is the surface that has to keep up');
     return `${[...deckOps].sort().join(', ')} on both surfaces`;
   });
+  check('deckedit: looking at a man NAMES him and the key, before anything is pressed', async () =>
+    withRoll(4, async () => {
+      /**
+       * THE DEFECT WAS THAT NOTHING SAID SO. The player, V13:
+       *
+       *   "is there a way to customize your troops while you're in the hangar
+       *    or am I just missing it"
+       *
+       * He was missing it, and there was nothing to find. Everything this file
+       * does — he breaks attention, turns, salutes, and the wheel dials his
+       * mark, his band, his paint and his kit — was reachable only by pressing
+       * a key nobody had been told about, at somebody. `tag()` fired the moment
+       * a man was HELD, which is one press after the discovery has to happen.
+       *
+       * So: with a man under the reticle and NOTHING pressed, the deck already
+       * says his name and what to press. Asserted through the same `pickMan`
+       * the keypress uses — a prompt sourced from a second opinion about who
+       * you are looking at is a prompt that will one day lie.
+       */
+      const { world } = await deck();
+      try {
+        formUp(world, idle);
+        /* READ AT `world.notify`, NOT AT `#deck-tag`. `tag()` speaks through
+         * both — the world first, the element second — and the element only
+         * exists on a page. The world's door is the one that is always there,
+         * and it is the one the HUD listens on. */
+        const said = [];
+        world.notify = (name, note) => said.push([name, note]);
+        const st = world._deckEdit;
+
+        /* LOOKING AT NOBODY. Stood well back, past `REACH`, so the pick has
+         * nothing to take. */
+        const one = world._company.men[Math.floor(world._company.men.length / 2)];
+        standBefore(world, one, Edit.REACH + 8, THREE, idle);
+        for (let i = 0; i < 10; i++) { Edit.stepDeckEdit(world, 1 / 60); world.update(1 / 60, idle); }
+        const named = said.filter(([n]) => n);
+        assert(!named.length,
+          `the deck named somebody with nobody in reach: ${named.map((x) => x[0]).join(', ')}`);
+        said.length = 0;
+
+        /* LOOKING AT A MAN, PRESSING NOTHING. */
+        standBefore(world, one, 2.4, THREE, idle);
+        assert(Edit.pickMan(world) === one, 'the fixture is not looking at the man it thinks it is');
+        let note = null, name = null;
+        for (let i = 0; i < 16 && note === null; i++) {
+          Edit.stepDeckEdit(world, 1 / 60);
+          world.update(1 / 60, idle);
+          const hit = said.find(([n]) => n);
+          if (hit) { name = hit[0]; note = hit[1]; }
+        }
+        assert(note !== null,
+          'a man under the reticle and the deck said nothing — that is the defect, not the fix');
+        assert(!st.held, 'the prompt only appeared because a man was already held');
+        assert(name, 'the prompt fired with no name on it');
+        assert(/\S/.test(note), 'it gave a name and never said what to press');
+        return `looking at ${name}: "${note}" — and nothing at ${(Edit.REACH + 8).toFixed(0)} m`;
+      } finally { world.unload(); }
+    }));
+
+  check('deckedit: a man can actually be renamed on the deck, by a key a player has', async () => {
+    /**
+     * THE WHOLE RENAME PATH EXISTED AND NOTHING COULD REACH IT.
+     *
+     * `beginNaming`, `typeName` and `commitName` were written, argued and
+     * correct, with ZERO callers anywhere in `src/` — verified by grep — and
+     * `optionsFor` never offered the `callsign` op that `EDIT_OPS` lists. So
+     * the deck could paint a man and kit him and never name him, while
+     * `deckedit: the deck edits exactly what the menu edits` passed, because
+     * both surfaces agreed about the WORD.
+     *
+     * This drives the path a player actually walks: hold a man, arm the
+     * rename, type, commit — and then asserts the name is on the RECORD, which
+     * is the only place it counts.
+     */
+    const THREE = await import('three');
+    const { world } = await deck();
+    try {
+      formUp(world, idle);
+      const row = world._company.men[0];
+      standBefore(world, row, 2.2, THREE, idle);
+      Edit.focusKey(world);
+      assert(Edit.holding(world), 'nobody is held, so there is nobody to name');
+      assert(!Edit.naming(world), 'the rename armed itself');
+      assert(Edit.beginNaming(world), 'beginNaming refused with a man held');
+      assert(Edit.naming(world), 'beginNaming did not arm');
+      for (const ch of 'Wrecker') assert(Edit.typeName(world, ch), `the letter ${ch} was dropped`);
+      /* THE BACKSPACE IS PART OF TYPING A NAME, and a player will use it
+       * first. */
+      assert(Edit.typeName(world, 'Backspace'), 'backspace was dropped');
+      Edit.commitName(world);
+      assert(!Edit.naming(world), 'the fence did not close on commit');
+      const got = row.rec.look?.callsign;
+      assert(got === 'Wrecke', `the record says "${got}" after typing Wrecker and one backspace`);
+      /* AND THE WHEEL'S OWN NOTCH REACHES THE SAME FENCE rather than writing a
+       * null over the name somebody just gave. */
+      const was = row.rec.look?.callsign;
+      const notch = Edit.optionsFor(row).findIndex((o) => o.op === 'callsign');
+      assert(notch >= 0, 'the wheel does not offer the callsign');
+      world._deckEdit.pending = Edit.optionsFor(row)[notch];
+      Edit.commitWheel(world);
+      assert(Edit.naming(world), 'the wheel notch did not arm the rename');
+      assert(row.rec.look?.callsign === was,
+        `dialling the callsign notch overwrote the name with ${row.rec.look?.callsign}`);
+      return `held, armed, typed "Wrecker" less a backspace → the record reads "${got}"; `
+        + 'and the wheel notch arms the same fence without writing';
+    } finally { world.unload(); }
+  });
+
 }

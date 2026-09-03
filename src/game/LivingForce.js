@@ -461,7 +461,11 @@ export const FACETS = [
   // Cleaving Throw and Sundering are both blade, but the throw is the one
   // technique in the game that leaves your hand — it hangs off the outermost
   // facet of the blade current rather than sitting inside the shape.
-  { id: 'saberthrow', axis: 'blade', to: ['unbound-throw'],
+  /* TWO LEAVES OFF ONE TECHNIQUE, and they are the same technique twice: the
+   * throw done with the hand holding the sword, and the throw done with the
+   * hand that is not. A paired-blades player who has learned to loose a blade
+   * has learned to loose either of them. See Powers.UNBOUND. */
+  { id: 'saberthrow', axis: 'blade', to: ['unbound-throw', 'unbound-throwOff'],
     jedi: 'Cleaving Throw', sith: 'The Loosed Blade' },
 
   /* ── the unbound tier: one leaf per power, past its current's mastery ──

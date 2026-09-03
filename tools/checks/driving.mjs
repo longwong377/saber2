@@ -99,12 +99,52 @@ export async function run({ check, assert }) {
       assert(!isCrewed({ type: k }),
         `${k} is a droid — the brain IS the machine — and something declared a crew in it`);
     }
-    /* …and every crewed machine is big enough to be worth taking. A crewed
-     * B1 would pass every check above and be a joke. */
+    /**
+     * …AND EVERY CREWED BODY IS ONE OF EXACTLY TWO THINGS, WHICH IS THE RULE
+     * THAT REPLACED "IT IS BIG".
+     *
+     * This asserted `ARCHETYPES[k].big` on every crewed row, on the argument
+     * that "a crewed B1 would pass every check above and be a joke" — and the
+     * argument is right while the only seated things are hulls. Three mounts
+     * arrived and are deliberately NOT `big`: the tauntaun's row argues that
+     * at length, because `A.big` also picks the movement proxy, counts against
+     * Waves' `heavyLimit` and forces `armourClass`/STRATAGEM_ONLY, none of
+     * which belongs on an animal a player owns.
+     *
+     * So the shape held is the PARTITION: a body with a seat in it is a
+     * VEHICLE (`big`) or a MOUNT (`mount`), never neither and never both. That
+     * still refuses the crewed B1 the old line was written to refuse, and it is
+     * the same partition `Menu.js` derives its two lists from — so a row that
+     * fell out of it would be a row the controls card silently omits.
+     */
+    const vehicles = crewed.filter(k => ARCHETYPES[k].big);
+    const mounts = crewed.filter(k => ARCHETYPES[k].mount);
     for (const k of crewed) {
-      assert(ARCHETYPES[k].big, `${k} declares a crew and is not a vehicle`);
+      assert(ARCHETYPES[k].big || ARCHETYPES[k].mount,
+        `${k} declares a crew and is neither a vehicle nor a mount — there is nothing to sit on`);
+      assert(!(ARCHETYPES[k].big && ARCHETYPES[k].mount),
+        `${k} is both a vehicle and a mount; A.big and A.mount decide four other things each`);
     }
-    return `${crewed.length} drivable: ${crewed.map(k => `${k}×${crewOf(k)}`).join(' ')}; `
+    /**
+     * AND THE BINDING RUNS THE OTHER WAY TOO, which is the half that catches a
+     * mount added without a seat. `mount: true` on a kind row is what the
+     * Kennel card reads to print "You can ride this one."; `crew` is what
+     * `whyNotDrive` reads to let you. For four months those were the same claim
+     * made in two places with only one of them true, and the card was the one
+     * telling the player.
+     */
+    for (const k of Object.keys(ARCHETYPES)) {
+      if (!ARCHETYPES[k].mount) continue;
+      assert(crewOf(k) > 0,
+        `${k} says it is a mount and declares no crew — every surface that offers it a rider is lying`);
+      assert(ARCHETYPES[k].steer > 0,
+        `${k} is a mount with no turn rate; it would come round at a Juggernaut's 0.9 rad/s`);
+    }
+    assert(mounts.length >= 3,
+      `only ${mounts.length} rideable animals on the roster — the player asked for three by name`);
+    return `${crewed.length} seated: ${vehicles.length} machines `
+      + `(${vehicles.map(k => `${k}×${crewOf(k)}`).join(' ')}) and ${mounts.length} mounts `
+      + `(${mounts.map(k => `${k}@${ARCHETYPES[k].steer}rad/s`).join(' ')}); `
       + 'four droid vehicles refused';
   });
 
@@ -379,6 +419,277 @@ export async function run({ check, assert }) {
       `only ${pressed.length} actions were polled in a second — the check is not pressing anything`);
     return `${new Set(pressed).size} distinct actions held for a second inside a hull, `
       + '0 powers fired, blade in its hand, barrier down';
+  });
+
+  /* ────────────────────────────────────────────────────────────────────
+   * 4. AND THE THING WITH THE SADDLE
+   *
+   * The player asked for three mounts by name — *"a Tauntaun you ride/mount"*,
+   * *"a Blurgg you ride/mount"*, *"a Varactyl you ride/mount"* — and for four
+   * months three separate surfaces said you could while `whyNotDrive` answered
+   * "Tauntaun is a droid — the brain is the machine, and there is no seat in
+   * it". These checks drive the whole loop on a live world rather than reading
+   * the flags: a real companion, boarded from the ground, ridden further than
+   * the same player's own legs carry him over the same line, got off, and still
+   * his afterwards.
+   * ──────────────────────────────────────────────────────────────────── */
+
+  /** A geonosis world with one of YOUR OWN animals fielded beside you. */
+  const rideBoot = async (kind, level = 'geonosis') => {
+    const H = await import('./_coop.mjs');
+    const THREE = await import('three');
+    const { fieldCompanion } = await import('../../src/game/Companions.js');
+    const { world } = await H.bootWorld({
+      level,
+      settings: { mode: 'waves', level, allies: 0, quality: 'low' },
+      runSeed: 21,
+    });
+    const p = world.player;
+    /** An input whose throttle and steering this check owns. */
+    const stick = { fwd: 0, steer: 0 };
+    const input = {
+      act: () => false, actHit: () => false, actDown: () => false,
+      moveAxis: (o) => { const v = o || {}; v.x = stick.steer; v.y = stick.fwd; return v; },
+      mouse: { dx: 0, dy: 0, wheel: 0, left: false, right: false },
+      delta: { x: 0, y: 0 }, accel: { x: 0, y: 0 }, end() {},
+    };
+    const STEP = 1 / 30;
+    const step = (n) => { for (let i = 0; i < n; i++) { p.hp = p.maxHp; world.update(STEP, input); } };
+    step(40);
+    const e = fieldCompanion(world, p, kind, { rec: { id: `k-${kind}`, xp: 99 } });
+    assert(e, `setup: no ${kind} was fielded`);
+    step(40);
+    const ctx = { input, terrain: world.terrain };
+    /** Stand it an arm's length off, which is where a player boards from. */
+    const alongside = () => { e.position.set(p.position.x + 1.5, e.position.y, p.position.z); };
+    return { world, p, e, input, stick, step, ctx, THREE, alongside, STEP };
+  };
+
+  check('driving: you get on your own tauntaun, and it carries you further than your legs do', async () => {
+    /**
+     * ── THE MEASUREMENT IS A RACE OVER THE SAME LINE ─────────────────────
+     *
+     * "Faster than walking" is easy to assert and easy to satisfy by accident,
+     * because the number a mount is CLAMPED to (`paceOf`, 0.82 of your sprint
+     * for this kind) is not the number it TRAVELS at: the animal takes the
+     * grade term, the wall slide and the stuck commit that `_move` gives every
+     * body, and the player does not take the same ones. So this runs the player
+     * on foot from a point along a heading for ten seconds, notes the line he
+     * actually took, and then puts him back and sends the ANIMAL down that same
+     * line for the same ten seconds. Same ground, same start, same bearing.
+     *
+     * The floor is the honest one: further on its back than on his feet, which
+     * is the whole of what a mount is for. It is not "faster than a sprint" and
+     * must not become that — a sprint is 7.45 m/s for as long as the stamina
+     * lasts, and COMPANIONS.md's pace cap exists precisely so that no companion
+     * ever outruns you.
+     *
+     * FOUR SECONDS AND NOT TEN, because ten runs the animal into the far side
+     * of the level: measured, the ride is a clean straight line at its full
+     * 5.90 m/s for about 25 m and then meets something, and a race whose second
+     * leg ends against a rock measures the rock. Four seconds is 23 m of ride
+     * against 18 of walk with room to spare on every level tried.
+     */
+    const b = await rideBoot('taun');
+    const { p, e, stick, step, THREE } = b;
+
+    /* ── on foot, ten seconds of the ordinary run. */
+    const from = p.position.clone();
+    stick.fwd = 1;
+    step(120);
+    const footLine = p.position.clone().sub(from).setY(0);
+    const foot = footLine.length();
+    const heading = Math.atan2(footLine.x, footLine.z);
+
+    /* ── the same start, the same bearing, on the animal. */
+    stick.fwd = 0;
+    p.position.copy(from);
+    p.body?.position?.copy(p.position);
+    p.velocity.set(0, 0, 0);
+    e.position.set(from.x + 1.5, e.position.y, from.z);
+    step(2);
+    const why = whyNotDrive(b.world, p, e);
+    assert(!why, `standing 1.5 m off your own tauntaun and it refuses you: ${why}`);
+    assert(p.takeControls(b.ctx), 'takeControls said no with no reason at all');
+    assert(p.driving && e.driven, 'the key was accepted and nobody is in the saddle');
+    /* Pointed down the line the legs took, or this measures two different
+     * pieces of ground and calls one of them a mount. */
+    e.facing = heading;
+    const rideFrom = p.position.clone();
+    stick.fwd = 1;
+    step(120);
+    const ride = p.position.clone().sub(rideFrom).setY(0).length();
+
+    assert(p.driving, 'it threw its rider off during an ordinary four-second run');
+    assert(ride > foot * 1.1,
+      `four seconds down the same line: ${ride.toFixed(1)} m on its back against `
+      + `${foot.toFixed(1)} m on foot — the mount is not carrying you anywhere`);
+    /* AND THE PLAYER IS ON THE ANIMAL, not being towed beside it. */
+    const gap = new THREE.Vector3().subVectors(p.position, e.position).setY(0).length();
+    const up = p.position.y - e.position.y;
+    assert(gap < 2, `the rider ended ${gap.toFixed(2)} m to one side of the animal he is on`);
+    assert(up > 1, `the rider is ${up.toFixed(2)} m above it — that is not a back`);
+
+    /* ── and getting off gives you back an animal that is still yours. */
+    p.takeControls(b.ctx);
+    assert(!p.driving && !e.driven, 'the same key did not get the rider down');
+    assert(!e.dead && e.hp > 0, 'the animal did not survive being ridden');
+    assert(e.team === p.team, 'it changed sides when its rider got off');
+    assert(e._cmpOwner === p, 'it stopped being his companion');
+    assert(e._cmpKind === 'taun', 'the kind record did not survive the ride');
+    /* AND IT COMES BACK TO HEEL, which is the whole of "it is still yours":
+     * the move wrap deferred to the driver for 300 frames and has to pick the
+     * station back up on the frame after. */
+    stick.fwd = 0;
+    step(90);
+    const heel = e.position.distanceTo(p.position);
+    assert(heel < 8, `three seconds after the dismount it is ${heel.toFixed(1)} m away, not at your heel`);
+    return `4 s down one line: ${ride.toFixed(1)} m ridden vs ${foot.toFixed(1)} m on foot `
+      + `(+${(100 * (ride / foot - 1)).toFixed(0)}%); rider ${gap.toFixed(2)} m over its centre and `
+      + `${up.toFixed(2)} m up; dismounted, still yours, back at ${heel.toFixed(1)} m`;
+  });
+
+  check('driving: on an animal the rider owns the heading, at the animal\'s own turn rate', async () => {
+    /**
+     * TWO THINGS THIS IS THE ONLY MEASUREMENT OF, AND BOTH ARE LOAD-BEARING.
+     *
+     * ── THE RATE. `DRIVE.turn` is 0.9 rad/s and its note says why: a
+     * twenty-five-metre Juggernaut you point somewhere as a decision you commit
+     * to. At 0.9 a tauntaun at 5.9 m/s has a 6.8 m turning circle, which on
+     * broken ground is a body you cannot aim at a gap. Each mount declares its
+     * own `steer` and the three are argued as RADII over `COMPANION_UNITS`;
+     * this measures the rate off the body and holds it to the row, so a mount
+     * added without one — or one silently falling back to the tank rate — is
+     * caught here rather than felt.
+     *
+     * ── AND WHO IS STEERING. A companion's move wrap writes `wish` every frame
+     * toward its station, which is the heel mark 3.4 m off its owner's back.
+     * While you are riding, the owner IS on the animal — so the station is
+     * three metres from the body it is steering and the wrap and the throttle
+     * are two hands on one rein. Measured with the wrap left running on a
+     * driven body: it wrote the wish on **60 of 60** frames, and it happened
+     * not to show in a straight-line race only because the fixture's camera and
+     * the animal's facing pointed the same way, which is the exact shape of a
+     * defect that ships. So this points the animal ACROSS the station — a
+     * quarter turn off where the rider is looking — and asks which of the two
+     * the body obeyed.
+     */
+    const rows = [];
+    for (const kind of ['taun', 'blurrg', 'varac']) {
+      const b = await rideBoot(kind);
+      const { p, e, stick, step, THREE } = b;
+      b.alongside();
+      step(2);
+      assert(p.takeControls(b.ctx), `${kind}: ${whyNotDrive(b.world, p, e)}`);
+
+      /* ── the rate, off one second of held steering. */
+      const was = e.facing;
+      stick.steer = 1;
+      step(30);
+      stick.steer = 0;
+      let turned = Math.abs(e.facing - was) % (Math.PI * 2);
+      if (turned > Math.PI) turned = Math.PI * 2 - turned;
+      const want = e.A.steer;
+      assert(Math.abs(turned - want) < 0.25,
+        `${kind}: a second of full steering turned it ${turned.toFixed(2)} rad and its row says ${want}`);
+      assert(Math.abs(turned - DRIVE.turn) > 0.25,
+        `${kind}: it turned at ${turned.toFixed(2)} rad/s, which is the tank rate — the row is not being read`);
+
+      /* ── and the heading, pointed a quarter turn off the station. */
+      const yaw = Math.atan2(p.aimDir.x, p.aimDir.z);
+      e.facing = yaw + Math.PI / 2;
+      const from = e.position.clone();
+      stick.fwd = 1;
+      step(90);
+      const went = new THREE.Vector3().subVectors(e.position, from).setY(0);
+      assert(went.length() > 4,
+        `${kind}: three seconds of throttle across its own station moved it ${went.length().toFixed(1)} m`);
+      const bearing = Math.atan2(went.x, went.z);
+      let off = Math.abs(bearing - e.facing) % (Math.PI * 2);
+      if (off > Math.PI) off = Math.PI * 2 - off;
+      assert(off < 0.45,
+        `${kind}: pointed at ${e.facing.toFixed(2)} and it travelled at ${bearing.toFixed(2)} — `
+        + `${(off * 57.3).toFixed(0)}° off, which is something other than the rider steering`);
+      rows.push(`${kind} ${turned.toFixed(2)} rad/s (row ${want}), ${went.length().toFixed(1)} m at `
+        + `${(off * 57.3).toFixed(0)}° off the nose`);
+      b.world.unload?.();
+    }
+    return rows.join(' · ');
+  });
+
+  check('driving: the saddle is the animal\'s measured back, not a number off its nose', async () => {
+    /**
+     * `_measurePlatform` returns immediately on `if (!this.A.big || !this.rig)`
+     * and no mount is `big` — so before this pass every mount published
+     * `platformTop` 0 and `platform()` null, and `Crew.seat` had nothing to sit
+     * on but `chestY`. This drives the gate: the platform is measured, the seat
+     * IS it, and `chestY` is far enough away that the two cannot be confused.
+     *
+     * BREAK EITHER HALF AND THIS GOES RED. Put `A.big` back in the gate and
+     * `platform()` is null on all three; leave the gate open and take the
+     * `plat` branch out of `seat()` and the rider sits at `chestY`, which the
+     * last assertion measures as a real distance rather than trusting it.
+     */
+    const rows = [];
+    for (const kind of ['taun', 'blurrg', 'varac']) {
+      const b = await rideBoot(kind);
+      const { p, e, step } = b;
+      const plat = e.platform();
+      assert(plat, `${kind}: no deck was measured, so there is nothing to sit on`);
+      assert(e.platformTop > 0.2 && e.platformRadius > 0.2,
+        `${kind}: a deck ${e.platformTop.toFixed(2)} m high and ${e.platformRadius.toFixed(2)} m across`);
+      b.alongside();
+      step(2);
+      assert(p.takeControls(b.ctx), `${kind}: ${whyNotDrive(b.world, p, e)}`);
+      step(4);
+      const back = plat.position.y + plat.extent.y;
+      const off = Math.abs(p.position.y - back);
+      assert(off < 0.35,
+        `${kind}: the rider is ${off.toFixed(2)} m off the back that was measured for him`);
+      /* …AND `chestY` IS A DIFFERENT ANSWER, or the branch above proves nothing. */
+      const chest = Math.abs(p.position.y - (e.chestY ?? 0));
+      assert(chest > 0.15,
+        `${kind}: the measured back and chestY are ${chest.toFixed(2)} m apart — `
+        + 'this check cannot tell which one the seat used');
+      rows.push(`${kind} back ${(back - e.position.y).toFixed(2)} m, rider ${off.toFixed(2)} off it, `
+        + `chestY ${chest.toFixed(2)} away`);
+      b.world.unload?.();
+    }
+    return rows.join(' · ');
+  });
+
+  check('driving: an animal is not a gun platform, and it says so', async () => {
+    /**
+     * `Crew.fire` goes through the machine's own `_shoot` — its damage, its
+     * bolt colour, its muzzle. A tauntaun has none of those, and the trade
+     * riding IS is that your blade goes on your belt and you arrive unarmed.
+     * A trigger that silently did nothing would be the defect `Player._refuse`
+     * exists to stop, so this asserts the REFUSAL and not the silence.
+     */
+    const b = await rideBoot('taun');
+    const { p, e, step } = b;
+    b.alongside();
+    step(2);
+    p.saber.ignite(); p.saber.ignition = 1;
+    assert(p.takeControls(b.ctx), `setup: ${whyNotDrive(b.world, p, e)}`);
+    assert(!p.saber.lit, 'you are on an animal with both hands on the reins and the blade is lit');
+
+    const said = [];
+    const was = b.world.notify;
+    b.world.notify = (t, m) => { said.push(`${t}: ${m}`); return was?.call(b.world, t, m); };
+    const bolts0 = b.world.bolts?.count ?? b.world.bolts?.list?.length ?? 0;
+    const fired = p.driving.fire(b.ctx);
+    step(30);
+    b.world.notify = was;
+    assert(fired === false, 'a tauntaun fired something');
+    const bolts1 = b.world.bolts?.count ?? b.world.bolts?.list?.length ?? 0;
+    assert(bolts1 <= bolts0, `${bolts1 - bolts0} bolts came out of an animal with no gun`);
+    assert(said.some(l => /FIRE/i.test(l)),
+      `the trigger did nothing and said nothing: ${said.join(' | ') || '(silence)'}`);
+    /* AND THE BLADE COMES BACK, so the trade is a trade and not a confiscation. */
+    p.takeControls(b.ctx);
+    assert(p.saber.lit || p.saber.ignition > 0, 'the blade did not come back lit after the dismount');
+    return `fire() refused with "${said.find(l => /FIRE/i.test(l))}", 0 bolts, blade back on the dismount`;
   });
 
   /* ────────────────────────────────────────────────────────────────────

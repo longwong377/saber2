@@ -227,11 +227,48 @@ export async function run({ check, assert }) {
         ward: () => { const a = ally(); if (a) p.forceWard(world); },
         restore: () => { p.hp = p.maxHp * 0.5; p.forceRestore(world); },
       };
-      const undriven = Object.keys(POWER_COST).filter(k => !fire[k]);
+      /**
+       * …AND TWO POWERS CANNOT BE FIRED ON THIS BENCH AT ALL, WHICH IS A FACT
+       * ABOUT THE POWERS AND NOT A GAP IN THE FIXTURE.
+       *
+       * `throwOff` throws one blade of a PAIR and keeps the other; `orbit`
+       * spins a STAFF about the body. Neither exists for a player holding one
+       * blade — `throwOffBlade` and `spinBarrier` return before they bill
+       * anything — and the set is fixed in the Player CONSTRUCTOR off
+       * `opts.saberSet`, which `World.spawnPlayer` reads from settings. There
+       * is no supported way to change it on a live body, and writing the
+       * fields by hand would be a bench measuring a state the game cannot be
+       * in.
+       *
+       * So they get their own worlds, booted with the set on through the same
+       * settings door a player uses, and are billed by the identical
+       * cast-then-sixty-frames loop. Declared in a table beside `fire` rather
+       * than hidden inside it, so the coverage assert below still walks every
+       * key of POWER_COST and a thirteenth power with no driver still fails.
+       */
+      const SET_POWERS = {
+        throwOff: { set: 'pair', cast: (pp, ww) => pp.throwOffBlade(ww) },
+        orbit: { set: 'staff', cast: (pp, ww) => pp.spinBarrier(ww) },
+      };
+      const undriven = Object.keys(POWER_COST).filter(k => !fire[k] && !SET_POWERS[k]);
       assert(!undriven.length, `this check has no way to fire ${undriven.join(', ')}`);
 
       const bill = {};
+      for (const [key, row] of Object.entries(SET_POWERS)) {
+        const sb = await boot({ forceDrain: drain, saberSet: row.set });
+        sb.p.force = sb.p.maxForce;
+        sb.p.charged = 0;
+        for (const k of Object.keys(sb.p.cooldowns)) sb.p.cooldowns[k] = 0;
+        sb.p.throwState = 'held'; sb.p.saberDown = false; sb.p.saber.lit = true;
+        assert(sb.p.saberSet === row.set,
+          `the ${row.set} bench built a player holding "${sb.p.saberSet}" — the settings door no longer picks the set`);
+        row.cast(sb.p, sb.world);
+        for (let i = 0; i < 60; i++) sb.step(1);
+        sb.p._regen(STEP);
+        bill[key] = sb.p.charged;
+      }
       for (const key of Object.keys(POWER_COST)) {
+        if (SET_POWERS[key]) continue;
         /* Back to a state every power can be cast from. A barrier already up
          * makes `forceShield` a toggle-DOWN, which spends nothing — the same
          * trap force-voice.mjs's `rearm` documents. */

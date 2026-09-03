@@ -714,6 +714,13 @@
            nothing hides its own heading, so a half-built feature is invisible
            rather than an empty box with a title over it. -->
       <div class="col scroll">
+        <!-- TRUST IN THE FORCE. The player asked for a randomise button "for the
+             people who prefer it that way" and asked that it not be called
+             randomise. It drives the CONTROLS below rather than the settings
+             behind them, so a row added to this panel is randomised the day it
+             is added and nothing here has to know what a robe is. -->
+        <button id="btn-trust" class="secondary wide">Trust in the Force</button>
+        <p class="hint">Let it choose for you — every row on this page at once.</p>
         <h3 id="h-order">Order</h3>
         <div id="order-list" class="cards small"></div>
         <h3 id="h-species" style="margin-top:22px">Species</h3>
@@ -739,6 +746,14 @@
         <div id="hair-list" class="swatches"></div>
         <h3 id="h-cut" style="margin-top:22px">Robe cut</h3>
         <div id="cut-list" class="cards small"></div>
+        <h3 id="h-saberset" style="margin-top:22px">What you carry</h3>
+        <div id="saberset-list" class="cards small"></div>
+        <h3 id="h-companion" style="margin-top:22px">What comes with you</h3>
+        <div id="companion-list" class="cards small"></div>
+        <div id="companion-state" class="note"></div>
+        <div id="companion-coop" class="note"></div>
+        <button id="companion-release" class="secondary hidden">Hold to release it</button>
+        <div id="companion-dress-host"></div>
         <!-- THE MEDITATION POSE. Built by Menu._buildForge off Rig.MEDITATION_POSES;
              the preview beside this column sits in a pose while its card is
              hovered, which is how you choose one. -->
@@ -1547,6 +1562,13 @@
          not follow a rebind. Shown only while the map is a Force reading and
          cold; the map itself is the readout once it is warm. -->
     <div id="minimap-key" class="mapkey hidden"></div>
+    <!-- WHAT CAME WITH YOU, AND HOW IT IS DOING. A SIBLING of #power-wheel in
+         the .hud-br column and NOT inside #roster: `setRoster` hides that node
+         in every mode with no CommandDirector, which is nine of the eleven and
+         is exactly where a companion is most likely to be the only thing on
+         your side. Not appended to #power-wheel either — `hud-events.mjs`
+         counts its slots. Filled by HUD.setCompanion. -->
+    <div id="companion-plate" class="powers hidden" aria-hidden="true"></div>
     <div id="power-wheel" class="powers"></div>
   </div>
 
@@ -1563,6 +1585,10 @@
        table, and a second copy of it typed in here is the defect this project
        keeps removing. Built by HUD.js the first frame there is an army. -->
   <div id="order-wheel" class="hidden" aria-hidden="true"></div>
+    <!-- The companion's own ring. A separate wheel on a separate key, because
+         the order wheel exists only where a CommandDirector does — two of the
+         eleven modes — and a companion is with you in all of them. -->
+    <div id="companion-wheel" class="emotes" aria-hidden="true"></div>
 
   <div id="bossbar" class="bossbar hidden">
     <div class="boss-name"><b id="boss-label">—</b><em id="boss-phase"></em></div>

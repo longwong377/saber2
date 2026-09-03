@@ -233,7 +233,11 @@ class LiveGrenade {
     this.mesh = null;
     if (field.scene) {
       const g = new THREE.SphereGeometry(0.11, 8, 6);
-      const m = new THREE.MeshLambertMaterial({ color: 0x3a4038, emissive: 0x000000 });
+      /* Standard, not Lambert, for the reason src/world/Graves.js's `attach`
+       * sets out at length: Cel.js rewrites the PHYSICAL program only, so a
+       * Lambert material is the one thing in the frame that is not cel shaded.
+       * This was the fifth and last one in the game. */
+      const m = new THREE.MeshStandardMaterial({ color: 0x3a4038, roughness: 1, metalness: 0 });
       this.mesh = new THREE.Mesh(g, m);
       this.mesh.castShadow = false;
       field.scene.add(this.mesh);

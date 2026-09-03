@@ -575,7 +575,25 @@ export async function run({ check, assert }) {
     };
     const mine = travel('geonosian');
     const rows = [`geonosian ${mine.sum.toFixed(1)} m in 20 s (peak ${m2(mine.peak)})`];
-    for (const type of Object.keys(ARCHETYPES).filter((t) => ARCHETYPES[t].float && t !== 'geonosian')) {
+    /**
+     * …AND THE COMPARISON SET IS BODIES THAT DO NOT FLY, WHICH IS WHAT IT
+     * ALWAYS MEANT.
+     *
+     * The note above names the two bodies this has to be different from — the
+     * jet trooper and the training remote — and both of them are things that
+     * HOLD AN ALTITUDE. A body that declares `flight` runs the same cruise and
+     * stoop cycle out of the same file by design, so asserting that it travels
+     * 2.5× less than the Geonosian is asserting that the shared model is not
+     * shared: it would fail the day a second flyer landed, and the failure
+     * would be the check disagreeing with its own subject rather than with a
+     * defect. `A.flight` is the exact predicate `installFlight` adopts on, so
+     * this filter cannot drift from what "flies" means.
+     *
+     * What is NOT relaxed: everything else in this file still runs over every
+     * archetype that declares `float`, including the new ones — the drawn-body
+     * check below is the one that found the jet trooper's pivot bug.
+     */
+    for (const type of Object.keys(ARCHETYPES).filter((t) => ARCHETYPES[t].float && !ARCHETYPES[t].flight)) {
       const other = travel(type);
       rows.push(`${type} ${other.sum.toFixed(1)} m (peak ${m2(other.peak)})`);
       assert(mine.sum > other.sum * 2.5,

@@ -1888,10 +1888,34 @@ export async function run({ check, assert }) {
      */
     const { ACTIONS } = await import('../../src/engine/Bindings.js');
     const Powers = await import('../../src/game/Powers.js');
+    const { POWERS } = await import('../../src/ui/HUD.js');
+    /**
+     * A POWER IS NOT ALWAYS A KEY, and this check assumed it was.
+     *
+     * It looked each card's `key` up in ACTIONS directly, which held for as
+     * long as every power had a binding of its own. Two do not: `throwOff` and
+     * `orbit` both RIDE the `throw` key, because that key means three different
+     * things in the three saber sets — the disc, the saberstaff's orbit, the
+     * pair's shoto — and the measured keyboard budget has nothing left to give
+     * them rows of their own. So the card for the pair's throw named
+     * 'throwOff', which is a real power with a real cost and a real slot on the
+     * wheel, and this file called it "not an action".
+     *
+     * `HUD.POWERS` is already the power → binding column, written where the
+     * wheel needed it and carrying its own argument for these two rows. It is
+     * imported rather than restated (§2.4), and the mapping is asserted to be
+     * TOTAL over the cards, so a fourteenth power that nothing draws still
+     * fails here rather than being quietly resolved to nothing.
+     */
+    const slot = new Map(POWERS);
     const vague = [];
     for (const u of Powers.UNBOUND) {
-      const act = ACTIONS.find((a) => a.id === u.key);
-      assert(act, `unbound card ${u.name} names '${u.key}', which is not an action`);
+      assert(slot.has(u.key),
+        `unbound card ${u.name} names the power '${u.key}' and HUD.POWERS gives it no slot, so the `
+        + 'wheel neither draws it nor prices it');
+      const bind = slot.get(u.key);
+      const act = ACTIONS.find((a) => a.id === bind);
+      assert(act, `unbound card ${u.name} names '${u.key}', which rides '${bind}' — not an action`);
       assert(act.label, `the action '${u.key}' has no label to name it by`);
       /* The first noun of the action's own label — "Force push" out of
        * "Force push", "Stasis field" out of "Stasis field", "Throw" out of

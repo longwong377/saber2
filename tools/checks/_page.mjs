@@ -101,6 +101,31 @@ class Element {
       this.value = '';
       this.checked = false;
       this.disabled = false;
+      /**
+       * min/max/step ARE PROPERTIES ON A REAL INPUT, and here they were only
+       * attributes — which is the difference between a range control this page
+       * can drive and one nothing can.
+       *
+       * `Menu._trustInTheForce` reads `Number(el.min)` and `Number(el.max)` and
+       * SKIPS any slider whose bounds do not parse. Against the shim as it
+       * stood both were `undefined`, so `Number(undefined)` was NaN and the
+       * whole slider pass — five sliders on the wardrobe page, the frame, the
+       * muscle, the years and the two blade dimensions — was silently doing
+       * nothing, in a check whose whole subject is "it moves EVERY control".
+       * A shim that answers `undefined` where a browser answers "0" does not
+       * make the check strict, it makes it blind: measured, opt-build sat at
+       * 0.5 across two presses that should have driven it to each end.
+       *
+       * Reflected off `attrs` rather than copied at parse time, so markup and
+       * a later `setAttribute` agree, exactly as `value` already does.
+       */
+      for (const name of ['min', 'max', 'step']) {
+        Object.defineProperty(this, name, {
+          configurable: true,
+          get: () => (attrs.has(name) ? attrs.get(name) : ''),
+          set: (v) => { attrs.set(name, String(v)); },
+        });
+      }
     }
   }
 

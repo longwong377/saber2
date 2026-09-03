@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { Enemy, ARCHETYPES, limitBackpedal } from '../../src/game/Enemy.js';
+import { Enemy, ARCHETYPES, BEAST_MOVES, limitBackpedal } from '../../src/game/Enemy.js';
 import { Saber } from '../../src/game/Saber.js';
 import { SaberController } from '../../src/game/SaberController.js';
 import { BoltPool } from '../../src/game/Bolts.js';
@@ -92,15 +92,46 @@ export async function run({ check, assert }) {
     return 'damage() intact, attackDamage carries the number';
   });
 
-  check('shadowing: every archetype carries a numeric attack damage or none', () => {
-    const rows = [];
+  check('shadowing: every archetype carries a numeric attack damage or none, and a zero means it', () => {
+    /**
+     * `damage > 0` WAS RIGHT UNTIL A BODY MEANT ZERO.
+     *
+     * This clause guarded against a field that had gone to a string, a NaN or
+     * a stray falsy — the shapes a rename leaves behind — and `> 0` caught all
+     * of them for as long as every archetype carrying the field could fight.
+     * Five now declare `damage: 0` ON PURPOSE: the tauntaun and the varactyl
+     * because "a Tauntaun you ride/mount and can follow you but is USELESS IN
+     * BATTLE" is the brief in the player's own words, the tooka because its
+     * whole brief is being useless and adorable, and the astromech and the
+     * 2-1B because a repair droid and a surgeon do not bite. `damage: 0` is
+     * load-bearing rather than absent: `dodgeable.mjs` reads it to exempt an
+     * unarmed body from a clause about repetitive attacks, and
+     * `beastMoveSet`'s empty set is the other half of the same statement.
+     *
+     * So a zero is allowed and then held to its word, which is a STRICTER rule
+     * than the one it replaces: a body that declares no damage may not carry a
+     * move that would land any. `BEAST_MOVES[*].damage` is a MULTIPLIER on the
+     * archetype's own, so the product is what is asserted — the varactyl's
+     * sweep reads 0.85 and lands 0.85 x 0 = nothing. Arm one of the five and
+     * this goes red; leave a field as the string "12" and it still goes red.
+     */
+    const rows = [], armed = [];
     for (const [key, A] of Object.entries(ARCHETYPES)) {
       if (A.damage === undefined) { rows.push(`${key} —`); continue; }
-      assert(typeof A.damage === 'number' && Number.isFinite(A.damage) && A.damage > 0,
+      assert(typeof A.damage === 'number' && Number.isFinite(A.damage) && A.damage >= 0,
         `${key} has damage ${A.damage}`);
+      if (A.damage === 0) {
+        const set = (A.moves || []).filter((k) => BEAST_MOVES[k]);
+        const worst = Math.max(0, ...set.map((k) => (BEAST_MOVES[k].damage ?? 0) * A.damage));
+        if (worst > 0) armed.push(`${key} (${set.join('/')} → ${worst})`);
+      }
       rows.push(`${key} ${A.damage}`);
     }
-    return `${rows.length} archetypes`;
+    assert(!armed.length,
+      `${armed.join(', ')} declare damage 0 and carry a move that lands more than nothing — `
+      + 'one of the two is a mistake');
+    const zeroes = Object.entries(ARCHETYPES).filter(([, A]) => A.damage === 0).map(([k]) => k);
+    return `${rows.length} archetypes, ${zeroes.length} of them deliberately unarmed: ${zeroes.join(', ')}`;
   });
 
   check('shadowing: the movement law survived the rename', () => {

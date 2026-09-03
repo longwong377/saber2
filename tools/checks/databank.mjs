@@ -43,6 +43,7 @@ import { Menu, DEFAULT_SETTINGS, databankPages, databankGroups } from '../../src
 import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { DATABANK, FACTIONS } from '../../src/game/Databank.js';
+import { COMPANION_KINDS } from '../../src/game/CompanionKinds.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -237,7 +238,7 @@ export async function run({ check, assert }) {
     try {
       const rows = rowsIn(doc);
       const wrong = [];
-      let withLevels = 0, dojo = 0;
+      let withLevels = 0, dojo = 0, brought = 0;
       for (const p of databankPages()) {
         const want = LEVEL_ORDER.filter((k) => (LEVELS[k].pool || []).includes(p.key))
           .map((k) => LEVELS[k].name);
@@ -264,6 +265,22 @@ export async function run({ check, assert }) {
           if (!/dojo/i.test(met)) wrong.push(`${p.key} is a dojo body and its page does not say so`);
           continue;
         }
+        /* AND THE THIRD DOOR: a body you BRING. A companion kind is an
+         * archetype the game fields and no pool names, which is exactly the
+         * shape `want.length` below calls a bug — so without this branch the
+         * only way to make the page render was to put the player's own animal
+         * in a level's spawn pool, and it would then be fought as an enemy.
+         * The clause is as strict as the dojo's: the cell must say the animal
+         * is brought, and must not point at a theatre, because "go to Geonosis
+         * to find a tauntaun" is a claim about the game that is false. */
+        if (COMPANION_KINDS[p.key]) {
+          brought++;
+          if (!/bring/i.test(met)) wrong.push(`${p.key} is a companion and its page does not say you bring it`);
+          for (const k of LEVEL_ORDER) {
+            if (met.includes(LEVELS[k].name)) wrong.push(`${p.key} is a companion and its page sends you to ${LEVELS[k].name}`);
+          }
+          continue;
+        }
         assert(want.length, `${p.key} is in no pool at all — roster.mjs should have caught that first`);
         withLevels++;
         for (const name of want) {
@@ -278,7 +295,8 @@ export async function run({ check, assert }) {
         }
       }
       assert(!wrong.length, wrong.slice(0, 6).join('; '));
-      return `${withLevels} bodies point at the theatres whose pools name them, ${dojo} name the dojo`;
+      return `${withLevels} bodies point at the theatres whose pools name them, `
+        + `${dojo} name the dojo and ${brought} say you bring them`;
     } finally { close(); }
   });
 

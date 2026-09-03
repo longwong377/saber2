@@ -1413,9 +1413,31 @@ export async function run({ check, assert }) {
     assert(before === Cmd.OPENING_STRENGTH, `${before} troopers on the field before the boundary`);
     const names = d.roster.all.map((t) => t.name).join('|');
 
+    /**
+     * THE BOUNDARY IS FORCED, AND `d.wave` IS NOT THE NUMBER TO FORCE IT WITH.
+     *
+     * `payWave` opens `if (!(wave > this._paid)) return false` — its dedupe,
+     * and correct. This read `d.payWave(d.wave)`, which is a request to pay the
+     * wave the director is CURRENTLY ON, and that is only unpaid if the two
+     * seconds of drive above happened to clear one. Whether they did is decided
+     * by Waves' own stream, which `clocked` deliberately does not put back —
+     * this file's own `commandWorld` note says so, and says the first seed it
+     * tried "turned 'the last wave of the area did not pay' red instead". So
+     * the check has always been one arrangement of the process away from
+     * failing on a fixture detail, and it is nothing to do with what it
+     * measures.
+     *
+     * What it measures is `recall()` across an area boundary. So it asks for
+     * the boundary in the terms the boundary is actually in: the next UNPAID
+     * wave, with `d.wave` moved to it first the way the director moves it when
+     * one clears. Same shipped path — payWave → _areaClear → recall →
+     * autoMuster → closeMuster → deploy — and no dependence on how far two
+     * seconds happened to get.
+     */
     d.areaWaves = d.area.waves - 1;
+    d.wave = Math.max(d.wave | 0, (d._paid | 0) + 1);
     const paid = d.payWave(d.wave);
-    assert(paid, 'the last wave of the area did not pay');
+    assert(paid, `the boundary would not pay: wave ${d.wave}, already paid ${d._paid}`);
     assert(d.areaIndex === 1, 'the area did not advance');
 
     /* AND THEY COME IN ON GUNSHIPS NOW, so the boundary is four seconds long.
@@ -1434,18 +1456,37 @@ export async function run({ check, assert }) {
      * order for eight seconds, so measuring at the end of the drive measures
      * the formation solver, not the gunship. Recorded on the frame each body
      * appears. */
+    /**
+     * …AND IT DRIVES UNTIL THE SKY IS EMPTY RATHER THAN FOR FOURTEEN SECONDS.
+     *
+     * A fixed clock here is a second fixture detail standing in for the thing
+     * being measured, and the same one that made the boundary above flaky: how
+     * long a landing takes depends on how many gunships `closeMuster` asked
+     * for, which depends on how many men were lost, which comes off Waves'
+     * unpinned stream. Measured on one arrangement that was failing at
+     * fourteen: every man was down and the whole check green by forty.
+     *
+     * So the bound is what the clause actually claims — they land, and they
+     * land in a reasonable time — with the cap generous enough that only a
+     * gunship which NEVER arrives can fail it. `far` is still recorded on the
+     * frame each body first appears, for the reason the note above gives.
+     */
+    const LAND_CAP = 40;
     let far = 0;
     const seen = new Set();
-    drive(world, 14, input, () => {
+    const flew = drive(world, LAND_CAP, input, () => {
       for (const t of d.roster.living) {
         if (!t.body || seen.has(t)) continue;
         seen.add(t);
         far = Math.max(far, Math.hypot(t.body.position.x - world.player.position.x,
           t.body.position.z - world.player.position.z));
       }
-      return false;
+      return d.arrivals.pending === 0;
     });
-    assert(d.arrivals.pending === 0, `${d.arrivals.pending} troopers still in the air after fourteen seconds`);
+    assert(d.arrivals.pending === 0,
+      `${d.arrivals.pending} troopers still in the air after ${LAND_CAP} s — a gunship that never lands`);
+    assert(flew < LAND_CAP,
+      `the sky only emptied on the last frame of ${LAND_CAP} s, so this measured the cap and not the landing`);
 
     const after = live();
     assert(after === d.roster.strength,

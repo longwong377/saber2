@@ -47,6 +47,40 @@ export function saddleThreat(type) {
   return ARCHETYPES[A.saddle]?.threat ?? 0;
 }
 
+/**
+ * COMING OFF SOMETHING THAT IS STILL MOVING — one table, and now two riders.
+ *
+ * These four numbers were written inline in `dismount` below for the one case
+ * this file had: a B2 whose reek has just been killed under it. The tauntaun's
+ * panic is the same event with a PLAYER on the back — see `Crew.throwRider` in
+ * Driving.js — and the second copy of "0.8 of the mount's momentum, 2.6 up,
+ * 2.4 out and 0.7 stunned" is exactly the duplicate-table defect HANDOFF §2.4
+ * is about. So the numbers are declared once and both callers read them.
+ *
+ * WHY THE STUN IS NOT APPLIED HERE. An Enemy is taken off the controls with
+ * `stun()`; a player never is — Player.js:4087 states that rule out loud and
+ * uses `staggerTimer` instead — so the two callers spend `THROWN.stun` in their
+ * own currency rather than this function branching on which kind of body it
+ * was handed. The momentum is identical for both and is all this writes.
+ */
+export const THROWN = { carry: 0.8, up: 2.6, out: 2.4, stun: 0.7 };
+
+/**
+ * Throw a body clear of the mount it was on, with the mount's own momentum.
+ *
+ * `yaw` is the direction it goes sideways in — the saddle's heading for a
+ * rider that fell off, the mount's own facing for one that was bucked.
+ */
+export function throwClear(body, mount, yaw = 0) {
+  if (!body?.velocity) return false;
+  body.velocity.copy(mount?.velocity ?? _v2.set(0, 0, 0)).multiplyScalar(THROWN.carry);
+  body.velocity.y = THROWN.up;
+  _v2.set(Math.cos(yaw), 0, Math.sin(yaw)).multiplyScalar(THROWN.out);
+  body.velocity.add(_v2);
+  body.grounded = false;
+  return true;
+}
+
 class RiderPack {
   constructor(world) {
     this.id = 'riders';
@@ -113,13 +147,10 @@ class RiderPack {
     /* Thrown clear, not deleted. It is a real body with real health and it has
      * just fallen three metres off something that was killed under it, so it
      * arrives with the mount's own momentum and takes the landing like anything
-     * else that falls in this game. */
-    r.velocity.copy(mount.velocity).multiplyScalar(0.8);
-    r.velocity.y = 2.6;
-    _v2.set(Math.cos(seat.yaw), 0, Math.sin(seat.yaw)).multiplyScalar(2.4);
-    r.velocity.add(_v2);
-    r.grounded = false;
-    r.stun?.(0.7);
+     * else that falls in this game. `throwClear` is that momentum, shared with
+     * the tauntaun's buck — see THROWN. */
+    throwClear(r, mount, seat.yaw);
+    r.stun?.(THROWN.stun);
   }
 
   update(dt) {

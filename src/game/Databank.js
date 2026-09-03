@@ -585,6 +585,174 @@ export const DATABANK = {
       + 'it reaches its most dangerous state within seconds of the gate. The answer '
       + 'is the last tenth of the telegraph.',
   },
+
+  /* ── THE COMPANION KINDS ────────────────────────────────────────────────
+   *
+   * Eight bodies that reached ARCHETYPES through `COMPANION_UNITS` rather than
+   * through a level's creature list, and the check that made this block
+   * necessary is the right one: `factions.mjs` walks ARCHETYPES, not the wave
+   * pools, because a body the game can PUT ON THE FIELD by any door is a body
+   * the databank owes a page. A companion is on the field more than most
+   * enemies are — it is out for the whole deployment — so this is the last
+   * table it should have been missing from.
+   *
+   * `wild` for all eight, the b1c included. The faction reads "Nothing here
+   * has a side, a rank or a reason to be on the field beyond the one that put
+   * it in a cage", which is a companion exactly: it is out because YOU brought
+   * it. Filing the droid as separatist was the alternative and it is a real
+   * bug rather than a nicety — `factionOf` is what the wave director reads to
+   * decide which side a body belongs on, and a Confederacy tag on a machine
+   * that walks at your heel is the one label that could put it in a wave
+   * against you.
+   *
+   * The text is written for the player who has one, not for a bestiary: what
+   * it does, what it costs, and the one thing it will not do. `COMPANION_KINDS
+   * [id].blurb` is the card in the kennel and says the same thing in one
+   * sentence; this is the page behind it. Neither is generated from the other,
+   * and that is deliberate — the blurb is a pitch and this is the manual.
+   */
+  massiff: {
+    faction: 'wild',
+    weapon: 'Jaws',
+    text: 'A massiff: the Geonosian guard animal, plated along the spine and '
+      + 'built low. It is the companion everything else is measured against, and '
+      + 'the only kind that can stand in front of you and still be there '
+      + 'afterwards. What it does is not damage, it is occupation — a B1 with a '
+      + 'massiff on it is a B1 shooting at a massiff. It is slower than your '
+      + 'sprint, which is the whole bargain: you can always leave it behind, and '
+      + 'it will always be a moment late.',
+  },
+  tooka: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'A tooka kit: the smallest thing you can own, no attack at all, and '
+      + 'the only companion you can pick up. Carrying it costs you a hand — the '
+      + 'blade stays lit, but the off-hand work stops — and what you buy is a '
+      + 'noise that every hostile inside its radius turns to look at. It is the '
+      + 'cheapest way in the game to make a firing line face the wrong way, and '
+      + 'a single bolt ends it while it does.',
+  },
+  tuk: {
+    faction: 'wild',
+    weapon: 'Fangs',
+    text: "A tuk'ata whelp, Korriban-bred, and the fastest thing you can own — "
+      + 'the one kind quicker than your own sprint. It outruns you into the '
+      + 'fight, which is both what it is for and how it dies: it does not carry '
+      + 'the health to survive a crossfire, so the leash setting matters more on '
+      + 'this animal than on any other. Sent long, it arrives alone.',
+  },
+  pup: {
+    faction: 'wild',
+    weapon: 'Fists',
+    text: 'A rancor pup: half a metre at the shoulder, the toughest companion '
+      + 'in the game and the slowest. What it hits for is nothing. What it hits '
+      + 'AT is the point — it is the only companion whose attacks break the '
+      + 'level rather than the enemy, so a firing line behind a wall is a firing '
+      + 'line until the pup is told about the wall. It will not keep up with you '
+      + 'and it does not try.',
+  },
+  taun: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'A tauntaun: quick, heavy, and carrying no attack whatsoever — it '
+      + 'will not bite, and it cannot be ordered to. It is a mount, and arriving '
+      + 'somewhere is the entire contribution. Get on it and the map gets '
+      + 'smaller; get off it and you have left a large warm animal standing in '
+      + 'the open where anything can shoot at it. Ride it into a fight and it '
+      + 'panics — the hostiles it can see and the fire it is taking for you '
+      + 'both count — and past a threshold you are on the ground, stunned, '
+      + 'watching it go.',
+  },
+  blurrg: {
+    faction: 'wild',
+    weapon: 'Jaws',
+    text: 'A blurrg: the other mount, and the only one that fights. It bites, '
+      + 'hard, so what closes on you while you are riding gets answered without '
+      + 'your dismounting. It pays for that in the turn — it comes round at half '
+      + 'the rate a tauntaun does, which makes it superb across open ground and '
+      + 'a bad thing to be sitting on in a trench.',
+  },
+  varac: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'A varactyl: a green-feathered lizard that does no damage and climbs '
+      + 'anything. It does not make the map faster the way a tauntaun does — it '
+      + 'makes it a different shape. Walls, cliffs and the outside of structures '
+      + 'are all ground to a varactyl, so the approach nobody is covering is '
+      + 'usually the one it can take. On the flat it is the slowest of the three '
+      + 'mounts and has nothing at all to defend itself with.',
+  },
+  b1c: {
+    faction: 'wild',
+    weapon: 'E-5 blaster rifle',
+    text: 'A reprogrammed B1: an E-5 it fires two bolts at a time, a chassis '
+      + 'that two bolts come back through, and a voice. It is the only companion '
+      + 'with a gun and the only one you can send with a message — orders it '
+      + 'carries reach men out of your own shouting range. Everything about '
+      + 'owning one is deciding how far from cover it is allowed to be, and it '
+      + 'will volunteer an opinion about that the entire time.',
+  },
+
+  /* ── AND THE FOUR THAT LANDED LAST ──────────────────────────────────────
+   *
+   * Written on the same commit as the check that caught them, which is the
+   * only reason they exist: `factions.mjs` and `databank.mjs` both walk
+   * ARCHETYPES, four new bodies arrived through `COMPANION_UNITS` after the
+   * other eight entries were written, and both files went red naming all four
+   * by id. That is the instrument doing exactly what it is for — a body the
+   * game can put on the field is a body the player is owed a page for, and
+   * nobody has to remember to write one.
+   *
+   * `wild` for all four, on the argument the block above makes: the faction
+   * reads "Nothing here has a side, a rank or a reason to be on the field
+   * beyond the one that put it in a cage", and a companion is out because YOU
+   * brought it. Filing the two droids and the wookiee under a banner they
+   * have a plausible claim to would be worse than a nicety — `factionOf` is
+   * what the wave director reads to decide which side a body belongs on.
+   */
+  hawk: {
+    faction: 'wild',
+    weapon: 'Talons',
+    text: 'A vhal\'kir: a raptor the size of a large dog that never lands while '
+      + 'you are fighting. It is the only companion that cannot be shot at by '
+      + 'anything without a raised barrel, and the only one whose whole '
+      + 'contribution is SIGHT — sent up, it paints what it can see, including '
+      + 'the bodies behind the wall you were about to walk round. What it costs '
+      + 'is that a bird circling over you is a bird telling everyone where you '
+      + 'are. It fights with its feet and it does not fight for long.',
+  },
+  astro: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'An astromech: the slowest thing you can own, and the only one that '
+      + 'gets stuck on terrain you would vault without thinking. It has no '
+      + 'attack of any kind. What it has is a scomp link — sent at a blast '
+      + 'door it opens it, and the nine seconds it spends at the panel are nine '
+      + 'seconds you are standing over it with a blade. Everything about owning '
+      + 'one is knowing which door is worth those nine seconds.',
+  },
+  medic: {
+    faction: 'wild',
+    weapon: 'Nothing',
+    text: 'A 2-1B surgical droid: the most valuable companion in a long '
+      + 'campaign and the least use in a duel. It walks to a man who is down '
+      + 'and works on him, which is the difference between a name on the wall '
+      + 'and a name on the roll, and it will do it under fire because nothing '
+      + 'in its programming knows what fire is. Two things follow: it is always '
+      + 'in the worst place on the field, and it cannot defend itself when it '
+      + 'gets there.',
+  },
+  wook: {
+    faction: 'wild',
+    weapon: 'Fists and a bandolier',
+    text: 'A wookiee: the heaviest thing that walks at your shoulder, and the '
+      + 'only companion that is a person. It does not take orders the way an '
+      + 'animal does — it takes them the way a soldier does, which in practice '
+      + 'means it arrives late to the ones it disagrees with. It hits harder '
+      + 'than anything else you can bring and it is the slowest of the four '
+      + 'that fight. What it is really for is the fights you should not have '
+      + 'taken: it is the only companion that can lose one and walk away.',
+  },
 };
 
 /* ══════════════════════════════════════════════════════════════════════ */

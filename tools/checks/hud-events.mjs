@@ -36,6 +36,12 @@ import { Stratagems, STRATAGEMS } from '../../src/game/Stratagems.js';
 // check is a third copy of a table that already has two readers.
 import { RANKS, ARMIES, CommandRoster } from '../../src/game/Command.js';
 import { OPEN_STATES, openState, openMul } from '../../src/game/Combat.js';
+/* THE THREE-WAY ROUTING OF THE `throw` KEY, from the table `Player.throwOrRecall`
+ * branches on. Imported for the same reason the HUD imports it: the question
+ * "may this player spend on this power at all" has one answer in the tree and a
+ * check that typed the word `orbit` beside the word `staff` would be the third
+ * copy of it. See the wheel check below and src/game/SaberSet.js. */
+import { SABER_SETS, THROW_POWERS, throwPowerOf } from '../../src/game/SaberSet.js';
 /* The ONE statement of "does this body belong to the other side", so the check
  * asks it the same way the HUD now does instead of writing a fourth copy. */
 import { WaveDirector } from '../../src/game/Waves.js';
@@ -122,6 +128,18 @@ function hudOnPage(html) {
     return { hud: new HUD(doc), doc, restore };
   } catch (e) { restore(); throw e; }
 }
+
+/**
+ * IS THIS SLOT ONE THIS PLAYER'S HANDS COULD NEVER SPEND ON.
+ *
+ * The `throw` key routes three ways off `saberSet` and each way has its own
+ * price, so two of the three slots are unreachable for everybody — which is a
+ * gate on READY exactly as `POWER_BOON` is, and every loop below that walks
+ * `POWERS` asserting "no cooldown and a full bar means lit" has to know it or
+ * it fails on a truth. Read off `SABER_SETS`, never typed: an unknown or
+ * missing set is the single blade, which is what `player()` above is holding.
+ */
+const offSet = (p, key) => THROW_POWERS.includes(key) && key !== throwPowerOf(p?.saberSet);
 
 /** A player with the fields the wheel reads, and the real Force economy. */
 function wheelPlayer(world) {
@@ -1009,10 +1027,17 @@ export async function run({ check, assert }) {
          * lit it from the first frame of a first run and pressing it answered
          * "not attuned". POWER_BOON is the one list of those gates — asserted
          * against it rather than against a name typed here. */
-        const gated = POWER_BOON[key] && !p.boonMods[POWER_BOON[key]];
+        /* …and the SET gate beside it, which is the same statement about a
+         * weapon instead of about a card: the pair's `throwOff` has a real
+         * 3.0 s cooldown in `Player.js` and this loop walks it, but a
+         * single-blade player — which is what `player()` is holding — can no
+         * more spend on it than on a power they were never granted. `offSet`
+         * reads that off SABER_SETS rather than naming the slot here. */
+        const gated = (POWER_BOON[key] && !p.boonMods[POWER_BOON[key]]) || offSet(p, key);
         assert(hud.powerEls[key].root.classList.contains('ready') === !gated,
           gated
-            ? `${key}: the slot is marked ready for a player who has never been granted it`
+            ? `${key}: the slot is marked ready for a player who has never been granted it, `
+              + 'or whose hands are holding a different weapon entirely'
             : `${key}: the slot is not marked ready with no cooldown and full Force`);
         rows.push(`${key} ${full}s`);
       }
@@ -1092,7 +1117,12 @@ export async function run({ check, assert }) {
        * cannot break this check by existing. */
       for (const b of Object.values(POWER_BOON)) p.boonMods[b] = true;
       hud.update(1 / 60, world, p, cam);
-      const dim = POWERS.map(([k]) => k).filter((k) => POWER_COST[k] != null).filter((k) => !ready(k));
+      /* THE TWO SLOTS THIS PLAYER'S WEAPON CANNOT REACH ARE NOT AN ECONOMY
+       * QUESTION and are excluded by the rule that decides it, not by name:
+       * unlimited Force buys you a saberstaff's orbit exactly as much as it
+       * buys you a power you were never granted, which is not at all. */
+      const dim = POWERS.map(([k]) => k).filter((k) => POWER_COST[k] != null)
+        .filter((k) => !offSet(p, k)).filter((k) => !ready(k));
       assert(!dim.length,
         `with Drain at 0 — the slider labelled "unlimited Force" — the wheel still greys out `
         + `${dim.join(', ')}. Throw, sense and lightning bypassed Player's own economy, so the `
@@ -1111,6 +1141,143 @@ export async function run({ check, assert }) {
       assert(!ready('lightning'), 'the wheel marks Force Lightning ready for a player who never drafted it');
       return 'one price table, no bare literal left in Player; drain 0 frees all nine, and '
         + 'half-price boons and the lightning attunement both reach the wheel';
+    } finally { restore(); }
+  });
+
+  check('hud: the wheel lights the throw slot this set has and neither of the others', () => {
+    /**
+     * *"DON'T CHANGE ANYTHING WITH THE DEFAULT SINGLE BLADE USAGE."*
+     *
+     * ── THE DEFECT THIS EXISTS BECAUSE OF ─────────────────────────────────
+     *
+     * The three saber sets put three different powers on the one `throw` key —
+     * the disc at 14, the pair's `throwOff` at 18, the saberstaff's `orbit` at
+     * 24 — and each needs its own slot, or one square draws three prices in
+     * turn. Two slots were duly added to `POWERS`, `_buildPowers` walked the
+     * list, `HUD.update` called `_power` for both every frame, and **not one
+     * line of it asked what was in the player's hands**: `_afford` read
+     * `POWER_COST`, `POWER_BOON` and `_canSpend`, and `grep saberSet
+     * src/ui/HUD.js` returned nothing at all.
+     *
+     * So a single-blade player holding 24 Force — the default set, the weapon
+     * the game has always given you, the one clause of the brief stated as an
+     * absolute — saw two extra squares in the power row lighting up READY for
+     * powers `Player.throwOrRecall` will never route them to. The comment over
+     * those two calls said the opposite in as many words ("the slot that is not
+     * yours is dim … because nothing in the set you are playing spends it"),
+     * which is HANDOFF §2.3d's defect: a note describing a game that was never
+     * written, believed by the next reader.
+     *
+     * IT SURVIVED A 600-FRAME BIT-EXACT RECORDING because `tools/_trace.mjs` is
+     * sixteen blade, guard and stamina floats and no UI at all. The single
+     * blade read 0.000e+0 of drift the entire time this was live on screen —
+     * §2.3b's shape exactly, a claim with no reader, and the reason the wheel
+     * now has one.
+     *
+     * ── WHAT IS ASSERTED, AND WHY IT IS NOT THE IMPLEMENTATION AGAIN ──────
+     *
+     * The single blade's row is compared against THE WHEEL AS IT WAS BEFORE
+     * THIS FEATURE EXISTED, reconstructed rather than typed: before the sets,
+     * `throw` was the only thing the throw key could spend on, so the rows that
+     * did not exist are exactly the throw powers that are not the single
+     * blade's. Everything else in `POWERS` predates the feature and must light
+     * exactly as it did. That is a statement about the shipped tree's own past,
+     * not a second copy of `_afford`'s condition.
+     *
+     * The other two arms are the cross-check that makes it a filter rather than
+     * a deletion: a staff lights `orbit` and neither of the others, a pair
+     * lights `throwOff` and neither of the others, and all three agree on every
+     * remaining slot in the row — so changing the set moves the throw slot and
+     * NOTHING else on the wheel.
+     *
+     * ── PROVED ABLE TO FAIL ────────────────────────────────────────────────
+     *
+     * Both halves were removed in turn and both went red. Deleting the
+     * `THROW_POWERS`/`throwPowerOf` line from `HUD._afford` — the tree this
+     * replaced, byte for byte — reports
+     *
+     *     a single player's wheel lights throw, throwOff, orbit — the throw key
+     *     spends on throw in that set and on nothing else
+     *
+     * and deleting the `_setThrowSlot` call from `HUD.update` reports
+     *
+     *     a single player is shown throwOff, orbit — a slot that can never
+     *     light in this set is a square in the power row that costs a glance
+     *     and gives nothing back
+     *
+     * The set loop is what catches both, so it is deliberately first: the
+     * `before` comparison underneath it is the same finding said in the words
+     * of the promise that was broken, and it is reachable by a filter that
+     * excludes the wrong slot rather than none.
+     */
+    const { hud, restore } = hudOnPage(INDEX);
+    try {
+      const world = stubWorld({ ...DEFAULT_SETTINGS });
+      const p = wheelPlayer(world);
+      const cam = new THREE.PerspectiveCamera();
+      /* Everything a slot could be refused for EXCEPT the set, cleared: full
+       * bar, no cooldown, every drafted card granted. What is left dim after
+       * that is dim for one reason. */
+      for (const b of Object.values(POWER_BOON)) p.boonMods[b] = true;
+      p.force = p.maxForce = 1000;
+      for (const [k] of POWERS) p.cooldowns[k] = 0;
+
+      const lit = (set) => {
+        p.saberSet = set;
+        hud.update(1 / 60, world, p, cam);
+        return POWERS.map(([k]) => k).filter((k) => hud.powerEls[k].root.classList.contains('ready'));
+      };
+      const drawn = () => POWERS.map(([k]) => k)
+        .filter((k) => hud.powerEls[k].root.style.display !== 'none');
+
+      /* THE WHEEL BEFORE THE FEATURE: every slot except the throw powers that
+       * are not the single blade's, because the single blade's IS the one that
+       * shipped. Derived from SABER_SETS so a fourth set is carried for free. */
+      const added = THROW_POWERS.filter((k) => k !== throwPowerOf('single'));
+      assert(added.length === 2,
+        `${added.length} throw powers were added by the saber sets — this check has lost its subject`);
+      const before = POWERS.map(([k]) => k).filter((k) => !added.includes(k));
+
+      const rows = {};
+      for (const s of SABER_SETS) {
+        const on = lit(s.id);
+        rows[s.id] = { lit: on, drawn: drawn() };
+        /* EXACTLY ONE of the three, and it is this set's own. */
+        const mine = on.filter((k) => THROW_POWERS.includes(k));
+        assert(mine.length === 1 && mine[0] === s.throwKey,
+          `a ${s.id} player's wheel lights ${mine.length ? mine.join(', ') : 'no throw slot at all'} `
+          + `— the throw key spends on ${s.throwKey} in that set and on nothing else`);
+        /* …and the two that are not theirs are not even drawn, because a row
+         * read at a glance is fourteen squares and two dead ones are a change
+         * to a screen that was asked not to change. */
+        const ghosts = rows[s.id].drawn.filter((k) => THROW_POWERS.includes(k) && k !== s.throwKey);
+        assert(!ghosts.length,
+          `a ${s.id} player is shown ${ghosts.join(', ')} — a slot that can never light in this set `
+          + 'is a square in the power row that costs a glance and gives nothing back');
+      }
+
+      /* THE SINGLE BLADE, AGAINST THE WHEEL IT HAD. Both directions: nothing
+       * new lit, and nothing that used to light gone. */
+      const gained = rows.single.lit.filter((k) => !before.includes(k));
+      assert(!gained.length,
+        `the single blade's wheel lights ${gained.join(', ')}, which the wheel before the saber sets `
+        + 'did not have — the one clause of the brief stated as an absolute was that the default '
+        + 'blade does not change, and the power row is on screen for the whole match');
+      const lostSlots = before.filter((k) => !rows.single.drawn.includes(k));
+      assert(!lostSlots.length,
+        `the single blade's wheel no longer draws ${lostSlots.join(', ')} — the filter has eaten a `
+        + 'slot that shipped years before any of this');
+
+      /* AND A SET CHANGE MOVES THE THROW SLOT AND NOTHING ELSE. */
+      const rest = (id) => rows[id].lit.filter((k) => !THROW_POWERS.includes(k)).join(',');
+      for (const s of SABER_SETS) {
+        assert(rest(s.id) === rest('single'),
+          `a ${s.id} player lights [${rest(s.id)}] where one blade lights [${rest('single')}] — `
+          + 'the set decides what the throw key does and must decide nothing else on this wheel');
+      }
+      return `single lights ${rows.single.lit.length} slots and draws ${rows.single.drawn.length}, `
+        + `exactly the ${before.length} the wheel had before the sets; staff ${rows.staff.lit.filter((k) => THROW_POWERS.includes(k))}, `
+        + `pair ${rows.pair.lit.filter((k) => THROW_POWERS.includes(k))}, and no set draws another's`;
     } finally { restore(); }
   });
 

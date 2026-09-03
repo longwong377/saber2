@@ -1640,4 +1640,352 @@ export async function run({ check, assert }) {
     assert(p.restoring, 'off the deck the same call does not cast');
     return 'both refused on the deck, restore casts the moment you are off it';
   });
+  check('push: a push against something solid throws YOU the other way', async () => {
+    /**
+     * "when you look down or have the curson down and you force push it should
+     *  throw you into the air … like an airbender … totally dependent on where
+     *  you're aiming … like real trajectories/physics. and that repelling force
+     *  should be based on your distance and force strength … should work in
+     *  the air too depending on how close you are to the ground"
+     *
+     * Five properties, and every one is in that sentence.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis', settings: { mode: 'waves', level: 'geonosis', quality: 'low' },
+    });
+    try {
+      const p = world.player;
+      const ctx = world._frameCtx || { world, enemies: world.enemies, physics: world.physics,
+        particles: world.particles, terrain: world.terrain, bolts: world.bolts };
+      const ground = world.terrain.height(0, 0);
+      /* `chest` is written once a frame by the update; a fixture that moves the
+       * body and pushes in the same tick would be firing from where he was. */
+      const set = (h, ax, ay, az) => {
+        p.position.set(0, ground + h, 0);
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.velocity.set(0, 0, 0);
+        p.grounded = h < 0.2;
+        p.force = p.maxForce = 400;
+        p.cooldowns.push = 0;
+        p.aimDir.set(ax, ay, az).normalize();
+      };
+      const kick = () => { const v = p.velocity.clone(); p.forcePush(ctx); return p.velocity.clone().sub(v); };
+
+      /* 1. AIMED AT THE GROUND FROM ON IT: up, and harder than a jump (7.4). */
+      set(0.05, 0, -1, 0);
+      const down = kick();
+      assert(down.y > 8, `a push straight down lifted ${down.y.toFixed(2)} m/s — a jump is 7.4`);
+      assert(Math.hypot(down.x, down.z) < 0.01, 'it threw him sideways off a level floor');
+
+      /* 2. ALONG THE AIM, NEGATED — not "up". Aimed down and BEHIND, he goes
+       *    up and FORWARD, which is the whole of what he asked for. */
+      set(0.05, 0, -0.7071, 0.7071);
+      const back = kick();
+      assert(back.y > 5 && back.z < -5,
+        `aimed down-and-behind he went (${back.x.toFixed(1)}, ${back.y.toFixed(1)}, ${back.z.toFixed(1)}) `
+        + '— it should be up and forward');
+      assert(Math.abs(back.y + back.z) < 0.2, 'the kick is not along the reversed aim');
+
+      /* 3. NOTHING TO PUSH OFF, NOTHING HAPPENS. */
+      set(0.05, 0, 1, 0);
+      assert(kick().length() < 0.01, 'a push at open sky launched him off nothing');
+
+      /* 4. THE DISTANCE TERM, which is also "it works in the air": the further
+       *    the surface, the less it gives, and past the push's own reach it
+       *    gives nothing. */
+      const curve = [];
+      for (const h of [0.05, 5, 9, 20]) { set(h, 0, -1, 0); curve.push(kick().y); }
+      assert(curve[0] > curve[1] && curve[1] > curve[2],
+        `the lift does not fall with height: ${curve.map((n) => n.toFixed(2)).join(' → ')}`);
+      assert(curve[3] < 0.01,
+        `still launched from 20 m up, past the push's own reach (${curve[3].toFixed(2)} m/s)`);
+
+      /* 5. FORCE STRENGTH, and the cap that stops it running away — `range`
+       *    already carries a sqrt(P), so taking the speed linearly too would
+       *    be a Jedi who never comes down. */
+      const byPower = [];
+      for (const P of [1, 2, 4]) {
+        world.settings.forcePower = P;
+        set(0.05, 0, -1, 0);
+        byPower.push(kick().y);
+      }
+      assert(byPower[1] > byPower[0] && byPower[2] >= byPower[1],
+        `force strength does not raise the launch: ${byPower.map((n) => n.toFixed(2)).join(' → ')}`);
+      assert(byPower[2] <= 18.01, `the launch is uncapped at ${byPower[2].toFixed(2)} m/s`);
+      return `straight down ${down.y.toFixed(2)} m/s up against a 7.4 jump; down-and-behind gives `
+        + `(${back.y.toFixed(1)} up, ${(-back.z).toFixed(1)} forward); nothing off open sky; `
+        + `${curve.map((n) => n.toFixed(1)).join('/')} by height; ${byPower.map((n) => n.toFixed(1)).join('/')} by force power`;
+    } finally { world.unload?.(); }
+  });
+
+  check('push: the recoil refuses a body with no mass behind it, composes with the velocity you '
+    + 'already had, and saturates at its cap', async () => {
+    /**
+     * THE THREE HALVES OF THE SAME SENTENCE THE CHECK ABOVE DOES NOT MEASURE —
+     * written after it, against the same world, because each of these fails in
+     * a way that reads as success from the outside.
+     *
+     *   "YOU CANNOT PUSH OFF SOMETHING THAT MOVES." A crate takes the shove and
+     *     goes; taking the launch as well is being paid the impulse twice. It
+     *     is the one property with no visible symptom — a Jedi standing on a
+     *     barrel and pushing it to fly looks exactly like a Jedi flying — so it
+     *     is measured as an A/B on ONE variable: the same box, at the same
+     *     place, at the same aim, once at mass 40 and once at mass 0. Nothing
+     *     else in the fixture moves between the two runs, so a difference in
+     *     the kick can only be the mass. The obvious alternative — reading
+     *     `_pushRecoil`'s `movable` branch out of the source — would pass
+     *     against a build where the raycast never reaches the box at all.
+     *
+     *   "IT SHOULD WORK IN THE AIR TOO." The height curve above shows the
+     *     launch falling with distance, which a man standing on a hill would
+     *     also produce. What "in the air" promises is two things a curve cannot
+     *     say: that being off the floor does not gate it, and that the kick is
+     *     ADDED to what you were already doing rather than replacing it, so a
+     *     second push mid-arc builds on the first. Measured by pushing a man
+     *     falling at 6 m/s and comparing his kick against a motionless man at
+     *     the same height, then checking the sum.
+     *
+     *   THE CAP IS A REAL CEILING, not a number in a table. The clause above
+     *     asserts <= 18.01 at forcePower 4 — which an entirely uncapped build
+     *     also satisfies, because at 4 the doubled `range` has moved the
+     *     distance term down to meet it. So this drives the bar far past any
+     *     plausible ceiling and asserts the launch STOPS MOVING: two different
+     *     strengths giving the same speed to the nanometre is what a clamp
+     *     looks like from outside, and nothing else produces it.
+     */
+    const { bootWorld } = await import('./_coop.mjs');
+    const { Body, box } = await import('../../src/physics/RapierWorld.js');
+    const { world } = await bootWorld({
+      level: 'geonosis', settings: { mode: 'waves', level: 'geonosis', quality: 'low' },
+    });
+    try {
+      const p = world.player;
+      const ctx = world._frameCtx || { world, enemies: world.enemies, physics: world.physics,
+        particles: world.particles, terrain: world.terrain, bolts: world.bolts };
+      const ground = world.terrain.height(0, 0);
+      /* `chest` is written once a frame by the update, so a fixture that moved
+       * the body and pushed in the same tick would fire from where he was. */
+      const set = (h, ax, ay, az, vel = null) => {
+        p.position.set(0, ground + h, 0);
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.velocity.set(0, 0, 0);
+        if (vel) p.velocity.copy(vel);
+        p.grounded = h < 0.2;
+        p.force = p.maxForce = 400;
+        p.cooldowns.push = 0;
+        p.aimDir.set(ax, ay, az).normalize();
+      };
+      const kick = () => { const v = p.velocity.clone(); p.forcePush(ctx); return p.velocity.clone().sub(v); };
+      world.settings.forcePower = 1;
+
+      /* ── 1. A BOX WITH MASS IS NOT A FLOOR ──────────────────────────────
+       * Fired from 8 m up and aimed level, so the only thing in front of the
+       * ray is the box the clause puts there — the empty run below is the
+       * proof of that rather than an assumption about the ground. */
+      const at = V(0, ground + 8 + 1.25, -1.6);
+      /**
+       * ONE STEP AFTER THE ADD, and it is not decoration: Rapier's ray casts go
+       * through the query pipeline, and a collider created since the last step
+       * is not in it. Measured — the first cut of this clause put a box 1.6 m
+       * in front of the reticle and `physics.raycast` returned null for it at
+       * both masses, so the "a crate gives you nothing" assertion passed
+       * against a world with no crate in it. A quarter of a millisecond is
+       * short enough that the box has not moved (4 microns of fall) and long
+       * enough to be in the broad phase.
+       */
+      const crate = (mass) => {
+        const b = new Body({ position: at.clone(), shape: box(0.6, 0.6, 0.6), mass });
+        world.physics.add(b);
+        world.physics.step(1 / 240);
+        return b;
+      };
+      set(8, 0, 0, -1);
+      const empty = kick();
+      assert(empty.length() < 0.01,
+        'the fixture is not clean — a level push from 8 m up found something to brace against '
+        + `before any box was put there (${empty.length().toFixed(2)} m/s)`);
+
+      const heavy = crate(40);
+      set(8, 0, 0, -1);
+      const offCrate = kick();
+      world.physics.remove(heavy);
+
+      const anvil = crate(0);                     // the same box, no mass: static
+      set(8, 0, 0, -1);
+      const offAnvil = kick();
+      world.physics.remove(anvil);
+
+      assert(offAnvil.length() > 5,
+        `the same box at mass 0 gave only ${offAnvil.length().toFixed(2)} m/s — the ray never found it, `
+        + 'so the mass clause below would pass on a build with no mass test in it at all');
+      assert(offCrate.length() < 0.01,
+        `pushing a 40 kg crate launched him at ${offCrate.length().toFixed(2)} m/s — the shove already `
+        + 'spent itself throwing that crate, and this is the same impulse taken twice');
+
+      /* ── 2. IN THE AIR, AND ADDED TO WHAT HE WAS ALREADY DOING ────────── */
+      set(4, 0, -1, 0);
+      assert(!p.grounded, 'the fixture put him on the floor at 4 m — the air clause is measuring nothing');
+      const still = kick();
+      set(4, 0, -1, 0, V(0, -6, 0));
+      const before = p.velocity.clone();
+      const moving = kick();
+      const after = p.velocity.clone();
+      assert(still.y > 1,
+        `a push at ground 4 m below gave ${still.y.toFixed(2)} m/s — it does not reach off the floor`);
+      assert(Math.abs(moving.y - still.y) < 1e-6,
+        `falling at 6 m/s the same push gave ${moving.y.toFixed(3)} m/s against ${still.y.toFixed(3)} `
+        + 'standing still — the launch is reading his motion, not the ground');
+      assert(Math.abs(after.y - (before.y + moving.y)) < 1e-6,
+        'the kick overwrote his velocity instead of adding to it — a second push mid-arc would throw '
+        + 'the first one away');
+      assert(after.y > before.y,
+        `he was falling at ${(-before.y).toFixed(1)} m/s and the push left him at ${after.y.toFixed(1)} — `
+        + 'it did not beat the fall');
+
+      /* ── 3. THE CEILING BINDS ──────────────────────────────────────────── */
+      const plateau = [];
+      for (const P of [9, 16, 25]) {
+        world.settings.forcePower = P;
+        set(0.05, 0, -1, 0);
+        plateau.push(kick().y);
+      }
+      world.settings.forcePower = 1;
+      set(0.05, 0, -1, 0);
+      const base = kick().y;
+      assert(plateau[0] > base, 'more Force strength did not buy a bigger launch at all');
+      assert(Math.abs(plateau[0] - plateau[2]) < 1e-9,
+        `forcePower 9 launches at ${plateau[0].toFixed(3)} m/s and 25 at ${plateau[2].toFixed(3)} — `
+        + 'the launch is still climbing, so nothing is clamping it');
+      /* sqrt(25) is five bars' worth of speed on a bar-1 launch of `base`, and
+       * that is where a build with the clamp deleted would be. */
+      assert(plateau[2] < base * 5 - 1,
+        `at forcePower 25 he leaves at ${plateau[2].toFixed(2)} m/s against an unclamped `
+        + `${(base * 5).toFixed(2)} — the cap is not doing anything`);
+      return `40 kg crate ${offCrate.length().toFixed(2)} m/s against the same box at mass 0 `
+        + `${offAnvil.length().toFixed(2)} m/s; in the air ${still.y.toFixed(2)} m/s standing and `
+        + `${moving.y.toFixed(2)} falling, added onto a −6 m/s fall to leave ${after.y.toFixed(2)}; `
+        + `power 1 → ${base.toFixed(2)} m/s, 9/16/25 → ${plateau.map((n) => n.toFixed(2)).join('/')} (capped)`;
+    } finally { world.unload?.(); }
+  });
+
+  check('push: aiming at the ground throws YOU the other way, harder the closer you are', async () => {
+    /**
+     * "when you look down or have the cursor down and you force push it should
+     *  throw you into the air you know what I mean? like push you off the
+     *  ground (kind of like an airbender) … it should be totally dependent on
+     *  where you're aiming you know what I mean? like real trajectories/physics.
+     *  and that repelling force should be based on your distance and force
+     *  strength, it should work in the air too depending on how close you are
+     *  to the ground"
+     *
+     * FIVE CLAUSES, AND EACH ONE IS A MEASUREMENT BELOW: the direction is the
+     * opposite of the aim; the magnitude falls off with distance; it scales
+     * with Force strength; it works in the air; and something that MOVES gives
+     * you nothing back, which is what makes it physics rather than a jump
+     * button pointed downward.
+     *
+     * THE HEIGHTFIELD IS NOT A RAPIER COLLIDER, which is why `_pushRecoil`
+     * asks `phys.raycast` AND `ctx.terrain.raycast` and takes the nearer hit.
+     * A version that asked only the physics world got nothing back from open
+     * ground — the exact case the player is describing.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({
+      level: 'geonosis',
+      settings: { mode: 'waves', level: 'geonosis', allies: 0, quality: 'low' },
+      runSeed: 8,
+    });
+    try {
+      void idleInput;
+      const p = world.player;
+      /* THE WORLD'S OWN FRAME CONTEXT, not one assembled here. `forcePush`
+       * reads more off it than a hand-built object obviously carries, and a
+       * fixture that guesses the shape measures the guess: the first version
+       * of this check built its own and read 0.00 m/s off ground the player
+       * was standing on. */
+      const ctx = world._frameCtx || { world, enemies: world.enemies, physics: world.physics,
+        particles: world.particles, terrain: world.terrain, bolts: world.bolts };
+      p.maxForce = 400;
+      /** Push straight down from `h` metres up and answer the velocity it gave. */
+      /**
+       * "that repelling force should be based on your distance and force
+       *  strength" — and FORCE STRENGTH IS THE SETTING, not the pool.
+       *
+       * `Player.forceScale` reads `world.settings.forcePower`, and
+       * `_pushRecoil` scales by `sqrt` of it. The first version of this check
+       * varied `p.force` — how much Force you have left right now — and
+       * measured 9.52 both times, correctly, because that is not what the
+       * recoil is a function of. A player with a full bar and a player with a
+       * quarter of one get the same shove; a player who turned Force Power up
+       * gets a bigger one.
+       */
+      const shove = (h, force = 1) => {
+        world.settings.forcePower = force;
+        p.position.set(0, world.terrain.height(0, 0) + h, 0);
+        p.velocity.set(0, 0, 0);
+        p.grounded = h < 0.2;
+        p.force = p.maxForce;
+        p.cooldowns.push = 0;
+        /* `chest` IS WRITTEN ONCE A FRAME by `_update`, and the push fires
+         * FROM it. A fixture that moves the body and pushes in the same tick
+         * casts its ray from where the player WAS — which is how the first
+         * version of this check measured 0.00 m/s off ground it was standing
+         * on, and read as the feature being dead. */
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.aimDir.set(0, -1, 0);
+        p.forcePush(ctx);
+        return p.velocity.clone();
+      };
+      const low = shove(0.1);
+      assert(low.y > 1, `aiming at the ground from 10 cm gave ${low.y.toFixed(2)} m/s upward`);
+      /* THE DIRECTION IS THE OPPOSITE OF THE AIM, on every axis and not just
+       * up: aim down-and-forward and you go up-and-back. */
+      p.velocity.set(0, 0, 0); p.force = p.maxForce; p.cooldowns.push = 0;
+      p.position.set(0, world.terrain.height(0, 0) + 0.1, 0);
+      p.chest.copy(p.position).setY(p.position.y + 1.25);
+      p.aimDir.set(0, -0.8, 0.6).normalize();
+      p.forcePush(ctx);
+      const v = p.velocity.clone();
+      assert(v.y > 0 && v.z < 0,
+        `aimed down-and-forward and went (${v.x.toFixed(1)}, ${v.y.toFixed(1)}, ${v.z.toFixed(1)}) — `
+        + 'it is not answering the aim');
+      /* CLOSER IS HARDER. */
+      const near = shove(0.5).length(), far = shove(6).length();
+      assert(near > far, `0.5 m gave ${near.toFixed(2)} and 6 m gave ${far.toFixed(2)}`);
+      /* IT WORKS IN THE AIR — the clause that makes it a movement tool rather
+       * than a ground-only trick. */
+      const air = shove(4);
+      assert(air.y > 0.5, `four metres up it gave ${air.y.toFixed(2)}`);
+      /* AND FORCE STRENGTH SCALES IT. */
+      const strong = shove(0.5, 2).length(), weak = shove(0.5, 1).length();
+      assert(strong > weak,
+        `Force Power 2 gave ${strong.toFixed(2)} and Force Power 1 gave ${weak.toFixed(2)}`);
+      world.settings.forcePower = 1;
+      /* AND IT IS CAPPED, so a push into a wall at point-blank is not a launch
+       * into orbit. */
+      const { PUSH_RECOIL } = await import('../../src/game/Player.js');
+      const blank = shove(0.01, 8).length();
+      assert(blank <= PUSH_RECOIL.cap + 1e-6,
+        `point blank at Force Power 8 gave ${blank.toFixed(2)} against a cap of ${PUSH_RECOIL.cap}`);
+      world.settings.forcePower = 1;
+      /* AND IT RUNS OUT. Beyond the push's own range there is nothing to
+       * shove off, which is what stops it being a jump button: aim at the sky
+       * and you stay where you are. */
+      const sky = (() => {
+        p.position.set(0, world.terrain.height(0, 0) + 40, 0);
+        p.velocity.set(0, 0, 0); p.grounded = false;
+        p.force = p.maxForce; p.cooldowns.push = 0;
+        p.chest.copy(p.position).setY(p.position.y + 1.25);
+        p.aimDir.set(0, -1, 0);
+        p.forcePush(ctx);
+        return p.velocity.length();
+      })();
+      assert(sky === 0, `forty metres up it still gave ${sky.toFixed(2)} — the falloff never reaches zero`);
+      return `10 cm → ${low.y.toFixed(1)} m/s up; 0.5 m ${near.toFixed(1)} vs 6 m ${far.toFixed(1)}; `
+        + `4 m up still ${air.y.toFixed(1)}; Force Power 2 ${strong.toFixed(1)} vs 1 ${weak.toFixed(1)}; `
+        + `capped at ${PUSH_RECOIL.cap}; and 40 m up it gives nothing`;
+    } finally { world.unload(); }
+  });
+
 }

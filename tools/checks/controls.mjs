@@ -2021,7 +2021,20 @@ export async function run({ check, assert }) {
       'troopNames',
       // The meditation pose — a card row off Rig.MEDITATION_POSES under the
       // robe cut, read by main.js's commune. See DEFAULT_SETTINGS.meditation.
-      'meditation'];
+      'meditation',
+      /* WHICH WEAPON YOU CARRY — a card row off `SABER_SETS` beside the
+       * blade's own colour, length and hilt, in the same `_cardRow` shape the
+       * robe cut and the meditation pose use. It is on the Jedi tab and not
+       * under Gameplay because it is a fact about your character rather than a
+       * rule of the match, which is the same reading `Net.LOOK_KEYS` takes of
+       * it. `this.s.saberSet` is written at the control site, which is what
+       * the regex below is asking for. */
+      'saberSet',
+      /* WHICH COMPANION COMES WITH YOU — a card row built off COMPANION_ORDER
+       * with a real NONE row at its head, in the same `_cardRow` shape as the
+       * robe cut and the saber set. `this.s.companion` is written at the
+       * control site, which is what the regex below is asking for. */
+      'companion'];
     /**
      * The settings that are TYPED — a text box rather than a slider, a
      * checkbox or a row of cards. One so far: the co-op name, which is the

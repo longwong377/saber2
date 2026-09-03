@@ -423,6 +423,128 @@ export async function bootPair({ level = null, settings = {}, sides = null, lag 
   return { host: a.world, client: b.world, pump, seen, input, roster, clock };
 }
 
+/**
+ * A REAL SESSION OF TWO TO FOUR: N Worlds, N `Net` endpoints, one broker.
+ *
+ * `bootPair` is two Worlds with HAND-WRITTEN net stubs between them — enough
+ * for snapshots, hits and avatars, and unable to say anything at all about the
+ * ROSTER, because a hand-written stub has none. `session()` in coop.mjs is the
+ * other half: real `Net` objects over the real PeerJS stub, and no Worlds. A
+ * companion needs both at once — the card crosses on the roster, the animal is
+ * a body in a World, and the order goes back up the wire — so this is the two
+ * joined, and it scales past two players because "each commander brings one"
+ * is a claim about four.
+ *
+ * WHAT IS SHIPPED AND WHAT IS THE HARNESS, stated plainly, because HANDOFF §2.4
+ * is the trap here: an instrument that restates a rule eventually disagrees
+ * with it and manufactures defects.
+ *
+ *   SHIPPED, and driven directly: `Net.host`/`join`/`setCompanion` and the
+ *   roster they build, `World.applySnapshot`/`applyOrder`, and the three
+ *   functions this whole feature is — `fieldForPeers`, `adoptCompanionBody`
+ *   and `applyCompanionOrder`, all exported from src/game/Companions.js.
+ *
+ *   THE HARNESS, and nothing more: the four `net.on(…)` lines, which are the
+ *   same four lines main.js has. Routing only. Every one of them hands the
+ *   message straight to a shipped reader — the rule bootPair's own note sets
+ *   out, and the reason `applyHit` was moved out of a closure in main.js.
+ *
+ * EACH NODE CARRIES ITS OWN `rec`, and that is not a convenience. The Kennel is
+ * ONE `localStorage` store per process, so four simulated players cannot each
+ * have their own — and they do not need one: `adoptCompanionBody` takes the
+ * record as an argument precisely because a companion's history is per machine.
+ * A check that wants a real fold sets the store for the one node folding it.
+ */
+export async function bootSession({ n = 2, level = null, settings = {},
+  names = null, cards = [], recs = [] } = {}) {
+  level = level || await defaultLevel();
+  const { Net, RemoteAvatar } = await import('../../src/net/Net.js');
+  const { adoptCompanionBody, applyCompanionOrder, fieldForPeers } =
+    await import('../../src/game/Companions.js');
+  const fake = installPeerStub();
+  const settle = async (k = 8) => {
+    for (let i = 0; i < k; i++) { await new Promise((r) => setTimeout(r, 0)); fake.flush(); }
+  };
+  names = names || ['HOST', 'ALPHA', 'BRAVO', 'CHARLIE'].slice(0, n);
+
+  const nodes = [];
+  const h = await bootWorld({ level, settings });
+  const hostNet = new Net();
+  const opening = hostNet.host(names[0], {}, null, cards[0] || null);
+  await settle();
+  const code = await opening;
+  h.world.attachNet(hostNet, 'host');
+  nodes.push({ world: h.world, net: hostNet, name: names[0], host: true, rec: recs[0] || null });
+
+  for (let i = 1; i < n; i++) {
+    const c = await bootWorld({ level, settings });
+    const cn = new Net();
+    const joining = cn.join(code, names[i], null, cards[i] || null);
+    await settle();
+    await joining;
+    c.world.attachNet(cn, 'client');
+    nodes.push({ world: c.world, net: cn, name: names[i], host: false, rec: recs[i] || null });
+  }
+  await settle();
+
+  /* The other players' bodies, built on the first packet — `bootPair`'s own
+   * `avatarOn`, with the interpolation window closed for the reason its note
+   * gives: this wire has no jitter and no wall clock of its own. */
+  const avatarOn = (node, id) => {
+    let r = node.world.remotes.get(id);
+    if (r) return r;
+    const entry = node.net.roster.find((x) => x.id === id);
+    r = new RemoteAvatar(node.world, { id, name: entry?.name || 'Jedi',
+      look: entry?.look || null, team: entry?.team });
+    r.delay = 0; r.minDelay = 0;
+    node.world.remotes.set(id, r);
+    node.world.players.push(r);
+    return r;
+  };
+
+  for (const nd of nodes) {
+    nd.net.on('avatar', (peerId, msg) => {
+      avatarOn(nd, peerId).push(msg, performance.now() / 1000);
+      if (nd.world.netMode !== 'host') return;
+      const put = fieldForPeers(nd.world, nd.net.roster, nd.net.peer?.id);
+      if (put.length) nd.net.setCompanionBodies(new Map([...nd.net.cmpBodies, ...put]));
+    });
+    nd.net.on('snapshot', (msg) => {
+      nd.world.applySnapshot(msg);
+      adoptCompanionBody(nd.world, nd.net.roster, nd.net.peer?.id, nd.rec);
+    });
+    nd.net.on('order', (peerId, msg) => {
+      if (msg?.c) applyCompanionOrder(nd.world, peerId, msg);
+      else nd.world.applyOrder(peerId, msg);
+    });
+    nd.net.on('hit', (msg) => nd.world.applyHit(msg));
+  }
+
+  const input = idleInput();
+  /* Every world steps, then the broker delivers whatever they sent — a `flush`
+   * runs until quiet, so a relayed packet lands in the same step as the one
+   * that caused it. */
+  const pump = (seconds, keepAlive = true) => {
+    const dt = 1 / 60;
+    for (let i = 0; i < Math.round(seconds / dt); i++) {
+      for (const nd of nodes) {
+        if (keepAlive && nd.world.player) nd.world.player.hp = nd.world.player.maxHp ?? 100;
+        nd.world.update(dt, input);
+      }
+      fake.flush();
+    }
+  };
+  /* The one body this node calls its own — the same question HUD asks of the
+   * pack, so a check cannot pass by looking somewhere the game does not. */
+  const mineOf = (nd) => nd.world._companions?.mine || null;
+  /** Every companion body standing in a node's world, whoever owns it. */
+  const seenBy = (nd) => (nd.world.enemies || []).filter((e) => e && e.companion && !e.dead);
+
+  return { nodes, host: nodes[0], clients: nodes.slice(1), fake, settle, pump, code,
+    mineOf, seenBy, input,
+    close: () => { for (const nd of nodes) { try { nd.net.close(); } catch {} } fake.restore(); } };
+}
+
 /** Step a world for `seconds` of wall clock at 60 Hz. */
 export function run(world, seconds, input = idleInput(), each = null) {
   const dt = 1 / 60;

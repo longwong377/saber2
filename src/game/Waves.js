@@ -34,9 +34,9 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: fifty-seven boons drafted every second wave, weighted
+ * And the player grows with it: fifty-eight boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
- * committed to an axis — and, one step past a mastery, eleven unbound powers gated
+ * committed to an axis — and, one step past a mastery, twelve unbound powers gated
  * harder still, each taking the cooldown off one Force power and charging Force
  * and blood for every cast. `budgetFor`'s one constant is derived from that
  * draft rate, because the two are one decision.
@@ -2561,6 +2561,21 @@ export class WaveDirector {
 
   /** Waves cleared on the current rung, which is what `run.wave` means. */
   get rungWave() { return Math.max(0, this.wave - this.floor); }
+
+  /**
+   * HOW MANY WAVE BOUNDARIES ARE ACTUALLY BEHIND THIS RUN — the public reader
+   * for `payWave`'s ledger, and the sibling of `CommandDirector.areasTaken`.
+   *
+   * `wave` is where you ARE, and `restartWave` — the pause card's button, in
+   * every mode — hands this director the SAME number back and refights it, so
+   * anything paid off `wave` is paid again for every restart. That is the farm
+   * `payWave` was written to close, and `_paid` is the high-water mark it
+   * closed it with. Anything that wants "a boundary went past" rather than
+   * "which wave is this" asks HERE, so there is one ledger and no second tally
+   * beside it: `Companions.boundariesTaken` is the first caller and reads this
+   * where there is no crossing to read `areasTaken` off.
+   */
+  get wavesTaken() { return this._paid | 0; }
 
   /**
    * THE RAMP, RE-DERIVED — and the derivation is one line of arithmetic, not a

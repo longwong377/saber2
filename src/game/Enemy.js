@@ -13,7 +13,7 @@ import { Rig, BipedAnimator, aimY } from './Rig.js';
 import { applyBodyLod, undarken, L3_AT } from './Cohorts.js';
 import { buildB1, buildB2, buildTrooper, buildAcolyte, buildDroideka, buildWalker, buildBeast, buildBlaster, plateGeo,
   buildJedi, bodyOptsFor, kitOptsFrom, weakSpotsOf, coverSpotOf, SPECIES, HAIR_STYLES, BEARD_STYLES, ROBE_COLORS,
-  hoodCut, postureOf } from './Bodies.js';
+  hoodCut, postureOf , companionOptsFrom } from './Bodies.js';
 import { Saber } from './Saber.js';
 import { WEIGHT as TOKEN_WEIGHT } from './Tokens.js';
 import { dropSaber } from './Dropped.js';
@@ -2194,7 +2194,10 @@ const GUARD_REFRESH = 6.0;
  */
 const WIND_TAKE = 0.14;      // share of max health inside the window that opens it
 const WIND_DECAY = 0.12;     // share of max health the tally sheds per second
-const WIND_OPEN = 2.4;       // seconds the body is open for
+/* Exported because `Companions.js` has to know when a window has closed on a
+ * body whose brain is not being serviced — see the note on `CompanionPack.update`.
+ * One number, two readers, and HANDOFF §2.4 is why it is not two numbers. */
+export const WIND_OPEN = 2.4;       // seconds the body is open for
 const WIND_GAP = 7;          // seconds before it can be opened again
 /** Does this body keep a `recentDamage` tally at all? One predicate, four readers. */
 const keepsWind = (A) => !!(A.boss || A.custom === 'beast');
@@ -3005,6 +3008,11 @@ export class Enemy {
      * your own line.
      */
     this.look = opts?.look ?? null;
+    /* A COMPANION'S OWN COLOUR SLOTS, read at BUILD time and therefore taken
+     * from the spawn options rather than written by the pack — `adopt` runs
+     * after the body exists, and a hide chosen after the mesh is built is a
+     * hide nobody ever sees. See `companionOptsFrom`. */
+    this._cmpLook = opts?.companionLook ?? null;
     /* Which chassis's vocabulary his kit is written in — the `Trooper` record
      * has carried `kind` since attributes existed, so the spawn hands it over
      * rather than this file guessing from an archetype name. */
@@ -3441,6 +3449,12 @@ export class Enemy {
       scale: A.scale,
       ...(bodyOptsFor(this.type) || {}),
       ...kitOptsFrom(this.look, this.lookKind || 'flesh'),
+      /* …AND A COMPANION'S OWN FOUR SLOTS, which `kitOptsFrom` cannot carry:
+       * its tables are keyed `flesh` and `steel` and a creature is neither, so
+       * a saved hide would be dropped on the way in. `companionOptsFrom` is
+       * that door and it is empty for every body that is not one, so this
+       * costs a spread of `{}` on every other spawn in the game. */
+      ...companionOptsFrom(this._cmpLook),
     };
     /* THE MARKSMAN'S PLATE MOVED TO `BODY_KITS` — see the note there. It used
      * to be a special case on this line, spread AFTER the man's own kit, so a
@@ -3762,6 +3776,25 @@ export class Enemy {
    * both of them are large enough that leaping onto one and cutting down
    * through it is exactly what the shape of the thing invites.
    *
+   * ── AND `A.mount`, WHICH IS THE ONE LINE THAT MAKES A MOUNT CHEAP ────────
+   *
+   * A tauntaun is not `big` and must never be. `A.big` is four unrelated
+   * decisions wearing one name — it picks the movement proxy (:3313), it counts
+   * against `Waves.heavyLimit`, it forces an `armourClass`, and it makes a body
+   * STRATAGEM_ONLY — and an animal a player owns wants none of the four. So the
+   * gate reads the SECOND flag rather than being widened to grant the first,
+   * and `mount: true` is the whole of what the three rideable companion
+   * archetypes add here. Measured on a live geonosis world, the three saddles
+   * come out at 1.12 / 1.52 / 0.65 m above the hips bone (taun / blurrg /
+   * varac) with radii of 0.54 / 0.96 / 0.51 — a back rather than a deck, narrow
+   * on purpose, for the reason the radius note below gives. In world terms that
+   * puts the tauntaun's back 2.59 m over the body's own position, against a
+   * crown of 3.12: the seat is the animal's back and not the top of its head.
+   *
+   * Nothing else in this method changes and nothing else needed to: the bone it
+   * measures is `body`, which `creatureSkeleton` (Rig.js:281) builds for every
+   * creature exactly as the walker's skeleton does.
+   *
    * Measured off the built geometry rather than guessed, and measured over the
    * MIDDLE of the hull rather than at its highest point. The bounding box's top
    * is a turret or an antenna at the edge — on the walker that is 0.35 m above
@@ -3777,7 +3810,7 @@ export class Enemy {
   _measurePlatform() {
     this.platformTop = 0;
     this.platformRadius = 0;
-    if (!this.A.big || !this.rig) return;
+    if ((!this.A.big && !this.A.mount) || !this.rig) return;
     const bone = this.rig.get('body') || this.rig.hipsBone;
     const hips = this.rig.hipsBone;
     if (!bone?.parts?.length || !hips) return;
@@ -5669,7 +5702,35 @@ export class Enemy {
    * for a squadmate to run to.
    */
   _mayGoDown(kind) {
-    if (this.downed || !this.trooper || this.trooper.alive === false) return false;
+    /**
+     * …AND A COMPANION, WHICH HAS NO `trooper` BY DESIGN.
+     *
+     * This read `!this.trooper` and returned false, so a companion did not go
+     * down: it DIED, outright, in every mode. Measured on a fresh massiff in
+     * theline (`downedScale 1`) and command (`0.6`): `downed=false dead=true`
+     * on the first lethal hit, with the window the mode had declared for it
+     * sitting there unused.
+     *
+     * That is the whole of "protecting the companions and keeping them safe is
+     * another thing the player can choose to worry about". An animal that
+     * simply vanishes when its bar runs out is not something you can protect;
+     * it is something you notice is gone.
+     *
+     * EVERYTHING ELSE ON THIS PATH IS ALREADY GENERIC. `_goDown` reads
+     * `world.director.downedScale` and `DOWN_BLEED`, the clock in `_tickDown`
+     * runs off neither a roster nor a squad, and the revive is somebody
+     * standing over the body. The trooper test was the only thing in the way,
+     * and it was testing for the wrong thing: what the window belongs to is a
+     * body on YOUR SIDE, and a companion is exactly that.
+     *
+     * THE MODE STILL DECIDES. `downedMen` below is false wherever the mode
+     * declared no window — the dojo, the sandbox, Trial of Waves — so those
+     * still kill outright, which is the right answer for a room with no
+     * medicine in it and is `MODES[mode].downed` doing its job unchanged.
+     */
+    if (this.downed) return false;
+    if (!this.trooper && !this.companion) return false;
+    if (this.trooper && this.trooper.alive === false) return false;
     if (!this.world?.director?.downedMen) return false;
     if (kind === 'sever' || kind === 'cleave' || this.actor?.severedCount > 0) return false;
     return true;
@@ -7894,7 +7955,17 @@ export class Enemy {
     if (this._windTick(dt)) { this.wish = null; return; }
 
     this.attackTimer -= dt;
-    if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach') {
+    /* …AND `&& this.beastMoves(phase).length`, WHICH IS WHAT AN EMPTY MOVE
+     * LIST HAS TO MEAN. The pick below closes with `|| 'lunge'`, so a body
+     * that declares `moves: []` — the tooka kit, the astromech, the 2-1B, and
+     * every companion COMPANIONS.md describes as unable to defend itself —
+     * lunged anyway, at whatever `damage` happened to be sitting on its row.
+     * "It has no verbs" is a statement the brain has to be able to hear, and
+     * the resolver is where it is already written down (`beastMoveSet`); this
+     * is the one place that read it and then ignored it. Cheap: one Map-free
+     * property read on the frames an attack would otherwise start. */
+    if (dist < A.preferred[1] + 2.5 && this.attackTimer <= 0 && this.state === 'approach'
+      && this.beastMoves(phase).length) {
       /**
        * WHICH ATTACK, AND WHY IT IS A LIST RATHER THAN A LADDER OF `if`s.
        *
@@ -9322,9 +9393,40 @@ export class Enemy {
     /* ── the cheek weld: the head drops toward the stock and nods onto the
      *    sights. A roll about the head's own forward axis and a nod about its
      *    across axis, both scaled by how far the rifle is up. */
+    /**
+     * …AND IT IS WRITTEN FROM REST, WHICH IS THE WHOLE OF "MY TROOPS' HEADS
+     * SPIN AND SOME OF THEM LOOK HEADLESS".
+     *
+     * The player, V13: *"a portion of my troops almost looked headless and I
+     * noticed a couple more had heads that would constantly spin so I think
+     * the headless ones just had heads that stopped rotating upside down"* —
+     * and that last clause is the correct diagnosis, arrived at from the
+     * outside.
+     *
+     * This was a bare `multiply`, under the note above that says the gait
+     * writes these bones every frame so an offset never accumulates. That note
+     * is true of the CHEST and the NECK and it was never true of the HEAD.
+     * `Rig` writes hips, spine, chest and neck each frame, every one of them
+     * `.copy(restQuat).multiply(...)`, and it deliberately leaves the head
+     * alone — its own comment says "the head has to end up square to the
+     * shoulders", which is the head bone at rest under a neck that has already
+     * taken the twist out.
+     *
+     * So nothing reset it and this line added `|(0.08, 0, 0.18)|` = 0.197 rad
+     * to it on every frame it aimed: 5.9 rad a second, a full revolution every
+     * 1.07 s, for as long as a body held its rifle up. Measured on a real
+     * Command world with `tools/_headspin.mjs`: **21 of 60 heads turned more
+     * than 20 radians in twenty seconds and 20 of 60 finished upside down.**
+     * A man who stops aiming keeps whatever angle he had got to, and half of
+     * those are inverted — a helmet turned inside out at twelve metres reads
+     * as no head at all.
+     */
     const headB = rig.get('head');
-    if (headB && !custom && k > 1e-3) {
-      headB.obj.quaternion.multiply(_rq[8].setFromEuler(_re.set(CHEEK_NOD * k, 0, CHEEK_ROLL * k, 'XYZ')));
+    if (headB && !custom) {
+      headB.obj.quaternion.copy(headB.restQuat);
+      if (k > 1e-3) {
+        headB.obj.quaternion.multiply(_rq[8].setFromEuler(_re.set(CHEEK_NOD * k, 0, CHEEK_ROLL * k, 'XYZ')));
+      }
     }
     rig.updateMatrices();
   }
@@ -9978,6 +10080,40 @@ const SEVERANCE = {
    * written on the same day the first winged body was, and not after it.
    */
   wing: { budget: 0.80 },
+  /**
+   * A DOME, AND IT IS AXIAL BECAUSE IT IS WHERE THE DROID IS.
+   *
+   * `axial` prices a role flat — reaching it ends the body wherever along it
+   * you reach — and that is the honest description of an astromech's dome. It
+   * carries every sensor, the processor and the whole of what the machine is
+   * for; a can with the dome off is not a wounded droid, it is scrap. So it
+   * sits with `head` rather than with a limb, and it sits one hundredth under
+   * `head` for the one reason that survives being argued about: a skull is
+   * still the one place a body dies from FIRST, and a dome is a fraction less
+   * of the thing it tops than a head is.
+   *
+   * It is NOT `head`, and the reason is `roleOf` rather than taste — see the
+   * note over `BONE_ROLES`. Both numbers clear the 0.9 that `takeCut` turns a
+   * fight on, which `severance.mjs` pins for every axial bone on the roster.
+   */
+  dome: { axial: 0.94 },
+  /**
+   * AN ANTENNA IS THE CHEAPEST THING ON ANY BODY IN THE GAME, AND THAT IS THE
+   * POINT OF PRICING IT.
+   *
+   * `budget` 0.06 says the whole set of them is worth six per cent of the
+   * droid — level with the humanoid hand this table's own header measures at
+   * 0.06, and well under the cheapest leg on the roster (0.092, one of the
+   * SPHA's twelve). A blade that takes the whip off an astromech has taken a
+   * piece of wire off it and the game should bill it as one.
+   *
+   * The alternative was to leave it unpriced by not giving it a role, and
+   * there is no such thing: `Bone`'s constructor throws on a bone with no
+   * role, which is the guard working. The other alternative — spelling it
+   * `arm` — is priced at half a droid by the divisor, and is the defect this
+   * table's own header calls "an answer that looked like an answer".
+   */
+  antenna: { budget: 0.06 },
 };
 
 /**

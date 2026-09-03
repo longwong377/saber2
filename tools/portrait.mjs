@@ -114,8 +114,14 @@ if (enemyArg) {
       for (const e of w.enemies.slice()) e.dispose?.();
       w.enemies.length = 0;
       const p = w.player.position;
-      const e = w.spawnEnemy(type, new window.THREE_V3
-        ? new window.THREE_V3(p.x, p.y, p.z + 6) : { x: p.x, y: p.y, z: p.z + 6 });
+      /* `p.constructor` IS three's Vector3 — read off the player's own
+       * position rather than off a `window.THREE_V3` global that this file
+       * never set. The old line read `new window.THREE_V3 ? a : b`, which
+       * parses as `(new window.THREE_V3) ? …` and threw "not a constructor"
+       * on undefined before either branch could run, so every enemy portrait
+       * this tool has ever been asked for died at the spawn. */
+      const V3 = p.constructor;
+      const e = w.spawnEnemy(type, new V3(p.x, p.y, p.z + 6));
       return { ok: !!e };
     }, type).catch((e) => ({ ok: false, err: String(e) }));
     if (!info.ok) { console.log('spawn failed for', type, info.err || ''); continue; }

@@ -34,6 +34,17 @@ const rng = makeRng(606);
  * the other five make.
  */
 export function seedBolts(seed) { rng.seed(seed >>> 0); return rng; }
+/**
+ * …AND THE STREAM ITSELF, for `Combat.gradeCaught`.
+ *
+ * A deflection and the bolt it came from are ONE event, so the scatter on a
+ * blocked bolt's outgoing direction belongs on this stream rather than on a
+ * second one of its own: `seedBolts(606)` is already in `restoreShared`'s
+ * list, and a new generator would be a new thing to remember to seed. Exported
+ * rather than moving `gradeCaught` here, because that function is the whole of
+ * how a deflection is graded and it belongs beside the grading it does.
+ */
+export const rngBolts = rng;
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _v4 = new THREE.Vector3(), _v5 = new THREE.Vector3(), _v6 = new THREE.Vector3();

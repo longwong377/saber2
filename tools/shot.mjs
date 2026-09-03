@@ -79,12 +79,15 @@ page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
 
 const url = `http://127.0.0.1:${port}/`;
 await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 45000 });
-await page.evaluate(([level, quality, mode, scale]) => {
+await page.evaluate(([level, quality, mode, scale, saberSet]) => {
   localStorage.setItem('saber.settings.v2', JSON.stringify({
     level, quality, mode, resolutionScale: scale, difficulty: 'knight',
     volume: 0, music: 0, sandboxCount: 0, sandboxFire: 0,
+    /* `--set` so the two new weapons can be LOOKED at. They are a setting like
+     * any other and this is the only door a shot has into the settings blob. */
+    saberSet,
   }));
-}, [LEVEL, QUALITY, MODE, SCALE]);
+}, [LEVEL, QUALITY, MODE, SCALE, flag('set', 'single')]);
 await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('#menu:not(.hidden)', { timeout: 90000 });
 await page.click('#btn-deploy');

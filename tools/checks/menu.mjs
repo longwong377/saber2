@@ -33,9 +33,14 @@ import { Menu, DEFAULT_SETTINGS, DEATH_TITLE, codexHtml, codexTeaching,
 /* The standing-order row is BUILT from this table, so the check that says so reads the
  * table rather than a transcription of what it said on the day. */
 import { AREAS, FORMATIONS, COMMAND_FORCE, ORDERS as COMMAND_ORDERS,
-         MAX_STRENGTH, OPENING_STRENGTH } from '../../src/game/Command.js';
+         MAX_STRENGTH, OPENING_STRENGTH, CommandRoster, ARMIES,
+         commandConfig } from '../../src/game/Command.js';
+/* A man on the roll is what the NPC half of "Trust in the Force" dresses, and
+ * the store is the only way to put one on a page — see `withTrooper`. */
+import * as Company from '../../src/game/Company.js';
 import { ACTIONS, defaultBindings } from '../../src/engine/Bindings.js';
 import { FOCUS } from '../../src/game/Focus.js';
+import { COMPANION_KINDS, COMPANION_ORDER } from '../../src/game/CompanionKinds.js';
 import { QUALITY } from '../../src/engine/Engine.js';
 import { MODES, playableModes, WaveDirector, BOSS_EVERY, CONDITION_KEYS, SKIRMISH } from '../../src/game/Waves.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
@@ -67,6 +72,10 @@ const PICKER_HOSTS = ['level-list', 'diff-list', 'mode-list', 'opt-quality', 'op
  * without ever yielding.
  */
 let INDEX_HTML = '';
+/* The menu's own source, for the two checks that assert a control EXISTS
+ * rather than what it does — a button with no markup is a button nobody can
+ * press, and a jsdom fixture only proves the ones that were drawn. */
+let MENU_SRC = '';
 function menuOn(overrides = {}) {
   const doc = makeDocument(INDEX_HTML);
   const restore = doc.install();
@@ -103,6 +112,7 @@ const over = (src, a, dst) => src.map((c, i) => Math.round(c * a + dst[i] * (1 -
 
 export async function run({ check, assert }) {
   INDEX_HTML = await read('index.html');
+  MENU_SRC = await read('src/ui/Menu.js');
   const CSS = await read('styles.css');
   const MAIN = await read('src/main.js');
 
@@ -1608,6 +1618,548 @@ export async function run({ check, assert }) {
       leave.dispatchEvent({ type: 'click' });
       assert(left === 1, `the Leave button fired onLeave ${left} times`);
       return 'solo: leave hidden, restart shown · host: both · client: leave only; onLeave fires';
+    } finally { close(); }
+  });
+  check('menu: Trust in the Force rolls the whole wardrobe, through the real controls', () => {
+    /**
+     * "there should also be a randomize button that randomizes every single
+     *  customization for the people who prefer it that way … maybe call it
+     *  something cool like 'Trust in the Force' or something of that nature
+     *  instead of randomize"
+     *
+     * TWO PROPERTIES, and the second is the one worth a check.
+     *
+     * It exists and it is not called "randomize" — trivial, asserted below in
+     * one line because the player named it.
+     *
+     * AND IT MOVES A LOT OF SETTINGS AT ONCE. `_trustInTheForce` deliberately
+     * does not know what a robe is: it walks the panel, finds every row of
+     * choices and every slider, and CLICKS them, so a wardrobe row added later
+     * is rolled by nobody's effort. The failure that would follow from writing
+     * it the other way — a private table of appearance keys drifting from the
+     * page — is invisible to a check that only looks at the button. So this
+     * counts how many settings actually changed value across one press.
+     */
+    const { menu, settings, doc, close } = menuOn();
+    try {
+      const btn = doc.getElementById('btn-trust');
+      assert(btn, 'no Trust in the Force button on the wardrobe page');
+      assert(!/random/i.test(btn.textContent),
+        `the button reads "${btn.textContent.trim()}" — he asked for it NOT to say randomize`);
+      /* Every appearance-ish key, snapshotted by value. `face` is an object —
+       * the character sheet — so it is compared as JSON. */
+      const snap = () => JSON.stringify(settings);
+      const before = snap();
+      const rows = [...doc.querySelectorAll('.cards, .swatches')].filter((r) => r.children.length > 1);
+      assert(rows.length >= 8,
+        `only ${rows.length} rows of choices on the page — the fixture is not building the wardrobe`);
+      btn.click();
+      const after = snap();
+      assert(after !== before, 'a press changed nothing at all');
+      /* HOW MUCH it moved, counted key by key, because "something changed" is
+       * satisfied by one swatch and the ask was every row. */
+      const a = JSON.parse(before), b = JSON.parse(after);
+      const moved = Object.keys(b).filter((k) => JSON.stringify(a[k]) !== JSON.stringify(b[k]));
+      assert(moved.length >= 5,
+        `one press moved ${moved.length} settings (${moved.join(', ')}) — it is meant to roll the page`);
+      return `${rows.length} rows of choices on the page; one press moved ${moved.length} settings `
+        + `(${moved.slice(0, 6).join(', ')}${moved.length > 6 ? ', …' : ''})`;
+    } finally { close(); }
+  });
+
+  check('menu: the deploy card says who is coming with you, in every mode that takes them', () => {
+    /**
+     * "I tried to play trial of waves and noticed that I still had troops in
+     *  that mode, is that a feature or bug?"
+     *
+     * A feature, and an invisible one. `settings.allies` is a PERSISTED GLOBAL
+     * — one slider on the Army tab — and `commandConfig` fields it in every
+     * mode that does not declare `solo` or `dojo`. Set it once on any card and
+     * it follows you onto all of them, and until now no screen said so before
+     * Ignite. `_syncAlliesRow` was already written for the mirror image (a lit
+     * control the mode overrules in silence); this is the mode HONOURING it in
+     * silence, which is the same surprise from the other side.
+     *
+     * Asserted on the two directions that matter and off the mode's own
+     * fields, never off a mode's name.
+     */
+    const { menu, settings, doc, close } = menuOn({ allies: 6, mode: 'waves' });
+    try {
+      menu.selectMode?.('waves');
+      const el = doc.getElementById('mode-need');
+      assert(el, 'the deploy card has no line to say it on');
+      const said = el.textContent || '';
+      assert(/\b6\b/.test(said) && /troop/i.test(said),
+        `six allied troopers are coming and the Trial's card says "${said.trim() || '(nothing)'}"`);
+
+      /* NOBODY COMING, NOTHING SAID — a card that always carries a sentence is
+       * a card nobody reads. */
+      settings.allies = 0;
+      menu.selectMode?.('waves');
+      assert(!/troop/i.test(doc.getElementById('mode-need').textContent || ''),
+        'it promises troopers when the slider is at zero');
+
+      /* AND THE TWO MODES THAT REFUSE A CONTINGENT DO NOT CLAIM ONE. They have
+       * their own sentence, in the slider's own readout. */
+      settings.allies = 6;
+      menu.selectMode?.('duel');
+      assert(!/troop/i.test(doc.getElementById('mode-need').textContent || ''),
+        'the Duel is solo and its card offers to take six men in');
+      return 'the Trial names the six it is taking, says nothing at zero, and the Duel — which '
+        + 'refuses a contingent — never claims one';
+    } finally { close(); }
+  });
+
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  TRUST IN THE FORCE, ON BOTH PAGES, AND ONLY ON ITS OWN
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * The check above proves the Jedi's button exists, is not called "randomize",
+   * and moves at least five settings. Three things it does not prove, and each
+   * of them is what the player actually asked for:
+   *
+   *   "add the same randomize button for NPC TROOP customization as well" —
+   *     a second button, on a different page, wired to a different store.
+   *   "randomizes EVERY SINGLE customization" — five settings out of a page of
+   *     twenty-three rows and five sliders is not every, and the slider pass in
+   *     particular was doing nothing at all here until `tools/checks/_page.mjs`
+   *     learned that `min`/`max`/`step` are properties on a real input.
+   *   and the one nobody asks for until it bites: IT STOPS AT ITS OWN ROOT.
+   *     Both buttons are on one page — index.html builds every panel at once —
+   *     so a walk that took `document` instead of the panel would re-roll the
+   *     player's own wardrobe from a trooper's page, and the only symptom
+   *     would be a player who cannot keep a face.
+   *
+   * HOW "EVERY CONTROL" IS MEASURED, and why not by counting what moved.
+   * `_trustInTheForce` picks with `Math.random()`, so a row that was reached
+   * can land on the value it already had and a row that was skipped looks
+   * identical to it. Counting moved settings therefore cannot tell "it reached
+   * all 23 rows" from "it reached 6 and got lucky". So the roll is PINNED
+   * instead: with `Math.random` returning ~1 every row must end on its LAST
+   * child and every slider at its maximum, and with it returning 0 every row
+   * must end on its FIRST child and every slider at its minimum. A row the
+   * walk never touched fails both, whatever it was showing when it started.
+   */
+
+  /** Run `fn` with `Math.random` pinned, and give the real one back. */
+  const rolled = (v, fn) => {
+    const real = Math.random;
+    Math.random = () => v;
+    try { return fn(); } finally { Math.random = real; }
+  };
+  /** Every row of choices under `root` that has something to choose between. */
+  const choiceRows = (root) => [...root.querySelectorAll('.cards, .swatches, .kit-chips')]
+    .filter((r) => r.children.length > 1);
+  const selectedIndex = (row) => [...row.children].findIndex((c) => c.classList.contains('sel'));
+
+  /**
+   * A man on the roll, on his page, with the store put back afterwards.
+   *
+   * SYNCHRONOUS for the reason `tools/checks/company.mjs` gives at length: the
+   * company roll is one localStorage key and the runner starts every check as
+   * soon as the one before it suspends, so a body that awaited anything here
+   * would be sharing its roll — and its `document` — with whatever ran next.
+   */
+  const onTroopPage = (fn, overrides = {}) => {
+    const KEY = 'saber.company.v1', SLATE = 'saber.muster.v1';
+    const had = localStorage.getItem(KEY), hadSlate = localStorage.getItem(SLATE);
+    localStorage.removeItem(KEY);
+    localStorage.removeItem(SLATE);
+    try {
+      const army = ARMIES.republic;
+      const roll = new CommandRoster(army);
+      for (let i = 0; i < 3; i++) roll.enlist(army.tiers[0].type);
+      Company.keep(roll.all, { army: 'republic', deployed: roll.all, ground: 'geonosis' });
+      const him = roll.all[0];
+      const fix = menuOn(overrides);
+      try {
+        fix.menu._showCompany(`republic/${him.designation}`);
+        const look = () => Company.load('republic').men
+          .find((m) => m.designation === him.designation)?.look || {};
+        return fn({ ...fix, him, look });
+      } finally { fix.close(); }
+    } finally {
+      if (had == null) localStorage.removeItem(KEY); else localStorage.setItem(KEY, had);
+      if (hadSlate == null) localStorage.removeItem(SLATE); else localStorage.setItem(SLATE, hadSlate);
+    }
+  };
+
+  check('menu: Trust in the Force moves EVERY control on the wardrobe — all 23 rows and all 5 sliders', () => {
+    const { doc, close } = menuOn();
+    try {
+      const btn = doc.getElementById('btn-trust');
+      assert(btn, 'no Trust in the Force button on the wardrobe page');
+      /* THE BUTTON'S OWN ROOT, taken the way the button takes it. */
+      const panel = btn.closest('[data-panel="saber"]');
+      assert(panel, 'the button is not inside the wardrobe panel it walks');
+      /**
+       * …EXCEPT THE ROWS THAT BELONG TO A DIFFERENT BUTTON.
+       *
+       * The wardrobe panel grew a SECOND owner: the companion picker and its
+       * colours sit under `[data-panel="saber"]` with their own Trust in the
+       * Force. This check's claim is "every control THIS button owns", and the
+       * companion's are not among them — deliberately, because randomising the
+       * picker would change WHICH ANIMAL YOU TAKE, and picking a different
+       * kind retires the one you have. That is the only control on this page
+       * that is not cosmetic.
+       *
+       * The exclusion is read from the same selector list `_wireTrust` passes
+       * as `skip`, so the two cannot drift: a row this check ignores is
+       * exactly a row that button refuses to touch. `menu: Trust in the Force
+       * randomises everything of YOURS and nothing of the animal's` holds the
+       * other end of it and asserts the fence is load-bearing.
+       */
+      const SKIP = ['#companion-list', '#companion-dress', '#companion-dress-host'];
+      const owned = (el) => !SKIP.some((sel) => {
+        const host = doc.querySelector(sel);
+        return host && (host === el || host.contains(el));
+      });
+      const rows = () => choiceRows(panel).filter(owned);
+      const ranges = () => [...panel.querySelectorAll('input[type="range"]')].filter(owned);
+      assert(rows().length >= 15,
+        `only ${rows().length} rows of choices under the button — the fixture is not building the wardrobe`);
+      assert(ranges().length >= 5,
+        `only ${ranges().length} sliders under the button — the wardrobe has the frame, the muscle, `
+        + 'the years and the two blade dimensions');
+
+      /* ── pinned high: last child of every row, top of every slider ──── */
+      rolled(0.999, () => btn.click());
+      const missedHi = rows().filter((r) => selectedIndex(r) !== r.children.length - 1);
+      assert(!missedHi.length,
+        `${missedHi.length} of ${rows().length} rows were not rolled at all — the walk does not reach `
+        + `${missedHi.map((r) => r.className).join(', ')}`);
+      const hi = ranges().map((el) => [el.id, Number(el.value), Number(el.max)]);
+      const stuckHi = hi.filter(([, v, max]) => v !== max);
+      assert(!stuckHi.length,
+        `sliders the roll left where they were: ${stuckHi.map(([id, v, m]) => `${id}=${v} (max ${m})`).join(', ')}`);
+
+      /* ── pinned low: first child of every row, bottom of every slider ── */
+      rolled(0, () => btn.click());
+      const missedLo = rows().filter((r) => selectedIndex(r) !== 0);
+      assert(!missedLo.length,
+        `${missedLo.length} rows did not follow the second roll — ${missedLo.map((r) => r.className).join(', ')}`);
+      const lo = ranges().map((el) => [el.id, Number(el.value), Number(el.min)]);
+      const stuckLo = lo.filter(([, v, min]) => v !== min);
+      assert(!stuckLo.length,
+        `sliders that ignored the second roll: ${stuckLo.map(([id, v, m]) => `${id}=${v} (min ${m})`).join(', ')}`);
+      return `${rows().length} rows and ${ranges().length} sliders, every one of them driven to both ends `
+        + `(${hi.map(([id, v]) => `${id} ${v}`).join(', ')} → ${lo.map(([, v]) => v).join(', ')})`;
+    } finally { close(); }
+  });
+
+  check('menu: the troopers have the same button, and it rolls every rack on the man\'s page', () => onTroopPage(({ doc, look }) => {
+    /**
+     * "add the same randomize button for npc troop custimization as well"
+     *
+     * The same walk, on a page whose controls are a different shape: a
+     * trooper's page has no `.cards` and no sliders at all, it has `.kit-chips`
+     * and `.swatches`, and every write goes through `Company.dress` rather than
+     * through the settings blob. So this asserts on the STORE — what the man is
+     * actually wearing afterwards — rather than on the DOM, which is the only
+     * evidence that survives the page re-rendering itself after every write.
+     *
+     * The two pinned rolls read cleanly on this page because of what sits at
+     * each end of a rack: the LAST chip in a kit row is "As issued" and the
+     * FIRST swatch in a paint row is "as issued", so a roll pinned high strips
+     * every kit field and paints all three channels, and a roll pinned low
+     * fills every kit field and strips the paint. Two presses, and every field
+     * on the page has to move in both directions.
+     */
+    const btn = doc.getElementById('company-trust');
+    assert(btn, 'the trooper page has no Trust in the Force button');
+    assert(!/random/i.test(btn.textContent),
+      `the trooper's button reads "${btn.textContent.trim()}" — the same name was asked for`);
+    const kitFields = [...new Set([...doc.querySelectorAll('.kit-chips .kit-chip')].map((c) => c.dataset.kit))];
+    const paintFields = [...new Set([...doc.querySelectorAll('.company-paints .swatch')].map((c) => c.dataset.paint))];
+    assert(kitFields.length >= 6 && paintFields.length >= 3,
+      `${kitFields.length} kit rows and ${paintFields.length} paint rows on the page — the fixture is `
+      + 'not building the dressing room');
+
+    rolled(0.999, () => btn.click());
+    const hi = look();
+    const keptKit = kitFields.filter((f) => (hi.kit || {})[f] !== undefined);
+    const noPaint = paintFields.filter((f) => !(hi.paint || {})[f]);
+    assert(!keptKit.length, `the roll never reached ${keptKit.join(', ')} — those rows kept their chip`);
+    assert(!noPaint.length, `the roll never reached the ${noPaint.join(', ')} paint rack`);
+
+    rolled(0, () => btn.click());
+    const lo = look();
+    const noKit = kitFields.filter((f) => (lo.kit || {})[f] === undefined);
+    const keptPaint = paintFields.filter((f) => (lo.paint || {})[f]);
+    assert(!noKit.length, `the second roll never reached ${noKit.join(', ')}`);
+    assert(!keptPaint.length, `the second roll left ${keptPaint.join(', ')} painted`);
+    return `${kitFields.length} kit rows and ${paintFields.length} paint racks on his page, every one of `
+      + `them rolled both ways (${paintFields.map((f) => `${f} ${hi.paint[f]}`).join(', ')} → as issued)`;
+  }));
+
+  check('menu: a Trust in the Force button rolls its own page and nothing else on the screen', () => onTroopPage(({ menu, settings, doc, look }) => {
+    /**
+     * THE ONE THAT WOULD NOT BE NOTICED FOR A WEEK.
+     *
+     * Both buttons live on one document — the menu builds every panel at
+     * construction, so a trooper's dressing room and the player's own wardrobe
+     * are on screen together whether or not the tab is showing. `_wireTrust`
+     * scopes its walk to `[data-panel="saber"]`; the trooper's walks
+     * `.kit-list`, which is the wrapper the dressing room puts around each
+     * rack. Neither is a document-wide walk today, and this is the check that
+     * goes red the day one becomes one — or the day a `.kit-list` is used for
+     * something on the Jedi's page, which is the same accident from the other
+     * direction.
+     *
+     * Compared by VALUE on both sides: the whole settings blob (the wardrobe's
+     * every choice, the face sheet included) and the man's stored look. A walk
+     * that reached across would move one of the two, and there is no roll of
+     * the dice that produces "changed nothing at all" across 23 rows.
+     */
+    const before = JSON.stringify(settings);
+    const beforeLook = JSON.stringify(look());
+
+    /* His button first: the wardrobe must not feel it. */
+    rolled(0.999, () => doc.getElementById('company-trust').click());
+    assert(JSON.stringify(look()) !== beforeLook, 'his own button changed nothing — the guard below is vacuous');
+    assert(JSON.stringify(settings) === before,
+      'the TROOPER\'s Trust in the Force re-rolled the player\'s own appearance: '
+      + `${Object.keys(settings).filter((k) => JSON.stringify(settings[k]) !== JSON.stringify(JSON.parse(before)[k])).join(', ')}`);
+
+    /* And the player's button: the man on the page must not feel it. */
+    const hisLook = JSON.stringify(look());
+    rolled(0, () => doc.getElementById('btn-trust').click());
+    assert(JSON.stringify(settings) !== before, 'the wardrobe button changed nothing — the guard below is vacuous');
+    assert(JSON.stringify(look()) === hisLook,
+      `the PLAYER's Trust in the Force redressed a trooper: ${hisLook} → ${JSON.stringify(look())}`);
+    return 'his button rolled his kit and left all of the wardrobe alone; the wardrobe button rolled '
+      + 'the wardrobe and left his kit alone';
+  }));
+
+  check('menu: the deploy card discloses the contingent in every mode that fields one, and in no mode that refuses one', () => {
+    /**
+     * "I tried to play trial of waves and noticed that I still had troops in
+     *  that mode, is that a feature or bug?"
+     *
+     * The check above proves the sentence on three cards — the Trial with six,
+     * the Trial with none, and the Duel. This is the same claim taken across
+     * the WHOLE mode table, because the sentence is generated off `M.solo` and
+     * `M.dojo` and the failure that matters is a mode nobody thought to look
+     * at: a twelfth mode added tomorrow either fields a contingent and says so,
+     * or refuses one and stays quiet, and this is what makes that automatic.
+     *
+     * The number is checked against `commandConfig` rather than against the
+     * slider, because the slider is what the player asked for and the config is
+     * what the run actually fields — a card that promised six while the world
+     * built four would be the same silence in a new place.
+     */
+    const modes = playableModes();
+    assert(modes.length >= 8, `only ${modes.length} playable modes — the table did not load`);
+    const said = (menu, doc, id) => {
+      menu.selectMode?.(id);
+      return (doc.getElementById('mode-need')?.textContent || '');
+    };
+    const { menu, settings, doc, close } = menuOn({ allies: 6 });
+    const told = [], quiet = [], wrong = [], leaked = [];
+    try {
+      for (const id of modes) {
+        const M = MODES[id];
+        const line = said(menu, doc, id);
+        const says = /\btroop/i.test(line);
+        const refuses = !!(M.solo || M.dojo);
+        if (refuses) {
+          if (says) leaked.push(id); else quiet.push(id);
+          continue;
+        }
+        if (!says) { wrong.push(`${id} said nothing`); continue; }
+        /* AND IT NAMES THE NUMBER THE RUN WILL ACTUALLY FIELD. */
+        const n = commandConfig({ ...settings, mode: id }).contingent;
+        if (!new RegExp(`\\b${n}\\b`).test(line)) wrong.push(`${id} promised "${line.trim()}" against ${n}`);
+        else told.push(id);
+      }
+      assert(!leaked.length,
+        `${leaked.join(', ')} declare solo/dojo — they refuse a contingent — and their card offers one anyway`);
+      assert(!wrong.length, `the disclosure is wrong on: ${wrong.join('; ')}`);
+      assert(told.includes('waves'), 'the Trial of Waves — the mode he asked about — does not say it');
+      assert(told.length >= 6 && quiet.length >= 1,
+        `${told.length} modes disclosed and ${quiet.length} refused — one side of this is not being measured`);
+
+      /* NOBODY COMING, NOTHING SAID, in every mode rather than in one. */
+      settings.allies = 0;
+      const noisy = modes.filter((id) => /\btroop/i.test(said(menu, doc, id)));
+      assert(!noisy.length, `with the slider at zero these cards still promise troopers: ${noisy.join(', ')}`);
+      return `${told.length} modes name the six they field (${told.join(', ')}); ${quiet.length} refuse a `
+        + `contingent and stay quiet (${quiet.join(', ')}); at zero allies all ${modes.length} say nothing`;
+    } finally { close(); }
+  });
+
+  check('menu: Trust in the Force randomises everything of YOURS and nothing of the animal\'s', () => {
+    /**
+     * "there should also be a randomize button that randomizes EVERY SINGLE
+     *  customization … maybe call it something cool like 'Trust in the Force'"
+     *
+     * TWO CLAUSES, AND THEY PULL AGAINST EACH OTHER. "every single" is why the
+     * walker is deliberately broad — `.cards, .swatches, .kit-chips` under
+     * whatever root it is handed, so it works on nine rows without a list and
+     * on the tenth the day somebody adds it. That breadth is the feature.
+     *
+     * AND IT IS ALSO THE HAZARD, which this check exists for. The Jedi panel
+     * grew a SECOND owner: the companion picker and its colours sit under
+     * `[data-panel="saber"]`, which is exactly the root the player's button
+     * walks. Unfenced, pressing "randomize my appearance" would randomise
+     * WHICH ANIMAL YOU TAKE — and picking a different kind retires the one you
+     * have. That is the only control on this screen that is not cosmetic, and
+     * it would have been the one the button reached.
+     */
+    const { menu, doc, close } = menuOn();
+    try {
+      const panel = doc.querySelector('[data-panel="saber"]');
+      assert(panel, 'there is no Jedi panel');
+      const list = doc.getElementById('companion-list');
+      assert(list, 'the companion picker is not on the page');
+      assert(panel.contains(list),
+        'the companion picker has moved off the Jedi panel — this check is now testing nothing, '
+        + 'and the skip it guards may be dead');
+
+      /* THE PLAYER'S BUTTON MOVES THE PLAYER. */
+      const before = { colorIndex: menu.s.colorIndex, robeIndex: menu.s.robeIndex,
+        hiltStyle: menu.s.hiltStyle, species: menu.s.species };
+      const companionBefore = menu.s.companion;
+      const n = menu._trustInTheForce(panel, {
+        first: ['order-list', 'species-list'],
+        skip: ['#companion-list', '#companion-dress', '#companion-dress-host'],
+      });
+      assert(n > 0, 'Trust in the Force chose nothing at all');
+      const moved = Object.keys(before).filter((k) => menu.s[k] !== before[k]);
+      assert(moved.length, `it clicked ${n} rows and not one of them changed a setting`);
+      /* …AND LEAVES THE ANIMAL ALONE. */
+      assert(menu.s.companion === companionBefore,
+        `it changed your companion from "${companionBefore}" to "${menu.s.companion}" — `
+        + 'picking a different kind retires the one you have');
+
+      /* AND THE SKIP IS LOAD-BEARING: without it, the same call reaches the
+       * picker. Asserted rather than assumed, so that removing the fence is a
+       * red check and not a silent regression. */
+      menu.s.companion = 'none';
+      let reached = false;
+      for (let i = 0; i < 12 && !reached; i++) {
+        menu._trustInTheForce(panel, {});
+        if (menu.s.companion !== 'none') reached = true;
+      }
+      assert(reached,
+        'even with no skip the walker never reached the companion picker — the fence is not '
+        + 'what is protecting it, so this check is not testing what it says it is');
+      /**
+       * …AND THE OTHER HALF OF THE ASK, WHICH IS A SEPARATE SURFACE.
+       *
+       * "add the same randomize button for npc troop custimization as well" —
+       * so there are two buttons, on two screens, and this asserts the second
+       * exists and is wired to the same walker rather than to a copy of it.
+       * The companion's own third button is asserted by the companions suite.
+       */
+      const src = MENU_SRC;
+      for (const id of ['btn-trust', 'company-trust', 'companion-trust']) {
+        assert(src.includes(`'${id}'`) || src.includes(`"${id}"`) || src.includes(`id="${id}"`),
+          `there is no ${id} — the player asked for this button on his own screen, on the troops' `
+          + 'and it belongs on the companion\'s too');
+      }
+      const calls = (src.match(/_trustInTheForce\(/g) || []).length;
+      assert(calls >= 4,
+        `_trustInTheForce is called ${calls} times — one definition and three buttons is four`);
+      return `${n} rows chosen, ${moved.length} of the player's own settings moved `
+        + `(${moved.join(', ')}), the companion untouched — and without the fence it is reached; `
+        + `3 buttons on 3 surfaces, all through one walker`;
+    } finally { close(); }
+  });
+
+  check('menu: the deploy card says how many troops are coming with you', () => {
+    /**
+     * "I tried to play trial of waves and noticed that I still had troops in
+     *  that mode, is that a feature or bug?"
+     *
+     * A FEATURE, AND THE DEFECT WAS THE SILENCE. `settings.allies` is a
+     * PERSISTED GLOBAL — one slider on the Army tab, kept across sessions —
+     * and `commandConfig` fields it in every mode that does not declare `solo`
+     * or `dojo`. He had set it once, on another card, and it followed him.
+     *
+     * SAID RATHER THAN REMOVED: nothing about a contingent is wrong in the
+     * Trial, and taking it away would answer a question with a confiscation.
+     * What was wrong is that no screen said it before Ignite.
+     */
+    const said = (over) => {
+      const { menu, doc, close } = menuOn(over);
+      try { menu._syncSessionNeed?.(); return doc.getElementById('mode-need')?.textContent || ''; }
+      finally { close(); }
+    };
+    const withFour = said({ mode: 'waves', allies: 4 });
+    assert(/\b4\b/.test(withFour) && /troopers?/i.test(withFour),
+      `Trial of Waves with 4 allies says "${withFour}"`);
+    assert(/Army tab|remembered/i.test(withFour),
+      'it says the number but not where the number came from, which is the actual surprise');
+    const withNone = said({ mode: 'waves', allies: 0 });
+    assert(!/trooper/i.test(withNone), `with no allies it still says "${withNone}"`);
+    /* AND THE TWO MODES THAT REFUSE A CONTINGENT DO NOT PROMISE ONE. */
+    for (const mode of ['duel', 'training']) {
+      const t = said({ mode, allies: 4 });
+      assert(!/taking \d+ allied/i.test(t), `${mode} refuses a contingent and still says "${t}"`);
+    }
+    return `waves+4 → "${withFour.slice(0, 90)}…"; waves+0 says nothing; duel and training say nothing`;
+  });
+
+
+
+  check('menu: every card in every picker has a NAME on it, and one row had twelve that said undefined', () => {
+    /**
+     * THE COMPANION PICKER RENDERED "undefined" TWELVE TIMES, FROM THE DAY IT
+     * LANDED, AND IT IS THE ONLY DOOR INTO THE WHOLE FEATURE.
+     *
+     * `_cardRow` prints `<b>${it.name}</b>`. `SABER_SETS` rows carry `name`;
+     * `COMPANION_KINDS` rows carry `label`, which is what ARCHETYPES uses
+     * everywhere else in the game. So the saber row four lines above it worked
+     * and the companion row below it showed twelve cards reading "undefined"
+     * over the right blurb.
+     *
+     * WHY NOTHING CAUGHT IT, which is the part worth keeping. Forty-three
+     * green companion checks never render this row — they drive the sim. The
+     * menu's own companion-list check asserts the list EXISTS and is on the
+     * Jedi panel, and the randomize-fence check counts the cards. Every one of
+     * them looked at the container and none at what was written in it.
+     *
+     * So this is asked of the whole page rather than of one row: every card
+     * `_cardRow` has built, in every picker, must carry a non-empty name that
+     * is not the string "undefined" or "null". A row whose data uses the wrong
+     * field name fails here whichever row it is, which is the general form of
+     * the defect rather than a patch to the one instance of it.
+     */
+    const { doc, close } = menuOn();
+    try {
+      /* Found by SHAPE, not by a list of ids: `_cardRow` is the only thing in
+       * the file that builds `.diff > .txt > b`, so every row it has ever made
+       * is here and a thirteenth needs nothing added. */
+      const cards = [...doc.querySelectorAll('.diff .txt b')];
+      assert(cards.length >= 20,
+        `only ${cards.length} picker cards rendered — the page did not build its rows, so this `
+        + 'check is looking at an empty document rather than at the menu');
+      const bad = [];
+      for (const b of cards) {
+        const text = (b.textContent || '').trim();
+        const row = b.closest('.diff');
+        const where = row?.parentElement?.id || row?.parentElement?.className || '?';
+        if (!text || text === 'undefined' || text === 'null') bad.push(`${where}: "${text}"`);
+      }
+      assert(!bad.length,
+        `${bad.length} card(s) render no name: ${[...new Set(bad)].slice(0, 6).join(', ')} — a picker `
+        + 'whose data carries the wrong field prints the word "undefined" at the player');
+
+      /* AND THE COMPANION ROW SPECIFICALLY SAYS WHAT THE TWELVE KINDS ARE
+       * CALLED, read off the table rather than typed here, so a rename moves
+       * both together. */
+      const list = doc.getElementById('companion-list');
+      assert(list, 'the companion picker is not on the page');
+      const shown = [...list.querySelectorAll('.diff .txt b')].map((b) => b.textContent.trim());
+      const want = ['None', ...COMPANION_ORDER.map((id) => COMPANION_KINDS[id].label)];
+      assert(shown.length === want.length,
+        `the companion picker drew ${shown.length} cards for ${want.length} choices`);
+      const wrong = want.filter((w, i) => shown[i] !== w);
+      assert(!wrong.length,
+        `the companion picker names ${wrong.join(', ')} differently from COMPANION_KINDS`);
+      return `${cards.length} picker cards, all named; the companion row reads ${shown.join(', ')}`;
     } finally { close(); }
   });
 }

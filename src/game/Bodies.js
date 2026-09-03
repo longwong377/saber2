@@ -68,6 +68,27 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   // lathe profile: [radius, y], rounded at both ends
   const profile = [];
   const capN = cap ? (opts.capN ?? 4) : 0;
+  /**
+   * ── AND THE TWO ENDS MAY BE CAPPED DIFFERENTLY, WHICH IS `capN0` ────────
+   *
+   * `capN` was one number for both poles, and for every lathe in this file
+   * that is a limb, a muzzle or a horn that is right — both ends are surface.
+   * It is wrong for exactly one caller, and that caller is the most numerous
+   * geometry in the game: `clawGeo` merges one limbGeo PER RING and caps only
+   * the last of them, so on a claw, a fang, a quill or a coat clump with more
+   * than one ring the last segment's ROOT cap is a flat disc lying in the
+   * junction plane inside a tube of its own radius. It is interior surface by
+   * construction — the same defect `tubeGeo`'s own header names in this exact
+   * function ("a six-segment tail carries five pairs of end caps buried
+   * inside itself — 60% of its triangles are surface nobody can ever see").
+   *
+   * It costs `4·seg` triangles a clump, which on the wookiee's 142-clump coat
+   * at seg 3 is 1 704 triangles — 12% of a body that was over its cap.
+   *
+   * Defaulting to `capN` so every existing call is byte-identical, and
+   * `clawGeo` is the one place that passes it.
+   */
+  const capN0 = cap ? (opts.capN0 ?? capN) : 0;
   const capY0 = opts.capY0 ?? 0.62;
   const capY1 = opts.capY1 ?? 0.62;
   const rings = Math.max(2, Math.round(opts.rings ?? 3));
@@ -104,8 +125,8 @@ export function limbGeo(len, r0, r1, seg = 10, cap = true, opts = {}) {
   // entirely — so the cap was left open with a hole of radius 0.38*r0 — and
   // then jumped from the last ring back out to the equator, revolving an
   // inverted cone through the cap it had just built.
-  for (let i = 0; i < capN; i++) {
-    const a = (i / capN) * Math.PI * 0.5;
+  for (let i = 0; i < capN0; i++) {
+    const a = (i / capN0) * Math.PI * 0.5;
     profile.push(new THREE.Vector2(Math.sin(a) * r0 * 0.999, -Math.cos(a) * r0 * capY0));
   }
   for (let i = 0; i < rings; i++) {
@@ -307,6 +328,49 @@ function calfSection(o = {}) {
   };
 }
 
+/**
+ * The plan section of a MUZZLE — wide, flat on top, full underneath.
+ *
+ * The four heads that have a mouth all built one out of `plateGeo`, and a
+ * rounded cuboid is the single worst shape available for the job: it has a
+ * flat front WALL, so the nose is a plane the animal stops at, and four hard
+ * vertical corners, so from three-quarters on it reads as the end of a crate.
+ * The complaint's first line — "the head reads as a detached rectangular box"
+ * — is that call and nothing else.
+ *
+ * A muzzle is not round either, which is why this is not just `ovalSection`.
+ * Four facts, each one a term:
+ *
+ *   IT IS WIDER THAN IT IS DEEP.  `flat` is the depth as a fraction of the
+ *   width — 0.72 on a dog, lower on anything that eats meat lying down.
+ *   IT HAS CHEEKS.  `n` above 2 fills the corners out into flat vertical
+ *   sides, which is what carries the light down the side of a jaw. An ellipse
+ *   has no side; it has a highlight that slides.
+ *   THE TOP IS A BRIDGE, NOT A DOME.  `crown` flattens the nasal bones.
+ *   THE BOTTOM IS FULLER THAN THE TOP.  `chin` — the lower jaw and the lip
+ *   carry more mass than the maxilla, and a muzzle that is symmetric top to
+ *   bottom reads as a tube.
+ *
+ * θ is measured from local +Z as everywhere else in this file. `muzzle()`
+ * rotates the lathe by +π/2 about X, which takes local +Z to world −Y — so
+ * cos θ > 0 is DOWNWARD on the finished animal and that is the half `chin`
+ * fattens. Getting this the wrong way round builds a head with a swollen brow
+ * and no jaw, which is a specific and recognisable kind of wrong.
+ */
+function muzzleSection(o = {}) {
+  const flat = o.flat ?? 0.72, n = o.n ?? 2.8;
+  const crown = o.crown ?? 0.07, chin = o.chin ?? 0.12;
+  return (th) => {
+    const si = Math.abs(Math.sin(th)), co = Math.abs(Math.cos(th));
+    let r = Math.pow(Math.pow(si, n) + Math.pow(co, n), -1 / n);
+    r *= flat + (1 - flat) * si * si;
+    const c = Math.cos(th);
+    if (chin) r *= 1 + chin * Math.max(0, c) ** 2;
+    if (crown) r *= 1 - crown * Math.max(0, -c) ** 2;
+    return r;
+  };
+}
+
 /** An oval limb — forearms, and any sleeve that has to match one. */
 function ovalSection(depth = 0.86, n = 2.4) {
   return (th) => {
@@ -455,6 +519,77 @@ function arcGeo(r0, r1, h, arc, thick = 0.01, seg = 6) {
 }
 
 /**
+ * A SHEET LAID OVER A SURFACE, WITH AN EDGE ON IT.
+ *
+ * `rows` is a grid of points — `rows[i][j]`, i along the thing it is laid on
+ * and j across it — and `norms` is the outward normal at each of them. The
+ * result is a closed slab `thick` through: an outer sheet standing half the
+ * thickness proud of every point, an inner one the same distance under it, and
+ * a rim of quads round the boundary joining the two.
+ *
+ * ── WHY IT IS NOT A ROW OF `plateGeo` CARDS, WHICH IS THE CHEAP ANSWER ────
+ *
+ * The plumage treatment tiles a back with `ks.aim`ed vanes and that is right
+ * for feathers, which ARE separate objects with gaps between them. A saddle
+ * blanket is one piece of cloth: tiled as cards it shows a seam every 10 cm on
+ * a curved back — cards that overlap on the shoulder and open on the loin,
+ * because a flat quad is a chord of the arc it is sitting on. The whole read
+ * of a pad under a saddle is that it is CONTINUOUS and its edge is a single
+ * line, and neither survives being made of tiles.
+ *
+ * ── AND WHY IT IS CLOSED RATHER THAN A SINGLE SURFACE ────────────────────
+ *
+ * Everything in this game is `FrontSide` (three's default, and nothing here
+ * changes it), so a one-sided sheet is invisible from underneath — which is
+ * exactly where a rider's blanket is looked at from when the animal is between
+ * the player and the sun, and where the hem hanging past the flank is looked
+ * at from always. Two sheets and a rim cost 2.6× the triangles of one and
+ * about 200 in total at the resolutions used here, which is a fifth of what
+ * one shag clump costs.
+ *
+ * The normals are the caller's, not derived: whoever is laying the sheet down
+ * already knows which way is out (`hullN` on a creature), and a cross product
+ * of the grid's own tangents has a sign that flips with the winding the caller
+ * happened to build the grid in.
+ */
+function drapeGeo(rows, norms, thick = 0.012) {
+  const nr = rows.length, nc = rows[0].length, h = thick * 0.5;
+  const pos = [], nrm = [], uv = [], idx = [];
+  for (const s of [1, -1]) {
+    for (let i = 0; i < nr; i++) for (let j = 0; j < nc; j++) {
+      const p = rows[i][j], n = norms[i][j];
+      pos.push(p[0] + n[0] * h * s, p[1] + n[1] * h * s, p[2] + n[2] * h * s);
+      nrm.push(n[0] * s, n[1] * s, n[2] * s);
+      uv.push(j / (nc - 1), i / (nr - 1));
+    }
+  }
+  const O = (i, j) => i * nc + j, I = (i, j) => nr * nc + i * nc + j;
+  for (let i = 0; i < nr - 1; i++) for (let j = 0; j < nc - 1; j++) {
+    idx.push(O(i, j), O(i, j + 1), O(i + 1, j), O(i, j + 1), O(i + 1, j + 1), O(i + 1, j));
+    idx.push(I(i, j), I(i + 1, j), I(i, j + 1), I(i, j + 1), I(i + 1, j), I(i + 1, j + 1));
+  }
+  /* THE HEM. The boundary walked once, anticlockwise in grid space, so every
+   * rim quad is wound the same way round and the edge is a closed band rather
+   * than four strips that disagree at the corners. */
+  const seam = [];
+  for (let j = 0; j < nc; j++) seam.push([0, j]);
+  for (let i = 1; i < nr; i++) seam.push([i, nc - 1]);
+  for (let j = nc - 2; j >= 0; j--) seam.push([nr - 1, j]);
+  for (let i = nr - 2; i >= 1; i--) seam.push([i, 0]);
+  for (let k = 0; k < seam.length; k++) {
+    const [ai, aj] = seam[k], [bi, bj] = seam[(k + 1) % seam.length];
+    idx.push(O(ai, aj), I(ai, aj), O(bi, bj), O(bi, bj), I(ai, aj), I(bi, bj));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  g.computeBoundingSphere();
+  return white(g);
+}
+
+/**
  * A claw, tusk or mandible: a tapered tube swept along an arc so it curves
  * instead of pointing. `bend` is the total turn in radians over its length.
  */
@@ -465,8 +600,13 @@ function clawGeo(len, r0, r1, bend, seg = 6, rings = 5) {
   const cur = new THREE.Matrix4();
   for (let i = 0; i < rings; i++) {
     const t0 = i / rings, t1 = (i + 1) / rings;
+    /* THE ROOT CAP ONLY ON THE FIRST SEGMENT. Every segment but the last is
+     * built uncapped, so on a multi-ring claw the last one's root cap is a
+     * flat disc closing a junction that is already inside the solid — see
+     * `capN0` over limbGeo. `i === 0` rather than a flag, because a one-ring
+     * claw IS its own first segment and keeps the base it always had. */
     const g = limbGeo(step * 1.06, lerp(r0, r1, t0), lerp(r0, r1, t1), seg, i === rings - 1,
-      { rings: 2, bulge: 0, capN: 2, capY0: 0, capY1: 0.9 });
+      { rings: 2, bulge: 0, capN: 2, capN0: i === 0 ? 2 : 0, capY0: 0, capY1: 0.9 });
     parts.push({ geo: g, matrix: cur.clone() });
     cur.multiply(m.makeTranslation(0, step, 0)).multiply(m.makeRotationX(bend / rings));
   }
@@ -1769,6 +1909,38 @@ function emissiveMat(color, intensity = 3) {
   return new THREE.MeshStandardMaterial({
     color: 0x111111, emissive: color, emissiveIntensity: intensity, roughness: 0.4, metalness: 0.2,
   });
+}
+/**
+ * AN EYE, AND THE BODY SAYS SO.
+ *
+ * The same material, with one word of userData on it, and the word is the
+ * whole point: `tools/checks/characters.mjs` casts a ray along every eye
+ * triangle's own normal and fails a body whose eye is inside its own skull,
+ * and the only way to write that check without a typed list of animals is for
+ * the geometry to declare which of its meshes is an eye. It went unwritten
+ * for as long as it did because there was nothing to ask.
+ *
+ * IT IS DELIBERATELY NOT "the emissive parts". The medical droid's lit
+ * material also paints a readout on each forearm and one on the chest, and a
+ * readout tucked behind a housing is a decoration nobody misses, where an eye
+ * that is not there is the difference between an animal and a lump. Two
+ * different rules, so two different materials: a body that wants both
+ * declares both. On the two droids it costs nothing at all — the Kit merges
+ * per material PER BONE, and on both heads the eye was already the only lit
+ * thing on that bone, so the astromech is 24 meshes and the 2-1B 40 either
+ * way. What it buys is that a check no longer has to guess which lit plate
+ * was the face.
+ *
+ * An eye that is MEANT to be hidden — a blindfolded body, a sensor under a
+ * cowl — says `hidden` here and the check exempts it by that property. None
+ * does today, and the check reports the count so a silent exemption cannot
+ * accumulate.
+ */
+function eyeMat(color, intensity = 3, hidden = false) {
+  const m = emissiveMat(color, intensity);
+  m.userData.role = 'eye';
+  if (hidden) m.userData.hidden = true;
+  return m;
 }
 
 /* ══════════════════════════════════════════════════════════════════════ */
@@ -5974,16 +6146,45 @@ export function buildB1(opts = {}) {
   const K = { ...(B1_KITS[opts.kit] || B1_KITS.line), ...opts };
   const S = opts.scale ?? 1.02;
   const rig = new Rig(humanoidSkeleton(S, { armLen: 1.06 }), { scale: S });
-  const shell = armorMat(opts.color ?? 0xb9a077, 0.25, 0.62, 5.0);
+  /**
+   * ── THE FOUR DROID COLOUR SLOTS, AND THIS BODY WAS THE ONE IGNORING THEM ──
+   *
+   * `COMPANION_LOOK.droid` is `['shell', 'trim', 'photoreceptor', 'panels']`
+   * and three companion kinds wear it — the astromech, the 2-1B and the
+   * reprogrammed B1. `buildAstromech` and `buildMedic` both read all four by
+   * those names. This builder read `opts.color`, `opts.markColor` and
+   * `opts.eyeColor`, which are three DIFFERENT words, so `companionOptsFrom`
+   * handed it four keys it had never heard of and dropped every one of them on
+   * the floor: `Menu._companionDressHtml` drew the swatch row, `Kennel.saneLook`
+   * persisted the pick, and the droid the player owns came out in factory tan
+   * with a red mark and a red eye whatever four colours he chose. Four dead
+   * controls out of eleven, on the kind whose whole card is that it is YOURS.
+   *
+   * The four names are the droid vocabulary's and the three old ones are kept
+   * as the fallback rather than deleted, because `bodyOptsFor`/`B1_KITS` and
+   * every caller that ever hand-painted a B1 spell them the old way and this is
+   * not the lane that renames them. So: the slot name wins, the old spelling is
+   * the default, and the plan's own colour is the default's default.
+   *
+   * `panels` IS THE JOINT STEEL, and that is the only one of the four whose
+   * mapping is a judgement rather than a name match. On the astromech `panels`
+   * is the dark metal between the shell plates; the one dark structural
+   * material on a B1 is the machined steel at every articulation — shoulders,
+   * elbows, knees, hands, feet, the panel lines and the vents. It is the same
+   * ROLE (the dark metal the painted plates are bolted to) and it is the
+   * largest painted area on the body after the shell, so the control moves
+   * something a player can see rather than a rivet.
+   */
+  const shell = armorMat(opts.shell ?? opts.color ?? 0xb9a077, 0.25, 0.62, 5.0);
   // Was a bare MeshStandardMaterial on all four limbs, which renders as grey
   // plastic tubing. A B1's joints are bare machined steel and now look it —
   // metalness 0.62 rather than the helper's 0.95, because at 0.95 and this
   // value there is nothing but the environment probe to reflect and the parts
   // come out as flat black rectangles.
-  const joint = metalMat(0x4b4438, 0.46, 0.62, 5.0);
-  const mark = armorMat(opts.markColor ?? 0x9e3524, 0.08, 0.58, 5.0);
+  const joint = metalMat(opts.panels ?? 0x4b4438, 0.46, 0.62, 5.0);
+  const mark = armorMat(opts.trim ?? opts.markColor ?? 0x9e3524, 0.08, 0.58, 5.0);
   const scorch = scorchMat();
-  const eye = emissiveMat(opts.eyeColor ?? 0xff3020, 4);
+  const eye = eyeMat(opts.photoreceptor ?? opts.eyeColor ?? 0xff3020, 4);
 
   const riv = rivet(0.0055 * S);
   const bolt = boltGeo(0.008 * S, 0.008 * S);
@@ -6311,7 +6512,7 @@ export function buildB2(opts = {}) {
   const dark = metalMat(0x2f2c27, 0.5);
   const hot = emissiveMat(0xff7a2a, 1.1);
   const scorch = scorchMat();
-  const eye = emissiveMat(0xff5522, 3);
+  const eye = eyeMat(0xff5522, 3);
 
   const riv = rivet(0.009 * S);
   const bolt = boltGeo(0.011 * S, 0.010 * S);
@@ -7558,7 +7759,7 @@ export function buildAcolyte(opts = {}) {
   const skin = skinMat(opts.skinColor ?? 0xb08a72);
   const maskMat = metalMat(0x767b87, 0.36, 0.45, 3.6);
   const trim = metalMat(0xb08f4c, 0.34, 0.80, 3.6);
-  const eye = emissiveMat(0xff2a1a, 5.0);
+  const eye = eyeMat(0xff2a1a, 5.0);
   // the cowl is an open shell — it has to be lit from the inside too
   const hoodMat = clothMat(0x121317, 0.95);
   hoodMat.side = THREE.DoubleSide;
@@ -7843,7 +8044,7 @@ export function buildDroideka(opts = {}) {
   const shell = armorMat(opts.color ?? 0x7a4a2e, 0.42, 0.56, 4.0);
   // was bare — every leg, every gun and the whole underside was flat plastic
   const dark = metalMat(0x2a2320, 0.5, 0.7, 4.0);
-  const eye = emissiveMat(0x44ff88, 3);
+  const eye = eyeMat(0x44ff88, 3);
   const hot = emissiveMat(0x66ff99, 1.4);
   const scorch = scorchMat();
 
@@ -8093,7 +8294,7 @@ export function buildWalker(opts = {}) {
   const dark = metalMat(0x2b2a27, 0.5, 0.72, 3.0);
   const mark = armorMat(0xa8621e, 0.1, 0.6, 3.0);
   const glass = glassMat(0x3a0c08, 0.16);
-  const eye = emissiveMat(0xff2a18, 2.6);
+  const eye = eyeMat(0xff2a18, 2.6);
   const hot = emissiveMat(0xff6622, 1.2);
   const scorch = scorchMat();
 
@@ -8390,6 +8591,50 @@ function creatureSkeleton(S, P) {
       i++;
     }
   }
+  /**
+   * ── WINGS, AND THEY ARE NOT IN `limbs[]` — WHICH IS THE WHOLE DESIGN ─────
+   *
+   * A wing is a limb, `Rig.BONE_ROLES` has carried the role since the
+   * Geonosian, and the obvious thing to do is add `{ role: 'wing' }` to the
+   * plan's `limbs[]` and let the loop above expand it left and right. That is
+   * wrong for two measured reasons, and both of them bite silently.
+   *
+   *   THE INDEX IS AN INDEX INTO THE STANCE, NOT INTO THE RIG.
+   *   `Enemy._poseWalker` walks `for (i = 0; i < ST.limbs.length; i++)` and
+   *   solves `femur{i}` → `tibia{i}` against `ST.limbs[i]` — so the stance
+   *   array and the limb loop above have to agree POSITIONALLY. `stanceOf`
+   *   would have to emit a wing entry (and IK a wing at the floor), or skip it
+   *   (and slide every later leg onto the wrong plan row). A hawk whose wings
+   *   were `limbs[0]` would have its TALONS driven by its wings' pole vectors.
+   *   Nothing throws; the animal just walks on its wings.
+   *
+   *   `Flight.beatWings` READS THE NAME. It takes the side off
+   *   `b.name.endsWith('L')`, so a wing spelt `femur2` is a wing whose side is
+   *   always −1 — both wings rotate the same way, one up and one down, every
+   *   beat. Spelling them `wingL`/`wingR` is not decoration: it is the same
+   *   vocabulary `humanoidSkeleton(…, { wings: true })` already publishes, so
+   *   the flyer built here and the flyer built there beat with one function.
+   *
+   * TWO BONES A SIDE for `roleShare`'s sake, which is `humanoidSkeleton`'s own
+   * argument and is not restated: a cut at the root takes the whole wing and a
+   * cut past the elbow takes the fan.
+   *
+   * Off `body` and not `hips`: a wing root is a shoulder, and on a creature
+   * whose trunk pitches, a wing that stayed level with the pelvis would tear
+   * out of the back the moment the animal reared.
+   */
+  if (P.wings) {
+    const W = P.wings;
+    for (const side of [1, -1]) {
+      const L = side > 0 ? 'L' : 'R';
+      out.push({ name: `wing${L}`, parent: 'body',
+        offset: [side * W.x * s, W.y * s, W.z * s], length: W.arm * s,
+        rest: [side * W.rest[0], W.rest[1], W.rest[2]], role: 'wing' });
+      out.push({ name: `wingTip${L}`, parent: `wing${L}`,
+        offset: [0, W.arm * s, 0], length: W.fan * s,
+        rest: [side * W.fanRest[0], W.fanRest[1], W.fanRest[2]], role: 'wing' });
+    }
+  }
   return out;
 }
 
@@ -8416,7 +8661,45 @@ function creatureSkeleton(S, P) {
  *   step/lift stride length and foot clearance, ×scale.
  *   rear     metres of hip travel per unit of an attack's `rise`, ×scale.
  *   moves    the verbs its anatomy affords. See the header.
+ *   blanket  `[colour, at0, at1, phi, lift]` — the saddle pad, on the three
+ *            rows that are ridden and absent everywhere else. Absence is the
+ *            statement: a body nobody sits on has no pad, and `COMPANION_LOOK`
+ *            offers the `blanket` slot to the mount row alone. `opts.blanket`
+ *            overrides the colour; the other four are the plan's own, because
+ *            the three mounts are three shapes and a shared span put the
+ *            varactyl's pad on its neck. See the seat in `buildQuadruped`.
  */
+/**
+ * A COMPANION'S OWN COLOURS, AS BUILDER OPTIONS — the wire that finally passes
+ * something to `buildQuadruped`'s `opts.hide` / `plate` / `belly` / `eye`.
+ *
+ * Those four have been accepted since the day the creature builder was
+ * written — `hideMat(opts.hide ?? P.hide, 0.92)` and three siblings — and
+ * NOTHING in the tree has ever handed them anything but the plan's own
+ * defaults. Every creature in the game wears its factory colours because
+ * there was no door.
+ *
+ * IT CANNOT BE `kitOptsFrom`, which is the door a trooper's look goes
+ * through: `KIT_FIELDS` and `PAINT_FIELDS` have exactly two keys, `flesh` and
+ * `steel`, and a creature is neither — a saved creature colour would be
+ * dropped before it ever reached the builder.
+ *
+ * IDS IN, COLOURS OUT. The record stores a palette id so a re-tuned palette
+ * reaches the animals already wearing it; `paintById` answers null for an id
+ * this build does not have, and a null slot is simply absent, which the
+ * builder reads as the plan's own colour. So an unknown id is the animal's
+ * factory hide rather than a black one.
+ */
+export function companionOptsFrom(look) {
+  const out = {};
+  if (!look) return out;
+  for (const f in look) {
+    const p = paintById(look[f]);
+    if (p) out[f] = p.color;
+  }
+  return out;
+}
+
 export const CREATURE_PLANS = {
   /**
    * THE REEK — `assets/reference/units/creatures/Reek.jpeg`.
@@ -8429,6 +8712,184 @@ export const CREATURE_PLANS = {
    * is why the hip is 0.88 where the old shared value was 1.6: at 2.4 scale
    * that is 2.11 m at the hip instead of 3.84, and 3.84 m is a giraffe.
    */
+  /**
+   * THE MASSIFF — the first companion, and the cheapest true body in the set.
+   *
+   * A lean reptilian war-dog off Tatooine and Geonosis: about a metre at the
+   * shoulder and twice that long, all jaw and spine, with a ridge of spines
+   * from the crown to the tail root and a low slung gait that keeps the belly
+   * a hand off the sand. The Republic used them as sentries, which is exactly
+   * the job a companion does, and it is the one animal in the reference
+   * material a person would plausibly keep.
+   *
+   * IT IS A PLAN ROW AND NOTHING ELSE, which is the point. The row buys the
+   * skeleton, the superellipse trunk, the dorsal outline, the head, the feet,
+   * the belly weak spot, the stance the gait reads, three LOD rungs, a cohort,
+   * the topple and a voice — so almost nothing about the first companion is
+   * new code, and what IS new is only the part that makes it yours.
+   *
+   * Small numbers throughout against the reek's: hip 0.44 where a reek is
+   * 0.74, trunk 0.86 long where a reek is 1.24, and a `girth` under half. At
+   * scale 0.95 that stands it 0.42 m at the hip and about 1.6 m nose to tail,
+   * which is the reference photograph and is deliberately BELOW the player's
+   * eye line — a companion you have to look down at reads as a companion.
+   */
+  /**
+   * THE VARACTYL — the only body in the game that takes a grade the player's
+   * own character controller refuses, and the row is built round that one fact.
+   *
+   * It is the third mount and it exists because the other two are about SPEED.
+   * A tauntaun makes the map faster; this makes the map a different SHAPE. So
+   * every number below is a climbing number rather than a running one: six
+   * points of contact instead of two, a long low body that keeps its weight
+   * against the rock, and a tail longer than the animal to hang off the far
+   * side of a ridge.
+   *
+   * SIX LEGS, AND NOT ONE LINE OF GAIT CODE. `creatureSkeleton` spans 2, 4 and
+   * 6 — the acklay is the proof, three `limbs[]` entries expanded left+right —
+   * and `_poseWalker` COUNTS the legs off the rig rather than restating the
+   * number, so a hexapod's phase offsets come out of the plan's own `step` and
+   * nothing is written. The acklay is the row this was measured against and
+   * the differences are all deliberate:
+   *
+   *   ITS LEGS SPLAY, THE ACKLAY'S TOWER. An acklay's `pole` is [1.40, 3.10]
+   *   — the knee is thrown three metres UP, which is what makes it a tripod
+   *   you walk under. This one's is [1.30, 0.55], so the knee goes OUT and
+   *   barely up: the body stays low and wide over its feet, which is what a
+   *   climbing lizard's does and what stops it reading as a small acklay.
+   *   `femurRest` follows — 0.86 out against 0.62, and y −0.10 against +0.72.
+   *
+   *   ITS FOOT IS A CLAW AND NOT A SPIKE. A spike is a point that plants; a
+   *   claw is what hooks rock, and it is the one piece of geometry on the
+   *   animal that says what it is for.
+   *
+   *   IT HAS A TAIL, AND THE ACKLAY HAS NONE. 2.6 of reach on a 1.30 trunk —
+   *   the longest tail-to-body ratio in the table — because a counterweight
+   *   swung out behind is what a climbing biped-turned-hexapod actually uses,
+   *   and because at forty metres a horizontal line half again the length of
+   *   the body is a silhouette nothing else in the game has.
+   *
+   * THE HEAD IS 'horned-ape' FOR THE FRILL, and this is a re-read rather than
+   * a compromise. The branch builds temple horns swept out and forward plus a
+   * jaw ruff; on a long low reptile head those two pieces are exactly a
+   * varactyl's swept crest and its cheek plumes. No fifth branch was invented,
+   * and none is needed — but if one is ever written, this row should move to
+   * it, which is written down here rather than left for somebody to guess.
+   */
+  varac: {
+    /* GREEN, and it is the only green animal in the table. Every other hide
+     * here is a brown or a grey — 0x6f6455, 0x6d5a4a, 0x8b6f52, 0x7a6a58 — so
+     * the one colour that reads instantly against Geonosian orange rock is the
+     * one nothing has used. The belly is warm and pale for the reason every
+     * belly in this file is: it is the surface you see from below, which on a
+     * mount is the surface you never see, and on a climbing animal on a cliff
+     * above you is the only surface you DO. */
+    hide: 0x5f7f46, plate: 0x86a057, belly: 0xd8cf9a, eye: 0xe8a03a,
+    /* LOW AND LONG: hip 0.92 on a 1.30 trunk, against the acklay's 1.62 on
+     * 1.06. The acklay is taller than it is long and this is the inverse,
+     * which is the first read at any distance. */
+    hip: 0.92, trunk: [0.12, -0.16, 1.30], pitch: -0.04, girth: 0.36,
+    /* Shoulder low and broad, haunch taller: a climber pulls with the front
+     * and pushes with the back, and the swells say which end does what. */
+    swells: [[0.62, 0.20, 0.30], [0.24, 0.30, 0.30]],
+    section: { n0: 2.6, n1: 3.1, back: 0.05, keel: 0.05, waist: 0.06 },
+    /* A LONG NECK, three segments and the longest curl in the file: the head
+     * has to be able to reach past the rock the front feet are on, and a mount
+     * whose head is up where the rider can see it is a mount you steer by. */
+    headAt: [0.10, 1.02], neck: [3, 0.26, 0.17, -0.22, -0.14], head: 'horned-ape',
+    /* SCUTES AND NOT A RIDGE: a plated back rather than a spine of spikes,
+     * because a rider sits on this one and a row of spikes down the seat is a
+     * silhouette that contradicts the saddle. */
+    back: 'scutes', tail: [4, 2.60, 0.12, 0.10, -0.16],
+    /* THE BLANKET, and this row is the one that needed `lift` to be a plan
+     * number. The scutes above are seated by `hull` sunk 0.038·S and stand
+     * 0.095·S along the normal, so about 0.057·S of bone is proud of the hide
+     * down the middle of exactly the stretch a saddle pad covers. At the
+     * tauntaun's 0.030 every boss came through the cloth; 0.070 clears the
+     * tallest of them with a few millimetres to spare, which is a pad tented
+     * over a ridged back — which is what one on this animal would be. Indigo
+     * against the only green hide in the table. */
+    blanket: [0x3e5f86, 0.32, 0.66, 1.90, 0.070],
+    limbs: [
+      { role: 'leg', x: 0.34, y: 0.06, z: 0.62, plant: 0.68, femur: 0.44, tibia: 0.50, tarsus: 0.22,
+        girth: 0.80, pole: [1.30, 0.55, 0.80], foot: 'claw',
+        femurRest: [0.86, -0.10, 0.34], tibiaRest: [0.30, -0.92, -0.24] },
+      { role: 'leg', x: 0.36, y: 0.04, z: 0.02, plant: 0.72, femur: 0.46, tibia: 0.52, tarsus: 0.22,
+        girth: 0.84, pole: [1.34, 0.55, 0], foot: 'claw',
+        femurRest: [0.90, -0.08, 0], tibiaRest: [0.32, -0.90, 0] },
+      { role: 'leg', x: 0.34, y: 0.02, z: -0.60, plant: 0.68, femur: 0.44, tibia: 0.50, tarsus: 0.22,
+        girth: 0.80, pole: [1.30, 0.55, -0.80], foot: 'claw',
+        femurRest: [0.86, -0.10, -0.34], tibiaRest: [0.30, -0.92, 0.24] },
+    ],
+    /* A SHORT QUICK STRIDE, which is what six legs are for: 0.66 against the
+     * acklay's 1.40 on a body two thirds the length. It does not lope, it
+     * scurries, and on a slope that is the difference between keeping four
+     * feet on the rock and keeping one. */
+    step: 0.66, lift: 0.20, rear: 0.14,
+    /* ITS ONLY ATTACK HURTS NOTHING. The shipped `sweep` row at zero damage
+     * through the archetype — a tail that knocks a body flat and takes not one
+     * point off it, which is the honest reading of "useless in battle" for an
+     * animal that is two metres of muscle: it can move you, it cannot kill
+     * you. */
+    moves: ['sweep'],
+  },
+
+  massiff: {
+    hide: 0x6f6455, plate: 0x8b7f68, belly: 0x9a8f79, eye: 0xd8a832,
+    hip: 0.44, trunk: [0.10, -0.10, 0.86], pitch: -0.06, girth: 0.28,
+    /* Shoulder and haunch, both slight: this animal is a spine with a head on
+     * it and the silhouette should read as length rather than as bulk. */
+    swells: [[0.52, 0.30, 0.20], [0.20, 0.18, 0.24]],
+    section: { n0: 2.4, n1: 2.9, back: 0.04, keel: 0.06, waist: 0.05 },
+    headAt: [0.16, 0.74], neck: [2, 0.14, 0.19, -0.30, -0.06], head: 'fanged',
+    /* The ridge is the animal's whole outline from the side, so it is the one
+     * feature that is not scaled down with the rest of it. */
+    /**
+     * SCUTES AND NOT A RIDGE, WHICH IS WHAT ITS OWN DESIGN SAYS — COMPANIONS.md
+     * writes this animal as "`back: 'scutes'`, `foot: 'paw'`, plate swells at
+     * the shoulder", and the row had drifted to the tuk'ata's spined ridge and
+     * clawed foot.
+     *
+     * IT IS ALSO WHAT SEPARATES THEM. `_creature.mjs` measures the worst
+     * silhouette overlap between any two bodies and calls a pair above 0.5
+     * "two animals that share a body plan"; the massiff and the tuk'ata
+     * measured 0.507, because they were wearing the same three choices —
+     * `fanged` + `ridge` + `claw`. Fixing the row that drifted fixes both
+     * problems with one edit, which is why it is here and not on the other
+     * animal: the tuk'ata's spines are its own design's word for it and were
+     * never the thing that was wrong.
+     *
+     * A PLATED BACK IS ALSO THE RIGHT READ FOR THE JOB. This is the BLOCKER —
+     * it puts itself between you and the nearest hostile and takes hits inside
+     * a cone — and armour plate says that from forty metres in a way a row of
+     * spikes does not.
+     */
+    back: 'scutes', tail: [3, 0.40, 0.09, 0.12, -0.10],
+    limbs: [
+      { role: 'leg', x: 0.24, y: 0.04, z: 0.46, plant: 0.34, femur: 0.26, tibia: 0.28, tarsus: 0.10,
+        girth: 0.92, pole: [0.20, 0.34, 0.90], foot: 'paw',
+        femurRest: [0.18, -0.88, 0.30], tibiaRest: [0.04, -0.97, -0.20] },
+      { role: 'leg', x: 0.26, y: 0.02, z: -0.38, plant: 0.36, femur: 0.26, tibia: 0.30, tarsus: 0.10,
+        girth: 0.86, pole: [0.20, 0.34, -0.90], foot: 'paw',
+        femurRest: [0.18, -0.88, -0.30], tibiaRest: [0.04, -0.97, 0.20] },
+    ],
+    step: 0.52, lift: 0.18, rear: 0.22,
+    /* Two verbs and no more. A massiff is a set of jaws that closes the last
+     * two metres fast; it does not gore, toss, slam or pounce, and giving a
+     * companion the reek's move list would make it a reek that follows you. */
+    /* AND `charge` AT PHASE 3, which is the escalation this row did not have.
+     * `dodgeable.mjs` asks two things of a move set — at least two verbs in
+     * phase 1, which is two thirds of the health bar, and at least one that
+     * unlocks later so that hurting the animal CHANGES something — and
+     * [lunge, rake] answered the first and failed the second: a massiff at 10%
+     * fought exactly like a massiff at 100%. A charge is the right third verb
+     * for this body and not a filler: the whole of what a massiff does is
+     * occupy the thing it is on, and an animal that has been hurt badly enough
+     * stops holding station and commits. It is the same verb the nexu and the
+     * reek escalate into, at the same gate. */
+    moves: ['lunge', 'rake', 'charge'],
+  },
+
   charger: {
     hide: 0x6a5f4e, plate: 0x9a8b6c, belly: 0x8d8168, eye: 0xffb03a,
     hip: 0.74, trunk: [0.16, -0.20, 1.24], pitch: -0.13, girth: 0.44,
@@ -8610,6 +9071,1137 @@ export const CREATURE_PLANS = {
      * field whose impulse points at the animal instead of away from it. */
     moves: ['stab', 'snatch', 'sweep'],
   },
+
+  /**
+   * THE TOOKA KIT — the animal that cannot do anything, and the row is the
+   * argument that it does not need to.
+   *
+   * Every other plan in this table is a delivery system for a verb: the reek
+   * is a wall built to carry a horn, the acklay is a tripod built to reach
+   * past your blade, the massiff is a spine built to close two metres. This
+   * one is built to be PICKED UP. Its `moves` is empty on purpose (below),
+   * so the whole row is silhouette and nothing else, and the silhouette has
+   * exactly one job: to be the smallest, roundest, softest thing on the sand,
+   * so that a player looking at it decides on their own that it will not last
+   * the next thirty seconds. See COMPANIONS.md, "The twelve kinds" — it is
+   * the control case for the protection loop.
+   *
+   * SMALLEST IN THE GAME, and the archetype's 0.34 is what makes the numbers
+   * here read oddly next to the massiff's. At 0.34 the hip below stands
+   * 0.102 m — a kitten a walking man does not see. The massiff was already
+   * argued down to 0.42 m at the hip because "a companion you have to look
+   * down at reads as a companion"; this one is a quarter of that, which is
+   * the difference between a dog at your knee and a thing you would step on.
+   *
+   * ── AND IT WAS NONE OF THAT, RENDERED ─────────────────────────────────
+   *
+   * Everything above is what the row INTENDED and almost none of it arrived.
+   * Four views off `tools/_soft.mjs` (the whole build in four seconds, no
+   * browser) show a squat armoured lump: a gundark's flat face with two
+   * spikes off the temples and NO VISIBLE EYES, a row of hard pale wedges
+   * along the spine and over the haunch, twelve bone claws under four feet, a
+   * bare needle of a tail, and a long body on long legs. The player asked for
+   * "something incredibly cute and adorable that is useless in battle and
+   * needs constant protecting"; what shipped reads closer to a beetle.
+   *
+   * The five things that were wrong were five different decisions and they
+   * are all in this row, each argued where it changed:
+   *
+   *   THE HEAD, which had no branch of its own and wore the wampa's — now
+   *   `kitten`, the seventh branch in `buildCreatureHead`.
+   *   THE COAT, which was `shag` at a wampa's standoff on a body a third the
+   *   girth — now `down`, the fifth dorsal treatment.
+   *   THE FEET, which wore three bone claws each on an animal with `moves: []`
+   *   — now `mitt`, the same paw with the claws sheathed.
+   *   THE TAIL, r0 0.030, the thinnest in the file, on a body 80 mm across.
+   *   THE PROPORTIONS: 0.26 of girth on 0.62 of trunk with 0.46 of leg.
+   */
+  tooka: {
+    /* The only non-predator palette in the table. Every other eye here is a
+     * hunting colour — 0xd8a832, 0xffb03a, 0x66ff9a, 0xffdd44, 0xff6a2a —
+     * and `emissiveMat` at 2.8 makes all of them lamps in the dark. A pale
+     * blue is the one hue in that set of six nobody has used, so the tooka is
+     * separable from the nexu at range on colour alone, and eyeshine on a
+     * kitten is a thing cats actually do rather than a threat display. The
+     * belly is the palest in the file (0xe2dac8 against the massiff's
+     * 0x9a8f79) because the underside is what you see when you are holding
+     * it, which is where this animal spends the fights it survives. */
+    hide: 0xa89c8a, plate: 0xbdb2a0, belly: 0xe2dac8, eye: 0x74c8ff,
+    hip: 0.30, trunk: [0.07, -0.05, 0.52], pitch: 0.02, girth: 0.30,
+    /* ROUND IS THE POINT, and it is the girth-to-trunk ratio that says so:
+     * 0.30/0.52 = 0.58 against the massiff's 0.28/0.86 = 0.33 and the nexu's
+     * 0.33/1.72 = 0.19. The nexu is a line, the massiff is a spine, this is a
+     * ball with legs. It was 0.26/0.62 = 0.42, which is rounder than anything
+     * else in the table and still reads as a small DOG from three-quarters —
+     * a body with a length to it, on legs. Both halves moved: 8 cm of trunk
+     * off and 4 cm of girth on, at the same 0.34 scale, so the animal is not
+     * smaller, it is rounder. That is what makes the head (below) read as too
+     * big for it without the head itself growing.
+     *
+     * `hip` 0.35 → 0.30 AND THE LEGS WITH IT (0.22+0.24 → 0.19+0.21), which
+     * is the same decision on the other axis: short legs are half of what
+     * says "young animal", and a 0.46 leg under a 0.52 body is a terrier.
+     * The extension is held where it was — 0.273 m of drop into 0.40 m of leg
+     * is 68% against the old 70% — because a straight leg reads as a stance
+     * and a bent one reads as a crouch, and that argument did not change. */
+    /* Both swells are LOW and WIDE, which is the inverse of every other row:
+     * the massiff's shoulder is 0.30 tall and 0.20 across, this one is 0.14
+     * tall and 0.34 across. A swell that stands up is a muscle and a muscle
+     * is a thing that hits you; spread flat it is just fat over the ribs. The
+     * haunch is the larger of the two (0.24 against 0.14) for the one honest
+     * anatomical reason on this animal — a kitten is heavier behind than in
+     * front — and not because anything is ever going to push off it. */
+    swells: [[0.58, 0.14, 0.34], [0.24, 0.24, 0.38]],
+    /* n0 2.0 IS A TRUE ELLIPSE, and it is the only row that asks for one. The
+     * header rejects a body of revolution — "it reads as a barrel from any
+     * angle" — and that judgement is about a two-tonne animal that needs a
+     * shoulder and a keel to look like it can work. This is the one body in
+     * the table for which "reads as a barrel" is the correct answer, so the
+     * superellipse is dialled all the way back to round and the three shaping
+     * terms are switched OFF rather than left on their defaults: `back` 0.05
+     * flattens the spine into a saddle, `keel` 0.02 puts a sternum ridge under
+     * it and `waist` pinches the flanks, and all three are what a working
+     * animal's section looks like. Explicit zeros, because `bodySection`'s
+     * own defaults are non-zero and an omitted field here would quietly give
+     * a kitten a keel. */
+    section: { n0: 2.0, n1: 2.2, back: 0, keel: 0, waist: 0 },
+    /**
+     * THE HEAD IS WIDER THAN THE BODY, and it now has a branch that means it.
+     *
+     * `kitten` builds a 0.34 cranium scaled (1.04, 1.00, 0.88) — 0.71 wide
+     * against this trunk's 0.60 (2 × 0.30 of girth) and 0.60 long against its
+     * 0.52. Bigger than the body in both directions, which is the read.
+     *
+     * ── AND THE ROW SPENT A PAGE ARGUING FOR 'horned-ape' AND WAS WRONG ───
+     *
+     * The note this replaces made a careful case for sharing the gundark's
+     * branch: a flat forward face, one pair of eyes, a jaw ruff, and the
+     * temple horns "doing an ear's job because the proportions happen to be
+     * an ear's proportions". Every clause of it is defensible on paper and
+     * the render settles it against all of them:
+     *
+     *   THE EYES WERE INSIDE THE SKULL. `horned-ape` puts them at (±0.13,
+     *   0.08, 0.24) with r 0.038, and its cranium's surface at that x and y
+     *   is z = 0.306 against the eye's front face at 0.278. Not small — ABSENT.
+     *   The one feature a cute animal is read by did not render at all, and
+     *   the row's own paragraph on why the branch fits never mentions eyes
+     *   being visible because nobody looked.
+     *   (This diagnosis was right and it was made about ONE branch. Three of
+     *   the seven had the same fault and two of them still did after this row
+     *   landed — the gundark's among them, so the varactyl that shares it went
+     *   on rendering no eye. `eyeAt` seats every eye on the skull's measured
+     *   surface now and `characters.mjs` fails a body whose eye is inside its
+     *   own head, which is the part of this note that was missing: a fix on
+     *   the branch somebody happened to be looking at.)
+     *   THE HORNS WERE HORNS. Straight tapered tubes swept 0.56 out and
+     *   FORWARD off the temples with a two-node polyline, so each is a flat
+     *   pale blade standing clear of the head with daylight under it. An ear
+     *   is a flap with a pale inside, it is triangular, and it stands UP.
+     *   THE FANGS. The note called them "the one piece that stays wrong" and
+     *   accepted them. On an animal the design forbids from biting, three per
+     *   side is decoration that contradicts the whole row.
+     *
+     * So this is the seventh branch, and the tauntaun's is the precedent: a
+     * companion the player looks at for a whole deployment is worth a branch,
+     * where an enemy seen for four seconds across a wave is not. What it
+     * costs is one more `else if` in a function that already has six, and it
+     * touches no other body. See `buildCreatureHead` for the numbers. */
+    headAt: [0.18, 0.44], neck: [1, 0.09, 0.16, 0.10, 0], head: 'kitten',
+    /* ONE neck segment, and the shortest in the file at 0.09 against the
+     * massiff's two of 0.14. A kit has no neck — the head sits straight on
+     * the shoulders, which is the second half of "the head is too big for
+     * it". `nCurl` is 0 for the same reason the rancor's is: there is not
+     * enough neck for a curve to happen in. `headAt[1]` came back from 0.52
+     * to 0.44 with the trunk: it is a station ALONG the spine in plan units,
+     * so leaving it at 0.52 on a 0.52 trunk would have hung the skull off the
+     * very tip of the lathe with nothing under it. */
+    /* FUR, AND IT IS NOT THE WAMPA'S. `shag` is the fourth dorsal treatment
+     * and was the obvious pick — it is the only soft one — and on a body this
+     * girth it is the thing that made the animal read as armoured: fourteen
+     * clumps at a fixed x of ±(0.30…0.44)·S, standing 0.12·S clear of a hull
+     * whose half-width peaks near 0.22·S, laid along the SPINE. Rendered they
+     * are plates. `down` is the fifth treatment and is the same idea seated on
+     * the hull, raked aft, half the length and twice the count; see it in
+     * `buildQuadruped`. The back itself carries nothing at all, which is what
+     * "a rounded, unarmoured back" means. */
+    back: 'down',
+    /**
+     * THE TAIL IS LONGER THAN THE ANIMAL — 0.82 of reach against 0.52 of
+     * trunk — AND IT IS NO LONGER A WIRE.
+     *
+     * The note this replaces argued the thickness the wrong way: "r0 0.030
+     * against the nexu's 0.085 and the massiff's 0.09 — since a tooka's tail
+     * is a whip of fur and not a rudder, and a thin tail on a round body
+     * exaggerates the body". The word doing the work in that sentence is
+     * "of fur", and 0.030 is the radius of the CORE with no fur on it: at
+     * 0.34 scale that is a 20 mm base tapering to 3 mm, and `tubeGeo` draws
+     * exactly that — a bare needle standing off the croup, which is what the
+     * four views show. It is the thinnest tail in the file on the one animal
+     * whose tail is supposed to be the softest thing about it.
+     *
+     * 0.085 is 28% of this body's own girth, where the nexu's 0.085 is 26% of
+     * its 0.33 and the massiff's 0.09 is 32% of its 0.28 — so in the only
+     * units that matter, the animal's own barrel, this is now the same tail
+     * those two have rather than a third of it. A thick tail on a round body
+     * exaggerates the body just as well as a thin one and it does not read as
+     * a rat.
+     *
+     * `pitch0` 0.42 with a POSITIVE curl is still the only tail in the table
+     * that goes up and keeps going up (the massiff's is 0.12 falling to −0.38,
+     * the nexu's 0.26 falling), and the curl is 0.135 a segment against 0.06:
+     * six segments carry it from 0.42 to 1.23 rad, so it stands off the croup
+     * and recurves forward over the back instead of leaving at a slant and
+     * staying there. A tail held high is the one posture cue a person reads as
+     * "this animal is pleased to see you" without being taught it, and it
+     * costs a sign. */
+    tail: [6, 0.82, 0.085, 0.42, 0.135],
+    limbs: [
+      /* THE TRACK IS NARROWER THAN THE HIPS, and this row is the only one
+       * that does it: `plant` 0.15 inside a hip at x 0.17, where the massiff
+       * plants 0.34 outside a hip at 0.24 and the acklay plants 1.90 outside
+       * 0.54. Every other animal here braces — a wide stance is what you
+       * stand on to take a hit or throw one, and this one is never going to
+       * do either. A cat places its feet nearly on a single line, so the legs
+       * lean IN under the body, which `solveIK` handles as ordinary reach and
+       * which reads as delicate from any angle.
+       *
+       * Legs 0.22 + 0.24 against a 0.35 hip and a 0.027 ankle: 0.323 m of
+       * drop into 0.46 m of leg, so 70% extended — the massiff's own 66% and
+       * deliberately not straighter, because a straight leg reads as a stance
+       * and a bent one reads as a crouch. */
+      { role: 'leg', x: 0.17, y: 0.05, z: 0.29, plant: 0.15, femur: 0.19, tibia: 0.21, tarsus: 0.09,
+        girth: 0.92, pole: [0.14, 0.26, 0.66], foot: 'mitt',
+        femurRest: [0.16, -0.90, 0.28], tibiaRest: [0.04, -0.96, -0.22] },
+      /* Hind heavier than fore — 0.96 against 0.92 — which INVERTS the
+       * massiff's 0.92/0.86. A dog carries its weight on the forehand and a
+       * cat's mass is behind; it is two hundredths and it is the difference
+       * between the two animals' outlines from the side. */
+      { role: 'leg', x: 0.18, y: 0.03, z: -0.22, plant: 0.16, femur: 0.20, tibia: 0.22, tarsus: 0.09,
+        girth: 0.96, pole: [0.16, 0.30, -0.70], foot: 'mitt',
+        femurRest: [0.16, -0.88, -0.32], tibiaRest: [0.04, -0.95, 0.24] },
+    ],
+    /* MITT, WHICH IS PAW WITH THE CLAWS IN — and the paragraph that used to
+     * stand here got the argument exactly right and then did not follow it:
+     * "The nexu is the other cat here and it wears claws, correctly — it is a
+     * thing that rakes. This one has nothing to rake with, so it should not be
+     * wearing the hardware for it." It was wearing the hardware for it. The
+     * `paw` branch hangs a 0.13·S `clawGeo` hook in `tooth` off each of three
+     * toe pads, so this row shipped twelve bone claws on an animal whose
+     * `moves` is `[]` and whose archetype deals 0.
+     *
+     * Everything else about the choice is unchanged and was right: `ANKLE_UP`
+     * rides a claw or a hoof at 0.84-0.90 of the tarsus and a paw at 0.30, so
+     * this is the one foot in the table that sets the body DOWN — and
+     * `stanceOf` gives it `toe: 0.75`, a sole that lies along the ground
+     * instead of dropping onto a point. `mitt` is spelled out in both of those
+     * tables rather than left to fall through their defaults; see them. */
+    step: 0.44, lift: 0.20, rear: 0.10,
+    /* Stride 0.44 against 0.40 of leg — 1.10, where the massiff runs 0.96 of
+     * its own leg. The legs came down and the stride did not, so the cadence
+     * went UP: a small animal keeping up with a walking man takes more steps,
+     * not longer ones, and this is that in one ratio. `lift` is the one
+     * number here that is proportionally the LARGEST in the table: 0.20/0.44
+     * is 0.45 of the stride against the massiff's 0.35 and the reek's 0.35.
+     * A kitten picks its feet up much higher than it needs to. It is one
+     * number, it is free, and it is the only thing in this row that animates. */
+    /* `rear` is the smallest in the file at 0.10 because it is very nearly
+     * dead: `_poseWalker` spends it as `ST.rear * rise` and `rise` only ever
+     * leaves zero inside a BEAST_MOVES pose, of which this animal has none.
+     * It is not zero for the reason given under `moves` — if the brain's
+     * fallback ever does fire, the tooka must not answer it by rearing up
+     * like a war-dog. */
+
+    /* ZERO VERBS, DECLARED HERE AND NOWHERE ELSE.
+     *
+     * This is the one row in the table whose move list is an assertion rather
+     * than an inventory. Everything above it is a body that affords something
+     * — the reek's horn, the acklay's reach, the massiff's jaws — and the
+     * whole of this body affords nothing: the head has no weapon on it that
+     * is not a milk tooth, the feet are soles, the tail is a fur whip, and
+     * there is no mass anywhere to put behind any of them. An empty array is
+     * the accurate reading of the anatomy, which is why it belongs on the
+     * PLAN and not on the archetype — see the header on the two authorities,
+     * and COMPANIONS.md's own line that the combat answer is "enforced rather
+     * than tuned". A tooka with `damage: 0` and a lunge would still be an
+     * animal that throws itself at people; a tooka with no verbs cannot.
+     *
+     * `[]` survives the handoff: `buildQuadruped` returns `P.moves || null`
+     * and an empty array is truthy, and `beastMoveSet` prefers `built.moves`
+     * over `DEFAULT_BEAST_MOVES` on the same test, so the floor that gives
+     * the unlisted creatures a lunge is not reached.
+     *
+     * ── AND THE LINE THIS NOTE SAID WAS IN Enemy.js IS NOT THERE ──────────
+     *
+     * It read: "What DOES need one line is `_beastBrain`'s pick —
+     * `moves[floor(rng() * moves.length)] || 'lunge'` — where an empty list
+     * falls through the `||` and hands this animal the massiff's opener. That
+     * line is the only thing standing between this row and a kitten that mauls
+     * people, and it is stated in Enemy.js beside the pick, not here."
+     *
+     * The hazard is real and the guard was never written. Measured through the
+     * shipped brain over 90 seconds against a motionless target
+     * (tools/checks/beasts.mjs): a tooka entered the `lunge` state 49 times and
+     * resolved a blow on the player 48 times. It falls through the `||` exactly
+     * as feared, on this row and on the tauntaun's.
+     *
+     * WHAT ACTUALLY HOLDS IS `damage: 0` ON THE ARCHETYPE, and it holds
+     * completely: those 48 resolutions moved the target's health by 0.0. So the
+     * belt described on the archetype as bracing the empty move list is in fact
+     * the only thing carrying it, and the two of them are now measured together
+     * rather than assumed — the menagerie check asserts that a creature with an
+     * empty move set deals literally zero damage in every evasion, standing
+     * still included, which goes red the day anybody types a number over that
+     * zero. Enemy.js is where the fallback lives and this row cannot reach it;
+     * what this row can do is stop claiming a guard that does not exist. */
+    moves: [],
+  },
+
+  /**
+   * THE TUK'ATA WHELP — the Sith hound pup, and the cheapest row in the set.
+   *
+   * It is the NEXU'S SILHOUETTE AT A THIRD OF THE SIZE and it is written that
+   * way on purpose: `stalker` already ships the long-low-horizontal cat — the
+   * poles, the rest pair, the claw foot and the forward-carried head — and
+   * re-authoring any of that would be inventing a difference the animal does
+   * not have. What changes here is the two things that are actually different
+   * about a whelp: it is BONIER and it is LEGGIER.
+   *
+   * Bonier is `girth` 0.21 against the nexu's 0.33 and the massiff's 0.28 —
+   * the thinnest trunk in the table — with the swells halved (0.20/0.15
+   * against the nexu's 0.34/0.26) and the section squared up to 3.0/3.4. A
+   * thin body on a round section is a tube; the same body on a near-square
+   * section keeps a corner along the flank, which is what makes it read as
+   * angular rather than as small. `waist` 0.12 is the highest in the table by
+   * a fifth: the ribcage ends and then there is nothing, which is the read the
+   * whole design word "fragile" has to survive at forty metres.
+   *
+   * Leggier is `hip` 0.62 on a 1.06 trunk. At its archetype's 0.85 scale that
+   * stands it 0.53 m at the hip against the massiff's 0.42 — TALLER THAN THE
+   * MASSIFF WHILE BEING A SMALLER ANIMAL — because leg-to-body is where pace
+   * is read from a distance, and this is the only companion that keeps up with
+   * a sprint. Femur+tibia+tarsus is 1.48 of the hip height, between the
+   * massiff's 1.45 and above the nexu's 1.40.
+   *
+   * WHAT IT DOES NOT GET IS THE TAIL AND THE MANE. The nexu's row says the
+   * tail IS the read at range — 2.40 of scale, nearly five metres — and the
+   * mane is the other half of it. Give a small cat both and you have not built
+   * a whelp, you have built a nexu the player thinks is standing further away,
+   * which is the same defect `BODYGUARD_KITS` measures at 0.658 IoU and calls
+   * out. So: a 0.70 whip tail, and `back: 'ridge'`, which is bone standing off
+   * the spine rather than quills raked off the shoulders.
+   */
+  tuk: {
+    hide: 0x4a4038, plate: 0x9a9282, belly: 0x6b5f52, eye: 0xff3a2a,
+    /**
+     * LEGGY, AND THAT IS BOTH THE DESIGN AND THE MEASUREMENT.
+     *
+     * "THE ONE THAT OUTRUNS YOU INTO TROUBLE — the only companion fast enough
+     * to follow a sprint". It sits exactly on the pace cap in
+     * `CompanionKinds.js`, and an animal that runs at 6.33 m/s should read as
+     * built for it: a greyhound against the massiff's bulldog.
+     *
+     * IT IS ALSO WHAT SEPARATES THE TWO SILHOUETTES, and three cheaper things
+     * were tried first and are written down so nobody repeats them.
+     * `_creature.mjs` calls a pair above 0.5 "two animals that share a body
+     * plan"; massiff/tuk'ata measured 0.507.
+     *
+     *   GIVING THE TUK'ATA A MANE reached 0.450, and was WRONG: the design's
+     *   own word for this animal is "bony, angular, SPINED", and a mane is the
+     *   opposite read.
+     *
+     *   GIVING THE MASSIFF ITS OWN `scutes` + `paw` (which COMPANIONS.md says
+     *   it should have had all along, and which it keeps) made them WORSE, at
+     *   0.542 — low bosses change an outline less than spikes do, and a paw
+     *   and a claw are nearly the same shape at range. The document's own
+     *   choice is the right one for that animal and does nothing for this
+     *   problem.
+     *
+     * So the separation is where it should have been from the start: the two
+     * animals are different SHAPES. The hip goes 0.62 → 0.86 and the legs
+     * lengthen with it, so this one stands over the massiff instead of beside
+     * it, and the trunk comes up to match rather than hanging off the new hip.
+     */
+    hip: 0.86, trunk: [0.09, -0.22, 1.06], pitch: 0.09, girth: 0.19,
+    /* Shoulder and haunch at half the nexu's amplitude. A pup's mass has not
+     * arrived yet; what is on the shoulder is scapula, and a gaussian big
+     * enough to read as muscle would be the one thing on the body arguing
+     * against the health bar. */
+    swells: [[0.76, 0.20, 0.20], [0.24, 0.15, 0.22]],
+    section: { n0: 3.0, n1: 3.4, back: 0.06, keel: 0.05, waist: 0.12 },
+    /* headAt is the nexu's 0.686 of trunk length, unchanged — a cat carries
+     * its head off the front of the body, and that ratio is the pose. `neck`
+     * keeps the nexu's three segments and its curl and shortens the segment
+     * from 0.24 to 0.15; pitch 0.10 against 0.06 carries the skull a little
+     * above the spine line, which is the one place a pup differs from the
+     * adult and the reason it is visible over the cover it is running past. */
+    headAt: [0.16, 0.72], neck: [3, 0.15, 0.13, 0.10, 0.02], head: 'fanged',
+    /* `ridge` and not `mane`: see the note above on not building a small nexu.
+     * The ridge is also the one dorsal treatment that goes into the trunk's
+     * PRIMARY mesh rather than the silhouette kit, so the spines survive the
+     * LOD rung that a companion spends most of its life on — it is behind you
+     * at thirty metres more often than it is in front of you at ten. */
+    /* SPINED, and it stays spined: the design's own word for this animal is
+     * "bony, angular, spined", and a mane is the opposite read. The overlap it
+     * shared with the massiff is fixed on the MASSIFF's row instead — see the
+     * note there — because that is the row that had drifted. The longer tail
+     * stays: on a low body the tail is the part that carries at range, which
+     * is the nexu's own argument at 2.40. */
+    back: 'ridge', tail: [5, 1.15, 0.055, 0.16, -0.14],
+    limbs: [
+      /* The nexu's fore leg, shortened and thinned. `pole` keeps its direction
+       * and loses its length with the body; `femurRest`/`tibiaRest` are
+       * COPIED EXACTLY, because a bind pose is a direction and not a size —
+       * nothing about being small changes which way a cat's elbow faces, and
+       * the header's own warning is about rest pairs authored for one animal
+       * being worn by another. `plant` 0.26 against the nexu's 0.34 and the
+       * massiff's 0.34 is the narrowest track in the table: a narrow track is
+       * what a runner has, and it is 0.22 m of stance at 0.85 scale. */
+      { role: 'leg', x: 0.20, y: 0.04, z: 0.53, plant: 0.26, femur: 0.52, tibia: 0.58, tarsus: 0.16,
+        girth: 0.72, pole: [0.18, 0.38, 0.86], foot: 'claw',
+        femurRest: [0.10, -0.88, 0.42], tibiaRest: [0.04, -0.94, -0.30] },
+      { role: 'leg', x: 0.22, y: 0.02, z: -0.45, plant: 0.28, femur: 0.55, tibia: 0.61, tarsus: 0.16,
+        girth: 0.78, pole: [0.18, 0.44, -0.90], foot: 'claw',
+        femurRest: [0.10, -0.82, -0.50], tibiaRest: [0.04, -0.92, 0.36] },
+    ],
+    /* `step` 0.86 is 0.73 m of stride at scale against the nexu's 2.04 and the
+     * massiff's 0.49 — short strides taken fast, which is what a small thing
+     * moving at 6.3 m/s has to look like. `lift` 0.34 sits above the massiff's
+     * trot and below the nexu's: it bounds.
+     *
+     * `rear` is the one number NOT scaled down with the body, and deliberately.
+     * It is metres of hip travel per unit of an attack's `rise` and it is
+     * multiplied by scale, so the nexu's own 0.42 would buy 0.36 m here. The
+     * pounce coils to rise -0.9 and the coil is the whole telegraph — the move
+     * is answered in the last tenth of it (see BEAST_MOVES.pounce) — so a
+     * gather the player cannot see from across the room is a window that does
+     * not exist. 0.46 buys 0.39 m of drop on a 0.53 m hip. */
+    step: 0.86, lift: 0.34, rear: 0.46,
+    /* Two verbs, for the reason the massiff's row states and does not need
+     * restating here. They are the nexu's first two minus the charge: a
+     * fifty-kilo pup does not run anything down — the POUNCE is how it arrives
+     * (it commits at the launch, so it closes ground it could not walk) and
+     * the RAKE is the only thing it can do once it is there. Its damage is on
+     * the archetype and it is small; the point of the pair is that the pounce
+     * knocks a body over for your blade, not that it kills. */
+    /* THE SAME THIRD VERB AND THE SAME GATE, for the opposite reason. This is
+     * the fastest thing the player can own and the one that outruns him into
+     * trouble; a whelp that has been opened up and still only pounces is an
+     * animal whose fight has one gear. `charge` at phase 3 is the gear. */
+    moves: ['pounce', 'rake', 'charge'],
+  },
+
+  /**
+   * THE RANCOR PUP — the wrecker, and the second body in the table that is
+   * not a level's problem but yours.
+   *
+   * It is the `brute` pattern and it is meant to be recognisable as one: two
+   * plantigrade hind legs off `hips`, two `role: 'arm'` limbs off `body`, no
+   * neck, a tail. Nothing about that layout is new — `creatureSkeleton`
+   * spans it for the rancor and the gundark already, and the arms buy the
+   * swing-and-throw path in `_poseWalker` for free, which is the whole reason
+   * the wrecker is a plan row and not a behaviour.
+   *
+   * WHAT MAKES IT A PUP IS PROPORTION, NOT SCALE. Dropping the archetype's
+   * scale alone gives a small rancor, which is a rancor seen from further
+   * away. A juvenile is a big head on a short barrel with stumpy limbs, and
+   * `buildCreatureHead` sizes the 'tusked' skull off S with no per-plan knob,
+   * so the only lever that exists is shrinking everything the head is
+   * measured AGAINST: the trunk is 0.62 against the rancor's 0.74, the arms
+   * come to 0.94 of reach against 1.16, and the head stays where S puts it.
+   * The skull is 1.5 trunk-radii wide here against the rancor's 1.26.
+   *
+   * The height is chosen against the massiff and not against the rancor. Hip
+   * 0.78 at the archetype's 0.55 scale is 0.43 m, which is the massiff's
+   * 0.42 m to within a centimetre — the shipped companion argues for being
+   * below the player's eye line and that argument is not re-run here, it is
+   * matched. Crown lands near 0.97 m: the rancor's silhouette at a sixth of
+   * its height, which is the joke the kind is for.
+   */
+  pup: {
+    /* Lighter than the rancor's 0x6b6152 hide and 0x585044 plate, because
+     * every one of those greys is weathering and this animal has not had
+     * any yet; the eye keeps the family's amber but paler. */
+    hide: 0x7d7360, plate: 0x6a6152, belly: 0x9c9280, eye: 0xffe08a,
+    hip: 0.78, trunk: [0.10, -0.08, 0.62],
+    /* LESS upright than the rancor's 1.02, which looks backwards and is not.
+     * The pose the reference is always in puts the knuckles on the sand, and
+     * this one's arms are 0.81 of the rancor's proportional reach — pitching
+     * the trunk up would hang them in the air. Lowering the shoulder is what
+     * lets a short arm still touch the ground. */
+    pitch: 0.88, girth: 0.50,
+    /* The masses swap ends. The rancor carries 0.44 over the shoulder because
+     * that is where a slam is thrown from; a pup's bulk is gut — 0.30 at the
+     * shoulder and 0.34 at the haunch, the only row in the table where the
+     * back mass is the larger of the two. */
+    swells: [[0.78, 0.30, 0.28], [0.30, 0.34, 0.36]],
+    /* ROUNDER THAN ANYTHING SHIPPED. The nexu is the current floor at
+     * 2.4/2.8 and the rancor sits at 2.6/3.2; 2.0 would be a plain ellipse,
+     * so 2.1/2.4 is as round as the section goes while still being a
+     * superellipse. The waist drops to 0.02 from the rancor's 0.04 for the
+     * same reason: a barrel does not pinch. */
+    section: { n0: 2.1, n1: 2.4, back: 0.03, keel: 0.04, waist: 0.02 },
+    headAt: [0.54, 0.30], neck: [1, 0.10, 0.30, 0.30, 0], head: 'tusked',
+    back: 'ridge',
+    /* Shorter, and shorter than the shrink: 0.72 of reach against the
+     * rancor's 1.30 is 1.16 trunk-lengths where the rancor is 1.76. A tail
+     * as long as the adult's would be the one part of the outline that read
+     * as full-grown, and the tail is drawn as one swept tube, so it costs
+     * nothing to have less of. The tighter curl (-0.18 against -0.14) keeps
+     * the tip off the sand on a body this low. */
+    tail: [4, 0.72, 0.14, 0.12, -0.18],
+    limbs: [
+      /* The hind legs. Still plantigrade and still poled FORWARD and low —
+       * the rancor's argument holds and is not repeated. Femur and tibia
+       * come down to 0.42/0.44 from 0.52/0.54 to stand a 0.78 hip instead of
+       * a 0.92 one, but the tarsus only goes 0.26 → 0.24: the sole stays big
+       * relative to the leg, which is both what a juvenile's foot looks like
+       * and what a body that slams needs to stand on. `girth` 1.45 against
+       * the rancor's 1.30 is the same thought — this is a stumpy leg, not a
+       * scaled one. Plant 0.44 on a 0.78 hip is a wider stance than the
+       * rancor's 0.46 on 0.92, because the base under a slam does not scale
+       * down with the animal doing it. */
+      { role: 'leg', x: 0.30, y: 0.02, z: -0.08, plant: 0.44, femur: 0.42, tibia: 0.44, tarsus: 0.24,
+        girth: 1.45, pole: [0.30, 0.52, 1.05], foot: 'paw',
+        femurRest: [0.16, -0.90, 0.34], tibiaRest: [0.04, -0.96, -0.26] },
+      /* The arms, and they are the short part. 0.94 of reach against the
+       * rancor's 1.16 — the knuckles come down near the sand rather than
+       * onto it, which is the pitch's problem above and is why it is 0.88.
+       * `hand` is required, not decorative: `_poseWalker` only runs the
+       * arm-swing-and-throw branch for a limb that has one. It is drawn in
+       * to [0.54, -0.16, 0.54] from [0.62, -0.22, 0.66] — proportionally
+       * forward of the rancor's hang, so the arms read as held rather than
+       * dangling, without going to the gundark's raised reach.
+       *
+       * AND THEY ARE THE THICK PART, WHICH THEY WERE NOT. `girth: 1.00` was
+       * the SLIMMEST limb on this animal — under its own hind leg at 1.45 and
+       * under the adult rancor's arm at 1.16 — on the body whose one-line
+       * description is "thick-armed". Rendered beside the blurrg the two read
+       * as one animal, and the arms were half of why: a short limb at 1.00 of
+       * girth on a barrel this round is a stick, and a stick hanging off a
+       * barrel is what the two-legged animal's LEG also looks like at forty
+       * metres. 1.50 makes them the heaviest limb in the table and the
+       * heaviest thing on this body — forelimb-dominant, which is what an
+       * infant that walks on its knuckles is and what the adult is not. It
+       * costs nothing: `girth` scales the limb lathe's radius, not its
+       * segment count. */
+      { role: 'arm', x: 0.40, y: 0.32, z: 0.20, femur: 0.36, tibia: 0.38, tarsus: 0.20,
+        girth: 1.50, pole: [0.52, -0.08, -0.80], foot: 'talon',
+        femurRest: [0.16, -0.96, 0.22], tibiaRest: [0.06, -0.98, 0.16],
+        hand: [0.54, -0.16, 0.54] },
+    ],
+    /* A waddle. Step 0.58 on legs of 0.42/0.44 is a shorter stride per unit
+     * of leg than the rancor's 0.72 on 0.52/0.54, and the lift comes down
+     * with it — this animal does not pick its feet up. `rear` goes the other
+     * way, 0.34 against 0.30, and that is deliberate: rear is metres of hip
+     * travel per unit of an attack's `rise` ×scale, so at 0.55 scale the
+     * slam's 1.5 rise buys 0.28 m of hip. Against a 0.43 m hip that is
+     * two thirds of its own standing height, which is the only way a slam
+     * telegraph stays legible on a body this small. */
+    step: 0.58, lift: 0.26, rear: 0.34,
+    /* Its verbs, declared HERE and not in the archetype — the massiff's
+     * precedent rather than the rancor's, and the difference is real: the
+     * rancor's set is a level designer's statement about a set-piece, and no
+     * level ever composes a companion, so there is nobody upstream to
+     * disagree with. SLAM is the kind (COMPANIONS.md: the only companion
+     * whose attack changes the level rather than the enemy), SWEEP is the
+     * arm arc the adult already carries and the phase-2 escalation, and
+     * LUNGE is the floor every animal has. There is no rake and no charge:
+     * a thing that weighs 150 kg and moves at 3.6 m/s does not run anything
+     * down, and it has hands rather than claws.
+     *
+     * ── AND IT SAID `toss`, WHICH IS THE SLAM WEARING A DIFFERENT NAME ────
+     *
+     * COMPANIONS.md asks for slam/toss/lunge and gives the reason — the toss
+     * "reuses the biggest upward impulse in the game at a small scale", which
+     * is `lift: 2.4` against everything else's 0.5–1.5. The impulse is real.
+     * The WIND-UP is not: `slam` and `toss` are the only two rise-positive
+     * moves in BEAST_MOVES and their poses are 1.50 and 1.25 of rise on the
+     * identical quarter-sine curve, so on any body that carries both they are
+     * ONE GESTURE AT 83% AMPLITUDE. `rear` is a single scalar per animal —
+     * "metres of hip travel per unit of an attack's rise" — so there is no
+     * number in this row that can separate two moves whose only difference is
+     * how much rise they ask for.
+     *
+     * Measured on the built rig, posed by `_poseWalker` through each move's own
+     * wind-up (tools/checks/beasts.mjs): slam and toss were 46 mm apart at
+     * their widest, 11.2% of this animal's 0.408 m stance, against a roster
+     * floor of 16.5% — the adult Rancor's own slam and sweep, which is the
+     * tightest pair anything else in the game asks a player to read. It is the
+     * only pair below the floor on every denominator tried: 23.5% against 32.3%
+     * measured across the whole rig instead of the hips, and 16.6% against
+     * 32.8% measured as a fraction of the larger of the two travels. Nor does
+     * timing rescue it — the toss's wind-up is 0.70 s and the slam's 0.95, but
+     * in that shared first 0.70 s the two bodies are 27 mm apart, and by the
+     * time the durations differ the toss has already landed. You would learn
+     * which one it was by being hit.
+     *
+     * `sweep` is 1.00 of rise, so the gap to the slam is 0.50 — 22.9% of this
+     * animal's stance, above the floor and above the adult's own closest pair.
+     * It is the same arm the toss used, the adult Rancor already carries it,
+     * and `unlock: 2` makes it the escalation rather than a third opener. What
+     * is lost is the 2.4 lift on this one body; what is bought is that a player
+     * watching a rancor pup rear can tell which of the two things is coming.
+     * COMPANIONS.md's move list is the thing this diverges from, deliberately
+     * and with the measurement above; the doc is not edited from here. */
+    moves: ['slam', 'sweep', 'lunge'],
+  },
+
+  /**
+   * THE TAUNTAUN — the first RIDEABLE body in CREATURE_PLANS, and the only row
+   * in the table that declares no verbs at all.
+   *
+   * COMPANIONS.md ("The twelve kinds") settles what it is: "PACE ON FLAT
+   * GROUND AND NOTHING ELSE. Fastest of the three mounts, useless in battle
+   * exactly as asked." Everything below is that sentence turned into numbers,
+   * and the two shapes it has to hold are (a) a body a player sits ON, and
+   * (b) a two-legged outline nobody mistakes for the wampa at forty metres,
+   * since those are the only two bipeds in the table.
+   *
+   * ONE LIMB ENTRY, WHICH IS TWO LEGS. `creatureSkeleton` expands every entry
+   * left and right, so the brute and the pouncer each declare one 'leg' pair
+   * plus one 'arm' pair. This declares the leg pair and stops: no arms, which
+   * is the whole silhouette difference from the pouncer. That animal is a
+   * vertical barrel (pitch 1.32) with its hands out; this is a horizontal one
+   * on stilts with a counterweight behind it. Same shag, same head branch,
+   * nothing alike in profile.
+   *
+   * LONG LEGS STATED AS A RATIO, because that is what the eye reads. hip 0.98
+   * against a 0.95 trunk — the hip stands as high as the body is long, where
+   * the massiff's hip is half its trunk and the stalker's is exactly half of
+   * its 1.72. It is above the brute's 0.92 and below the acklay's 1.62, which
+   * is right: the acklay's height is a tripod's clearance, this is a runner's.
+   * At scale 1.45 (the archetype) that is 1.42 m at the hip and a back at
+   * about 1.85 m — a saddle you climb onto, not one you step over.
+   *
+   * IT CANNOT TAKE GRADES, and that is the varactyl's job rather than a
+   * number here — see COMPANIONS.md. Nothing in this row encodes it.
+   */
+  taun: {
+    /* Grey-white over tan, the only pale hide in the table: six creatures in
+     * this file are sand and rust, and the animal you own has to be findable
+     * on the same sand they are fought on. The EYE is the deliberate one —
+     * 0x8a5a2e is the dimmest in the table by a wide margin, against the
+     * stalker's 0x66ff9a and the acklay's 0xffdd44. Those are warning lights
+     * on predators. `emissiveMat` runs at 2.8 either way, and a lamp burning
+     * on the head of the thing you are sitting behind is a lantern pointed at
+     * your own night route. */
+    hide: 0xb9b2a4, plate: 0x8e8577, belly: 0xd8d2c4, eye: 0x8a5a2e,
+    /**
+     * IT STANDS LIKE A RUNNER NOW, AND IT WAS HANGING NOSE-DOWN.
+     *
+     * Three numbers were fighting each other and the arithmetic says so:
+     *
+     *   `trunk[1]` was −0.40, hanging the barrel that far BELOW the hip on a
+     *   body 0.95 long — which drops the chest to the ankles.
+     *
+     *   `pitch` was −0.10, which then aims the nose at the sand.
+     *
+     * Both pushed the same way, which is why it read as an animal sagging
+     * rather than one standing. A tauntaun is the FASTEST thing you own and
+     * the one you get ON — it has to look like it is about to move, and it has
+     * to have a back you would believe a saddle sits on.
+     *
+     * AND `plant` IS NOT THE THIRD NUMBER, which is worth writing down because
+     * the name invites the mistake: it is the foot's LATERAL stance —
+     * `x: (L.plant ?? L.x) * S * side` — not how far the leg extends. Raising
+     * it from 0.30 to 0.92 to "straighten the leg" widened the animal from
+     * 1.68 m across to 3.07 and changed its height by nothing at all. Measured,
+     * reverted, and recorded here so the next person reads it instead of
+     * measuring it again.
+     */
+    hip: 0.98, trunk: [0.12, -0.46, 0.95], pitch: 0.50, girth: 0.34,
+    /* THE SWELLS ARE REVERSED FROM EVERY SHIPPED ROW, and it is the one
+     * anatomical claim in here. The charger is [[0.74, 0.52, …], [0.24, 0.24,
+     * …]] and the massiff, stalker, brute, pouncer and acklay are all the same
+     * shape: shoulder big, haunch small, because they are quadrupeds that
+     * drive from the front. A two-legged runner puts its engine at the BACK —
+     * haunch 0.44 against a shoulder of 0.30 — and without that the body reads
+     * as a quadruped that has lost its forelegs. */
+    swells: [[0.72, 0.30, 0.22], [0.22, 0.44, 0.30]],
+    /* t runs rear to front (see the lathe's capY0/capY1), so n0 is the
+     * haunch and n1 the chest. 3.0 → 2.6 is boxy at the back and rounder
+     * forward, which is the opposite direction to every other row and is
+     * chosen for the saddle: the rider sits over the hips, so the slab-sided
+     * section belongs where his knees are and the deep round chest can stay a
+     * chest. `back` 0.07 is the highest in the table (massiff and stalker
+     * 0.04, charger 0.02) — `_measurePlatform` takes the highest vertex
+     * inside the central 60% of the hull, and a circular section gives it a
+     * crown one vertex wide, which is a ridgepole rather than a seat. `waist`
+     * 0.10 matches the stalker's, the deepest pinch shipped, for the same
+     * reason from the other side: at girth 0.34 the widest part of the animal
+     * would otherwise be exactly under the rider's knees. */
+    section: { n0: 3.0, n1: 2.6, back: 0.07, keel: 0.08, waist: 0.10 },
+    /**
+     * …AND THE HEAD COMES UP, WHICH TOOK READING THE SCHEMA RATHER THAN
+     * GUESSING AT IT. `neck` is `[segs, length, radius, pitch, curl]`, and this
+     * row already asked for a strong upward pitch of 0.62 — it just had only
+     * 0.20 of neck to apply it to, which is the massiff's own length on an
+     * animal three times the size. A lever that short cannot lift anything, so
+     * the head sat on the shoulders and pointed at the sand whatever the pitch
+     * said.
+     *
+     * 0.52 is the longest neck in the table and it is what this animal is: the
+     * head is held HIGH and forward, which is what makes a tauntaun read as a
+     * runner from behind — and, when you are on it, is the difference between
+     * a mount you steer by and a barrel with a saddle.
+     */
+    headAt: [0.62, 0.86], neck: [2, 0.22, 0.21, 0.16, -0.02], head: 'snouted',
+    /* THE NECK GOES UP, and it is the only one that does. The massiff (-0.30),
+     * the charger (-0.44) and the acklay (-0.30) all sweep DOWN because they
+     * carry a weapon in front of their eyes and have to aim it; the stalker is
+     * level at 0.06. This one starts at 0.62 and curls -0.22 a segment, so it
+     * stands out of the withers and then levels off — three segments of 0.20
+     * is 0.87 m of neck at scale. A head carried at the height of the thing
+     * behind it is a head the rider looks OVER rather than through.
+     *
+     * `horned-ape` is the nearest existing branch and it is not a perfect fit
+     * — see the report. It buys the two things that matter: horns curving
+     * sideways off the temples rather than forward, and the fur ruff round the
+     * jaw that carries the head's outline into the coat. What it costs is a
+     * short broad face where a tauntaun has a muzzle, and an underbite of
+     * fangs on an animal that does not bite anything. No new string was
+     * invented for it. */
+    back: 'shag', tail: [4, 0.80, 0.15, 0.10, -0.06],
+    /* THE BLANKET — `[colour, at0, at1, phi, lift]`, and see the seat in
+     * `buildQuadruped` for what each one does. The span is 0.30-0.68 of the
+     * spine because that is the flat of this animal's back between the
+     * shoulder and the haunch, and `phi` 1.95 drops the hem just past the
+     * widest point of the barrel so it hangs rather than clinging. `lift`
+     * 0.030 is the shag's own clearance: the coat's clumps stand off the
+     * FLANKS at x ±(0.30-0.44)·S and not off the spine, so nothing this pad
+     * covers is standing up through it. Rust on a grey-white animal, which is
+     * the one warm thing on the tauntaun and is the colour a saddle pad is
+     * everywhere in the reference. */
+    blanket: [0x8c4a34, 0.30, 0.68, 1.95, 0.030],
+    /* THE TAIL IS THE COUNTERWEIGHT AND IS SIZED AS ONE. r0 0.15 is the
+     * brute's 0.16 and not the stalker's 0.085 — the nexu's tail is a whip
+     * and its read is length (2.40), this one is a mass and its read is
+     * thickness. curl -0.06 is the flattest in the table (massiff -0.10,
+     * brute -0.14) so it holds out behind instead of drooping: a two-legged
+     * body whose tail hangs reads as standing up, and this one never does. */
+    limbs: [
+      /* THE ONE PAIR. Poled BACK and high — [0.26, 0.70, -1.35], further back
+       * than the stalker's hind at -1.20 — so the hock stands behind the
+       * animal and the leg reads as a bird's. The alternative was the brute's
+       * plantigrade forward pole, and it was rejected on the same ground the
+       * swells were: a rancor stands, and this thing only ever runs.
+       *
+       * 0.58 + 0.62 + 0.22 = 1.42 of leg under a 0.98 hip. The ratio 1.45 is
+       * deliberately the brute's and the stalker's (both 1.43) rather than
+       * something longer, because that ratio is KNEE BEND and not leg length:
+       * straighten it further and `solveIK` has no room to fold, so the
+       * fastest thing in the roster would be the one whose gait stops
+       * bending. The length is bought with `hip` instead, which is where it
+       * belongs.
+       *
+       * plant 0.30 against the pouncer's 0.42 and the brute's 0.46 — the
+       * narrowest stance of any biped here. A body running on two legs tracks
+       * its feet toward the centreline; splayed, it waddles. girth 1.02 sits
+       * between the stalker's 0.96 and the pouncer's 1.20: it is not a
+       * cat's leg, because it carries a rider, and it is not a wampa's,
+       * because it has to swing at speed. */
+      { role: 'leg', x: 0.24, y: 0.03, z: -0.02, plant: 0.30, femur: 0.58, tibia: 0.62, tarsus: 0.22,
+        girth: 1.02, pole: [0.26, 0.70, -1.35], foot: 'claw',
+        femurRest: [0.12, -0.88, -0.44], tibiaRest: [0.04, -0.93, 0.36] },
+    ],
+    /* The longest stride in the table after the acklay's: 1.30 × 1.45 is
+     * 1.89 m against the stalker's 2.04 at 8.6 m/s. It moves at 6.1 (the
+     * archetype), so the cadence is slower than the nexu's on a stride nearly
+     * as long, which is a bound rather than a scurry and is what the legs
+     * were bought for. lift 0.46 is above the stalker's 0.44 for the same
+     * reason: a hock that high has to clear.
+     *
+     * `rear` 0.12 is the lowest in the table — under the acklay's 0.26 — and
+     * it is low BECAUSE of `moves` below. `rear` is metres of hip travel per
+     * unit of an attack's `rise`, and with no attack there is nothing to
+     * telegraph; what is left of it is flinches and the topple, and every
+     * centimetre of that is a rider being lifted out of a seat that is
+     * written from this body's own platform. */
+    step: 1.30, lift: 0.46, rear: 0.12,
+    /* NO VERBS, AND THE EMPTY ARRAY IS THE ENFORCEMENT RATHER THAN A NOTE.
+     * `beastMoveSet` returns the first truthy of archetype, plan, default, and
+     * `[]` is truthy — so a declared empty set reaches `_beastBrain`, which
+     * filters it by phase and finds nothing to reach for at any health. The
+     * archetype deliberately declares no `moves` of its own, so this line is
+     * the only statement of it in the game.
+     *
+     * The alternative was `lunge` "so it can defend itself", and it is the
+     * one thing this animal must not have: the brief is that arriving at a
+     * fight is something you DISMOUNT to do, and a mount that trades on its
+     * own makes the dismount optional. The blurrg is the mount that bites,
+     * and it is a different row. */
+    moves: [],
+  },
+
+  /**
+   * THE BLURRG — the second of the three mounts, and the only body in the
+   * table that is ridden AND bites.
+   *
+   * TWO LEGS, ONE LIMB ENTRY. `limbs[]` is expanded left and right by
+   * `creatureSkeleton`, so a two-legged animal is one row and needs nothing
+   * written; the rancor and the wampa are the proof that a plan with a single
+   * leg pair already walks. What makes this one unmistakable from the other
+   * two mounts at forty metres is not the leg COUNT — the rancor has two as
+   * well — it is where the mass sits: the haunch swell is 0.58, the largest
+   * single swell in the table against the reek's shoulder at 0.52, and the
+   * shoulder is 0.18, the smallest. Every animal above this carries its mass
+   * over the front legs it has. This one has none, so the barrel hangs off
+   * the hips and the head is thrown out in front on a short neck to pay for
+   * it. That is a two-legged outline before the legs are visible at all.
+   *
+   * `pitch: 0.45` is the only mid value in the table — the reek is level at
+   * -0.13 and the rancor stands at 1.02 — and it is the one number that makes
+   * it a MOUNT. A level spine gives a shelf and a vertical one gives a wall;
+   * a 26-degree spine gives a back that rises from the hips to the shoulder,
+   * which is the shape a saddle sits in the top of. `trunk[1]` is -0.26, the
+   * most rearward trunk mount in the table (the reek is -0.20 across four
+   * legs), because a biped whose barrel starts at the hip joint puts every
+   * kilo of it in front of the only two feet it has.
+   *
+   * ── THE BACK IS `folds` AND IT USED TO BE `ridge`, WHICH IT SHARED ─────
+   *
+   * The rider decides the CLASS of treatment and it always did: only a
+   * treatment that goes into the trunk's PRIMARY mesh can carry a saddle,
+   * because `Enemy._measurePlatform` measures a deck off the body bone's
+   * `parts` and the Kit-baked outline is not in them. A mane, scutes, shag,
+   * down or plumage would stand over the hull the rider is measured against
+   * instead of being part of it, so the saddle would sit inside the animal.
+   *
+   * What the rider does NOT decide is WHICH primary treatment, and for as long
+   * as `ridge` was the only one there was no choice to make. That is how this
+   * animal came to wear the rancor's sawtooth: nine spines from crown to tail,
+   * the same nine the pup carries, over the same `tusked` head the pup
+   * carries. Two of the player's twelve companions were one animal at a
+   * glance, and the spine was half of it.
+   *
+   * `folds` is the second primary treatment and it is what a blurrg's back
+   * actually is: five transverse rolls of loose hide, thickest over the
+   * shoulder, standing about 2 cm of scale out of the skin. It is the same
+   * hull seat, the same merge and the same mesh count; it reads as WEIGHT
+   * rather than as threat, which is the right sentence for a pack animal that
+   * carries a man, and it is nothing like a row of spikes at forty metres.
+   */
+  blurrg: {
+    /* COLD, AND IT IS THE ONLY COLD BODY IN THE TABLE. It was 0x77685f
+     * against the rancor pup's 0x7d7360 — eleven points apart on the green
+     * channel and six on the red, which is to say the same colour. Eleven of
+     * the thirteen plans here are warm earths (the varactyl is green and the
+     * nexu red-brown), so a desaturated blue-grey is the one direction nothing
+     * else in the file occupies, and hue is the thing that separates two
+     * animals at a distance where neither's outline has resolved yet. The eye
+     * stays the reference's red, which is now the only warm thing on the body
+     * and reads at range for exactly that reason. */
+    hide: 0x74798a, plate: 0x8f96a6, belly: 0xaeb4be, eye: 0xb8452c,
+    /* Scale 1.7 is declared on the archetype and is deliberately the NEXU's,
+     * to the digit: same size, opposite proportions, so the pair says out loud
+     * that these rows are the animal and not its bounding box. Against that
+     * nexu — hip 0.86, girth 0.33, trunk 1.72 long — this is hip 0.86, girth
+     * 0.44 and a trunk 1.10 long. Two thirds the length at a third again the
+     * barrel: squat and wide, from three numbers. */
+    hip: 0.86, trunk: [0.10, -0.26, 1.10], pitch: 0.45, girth: 0.44,
+    /* Shoulder nearly flat, haunch enormous. The reek's pair is [0.74, 0.52]
+     * and [0.24, 0.24] — mass forward — and this is that inverted. */
+    swells: [[0.62, 0.18, 0.26], [0.26, 0.58, 0.34]],
+    /* Rounder than the reek's 2.8/3.4 so it reads as a barrel rather than a
+     * slab; `back: 0.07` is the largest dorsal flattening in the table and it
+     * is here for one reason — it is the only body a person sits on, and a
+     * seat wants a facet. It costs about 5 cm of deck height at this scale,
+     * which is cheaper than a rider perched on a cylinder. `keel: 0.10` is the
+     * gut, and `waist: 0.02` is nearly nothing: the nexu's 0.10 pinch is a
+     * cat's flank and this animal has no waist to pinch. */
+    section: { n0: 2.4, n1: 2.9, back: 0.07, keel: 0.10, waist: 0.02 },
+    /* THE NECK PITCHES DOWN OUT OF A SPINE THAT PITCHES UP, and that is the
+     * bite. Against the trunk's +0.45 it leaves the head hanging level and
+     * forward with the jaw at about a standing man's chest, so what the animal
+     * can reach while you are on its back is a body on the GROUND beside it.
+     * A neck that followed the spine would put the jaws at the height of the
+     * rider's own shoulder, which is a mount that can only bite other mounts.
+     * Three segments at 0.105 — 0.32 of neck all told, shorter than the
+     * massiff's 2 × 0.14 in fraction of body, because a heavy head on a long
+     * neck on two legs is a pendulum.
+     *
+     * AND `headAt[0]` IS MEASURED FROM THE WRONG PLACE UNLESS THE ROW KNOWS
+     * IT, which is the whole of what was wrong with this animal and with the
+     * tauntaun beside it. The head bone hangs off `body` at
+     * `[0, headAt[0]·s, headAt[1]·s]` and the BONE CHAIN IS NOT PITCHED — only
+     * the trunk MESH is, by `trunkRot`. So on a level-backed animal
+     * `headAt[0]` is height above the spine and reads as written, and on a
+     * pitched one the spine has already climbed `sin(pitch) · headAt[1]` by the
+     * time it reaches that station.
+     *
+     * At +0.45 over a station 0.86 down the body the spine is 0.374 up, and
+     * this row once asked for 0.40: twenty-six millimetres of clearance on an
+     * animal 0.44 thick. The head was INSIDE the chest, and the render showed
+     * exactly that — a bean with a lump on the front and no face anywhere.
+     *
+     * ── AND THE FIX FOR THAT OVERSHOT, WHICH TOOK A SECOND LOOK TO SEE ────
+     *
+     * 0.72 cleared the chest and then some: it put the head bone 0.35 plan
+     * units above the spine axis, which is 0.79 of girth and ABOVE the hull
+     * rather than on it. That matters because of where the neck TUBE starts —
+     * a full segment BEHIND the head bone along its own pitch (see
+     * `buildCreatureHead`, `const back = 1.0`), and on a neck pitched steeply
+     * DOWN, "behind" is UP. With the root ring flared to 1.45·nR and clamped
+     * to the trunk's own half-width, the tube's root stood 0.57 m clear of the
+     * back on the rendered animal: a hard-edged triangular SAIL between the
+     * shoulders, and with the sawtooth `ridge` gone from the spine it was the
+     * loudest thing left on the body.
+     *
+     * Three numbers move together and none of them alone does it. `headAt[0]`
+     * 0.58 leaves 0.21 over the spine — still 0.48 of girth, still well clear
+     * of the chest the 0.40 row was buried in, and now ON the hull instead of
+     * over it. `nPitch` −0.35 rather than −0.55 makes the segment the tube
+     * reaches back along nearly level, so the root climbs 0.046 instead of
+     * 0.113. And `nR` 0.145 rather than 0.24 — 0.24 was the widest neck in the
+     * table — takes the root flare from a clamped 0.51 m radius to 0.357.
+     * Measured on the built body at the archetype's 1.7: the head bone's
+     * meshes topped out 0.57 m above the trunk's own crown and now top out
+     * 0.09 m above it, which is a nape and not a fin — and the JAW sits 0.15 m
+     * LOWER than it did, which is the direction this row wanted anyway.
+     *
+     * ── AND THE CHECK THIS NOTE PROMISED DOES NOT EXIST, WHICH IS WORTH MORE
+     *    THAN THE PROMISE ─────────────────────────────────────────────────
+     *
+     * It used to end "`tools/checks/beasts.mjs` now pins the ratio for every
+     * plan, so the next pitched body fails a check instead of shipping with
+     * its head in its ribs". No such check was ever written — HANDOFF §2.3b's
+     * defect, one layer up: a claim about a guard, standing in the file, with
+     * nothing behind it.
+     *
+     * It is not written now either, and the reason is the more useful half.
+     * Three metrics were built and measured across all thirteen plans before
+     * giving up on it (`tools/_soft.mjs` beside a throwaway probe):
+     *
+     *   SKULL VERTICES INSIDE THE TRUNK HULL, by ray parity. The blurrg's
+     *   actual defect — headAt[0] 0.40, "a bean with a lump on the front and
+     *   no face anywhere" — measures 25.5%. The WAMPA, whose row deliberately
+     *   sinks "the head BETWEEN the shoulders", measures 52.7%. The design
+     *   case is twice the accident.
+     *   THE HEAD BONE'S SIGNED DISTANCE OUTSIDE THE HULL. Eleven of thirteen
+     *   plans are negative, because the head bone sits at the BASE of the neck
+     *   by construction and the neck tube carries out to the skull.
+     *   RADIAL DISTANCE FROM THE MEASURED LATHE AXIS OVER THE HULL RADIUS
+     *   THERE — the ratio this note is actually about. Blurrg-as-shipped 0.442,
+     *   wampa 0.146, tuk'ata 0.255. Again the design cases sit below the
+     *   accident.
+     *
+     * Any threshold that passes the wampa passes the blurrg's defect, so the
+     * check would be a check that cannot fail, which is worse than no check
+     * (HANDOFF §2.3b). What would separate them is a per-plan expectation, and
+     * a table of thirteen expected numbers beside the thirteen numbers that
+     * produce them is HANDOFF §2.3's hand-maintained twin. Recorded here so
+     * the next reader does not spend the afternoon this cost.
+     *
+     * The rancor (0.62 of girth clear) and the wampa (1.01) were already
+     * compensated by hand by whoever authored them; nothing here moves them. */
+    headAt: [0.58, 0.86], neck: [3, 0.105, 0.145, -0.35, -0.09], head: 'maw',
+    back: 'folds', tail: [3, 0.46, 0.17, -0.10, -0.12],
+    /* THE BLANKET, and it is the warm thing on a cold animal. The span is
+     * shifted forward of the tauntaun's — 0.32-0.70 against 0.30-0.68 — because
+     * the spine is pitched 26° and the pad has to sit on the flat of the rise
+     * rather than slide off the back of it. `lift` 0.030 is the tauntaun's and
+     * it is right for the same arithmetic in reverse: `folds` above is sunk
+     * 0.030·S and stands 0.010-0.038·S proud, so the shoulder-most roll tents
+     * the cloth and the two behind it lie under it — which is what a pad over
+     * a heavy hide does and not a clash. */
+    blanket: [0xa8763a, 0.32, 0.70, 1.95, 0.030],
+    limbs: [
+      /* ONE PAIR, and it carries a rider as well as the animal. `girth: 1.45`
+       * is the heaviest limb in the table — the rancor's 1.30 is the current
+       * maximum, on a body twice this scale — because two legs are doing what
+       * four do everywhere else in this file.
+       *
+       * THE STANCE IS THE HANDLING. `plant: 0.56` off a hip mounted at 0.38 is
+       * the widest track any biped here stands on (the rancor plants at 0.46,
+       * the wampa at 0.42), and a wide-tracked body pivots badly for the same
+       * reason it is stable: the feet are a long way from the axis. The turn
+       * rate itself is the rider's number and lives with the rider; this is
+       * the silhouette that has to agree with it, so a player who has been
+       * told it turns like a barge can SEE the barge.
+       *
+       * Poled forward and OUT at 0.55 against the wampa's 0.36, so the knees
+       * stand outside the trunk instead of under it. Digitigrade, hence
+       * `foot: 'claw'` and not the two uprights' `'paw'`: `ANKLE_UP` rides a
+       * claw at 0.86 of the tarsus and a paw at 0.30, so the choice is a
+       * standing posture and not a decoration. Measured against the rancor,
+       * the shipped biped at the same hip height: its chain spans 0.87 m of
+       * 1.06 and this one spans 0.71 of 0.96, so the leg sits at 0.74 of full
+       * extension against the rancor's 0.82 — a deeper permanent crouch, which
+       * is the squat read and is also where the animal's whole spring is. */
+      { role: 'leg', x: 0.38, y: 0.02, z: -0.04, plant: 0.56, femur: 0.46, tibia: 0.50, tarsus: 0.22,
+        girth: 1.45, pole: [0.55, 0.55, 1.05], foot: 'claw',
+        femurRest: [0.24, -0.86, 0.28], tibiaRest: [0.06, -0.94, -0.32] },
+    ],
+    /* A SHORT, LOW, FAST GAIT, and two of these three exist because of the
+     * saddle. `step: 0.62` is under everything but the massiff's 0.52, so at
+     * the 5.1 m/s the archetype declares the cycle turns over quickly — a
+     * waddle rather than the reek's 0.80 lope. `lift: 0.22` is the lowest of
+     * any long-legged body here (the reek 0.28, the nexu 0.44): a high foot
+     * lift under a saddle is a rider being thrown around by the animation.
+     * `rear: 0.18` is the lowest number in the table full stop. It is metres
+     * of hip travel per unit of an attack's `rise`, `lunge` crouches at -0.55,
+     * so the deck drops about 0.17 m when it bites — felt, and not a launch.
+     * The massiff's 0.22 was the floor and this goes under it for the one
+     * reason that one does not have: somebody is standing on this. */
+    step: 0.62, lift: 0.22, rear: 0.18,
+    /* ONE VERB, which is one more than the other two mounts have and is the
+     * entire difference between them. It is `lunge` and not `rake`, `gore` or
+     * `snatch` because this animal has a jaw and nothing else — no horn, no
+     * claw that leaves the ground, no reach — and because a mount whose attack
+     * travelled would take the rider with it. `lunge` drives 0.5 m and closes;
+     * the rider stays over the hips. The second verb every other fighting body
+     * here carries is deliberately absent: see the massiff's note on giving a
+     * companion the reek's move list. */
+    /* THREE VERBS AND NOT ONE. A single-verb set fails `dodgeable.mjs` twice
+     * over — one phase-1 move IS the "they all attack the same way" complaint
+     * in the data, and with nothing above it the animal never escalates — and
+     * a blurrg is the one mount authored to fight, so it is the last body in
+     * the table that should have had a single loop.
+     *
+     * `toss` at phase 1 is what a blurrg's head does: 1.0 of reach against
+     * lunge's 0.75 and 0.85 damage, a wide throw of the skull rather than a
+     * snap, which is the move that makes a rider's mount dangerous to stand
+     * beside. `charge` at phase 3 is the escalation and it is also the animal:
+     * a blurrg comes round badly and commits straight, which is exactly the
+     * `drive` aim. */
+    moves: ['lunge', 'toss', 'charge'],
+  },
+
+  /**
+   * THE VHAL'KIR HAWK — "an alien hawk/owl thing that only flys".
+   *
+   * IT NEVER LANDS, and that one sentence decides every number below. Three
+   * things follow from it that are true of nothing else in this table:
+   *
+   *   THE STANCE PUBLISHES NO LIMBS. `tuck: true` — argued over `stanceOf` —
+   *   so `_poseWalker`'s per-limb IK loop runs zero iterations and the legs
+   *   hold the rest pose this row authors. Without it the animal cruises with
+   *   two rigid spikes reaching 5.6 m down for a floor it is never on.
+   *
+   *   THE LEGS ARE AUTHORED FOLDED. `femurRest` is back and down and
+   *   `tibiaRest` folds forward under it, so the talons are carried up under
+   *   the tail the way a hawk carries them between stoops. On every other plan
+   *   here the rest pair is a bind pose that the IK immediately overwrites;
+   *   on this one it IS the pose, at every range, for the whole life of the
+   *   body.
+   *
+   *   THERE IS NO TAIL TUBE. `tail: [0, …]` skips `P.tail` entirely and the
+   *   `plumage` treatment builds a FAN instead — see it. A rope of flesh is
+   *   what a massiff and a nexu have; a bird's tail has no core in it.
+   *
+   * ── THE PROPORTIONS ARE A BIRD'S AND NOT A SMALL QUADRUPED'S ────────────
+   *
+   * `hip` 0.30 against the tooka's 0.62 and the massiff's 0.44: the "hip" of a
+   * flying body is only how far its mass sits above the point the flight model
+   * is holding, and a bird hangs UNDER its wings rather than standing on
+   * anything. `girth` 0.13 on a `trunk` 0.52 long is the narrowest body in the
+   * table by a wide margin — 0.25 of length against the massiff's 0.33 and the
+   * blurrg's 0.40 — because everything a bird weighs is in one place and that
+   * place is not its width.
+   *
+   * `keel: 0.22` is the single most important number here and it is the
+   * largest in the file (the blurrg's gut is 0.10). It is the STERNUM: the
+   * flight muscle of a bird is a third of it and it all hangs off a keel under
+   * the chest, so the body is deep and thin rather than round. Read against
+   * `back: 0.02`, which is nearly nothing — flat on top, deep underneath, and
+   * that section is the whole difference between a hawk and a feathered dog.
+   *
+   * `swells` puts 0.40 of extra radius at 0.66 along the trunk and almost
+   * nothing at the tail: the mass is at the shoulders, over the wings, which
+   * is where a flying animal's centre has to be or it flies backwards.
+   *
+   * ── THE WINGS ARE 2.6 m ACROSS, AND THAT IS THE ARCHETYPE ───────────────
+   *
+   * `arm` 0.62 + `fan` 0.58 a side plus the body is a 2.58 m span on a 0.52 m
+   * body — five to one, which is a soaring bird's ratio (a harrier's is about
+   * 4.5:1, an albatross's nearer 7) and is what makes this thing legible from
+   * the ground it is never on. `rest` takes them out and slightly BACK and
+   * `fanRest` carries the hand further back again, which is the swept planform
+   * every raptor holds in a glide; a wing held square out is a heron.
+   *
+   * `chord` 0.34 is the plan's own field, read only by the wing dressing, and
+   * it is the longest feather on the body: with the primaries at 1.00 of it
+   * the outer wing is 34 cm of quill on a 58 cm hand, which is the proportion
+   * that makes a wing tip look slotted rather than blunt.
+   *
+   * ── AND ITS ONE VERB IS A STOOP ─────────────────────────────────────────
+   *
+   * `pounce`, which is the shipped BEAST_MOVES row that commits its landing
+   * point 0.55 s into the wind-up and arrives at 0.95 — a dive, decided in
+   * advance, that a player can step out of. It is the only row in the table
+   * whose shape is already a stoop, and the archetype prices it at damage that
+   * staggers rather than kills (see COMPANION_UNITS). No second verb: a body
+   * this size with no jaw has nothing else to do.
+   */
+  hawk: {
+    /* Dark above and pale below — countershading, which is what every bird of
+     * prey is coloured and the only reason one is hard to see against ground
+     * and easy against sky. `belly` is the palest value in this table.
+     *
+     * `hide` was 0x4c4238 and is 0x6f5f4a, which is a RENDER and not a taste:
+     * at the darker value the whole animal came back as one black blob in the
+     * hangar's own light, with the pale coverts the plumage treatment lays
+     * over it invisible against it. The countershading only reads if the dark
+     * half is a colour rather than an absence. */
+    hide: 0x6f5f4a, plate: 0xc9bda2, belly: 0xf0e7d3, eye: 0xf2b21c,
+    /* THE BODY IS A TEARDROP AND NOT A BALL, and the first build was a ball:
+     * `girth` 0.13 with a 1.40 shoulder swell is a 36 cm barrel on a 52 cm
+     * trunk, which rendered as a fat mammal with wings on. A hawk's body is
+     * about a fifth of its own length across. 0.095 on a 0.64 trunk is 27 cm
+     * over 64, and the keel carries the depth the width no longer has. */
+    hip: 0.30, trunk: [0.04, -0.12, 0.64], pitch: 0.06, girth: 0.095,
+    swells: [[0.64, 0.44, 0.26], [0.20, 0.10, 0.24]],
+    section: { n0: 2.2, n1: 2.6, back: 0.02, keel: 0.26, waist: 0.06 },
+    /* A SHORT S-NECK CARRIED UP. `nPitch` 0.42 is the steepest in the table
+     * (the varactyl's 0.62 is the only steeper one and it is a long neck) and
+     * `nCurl` −0.30 turns it back over so the head finishes level and forward
+     * — which is the S every bird's neck is, done in two segments. */
+    headAt: [0.15, 0.44], neck: [2, 0.070, 0.070, 0.40, -0.28], head: 'beak',
+    back: 'plumage', tail: [0, 0, 0, 0, 0],
+    /* `z` 0.36 IS THE SHOULDER AND IT WAS -0.04, WHICH WAS THE TAIL.
+     * `creatureSkeleton` places a wing root in the BODY BONE's frame, where +Y
+     * is up the animal and +Z is forward along the trunk — the same frame
+     * `headAt` uses, and the head sits at 0.46. At -0.04 the wings left the
+     * body four centimetres BEHIND its own origin, which is the tail end: seen
+     * from above the animal was an arrow with a flight at the back of it. 0.36
+     * is over the shoulder swell (`swells` puts the mass at 0.64 of a 0.64 m
+     * trunk), which is where a flying body's wings have to be or its centre of
+     * mass is behind its own lift. */
+    /* `chord` 0.44 AND NOT 0.34: seen from above at 0.34 the wing was a ROPE —
+     * a 5.6 cm spar with 12 cm of feather behind it on a 1.2 m semi-span, so
+     * the eye read the leading edge and nothing else. A soaring bird runs
+     * about 4:1 span to chord and this is 5.5:1, which is still a long thin
+     * wing and is now a SURFACE. */
+    wings: { x: 0.09, y: 0.07, z: 0.36, arm: 0.62, fan: 0.58, chord: 0.44,
+      rest: [0.88, 0.24, -0.40], fanRest: [0.94, 0.06, -0.34] },
+    limbs: [
+      /* ONE PAIR, SHORT, AND FOLDED. 0.16 + 0.18 of leg on a 0.52 body is the
+       * shortest limb-to-trunk ratio in the file; `girth` 0.55 is the thinnest.
+       * `plant` and `pole` are written down and are never read — `tuck` means
+       * `stanceOf` never reaches them — and they are here rather than deleted
+       * because they are what a future flightless variant of this plan would
+       * need, and a row that is silently a different shape from every other row
+       * in the table is how the next reader gets caught. */
+      { role: 'leg', x: 0.06, y: -0.03, z: 0.02, plant: 0.10, femur: 0.13, tibia: 0.15, tarsus: 0.075,
+        girth: 0.50, pole: [0.16, 0.20, 0.50], foot: 'raptor',
+        /* TRAILING, NOT HANGING. The first pair pointed the femur back and the
+         * tibia FORWARD again, which is a folded landing gear and rendered as
+         * two stilts under the animal. Both segments now go back and down, so
+         * the whole leg lies along the belly and the talons finish under the
+         * tail — which is where a bird in cruise carries them. */
+        femurRest: [0.12, -0.66, -0.74], tibiaRest: [0.02, -0.84, -0.54] },
+    ],
+    step: 0.20, lift: 0.10, rear: 0.16,
+    /* RAKE AT PHASE 1 AND SWEEP AT 2, on the same argument as the blurrg's and
+     * with the bird's own anatomy deciding which. A raptor's two weapons are
+     * the stoop and the talons, so `pounce` and `rake` are one animal rather
+     * than a verb and a filler; `sweep` at phase 2 is the wing buffet, and it
+     * is the widest reach in the table at 1.15, which is what a two-and-a-half
+     * metre span is FOR. One phase-1 verb was a bird that did the same thing
+     * from full health to nearly dead. */
+    moves: ['pounce', 'rake', 'sweep'],
+  },
+
 };
 
 /**
@@ -8624,11 +10216,35 @@ export const CREATURE_PLANS = {
  * above the floor instead — nearly all of it for a leg that comes down on a
  * point or a hoof, a third for a plantigrade sole that lies flat.
  */
-const ANKLE_UP = { spike: 0.90, claw: 0.86, hoof: 0.84, paw: 0.30, talon: 0.30 };
+const ANKLE_UP = { spike: 0.90, claw: 0.86, hoof: 0.84, paw: 0.30, mitt: 0.30, talon: 0.30, raptor: 0.62 };
 
+/**
+ * ── AND A BODY MAY PUBLISH NO LIMBS AT ALL, WHICH IS `tuck` ───────────────
+ *
+ * `_poseWalker` walks `ST.limbs` and IKs `femur{i}`→`tibia{i}` onto the FLOOR:
+ * `foot.y = terrain(x, z) + L.ankle`. That is the right solve for everything
+ * else in this table and it is exactly wrong for a body that is never on the
+ * floor. Measured on the hawk before this line: at the cruise altitude of
+ * 5.6 m the solve asks for a foot five and a half metres below a 34 cm leg,
+ * `solveIK` clamps the chain straight, and the animal flies with two rigid
+ * spikes hanging out of it pointing at the ground — the same defect
+ * `Enemy._poseJetLegs` was written for on the humanoid side, one pose path
+ * over.
+ *
+ * `tuck` says the legs hold their REST POSE and nothing solves them, so the
+ * plan's `femurRest`/`tibiaRest` ARE the pose: authored folded, they are a
+ * bird's undercarriage carried up under the tail. The bones still exist, still
+ * carry their talons, are still priced by `severance` and are still in the
+ * blade's contact set — only the IK is gone, and it is gone because there is
+ * no ground under this body to solve against.
+ *
+ * It is the same zero-limb stance the astromech publishes for a completely
+ * different reason (it has no walking legs at all), which is why this is a
+ * property of the stance and not a special case anywhere in `Enemy`.
+ */
 function stanceOf(S, P) {
   const limbs = [];
-  for (const L of P.limbs) {
+  for (const L of (P.tuck ? [] : P.limbs)) {
     for (const side of [1, -1]) {
       limbs.push({
         arm: L.role === 'arm',
@@ -8638,7 +10254,13 @@ function stanceOf(S, P) {
         pole: [L.pole[0] * S * side, L.pole[1] * S, L.pole[2] * S],
         hand: L.hand ? [L.hand[0] * S * side, L.hand[1] * S, L.hand[2] * S] : null,
         // a plantigrade sole lies along the ground; a hoof or a point drops
-        toe: L.foot === 'paw' || L.foot === 'talon' ? 0.75 : 0.30,
+        /* A plantigrade sole lies along the ground; a hoof or a point drops.
+         * `mitt` is `paw` with the claws sheathed (see buildFootFor) and is
+         * therefore the same sole and the same ankle — spelling it out in
+         * both tables rather than letting it fall through `?? 0.5` and the
+         * ternary's else, which would stand the tooka on its toes at a
+         * fifteenth of a millimetre's difference nobody would ever find. */
+        toe: L.foot === 'paw' || L.foot === 'mitt' || L.foot === 'talon' ? 0.75 : 0.30,
       });
     }
   }
@@ -8663,8 +10285,25 @@ export function buildQuadruped(opts = {}) {
   const hide = hideMat(opts.hide ?? P.hide, 0.92);
   const plate = chitinMat(opts.plate ?? P.plate, 0.52);
   const belly = hideMat(opts.belly ?? P.belly, 0.94);
-  const eye = emissiveMat(opts.eye ?? P.eye, 2.8);
+  const eye = eyeMat(opts.eye ?? P.eye, 2.8);
   const tooth = boneMat(0xd6cbb0, 0.34);
+  /**
+   * THE PUPIL, and it is the cheapest character in the file.
+   *
+   * Every creature's eye is one `emissiveMat` sphere, and an emissive under
+   * the cel program solves to a SINGLE FLAT COLOUR — so what the player sees
+   * is a coloured disc with no centre and no direction, which is the one
+   * feature that decides whether an animal is looking at him. A dark bead
+   * standing 15% proud of that disc gives it a pupil, and because it is
+   * offset FORWARD along the head's own +Z it also gives it a gaze: the eye
+   * reads as aimed the way the muzzle is.
+   *
+   * One material, so one extra merged mesh on the head bone and nothing
+   * anywhere else. `hideMat` and not `emissiveMat`: a pupil that glows is a
+   * headlight, which is exactly the mistake the tauntaun's row spends a
+   * paragraph refusing for the iris.
+   */
+  const pupil = hideMat(0x140f0b, 0.30);
 
   /* ── the trunk ──
    * ONE lathe, laid along the animal's spine and reshaped by a superellipse
@@ -8680,6 +10319,51 @@ export function buildQuadruped(opts = {}) {
   // lifts the front of it — 1.02 rad stands the rancor up.
   const trunkRot = [Math.PI / 2 - P.pitch, 0, 0];
   const trunkParts = [[spine, [0, 0, 0], trunkRot]];
+
+  /**
+   * ── WHERE THE ANIMAL'S SURFACE ACTUALLY IS ───────────────────────────
+   *
+   * Every dorsal and flank feature below used to be placed at a CONSTANT
+   * standoff from the spine axis — `0.12 * S` above it for the ridge,
+   * `p[1] + 0.32 * S` for the scutes, `R * 0.92` sideways for the ribs — and
+   * the trunk is a superellipse lathe with two gaussian swells on it, so the
+   * surface is nowhere near constant. Measured on the massiff, whose shoulder
+   * swell is +30%: the ribs stand 4 cm proud of the flank at the waist and
+   * 3 cm inside it over the shoulder, and the ridge is buried to the gums at
+   * both ends of the back and only shows over the middle third. That is the
+   * complaint's second line exactly — plates that do not follow the back's
+   * curve, reading as cardboard glued on rather than as bone growing out.
+   *
+   * The file already answers this question for helmets, visors and vents, and
+   * the answer is `surfacePoint`: fire a ray from the axis and take the point
+   * where it leaves the hull. So this asks the lathe. `t` runs 0→1 along the
+   * body and `phi` is the azimuth from straight up — 0 is the spine, ±π/2 the
+   * flank, ±π the belly — and `sink` pushes the seat back INTO the hide so a
+   * scute is set into the back rather than balanced on it.
+   *
+   * IT PROBES `spine` IN THE LATHE'S OWN FRAME AND ROTATES THE ANSWER, rather
+   * than probing the assembled trunk. The lathe is authored +Y along the body
+   * and `trunkRot` is a rotation about X by (π/2 − pitch), which takes lathe
+   * −Z to the animal's up — so "up" is a fixed direction in lathe space
+   * whatever the plan's pitch is, and one probe serves a level massiff and a
+   * reared rancor with no branch. Rotating a point is three multiplies;
+   * re-probing an assembled, rotated hull would need the ray rotated instead
+   * and would pick up whatever else had been merged into it by then.
+   */
+  const _hullO = new THREE.Vector3(), _hullD = new THREE.Vector3(), _hullP = new THREE.Vector3();
+  const hull = (t, phi, sink = 0) => {
+    _hullD.set(Math.sin(phi), 0, -Math.cos(phi));
+    _hullO.set(0, clamp(t, 0, 1) * L, 0);
+    const p = surfacePoint(spine, _hullD, _hullO, _hullP, true) || _hullO;
+    const cs = Math.cos(P.pitch), sn = Math.sin(P.pitch);
+    const x = p.x - _hullD.x * sink, y = p.y - _hullD.y * sink, z = p.z - _hullD.z * sink;
+    return [x, y * sn - z * cs, y * cs + z * sn];
+  };
+  /** The outward normal at that seat, in the body bone's frame. */
+  const hullN = (phi) => {
+    const cs = Math.cos(P.pitch), sn = Math.sin(P.pitch);
+    return [Math.sin(phi), Math.cos(phi) * cs, -Math.cos(phi) * sn];
+  };
   /* The dorsal structure goes in the PRIMARY for the plated animals and only
    * for them: `Enemy._measurePlatform` measures a rideable deck as the
    * highest vertex inside the middle 60% of the hull, and asserts (in
@@ -8687,13 +10371,82 @@ export function buildQuadruped(opts = {}) {
    * so on a body that carries a rider the ridge has to be part of the hull it
    * is measured against, not a second mesh standing over it. */
   if (P.back === 'ridge') {
-    const n = 7;
+    /* SEATED ON THE BACK, AND THEREFORE ON THE BACK'S CURVE. The old line
+     * stood every spine at 0.12·S above the spine AXIS; the massiff's hull is
+     * 0.24·S over the loin and 0.31·S over the shoulder swell, so the middle
+     * spines showed a third of themselves and the two at each end were
+     * entirely inside the animal. The plan row says "a ridge of spines from
+     * the crown to the tail root" and the build delivered four bumps over the
+     * ribs.
+     *
+     * `h` is 0.62 of what it was because the seat changed: what the player
+     * sees is the part standing OUT of the hide, the old burial was an
+     * accident of the swell profile, and 0.62 with a deliberate 0.25·h root
+     * inside the skin puts the tallest spine within a few millimetres of the
+     * height it used to reach — while the eleven others, which used to be
+     * invisible or nearly so, now show. Nothing about the outline's PEAK
+     * moves; what arrives is the line between the peaks. */
+    const n = 9;
     for (let i = 0; i < n; i++) {
       const t = i / (n - 1);
-      const y = Math.cos(P.pitch) * (0.12 + t * 0.02) * S + Math.sin(P.pitch) * (t - 0.1) * L;
-      const z = Math.cos(P.pitch) * (t - 0.1) * L - Math.sin(P.pitch) * 0.12 * S;
-      const h = (0.30 - Math.abs(t - 0.55) * 0.26) * S;
-      trunkParts.push([clawGeo(h, 0.075 * S, 0.012 * S, -0.45, 5, 3), [0, y, z], [0.55 - t * 0.9 - P.pitch, 0, 0]]);
+      const h = (0.30 - Math.abs(t - 0.55) * 0.26) * S * 0.62;
+      trunkParts.push([clawGeo(h, 0.070 * S, 0.011 * S, -0.45, 5, 3),
+        hull(0.06 + t * 0.88, 0, h * 0.25), [0.55 - t * 0.9 - P.pitch, 0, 0]]);
+    }
+  } else if (P.back === 'folds') {
+    /**
+     * ROLLS OF LOOSE HIDE ACROSS THE SPINE — the SECOND treatment that goes
+     * into the primary, and the reason there had to be one.
+     *
+     * `ridge` above is in the primary because a rideable animal's deck is
+     * measured off the body bone's `parts` and the Kit-baked outline is not in
+     * them (see its own note). That made it the only treatment a mount could
+     * wear, and so all three mounts and both brutes were reaching for the same
+     * nine spikes: the blurrg carried the rancor's sawtooth over the rancor's
+     * head, and the rancor pup carried both as well. One primary treatment is
+     * not a dorsal vocabulary, it is a default with a comment on it.
+     *
+     * A FOLD IS THE OPPOSITE STATEMENT TO A SPINE and that is the whole point
+     * of building it. A spine is armour and threat, aimed OUT along the hull
+     * normal and read as a serrated edge against the sky. A fold is weight:
+     * loose hide gathered ACROSS the back where a heavy animal's skin bunches,
+     * lying flat, and read as a soft banded line. Five of them rather than
+     * nine, so the eye counts bands and not teeth.
+     *
+     * SEATED ON THE HULL AND SWEPT ACROSS IT, which is the one thing that
+     * makes it work at all: each fold is a tapered tube through nine points
+     * ON the surface from φ −1.25 to +1.25 — over the spine and down both
+     * flanks — so it follows the barrel's own curve instead of standing on a
+     * chord of it. The section is `(0.014 + 0.040·cos) · S · thick`, so each
+     * roll is fattest over the spine and fines to a quarter of that at the
+     * flanks, and the whole thing is sunk 0.030·S — which leaves between 1.0
+     * and 3.8 cm of scale standing out of the skin at the crown and nothing at
+     * all standing out at the ends. That is a crease, which is what it should
+     * be; a fold you can see under is a hoop.
+     *
+     * THICKEST OVER THE SHOULDER — 1.25× at the head end against 0.75× at the
+     * tail — because that is where a two-legged animal carrying its barrel out
+     * in front of the only two feet it has actually gathers, and because the
+     * shoulder is the part a rider is looking down at.
+     *
+     * Five swept tubes at six sides is a few hundred triangles on a body that
+     * weighs 6 396 against a 13 000 cap, and it is merged into the trunk mesh
+     * that was being assembled anyway, so the mesh count does not move at all
+     * — the blurrg is 25 meshes before and after.
+     */
+    const n = 5;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const thick = 0.75 + t * 0.50;
+      const nodes = [];
+      for (let j = 0; j < 9; j++) {
+        const u = j / 8;
+        const phi = (u * 2 - 1) * 1.25;
+        const r = (0.014 + 0.040 * Math.cos((u * 2 - 1) * Math.PI * 0.5)) * S * thick;
+        const p = hull(0.20 + t * 0.62, phi, 0.030 * S);
+        nodes.push([p[0], p[1], p[2], r]);
+      }
+      trunkParts.push([tubeGeo(nodes, 6, { tip: 0.1 }), [0, 0, 0]]);
     }
   }
   const bm = mesh(assemble(trunkParts, 'trunk'), hide, body.obj);
@@ -8706,11 +10459,26 @@ export function buildQuadruped(opts = {}) {
   const ks = new Kit();
   const fwd = (t) => [0, Math.sin(P.pitch) * t * L + 0.10 * S, Math.cos(P.pitch) * t * L];
   if (P.back === 'scutes') {
-    // low bony bosses down the spine, biggest over the shoulder
-    ks.row(6, (i, t) => {
-      const p = fwd(t * 0.92 - 0.02);
-      ks.add(plate, plateGeo((0.52 - Math.abs(t - 0.72) * 0.34) * S, 0.10 * S, 0.20 * S, 0.03 * S, 1),
-        [0, p[1] + 0.32 * S, p[2]], [0.08 - P.pitch, 0, 0]);
+    /* LOW BONY BOSSES DOWN THE SPINE, biggest over the shoulder — and they
+     * are BOSSES now rather than slabs. `plateGeo` is a rounded cuboid, so
+     * six of them laid at a fixed 0.32·S above the axis with a fixed pitch
+     * rotation are six cards standing on a curved back: each one meets the
+     * hide along one edge and lifts clear of it along the other, and the gap
+     * is the thing the eye reads. A scute is a swelling of the same skin, so
+     * this is a squashed ellipsoid, seated by `hull` and aimed down the
+     * surface's own normal, sunk 40% of its own depth into the hide. The
+     * width curve is the old one halved, because these are half-widths.
+     *
+     * They stay OUT of the primary, which is deliberate and is the one thing
+     * that separates this treatment from `ridge` above: `_measurePlatform`
+     * takes a rideable deck off the primary hull, and the varactyl is ridden.
+     * A saddle that sat on top of the scutes would be a saddle 10 cm above
+     * the animal. */
+    ks.row(7, (i, t) => {
+      const w = (0.26 - Math.abs(t - 0.72) * 0.17) * S;
+      const at = 0.04 + t * 0.88;
+      ks.aim(plate, new THREE.SphereGeometry(1, 9, 7), hull(at, 0, 0.038 * S), hullN(0),
+        [w, 0.095 * S, 0.115 * S]);
     });
   } else if (P.back === 'mane') {
     /* THE MANE, and it is the nexu's whole read at range. Quills raked back
@@ -8727,37 +10495,283 @@ export function buildQuadruped(opts = {}) {
      * edge — so the shag is authored as tapered clumps standing off the
      * flanks and the shoulders rather than as a texture, which is the one
      * thing that survives being a silhouette. */
+    /* SIX SIDES AND THREE RINGS, and it is the massiff's fang argument applied
+     * to the thing that argument was never carried to. That note reads: "at
+     * rings 2 it is two prisms end to end — the rendered massiff has a
+     * mouthful of flat white wedges. Three rings on the same bend is a curve;
+     * six sides round the shaft is the difference between a tooth and a
+     * shard." A shag clump is the same geometry at four times the size and it
+     * was still at (5, 2), so every clump was a flat card: rendered on the
+     * tauntaun they read as loose white quads standing off the shoulders,
+     * which is the "janky garbage" complaint in one shape. The count of clumps
+     * and every position is untouched — this is the same coat, curved. It
+     * costs 14 triangles a clump on fourteen clumps, which `frame-budget`
+     * measures and passes. */
     ks.row(4, (i, t) => ks.pair((sx) => {
       const p = fwd(0.10 + t * 0.80);
-      ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 5, 2),
+      ks.add(hide, clawGeo((0.30 + t * 0.12) * S, 0.11 * S, 0.02 * S, 0.5, 6, 3),
         [sx * (0.30 + t * 0.10) * S, p[1] + 0.10 * S, p[2] - 0.06 * S], [1.9, 0, sx * (0.9 - t * 0.4)]);
     }));
     ks.row(3, (i, t) => ks.pair((sx) => {
       const p = fwd(0.74 + t * 0.20);
-      ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 5, 2),
+      ks.add(hide, clawGeo(0.34 * S, 0.12 * S, 0.02 * S, 0.4, 6, 3),
         [sx * 0.34 * S, p[1] + 0.24 * S, p[2]], [2.3, 0, sx * 1.25]);
     }));
+  } else if (P.back === 'down') {
+    /**
+     * THE UNDERCOAT — the fifth dorsal treatment, and the only one that is
+     * not trying to break the animal's outline UP.
+     *
+     * The other four are all armour or threat: a `ridge` of spikes, bony
+     * `scutes`, a raked `mane`, and `shag` — which is a wampa's coat and is
+     * authored as fourteen clumps standing 0.30-0.34·S off the flanks at
+     * x = ±(0.30…0.44)·S. On a 0.46-girth wampa that is a fringe hanging just
+     * outside the shoulder. On the tooka, whose girth is 0.26 and whose hull
+     * half-width therefore peaks near 0.22·S, the SAME fourteen clumps stand
+     * 0.12·S clear of the skin with daylight under them — rendered
+     * (`tools/_soft.mjs`, side and top) they are a row of hard pale wedges
+     * along the spine and over the haunch, and they are most of the reason a
+     * kitten reads as an armoured beetle. The player's word for it was
+     * "squat armoured lump".
+     *
+     * Three differences, and each one is the same decision in a different
+     * place: FUR LIES DOWN.
+     *
+     *   IT IS SEATED ON THE HULL, not at a constant offset from the spine
+     *   axis. `hull()` and `hullN()` are already here for the scutes and the
+     *   ribs and the argument is identical — the trunk is a superellipse
+     *   lathe with two gaussian swells on it, so a fixed x is inside the
+     *   animal over the shoulder and outside it at the waist. A clump you can
+     *   see under is a card; a clump growing out of the skin is a coat.
+     *
+     *   IT IS RAKED AFT AND NOT AIMED OUT. `aim` along the hull normal is the
+     *   MANE's treatment — a quill standing off the back — and it is what
+     *   makes a coat read as spines. Mixing 0.55 of the normal with the
+     *   animal's own backward direction lays each clump down along the flank
+     *   at about 30° off the surface, which is what fur on a small mammal
+     *   does and is why the same geometry reads as soft here and as a crest
+     *   on the nexu.
+     *
+     *   IT IS MANY SMALL CLUMPS AND NOT A FEW BIG ONES. 0.18·S long against
+     *   shag's 0.30-0.34·S, and 28 of them against 14. A clump the eye can
+     *   resolve individually is a spike; a fringe it cannot is a texture, and
+     *   the outline is the only thing that survives at forty metres either
+     *   way. At (6, 3) — the sides and rings the massiff's fang argument
+     *   settled, carried here by the same reasoning — that is about 60
+     *   triangles a clump.
+     *
+     * AND THE RUFF IS THE HALF THAT DOES THE WORK ON A SMALL BODY. A kitten's
+     * head looks too big for it partly because there is a collar of longer
+     * fur behind the jaw; four clumps a side round the shoulder at φ 0.9-1.8
+     * put that collar on the silhouette, and they are the one place the coat
+     * is allowed to stand off the body — a ruff is fur that does NOT lie down.
+     */
+    const aft = [0, -Math.sin(P.pitch), -Math.cos(P.pitch)];
+    /** The hull normal at φ, laid back toward the tail by `1 - out`. */
+    const lie = (phi, out) => {
+      const n = hullN(phi);
+      return [n[0] * out + aft[0] * (1 - out), n[1] * out + aft[1] * (1 - out),
+        n[2] * out + aft[2] * (1 - out)];
+    };
+    ks.row(7, (i, t) => ks.pair((sx) => {
+      for (const [phi, len, out] of [[1.18, 0.19, 0.30], [1.62, 0.17, 0.26]]) {
+        const at = 0.08 + t * 0.78;
+        ks.aim(hide, clawGeo(len * S, 0.055 * S, 0.007 * S, 0.5, 6, 3),
+          hull(at, sx * phi, 0.035 * S), lie(sx * phi, out));
+      }
+    }));
+    ks.row(6, (i, t) => ks.pair((sx) => {
+      const phi = 0.60 + t * 1.25;
+      ks.aim(hide, clawGeo((0.23 - t * 0.04) * S, 0.105 * S, 0.030 * S, 0.45, 6, 3),
+        hull(0.90, sx * phi, 0.045 * S), lie(sx * phi, 0.52));
+    }));
+  } else if (P.back === 'plumage') {
+    /**
+     * FEATHER, AND IT IS A DORSAL TREATMENT BECAUSE THAT IS WHERE A BIRD'S
+     * OUTLINE IS.
+     *
+     * `shag` above is the closest shipped thing and it is the wrong shape for
+     * this: a wampa's coat is CLUMPS standing off the flanks — deliberately
+     * ragged, because fur breaking the edge is what it is for — and plumage is
+     * the opposite. Feathers lie DOWN and OVERLAP, and the read is a smooth
+     * back with a scalloped trailing edge, so these are broad flat vanes laid
+     * along the hull with `hull()` and `hullN()`, seated the way the scutes are
+     * seated and for the scutes' stated reason: a feather that stood at a
+     * constant standoff from the spine axis would be buried over the shoulder
+     * swell and floating over the loin.
+     *
+     * THE TAIL FAN IS HERE AND NOT IN `P.tail`, and that is the one thing worth
+     * arguing about. `P.tail` builds ONE SWEPT TUBE — a rope of flesh, which is
+     * what a massiff, a nexu and a varactyl have. A bird's tail is not a tube
+     * at all: it is a fan of rectrices with no core in it, and it is the second
+     * biggest shape on the animal from below. So the plan carries `tail: [0,…]`
+     * (no tube) and the fan is built here, out of the same vanes, spread over
+     * 1.5 rad about the tail root. Eleven feathers, one merged mesh, tagged
+     * silhouette with the rest.
+     */
+    /**
+     * ONE `aim` PER FEATHER, AND THE REFERENCE AXIS IS WHAT MAKES IT LIE FLAT.
+     *
+     * `Kit.aim` puts a part's local +Y along `dir` and takes its ROLL from
+     * `ref` (see `aimY`: x = ref × dir, z = x × dir). A vane authored as
+     * width-on-X, length-on-Y, thickness-on-Z therefore comes out lying along
+     * `dir` with its flat face square to `ref` — so passing the hull's own
+     * normal as the reference is what seats a feather ON the back rather than
+     * standing it on edge, and it costs nothing that `aim` was not already
+     * doing. The two-argument mistake here is easy and silent: `aim` with the
+     * normal as the DIRECTION plants every feather sticking straight out of
+     * the animal like a quill, which is the mane's treatment and not this one.
+     */
+    const vane = (w, len, thin) => { const g = new THREE.SphereGeometry(1, 7, 5); g.scale(w, len, thin); return g; };
+    /* AND THE REFERENCE HAS TO BE A `Vector3`, WHICH THE DIRECTION DOES NOT.
+     * `Kit.aim` converts a plain `[x,y,z]` DIRECTION for you and says so in its
+     * own note — and then hands `ref` straight to `aimY`, which does
+     * `Vector3.copy(ref)`. Copying an array yields NaN silently, the NaN goes
+     * into the merged geometry, and the whole body's bounding sphere comes back
+     * NaN — which is how this was found: every mesh on the trunk bone, 3888
+     * NaN floats of 4656, on a build that threw nothing. */
+    const V = (a) => new THREE.Vector3(a[0], a[1], a[2]);
+    // straight back down the spine, whatever the plan's pitch is
+    const aft = [0, -Math.sin(P.pitch), -Math.cos(P.pitch)];
+    const behind = (p, len) => [p[0] + aft[0] * len * 0.5, p[1] + aft[1] * len * 0.5, p[2] + aft[2] * len * 0.5];
+    // the mantle: coverts down the back, longest over the shoulder
+    ks.row(5, (i, t) => ks.pair((sx) => {
+      const phi = sx * (0.30 + t * 0.34);
+      const len = (0.30 - t * 0.10) * S;
+      ks.aim(plate, vane(0.085 * S, len, 0.009 * S),
+        behind(hull(0.14 + t * 0.74, phi, 0.020 * S), len), aft, null, V(hullN(phi)));
+    }));
+    // …and the scapulars, higher and shorter, closing the line into the wing root
+    ks.row(3, (i, t) => ks.pair((sx) => {
+      const phi = sx * (0.10 + t * 0.14);
+      const len = 0.20 * S;
+      ks.aim(plate, vane(0.070 * S, len, 0.009 * S),
+        behind(hull(0.46 + t * 0.30, phi, 0.024 * S), len), aft, null, V(hullN(phi)));
+    }));
+    /* THE BREAST AND THE FLANK, in `belly` — the pale half of the
+     * countershading, and the only place in this treatment where that colour
+     * is used at all. Without it the animal is one brown value from the keel
+     * to the shoulder and the whole lower half of the side view is a smooth
+     * sausage; with it the body has a waterline. Seated at 1.9-2.4 rad from
+     * the spine, which is the flank turning under into the keel. */
+    ks.row(5, (i, t) => ks.pair((sx) => {
+      const phi = sx * (1.90 + t * 0.46);
+      const len = (0.13 - t * 0.03) * S;
+      ks.aim(belly, vane(0.048 * S, len, 0.008 * S),
+        behind(hull(0.14 + t * 0.66, phi, 0.022 * S), len), aft, null, V(hullN(phi)));
+    }));
+    /**
+     * THE FAN, and the reference here is UP rather than a surface normal:
+     * eleven rectrices spread about the tail root in ONE horizontal plane, so
+     * every one of them wants its flat face square to the animal's own up.
+     * `0.30 − |u|·0.10` is the wedge — longest down the middle, shortest at the
+     * edges — which is a hawk's tail and not a duck's square one, and 0.75 rad
+     * of half-spread is a tail carried closed the way a bird in level cruise
+     * carries it. It is the second largest shape on this animal from below,
+     * which is the angle a player standing under it is looking from.
+     */
+    const root = fwd(-0.04);
+    const up = [0, Math.cos(P.pitch), -Math.sin(P.pitch)];
+    ks.row(11, (i, t) => {
+      const th = (t * 2 - 1) * 0.75;
+      const len = (0.30 - Math.abs(t * 2 - 1) * 0.10) * S;
+      const dir = [Math.sin(th), Math.cos(th) * aft[1], Math.cos(th) * aft[2]];
+      /* BARRED, which is one `%` and is the difference between a tail and a
+       * doily. All eleven in `plate` came back as a solid white fan under the
+       * level's own light — the brightest thing on the animal and the first
+       * thing the eye went to, on the piece that is meant to be read as SHAPE.
+       * Alternating them against the hide is what every reference raptor's
+       * tail does and it costs nothing: the Kit merges per material, so it is
+       * the same two meshes either way. */
+      ks.aim(i % 2 ? hide : plate, vane(0.042 * S, len, 0.008 * S),
+        [root[0] + dir[0] * len * 0.5, root[1] + dir[1] * len * 0.5, root[2] + dir[2] * len * 0.5],
+        dir, null, V(up));
+    });
   }
   /* THE TAIL, on the body bone because the skeleton has no tail chain, swept
    * as ONE tube rather than as a chain of capped limbs — six capped segments
    * bury five pairs of end caps inside themselves, which is 60% of the
    * triangles on geometry nobody can see (see tubeGeo). */
   if (P.tail[0] > 0) {
+    /**
+     * ── AND IT IS RESAMPLED, FOR THE NECK'S REASON AND NOT A NEW ONE ────
+     *
+     * `tubeGeo` interpolates nothing: it puts one ring at each node and joins
+     * them with flat quads. `P.tail[0]` is a count of SEGMENTS — 3 on the
+     * massiff, 4 on the varactyl — so a three-segment tail was four rings on
+     * a polyline that turns 0.10 rad at each of them, which is a chain of
+     * short prisms with a visible crease at every joint. The complaint calls
+     * it "a chain of visibly hard cubes" and at seven radial segments and
+     * four rings that is very nearly literally what it was.
+     *
+     * Same fix the neck already carries thirty lines down: at least three
+     * rings a segment, walked along the SAME arc — the total turn is still
+     * `curl * n` and the total length still `reach * S`, both spread over the
+     * finer step — so a plan's tail arrives where its author put it. The
+     * radius law is the old one written continuously: at u = i/n it is
+     * identically `r0 * S * (1 - i / (n + 1.2))`, so no tail changes girth.
+     *
+     * The ring goes to 9 from 7 because a tail is a cylinder seen against the
+     * sky from the side, where a 7-gon shows its facets on the top edge, and
+     * because tubeGeo carries no duplicated seam column — two more columns is
+     * two more vertices a ring and nothing else.
+     */
     const [n, reach, r0, pitch0, curl] = P.tail;
+    const RT = Math.max(5, n * 3 + 1);
     const nodes = [];
     let y = 0.06 * S, z = -0.06 * S, a = pitch0;
-    const seg = (reach * S) / n;
-    for (let i = 0; i <= n; i++) {
-      nodes.push([0, y, z, r0 * S * (1 - i / (n + 1.2))]);
-      z -= Math.cos(a) * seg; y += Math.sin(a) * seg; a += curl;
+    const step = (reach * S) / (RT - 1);
+    for (let i = 0; i < RT; i++) {
+      const u = i / (RT - 1);
+      nodes.push([0, y, z, r0 * S * (1 - (u * n) / (n + 1.2))]);
+      z -= Math.cos(a) * step; y += Math.sin(a) * step; a += (curl * n) / (RT - 1);
     }
-    ks.add(hide, tubeGeo(nodes, 7), [0, 0, 0]);
+    ks.add(hide, tubeGeo(nodes, 9), [0, 0, 0]);
   }
-  // ribbed flanks and a soft belly — the one place a blade meets flesh
+  /**
+   * ── RIBBED FLANKS, AND THEY ARE RIBS NOW ───────────────────────────────
+   *
+   * This was four `plateGeo` slabs a side at a FIXED `x = ±R * 0.92`, and it
+   * is the worst-looking thing on the animal — the rendered massiff shows
+   * four pale rectangles floating clear of its shoulder like luggage labels.
+   * Two faults compound:
+   *
+   *   R IS THE PLAN'S GIRTH AND NOT THE ANIMAL'S WIDTH. The lathe is
+   *   superellipse-sectioned and carries two gaussian swells; on the massiff
+   *   the hull runs 0.72·R at the loin to 1.30·R over the shoulder. One x for
+   *   all four puts the front pair well outside the skin and the back pair
+   *   well inside it, and a rib you can see daylight under is a sticker.
+   *
+   *   A RIB IS NOT FLAT AND IT IS NOT VERTICAL. It leaves the spine, wraps
+   *   the barrel and turns under toward the sternum, and it tapers the whole
+   *   way. A 0.34·S tall slab hung on the widest point of the flank is a
+   *   cross-section of that, drawn as a card.
+   *
+   * So each one is a tapered tube through five points ON the hull, from just
+   * beside the spine (φ 0.55) to under the flank (φ 2.10), sunk far enough
+   * that only the crown of it stands out of the hide. It costs about 60
+   * triangles a rib against the slab's 12, which on a body that runs 4–6k
+   * against a 13k cap is the cheapest legibility in the file.
+   */
   ks.pair((sx) => ks.row(4, (i, t) => {
-    const p = fwd(0.12 + t * 0.66);
-    ks.add(plate, plateGeo(0.05 * S, 0.34 * S, 0.15 * S, 0.02 * S, 1),
-      [sx * R * 0.92, p[1] - 0.04 * S, p[2]], [0, 0, sx * 0.2]);
+    const at = 0.18 + t * 0.54;
+    const nodes = [];
+    for (let j = 0; j < 6; j++) {
+      const u = j / 5;
+      const phi = 0.80 + u * 1.30;
+      /* A BELL AND NOT A TAPER, and sunk almost to its own crown. A rib
+       * disappears under the spinal muscle at the top and under the sternum
+       * at the bottom, so a tube that is fattest in the middle and fines away
+       * at both ends leaves a raised band on the flank rather than a claw
+       * hanging off it — which is what the first pass of this looked like
+       * rendered: eight pale hooks down the animal's sides. `sink` at 0.048·S
+       * against a 0.040·S peak radius means only the top fifth of the tube
+       * ever leaves the hide. */
+      const r = (0.014 + 0.026 * Math.sin(Math.PI * u)) * S;
+      const p = hull(at, sx * phi, 0.048 * S);
+      nodes.push([p[0], p[1], p[2], r]);
+    }
+    ks.add(plate, tubeGeo(nodes, 6, { tip: 0.1 }), [0, 0, 0]);
   }));
   {
     const p = fwd(0.44);
@@ -8796,11 +10810,85 @@ export function buildQuadruped(opts = {}) {
       at1: clamp((at[1] + ax[1] * bLen) / (body.length || 1), 0, 1),
     });
   }
+  /**
+   * ── THE SADDLE BLANKET, AND IT IS A COLOUR CONTROL THAT PAINTED NOTHING ──
+   *
+   * `COMPANION_LOOK.mount` is `['hide', 'blanket']` and the three mounts wear
+   * it. `hide` reaches `hideMat` at the top of this function; the word
+   * `blanket` did not appear anywhere in this file. `Menu._companionDressHtml`
+   * drew the swatch row off the look table regardless, `Kennel.saneLook`
+   * persisted the pick, and `companionOptsFrom` faithfully turned the id into
+   * a hex that `buildQuadruped` then ignored — so a player dressing his
+   * tauntaun, blurrg or varactyl chose a colour, watched the game save it, and
+   * got the same animal back. Three dead controls, on the three kinds whose
+   * whole point is that you are ON them.
+   *
+   * WIRING IT WAS THE RIGHT ANSWER RATHER THAN SHORTENING THE ROW. The player
+   * asked to "customize their appearance to a degree", the mount rows are the
+   * SHORTEST in the look table already (two slots against the creature's four
+   * and the droid's four), and cutting `blanket` would leave a mount with one
+   * control — a hide colour — which is less customisation than a massiff has.
+   * More to the point a blanket is the one piece of kit a rider actually owns:
+   * it is the animal wearing something of YOURS.
+   *
+   * ── WHERE IT SITS, AND WHY THE ROW CARRIES A SPAN ────────────────────────
+   *
+   * `P.blanket` is `[colour, at0, at1, phi, lift]` — the plan's own default
+   * hue, the span down its spine in trunk fractions, how far round the barrel
+   * the hem falls in radians, and how far the cloth stands off the hide. It is
+   * per-plan because the three animals are not one shape: the tauntaun is a
+   * level barrel on stilts, the blurrg is a short one pitched 26° with the
+   * rider over the hips, and the varactyl is two and a half metres of lizard
+   * with bony scutes down the middle of exactly the stretch a pad would cover.
+   * A single shared span put the varactyl's pad on its neck.
+   *
+   * SEATED ON THE HULL, like the scutes, the ribs, the coat and the plumage,
+   * and for the reason all four of them give: the trunk is a superellipse
+   * lathe with two gaussian swells on it, so a fixed radius is inside the
+   * animal over the shoulder and floating over the loin. `lift` is the ONLY
+   * standoff, and it is a plan number because the varactyl's scutes stand
+   * 0.057·S proud of the same surface — a pad at the tauntaun's 0.03 would
+   * have bosses coming through it.
+   *
+   * THE CORNERS ARE PULLED IN. `1 - 0.16·(2u-1)²` narrows the two end stations
+   * to 84% of the span, which is a saddle pad's rounded corner and is what
+   * stops a rectangle of cloth reading as a placard taped to the animal.
+   *
+   * NOT IN THE PRIMARY, deliberately: `Enemy._measurePlatform` measures the
+   * rideable deck off the body bone's `parts` and the Kit-baked outline is not
+   * in them, so the deck stays the animal's own back and the rider sits ON the
+   * blanket rather than the blanket raising the seat by its own thickness.
+   */
+  if (P.blanket) {
+    const [bcol, at0, at1, bphi, lift] = P.blanket;
+    const cloth = clothMat(opts.blanket ?? bcol, 0.94, { repeat: 3.0 });
+    const NR = 6, NC = 9, rows2 = [], norms = [];
+    for (let i = 0; i < NR; i++) {
+      const u = i / (NR - 1);
+      const wide = bphi * (1 - 0.16 * (u * 2 - 1) ** 2);
+      const r = [], n = [];
+      for (let j = 0; j < NC; j++) {
+        const phi = ((j / (NC - 1)) * 2 - 1) * wide;
+        r.push(hull(at0 + u * (at1 - at0), phi, -lift * S));
+        n.push(hullN(phi));
+      }
+      rows2.push(r); norms.push(n);
+    }
+    ks.add(cloth, drapeGeo(rows2, norms, 0.014 * S), [0, 0, 0]);
+  }
   markSilhouette(ks.bake(body.obj));
 
   /* ── the head ── */
   const head = rig.get('head');
-  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth });
+  /* THE SHOULDER THE NECK COMES OUT OF, MEASURED. `headAt[1]` is the head
+   * bone's offset down the spine in plan units and `trunk[2]` is the spine's
+   * length in the same units, so their ratio is where along the lathe the
+   * neck leaves — and `hull` at a right angle to the spine there is the
+   * animal's own half-width at that station, swells and superellipse and all.
+   * See the neck's own note for what it is used for and what typing a number
+   * here instead cost. */
+  buildCreatureHead(rig, P, S, { hide, plate, belly, eye, tooth, pupil,
+    trunkR: Math.abs(hull(P.headAt[1] / P.trunk[2], Math.PI / 2)[0]) });
 
   /* ── the limbs ── */
   for (let i = 0; i < P.limbs.length * 2; i++) {
@@ -8817,6 +10905,49 @@ export function buildQuadruped(opts = {}) {
       m.userData.limb = { r0: rr0, r1: rr1, seg: 8 };
       b.parts.push(m); b.primary = m; b.radius = rr0;
     }
+    /**
+     * ── THE SHOULDER, AND THE HAUNCH ─────────────────────────────────────
+     *
+     * `hipL{i}` is a 0.10·S socket tube and that was the entire junction: a
+     * 5 cm pipe of chitin poking out of a lathe. Close up the leg meets the
+     * trunk along a hard circular seam with nothing spanning it — the
+     * complaint's fifth line — and the reason is that a real one is spanned
+     * by MUSCLE that belongs to neither piece. A deltoid and a gluteal wrap
+     * the joint from the body side and taper onto the limb.
+     *
+     * So: one hide-coloured ellipsoid on the socket bone, centred on the
+     * joint and elongated along the limb's own axis. The socket bone's +Y IS
+     * the limb direction — `creatureSkeleton` gives it `rest: [side, …]`, so
+     * it leaves the body sideways — and the bone's origin sits within a
+     * centimetre or two of the flank on every plan in the table, so a mass
+     * centred there is half inside the trunk and half standing out of it,
+     * which is what a deltoid is. No plan-specific offset and no sign to get
+     * wrong: the skeleton has already put the frame where it belongs. It
+     * rides `hipL` rather
+     * than `femur`, which is what makes it a shoulder rather than a pauldron:
+     * `_poseWalker` swings the femur and leaves the socket where the body
+     * put it, so the mass stays welded to the flank while the leg moves under
+     * it. On the femur it would swing out of the animal at the top of a
+     * stride.
+     *
+     * It is NOT tagged `silhouette`. Past thirty metres `_collectLodParts`
+     * keeps one mesh a bone, and at thirty metres a 12 cm shoulder is inside
+     * the trunk's own outline — this is a piece that only exists to close a
+     * seam nobody can see from there. Tagging it would buy a draw call per
+     * body for nothing, against the horns and crests that earn theirs.
+     *
+     * Sized off `girth`, which is the plan's own word for how heavy this limb
+     * is, so an acklay's spider leg gets a small one and a rancor's arm a
+     * large one out of a number that was already written down.
+     */
+    const socket = rig.get(`hipL${i}`);
+    if (socket) {
+      const k = new Kit();
+      const w = (arm ? 0.19 : 0.22) * S * g;
+      k.add(hide, new THREE.SphereGeometry(1, 9, 6), [0, socket.length * 0.10, 0], null,
+        [w, (arm ? 0.24 : 0.28) * S * g, w * 1.06]);
+      k.bake(socket.obj);
+    }
     const femur = rig.get(`femur${i}`);
     if (femur) {
       const k = new Kit(); const len = femur.length;
@@ -8827,13 +10958,146 @@ export function buildQuadruped(opts = {}) {
     const tarsus = rig.get(`tarsus${i}`);
     if (tarsus) {
       const k = new Kit(); const len = tarsus.length;
-      buildFootFor(k, L2.foot, plate, tooth, S, g, len);
+      buildFootFor(k, L2.foot, plate, tooth, hide, S, g, len);
       markSilhouette(k.bake(tarsus.obj));
     }
   }
+  /**
+   * ══ THE WINGS ══════════════════════════════════════════════════════════
+   *
+   * `creatureSkeleton` has built `wing{L,R}` and `wingTip{L,R}` off the plan's
+   * `wings` block and argued there for why they are not in `limbs[]`. This is
+   * the other half: something has to hang geometry on them, and NOTHING in the
+   * creature builder did — the limb loop above walks `P.limbs`, so a winged
+   * plan built four bones with no meshes on them. That is not a cosmetic gap.
+   * `Enemy.capsules` skips a bone with `!b.parts.length`, so an undressed wing
+   * is a wing the blade passes straight through, and `Flight.wingLift` — which
+   * is what makes one-wing consequence real — would then be measuring a chain
+   * nothing can ever cut.
+   *
+   * ── WHICH LOCAL AXIS IS "BACKWARD", AND IT IS NOT A GUESS ───────────────
+   *
+   * `Rig` builds every rest quaternion with `aimY(restDir, BACK)`. Measured on
+   * the hawk's own rest pair, that puts local +Z within 25° of the animal's
+   * forward on BOTH sides and local X along the (down on the left, up on the
+   * right) axis — and both frames come out right-handed, so the two are exact
+   * world MIRRORS of each other. Which means NOTHING here carries a per-side
+   * sign: the same local rotation on both bones is already symmetric in the
+   * world, and the `side * rake` the first build used raked the right wing's
+   * feathers forward and inboard while the left's went back and out. One wing
+   * a comb and one a wing.
+   *
+   * Authoring the chord on local X instead of Z is the other mistake and it is
+   * the expensive one: it builds a wing standing on edge, and it does it
+   * symmetrically, so it looks deliberate.
+   *
+   * ── FEATHERS AND NOT A MEMBRANE ─────────────────────────────────────────
+   *
+   * `buildGeonosian` puts one flattened ellipsoid on each wing bone and it is
+   * right for an insect: a membrane under tension is one surface. A bird's
+   * wing is a row of separate quills with air between them and a SCALLOPED
+   * trailing edge, and that edge is the entire difference between the two
+   * silhouettes at forty metres — which is the range the whole menagerie note
+   * above is about. Eleven vanes a side, merged by material into two meshes a
+   * bone by the Kit, so the cost is the same two draw calls the membrane pays.
+   *
+   * The coverts are `plate` and the flight feathers `hide`, which is the same
+   * two-tone the `plumage` back treatment uses: a pale shoulder over a dark
+   * wing is what a raptor seen from above actually is, and it is the only
+   * thing that stops a wing reading as one flat card.
+   */
+  if (P.wings) {
+    const W = P.wings;
+    const vane = (thin, w, len) => { const g = new THREE.SphereGeometry(1, 7, 5); g.scale(thin, w, len); return g; };
+    for (const side of [1, -1]) {
+      const LR = side > 0 ? 'L' : 'R';
+      for (const [name, n, c0, c1, rake0, rake1, cov] of [
+        // the arm: secondaries, short and square, under a sheet of coverts
+        [`wing${LR}`, 6, 0.62, 0.86, 0.10, 0.34, true],
+        // the hand: primaries, long and raked hard back, tapering to the tip
+        [`wingTip${LR}`, 7, 1.00, 0.58, 0.42, 0.95, false],
+      ]) {
+        const b = rig.get(name);
+        if (!b) continue;
+        const k = new Kit();
+        const A = b.length;
+        /* THE SPAR. A wing's leading edge is bone and it is the line the eye
+         * follows; without it the feathers are a row of leaves with nothing
+         * holding them. Tapered, and slightly forward of the bone axis (+Z) so
+         * the quills root BEHIND it rather than through it. */
+        k.add(hide, limbGeo(A, 0.028 * S, 0.016 * S, 7, true,
+          { rings: 3, capN: 2, bulge: 0.10, bulgeAt: 0.12 }), [0, 0, 0.010 * S]);
+        /**
+         * ── THE VANES OVERLAP, WHICH IS THE WHOLE DIFFERENCE BETWEEN A WING
+         *    AND A COMB ────────────────────────────────────────────────
+         *
+         * The first build spaced `n` feathers over 0.86 of the spar at a
+         * half-width of 0.055 — 7.6 cm apart on an 11 cm feather — and because
+         * a vane is an ELLIPSOID it is only that wide at its own middle. So
+         * every gap was open at the root and open at the tip, and rendered
+         * from three-quarters above the wing was a bar with teeth on it. A
+         * feather is 0.085 of half-width here, which is more than the spacing
+         * everywhere along the span, so each vane's neighbours close it.
+         */
+        k.row(n, (i, t) => {
+          const len = W.chord * S * (c0 + (c1 - c0) * t);
+          const rake = rake0 + (rake1 - rake0) * t;
+          /* Rooted on the spar, swept back, and each one twisted a little
+           * further nose-down than the last — the wash-out every wing has, and
+           * what stops a fan of identical feathers reading as a rake. */
+          k.add(hide, vane(0.006 * S, 0.085 * S, len * 0.5),
+            [0, (0.10 + t * 0.86) * A + Math.sin(rake) * len * 0.5, -Math.cos(rake) * len * 0.5],
+            [rake, 0, 0.10 + t * 0.18]);
+        });
+        /**
+         * ── AND THE INNER HALF OF THE WING IS ONE SURFACE ────────────────
+         *
+         * The coverts were five small vanes and they were the wrong answer to
+         * the same defect: what covers the base of a bird's flight feathers is
+         * a CONTINUOUS sheet, and the scallop only starts where that sheet
+         * ends. So this is one panel down the whole span — the greater coverts
+         * — with a shorter one in front of it, and between them they close the
+         * leading two thirds of the wing. Two merged shapes rather than nine,
+         * and the trailing edge is the only part that is a row of anything.
+         *
+         * `plate` on `hide`: a pale shoulder over a dark wing is what a raptor
+         * seen from above is, and it is also the only thing that stops the
+         * whole wing reading as one flat card.
+         */
+        if (cov) {
+          k.add(plate, vane(0.008 * S, A * 0.50, W.chord * S * 0.34),
+            [0, A * 0.50, -W.chord * S * 0.22], [0.12, 0, 0]);
+          k.add(plate, vane(0.010 * S, A * 0.46, W.chord * S * 0.20),
+            [0, A * 0.46, -W.chord * S * 0.05], [0.06, 0, 0]);
+        } else {
+          /* On the hand the same idea at a third of the chord: the primaries
+           * are long and mostly free, but their roots still have to be part of
+           * a surface or the wing tip is a bundle of sticks. */
+          k.add(plate, vane(0.008 * S, A * 0.48, W.chord * S * 0.16),
+            [0, A * 0.46, -W.chord * S * 0.09], [0.22, 0, 0]);
+        }
+        const made = k.bake(b.obj);
+        for (const m of made) { b.parts.push(m); markSilhouette(m); }
+        /* `primary`, `parts` and `radius` set the way `addLimb` sets them, for
+         * the reason `buildGeonosian` states and does not need repeating: a
+         * wing with meshes and no radius is a wing the blade passes through. */
+        b.primary = made[0] || null;
+        /* 0.42 OF THE CHORD, and the number is `severance.mjs`'s to set rather
+         * than mine: it walks the drawn surface of every rigged body and fails
+         * one with more than 22% of it outside its own capsules, or any point
+         * more than 20 cm out. A wing is a wide flat thing hung off a thin
+         * spar, so the capsule around that spar has to be a good fraction of
+         * the chord or most of the wing is air the blade passes through. */
+        b.radius = Math.max(b.radius, W.chord * S * 0.42);
+      }
+    }
+  }
+
   return {
     rig, kind, plan: P, stance: stanceOf(S, P), moves: P.moves || null,
     palette: { hide, chitin: plate, belly, eye }, scale: S,
+    /** Which bones hold this body up in the air — read by src/game/Flight.js. */
+    wings: P.wings ? ['wingL', 'wingTipL', 'wingR', 'wingTipR'] : undefined,
   };
 }
 
@@ -8867,28 +11131,143 @@ function markSilhouette(meshes) {
  * girth multiplier is a radius, and applying it to lengths grows the foot in
  * the two directions it must not grow in.
  */
-function buildFootFor(k, kind, plate, tooth, S, g, len) {
+/**
+ * ── AND EVERY ONE OF THEM NEEDED A FOOT UNDER IT ───────────────────────
+ *
+ * Rendered close, the massiff stands on three pale cubes. That is what the
+ * `claw` branch was: three `clawGeo` toes at `rings: 3` — three straight
+ * prisms with a 0.35-rad kink in each — hung directly off the end of the
+ * tarsus tube with nothing behind them. There is no foot; there are toes
+ * bolted to a shin.
+ *
+ * Two things fix it and neither is expensive:
+ *
+ *   A PAD. Every one of these animals plants on a mass of horn and fat, and
+ *   it is the piece that says "this is where the weight goes". A squashed
+ *   ellipsoid at the end of the tarsus, wide across and long fore-and-aft, is
+ *   both the metatarsus and the pad, and it is what the toes now grow out of
+ *   rather than being the whole of the foot.
+ *
+ *   RINGS. `clawGeo` merges one capped `limbGeo` per ring, so `rings: 3` on a
+ *   claw with 1.05 rad of bend turns 20° at a time and reads as a stack of
+ *   blocks. Five rings on the same curve is the same silhouette with the
+ *   corners off, for two more merged segments on a piece 3 cm long.
+ *
+ * The toes also splay and rise: `t` drives yaw as it did, and now also a
+ * small outward lift, so the three are three toes rather than one toe drawn
+ * three times.
+ *
+ * SIZED OFF THE CREATURE'S SCALE AND ONLY WIDENED BY THE LIMB'S GIRTH — the
+ * rule the header below already states, and the pad obeys it: `g` multiplies
+ * the pad's width and never its length or its height, for exactly the reason
+ * a 2.27 m foot was once below the floor.
+ */
+function buildFootFor(k, kind, plate, tooth, hide, S, g, len) {
   if (kind === 'spike') return;              // an acklay's leg ends in the leg
+  /** The pad: a flattened ellipsoid, `x`/`z` from the ankle, in plan units. */
+  const pad = (mat, w, h, d, x, z, y = 0.92) => k.add(mat, new THREE.SphereGeometry(1, 8, 6),
+    [x * S * g, len * y, z * S], null, [w * S * g, h * S, d * S]);
   if (kind === 'hoof') {
-    k.add(plate, new THREE.CylinderGeometry(0.10 * S * g, 0.13 * S * g, 0.12 * S, 8), [0, len * 0.92, 0.02 * S]);
-    k.add(plate, plateGeo(0.20 * S * g, 0.08 * S, 0.22 * S, 0.03 * S, 1), [0, len * 0.96, 0.05 * S]);
+    /* A HOOF IS A CONE OF HORN, not a cylinder with a lid. The lathe tapers
+     * to the ground and `capY1: 0.18` keeps the sole nearly flat, so the
+     * animal stands on a plane instead of on the equator of a drum. */
+    k.add(plate, limbGeo(0.15 * S, 0.135 * S * g, 0.105 * S * g, 9, true,
+      { rings: 3, capN: 3, capY0: 0.10, capY1: 0.18, bulge: 0.10, section: ovalSection(0.82, 2.6) }),
+    [0, len * 0.86, 0.03 * S], [Math.PI, 0, 0]);
+    k.add(plate, limbGeo(0.05 * S, 0.14 * S * g, 0.125 * S * g, 9, true,
+      { rings: 2, capN: 2, capY0: 0, capY1: 0.10, section: ovalSection(0.80, 2.8) }),
+    [0, len * 1.00, 0.03 * S], [Math.PI, 0, 0]);
     return;
   }
   if (kind === 'paw') {
-    // a broad flat sole with short toes — plantigrade, so it reads as standing
-    k.add(plate, plateGeo(0.24 * S * g, 0.07 * S, 0.34 * S, 0.04 * S, 1), [0, len * 0.94, 0.09 * S]);
-    k.row(3, (j, t) => k.add(tooth, clawGeo(0.12 * S, 0.028 * S, 0.006 * S, 0.6, 5, 2),
-      [(t - 0.5) * 0.17 * S * g, len * 0.92, 0.23 * S], [1.2, (t - 0.5) * 0.5, 0]));
+    /* PLANTIGRADE: one deep sole lying along the ground with three toe pads
+     * off the front of it and a claw out of each. The old sole was a
+     * `plateGeo` 0.34·S deep — a slab the animal stood on the corner of. */
+    pad(hide, 0.13, 0.050, 0.19, 0, 0.07);
+    k.row(3, (j, t) => {
+      pad(hide, 0.050, 0.040, 0.058, (t - 0.5) * 0.19, 0.22, 0.91);
+      k.add(tooth, clawGeo(0.13 * S, 0.026 * S, 0.005 * S, 0.7, 5, 3),
+        [(t - 0.5) * 0.19 * S * g, len * 0.90, 0.27 * S], [1.15, (t - 0.5) * 0.55, 0]);
+    });
+    return;
+  }
+  if (kind === 'mitt') {
+    /**
+     * THE SAME PAW WITH THE CLAWS IN — the tooka's foot, and the only one in
+     * this function that ends in nothing hard.
+     *
+     * `paw` is a plantigrade sole with three toe pads and a 0.13·S `clawGeo`
+     * hook out of each, in `tooth`: twelve pale spikes on a four-footed
+     * animal. That is right for the massiff, the wampa, the rancor and the
+     * pup, which all rake with them, and it is the same decision the head
+     * branch above refuses for the same body — the plan declares `moves: []`
+     * and the archetype `damage: 0`, so a claw here is hardware on an animal
+     * the design forbids from using it. Rendered at 0.34 scale
+     * (`tools/_soft.mjs`, three-quarter) the twelve hooks are the brightest
+     * thing on the silhouette below the eyes, which on the one body in the
+     * game whose entire brief is "cannot fight" is the worst place in the
+     * frame to put a weapon.
+     *
+     * A cat's claws are SHEATHED. Not filed off — sheathed — so this is the
+     * `paw` branch with the three `clawGeo` calls simply not made, and not a
+     * new shape: same two `pad()` primitives, same three toe stations across
+     * the foot, same `y`. Two numbers move and both are the claw's absence
+     * being paid for rather than a redesign: each toe pad is 15% longer
+     * (0.058 → 0.067) and sits 1.5% further forward (0.22 → 0.235), so the
+     * front of the foot still reaches where the claw tips used to, and the
+     * sole grows with it (0.13 → 0.135 across, 0.19 → 0.20 fore-and-aft).
+     */
+    pad(hide, 0.135, 0.052, 0.20, 0, 0.07);
+    k.row(3, (j, t) => pad(hide, 0.052, 0.042, 0.067, (t - 0.5) * 0.19, 0.235, 0.91));
+    return;
+  }
+  if (kind === 'raptor') {
+    /**
+     * A BIRD OF PREY'S FOOT, AND IT IS NOT THE `claw` PAD WITH LONGER TOES.
+     *
+     * The two differ in the one thing that reads: a dog's foot is a PAD with
+     * toes on the front of it and stands on the pad; a hawk's is four long
+     * scaled digits and a hook on each, and it stands on nothing — the toes
+     * are the whole foot. So there is no `pad()` call here at all, which is
+     * the first branch in this function that has none.
+     *
+     * THREE FORWARD AND ONE BACK, which is the anisodactyl arrangement every
+     * reference photograph of a hawk's foot shows and is the only part of it
+     * that survives at range: the hallux swings under and back, and it is what
+     * makes a foot with something in it read as a fist rather than as a stick.
+     *
+     * CURLED HARD (`bend` 1.5 against the claw foot's 1.05) because this body
+     * never lands — see `tuck` over `stanceOf`. A talon carried in the air is
+     * a talon closed, and a straight one would read as a landing gear that
+     * failed to retract. The tarsometatarsus is the short scaled shank above
+     * them, and it is `plate` (the pale horn colour) rather than `hide`,
+     * because a raptor's legs are bare scale where the rest of it is feather.
+     */
+    k.add(plate, limbGeo(len * 0.30, 0.036 * S * g, 0.030 * S * g, 7, true,
+      { rings: 2, capN: 2, capY0: 0.20, capY1: 0.20 }), [0, len * 0.62, 0]);
+    k.row(3, (j, t) => k.add(plate, clawGeo(0.19 * S, 0.020 * S * g, 0.005 * S, 1.5, 6, 5),
+      [(t - 0.5) * 0.075 * S * g, len * 0.90, 0.020 * S], [0.30, (t - 0.5) * 1.0, 0]));
+    // the hallux: shorter, heavier, and pointing the other way
+    k.add(plate, clawGeo(0.15 * S, 0.022 * S * g, 0.005 * S, 1.6, 6, 5),
+      [0, len * 0.90, -0.020 * S], [-0.45, 0, 0]);
     return;
   }
   if (kind === 'talon') {
     // four long fingers with hooks — the rancor's hand, which reaches its knee
-    k.row(4, (j, t) => k.add(plate, clawGeo(0.30 * S, 0.036 * S, 0.008 * S, 1.35, 5, 3),
-      [(t - 0.5) * 0.18 * S, len * 0.84, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
+    pad(hide, 0.115, 0.075, 0.085, 0, 0.01);
+    k.row(4, (j, t) => k.add(plate, clawGeo(0.30 * S, 0.036 * S, 0.008 * S, 1.35, 5, 5),
+      [(t - 0.5) * 0.18 * S, len * 0.86, 0.02 * S], [0.25, (t - 0.5) * 0.8, 0]));
     return;
   }
-  k.row(3, (j, t) => k.add(plate, clawGeo(0.26 * S, 0.030 * S, 0.007 * S, 1.05, 6, 3),
-    [(t - 0.5) * 0.12 * S, len * 0.90, 0], [0.15, (t - 0.5) * 0.7, 0]));
+  /* THE CLAW FOOT — a digitigrade pad with three hooked toes off the front of
+   * it: the massiff, the nexu, the tooka, the tuk'ata, the blurrg and the
+   * varactyl. HIDE-COLOURED PAD, PALE TOES. Everything here used to be
+   * `plate`, and `plate` on these plans is the light bone colour — which is
+   * how a dark-legged animal came to be standing on three bright cubes. The
+   * horn is the part that ought to be horn. */
+  pad(hide, 0.105, 0.060, 0.115, 0, 0.035);
+  k.row(3, (j, t) => k.add(plate, clawGeo(0.26 * S, 0.030 * S, 0.007 * S, 1.05, 6, 4),
+    [(t - 0.5) * 0.13 * S * g, len * 0.90, 0.055 * S], [0.15 - Math.abs(t - 0.5) * 0.3, (t - 0.5) * 0.9, 0]));
 }
 
 /**
@@ -8902,31 +11281,313 @@ function buildFootFor(k, kind, plate, tooth, S, g, len) {
  * reek still has horns and an acklay still has a crest at the range the
  * player was complaining about.
  */
+/* Scratch for the eye seat below — one set for the whole file, not one per
+ * eye per body per build. */
+const _eyeD = new THREE.Vector3(), _eyeO = new THREE.Vector3(), _eyeP = new THREE.Vector3();
+
 function buildCreatureHead(rig, P, S, M) {
   const head = rig.get('head');
   const [segs, nLen, nR, nPitch, nCurl] = P.neck;
   const parts = [];
+
+  /* ── THE NECK IS ONE SWEPT TUBE, AND IT LEAVES THE SHOULDERS FAT ──────
+   *
+   * It was `segs` separate limbGeo capsules laid nose to tail, each one CAPPED
+   * at both ends, and that shape is the whole reason the head read as a box
+   * stuck onto the body rather than as a head. Three faults, all of them the
+   * chain's:
+   *
+   *   EVERY JOINT WAS A PINCH. Each capsule domes out to capY 0.62 at both
+   *   ends and the next one starts at the previous one's ORIGIN, not at its
+   *   dome — so the surface went out, in, and out again once per segment. On
+   *   the massiff's two-segment neck that is one visible constriction directly
+   *   behind the skull, which is exactly where an animal's neck is thickest.
+   *
+   *   IT LEFT THE TRUNK AT NECK WIDTH. `nR` is the radius of the neck under
+   *   the jaw, and the first capsule started at that radius INSIDE the
+   *   shoulder — so the neck met the body as a peg in a hole. Nothing carried
+   *   the head's mass down into the trunk, and a head whose support is a peg
+   *   is a head that has been stuck on.
+   *
+   *   FIVE PAIRS OF CAPS WERE BURIED. The same argument the tail already makes
+   *   two hundred lines up (see tubeGeo's header): the interior caps are
+   *   triangles nobody can ever see. A three-segment neck spent 40% of itself
+   *   on them.
+   *
+   * So it is one `tubeGeo` down the same polyline the chain walked — same
+   * `nLen`, `nPitch` and `nCurl`, so every plan's neck still arrives at the
+   * same place and at the same angle — resampled to at least three rings a
+   * segment so the curl is a curve rather than a dogleg, and swept from a
+   * TRAPEZIUS at the root to `nR` under the jaw.
+   *
+   * The root radius is 1.45×nR, clamped to the trunk's OWN half-width where
+   * the neck leaves it — `M.trunkR`, raycast off the lathe by the caller, and
+   * not `P.girth`. That distinction is the whole of this paragraph and it was
+   * got wrong: `girth` is the lathe's nominal radius at its widest, and the
+   * lathe tapers to 0.72 of it at the front and is then reshaped by a
+   * superellipse. On the massiff the clamp let the neck out to 0.266·S where
+   * the shoulder it grows from is 0.20·S wide, so the "trapezius" left the
+   * body as a flat triangular sail standing proud of the animal on both
+   * sides — a cowl, not a neck, and the single most conspicuous thing on the
+   * rendered body. The measured seat cannot be wrong by construction, in the
+   * same way and for the same reason `onLimb` is used instead of typing a
+   * radius. 0.92 of it, so the neck arrives just inside the shoulder's
+   * outline rather than exactly on it.
+   *
+   * And it STARTS BEHIND THE HEAD BONE, a full segment back down its own
+   * pitch, which puts the root ring well inside the trunk lathe. A tube that
+   * begins on the shoulder's surface still shows a rim; one that begins
+   * inside it cannot. (0.55 of a segment was not enough on the four plans
+   * whose necks are shortest — the flare decays over a fixed fraction of the
+   * TUBE, so a 0.28·S neck spends its taper in the first 0.09·S and the rim
+   * lands outside the hide.) Nothing downstream reads the neck's mesh
+   * extent — `head.radius` is set from S below, as it always was.
+   */
+  const RN = Math.max(4, segs * 3 + 1);       // rings, not segments
+  const nodes = [];
+  const root = Math.min(nR * 1.45 * S, (M.trunkR ?? P.girth * S) * 0.92);
   let hy = 0, hz = 0, pitch = nPitch;
-  for (let i = 0; i < segs; i++) {
-    const len = nLen * S;
-    const r0 = nR * S - i * 0.024 * S;
-    parts.push([limbGeo(len * 1.12, r0, r0 * 0.9, 10, true, { rings: 3, bulge: 0.05, capN: 2 }),
-      [0, hy, hz], [Math.PI / 2 - pitch, 0, 0]]);
-    hy += Math.sin(pitch) * len; hz += Math.cos(pitch) * len;
-    pitch += nCurl;
+  {
+    /* BACK is how many of the plan's own segments the tube starts BEHIND the
+     * head bone, and the walk is extended by exactly that much so the tip
+     * still lands where the skull hangs — a tube that buried its root without
+     * lengthening would leave the last centimetres of neck missing and the
+     * head floating clear of it. The start angle is wound back by the same
+     * amount of curl, so at the bone's own origin the tube is travelling at
+     * `nPitch` and reaches `nPitch + nCurl * segs` at the tip: the two walks
+     * agree at both ends by construction rather than by arithmetic. */
+    const back = 1.0;
+    const span = segs + back;
+    const step = (nLen * S * span) / (RN - 1);
+    let a = nPitch - nCurl * back;
+    let y = -Math.sin(a) * nLen * S * back, z = -Math.cos(a) * nLen * S * back;
+    for (let i = 0; i < RN; i++) {
+      const u = i / (RN - 1);
+      // the flare is concentrated at the base: ²·² decays to nothing by a
+      // third of the way up, which is where a trapezius stops.
+      nodes.push([0, y, z, nR * S * 0.95 + (root - nR * S * 0.95) * (1 - u) ** 2.2]);
+      z += Math.cos(a) * step; y += Math.sin(a) * step; a += (nCurl * span) / (RN - 1);
+    }
+    // where the neck ARRIVES, which is where every branch below hangs its
+    // skull. Walked separately at the plan's own resolution so the numbers the
+    // five head branches were authored against do not move by a millimetre.
+    for (let i = 0; i < segs; i++) {
+      hy += Math.sin(pitch) * nLen * S; hz += Math.cos(pitch) * nLen * S;
+      pitch += nCurl;
+    }
   }
+  parts.push([tubeGeo(nodes, 9), [0, 0, 0]]);
+
   const k = new Kit();
   const K = P.head;
 
+  /**
+   * A MUZZLE, AND NOT A BOX.
+   *
+   * Every one of the five heads hung its jaw off a `plateGeo` — a rounded
+   * cuboid — and that single call is the "detached rectangular box" the
+   * complaint names. A plateGeo has four flat sides, four hard vertical
+   * corners and a FLAT FRONT WALL, so at any angle off dead-centre the animal
+   * is showing you the end of a crate. Rounding the corners harder does not
+   * help: the silhouette is still a rectangle, and the front face is still a
+   * wall the nose stops at.
+   *
+   * This is a tapered lathe instead, laid along the neck's own heading and
+   * reshaped by `muzzleSection` — so it is wide across the cheeks, flat over
+   * the nasal bridge, full under the jaw, and it comes to a rounded NOSE
+   * rather than to a plane. It is the same trick the trunk already uses and
+   * for the same stated reason: a body of revolution is a barrel, a
+   * superellipse is an animal.
+   *
+   *   len          nose-to-hinge, ×S
+   *   w0, w1       half-width at the hinge and at the nose, ×S
+   *   y, z         the hinge, relative to where the neck arrives
+   *   droop        radians nose-down, in the HEAD BONE's frame
+   *
+   * The droop is measured in the bone's frame and NOT off the neck's heading,
+   * which is the one thing worth arguing about here. The five branches below
+   * were authored by eye against a box that carried its own X rotation, so
+   * every jaw angle in this function is already a bone-frame number; folding
+   * the neck's accumulated curl into it would have silently re-aimed all five
+   * mouths the moment the neck changed shape, and re-aiming a mouth is not a
+   * thing a neck rewrite is allowed to do. `Math.PI / 2` lays the lathe's +Y
+   * down +Z (forward) and `droop` tips the nose under, so a branch passes the
+   * same number its plateGeo used to carry.
+   *
+   * `capY0: 0.22` keeps the back cap shallow so it tucks inside the cranium
+   * instead of pushing a second dome out through the cheek.
+   */
+  const muzzle = (len, w0, w1, y, z, droop, o = {}) => [
+    limbGeo(len * S, w0 * S, w1 * S, 10, true, {
+      rings: 4, capN: 3, capY0: 0.22, capY1: o.nose ?? 0.62,
+      section: muzzleSection(o),
+    }),
+    [0, hy + y * S, hz + z * S], [Math.PI / 2 + droop, 0, 0],
+  ];
+
+  /**
+   * THE CHEEK — the mass that makes the join a join.
+   *
+   * A cranium and a muzzle placed end to end are two shapes touching, however
+   * well each is shaped; what a skull actually has between them is the
+   * masseter, a wedge of muscle from the zygomatic arch down to the angle of
+   * the jaw, and it is the piece that carries the eye line into the mouth.
+   * One squashed ellipsoid a side, merged into the same shell, and the head
+   * stops coming apart at the eyes.
+   */
+  const cheek = (x, y, z, r, sx = 1.0, sy = 0.78, sz = 1.25) => {
+    const g = new THREE.SphereGeometry(r * S, 9, 7);
+    g.scale(sx, sy, sz);
+    return [g, [x * S, hy + y * S, hz + z * S]];
+  };
+
+  /**
+   * THE SKULL'S OWN OUTSIDE, MERGED ONCE, SO AN EYE CAN BE SEATED ON IT.
+   *
+   * Every branch below pushes its cranium, its muzzle, its cheeks and
+   * whatever shelf or lip it owns into `parts` BEFORE it places a single eye,
+   * and nothing pushes to `parts` after. So at the moment the first eye is
+   * placed the shell is complete, and one merge answers every seat on the
+   * head for the cost of the merge the tail of this function was going to do
+   * anyway — `skull` below takes this geometry rather than building a second.
+   *
+   * The length guard is not decoration. If a branch is ever written that adds
+   * a mass to `parts` after its eyes, this shell is stale by exactly the mass
+   * that would have buried them, and a stale shell fails in the direction
+   * nobody looks — the eye still renders, it renders inside something. The
+   * comparison is one integer and it makes the reuse safe by construction
+   * instead of by a paragraph asking the next author to be careful.
+   */
+  let _shell = null, _shellN = -1;
+  const shell = () => {
+    if (_shell && _shellN === parts.length) return _shell;
+    _shellN = parts.length;
+    return (_shell = assemble(parts, 'skull'));
+  };
+
+  /**
+   * AN EYE, WITH SOMETHING BEHIND IT — AND ITS DEPTH MEASURED, NOT TYPED.
+   *
+   * Six eyes across five branches were each one `emissiveMat` sphere placed
+   * by hand, and this is those calls with the pupil from `M.pupil` in the
+   * same call — one place that knows how big a pupil is relative to an eye
+   * and how far in front of it the bead sits, rather than six.
+   *
+   * ── AND THREE OF THE SEVEN BRANCHES HAD NO VISIBLE EYE AT ALL ─────────
+   *
+   * `(x, y, z)` used to be a POSITION, authored by eye against whatever the
+   * skull happened to be on the day, and every time a cranium was re-shaped
+   * under it — which this function has done twice, once when the five heads
+   * stopped being boxes and again when the tooka got its own branch — the
+   * eyes did not move with it. Measured off the built rig, by casting a ray
+   * along each eye triangle's own normal against every other triangle in the
+   * body, on the tree this replaces:
+   *
+   *     horned      (reek)                 0 of 140 triangles unobstructed
+   *     tusked      (rancor, pup, blurrg)  0 of 140
+   *     horned-ape  (gundark, varac)       0 of 140
+   *     fanged      lower pair             0 of 140   (upper pair 68 of 140)
+   *     snouted     (tauntaun)            21 of 140
+   *     kitten      (tooka)               33 of 140
+   *     mandibles   (acklay)              38 of 140
+   *
+   * Three whole branches — six of the thirteen shipped bodies, three of the
+   * twelve companions — rendered NO EYE. Not a small eye: the sphere was
+   * inside the cranium, every triangle of it facing another triangle of the
+   * animal's own head. The same arithmetic says why, in one number per
+   * branch: how far the eye's outer face stands proud of the skull, in units
+   * of the eye's own radius. −0.36r, −0.50r, −0.77r and −1.08r for the four
+   * that showed nothing; +0.50r, +0.75r, +0.91r and +0.97r for the four that
+   * showed something. The eyes that worked were the ones that happened to be
+   * outside.
+   *
+   * So the DIRECTION stays authored and the DEPTH is measured. `(x, y, z)` is
+   * read as a ray from where the neck arrives — the same ray the pupil has
+   * always been pushed along — and the eye is seated where that ray leaves
+   * the skull, standing `PROUD` of its own radius out of it. `surfacePoint`
+   * is the ray `onSurface` is built on, and that pair is the vocabulary this
+   * file already uses for every photoreceptor, visor, horn and vent that has
+   * to stay put when the shell under it changes shape; the heads were the
+   * last thing in here still typing a coordinate and hoping.
+   *
+   * PROUD IS 0.95 BECAUSE THAT IS WHERE THE TWO BRANCHES THAT RENDERED
+   * CORRECTLY ALREADY SAT — +0.91r on the acklay, +0.97r on the nexu's upper
+   * pair — so the number is the shipped result that worked rather than a
+   * fresh guess. It is one number and not a per-branch knob on purpose: a
+   * defaulted parameter no branch ever passes is a lever nobody is pulling
+   * and a claim nobody is checking, and the seven heads all want the same
+   * thing from it. The rancor's own note calls its eyes deep-set and it still
+   * takes 0.95 — what makes an eye deep-set is the brow shelf standing over
+   * it, which that branch builds, and not the eye being further inside the
+   * skull. Measured on the pup: 0.95 leaves 29 of 70 triangles clear an eye,
+   * 0.75 leaves 21 and 0.55 leaves 15, which is under the floor the check
+   * holds every body to.
+   *
+   * The bead is pushed OUTWARD ALONG THE EYE'S OWN RADIUS and not along +Z.
+   * That distinction is visible: an eye set on the side of a long skull with
+   * its pupil shoved forward shows the bead on the front corner of the iris,
+   * which reads as a squint. The radius is the one direction that is correct
+   * for a four-eyed nexu, a rancor's deep-set pair and a reek's horn-flanked
+   * eyes alike, because it is derived from where each of them was aimed
+   * rather than assumed about all of them.
+   */
+  const PROUD = 0.95;
+  const eyeAt = (x, y, z, r) => {
+    _eyeD.set(x, y, z).normalize();
+    _eyeO.set(0, hy, hz);
+    /* NO FALLBACK. `onSurface` answers the ORIGIN when the ray misses, which
+     * would seat the eye at the base of the skull and look like a body that
+     * built — HANDOFF §2.3b's "a missing thing answered with a plausible
+     * default". The ray starts inside the shell, so a miss means the shell is
+     * not closed round the head bone, and that is worth stopping the build
+     * for rather than shipping a face with its eyes in its throat. */
+    const hitP = surfacePoint(shell(), _eyeD, _eyeO, _eyeP, true);
+    if (!hitP) throw new Error(`buildCreatureHead: no skull surface along the ${K} eye at (${x}, ${y}, ${z})`);
+    hitP.addScaledVector(_eyeD, -r * S * (1 - PROUD));
+    k.add(M.eye, new THREE.SphereGeometry(r * S, 7, 6), [hitP.x, hitP.y, hitP.z]);
+    k.add(M.pupil, new THREE.SphereGeometry(r * 0.50 * S, 6, 5),
+      [hitP.x + _eyeD.x * r * 0.62 * S, hitP.y + _eyeD.y * r * 0.62 * S, hitP.z + _eyeD.z * r * 0.62 * S]);
+  };
+
+  /**
+   * ── AND THE FIVE BRANCHES BELOW NOW CALL THEM ────────────────────────
+   *
+   * `muzzle()` and `cheek()` were written, argued for at length, and then not
+   * wired in: every one of the five heads still hung its jaw off `plateGeo`
+   * and its skull off a bare `SphereGeometry`, which is the exact pair of
+   * calls the two headers above name as the defect. Rendered, that reads as a
+   * grey slab with teeth in it floating off the front of a ball — "the head
+   * reads as a detached rectangular box", said of the massiff, and it was
+   * true of all twelve plans because all twelve go through these five
+   * branches.
+   *
+   * What changes below is only the SHAPE of three pieces per head — cranium,
+   * muzzle, cheeks. Every horn, tusk, eye, fang, quill, crest and ruff keeps
+   * the coordinates it was authored at, because those were authored by eye
+   * against the old boxes' extents and moving them would re-aim five faces at
+   * once. Where a new lathe's extent had to differ from the box it replaces,
+   * it is stated on the line.
+   *
+   * The muzzle's ROOT is its hinge, not its centre — a plateGeo was placed at
+   * its middle — so every `z` below is the old box's centre minus half its
+   * old depth, and the length is the old depth plus however much snout the
+   * animal is owed. That arithmetic is why the numbers look unfamiliar next
+   * to the git history: they are the same head.
+   */
   if (K === 'horned') {
     /* THE REEK. The skull is a wide low wedge and everything that matters is
      * carried in FRONT of the eyes: a frill across the brow, two cheek horns
      * curving down and forward, and the nasal horn that is the thing which
      * actually hits you. Head-on it is a wall rather than a face, which is
      * the whole counter-play — you do not meet this one from the front. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.28 * S, 12, 9); g.scale(1.02, 0.80, 1.16); return g; })(),
-      [0, hy + 0.02 * S, hz + 0.22 * S]]);
-    parts.push([plateGeo(0.30 * S, 0.13 * S, 0.42 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.32 * S], [0.08, 0, 0]]);
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.26 * S, 12, 9); g.scale(1.06, 0.84, 1.04); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.16 * S]]);
+    /* BLUNT, and that is the whole reek: `flat` 0.88 and w1 within a hair of
+     * w0, so the muzzle is a squared-off box-end of bone rather than a snout.
+     * It runs 0.11 → 0.55 where the old plate ran 0.11 → 0.53, so the nasal
+     * horn seated at 0.40–0.74 still leaves the face where it always did. */
+    parts.push(muzzle(0.44, 0.165, 0.150, -0.13, 0.11, 0.05, { flat: 0.88, n: 3.2, chin: 0.13, crown: 0.10 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.16, -0.03, 0.18, 0.135, 1.0, 0.86, 1.30));
     k.add(M.plate, plateGeo(0.92 * S, 0.58 * S, 0.11 * S, 0.05 * S, 2), [0, hy + 0.20 * S, hz - 0.02 * S], [-0.34, 0, 0]);
     k.add(M.plate, tubeGeo([[0, hy + 0.06 * S, hz + 0.40 * S, 0.095 * S],
       [0, hy + 0.30 * S, hz + 0.60 * S, 0.055 * S], [0, hy + 0.52 * S, hz + 0.74 * S, 0.012 * S]], 7));
@@ -8934,7 +11595,16 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.20 * S, hy + 0.08 * S, hz + 0.20 * S, 0.085 * S],
         [sx * 0.34 * S, hy - 0.06 * S, hz + 0.46 * S, 0.050 * S],
         [sx * 0.32 * S, hy + 0.06 * S, hz + 0.68 * S, 0.010 * S]], 7));
-      k.add(M.eye, new THREE.SphereGeometry(0.046 * S, 7, 6), [sx * 0.18 * S, hy + 0.10 * S, hz + 0.20 * S]);
+      /* AIMED CLEAR OF ITS OWN CHEEK HORN, which is the second thing that was
+       * burying it and the one a surface seat cannot fix. The horn above roots
+       * at (±0.20, 0.08, 0.20) with an 8.5 cm shaft, and the eye was aimed at
+       * (±0.18, 0.10, 0.20) — 2.8 cm from that root, so half the ball came out
+       * of the skull INSIDE the horn. Measured on the rendered head: 0 of 140
+       * eye triangles unobstructed at the old aim, 38 with the depth measured
+       * alone, 48 once the ray also clears the horn. Up and forward is the
+       * direction that does it and it is where a reek's eye is anyway —
+       * above the cheek horns, either side of the nasal one. */
+      eyeAt(sx * 0.19, 0.14, 0.24, 0.046);
     });
   } else if (K === 'fanged') {
     /* THE NEXU. FOUR EYES in two pairs — one line of geometry and the single
@@ -8942,32 +11612,78 @@ function buildCreatureHead(rig, P, S, M) {
      * of eyes on it reads as wrong from further away than any amount of horn
      * — over a mouth that is wider than the skull, with the fangs standing
      * OUTSIDE the lip line the way the reference photograph has them. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.24 * S, 12, 9); g.scale(0.94, 0.68, 1.30); return g; })(),
-      [0, hy + 0.02 * S, hz + 0.20 * S]]);
-    parts.push([plateGeo(0.44 * S, 0.14 * S, 0.40 * S, 0.05 * S, 1), [0, hy - 0.14 * S, hz + 0.28 * S], [0.14, 0, 0]]);
+    /* THE BRAINCASE PULLS BACK AND THE SNOUT DOES THE REACHING. The old
+     * ellipsoid was stretched 1.30 on Z and ran to 0.51 on its own, so the
+     * jaw box sat entirely INSIDE it and the animal had no muzzle at all —
+     * one smooth egg with a slab hung under it. This is a braincase (1.05 on
+     * Z, front at 0.33) plus a real snout that carries the face out to 0.51,
+     * which is where the head used to end. Same reach, a face on it. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.22 * S, 12, 9); g.scale(0.98, 0.82, 1.05); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.10 * S]]);
+    parts.push(muzzle(0.48, 0.20, 0.105, -0.05, 0.03, 0.10, { flat: 0.68, n: 3.0, chin: 0.18, crown: 0.10 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.14, -0.02, 0.11, 0.125, 1.0, 0.88, 1.25));
     k.pair((sx) => {
-      k.add(M.eye, new THREE.SphereGeometry(0.042 * S, 7, 6), [sx * 0.11 * S, hy + 0.10 * S, hz + 0.26 * S]);
-      k.add(M.eye, new THREE.SphereGeometry(0.030 * S, 6, 5), [sx * 0.16 * S, hy + 0.03 * S, hz + 0.16 * S]);
+      /* AND THE SECOND PAIR WAS THE HALF THAT NEVER RENDERED. The note above
+       * calls four eyes "the single most alien thing about the animal"; the
+       * upper pair stood 0.97 of its own radius proud of the skull and the
+       * lower pair sat 1.08 radii INSIDE it, so every massiff, tuk'ata and
+       * nexu in the game has had two eyes since the branch was written. Both
+       * pairs are seated on the shell now: 68 of 280 triangles unobstructed
+       * before, 128 after, and the lower pair is 61 of them. */
+      eyeAt(sx * 0.11, 0.10, 0.26, 0.042);
+      eyeAt(sx * 0.16, 0.03, 0.16, 0.030);
       k.row(4, (i, t) => {
-        k.add(M.tooth, clawGeo((0.18 - t * 0.06) * S, 0.030 * S, 0.005 * S, 0.35, 4, 2),
+        /* SIX SIDES AND THREE RINGS, not four and two. A fang is 2 cm long
+         * and stands OUTSIDE the lip where nothing hides its silhouette, and
+         * at rings 2 it is two prisms end to end — the rendered massiff has
+         * a mouthful of flat white wedges. Three rings on the same 0.35 rad
+         * of bend is a curve; six sides round the shaft is the difference
+         * between a tooth and a shard. */
+        k.add(M.tooth, clawGeo((0.18 - t * 0.06) * S, 0.028 * S, 0.004 * S, 0.35, 6, 3),
           [sx * (0.10 + t * 0.09) * S, hy - 0.10 * S, hz + (0.40 - t * 0.16) * S], [0.9 + t * 0.5, 0, 0]);
-        k.add(M.tooth, clawGeo((0.15 - t * 0.05) * S, 0.026 * S, 0.005 * S, 0.35, 4, 2),
+        k.add(M.tooth, clawGeo((0.15 - t * 0.05) * S, 0.024 * S, 0.004 * S, 0.35, 6, 3),
           [sx * (0.10 + t * 0.09) * S, hy - 0.02 * S, hz + (0.40 - t * 0.16) * S], [2.35 - t * 0.4, 0, 0]);
       });
-      // the quill whiskers either side of the jaw
-      k.add(M.plate, tubeGeo([[sx * 0.14 * S, hy + 0.02 * S, hz + 0.10 * S, 0.020 * S],
-        [sx * 0.40 * S, hy + 0.12 * S, hz - 0.10 * S, 0.004 * S]], 5, { capRoot: false }));
+      /* The quill whiskers either side of the jaw — THREE nodes and not two.
+       * `tubeGeo` puts one ring per node, so a two-node quill is a five-sided
+       * cone: seen from the side it is a flat pale blade lying across the
+       * cheek, which on the tooka's small head is the biggest thing on it.
+       * A mid node at a third of the radius makes it a taper. */
+      k.add(M.plate, tubeGeo([[sx * 0.14 * S, hy + 0.02 * S, hz + 0.10 * S, 0.016 * S],
+        [sx * 0.28 * S, hy + 0.08 * S, hz + 0.01 * S, 0.008 * S],
+        [sx * 0.42 * S, hy + 0.13 * S, hz - 0.11 * S, 0.003 * S]], 6, { capRoot: false }));
     });
   } else if (K === 'tusked') {
     /* THE RANCOR. No neck: the skull is a wedge sitting straight on the
      * shoulders, and the read is the MOUTH — a jaw as wide as the head with
      * tusks standing up out of the lower jaw past the upper lip, which is the
-     * thing every photograph of one is showing. Two small deep-set eyes above
-     * a brow shelf, and lumps of bone over the crown. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.34 * S, 12, 9); g.scale(0.86, 0.86, 1.20); return g; })(),
-      [0, hy + 0.04 * S, hz + 0.16 * S]]);
-    parts.push([plateGeo(0.52 * S, 0.20 * S, 0.52 * S, 0.06 * S, 1), [0, hy - 0.20 * S, hz + 0.26 * S], [0.16, 0, 0]]);
-    parts.push([plateGeo(0.46 * S, 0.16 * S, 0.30 * S, 0.05 * S, 1), [0, hy + 0.26 * S, hz + 0.02 * S], [-0.24, 0, 0]]);
+     * thing every photograph of one is showing. Two small deep-set eyes UNDER
+     * a brow shelf, and lumps of bone over the crown.
+     *
+     * "Above a brow shelf" is what this line used to say and it was wrong in
+     * both halves. Measured off the built head: the shelf spans y 0.17→0.35
+     * and stops at z 0.21, and the eye is aimed at y 0.14, z 0.30 — BELOW the
+     * shelf and in front of it, which is what a brow ridge over a deep-set eye
+     * actually is and is the read this branch wants. And the muzzle, which the
+     * eye was said to be sitting on top of, is nowhere near it: its top edge
+     * is at y ≈ 0.02 under an eye at 0.14. The thing that buried this eye was
+     * the CRANIUM — 44 of the 70 triangles blocked by it, the cheek and the
+     * shelf between them accounting for 13 more — and the eye's outer face
+     * stood half its own radius inside the skull's surface. Nothing about the
+     * jaw or the brow was ever going to fix that; the depth was. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.32 * S, 12, 9); g.scale(0.90, 0.90, 1.14); return g; })(),
+      [0, hy + 0.04 * S, hz + 0.14 * S]]);
+    /* THE WIDEST MUZZLE IN THE TABLE and barely tapered — 0.26 to 0.21 half
+     * width over half a metre of jaw — because the rancor's read is that its
+     * mouth is as wide as its skull. 0.00 → 0.52 against the old box's
+     * 0.00 → 0.52: the tusks at 0.42–0.50 sit exactly where they did. */
+    parts.push(muzzle(0.52, 0.26, 0.21, -0.21, 0.00, 0.05, { flat: 0.80, n: 3.4, chin: 0.16, crown: 0.06 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.21, -0.06, 0.14, 0.185, 1.0, 0.84, 1.20));
+    /* The brow shelf, which was the third plateGeo on this head. A shelf is a
+     * ridge of bone over the eyes and not a plank: an ellipsoid squashed flat
+     * on Y keeps the overhang and loses the four corners. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.23 * S, 10, 8); g.scale(1.02, 0.38, 0.68); return g; })(),
+      [0, hy + 0.26 * S, hz + 0.06 * S], [-0.24, 0, 0]]);
     k.pair((sx) => {
       // the tusks: up out of the lower jaw, past the lip
       k.add(M.tooth, tubeGeo([[sx * 0.20 * S, hy - 0.24 * S, hz + 0.42 * S, 0.055 * S],
@@ -8976,11 +11692,296 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.tooth, tubeGeo([[sx * 0.11 * S, hy - 0.26 * S, hz + 0.46 * S, 0.040 * S],
         [sx * 0.12 * S, hy - 0.08 * S, hz + 0.50 * S, 0.024 * S],
         [sx * 0.12 * S, hy + 0.06 * S, hz + 0.48 * S, 0.006 * S]], 6));
-      k.add(M.eye, new THREE.SphereGeometry(0.040 * S, 6, 5), [sx * 0.16 * S, hy + 0.14 * S, hz + 0.30 * S]);
+      eyeAt(sx * 0.16, 0.14, 0.30, 0.040);
       k.add(M.plate, clawGeo(0.26 * S, 0.070 * S, 0.014 * S, -0.5, 5, 2),
         [sx * 0.20 * S, hy + 0.32 * S, hz - 0.06 * S], [-0.7, 0, sx * 0.4]);
       k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.11 * S, 0.022 * S, 0.004 * S, 0.3, 4, 2),
         [sx * (0.08 + t * 0.10) * S, hy - 0.12 * S, hz + (0.30 + t * 0.14) * S], [2.5, 0, 0]));
+    });
+  } else if (K === 'maw') {
+    /**
+     * THE BLURRG — the eighth branch, and it exists because two of the
+     * player's own companions were the same animal at a glance.
+     *
+     * ── THE DEFECT, STATED THE WAY IT WAS FOUND ──────────────────────────
+     *
+     * The rancor pup and the blurrg were built from the IDENTICAL `tusked`
+     * head, the IDENTICAL `ridge` spine and hide colours eleven hex points
+     * apart, and rendered (`tools/_soft.mjs`, side and three-quarter) they are
+     * one dark barrel with two tusks standing up out of a jaw thrown forward
+     * and a sawtooth of spines down the back — twice. Two of twelve kinds, and
+     * the player's brief for the set is "these companions have to look
+     * incredibly detailed and different and unique".
+     *
+     * SILHOUETTE IoU DOES NOT CATCH IT AND IT WAS NEVER GOING TO. `_creature.mjs`
+     * rasterises an outline and normalises for size; a 0.55-scale pup and a
+     * 1.7-scale blurrg differ in every proportion the IoU reads while sharing
+     * every FEATURE the eye reads. The instrument that found this was looking.
+     *
+     * ── WHAT A BLURRG IS, AS AGAINST WHAT A RANCOR IS ────────────────────
+     *
+     * A rancor is a BRUTE: a deep tall braincase, a brow shelf, tusks standing
+     * out of the lower jaw past the lip, bosses over the crown. Every one of
+     * those says "this thing hits you", and the pup is a small one of exactly
+     * that on purpose — its row's whole joke is the adult's silhouette at a
+     * sixth of the height.
+     *
+     * A blurrg is a PACK BEAST, and its head is mostly mouth:
+     *
+     *   THE BRAINCASE IS LOW, WIDE AND FLAT. 0.61 across by 0.35 tall against
+     *   the rancor's 0.58 by 0.58 — the same skull volume laid on its side. It
+     *   is the one number that decides the read from the front, because a
+     *   flat-topped head with the eyes on the corners of it is a lizard and a
+     *   tall domed one is an ape.
+     *
+     *   THE SNOUT IS THE SHALLOWEST IN THE FILE. `flat: 0.56` against the
+     *   rancor's 0.80 and the tauntaun's 0.92 — the section is squashed to
+     *   just over half its width top to bottom — with `chin: 0.32` filling it
+     *   out underneath. Wide, flat and blunt: a mouth you could get an arm
+     *   into, which is what a mount authored to BITE while you are on its back
+     *   has to look like.
+     *
+     *   THE LOWER JAW IS ITS OWN MASS, and nothing else in this function has
+     *   one. Six branches hang a jaw off `muzzle()` and let the cheeks close
+     *   the gap; this one slings a second lathe under the snout running its
+     *   whole length, so the head reads as two halves that OPEN rather than as
+     *   one wedge with teeth drawn on it.
+     *
+     *   NO TUSKS, NO HORNS, NO BROW. A saw of small conical teeth along the
+     *   gum line instead — eight a side, upper and lower, none longer than
+     *   7 cm at scale. Two big tusks are a shape the eye names in one glance
+     *   and it is the shape it was naming twice; a serrated line is a
+     *   different one, and it is what every reference blurrg has.
+     *
+     *   THE THROAT POUCH. One soft mass under the jaw hinge — loose hide, the
+     *   thing a heavy-headed animal carries that a rancor does not — and it is
+     *   also what stops a head this big reading as bolted onto the neck.
+     *
+     *   THE NOSTRILS ARE ON TOP. Two dark slots on the crown of the snout
+     *   rather than at the end of it, which is the tauntaun's placement turned
+     *   ninety degrees and is the last small thing that says reptile.
+     *
+     * THE EYES ARE SMALL, HIGH AND WELL BACK — r 0.034 on a 0.25 cranium, the
+     * SMALLEST eye-to-skull ratio in the file (the tooka's is 0.31, this is
+     * 0.14) — aimed up and out over the cheek at (0.26, 0.20, 0.05). Small
+     * eyes set far from the mouth are the whole difference between an animal
+     * that is looking at you and an animal that is looking for grazing, and it
+     * is the read the row wants: this thing bites what closes on it, not what
+     * it has chosen. `eyeAt` measures the depth, so the bearing is all this
+     * branch owns; measured after, 29 of 70 triangles clear against a 20%
+     * floor, which is where the shared `tusked` seat already stood.
+     */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.25 * S, 12, 9); g.scale(1.24, 0.70, 1.00); return g; })(),
+      [0, hy + 0.05 * S, hz + 0.02 * S]]);
+    parts.push(muzzle(0.50, 0.215, 0.180, -0.09, 0.04, 0.02, { flat: 0.56, n: 2.5, chin: 0.32, crown: 0.10 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.21, -0.05, 0.10, 0.185, 1.0, 0.92, 1.10));
+    /* THE LOWER JAW. Scaled 1.80 on Z so it runs the snout's whole length and
+     * 0.62 on Y so it is a jaw and not a second head, seated 0.20 under the
+     * neck's arrival — which puts its top edge just inside the muzzle's own
+     * underside, so the mouth is a LINE between two masses rather than a gap. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.165 * S, 10, 8); g.scale(1.02, 0.62, 1.80); return g; })(),
+      [0, hy - 0.325 * S, hz + 0.240 * S], [0.03, 0, 0]]);
+    /* THE THROAT POUCH, at the hinge. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.155 * S, 10, 8); g.scale(0.94, 0.90, 0.86); return g; })(),
+      [0, hy - 0.150 * S, hz - 0.020 * S]]);
+    k.pair((sx) => {
+      eyeAt(sx * 0.26, 0.20, 0.05, 0.034);
+      /* THE NOSTRIL, on the crown of the snout. `M.pupil` is the darkest
+       * material on the body, for the reason the tauntaun's branch gives. */
+      k.add(M.pupil, (() => { const g = new THREE.SphereGeometry(0.042 * S, 8, 6); g.scale(0.60, 0.70, 1.45); return g; })(),
+        [sx * 0.062 * S, hy + 0.020 * S, hz + 0.420 * S]);
+      /* THE SAW. Eight teeth a side, upper pointing down out of the lip and
+       * lower pointing up out of the jaw, alternating along the same line so
+       * from the flank the mouth is a zigzag rather than a pair of combs.
+       * They fine away toward the nose the way a real jaw's do: the back
+       * teeth on a bite-and-hold animal are the ones that do the work. */
+      k.row(6, (i, t) => {
+        /* ON THE LIP LINE, WHICH IS MEASURED AND NOT GUESSED. The muzzle's
+         * underside at half-width w is `w · flat · (1 + chin)` below its own
+         * axis — 0.56 × 1.32 = 0.739 of w — so at the hinge (w0 0.215) the lip
+         * is 0.159 under a hinge at −0.09, and at the nose (w1 0.180) it is
+         * 0.133 under it. The first cut of this row typed y −0.190 and x 0.075
+         * and put every tooth INSIDE the snout: two gold specks on the rendered
+         * head where thirty-two teeth had been built. They sit at −0.245 and
+         * ride out to x 0.15, a centimetre inside the lip's own edge. */
+        const z = 0.090 + t * 0.330, x = 0.100 + t * 0.052;
+        k.add(M.tooth, clawGeo((0.100 - t * 0.034) * S, 0.024 * S, 0.004 * S, 0.22, 5, 2),
+          [sx * x * S, hy - 0.245 * S, hz + z * S], [2.80, 0, 0]);
+        k.add(M.tooth, clawGeo((0.080 - t * 0.026) * S, 0.020 * S, 0.004 * S, 0.22, 5, 2),
+          [sx * (x - 0.008) * S, hy - 0.270 * S, hz + (z + 0.028) * S], [0.34, 0, 0]);
+      });
+    });
+  } else if (K === 'snouted') {
+    /**
+     * THE TAUNTAUN — the sixth branch, and the one the fifth's own comment
+     * asked for and did not build.
+     *
+     * `horned-ape` says it out loud: "Three plans that are genuinely
+     * long-snouted — taun, blurrg, varac — share this branch and are the
+     * argument for a sixth one, recorded here and not acted on: a new branch
+     * is a new silhouette for three shipped bodies." That was the right call
+     * then and it is the wrong one now: the tauntaun is not a shipped enemy
+     * seen for four seconds across a wave, it is a COMPANION the player looks
+     * at for a whole deployment and rides. It was wearing a wampa's face.
+     *
+     * The gundark branch is a FACE — a flat wide front with the horns curving
+     * sideways off the temples, an underbite of fangs and a fur ruff, on a
+     * 0.30 snout that is deliberately short so a wampa does not read as a dog.
+     * Every one of those is wrong for this animal, and rendered it exactly as
+     * wrong as it sounds: an ape's head with two spikes, hung on the front of
+     * a running body.
+     *
+     * WHAT A TAUNTAUN'S HEAD IS, in the order the eye takes it:
+     *
+     *   THE SNOUT, which is the whole read. 0.62 long — the longest in the
+     *   file, past the acklay's 0.56 — on a 0.17 hinge tapering to 0.105, so
+     *   it is a taper and not a tube. `flat: 0.92` and `n: 2.6` keep the
+     *   section nearly round and soft-cornered: this is a woolly herbivore,
+     *   not a chitin jaw, and the acklay's 0.60 flat is what makes ITS head
+     *   read as an insect. The droop is 0.06, almost none — a browsing animal
+     *   carries its nose level and the gundark's 0.11 was already tipping it.
+     *
+     *   THE NOSTRILS, and nothing else in the file has them. Two dark
+     *   ellipsoids sunk into the end of the snout: at forty metres they are
+     *   two pixels of shadow on a pale muzzle, which is precisely the detail
+     *   that stops a snout reading as a peg.
+     *
+     *   THE HORNS, curving BACK over the crown rather than out from the
+     *   temples. Three nodes so it is a curve; the wampa's are two-node
+     *   spikes swept sideways, which is the one thing that made the shared
+     *   branch unmistakably not this animal.
+     *
+     *   NO FANGS. A tauntaun does not bite anything — the plan declares
+     *   `moves: []` and the archetype `damage: 0` — and a mouthful of tusks
+     *   on an animal that cannot use them is the kind of decoration that
+     *   makes a body read as parts. The lower jaw is a lip and a chin.
+     *
+     *   THE RUFF at the base of the skull, kept from the gundark because it
+     *   is right here for a different reason: the coat is the animal's other
+     *   read, `back: 'shag'` carries it down the spine, and a bare join
+     *   between a woolly body and a smooth head is the seam a player sees.
+     */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.245 * S, 12, 9); g.scale(0.94, 0.96, 1.02); return g; })(),
+      [0, hy + 0.03 * S, hz + 0.04 * S]]);
+    parts.push(muzzle(0.62, 0.17, 0.105, -0.06, 0.06, 0.06, { flat: 0.92, n: 2.6, chin: 0.22, crown: 0.14 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.15, -0.02, 0.13, 0.135, 1.0, 0.94, 1.15));
+    /* The jaw, as a lip rather than a mouthful: one shallow lathe under the
+     * snout's front third, so the profile has an underline and the head does
+     * not end in a cone. */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.13 * S, 10, 8); g.scale(0.92, 0.52, 1.9); return g; })(),
+      [0, hy - 0.12 * S, hz + 0.34 * S], [0.06, 0, 0]]);
+    k.pair((sx) => {
+      /* THE HORN. Three nodes, off the crown and swept BACK and slightly out
+       * — 0.24 wide at the base curling to 0.30 at the tip over 0.46 of
+       * length going backwards, which is a ram's horn and not a spike. */
+      k.add(M.plate, tubeGeo([[sx * 0.16 * S, hy + 0.20 * S, hz + 0.02 * S, 0.055 * S],
+        [sx * 0.24 * S, hy + 0.30 * S, hz - 0.20 * S, 0.038 * S],
+        [sx * 0.30 * S, hy + 0.22 * S, hz - 0.44 * S, 0.010 * S]], 7));
+      /* Eyes high and to the SIDE of the skull, which is where a prey animal
+       * carries them and is the other half of "this is not a predator". */
+      eyeAt(sx * 0.175, 0.11, 0.10, 0.044);
+      /* THE NOSTRIL. Sunk into the end of the snout with the pupil material,
+       * which is the darkest thing on the body — two of them on a pale muzzle
+       * is the detail that reads at range. */
+      k.add(M.pupil, (() => { const g = new THREE.SphereGeometry(0.045 * S, 8, 6); g.scale(1.0, 1.35, 0.55); return g; })(),
+        [sx * 0.055 * S, hy - 0.02 * S, hz + 0.60 * S]);
+      // the ruff, at the join with the coat
+      k.row(3, (i, t) => k.add(M.hide, clawGeo(0.30 * S, 0.090 * S, 0.015 * S, 0.55, 6, 3),
+        [sx * (0.17 + t * 0.07) * S, hy - (0.04 + t * 0.09) * S, hz - 0.10 * S], [1.7 + t * 0.4, 0, sx * (1.0 - t * 0.3)]));
+    });
+  } else if (K === 'kitten') {
+    /**
+     * THE TOOKA — the seventh branch, and the only head in this function
+     * whose brief is a FEELING rather than an animal.
+     *
+     * The player's words for this companion are "something incredibly cute
+     * and adorable that is useless in battle and needs constant protecting".
+     * It shared `horned-ape` — a gundark's flat face, two horns swept
+     * sideways off the temples and an underbite of three fangs a side — and
+     * the row that chose it argued the horns could be read as ears "because
+     * the proportions happen to be an ear's proportions". Rendered at the
+     * archetype's own 0.34 scale they are not: `tools/_soft.mjs` front view
+     * shows two thin pale blades standing straight out of the temples with
+     * daylight under them, an underbite below a bare snout, and NO EYES AT
+     * ALL — the pair at (±0.13, 0.08, 0.24) with r 0.038 is entirely inside
+     * the cranium ellipsoid, whose surface at that x and y is z = 0.306
+     * against the eye's front face at 0.278. The single most important
+     * feature on a cute animal was buried 28 mm inside its own skull.
+     *
+     * WHAT CUTE IS, STRUCTURALLY, and every one of these is a number below:
+     *
+     *   THE EYES ARE THE WHOLE READ, and the lever is `eyeAt`'s radius. 0.105
+     *   on a 0.34 cranium is 0.31 of the skull — the largest eye-to-skull
+     *   ratio in the file, past the hawk's 0.055/0.20 = 0.275, which until now
+     *   held it and holds it for the opposite reason (a raptor's eye is big
+     *   because it hunts). They are aimed FORWARD and LOW — the bearing is
+     *   (0.148, 0.005, 0.255), so barely above a cranium centred at 0.045 —
+     *   because an eye high on a skull reads as a brow and a brow reads as an
+     *   adult. How far out they sit on that bearing is `eyeAt`'s measurement
+     *   and not a number here; this branch was authored 0.75 of an eye radius
+     *   proud of the shell and the shared seat puts it at 0.95, which is 2 mm
+     *   of plan and reads the same. Two of them 0.21 across on a face 0.71 wide
+     *   is 59% of the head's width in eye, which is a kitten and nothing else.
+     *
+     *   THE EARS ARE MOST OF THE SILHOUETTE and it had none. Two flattened
+     *   lathes — `ovalSection(0.26)` squashes the local Z to a quarter of the
+     *   width, so each one is a triangular FLAP and not a horn — 0.30 long on
+     *   a 0.115 half-width base, standing up off the crown and tipped 0.38 rad
+     *   out. That is 0.60 of the cranium's own height added above it, which is
+     *   what makes the head read as bigger than it is without the skull
+     *   growing. Each carries a pale inner in `M.belly` set 0.7 of its length
+     *   and slightly forward, so from the front the ear is a light triangle
+     *   inside a dark one rather than a solid tab.
+     *
+     *   THE MUZZLE IS THE SHORTEST IN THE FILE — 0.17 against the hawk's bill
+     *   at 0.17·0.80 = 0.136 of scale and the gundark's 0.30 — and it is blunt
+     *   rather than pointed: w1/w0 is 0.87 where every predator here runs
+     *   0.52-0.81, and `flat: 0.96` with `n: 2.2` keeps the section round. A
+     *   muzzle that tapers is a snout and a snout is a hunting animal.
+     *
+     *   THE NOSE. One dark wedge in `M.pupil` — the darkest material on the
+     *   body — sunk into the end of the muzzle, for the reason the tauntaun's
+     *   nostrils are there: at forty metres it is two pixels of shadow, and it
+     *   is what stops a blunt muzzle reading as an amputation.
+     *
+     *   NOTHING SHARP ANYWHERE. No horns, no fangs, no quills, no brow shelf.
+     *   The plan declares `moves: []` and the archetype `damage: 0`, so every
+     *   one of those would be hardware on an animal that cannot use it — the
+     *   same argument the tauntaun's branch makes, and it is stronger here
+     *   because this body's ENTIRE job is to look like it cannot fight.
+     *
+     * The cheeks are round rather than the masseter wedge the other six use:
+     * `cheek()`'s default (1.0, 0.78, 1.25) is a chewing muscle stretched
+     * forward under the eye, and (1.06, 1.02, 1.00) is the same call spent on
+     * a cheek that is fat and not muscle. It is one line and it is the
+     * difference between a jaw and a face.
+     */
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.34 * S, 12, 9); g.scale(1.04, 1.00, 0.88); return g; })(),
+      [0, hy + 0.045 * S, hz + 0.02 * S]]);
+    parts.push(muzzle(0.17, 0.150, 0.130, -0.085, 0.20, 0.02, { flat: 0.96, n: 2.2, chin: 0.30, crown: 0.20 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.185, -0.055, 0.14, 0.155, 1.06, 1.02, 1.00));
+    /* THE NOSE, on the centreline, so it is one part and not a pair. */
+    k.add(M.pupil, (() => { const g = new THREE.SphereGeometry(0.052 * S, 8, 6); g.scale(1.25, 0.85, 0.80); return g; })(),
+      [0, hy - 0.045 * S, hz + 0.355 * S]);
+    k.pair((sx) => {
+      /* THE EAR. `ovalSection` is the file's existing "flatten a lathe"
+       * vocabulary — it is what a forearm and a sleeve are shaped with — and
+       * 0.26 of depth turns a cone into a flap. The Z rotation tips it out,
+       * the X rotation rakes it a little forward; both are applied to a shape
+       * whose local +Y is up, which is the lathe's own axis. */
+      const earOuter = limbGeo(0.42 * S, 0.185 * S, 0.010 * S, 8, true,
+        { rings: 4, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
+      k.add(M.hide, earOuter, [sx * 0.180 * S, hy + 0.165 * S, hz - 0.02 * S], [0.08, 0, sx * -0.34]);
+      const earInner = limbGeo(0.29 * S, 0.120 * S, 0.008 * S, 7, true,
+        { rings: 3, capN: 2, capY0: 0.14, capY1: 0.55, section: ovalSection(0.26, 2.2) });
+      k.add(M.belly, earInner, [sx * 0.190 * S, hy + 0.205 * S, hz + 0.012 * S], [0.08, 0, sx * -0.34]);
+      /* THE EYE, and it is the biggest in the file relative to its skull. */
+      eyeAt(sx * 0.148, 0.005, 0.255, 0.105);
+      /* THE WHISKER PAD — one soft swelling either side of the nose. A cat's
+       * muzzle is two pads and a nose, and without them the blunt lathe above
+       * ends in a flat wall. `M.belly` because a tooka's is pale. */
+      k.add(M.belly, (() => { const g = new THREE.SphereGeometry(0.062 * S, 8, 6); g.scale(1.0, 0.80, 0.85); return g; })(),
+        [sx * 0.058 * S, hy - 0.085 * S, hz + 0.315 * S]);
     });
   } else if (K === 'horned-ape') {
     /* THE GUNDARK. A wide flat FACE rather than a muzzle — the wampa's read
@@ -8989,13 +11990,22 @@ function buildCreatureHead(rig, P, S, M) {
      * and a fur ruff round the jaw that carries the head's outline into the
      * shoulders. */
     parts.push([(() => { const g = new THREE.SphereGeometry(0.30 * S, 12, 9); g.scale(1.10, 0.94, 0.86); return g; })(),
-      [0, hy + 0.04 * S, hz + 0.10 * S]]);
-    parts.push([plateGeo(0.40 * S, 0.20 * S, 0.26 * S, 0.05 * S, 1), [0, hy - 0.18 * S, hz + 0.20 * S], [0.20, 0, 0]]);
+      [0, hy + 0.04 * S, hz + 0.08 * S]]);
+    /* SHORT AND DEEP — 0.30 of snout on a 0.26-wide hinge — because this
+     * branch is a FACE and not a muzzle, and a long lathe here would turn the
+     * wampa into a dog. It runs 0.07 → 0.37 where the old box ran 0.07 → 0.33;
+     * the four centimetres it gains are a nose, and the fangs at 0.26 and the
+     * ruff at −0.02 are both untouched. Three plans that are genuinely
+     * long-snouted — taun, blurrg, varac — share this branch and are the
+     * argument for a sixth one, recorded here and not acted on: a new branch
+     * is a new silhouette for three shipped bodies. */
+    parts.push(muzzle(0.30, 0.19, 0.135, -0.17, 0.07, 0.11, { flat: 0.76, n: 3.0, chin: 0.18, crown: 0.08 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.18, -0.07, 0.10, 0.155, 1.0, 0.88, 1.05));
     k.pair((sx) => {
       k.add(M.plate, tubeGeo([[sx * 0.26 * S, hy + 0.18 * S, hz - 0.02 * S, 0.060 * S],
         [sx * 0.46 * S, hy + 0.20 * S, hz + 0.10 * S, 0.040 * S],
         [sx * 0.56 * S, hy + 0.06 * S, hz + 0.22 * S, 0.008 * S]], 6));
-      k.add(M.eye, new THREE.SphereGeometry(0.038 * S, 6, 5), [sx * 0.13 * S, hy + 0.08 * S, hz + 0.24 * S]);
+      eyeAt(sx * 0.13, 0.08, 0.24, 0.038);
       k.row(3, (i, t) => k.add(M.tooth, clawGeo(0.14 * S, 0.026 * S, 0.005 * S, 0.3, 4, 2),
         [sx * (0.07 + t * 0.08) * S, hy - 0.18 * S, hz + 0.26 * S], [0.4 + t * 0.3, 0, 0]));
       // the ruff — fur clumps round the jaw, which is where the wampa's
@@ -9003,14 +12013,177 @@ function buildCreatureHead(rig, P, S, M) {
       k.row(3, (i, t) => k.add(M.hide, clawGeo(0.28 * S, 0.085 * S, 0.015 * S, 0.5, 5, 2),
         [sx * (0.20 + t * 0.08) * S, hy - (0.06 + t * 0.10) * S, hz - 0.02 * S], [1.6 + t * 0.4, 0, sx * (1.1 - t * 0.3)]));
     });
+  } else if (K === 'beak') {
+    /**
+     * THE VHAL'KIR HAWK — the sixth branch, and the first head in this
+     * function with no MOUTH in it.
+     *
+     * Every other branch here is a cranium plus `muzzle()` plus teeth, because
+     * every other animal in the table bites. A raptor's head is three shapes
+     * and none of them is a jaw:
+     *
+     *   THE FACIAL DISC. The thing that makes a hawk or an owl read as a hawk
+     *   or an owl from further away than any beak does: the head is a flat
+     *   DISH aimed forward with the eyes set in it, not a snout with eyes on
+     *   the sides of it. It is the cranium sphere squashed hard on Z (0.72)
+     *   and a shallow ring of feather in front of it, and it is why this
+     *   branch does not call `cheek()` — a masseter is the mass that carries
+     *   an eye line into a mouth, and there is no mouth to carry it into.
+     *
+     *   THE EYES, ENORMOUS AND FORWARD. 0.055 of scale each on a 0.20 skull,
+     *   against the nexu's 0.042 on 0.22 and the reek's 0.046 on 0.26 — the
+     *   biggest eye-to-skull ratio in the file by half again. Binocular and
+     *   set 0.075 apart on a 0.30-wide head, so both are visible in the same
+     *   frontal silhouette. A bird whose eyes are on the sides of its head is
+     *   a pigeon; this one is meant to be looking at you.
+     *
+     *   THE HOOK. `muzzle()` is used for the CERE and the upper mandible —
+     *   short (0.17 against the gundark's 0.30, the shortest in the table) and
+     *   deep rather than long, so it is a bill and not a snout — and then a
+     *   `clawGeo` with 1.35 rad of bend takes the tip down and under past the
+     *   lower mandible. That overhanging hook is the single feature that says
+     *   BIRD OF PREY rather than bird, and it is 3 cm of geometry.
+     *
+     * The two crown tufts and the nape feathers go in the Kit and are marked
+     * silhouette with everything else, because at forty metres a head this
+     * small is an outline and nothing else — and a hawk's outline is a hooked
+     * profile with a ragged nape behind it.
+     */
+    /**
+     * AND THE WHOLE BRANCH IS AUTHORED AT A FRACTION OF SCALE, which is the
+     * one thing that separates a bird's head from every other head in this
+     * function. The four mammal branches are authored at 1: a reek's skull is
+     * as wide as its own shoulder and a rancor's is wider. A hawk's is a
+     * quarter of the width of its body, and the first build of this branch —
+     * a 0.20 cranium on a 0.13 trunk — rendered as a bear's head with a beak
+     * on it, 40 cm across on a 36 cm body. `hS` is that ratio, applied to
+     * every shape in the branch, so the head shrinks as ONE thing rather than
+     * as eleven numbers that can drift apart.
+     *
+     * ── AND IT WENT ONE STEP TOO FAR: 0.80 → 0.96 ────────────────────────
+     *
+     * The ladder that produced 0.80 was 0.58 → 0.68 → 0.80, each rung read
+     * against the NECK ("a head too small for its own neck"), and the body
+     * lane's verdict on the shipped result is read against the BODY: "the head
+     * is small for the body". Both are true, because the plumage arrived after
+     * the head did. `back: 'plumage'` lays a mantle of coverts over the
+     * shoulder and a ruff at the nape — the biggest mass on the animal after
+     * the wings — and it is directly behind the skull, so the head is
+     * measured against a shoulder that grew and it did not.
+     *
+     * Measured off the built rig at scale 1, head bone subtree against the
+     * whole body: at 0.80 the cranium is 0.327 wide on a body whose shoulder
+     * (girth 0.095 with a 0.44 swell) is 0.274 — nominally wider, and it does
+     * not read that way because the mantle sits on top of the shoulder and the
+     * head sits in front of it. 0.96 is 0.392 across, which is half again the
+     * shoulder and is where a raptor's head actually sits: a bird of prey's
+     * skull is the widest thing on it after the wing roots. It is one number
+     * because the branch was built to be one number.
+     */
+    const hk = 0.96, hS = S * hk;
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.20 * hS, 12, 9); g.scale(1.02, 0.94, 0.72); return g; })(),
+      [0, hy + 0.02 * hS, hz + 0.04 * hS]]);
+    /**
+     * ── AND THE BILL IS PALE, WHICH PUTS IT IN THE KIT ──────────────────
+     *
+     * Every other head in this function builds its jaw into `parts`, which is
+     * merged into the skull and therefore wears `M.hide`. That is right for a
+     * mammal whose muzzle is the same skin as its face and wrong here: a bird
+     * of prey's bill is HORN, a different material from every feather on it,
+     * and the pale hook against the dark head is most of what says "raptor" in
+     * a silhouette that is otherwise a dark lump.
+     *
+     * It costs nothing to move: the Kit is merged per material and the whole
+     * of it is marked `silhouette` below, so the bill survives the LOD cull
+     * exactly as the skull does. `muzzle()` returns the triple `parts` wants,
+     * so it is destructured into `k.add` rather than reimplemented.
+     *
+     * The cere and the upper mandible run 0.06 → 0.23 forward of where the
+     * neck arrives; `flat` 0.52 makes the section deeper than it is wide (a
+     * bill's, and the opposite of the reek's 0.88 slab) and `crown` 0.22 keeps
+     * the culmen — the ridge along the top of the bill — convex.
+     */
+    const bill = muzzle(0.17 * hk, 0.070 * hk, 0.030 * hk, 0.02 * hk, 0.06 * hk, 0.34,
+      { flat: 0.52, n: 2.6, chin: 0.10, crown: 0.22, nose: 0.30 });
+    k.add(M.plate, bill[0], bill[1], bill[2]);
+    // the lower mandible, shorter and tucked under: a bill closes short of its own hook
+    k.add(M.plate, limbGeo(0.13 * hS, 0.052 * hS, 0.026 * hS, 8, true,
+      { rings: 3, capN: 2, capY0: 0.20, capY1: 0.44, section: muzzleSection({ flat: 0.62, n: 2.4 }) }),
+    [0, hy - 0.035 * hS, hz + 0.06 * hS], [Math.PI / 2 + 0.42, 0, 0]);
+    /* THE HOOK. The furthest-forward point on the whole animal and the thing
+     * the profile is read by — 1.35 rad of bend takes the tip down and under
+     * past the lower mandible, and that overhang is the single feature that
+     * says BIRD OF PREY rather than bird. */
+    k.add(M.plate, clawGeo(0.075 * hS, 0.030 * hS, 0.004 * hS, 1.35, 6, 5),
+      [0, hy + 0.045 * hS, hz + 0.215 * hS], [1.30, 0, 0]);
+    k.pair((sx) => {
+      /* The eye, and a dark rim round it. Two spheres, and the rim is `plate`
+       * — the pale horn colour — so the eye reads as a ring with a light in it
+       * rather than as a bead stuck on a head. */
+      k.add(M.plate, (() => { const g = new THREE.SphereGeometry(0.062 * hS, 8, 6); g.scale(1, 1, 0.55); return g; })(),
+        [sx * 0.075 * hS, hy + 0.055 * hS, hz + 0.115 * hS]);
+      k.add(M.eye, new THREE.SphereGeometry(0.048 * hS, 8, 6), [sx * 0.075 * hS, hy + 0.055 * hS, hz + 0.145 * hS]);
+      /* THE BROW. A hawk's supraorbital ridge is why it looks angry, and it is
+       * a real shelf of bone standing over the eye — one squashed ellipsoid a
+       * side, raked down and forward over the socket. */
+      k.add(M.plate, (() => { const g = new THREE.SphereGeometry(0.070 * hS, 8, 6); g.scale(1.05, 0.30, 0.62); return g; })(),
+        [sx * 0.080 * hS, hy + 0.115 * hS, hz + 0.090 * hS], [-0.34, 0, sx * 0.24]);
+      /**
+       * ── THE CROWN TUFT, AND IT IS THREE FEATHERS NOW ────────────────────
+       *
+       * The note this replaces read: "it is 0.13 rather than the 0.20 it was
+       * authored at, because at 0.20 on a head this size the pair rendered as
+       * two curved HORNS over the skull. An ear tuft lies back along the
+       * crown; it does not stand off it." Half right, and the correction went
+       * past the target: at 0.13 long and laid at −1.35 rad — 77° off
+       * vertical, so nearly flat on the skull — the pair renders as two pale
+       * SMUDGES behind the eyes. The body lane's words are "the crown tufts
+       * read as bumps, not ear tufts", and rendered head-on
+       * (`tools/_soft.mjs`, framed on the head bone) that is exactly what they
+       * are: two 2-pixel slivers on the top of a dark ball.
+       *
+       * The reason one clump could not win either way is that AN EAR TUFT IS
+       * NOT ONE FEATHER. On every eagle-owl and every horned owl it is a
+       * sheaf — a splayed cluster whose individual feathers separate at the
+       * tip — and a single cone can only be a horn (standing up) or a mark
+       * (lying down). Three per side, fanned 0.32 rad apart in roll and
+       * 0.28 in pitch, with the middle one longest, is a tuft: it stands at
+       * −0.46 rad (26° off vertical, back over the crown, not flat on it) and
+       * the fan is what stops the silhouette reading as a spike. The roll is
+       * NEGATIVE against `sx` and the first cut had it positive: `Rz(+θ)`
+       * takes local +Y toward −X, so on the +X side that leans the sheaf
+       * INWARD, and rendered head-on the two tufts crossed over the crown
+       * like a pair of antennae.
+       *
+       * 0.20 of length is the number the branch was FIRST authored at, and it
+       * turns out to have been right — what was wrong was that there was one
+       * of them and it was lying down. Six feathers at (4, 3) cost 240
+       * triangles against the pair's 120, on a body 3 900 under its cap.
+       */
+      k.row(3, (i, t) => k.add(M.hide,
+        clawGeo((0.155 + (1 - Math.abs(t - 0.5) * 2) * 0.055) * hS, 0.022 * hS, 0.004 * hS, -0.30, 4, 3),
+        [sx * (0.080 + t * 0.024) * hS, hy + (0.122 - t * 0.010) * hS, hz + (0.020 - t * 0.040) * hS],
+        [-0.46 - t * 0.28, 0, sx * -(0.24 + t * 0.32)]));
+      // the nape: three short feathers breaking the line into the neck
+      k.row(3, (i, t) => k.add(M.hide, clawGeo((0.15 - t * 0.03) * hS, 0.042 * hS, 0.008 * hS, 0.5, 5, 3),
+        [sx * (0.045 + t * 0.055) * hS, hy + (0.06 - t * 0.10) * hS, hz - 0.11 * hS], [2.15, 0, sx * (0.5 + t * 0.7)]));
+    });
   } else {
     /* THE ACKLAY. A long toothed jaw hung under a flat CREST that sweeps back
      * over the shoulders — in the reference the crest is the biggest single
      * shape on the animal and the old build had none of it. Mandibles sweep
      * forward and in from the corners of the jaw. */
-    parts.push([(() => { const g = new THREE.SphereGeometry(0.26 * S, 12, 9); g.scale(0.78, 0.72, 1.52); return g; })(),
-      [0, hy + 0.02 * S, hz + 0.30 * S], [0.28, 0, 0]]);
-    parts.push([plateGeo(0.28 * S, 0.13 * S, 0.44 * S, 0.05 * S, 1), [0, hy - 0.13 * S, hz + 0.36 * S], [0.32, 0, 0]]);
+    parts.push([(() => { const g = new THREE.SphereGeometry(0.24 * S, 12, 9); g.scale(0.82, 0.76, 1.10); return g; })(),
+      [0, hy + 0.02 * S, hz + 0.16 * S], [0.28, 0, 0]]);
+    /* THE NARROWEST AND THE LONGEST — 0.11 at the hinge over 0.56 of jaw, and
+     * `flat` 0.60 so it is deeper than it is wide. That is the one shape an
+     * insect's head has and a mammal's never does, and it is what the old
+     * 1.52-on-Z ellipsoid was reaching for with a stretched ball. The lathe
+     * carries the same droop the box did (0.32) plus the cranium's own tilt,
+     * and runs 0.14 → 0.70 against the old box's 0.14 → 0.58: the extra is
+     * jaw the mandibles at 0.44–0.70 were already sweeping past. */
+    parts.push(muzzle(0.56, 0.115, 0.062, -0.11, 0.14, 0.30, { flat: 0.60, n: 2.8, chin: 0.12, crown: 0.06 }));
+    for (const sx of [1, -1]) parts.push(cheek(sx * 0.11, 0.00, 0.16, 0.105, 1.0, 0.90, 1.45));
     // the crest: two swept plates rather than one, so it has a ridge down it
     k.pair((sx) => {
       k.add(M.plate, plateGeo(0.40 * S, 0.06 * S, 0.86 * S, 0.04 * S, 2),
@@ -9018,7 +12191,7 @@ function buildCreatureHead(rig, P, S, M) {
       k.add(M.plate, tubeGeo([[sx * 0.16 * S, hy + 0.10 * S, hz + 0.14 * S, 0.055 * S],
         [sx * 0.30 * S, hy - 0.12 * S, hz + 0.44 * S, 0.034 * S],
         [sx * 0.20 * S, hy - 0.20 * S, hz + 0.70 * S, 0.008 * S]], 6));
-      k.add(M.eye, new THREE.SphereGeometry(0.048 * S, 7, 6), [sx * 0.14 * S, hy + 0.12 * S, hz + 0.22 * S]);
+      eyeAt(sx * 0.14, 0.12, 0.22, 0.048);
       k.row(4, (i, t) => {
         k.add(M.tooth, clawGeo(0.10 * S, 0.021 * S, 0.004 * S, 0.3, 4, 2),
           [sx * 0.11 * S, hy - 0.20 * S, hz + (0.24 + t * 0.34) * S], [0.5, 0, 0]);
@@ -9028,7 +12201,11 @@ function buildCreatureHead(rig, P, S, M) {
     });
   }
 
-  const skull = assemble(parts, 'skull');
+  /* `shell()` and not a second `assemble(parts, 'skull')`: the eyes above
+   * have already merged exactly these parts under exactly this tag, and
+   * merging them twice is a second copy of every head in the game built to
+   * throw away. The guard inside it is what makes reuse safe. */
+  const skull = shell();
   const hm = mesh(skull, M.hide, head.obj);
   head.primary = hm; head.parts.push(hm); head.radius = 0.5 * S;
   markSilhouette(k.bake(head.obj));
@@ -9581,6 +12758,87 @@ export function buildBlaster(kind = 'e5') {
     k.add(glow, new THREE.CylinderGeometry(0.034, 0.040, 0.02, 12), [0, 0.012, 0.37], [1.5708, 0, 0]);
     holdPoints(g, { stock: [0, -0.01, -0.24], grip: [0, -0.060, -0.065],
       foregrip: [0, -0.046, 0.11], muzzle: [0, 0.012, 0.38] });
+  } else if (kind === 'bowcaster') {
+    /**
+     * THE WOOKIEE BOWCASTER — the sixth kind, and the first one here that is
+     * not a gun in outline.
+     *
+     * COMPANIONS.md gives the wookiee both bands and a bowcaster, its card in
+     * the picker says "the only one with both bands", and the player asked for
+     * "a large wookie (with melee and ranged weapons potentially)". The
+     * archetype row could not say so: it wrote out, at length, that
+     * `buildBlaster` has no such kind and that handing it `weapon: 'heavy'`
+     * would put a clone repeater in a wookiee's hands to satisfy a field. That
+     * was the right refusal and this is the thing it was waiting for.
+     *
+     * ── WHAT MAKES IT A BOWCASTER AND NOT AN E-5 WITH A NEW NAME ──────────
+     *
+     * The `sonic` branch's header settles the standard: a kind earns its own
+     * branch when the SILHOUETTE differs, not when the stats do. Three shapes
+     * do it here and no other weapon in this file has any of them.
+     *
+     *   THE TRANSVERSE LIMB ASSEMBLY. Every other blaster on the roster is a
+     *   line: everything it owns lies within about 7 cm of the bore. This one
+     *   is a CROSS — two recurved limbs sweeping out to ±0.27 m, which is
+     *   0.57 m across a weapon 0.95 m long. At forty metres, where a rifle is
+     *   four pixels of dark line, that crossbar is the entire read, and it is
+     *   the reason a wookiee with one in his hands is recognisable before his
+     *   face is.
+     *
+     *   THE STRING, run from each limb tip back to the centre of the rail. Two
+     *   tubes, 8 mm through, and they are what turn a cross into a BOW rather
+     *   than a rifle with a bipod welded across it — without them the limbs
+     *   read as a muzzle brake.
+     *
+     *   THE QUARREL, nocked on the rail rather than a bolt in a chamber. It is
+     *   the one part of the weapon a player can see is AMMUNITION: a shaft
+     *   lying on top of the barrel with its head standing 3 cm ahead of the
+     *   fore-end, drawn in the dark furniture material so it separates from the
+     *   receiver under it.
+     *
+     * THE STOCK IS THICK AND THE GRIP IS BIG, and that is the wookiee half.
+     * The receiver is 5.8 cm across against the DC-15A's 4.8 on a body 2.22 m
+     * tall — this is furniture cut for a hand half again the size of a clone's,
+     * and it is what stops the weapon reading as a human rifle a wookiee
+     * happens to be carrying.
+     *
+     * 0.95 m, which is a metre of weapon on a 2.22 m body — proportionally the
+     * DC-15A on a clone (1.05 on 1.78) taken down slightly, because a bow is
+     * held with the support hand further forward and the limbs have to clear
+     * it. `rifle-hold.mjs` measures the length, the muzzle, the stock and both
+     * hold points on this like every other kind in the table; the limbs and the
+     * string sit at z 0.34-0.40, forward of the fore-end at 0.24, so nothing
+     * this branch adds is in the support hand's way.
+     */
+    // the receiver, and a heavy square stock behind it
+    k.add(body, plateGeo(0.058, 0.078, 0.34, 0.012, 1), [0, 0, 0.02]);
+    k.add(dark, plateGeo(0.046, 0.090, 0.16, 0.010, 1), [0, -0.012, -0.22]);
+    k.add(dark, plateGeo(0.052, 0.104, 0.020, 0.004, 1), [0, -0.014, -0.29]);
+    // the rail out to the muzzle, and its glow ring
+    barrel(0.013, 0.015, 0.030, 0.30, 0.65, 8);
+    k.add(body, plateGeo(0.034, 0.026, 0.16, 0.006, 1), [0, 0.030, 0.26]);
+    // the energy cell under the receiver, and the cocking lever above it
+    k.add(dark, new THREE.CylinderGeometry(0.026, 0.026, 0.10, 8), [0, -0.048, 0.06], [1.5708, 0, 0]);
+    k.add(dark, plateGeo(0.012, 0.020, 0.11, 0.004, 1), [0.034, 0.024, -0.02]);
+    // THE LIMBS. Three nodes each, so the sweep is a recurve and not a spar:
+    // out and slightly forward to the shoulder, then out and BACK to the tip,
+    // which is the profile every crossbow prod has and a straight bar has not.
+    k.pair((sx) => {
+      k.add(body, tubeGeo([[sx * 0.026, 0.030, 0.360, 0.022],
+        [sx * 0.160, 0.046, 0.400, 0.015], [sx * 0.270, 0.056, 0.336, 0.007]], 6));
+      // the string, tip to centre rail
+      k.add(dark, tubeGeo([[sx * 0.268, 0.056, 0.334, 0.005],
+        [sx * 0.140, 0.050, 0.268, 0.004], [0, 0.046, 0.206, 0.004]], 5, { capRoot: false }));
+    });
+    // THE QUARREL, on the rail: shaft, then a head that stops short of the
+    // muzzle so the barrel is still the far end of the geometry.
+    k.add(dark, new THREE.CylinderGeometry(0.0065, 0.0065, 0.38, 6), [0, 0.056, 0.390], [1.5708, 0, 0]);
+    k.add(dark, clawGeo(0.055, 0.013, 0.002, 0.0, 5, 2), [0, 0.056, 0.578], [1.5708, 0, 0]);
+    // grip and fore-end, both cut for a wookiee's hand
+    k.add(dark, plateGeo(0.030, 0.115, 0.046, 0.008, 1), [0, -0.078, -0.030], [0.22, 0, 0]);
+    k.add(dark, plateGeo(0.038, 0.032, 0.170, 0.006, 1), [0, -0.042, 0.240]);
+    holdPoints(g, { stock: [0, -0.010, -0.30], grip: [0, -0.072, -0.035],
+      foregrip: [0, -0.052, 0.240], muzzle: [0, 0.030, 0.65] });
   } else {
     // heavy repeater: three barrels in a shroud, drum magazine, carry handle,
     // a vertical foregrip. 1.2 m.
@@ -9621,7 +12879,7 @@ export function buildBlaster(kind = 'e5') {
 }
 
 /** The blaster kinds `buildBlaster` builds, and the reference length of each. */
-export const BLASTER_LENGTH = { dc15: 1.05, dc15s: 0.70, e5: 0.75, heavy: 1.20, sonic: 0.62 };
+export const BLASTER_LENGTH = { dc15: 1.05, dc15s: 0.70, e5: 0.75, heavy: 1.20, sonic: 0.62, bowcaster: 0.95 };
 
 
 /* ── who wears what ──────────────────────────────────────────────────── */
@@ -9657,6 +12915,1275 @@ export const BLASTER_LENGTH = { dc15: 1.05, dc15s: 0.70, e5: 0.75, heavy: 1.20, 
  * spawned body wears one. Measured either way in `tools/_roster.mjs`, which
  * takes `--wired` to apply this table and prints the gap.
  */
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  The companion droids, and the wookiee                                 */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * A DROID'S DOME, SHARED BY THE TWO BODIES THAT HAVE ONE.
+ *
+ * COMPANIONS.md gives the astromech and the 2-1B the same head branch and the
+ * reason is not thrift — it is that the two machines are the same idea. A
+ * dome is what you build when the sensor cluster has to see in every direction
+ * and there is no face to put on it, and both of these are that: an astromech
+ * has no front, and a medical droid's head is a smooth instrument housing with
+ * a single band of receptor across it.
+ *
+ * It returns the SHELL ONLY, as one geometry, for the one reason that decides
+ * the shape of this pair of functions: `dressHumanoid` takes `headGeo` as a
+ * geometry and gives it one material, so anything that is a different colour —
+ * the photoreceptor, the dark panels, the holoprojector — cannot live in here.
+ * `domeKit` is the other half and takes the materials; the astromech calls
+ * both by hand and the 2-1B hands one to `headGeo` and one to `buildHead`.
+ *
+ *   r        dome radius, ×s
+ *   squash   how much flatter than a hemisphere. 1 is a half sphere (the
+ *            astromech); 0.86 is the 2-1B's, whose head is a lower, wider
+ *            instrument cap than an R-unit's.
+ *   collar   height of the base ring the dome turns on. 0 for a head that is
+ *            not meant to look like it turns.
+ */
+function domeHeadGeo(s, o = {}) {
+  const r = (o.r ?? 0.30) * s, squash = o.squash ?? 1, collar = (o.collar ?? 0.028) * s;
+  const parts = [];
+  const dome = new THREE.SphereGeometry(r, 16, 9, 0, Math.PI * 2, 0, Math.PI / 2);
+  dome.scale(1, squash, 1);
+  parts.push([dome, [0, 0, 0]]);
+  /* THE RING IS WHAT MAKES IT A DOME RATHER THAN A LID. A hemisphere sitting
+   * on a cylinder of the same radius is one continuous surface with a
+   * horizontal terminator across it and reads as a bullet; a proud ring at the
+   * join is a hard edge under the cel ramp and says the top half turns. */
+  if (collar > 0) parts.push([bandGeo(r * 0.94, r * 1.03, r * 0.90, r * 1.01, collar, 20), [0, -collar * 0.4, 0]]);
+  return assemble(parts, 'dome');
+}
+
+/**
+ * The dome's furniture: the eye, the panels, and the crown stub.
+ *
+ * Everything here is seated with `onSurface` against the dome's own geometry
+ * rather than at typed coordinates, which is the rule `characters.mjs` holds
+ * every head to ("nothing on a head stands off it like a bolted-on slab") and
+ * is the only way a piece stays seated when `squash` changes the shell under
+ * it. `M` carries the four materials the companion look table names.
+ */
+function domeKit(k, hg, s, M, o = {}) {
+  const core = new THREE.Vector3(0, 0, 0);
+  const d = new THREE.Vector3();
+  /* THE PHOTORECEPTOR. One housing, one lens, and the lens is the only lit
+   * thing on the body — which is what a player's eye goes to, so it is the one
+   * piece that says which way this machine is facing. */
+  /* `sink` IS INWARD — `onSurface` returns `p − dir·sink`, so a POSITIVE sink
+   * buries the part in the shell it is seated on. The first build passed
+   * `+er*0.05` for the lens and the whole photoreceptor was inside the dome:
+   * rendered from dead ahead the droid had no eye at all, which on a body
+   * whose only asymmetry IS its eye means it has no front. Both of these are
+   * negative, and the lens stands further out than its own housing. */
+  const er = (o.r ?? 0.30) * s;
+  d.set(0, o.eyeUp ?? 0.42, 1).normalize();
+  k.aim(M.panels, new THREE.CylinderGeometry(er * 0.23, er * 0.29, er * 0.17, 12),
+    onSurface(hg, d, -er * 0.10, core), d);
+  /* `M.eye` AND NOT `M.photo`, and it is one merged mesh's worth of
+   * difference. Both are the same lit colour and they were the same material,
+   * so the droid's eye and its status pips were one geometry — and a check
+   * that has to answer "is this body's eye visible" off the built rig could
+   * then only ask about the pips as well. `eyeMat` is the declaration; see
+   * its note. The lens is the only thing in here that gets it. */
+  k.aim(M.eye, new THREE.CylinderGeometry(er * 0.17, er * 0.17, er * 0.09, 12),
+    onSurface(hg, d, -er * 0.19, core), d);
+  // the smaller secondary lenses either side of it, unlit
+  k.pair((sx) => {
+    d.set(sx * 0.46, 0.30, 0.84).normalize();
+    k.aim(M.panels, new THREE.CylinderGeometry(er * 0.07, er * 0.08, er * 0.05, 8),
+      onSurface(hg, d, 0, core), d);
+  });
+  /* THE PANELS. Radial, seated on the shell, and DELIBERATELY NOT SYMMETRIC
+   * about the front — a dome with four panels at the compass points reads as a
+   * machine part, and every reference astromech has its panels clocked off the
+   * eye. 0.55 rad of offset is what does that. */
+  if (o.panels !== false) {
+    k.row(o.panelCount ?? 5, (i, t) => {
+      const th = t * Math.PI * 1.7 + 0.55;
+      d.set(Math.sin(th) * 0.86, 0.51, Math.cos(th) * 0.86).normalize();
+      k.face(M.trim, plateGeo(er * 0.30, er * 0.46, er * 0.04, er * 0.02, 1),
+        onSurface(hg, d, -er * 0.01, core), d);
+    });
+  }
+  /* The holoprojector: a stub cylinder standing off the crown, which is the
+   * one thing on the top of a dome that breaks its outline. */
+  if (o.holo !== false) {
+    d.set(0.30, 0.94, 0.16).normalize();
+    k.aim(M.shell, new THREE.CylinderGeometry(er * 0.05, er * 0.07, er * 0.14, 8),
+      onSurface(hg, d, -er * 0.06, core), d);
+  }
+  return k;
+}
+
+/**
+ * ══ THE ASTROMECH ═══════════════════════════════════════════════════════
+ *
+ * "an R2/Astromech unit", and it is the most expensive body in the companion
+ * set to write for a reason COMPANIONS.md states in the open: THERE IS NO
+ * `DROID_PLANS`. Every droid in this file is a bespoke builder, and the one
+ * astromech the game already had — `DeckCast.astromechChassis`, near the top of
+ * src/game/DeckCast.js — is a vertex-coloured `InstancedMesh` with no `Rig`,
+ * no bones and no capsules. It cannot be cut, shot, gripped or carried off the
+ * deck, because it is scenery and was built to be.
+ *
+ * So this is a RIGGED one, and what it takes from that file is the RECIPE and
+ * not the mesh: the can, the dome on it, two shoulder hubs, two legs with
+ * wedge feet on rollers, the third leg down, the panel rows and the tool bays
+ * are all shapes that file already worked out, re-authored here at the
+ * proportions of a real R-unit — 1.05 m to the top of the dome on a 0.60 m
+ * can — with the cel-shaded materials the rest of the roster wears rather than
+ * with deck vertex colours.
+ *
+ * ── THE COMPENSATION: IT PUBLISHES A STANCE WITH NO LIMBS IN IT ──────────
+ *
+ * `_poseWalker` walks `ST.limbs` and runs a two-bone IK per entry. This
+ * publishes an empty one, so that loop runs ZERO iterations and the body's
+ * whole per-frame pose cost is placing the hips and turning the dome. It is
+ * the cheapest rigged body in the game per frame, and that is not an
+ * optimisation looking for a justification: AN ASTROMECH'S LEGS DO NOT WALK.
+ * They are rigid struts on rollers and the machine gets about by rolling on
+ * them, which is exactly the body a gait solver has nothing to say about.
+ * (`stanceOf`'s `tuck` is the same empty-stance mechanism reached for a
+ * different reason — a hawk that is never on the floor.)
+ *
+ * The legs are still BONES: three leg roots, so `severance` divides the leg
+ * budget by three and one strut is 0.367 of the droid, and they still carry
+ * meshes, so the blade still meets them. What they do not have is a walk.
+ *
+ * ── AND THE DOME BONE IS NAMED `head` ───────────────────────────────────
+ *
+ * Its ROLE is `dome` — priced apart, for the reasons argued over `BONE_ROLES`
+ * and in `SEVERANCE` — but its NAME is `head`, because `_poseWalker`'s target
+ * track is keyed on the name and turning the dome toward whatever the droid is
+ * looking at is the single most legible thing this body can do. It is also
+ * free: the track is one quaternion on a bone that is already there.
+ */
+export function buildAstromech(opts = {}) {
+  const S = opts.scale ?? 1;
+  const shell = metalMat(opts.shell ?? 0xd7d3c8, 0.42, 0.62, 2.2);
+  const trim = armorMat(opts.trim ?? 0x2f5fa8, 0.10, 0.46, 2.6);
+  const panels = metalMat(opts.panels ?? 0x30343a, 0.44, 0.90, 2.8);
+  /* THE DOME'S ONE LENS, and it is the only lit thing on this body — which is
+   * why the material it wears is `eyeMat` and there is no longer a separate
+   * `photo` beside it. `opts.photoreceptor` still names the colour, so the
+   * Kennel's look table repaints exactly what it always did; what changed is
+   * that the mesh now says it is an eye. Nothing on this droid moves and the
+   * mesh count is unchanged at 24 against a cap of 76, because there was one
+   * lit material before and there is one now. */
+  const eye = eyeMat(opts.photoreceptor ?? 0xff5a3c, 3.0);
+  const M = { shell, trim, panels, eye };
+
+  /* THE SKELETON. Nine bones, and every one of them is a thing a blade can
+   * take: the can, the dome, the whip, three struts and three feet. Free
+   * names, because Ragdoll's joint table falls back on a name it does not know
+   * and nothing downstream reads `femur{i}` on a body whose stance has no
+   * limbs — see `_stance`, which prefers `built.stance` and only synthesises
+   * one from `femur{i}` when a builder has published none. */
+  /**
+   * THE THREE HEIGHTS, AND `HIP` IS THE ONE THAT WAS WRONG.
+   *
+   * At `HIP` 0.10 the can's own bottom sat 10 cm off the ground and the legs
+   * ran down INSIDE that 10 cm — so the rendered droid was a drum with a
+   * clump of white boxes under it and no visible leg at all. An R-unit's legs
+   * are a third of its height and they are the read from the side: a can, two
+   * struts down its flanks, and the feet standing clear of it.
+   *
+   * 0.26 + 0.52 + 0.27 = 1.05 m to the crown of the dome, which is a real
+   * R-unit to the centimetre, with the whip on top of that.
+   */
+  const CAN = 0.52, DOME = 0.27, HIP = 0.26;
+  const bones = [
+    { name: 'hips', parent: null, offset: [0, 0, 0], length: HIP * S, rest: [0, 1, 0], role: 'core' },
+    { name: 'body', parent: 'hips', offset: [0, HIP * S, 0], length: CAN * S, rest: [0, 1, 0], role: 'core' },
+    { name: 'head', parent: 'body', offset: [0, CAN * S, 0], length: DOME * S, rest: [0, 1, 0], role: 'dome' },
+    /* THE WHIP. Off the dome, so it turns with it and comes off with it — and
+     * so a cut that takes the dome does not leave an antenna hanging in the
+     * air, which `Actor.cut` gets right for free by reparenting the subtree. */
+    { name: 'antenna', parent: 'head', offset: [0.10 * S, 0.22 * S, -0.07 * S], length: 0.26 * S,
+      rest: [0.10, 0.99, -0.06], role: 'antenna' },
+    { name: 'legC', parent: 'body', offset: [0, 0.16 * S, 0.19 * S], length: 0.30 * S,
+      rest: [0, -0.95, 0.30], role: 'leg' },
+    /* Nearly upright, like the outer two: at [0, −0.52, 0.85] the third
+     * shoe lay at 60 degrees and rendered as a foot kicked out in front. */
+    { name: 'footC', parent: 'legC', offset: [0, 0.30 * S, 0], length: 0.14 * S, rest: [0, -0.90, 0.44], role: 'leg' },
+  ];
+  for (const side of [1, -1]) {
+    const LR = side > 0 ? 'L' : 'R';
+    bones.push({ name: `leg${LR}`, parent: 'body', offset: [side * 0.33 * S, 0.40 * S, 0],
+      length: 0.44 * S, rest: [side * 0.03, -1, 0], role: 'leg' });
+    bones.push({ name: `foot${LR}`, parent: `leg${LR}`, offset: [0, 0.44 * S, 0],
+      /* STRAIGHT DOWN, not raked forward: at 0.44 of Z the foot hung off
+       * the ankle at 26 degrees and the pair rendered as two skis pointing
+       * into the ground. An astromech's foot is a shoe, and a shoe is level. */
+      length: 0.20 * S, rest: [0, -0.99, 0.14], role: 'leg' });
+  }
+  const rig = new Rig(bones, { scale: S });
+
+  /* ── the can ──
+   * ONE LATHE with shallow caps, not a `CylinderGeometry`. A drum's flat lid
+   * meets its wall at a right angle, and under a two-tone ramp that edge is a
+   * black line running round the top of the body; `capY0`/`capY1` at 0.10 put
+   * a few millimetres of radius on it, which is what a rolled steel edge is. */
+  const body = rig.get('body');
+  const R = 0.28 * S;
+  const can = limbGeo(CAN * S, R, R * 0.97, 16, true, { rings: 3, capN: 2, capY0: 0.10, capY1: 0.08 });
+  const bm = mesh(can, shell, body.obj);
+  body.primary = bm; body.parts.push(bm); body.radius = R;
+  {
+    const k = new Kit();
+    /* SIX RECESSED PANELS AND A LOUVRE UNDER EACH — DeckCast's own row count
+     * and its own two heights, because that is the read: an astromech's body
+     * is a ring of coloured panels at chest height over a band of dark louvres,
+     * and six is what makes it a ring rather than a face. `face()` and not
+     * `add()`, so a panel authored (width, height, thickness) is not laid down
+     * 4 cm thick and standing out of the can — the defect `characters.mjs`
+     * names on every head in the game. */
+    /* `i / 6` AND NOT `t`. `Kit.row` hands out `t = i/(n-1)`, which over six
+     * panels walks 0 → 1 in fifths — 1.2 turns of the can, with two panels
+     * landing on top of each other and a bare quadrant opposite them. A ring
+     * is indexed, not interpolated. */
+    k.row(6, (i) => {
+      const th = (i / 6) * Math.PI * 2 - Math.PI / 6;
+      const d = [Math.sin(th), 0, Math.cos(th)];
+      k.face(trim, plateGeo(0.13 * S, 0.16 * S, 0.014 * S, 0.006 * S, 1),
+        [d[0] * R * 0.99, 0.34 * S, d[2] * R * 0.99], d);
+      k.face(panels, plateGeo(0.10 * S, 0.030 * S, 0.012 * S, 0.004 * S, 1),
+        [d[0] * R * 0.99, 0.13 * S, d[2] * R * 0.99], d);
+    });
+    // the front tool bays and the power bus socket — the only asymmetry on the can
+    k.face(panels, plateGeo(0.19 * S, 0.10 * S, 0.016 * S, 0.006 * S, 1), [0, 0.43 * S, R * 0.99], [0, 0, 1]);
+    k.face(trim, plateGeo(0.062 * S, 0.038 * S, 0.014 * S, 0.004 * S, 1), [0, 0.08 * S, R * 0.99], [0, 0, 1]);
+    /* THE TOP AND BOTTOM RINGS. The one at the top is the bearing the dome
+     * turns on, and it is the piece that stops the dome reading as a lid
+     * balanced on a tube; the one at the foot is the skirt. */
+    k.add(panels, bandGeo(R * 0.93, R * 1.02, R * 0.93, R * 1.02, 0.030 * S, 22), [0, CAN * S - 0.020 * S, 0]);
+    k.add(panels, bandGeo(R * 0.90, R * 1.01, R * 0.94, R * 1.01, 0.036 * S, 22), [0, 0.018 * S, 0]);
+    k.bake(body.obj);
+  }
+
+  /* ── the dome ── */
+  const head = rig.get('head');
+  {
+    const hg = domeHeadGeo(S, { r: 0.28, squash: 0.96, collar: 0.030 });
+    const hm = mesh(hg, shell, head.obj);
+    head.primary = hm; head.parts.push(hm); head.radius = 0.28 * S;
+    const k = new Kit();
+    domeKit(k, hg, S, M, { r: 0.28, panelCount: 5 });
+    /* The eye and the panels are what this body is READ by at range — a can
+     * with a smooth dome on it is a bin — so unlike a trooper's rivets these
+     * are kept past thirty metres. Three extra meshes on a body carrying nine. */
+    markSilhouette(k.bake(head.obj));
+  }
+
+  /* ── the whip antenna ──
+   * A tapered tube and a ball at its root. It is 8 mm thick, which is under
+   * every LOD threshold in the game and is exactly why it is marked
+   * silhouette: a 26 cm line off the top of a dome is a SHAPE, and an
+   * astromech without it is a dustbin. */
+  const ant = rig.get('antenna');
+  if (ant) {
+    const k = new Kit();
+    k.add(panels, limbGeo(ant.length, 0.008 * S, 0.003 * S, 5, true, { rings: 2, capN: 1 }), [0, 0, 0]);
+    k.add(panels, new THREE.SphereGeometry(0.014 * S, 6, 5), [0, 0, 0]);
+    const made = k.bake(ant.obj);
+    for (const m of made) { ant.parts.push(m); markSilhouette(m); }
+    ant.primary = made[0] || null;
+    ant.radius = 0.012 * S;
+  }
+
+  /* ── the legs ──
+   * A strut is a flat BLADE of metal, not a tube: an astromech's leg is a
+   * shoulder hub, a tapering plate and an ankle block, and the plate is what
+   * makes the machine read as three straight lines from the side rather than
+   * as a stool. */
+  for (const [name, w, hub] of [['legL', 1, true], ['legR', 1, true], ['legC', 0.72, false]]) {
+    const b = rig.get(name);
+    if (!b) continue;
+    const k = new Kit();
+    const L = b.length;
+    if (hub) {
+      // the shoulder: a drum on its side, the one round shape on the leg
+      k.add(shell, new THREE.CylinderGeometry(0.115 * S, 0.115 * S, 0.085 * S, 12), [0, 0.02 * S, 0], [0, 0, Math.PI / 2]);
+      k.add(trim, new THREE.CylinderGeometry(0.052 * S, 0.052 * S, 0.098 * S, 10), [0, 0.02 * S, 0], [0, 0, Math.PI / 2]);
+    }
+    k.add(shell, plateGeo(0.105 * S * w, L * 0.92, 0.155 * S * w, 0.016 * S, 2), [0, L * 0.48, -0.012 * S]);
+    /* THE KNEE BREAK IS DARK, and it is the one thing that makes the leg read
+     * as a leg from the side: strut, can and foot are all the same shell
+     * white, so without a dark band across it the whole flank is one pale mass
+     * with a wheel under it. (The ankle is the foot bone's own — see it.) */
+    k.add(panels, plateGeo(0.122 * S * w, 0.070 * S, 0.138 * S * w, 0.012 * S, 1), [0, L * 0.86, -0.006 * S]);
+    // …and a trim stripe down the outer face, which is the R-unit's own livery
+    k.add(trim, plateGeo(0.030 * S * w, L * 0.62, 0.020 * S, 0.006 * S, 1), [0, L * 0.46, -0.082 * S * w]);
+    // the shock strut down the front of the leg
+    k.add(panels, new THREE.CylinderGeometry(0.016 * S, 0.016 * S, L * 0.55, 7), [0, L * 0.55, 0.070 * S * w]);
+    const made = k.bake(b.obj);
+    for (const m of made) b.parts.push(m);
+    b.primary = made[0] || null;
+    /* THE RADIUS IS THE HUB'S AND NOT THE STRUT'S, and it is measured rather
+     * than eyeballed: `Enemy.capsules` builds a bone's contact volume as a
+     * capsule of `bone.radius` about the bone's own axis, and
+     * `severance.mjs`'s first check walks the DRAWN surface and fails a body
+     * with more than 22% of it outside. At the strut's own 0.09 the shoulder
+     * drum (0.115) and the plate's corners stood outside their own capsule and
+     * this body measured 27%. */
+    b.radius = (hub ? 0.125 : 0.095) * S * w;
+  }
+  /* ── the feet ──
+   * A wedge with two rollers under it, and the rollers are the point: this
+   * body's whole cost as a companion is that it ROLLS and gets stuck on ground
+   * the player vaults, and a foot with visible wheels is the only place that
+   * cost is stated to a player who has not read the card. */
+  for (const [name, w] of [['footL', 1], ['footR', 1], ['footC', 0.78]]) {
+    const b = rig.get(name);
+    if (!b) continue;
+    const k = new Kit();
+    const L = b.length;
+    /**
+     * ── AND THE PIECES GO DOWN THE BONE IN THE ORDER THEY GO DOWN THE FOOT ──
+     *
+     * A foot bone's +Y is DOWN (`rest` is [0, −0.99, 0.14]), so a part at
+     * `L * 0.88` is at the SOLE and one at `L * 0.10` is at the ankle. The
+     * first build had the dark ankle block at 0.90 and the shoe at 0.55 — the
+     * ankle under the shoe, upside down — and rendered as a pile of pale slabs
+     * at three angles under the can, which is what the in-engine flank shot
+     * showed. Ankle at the top, shoe under it, rollers under that.
+     */
+    k.add(panels, plateGeo(0.115 * S * w, 0.075 * S, 0.130 * S * w, 0.012 * S, 1), [0, L * 0.10, 0]);
+    k.add(shell, plateGeo(0.135 * S * w, 0.085 * S, 0.30 * S * w, 0.018 * S, 2), [0, L * 0.62, 0.045 * S]);
+    k.pair((sx) => k.add(panels, new THREE.CylinderGeometry(0.045 * S, 0.045 * S, 0.032 * S, 9),
+      [sx * 0.052 * S * w, L * 0.96, 0.115 * S], [0, 0, Math.PI / 2]));
+    k.add(panels, new THREE.CylinderGeometry(0.038 * S, 0.038 * S, 0.075 * S * w, 9),
+      [0, L * 0.96, -0.075 * S], [0, 0, Math.PI / 2]);
+    const made = k.bake(b.obj);
+    for (const m of made) { b.parts.push(m); markSilhouette(m); }
+    b.primary = made[0] || null;
+    /* A foot is 30 cm deep on a 16 cm bone, so its capsule is very nearly a
+     * sphere — see the note on the strut's radius above for why that is the
+     * right answer rather than a generous one. */
+    b.radius = 0.165 * S * w;
+  }
+
+  return {
+    rig, group: rig.root, scale: S,
+    palette: { shell, trim, panels, eye },
+    /**
+     * THE EMPTY STANCE. `hipHeight` is where the hips bone rides above the
+     * ground and the rest of the numbers are what `_poseWalker` reads to place
+     * it: `step` and `lift` are dead on a body with no limbs and are published
+     * as the values they would have rather than as zeroes, because a zero in a
+     * stance is indistinguishable from a field somebody forgot. `rear` is the
+     * one that is live — metres of hip travel per unit of an attack's rise —
+     * and `bob` is a real 12 mm of servo wobble, which is what stops a
+     * stationary droid reading as a prop.
+     */
+    stance: { hipHeight: HIP * S, step: 0.30 * S, lift: 0, rear: 0.06 * S, bob: 0.012 * S, limbs: [] },
+    /** No verbs. See COMPANION_UNITS.astro — this body cannot fight at all. */
+    moves: [],
+  };
+}
+
+/**
+ * ══ THE 2-1B MEDICAL DROID ══════════════════════════════════════════════
+ *
+ * "a medical droid", and the cheapest of the four to build because it takes
+ * the decision COMPANIONS.md makes for it: A TALL THIN HUMANOID CHASSIS ON
+ * `humanoidSkeleton`. So `BipedAnimator`, `POSTURES`, `hipHeight`, the parade
+ * path and the deck's humanoid row all work with nothing written, and this
+ * function's whole job is proportions and dressing.
+ *
+ * ── WHAT MAKES IT NOT A TROOPER WITH A DOME ON ─────────────────────────
+ *
+ *   THE WAIST. `waistR` 0.062 against a clone's 0.125, under a chest of 0.112
+ *   — the narrowest midriff on the roster by half. A 2-1B's abdomen is an
+ *   EXPOSED SPINE with the hip block hung off it, and the gap between chest
+ *   and pelvis is the single feature every reference plate of one is about. It
+ *   is dressed below as a stack of vertebral discs on a rod, so what stands in
+ *   the gap is machinery and not a waist.
+ *
+ *   THE LIMBS ARE STRUTS. `deltoid: false` and `limbOpts` with no bulge, so
+ *   arms and legs are straight tapers with a hard step at each joint. Nothing
+ *   on this body has a muscle on it, and `sections: false` is the other half —
+ *   `FLESH_SECTIONS` gives a shin a calf, and a surgical droid's shin is a pipe.
+ *
+ *   IT IS TALLER THAN A MAN AND THINNER. `legLen` 1.14 and `armLen` 1.10 on a
+ *   1.10 scale measures 1.86 m off its own transformed vertex box and stands at
+ *   1.79 m once `BipedAnimator`'s own hip clamp has settled (it holds the hip
+ *   at `ankleY + legLen × 0.965`, so a long-legged figure keeps a few degrees
+ *   of knee — which on this body is correct rather than tolerated: a 2-1B's
+ *   legs are bent in every reference plate of one) — which is what a body built to
+ *   reach across a table at a man lying on it is — and it is the opposite
+ *   proportion to the wookiee below, long and thin against short and wide, so
+ *   the two companions that share a skeleton cannot be confused at any range.
+ *
+ * ── AND IT IS UNARMED, WHICH IS ENFORCED WHERE IT MATTERS ───────────────
+ *
+ * Nothing here builds a weapon or a mount for one. The archetype declares
+ * `moves: []` and `_beastBrain` now reads an empty list as "no verbs" rather
+ * than falling through to a lunge (see Enemy.js), so "must never be given a
+ * weapon" is true of the body and of the brain and not only of the card.
+ */
+export function buildMedic(opts = {}) {
+  const S = opts.scale ?? 1.10;
+  const rig = new Rig(humanoidSkeleton(S, { armLen: 1.10, legLen: 1.14 }), { scale: S });
+
+  /* The 2-1B's two-tone: a dark instrument torso and head over pale limbs. It
+   * is the reference's own scheme and it is also what makes the body legible —
+   * the dark mass carries the machinery, and the eye reads it as the head and
+   * chest of a thin figure rather than as one whole pale man. */
+  const trim = metalMat(opts.trim ?? 0x3a3128, 0.40, 0.72, 2.4);
+  const shell = metalMat(opts.shell ?? 0xb6ae9c, 0.44, 0.60, 2.2);
+  const panels = metalMat(opts.panels ?? 0x24211d, 0.42, 0.90, 2.8);
+  const photo = emissiveMat(opts.photoreceptor ?? 0x8fd8ff, 2.6);
+  /* THE RECEPTOR BAND AND THE DOME LENS ARE THE EYE; the forearm and chest
+   * readouts are not. Same colour, a separate material, and it costs NOTHING:
+   * the band and the lens are the only lit parts on the head bone, so that
+   * Kit baked one merged mesh under `photo` and bakes one under `eye`, and
+   * the body is 5 712 triangles over 40 meshes either way. See `eyeMat`. */
+  const eye = eyeMat(opts.photoreceptor ?? 0x8fd8ff, 2.6);
+
+  /* `squash` 0.96 and not 0.86: at 0.86 on a 0.115 radius the cap came out
+   * wider than it was tall on a neck a third of its width, and rendered as a
+   * MUSHROOM. A 2-1B's head is a rounded instrument housing that is very
+   * nearly as deep as it is wide. The collar is what carries it onto the neck. */
+  /* r 0.090 AND NOT 0.108. In the engine at 0.108 the cap measured 24 cm
+   * across on a neck 8 cm through and read as a MUSHROOM from the flank — a
+   * brim with a stalk under it. A head is about twice its own neck, not three
+   * times; `neckR` goes up to meet it in the same pass. `squash` 1.02 makes
+   * the housing very slightly taller than it is wide, which is the last thing
+   * that stops it being a cap. */
+  const headShell = (s) => domeHeadGeo(s, { r: 0.090, squash: 1.02, collar: 0.018 });
+
+  dressHumanoid(rig, {
+    scale: S,
+    body: trim, arm: shell, leg: shell, hand: panels, boot: panels, head: trim,
+    mats: { spine: panels, neck: panels },
+    deltoid: false,
+    sections: false,
+    /**
+     * THIN, AND THEN LESS THIN — a render, not a preference. The first pass
+     * ran armR 0.034 and thighR 0.058, and what came back was a stick insect:
+     * two pale pipes for legs with nothing at the knee, arms the width of the
+     * fingers on them, and a torso so much heavier than either that the figure
+     * read as a dark egg on wires. A 2-1B IS thin, but every part of it is a
+     * MACHINED part with a joint at each end, and a limb under about 7 cm of
+     * radius cannot show a joint at all at gameplay range.
+     */
+    parts: {
+      chestR: 0.125, shoulderR: 0.106, hipR: 0.100, waistR: 0.062,
+      armR: 0.043, clavR: 0.052, thighR: 0.076, neckR: 0.046,
+      torsoDepth: 0.80, shoulderDome: 0.24, headR: 0.088,
+    },
+    seg: { torso: 12, arm: 8, leg: 8, clav: 6, neck: 8 },
+    /* Straight tapers with no bulge anywhere: a strut, at every joint. */
+    limbOpts: {
+      arm: { rings: 2, capN: 2 }, fore: { rings: 2, capN: 2 },
+      thigh: { rings: 2, capN: 2 }, shin: { rings: 2, capN: 2 },
+    },
+    headGeo: headShell,
+    /* A surgeon's hands. `droidHandGeo` at a tighter curl than a B1's, which
+     * is the difference between a hand that holds a rifle and one that holds
+     * an instrument. */
+    handGeo: (side, s) => droidHandGeo(side, s, { curl: 0.55 }),
+    /* A real pad. At 0.058 x 0.150 the feet were two dark specks and the
+     * legs ended in nothing — see the note on the limb radii. */
+    feet: { w: 0.072, len: 0.190, h: 0.056 },
+
+    buildHead(headObj, s, hg) {
+      const k = new Kit();
+      /* eyeUp 0.40 AND NOT 0.10, and the difference is one of the five
+       * segments of the band below. At 0.10 the dome's lens sits on the same
+       * bearing as the band's CENTRE plate — 0.03 rad apart on a 9 cm cap,
+       * which is 3 mm — so the lens and its housing stood directly over it
+       * and that segment measured 0 of its 12 triangles unobstructed: a
+       * receptor band with a hole punched in the middle of it, on the one
+       * feature this head is read by. 0.40 lifts the lens onto the brow of
+       * the cap, where the astromech's own default (0.42) puts it, and the
+       * band comes back even: 8/12, 4/12, 4/12, 4/12, 8/12 across the five. */
+      domeKit(k, hg, s, { shell, trim: panels, panels, eye },
+        { r: 0.090, eyeUp: 0.40, panels: false, holo: false });
+      /* THE VISOR BAND, and it is what separates this head from the
+       * astromech's. An R-unit has ONE eye and looks in one direction; a
+       * medical droid's receptor is a band across the whole front of the cap,
+       * because it is reading a body on a table under it rather than picking a
+       * heading. Seated with `face` on the shell so it follows the squash. */
+      const core = new THREE.Vector3(0, 0, 0);
+      const d = new THREE.Vector3();
+      /* THE FACEPLATE FIRST — a pale panel across the front of the cap, which
+       * is what stops the head reading as a dark bowl on dark shoulders. The
+       * band of receptor sits ON it. Five segments rather than three: at three
+       * the band was two specks either side of a gap. */
+      k.row(5, (i, t) => {
+        const th = (t - 0.5) * 1.9;
+        d.set(Math.sin(th) * 0.86, 0.16, Math.cos(th) * 0.86).normalize();
+        k.face(shell, plateGeo(0.046 * s, 0.086 * s, 0.010 * s, 0.004 * s, 1),
+          onSurface(hg, d, -0.002 * s, core), d);
+      });
+      k.row(5, (i, t) => {
+        const th = (t - 0.5) * 1.7;
+        d.set(Math.sin(th) * 0.86, 0.06, Math.cos(th) * 0.86).normalize();
+        k.face(eye, plateGeo(0.040 * s, 0.028 * s, 0.008 * s, 0.003 * s, 1),
+          onSurface(hg, d, -0.012 * s, core), d);
+      });
+      /* The two audio pickups either side. Small, dark, and NOT marked
+       * silhouette: at thirty metres this head is eleven pixels and what has
+       * to survive is the DOME, which is the bone's own primary. */
+      k.pair((sx) => {
+        d.set(sx * 0.96, 0.22, 0.10).normalize();
+        k.aim(panels, new THREE.CylinderGeometry(0.020 * s, 0.024 * s, 0.030 * s, 8),
+          onSurface(hg, d, 0.002 * s, core), d);
+      });
+      k.bake(headObj);
+    },
+
+    dress(r, s) {
+      /**
+       * ── THE OPEN MIDRIFF ────────────────────────────────────────────
+       *
+       * The one thing that has to be right. `waistR` 0.062 leaves a real gap
+       * between the chest lathe and the hip lathe, and what fills it is a
+       * COLUMN: a rod with four discs stacked on it and a pair of pistons
+       * either side. Parented to `spine`, so it moves with the trunk the way a
+       * spine does and comes off with it under a blade.
+       */
+      const spine = r.get('spine');
+      if (spine) {
+        const k = new Kit();
+        const L = spine.length;
+        k.add(panels, new THREE.CylinderGeometry(0.030 * s, 0.030 * s, L * 1.05, 9), [0, L * 0.48, 0]);
+        k.row(4, (i, t) => k.add(shell,
+          /* 0.088 AND NOT 0.068: the discs were built at exactly `waistR`, so
+           * they were flush with the lathe they were meant to be standing out
+           * of and the "exposed spine" was a smooth dark waist. A vertebra has
+           * to be WIDER than the column it is threaded on. */
+          (() => { const g = new THREE.SphereGeometry(0.088 * s, 10, 6); g.scale(1, 0.40, 0.86); return g; })(),
+          [0, (0.12 + t * 0.74) * L, 0]));
+        k.pair((sx) => {
+          k.add(panels, new THREE.CylinderGeometry(0.014 * s, 0.014 * s, L * 0.86, 7), [sx * 0.055 * s, L * 0.50, -0.020 * s]);
+          k.add(shell, new THREE.CylinderGeometry(0.019 * s, 0.019 * s, L * 0.34, 7), [sx * 0.055 * s, L * 0.30, -0.020 * s]);
+        });
+        k.bake(spine.obj);
+      }
+      /* THE CHEST PLATE AND THE SHOULDER RINGS. A 2-1B's thorax is a slab of
+       * instrument housing with two exposed rotator rings above it, and the
+       * rings are what make the arms read as bolted ON rather than grown. */
+      const chest = r.get('chest');
+      if (chest) {
+        const k = new Kit();
+        /* SEATED PROUD OF THE LATHE, WHICH IT WAS NOT. `torsoDepth` 0.80
+         * squashes the chest to 0.100 in Z, and the plate was centred at 0.070
+         * with a half-depth of 0.028 — its front face landed 2 mm outside the
+         * hull it was supposed to be sitting ON, so the whole instrument
+         * housing was inside the droid and the front of the body was blank. */
+        k.add(shell, plateGeo(0.160 * s, 0.190 * s, 0.055 * s, 0.014 * s, 2), [0, 0.105 * s, 0.104 * s]);
+        k.add(panels, plateGeo(0.095 * s, 0.055 * s, 0.014 * s, 0.005 * s, 1), [0, 0.152 * s, 0.135 * s]);
+        k.add(photo, plateGeo(0.032 * s, 0.014 * s, 0.010 * s, 0.003 * s, 1), [0.048 * s, 0.062 * s, 0.136 * s]);
+        k.pair((sx) => k.add(panels, bandGeo(0.052 * s, 0.072 * s, 0.052 * s, 0.072 * s, 0.048 * s, 12),
+          [sx * 0.100 * s, 0.185 * s, 0], [0, 0, Math.PI / 2]));
+        for (const m of k.bake(chest.obj)) if (m.material === shell) markSilhouette(m);
+      }
+      /* THE HIP BLOCK. A pelvis on this body is a machined box, and it is what
+       * the open midriff stands ON — without it the column runs into a taper
+       * and the figure has no bottom half. */
+      const hips = r.get('hips');
+      if (hips) {
+        const k = new Kit();
+        k.add(shell, plateGeo(0.175 * s, 0.095 * s, 0.130 * s, 0.018 * s, 2), [0, 0.025 * s, 0]);
+        k.add(panels, plateGeo(0.130 * s, 0.032 * s, 0.105 * s, 0.008 * s, 1), [0, -0.030 * s, 0]);
+        /* The hip actuators: two short pistons standing out of the block over
+         * each thigh, which is the join a machined pelvis has and a lathe
+         * running smoothly into a leg does not. */
+        k.pair((sx) => k.add(panels, new THREE.CylinderGeometry(0.026 * s, 0.030 * s, 0.070 * s, 8),
+          [sx * 0.082 * s, 0.010 * s, 0.010 * s], [0, 0, sx * 0.22]));
+        k.bake(hips.obj);
+      }
+      /**
+       * THE INSTRUMENT CLUSTER, ON THE LEFT FOREARM ONLY.
+       *
+       * Asymmetry is the cheapest legibility there is on a body this thin, and
+       * it is also correct: a 2-1B carries its diagnostic arm on one side and
+       * works with the other. Three short probes and a lit readout — and the
+       * readout is `photo`, so from the front the droid is an eye band and one
+       * small light low on an arm, which reads as a machine at work.
+       */
+      /**
+       * ── A JOINT AT EVERY JOINT ──────────────────────────────────────
+       *
+       * `dressHumanoid` builds each limb as a lathe with a hard step where the
+       * next one starts, and on a body with a bicep and a calf that step IS
+       * the elbow. This one has neither — `limbOpts` asks for straight tapers,
+       * because a surgical droid's arm is a strut — so the step is a change of
+       * radius on a smooth pipe and reads as nothing at all. One dark ring at
+       * each of the four joints is what a machined limb actually has there, it
+       * is four merged shapes a side, and it is the difference between a leg
+       * and a length of pipe.
+       */
+      for (const side of ['L', 'R']) {
+        for (const [bone, rr, at] of [['arm', 0.050, 0.98], ['fore', 0.046, 0.02],
+          ['thigh', 0.082, 0.98], ['shin', 0.076, 0.03]]) {
+          const b = r.get(bone + side);
+          if (!b) continue;
+          const k = new Kit();
+          k.add(panels, bandGeo(rr * 0.70 * s, rr * s, rr * 0.70 * s, rr * s, 0.052 * s, 12),
+            [0, b.length * at - 0.026 * s, 0]);
+          k.bake(b.obj);
+        }
+      }
+      const fore = r.get('foreL');
+      if (fore) {
+        const k = new Kit();
+        const L = fore.length;
+        k.add(panels, plateGeo(0.055 * s, 0.090 * s, 0.048 * s, 0.010 * s, 1), [0.028 * s, L * 0.42, 0]);
+        k.add(photo, plateGeo(0.026 * s, 0.016 * s, 0.008 * s, 0.003 * s, 1), [0.052 * s, L * 0.42, 0.010 * s]);
+        k.row(3, (i, t) => k.add(shell, new THREE.CylinderGeometry(0.006 * s, 0.004 * s, 0.075 * s, 6),
+          [0.028 * s, L * 0.80, (t - 0.5) * 0.030 * s]));
+        k.bake(fore.obj);
+      }
+    },
+  });
+
+  /* A WORKING STOOP. `leanTrunk` puts it in the REST pose for the reason that
+   * function's own note gives, and 0.14 is a body that spends its life bent
+   * over somebody — enough to read from the side, well under the BX commando's
+   * crouch, and it survives the walk because the gait writes every trunk bone
+   * as rest × its own lean. The head comes back up (−0.10) so the droid is
+   * still looking where it is going. */
+  leanTrunk(rig, 0.14, -0.10);
+
+  return { rig, group: rig.root, scale: S, palette: { shell, trim, panels, photo, eye } };
+}
+
+/**
+ * A COAT, AS TAPERED CLUMPS — the creature `back: 'shag'` treatment, said once
+ * as a function so the wookiee below and the wampa are the same shape law.
+ *
+ * What that treatment IS is one idea rather than one call site: fur is
+ * authored as clumps standing OFF the body and never as a texture, because a
+ * clump breaks the SILHOUETTE and a texture does not — and past thirty metres
+ * the silhouette is all there is. A `clawGeo` is the primitive for the same
+ * reason it is there: a tapered, slightly curved tube with real rings in it,
+ * where a cone reads as a spike and hair falls.
+ *
+ * ── AND IT IS ROOTED WITH `onLimb`, WHICH IS THE WHOLE OF THE FIRST BUILD'S
+ *    DEFECT ────────────────────────────────────────────────────────────────
+ *
+ * The first version placed each clump at a TYPED coordinate — `z: 0.150 * s`
+ * on a chest whose lathe radius is 0.244 — so every clump was rooted 9 cm
+ * INSIDE the body and only its far end came out. What renders is then not fur
+ * at all: it is a row of cones emerging from a smooth surface, and at the
+ * length a clump needs to read at range that is a stegosaurus. Exactly the
+ * defect the creature builder's own `hull()` note describes one treatment
+ * over, arrived at independently on a humanoid.
+ *
+ * So the root is `onLimb`, which fires a ray from the bone's axis and takes
+ * the point where it leaves the mesh — the same answer `limbPlate` already
+ * uses to stop a greave ending up inside a shin — and the clump is AIMED
+ * mostly downward with a little of the surface normal in it, because hair
+ * lies along a body and hangs off it. `droop` is that mix and it is the one
+ * number that decides whether this reads as fur or as spines.
+ *
+ *   n       clumps in the row
+ *   y0,y1   fractions along the bone
+ *   a0,a1   azimuth arc, 0 straight ahead (+Z), ±π/2 the flanks
+ *   len,r0  the clump; `len` may be a function of t so a row can taper
+ *   droop   0 straight out of the surface, 1 straight down the body
+ */
+const _shagDn = new THREE.Vector3(), _shagInv = new THREE.Matrix4();
+function shagOn(k, mat, bone, n, o = {}) {
+  if (!bone) return k;
+  const y0 = o.y0 ?? 0.15, y1 = o.y1 ?? 0.85;
+  const a0 = o.a0 ?? -1.2, a1 = o.a1 ?? 1.2;
+  const r0 = o.r0 ?? 0.026, droop = o.droop ?? 0.72;
+  /**
+   * ── "STRAIGHT DOWN THE BODY" IS A WORLD DIRECTION AND WAS WRITTEN AS A
+   *    LOCAL ONE, AND ON THIS BODY THAT IS FOUR LIMBS OF FUR BRUSHED
+   *    BACKWARDS ─────────────────────────────────────────────────────────
+   *
+   * The aim was `[out.x·(1−droop), −droop, out.z·(1−droop)]` — literal local
+   * −Y — and the header above it says `droop` is "0 straight out of the
+   * surface, 1 straight down the body". Those two agree on the torso and
+   * disagree on every limb, because a bone's local +Y runs from its origin
+   * toward its CHILD: on `chest` and `hips` that is toward the head, so local
+   * −Y is world down and the sentence is true; on `armL`, `foreL`, `thighL`
+   * and `shinL` it is toward the hand and the foot, so local −Y is world UP.
+   *
+   * Measured on the shipped figure before this line, off the merged coat's own
+   * vertices: the shin's clumps are rooted between world y −0.671 and −1.105
+   * and the mesh reaches −0.519 — 0.076 m ABOVE the knee the topmost root sits
+   * under. Every clump on both arms, both forearms, both thighs and both shins
+   * was raked toward the body. That is fur combed the wrong way, and it is why
+   * the coat reads as spines from the front: a spike pointing up a limb is a
+   * quill, and the same clump pointing down it is hair.
+   *
+   * So the direction is MEASURED rather than assumed — world down, carried
+   * into whatever frame this bone happens to be in — which is the same answer
+   * `hull()`/`hullN()` give one builder over and `onLimb` gives here for the
+   * ROOT. The rest pose is the authoring frame for everything else in this
+   * file and it is the authoring frame for this too.
+   */
+  bone.obj.updateWorldMatrix(true, false);
+  _shagDn.set(0, -1, 0).transformDirection(_shagInv.copy(bone.obj.matrixWorld).invert()).normalize();
+  const out = [0, 0, 0];
+  return k.row(n, (i, t) => {
+    const th = a0 + (a1 - a0) * (n === 1 ? 0.5 : t);
+    out[0] = Math.sin(th); out[1] = 0; out[2] = Math.cos(th);
+    const root = onLimb(bone, (y0 + (y1 - y0) * t) * bone.length, out, o.sink ?? 0);
+    const L = typeof o.len === 'function' ? o.len(t) : (o.len ?? 0.12);
+    /**
+     * 3 SEGMENTS AND 2 RINGS, and the count is the whole of this body's
+     * triangle budget.
+     *
+     * The note this replaces already made the argument once — "at 4x2 a clump
+     * is 64 triangles instead of 200 and the silhouette is identical, because
+     * what a clump contributes at any range is its OUTLINE" — and stopped one
+     * step short. `characters.mjs`'s new companion check weighs this figure at
+     * 13 732 against a 13 000 cap, and a per-mesh census says where it is:
+     * 6 336 triangles of COAT out of 13 732, which is 46% of the body in hair.
+     *
+     * A `clawGeo` at (seg, 2) is `2·seg` triangles for the open ring plus
+     * `seg·5·2` for the capped tip — 48 at seg 4, 36 at seg 3. Across the 142
+     * clumps this body wears that is 1 704 triangles for a change nobody can
+     * see: the section goes from a square to a triangle on a shape 10 cm long
+     * and 2.6 cm across, and the widest a triangular section is ever narrower
+     * than a square one is half its own root radius, 13 mm, at one azimuth in
+     * three. Measured against the cap it is the difference between over and
+     * under, and it is what pays for the shins and the feet below.
+     */
+    k.aim(mat, clawGeo(L, r0, r0 * 0.18, 0.5, 3, 2), root,
+      [out[0] * (1 - droop) + _shagDn.x * droop, _shagDn.y * droop,
+        out[2] * (1 - droop) + _shagDn.z * droop]);
+  });
+}
+
+/**
+ * ══ THE WOOKIEE ═════════════════════════════════════════════════════════
+ *
+ * "a large wookie", and COMPANIONS.md settles the two decisions that would
+ * otherwise be arguments:
+ *
+ *   A HUMANOID RIG AT ~1.28, so BipedAnimator, POSTURES, `hipHeight`, the
+ *   parade path and the deck's humanoid figure builder all work unchanged.
+ *   1.32 rather than the design's 1.28, and it is a MEASUREMENT correcting a
+ *   round number: `legLen` 0.98 shortens the legs for the ape proportion below,
+ *   and at 1.28 the built box came out 2.08 m — under Chewbacca's stated 2.28
+ *   and barely over a Geonosian. 1.32 measures 2.22 m, which is the tallest
+ *   walking body on the roster short of a machine and the reason it can
+ *   physically block a doorway a player is standing in.
+ *
+ *   NO CLOTH. `Engine.js` sizes `QUALITY.cloth` on "every enemy wearing
+ *   exactly one cape" and `cloth-cost.mjs` holds every archetype to `g.n === 1`
+ *   — so the bandolier is GEOMETRY. It is a strap and six cases on a bone, two
+ *   draw calls, and it does not move. A simulated belt on a body this size
+ *   would be the twelfth cape in a column sized for eleven.
+ *
+ * ── THE PROPORTIONS ARE THE OPPOSITE OF THE MEDIC'S ─────────────────────
+ *
+ * `armLen` 1.16 and `legLen` 0.92 under a chest of 0.225: long arms, short
+ * legs, enormous barrel. That is an ape's proportion and it is what makes this
+ * read as a wookiee rather than as a hairy tall man — measured against the
+ * 2-1B on the same skeleton, the two silhouettes have almost nothing in common
+ * above the hip, which is the whole point of two companions sharing a rig.
+ */
+export function buildWookiee(opts = {}) {
+  const S = opts.scale ?? 1.32;
+  const rig = new Rig(humanoidSkeleton(S, { armLen: 1.16, legLen: 0.98 }), { scale: S });
+
+  /* THE PELT IS THE BODY — there is no skin on this figure a player ever sees
+   * except the face — so `pelt` is the one colour the look table really moves,
+   * and `braid` is the bandolier's leather. `hideMat` rather than `skinMat`:
+   * 0.94 roughness with no sheen at all, because fur that catches a specular
+   * is wet fur. */
+  const pelt = hideMat(opts.pelt ?? 0x6b4a2c, 0.94);
+  /**
+   * The under-coat, two shades up. One material, and it is what gives the
+   * chest, the belly and the thighs a lighter mass than the back — every
+   * reference wookiee is countershaded, and a single flat brown is the thing
+   * that makes a fur body read as a costume.
+   *
+   * DERIVED FROM THE PELT RATHER THAN DECLARED BESIDE IT. The first version
+   * read `opts.pelt ?? 0x7d5c3a`, which meant the countershading existed only
+   * while the player left the colour alone: pick anything in the Kennel and
+   * the under-coat became the same value as the back and the whole body went
+   * flat.
+   *
+   * BRIGHTENED RATHER THAN LERPED TOWARD WHITE, and the difference is not
+   * subtle: `THREE.ColorManagement` is on, so a `lerp` runs in LINEAR space
+   * and pulls the value toward grey as well as up — 0x6b4a2c a fifth of the
+   * way to white comes out near 0x9a8a7c, a different and greyer colour, and
+   * it rendered as pale pink quills standing against the brown rather than as
+   * a lighter coat. `multiplyScalar` is a gain instead: 1.35 gives 0x7b5634,
+   * which is the same brown two shades up. A coat's pale half is lit fur, not
+   * different fur.
+   */
+  const under = hideMat(new THREE.Color(opts.pelt ?? 0x6b4a2c).multiplyScalar(1.35).getHex(), 0.94);
+  const face = skinMat(0x3a2b1e, 2.6);
+  /**
+   * ── THE MUZZLE MASK, AND IT IS THE WHOLE OF THE FACE COMPLAINT ────────
+   *
+   * The body lane's own verdict on this figure was "the face is a dark mass
+   * with amber eyes", and rendered head-on (`tools/_soft.mjs` with the frame
+   * on the head bone) that is exactly what it is: braincase, brow shelf,
+   * muzzle and both cheeks are ONE `assemble` wearing ONE material at
+   * 0x3a2b1e, so the four shapes that were built to give this head structure
+   * all solve to the same flat value under the cel ramp and none of them can
+   * be seen. The brow the geometry actually has is invisible. The nose was a
+   * sphere in the SAME material as the thing it sits on. There is no mouth.
+   * It is a black hole with two lamps in it, and the ramp is the reason: the
+   * bandolier's own note in this function already says it — "the one thing a
+   * cel ramp will not do is separate two dark values".
+   *
+   * So the fix is VALUE and not more geometry. Three materials over the one:
+   *
+   *   `snout` — the pale fur mask over the muzzle and the brow, which every
+   *   reference wookiee has and which is the thing that makes the face read
+   *   as a face rather than as a silhouette. Derived from the pelt by the
+   *   same `multiplyScalar` gain `under` uses and for the same argued reason:
+   *   a lerp toward white runs in linear space and comes back grey, and a
+   *   coat's pale half is lit fur rather than different fur. 2.0 against
+   *   `under`'s 1.35 because this one has to separate from `under` as well,
+   *   and 2.0 RATHER THAN THE 2.4 THIS WAS FIRST WRITTEN AT because of
+   *   `lit()`'s clamp: it divides the authored colour by the bake's mean
+   *   albedo, and duracrete's is 0.332 linear on red. At 2.4 the stock pelt
+   *   comes to 0.353 — 1.06 of the mean, so the red channel clamps to 1 while
+   *   green and blue do not, and the mask goes ORANGE and stays orange for
+   *   every pelt lighter than stock. 2.0 lands at 0.89 of the mean, which
+   *   leaves the head of room a repaintable colour needs.
+   *
+   *   `snoutDark` — the nose and the lip line, and it is the darkest value on
+   *   the body by a distance (0x120d0a against the face's 0x3a2b1e). It is
+   *   flat and not derived, because a nose is wet skin and does not change
+   *   colour when the player repaints the coat.
+   *
+   * Two materials, two more merged meshes on the head bone, and the four
+   * shapes that were already there stop being one shape.
+   */
+  const snout = hideMat(new THREE.Color(opts.pelt ?? 0x6b4a2c).multiplyScalar(2.0).getHex(), 0.94);
+  const snoutDark = hideMat(0x120d0a, 0.62);
+  /* 0x6a4a2e and not 0x4a3524: at the darker value the strap rendered as a
+   * solid BLACK plank across the chest, because the one thing a cel ramp will
+   * not do is separate two dark values. A bandolier is tan leather. */
+  const leather = leatherMat(opts.braid ?? 0x6a4a2e, 0.68);
+  const steel = metalMat(0x8b8880, 0.40, 0.90, 2.4);
+  const eye = eyeMat(0xd8b25a, 1.4);
+  const tooth = boneMat(0xe0d5b8, 0.36);
+
+  /**
+   * THE HEAD. A long muzzle under a heavy brow, and a mane that swallows the
+   * neck — which is the whole read, because a wookiee's head has no visible
+   * join with its shoulders at all.
+   *
+   * Authored as ONE geometry for the reason `buildGeonosian`'s is: the head is
+   * a bone primary and a primary is one draw call at every range, so a skull
+   * split across three meshes is three draw calls at forty metres for a shape
+   * nine pixels across. The muzzle is `limbGeo` with a `muzzleSection` — the
+   * same lathe the creature heads use and for the same stated reason: a
+   * `plateGeo` snout is a crate seen end-on.
+   */
+  const headShell = (s) => assemble([
+    // braincase: long back to front, low, and heavy at the occiput
+    [(() => { const g = new THREE.SphereGeometry(0.108 * s, 12, 9); g.scale(0.98, 0.94, 1.16); return g; })(),
+      [0, 0.096 * s, -0.010 * s]],
+    // the brow shelf, which is what a wookiee looks out from under
+    [(() => { const g = new THREE.SphereGeometry(0.098 * s, 10, 7); g.scale(1.02, 0.34, 0.60); return g; })(),
+      [0, 0.132 * s, 0.052 * s], [-0.26, 0, 0]],
+    // the muzzle: short, deep and wide at the hinge — an ape's, not a dog's
+    [limbGeo(0.115 * s, 0.072 * s, 0.048 * s, 10, true,
+      { rings: 3, capN: 3, capY0: 0.22, capY1: 0.58, section: muzzleSection({ flat: 0.78, n: 2.8, chin: 0.20, crown: 0.10 }) }),
+    [0, 0.058 * s, 0.052 * s], [Math.PI / 2 + 0.10, 0, 0]],
+    // the cheeks, which carry the eye line into the mouth
+    [(() => { const g = new THREE.SphereGeometry(0.062 * s, 9, 7); g.scale(1, 0.86, 1.20); return g; })(),
+      [0.058 * s, 0.062 * s, 0.030 * s]],
+    [(() => { const g = new THREE.SphereGeometry(0.062 * s, 9, 7); g.scale(1, 0.86, 1.20); return g; })(),
+      [-0.058 * s, 0.062 * s, 0.030 * s]],
+  ], 'head');
+
+  dressHumanoid(rig, {
+    scale: S,
+    body: pelt, arm: pelt, leg: pelt, hand: pelt, boot: pelt, head: face,
+    /* A DELTOID AND A HALF. The default is [0.30, 0.15, 0.17]; this is a
+     * bigger swell further down the arm, which is where an ape carries its
+     * shoulder mass — and it is a swell in the arm's OWN lathe rather than a
+     * ball on it, for the reason `dressHumanoid` argues at length. */
+    deltoid: [0.44, 0.20, 0.20],
+    /* 0.185 AND NOT 0.225, WHICH IS A MEASUREMENT. `addLimb` multiplies these
+     * by the figure's scale, so 0.225 on a 1.32 body is a chest radius of
+     * 0.297 m — a barrel 59 cm across, half again a clone's at its own scale,
+     * and it rendered as a drum with arms. 0.185 is 0.244 m, which is a clone's
+     * 0.155 carried out by the scale plus about 20% — big, and still a body.
+     *
+     * AND THE SHOULDER IS WIDER THAN THE HIP BY A THIRD (0.186 against 0.142),
+     * which the first pass had at 0.163 against 0.152 — near enough equal, and
+     * a body with a man's taper reads as a man in a fur suit however much hair
+     * is on it. An ape is a wedge. */
+    parts: {
+      chestR: 0.195, shoulderR: 0.186, hipR: 0.142, waistR: 0.150,
+      armR: 0.062, clavR: 0.086, thighR: 0.110, neckR: 0.082,
+      /* THE FOREARM BARELY TAPERS. `dressHumanoid` defaults it to 0.89 → 0.61
+       * of the upper arm, which is a human's wrist and turned this one's arms
+       * into pipes ending in sticks. An ape's forearm is as heavy as its
+       * upper arm and its wrist is thick; it is also the part of the body a
+       * player standing next to this thing is closest to. */
+      foreR0: 0.062, foreR1: 0.050,
+      /* 0.94 DEEP against a clone's 0.76 — nearly round in section. A wookiee
+       * is as thick front to back as it is across, and that one number is what
+       * stops the barrel reading as a broad flat man. */
+      torsoDepth: 0.94, shoulderDome: 0.30, headR: 0.110,
+    },
+    seg: { torso: 14, arm: 12, leg: 12, clav: 8, neck: 10 },
+    /* THE YOKE. A trapezius sized off the clavicle the rig actually has, and
+     * on this body it does more work than on any other: the mane below sits on
+     * it, and without the mass under the hair the coat hangs off a flat disc. */
+    yoke: { reach: 0.72, rise: 0.048, depth: 0.086, at: 0.46, slope: 0.26 },
+    yokeMat: pelt,
+    headGeo: headShell,
+    feet: { w: 0.082, len: 0.215, h: 0.070 },
+
+    buildHead(headObj, s, hg) {
+      const k = new Kit();
+      const core = new THREE.Vector3(0, 0.096 * s, -0.010 * s);
+      const d = new THREE.Vector3();
+      /**
+       * ── THE MASK OVER THE MUZZLE ──────────────────────────────────────
+       *
+       * A SLEEVE OVER THE LATHE THAT IS ALREADY THERE, and not the muzzle
+       * moved into the Kit, which was the first thing tried and is wrong:
+       * `headShell` is the geometry `onSurface` seats the eyes and every mane
+       * clump against (`hg` below), so taking a shape out of it re-aims eleven
+       * things that were authored against the shape it had. The sleeve is the
+       * same lathe at 1.10 of its radii, started 0.030 further forward so the
+       * dark hinge and the cheeks still show behind it, and it is fur over
+       * skin — which is what a wookiee's pale muzzle actually is.
+       *
+       * It costs 160 triangles, which is a tenth of what this head spends on
+       * mane and is the only part of the face a player can read at 3 m.
+       */
+      k.add(snout, limbGeo(0.098 * s, 0.076 * s, 0.052 * s, 10, true,
+        { rings: 3, capN: 3, capY0: 0.10, capY1: 0.52,
+          section: muzzleSection({ flat: 0.78, n: 2.8, chin: 0.20, crown: 0.10 }) }),
+      [0, 0.055 * s, 0.070 * s], [Math.PI / 2 + 0.10, 0, 0]);
+      k.pair((sx) => {
+        // deep-set eyes under the shelf
+        d.set(sx * 0.40, 0.10, 0.91).normalize();
+        k.aim(eye, new THREE.SphereGeometry(0.019 * s, 7, 6), onSurface(hg, d, -0.004 * s, core), d);
+        /* THE LOWER CANINE, and it is SEATED now rather than typed. Its own
+         * note said "standing out of the lip the way every reference has it"
+         * and it was at [±0.030, 0.038, 0.106] — a point 3 cm inside a muzzle
+         * whose lathe at that station runs to 0.067 across and −0.011 under.
+         * Both teeth were buried in the jaw they were meant to stand out of,
+         * and had been since the body landed. Same ray the eyes and the lip
+         * line use, pushed clear of the mask. */
+        d.set(sx * 0.30, -0.52, 0.80).normalize();
+        k.add(tooth, clawGeo(0.034 * s, 0.008 * s, 0.002 * s, -0.35, 4, 3),
+          onSurface(hg, d, -0.014 * s, core), [-0.55, 0, sx * 0.16]);
+        /**
+         * THE BROW, AS FUR. The shelf is in `headShell` and has been since
+         * this body landed — an ellipsoid squashed to 0.34 on Y and raked
+         * −0.26 over the sockets — and it is invisible for the reason the
+         * mask above exists: it is the same value as everything it stands
+         * proud of. A shadow line cannot be drawn under a flat ramp, so the
+         * brow is drawn instead, as four short clumps of `snout` fur raked
+         * FORWARD along its leading edge. Forward and not down: hair over an
+         * eyebrow points at what the animal is looking at, and a clump raked
+         * down would be another mane ring.
+         */
+        k.row(4, (i, t) => {
+          const th = sx * (0.16 + t * 0.42);
+          d.set(Math.sin(th) * 0.92, 0.34, Math.cos(th) * 0.92).normalize();
+          k.aim(snout, clawGeo((0.055 - t * 0.010) * s, 0.014 * s, 0.003 * s, 0.4, 3, 2),
+            onSurface(hg, d, -0.006 * s, core), [d.x * 0.5, 0.18, d.z * 0.5 + 0.55]);
+        });
+      });
+      /* THE NOSE, in the darkest material on the body rather than in the same
+       * one as the face it sits on — which is what it was, and is why nothing
+       * was there. Seated on the muzzle's own surface and pushed clear of the
+       * mask, so it rides the bridge instead of floating between the eyes:
+       * typed at [0, 0.081, 0.152] it rendered as a black disc wider than
+       * either eye sitting directly under them. */
+      const dn = new THREE.Vector3(0, 0.22, 0.975).normalize();
+      k.add(snoutDark, (() => { const g = new THREE.SphereGeometry(0.024 * s, 8, 6); g.scale(1.15, 0.72, 0.85); return g; })(),
+        onSurface(hg, dn, -0.008 * s, core));
+      /**
+       * THE MOUTH, AND IT IS A LINE AND NOT A HOLE.
+       *
+       * There was none. A `plateGeo` strip laid ON the underside of the snout
+       * in `snoutDark` is a lip line: under a two-step ramp a dark strip on a
+       * pale muzzle reads as a closed mouth from every angle that can see the
+       * face, and it is 92 triangles. A modelled opening would need an
+       * interior, a tongue and a jaw that moves, none of which this rig has.
+       *
+       * `k.face` and not `k.add`: `face` puts the panel's local +Z along the
+       * ray and its +X across it horizontally, which is the frame `plateGeo`
+       * is authored in (width, height, thickness) — and `aim`, the other
+       * seater in this file, would put the 10 cm width through the muzzle. Its
+       * own note says so in as many words, on the vent it was written for.
+       */
+      const dm = new THREE.Vector3(0, -0.46, 0.89).normalize();
+      k.face(snoutDark, plateGeo(0.088 * s, 0.015 * s, 0.010 * s, 0.003 * s, 1),
+        onSurface(hg, dm, -0.010 * s, core), dm);
+
+      /**
+       * THE MANE, and it is the head's whole outline. Two rings of clumps
+       * raked back and down off the crown and the jaw, so the head's
+       * silhouette is a shaggy wedge rather than a ball — and the lower ring
+       * reaches past the neck onto the shoulders, which is what makes the join
+       * disappear.
+       */
+      /* Seated with `onSurface` against the skull's own geometry, for the
+       * reason `shagOn` gives about the body: a clump rooted at a typed
+       * coordinate inside a shell is a spike coming out of it. Two rings, and
+       * the lower one reaches past the neck onto the shoulders. */
+      const mane = (n, spread, up, len, r, droop) => k.row(n, (i, t) => {
+        const th = (t - 0.5) * spread;
+        d.set(Math.sin(th) * Math.cos(up), Math.sin(up), Math.cos(th) * Math.cos(up)).normalize();
+        const root = onSurface(hg, d, -0.010 * s, core);
+        k.aim(pelt, clawGeo(len * s, r * s, r * 0.18 * s, 0.5, 3, 2), root,
+          [d.x * (1 - droop) - Math.sin(th) * 0.10, -droop, d.z * (1 - droop) - 0.45]);
+      });
+      mane(11, 4.4, 0.60, 0.150, 0.030, 0.44);
+      mane(11, 4.8, 0.02, 0.185, 0.033, 0.60);
+      mane(9, 4.8, -0.55, 0.165, 0.030, 0.70);
+      /* Kept past thirty metres, and it is the only thing on this head that
+       * is: a wookiee at range is a mane and a pair of shoulders. */
+      markSilhouette(k.bake(headObj));
+    },
+
+    dress(r, s) {
+      /**
+       * ── THE COAT ────────────────────────────────────────────────────
+       *
+       * Clumps on the chest, the back, the hips, the outside of each arm and
+       * the front of each thigh — every one of them rooted on the surface by
+       * `shagOn` (see it) and every one of them on a BONE, so the coat bends
+       * with the body and a severed arm takes its own hair with it. That is
+       * the rule every rivet and plate in this file obeys, and the reason none
+       * of this hangs off `rig.root`.
+       *
+       * SMALL AND MANY. The first pass used five clumps of 20 cm at 5.5 cm of
+       * root radius and they read as horns; a coat is made of pieces that are
+       * each too small to be looked at. 10-11 cm at 2.4 cm, in rows of seven
+       * to nine, is a fur EDGE — which is the only thing about hair that
+       * survives being a silhouette.
+       *
+       * Marked silhouette on the TRUNK and not on the limbs. `characters.mjs`
+       * caps a humanoid at 32 kept meshes at LOD 1, and the trunk clumps are
+       * the ones that change the outline; four more merged meshes on the arms
+       * and thighs would buy an edge nobody can resolve at that range.
+       */
+      const chest = r.get('chest');
+      if (chest) {
+        const k = new Kit();
+        // the pectoral coat, hanging down the front
+        shagOn(k, under, chest, 7, { y0: 0.30, y1: 0.30, a0: -1.05, a1: 1.05,
+          len: (t) => (0.150 - Math.abs(t - 0.5) * 0.04) * s, r0: 0.028 * s, droop: 0.80, sink: 0.010 * s });
+        shagOn(k, under, chest, 7, { y0: 0.62, y1: 0.62, a0: -1.15, a1: 1.15,
+          len: 0.140 * s, r0: 0.026 * s, droop: 0.76, sink: 0.010 * s });
+        // the back, which is what somebody following it sees
+        shagOn(k, pelt, chest, 8, { y0: 0.26, y1: 0.26, a0: Math.PI - 1.2, a1: Math.PI + 1.2,
+          len: 0.165 * s, r0: 0.032 * s, droop: 0.74, sink: 0.008 * s });
+        shagOn(k, pelt, chest, 8, { y0: 0.60, y1: 0.60, a0: Math.PI - 1.3, a1: Math.PI + 1.3,
+          len: 0.155 * s, r0: 0.030 * s, droop: 0.70, sink: 0.008 * s });
+        // …and the ruff over the shoulders, which is where the mane lands
+        shagOn(k, pelt, chest, 5, { y0: 0.86, y1: 0.86, a0: -2.6, a1: -1.5,
+          len: 0.145 * s, r0: 0.032 * s, droop: 0.52, sink: 0.006 * s });
+        shagOn(k, pelt, chest, 5, { y0: 0.86, y1: 0.86, a0: 1.5, a1: 2.6,
+          len: 0.145 * s, r0: 0.032 * s, droop: 0.52, sink: 0.006 * s });
+        markSilhouette(k.bake(chest.obj));
+
+        /**
+         * ── THE BANDOLIER, AS GEOMETRY ──────────────────────────────
+         *
+         * One strap over the left shoulder to the right hip, six cases on it,
+         * and a buckle. Its own Kit, so it bakes to its own merged meshes —
+         * leather and steel, two draw calls — and it is on `chest` rather than
+         * on `spine` because a bandolier hangs from a SHOULDER, and a strap
+         * that swung with the pelvis would slide off the body on every turn.
+         *
+         * A ROTATED SLAB AND NOT A SWEPT TUBE. `plateGeo` at 0.62 rad across
+         * the chest reads as one continuous strap under the cel ramp and is 92
+         * triangles; a tube swept round the torso is nine times that for a
+         * shape the shoulder ruff covers a third of. It rides at 1.06 of the
+         * chest's own radius, taken off `onLimb` rather than typed, so it
+         * cannot end up under the coat it is supposed to be over.
+         */
+        const L = chest.length;
+        const R = onLimb(chest, L * 0.5, [0, 0, 1])[2];
+        const b = new Kit();
+        b.add(leather, plateGeo(0.058 * s, 0.66 * s, 0.028 * s, 0.010 * s, 1),
+          [0.020 * s, L * 0.44, R * 1.02], [0.06, 0, 0.62]);
+        b.add(leather, plateGeo(0.058 * s, 0.64 * s, 0.028 * s, 0.010 * s, 1),
+          [0.020 * s, L * 0.44, -R * 1.02], [-0.06, 0, 0.62]);
+        b.row(6, (i, t) => b.add(steel,
+          plateGeo(0.052 * s, 0.066 * s, 0.028 * s, 0.006 * s, 1),
+          [(0.170 - t * 0.33) * s, L * (0.13 + t * 0.62), R * 1.06], [0.06, 0, 0.62]));
+        b.add(steel, plateGeo(0.074 * s, 0.074 * s, 0.024 * s, 0.008 * s, 1),
+          [-0.135 * s, L * 0.10, R * 0.98], [0.10, 0, 0.62]);
+        markSilhouette(b.bake(chest.obj));
+      }
+      const hips = r.get('hips');
+      if (hips) {
+        const k = new Kit();
+        shagOn(k, under, hips, 9, { y0: 0.30, y1: 0.30, a0: -Math.PI, a1: Math.PI,
+          len: 0.135 * s, r0: 0.028 * s, droop: 0.86, sink: 0.008 * s });
+        k.bake(hips.obj);
+      }
+      for (const side of ['L', 'R']) {
+        /**
+         * ── THE OUTBOARD SIDE IS −1 ON THE LEFT, AND IT WAS +1 ────────────
+         *
+         * `shagOn`'s azimuth is in the BONE's frame, and every limb bone on
+         * this rig has its local +X pointing at world −X: measured off the
+         * built rest pose, `armL` and `armR` both give localX → (−0.95, ∓0.30,
+         * ∓0.03) and `shinL` gives (−1.00, 0, 0). So a positive azimuth is
+         * world −X, which is INBOARD on the left arm and inboard on the right
+         * one too, and the three rows this variable places were on the inside
+         * of both arms — the surface pressed against the body.
+         *
+         * Measured off the merged coat's own vertices before this line: the
+         * left upper arm's lathe spans world x 0.130–0.406 and its coat spans
+         * 0.044–0.331, so 7.5 cm of the OUTSIDE of the arm — the half a player
+         * standing next to this body is looking at — carried no hair at all,
+         * and 8.6 cm of coat was buried between the arm and the ribs. Same on
+         * the forearm (lathe 0.265–0.453, coat 0.191–0.355).
+         *
+         * One sign, and it is the difference between a coat and a coat nobody
+         * can see. The name says what it is for rather than which side it is.
+         */
+        const sx = side === 'L' ? -1 : 1;
+        const arm = r.get('arm' + side);
+        if (arm) {
+          const k = new Kit();
+          /* THREE ROWS ROUND THE ARM AND NOT TWO. At two the arm was a bare
+           * pipe from every angle but one, which on the limb a player standing
+           * beside this body is closest to is the whole of the read. */
+          for (const a of [1.15, 1.95, 2.75]) {
+            shagOn(k, pelt, arm, 4, { y0: 0.16, y1: 0.80, a0: sx * a, a1: sx * a,
+              len: (t) => (0.135 - t * 0.02) * s, r0: 0.026 * s, droop: 0.62, sink: 0.006 * s });
+          }
+          k.bake(arm.obj);
+        }
+        const fore = r.get('fore' + side);
+        if (fore) {
+          const k = new Kit();
+          for (const a of [1.30, 2.20]) {
+            shagOn(k, pelt, fore, 4, { y0: 0.18, y1: 0.82, a0: sx * a, a1: sx * a,
+              len: 0.115 * s, r0: 0.023 * s, droop: 0.66, sink: 0.005 * s });
+          }
+          k.bake(fore.obj);
+        }
+        const thigh = r.get('thigh' + side);
+        if (thigh) {
+          const k = new Kit();
+          shagOn(k, under, thigh, 4, { y0: 0.20, y1: 0.74, a0: 0.5, a1: 0.5,
+            len: 0.115 * s, r0: 0.026 * s, droop: 0.80, sink: 0.006 * s });
+          shagOn(k, under, thigh, 4, { y0: 0.20, y1: 0.74, a0: -0.5, a1: -0.5,
+            len: 0.115 * s, r0: 0.026 * s, droop: 0.80, sink: 0.006 * s });
+          k.bake(thigh.obj);
+        }
+        const shin = r.get('shin' + side);
+        if (shin) {
+          const k = new Kit();
+          /**
+           * ── THE SHIN AND THE INSTEP, WHICH WERE THE OTHER HALF OF THE
+           *    COMPLAINT ────────────────────────────────────────────────
+           *
+           * "shins and feet are nearly bare", and the line above is why: ONE
+           * row of three clumps at a single azimuth (0.6), on the one limb of
+           * this body that is at a standing player's eye level when the
+           * wookiee is beside him. From the front and from behind the shin
+           * was a bare pipe — the same defect the arm's own note names three
+           * blocks up ("at two the arm was a bare pipe from every angle but
+           * one") and it was left standing on the leg.
+           *
+           * Three rows of four, at the front, the outside and the back, is
+           * the arm's answer applied to the leg. The inside is deliberately
+           * bare: it is the one azimuth that is never on a silhouette,
+           * because the other leg is behind it.
+           *
+           * AND THE FOOT IS COATED FROM THE SHIN AND NOT FROM THE FOOT BONE,
+           * which is anatomy rather than convenience. Hair over an instep
+           * grows out of the LEG and hangs across the foot — it does not
+           * sprout from the toes — so a skirt of six short clumps round the
+           * bottom of the shin covers the ankle and the top of the boot, and
+           * it bends with the shin, which is the joint that actually moves it.
+           * A clump rooted on `foot` would swing with the toe on every step
+           * and read as a brush glued to a shoe.
+           */
+          /* All three azimuths carry `sx`, which the first cut got half right:
+           * with the middle row at `sx * 1.55` and the other two at a bare
+           * 0.45 and π − 0.45, the left leg's front row sat inboard and the
+           * right leg's sat outboard — the same body wearing two different
+           * coats. Signing all three puts front-outboard, outboard and
+           * back-outboard on both legs. */
+          for (const a of [0.45, 1.55, 2.70]) {
+            shagOn(k, under, shin, 4, { y0: 0.14, y1: 0.70, a0: sx * a, a1: sx * a,
+              len: (t) => (0.108 - t * 0.014) * s, r0: 0.024 * s, droop: 0.84, sink: 0.005 * s });
+          }
+          shagOn(k, under, shin, 7, { y0: 0.80, y1: 0.80, a0: -2.7, a1: 2.7,
+            len: 0.075 * s, r0: 0.022 * s, droop: 0.90, sink: 0.004 * s });
+          /**
+           * ── AND THE SHIN IS MARKED SILHOUETTE, WHICH THE COAT'S OWN NOTE
+           *    ARGUES AGAINST FOR THE ARMS ────────────────────────────────
+           *
+           * That note reads: "Marked silhouette on the TRUNK and not on the
+           * limbs… four more merged meshes on the arms and thighs would buy
+           * an edge nobody can resolve at that range." It is right about the
+           * arms — they hang inside the trunk's own outline for most of a
+           * walk cycle — and wrong about the shins, because BELOW THE HIP
+           * SKIRT THERE IS NOTHING ELSE. `Enemy._applyLod` hides every mesh
+           * that is not a bone primary and not marked, so past 30 m the
+           * bottom third of this body is two bare tapered tubes and two
+           * boxes, and that third is 0.75 m of a 2.22 m silhouette.
+           *
+           * Four meshes (two shins, two feet) against the bandolier's two, on
+           * an archetype there is exactly one of on the field — it is a
+           * companion kind and nothing spawns it in a wave. `frame-budget`
+           * and `characters` both weigh it and both pass.
+           */
+          markSilhouette(k.bake(shin.obj));
+        }
+        const foot = r.get('foot' + side);
+        if (foot) {
+          const k = new Kit();
+          /* AND A LOW FRINGE ON THE FOOT ITSELF, round the outside of the
+           * boot. The skirt above hangs over the instep from the shin, which
+           * is where hair over a foot comes from — but the foot bone's own
+           * outline from the side is a bare slab, and the one row that has to
+           * be ON it is the row that breaks that edge. `droop` is NEGATIVE
+           * here and it is the only negative one in this body: the foot bone's
+           * local +Y runs from the ankle to the TOE (its child offset is
+           * [0, length, 0] and its rest is [0, -0.2, 1]), so `-droop` on Y
+           * points back up the leg, and hair on a foot lies toward the toe.
+           *
+           * TWO SIDE ROWS AND NOTHING OVER THE INSTEP, because the shin's
+           * skirt above already covers the instep and a clump that sits under
+           * another clump costs what one on the silhouette costs. What is
+           * bare from the side is the boot's own edge, so that is what these
+           * six break. `a` ±1.45 is measured and not reasoned: `footL`'s local
+           * +Z comes out at world (0, 0.98, 0.20) — the instep — so ±1.45 is
+           * the flank of the foot, and an arc centred on π would be the SOLE.
+           * The first cut of this row was centred on π and rendered as four
+           * spikes standing in the ground; the probe that settled it prints
+           * each bone's local axes in world space and took two minutes. */
+          for (const a of [1.45, -1.45]) {
+            shagOn(k, under, foot, 3, { y0: 0.10, y1: 0.52, a0: a, a1: a,
+              len: 0.036 * s, r0: 0.016 * s, droop: 0.10, sink: 0.004 * s });
+          }
+          markSilhouette(k.bake(foot.obj));
+        }
+      }
+    },
+  });
+
+  /* A STANDING HUNCH. Every ape carries its shoulders in front of its hips and
+   * its head forward of both; 0.10 of stoop with the head brought back up is
+   * that, and it goes in the rest pose for `leanTrunk`'s own stated reason. */
+  leanTrunk(rig, 0.10, -0.06);
+
+  return { rig, group: rig.root, scale: S, palette: { pelt, under, face, leather, steel } };
+}
+
 export const BODY_KITS = {
   /* the clone army — see TROOPER_KITS */
   trooper: { kit: 'line' },
@@ -9681,6 +14208,11 @@ export const BODY_KITS = {
   master: { rank: 'master' },
   /* the separatist chassis — see B1_KITS */
   b1: { kit: 'line' },
+  /* THE REPROGRAMMED B1 wears what a B1 wears — it IS a B1, `buildB1`
+   * verbatim, and the only thing that differs is whose side it is on. A
+   * separate kit would be a second answer to a question the body already
+   * answers. */
+  b1c: { kit: 'line' },
   /* FLAGSHIP §6's third body class, on the B1 chassis and the B1 kit. The
    * conscript differs from a B1 in its NUMBERS and its paint, not in what it
    * carries — see `ARCHETYPES.conscript`, which passes the colours through to
@@ -9705,6 +14237,15 @@ export const BODY_KITS = {
    * nothing, and the last time that happened three archetypes went a whole
    * session without a body of their own." */
   geonosian: {},
+  /* THE TWO HUMANOID COMPANIONS. One chassis and one rung each, like the B2
+   * and the Geonosian above, and here for the same reason those two are: a
+   * humanoid archetype with no row is what `characters.mjs` forbids, and a
+   * body whose whole look comes from `COMPANION_LOOK` still has to say out
+   * loud that it wears nothing from the trooper tables. The four colour slots
+   * a player CAN move on these two arrive through `companionOptsFrom` — a
+   * different door, argued over that function. */
+  medic: {},
+  wook: {},
 };
 
 /** What an archetype wears, or null if it is not a body this file dresses. */
@@ -9724,6 +14265,7 @@ export const BODY_KITS = {
  */
 export const POSTURES = {
   b1: { crouch: 0.10 },
+  b1c: { crouch: 0.10 },
   conscript: { crouch: 0.12 },
   rocket: { crouch: 0.10 },
   bx: { crouch: 0.32 },

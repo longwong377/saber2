@@ -434,6 +434,38 @@ export const ACTIONS = [
    */
   { id: 'orderwheel', group: 'Command',   label: 'Order wheel',      keys: ['KeyT'],       hold: true, pad: 'PadBack+PadLB' },
   /**
+   * THE COMPANION'S RING — and the key had to come from outside the letters.
+   *
+   * `controls.mjs` found this the honest way: the Codex named an action that
+   * was not in this table, which means the wheel existed in `HUD.js`, drew its
+   * slots, printed its live refusals — and NO PLAYER COULD OPEN IT. A ring with
+   * no key is a ring nobody has ever seen.
+   *
+   * WHY `Quote` AND NOT A LETTER. Every letter near WASD is spoken for twice
+   * over — the note on `walk` above lists Tab, CapsLock, Backquote, Shift,
+   * Ctrl and Alt all going the same way — and `controls.mjs` requires two
+   * unbound letters to survive as spares for the rebinder to settle a clash
+   * with. Taking one fails that gate, correctly. `Quote` is beside the right
+   * hand, is not a letter, and is not spoken for.
+   *
+   * IT IS A HOLD, like the order wheel, and for the same reason: the wheel is
+   * aimed at with the cursor and released on a slot. And it is the ONE key the
+   * companion needs, because the middle of the ring is HEEL — so the panic
+   * verb costs a tap with no aim at all.
+   *
+   * THREE KEYS WERE TRIED AND THE CHECKS REFUSED TWO OF THEM, on the first run
+   * rather than the first playtest. `Quote` answers the DIG-IN order and
+   * `Semicolon` answers RANK — and neither is a `keys:` row in this file,
+   * because the formation keys live on `FORMATIONS` in Command.js. A scan of
+   * this table alone reports both as free, which is exactly the trap
+   * `controls: no shipped default binds one key to two actions` exists for.
+   * `PadBack+PadX` was taken too, by `swap`.
+   *
+   * `End` is bound to nothing anywhere and is beside the right hand;
+   * `PadRB+PadX` is the one right-bumper chord still free.
+   */
+  { id: 'companionwheel', group: 'Command', label: 'Companion ring',  keys: ['End'],        hold: true, pad: 'PadRB+PadX' },
+  /**
    * ── WHICH SQUAD THE NEXT ORDER IS FOR, ON A KEY OF ITS OWN ──────────────
    *
    * "how do you order one squad to do one thing and another squad to do

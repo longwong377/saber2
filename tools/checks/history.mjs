@@ -62,12 +62,37 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
   assert(/world\._recorded\b/.test(body),
     'the lifted record() no longer consults world._recorded — nothing stops a death and its own '
     + 'card writing the same run twice');
+  /**
+   * …AND THE FOLD IS PASSED IN, WITH THE ORDER ASSERTED RATHER THAN ASSUMED.
+   *
+   * `record` gained a call to `foldCompanion(stats)` when the companion's
+   * durable record landed, and this lift compiles the body verbatim — so the
+   * first run after that threw `foldCompanion is not defined` and took the
+   * whole check with it. A lift that closes over four things and the function
+   * grows a fifth WILL break, and that is the lift working: it is the only
+   * thing in the tree that would have noticed a new dependency inside
+   * `record`.
+   *
+   * The stub is a spy rather than a no-op, because main.js's own comment on
+   * that line makes a claim worth pinning — "BEFORE the run is filed, for the
+   * ordering reason in `foldCompanion`". The fold reads the run's OUTCOME to
+   * decide whether the animal comes home, and `recordRun` is what files that
+   * outcome, so a fold that ran second would be reading the run it is supposed
+   * to be part of. `folds` records the order and the check below asserts it.
+   */
+  const calls = [];
+  const foldCompanion = (stats) => { calls.push(['fold', stats]); };
+  const spyRecordRun = (summary) => { calls.push(['file', summary]); return recordRun(summary); };
   // eslint-disable-next-line no-new-func
-  const make = new Function('scope', 'recordRun', 'sessionOr', 'settings',
+  const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion',
     `const world = scope.world;\n${body}\nreturn record;`);
   // Rebuilt per call so `const world = scope.world` re-reads the live world,
   // exactly as main.js's own module-level `world` binding does.
-  return { body, record: (...a) => make(scope, recordRun, () => mode, settings)(...a) };
+  return {
+    body,
+    calls,
+    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion)(...a),
+  };
 }
 
 export async function run({ check, assert }) {
@@ -81,7 +106,7 @@ export async function run({ check, assert }) {
     const scope = { world };
     // The real store is not touched: `recordRun` is where the += lives, and
     // what it is handed is what the store would get.
-    const { record } = liftRecord(await mainSrc(), assert, {
+    const { record, calls } = liftRecord(await mainSrc(), assert, {
       scope,
       recordRun: (s) => { written.push(s); },
       mode: 'roguelite',
@@ -117,6 +142,26 @@ export async function run({ check, assert }) {
       `dying and then clicking "Return to the Temple" on that same card wrote ${written.length} runs to `
       + 'the store — the menu\'s only line of history says "2 runs" after a player\'s first, and the '
       + 'forty-entry recent list holds two copies of it');
+
+    /**
+     * AND THE COMPANION IS FOLDED BEFORE THE RUN IS FILED, which is a claim
+     * main.js makes in a comment on that line and nothing was holding it to.
+     *
+     * The fold reads the run's OUTCOME to decide whether the animal comes home
+     * — won, lost, left standing, killed — and `recordRun` is what files that
+     * outcome. A fold that ran second would be reading the very run it is
+     * supposed to be part of. It also has to be deduped by the SAME guard: a
+     * death and the card's own exit must fold once between them, or a player
+     * who clicks "Return to the Temple" buries his companion twice.
+     */
+    const folds = calls.filter((c) => c[0] === 'fold');
+    assert(folds.length === 1,
+      `dying and taking the card's exit folded the companion ${folds.length} times, not once`);
+    assert(calls[0][0] === 'fold',
+      `the run was filed before the companion was folded (order: ${calls.map((c) => c[0]).join(' → ')}) `
+      + '— the fold reads the outcome that filing is what writes');
+    assert(folds[0][1] && folds[0][1].wave === 3,
+      'the fold was handed different stats from the ones the run was filed with');
 
     // …and it is not simply refusing to record: a NEW world is a new session.
     const { world: second } = await H.bootWorld({ level: 'colosseum', settings: { mode: 'roguelite', difficulty: 'knight' } });

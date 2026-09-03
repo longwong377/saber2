@@ -475,6 +475,79 @@ export const FORCE_LINES = {
     { gain: 0.76, words: 'Now.', syll: [[1.30, 0.16, 1.0], [1.16, 0.16, 0.65]] },
   ],
   /**
+   * THROW OFF — the shoto, and the one throw where you keep a blade.
+   *
+   * The disc's pool above is a handoff: 'Take it', 'Catch', 'Now'. This one is
+   * not, because the line is not about the blade leaving — it is about the one
+   * that stays. So the contour is the throw's clipped two-beat with the weight
+   * on the SECOND beat rather than the first, which is where 'and I still have
+   * this' sits in a sentence.
+   */
+  throwOff: [
+    { gain: 0.80, words: 'Have that.', syll: [[1.02, 0.22, 0.65], [1.20, 0.28, 1.0]] },
+    /**
+     * "ONE of them." — AND THE STRESS IS ON THE FIRST WORD, WHICH IS THE ONLY
+     * REASON THIS LINE IS NOT THE ONE ABOVE IT.
+     *
+     * As authored it was 'One of them.' on a rising two-beat with the weight on
+     * the second — the same sentence shape as 'Have that.' — and
+     * `force-voice.mjs` caught it: 12% apart in length, 3% in pitch, 5% in
+     * direction and 2% in where the weight sits, while `utterance()` dithers
+     * every line by ±5.5% in pitch and ±7% in pace. The two were inside the
+     * jitter, which means a player would sometimes hear the same sound twice
+     * and the pool would be a pool of two.
+     *
+     * The fix is not a nudge to the numbers, it is reading the line properly.
+     * The point of this one is WHICH blade left — one of them, and I have the
+     * other — so the stress is on 'One' and the tail falls away. High and short
+     * on the first beat, low and long on the second, falling: the mirror of the
+     * line above rather than a variation on it. Measured after: the pool's
+     * weakest pair went from 12% to well clear of the jitter, and it holds in
+     * every larynx the player can pick, which is the second check and the one
+     * that catches a separation bought from a single throat.
+     */
+    { gain: 0.78, words: 'One of them.', syll: [[1.26, 0.16, 1.0], [0.84, 0.50, 0.62]] },
+    { gain: 0.82, words: 'I have another.', syll: [[1.16, 0.30, 1.0], [0.86, 0.62, 0.72], [0.70, 0.84, 0.80]] },
+  ],
+  /**
+   * ORBIT — the spin barrier, and it is the only line in this table spoken with
+   * NOTHING IN YOUR HANDS. Both blades are in the air, so it is not a command
+   * aimed at anybody: it is the effort of holding two lit blades on a circle by
+   * the Force, which is a low, held, falling contour rather than a bark.
+   */
+  orbit: [
+    /**
+     * THREE SHAPES, NOT THREE VARIATIONS — and the pool needed rewriting whole
+     * rather than nudging, because `force-voice.mjs` measures separation on
+     * four axes at once (length, pitch, direction, where the weight sits) and
+     * moving one line only ever pushed the collision onto the next pair. Two
+     * rounds of that is the signal to stop tuning numbers and read the lines.
+     *
+     * They are all in the register this pool's note describes — the effort of
+     * holding two lit blades on a circle by the Force, not a bark — and what
+     * separates them is what each sentence is DOING:
+     *
+     *   'Come no closer.'  a standing order. Three beats, the longest line in
+     *                      the pool at 1.84, falling all the way, and the
+     *                      weight at the END where the refusal is.
+     *   'Stay back.'       a warning, half the length at 0.94, the steepest
+     *                      fall of the three, and the weight on the FIRST beat
+     *                      — the opposite placement to the line above it.
+     *   'Try it.'          an invitation, and the only line here that RISES.
+     *                      0.50 long, a quarter of the first, weight on the
+     *                      second beat where the dare lands.
+     *
+     * Lengths 1.84 / 0.94 / 0.50, two falls and a rise, and the weight moving
+     * end / start / end. `utterance()` dithers ±5.5% in pitch and ±7% in pace,
+     * so a pair has to clear that in EVERY larynx the player can pick, which is
+     * the second check and the one that catches a separation bought from a
+     * single throat.
+     */
+    { gain: 0.86, words: 'Come no closer.', syll: [[0.84, 0.40, 0.8], [0.78, 0.46, 0.9], [0.64, 0.98, 1.0]] },
+    { gain: 0.84, words: 'Stay back.', syll: [[0.96, 0.34, 1.0], [0.68, 0.60, 0.70]] },
+    { gain: 0.90, words: 'Try it.', syll: [[0.76, 0.20, 0.6], [0.98, 0.30, 1.0]] },
+  ],
+  /**
    * SENSE — the one power that is not aimed at anybody, so it is the one line
    * that is not addressed to anybody: high, quiet, slow, and gently rising.
    * At 0.5 gain it is the softest thing the player's throat does.

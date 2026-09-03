@@ -151,6 +151,104 @@ function sliceFill(m, yLocal, N = 512) {
     w: xmax - xmin, d: zmax - zmin, front: zmax, back: -zmin };
 }
 
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  eyes                                                                  */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * EVERY TRIANGLE IN A BUILT BODY, IN WORLD SPACE, SPLIT BY WHAT IT IS.
+ *
+ * `role: 'eye'` is written by `eyeMat` in Bodies.js and by nothing else, so
+ * this reads the body's own declaration rather than guessing from a colour or
+ * from "is it emissive". The 2-1B's other lit material paints a readout on
+ * each forearm and one on the chest, at the same hue and intensity as the
+ * receptor band on its face, and an instrument is not a face.
+ */
+function bodyTris(root) {
+  root.updateMatrixWorld(true);
+  const eyes = [], all = [];
+  const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
+  root.traverse((o) => {
+    if (!o.isMesh || !o.geometry?.attributes?.position) return;
+    const role = o.material?.userData?.role;
+    const hidden = !!o.material?.userData?.hidden;
+    const pos = o.geometry.attributes.position, idx = o.geometry.index;
+    const n = idx ? idx.count : pos.count;
+    for (let i = 0; i < n; i += 3) {
+      const i0 = idx ? idx.getX(i) : i, i1 = idx ? idx.getX(i + 1) : i + 1, i2 = idx ? idx.getX(i + 2) : i + 2;
+      a.fromBufferAttribute(pos, i0).applyMatrix4(o.matrixWorld);
+      b.fromBufferAttribute(pos, i1).applyMatrix4(o.matrixWorld);
+      c.fromBufferAttribute(pos, i2).applyMatrix4(o.matrixWorld);
+      const t = [a.clone(), b.clone(), c.clone()];
+      all.push(t);
+      if (role === 'eye') eyes.push({ t, hidden });
+    }
+  });
+  return { eyes, all };
+}
+
+/**
+ * ONE EYE AT A TIME, and the split is over shared vertices.
+ *
+ * The Kit merges per material, so a body's eyes arrive as ONE geometry with
+ * two, four or six balls in it, and a mean taken over that geometry is exactly
+ * the measurement that would have missed this: the nexu's upper pair was 97%
+ * of an eye radius proud and its lower pair was 108% INSIDE the skull, and the
+ * average of the four is a healthy-looking number for an animal with two eyes.
+ * Every ball is asked about on its own.
+ */
+function eyeballs(eyes) {
+  const key = (v) => `${Math.round(v.x * 1e5)},${Math.round(v.y * 1e5)},${Math.round(v.z * 1e5)}`;
+  const up = eyes.map((_, i) => i);
+  const find = (i) => { while (up[i] !== i) { up[i] = up[up[i]]; i = up[i]; } return i; };
+  const seen = new Map();
+  eyes.forEach((e, i) => {
+    for (const v of e.t) {
+      const k = key(v);
+      if (seen.has(k)) { const x = find(seen.get(k)), y = find(i); if (x !== y) up[x] = y; } else seen.set(k, i);
+    }
+  });
+  const g = new Map();
+  eyes.forEach((e, i) => { const r = find(i); if (!g.has(r)) g.set(r, []); g.get(r).push(e); });
+  return [...g.values()];
+}
+
+/**
+ * WHAT FRACTION OF ONE EYE IS NOT LOOKING AT ITS OWN HEAD.
+ *
+ * A ray along each triangle's OWN normal against every other triangle in the
+ * body. The normal and not a camera, because an eye is read from wherever the
+ * player happens to be standing and a fixed camera answers a question about
+ * one pose; and every other triangle rather than just the skull, because the
+ * thing that buries an eye is as often a tusk, a horn or the pupil in front of
+ * it as it is the cranium.
+ *
+ * The back half of a ball on a surface is always obstructed — its normals
+ * point into whatever it is sitting on — so a perfectly seated eye scores
+ * about a quarter and never a half. The bound below is read against that.
+ */
+function clearFraction(cluster, all, eps) {
+  const ray = new THREE.Ray(), tri = new THREE.Triangle();
+  const hit = new THREE.Vector3(), n = new THREE.Vector3(), mid = new THREE.Vector3();
+  const own = new Set(cluster.map((e) => e.t));
+  let clear = 0;
+  for (const e of cluster) {
+    tri.set(e.t[0], e.t[1], e.t[2]);
+    tri.getNormal(n);
+    if (n.lengthSq() < 0.5) continue;                 // a degenerate sliver has no direction
+    mid.copy(e.t[0]).add(e.t[1]).add(e.t[2]).multiplyScalar(1 / 3);
+    ray.origin.copy(mid).addScaledVector(n, eps);
+    ray.direction.copy(n);
+    let blocked = false;
+    for (const t of all) {
+      if (own.has(t)) continue;
+      if (ray.intersectTriangle(t[0], t[1], t[2], false, hit)) { blocked = true; break; }
+    }
+    if (!blocked) clear++;
+  }
+  return { clear, total: cluster.length };
+}
+
 const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
 
 export async function run({ check, assert, near, THREE: T }) {
@@ -718,6 +816,230 @@ export async function run({ check, assert, near, THREE: T }) {
     }
     assert(tris < 72000, `${ALL.length} archetypes cost ${Math.round(tris)} triangles between them`);
     return rows.join(' ') + ` — ${Math.round(tris)} tris, ${meshes} meshes total`;
+  });
+
+  check('characters: and the twelve companion bodies are under the same roof', async () => {
+    /**
+     * `ALL` IS A TYPED LIST OF EIGHT BUILDERS, AND TWELVE BODIES WALKED ROUND
+     * THE OUTSIDE OF IT.
+     *
+     * The cost check above is the game's only triangle bound and it enumerates
+     * its subjects by hand: five humanoids plus the droideka, the walker and
+     * the beast. Every companion kind is built by a different door —
+     * `COMPANION_KINDS[*].archetype` into `ARCHETYPES`, most of them through
+     * `buildQuadruped` off a CREATURE_PLANS row — so not one of them was
+     * weighed. Measured when this was written: the wookiee at 13 732 triangles
+     * was over the shipped cap and nothing in the tree said so.
+     *
+     * AND THE BOUND IS THE SAME 13 000, WHICH IS THE ARGUABLE PART. The cap
+     * above is justified by "twenty of these are on screen at once", and there
+     * is exactly ONE companion. That reads like a licence to spend more, and it
+     * is the opposite: COMPANIONS.md's own honest-doubt section records that
+     * every rung of the LOD ladder keys on camera distance — the band select,
+     * the merged skin at 62 m, the cohort past L3_AT, `clothOn` against a
+     * clothCut of 30 — and a companion is inside 30 m of somebody FOREVER. It
+     * is permanently LOD 0: full skeletal solve every frame, every decoration
+     * mesh drawn, never merged, never cohorted. A trooper at 13 000 is 13 000
+     * that the ladder takes away as he walks off; a companion at 13 000 is
+     * 13 000 in every frame of the run, in exactly the frames that are already
+     * the worst ones. The same number is the right number, and it is a ceiling
+     * rather than a target.
+     *
+     * DRIVEN FROM `COMPANION_KINDS` AND NOT FROM A LIST, which is the whole
+     * reason the defect existed: the kind that lands tomorrow is weighed the
+     * day it lands.
+     */
+    const { COMPANION_KINDS } = await import('../../src/game/CompanionKinds.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+    const rows = [], over = [];
+    let tris = 0;
+    for (const id of Object.keys(COMPANION_KINDS)) {
+      const type = COMPANION_KINDS[id].archetype ?? id;
+      const A = ARCHETYPES[type];
+      assert(A, `${id} names archetype "${type}" and nothing registers it`);
+      assert(typeof A.build === 'function', `${type} has no builder to weigh`);
+      const built = A.build({ scale: A.scale ?? 1 });
+      const root = built?.rig?.root ?? built?.group;
+      assert(root, `${type} built neither a rig nor a group`);
+      root.updateMatrixWorld?.(true);
+      let t = 0, m = 0;
+      root.traverse((o) => {
+        if (!o.isMesh || !o.geometry) return;
+        m++;
+        const g = o.geometry;
+        t += g.index ? g.index.count / 3 : g.attributes.position.count / 3;
+      });
+      if (t >= 13000) over.push(`${id} ${Math.round(t)}`);
+      if (m >= 76) over.push(`${id} ${m} meshes`);
+      tris += t;
+      rows.push(`${id} ${Math.round(t)}/${m}`);
+    }
+    assert(rows.length >= 12, `only ${rows.length} companion kinds were weighed of twelve`);
+    assert(!over.length,
+      `${over.join(', ')} — over the 13 000 triangle / 76 mesh cap the roster has kept for a body `
+      + 'that at least gets LOD relief, on a body that never leaves LOD 0');
+    return `${rows.length} companion bodies, ${Math.round(tris)} triangles between them: ${rows.join(' ')}`;
+  });
+
+  check('characters: every companion and every creature has an eye you can see', async () => {
+    /**
+     * THREE OF THE PLAYER'S TWELVE COMPANIONS RENDERED NO EYE AT ALL.
+     *
+     * Not a small eye — no eye. The sphere was inside the cranium, every
+     * triangle of it facing another triangle of the same animal's head.
+     * Measured on the tree this check landed on, casting a ray along each eye
+     * triangle's own normal against every other triangle in the body:
+     *
+     *     varac    0 of 140 unobstructed      massiff  68 of 280
+     *     pup      0 of 140                   tuk      68 of 280
+     *     blurrg   0 of 140                   hawk     48 of 160
+     *     charger  0 of 140                   tooka    33 of 140
+     *     pouncer  0 of 140                   taun     21 of 140
+     *     brute    0 of 140                   acklay   38 of 140
+     *
+     * Six of the thirteen creature bodies, and the massiff's 68 is its UPPER
+     * pair alone — the nexu branch's second pair, the thing that makes a
+     * four-eyed animal read as four-eyed, was also entirely inside the skull.
+     * It survived two full rebuilds of these heads, a body-lane pass that
+     * photographed every creature, and a written note in Bodies.js that
+     * diagnosed the fault on ONE branch and fixed it there.
+     *
+     * It survived because nothing measured it. Every other bound in this file
+     * is a proportion or a cost — heads tall, triangles, IoU at thirty metres
+     * — and a buried eye changes none of them: the geometry is built, it is in
+     * the merge, it is in the triangle count, and it is invisible. The only
+     * instrument that could have caught it was somebody looking at a
+     * head-filling render of all twelve, and that is a thing that happens once.
+     *
+     * ── WHAT THE BOUND IS AND WHY IT IS THAT NUMBER ──────────────────────
+     *
+     * A quarter of one eye's own triangles is the ceiling, not the target: an
+     * eye is a ball seated in a face, so the whole back of it faces the head
+     * it is sitting in and can never be clear. Measured across the roster
+     * after the seats were fixed, the worst eye in the game is the wookiee's
+     * at 24.3% and the best is the astromech's lens at 50%. `MIN` is 0.20 —
+     * under every shipped body with 21% of headroom on the tightest, and well
+     * over the two states this is here to catch: 0% for an eye inside its own
+     * skull, and 15% for the tauntaun's, which stood 10 mm proud of an 88 mm
+     * ball and read as a smudge.
+     *
+     * ── AND IT IS DRIVEN FROM THE TWO TABLES, NOT FROM A LIST ────────────
+     *
+     * `COMPANION_KINDS` through each row's own archetype builder, plus every
+     * `CREATURE_PLANS` row through `buildQuadruped`. A kind added tomorrow is
+     * measured the day it is added, which is the whole reason the defect
+     * lasted: the two head branches that shipped with no visible eye were both
+     * SHARED by three bodies each, so any list that named the animals somebody
+     * happened to be looking at would have missed the other four.
+     *
+     * A body whose eye is meant to be hidden says so on the material —
+     * `eyeMat(colour, intensity, true)` — and never by name. Nothing declares
+     * it today and the count is reported, so an exemption cannot be added in
+     * silence. Having no eye at all is not an exemption: it is the failure.
+     */
+    const { COMPANION_KINDS } = await import('../../src/game/CompanionKinds.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+
+    const MIN = 0.20;
+    const roster = [];
+    for (const id of Object.keys(COMPANION_KINDS)) {
+      const type = COMPANION_KINDS[id].archetype ?? id;
+      const A = ARCHETYPES[type];
+      assert(A && typeof A.build === 'function', `companion ${id} names archetype "${type}" and nothing builds it`);
+      roster.push([`companion ${id}`, A.build({ scale: A.scale ?? 1 })]);
+    }
+    for (const kind of Object.keys(B.CREATURE_PLANS)) {
+      roster.push([`creature ${kind}`, B.buildQuadruped({ kind, scale: 1 })]);
+    }
+    assert(roster.length >= 25,
+      `only ${roster.length} bodies were looked at — twelve companion kinds and thirteen creature plans is 25`);
+
+    const rows = [], blind = [], worst = { f: 2, who: '' };
+    let exempt = 0;
+    for (const [who, built] of roster) {
+      const root = built?.rig?.root ?? built?.group;
+      assert(root, `${who} built neither a rig nor a group`);
+      const { eyes, all } = bodyTris(root);
+      /* NO EYE GEOMETRY IS THE LOUDER FAILURE and it has to be checked first:
+       * a per-eye bound over an empty set passes vacuously, which is HANDOFF
+       * §2.3's "0 passed, 0 failed reads as success" wearing a different hat. */
+      assert(eyes.length,
+        `${who} has no mesh declaring \`role: 'eye'\` — nothing on this body is an eye, `
+        + 'so nothing can be measured and nothing would ever fail here');
+      const size = new THREE.Box3().setFromObject(root).getSize(new THREE.Vector3()).length();
+      const eps = size * 1e-5;
+      const per = [];
+      for (const ball of eyeballs(eyes)) {
+        if (ball.every((e) => e.hidden)) { exempt++; per.push('hidden'); continue; }
+        const { clear, total } = clearFraction(ball, all, eps);
+        const f = clear / total;
+        per.push(`${clear}/${total}`);
+        if (f < worst.f) { worst.f = f; worst.who = `${who} ${clear}/${total}`; }
+        if (f < MIN) {
+          blind.push(`${who} ${clear}/${total} = ${(f * 100).toFixed(0)}%`);
+        }
+      }
+      rows.push(`${who.split(' ')[1]} [${per.join(' ')}]`);
+    }
+    assert(!blind.length,
+      `${blind.join(', ')} — an eye whose own triangles are looking at the inside of its own head. `
+      + `Every eye has to keep ${(MIN * 100).toFixed(0)}% of itself clear of the body it is set in`);
+
+    /**
+     * ── AND THE BOUND IS PROVED ON ITSELF, IN THE SAME CHECK ─────────────
+     *
+     * A visibility measurement is exactly the kind that passes for years while
+     * measuring nothing — the geometry exists, the triangle count is right,
+     * the ray test runs and reports a number, and the number is meaningless if
+     * the occluder set or the normal is wrong. So one eye is pushed back into
+     * the skull it came out of and the same function is asked again: it has to
+     * report it BURIED. `positive control` rather than a comment claiming the
+     * check works.
+     *
+     * The push is toward the head BONE's origin, which on every creature sits
+     * behind the skull where the neck leaves the shoulders — so 55% of the way
+     * there is unambiguously inside the animal, and it needs no per-body
+     * number to be sure of that. The vertices are moved IN PLACE, which is the
+     * point: `eyes` and `all` hold the same triangle objects, so the control's
+     * eye is buried in the same body that is asked about it rather than in a
+     * copy that has drifted from it.
+     */
+    const ctl = B.buildQuadruped({ kind: 'massiff', scale: 1 });
+    const ctlT = bodyTris(ctl.rig.root);
+    const balls = eyeballs(ctlT.eyes);
+    assert(balls.length === 4, `the massiff has four eyes and the control found ${balls.length}`);
+    const hp = ctl.rig.worldPos('head', new THREE.Vector3());
+    const sz = new THREE.Box3().setFromObject(ctl.rig.root).getSize(new THREE.Vector3()).length();
+    const before = clearFraction(balls[0], ctlT.all, sz * 1e-5);
+    assert(before.clear / before.total >= MIN,
+      `the control's own eye measured ${before.clear}/${before.total} before it was touched`);
+    for (const e of balls[0]) for (const v of e.t) v.lerp(hp, 0.55);
+    const after = clearFraction(balls[0], ctlT.all, sz * 1e-5);
+    assert(after.clear / after.total < MIN,
+      `an eye pushed 55% of the way back toward the head bone still measured ${after.clear}/${after.total} `
+      + 'clear — this check cannot fail and is therefore not a check');
+
+    /* AND THE EXEMPTION IS EXERCISED, for the reason HANDOFF §2.3b gives: the
+     * `hidden` door above has no caller in the shipped tree, and a branch
+     * nothing takes is a branch nobody knows is broken. The same buried eye,
+     * with `hidden` on its material, has to come back exempt rather than
+     * failing — so a body that one day genuinely wants an eye under a cowl has
+     * a door that is known to work, and a reader can see what it costs. */
+    let hidMat = null;
+    ctl.rig.root.traverse((o) => { if (o.isMesh && o.material?.userData?.role === 'eye') hidMat = o.material; });
+    assert(hidMat, 'the control body has no eye material to exempt');
+    hidMat.userData.hidden = true;
+    const exempted = eyeballs(bodyTris(ctl.rig.root).eyes).filter((ball) => ball.every((e) => e.hidden));
+    assert(exempted.length === 4,
+      `marking the eye material hidden exempted ${exempted.length} of the massiff's four eyes — `
+      + 'the door the check offers a cowled body does not open');
+    delete hidMat.userData.hidden;
+
+    return `${rows.length} bodies, worst eye ${worst.who} = ${(worst.f * 100).toFixed(1)}% against a ${(MIN * 100).toFixed(0)}% floor`
+      + `; ${exempt} declared hidden; control ${before.clear}/${before.total} → ${after.clear}/${after.total} when buried`
+      + ` — ${rows.join(' ')}`;
   });
 
   check('characters: hands are hands, at the scale a hand is', () => {

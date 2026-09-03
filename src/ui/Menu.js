@@ -24,6 +24,13 @@ import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
          garmentTone } from '../game/Cloth.js';
+/* The three sets the Jedi tab offers — one table, and the card row below reads
+ * its rows straight through so a fourth set is a row there and nothing here. */
+import { SABER_SETS } from '../game/SaberSet.js';
+/* The twelve kinds and their rows — the card list below IS this table. */
+import { COMPANION_KINDS, COMPANION_LOOK, COMPANION_ORDER, rungOf } from '../game/CompanionKinds.js';
+import { load as loadKennel, notSaving as kennelNotSaving, dressCompanion,
+         clear as kennelClear } from '../game/Kennel.js';
 import { applyInjury } from '../game/Injury.js';
 import { LEVELS, LEVEL_ORDER, theatresFor } from '../game/Levels.js';
 import { WITHDRAW_HOLD, LAST_CALL } from '../game/Extraction.js';
@@ -91,10 +98,27 @@ import { DRIVE, crewOf } from '../game/Driving.js';
  * Typed here it would be a second list beside `crew` on the archetypes and one
  * roster change from being a lie — HANDOFF §2.3. Read off the same field
  * `Driving.isCrewed` reads, so the card and the rule cannot disagree.
+ *
+ * ── AND THE SEATED THINGS ARE NOW TWO POPULATIONS, NOT ONE LIST ──────────
+ *
+ * `crew` is the whole boarding rule and the three mounts declare it like
+ * everything else with a seat, so an unfiltered list put "Tauntaun (1 crew)"
+ * in the middle of a sentence about hulls and hatches. Two derivations off the
+ * same two fields rather than one list plus a hand-written exception: a
+ * MACHINE is a crewed body that is `big`, a MOUNT is one that declares
+ * `mount`, and no archetype is both — `tools/checks/driving.mjs` asserts that
+ * partition rather than trusting it, so a future row cannot land in neither
+ * list or in both and go unmentioned on a card that claims to name them all.
  */
 const DRIVABLE = () => Object.keys(ARCHETYPES)
-  .filter(k => crewOf(k) > 0)
+  .filter(k => crewOf(k) > 0 && ARCHETYPES[k].big)
   .map(k => `${ARCHETYPES[k].label} (${crewOf(k)} crew)`)
+  .join(', ') || 'nothing on this roster';
+
+/** …and the things with a saddle rather than a hatch. */
+const RIDEABLE = () => Object.keys(ARCHETYPES)
+  .filter(k => crewOf(k) > 0 && ARCHETYPES[k].mount)
+  .map(k => ARCHETYPES[k].label)
   .join(', ') || 'nothing on this roster';
 
 /**
@@ -890,6 +914,36 @@ export const DEFAULT_SETTINGS = {
    */
   troopNames: 'aimed',
   /**
+   * WHICH WEAPON YOU CARRY — and `'single'` is the default in the strongest
+   * sense the word has here.
+   *
+   * *"don't change anything with the default single blade usage"* is the
+   * player's own clause, and this line is half of how it is kept: every
+   * existing save, every check that does not name a set, and every player who
+   * never opens this control gets the blade the game has always given them,
+   * along the code path it has always taken. `tools/checks/saberforms.mjs`
+   * holds the other half against a 600-frame recording of it.
+   */
+  saberSet: 'single',
+  /**
+   * WHICH COMPANION YOU TAKE — and `'none'` is the default because a companion
+   * is a thing you choose to worry about.
+   *
+   * *"a pet/close personal companion/protector that you CAN CHOOSE to go into
+   * battle with"* — the player's own verb. A player who never opens this page
+   * plays the game they already had.
+   *
+   * THE CHOICE IS A SETTING AND THE ANIMAL IS A RECORD, and the split is
+   * load-bearing rather than tidy. `loadSettings` falls back to
+   * `{...DEFAULT_SETTINGS}` on any parse failure and spreads the stored blob
+   * over the defaults wholesale — so a companion that LIVED in that blob would
+   * be silently RESURRECTED by a corrupt save or a version bump, which is
+   * `Company.keep()` reopened by accident. This key says which KIND you want;
+   * `Kennel.js` holds whether the animal is alive, what it is called and what
+   * it has done, in its own store with its own fold.
+   */
+  companion: 'none',
+  /**
    * THE MINIMAP, on by default and switchable off.
    *
    * On because a fight against 25 bodies with no idea where the other 24 are is
@@ -1154,6 +1208,11 @@ export const SETTING_READERS = {
   enemyBody:       ['engine/Presence.js', 's.enemyBody !== false'],
   popups:          ['ui/HUD.js', 'world.settings.popups !== false'],
   troopNames:      ['ui/HUD.js', "world.settings?.troopNames ?? 'aimed'"],
+  saberSet:        ['game/World.js', 'saberSet: this.settings.saberSet'],
+  /* The kind you picked; `myCompanion` turns it into the animal, and it is the
+   * one reader — deploy, the co-op handshake and the joining player's own
+   * adoption all ask it rather than reading the key a second time. */
+  companion:       ['main.js', 'const want = s?.companion'],
   minimap:         ['ui/HUD.js', 'settings.minimap !== false'],
   minimapSense:    ['ui/HUD.js', 'settings.minimapSense !== false'],
   reticleShape:    ['ui/HUD.js', 'shapeAt(s.reticleShape)'],
@@ -1744,6 +1803,35 @@ export const CODEX = [
     text: () => `<b>Focus</b> — hold to bend time. The world slows to `
       + `${(FOCUS.heldScale * 100).toFixed(0)}% of real time, you barely do. Burns `
       + `${FOCUS.drain} Force a second, so pick your volleys.` },
+  /**
+   * THE TWO SET MOVES, AND THEY ARE ON THIS PAGE BECAUSE THEY ARE PRICED.
+   *
+   * `Powers.js` said of the staff's spin that it "has no card and needs none",
+   * and `menu: the Codex prices the kit off the price list, not off prose`
+   * disagreed the moment the price landed — it names every entry in
+   * POWER_COST that this grid does not print, and it named `orbit`. The check
+   * is right and the comment was wrong: a thing that spends the same pool as
+   * push and unleash is a thing the player has to be able to compare against
+   * push and unleash, and the whole argument for the price being a NUMBER in a
+   * chip is that the eye can run down the column.
+   *
+   * Both rows are keyed on `power` rather than on their key, because both are
+   * cast off `throw` — one key, one meaning per set, which is the pattern
+   * `swap`, `drive` and `hurl` already use — so the chip has to be told which
+   * price row to read or it would print the thrown blade's.
+   *
+   * They print in every set, including the single blade's. A card that
+   * appeared and disappeared with a menu choice would be a page that teaches
+   * you the game you are currently holding rather than the game; the sets are
+   * named in the prose instead.
+   */
+  { keys: ['throw'], power: 'orbit',
+    text: k => 'Saberstaff — ${k} sets the staff spinning around you on '
+      + 'telekinesis alone. It answers what comes at you while your hands stay '
+      + 'free to cast.'.replace('${k}', k('throw')) },
+  { keys: ['throw'], power: 'throwOff',
+    text: k => `Paired blades — ${k('throw')} throws the off blade only. You `
+      + 'keep the main one, so you are still armed and can still block while it is gone.' },
   { keys: ['push'], text: () => 'Force push.' },
   { keys: ['pull'], text: () => 'Force pull.' },
   { keys: ['grip'],
@@ -1861,7 +1949,14 @@ export const CODEX = [
       + `displace. Your own side's any time; the enemy's only once you have put it under `
       + `${Math.round(DRIVE.wreck * 100)}% and the crew is dead. Move to drive, aim to lay the gun `
       + `(it turns faster than the hull, inside an arc off the nose), attack to fire. The hull `
-      + `takes the hits while you are in it, and when it dies you are put out on the ground.` },
+      + `takes the hits while you are in it, and when it dies you are put out on the ground. `
+      /* AND THE SAME KEY GETS YOU ONTO YOUR OWN ANIMAL, which is worth saying
+       * on the card rather than leaving a player to discover that the mount
+       * they were sold uses the vehicle binding. The names are derived off
+       * `mount` for the reason the machine list is derived off `crew`. */
+      + `<b>The same key mounts your companion</b> if it is one you can ride — ${RIDEABLE()} — `
+      + `and there is no gun on any of them: your blade goes on your belt for as long as you `
+      + `are up there, and the hits it takes are the animal's.` },
   { keys: ['view'], text: () => 'Toggle first / third person.' },
   { keys: ['scoreboard'], hold: true, text: () => 'Scoreboard &amp; run boons.' },
   // The slot count is read off the table, so a ninth emote changes this line.
@@ -1904,6 +1999,28 @@ export const CODEX = [
    * appears the day it is authored"; it was reading the wrong table, and the
    * two Force verbs authored with it appeared in no list a player could read —
    * not here, not in the teaching panel, nowhere but a wheel caption. */
+  /**
+   * THE COMPANION, TAUGHT — and it was on no page at all.
+   *
+   * A player who picks one off the Jedi tab was told nothing: not which key
+   * opens the ring, not that the middle of the ring means COME BACK, not that
+   * four of the six orders are licensed by a rung it has to earn, and not that
+   * standing on a downed one picks it up. Every one of those is a thing you
+   * would otherwise find out by losing an animal.
+   *
+   * ONE ROW AND NOT SIX, because the wheel prints its own live captions —
+   * including the refusals, in the animal's own words — so what this page owes
+   * the player is the SHAPE: there is a ring, the middle of it is safety, the
+   * rest is earned, and it can be picked up. `codexTeaching` fills the numbers.
+   */
+  { keys: ['companionwheel'], hold: true,
+    text: k => 'Your companion — hold to open its ring. Let go in the MIDDLE and it '
+      + `comes back to you, which is the one order it will always take. `
+      + '<b>Away</b> breaks it off a fight, <b>ward</b> makes it meet anything that comes near '
+      + 'YOU, <b>seek</b> sends it at whatever is under your reticle, <b>hold</b> plants it on '
+      + 'ground you pick, and the last slot is its own — a massiff blocks, a tooka cries, an '
+      + 'astromech slices. The four it has not earned yet say so when you point at them. '
+      + `It goes down before it dies: stand on it to pick it up${k ? '' : ''}.` },
   { keys: ['orderwheel'], hold: true,
     text: () => `Order wheel — all ${Object.keys(COMMAND_ORDERS).length} orders, `
       + '<b>hold ground</b>, <b>target</b> and <b>detach</b>, on one key. Hold it, aim at a '
@@ -2559,6 +2676,16 @@ export function databankPages() {
       hp: A.hp, threat: A.threat ?? 0, speed: A.speed ?? 0, mass: A.mass ?? 0,
       boss: !!A.boss, big: !!A.big, training: !!A.training,
       setPieceOnly: !!A.setPieceOnly,
+      /* A BODY YOU BRING IS NOT A BODY YOU MEET, and it needed the third
+       * branch rather than a pool entry. Eight of the twelve companion kinds
+       * are archetypes now, so the databank owes each a page — and `levels`
+       * for every one of them is `[]`, because no theatre's pool fields a
+       * companion and putting one in a pool to make a cell render would spawn
+       * the player's own animal as an enemy. `training` already had this shape
+       * (a dojo body is met in the dojo and in no pool), so this follows it:
+       * the flag is read off COMPANION_KINDS, which is the one table that
+       * decides what a companion kind is, and the page says the true thing. */
+      companion: !!COMPANION_KINDS[key],
       /* WHERE IT IS MET, derived from the pools — which is the question a player
        * actually has ("where do I go to fight one of these") and the one thing
        * on the page that no comment anywhere in the source already answers.
@@ -4940,6 +5067,59 @@ export class Menu {
      */
     this._cardRow('cut-list', 'h-cut', 'robeCut', ROBE_CUTS, () => this._refreshPreview(true));
     /**
+     * WHAT YOU CARRY — the third fighting style, and it goes on the JEDI tab
+     * beside the blade's own colour, length and hilt rather than under
+     * Gameplay.
+     *
+     * It is a thing about your character and not a rule of the match, which is
+     * the same reading `Net.LOOK_KEYS` takes of it: two players in one session
+     * carrying different weapons is the feature. A control under Gameplay
+     * would sit beside friendly fire and the ally slider and read as something
+     * the host decides.
+     *
+     * `SABER_SETS` is the table and this passes it straight through, so a
+     * fourth set would be a row there and nothing here — and the blurb the
+     * card prints is the row's own sentence rather than a second copy on a
+     * screen.
+     */
+    this._cardRow('saberset-list', 'h-saberset', 'saberSet', SABER_SETS,
+      () => this._refreshPreview(true));
+    /**
+     * AND WHAT COMES WITH YOU. Twelve kinds and a NONE, built straight off
+     * `COMPANION_ORDER` so a thirteenth would be a row in CompanionKinds.js
+     * and nothing here, and each card printing that kind's own one sentence
+     * rather than a second copy of it on a screen.
+     *
+     * THE NONE ROW IS FIRST AND IT IS A REAL CHOICE, not an empty state. The
+     * whole feature is opt-in — see DEFAULT_SETTINGS.companion — and a list
+     * whose only exit was picking something would be a list that conscripts
+     * you into looking after an animal.
+     */
+    /**
+     * `name`, NOT `label` — AND EVERY CARD IN THIS ROW READ "undefined".
+     *
+     * `_cardRow` prints `<b>${it.name}</b>`, and a COMPANION_KINDS row carries
+     * `label`. `SABER_SETS` uses `name`, which is why the saber row four lines
+     * above this one has always worked and this one never did: the picker that
+     * is the ONLY door into the whole companion feature rendered twelve cards
+     * reading "undefined" over the right blurb, from the day it landed.
+     *
+     * Forty-three green companion checks did not see it because none of them
+     * renders this row, and `menu.mjs`'s own companion-list check counted the
+     * cards without reading them. The check now asserts that every card in
+     * every `_cardRow` list renders a non-empty name, which is the general
+     * form of the bug and catches the next row that carries the wrong field.
+     *
+     * Mapped here rather than renaming `label` on the rows: `label` is what
+     * ARCHETYPES uses everywhere else in the game — the kill feed, the
+     * databank, the roster — and this is the one surface that wants the other
+     * spelling.
+     */
+    this._cardRow('companion-list', 'h-companion', 'companion',
+      [{ id: 'none', name: 'None', blurb: 'You go in alone, as you always have.' },
+        ...COMPANION_ORDER.map((id) => ({ ...COMPANION_KINDS[id], name: COMPANION_KINDS[id].label }))],
+      () => { this._syncKennel(); this._wireCompanionDress(); });
+    /**
      * THE MEDITATION POSE, and the preview SITS IN IT while you are choosing.
      *
      * A card row like the cut's, off `MEDITATION_POSES` in Rig.js — the same
@@ -5154,6 +5334,31 @@ export class Menu {
    * uses. A player who loads a blob and then plays should not have to be told
    * to refresh first.
    */
+  /**
+   * The button, wired once. It is OUTSIDE the lists `_buildSaber` rewrites, so
+   * it survives every rebuild its own presses cause.
+   */
+  _wireTrust() {
+    const btn = document.getElementById('btn-trust');
+    if (!btn) return;
+    const panel = btn.closest('[data-panel="saber"]') || btn.parentElement;
+    this._activate(btn, () => {
+      audio.ui('click');
+      /* The Order and the Species redraw what comes after them — see the note
+       * over `_trustInTheForce`. */
+      /* THE COMPANION IS NOT PART OF YOUR APPEARANCE. Its picker and its
+       * colours share this panel and have their own button — see `opts.skip`
+       * for what pressing this one would otherwise do to your animal. */
+      const n = this._trustInTheForce(panel, {
+        first: ['order-list', 'species-list'],
+        skip: ['#companion-list', '#companion-dress', '#companion-dress-host'],
+      });
+      this._refreshPreview(true);
+      saveSettings(this.s);
+      btn.textContent = n ? 'Trust in the Force' : 'Nothing to choose';
+    });
+  }
+
   _wirePortable() {
     const box = document.getElementById('opt-portable');
     const said = document.getElementById('portable-said');
@@ -5272,10 +5477,304 @@ export class Menu {
     const el = document.getElementById('mode-need');
     if (!el) return;
     const M = MODES[this.s.mode];
-    el.textContent = (M?.needsSession && !this._netMode)
-      ? `${M.name} is fought against another commander — host or join a session under `
-        + 'Co-op first. Deployed alone it stands the meeting down and fights the composed wave.'
-      : '';
+    const lines = [];
+    if (M?.needsSession && !this._netMode) {
+      lines.push(`${M.name} is fought against another commander — host or join a session under `
+        + 'Co-op first. Deployed alone it stands the meeting down and fights the composed wave.');
+    }
+    /**
+     * …AND WHO IS COMING WITH YOU, WHICH IS THE OTHER HALF OF THE SAME
+     * PROMISE — and it was missing.
+     *
+     * The player, V13: *"I tried to play trial of waves and noticed that I
+     * still had troops in that mode, is that a feature or bug?"*
+     *
+     * A feature. `settings.allies` is a PERSISTED GLOBAL — one slider on the
+     * Army tab, kept across sessions — and `commandConfig` fields it in every
+     * mode that does not declare `solo` or `dojo`. He had set it once, on
+     * another card, and it followed him. `_syncAlliesRow` one screen up was
+     * written for the mirror-image defect (a lit control the mode overrules in
+     * silence); this is the case where the mode HONOURS it in silence, which
+     * is the same surprise from the other side.
+     *
+     * SAID RATHER THAN REMOVED. Nothing about a contingent is wrong in the
+     * Trial and taking it away would be answering a question with a
+     * confiscation — the player asked what it was, not for it to stop. What
+     * was wrong is that no screen said it before Ignite.
+     *
+     * On the mode's own fields, so it is right in the eleven modes and in the
+     * twelfth: `solo`/`dojo` are the two that refuse a contingent, and they
+     * already have their own sentence in the slider's readout.
+     */
+    const n = Math.round(Number(this.s.allies) || 0);
+    if (n > 0 && !M?.solo && !M?.dojo) {
+      lines.push(`You are taking ${n} allied ${n === 1 ? 'trooper' : 'troopers'} in with you — `
+        + 'the Allied troops slider on the Army tab, which is remembered across every mode.');
+    }
+    el.textContent = lines.join(' ');
+  }
+
+  /**
+   * WHAT THE KENNEL ACTUALLY HOLDS, under the picker.
+   *
+   * THREE SENTENCES AND A DOOR, and every one of them is a thing the player
+   * would otherwise have to deduce:
+   *
+   *   WHICH animal it is — its name, its rung and how many runs you have had
+   *   together, because a rung is metres of leash and the ladder is invisible
+   *   otherwise.
+   *
+   *   THAT IT IS NOT SAVING, when the store is refused. `notSaving()` is one
+   *   sentence on one panel of the Company tab today and the companion lives
+   *   in three rooms; silent data loss is the one unacceptable failure mode in
+   *   a permadeath game, so it is said wherever the animal is.
+   *
+   *   THE FALLEN, because the epitaph list is the whole of what survives an
+   *   animal and a wall nobody can see is not a wall.
+   *
+   * AND A DELETE DOOR WITH A REAL CALLER. `Company.clear`, `Muster.clear` and
+   * `clearProgress` are all exported with zero callers anywhere in `src/` —
+   * three delete doors nobody can open. A companion is the first durable
+   * record a player will genuinely want to destroy, so this one has a control.
+   * It is a HOLD and not a click, on `_activate`'s own confirm idiom, because
+   * an accidental tap here costs a named thing that cannot come back.
+   */
+  _syncKennel() {
+    this._wireCompanionDress();
+    this._syncKennelCoop();
+    this._wireKennelRelease();
+    /* THE DOOR IS ONLY THERE WHEN THERE IS SOMETHING BEHIND IT. */
+    const rel = document.getElementById('companion-release');
+    if (rel) rel.classList.toggle('hidden', !loadKennel().live);
+    const el = document.getElementById('companion-state');
+    if (!el) return;
+    const k = loadKennel();
+    const lines = [];
+    if (kennelNotSaving()) {
+      lines.push('THIS IS NOT BEING SAVED — the browser refused the write. '
+        + 'Anything your companion does this session is lost when the tab closes.');
+    }
+    const want = this.s.companion;
+    if (k.live && (!want || want === 'none' || k.live.kind === want)) {
+      const K = COMPANION_KINDS[k.live.kind];
+      const r = rungOf(k.live);
+      const nm = k.live.name || K?.label || 'it';
+      /* AND WHETHER YOU CAN GET ON IT, which is the one fact about a kind that
+       * changes what the deploy is FOR rather than how it goes: three of the
+       * twelve are transport and the other nine are not, and a player who has
+       * to discover that on the field has been told nothing. */
+      if (K?.mount) lines.push('You can ride this one.');
+      lines.push(`${nm} — ${K?.label ?? k.live.kind}, ${r.label.toLowerCase()}, `
+        + `${r.leash} m of leash, ${k.live.runs} run${k.live.runs === 1 ? '' : 's'} with you`
+        + (k.live.kills ? `, ${k.live.kills} of theirs` : '')
+        + (k.live.tempers?.length ? ` · ${k.live.tempers.join(' ')}` : ''));
+    } else if (want && want !== 'none') {
+      lines.push(`A ${COMPANION_KINDS[want]?.label?.toLowerCase() ?? want} will be waiting `
+        + 'when you deploy. It has done nothing yet.');
+    }
+    if (k.fallen?.length) {
+      lines.push('Lost: ' + k.fallen.map((f) =>
+        `${f.name || COMPANION_KINDS[f.kind]?.label || f.kind}`
+        + `${f.where ? ` on ${f.where}` : ''}${f.fate === 'left' ? ' (left behind)' : ''}`).join(' · '));
+    }
+    el.textContent = lines.join('  ');
+    el.style.display = lines.length ? '' : 'none';
+  }
+
+  /**
+   * ══ DRESSING A COMPANION ═══════════════════════════════════════════════
+   *
+   * "you can customize their appearance to a degree"
+   *
+   * THIS LIGHTS CODE THAT HAS SHIPPED FOR MONTHS AND HAS NEVER BEEN REACHED.
+   * `buildQuadruped` accepts `opts.hide`, `opts.plate`, `opts.belly` and
+   * `opts.eye` — `hideMat(opts.hide ?? P.hide, 0.92)` and three siblings — and
+   * NOTHING in the tree has ever passed it anything but the plan's own
+   * defaults. Every creature in the game is wearing its factory colours
+   * because there was no door. This is the door.
+   *
+   * IT IS NOT `_dressingHtml`, AND THAT IS A DECISION RATHER THAN LAZINESS.
+   * That renderer is built around `KIT_FIELDS`, `PAINT_SLOTS` and
+   * `wearableFor` — a clone's armour slots and the hardware bolted to them —
+   * and a companion has neither: four flat colour overrides and no kit at all.
+   * Worse, `WEARS` is deliberately PERMISSIVE, so a type it does not know gets
+   * its kind's whole vocabulary, and a companion routed through it would be
+   * offered nine clone-armour rows that store a value, light up and change
+   * nothing. That is the exact dead control that table exists to prevent.
+   *
+   * WHAT IS REUSED IS THE PART THAT MATTERS: the same `.kit-row`,
+   * `.kit-name`, `.swatches` and `.swatch` classes, so there is one stylesheet
+   * and one look; the same `PAINTS` palette, so a re-tuned colour reaches the
+   * companions already wearing it; and ids stored rather than colours.
+   *
+   * AND ITS OWN ROOT, WHICH IS THE TRAP COMPANIONS.md NAMES BY NAME.
+   * `_trustInTheForce` walks `.cards, .swatches, .kit-chips` under whatever
+   * root it is handed. A companion block sharing a root with the Jedi
+   * wardrobe would be randomised by the player's own button — so this block
+   * is its own node with its own button, and pressing one does not touch the
+   * other.
+   */
+  _companionDressHtml(kind, look = {}) {
+    const K = COMPANION_KINDS[kind];
+    if (!K) return '';
+    const slots = COMPANION_LOOK[K.look] || [];
+    if (!slots.length) return '';
+    const swatch = (p, on, field) => `<i class="swatch${on ? ' sel' : ''}"
+        data-cmp="${escKey(field)}" data-hue="${escKey(p ? p.id : '')}"
+        title="${escKey(p ? p.name : 'As it was born')}"
+        style="background:${p ? `#${p.color.toString(16).padStart(6, '0')}` : 'transparent'};
+               ${p ? '' : 'border-style:dashed'}"></i>`;
+    const rows = slots.map((field) => `
+      <div class="kit-row"><span class="kit-name">${escKey(field)}</span>
+        <span class="swatches">
+          ${swatch(null, !look[field], field)}
+          ${PAINTS.map((p) => swatch(p, look[field] === p.id, field)).join('')}
+        </span></div>`).join('');
+    return `<div class="kit-list" id="companion-dress">${rows}
+      <button class="secondary" id="companion-trust">Trust in the Force</button></div>`;
+  }
+
+  /**
+   * Draw and bind the companion's colours. Rebuilt whole on every kind change,
+   * because a hawk and a wookiee do not wear the same words and a row left
+   * over from the last pick is a control that writes a slot the builder will
+   * never read.
+   */
+  _wireCompanionDress() {
+    const host = document.getElementById('companion-dress-host');
+    if (!host) return;
+    const k = loadKennel();
+    const kind = (k.live && k.live.kind) || (this.s.companion !== 'none' ? this.s.companion : null);
+    if (!kind || !k.live || k.live.kind !== kind) {
+      /* NOTHING TO DRESS UNTIL THERE IS AN ANIMAL. The record is created at
+       * deploy — see `fieldFromKennel` — so before the first run there is a
+       * kind chosen and no body to paint, and saying so is better than a row
+       * of swatches that write into nothing. */
+      host.innerHTML = kind
+        ? '<div class="note">Its colours are yours to set once you have taken it out once.</div>'
+        : '';
+      return;
+    }
+    host.innerHTML = this._companionDressHtml(kind, k.live.look || {});
+    const write = (field, hue) => {
+      const look = { ...(loadKennel().live?.look || {}) };
+      if (hue) look[field] = hue; else delete look[field];
+      dressCompanion(k.live.id, { look });
+      this._wireCompanionDress();
+      this._syncKennel();
+    };
+    for (const el of host.querySelectorAll('.swatch')) {
+      this._activate(el, () => {
+        audio.ui('click');
+        write(el.dataset.cmp, el.dataset.hue || null);
+      });
+    }
+    const trust = document.getElementById('companion-trust');
+    if (trust) {
+      this._activate(trust, () => {
+        audio.ui('click');
+        /* ITS OWN ROOT, so the Jedi wardrobe's button and this one cannot
+         * randomise each other — see `_companionDressHtml`. */
+        this._trustInTheForce(host, {});
+        const look = {};
+        for (const el of host.querySelectorAll('.swatch.sel')) {
+          if (el.dataset.hue) look[el.dataset.cmp] = el.dataset.hue;
+        }
+        dressCompanion(k.live.id, { look });
+        this._wireCompanionDress();
+        this._syncKennel();
+      });
+    }
+  }
+
+  /**
+   * WHAT A SESSION DOES TO YOUR COMPANION, SAID BEFORE YOU JOIN.
+   *
+   * IT USED TO SAY SOMETHING ELSE, and the something else was true: "in a
+   * session only the host's companion takes the field. Yours stays in the
+   * kennel." That was the shape of the feature — one shared setting, one body,
+   * the host's — and the line existed so a joining player was told rather than
+   * left to discover their animal was missing.
+   *
+   * COMPANIONS.md's position is *"each commander brings one"* and that is what
+   * ships now: the choice is per player (Net.LOCAL_KEYS), the card crosses on
+   * the roster, and the host fields one body per peer that brought something.
+   * So the sentence that has to be said changed with it, and the two halves of
+   * it are different halves:
+   *
+   *   YOUR ANIMAL IS THERE. On the field, beside you, on everybody's screen,
+   *   answering your own order wheel and nobody else's.
+   *   WHAT IT DOES THERE IS NOT KEPT. `keepCompanion` folds on your own
+   *   machine — the run counts, and an animal that dies out there is gone —
+   *   but no xp is earned, because the deeds are measured off a body this
+   *   machine is only watching. `CompanionPack._ledger` says why at length.
+   *
+   * BOTH ROLES ARE TOLD THE SAME THING NOW, because both get the same thing,
+   * and that is the whole point of the change. A line that still split them
+   * would be describing a limitation that no longer exists.
+   *
+   * A player who finds any of this out AFTERWARDS has been cheated of an
+   * evening, which is the argument `notSaving()` makes one panel across: a
+   * player who is told is not being cheated.
+   */
+  /**
+   * A DELETE DOOR WITH A REAL CALLER, WHICH NOTHING DURABLE IN THIS TREE HAS.
+   *
+   * `Company.clear`, `Muster.clear` and `clearProgress` are all exported with
+   * ZERO callers anywhere in `src/` — three delete doors nobody can open. A
+   * companion is the first durable record a player will genuinely WANT to
+   * destroy: one they regret naming, one they want to start over with, one
+   * whose kind they have gone off.
+   *
+   * A HOLD AND NOT A CLICK. An accidental tap here costs a named thing that
+   * cannot come back, and the animal has a rung and a history behind it. The
+   * hold is 1.2 s — long enough that it cannot be an accident, short enough
+   * that it is not a punishment — and the label counts down so the player can
+   * see they are doing it on purpose.
+   *
+   * AND IT IS A RELEASE, NOT A KILL. `clear()` drops the store, so there is no
+   * epitaph and no `lost` count: the player retiring an animal has not lost
+   * one, and a wall of the fallen that included the ones you let go would be
+   * lying about what happened to them.
+   */
+  _wireKennelRelease() {
+    const btn = document.getElementById('companion-release');
+    if (!btn || btn._wired) return;
+    btn._wired = true;
+    const HOLD = 1.2;
+    let t0 = 0, timer = null;
+    const label = () => { btn.textContent = 'Hold to release it'; };
+    const stop = () => { if (timer) clearInterval(timer); timer = null; label(); };
+    const start = () => {
+      if (timer) return;
+      t0 = Date.now();
+      timer = setInterval(() => {
+        const held = (Date.now() - t0) / 1000;
+        if (held >= HOLD) {
+          stop();
+          audio.ui('click');
+          kennelClear();
+          this._syncKennel();
+        } else {
+          btn.textContent = `Releasing… ${(HOLD - held).toFixed(1)}s`;
+        }
+      }, 60);
+    };
+    for (const ev of ['pointerdown', 'touchstart']) btn.addEventListener(ev, start);
+    for (const ev of ['pointerup', 'pointerleave', 'touchend', 'touchcancel']) btn.addEventListener(ev, stop);
+    label();
+  }
+
+  _syncKennelCoop() {
+    const el = document.getElementById('companion-coop');
+    if (!el) return;
+    const live = !!this._netMode;
+    const has = this.s.companion && this.s.companion !== 'none';
+    el.textContent = !(live && has) ? ''
+      : 'In a session your companion comes with you — every commander brings their own, and the '
+        + 'host puts it on the field so everyone can see it. It will not earn a rung out there, '
+        + 'and it can be lost.';
+    el.style.display = el.textContent ? '' : 'none';
   }
 
   _syncVersusBox() {
@@ -5521,6 +6020,103 @@ export class Menu {
    * Hides its own heading when the list is empty, so a module that exports
    * nothing yet leaves no titled empty box behind it.
    */
+  /**
+   * ══════════════════════════════════════════════════════════════════════
+   *  TRUST IN THE FORCE — the randomise button, by its own name
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * "there should also be a randomize button that randomizes every single
+   *  customization for the people who prefer it that way … maybe call it
+   *  something cool like 'Trust in the Force' or something of that nature
+   *  instead of randomize"
+   *
+   * IT DRIVES THE CONTROLS, NOT THE SETTINGS, and that is the whole design.
+   *
+   * The obvious version is a table of every appearance key with a list of its
+   * legal values, and it would be a second copy of `_buildSaber` — wrong the
+   * first time a swatch is added and silently wrong forever after, which is
+   * the defect HANDOFF 2.3 calls "a hand-maintained table beside its generated
+   * twin". Instead this walks the panel and clicks a random child of every row
+   * it finds. A card row added tomorrow is randomised tomorrow, by nobody.
+   *
+   * It also means every pick goes through the SAME door a person's click goes
+   * through — `_activate`'s handler, which writes the setting, re-marks the
+   * selection, runs the row's own `onPick` and saves. Nothing here knows what
+   * a robe is, and nothing here can forget a side effect.
+   *
+   * THREE PASSES, BECAUSE TWO ROWS REBUILD THE PAGE UNDER YOU. Picking an
+   * Order runs `_buildSaber()` — it re-homes the crystal, the hilt and the
+   * robe and redraws every list — and picking a Species re-homes the skin
+   * rack. A single pass over one NodeList would be clicking elements that had
+   * already been thrown away. So: the order, then the species, then everything
+   * else re-queried from scratch.
+   */
+  _trustInTheForce(root, opts = {}) {
+    if (!root) return 0;
+    let n = 0;
+    const oneOf = (row) => {
+      if (!row) return false;
+      const kids = [...row.children].filter((c) => c.nodeType === 1);
+      if (kids.length < 2) return false;
+      kids[(Math.random() * kids.length) | 0].click();
+      n++;
+      return true;
+    };
+    /* The two that redraw what comes after them, in the order they redraw it. */
+    for (const id of (opts.first || [])) {
+      oneOf(document.getElementById(id));
+    }
+    /**
+     * …AND WHAT THIS BUTTON MUST NOT REACH.
+     *
+     * `opts.skip` is a selector for subtrees under the same root that belong
+     * to somebody else's button. It exists because the Jedi panel grew a
+     * SECOND owner: the companion picker and its colours sit under
+     * `[data-panel="saber"]`, which is exactly the root `_wireTrust` walks.
+     *
+     * Without this, pressing the player's own Trust in the Force would
+     * randomise WHICH ANIMAL YOU TAKE — and picking a different kind retires
+     * the one you have, so a button labelled "randomize my appearance" would
+     * quietly put your companion back in the kennel and adopt another. That is
+     * not a cosmetic surprise; it is the one thing on this screen that is not
+     * cosmetic at all.
+     *
+     * COMPANIONS.md names this trap by name, and it names it because the
+     * walker is deliberately broad — `.cards, .swatches, .kit-chips` under
+     * whatever root it is handed — which is what makes it work on nine
+     * different rows without a list. The breadth is the feature; the skip is
+     * how a second owner coexists with it.
+     */
+    const skipped = new Set();
+    for (const sel of (opts.skip || [])) {
+      for (const node of root.querySelectorAll(sel)) {
+        node.querySelectorAll?.('.cards, .swatches, .kit-chips, input[type="range"]')
+          .forEach((x) => skipped.add(x));
+        skipped.add(node);
+      }
+    }
+    /* …and then everything, re-queried. `.cards` is a card row, `.swatches` a
+     * colour rack, `.kit-chips` a row of kit options on a trooper's page —
+     * three class names against the whole wardrobe, because they are what the
+     * markup already uses to mean "a row of choices". */
+    for (const row of root.querySelectorAll('.cards, .swatches, .kit-chips')) {
+      if (!skipped.has(row)) oneOf(row);
+    }
+    /* Sliders take a random NOTCH rather than a random float, so a frame or a
+     * blade length lands on a value the control can actually show. */
+    for (const el of root.querySelectorAll('input[type="range"]')) {
+      if (skipped.has(el)) continue;
+      const lo = Number(el.min), hi = Number(el.max), step = Number(el.step) || 0.01;
+      if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) continue;
+      const notches = Math.max(1, Math.round((hi - lo) / step));
+      el.value = String(lo + step * ((Math.random() * (notches + 1)) | 0));
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      n++;
+    }
+    return n;
+  }
+
   _cardRow(hostId, headId, key, list, onPick) {
     const host = document.getElementById(hostId);
     const head = headId && document.getElementById(headId);
@@ -6620,7 +7216,12 @@ export class Menu {
      * thing the player could not be told about — the silent failure the store
      * was rewritten to end, one layer further out.
      */
-    const stuck = [companyNotSaving() && 'the roll', Muster.notSaving() && 'the muster']
+    /* …AND THE KENNEL, which is the third durable store and lives in three
+     * rooms rather than one. `notSaving()` was one sentence on one panel; a
+     * companion is on the deck and on the field as well, and silent data loss
+     * is the only unacceptable failure mode in a permadeath game. */
+    const stuck = [companyNotSaving() && 'the roll', Muster.notSaving() && 'the muster',
+      kennelNotSaving() && 'the kennel']
       .filter(Boolean);
     const notSaved = stuck.length
       ? `<p class="hint company-cut"><b>NOT SAVING.</b> This browser has refused to write
@@ -7217,6 +7818,11 @@ export class Menu {
         pattern that copied them would delete it. A droid gets whatever part of a
         clone's pattern a droid can wear.</p>
       <div class="issue-row">
+        ${/* TRUST IN THE FORCE, on a man rather than on the Jedi. Same button,
+             same name, same walk over the rows — see `_trustInTheForce`. It
+             sits with the issue buttons because it is the same kind of act:
+             something you do to a whole page of choices at once. */''}
+        <button class="secondary" id="company-trust">Trust in the Force</button>
         ${/* ONLY WHEN HE IS IN ONE. Every man on a fresh slate is dealt no
             squad at all, so "his squad" and "the whole company" would be the
             same set and the page would be offering one button twice — which
@@ -7251,6 +7857,23 @@ export class Menu {
     }
     const kit = { ...(look?.kit || {}) };
     const paint = { ...(look?.paint || {}) };
+    /**
+     * TRUST IN THE FORCE, on this man. Wired BEFORE the rows below so that the
+     * clicks it fires land on handlers that already exist — the walk clicks the
+     * real controls, and a control that has not been given its handler yet is a
+     * control that does nothing.
+     *
+     * Scoped to the page rather than to the document: `.kit-list` is what wraps
+     * both racks here, and a wider root would reach the Jedi's own wardrobe on
+     * a tab that happens to be built.
+     */
+    const trust = document.getElementById('company-trust');
+    if (trust) {
+      this._activate(trust, () => {
+        audio.ui('click');
+        for (const list of document.querySelectorAll('.kit-list')) this._trustInTheForce(list);
+      }, 'Trust in the Force');
+    }
     for (const el of document.querySelectorAll('.company-paints .swatch')) {
       this._activate(el, () => {
         audio.ui('click');
@@ -8061,6 +8684,7 @@ export class Menu {
     }
 
     const where = p.training ? 'The dojo, and nowhere else'
+      : p.companion ? 'Nowhere — this one you bring, to whichever theatre you take it to'
       : p.levels.length ? p.levels.join(' · ')
       : 'Nowhere — no theatre fields this one';
     /* The tags are facts off the archetype, not adjectives. `setPieceOnly` is
@@ -9118,6 +9742,9 @@ export class Menu {
      * `_syncAlliesRow`. */
     this._slider('opt-allies', 'allies', (v) => {
       const M = MODES[this.s.mode];
+      /* The deploy card says who is coming with you, and this is the handle
+       * that changes the answer — see `_syncSessionNeed`. */
+      this._syncSessionNeed?.();
       if (M?.solo || M?.dojo) return `not in ${M?.name || this.s.mode}`;
       return v <= 0 ? 'none' : `${Math.round(v)} of ${MAX_STRENGTH}`;
     });
@@ -9277,6 +9904,7 @@ export class Menu {
     document.getElementById('opt-fullscreen')?.closest('label')
       ?.classList.toggle('hidden', !canFullscreen());
     this._wirePortable();
+    this._wireTrust();
     this._check('opt-bloom', 'bloom', v => this.hooks.onBloom?.(v));
     this._syncBloomBox();
     this._check('opt-showperf', 'showPerf', () => this._syncDiag());
@@ -9555,6 +10183,10 @@ export class Menu {
      * `_syncVersusBox`. */
     this._netMode = mode || null;
     this._syncVersusBox();
+    /* …AND WHAT A SESSION DOES TO YOUR COMPANION, which is only true while
+     * one is live and has to appear the moment you host or join rather than
+     * the next time the Jedi tab is drawn. */
+    this._syncKennelCoop();
     /* …AND THE SIDE LIST, which is greyed out of a session and live in one —
      * the same signal, the same reason. And the line under the mode list, which
      * is the same fact asked the other way round. */

@@ -5677,6 +5677,32 @@ SET_PIECE.splice(SET_PIECE.findIndex((s) => s.type === 'droideka'), 0, { type: '
  * the arithmetic cannot drift out of step with the body it is paying for.
  */
 Object.assign(ARCHETYPES, {
+  /**
+   * THE MASSIFF — the first companion, and the only archetype in the game
+   * that a wave may never spend.
+   *
+   * `companion: true` is the flag, and it is a flag rather than a name for the
+   * reason every other field on these rows is: the composer filters on it, the
+   * pack reads it, and the twelfth companion lights both the day it is
+   * written. Nothing anywhere tests for the string 'massiff'.
+   *
+   * The numbers are a dog's and are meant to be modest. 210 hp is under a
+   * clone trooper's twice over — it dies if you leave it, which is the half of
+   * the brief that says protecting it is a thing you choose to worry about.
+   * 5.2 m/s is a trot: below a jet trooper's 6.2, well below your own sprint,
+   * and the reason every good decision you make with your own body leaves it
+   * behind. `preferred` at [1.4, 2.6] is jaws — it has to arrive to matter.
+   */
+  massiff: {
+    label: 'Massiff', build: (o) => buildQuadruped({ ...o, kind: 'massiff' }),
+    scale: 0.95, hp: 210, mass: 110,
+    speed: 5.2, toughness: TOUGHNESS.flesh, melee: true, custom: 'beast',
+    damage: 22, preferred: [1.4, 2.6], score: 0, threat: 0,
+    /* NEVER COMPOSED INTO A WAVE. A companion archetype that a wave could
+     * spend would put your own animal on the other side of the field, which is
+     * the faction defect `factions.mjs` exists to stop. */
+    companion: true, unlockAt: 99,
+  },
   charger: {
     label: 'Reek', build: (o) => buildQuadruped({ ...o, kind: 'charger' }),
     /* 1650 kg, and the ceiling is the FORCE GRIP rather than the animal. The

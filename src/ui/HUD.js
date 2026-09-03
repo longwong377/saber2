@@ -22,6 +22,10 @@ import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
  * the model wearing it.
  */
 import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
+/* The six orders and the one reader that says whether a slot is live and why
+ * not — see `CompanionWheel`. */
+import { COMPANION_ORDERS, orderArg, orderCompanion, refuseOrder } from '../game/Companions.js';
+import { COMPANION_KINDS, rungOf as rungOfCompanion } from '../game/CompanionKinds.js';
 /* THE PLATE'S "shaken" IS THE REFUSAL RULE'S OWN QUESTION, asked the same way.
  * It was `t.morale < 0.4` — a typed literal against a raw morale reading, while
  * the rule that stops a man advancing is `braveryOf(body) < SHAKEN_AT` (0.30)
@@ -34,6 +38,19 @@ import { RANKS, ARMIES, ORDERS, SHAKEN_AT } from '../game/Command.js';
 import { braveryOf } from '../game/Reactions.js';
 import { DIR_GLYPH, callPhrase } from '../game/Stratagems.js';
 import { POWER_COST, POWER_BOON } from '../game/Powers.js';
+/**
+ * WHICH OF THE THREE THROW POWERS THIS PLAYER'S HANDS CAN ACTUALLY SPEND ON,
+ * asked of the table that decides it rather than restated here.
+ *
+ * `throwOrRecall` routes the ONE `throw` key three ways off `saberSet`, and
+ * `SABER_SETS[].throwKey` is the column that says which — so a wheel that
+ * wanted to know "is this slot mine" had exactly two choices: read that column,
+ * or grow a private copy of the routing. HANDOFF §2.4 is a post-mortem of the
+ * second choice, and this file is where §2.3's hand-maintained twin has already
+ * been found twice (lightning at 14 against a real 30; stasis at 30 against 26).
+ * `throwPowerOf` IS `throwOrRecall`'s own branch, spelled as data.
+ */
+import { THROW_POWERS, throwPowerOf } from '../game/SaberSet.js';
 import { supportCost } from '../game/Stratagems.js';
 // The words a slot is about to say, and whether this browser can say them
 // at all. Audio.js owns both the table and the speaking; the wheel prints.
@@ -179,6 +196,15 @@ export const POWERS = [
   ['ward', 'shield'],
   /* Restore — the group heal. Its own key, its own price, its own 75 s. */
   ['restore', 'restore'],
+  /* THE TWO SABER-SET POWERS, and both ride the `throw` key — which is exactly
+   * why they need slots of their own. The key means three different things in
+   * the three sets (the disc, the saberstaff's orbit, the pair's shoto) and the
+   * one thing that must not follow is one slot drawing three prices; each has
+   * its own row in POWER_COST, so each gets its own `_afford` and its own
+   * readout. The binding column is `throw` because that IS the key, the same
+   * way the ward's is `shield`. See src/game/SaberSet.js. */
+  ['throwOff', 'throw'],
+  ['orbit', 'throw'],
 ];
 
 /**
@@ -888,6 +914,153 @@ export const TERSE = {
   detach: 'One man, his own orders',
 };
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE COMPANION WHEEL
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * "you can give them a limited set of orders such as attacking/killing a
+ *  specific enememy that you target, attacking anything that gets within a
+ *  certain range of you, etc."
+ *
+ * SIX SLOTS, AND THE ONLY REASON THIS IS A WHEEL AND NOT SIX KEYBINDS IS THE
+ * CAPTION.
+ *
+ * Four of the six are LICENSED BY RUNG, and a cold slot that does not say why
+ * it is cold is a control the player concludes is broken. `refuseOrder` is the
+ * one reader for both halves — whether the slot is live and what the refusal
+ * says — so a lit slot and its sentence can never disagree, and the sentence
+ * is the animal's own: "not until it is trusted", not "locked".
+ *
+ * AND ONE SLOT MEANS TWELVE DIFFERENT THINGS. The verb reads its label and its
+ * caption off `COMPANION_KINDS[kind].verb`, so the wheel says SLICE for an
+ * astromech and CRY for a tooka and BLOCK for a massiff. That is what stops
+ * twelve kinds being twelve reskins, and it is the whole reason the label is
+ * `null` in the order table rather than a string.
+ *
+ * THE DEADZONE IS HEEL, AND THAT IS NOT A CONVENIENCE. `emoteIndexAt` already
+ * returns -1 inside EMOTE_DEADZONE — open the wheel, let go in the middle, and
+ * every other wheel in the game does nothing. Here the middle is the one order
+ * you want when you have no time to aim: come back. It is unrefusable at every
+ * rung for the same reason, so the panic verb is available in the first minute
+ * of the first run and costs a tap with no aim at all.
+ */
+/**
+ * ══ WHAT CAME WITH YOU, AND HOW IT IS DOING ═══════════════════════════════
+ *
+ * "protecting the companions and keeping them safe is another thing the
+ *  player can choose to worry about"
+ *
+ * YOU CANNOT WORRY ABOUT SOMETHING YOU CANNOT SEE. Without this the animal's
+ * health was legible only as a body you had to look at and judge by eye —
+ * and the whole loop the player asked for is noticing it is in trouble and
+ * doing something. A companion at 12% behind you is the single most important
+ * fact on the screen and nothing was saying it.
+ *
+ * A SIBLING NODE, AND THE TWO PLACES IT COULD HAVE GONE ARE BOTH WRONG.
+ * Inside `#roster` it would be hidden in every mode with no CommandDirector —
+ * nine of the eleven, and exactly the modes where a companion is the only
+ * thing on your side. Appended to `#power-wheel` it would be counted by
+ * `hud-events.mjs`'s slot census. So it is its own node in the same column,
+ * wearing the same `.powers` class so there is one stylesheet.
+ *
+ * EVERY WRITE IS GUARDED ON CHANGE. This runs every frame and the values move
+ * a few times a minute; an unguarded `textContent` is a layout pass sixty
+ * times a second for a string that did not change.
+ */
+export class CompanionPlate {
+  constructor(root = document) {
+    this.el = root.getElementById ? root.getElementById('companion-plate') : null;
+    this._key = '';
+  }
+
+  /**
+   * @param body  the live companion, or null.
+   * @param rec   its Kennel record, for the name and the rung.
+   * @param rung  the rung row it stands on.
+   */
+  set(body, rec = null, rung = null) {
+    const el = this.el;
+    if (!el) return;
+    if (!body || body.dead) {
+      if (this._key !== 'none') { this._key = 'none'; el.classList.add('hidden'); el.textContent = ''; }
+      return;
+    }
+    const hp = Math.max(0, Math.round(body.hp));
+    const max = Math.max(1, Math.round(body.maxHp || 1));
+    const frac = hp / max;
+    const name = rec?.name || body.A?.label || 'Companion';
+    const duty = body._cmpDuty?.id || 'heel';
+    /* DOWN IS NOT "LOW HEALTH" AND MUST NOT READ AS IT. A downed animal is on
+     * a clock you can still beat by standing on it, and that is a different
+     * thing to do than backing off — so it gets its own word and its own
+     * number, the seconds it has left. */
+    const down = body.downed ? Math.max(0, body.bleed || 0) : 0;
+    const key = `${name}|${hp}|${max}|${duty}|${down.toFixed(0)}|${rung?.id || ''}`;
+    if (key === this._key) return;
+    this._key = key;
+    el.classList.remove('hidden');
+    const bar = Math.round(frac * 100);
+    const hurt = body.downed ? 'down' : frac < 0.34 ? 'bad' : frac < 0.67 ? 'low' : '';
+    el.innerHTML = `<div class="cmp-plate ${hurt}">`
+      + `<b>${escKey(name)}</b>`
+      + `<span class="cmp-bar"><i style="width:${bar}%"></i></span>`
+      + `<span class="cmp-say">${body.downed
+        ? `DOWN — ${down.toFixed(0)}s, stand on it`
+        : `${hp}/${max}${rung ? ` · ${escKey(rung.label.toLowerCase())}` : ''} · ${escKey(duty)}`}</span>`
+      + '</div>';
+  }
+}
+
+export class CompanionWheel extends RadialWheel {
+  constructor(host) {
+    /* THE SLOTS ARE THE ORDER TABLE, IN ITS OWN ORDER. Never a list typed
+     * here: a seventh order would be a row in Companions.js and nothing in
+     * this file, and `HEEL` is deliberately absent from the ring because it is
+     * the deadzone. */
+    const items = Object.values(COMPANION_ORDERS)
+      .filter((O) => O.id !== 'heel')
+      .map((O) => ({ id: O.id, name: O.label || '—', blurb: O.caption || '', kind: 'cmp' }));
+    super(host, { items, action: 'companionwheel', cls: 'em cw' });
+    /* The live body, set by whoever ticks the HUD. Null in every mode where
+     * nothing of yours is out, which is most of them. */
+    this.body = null;
+  }
+
+  /** The verb slot wears the live animal's own name. */
+  titleFor(item) {
+    if (item.id !== 'verb') return item.name;
+    return COMPANION_KINDS[this.body?._cmpKind]?.verb?.label || 'VERB';
+  }
+
+  /**
+   * THE LIVE CAPTION, and it is three different sentences depending on what is
+   * true — which is the part a bare keybinding could never do.
+   *
+   *   nothing of yours is out   → say so once, on every slot, rather than
+   *                               offering six orders to nobody.
+   *   the rung refuses it       → the refusal, in the animal's own terms.
+   *   it is live                → what the order will actually do, and for a
+   *                               standing order whether it is ALREADY on, so
+   *                               the wheel is a readout as well as a control.
+   */
+  captionFor(item) {
+    const e = this.body;
+    if (!e || e.dead) return 'Nothing of yours is out';
+    const why = refuseOrder(e, item.id);
+    if (why) return why;
+    if (item.id === 'verb') {
+      return COMPANION_KINDS[e._cmpKind]?.verb?.caption || item.blurb;
+    }
+    if (e._cmpDuty?.id === item.id) return `${item.blurb} — on now, again to lift`;
+    if (item.id === 'ward') {
+      const r = COMPANION_KINDS[e._cmpKind]?.ward || 0;
+      return r > 0 ? `Meet anything inside ${r} m of ME` : item.blurb;
+    }
+    return item.blurb;
+  }
+}
+
 export class OrderWheel extends RadialWheel {
   constructor(host, formations) {
     const items = Object.values(formations || {}).map((F) => ({
@@ -1208,6 +1381,10 @@ export class HUD {
       mapKey: root.getElementById('minimap-key'),
       emotes: root.getElementById('emote-wheel'),
       orderwheel: root.getElementById('order-wheel'),
+      /* THE COMPANION'S RING — its own node beside the order wheel's, for the
+       * reason in the block that drives it: it must exist in the nine modes
+       * that have no order wheel at all. */
+      companionwheel: root.getElementById('companion-wheel'),
       // The free camera's own line lives OUTSIDE #hud, because #hud is the
       // thing it hides — a legend inside it would go away with everything else
       // and leave a player flying a detached camera with no way to learn how to
@@ -1783,7 +1960,45 @@ export class HUD {
       this.el.powers.appendChild(d);
       this.powerEls[key] = { root: d, cd, label, tick, cost, glyph: gl };
     }
+    /* The row is rebuilt from scratch here, so whichever throw slot was showing
+     * is showing again — see `_setThrowSlot`, whose whole job is not to touch
+     * the DOM on the frames where nothing has changed. Forgetting this is one
+     * repaint late per rebind, and the rebind is the frame a player is looking
+     * at the wheel. */
+    this._throwSlot = null;
     this._bindings = bindings;
+  }
+
+  /**
+   * DRAW THE ONE THROW SLOT THIS SET HAS, AND NONE OF THE OTHERS.
+   *
+   * `_afford` already refuses to light a power the set cannot spend on; this is
+   * the other half, and the reason it is not merely cosmetic is the clause the
+   * whole feature was held to — *"don't change anything with the default single
+   * blade usage"*. Two extra squares that can never light, in the row a player
+   * reads at a glance for what they can do RIGHT NOW, is a change to the single
+   * blade's screen even though no float in the 600-frame recording moves. The
+   * fourteen slots that shipped are the fourteen slots a single-blade player
+   * gets, in their shipped order.
+   *
+   * Inline `display` rather than a class, because the class would have to be
+   * written into styles.css against a `.pw` rule that already sets `display`,
+   * and specificity — not the cascade order — decides that fight. This is the
+   * same trap `tools/checks/hud-events.mjs` records for the reticle, where a
+   * leftover `stroke:` in the stylesheet beat an SVG presentation attribute and
+   * pinned every player to white while the slider moved and nothing failed.
+   *
+   * Guarded on the value and not run every frame: the row is fourteen writes
+   * into layout, and `saberSet` changes on a deploy, never in a fight.
+   */
+  _setThrowSlot(player) {
+    const mine = throwPowerOf(player?.saberSet);
+    if (this._throwSlot === mine) return;
+    this._throwSlot = mine;
+    for (const key of THROW_POWERS) {
+      const el = this.powerEls[key];
+      if (el) el.root.style.display = key === mine ? '' : 'none';
+    }
   }
 
   /**
@@ -2240,6 +2455,42 @@ export class HUD {
 
   update(dt, world, player, camera) {
     /**
+     * WHAT CAME WITH YOU, EVERY FRAME. `CompanionPlate` guards its own writes
+     * on a key, so this costs one string build and a compare on a frame where
+     * nothing about the animal has changed — which is nearly all of them. See
+     * the class for why it is a sibling node and not part of the roster.
+     */
+    if (this._cmpPlate === undefined) this._cmpPlate = new CompanionPlate(document);
+    if (this._cmpPlate?.el) {
+      /**
+       * WHICH BODY IS YOURS IS ASKED IN ONE PLACE, and this used to be the
+       * second one.
+       *
+       * A session puts up to four companions in `pack.list` — one per
+       * commander — and this file had its own three clauses for picking the
+       * local player's out of it, written beside `CompanionPack.body0`'s three
+       * clauses for the same question. That is HANDOFF §2.4's defect exactly,
+       * and the two had already diverged in a way that mattered: `body0` keeps
+       * pointing at an animal that has DIED, because the fold has to tell "it
+       * was killed" from "you never brought one", and this reading dropped a
+       * dead body on the frame `update` spliced it out of the list. So a
+       * companion's plate vanished the instant it was killed, where the design
+       * is that the last thing you see is what happened to it.
+       *
+       * `pack.mine` is written by `adopt` at the one door every companion comes
+       * through, and only for the animal the local player brought. Reading the
+       * getter is one property access against a `find` over the list, so it is
+       * also cheaper on every frame of a session.
+       */
+      const pack = world?._companions;
+      const body = pack?.body0 || null;
+      this._cmpPlate.set(body, body?._cmpRec || null,
+        body?._cmpRec ? rungOfCompanion(body._cmpRec) : null);
+      /* AND THE WHEEL IS POINTED AT THE SAME BODY, so what the ring says and
+       * what the plate says can never be about two different animals. */
+      if (this.companionWheel) this.companionWheel.body = body;
+    }
+    /**
      * THE FREE CAMERA IS READ BEFORE THE EARLY RETURN, ON PURPOSE.
      *
      * Everything below this block describes a living player. The free camera
@@ -2468,6 +2719,48 @@ export class HUD {
     this._power('ward', cd.ward, this._afford(player, 'ward'), !!player.ward?.body);
     /* Restore lights for the three seconds the burst is landing. */
     this._power('restore', cd.restore, this._afford(player, 'restore'), !!player.restoring);
+    /**
+     * THE THREE SLOTS ON THE `throw` KEY, OF WHICH YOU ARE DRAWN EXACTLY ONE.
+     *
+     * The key means the disc, the saberstaff's orbit or the pair's shoto
+     * depending on `saberSet`, and each has its own row in `POWER_COST` — so
+     * the wheel needs three slots, or a spend would exist with no readout and
+     * one square would draw three prices in turn.
+     *
+     * THE PARAGRAPH THAT USED TO STAND HERE SAID THE SLOT THAT IS NOT YOURS IS
+     * DIM "because nothing in the set you are playing spends it", AND IT WAS
+     * NOT TRUE OF ANY LINE UNDER IT. `_afford` read `POWER_COST`, `POWER_BOON`
+     * and `_canSpend`, and `grep saberSet src/ui/HUD.js` returned nothing at
+     * all: every player got all three, and a single-blade player at 24 Force
+     * lit the saberstaff's orbit as READY for a power `throwOrRecall` cannot
+     * reach them by. The 600-frame single-blade recording could not see it —
+     * `tools/_trace.mjs` is sixteen blade, guard and stamina floats and no UI —
+     * which is exactly the shape §2.3b is about: a claim with no reader.
+     *
+     * So the filter is real now and it is in TWO places on purpose, because the
+     * defect had two halves. `_afford` answers READY, which is the lie a player
+     * acts on. `_setThrowSlot` answers DRAWN, because a wheel is a row you read
+     * at a glance and two permanently dead squares in it are a change to the
+     * single blade's screen — and the single blade is the one thing in this
+     * feature that was asked not to move. A single-blade player's row is the
+     * fourteen slots it has always been, in the order it has always had them.
+     *
+     * AND THE CODEX DELIBERATELY DOES THE OPPOSITE — `Menu.js` prints both
+     * cards in every set, and its own note says why: "a card that appeared and
+     * disappeared with a menu choice would be a page that teaches you the game
+     * you are currently holding rather than the game." That is not an
+     * inconsistency to tidy away. A manual lists what exists; a wheel is a
+     * readout of what this hand can do this second, and the two answer
+     * different questions.
+     *
+     * The shoto's lit border is "the blade is out", exactly as the disc's is.
+     * The orbit's is "the ring is turning", which is the readout that matters
+     * most in the row — it is what tells the player two bars are draining.
+     */
+    this._setThrowSlot(player);
+    this._power('throwOff', cd.throwOff, this._afford(player, 'throwOff'),
+      !!(player.sidearm && player.sidearm.throwState !== 'held'));
+    this._power('orbit', 0, this._afford(player, 'orbit'), player.throwState === 'orbit');
 
     // ── reticle & blade cursor
     this._drivePrompt(world, player);
@@ -2909,6 +3202,117 @@ export class HUD {
     } else if (this.orders) {
       this.orders.close();
     }
+
+    /**
+     * ══ AND THE COMPANION'S OWN RING ═════════════════════════════════════
+     *
+     * A SEPARATE WHEEL ON A SEPARATE KEY, and not a slot on the order wheel —
+     * because the order wheel exists only where `world.command || world.orders`
+     * does, which is two of the eleven modes, and a companion is with you in
+     * every one of them. Hanging it off that wheel would be a companion you
+     * can only command in the two modes that already give you an army.
+     *
+     * IT IS BUILT LAZILY AND ONLY WHERE THERE IS AN ANIMAL, so a mode with no
+     * companion pays nothing and the node stays out of the layout.
+     *
+     * THE DEADZONE IS HEEL, which is what `emoteIndexAt` already answers -1
+     * for. Every other wheel in the game treats -1 as "did nothing"; here it
+     * is the one order you want when you have no time to aim, and it is
+     * unrefusable at every rung.
+     */
+    /**
+     * ── WHAT THE ORDER IS POINTED AT, READ FROM THE RETICLE ──────────────
+     *
+     * `RadialWheel` has no argument channel and adding one would be a second
+     * targeting system. The thing you are looking at IS the thing you mean —
+     * strictly better than a target-cycler for the same reason a reticle beats
+     * a tab key — so SEEK and the kind's own verb take the body under the aim
+     * and HOLD takes the ground under it.
+     *
+     * THE BODY IS PICKED BY ANGLE AND NOT BY DISTANCE. Nearest-to-you would
+     * send the animal at whatever is closest whichever way you were looking,
+     * which is not an order, it is a suggestion. This walks
+     * `world._hostilesFor` — the same unconditional door the companion's own
+     * targeting uses, so the wheel can never offer a body the animal would
+     * then refuse — and takes the smallest angle off the aim, with a cone
+     * wide enough to be usable at speed and tight enough to be a choice.
+     */
+    const reticleBody = () => {
+      const p = player || world.player;
+      if (!p?.aimDir || !world._hostilesFor) return null;
+      let best = null, bestDot = Math.cos(0.22);
+      for (const o of world._hostilesFor(p)) {
+        if (!o || o.dead) continue;
+        _hv.subVectors(o.position, p.chest || p.position);
+        const d = _hv.length();
+        if (d < 0.5 || d > 90) continue;
+        const dot = _hv.multiplyScalar(1 / d).dot(p.aimDir);
+        if (dot > bestDot) { bestDot = dot; best = o; }
+      }
+      return best;
+    };
+    /**
+     * …AND ONE OF YOUR OWN, for the two verbs that talk to your side rather
+     * than fight it. `_hostilesFor` is the wrong door for those — RELAY
+     * carries an order to a man of yours and TEND works on one — so the pass
+     * is over the same two lists the world keeps, filtered on team the way
+     * `Reactions.findPatient` filters, and picked by ANGLE for the reason
+     * `reticleBody` gives.
+     */
+    const reticleFriend = () => {
+      const p = player || world.player;
+      if (!p?.aimDir) return null;
+      let best = null, bestDot = Math.cos(0.22);
+      for (const o of world.enemies || []) {
+        if (!o || o.dead || o === cmpBody || o.team !== p.team) continue;
+        _hv.subVectors(o.position, p.chest || p.position);
+        const d = _hv.length();
+        if (d < 0.5 || d > 90) continue;
+        const dot = _hv.multiplyScalar(1 / d).dot(p.aimDir);
+        if (dot > bestDot) { bestDot = dot; best = o; }
+      }
+      return best;
+    };
+    const reticleGround = () => {
+      const p = player || world.player;
+      if (!p?.aimDir || !world.terrain?.raycast) return null;
+      const from = (p.chest || p.position);
+      const t = world.terrain.raycast(from, p.aimDir, 120, _hp, _hn);
+      return t == null ? null : _hp.clone();
+    };
+    const cmpBody = this.companionWheel?.body || null;
+    if (this.el.companionwheel) {
+      if (!this.companionWheel) this.companionWheel = new CompanionWheel(this.el.companionwheel);
+      const pick = this.companionWheel.update(input, this);
+      if (pick !== undefined && cmpBody) {
+        /* -1 IS THE MIDDLE, AND THE MIDDLE IS HEEL. */
+        const id = pick === -1 || !pick ? 'heel' : pick.id;
+        /**
+         * WHICH SHAPE, ASKED OF THE ORDER RATHER THAN LISTED HERE.
+         *
+         * This read `id === 'hold' ? ground : (seek || verb) ? body : null`,
+         * and the second clause is wrong for eight of the twelve verbs: WRECK,
+         * BREACH, SLICE and CLIMB are pointed at GROUND, RELAY and TEND at a
+         * man of your own, and BLOCK, CRY, SPOT, BOLT and CHARGE at nothing at
+         * all. Handing a hostile to an astromech's SLICE refused it with "no
+         * ground under your reticle" — an order the wheel offered, the player
+         * aimed, and the game then said was aimed at nothing.
+         *
+         * `orderArg` is the order's own answer — one table, in the file that
+         * owns it — so a thirteenth verb is a row there and nothing here.
+         */
+        const shape = orderArg(cmpBody, id);
+        const arg = shape === 'point' ? reticleGround()
+          : shape === 'body' ? reticleBody()
+          : shape === 'friend' ? reticleFriend() : null;
+        const why = orderCompanion(cmpBody, id, arg);
+        /* A REFUSED ORDER SAYS SO, in the animal's own words — the same
+         * sentence the wheel's caption was already printing under the cursor.
+         * An order that is silently dropped is a control the player concludes
+         * is broken. */
+        if (why) world.notify?.(cmpBody._cmpRec?.name?.toUpperCase() || 'YOUR COMPANION', why);
+      }
+    }
   }
 
   /**
@@ -3073,6 +3477,32 @@ export class HUD {
     // refuses no matter how much Force is in the bar.
     const boon = POWER_BOON[key];
     if (boon && !player.boonMods?.[boon]) return false;
+    /**
+     * …AND THE SAME SHAPE ONE ROW DOWN: A POWER THIS SET'S HANDS NEVER SPEND.
+     *
+     * The `throw` key means three different things in the three sets and each
+     * has its own price, so the wheel carries three slots — and for a long time
+     * it carried them with NO per-player filter, which made two of the three a
+     * lie for every player alive. Measured on the shipped tree: a single-blade
+     * player at 24 Force lit `orbit` and `throwOff` as READY, for powers
+     * `Player.throwOrRecall` will never route them to, while the note over the
+     * two `_power` calls claimed "the slot that is not yours is dim … because
+     * nothing in the set you are playing spends it" — a comment contradicted by
+     * the four lines under it, which is precisely the failure the paragraph
+     * below this one records having already made once.
+     *
+     * It belongs beside the boon gate and not in a fourth place, because it is
+     * the same question in the same words: Force Lightning is drafted rather
+     * than learned and the key refuses however full the bar is; the saberstaff's
+     * orbit is a WEAPON you are not holding and the key refuses for exactly as
+     * long. Neither is an economy question and both decide READY.
+     *
+     * `throwPowerOf` is `throwOrRecall`'s own branch read off `SABER_SETS`, so
+     * the three-way routing has one statement in the tree and this reads it —
+     * and an unknown or missing `saberSet` is the single blade, which is what
+     * every save and every check that names no set is holding.
+     */
+    if (THROW_POWERS.includes(key) && key !== throwPowerOf(player.saberSet)) return false;
     // ONE gate for all nine — `_canSpend` is the single function Player uses to
     // decide, and it reads the drain slider and the boon multiplier live. There
     // used to be three gates here because three powers bypassed it; they do not
@@ -3332,6 +3762,9 @@ const SEVER_LABEL = {
 const _screen = new THREE.Vector2();
 
 /** Titles come from archetype labels, which are data. Data goes in as text. */
+const _hv = new THREE.Vector3();
+const _hp = new THREE.Vector3();
+const _hn = new THREE.Vector3();
 const esc = (s) => String(s == null ? '' : s).replace(/[<>&]/g, (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;' }[c]));
 
 /**

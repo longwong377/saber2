@@ -212,11 +212,18 @@ export function run({ check, assert }) {
     const { recordRun, loadProgress } = await import('../../src/game/Progress.js');
     const store = await withCleanStore(() => {
       let handed = null;
+      /* `record` closes over `foldCompanion` as well now — the companion's
+       * durable fold, which it calls BEFORE filing the run because the fold
+       * reads the outcome that filing is what writes. This lift compiles the
+       * body verbatim, so the name has to be supplied or the whole check dies
+       * on a ReferenceError; a no-op is right HERE because this check is about
+       * the woken facets the record is handed, and `history.mjs` is where the
+       * fold's own ordering is asserted. */
       // eslint-disable-next-line no-new-func
-      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings',
+      const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion',
         `const world = scope.world;\n${body}\nreturn record;`);
       const rec = make({ world }, (s) => { handed = s; return recordRun(s); },
-        () => 'waves', { order: 'jedi', species: 'human' });
+        () => 'waves', { order: 'jedi', species: 'human' }, () => {});
       rec({ wave: 12, score: 9000, kills: 40, won: false });
       assert(handed, 'the lifted record() never called recordRun');
       assert(Array.isArray(handed.woken),

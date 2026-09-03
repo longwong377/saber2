@@ -291,6 +291,57 @@ function bench(over = {}) {
 }
 
 /**
+ * THE SAME BENCH, HOLDING A DIFFERENT WEAPON — and it has to be a NEW Player
+ * rather than a field written on the old one.
+ *
+ * `throwOff` throws one blade of a PAIR and keeps the other; `orbit` spins a
+ * STAFF about the body. Neither exists for a player holding a single blade:
+ * `throwOffBlade` and `spinBarrier` both return before they do anything, so
+ * the bench fired them, nothing happened, and the suite reported them as
+ * powers that cast and say nothing. It was right — on that bench they cannot
+ * cast at all.
+ *
+ * The set is fixed in the Player CONSTRUCTOR (`this.saberSet =
+ * setById(opts.saberSet).id`, and the `Sidearm` built from it twenty lines
+ * later), which is what `World.spawnPlayer` reads out of settings. There is no
+ * supported way to change it on a live body and no reason there should be — a
+ * player picks a weapon in the menu and deploys with it. So this stands a
+ * SECOND player up in the same world, through the same constructor argument,
+ * and points the bench at him: same recorder, same announcer, same droid, same
+ * aim, so every line the check reads is measured under the conditions it was
+ * measured under for the other eleven powers.
+ */
+function withSet(b, id) {
+  const p = new Player(b.w, { isLocal: true, saberSet: id });
+  p.position.set(0, 0, 0);
+  p.aimDir.set(0, 0, -1);
+  p.saber.ignite(); p.saber.ignition = 1;
+  p.boonMods.lightning = true;
+  p.boonMods.compel = true;
+  /**
+   * AND HE INHERITS THE OLD BODY'S STATE, or this helper quietly heals the
+   * player it replaces.
+   *
+   * `rearm` sets up whatever each check needs — and the refusal check
+   * DELIBERATELY empties the Force bar, then expects silence. A fresh Player
+   * arrives at `maxForce`, so swapping one in after the drain handed the
+   * refusal check a player who could afford the power: it cast, it spoke, and
+   * the check reported the game shouting on an empty bar. It was reporting the
+   * fixture. Everything the bench's own setup writes is copied across, so the
+   * new body differs from the old one in exactly one thing — the weapon.
+   */
+  p.force = b.p.force;
+  p.hp = b.p.hp;
+  p.team = b.p.team;
+  Object.assign(p.cooldowns, b.p.cooldowns);
+  const i = b.w.players.indexOf(b.p);
+  if (i >= 0) b.w.players.splice(i, 1, p); else b.w.players.push(p);
+  b.ctx.pickTarget = () => p;
+  b.p = p;
+  return p;
+}
+
+/**
  * WHICH METHOD FIRES WHICH POWER — and the map is checked against POWER_COST
  * rather than trusted, below. An instrument that carries its own list of the
  * game's powers is an instrument that measures ten of them the day an eleventh
@@ -301,6 +352,14 @@ const FIRE = {
   pull: (b) => b.p.forcePull(b.ctx),
   grip: (b) => b.p.toggleGrip(b.ctx),
   throw: (b) => b.p.throwOrRecall(b.ctx),
+  /* THE TWO SABER-SET VERBS. `throwOrRecall` is the key they ride, but the key
+   * is conditional on the set — see Player.throwOrRecall — so firing them
+   * through it here would only ever reach the single blade's disc. The methods
+   * are what the key dispatches to, and they are what this drives — on a
+   * player actually HOLDING the weapon, which is what `withSet` is for and
+   * without which both of these returned before they made a sound. */
+  throwOff: (b) => { withSet(b, 'pair'); b.p.throwOffBlade(b.ctx); },
+  orbit: (b) => { withSet(b, 'staff'); b.p.spinBarrier(b.ctx); },
   sense: (b) => b.p.toggleSense(b.ctx),
   lightning: (b) => b.p.forceLightning(b.ctx),
   stasis: (b) => b.p.toggleStasis(b.ctx),

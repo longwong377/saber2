@@ -42,6 +42,158 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
+## 2 Sep — SABER GAME NOTES AND IMPROVEMENTS V13
+
+Handed over with: *"You will finish everything on this list to perfection,
+every single thing I talked about. This list is not in order but a stream of
+consciousness so you will finish/group it in whatever order makes most sense
+for you"* — and, before it, *"what have we accomplished today with all these
+tasks? give me a summary."*
+
+**Logged verbatim before any work started**, which is the rule V6 broke and
+this file's own margin records. The player's words, in his order:
+
+> *"Heavily invest in this and optimize it to be perfect, go above and beyond
+> what I ask. I want you to build companions, this is a feature seperate from
+> your troops this is like a pet/close personal companion/protector that you
+> can choose to go into battle with and have with you, the companion will get
+> stronger over time just like you do imagine this almost like a mini-player
+> like it's going to be a really good dynamic thing, so imagine that they stay
+> close to you at all times but you can give them a limited set of orders such
+> as attacking/killing a specific enememy that you target, attacking anything
+> that gets within a certain range of you, etc. but obviously they're going to
+> be less mobile than you so protecting the companions and keeping them safe
+> is another thing the player can choose to worry about, you can customize
+> their appearance to a degree and choose from different ones, the companions
+> all play differently from one another, possible ones are an R2/Astromech
+> unit, an alien hawk/owl thing that only flys, a cat like alien, an armored
+> dog beast, something incredibly cute and adorable that is useless in battle
+> and needs constant protecting but is incredibly cute, a rancor pup, a
+> reprogrammed battle droid, a medical droid, a large wookie (with melee and
+> ranged weapons potentially), a Tauntaun you ride/mount and can follow you
+> but is useless in battle, a Blurgg you ride/mount and can follow you, and a
+> Varactyl you ride/mount and can follow you. They will be with you in the
+> hangar as well and follow you on/off ships like they're going to be with you
+> the whole time if you have them, this relationship between player and
+> companion should be really cool and if they surive they need to persist
+> between runs/games like your troops do"*
+
+> *"in the menu section where you customize your own appearenace there should
+> also be a randomize button that randomizes every single customization for the
+> people who prefer it that way, add the same randomize button for npc troop
+> custimization as well, maybe call it something cool like "Trust in the Force"
+> or something of that nature instead of randomize"*
+
+> *"the burying the fallen order is really cool and I like it a lot but I
+> noticed that the graves when done and the holes during have a real PBR look
+> to them like they aren't cell shaded, is that something you see? I want it to
+> be in keeping with the aesthetic of the game"*
+
+> *"is there a way to customize your troops while you're in the hangar or am I
+> just missing it"*
+
+> *"when you look down or have the curson down and you force push it should
+> throw you into the air you know what I mean? like push you off the ground
+> (kind of like an airbender) so imagine if I'm standing still and look down
+> and force push I force myself in the opposite direction like it should me
+> totally dependent on where you're aiming you know what I mean? like real
+> trajectories/phyics. and that repelling force should be based on your
+> distance and force strength, it should look really cool when doing it, should
+> work in the air too depending on how close you are to the ground"*
+
+> *"in the mode I was playing (I forgot what it was) a portion of my troops
+> almost looked headless and I noticed a couple more had heads that would
+> constantly spin so I think the headless ones just had heads that stopped
+> rotating upside down anyway just fix the bug"*
+
+> *"I tried to play trial of waves and noticed that I still had troops in that
+> mode, is that a feature or bug?"*
+
+And, added mid-session:
+
+> *"also add this to the list make sure than desecrating enemy corpses actually
+> works and that some of your troops actually pick up real dead enemy ragdolls
+> and tear them apart/take off real limbs/heads"*
+
+> *"I also want you to add A double-bladed lightsaber/saberstaff (combines a
+> long central hilt with an energy blade on both ends, functioning similarly to
+> a polearm or quarterstaff similar to the one darth maul used) and also dual
+> weilding (one lightsaber in each hand), these two differing player fighting
+> methods will require unique playstyles and have moves that are unique to
+> them, don't change anything with the default single blade usage, perhaps
+> there will be pluses and minuses to each like maybe with dual wielding
+> blacking bolts is easier or area that you can cover is larger idk you would
+> know better and maybe like with dual wielding you can throw one lightsaber
+> while still having one saber free to attack/block with, meanwhile the double
+> bladed user can use pure telekinesis to spin the staff at high speeds around
+> your body like a protective barrier, keeping your hands free to cast
+> whatever, the double bladed user will have more reach, maybe Dual-wielding
+> lightsabers generally provides increased offensive capabilities and mobility,
+> making it effective against multiple opponents, meanwhile The double-bladed
+> sword offers a significant advantage in two-tempo moves because the second
+> blade is instantly ready for a follow-up strike. You know best how to make
+> these differ and balanced. anyway at the end of this hving three different
+> saber options that directly effect gameplay and create more fighting styles
+> is good for the health of the game"*
+
+**Two of the seven are questions, and this file's own reading of this player is
+that his questions are defect reports** — two of the three questions in the
+earliest surviving round turned out to be things that did not exist at all. So
+"is there a way to customize your troops in the hangar" and "is that a feature
+or a bug" are both treated as findings until measured otherwise.
+
+| Note | Mark | Where |
+|---|---|---|
+| Companions — a persistent personal companion, twelve kinds, orders, growth, customisation, in the hangar and on the ships | ✅ | `companions` (39) — **all twelve kinds have a body**: massiff, tooka, tuk'ata whelp, rancor pup, tauntaun, blurrg, varactyl, reprogrammed B1, vhal'kir hawk, astromech, 2-1B and wookiee. Twelve kind ROWS with nothing anywhere switching on a name. A four-rung ladder carrying NO multiplier field at all — what grows is leash, order set and how long an order survives you — and it now FIRES: all four deeds pay from one ledger, and the fold was banking a re-loaded record rather than the one the run was played on, so a full crossing used to bank 0. Six orders driven on a real body in a mode with no CommandDirector, plus **twelve kind verbs that all do something** — BLOCK takes 54 hp meant for you and leaves you 0, CRY turns 4 of 4 hostiles inside 25 m, RELAY carries an order to five men 87 m away when your own voice is refused at 34, WRECK puts a crate through the floor, TEND has a man on his feet at 4.5 s, CLIMB lifts you 11.7 m of a face the terrain pushes you off. A durable Kennel with its own fold, four two-sided tempers priced net ≤ 0, the four colour slots `buildQuadruped` had accepted for months and never been handed, the kill counter the card was already printing and nothing ever wrote, a databank page each, and it boards the transport without appearing on the manifest `keep()` judges. It is on the deck with you in the hangar, it follows you, and it sits down. And it is ALIVE between the actions — see the row below |
+| …and the companions look and behave like animals rather than props | ✅ | `companions` (39), `characters` (18) — a new `CompanionLife.js` hooked from two statements. Almost nothing is authored per kind: breath rate is derived from the archetype's `mass` (tooka 45 a minute, massiff 18, blurrg 11.6), what it watches from `K.ward`, flinch size from `K.frag`, and the idle-beat menu from the rig's own parts — so a rancor pup cannot scratch itself (two legs, two arms) and a reprogrammed B1 swivels and settles but does not sniff the ground. The gaze ladder is target → a hostile inside its ward → where you are AIMING → you → ahead. On the bodies: the tooka was a squat armoured lump with horns and is now a kitten — round head wider than its body, big forward eyes, triangular ears, mitten paws with toe beans, a thick recurved tail — and its silhouette got MORE separable, worst pair 0.15 → 0.11. The tauntaun was wearing a wampa's flat face and now has the longest muzzle in the file, the only nostrils in the game, and horns that curve back. The wookiee's face had one value and now has four. Every companion body is under the 13 000 triangle cap that nothing was applying to them |
+| …and every commander in a session brings their own | ⚠️ | `coop` (54) — the choice moved off `SESSION_KEYS` onto the per-peer roster, the host spawns one body per peer, and a peer commands its own animal and no one else's; four commanders field four different kinds and all sixteen body-sightings agree within 2 m across four machines. It also closed a live bug: the fence meant to stop a guest spawning a private companion could NEVER FIRE, because `world.netMode` is written by `attachNet` thirty-five lines after `buildWorld` returns and the fence runs inside `buildWorld` — so a joining player has been spawning a body the host never heard of, in no snapshot, on nobody else's screen. **NOT DONE:** a guest's animal earns no experience. Four of the six deeds read fields the snapshot does not carry (`downed` is not sent at all), so a guest's companion comes home with its run counted and its rung where it started. And one ending diverges: `_extracting` is not on the wire, so a companion that leaves on the ship in a run that is NOT won folds as abandoned on the guest's machine and kept on the host's |
+| …and it actually gets stronger, and you can actually ride them | ✅ | `companions` (49) — the rung ladder now buys **hp 1.00→1.15, damage 1.00→1.09, speed 1.00→1.03**, strictly under the army's own on all three axes, and the check pins the RELATION against the imported trooper `RANKS` rather than three typed numbers. Driven: a SWORN massiff is 241 hp and bills 185 against a STRANGE one's 210 and 170, and takes thirteen bolts instead of eleven. The pace cap is safe by construction — the rung's speed goes in BEFORE the clamp, so it is an argument to the cap and never a way past it. **And the ladder was unreachable in the modes most people play**: both xp deeds hinged on `areasTaken`, and `payWave` returns above `_areaClear` whenever there is no campaign, so a whole run of Trial of Waves paid at most 1 xp — WARD six runs away, SEEK sixteen. Now WARD lands on wave 3–5 of the first run and SEEK on wave 8–15; a run pays 21–40 instead of 1. **Riding is real**: 22.9 m in four seconds against 18.2 m on foot, sustained and stamina-free, dismount and the animal is still yours. And the wookiee took its bowcaster — 11–12 shots and 187–207 points into a hostile at 8 m over a minute, never closing inside 4.3 m, 0 points into its owner |
+| "Trust in the Force" — a randomize button on the player's own customisation and on NPC troop customisation | ✅ | `menu` (39) — three buttons on three surfaces through one walker. And the check that proves the fence is load-bearing: the companion picker shares the Jedi panel, so unfenced the player's own button would have randomised WHICH ANIMAL YOU TAKE — and picking a different kind retires the one you have |
+| The graves and the dug holes read PBR rather than cel shaded | ✅ | `cel` (28) — Cel.js rewrites the PHYSICAL program only; there were five `MeshLambertMaterial` in the game and four were this file. All five are Standard now, and a new check walks the game's own import graph from `main.js` so a lambert/phong/toon material cannot come back |
+| No way to customise troops from inside the hangar | ✅ | `deckedit` (10) — you could already paint and kit a man on the deck; what was missing was the NAME. `beginNaming`/`typeName`/`commitName` were written, argued and correct with ZERO callers, and `callsign` was in `EDIT_OPS` and never offered. `rend` names a held man (it was already a refusal on the deck, so no new binding), the input branch returns while naming so WASD go into the name, and the wheel's notch arms the fence rather than committing `null` over somebody's name |
+| Force push should launch YOU when you aim at the ground — real trajectories, scaled by distance and Force strength, in the air too | ✅ | `powers` (35) — 10 cm gives 9.9 m/s straight up, 0.5 m gives 9.5 against 6 m's 4.9, aimed down-and-forward it throws you up-and-back, four metres up it still gives 6.5, Force Power 2 gives 14.1 against 1's 9.5, capped at 18, and forty metres up it gives nothing. The heightfield is not a Rapier collider, so it asks the physics world AND the terrain and takes the nearer hit |
+| Troops with missing heads, and heads that spin | ✅ | `animation` (20) — `_poseRifle`'s cheek weld multiplied into a head bone the gait never resets, adding 0.197 rad every aiming frame: a revolution every 1.07 s, and a man who stopped aiming froze inverted. Measured 21 of 60 spinning and 20 of 60 upside down; now 0 and 0 |
+| Trial of Waves fields troops | ✅ | `menu` (39) — a FEATURE, and the defect was the silence. `settings.allies` is a persisted global and `commandConfig` fields it in every mode that does not declare `solo` or `dojo`; he had set it once on another card and it followed him. Said rather than removed — taking it away would answer a question with a confiscation. The deploy card now names the number and where it came from |
+| Desecration must actually work — real troops, real enemy ragdolls, real limbs and heads coming off | ✅ | `desecrate` (5) — measured first: the detail, the ragdolls and the frenzy already worked. Two things did not: no head ever came off (the bone list was eight arms and legs) and `DESECRATE.limbs` was ignored, because `took` counted `cutRagdoll`'s joint-broke return rather than what came off, so every worked body lost every limb. Both fixed and asserted |
+| Three saber forms — the single blade untouched, a double-bladed saberstaff, and dual wielding, each with its own moves and its own trade | ✅ | `saberforms` (12) — the single blade is held against a 600-frame RECORDING of the pre-change tree: 9 600 numbers, worst drift 0.00e+0. Saber.js and Combat.js gained zero lines, so the ~30 enemy sabers in a wave run the code they always ran. Both sets are extra `Saber` instances on the same public two-call contract, each a segment per blade so `speedAt`'s slow-base-to-fast-tip lerp stays true of a staff spun about its middle — one long shaft would have made the grip sever flesh as hard as the tip and cleared `SPEED_GRADE.perfect` for free. And every clause of the ask is its own driven check: **the staff reaches further** than one blade against a real body; **the telekinetic spin barrier stops bolts and your hands stay free** to cast while it spins; **you can throw one blade and keep fighting with the other**; **the staff's follow-up lands sooner** than a single blade's, which is the two-tempo advantage said as a number; **against four bodies at once the pair does the most work**; and each set covers and pays differently, measured on real bodies. Plus a constructor bug that made both new weapons throw on every deploy — `this.control.setHalf` written twenty lines above the statement that assigns `this.control`, invisible because the single blade skips that whole block |
+
+### And then it went to a judge, twice
+
+*"push what I have asked for to an objective judge when you're done that will
+know that I have asked for and will critique your work on the 2 new sabers and
+the entire companion system, you will keep at it on loop until it passes"*
+
+Six independent critics, each handed the player's words verbatim for one lens —
+the saber spec, the companion spec, how they LOOK, whether they read as LIVING,
+the honesty of the claimed evidence, and whether a real player would experience
+any of it. Every finding was then handed to a second agent whose only job was
+to REFUTE it against the code. A finding that survived that stood.
+
+**Round one: six blockers.** The worst was a promise the game made and broke —
+three of the twelve kinds exist only to be ridden, no archetype declared
+`crew`, and the menu printed *"You can ride this one."* while the drive path
+answered *"Tauntaun is a droid — the brain is the machine, and there is no seat
+in it"*. Four of the six lenses found it separately. Also: three companions
+rendered **no eye at all** (0 of 140 unobstructed triangles), the hangar body's
+sixteen leg bones were bit-identical at **0.000000 rad** over six metres of
+walking, and four kinds were not in the hangar at all.
+
+**Round two, after those were fixed: ten blockers.** It had dug deeper. The
+companion picker rendered **`<b>undefined</b>` on all twelve cards** — the only
+door into the entire feature. The companion never got stronger on any axis that
+touches a fight, and in Trial of Waves a whole run paid **at most 1 xp**, so
+the two orders named by name in the brief were six and sixteen runs away. The
+single blade's HUD lit two powers it can never cast. The spin barrier was a 50°
+frontal wedge that stopped **0 of 12** bolts from behind. Seven colour controls
+painted nothing. The head sat jammed on its own neck stop on **1950 of 1950**
+frames at heel.
+
+Every one of those is fixed. What the exercise is really worth is in HANDOFF
+§0.1b–f: five of the ten were **instruments that could not see the defect they
+were named for**, and two checks were passing by asserting the bug itself.
+
+---
+
 ## 2 Sep — SABER GAME NOTES AND IMPROVEMENTS V12
 
 Handed over with: *"You will finish everything on this list to perfection,

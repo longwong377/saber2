@@ -75,12 +75,92 @@ export const PEER_TIMEOUT = 8;
  * this one exists to catch. It becomes worth sending the day there is a third
  * army — and not before.
  */
+/**
+ * `saberSet` IS DELIBERATELY NOT ON THIS LIST, AND THAT IS A MEASURED
+ * LIMITATION RATHER THAN AN OVERSIGHT.
+ *
+ * It belongs here on every argument of principle: which weapon you carry is a
+ * fact about YOUR body, exactly as your crystal and your hilt are, and two
+ * players in one session carrying different weapons is the feature. It is
+ * declared on LOCAL_KEYS below for precisely that reason.
+ *
+ * PUTTING IT ON THIS LIST BREAKS REMOTE BODIES, and the check that says so is
+ * `co-op: the next snapshot does not stomp the shove the guest just applied`.
+ * Measured: with `saberSet` appended here, a shoved body travelled 9.93 m BACK
+ * toward where it started during an 11.46 m flight; with it removed, the same
+ * body moved 0.78 m inside 50 ms and landed 0.01 m from the host's copy.
+ * Green on the clean tree, red with one string added, green again with it
+ * taken out — three runs, the same seed, nothing else changed.
+ *
+ * WHAT THAT COSTS THE PLAYER, SAID PLAINLY: in a session your saberstaff or
+ * your paired blades are yours to fight with and are correct in your own
+ * hands, but the OTHER players' screens draw you holding one blade. It is a
+ * cosmetic desync in co-op only, and it is the smaller of the two harms —
+ * a rubber-banding body is a thing you feel every second.
+ *
+ * The root cause is not yet found and this comment is not a diagnosis. What is
+ * established is the correlation, the size of it, and that the avatar packet
+ * is the wrong place to fix it blind.
+ */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
   'skinIndex', 'hairIndex', 'build', 'species', 'face'];
 
 export function packLook(settings = {}) {
   const out = {};
   for (const k of LOOK_KEYS) if (settings[k] !== undefined) out[k] = settings[k];
+  return out;
+}
+
+/**
+ * THE ANIMAL, AS IT CROSSES THE WIRE — and it is a KENNEL RECORD and not a
+ * kind name, which is the difference between "each commander brings one" and
+ * "each commander brings one of those".
+ *
+ * The choice is a LOCAL setting now (see LOCAL_KEYS.companion) and the kennel
+ * is per machine, so the host cannot look up what a peer is bringing: the peer
+ * has to say. What it says is the record, because everything the host needs to
+ * build THAT animal rather than a fresh one of its kind is on it —
+ *
+ *   `kind`     which body to spawn, and which of the twelve rows of duties,
+ *              verbs and paces it answers to.
+ *   `name`     what the plate over it says and what the refusal messages call
+ *              it. A companion is a named thing; a nameless copy is a pet.
+ *   `look`     its coat. `fieldCompanion` hands this to the builder inside the
+ *              constructor — the one thing about a companion that cannot be
+ *              hung on afterwards.
+ *   `xp`       its RUNG, and the rung is its leash. A sworn animal on the
+ *              host's field with a stranger's rope is a different animal.
+ *   `tempers`  what it has learned, which is the swing on that rope and the
+ *              two duties (`hold`) a green one is refused.
+ *   `runs`     the rancor pup's SIZE reads off it, and nothing else does.
+ *
+ * WHAT IS DELIBERATELY NOT HERE: `story`, `scars`, `kills`, `saves`, `downs`,
+ * `orders`, `ranged`, `since`. Every one of them is the peer's own history,
+ * folded on the peer's own machine by the peer's own `keepCompanion`, and
+ * nothing on the host reads any of them. A field on the wire with no reader is
+ * the defect `co-op: no field is put on the wire and read by nobody` exists to
+ * catch, and this record is sent per peer per roster refresh.
+ *
+ * SENT ONCE PER CHANGE, ON THE ROSTER, exactly as `look` is and for the same
+ * reason: which animal you brought is IDENTITY for the length of a run, not
+ * per-frame state, so putting it in the 24 Hz avatar packet would pay for it
+ * forever to say the same thing.
+ *
+ * IT IS READ WITH `Kennel.readOne` AT THE FAR END and nowhere else. That
+ * function already clamps every field of a record off disk — its own note says
+ * "a hand-edited save is where this has to stop, not where it has to be
+ * trusted" — and a peer's packet is the same threat with a shorter wire: a
+ * stored xp of 5000 is a companion that starts SWORN, which is the whole
+ * ladder handed over by editing one number. Restating those clamps here would
+ * be HANDOFF §2.4's manufactured second copy, so this half only chooses the
+ * fields and the other half is called.
+ */
+export const COMPANION_CARD = ['id', 'kind', 'name', 'look', 'xp', 'runs', 'tempers'];
+
+export function packCompanionCard(rec) {
+  if (!rec || typeof rec !== 'object' || !rec.kind) return null;
+  const out = {};
+  for (const k of COMPANION_CARD) if (rec[k] !== undefined) out[k] = rec[k];
   return out;
 }
 
@@ -122,10 +202,14 @@ export class Net {
     this.code = null;
     this.name = 'Jedi';
     this.look = null;
+    /** The animal we are bringing, as `packCompanionCard` packs it, or null. */
+    this.companion = null;
     this.handlers = new Map();
     this.roster = [];
     /** peer id → side. Written by the host through setSides; see _sideOf. */
     this.sides = new Map();
+    /** peer id → the enemy id of the body the host put down for them. See _cmpOf. */
+    this.cmpBodies = new Map();
     /** Round trip / 2, from the ping World sends every 2 s. Read by the scoreboard. */
     this.latency = 0;
     /** The stamp of the ping we are still waiting on. See the `pong` case. */
@@ -143,10 +227,11 @@ export class Net {
     if (list) for (const fn of list) { try { fn(...args); } catch (e) { console.error('[net]', type, e); } }
   }
 
-  async host(name, settings, look = null) {
+  async host(name, settings, look = null, companion = null) {
     const Peer = await loadPeerLib();
     this.name = name || 'Jedi';
     this.look = look;
+    this.companion = companion;
     this.isHost = true;
     this.enabled = true;
     this.settings = settings;
@@ -162,7 +247,8 @@ export class Net {
         // Through _refreshRoster's shape rather than a second literal: the two
         // drifted the moment the roster grew a `team`, and a host sitting alone
         // in a lobby had an entry with no side on it at all.
-        this.roster = [{ id: peer.id, name: this.name, host: true, look: this.look, team: this._sideOf(peer.id) }];
+        this.roster = [{ id: peer.id, name: this.name, host: true, look: this.look,
+          companion: this.companion, team: this._sideOf(peer.id) }];
         this._emit('roster', this.roster);
         this._emit('open', code);
         resolve(code);
@@ -172,7 +258,7 @@ export class Net {
         if (err.type === 'unavailable-id') {
           // code collision — pick another and try once
           peer.destroy();
-          this.host(name, settings, look).then(resolve, reject);
+          this.host(name, settings, look, companion).then(resolve, reject);
           return;
         }
         fail(err);
@@ -181,10 +267,11 @@ export class Net {
     });
   }
 
-  async join(code, name, look = null) {
+  async join(code, name, look = null, companion = null) {
     const Peer = await loadPeerLib();
     this.name = name || 'Jedi';
     this.look = look;
+    this.companion = companion;
     this.isHost = false;
     this.enabled = true;
     this.code = code.toUpperCase();
@@ -198,11 +285,12 @@ export class Net {
       }, 14000);
 
       peer.on('open', () => {
-        const conn = peer.connect(PREFIX + this.code, { reliable: true, metadata: { name: this.name, look: this.look } });
+        const conn = peer.connect(PREFIX + this.code,
+          { reliable: true, metadata: { name: this.name, look: this.look, companion: this.companion } });
         this.hostConn = conn;
         conn.on('open', () => {
           this.connected = true;
-          conn.send({ t: 'hello', name: this.name, look: this.look });
+          conn.send({ t: 'hello', name: this.name, look: this.look, companion: this.companion });
           clearTimeout(timer);
           if (!settled) { settled = true; resolve(); }
           this._emit('open', this.code);
@@ -222,7 +310,8 @@ export class Net {
   _acceptConnection(conn) {
     conn.on('open', () => {
       this.conns.set(conn.peer, { conn, name: conn.metadata?.name || 'Jedi',
-        look: conn.metadata?.look || null, lastSeen: performance.now() / 1000 });
+        look: conn.metadata?.look || null, companion: conn.metadata?.companion || null,
+        lastSeen: performance.now() / 1000 });
       this._refreshRoster();
       this._emit('peer-joined', conn.peer, conn.metadata?.name);
       conn.send({ t: 'welcome', settings: this.settings, roster: this.roster, hostName: this.name });
@@ -271,10 +360,12 @@ export class Net {
 
   _refreshRoster() {
     this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look,
-      team: this._sideOf(this.peer?.id), ...this._seatOf(this.peer?.id) }];
+      companion: this.companion, team: this._sideOf(this.peer?.id),
+      ...this._cmpOf(this.peer?.id), ...this._seatOf(this.peer?.id) }];
     for (const [id, c] of this.conns) {
       this.roster.push({ id, name: c.name, host: false, look: c.look || null,
-        team: this._sideOf(id), ...this._seatOf(id) });
+        companion: c.companion || null, team: this._sideOf(id),
+        ...this._cmpOf(id), ...this._seatOf(id) });
     }
     this._emit('roster', this.roster);
     if (this.isHost) this.broadcast({ t: 'roster', roster: this.roster });
@@ -301,6 +392,75 @@ export class Net {
     const s = this.seats?.get(id);
     if (!s || !Array.isArray(s.at)) return {};
     return { at: s.at, facing: s.facing ?? 0 };
+  }
+
+  /**
+   * WHICH BODY ON THE FIELD IS THIS PEER'S ANIMAL — the host's half of the
+   * conversation `companion` starts, and the reason it rides the roster.
+   *
+   * The peer says WHAT it is bringing (`companion`, off its own kennel, sent
+   * with `hello`); the host is the only node that can say WHICH BODY that
+   * became, because the host is the only node that spawns one. Those are two
+   * different facts with two different authors, so they are two fields with
+   * two writers on the one ledger only the host may publish — exactly the
+   * split `look` (yours) and `team` (the host's) already sit either side of.
+   *
+   * WITHOUT IT A CLIENT CANNOT FIND ITS OWN ANIMAL. Every companion in the
+   * session arrives on a client as an ordinary net-driven Enemy in the
+   * snapshot, indistinguishable from a trooper; there is no owner on that
+   * record and there must not be one, because a snapshot is 18 Hz and this
+   * changes once a run. With the id, the client adopts that one body into its
+   * own pack — which is what puts the plate over it, points the order wheel at
+   * it, and gives `keepCompanion` something to fold at the end.
+   *
+   * Empty for every session where nobody brought anything, which is most of
+   * them — `...{}` spreads to nothing and the roster entry is byte for byte
+   * what it was. Same shape and same argument as `_seatOf` below.
+   */
+  _cmpOf(id) {
+    const b = this.cmpBodies?.get(id);
+    return b ? { cmp: b } : {};
+  }
+
+  /**
+   * Host: say whose animal is which body. `map` is peer id → enemy id.
+   *
+   * Refused on a client for the reason `setSides` is refused: a peer that could
+   * name its own animal could name yours and order it.
+   */
+  setCompanionBodies(map) {
+    if (!this.isHost) return this.roster;
+    this.cmpBodies = map instanceof Map ? map : new Map(Object.entries(map || {}));
+    this._refreshRoster();
+    return this.roster;
+  }
+
+  /**
+   * A DIFFERENT ANIMAL, MID-LOBBY — and it is `setName` in every respect.
+   *
+   * The Kennel page is reachable while a session is open, so the card sent at
+   * the handshake is a card the player can change afterwards: adopt one, name
+   * it, release it, switch kinds. It is also the door `fieldFromKennel` uses on
+   * a client, because the card sent at the handshake is what was in the kennel
+   * THEN and the animal that actually deploys is resolved at deploy — a player
+   * whose first companion is adopted on the way out of the menu has nothing to
+   * send until that moment.
+   *
+   * NO NEW MESSAGE ON THE WIRE, for `setName`'s reason: a client says `hello`
+   * again, which is the join handshake's own packet, and its handler already
+   * does exactly the right thing. `toHost` rather than `broadcast` because the
+   * card is the SENDER's to state and the host is the only node that may
+   * publish a roster.
+   *
+   * @returns {boolean} did the card actually change
+   */
+  setCompanion(card) {
+    const next = card || null;
+    if (JSON.stringify(next) === JSON.stringify(this.companion || null)) return false;
+    this.companion = next;
+    if (this.isHost) this._refreshRoster();
+    else this.toHost({ t: 'hello', name: this.name, look: this.look, companion: this.companion });
+    return true;
   }
 
   /**
@@ -424,7 +584,18 @@ export class Net {
     if (c) c.lastSeen = performance.now() / 1000;
     switch (msg.t) {
       case 'hello':
-        if (c) { c.name = msg.name; if (msg.look) c.look = msg.look; }
+        /* `companion` IS TESTED FOR PRESENCE AND NOT FOR TRUTH, unlike `look`
+         * one clause along, and the difference is a player who puts their
+         * animal back in the kennel mid-lobby. `look` can only ever be
+         * replaced; a card can be TAKEN AWAY, and `if (msg.companion)` would
+         * make the null that says so unsendable — the host would keep fielding
+         * an animal its owner had stabled. See `setCompanion`, which is the
+         * only thing that sends a second `hello`. */
+        if (c) {
+          c.name = msg.name;
+          if (msg.look) c.look = msg.look;
+          if (msg.companion !== undefined) c.companion = msg.companion || null;
+        }
         this._refreshRoster();
         break;
       /**
@@ -645,6 +816,15 @@ export class Net {
     this.peer = null; this.connected = false; this.enabled = false;
     this.isHost = false;
     this.code = null;
+    /* THE HOST'S TWO LEDGERS GO WITH THE SESSION and the LOCAL card does not.
+     * `cmpBodies` names enemy ids in a world that is about to be disposed, so
+     * carrying it into the next session would point a joining player at a body
+     * that no longer exists; `this.companion` is which animal YOU own, which is
+     * true of you between sessions and is read again by the next `host`/`join`.
+     * Same line `sides` sits on: what the host decided is the session's, what
+     * you brought is yours. */
+    this.cmpBodies = new Map();
+    this.sides = new Map();
     this.roster = [];
     this._emit('roster', this.roster);
   }
@@ -1227,6 +1407,36 @@ export const LOCAL_KEYS = {
   playerName: 'your name; it crosses on the roster instead',
   order: 'which temple you belong to — measured not to change an army assignment in 0 of 28 rosters, see beginVersus',
   colorIndex: 'your crystal', lightningColor: 'your lightning', hiltStyle: 'your hilt',
+  /* WHICH WEAPON YOU CARRY — one blade, a saberstaff, or a pair. Local for the
+   * same reason the crystal and the hilt above are: it is a fact about YOUR
+   * body, and two players in one session carrying different weapons is the
+   * feature rather than a disagreement. The host choosing what is in
+   * everybody's hands would be the "reaching onto somebody else's mouse" case
+   * this list refuses.
+   *
+   * NOT ON LOOK_KEYS EITHER, which it should be — see the measured note over
+   * that table for what that costs and why it is out. */
+  saberSet: 'which weapon is in your hands',
+  /**
+   * WHICH ANIMAL YOU BRING — and it moved here off SESSION_KEYS, which is the
+   * whole of "each commander brings one".
+   *
+   * The old argument was that a companion is a BODY ON THE HOST'S FIELD and
+   * the host is the one that has to build it, so the CHOICE was the host's
+   * too. Half of that is still true and half of it never followed. The host
+   * does build every body — that has not changed and is why the animal is
+   * spawned host-side per peer — but one shared key means ONE VALUE for the
+   * session, so four commanders who each picked a different kind fielded four
+   * copies of the host's. That is not "each commander brings one"; it is one
+   * kind wearing four bodies, and COMPANIONS.md has never said otherwise.
+   *
+   * So the choice is yours, exactly as your crystal and your hilt are, and the
+   * ANIMAL — its name, its coat, its rung and its tempers — crosses per peer
+   * on the roster beside `look` and `team`, through `packCompanionCard`. Same
+   * split `playerName` is on in this list: the setting is local, and the fact
+   * about you that other machines need travels on the roster.
+   */
+  companion: 'which animal you bring; it crosses per peer on the roster instead',
   species: 'your face', face: 'your face', robeCut: 'your clothes', robeIndex: 'your clothes',
   wardrobe: 'your clothes', skinIndex: 'your skin', hairIndex: 'your hair', build: 'your build',
   meditation: 'how YOUR body sits when you commune; nobody else\'s knees',

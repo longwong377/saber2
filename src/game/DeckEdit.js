@@ -134,6 +134,8 @@ import { dress as companyDress } from './Company.js';
 import { dressRecruit } from './Muster.js';
 import { MARKS, markById, CommandDirector } from './Command.js';
 import { ARCHETYPES } from './Enemy.js';
+/* The prompt says the key the player actually has bound — see `focusKeyLabel`. */
+import { keyLabel, codesFor, loadBindings } from '../engine/Bindings.js';
 import {
   PAINTS, PAINT_SLOTS, KIT_FIELDS, paintById, wearableFor, bodyOptsFor,
 } from './Bodies.js';
@@ -554,6 +556,16 @@ export function optionsFor(row) {
     out.push({ op: 'paint', field, value: null, label: `${field} as issued` });
     for (const p of PAINTS) out.push({ op: 'paint', field, value: p.id, label: `${field} ${p.name}` });
   }
+  /* THE CALLSIGN, WHICH `EDIT_OPS` HAS LISTED SINCE THE DAY THIS FILE LANDED
+   * AND THIS FUNCTION HAS NEVER OFFERED. `deckedit.mjs` asserts EDIT_OPS
+   * equals the menu's op list, so both surfaces agreed about the WORD while
+   * one of them had no way to reach it — a listed op with no control is the
+   * dead-control defect `WEARS` exists to prevent, one file across.
+   *
+   * It is a notch that ARMS the rename rather than a value, because a name is
+   * free text and a wheel has no letters: picking it is the same as pressing
+   * the naming key, which is what `applyEdit` routes it to. */
+  out.push({ op: 'callsign', value: null, label: 'Name him' });
   for (const field of can.kit) {
     const row2 = KIT_FIELDS[kind][field];
     if (!row2) continue;
@@ -593,6 +605,12 @@ export function commitWheel(world) {
   const o = st?.pending;
   if (!o || !st.held) { if (st) st.pending = null; return null; }
   st.pending = null;
+  /* THE CALLSIGN NOTCH ARMS THE RENAME; IT DOES NOT WRITE ONE. A name is free
+   * text and a wheel has no letters, so dialling it opens the typing fence —
+   * the same one the naming key opens — rather than committing `null`, which
+   * is what `applyEdit` would faithfully have done: erased the man's name for
+   * anybody who happened to scroll past the notch. */
+  if (o.op === 'callsign') { beginNaming(world); return null; }
   const look = applyEdit(world, o.op, o.field ? { [o.field]: o.value } : o.value);
   tag(world, nameOf(st.held.rec), o.label);
   return look;
@@ -1207,6 +1225,45 @@ export function stepDeckEdit(world, dt) {
     }
   }
 
+  /**
+   * ══ AND THE PROMPT, WHICH IS WHY HE COULD NOT FIND ANY OF THIS ═══════════
+   *
+   * The player, V13: *"is there a way to customize your troops while you're in
+   * the hangar or am I just missing it"*.
+   *
+   * He was missing it, and there was nothing to find. Everything this file does
+   * — walk up to a man, he breaks attention and salutes, the wheel dials his
+   * mark, his band, his paint and his kit — was reachable only by pressing a
+   * key nobody had been told about while looking at somebody. `tag()` fires the
+   * moment a man is HELD, which is one press too late to be a discovery.
+   *
+   * This is the same `pickMan` the key uses, on a hover, so the answer on the
+   * screen and the answer to the press cannot disagree. Anything else — a
+   * second raycast, a proximity test — would be a second opinion about who you
+   * are looking at.
+   *
+   * THROTTLED, and that is not a micro-optimisation. `pickMan`'s own note says
+   * the walk is affordable because "a pick is a keypress and there are at most
+   * MAX_ON_DECK of these" — two dozen bodies, each rebuilding a box out of its
+   * bones. Once per keypress is free; sixty times a second is not the same
+   * claim, so it runs on every fourth frame, which is 15 Hz against a pointer
+   * that moves in tenths of a second.
+   */
+  if (!st.held) {
+    st.hoverTick = (st.hoverTick || 0) + 1;
+    if ((st.hoverTick & 3) === 0) {
+      const under = pickMan(world);
+      const who = under ? nameOf(under.rec) : null;
+      if (who !== st.hoverName) {
+        st.hoverName = who;
+        if (who) tag(world, who, `${focusKeyLabel(world)} to look him over`);
+        else tag(world, null, null);
+      }
+    }
+  } else if (st.hoverName) {
+    st.hoverName = null;
+  }
+
   for (let i = st.sweeps.length - 1; i >= 0; i--) {
     if (stepSweep(world, st.sweeps[i], t)) st.sweeps.splice(i, 1);
   }
@@ -1276,6 +1333,11 @@ export function leaveDeck(world) {
  * document to listen to.
  */
 export function naming(world) { return !!world?._deckEdit?.naming; }
+
+/** Is a man being held at all? Published for the same reason `naming` is: the
+ *  caller has to know, and a second copy of "is there a held row" in Player.js
+ *  is a second copy of this file's state. */
+export function holding(world) { return !!world?._deckEdit?.held; }
 
 export function beginNaming(world) {
   const st = editState(world);
@@ -1371,6 +1433,23 @@ function nameOf(rec) {
  * for anyone who has the HUD up — this is the second reader of one statement,
  * not a second statement.
  */
+/**
+ * What the player has bound to `focus`, in the words their own keyboard uses.
+ *
+ * Asked of `Bindings` rather than typed, because the action is rebindable and a
+ * prompt that said "Middle mouse" to somebody who had moved it would be worse
+ * than no prompt at all. `keyLabel` is the same reader the HUD and the Codex
+ * use, so all three say one thing.
+ */
+function focusKeyLabel(world) {
+  try {
+    const b = world?.input?.bindings || loadBindings();
+    const dev = world?.input?.lastDevice === 'pad' ? 'pad' : 'key';
+    const code = codesFor(b, 'focus', dev)[0];
+    return keyLabel(code, 'xbox') || 'Middle mouse';
+  } catch { return 'Middle mouse'; }
+}
+
 function tag(world, name, note) {
   world?.notify?.(name || '', note || '');
   const d = globalThis.document;
