@@ -11374,21 +11374,37 @@ function buildCreatureHead(rig, P, S, M) {
      * profile with a ragged nape behind it.
      */
     /**
-     * AND THE WHOLE BRANCH IS AUTHORED AT 0.58 OF SCALE, which is the one
-     * thing that separates a bird's head from every other head in this
+     * AND THE WHOLE BRANCH IS AUTHORED AT A FRACTION OF SCALE, which is the
+     * one thing that separates a bird's head from every other head in this
      * function. The four mammal branches are authored at 1: a reek's skull is
      * as wide as its own shoulder and a rancor's is wider. A hawk's is a
      * quarter of the width of its body, and the first build of this branch —
      * a 0.20 cranium on a 0.13 trunk — rendered as a bear's head with a beak
-     * on it, 40 cm across on a 36 cm body. 0.80 is where it landed: 0.58 and 0.68
-     * both rendered a head too small for its own neck, which is the same
-     * disconnection the complaint names on the massiff, arrived at from the
-     * other direction.
-     * `hS` is that ratio, applied to
+     * on it, 40 cm across on a 36 cm body. `hS` is that ratio, applied to
      * every shape in the branch, so the head shrinks as ONE thing rather than
      * as eleven numbers that can drift apart.
+     *
+     * ── AND IT WENT ONE STEP TOO FAR: 0.80 → 0.96 ────────────────────────
+     *
+     * The ladder that produced 0.80 was 0.58 → 0.68 → 0.80, each rung read
+     * against the NECK ("a head too small for its own neck"), and the body
+     * lane's verdict on the shipped result is read against the BODY: "the head
+     * is small for the body". Both are true, because the plumage arrived after
+     * the head did. `back: 'plumage'` lays a mantle of coverts over the
+     * shoulder and a ruff at the nape — the biggest mass on the animal after
+     * the wings — and it is directly behind the skull, so the head is
+     * measured against a shoulder that grew and it did not.
+     *
+     * Measured off the built rig at scale 1, head bone subtree against the
+     * whole body: at 0.80 the cranium is 0.327 wide on a body whose shoulder
+     * (girth 0.095 with a 0.44 swell) is 0.274 — nominally wider, and it does
+     * not read that way because the mantle sits on top of the shoulder and the
+     * head sits in front of it. 0.96 is 0.392 across, which is half again the
+     * shoulder and is where a raptor's head actually sits: a bird of prey's
+     * skull is the widest thing on it after the wing roots. It is one number
+     * because the branch was built to be one number.
      */
-    const hk = 0.80, hS = S * hk;
+    const hk = 0.96, hS = S * hk;
     parts.push([(() => { const g = new THREE.SphereGeometry(0.20 * hS, 12, 9); g.scale(1.02, 0.94, 0.72); return g; })(),
       [0, hy + 0.02 * hS, hz + 0.04 * hS]]);
     /**
@@ -11436,12 +11452,42 @@ function buildCreatureHead(rig, P, S, M) {
        * side, raked down and forward over the socket. */
       k.add(M.plate, (() => { const g = new THREE.SphereGeometry(0.070 * hS, 8, 6); g.scale(1.05, 0.30, 0.62); return g; })(),
         [sx * 0.080 * hS, hy + 0.115 * hS, hz + 0.090 * hS], [-0.34, 0, sx * 0.24]);
-      /* The crown tuft, raked back off the temple — and it is 0.13 rather
-       * than the 0.20 it was authored at, because at 0.20 on a head this size
-       * the pair rendered as two curved HORNS over the skull. An ear tuft
-       * lies back along the crown; it does not stand off it. */
-      k.add(M.hide, clawGeo(0.13 * hS, 0.034 * hS, 0.005 * hS, -0.40, 5, 4),
-        [sx * 0.070 * hS, hy + 0.135 * hS, hz - 0.020 * hS], [-1.35, 0, sx * 0.34]);
+      /**
+       * ── THE CROWN TUFT, AND IT IS THREE FEATHERS NOW ────────────────────
+       *
+       * The note this replaces read: "it is 0.13 rather than the 0.20 it was
+       * authored at, because at 0.20 on a head this size the pair rendered as
+       * two curved HORNS over the skull. An ear tuft lies back along the
+       * crown; it does not stand off it." Half right, and the correction went
+       * past the target: at 0.13 long and laid at −1.35 rad — 77° off
+       * vertical, so nearly flat on the skull — the pair renders as two pale
+       * SMUDGES behind the eyes. The body lane's words are "the crown tufts
+       * read as bumps, not ear tufts", and rendered head-on
+       * (`tools/_soft.mjs`, framed on the head bone) that is exactly what they
+       * are: two 2-pixel slivers on the top of a dark ball.
+       *
+       * The reason one clump could not win either way is that AN EAR TUFT IS
+       * NOT ONE FEATHER. On every eagle-owl and every horned owl it is a
+       * sheaf — a splayed cluster whose individual feathers separate at the
+       * tip — and a single cone can only be a horn (standing up) or a mark
+       * (lying down). Three per side, fanned 0.32 rad apart in roll and
+       * 0.28 in pitch, with the middle one longest, is a tuft: it stands at
+       * −0.46 rad (26° off vertical, back over the crown, not flat on it) and
+       * the fan is what stops the silhouette reading as a spike. The roll is
+       * NEGATIVE against `sx` and the first cut had it positive: `Rz(+θ)`
+       * takes local +Y toward −X, so on the +X side that leans the sheaf
+       * INWARD, and rendered head-on the two tufts crossed over the crown
+       * like a pair of antennae.
+       *
+       * 0.20 of length is the number the branch was FIRST authored at, and it
+       * turns out to have been right — what was wrong was that there was one
+       * of them and it was lying down. Six feathers at (4, 3) cost 240
+       * triangles against the pair's 120, on a body 3 900 under its cap.
+       */
+      k.row(3, (i, t) => k.add(M.hide,
+        clawGeo((0.155 + (1 - Math.abs(t - 0.5) * 2) * 0.055) * hS, 0.022 * hS, 0.004 * hS, -0.30, 4, 3),
+        [sx * (0.080 + t * 0.024) * hS, hy + (0.122 - t * 0.010) * hS, hz + (0.020 - t * 0.040) * hS],
+        [-0.46 - t * 0.28, 0, sx * -(0.24 + t * 0.32)]));
       // the nape: three short feathers breaking the line into the neck
       k.row(3, (i, t) => k.add(M.hide, clawGeo((0.15 - t * 0.03) * hS, 0.042 * hS, 0.008 * hS, 0.5, 5, 3),
         [sx * (0.045 + t * 0.055) * hS, hy + (0.06 - t * 0.10) * hS, hz - 0.11 * hS], [2.15, 0, sx * (0.5 + t * 0.7)]));
@@ -13032,9 +13078,16 @@ export function buildWookiee(opts = {}) {
         // deep-set eyes under the shelf
         d.set(sx * 0.40, 0.10, 0.91).normalize();
         k.aim(eye, new THREE.SphereGeometry(0.019 * s, 7, 6), onSurface(hg, d, -0.004 * s, core), d);
-        // the lower canine, standing out of the lip the way every reference has it
-        k.add(tooth, clawGeo(0.030 * s, 0.007 * s, 0.002 * s, -0.35, 4, 3),
-          [sx * 0.030 * s, 0.038 * s, 0.106 * s], [-0.30, 0, sx * 0.12]);
+        /* THE LOWER CANINE, and it is SEATED now rather than typed. Its own
+         * note said "standing out of the lip the way every reference has it"
+         * and it was at [±0.030, 0.038, 0.106] — a point 3 cm inside a muzzle
+         * whose lathe at that station runs to 0.067 across and −0.011 under.
+         * Both teeth were buried in the jaw they were meant to stand out of,
+         * and had been since the body landed. Same ray the eyes and the lip
+         * line use, pushed clear of the mask. */
+        d.set(sx * 0.30, -0.52, 0.80).normalize();
+        k.add(tooth, clawGeo(0.034 * s, 0.008 * s, 0.002 * s, -0.35, 4, 3),
+          onSurface(hg, d, -0.014 * s, core), [-0.55, 0, sx * 0.16]);
         /**
          * THE BROW, AS FUR. The shelf is in `headShell` and has been since
          * this body landed — an ellipsoid squashed to 0.34 on Y and raked
@@ -13055,24 +13108,32 @@ export function buildWookiee(opts = {}) {
       });
       /* THE NOSE, in the darkest material on the body rather than in the same
        * one as the face it sits on — which is what it was, and is why nothing
-       * was there. Two nostril creases sunk into it for the tauntaun's stated
-       * reason: at range a nose is two pixels of shadow. */
-      k.add(snoutDark, (() => { const g = new THREE.SphereGeometry(0.030 * s, 8, 6); g.scale(1.25, 0.82, 1); return g; })(),
-        [0, 0.081 * s, 0.152 * s]);
+       * was there. Seated on the muzzle's own surface and pushed clear of the
+       * mask, so it rides the bridge instead of floating between the eyes:
+       * typed at [0, 0.081, 0.152] it rendered as a black disc wider than
+       * either eye sitting directly under them. */
+      const dn = new THREE.Vector3(0, 0.22, 0.975).normalize();
+      k.add(snoutDark, (() => { const g = new THREE.SphereGeometry(0.024 * s, 8, 6); g.scale(1.15, 0.72, 0.85); return g; })(),
+        onSurface(hg, dn, -0.008 * s, core));
       /**
        * THE MOUTH, AND IT IS A LINE AND NOT A HOLE.
        *
-       * There was none. A `plateGeo` slab 0.10 wide and 0.012 tall laid
-       * across the underside of the snout, standing 2 mm proud of it in
-       * `snoutDark`, is a lip line: under a two-step ramp a dark strip on a
+       * There was none. A `plateGeo` strip laid ON the underside of the snout
+       * in `snoutDark` is a lip line: under a two-step ramp a dark strip on a
        * pale muzzle reads as a closed mouth from every angle that can see the
        * face, and it is 92 triangles. A modelled opening would need an
        * interior, a tongue and a jaw that moves, none of which this rig has.
-       * The two canines above already stand out of it, which is what makes
-       * the line read as a MOUTH rather than as a seam.
+       *
+       * `k.face` and not `k.add`: `face` puts the panel's local +Z along the
+       * ray and its +X across it horizontally, which is the frame `plateGeo`
+       * is authored in (width, height, thickness) — and `aim`, the other
+       * seater in this file, would put the 10 cm width through the muzzle. Its
+       * own note says so in as many words, on the vent it was written for.
        */
-      k.add(snoutDark, plateGeo(0.098 * s, 0.014 * s, 0.052 * s, 0.004 * s, 1),
-        [0, 0.036 * s, 0.128 * s], [0.34, 0, 0]);
+      const dm = new THREE.Vector3(0, -0.46, 0.89).normalize();
+      k.face(snoutDark, plateGeo(0.088 * s, 0.015 * s, 0.010 * s, 0.003 * s, 1),
+        onSurface(hg, dm, -0.010 * s, core), dm);
+
       /**
        * THE MANE, and it is the head's whole outline. Two rings of clumps
        * raked back and down off the crown and the jaw, so the head's

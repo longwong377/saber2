@@ -53,6 +53,11 @@ import { ARCHETYPES } from './Enemy.js';
 import { COMPANION_KINDS } from './CompanionKinds.js';
 import { load as loadKennel } from './Kennel.js';
 import { companionOptsFrom } from './Bodies.js';
+/* The idle-and-reaction layer, shared verbatim with the field body — see
+ * CompanionLife.js. On the deck it is the only thing that moves a bone at all:
+ * this room has no gait, no brain and no target, and it is the room a player
+ * stands in for minutes looking at the animal. */
+import { stepCompanionDeckLife } from './CompanionLife.js';
 
 /** How far behind you it stands, and how close is close enough to stop. */
 export const DECK_HEEL = { back: 2.2, side: 0.7, settled: 0.6 };
@@ -258,6 +263,11 @@ export function stepCompanionDeck(world, dt) {
   root.position.y = groundUnder(world, root.position.x, root.position.z)
     - fig.sit * hip * 0.35 * (fig.built?.scale ?? 1);
   root.rotation.x = fig.sit * -0.12;
+
+  /* AND THEN IT IS ALIVE. Last, after the root has been placed and turned, so
+   * the layer's own bone writes are the last thing to touch this body in the
+   * frame and nothing below overwrites them. */
+  stepCompanionDeckLife(fig, dt, world);
 }
 
 /** Put it away. Called from the room's own teardown. */
