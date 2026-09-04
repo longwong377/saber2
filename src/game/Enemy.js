@@ -6272,7 +6272,27 @@ export class Enemy {
 
     // level of detail: distant enemies skip the expensive solves
     const camDist = ctx.camera.position.distanceTo(this.position);
-    const lod = camDist > L3_AT ? 3 : camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
+    /**
+     * ══ A BODY THAT IS NEVER FOUGHT MAY MERGE AT ANY RANGE ═══════════════
+     *
+     * The bands below are written for an ENEMY: at LOD 0 a body you are
+     * fighting keeps every decoration mesh and every shadow, because it is the
+     * thing you are looking at. SHARK's station has sixty bodies inside forty
+     * metres that nobody is fighting, and measured in a browser it cost
+     * **3 452 draw calls** against §12.2's bound of 400 — 22 live residents at
+     * sixty meshes each is the whole of it.
+     *
+     * `stationResident` is set by `StationLife.spawnResident` and by nothing
+     * else. It pins the body to the merged rung, which is four draws for a
+     * complete figure rather than sixty, and costs it its decoration meshes
+     * and its shadow — the two knobs §12.3 names, in the order it names them,
+     * spent on the bodies that are furniture rather than on the ones that are
+     * not. Everything else about a resident is unchanged: it still walks,
+     * still ragdolls, still comes apart under the blade, and `applyMergedSkin`
+     * gives the skin back on the frame it is cut or ragdolled.
+     */
+    const lod = this.stationResident ? 3
+      : camDist > L3_AT ? 3 : camDist > 62 ? 2 : camDist > 30 ? 1 : 0;
     if (lod !== this.lod) { this.lod = lod; this._applyLod(lod); }
     /* …and the merged skin and the cohort are asked EVERY frame, because the
      * things they answer to do not move on a LOD edge and `_applyLod` is

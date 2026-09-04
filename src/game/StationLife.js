@@ -64,6 +64,12 @@ export const LIVE_RADIUS = 40;
  * written: without it the pool churns and the frame cost is the churn. */
 export const DROP_RADIUS = 52;
 
+/**
+ * Is there a `process.cpuUsage` to time with? Node has one and a browser does
+ * not — and see the note at its first use for why the test must be `typeof`.
+ */
+const HAS_CPU = typeof process !== 'undefined' && typeof process.cpuUsage === 'function';
+
 /** How often the pool re-seats itself. Not every frame: a spawn is a body. */
 const RESEAT_EVERY = 0.5;
 
@@ -346,7 +352,13 @@ function reseat(world, st, life, px, pz) {
     /* Only inside the live radius does a body actually appear — the wider
      * DROP_RADIUS above is the hysteresis, not the spawn line. */
     if (w.d2 > LIVE_RADIUS * LIVE_RADIUS) { keep.delete(w.key); n--; continue; }
-    const t = process?.cpuUsage ? process.cpuUsage() : null;
+    /* `process?.cpuUsage` still THROWS on an undeclared identifier — optional
+     * chaining guards a null, not a missing binding — so a browser met
+     * `ReferenceError: process is not defined` on the first re-seat and the
+     * station never dressed at all. `typeof` is the only safe test, and it is
+     * the one the step below already used. Every headless check stayed green
+     * throughout, because node has a `process`. */
+    const t = HAS_CPU ? process.cpuUsage() : null;
     const body = spawnResident(world, st, w.place, w.i);
     if (t) { const d = process.cpuUsage(t); life.spawnMs = (d.user + d.system) / 1000; }
     if (body) { life.live.set(w.key, body); life.spawned++; made++; }
@@ -398,6 +410,12 @@ function spawnResident(world, st, place, i) {
    * one kind of body. `station.mjs` asserts it.
    */
   body.team = world.player?.team ?? 0;
+  /**
+   * PINNED TO THE MERGED RUNG. Four draws for a complete figure rather than
+   * sixty — see the note on `stationResident` in `Enemy.update`. Measured in a
+   * browser without it: 3 452 draw calls on deck 40 against §12.2's 400.
+   */
+  body.stationResident = true;
   /* What the nameplate says when you look at them (§14). */
   body.stationName = r.name;
   body.stationRole = r.role;
@@ -579,7 +597,7 @@ export function stepStationLife(world, dt) {
   const st = world._station;
   const life = world._stationLife;
   if (!st || !life || !(dt > 0)) return;
-  const t0 = (typeof process !== 'undefined' && process.cpuUsage) ? process.cpuUsage() : null;
+  const t0 = HAS_CPU ? process.cpuUsage() : null;
   const spawnBefore = life.spawned, dropBefore = life.despawned;
 
   const cam = world.player?.position;
