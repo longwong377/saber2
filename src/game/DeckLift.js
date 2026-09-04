@@ -148,6 +148,8 @@ const _c = new THREE.Color();
 const _c2 = new THREE.Color();
 const _hsl = { h: 0, s: 0, l: 0 };
 const _X = new THREE.Vector3(1, 0, 0);
+/** The spin axis, for a car standing in a shaft that is not the deck's. */
+const _Y = new THREE.Vector3(0, 1, 0);
 
 /**
  * THE TIMINGS. `ride` is the number that decides how the room is entered:
@@ -209,6 +211,42 @@ export const LEVEL = 7;
 const SPAN = LEVEL * 7;
 /** The number on the readout when the car stops on the flight deck. */
 export const FLIGHT_DECK = 32;
+
+/**
+ * ══ THE FLOOR SELECTOR — SHARK §5.2, and it is the station's whole door ═══
+ *
+ * "First cut: two floors, FLIGHT DECK 32 and CONCOURSE 40; every vignette at a
+ * real floor's number is that place." The readout has counted levels since the
+ * day it was built and the button column has been six modelled buttons with
+ * the fifth lit; this makes both of them mean something.
+ *
+ * THE LIST IS SET FROM OUTSIDE, and that is load-bearing rather than tidy.
+ * This file cannot import `Station.js`: the lift is the hangar's and the
+ * station is downstream of it, so an import here would be a cycle of exactly
+ * the kind `Levels.js` records dying on one suite's import order after running
+ * green for hours. `Levels.js` owns the roster, knows what floors exist, and
+ * hands them down — the same direction the deck's own registration points.
+ *
+ * With the switch off (§9.2) nobody calls the setter, the list is one row, the
+ * button column does nothing and the ride out ends on the menu exactly as it
+ * does today. That is what `station.mjs`'s recorded trace holds.
+ */
+export const MENU_FLOOR = { n: 7, label: 'BRIDGE', level: null };
+let FLOORS = [MENU_FLOOR];
+
+/** Replace the floor list. Called from `Levels.js` behind `STATION_ENABLED`. */
+export function setLiftFloors(rows) {
+  FLOORS = (rows && rows.length) ? rows.slice() : [MENU_FLOOR];
+}
+
+/** The floors the car will stop at, in the order the button column cycles. */
+export function liftFloors() { return FLOORS; }
+
+/** The floor currently selected in the car. */
+export function liftPick(world) {
+  const st = world?._deckLift;
+  return FLOORS[st ? (st.pick | 0) % FLOORS.length : 0];
+}
 /** Seven-segment digits: a b c d e f g, clockwise from the top, g the middle. */
 const SEVEN = [
   [1, 1, 1, 1, 1, 1, 0], [0, 1, 1, 0, 0, 0, 0], [1, 1, 0, 1, 1, 0, 1], [1, 1, 1, 1, 0, 0, 1],
@@ -535,6 +573,37 @@ export function dressDeckLift(world, opts = {}) {
 
   /* ── THE SHAFT SCENE the panes look into. */
   const scene = buildShaft(world, M, lightMat, layout);
+  /**
+   * ══ WHERE THE CAR STANDS, WHICH USED TO BE ONE PLACE ══════════════════
+   *
+   * Everything above is built at `LIFT`'s own (x, z) with the doors facing
+   * −Z, because for as long as this file has existed there has been exactly
+   * one lift shaft in the game and it is in the flight deck's aft bulkhead.
+   * The station has three (SHARK §3.1 rule 3) and none of them is there.
+   *
+   * So the assembly is built in LIFT SPACE and PLACED. Three groups and the
+   * glow carry the whole car, its outer leaves and the shaft scene, so an
+   * offset and a yaw on those four move all of it — and the four things that
+   * ask "where is the player relative to the doors" transform into lift
+   * space through `toLift` rather than each keeping its own copy of the
+   * arithmetic. The default is the identity, so the deck is untouched.
+   */
+  const at = opts.at || null;
+  const OX = at ? at.x - L.x : 0, OZ = at ? at.z - L.z : 0, OY = at?.y || 0;
+  const OA = at?.yaw || 0;
+  if (OX || OZ || OY || OA) {
+    for (const g of [car, outer, scene.group, glow]) {
+      /* Rotate about the car's own axis, then move: a group whose children
+       * are at absolute coordinates has to be spun about the point those
+       * coordinates are relative to, which is the shaft's centre. */
+      g.position.set(
+        L.x + OX - (L.x * Math.cos(OA) + L.z * Math.sin(OA)),
+        OY,
+        L.z + OZ - (-L.x * Math.sin(OA) + L.z * Math.cos(OA)),
+      );
+      g.rotation.y = OA;
+    }
+  }
   world.scene.add(car, outer, scene.group);
   world.statics.push(car, outer, scene.group);
 
@@ -542,10 +611,16 @@ export function dressDeckLift(world, opts = {}) {
    * doorway are permanent; the door pair is one box that exists only while
    * the leaves are shut. */
   const P = world.physics;
-  const q = new THREE.Quaternion();
+  const q = new THREE.Quaternion().setFromAxisAngle(_Y, OA);
   const solids = [];
+  /* Lift space → world: the same transform the groups got, applied to a point. */
+  const place = (x, y, z, out = new THREE.Vector3()) => out.set(
+    (x * Math.cos(OA) + z * Math.sin(OA)) + (L.x + OX - (L.x * Math.cos(OA) + L.z * Math.sin(OA))),
+    y + OY,
+    (-x * Math.sin(OA) + z * Math.cos(OA)) + (L.z + OZ - (-L.x * Math.sin(OA) + L.z * Math.cos(OA))),
+  );
   if (P?.addStaticBox) {
-    const box = (x, y, z, hx, hy, hz) => P.addStaticBox(new THREE.Vector3(x, y, z),
+    const box = (x, y, z, hx, hy, hz) => P.addStaticBox(place(x, y, z),
       new THREE.Vector3(hx, hy, hz), q, { friction: 0.7 });
     for (const s of [-1, 1]) solids.push(box(cx + s * (hw + 0.12), H / 2, cz, 0.16, H / 2 + 0.2, hd + 0.3));
     solids.push(box(cx, H / 2, zA - 0.12, hw + 0.4, H / 2 + 0.2, 0.16));
@@ -555,6 +630,8 @@ export function dressDeckLift(world, opts = {}) {
 
   const st = {
     car, outer, shaft: scene.group, scene, bars: scene.bars, doors, outerDoors, panes,
+    /* Where this car stands, so `toLift` can undo it. Zero on the deck. */
+    ox: OX, oy: OY, oz: OZ, yaw: OA, place,
     lamp: carMeshes.find((m) => m.material === lightMat) || null,
     lightMat, lightBase: M.glow.color, glow, lampMat, call, readout, buttons, status, solids,
     /** The car's own wall materials, dimmed for the ride. */
@@ -582,6 +659,10 @@ export function dressDeckLift(world, opts = {}) {
     /** The light's dip, 1 at a jolt, decaying. */
     dip: 0,
     state: opts.arrive ? STATE.OPENING : STATE.RIDE,
+    /* Which floor the button column is showing. Zero is the menu's, which
+     * is what the ride out has always done; §9.2's switch off leaves it the
+     * only row and this field permanently 0. */
+    pick: 0,
     t: 0,
     /** Set once the player has been told how to call the car. */
     told: false,
@@ -647,6 +728,19 @@ function makeReadout(M) {
   return r;
 }
 
+/**
+ * The button column, lit for the current pick. Six modelled buttons; the one
+ * that is chosen is bright and the rest are dim, which is the same instanced
+ * colour attribute the column was built with.
+ */
+function lightButtons(st) {
+  const b = st.buttons;
+  if (!b?.setColorAt) return;
+  const lit = FLOORS.length > 1 ? (st.pick % FLOORS.length) % 6 : 4;
+  for (let i = 0; i < 6; i++) b.setColorAt(i, _c.setScalar(i === lit ? 1.0 : 0.45));
+  if (b.instanceColor) b.instanceColor.needsUpdate = true;
+}
+
 /** What the readout says in this state. */
 function setReadout(st) {
   const s = st.state;
@@ -656,8 +750,19 @@ function setReadout(st) {
     n = FLIGHT_DECK - Math.round(Math.max(0, st.rideLen - travelled) / LEVEL);
     cap = st.t > RIDE.settle ? 'DECK  ▲' : 'DECK';
   } else if (s === STATE.LEAVE || s === STATE.GONE) {
-    n = FLIGHT_DECK + Math.round(Math.abs(st.scroll - st.stopScroll) / LEVEL);
-    cap = 'DECK  ▲';
+    /* Counting toward the floor that was CHOSEN, and stopping there. It used
+     * to count up for ever from 32 because there was nowhere to arrive. */
+    const target = FLOORS[st.pick % FLOORS.length];
+    const gone = Math.round(Math.abs(st.scroll - st.stopScroll) / LEVEL);
+    const up = (target?.n ?? FLIGHT_DECK) >= FLIGHT_DECK;
+    n = up ? Math.min(target?.n ?? FLIGHT_DECK + gone, FLIGHT_DECK + gone)
+      : Math.max(target.n, FLIGHT_DECK - gone);
+    cap = up ? 'DECK  ▲' : 'DECK  ▼';
+  } else if (FLOORS.length > 1 && s === STATE.WAIT) {
+    /* Waiting with the doors open, the readout is the button column's answer:
+     * where this car will take you if you step back and let it seal. */
+    const f = FLOORS[st.pick % FLOORS.length];
+    n = f.n; cap = String(f.label).toUpperCase();
   }
   st.readout.draw(n, cap);
 }
@@ -1680,8 +1785,11 @@ function layScene(st, s, t, full = true) {
 function shutDoors(world, st) {
   if (st.doorBox || !world.physics?.addStaticBox) return;
   const L = LIFT;
-  st.doorBox = world.physics.addStaticBox(new THREE.Vector3(L.x, L.height / 2, (DOOR.zIn + DOOR.zOut) / 2),
-    new THREE.Vector3(DOOR.halfW + 0.1, L.height / 2 + 0.2, 0.45), new THREE.Quaternion(), { friction: 0.6 });
+  st.doorBox = world.physics.addStaticBox(
+    st.place ? st.place(L.x, L.height / 2, (DOOR.zIn + DOOR.zOut) / 2)
+      : new THREE.Vector3(L.x, L.height / 2, (DOOR.zIn + DOOR.zOut) / 2),
+    new THREE.Vector3(DOOR.halfW + 0.1, L.height / 2 + 0.2, 0.45),
+    new THREE.Quaternion().setFromAxisAngle(_Y, st.yaw || 0), { friction: 0.6 });
 }
 
 /** …and take it out. */
@@ -1704,18 +1812,38 @@ function setDoors(world, st, k) {
   }
 }
 
+/**
+ * A world point in LIFT SPACE — the frame everything in this file is written
+ * in, whichever shaft the car is actually standing in. One function, so the
+ * four tests below cannot drift from the placement above (HANDOFF §2.4:
+ * never restate a rule; call it).
+ */
+const _lp = new THREE.Vector3();
+function toLift(world, p) {
+  const st = world?._deckLift;
+  if (!st || (!st.ox && !st.oz && !st.yaw && !st.oy)) return p;
+  const L = LIFT;
+  const bx = L.x + st.ox - (L.x * Math.cos(st.yaw) + L.z * Math.sin(st.yaw));
+  const bz = L.z + st.oz - (-L.x * Math.sin(st.yaw) + L.z * Math.cos(st.yaw));
+  const dx = p.x - bx, dz = p.z - bz;
+  const c = Math.cos(-st.yaw), sn = Math.sin(-st.yaw);
+  return _lp.set(dx * c + dz * sn, p.y - st.oy, -dx * sn + dz * c);
+}
+
 /** Is the player standing inside the car, clear of the leaves? */
 function inCar(world) {
-  const p = world.player?.position;
-  if (!p) return false;
+  const raw = world.player?.position;
+  if (!raw) return false;
+  const p = toLift(world, raw);
   const L = LIFT;
   return Math.abs(p.x - L.x) < L.halfW - 0.1 && p.z > L.z - L.halfD && p.z < DOOR.zIn - 0.45;
 }
 
 /** Is the player near enough to the doors, on the deck side, to call the car? */
 export function atTheDoors(world) {
-  const p = world.player?.position;
-  if (!p) return false;
+  const raw = world.player?.position;
+  if (!raw) return false;
+  const p = toLift(world, raw);
   const L = LIFT;
   return Math.abs(p.x - L.x) < L.halfW + 2.5 && p.z > L.door - 0.2 && p.z < L.door + RIDE.reach;
 }
@@ -1726,7 +1854,29 @@ export function atTheDoors(world) {
  */
 export function liftKey(world) {
   const st = world?._deckLift;
-  if (!st || !atTheDoors(world)) return false;
+  if (!st) return false;
+  /**
+   * ══ THE BUTTON COLUMN ═════════════════════════════════════════════════
+   *
+   * Inside the car, the interact key cycles the floor rather than calling a
+   * car that is already here. `atTheDoors` is false in the car by
+   * construction (it tests the deck side of the threshold), so the two
+   * meanings of one key can never both fire on one press.
+   *
+   * Only while the doors are open: pressing it after the seal would change
+   * where a ride already under way was going, and a lift that changes its
+   * mind mid-shaft is a bug report and not a feature.
+   */
+  if (FLOORS.length > 1 && inCar(world)
+      && (st.state === STATE.WAIT || st.state === STATE.OUT || st.state === STATE.OPENING)) {
+    st.pick = (st.pick + 1) % FLOORS.length;
+    const f = FLOORS[st.pick];
+    lightButtons(st);
+    world.notify?.(String(f.label).toUpperCase(), `deck ${f.n} — step back to ride`);
+    audio.tone?.({ freq: 540, freqEnd: 700, dur: 0.09, gain: 0.10, pos: _v.set(LIFT.x, 1.6, LIFT.z) });
+    return true;
+  }
+  if (!atTheDoors(world)) return false;
   if (st.state === STATE.AWAY) {
     st.state = STATE.CALLED; st.t = 0;
     st.lampMat.color.setHex(0xffb347);
@@ -1823,7 +1973,8 @@ export function stepDeckLift(world, dt) {
        * reset while he stands in the car, so a player who lingers is not shut
        * in. */
       const p = world.player?.position;
-      const clear = p && (p.z > L.door + 1.2 || Math.abs(p.x - L.x) > L.halfW + 1.0);
+      const q = p ? toLift(world, p) : null;
+    const clear = q && (q.z > L.door + 1.2 || Math.abs(q.x - L.x) > L.halfW + 1.0);
       if (!clear) st.t = 0;
       else if (st.t >= RIDE.linger) {
         st.state = STATE.CLOSING; st.t = 0;
@@ -1913,7 +2064,13 @@ export function stepDeckLift(world, dt) {
       if (t >= T && !st.left) {
         st.left = true;
         st.state = STATE.GONE;
-        world.onDeckLeave?.();
+        /* SHARK §5.2: `onDeckLift(floor)` when a floor other than the menu's
+         * was chosen, and `onDeckLeave` otherwise. `main.js` answers both;
+         * with the switch off there is only one floor and only the second can
+         * ever fire, which is today's behaviour exactly. */
+        const f = FLOORS[st.pick % FLOORS.length];
+        if (f && f.level) world.onDeckLift?.(f);
+        else world.onDeckLeave?.();
       }
       break;
     }

@@ -375,6 +375,36 @@ export const MODES = {
      * the shape `Levels.js` has deleted three times. See `playableModes`. */
     hidden: true,
   },
+  /**
+   * ══ THE STATION — SHARK.md §11, and it is a level in SANDBOX mode ═══════
+   *
+   * A row here for the reason `MODES.hangar` has one: `World.loadLevel`,
+   * `Extraction` and the theatre column all answer questions about a
+   * destination by reading a row in this table, and a second table for one
+   * place would be the same rule written twice.
+   *
+   * WHAT IT INHERITS IS THE SANDBOX, deliberately. §11: "`MODES.sandbox`
+   * already builds a full `World` + `Player` with zero enemies, so
+   * `LEVELS.station` runs on that path and every system the battlefield has
+   * is simply present" — `spawnEnemy`, `Ragdoll`, dismemberment,
+   * `Destruction`, `Props` bodies, Force grip and hurl on everything,
+   * `Reactions`, `Corpses`, voice. That is the player's bar for this place
+   * and it is the one thing the hangar deliberately does not do.
+   *
+   * `hidden`, for `MODES.hangar`'s reason exactly: it is reached by the LIFT
+   * and by nothing else (§14: "no Station button, no second front door"), and
+   * offering it in the theatre grid would put an interior in the list
+   * `Levels.js` has deleted six interiors out of.
+   */
+  station: {
+    name: 'The Station',
+    blurb: 'A crossroads port. The whole cast lives here, and the lift is the only door.',
+    level: 'station',
+    fixedTheatre: true,
+    insertion: false,
+    fixedRules: 'Nothing is composed on the station: there is no wave, no enemy and no ending in a place whose promise is that nothing happens unless you ask.',
+    hidden: true,
+  },
   training: {
     name: 'Training',
     /* TEN, and it was eleven while only ten could be reached. The last rung

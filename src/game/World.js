@@ -162,7 +162,7 @@ export function roomOf(level, surface = 'sand') {
 }
 import { applyOrder } from './Order.js';
 import { CAMPAIGNS, CAMPAIGN_IDS, LEVELS, LEVEL_ORDER, campaignAt, groundMight, levelRotation,
-  spawnClear } from './Levels.js';
+  spawnClear, STATION_ENABLED } from './Levels.js';
 
 /**
  * WHAT A LEVEL'S AIR ASKS OF A BLADE.
@@ -198,6 +198,7 @@ import { BladeLock } from './Duel.js';
 import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { HangarDirector } from './Hangar.js';
+import { StationDirector } from './Station.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
@@ -937,6 +938,24 @@ export class World {
      */
     if (MODES[this.settings.mode]?.level === 'hangar') {
       this.director = new HangarDirector(this);
+      this.running = true;
+      this.over = false;
+      return L;
+    }
+    /**
+     * ══ AND THE STATION, THE SAME WAY (SHARK §9.2) ═════════════════════════
+     *
+     * `StationDirector` is `HangarDirector`'s sibling and exists for the same
+     * four unguarded HUD fields — plus the station's own clock and the
+     * per-place draw cull, which have to run once a frame and have nowhere
+     * else to hang without a second per-frame hook in this file.
+     *
+     * Guarded by the same switch as the level's registration: with
+     * `STATION_ENABLED` false no mode declares `level: 'station'`, so this
+     * branch is unreachable and the file behaves exactly as it did.
+     */
+    if (STATION_ENABLED && MODES[this.settings.mode]?.level === 'station') {
+      this.director = new StationDirector(this);
       this.running = true;
       this.over = false;
       return L;

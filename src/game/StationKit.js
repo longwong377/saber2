@@ -1,0 +1,1513 @@
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE PLACE BUILDERS — fifty rooms and no two of them the same plan
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── THE ONE RULE THIS FILE EXISTS TO KEEP ─────────────────────────────────
+ *
+ * `SHARK.md` §3.1 rule 4: **no two places the same shape.** The other repo's
+ * own post-mortem is why it is written down — *"16 distinct place builders
+ * over 128 places; 78 from one generic kit; one corridor generator for 70
+ * decks"* — and §13's warning is sharper still:
+ *
+ *   "every gate measured coverage or correctness, and both are perfectly
+ *    satisfied by one generic thing repeated seventy-eight times … a
+ *    generator is finished when its OUTPUT is various, not when its output is
+ *    correct."
+ *
+ * So there is no `buildGenericRoom`. There is a library of PARTS below —
+ * a wall run, a tier, a pit, a mezzanine, a counter, a rack — and then one
+ * function per shape that composes them into a plan nothing else has. Two
+ * places may share a part; they never share a plan. `station.mjs` measures
+ * it rather than trusting it: the pairwise silhouette IoU of every place from
+ * its own door, failing any pair over 0.85.
+ *
+ * ── AND EVERYTHING IN THEM IS A BODY (§11) ────────────────────────────────
+ *
+ * The player's bar: *"everything actually modelled and with physics and
+ * interactable like any other body in Battlefield Borz."* So:
+ *
+ *   STRUCTURE — walls, floors, tiers, catwalks, the drum — is static
+ *   geometry with box colliders, merged into the place's own kit.
+ *   FURNITURE — every table, chair, crate, barrel, locker, bunk, stall,
+ *   pot, tank and bench — is a `Props.Prop` through `kit.after`, so it is
+ *   grabbable, throwable and cuttable exactly as a battlefield crate is.
+ *
+ * `loose()` is the door for the second kind, and a place that has none is a
+ * place with nothing in it to pick up, which `station-sandbox.mjs` fails.
+ */
+
+import * as THREE from '../../vendor/three/three.module.js';
+import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Props.js';
+import { DECK_Y, DRUM, floorOf } from './StationPlan.js';
+
+const TAU = Math.PI * 2;
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PARTS                                                                 */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/** A floor plate. Every place has one; what differs is what stands on it. */
+function floor(kit, M, w, d, y = 0, mat = null) {
+  kit.slab(mat || M.deep, w, 0.4, d, 0, y - 0.2, 0, { collide: true, bevel: 0 });
+}
+
+/**
+ * Four walls with a gap for the door, which is always at local −Z (the plan
+ * table puts every door on the side a walk arrives from). `open` names sides
+ * to leave out entirely — a place with a window onto another place (§3.1
+ * rule 5) leaves one out and glazes it.
+ */
+function walls(kit, M, w, d, h, opts = {}) {
+  const t = 0.4, gap = opts.doorW ?? 3.4;
+  const mat = opts.mat || M.hull;
+  const open = new Set(opts.open || []);
+  /* +Z, the back. */
+  if (!open.has('back')) kit.slab(mat, w + t * 2, h, t, 0, h / 2, d / 2 + t / 2, { collide: true, bevel: 0 });
+  else if (opts.glaze) kit.slab(M.glass, w, h - 0.6, 0.2, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+  /* ±X, the sides. */
+  for (const s of [-1, 1]) {
+    if (open.has(s < 0 ? 'left' : 'right')) continue;
+    kit.slab(mat, t, h, d, s * (w / 2 + t / 2), h / 2, 0, { collide: true, bevel: 0 });
+  }
+  /* −Z, the front, with the doorway cut out of it. */
+  if (!open.has('front')) {
+    const side = (w - gap) / 2;
+    for (const s of [-1, 1]) {
+      kit.slab(mat, side, h, t, s * (gap + side) / 2, h / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
+    }
+    /* The lintel over the opening, and the light in its reveal. */
+    kit.slab(mat, gap, h - 2.6, t, 0, 2.6 + (h - 2.6) / 2, -d / 2 - t / 2, { collide: true, bevel: 0 });
+    kit.slab(M.strip, gap - 0.4, 0.1, 0.12, 0, 2.5, -d / 2 - 0.1, { collide: false, bevel: 0 });
+  }
+}
+
+/** A soffit. `ribs` gives it the structure that stops it reading as a lid. */
+function ceiling(kit, M, w, d, h, opts = {}) {
+  kit.slab(opts.mat || M.dark, w + 0.8, 0.4, d + 0.8, 0, h + 0.2, 0, { collide: true, bevel: 0 });
+  const n = opts.ribs ?? Math.max(2, Math.round(d / 3.5));
+  for (let i = 0; i < n; i++) {
+    const z = -d / 2 + d * ((i + 0.5) / n);
+    kit.slab(M.hull, w, 0.34, 0.34, 0, h - 0.2, z, { collide: false, bevel: 0 });
+  }
+  if (opts.strips !== false) {
+    for (let i = 0; i < n; i += 2) {
+      const z = -d / 2 + d * ((i + 0.5) / n);
+      kit.slab(M.strip, w * 0.66, 0.09, 0.16, 0, h - 0.42, z, { collide: false, bevel: 0 });
+    }
+  }
+}
+
+/** Tiered benches stepping up from a centre — the arena's and the theatre's. */
+function tiers(kit, M, w, d, steps, rise, run, opts = {}) {
+  for (let i = 0; i < steps; i++) {
+    const y = (i + 1) * rise, z = d / 2 - (i + 0.5) * run;
+    kit.slab(M.dark, w, rise, run, 0, y - rise / 2, z, { collide: true, bevel: 0 });
+    if (opts.strip && i % 2 === 0) kit.slab(M.strip, w * 0.9, 0.06, 0.1, 0, y + 0.03, z - run / 2 + 0.1, { collide: false, bevel: 0 });
+  }
+}
+
+/** A sunken well: a floor below the room's, with a kerb you can see. */
+function sink(kit, M, w, d, depth, ctx, opts = {}) {
+  kit.slab(M.deep, w, 0.4, d, 0, -depth - 0.2, 0, { collide: true, bevel: 0 });
+  for (const s of [-1, 1]) {
+    kit.slab(M.dark, 0.4, depth, d, s * (w / 2 + 0.2), -depth / 2, 0, { collide: true, bevel: 0 });
+    kit.slab(M.dark, w + 0.8, depth, 0.4, 0, -depth / 2, s * (d / 2 + 0.2), { collide: true, bevel: 0 });
+  }
+  /* The kerb light that stops a hole in a dark floor being an ambush. */
+  kit.slab(M.strip, w, 0.08, 0.12, 0, -0.06, -d / 2 - 0.15, { collide: false, bevel: 0 });
+  if (ctx && opts.record !== false) ctx.sunk.push({ w, d, depth });
+}
+
+/** A mezzanine: a half floor at height, with a stair up and a rail. */
+function mezzanine(kit, M, w, d, y, opts = {}) {
+  const dd = opts.depth ?? d / 2.6;
+  const z = opts.z ?? (d / 2 - dd / 2);
+  kit.slab(M.dark, w, 0.34, dd, 0, y, z, { collide: true, bevel: 0 });
+  /* The rail, drawn so what stops you is visible. */
+  kit.slab(M.wing, w, 0.1, 0.12, 0, y + 1.0, z - dd / 2, { collide: true, bevel: 0 });
+  for (let i = 0; i * 1.6 < w; i++) {
+    kit.slab(M.dark, 0.08, 1.0, 0.08, -w / 2 + i * 1.6 + 0.1, y + 0.5, z - dd / 2, { collide: false, bevel: 0 });
+  }
+  if (opts.stair !== false) stair(kit, M, opts.stairW ?? 2.2, y, -w / 2 + (opts.stairW ?? 2.2) / 2 + 0.4, z - dd / 2 - 1.4);
+}
+
+/** A straight run of steps up to `y`, landing at (x, z), rising toward −Z. */
+function stair(kit, M, w, y, x, z) {
+  const n = Math.max(3, Math.round(y / 0.24));
+  const rise = y / n, run = 0.32;
+  for (let i = 0; i < n; i++) {
+    kit.slab(M.dark, w, rise + 0.04, run, x, (i + 0.5) * rise, z - (i + 0.5) * run, { collide: true, bevel: 0 });
+  }
+}
+
+/** A ring of posts — a colonnade, a cage, a cell block's bars. */
+function ringOf(kit, M, mat, r, h, n, y = 0, opts = {}) {
+  const from = opts.from ?? 0, to = opts.to ?? TAU;
+  for (let i = 0; i < n; i++) {
+    const a = from + (to - from) * (i / n);
+    kit.post(mat, opts.rad ?? 0.16, opts.rad ?? 0.16, h, r * Math.sin(a), y + h / 2, r * Math.cos(a),
+      { radial: 6, collide: !!opts.collide });
+  }
+}
+
+/** A curved wall segment, `n` chords over an arc. */
+function arcWall(kit, mat, r, h, from, to, n, y = 0, t = 0.4, collide = true) {
+  const span = to - from;
+  const wide = 2 * r * Math.tan(Math.abs(span) / n / 2) * 1.06;
+  for (let i = 0; i < n; i++) {
+    const a = from + span * ((i + 0.5) / n);
+    kit.slab(mat, wide, h, t, r * Math.sin(a), y + h / 2, r * Math.cos(a), { ry: a, collide, bevel: 0 });
+  }
+}
+
+/** A counter with a top and a face — a bar, a stall, a hatch, a desk. */
+function counter(kit, M, w, d, x, z, ry = 0, h = 1.08) {
+  kit.push(x, 0, z, ry);
+  kit.slab(M.deep, w, h - 0.08, d, 0, (h - 0.08) / 2, 0, { collide: true, bevel: 0 });
+  kit.slab(M.wing, w + 0.18, 0.08, d + 0.18, 0, h - 0.04, 0, { collide: false, bevel: 0 });
+  kit.slab(M.strip, w * 0.9, 0.05, 0.06, 0, 0.16, -d / 2 - 0.04, { collide: false, bevel: 0 });
+  kit.pop();
+}
+
+/** A wall of shelving or lockers — the racks, the cages, the parts wall. */
+function rack(kit, M, w, h, x, z, ry = 0, shelves = 4) {
+  kit.push(x, 0, z, ry);
+  kit.slab(M.dark, w, h, 0.6, 0, h / 2, 0, { collide: true, bevel: 0 });
+  for (let i = 1; i <= shelves; i++) {
+    kit.slab(M.wing, w - 0.15, 0.06, 0.7, 0, (h * i) / (shelves + 1), -0.08, { collide: false, bevel: 0 });
+  }
+  kit.pop();
+}
+
+/** A lit screen or board on a wall — the departures board, the tactical wall. */
+function board(kit, M, w, h, x, y, z, ry = 0) {
+  kit.push(x, 0, z, ry);
+  kit.slab(M.dark, w + 0.3, h + 0.3, 0.16, 0, y, 0, { collide: false, bevel: 0 });
+  kit.slab(M.screen, w, h, 0.06, 0, y, -0.1, { collide: false, bevel: 0 });
+  kit.pop();
+}
+
+/** A lit vertical tank — bacta, coolant, a kyber cabinet. */
+function tank(kit, M, r, h, x, z) {
+  kit.post(M.glass, r, r, h, x, h / 2, z, { radial: 10, collide: true });
+  kit.post(M.dark, r + 0.12, r + 0.12, 0.3, x, 0.15, z, { radial: 10 });
+  kit.post(M.dark, r + 0.12, r + 0.12, 0.3, x, h - 0.15, z, { radial: 10 });
+  kit.slab(M.strip, 0.1, h - 0.7, 0.1, x, h / 2, z - r - 0.06, { collide: false, bevel: 0 });
+}
+
+/** A catwalk at height, with a rail — the reactor's, the maintenance bay's. */
+function catwalk(kit, M, w, d, y, x, z, ry = 0) {
+  kit.push(x, 0, z, ry);
+  kit.slab(M.dark, w, 0.16, d, 0, y, 0, { collide: true, bevel: 0 });
+  for (const s of [-1, 1]) {
+    kit.slab(M.wing, w, 0.08, 0.08, 0, y + 1.02, s * d / 2, { collide: false, bevel: 0 });
+    for (let i = 0; i * 1.8 < w; i++) kit.slab(M.dark, 0.07, 1.0, 0.07, -w / 2 + i * 1.8 + 0.2, y + 0.5, s * d / 2, { collide: false, bevel: 0 });
+  }
+  kit.pop();
+}
+
+/**
+ * ══ THE LOOSE THINGS, AND THEY ARE THE POINT (§11) ════════════════════════
+ *
+ * A `Props.Prop` at a kit-space point, made when the kit is emitted. Grabbable
+ * by the Force, throwable, cuttable, and armed — the same body a battlefield
+ * crate is, which is exactly what the player asked the station to be made of.
+ *
+ * A `kit.after` and not a bare call, because a maker composed into a kit is
+ * building in KIT SPACE and a rigid body has no kit space to live in; `after`
+ * is handed the world point at emit. That is `Props.Kit`'s own hook and its
+ * header records the bug that made it necessary.
+ */
+function loose(kit, x, y, z, make) {
+  kit.after(new THREE.Vector3(x, y, z), (world, p) => make(world, p));
+}
+
+/** A table: a top on legs, as one throwable body. */
+function tableBody(world, p, M, w = 1.5, d = 0.9, h = 0.78) {
+  const g = slabGeo(w, 0.07, d, { bevel: 0.02 });
+  g.translate(0, h - 0.035, 0);
+  const parts = [g];
+  for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const l = cylGeo(0.05, 0.05, h, 6, 1);
+    l.translate(sx * (w / 2 - 0.12), h / 2, sz * (d / 2 - 0.1));
+    parts.push(l);
+  }
+  return bodyFrom(world, p, parts, M.deep, { mass: 16, kind: 'table' });
+}
+
+/** A stool or chair: a seat, a back, four legs. */
+function chairBody(world, p, M) {
+  const s = slabGeo(0.44, 0.06, 0.42, { bevel: 0.02 }); s.translate(0, 0.45, 0);
+  const b = slabGeo(0.42, 0.5, 0.06, { bevel: 0.02 }); b.translate(0, 0.72, 0.18);
+  const parts = [s, b];
+  for (const [sx, sz] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+    const l = cylGeo(0.035, 0.035, 0.45, 5, 1);
+    l.translate(sx * 0.17, 0.225, sz * 0.16);
+    parts.push(l);
+  }
+  return bodyFrom(world, p, parts, M.deep, { mass: 7, kind: 'chair' });
+}
+
+/** A locker, a cabinet, a console shell — one upright box with a face. */
+function boxBody(world, p, M, w, h, d, mat, mass = 22, kind = 'crate') {
+  const g = slabGeo(w, h, d, { bevel: 0.03 });
+  g.translate(0, h / 2, 0);
+  return bodyFrom(world, p, [g], mat, { mass, kind });
+}
+
+function bodyFrom(world, p, geos, mat, opts) {
+  let verts = 0, idx = 0;
+  for (const g of geos) { verts += g.attributes.position.count; idx += g.index ? g.index.count : g.attributes.position.count; }
+  const pos = new Float32Array(verts * 3), nor = new Float32Array(verts * 3);
+  const ind = verts > 65535 ? new Uint32Array(idx) : new Uint16Array(idx);
+  let vo = 0, io = 0;
+  for (const g of geos) {
+    pos.set(g.attributes.position.array, vo * 3);
+    if (g.attributes.normal) nor.set(g.attributes.normal.array, vo * 3);
+    const gi = g.index ? g.index.array : null;
+    if (gi) for (let i = 0; i < gi.length; i++) ind[io + i] = gi[i] + vo;
+    else for (let i = 0; i < g.attributes.position.count; i++) ind[io + i] = i + vo;
+    io += gi ? gi.length : g.attributes.position.count;
+    vo += g.attributes.position.count;
+    g.dispose();
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+  geo.setIndex(new THREE.BufferAttribute(ind, 1));
+  geo.computeBoundingBox(); geo.computeBoundingSphere();
+  const mesh = new THREE.Mesh(geo, mat);
+  return new Prop(world, { mesh, position: p.clone(), mass: opts.mass, kind: opts.kind, hp: opts.hp ?? 30, weather: false });
+}
+
+/** Scatter `n` of something across a footprint, deterministically. */
+function scatter(kit, n, w, d, seed, make) {
+  let h = seed >>> 0;
+  const rnd = () => { h = (h * 1664525 + 1013904223) >>> 0; return h / 4294967296; };
+  for (let i = 0; i < n; i++) {
+    const x = (rnd() - 0.5) * w * 0.82, z = (rnd() - 0.5) * d * 0.82;
+    make(x, z, rnd());
+  }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PLANS — one per shape, and no two alike                               */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Every builder is called with the kit already framed on the place: local
+ * origin at the floor's centre, +Z radially outward (or the plan's yaw), and
+ * `p.w` × `p.d` × `p.h` its interior. So a builder never does arithmetic about
+ * where in the drum it is, which is what makes fifty of them readable.
+ */
+export const SHAPES = {
+
+  /* ── DECK 40 ──────────────────────────────────────────────────────────── */
+
+  /** #7 Arrivals: CURVED. A long shallow crescent, glazed on its outer face,
+   * with three customs gates across it and a board over them. */
+  curvedhall(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['back'], glaze: true, doorW: 6 });
+    ceiling(kit, M, w, d, h, { ribs: 9 });
+    /* The customs line: three gates, each an arch with a lit threshold. */
+    for (let i = -1; i <= 1; i++) {
+      const x = i * (w / 4);
+      for (const s of [-1, 1]) kit.slab(M.wing, 0.5, 2.9, 1.4, x + s * 1.5, 1.45, 1.5, { collide: true, bevel: 0 });
+      kit.slab(M.dark, 3.5, 0.5, 1.4, x, 3.15, 1.5, { collide: false, bevel: 0 });
+      kit.slab(M.strip, 2.6, 0.08, 0.1, x, 2.86, 0.82, { collide: false, bevel: 0 });
+    }
+    board(kit, M, 8, 2.2, 0, h - 2.0, d / 2 - 0.6);
+    /* Benches down the concourse side, and bags people put down. */
+    for (let i = -2; i <= 2; i++) {
+      loose(kit, i * 6, 0, -d / 2 + 3.2, (world, q) => boxBody(world, q, M, 2.6, 0.46, 0.7, M.wing, 30, 'bench'));
+    }
+    scatter(kit, 7, w * 0.7, d * 0.5, 71, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.5)));
+  },
+
+  /** #8 Docking throat: a COLLAR. A tube through the skin with a shuttle nose
+   * in it, umbilicals, and a ramp down. No ceiling — you are inside a joint. */
+  collar(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    arcWall(kit, M.hull, w / 2, h, -1.9, 1.9, 10);
+    /* The collar rings, stepping in toward the shuttle. */
+    for (let i = 0; i < 4; i++) {
+      ringOf(kit, M, M.dark, w / 2 - 1 - i * 0.7, 0.5, 18, h - 1.6 - i * 0.3, { rad: 0.3 });
+    }
+    /* The shuttle's nose, filling the far end. */
+    kit.post(M.wing, 2.4, 3.4, 7, 0, h / 2 - 1, d / 2 - 1.5, { rx: Math.PI / 2, radial: 10, collide: true });
+    /* The ramp down out of it. */
+    for (let i = 0; i < 8; i++) kit.slab(M.dark, 3.4, 0.22, 0.5, 0, 1.8 - i * 0.22, d / 2 - 5 - i * 0.5, { collide: true, bevel: 0 });
+    /* The fuel line and the umbilicals, and cargo at the ramp's foot. */
+    for (const s of [-1, 1]) kit.post(M.dark, 0.22, 0.22, d * 0.7, s * (w / 2 - 1.4), h - 1.4, 0, { rx: Math.PI / 2, radial: 6 });
+    scatter(kit, 9, w * 0.6, d * 0.4, 17, (x, z) => loose(kit, x, 0, z - 3, (world, q) => makeCrate(world, q, 0.8)));
+  },
+
+  /** #10 The Forge: an ALCOVE SHOP. Open to the hall on one long side, a
+   * bench across the middle, a pegboard wall, and the kyber cabinet lit. */
+  alcoveshop(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: w - 1.2 });
+    ceiling(kit, M, w, d, h, { ribs: 3, strips: false });
+    rack(kit, M, w - 1.5, h - 0.9, 0, d / 2 - 0.5, 0, 5);
+    counter(kit, M, w - 3, 0.9, 0, -0.4, 0, 1.0);
+    /* The vice on the bench, and the cabinet with the light inside it. */
+    kit.slab(M.wing, 0.4, 0.35, 0.3, w / 4, 1.15, -0.4, { collide: false, bevel: 0 });
+    kit.slab(M.dark, 1.2, 2.1, 0.7, -w / 2 + 0.9, 1.05, d / 2 - 1.6, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 0.9, 1.6, 0.1, -w / 2 + 0.95, 1.15, d / 2 - 2.0, { collide: false, bevel: 0 });
+    for (let i = 0; i < 4; i++) loose(kit, -2 + i * 1.4, 1.05, -0.4, (world, q) => makeBarrel(world, q));
+  },
+
+  /** #11 Quartermaster's cage: a CAGE. Bars floor to soffit across the front,
+   * racks on three sides, one hatch. The room is a grid you look through. */
+  cage(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['front'] });
+    ceiling(kit, M, w, d, h, { ribs: 2 });
+    /* The bars: the whole front, with a hatch cut in the middle. */
+    for (let i = 0; i * 0.34 < w; i++) {
+      const x = -w / 2 + i * 0.34;
+      if (Math.abs(x) < 1.1) continue;
+      kit.post(M.wing, 0.05, 0.05, h, x, h / 2, -d / 2, { radial: 4, collide: true });
+    }
+    for (const y of [1.3, 2.6]) kit.slab(M.wing, w, 0.07, 0.07, 0, y, -d / 2, { collide: false, bevel: 0 });
+    counter(kit, M, 2.2, 0.8, 0, -d / 2 + 0.4, 0, 1.1);
+    rack(kit, M, w - 1, h - 0.6, 0, d / 2 - 0.5, 0, 6);
+    for (const s of [-1, 1]) rack(kit, M, d - 1.6, h - 0.6, s * (w / 2 - 0.5), 0, s * Math.PI / 2, 6);
+    scatter(kit, 6, w * 0.5, d * 0.4, 33, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.55)));
+  },
+
+  /** #12 Recruiting: GLASS-FRONTED. A shallow box whose whole front is glass,
+   * a crest on the back wall, a holoscreen, a desk and a queue rail. */
+  glassfront(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['front'] });
+    ceiling(kit, M, w, d, h, { ribs: 3 });
+    kit.slab(M.glass, w, h - 0.5, 0.14, 0, h / 2, -d / 2, { collide: true, bevel: 0 });
+    for (let i = 1; i * 2.2 < w; i++) kit.slab(M.dark, 0.14, h, 0.24, -w / 2 + i * 2.2, h / 2, -d / 2, { collide: false, bevel: 0 });
+    kit.slab(M.mark, 3.0, 3.0, 0.12, 0, h - 2.2, d / 2 - 0.3, { collide: false, bevel: 0 });
+    board(kit, M, 3.2, 1.8, -w / 4, 2.0, d / 2 - 0.5);
+    counter(kit, M, 3.0, 1.0, w / 4, d / 4, 0, 1.05);
+    /* The queue rail, which is what makes a shop read as one. */
+    for (let i = 0; i < 5; i++) kit.post(M.wing, 0.05, 0.05, 1.0, -w / 2 + 1.2 + i * 1.5, 0.5, -d / 4, { radial: 5 });
+    kit.slab(M.wing, 6.2, 0.05, 0.05, -w / 2 + 3.4, 1.0, -d / 4, { collide: false, bevel: 0 });
+    for (let i = 0; i < 3; i++) loose(kit, -2 + i * 2, 0, 0, (world, q) => chairBody(world, q, M));
+  },
+
+  /** #13 The Databank: a ROTUNDA. Round, terminals in a ring facing inward,
+   * a holo globe on a plinth at the centre, a domed soffit. */
+  rotunda(kit, M, p) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    /* A round floor: twelve wedges, so the edge is round and not square. */
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 12);
+      kit.slab(M.deep, 2 * r * Math.tan(Math.PI / 12) * 1.06, 0.4, r, r / 2 * Math.sin(a), -0.2, r / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    arcWall(kit, M.hull, r, h, 0.42, TAU - 0.42, 18);
+    /* A dome: four rings stepping in. */
+    for (let i = 0; i < 4; i++) ringOf(kit, M, M.dark, r * (1 - i * 0.2), 0.36, 24, h + i * 0.5, { rad: 0.34 });
+    kit.post(M.strip, 0.8, 0.8, 0.3, 0, h + 2.1, 0, { radial: 10 });
+    /* The terminals, in a ring, each a desk and a screen. */
+    for (let i = 0; i < 8; i++) {
+      const a = TAU * (i / 8) + 0.2;
+      counter(kit, M, 2.0, 0.8, (r - 1.6) * Math.sin(a), (r - 1.6) * Math.cos(a), a + Math.PI, 0.95);
+      board(kit, M, 1.2, 0.7, (r - 1.6) * Math.sin(a), 1.5, (r - 1.6) * Math.cos(a), a + Math.PI);
+    }
+    /* The globe. */
+    kit.post(M.dark, 0.8, 0.6, 1.0, 0, 0.5, 0, { radial: 12, collide: true });
+    kit.post(M.screen, 1.3, 1.3, 1.3, 0, 2.0, 0, { radial: 12 });
+    for (let i = 0; i < 4; i++) loose(kit, (i - 1.5) * 1.6, 0, 0, (world, q) => chairBody(world, q, M));
+  },
+
+  /** #14 The Cantina: SUNKEN AND ROUND. You come in at the concourse's level
+   * and step down half a deck; the bar is a ring in the middle of the well,
+   * booths are cut into the wall, and the band's dais is at the back. */
+  sunkenround(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    const depth = 2.2;
+    floor(kit, M, w, 4, 0);
+    kit.slab(M.deep, w, 0.4, 4, 0, -0.2, -d / 2 + 2, { collide: true, bevel: 0 });
+    sink(kit, M, w - 3, d - 6, depth, ctx);
+    /* Steps down, the full width, so the drop reads as an invitation. */
+    for (let i = 0; i < 8; i++) kit.slab(M.dark, w - 3, 0.28, 0.6, 0, -i * 0.275, -d / 2 + 4 + i * 0.6, { collide: true, bevel: 0 });
+    walls(kit, M, w, d, h, { doorW: w - 4 });
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    /* The bar: a ring in the round with a back-bar column inside it. */
+    const br = 3.6;
+    for (let i = 0; i < 14; i++) {
+      const a = TAU * (i / 14);
+      counter(kit, M, 2 * br * Math.tan(Math.PI / 14) * 1.06, 0.9, br * Math.sin(a), br * Math.cos(a) + 1, a, 1.12);
+    }
+    kit.post(M.dark, 1.4, 1.4, 2.6, 0, -depth + 1.3, 1, { radial: 10, collide: true });
+    kit.post(M.strip, 1.5, 1.5, 0.2, 0, -depth + 2.7, 1, { radial: 10 });
+    /* Booths in the wall, and the coloured lights over them. */
+    for (let i = 0; i < 8; i++) {
+      const a = TAU * (i / 8) + 0.39;
+      const rr = (w - 3) / 2 - 1.2;
+      kit.slab(M.deep, 2.4, 1.3, 0.5, rr * Math.sin(a), -depth + 0.65, rr * Math.cos(a) + 1, { ry: a, collide: true, bevel: 0 });
+      kit.slab(M.status, 0.7, 0.14, 0.14, rr * Math.sin(a) * 0.94, -depth + 2.4, rr * Math.cos(a) * 0.94 + 1, { ry: a, collide: false, bevel: 0 });
+    }
+    /* The band's dais. */
+    kit.slab(M.dark, 5, 0.5, 3, 0, -depth + 0.25, d / 2 - 3.4, { collide: true, bevel: 0 });
+    for (let i = 0; i < 10; i++) loose(kit, ((i % 5) - 2) * 2.2, -depth, (i < 5 ? -2 : 4), (world, q) => chairBody(world, q, M));
+    for (let i = 0; i < 4; i++) loose(kit, (i - 1.5) * 3, -depth, 5.5, (world, q) => tableBody(world, q, M, 1.1, 1.1, 0.74));
+  },
+
+  /** #15 The Fresh Air: a TERRACE. No fourth wall — the room ends in a rail
+   * over the atrium. White cloth on tables, planters, the kitchen pass. */
+  terrace(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['front'] });
+    ceiling(kit, M, w, d, h, { ribs: 4 });
+    /* The rail over the void, and the planters along it. */
+    kit.slab(M.wing, w, 0.1, 0.14, 0, 1.02, -d / 2, { collide: true, bevel: 0 });
+    for (let i = 0; i * 1.4 < w; i++) kit.slab(M.dark, 0.08, 1.0, 0.08, -w / 2 + i * 1.4 + 0.2, 0.5, -d / 2, { collide: false, bevel: 0 });
+    for (let i = -2; i <= 2; i++) {
+      kit.slab(M.mark, 1.1, 0.6, 0.7, i * 3.6, 0.3, -d / 2 + 0.9, { collide: true, bevel: 0 });
+      kit.post(M.strip, 0.35, 0.1, 0.9, i * 3.6, 1.05, -d / 2 + 0.9, { radial: 6 });
+    }
+    /* The pass, with the kitchen seen through it. */
+    kit.slab(M.hull, w, h - 1.4, 0.4, 0, (h - 1.4) / 2 + 1.4, d / 2 - 0.3, { collide: true, bevel: 0 });
+    counter(kit, M, w - 4, 0.7, 0, d / 2 - 0.7, 0, 1.15);
+    kit.slab(M.strip, w - 4.4, 0.09, 0.1, 0, 1.45, d / 2 - 1.1, { collide: false, bevel: 0 });
+    for (let i = 0; i < 6; i++) {
+      const x = ((i % 3) - 1) * 5, z = (i < 3 ? -2.2 : 1.4);
+      loose(kit, x, 0, z, (world, q) => tableBody(world, q, M, 1.3, 1.3, 0.76));
+      loose(kit, x + 0.9, 0, z, (world, q) => chairBody(world, q, M));
+      loose(kit, x - 0.9, 0, z, (world, q) => chairBody(world, q, M));
+    }
+  },
+
+  /** #16 Galley: a WORK ROOM. Low, hot, two ranges back to back down the
+   * middle, pots hung over them, a cold-room door in the end wall. */
+  workroom(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h);
+    ceiling(kit, M, w, d, h, { ribs: 3, strips: false });
+    /* Two ranges, back to back, with the extraction hood over them. */
+    for (const s of [-1, 1]) {
+      kit.slab(M.wing, w - 2.4, 0.9, 1.0, 0, 0.45, s * 1.1, { collide: true, bevel: 0 });
+      kit.slab(M.status, w - 3, 0.06, 0.5, 0, 0.92, s * 1.1, { collide: false, bevel: 0 });
+    }
+    kit.slab(M.dark, w - 1.6, 0.7, 3.2, 0, h - 0.6, 0, { collide: false, bevel: 0 });
+    /* The pot rail, and the pots on it — every one of them throwable (#16's
+     * verb IS "throw pots"). */
+    kit.slab(M.wing, w - 2, 0.06, 0.06, 0, h - 1.2, 0, { collide: false, bevel: 0 });
+    for (let i = 0; i < 8; i++) loose(kit, -w / 2 + 1.4 + i * ((w - 2.8) / 7), 0.95, 1.1, (world, q) => makeBarrel(world, q));
+    /* The cold room: a heavy door in the end wall with its own light. */
+    kit.slab(M.wing, 2.0, 2.4, 0.3, w / 2 - 1.8, 1.2, d / 2 - 0.2, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 1.6, 0.08, 0.1, w / 2 - 1.8, 2.5, d / 2 - 0.4, { collide: false, bevel: 0 });
+    rack(kit, M, w - 3, h - 0.8, 0, -d / 2 + 0.5, Math.PI, 5);
+  },
+
+  /** #17 Food court: LOW COUNTERS in a row. The lowest ceiling on the deck,
+   * one long line of vendor fronts, stools facing them, steam and neon. */
+  lowcounters(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: w - 3 });
+    ceiling(kit, M, w, d, h, { ribs: 8, strips: false });
+    for (let i = 0; i < 3; i++) {
+      const x = (i - 1) * (w / 3);
+      counter(kit, M, w / 3 - 0.6, 1.1, x, d / 2 - 1.4, 0, 1.15);
+      kit.slab(M.dark, w / 3 - 0.6, 1.5, 0.5, x, h - 0.9, d / 2 - 0.5, { collide: false, bevel: 0 });
+      kit.slab(M.screen, w / 3 - 1.4, 0.8, 0.06, x, h - 0.95, d / 2 - 0.8, { collide: false, bevel: 0 });
+      /* The steam vent above each — the thing that makes a counter a kitchen. */
+      kit.post(M.wing, 0.18, 0.18, 1.2, x, h - 0.6, d / 2 - 2.4, { radial: 6 });
+    }
+    for (let i = 0; i < 10; i++) {
+      loose(kit, -w / 2 + 1.6 + i * ((w - 3.2) / 9), 0, d / 2 - 2.8, (world, q) => boxBody(world, q, M, 0.4, 0.72, 0.4, M.deep, 6, 'stool'));
+    }
+  },
+
+  /** #18 The Pit: a LOW DEN. One exit, a cashier behind bars in the corner,
+   * a dice cage on a stand and four sabacc tables under hanging lamps. */
+  lowden(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 2.4 });
+    ceiling(kit, M, w, d, h, { ribs: 6, strips: false });
+    /* The cashier: a box of bars in the far corner. */
+    kit.push(w / 2 - 2.2, 0, d / 2 - 1.8, 0);
+    kit.slab(M.dark, 4, h, 0.4, 0, h / 2, 1.6, { collide: true, bevel: 0 });
+    counter(kit, M, 3.6, 0.7, 0, 1.0, 0, 1.05);
+    for (let i = 0; i * 0.3 < 3.6; i++) kit.post(M.wing, 0.04, 0.04, h - 1.1, -1.8 + i * 0.3, 1.1 + (h - 1.1) / 2, 1.0, { radial: 4 });
+    kit.pop();
+    /* The dice cage on its stand. */
+    kit.post(M.dark, 0.35, 0.35, 1.0, -w / 2 + 2, 0.5, d / 2 - 2, { radial: 8, collide: true });
+    kit.post(M.wing, 0.6, 0.6, 0.9, -w / 2 + 2, 1.45, d / 2 - 2, { radial: 8, open: true });
+    /* Four tables, each with a lamp hung over it — the room's only light. */
+    for (let i = 0; i < 4; i++) {
+      const x = ((i % 2) - 0.5) * 5, z = (i < 2 ? -2.2 : 2.2);
+      loose(kit, x, 0, z, (world, q) => tableBody(world, q, M, 1.9, 1.9, 0.75));
+      kit.post(M.dark, 0.04, 0.04, h - 2.2, x, h - (h - 2.2) / 2, z, { radial: 4 });
+      kit.post(M.strip, 0.45, 0.15, 0.3, x, 2.1, z, { radial: 8 });
+      for (let k = 0; k < 3; k++) loose(kit, x + Math.cos(k * 2) * 1.3, 0, z + Math.sin(k * 2) * 1.3, (world, q) => chairBody(world, q, M));
+    }
+  },
+
+  /** #19 Holo-theatre: a FAN. The floor rakes down toward a stage, the seats
+   * are in arcs that widen, the back wall is the widest thing in the room. */
+  fanauditorium(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 4 });
+    ceiling(kit, M, w, d, h, { ribs: 6, strips: false });
+    /* The rake: six arcs of seating stepping up toward the back. */
+    for (let i = 0; i < 6; i++) {
+      const rr = 5 + i * 2.4, y = i * 0.42;
+      const from = -1.05, to = 1.05, n = 7 + i * 2;
+      const wide = 2 * rr * Math.tan((to - from) / n / 2) * 1.06;
+      for (let k = 0; k < n; k++) {
+        const a = from + (to - from) * ((k + 0.5) / n);
+        kit.slab(M.dark, wide, 0.42, 1.6, rr * Math.sin(a), y - 0.21 + 0.42, rr * Math.cos(a) - d / 2 + 3 + rr * 0 , { ry: a, collide: true, bevel: 0 });
+      }
+    }
+    /* The stage, and the holo volume standing on it. */
+    kit.slab(M.deep, w - 6, 0.6, 4, 0, 0.3, d / 2 - 2.6, { collide: true, bevel: 0 });
+    kit.post(M.screen, 3.2, 2.4, 3.4, 0, 2.3, d / 2 - 2.6, { radial: 12 });
+    kit.slab(M.strip, w - 7, 0.08, 0.12, 0, 0.62, d / 2 - 4.6, { collide: false, bevel: 0 });
+  },
+
+  /** #20 The Arena: a SUNKEN RING. A round pit with tiers all round it,
+   * remotes on a gantry overhead and a rack of practice sabers at the door. */
+  sunkenring(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    floor(kit, M, w, d);
+    arcWall(kit, M.hull, r, h, 0.5, TAU - 0.5, 20);
+    /* The ring: a round well two metres down, with tiers stepping to it. */
+    for (let i = 0; i < 3; i++) {
+      const rr = r - 2.4 - i * 2.0, y = -0.7 * (i + 1);
+      ringOf(kit, M, M.dark, rr, 0.7, 28, y, { rad: 0.9, collide: true });
+    }
+    for (let i = 0; i < 16; i++) {
+      const a = TAU * (i / 16);
+      kit.slab(M.deep, 2 * (r - 7) * Math.tan(Math.PI / 16) * 1.06, 0.4, r - 7, (r - 7) / 2 * Math.sin(a), -2.3, (r - 7) / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    ctx.sunk.push({ w: (r - 7) * 1.4, d: (r - 7) * 1.4, depth: 2.1 });
+    /* The gantry the remotes hang from — a cross over the ring. */
+    for (const ry of [0, Math.PI / 2]) {
+      kit.slab(M.wing, r * 2 - 2, 0.3, 0.5, 0, h - 1.2, 0, { ry, collide: false, bevel: 0 });
+    }
+    for (let i = 0; i < 4; i++) {
+      const a = TAU * (i / 4) + 0.4;
+      kit.post(M.status, 0.28, 0.28, 0.28, (r - 5) * Math.sin(a), h - 2.4, (r - 5) * Math.cos(a), { radial: 8 });
+    }
+    /* The saber rack at the door. */
+    rack(kit, M, 3.4, 2.2, 0, -r + 1.2, 0, 3);
+  },
+
+  /** #21 Gym: a RUNNING GALLERY. Long and shallow, open to the atrium down
+   * its whole inner face, with a raised running track round the outside. */
+  runninggallery(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['front'] });
+    ceiling(kit, M, w, d, h, { ribs: 5 });
+    /* The rail onto the void, and the track a metre above the floor. */
+    kit.slab(M.wing, w, 0.1, 0.12, 0, 1.02, -d / 2, { collide: true, bevel: 0 });
+    kit.slab(M.mark, w, 0.3, 2.2, 0, 0.85, d / 2 - 1.4, { collide: true, bevel: 0 });
+    for (let i = 0; i < 5; i++) stair(kit, M, 1.2, 1.0, -w / 2 + 2 + i * ((w - 4) / 4), d / 2 - 2.8);
+    /* Bars and weights: the bars are structure, the weights are throwable. */
+    for (const x of [-w / 4, w / 4]) {
+      for (const y of [1.1, 1.9]) kit.slab(M.wing, 3.4, 0.09, 0.09, x, y, 0.4, { collide: true, bevel: 0 });
+      for (const s of [-1, 1]) kit.post(M.dark, 0.08, 0.08, 2.0, x + s * 1.7, 1.0, 0.4, { radial: 6 });
+    }
+    for (let i = 0; i < 8; i++) loose(kit, -w / 2 + 2 + i * ((w - 4) / 7), 0, -1.2, (world, q) => makeBarrel(world, q));
+  },
+
+  /** #22 Chapel: a DARK DRUM. One skylight to space, nothing else lit. The
+   * tallest small room on the station, and the only one with no strips. */
+  darkdrum(kit, M, p) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 12);
+      kit.slab(M.dark, 2 * r * Math.tan(Math.PI / 12) * 1.06, 0.4, r, r / 2 * Math.sin(a), -0.2, r / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    arcWall(kit, M.hull, r, h, 0.34, TAU - 0.34, 20);
+    /* The drum narrows to the skylight: four rings stepping in, then glass. */
+    for (let i = 0; i < 5; i++) ringOf(kit, M, M.dark, r * (1 - i * 0.17), 0.5, 20, h + i * 0.8, { rad: 0.5 });
+    kit.post(M.glass, r * 0.2, r * 0.2, 0.3, 0, h + 4.3, 0, { radial: 12 });
+    /* The shrine, the candles and the mats. No strip lights anywhere: the
+     * skylight and the candles are the whole rig, which is the room. */
+    kit.slab(M.wing, 2.2, 1.2, 0.8, 0, 0.6, r - 1.8, { collide: true, bevel: 0 });
+    kit.post(M.status, 0.4, 0.3, 0.9, 0, 1.65, r - 1.8, { radial: 8 });
+    for (let i = 0; i < 10; i++) {
+      const a = TAU * (i / 10);
+      kit.post(M.status, 0.07, 0.07, 0.5, (r - 0.9) * Math.sin(a), 0.25, (r - 0.9) * Math.cos(a), { radial: 5 });
+    }
+    for (let i = 0; i < 6; i++) {
+      const x = ((i % 3) - 1) * 1.8, z = (i < 3 ? -1.5 : 0.6);
+      kit.slab(M.deep, 1.0, 0.08, 1.6, x, 0.04, z, { collide: false, bevel: 0 });
+    }
+  },
+
+  /** #23 Arboretum: a CUT through two decks. No ceiling at all — the deck
+   * above is open over it — real trees, a stream, and a bridge across at 44. */
+  cutthrough(kit, M, p, ctx, world) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.mark);
+    walls(kit, M, w, d, h, { doorW: 5 });
+    /* No ceiling: the cut is what the place IS. What closes the top is the
+     * deck 44 balcony that looks down into it. */
+    kit.slab(M.dark, w + 0.8, 0.4, 3, 0, DRUM.pitch, -d / 2 + 1.5, { collide: true, bevel: 0 });
+    kit.slab(M.dark, w + 0.8, 0.4, 3, 0, DRUM.pitch, d / 2 - 1.5, { collide: true, bevel: 0 });
+    /* The stream: a channel of glass down the middle with a bank each side. */
+    kit.slab(M.glass, 2.2, 0.2, d - 3, 0, 0.06, 0, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.mark, 0.7, 0.35, d - 3, s * 1.45, 0.17, 0, { collide: true, bevel: 0 });
+    /* The trees. `Trees.js` is the engine's own and this is the one place on
+     * the station that gets it (§3.2 #23 names the file). */
+    ctx.trees.push({ w: w - 4, d: d - 4, n: 9 });
+    for (let i = 0; i < 5; i++) {
+      loose(kit, ((i % 2) ? -1 : 1) * (w / 2 - 2.5), 0, -d / 2 + 3 + i * ((d - 6) / 4),
+        (world2, q) => boxBody(world2, q, M, 2.2, 0.44, 0.6, M.wing, 26, 'bench'));
+    }
+  },
+
+  /** #24 Security post: a BOOTH. The smallest room on the station, out on the
+   * atrium bridge, glazed on three sides with a cell behind glass at the back. */
+  booth(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    kit.slab(M.hull, w, h, 0.3, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.glass, 0.14, h - 0.7, d, s * w / 2, h / 2 - 0.2, 0, { collide: true, bevel: 0 });
+    kit.slab(M.glass, w, h - 0.7, 0.14, 0, h / 2 - 0.2, -d / 2, { collide: true, bevel: 0 });
+    ceiling(kit, M, w, d, h, { ribs: 1 });
+    counter(kit, M, w - 1.6, 0.8, 0, d / 2 - 1.2, 0, 1.05);
+    board(kit, M, 1.4, 0.9, -1.6, 1.6, d / 2 - 0.25);
+    board(kit, M, 1.4, 0.9, 1.6, 1.6, d / 2 - 0.25);
+    /* The cell: bars in a recess, which is the whole reason this is not a desk. */
+    for (let i = 0; i * 0.28 < 2.4; i++) kit.post(M.wing, 0.045, 0.045, h - 0.4, -1.2 + i * 0.28, (h - 0.4) / 2, d / 2 - 0.05, { radial: 4 });
+  },
+
+  /** #25 Lost & found: a NOTICE WALL. Barely a room — a deep alcove whose
+   * back is entirely paper and holo notes, with a droid's niche beside it. */
+  noticewall(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: w - 1 });
+    ceiling(kit, M, w, d, h, { ribs: 2, strips: false });
+    /* The wall itself: forty small panels, half of them lit. */
+    for (let i = 0; i < 8; i++) {
+      for (let k = 0; k < 5; k++) {
+        const x = -w / 2 + 0.8 + i * ((w - 1.6) / 7);
+        const y = 0.8 + k * 0.5;
+        kit.slab((i + k) % 3 === 0 ? M.screen : M.mark, 0.5, 0.36, 0.05, x, y, d / 2 - 0.25, { collide: false, bevel: 0 });
+      }
+    }
+    kit.slab(M.strip, w - 1.4, 0.08, 0.14, 0, 3.5, d / 2 - 0.5, { collide: false, bevel: 0 });
+    counter(kit, M, 1.4, 0.7, w / 2 - 1.1, -d / 2 + 1.0, 0, 1.0);
+  },
+
+  /* ── DECK 44 ──────────────────────────────────────────────────────────── */
+
+  /** #27 Your cabin: TWO ROOMS. A partition splits it; the outer half is the
+   * desk, the map table and the trophy wall, the inner is the bunk and a real
+   * window. The only place on the station with a door that is yours. */
+  twinroom(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { open: ['back'], glaze: true, doorW: 2.2 });
+    ceiling(kit, M, w, d, h, { ribs: 3 });
+    /* The partition, with a way through at one end. */
+    kit.slab(M.hull, w - 3.2, h, 0.3, -1.6, h / 2, 0.6, { collide: true, bevel: 0 });
+    /* The trophy wall and the saber stand — `Home.js` fills both from the
+     * ledger and the kennel, so what is built here is the furniture. */
+    rack(kit, M, 4.2, 2.4, -w / 2 + 2.4, -d / 2 + 0.4, Math.PI, 4);
+    kit.post(M.wing, 0.3, 0.22, 1.3, w / 2 - 1.4, 0.65, -d / 2 + 1.0, { radial: 8, collide: true });
+    /* The map table, the desk, the bunk, the wardrobe. */
+    loose(kit, 1.6, 0, -1.6, (world, q) => tableBody(world, q, M, 2.4, 1.4, 0.8));
+    loose(kit, -3.2, 0, -2.6, (world, q) => tableBody(world, q, M, 1.6, 0.7, 0.76));
+    loose(kit, -3.2, 0, -1.6, (world, q) => chairBody(world, q, M));
+    kit.slab(M.deep, 2.1, 0.5, 1.0, w / 2 - 2.4, 0.42, d / 2 - 1.2, { collide: true, bevel: 0 });
+    kit.slab(M.wing, 2.0, 0.18, 0.9, w / 2 - 2.4, 0.75, d / 2 - 1.2, { collide: false, bevel: 0 });
+    loose(kit, -w / 2 + 1.4, 0, d / 2 - 1.2, (world, q) => boxBody(world, q, M, 1.2, 2.1, 0.6, M.deep, 40, 'locker'));
+    ctx.home = { deck: p.deck, x: p.x, z: p.z, yaw: p.yaw };
+  },
+
+  /** #28 The Kennel habitat: a MEZZANINE room. High, with a half floor at
+   * four metres reached by a ramp, straw below, perches above, a pool at one
+   * end and a run out to the arboretum. */
+  mezzanine(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.mark);
+    walls(kit, M, w, d, h, { doorW: 3.4 });
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    mezzanine(kit, M, w - 2, d, 4.2, { depth: d / 2.4 });
+    /* The perches: four bars at different heights under the soffit. */
+    for (let i = 0; i < 4; i++) {
+      kit.slab(M.wing, w - 3, 0.12, 0.12, 0, 5.6 + i * 0.9, -d / 2 + 2 + i * 1.6, { collide: true, bevel: 0 });
+    }
+    /* The pool, sunk at the far end. */
+    kit.slab(M.glass, 4.4, 0.2, 3.4, w / 2 - 3.4, 0.08, d / 2 - 2.6, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.dark, 0.4, 0.5, 3.8, w / 2 - 3.4 + s * 2.4, 0.25, d / 2 - 2.6, { collide: true, bevel: 0 });
+    /* The plaques — `Habitat.js` writes the names on them from the Kennel. */
+    for (let i = 0; i < 6; i++) kit.slab(M.mark, 0.7, 0.4, 0.06, -w / 2 + 1.4 + i * 1.1, 2.4, -d / 2 + 0.3, { collide: false, bevel: 0 });
+    ctx.habitat = { deck: p.deck, x: p.x, z: p.z, yaw: p.yaw };
+    for (let i = 0; i < 4; i++) loose(kit, -w / 2 + 2 + i * 2, 0, 1.5, (world, q) => makeCrate(world, q, 0.6));
+  },
+
+  /** #29 Company barracks: a BUNK HALL. Long, split into bays by lockers
+   * standing out from the walls, bunks in each bay, a stove and a slate. */
+  bunkhall(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 3 });
+    ceiling(kit, M, w, d, h, { ribs: 9 });
+    const bays = 5;
+    for (let i = 0; i < bays; i++) {
+      const x = -w / 2 + (w / bays) * (i + 0.5);
+      for (const s of [-1, 1]) {
+        /* The locker divider that MAKES the bay. */
+        if (i) kit.slab(M.dark, 0.5, 2.1, 2.0, x - w / (bays * 2), 1.05, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
+        /* Two bunks, one over the other. */
+        for (const y of [0.5, 1.6]) {
+          kit.slab(M.wing, 1.9, 0.12, 0.9, x, y, s * (d / 2 - 0.8), { collide: true, bevel: 0 });
+          kit.slab(M.deep, 1.8, 0.16, 0.8, x, y + 0.14, s * (d / 2 - 0.8), { collide: false, bevel: 0 });
+        }
+        kit.post(M.dark, 0.06, 0.06, 2.1, x - 0.9, 1.05, s * (d / 2 - 0.4), { radial: 4 });
+        kit.post(M.dark, 0.06, 0.06, 2.1, x + 0.9, 1.05, s * (d / 2 - 0.4), { radial: 4 });
+      }
+    }
+    /* The slate — the Muster board (#29's verb) — and the stove. */
+    board(kit, M, 3.4, 2.0, -w / 2 + 2.4, 1.8, -d / 2 + 0.25);
+    kit.post(M.dark, 0.6, 0.5, 1.2, w / 2 - 2.5, 0.6, 0, { radial: 10, collide: true });
+    kit.post(M.status, 0.35, 0.35, 0.2, w / 2 - 2.5, 1.3, 0, { radial: 10 });
+    kit.post(M.dark, 0.16, 0.16, h - 1.4, w / 2 - 2.5, 1.4 + (h - 1.4) / 2, 0, { radial: 6 });
+    for (let i = 0; i < 4; i++) loose(kit, (i - 1.5) * 3.4, 0, 0, (world, q) => boxBody(world, q, M, 0.8, 0.5, 0.6, M.wing, 14, 'crate'));
+  },
+
+  /** #30 Officers' quarters: a CORRIDOR OF DOORS, curved, with one open.
+   * Not a room at all — a passage, which is what makes it different. */
+  doorcorridor(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    for (const s of [-1, 1]) kit.slab(M.hull, w, h, 0.4, 0, h / 2, s * d / 2, { collide: true, bevel: 0 });
+    ceiling(kit, M, w, d, h, { ribs: 8, strips: false });
+    const n = 6;
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + (w / n) * (i + 0.5);
+      /* Wood and brass: a panelled door, a brass number, a lamp over it. */
+      kit.slab(M.deep, 1.2, 2.3, 0.16, x, 1.15, d / 2 - 0.22, { collide: i !== 2, bevel: 0 });
+      kit.slab(M.wing, 0.22, 0.22, 0.05, x + 0.4, 2.0, d / 2 - 0.32, { collide: false, bevel: 0 });
+      kit.slab(M.strip, 0.5, 0.07, 0.12, x, 2.55, d / 2 - 0.35, { collide: false, bevel: 0 });
+      /* The one open door, with a lit room behind it. */
+      if (i === 2) {
+        kit.slab(M.deep, 1.2, 2.3, 0.16, x - 0.9, 1.15, d / 2 - 0.9, { ry: 1.1, collide: true, bevel: 0 });
+        kit.slab(M.screen, 1.1, 2.1, 0.04, x, 1.1, d / 2 - 0.14, { collide: false, bevel: 0 });
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      const x = -w / 2 + (w / n) * (i + 0.5);
+      kit.slab(M.deep, 1.1, 2.3, 0.14, x, 1.15, -d / 2 + 0.22, { collide: true, bevel: 0 });
+    }
+  },
+
+  /** #31 Human residential: a LIGHT WELL. Two levels of cabin doors round a
+   * square well open to the soffit, with a stair in one corner and laundry
+   * lines strung across it. The only place with a floor you look down into. */
+  lightwell(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 3.2 });
+    ceiling(kit, M, w, d, h, { ribs: 4 });
+    /* The upper gallery: a walk round all four sides at 4.4 m. */
+    const gy = 4.4, gw = 2.6;
+    for (const s of [-1, 1]) {
+      kit.slab(M.dark, w, 0.3, gw, 0, gy, s * (d / 2 - gw / 2), { collide: true, bevel: 0 });
+      kit.slab(M.dark, gw, 0.3, d - gw * 2, s * (w / 2 - gw / 2), gy, 0, { collide: true, bevel: 0 });
+      kit.slab(M.wing, w, 0.09, 0.1, 0, gy + 1.05, s * (d / 2 - gw), { collide: true, bevel: 0 });
+    }
+    stair(kit, M, 2.0, gy, -w / 2 + 1.6, d / 2 - gw - 0.4);
+    /* Cabin doors, both levels, all four sides. */
+    for (let i = 0; i < 5; i++) {
+      const x = -w / 2 + (w / 5) * (i + 0.5);
+      for (const s of [-1, 1]) {
+        kit.slab(M.wing, 1.1, 2.1, 0.14, x, 1.05, s * (d / 2 - 0.3), { collide: true, bevel: 0 });
+        kit.slab(M.wing, 1.1, 2.1, 0.14, x, gy + 1.35, s * (d / 2 - 0.3), { collide: true, bevel: 0 });
+      }
+    }
+    /* The laundry lines across the well — what makes it a place people live. */
+    for (let i = 0; i < 4; i++) {
+      kit.slab(M.mark, w - 4, 0.04, 0.04, 0, 6.8 + i * 0.5, -d / 2 + 4 + i * 2, { collide: false, bevel: 0 });
+      for (let k = 0; k < 5; k++) kit.slab(M.mark, 0.5, 0.7, 0.02, -w / 2 + 3 + k * 2.6, 6.5 + i * 0.5, -d / 2 + 4 + i * 2, { collide: false, bevel: 0 });
+    }
+  },
+
+  /** #32 Narn quarter: STONE AND LOW. The lowest ceiling of the five quarters,
+   * red stone piers you walk between, braziers, a shrine in a niche. */
+  stonelow(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.deep);
+    walls(kit, M, w, d, h, { doorW: 2.6, mat: M.deep });
+    ceiling(kit, M, w, d, h, { ribs: 12, strips: false, mat: M.deep });
+    /* Piers: a grid of heavy stone posts. The room is what is between them. */
+    for (let i = 0; i < 4; i++) {
+      for (let k = 0; k < 4; k++) {
+        const x = -w / 2 + (w / 4) * (i + 0.5), z = -d / 2 + (d / 4) * (k + 0.5);
+        if ((i === 1 || i === 2) && (k === 1 || k === 2)) continue;
+        kit.slab(M.deep, 1.1, h, 1.1, x, h / 2, z, { collide: true, bevel: 0 });
+      }
+    }
+    /* Braziers — the room's only light, and low. */
+    for (const [x, z] of [[-w / 4, 0], [w / 4, 0], [0, -d / 3], [0, d / 3]]) {
+      kit.post(M.dark, 0.5, 0.4, 0.8, x, 0.4, z, { radial: 8, collide: true });
+      kit.post(M.status, 0.42, 0.2, 0.35, x, 0.95, z, { radial: 8 });
+    }
+    /* The shrine, in a niche in the back wall. */
+    kit.slab(M.dark, 3.0, 2.4, 0.5, 0, 1.2, d / 2 - 0.5, { collide: true, bevel: 0 });
+    kit.slab(M.mark, 1.4, 1.8, 0.1, 0, 1.2, d / 2 - 0.8, { collide: false, bevel: 0 });
+    for (let i = 0; i < 5; i++) loose(kit, -w / 2 + 3 + i * 3.5, 0, -d / 2 + 3, (world, q) => makeBarrel(world, q));
+  },
+
+  /** #33 Centauri quarter: a GILT COURT. White and gold, a fountain in the
+   * middle, portraits on every wall, a card room screened off at one end. */
+  giltcourt(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.wing);
+    walls(kit, M, w, d, h, { doorW: 3.6, mat: M.wing });
+    ceiling(kit, M, w, d, h, { ribs: 5 });
+    /* A colonnade round the court, gilt. */
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 12);
+      const rr = Math.min(w, d) / 2 - 2.2;
+      kit.post(M.mark, 0.32, 0.28, h - 0.6, rr * Math.sin(a), (h - 0.6) / 2, rr * Math.cos(a), { radial: 8, collide: true });
+    }
+    /* The fountain: three basins stepping down, lit from inside. */
+    for (let i = 0; i < 3; i++) {
+      kit.post(M.wing, 2.4 - i * 0.7, 2.2 - i * 0.7, 0.45, 0, 0.22 + i * 0.5, 0, { radial: 14, collide: true });
+      kit.post(M.glass, 2.1 - i * 0.7, 2.1 - i * 0.7, 0.1, 0, 0.46 + i * 0.5, 0, { radial: 14 });
+    }
+    kit.post(M.strip, 0.3, 0.1, 1.4, 0, 2.2, 0, { radial: 8 });
+    /* The portraits. */
+    for (let i = 0; i < 6; i++) {
+      kit.slab(M.mark, 1.0, 1.6, 0.08, -w / 2 + 2 + i * ((w - 4) / 5), 2.6, d / 2 - 0.3, { collide: false, bevel: 0 });
+    }
+    /* The card room, screened. */
+    kit.slab(M.mark, 6, h - 1.2, 0.16, 0, (h - 1.2) / 2, -d / 2 + 3.6, { collide: true, bevel: 0 });
+    loose(kit, 0, 0, -d / 2 + 2.0, (world, q) => tableBody(world, q, M, 2.0, 2.0, 0.78));
+    for (let i = 0; i < 4; i++) loose(kit, Math.cos(i * 1.57) * 1.5, 0, -d / 2 + 2.0 + Math.sin(i * 1.57) * 1.5, (world, q) => chairBody(world, q, M));
+  },
+
+  /** #34 Minbari quarter: TRIANGULAR. Everything in the room is a triangle —
+   * the plan, the piers, the openings — and it is silent and blue. */
+  triangular(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.glass);
+    /* Three walls, not four: the plan is a triangle inside the footprint. */
+    const r = Math.min(w, d) / 2;
+    for (let i = 0; i < 3; i++) {
+      const a = TAU * (i / 3) + Math.PI / 3;
+      kit.slab(M.hull, r * 1.75, h, 0.4, r * 0.86 * Math.sin(a), h / 2, r * 0.86 * Math.cos(a), { ry: a, collide: i !== 0, bevel: 0 });
+    }
+    /* The soffit is a triangle too, and it steps up to a crystal at the apex. */
+    for (let i = 0; i < 4; i++) {
+      for (let k = 0; k < 3; k++) {
+        const a = TAU * (k / 3) + Math.PI / 3, s = 1 - i * 0.22;
+        kit.slab(M.dark, r * 1.75 * s, 0.4, 0.6, r * 0.86 * s * Math.sin(a), h + i * 0.7, r * 0.86 * s * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+      }
+    }
+    kit.post(M.strip, 0.9, 0.05, 1.6, 0, h + 3.4, 0, { radial: 3 });
+    /* Crystal piers: triangular posts at the three corners. */
+    for (let i = 0; i < 3; i++) {
+      const a = TAU * (i / 3);
+      kit.post(M.glass, 0.7, 0.5, h - 0.4, r * 0.8 * Math.sin(a), (h - 0.4) / 2, r * 0.8 * Math.cos(a), { radial: 3, collide: true });
+    }
+    /* Low benches on the three sides, and nothing else at all. */
+    for (let i = 0; i < 3; i++) {
+      const a = TAU * (i / 3) + Math.PI / 3;
+      loose(kit, r * 0.6 * Math.sin(a), 0, r * 0.6 * Math.cos(a), (world, q) => boxBody(world, q, M, 2.6, 0.4, 0.7, M.glass, 30, 'bench'));
+    }
+  },
+
+  /** #35 Drazi quarter: a FIGHTING PIT. One deep round hole with a lip you
+   * stand on, colours strung overhead, and noise. Nothing else in the room. */
+  fightingpit(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 4 });
+    ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
+    const r = Math.min(w, d) / 2 - 3;
+    /* The pit: a round well 2.6 m down with a ramp in on one side. */
+    for (let i = 0; i < 14; i++) {
+      const a = TAU * (i / 14);
+      kit.slab(M.deep, 2 * r * Math.tan(Math.PI / 14) * 1.06, 2.6, 0.5, r * Math.sin(a), -1.3, r * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+      kit.slab(M.deep, 2 * (r / 2) * Math.tan(Math.PI / 14) * 1.06, 0.4, r, (r / 2) * Math.sin(a), -2.8, (r / 2) * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    ctx.sunk.push({ w: r * 1.4, d: r * 1.4, depth: 2.6 });
+    for (let i = 0; i < 9; i++) kit.slab(M.dark, 2.2, 0.3, 0.6, 0, -0.15 - i * 0.29, -r + 0.4 + i * 0.55, { collide: true, bevel: 0 });
+    /* The colours: green and purple, strung across, which is the whole story
+     * of the Drazi and the only decoration the room has. */
+    for (let i = 0; i < 8; i++) {
+      kit.slab(i % 2 ? M.strip : M.status, w - 3, 0.05, 0.05, 0, h - 0.6 - (i % 3) * 0.3, -d / 2 + 2 + i * ((d - 4) / 7), { collide: false, bevel: 0 });
+    }
+  },
+
+  /** #36 The methane quarter: WALKWAYS OVER POOLS. Behind an airlock, yellow,
+   * and the floor is not a floor — it is a grid of catwalks over standing
+   * liquid. The one room you need a suit in. */
+  walkwaypools(kit, M, p) {
+    const { w, d, h } = p;
+    /* The pools ARE the floor: a plate 1.4 m down, glazed. */
+    kit.slab(M.glass, w, 0.3, d, 0, -1.25, 0, { collide: true, bevel: 0 });
+    walls(kit, M, w, d, h, { doorW: 2.4 });
+    ceiling(kit, M, w, d, h, { ribs: 6 });
+    /* The airlock at the door: two heavy frames and a light between them. */
+    for (const z of [-d / 2 - 0.1, -d / 2 + 1.6]) {
+      kit.slab(M.wing, 1.4, 2.6, 0.4, -1.9, 1.3, z, { collide: true, bevel: 0 });
+      kit.slab(M.wing, 1.4, 2.6, 0.4, 1.9, 1.3, z, { collide: true, bevel: 0 });
+      kit.slab(M.wing, 5.2, 0.5, 0.4, 0, 2.85, z, { collide: true, bevel: 0 });
+    }
+    kit.slab(M.status, 0.4, 0.4, 0.2, 0, 2.6, -d / 2 + 0.75, { collide: false, bevel: 0 });
+    /* The catwalks: a cross and a ring, everything else is pool. */
+    catwalk(kit, M, w - 2, 2.2, 0, 0, 0, 0);
+    catwalk(kit, M, d - 2, 2.2, 0, 0, 0, Math.PI / 2);
+    for (let i = 0; i < 8; i++) {
+      const a = TAU * (i / 8);
+      const rr = Math.min(w, d) / 2 - 2.6;
+      catwalk(kit, M, 2 * rr * Math.tan(Math.PI / 8) * 1.06, 1.8, 0, rr * Math.sin(a), rr * Math.cos(a), a + Math.PI / 2);
+    }
+    /* Suit checks: a rack of suits at the lock. */
+    rack(kit, M, 3.4, 2.4, w / 2 - 2.2, -d / 2 + 1.4, 0, 2);
+  },
+
+  /** #37 The Vorlon's door: a DEAD END. A corridor that narrows and stops.
+   * One light, one door, nothing else — the smallest place and the only one
+   * you cannot go into. */
+  deadend(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    /* The walls close in as you go: five bays, each narrower than the last. */
+    for (let i = 0; i < 5; i++) {
+      const z = -d / 2 + (d / 5) * (i + 0.5);
+      const ww = w - i * 0.5;
+      for (const s of [-1, 1]) kit.slab(M.hull, 0.4, h, d / 5, s * (ww / 2), h / 2, z, { collide: true, bevel: 0 });
+      kit.slab(M.dark, ww, 0.4, d / 5, 0, h + 0.2, z, { collide: true, bevel: 0 });
+    }
+    /* The door: organic, and the one light in the corridor is on it. */
+    kit.post(M.deep, 1.5, 1.1, 2.8, 0, 1.4, d / 2 - 0.6, { radial: 10, collide: true });
+    kit.post(M.strip, 0.24, 0.24, 0.24, 0, 2.0, d / 2 - 1.15, { radial: 8 });
+  },
+
+  /** #38 Transient hostel: a CAPSULE WALL. Both long walls are a honeycomb
+   * of bunk capsules three high; a desk at the door; a passage between. */
+  capsulewall(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 2.4 });
+    ceiling(kit, M, w, d, h, { ribs: 6 });
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 5; i++) {
+        for (let k = 0; k < 3; k++) {
+          const x = -w / 2 + (w / 5) * (i + 0.5), y = 0.3 + k * 1.25;
+          kit.slab(M.wing, w / 5 - 0.2, 1.1, 2.2, x, y + 0.55, s * (d / 2 - 1.2), { collide: true, bevel: 0 });
+          kit.slab(M.dark, w / 5 - 0.6, 0.9, 0.2, x, y + 0.55, s * (d / 2 - 2.3), { collide: false, bevel: 0 });
+          if ((i + k) % 2) kit.slab(M.strip, w / 5 - 0.9, 0.06, 0.08, x, y + 1.0, s * (d / 2 - 2.35), { collide: false, bevel: 0 });
+        }
+      }
+    }
+    counter(kit, M, 2.4, 0.8, w / 2 - 1.6, -d / 2 + 1.0, 0, 1.05);
+  },
+
+  /** #39 Laundry & showers: STEAM ROWS. Two rows of machines facing each
+   * other with a wet aisle between, shower stalls at the end, steam. */
+  steamrows(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.wing);
+    walls(kit, M, w, d, h, { doorW: 2.4 });
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 6; i++) {
+        const x = -w / 2 + (w / 6) * (i + 0.5);
+        kit.slab(M.wing, w / 6 - 0.25, 1.5, 1.1, x, 0.75, s * (d / 2 - 0.9), { collide: true, bevel: 0 });
+        kit.post(M.glass, 0.42, 0.42, 0.12, x, 0.95, s * (d / 2 - 1.5), { rx: Math.PI / 2, radial: 10 });
+      }
+      kit.slab(M.dark, w, 0.4, 1.4, 0, 1.7, s * (d / 2 - 0.9), { collide: false, bevel: 0 });
+    }
+    /* The showers, stalled off at one end. */
+    for (let i = 0; i < 3; i++) {
+      const x = w / 2 - 1.2 - i * 1.5;
+      kit.slab(M.glass, 0.1, 2.2, 1.4, x, 1.1, 0, { collide: true, bevel: 0 });
+      kit.post(M.wing, 0.12, 0.12, 0.3, x - 0.7, 2.1, 0, { radial: 6 });
+    }
+  },
+
+  /* ── THE FOUR TRAM PLATFORMS: #40 and its three, and rule 4 says they are
+   * four DIFFERENT rooms, not one built four times. Each is named for its
+   * material because that is what §3.2 names them by. ─────────────────────── */
+
+  /** #40 Arrivals — GLASS: a clear barrel vault over an island platform. */
+  glassplatform(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.wing);
+    for (let i = 0; i < 9; i++) {
+      const a = Math.PI * (i / 8);
+      kit.slab(M.glass, 0.5, 0.4, d, (d / 2 + 1) * Math.cos(a) * 0 + Math.cos(a) * (w / 2 + 0.6), Math.sin(a) * (h - 0.6) + 0.3, 0, { rz: -a, collide: false, bevel: 0 });
+    }
+    for (let i = 0; i < 5; i++) kit.slab(M.wing, w + 1.2, 0.18, 0.18, 0, h - 0.2, -d / 2 + (d / 4) * i, { collide: false, bevel: 0 });
+    kit.slab(M.strip, w * 0.7, 0.08, 0.12, 0, h - 0.5, 0, { collide: false, bevel: 0 });
+    for (let i = 0; i < 3; i++) loose(kit, (i - 1) * 4, 0, 0, (world, q) => boxBody(world, q, M, 2.4, 0.44, 0.6, M.wing, 26, 'bench'));
+  },
+
+  /** #40.2 Concourse East — BRASS: a deep bay under a ribbed brass soffit,
+   * with a bench island down the middle. */
+  brassplatform(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.mark);
+    for (const s of [-1, 1]) kit.slab(M.hull, 0.4, h, d, s * w / 2, h / 2, 0, { collide: true, bevel: 0 });
+    for (let i = 0; i < 10; i++) {
+      const z = -d / 2 + (d / 10) * (i + 0.5);
+      kit.slab(M.mark, w, 0.4, 0.5, 0, h - 0.2, z, { collide: false, bevel: 0 });
+      if (i % 2) kit.slab(M.strip, w * 0.5, 0.07, 0.14, 0, h - 0.5, z, { collide: false, bevel: 0 });
+    }
+    kit.slab(M.mark, 1.6, 0.5, d - 3, 0, 0.25, 0, { collide: true, bevel: 0 });
+    for (let i = 0; i < 4; i++) loose(kit, 0, 0.5, -d / 2 + 2.4 + i * ((d - 5) / 3), (world, q) => boxBody(world, q, M, 1.2, 0.4, 0.6, M.mark, 22, 'bench'));
+  },
+
+  /** #40.3 Quarters — TIMBER: low and warm, slatted screens, hanging lamps. */
+  timberplatform(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.deep);
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 14; i++) {
+        kit.slab(M.deep, w, 0.14, 0.1, 0, 0.4 + i * 0.22, s * (d / 2 - 0.2), { collide: i === 0, bevel: 0 });
+      }
+    }
+    kit.slab(M.deep, w, 0.4, d, 0, h + 0.2, 0, { collide: true, bevel: 0 });
+    for (let i = 0; i < 4; i++) {
+      const x = -w / 2 + (w / 4) * (i + 0.5);
+      kit.post(M.dark, 0.03, 0.03, 1.2, x, h - 0.6, 0, { radial: 4 });
+      kit.post(M.strip, 0.28, 0.2, 0.3, x, h - 1.3, 0, { radial: 8 });
+    }
+  },
+
+  /** #40.4 Command — STEEL: bare, guarded, a checkpoint arch and one bench. */
+  steelplatform(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    for (const s of [-1, 1]) kit.slab(M.wing, 0.5, h, d, s * w / 2, h / 2, 0, { collide: true, bevel: 0 });
+    kit.slab(M.wing, w + 1, 0.6, d, 0, h + 0.3, 0, { collide: true, bevel: 0 });
+    /* The checkpoint: an arch you walk through, with a scanner in it. */
+    for (const s of [-1, 1]) kit.slab(M.dark, 0.8, 2.8, 1.0, s * 2.0, 1.4, -d / 2 + 1.4, { collide: true, bevel: 0 });
+    kit.slab(M.dark, 4.8, 0.6, 1.0, 0, 3.1, -d / 2 + 1.4, { collide: true, bevel: 0 });
+    kit.slab(M.status, 3.4, 0.1, 0.12, 0, 2.75, -d / 2 + 0.9, { collide: false, bevel: 0 });
+    loose(kit, 0, 0, d / 2 - 2, (world, q) => boxBody(world, q, M, 2.2, 0.44, 0.6, M.wing, 26, 'bench'));
+  },
+
+  /* ── DECK 48 ──────────────────────────────────────────────────────────── */
+
+  /** #42 Comms & sensor room: a SCREEN DRUM. Round, dark, screens for walls,
+   * and one window with the dish turning behind it. */
+  screendrum(kit, M, p) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 12);
+      kit.slab(M.dark, 2 * r * Math.tan(Math.PI / 12) * 1.06, 0.4, r, r / 2 * Math.sin(a), -0.2, r / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    arcWall(kit, M.dark, r, h, 0.42, TAU - 0.42, 16);
+    ringOf(kit, M, M.dark, r - 0.1, 0.5, 20, h, { rad: 0.4 });
+    /* Screens: three courses right round, so the walls ARE the instrument. */
+    for (let k = 0; k < 3; k++) {
+      for (let i = 0; i < 14; i++) {
+        const a = TAU * (i / 14) + 0.2;
+        if (Math.abs(a - Math.PI) < 0.5) continue;
+        kit.slab(M.screen, 1.5, 0.7, 0.06, (r - 0.35) * Math.sin(a), 1.3 + k * 0.9, (r - 0.35) * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+      }
+    }
+    /* The window, and the dish turning outside it. */
+    kit.slab(M.glass, 3.4, 2.2, 0.12, 0, 2.0, r - 0.2, { collide: true, bevel: 0 });
+    kit.post(M.wing, 2.6, 0.6, 0.5, 0, 2.2, r + 2.6, { rx: -1.1, radial: 12 });
+    for (let i = 0; i < 4; i++) counter(kit, M, 2.2, 0.9, (i - 1.5) * 2.6, -r + 2.4, Math.PI, 0.95);
+  },
+
+  /** #43 Medbay: a TRIAGE HALL. Six curtained bays down one side, the surgery
+   * behind glass at the end, and a crash-cart lane clear down the middle. */
+  triagehall(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.wing);
+    walls(kit, M, w, d, h, { doorW: 4.4 });
+    ceiling(kit, M, w, d, h, { ribs: 7 });
+    for (let i = 0; i < 6; i++) {
+      const x = -w / 2 + (w / 6) * (i + 0.5);
+      /* The bay: a bed, a rail, a curtain, a monitor. */
+      kit.slab(M.wing, 2.0, 0.7, 0.9, x, 0.35, d / 2 - 1.6, { collide: true, bevel: 0 });
+      kit.slab(M.deep, 1.9, 0.16, 0.8, x, 0.78, d / 2 - 1.6, { collide: false, bevel: 0 });
+      kit.slab(M.mark, 0.1, 2.2, 2.4, x - w / 12, 1.1, d / 2 - 1.4, { collide: false, bevel: 0 });
+      kit.slab(M.screen, 0.7, 0.5, 0.05, x, 2.0, d / 2 - 0.25, { collide: false, bevel: 0 });
+    }
+    /* The surgery, glazed, at the far end. */
+    kit.slab(M.glass, 6.0, h - 0.6, 0.14, w / 2 - 4, h / 2 - 0.3, -d / 2 + 3.4, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 3.2, 0.14, 0.5, w / 2 - 4, h - 0.5, -d / 2 + 1.8, { collide: false, bevel: 0 });
+    loose(kit, w / 2 - 4, 0, -d / 2 + 1.8, (world, q) => tableBody(world, q, M, 2.2, 0.9, 0.9));
+    for (let i = 0; i < 3; i++) loose(kit, (i - 1) * 4, 0, 0, (world, q) => boxBody(world, q, M, 0.7, 1.0, 0.5, M.wing, 16, 'cart'));
+  },
+
+  /** #44 Bacta ward: a TANK ROW. One line of lit cylinders with men in them
+   * and a walk in front. Nothing else — the room is the row. */
+  tankrow(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 2.6 });
+    ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
+    for (let i = 0; i < 5; i++) {
+      tank(kit, M, 0.85, h - 1.0, -w / 2 + (w / 5) * (i + 0.5), d / 2 - 1.6);
+    }
+    /* The plant behind them: pipes running the length at the soffit. */
+    for (const dz of [-0.5, 0, 0.5]) kit.post(M.wing, 0.16, 0.16, w - 1, 0, h - 0.5, d / 2 - 0.6 + dz, { rx: 0, rz: Math.PI / 2, radial: 6 });
+    counter(kit, M, 3.0, 0.8, -w / 2 + 2.0, -d / 2 + 1.0, 0, 1.0);
+  },
+
+  /** #45 Morgue & memorial: a NAME WALL. Cold drawers on one side, and the
+   * whole other wall is the roll — read by `Graves`. */
+  namewall(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 2.4 });
+    ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
+    /* The drawers: a grid of handles, five wide and four high. */
+    for (let i = 0; i < 6; i++) {
+      for (let k = 0; k < 4; k++) {
+        kit.slab(M.wing, w / 6 - 0.14, 0.7, 0.5, -w / 2 + (w / 6) * (i + 0.5), 0.5 + k * 0.75, d / 2 - 0.4, { collide: true, bevel: 0 });
+        kit.slab(M.dark, 0.4, 0.1, 0.1, -w / 2 + (w / 6) * (i + 0.5), 0.5 + k * 0.75, d / 2 - 0.68, { collide: false, bevel: 0 });
+      }
+    }
+    /* The roll. One lit panel per rank of names, and a candle under it. */
+    for (let i = 0; i < 7; i++) {
+      kit.slab(M.mark, w / 7 - 0.2, 2.4, 0.05, -w / 2 + (w / 7) * (i + 0.5), 1.7, -d / 2 + 0.28, { collide: false, bevel: 0 });
+    }
+    kit.slab(M.strip, w - 1, 0.07, 0.16, 0, 3.1, -d / 2 + 0.42, { collide: false, bevel: 0 });
+  },
+
+  /** #46 Armoury: CAGES AND A RANGE. A cage wall of rifles, a saber vault
+   * with its own door, a bench, and a firing range seen through armoured
+   * glass — the range is a second volume, which is what makes the plan. */
+  cagerange(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 3 });
+    ceiling(kit, M, w, d, h, { ribs: 8 });
+    /* The cages. */
+    for (let i = 0; i < 4; i++) {
+      const x = -w / 2 + (w / 5) * (i + 0.5);
+      rack(kit, M, w / 5 - 0.4, h - 1.0, x, d / 2 - 0.6, 0, 4);
+      for (let k = 0; k * 0.3 < w / 5 - 0.4; k++) {
+        kit.post(M.wing, 0.04, 0.04, h - 1.0, x - (w / 5 - 0.4) / 2 + k * 0.3, (h - 1.0) / 2, d / 2 - 1.0, { radial: 4 });
+      }
+    }
+    /* The saber vault: a heavy round door in the end wall. */
+    kit.post(M.wing, 1.3, 1.3, 0.4, -w / 2 + 1.2, 1.6, -d / 2 + 1.2, { rz: Math.PI / 2, radial: 14, collide: true });
+    kit.post(M.strip, 0.3, 0.3, 0.1, -w / 2 + 1.0, 1.6, -d / 2 + 1.2, { rz: Math.PI / 2, radial: 10 });
+    counter(kit, M, 4.0, 1.0, 0, -d / 2 + 1.4, 0, 1.05);
+    /* The range: glass, then a lane with targets down it. */
+    kit.slab(M.glass, 10, h - 0.8, 0.16, w / 2 - 7, h / 2 - 0.4, -d / 2 + 3.0, { collide: true, bevel: 0 });
+    for (let i = 0; i < 3; i++) {
+      kit.slab(M.mark, 0.7, 1.6, 0.08, w / 2 - 10 + i * 3, 0.9, -d / 2 + 1.2, { collide: true, bevel: 0 });
+    }
+  },
+
+  /** #47 The Brig: a CELL RING. A ring of cells round a guard desk in the
+   * middle, force-field doors that glow. You wake here (§11's consequence). */
+  cellring(kit, M, p) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    floor(kit, M, w, d, 0, M.dark);
+    arcWall(kit, M.hull, r, h, 0.45, TAU - 0.45, 18);
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    /* Six cells, each a wedge with a lit field across its mouth. */
+    for (let i = 0; i < 6; i++) {
+      const a = TAU * (i / 6) + 0.52;
+      for (const s of [-1, 1]) {
+        const b = a + s * 0.42;
+        kit.slab(M.hull, 0.4, h, r - 4, (r - 2) / 1.4 * Math.sin(b), h / 2, (r - 2) / 1.4 * Math.cos(b), { ry: b, collide: true, bevel: 0 });
+      }
+      kit.slab(M.strip, 2.6, h - 0.6, 0.1, (r - 5.2) * Math.sin(a), h / 2 - 0.3, (r - 5.2) * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+      kit.slab(M.deep, 2.0, 0.4, 0.8, (r - 2.4) * Math.sin(a), 0.4, (r - 2.4) * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    /* The guard desk in the middle. */
+    for (let i = 0; i < 6; i++) {
+      const a = TAU * (i / 6);
+      counter(kit, M, 1.9, 0.8, 1.8 * Math.sin(a), 1.8 * Math.cos(a), a, 1.05);
+    }
+    kit.post(M.screen, 1.0, 1.0, 1.4, 0, 2.0, 0, { radial: 10 });
+  },
+
+  /** #48 Reactor hall: a CATHEDRAL. Thirty metres tall, the core a lit column
+   * up the middle, catwalks spiralling round it. The tallest place here. */
+  cathedral(kit, M, p) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    floor(kit, M, w, d, 0, M.dark);
+    arcWall(kit, M.hull, r, h, 0.4, TAU - 0.4, 22);
+    /* The core: a column of glass with a strip inside it, floor to soffit. */
+    kit.post(M.glass, 3.0, 3.0, h - 1, 0, (h - 1) / 2, 0, { radial: 16, collide: true });
+    kit.post(M.strip, 2.2, 2.2, h - 3, 0, (h - 3) / 2 + 1, 0, { radial: 12 });
+    for (let i = 0; i < 6; i++) ringOf(kit, M, M.wing, 3.4, 0.6, 16, i * (h / 6), { rad: 0.3 });
+    /* The spiral: eight catwalk segments climbing a full turn and a half. */
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 8), y = 3 + i * (h - 8) / 12;
+      const rr = r - 3.5;
+      catwalk(kit, M, 2 * rr * Math.tan(Math.PI / 8) * 1.06, 2.4, y, rr * Math.sin(a), rr * Math.cos(a), a + Math.PI / 2);
+      kit.post(M.dark, 0.2, 0.2, y, rr * Math.sin(a), y / 2, rr * Math.cos(a), { radial: 6, collide: true });
+    }
+    stair(kit, M, 2.0, 3, -r + 2.4, r - 5);
+    for (let i = 0; i < 6; i++) loose(kit, (i - 2.5) * 2.2, 0, -r + 3, (world, q) => makeBarrel(world, q));
+  },
+
+  /** #49 Coolant & water plant: WET GRATING. The floor is a grid over standing
+   * water, pipes in banks at head height, turquoise light from below. */
+  wetgrating(kit, M, p) {
+    const { w, d, h } = p;
+    kit.slab(M.glass, w, 0.3, d, 0, -1.05, 0, { collide: true, bevel: 0 });
+    walls(kit, M, w, d, h, { doorW: 3 });
+    ceiling(kit, M, w, d, h, { ribs: 6 });
+    /* The grating: a grid of bars you walk on and see through. */
+    for (let i = 0; i * 0.5 < w; i++) kit.slab(M.dark, 0.1, 0.1, d, -w / 2 + i * 0.5, 0.05, 0, { collide: i % 4 === 0, bevel: 0 });
+    for (let i = 0; i * 0.5 < d; i++) kit.slab(M.dark, w, 0.08, 0.08, 0, 0.02, -d / 2 + i * 0.5, { collide: false, bevel: 0 });
+    kit.slab(M.dark, w, 0.3, d, 0, -0.16, 0, { collide: true, bevel: 0 });
+    /* The tanks and the pipe banks. */
+    for (let i = 0; i < 3; i++) tank(kit, M, 1.5, h - 1.4, -w / 2 + 3 + i * 4.2, d / 2 - 2.4);
+    for (let k = 0; k < 4; k++) {
+      kit.post(M.wing, 0.3, 0.3, w - 1, 0, h - 1.2 - (k % 2) * 0.5, -d / 2 + 3 + k * 1.1, { rz: Math.PI / 2, radial: 8 });
+    }
+    kit.slab(M.strip, w - 2, 0.06, 0.4, 0, -0.9, 0, { collide: false, bevel: 0 });
+  },
+
+  /** #50 Fabrication: a MACHINE SHOP. Lathes in a row, a plasma cutter under
+   * an extraction hood, a droid on a bench being rebuilt. */
+  machineshop(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 4 });
+    ceiling(kit, M, w, d, h, { ribs: 6 });
+    for (let i = 0; i < 4; i++) {
+      const x = -w / 2 + (w / 4) * (i + 0.5);
+      kit.slab(M.wing, w / 4 - 0.8, 1.1, 1.2, x, 0.55, d / 2 - 1.8, { collide: true, bevel: 0 });
+      kit.post(M.dark, 0.3, 0.3, 1.4, x, 1.8, d / 2 - 1.8, { rz: Math.PI / 2, radial: 8 });
+      kit.slab(M.status, 0.3, 0.14, 0.14, x + 0.6, 1.25, d / 2 - 2.3, { collide: false, bevel: 0 });
+    }
+    /* The cutter under its hood — the sparks are `Particles`'. */
+    kit.slab(M.dark, 4.0, 1.0, 3.0, -w / 2 + 3.4, h - 0.7, -d / 2 + 3.0, { collide: false, bevel: 0 });
+    kit.slab(M.wing, 3.0, 0.9, 2.0, -w / 2 + 3.4, 0.45, -d / 2 + 3.0, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 2.0, 0.06, 1.2, -w / 2 + 3.4, 0.92, -d / 2 + 3.0, { collide: false, bevel: 0 });
+    /* The bench with the droid on it. */
+    loose(kit, w / 2 - 4, 0, -d / 2 + 2.6, (world, q) => tableBody(world, q, M, 2.6, 1.2, 0.85));
+    for (let i = 0; i < 5; i++) loose(kit, w / 2 - 6 + i * 1.2, 0, 0, (world, q) => makeCrate(world, q, 0.55));
+  },
+
+  /** #51 Droid pool: CHARGING ROWS. Alcoves in both long walls with a droid
+   * in each and a charge light over it, a protocol droid on a bench. */
+  chargingrows(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 2.8 });
+    ceiling(kit, M, w, d, h, { ribs: 6, strips: false });
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 8; i++) {
+        const x = -w / 2 + (w / 8) * (i + 0.5);
+        kit.slab(M.hull, w / 8 - 0.2, 2.1, 1.2, x, 1.05, s * (d / 2 - 0.7), { collide: true, bevel: 0 });
+        kit.slab(M.dark, w / 8 - 0.5, 1.8, 0.5, x, 0.9, s * (d / 2 - 1.35), { collide: false, bevel: 0 });
+        kit.slab(M.strip, 0.3, 0.06, 0.1, x, 1.95, s * (d / 2 - 1.4), { collide: false, bevel: 0 });
+      }
+    }
+    loose(kit, 0, 0, 0, (world, q) => tableBody(world, q, M, 2.2, 1.0, 0.8));
+  },
+
+  /** #52 Cargo hold: a CANYON. Container stacks in two walls with a slot
+   * between them, a crane rail overhead, a lifter parked. The whole room is
+   * throwable — §3.2 says so in as many words. */
+  canyon(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 5 });
+    /* The stacks: static below shoulder height (they are the canyon walls),
+     * loose on top (they are the sandbox). */
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 5; i++) {
+        for (let k = 0; k < 3; k++) {
+          const x = -w / 2 + (w / 5) * (i + 0.5), y = k * 2.6;
+          kit.slab(k % 2 ? M.deep : M.wing, w / 5 - 0.4, 2.5, 4.6, x, y + 1.25, s * (d / 2 - 3), { collide: true, bevel: 0 });
+        }
+        loose(kit, -w / 2 + (w / 5) * (i + 0.5), 7.8, s * (d / 2 - 3), (world, q) => makeCrate(world, q, 1.2));
+      }
+    }
+    /* The crane rail and its trolley. */
+    for (const s of [-1, 1]) kit.slab(M.wing, w, 0.4, 0.5, 0, h - 1.2, s * 3.4, { collide: false, bevel: 0 });
+    kit.slab(M.dark, 2.4, 0.8, 7.4, -w / 4, h - 1.8, 0, { collide: false, bevel: 0 });
+    kit.post(M.dark, 0.08, 0.08, 4.0, -w / 4, h - 4.0, 0, { radial: 4 });
+    scatter(kit, 14, w * 0.5, 5, 91, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.8)));
+  },
+
+  /** #53 Waste & recycling: a COMPACTOR. A pit with a moving face, a chute
+   * above it, and a walk round three sides you throw things from. */
+  compactor(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 2.6 });
+    ceiling(kit, M, w, d, h, { ribs: 4, strips: false });
+    sink(kit, M, w - 6, d - 6, 3.4, ctx);
+    /* The compactor face: a slab that will move (StationLife steps it). */
+    kit.slab(M.wing, 0.7, 3.2, d - 6.4, -(w - 6) / 2 + 0.4, -1.7, 0, { collide: true, bevel: 0 });
+    kit.slab(M.status, 0.1, 0.2, d - 7, -(w - 6) / 2 + 0.75, -0.6, 0, { collide: false, bevel: 0 });
+    /* The chute over it. */
+    kit.post(M.dark, 1.6, 1.2, 2.4, (w - 6) / 2 - 1.5, h - 1.4, 0, { radial: 8 });
+    for (let i = 0; i < 6; i++) loose(kit, (w - 6) / 2 - 1.5, 0, (i - 2.5) * 1.2, (world, q) => makeCrate(world, q, 0.7));
+  },
+
+  /* ── DECK 32 AND 12: FLIGHT OPS ───────────────────────────────────────── */
+
+  /** #2 Deck control tower: a CANTILEVER. A glass box hung out over nothing,
+   * reached by a stair, with the traffic board across its back. */
+  cantilever(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.wing);
+    kit.slab(M.hull, w, h, 0.4, 0, h / 2, d / 2, { collide: true, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.glass, 0.14, h - 0.7, d, s * w / 2, h / 2 - 0.2, 0, { collide: true, bevel: 0 });
+    kit.slab(M.glass, w, h - 0.7, 0.14, 0, h / 2 - 0.2, -d / 2, { collide: true, bevel: 0 });
+    ceiling(kit, M, w, d, h, { ribs: 3 });
+    /* The struts it hangs on — a cantilever that is not visibly held is a box
+     * floating in the air, which is the failure `HANGAR.md` is about. */
+    for (const s of [-1, 1]) kit.slab(M.wing, 0.4, 0.4, 5.0, s * (w / 2 - 0.6), -1.4, 1.0, { rx: 0.6, collide: false, bevel: 0 });
+    board(kit, M, 5.0, 1.8, 0, 2.2, d / 2 - 0.25);
+    for (let i = 0; i < 4; i++) counter(kit, M, 2.0, 0.9, (i - 1.5) * 2.6, -d / 2 + 1.4, Math.PI, 0.95);
+    stair(kit, M, 1.8, 3.2, 0, -d / 2 - 0.4);
+  },
+
+  /** #3 Pilots' ready room: a LOW ROOM. The lowest ceiling anywhere, lockers
+   * down one wall, cots down the other, a briefing screen and an urn. */
+  lowroom(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 2.2 });
+    ceiling(kit, M, w, d, h, { ribs: 5, strips: false });
+    for (let i = 0; i < 8; i++) {
+      kit.slab(M.wing, w / 8 - 0.15, 2.2, 0.6, -w / 2 + (w / 8) * (i + 0.5), 1.1, d / 2 - 0.4, { collide: true, bevel: 0 });
+    }
+    for (let i = 0; i < 4; i++) {
+      kit.slab(M.deep, 1.9, 0.4, 0.8, -w / 2 + 2 + i * 3.2, 0.3, -d / 2 + 1.2, { collide: true, bevel: 0 });
+    }
+    board(kit, M, 3.2, 1.8, w / 2 - 2.4, 1.7, -d / 2 + 0.25);
+    kit.post(M.wing, 0.3, 0.3, 0.6, -w / 2 + 1.0, 1.3, 0, { radial: 10, collide: true });
+    for (let i = 0; i < 3; i++) loose(kit, (i - 1) * 2.2, 0, 0, (world, q) => chairBody(world, q, M));
+    loose(kit, 0, 0, 1.2, (world, q) => tableBody(world, q, M, 1.6, 1.0, 0.76));
+  },
+
+  /** #4 Fighter maintenance bay: a DEEP PIT with gantries at three levels and
+   * a fighter on a lift in it. You look down into the work. */
+  deeppit(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { doorW: 5 });
+    sink(kit, M, w - 8, d - 8, 8, ctx);
+    for (let i = 0; i < 3; i++) {
+      const y = -8 + 2.6 + i * 2.6;
+      for (const s of [-1, 1]) catwalk(kit, M, w - 9, 1.8, y, 0, s * ((d - 8) / 2 - 1.2), 0);
+    }
+    /* The lift plate at the bottom, and the airframe standing on it. */
+    kit.slab(M.wing, w - 12, 0.5, d - 12, 0, -7.6, 0, { collide: true, bevel: 0 });
+    kit.slab(M.wing, 2.0, 1.4, 7.0, 0, -6.4, 0, { collide: true, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.wing, 5.0, 0.3, 2.2, s * 3, -6.6, -1, { collide: false, bevel: 0 });
+    /* The overhead gantry crane. */
+    kit.slab(M.dark, w - 2, 0.5, 0.7, 0, h - 1.0, 0, { collide: false, bevel: 0 });
+    scatter(kit, 8, w * 0.6, d * 0.6, 55, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.7)));
+  },
+
+  /** #5 Cobra bay: a SHAFT. Thirty-four metres of vertical launch well with
+   * the Starfury on a rail up the middle and a blast wall you look through. */
+  shaft(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    const r = Math.min(w, d) / 2;
+    arcWall(kit, M.hull, r, h, 0.5, TAU - 0.5, 16);
+    /* The rail: two rams up the full height, with the cradle between them. */
+    for (const s of [-1, 1]) kit.post(M.wing, 0.4, 0.4, h - 2, s * 2.6, (h - 2) / 2, 0, { radial: 8, collide: true });
+    kit.slab(M.wing, 6.0, 0.5, 2.4, 0, 1.4, 0, { collide: true, bevel: 0 });
+    /* Hazard chevrons on the deck, and the blast wall with its window. */
+    for (let i = 0; i < 6; i++) kit.slab(M.mark, 1.2, 0.05, 0.5, -3 + i * 1.2, 0.03, -r + 2.0, { ry: 0.6, collide: false, bevel: 0 });
+    kit.slab(M.hull, w, 3.4, 0.6, 0, 1.7, -r + 0.6, { collide: true, bevel: 0 });
+    kit.slab(M.glass, w - 4, 1.6, 0.2, 0, 2.4, -r + 0.6, { collide: false, bevel: 0 });
+    /* The strips climbing the shaft, which is what makes it read as deep. */
+    for (let i = 0; i < 10; i++) {
+      const a = TAU * (i / 10);
+      kit.slab(M.strip, 0.16, h - 4, 0.1, (r - 0.5) * Math.sin(a), h / 2, (r - 0.5) * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+    }
+  },
+
+  /** #6 Fighter rack: a CELLAR. Low and wide, two airframes on cradles, a
+   * parts wall, engines on stands you can pick up and throw. */
+  cellar(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 4 });
+    ceiling(kit, M, w, d, h, { ribs: 8, strips: false });
+    for (const s of [-1, 1]) {
+      kit.slab(M.wing, 1.6, 1.0, 6.0, s * (w / 4), 0.5, 0, { collide: true, bevel: 0 });
+      kit.slab(M.wing, 5.0, 0.3, 1.8, s * (w / 4), 1.6, -0.8, { collide: false, bevel: 0 });
+      kit.post(M.dark, 0.7, 0.7, 3.0, s * (w / 4), 1.3, 2.2, { rx: Math.PI / 2, radial: 10, collide: true });
+    }
+    rack(kit, M, w - 3, h - 0.6, 0, d / 2 - 0.5, 0, 5);
+    /* The engines on stands — #6's verb is to grip a bell and throw it. */
+    for (let i = 0; i < 4; i++) {
+      loose(kit, -w / 2 + 3 + i * ((w - 6) / 3), 0.9, -d / 2 + 2.4,
+        (world, q) => boxBody(world, q, M, 1.0, 1.1, 1.0, M.status, 34, 'engine'));
+      kit.slab(M.dark, 1.2, 0.9, 1.2, -w / 2 + 3 + i * ((w - 6) / 3), 0.45, -d / 2 + 2.4, { collide: true, bevel: 0 });
+    }
+  },
+};
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Build one place into its own group.
+ *
+ * ONE KIT PER PLACE, not one per deck. A deck-wide merge would be four draw
+ * calls for fifty rooms and no way to cull any of them — and §12.3's rule is
+ * that a place is drawn when its door is inside 80 m, which needs the place
+ * to be a thing that can be switched off. The price is a draw per material per
+ * place, which is why a builder keeps to four or five materials and why
+ * `station.mjs` counts them.
+ */
+export function buildPlace(world, group, place, M, st) {
+  const fn = SHAPES[place.shape];
+  if (!fn) throw new Error(`StationKit: place #${place.id} (${place.name}) declares shape '${place.shape}', which has no builder`);
+  const kit = new Kit(1000 + Math.round(place.id * 7));
+  kit.weather = false;
+  const ctx = {
+    sunk: [],
+    trees: [],
+    place,
+    /* A builder may hand something back to the station: the cabin and the
+     * habitat each name themselves so `Home.js` and `Habitat.js` can find
+     * their room without a second table of coordinates (§2.3). */
+    home: null,
+    habitat: null,
+  };
+  fn(kit, M, place, ctx, world);
+  const y = floorOf(place);
+  const pos = new THREE.Vector3(place.x, y, place.z);
+  const quat = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), place.yaw);
+  const out = kit.emit(world, pos, quat);
+  for (const m of out.meshes) group.add(m);
+  /* A sunken floor is world-space state `world.floorAt` reads, so it is
+   * recorded here in world coordinates rather than in the builder's frame. */
+  for (const s of ctx.sunk) {
+    const c = Math.abs(Math.cos(place.yaw)), sn = Math.abs(Math.sin(place.yaw));
+    const hx = (s.w * c + s.d * sn) / 2, hz = (s.w * sn + s.d * c) / 2;
+    st.sunk.push({ x0: place.x - hx, x1: place.x + hx, z0: place.z - hz, z1: place.z + hz, dy: -s.depth });
+  }
+  if (ctx.home) st.home = ctx.home;
+  if (ctx.habitat) st.habitat = ctx.habitat;
+  if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
+  return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
+}

@@ -36,6 +36,8 @@ import { registerDestructible } from '../world/Destruction.js';
 import { makeRng, clamp, TAU, lerp } from '../engine/MathUtil.js';
 import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
 import { HANGAR_LEVEL } from './Hangar.js';
+import { STATION_LEVEL } from './Station.js';
+import { setLiftFloors, MENU_FLOOR } from './DeckLift.js';
 /* The IG-100 general's set-piece is registered at the bottom of this file —
  * see the
  * note there. These three edges add nothing to anybody's static import graph
@@ -5011,6 +5013,60 @@ LEVELS.geonosis = {
  * something had imported that file.
  */
 LEVELS.hangar = HANGAR_LEVEL;
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE STATION — SHARK.md, and its one switch                                */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ §9.2: IT CAN BE KILLED IN ONE COMMIT, AND THE GAME IS EXACTLY TODAY'S ══
+ *
+ * The station is `SHARK.md`, and every line of it is a new file except the
+ * guarded seams below. This is the switch those seams are behind:
+ *
+ *   Levels.js   this block — `LEVELS.station`, `LEVELS.orbit`, the lift's
+ *               floor list.
+ *   Waves.js    `MODES.station`, one hidden row in the shape of `MODES.hangar`.
+ *   World.js    one branch beside the hangar's, choosing `StationDirector`.
+ *   DeckLift.js the floor list and the button column — inert at one floor.
+ *   main.js     `onDeckLift`, `onKiosk`, and the orbit load.
+ *   pack.mjs    one MIME row for `.smesh`.
+ *   Bodies.js   the species rows on `ARCHETYPES`, fenced `unlockAt: 99`.
+ *
+ * Set this to `false` and the lift has one floor, `LEVELS.station` does not
+ * exist, no mode names it, and the tree behaves as it did before any of it.
+ * `station.mjs` proves that against a recorded trace of the hangar visit the
+ * way `saberforms.mjs` proves the single blade — a difference of zero, not a
+ * suite that happens to still pass.
+ *
+ * Killing it for good is: delete the new files, delete `assets/station/`,
+ * revert these seams. One commit; nothing else in the game moves.
+ */
+export const STATION_ENABLED = true;
+
+if (STATION_ENABLED) {
+  /* The registration points the same way the deck's does and for the same
+   * reason: this file owns the roster and imports the record; `Station.js`
+   * imports no levels at all, so there is no cycle to run green for hours
+   * and then die on one suite's import order. */
+  LEVELS.station = STATION_LEVEL;
+  /**
+   * THE LIFT'S FLOOR LIST — one row per door (§9.2), in the order the button
+   * column cycles. `MENU_FLOOR` stays first, so the ride out still ends on
+   * the menu unless a floor was chosen.
+   *
+   * SHARK §5.2's first cut is two floors, FLIGHT DECK 32 and CONCOURSE 40.
+   * The other three decks of the drum are here because the drum is built and
+   * a lift that can only reach one of its three decks is a lift with a bug in
+   * it, not a smaller feature.
+   */
+  setLiftFloors([
+    MENU_FLOOR,
+    { n: 40, label: 'Concourse', level: 'station', deck: 40 },
+    { n: 44, label: 'Living deck', level: 'station', deck: 44 },
+    { n: 48, label: 'Working deck', level: 'station', deck: 48 },
+  ]);
+}
 
 export const LEVEL_ORDER = ['scoria', 'mustafar', 'colosseum', 'wood', 'drifts', 'alpine',
   'geonosis'];
