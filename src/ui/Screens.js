@@ -57,7 +57,12 @@
  * the Holocron exactly as it gets you out of a draft, and `guarded` has to be
  * able to fall back to the pause card from inside it.
  */
-export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster', 'deploy'];
+export const LIVE = ['playing', 'paused', 'draft', 'dead', 'meditation', 'muster', 'deploy',
+  /* 'kiosk' is the station's counter (SHARK §5.2) and it is here for exactly
+   * the reason 'meditation' is: an overlay that stops the world and owns the
+   * screen, whose card is registered through `card()` rather than being one of
+   * Menu's three. Inert with STATION_ENABLED off — nothing raises it. */
+  'kiosk'];
 
 /**
  * The states in which an overlay owns the screen and the world is stopped, and

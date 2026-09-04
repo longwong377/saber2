@@ -50,7 +50,7 @@ import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf } from './StationPlan.js';
 import { buildPlace, SHAPES } from './StationKit.js';
-import { dressDeckLift, stepDeckLift, undressDeckLift } from './DeckLift.js';
+import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -594,6 +594,8 @@ export function dressStation(world) {
     places: new Map(),
     sunk: [],
     draws: 0,
+    /** Which place the arrival prompt last named. */
+    promptedAt: undefined,
     tris: 0,
     solids: 0,
     /** The station clock (§3.4). One game hour per two real minutes. */
@@ -769,6 +771,78 @@ export class StationDirector {
  * Nothing is allocated here and nothing closes over the loop: the rule every
  * deck file already keeps (§12.3), and what makes this affordable at all.
  */
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE ONE KEY — §14's interact prompt, and §3.2's verb column               */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ EVERY VERB ROW IN §3.2 IS A PROMPT STRING ═════════════════════════════
+ *
+ * §14: "One key, one prompt style, on every verb in §3.2 — the deck's
+ * `liftKey`/inspect pattern — so a player never wonders what is usable."
+ *
+ * So there is no table of interactions here. The gazetteer already says what
+ * you do in each of the fifty-five places, and `place.verb` IS the prompt.
+ * A second list would be the hand-maintained twin beside its generated
+ * original that HANDOFF §2.3 calls this project's signature defect.
+ */
+
+/** Which place the player is standing in, or at the door of. Null outdoors. */
+export function placeUnder(world, x, z) {
+  const st = world?._station;
+  if (!st) return null;
+  let best = null, bestD = 4 * 4;
+  for (const rec of st.places.values()) {
+    const p = rec.place;
+    /* Inside its footprint wins outright — you are IN the room. */
+    const dx = x - p.x, dz = z - p.z;
+    const c = Math.cos(-p.yaw), sn = Math.sin(-p.yaw);
+    const lx = dx * c + dz * sn, lz = -dx * sn + dz * c;
+    if (Math.abs(lx) <= p.w / 2 && Math.abs(lz) <= p.d / 2) return p;
+    /* Otherwise the nearest door within arm's reach of it. */
+    const ex = x - p.door[0], ez = z - p.door[1];
+    const d2 = ex * ex + ez * ez;
+    if (d2 < bestD) { bestD = d2; best = p; }
+  }
+  return best;
+}
+
+/**
+ * The interact key, on the station. `Player._readInput` calls it on `focus`.
+ *
+ * The lift first, exactly as `DeckEdit.focusKey` does it and for the same
+ * reason: `liftKey` answers true only when it spent the press, so one key at
+ * the lobby doors cannot both call the car and open a shop.
+ */
+export function stationKey(world) {
+  if (liftKey(world)) return true;
+  const p = world.player?.position;
+  if (!p) return false;
+  const place = placeUnder(world, p.x, p.z);
+  if (!place || !place.verb) return false;
+  /* A counter opens the panel it names; everything else answers with its own
+   * verb, which is the prompt and, until its system lands, the whole of it. */
+  if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
+  world.notify?.(place.name.toUpperCase(), place.verb);
+  return true;
+}
+
+/**
+ * The prompt, raised once when you arrive somewhere new. Not every frame and
+ * not on a HUD element of its own: the station adds no interface (§14's "the
+ * menu does not change"), so the place's name and its verb go through the
+ * banner every other verb in this game already uses.
+ */
+function promptOnArrival(world, st, px, pz) {
+  const here = placeUnder(world, px, pz);
+  const id = here ? here.id : null;
+  if (id === st.promptedAt) return;
+  st.promptedAt = id;
+  if (!here || !here.verb) return;
+  world.notify?.(here.name.toUpperCase(), here.verb);
+}
+
 const CULL = 80;
 const CULL_ATRIUM = 130;
 
@@ -794,4 +868,5 @@ export function stepStation(world, dt) {
     const want = d2 < r * r;
     if (want !== rec.group.visible) rec.group.visible = want;
   }
+  promptOnArrival(world, st, px, pz);
 }

@@ -135,23 +135,65 @@ const peerData = await exists(peer)
  * level is added (§2.3). Audio is deliberately excluded — the soundtrack is
  * 28 MB and is streamed.
  */
+/**
+ * …AND ONE ROW THAT IS NOT AN IMAGE (SHARK §9.2, §12.1).
+ *
+ * The station's five rooms are `.smesh` — a JSON header and two typed arrays,
+ * read by `src/game/StationMesh.js` with a plain `fetch`. They have to be IN
+ * the single file or the station is a level that 404s when you open the build
+ * from disk, which is the exact class of failure this packer's own header
+ * records against the theatre screenshots: the page still works and everyone
+ * is looking at the fallback.
+ *
+ * A `data:` URL is `fetch`-able, so one MIME row is the whole change and the
+ * game's code path is identical served or packed. `SHARK.md` §5.1 budgeted a
+ * draco decoder and its wasm here too; `tools/glbmesh.mjs`'s header records
+ * why there is none to inline.
+ */
 const ASSET_IMG = { '.png': 'image/png', '.webp': 'image/webp', '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml' };
+  '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.svg': 'image/svg+xml',
+  '.smesh': 'application/octet-stream' };
 const assetData = new Map();
-async function inlineAsset(relPath) {
-  if (assetData.has(relPath)) return assetData.get(relPath);
+/**
+ * ══ AND WHICH OF THEM THE RUNTIME MAP ACTUALLY NEEDS ══════════════════════
+ *
+ * Every asset used to go into `window.__PACKED_ASSETS` as well as being
+ * substituted into whatever named it, so each one was carried TWICE: once
+ * base64'd inside a module (which is itself base64'd, so 1.78× its bytes) and
+ * once in the page's map (1.33×). Measured when the station's five rooms
+ * arrived: 2.03 MB of geometry cost 6.35 MB of page, and the pack went through
+ * §12.2's 34 MB bound on an asset budget of two.
+ *
+ * The map exists for ONE case — `assets/previews/${key}.jpg`, a path that does
+ * not exist until it is evaluated, so it cannot be substituted by name. Those
+ * are exactly the files the directory scan below discovers. An asset reached
+ * by a literal is already in the source that names it and never needs looking
+ * up, so it is inlined and left out of the map.
+ *
+ * A file that is BOTH — named literally in one module and interpolated in
+ * another — is still in the map, because the directory scan puts it there.
+ * The fallback in `__A` is unchanged, so a miss still degrades to today's
+ * behaviour rather than to a hole.
+ */
+const mapData = new Map();
+async function inlineAsset(relPath, forMap = false) {
+  if (assetData.has(relPath)) {
+    if (forMap) mapData.set(relPath, assetData.get(relPath));
+    return assetData.get(relPath);
+  }
   const type = ASSET_IMG[extname(relPath).toLowerCase()];
   if (!type) return null;
   const file = `${ROOT}/${relPath}`;
   if (!await exists(file)) return null;
   const uri = `data:${type};base64,${(await readFile(file)).toString('base64')}`;
   assetData.set(relPath, uri);
+  if (forMap) mapData.set(relPath, uri);
   return uri;
 }
 
 /* The paths named with no interpolation in them: every one is resolved here
  * and substituted in place, in the HTML and in the module sources alike. */
-const STATIC_ASSET = /(?:\.\/)?(assets\/[A-Za-z0-9_\-./]+\.(?:png|webp|jpe?g|gif|svg))/g;
+const STATIC_ASSET = /(?:\.\/)?(assets\/[A-Za-z0-9_\-./]+\.(?:png|webp|jpe?g|gif|svg|smesh))/g;
 /* index.html names its own — the boot plate and the wordmarks — and they are
  * in no module, so the page is scanned alongside the graph. */
 for (const m of [...html.matchAll(STATIC_ASSET)]) await inlineAsset(m[1]);
@@ -199,7 +241,7 @@ for (const d of dirs) {
   const dir = `${ROOT}/${d}`.replace(/\/[^/]*$/, '');
   try { if (!(await stat(dir)).isDirectory()) continue; } catch { continue; }
   for (const name of await readdir(dir)) {
-    await inlineAsset(`${d.replace(/[^/]*$/, '')}${name}`);
+    await inlineAsset(`${d.replace(/[^/]*$/, '')}${name}`, true);
   }
 }
 
@@ -419,7 +461,7 @@ const head = (page.match(/<head[^>]*>([\s\S]*?)<\/head>/) || [, ''])[1]
  * as the unpacked game does rather than painting a hole.
  */
 const assetMap = `<script>window.__PACKED_ASSETS=${JSON.stringify(
-  Object.fromEntries(assetData))};window.__A=function(p){return window.__PACKED_ASSETS[
+  Object.fromEntries(mapData))};window.__A=function(p){return window.__PACKED_ASSETS[
   String(p).replace(/^\\.\\//,'')]||p};</script>`;
 body = assetMap + body;
 
@@ -452,5 +494,5 @@ await writeFile(OUT, `${head}\n${body}`);
 const size = (await stat(OUT)).size;
 console.log(`modules  : ${mods.size}`);
 console.log(`module b64: ${(bytes / 1e6).toFixed(2)} MB`);
-console.log(`assets   : ${assetData.size} inlined`);
+console.log(`assets   : ${assetData.size} inlined (${mapData.size} in the runtime map)`);
 console.log(`written  : ${OUT}  ${(size / 1e6).toFixed(2)} MB`);

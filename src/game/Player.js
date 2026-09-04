@@ -40,6 +40,10 @@ import { POWER_COST, SENSE_DRAIN, UNBOUND, UNBOUND_OF, UNLEASH_TOLL, unboundId }
 /* FLAGSHIP §7's BREAK verb, and both are leaves — see the header of each. */
 import { MORALE } from './Morale.js';
 import { shakeNerve } from './Nerve.js';
+/* The station's interact key — SHARK §14. `Station.js` imports no levels and
+ * nothing from this file, so the edge is one-way, the same shape the DeckEdit
+ * import below has. */
+import { stationKey } from './Station.js';
 import { focusKey as deckFocus, wheelEdit as deckWheel,
          naming as deckNaming, beginNaming as deckBeginNaming,
          commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
@@ -4483,6 +4487,25 @@ export class Player {
       }
       return;
     }
+
+    /**
+     * ══ THE STATION'S ONE KEY (SHARK §14) ══════════════════════════════════
+     *
+     * "One key, one prompt style, on every verb in §3.2 — the deck's
+     * `liftKey`/inspect pattern — so a player never wonders what is usable."
+     *
+     * The station is NOT `hosting`: it is a level in sandbox mode (§11) and
+     * the player has the blade, the Force and every system the battlefield
+     * has. So it does not take the deck's allow-list branch above, and its
+     * interact key belongs here, on `focus` — the same key the deck's lift
+     * and its man-picking already answer, so nothing new is bound and
+     * `controls.mjs` has nothing new to refuse.
+     *
+     * Guarded on `world._station`, which only `dressStation` writes. With
+     * `STATION_ENABLED` off no world ever has one and this is one property
+     * read a frame.
+     */
+    if (this.world?._station && input.actHit('focus')) stationKey(this.world);
 
     // ── the wheel belongs to whatever is actually being held.
     // SaberController spends it on wrist roll (`rollInput += mouse.wheel*0.55`)

@@ -987,6 +987,25 @@ async function enterHangar(arrival = null, opts = {}) {
      * commits his edits and puts the deck down properly.
      */
     world.onDeckLeave = () => { leaveHangar(); };
+    /**
+     * ══ AND THE LIFT NOW HAS FLOORS (SHARK §5.2) ═══════════════════════════
+     *
+     * `DeckLift` raises this instead of `onDeckLeave` when the button column
+     * was set to a floor that is not the menu's. What a floor IS — a level and
+     * a deck number — is the lift's row; what to DO with one is main.js's, the
+     * same division `onDeckDeploy` already has.
+     *
+     * With `STATION_ENABLED` off the lift has one floor, no row carries a
+     * `level`, and this can never fire.
+     */
+    world.onDeckLift = (floorRow) => {
+      leaveHangar({ toMenu: false });
+      enterStation(floorRow).catch((e) => {
+        console.error('the station failed', e);
+        menu.showMenu(); screens.set('menu');
+        sayOnTheMenu(`Could not reach the station: ${e.message || e}`);
+      });
+    };
     world.onDeckDeploy = () => {
       /* The seam: a still of the sealed bay for the load, and the player's
        * look relative to the hull so the orbit opens on the same view. */
@@ -1026,6 +1045,99 @@ async function enterHangar(arrival = null, opts = {}) {
     const w = world;
     setTimeout(() => { if (world === w) w.notify?.('TO DEPLOY', 'walk up the transport\'s ramp — the company boards with you'); }, 9000);
   }
+}
+
+/**
+ * ══ WALK ONTO THE STATION ═════════════════════════════════════════════════
+ *
+ * `enterHangar`'s sibling, and everything it is careful about is the same:
+ * `allies: 0` so no `CommandDirector` is built and `bank()` cannot strike the
+ * roll as dead on the way out; no `saveSettings`, because nobody chose to play
+ * a mode; no `mintRunSeed`, because a visit is not a run.
+ *
+ * WHAT IS DIFFERENT IS THE AWAIT BEFORE THE BUILD. `World._loadSteps` runs
+ * `L.dress` synchronously and §9.2 forbids adding a stage to it, so the five
+ * imported rooms are decoded HERE, on the far side of the door, inside the
+ * loading plate the player is already looking at. `dressStation` then finds
+ * them decoded and cannot be handed a half-built room.
+ *
+ * `mode: 'station'` is a hidden row in `MODES` whose `level` is `'station'`;
+ * `World.loadLevel` reads it and builds `StationDirector`, exactly as
+ * `MODES.hangar` gets `HangarDirector`. §11's sandbox is what the row inherits
+ * and what the place is for: every resident is a real body, every prop is a
+ * real prop, and the Force works on all of it.
+ */
+async function enterStation(floorRow = null) {
+  const deck = floorRow?.deck ?? 40;
+  try {
+    /* The rooms, before the world. See the note above. */
+    const { prepareStation } = await import('./game/Station.js');
+    screens.loading?.(0.05, 'reading the station');
+    await prepareStation();
+    await buildWorld('station', (frac, label) => screens.loading?.(frac, label), null,
+      { mode: 'station', level: 'station', allies: 0 },
+      { onWorld: (w) => {
+        w._stationFloor = deck;
+        /* Which shaft the car is standing in. The lift you rode is the lift
+         * you arrive in, so the station dresses the same one. */
+        w._stationShaft = floorRow?.shaft || 'arrivals';
+        /* What is outside the window — the same resolver the deck uses, so a
+         * campaign's theatre is the planet under the station too. */
+        w._pickedLevel = LEVELS[theatreFor(sessionOr('mode'), sessionOr('level'), null)] || null;
+      } });
+  } catch (e) {
+    console.error('station failed', e);
+    if (world) { try { world.dispose(); } catch {} world = null; }
+    hud.show(false);
+    input.enabled = false;
+    menu.showMenu();
+    screens.set('menu');
+    sayOnTheMenu(`Could not reach the station: ${e.message || e}`);
+    return;
+  }
+  if (world) {
+    /* The way off it is the same lift, and the same two answers. */
+    world.onDeckLeave = () => { leaveStation(); };
+    world.onDeckLift = (row) => {
+      leaveStation({ toMenu: false });
+      if (row?.level === 'station') enterStation(row).catch((e) => console.error('deck change failed', e));
+      else enterHangar(null).catch((e) => console.error('back to the deck failed', e));
+    };
+    /**
+     * ══ A KIOSK OPENS A REAL MENU (SHARK §5.2) ════════════════════════════
+     *
+     * "Kiosks open DOM menus from a pointer-locked deck": the forge, the
+     * quartermaster, the recruiter, the databank, the armoury and the muster
+     * board are the panels the game already has, reached from a counter in a
+     * room instead of from a tab. One hook for all six — the room raises the
+     * panel's id, this releases the lock, opens it, and re-locks on close.
+     */
+    world.onKiosk = (panelId) => openKiosk(panelId);
+  }
+  cancelDeathCard();
+  menu.hideMenu();
+  menu.hideDeath();
+  screens.clear();
+  hud.show(true);
+  document.getElementById('hud')?.classList.add('deck');
+  input.enabled = true;
+  input.requestLock();
+  screens.set('playing');
+}
+
+/** `leaveHangar` for the station: the same teardown, none of the deck's. */
+function leaveStation(opts = {}) {
+  screens.clear();
+  hud.show(false);
+  document.getElementById('hud')?.classList.remove('deck');
+  hud.freecam?.exit?.(hud);
+  hud.announcer?.reset?.();
+  input.enabled = false;
+  input.exitLock();
+  if (world) { world.dispose(); world = null; }
+  if (opts.toMenu === false) return;
+  menu.showMenu();
+  screens.set('menu');
 }
 
 /**
@@ -1525,6 +1637,64 @@ function communeContext(live) {
       : undefined,
   };
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  KIOSKS — SHARK §5.2, and they are the menu reached from a counter         */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A DOM MENU FROM A POINTER-LOCKED DECK ═════════════════════════════════
+ *
+ * "One hook for the forge, quartermaster, recruiter, databank, armoury and the
+ * muster board." A kiosk is not a new interface — every one of those panels
+ * already exists and is good; what the station adds is a place to stand while
+ * you use one. §3.2's verb for the Forge is "the hilt/blade menu, at a
+ * counter", and the counter is the whole difference.
+ *
+ * IT GOES UP THROUGH `Screens.take`, which is the same door the Holocron and
+ * the muster use and the reason there is no way to get stranded in one: the
+ * overlay is remembered as it is raised, Escape is never a dead key over it,
+ * and a throw inside lands on the pause card rather than in a void. Eight
+ * lines of `menu.showMenu()` here instead would be the exact defect
+ * `Screens.js`'s own header exists to have deleted.
+ */
+const KIOSK_TAB = {
+  /* Which of the menu's five tabs each counter opens on. */
+  hilt: 'saber',
+  loadout: 'saber',
+  kit: 'play',
+  muster: 'play',
+  campaign: 'play',
+  databank: 'codex',
+};
+
+function showKioskPanel(panelId) {
+  menu.showMenu();
+  const tab = document.querySelector(`.tab[data-tab="${KIOSK_TAB[panelId] || 'play'}"]`);
+  /* Click the tab rather than toggling the classes here: the handler starts
+   * the saber preview, stops the company stage and re-renders the "Taking in"
+   * block, and a second copy of that list is exactly the hand-maintained twin
+   * HANDOFF §2.3 is about. */
+  if (tab) tab.click();
+}
+
+function closeKiosk() {
+  if (!world) { menu.hideMenu(); return; }
+  menu.hideMenu();
+  screens.overlay = null;
+  screens.state = 'paused';
+  resume();
+}
+
+function openKiosk(panelId) {
+  if (!panelId || !world) return;
+  audio.ui('good');
+  screens.take('kiosk', () => showKioskPanel(panelId));
+}
+/* Screens knows how to take the counter down, so a pause raised over one — or
+ * a callback that threw inside it — is recoverable instead of leaving a menu
+ * page sitting on top of the pause card. */
+screens.card('kiosk', () => menu.hideMenu());
 
 function openMeditation() {
   audio.ui('good');
@@ -3282,4 +3452,7 @@ window.SABER = { engine, input, audio, get world() { return world; }, settings, 
   screens, resume, pause,
   /* The two doors a probe drives the hub through — see tools/_hubprobe.mjs. */
   deploy, enterHangar, hangarFirst,
+  /* …and the third: the station's own door (SHARK §13.2's contact sheet, and
+   * tools/_stationshot.mjs). Undefined with STATION_ENABLED off. */
+  enterStation,
   get fps() { return Math.round(fpsSmooth); } };
