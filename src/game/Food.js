@@ -59,7 +59,7 @@
  */
 
 import { shelfFor } from './Counter.js';
-import { everyRow } from './Vendors.js';
+import { everyRow, COUNTERS } from './Vendors.js';
 import { kindOfArmy } from './Attributes.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -120,6 +120,18 @@ export function dishById(id) {
   }
   return _byId.get(id) || null;
 }
+
+/**
+ * Which counters actually cook, DERIVED rather than listed.
+ *
+ * A surface standing at a counter has to know whether to offer the cook and
+ * the larder, and the obvious way to answer is `[17, 15, 32]` written into the
+ * screen. That list would be wrong the first time somebody puts a soup on the
+ * quartermaster's shelf, and nothing would say so. A counter is a kitchen if
+ * it has anything edible on its table — one predicate, no list to keep.
+ */
+export function isKitchen(counter) { return (counter?.stock || []).some(isDish); }
+export function kitchens() { return COUNTERS.filter(isKitchen); }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  HOW IT IS MADE — one table, two features                                  */
@@ -463,10 +475,22 @@ export class Cook {
     }
   }
 
-  /** Cut it short and hand it over — a save, a teardown, a player walking off. */
+  /**
+   * Cut it short and hand it over — a save, a teardown, a player walking off.
+   *
+   * IT SAYS THE LINES IT HAS NOT SAID AND NOT THE ONE IT IS ON. The first cut
+   * of this replayed the current step, so a cook interrupted a fifth of a
+   * second in said its opening line twice — measured by `food.mjs` driving
+   * every dish, which read "f-noodle cut short said 6 of 5 lines". A sequence
+   * that repeats itself when it is hurried is a sequence a player will see
+   * repeat itself, because being hurried is the normal case.
+   */
   finish() {
     if (this.done) return;
-    for (let k = this.i; k < this.steps.length; k++) this.sink.say?.(this.steps[k].say);
+    for (let k = this.i; k < this.steps.length; k++) {
+      if (k === this._said) continue;
+      this.sink.say?.(this.steps[k].say);
+    }
     this.done = true;
     this.sink.done?.(this.of);
   }

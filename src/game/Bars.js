@@ -266,8 +266,9 @@ export function ownHeads(bar, hour, heads, opts = {}) {
  * handed in rather than computed — `StationLife.headcount` owns that curve and
  * a second copy of it here would be a second answer to how full a room is.
  *
- * Returns `{ heads, leave, locals, line }`: the soldiers by name, and how many
- * of the room is everybody else.
+ * Returns `{ heads, leave, own, locals, line }`: the soldiers by name, how
+ * many of them are off the player's own roll, and how much of the room is
+ * everybody else.
  */
 export function crowdOf(bar, hour, heads, opts = {}) {
   const b = typeof bar === 'object' && bar ? bar : barById(bar);

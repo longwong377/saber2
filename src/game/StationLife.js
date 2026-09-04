@@ -540,12 +540,20 @@ function spawnResident(world, st, place, i) {
    * than twice a second — `Company.loadAll` is a `localStorage` read and the
    * pool re-seats every 0.5 s.
    *
-   * `st.day` DOES NOT EXIST YET and that is deliberate rather than missed.
-   * The station clock persists an hour and no day count (`StationSave.hour`),
-   * so leave is the same third of the roll every evening until somebody adds
-   * one. The day that field lands, `st.day ?? 0` below starts rotating who is
-   * out with no other change anywhere — which is the whole reason `day` is a
-   * parameter in `Bars.js` rather than an assumption.
+   * `st.day` IS NOT SET BY ANYBODY YET, and the reason is worth writing down
+   * rather than defaulting past. There IS a derivation — `main.js`'s private
+   * `stationDay()`, which the shelves, the job board and the pit's card are
+   * all seeded off — but it is private to that file and half of it is
+   * `loadStation().seen.length`, which this one cannot see. Copying half of it
+   * here would give the station two answers to what day it is, in the same
+   * room, at the same moment: the counter's board would roll over and the
+   * cantina's leave roll would not.
+   *
+   * So this reads `st.day` and takes 0 until somebody sets it, which means
+   * every evening is the same third of the roll. The fix is one line — lift
+   * `stationDay()` out of `main.js` and have `Station.js` put it on `st` — and
+   * leave starts rotating with no other change anywhere. That is the whole
+   * reason `day` is a parameter in `Bars.js` and not an assumption.
    */
   const life = world?._stationLife;
   let r = occupant(place, i, {
