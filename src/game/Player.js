@@ -18,7 +18,9 @@ import { Rig, BipedAnimator, aimY, limbScale, poseMeditation } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
-import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell, attachWaistCape, WAIST_CUTS } from './Cloth.js';
+/** The waist-cape cut a player is wearing, or null for none. V15 §2. */
+const waistCut = (id) => WAIST_CUTS.find((c) => c.id === id) || null;
 import { armKinetic, KINETIC_BODY } from './Impact.js';
 import { Body, LAYER, capsuleSpheres, capsule } from '../physics/RapierWorld.js';
 import { supportHeight, topOfProps, ceilingHeight, STEP_UP, GROUND_SNAP, CLIMB_RATE } from '../physics/Support.js';
@@ -3811,6 +3813,7 @@ export class Player {
 
   _makeCloak() {
     this.cloak?.dispose();
+    this.waistCape?.dispose(); this.waistCape = null;
     this.skirt?.dispose(); this.skirt = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
     this.hoodShell?.dispose(); this.hoodShell = null;
@@ -3858,6 +3861,25 @@ export class Player {
       // real thing: live proxy in, table out.
       this.cloak.outer = this.skirt;
     }
+    /**
+     * AND THE WAIST CAPE — V15 §2's *"capes, waist capes"*.
+     *
+     * OFF unless the player put one on, which is the whole reason it can
+     * exist: `cloth-cost.mjs` pins this body at 287 particles and 1466 links
+     * as an equality, and a kama is 49 particles more. A garment that
+     * defaulted on would change the shipped figure's cost and re-dress every
+     * saved profile at once, which is what the hood's own note in `Cloth.js`
+     * refuses for the same reason.
+     */
+    const WC = waistCut(this.world?.settings?.wardrobe?.waist ?? this.wardrobe?.waist);
+    if (WC?.waist) {
+      const wmat = (this.palette.over || this.palette.outer).clone();
+      wmat.side = THREE.DoubleSide;
+      this.waistCape = attachWaistCape(this.world.scene, this.rig, {
+        ...WC.waist, scale: S, material: wmat,
+      });
+    }
+
     /* AND THE HOOD'S FALL, if the hood being worn has one. The shell stays
      * rigid on the head bone — see `hoodOn` — and this is the cloth hanging off
      * its hem, which is the half of "act as cloth" that no amount of shaping a
@@ -6406,6 +6428,7 @@ export class Player {
     _q2.copy(this._flipQ).invert().premultiply(_q1);
     this._flipQ.copy(_q1);
     this.cloak?.carry(_q2, pivot);
+    this.waistCape?.carry(_q2, pivot);
     this.hoodDrape?.carry(_q2, pivot);
     this.skirt?.carry(_q2, pivot);
 
@@ -7253,6 +7276,17 @@ export class Player {
       }
       this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
       this.cloak.setVisible(!this.camera.firstPerson, false);
+      /* The waist cape, on the same finished pose and the same wind. Hidden in
+       * first person for the cape's reason: it hangs at the belt behind you,
+       * where this camera cannot see it, so simulating it there is paying for
+       * nothing. */
+      if (this.waistCape) {
+        if (this.camera.firstPerson) this.waistCape.setVisible(false);
+        else {
+          this.waistCape.setVisible(true);
+          this.waistCape.update(dt, this.waistCape.refreshColliders(), _v1);
+        }
+      }
     }
     /* THE HOOD'S FALL, on the same finished pose and the same wind. Hidden in
      * first person for the cape's reason and not the head's: it hangs behind
@@ -7336,6 +7370,7 @@ export class Player {
     _v1.z += Math.cos(ctx.time * 0.53) * 0.6;
     if (this.skirt) this.skirt.update(dt, this.skirt.refreshColliders(), _v1);
     if (this.cloak) this.cloak.update(dt, this.cloak.refreshColliders(), _v1);
+    if (this.waistCape) this.waistCape.update(dt, this.waistCape.refreshColliders(), _v1);
     if (this.hoodDrape) this.hoodDrape.update(dt, this.hoodDrape.refreshColliders(), _v1);
     this.hoodShell?.update(dt);
   }
@@ -11933,6 +11968,7 @@ export class Player {
     this.saber.retract();
     this.hum.retract();
     this.cloak?.dispose(); this.cloak = null;
+    this.waistCape?.dispose(); this.waistCape = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
     this.hoodShell?.dispose(); this.hoodShell = null;
     this.skirt?.dispose(); this.skirt = null;
@@ -12170,6 +12206,7 @@ export class Player {
     this.hurled.length = 0;
     this.hum.dispose();
     this.cloak?.dispose(); this.cloak = null;
+    this.waistCape?.dispose(); this.waistCape = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
     this.hoodShell?.dispose(); this.hoodShell = null;
     /**

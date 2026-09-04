@@ -23,7 +23,7 @@ import { handPoseOnHilt, GRIP_AT, UNLEASH, SHIELD, ALLY_WARD, RESTORE } from '..
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
-         garmentTone } from '../game/Cloth.js';
+         garmentTone, WAIST_CUTS } from '../game/Cloth.js';
 /* The three sets the Jedi tab offers — one table, and the card row below reads
  * its rows straight through so a fourth set is a row there and nothing here. */
 import { SABER_SETS } from '../game/SaberSet.js';
@@ -5216,6 +5216,12 @@ export class Menu {
      * cloak's hood IS its collar — and because they are the two pieces that
      * change the outline of the figure rather than its colour. */
     this._wardrobeCards('hood-list', 'h-hood', 'hood', HOOD_CUTS);
+    /* THE WAIST CAPE — V15 §2's *"capes, waist capes"*. Directly under the
+     * cape and the hood because the three are the pieces that change the
+     * OUTLINE rather than the colour, and a kama is read at the same range a
+     * cape is. Same table-driven row as every other cut, so a fifth waist cape
+     * is a row in `Cloth.WAIST_CUTS` and nothing here. */
+    this._wardrobeCards('waist-list', 'h-waist', 'waist', WAIST_CUTS);
     this._wardrobeCards('sash-list', 'h-sash', 'sash', SASH_CUTS);
     this._wardrobeTones('sash-tone-list', 'sashTone', 'trim');
     this._wardrobeTones('boot-tone-list', 'bootTone', 'leather');

@@ -77,7 +77,18 @@ function blank() {
     standing: 0,
     /** Which places you have walked into, for §14's "the first visit". */
     seen: [],
-    /** The home's state — V15 §1.3. Written by `Home.js` when that lands. */
+    /**
+     * The home's state — V15 §1.3, and `Home.js` owns every field of it.
+     *
+     * NULL IS THE DEFAULT AND IT IS NOT AN EMPTY HOME: `Home.clean` reads a
+     * missing record as the cabin §3.2 describes, furnished with
+     * `DEFAULT_LAYOUT`, so a player who has never touched it walks into a room
+     * rather than into a bare floor. What is stored is `{ v, place, surfaces,
+     * pieces, store, pad }` — `v` is the migration hook, `place` is which door
+     * the dressing was last behind (V16 Lane F assigns a different one per
+     * co-op guest), and `store` is the food and the parcels the home holds
+     * (V16 §2 B5, §3.2), empty until those lanes land.
+     */
     home: null,
   };
 }

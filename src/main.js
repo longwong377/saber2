@@ -1698,6 +1698,21 @@ const KIOSK_TAB = {
   muster: 'play',
   campaign: 'play',
   databank: 'codex',
+  /**
+   * THE MIRROR IN #27 (V15 §1.3), and it is a SECOND DOOR onto the panel the
+   * menu already has rather than a new one.
+   *
+   * *"A real mirror in the cabin, and standing at it opens the character
+   * creator with your own body in the glass rather than on a menu stage."* The
+   * note's eventual intent is that this becomes the only place you customise;
+   * the way to get there without breaking anything is to leave the menu's page
+   * working and add this. Removing the menu's is a later, separate change.
+   *
+   * It is raised by `Home.homeKey` through `world.onKiosk('mirror')` — the
+   * same `Screens.take` door every counter on the station uses, so Escape is
+   * never a dead key over it and `kioskOpen` still gates the card's hide.
+   */
+  mirror: 'saber',
 };
 
 /**

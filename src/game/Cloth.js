@@ -1643,6 +1643,16 @@ export const WARDROBE = {
    * applied to people who did not ask for one.
    */
   hood: 'none',
+  /**
+   * THE WAIST CAPE, and like the hood the default is NOT having one.
+   *
+   * V15 §2 asks for *"capes, waist capes"*. `'none'` for the reason the hood's
+   * note above gives and one more: `cloth-cost.mjs` pins the player at 287
+   * particles and 1466 links as an EQUALITY, so a waist cape that defaulted on
+   * would change the shipped figure's cost and every saved profile's costume
+   * at once. A player who puts one on pays 42 particles for it.
+   */
+  waist: 'none',
   capeTone: -1,
   tunicTone: -1,
   tabardTone: -1,
@@ -1670,6 +1680,7 @@ export function wardrobeOf(w) {
     tabard: id(TABARD_BY_ID, src.tabard, WARDROBE.tabard),
     sash: id(SASH_BY_ID, src.sash, WARDROBE.sash),
     hood: id(HOOD_BY_ID, src.hood, WARDROBE.hood),
+    waist: id(WAIST_BY_ID, src.waist, WARDROBE.waist),
     capeTone: tone(src.capeTone),
     tunicTone: tone(src.tunicTone),
     tabardTone: tone(src.tabardTone),
@@ -2684,6 +2695,111 @@ export function attachHoodDrape(scene, rig, opts = {}) {
  * @param opts.rigid  meshes the rigid layer is made of; hidden while this is
  *                    live and shown again by setVisible(false) at LOD range.
  */
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  A WAIST CAPE — V15 §2, and it is one anchor row away from the shoulder one
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * V15 §2 asks for *"capes, waist capes"*, and a waist cape is not a short
+ * skirt: a skirt is a closed ring gathered all the way round and cut to a
+ * petticoat profile, and this is an OPEN fall of cloth pinned across the back
+ * of the belt. Different garment, different anchor, an eighth of the
+ * particles, and `attachSkirt`'s two hundred lines of petticoat tables are
+ * exactly the thing it must not inherit.
+ *
+ * So it is `attachTrooperCape`'s machinery with the pin arc moved from the
+ * collar to the belt — which is what V15's own note says it should be. The
+ * arc runs round the BACK rather than over one shoulder, so it is symmetric
+ * and there is no handedness.
+ *
+ *   kama   the clone officer's: square, heavy, to mid-thigh, over both hips
+ *   half   one side only, off the right hip, longer
+ *   sash   a narrow fall off the back of the belt, to the knee
+ *
+ * ── WHY IT IS CHEAP, WHICH IS THE ONLY REASON IT CAN EXIST ────────────────
+ *
+ * `tools/checks/cloth-cost.mjs` pins the player at 287 particles and 1466
+ * links AS AN EQUALITY, and the whole garment budget at 7.0 ms of a 16.67 ms
+ * frame. A 6 x 7 waist cape is 42 particles — a third of the shoulder cape's
+ * — and it is OFF by default (`WARDROBE.waist` is `'none'`), so the shipped
+ * player is untouched and that equality does not move. A player who puts one
+ * on pays for it, which is the same contract every other garment here has.
+ */
+export function attachWaistCape(scene, rig, opts = {}) {
+  const S = opts.scale ?? rig?.scale ?? 1;
+  const hips = rig?.get('hips');
+  if (!hips) return null;
+  const cols = opts.cols ?? 7, rows = opts.rows ?? 7;
+  const length = (opts.length ?? 0.44) * S;
+  /**
+   * THE PIN ARC, in the hips bone's frame. An ellipse round the belt —
+   * 0.155 across and 0.115 deep, which is the obi's outer face — walked from
+   * one hip round the BACK to the other. `phi0`/`phi1` are what makes a kama
+   * (both hips, round the back) a half-cape (one hip) instead: one row.
+   */
+  const RX = (opts.rx ?? 0.155) * S, RZ = (opts.rz ?? 0.115) * S;
+  const Y = (opts.y ?? 0.052) * S, OUT = 0.018 * S;
+  const PHI0 = opts.phi0 ?? -Math.PI * 0.42, PHI1 = opts.phi1 ?? Math.PI * 0.42;
+  const cloak = new Cloak(scene, {
+    cols, rows,
+    width: (opts.width ?? 0.40) * S, length,
+    material: opts.material || null, color: opts.color ?? 0x2a2b30,
+    /* Heavier and stiffer than a shoulder cape and much less flared: a kama is
+     * a stiff plate of cloth that swings at the hem, not a sail. */
+    flare: opts.flare ?? 0.28, flarePow: 1.5,
+    stiffness: 0.90, bendDown: 0.72, bend: 0.14,
+    fullness: opts.fullness ?? 0.95, jitter: 0.04,
+    damping: 0.970, lift: 0.5, drift: 0.4,
+    gravity: -14, iterations: 4, seed: opts.seed,
+    lean: 0.02,
+    anchorFn: (c, n, out) => {
+      const t = n === 1 ? 0.5 : c / (n - 1);
+      const phi = lerp(PHI0, PHI1, t);
+      /* Round the BACK: −cos on Z puts phi = 0 behind the body. */
+      const x = RX * Math.sin(phi), z = -RZ * Math.cos(phi);
+      const nx = x / (RX * RX), nz = z / (RZ * RZ);
+      const nl = Math.hypot(nx, nz) || 1;
+      out.set(x + (nx / nl) * OUT, Y, z + (nz / nl) * OUT);
+      _m.copy(hips.obj.matrixWorld);
+      out.applyMatrix4(_m);
+    },
+  });
+  cloak._sharedMat = !!opts.material;
+
+  /* What it hangs over: the pelvis and both legs. Nothing above the belt —
+   * a waist cape never reaches the chest, and a collider it can never touch
+   * is `cloth-cost.mjs`'s sphere-tests-per-frame spent on nothing. */
+  const bones = ['hips', 'thighL', 'shinL', 'thighR', 'shinR'];
+  const radii = [0.185, 0.115, 0.090, 0.115, 0.090];
+  cloak.refreshColliders = () => {
+    const out = cloak.colliders;
+    out.length = 0;
+    for (let i = 0; i < bones.length; i++) {
+      const b = rig.get(bones[i]);
+      if (!b || b.severed) continue;
+      b.obj.updateMatrixWorld(false);
+      for (const t of [0.3, 0.85]) {
+        _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
+        out.push({ c: _v3.clone(), r: radii[i] * S });
+      }
+    }
+    return out;
+  };
+  return cloak;
+}
+
+/** The waist-cape cuts a player may wear. `none` is the default and is real. */
+export const WAIST_CUTS = [
+  { id: 'none', name: 'No waist cape', blurb: 'Nothing at the belt.', none: true },
+  { id: 'kama', name: 'Kama', blurb: 'The clone officer\'s: heavy square cloth over both hips, to mid-thigh.',
+    waist: { width: 0.40, length: 0.44, cols: 7, rows: 7 } },
+  { id: 'half', name: 'Half Kama', blurb: 'One side only, off the right hip, and longer for it.',
+    waist: { width: 0.24, length: 0.58, cols: 5, rows: 8, phi0: 0.10, phi1: Math.PI * 0.52 } },
+  { id: 'fall', name: 'Back Fall', blurb: 'A narrow fall of cloth off the back of the belt, to the knee.',
+    waist: { width: 0.22, length: 0.62, cols: 5, rows: 8, phi0: -Math.PI * 0.20, phi1: Math.PI * 0.20 } },
+];
+const WAIST_BY_ID = new Map(WAIST_CUTS.map((c) => [c.id, c]));
+
 export function attachSkirt(scene, rig, opts = {}) {
   opts = withCut(opts, 'skirt');
   const S = opts.scale ?? 1;

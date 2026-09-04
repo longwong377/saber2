@@ -56,6 +56,7 @@ import { dressObelisk, dressBoards, stepBoards } from './StationBoards.js';
 import { stationHour, setStationHour, stationName, setStationName, standing, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
+import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -771,6 +772,17 @@ export function dressStation(world) {
   dressObelisk(world, st, M);
   dressBoards(world, st, M);
 
+  /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
+   *
+   * `SHAPES.twinroom` hands `#27` back on `st.home` and until now nothing read
+   * it. `Home.js` is what reads it: the placement grid, the catalogue of real
+   * bodies, the surfaces, the address on the door and the mirror. It is handed
+   * this deck's `M` rather than importing `stationMats` for itself, which is
+   * what keeps the two files acyclic — `StationKit` is imported by both.
+   *
+   * A no-op on every deck but 44, because only one place declares a home. */
+  dressHome(world, st, M);
+
   /* ── AND WHAT IS OUTSIDE THE GLASS ─────────────────────────────────────
    *
    * V15 §1.3: the home's *"windows that look out on the same space battle the
@@ -822,6 +834,13 @@ export function dressStation(world) {
 export function undressStation(world) {
   const st = world._station;
   if (!st) return;
+  /* THE HOME IS SAVED BEFORE ANYTHING IS TAKEN DOWN, which is V15 §1.3.5's
+   * "saved on leaving" and `DeckEdit.leaveDeck`'s pattern: the record is
+   * authored in memory across a visit and committed once, here, on the way
+   * out. `leaveHome` reads the bodies' real positions, so it has to run while
+   * they are still bodies. */
+  leaveHome(world);
+  undressHome(world);
   for (const rec of st.places.values()) {
     rec.group.parent?.remove(rec.group);
     rec.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
@@ -1059,6 +1078,10 @@ export function stationKey(world) {
    * suppression note over `beginStationName`. */
   if (namingStation(world)) return true;
   if (liftKey(world)) return true;
+  /* AND THE HOME, which claims the key only inside its own four walls — it
+   * answers false anywhere else, so #27's verb still reaches the prompt. See
+   * `Home.homeKey` for the four things one press can mean in there. */
+  if (homeKey(world)) return true;
   const p = world.player?.position;
   if (!p) return false;
   const place = placeUnder(world, p.x, p.z);
@@ -1102,6 +1125,9 @@ export function stepStation(world, dt) {
    * be later in the same day, not a localStorage write sixty times a second. */
   if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }
   stepBoards(world, st, dt);
+  /* The piece in your hands follows the crosshair. Costs one property read a
+   * frame when there is nothing held, which is nearly always. */
+  stepHome(world, dt);
   /* The fleet outside the glass. Its own step is a no-op when nothing was
    * dressed, so this is unconditional and costs one call on a station whose
    * theatre could not be resolved. */

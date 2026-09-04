@@ -946,7 +946,24 @@ export const SHAPES = {
 
   /** #27 Your cabin: TWO ROOMS. A partition splits it; the outer half is the
    * desk, the map table and the trophy wall, the inner is the bunk and a real
-   * window. The only place on the station with a door that is yours. */
+   * window. The only place on the station with a door that is yours.
+   *
+   * ── AND THE FURNITURE IS NOT HERE ANY MORE ──────────────────────────────
+   *
+   * This builder used to drop four bodies of its own — a map table, a desk, a
+   * chair and a locker. `Home.js` (V15 §1.3) makes the cabin's floor a
+   * PLACEMENT GRID whose contents are saved, and a room that builds furniture
+   * beside a save that remembers furniture is two answers to where your desk
+   * is: the one the player moved would lose on the next visit. So this builds
+   * the architecture and `Home.DEFAULT_LAYOUT` builds those four, at the same
+   * coordinates, as pieces you may then pick up.
+   *
+   * What is handed back is therefore no longer a point but a ROOM: its
+   * footprint, so the grid has bounds, and the rectangles a piece may not be
+   * set down in, so the grid has walls. Deriving those from the slabs below by
+   * reading them back out of the kit would be the hand-maintained twin
+   * `HANDOFF` §2.3 warns about; declaring them here, next to the slab each one
+   * describes, is one line per obstacle and it is checked (`home.mjs`). */
   twinroom(kit, M, p, ctx) {
     const { w, d, h } = p;
     floor(kit, M, w, d, 0, M.dark);
@@ -958,14 +975,20 @@ export const SHAPES = {
      * ledger and the kennel, so what is built here is the furniture. */
     rack(kit, M, 4.2, 2.4, -w / 2 + 2.4, -d / 2 + 0.4, Math.PI, 4);
     kit.post(M.wing, 0.3, 0.22, 1.3, w / 2 - 1.4, 0.65, -d / 2 + 1.0, { radial: 8, collide: true });
-    /* The map table, the desk, the bunk, the wardrobe. */
-    loose(kit, 1.6, 0, -1.6, (world, q) => tableBody(world, q, M, 2.4, 1.4, 0.8));
-    loose(kit, -3.2, 0, -2.6, (world, q) => tableBody(world, q, M, 1.6, 0.7, 0.76));
-    loose(kit, -3.2, 0, -1.6, (world, q) => chairBody(world, q, M));
+    /* The bunk, which is built rather than placeable: it is the half of the
+     * room §3.2 names, and rule 4 reads this room from its door. */
     kit.slab(M.deep, 2.1, 0.5, 1.0, w / 2 - 2.4, 0.42, d / 2 - 1.2, { collide: true, bevel: 0 });
     kit.slab(M.wing, 2.0, 0.18, 0.9, w / 2 - 2.4, 0.75, d / 2 - 1.2, { collide: false, bevel: 0 });
-    loose(kit, -w / 2 + 1.4, 0, d / 2 - 1.2, (world, q) => boxBody(world, q, M, 1.2, 2.1, 0.6, M.deep, 40, 'locker'));
-    ctx.home = { deck: p.deck, x: p.x, z: p.z, yaw: p.yaw };
+    ctx.home = {
+      id: p.id, deck: p.deck, x: p.x, z: p.z, yaw: p.yaw, y: floorOf(p), w, d, h,
+      /* Where a placed piece may not stand, in the room's own frame. */
+      blockers: [
+        { x: -1.6, z: 0.6, w: w - 3.2, d: 0.3 },                      // the partition
+        { x: -w / 2 + 2.4, z: -d / 2 + 0.4, w: 4.2, d: 0.7 },         // the trophy rack
+        { x: w / 2 - 1.4, z: -d / 2 + 1.0, w: 0.6, d: 0.6 },          // the saber stand
+        { x: w / 2 - 2.4, z: d / 2 - 1.2, w: 2.1, d: 1.0 },           // the bunk
+      ],
+    };
   },
 
   /** #28 The Kennel habitat: a MEZZANINE room. High, with a half floor at

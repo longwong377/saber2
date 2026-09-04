@@ -329,9 +329,13 @@ export const PLACES = [
   },
   {
     id: 27, deck: 44, name: 'Your cabin', shape: 'twinroom',
-    look: 'two rooms, a real window, a saber stand, a trophy wall, the campaign map table, a bunk, a desk, a wardrobe',
+    look: 'two rooms, a real window, a saber stand, a trophy wall, a mirror, a bunk, and whatever you have put in it',
     who: 'you; the companion sleeping', idle: 'the trophies grow; a note on the desk',
-    verb: 'sleep, dress, read', band: 'inner', at: 0, w: 15, d: 11, h: 3.4, peak: 23, heads: 1,
+    /* V15 §1.3 made this a home rather than a room, and the verb is the whole
+     * of §14's prompt — so the three things `Home.js` added to it are named
+     * here or a player is never told they can do them. */
+    verb: 'sleep, dress, read — move the furniture, wheel to choose, the mirror to change your face',
+    band: 'inner', at: 0, w: 15, d: 11, h: 3.4, peak: 23, heads: 1,
   },
   {
     id: 28, deck: 44, name: 'The Kennel habitat', shape: 'mezzanine',
