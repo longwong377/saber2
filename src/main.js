@@ -55,6 +55,8 @@ import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
+import { watch as toteWatch, resultOf as toteResult, MAX_STAKE } from './game/Tote.js';
+import { stakeAtTote, payAtTote } from './game/Station.js';
 import {
   pitAtPlace, venueOpen, handlersOn, offerBout, openBout, beginRound, callOrder,
   runRound, cornerAct, pitState, settleBout, foldPit, pitCall,
@@ -1174,6 +1176,8 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onMedbay = (id) => openMedbay(id);
     /* #20 and #61 — see `openPit`. */
     world.onPit = (id) => openPit(id);
+    /* #18, #19 and #20 — see `openTote`. */
+    world.onTote = (id) => openTote(id);
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -2129,6 +2133,136 @@ function openPit(placeId) {
   return true;
 }
 screens.card('pit', () => { clearPitTimer(); pit = null; closePane('pit'); });
+
+/**
+ * ══ #18, #19 AND #20 — THE TOTE, V16 Lane D2 ══════════════════════════════
+ *
+ * *"you don't have to bet to watch (applies to any casino game)."*
+ *
+ * That sentence is the shape of this whole screen and not a line in it. The
+ * page opens on a READING — the board, the going, the running order, the
+ * announcer's calls, the result — and every one of those is on the glass
+ * before any stake exists. `Tote.watch` takes a place, a day and an hour and
+ * has no parameter a ticket could hide in, so a betting control that vanished
+ * would take nothing off this page with it.
+ *
+ * THE BOOK SHUTS AT THE OFF. The stake row disappears when the tapes go up,
+ * because the race is already run in the sim by then and a window still open
+ * would be a window selling a known result. What stays open is the watching.
+ *
+ * THE TICKETS ARE HELD IN THIS FILE AND NOWHERE ELSE. `Tote.js` prices a bet
+ * and never holds one; `Station.stakeAtTote` and `payAtTote` are the dozen
+ * lines where credits actually move. A ticket lives as long as the screen and
+ * the race it is on, which is what a paper ticket does.
+ */
+let tote = null;
+
+function toteHour() { return world?._station?.hour ?? 0; }
+
+function showTote(venueId) {
+  const el = paneRoot('tote');
+  const day = stationDay();
+  const r = toteWatch(venueId, day, toteHour());
+  if (!tote || tote.venue !== venueId) tote = { venue: venueId, tickets: [], settled: new Set(), pick: null };
+
+  /* SETTLE ANYTHING THIS SCREEN IS HOLDING ON A RACE THAT HAS BEEN CALLED, and
+   * exactly once — a screen that re-rendered would otherwise pay a winning
+   * ticket every time the player looked at it. */
+  if (r.phase === 'called' && r.race && !tote.settled.has(r.race.id)) {
+    const mine = tote.tickets.filter((t) => t.race === r.race.id);
+    if (mine.length) {
+      const done = payAtTote(mine, toteResult(r.race));
+      tote.settled.add(r.race.id);
+      tote.last = done;
+      if (done.paid) world?.notify?.('THE WINDOW', `${done.paid} credits`);
+      else world?.notify?.('THE WINDOW', 'nothing on that one');
+    }
+  }
+
+  let html = `<div class="pane"><h2>${esc(r.name)}</h2>`;
+  html += `<p class="sub">${esc(r.word)} · ${purse()} credits</p>`;
+  if (r.dark) {
+    html += '<p class="sub">Dark tonight. Nothing on the board.</p>';
+  } else if (r.phase === 'closed' || r.phase === 'over') {
+    html += `<p class="sub">${r.next ? `Nothing until ${String(r.next.hour).padStart(2, '0')}:00 — ${esc(r.next.ground)}.`
+      : 'The card is done for the day.'}</p>`;
+  } else {
+    const board = r.board;
+    html += `<p class="sub">${esc(r.race?.ground?.name || '')}`
+      + (r.phase === 'parading' ? ' — parading' : '')
+      + (r.phase === 'running' ? ` — gate ${r.segment} of ${r.segments}` : '')
+      + (r.phase === 'called' ? ' — called' : '') + '</p>';
+    /* THE BOARD, WHICH IS FREE AND IS THE WHOLE POINT. A row is a price and a
+     * name; the button beside it is the only thing a stake touches, and it is
+     * gone once the book shuts. */
+    const open = r.phase === 'parading';
+    html += '<div class="rows">' + (board?.runners || []).map((row) => {
+      const held = tote.tickets.filter((t) => t.race === r.race?.id && t.on === row.id);
+      const lead = r.standings?.[0]?.id === row.id;
+      return `<div class="row"><b>${esc(row.name)}${lead && r.phase !== 'parading' ? ' ◂' : ''}</b>`
+        + `<span>${Number(row.win).toFixed(2)}`
+        + (row.place ? ` · pl ${Number(row.place).toFixed(2)}` : '')
+        + (held.length ? ` · ${held.reduce((a, t) => a + t.stake, 0)} on` : '')
+        + '</span>'
+        + (open ? `<button class="buy" data-on="${esc(row.id)}" data-kind="win">back</button>` : '')
+        + '</div>';
+    }).join('') + '</div>';
+    if (open) {
+      html += `<div class="acts"><label>stake <input id="tote-stake" type="number" min="1" `
+        + `max="${MAX_STAKE}" value="25"></label>`
+        + (board?.field ? '<button class="buy" data-kind="field" data-on="field">back the field</button>' : '')
+        + '</div>';
+      html += `<p class="sub">The window takes ${MAX_STAKE} on a race. The book shuts at the off.</p>`;
+    }
+    /* WHAT THE CROWD IS HEARING. The announcer's own lines, up to the gate the
+     * clock has reached and no further — a call the feed has not made yet is a
+     * result printed early, which is the one thing this room may not do. */
+    if (r.calls?.length) {
+      html += '<div class="rows">' + r.calls.slice(-5).map((line) =>
+        `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
+    }
+    if (r.phase === 'called' && r.winner) {
+      const w = (board?.runners || []).find((x) => x.id === r.winner);
+      html += `<p class="sub">${esc(w?.name || r.winner)} by ${Number(r.margin).toFixed(2)}.</p>`;
+      if (tote.last) {
+        html += `<p class="sub">${tote.last.paid} credits`
+          + (tote.last.capped ? ` — the window owed ${tote.last.returned} and pays ${MAX_STAKE} at most` : '')
+          + '.</p>';
+      }
+    }
+  }
+  html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div>';
+  el.innerHTML = html + '</div>';
+
+  for (const b of el.querySelectorAll('button.buy')) {
+    b.addEventListener('click', () => {
+      const amount = Math.round(Number(document.getElementById('tote-stake')?.value) || 0);
+      const got = stakeAtTote(r.race, { on: b.dataset.on, kind: b.dataset.kind, stake: amount, at: toteHour() });
+      /* A REFUSAL IS A SENTENCE. Every door in this tree that can say no says
+       * why, and the window has five distinct reasons. */
+      if (!got.ok) world?.notify?.('THE WINDOW', got.why || 'no');
+      else tote.tickets.push(got.ticket);
+      showTote(venueId);
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-do="leave"]')) {
+    b.addEventListener('click', () => {
+      closePane('tote');
+      screens.clear();
+      input.enabled = true;
+      input.requestLock();
+      screens.set('playing');
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function openTote(venueId) {
+  audio.ui('good');
+  screens.take('tote', () => showTote(venueId));
+  return true;
+}
+screens.card('tote', () => closePane('tote'));
 
 /**
  * ══ #43 AND #44, THE MEDBAY — V16 Lane B3 ═════════════════════════════════

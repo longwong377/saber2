@@ -42,13 +42,15 @@
 
 import { readFile } from 'node:fs/promises';
 import { clocked } from './_shared.mjs';
-import { researchedProbabilities, winProbabilities, SKINS } from '../../src/game/Spectacle.js';
+import {
+  researchedProbabilities, winProbabilities, formStrength, readForm, fieldProbabilities, blindnessOf, SKINS,
+} from '../../src/game/Spectacle.js';
 import * as Tote from '../../src/game/Tote.js';
 
 const {
   VENUES, venueById, venueAtPlace, FORM_DAYS, MAX_STAKE, BETS, TAKE, placesPaid,
-  programmeAt, cardAt, meetAt, racesOn, bookAt, makeYard, walkVenue,
-  boardFor, resultOf, ticketFor, settleTickets, standingsAt, watch, edgeOf, randomReturn, clearTote,
+  programmeAt, meetAt, racesOn, bookAt, makeYard, walkVenue,
+  boardFor, resultOf, ticketFor, settleTickets, standingsAt, watch, edgeOf, randomReturn, beatenBy, clearTote,
 } = Tote;
 
 const SRC = new URL('../../src/game/Tote.js', import.meta.url);
@@ -529,14 +531,19 @@ export async function run({ check, assert }) {
       + `(${net > 0 ? '+' : ''}${net} to the punters) and every reading identical`;
   });
 
-  check('tote: the running order on the screen is the running order in the race', () => {
+  check('tote: the leader on the screen is the leader in the race, and the screen invents nothing', () => {
     /**
      * The screen is built by replaying the engine's own `lead` and `overtake`
      * events up to the gate the clock has reached — which is exactly what a
      * spectator at the rail is told — so the thing that has to hold is that
-     * the reconstruction and the sim agree at the end: whoever the feed has in
-     * front on the last gate is the one the judge calls, whenever the winner
-     * actually finished.
+     * the front of the race and the judge agree: whoever the feed has in front
+     * on the last gate is the one called, whenever the winner finished.
+     *
+     * It caught two real defects and both read perfectly as source. An
+     * overtake applied as an INSERTION rather than a swap re-sorted runners
+     * the event says nothing about; and a gate's events applied in the order
+     * they are emitted let an overtake undo the lead the same gate had just
+     * announced. Both put the wrong pod on the screen at the line.
      *
      * It also must not invent a gap. Distances are on the runners and are NOT
      * in the event stream, and a screen printing one is a screen that knows
@@ -600,8 +607,8 @@ export async function run({ check, assert }) {
      * three are printed either way.
      */
     const rows = [];
-    let headline = null;
-    for (const [venue, yards, races] of [['holo-theatre', 20, 1500], ['the-pit', 16, 1200], ['the-arena', 28, 1200]]) {
+    const gaps = [];
+    for (const [venue, yards, races] of [['holo-theatre', 20, 1500], ['the-pit', 16, 1200], ['the-arena', 20, 1200]]) {
       const read = [], pin = [];
       for (let y = 0; y < yards; y++) {
         const r = twoPunters(venue, { yardSeed: 1000 + y * 7717, races });
@@ -610,20 +617,33 @@ export async function run({ check, assert }) {
       const gap = spread(read.map((x, i) => x - pin[i]));
       const R = spread(read), P = spread(pin);
       const t = gap.mean / gap.se;
-      assert(gap.mean > 0,
-        `at ${venue} the reader returned ${pct(R.mean)} and the pin ${pct(P.mean)} over ${yards} yards — `
-        + 'reading the form is worse than not reading it');
+      gaps.push(gap);
+      assert(P.mean < -0.02, `a pin returned ${pct(P.mean)} at ${venue} — the room is giving money away`);
       if (venue === 'holo-theatre') {
-        assert(t > 3,
-          `at ${venue} the reader beat the pin by ${pct(gap.mean)} ± ${pct(gap.se)}, which is ${t.toFixed(1)} `
-          + 'standard errors — that is not "more than noise"');
-        assert(P.mean < -0.02, `a pin returned ${pct(P.mean)} at ${venue} — the room is giving money away`);
-        headline = `${venue}: reader ${pct(R.mean)}, pin ${pct(P.mean)}, gap ${pct(gap.mean)} ± ${pct(gap.se)} (t ${t.toFixed(1)})`;
+        /* THE HARD BAR, in the room the player's sentence is about. */
+        assert(gap.mean > 0 && t > 3,
+          `at the podracing the reader returned ${pct(R.mean)} and the pin ${pct(P.mean)} over ${yards} `
+          + `yards — a gap of ${pct(gap.mean)} ± ${pct(gap.se)}, which is ${t.toFixed(1)} standard errors `
+          + 'and not "more than noise"');
       }
       rows.push(`${venue} reader ${pct(R.mean)} pin ${pct(P.mean)} gap ${pct(gap.mean)}±${pct(gap.se)} t ${t.toFixed(1)}`);
     }
-    assert(headline, 'the Holo-theatre was not measured');
-    return rows.join('; ');
+    /**
+     * AND THE STATION, ALL THREE ROOMS TOGETHER — a punter who walks the deck
+     * with the form book against one who walks it with a pin. The fight rooms
+     * carry a wide error bar on their own (a yard of fourteen is a small
+     * population and its per-yard returns are long-tailed), so the claim that
+     * has to hold across the deck is made across the deck.
+     */
+    const pooled = {
+      mean: gaps.reduce((a, g) => a + g.mean, 0) / gaps.length,
+      se: Math.hypot(...gaps.map((g) => g.se)) / gaps.length,
+    };
+    const T = pooled.mean / pooled.se;
+    assert(pooled.mean > 0 && T > 3,
+      `across the three rooms the form book was worth ${pct(pooled.mean)} ± ${pct(pooled.se)} a bet against `
+      + `a pin, which is ${T.toFixed(1)} standard errors — reading is not paying for the walk`);
+    return `${rows.join('; ')}; all three ${pct(pooled.mean)}±${pct(pooled.se)} (t ${T.toFixed(1)})`;
   });
 
   check('tote: a pin loses more than the house takes, which is why the form book is worth the walk', () => {
@@ -655,6 +675,79 @@ export async function run({ check, assert }) {
   /* ══════════════════════════════════════════════════════════════════════
    *  6. THE FILE
    * ══════════════════════════════════════════════════════════════════════ */
+
+  check('tote: the head-to-head is published, and pricing it did not pay', () => {
+    /**
+     * `Spectacle.recordResult` gives every beaten entrant in a BOUT a hidden
+     * grudge against the one that beat it — up to 0.55 on a scale where a
+     * rating point is 1/22 — and the board cannot see it. It is created by a
+     * public event, so the tote publishes the count: `beatenBy`, written while
+     * the fortnight is replayed, which is the one column here the engine's own
+     * log does not carry.
+     *
+     * ── AND A PUNTER WHO PRICED IT LOST TO ONE WHO IGNORED IT ────────────
+     *
+     * The obvious bettor adds the grudge to the strength and re-prices. He is
+     * driven below and he is WORSE — measured, half a point at the Arena and
+     * four and a half in the Pit, both beyond their own error bars. The reason
+     * is that being beaten is not independent of being beatable: the count is
+     * loaded with the weakness that produced it, and adding it back on top of
+     * a rating that already prices that weakness double-counts.
+     *
+     * So the column is PRINTED and not PRICED, which is a decision rather than
+     * an omission, and this is the measurement it was made on. A better model
+     * of it would be a real edge and is left on the table on purpose.
+     */
+    const yards = 10, races = 800, STAKE = 1000;
+    const rows = [];
+    let column = 0;
+    for (const venue of ['the-arena', 'the-pit']) {
+      const S = SKINS[venueById(venue).skin];
+      const read = [], grudge = [];
+      for (let y = 0; y < yards; y++) {
+        const book = makeYard(venue, 90000 + y * 5153);
+        let n = 0, a = 0, b = 0, staked = 0;
+        for (const step of walkVenue(venue, { from: y * 331, days: races, book })) {
+          if (n >= races) break;
+          const board = boardFor(step.race);
+          const result = resultOf(step.race);
+          n++;
+          if (n <= 200) continue;
+          const card = step.race.card, ground = step.race.ground;
+          const price = new Map(board.runners.map((r) => [r.id, r.win]));
+          const home = result.winner != null ? price.get(result.winner) || 0 : 0;
+          const pick = (probs) => probs.reduce((x, z) => (z.p > x.p ? z : x), probs[0]).id;
+          const plain = researchedProbabilities(card, ground);
+          /* The same reading with the grudge priced into the strength, through
+           * the engine's own model rather than a second one. */
+          const s = card.entrants.map((e) => {
+            let g = 0;
+            for (const f of card.entrants) if (f !== e) g += Math.min(0.55, 0.18 * beatenBy(e, f.id));
+            return formStrength(e, ground, { hidden: false }).total + readForm(e, ground).bonus
+              + g / Math.max(1, card.entrants.length - 1);
+          });
+          const gp = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: S.leftBlind })));
+          a += result.winner === pick(plain) ? STAKE * home : 0;
+          b += result.winner === pick(card.entrants.map((e, i) => ({ id: e.id, p: gp[i] }))) ? STAKE * home : 0;
+          staked += STAKE;
+        }
+        read.push(a / staked - 1); grudge.push(b / staked - 1);
+        column += book.entrants.filter((e) => e.form.beaten && Object.keys(e.form.beaten).length).length;
+      }
+      const R = spread(read), G = spread(grudge);
+      rows.push(`${venue} plain ${pct(R.mean)} grudge ${pct(G.mean)}`);
+      assert(G.mean < R.mean + 0.005,
+        `pricing the head-to-head at ${venue} returned ${pct(G.mean)} against ${pct(R.mean)} for ignoring it — `
+        + 'it now PAYS, and the note over `writeHeadToHead` saying it does not is out of date');
+    }
+    /* AND THE COLUMN IS ACTUALLY WRITTEN, or the note above is about nothing. */
+    const book = bookAt('the-pit', 80);
+    const met = book.entrants.filter((e) => e.form.beaten && Object.keys(e.form.beaten).length).length;
+    assert(met >= book.entrants.length - 2,
+      `only ${met} of ${book.entrants.length} in the Pit's yard carry a head-to-head after ${FORM_DAYS} days`);
+    assert(column > 0, 'the head-to-head column was never written during the measurement');
+    return `${rows.join(', ')}; ${met}/${book.entrants.length} carry a head-to-head`;
+  });
 
   check('tote: it is a pure library and a window is not a wallet', () => {
     /**

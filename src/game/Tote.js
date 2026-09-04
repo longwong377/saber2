@@ -65,8 +65,8 @@
  *
  * IT KEEPS NONE. `ticketFor` PRICES a bet and hands back a ticket; it does not
  * take the money. `settleTickets` says what is owed; it does not pay it. The
- * credits move in `Station.js`'s `stakeAtTote`/`payAtTote`, which are eight
- * lines beside the interact key and are the only place the two words appear.
+ * credits move in `Station.js`'s `stakeAtTote`/`payAtTote`, a dozen lines
+ * beside the interact key, which are the only place the two doors are opened.
  * That is what lets `tools/checks/tote.mjs` settle a hundred thousand tickets
  * without a store, and it is the reason this file names no wallet word — its
  * own suite runs the six-word currency scan over it rather than waiting to be
@@ -180,9 +180,19 @@ export const venueAtPlace = (place) => VENUES.find((v) => v.place === (place | 0
  *  1. THE CARD — what is on, when
  * ══════════════════════════════════════════════════════════════════════════ */
 
-/** How far back the public form book runs. See the header: it is a constant
- * because two readers replaying different windows are watching different
- * races. Twelve days is sixty-odd starts a runner, which is `LOG_KEEP`. */
+/**
+ * HOW FAR BACK THE PUBLIC FORM BOOK RUNS.
+ *
+ * A constant and not an option, for the reason in the header: a bout carries a
+ * grudge out of the replay, so two readers running different windows are two
+ * readers watching different races.
+ *
+ * Twelve days is eighteen to thirty-odd starts a runner at the Holo-theatre —
+ * measured — which is well past what `Spectacle.readForm` needs to split a
+ * form line on the going, and short of the sixty rows `LOG_KEEP` would hold.
+ * A shorter book is a reading room with nothing in it and a longer one is a
+ * fortnight of races run every time somebody opens a door.
+ */
 export const FORM_DAYS = 12;
 
 /** How long the field is out before the first one goes off. */
@@ -222,10 +232,11 @@ export function programmeAt(venueId, day = 0) {
     const to = round2(Math.min(v.hours[1] + 1, from + length));
     const races = [];
     /* THE PARADE. A meet OPENS before anything runs — the field is out, the
-     * board is up and nothing has happened yet, which is the best half hour in
-     * the room and the only half hour in which every market is still open. A
-     * meet whose first race went off at the door would have no such phase and
-     * `watch` would have a state it could never report. */
+     * board is up and nothing has happened yet, which is the best twenty
+     * minutes in the room and the only stretch in which every market on the
+     * whole card is still open. A meet whose first race went off at the door
+     * would have no such phase, and `watch` would carry a state the room could
+     * never actually be in. */
     for (let k = 0, hour = from + PARADE; hour + v.runs <= to; k++, hour = round2(from + PARADE + k * v.every)) {
       races.push({
         id: `${v.id}:${d}:${m}:${k}`,
@@ -283,13 +294,13 @@ const yardFor = (v) => makeYard(v);
  * against 0.05 — and the tail of a probability model is the part you can least
  * afford to sell at face value.
  *
- * MEASURED, on 96,000 bouts across 24 independent yards: the board prices its
- * two-runner outsiders at 0.055 and they win 0.072, which is a hundredth and a
- * half of an error and reads as nothing. At a price of 17.3 it is +25% to
- * anybody who backs the underdog every night, forever. The same table is
- * excellent where the pair is close — 0.452 priced against 0.447 won, 0.548
- * against 0.553 — so the leak is not in the model, it is in WHICH PART OF THE
- * MODEL THE WINDOW SELLS.
+ * MEASURED, over 19,200 bouts across 24 independent yards, with an open draw:
+ * one bout in five had a runner priced under a tenth, the board priced that
+ * band at 0.055 and it won 0.072. A hundredth and a half of error reads as
+ * nothing — at a price of 17.3 it is +25% to anybody who backs the underdog
+ * every night, forever. The same table is excellent where the pair is close:
+ * 0.452 priced against 0.447 won, 0.548 against 0.553. So the leak is not in
+ * the model, it is in WHICH PART OF THE MODEL THE WINDOW SELLS.
  *
  * A promoter does not put a 94 in with a 46. `graded` is the marshal making
  * the match: the pair comes out of a window of the yard's own rating order, so
@@ -425,11 +436,11 @@ export function bookAt(venueId, day = 0) {
   return stable;
 }
 
-/** Forget the replayed books. Only a check calls this. */
-export function clearTote() { BOOKS.clear(); CARDS.clear(); }
-
 const CARDS = new Map();
 const CARD_KEEP = 8;
+
+/** Forget the replayed books and the day's cards. Only a check calls this. */
+export function clearTote() { BOOKS.clear(); CARDS.clear(); }
 
 /**
  * THE CARD AT A PLACE TODAY — the programme with the runners in it.
@@ -534,10 +545,10 @@ function topK(p, i, k) {
 export function boardFor(race) {
   if (race._board) return race._board;
   const rows = priceCard(race.card, race.ground);
-  /* `priceCard` rounds `marketP` to three figures for printing, so the column
-   * no longer sums to one. Renormalised before anything is derived from it:
-   * a place market built on a book that adds to 0.997 is 0.3% long on every
-   * row and the house finds out before the player does. */
+  /* `priceCard` rounds `marketP` for printing, so the column no longer sums to
+   * exactly one. Renormalised before anything is derived from it: a place
+   * market built on a book that adds to 0.997 is 0.3% long on every row, and
+   * the house would find that out before the player did. */
   const sum = rows.reduce((a, r) => a + r.marketP, 0) || 1;
   const p = rows.map((r) => r.marketP / sum);
   const k = placesPaid(race.card.entrants.length);
@@ -562,7 +573,15 @@ export function boardFor(race) {
     places: k, favourite: fav.id, runners,
     /* THE FIELD BET, and it needs three runners to mean anything: laying the
      * favourite in a two-horse race is backing the other one, which is already
-     * on the board at a better price. */
+     * on the board at a better price.
+     *
+     * IT IS THE ONE MARKET WHOSE MEASURED CUT IS NOT ITS DECLARED ONE, and
+     * that is structural rather than a miss. Win and place are books — every
+     * runner has a price and buying all of them returns `1 − take` whatever the
+     * model thinks. The field is a SINGLE outcome with no complement quoted
+     * beside it, so nothing forces the arithmetic and only the measurement can
+     * say what the cut is: 5.5% declared, 7.0–7.7% measured, because the board
+     * is flatter than the truth and therefore understates its own favourite. */
     field: race.card.entrants.length >= 3
       ? { p: Math.round(against * 1000) / 1000, price: round2(Math.max(1.05, (1 / Math.max(against, 1e-3)) * (1 - TAKE.field))), against: fav.id }
       : null,
@@ -655,7 +674,9 @@ export function ticketFor(race, { on = null, kind = 'win', stake = 0, at = null 
  * `Math.round(stake * price)` — a credit is a credit. Which means that at a
  * stake of 1, a price of 2.95 and a price of 3.40 pay the same three credits
  * and every measurement of the cut reads the ROUNDING instead of the price.
- * `drumEdge` names the same trap. `edgeOf` measures at a thousand.
+ * `drumEdge` names the same trap. `edgeOf` buys the book at a hundred thousand
+ * for exactly that reason, which is a size no player may stake — `MAX_STAKE`
+ * is 900 — and that is the point: a measurement is not a bet.
  */
 export function settleTickets(tickets = [], result = null) {
   const place = new Map((result?.order || []).map((r) => [r.id, r.position]));
@@ -730,7 +751,7 @@ function progressOf(race, hour) {
 }
 
 /**
- * THE RUNNING ORDER, RECONSTRUCTED FROM THE FEED AND FROM NOTHING ELSE.
+ * THE RUNNING ORDER, READ OFF THE FEED AND OVER THE CARD IN YOUR HAND.
  *
  * The engine emits `lead` when the front changes and `overtake` when a pair
  * swaps, which is exactly what a rail-side spectator is told, so the order on
@@ -738,7 +759,19 @@ function progressOf(race, hour) {
  * has reached. A runner who is out is pulled to the bottom with what happened
  * to it.
  *
- * ── WHAT IT DELIBERATELY DOES NOT DO IS INVENT A GAP ─────────────────────
+ * ── WHAT IS EXACT AND WHAT IS THE FEED'S OWN ACCOUNT ─────────────────────
+ *
+ * EXACT, and the check holds it: who is in FRONT at every gate, and who is out
+ * and why. The engine names the leader on every change and every retirement,
+ * refusal and beating as it happens, so those are not reconstructions.
+ *
+ * THE FEED'S ACCOUNT, and not claimed to be more: the places behind the
+ * leader. The stream carries overtakes between adjacent pairs and nothing
+ * else, so the rest of the order starts from the board — the card in your hand
+ * — and is shuffled by the swaps as they are called. A screen shows the front
+ * of the race and a running list, which is what a screen at a racetrack shows.
+ *
+ * ── AND IT DELIBERATELY DOES NOT INVENT A GAP ────────────────────────────
  *
  * The natural next field is "two lengths up", and the sim's distances are
  * right there on the runners. They are NOT in the event stream, and a screen
@@ -782,7 +815,11 @@ export function standingsAt(race, hour) {
   const firstLead = result.events.find((ev) => ev.type === 'lead');
   const front = firstLead ? firstLead.from
     : (result.order.find((o) => o.status === 'finished')?.id ?? result.order[0]?.id ?? null);
-  let order = race.card.entrants.map((e) => e.id);
+  /* Behind the leader, the screen starts from the BOARD — which is what the
+   * card in the spectator's hand says and the only ordering of a field that
+   * anybody has before the tapes go up. It is not the running order and it is
+   * not claimed to be; see the note above for exactly which line is. */
+  let order = boardFor(race).runners.map((r) => r.id);
   if (front) order = [front, ...order.filter((id) => id !== front)];
   const status = new Map();
   /**

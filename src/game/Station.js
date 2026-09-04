@@ -1335,7 +1335,7 @@ export function stationKey(world) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
- *  THE WINDOW — the eight lines where the credits actually move
+ *  THE WINDOW — the dozen lines where the credits actually move
  * ══════════════════════════════════════════════════════════════════════════
  *
  * `Tote.js` prices a bet and says what a ticket is worth; it holds no balance
@@ -1351,7 +1351,7 @@ export function stationKey(world) {
  * it owed and what it handed over, so a screen can say so. That is deliberate:
  * `Progress.js`'s amendment bounds the economy at a run's earnings, and a
  * betting room that paid round it would be the one place in the game where a
- * player buys their way past the doctrine. A tote is a thing to do with
+ * player could stake their way past the doctrine. A tote is a thing to do with
  * credits, not a way to make them.
  */
 
