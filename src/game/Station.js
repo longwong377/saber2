@@ -53,7 +53,7 @@ import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js'
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards } from './StationBoards.js';
-import { stationHour, setStationHour, stationName, setStationName, standing, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
+import { stationHour, setStationHour, stationName, setStationName, standing, stationDay, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
@@ -1397,6 +1397,12 @@ export function stepStation(world, dt) {
   st.hour += dt / 120;
   while (st.hour >= 24) st.hour -= 24;
   if (world.run) world.run.stationHour = st.hour;
+  /* AND WHICH DAY IT IS, published on the station so `StationLife` can read it.
+   * Everything seeded off the day — the shelves, the board, the pit's card, the
+   * tote's programme, who is on leave in the cantina — reads this one number,
+   * and a reader that had to derive its own would put two different stations in
+   * one hull. */
+  st.day = stationDay(st.hour);
   /* Persisted on the hour rather than every frame: §14 wants a return visit to
    * be later in the same day, not a localStorage write sixty times a second. */
   if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }

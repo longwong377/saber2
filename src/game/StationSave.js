@@ -134,6 +134,25 @@ export function setStationName(name) {
 
 /** The clock, so a return visit is later in the day (§3.4). */
 export function stationHour() { return read().hour; }
+
+/**
+ * ── WHAT DAY IT IS ON THE STATION, AND THERE IS ONE ANSWER ───────────────
+ *
+ * The shelves, the job board, the pit's card, the tote's programme and the
+ * bar's leave roll are every one of them seeded off it, so two readers who
+ * disagreed about the day would put two different rooms on one station.
+ *
+ * It lived as a private in `main.js` and half of it is `seen.length`, which is
+ * this file's own record and nothing outside could reach — so `StationLife`
+ * could not answer the question at all, and the same third of the roll took
+ * leave every single evening. It is here because this is the file that owns
+ * both halves.
+ */
+export function stationDay(hour = null) {
+  const s = read();
+  const h = Number.isFinite(hour) ? hour : s.hour;
+  return Math.floor((h || 0) / 24) + (s.seen?.length | 0);
+}
 export function setStationHour(h) {
   const s = read();
   s.hour = ((Number(h) || 0) % 24 + 24) % 24;

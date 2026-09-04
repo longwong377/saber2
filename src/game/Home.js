@@ -497,12 +497,13 @@ export function dressHome(world, st, M) {
     dial: 0,
     /** Set by anything that changes the record. `leaveHome` reads it. */
     dirty: false,
-    surfaces: null, mirror: null, sign: null, wheel: null, draws: 0,
+    surfaces: null, mirror: null, galley: null, sign: null, wheel: null, draws: 0,
   };
   world._home = h;
 
   dressSurfaces(world, h);
   dressMirror(world, h);
+  dressGalley(world, h);
   dressSign(world, h);
   for (const p of state.pieces) spawnPiece(world, h, p);
   attachWheel(world, h);
@@ -605,6 +606,38 @@ function dressMirror(world, h) {
     h.draws++;
   }
   h.mirror = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: fm };
+}
+
+/**
+ * ══ THE GALLEY — V16 §B5's *"store it in your apartment"* ═════════════════
+ *
+ * A cold store against the far wall, and it is a FIXTURE rather than a piece
+ * off the catalogue for the mirror's reason exactly: you have to be able to
+ * find it. A larder you could pick up, rotate and drop in a corner is a larder
+ * a player can lose, and losing the cupboard is a different game to the one
+ * that was asked for.
+ *
+ * TWO SLABS AND A DOOR SEAM. Same shape as the mirror, same cost — the room's
+ * whole argument is that it is a place and not a menu, and a place has a
+ * kitchen in it whether or not anything is in the kitchen today.
+ */
+const GALLEY_REACH = 2.4;
+
+function dressGalley(world, h) {
+  const { w, d } = h.spot;
+  const lx = w / 2 - 0.36, lz = -d / 2 + 1.4;
+  const body = slabGeo(0.62, 1.9, 1.3, { bevel: 0.03 }); body.translate(0, 0.95, 0);
+  const seam = slabGeo(0.04, 1.7, 0.06, { bevel: 0 }); seam.translate(-0.31, 0.95, 0);
+  const bm = new THREE.Mesh(body, h.M.wing);
+  const sm = new THREE.Mesh(seam, h.M.glass);
+  bm.name = 'home-galley'; sm.name = 'home-galley-seam';
+  for (const m of [bm, sm]) {
+    m.position.copy(toWorld(h, lx, lz));
+    m.quaternion.setFromAxisAngle(UP, h.spot.yaw);
+    h.group.add(m);
+    h.draws++;
+  }
+  h.galley = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: bm };
 }
 
 /**
@@ -885,6 +918,13 @@ export function homeKey(world, opts = {}) {
   if (p && h.mirror && p.distanceTo(h.mirror.at) < MIRROR_REACH && world.onKiosk) {
     world.onKiosk('mirror');
     world.notify?.('THE MIRROR', 'your own body in the glass');
+    return true;
+  }
+
+  /* AND THE GALLEY, on the same terms: a fixture you stand at, so the press
+   * cannot be mistaken for placing furniture on the floor beside it. */
+  if (p && h.galley && p.distanceTo(h.galley.at) < GALLEY_REACH && world.onLarder) {
+    world.onLarder();
     return true;
   }
 

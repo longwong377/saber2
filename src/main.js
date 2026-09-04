@@ -53,9 +53,11 @@ import { musterPlan, ARMY_IDS } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
+import { emptyLarder, larder, stowFood, takeFood } from './game/Home.js';
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
 import { watch as toteWatch, resultOf as toteResult, MAX_STAKE } from './game/Tote.js';
+import * as Food from './game/Food.js';
 import { stakeAtTote, payAtTote } from './game/Station.js';
 import {
   pitAtPlace, venueOpen, handlersOn, offerBout, openBout, beginRound, callOrder,
@@ -68,7 +70,7 @@ import { counterById } from './game/Vendors.js';
 import { spend } from './game/Credits.js';
 import { benchFor } from './game/Bench.js';
 import { STRATAGEMS } from './game/Stratagems.js';
-import { loadStation, standing } from './game/StationSave.js';
+import { loadStation, standing, stationDay as stationDayOf } from './game/StationSave.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
@@ -1178,6 +1180,8 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onPit = (id) => openPit(id);
     /* #18, #19 and #20 — see `openTote`. */
     world.onTote = (id) => openTote(id);
+    /* The cupboard at #27 — see `openLarder`. */
+    world.onLarder = () => openLarder();
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -1932,7 +1936,9 @@ screens.card('habitat', () => closeHabitat());
  * about what day it is in the same room.
  */
 function stationDay() {
-  return Math.floor((world?._station?.hour ?? 0) / 24) + (loadStation().seen?.length | 0);
+  /* THE ONE DERIVATION IS `StationSave`'s, and this is a pass-through so the
+   * station's own rooms and this file's overlays cannot land on two days. */
+  return stationDayOf(world?._station?.hour ?? null);
 }
 
 /**
@@ -2409,6 +2415,25 @@ function showCounter(counterId) {
        * are forty short" is the shape this tree keeps removing. */
       if (!paid.ok) { world?.notify?.(c.name.toUpperCase(), paid.short ? `${paid.short} credits short` : paid.why); return; }
       world?.notify?.(c.name.toUpperCase(), `${row?.name} — ${paid.left} left`);
+      /* ── V16 §B5, AND IT IS THE HALF THE PLAYER ASKED FOR ────────────────
+       *
+       * *"there could be a small cutscene of it being cooked then you can take
+       * it home."* Buying a DISH does not put it in a bag, it puts a man to
+       * work: `Food.Cook` is `Warp.PHASES`' shape, an ordered list of steps
+       * with a line each, and it plays out over three and a half to seven
+       * seconds in the banner.
+       *
+       * THE PLAYER IS NEVER TAKEN OFF THEIR FEET. Warp.js argues this at
+       * length for the jump and the argument is smaller here: somebody
+       * standing at a counter watching a man cook does not need the camera
+       * taken away to follow what is happening. So the panel stays up, the
+       * lines land in the banner, and the thing goes in the larder when it is
+       * over the counter.
+       *
+       * DERIVED, NOT A LIST OF ROOM NUMBERS. `Food.isDish` tests the row, so a
+       * dish added to any counter cooks and a hilt bought at the same window
+       * does not. */
+      if (Food.isDish(row)) { cookAtCounter(c, row); return; }
       showCounter(counterId);
     });
   }
@@ -2427,6 +2452,112 @@ function openCounter(counterId) {
   return true;
 }
 screens.card('counter', () => closePane('counter'));
+
+/**
+ * ══ WATCHING IT COOKED ════════════════════════════════════════════════════
+ *
+ * One handle, cancelled by every exit — `cancelDeathCard`'s precedent and its
+ * exact reason: a timer that outlives the screen it belongs to raises its
+ * closing line over whatever the player walked into next.
+ */
+let cookTimer = null;
+function cancelCook() {
+  if (cookTimer !== null) { clearTimeout(cookTimer); cookTimer = null; }
+}
+
+function cookAtCounter(counter, row) {
+  cancelCook();
+  const title = (counter?.name || 'the counter').toUpperCase();
+  const cook = new Food.Cook(row, {
+    say: (line) => world?.notify?.(title, line),
+    /* AND INTO THE LARDER, which is the whole reason the walk home exists. A
+     * dish that vanished when the cutscene ended would be a cutscene. */
+    done: () => {
+      const st = stowFood(row, { clock: Food.clockOf(stationDay(), world?._station?.hour ?? 0) });
+      world?.notify?.(title,
+        st.ok ? `${row.name} — in your larder at home` : (st.why || 'no room for it'));
+    },
+  });
+  const TICK = 0.25;
+  const beat = () => {
+    cookTimer = null;
+    if (cook.step(TICK) === 'done') return;
+    cookTimer = setTimeout(beat, TICK * 1000);
+  };
+  beat();
+}
+
+/**
+ * ══ #27, THE LARDER ═══════════════════════════════════════════════════════
+ *
+ * What is in the cupboard and what is still good. `Home.larder` sweeps
+ * anything past its keeping on the way out, so a wok bowl five hours old is
+ * gone from the page because it is gone from the cupboard — the page cannot
+ * offer a portion the store would refuse.
+ *
+ * THE SLOT IS ONE SLOT. Eating while full is refused with the time left rather
+ * than stacked, which is what *"eat it for buffs"* means when the buff is a
+ * provision: you get one going at a time and a second helping is a decision to
+ * waste it.
+ */
+let fullUntil = null;
+
+function showLarder() {
+  const el = paneRoot('larder');
+  const clock = Food.clockOf(stationDay(), world?._station?.hour ?? 0);
+  const rows = larder(clock);
+  const kind = Food.eaterKind(sessionOr('army'));
+  let html = '<div class="pane"><h2>The larder</h2>';
+  const on = Food.full(fullUntil, clock);
+  html += `<p class="sub">${on ? `${esc(fullUntil.name)} — ${Food.leftIn(fullUntil, clock).toFixed(1)} h left`
+    : 'nothing working'}</p>`;
+  if (!rows.length) {
+    html += '<p class="sub">Empty. There is a food court on deck 40.</p>';
+  } else {
+    html += '<div class="rows">' + rows.map((r) => {
+      const d = Food.dishById(r.id);
+      return `<div class="row"><b>${esc(d?.name || r.id)}${r.n > 1 ? ` ×${r.n}` : ''}</b>`
+        + `<span>${esc(r.state || '')}${Number.isFinite(r.left) ? ` · keeps ${r.left.toFixed(1)} h` : ''}</span>`
+        + `<button class="buy" data-id="${esc(r.id)}">eat</button></div>`;
+    }).join('') + '</div>';
+  }
+  html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div></div>';
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll('button.buy')) {
+    b.addEventListener('click', () => {
+      const got = takeFood(b.dataset.id, { clock });
+      if (!got.ok) { world?.notify?.('THE LARDER', got.why); showLarder(); return; }
+      const ate = Food.eat(got.dish, { kind, clock, slot: fullUntil });
+      if (!ate.ok) {
+        /* IT CAME OUT OF THE CUPBOARD AND IT GOES BACK IN. A refusal that ate
+         * the portion anyway is a refusal that charged for nothing. */
+        stowFood(got.dish, { clock });
+        world?.notify?.('THE LARDER', ate.why);
+      } else {
+        fullUntil = ate.slot;
+        world?.notify?.('THE LARDER', `${got.dish.name} — ${ate.slot.until - clock} h of it`);
+      }
+      showLarder();
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-do="leave"]')) {
+    b.addEventListener('click', () => {
+      closePane('larder');
+      screens.clear();
+      input.enabled = true;
+      input.requestLock();
+      screens.set('playing');
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function openLarder() {
+  audio.ui('good');
+  screens.take('larder', () => showLarder());
+  return true;
+}
+screens.card('larder', () => closePane('larder'));
 
 function showBench(which) {
   const el = paneRoot('bench');
@@ -2970,6 +3101,10 @@ function record(stats = null) {
   world._recorded = true;
   /* BEFORE the run is filed, for the ordering reason in `foldCompanion`. */
   foldCompanion(stats);
+  /* V16 §B5 — A PROVISION DOES NOT SURVIVE THE RUN IT WAS STOCKED FOR. The
+   * doctrine amendment allows food precisely because it is temporary; a larder
+   * that outlived the run would make it the permanent buy it is not. */
+  emptyLarder();
   recordRun({
     ...(stats || { wave: world.director?.wave ?? 0, score: world.score,
                    kills: world.players.reduce((a, p) => a + (p.kills || 0), 0) }),
