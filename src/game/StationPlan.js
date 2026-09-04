@@ -545,6 +545,48 @@ export const PLACES = [
     who: '3', idle: 'the compactor crushes', verb: 'throw a crate in and watch it die',
     band: 'outer', at: 136, w: 20, d: 16, h: 8.0, peak: 20, heads: 3,
   },
+  /**
+   * ── #57 THE REPEATING ROOM (V16 §A2) ──────────────────────────────────
+   *
+   * *"a holodeck/dojo that replaces the training and sandbox menus — you walk
+   * into a room and program it rather than picking a tab."*
+   *
+   * IT IS ON THE WORKING DECK AND NOT THE LIVING ONE, because that is what it
+   * is: a machine you operate. Deck 48 is where the reactor, the fabricators,
+   * the coolant plant and the droid pool are, and this stands in the gap
+   * between Fabrication and the cargo hold — the two rooms that are already
+   * about making a thing and stacking it. A projection room on the residential
+   * deck would read as a leisure room, and the point of the ask is that it is
+   * PROGRAMMED.
+   *
+   * ITS HOUR IS 21:00. Every other room on this deck peaks on a shift; this
+   * one fills after the last one, because practice is what you do when the
+   * work is finished. `headcount` reads `peak`, so the room is genuinely empty
+   * at ten in the morning — you have it to yourself, which is half of what a
+   * practice room is for.
+   *
+   * `heads` is 3: two waiting their turn on the bench outside and the
+   * technician who keeps the emitters trimmed. Not a crowd. A room with an
+   * audience is `#20 The Arena`, and this one has no audience by design.
+   *
+   * SHAPE, and rule 4 measured rather than hoped for: `latticecell` is a CUBE
+   * — 16 × 14 × 8.2 — studded on all six faces on one pitch and empty on the
+   * floor but for the plinth. Nothing else on deck 48 is a cube and nothing
+   * else on the station is regular in three axes at once. Measured with
+   * `station.mjs`'s own instrument on this deck: the worst pair involving #57
+   * is 0.140 (× #49 Coolant & water plant), against a bound of 0.85, and the
+   * deck's own worst pair is unmoved at 0.164 (#47 × #49).
+   */
+  {
+    id: 57, deck: 48, name: 'The Repeating Room', shape: 'latticecell',
+    look: 'a black cube with no window: every face — floor, walls and soffit — studded with '
+      + 'emitters on one square pitch, an empty floor, and a single lit plinth dead centre; '
+      + 'a rack of grey calibration blocks in the reveal by the door',
+    who: 'a technician trimming the emitters; two waiting outside',
+    idle: 'the room runs the last program it was given, empty, so the walls are never the same twice',
+    verb: 'program the room — the lessons, and a room of your own',
+    band: 'outer', at: 81, w: 16, d: 14, h: 8.2, peak: 21, heads: 3,
+  },
 
   /* ══ DECK 60 — ABOVE THE DRUM ═══════════════════════════════════════════ */
   {

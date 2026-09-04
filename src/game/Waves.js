@@ -345,6 +345,25 @@ export const MODES = {
      * is. Absent means true — every fighting mode keeps the flight.
      */
     insertion: false,
+    /**
+     * ══ NOT A CARD ANY MORE — V16 §A2 ═══════════════════════════════════
+     *
+     * *"a holodeck/dojo that replaces the training and sandbox menus — you
+     * walk into a room and program it rather than picking a tab."*
+     *
+     * `hidden` already means exactly one thing here and it is the right thing:
+     * a DESTINATION reached by a door rather than by picking it, which is why
+     * `MODES.hangar` and `MODES.station` carry it. These two are reached from
+     * `#57 The Repeating Room` on deck 48 now — `Holodeck.programSettings`
+     * writes this key when a program is chosen off the rack — so the flag is a
+     * statement of fact rather than a way of tidying the list.
+     *
+     * The row itself is untouched. `World.loadLevel` still builds the same
+     * director off `dojo`, `Extraction` still reads `insertion`, `claims.mjs`
+     * still holds this blurb's word "ten" to `LESSONS.length`, and
+     * `Progress.RECORDED` still refuses both. What changed is the door.
+     */
+    hidden: true,
   },
   /**
    * TRAINING WAS PINNED TO ONE ROOM.
@@ -462,6 +481,8 @@ export const MODES = {
      * never deploy them — a control that mints and saves and lies.
      */
     dojo: true,
+    /* NOT A CARD ANY MORE — see the same flag on `MODES.sandbox` above. */
+    hidden: true,
   },
   /**
    * COMMAND — the one mode where you are not alone.

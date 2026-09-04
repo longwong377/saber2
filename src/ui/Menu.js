@@ -65,15 +65,14 @@ import {
  * number in that row is read off this record rather than transcribed. */
 import { DIFFICULTY, GRADE_NAME, GRADE_DAMAGE, SPEED_GRADE, PARRY_GRADE, parryScale,
          CATCH } from '../game/Combat.js';
-// The Codex and the training panel both quote Focus's numbers. They are read
-// from the system rather than typed, because both of them had been left behind
-// by the round that changed heldScale from 0.35 to 0.18.
+// The Codex quotes Focus's numbers. They are read from the system rather than
+// typed, because it had been left behind by the round that changed heldScale
+// from 0.35 to 0.18.
 import { FOCUS } from '../game/Focus.js';
-// How many lessons there are, counted rather than typed: the training panel
-// offers to start them and the number in that sentence is the length of the
-// list it starts. MODES.training's own blurb says "the eleven lessons" and it
-// is the same eleven.
-import { LESSONS } from '../game/Dojo.js';
+/* `LESSONS` used to come in here so the Training panel could print how many
+ * there were. The panel is `#57 The Repeating Room` now (see the epitaph on
+ * `_buildTraining`) and the rack counts them where the room is built, so this
+ * file no longer needs to know that the dojo exists. */
 import { fellLine } from '../game/Session.js';
 import { VERSION } from '../version.js';
 import { MODES, playableModes, sandboxUnits, SANDBOX_MAX_ENEMIES, sandboxConfig, SKIRMISH,
@@ -528,6 +527,16 @@ export const DEFAULT_SETTINGS = {
   // Empty by default, which is exactly the room this mode always had — the
   // whole population drawn from `sandboxType`.
   sandboxMix: {},
+  /**
+   * WHICH RUNG THE LADDER OPENS ON — V16 §A2, and it is the room that writes it.
+   *
+   * A lesson ID from `Dojo.LESSONS`, or null for the first one. Nothing on the
+   * menu writes this and nothing on the menu ever will: it is written by
+   * `Holodeck.programSettings` when a program is chosen off the rack in `#57`,
+   * and read once by `DojoDirector.start`. Null is the tab's old behaviour
+   * exactly — every "Begin the lessons" press started at rung 0.
+   */
+  lesson: null,
   unlimitedBlade: false,
   // The other half of note 46. The slow-motion itself was deepened (heldScale
   // 0.35 -> 0.18, see FOCUS); this is the option that lets a player who is
@@ -1117,6 +1126,10 @@ export const SETTING_READERS = {
   sandboxFire:     ['game/Waves.js', 's.sandboxFire'],
   sandboxType:     ['game/Waves.js', 's.sandboxType'],
   sandboxMix:      ['game/Waves.js', 's.sandboxMix'],
+  /* Read once, at the top of the ladder, and by nothing else — see the note on
+   * `DojoDirector.start`, which is also the record of why the branch that used
+   * to read a MODE there had to be deleted. */
+  lesson:          ['game/Dojo.js', 'settings?.lesson'],
   unlimitedBlade:  ['ui/Menu.js', 's.unlimitedBlade ? BLADE_MAX : BLADE_CAP'],
   unlimitedFocus:  ['game/World.js', 'this.settings.unlimitedFocus'],
   sensitivity:     ['game/World.js', 'sensitivity: this.settings.sensitivity'],
@@ -3830,12 +3843,11 @@ export class Menu {
       build: document.getElementById('build-id'),
       buildLine: document.getElementById('build-line'),
     };
-    // Blade length is reachable from the forge AND from the training panel, so
+    // Blade length is reachable from the forge AND from the pause card, so
     // every control bound to a setting is registered and they all refresh
     // together. Two inputs quietly disagreeing about one number is exactly the
     // kind of bug this codebase specialises in.
     this._bound = new Map();
-    this._buildTraining();          // must exist before the tab wiring runs
     /* BEFORE the Databank, because both insert themselves into the tab bar
      * relative to a tab that is already there and the Company goes in front of
      * Co-op while the Databank goes in front of the Codex. Two independent
@@ -3863,7 +3875,8 @@ export class Menu {
     // both of those normalise the setting this renders.
     this._buildCodexTeaching();
     // after _buildSaber, so the forge's own Length slider gets the ceiling too
-    this._applyBladeCeiling?.(this.s.unlimitedBlade);
+    this._buildBladeCeiling();
+    this._applyBladeCeiling(this.s.unlimitedBlade);
     // How much of a column is below the fold is a function of the window, so it
     // is re-answered when the window changes. Registered once, on the object
     // that lives as long as the page.
@@ -5372,7 +5385,18 @@ export class Menu {
     this._slider('opt-build', 'build', (v) => (v < 0.34 ? 'slight' : v > 0.66 ? 'heavy' : 'even'),
       () => this._refreshPreview(true));
     // 'saber', not true: neither of these is a new body. See _reforgeSaber.
-    this._slider('opt-bladelen', 'bladeLength', (v) => `${v.toFixed(2)}m`, () => this._refreshPreview('saber'));
+    /* THE FIRST AND NOW ONLY REGISTRATION FOR `bladeLength`, and it inherits a
+     * job. The Training panel registered this setting before `_buildSaber`
+     * ran, so ITS handler was the one both sliders fired and the forge's own
+     * was never reached — which is where `hooks.onBladeLength` was called
+     * from. The panel is gone; without this argument the blade would stop
+     * being live and nothing would go red, because a hook nobody calls reads
+     * exactly like a hook nothing needs. `main.js` answers it by writing the
+     * length onto the saber the player is holding. */
+    this._slider('opt-bladelen', 'bladeLength', (v) => `${v.toFixed(2)}m`, (v) => {
+      this._refreshPreview('saber');
+      this.hooks.onBladeLength?.(v);
+    });
     this._slider('opt-bladewidth', 'coreWidth', (v) => `${Math.round(v * 100)}%`, () => this._refreshPreview('saber'));
   }
 
@@ -6796,164 +6820,49 @@ export class Menu {
   /* ── training ────────────────────────────────────────────────────── */
 
   /**
-   * The practice panel.
+   * ══ THE TAB THAT USED TO BE HERE IS A ROOM NOW (V16 §A2) ══════════════
    *
-   * It is built here rather than in index.html for the same reason the boon
-   * cards and the key bindings are: the archetype list has to come from
-   * ARCHETYPES, and a hand-written copy of it in the markup would be wrong the
-   * first time somebody adds a droid.
+   * *"a holodeck/dojo that replaces the training and sandbox menus — you walk
+   * into a room and program it rather than picking a tab."*
    *
-   * It has to exist before _buildTabs runs — that is what collects .tab and
-   * .panel — hence the call order in the constructor.
+   * `_buildTraining` built a tab called Training, second in the bar, carrying
+   * three columns and two buttons: `sandboxCount`/`sandboxFire`, the opponent
+   * list (`sandboxType` + `sandboxMix`), `bladeLength` with `unlimitedBlade`
+   * and `unlimitedFocus` beside it, "Begin the lessons" and "Enter the
+   * sandbox". The ground came off Deploy, two tabs away, which is why the
+   * panel's own copy had to say "in whatever theatre you have picked under
+   * Deploy".
+   *
+   * All of it is `#57 The Repeating Room` on deck 48. A PROGRAM
+   * (`src/game/Holodeck.js`) names a ground, an opponent set and all seven of
+   * those dials as one value, and `Holodeck.programSettings` writes the same
+   * settings blob these buttons wrote — so the lessons and the sandbox are
+   * reached the way the hangar and the station already are: through a door.
+   * `MODES.training` and `MODES.sandbox` carry `hidden` for that exact reason,
+   * which is what takes their cards off the Deploy list as well; `playableModes`
+   * has always meant "not reached by a door".
+   *
+   * WHAT DID NOT MOVE, because moving it would have been a deletion dressed as
+   * a replacement:
+   *
+   *   the pause card    still carries Enemies, Incoming fire and Opponent
+   *                     (`_buildPauseTraining`), because "live" is worth
+   *                     nothing if the only copy is behind Abandon Run — and
+   *                     a program is a room you then adjust from inside it.
+   *   the forge         still carries Length (`#opt-bladelen`, Saber tab).
+   *                     `bladeLength` is not a practice-only number; the other
+   *                     six are, which is precisely why they belonged on a
+   *                     program and not on a tab.
+   *   the ceiling       `_buildBladeCeiling` below, which is what the deleted
+   *                     `_buildUnlimitedBlade` actually did for a living.
    */
-  _buildTraining() {
-    const tabs = document.querySelector('.menu-tabs');
-    const wrap = document.querySelector('.menu-wrap');
-    if (!tabs || !wrap) return;                       // stripped DOM (tests)
-
-    const tab = document.createElement('button');
-    tab.className = 'tab';
-    tab.dataset.tab = 'training';
-    tab.textContent = 'Training';
-    // second, right after Deploy: this is where a player who is being shot to
-    // pieces goes looking, and the last tab is where nobody looks.
-    tabs.insertBefore(tab, tabs.children[1] || null);
-
-    const panel = document.createElement('section');
-    panel.className = 'panel';
-    panel.dataset.panel = 'training';
-    panel.innerHTML = `
-      <div class="col">
-        <h3>The room</h3>
-        <p class="hint" style="margin-bottom:14px">Two numbers you own outright. They apply in
-          <b>Sandbox</b> mode in any theatre and in <b>Training</b>, and nowhere else —
-          they are practice controls, not a difficulty.</p>
-        <label class="slider">Enemies <input type="range" id="opt-sandbox-count"
-          min="0" max="${SANDBOX_MAX_ENEMIES}" step="1" value="5"><b></b></label>
-        <label class="slider">Incoming fire <input type="range" id="opt-sandbox-fire"
-          min="0" max="2" step="0.05" value="1"><b></b></label>
-        <p class="hint">Zero enemies is an empty arena to move around in. Zero fire is a room
-          full of droids that walk, dodge and never pull a trigger — the two are independent on
-          purpose, because reading a swing and reading a bolt are different lessons.</p>
-        <p class="hint" style="margin-top:14px">All of it is <b>live</b>: repeated on the pause
-          screen, and the room reshapes itself the moment you resume — change the mix and the
-          droids you stopped asking for are retired, no kills required.</p>
-      </div>
-      <div class="col">
-        <h3>Opponent</h3>
-        <p class="hint" style="margin-bottom:14px">Name as many kinds as you like and how many of
-          each. <b>+</b> and <b>−</b> set a count; pressing the row itself clears the others and
-          gives the whole room to that one. <b>Mixed</b> is the remainder — every body you have
-          not asked for by name — so a room with nothing named is the theatre's own draw, which
-          is what this list always did.</p>
-        <div id="opt-sandbox-type" class="difflist"></div>
-        <p class="hint" style="margin-top:12px">Naming more than the room holds raises the
-          <b>Enemies</b> slider to fit; the ceiling is ${SANDBOX_MAX_ENEMIES}. Taking one away
-          leaves the room the size it was and hands the place to the mixed draw.</p>
-      </div>
-      <div class="col narrow pinned">
-        <div class="col-scroll">
-        <h3>Blade</h3>
-        <label class="check"><input type="checkbox" id="opt-unlimited-blade"> Unlimited blade length</label>
-        <label class="check"><input type="checkbox" id="opt-unlimited-focus"> Unlimited Focus</label>
-        <p class="hint">Focus costs ${FOCUS.drain} Force a second, which is the trade the whole system exists
-          to create — every second inside it is a push you cannot make. Off the leash it costs
-          nothing, so you can sit inside a volley for as long as it takes to learn to read one.
-          The world still runs at ${FOCUS.heldScale.toFixed(2)} of real time and you still run at
-          ${FOCUS.playerScale.toFixed(2)} of yours; what goes away is the bill.</p>
-        <label class="slider">Length <input type="range" id="opt-train-bladelen"
-          min="0.85" max="${BLADE_CAP}" step="0.01" value="1.15"><b></b></label>
-        <p class="hint">Off the leash the blade reaches ${BLADE_MAX.toFixed(2)} m instead of
-          ${BLADE_CAP.toFixed(2)}. The capture window along the blade grows with it — ±70 cm at
-          the stock 1.15 m, ±212 cm at 4 m — which is the point: a bolt you cannot yet meet with
-          a hand-span of plasma, you can meet with a pike, and then shorten it back.</p>
-        <p class="hint">The same slider lives in <b>Saber</b>; they are one number, and like the
-          two above it, it is <b>live</b>: the blade you are holding grows or shortens as you drag
-          it. It used to say it landed on your next Ignite, and it did not land at all — nothing
-          read it after the blade was built.</p>
-        <h3 style="margin-top:22px">The lessons</h3>
-        <p class="hint">${LESSONS.length} of them, in order, in whatever theatre you have picked
-          under <b>Deploy</b>: meeting a bolt, driving into one, sending it home, the cut, the
-          parry, the chamber, the blade lock. A coach panel calls each one and counts it off, and
-          nothing in the room can kill you.</p>
-        <p class="hint" style="margin-top:auto">The sandbox is the same room without the coach:
-          the theatre picked under <b>Deploy</b>, the three controls on this page, and nothing
-          arrives until you ask for it.</p>
-        </div>
-        <button id="btn-lessons" class="primary">Begin the lessons</button>
-        <button id="btn-sandbox" class="secondary">Enter the sandbox</button>
-      </div>`;
-    wrap.insertBefore(panel, document.querySelector('.menu-foot'));
-
-    this._slider('opt-sandbox-count', 'sandboxCount',
-      v => (v <= 0 ? 'empty' : String(Math.round(v))),
-      /* The opponent list prints the REMAINDER on its Mixed row, and the
-       * remainder is this number minus what has been named — so the list is
-       * stale the instant this moves. Registered as the side effect rather than
-       * hooked onto the input, because the pause card is a second handle on the
-       * same number and `_set` runs this for both. */
-      () => this._buildSandboxUnits());
-    this._slider('opt-sandbox-fire', 'sandboxFire',
-      v => (v <= 0 ? 'held' : `${v.toFixed(2)}×`));
-    this._slider('opt-train-bladelen', 'bladeLength', v => `${v.toFixed(2)}m`, (v) => {
-      // This registration is the FIRST for `bladeLength` — _buildTraining runs
-      // before _buildSaber — so it is this handler that both sliders fire, and
-      // the forge's own is never reached. Which is why 'saber' has to be here
-      // too: on the full rebuild, dragging either one is 8 fps.
-      this._refreshPreview('saber');
-      // The seam for making length live. World.spawnPlayer reads bladeLength
-      // once, at construction, so today this lands on the next Ignite — but the
-      // Saber itself reads this.bladeLength every frame, so one line in main.js
-      // (`onBladeLength: v => world.player?.saber && (…bladeLength = v)`) is the
-      // whole fix, and it belongs on that side of the wall.
-      this.hooks.onBladeLength?.(v);
-    });
-
-    this._buildSandboxUnits();
-    this._buildUnlimitedBlade();
-
-    /**
-     * THE TAB CALLED TRAINING NOW STARTS TRAINING.
-     *
-     * It had exactly one button and that button deployed SANDBOX. Enumerated in
-     * Chromium: the panel's headings were ['The room', 'Opponent', 'Blade'] and
-     * its buttons were [{id:'btn-sandbox', text:'Enter the sandbox'}] — one, and
-     * not a Training one. Clicking it gave settings.mode 'sandbox', a
-     * WaveDirector, a hidden coach panel still holding index.html's placeholder
-     * '—', and a HUD counting WAVES; `DojoDirector`, the class that owns the
-     * lessons, was never constructed. `grep -n 'selectMode(' src/ui/Menu.js`
-     * returned three lines — the mode card, this button, and the definition —
-     * so the ONLY writer of mode 'training' in the whole product was a card on
-     * the Deploy panel that sits below the fold of a scrollable column.
-     *
-     * So the tab gets the button its name promises, and it is the primary one:
-     * a player being shot to pieces opens this tab looking for the tutorial,
-     * which is exactly why _buildTraining puts the tab second. The sandbox
-     * keeps its own button and its own honest label, one step down the
-     * hierarchy. Both are four lines and both go through `selectMode`, so the
-     * Deploy panel's Mode list is still telling the truth afterwards.
-     */
-    const lessons = document.getElementById('btn-lessons');
-    if (lessons) lessons.addEventListener('click', () => {
-      audio.ui('click');
-      this.selectMode('training');
-      this.hooks.onDeploy?.(this.s);
-    });
-
-    const go = document.getElementById('btn-sandbox');
-    if (go) go.addEventListener('click', () => {
-      audio.ui('click');
-      this.selectMode('sandbox');
-      this.hooks.onDeploy?.(this.s);
-    });
-  }
 
   /* ── databank ────────────────────────────────────────────────────── */
 
   /**
    * THE PAGE PER BODY.
    *
-   * Built here rather than in index.html for the reason `_buildTraining` is:
+   * Built here rather than in index.html for the reason `_buildCompany` is:
    * the list has to come from `ARCHETYPES`, and thirty-one blocks of markup
    * typed into a file would be wrong the day somebody adds a droid — which is
    * the defect this repository has now removed nine times. There is no unit
@@ -7018,8 +6927,8 @@ export class Menu {
     tab.textContent = 'Company';
     /* AFTER THE JEDI AND BEFORE CO-OP, which is the order of the three things
      * a player owns: the one they are, the ones who follow them, and the ones
-     * they play with. Behind the reference pages is where `_buildTraining`'s
-     * own note says nobody looks. */
+     * they play with. Behind the reference pages is the end of the bar, and
+     * the end of the bar is where nobody looks. */
     const coop = [...tabs.children].find((t) => t.dataset.tab === 'coop');
     tabs.insertBefore(tab, coop || null);
 
@@ -9140,106 +9049,49 @@ export class Menu {
     });
   }
 
-  _buildSandboxUnits() {
-    const host = document.getElementById('opt-sandbox-type');
-    if (!host) return;
-    const cfg = sandboxConfig(this.s);
-    const mix = this.s.sandboxMix && typeof this.s.sandboxMix === 'object' ? this.s.sandboxMix : {};
-    const rest = Math.max(0, cfg.count - cfg.named);
-    host.innerHTML = '';
-    for (const u of sandboxUnits()) {
-      const d = document.createElement('div');
-      const n = u.key === 'mixed' ? rest : Math.max(0, Math.round(Number(mix[u.key]) || 0));
-      d.className = 'diff sandbox-row' + (n > 0 ? ' sel' : '');
-      d.dataset.unit = u.key;
-      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${u.name}</b><span>${u.blurb}</span></div>`
-        + (u.key === 'mixed'
-          /* The remainder, stated rather than offered — see the note above. */
-          ? `<div class="step rest"><b>${n}</b></div>`
-          : `<div class="step"><button type="button" class="less" aria-label="one fewer ${u.name}"
-                ${n <= 0 ? 'disabled' : ''}>−</button><b>${n}</b><button type="button" class="more"
-                aria-label="one more ${u.name}"
-                ${cfg.count >= SANDBOX_MAX_ENEMIES && n <= 0 ? 'disabled' : ''}>+</button></div>`);
-      if (u.key !== 'mixed') {
-        const step = (by) => {
-          audio.ui('click');
-          const was = Math.max(0, Math.round(Number(this.s.sandboxMix?.[u.key]) || 0));
-          const now = Math.max(0, was + by);
-          const next = { ...(this.s.sandboxMix || {}) };
-          if (now > 0) next[u.key] = now; else delete next[u.key];
-          this.s.sandboxMix = next;
-          /* THE TOTAL FOLLOWS THE NAMES UP, AND NOT BACK DOWN. Asking for one
-           * more droideka than the room holds raises the room — a number you
-           * typed must not lose to a slider you did not touch — but taking one
-           * away leaves the total where it is, so the body you removed becomes
-           * a mixed draw instead of shrinking the fight you are in. `_set` is
-           * what moves the OTHER handle on this number, the pause card's. */
-          const cur = sandboxConfig(this.s);
-          if (cur.named > (this.s.sandboxCount ?? 0)) this._set('sandboxCount', cur.named);
-          saveSettings(this.s);
-          this._buildSandboxUnits();
-        };
-        d.querySelector('.less')?.addEventListener('click', (e) => { e.stopPropagation(); step(-1); });
-        d.querySelector('.more')?.addEventListener('click', (e) => { e.stopPropagation(); step(+1); });
-        /* THE ROW ITSELF IS STILL A CONTROL. A radio list taught every player
-         * of this screen that the row is what you press, so a row press means
-         * "just this one": it clears the rest of the mix and takes the whole
-         * room. That is the old behaviour exactly, reached the old way. */
-        this._activate(d, () => {
-          audio.ui('click');
-          this.s.sandboxMix = {};
-          this.s.sandboxType = u.key;
-          saveSettings(this.s);
-          if (this._pauseType) this._pauseType.value = u.key;
-          this._buildSandboxUnits();
-        });
-      } else {
-        this._activate(d, () => {
-          audio.ui('click');
-          this.s.sandboxMix = {};
-          this.s.sandboxType = 'mixed';
-          saveSettings(this.s);
-          if (this._pauseType) this._pauseType.value = 'mixed';
-          this._buildSandboxUnits();
-        });
-      }
-      host.appendChild(d);
-    }
-  }
+  /**
+   * ══ THE OPPONENT LIST WENT WITH THE TAB (V16 §A2) ═════════════════════
+   *
+   * `_buildSandboxUnits` built `#opt-sandbox-type` — a row per archetype with
+   * a ± stepper, writing `sandboxMix`, and a Mixed row printing the
+   * remainder. It was twelve rows of prose in a panel that no longer exists.
+   *
+   * The room carries it instead, and carries it BETTER, which is the honest
+   * reason and not a consolation: a mix is only meaningful next to a ground
+   * and a fire rate, and those three lived on three different screens. A
+   * `Holodeck` program names all of them at once (`open:volley` is six B1s and
+   * two snipers on the flattest ground in the game at 1.4× fire), so what used
+   * to be a stepper you had to reason about is a room with a name.
+   *
+   * `settings.sandboxMix` is unchanged and `sandboxConfig` still reads it the
+   * same way — the pause card's Opponent select still writes `sandboxType`,
+   * which is the REMAINDER and the thing you actually want to change mid-run.
+   */
 
   /**
-   * The leash.
+   * The leash, and it is a CONSEQUENCE now rather than a checkbox.
    *
-   * There is only ONE blade length setting; the checkbox moves the ceiling on
-   * every control bound to it. Turning it back off has to shorten a blade that
-   * is already past the stock cap, or the setting would be a one-way door that
-   * left a 4 m blade in a ranked run with nothing on screen admitting it.
+   * There is only ONE blade length setting, and `unlimitedBlade` moves the
+   * ceiling on every control bound to it. The tick box that used to set it
+   * went with the Training tab — the leash is a practice control, it bites in
+   * exactly two modes, and it is one of the seven dials a `Holodeck` program
+   * now names (`open:pike` is the one that takes it off). So the setting is
+   * written by the room, and this is the half that has to happen either way:
+   * whatever set it, the forge's own Length slider must be able to REACH the
+   * blade the player is holding, and turning it back off must shorten a blade
+   * that is already past the stock cap — otherwise the number is a one-way
+   * door that leaves 4 m in a ranked run with nothing on screen admitting it.
+   *
+   * Called from the constructor after `_buildSaber`, which is where the slider
+   * this moves is registered.
    */
-  _buildUnlimitedBlade() {
-    const box = document.getElementById('opt-unlimited-blade');
-    if (!box) return;
+  _buildBladeCeiling() {
     const apply = (on) => {
       const cap = on ? BLADE_MAX : BLADE_CAP;
       for (const input of this._bound.get('bladeLength')?.inputs || []) input.setAttribute('max', String(cap));
       if (this.s.bladeLength > cap) this._set('bladeLength', cap);
       else this._set('bladeLength', this.s.bladeLength, true);   // re-sync the labels
     };
-    box.checked = !!this.s.unlimitedBlade;
-    box.addEventListener('change', () => {
-      audio.ui('click');
-      this.s.unlimitedBlade = box.checked;
-      saveSettings(this.s);
-      apply(box.checked);
-      this._refreshPreview(true);
-    });
-
-    // …and the one beside it, through `_check` rather than by hand. The blade
-    // ceiling above needs the `apply` side effect and so is wired here; this
-    // one needs nothing but the setting, and going through the helper is what
-    // puts it in the bound table that controls.mjs reads — a hand-wired box
-    // has to be excused by name in PICKED, and an excuse is a thing that can
-    // be granted to something that does not deserve one.
-    this._check('opt-unlimited-focus', 'unlimitedFocus');
     this._applyBladeCeiling = apply;
   }
 
@@ -11266,7 +11118,9 @@ export class Menu {
     sel.addEventListener('change', () => {
       this.s.sandboxType = sel.value;
       saveSettings(this.s);
-      this._buildSandboxUnits();          // keep the menu's own picker in step
+      /* Nothing else to keep in step: this is the only picker for the
+       * remainder that is left, now that the menu's twelve-row copy of it has
+       * gone into the room. See `_buildSandboxUnits`' epitaph. */
     });
     this._pauseType = sel;
     this._pauseTraining = box;

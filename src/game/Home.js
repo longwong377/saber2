@@ -56,6 +56,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { Prop, mergeGeos, slabGeo, cylGeo } from '../world/Props.js';
 import { homeState, setHomeState } from './StationSave.js';
 import { signPanel } from './StationKit.js';
+import { floorOf } from './StationPlan.js';
 import * as Food from './Food.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -355,6 +356,17 @@ export function loadHome() { return clean(homeState()); }
 export function saveHome(rec) { return setHomeState(clean(rec)); }
 
 /**
+ * The same clamp, on a record that did not come off this machine's disk.
+ *
+ * `Coop.js` reads a friend's home off the wire, which is a hand-edited save
+ * with a shorter wire: 4000 pieces at coordinates a kilometre out is bodies
+ * spawned into deck 44 on somebody else's machine. Restating those clamps
+ * there would be `HANDOFF` §2.4's manufactured second copy, so the validator
+ * gets a door instead of a twin.
+ */
+export function cleanHome(rec) { return clean(rec); }
+
+/**
  * What the home HOLDS (V16 §2 B5, §3.2). Its own door, so that the food lane
  * and the parcels desk write one field each and never the whole record.
  */
@@ -457,6 +469,34 @@ const FWD = new THREE.Vector3(0, 0, -1);
 const UP = new THREE.Vector3(0, 1, 0);
 
 /**
+ * ══ WHICH ROOM A DRESSING GOES BEHIND ═════════════════════════════════════
+ *
+ * `SHAPES.twinroom` is the only builder that hands back a home spot, and it
+ * hands back #27's — the footprint AND the four rectangles a piece may not be
+ * set down in. Lane F dresses a home behind a RESIDENCE (`#31`, `#33`, `#34`,
+ * `#38`) whose builder declares nothing of the sort, so the spot for one is
+ * derived from the gazetteer row that every place already has: the same
+ * centre, yaw, footprint and deck floor `buildPlace` emitted the room at.
+ *
+ * WHAT IS LOST BY DERIVING IT, SAID PLAINLY AND NOT PAPERED OVER: `blockers`
+ * comes back EMPTY, so inside a converted residence the grid knows the walls
+ * and nothing inside them — a chair may be set down in the Centauri fountain.
+ * The honest fix is one declared rectangle per shape in `StationKit`, exactly
+ * as `twinroom` has; until that is written this is a room you may furnish
+ * through, not a room with no rules. It is bounded, snapped and capped like
+ * every other home, which is the part that protects the record.
+ */
+function spotOf(st, id) {
+  if (!st || !Number.isFinite(id)) return null;
+  if (st.home && st.home.id === id) return st.home;
+  const rec = st.places.get(id);
+  const p = rec?.place;
+  if (!p || !(p.w > 2 && p.d > 2)) return null;
+  return { id: p.id, deck: p.deck, x: p.x, z: p.z, yaw: p.yaw, y: floorOf(p),
+    w: p.w, d: p.d, h: p.h, blockers: [] };
+}
+
+/**
  * ══ THE HOME, PUT UP ══════════════════════════════════════════════════════
  *
  * Called by `dressStation` once the places are built, with the station's own
@@ -465,15 +505,45 @@ const UP = new THREE.Vector3(0, 1, 0);
  * so `undressStation`'s existing teardown frees the geometry and the cull
  * switches the home off with the room it is in.
  *
+ * ── AND THERE MAY NOW BE FOUR OF THEM, OF WHICH EXACTLY ONE IS YOURS ──────
+ *
+ * `Coop.js` calls this again, once per guest, with `opts.owner` and the record
+ * that came off THEIR machine. Every apartment is the same object and is put
+ * up by the same code — the only difference between yours and a friend's is
+ * two fields, and every rule in this file that has to know reads them:
+ *
+ *   `mine`   TRUE for exactly one dressed home per world. `world._home` is it,
+ *            and it is the ONLY home the placement verbs can name — `addPiece`,
+ *            `takePiece`, `dropPiece`, `movePiece`, `rotatePiece` and
+ *            `setSurface` every one of them start `world._home`, so "a guest
+ *            may not rearrange your cabin" is not a permission test that can be
+ *            forgotten, it is the absence of a way to say it. See `Coop.js`
+ *            §WHO MAY MOVE THE FURNITURE.
+ *   `owner`  `{ id, name }` for a friend's, null for yours. It is what the
+ *            refusal names, and a refusal that cannot name whose room this is
+ *            is a control that ignores you.
+ *
  * @param st the station record; `st.home` is what `SHAPES.twinroom` handed back.
+ * @param opts `{ place, state, owner }` — the door, the dressing and whose.
  */
-export function dressHome(world, st, M) {
-  const spot = st?.home;
+export function dressHome(world, st, M, opts = {}) {
+  const spot = spotOf(st, opts.place ?? st?.home?.id);
   if (!world || !spot) return null;
   const rec = st.places.get(spot.id);
   if (!rec) return null;
 
-  const state = loadHome();
+  /* YOURS COMES OFF THE DISK AND A GUEST'S COMES OFF THE WIRE, and neither
+   * path can be the other: `loadHome` reads the one durable fold this machine
+   * has, which is the local player's and nobody else's. A guest's record is
+   * re-validated here anyway — it crossed a wire, and `clean` is the same
+   * clamp a hand-edited save meets. */
+  const mine = !opts.owner;
+  /* AND `opts.state` OVERRIDES THE DISK EVEN FOR YOUR OWN, which is the one
+   * case `Coop.reseatMine` needs: an apartment assignment can arrive after the
+   * level is built, and moving your dressing to the door you were given must
+   * carry the chairs you moved before it arrived rather than re-reading a fold
+   * that has not been written since you walked in. */
+  const state = opts.state ? clean(opts.state) : (mine ? loadHome() : clean(null));
   /* THE ROOM IT IS BEHIND IS THE ROOM IT IS DRESSED IN, and the record is
    * told which one that was. Lane F assigns a different door per player and
    * nothing else in the record has to change. */
@@ -482,6 +552,10 @@ export function dressHome(world, st, M) {
   const h = {
     spot, group: rec.group, place: rec.place, M, state,
     address: homeAddress(rec.place),
+    /** Exactly one dressed home per world is yours; the verbs know no other. */
+    mine,
+    /** Whose this is: `{ id, name }`, or null when it is yours. */
+    owner: opts.owner || null,
     /** The room's frame, resolved once. Local (x,z) → world (x,z). */
     cos: Math.cos(spot.yaw), sin: Math.sin(spot.yaw),
     y: spot.y,
@@ -497,18 +571,57 @@ export function dressHome(world, st, M) {
     dial: 0,
     /** Set by anything that changes the record. `leaveHome` reads it. */
     dirty: false,
+    /**
+     * HOW MANY TIMES THE RECORD HAS BEEN CHANGED, and it only ever climbs.
+     *
+     * `dirty` is a flag that `leaveHome` CLEARS, so it cannot answer "has
+     * anything happened since the last time I looked" for a second reader —
+     * and Lane F has one: `Coop.publishApartment` puts this room on the wire
+     * when it changes and must not stringify a forty-piece home every frame to
+     * find out. A counter answers that in one integer compare and has no
+     * owner to fight over.
+     */
+    edits: 0,
     surfaces: null, mirror: null, galley: null, sign: null, wheel: null, draws: 0,
+    /** Every mesh this dressing put in the room's group — see `undressOne`. */
+    built: [],
   };
-  world._home = h;
+  if (mine) world._home = h;
+  /* EVERY DRESSED APARTMENT, YOURS FIRST. `homeUnder` walks it to answer which
+   * room a player is standing in, and `undressHome` walks it to take them all
+   * down — a guest's cabin that outlived the visit would be a live body list
+   * pointing into a disposed world. */
+  (world._homes || (world._homes = [])).push(h);
 
   dressSurfaces(world, h);
   dressMirror(world, h);
   dressGalley(world, h);
   dressSign(world, h);
   for (const p of state.pieces) spawnPiece(world, h, p);
-  attachWheel(world, h);
+  /* ONE WHEEL LISTENER PER WORLD, NOT PER ROOM. The wheel turns the piece in
+   * YOUR hands and dials YOUR catalogue; a listener per guest apartment would
+   * be four claims on one notch, three of which have nothing to spend it on. */
+  if (mine) attachWheel(world, h);
   st.draws += h.draws;
   return h;
+}
+
+/**
+ * ══ WHICH APARTMENT A PLAYER IS STANDING IN, WHOEVER'S IT IS ══════════════
+ *
+ * `inHome` answers "are you in YOUR home", which is the fence every verb in
+ * this file wants and is the wrong question at a friend's front door. This is
+ * the other one, and the two together are the whole of the co-op key: you are
+ * in a room, and the room either is or is not yours.
+ */
+export function homeUnder(world) {
+  const p = world?.player?.position;
+  if (!p) return null;
+  for (const h of world._homes || []) {
+    const l = toLocal(h, p.x, p.z);
+    if (Math.abs(l.x) <= h.spot.w / 2 && Math.abs(l.z) <= h.spot.d / 2) return h;
+  }
+  return null;
 }
 
 /** Local room coordinates → world. The frame `buildPlace` emitted the kit in. */
@@ -543,6 +656,7 @@ function dressSurfaces(world, h) {
     mesh.position.copy(toWorld(h, 0, 0));
     mesh.quaternion.setFromAxisAngle(UP, h.spot.yaw);
     h.group.add(mesh);
+    h.built.push(mesh);
     h.draws++;
     return mesh;
   };
@@ -603,6 +717,7 @@ function dressMirror(world, h) {
     m.position.copy(toWorld(h, lx, lz));
     m.quaternion.setFromAxisAngle(UP, h.spot.yaw);
     h.group.add(m);
+    h.built.push(m);
     h.draws++;
   }
   h.mirror = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: fm };
@@ -635,6 +750,7 @@ function dressGalley(world, h) {
     m.position.copy(toWorld(h, lx, lz));
     m.quaternion.setFromAxisAngle(UP, h.spot.yaw);
     h.group.add(m);
+    h.built.push(m);
     h.draws++;
   }
   h.galley = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: bm };
@@ -646,7 +762,11 @@ function dressGalley(world, h) {
  */
 function dressSign(world, h) {
   const { d } = h.spot;
-  const panel = signPanel([h.address, 'PRIVATE RESIDENCE'], {
+  /* AND WHOSE IT IS, WHEN IT IS NOT YOURS. V16 Lane F is *"you should be able
+   * to visit your friend's apartment"*, and a visit needs a door you can tell
+   * from the twelve beside it — which is the argument §1.3.4 already makes for
+   * having an address at all, one player further on. */
+  const panel = signPanel([h.address, h.owner ? `${String(h.owner.name || 'RESIDENT').toUpperCase()}'S CABIN` : 'PRIVATE RESIDENCE'], {
     name: `home${h.place.id}`, w: 1.4, h: 0.5,
   });
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.62), panel.material);
@@ -656,6 +776,7 @@ function dressSign(world, h) {
   mesh.position.y += 2.35;
   mesh.rotation.y = h.spot.yaw + Math.PI;
   h.group.add(mesh);
+  h.built.push(mesh);
   h.draws++;
   h.sign = panel;
 }
@@ -752,7 +873,7 @@ export function addPiece(world, id) {
   ghost.name = `home-ghost-${c.id}`;
   h.group.add(ghost);
   h.held = { c, row, i, x: 0, z: 0, r: 0, ghost, ok: true, fresh: true };
-  h.dirty = true;
+  h.dirty = true; h.edits++;
   poseGhost(h);
   world.notify?.(c.name.toUpperCase(), 'move it, wheel to turn, press again to set it down');
   return h.held;
@@ -800,13 +921,13 @@ export function dropPiece(world) {
     /* Out of the room, or into the partition: the piece is stowed. */
     h.state.pieces.splice(g.i, 1);
     h.props.splice(g.i, 1);
-    h.dirty = true;
+    h.dirty = true; h.edits++;
     world.notify?.(g.c.name.toUpperCase(), `put away — it would have stood ${why}`);
     return null;
   }
   g.row.x = g.x; g.row.z = g.z; g.row.r = g.r;
   h.props[g.i] = spawnPiece(world, h, g.row);
-  h.dirty = true;
+  h.dirty = true; h.edits++;
   world.notify?.(g.c.name.toUpperCase(), `set down at ${g.x.toFixed(1)}, ${g.z.toFixed(1)}`);
   return g.row;
 }
@@ -840,7 +961,7 @@ export function setSurface(world, slot, key) {
   h.state.surfaces[slot] = key;
   const mesh = h.surfaces?.[slot];
   if (mesh) mesh.material = h.M[key];
-  h.dirty = true;
+  h.dirty = true; h.edits++;
   return key;
 }
 
@@ -909,6 +1030,27 @@ export function homeKey(world, opts = {}) {
   const h = world?._home;
   if (!h) return false;
   if (h.held) { dropPiece(world); return true; }
+  /**
+   * ══ AND IN SOMEBODY ELSE'S APARTMENT IT SPENDS THE PRESS ON A SENTENCE ══
+   *
+   * The press is CLAIMED and answered, not passed through. Falling through
+   * would hand it to `placeUnder`, whose verb for `#33` is *"walk"* — so a
+   * player standing at a friend's cupboard would be told to walk, and a player
+   * standing at their own would open their own larder while looking at
+   * somebody else's fridge. That second one is the whole of `Coop.js`
+   * §WHAT A GUEST SEES: `larder()` reads the LOCAL store, which is yours and
+   * can never be theirs, so the door onto it is shut here rather than left to
+   * whichever store answered first.
+   *
+   * It is one sentence with a name and an address in it, because "nothing
+   * happened" is indistinguishable from a broken key.
+   */
+  const here = homeUnder(world);
+  if (here && !here.mine) {
+    world.notify?.(`${(here.owner?.name || 'A RESIDENT').toUpperCase()}'S CABIN`,
+      `${here.address} — their furniture and their cupboard, not yours`);
+    return true;
+  }
   if (!inHome(world) && !opts.at) return false;
 
   /* THE MIRROR FIRST, because you have to stand at it and standing at it is
@@ -1035,7 +1177,12 @@ export function stepHome(world, dt) {
  */
 export function leaveHome(world) {
   const h = world?._home;
-  if (!h) return 0;
+  /* `world._home` IS BY CONSTRUCTION THE ONE HOME THAT IS YOURS — `dressHome`
+   * assigns it only under `mine` — and the test is here anyway, because this
+   * is the single line in the tree that turns a room into a durable record and
+   * the cost of it ever being wrong is a friend's furniture overwriting yours
+   * on your own disk. One property read, once per station visit. */
+  if (!h || !h.mine) return 0;
   /* A piece still in your hands is put back down first — the same "a change
    * dialled and not yet settled is still a change" `releaseMan` makes. */
   if (h.held) dropPiece(world);
@@ -1074,7 +1221,14 @@ export function leaveHome(world) {
 
 /** Everything the home made, put down. `undressStation` calls it. */
 export function undressHome(world) {
-  const h = world?._home;
+  /* EVERY APARTMENT, NOT ONLY YOURS. A guest's cabin is bodies in `world.props`
+   * and a canvas texture on a door exactly as yours is, and one left standing
+   * after a station is disposed is a leak with a collider in it. */
+  for (const h of [...(world?._homes || [])]) undressOne(world, h);
+  if (world) { world._homes = []; world._home = null; }
+}
+
+function undressOne(world, h) {
   if (!h) return;
   const w = globalThis.window;
   if (h.wheel && w?.removeEventListener) w.removeEventListener('wheel', h.wheel, { capture: true });
@@ -1091,8 +1245,26 @@ export function undressHome(world) {
   h.sign?.material?.dispose?.();
   for (const p of h.props) { if (p && !p.dead) p.destroy(); }
   h.props.length = 0;
-  world._home = null;
+  /* And the fixtures and surfaces this dressing added to the room's group.
+   * They are remembered as they are made (`h.built`) rather than found by a
+   * name test over the group's children, because the group is the ROOM's and
+   * most of what is in it was built by `StationKit` — a filter is a guess about
+   * somebody else's naming and it fails by deleting the walls. A guest's
+   * apartment is dressed and RE-dressed while the world stands, every time its
+   * owner moves a chair, so this path runs far more than once a session. */
+  for (const m of h.built || []) {
+    h.group.remove(m);
+    m.geometry?.dispose?.();
+  }
+  if (h.built) h.built.length = 0;
+  h.surfaces = h.mirror = h.galley = h.sign = null;
+  const at = (world?._homes || []).indexOf(h);
+  if (at >= 0) world._homes.splice(at, 1);
+  if (world && world._home === h) world._home = null;
 }
+
+/** One apartment, taken down on its own — `Coop.js` re-dresses a guest's. */
+export function undressApartment(world, h) { undressOne(world, h); }
 
 /**
  * The home, for anything that wants to read it without dressing one.

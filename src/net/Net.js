@@ -28,6 +28,9 @@ import { ATTACK_KEYS, DUEL_PHASES } from '../game/Duel.js';
  */
 import { canHarm, asSide, TEAM, rigCapsules, DuelMatch } from '../game/Player.js';
 import { TOUGHNESS } from '../game/Combat.js';
+/* The session cap, which is the number of apartments there are. See the block
+ * over the re-export below for why it is not a number written in this file. */
+import { SESSION_CAP } from '../game/Coop.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
@@ -38,6 +41,29 @@ const PREFIX = 'saberduel-';
 
 /** How long a peer may go silent before the host drops it. See Net.sweep. */
 export const PEER_TIMEOUT = 8;
+
+/**
+ * ══ HOW MANY MAY BE IN ONE SESSION, AND IT IS ENFORCED AT THE DOOR ════════
+ *
+ * `V16.md` Lane F: *"it should work with up to 4 players … each friend added
+ * in gets their apartment spawned in somewhere in the residence area."*
+ *
+ * SO THE CAP IS NOT A NUMBER TYPED HERE. It is `Coop.GUEST_ROOMS.length + 1` —
+ * the doors that exist — because a session cap and an apartment count that are
+ * two independent constants are two constants that will one day disagree, and
+ * the shape of that disagreement is a player admitted to a station with no room
+ * for them. `Coop.js` owns the rooms, so `Coop.js` owns the number; this file
+ * owns the DOOR, which is the only place it can be applied before a handshake
+ * has already told somebody they are in.
+ *
+ * REFUSED WITH A SENTENCE, WHICH IS THE OTHER HALF. A silent drop and a broken
+ * broker are indistinguishable to the person holding the code, and they will
+ * try again. `full` is a real message with a reason on it, sent before the
+ * connection is closed — so the fifth player is told the session is full,
+ * instead of being told nothing for fourteen seconds and then "no answer —
+ * check the code", which is a lie about a code that is correct.
+ */
+export { SESSION_CAP };
 
 /**
  * THE CHARACTER SHEET, AS IT CROSSES THE WIRE.
@@ -314,6 +340,19 @@ export class Net {
 
   _acceptConnection(conn) {
     conn.on('open', () => {
+      /* THE CAP, AT THE DOOR. `conns` is the guests, so the host's own seat is
+       * the one this test does not count. See SESSION_CAP for why the number is
+       * here and why the refusal speaks. */
+      if (this.conns.size >= SESSION_CAP - 1) {
+        const why = `this session is full — ${SESSION_CAP} players is the cap, and ${SESSION_CAP} `
+          + `apartments on ${this.name}'s station are already taken`;
+        this.send(conn, { t: 'full', why });
+        this._emit('refused', conn.peer, why);
+        /* Closed AFTER the refusal is queued, so the sentence is the last thing
+         * that crosses rather than a message racing a teardown. */
+        try { conn.close(); } catch {}
+        return;
+      }
       this.conns.set(conn.peer, { conn, name: conn.metadata?.name || 'Jedi',
         look: conn.metadata?.look || null, companion: conn.metadata?.companion || null,
         lastSeen: performance.now() / 1000 });
@@ -366,11 +405,12 @@ export class Net {
   _refreshRoster() {
     this.roster = [{ id: this.peer?.id, name: this.name, host: true, look: this.look,
       companion: this.companion, team: this._sideOf(this.peer?.id),
-      ...this._cmpOf(this.peer?.id), ...this._seatOf(this.peer?.id) }];
+      ...this._cmpOf(this.peer?.id), ...this._seatOf(this.peer?.id),
+      ...this._aptOf(this.peer?.id) }];
     for (const [id, c] of this.conns) {
       this.roster.push({ id, name: c.name, host: false, look: c.look || null,
         companion: c.companion || null, team: this._sideOf(id),
-        ...this._cmpOf(id), ...this._seatOf(id) });
+        ...this._cmpOf(id), ...this._seatOf(id), ...this._aptOf(id) });
     }
     this._emit('roster', this.roster);
     if (this.isHost) this.broadcast({ t: 'roster', roster: this.roster });
@@ -425,6 +465,44 @@ export class Net {
   _cmpOf(id) {
     const b = this.cmpBodies?.get(id);
     return b ? { cmp: b } : {};
+  }
+
+  /**
+   * ══ WHICH DOOR A PLAYER'S HOME IS BEHIND — Lane F's assignment ══════════
+   *
+   * `_seatOf` and `_cmpOf`'s third sibling, and the argument is theirs word for
+   * word: an apartment is IDENTITY for the length of a session, not per-frame
+   * state, so it rides the roster rather than the 24 Hz packet, and it is
+   * written by the HOST because two machines that disagreed about whose door is
+   * whose would draw two different stations.
+   *
+   * THE PEER SAYS WHAT ITS HOME LOOKS LIKE, THE HOST SAYS WHERE IT IS. Exactly
+   * the split `companion` (yours) and `cmp` (the host's) already sit either
+   * side of: the dressing is off the peer's own disk and no other machine has
+   * it, but only one machine can hand out four rooms without two players
+   * landing in the same one.
+   *
+   * Empty for every session that is not co-op, which is most of them —
+   * `...{}` spreads to nothing and the roster entry is byte for byte what it
+   * was.
+   */
+  _aptOf(id) {
+    const a = this.apts?.get(id);
+    return Number.isFinite(a) ? { apt: a } : {};
+  }
+
+  /**
+   * Host: hand out apartments. `map` is peer id → place id.
+   *
+   * Refused on a client for `setSeats`' reason: a peer that could choose its
+   * own door could choose yours, and two homes dressed behind one door is one
+   * player's furniture standing inside another's.
+   */
+  setHomes(map) {
+    if (!this.isHost) return this.roster;
+    this.apts = map instanceof Map ? map : new Map(Object.entries(map || {}));
+    this._refreshRoster();
+    return this.roster;
   }
 
   /**
@@ -629,6 +707,49 @@ export class Net {
         this.roster = msg.roster || [];
         this._emit('roster', this.roster);
         break;
+      /**
+       * ══ HOST → ONE PEER: THERE IS NO ROOM ═══════════════════════════════
+       *
+       * Guarded like `army`, and for the same reason with a sharper edge: a
+       * client that could send this could tell the HOST its own session was
+       * full and tear down the machine that is running the thing.
+       *
+       * IT ARRIVES AFTER `join()` HAS ALREADY RESOLVED, and that is a property
+       * of every peer-to-peer connection rather than a shortcoming here: the
+       * data channel opens on both ends before one byte crosses it, so the
+       * earliest the host can say no is the first packet. That is why this
+       * closes rather than only announcing — a caller who awaited `join` has
+       * been told they are connected, and the only honest correction is to
+       * make it false again and say why. `close()` clears `connected`,
+       * `enabled` and `hostConn`, which is exactly the state a player who
+       * never dialled would be in, so the next Ignite is solo play rather than
+       * a silent re-attach — the defect `close()`'s own note describes.
+       */
+      case 'full':
+        if (this.isHost) break;
+        this._emit('full', msg.why || 'the session is full');
+        this.close();
+        break;
+      /**
+       * ══ SOMEBODY'S APARTMENT, AS THEY HAVE DRESSED IT ═══════════════════
+       *
+       * `avatar`'s shape exactly — emitted with the sender, relayed once by the
+       * host — because it is the same KIND of fact: a statement each machine
+       * makes about itself that everybody else has to hear. `_sender` for the
+       * client's copy (every packet arrives on the one host connection there,
+       * so `conn.peer` cannot tell two friends apart) and `conn.peer` for the
+       * relay stamp, because on the host `msg.from` is nothing but a string the
+       * sender chose — the forgery `_sender`'s own note measured.
+       *
+       * IT IS NOT IN THE AVATAR PACKET AND MUST NEVER BE. A home is thirty to
+       * forty rows of furniture and it changes when somebody moves a chair; the
+       * avatar packet is 24 Hz. See `Coop.js` §WHAT CROSSES THE WIRE for the
+       * measurement, which is the whole reason this is its own message.
+       */
+      case 'home':
+        this._emit('home', this._sender(msg, conn), msg);
+        if (this.isHost) this.broadcastExcept(conn.peer, { ...msg, from: conn.peer });
+        break;
       case 'start': if (!this.isHost) this._emit('start', msg); break;
       case 'snapshot': if (!this.isHost) this._emit('snapshot', msg); break;
       case 'avatar':
@@ -830,6 +951,9 @@ export class Net {
      * you brought is yours. */
     this.cmpBodies = new Map();
     this.sides = new Map();
+    /* …and the apartments, which are the session's for the same reason `sides`
+     * is: which door was yours was decided by a host who is no longer there. */
+    this.apts = new Map();
     this.roster = [];
     this._emit('roster', this.roster);
   }

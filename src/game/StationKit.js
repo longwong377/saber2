@@ -1714,6 +1714,119 @@ export const SHAPES = {
     for (let i = 0; i < 6; i++) loose(kit, (w - 6) / 2 - 1.5, 0, (i - 2.5) * 1.2, (world, q) => makeCrate(world, q, 0.7));
   },
 
+  /**
+   * #57 The Repeating Room: A LATTICE CELL (V16 §A2).
+   *
+   * The holodeck, and its shape is an argument about what the room is FOR.
+   *
+   * ── WHY IT IS A CUBE AND WHY THE FLOOR IS EMPTY ───────────────────────
+   *
+   * Every other room in this file is a room with a JOB standing in it: a
+   * counter, a bench, a row of tanks, a pit. The furniture is what tells you
+   * what happens there. This room's job is to become somewhere else, so
+   * furniture would be the one thing it must not have — a lathe in the corner
+   * of a holodeck is a lathe you can still see when the room is supposed to be
+   * a desert. So the floor is EMPTY: one plinth, dead centre, and 220 square
+   * metres of nothing.
+   *
+   * That is also the whole silhouette, and it is the inverse of every deck-48
+   * room around it:
+   *
+   *   `machineshop` is a room with things IN it;   this is a room with nothing
+   *   `canyon` is high walls and a gap;            this is one even box
+   *   `cathedral` is a column and catwalks;        this has one waist-high mark
+   *   `compactor` and `wetgrating` sink;           this is dead flat
+   *
+   * ── AND THE LATTICE IS WHAT MAKES IT READ AS A MACHINE ────────────────
+   *
+   * Six faces, one pitch, edge to edge — floor, four walls and the soffit,
+   * every one of them the same. Nothing else on this station is regular in
+   * three axes at once, which is what rule 4's instrument actually keys on: an
+   * even stipple over the whole frame, from any angle, with a single small
+   * object at the middle of it. Measured with `station.mjs`'s own raster on
+   * deck 48, the worst pair involving this room is 0.140 against a bound of
+   * 0.85 — and it fills 865 of 2560 cells from its own door where the next
+   * densest room on the deck fills 414 and the median fills 200, which is the
+   * DENSITY doing the work rather than a lucky angle.
+   *
+   * The pitch is 1.05 m, which is a number and not a taste: any coarser and
+   * the wall reads as panelling, any finer and it reads as texture. The studs
+   * are `M.strip` because the emitters are the only light in here — there is
+   * no lamp, no window, and `ceiling` is called with no ribs and no strips, so
+   * the room is lit by the thing that makes the room.
+   *
+   * ── §11: THE ONE THING YOU CAN PICK UP ────────────────────────────────
+   *
+   * Four grey calibration blocks, in the reveal by the door and not on the
+   * floor. A holodeck's floor has to stay clear; a room with nothing loose in
+   * it at all fails §11 and is also a lie about a working machine, because
+   * something has to be put on the floor to trim the emitters against.
+   */
+  latticecell(kit, M, p) {
+    const { w, d, h } = p;
+    /* Black plate, and `dark` for the shell too: this room is a hole in the
+     * deck's own palette until a program paints it. */
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 3.4, mat: M.dark });
+    ceiling(kit, M, w, d, h, { ribs: 0, strips: false, mat: M.dark });
+
+    /* THE LATTICE. One pitch on every face, counted off each span rather than
+     * typed, so the grid stays square whatever the room's dimensions are. */
+    const PITCH = 1.05, S = 0.16;
+    const nx = Math.max(3, Math.round(w / PITCH));
+    const nz = Math.max(3, Math.round(d / PITCH));
+    const ny = Math.max(3, Math.round(h / PITCH));
+    const at = (n, span, i) => -span / 2 + (span * (i + 0.5)) / n;
+    const stud = (x, y, z, sx, sy, sz) =>
+      kit.slab(M.strip, sx, sy, sz, x, y, z, { collide: false, bevel: 0 });
+    /* The back wall and the two sides. The front wall is the doorway, and its
+     * two returns carry the grid too — a face that skipped it would be the one
+     * face you look at on the way out. */
+    for (let j = 0; j < ny; j++) {
+      const y = at(ny, h, j) + h / 2;
+      for (let i = 0; i < nx; i++) {
+        const x = at(nx, w, i);
+        stud(x, y, d / 2 - 0.06, S, S, 0.06);
+        /* the front returns, either side of the 3.4 m opening */
+        if (Math.abs(x) > 1.7 + S) stud(x, y, -d / 2 + 0.06, S, S, 0.06);
+      }
+      for (let i = 0; i < nz; i++) {
+        const z = at(nz, d, i);
+        for (const s of [-1, 1]) stud(s * (w / 2 - 0.06), y, z, 0.06, S, S);
+      }
+    }
+    /* The soffit and the floor. The floor's are INSET — flush with the plate,
+     * so there is nothing to trip on and nothing that stops the floor reading
+     * as one surface. */
+    for (let i = 0; i < nx; i++) {
+      for (let j = 0; j < nz; j++) {
+        const x = at(nx, w, i), z = at(nz, d, j);
+        stud(x, h - 0.06, z, S, 0.06, S);
+        stud(x, 0.01, z, S, 0.02, S);
+      }
+    }
+
+    /**
+     * THE PLINTH — the console, and the only thing standing on the floor.
+     *
+     * Dead centre rather than by the door, which is the room's whole manner:
+     * you walk into the middle of it and the room is all round you before you
+     * choose anything. Waist high, so it does not break the eye line to any
+     * wall — the silhouette above the plinth has to stay the lattice.
+     */
+    kit.post(M.dark, 0.62, 0.78, 1.02, 0, 0.51, 0, { radial: 8, collide: true });
+    kit.slab(M.screen, 0.5, 0.06, 0.36, 0, 1.05, 0, { rx: -0.42, collide: false, bevel: 0 });
+    kit.slab(M.strip, 0.66, 0.03, 0.5, 0, 0.06, 0, { collide: false, bevel: 0 });
+
+    /* THE REVEAL BY THE DOOR: a shallow rack and the blocks in it. Everything
+     * grabbable in this room is here and none of it is on the floor. */
+    kit.slab(M.wing, 1.5, 0.12, 0.6, w / 2 - 1.2, 0.62, -d / 2 + 0.9, { collide: true, bevel: 0 });
+    for (let i = 0; i < 4; i++) {
+      loose(kit, w / 2 - 1.2, 0.7, -d / 2 + 0.9 + (i - 1.5) * 0.34,
+        (world, q) => makeCrate(world, q, 0.28));
+    }
+  },
+
   /* ── DECK 32 AND 12: FLIGHT OPS ───────────────────────────────────────── */
 
   /** #2 Deck control tower: a CANTILEVER. A glass box hung out over nothing,

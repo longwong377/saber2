@@ -57,6 +57,7 @@ import { stationHour, setStationHour, stationName, setStationName, standing, sta
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
+import { myApartment, stepCoop } from './Coop.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
 import { countersAt } from './Vendors.js';
@@ -853,8 +854,18 @@ export function dressStation(world) {
    * this deck's `M` rather than importing `stationMats` for itself, which is
    * what keeps the two files acyclic — `StationKit` is imported by both.
    *
-   * A no-op on every deck but 44, because only one place declares a home. */
-  dressHome(world, st, M);
+   * A no-op on every deck but 44, because only one place declares a home.
+   *
+   * ── AND IN CO-OP IT IS NOT ALWAYS `#27` ──────────────────────────────
+   *
+   * `V16.md` Lane F assigns every player a door and the host keeps `#27`, so
+   * on a GUEST's machine their own dressing goes up behind whichever residence
+   * the host gave them — `Coop.myApartment` is that lookup and it answers null
+   * when there is no session, which is every solo game, so this line is what it
+   * was off the wire. The friends' apartments follow on the first station step
+   * rather than here, because a dressing arrives when its owner sends it and
+   * that is after the level is built. See `Coop.dressApartments`. */
+  dressHome(world, st, M, { place: myApartment(world) ?? st.home?.id });
 
   /* ── AND WHAT IS OUTSIDE THE GLASS ─────────────────────────────────────
    *
@@ -1312,6 +1323,27 @@ export function stationKey(world) {
    */
   if (pitAtPlace(place.id) && world.onPit) return world.onPit(place.id) !== false;
   /**
+   * ── #57 THE REPEATING ROOM — V16 Lane A2 ───────────────────────────────
+   *
+   * *"a holodeck/dojo that replaces the training and sandbox menus — you walk
+   * into a room and program it rather than picking a tab."*
+   *
+   * A ROOM AND NOT A KIOSK, which is the same distinction `#28`'s note draws
+   * one branch up. A kiosk raises a page of the MENU (`KIOSK_TAB`), and the
+   * whole point of this room is that the pages it replaces are gone from the
+   * menu — routing it through the kiosk door would put the tab back in a
+   * costume. `main.js` answers this with its own overlay on its own root, for
+   * `openMeditation`'s reason: `Screens.clear()` runs every card's hide on
+   * every clear, and a rack that vanishes when the world changes screens is a
+   * rack you cannot use.
+   *
+   * NOTHING HERE NAMES A MODE. §9.2 forbids a station file branching on one,
+   * and this branch does not have to: `Holodeck.programSettings` is what turns
+   * a program into a mode, and it is not a station file. The room raises its
+   * own id and stops.
+   */
+  if (place.id === 57 && world.onHolodeck) return world.onHolodeck(place.id) !== false;
+  /**
    * ── #18, #19 AND #20, THE TOTE — V16 Lane D2 ───────────────────────────
    *
    * A room with a card on it. AFTER the pits, so `#20`'s own verb — "fight a
@@ -1421,6 +1453,11 @@ export function stepStation(world, dt) {
   /* The piece in your hands follows the crosshair. Costs one property read a
    * frame when there is nothing held, which is nearly always. */
   stepHome(world, dt);
+  /* THE OTHER PLAYERS' APARTMENTS (V16 Lane F). Seats the doors when the roster
+   * moves, puts our own room on the wire when it changes, and dresses whatever
+   * has arrived. Three property reads on a station with nobody else on it — it
+   * returns on `net.connected` before it does anything at all. */
+  stepCoop(world);
   /* The fleet outside the glass. Its own step is a no-op when nothing was
    * dressed, so this is unconditional and costs one call on a station whose
    * theatre could not be resolved. */

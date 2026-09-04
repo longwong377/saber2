@@ -463,8 +463,16 @@ export async function bootPair({ level = null, settings = {}, sides = null, lag 
  * record as an argument precisely because a companion's history is per machine.
  * A check that wants a real fold sets the store for the one node folding it.
  */
+/**
+ * `onWorld` IS PASSED STRAIGHT THROUGH TO EVERY NODE, and it is the same door
+ * `bootWorld` documents above: a few things the DRESSING reads are properties
+ * of the world rather than preferences — the picked level, and which deck of
+ * the station this is. A session on the station cannot be booted without it,
+ * and putting `_stationFloor` on `settings` instead makes it a key
+ * `Settings.js` never defaults, which `controls.mjs` refuses.
+ */
 export async function bootSession({ n = 2, level = null, settings = {},
-  names = null, cards = [], recs = [] } = {}) {
+  names = null, cards = [], recs = [], onWorld = null } = {}) {
   level = level || await defaultLevel();
   const { Net, RemoteAvatar } = await import('../../src/net/Net.js');
   const { adoptCompanionBody, applyCompanionOrder, fieldForPeers } =
@@ -476,7 +484,7 @@ export async function bootSession({ n = 2, level = null, settings = {},
   names = names || ['HOST', 'ALPHA', 'BRAVO', 'CHARLIE'].slice(0, n);
 
   const nodes = [];
-  const h = await bootWorld({ level, settings });
+  const h = await bootWorld({ level, settings, onWorld });
   const hostNet = new Net();
   const opening = hostNet.host(names[0], {}, null, cards[0] || null);
   await settle();
@@ -485,7 +493,7 @@ export async function bootSession({ n = 2, level = null, settings = {},
   nodes.push({ world: h.world, net: hostNet, name: names[0], host: true, rec: recs[0] || null });
 
   for (let i = 1; i < n; i++) {
-    const c = await bootWorld({ level, settings });
+    const c = await bootWorld({ level, settings, onWorld });
     const cn = new Net();
     const joining = cn.join(code, names[i], null, cards[i] || null);
     await settle();

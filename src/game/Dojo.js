@@ -304,7 +304,31 @@ export class DojoDirector {
    * produce, which is the shape §2.4 is about. The sandbox room is reached the
    * way every other lesson is now: by finishing the one before it.
    */
-  start() { this._applyLesson(); }
+  /**
+   * ── AND NOW SOMETHING CAN PRODUCE IT (V16 §A2) ────────────────────────
+   *
+   * The paragraph above records a branch that was deleted for being
+   * unreachable: it read a MODE to decide which rung to open on, and no deploy
+   * could ever set that mode on this director. The room is the caller that
+   * branch never had. `#57 The Repeating Room` has a rack with one row per
+   * rung and `Holodeck.programSettings` writes the chosen one into
+   * `settings.lesson`, so "start on this lesson" is now a thing a player does
+   * with their hands.
+   *
+   * BY ID AND NOT BY INDEX. An index is a promise about the order of this
+   * array, and the room builds its rack FROM this array — so the two can only
+   * disagree if one of them keeps a number. A rung id that is not here (an old
+   * settings blob naming a lesson that has been renamed) opens at rung 0,
+   * which is where the tab's own button always started.
+   */
+  start() {
+    const want = this.world.settings?.lesson;
+    if (want) {
+      const i = LESSONS.findIndex((l) => l.id === want);
+      if (i >= 0) this.index = i;
+    }
+    this._applyLesson();
+  }
 
   /** Any world event that a lesson might care about. */
   report(ev) {
