@@ -161,6 +161,8 @@ for (const p of places) {
    * (−sin θ, −cos θ) — `_deckshot`'s own read-back settles it: yaw π looks
    * toward +z. So one atan2 aims every shot down its own room. */
   const yaw = Math.atan2(-(p.x - p.door[0]), -(p.z - p.door[1]));
+  const slug = p.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  await shot(`${String(p.id).padStart(2, '0')}-${slug}`,
     { x: p.door[0], y: Y + 1.7, z: p.door[1], yaw, pitch: 0 });
 }
 
