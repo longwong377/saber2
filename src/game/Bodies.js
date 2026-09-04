@@ -3572,7 +3572,21 @@ const SPECIES_HEADS = {
 };
 
 function speciesHead(sp, headObj, s, hg, ctx) {
-  const fn = SPECIES_HEADS[sp.id];
+  /**
+   * `headOf` BORROWS A HEAD BUILDER, and the default is the identity.
+   *
+   * The dispatch was on the row's own id, which means a species defined
+   * OUTSIDE this file — which `speciesOf` has always allowed, since it takes a
+   * row object as readily as an id — could carry `horns` or `lekku` and get
+   * neither, silently. SHARK §3.3's fifteen station species are exactly that
+   * case: a Minbari's bone crest IS a ring of bone standing off the vault,
+   * which is what `zabrak` already builds from a `horns` row, and building a
+   * second one would be the same geometry written twice.
+   *
+   * A row with no `headOf` and an id that is not in the table gets what it
+   * always got: nothing.
+   */
+  const fn = SPECIES_HEADS[sp.id] || (sp.headOf ? SPECIES_HEADS[sp.headOf] : null);
   if (fn) fn(headObj, s, hg, ctx);
 }
 
@@ -4990,7 +5004,21 @@ export function buildJedi(opts = {}) {
   // figure comes out with a head SMALLER than its body's share: measured at
   // 10.5 heads tall, which is a stick insect.
   const HS = (opts.scale ?? 1) * (FR ? FR.head : 1);
-  const robe = ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0];
+  /**
+   * A ROBE MAY BE HANDED IN WHOLE, and the default is the identity.
+   *
+   * `robeIndex` picks one of six authored palettes, which is right for a Jedi
+   * and useless for the fifteen station species (SHARK §3.3): a Drazi dock
+   * gang and a Centauri court cannot both be Sand or Ash. `opts.robe` takes
+   * the same three fields — outer, inner, trim — so a caller with its own
+   * palette does not need a row added to a table it has nothing else in.
+   *
+   * An absent `robe` is exactly today's expression, so `buildJedi()` emits
+   * byte-for-byte what it emitted before this line, which is what Player,
+   * Enemy, Net and the menu preview all depend on.
+   */
+  const robe = (opts.robe && opts.robe.outer !== undefined)
+    ? opts.robe : (ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0]);
   const rig = new Rig(humanoidSkeleton(S, FR ? { armLen: FR.armLen, legLen: FR.legLen } : {}), { scale: S });
   const F = faceFor(sp, opts.face, G.a);
   const { k } = buildOf(opts.build);
