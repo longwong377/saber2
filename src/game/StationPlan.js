@@ -226,7 +226,11 @@ export const PLACES = [
   {
     id: 13, deck: 40, name: 'The Databank', shape: 'rotunda',
     look: 'a round reading room, terminals in a ring, a holo globe at the centre',
-    who: 'a librarian droid, 6 readers', idle: 'the globe cycles the war’s fronts', verb: 'read the Databank',
+    who: 'a librarian droid, 6 readers', idle: 'the globe cycles the war’s fronts',
+    /* AND THE REGISTER, which is one of the eight terminals and is where V15
+     * §1.1 says the station is named. A verb that does not say so is a feature
+     * nobody finds — see `Station.beginStationName`. */
+    verb: 'read the Databank — or the register, to name the station',
     kiosk: 'databank', band: 'concourse', side: 1, along: 33, w: 18, d: 18, h: 5.6, peak: 16, heads: 7,
   },
   {
@@ -259,6 +263,60 @@ export const PLACES = [
     look: 'a lower room off the cantina: sabacc tables, a dice cage, a cashier behind bars, one exit',
     who: 'a Brakiri house, 12 players, a bouncer', idle: 'games; a cheat thrown out',
     verb: 'watch and bet', band: 'outer', at: 76, w: 18, d: 14, h: 3.2, peak: 23, heads: 14,
+  },
+  /**
+   * ── #60 THE WHEELHOUSE (V16 §D1) ──────────────────────────────────────
+   *
+   * *"you should be able to play some of the casino games these should be
+   * actual games within games … in certain games you play against actual npcs
+   * like it could be anyone on the ship on any day."*
+   *
+   * `Games.js` — sabacc, the Dejarik Column and the Drum — has been finished
+   * and 4/4 green since Lane D landed, and it was in NO SHIPPED BUILD: the
+   * only occurrence of the string "Games.js" anywhere under `src/` was a
+   * sentence in a comment in `Bars.js`, so `tools/pack.mjs` walked the module
+   * graph from `main.js` and never reached it. Three games nobody could play.
+   * §D1 asks for the room they are in and this is it.
+   *
+   * ── 89.85 DEGREES, AND THE NUMBER IS THE WHOLE OF THE SITING ──────────
+   *
+   * §D1 says "deck 40 outer, next to `#18 The Pit` so the whole gambling
+   * quarter is one walk", and deck 40's outer band is the fullest on the
+   * station. A probe that imports `PLACES` and runs `station.mjs`'s own two
+   * tests — the separating-axis test on the yawed rectangles at 0.5 m slack,
+   * and the door-arc clearance against every walkway fixture — over every
+   * bearing at every size found EXACTLY ONE WINDOW in the whole 360:
+   *
+   *   w=26  nothing   w=22  nothing   w=18  nothing   w=16  89.5..89.75
+   *   w=14 d=16  **89.20 .. 90.50**   w=12 d=16  88.50 .. 91.25
+   *
+   * Everything wider is refused: `#18 The Pit` at 76 runs its corners out to
+   * 89.1 and `Chandler & lamps` at 100 is a span-8 shopfront whose edge is at
+   * 96, and a room is a rectangle at a radius, so a 16-metre front swings its
+   * corners past both. 14 by 16 at 89.85 is the middle of the only window
+   * there is, with 0.65 degrees of clearance on each side — measured, not
+   * chosen. `#58` took three attempts for want of this probe.
+   *
+   * DEEP RATHER THAN WIDE is therefore forced, and it is also the right room:
+   * you come off the ring through a narrow front and the hall runs AWAY from
+   * you with the wheel at the far end of it, which is what a casino does to a
+   * person walking in.
+   *
+   * `peak: 1` and `heads: 22`. The gambling quarter is a night quarter — the
+   * cantina peaks at 21, the Pit at 23 — and this is the last thing still
+   * open. It is also the only room on deck 40 whose hour is past midnight,
+   * so `headcount` genuinely empties it in the afternoon.
+   */
+  {
+    id: 60, deck: 40, name: 'The Wheelhouse', shape: 'wheelhall',
+    look: 'a narrow front off the ring opening into a tall hall: the Drum itself — a twenty-segment '
+      + 'wheel eleven metres across, stood on edge and lit from behind — fills the far end over a '
+      + 'raised dais; sabacc tables in the low half, a lit dejarik column on the floor between them, '
+      + 'a cage of a cashier by the door and a rail of standing drinkers along one wall',
+    who: 'a Brakiri house, three at each table, dancers on the dais when the wheel is not turning',
+    idle: 'the wheel is spun on the hour whether anybody is there or not; hands are dealt between',
+    verb: 'take a seat — sabacc, dejarik or the Drum',
+    band: 'outer', at: 89.85, w: 14, d: 16, h: 7.4, peak: 1, heads: 22,
   },
   {
     id: 19, deck: 40, name: 'Holo-theatre', shape: 'fanauditorium',
@@ -334,7 +392,8 @@ export const PLACES = [
     /* V15 §1.3 made this a home rather than a room, and the verb is the whole
      * of §14's prompt — so the three things `Home.js` added to it are named
      * here or a player is never told they can do them. */
-    verb: 'sleep, dress, read — move the furniture, wheel to choose, the mirror to change your face',
+    verb: 'sleep, dress, read — move the furniture, wheel to choose, the mirror to change your '
+      + 'face, the plan table to name the station',
     band: 'inner', at: 0, w: 15, d: 11, h: 3.4, peak: 23, heads: 1,
   },
   {

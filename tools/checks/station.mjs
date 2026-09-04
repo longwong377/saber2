@@ -662,6 +662,100 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('station: a face is the same all day and somebody else tomorrow', async () => {
+    /**
+     * *"the same shop owner doesnt always look the same like between runs …
+     *  otherwise it would get stale seeing the same people always doing the
+     *  same things."*
+     *
+     * ── WHAT WAS MEASURED, AND IT IS THE DEFECT THIS IS A PIN FOR ────────
+     *
+     * `occupant`'s seed was `p{place}s{slot}` and nothing else. Read on day 0,
+     * day 1, day 5 and day 40 the Concourse's slot 0 handed back Vesbar Kolbar
+     * the brakiri financier every single time. The shelves rerolled on
+     * `(counter, day)`, the job board rerolled, the leave roll rerolled — and
+     * the faces did not, because the day never reached that line. A station
+     * where every shelf changes and no person does is worse than one where
+     * neither does: it says the day is passing and shows you it is not.
+     *
+     * ── AND THE TWO HALVES ARE OPPOSITE, WHICH IS WHY BOTH ARE HERE ──────
+     *
+     * STABLE ALL DAY, because `spawnResident`'s own argument is that a slot
+     * index is what makes a resident survive a despawn — a face that changed
+     * while you crossed the room is a worse failure than one that never
+     * changes at all.
+     * SOMEBODY ELSE TOMORROW, which is the ask.
+     * AND THE NAMED CAST IS EXEMPT: the Forge's Wookiee smith is a person, not
+     * a slot, and a person who is somebody else on Tuesday is not a person.
+     */
+    const { occupant, headcount } = await import('../../src/game/StationLife.js');
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const rooms = PLACES.filter((p) => !p.external && p.heads >= 6).slice(0, 8);
+    const DAYS = [0, 1, 2, 7, 30];
+
+    /* ── STABLE WITHIN A DAY, across every hour the room is open ────────── */
+    for (const p of rooms) {
+      for (const day of DAYS) {
+        const first = occupant(p, 3, { day, hour: 3 });
+        for (const hour of [7, 11, 15, 19, 23]) {
+          const again = occupant(p, 3, { day, hour });
+          /* A bar seat legitimately changes with the hour — that is liberty,
+           * and `food.mjs` holds it. What must not change is the CENSUS. */
+          if (again.bar || first.bar) continue;
+          assert(again.name === first.name && again.species === first.species,
+            `#${p.id} slot 3 is ${first.name} at 03:00 and ${again.name} at `
+            + `${hour}:00 on the same day — a face changed while you crossed the room`);
+        }
+      }
+    }
+
+    /* ── AND SOMEBODY ELSE TOMORROW ─────────────────────────────────────── */
+    const stuck = [];
+    for (const p of rooms) {
+      const n = Math.min(headcount(p, 13), 12);
+      let moved = 0, slots = 0;
+      for (let i = 0; i < n; i++) {
+        const seen = new Set(DAYS.map((day) => {
+          const r = occupant(p, i, { day, hour: 13 });
+          return r.borz ? 'BORZ' : `${r.name}|${r.species}`;
+        }));
+        if (seen.has('BORZ')) continue;          // a named character, exempt
+        slots++;
+        if (seen.size > 1) moved++;
+      }
+      if (slots && moved / slots < 0.5) {
+        stuck.push(`#${p.id} ${p.name}: ${moved} of ${slots} census slots changed over ${DAYS.length} days`);
+      }
+    }
+    assert(!stuck.length,
+      `${stuck.length} rooms hold the same people for ever:\n      ${stuck.join('\n      ')}`);
+
+    /* ── THE NAMED CAST IS THE SAME PERSON ON EVERY ONE OF THOSE DAYS ───── */
+    const cast = [];
+    for (const p of PLACES) {
+      if (p.external || !p.heads) continue;
+      const names = DAYS.map((day) => occupant(p, 0, { day, hour: 13 })).filter((r) => r.borz);
+      if (names.length !== DAYS.length) continue;
+      const one = new Set(names.map((r) => r.name));
+      assert(one.size === 1,
+        `#${p.id}'s named character is ${[...one].join(' / ')} across ${DAYS.length} days — `
+        + 'a person who is somebody else on Tuesday is not a person');
+      cast.push(`#${p.id} ${names[0].name}`);
+    }
+
+    /* ── AND THE MAN ACROSS THE PIT IS NOT THE SAME MAN FOR EVER ────────── */
+    const { handlersOn, ROSTER_HOUR } = await import('../../src/game/Pits.js');
+    const rosters = DAYS.map((day) => handlersOn(ROSTER_HOUR, day).map((h) => h.id).join(','));
+    assert(new Set(rosters).size > 1,
+      `the pit fields the same ${handlersOn(ROSTER_HOUR, 0).length} handlers on every one of `
+      + `${DAYS.length} days — §G4's whole point is that it could be anyone on any day`);
+
+    return `${rooms.length} rooms: a census face is fixed across 6 hours of its own day and `
+      + `changes over ${DAYS.length} days; ${cast.length} named characters unchanged `
+      + `(${cast.slice(0, 3).join(', ')}…); the pit's roster differs on `
+      + `${new Set(rosters).size} of ${DAYS.length} days`;
+  });
+
   check('station: the cast — fifteen species, each with a body, a name and a day', async () => {
     const C = await import('../../src/game/StationCast.js');
     const { ARCHETYPES } = await import('../../src/game/Enemy.js');
@@ -979,5 +1073,466 @@ export async function run({ check, assert, THREE }) {
     await prepareStation();
     assert(roomOf('zocalo'), 'the rooms did not come back — the next suite would measure the fallback');
     return rows.join('; ');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ V15 §1.2, FINDING 1: THE STANDING HAS NAMES ON IT ═══════════════════
+   *
+   * *"The names are cut into it, best at the top… Your own row is lit;
+   * everyone else's is engraved."* and *"The dead are on it too… a name that
+   * comes off the company goes onto the obelisk's fourth face."*
+   *
+   * Measured before the fix, deck 40, the four faces read:
+   *   ["DEEPEST","NO RUN YET","—"]  ["SCORE","—","—"]
+   *   ["THE ROLL","0 STANDING","0 FALLEN"]  ["RUNS","0","0 WON"]
+   * — four counters and ZERO names, and the fourth face was RUNS rather than
+   * the memorial. This asserts names, from the two stores that hold them.
+   */
+  check('station: #56 cuts real names into all four faces, and the last run is the lit row', async () => {
+    const B = await import('../../src/game/StationBoards.js');
+    const C = await import('../../src/game/Company.js');
+    const { ARMY_IDS } = await import('../../src/game/Command.js');
+    /**
+     * THROUGH THE REAL WRITERS, AND WITHOUT TOUCHING THE STORE.
+     *
+     * The records here are the shape `Progress.recordRun` writes and the shape
+     * `Company.load` hands back — every field read below is one of theirs —
+     * but they are held in this check rather than written to `localStorage`.
+     * The suite's checks run concurrently and half of them boot a station that
+     * reads both folds; a check that cleared and reseeded the player's runs
+     * and company underneath them would be measuring this and breaking those.
+     * `rolls` is a pure function of the two records, which is what makes that
+     * possible — and a first draft that did write the store cost this suite a
+     * red in an unrelated check.
+     */
+    {
+      const army = ARMY_IDS[0];
+      /* THREE RUNS, filed in this order, so `recent[0]` is the GREY one and
+       * the deepest and highest-scoring is the SITH one. Those are different
+       * rows, which is the whole point: the lit row is not the top row. */
+      const prog = { runs: 3, wins: 1, recent: [
+        { depth: 7, score: 1200, won: null, order: 'grey', species: 'togruta', mode: 'skirmish' },
+        { depth: 23, score: 9100, won: true, order: 'sith', species: 'zabrak', mode: 'skirmish' },
+        { depth: 12, score: 4100, won: null, order: 'jedi', species: 'human', mode: 'skirmish' },
+      ] };
+      const co = {
+        army,
+        men: [
+          { id: 'a', army, type: 'trooper', designation: 'CT-1500', kills: 41, runs: 6, xp: 300, look: { callsign: 'Ladder' } },
+          { id: 'b', army, type: 'trooper', designation: 'CT-2210', nickname: 'Pip', kills: 22, runs: 3, xp: 120 },
+          { id: 'c', army, type: 'trooper', designation: 'CT-3007', kills: 9, runs: 1, xp: 20 },
+        ],
+        fallen: [
+          { designation: 'CT-7712', callsign: 'Boots', type: 'trooper', kills: 14, runs: 4, fate: 'kia' },
+          { designation: 'CT-8890', nickname: 'Hitch', type: 'trooper', kills: 6, runs: 2, fate: 'left' },
+        ],
+      };
+      /* THE STORE'S OWN SANITISERS STILL RUN OVER IT, so a name this check
+       * invents cannot be a name the game could not hold: `Company.load`'s
+       * `saneFallen` clamps every casualty field on the way off disk, and a
+       * callsign is `cleanCallsign`'s. */
+      co.fallen = co.fallen.map((f) => ({ ...f, callsign: C.cleanCallsign(f.callsign) }));
+
+      const faces = B.rolls(prog, co);
+      assert(faces.length === 4, `${faces.length} faces; §1.2 says four`);
+      const heads = faces.map((f) => f.head);
+      assert(heads.join('|') === 'DEEPEST|SCORE|THE ROLL|FALLEN',
+        `the faces are ${heads.join(', ')} — §1.2's fourth is the memorial, not a second total`);
+
+      const text = (r) => String(r && typeof r === 'object' ? r.t : r).toUpperCase();
+      const all = faces.map((f) => f.rows.map(text).join(' | '));
+      /* A NAME ON EVERY FACE. Not a count of rows — the actual strings the two
+       * stores hold, which is the difference between a leaderboard and a stat
+       * readout. */
+      const wants = [
+        [0, 'SITH ZABRAK'], [0, 'JEDI HUMAN'], [1, 'SITH ZABRAK'],
+        [2, 'LADDER'], [2, 'PIP'], [3, 'BOOTS'], [3, 'HITCH'],
+      ];
+      const missing = wants.filter(([i, name]) => !all[i].includes(name));
+      assert(missing.length === 0,
+        `${missing.length} name(s) are not cut into the faces: `
+        + missing.map(([i, n]) => `${n} (face ${heads[i]})`).join(', ')
+        + `\n      faces: ${all.join('\n             ')}`);
+      /* AND THE MEMORIAL'S SOURCE IS `Company.fallen` — the one list in the
+       * tree that says who is dead, and the list #45's wall is about. */
+      assert(all[3].includes('2 FALLEN'),
+        `the fallen face says "${all[3]}" and Company.fallen holds 2`);
+
+      /* YOUR OWN ROW IS LIT, AND IT IS THE RUN THAT FILED LAST. Exactly one
+       * lit row per run face, and it is the GREY one — third of three by both
+       * axes, so a check that only looked at the top row would pass on a bug. */
+      for (const i of [0, 1]) {
+        const lit = faces[i].rows.filter((r) => r && typeof r === 'object' && r.lit);
+        assert(lit.length === 1, `face ${heads[i]} lights ${lit.length} rows; §1.2 lights your own`);
+        assert(text(lit[0]).startsWith('GREY TOGRUTA'),
+          `face ${heads[i]} lights "${text(lit[0])}" — the run that filed last was GREY TOGRUTA`);
+      }
+      /* …and the company's rows are ENGRAVED: no lit row on either of the two
+       * faces that are not yours. */
+      for (const i of [2, 3]) {
+        const lit = faces[i].rows.filter((r) => r && typeof r === 'object' && r.lit);
+        assert(lit.length === 0, `face ${heads[i]} lights ${lit.length} of the company's rows`);
+      }
+
+      /* AND THE VERB'S READING IS THE SAME READING — `myRow` is what #56's
+       * key answers, so it cannot say a different thing from the stone. */
+      const [head, line] = B.myRow(prog, co);
+      assert(/GREY TOGRUTA/.test(head), `the key's reading heads "${head}"`);
+      assert(/3rd of 3/.test(line),
+        `the key's reading says "${line}" — the last run is 3rd of 3 by depth`);
+
+      /* AND AN EMPTY GAME SAYS SO RATHER THAN LYING. Four heads, four rows,
+       * no invented names — the state a fresh player walks into. */
+      const bare = B.rolls(null, null);
+      assert(bare.length === 4 && bare.every((f) => f.rows.length === 2),
+        'a station with no runs and no company does not print four honest faces');
+
+      return `4 faces: ${all.map((a, i) => `${heads[i]} ${a.split(' | ').length} rows`).join(', ')}; `
+        + `7 names cut; 1 lit row per run face, 0 on the company's two`;
+    }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ V15 §1.2, FINDING 2: THE COLUMN IS SEEN FROM THE DECKS ABOVE ════════
+   *
+   * *"you see the top of it from the Living deck's balcony and the whole of it
+   * from the Concourse floor."* Measured before the fix: `deck 44: st.obelisk
+   * NULL, 0 'station-obelisk' nodes`, and the same on 48 — the landmark
+   * existed on one deck of three, which is the whole argument for an obelisk
+   * over a screen undelivered.
+   *
+   * Two facts, both measured rather than asserted from the source: the column
+   * is BUILT on each deck it passes, and the plate and soffit are actually CUT
+   * — a raycast down the shaft that hits a floor is a column in a box.
+   */
+  check('station: the Standing rises through three decks, and the shaft is cut for it', async () => {
+    const { PLACE, DECK_Y } = await import('../../src/game/StationPlan.js');
+    const p56 = PLACE.get(56);
+    assert(p56, 'the gazetteer has no #56 to raise a column in');
+    /* The bearing arithmetic in `Station.standingWell` takes a min/max over
+     * four corner bearings and cannot cross the ±π seam. Pin the assumption. */
+    const bear = Math.atan2(p56.x, p56.z);
+    assert(Math.abs(bear) < Math.PI - 0.6,
+      `#56 stands at ${(bear * 180 / Math.PI).toFixed(0)}° — the well's min/max would wrap`);
+
+    const rows = [];
+    for (const deck of [40, 44, 48]) {
+      const { world } = await station(deck);
+      try {
+        const st = world._station;
+        assert(st.obelisk, `deck ${deck}: st.obelisk is NULL — no column on this deck`);
+        const g = st.obelisk.group3;
+        assert(g && g.children.length >= 2,
+          `deck ${deck}: the column is ${g ? g.children.length : 0} meshes`);
+        let nodes = 0;
+        world.scene.traverse((o) => { if (o.name === 'station-obelisk') nodes++; });
+        assert(nodes === 1, `deck ${deck}: ${nodes} 'station-obelisk' nodes in the scene`);
+        /* IT IS THE SAME COLUMN. Same foot, same height, on all three decks —
+         * three copies that drifted would be three different landmarks. */
+        assert(Math.abs(st.obelisk.x - p56.x) < 0.01 && Math.abs(st.obelisk.z - p56.z) < 0.01,
+          `deck ${deck}: the column stands at ${st.obelisk.x.toFixed(1)}, ${st.obelisk.z.toFixed(1)} `
+          + `and #56 is at ${p56.x.toFixed(1)}, ${p56.z.toFixed(1)}`);
+        assert(Math.abs(st.obelisk.h - (p56.h - 3)) < 0.01,
+          `deck ${deck}: the column is ${st.obelisk.h} m and #56's hall says ${p56.h - 3}`);
+
+        /**
+         * THE CUT, MEASURED WITH A RAY. Down the shaft's centre from head
+         * height on this deck: on 44 and 48 the plate is omitted there, so
+         * nothing of the SHELL is under your feet; a control ray eight metres
+         * along the same bearing must still hit, or the check would pass on a
+         * deck with no floor at all.
+         */
+        const R = new THREE.Raycaster();
+        const down = new THREE.Vector3(0, -1, 0);
+        const y0 = DECK_Y[deck] + 2;
+        R.set(new THREE.Vector3(p56.x, y0, p56.z), down);
+        const through = R.intersectObjects(st.shell, false).length;
+        const k = 1 + 9 / Math.hypot(p56.x, p56.z);
+        R.set(new THREE.Vector3(p56.x * k, y0, p56.z * k), down);
+        const control = R.intersectObjects(st.shell, false).length;
+        assert(control > 0, `deck ${deck}: the control ray found no deck plate at all`);
+        if (deck === 40) {
+          assert(through > 0, `deck 40: the column's own hall has no floor under it`);
+          /* …and the SOFFIT is cut, which is what "up through a cut in the
+           * soffit" means: a ray up from the hall must leave the drum. */
+          R.set(new THREE.Vector3(p56.x, DECK_Y[40] + 2, p56.z), new THREE.Vector3(0, 1, 0));
+          const up = R.intersectObjects(st.shell, false).length;
+          R.set(new THREE.Vector3(p56.x * k, DECK_Y[40] + 2, p56.z * k), new THREE.Vector3(0, 1, 0));
+          const upControl = R.intersectObjects(st.shell, false).length;
+          assert(up === 0 && upControl > 0,
+            `deck 40: ${up} shell hits looking up the shaft (${upControl} beside it) — `
+            + 'the soffit is not cut and the column ends in the ceiling');
+        } else {
+          assert(through === 0,
+            `deck ${deck}: ${through} shell hits straight down the shaft — the plate is not cut`);
+        }
+        rows.push(`deck ${deck}: ${g.children.length} column meshes, `
+          + `${st.obelisk.faces.length} faces, shell ${st.shellDraws} draws`);
+      } finally { world.dispose?.(); }
+    }
+    return rows.join('; ');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ V15 §1.1, FINDING 3: THE NAME REACHES EVERY DECK ════════════════════
+   *
+   * *"shown everywhere the station names itself: the Arrivals departures board
+   * (#7), the lift readout's caption, the tram platform signs (#40), the
+   * Databank's station page, and the PA."*
+   *
+   * Measured before the fix: deck 40 → 1 board, deck 44 → 4 signs, deck 48 →
+   * ZERO, and the lift's captions were the hardcoded 'Concourse' / 'Living
+   * deck' / 'Working deck'. Four of §1.1's five places are asserted here; the
+   * PA is the fifth and is declined with a reason — `DeckAudio`'s tannoy is a
+   * formant synthesiser with no words in it by design, and giving it speech is
+   * the narrator its own header refuses. See `Station.beginStationName`.
+   */
+  check('station: the name is on every deck, and the lift readout still matches its button', async () => {
+    const { liftFloors, liftPick } = await import('../../src/game/DeckLift.js');
+    const { FACTIONS } = await import('../../src/game/Databank.js');
+    const S = await import('../../src/game/StationSave.js');
+    const was = S.stationName();
+    /* A name nothing else in the tree could produce, so a stale hardcoded
+     * string cannot pass this by coincidence. */
+    S.setStationName('Testport');
+    try {
+      const decks = liftFloors().filter((f) => f.deck);
+      assert(decks.length >= 3, `the lift reaches ${decks.length} station decks`);
+      const blind = decks.filter((f) => !String(f.label).includes('Testport'));
+      assert(blind.length === 0,
+        `${blind.length} lift floors do not name the station: ${blind.map((f) => f.label).join(', ')}`);
+      /* THE DATABANK'S STATION PAGE. */
+      assert(FACTIONS.station.name === 'Testport',
+        `the Databank's station page is headed "${FACTIONS.station.name}"`);
+      assert(String(FACTIONS.station.note).includes('Testport'),
+        'the Databank\'s station page never says the name in its paragraph');
+
+      const { RIDE, STATE, atTheDoors, liftKey } = await import('../../src/game/DeckLift.js');
+      const { run: step, idleInput } = await import('./_coop.mjs');
+      const rows = [];
+      for (const deck of [40, 44, 48]) {
+        const { world, idle } = await station(deck);
+        try {
+          const st = world._station;
+          const lift = world._deckLift;
+          assert(lift, `deck ${deck} dressed no lift`);
+
+          /**
+           * CALL THE CAR AND READ WHAT IT SAYS. The station's car goes AWAY
+           * once you have stepped out of it, and a car that is away prints the
+           * flight deck; only a car WAITING with its doors open prints the
+           * button column's answer, which is the caption V15 §1.1 is about.
+           * The doors are found by asking `atTheDoors` rather than by
+           * repeating `DeckLift`'s frame arithmetic here — a second copy of
+           * that would be the hand-maintained twin HANDOFF §2.3 warns about.
+           */
+          const sh = st.shaft;
+          let found = null;
+          for (let dr = 0; dr <= 8 && !found; dr += 0.5) {
+            for (let a = 0; a < 32 && !found; a++) {
+              const th = (Math.PI * 2 * a) / 32;
+              const x = sh.x + Math.cos(th) * dr, z = sh.z + Math.sin(th) * dr;
+              world.player.position.set(x, st.deckY + 1.0, z);
+              if (atTheDoors(world)) found = [x, z];
+            }
+          }
+          assert(found, `deck ${deck}: no point within 8 m of the shaft is "at the doors"`);
+          /* OUT OF THE DOORWAY FIRST, or the car never closes and never
+           * leaves: it is still standing here with its doors open, which is
+           * not the state whose caption this check is about. */
+          world.player.position.set(sh.x * 0.6, st.deckY + 1.0, sh.z * 0.6);
+          step(world, 8.0, idle);
+          assert(lift.state === STATE.AWAY,
+            `deck ${deck}: the car is ${lift.state} rather than away, so it cannot be called`);
+          world.player.position.set(found[0], st.deckY + 1.0, found[1]);
+          assert(liftKey(world), `deck ${deck}: the call key at the doors was not taken`);
+          step(world, RIDE.arrive + RIDE.doors + 0.4, idle);
+          assert(lift.state === STATE.WAIT, `deck ${deck}: the called car is ${lift.state}`);
+          /* The button column, on this deck's own floor. */
+          const idx = liftFloors().findIndex((f) => f.deck === deck);
+          lift.pick = idx;
+          step(world, 0.05, idle);
+          /* THE RULE `decklift.mjs` HOLDS, held here too: the readout is the
+           * button column's answer. The name went in at the LABEL, which is
+           * the one string both of them read, so they cannot disagree. */
+          assert(lift.readout.caption === String(liftPick(world).label).toUpperCase(),
+            `deck ${deck}: the readout says "${lift.readout.caption}" and the column is on `
+            + `"${liftPick(world).label}"`);
+          assert(lift.readout.caption.includes('TESTPORT'),
+            `deck ${deck}: the lift readout reads "${lift.readout.caption}" and names no station`);
+
+          /* AND HOW MANY THINGS IN THE ROOM SAY IT. A board, a platform sign,
+           * the register, the caption — at least one on every deck, which is
+           * the clause deck 48 failed with a zero. */
+          const boards = (st.boards || []).filter((b) => (b.panel._rows || []).some(
+            (r) => String(r && typeof r === 'object' ? r.t : r).includes('Testport'))).length;
+          const register = st.register ? 1 : 0;
+          rows.push(`deck ${deck}: ${boards} board(s) + ${register} register + 1 lift caption `
+            + `("${lift.readout.caption}")`);
+        } finally { world.dispose?.(); }
+      }
+      return rows.join('; ');
+    } finally { S.setStationName(was); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ V15 §1.1/§1.2, FINDING 4: THE VERB AND THE KEY AGREE ════════════════
+   *
+   * #56's prompt says *"read the rolls — find your own row"* and the key
+   * answered NAME THE STATION. §1.1 says where naming belongs: *"the Databank
+   * terminal (#13) and the plan table in your own cabin."*
+   */
+  check('station: the clock is a thing the panels can wind, and stepStation is its only other caller', async () => {
+    /**
+     * ══ THE CLOCK STOPPED BEHIND EVERY PANEL ═══════════════════════════
+     *
+     * `Screens.take` sets `world.paused`, and `main.js`'s frame loop calls
+     * `world.update` only while the state is 'playing' or 'dead'. So with any
+     * card up, `StationDirector.update` → `stepStation` → `st.hour += dt/120`
+     * did not run and the station clock was frozen for as long as you looked
+     * at the board. That is not cosmetic in the one room built to be watched:
+     * a race is `runs: 0.3` h — 36 real seconds — so the tote was two stills.
+     * Driven at #19 at 15:15 with a race live, before the fix:
+     *
+     *     hour before 15.25   hour after 15.25   (5400 × world.update(1/60))
+     *
+     * The fix is `tickStationClock` — the eight lines of clock at the top of
+     * `stepStation`, split out so the tote's panel can wind the SAME number
+     * rather than keeping an hour of its own. This holds both halves: that a
+     * paused world's clock really does stand still through `update`, that the
+     * split-out function moves it, and that the clock exists in exactly one
+     * place. Two copies of `st.hour += dt / 120` would be the hand-maintained
+     * twin, and the panel and the station would disagree by however much they
+     * had drifted — which is the failure `Tote.watch`'s signature exists to
+     * make impossible.
+     */
+    const St = await import('../../src/game/Station.js');
+    assert(typeof St.tickStationClock === 'function',
+      'Station.js exports no clock a panel can wind — a watched race cannot advance');
+    const src = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
+    const bare = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const winds = (bare.match(/st\.hour\s*\+=/g) || []).length;
+    assert(winds === 1, `${winds} places in Station.js advance st.hour — the clock must have one`);
+
+    const { world } = await station(40);
+    try {
+      const st = world._station;
+      st.hour = 15.25;
+      /* A PANEL IS UP: paused, and the frame loop would not be calling this
+       * at all. `update` is driven here anyway to show it is not the loop's
+       * `if` alone doing the work — a paused world ignores the frame. */
+      world.paused = true;
+      const before = st.hour;
+      for (let i = 0; i < 600; i++) world.update(1 / 60, null);
+      assert(st.hour === before,
+        `a paused world moved the clock ${before} → ${st.hour} — this check is measuring nothing`);
+      /* AND THE PANEL'S OWN WINDING MOVES IT, at the rate §3.4 names: one game
+       * hour per two real minutes, so ninety real seconds is 0.75 h. */
+      for (let i = 0; i < 5400; i++) St.tickStationClock(world, 1 / 60);
+      const moved = st.hour - before;
+      assert(Math.abs(moved - 0.75) < 1e-6,
+        `ninety real seconds moved the station clock ${moved.toFixed(4)} h and §3.4 says 0.75`);
+      /* AND IT REPUBLISHES THE DAY AND WRAPS AT MIDNIGHT — everything seeded
+       * off the date reads `st.day`, and a panel that wound the hour without
+       * republishing it would hand `Tote.watch` a day the station is no longer
+       * on. The wrap matters for the same reason: `stationDay` reads an hour
+       * that `stepStation` keeps under 24, so a panel that let it run past
+       * would break the invariant the whole calendar is derived through. */
+      const S2 = await import('../../src/game/StationSave.js');
+      st.hour = 23.9;
+      for (let i = 0; i < 1500; i++) St.tickStationClock(world, 1 / 60);
+      assert(st.hour < 1, `the clock did not wrap under 24: ${st.hour}`);
+      assert(st.day === S2.stationDay(st.hour),
+        `the panel wound the hour to ${st.hour.toFixed(2)} and left the day at ${st.day}`);
+      return `paused: 600 frames moved the hour 0.0000; tickStationClock moved it ${moved.toFixed(4)} h `
+        + `in ninety real seconds, wrapped at midnight and republished day ${st.day}`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('station: #56 reads the rolls, and the station is named at #13 and at the plan table', async () => {
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const St = await import('../../src/game/Station.js');
+    const S = await import('../../src/game/StationSave.js');
+    assert(/read the rolls/.test(PLACE.get(56).verb), `#56's verb is "${PLACE.get(56).verb}"`);
+    assert(/name the station/i.test(PLACE.get(13).verb),
+      `#13's verb is "${PLACE.get(13).verb}" and §1.1 sets the name there`);
+    assert(/name the station/i.test(PLACE.get(27).verb),
+      `#27's verb is "${PLACE.get(27).verb}" and §1.1 sets the name at the plan table`);
+
+    const was = S.stationName();
+    const out = [];
+    /* ── DECK 40: the obelisk reads, the register writes ─────────────── */
+    const a = await station(40);
+    try {
+      const { world } = a;
+      const st = world._station;
+      let said = null, kiosk = null;
+      world.notify = (h, l) => { said = `${h} :: ${l}`; };
+      world.onKiosk = (id) => { kiosk = id; };
+
+      const p56 = PLACE.get(56);
+      world.player.position.set(p56.x, st.deckY + 1.6, p56.z);
+      assert(St.stationKey(world), '#56 did not answer the key at all');
+      assert(!St.namingStation(world),
+        '#56 still opens the naming field — the verb says it reads the rolls');
+      assert(said && /YOUR ROW|THE STANDING/.test(said), `#56 answered "${said}"`);
+      out.push(`#56 → ${said.split(' :: ')[0]}`);
+
+      /* THE REGISTER, which is one terminal of eight. */
+      assert(st.register, '#13 dressed no register panel');
+      said = null; kiosk = null;
+      world.player.position.set(st.register.x, st.deckY + 1.6, st.register.z);
+      assert(St.atRegister(world), 'standing on the register is not "at the register"');
+      assert(St.stationKey(world), 'the register did not answer the key');
+      assert(St.namingStation(world), 'the register did not open the naming field');
+      assert(kiosk === null, `the register also raised the '${kiosk}' kiosk`);
+      for (const ch of 'Borzport') St.typeStationName(world, ch);
+      St.typeStationName(world, 'Enter');
+      assert(S.stationName() === 'Borzport', `the register set the name to "${S.stationName()}"`);
+      assert((st.register.panel._rows || [])[0] === 'Borzport',
+        `the register panel still reads "${(st.register.panel._rows || [])[0]}"`);
+      out.push('register → named');
+
+      /* AND THE OTHER SEVEN TERMINALS STILL OPEN THE CODEX. */
+      const p13 = PLACE.get(13);
+      kiosk = null;
+      world.player.position.set(p13.x, st.deckY + 1.6, p13.z);
+      assert(!St.atRegister(world), 'the middle of the rotunda is "at the register"');
+      assert(St.stationKey(world), '#13 did not answer the key');
+      assert(kiosk === 'databank', `#13 raised '${kiosk}' rather than the codex`);
+      out.push('#13 elsewhere → codex');
+    } finally { a.world.dispose?.(); S.setStationName(was); }
+
+    /* ── DECK 44: the plan table in your own cabin ────────────────────── */
+    const b = await station(44);
+    try {
+      const { world } = b;
+      const h = world._home;
+      assert(h, 'deck 44 dressed no cabin');
+      const table = (h.state.pieces || []).find((r) => r.k === 'table');
+      assert(table, "the cabin's default layout has no plan table to name the station at");
+      const x = h.spot.x + table.x * h.cos + table.z * h.sin;
+      const z = h.spot.z - table.x * h.sin + table.z * h.cos;
+      world.player.position.set(x, h.y + 1.6, z);
+      assert(St.atPlanTable(world), 'standing on the plan table is not "at the plan table"');
+      assert(St.stationKey(world), 'the plan table did not answer the key');
+      assert(St.namingStation(world), 'the plan table did not open the naming field');
+      St.typeStationName(world, 'Escape');
+      /* …AND STEPPING BACK GIVES THE PRESS TO THE FURNITURE, which is the
+       * trade the short reach buys: the table is still a thing you can move. */
+      world.player.position.set(x + 3.0, h.y + 1.6, z);
+      assert(!St.atPlanTable(world),
+        'three metres from the table is still "at the plan table" — the furniture is unreachable');
+      out.push('plan table → named, and released at 3 m');
+    } finally { b.world.dispose?.(); S.setStationName(was); }
+    return out.join('; ');
   });
 }

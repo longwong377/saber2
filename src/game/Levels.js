@@ -38,6 +38,7 @@ import { ARRIVAL_BY_TERRAIN } from './Arrivals.js';
 import { HANGAR_LEVEL } from './Hangar.js';
 import { STATION_LEVEL } from './Station.js';
 import { setLiftFloors, MENU_FLOOR } from './DeckLift.js';
+import { stationName } from './StationSave.js';
 /* The IG-100 general's set-piece is registered at the bottom of this file —
  * see the
  * note there. These three edges add nothing to anybody's static import graph
@@ -5060,11 +5061,35 @@ if (STATION_ENABLED) {
    * a lift that can only reach one of its three decks is a lift with a bug in
    * it, not a smaller feature.
    */
+  /**
+   * ── AND THE LABEL CARRIES THE STATION'S NAME (V15 §1.1) ───────────────
+   *
+   * *"One string in `Session`, set once, shown everywhere the station names
+   * itself: the Arrivals departures board (#7), the lift readout's caption,
+   * the tram platform signs (#40), the Databank's station page."* Measured
+   * before this: deck 40 had 1 board, deck 44 had 4 signs, deck 48 had ZERO —
+   * and the readout said `Concourse` / `Living deck` / `Working deck`, which
+   * are the three words the drum would have if nobody had ever named it.
+   *
+   * IT IS A GETTER, AND IT IS ON THE FLOOR ROW RATHER THAN ON THE READOUT.
+   * `tools/checks/decklift.mjs` asserts that a waiting car's caption is
+   * `liftPick(world).label` upper-cased — the readout and the button column
+   * must not be able to disagree — so the name goes in at the ONE source both
+   * of them read. A getter rather than a string because `setLiftFloors` runs
+   * once at module load and the name is typed later, in the world: a row
+   * holding a snapshot would print whatever the station was called the first
+   * time this file was imported. `setLiftFloors` slices the array, which
+   * copies the row REFERENCES, so the accessors survive it.
+   *
+   * The lift is also the one place on the station that reaches every deck, so
+   * this is the fix that puts the name in front of a player on deck 48, where
+   * there is no board and no platform sign to carry it.
+   */
   setLiftFloors([
     MENU_FLOOR,
-    { n: 40, label: 'Concourse', level: 'station', deck: 40 },
-    { n: 44, label: 'Living deck', level: 'station', deck: 44 },
-    { n: 48, label: 'Working deck', level: 'station', deck: 48 },
+    { n: 40, get label() { return `${stationName()} · Concourse`; }, level: 'station', deck: 40 },
+    { n: 44, get label() { return `${stationName()} · Living deck`; }, level: 'station', deck: 44 },
+    { n: 48, get label() { return `${stationName()} · Working deck`; }, level: 'station', deck: 48 },
   ]);
 }
 

@@ -28,17 +28,26 @@
  * two are the authority for what an army may BUY, and the check pins that an
  * army never musters a body that fights for the other side.
  *
- * ── NO IMPORTS, AND THAT IS LOAD-BEARING ───────────────────────────────
+ * ── ONE IMPORT, AND THE RULE IT IS MEASURED AGAINST ────────────────────
  *
- * `Waves.js` reads `factionOf` to split a battlefield into two armies, and
- * `Menu.js` reads the whole table to draw the pages. Waves.js must not acquire
- * a static edge to Levels.js (a cycle — Levels imports SET_PIECE from Waves and
- * uses it at module-eval time) or to Vehicles.js (which reaches Textures.js and
- * bakes onto a canvas, so every check importing Waves would need the DOM shim —
- * HANDOFF §2.1). A table with no imports can be read by both without either
- * problem, and the cross-checks that would otherwise want those imports live in
- * the check, which loads everything anyway.
+ * This file used to have NONE, and the reason is load-bearing: `Waves.js`
+ * reads `factionOf` to split a battlefield into two armies, and `Menu.js`
+ * reads the whole table to draw the pages. Waves.js must not acquire a static
+ * edge to Levels.js (a cycle — Levels imports SET_PIECE from Waves and uses it
+ * at module-eval time) or to Vehicles.js (which reaches Textures.js and bakes
+ * onto a canvas, so every check importing Waves would need the DOM shim —
+ * HANDOFF §2.1).
+ *
+ * The rule was never "no imports"; it is THOSE TWO EDGES, and the cheapest way
+ * to keep them was to have no edges at all. `StationSave.js` is neither: its
+ * whole static graph is `Store.js`, which imports nothing, touches no canvas
+ * and reaches no level. So the edge added here — for the one thing V15 §1.1
+ * asks of this file, the station's own name on its own page — costs Waves.js
+ * a `localStorage` wrapper and nothing else, and the two forbidden edges are
+ * still absent. Anything else wanting an import here should be weighed the
+ * same way rather than waved through on this precedent.
  */
+import { stationName } from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  The factions                                                          */
@@ -108,13 +117,31 @@ export const FACTIONS = {
    * unarmed and in somebody else's neutral space.
    */
   station: {
-    name: 'The station',
+    /**
+     * ── AND THIS PAGE CARRIES THE NAME THE PLAYER GAVE IT (V15 §1.1) ────
+     *
+     * *"shown everywhere the station names itself: … the Databank's station
+     * page"*. This IS that page: the one entry in `FACTIONS` that is a place
+     * rather than a side, and the header `Menu.databankGroups` prints over the
+     * twenty-three residents. It read `The station`, which is what a station
+     * is called by somebody who has not named it.
+     *
+     * A GETTER, for the same reason `Levels.js`'s lift floors use one:
+     * `FACTIONS` is a module-level object evaluated once at import and the
+     * name is typed later, in the world, so a string here would be a snapshot
+     * of whatever the fold held the first time anything imported this file.
+     * `short` stays `Station` — it is a column heading in a count line, not a
+     * name.
+     */
+    get name() { return stationName(); },
     short: 'Station',
     army: false,
-    note: 'Fifty-five rooms turning in neutral space, and the only ground in '
-      + 'the game where nobody is shooting. Fifteen peoples keep fifteen '
-      + 'different days here and the war pays for all of them; what you meet on '
-      + 'this deck is a crowd, not an enemy.',
+    get note() {
+      return `${stationName()} is fifty-five rooms turning in neutral space, and the only `
+        + 'ground in the game where nobody is shooting. Fifteen peoples keep fifteen '
+        + 'different days here and the war pays for all of them; what you meet on '
+        + 'this deck is a crowd, not an enemy.';
+    },
   },
   wild: {
     name: 'Unaligned',

@@ -40,6 +40,17 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Props.js';
 import { DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
+/**
+ * ── THE WHEEL'S SEGMENT COUNT COMES OFF THE RULES, NOT OFF A RULER ───────
+ *
+ * `wheelhall` draws one spoke per segment of the Drum, and `Games.DRUM` is the
+ * one authority on how many there are — `drumPays` prices a deck at 3 in 20
+ * off that same array. A room that drew sixteen spokes while the panel priced
+ * twenty would be the two-copies-of-the-partition defect `StationPlan.js`'s
+ * header is written against, in geometry.
+ */
+import { DRUM as GAMES_DRUM } from './Games.js';
+const DRUM_SEGMENTS = GAMES_DRUM.SEGMENTS.length;
 
 const TAU = Math.PI * 2;
 
@@ -358,11 +369,26 @@ export function signPanel(lines, opts = {}) {
   });
   mat.name = `station-sign-${opts.name || 'panel'}`;
   mat.userData.key = 'sign';
+  /**
+   * ── A ROW MAY BE LIT, AND THAT IS THE WHOLE OF V15 §1.2's SECOND HALF ───
+   *
+   * *"Your own row is lit; everyone else's is engraved."* A row is either a
+   * string — engraved, the default every board in this file uses — or
+   * `{ t, lit }`, and a lit one is drawn in `opts.lit1` instead of `ink2`.
+   *
+   * It is a shape on the ROW and not a second argument to `draw` because the
+   * key that early-outs on identical text has to see it: a redraw that
+   * changed only which row is lit and kept the same words would have been
+   * skipped, and the moment a run files at the obelisk is exactly that
+   * redraw. `rowText`/`rowLit` are the two readers and nothing else unpacks it.
+   */
+  const rowText = (r) => String(r && typeof r === 'object' ? r.t : r).toUpperCase();
+  const rowLit = (r) => !!(r && typeof r === 'object' && r.lit);
   const panel = {
     material: mat, texture: tex,
     /** Redraw. Cheap and idempotent: it early-outs on identical text. */
     draw(rows) {
-      const key = rows.join('\u0001');
+      const key = rows.map((r) => (rowLit(r) ? '*' : '') + rowText(r)).join('\u0001');
       /* The rows are KEPT, so a caller that changes one line — the station's
        * name, on every board at once — does not have to know how the rest of
        * the panel was laid out. */
@@ -377,9 +403,10 @@ export function signPanel(lines, opts = {}) {
       const n = rows.length || 1;
       for (let i = 0; i < rows.length; i++) {
         const big = i === 0 && opts.head !== false;
-        ctx.fillStyle = big ? (opts.head1 || '#ffd9a0') : (opts.ink2 || '#c9a06a');
+        ctx.fillStyle = big ? (opts.head1 || '#ffd9a0')
+          : (rowLit(rows[i]) ? (opts.lit1 || '#ffe6bd') : (opts.ink2 || '#c9a06a'));
         ctx.font = `bold ${big ? Math.round(H / 3.4) : Math.round(H / (n + 2.2))}px "Courier New", monospace`;
-        ctx.fillText(String(rows[i]).toUpperCase(), x, (H * (i + 0.85)) / (n + 0.7));
+        ctx.fillText(rowText(rows[i]), x, (H * (i + 0.85)) / (n + 0.7));
       }
       if (tex) tex.needsUpdate = true;
       return panel;
@@ -779,6 +806,127 @@ export const SHAPES = {
       kit.post(M.strip, 0.45, 0.15, 0.3, x, 2.1, z, { radial: 8 });
       for (let k = 0; k < 3; k++) loose(kit, x + Math.cos(k * 2) * 1.3, 0, z + Math.sin(k * 2) * 1.3, (world, q) => chairBody(world, q, M));
     }
+  },
+
+  /**
+   * #60 The Wheelhouse: A WHEEL STOOD ON EDGE (V16 §D1).
+   *
+   * The one room on the station whose silhouette is a CIRCLE IN THE AIR. Rule
+   * 4 is measured from the door and every other gambling room on deck 40
+   * answers it with furniture on a floor — `lowden` is four tables under
+   * lamps, `sunkenround` is a bar in a well, `sunkenring` is tiers round a
+   * pit, `fanauditorium` is a rake of seats. This is a twenty-segment disc
+   * eleven metres across standing vertically at the far end of a tall narrow
+   * hall, filling the top half of the frame from the doorway, and nothing
+   * else in the drum has a vertical circle in it at all.
+   *
+   * ── AND THE ROOM IS THE SHAPE THE SITING FORCED ───────────────────────
+   *
+   * 14 m across the front and 16 m deep is the only footprint deck 40's outer
+   * band had left (see the note on the gazetteer row). That is a room you
+   * enter down its short axis, so the plan is a PROCESSION rather than a
+   * floor: the cage and the standing rail at the door, the tables in the low
+   * half, the dejarik column alone on the centreline, then two steps up to
+   * the dais and the wheel over it. Every one of those reads at a different
+   * height from the door, which is what makes the raster of this room unlike
+   * the raster of a room with tables in it.
+   *
+   * THE WHEEL IS TWENTY SEGMENTS BECAUSE `Games.DRUM.SEGMENTS` IS TWENTY, and
+   * the two must not disagree — a wheel a player counts sixteen spokes on
+   * while the panel prices three-in-twenty is a room that lies about its own
+   * odds. The number is imported rather than typed.
+   */
+  wheelhall(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    /* A NARROW FRONT. 2.6 m in a 14 m wall is a door you notice going through,
+     * which is the difference between a hall and a shopfront. */
+    walls(kit, M, w, d, h, { doorW: 2.6 });
+    ceiling(kit, M, w, d, h, { ribs: 7, strips: false });
+
+    /* ── THE DAIS, at the far end. Two steps, so the wheel stands over a
+     * floor the crowd is below rather than on. */
+    const daisD = 4.4, daisZ = d / 2 - daisD / 2 - 0.6;
+    for (let i = 0; i < 2; i++) {
+      kit.slab(M.deep, w - 2.4 - i * 1.6, 0.34, daisD + 1.2 - i * 1.2, 0, 0.17 + i * 0.34, daisZ - 0.6 + i * 0.6,
+        { collide: true, bevel: 0.03 });
+    }
+    kit.slab(M.strip, w - 4.6, 0.06, 0.1, 0, 0.72, daisZ - 2.3, { collide: false, bevel: 0 });
+
+    /* ── THE DRUM. A rim, a hub, and one spoke per segment, stood on edge
+     * over the dais. `SEGMENTS.length` and not a literal — see the note. */
+    const n = DRUM_SEGMENTS, R = 5.5, cy = 4.0, cz = d / 2 - 1.1;
+    /* The rim as `n` chords, so the count is legible from the floor: a player
+     * can see which segment the pointer is on without a caption. */
+    for (let i = 0; i < n; i++) {
+      const a = (TAU * (i + 0.5)) / n;
+      const chord = 2 * R * Math.sin(Math.PI / n) * 1.04;
+      kit.slab(i % 2 ? M.mark : M.wing, chord, 0.42, 0.5,
+        R * Math.sin(a), cy + R * Math.cos(a), cz, { rz: -a, collide: false, bevel: 0.03 });
+    }
+    for (let i = 0; i < n; i++) {
+      const a = (TAU * i) / n;
+      /* A spoke is a thin slab from the hub to the rim, laid along the radius
+       * — `rz` turns it, and the offset puts its middle half way out. */
+      kit.slab(M.hull, 0.14, R - 0.5, 0.26,
+        (R / 2) * Math.sin(a), cy + (R / 2) * Math.cos(a), cz, { rz: -a, collide: false, bevel: 0 });
+    }
+    kit.post(M.deep, 0.9, 0.9, 0.7, 0, cy, cz, { rx: Math.PI / 2, radial: 16, collide: true });
+    kit.post(M.strip, 0.5, 0.5, 0.76, 0, cy, cz, { rx: Math.PI / 2, radial: 12 });
+    /* THE POINTER, over the top of the wheel and pointing down into it —
+     * the only thing in the room that says which way is the answer. */
+    kit.slab(M.status, 0.34, 0.9, 0.3, 0, cy + R + 0.6, cz, { collide: false, bevel: 0.05 });
+    /* Lit FROM BEHIND, so the wheel is a black disc with a bright edge from
+     * the door — the reading the silhouette raster actually takes. */
+    kit.light(0, cy, cz - 1.2, { intensity: 22, distance: 26 });
+    for (const s of [-1, 1]) {
+      kit.post(M.dark, 0.22, 0.28, cy + R + 0.4, s * (R + 0.7), (cy + R + 0.4) / 2, cz + 0.4, { radial: 8, collide: true });
+    }
+
+    /* ── THE DEJARIK COLUMN, alone on the centreline where the hall narrows.
+     * A drum of a plinth with a lit board floating over it: the one waist-
+     * high circle in a room whose other circle is five metres up. */
+    kit.post(M.deep, 0.85, 1.0, 0.95, 0, 0.475, -0.6, { radial: 16, collide: true });
+    kit.post(M.screen, 1.15, 1.15, 0.1, 0, 1.06, -0.6, { radial: 20 });
+    for (let i = 0; i < 12; i++) {
+      const a = (TAU * i) / 12;
+      kit.slab(M.strip, 0.18, 0.05, 0.18, 0.82 * Math.sin(a), 1.14, -0.6 + 0.82 * Math.cos(a), { collide: false, bevel: 0 });
+    }
+
+    /* ── THE TABLES. Two, not four: the room is 14 across and `lowden` next
+     * door already owns "a floor of card tables". These flank the column. */
+    for (const s of [-1, 1]) {
+      const x = s * 4.3, z = -4.2;
+      loose(kit, x, 0, z, (world, q) => tableBody(world, q, M, 2.2, 2.2, 0.78));
+      kit.post(M.dark, 0.04, 0.04, h - 2.6, x, h - (h - 2.6) / 2, z, { radial: 4 });
+      kit.post(M.strip, 0.5, 0.16, 0.28, x, 2.4, z, { radial: 10 });
+      for (let k = 0; k < 3; k++) {
+        loose(kit, x + Math.cos(k * 2.1) * 1.5, 0, z + Math.sin(k * 2.1) * 1.5, (world, q) => chairBody(world, q, M));
+      }
+    }
+
+    /* ── THE CAGE BY THE DOOR. A cashier behind bars, the way `lowden` has
+     * one — a casino that pays out over an open counter is a bank. */
+    kit.push(-w / 2 + 2.0, 0, -d / 2 + 2.2, 0);
+    kit.slab(M.dark, 3.4, h, 0.4, 0, h / 2, -1.4, { collide: true, bevel: 0 });
+    counter(kit, M, 3.0, 0.65, 0, -0.9, 0, 1.05);
+    for (let i = 0; i * 0.34 < 3.0; i++) {
+      kit.post(M.wing, 0.035, 0.035, h - 1.1, -1.5 + i * 0.34, 1.1 + (h - 1.1) / 2, -0.95, { radial: 4 });
+    }
+    kit.pop();
+
+    /* ── THE STANDING RAIL down the other wall, at drinking height. Nowhere
+     * to sit on that side is what makes the room read as a night room. */
+    kit.slab(M.wing, 0.5, 0.09, d - 6.5, w / 2 - 0.6, 1.05, -1.0, { collide: true, bevel: 0.02 });
+    for (let i = 0; i < 4; i++) {
+      kit.post(M.dark, 0.06, 0.06, 1.05, w / 2 - 0.6, 0.525, -4.0 + i * 2.0, { radial: 6 });
+    }
+
+    /* §11 — loose things. Stools at the rail and a crate of the house's own. */
+    for (let i = 0; i < 4; i++) {
+      loose(kit, w / 2 - 1.9, 0, -4.0 + i * 2.0, (world, q) => boxBody(world, q, M, 0.42, 0.76, 0.42, M.deep, 7, 'stool'));
+    }
+    loose(kit, -w / 2 + 2.0, 0, -d / 2 + 4.4, (world, q) => makeCrate(world, q));
   },
 
   /** #19 Holo-theatre: a FAN. The floor rakes down toward a stage, the seats

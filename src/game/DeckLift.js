@@ -720,7 +720,25 @@ function makeReadout(M) {
       ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.font = 'bold 74px "Courier New", monospace';
       ctx.fillText(String(number).padStart(2, '0'), 128, 50);
-      ctx.font = 'bold 24px "Courier New", monospace';
+      /**
+       * THE CAPTION IS FITTED, NOT TRUNCATED.
+       *
+       * It was a fixed 24 px, which holds about seventeen Courier characters
+       * on a 256-wide canvas — enough for `CONCOURSE` and nothing else. V15
+       * §1.1 puts the STATION'S NAME in this caption (`Levels.js`'s floor
+       * rows), and a name is up to 18 characters on its own, so a fixed size
+       * would print `CROSSROADS · CONCOU` off the edge of the screen. The
+       * type steps down until the string fits inside the bezel and stops at
+       * 13 px, which is the smallest that is still legible on the plane's 0.42
+       * m at arm's length; a name longer than that is cut by `NAME_MAX` at
+       * the one place it is set rather than silently here.
+       */
+      let px = 24;
+      for (; px > 13; px--) {
+        ctx.font = `bold ${px}px "Courier New", monospace`;
+        if (ctx.measureText(caption).width <= 236) break;
+      }
+      ctx.font = `bold ${px}px "Courier New", monospace`;
       ctx.fillText(caption, 128, 106);
       if (tex) tex.needsUpdate = true;
     },

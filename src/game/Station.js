@@ -52,11 +52,11 @@ import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, secto
 import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
-import { dressObelisk, dressBoards, stepBoards } from './StationBoards.js';
+import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
 import { stationHour, setStationHour, stationName, setStationName, standing, stationDay, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
-import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
+import { dressHome, stepHome, leaveHome, undressHome, homeKey, inHome } from './Home.js';
 import { myApartment } from './Coop.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
@@ -64,6 +64,8 @@ import { countersAt } from './Vendors.js';
 import { stepMedbay } from './Medbay.js';
 import { pitAtPlace } from './Pits.js';
 import { venueAtPlace, ticketFor, settleTickets } from './Tote.js';
+import { openWheelhouse, wheelhouseLine, drumQuote, WHEELHOUSE } from './Casino.js';
+import { offersAt, openJobs, owedJobs, takeJob, collect } from './Quests.js';
 import { pay, spend } from './Credits.js';
 import {
   boardAt, traffic, inboundLine, walkGantry, signCert, certified, readiness,
@@ -278,21 +280,128 @@ const TAU = Math.PI * 2;
 /* Scratch for the jump's transit-amber lerp — see `orderJump`. */
 const _warpC = new THREE.Color(), _warpA = new THREE.Color();
 
-/** A ring of slabs approximating an annulus: `n` segments, each a box. */
+/**
+ * A ring of slabs approximating an annulus: `n` segments, each a box.
+ *
+ * `opts.omit` is a POLAR RECTANGLE the ring is not laid in — `{ a0, a1, r0,
+ * r1 }` in bearing and radius. A segment whose bearing falls inside it is laid
+ * as its inner and outer REMAINDERS instead of one full-depth chord, which is
+ * how a hole is cut in a merged floor without a boolean: the plate is still
+ * one mesh per material, so a well costs a few boxes and NO extra draw call.
+ * See `standingWell` for the one thing that asks for it and why.
+ */
 function annulus(kit, mat, y, h, r0, r1, n, opts = {}) {
   const from = opts.from ?? 0, to = opts.to ?? TAU;
   const span = to - from;
   const seg = Math.max(3, Math.round(n * (span / TAU)));
-  const rMid = (r0 + r1) / 2, depth = r1 - r0;
+  const collide = opts.collide !== false;
   /* Each segment is a chord, so it is made slightly long: a box whose ends
    * meet its neighbours' on the OUTER radius leaves a wedge of gap on the
    * inner one, and a floor with gaps in it is a floor a capsule falls through. */
-  const wide = 2 * rMid * Math.tan(span / seg / 2) * 1.06;
+  const lay = (rA, rB, a) => {
+    if (rB - rA < 0.25) return;
+    const rMid = (rA + rB) / 2;
+    kit.slab(mat, 2 * rMid * Math.tan(span / seg / 2) * 1.06, h, rB - rA,
+      rMid * Math.sin(a), y, rMid * Math.cos(a), { ry: a, collide, bevel: 0 });
+  };
+  const cut = opts.omit || null;
   for (let i = 0; i < seg; i++) {
     const a = from + span * ((i + 0.5) / seg);
-    const x = rMid * Math.sin(a), z = rMid * Math.cos(a);
-    kit.slab(mat, wide, h, depth, x, y, z, { ry: a, collide: opts.collide !== false, bevel: 0 });
+    if (cut && a > cut.a0 && a < cut.a1) { lay(r0, cut.r0, a); lay(cut.r1, r1, a); continue; }
+    lay(r0, r1, a);
   }
+}
+
+/**
+ * ══ THE WELL THE STANDING RISES THROUGH — V15 §1.2 ════════════════════════
+ *
+ * *"a black obelisk three decks high, running up through a cut in the soffit
+ * so you see the top of it from the Living deck's balcony and the whole of it
+ * from the Concourse floor."*
+ *
+ * Measured before this existed: `deck 44: st.obelisk NULL, 0 'station-obelisk'
+ * nodes`, and the same on 48. #56's own builder raises four corner piers up
+ * through the hall's 26 m — but the drum's SOFFIT is a full annulus laid over
+ * the whole turn, so on deck 40 the column vanished into the ceiling 8.6 m up,
+ * and on the two decks above it there was no column at all. The landmark you
+ * can see from two other decks, which is the entire argument for an obelisk
+ * over a screen, did not exist on any deck.
+ *
+ * So the plate and the soffit are CUT round #56's footprint, on the decks the
+ * shaft passes, and the cut is railed. Nothing else changes: the cut is an
+ * `omit` on the two annuli that were already being laid, so the deck is still
+ * nine merged meshes and the well costs no draw call at all.
+ *
+ * ── AND THE RAIL IS WHAT STOPS YOU ────────────────────────────────────────
+ *
+ * `activeFloorAt` answers the deck's height at every (x, z) — it is a flat
+ * plane per deck by design — so a hole in the plate does not become a hole a
+ * walker falls down; it becomes a place a walker stands on air. The rail is
+ * therefore not a nicety: it is the collider that keeps anything from being
+ * over the void in the first place, drawn rather than invisible, which is the
+ * balcony rail's own rule six lines down ("you can see what stops you").
+ */
+function standingWell() {
+  const p = PLACE.get(56);
+  if (!p) return null;
+  const c = Math.cos(p.yaw), s = Math.sin(p.yaw);
+  let r0 = Infinity, r1 = -Infinity, a0 = Infinity, a1 = -Infinity;
+  /* The four corners, in the drum's polar frame. #56 stands at bearing 13°,
+   * nowhere near the ±π seam, so a min/max over four bearings is the whole
+   * arithmetic and there is no wrap to handle — `station.mjs` pins that. */
+  for (const [lx, lz] of [[-p.w / 2, -p.d / 2], [p.w / 2, -p.d / 2], [p.w / 2, p.d / 2], [-p.w / 2, p.d / 2]]) {
+    const x = p.x + lx * c + lz * s, z = p.z - lx * s + lz * c;
+    const r = Math.hypot(x, z), a = Math.atan2(x, z);
+    r0 = Math.min(r0, r); r1 = Math.max(r1, r); a0 = Math.min(a0, a); a1 = Math.max(a1, a);
+  }
+  return { r0, r1, a0, a1, x: p.x, z: p.z, w: p.w, d: p.d, yaw: p.yaw };
+}
+
+/**
+ * The rail round the well, on the deck the shaft passes through. At the
+ * balcony rail's own height, and it COLLIDES — see the note over
+ * `standingWell` about why the rail is the safety and not the floor.
+ *
+ * ── AND IT STOPS AT ANOTHER ROOM'S WALL ───────────────────────────────────
+ *
+ * #56's hall is 12 x 11 m and three decks tall, and the two rooms its shaft
+ * passes are not clear of it: measured with `station.mjs`'s own separating-axis
+ * test, the footprint overlaps `#61 The Underlift Pit` on deck 44 by 5.1 m and
+ * `#48 Reactor hall` on deck 48 by 5.0 m. That predates this lane — the
+ * gazetteer's overlap check compares places on the SAME deck, and a 26 m hall
+ * on 40 is nobody's neighbour by that test.
+ *
+ * The plate cut is harmless inside those two: both build their own floor at
+ * this deck's height, so a cut under a room is a hole with a floor over it.
+ * The RAIL is not harmless — a balustrade standing inside the reactor hall is
+ * a thing the player walks into for no reason — so each side is laid in short
+ * runs and a run whose middle is inside another place on this deck is skipped.
+ * What is left is exactly the rail you can reach.
+ */
+function railWell(kit, M, deck, y, well) {
+  const c = Math.cos(well.yaw), s = Math.sin(well.yaw);
+  const rooms = placesOn(deck).filter((p) => p.band !== 'ring' && p.id !== 56);
+  const covered = (x, z) => rooms.some((p) => {
+    const dx = x - p.x, dz = z - p.z;
+    const pc = Math.cos(-p.yaw), ps = Math.sin(-p.yaw);
+    return Math.abs(dx * pc + dz * ps) <= p.w / 2 && Math.abs(-dx * ps + dz * pc) <= p.d / 2;
+  });
+  const hw = well.w / 2 + 0.2, hd = well.d / 2 + 0.2;
+  const RUN = 6;
+  const side = (fx, fz, w, d) => {
+    for (let i = 0; i < RUN; i++) {
+      const t = (i + 0.5) / RUN - 0.5;
+      const lx = fx(t), lz = fz(t);
+      const x = well.x + lx * c + lz * s, z = well.z - lx * s + lz * c;
+      if (covered(x, z)) continue;
+      kit.slab(M.dark, w, 1.05, d, x, y + 0.52, z, { ry: well.yaw, collide: true, bevel: 0 });
+      kit.slab(M.strip, w, 0.1, d, x, y + 1.08, z, { ry: well.yaw, collide: false, bevel: 0 });
+    }
+  };
+  side((t) => t * hw * 2, () => -hd, (hw * 2) / RUN + 0.02, 0.18);
+  side((t) => t * hw * 2, () => hd, (hw * 2) / RUN + 0.02, 0.18);
+  side(() => -hw, (t) => t * hd * 2, 0.18, (hd * 2) / RUN + 0.02);
+  side(() => hw, (t) => t * hd * 2, 0.18, (hd * 2) / RUN + 0.02);
 }
 
 /**
@@ -306,11 +415,23 @@ function annulus(kit, mat, y, h, r0, r1, n, opts = {}) {
  */
 function buildDeckPlate(kit, M, deck) {
   const y = DECK_Y[deck];
+  /**
+   * THE STANDING'S SHAFT, PER DECK — see `standingWell`.
+   *
+   *   40  the column stands here, so the SOFFIT is cut and the plate is whole
+   *   44  the shaft passes through: both are cut, and the well is railed
+   *   48  the column's cap arrives at this floor, so the PLATE is cut and the
+   *       soffit above it is left whole — there is nothing over it to see
+   */
+  const well = standingWell();
+  const cutPlate = well && (deck === 44 || deck === 48) ? well : null;
+  const cutSoffit = well && (deck === 40 || deck === 44) ? well : null;
   /* The floor: balcony lip out to the skin, in one merged annulus. */
-  annulus(kit, M.deep, y - 0.3, 0.6, DRUM.atrium, DRUM.R, 72);
+  annulus(kit, M.deep, y - 0.3, 0.6, DRUM.atrium, DRUM.R, 72, { omit: cutPlate });
   /* The soffit over it — the next deck's underside, so a player on 40 looking
    * up sees a ceiling and not the sky. The top deck gets one too. */
-  annulus(kit, M.dark, y + DRUM.storey + 0.4, 0.8, DRUM.atrium, DRUM.R, 48, { collide: false });
+  annulus(kit, M.dark, y + DRUM.storey + 0.4, 0.8, DRUM.atrium, DRUM.R, 48, { collide: false, omit: cutSoffit });
+  if (cutPlate) railWell(kit, M, deck, y, cutPlate);
   /* The balcony rail round the void, and the light under its lip: §3.1 rule 1
    * wants the void READ as the station's landmark, and an unlit edge at
    * twelve metres reads as a wall. */
@@ -1134,12 +1255,38 @@ export class StationDirector {
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * ══ YOU TYPE IT STANDING IN FRONT OF THE OBELISK ══════════════════════════
+ * ══ WHERE YOU TYPE IT, AND IT IS NOT AT #56 ═══════════════════════════════
  *
- * V15: *"you should be able to name your station."* Where you do it is the
- * decision, and it is at #56 — the thing that carries your standing is the
- * thing you put your name on. Not a menu field: the whole argument for the
- * obelisk being a place rather than a screen applies to this too.
+ * V15 §1.1 says exactly where: *"the Databank terminal (#13) and the plan
+ * table in your own cabin."* It was at #56 and only #56 — under a prompt
+ * reading *"read the rolls — find your own row"*, which is a different
+ * sentence about a different feature. Two defects in one key: the obelisk's
+ * verb did not do what it said, and naming was hidden in one hall a player may
+ * never press a key in, so the whole of §1.1 could go unfound in a session.
+ *
+ * Both doors are physical, which is §14's rule and the obelisk's own argument:
+ *
+ *   #13  `StationBoards.dressRegister` puts a REGISTER panel over the reading
+ *        room's nearest terminal. Stand at it and the key names the station;
+ *        stand anywhere else in the rotunda and it opens the codex, which is
+ *        what #13's gazetteer verb has always said.
+ *   #27  the MAP TABLE in your own cabin — `Home.DEFAULT_LAYOUT`'s `table`,
+ *        the piece §1.1 calls the plan table. `atPlanTable` claims the key
+ *        within 1.6 m of it, ahead of `homeKey`; step back and the same press
+ *        picks the table up as it always did. That is the same bargain the
+ *        mirror and the galley already make in `Home.js`, one fixture further
+ *        on, and it is why the reach is short.
+ *
+ * AND THE PA IS THE ONE §1.1 ASKS FOR THAT IS REFUSED, WITH A REASON. The
+ * list ends *"…the Databank's station page, and the PA."* There IS a PA —
+ * `DeckAudio`'s tannoy — and its own header spends a page arguing that it must
+ * never say words: *"A PA that says a sentence is a NARRATOR. The player looks
+ * up, listens, decodes it, finds it says nothing that matters, and never
+ * listens again."* It is a formant synthesiser with the consonants left out,
+ * on purpose, and it has no text input to give a name to. Making it say
+ * `CROSSROADS` means giving it speech, which is the one thing that file is
+ * built not to have. So four of the five places are built and the fifth is
+ * declined here rather than faked with a caption nobody hears.
  *
  * The mechanism is `DeckEdit`'s, which is this game's own idiom for typing a
  * name in the world — a document keydown listener, a text buffer, the banner
@@ -1154,6 +1301,45 @@ export class StationDirector {
  * letters a player is typing into a station name are also W, A, S and D.
  */
 export function namingStation(world) { return !!world?._station?.naming; }
+
+/** How close you stand to a naming fixture. 2.0 m at the register, which is a
+ * desk you walk up to; 1.6 m at the map table, which is short deliberately —
+ * see the note over `beginStationName` about what the key does further back. */
+const REGISTER_REACH = 2.0;
+const TABLE_REACH = 1.6;
+
+/** Standing at #13's register terminal? `dressBoards` put the panel there. */
+export function atRegister(world) {
+  const r = world?._station?.register;
+  const p = world?.player?.position;
+  if (!r || !p) return false;
+  const dx = p.x - r.x, dz = p.z - r.z;
+  return dx * dx + dz * dz < REGISTER_REACH * REGISTER_REACH;
+}
+
+/**
+ * Standing at the plan table in YOUR OWN cabin? (V15 §1.1)
+ *
+ * The map table is a piece of furniture rather than a fixture — `Home.js`
+ * makes the cabin's floor a placement grid and `DEFAULT_LAYOUT` puts a `table`
+ * on it — so where it is is wherever the player last set it down, which is why
+ * this reads the record's row rather than a built position. Never while a
+ * piece is held: that press is `dropPiece`'s and `homeKey` claims it one line
+ * below.
+ */
+export function atPlanTable(world) {
+  const h = world?._home;
+  const p = world?.player?.position;
+  if (!h || !p || h.held || !h.mine || !inHome(world)) return false;
+  for (const row of h.state?.pieces || []) {
+    if (row.k !== 'table') continue;
+    const x = h.spot.x + row.x * h.cos + row.z * h.sin;
+    const z = h.spot.z - row.x * h.sin + row.z * h.cos;
+    const dx = p.x - x, dz = p.z - z;
+    if (dx * dx + dz * dz < TABLE_REACH * TABLE_REACH) return true;
+  }
+  return false;
+}
 
 export function beginStationName(world) {
   const st = world?._station;
@@ -1202,6 +1388,9 @@ export function commitStationName(world) {
     const rows = b.panel._rows;
     if (rows) b.panel.draw([st.name, ...rows.slice(1)]);
   }
+  /* AND THE REGISTER YOU ARE STANDING AT, which is the one panel in the game
+   * a player is looking straight at while they type. */
+  if (st.register) st.register.panel.draw([st.name, 'STATION REGISTER', 'press to rename']);
   world.notify?.(st.name.toUpperCase(), 'the boards say so now');
   return st.name;
 }
@@ -1263,6 +1452,9 @@ export function stationKey(world) {
    * suppression note over `beginStationName`. */
   if (namingStation(world)) return true;
   if (liftKey(world)) return true;
+  /* THE PLAN TABLE, BEFORE THE HOME AND ONLY WITHIN ARM'S REACH OF IT — V15
+   * §1.1's second naming door. See the note over `beginStationName`. */
+  if (atPlanTable(world)) return beginStationName(world);
   /* AND THE HOME, which claims the key only inside its own four walls — it
    * answers false anywhere else, so #27's verb still reaches the prompt. See
    * `Home.homeKey` for the four things one press can mean in there. */
@@ -1271,11 +1463,29 @@ export function stationKey(world) {
   if (!p) return false;
   const place = placeUnder(world, p.x, p.z);
   if (!place || !place.verb) return false;
+  /* THE REGISTER IN #13, ahead of the kiosk branch below it: the rotunda is a
+   * kiosk place and one of its eight terminals is the station's own register
+   * (V15 §1.1). Standing at that one names the station; the other seven — and
+   * the rest of the room — open the codex on the next line. */
+  if (place.id === 13 && atRegister(world)) return beginStationName(world);
   /* A counter opens the panel it names; everything else answers with its own
    * verb, which is the prompt and, until its system lands, the whole of it. */
   if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
-  /* #56 is the one place whose verb writes something. */
-  if (place.id === 56) return beginStationName(world);
+  /**
+   * ── #56 THE STANDING: THE KEY READS THE ROLLS ─────────────────────────
+   *
+   * The gazetteer's verb is *"read the rolls — find your own row"* and this
+   * branch used to answer NAME THE STATION, which is neither of those things.
+   * `StationBoards.myRow` is the reading: which run filed last, where it
+   * stands on each of the two faces that rank your runs, and what the company
+   * looks like on the other two. The naming moved to the two places §1.1 asks
+   * for it — see the note over `beginStationName`.
+   */
+  if (place.id === 56) {
+    const [head, line] = standingReading();
+    world.notify?.(head, line);
+    return true;
+  }
   /**
    * ── #28 THE KENNEL HABITAT — V15 §4's *"only reachable at the habitat"* ──
    *
@@ -1350,8 +1560,23 @@ export function stationKey(world) {
    *
    * AFTER the counter branch, matching #42 and #50: a room that sells
    * something sells it first, and neither of these two rooms does.
+   *
+   * ── AND #20 HAS TWO DOORS, SO THIS ONE DOES NOT EAT THE PRESS ─────────
+   *
+   * `#20 The Arena` is a pit AND a book. This branch used to `return` on the
+   * pit's answer whatever it was, so the tote branch below was unreachable at
+   * #20 and the room was a one-line refusal at every hour of every day on a
+   * profile with no animal — driven: #18 at 22:00 raised [tote], #19 at 14:45
+   * raised [tote], #20 at 18:15 raised [pit] "you have nothing to put in
+   * there". A player who wanted to back somebody else's could not get to the
+   * card at all, which is exactly the sentence Lane D2 was written for.
+   *
+   * So the pit KEEPS the press only when it took it. `main.js`'s `openPit`
+   * returns false when there is no bout for you and a book shares the room,
+   * and the press falls through to the tote below. #61 has no book, so its
+   * refusal still answers there and nothing about the Underlift moves.
    */
-  if (pitAtPlace(place.id) && world.onPit) return world.onPit(place.id) !== false;
+  if (pitAtPlace(place.id) && world.onPit && world.onPit(place.id) !== false) return true;
   /**
    * ── #57 THE REPEATING ROOM — V16 Lane A2 ───────────────────────────────
    *
@@ -1393,6 +1618,45 @@ export function stationKey(world) {
     return true;
   }
   /**
+   * ── #60 THE WHEELHOUSE — V16 Lane D1 ───────────────────────────────────
+   *
+   * *"you should be able to play some of the casino games these should be
+   * actual games within games … in certain games you play against actual npcs
+   * like it could be anyone on the ship on any day."*
+   *
+   * `Games.js` — three finished games, 4/4 green — was in no shipped build
+   * until this line: `pack.mjs` walks the module graph from `main.js` and the
+   * only mention of the file under `src/` was a sentence in a comment. This
+   * branch and `StationKit.wheelhall` are what make it a dependency of the
+   * game rather than of the tests. `Casino.js` deals; nothing here knows a
+   * card.
+   *
+   * ── WHERE IT SITS, AND WHAT IT CANNOT SHADOW ──────────────────────────
+   *
+   * AFTER the counter, the bench, the medbay, the pits, the Repeating Room
+   * and the tote, and BEFORE the flight dispatcher. It names ONE id and every
+   * branch above it names ids that are not 60, so this cannot eat a press
+   * that belonged to anything: #60 has no counter in `Vendors`, no kiosk on
+   * its row, no venue in `Tote` and no pit in `Pits`. And it is not the last
+   * branch, so it cannot swallow the fallback either — the two doors below
+   * are the five flight rooms and the job board, and 60 is in neither.
+   *
+   * That position is the lesson of the branch three above: the pit's door
+   * used to `return` on the pit's own refusal and #20's betting card was
+   * unreachable for it. A branch that claims a press it did not use is the
+   * defect, so this one claims exactly one room and answers with something
+   * true even when nothing has opened a panel.
+   */
+  if (place.id === WHEELHOUSE) {
+    const room = openWheelhouse(st.hour, stationDay(), place.id);
+    if (world.onCasino && world.onCasino(room) !== false) return true;
+    /* NO PANEL YET AND THE ROOM STILL WORKS. `main.js` owns the overlay; a
+     * build without it gets the real spin and the real dealer off the same
+     * call the panel reads, rather than a room that looks built and is not. */
+    world.notify?.('THE WHEELHOUSE', wheelhouseLine(room));
+    return true;
+  }
+  /**
    * ── #2, #3, #4, #5 AND #6 — FLIGHT OPS, SHARK §7 ───────────────────────
    *
    * LAST, and the position is the argument: none of the five sells anything,
@@ -1404,9 +1668,92 @@ export function stationKey(world) {
    * reach the one you want.
    */
   if (FLIGHT_PLACES.has(place.id)) return flightKey(world, place);
+  /**
+   * ── SOMEBODY IN HERE HAS A JOB — V16 Lane C3 ───────────────────────────
+   *
+   * *"you can talk to npcs there so maybe give you certain quests (very long
+   * list of potential ones and totally random and not always there and the
+   * npcs aren't always in the same place either so it's a chance thing) …
+   * when you complete a certain quest it is recorded and you go back to that
+   * npc who will be there since you compelted the quest."*
+   *
+   * `Quests.js` had the same defect `Games.js` had and it is the same fix: a
+   * finished module, 3/3 green, that no file under `src/` imported and that
+   * `pack.mjs` therefore never put in a build. This is its door.
+   *
+   * ── AND THE DOOR IS THE FALLBACK, WHICH IS THE HONEST ANSWER ──────────
+   *
+   * A giver does not belong in a new room. The player's own rule is that the
+   * NPCs *"aren't always in the same place"*, so the right place for this is
+   * every room that has nobody standing behind a counter in it — which is
+   * exactly the set that reaches this line. Measured: 32 of the gazetteer's
+   * rooms fall through to here, including `#14 The Long Night`, `#38` the
+   * hostel, the six quarters, the Promenade, the gym, the chapel, the
+   * arboretum, the morgue, the cargo hold and the dome, and `offersAt` puts
+   * about twenty jobs a day across them.
+   *
+   * LAST, AND IT CANNOT SHADOW ANYTHING. Every branch above has already
+   * returned if it wanted the press — a counter, a kiosk, a bench, a ward, a
+   * pit, a card, a table, a hangar door. What it replaces is `notify(name,
+   * verb)`, which is a line of text, and it only replaces it when there is
+   * genuinely somebody here: no offer today and nothing owed here means no
+   * panel and the verb still prints.
+   *
+   * THE OWED HALF IS WHY THIS IS NOT JUST A BOARD. `owedJobs` is the pinned
+   * giver — you finished the job, the money is here, and the room opens for
+   * that even on a day it is offering nothing new.
+   */
+  const day = stationDay();
+  const offers = offersAt(place.id, day, questContext(world));
+  const owed = owedJobs().filter((j) => j.place === place.id);
+  if ((offers.length || owed.length) && world.onQuest) {
+    const board = {
+      place: place.id, name: place.name, day,
+      offers, owed, carrying: openJobs(), verb: place.verb,
+    };
+    if (world.onQuest(board) !== false) return true;
+  }
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
 }
+
+/**
+ * What a job may be rolled against: the men on the roll and the kinds you
+ * have actually fought. `Quests.SHAPES` reads both and neither is a new
+ * counter — "a name" is `Company.js`'s own roll and "a mercy" is a kind out
+ * of the same list the run reports. A context this cannot build is null, and
+ * `offersAt` answers with the shapes that need none.
+ */
+function questContext(world) {
+  let men = [];
+  /* `StationBoards.companyOf` is the one authority on which manifest is "the"
+   * company from the station's point of view — `StationLife` reads the same
+   * one for the leave seats, and a job that named a man the bar has never
+   * heard of would be two rolls. */
+  try { men = (companyOf()?.men || []).filter((m) => m && m.id && m.name); } catch { men = []; }
+  const kinds = world?.run?.killedKinds ? Object.keys(world.run.killedKinds) : null;
+  return { men, kinds: kinds && kinds.length ? kinds : null };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE JOB BOARD'S OWN MONEY, and it moves here for the tote's reason
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `Quests.collect` marks a job paid and says what it is worth; it holds no
+ * balance and names no wallet word, exactly as `Tote.js` does not. The purse
+ * moves in this file, through the one pay door, under the same `PER_RUN_CAP`
+ * that bounds every other payment in the game — a job that paid round the cap
+ * would be the second place a player could earn past the doctrine.
+ */
+export function payForJob(jobId) {
+  const got = collect(jobId);
+  if (!got.ok) return { ...got, paid: 0, capped: false };
+  const paid = pay(got.pay, 'work');
+  return { ...got, paid, capped: paid < got.pay };
+}
+
+/** Take one. Refuses at three, and refuses the same job twice. */
+export function takeJobAt(offer) { return takeJob(offer); }
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  THE WINDOW — the dozen lines where the credits actually move
@@ -1443,6 +1790,34 @@ export function payAtTote(tickets, result) {
   const ledger = settleTickets(tickets, result);
   const paid = ledger.returned > 0 ? pay(ledger.returned, 'tote') : 0;
   return { ...ledger, paid, capped: paid < ledger.returned };
+}
+
+/**
+ * ── AND THE DRUM'S WINDOW IS THE SAME WINDOW ─────────────────────────────
+ *
+ * *"you can bet your real money."* `Casino.js` prices a bet against a stop and
+ * holds no balance; the two lines that move the purse are here, beside the
+ * tote's, so the six-word currency scan over the economy still finds every
+ * place a credit changes hands in one file.
+ *
+ * THE WHEEL IS SPUN BEFORE THE STAKE IS SETTLED AND NEVER AFTER. `drumAt` is
+ * a pure function of the station clock, so `stakeAtDrum` takes the hour it is
+ * betting ON and `payAtDrum` reads the same one — a player cannot stake into
+ * an hour that has already turned, and cannot re-take one by walking out.
+ */
+export function stakeAtDrum(bet) {
+  const stake = Math.max(0, Math.round(Number(bet?.stake) || 0));
+  if (!stake) return { ok: false, why: 'name a stake', ticket: null };
+  const paid = spend(stake, 'drum');
+  if (!paid.ok) return { ok: false, why: paid.why, short: paid.short, ticket: null };
+  return { ok: true, why: null, ticket: { ...bet, stake }, left: paid.left };
+}
+
+/** What the wheel owed, and what the wallet actually handed over. */
+export function payAtDrum(ticket, at) {
+  const owed = drumQuote(ticket, at);
+  const paid = owed > 0 ? pay(owed, 'drum') : 0;
+  return { owed, paid, capped: paid < owed, won: owed > 0 };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -1781,8 +2156,30 @@ function promptOnArrival(world, st, px, pz) {
 const CULL = 80;
 const CULL_ATRIUM = 130;
 
-export function stepStation(world, dt) {
-  const st = world._station;
+/**
+ * THE CLOCK, ON ITS OWN, BECAUSE ONE ROOM NEEDS IT WITHOUT THE REST.
+ *
+ * These eight lines were the top of `stepStation` and are still only called
+ * from there — plus one place: `main.js`'s tote panel, which is a screen you
+ * WATCH A RACE ON. `Screens.take` sets `world.paused`, and the frame loop only
+ * calls `world.update` while the state is 'playing' or 'dead', so with any
+ * panel up `stepStation` does not run and `st.hour` stops. Driven at #19 with
+ * a race live: 5400 × `world.update(1/60)` — ninety simulated seconds — moved
+ * the hour 15.25 → 15.25 and the panel's text not by one byte. A race lasts
+ * 0.3 h, which is 36 real seconds, so the room the player was told he could
+ * stand in for nothing was two stills with a walk between them.
+ *
+ * IT IS THE CLOCK AND NOTHING ELSE, and that is the whole point of splitting
+ * it out rather than letting the panel call `stepStation`. The rest of that
+ * function heals the ward, rerolls the boards, moves the piece in your hands
+ * and steps the fleet outside the glass — all of it out of sight behind a
+ * panel, none of it something the player asked to have happen while he reads
+ * a board. What a watched race needs is the hour, and the hour is a number
+ * both this file and that screen must agree on to the digit, which is why the
+ * panel drives THIS and keeps no hour of its own.
+ */
+export function tickStationClock(world, dt) {
+  const st = world?._station;
   if (!st) return;
   /* The clock: one game hour per two real minutes (§3.4). Everything in
    * `StationLife` reads this and nothing else keeps time. */
@@ -1798,6 +2195,12 @@ export function stepStation(world, dt) {
   /* Persisted on the hour rather than every frame: §14 wants a return visit to
    * be later in the same day, not a localStorage write sixty times a second. */
   if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }
+}
+
+export function stepStation(world, dt) {
+  const st = world._station;
+  if (!st) return;
+  tickStationClock(world, dt);
   /* THE WARD HEALS ON THE STATION'S OWN CLOCK. Every ten seconds, and only
    * then — a man mending is a thing that happens while you shop, not a thing
    * that happens when you walk into #44 and look at him. It returns the rolls
