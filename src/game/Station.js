@@ -60,6 +60,7 @@ import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js'
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
 import { countersAt } from './Vendors.js';
+import { stepMedbay } from './Medbay.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -1315,6 +1316,17 @@ export function stepStation(world, dt) {
   /* Persisted on the hour rather than every frame: §14 wants a return visit to
    * be later in the same day, not a localStorage write sixty times a second. */
   if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }
+  /* THE WARD HEALS ON THE STATION'S OWN CLOCK. Every ten seconds, and only
+   * then — a man mending is a thing that happens while you shop, not a thing
+   * that happens when you walk into #44 and look at him. It returns the rolls
+   * that changed, which is the one frame worth a banner. */
+  const mended = stepMedbay(world, dt);
+  if (mended) {
+    for (const m of mended) {
+      const n = m.healed.length;
+      world.notify?.('MEDICAL BAY', `${n === 1 ? m.healed[0] : `${n} of the company`} off the list`);
+    }
+  }
   stepBoards(world, st, dt);
   /* The piece in your hands follows the crosshair. Costs one property read a
    * frame when there is nothing held, which is nearly always. */
