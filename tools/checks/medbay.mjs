@@ -535,6 +535,75 @@ export async function run({ check, assert, near }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('medbay: time passes while you are away, not only while you pace the drum', async () => {
+    /**
+     * §C1's promise: *"you go and do something else and come back and he's on
+     * his feet."*
+     *
+     * ── WHAT "SOMETHING ELSE" MEANT, MEASURED ────────────────────────────
+     *
+     * `stepStation` is the only writer of `st.hour` and it runs on the STATION
+     * world alone. So the clock stopped during a run and stopped at the menu,
+     * and the only way to mend anybody was to idle in the drum: a tank is
+     * twelve station hours, which at §3.4's rate is twenty-four real minutes
+     * of walking in circles, and untended is eighty. The ward worked
+     * perfectly and the sentence was still false.
+     *
+     * `StationSave.passStationHours` is the door an ending calls with the time
+     * the run took. It is HOURS AND NOT A WALL CLOCK, deliberately: reading
+     * `Date.now()` would let a player mend a company by closing the tab for a
+     * week, and would put a second ungoverned clock in a tree whose whole
+     * timekeeping is `st.hour` at one hour per two real minutes.
+     */
+    return withCleanStore(() => {
+      const S = { ...globalThis };
+      void S;
+      return (async () => {
+        const { passStationHours, HOURS_PER_SECOND, setStationHour, stationHour } =
+          await import('../../src/game/StationSave.js');
+        /* THE RATE IS §3.4'S AND THERE IS ONE COPY OF IT. A second spelling of
+         * "one hour per two real minutes" anywhere is two clocks. */
+        assert(Math.abs(HOURS_PER_SECOND - 1 / 120) < 1e-12,
+          `the away rate is ${HOURS_PER_SECOND} an hour a second, not §3.4's 1/120`);
+        setStationHour(9);
+        /* A REAL RUN'S WORTH: twelve minutes of play is six station hours. */
+        const after = passStationHours(720 * HOURS_PER_SECOND);
+        near(after, 15, 1e-9, 'twelve minutes of play did not move the clock six hours');
+        assert(stationHour() === after, 'the clock moved and the fold did not keep it');
+        /* AND IT WRAPS, because the hour is a time of day. */
+        setStationHour(23);
+        near(passStationHours(3), 2, 1e-9, 'the clock did not wrap past midnight');
+        /* A ZERO OR A NONSENSE IS A NO-OP rather than a reset — an ending that
+         * reports no duration must not put the station back to midnight. */
+        setStationHour(7);
+        near(passStationHours(0), 7, 1e-9, 'a zero-length run moved the clock');
+        near(passStationHours(-4), 7, 1e-9, 'a negative duration ran the clock backwards');
+        near(passStationHours(NaN), 7, 1e-9, 'a NaN duration moved the clock');
+
+        /* ── AND THE WARD ACTUALLY MENDS ACROSS IT ──────────────────────── */
+        const roster = freshRoll(2);
+        roster.all.forEach((t) => { t.body = hurtBody(0.4); });
+        Company.keep(roster.all, { army: 'republic', deployed: roster.all, ground: 'geonosis' });
+        Medbay.checkIn('republic');
+        setStationHour(9);
+        Medbay.settle('republic', 9);
+        const before = Company.load('republic').men.map((m) => Medbay.hpOf(m));
+        /* Twenty-four minutes of PLAY — one real run and a bit — and nobody
+         * standing on the station for a second of it. */
+        const now = passStationHours(1440 * HOURS_PER_SECOND);
+        Medbay.settle('republic', now);
+        const later = Company.load('republic').men.map((m) => Medbay.hpOf(m));
+        const gained = later.map((h, i) => (h ?? 1) - (before[i] ?? 1));
+        assert(gained.every((g) => g > 0.05),
+          `a run's worth of time away mended ${gained.map((g) => g.toFixed(3)).join(', ')} — `
+          + 'the ward only moves while you are pacing the drum');
+        return `12 min of play = 6 station hours; the clock wraps and refuses 0/-4/NaN; `
+          + `two men in tanks gained ${gained.map((g) => g.toFixed(2)).join(' and ')} health `
+          + 'over one run spent entirely off the station';
+      })();
+    });
+  });
+
   check('medbay: it adds no fourth durable key, no room material of its own, and no price', async () => {
     /**
      * THE THREE SILENCES, EACH CLOSED HERE.

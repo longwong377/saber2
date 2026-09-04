@@ -175,6 +175,36 @@ export function setStationHour(h) {
   return write(s).hour;
 }
 
+/**
+ * ══ TIME PASSES WHILE YOU ARE AWAY ════════════════════════════════════════
+ *
+ * V16 §C1's promise for the ward is *"you go and do something else and come
+ * back and he's on his feet"* — and a hostile pass measured what "something
+ * else" actually meant. `stepStation` is the only writer of `st.hour`, and it
+ * runs on the STATION world alone. So the clock stopped during a run and
+ * stopped at the menu, and the only way to mend a man was to idle in the drum:
+ * a tank is twelve station hours, which at §3.4's rate is twenty-four real
+ * minutes of walking in circles, and untended is eighty.
+ *
+ * A RUN IS THE SOMETHING ELSE. This is the door an ending calls with the
+ * seconds it took, so coming home from a mission has moved the wall clock by
+ * what the mission cost — five to ten hours for a real run, which is most of a
+ * tank and exactly the sentence.
+ *
+ * IT IS HOURS AND NOT A WALL CLOCK, deliberately. Reading `Date.now()` would
+ * let a player mend a company by closing the tab for a week, and would put a
+ * second, ungoverned clock in a tree whose whole timekeeping is `st.hour` at
+ * §3.4's rate. What passes here is time the player SPENT.
+ */
+export function passStationHours(hours) {
+  const h = Number(hours);
+  if (!Number.isFinite(h) || h <= 0) return read().hour;
+  return setStationHour(read().hour + h);
+}
+
+/** Seconds of play, at §3.4's one game hour per two real minutes. */
+export const HOURS_PER_SECOND = 1 / 120;
+
 /** §11's standing: it falls when you hurt a resident and the kiosks read it. */
 export function standing() { return read().standing; }
 export function setStanding(n) {
