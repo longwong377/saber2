@@ -8,6 +8,7 @@
  *
  *   node --import ./tools/register.mjs tools/_lifeprof.mjs
  */
+import './dom-shim.mjs';
 import { bootWorld, idleInput, run } from './checks/_coop.mjs';
 import * as DL from '../src/game/DeckLife.js';
 
@@ -61,7 +62,19 @@ for (const [label, get] of parts) {
   const list = get();
   if (!Array.isArray(list)) { rows.push({ label: `${label} (not a list)`, ms: NaN }); continue; }
   const kept = list.slice();
-  const r = time(label, () => { list.length = 0; }, () => { list.push(...kept); });
+  /* NOT EVERY LIST IS SAFE TO EMPTY, and that is worth reporting rather than
+   * crashing on: `ripple` picks the least-recently-used ring and dereferences
+   * it without asking whether there is one, which is fine in the shipped game
+   * because `dressRings` always fills the list, and fatal to an instrument
+   * that empties it. A row that cannot be measured this way says so. */
+  let r;
+  try {
+    r = time(label, () => { list.length = 0; }, () => { list.length = 0; list.push(...kept); });
+  } catch (e) {
+    list.length = 0; list.push(...kept);
+    rows.push({ label: `${label} (${kept.length}) — cannot be emptied: ${e.message}`, ms: NaN });
+    continue;
+  }
   rows.push({ label: `${label} (${kept.length})`, ms: whole.ms - r.ms, off: r.ms });
 }
 

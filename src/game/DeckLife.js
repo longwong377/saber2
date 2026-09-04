@@ -2104,10 +2104,30 @@ function stepWorkers(world, life, dt) {
     w.lag = (w.lag || 0) + dt;
     const due = speed > 0.05 || sh.state !== 'post' || ((life.frame + w.i) % 3 === 0);
     if (due) { w.anim.update(w.lag, p); w.lag = 0; }
+    /**
+     * ── AND THE MERGED SKIN IS ON THE SAME CLOCK AS THE POSE ──────────────
+     *
+     * `merged.update` was the one thing in this loop that ran at full rate on
+     * every man including the ones whose pose had just been skipped, and after
+     * the bake all it does is `spansMoved` plus `syncPaint` — copying a colour
+     * buffer that has not moved, for a deck hand nobody is painting.
+     *
+     * Measured when this was found: the step had drifted from the 1.0 ms its
+     * own check records to 2.62, and the profiler put 1.27 ms of a 2.06 ms
+     * step on 35 workers — 36 µs a man against 6 µs for a droid and 2 µs for a
+     * silhouette. The count had gone 13 → 35 and nothing re-measured.
+     *
+     * BEFORE THE BAKE IT STILL RUNS EVERY FRAME, and that is not a detail:
+     * `update` is what drives the deferred bake, which hands out
+     * `BAKES_PER_FRAME` per distinct clock, and staggering the calls would
+     * stretch a 35-man bake from half a second to nearly two. Once a man is
+     * `ready` there is nothing left in the call but the paint sync.
+     */
+    const syncing = due || !w.merged.ready;
     /* ── THE ARMS. Walking: they swing. Working: they reach for the work. */
     const fwdX = Math.sin(w.yaw), fwdZ = Math.cos(w.yaw);
     const rig = w.rig;
-    if (!due) { w.merged.update(life.t); continue; }
+    if (!due) { if (syncing) w.merged.update(life.t); continue; }
     if (speed > 0.3 || sh.state !== 'post') {
       w.anim.swingArms(dt, speed, 1);
     } else if (J.job === 'kneel') {
