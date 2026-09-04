@@ -1104,14 +1104,26 @@ export async function run({ check, assert }) {
      */
     const { readFile } = await import('node:fs/promises');
     const mainSrc = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
-    const rowsSrc = (() => {
-      const j = mainSrc.indexOf('  const rows = ');
-      const k = mainSrc.indexOf('  const card = ', j);
-      assert(j > 0 && k > j, 'main.js no longer builds the ending card as `const rows` — this lift is describing a file that is gone');
+    const rowsSrc = await (async () => {
+      /* THE LIFT IS ANCHORED IN `gameOver` AND NOT IN THE FILE, and that is the
+       * defect this line is a fix for. `indexOf('  const rows = ')` found the
+       * FIRST one in main.js, and the moment a second surface grew a `rows` of
+       * its own — the stratagem bench did — the slice ran from that one all the
+       * way down to the ending card, swallowing seven hundred lines of
+       * unrelated code and every `stats.` in them. `ended` was read as a
+       * printed row on that evidence and the clause failed for a reason that
+       * had nothing to do with either ending. `functionBody` reads the ending
+       * card's own function to its real closing brace; the search then cannot
+       * leave it. */
+      const { functionBody } = await import('./_source.mjs');
+      const over = functionBody(mainSrc, 'function gameOver(stats) {');
+      const j = over.indexOf('  const rows = ');
+      const k = over.indexOf('  const card = ', j);
+      assert(j >= 0 && k > j, 'gameOver no longer builds the ending card as `const rows` — this lift is describing a file that is gone');
       /* CODE ONLY: the block comment over the rows quotes two field names it is
        * an account of, and a scan that counts prose finds rows the card does
        * not print — an instrument manufacturing its own defect (§2.4). */
-      return mainSrc.slice(j, k).replace(/\/\*[\s\S]*?\*\//g, ' ');
+      return over.slice(j, k).replace(/\/\*[\s\S]*?\*\//g, ' ');
     })();
     const printed = new Set([...rowsSrc.matchAll(/\bstats\.(\w+)/g)].map((m) => m[1]));
     assert(printed.size >= 5,
