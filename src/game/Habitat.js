@@ -57,7 +57,7 @@
  * are separate functions: the words are right whether or not there is a wall
  * to put them on.
  */
-import * as THREE from 'three';
+import * as THREE from '../../vendor/three/three.module.js';
 import { signPanel } from './StationKit.js';
 import { load as loadKennel, notSaving, canCare, careFor, CARE_ACTS, temperById } from './Kennel.js';
 import {
