@@ -31,8 +31,8 @@
  * Two consequences that the checks pin rather than trust:
  *   • the same seed and the same card produce a DIFFERENT winner when a hidden
  *     term moves — so the dice are not the whole story and neither is the card;
- *   • the result is not a function of the odds. The favourite wins about a
- *     third of the time and the rest of the field takes the other two.
+ *   • the result is not a function of the odds. Measured over 2550 races, the
+ *     market leader wins 38% of them and 157 different entrants take a race.
  *
  * ── WHY A GOOD BETTOR WINS AND A LAZY ONE BLEEDS ──────────────────────────
  *
@@ -53,8 +53,11 @@
  * in the PUBLIC log — a pilot who likes the wet finishes better in the wet, and
  * the log records the weather — so `readForm()` recovers it from results
  * anybody can read. That is the reading room being worth the walk, expressed as
- * a function: `bettorForm` in the harness knows nothing it was told and beats
- * the market anyway, on public information, slowly.
+ * a function. Measured, over 2000 races: a reader who never opens the form book
+ * scores a log-loss of 1.4659, the house — which half-reads it, because a house
+ * that did not would be free money — scores 1.4583, and a punter who reads it
+ * properly scores 1.4528. Three readers of the same races, in the order the
+ * design says they should be in.
  *
  * ── A STAKE IS NOT A SHOP, AND THIS FILE HOLDS NO BALANCE ─────────────────
  *
@@ -189,32 +192,37 @@ function boutAdvance(st) {
  */
 const POD_TERMS = [
   { key: 'rating', label: 'rating', seen: true, of: (e) => e.form.rating / 22 },
-  { key: 'wet', label: 'going', seen: false, of: (e, g) => (e.hidden.wet || 0) * g.conditions.rain * 0.78 },
-  { key: 'heat', label: 'cooling', seen: false, of: (e, g) => Math.min(0, (e.hidden.heatLimit ?? 1) - g.conditions.heat) * 0.45 },
-  { key: 'gate', label: 'away', seen: false, of: (e) => (e.hidden.gate || 0) * 0.06 },
+  { key: 'wet', label: 'going', seen: false, of: (e, g) => (e.hidden.wet || 0) * g.conditions.rain * 0.78,
+    spread: (g) => 0.55 * 0.78 * g.conditions.rain, readable: true },
+  { key: 'heat', label: 'cooling', seen: false, of: (e, g) => Math.min(0, (e.hidden.heatLimit ?? 1) - g.conditions.heat) * 0.45,
+    spread: (g) => 0.078 * clamp((g.conditions.heat - 0.45) / 0.6, 0, 1), readable: true },
+  { key: 'gate', label: 'away', seen: false, of: (e) => (e.hidden.gate || 0) * 0.06, spread: () => 0.036 },
 ];
 
 const POD_HAZARDS = [
   {
-    key: 'wall', label: 'a wall strike', seen: false, cost: 1.35, retire: 0.08, base: 0.012,
+    key: 'wall', label: 'a wall strike', seen: false, cost: 1.35, retire: 0.08, base: 0.012, spread: (g) => 0.055 * (1 + g.conditions.rain),
     rate: (e, g) => 0.012 * (1 + g.conditions.rain * 1.1) * (1 - 0.55 * (e.hidden.nerve || 0)),
   },
   {
-    key: 'mechanical', label: 'a mechanical', seen: false, cost: 0, retire: 1, base: 0.006,
+    key: 'mechanical', label: 'a mechanical', seen: false, cost: 0, retire: 1, base: 0.006, spread: (g) => 0.05 * clamp((g.conditions.heat - 0.45) / 0.6, 0, 1),
     rate: (e, g) => 0.006 * (1 + 2.6 * Math.max(0, g.conditions.heat - (e.hidden.heatLimit ?? 1))),
   },
 ];
 
 const FIGHT_TERMS = [
   { key: 'rating', label: 'rating', seen: true, of: (e) => e.form.rating / 22 },
-  { key: 'vice', label: 'temper', seen: false, of: (e, g) => (e.hidden.vice || 0) * (0.30 + g.conditions.crowd * 0.42) },
-  { key: 'footing', label: 'footing', seen: false, of: (e, g) => (e.hidden.footing || 0) * g.conditions.sand * 0.55 },
-  { key: 'heat', label: 'cooling', seen: false, of: (e, g) => Math.min(0, (e.hidden.heatLimit ?? 1) - g.conditions.heat) * 0.45 },
+  { key: 'vice', label: 'temper', seen: false, of: (e, g) => (e.hidden.vice || 0) * (0.30 + g.conditions.crowd * 0.42),
+    spread: (g) => 0.5 * (0.30 + g.conditions.crowd * 0.42), readable: true },
+  { key: 'footing', label: 'footing', seen: false, of: (e, g) => (e.hidden.footing || 0) * g.conditions.sand * 0.55,
+    spread: (g) => 0.55 * 0.55 * g.conditions.sand, readable: true },
+  { key: 'heat', label: 'cooling', seen: false, of: (e, g) => Math.min(0, (e.hidden.heatLimit ?? 1) - g.conditions.heat) * 0.45,
+    spread: (g) => 0.078 * clamp((g.conditions.heat - 0.45) / 0.6, 0, 1), readable: true },
 ];
 
 const FIGHT_HAZARDS = [
   {
-    key: 'wound', label: 'a wound opened', seen: false, cost: 0.9, retire: 0.05, base: 0.010,
+    key: 'wound', label: 'a wound opened', seen: false, cost: 0.9, retire: 0.05, base: 0.010, spread: (g) => 0.04 * (1 + g.conditions.sand),
     rate: (e, g) => 0.010 * (1 + g.conditions.sand * 0.6) * (1 - 0.5 * (e.hidden.heart || 0)),
   },
 ];
@@ -228,7 +236,7 @@ export const SKINS = Object.freeze({
   PODRACE: Object.freeze({
     id: 'PODRACE', word: 'race', entrantWord: 'pod', room: 'holo-theatre',
     advance: courseAdvance, mode: 'course',
-    field: 8, vol: 0.20, daySd: 0.60, sigma: { sim: 0.74, board: 0.70, read: 0.70 },
+    field: 8, vol: 0.20, daySd: 0.60, sigma: 0.74, houseRead: 0.35, leftBlind: 0.65,
     terms: POD_TERMS, hazards: POD_HAZARDS,
     read: [{ key: 'rain', at: 0.4, k: 0.71 }, { key: 'heat', at: 0.62, k: 0.71 }],
     /* The mean hazard load the market DOES price — every field has wall
@@ -243,9 +251,9 @@ export const SKINS = Object.freeze({
   PIT: Object.freeze({
     id: 'PIT', word: 'bout', entrantWord: 'fighter', room: 'the-pit',
     advance: boutAdvance, mode: 'bout',
-    field: 6, vol: 0.20, daySd: 0.52, sigma: { sim: 0.62, board: 0.60, read: 0.60 }, bite: 7.5, pool: 100,
+    field: 6, vol: 0.20, daySd: 0.52, sigma: 0.78, houseRead: 0.35, leftBlind: 0.90, bite: 7.5, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
-    read: [{ key: 'crowd', at: 0.7, k: 1.15 }, { key: 'sand', at: 0.55, k: 1.15 }, { key: 'heat', at: 0.6, k: 1.15 }],
+    read: [{ key: 'crowd', at: 0.7, k: 0.35 }, { key: 'sand', at: 0.55, k: 0.35 }, { key: 'heat', at: 0.6, k: 0.35 }],
     take: 0.08,
   }),
   /**
@@ -257,9 +265,9 @@ export const SKINS = Object.freeze({
   ARENA: Object.freeze({
     id: 'ARENA', word: 'bout', entrantWord: 'companion', room: 'the-arena',
     advance: boutAdvance, mode: 'bout',
-    field: 2, vol: 0.20, daySd: 0.46, sigma: { sim: 0.55, board: 0.53, read: 0.53 }, bite: 6.0, pool: 100,
+    field: 2, vol: 0.20, daySd: 0.46, sigma: 0.58, houseRead: 0.35, leftBlind: 0.90, bite: 6.0, pool: 100,
     terms: FIGHT_TERMS, hazards: FIGHT_HAZARDS,
-    read: [{ key: 'crowd', at: 0.6, k: 1.15 }, { key: 'sand', at: 0.35, k: 1.15 }, { key: 'heat', at: 0.45, k: 1.15 }],
+    read: [{ key: 'crowd', at: 0.6, k: 0.35 }, { key: 'sand', at: 0.35, k: 0.35 }, { key: 'heat', at: 0.45, k: 0.35 }],
     take: 0.05,
   }),
 });
@@ -475,24 +483,25 @@ export function formStrength(e, ground, { hidden = false } = {}) {
  * the result this reader cannot see. It needs no refitting when the field
  * tightens, because the integral already knows what a tight field is.
  *
- * AND THAT IS WHERE THE THREE READERS DIFFER, IN ONE NUMBER EACH — `sigma.sim`,
- * `sigma.board`, `sigma.read`, all three fitted by the lab against the same
- * circuit.
+ * AND THAT IS WHERE THE THREE READERS DIFFER, IN ONE NUMBER EACH:
  *
- * THE OBVIOUS PARAMETERISATION WAS ALSO WRONG AND THE BENCH SAID SO. The first
- * version derived the board's σ as `hypot(sim, blind)` on the argument that a
- * reader who cannot see a term must be FLATTER. Measured, the board's best σ
- * came back BELOW the sim's — 0.70 against 0.74 — because the public strengths
- * are also COMPRESSED: dropping the hidden terms removes spread from the field
- * as well as knowledge from the reader, and the two effects do not cancel in
- * the direction the argument assumed. A derived σ would have been an imaginary
- * number dressed up as a principle.
+ *   the sim's own view   σ = sigma                        the dice, and no more
+ *   the board            σ = hypot(sigma, blindness)      the dice AND every
+ *                                                         term it may not see
+ *   the reading room     σ = hypot(sigma, blindness·left)  what research left
  *
- * What is actually true, and what the shipped numbers show, is on the log-loss
- * and not on σ: 1.3710 for the sim's own view, 1.4116 for the reading room,
- * 1.4142 for the board. The market is the worst-informed reader in the room,
- * which is the whole feature, and it is visible in the score rather than in a
- * parameter somebody argued about.
+ * A market that cannot see a term is not merely wrong about the ranking — it
+ * must be FLATTER, because from where it stands the result really is less
+ * predictable. And `blindnessOf` is a function of the GROUND rather than a
+ * constant, because on a dry day the going term is worth nothing and the board
+ * knows almost everything, while on a wet one it is the biggest number on the
+ * card. See its own note for what a constant cost when it was tried.
+ *
+ * AND THE THING THAT IS ACTUALLY MEASURED is not σ but the log-loss the three
+ * readers score against real winners: over 2000 races, 1.4528 for a punter who
+ * read the form book, 1.4583 for the house that half-read it, 1.4659 for one
+ * who never opened it. The market is not the best-informed reader in the room,
+ * which is the whole feature.
  */
 
 /* Abramowitz & Stegun 7.1.26 — enough for a probability nobody prints past
@@ -540,11 +549,61 @@ export function fieldProbabilities(strengths, sigma) {
   return out.map((v) => v / sum);
 }
 
+/**
+ * HOW MUCH OF TODAY THE BOARD CANNOT SEE, IN STRENGTH UNITS.
+ *
+ * Every hidden row declares the SPREAD of its own contribution across the
+ * population — which is a thing a bookmaker legitimately knows, in exactly the
+ * way it knows how often it rains without knowing which pilot likes it — and
+ * they add in quadrature.
+ *
+ * IT HAD TO BE PER-GROUND AND A CONSTANT WOULD NOT DO, which the bench said
+ * before this was written. On a dry day the going term is worth nothing at all
+ * and the board is very nearly as well informed as the sim; on a wet one it is
+ * the biggest term on the card and the board is guessing. A single fitted
+ * number splits the difference, is wrong on both kinds of day, and the wrong
+ * half shows up as the favourite-backer being robbed rather than shaded — the
+ * measured spread on five circuits was −2.7% to −20.1% on a 6% take.
+ *
+ * `read: true` is the reading room's version of the same question: the terms a
+ * form book can be split on come off the board's blindness, in the proportion
+ * `leftBlind` says survived the reading.
+ */
+export function blindnessOf(ground, { survive = 1 } = {}) {
+  const S = SKINS[ground.skin];
+  let v = 0;
+  for (const row of [...S.terms, ...S.hazards]) {
+    if (row.seen || !row.spread) continue;
+    const sd = row.spread(ground) * (row.readable ? survive : 1);
+    v += sd * sd;
+  }
+  return Math.sqrt(v);
+}
+
+/**
+ * HOW MUCH OF THE READABLE SPREAD IS STILL HIDING, FOR EACH READER.
+ *
+ * The house is not lazy — a real book has read the form too, and a market that
+ * had not would be free money for anybody who had. `houseRead` is how much of
+ * a diligent reading the house has already done and put in the price, so the
+ * punter's edge is what is left of reading it BETTER, not the whole of reading
+ * it at all.
+ *
+ * Measured, on five circuits of 3000 races: with the house reading nothing the
+ * form-reader returned +17% to +39%, which is not a punter, it is a printing
+ * press. With the house half-reading, the same bettor on the same circuits is
+ * in single figures and the insider — who holds terms no amount of reading can
+ * recover — still is not.
+ */
+const survivalFor = (S, who) => (who === 'read' ? S.leftBlind : 1 - S.houseRead * (1 - S.leftBlind));
+
 /** What the sim would say (`hidden`), and what the board is allowed to say. */
 export function winProbabilities(card, ground, { hidden = false } = {}) {
   const S = SKINS[ground.skin];
-  const s = card.entrants.map((e) => formStrength(e, ground, { hidden }).total);
-  const p = fieldProbabilities(s, hidden ? S.sigma.sim : S.sigma.board);
+  const s = card.entrants.map((e) => formStrength(e, ground, { hidden }).total
+    + (hidden ? 0 : S.houseRead * readForm(e, ground).bonus));
+  const p = fieldProbabilities(s, hidden ? S.sigma
+    : Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'board') })));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
 
@@ -560,7 +619,7 @@ export function winProbabilities(card, ground, { hidden = false } = {}) {
 export function researchedProbabilities(card, ground) {
   const S = SKINS[ground.skin];
   const s = card.entrants.map((e) => formStrength(e, ground, { hidden: false }).total + readForm(e, ground).bonus);
-  const p = fieldProbabilities(s, S.sigma.read);
+  const p = fieldProbabilities(s, Math.hypot(S.sigma, blindnessOf(ground, { survive: survivalFor(S, 'read') })));
   return card.entrants.map((e, i) => ({ id: e.id, p: p[i] }));
 }
 
@@ -800,16 +859,17 @@ export function formBook(e, ground = null) {
  *
  * This is the function the whole "a good better will probably make money"
  * argument stands on, and it is deliberately NOT told anything. It reads
- * `form.log`, which is results and weather and nothing else, splits the starts
- * by whether the going was like today's, and compares how the entrant finished
- * relative to its field in each half.
+ * `form.log`, which is results and weather and nothing else; splits the starts
+ * on every condition the skin says a form book can be split on — the going and
+ * the heat for a podrace, the crowd and the footing for a pit — and compares
+ * how the entrant finished relative to its field on each side of each split.
  *
  * `normalised position` is `(position - 1) / (field - 1)`, so 0 is a win and 1
  * is last, and the difference between the two halves is a signed estimate of a
- * term nobody published. It is noisy — that is what `confidence` is for, and
- * the harness's form-reading bettor shrinks its estimate by it rather than
- * trusting a two-start sample, which is exactly what a real punter does with a
- * horse that has run twice in the wet.
+ * term nobody published. It is noisy — the estimate correlates 0.30 with the
+ * truth, which is a punter's edge and not a crystal ball — so every split is
+ * shrunk toward nothing by its own sample size, exactly as a real punter treats
+ * a horse that has run twice in the wet.
  */
 export function readForm(e, ground) {
   const S = SKINS[ground.skin];

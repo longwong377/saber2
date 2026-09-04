@@ -176,6 +176,14 @@ export async function snapshotShared() {
   const { seedRagdoll } = await import('../../src/game/Ragdoll.js');
   const { seedCloth } = await import('../../src/game/Cloth.js');
   const { seedVehicles } = await import('../../src/game/Vehicles.js');
+  /* ── AND THE SPECTACLE'S, WHICH IS A NINTH OF THE SAME KIND ────────────
+   *
+   * `Spectacle.js` draws a card, a ground and every roll of a race off one
+   * module stream. A suite that runs a few thousand races — which is what
+   * measuring a betting edge takes — moves it a long way, and the next suite
+   * would muster its army out of whatever phase that left. Exactly the defect
+   * the crate two notes up records having found three separate times. */
+  const { seedSpectacle } = await import('../../src/game/Spectacle.js');
   const { audio } = await import('../../src/engine/Audio.js');
   return {
     seedWorld,
@@ -184,7 +192,7 @@ export async function snapshotShared() {
      * back where the module started, not where the snapshot found them. */
     more: [[seedProps, 9091], [seedBodies, 5150], [seedPlayerRng, 1212],
       [seedParticles, 2718], [seedBolts, 606], [seedRagdoll, 31337],
-      [seedCloth, 606011], [seedVehicles, 70714]],
+      [seedCloth, 606011], [seedVehicles, 70714], [seedSpectacle, 0x5EC7]],
     wind,
     time: wind.time,
     /* The four `configure` sets, which is the whole of a level's wind block.

@@ -855,7 +855,24 @@ export const BORZ_RESIDENTS = [
   { id: 'pilot', label: 'Pilot', species: 'human', home: 30, job: 'traffic', haunt: 3,
     robe: { outer: 0xd06a2a, inner: 0xe8974e, trim: 0x3a2a1c },
     why: 'the ready room’s orange, which is a flight suit and reads as one' },
-  { id: 'jedi', label: 'Jedi', species: 'human', home: 30, job: 'diplomat', haunt: 22,
+  /**
+   * NOT LABELLED 'Jedi', AND THAT IS NOT A STYLE CHOICE.
+   *
+   * `'Jedi'` is what the game calls THE PLAYER: it is Net.js's default name in
+   * five places, the placeholder in the name field, the title of the builder
+   * tab and the word the lobby counts ("up to 4 Jedi"). A body labelled with
+   * it puts that word over an NPC's head and into the kill feed meaning
+   * somebody else — and `databank.mjs`'s "no page is typed by hand" clause
+   * caught it as exactly that collision, since it greps the markup for every
+   * archetype label and the markup is full of this one, about the player.
+   *
+   * The label is the fix rather than the check: the check's rule is right, the
+   * markup's "Jedi" is right, and the third `Jedi` — the one that arrived
+   * here — is the one that was ambiguous. `job: 'diplomat'` already said what
+   * this row is; the label says it now too, and it is distinct from the
+   * Order's three fighting bodies (Knight, Sentinel, Master) as well.
+   */
+  { id: 'jedi', label: 'Jedi envoy', species: 'human', home: 30, job: 'diplomat', haunt: 22,
     robe: { outer: 0x9d8567, inner: 0xd8c9a8, trim: 0x5d4b34 },
     why: 'robes ARE a Jedi’s civilian dress — this row is the one exception and says so' },
   { id: 'acolyte', label: 'Sith acolyte', species: 'human', home: 38, job: 'visitor', haunt: 14,
@@ -932,6 +949,33 @@ export function residents() {
     });
   }
   for (const rows of MANIFESTS.values()) for (const r of rows) out.push(r);
+  return out;
+}
+
+/**
+ * ══ WHERE A RESIDENT IS FOUND, AND IT IS THE MANIFEST THAT SAYS ═══════════
+ *
+ * The databank's every page answers "where do I meet this body", and for a
+ * body that fights it is derived from the level pools — the theatres whose
+ * roster names it. A resident is in no pool, and putting one in a pool to make
+ * that cell render is exactly the mistake `COMPANION_KINDS` records next door:
+ * it would field a shopkeeper as an enemy.
+ *
+ * So the fourth answer comes from the same table that decides where a resident
+ * actually stands. `residents()` is the manifest — home, and for the Borz cast
+ * a haunt — and this turns those ids into the gazetteer's own names. Nothing
+ * is typed: rehouse a species and its page moves with it, and a row pointing
+ * at a place that is not built throws in `homeFor` before it can reach a page.
+ */
+export function residentPlaces(key) {
+  const out = [];
+  for (const r of residents()) {
+    if (r.builder !== key) continue;
+    for (const id of [r.home, r.haunt]) {
+      const p = id ? PLACE.get(id) : null;
+      if (p && !out.includes(p.name)) out.push(p.name);
+    }
+  }
   return out;
 }
 

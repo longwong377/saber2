@@ -38,10 +38,10 @@ import { readFile } from 'node:fs/promises';
 import { clocked } from './_shared.mjs';
 import { makeRng } from '../../src/engine/MathUtil.js';
 import {
-  SKINS, GROUNDS, groundById, dressGround, makeCard, makeEntrant, entrantFromCompanion,
-  formStrength, fieldProbabilities, winProbabilities, researchedProbabilities, readForm,
+  SKINS, GROUNDS, groundById, dressGround, makeCard, entrantFromCompanion, blindnessOf,
+  formStrength, fieldProbabilities, winProbabilities, researchedProbabilities,
   priceCard, favouriteOf, runSpectacle, runMeeting, recordResult, settle, formBook,
-  announce, momentsOf, MOMENTS, seedSpectacle, spectacleRng,
+  announce, momentsOf, seedSpectacle,
 } from '../../src/game/Spectacle.js';
 
 const SRC = new URL('../../src/game/Spectacle.js', import.meta.url);
@@ -86,7 +86,7 @@ function circuit({ skin = 'PODRACE', races = 3000, seed = 90210 } = {}) {
   const rng = makeRng(seed);
   const pool = GROUNDS.filter((g) => g.skin === skin);
   const stables = [];
-  for (let i = 0; i < 6; i++) stables.push(makeCard({ skin, size: SKINS[skin].field, seed: rng.int(1, 1e9) }));
+  for (let i = 0; i < 30; i++) stables.push(makeCard({ skin, size: SKINS[skin].field, seed: rng.int(1, 1e9) }));
 
   const books = {
     favourite: { staked: 0, net: 0, bets: 0, hits: 0 },
@@ -341,38 +341,43 @@ export async function run({ check, assert }) {
     const rng = makeRng(1717);
     const pool = GROUNDS.filter((g) => g.skin === 'PODRACE');
     const stables = [];
-    for (let i = 0; i < 4; i++) stables.push(makeCard({ skin: 'PODRACE', seed: rng.int(1, 1e9) }));
-    let board = 0, read = 0, n = 0, warm = 300;
-    for (let i = 0; i < 1400; i++) {
+    for (let i = 0; i < 8; i++) stables.push(makeCard({ skin: 'PODRACE', seed: rng.int(1, 1e9) }));
+    /* THREE READERS OF THE SAME RACES. `blind` reads the board's own public
+     * terms and stops there; `board` is the shipped price, which has already
+     * half-read the form because a house that had not would be free money;
+     * `read` is the punter who read it properly. The claim that has to hold is
+     * that reading the log beats not reading it, by a margin bigger than the
+     * arithmetic — the board sits between the two and is reported, not
+     * asserted on, because how much the house reads is a dial. */
+    const sigmaBoard = (g) => Math.hypot(SKINS.PODRACE.sigma, blindnessOf(g, { survive: 1 }));
+    let blind = 0, board = 0, read = 0, n = 0;
+    const warm = 400;
+    for (let i = 0; i < 2400; i++) {
       const card = stables[i % stables.length];
       const ground = dressGround(rng.pick(pool), rng.int(1, 1e9));
+      const flat = fieldProbabilities(card.entrants.map((e) => formStrength(e, ground, { hidden: false }).total), sigmaBoard(ground));
       const b = winProbabilities(card, ground, { hidden: false });
       const r = researchedProbabilities(card, ground);
       const result = runSpectacle({ card, ground, seed: rng.int(1, 1e9) });
       const k = card.entrants.findIndex((e) => e.id === result.winner);
       if (i >= warm && k >= 0) {
+        blind -= Math.log(Math.max(flat[k], 1e-9));
         board -= Math.log(Math.max(b[k].p, 1e-9));
         read -= Math.log(Math.max(r[k].p, 1e-9));
         n++;
       }
       recordResult(card, ground, result);
     }
-    board /= n; read /= n;
-    assert(read < board,
-      `reading the public log scored ${read.toFixed(4)} against the board's ${board.toFixed(4)} — the reading `
-      + 'room adds nothing a punter could not get off the board, so research is a decoration');
-    /* And it must be reading something real, not just noise that happened to
-     * land: the read is correlated with the term it is trying to recover. */
-    const card = stables[0];
-    const ground = dressGround(pool[0], 8123);
-    let sxy = 0, sxx = 0, syy = 0;
-    for (const e of card.entrants) {
-      const x = readForm(e, ground).bonus;
-      const y = formStrength(e, ground, { hidden: true }).total - formStrength(e, ground, { hidden: false }).total;
-      sxy += x * y; sxx += x * x; syy += y * y;
-    }
-    assert(sxx > 0, 'the form reader recovered nothing at all from a full log');
-    return `log-loss ${read.toFixed(4)} reading the log against ${board.toFixed(4)} off the board, over ${n} races`;
+    blind /= n; board /= n; read /= n;
+    assert(read < blind - 0.004,
+      `reading the public log scored ${read.toFixed(4)} against ${blind.toFixed(4)} for not reading it — the `
+      + 'reading room adds nothing a punter could not get off the board, so research is a decoration');
+    assert(board < blind,
+      `the house priced worse than a reader who never opened the form book — ${board.toFixed(4)} against ${blind.toFixed(4)}`);
+    assert(read <= board,
+      `the punter who read the form scored worse than the house that half-read it: ${read.toFixed(4)} vs ${board.toFixed(4)}`);
+    return `log-loss over ${n} races: ${read.toFixed(4)} having read the form, ${board.toFixed(4)} off the `
+      + `board, ${blind.toFixed(4)} for a punter who never opened it`;
   });
 
   check('spectacle: the model the odds are quoted from is a model of this simulation', () => {

@@ -327,7 +327,18 @@ export async function run({ check, assert }) {
      * So the two files that carry the durable record are held to the roll's
      * own standard, on the commit that creates them.
      */
-    for (const f of ['game/Kennel.js', 'game/Companions.js', 'game/CompanionKinds.js']) {
+    /* ── AND `Spectacle.js` IS ON THE LIST FROM THE COMMIT THAT MADE IT ───
+     *
+     * The betting engine is the one file in the tree with the strongest pull
+     * toward a stored balance: a wager, a payout and a settled result are
+     * three quarters of a wallet, and the fourth quarter is the easy one to
+     * add. It keeps none — a stake is a run-scoped number handed in and handed
+     * back — and it is added to this scan HERE, on the commit that created it,
+     * rather than left invisible to it. The note above is the reason: silence
+     * is a hazard, not a permission, and a new file is legal by default until
+     * somebody writes its path down. */
+    const SCANNED = ['game/Kennel.js', 'game/Companions.js', 'game/CompanionKinds.js', 'game/Spectacle.js'];
+    for (const f of SCANNED) {
       const code = strip(await src(f));
       for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {
         assert(!new RegExp(`\\b${word}\\b`, 'i').test(code),
@@ -345,7 +356,11 @@ export async function run({ check, assert }) {
     assert(fields.join(',') === 'look,name',
       `dressCompanion writes ${fields.join(', ') || 'nothing'} — it may write a name and a set of `
       + 'colours, and a screen that could edit xp, runs, kills or tempers is a cheat panel');
-    return `3 files clean of all six words; dressCompanion writes exactly ${fields.join(', ')}`;
+    /* COUNTED AND NOT TYPED. This line read "3 files" while the loop above ran
+     * four, which is a report that has stopped tracking what it measured — and
+     * a report nobody can trust is how a check quietly stops covering the file
+     * somebody added to it. */
+    return `${SCANNED.length} files clean of all six words; dressCompanion writes exactly ${fields.join(', ')}`;
   });
 
   check('companion: the store clamps a hostile save instead of trusting it', () => {

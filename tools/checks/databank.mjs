@@ -44,6 +44,7 @@ import { ARCHETYPES } from '../../src/game/Enemy.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { DATABANK, FACTIONS } from '../../src/game/Databank.js';
 import { COMPANION_KINDS } from '../../src/game/CompanionKinds.js';
+import { residentPlaces } from '../../src/game/StationCast.js';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
 
@@ -238,7 +239,7 @@ export async function run({ check, assert }) {
     try {
       const rows = rowsIn(doc);
       const wrong = [];
-      let withLevels = 0, dojo = 0, brought = 0;
+      let withLevels = 0, dojo = 0, brought = 0, station = 0;
       for (const p of databankPages()) {
         const want = LEVEL_ORDER.filter((k) => (LEVELS[k].pool || []).includes(p.key))
           .map((k) => LEVELS[k].name);
@@ -281,6 +282,40 @@ export async function run({ check, assert }) {
           }
           continue;
         }
+        /**
+         * ── AND THE FOURTH DOOR: A BODY YOU LIVE WITH ────────────────────
+         *
+         * The twenty-three the station brought — fifteen species and eight of
+         * the company off duty — are `resident: true`, `threat: 0`,
+         * `unlockAt: 99`, in NO level's pool by design, and spawned only by
+         * StationLife. That is the same shape `want.length` calls a bug two
+         * lines down, so without this branch the only way to make the page
+         * render would be to put a shopkeeper in a spawn pool, where a wave
+         * could then spend her — the identical trap the companion branch above
+         * records, and the reason both are branches rather than pool entries.
+         *
+         * IT IS STRICTLY MORE THAN THE DOJO'S CLAUSE, not less. The dojo body
+         * only has to say "dojo"; a resident has to say the station AND name
+         * every room the manifest actually houses it in, measured against
+         * `residentPlaces` — the same table StationLife routes it by, the way
+         * the levels half below is measured against the same pools the
+         * director composes from. Both directions, as above: a page that
+         * points at a theatre is claiming you can go and fight a Narn
+         * shopkeeper on Geonosis, which is false about the game.
+         */
+        if (ARCHETYPES[p.key].resident) {
+          station++;
+          const rooms = residentPlaces(p.key);
+          assert(rooms.length, `${p.key} is a resident the manifest houses nowhere`);
+          if (!/station/i.test(met)) wrong.push(`${p.key} lives on the station and its page does not say so`);
+          for (const name of rooms) {
+            if (!met.includes(name)) wrong.push(`${p.key} is housed at ${name} and its page omits it`);
+          }
+          for (const k of LEVEL_ORDER) {
+            if (met.includes(LEVELS[k].name)) wrong.push(`${p.key} is a resident and its page sends you to ${LEVELS[k].name}`);
+          }
+          continue;
+        }
         assert(want.length, `${p.key} is in no pool at all — roster.mjs should have caught that first`);
         withLevels++;
         for (const name of want) {
@@ -296,7 +331,8 @@ export async function run({ check, assert }) {
       }
       assert(!wrong.length, wrong.slice(0, 6).join('; '));
       return `${withLevels} bodies point at the theatres whose pools name them, `
-        + `${dojo} name the dojo and ${brought} say you bring them`;
+        + `${dojo} name the dojo, ${brought} say you bring them and ${station} name the `
+        + 'rooms the station manifest houses them in';
     } finally { close(); }
   });
 

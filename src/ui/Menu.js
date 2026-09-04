@@ -235,6 +235,11 @@ import {
   traitById as attrTraitById, kindOfArmy,
 } from '../game/Attributes.js';
 import { DATABANK, FACTIONS, entryFor } from '../game/Databank.js';
+/* WHERE A RESIDENT IS MET, from the manifest that houses it. The pools
+ * answer that question for every body that fights and cannot answer it for
+ * one that lives here — a resident is in no pool, deliberately, because a
+ * pool entry is a thing a wave may spend. See StationCast.residentPlaces. */
+import { residentPlaces } from '../game/StationCast.js';
 
 /**
  * THE SIX ORDER KEYS JOIN THE TABLE, HERE, AND IT HAS TO BE HERE.
@@ -2690,6 +2695,14 @@ export function databankPages() {
        * the flag is read off COMPANION_KINDS, which is the one table that
        * decides what a companion kind is, and the page says the true thing. */
       companion: !!COMPANION_KINDS[key],
+      /* A BODY YOU LIVE WITH IS THE FOURTH DOOR, and it is the same shape as
+       * the third. Twenty-three archetypes arrived with the station — fifteen
+       * species and eight of the company off duty — and every one of them is
+       * `resident: true`, in no level's pool and fielded only by StationLife.
+       * `residentPlaces` reads the same manifest that decides where the body
+       * actually stands, so the cell names the rooms rather than a theatre. */
+      resident: !!A.resident,
+      places: A.resident ? residentPlaces(key) : [],
       /* WHERE IT IS MET, derived from the pools — which is the question a player
        * actually has ("where do I go to fight one of these") and the one thing
        * on the page that no comment anywhere in the source already answers.
@@ -8708,8 +8721,9 @@ export class Menu {
        * this page exists to end — a hand-written count beside the generated list
        * directly under it. */
       host.innerHTML = `<h3>The databank</h3>
-        <p class="hint">${pages.length} bodies fight this war and ${groups.length} banners fly
-          over them. Pick one. Every page is the same four things: whose it is, what it is
+        <p class="hint">${pages.length} bodies are in this game, under ${groups.length} banners —
+          the ones that fight the war and the ones that live on the station it is run from.
+          Pick one. Every page is the same four things: whose it is, what it is
           carrying, where you meet it, and what it is.</p>
         ${groups.map((g) => `<p class="hint"><b>${escKey(g.faction.short)}</b> — `
           + `${escKey(g.faction.note || '')}</p>`).join('')}`;
@@ -8727,6 +8741,7 @@ export class Menu {
 
     const where = p.training ? 'The dojo, and nowhere else'
       : p.companion ? 'Nowhere — this one you bring, to whichever theatre you take it to'
+      : p.resident ? `The station${p.places.length ? ' — ' + p.places.join(' · ') : ''}`
       : p.levels.length ? p.levels.join(' · ')
       : 'Nowhere — no theatre fields this one';
     /* The tags are facts off the archetype, not adjectives. `setPieceOnly` is

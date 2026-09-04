@@ -90,6 +90,32 @@ export const FACTIONS = {
       + 'the command of it. A Jedi on a battlefield is a general who was trained '
       + 'as a diplomat and armed as a duellist.',
   },
+  /**
+   * THE FIFTH BANNER, AND IT IS NOT A SIDE — IT IS AN ADDRESS.
+   *
+   * Twenty-three archetypes arrived with the station: fifteen species who live
+   * on it and eight of the company's own off duty. Every one of them is
+   * `resident: true, threat: 0, unlockAt: 99` — no wave may compose one — so
+   * none of them fights for anybody, and filing a shopkeeper under the
+   * Republic because the company is Republic would be worse than a nicety.
+   * `factionOf` is what `WaveDirector.sideFor` reads to decide which side a
+   * body belongs on, and this faction is `army: false` for the same reason
+   * `wild` is: there is no side of a battle it can be put on.
+   *
+   * A clone crewman drinking in the cantina IS Republic and that is not what
+   * this field asks. It asks whose body this is on the ground it is met on,
+   * and the answer here is the drum: everyone in this group is off duty,
+   * unarmed and in somebody else's neutral space.
+   */
+  station: {
+    name: 'The station',
+    short: 'Station',
+    army: false,
+    note: 'Fifty-five rooms turning in neutral space, and the only ground in '
+      + 'the game where nobody is shooting. Fifteen peoples keep fifteen '
+      + 'different days here and the war pays for all of them; what you meet on '
+      + 'this deck is a crowd, not an enemy.',
+  },
   wild: {
     name: 'Unaligned',
     short: 'Unaligned',
@@ -752,6 +778,304 @@ export const DATABANK = {
       + 'than anything else you can bring and it is the slowest of the four '
       + 'that fight. What it is really for is the fights you should not have '
       + 'taken: it is the only companion that can lose one and walk away.',
+  },
+
+  /* ── The station: fifteen peoples ──────────────────────────────────── */
+
+  /**
+   * TWENTY-THREE PAGES, AND THE ARGUMENT FOR WRITING THEM RATHER THAN
+   * DECLARING THEM AWAY.
+   *
+   * `characters.mjs` met these same twenty-three names one commit ago and did
+   * NOT give them rows: a `BODY_KITS` row for a resident would be dead data,
+   * because a resident's appearance is drawn per body from a seed and every
+   * instance would override it. So the archetype declares `resident: true` and
+   * the check holds the same property by measurement instead. That was right
+   * there and it is the wrong move here, because the two failures are not the
+   * same shape: NOTHING OVERRIDES A DATABANK PAGE. It is read exactly as it is
+   * written, by a player standing in front of the body, and the only thing that
+   * can make one dead is nobody writing it.
+   *
+   * The eight off-duty rows are not duplicates of pages the codex already has,
+   * either. Four of them — the medic, the pilot, the guard and the engineer —
+   * have no counterpart archetype anywhere in the roster to point at; the
+   * station is the only place in the game those jobs exist. The four that do
+   * have one are met somewhere else doing something else, which is the whole
+   * of what a page is for.
+   *
+   * WHAT IS NOT TYPED HERE, as everywhere above: the name, the stature, the
+   * pace and the mass are the archetype's, and WHERE a resident is met is read
+   * off the manifest that houses it — `residentPlaces` in StationCast.js turns
+   * a home and a haunt into the gazetteer's own names, so rehousing a species
+   * moves its page with it.
+   */
+  res_human: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Three meals and one long sleep, and the entire drum is set to it: the '
+      + 'concourse clock keeps this species\' day because this species built the '
+      + 'drum and hung the clock. They are the reference figure here in the most '
+      + 'literal sense — every stature, arm, jaw and gait on the station is a '
+      + 'ratio against theirs, including the fourteen below. Off duty they are '
+      + 'the crowd you push through in the market and the queue at the food '
+      + 'court. Nothing about them is remarkable, which on a deck of fifteen '
+      + 'peoples is the one genuinely strange thing about them.',
+  },
+  res_narn: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Heavy through the shoulders, a hand taller than the station average, '
+      + 'and hided in a reticulation — dark cells in a pale raised net, which is '
+      + 'not the same thing as spots and reads differently at ten metres. The '
+      + 'jaw is narrow against a wide temple, the opposite of the human '
+      + 'proportion, and it is why the face reads as a predator\'s from the '
+      + 'front. They keep the earliest and most regimented day on the drum: up '
+      + 'before six, three meals at fixed hours, work. A people who were '
+      + 'occupied for a century and came out of it organised, and you can see it '
+      + 'in a market queue before you see it anywhere else.',
+  },
+  res_centauri: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'The crest is the whole silhouette: a fan of groomed hair standing off '
+      + 'the crown, most of a head wide again, flat to the sides and rising more '
+      + 'than half a face above the skull. Breadth is rank, so it is the widest '
+      + 'per-individual spread of any species here and it is worn as such. They '
+      + 'retire near dawn and their social life is nocturnal and drink-centred, '
+      + 'which puts them in the cantina at the hours the day shift is asleep. An '
+      + 'empire in a long decline, dressed for the version of itself that is not '
+      + 'in decline.',
+  },
+  res_minbari: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'A broad upright bone fin rises behind the crown, wider than the skull '
+      + 'itself — bone, not hair, not horn, and it is the one head on the deck '
+      + 'that a silhouette test can pick out at any range. Slender under the '
+      + 'robes and slightly taller than the station average. The interesting '
+      + 'thing is the sleep: it is BROKEN, a waking hour set in the middle of '
+      + 'the rest block, so this is the species you meet in an empty corridor at '
+      + 'the dead of station-night with nothing wrong. Formal to the point of '
+      + 'ritual, and no more explanation than that is ever offered.',
+  },
+  res_drazi: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'The heaviest humanoid frame on the station: short in the neck to the '
+      + 'point of having almost none, wide in the shoulder, thick through the '
+      + 'limbs, and standing with a slight forward set that reads as about to do '
+      + 'something. They take most of the physical work on the drum and two '
+      + 'large meals rather than three, and both facts are the same fact. Blunt '
+      + 'in a way that other species read as rudeness and they do not read as '
+      + 'anything at all.',
+  },
+  res_brakiri: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Traders, and the reason station-night has a crowd of its own. They '
+      + 'sleep through the day shift and work from the evening meal through to '
+      + 'the small hours, so the market that closes at nineteen hundred is a '
+      + 'different market, with different stalls and different money, by '
+      + 'midnight. Build and stature are close enough to the reference figure '
+      + 'that the clock is the only reliable way to tell the two crowds apart. '
+      + 'If you have been on the drum a week and never met one, you have been '
+      + 'asleep when they are awake.',
+  },
+  res_pakmara: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'A high domed skull carried on almost no neck, and a mouth that is '
+      + 'four tentacles rather than a jaw — the head is the largest on the deck '
+      + 'in proportion and the face is the least legible on it. They are carrion '
+      + 'eaters, which is a fact about diet that has turned into a fact about '
+      + 'geography: theirs is the only species on the station with a segregated '
+      + 'food economy, its own suppliers and its own counters. The long sleep '
+      + 'and the two meals at four and sixteen hundred keep them feeding at the '
+      + 'hours the concourse is emptiest. Nobody wrote that rule and everybody '
+      + 'keeps it.',
+  },
+  res_vree: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'A metre and a half tall, thin, and carrying a head a fifth larger '
+      + 'than the reference figure\'s on a frame two-thirds its weight — the '
+      + 'smallest people on the drum and the ones a crowd shot has to be framed '
+      + 'for. Traders, working human-facing market hours, which is unusual here: '
+      + 'most species keep their own clock and let the station work around it. '
+      + 'Their ships are disc-shaped and this has been the subject of a very '
+      + 'long and very unfunny joke for as long as either species has known the '
+      + 'other one.',
+  },
+  res_abbai: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Amphibian, and the only residents whose rest is taken in water rather '
+      + 'than at an hour — the sleep block is a PLACE for them, which is why '
+      + 'their quarter is the humid one and why they are the people you never '
+      + 'see between twenty-two hundred and five. A mask is worn in the standard '
+      + 'atmosphere out of preference rather than need. Diplomats and '
+      + 'administrators by inclination, mediating arguments the other fourteen '
+      + 'would rather escalate, and quietly the reason the transient hostel is '
+      + 'not on fire more often.',
+  },
+  res_gaim: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Insectile, hive-organised and suited: the atmosphere they breathe is '
+      + 'methane, so on this deck they are always inside a mask, and their two '
+      + 'meals BRACKET the work shift because eating means going home to the '
+      + 'quarter that has their air. The individual scatter is the smallest of '
+      + 'any species here by a factor of three — a hive has very little '
+      + 'variation to scatter — so a group of them moves like one thing and '
+      + 'sleeps at one hour. Castes are visible in stature and nowhere else, and '
+      + 'they do not explain them.',
+  },
+  res_hyach: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Formality made legible: they eat at six thirty, twelve and eighteen '
+      + 'hundred with almost no individual spread, so a dining hall of them '
+      + 'fills and empties in one motion and the effect on a stranger is '
+      + 'unnerving. Tall, narrow, long-necked, and elderly-looking at every age. '
+      + 'An old people with a long history and a piece of it they will not '
+      + 'discuss, whose discipline reads as manners right up until you notice '
+      + 'how uniform it is.',
+  },
+  res_llort: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'Short, thick-armed, scaled, and the reason the lost and found on this '
+      + 'station is a real room with a real queue. They sleep through the '
+      + 'morning and work the margins of the market day and the small hours — '
+      + 'the rhythm IS the crime layer, and it is deliberate on their part and '
+      + 'known to everybody. Nothing they take is worth reporting on its own, '
+      + 'which is the whole strategy. Security tolerates them at a level that is '
+      + 'itself a negotiated figure.',
+  },
+  res_grome: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'The tallest people on the drum and among the heaviest, working the '
+      + 'agricultural shift — four thirty, eleven thirty, eighteen hundred — '
+      + 'which is not an office day and puts them in the arboretum and the '
+      + 'galley when nobody else is. Broad-shouldered, blunt-jawed, slow to '
+      + 'speak. They are the quietest crowd on the station and the least often '
+      + 'in anybody\'s way, and a stranger tends to notice them only after '
+      + 'walking into one.',
+  },
+  res_other: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'The remainder of the census, and it is a real category rather than a '
+      + 'shrug: on a drum with a docking throat open to anyone paying, some of '
+      + 'the crowd is one of a kind and going somewhere else tomorrow. This row '
+      + 'carries the widest individual scatter of any on the station — three '
+      + 'times the reference figure\'s spread in stature, and every hour of the '
+      + 'day loosened to match — precisely so that it never reads as one more '
+      + 'species with one more look. If two of them seem to be the same thing, '
+      + 'the table is broken.',
+  },
+  res_vorlon: {
+    faction: 'station',
+    weapon: 'None',
+    text: 'There is one, it lives behind a door on the residential deck, and '
+      + 'nobody on this station has seen what is inside the suit. Two metres of '
+      + 'encounter suit, an undisclosed atmosphere, no meal ever taken in public '
+      + 'and twenty hours a day in seclusion — the census share rounds to '
+      + 'nobody, so the right number of them here is exactly one and it is '
+      + 'placed by hand rather than rolled for. It answers questions with other '
+      + 'questions. It was on the drum before the drum had a quartermaster.',
+  },
+
+  /* ── The station: the company off duty ─────────────────────────────── */
+
+  res_borz_crew: {
+    faction: 'station',
+    weapon: 'None — off duty and unarmed',
+    text: 'The men who move the cargo, in fatigues rather than plastoid: the '
+      + 'same face as every other man in the company, the same voice, and no '
+      + 'armour on it at all. They work the docking throat on the day shift with '
+      + 'muster surges at six and fourteen hundred, sleep in the barracks and '
+      + 'drink in the cantina, and the walk between those three is most of what '
+      + 'a life is here. Meeting one out of armour is the thing that makes the '
+      + 'line troopers people rather than a colour.',
+  },
+  res_borz_medic: {
+    faction: 'station',
+    weapon: 'None — a field kit',
+    text: 'Whites with a red flash at the collar, in the medbay and on the way '
+      + 'to it. A surgical droid does the same job on a battlefield and cannot '
+      + 'do this one: the drum\'s casualties are crush injuries, decompression '
+      + 'and the results of an argument in a bar, and none of those are '
+      + 'triage-on-a-line work. Off shift they eat late in the galley, because '
+      + 'the rota that covers the small hours is the one nobody else wants.',
+  },
+  res_borz_pilot: {
+    faction: 'station',
+    weapon: 'None — a flight helmet under one arm',
+    text: 'Orange, and the orange is not decoration — it is a flight suit, it '
+      + 'reads as one at any distance, and it is the only colour on the drum '
+      + 'that means one specific job. Traffic control and the ready room off the '
+      + 'flight deck: clamps, approach lanes, and the standing argument with the '
+      + 'docking throat about who gets the near berth. They are the loudest '
+      + 'people on the station and by some margin the ones most likely to be '
+      + 'still awake when the day shift musters.',
+  },
+  res_borz_jedi: {
+    faction: 'station',
+    weapon: 'None — the blade stays in the quarters',
+    text: 'Robes, which is the one costume on this deck that is not a change of '
+      + 'clothes: the Order dresses the same on duty and off, so what marks this '
+      + 'one as off duty is the empty belt. The station keeps a chapel and this '
+      + 'is who is in it, along with anybody else who wants the quietest room on '
+      + 'the drum. The work is diplomatic — arguments between fifteen peoples '
+      + 'who each have their own hours, their own food and their own idea of an '
+      + 'insult. It is the same job the Order does in a war, with the shooting '
+      + 'taken out of it.',
+  },
+  res_borz_acolyte: {
+    faction: 'station',
+    weapon: 'None — off duty and unarmed',
+    text: 'Black, drinking alone, in the cantina at hours that overlap with no '
+      + 'crowd on the drum. A transient: the hostel rather than the barracks, no '
+      + 'berth of their own and no stated business on the station, which is '
+      + 'noted by security and acted on by nobody. The other residents give the '
+      + 'table a wide berth without being able to say what it is they are '
+      + 'reading. They are not wrong, and nothing about the evening is going to '
+      + 'confirm it either.',
+  },
+  res_borz_officer: {
+    faction: 'station',
+    weapon: 'None — a datapad',
+    text: 'Command staff, in dress blue with a gold trim, between the operations '
+      + 'centre and the quarters on the deck above the barracks. On a field this '
+      + 'rank carries a rally aura and a company that fails without it; on the '
+      + 'drum it carries a duty roster and the argument about berth fees. The '
+      + 'second half is the interesting one — somebody signs for the water, the '
+      + 'air and the fuel, and a station is the only ground in this game where '
+      + 'that is visible at all.',
+  },
+  res_borz_guard: {
+    faction: 'station',
+    weapon: 'None — a stunner, holstered',
+    text: 'Grey, on a post, and the only body on this deck whose job could turn '
+      + 'into a fight. Security is one booth on the concourse and a walk between '
+      + 'the market, the hostel and the cantina, which is to say the three '
+      + 'places an argument starts. The work is almost entirely a matter of '
+      + 'standing where the argument would otherwise have happened. Fifteen '
+      + 'peoples with fifteen different ideas of a provocation makes that a '
+      + 'harder trade than it looks.',
+  },
+  res_borz_engineer: {
+    faction: 'station',
+    weapon: 'None — a hydrospanner',
+    text: 'Ochre coveralls, and the person the entire drum quietly depends on: '
+      + 'the reactor hall, the fabrication shop and whatever on this rotating '
+      + 'hull is currently making a noise it should not be making. Fifty-five '
+      + 'rooms, four decks, one atmosphere plant and a methane quarter that must '
+      + 'never be joined to it. Off shift they are in the barracks or asleep. A '
+      + 'station is a machine that kills everyone aboard on the day it stops, '
+      + 'and this is the crew that does not let it.',
   },
 };
 

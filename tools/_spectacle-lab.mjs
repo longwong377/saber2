@@ -27,7 +27,7 @@ import { makeRng } from '../src/engine/MathUtil.js';
 import {
   SKINS, GROUNDS, makeCard, dressGround, priceCard, runSpectacle, recordResult,
   formStrength, readForm, winProbabilities, researchedProbabilities, favouriteOf, settle, seedSpectacle,
-  fieldProbabilities,
+  fieldProbabilities, blindnessOf,
 } from '../src/game/Spectacle.js';
 
 const RACES = Number(process.argv[2]) || 4000;
@@ -71,11 +71,11 @@ function value(probs, board, { margin = 0.08, floor = 0.05 } = {}) {
  * bet, run and then written into the public log — in that order, because that
  * is the order the player lives it in.
  */
-function circuit(skin, races) {
-  const rng = makeRng(Number(process.argv[4]) || 90210);
+function circuit(skin, races, seed) {
+  const rng = makeRng(seed || Number(process.argv[4]) || 90210);
   const pool = GROUNDS.filter((g) => g.skin === skin);
   const stables = [];
-  for (let i = 0; i < 6; i++) stables.push(makeCard({ skin, size: SKINS[skin].field, seed: rng.int(1, 1e9) }));
+  for (let i = 0; i < 30; i++) stables.push(makeCard({ skin, size: SKINS[skin].field, seed: rng.int(1, 1e9) }));
 
   const books = {
     'favourite-backer': { staked: 0, net: 0, bets: 0, hits: 0 },
@@ -127,12 +127,26 @@ function circuit(skin, races) {
 
 console.log(`\nSPECTACLE LAB — ${SKIN}, ${RACES} races\n`);
 
+/* `bet` skips the fits and rides the circuit on several seeds instead, which
+ * is the run that killed the softmax: one circuit's numbers are an anecdote. */
+if (process.argv[5] === 'bet') {
+  for (const seed of [90210, 13579, 24680, 555, 8675309]) {
+    const c = circuit(SKIN, RACES, seed);
+    const r = (b) => pct(b.staked ? b.net / b.staked : 0);
+    console.log(`  seed ${String(seed).padEnd(8)} fav strike ${pct(c.favStrike).padStart(7)}   `
+      + `favourite ${r(c.books['favourite-backer']).padStart(8)}   form-reader ${r(c.books['form-reader']).padStart(8)}`
+      + ` (${c.books['form-reader'].bets} bets)   insider ${r(c.books.insider).padStart(8)}`);
+  }
+  console.log('');
+  process.exit(0);
+}
+
 const { books, rows, favStrike, run } = circuit(SKIN, RACES);
 const S = SKINS[SKIN];
 for (const [key, name, shipped] of [
-  ['hid', 'sim view     ', S.sigma.sim],
-  ['pub', 'board        ', S.sigma.board],
-  ['res', 'reading room ', S.sigma.read]]) {
+  ['hid', 'sim view     ', S.sigma],
+  ['pub', 'board        ', Math.round(Math.hypot(S.sigma, blindnessOf(dressGround(GROUNDS[0], 1))) * 100) / 100],
+  ['res', 'reading room ', '—']]) {
   const b = fit(rows, key);
   console.log(`  ${name}   best sigma ${String(b.sd).padEnd(5)} (log-loss ${b.ll.toFixed(4)})   shipped ${shipped}`);
 }
