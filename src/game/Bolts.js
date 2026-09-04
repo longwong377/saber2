@@ -221,6 +221,23 @@ export class BoltPool {
     return bolt;
   }
 
+  /**
+   * Catch one in a bare hand — V16 Lane E's Still Hand.
+   *
+   * `hand` is anything with `at(out)`: it writes the world point the bolt is
+   * suspended at and returns false when the hold is over. `radial` spreads a
+   * stack so three caught bolts do not occupy the same cubic centimetre,
+   * exactly as it does on a blade.
+   */
+  holdAt(bolt, hand, radial = null) {
+    const dir = new THREE.Vector3().copy(bolt.vel);
+    if (dir.lengthSq() < 1e-8) dir.set(0, 0, 1); else dir.normalize();
+    bolt.held = { hand, dir, bladeT: 0, radial: radial ? radial.clone() : new THREE.Vector3() };
+    bolt.heldT = 0;
+    bolt.vel.set(0, 0, 0);
+    return bolt;
+  }
+
   /** Let go: the bolt becomes a live projectile again, aimed by the caller. */
   release(bolt, dir, speed) {
     bolt.held = null;
@@ -243,9 +260,36 @@ export class BoltPool {
     for (const b of this.bolts) {
       if (!b.active) continue;
 
-      // ── caught: pinned to the blade, inert, and drawn as something held
+      // ── caught: pinned to the blade or to a hand, inert, drawn as held
       if (b.held) {
-        const sab = b.held.saber;
+        /**
+         * ── TWO KINDS OF HOLDER, AND THE SECOND IS A BARE HAND ────────────
+         *
+         * V16 Lane E: *"at higher levels of upgrading melee you can even
+         * deflect bolts back … you block with your arm/hand suspending one or
+         * more bolts maybe a foot or two away from you and then sending them
+         * back in the same way you would with the lightsaber."*
+         *
+         * That is this block's own mechanism with a different anchor, and it
+         * is deliberately reached that way rather than by a second inert-bolt
+         * path in `Melee.js`: a bolt that does not fly, does not hit anything
+         * and does not age is a state of the POOL, and a second file holding
+         * bolts still would be a second answer to what an arrested bolt is.
+         *
+         * `hand.at(out)` writes the world point to hold it at and answers
+         * false when the hand is no longer holding anything up — which is the
+         * hand's version of a blade going out.
+         */
+        const H = b.held;
+        if (H.hand) {
+          if (H.hand.at(b.pos) === false) { b.held = null; b.active = false; continue; }
+          b.heldT += dt;
+          b.pos.add(H.radial);
+          b.prev.copy(b.pos);
+          if (n < this.max) n = this._drawHeld(b, n, colors, hcolors);
+          continue;
+        }
+        const sab = H.saber;
         // A blade that goes out drops what it was carrying, and a bolt with no
         // blade under it is gone — not left hanging in the air at zero velocity.
         if (!sab || sab.ignition < 0.4) { b.held = null; b.active = false; continue; }

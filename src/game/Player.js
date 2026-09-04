@@ -49,7 +49,7 @@ import { stationKey, namingStation } from './Station.js';
 /* V15 §3's melee set. A leaf: it reads a Player and writes damage through the
  * doors that already exist (`Enemy.damage` with kind 'melee', `addShove`), and
  * imports nothing from this file. */
-import { strike as meleeStrike, stepMelee, poseMelee } from './Melee.js';
+import { strike as meleeStrike, stepMelee, poseMelee, stepCatch } from './Melee.js';
 import { focusKey as deckFocus, wheelEdit as deckWheel,
          naming as deckNaming, beginNaming as deckBeginNaming,
          commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
@@ -3082,6 +3082,9 @@ export function defaultBoonMods() {
      */
     meleeSpeed: 1, meleeChain: 1, meleeDamage: 1, meleeImpulse: 1,
     meleeStamina: 1, meleeReach: 1, meleeStagger: 1,
+    /* V16 Lane E's two: COUNTS, whose identity is 0 and not 1 — a fighter who
+     * has not bought the Still Hand catches no bolts, and 0 is what none is. */
+    meleeCatches: 0, meleePoint: 0,
     /** Set by the conditional cards; each has a reader in the technique layer. */
     riposteWindow: 1, riposteCut: 1, forceRegen: 1, encircle: 0, ferocity: 0,
     conduit: 0, secondWind: 0, fury: 0, steadfast: 0, sunderShock: 0,
@@ -4810,6 +4813,26 @@ export class Player {
      * button; you put the saber away and your hands come up.
      */
     if (!this.saber?.lit && !this.gripBody && !this.gripEnemy) {
+      /**
+       * ══ THE STILL HAND AND THE ONE POINT — V16 Lane E ═══════════════════
+       *
+       * Two more meanings on keys that already exist, and no new binding, for
+       * the reason the note above gives and `controls.mjs` enforces.
+       *
+       *   `stance` HELD with the blade down raises the palm. It is the block
+       *     key: raising a hand to stop something coming at you is what that
+       *     key already means, and with no blade in the hand there is no guard
+       *     for it to be choosing.
+       *   `thrust` with bolts hanging at the palm THROWS THEM — `Melee.strike`
+       *     answers the full hand before it answers the chain, so a fighter
+       *     holding a bolt and pressing punch means the bolt.
+       *   `push` with the blade down is the One Point. The Force key, for a
+       *     strike that spends Force, and it is a thrust of the hand either
+       *     way — which is what makes one key mean one thing here rather than
+       *     two.
+       */
+      stepCatch(this, ctx?.dt ?? 0.016, !!input.act?.('stance'));
+      if (input.actHit('push')) { meleeStrike(this, null, 'point'); return; }
       if (input.actHit('thrust')) { meleeStrike(this); return; }
     } else if (input.actHit('thrust')) this._tryDive(ctx);
     this._stratagemInput(input, ctx);

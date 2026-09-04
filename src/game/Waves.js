@@ -34,7 +34,7 @@
  *               before wave ~92. They are also a choice made before Ignite now,
  *               in force from wave 1 and never charged. See the RUN RULES block.
  *
- * And the player grows with it: sixty-two boons drafted every second wave, weighted
+ * And the player grows with it: sixty-four boons drafted every second wave, weighted
  * by rarity that moves with depth, with six masteries gated on already having
  * committed to an axis — and, one step past a mastery, twelve unbound powers gated
  * harder still, each taking the cooldown off one Force power and charging Force
@@ -70,7 +70,27 @@ import { UNBOUND, UNLEASH_TOLL, unboundId } from './Powers.js';
  * is WORTH lives beside the moves it multiplies, in Melee.FACETS, so the branch
  * has one table and not two that drift. */
 import { FACETS as MELEE_FACETS } from './Melee.js';
-const MELEE_FACET = new Map(MELEE_FACETS.map((f) => [f.id, f]));
+/**
+ * ── READ AT CALL TIME, NOT AT MODULE SCOPE, AND THAT IS NOT A STYLE CHOICE ──
+ *
+ * `Melee.js` imports `Enemy.js` and `Enemy.js` reaches back here, so the two
+ * are a cycle — which ESM handles fine as long as neither TOUCHES the other's
+ * bindings while the other is still evaluating. Building this Map on the
+ * module's first line did exactly that: enter the graph through `Melee.js`
+ * and `Waves.js` evaluates first, reaching `MELEE_FACETS` before the module
+ * that exports it has run. `Cannot access 'MELEE_FACETS' before
+ * initialization`, on import, which is the game not booting.
+ *
+ * A lazy read is the fix and the whole fix: by the time a card's `apply` runs,
+ * both modules have finished.
+ */
+let _meleeFacets = null;
+const MELEE_FACET = {
+  get(id) {
+    if (!_meleeFacets) _meleeFacets = new Map(MELEE_FACETS.map((f) => [f.id, f]));
+    return _meleeFacets.get(id);
+  },
+};
 
 /**
  * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
@@ -6508,6 +6528,31 @@ export const BOONS = [
       p.boonMods.meleeReach *= grow(f.reach, s);
       p.boonMods.meleeStagger *= grow(f.stagger, s);
     },
+  },
+  {
+    id: 'melee-catch', icon: '🤚', name: 'The Still Hand', tag: 'Open Hand',
+    /**
+     * TWO RANKS AND EACH IS ONE MORE BOLT, which is why `apply` ADDS rather
+     * than multiplying and does not go through `grow`: a count that diminished
+     * would give a second rank two thirds of a bolt.
+     *
+     * TWO AND NOT THREE, and the cap is the game's law rather than my taste.
+     * `balance.mjs`'s "a rank is a return, and a diminishing one" holds every
+     * card to a geometric ladder and makes exactly one exception — a
+     * whole-count card, capped at two ranks — because a third linear copy is
+     * off the ladder in the runaway direction. A third bolt was my number and
+     * not the player's, who asked for *"one or more bolts"*; two is inside the
+     * law and the fantasy lands whole either way.
+     */
+    rarity: 'rare', axes: ['body', 'force'], stack: 2,
+    text: 'A blaster bolt stops a foot from your open palm. Press again and it goes back the way it came. 1 more bolt a rank, to 2.',
+    apply(p) { p.boonMods.meleeCatches += 1; },
+  },
+  {
+    id: 'melee-point', icon: '☝', name: 'The One Point', tag: 'Open Hand',
+    rarity: 'rare', axes: ['body', 'force'],
+    text: 'One finger, driven through a machine, and the machine comes apart. 30 Force, nine seconds between, and it is the slowest thing you can throw.',
+    apply(p) { p.boonMods.meleePoint += 1; },
   },
   {
     id: 'longblade', icon: '📏', name: 'Extended Blade', tag: 'Crystal',

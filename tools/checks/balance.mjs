@@ -374,6 +374,13 @@ export async function run({ check, assert }) {
       'melee-weight',
       'melee-wind',
       'melee-reach',
+      /* And the two at the top of the branch, for the same reason twice over:
+       * this model's fighters duel with a lit blade, so they never reach the
+       * Still Hand's code at all — and it answers BLASTER FIRE, which is not
+       * a thing that happens in a duel the model simulates. `melee.mjs` drives
+       * both on a real pool and a real body instead. */
+      'melee-catch',
+      'melee-point',
     ]);
     const missed = [];
     for (const b of BOONS) {

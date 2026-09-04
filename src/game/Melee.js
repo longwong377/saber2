@@ -47,6 +47,9 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { addShove } from './Enemy.js';
+/* The material ladder, for the One Point's machine test. Combat.js owns it and
+ * this reads it rather than restating a number. */
+import { TOUGHNESS } from './Combat.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE SET                                                                   */
@@ -103,6 +106,41 @@ export const MOVES = {
     reach: 1.95, arc: 0.60, damage: 8, impulse: 11, lift: 0.20, stamina: 8,
     stagger: 0.5, next: null,
   },
+  /**
+   * ══ THE ONE POINT — V16 Lane E, and it is not part of the chain ═════════
+   *
+   * *"a two finger death punch type move where you like thrust own your two
+   * fingers/poke the enemy in front of you or whereever you're aiming at and
+   * it completey dissassembles them just like your regular dissassmble move
+   * but with melee … imagine you've like infused your chakra/force into your
+   * finger and the effect is so strong it dissassmbles droids."*
+   *
+   * WHAT MAKES IT SAFE TO EXIST is everything about it that is bad. It is the
+   * slowest thing in the set by a factor of two, its recovery is longer than
+   * any other strike's whole duration, it costs Force ON TOP of stamina, it
+   * has a cooldown nothing else in the set has, and its arc is narrow enough
+   * that a moving target is a miss. A player who throws it speculatively is
+   * on the floor; a player who throws it into a committed droid deletes it.
+   *
+   * `disassemble` is the flag `resolve` reads. Against anything with a
+   * skeleton it is simply a very heavy blunt strike, which is what a finger
+   * driven through a ribcage would be, and the fantasy stays where the fiction
+   * put it: the trick works on machines.
+   *
+   * It is NOT reachable without `melee-point`, which sits two facets past the
+   * end of the branch — see `FACETS`.
+   */
+  point: {
+    label: 'the one point', limb: 'handR', pole: 'armR', joint: 'foreR',
+    wind: 0.34, hit: 0.06, rec: 0.62,
+    reach: 2.05, arc: 0.22, damage: 30, impulse: 16, lift: 0.30, stamina: 22,
+    stagger: 1.4, next: null,
+    /** Requires this facet, costs this much Force, and cannot be thrown again
+     * for this long. No other move carries any of the three. */
+    needs: 'melee-point', force: 30, cooldown: 9,
+    /** Inorganics come apart. See `resolve`. */
+    disassemble: true,
+  },
 };
 
 export const MOVE_KEYS = Object.keys(MOVES);
@@ -145,6 +183,23 @@ export const FACETS = [
     stamina: 0.66 },
   { id: 'melee-reach', name: 'Open Hand', line: 'You reach further, and what you hit stays down.',
     reach: 1.25, stagger: 1.8 },
+  /**
+   * ══ AND THE TOP OF THE BRANCH — V16 Lane E ══════════════════════════════
+   *
+   * Two facets past `melee-reach`, so a fighter reaches them only having built
+   * the whole of the Open Hand. Neither multiplies a number in the table
+   * above: each one adds a VERB the set did not have, which is what the top of
+   * a branch should be — a fifth rank of Falling Stone is more of the same and
+   * catching a bolt in your hand is not.
+   *
+   * `catches` is how many bolts the Still Hand can suspend at once. It is a
+   * count and not a multiplier, so `meleeMods` carries it as one.
+   */
+  { id: 'melee-catch', name: 'The Still Hand', line: 'A bolt stops a foot from your palm, and goes back where it came from.',
+    catches: 1 },
+  { id: 'melee-point', name: 'The One Point', line: 'One finger, driven through a machine, and the machine comes apart.',
+    /* It buys the move. The move's own numbers are in MOVES.point. */
+    point: 1 },
 ];
 
 /**
@@ -164,7 +219,11 @@ export const FACETS = [
  * Either way an empty build is exactly `1` in every field, and `1` is exact.
  */
 export function meleeMods(src) {
-  const m = { speed: 1, chain: 1, damage: 1, impulse: 1, stamina: 1, reach: 1, stagger: 1 };
+  /* `catches` and `point` are COUNTS rather than multipliers and their
+   * identity is 0, not 1: a fighter who has not bought the Still Hand catches
+   * nothing, and 0 is what "nothing" is. Every other field's identity is 1. */
+  const m = { speed: 1, chain: 1, damage: 1, impulse: 1, stamina: 1, reach: 1, stagger: 1,
+    catches: 0, point: 0 };
   if (!src) return m;
   /* A boonMods declares every key it owns (see `Player.defaultBoonMods`), so
    * one of them being a number is what tells the two shapes apart.
@@ -183,12 +242,20 @@ export function meleeMods(src) {
     m.stamina = boonMods.meleeStamina ?? 1;
     m.reach = boonMods.meleeReach ?? 1;
     m.stagger = boonMods.meleeStagger ?? 1;
+    /* The two counts ACCUMULATE rather than multiply — a second rank of the
+     * Still Hand catches a second bolt, and 1 x 1 would be one forever. */
+    m.catches = boonMods.meleeCatches ?? 0;
+    m.point = boonMods.meleePoint ?? 0;
     return m;
   }
   const has = (id) => (src.has ? src.has(id) : (Array.isArray(src) ? src.includes(id) : !!src[id]));
   for (const f of FACETS) {
     if (!has(f.id)) continue;
-    for (const k of Object.keys(m)) if (f[k] !== undefined) m[k] *= f[k];
+    for (const k of ['speed', 'chain', 'damage', 'impulse', 'stamina', 'reach', 'stagger']) {
+      if (f[k] !== undefined) m[k] *= f[k];
+    }
+    if (f.catches !== undefined) m.catches += f.catches;
+    if (f.point !== undefined) m.point += f.point;
   }
   return m;
 }
@@ -203,6 +270,9 @@ const _d = new THREE.Vector3();
 const _imp = new THREE.Vector3();
 const _tgt = new THREE.Vector3();
 const _pole = new THREE.Vector3();
+/* The Still Hand's own scratch — allocated once with the rest, because the
+ * catch runs every frame the hand is up. */
+const _v = new THREE.Vector3(), _v2 = new THREE.Vector3(), _r = new THREE.Vector3();
 
 /**
  * The set, as carried by one body. Held on `Player._melee`; nothing else has
@@ -226,6 +296,17 @@ export class MeleeSet {
     /** Total strikes thrown and landed this life — the ledger's melee row. */
     this.thrown = 0;
     this.landed = 0;
+    /**
+     * ── V16 LANE E ────────────────────────────────────────────────────────
+     *
+     * `caught` are the live bolts suspended at the palm — the pool's own
+     * objects, held through `Bolts.holdAt`, not copies. `hold` is how long the
+     * hand has been up, and `cool` bills the moves that have a cooldown (only
+     * the One Point so far).
+     */
+    this.caught = [];
+    this.hold = 0;
+    this.cool = {};
   }
 
   /** Is a strike running? While it is, movement is committed and input is not read. */
@@ -256,17 +337,43 @@ export class MeleeSet {
  *   the blade is lit              the whole seam: put it away first
  *   no stamina                    below MIN_STAMINA, nothing comes out
  */
-export function strike(player, mods = null) {
+export function strike(player, mods = null, want = null) {
   const set = player._melee || (player._melee = new MeleeSet());
   if (set.busy) return null;
   if (player.saber?.lit) return null;
   if ((player.stamina ?? 0) < MIN_STAMINA) return null;
 
   const m = mods || meleeMods(player.boonMods || player.takenBoons || player.world?.takenBoons);
-  /* The chain, if the window is still open; the opener otherwise. */
-  const name = (set.chain && set.chainT > 0) ? set.chain : 'jab';
+  /**
+   * ── A HAND FULL OF BOLTS THROWS THEM, AND THROWS NOTHING ELSE ──────────
+   *
+   * The Still Hand and the strike share one key, the same way `thrust` already
+   * means two things depending on the blade. Holding bolts is the third
+   * meaning and it wins while it is true, because a fighter with a blaster
+   * bolt suspended at his palm pressing the punch button means the bolt.
+   */
+  if (set.caught.length) return release(player, m) ? 'return' : null;
+
+  /* The chain, if the window is still open; the opener otherwise. A caller may
+   * NAME a move instead — the One Point is not in the chain and is reached by
+   * asking for it, which is what `want` is. */
+  let name = (set.chain && set.chainT > 0) ? set.chain : 'jab';
+  if (want && MOVES[want]) name = want;
   const M = MOVES[name];
   if (!M) return null;
+  /**
+   * A MOVE MAY HAVE A PRICE THE CHAIN DOES NOT. `MOVES.point` is the only one
+   * so far and it carries all three: a facet that must be woken, Force on top
+   * of stamina, and a cooldown. Stated on the row rather than as a branch here,
+   * so a second such move is a row.
+   */
+  if (M.needs && !(m[M.needs.replace('melee-', '')] > 0)) return null;
+  if (M.cooldown && (set.cool[name] ?? 0) > 0) return null;
+  if (M.force) {
+    if ((player.force ?? 0) < M.force) return null;
+    player.force -= M.force;
+  }
+  if (M.cooldown) set.cool[name] = M.cooldown;
 
   set.move = name;
   set.t = 0;
@@ -294,6 +401,10 @@ export function stepMelee(player, dt, ctx = null, mods = null) {
   const set = player._melee;
   if (!set) return;
   if (set.chainT > 0) set.chainT = Math.max(0, set.chainT - dt);
+  /* The cooldowns, which only the One Point has so far. Ticked whether or not
+   * a strike is running, because a cooldown that only ran down while you were
+   * punching would never run down at all. */
+  for (const k in set.cool) if (set.cool[k] > 0) set.cool[k] = Math.max(0, set.cool[k] - dt);
   if (!set.move) return;
 
   const m = mods || meleeMods(player.boonMods || player.takenBoons || player.world?.takenBoons);
@@ -315,6 +426,179 @@ export function stepMelee(player, dt, ctx = null, mods = null) {
     set.t = 0;
   }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE STILL HAND — V16 LANE E                                               */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A BOLT, STOPPED A FOOT FROM YOUR PALM ═════════════════════════════════
+ *
+ * *"at higher levels of upgrading melee you can even deflect bolts back
+ * (albiet at a much less effective rate and way than with a saber but you can
+ * do it) so basically you block with your arm/hand suspending one or more
+ * bolts maybe a foot or two away from you and then sending them back … lore/
+ * physics whise you are combining the power of the force and your enhanced
+ * melee skills to do what the lightsaber does."*
+ *
+ * ── IT IS NOT A DEFLECTION AND IT MUST NOT BECOME ONE ─────────────────────
+ *
+ * The blade's deflect is a CONTACT: a sweep meets a bolt, it is graded on a
+ * ladder, and the return leaves on the same frame. That is a reflex, it is
+ * fast, and it is what a lightsaber is for. This is the opposite in every
+ * respect and the player asked for it that way — *"a much less effective rate
+ * and way"*:
+ *
+ *   IT CATCHES, IT DOES NOT RETURN.  The bolt stops and hangs there. Sending
+ *     it back is a SECOND press, and between the two you are standing still
+ *     with your hand up.
+ *   IT CATCHES ONE.  A rank buys one more, to three. A blade answers everything
+ *     that reaches it.
+ *   IT COSTS BOTH BARS.  Force to hold and stamina to throw, where a deflect
+ *     costs neither.
+ *   IT IS INACCURATE.  A returned bolt carries `SCATTER` off the aim, so it is
+ *     a threat at ten metres and a coin toss at thirty. A blade's return is
+ *     graded and can be perfect.
+ *
+ * So the fantasy lands whole and the blade is still the better tool, which is
+ * the entire brief.
+ *
+ * `Bolts.holdAt` is the mechanism, and it is the SAME mechanism the saber's
+ * catch window already uses — a bolt that does not fly, does not hit anything
+ * and does not age is a state of the pool, and a second file holding bolts
+ * still would be a second answer to what an arrested bolt is.
+ */
+
+/** How far in front of the palm a caught bolt hangs. A foot, as asked. */
+const CATCH_STAND = 0.34;
+/** The cone the hand covers, and how far up the line it can reach. */
+const CATCH_ARC = 0.62, CATCH_RANGE = 3.2;
+/** Force a second, while the hand is up and holding. */
+const CATCH_DRAIN = 9;
+/** How wide a returned bolt scatters. A blade's return does not do this. */
+const RETURN_SCATTER = 0.085;
+/** What a returned bolt costs to throw, on top of what holding it cost. */
+const RETURN_STAMINA = 6;
+
+/**
+ * What the One Point is worth against a machine. 30 x 8 = 240, which deletes
+ * every light droid outright, leaves a droideka on its last few points and is
+ * a very bad day for a walker without being an instant kill on one.
+ */
+const DISASSEMBLE = 8;
+
+/**
+ * Run the hand for one frame: hold what is held, catch what arrives, and drop
+ * everything if the fighter cannot pay for it.
+ *
+ * `up` is whether the player is asking — the guard input, with the blade down.
+ */
+export function stepCatch(player, dt, up, mods = null) {
+  const set = player._melee || (player._melee = new MeleeSet());
+  const m = mods || meleeMods(player.boonMods || player.takenBoons || player.world?.takenBoons);
+  const cap = m.catches | 0;
+  const pool = player.world?.bolts;
+  /* Nothing woken, no pool, or a lit blade: the hand is not a thing that
+   * exists. Anything already held is dropped rather than left hanging. */
+  if (!cap || !pool || player.saber?.lit) { dropCaught(set); set.hold = 0; return 0; }
+
+  if (set.caught.length) {
+    set.hold += dt;
+    /* HOLDING COSTS FORCE, and running out is what makes a long hold a
+     * decision. The bolts go out rather than dropping live at your feet. */
+    player.force = Math.max(0, (player.force ?? 0) - CATCH_DRAIN * dt);
+    if ((player.force ?? 0) <= 0) { dropCaught(set); return 0; }
+    /* One that has gone stale — a holder that dropped it, a pool reset — is
+     * pruned so the count is the count. */
+    for (let i = set.caught.length - 1; i >= 0; i--) {
+      const b = set.caught[i];
+      if (!b.active || !b.held || b.held.hand !== set._hand) set.caught.splice(i, 1);
+    }
+  } else set.hold = 0;
+
+  if (!up || set.busy || set.caught.length >= cap) return set.caught.length;
+
+  /* THE HAND, as the pool sees it: a point in front of the fighter and a
+   * question about whether the hold is still on. One object for the life of
+   * the set, because the pool holds the reference. */
+  if (!set._hand) {
+    set._hand = {
+      set, player,
+      at(out) {
+        const s = this.set, p = this.player;
+        if (!s.caught.length || p.saber?.lit) return false;
+        const yaw = p.camera?.yaw ?? p.yaw ?? 0;
+        const i = s.caught.indexOf(out.__b);
+        out.set(p.position.x - Math.sin(yaw) * CATCH_STAND,
+          p.position.y + (p.hipHeight ?? 0.95) * 1.15,
+          p.position.z - Math.cos(yaw) * CATCH_STAND);
+        return true;
+      },
+    };
+  }
+
+  const yaw = player.camera?.yaw ?? player.yaw ?? 0;
+  _d.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+  const cosArc = Math.cos(CATCH_ARC);
+  const eye = _p.copy(player.position); eye.y += (player.hipHeight ?? 0.95) * 1.15;
+  for (const b of pool.bolts) {
+    if (set.caught.length >= cap) break;
+    if (!b.active || b.held) continue;
+    /* Hostile fire only. Your own returns must be free to leave, which is the
+     * same rule the blade's guards keep. */
+    if (b.team === (player.team ?? 0)) continue;
+    _v.subVectors(b.pos, eye);
+    const dist = _v.length();
+    if (dist > CATCH_RANGE || dist < 1e-4) continue;
+    _v.multiplyScalar(1 / dist);
+    if (_v.dot(_d) < cosArc) continue;
+    /* AND IT HAS TO BE COMING AT YOU. A bolt crossing the cone on its way past
+     * is not one you caught; it is one you waved at. */
+    if (b.vel.lengthSq() > 1e-6 && _v2.copy(b.vel).normalize().dot(_v) > -0.35) continue;
+    _r.set((set.caught.length - 1) * 0.09, (set.caught.length % 2) * 0.07, 0);
+    pool.holdAt(b, set._hand, _r);
+    set.caught.push(b);
+  }
+  return set.caught.length;
+}
+
+/** Throw them all back down the line the fighter is looking. */
+export function release(player, mods = null) {
+  const set = player._melee;
+  if (!set?.caught.length) return 0;
+  const pool = player.world?.bolts;
+  const yaw = player.camera?.yaw ?? player.yaw ?? 0;
+  const pitch = player.camera?.pitch ?? 0;
+  const n = set.caught.length;
+  player.stamina = Math.max(0, (player.stamina ?? 0) - RETURN_STAMINA * n);
+  for (const b of set.caught) {
+    if (!b.active || !b.held) continue;
+    /* INACCURATE ON PURPOSE — see the header. The scatter is per bolt, so a
+     * hand full of three sprays rather than firing a volley. */
+    const j = () => (Math.random() * 2 - 1) * RETURN_SCATTER;
+    _v.set(-Math.sin(yaw + j()) * Math.cos(pitch), Math.sin(pitch) + j(), -Math.cos(yaw + j()) * Math.cos(pitch));
+    pool?.release(b, _v, b.speed || 90);
+    /* It is YOURS now, and it can hurt what fired it. `deflected` is what
+     * `World._boltHitTest` reads to let a team-1 bolt hit a team-1 body. */
+    b.team = player.team ?? 0;
+    b.deflected = true;
+    b.deflector = player;
+    b.owner = player;
+  }
+  set.caught.length = 0;
+  set.hold = 0;
+  return n;
+}
+
+/** Let go of everything without throwing it. The bolts simply go out. */
+function dropCaught(set) {
+  if (!set?.caught?.length) return;
+  for (const b of set.caught) { b.held = null; b.active = false; }
+  set.caught.length = 0;
+}
+
+/** How many bolts are hanging at the palm right now. For the HUD and a check. */
+export function caughtCount(player) { return player?._melee?.caught?.length || 0; }
 
 /**
  * ══ WHAT A STRIKE HITS ════════════════════════════════════════════════════
@@ -365,7 +649,32 @@ function resolve(player, M, mods, ctx) {
      * exempts it — the one place the engine already knew blunt was different
      * from a bolt. Nothing here reaches the slicer, so nothing comes off. */
     _tgt.copy(e.position); _tgt.y += (e.hipHeight ?? 0.95) * 0.6;
-    const dealt = e.damage?.(M.damage * mods.damage, _tgt, player, 'melee');
+    /**
+     * ── AND THE ONE POINT COMES APART A MACHINE ─────────────────────────
+     *
+     * V16 Lane E: *"if aimed at an inorganic enemy it just one shots most of
+     * them probably and looks really cool."* So it is a MULTIPLIER against a
+     * machine and not an instant kill flag — a B1 and a remote are deleted, a
+     * droideka is nearly, and an AT-TE is very badly hurt and still standing,
+     * which is the honest reading of "most of them".
+     *
+     * WHAT COUNTS AS A MACHINE is the engine's own material ladder and not a
+     * list of names: `TOUGHNESS.droid` and above. Measured across every
+     * archetype in the tree at the time of writing, that set is exactly the
+     * droids and the vehicles — the lowest rung on it, `conscript` at 2.0, is
+     * the Conscript DROID — and there are no organic bodies in it at all.
+     * `melee.mjs` asserts that, so an organic archetype authored at droid
+     * toughness makes a check go red rather than making a finger take a person
+     * apart in silence.
+     *
+     * Against flesh it is simply the heaviest blunt strike in the set, which
+     * is what a finger driven through a ribcage would be, and the fiction
+     * stays where the fiction put it: the trick works on machines.
+     */
+    let dmg = M.damage * mods.damage;
+    const machine = (e.A?.toughness ?? e.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.droid;
+    if (M.disassemble && machine) dmg *= DISASSEMBLE;
+    const dealt = e.damage?.(dmg, _tgt, player, 'melee');
 
     /* KNOCKBACK, and it is the thing V15 asks for by name. Along the strike,
      * with a lift in it so a body goes over rather than sliding — `addShove`

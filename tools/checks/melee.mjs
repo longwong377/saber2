@@ -134,7 +134,15 @@ export async function run({ check, assert, THREE }) {
      * it. So the mods are read through the game's own function.
      */
     const none = M.meleeMods(null);
-    for (const k of Object.keys(none)) assert(none[k] === 1, `an unbuilt fighter is not the bare table: ${k} = ${none[k]}`);
+    /* Two of the fields are COUNTS rather than multipliers — how many bolts the
+     * Still Hand catches, and whether the One Point is bought — and a count's
+     * identity is 0. Named here rather than skipped, so a THIRD field with an
+     * identity of 0 has to be added to this line before it can pass. */
+    const COUNTS = new Set(['catches', 'point']);
+    for (const k of Object.keys(none)) {
+      const want = COUNTS.has(k) ? 0 : 1;
+      assert(none[k] === want, `an unbuilt fighter is not the bare table: ${k} = ${none[k]}, not ${want}`);
+    }
     const all = M.meleeMods(new Set(M.FACETS.map((f) => f.id)));
     assert(all.damage > 1.3, `the whole branch buys only ${all.damage}x damage`);
     assert(all.stamina < 0.8, `the whole branch buys only ${all.stamina}x stamina`);
@@ -241,6 +249,155 @@ export async function run({ check, assert, THREE }) {
      * input that does nothing is worse than a weak punch. */
     const low = base(); low.stamina = M.MIN_STAMINA + 0.5;
     assert(M.strike(low) === 'jab', 'a fighter above the floor could not throw the opener');
+  });
+
+  check('melee: the top of the branch — a bolt in the hand and a finger through a droid', async () => {
+    /**
+     * V16 Lane E. Two facets past the Open Hand, and neither is a bigger
+     * number: each adds a verb the set did not have, which is what the end of
+     * a branch is for.
+     *
+     * ── AND THE BLADE HAS TO STAY BETTER ────────────────────────────────
+     *
+     * *"albiet at a much less effective rate and way than with a saber but you
+     * can do it."* Every clause below is that sentence: one bolt at a time
+     * against a blade that answers everything reaching it, a catch that is not
+     * a return, both bars spent where a deflect spends neither, and a scatter
+     * on the way out that a graded deflection does not have.
+     */
+    const M = await import('../../src/game/Melee.js');
+    const W = await import('../../src/game/Waves.js');
+    const L = await import('../../src/game/LivingForce.js');
+    const P = await import('../../src/game/Player.js');
+    const { TOUGHNESS } = await import('../../src/game/Combat.js');
+
+    /* BOTH ARE ON THE TREE, PAST THE WHOLE BRANCH, AND BOTH HAVE A CARD. */
+    for (const id of ['melee-catch', 'melee-point']) {
+      const row = L.FACETS.find((f) => f.id === id);
+      assert(row, `${id} is not on the tree`);
+      assert(row.jedi && row.sith, `${id} has no name on one side`);
+      assert(W.boonById(id), `${id} has no card — it cannot be priced, and the purse walk never ends`);
+      const parents = L.FACETS.filter((f) => (f.to || []).includes(id)).map((f) => f.id);
+      assert(parents.includes('melee-reach'),
+        `${id} hangs off ${parents.join(', ') || 'nothing'} — the top of the branch has to be past the whole of it`);
+    }
+
+    /* THE COUNTS ACCUMULATE, and their identity is 0 and not 1. A count that
+     * multiplied would give a second rank of the Still Hand one bolt forever. */
+    assert(M.meleeMods(null).catches === 0, 'an unbuilt fighter catches bolts');
+    assert(M.meleeMods(null).point === 0, 'an unbuilt fighter has the One Point');
+    const p = { boonMods: P.defaultBoonMods() };
+    W.boonById('melee-catch').apply(p, 1);
+    assert(M.meleeMods(p.boonMods).catches === 1, 'one rank of the Still Hand does not catch one');
+    W.boonById('melee-catch').apply(p, 1);
+    /* TWO IS THE CAP, and it is `balance.mjs`'s law and not a preference: a
+     * whole-count card may have two ranks, because a third linear copy is off
+     * the geometric ladder every other card is held to. */
+    assert(M.meleeMods(p.boonMods).catches === 2,
+      `two ranks catch ${M.meleeMods(p.boonMods).catches} — a count that diminishes is a count that is a multiplier`);
+    assert(W.maxRank(W.boonById('melee-catch')) === 2,
+      'the Still Hand stacks past two, which is off balance.mjs\'s ladder for a whole-count card');
+
+    /* THE ONE POINT IS THE MOST EXPENSIVE THING IN THE SET, IN EVERY UNIT. */
+    const pt = M.MOVES.point;
+    assert(pt.needs === 'melee-point', 'the One Point is reachable without its facet');
+    assert(pt.force > 0 && pt.cooldown > 0, 'the One Point costs no Force or has no cooldown');
+    for (const k of M.MOVE_KEYS) {
+      if (k === 'point') continue;
+      const o = M.MOVES[k];
+      assert(pt.wind + pt.hit + pt.rec > o.wind + o.hit + o.rec,
+        `the One Point is faster than ${o.label} — the only thing making it safe is how slow it is`);
+      assert(pt.stamina > o.stamina, `the One Point is cheaper than ${o.label}`);
+      assert(pt.arc < o.arc, `the One Point is wider than ${o.label} — a moving target has to be a miss`);
+      assert(!o.disassemble, `${o.label} disassembles things, and only the One Point may`);
+    }
+
+    /**
+     * ── AND THE MACHINE TEST HAS NO ORGANIC IN IT ───────────────────────
+     *
+     * `resolve` reads the engine's own material ladder — `TOUGHNESS.droid` and
+     * above — rather than a list of names, because a list of names is the
+     * thing this suite refuses everywhere else. That is only honest while the
+     * set it selects really is the machines, so this measures it: an organic
+     * archetype authored at droid toughness makes this go red rather than
+     * making a finger take a person apart in silence.
+     */
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+    const machines = Object.entries(ARCHETYPES)
+      .filter(([, A]) => (A.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.droid);
+    assert(machines.length > 8, `only ${machines.length} archetypes are droid-tough or harder`);
+    const ORGANIC = /clone|trooper|jedi|sith|rancor|wookiee|acolyte|guardsman|senate|beast|creature|nexu|reek|acklay/i;
+    const wrong = machines.filter(([k, A]) => ORGANIC.test(A.label || k) && !/droid/i.test(A.label || ''));
+    assert(!wrong.length,
+      `${wrong.map(([k]) => k).join(', ')} read as organic and sit at droid toughness — the One Point `
+      + 'would disassemble them. Either the label is wrong or the machine test needs a declared flag');
+
+    /* IT IS WORTH TAKING, AND IT IS STILL NOT A BLADE. */
+    const all = M.meleeMods(new Set(M.FACETS.map((f) => f.id)));
+    const best = M.MOVES.roundhouse.damage * all.damage;
+    assert(best < 45, `fully built the finisher does ${best.toFixed(0)} — that is a blade`);
+    return `catch ${M.meleeMods(p.boonMods).catches} bolts at both ranks; the One Point is `
+      + `${(pt.wind + pt.hit + pt.rec).toFixed(2)}s, ${pt.force} Force and ${pt.cooldown}s between; `
+      + `${machines.length} machine archetypes and no organic among them`;
+  });
+
+  check('melee: a caught bolt is arrested, and the return is worse than a blade', async () => {
+    /**
+     * Driven on the real pool, because the whole of this feature is a state of
+     * `Bolts` — the same `held` a saber's catch window uses — and a check that
+     * built its own bolt would be testing a fake.
+     */
+    const M = await import('../../src/game/Melee.js');
+    const W = await import('../../src/game/Waves.js');
+    const { bootWorld } = await import('./_coop.mjs');
+    const { world } = await bootWorld({});
+    try {
+      const p = world.player;
+      p.saber.lit = false; p.force = 100; p.camera.yaw = 0;
+      const pool = world.bolts;
+      /* Three hostile bolts on their way in, and one going the other way. */
+      const made = [];
+      for (let i = 0; i < 4; i++) {
+        const b = pool.bolts.find((x) => !x.active && !made.includes(x));
+        b.active = true; b.team = 1; b.life = 4; b.speed = 40; b.damage = 10;
+        b.pos.set(p.position.x + (i - 1) * 0.2, p.position.y + 1.1, p.position.z - 2.2);
+        b.prev.copy(b.pos);
+        /* The fourth is CROSSING, not incoming: a bolt on its way past is one
+         * you waved at, not one you caught. */
+        b.vel.set(i === 3 ? 40 : 0, 0, i === 3 ? 0 : 40);
+        made.push(b);
+      }
+      /* WITH NOTHING WOKEN, NOTHING IS CAUGHT. */
+      assert(M.stepCatch(p, 1 / 60, true) === 0, 'a fighter with no facet caught a bolt');
+      W.boonById('melee-catch').apply(p, 1);
+      /* ONE RANK CATCHES ONE, and the hand has to be up. */
+      assert(M.stepCatch(p, 1 / 60, false) === 0, 'a bolt was caught with the hand down');
+      assert(M.stepCatch(p, 1 / 60, true) === 1, 'one rank did not catch exactly one');
+      const held = made.find((b) => b.held);
+      assert(held && held.vel.lengthSq() === 0, 'a caught bolt is still moving');
+      assert(!made[3].held, 'a bolt crossing the cone was caught — that is a wave, not a catch');
+      /* IT DOES NOT AGE while it is held, which is the pool's own contract. */
+      const life = held.life;
+      M.stepCatch(p, 0.5, true);
+      assert(held.life === life, 'a caught bolt aged in the hand');
+      /* IT COSTS FORCE TO HOLD, which a deflection does not. */
+      assert(p.force < 100, 'holding a bolt cost no Force at all');
+      /* AND THE RETURN IS A SECOND PRESS, costs stamina, and comes out YOURS. */
+      const stam = p.stamina;
+      assert(M.strike(p) === 'return', 'a full hand threw a punch instead of the bolt');
+      assert(p.stamina < stam, 'throwing a caught bolt cost no stamina');
+      assert(M.caughtCount(p) === 0, 'the hand is still full after throwing');
+      assert(held.team === (p.team ?? 0) && held.deflected,
+        'a returned bolt is not the fighter\'s, so it cannot hurt what fired it');
+      assert(held.vel.lengthSq() > 1, 'a returned bolt is not moving');
+      /* THE BLADE IS STILL BETTER: one at a time against everything that
+       * reaches it, and this one costs both bars to do it. */
+      const cap = M.meleeMods(p.boonMods).catches;
+      assert(cap === 1, `one rank caught ${cap}`);
+      return `caught 1 of 3 inbound and none of the crossing one; held inert and unaged at `
+        + `${(100 - p.force).toFixed(0)} Force; returned on a second press, on the fighter's team`;
+    } finally { world.dispose?.(); }
   });
 
   check('melee: Player wires it to the blade being down, and nothing else', async () => {

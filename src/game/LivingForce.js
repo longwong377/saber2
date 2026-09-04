@@ -412,8 +412,20 @@ export const FACETS = [
     jedi: 'Falling Stone', sith: 'The Weight of Anger' },
   { id: 'melee-wind', axis: 'body', to: ['melee-reach'],
     jedi: 'Long Breath', sith: 'Breath Without End' },
-  { id: 'melee-reach', axis: 'body', to: [],
+  { id: 'melee-reach', axis: 'body', to: ['melee-catch', 'melee-point'],
     jedi: 'Open Hand', sith: 'The Hand That Takes' },
+  /**
+   * ── AND THE TOP OF THE BRANCH — V16 Lane E ──────────────────────────────
+   *
+   * Two leaves past the Open Hand, so they are reachable only having built the
+   * whole of it. Neither is a bigger number: each adds a verb the set did not
+   * have, which is what the end of a branch is for. `Melee.MOVES.point` and
+   * `Melee.FACETS` carry what they do; this is only the shape of the tree.
+   */
+  { id: 'melee-catch', axis: 'body', to: [],
+    jedi: 'The Still Hand', sith: 'The Closing Grip' },
+  { id: 'melee-point', axis: 'body', to: [],
+    jedi: 'The One Point', sith: 'The Severing Finger' },
   { id: 'vitality', axis: 'body', to: ['secondwind'],
     jedi: 'Vitality', sith: 'Spite' },
   { id: 'celerity', axis: 'body', to: ['momentum'],
