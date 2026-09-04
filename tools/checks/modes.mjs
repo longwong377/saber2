@@ -221,10 +221,10 @@ export function run({ check, assert }) {
        * fold's own ordering is asserted. */
       // eslint-disable-next-line no-new-func
       const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
-        'payForRun', 'clearTuning',
+        'payForRun', 'clearTuning', 'holdLessons',
         `const world = scope.world;\n${body}\nreturn record;`);
       const rec = make({ world }, (s) => { handed = s; return recordRun(s); },
-        () => 'waves', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {});
+        () => 'waves', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {}, () => {});
       rec({ wave: 12, score: 9000, kills: 40, won: false });
       assert(handed, 'the lifted record() never called recordRun');
       assert(Array.isArray(handed.woken),

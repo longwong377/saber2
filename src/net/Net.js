@@ -30,7 +30,7 @@ import { canHarm, asSide, TEAM, rigCapsules, DuelMatch } from '../game/Player.js
 import { TOUGHNESS } from '../game/Combat.js';
 /* The session cap, which is the number of apartments there are. See the block
  * over the re-export below for why it is not a number written in this file. */
-import { SESSION_CAP } from '../game/Coop.js';
+import { SESSION_CAP, fullSentence } from '../game/Coop.js';
 
 const _v1 = new THREE.Vector3(), _v2 = new THREE.Vector3(), _v3 = new THREE.Vector3();
 const _q1 = new THREE.Quaternion();
@@ -344,8 +344,9 @@ export class Net {
        * the one this test does not count. See SESSION_CAP for why the number is
        * here and why the refusal speaks. */
       if (this.conns.size >= SESSION_CAP - 1) {
-        const why = `this session is full — ${SESSION_CAP} players is the cap, and ${SESSION_CAP} `
-          + `apartments on ${this.name}'s station are already taken`;
+        /* THE WORDING IS `Coop.js`'S, not a second copy written here — see
+         * `fullSentence`. This end only supplies the host's name for it. */
+        const why = fullSentence(this.name);
         this.send(conn, { t: 'full', why });
         this._emit('refused', conn.peer, why);
         /* Closed AFTER the refusal is queued, so the sentence is the last thing
@@ -1485,6 +1486,14 @@ export const SESSION_KEYS = [
   'skirmishPressure', 'skirmishRotate',
   /* THE PRACTICE ROOM, and whether bodies walk in or appear. */
   'sandboxCount', 'sandboxFire', 'sandboxType', 'sandboxMix', 'instantSpawn',
+  /* WHICH RUNG THE DOJO OPENS ON — V16 Lane A2. It arrived with the Repeating
+   * Room, which programs the room instead of the training tab picking a rung,
+   * and it sits HERE for the same reason `mode` does: `DojoDirector.start`
+   * builds the lesson's own dummies, remotes and sparring partner from it, so
+   * two machines holding different answers are two different rooms. A guest
+   * whose bookmark is further up the ladder must not rebuild the host's floor
+   * under them. */
+  'lesson',
   /* THE HANDICAPS. Every one of these is a lever a guest could otherwise pull
    * on somebody else's run: unlimited Force, an unleashed blade, free Focus,
    * and whether the Holocron is in play. */

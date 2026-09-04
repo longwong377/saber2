@@ -552,12 +552,30 @@ export const PLACES = [
    * into a room and program it rather than picking a tab."*
    *
    * IT IS ON THE WORKING DECK AND NOT THE LIVING ONE, because that is what it
-   * is: a machine you operate. Deck 48 is where the reactor, the fabricators,
-   * the coolant plant and the droid pool are, and this stands in the gap
-   * between Fabrication and the cargo hold — the two rooms that are already
-   * about making a thing and stacking it. A projection room on the residential
+   * is: a machine you operate. Deck 48 is the reactor, the fabricators, the
+   * coolant plant and the droid pool; a projection room on the residential
    * deck would read as a leisure room, and the point of the ask is that it is
    * PROGRAMMED.
+   *
+   * AND IT IS ON THE BALCONY, WHICH IS THE ONE INTERESTING THING ABOUT WHERE
+   * IT STANDS. The `inner` band is described one screen down as "the places
+   * that want the void in the window" — and this is the room that has no
+   * window at all. A sealed black box on the outer edge of the biggest open
+   * space in the hull, on the deck's best frontage, is the room stating what
+   * it is before you reach the door: everything else on this balcony looks at
+   * two other decks and the people on them, and this one looks at nothing
+   * because what is inside it is not here.
+   *
+   * The ring was tried first and the ring is full. Between `#50 Fabrication`
+   * (ending at 72.1°) and `#52 The cargo hold` (starting at 90.2°) there are
+   * 18.1° of ring, and `The fab bench` — a walkway fixture, §"the between-space
+   * gets a gazetteer too" — stands at 77° in the middle of them. Measured with
+   * `station.mjs`'s own door-clash arithmetic, no width of room and no bearing
+   * for the bench clears both the two rooms and each other; the bench would
+   * have had to be deleted to fit a cube in there, and a fixture deleted to
+   * make room is exactly the walkway thinning that table exists to prevent.
+   * The balcony has 12° of clear arc either side of it and no fixture on the
+   * band at all.
    *
    * ITS HOUR IS 21:00. Every other room on this deck peaks on a shift; this
    * one fills after the last one, because practice is what you do when the
@@ -572,10 +590,10 @@ export const PLACES = [
    * SHAPE, and rule 4 measured rather than hoped for: `latticecell` is a CUBE
    * — 16 × 14 × 8.2 — studded on all six faces on one pitch and empty on the
    * floor but for the plinth. Nothing else on deck 48 is a cube and nothing
-   * else on the station is regular in three axes at once. Measured with
-   * `station.mjs`'s own instrument on this deck: the worst pair involving #57
-   * is 0.140 (× #49 Coolant & water plant), against a bound of 0.85, and the
-   * deck's own worst pair is unmoved at 0.164 (#47 × #49).
+   * else on the station is regular in three axes at once. The number is in
+   * `latticecell`'s own note and in `tools/checks/holodeck.mjs`, which
+   * measures it on THIS deck with `station.mjs`'s own raster — that check
+   * pairs deck 40 only, because `dressStation` builds one deck a boot.
    */
   {
     id: 57, deck: 48, name: 'The Repeating Room', shape: 'latticecell',
@@ -585,7 +603,7 @@ export const PLACES = [
     who: 'a technician trimming the emitters; two waiting outside',
     idle: 'the room runs the last program it was given, empty, so the walls are never the same twice',
     verb: 'program the room — the lessons, and a room of your own',
-    band: 'outer', at: 81, w: 16, d: 14, h: 8.2, peak: 21, heads: 3,
+    band: 'inner', at: 45, w: 16, d: 14, h: 8.2, peak: 21, heads: 3,
   },
 
   /* ══ DECK 60 — ABOVE THE DRUM ═══════════════════════════════════════════ */

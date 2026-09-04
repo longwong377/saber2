@@ -53,16 +53,18 @@
  * A dressing is `place` + three surface keys + up to `MAX_PIECES` rows of
  * furniture. Packed as compact rows (`["crate", 3, -8, 2]` — the id, the two
  * grid coordinates as WHOLE CELLS because `Home.snap` guarantees they are, and
- * the rotation notch) a full forty-piece home is about 0.7 KB and the four-
- * piece cabin a player starts with is about 0.1 KB. The same rows written as
- * objects are 1.9× that, measured in `coop-home.mjs`, which is the whole
- * reason the codec exists.
+ * the rotation notch) a full forty-piece home is **758 B** and the four-piece
+ * cabin a player starts with is **150 B**. The same rows written as objects are
+ * 1387 B — 1.83× — which is the whole reason the codec exists. Measured in
+ * `coop-home.mjs`.
  *
- * Sent at the AVATAR rate it would cost 0.7 KB × 24 Hz × 3 peers ≈ 50 KB/s per
- * machine to repeat a fact that changes when somebody moves a chair. Sent on
- * change it costs 0.7 KB per chair. That is the same argument `LOOK_KEYS`,
- * `match` and `army` each make in `Net.js`, and it is why `home` is its own
- * message rather than four more fields on `packAvatar`.
+ * Sent at the AVATAR rate it would cost 758 B × 24 Hz × 3 peers = **53 KB/s**
+ * per machine to repeat a fact that changes when somebody moves a chair. Sent
+ * on change it cost **282 B for a whole three-player session** — a join, three
+ * seatings, three publishes and a planter put down — and 0 B over the 120
+ * frames after it while everybody stood still. That is the same argument
+ * `LOOK_KEYS`, `match` and `army` each make in `Net.js`, and it is why `home`
+ * is its own message rather than four more fields on `packAvatar`.
  *
  * WHAT IS NOT ON IT: `store` (the larder) and `pad` (which companion lives
  * there). Neither has a reader on another machine — see question 4 — and a
@@ -155,7 +157,7 @@ export const HOST_ROOM = 27;
  * moves a player's front door mid-session.
  *
  * EVERY ONE IS A ROOM THAT ALREADY STANDS. Nothing here builds a residence —
- * that is the whole saving V16 identifies, and `homeSpot` in `Home.js` derives
+ * that is the whole saving V16 identifies, and `spotOf` in `Home.js` derives
  * the placement grid from the gazetteer row the room was already built from.
  */
 export const GUEST_ROOMS = [31, 38, 33];
@@ -196,7 +198,7 @@ export function assignHomes(roster) {
     if (!r || !r.id) continue;
     if (r.host) { apts.set(r.id, HOST_ROOM); continue; }
     if (next >= GUEST_ROOMS.length) {
-      refused.push({ id: r.id, name: r.name || 'Jedi', why: fullSentence(r.name) });
+      refused.push({ id: r.id, name: r.name || 'Jedi', why: fullSentence() });
       continue;
     }
     apts.set(r.id, GUEST_ROOMS[next++]);
@@ -204,10 +206,19 @@ export function assignHomes(roster) {
   return { apts, refused };
 }
 
-/** The one sentence a refused player is given. One wording, one place. */
-export function fullSentence(name = null) {
-  return `${name ? `${name} cannot join: ` : ''}this session is full — `
-    + `${SESSION_CAP} players is the cap, and all ${SESSION_CAP} apartments are taken`;
+/**
+ * ══ THE ONE SENTENCE A REFUSED PLAYER IS GIVEN ════════════════════════════
+ *
+ * One wording, in one place, because there are two callers and they are on
+ * different sides of the wire: `Net._acceptConnection` says it to the fifth
+ * player at the door, and `assignHomes` says it about a roster entry there was
+ * no room for. Two hand-written versions of the same refusal is the twin table
+ * `HANDOFF` §2.4 names, and the day the cap moves one of them would go on
+ * saying three.
+ */
+export function fullSentence(hostName = null) {
+  return `this session is full — ${SESSION_CAP} players is the cap, and all ${SESSION_CAP} `
+    + `apartments${hostName ? ` on ${hostName}'s station` : ''} are already taken`;
 }
 
 /** Which door a player's home is behind, off the roster the host published. */
@@ -241,8 +252,9 @@ export function addressOf(placeId) {
  * compression trick: `Home.snap` guarantees every stored coordinate is a
  * multiple of `CELL`, so the cell index is the coordinate without loss, and
  * `1.5` costs three characters where `3` costs one. The rotation is already a
- * notch. Measured over a full home the row form is 1.9× the array form, and
- * the rows ARE the message — everything else on it is a dozen bytes.
+ * notch. Measured over a full home the object form is 1.83× the array form
+ * (1387 B against 758 B), and the rows ARE the message — everything else on it
+ * is a dozen bytes.
  *
  * The kind stays a STRING rather than becoming an index into `CATALOGUE`,
  * which would be smaller again. An index is a wire format that depends on the
@@ -263,6 +275,12 @@ function packPieces(pieces) {
 function readPieces(rows) {
   const out = [];
   for (const r of rows || []) {
+    /* BOUNDED HERE AND NOT ONLY IN `cleanHome`. The clamp downstream throws the
+     * surplus away, which is the right answer about the RECORD and the wrong
+     * one about the work: a peer sending four thousand rows would have four
+     * thousand objects built out of them first. A packet is somebody else's
+     * number and the loop that reads it is ours. */
+    if (out.length >= MAX_PIECES) break;
     if (!Array.isArray(r) || r.length < 4) continue;
     out.push({ k: r[0], x: Number(r[1]) * CELL, z: Number(r[2]) * CELL,
       r: ((Number(r[3]) | 0) % NOTCHES + NOTCHES) % NOTCHES });
@@ -376,16 +394,21 @@ export function seatApartments(world) {
  * the same divergence every prop in a co-op level already has, and the thing
  * that would fix it is a prop stream, not a home packet at 24 Hz.
  */
-export function publishApartment(world, force = false) {
+export function publishApartment(world) {
   const h = world?._home;
   const net = world?.net;
   if (!h || !h.mine || !net?.connected) return null;
   const st = coopState(world);
-  if (!force && h.edits === st.edits) return null;
+  if (h.edits === st.edits) return null;
   st.edits = h.edits;
   const msg = packHome(h.state, st.seq + 1);
+  /* THE SECOND GATE, AND IT IS NOT THE SAME AS THE FIRST. `edits` says the
+   * record was touched; this says the touch CHANGED anything a reader could
+   * see — a piece picked up and put back in the same cell is two edits and one
+   * unchanged room. `seq` is excluded from the comparison or every packet
+   * would differ from the last by construction. */
   const body = JSON.stringify([msg.a, msg.s, msg.f]);
-  if (!force && body === st.sent) return null;
+  if (body === st.sent) return null;
   st.sent = body;
   msg.seq = ++st.seq;
   st.sends++;
@@ -520,21 +543,39 @@ function reseatMine(world) {
   const h = world?._home;
   const want = myApartment(world);
   if (!stn || !stn.mats || !h || want == null || h.place.id === want) return false;
+  const was = h.place.id;
   const state = h.state;
   undressApartment(world, h);
-  const next = dressHome(world, stn, stn.mats, { place: want, state });
+  /* AND IF THE NEW DOOR CANNOT BE DRESSED, THE OLD ONE GOES BACK UP. A place
+   * that is not on this deck, or is too small to be a home, answers null from
+   * `dressHome` — and a player with no `world._home` at all has no room, no
+   * key, no wheel and nothing to save on the way out. Taking a room away is
+   * never the better failure. */
+  const next = dressHome(world, stn, stn.mats, { place: want, state })
+    || dressHome(world, stn, stn.mats, { place: was, state });
   /* The room changed, so what everybody else is holding is now wrong about
    * WHERE as well as what. −1 is "nothing has been published", which forces the
    * next `publishApartment` to send whatever `h.edits` happens to be. */
   coopState(world).edits = -1;
-  return !!next;
+  return !!next && next.place.id === want;
 }
 
 /**
- * One line of `stepStation`, and it costs one property read on a station with
- * nobody else on it: seat the doors if the roster moved, move our own dressing
- * if the door we were given is not the one it is behind, publish our own room
- * if it changed, put up anything new that has arrived.
+ * ══ ONE LINE OF `World._netTick` ══════════════════════════════════════════
+ *
+ * Seat the doors if the roster moved, move our own dressing if the door we
+ * were given is not the one it is behind, publish our own room if it changed,
+ * and put up anything that has arrived. It costs ONE property read when there
+ * is no session, which is every solo game.
+ *
+ * IT IS CALLED FROM THE NET TICK AND NOT FROM `stepStation`, WHICH IS WHERE IT
+ * BELONGS, and the reason is in `World._netTick` beside the call: a joining
+ * player's `StationDirector` is gated off, so `stepStation` never runs on a
+ * guest at all. That gate is `V16.md` Lane F's own *"the larger work is the
+ * station in co-op at all"* and it is not this lane; what cannot wait for it is
+ * the apartments, which are the feature. The cadence is the wire's — 18 Hz on
+ * the host, 24 on a client — which is the right one anyway for work whose whole
+ * argument is that it must not happen every frame.
  */
 export function stepCoop(world) {
   if (!world?.net?.connected) return;

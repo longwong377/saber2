@@ -378,10 +378,18 @@ export async function run({ check, assert }) {
         `listeners stacked after 3 rebuilds: ${stacked.map(([k, n]) => `${k}×${n}`).join(', ')}`);
       assert(menu._bound.get('build').inputs.length === 1,
         `_bound.build holds ${menu._bound.get('build').inputs.length} handles on one input`);
-      // The one that has two CONTROLS still has two, because Length is reachable
-      // from the forge and from the training panel and they must stay in step.
-      assert(menu._bound.get('bladeLength').inputs.length === 2,
-        `bladeLength holds ${menu._bound.get('bladeLength').inputs.length} inputs, expected the forge's and the training panel's`);
+      /* ONE CONTROL NOW, AND THAT IS THE INTERESTING NUMBER.
+       *
+       * Length used to be reachable from the forge AND from the Training
+       * panel, and the point of this line was that the two stayed in step.
+       * The Training tab is `#57 The Repeating Room` (V16 §A2), so the forge's
+       * is the only slider left — and it is the one that inherited the live
+       * blade: the panel's registration ran first and therefore owned
+       * `hooks.onBladeLength`, which the forge's now calls. Asserted at 1
+       * rather than deleted, because 2 would mean somebody put the panel back
+       * and 0 would mean the forge lost its slider with it. */
+      assert(menu._bound.get('bladeLength').inputs.length === 1,
+        `bladeLength holds ${menu._bound.get('bladeLength').inputs.length} inputs, expected the forge's alone`);
       // and one drag is one rebuild
       let rebuilds = 0;
       menu._refreshPreview = () => { rebuilds++; };

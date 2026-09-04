@@ -215,12 +215,12 @@ export function run({ check, assert }) {
        * once-per-run guard are asserted. */
       // eslint-disable-next-line no-new-func
       const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
-        'payForRun', 'clearTuning',
+        'payForRun', 'clearTuning', 'holdLessons',
         `const world = scope.world;\n${body}\nreturn record;`);
       // The REAL `recordRun` behind a tap, so the store below is written by the
       // shipped path exactly once and the check can also read what was handed to it.
       const record = make({ world }, (s) => { written.push(s); return recordRun(s); },
-        () => 'command', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {});
+        () => 'command', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {}, () => {});
       record(summary);
       record();                       // the death card's own exit — once, not twice
       assert(written.length === 1, `a finished campaign wrote ${written.length} records`);
@@ -292,10 +292,10 @@ export function run({ check, assert }) {
        * once-per-run guard are asserted. */
       // eslint-disable-next-line no-new-func
       const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
-        'payForRun', 'clearTuning',
+        'payForRun', 'clearTuning', 'holdLessons',
         `const world = scope.world;\n${body}\nreturn record;`);
       const record = make({ world }, (s) => { written.push(s); return recordRun(s); },
-        () => 'campaign', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {});
+        () => 'campaign', { order: 'jedi', species: 'human' }, () => {}, () => {}, () => {}, () => {}, () => {});
       record();                        // quitToMenu, verbatim
       assert(written.length === 1, `quitting wrote ${written.length} records`);
       assert(written[0].won !== false,

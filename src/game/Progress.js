@@ -157,6 +157,27 @@ const blank = () => ({
    * what you did it with". Under what terms is what you did it with.
    */
   byRule: {},
+  /**
+   * ── THE SYLLABUS BOOKMARK — V16 Lane A2 ───────────────────────────────
+   *
+   * The rungs of the dojo ladder that have been cleared, by id. It is here and
+   * not in a store of its own because `session.mjs` counts the durable writers
+   * in this tree and refuses a fourth, and it is right to: a new key is a new
+   * thing that crosses a session and whoever adds one has to argue it. This
+   * needs no new key, because it is the same KIND of fact the rest of this
+   * record holds — a tally of a thing done.
+   *
+   * AND IT IS NOT A RUN, which is why it does not go through `recordRun`.
+   * `RECORDED` refuses training and the sandbox because nothing in a lesson
+   * can kill you, so a lesson cleared must not add a run, a kill or a depth to
+   * anything. `clearLesson` writes this field and touches no other.
+   *
+   * NOT A CURRENCY AND NOT AN UNLOCK IN THE SENSE THIS FILE FORBIDS. A rung is
+   * a door onto a room that repeats a lesson you have already been taught; it
+   * buys no power, enters no draft, and nothing reads it back into a run.
+   * `grep -n 'lessons' src/` finds the room and nothing else.
+   */
+  lessons: [],
   recent: [],
 });
 
@@ -265,6 +286,24 @@ function write(v) {
 }
 
 export function loadProgress() { return read(); }
+
+/**
+ * A RUNG CLEARED. Idempotent — a lesson taken twice is one rung, and the
+ * ladder is a set rather than a tally for the reason the field's note gives:
+ * counting how many times you were taught something is a statistic about
+ * repetition and not about what you know.
+ */
+export function clearLesson(id) {
+  if (typeof id !== 'string' || !id) return read();
+  const p = read();
+  if (p.lessons.includes(id)) return p;
+  p.lessons = [...p.lessons, id];
+  write(p);
+  return p;
+}
+
+/** The rungs cleared, as a plain list. */
+export function lessonsCleared() { return read().lessons.slice(); }
 
 /**
  * Record one finished run.

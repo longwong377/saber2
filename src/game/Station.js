@@ -57,7 +57,7 @@ import { stationHour, setStationHour, stationName, setStationName, standing, sta
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
-import { myApartment, stepCoop } from './Coop.js';
+import { myApartment } from './Coop.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
 import { countersAt } from './Vendors.js';
@@ -1453,11 +1453,6 @@ export function stepStation(world, dt) {
   /* The piece in your hands follows the crosshair. Costs one property read a
    * frame when there is nothing held, which is nearly always. */
   stepHome(world, dt);
-  /* THE OTHER PLAYERS' APARTMENTS (V16 Lane F). Seats the doors when the roster
-   * moves, puts our own room on the wire when it changes, and dresses whatever
-   * has arrived. Three property reads on a station with nobody else on it — it
-   * returns on `net.connected` before it does anything at all. */
-  stepCoop(world);
   /* The fleet outside the glass. Its own step is a no-op when nothing was
    * dressed, so this is unconditional and costs one call on a station whose
    * theatre could not be resolved. */

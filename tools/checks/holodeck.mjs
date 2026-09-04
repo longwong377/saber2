@@ -296,9 +296,13 @@ export async function run({ check, assert, THREE }) {
         assert(!H.isHeld(far, hold),
           `rung ${j} ('${LESSONS[j].id}') can be entered by a player who has not cleared rung ${j - 1}`);
       }
+      /* …and the list the door is allowed to use agrees with `isHeld`, which
+       * is the one that would go quietly wrong: a `heldPrograms` that forgot
+       * to filter would still pass every line above. */
       const held = new Set(H.heldPrograms(LESSONS, hold).map((r) => r.id));
-      assert(!held.has(all.find((r) => r.lesson === LESSONS[LESSONS.length - 1].id).id) || i === LESSONS.length - 1,
-        'the last rung is in the held list before it has been earned');
+      const leaked = all.filter((r) => held.has(r.id) && !H.isHeld(r, hold));
+      assert(leaked.length === 0,
+        `heldPrograms offers ${leaked.map((r) => r.id).join(', ')} that isHeld refuses, at rung ${i}`);
       hold = H.clearLesson(hold, LESSONS[i].id);
     }
     /* Everything, once the ladder is walked. A gate that never opens is worse

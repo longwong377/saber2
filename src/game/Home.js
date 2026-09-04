@@ -473,10 +473,10 @@ const UP = new THREE.Vector3(0, 1, 0);
  *
  * `SHAPES.twinroom` is the only builder that hands back a home spot, and it
  * hands back #27's — the footprint AND the four rectangles a piece may not be
- * set down in. Lane F dresses a home behind a RESIDENCE (`#31`, `#33`, `#34`,
- * `#38`) whose builder declares nothing of the sort, so the spot for one is
- * derived from the gazetteer row that every place already has: the same
- * centre, yaw, footprint and deck floor `buildPlace` emitted the room at.
+ * set down in. Lane F dresses a home behind a RESIDENCE (`Coop.GUEST_ROOMS`:
+ * `#31`, `#38`, `#33`) whose builder declares nothing of the sort, so the spot
+ * for one is derived from the gazetteer row that every place already has: the
+ * same centre, yaw, footprint and deck floor `buildPlace` emitted the room at.
  *
  * WHAT IS LOST BY DERIVING IT, SAID PLAINLY AND NOT PAPERED OVER: `blockers`
  * comes back EMPTY, so inside a converted residence the grid knows the walls

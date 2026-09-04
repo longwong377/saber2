@@ -28,6 +28,9 @@
  *   THE TAB        the tab labelled Training had one button and it deployed
  *                  Sandbox; `selectMode('training')` had no caller in the
  *                  product except a mode card below the fold of that column.
+ *                  (V16 §A2 answered it by deleting the tab: the lessons and
+ *                  the sandbox are `#57 The Repeating Room` now. What is
+ *                  checked here is that neither comes back to this screen.)
  *   THE SERVER     tools/serve.mjs sent `Cache-Control: no-cache` with no ETag
  *                  and no Last-Modified, which is strictly worse than sending
  *                  nothing: it forbids heuristic freshness and then offers the
@@ -50,7 +53,6 @@ import { Menu, DEFAULT_SETTINGS, SCROLL_FADE } from '../../src/ui/Menu.js';
 import { SPECIES, HAIR_STYLES, BEARD_STYLES, speciesOf } from '../../src/game/Bodies.js';
 import { LEVELS, LEVEL_ORDER } from '../../src/game/Levels.js';
 import { MODES, playableModes } from '../../src/game/Waves.js';
-import { LESSONS } from '../../src/game/Dojo.js';
 import { handler } from '../serve.mjs';
 
 const read = (p) => readFile(new URL('../../' + p, import.meta.url), 'utf8');
@@ -399,12 +401,18 @@ export async function run({ check, assert }) {
       assert(scroller.scrollTop === scrolled,
         'a second reveal of a card already in view moved the column again');
 
-      // The last mode in the list is the one the lessons live behind.
-      menu.s.mode = 'training';
+      /* THE LAST CARD IN THE LIST, whichever it is — the deepest one under the
+       * fade and therefore the hardest to reveal. It was named as 'training'
+       * until the lessons moved into `#57 The Repeating Room` and Training
+       * stopped being a card at all (V16 §A2); a literal here would have gone
+       * from "the worst case" to "a card that is not in the list" without the
+       * sentence above it changing, which is the whole reason it is derived. */
+      const last = PICKABLE[PICKABLE.length - 1];
+      menu.s.mode = last;
       menu._revealMode();
-      r = cards[PICKABLE.indexOf('training')].getBoundingClientRect();
+      r = cards[PICKABLE.indexOf(last)].getBoundingClientRect();
       assert(r.bottom <= BAND - SCROLL_FADE + 0.5 && r.top >= 0,
-        `Training was revealed at ${r.top}..${r.bottom} of a ${BAND}px band`);
+        `${MODES[last].name} was revealed at ${r.top}..${r.bottom} of a ${BAND}px band`);
 
       // A DOM with no layout engine must be left alone rather than guessed at.
       const plain = menuOn();
@@ -413,7 +421,7 @@ export async function run({ check, assert }) {
         const s2 = plain.doc.getElementById('mode-list').closest('.col-scroll');
         assert(!s2.scrollTop, 'the reveal invented a scroll position on a page with no boxes');
       } finally { plain.close(); }
-      return `roguelite revealed at scrollTop ${scrolled}, training too, both clear of the ${SCROLL_FADE}px fade`;
+      return `roguelite revealed at scrollTop ${scrolled}, ${last} too, both clear of the ${SCROLL_FADE}px fade`;
     } finally { close(); }
   });
 
@@ -421,46 +429,55 @@ export async function run({ check, assert }) {
    *  THE TAB
    * ══════════════════════════════════════════════════════════════════ */
 
-  check('training: the tab named Training starts Training, and says how many lessons that is', () => {
-    const { menu, doc, hooks, close } = menuOn();
+  /**
+   * ══ THE TAB IS A ROOM NOW, AND THIS IS THE HALF THAT IS A DELETION ══════
+   *
+   * This check used to assert that the tab called Training started Training —
+   * it was written because the tab had one button and that button deployed the
+   * SANDBOX, so `selectMode('training')` had no caller a player could reach.
+   * V16 §A2 answers the same complaint one level further out: the player asked
+   * for *"a holodeck/dojo that replaces the training and sandbox menus — you
+   * walk into a room and program it rather than picking a tab"*, and both
+   * modes are now reached from `#57 The Repeating Room` on deck 48.
+   *
+   * So what the front screen has to say about training is that it says
+   * NOTHING about it. Kept here, on the front screen's own suite, rather than
+   * folded entirely into `holodeck.mjs`: the defect this file exists to catch
+   * is a control on this screen that does not do what its label says, and a
+   * Training tab quietly coming back — a merge, a revert, a second copy of the
+   * panel — is exactly that defect. The positive half (that the room teaches
+   * every lesson the tab taught) is measured in `tools/checks/holodeck.mjs`.
+   */
+  check('training: the front screen no longer offers the lessons or the sandbox at all', () => {
+    const { menu, doc, close } = menuOn();
     try {
-      // By `dataset`, not by an attribute selector: _buildTraining assigns
-      // `panel.dataset.panel` directly, which sets no attribute — in a browser
-      // it does, and in tools/checks/_page.mjs's DOM it does not. The property
-      // is what the menu's own tab wiring reads, so it is what is asked here.
       const panel = doc.querySelectorAll('.panel').find(p => p.dataset.panel === 'training');
-      assert(panel, 'the Training panel is gone');
+      assert(!panel, 'the Training panel is back on the menu beside the room that replaces it');
       const tab = doc.querySelectorAll('.tab').find(t => t.dataset.tab === 'training');
-      assert(tab && /training/i.test(tab.textContent), 'the Training tab is gone');
-
-      const go = doc.getElementById('btn-lessons');
-      assert(go, 'the Training tab has no button that starts the lessons');
-      assert(go.closest('.panel') === panel, 'the lessons button is not on the Training panel');
-      assert(/lesson/i.test(go.textContent), `the button reads "${go.textContent}"`);
-
-      assert(menu.s.mode !== 'training', 'the fixture already had Training selected; this proves nothing');
-      go.click();
-      assert(menu.s.mode === 'training',
-        `pressing "${go.textContent}" left the mode at ${menu.s.mode}`);
-      assert(hooks.fired.some(([n]) => n === 'onDeploy'), 'it selected the mode and never deployed');
-      // The Deploy panel has to agree afterwards — it goes through selectMode.
-      const card = menu._modeCards.get('training');
-      assert(card && card.classList.contains('sel'),
-        'the Mode list on the Deploy panel still shows something else as chosen');
-
-      // The sandbox keeps its own honestly-labelled button, one step down.
-      const sandbox = doc.getElementById('btn-sandbox');
-      assert(sandbox && /sandbox/i.test(sandbox.textContent), 'the sandbox button lost its name');
-      assert(!sandbox.classList.contains('primary'),
-        'the sandbox is still the primary action on the tab named Training');
-      sandbox.click();
-      assert(menu.s.mode === 'sandbox', 'the sandbox button stopped selecting the sandbox');
-
-      // …and the count in the panel's copy is the length of the list it starts.
-      const text = panel.textContent;
-      assert(text.includes(String(LESSONS.length)),
-        `the panel never names how many lessons there are (${LESSONS.length})`);
-      return `#btn-lessons → mode training + onDeploy, #btn-sandbox → sandbox, ${LESSONS.length} lessons named`;
+      assert(!tab, 'the Training tab is back in the bar');
+      for (const id of ['btn-lessons', 'btn-sandbox', 'opt-sandbox-count', 'opt-sandbox-fire',
+        'opt-sandbox-type', 'opt-train-bladelen', 'opt-unlimited-blade', 'opt-unlimited-focus']) {
+        assert(!doc.getElementById(id), `#${id} is still on the front screen`);
+      }
+      /* AND NOT AS A CARD EITHER. `_modeCards` is built from `playableModes`,
+       * so this is the same question the Deploy list asks. */
+      for (const k of ['training', 'sandbox']) {
+        assert(!menu._modeCards.get(k), `${k} is still a card on the Deploy panel`);
+      }
+      /* WHAT DID NOT GO WITH IT. The forge keeps Length — `bladeLength` is not
+       * a practice-only number and the Saber tab is where a blade is built —
+       * and the pause card keeps the two numbers you actually want to move
+       * while standing in the room. Losing either would be a deletion wearing
+       * a replacement's coat. */
+      assert(doc.getElementById('opt-bladelen'), 'the forge lost its Length slider with the tab');
+      const box = menu._buildPauseTraining?.();
+      assert(box, 'the pause card lost the practice numbers');
+      for (const id of ['opt-pause-count', 'opt-pause-fire', 'opt-pause-type']) {
+        assert(doc.getElementById(id), `#${id} went with the tab — the room is not adjustable from inside`);
+      }
+      const modes = playableModes();
+      return `no Training tab, no panel, 8 controls gone; ${modes.length} cards on Deploy `
+        + `(${modes.join(', ')}); forge Length and the three pause controls kept`;
     } finally { close(); }
   });
 

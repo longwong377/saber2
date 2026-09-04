@@ -28,7 +28,7 @@ import { theatreFor, LEVELS } from './game/Levels.js';
 import { deployCard, runReport } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
-import { recordRun, loadProgress } from './game/Progress.js';
+import { recordRun, loadProgress, clearLesson, lessonsCleared } from './game/Progress.js';
 /* V16 Lane B's purse and Lane A3's bench. `Progress.js`'s own header carries
  * the amendment that lets a currency exist at all; these are the two doors it
  * is spent and earned through. */
@@ -53,11 +53,14 @@ import { musterPlan, ARMY_IDS } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
-import { emptyLarder, larder, stowFood, takeFood } from './game/Home.js';
+import { emptyLarder, stowFood, takeFood } from './game/Home.js';
+import { noteApartment, larderAt } from './game/Coop.js';
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
 import { watch as toteWatch, resultOf as toteResult, MAX_STAKE } from './game/Tote.js';
 import * as Food from './game/Food.js';
+import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
+import { LESSONS } from './game/Dojo.js';
 import { stakeAtTote, payAtTote } from './game/Station.js';
 import {
   pitAtPlace, venueOpen, handlersOn, offerBout, openBout, beginRound, callOrder,
@@ -1182,6 +1185,8 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onTote = (id) => openTote(id);
     /* The cupboard at #27 — see `openLarder`. */
     world.onLarder = () => openLarder();
+    /* #57 — see `openHolodeck`. */
+    world.onHolodeck = () => openHolodeck();
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -2505,13 +2510,21 @@ let fullUntil = null;
 function showLarder() {
   const el = paneRoot('larder');
   const clock = Food.clockOf(stationDay(), world?._station?.hour ?? 0);
-  const rows = larder(clock);
+  /* WHOSE CUPBOARD IS OPEN. `homeKey` already shuts the galley door in a
+   * friend's cabin, so this covers the other route in — and it covers it by
+   * asking rather than by assuming, because a page that reads the local store
+   * while standing at somebody else's address is a page that lies about which
+   * fridge is open. */
+  const seen = larderAt(world, clock);
+  const rows = seen.rows;
   const kind = Food.eaterKind(sessionOr('army'));
   let html = '<div class="pane"><h2>The larder</h2>';
   const on = Food.full(fullUntil, clock);
   html += `<p class="sub">${on ? `${esc(fullUntil.name)} — ${Food.leftIn(fullUntil, clock).toFixed(1)} h left`
     : 'nothing working'}</p>`;
-  if (!rows.length) {
+  if (!seen.ok) {
+    html += `<p class="sub">${esc(seen.whose)}'s larder — their cupboard, not yours.</p>`;
+  } else if (!rows.length) {
     html += '<p class="sub">Empty. There is a food court on deck 40.</p>';
   } else {
     html += '<div class="rows">' + rows.map((r) => {
@@ -2558,6 +2571,101 @@ function openLarder() {
   return true;
 }
 screens.card('larder', () => closePane('larder'));
+
+/**
+ * ══ #57, THE REPEATING ROOM — V16 Lane A2 ═════════════════════════════════
+ *
+ * *"a holodeck/dojo that replaces the training and sandbox menus — you walk
+ *  into a room and program it rather than picking a tab."*
+ *
+ * REPLACES, and the tabs are gone rather than hidden beside it: `_buildTraining`
+ * and `_buildSandboxUnits` are deleted from Menu.js and both modes carry
+ * `hidden: true`, the flag that already means "reached by a door". Deploy went
+ * from ten cards to eight.
+ *
+ * A PROGRAM IS ONE ADDRESSABLE VALUE — a ground, an opponent set, and all seven
+ * dials the sandbox tab used to spread across a panel. Sixteen of them: one per
+ * rung of the ladder, plus six free rooms. `programSettings` never mutates, so
+ * the `Object.assign` below is the single visible place a program becomes the
+ * game's settings.
+ *
+ * THE RACK PRINTS WHAT YOU CANNOT RUN. A syllabus that hides the rungs above
+ * you tells you nothing about where you are going, and the room's whole subject
+ * is a syllabus — so every row is drawn and the door refuses the unheld ones.
+ */
+let holoCycle = null;
+
+function holoHold() { return { cleared: lessonsCleared() }; }
+
+function showHolodeck() {
+  const el = paneRoot('holodeck');
+  const rows = rack(LESSONS, holoHold());
+  let html = '<div class="pane"><h2>The Repeating Room</h2>';
+  if (holoCycle && !holoCycle.done) {
+    html += `<p class="sub">${esc(holoCycle.program.name)} — the room is setting itself.</p>`;
+  } else {
+    html += `<p class="sub">${rows.filter((r) => r.held).length} of ${rows.length} programs.</p>`;
+    html += '<div class="rows">' + rows.map((r) => {
+      const lines = rackLines(r, LEVELS[r.ground]?.name);
+      return `<div class="row"><b>${esc(lines[0])}</b>`
+        + `<span>${lines.slice(1).map(esc).join(' · ')}</span>`
+        + `<button class="buy" data-id="${esc(r.id)}"${r.held ? '' : ' disabled'}>`
+        + `${r.held ? 'run' : 'locked'}</button></div>`;
+    }).join('') + '</div>';
+  }
+  html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div></div>';
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll('button.buy')) {
+    b.addEventListener('click', () => runProgram(b.dataset.id));
+  }
+  for (const b of el.querySelectorAll('button[data-do="leave"]')) {
+    b.addEventListener('click', () => {
+      holoCycle?.abort(); holoCycle = null;
+      closePane('holodeck');
+      screens.clear();
+      input.enabled = true;
+      input.requestLock();
+      screens.set('playing');
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function runProgram(id) {
+  const p = programById(LESSONS, id);
+  if (!p || !rack(LESSONS, holoHold()).some((r) => r.id === id && r.held)) return;
+  Object.assign(settings, programSettings(p, settings));
+  holoCycle = new Cycle(p, settings, {
+    say: (line) => world?.notify?.('THE REPEATING ROOM', line),
+    /* The room's own emitters. The sink exists so the lattice can light with
+     * the program rather than after it; nothing drives it yet and it says so
+     * here rather than pretending. */
+    lattice: () => {},
+    paint: () => {},
+    live: () => { screens.clear(); deploy().catch((e) => console.error('program failed', e)); },
+  });
+  showHolodeck();
+}
+
+function openHolodeck() {
+  audio.ui('good');
+  screens.take('holodeck', () => showHolodeck());
+  return true;
+}
+screens.card('holodeck', () => { holoCycle?.abort(); holoCycle = null; closePane('holodeck'); });
+
+/**
+ * A RUNG FINISHED IS A RUNG HELD, and it is filed in the record that already
+ * exists rather than in a key of its own — `session.mjs` counts the durable
+ * writers in this tree and refuses a fourth, which is the right rule. See
+ * `Progress.lessons`: a lesson cleared is not a run, so it does not go through
+ * `recordRun`, and `RECORDED` still refuses training and the sandbox.
+ */
+function holdLessons() {
+  const d = world?.director;
+  if (!d || sessionOr('mode') !== 'training') return;
+  for (let i = 0; i < Math.min((d.index | 0) + 1, LESSONS.length); i++) clearLesson(LESSONS[i].id);
+}
 
 function showBench(which) {
   const el = paneRoot('bench');
@@ -3100,6 +3208,7 @@ function record(stats = null) {
   if (world._recorded) return;
   world._recorded = true;
   /* BEFORE the run is filed, for the ordering reason in `foldCompanion`. */
+  holdLessons();
   foldCompanion(stats);
   /* V16 §B5 — A PROVISION DOES NOT SURVIVE THE RUN IT WAS STOCKED FOR. The
    * doctrine amendment allows food precisely because it is temporary; a larder
@@ -3504,6 +3613,10 @@ function wireNet() {
     world?.applySeat?.(roster.find((r) => r.id === net.peer?.id));
   });
   net.on('error', (err) => menu.netStatus(String(err.message || err), 'err'));
+  /* V16 Lane F — THE DOOR SAYS NO IN WORDS. Four apartments on a station is
+   * four players; a fifth is turned away with the reason rather than dropped
+   * on a timeout that reads as a broken connection. */
+  net.on('full', (why) => menu.netStatus(String(why), 'err'));
   net.on('peer-joined', (id, name) => menu.netStatus(`${name || 'a Jedi'} joined`, 'ok'));
   net.on('peer-left', (id) => {
     menu.netStatus('a Jedi left', '');
@@ -3731,6 +3844,11 @@ function wireNet() {
    * The appearance comes off the ROSTER, where it crossed the wire with the
    * player who built it, instead of being invented here from a roster index.
    */
+  /* V16 Lane F — SOMEBODY'S APARTMENT, AS THEY HAVE DRESSED IT. Straight to
+   * the shipped reader: `noteApartment` refuses a packet from off the roster,
+   * one naming a door that is not the sender's, and one older than what is
+   * already held. None of those three judgements belongs in main.js. */
+  net.on('home', (peerId, msg) => { if (world) noteApartment(world, peerId, msg); });
   net.on('avatar', (peerId, msg) => {
     if (!world) return;
     if (!world.remotes) world.remotes = new Map();
@@ -4239,6 +4357,12 @@ function frame(now) {
   orderKeys();
   missionKey();
   communeTick(dt);
+  /* THE ROOM SETTING ITSELF, if a program was called for. It runs while the
+   * panel is up and the player is on their feet — the same argument `Warp.js`
+   * makes for the jump and `Food.Cook` makes for the counter: nobody needs the
+   * camera taken away to watch a room change. `live()` at the end is the one
+   * call that deploys. */
+  if (holoCycle && !holoCycle.done && holoCycle.step(dt) === 'done') holoCycle = null;
   setCommuneEntry(screens.state === 'menu' && !tree.open);
 
   if (world && (screens.state === 'playing' || screens.state === 'dead')) {

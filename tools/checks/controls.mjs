@@ -1986,12 +1986,12 @@ export async function run({ check, assert }) {
      * a setting cannot join this list without a control writing it.
      */
     const PICKED = ['level', 'difficulty', 'mode', 'colorIndex', 'hiltStyle', 'robeIndex',
-      'sandboxType', 'scheme', 'quality', 'deflectAim', 'unlimitedBlade', 'holocron',
-      // The opponent list's counts — one stepper per archetype, all writing
-      // into one object the way `wardrobe` and `face` do. `sandboxType` above
-      // is still real and still picked: it is what the bodies you did NOT name
-      // are, so the two are a pair rather than a duplicate.
-      'sandboxMix',
+      'sandboxType', 'scheme', 'quality', 'deflectAim', 'holocron',
+      /* `sandboxMix` and `unlimitedBlade` used to be here, as a stepper per
+       * archetype and a tick box on the Training tab. Both are PROGRAMMED
+       * now — see the derivation below. `sandboxType` stays: the pause card's
+       * Opponent select still writes it, and it is what the bodies you did NOT
+       * name are, so the two were always a pair rather than a duplicate. */
       /* The Commander Battle's two picked settings. `versusWin` is a card row
        * built off `VERSUS_WINS`, like every other list on this screen;
        * `versusTeams` is the session roster with a side on each name, written
@@ -2065,7 +2065,36 @@ export async function run({ check, assert }) {
     const EXCUSED = covered.length ? {} : {
       grassScale: 'no level grows a field, so the slider could not move anything — see Menu.js',
     };
-    const orphans = [], ghost = [];
+    /**
+     * ══ A FOURTH SHAPE OF CONTROL: PROGRAMMED (V16 §A2) ═══════════════════
+     *
+     * *"a holodeck/dojo that replaces the training and sandbox menus — you
+     * walk into a room and program it rather than picking a tab."*
+     *
+     * Four settings are now moved by a thing that is not on the menu at all:
+     * a PROGRAM, chosen off the rack in `#57 The Repeating Room`. This check
+     * asks "can the player move it", and it was answering that question by
+     * looking only in `Menu.js` — which was a complete list of the ways a
+     * setting could be written right up until the moment it was not.
+     *
+     * DERIVED, LIKE `EXCUSED` AND UNLIKE A LIST. A key is programmed if some
+     * program's `programSettings` output actually DIFFERS from the default for
+     * it. So a setting cannot join this by being typed here: it joins by a
+     * program moving it, and it falls off the day the last program that moves
+     * it stops — at which point the key is an orphan again and this check asks
+     * for a control back by name. The room is held to the same standard as the
+     * markup.
+     */
+    const { programs, programSettings } = await import('../../src/game/Holodeck.js');
+    const { LESSONS } = await import('../../src/game/Dojo.js');
+    const PROGRAMMED = new Set();
+    for (const prog of programs(LESSONS)) {
+      const out = programSettings(prog, DEFAULT_SETTINGS);
+      for (const k of Object.keys(DEFAULT_SETTINGS)) {
+        if (JSON.stringify(out[k]) !== JSON.stringify(DEFAULT_SETTINGS[k])) PROGRAMMED.add(k);
+      }
+    }
+    const orphans = [], ghost = [], programmed = [];
     for (const key of Object.keys(DEFAULT_SETTINGS)) {
       if (EXCUSED[key] && !bound.has(key)) continue;
       if (TYPED[key]) {
@@ -2078,7 +2107,14 @@ export async function run({ check, assert }) {
           `${key} is bound to #${bound.get(key)}, which is in no markup — _slider returns silently`);
         continue;
       }
-      if (!PICKED.includes(key)) { orphans.push(key); continue; }
+      if (!PICKED.includes(key)) {
+        /* AFTER the pickers, so a setting that has BOTH a card and a program
+         * is still held to having the card. The room is the last resort, not
+         * an amnesty. */
+        if (PROGRAMMED.has(key)) { programmed.push(key); continue; }
+        orphans.push(key);
+        continue;
+      }
       // `_swatchRow('skin-list', 'skinIndex', ...)` names the key at the control
       // site just as explicitly as `this.s.skinIndex =` does — it is the same
       // guarantee through a shared helper, so the vocabulary widens and the
@@ -2104,6 +2140,7 @@ export async function run({ check, assert }) {
     }
     return `${Object.keys(DEFAULT_SETTINGS).length} settings: ${bound.size} on sliders/checkboxes, `
       + `${PICKED.length} on pickers, ${Object.keys(TYPED).length} typed, `
+      + `${programmed.length} programmed in #57 (${programmed.join(', ') || '—'}), `
       + `${Object.keys(EXCUSED).length} excused (${Object.keys(EXCUSED).join(', ') || '—'}), 0 with no control`;
   });
 

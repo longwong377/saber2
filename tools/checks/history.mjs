@@ -85,7 +85,7 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
   const spyRecordRun = (summary) => { calls.push(['file', summary]); return recordRun(summary); };
   // eslint-disable-next-line no-new-func
   const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
-    'payForRun', 'clearTuning',
+    'payForRun', 'clearTuning', 'holdLessons',
     `const world = scope.world;\n${body}\nreturn record;`);
   // Rebuilt per call so `const world = scope.world` re-reads the live world,
   // exactly as main.js's own module-level `world` binding does.
@@ -97,7 +97,7 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
      * the STORE, and `food.mjs` is where a death emptying the larder is
      * asserted. A name the lift does not supply is a ReferenceError that takes
      * the whole check down. */
-    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion, () => {}, () => {}, () => {})(...a),
+    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion, () => {}, () => {}, () => {}, () => {})(...a),
   };
 }
 

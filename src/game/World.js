@@ -218,6 +218,7 @@ import { FocusSystem } from './Focus.js';
 import { DojoDirector } from './Dojo.js';
 import { HangarDirector } from './Hangar.js';
 import { StationDirector } from './Station.js';
+import { stepCoop } from './Coop.js';
 import { updateCauterisation } from './Ragdoll.js';
 import { packAvatar, packMatch, packSnapshot, sessionPart } from '../net/Net.js';
 import { QUALITY } from '../engine/Engine.js';
@@ -6306,6 +6307,25 @@ export class World {
     }
     if (this.netMode === 'host') this._armyTick(net);
     this._bondTick(net);
+    /**
+     * ══ AND THE APARTMENTS (V16 Lane F) ═══════════════════════════════════
+     *
+     * `_armyTick`'s slot exactly: a subsystem's wire work, done at the wire's
+     * cadence rather than the frame's, because a home changes when somebody
+     * moves a chair and stringifying forty rows sixty times a second to find
+     * out that nothing has is the cost this whole design refuses.
+     *
+     * IT IS HERE AND NOT IN `stepStation`, WHICH IS WHERE IT BELONGS, and the
+     * reason is one line up in this file: `director.update` is gated off on a
+     * client, so a joining player's `StationDirector` never runs and every
+     * station system with it. That is `V16.md` Lane F's own "the larger work is
+     * the station in co-op at all" and it is not this lane. What cannot wait
+     * for it is the apartments themselves — a guest who never steps the station
+     * never receives a door, never publishes their own room, and never dresses
+     * anybody else's, which is the whole feature. `stepCoop` returns on
+     * `net.connected` before it does anything, so solo play never reaches it.
+     */
+    stepCoop(this);
   }
 
   /**

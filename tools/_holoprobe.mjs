@@ -1,4 +1,22 @@
-/** TEMP probe: rule 4 on a deck. node --import ./tools/register.mjs tools/_holoprobe.mjs 48 */
+/**
+ * RULE 4 ON ONE DECK — a probe, not a check.
+ *
+ *   node --import ./tools/register.mjs tools/_holoprobe.mjs [deck] [id]
+ *
+ * `tools/checks/station.mjs` measures rule 4 on DECK 40 and only deck 40:
+ * `dressStation` builds one deck a boot, so its pairing can never see a room
+ * on 44 or 48. `tools/checks/holodeck.mjs` holds #57's own deck to the bound;
+ * this prints the WHOLE table so a shape can be tried and looked at, which is
+ * what §13.3 asks for — *"a pair over 0.85 is a place to redesign, not a
+ * threshold to raise"*, and you cannot redesign against a boolean.
+ *
+ * Same camera and same raster as the check: `_raster.mjs` exists so a number
+ * read here is comparable with the one that gate prints.
+ *
+ * With an `id`, it also lists every pair that room is in, nearest first —
+ * which is the list you actually work from when a silhouette is too close to
+ * something.
+ */
 import './dom-shim.mjs';
 import * as THREE from 'three';
 import { readFile } from 'node:fs/promises';
