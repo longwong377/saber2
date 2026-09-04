@@ -84,14 +84,20 @@ function liftRecord(src, assert, { scope, recordRun, mode, settings }) {
   const foldCompanion = (stats) => { calls.push(['fold', stats]); };
   const spyRecordRun = (summary) => { calls.push(['file', summary]); return recordRun(summary); };
   // eslint-disable-next-line no-new-func
-  const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion',
+  const make = new Function('scope', 'recordRun', 'sessionOr', 'settings', 'foldCompanion', 'emptyLarder',
+    'payForRun', 'clearTuning',
     `const world = scope.world;\n${body}\nreturn record;`);
   // Rebuilt per call so `const world = scope.world` re-reads the live world,
   // exactly as main.js's own module-level `world` binding does.
   return {
     body,
     calls,
-    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion)(...a),
+    /* `emptyLarder` is the fifth free name in the lifted body and, like
+     * `foldCompanion`, a no-op is right here: this file is about what reaches
+     * the STORE, and `food.mjs` is where a death emptying the larder is
+     * asserted. A name the lift does not supply is a ReferenceError that takes
+     * the whole check down. */
+    record: (...a) => make(scope, spyRecordRun, () => mode, settings, foldCompanion, () => {}, () => {}, () => {})(...a),
   };
 }
 

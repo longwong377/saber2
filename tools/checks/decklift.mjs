@@ -32,7 +32,7 @@
  */
 
 import { DECK, LIFT } from '../../src/game/Hangar.js';
-import { RIDE, STATE, DOOR, LEVEL, liftState, liftKey, atTheDoors } from '../../src/game/DeckLift.js';
+import { RIDE, STATE, DOOR, LEVEL, liftState, liftKey, atTheDoors, liftPick } from '../../src/game/DeckLift.js';
 
 async function deck() {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
@@ -162,7 +162,29 @@ export async function run({ check, assert, THREE }) {
       step(world, RIDE.arrive + RIDE.doors + 0.3, idle);
       assert(liftState(world) === STATE.WAIT, `the called car is ${liftState(world)}, not waiting open`);
       assert(st.open > 0.99, 'the car arrived with its doors shut');
-      assert(st.readout.caption === 'FLIGHT DECK', `the car came back reading "${st.readout.caption}"`);
+      /**
+       * ── WHAT A WAITING CAR'S READOUT SAYS, AND IT IS NOT WHERE IT IS ─────
+       *
+       * This asserted the literal 'FLIGHT DECK' and was right for exactly as
+       * long as the car had one floor to go to. `setReadout` has a documented
+       * branch for a car WAITING with its doors open: the readout is the
+       * button column's answer — where this car will take you if you step back
+       * and let it seal — and with the station's decks registered that is a
+       * deck number and not the deck you are standing on. The check was
+       * reading a destination and calling it a position.
+       *
+       * So the two facts are asserted as the two facts they are, and the
+       * expectation is DERIVED from the same list the button column cycles,
+       * which is what stops it going stale the next time a floor is added.
+       */
+      assert(st.readout.caption === String(liftPick(world).label).toUpperCase(),
+        `a waiting car reads "${st.readout.caption}" and the column is on `
+        + `"${liftPick(world).label}" — the readout and the button disagree`);
+      /* AND IT IS ACTUALLY HERE, which is the clause's real subject: the car
+       * was called and came back, so it is at rest on the deck rather than
+       * anywhere on the shaft. */
+      assert(Math.abs(st.scroll - st.stopScroll) < 0.01,
+        `the car answered the call from ${Math.abs(st.scroll - st.stopScroll).toFixed(2)} m off the deck`);
       /* STEP IN, and the ride out raises the door to the menu. */
       let left = 0;
       world.onDeckLeave = () => { left++; };
