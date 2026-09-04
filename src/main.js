@@ -63,7 +63,7 @@ import { programById, programSettings, rack, rackLines, Cycle } from './game/Hol
 import { LESSONS } from './game/Dojo.js';
 import { stakeAtTote, payAtTote } from './game/Station.js';
 import {
-  pitAtPlace, venueOpen, handlersOn, offerBout, openBout, beginRound, callOrder,
+  pitAtPlace, venueOpen, handlersOn, ROSTER_HOUR, offerBout, openBout, beginRound, callOrder,
   runRound, cornerAct, pitState, settleBout, foldPit, pitCall,
   PIT_ORDERS, ORDER_WINDOW, READ_WINDOW, CORNER_ACTS, ORDERS_PER_ROUND,
 } from './game/Pits.js';
@@ -1989,8 +1989,10 @@ function pitOffer(placeId) {
   if (!rec) return { venue, why: 'you have nothing to put in there' };
   /* WHO IS ACROSS THE PIT. Drawn from the people who were actually on the
    * station this morning — `handlersOn` walks the resident roster — so the man
-   * at the rail is somebody who lives here, and the same one all night. */
-  const on = handlersOn();
+   * at the rail is somebody who lives here, and the same one all night. THE
+   * DAY IS PASSED: without it the roster was the same twelve people for ever,
+   * which is the one thing the pit's own header says it must not be. */
+  const on = handlersOn(ROSTER_HOUR, day);
   if (!on.length) return { venue, why: 'nobody down here is carrying tonight' };
   const handler = on[(Math.abs(day * 2654435761) >>> 0) % on.length];
   return { venue, offer: offerBout({ venue, rec, handler, hour, day, standing: standing() }) };

@@ -257,7 +257,35 @@ export function wayPlacesOn(deck) {
  * `pits.mjs` — gets exactly the census it got before.
  */
 export function occupant(place, i, opts = {}) {
+  /**
+   * ══ THE FACE CHANGES BETWEEN DAYS AND NOT BETWEEN GLANCES ══════════════
+   *
+   * *"the same shop owner doesnt always look the same like between runs …
+   *  otherwise it would get stale seeing the same people always doing the
+   *  same things."*
+   *
+   * The seed was `p{place}s{slot}` and nothing else, so a hostile pass read
+   * the Concourse's slot 0 on day 0, day 1, day 5 and day 40 and got Vesbar
+   * Kolbar the brakiri financier every single time. The shelves rerolled on
+   * `(counter, day)`, the job board rerolled, the leave roll rerolled — and
+   * the faces did not, because the day never reached this line. A station
+   * where every shelf changes and no person does is worse than one where
+   * neither does: it says the day is passing and shows you it is not.
+   *
+   * SO THE DAY IS IN THE SEED, AND ONLY HERE. Stable for a whole day —
+   * `spawnResident`'s own note is that a slot index is what makes a resident
+   * survive a despawn, and a face that changed while you crossed the room
+   * would be a worse failure than a face that never changes at all. Different
+   * tomorrow. Same shape as `Counter.shelfFor`, for the same reason.
+   *
+   * AND THE NAMED CAST IS EXEMPT, which is the branch below this one: the
+   * Forge's Wookiee smith is a person, not a slot, and a person who is
+   * somebody else on Tuesday is not a person. `BORZ_BY_PLACE` returns before
+   * the day is ever consulted.
+   */
+  const day = Number.isFinite(opts.day) ? (opts.day | 0) : 0;
   const seed = `p${place.id}s${i}`;
+  const daily = `${seed}d${day}`;
   /**
    * A place's own bias, and there are three kinds.
    *
@@ -312,8 +340,11 @@ export function occupant(place, i, opts = {}) {
    */
   const off = barman(place, i, opts);
   if (off) return { ...off, seed };
+  /* EVERYTHING BELOW IS THE CENSUS — anonymous people filling a room — and
+   * every one of them is drawn on `daily`. The species bias of a quarter is
+   * the room's and does not move; who is standing in it does. */
   const bias = QUARTER_OF[place.id];
-  if (bias) return resident(seed, { species: bias });
+  if (bias) return resident(daily, { species: bias });
   if (place.id === 9 && i < RARE.length * 5) {
     /* The RARE eight, five each, in the first forty stalls. Cycling all
      * fifteen here would make the market one human in fifteen, which is a
@@ -321,15 +352,15 @@ export function occupant(place, i, opts = {}) {
      * the market has to guarantee is that the whole cast is IN it, and the
      * eight that the census would otherwise round out of the room are the
      * eight that need guaranteeing. `stationlife.mjs` counts them. */
-    return resident(seed, { species: RARE[i % RARE.length] });
+    return resident(daily, { species: RARE[i % RARE.length] });
   }
-  if (place.id === 38) return resident(seed, { species: HOSTEL[i % HOSTEL.length] });
+  if (place.id === 38) return resident(daily, { species: HOSTEL[i % HOSTEL.length] });
   /* The food court is the other place the tail is always in: a cheap counter
    * under a low ceiling at shift change is where transients and dock gangs
    * eat, and the census would otherwise leave the seven quarterless species
    * with one room between them. */
-  if (place.id === 17 && i < HOSTEL.length * 2) return resident(seed, { species: HOSTEL[i % HOSTEL.length] });
-  return resident(seed);
+  if (place.id === 17 && i < HOSTEL.length * 2) return resident(daily, { species: HOSTEL[i % HOSTEL.length] });
+  return resident(daily);
 }
 
 /** §3.2 #38: the species with no quarter of their own live at the hostel. */

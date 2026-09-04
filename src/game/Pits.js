@@ -166,14 +166,31 @@ const BEAST_TAIL = [' the Red', ' of Nar Shu', ' Ninefingers', ' the Quiet', ' I
  * place and `occupant` says who each of them is, which is the same pair of
  * readers `stationlife.mjs` holds the day to. Nothing here invents a resident.
  */
-export function handlersOn(hour = ROSTER_HOUR) {
+export function handlersOn(hour = ROSTER_HOUR, day = 0) {
   const out = [];
   const seen = new Set();
   for (const p of PLACES) {
     if (p.external || !p.heads) continue;
     const n = headcount(p, hour);
     for (let i = 0; i < n; i++) {
-      const res = occupant(p, i);
+      /**
+       * ── THE DAY, AND IT USED TO BE MISSING ────────────────────────────
+       *
+       * This called `occupant(p, i)` with no day at all, and `occupant`'s own
+       * seed carried none either — so a hostile pass swept twenty days and got
+       * the same twelve handlers with the same twelve animals every time. The
+       * man across the pit was the same man for ever, which is the *"it would
+       * get stale seeing the same people always doing the same things"* the
+       * player named, arriving through the one door where it matters most:
+       * the whole point of §G4 is that the opponent is somebody who lives here
+       * and could be anyone on any day.
+       *
+       * `seen` still keys on `res.seed`, which is deliberately the DAY-FREE
+       * one — a resident is one person however many rooms the walk finds them
+       * in, and de-duplicating on a daily key would put the same man on the
+       * card twice.
+       */
+      const res = occupant(p, i, { day });
       /* A Borz row is a named character with a job, not a stranger with an
        * animal — the cast is somebody else's table and it is left alone. */
       if (!res || res.borz || seen.has(res.seed)) continue;
@@ -1036,7 +1053,7 @@ export function foldPit(bout) {
 export function pitCard(venue, { hour = ROSTER_HOUR, day = 0, size = 0, roster = null } = {}) {
   const V = typeof venue === 'string' ? pitById(venue) : venue;
   if (!V) throw new Error('no such pit');
-  const pool = roster || handlersOn(hour);
+  const pool = roster || handlersOn(hour, day);
   const ground = dressGround(groundById(V.groundId), hash32(`card|${V.id}|${day}`));
   const n = Math.max(2, size || SKINS[ground.skin].field);
   const rng = streamOf('field', V.id, String(day));
