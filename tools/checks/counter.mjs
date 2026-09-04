@@ -239,6 +239,37 @@ export async function run({ check, assert, near }) {
       + `the black market turns a Jedi away and serves a Sith ${sith.rows.length} rows`;
   });
 
+  check('counter: every shop is in a room you can walk to', async () => {
+    /**
+     * THE DEFECT THIS IS A PIN FOR, and it shipped: `Vendors.UNDERLIFT` — the
+     * black market, the one shop in the game gated on your order, with a
+     * `refuse` list and nine rows nobody else carries — named `place: 58`, and
+     * 58 was not in the gazetteer. `Station.stationKey` reaches a counter
+     * through `countersAt(place.id)`, so a counter whose place does not exist
+     * is a counter no press can ever raise: the whole shop was unreachable and
+     * every check about it passed, because they all ask what it SELLS.
+     *
+     * So this asks the other question. A shop is a place plus a table, and a
+     * table without a place is a table in a corridor nobody built.
+     */
+    const V = await import('../../src/game/Vendors.js');
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const rooms = new Map(PLACES.map((p) => [p.id, p]));
+    const homeless = V.COUNTERS.filter((c) => !rooms.has(c.place));
+    assert(!homeless.length,
+      `${homeless.map((c) => `${c.name} stands in #${c.place}`).join('; ')} — and `
+      + 'there is no such place, so nothing on the station can raise that counter');
+    /* AND THE PLACE HAS TO BE ONE YOU CAN PRESS IN. A room with no `verb` is
+     * skipped by `stationKey` before the counter branch is ever reached, which
+     * is the same failure by a longer route. */
+    const mute = V.COUNTERS.filter((c) => !rooms.get(c.place)?.verb);
+    assert(!mute.length,
+      `${mute.map((c) => `#${c.place} carries ${c.name}`).join('; ')} — and that place has no verb, `
+      + 'so the interact key returns before the shop is offered');
+    return `${V.COUNTERS.length} counters in ${new Set(V.COUNTERS.map((c) => c.place)).size} rooms: `
+      + V.COUNTERS.map((c) => `#${c.place} ${rooms.get(c.place).name}`).join(', ');
+  });
+
   check('counter: the wallet is one short file, and the doctrine names its exception', async () => {
     /**
      * `Kennel.js:22-32` calls a new file's invisibility to the currency scan

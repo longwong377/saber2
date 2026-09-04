@@ -437,6 +437,63 @@ export const PLACES = [
     verb: 'fight a bout — no referee',
     band: 'outer', at: 6, w: 16, d: 14, h: 4.4, peak: 2, heads: 16,
   },
+  /**
+   * ── #58 THE UNDERLIFT — V16 §B4's black market ────────────────────────
+   *
+   * *"the black market smuggler types only deal with sith."*
+   *
+   * THE COUNTER EXISTED AND THE ROOM DID NOT. `Vendors.UNDERLIFT` has named
+   * place 58 since Lane B landed — a `refuse` list that turns a Jedi away in
+   * words, a shelf dark two days in three, nine rows nobody else carries — and
+   * `countersAt(58)` could never fire, because 58 was not in this table. One
+   * of the seven shops in the game, and the only one gated on your order, had
+   * no room to stand in.
+   *
+   * ON THE SERVICE DECK, BESIDE THE CARGO HOLD, and that is where the
+   * measurement put it rather than where the name first suggested.
+   *
+   * THREE CUTS AND THE STATION REFUSED TWO OF THEM. The obvious place is the
+   * living deck beside `#61 The Underlift Pit`, and deck 44's outer band has
+   * no room left: clockwise of the pit, `#30`'s doors begin at 30.8 degrees
+   * and `The star bay` stands at 20 in the middle of what is left;
+   * anticlockwise, the `Night market` fixture holds -16 to -8 and the laundry
+   * has the rest. The station said both in its own words — "#30 × #58 by 4.0
+   * m", then "The star bay at 20 degrees is in the door of #58", then "Night
+   * market at 348 degrees is in the door of #58". Moving somebody else's
+   * window bay to make room would have been the wrong repair.
+   *
+   * Deck 48 has the widest unclaimed arc on either deck, between `The fab
+   * bench` and `#52 The cargo hold`, and it is the better room anyway:
+   * smuggled cargo arrives in the cargo hold, and a man working out of
+   * containers on the service deck is where it goes next. The pit stays on 44
+   * and this is one deck under it, which is what the underlift is — the space
+   * around the lift core that nobody drew a room on.
+   *
+   * 84.5 DEGREES AND TWELVE METRES, and both numbers came off the station's
+   * own two tests rather than off a ruler. A room is a rectangle at a radius,
+   * not an arc, so its corners swing further round than its width suggests:
+   * the separating-axis test leaves 77.5 to 85 clear for twelve metres and
+   * only 79 to 83.5 for sixteen. And the door arc has to miss `The fab bench`
+   * at 77, which needs 6.7 degrees of clearance for a twelve-metre door —
+   * 83.8 at the earliest. The two windows overlap in about a degree, and this
+   * sits in it.
+   *
+   * `peak: 1` — the small hours, the same as the pit, so a player who walks
+   * down for one may as well try the other.
+   *
+   * `heads` is 2 — the smuggler and one other. A black market with a crowd in
+   * it is a market.
+   */
+  {
+    id: 58, deck: 48, name: 'The Underlift', shape: 'containerrow',
+    look: 'a service gap with cargo containers stacked two high down one side and one down the '
+      + 'other, an aisle between; every box shut but one, a plank across its mouth for a counter, '
+      + 'a hand lamp clamped to the door frame and pointed in',
+    who: '2 — a smuggler and whoever is ahead of you',
+    idle: 'the shutter is down two days in three; when it is up he does not look at your face',
+    verb: 'see what he has',
+    band: 'outer', at: 84.5, w: 12, d: 12, h: 5.0, peak: 1, heads: 2,
+  },
   /* #40 is FOUR platforms and they are four DIFFERENT rooms (§3.2). They keep
    * one id because the gazetteer gives them one; `station.mjs` measures rule 4
    * across all four as separate silhouettes, which is the point of them. */

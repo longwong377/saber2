@@ -1392,6 +1392,98 @@ export const SHAPES = {
     }
   },
 
+  /**
+   * #58 The Underlift: a CONTAINER ROW. Two stacks of cargo containers down
+   * one side and one down the other, an aisle between them, and exactly one
+   * container open — a plank across its mouth for a counter, and a hand lamp
+   * clamped to the door frame.
+   *
+   * ── WHY IT IS THIS AND NOT A SHOP ─────────────────────────────────────
+   *
+   * *"the black market smuggler types only deal with sith."* The counter has
+   * existed since Lane B — seven of them, and this is the seventh — with a
+   * `refuse` list, a shelf that is dark two days in three, and stock nobody
+   * else carries. What it did not have is a ROOM: `Vendors.UNDERLIFT` names
+   * place 58 and place 58 was not in the gazetteer, so the one shop in the
+   * game that is gated on your order could not be walked to.
+   *
+   * Everything about the room is the argument that it is not a shop. There is
+   * no shopfront, no sign, no ceiling of its own — the deck's underside IS the
+   * ceiling — and the light is one lamp on the open box rather than a lit
+   * room. The other containers are shut, which is the point: what is in them
+   * is not the player's business and the room does not pretend otherwise.
+   *
+   * ── AND IT IS THE SAME SERVICE GAP AS THE PIT ─────────────────────────
+   *
+   * `#61 The Underlift Pit` sits at 6 degrees on this band and this is at 26.
+   * They share the underlift and they share the hour: the shelf is seeded off
+   * the day and the pit is not on every night, so a walk down there is a walk
+   * to two things that may both be shut.
+   */
+  containerrow(kit, M, p) {
+    const { w, d, h } = p;
+    /* THE DECK'S UNDERSIDE IS THE CEILING. No `ceiling()` call: a service gap
+     * has beams and conduit over it and nothing else, and a finished soffit
+     * here would make it a room somebody built on purpose. */
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 2.6 });
+    for (let i = 0; i < 5; i++) {
+      const z = -d / 2 + (d / 5) * (i + 0.5);
+      kit.slab(M.hull, w - 1.0, 0.34, 0.30, 0, h - 0.3, z, { collide: false, bevel: 0 });
+    }
+    for (const s of [-1, 1]) {
+      kit.post(M.deep, 0.16, 0.16, h - 0.6, s * (w / 2 - 1.2), (h - 0.6) / 2, -d / 2 + 0.9, { radial: 8 });
+    }
+
+    /* THE STACKS. A container is 6.0 x 2.44 x 2.6, which is the real box and
+     * is why they read as containers rather than as crates: the proportion is
+     * the whole silhouette. Two high on the long wall, one high opposite, and
+     * the ribs are drawn on rather than modelled — REFERENCE.md rule 6. */
+    const CW = 6.0, CH = 2.6, CD = 2.44;
+    const box = (x, y, z, mat, ribs = true) => {
+      kit.slab(mat, CW, CH, CD, x, y + CH / 2, z, { collide: true, bevel: 0.04 });
+      if (!ribs) return;
+      for (let r = 0; r < 7; r++) {
+        kit.slab(M.dark, 0.06, CH - 0.3, 0.03, x - CW / 2 + 0.6 + r * 0.8, y + CH / 2, z + CD / 2 + 0.02,
+          { collide: false, bevel: 0 });
+      }
+    };
+    const zBack = -d / 2 + 1.8, zFront = d / 2 - 1.8;
+    box(-w / 2 + 4.0, 0, zBack, M.hull);
+    box(-w / 2 + 4.0, CH, zBack, M.deep);
+    box(w / 2 - 4.4, 0, zBack, M.deep);
+    box(0, 0, zFront, M.hull);
+
+    /* THE ONE THAT IS OPEN, and it faces the door. Its far wall is set back so
+     * the mouth reads as depth rather than as a painted rectangle, and the
+     * plank across it is the counter — `counter()` would give a shopfitted
+     * desk, which is exactly the thing this room is not. */
+    const ox = w / 2 - 4.4, oy = CH, oz = zBack;
+    kit.slab(M.dark, CW, CH, CD - 0.5, ox, oy + CH / 2, oz - 0.25, { collide: true, bevel: 0 });
+    for (const t of [-1, 1]) {
+      kit.slab(M.deep, 0.22, CH, CD, ox + t * (CW / 2 - 0.11), oy + CH / 2, oz, { collide: true, bevel: 0.03 });
+    }
+    kit.slab(M.deep, CW, 0.22, CD, ox, oy + CH - 0.11, oz, { collide: true, bevel: 0.03 });
+    kit.slab(M.wing, CW - 0.5, 0.12, 0.7, ox, oy + 1.02, oz + CD / 2 - 0.1, { collide: true, bevel: 0.02 });
+    /* THE LAMP, clamped to the frame and pointed in, so the box is bright and
+     * the aisle is not — the same lighting argument the pit's one hung lamp
+     * makes one room across. */
+    kit.post(M.dark, 0.2, 0.2, 0.16, ox - CW / 2 + 0.4, oy + CH - 0.3, oz + CD / 2, { radial: 8, rx: 0.5 });
+    kit.post(M.strip, 0.15, 0.15, 0.06, ox - CW / 2 + 0.42, oy + CH - 0.38, oz + CD / 2 - 0.06, { radial: 8, rx: 0.5 });
+
+    /* THE STEPS UP TO IT — a welded stair, because the open box is at the top
+     * of a stack and a counter you cannot reach is a counter nobody uses. */
+    for (let i = 0; i < 5; i++) {
+      kit.slab(M.wing, 1.1, 0.1, 0.42, ox - CW / 2 - 0.7, 0.52 * (i + 1), oz + CD / 2 - 0.3 - i * 0.42,
+        { collide: true, bevel: 0 });
+    }
+
+    /* §11 — loose things. Four crates nobody has stacked, in the aisle. */
+    for (let i = 0; i < 4; i++) {
+      loose(kit, -w / 2 + 2.2 + i * 1.2, 0, 0.4, (world, q) => makeCrate(world, q));
+    }
+  },
+
   /* ── THE FOUR TRAM PLATFORMS: #40 and its three, and rule 4 says they are
    * four DIFFERENT rooms, not one built four times. Each is named for its
    * material because that is what §3.2 names them by. ─────────────────────── */

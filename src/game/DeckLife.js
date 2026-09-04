@@ -2011,10 +2011,34 @@ function reach(rig, side, target, yaw, out) {
 
 const WALK = 1.35, SPRINT = 3.1;
 
+/**
+ * ── HOW OFTEN A MAN IS SOLVED, BY WHAT HE IS DOING AND HOW FAR OFF HE IS ──
+ *
+ * `NEAR` is the radius inside which a man is solved on the schedule the note
+ * at the call site argues for — every frame moving, one in three standing.
+ * Beyond it the same argument gets stronger rather than weaker: the animator
+ * integrates its own clock off the `dt` it is handed, so six frames arriving
+ * as one advance a walk cycle by exactly what six would, and at forty metres a
+ * man is eleven pixels tall and the difference is not visible.
+ *
+ * MEASURED, and this is why it exists: `tools/_lifeprof.mjs` puts 1.27 ms of a
+ * 2.06 ms step on 35 workers — 36 us a man, against 6 for a droid and 2 for a
+ * silhouette — and `deckcast` reads 2.8 ms on a typical frame inside a live
+ * world against a 2.5 budget. The deck's worker count went 13 -> 35 across the
+ * density pass and nothing re-derived either number.
+ */
+const WORKER_NEAR = 40;
+const WORKER_NEAR2 = WORKER_NEAR * WORKER_NEAR;
+const _wcam = { x: 0, z: 0, has: false };
+
 function stepWorkers(world, life, dt) {
   const W = life.workers;
   if (!W) return;
   const fx = world.particles;
+  /* ONE CAMERA READ FOR THE WHOLE LOOP, not one per man. */
+  const cam = world.engine?.camera;
+  _wcam.has = !!cam;
+  if (cam) { _wcam.x = cam.position.x; _wcam.z = cam.position.z; }
   for (const w of W) {
     const sh = w.shove;
     const J = w.job;
@@ -2102,7 +2126,15 @@ function stepWorkers(world, life, dt) {
      * third.
      */
     w.lag = (w.lag || 0) + dt;
-    const due = speed > 0.05 || sh.state !== 'post' || ((life.frame + w.i) % 3 === 0);
+    /* THE STRIDE: every frame close and moving, one in three close and still,
+     * one in three far and moving, one in six far and still. A man being
+     * thrown or getting up (`sh.state !== 'post'`) is always solved wherever he
+     * is — that is the one motion whose timing a player is watching. */
+    const far = _wcam.has
+      && ((w.pos.x - _wcam.x) ** 2 + (w.pos.z - _wcam.z) ** 2) > WORKER_NEAR2;
+    const stride = sh.state !== 'post' ? 1
+      : (speed > 0.05 ? (far ? 3 : 1) : (far ? 6 : 3));
+    const due = stride === 1 || ((life.frame + w.i) % stride === 0);
     if (due) { w.anim.update(w.lag, p); w.lag = 0; }
     /**
      * ── AND THE MERGED SKIN IS ON THE SAME CLOCK AS THE POSE ──────────────
