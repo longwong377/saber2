@@ -47,6 +47,8 @@ import * as Muster from './game/Muster.js';
 import { musterPlan } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
+/* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
+import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
@@ -1145,6 +1147,8 @@ async function enterStation(floorRow = null, opts = {}) {
      * panel's id, this releases the lock, opens it, and re-locks on close.
      */
     world.onKiosk = (panelId) => openKiosk(panelId);
+    /* #28's own page — see `openHabitat`. */
+    world.onHabitat = () => openHabitat();
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -1762,6 +1766,91 @@ function openKiosk(panelId) {
  * a callback that threw inside it — is recoverable instead of leaving a menu
  * page sitting on top of the pause card. */
 screens.card('kiosk', () => { if (kioskOpen) { kioskOpen = false; menu.hideMenu(); } });
+
+/**
+ * ══ THE HABITAT'S OWN PAGE — V15 §4 ═══════════════════════════════════════
+ *
+ * *"a companion management screen that can only be reached at the habitat."*
+ *
+ * ITS OWN OVERLAY AND NOT A KIOSK. A kiosk opens a tab of the menu, and this
+ * page is not on the menu: the Jedi tab's kennel page dresses and releases,
+ * and this one feeds and grooms. Two doors onto one animal, each doing what
+ * its room does. `companions.mjs` holds the menu's page exactly where it is.
+ *
+ * AND ITS HIDE KNOWS ITS OWN ROOT, which is the whole reason it is shaped like
+ * `openMeditation` and not like `openKiosk`. `Screens.clear()` runs EVERY
+ * registered card's hide on every clear and boot ends with a clear — a card
+ * that cannot tell itself from "hide the menu" took the front screen down on
+ * every boot once, and the game was unreachable with nothing on the console.
+ * This one hides `#habitat`, which is its and nothing else's.
+ */
+function habitatRoot() {
+  let el = document.getElementById('habitat');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'habitat';
+    el.className = 'screen hidden';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+const esc = (v) => String(v ?? '').replace(/[&<>"]/g, (c) => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+function showHabitat() {
+  const el = habitatRoot();
+  const p = habitatPanel();
+  let html = '<div class="pane"><h2>The Kennel habitat</h2>';
+  if (p.broken) html += '<p class="warn">This station is not saving. Nothing here will be here tomorrow.</p>';
+  if (!p.rec) {
+    html += '<p class="sub">No animal on the roll. Take one out and bring it back.</p>';
+  } else {
+    html += `<p class="sub">${esc(p.name || p.label)} — ${esc(p.label)}, ${esc(p.stage.label)}`
+      + (p.grownBy > 1.02 ? ` · ${p.grownBy.toFixed(2)}x the size it came in at` : '') + '</p>';
+    if (p.marks) html += `<p class="sub">${esc(p.marks)}</p>`;
+    if (p.next) {
+      html += `<p class="sub">Next: ${esc(p.next.label)} — ${esc(p.next.note)}`
+        + (p.next.both ? ` (${p.next.runs} more runs AND ${p.next.care} more here)` : '') + '</p>';
+    }
+    /* THE TWO THINGS THIS ROOM CAN DO, and the reason a disabled one is
+     * disabled — a button that refuses without saying why is the shape this
+     * codebase keeps removing. */
+    html += '<div class="acts">' + p.care.acts.map((a) =>
+      `<button class="care" data-act="${esc(a.act)}"${a.can ? '' : ' disabled'}`
+      + `${a.why ? ` title="${esc(a.why)}"` : ''}>${esc(a.label)}</button>`).join('') + '</div>';
+    if (p.tempers.length) {
+      html += '<div class="rows">' + p.tempers.map((t) =>
+        `<div class="row"><b>${esc(t.label)}</b><span>${esc(t.gain)} · ${esc(t.cost)}</span></div>`).join('') + '</div>';
+    }
+  }
+  /* THE SIX PLAQUES, which is the other half of the room: who is on the wall. */
+  html += '<div class="rows">' + p.plaques.map((r) =>
+    `<div class="row"><b>${esc(r[0])}</b><span>${esc(r[1])}</span></div>`).join('') + '</div></div>';
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll('button.care')) {
+    b.addEventListener('click', () => {
+      careAt(p.rec?.id, b.dataset.act);
+      showHabitat();
+      /* The plaques are geometry in the room and they say what the record
+       * says, so they are re-cut on the same press that changed it. */
+      try { writePlaques(world); } catch {}
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function closeHabitat() {
+  const el = document.getElementById('habitat');
+  if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+}
+
+function openHabitat() {
+  audio.ui('good');
+  screens.take('habitat', () => showHabitat());
+  return true;
+}
+screens.card('habitat', () => closeHabitat());
 
 function openMeditation() {
   audio.ui('good');

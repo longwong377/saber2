@@ -1152,6 +1152,17 @@ export function stationKey(world) {
   if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
   /* #56 is the one place whose verb writes something. */
   if (place.id === 56) return beginStationName(world);
+  /**
+   * ── #28 THE KENNEL HABITAT — V15 §4's *"only reachable at the habitat"* ──
+   *
+   * Raised like the kiosks and NOT as one: a kiosk opens a page of the menu
+   * (`KIOSK_TAB`), and the habitat's page is not on the menu — it is where you
+   * feed and groom, which the Jedi tab's kennel page does not do and must not
+   * grow. `main.js` answers this the way it answers meditation: its own
+   * overlay with its own root, which is also the only shape that is safe
+   * against `Screens.clear()` running every card's hide on every clear.
+   */
+  if (place.id === 28 && world.onHabitat) return world.onHabitat() !== false;
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
 }

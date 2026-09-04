@@ -1007,9 +1007,25 @@ export const SHAPES = {
     /* The pool, sunk at the far end. */
     kit.slab(M.glass, 4.4, 0.2, 3.4, w / 2 - 3.4, 0.08, d / 2 - 2.6, { collide: false, bevel: 0 });
     for (const s of [-1, 1]) kit.slab(M.dark, 0.4, 0.5, 3.8, w / 2 - 3.4 + s * 2.4, 0.25, d / 2 - 2.6, { collide: true, bevel: 0 });
-    /* The plaques — `Habitat.js` writes the names on them from the Kennel. */
-    for (let i = 0; i < 6; i++) kit.slab(M.mark, 0.7, 0.4, 0.06, -w / 2 + 1.4 + i * 1.1, 2.4, -d / 2 + 0.3, { collide: false, bevel: 0 });
-    ctx.habitat = { deck: p.deck, x: p.x, z: p.z, yaw: p.yaw };
+    /**
+     * THE PLAQUES — `Habitat.js` writes the names on them from the Kennel, and
+     * it needs to know WHERE they are and what to parent a panel to.
+     *
+     * The slabs are merged into the room's per-material mesh and come out the
+     * other side with no handle, so the six positions are published in the
+     * PLACE'S OWN FRAME along with the room's size. `#56`'s obelisk already
+     * hands back a `group` for the same reason; this is that, plus the six
+     * points, because a plaque is a surface to draw on rather than an object
+     * to move. Reading them back off the merged mesh would be a second
+     * statement of where a plaque is, in a form nothing could check.
+     */
+    const plaques = [];
+    for (let i = 0; i < 6; i++) {
+      const px = -w / 2 + 1.4 + i * 1.1, py = 2.4, pz = -d / 2 + 0.3;
+      kit.slab(M.mark, 0.7, 0.4, 0.06, px, py, pz, { collide: false, bevel: 0 });
+      plaques.push({ x: px, y: py, z: pz, w: 0.7, h: 0.4 });
+    }
+    ctx.habitat = { deck: p.deck, x: p.x, z: p.z, yaw: p.yaw, w, d, h, plaques };
     for (let i = 0; i < 4; i++) loose(kit, -w / 2 + 2 + i * 2, 0, 1.5, (world, q) => makeCrate(world, q, 0.6));
   },
 
@@ -1765,7 +1781,10 @@ export function buildPlace(world, group, place, M, st) {
   }
   if (ctx.home) st.home = ctx.home;
   if (ctx.obelisk) st.obelisk = { ...ctx.obelisk, group };
-  if (ctx.habitat) st.habitat = ctx.habitat;
+  /* The group as well as the numbers: `Habitat.js` parents its six panels to
+   * the place's own node so they are culled, moved and disposed with the room
+   * exactly as everything else in it is. Same hand-back `st.obelisk` gets. */
+  if (ctx.habitat) st.habitat = { ...ctx.habitat, group };
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
 }
