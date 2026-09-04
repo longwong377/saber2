@@ -1000,11 +1000,15 @@ async function enterHangar(arrival = null, opts = {}) {
      */
     world.onDeckLift = (floorRow) => {
       leaveHangar({ toMenu: false });
-      enterStation(floorRow).catch((e) => {
-        console.error('the station failed', e);
-        menu.showMenu(); screens.set('menu');
-        sayOnTheMenu(`Could not reach the station: ${e.message || e}`);
-      });
+      /* `enterStation` reports its own failure — it has a real try/catch round
+       * the build and `sayOnTheMenu` is called from inside it. A second report
+       * here would be a `#menu-record` writer on a promise rejection, which
+       * `keyart.mjs` refuses BY BRACE COUNTING: a `.catch()` arrow is not a
+       * `catch` block, and the rule is that every call site of the one writer
+       * is lexically inside one. It is a good rule — a writer reachable on an
+       * unconditional path is a permanent line under the title of the game —
+       * and this is one report, in the place that knows what went wrong. */
+      enterStation(floorRow).catch((e) => console.error('the station failed', e));
     };
     world.onDeckDeploy = () => {
       /* The seam: a still of the sealed bay for the load, and the player's
@@ -1668,7 +1672,26 @@ const KIOSK_TAB = {
   databank: 'codex',
 };
 
+/**
+ * ══ THE CARD MUST BE A NO-OP WHEN NO COUNTER IS UP ════════════════════════
+ *
+ * `Screens.clear()` runs EVERY registered card's hide, on every clear — and
+ * boot ends with a clear. So `screens.card('kiosk', () => menu.hideMenu())`
+ * took the front screen down on the frame the game finished loading, every
+ * time, and the game was unreachable: `window.SABER` present, the boot plate
+ * gone, and `#menu` hidden with nothing to click.
+ *
+ * It cost a browser probe to find, and nothing headless could have: the whole
+ * suite is green with the menu hidden, because no check clicks a button.
+ *
+ * The meditation card next door is safe because it hides `tree`, which is its
+ * own overlay. A kiosk IS the menu, so its card cannot be told from "hide the
+ * menu" unless it knows whether a counter is open. This flag is that.
+ */
+let kioskOpen = false;
+
 function showKioskPanel(panelId) {
+  kioskOpen = true;
   menu.showMenu();
   const tab = document.querySelector(`.tab[data-tab="${KIOSK_TAB[panelId] || 'play'}"]`);
   /* Click the tab rather than toggling the classes here: the handler starts
@@ -1679,6 +1702,7 @@ function showKioskPanel(panelId) {
 }
 
 function closeKiosk() {
+  kioskOpen = false;
   if (!world) { menu.hideMenu(); return; }
   menu.hideMenu();
   screens.overlay = null;
@@ -1694,7 +1718,7 @@ function openKiosk(panelId) {
 /* Screens knows how to take the counter down, so a pause raised over one — or
  * a callback that threw inside it — is recoverable instead of leaving a menu
  * page sitting on top of the pause card. */
-screens.card('kiosk', () => menu.hideMenu());
+screens.card('kiosk', () => { if (kioskOpen) { kioskOpen = false; menu.hideMenu(); } });
 
 function openMeditation() {
   audio.ui('good');
