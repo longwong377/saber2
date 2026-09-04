@@ -672,3 +672,48 @@ output is correct."* So:
   (the readable port).
 - §3.2, §6 and §5.3 unchanged. **A place not in §3.2 is not built. A rule in
   §3.1 is not bent. A gate in §5.3 is not skipped.**
+
+---
+
+## 16. AMENDED BY V15 — the player's list of 4 Sep
+
+`V15.md` is the player's V15 notes, sorted into work. Most of them land here,
+so this file is amended rather than left standing. §15's rule holds: a place
+not in §3.2 is not built, and the player is the only authority that can add
+one — these are added by that authority.
+
+**One new place**, and it is a landmark rather than a screen:
+
+| # | Deck | Place | Shape / look | Who / rhythm | Happens without you | Your verb |
+|---|---|---|---|---|---|---|
+| 56 | 40 | **The Standing** | a tall narrow hall with a black obelisk three decks high running up through a cut in the soffit; four cut faces, slowly turning; your own row lit and everyone else's engraved | a few reading it at any hour, a crowd after a run files | rows change as runs file | read it; find your own row |
+
+**And five clauses amended.** Each is argued in `V15.md`; the change here is
+so this file cannot be read as still saying the old thing:
+
+- **§3.2 #27, Your cabin** — is now a customisable HOME: a placement grid, a
+  catalogue of real `Prop` bodies, per-room surfaces off `DECK_PALETTE`'s
+  discipline, a unique address printed on the door and the notice board, a
+  mirror that opens the character creator with your own body in the glass, a
+  perch for one small companion, and its own `Session` fold that a death does
+  not touch. (V15 §1.3.)
+- **§3.2 #28, The Kennel habitat** — is now the companion management place and
+  the ONLY one: care, feeding, grooming and visible growth happen there and
+  nowhere else, and each companion's own corner of it is where you manage that
+  companion. (V15 §4.)
+- **§3.3, Who lives here** — the Borz cast is not only manifested but SPAWNED,
+  in off-duty dress. A trooper on the station is not in plates and a Jedi is
+  not in robes; each is a costume palette through the same `robe` override the
+  fifteen species use. (V15 §1.4.)
+- **§5.2, the lift** — the ride between the flight deck and the station shows
+  no loading plate. The ride is already the right length to hide the build;
+  what gives it away is the plate over the top of it. (V15 §1.5.)
+- **§4, the Starfury** — the pass at the flight deck keeps the deck's own
+  traffic running while you watch it through the field, and the field is solid
+  to you. (V15 §1.6.)
+
+**And three things that are NOT this file's**, recorded here only so a reader
+of this plan knows they exist and are coming: a melee set with a Holocron
+branch, the player's body and wardrobe (a woman of any Star Wars species,
+clone armour head to toe, capes, secondary motion), and companion growth. They
+are `V15.md` §§2–4 and they are game-wide rather than station work.
