@@ -3242,4 +3242,58 @@ export async function run({ check, assert }) {
     return `${raised.size} hooks raised, ${sites.length} callers, every one paid or exempt: `
       + `${[...raised].sort().join(', ')}`;
   });
+
+  check('controls: a key with two meanings names both of them', async () => {
+    /**
+     * ══ FINDING 9's OTHER HALF ══════════════════════════════════════════════
+     *
+     * This repository has refused a new binding row three times, so a second
+     * meaning goes on an EXISTING key and the state decides which one you get —
+     * `swap`, `drive`, `throw` and now `thrust`. That is a good pattern with one
+     * price: the controls screen is the only place a player goes to find out
+     * what a key does, and it prints `label`. Print half a key's meaning and the
+     * other half is undiscoverable.
+     *
+     * It was: `thrust` read "Attack (thrust)" under **Blade** while also being
+     * the whole of V15 §3's melee set — five strikes, a chain, six Holocron
+     * facets — reachable only by pressing it with the sabre PUT AWAY, and
+     * nothing on any screen said so.
+     *
+     * The bar is the pattern the other three already keep: a row whose action
+     * `Player._readInput` branches on with the blade down states its second
+     * meaning. Derived from `Player.js` rather than from a list typed here, so
+     * a FIFTH key that grows a blade-down meaning is caught the day it does.
+     */
+    const psrc = await read('src/game/Player.js');
+    const pcode = psrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    /* The block `_readInput` runs only with the blade down — its own condition
+     * is the seam, and everything `actHit`/`act` is asked for inside it is a key
+     * that means something different there. */
+    const i = pcode.indexOf("if (!this.saber?.lit && !this.gripBody && !this.gripEnemy) {");
+    assert(i > 0, 'the blade-down input block has moved — this check is reading nothing');
+    const block = pcode.slice(i, pcode.indexOf('\n    } else', i));
+    const dual = [...new Set([...block.matchAll(/\bact(?:Hit)?\??\.?\(?'(\w+)'\)/g)].map(m => m[1]))];
+    assert(dual.length >= 2,
+      `only ${dual.length} key(s) read inside the blade-down block — the scan has stopped matching`);
+    const short = [];
+    for (const id of dual) {
+      const row = ACTIONS.find(a => a.id === id);
+      assert(row, `${id} is read with the blade down and is not in ACTIONS`);
+      /* `/` is how this table already writes two meanings ("Drop / take a
+       * saber", "Take / leave the controls", "Throw / recall saber"), so the
+       * shape is the table's own and not a new convention. */
+      if (!row.label.includes('/')) short.push(`${id}: "${row.label}"`);
+    }
+    assert(!short.length,
+      `${short.join('; ')} — this key does something else entirely with the blade down and its `
+      + 'own description on the controls screen does not say so, which is the only place a '
+      + 'player could have found out');
+    /* AND THE SECOND HALF IS ABOUT THE BLADE BEING DOWN, not just any slash: a
+     * row could keep the punctuation and say nothing. */
+    const thrust = ACTIONS.find(a => a.id === 'thrust');
+    assert(/blade down|no blade|unarmed|strike|fist|punch/i.test(thrust.label),
+      `the attack key reads "${thrust.label}" and never mentions what it does without a blade`);
+    return `${dual.length} keys carry a blade-down meaning and every one names it: `
+      + dual.map(id => `${id} "${ACTIONS.find(a => a.id === id).label}"`).join(', ');
+  });
 }

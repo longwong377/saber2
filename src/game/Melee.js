@@ -481,9 +481,21 @@ const RETURN_SCATTER = 0.085;
 const RETURN_STAMINA = 6;
 
 /**
- * What the One Point is worth against a machine. 30 x 8 = 240, which deletes
- * every light droid outright, leaves a droideka on its last few points and is
- * a very bad day for a walker without being an instant kill on one.
+ * ══ WHAT THE ONE POINT IS WORTH AGAINST A MACHINE THAT WILL NOT COME APART ═
+ *
+ * It is the FALLBACK now and not the move. It used to be the whole of it —
+ * `dmg *= 8` and an ordinary `e.damage(...)` — which measured, on a b1, as
+ * hp 28 -> -212 with `dead=true` and `actor.severedCount` still 0: a blunt
+ * death with nothing off it, on the move whose own brief is *"it completely
+ * dissassembles them just like your regular dissassmble move but with melee."*
+ * An 8x multiplier wearing the name.
+ *
+ * So the machine branch now goes through `Player.disassembleBody`, which is
+ * the SAME `Enemy.takeCut` path `forceDisassemble` uses, with the same budget
+ * off `forceScale`. This number survives for the case that path answers zero —
+ * a chassis with no capsules, or a droid already rent to the core — because a
+ * finger driven into something that cannot shed a joint still has to land like
+ * a truck rather than like a jab.
  */
 const DISASSEMBLE = 8;
 
@@ -601,6 +613,47 @@ function dropCaught(set) {
 export function caughtCount(player) { return player?._melee?.caught?.length || 0; }
 
 /**
+ * ══ HAS THIS FIGHTER WOKEN THE ONE POINT? ═════════════════════════════════
+ *
+ * Asked by `Player._readInput` BEFORE it decides what the attack key means,
+ * which is the whole of finding 5. The old wiring asked for the point
+ * unconditionally and let `strike` refuse it, and a refused `want` comes back
+ * null — so a fighter without the facet who happened to be holding the guard
+ * got an attack key that did nothing at all. One reader, here, so the key's
+ * meaning and the move's own gate cannot drift apart.
+ */
+export function hasPoint(player, mods = null) {
+  const m = mods || meleeMods(player?.boonMods || player?.takenBoons || player?.world?.takenBoons);
+  return m.point > 0;
+}
+
+/**
+ * WHY THE ONE POINT DID NOT COME OUT, in the player's own units, or null if it
+ * did or if there is nothing to say.
+ *
+ * `_refuse`'s rule — "a bound key that does nothing and does not say why is the
+ * same lie as a dead checkbox" — applies hardest to a move with a nine-second
+ * cooldown and a 30-Force price, because both of the reasons it refuses are
+ * invisible: the bar is on screen but the threshold is not, and the cooldown is
+ * on nothing at all. Said HERE rather than in Player.js so the numbers come off
+ * `MOVES.point` and cannot be retyped.
+ */
+export function pointRefusal(player) {
+  const set = player?._melee;
+  const M = MOVES.point;
+  /* Mid-strike is not a refusal, it is a commitment — and it already reads on
+   * screen, because the fighter is visibly swinging. */
+  if (!set || set.busy) return null;
+  const cd = set.cool?.point ?? 0;
+  if (cd > 0) return `recovering — ${cd.toFixed(1)}s`;
+  if ((player.force ?? 0) < M.force) {
+    return `${M.force} Force needed, you have ${Math.round(player.force ?? 0)}`;
+  }
+  if ((player.stamina ?? 0) < MIN_STAMINA) return 'nothing left to throw it with';
+  return null;
+}
+
+/**
  * ══ WHAT A STRIKE HITS ════════════════════════════════════════════════════
  *
  * A cone in front of the fighter: everything inside `reach`, inside `arc` of
@@ -647,7 +700,9 @@ function resolve(player, M, mods, ctx) {
 
     /* BLUNT. `'melee'` is the kind, and `Enemy.damage`'s shield branch already
      * exempts it — the one place the engine already knew blunt was different
-     * from a bolt. Nothing here reaches the slicer, so nothing comes off. */
+     * from a bolt. Nothing in the CHAIN reaches the slicer, so nothing comes
+     * off it; the One Point is the one declared exception and it goes through
+     * the Force's own disassembly rather than through a cut. See below. */
     _tgt.copy(e.position); _tgt.y += (e.hipHeight ?? 0.95) * 0.6;
     /**
      * ── AND THE ONE POINT COMES APART A MACHINE ─────────────────────────
@@ -673,7 +728,24 @@ function resolve(player, M, mods, ctx) {
      */
     let dmg = M.damage * mods.damage;
     const machine = (e.A?.toughness ?? e.toughness ?? TOUGHNESS.flesh) >= TOUGHNESS.droid;
-    if (M.disassemble && machine) dmg *= DISASSEMBLE;
+    /**
+     * AND HERE IS WHERE IT ACTUALLY COMES APART. `disassembleBody` is
+     * `Player.forceDisassemble`'s own severing loop, lifted so both moves run
+     * it: extremities first, legs last, `Enemy.takeCut` with `force: true`, one
+     * budget off `forceScale`. Duck-typed rather than imported — Player.js
+     * imports this file, so the arrow only points one way, and a fighter that
+     * cannot disassemble anything simply does not carry the method.
+     *
+     * Measured, one press each at default Force power (budget 2), against the
+     * flat 0 every one of them read before: 2 joints off a b1 — which is what
+     * kills it, at hp 28 -> -4 rather than -212 — 2 off a dwarfspider, 2 off a
+     * tridroid, and 0 off a clone trooper, which is where the fiction put it.
+     */
+    let cut = 0;
+    if (M.disassemble && machine) cut = player.disassembleBody?.(e, ctx) ?? 0;
+    /* Nothing came away — see DISASSEMBLE. Then it is the heavy blunt strike it
+     * always was, and the player is not charged 30 Force for a poke. */
+    if (M.disassemble && machine && !cut) dmg *= DISASSEMBLE;
     const dealt = e.damage?.(dmg, _tgt, player, 'melee');
 
     /* KNOCKBACK, and it is the thing V15 asks for by name. Along the strike,
@@ -690,7 +762,11 @@ function resolve(player, M, mods, ctx) {
     if (M.stagger > 0 && e.duel?.stagger) {
       try { e.duel.stagger(M.stagger * mods.stagger, _q, 1.0); } catch {}
     }
-    if (dealt !== false) hits++;
+    /* A JOINT COMING OFF IS A HIT even when the damage call answers false,
+     * which is what it answers on a body the severing has already killed —
+     * `set.landed` and the HUD both read this, and a One Point that deleted a
+     * b1 used to report itself as a miss. */
+    if (dealt !== false || cut) hits++;
     /* The hit's report: a thump rather than a hum, and dust rather than
      * sparks. `Impact` is the door every striker in the game already uses. */
     ctx?.hitSpark?.(_tgt, 'blunt');
@@ -763,13 +839,34 @@ export function poseMelee(player, mods = null) {
 }
 
 /**
- * What the HUD says while the blade is down. One line, and it is the chain —
- * a player who cannot see the chain cannot use it.
+ * ══ WHAT THE HUD SAYS WHILE THE BLADE IS DOWN ═════════════════════════════
+ *
+ * *"a player who cannot see the chain cannot use it"* — this function's own
+ * header, written before it had a caller. It had none for two rounds: nothing
+ * in `HUD.js` mentioned melee, punch or kick, `caughtCount` was called only by
+ * a check, and the binding screen filed the attack key under **Blade** as
+ * "Attack (thrust)". A player who never happened to click with the saber down
+ * had no way at all to find out the set existed. `HUD._meleePrompt` is the
+ * caller now and `melee.mjs` fails if it goes away again.
+ *
+ * IT ANSWERS EVEN WHEN NOTHING IS HAPPENING, which is the change that makes it
+ * teach rather than narrate. Returning null on an idle fighter — which it did —
+ * means the line only ever appears to somebody who is already punching.
+ *
+ * NO KEY NAMES IN HERE. What the player must press is the HUD's business,
+ * because a key is a binding and `controls.mjs` refuses a typed one anywhere in
+ * `src/`. This says what the hands are doing; the HUD puts the player's own
+ * keycaps in front of it.
  */
 export function meleePrompt(player) {
-  const set = player?._melee;
-  if (!set) return null;
+  if (!player || player.saber?.lit) return null;
+  const set = player._melee;
+  /* Before the first punch of a life there is no set at all, and that is
+   * exactly the fighter this line is for. */
+  if (!set) return 'strike — hands and feet';
+  const n = set.caught.length;
+  if (n) return n > 1 ? `send ${n} bolts back` : 'send it back';
   if (set.move) return MOVES[set.move].label;
   if (set.chain && set.chainT > 0) return `→ ${MOVES[set.chain].label}`;
-  return null;
+  return 'strike — hands and feet';
 }

@@ -49,7 +49,7 @@ import { stationKey, namingStation } from './Station.js';
 /* V15 §3's melee set. A leaf: it reads a Player and writes damage through the
  * doors that already exist (`Enemy.damage` with kind 'melee', `addShove`), and
  * imports nothing from this file. */
-import { strike as meleeStrike, stepMelee, poseMelee, stepCatch } from './Melee.js';
+import { strike as meleeStrike, stepMelee, poseMelee, stepCatch, hasPoint, pointRefusal } from './Melee.js';
 import { focusKey as deckFocus, wheelEdit as deckWheel,
          naming as deckNaming, beginNaming as deckBeginNaming,
          commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
@@ -4863,16 +4863,67 @@ export class Player {
        *   `thrust` with bolts hanging at the palm THROWS THEM — `Melee.strike`
        *     answers the full hand before it answers the chain, so a fighter
        *     holding a bolt and pressing punch means the bolt.
-       *   `push` with the blade down is the One Point. The Force key, for a
-       *     strike that spends Force, and it is a thrust of the hand either
-       *     way — which is what makes one key mean one thing here rather than
-       *     two.
+       *   `thrust` with the PALM ALREADY UP is the One Point — see
+       *     `_meleePress`, which owns that decision and the reason for it.
        */
-      stepCatch(this, ctx?.dt ?? 0.016, !!input.act?.('stance'));
-      if (input.actHit('push')) { meleeStrike(this, null, 'point'); return; }
-      if (input.actHit('thrust')) { meleeStrike(this); return; }
+      const palm = !!input.act?.('stance');
+      stepCatch(this, ctx?.dt ?? 0.016, palm);
+      if (input.actHit('thrust')) { this._meleePress(ctx, palm); return; }
     } else if (input.actHit('thrust')) this._tryDive(ctx);
     this._stratagemInput(input, ctx);
+  }
+
+  /**
+   * ══ ONE PRESS, ONE MOVE — AND IT WAS TWO ══════════════════════════════════
+   *
+   * MEASURED, on a real world, one frame of the press, `meleePoint: 1`, blade
+   * down: the finger spent **45.5 Force** on every target and threw a visible
+   * push shockwave through the One Point's own 0.34 s wind-up. The move
+   * declares 30. The other 15.5 was a whole Force push, because
+   * `_readInput`'s Force block runs `if (input.actHit('push')) this.forcePush(ctx)`
+   * unconditionally and the melee block below it then read the SAME press for
+   * the point. On a b1 the shockwave killed the target at frame 1 — before the
+   * strike it was supposed to open with existed.
+   *
+   * ── WHICH KEY THE POINT BELONGS ON ────────────────────────────────────────
+   *
+   * Not `push`. Making that branch exclusive would have fixed the double
+   * charge and taken Force push off a fighter with no blade in his hands, and
+   * the build that buys the One Point is precisely the one V15 describes —
+   * *"you only want to run melee and force powers"*. Taking a Force power away
+   * to pay for a melee move is the wrong side of that sentence.
+   *
+   * So it is the ATTACK key with the PALM ALREADY UP: `stance` held is what
+   * raises the Still Hand two lines above this, it is the only hold in the set,
+   * and both of Lane E's verbs are then the same gesture — the hand comes up,
+   * and either it catches something or the fingers go through. Nothing is
+   * consumed twice: `stance` is a LEVEL and `thrust` is an EDGE, and the edge's
+   * three meanings with the blade down are ordered and exclusive —
+   *
+   *   a hand full of bolts   sends them back (`Melee.strike` answers the full
+   *                          hand first, whatever was asked for)
+   *   the palm up, and the   the One Point
+   *     One Point woken
+   *   otherwise              the chain
+   *
+   * `hasPoint` is asked BEFORE the key is spent rather than letting `strike`
+   * refuse an unwoken move, because a refused `want` comes back null and the
+   * attack key would do nothing at all for the ninety-nine fighters in a
+   * hundred holding the guard without the facet. They get the jab.
+   *
+   * AND IT SAYS WHY WHEN IT WILL NOT COME OUT. A nine-second cooldown and a
+   * 30-Force floor are both invisible — `_refuse`'s own rule — so
+   * `Melee.pointRefusal` states them in the player's units. Verified after:
+   * 30.0 Force spent on the press, on all three droids, and no shockwave.
+   */
+  _meleePress(ctx, palm) {
+    if (palm && hasPoint(this)) {
+      if (meleeStrike(this, null, 'point')) return;
+      const why = pointRefusal(this);
+      if (why) this._refuse('the one point', why);
+      return;
+    }
+    meleeStrike(this);
   }
 
   /**
@@ -11595,6 +11646,159 @@ export class Player {
   }
 
   /**
+   * ══ THE JOINTS THIS BODY COULD STILL LOSE, FURTHEST OUT FIRST ═════════════
+   *
+   * Lifted out of `forceDisassemble` unchanged, because the One Point needs the
+   * SAME list — V16 Lane E asks for a finger that *"completely dissassembles
+   * them just like your regular dissassmble move but with melee"*, and "just
+   * like" is a promise about this code and not about a damage number. Melee.js
+   * reached `e.damage(dmg * 8, …)` instead: measured on a b1, hp 28 -> -212,
+   * dead, and `actor.severedCount` still 0 — nothing came off at all.
+   *
+   * Extremities first, core last: a droid coming apart from the hands inward
+   * reads as disassembly, whereas going for the chest first reads as an
+   * execution and is over before you can see it.
+   */
+  _severable(e, centre) {
+    if (!e || !e.capsules) return [];
+    // Bone DEPTH, used only to break ties — it keeps the order sane on the one
+    // frame after a spawn when the rig has not been solved and every capsule is
+    // sitting on top of every other.
+    const depth = (name) => { let b = e.rig ? e.rig.get(name) : null, n = 0; while (b && b.parent) { b = b.parent; n++; } return n; };
+    return e.capsules()
+      // vital ≥ 0.15 drops the hands and the feet. They are not worth a joint
+      // of the budget: a cut takes the whole subtree, so an elbow already
+      // brings the hand with it, and spending the entire default budget on two
+      // detached hands is not what "take it apart" looks like.
+      /* No `?? 0.4` on the reads: every capsule the game emits is priced by
+       * `Enemy.severance`, which throws rather than defaulting, so a fallback
+       * here would only ever hide the one thing it was there to cover up. */
+      .filter(c => !c.shield && c.vital >= 0.15 && c.vital < 0.7 && !CORE_BONE.test(c.name))
+      .filter(c => !e.actor || !e.actor.isSevered(c.covers ?? c.name))
+      .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
+      .sort((a, b) => (b.d - a.d) || (b.k - a.k))
+      .map(x => x.c);
+  }
+
+  /**
+   * How far it comes apart. round(1.6·P + 0.6) is 1 joint at 0.25x, 2 at 1x,
+   * 4 at 2x and 7 at 4x — and seven joints off a humanoid frame is both arms at
+   * the elbow, both at the shoulder, both clavicles and the head, i.e. the top
+   * of the slider really does dismantle it.
+   *
+   * ONE EXPRESSION, TWO MOVES. The finger uses the identical budget off the
+   * identical `forceScale`, which is the whole meaning of "just like your
+   * regular disassemble move": a player who has bought Force power sees BOTH
+   * disassemblies grow, and neither can be tuned without the other noticing.
+   */
+  _severBudget(P = this.forceScale) { return clamp(Math.round(1.6 * P + 0.6), 1, 8); }
+
+  /**
+   * ══ TAKE THE JOINTS OFF, AND SAY HOW MANY CAME ════════════════════════════
+   *
+   * The loop `forceDisassemble` has always run, with the ordering argument that
+   * was learnt the expensive way kept verbatim. It does NOT gate on what the
+   * body is made of: rend asks `isMechanical` (`A.droid`) and the One Point asks
+   * the material ladder (`TOUGHNESS.droid` and up, which is droids AND
+   * vehicles), and those two are deliberately different questions. This runs the
+   * severing for whoever already decided.
+   */
+  _sever(e, live, budget, centre, P = this.forceScale) {
+    // Legs LAST, whatever the geometry says. Enemy._loseLimbBehaviour topples
+    // on the first leg lost, and topple() ragdolls the body — after which every
+    // further cut is a broken joint rather than a detached piece with a molten
+    // stub. Taking a foot first therefore turned a seven-joint disassembly into
+    // one flying limb and a heap. Arms and head first, then it collapses.
+    const legs = live.filter(c => LEG_BONE.test(c.name));
+    const limbs = live.filter(c => !LEG_BONE.test(c.name));
+    // The head goes after the arms and before the legs: vital 0.95 makes it a
+    // lethal cut, so leading with it ends the show before it starts.
+    if (budget >= 5) {
+      const head = e.capsules().find(c => c.name === 'head' && (!e.actor || !e.actor.isSevered('head')));
+      if (head) limbs.push(head);
+    }
+    limbs.push(...legs);
+
+    let cut = 0;
+    for (const c of limbs) {
+      if (cut >= budget) break;
+      // Re-checked INSIDE the loop, not just when the list was built. A cut
+      // takes the whole subtree below it, so severing an upper arm severs the
+      // forearm and the hand too — and without this the next two iterations
+      // spent budget on bones that were already gone, reported two sever
+      // events the actor never made, and a forcePower-4 disassembly took
+      // exactly one joint off.
+      /* `c.covers ?? c.name` — a weak point's capsule is named for the GAP
+       * (`femur0.tip`) and the thing that comes off is the BONE the gap is a
+       * hole in, so asking the actor about the capsule's own name always
+       * answers false and the rend spends a joint of its budget on a limb that
+       * is already on the floor. `Enemy.takeCut` refuses the second cut, so
+       * this was safe and wasteful rather than wrong. */
+      if (e.actor && e.actor.isSevered(c.covers ?? c.name)) continue;
+      _g3.lerpVectors(c.p0, c.p1, 0.5);
+      _g4.subVectors(_g3, centre);
+      _g4.y = _g4.y * 0.4 + 0.35;                       // bias the scatter upward
+      if (_g4.lengthSq() < 1e-8) _g4.set(0, 1, 0);
+      // Ragdoll scales this by 0.35 in takeCut and again by 0.34 in finalise,
+      // so ~28 here is the 3 m/s of drift that makes a piece leave rather than
+      // drop; the rest is what forcePower buys.
+      _g4.normalize().multiplyScalar(18 + 14 * P);
+      /* `force: true` — this is a joint pulled apart, not a blade drawn through
+       * one, and `Enemy._turnCut` is the BLADE's guard. A heavy body turns a
+       * killing edge with a plate or a hide; the answer to a Force power is the
+       * Force pool (`resistForce`), which already runs on the enemy side. See
+       * the note at `_turnCut`. */
+      const outcome = e.takeCut({
+        bone: c.name, cutT: 0.14, cap: c, point: _g3.clone(),
+        impulse: _g4.clone(), normal: UP.clone(), speed: 18, force: true,
+      }, this);
+      // …and a pass that took nothing off is not a limb. World._applyBladeEvent
+      // learnt this when the duellist guard landed and this site did not, so a
+      // rend that a guard caught still credited the counter on the death card.
+      if (outcome === 'turned') continue;
+      this.limbsRemoved++;
+      cut++;
+    }
+    return cut;
+  }
+
+  /**
+   * ══ THE ONE POINT'S DOOR ONTO ALL OF THAT — V16 LANE E ════════════════════
+   *
+   * *"imagine you've like infused your chakra/force into your finger and the
+   * effect is so strong it dissassmbles droids."* `Melee.resolve` calls this by
+   * NAME rather than importing anything, because Player.js imports Melee.js and
+   * the arrow has to point one way; a striker that cannot take things apart
+   * simply does not have the method, and `?.` is the whole of that.
+   *
+   * WHO IS A MACHINE IS NOT DECIDED HERE. Melee keeps its own gate — the
+   * engine's material ladder, `TOUGHNESS.droid` and above — which is the gate
+   * `melee.mjs` measures against every archetype in the game. This is the
+   * severing and nothing else.
+   *
+   * Force is charged at `Melee.strike` when the move is committed (30, on top
+   * of 22 stamina and a 9 s cooldown), so nothing is spent here: the price was
+   * paid to throw the finger, and whether it lands is the aim's problem.
+   *
+   * Measured, one press each at default Force power, where `_severBudget` is 2:
+   * b1 2 joints, tridroid 2, dwarfspider 2, clone trooper 0 — the flesh branch
+   * never reaches this at all. Buy Force power and both disassemblies grow
+   * together, which is the point of sharing the budget.
+   */
+  disassembleBody(e, ctx = null, budget = null) {
+    const centre = this._enemyPoint(e, _g1).clone();
+    const live = this._severable(e, centre);
+    if (!live.length) return 0;
+    const cut = this._sever(e, live, this._severBudget(budget ?? this.forceScale), centre);
+    if (!cut) return 0;
+    /* The same shake and the same burst rend ends on, at the same site, because
+     * a droid that comes apart in silence reads as a damage number. */
+    this.camera?.addShake?.(0.22);
+    ctx?.particles?.sparkBurst?.(centre, null, 22 + 6 * cut, { speed: 11 });
+    return cut;
+  }
+
+  /**
    * FORCE DISASSEMBLE — take a droid apart at the joints.
    *
    * Deliberately routed through Enemy.takeCut with the REAL cap from
@@ -11649,24 +11853,7 @@ export class Player {
 
     const P = this.forceScale;
     const centre = this._enemyPoint(e, _g1).clone();
-    const caps = e.capsules();
-    // Bone DEPTH, used only to break ties — it keeps the order sane on the one
-    // frame after a spawn when the rig has not been solved and every capsule is
-    // sitting on top of every other.
-    const depth = (name) => { let b = e.rig ? e.rig.get(name) : null, n = 0; while (b && b.parent) { b = b.parent; n++; } return n; };
-    const live = caps
-      // vital ≥ 0.15 drops the hands and the feet. They are not worth a joint
-      // of the budget: a cut takes the whole subtree, so an elbow already
-      // brings the hand with it, and spending the entire default budget on two
-      // detached hands is not what "take it apart" looks like.
-      /* No `?? 0.4` on the reads: every capsule the game emits is priced by
-       * `Enemy.severance`, which throws rather than defaulting, so a fallback
-       * here would only ever hide the one thing it was there to cover up. */
-      .filter(c => !c.shield && c.vital >= 0.15 && c.vital < 0.7 && !CORE_BONE.test(c.name))
-      .filter(c => !e.actor || !e.actor.isSevered(c.covers ?? c.name))
-      .map(c => ({ c, d: _g2.lerpVectors(c.p0, c.p1, 0.5).distanceTo(centre), k: depth(c.name) }))
-      .sort((a, b) => (b.d - a.d) || (b.k - a.k))
-      .map(x => x.c);
+    const live = this._severable(e, centre);
     if (!live.length) {
       /* Every joint this body had is already on the floor, which is a fact
        * about a droid you already rent and not about the power. Named, because
@@ -11697,67 +11884,12 @@ export class Player {
      * gesture is the reaching. */
     this._gesture('rend', centre);
 
-    // How far it comes apart. round(1.6·P + 0.6) is 1 joint at 0.25x, 2 at 1x,
-    // 4 at 2x and 7 at 4x — and seven joints off a humanoid frame is both arms
-    // at the elbow, both at the shoulder, both clavicles and the head, i.e. the
-    // top of the slider really does dismantle it.
-    const budget = clamp(Math.round(1.6 * P + 0.6), 1, 8);
-
-    // Legs LAST, whatever the geometry says. Enemy._loseLimbBehaviour topples
-    // on the first leg lost, and topple() ragdolls the body — after which every
-    // further cut is a broken joint rather than a detached piece with a molten
-    // stub. Taking a foot first therefore turned a seven-joint disassembly into
-    // one flying limb and a heap. Arms and head first, then it collapses.
-    const legs = live.filter(c => LEG_BONE.test(c.name));
-    const limbs = live.filter(c => !LEG_BONE.test(c.name));
-    // The head goes after the arms and before the legs: vital 0.95 makes it a
-    // lethal cut, so leading with it ends the show before it starts.
-    if (budget >= 5) {
-      const head = caps.find(c => c.name === 'head' && (!e.actor || !e.actor.isSevered('head')));
-      if (head) limbs.push(head);
-    }
-    limbs.push(...legs);
-
-    let cut = 0;
-    for (const c of limbs) {
-      if (cut >= budget) break;
-      // Re-checked INSIDE the loop, not just when the list was built. A cut
-      // takes the whole subtree below it, so severing an upper arm severs the
-      // forearm and the hand too — and without this the next two iterations
-      // spent budget on bones that were already gone, reported two sever
-      // events the actor never made, and a forcePower-4 disassembly took
-      // exactly one joint off.
-      /* `c.covers ?? c.name` — a weak point's capsule is named for the GAP
-       * (`femur0.tip`) and the thing that comes off is the BONE the gap is a
-       * hole in, so asking the actor about the capsule's own name always
-       * answers false and the rend spends a joint of its budget on a limb that
-       * is already on the floor. `Enemy.takeCut` refuses the second cut, so
-       * this was safe and wasteful rather than wrong. */
-      if (e.actor && e.actor.isSevered(c.covers ?? c.name)) continue;
-      _g3.lerpVectors(c.p0, c.p1, 0.5);
-      _g4.subVectors(_g3, centre);
-      _g4.y = _g4.y * 0.4 + 0.35;                       // bias the scatter upward
-      if (_g4.lengthSq() < 1e-8) _g4.set(0, 1, 0);
-      // Ragdoll scales this by 0.35 in takeCut and again by 0.34 in finalise,
-      // so ~28 here is the 3 m/s of drift that makes a piece leave rather than
-      // drop; the rest is what forcePower buys.
-      _g4.normalize().multiplyScalar(18 + 14 * P);
-      /* `force: true` — this is a joint pulled apart, not a blade drawn through
-       * one, and `Enemy._turnCut` is the BLADE's guard. A heavy body turns a
-       * killing edge with a plate or a hide; the answer to a Force power is the
-       * Force pool (`resistForce`), which already runs on the enemy side. See
-       * the note at `_turnCut`. */
-      const outcome = e.takeCut({
-        bone: c.name, cutT: 0.14, cap: c, point: _g3.clone(),
-        impulse: _g4.clone(), normal: UP.clone(), speed: 18, force: true,
-      }, this);
-      // …and a pass that took nothing off is not a limb. World._applyBladeEvent
-      // learnt this when the duellist guard landed and this site did not, so a
-      // rend that a guard caught still credited the counter on the death card.
-      if (outcome === 'turned') continue;
-      this.limbsRemoved++;
-      cut++;
-    }
+    /* HOW FAR IT COMES APART, and the loop that does it, are `_severBudget`
+     * and `_sever` — lifted out whole when the One Point needed the same
+     * severing (V16 Lane E, finding 6). Not one line of behaviour moved: the
+     * budget is the same expression off the same `forceScale`, the ordering is
+     * the same, and rend still spends and refunds around it. */
+    const cut = this._sever(e, live, this._severBudget(P), centre, P);
     /**
      * NOTHING CAME OFF — AND THIS IS THE ONE THAT HAD ALREADY TAKEN THE MONEY.
      *

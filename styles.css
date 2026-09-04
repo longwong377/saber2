@@ -1635,6 +1635,18 @@ button{font-family:inherit}
 .driveprompt.on{opacity:.95}
 .driveprompt.no{border-color:rgba(255,150,120,.45);color:#ffd0c0}
 .driveprompt b{color:#fff;font-weight:800}
+/* The open hand's line. Same box as the board prompt — it is the same KIND of
+   thing, a fact about what your hands can do right now rather than an event —
+   one step higher up the screen so the two can be on at once, and warmer,
+   because this one is about you and not about the machine you are standing
+   next to. */
+.meleeprompt{position:absolute;left:50%;bottom:26%;transform:translateX(-50%);text-align:center;
+  opacity:0;transition:opacity .16s;pointer-events:none;max-width:min(560px,72vw);
+  font-size:clamp(11px,1.5vw,15px);letter-spacing:.05em;text-transform:uppercase;
+  padding:.42em .9em;border:1px solid rgba(255,210,150,.42);border-radius:3px;
+  background:rgba(14,10,6,.6);color:#ffe6c4;text-shadow:0 1px 2px #000}
+.meleeprompt.on{opacity:.95}
+.meleeprompt b{color:#fff;font-weight:800}
 .centermsg{position:absolute;left:50%;top:31%;transform:translateX(-50%);text-align:center;opacity:0;
   transition:opacity .3s;pointer-events:none;white-space:normal;
   max-width:min(760px,calc(100vw - 32px))}

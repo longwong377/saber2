@@ -11,6 +11,10 @@ import { Announcer } from './Announcer.js';
 import { Presence } from '../engine/Presence.js';
 import { keyLabel, walkScale, ORDER_ACTIONS, codesFor } from '../engine/Bindings.js';
 import { drivableNear, whyNotDrive, crewOf } from '../game/Driving.js';
+/* V15 §3 / V16 Lane E. The line the hands get while the blade is down, and the
+ * count of what is hanging at the palm — both read from the game's own file
+ * rather than restated here. See `_meleePrompt`. */
+import { meleePrompt, caughtCount, meleeMods, MOVES as MELEE_MOVES } from '../game/Melee.js';
 /**
  * The two lookup tables the roster panel draws WITH, never a copy of them.
  *
@@ -1331,6 +1335,7 @@ export class HUD {
       withdrawRing: root.getElementById('withdraw-ring'),
       center: root.getElementById('hud-center-msg'),
       drivePrompt: root.getElementById('drive-prompt'),
+      meleePrompt: root.getElementById('melee-prompt'),
       hitmarks: root.getElementById('hitmarks'),
       troopnames: root.getElementById('troopnames'),
       stratagem: root.getElementById('stratagem'),
@@ -2072,6 +2077,54 @@ export class HUD {
     if (text !== this._driveText) { el.innerHTML = text; this._driveText = text; }
   }
 
+  /**
+   * ══ THE OPEN HAND, ON SCREEN ══════════════════════════════════════════════
+   *
+   * FINDING 9, and it is the one that made the other two academic: `Melee.js`
+   * shipped five strikes, a chain, a bolt catch and the One Point, and NOTHING
+   * IN THIS FILE MENTIONED ANY OF IT. `meleePrompt` — whose own header says
+   * *"a player who cannot see the chain cannot use it"* — had no caller;
+   * `caughtCount` was called only by a check; and the controls screen filed the
+   * attack key under **Blade** as "Attack (thrust)". A player who never
+   * happened to click with the saber down had no route to the system at all.
+   *
+   * A PERSISTENT LINE, for the same reason the board prompt is one: what it
+   * says is a fact about the hands you are standing there with, not an event. It
+   * appears the moment the blade goes down and BEFORE the first punch — a line
+   * that only shows up once you are already punching teaches nobody.
+   *
+   * THE WORDS ARE MELEE'S AND THE KEYS ARE THIS FILE'S. `Melee.meleePrompt`
+   * names the move, the chain or the bolts in the hand and contains no key
+   * names, because a key is a binding and `controls.mjs` fails any file in
+   * `src/` that types one; the chips come off the live table through `_chip`,
+   * so a rebind moves this line with it.
+   */
+  _meleePrompt(player) {
+    const el = this.el.meleePrompt;
+    if (!el) return;
+    let text = '';
+    /* Not while driving and not while dead: the hands are elsewhere, and a
+     * prompt for a key that is doing something else is worse than none. */
+    if (player.alive !== false && !player.driving && !player.gripBody && !player.gripEnemy) {
+      const line = meleePrompt(player);
+      if (line) {
+        const held = caughtCount(player);
+        text = `<b>${escKey(this._chip('thrust'))}</b> ${esc(line)}`;
+        /* THE ONE POINT IS A CHORD AND CHORDS ARE THE THING NOBODY FINDS, so
+         * it is spelled out whenever the fighter owns it and has no bolts in
+         * the hand — which is exactly when that press means the finger. The
+         * move's name is `MOVES.point.label`, not a string typed here, for the
+         * same reason the key is not. */
+        if (!held && meleeMods(player.boonMods || player.takenBoons).point > 0) {
+          text += ` · <b>${escKey(this._chip('stance'))}</b>+<b>${escKey(this._chip('thrust'))}</b> `
+            + esc(MELEE_MOVES.point.label);
+        }
+      }
+    }
+    el.classList.toggle('on', !!text);
+    if (text !== this._meleeText) { el.innerHTML = text; this._meleeText = text; }
+  }
+
   /** One binding, as the player's own device names it. */
   _chip(id) {
     const b = this._bindings;
@@ -2764,6 +2817,7 @@ export class HUD {
 
     // ── reticle & blade cursor
     this._drivePrompt(world, player);
+    this._meleePrompt(player);
     const firstPerson = !!player.camera.firstPerson;
     /* THE SAME MISSING FILTER, AND IT PINNED THE WARNING ON FOR ALL OF COMMAND.
      * Every formation parks your squads inside 5 m by construction: measured on

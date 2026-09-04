@@ -418,4 +418,263 @@ export async function run({ check, assert, THREE }) {
     assert(iAnim > 0 && iPose > iAnim,
       'poseMelee runs before the animator, so the gait overwrites the punch on the frame it is thrown');
   });
+
+  check('melee: one press is one move — the One Point does not also throw a Force push', async () => {
+    /**
+     * ══ FINDING 5, AND IT IS A MEASUREMENT AND NOT A GREP ═══════════════════
+     *
+     * `Player._readInput` ran `if (input.actHit('push')) this.forcePush(ctx)`
+     * in its Force block and then read the SAME press for the One Point sixty
+     * lines below. Measured on a real world, one frame of the press, blade
+     * down, `meleePoint: 1`:
+     *
+     *   before   45.5 Force spent on every target, against 30 declared —
+     *            a whole Force push (15.5) on top of the move, and a visible
+     *            shockwave that shoved the target through the 0.34 s wind-up.
+     *            On a b1 the push killed it at frame 1, before the strike
+     *            existed.
+     *   after    29.9 on all three, and forcePush never called.
+     *
+     * DRIVEN THROUGH `world.update(dt, input)` and not through a browser: a
+     * keypress in headless Chromium reaches `Input` and no frame ever consumes
+     * it, because requestAnimationFrame does not fire there. The game's own
+     * loop is the only honest place to press a key.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const press = (acts) => {
+      const i = idleInput();
+      i.act = (a) => !!acts[a];
+      i.actHit = (a) => !!acts[a];
+      return i;
+    };
+    const { world } = await bootWorld({});
+    try {
+      const M = await import('../../src/game/Melee.js');
+      const p = world.player;
+      p.saber.lit = false;
+      p.force = p.maxForce ?? 100;
+      p.stamina = p.maxStamina ?? 100;
+      p.boonMods.meleePoint = 1;
+      p.camera.yaw = 0; p.camera.pitch = 0;
+      let pushes = 0;
+      const realPush = p.forcePush.bind(p);
+      p.forcePush = (...a) => { pushes++; return realPush(...a); };
+
+      const at = p.position.clone(); at.z -= 1.6;
+      const e = world.spawnEnemy('b1', at);
+      assert(e, 'no b1 to point at');
+      e.noReact = true;
+      const f0 = p.force;
+      /* The chord: the palm is already up (`stance` held) and the attack key
+       * comes down. That is the ONE press the move costs. */
+      world.update(1 / 60, press({ stance: true, thrust: true }));
+      const spent = f0 - p.force;
+      assert(pushes === 0,
+        `one press of the attack key fired ${pushes} Force push(es) as well as the One Point`);
+      assert(Math.abs(spent - M.MOVES.point.force) < 1.5,
+        `the finger spent ${spent.toFixed(1)} Force and the move declares ${M.MOVES.point.force}`);
+      /* AND THE TARGET IS STILL STANDING WHEN THE WIND-UP BEGINS. The push used
+       * to kill a b1 on frame 1 — a strike whose own commitment is 0.34 s
+       * cannot have resolved anything yet. */
+      assert(!e.dead, 'the target was dead on the press frame, before the wind-up had run');
+      assert(p._melee?.move === 'point', `the press threw '${p._melee?.move}', not the One Point`);
+
+      /* AND THE FORCE KEY STILL PUSHES, which is the half of this that a fix on
+       * the `push` branch would have cost: V15's fighter runs *"melee and force
+       * powers"*, and taking a power off him to pay for a strike is the wrong
+       * side of that sentence. */
+      p.force = p.maxForce ?? 100;
+      p._melee.move = null; p._melee.t = 0;
+      p.cooldowns.push = 0;
+      pushes = 0;
+      world.update(1 / 60, press({ push: true }));
+      assert(pushes === 1, 'the Force key no longer pushes with the blade down');
+      return `one press: ${spent.toFixed(1)} Force of a declared ${M.MOVES.point.force}, `
+        + `0 Force pushes, target alive through the wind-up; the Force key still pushes`;
+    } finally { world.dispose?.(); }
+  });
+
+  check('melee: the One Point disassembles a droid, and does not touch a man', async () => {
+    /**
+     * ══ FINDING 6 ══════════════════════════════════════════════════════════
+     *
+     * The player, verbatim: *"it completely dissassembles them just like your
+     * regular dissassmble move but with melee."* What shipped was
+     * `dmg *= DISASSEMBLE (8)` and an ordinary `e.damage(...)`. Measured on a
+     * b1: hp 28 -> -212, `dead=true`, `actor.severedCount` **0** — an ordinary
+     * blunt death with nothing off it. An 8x multiplier wearing the name.
+     *
+     * So this counts PARTS, not damage, and it counts them on three machines
+     * and on a man. `severedCount` is the ragdoll's own tally, which is what
+     * `forceDisassemble` moves and what a cut moves; nothing else can raise it.
+     */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const drive = async (kind) => {
+      const { world } = await bootWorld({});
+      try {
+        const p = world.player;
+        p.saber.lit = false;
+        p.force = p.maxForce ?? 100;
+        p.stamina = p.maxStamina ?? 100;
+        p.boonMods.meleePoint = 1;
+        p.camera.yaw = 0; p.camera.pitch = 0;
+        const at = p.position.clone(); at.z -= 1.6;
+        const e = world.spawnEnemy(kind, at);
+        assert(e, `no ${kind} to point at`);
+        e.noReact = true;
+        const hp0 = e.hp;
+        const i = idleInput();
+        i.act = (a) => a === 'stance';
+        i.actHit = (a) => a === 'thrust';
+        world.update(1 / 60, i);
+        const idle = idleInput();
+        for (let n = 0; n < 90 && p._melee.move; n++) {
+          if (!e.dead) e.position.copy(at);
+          world.update(1 / 60, idle);
+        }
+        return { parts: e.actor?.severedCount ?? 0, limbs: p.limbsRemoved, hp0, hp: e.hp, hits: p._melee.lastHits };
+      } finally { world.dispose?.(); }
+    };
+
+    const b1 = await drive('b1');
+    const tri = await drive('tridroid');
+    const spider = await drive('dwarfspider');
+    for (const [k, r] of [['b1', b1], ['tridroid', tri], ['dwarfspider', spider]]) {
+      assert(r.parts > 0,
+        `the One Point took ${r.parts} parts off a ${k} — the move's whole brief is that it `
+        + 'disassembles a machine, and an 8x damage multiplier is not that');
+      assert(r.limbs > 0, `${k}: the player's own limbsRemoved never moved, so nothing was credited`);
+      assert(r.hits > 0, `${k}: the strike reported itself as a miss while taking a limb off`);
+    }
+
+    /**
+     * AND A MAN IS UNTOUCHED BY THAT PATH. The gate is the engine's material
+     * ladder — `TOUGHNESS.droid` and above — which the check above this one
+     * holds against every archetype in the game. Here it is measured on a real
+     * body: a clone trooper takes the strike as the heaviest blunt hit in the
+     * set and keeps every limb, which is where the fiction put it.
+     */
+    const man = await drive('trooper');
+    assert(man.parts === 0,
+      `the One Point took ${man.parts} parts off a clone trooper — the trick works on machines`);
+    assert(man.hp < man.hp0, 'a man took no damage at all from it — it is still a very heavy strike');
+
+    /* AND THE ROUTE IS THE FORCE'S OWN. A second copy of the severing loop is
+     * how the two disassemblies drift apart, so this names the one door. */
+    const src = await (await import('node:fs/promises'))
+      .readFile(new URL('../../src/game/Melee.js', import.meta.url), 'utf8');
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(/disassembleBody\s*\?\./.test(code),
+      'Melee.js no longer routes the One Point through Player.disassembleBody');
+    const psrc = await (await import('node:fs/promises'))
+      .readFile(new URL('../../src/game/Player.js', import.meta.url), 'utf8');
+    const pcode = psrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert((pcode.match(/e\.takeCut\(\{/g) || []).length === 1,
+      'there is more than one severing loop in Player.js — rend and the finger must share one');
+    /* …and rend goes through the SAME door, which is the half that makes "just
+     * like your regular disassemble move" a fact rather than a hope. Read out
+     * of `forceDisassemble`'s own body, not off the file. */
+    const fd = pcode.slice(pcode.indexOf('forceDisassemble(ctx) {'));
+    assert(fd.startsWith('forceDisassemble(ctx) {'), 'forceDisassemble is gone');
+    assert(/this\._sever\(/.test(fd.slice(0, fd.indexOf('\n  }\n'))),
+      'forceDisassemble no longer runs through the shared severing loop, so the finger and '
+      + 'the Force are two copies again');
+
+    return `b1 ${b1.parts} parts, tridroid ${tri.parts}, dwarfspider ${spider.parts}, `
+      + `clone trooper 0 (blunt only, ${(man.hp0 - man.hp).toFixed(0)} hp); one takeCut loop for both moves`;
+  });
+
+  check('melee: the HUD says the fists exist, and the binding says what the key does', async () => {
+    /**
+     * ══ FINDING 9 ══════════════════════════════════════════════════════════
+     *
+     * `Melee.meleePrompt`'s own header: *"What the HUD says while the blade is
+     * down … a player who cannot see the chain cannot use it."* It had NO
+     * CALLER. `grep -in "melee|punch|kick" src/ui/HUD.js` found nothing,
+     * `caughtCount` was called only by this file, and the controls screen filed
+     * Mouse1 under **Blade** as "Attack (thrust)". Every number in this suite
+     * was true and unreachable.
+     *
+     * DRIVEN ON A REAL HUD over the real page, not grepped: a check that
+     * asserts the string "meleePrompt" appears in HUD.js passes on a call whose
+     * result is thrown away.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const { makeDocument } = await import('./_page.mjs');
+    const { HUD } = await import('../../src/ui/HUD.js');
+    const { defaultBindings, keyLabel } = await import('../../src/engine/Bindings.js');
+    const M = await import('../../src/game/Melee.js');
+    const P = await import('../../src/game/Player.js');
+    const INDEX = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
+    assert(INDEX.includes('id="melee-prompt"'), 'the page has no slot for the open hand\'s line');
+
+    const doc = makeDocument(INDEX);
+    const restore = doc.install();
+    try {
+      const hud = new HUD(doc);
+      const b = defaultBindings();
+      hud.setBindings(b, null);
+      const el = doc.getElementById('melee-prompt');
+      const player = {
+        alive: true, driving: null, gripBody: null, gripEnemy: null,
+        /* The REAL applied state — `defaultBoonMods` — and not a bag with one
+         * key in it: `meleeMods` tells its two shapes apart by whether
+         * `meleeDamage` is a number, so a hand-made object is silently read as
+         * a SET OF FACET IDS and answers 0 to everything. */
+        saber: { lit: true }, boonMods: P.defaultBoonMods(), _melee: null,
+      };
+      /* WITH THE BLADE LIT THERE IS NOTHING TO SAY — the seam is the whole
+       * design, and a melee line under a lit sabre would teach the wrong rule. */
+      hud._meleePrompt(player);
+      assert(!el.innerHTML, `the line is up with the blade lit: "${el.innerHTML}"`);
+
+      /* BLADE DOWN, AND NOT ONE PUNCH THROWN YET. This is the fighter the line
+       * exists for: it has to appear before the first press, or it only ever
+       * reaches players who already found the system. */
+      player.saber.lit = false;
+      hud._meleePrompt(player);
+      const cold = el.innerHTML;
+      assert(cold, 'a fighter with the blade down and no melee set yet is told nothing');
+      assert(cold.includes(keyLabel(b.thrust[0])),
+        `the line does not name the attack key (${keyLabel(b.thrust[0])}): "${cold}"`);
+      assert(el.classList.contains('on'), 'the line is written but not shown');
+      /* NO ONE POINT WITHOUT THE FACET — a chord printed for a move you cannot
+       * throw is a key that does nothing. */
+      assert(!cold.includes(M.MOVES.point.label),
+        'the One Point is advertised to a fighter who has not woken it');
+
+      /* THE CHAIN, mid-combination: what the next press buys. */
+      player._melee = new M.MeleeSet();
+      player._melee.chain = 'cross'; player._melee.chainT = 0.3;
+      hud._meleePrompt(player);
+      assert(el.innerHTML.includes(M.MOVES.cross.label),
+        `mid-chain the line says "${el.innerHTML}" and not what the next press buys`);
+
+      /* THE ONE POINT, once it is woken: the chord, spelled out, because a
+       * chord is the thing nobody finds by accident. */
+      player._melee = new M.MeleeSet();
+      player.boonMods.meleePoint = 1;
+      hud._meleePrompt(player);
+      const armed = el.innerHTML;
+      assert(armed.includes(M.MOVES.point.label), `the One Point is nowhere on the line: "${armed}"`);
+      assert(armed.includes(keyLabel(b.stance[0])) || armed.includes(keyLabel(b.stance[1])),
+        `the chord does not name the hold key: "${armed}"`);
+
+      /* A HAND FULL OF BOLTS SAYS SO, through `caughtCount` — which had exactly
+       * one caller in the repository and it was this file. */
+      player._melee.caught.push({ active: true, held: {} }, { active: true, held: {} });
+      hud._meleePrompt(player);
+      assert(/2/.test(el.innerHTML) && !el.innerHTML.includes(M.MOVES.point.label),
+        `a hand holding two bolts reads "${el.innerHTML}"`);
+
+      /* AND IT IS CALLED EVERY FRAME BY `update`, not only by this check. */
+      const hsrc = await readFile(new URL('../../src/ui/HUD.js', import.meta.url), 'utf8');
+      const hcode = hsrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      assert(/this\._meleePrompt\(player\)/.test(hcode),
+        'HUD.update no longer paints the melee prompt — the line exists and nothing calls it');
+      assert(/meleePrompt|caughtCount/.test(hcode), 'HUD.js no longer reads Melee.js at all');
+      return `blade lit: silent; blade down: "${cold.replace(/<[^>]+>/g, '')}"; `
+        + `woken: "${armed.replace(/<[^>]+>/g, '')}"`;
+    } finally { restore(); }
+  });
 }

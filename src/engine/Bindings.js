@@ -246,7 +246,19 @@ export const ACTIONS = [
   // `stance` below. A thrust is a PRESS, so a face button costs the right thumb
   // one beat off the look stick; a lateral guard is a HOLD, and a hold on a face
   // button is a guard the player cannot aim from.
-  { id: 'thrust',     group: 'Blade',    label: 'Attack (thrust)',   keys: ['Mouse1'], pad: 'PadY' },
+  /**
+   * AND THE LABEL NAMES BOTH MEANINGS, BECAUSE THE KEY HAS TWO.
+   *
+   * It read "Attack (thrust)" under **Blade** while it was also the whole of
+   * V15 §3's melee set — five strikes, a chain, six Holocron facets — and the
+   * only route into that set is pressing this key with the saber PUT AWAY. The
+   * controls screen is the one place a player goes to find out what a key does,
+   * and it described half of one, so the half nobody had found stayed
+   * undiscovered. `swap`, `drive` and `throw` already state both of their
+   * meanings with a slash; this is the fourth, and it is the one where the
+   * second meaning is a system rather than a variant.
+   */
+  { id: 'thrust',     group: 'Blade',    label: 'Attack (thrust) / strike, blade down', keys: ['Mouse1'], pad: 'PadY' },
   // The two halves of the attack rose, mirroring the guard rose: wheel up is an
   // overhead, wheel down is a stab. They are ordinary rows here rather than a
   // raw `mouse.wheel` read for exactly the reason the four rows below this one
@@ -298,7 +310,11 @@ export const ACTIONS = [
    * is up, so a hold has to live under an index finger. RT is `blade` and LT is
    * `focus`; RB is the one left, and `thrust` took the face button it vacated
    * because a press can afford to. */
-  { id: 'stance',     group: 'Blade',    label: 'Lateral guard',     keys: ['Digit1', 'Mouse5'], hold: true, pad: 'PadRB' },
+  /* The same sentence, for the same reason: held with the blade down this is
+   * the Still Hand (a bolt stops at your palm), and with the attack key it is
+   * the One Point. Two of V16 Lane E's three verbs are on this hold and the row
+   * used to name neither. */
+  { id: 'stance',     group: 'Blade',    label: 'Lateral guard / open hand, blade down', keys: ['Digit1', 'Mouse5'], hold: true, pad: 'PadRB' },
   /* MOVED OFF `PadLB+PadBack`, which is both modifiers at once and which
    * `orderwheel` also claimed under the other spelling: two rows on one
    * physical pair, and the conflict finder could not see it because it
