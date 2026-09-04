@@ -239,6 +239,60 @@ export async function run({ check, assert, near }) {
       + `the black market turns a Jedi away and serves a Sith ${sith.rows.length} rows`;
   });
 
+  check('counter: a shutter that is declared comes down, and a gate that is declared holds', async () => {
+    /**
+     * TWO PROMISES IN THE DATA, AND ONE OF THEM WAS NOT BEING KEPT.
+     *
+     * `UNDERLIFT` carries `openDays: 2/3` under a note reading "NOT OPEN EVERY
+     * DAY — the shelf's own seed decides, so a day it is shut is the same day
+     * for everyone and is not a roll you can re-take by walking out and back
+     * in." Nothing anywhere read the field. Swept over a month it was open on
+     * thirty days out of thirty, which is the dead control this tree keeps
+     * deleting wearing a field name.
+     *
+     * Both halves are asserted from the DECLARATION rather than from a typed
+     * number, so a counter that is given an `openDays` tomorrow is measured
+     * against its own, and the black market cannot quietly lose the field.
+     */
+    const V = await import('../../src/game/Vendors.js');
+    const { offerFrom } = await import('../../src/game/Counter.js');
+    const DAYS = 120;
+    for (const c of V.COUNTERS) {
+      let open = 0;
+      for (let d = 0; d < DAYS; d++) if (offerFrom(c, { day: d, order: 'sith' }).open) open++;
+      const want = Number.isFinite(Number(c.openDays)) ? Number(c.openDays) : 1;
+      if (want >= 1) {
+        assert(open === DAYS, `${c.name} declares no shutter and was shut ${DAYS - open} days of ${DAYS}`);
+        continue;
+      }
+      const got = open / DAYS;
+      assert(Math.abs(got - want) < 0.09,
+        `${c.name} declares it opens ${(want * 100).toFixed(0)}% of days and opened `
+        + `${(got * 100).toFixed(0)}% over ${DAYS} — the field is not being read`);
+      /* AND THE SAME DAY IS THE SAME ANSWER, which is the half of the note
+       * that stops a player re-rolling a shut door by walking out and in. */
+      const twice = [0, 1, 2, 3, 4, 5, 6, 7].every((d) =>
+        offerFrom(c, { day: d, order: 'sith' }).open === offerFrom(c, { day: d, order: 'sith' }).open);
+      assert(twice, `${c.name} answers differently to two readers on the same day`);
+    }
+    /* THE FACTION GATE, from the same declaration. `refuse` speaks or it is
+     * indistinguishable from a bug — that is this file's own rule one deck up. */
+    for (const c of V.COUNTERS.filter((x) => x.refuse?.length)) {
+      for (const order of c.refuse) {
+        const r = offerFrom(c, { day: 0, order });
+        assert(!r.open, `${c.name} refuses ${order} in its table and served one anyway`);
+        assert(typeof r.why === 'string' && r.why.length > 8,
+          `${c.name} turned a ${order} away without saying why`);
+      }
+      const ok = [...Array(30).keys()].some((d) => offerFrom(c, { day: d, order: 'sith' }).open);
+      assert(ok, `${c.name} refuses ${c.refuse.join('/')} and never opens for anybody else either`);
+    }
+    const shuttered = V.COUNTERS.filter((c) => Number(c.openDays) < 1);
+    return `${V.COUNTERS.length} counters; ${shuttered.length} with a declared shutter `
+      + `(${shuttered.map((c) => `${c.id} ${(Number(c.openDays) * 100).toFixed(0)}%`).join(', ')}); `
+      + `${V.COUNTERS.filter((c) => c.refuse?.length).length} with a faction gate, every refusal in words`;
+  });
+
   check('counter: every shop is in a room you can walk to', async () => {
     /**
      * THE DEFECT THIS IS A PIN FOR, and it shipped: `Vendors.UNDERLIFT` — the

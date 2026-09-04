@@ -258,6 +258,28 @@ export function offerFrom(counter, opts = {}) {
   if (counter?.refuse && order && counter.refuse.includes(order)) {
     return { open: false, why: counter.refuseLine || 'they look at your order and shake their head', rows: [] };
   }
+  /**
+   * ── AND SOME COUNTERS ARE NOT THERE EVERY DAY ─────────────────────────
+   *
+   * `openDays` was declared on the black market with a note saying "NOT OPEN
+   * EVERY DAY — the shelf's own seed decides, so a day it is shut is the same
+   * day for everyone and is not a roll you can re-take by walking out and back
+   * in", and NOTHING READ IT. Fourteen days swept, open on fourteen. A
+   * promise in the data that no code keeps is the dead control this tree keeps
+   * deleting, wearing a field name.
+   *
+   * It is rolled off `(counter, day)` — the shelf's own seed shape and for the
+   * shelf's own reason: everyone on the station finds the same shutter down on
+   * the same day, and walking out and back in does not re-roll it. A counter
+   * with no `openDays` is open, which is every counter but this one and is
+   * what a shop normally is.
+   */
+  const days = Number(counter?.openDays);
+  if (Number.isFinite(days) && days < 1) {
+    const rng = makeRng(hashOf(`${counter.id}:shut:${day | 0}`));
+    rng(); rng();
+    if (rng() >= days) return { open: false, why: counter?.shut || 'not today', rows: [] };
+  }
   const rows = shelfFor(counter, day).filter((r) => !r.side || !order || r.side === order);
   return {
     open: true,
