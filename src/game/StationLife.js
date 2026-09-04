@@ -46,6 +46,8 @@ import {
   SPECIES_KEYS, SPECIES_BY, RHYTHMS, ROLE_BY, resident, speciesFor, roleFor,
   residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
 } from './StationCast.js';
+import { barman } from './Bars.js';
+import { companyOf } from './StationBoards.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE BUDGET                                                                */
@@ -244,8 +246,17 @@ export function wayPlacesOn(deck) {
  * The seed is the PLACE and the SLOT, never the clock, so the person at a
  * table is the same person when you look away and back, and the same person
  * on a return visit later in the same day (§14's persistence line).
+ *
+ * ── `opts` IS THE EVENING, AND IT IS OPTIONAL ─────────────────────────────
+ *
+ * V16 §C2 puts troops on leave in the three bars, and unlike everything else
+ * in this function that is a fact about the HOUR rather than about the room:
+ * the same seat at #14 holds a soldier at 22:00 and a merchant at 06:00. So
+ * `{ hour, day, heads, company }` is handed in by `spawnResident`, which has
+ * all four, and every existing caller that does not pass it — `Pits.js` and
+ * `pits.mjs` — gets exactly the census it got before.
  */
-export function occupant(place, i) {
+export function occupant(place, i, opts = {}) {
   const seed = `p${place.id}s${i}`;
   /**
    * A place's own bias, and there are three kinds.
@@ -288,6 +299,19 @@ export function occupant(place, i) {
       home: R.home,
     };
   }
+  /**
+   * ══ AND THEN THE LEAVE SEATS (V16 §C2) ═════════════════════════════════
+   *
+   * AFTER the Borz cast and BEFORE the census, and the order is the whole
+   * decision. The Drazi barkeep at #14 is a named body who works there and
+   * has to still be there on the evening the soldiers arrive; the census is
+   * everybody else and is exactly who a soldier displaces. `Bars.barman`
+   * answers null for every place that is not one of the three and for every
+   * slot past the ones liberty actually filled, so this costs one Map lookup
+   * on all fifty-odd other rooms.
+   */
+  const off = barman(place, i, opts);
+  if (off) return { ...off, seed };
   const bias = QUARTER_OF[place.id];
   if (bias) return resident(seed, { species: bias });
   if (place.id === 9 && i < RARE.length * 5) {
@@ -345,6 +369,15 @@ export function dressStationLife(world, st) {
     priming: true,
     /** The tram: four stops, ninety seconds apart (§3.2 #40). */
     tram: { t: 0, at: 0, car: null },
+    /**
+     * THE PLAYER'S OWN ROLL, read ONCE (V16 §C2). `StationBoards.companyOf`
+     * is the one authority on which of the armies' manifests is "the"
+     * company from the station's point of view — the departures board and
+     * the cantina must not disagree about who is aboard. Null is a legal
+     * answer and means the bars fill with the station's own garrison
+     * instead; see `Bars.js`'s header.
+     */
+    company: (() => { try { return companyOf(); } catch { return null; } })(),
     /** The event table's cursor and what is running (§3.4). */
     event: null, eventIn: 20,
     /** §11's consequence: your standing, and the guards who come. */
@@ -500,7 +533,26 @@ const byNear = (a, b) => a.d2 - b.d2;
 
 /** One resident, made real. */
 function spawnResident(world, st, place, i) {
-  let r = occupant(place, i);
+  /**
+   * THE EVENING, handed to `occupant` (V16 §C2). Everything in it is already
+   * on the world: the clock is `st.hour`, the room's own headcount is the
+   * curve this file owns, and the company was read once at dress time rather
+   * than twice a second — `Company.loadAll` is a `localStorage` read and the
+   * pool re-seats every 0.5 s.
+   *
+   * `st.day` DOES NOT EXIST YET and that is deliberate rather than missed.
+   * The station clock persists an hour and no day count (`StationSave.hour`),
+   * so leave is the same third of the roll every evening until somebody adds
+   * one. The day that field lands, `st.day ?? 0` below starts rotating who is
+   * out with no other change anywhere — which is the whole reason `day` is a
+   * parameter in `Bars.js` rather than an assumption.
+   */
+  const life = world?._stationLife;
+  let r = occupant(place, i, {
+    hour: st.hour, day: st.day ?? 0,
+    heads: headcount(place, st.hour),
+    company: life?.company || null,
+  });
   if (place.id === 36) r = resident(`p36s${i}`, { species: METHANE[i % 2] });
   const type = archetypeOf(r);
   slotIn(place, i, _v);

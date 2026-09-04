@@ -56,6 +56,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { Prop, mergeGeos, slabGeo, cylGeo } from '../world/Props.js';
 import { homeState, setHomeState } from './StationSave.js';
 import { signPanel } from './StationKit.js';
+import * as Food from './Food.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE NUMBERS                                                               */
@@ -324,7 +325,22 @@ function clean(v) {
     for (const r of rows.slice(0, 32)) {
       if (!r || typeof r !== 'object' || typeof r.id !== 'string') continue;
       const n = Math.max(1, Math.min(99, Math.round(Number(r.n) || 1)));
-      out.store[bin].push({ id: r.id.slice(0, 32), n });
+      /**
+       * `t` IS THE ONE FIELD V16 §B5 ADDED, and it is the whole of the
+       * migration the header promised there would not be: a row without it
+       * reads as stowed at hour nought, which is the oldest anything can be,
+       * so a save from before this lane comes back as a larder full of things
+       * that have gone off rather than as a larder full of things that never
+       * will. Erring stale is the only safe direction — the other one hands a
+       * player a bowl of noodle that is fresh for ever.
+       *
+       * It is the ABSOLUTE station clock (`Food.clockOf(day, hour)`), not an
+       * hour of the day: see that function for why an hour alone cannot say
+       * whether a jar is five hours old or twenty-nine. Clamped like every
+       * other number that survives a hand edit.
+       */
+      const t = Math.max(0, Math.min(1e9, Math.round(Number(r.t) || 0)));
+      out.store[bin].push({ id: r.id.slice(0, 32), n, t });
     }
   }
   return out;
@@ -348,6 +364,87 @@ export function setHomeStock(bin, rows) {
   if (bin !== 'food' && bin !== 'parcels') return rec.store;
   rec.store[bin] = Array.isArray(rows) ? rows : [];
   return clean(saveHome(rec)).store;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE LARDER — V16 §B5                                                      */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ THE PEN IS HERE AND THE ARITHMETIC IS IN `Food.js` ════════════════════
+ *
+ * *"you can buy food … then you can take it home and store it in your
+ * apartment and eat it for buffs."*
+ *
+ * The field is `store.food`, which this file has been reserving for exactly
+ * this since V15 — see `clean` and the header. It is NOT a second store, and
+ * these four doors exist so that the food lane never has to hold the whole
+ * home record to add a jar of pickle to it: each of them reads one field,
+ * hands it to a pure function in `Food.js`, and writes the one field back
+ * through `setHomeStock`.
+ *
+ * `Food.js` cannot do this itself and must not learn how. It is pure — no
+ * store, no world, no THREE — which is what lets `food.mjs` drive a week of
+ * shopping with no disk at all. The dependency runs one way: Home knows about
+ * Food, Food knows nothing about Home.
+ *
+ * ── EVERY READ SWEEPS ─────────────────────────────────────────────────────
+ *
+ * `Food.sweep` throws out whatever the clock has killed before the rows are
+ * handed back, so a screen can never draw a row that `takeFood` would then
+ * refuse. A list with dead entries in it is a list that lies, and the player
+ * finds out at the moment they were counting on a meal.
+ */
+
+/** What is in the larder now, with anything past its keeping thrown out. */
+export function larder(clock = 0) {
+  const { kept, lost } = Food.sweep(homeStock().food, clock);
+  if (lost.length) setHomeStock('food', kept);
+  return Food.larderRows(kept, clock);
+}
+
+/** Put `n` of a dish in it. Returns `{ ok, why, rows }` — a refusal speaks. */
+export function stowFood(dish, opts = {}) {
+  const now = Number.isFinite(opts.clock) ? opts.clock : Food.clockOf(opts.day, opts.hour);
+  const { kept } = Food.sweep(homeStock().food, now);
+  const r = Food.stow(kept, dish, { ...opts, clock: now });
+  if (r.ok) setHomeStock('food', r.rows);
+  return { ok: r.ok, why: r.why, rows: Food.larderRows(r.ok ? r.rows : kept, now) };
+}
+
+/**
+ * Take one out. Returns the counter row itself, so the caller hands it
+ * straight to `Food.eat` — this file has no opinion about what eating does.
+ */
+export function takeFood(id, opts = {}) {
+  const now = Number.isFinite(opts.clock) ? opts.clock : Food.clockOf(opts.day, opts.hour);
+  const { kept } = Food.sweep(homeStock().food, now);
+  const r = Food.unstow(kept, id);
+  if (r.ok) setHomeStock('food', r.rows);
+  return { ok: r.ok, why: r.why, dish: r.ok ? Food.dishById(id) : null };
+}
+
+/**
+ * ══ AND A DEATH EMPTIES IT ════════════════════════════════════════════════
+ *
+ * `Progress.js`'s amendment: a provision is *"a run's worth of something, and
+ * gone when the run ends."* An uneaten dish is still a provision, so it goes
+ * with the run that failed to eat it — `Food.afterDeath` decides which rows
+ * those are, by testing the row rather than by emptying the list, so a
+ * mods-free keepsake you eat would survive without anybody having to come
+ * back here.
+ *
+ * NOTHING CALLS THIS YET. The one funnel every death and quit goes through is
+ * `main.js`'s `record()`, which this lane may not edit; the line for it is in
+ * the report. Until it is wired, the guarantee that actually holds is the
+ * stronger one: a meal's EFFECT is never written anywhere at all, so no buff
+ * can outlive anything. This closes the smaller hole of a larder that
+ * outlives the run it was stocked for.
+ */
+export function emptyLarder() {
+  const { kept, lost } = Food.afterDeath(homeStock().food);
+  setHomeStock('food', kept);
+  return { kept: kept.length, lost: lost.reduce((a, r) => a + (r.n | 0), 0) };
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */

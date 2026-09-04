@@ -164,8 +164,14 @@ export function stepBoards(world, st, dt) {
  * The player's own company, whichever army they are playing. `Company.loadAll`
  * returns every army's roll keyed by name; the station wants the one that is
  * being played, and failing that the one with men in it.
+ *
+ * EXPORTED FOR V16 §C2, and exported rather than copied. `StationLife` needs
+ * the same roll to seat troops on leave into the bars, and "which of the
+ * player's companies is THE company, from the station's point of view" is a
+ * judgement that must have exactly one answer — two would put a different set
+ * of men on the departures board and in the cantina on the same evening.
  */
-function companyOf() {
+export function companyOf() {
   const all = loadCompany?.();
   if (!all) return null;
   const rolls_ = Object.values(all).filter((a) => a && Array.isArray(a.men));
