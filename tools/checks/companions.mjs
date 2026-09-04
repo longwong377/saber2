@@ -337,7 +337,13 @@ export async function run({ check, assert }) {
      * rather than left invisible to it. The note above is the reason: silence
      * is a hazard, not a permission, and a new file is legal by default until
      * somebody writes its path down. */
-    const SCANNED = ['game/Kennel.js', 'game/Companions.js', 'game/CompanionKinds.js', 'game/Spectacle.js'];
+    const SCANNED = ['game/Kennel.js', 'game/Companions.js', 'game/CompanionKinds.js', 'game/Spectacle.js',
+      /* AND THE TWO THAT ARE THE ECONOMY. `Counter.js` prices things and
+       * decides what is on a shelf; `Vendors.js` is the content. Neither holds
+       * a balance — `Credits.js` does, and it is exempt BY NAME because it is
+       * the one file the doctrine's amendment allows to. Everything around it
+       * is held to the same six words as the kennel. */
+      'game/Counter.js', 'game/Vendors.js'];
     for (const f of SCANNED) {
       const code = strip(await src(f));
       for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {

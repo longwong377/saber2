@@ -24,6 +24,65 @@
  *
  * What IS here is the shape of a history: how deep you have been, what you did
  * it with, and whether you have ever reached the top.
+ *
+ * ══════════════════════════════════════════════════════════════════════════
+ *  AMENDMENT — CREDITS, AND WHY THEY DO NOT BREAK THE THREE RULES ABOVE
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * V16 asks for a shop. In the player's words: *"extensive shop system that you
+ * access through differernt vendors at the zocalo; very very long list of
+ * items you can purchase with credits that you get for doing differnt stuff in
+ * the game and playing the game."*
+ *
+ * That is a cross-run currency and the second rule above says there is not
+ * one. So it is written down HERE, in the file that states the doctrine,
+ * BEFORE any of it is built — because a rule edited in silence is worse than
+ * one broken loudly, and `Kennel.js`'s own header is explicit that a new file
+ * being invisible to the currency scan is "a hazard, not a permission."
+ *
+ * ── WHAT THE RULE IS ACTUALLY FOR ─────────────────────────────────────────
+ *
+ * Read the three refusals again and they are one sentence: **A RUN IS WON BY
+ * PLAYING, NOT BY HAVING PLAYED BEFORE.** "No currency" is not the value; it
+ * is the enforcement mechanism for that value, chosen when the only thing a
+ * currency could plausibly have bought was power.
+ *
+ * ── SO THE AMENDMENT IS A NARROWING, NOT A REPEAL ─────────────────────────
+ *
+ * Credits may exist, and exactly two kinds of thing may be bought with them.
+ * The player drew this line himself, unprompted, in the same paragraph:
+ * *"maybe cosmetic stuff you buy is permanent and you can also buy powerups
+ * similar to the stuff you can get in the holocrons but they are temporary and
+ * do not persist when you die."*
+ *
+ *   KEEPSAKES   Cosmetic and permanent. Paint, hilt parts, robes, furniture,
+ *               a companion's collar, a trophy on a shelf. They change how
+ *               something LOOKS and nothing else — no stat, no capability, no
+ *               shortcut. A check measures a bought item's effect on the
+ *               player's numbers and fails on ANY movement at all.
+ *
+ *   PROVISIONS  A run's worth of something, and gone when the run ends —
+ *               exactly as the player specified, and exactly the contract the
+ *               Holocron already has, which is why he reached for that
+ *               comparison without being asked. Food, a stim, a temporary
+ *               facet, a stratagem charge.
+ *
+ * A third category — permanent power — is what the doctrine forbids, is not
+ * created by this amendment, and was never asked for.
+ *
+ * ── AND THE THREE THINGS THAT KEEP IT HONEST ──────────────────────────────
+ *
+ *   THE ECONOMY IS BOUNDED. Credits earned per run are capped and the
+ *     interesting rows cost several runs, so hoarding cannot buy an advantage
+ *     that does not exist anyway.
+ *   THE SCAN IS EXTENDED, NOT EVADED. Every file that touches credits goes
+ *     ONTO the six-word currency scan (`companions.mjs`, `company.mjs`) on the
+ *     commit that creates it, with these two categories named as the exemption
+ *     and this paragraph as the reason. That is the difference between an
+ *     argued change to a rule and a quiet hole in it.
+ *   `takenBoons` IS UNTOUCHED. Nothing bought enters the draft, the Holocron
+ *     or the run's own ledger. The hundredth run still starts where the first
+ *     did, which is the sentence the three refusals above exist to protect.
  */
 
 // The ladder itself, so `bestTier` can be shown as the place it names rather
