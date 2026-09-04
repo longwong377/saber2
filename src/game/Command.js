@@ -3223,6 +3223,12 @@ export class Trooper {
       const shed = shedTraits({ ...opts, attrs: opts.attrs, traits: opts.traits || [] });
       this.attrs = { ...shed.attrs };
       this.traits = shed.traits.slice();
+      /* AND WHAT THE 0..100 CLAMP ATE OF A TRAIT'S SWING ON HIM — `lent`, off
+       * the record, handed to `shedTraits` above in the same bag. It is the
+       * one part of his profile the table cannot re-derive: a man given the
+       * bond's +16 Loyalty at 88 only received 12 of it, and the way off owes
+       * him the 12. See `Attributes.bake` and `Company.saneLent`. */
+      this.lent = shed.lent ?? null;
     } else {
       /* HASHED FROM WHO HE IS, never drawn from a stream. See `musterRng` — a
        * stream makes the same man depend on the order he was built in, and two
@@ -3232,6 +3238,10 @@ export class Trooper {
         { bias: ARCHETYPE_BIAS[this.type] || null });
       this.attrs = rolled.attrs;
       this.traits = rolled.traits;
+      /* NOTHING TO REMEMBER ON A FRESH MAN. The muster's own bake IS his base
+       * — these numbers are what he was rolled as, not a swing hung on top of
+       * them — so there is no earlier value for a ledger to hand back. */
+      this.lent = null;
     }
     /**
      * …AND WHO HE HAS SERVED WITH. A tally per partner, off the record and not
@@ -3413,6 +3423,12 @@ export class CommandRoster {
       morale: Math.min(1, Math.max(0, Number.isFinite(m.morale) ? m.morale : 0.72)),
       joined: Math.max(1, m.joined | 0),
       kind: m.kind, attrs: m.attrs || null, traits: m.traits,
+      /* THE PROFILE IS THREE FIELDS AND NOT TWO. `lent` is what the 0..100
+       * clamp ate of a trait's swing on him, and a door that carried the
+       * numbers and the traits but not that would hand him back the table's
+       * refund instead of what he was actually lent — the four Loyalty
+       * `Company.saneLent` is about. */
+      lent: m.lent || null,
       /* `shedTraits` reads these off the man to decide what he has grown out
        * of, so they have to be in the bag the constructor sees rather than
        * assigned afterwards. */

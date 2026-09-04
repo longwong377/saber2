@@ -51,6 +51,7 @@
 import { ARMIES, ARMY_IDS, RANKS, rankFor, MARKS, markById, SQUAD, MAX_STRENGTH } from './Command.js';
 import {
   ATTR_IDS, traitById, attrName, BOND_AREAS, liveBonds, isBonded, applyTrait, shedTraits,
+  traitSwing,
 } from './Attributes.js';
 /* FOR THE ONE WORD THAT SAYS WHAT HE DOES. `dossier` printed `m.type` raw for
  * a long time, so a page about a person had "clone_heavy" on it; `ARCHETYPES`
@@ -77,6 +78,48 @@ function saneAttrs(a) {
     out[id] = Math.max(0, Math.min(100, Math.round(v)));
   }
   return out;
+}
+
+/**
+ * WHAT A TRAIT ACTUALLY LENT HIM, off disk and made safe.
+ *
+ * `Attributes.bake` clamps to 0..100, so a man at 88 Loyalty handed the bond's
+ * +16 only ever received 12 of it — and when the bond lapses the refund has to
+ * be the 12, or he is left four points under the man he was mustered as for
+ * good. That difference is the ONE thing about a man's profile the table and
+ * his designation cannot re-derive between them, so it is the one thing this
+ * file stores about it. Absent for everybody the cap never touched, which is
+ * almost everybody.
+ *
+ * BOUNDED BY THE TABLE, which is what stops it being a way to print points. A
+ * hand-edited `lent` of −9999 on an axis would otherwise be a refund of 9999
+ * the next time the trait lapsed — `saneAttrs` would clamp the result to 100
+ * and the man would still be a free maximum. An entry may never claim a trait
+ * lent MORE than that trait's own swing, nor lent it the other way, so the
+ * worst a forged ledger can buy is the refund the table would have given
+ * anyway: the same door `saneBonds` and `saneAttrs` hold, on the same terms.
+ */
+function saneLent(v) {
+  if (!v || typeof v !== 'object') return null;
+  const out = {};
+  /* CAPPED like every other list off disk. Four is what a man may carry;
+   * `shedTraits` leaves an entry behind when a trait comes off, so a long
+   * career is allowed a few more than that and nothing beyond it. */
+  for (const id of Object.keys(v).slice(0, LENT_KEEP)) {
+    const t = traitById(id);
+    const row = v[id];
+    if (!t || !row || typeof row !== 'object') continue;
+    const swing = traitSwing(t);
+    const kept = {};
+    for (const k in swing) {
+      const n = Math.round(Number(row[k]));
+      if (!Number.isFinite(n)) continue;
+      kept[k] = swing[k] >= 0 ? Math.min(swing[k], Math.max(0, n))
+        : Math.max(swing[k], Math.min(0, n));
+    }
+    if (Object.keys(kept).length) out[id] = kept;
+  }
+  return Object.keys(out).length ? out : null;
 }
 
 /** The order a man's bonds are kept and shown in. Stable across a reload. */
@@ -187,6 +230,10 @@ const MAN_FIELDS = [
    * rank is what he has earned; these are what he was rolled as. See
    * src/game/Attributes.js. */
   'kind', 'attrs', 'traits',
+  /* AND WHAT THE CAP ATE OF A TRAIT'S SWING ON HIM, which travels with those
+   * three or the refund is wrong on the way off. Absent for every man 0..100
+   * never touched — see `saneLent` for the four Loyalty this exists for. */
+  'lent',
   /* THE CAMPAIGN HISTORY, and it only exists once a man has one. `runs` is
    * withdrawals survived and `since` is the run he first walked up a ramp on,
    * so the tab can say "nine runs, since Geonosis" rather than a bare number.
@@ -249,6 +296,15 @@ export const BONDS_MAX = 3;
  * screen has to render or the sorter has to trust.
  */
 export const BOND_TALLY_MAX = BOND_AREAS * 8;
+
+/**
+ * …AND HOW MANY TRAITS ONE MAN'S LEDGER MAY REMEMBER THE CAP EATING. Four is
+ * what he may carry at once and `shedTraits` leaves an entry behind when a
+ * trait comes off, so a long career is allowed a few more than that — and
+ * nothing beyond it, for the same reason `BONDS_MAX` exists: a save file with
+ * fifty entries in it is not a soldier. See `saneLent`.
+ */
+const LENT_KEEP = 8;
 
 /** The trait a live bond hangs on a man. Named once; `Attributes.js` owns it. */
 const BOND_TRAIT = 'bonded';
@@ -432,6 +488,11 @@ function readMan(m, army) {
     traits: Array.isArray(m.traits)
       ? m.traits.filter((t) => typeof t === 'string' && traitById(t)).slice(0, 4)
       : [],
+    /* THE THIRD FIELD OF THE PROFILE. `attrs` is where he stands, `traits` is
+     * what he is, and this is what the 0..100 clamp took off a trait's swing
+     * on the way in — the only part of the pair `applyTrait`/`shedTraits`
+     * cannot work out for itself. `null` for almost everybody. */
+    lent: saneLent(m.lent),
     squad: Number.isInteger(m.squad) ? m.squad : null,
     /* A BOOLEAN, and the LICENCE is checked at the other door rather than
      * here: this file knows nothing about ranks and `CommandRoster.
@@ -566,10 +627,16 @@ function settleBonds(men) {
     const shed = shedTraits(m);
     m.attrs = shed.attrs;
     m.traits = shed.traits;
+    m.lent = shed.lent ?? null;
     if (isBonded(m) && !m.traits.includes(BOND_TRAIT)) {
       const worn = applyTrait(m, BOND_TRAIT);
       m.attrs = worn.attrs;
       m.traits = worn.traits;
+      /* THE THIRD FIELD MOVES WITH THE OTHER TWO, every time. `applyTrait`
+       * measured what the cap let through; dropping it here is dropping the
+       * only record of it, and the refund below on the next read would be the
+       * table's 16 against the 12 he was actually given. */
+      m.lent = worn.lent ?? null;
     }
   }
   return men;
@@ -723,6 +790,11 @@ export function manOf(t, meta = {}) {
     kind: t.kind || 'flesh',
     attrs: t.attrs ? { ...t.attrs } : null,
     traits: Array.isArray(t.traits) ? t.traits.slice() : [],
+    /* CARRIED OFF THE RAMP WITH THE OTHER TWO. `Trooper` holds it for exactly
+     * the same reason it holds `attrs` — its own constructor sheds what he has
+     * grown out of — and a door that dropped it here would refund the table
+     * instead of what the cap left, one run later, on the roll. */
+    lent: t.lent && typeof t.lent === 'object' && Object.keys(t.lent).length ? { ...t.lent } : null,
     squad: Number.isInteger(t.squad) ? t.squad : null,
     /* THE SEAT HE WAS GIVEN — see `Trooper.post`. A boolean and nothing more:
      * it buys no number, it is re-checked against the licence on the way back

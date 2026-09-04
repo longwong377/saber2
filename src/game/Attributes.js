@@ -401,6 +401,19 @@ export const traitById = (id) => TRAIT_BY_ID.get(id) || null;
  * @param man   a stored man: `attrs`, `traits`, and whatever the predicates read.
  */
 /**
+ * A TRAIT'S WHOLE SWING AS ONE SIGNED MAP. `up` and `down` are two halves of
+ * one sentence — what the trait moves and which way — and every reader of them
+ * wants them together. `Company.js` wants it too, to bound what a stored
+ * ledger is allowed to claim a trait lent a man.
+ */
+export function traitSwing(t) {
+  const d = {};
+  for (const k in (t?.up || {})) d[k] = (d[k] || 0) + t.up[k];
+  for (const k in (t?.down || {})) d[k] = (d[k] || 0) - t.down[k];
+  return d;
+}
+
+/**
  * A TRAIT'S SWING, APPLIED OR REVERSED, and there is one copy of it.
  *
  * `dir` is +1 to hang the trait on a man and -1 to take it off him again. The
@@ -408,11 +421,46 @@ export const traitById = (id) => TRAIT_BY_ID.get(id) || null;
  * spell these two loops out, and a sign that disagreed between the way on and
  * the way off is exactly the defect `shedTraits`'s own note is about: a veteran
  * carrying a rookie's penalty for good with nothing on the roster to say why.
+ *
+ * ── AND IT HANDS BACK WHAT ACTUALLY LANDED, WHICH IS NOT THE TABLE ──────
+ *
+ * The clamp is the whole reason this returns anything. Measured in the gate,
+ * on the man the company suite's third clause happens to pick: base Loyalty
+ * 88, `bonded` gives +16, 0..100 eats four of them, and the way off subtracts
+ * the NOMINAL 16 — "losing them left bond 84 vs 88". Four points under the man
+ * he was mustered as, for ever, with nothing on his page to explain it: the
+ * exact defect `shedTraits`'s own note is about, wearing the cap instead of a
+ * sign. It is only ever the man at an EDGE, which is why it survived so long
+ * and why it was order-dependent — it depends on which man the roll drew.
+ *
+ * So the way off is handed what the way on managed: `lent` is a signed
+ * per-axis map of what a previous `bake` actually moved, and it stands in for
+ * the table when it is there. Reversing a delta that was measured inside
+ * 0..100 lands back inside 0..100, so the round trip is exact by construction
+ * rather than by the man being lucky.
  */
-function bake(attrs, t, dir) {
-  for (const k in (t.up || {})) attrs[k] = clamp((attrs[k] ?? 50) + dir * t.up[k], 0, 100);
-  for (const k in (t.down || {})) attrs[k] = clamp((attrs[k] ?? 50) - dir * t.down[k], 0, 100);
-  return attrs;
+function bake(attrs, t, dir, lent = null) {
+  const swing = lent || traitSwing(t);
+  const landed = {};
+  for (const k in swing) {
+    const was = attrs[k] ?? 50;
+    const now = clamp(was + dir * swing[k], 0, 100);
+    attrs[k] = now;
+    landed[k] = now - was;
+  }
+  return landed;
+}
+
+/**
+ * …AND WHETHER THE CAP ATE ANY OF IT, which is the only case worth a ledger
+ * entry. For everybody else the table already says what came off him, and a
+ * stored copy of a number that is already in the table is the hand-maintained
+ * twin this repository keeps deleting.
+ */
+function clipped(t, landed) {
+  const swing = traitSwing(t);
+  for (const k in swing) if (landed[k] !== swing[k]) return true;
+  return false;
 }
 
 /**
@@ -427,19 +475,42 @@ function bake(attrs, t, dir) {
  * A trait he already has is a no-op rather than a second helping, which is
  * what keeps the whole thing idempotent — the roll is settled on every read
  * and a man must not gain 16 Loyalty per time the Company tab is opened.
+ *
+ * A THIRD FIELD COMES BACK NOW: `lent`, the ledger `bake` above describes,
+ * keyed by trait id. It is `null` for the overwhelming majority of men —
+ * nothing was clipped, so the table is the honest answer and there is nothing
+ * to remember. `Company.js` stores it beside `attrs` and `traits`, and it has
+ * to, because the number the cap ate is the one thing about a man's profile
+ * that cannot be re-derived from the table and his designation.
  */
 export function applyTrait(man, id) {
   const t = TRAIT_BY_ID.get(id);
   const traits = (man?.traits || []).slice();
   const attrs = { ...(man?.attrs || {}) };
-  if (!t || traits.includes(id)) return { attrs: man?.attrs || attrs, traits };
+  const lent = { ...(man?.lent || {}) };
+  if (!t || traits.includes(id)) return { attrs: man?.attrs || attrs, traits, lent: man?.lent || null };
   traits.push(id);
-  return { attrs: bake(attrs, t, 1), traits };
+  const landed = bake(attrs, t, 1);
+  /* WRITTEN OR STRUCK OUT ON EVERY APPLICATION, never merely written. A man
+   * who was bonded at 88 Loyalty, lost them, and is bonded again at 74 is owed
+   * the full 16 the second time — an entry left over from the first would
+   * under-pay him by exactly what the cap ate a run ago. */
+  if (clipped(t, landed)) lent[id] = landed; else delete lent[id];
+  return { attrs, traits, lent: Object.keys(lent).length ? lent : null };
 }
 
 export function shedTraits(man) {
   const traits = (man?.traits || []).slice();
   const attrs = { ...(man?.attrs || {}) };
+  /* THE LEDGER OUTLIVES THE TRAIT, and that is deliberate rather than an
+   * omission. It is a fact about THESE numbers — what the cap ate of a swing
+   * that is still sitting in them — and a save can hand the trait back to the
+   * same numbers: `Company.load` settles the roll on every read, and a record
+   * that still claims `bonded` with a bond to a name that is not on the roll
+   * has to be refunded to the man he was mustered as on the spot, with no run
+   * happening. Clearing the entry here would make that refund depend on
+   * whether the save was written before or after the bond lapsed. */
+  const lent = man?.lent || null;
   const keep = [];
   let shed = false;
   for (const id of traits) {
@@ -447,9 +518,9 @@ export function shedTraits(man) {
     if (!t) continue;
     if (!t.sheds || !t.sheds(man)) { keep.push(id); continue; }
     shed = true;
-    bake(attrs, t, -1);
+    bake(attrs, t, -1, lent?.[id] || null);
   }
-  return shed ? { attrs, traits: keep } : { attrs: man?.attrs || attrs, traits };
+  return shed ? { attrs, traits: keep, lent } : { attrs: man?.attrs || attrs, traits, lent };
 }
 
 /**

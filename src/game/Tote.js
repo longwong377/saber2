@@ -119,7 +119,7 @@ export const VENUES = Object.freeze([
     id: 'holo-theatre', place: 19, name: 'Holo-theatre', skin: 'PODRACE',
     word: 'race', runners: 'the field', crowd: 'sixty in the seats',
     grounds: ['boonta', 'vinta', 'ord'],
-    yard: 20, meets: [1, 2], window: [12, 21], length: [2.5, 4], every: 0.5, runs: 0.3,
+    yard: 20, meets: [1, 2], hours: [12, 21], length: [2.5, 4], every: 0.5, runs: 0.3,
     /* Six days in seven. A card every single day is a timetable, not an event. */
     dark: 0.14,
   },
@@ -133,7 +133,7 @@ export const VENUES = Object.freeze([
     id: 'the-pit', place: 18, name: 'The Pit', skin: 'PIT',
     word: 'bout', runners: 'the card', crowd: 'twelve at the rail',
     grounds: ['pit-floor'],
-    yard: 14, meets: [1, 1], window: [19, 23], length: [2, 3.5], every: 0.5, runs: 0.3,
+    yard: 14, meets: [1, 1], hours: [19, 23], length: [2, 3.5], every: 0.5, runs: 0.3,
     dark: 0.22,
   },
   /**
@@ -150,7 +150,7 @@ export const VENUES = Object.freeze([
     id: 'the-arena', place: 20, name: 'The Arena', skin: 'ARENA',
     word: 'bout', runners: 'the pair', crowd: 'twelve on the benches',
     grounds: ['arena-sand'],
-    yard: 12, meets: [1, 2], window: [10, 20], length: [1.5, 3], every: 0.5, runs: 0.25,
+    yard: 12, meets: [1, 2], hours: [10, 20], length: [1.5, 3], every: 0.5, runs: 0.25,
     dark: 0.18,
     /* THE MARSHAL MATCHES THE PAIR — see `drawField`, which carries the
      * measurement. A refereed bout is made, not drawn out of a hat, and it is
@@ -185,6 +185,9 @@ export const venueAtPlace = (place) => VENUES.find((v) => v.place === (place | 0
  * races. Twelve days is sixty-odd starts a runner, which is `LOG_KEEP`. */
 export const FORM_DAYS = 12;
 
+/** How long the field is out before the first one goes off. */
+export const PARADE = 0.4;
+
 /**
  * THE DAY'S PROGRAMME, AND IT KNOWS NOTHING ABOUT THE RUNNERS' FORM.
  *
@@ -210,15 +213,20 @@ export function programmeAt(venueId, day = 0) {
   if (rng() < v.dark) return { venue: v, day: d, dark: true, meets: [] };
   const n = v.meets[0] + (rng() < 0.5 ? 0 : v.meets[1] - v.meets[0]);
   const meets = [];
-  let earliest = v.window[0];
+  let earliest = v.hours[0];
   for (let m = 0; m < n; m++) {
-    const span = v.window[1] - earliest;
+    const span = v.hours[1] - earliest;
     if (span <= 1) break;
     const from = round2(earliest + rng() * Math.max(0, span - 1));
     const length = round2(v.length[0] + rng() * (v.length[1] - v.length[0]));
-    const to = round2(Math.min(v.window[1] + 1, from + length));
+    const to = round2(Math.min(v.hours[1] + 1, from + length));
     const races = [];
-    for (let k = 0, hour = from; hour + v.runs <= to; k++, hour = round2(from + k * v.every)) {
+    /* THE PARADE. A meet OPENS before anything runs — the field is out, the
+     * board is up and nothing has happened yet, which is the best half hour in
+     * the room and the only half hour in which every market is still open. A
+     * meet whose first race went off at the door would have no such phase and
+     * `watch` would have a state it could never report. */
+    for (let k = 0, hour = from + PARADE; hour + v.runs <= to; k++, hour = round2(from + PARADE + k * v.every)) {
       races.push({
         id: `${v.id}:${d}:${m}:${k}`,
         venue: v.id, day: d, meet: m, index: k, hour: round2(hour), runs: v.runs,
@@ -344,12 +352,48 @@ export function* walkVenue(venueId, { from = 0, days = 1, book = null } = {}) {
       for (const row of meet.races) {
         const race = bind(row, stable);
         yield { day: d, venue: v, meet, race, book: stable };
-        recordResult(race.card, race.ground, resultOf(race));
+        const result = resultOf(race);
+        recordResult(race.card, race.ground, result);
+        writeHeadToHead(race.card, result);
       }
     }
   }
   return stable;
 }
+
+/**
+ * WHO BEAT WHOM — the tote's own column, and the only thing here the engine's
+ * log does not already carry.
+ *
+ * `Spectacle.recordResult` writes where a runner FINISHED; it does not write
+ * who it finished behind, because a form line is `1-3-2-1-4-4` and that is what
+ * a form line is. But the same function, on a bout, gives every beaten entrant
+ * a hidden GRUDGE against the one that beat it — up to 0.55 on a scale where a
+ * whole rating point is worth 1/22 — and the board cannot see it.
+ *
+ * That grudge is created by a PUBLIC event. Anybody at the rail last Tuesday
+ * saw who put whom down, and the tote replays last Tuesday anyway. So the
+ * head-to-head is published: a column on the card, exactly as a real fight
+ * bill prints "their last meeting". It is the reason the Pit and the Arena
+ * have a reading room at all — the going and the footing are nine tenths
+ * unreadable there by the engine's own `leftBlind`, and this is not.
+ *
+ * It is a COUNT and not a strength. What a grudge is worth is the punter's
+ * problem, and `tools/checks/tote.mjs` has one who prices it.
+ */
+function writeHeadToHead(card, result) {
+  if (!result?.winner) return;
+  for (const row of result.order) {
+    if (row.position === 1) continue;
+    const e = card.entrants.find((x) => x.id === row.id);
+    if (!e) continue;
+    e.form.beaten = e.form.beaten || {};
+    e.form.beaten[result.winner] = (e.form.beaten[result.winner] || 0) + 1;
+  }
+}
+
+/** How many times this one has been beaten by that one, in the public book. */
+export const beatenBy = (e, id) => (e.form.beaten?.[id] || 0);
 
 /* A small cache, because a room the player walks back into must not replay a
  * fortnight every time the prompt is raised. Bounded, and keyed by the two
@@ -382,7 +426,7 @@ export function bookAt(venueId, day = 0) {
 }
 
 /** Forget the replayed books. Only a check calls this. */
-export function clearTote() { BOOKS.clear(); RESULTS.clear(); }
+export function clearTote() { BOOKS.clear(); CARDS.clear(); }
 
 const CARDS = new Map();
 const CARD_KEEP = 8;
@@ -642,9 +686,6 @@ export function settleTickets(tickets = [], result = null) {
  *  THE RESULT — the engine's, run forward, from a seed nobody can move
  * ══════════════════════════════════════════════════════════════════════════ */
 
-const RESULTS = new Map();
-const RESULT_KEEP = 512;
-
 /**
  * RUN THE RACE, OR HAND BACK THE ONE THAT WAS ALREADY RUN.
  *
@@ -657,16 +698,25 @@ const RESULT_KEEP = 512;
  * IT DOES NOT TAKE WAGERS, and it cannot: the parameter list is a race. That
  * is the same structural guarantee the engine has and this file must not be
  * the place that gives it back.
+ *
+ * ── AND THE MEMO IS ON THE RACE AND NOT IN A MAP BESIDE IT ───────────────
+ *
+ * The first cut kept a module-level cache keyed by `race.id` — the place, the
+ * day and the index — which is unique for the station, because a venue has one
+ * yard. It is NOT unique for a measurement: `tools/checks/tote.mjs` rides a
+ * dozen INDEPENDENT yards through the same days, and every one of them after
+ * the first was handed the first yard's results for its own runners. Measured,
+ * that read a pin losing 23.8% at the Arena against a true 5.5%, and it read
+ * as a balance problem rather than as a cache.
+ *
+ * A memo on the bound race cannot collide, because the bound race IS the
+ * field. It lives exactly as long as `cardAt` holds the day, which is what the
+ * cache was for.
  */
 export function resultOf(race) {
   if (race._result) return race._result;
-  const hit = RESULTS.get(race.id);
-  if (hit) { race._result = hit; return hit; }
-  const out = runSpectacle({ card: race.card, ground: race.ground, seed: race.runSeed });
-  if (RESULTS.size >= RESULT_KEEP) RESULTS.delete(RESULTS.keys().next().value);
-  RESULTS.set(race.id, out);
-  race._result = out;
-  return out;
+  race._result = runSpectacle({ card: race.card, ground: race.ground, seed: race.runSeed });
+  return race._result;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -701,7 +751,13 @@ export function standingsAt(race, hour) {
   const result = resultOf(race);
   const at = progressOf(race, hour);
   const segments = race.ground.segments;
-  const seg = Math.floor(at * segments);
+  /* THE GATE UNDER WAY, not the last one completed. A screen showing gate 15
+   * while the field is coming out of 16 is a screen a second behind, and the
+   * gate the crowd is watching is the one being run. It also makes the reading
+   * at the line agree with the judge: the last lead change of a race happens
+   * ON the last gate, and a floor here had the feed calling Boleskin while
+   * Arkroo took it — which is how this was caught. */
+  const seg = Math.min(segments, Math.max(0, Math.ceil(at * segments)));
   const name = new Map(race.card.entrants.map((e) => [e.id, e.name]));
   if (at >= 1) {
     return result.order.map((r) => ({
@@ -709,22 +765,67 @@ export function standingsAt(race, hour) {
       dist: r.dist, condition: r.condition,
     }));
   }
+  /**
+   * ── WHO WAS IN FRONT BEFORE ANYBODY WAS ANNOUNCED ──────────────────────
+   *
+   * The engine emits `lead` on a CHANGE, so the first runner to hold the front
+   * is never named — and a screen seeded with the card's own order then has
+   * the wrong pod in front for as long as that one keeps it, which is how this
+   * was caught: the feed had Cleggano and the judge called Arkdon.
+   *
+   * It is recoverable exactly and without touching the result: the first
+   * `lead` event carries `from`, which IS whoever was in front until then. A
+   * race with no lead change at all was led wire to wire by whoever came home
+   * first. Neither reads a distance and neither knows anything a spectator at
+   * the rail does not.
+   */
+  const firstLead = result.events.find((ev) => ev.type === 'lead');
+  const front = firstLead ? firstLead.from
+    : (result.order.find((o) => o.status === 'finished')?.id ?? result.order[0]?.id ?? null);
   let order = race.card.entrants.map((e) => e.id);
+  if (front) order = [front, ...order.filter((id) => id !== front)];
   const status = new Map();
-  const move = (id, before) => {
-    const i = order.indexOf(id);
-    if (i < 0) return;
-    order.splice(i, 1);
-    const j = before == null ? order.length : order.indexOf(before);
-    order.splice(j < 0 ? order.length : j, 0, id);
+  /**
+   * ── AN OVERTAKE IS A SWAP AND A LEAD IS THE LAST WORD ──────────────────
+   *
+   * Two things had to be got right here and the first cut got both wrong.
+   *
+   * An overtake was applied as "lift this one out and put it in front of that
+   * one", which MOVES EVERYBODY IN BETWEEN. The engine emits it for a pair
+   * that were adjacent and swapped, so it is a swap; an insertion re-sorted
+   * runners the event says nothing about.
+   *
+   * And a gate's events arrive lead-first, so applying them in the order they
+   * were emitted let a following overtake undo the lead the same gate had just
+   * announced — the feed had Arkano in front of a race Teemkin won by a length
+   * and a quarter. Within a gate the overtakes are applied and THEN the lead,
+   * because the lead event is the announcement of where the front finished up.
+   */
+  const swap = (a, b) => {
+    const i = order.indexOf(a), j = order.indexOf(b);
+    if (i < 0 || j < 0) return;
+    order[i] = b; order[j] = a;
   };
+  const toFront = (id) => {
+    const i = order.indexOf(id);
+    if (i <= 0) return;
+    order.splice(i, 1);
+    order.unshift(id);
+  };
+  const gates = new Map();
   for (const ev of result.events) {
     if (ev.t > seg) break;
-    if (ev.type === 'lead') { const first = order[0]; if (first !== ev.who) move(ev.who, first); }
-    else if (ev.type === 'overtake') move(ev.who, ev.past);
-    else if (ev.type === 'retire') status.set(ev.who, 'retired');
-    else if (ev.type === 'beaten') status.set(ev.who, 'beaten');
-    else if (ev.type === 'refusal') status.set(ev.who, 'refused');
+    if (!gates.has(ev.t)) gates.set(ev.t, []);
+    gates.get(ev.t).push(ev);
+  }
+  for (const [, evs] of gates) {
+    for (const ev of evs) {
+      if (ev.type === 'overtake') swap(ev.who, ev.past);
+      else if (ev.type === 'retire') status.set(ev.who, 'retired');
+      else if (ev.type === 'beaten') status.set(ev.who, 'beaten');
+      else if (ev.type === 'refusal') status.set(ev.who, 'refused');
+    }
+    for (const ev of evs) if (ev.type === 'lead') toFront(ev.who);
   }
   const live = order.filter((id) => !status.has(id));
   const out = order.filter((id) => status.has(id));
@@ -792,7 +893,7 @@ export function watch(venueId, day = 0, hour = 0) {
   reading.board = boardFor(race);
   reading.progress = round2(at);
   reading.segments = race.ground.segments;
-  reading.segment = Math.min(race.ground.segments, Math.floor(at * race.ground.segments));
+  reading.segment = Math.min(race.ground.segments, Math.max(0, Math.ceil(at * race.ground.segments)));
   reading.standings = standingsAt(race, hour);
   reading.phase = at >= 1 ? 'called' : 'running';
   reading.calls = result.events
