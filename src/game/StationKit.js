@@ -200,12 +200,70 @@ function arcWall(kit, mat, r, h, from, to, n, y = 0, t = 0.4, collide = true) {
   }
 }
 
-/** A counter with a top and a face — a bar, a stall, a hatch, a desk. */
+/**
+ * A counter with a top and a face — a bar, a stall, a hatch, a desk.
+ *
+ * ── AND IT SAYS WHERE IT IS, WHICH IS WHAT MADE THE SHOPS REACHABLE ───────
+ *
+ * `Station.stationKey` had no "standing at" test at all: it asked
+ * `countersAt(place.id)` for the shops in the ROOM and took `shops[0]`, so a
+ * room with a kiosk AND a counter answered whichever branch ran first — and
+ * the kiosk branch ran first, which is the opposite of what the comment above
+ * it claimed. Driven for 45 s per room with the real key: #10 The Forge only
+ * ever raised `onKiosk:hilt` and #11 the Quartermaster's cage only ever raised
+ * `onKiosk:kit`. The armourer and the quartermaster were unreachable, and the
+ * quartermaster is the only counter in the game carrying stims and stratagem
+ * charges.
+ *
+ * A reach test needs a fixture to reach for, and `atRegister` is the tree's
+ * own precedent for that: the dressing puts a thing somewhere and the key
+ * measures the distance to it. The thing already existed — every one of these
+ * rooms builds a desk — it just never told anybody where it stood.
+ *
+ * `kit.after` is the door for that and it is the one the loose bodies already
+ * use: it takes a point in this frame and hands it back in WORLD coordinates
+ * at the end of the emit, composed through whatever push/pop stack the shape
+ * happened to be inside. So the arithmetic is not repeated anywhere, and a
+ * shape that moves its counter moves the shop with it — which is exactly what
+ * the alternative, a table of coordinates in `Station.js`, would not do.
+ */
 function counter(kit, M, w, d, x, z, ry = 0, h = 1.08) {
   kit.push(x, 0, z, ry);
   kit.slab(M.deep, w, h - 0.08, d, 0, (h - 0.08) / 2, 0, { collide: true, bevel: 0 });
   kit.slab(M.wing, w + 0.18, 0.08, d + 0.18, 0, h - 0.04, 0, { collide: false, bevel: 0 });
   kit.slab(M.strip, w * 0.9, 0.05, 0.06, 0, 0.16, -d / 2 - 0.04, { collide: false, bevel: 0 });
+  /**
+   * THREE POINTS, IN WORLD SPACE, AND THE FRAME FALLS OUT OF THEM.
+   *
+   * `at` is the middle of the desk, `front` is one metre out on the CUSTOMER'S
+   * side (−Z of the counter's own frame — the face the strip above lights),
+   * and `behind` is where the keeper stands. `front − at` is a unit vector
+   * pointing at the customer, so `counterHere` reconstructs the desk's whole
+   * frame from two points and never has to know the room's yaw or the depth of
+   * the push stack it was built inside.
+   *
+   * A RADIUS WAS TRIED AND IT WAS WRONG, twice, measured in a browser:
+   *   `#10 The Forge` builds its desk 0.4 m off the middle of a 13 × 10 room,
+   *     so a 2.4 m radius made the WHOLE MIDDLE of the room the shop and the
+   *     hilt bench unreachable — the same defect, one branch over.
+   *   `#11 Quartermaster's cage` has its hatch in the front wall, so the
+   *     customer stands OUTSIDE the cage, in the Concourse — a radius round
+   *     the desk centre put the shop inside the bars where nobody stands.
+   * A desk has a front and a back and a width; a circle has none of those.
+   */
+  kit.after(new THREE.Vector3(0, 0, 0), (world, q) => {
+    (kit.counters || (kit.counters = [])).push({
+      at: { x: q.x, y: q.y, z: q.z }, front: null, behind: null, w, d,
+    });
+  });
+  kit.after(new THREE.Vector3(0, 0, -d / 2 - 1), (world, q) => {
+    const rec = kit.counters?.[kit.counters.length - 1];
+    if (rec) rec.front = { x: q.x, y: q.y, z: q.z };
+  });
+  kit.after(new THREE.Vector3(0, 0, d / 2 + 0.55), (world, q) => {
+    const rec = kit.counters?.[kit.counters.length - 1];
+    if (rec) rec.behind = { x: q.x, y: q.y, z: q.z };
+  });
   kit.pop();
 }
 
@@ -2264,6 +2322,16 @@ export function buildPlace(world, group, place, M, st) {
     const hx = (s.w * c + s.d * sn) / 2, hz = (s.w * sn + s.d * c) / 2;
     st.sunk.push({ x0: place.x - hx, x1: place.x + hx, z0: place.z - hz, z1: place.z + hz, dy: -s.depth });
   }
+  /* ── WHERE THE DESKS IN THIS ROOM ENDED UP ───────────────────────────
+   *
+   * In world coordinates, off the kit's own emit — see `counter()`. Recorded
+   * per PLACE and not in one flat list, because the question `stationKey` asks
+   * is "am I standing at a counter IN THIS ROOM", and a flat list would make
+   * that a search over every desk on the deck. A room whose shape builds no
+   * desk records nothing and is not in the map at all, which is the state the
+   * two rooms that sell over a plank and a stone floor are in — see
+   * `counterHere` for what the key does there. */
+  if (kit.counters?.length) (st.counters || (st.counters = new Map())).set(place.id, kit.counters);
   if (ctx.home) st.home = ctx.home;
   if (ctx.obelisk) st.obelisk = { ...ctx.obelisk, group };
   /* The group as well as the numbers: `Habitat.js` parents its six panels to

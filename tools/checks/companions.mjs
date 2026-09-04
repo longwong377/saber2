@@ -344,6 +344,14 @@ export async function run({ check, assert }) {
        * the one file the doctrine's amendment allows to. Everything around it
        * is held to the same six words as the kennel. */
       'game/Counter.js', 'game/Vendors.js',
+      /* AND `Keepsakes.js`, ON THE COMMIT THAT MADE IT. It is the file that
+       * turns a payment into a thing you own, which is the closest anything in
+       * this tree comes to a shop that is not the wallet — and a new file is
+       * invisible to this scan and therefore legal by default, which the note
+       * above calls a hazard rather than a permission. It holds no balance and
+       * opens no store: every write goes through a record somebody else
+       * already owns, which `counter.mjs` asserts by reading the file. */
+      'game/Keepsakes.js',
       /* AND `Pits.js`, V16 Lane G's pit room, on the commit that made it. It
        * pays a PURSE and settles a WAGER — the same pull toward a stored
        * balance the betting engine has, one step closer to the record,

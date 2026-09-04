@@ -460,6 +460,138 @@ export function emptyLarder() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PARCELS — V16 §3.2, and it is where a bought piece of furniture waits  */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ WHY A CRATE YOU PAID FOR IS NOT ON THE FLOOR THE INSTANT YOU PAY ══════
+ *
+ * The audit: four `slot:'home'` rows on the counters, of which three named
+ * nothing in `CATALOGUE` at all — so a Narn banner and a mounted skull were
+ * 240 and 2100 credits for a string. The rows are real ids now, and this is
+ * where they land.
+ *
+ * They land in `store.parcels` and not in `pieces`, and the reason is the
+ * partition. `fits()` — the one rule about where a piece may stand — needs
+ * `h.blockers`, which the room's OWN shape hands back through `ctx.home` at
+ * dress time (`StationKit.twinroom` declares four: the partition, the trophy
+ * rack, the saber stand and the bunk). Nothing off the disk knows those, so a
+ * delivery that put a locker down from the Concourse would put it in a wall
+ * about a fifth of the time — measured over the cabin's 30 × 22 grid, the
+ * blockers cover 19% of it.
+ *
+ * So the parcel waits and the ROOM unpacks it, which is exactly the sentence
+ * this file's header wrote when it reserved the field: *"§3.2's shipping
+ * office delivers to your apartment overnight."* You buy it at the counter,
+ * and it is standing in your cabin the next time you walk in.
+ *
+ * `store.parcels` already validates as `{ id, n, t }` and needs no migration:
+ * `id` is the catalogue id, `n` is how many of them and `t` is the station
+ * clock it was sent at, exactly as the larder uses them.
+ */
+
+/** Send a catalogue piece home. Returns `{ ok, why }` — a refusal speaks. */
+export function deliverPiece(id, opts = {}) {
+  const c = BY_ID.get(id);
+  if (!c) return { ok: false, why: `there is no such thing as a ${id}` };
+  const rec = loadHome();
+  const held = rec.pieces.length + rec.store.parcels.reduce((a, r) => a + (r.n | 0), 0);
+  if (held >= MAX_PIECES) return { ok: false, why: `a cabin holds ${MAX_PIECES} pieces and yours is full` };
+  const t = Math.max(0, Math.round(Number(opts.clock) || 0));
+  const rows = rec.store.parcels.slice();
+  const at = rows.findIndex((r) => r.id === c.id);
+  if (at >= 0) rows[at] = { ...rows[at], n: Math.min(99, rows[at].n + 1) };
+  else rows.push({ id: c.id, n: 1, t });
+  setHomeStock('parcels', rows);
+  return { ok: true, why: null, piece: c.name, waiting: rows.length };
+}
+
+/** What is waiting to be unpacked, as catalogue rows. For a screen. */
+export function parcels() {
+  return loadHome().store.parcels
+    .map((r) => ({ ...r, kind: BY_ID.get(r.id) || null }))
+    .filter((r) => r.kind);
+}
+
+/**
+ * ══ UNPACKED BY THE ROOM, BECAUSE THE ROOM KNOWS WHERE THE WALLS ARE ══════
+ *
+ * Called once from `dressHome`, after `h` exists and therefore after the
+ * blockers do. Every parcel is walked onto the first free cell of a lattice
+ * scanned from the middle of the floor outwards, tested with `fits()` — the
+ * same rule the player's own hands are held to, so a delivered piece can never
+ * stand anywhere they could not have put it themselves.
+ *
+ * A parcel that will not fit STAYS A PARCEL. That is deliberate: a cabin with
+ * no floor left keeps your banner in the box until you move something, which
+ * is a thing you can act on, and the alternative — dropping it, or stacking it
+ * on the bunk — is a purchase quietly deleted.
+ *
+ * Only yours. A guest's apartment is dressed from a record that came off the
+ * wire and unpacking into it would put YOUR furniture in THEIR room and then
+ * write it to your disk on the way out.
+ */
+function unpackParcels(world, h) {
+  if (!h.mine) return 0;
+  const rows = h.state.store?.parcels || [];
+  if (!rows.length) return 0;
+  const left = [];
+  let put = 0;
+  for (const r of rows) {
+    const c = BY_ID.get(r.id);
+    let n = c ? (r.n | 0) : 0;
+    while (n > 0 && h.state.pieces.length < MAX_PIECES) {
+      const at = freeCell(h, c);
+      if (!at) break;
+      /* The row only. `dressHome` spawns a `Prop` for every row immediately
+       * below this call and `spawnPiece` PUSHES onto `h.props`, so a null
+       * pushed here would put the two lists one apart for ever — and
+       * `leaveHome` reads `h.props[i]` against `h.state.pieces[i]` to find out
+       * where a piece was pushed to. */
+      h.state.pieces.push({ k: c.id, x: at.x, z: at.z, r: 0 });
+      n--; put++;
+    }
+    if (n > 0) left.push({ ...r, n });
+  }
+  if (!put) return 0;
+  h.state.store = { ...h.state.store, parcels: left };
+  /* WRITTEN WHOLE, HERE, AND NOT LEFT TO `leaveHome`. That function takes
+   * `store` from the DISK on the way out — correctly, because the larder and
+   * the pad are written while you are somewhere else — so a parcel emptied
+   * only in memory would come back on the next visit and be unpacked again,
+   * once per visit, for ever. One save, both halves, at the moment the two
+   * facts change together. */
+  saveHome(h.state);
+  h.dirty = false;
+  h.edits++;
+  world?.notify?.('DELIVERED', put === 1 ? 'a parcel was waiting for you' : `${put} parcels were waiting for you`);
+  return put;
+}
+
+/**
+ * The first cell a piece will stand on, scanned outwards from the middle.
+ *
+ * Outwards rather than from a corner so a delivery lands in the room rather
+ * than behind the door, and deterministic — no `Math.random` in `src/`, and
+ * two players unpacking one record must get one layout.
+ */
+function freeCell(h, c) {
+  const nx = Math.floor(h.hx / CELL), nz = Math.floor(h.hz / CELL);
+  const n = Math.max(nx, nz);
+  for (let ring = 0; ring <= n; ring++) {
+    for (let ix = -ring; ix <= ring; ix++) {
+      for (let iz = -ring; iz <= ring; iz++) {
+        if (Math.max(Math.abs(ix), Math.abs(iz)) !== ring) continue;
+        if (Math.abs(ix) > nx || Math.abs(iz) > nz) continue;
+        const x = ix * CELL, z = iz * CELL;
+        if (!fits(h, c, x, z, 0)) return { x, z };
+      }
+    }
+  }
+  return null;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
 /*  DRESSING THE ROOM                                                         */
 /* ══════════════════════════════════════════════════════════════════════════ */
 
@@ -598,6 +730,10 @@ export function dressHome(world, st, M, opts = {}) {
   dressGalley(world, h);
   dressPanel(world, h);
   dressSign(world, h);
+  /* WHAT THE SHOP SENT, BEFORE THE BODIES ARE MADE — a parcel unpacked after
+   * the loop below would be a row in the record with no `Prop` beside it, and
+   * `leaveHome` walks the two lists in step. See `unpackParcels`. */
+  unpackParcels(world, h);
   for (const p of state.pieces) spawnPiece(world, h, p);
   /* ONE WHEEL LISTENER PER WORLD, NOT PER ROOM. The wheel turns the piece in
    * YOUR hands and dials YOUR catalogue; a listener per guest apartment would

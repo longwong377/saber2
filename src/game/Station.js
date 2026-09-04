@@ -53,14 +53,17 @@ import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js'
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards, standingReading, companyOf } from './StationBoards.js';
-import { stationHour, setStationHour, stationName, setStationName, standing, stationDay, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
+import { stationHour, setStationHour, stationName, setStationName, standing, setStanding, stationDay, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
 import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey, inHome } from './Home.js';
 import { myApartment } from './Coop.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
-import { countersAt } from './Vendors.js';
+import { countersAt, counterById, COUNTERS } from './Vendors.js';
+/* THE KEEPERS' BODIES come off the same census every other resident does — see
+ * `dressKeepers`. One import, no new archetype. */
+import { resident } from './StationCast.js';
 import { stepMedbay } from './Medbay.js';
 import { pitAtPlace } from './Pits.js';
 import { venueAtPlace, ticketFor, settleTickets } from './Tote.js';
@@ -986,6 +989,13 @@ export function dressStation(world) {
   dressObelisk(world, st, M);
   dressBoards(world, st, M);
   dressWayfinding(world, st, M);
+  /* ── AND THE PEOPLE BEHIND THE COUNTERS (V16 Lane B) ───────────────────
+   *
+   * AFTER `dressStationLife`, so the pool has already claimed its budget and
+   * a keeper is an extra body rather than one taken off the crowd; and after
+   * the places, because a keeper stands behind a desk the room's own shape
+   * recorded. See `dressKeepers` for why they are not in the pool. */
+  st.keeperCount = dressKeepers(world, st);
 
   /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
    *
@@ -1163,6 +1173,16 @@ export function undressStation(world) {
   if (world._flight) { try { setFlightState(world._flight); } catch {} }
   world._flight = null;
   st.bells = [];
+  /* AND THE PEOPLE BEHIND THE COUNTERS. They are NOT in `StationLife`'s pool —
+   * see `dressKeepers` — so nothing else takes them down, and a body left in
+   * `world.enemies` pointing at a disposed room is the leak this file's own
+   * teardown exists to prevent. */
+  for (const k of st.keepers || []) {
+    try { k.body?.dispose?.(); } catch { /* already gone */ }
+    const i = world.enemies?.indexOf(k.body) ?? -1;
+    if (i >= 0) world.enemies.splice(i, 1);
+  }
+  st.keepers = [];
   world._station = null;
   world.floorAt = null;
 }
@@ -1345,6 +1365,224 @@ export function atPlanTable(world) {
   return false;
 }
 
+/**
+ * ══ WHERE THE SHOP IS, AND IT IS NOT A CIRCLE ═════════════════════════════
+ *
+ * How far in front of a desk's face you can stand and still be at it, and how
+ * far past its ends. 2.0 m is one pace back from the counter plus the arm you
+ * reach over it with; 0.7 m at the ends is standing at the corner of it.
+ *
+ * ── A RADIUS WAS TRIED FIRST AND A BROWSER KILLED IT TWICE ───────────────
+ *
+ * The first cut was 2.4 m round the desk's middle. Driven with the real key:
+ *
+ *   #10 The Forge      the desk is 0.4 m off the middle of a 13 × 10 room, so
+ *                      the circle covered the whole middle of it and the room
+ *                      centre answered `onCounter:armourer` — the hilt bench
+ *                      was unreachable, which is the SAME defect one branch
+ *                      over from the one being fixed.
+ *   #11 Quartermaster  the hatch is in the front wall, so the customer stands
+ *                      OUTSIDE the cage in the Concourse; `placeUnder` there
+ *                      answers #9, and the branch offered the CLOTHIER at the
+ *                      quartermaster's hatch.
+ *
+ * A desk has a front, a back and a width. A circle has none of those, and the
+ * second failure is worse than the first: which room you are technically
+ * inside is not the same question as which counter you are standing at, and
+ * for a hatch in a wall the two answers are always different.
+ *
+ * So the test is in the DESK'S own frame — `StationKit.counter` records the
+ * middle, a point one metre out on the customer's side and the keeper's spot,
+ * all in world coordinates, and `front − at` is the unit vector that
+ * reconstructs the frame — and it is run over EVERY desk on the deck rather
+ * than over the ones belonging to the room `placeUnder` named.
+ */
+const COUNTER_REACH = 2.0;
+const COUNTER_SIDE = 0.7;
+
+/**
+ * WHICH SHOP YOU ARE STANDING AT, OR NULL.
+ *
+ * Three steps, in this order, and the order is the whole of it:
+ *
+ *   1. EVERY DESK ON THE DECK. You are at a counter if you are in front of its
+ *      face, within `COUNTER_REACH` of it and no more than `COUNTER_SIDE` past
+ *      either end. Deck-wide and not room-scoped, because #11's hatch is
+ *      served from outside its own room.
+ *   2. THE ROOM ITSELF, but only if that room's shape built NO desk. Three of
+ *      the seven are in that state and all three are honest: `#9 The
+ *      Concourse` is an imported mesh (`zocalo.smesh`) with no kit desk in it,
+ *      `#32 Narn quarter` is a stone floor with braziers, and `#58 The
+ *      Underlift` sells over a plank across a container — its own shape says
+ *      so in as many words. None of the three carries a kiosk, so the room
+ *      being the counter shadows nothing.
+ *   3. Otherwise nothing, and the press falls through to the kiosk. That is
+ *      what makes the Forge's bench and the cage's paint racks reachable.
+ *
+ * A room with several desks (the food court has three) answers on whichever
+ * one you are at, and one counter serves them all — a row of stalls is one
+ * vendor's frontage.
+ */
+export function counterHere(world, place) {
+  const p = world?.player?.position;
+  const st = world?._station;
+  if (p && st?.counters) {
+    let best = null, bestD = Infinity;
+    for (const [placeId, desks] of st.counters) {
+      const shops = countersAt(placeId);
+      if (!shops.length) continue;
+      for (const d of desks) {
+        if (!d.front) continue;
+        /* The desk's own frame, from two points: `f` is the unit vector from
+         * the middle of the desk to a metre out on the customer's side, so
+         * `along` is how far in front of it you are and `side` is how far off
+         * its centre line. No yaw, no push stack, no room. */
+        const fx = d.front.x - d.at.x, fz = d.front.z - d.at.z;
+        const dx = p.x - d.at.x, dz = p.z - d.at.z;
+        const along = dx * fx + dz * fz;
+        const side = dx * fz - dz * fx;
+        if (along < 0 || along > d.d / 2 + COUNTER_REACH) continue;
+        if (Math.abs(side) > d.w / 2 + COUNTER_SIDE) continue;
+        if (along < bestD) { bestD = along; best = shops[0]; }
+      }
+    }
+    if (best) return best;
+  }
+  const shops = countersAt(place?.id);
+  if (!shops.length) return null;
+  const desks = world?._station?.counters?.get(place.id);
+  return (desks && desks.length) ? null : shops[0];
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE KEEPERS — `Vendors.keeper` gets its first reader
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * Every counter in `Vendors.js` has carried a `keeper` since the table was
+ * written — `ARMOURER.keeper` is `{role:'smith', species:'human', helm:true}`
+ * — and until now `offerFrom` returned it and NOBODY read it. No body was
+ * built, no species, no helmet; #10's gazetteer row still said the smith was a
+ * Wookiee, and V16 §A4 asked for a Mandalorian. A field declared and never
+ * read is the dead control this tree keeps deleting, and this one had a
+ * player's sentence behind it.
+ *
+ * So a keeper is a BODY, standing behind the desk `StationKit.counter()`
+ * recorded, drawn from the station's own census exactly as every other
+ * resident is: `StationCast.resident(seed)` picks the species, the name and
+ * the frame, and `spawnEnemy(res_<species>)` builds it. Nothing new is
+ * modelled and no new archetype exists — the whole of this is a seed and a
+ * position.
+ *
+ * ── THE SEED IS THE COUNTER AND THE DAY, WHICH IS THE SHELF'S OWN ────────
+ *
+ * *"the same shop owner doesnt always look the same like between runs or maybe
+ * deaths idk everything other than your apartment/companion should be
+ * refreshed/randomized."* So the keeper rerolls on the day, off the same
+ * `(counter, day)` shape the shelf uses and for the same reason: everyone on
+ * the station meets the same trader on the same day, and walking out and back
+ * in does not fetch a different one. `Math.random` is refused in `src/`.
+ *
+ * ── AND THEY ARE ON YOUR SIDE, LIKE EVERY OTHER RESIDENT ────────────────
+ *
+ * §11: `team = player.team`, so nothing in the game hunts a shopkeeper and no
+ * director can be handed one as an objective. Set after the spawn because
+ * `Enemy`'s constructor writes `team = 1` outright — `StationLife.spawnResident`
+ * hit the same edge and its note is the authority.
+ *
+ * They are NOT in `StationLife`'s pool and must not be: that pool re-seats on
+ * distance and would despawn the one person in the room you came to see. Five
+ * bodies on deck 40, one on 44, one on 48 — measured at 4 draws each on the
+ * merged rung, against §12.2's 400.
+ */
+function keeperSeed(counter, day) { return `keep:${counter.id}:${day | 0}`; }
+
+export function dressKeepers(world, st) {
+  if (!world?.spawnEnemy) return 0;
+  const day = stationDay();
+  let made = 0;
+  st.keepers = [];
+  for (const c of COUNTERS) {
+    const rec = st.places.get(c.place);
+    if (!rec) continue;
+    const desks = st.counters?.get(c.place);
+    const p = rec.place;
+    /* Behind the desk if the room built one; otherwise in the middle of the
+     * room, which is where the two rooms without a desk put their trader —
+     * see `counterHere` for why those two have none. */
+    const spot = desks?.[0]?.behind
+      || { x: p.x, y: floorOf(p), z: p.z };
+    const yaw = desks?.[0]?.yaw ?? (p.yaw + Math.PI);
+    /* The keeper's own row decides the species and the job; the seed decides
+     * everything the row leaves open, which is most of a person. */
+    const seed = keeperSeed(c, day);
+    const want = c.keeper || {};
+    let who = null;
+    try {
+      who = resident(seed, {
+        species: want.species && want.species !== 'any' ? want.species : undefined,
+        role: want.role || undefined,
+      });
+    } catch { who = null; }
+    if (!who) continue;
+    let body = null;
+    try {
+      body = world.spawnEnemy(`res_${who.species}`, new THREE.Vector3(spot.x, spot.y + 0.1, spot.z),
+        { team: world.player?.team ?? 0 });
+    } catch { body = null; }
+    if (!body) continue;
+    body.team = world.player?.team ?? 0;
+    body.stationResident = true;
+    body.stationName = want.name || who.name;
+    body.stationRole = want.role || who.role;
+    body.stationSpecies = who.species;
+    body.stationFaction = who.faction;
+    body.stationPlace = c.place;
+    /** What makes this one a shopkeeper rather than a passer-by. Read by the
+     *  counter panel, so the shop can say who is behind it. */
+    body.stationKeeper = c.id;
+    if (body.brain) body.brain.idle = true;
+    if (body.rotation) body.rotation.y = yaw;
+    body.position?.set(spot.x, spot.y + 0.1, spot.z);
+    st.keepers.push({ id: c.id, body, who: { ...who, name: want.name || who.name },
+      helm: !!want.helm, mando: !!want.mando, x: spot.x, z: spot.z });
+    made++;
+  }
+  return made;
+}
+
+/**
+ * WHO IS BEHIND A GIVEN COUNTER, as a plain row. The panel's reader.
+ *
+ * It answers off the dressed body when there is one and off the seed when
+ * there is not — a check with no world still gets a name, a species and
+ * whether the man is helmed, which is the whole of what the shop says about
+ * him and is what makes the Mandalorian at #10 a fact rather than a field.
+ */
+export function keeperOf(counterOrId, world = null, day = null) {
+  const c = typeof counterOrId === 'string' ? counterById(counterOrId) : counterOrId;
+  if (!c) return null;
+  const want = c.keeper || {};
+  const live = day == null ? world?._station?.keepers?.find((k) => k.id === c.id) : null;
+  const who = live?.who || resident(keeperSeed(c, day == null ? stationDay() : day), {
+    species: want.species && want.species !== 'any' ? want.species : undefined,
+    role: want.role || undefined,
+  });
+  return {
+    counter: c.id,
+    /* A ROW MAY NAME ITS KEEPER, and one does: the Forge's shop sign and #10's
+     * gazetteer line both read "Bo Vhett", so that man does not reroll. Every
+     * other counter's keeper is a seed and turns over with the day. */
+    name: want.name || who.name,
+    species: who.species,
+    role: want.role || who.role,
+    helm: !!want.helm,
+    /** V16 §A4: the Forge's smith is a Mandalorian and keeps the bucket on. */
+    mando: !!want.mando,
+    built: !!live?.body,
+  };
+}
+
 export function beginStationName(world) {
   const st = world?._station;
   if (!st) return false;
@@ -1472,6 +1710,57 @@ export function stationKey(world) {
    * (V15 §1.1). Standing at that one names the station; the other seven — and
    * the rest of the room — open the codex on the next line. */
   if (place.id === 13 && atRegister(world)) return beginStationName(world);
+  /**
+   * ── A COUNTER, IF YOU ARE STANDING AT ONE — V16 Lane B ──────────────────
+   *
+   * ══ THE DEFECT THIS REPLACES, AND IT MADE TWO SHOPS UNREACHABLE ═══════
+   *
+   * This branch used to sit BELOW the kiosk branch and read:
+   *
+   *     const shops = countersAt(place.id);
+   *     if (shops.length && world.onCounter) return world.onCounter(shops[0].id) !== false;
+   *
+   * with a comment over it claiming it was "raised before the kiosk branch …
+   * and the one you are standing at is the one that answers". Both halves were
+   * false. It was raised AFTER, so the kiosk always won; and `countersAt`
+   * takes a ROOM ID and the code took `shops[0]`, so there was no standing-at
+   * test of any kind. Driven with the real key — `Input.touchHitSet.add
+   * ('focus')`, one tap on one frame, through `Player._readInput` — for 45 s
+   * in each deck-40 room:
+   *
+   *     #9  The Concourse        onCounter:clothier
+   *     #10 The Forge            onKiosk:hilt     the armourer never reached
+   *     #11 Quartermaster's cage onKiosk:kit      the QM never reached
+   *     #15 The Fresh Air        onCounter:freshair
+   *     #17 Food court           onCounter:foodcourt
+   *
+   * The Quartermaster is the ONLY counter carrying stims and stratagem
+   * charges, so no provision in the game could be bought at all — the whole of
+   * `Progress.js`'s second amended category, behind a branch that never ran.
+   * `tools/_doorprobe.mjs` was green throughout because it calls
+   * `world.onCounter('armourer')` directly, which is the instrument that
+   * cannot see this class of defect.
+   *
+   * ── SO THE PROMISE IN THAT COMMENT IS BUILT ───────────────────────────
+   *
+   * `counterHere` is a reach test on the DESK — `StationKit.counter()` records
+   * where every one of them ended up, in world coordinates, off the kit's own
+   * emit. That is `atRegister`'s exact shape one file over: the dressing puts
+   * a fixture somewhere and the key measures the distance to it, so #13's
+   * eight terminals can mean two different things and so can #10's bench and
+   * its counter.
+   *
+   * FIRST, now, and it has to be: a shop and a kiosk in one room is a choice
+   * between two things and the shop is the one with a person behind it. Step
+   * back from the desk and the press falls through to the kiosk on the next
+   * line, which is how the Forge's hilt bench and the cage's paint rack stay
+   * reachable — measured after the fix, at the door of #10 and at its counter,
+   * and the two presses raise different panels.
+   */
+  const shop = counterHere(world, place);
+  if (shop && world.onCounter) {
+    if (world.onCounter(shop.id) !== false) return true;
+  }
   /* A counter opens the panel it names; everything else answers with its own
    * verb, which is the prompt and, until its system lands, the whole of it. */
   if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
@@ -1518,19 +1807,6 @@ export function stationKey(world) {
    * While a jump is running the plot table says so rather than reopening: an
    * order taken twice is the one thing a bridge does not do.
    */
-  /**
-   * ── A COUNTER, IF ONE STANDS HERE — V16 Lane B ──────────────────────────
-   *
-   * `Vendors.countersAt` answers the shops in this room, so a place gets a
-   * shop by being named in that table and nothing here changes. Raised before
-   * the kiosk branch because a room may have both — `#10 The Forge` has a
-   * kiosk for the hilt AND an armourer behind the counter, and the one you are
-   * standing at is the one that answers.
-   */
-  const shops = countersAt(place.id);
-  if (shops.length && world.onCounter) {
-    return world.onCounter(shops[0].id) !== false;
-  }
   /* ── THE BENCH, at #42 and #50 — V16 Lane A3. You make the thing at
    * Fabrication and you tune the call at Comms, which is where a fire mission
    * is called from and which has had no job at all until now. */
@@ -1554,6 +1830,25 @@ export function stationKey(world) {
   if ((place.id === 43 || place.id === 44) && world.onMedbay) {
     return world.onMedbay(place.id) !== false;
   }
+  /**
+   * ── #51 THE DROID POOL — V16 Lane B5's *"instead of"* ───────────────────
+   *
+   * *"droids charge instead of eating."* `Food.eat`'s refusal to a droid names
+   * this room in as many words — *"a droid has no stomach; there is a rack of
+   * posts at the droid pool"* — and there was no door here, so a separatist
+   * roll could buy food, watch it cooked, carry it home, be refused at the
+   * cupboard and be sent to a room with nothing in it. `Food.CHARGES` and
+   * `Food.offeredTo` had zero callers outside their own file for the same
+   * reason: the only room they were written for was not asking.
+   *
+   * IT ANSWERS ONLY A DROID, and that is why it is a fall-through rather than
+   * a `return`. `main.js` hands back false for anybody with a stomach and the
+   * press carries on to the room's own verb, which is the rule #20's pit
+   * branch below states at length: a branch that claims a press it did not use
+   * is the defect. Nothing here knows what a droid is — the kind is
+   * `Attributes.kindOfArmy`'s and the panel is `main.js`'s.
+   */
+  if (place.id === 51 && world.onCharge && world.onCharge(place.id) !== false) return true;
   /**
    * ── #20 AND #61, THE PITS — V16 Lane G ─────────────────────────────────
    *
@@ -1756,6 +2051,32 @@ export function payForJob(jobId) {
   const got = collect(jobId);
   if (!got.ok) return { ...got, paid: 0, capped: false };
   const paid = pay(got.pay, 'work');
+  /**
+   * ══ AND THE STATION REMEMBERS THAT YOU DID IT ═══════════════════════════
+   *
+   * The riser half of §11's standing, and the reason it is HERE:
+   *
+   *   IT IS A RESIDENT'S OWN OPINION. The fall is "you cut somebody in this
+   *     hull" and the rise has to be the same KIND of fact or the number means
+   *     two things. A job is given by a named resident, in a room, and
+   *     collected face to face — `Quests.pinnedGivers` keeps them standing
+   *     there until you come back. That is the whole of what a vendor could
+   *     have heard about you.
+   *   IT IS BOUNDED BY PLAYING AND NOT BY SHOPPING. A job only exists because
+   *     `Quests.settleRun` finished one off a RUN, so standing climbs at the
+   *     rate runs happen and no faster, and `setStanding` clamps at +40 —
+   *     eleven jobs from neutral, worth 12% off a cape. Nothing about that is
+   *     power: `markupFor` moves a PRICE, every price is for a cosmetic or a
+   *     run-only provision, and `PER_RUN_CAP` still bounds the purse.
+   *   AND IT IS NOT SPENDING. Standing that rose when you paid would be a
+   *     loyalty ladder — a number that grows by having played, which is the
+   *     one sentence `Progress.js`'s header exists to refuse.
+   *
+   * +2 against the fall's −2 a body, so one man cut costs one job done. That
+   * symmetry is the point: the number is a ledger of how you have treated the
+   * place, not a currency with an exchange rate.
+   */
+  setStanding(standing() + 2);
   return { ...got, paid, capped: paid < got.pay };
 }
 
@@ -2202,10 +2523,64 @@ export function tickStationClock(world, dt) {
   if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }
 }
 
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  STANDING, PERSISTED — and it had NO WRITER AT ALL
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `StationSave.setStanding` had zero callers in the tree. `Counter.markupFor`
+ * works and is measured — standing 0 pays 38 for the oiled leather, −20 pays
+ * 45, −35 is refused with a line — but the number it reads was 0 for every
+ * player for ever, so the vendor-remembers-you half of the shop never fired
+ * once.
+ *
+ * The fall was already being COMPUTED and thrown away.
+ * `StationLife.witness` does `life.standing -= hurt * 2` when you cut a
+ * resident, writes it to `world.run.stationStanding`, and `dressStationLife`
+ * reads it back off the run — so it survives a station visit inside a run and
+ * dies with the run, while the durable fold beside it never moved. Two numbers
+ * called standing, one of them the one the shops read.
+ *
+ * ── SO THE DELTA IS MIRRORED, NOT THE VALUE ───────────────────────────────
+ *
+ * `life.standing` starts at `world.run?.stationStanding ?? 0` — NOT at the
+ * saved fold — so copying it across would reset a player who had earned a −20
+ * back to zero on the next visit, which is the fold quietly undoing the
+ * consequence. What is written is the CHANGE since this file last looked, so
+ * the two numbers can disagree about their origin and still agree about what
+ * happened.
+ *
+ * Written on the frame it changes and not per frame: `witness` only moves the
+ * number when a body is hurt for the first time, so this costs one integer
+ * compare a frame and a `localStorage` write about once a lifetime.
+ *
+ * ── AND WHAT MOVES IT THE OTHER WAY IS WORK, WHICH IS IN `payForJob` ─────
+ *
+ * A ratchet that only ever falls would make `markupFor`'s +40 rung — "a
+ * regular, and they knock a bit off" — a dead branch, and this file has just
+ * finished deleting one of those. The riser is collecting on a job for a
+ * resident: see `payForJob`. It is not shopping, deliberately — standing that
+ * went up when you spent would be a loyalty ladder, which is a number that
+ * grows by having played and is the thing `Progress.js`'s header refuses.
+ */
+function persistStanding(world, st) {
+  const life = world?._stationLife;
+  if (!life) return;
+  const now = Math.round(Number(life.standing) || 0);
+  if (st._lifeStanding === undefined) { st._lifeStanding = now; return; }
+  if (now === st._lifeStanding) return;
+  const moved = now - st._lifeStanding;
+  st._lifeStanding = now;
+  setStanding(standing() + moved);
+}
+
 export function stepStation(world, dt) {
   const st = world._station;
   if (!st) return;
   tickStationClock(world, dt);
+  /* §11's consequence, reaching the disk. One integer compare a frame — see
+   * `persistStanding` for why it is a delta and not a copy. */
+  persistStanding(world, st);
   /* THE WARD HEALS ON THE STATION'S OWN CLOCK. Every ten seconds, and only
    * then — a man mending is a thing that happens while you shop, not a thing
    * that happens when you walk into #44 and look at him. It returns the rolls

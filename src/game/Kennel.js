@@ -373,11 +373,24 @@ export function readOne(r) {
  * that this one does not have is DROPPED rather than silently painting
  * nothing. `markById` is the one validator and it is the roll's own.
  */
+/**
+ * THE COLOUR SLOTS A KIND'S BUILDER READS — exported so the one other place
+ * that writes an animal's look does not have to keep a second copy of them.
+ *
+ * `Keepsakes.js` validates a shop row against this list before it ever reaches
+ * `dressCompanion`, so a collar naming a slot no animal has is refused by the
+ * suite rather than dropped in silence at the counter. It was an inline array
+ * in `saneLook` and a second one there would be the hand-maintained twin
+ * HANDOFF §2.3 calls this project's signature defect — the list is one line
+ * long and would have gone stale the first time a kind grew a surface.
+ */
+export const LOOK_SLOTS = Object.freeze(['hide', 'plate', 'belly', 'eye', 'shell', 'trim',
+  'photoreceptor', 'panels', 'pelt', 'braid', 'blanket']);
+
 function saneLook(look) {
   if (!look || typeof look !== 'object') return {};
   const out = {};
-  for (const k of ['hide', 'plate', 'belly', 'eye', 'shell', 'trim',
-    'photoreceptor', 'panels', 'pelt', 'braid', 'blanket']) {
+  for (const k of LOOK_SLOTS) {
     if (typeof look[k] !== 'string') continue;
     /* `paintById` answers null for an id this build does not have, and a
      * dropped slot is the chassis's own colour — which is the honest failure.

@@ -466,6 +466,85 @@ export async function run({ check, assert, near, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('home: a parcel bought at a counter is standing in the cabin when you walk in', async () => {
+    /**
+     * ══ FINDING 4, AND THE ROWS NAMED FURNITURE THAT DID NOT EXIST ════════
+     *
+     * Four `slot:'home'` rows were on the counters — `cloth`, `banner`,
+     * `crate`, `trophy-skull` — against `CATALOGUE`'s ten ids, and THREE OF
+     * THE FOUR named nothing at all. A Narn banner was 240 credits for a
+     * string. `Keepsakes.WEARERS` holds every row to the catalogue now; this
+     * is the other half — that a row which does name a piece produces one.
+     *
+     * IT LANDS IN `store.parcels` AND THE ROOM UNPACKS IT, which is the field
+     * this file's header reserved for V16 §3.2's *"delivers to your apartment
+     * overnight"*. The reason is the partition: `fits()` needs `h.blockers`,
+     * which only the room's own shape hands back at dress time, and a delivery
+     * placed from the Concourse would put a locker in a wall — the four
+     * declared blockers cover 19% of the cabin's 30 × 22 grid.
+     */
+    const H = await import('../../src/game/Home.js');
+    const S = await import('../../src/game/StationSave.js');
+    S.clearStation();
+
+    /* THE COUNTER'S OWN ROW, not a hand-typed id — a row that stopped naming a
+     * real piece would fail here rather than at the till. */
+    const V = await import('../../src/game/Vendors.js');
+    const KS = await import('../../src/game/Keepsakes.js');
+    const row = V.everyRow().find((r) => r.slot === 'home');
+    assert(row, 'no counter sells a piece of furniture at all');
+    assert(KS.wearable(row), `${row.id} names ${JSON.stringify(row.value)}, which is not in CATALOGUE`);
+
+    const before = H.loadHome().pieces.length;
+    const sent = H.deliverPiece(row.value);
+    assert(sent.ok, `the delivery was refused: ${sent.why}`);
+    /* NOT ON THE FLOOR YET. It is a parcel, and the room has not been walked
+     * into — putting it down from the shop is the thing that cannot be done. */
+    assert(H.loadHome().pieces.length === before,
+      'the piece went straight onto the floor from the counter, where nothing knows about the '
+      + 'partition');
+    assert(H.parcels().some((r) => r.id === row.value), 'nothing is waiting to be unpacked');
+
+    /* AND NOW WALK IN. */
+    let after = 0, waiting = 0, at = null;
+    const one = await station(44);
+    try {
+      const h = one.world._home;
+      after = h.state.pieces.length;
+      waiting = (h.state.store.parcels || []).length;
+      /* THE LAST ONE, not the first: `unpackParcels` pushes, and the shipped
+       * `DEFAULT_LAYOUT` already contains a chair — the first cut of this line
+       * found THAT one and reported the delivery at the default layout's
+       * coordinates. */
+      at = h.state.pieces[h.state.pieces.length - 1] || null;
+      assert(after === before + 1,
+        `${after} pieces in the cabin against ${before + 1} — the parcel was not unpacked`);
+      assert(!waiting, `${waiting} parcels still in the box after walking in`);
+      assert(at && at.k === row.value, `the last piece in the cabin is a ${at?.k}, not a ${row.value}`);
+      /* WHERE THE PLAYER COULD HAVE PUT IT THEMSELVES. `fits` is the same rule
+       * their own hands are held to, so a delivered piece can never stand
+       * somewhere they could not have set it down. */
+      assert(!H.fits(h, H.pieceKind(row.value), at.x, at.z, at.r, at),
+        `the ${row.value} was delivered to ${at.x}, ${at.z}, which fits() refuses`);
+      /* AND ONE BODY PER ROW, in step. `leaveHome` walks the two lists
+       * together and a parcel pushed without a `Prop` beside it would put them
+       * one apart for ever. */
+      assert(h.props.length === h.state.pieces.length,
+        `${h.props.length} bodies for ${h.state.pieces.length} rows — the two lists are apart`);
+    } finally { one.world.dispose?.(); }
+
+    /* AND THE BOX IS EMPTY ON DISK, so the next visit does not unpack it again.
+     * `leaveHome` takes `store` from the DISK on the way out — correctly — so
+     * an unpack that only emptied memory would re-deliver once per visit. */
+    const disk = H.loadHome();
+    assert(!(disk.store.parcels || []).length,
+      'the parcel is still on disk — it will be unpacked again on every visit, for ever');
+    assert(disk.pieces.some((p) => p.k === row.value), 'the delivered piece did not survive the leaving');
+    S.clearStation();
+    return `${row.id} → a ${row.value}: ${before} pieces + 1 parcel → ${after} pieces at `
+      + `${at.x}, ${at.z} and 0 waiting; the box is empty on disk`;
+  });
+
   check('home: saved on leaving, survived by a re-dress, and never a fourth durable key', async () => {
     const H = await import('../../src/game/Home.js');
     const S = await import('../../src/game/StationSave.js');

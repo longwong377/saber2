@@ -153,6 +153,30 @@ export async function run({ check, assert, near }) {
     /* AND `owns` IS THE LEDGER'S READER, so a shelf can say what is yours. */
     assert(KS.owns(s, 'tone-glove') && !KS.owns(s, 'tone-vorlon'), 'the ledger does not read back');
 
+    /* ══ AND THE ANIMAL, which had ZERO rows on any of the seven counters ══
+     *
+     * *"you can buy a bunch of shit for your compansions too."* There was not
+     * a collar, a blanket or a mark in the whole tree. A `pet` row writes
+     * through `Kennel.dressCompanion` — the one door the kennel allows a
+     * screen, grep-pinned by `companions.mjs` to `name` and `look` — so this
+     * lane opened no new way to edit an animal. */
+    const Kn = await import('../../src/game/Kennel.js');
+    Kn.clear();
+    const pet = V.everyRow().find((r) => r.slot === 'pet');
+    assert(pet, 'no counter sells anything for a companion at all');
+    /* WITH NOTHING TO PUT IT ON IT IS REFUSED, AND IT SAYS SO — a shop that
+     * takes the money for a collar you cannot wear is the defect again. */
+    const nobody = KS.takeKeepsake(s, pet);
+    assert(!nobody.ok && nobody.why, 'a collar was sold to a player with no animal, silently');
+    assert(!KS.owns(s, pet.id), 'the refused row was written into the ledger anyway');
+    Kn.adopt('massiff', 'Tam');
+    const worn = KS.takeKeepsake(s, pet);
+    assert(worn.ok, `the collar was refused with an animal in the kennel: ${worn.why}`);
+    const [slot, value] = Object.entries(pet.value)[0];
+    assert(Kn.load().live?.look?.[slot] === value,
+      `${pet.id} said ${slot}=${value} and the animal wears ${JSON.stringify(Kn.load().live?.look)}`);
+    Kn.clear();
+
     /* ══ AND IT IS NOT A FOURTH DURABLE KEY ═══════════════════════════════
      *
      * `session.mjs` counts `localStorage.setItem` writers across five named
@@ -174,6 +198,7 @@ export async function run({ check, assert, near }) {
       'Keepsakes.js reaches localStorage — that is the fourth durable key session.mjs refuses');
     assert(!/makeStore/.test(code), 'Keepsakes.js opens a store of its own');
     return `gloveTone -1 → ${glove.value}, cape → mantle, hilt → Archaic, plate → ice, `
+      + `${pet.id} → ${slot}=${value} on the animal (and refused with no animal); `
       + `${s.keepsakes.length} in the ledger; no store of its own`;
   });
 
@@ -653,16 +678,62 @@ export async function run({ check, assert, near }) {
       `the Forge's smith is ${JSON.stringify(smith)} — §A4 asks for a Mandalorian, and a `
       + 'Mandalorian keeps the bucket on');
     assert(smith.role === 'smith', `the Forge's keeper is a ${smith.role}`);
+    /* AND HE IS THE MAN ON THE SIGN. The shop is "Bo Vhett, beskar and blade"
+     * and #10's row names him too, so a seeded name would put a stranger
+     * behind somebody else's sign — measured in a browser, it said "Bo
+     * Connally". A row that names its keeper keeps him. */
+    assert(smith.name === 'Bo Vhett' && V.ARMOURER.name.includes(smith.name),
+      `the Forge's shop sign says "${V.ARMOURER.name}" and the man behind it is ${smith.name}`);
+    /* Every OTHER keeper is a seed and turns over with the day, which is the
+     * player's *"the same shop owner doesnt always look the same"*. */
+    const rolled = new Set();
+    for (let d = 0; d < 14; d++) rolled.add(S.keeperOf('clothier', null, d).name);
+    assert(rolled.size >= 5,
+      `the clothier is the same ${rolled.size} people over a fortnight — the keeper does not reroll`);
     /* AND THE ROOM SAYS THE SAME THING THE TABLE DOES. */
     const who = PLACE.get(10).who;
     assert(/mandalorian/i.test(who) && !/wookiee/i.test(who),
       `#10's gazetteer says "${who}" — the room and the table disagree about who is in it`);
-    /* THE KEEPER REROLLS AND THE ROLE DOES NOT. Same `(counter, day)` shape the
-     * shelf uses: a different trader tomorrow, the same trade. */
-    const days = new Set();
-    for (let d = 0; d < 14; d++) days.add(S.keeperOf('clothier', null, d)?.name);
-    return `${V.COUNTERS.length} keepers, all named; the Forge's is a helmed Mandalorian smith; `
-      + `#10 reads "${who}"`;
+    return `${V.COUNTERS.length} keepers, all named; the Forge's is ${smith.name}, a helmed `
+      + `Mandalorian smith who does not reroll; the clothier is ${rolled.size} different people `
+      + `over a fortnight; #10 reads "${who}"`;
+  });
+
+  check('counter: the shop\'s till is wired to the shipped build, not to a check', async () => {
+    /**
+     * ══ THE ONE CLAUSE THAT IS ABOUT THE PLAYER AND NOT ABOUT THE CODE ═══
+     *
+     * Every other clause in this file reaches `Keepsakes.js` with `import()`,
+     * which is a statement about the FILE SYSTEM and not about the game. That
+     * is exactly how `Games.js` and `Quests.js` shipped finished and
+     * unreachable behind seven green checks, and `games.mjs` says of its own
+     * version of this line: "if it ever goes red the answer is never to delete
+     * it."
+     *
+     * The whole of Finding 1 is that the shop took money and wrote nothing.
+     * `Keepsakes.js` fixes that ONLY if `showCounter`'s handler calls it, and
+     * that handler is in `main.js`. So the walk `pack.mjs` does is the test,
+     * and the importer has to actually USE the door: a file named in an import
+     * and never called satisfies a graph and still leaves the shop a sink.
+     */
+    const { assertShipped } = await import('./_shipped.mjs');
+    const by = await assertShipped(assert, 'src/game/Keepsakes.js',
+      'a shop that takes 3200 credits for beskar and writes nothing is the defect this lane exists '
+      + 'to fix, and the only line that fixes it is the one in showCounter that spends the row');
+    const { readFile } = await import('node:fs/promises');
+    let used = [];
+    for (const f of by) {
+      const code = await readFile(new URL(`../../${f}`, import.meta.url), 'utf8');
+      const m = code.match(/import\s*\{([^}]*)\}\s*from\s*'[^']*Keepsakes\.js'/);
+      if (m) used = used.concat(m[1].split(',').map((x) => x.trim().split(/\s+as\s+/)[0]).filter(Boolean));
+      /* AND IT IS CALLED, on the same line the money moves. A `spend()` with
+       * no `takeKeepsake` beside it is the shop exactly as it shipped. */
+      if (/takeKeepsake\s*\(/.test(code)) used.push('called');
+    }
+    assert(used.includes('takeKeepsake') && used.includes('called'),
+      `Keepsakes.js is imported by ${by.join(', ')} but nothing calls takeKeepsake — the row is `
+      + 'still paid for and still not owned');
+    return `Keepsakes.js is in the shipped build, imported by ${by.join(', ')}, and takeKeepsake is called`;
   });
 
   check('counter: standing has a writer now, in both directions', async () => {

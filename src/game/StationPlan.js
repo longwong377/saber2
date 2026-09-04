@@ -208,7 +208,7 @@ export const PLACES = [
   {
     id: 10, deck: 40, name: 'The Forge', shape: 'alcoveshop',
     look: 'a stall grown into a shop: hilt parts on pegboard, a bench with a vice, a kyber cabinet lit from inside',
-    who: 'a Wookiee smith', idle: 'hammering, sparks', verb: 'work the hilt and blade',
+    who: 'Bo Vhett, a Mandalorian smith', idle: 'hammering, sparks', verb: 'work the hilt and blade',
     kiosk: 'hilt', band: 'concourse', side: -1, along: 14, w: 13, d: 10, h: 4.4, peak: 15, heads: 2,
   },
   {

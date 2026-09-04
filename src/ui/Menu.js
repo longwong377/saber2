@@ -489,6 +489,30 @@ export const DEFAULT_SETTINGS = {
    * or a corrupt one cannot leave a character with no cape at all.
    */
   wardrobe: { ...WARDROBE },
+  /**
+   * ══ WHAT THE VENDORS HAVE SOLD YOU — V16 Lane B, and it is one array ═════
+   *
+   * Keepsake ids, and it is here rather than in a key of its own because
+   * `session.mjs` counts the durable writers in this tree and refuses a
+   * fourth; `Progress.lessons` is the precedent for putting a new durable fact
+   * in a record that already exists. This is the right record and not merely
+   * an available one: a keepsake is a COSMETIC PREFERENCE OF THIS PROFILE,
+   * which is the whole subject of this blob, and it is neither a run record
+   * (`saber.progress.v1` refuses anything a run did not do) nor the station's
+   * business (`saber.station.v1` is the clock, the standing and the room).
+   *
+   * A LIST OF WHAT IS OWNED, NOT WHAT IS WORN. What you are wearing is already
+   * `wardrobe` above and `hiltStyle` below; this is the vendor's receipt, and
+   * the two answer different questions — you may own two cape tones and be
+   * wearing one. `Keepsakes.js` is the only writer.
+   *
+   * NOT AN UNLOCK, WHICH IS THE HALF THE DOCTRINE CARES ABOUT. Every tone,
+   * cut, kit and hilt a counter sells is already free in the creator; buying
+   * one applies it, and nothing anywhere reads this array back to decide what
+   * a player may choose. `grep -n 'keepsakes' src/` finds the shop and nothing
+   * else. `coerceSettings` validates it as a list of strings off this `[]`.
+   */
+  keepsakes: [],
   skinIndex: 2,
   hairIndex: 1,
   /**
@@ -1117,6 +1141,10 @@ export const SETTING_READERS = {
    * the pause card land on the body without a redeploy.
    */
   wardrobe:        ['ui/Menu.js', 'wardrobeOf(s.wardrobe)'],
+  /* The vendors' receipt. `Keepsakes.ownedIds` is the reader, and it is the
+   * only one — nothing reads this back to decide what a player may choose,
+   * which is the line between a record and an unlock. */
+  keepsakes:       ['game/Keepsakes.js', 'settings?.keepsakes'],
   skinIndex:       ['game/World.js', 'skinIndex: this.settings.skinIndex'],
   hairIndex:       ['game/World.js', 'hairIndex: this.settings.hairIndex'],
   build:           ['game/World.js', 'build: this.settings.build'],
