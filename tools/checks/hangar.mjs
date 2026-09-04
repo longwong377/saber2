@@ -340,11 +340,34 @@ export async function run({ check, assert }) {
       'the flight deck is offered as a mode you can pick — a hangar in the theatre grid is the '
       + 'shape Levels.js has deleted three times');
     assert(!Waves.playableModes().includes('hangar'), 'playableModes offers the deck');
-    assert(Waves.playableModes().length === Object.keys(Waves.MODES).length - 1,
-      'playableModes is filtering something other than the deck, or nothing at all');
+    /**
+     * ── EVERY HIDDEN MODE IS FILTERED, AND THE DECK IS ONE OF THEM ────────
+     *
+     * This counted `MODES.length - 1` on the assumption that the deck was the
+     * only thing `hidden` could ever mean. V16 §A2 made the lessons and the
+     * sandbox a PLACE — `#57 The Repeating Room` — and both modes carry
+     * `hidden: true` now, which is the same flag doing the same job: reached
+     * by a door, not by a card on the grid.
+     *
+     * So the count is derived from the flag rather than from a literal, which
+     * is what the clause was always about — the grid offers exactly what is
+     * not hidden — and it still fails the day something is hidden by accident
+     * or the filter stops filtering.
+     */
+    const hidden = Object.keys(Waves.MODES).filter((k) => Waves.MODES[k].hidden === true);
+    assert(hidden.length >= 1 && hidden.includes('hangar'),
+      `${hidden.length} hidden modes and the deck ${hidden.includes('hangar') ? 'is' : 'is NOT'} among them`);
+    assert(Waves.playableModes().length === Object.keys(Waves.MODES).length - hidden.length,
+      `${Waves.playableModes().length} playable of ${Object.keys(Waves.MODES).length} with `
+      + `${hidden.length} hidden (${hidden.join(', ')}) — playableModes is filtering something `
+      + 'other than the hidden ones, or nothing at all');
+    for (const k of hidden) {
+      assert(!Waves.playableModes().includes(k), `${k} is hidden and is on the grid anyway`);
+    }
     assert(P.insertion === false,
       'the deck flies a 28-second orbital descent to reach the deck you are already standing on');
-    return `${Waves.playableModes().length} modes a player can pick, and the deck is not one`;
+    return `${Waves.playableModes().length} modes a player can pick; `
+      + `${hidden.length} reached by a door instead (${hidden.join(', ')})`;
   });
 
   check('hangar: the deck is a place, not a theatre', () => {

@@ -90,6 +90,22 @@ function blank() {
      * (V16 §2 B5, §3.2), empty until those lanes land.
      */
     home: null,
+    /**
+     * FLIGHT OPS — SHARK §7, and `FlightOps.js` owns every field of it.
+     *
+     * NULL IS THE DEFAULT AND IT IS AN UNCERTIFIED PILOT, not an empty object:
+     * `FlightOps.cleanFlight` reads a missing record as somebody who has never
+     * been down to the pit, never read the tower's board and cannot sign for a
+     * Starfury — which is the state §7's whole ladder starts from. What is
+     * stored is `{ v, cert, gantries, boards, bells, sorties }`.
+     *
+     * IT IS IN THIS FOLD AND NOT A KEY OF ITS OWN. `session.mjs` counts the
+     * durable writers in this tree and refuses another; the cert is the
+     * station's business exactly as the home and the clock are, and a sortie
+     * is emphatically NOT a run — `saber.progress.v1` already refuses
+     * `station` and nothing here goes near `recordRun`.
+     */
+    flight: null,
   };
 }
 
@@ -178,6 +194,10 @@ export function markSeen(id) {
 /** The home's state. Opaque here: `Home.js` owns its shape (V15 §1.3). */
 export function homeState() { return read().home; }
 export function setHomeState(v) { const s = read(); s.home = v; return write(s).home; }
+
+/** The flight-ops fold. Opaque here too: `FlightOps.js` owns its shape (§7). */
+export function flightState() { return read().flight; }
+export function setFlightState(v) { const s = read(); s.flight = v; return write(s).flight; }
 
 /** Start again. Only a check calls this. */
 export function clearStation() { store.drop(); _cache = null; return read(); }

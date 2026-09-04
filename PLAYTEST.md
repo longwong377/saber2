@@ -42,6 +42,55 @@ same row, is not a ✅ whatever else it says.
 
 ---
 
+## 4 Sep — SABER GAME NOTES AND IMPROVEMENTS V16
+
+Handed over as a stream of consciousness with *"dont stop here im only human
+you must fucking see where I'm going with all of this"*, and added to twice
+mid-session. `V16.md` carries the asks verbatim.
+
+| Ask | Mark | Check | What landed |
+|---|---|---|---|
+| *"mode/map selection at the command deck … no loading screen"* | ✅ | `warp` 5/5 | A nine-second jump that drives a shader and a fleet while you walk about. |
+| *"an extensive shop system … permanent cosmetics vs temporary powerups"* | ✅ | `counter` 8/8, `credits` | Seven counters, 72 rows, a bounded economy, and the no-currency doctrine AMENDED in the open before a line of shop code was written. |
+| *"stratagem upgrades at engineering with a minigame"* | ✅ | `bench` 4/4 | Twelve sidegrades over six stratagems; use opens them and never a number. |
+| *"NPC quests from the people on the station"* | ✅ | `work` 3/3 | The giver is a chance encounter, the payer is pinned. |
+| *"a med bay that actually does something"* | ✅ | `medbay` 10/10 | The ward mends on the station's own clock whether you are there or not; the door's job is choosing which five of your wounded get the tanks. |
+| *"playable alien casino games … against actual npcs"* | ✅ | `games` 4/4 | Sabacc, the Dejarik Column and the Drum, each measured until a player who knows the rules beats one who does not. |
+| *"podracing betting … real races without pre-determined outcomes"* | ✅ | `spectacle-engine` 18/18, `tote` 17/17 | The sim runs FORWARD from the bet; every market's cut is positive and under 16%, measured at a stake where rounding is not the payout. |
+| *"you don't have to bet to watch (applies to any casino game)"* | ✅ | `tote` | `watch()` takes a place, a day and an hour and has no parameter a ticket could hide in. |
+| *"companion duels … sanctioned or illegal … permanent consequences"* | ✅ | `pits` 17/17 | `#20` has a marshal and a doctor; `#61` has neither. Reading the tell 70.3%, silence 52.3%, shouting 38.7%. The mortal stake needs a token derived from the sentence you were shown. |
+| *"the station must not read as a series of connected rooms"* | ✅ | `station` (walkways) | The between-space measured worst-pair IoU **1.000** — identical cell for cell on all three decks, four merged meshes a deck and nobody in any corridor at any hour. Now 0.767 / 0.793 / 0.745, and 88 / 81 / 81 people walking. |
+| *"food … a small cutscene of it being cooked … droids charge instead"* | ✅ | `food` 9/9 | A dish is a counter row; the cook is an ordered list of steps in the banner with the player on their feet; the larder is a fixture in the apartment. |
+| *"one or two bars … troops on leave"* | ✅ | `food` (the bars clause) | At 21:00 the cantina held 26 people and not one was a soldier. Now 22 at 22:00, nine of them named off your own roll. |
+| *"a holodeck/dojo that replaces the training and sandbox menus"* | ✅ | `holodeck` 10/10 | REPLACES: both tabs deleted, Deploy 10 cards → 8. Sixteen programs, each a ground and an opponent set and all seven dials as one value. |
+| *"co-op apartments for up to 4 players"* | ✅ | `coop-home` 5/5 | One room, one owner. A 40-piece home crosses as 758 bytes of cell coordinates; a guest sees the room and not your cupboard. |
+| *"the black market smuggler types only deal with sith"* | ✅ | `counter` | The counter shipped gated and with no ROOM — `#58` was not in the gazetteer, so the one shop gated on your order could not be walked to. It has one now, and a check that asks whether a shop has a place rather than what it sells. |
+| SHARK step 7 — flight ops and the Starfury | ⚠️ | `flightops` 15/15 | The four rooms and the launch loop are done; the orbit is a rail, not a flight model, and the tractor is ❌. Stated at the top of the lane rather than at the bottom. |
+
+Also this round, and each of these was a check that had gone stale against the
+game rather than a bug in the game: a source lift reading seven hundred lines
+it did not own, a character sheet check that went red for the sheet being
+correct, a function body read by guessing 2600 characters, a lift readout
+asserted as a position when it is a destination, and a shutter declared in the
+data that no code read. And `tools/_doorprobe.mjs`, which opens all eleven of
+the station's panels in a real browser — because the suite drives the data and
+stops at the door, and this tree has twice shipped a room no player could
+reach with every check green.
+
+## 4 Sep — SABER GAME NOTES AND IMPROVEMENTS V15
+
+The list before V16, worked in the same session. `V15.md` has it verbatim.
+
+| Ask | Mark | Check | What landed |
+|---|---|---|---|
+| *"name your station"*, and the leaderboard as a place | ✅ | `station` 19/19 | `#56 The Standing` is a room you walk to; the name is typed in it and the boards say so. |
+| *"the Borz cast, on the station, in off-duty dress"* | ✅ | `station` (the cast clause), `characters` | Fifteen species, each with a body, a name and a day; 301 residents, populated at each place's own busy hour. |
+| *"kicks and punches"*, and a two-finger death touch for droids | ✅ | `melee` 8/8 | Six moves, six facets, catch-and-throw, and `DISASSEMBLE` gated on a toughness at or above a droid's. |
+| *"no loading plate between the flight deck and the station"* | ✅ | `decklift` 9/9, `station` | Both lift handlers capture the last frame before teardown and hand it on; the screen wears it and gives it back. |
+| *"the home — a place, not a menu"* | ✅ | `home` 16/16 | A placement grid, surfaces, an address on the door, a mirror, a galley, and one durable key. |
+| *"a woman of any species, armour, capes, secondary motion"* | ✅ | `creator` 18/18, `grooming` 17/17 | Clone armour head to toe either sex, bucket on or off, through ONE chooser on all five body paths; a woman's cut and shirtless at LOWER triangle cost than the tunic; braid physics at 24 particles, opt-in. Bounce is ❌ — the argument for both routes is in `Bodies.js`'s header. |
+| *"companion growth — visible change, care at the habitat"* | ✅ | `companions` 54/54 | The animal changes size on its own body's number; care is at `#28` and nowhere else. |
+
 ## 3 Sep — SABER GAME NOTES AND IMPROVEMENTS V14
 
 Handed over with: *"This list is not in order but a stream of consciousness

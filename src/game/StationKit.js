@@ -141,6 +141,34 @@ function stair(kit, M, w, y, x, z) {
   }
 }
 
+/**
+ * THE THREE GANTRY LEVELS OF #4, in metres off the pit's own floor, lowest
+ * first. EXPORTED because `Station.js` decides which one the player is
+ * standing on from their height, and there must not be a second copy of these
+ * three numbers — `StationPlan.js`'s whole header is about what happens when
+ * four files each keep their own idea of where something is.
+ */
+export const GANTRY_Y = Object.freeze([-5.4, -2.8, -0.2]);
+
+/**
+ * A flight of steps DOWN from `y0` to `y1`, running along ±Z from `z0`.
+ *
+ * `stair()` above goes UP to a landing and is the only one anything needed
+ * until #4's pit: a hole in the floor with three levels of catwalk in it and
+ * no way down is a room whose verb — *"walk the gantries"* — reaches exactly
+ * one of the three. Same rise as `stair` (0.24 m a step) so the two read as
+ * the same building.
+ */
+function drop(kit, M, w, y0, y1, x, z0, dir = -1) {
+  const n = Math.max(4, Math.round(Math.abs(y0 - y1) / 0.24));
+  const rise = (y1 - y0) / n, run = 0.34;
+  for (let i = 0; i < n; i++) {
+    kit.slab(M.dark, w, 0.18, run + 0.04, x, y0 + (i + 1) * rise, z0 + dir * (i + 0.5) * run,
+      { collide: true, bevel: 0 });
+  }
+  return z0 + dir * n * run;
+}
+
 /** A ring of posts — a colonnade, a cage, a cell block's bars. */
 function ringOf(kit, M, mat, r, h, n, y = 0, opts = {}) {
   const from = opts.from ?? 0, to = opts.to ?? TAU;
@@ -1964,10 +1992,36 @@ export const SHAPES = {
     floor(kit, M, w, d);
     walls(kit, M, w, d, h, { doorW: 5 });
     sink(kit, M, w - 8, d - 8, 8, ctx);
-    for (let i = 0; i < 3; i++) {
-      const y = -8 + 2.6 + i * 2.6;
-      for (const s of [-1, 1]) catwalk(kit, M, w - 9, 1.8, y, 0, s * ((d - 8) / 2 - 1.2), 0);
+    /**
+     * ══ THREE LEVELS, AND ALL THREE OF THEM REACHABLE ═════════════════════
+     *
+     * §3.2 #4's verb is *"walk the gantries"* and `FlightOps.js` makes walking
+     * all three of them the type rating on the Starfury cert — so a level you
+     * cannot get to is a gate nothing can open. As first built, the pit had
+     * three catwalks at −5.4, −2.8 and −0.2 m, a kerb, and NO WAY DOWN: the
+     * top one was a step off the floor and the other two were eight metres of
+     * air. The stair below is that fix, and it is a switchback against the −X
+     * wall with a spur onto each level, because a straight run at this rise
+     * would be eleven metres long in a pit fourteen deep.
+     *
+     * The catwalks are 2.2 m deep rather than 1.8 so the top one meets the
+     * pit's lip instead of stopping 300 mm short of it, which was a gap you
+     * could fall down on the way to the verb.
+     */
+    const pz = (d - 8) / 2, px = (w - 8) / 2;
+    const GY = GANTRY_Y;
+    for (const y of GY) {
+      for (const s of [-1, 1]) catwalk(kit, M, w - 9, 2.2, y, 0, s * (pz - 1.1), 0);
     }
+    /* The switchback: floor → level 1 → level 0, against the −X wall. */
+    const sx = -px + 1.1;
+    const z1 = drop(kit, M, 1.5, GY[2], GY[1], sx, pz - 2.4, -1);
+    kit.slab(M.dark, 1.5, 0.18, 1.0, sx, GY[1], z1 - 0.5, { collide: true, bevel: 0 });
+    drop(kit, M, 1.5, GY[1], GY[0], sx, z1 - 1.0, -1);
+    /* And the spur off each landing onto that level's catwalk, or the stair is
+     * a stair to nowhere. */
+    catwalk(kit, M, 3.0, 1.3, GY[1], sx, (pz - 2.6 + z1) / 2, Math.PI / 2);
+    catwalk(kit, M, 3.4, 1.3, GY[0], sx, -(pz - 2.2), Math.PI / 2);
     /* The lift plate at the bottom, and the airframe standing on it. */
     kit.slab(M.wing, w - 12, 0.5, d - 12, 0, -7.6, 0, { collide: true, bevel: 0 });
     kit.slab(M.wing, 2.0, 1.4, 7.0, 0, -6.4, 0, { collide: true, bevel: 0 });

@@ -65,6 +65,15 @@ import { stepMedbay } from './Medbay.js';
 import { pitAtPlace } from './Pits.js';
 import { venueAtPlace, ticketFor, settleTickets } from './Tote.js';
 import { pay, spend } from './Credits.js';
+import {
+  boardAt, traffic, inboundLine, walkGantry, signCert, certified, readiness,
+  shortLine, throwBell, spares, cleanFlight, flew, gantryStage, BELL, CERT,
+  GANTRY_LEVELS,
+} from './FlightOps.js';
+import { Sortie, canLaunch } from './Launch.js';
+import { sample as orbitSample, sightLine, CIRCUIT_LENGTH } from './Outside.js';
+import { GANTRY_Y } from './StationKit.js';
+import { flightState, setFlightState } from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -722,6 +731,13 @@ export function dressStation(world) {
     name: stationName(),
     /** The height of this deck, for anything placing itself against it. */
     deckY: DECK_Y[deck] ?? 0,
+    /**
+     * WHICH WAR IS OUTSIDE, resolved once, here, and read by the tower's
+     * traffic board so the fighters coming home on it are coming home from the
+     * battle in the window. `outsideLevel` is the one resolver — see the note
+     * over `configureOrbit` below about two skies that agree by coincidence.
+     */
+    theatre: outsideLevel(world)?.name || 'the line',
   };
   world._station = st;
   world._deckFaction = factionOf(world);
@@ -1008,6 +1024,20 @@ export function undressStation(world) {
    * at its own null branch, and the deck learned it the hard way. */
   undressDeckBattle(world);
   world.engine?.skyDome?.configureOrbit?.(null);
+  /**
+   * A SORTIE IN THE AIR IS LANDED, NOT ABANDONED (§7). `Sortie.finish` exists
+   * for exactly this — a save, a teardown, a disconnect — and a launch dropped
+   * halfway would leave `_flying` set on a world being disposed and the fold
+   * unwritten. The fold is committed here for `leaveHome`'s reason two
+   * paragraphs up: authored across a visit, written once on the way out.
+   */
+  if (world._sortie && !world._sortie.done) world._sortie.finish();
+  world._sortie = null;
+  world._flying = false;
+  world._orbitU = 0;
+  if (world._flight) { try { setFlightState(world._flight); } catch {} }
+  world._flight = null;
+  st.bells = [];
   world._station = null;
   world.floorAt = null;
 }
@@ -1362,6 +1392,18 @@ export function stationKey(world) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;
   }
+  /**
+   * ── #2, #3, #4, #5 AND #6 — FLIGHT OPS, SHARK §7 ───────────────────────
+   *
+   * LAST, and the position is the argument: none of the five sells anything,
+   * opens a kiosk, keeps an animal or runs a bout, so every branch above has
+   * already had its chance and none of them can be standing here. One line for
+   * five rooms because `flightKey` is the dispatcher — the same shape
+   * `homeKey` and `liftKey` have at the top of this function, and for the same
+   * reason: five branches in here would be five more things to read before you
+   * reach the one you want.
+   */
+  if (FLIGHT_PLACES.has(place.id)) return flightKey(world, place);
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
 }
@@ -1401,6 +1443,324 @@ export function payAtTote(tickets, result) {
   const ledger = settleTickets(tickets, result);
   const paid = ledger.returned > 0 ? pay(ledger.returned, 'tote') : 0;
   return { ...ledger, paid, capped: paid < ledger.returned };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  FLIGHT OPS — SHARK §7, and the five doors it puts on the station
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `FlightOps.js` is the rooms, `Launch.js` is the sequence and `Outside.js` is
+ * #55. All three are pure and none of them has ever seen a world; this is the
+ * seam where they meet one, and it is deliberately thin — a fold in, a line
+ * out, and one sequence object on the world exactly as `world._warp` is.
+ */
+
+/** The five places §7 is about. #1 is the hangar and has no verb of its own. */
+const FLIGHT_PLACES = new Set([2, 3, 4, 5, 6]);
+
+/**
+ * The flight fold, cached on the world for the length of a visit.
+ *
+ * READ ONCE, NOT PER PRESS. `flightState()` is a localStorage read and a parse
+ * and the cert is looked at by four rooms; the cache is written through on
+ * every change, so a reload is the same station and a refusal never half-
+ * writes — `FlightOps` hands back a NEW fold rather than mutating the old one
+ * precisely so this line can be the only place a write happens.
+ */
+function flightFold(world) {
+  if (!world._flight) world._flight = cleanFlight(flightState());
+  return world._flight;
+}
+function keepFlight(world, fold) {
+  world._flight = fold;
+  try { setFlightState(fold); } catch {}
+  return fold;
+}
+
+/** How fast a Starfury goes round the station, m/s. One lap of `Outside`'s
+ *  1058 m circuit in about nine seconds, which is a fighter and not a tram. */
+export const ORBIT_SPEED = 120;
+
+/**
+ * ══ #2 THE TOWER ═════════════════════════════════════════════════════════
+ *
+ * The verb is *"read the board: what is inbound"* and the answer is the same
+ * `FlightOps.boardAt` the glass in the room is printing — `StationBoards.
+ * trafficRows` draws it and this reads it, off one pure function of the
+ * station clock, so the banner cannot say something the board does not.
+ *
+ * AND READING IT IS WHAT SIGNS THE DECK CHECK. `fold.boards` only moves when
+ * there was actually traffic on it, so a player who walks in at 04:00 with a
+ * clear board is told the board is clear and has to come back — which is the
+ * whole of what makes #3's third rung a trip to a second room.
+ */
+function readTower(world, st) {
+  const seen = { theatre: st.theatre, mine: st.mine };
+  const t = traffic(st.day ?? 0, st.hour ?? 0, seen);
+  const line = inboundLine(st.day ?? 0, st.hour ?? 0, seen);
+  if (t.live > 0) {
+    const f = flightFold(world);
+    keepFlight(world, { ...f, boards: (f.boards | 0) + 1 });
+  }
+  const tail = t.holding ? `, ${t.holding} holding` : t.live ? '' : ' — nothing moving';
+  world.notify?.('DECK CONTROL', `${line}${tail}`);
+  return true;
+}
+
+/**
+ * ══ #3 THE READY ROOM — the gate ═════════════════════════════════════════
+ *
+ * One press signs the next rung you are actually eligible for, or says what it
+ * is waiting on. NO PAGE AND NO OVERLAY: §14's rule is that the station adds no
+ * interface, and a cert with three rows on it is a banner's worth of words —
+ * see the same argument in `StationBoards.dressFlightBoard`, where the answer
+ * to a longer list was to put it on a panel in the room rather than on a page
+ * over the top of it.
+ */
+function signInReadyRoom(world, st) {
+  const f = flightFold(world);
+  const r = signCert(f, { hour: st.hour ?? 12, day: st.day ?? 0 });
+  if (!r.ok) {
+    world.notify?.("PILOTS' READY ROOM", r.why);
+    return true;
+  }
+  keepFlight(world, r.fold);
+  const left = CERT.length - r.fold.cert.length;
+  world.notify?.(r.rung.name.toUpperCase(),
+    left ? `${r.line} — ${left} to go` : `${r.line}. You are cleared for the Cobra bay`);
+  return true;
+}
+
+/**
+ * ══ #4 THE PIT — which gantry are your feet on? ══════════════════════════
+ *
+ * The level is a HEIGHT and not a menu. `StationKit.GANTRY_Y` is the one copy
+ * of the three numbers and the pit's floor is the place's own, so this is a
+ * subtraction rather than a second table — which is what `StationPlan.js`'s
+ * header spends four paragraphs on.
+ *
+ * A press with your feet on the room's floor and not on a catwalk answers with
+ * the stair, because "walk the gantries" means going down the stair.
+ */
+function walkThePit(world, st, place) {
+  const f = flightFold(world);
+  const y = (world.player?.position?.y ?? 0) - floorOf(place);
+  let level = -1, best = 1.6;
+  for (let i = 0; i < GANTRY_Y.length; i++) {
+    const d = Math.abs(y - GANTRY_Y[i]);
+    if (d < best) { best = d; level = i; }
+  }
+  if (level < 0) {
+    const stage = gantryStage(st.day ?? 0, st.hour ?? 0);
+    world.notify?.('FIGHTER MAINTENANCE', `${stage.what} — the stair down is on your left`);
+    return true;
+  }
+  const r = walkGantry(f, level, { day: st.day ?? 0, hour: st.hour ?? 0 });
+  if (!r.ok) { world.notify?.('FIGHTER MAINTENANCE', r.why); return true; }
+  keepFlight(world, r.fold);
+  world.notify?.(`GANTRY ${level + 1} OF ${GANTRY_LEVELS}`,
+    r.had ? r.line : `${r.line} — ${r.left ? `${r.left} to go` : 'that is the type rating'}`);
+  return true;
+}
+
+/**
+ * ══ #5 THE COBRA BAY — board and launch ══════════════════════════════════
+ *
+ * ONE KEY, THREE MEANINGS, and they cannot overlap: it launches when you are
+ * on the deck and certified, it recovers when you are outside, and it refuses
+ * with the reason while a sequence is running. Exactly `DeckLift.liftKey`'s
+ * shape — one press at the doors cannot both call a car and open a shop.
+ *
+ * AND THERE IS NO PLATE. See `Launch.js`'s header: nothing is loaded, the
+ * player never moves, and what changes is a shader's uniforms on the one frame
+ * the well is at full scroll. `station.mjs` holds the lift to that bar; this
+ * sequence never touches `Screens`, `enterStation` or `captureStill`, and
+ * `flightops.mjs` greps the whole of §7's source to prove it.
+ */
+function cobraBay(world, st) {
+  const f = flightFold(world);
+  const now = (st.day ?? 0) * 24 + (st.hour ?? 0);
+  if (world._sortie && !world._sortie.done) {
+    world.notify?.('COBRA BAY', `${world._sortie.phase} — stand by`);
+    return true;
+  }
+  /* OUTSIDE ALREADY: the same key brings you home. */
+  if (world._flying) {
+    world._sortie = new Sortie('in', sortieSink(world, st), { at: now });
+    return true;
+  }
+  const ready = readiness(f, st.day ?? 0, st.hour ?? 0);
+  const may = canLaunch({ cert: ready.cert, short: shortLine(f), flying: false, busy: false });
+  if (!may.ok) { world.notify?.('COBRA BAY', may.why); return true; }
+  world._sortie = new Sortie('out', sortieSink(world, st), { at: now, well: PLACE.get(5)?.h });
+  return true;
+}
+
+/**
+ * ══ #6 THE RACK ══════════════════════════════════════════════════════════
+ *
+ * The verb is a GRIP AND A THROW, which this game already has — the four
+ * engine bells `StationKit.cellar` stands up are `Props.Prop` bodies like every
+ * crate on every battlefield, and the Force picks them up without a line of new
+ * code. So the key here does not throw anything: it tells you what the rack is
+ * and what you have found, and `stepBells` below is what listens for the
+ * throw. A verb the game already owns should not be re-implemented behind a
+ * key press; it should be given a consequence.
+ */
+function fighterRack(world, st) {
+  const f = flightFold(world);
+  const n = spares(f, st.day ?? 0);
+  world.notify?.('FIGHTER RACK',
+    n ? `${n} sound ${n === 1 ? 'bell' : 'bells'} on the day's rack — throw another and listen`
+      : 'engine bells on the stands. Throw one and listen to it');
+  return true;
+}
+
+/** The one dispatcher, so `stationKey` has one line for §7 rather than five. */
+function flightKey(world, place) {
+  const st = world._station;
+  if (!st) return false;
+  switch (place.id) {
+    case 2: return readTower(world, st);
+    case 3: return signInReadyRoom(world, st);
+    case 4: return walkThePit(world, st, place);
+    case 5: return cobraBay(world, st);
+    case 6: return fighterRack(world, st);
+    default: return false;
+  }
+}
+
+/**
+ * ══ WHAT A SORTIE DRIVES ═════════════════════════════════════════════════
+ *
+ * `Launch.Sortie` imports nothing and knows about no world; this is the bag it
+ * pushes into, and it is the same arrangement `Warp`'s sink is — see that
+ * file's header for why the sequence is testable at 6 ms a step because of it.
+ *
+ * `bay` is left on the station as plain numbers rather than driven into
+ * materials here: the four things a launch moves (the canopy, the rams, the
+ * bay's lighting and how much well has gone past) are the room's to draw, and
+ * a station file reaching into a place's materials is how §9.1's nine-material
+ * rule gets a tenth.
+ */
+function sortieSink(world, st) {
+  st.bay = st.bay || { canopy: 0, lights: 0, rams: 0, shaft: 0, scroll: 0 };
+  return {
+    say: (line) => world.notify?.('COBRA BAY', line),
+    canopy: (k) => { st.bay.canopy = k; },
+    lights: (k) => { st.bay.lights = k; },
+    rams: (k) => { st.bay.rams = k; },
+    shaft: (k, m) => { st.bay.shaft = k; st.bay.scroll = m; },
+    /**
+     * THE ONE FRAME. `configureOrbit` is the same call the flight deck and the
+     * drum's own windows already make (see `dressStation`), handed the same
+     * `outsideLevel` record — so going outside is a re-configure of a shader
+     * that is already running, on the frame `Launch.js` chose because it is the
+     * frame nobody can see. Nothing is built and nothing is loaded.
+     */
+    outside: (on) => {
+      world._flying = !!on;
+      world._orbitU = on ? 0 : world._orbitU;
+      const shown = outsideLevel(world);
+      world.engine?.skyDome?.configureOrbit?.({
+        level: shown,
+        terrain: TERRAIN_PRESETS[shown?.terrain],
+        faction: world._deckFaction,
+        forward: [0, 0, 1],
+        /* Out of the well you are looking along the hull, so the disc sits
+         * lower than it does from a window inside the drum. */
+        rise: on ? 0.04 : 0.10,
+      });
+    },
+    /* YOUR OWN LAUNCH GOES ON THE TOWER'S BOARD, which is the whole reason
+     * `movementsIn` takes a `mine`. */
+    sortie: (rec) => { st.mine = rec; },
+    done: (way) => {
+      if (way === 'out') { world._orbitU = 0; return; }
+      keepFlight(world, flew(flightFold(world)));
+      st.mine = null;
+    },
+  };
+}
+
+/**
+ * One frame of a sortie: the sequence, then the lap.
+ *
+ * ── ONE LAP AND THE RECOVERY STARTS ITSELF ───────────────────────────────
+ *
+ * The verb §3.2 gives #5 is *"board and launch"* and the brief's bar is
+ * *"launch, and come back"* — so a sortie is a round trip rather than a state
+ * you have to remember to leave. One lap of `Outside`'s circuit at 120 m/s is
+ * 8.8 seconds, the five sights are named as they go past, and then the
+ * recovery runs without another press.
+ *
+ * WHAT IS HONESTLY NOT HERE: nobody is steering. `Starfury.js` is a real 6-DOF
+ * Newtonian craft, measured by `starfury.mjs`, and it is NOT wired to this —
+ * that is step 4 and it is not done. What is here is the loop and the place,
+ * with the player on their feet and in control the whole way, which is the
+ * thing `Warp.js` argues is better than a cutscene and is certainly better
+ * than a flight model that is a placeholder.
+ */
+function stepSortie(world, st, dt) {
+  const s = world._sortie;
+  if (s && !s.done) { s.step(dt); return; }
+  if (!world._flying) return;
+  const was = world._orbitU ?? 0;
+  const u = was + (ORBIT_SPEED * dt) / CIRCUIT_LENGTH;
+  world._orbitU = u;
+  /* The sights, named as they pass. `nearest` never answers `hull` — see
+   * `Outside.js` — so this is the four things you fly past and not a caption
+   * every frame saying you are near the station. */
+  const a = orbitSample(was), b = orbitSample(u);
+  if (b.near !== a.near) world.notify?.('OUTSIDE', sightLine(b.near));
+  if (u >= 1) {
+    world._orbitU = 0;
+    world._sortie = new Sortie('in', sortieSink(world, st),
+      { at: (st.day ?? 0) * 24 + (st.hour ?? 0) });
+  }
+}
+
+/**
+ * ══ THE BELLS — #6's verb, listened for rather than pressed ══════════════
+ *
+ * A bell rings when it is STRUCK, so what this watches for is the strike: a
+ * body that was moving at more than `BELL.ring` and has just lost most of it in
+ * one frame has hit something. `FlightOps.ringBell` decides what that sounded
+ * like, off the bell and the day rather than off the throw — see its note about
+ * why a verb graded on how hard you threw would be a strength meter.
+ *
+ * The four bodies are found ONCE, on the first frame after the rack is dressed,
+ * and never scanned for again: `world.props` is every prop in the level and a
+ * filter per frame over it would be the one expensive line in this file.
+ */
+function stepBells(world, st) {
+  if (st.deck !== 12) return;
+  /* `undefined` is "not looked yet" and `[]` is "looked and there are none" —
+   * two states, because collapsing them to a falsy check would re-filter the
+   * whole prop list every frame on a rack that has been emptied. */
+  if (st.bells === undefined) {
+    st.bells = (world.props || []).filter((p) => p?.kind === 'engine')
+      .map((p) => ({ prop: p, was: 0 }));
+  }
+  if (!st.bells.length) return;
+  for (let i = 0; i < st.bells.length; i++) {
+    const b = st.bells[i];
+    const v = b.prop?.body?.velocity;
+    if (!v || b.prop.dead) continue;
+    const now = Math.hypot(v.x, v.y, v.z);
+    /* A strike: it was going somewhere and most of that is gone in one frame.
+     * Half is the threshold because a bell that bounces keeps some of it, and a
+     * bell that stops dead has hit a bulkhead. */
+    if (b.was >= BELL.ring && now < b.was * 0.5) {
+      const f = flightFold(world);
+      const r = throwBell(f, i, b.was, { day: st.day ?? 0 });
+      if (r.heard) {
+        keepFlight(world, r.fold);
+        world.notify?.('ENGINE BELL', r.line);
+      }
+    }
+    b.was = now;
+  }
 }
 
 /**
@@ -1460,6 +1820,12 @@ export function stepStation(world, dt) {
   /* THE JUMP, if one is running. It drives a shader and a fleet and nothing
    * else, which is why it can run while the player walks about — see Warp.js. */
   if (world._warp && !world._warp.done) world._warp.step(dt);
+  /* THE SORTIE, on the same terms and for the same reason (§7). A no-op until
+   * somebody launches, which is one property read a frame. */
+  if (world._sortie || world._flying) stepSortie(world, st, dt);
+  /* AND #6'S BELLS, which cost one cached array and four hypots on deck 12 and
+   * a single early return everywhere else. */
+  stepBells(world, st);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

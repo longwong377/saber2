@@ -44,6 +44,7 @@ import { signPanel } from './StationKit.js';
 import { stationName } from './StationSave.js';
 import { loadProgress } from './Progress.js';
 import { loadAll as loadCompany } from './Company.js';
+import { boardAt, boardLine, BOARD } from './FlightOps.js';
 
 /**
  * The four faces, as text. Every number comes off a store that already
@@ -136,6 +137,20 @@ export function dressObelisk(world, st, M) {
  * allocates; the rolls are re-read only when the run count moves.
  */
 export function stepBoards(world, st, dt) {
+  /**
+   * THE TRAFFIC BOARD FIRST, and on the STATION MINUTE rather than the frame.
+   * `st.hour` advances by dt/120, so a minute of station time is two seconds
+   * of real time and the board changes about thirty times an hour — which is
+   * the rate the traffic actually moves at. Redrawing per frame would be a
+   * canvas fill and a texture upload sixty times a second for a picture that
+   * is identical fifty-nine of them; `signPanel.draw` early-outs on identical
+   * text anyway, so the stamp is here to skip building the strings at all.
+   */
+  const tb = st.traffic;
+  if (tb) {
+    const stamp = Math.floor(((st.day ?? 0) * 24 + (st.hour ?? 0)) * 60) + (st.mine ? 1e7 : 0);
+    if (stamp !== tb.stamp) { tb.stamp = stamp; tb.panel.draw(trafficRows(st)); }
+  }
   const o = st.obelisk;
   if (!o?.group3) return;
   o.group3.rotation.y += dt * 0.045;
@@ -214,5 +229,60 @@ export function dressBoards(world, st, M) {
   const stops = [[40, 'ARRIVALS'], [40.2, 'CONCOURSE EAST'], [40.3, 'QUARTERS'], [40.4, 'COMMAND']];
   for (const [id, label] of stops) put(at(id), [name, label], { w: 4.4, h: 1.3, y: 3.2 });
   st.boards = made;
+  /* ── AND #2's, WHICH IS THE ONLY ONE THAT MOVES ─────────────────────── */
+  dressFlightBoard(world, st, at(2));
   return made;
+}
+
+/**
+ * ══ THE TOWER'S TRAFFIC BOARD — SHARK §7 #2 ═══════════════════════════════
+ *
+ * §3.2 #2 Deck control tower: *"consoles, the traffic board"*, and the verb is
+ * *"read the board: what is inbound"*. A verb that reads something needs the
+ * something to exist, so this is it: eight movements, on the glass, in the
+ * room, redrawn on the station's own minute.
+ *
+ * ── WHY IT IS A BOARD AND NOT A BANNER ────────────────────────────────────
+ *
+ * §14 is firm that the station adds no interface, and the answer this file
+ * already gives to that is the one the departures board in Arrivals gives: put
+ * the words on a PANEL IN THE ROOM. A traffic board that only existed as a
+ * line of text when you pressed a key would be a menu with a tower around it,
+ * and the tower is the better half of the idea — you can stand at the glass
+ * and watch a movement go from EXPECTED to ON FINAL without touching anything.
+ *
+ * ── AND IT IS THE SAME BOARD THE VERB READS ───────────────────────────────
+ *
+ * Both come off `FlightOps.boardAt(day, hour)`, which is a pure function of
+ * the station clock — so the banner cannot say something the glass does not,
+ * which is the failure mode of every second copy in this tree.
+ */
+export function dressFlightBoard(world, st, place) {
+  if (!place) return null;
+  const panel = signPanel(['', '', ''], {
+    name: 'traffic', px: 768, pyx: 384, bg: '#07090c', align: 'left',
+    head1: '#9fd0ff', ink2: '#6f9fc8',
+  });
+  const mesh = new THREE.Mesh(new THREE.PlaneGeometry(4.9, 1.7), panel.material);
+  const c = Math.cos(place.yaw), s2 = Math.sin(place.yaw);
+  /* On the tower's back wall, 0.2 m proud of the slab `StationKit.cantilever`
+   * already builds there, facing the stair you come up. */
+  const lz = place.d / 2 - 0.45;
+  mesh.position.set(place.x + lz * s2, (st.deckY ?? 0) + 2.2, place.z + lz * c);
+  mesh.rotation.y = place.yaw + Math.PI;
+  world.scene.add(mesh);
+  world.statics.push(mesh);
+  st.traffic = { panel, mesh, place, stamp: -1 };
+  return st.traffic;
+}
+
+/** The rows as the glass prints them: a head, then the movements. */
+export function trafficRows(st) {
+  /* `mine` is the player's own launch, which `Launch.Sortie` files through
+   * `Station.sortieSink` — so a sortie you flew is on the tower's glass with
+   * the rest of the day's traffic, which is the whole reason `movementsIn`
+   * takes one. */
+  const rows = boardAt(st.day ?? 0, st.hour ?? 0,
+    { theatre: st.theatre, rows: BOARD.rows, mine: st.mine });
+  return [`${st.name || 'STATION'} — MOVEMENTS`, ...rows.map(boardLine)];
 }
