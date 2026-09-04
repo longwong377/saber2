@@ -48,8 +48,8 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { Kit, propMaterials, makeCrate } from '../world/Props.js';
 import { deckMats, factionOf } from './DeckKit.js';
 import { loadRoom, materialKeyFor } from './StationMesh.js';
-import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf } from './StationPlan.js';
-import { buildPlace, SHAPES } from './StationKit.js';
+import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf, sectorAt } from './StationPlan.js';
+import { buildPlace, SHAPES, buildWays, dressWayfinding } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards } from './StationBoards.js';
@@ -318,12 +318,36 @@ function buildDeckPlate(kit, M, deck) {
     /* A pilaster every fourth bay, and a strip light on it — the wall of
      * `hangar 1`, `3` and `6` translated to a curve. Density, not absence:
      * `HANGAR.md`'s counter to the box is that a wall must have things ON it. */
-    if (i % 4 === 0) {
+    const P = sectorAt(deck, i * 360 / m)?.pilaster || 4;
+    if (i % P === 0) {
       kit.slab(M.dark, 0.9, DRUM.storey, 1.1, (DRUM.R - 0.6) * Math.sin(a), y + DRUM.storey / 2, (DRUM.R - 0.6) * Math.cos(a),
         { ry: a, collide: false, bevel: 0 });
       kit.slab(M.strip, 0.24, DRUM.storey - 1.6, 0.12, (DRUM.R - 1.15) * Math.sin(a), y + DRUM.storey / 2, (DRUM.R - 1.15) * Math.cos(a),
         { ry: a, collide: false, bevel: 0 });
     }
+  }
+}
+
+/**
+ * THE LIT FLOOR CHANNEL, and which line of the walk it runs down. A sector's
+ * own — a person navigating by the light in the floor is reading the arc they
+ * are in, which is what a wayfinding system is.
+ */
+function channel(kit, M, S, a, sx, sz, wide, y) {
+  const at = { centre: [0], outer: [3.2], inner: [-3.2], both: [-3.2, 3.2] }[S.channel] || [0];
+  for (const dr of at) {
+    const r = DRUM.ringR + dr;
+    kit.slab(M.strip, wide * 0.9, 0.06, dr ? 0.28 : 0.5, r * sx, y + 0.04, r * sz, { ry: a, collide: false, bevel: 0 });
+  }
+}
+
+/** The soffit's coffers, if this sector has any: one, two, or a flat ceiling. */
+function coffer(kit, M, S, i, a, sx, sz, wide, y) {
+  if (!S.coffer) return;
+  for (let k = 0; k < S.coffer; k++) {
+    const r = DRUM.ringR + (S.coffer === 1 ? 0 : (k ? 2.4 : -2.4));
+    kit.slab(M.dark, wide * 0.86, 0.42, S.coffer === 1 ? 5.2 : 3.2, r * sx, y + DRUM.storey + 0.02, r * sz,
+      { ry: a, collide: false, bevel: 0 });
   }
 }
 
@@ -340,31 +364,50 @@ function buildRing(kit, M, deck) {
     const a = TAU * (i / n);
     const sx = Math.sin(a), sz = Math.cos(a);
     const wide = 2 * DRUM.ringR * Math.tan(Math.PI / n) * 1.06;
+    /**
+     * ══ WHICH SECTOR THIS BAY IS IN ═══════════════════════════════════════
+     *
+     * `i % 2` was the only thing that varied along this loop, and a loop with
+     * that as its only input has the drum's rotational symmetry: the walkway
+     * probe measured the view at bearing 0 and the view at bearing 90 as the
+     * SAME PICTURE, IoU 1.000, on every deck. The four junctions cut the ring
+     * into four arcs and `sectorAt` hands back that arc's rhythm — the rib
+     * spacing, where the lit floor channel runs, whether the soffit is
+     * coffered. Four arcs with four rhythms have no rotational symmetry left
+     * to find, which is the whole of the fix.
+     */
+    const S = sectorAt(deck, i * 360 / n) || { rib: 2, channel: 'centre', coffer: 0, pilaster: 4 };
+    const rib = i % S.rib === 0;
     if (type === 'transit') {
       /* DECK 40 — the imported ribbed corridor's language: a rib every two
        * bays, signage frames between them, and the lit floor channel. The
        * imported module itself stands on the spines (`buildSpine`); the ring
        * carries its ribs so the deck reads as one corridor system. */
-      if (i % 2 === 0) {
+      if (rib) {
         kit.slab(M.hull, wide, 0.5, DRUM.ringW, DRUM.ringR * sx, y + DRUM.storey - 0.3, DRUM.ringR * sz, { ry: a, collide: false, bevel: 0 });
         kit.slab(M.dark, 0.5, DRUM.storey, 0.6, (DRUM.ringR - DRUM.ringW / 2) * sx, y + DRUM.storey / 2, (DRUM.ringR - DRUM.ringW / 2) * sz, { ry: a, collide: false, bevel: 0 });
       }
-      kit.slab(M.strip, wide * 0.9, 0.06, 0.5, DRUM.ringR * sx, y + 0.04, DRUM.ringR * sz, { ry: a, collide: false, bevel: 0 });
+      channel(kit, M, S, a, sx, sz, wide, y);
+      coffer(kit, M, S, i, a, sx, sz, wide, y);
     } else if (type === 'promenade') {
       /* DECK 44 — a continuous window wall outboard, doors inboard, and the
        * tram guideway visible through the glass. The skin is already glass on
        * this deck; what the ring adds is the mullion rhythm and the handrail
        * you stand at to watch the tram go past. */
       kit.slab(M.dark, 0.22, DRUM.storey, 0.3, (DRUM.R - 0.9) * sx, y + DRUM.storey / 2, (DRUM.R - 0.9) * sz, { ry: a, collide: false, bevel: 0 });
-      if (i % 2 === 0) {
+      if (rib) {
         kit.slab(M.wing, wide * 0.92, 0.09, 0.14, (DRUM.R - 1.6) * sx, y + 1.02, (DRUM.R - 1.6) * sz, { ry: a, collide: false, bevel: 0 });
         kit.slab(M.dark, 0.1, 1.0, 0.1, (DRUM.R - 1.6) * sx, y + 0.5, (DRUM.R - 1.6) * sz, { ry: a, collide: false, bevel: 0 });
       }
+      channel(kit, M, S, a, sx, sz, wide, y);
+      coffer(kit, M, S, i, a, sx, sz, wide, y);
     } else {
       /* DECK 48 — the service way: grating underfoot, conduit overhead, and a
        * cutaway into machinery every few bays. */
       kit.slab(M.dark, wide, 0.08, DRUM.ringW * 0.9, DRUM.ringR * sx, y + 0.34, DRUM.ringR * sz, { ry: a, collide: false, bevel: 0 });
-      if (i % 3 === 0) {
+      channel(kit, M, S, a, sx, sz, wide, y);
+      coffer(kit, M, S, i, a, sx, sz, wide, y);
+      if (rib) {
         for (const dr of [-1.1, -0.5, 0.1]) {
           kit.post(M.wing, 0.16, 0.16, wide, (DRUM.ringR + dr) * sx, y + DRUM.storey - 0.6, (DRUM.ringR + dr) * sz,
             { rx: Math.PI / 2, ry: a, radial: 6 });
@@ -680,7 +723,24 @@ export function dressStation(world) {
   buildRing(shell, M, deck);
   buildSpines(shell, M, deck);
   buildLobbies(shell, M, deck);
+  /* ── AND WHAT IS ON THE WALKWAYS. `StationPlan.WAYS` is the ring's address
+   * table and `JUNCTIONS` is what happens where a spine meets it; both are
+   * read here so the between-space merges into the SAME nine meshes the shell
+   * does — forty fixtures for no extra draw call. See `StationKit`'s own note
+   * for the measurement that made this necessary. */
+  st.ways = buildWays(shell, M, deck);
   const shellOut = shell.emit(world, new THREE.Vector3(0, 0, 0));
+  /**
+   * THE BETWEEN-SPACE, NAMED. Rule 4 measures the places from their doors and
+   * the walkway rule measures the corridor between them from standing points
+   * in it; the second needs to be able to say WHICH meshes are the corridor,
+   * and a traverse of the scene cannot — the shell's merged meshes and a
+   * crate's are both children of the scene root. Kept as the shell's own
+   * draws so `station.mjs` can raster the drum without the crowd in it.
+   */
+  st.shell = shellOut.meshes;
+  st.shellDraws = shellOut.meshes.length;
+  st.shellTris = shellOut.triangles;
   st.draws += shellOut.meshes.length;
   st.tris += shellOut.triangles;
   st.solids += shellOut.boxes?.length || 0;
@@ -771,6 +831,7 @@ export function dressStation(world) {
    * boards are what make the station's name worth having. */
   dressObelisk(world, st, M);
   dressBoards(world, st, M);
+  dressWayfinding(world, st, M);
 
   /* ── AND THE ONE ROOM THAT IS YOURS (V15 §1.3) ─────────────────────────
    *

@@ -39,7 +39,7 @@
 
 import * as THREE from '../../vendor/three/three.module.js';
 import { Kit, makeCrate, makeBarrel, Prop, slabGeo, cylGeo } from '../world/Props.js';
-import { DECK_Y, DRUM, floorOf } from './StationPlan.js';
+import { DECK_Y, DRUM, floorOf, waysOn, junctionsOn } from './StationPlan.js';
 
 const TAU = Math.PI * 2;
 
@@ -1768,4 +1768,597 @@ export function buildPlace(world, group, place, M, st) {
   if (ctx.habitat) st.habitat = ctx.habitat;
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE BETWEEN-SPACE — the walkways, and why they needed their own rule      */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ WHAT WAS MEASURED, AND WHAT IT SAID ═══════════════════════════════════
+ *
+ * The player: *"the station really should not read as a series of connected
+ * rooms … it should feel like a place at large, the in-between places, the
+ * walkways, the transports … it can't just be an elevator selecting a level
+ * and that's the room."*
+ *
+ * Rule 4 measured the PLACES and never once looked at what is between them.
+ * `tools/_walkprobe.mjs` stood forty points on the walkways of each deck and
+ * ran rule 4's own raster down them in both directions. Shell only — no
+ * crowd, no rooms behind it, just the corridor:
+ *
+ *   deck 40 ring   worst pair 1.000   60 of 780 pairs over 0.85
+ *   deck 44 ring   worst pair 1.000   57 of 780
+ *   deck 40 spines worst pair 1.000   26 of 276
+ *   deck 40 rim    worst pair 1.000    9 of 120
+ *
+ * 1.000 means the same picture, cell for cell. `Station.js`'s `buildRing` was
+ * a 72-step loop whose only variation was `i % 2`, `buildSpines` built one
+ * corridor four times, and no function in the whole between-space took a
+ * bearing as an input. The criticism was exactly right.
+ *
+ * ── THE SAME ANSWER `SHAPES` IS ───────────────────────────────────────────
+ *
+ * `SHAPES` holds the rule "no two places the same shape" by being a library of
+ * PARTS and one function per place — never a generic builder with a parameter,
+ * which `station.mjs` checks by counting distinct function objects. `FIXTURES`
+ * is that, for the street: ten kinds, ten builders, no two sharing a plan, and
+ * `StationPlan.WAYS` says which is at which bearing on which deck.
+ *
+ * ── THE FRAME EVERY FIXTURE IS BUILT IN ───────────────────────────────────
+ *
+ * The kit arrives pushed onto the ring at the fixture's bearing: local origin
+ * on the floor at `DRUM.ringR`, local +Z radially OUTWARD (the skin is at
+ * z = +4.5), local −Z inboard (the room fronts are at z = −4.5), local +X
+ * tangential. So a builder never does arithmetic about where in the drum it
+ * is — the same thing that makes fifty place builders readable.
+ *
+ * THE WALK LINE IS KEPT. Nothing may leave less than 3 m of clear ring; a
+ * fixture is against one edge or an island narrow enough to pass both sides,
+ * and `station.mjs` measures the clearance rather than trusting this comment.
+ */
+
+/** Half the ring, in metres: the inboard face is at −IN, the skin at +IN. */
+const RIN = DRUM.ringW / 2;
+
+/** A hazard chevron run — the service way's own language, on a door. */
+function chevrons(kit, M, w, y, z, n = 5) {
+  for (let i = 0; i < n; i++) {
+    kit.slab(M.status, w / n * 0.7, 0.16, 0.06, -w / 2 + (i + 0.5) * (w / n), y, z,
+      { collide: false, bevel: 0, rz: 0.5 });
+  }
+}
+
+/** A bench: a seat, a back, two cheeks. Static, so a crowd can be sat on it. */
+function benchRun(kit, M, w, x, z, ry = 0) {
+  kit.push(x, 0, z, ry);
+  kit.slab(M.wing, w, 0.09, 0.52, 0, 0.44, 0, { collide: true, bevel: 0.02 });
+  kit.slab(M.wing, w, 0.42, 0.08, 0, 0.72, 0.24, { collide: false, bevel: 0.02 });
+  for (const s of [-1, 1]) kit.slab(M.dark, 0.1, 0.42, 0.5, s * (w / 2 - 0.2), 0.21, 0, { collide: false, bevel: 0 });
+  kit.pop();
+}
+
+/** A lamp standard — the thing that makes a street a street after dark. */
+function lampPost(kit, M, x, z, h = 3.4) {
+  kit.post(M.dark, 0.09, 0.07, h, x, h / 2, z, { radial: 8, collide: true });
+  kit.slab(M.strip, 0.5, 0.12, 0.5, x, h + 0.06, z, { collide: false, bevel: 0.03 });
+  kit.light(x, h - 0.2, z, { intensity: 9, distance: 14 });
+}
+
+/**
+ * ══ THE TEN KINDS ═════════════════════════════════════════════════════════
+ * Each is its own function and each composes a plan nothing else has.
+ * `station.mjs` counts the distinct function objects, exactly as it does for
+ * `SHAPES`, so a table of ten names onto one closure fails.
+ */
+export const FIXTURES = {
+
+  /** A SHOPFRONT: a glazed frontage set into the room line, awning, counter,
+   * a hanging trade sign, and stock on the floor in front of it. */
+  shopfront(kit, M, f) {
+    const w = 9;
+    kit.slab(M.hull, w, 3.9, 0.35, 0, 1.95, -RIN + 0.2, { collide: true, bevel: 0 });
+    kit.slab(M.glass, w - 2.2, 2.3, 0.1, 0, 1.55, -RIN + 0.05, { collide: false, bevel: 0 });
+    /* The awning, out over the walk, and the two ties that hold it. */
+    kit.slab(M.mark, w - 0.6, 0.12, 2.1, 0, 3.5, -RIN + 1.3, { collide: false, bevel: 0.04, rx: -0.12 });
+    for (const s of [-1, 1]) kit.post(M.dark, 0.05, 0.05, 1.5, s * (w / 2 - 0.6), 3.9, -RIN + 0.5, { radial: 5, rx: 0.7 });
+    counter(kit, M, w - 3.4, 0.8, 0, -RIN + 1.9, 0, 1.02);
+    kit.slab(M.strip, w - 1.4, 0.1, 0.1, 0, 3.34, -RIN + 2.3, { collide: false, bevel: 0 });
+    board(kit, M, 1.9, 0.7, w / 2 - 1.2, 3.1, -RIN + 2.5, Math.PI / 2);
+    loose(kit, -w / 2 + 1.0, 0.5, -RIN + 2.6, (world, p) => makeCrate(world, p, 0.7));
+    loose(kit, w / 2 - 1.4, 0.55, -RIN + 2.7, (world, p) => makeBarrel(world, p));
+    return 'shopfront';
+  },
+
+  /** AN ALCOVE: a niche cut back out of the walk, with a low soffit over it,
+   * a curved bench in it and a light you sit under. Somewhere to stop. */
+  alcove(kit, M, f) {
+    const w = 6.4, d = 2.8;
+    for (const s of [-1, 1]) kit.slab(M.hull, 0.4, 3.0, d, s * w / 2, 1.5, -RIN + d / 2, { collide: true, bevel: 0 });
+    kit.slab(M.deep, w, 3.0, 0.3, 0, 1.5, -RIN + 0.15, { collide: true, bevel: 0 });
+    kit.slab(M.dark, w + 0.8, 0.35, d + 0.4, 0, 3.15, -RIN + d / 2, { collide: false, bevel: 0 });
+    kit.slab(M.strip, w - 1.2, 0.08, 0.3, 0, 2.94, -RIN + d - 0.2, { collide: false, bevel: 0 });
+    benchRun(kit, M, w - 1.6, 0, -RIN + 0.75);
+    /* Its floor is a step up, so the alcove reads as OFF the walk. */
+    kit.slab(M.mark, w, 0.18, d - 0.3, 0, 0.09, -RIN + d / 2 - 0.1, { collide: true, bevel: 0 });
+    loose(kit, w / 2 - 1.0, 0.4, -RIN + 1.9, (world, p) => boxBody(world, p, M, 0.5, 0.8, 0.4, M.dark, 14, 'crate'));
+    return 'alcove';
+  },
+
+  /** A SERVICE DOOR: a hatch nobody but the crew opens — recessed frame,
+   * chevrons, a conduit bundle climbing out of it, a status lamp, a bollard. */
+  service(kit, M, f) {
+    const w = 3.4;
+    kit.slab(M.dark, w, 2.9, 0.5, 0, 1.45, -RIN + 0.25, { collide: true, bevel: 0 });
+    kit.slab(M.deep, w - 0.8, 2.4, 0.16, 0, 1.2, -RIN + 0.5, { collide: false, bevel: 0 });
+    chevrons(kit, M, w - 1.0, 0.35, -RIN + 0.6);
+    for (const dx of [-0.5, 0, 0.5]) {
+      kit.post(M.wing, 0.12, 0.12, DRUM.storey - 2.9, w / 2 - 0.5 + dx * 0.34,
+        2.9 + (DRUM.storey - 2.9) / 2, -RIN + 0.5, { radial: 6 });
+    }
+    kit.slab(M.status, 0.26, 0.26, 0.2, 0, 3.1, -RIN + 0.5, { collide: false, bevel: 0.04 });
+    kit.post(M.dark, 0.14, 0.14, 0.95, w / 2 + 0.9, 0.47, -RIN + 0.9, { radial: 6, collide: true });
+    return 'service';
+  },
+
+  /** A KIOSK: a free-standing island in the middle of the walk you go round —
+   * six faces, three of them screens, a lit cap. The one fixture the walk
+   * SPLITS at, which is what stops the ring reading as a tube. */
+  kiosk(kit, M, f) {
+    kit.post(M.dark, 1.35, 1.5, 2.5, 0, 1.25, 0, { radial: 6, collide: true });
+    for (let i = 0; i < 3; i++) {
+      const a = -Math.PI / 2 + i * (Math.PI * 2 / 6);
+      kit.slab(M.screen, 1.15, 1.1, 0.08, 1.42 * Math.sin(a), 1.6, 1.42 * Math.cos(a), { ry: a, collide: false, bevel: 0 });
+    }
+    kit.post(M.wing, 1.75, 1.55, 0.22, 0, 2.62, 0, { radial: 6 });
+    kit.slab(M.strip, 0.24, 0.9, 0.24, 0, 3.2, 0, { collide: false, bevel: 0.05 });
+    kit.light(0, 2.9, 0, { intensity: 7, distance: 12 });
+    loose(kit, 1.9, 0.4, 1.2, (world, p) => chairBody(world, p, M));
+    return 'kiosk';
+  },
+
+  /** A PLANTER: a raised bed with a wall you sit on, a trunk and a canopy that
+   * breaks the view down the ring — the cheapest thing there is that stops a
+   * corridor being straight. */
+  planter(kit, M, f) {
+    const w = 6.2, d = 2.4;
+    kit.slab(M.deep, w, 0.62, d, 0, 0.31, 0, { collide: true, bevel: 0.04 });
+    kit.slab(M.wing, w + 0.24, 0.1, d + 0.24, 0, 0.64, 0, { collide: false, bevel: 0.03 });
+    kit.slab(M.mark, w - 0.5, 0.16, d - 0.5, 0, 0.72, 0, { collide: false, bevel: 0 });
+    kit.post(M.dark, 0.24, 0.17, 2.6, -1.3, 1.95, 0.2, { radial: 7, collide: true });
+    for (const [dx, dy, dz, s] of [[-1.3, 3.1, 0.2, 2.4], [-0.7, 3.5, -0.4, 1.7], [-1.9, 3.4, 0.6, 1.6]]) {
+      kit.slab(M.mark, s, 0.3, s * 0.8, dx, dy, dz, { collide: false, bevel: 0.12 });
+    }
+    kit.post(M.dark, 0.18, 0.13, 1.9, 1.9, 1.57, -0.3, { radial: 6, collide: true });
+    kit.slab(M.mark, 1.5, 0.26, 1.2, 1.9, 2.6, -0.3, { collide: false, bevel: 0.1 });
+    kit.light(0, 1.1, 0, { color: 0x9fe08a, intensity: 4, distance: 8 });
+    return 'planter';
+  },
+
+  /** SEATING against the skin: three runs of bench facing outboard, a lamp
+   * between them, and a bin. Where a person waits for somebody. */
+  bench(kit, M, f) {
+    for (const dx of [-2.6, 0, 2.6]) benchRun(kit, M, 2.2, dx, RIN - 1.5, Math.PI);
+    lampPost(kit, M, -1.3, RIN - 2.4);
+    lampPost(kit, M, 1.3, RIN - 2.4);
+    kit.slab(M.dark, 4.2, 0.12, 1.5, 0, 0.06, RIN - 1.6, { collide: false, bevel: 0 });
+    loose(kit, 3.9, 0.5, RIN - 2.2, (world, p) => makeBarrel(world, p));
+    return 'bench';
+  },
+
+  /** A LEVEL CHANGE: a terrace against the skin, 0.9 m up, three steps at each
+   * end and a rail along its lip. §3.1's decks are flat and this is the one
+   * thing that gives a walk a section rather than a plan. */
+  stair(kit, M, f) {
+    const w = 12, d = 3.4, rise = 0.9;
+    kit.slab(M.deep, w, rise, d, 0, rise / 2, RIN - d / 2, { collide: true, bevel: 0 });
+    kit.slab(M.mark, w - 0.3, 0.1, d - 0.2, 0, rise + 0.05, RIN - d / 2, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) {
+      for (let i = 0; i < 3; i++) {
+        kit.slab(M.deep, 1.1, rise * (i + 1) / 3, d - 0.6,
+          s * (w / 2 + 0.55 + i * 1.1), rise * (i + 1) / 6, RIN - d / 2, { collide: true, bevel: 0 });
+      }
+      kit.post(M.wing, 0.06, 0.06, 1.05, s * (w / 2 + 0.2), rise + 0.52, RIN - d + 0.3, { radial: 5 });
+    }
+    kit.slab(M.wing, w, 0.08, 0.08, 0, rise + 1.02, RIN - d + 0.3, { collide: false, bevel: 0.02 });
+    for (let i = 0; i * 2 <= w; i++) kit.slab(M.dark, 0.06, 1.0, 0.06, -w / 2 + i * 2, rise + 0.5, RIN - d + 0.3, { collide: false, bevel: 0 });
+    kit.slab(M.strip, w - 1, 0.08, 0.1, 0, 0.08, RIN - d - 0.05, { collide: false, bevel: 0 });
+    return 'stair';
+  },
+
+  /** A WINDOW BAY: the skin steps outboard, a rail and a step to stand on, a
+   * fixed viewer on a post. §3.1 rule 1 wants the outside READ. */
+  bay(kit, M, f) {
+    const w = 6.6;
+    for (const s of [-1, 1]) kit.slab(M.hull, 0.4, DRUM.storey, 2.2, s * w / 2, DRUM.storey / 2, RIN + 0.6, { collide: true, bevel: 0 });
+    kit.slab(M.glass, w, 4.6, 0.12, 0, 2.9, RIN + 1.6, { collide: false, bevel: 0 });
+    kit.slab(M.dark, w + 0.6, 0.5, 2.4, 0, DRUM.storey - 0.3, RIN + 0.6, { collide: false, bevel: 0 });
+    kit.slab(M.deep, w, 0.36, 1.9, 0, 0.18, RIN - 0.4, { collide: true, bevel: 0 });
+    kit.slab(M.wing, w, 0.09, 0.09, 0, 1.06, RIN - 1.3, { collide: false, bevel: 0.02 });
+    for (let i = 0; i * 1.6 <= w; i++) kit.slab(M.dark, 0.06, 0.95, 0.06, -w / 2 + i * 1.6, 0.6, RIN - 1.3, { collide: false, bevel: 0 });
+    kit.post(M.dark, 0.13, 0.1, 1.25, w / 2 - 1.1, 0.98, RIN - 0.9, { radial: 7, collide: true });
+    kit.slab(M.wing, 0.3, 0.3, 0.75, w / 2 - 1.1, 1.7, RIN - 0.9, { collide: false, bevel: 0.05, rx: 0.35 });
+    kit.slab(M.strip, w - 1.2, 0.07, 0.09, 0, 0.42, RIN - 0.45, { collide: false, bevel: 0 });
+    return 'bay';
+  },
+
+  /** A GANTRY over the walk: two columns, a beam at head height, lamps and a
+   * board hung under it. You pass THROUGH it, which is the whole point — a
+   * corridor with a portal in it has two halves and a corridor has one. */
+  gantry(kit, M, f) {
+    const h = 4.4;
+    for (const s of [-1, 1]) {
+      kit.post(M.dark, 0.32, 0.26, h, 0, h / 2, s * (RIN - 0.9), { radial: 8, collide: true });
+      kit.slab(M.wing, 0.9, 0.16, 0.9, 0, 0.08, s * (RIN - 0.9), { collide: false, bevel: 0.03 });
+    }
+    kit.slab(M.hull, 0.7, 0.62, DRUM.ringW - 1.4, 0, h + 0.31, 0, { collide: false, bevel: 0.04 });
+    kit.slab(M.strip, 0.3, 0.09, DRUM.ringW - 2.2, 0, h - 0.06, 0, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.status, 0.2, 0.2, 0.2, 0, h + 0.7, s * (RIN - 1.4), { collide: false, bevel: 0.04 });
+    kit.light(0, h - 0.4, 0, { intensity: 8, distance: 15 });
+    return 'gantry';
+  },
+
+  /** A MARKET RUN: three stalls staggered across the walk, each a counter
+   * under its own canopy at its own height, with stock between them. Nothing
+   * else in the between-space is asymmetric across the walk, and this is what
+   * makes the ring feel occupied rather than furnished. */
+  /** A SPINE NICHE: the wall of a radial corridor set back for two metres,
+   * with a bench, a lit soffit and a map board. Frame: origin on the spine's
+   * centreline, +Z outward along it, the walls at x = ±spineW/2. */
+  niche(kit, M, f) {
+    const hw = DRUM.spineW / 2, d = 2.0, w = 4.2;
+    const s = f.side ?? 1;
+    kit.slab(M.deep, d, 3.2, w, s * (hw + d / 2), 1.6, 0, { collide: false, bevel: 0 });
+    kit.slab(M.hull, 0.3, 3.2, w, s * (hw + d), 1.6, 0, { collide: true, bevel: 0 });
+    for (const t of [-1, 1]) kit.slab(M.hull, d, 3.2, 0.3, s * (hw + d / 2), 1.6, t * w / 2, { collide: true, bevel: 0 });
+    kit.slab(M.dark, d + 0.4, 0.3, w + 0.4, s * (hw + d / 2), 3.35, 0, { collide: false, bevel: 0 });
+    kit.slab(M.strip, d - 0.4, 0.08, w - 0.8, s * (hw + d / 2), 3.16, 0, { collide: false, bevel: 0 });
+    benchRun(kit, M, w - 1.2, s * (hw + d - 0.5), 0, s * Math.PI / 2);
+    board(kit, M, 1.2, 0.8, s * (hw + 0.25), 2.0, w / 2 - 1.0, s * Math.PI / 2);
+    return 'niche';
+  },
+
+  /** A RISER: the services made visible where they cross a spine — a bundle
+   * of pipe overhead, a valve stand, a grating underfoot and a floor light.
+   * Deck 48's whole language, borrowed one bay at a time by the other two. */
+  ducts(kit, M, f) {
+    const hw = DRUM.spineW / 2;
+    for (let i = 0; i < 4; i++) {
+      kit.post(M.wing, 0.19, 0.19, DRUM.spineW + 1.2, 0, DRUM.storey - 1.0 - i * 0.34, -1.2 + i * 0.8,
+        { rx: 0, rz: Math.PI / 2, radial: 7 });
+    }
+    kit.post(M.dark, 0.3, 0.3, DRUM.storey - 2.2, -hw + 0.7, (DRUM.storey - 2.2) / 2 + 1.1, 0.6, { radial: 8, collide: true });
+    kit.post(M.status, 0.42, 0.42, 0.12, -hw + 0.7, 2.4, 0.6, { rx: Math.PI / 2, radial: 10 });
+    kit.slab(M.dark, DRUM.spineW - 1.0, 0.1, 2.6, 0, 0.05, 0, { collide: false, bevel: 0 });
+    kit.slab(M.strip, DRUM.spineW - 2.0, 0.06, 0.2, 0, 0.12, -1.3, { collide: false, bevel: 0 });
+    loose(kit, hw - 1.1, 0.5, -0.8, (world, p) => makeBarrel(world, p));
+    return 'ducts';
+  },
+
+  /** A BULKHEAD you walk through: a full frame across the spine with a lit
+   * lintel, a raised sill and the door leaves parked in the wall. A spine
+   * with two of these has three parts; a spine with none is a tube. */
+  portal(kit, M, f) {
+    const hw = DRUM.spineW / 2, h = 4.6;
+    for (const s of [-1, 1]) {
+      kit.slab(M.hull, 1.0, h, 0.9, s * (hw - 0.5), h / 2, 0, { collide: true, bevel: 0 });
+      kit.slab(M.wing, 0.32, h - 0.5, 1.0, s * (hw - 1.05), (h - 0.5) / 2, 0, { collide: false, bevel: 0 });
+    }
+    kit.slab(M.hull, DRUM.spineW, 1.1, 0.9, 0, h + 0.55, 0, { collide: false, bevel: 0 });
+    kit.slab(M.strip, DRUM.spineW - 2.4, 0.1, 0.24, 0, h - 0.12, -0.5, { collide: false, bevel: 0 });
+    kit.slab(M.dark, DRUM.spineW - 2.0, 0.12, 0.7, 0, 0.06, 0, { collide: false, bevel: 0 });
+    kit.slab(M.status, 0.22, 0.22, 0.2, hw - 1.6, 1.5, -0.5, { collide: false, bevel: 0.04 });
+    kit.light(0, h - 0.5, 0, { intensity: 6, distance: 11 });
+    return 'portal';
+  },
+
+  /** AN OVERLOOK on the balcony lip: the rail bulges out over the void on a
+   * bracketed platform, with a leaning rail and a viewer. §3.1 rule 1 wants
+   * the void looked into; a continuous rail is a thing you walk past. */
+  overlook(kit, M, f) {
+    const w = 7.0;
+    /* Frame: origin on the lip, +Z pointing OUTWARD, so the void is −Z. */
+    kit.slab(M.deep, w, 0.35, 3.0, 0, -0.17, -1.5, { collide: true, bevel: 0 });
+    for (const s of [-1, 1]) kit.post(M.dark, 0.16, 0.1, 2.6, s * (w / 2 - 0.5), -1.5, -2.6, { rx: 0.7, radial: 6 });
+    kit.slab(M.wing, w, 0.1, 0.1, 0, 1.02, -2.9, { collide: false, bevel: 0.02 });
+    for (let i = 0; i * 1.3 <= w; i++) kit.slab(M.dark, 0.07, 1.0, 0.07, -w / 2 + i * 1.3, 0.5, -2.9, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.wing, 0.1, 1.1, 3.0, s * w / 2, 0.55, -1.5, { collide: false, bevel: 0.02 });
+    kit.post(M.dark, 0.12, 0.09, 1.15, 1.6, 0.57, -2.4, { radial: 7, collide: true });
+    kit.slab(M.wing, 0.28, 0.28, 0.7, 1.6, 1.28, -2.4, { collide: false, bevel: 0.05, rx: -0.4 });
+    kit.slab(M.strip, w - 0.6, 0.06, 0.14, 0, 0.06, -2.85, { collide: false, bevel: 0 });
+    lampPost(kit, M, -w / 2 + 0.6, 0.6, 3.0);
+    return 'overlook';
+  },
+
+  /** A STAIRHEAD: the rail breaks and eight steps drop to a half-landing over
+   * the void, with a newel each side. The only place on a deck where the eye
+   * is carried DOWN, which is what a balcony is for. */
+  stairhead(kit, M, f) {
+    const w = 3.6;
+    for (let i = 0; i < 8; i++) {
+      kit.slab(M.deep, w, 0.22, 0.42, 0, -0.11 - i * 0.22, -0.4 - i * 0.42, { collide: true, bevel: 0 });
+    }
+    kit.slab(M.deep, w + 1.6, 0.3, 2.2, 0, -1.9, -4.5, { collide: true, bevel: 0 });
+    for (const s of [-1, 1]) {
+      kit.post(M.dark, 0.16, 0.16, 1.5, s * (w / 2 + 0.3), 0.75, -0.2, { radial: 6, collide: true });
+      kit.slab(M.wing, 0.09, 0.09, 4.6, s * (w / 2 + 0.25), 0.4, -2.4, { collide: false, bevel: 0.02, rx: -0.48 });
+      kit.slab(M.wing, 0.09, 1.1, 2.4, s * (w / 2 + 0.85), -1.2, -4.6, { collide: false, bevel: 0.02 });
+    }
+    kit.slab(M.strip, w, 0.06, 0.14, 0, 0.06, -0.14, { collide: false, bevel: 0 });
+    kit.light(0, -1.2, -4.2, { intensity: 6, distance: 12 });
+    return 'stairhead';
+  },
+
+  /** A SHRINE on the lip: a lit stone facing the drop with a bench in front of
+   * it and a bowl of light. Fourteen species aboard and they do not all mark
+   * the same things; what they share is standing at the rail. */
+  shrine(kit, M, f) {
+    kit.slab(M.deep, 2.4, 2.9, 0.7, 0, 1.45, 1.1, { collide: true, bevel: 0.06 });
+    kit.slab(M.mark, 1.6, 1.9, 0.14, 0, 1.55, 0.72, { collide: false, bevel: 0.03 });
+    kit.slab(M.strip, 1.0, 0.1, 0.16, 0, 2.7, 0.7, { collide: false, bevel: 0 });
+    kit.post(M.dark, 0.42, 0.3, 0.75, 0, 0.37, -0.5, { radial: 9, collide: true });
+    kit.post(M.strip, 0.3, 0.3, 0.1, 0, 0.78, -0.5, { radial: 9 });
+    benchRun(kit, M, 2.6, 0, -1.6, Math.PI);
+    kit.light(0, 1.1, -0.4, { color: 0xffcf94, intensity: 6, distance: 10 });
+    return 'shrine';
+  },
+
+  market(kit, M, f) {
+    const at = [[-4.2, -RIN + 1.7, 0.0, 2.7], [0.2, RIN - 2.0, Math.PI, 3.0], [4.4, -RIN + 2.4, 0.25, 2.5]];
+    for (let i = 0; i < at.length; i++) {
+      const [x, z, ry, ch] = at[i];
+      counter(kit, M, 2.8 + i * 0.4, 1.0, x, z, ry, 0.98);
+      kit.push(x, 0, z, ry);
+      for (const s of [-1, 1]) kit.post(M.dark, 0.06, 0.06, ch, s * (1.2 + i * 0.2), ch / 2, -0.7, { radial: 5 });
+      kit.slab(M.mark, 3.2 + i * 0.4, 0.1, 2.2, 0, ch, -0.4, { collide: false, bevel: 0.05, rx: 0.1 + i * 0.05 });
+      kit.slab(M.strip, 2.4, 0.07, 0.08, 0, ch - 0.22, -1.4, { collide: false, bevel: 0 });
+      kit.pop();
+      loose(kit, x + 1.9, 0.45, z + (ry ? -1.3 : 1.3), (world, p) => makeCrate(world, p, 0.62));
+    }
+    rack(kit, M, 2.4, 2.2, -1.9, -RIN + 0.5);
+    return 'market';
+  },
+};
+
+/**
+ * ══ A JUNCTION, WHICH IS WHERE A PERSON DECIDES SOMETHING ═════════════════
+ *
+ * There was nothing at the mouth of a spine. The spine's two walls stopped at
+ * `roomR`, the ring ran past on the far side of that line, and the one moment
+ * on a walk that carries any information — *which way now* — happened at a
+ * blank corner. Measured, the four mouths of a deck were the same picture:
+ * `spine90@32 × spine270@32` came back at 1.000.
+ *
+ * Every junction gets the same STRUCTURE, because a station's junctions are a
+ * family and pretending otherwise would be decoration; what makes each one
+ * itself is `look`, and there are twelve of those, one per junction, each its
+ * own function. A visitor learns "the brass one" and "the one with the
+ * banners" the way people learn a real building.
+ */
+const JUNCTION_LOOK = {
+  /* Deck 40 — a market deck: brass, cloth, lanterns, a customs line. */
+  brass: (kit, M) => {
+    for (const s of [-1, 1]) {
+      kit.post(M.wing, 0.5, 0.42, 5.2, s * 5.6, 2.6, -RIN + 1.2, { radial: 10, collide: true });
+      kit.post(M.wing, 0.34, 0.3, 3.4, s * 8.4, 1.7, 0, { radial: 10, collide: true });
+      kit.slab(M.mark, 1.3, 1.3, 1.3, s * 8.4, 3.7, 0, { collide: false, bevel: 0.3 });
+    }
+    kit.slab(M.mark, 11.4, 0.3, 0.9, 0, 5.4, -RIN + 1.2, { collide: false, bevel: 0.08 });
+  },
+  awning: (kit, M) => {
+    for (const s of [-1, 1]) {
+      kit.slab(M.mark, 4.6, 0.12, 2.4, s * 3.4, 3.6, -RIN + 1.4, { collide: false, bevel: 0.05, rx: -0.16 });
+      /* Cloth on a wire, right across the walk and on out along the ring —
+       * what you see from thirty metres away is the washing, not the portal. */
+      for (let i = 0; i < 4; i++) kit.slab(M.mark, 0.9, 1.6, 0.05, s * (6.5 + i * 1.7), DRUM.storey - 2.2, -1.4 + i * 0.9, { collide: false, bevel: 0 });
+    }
+    lampPost(kit, M, 0, RIN - 2.2, 4.0);
+  },
+  customs: (kit, M) => {
+    for (const s of [-1, 1]) {
+      kit.slab(M.dark, 1.0, 1.15, 2.6, s * 2.6, 0.58, -RIN + 1.6, { collide: true, bevel: 0.03 });
+      kit.slab(M.screen, 0.7, 0.5, 0.06, s * 2.6, 1.4, -RIN + 0.4, { collide: false, bevel: 0 });
+      /* The queue rail, running away down the ring both ways. */
+      for (let i = 0; i < 5; i++) kit.post(M.wing, 0.05, 0.05, 1.0, s * (6.0 + i * 2.0), 0.5, 1.6, { radial: 5 });
+      kit.slab(M.wing, 9.0, 0.06, 0.06, s * 10.0, 1.02, 1.6, { collide: false, bevel: 0 });
+    }
+  },
+  lantern: (kit, M) => {
+    for (const s of [-1, 1]) for (const t of [-1, 1]) {
+      kit.post(M.dark, 0.07, 0.07, 1.4, s * 4.2, DRUM.storey - 1.0, t * 2.2, { radial: 5 });
+      kit.slab(M.strip, 0.6, 0.7, 0.6, s * 4.2, DRUM.storey - 2.0, t * 2.2, { collide: false, bevel: 0.14 });
+    }
+    /* A row of them marching away along the walk. */
+    for (const s of [-1, 1]) for (let i = 0; i < 4; i++) {
+      kit.post(M.dark, 0.06, 0.06, 1.1, s * (7.0 + i * 2.6), DRUM.storey - 1.2, 0, { radial: 5 });
+      kit.slab(M.strip, 0.5, 0.55, 0.5, s * (7.0 + i * 2.6), DRUM.storey - 2.0, 0, { collide: false, bevel: 0.12 });
+    }
+  },
+  /* Deck 44 — a living deck: timber, glass, stone, banners. */
+  timber: (kit, M) => {
+    for (const s of [-1, 1]) {
+      kit.slab(M.dark, 0.55, 4.4, 1.1, s * 5.2, 2.2, -RIN + 1.0, { collide: true, bevel: 0.06 });
+      for (let i = 0; i < 3; i++) kit.slab(M.dark, 0.3, 2.6, 0.3, s * (7.6 + i * 2.4), 1.3, -RIN + 0.7, { collide: false, bevel: 0.05 });
+    }
+    kit.slab(M.dark, 11.0, 0.4, 1.1, 0, 4.6, -RIN + 1.0, { collide: false, bevel: 0.06 });
+  },
+  glass: (kit, M) => {
+    kit.slab(M.glass, 10.4, 3.4, 0.1, 0, 2.4, -RIN + 0.4, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) {
+      kit.post(M.wing, 0.2, 0.2, 4.4, s * 5.2, 2.2, -RIN + 0.4, { radial: 8, collide: true });
+      kit.slab(M.glass, 7.0, 3.0, 0.08, s * 9.2, 2.1, -RIN + 0.4, { collide: false, bevel: 0 });
+      kit.post(M.wing, 0.16, 0.16, 4.0, s * 12.8, 2.0, -RIN + 0.4, { radial: 8 });
+    }
+  },
+  stone: (kit, M) => {
+    for (const s of [-1, 1]) {
+      kit.slab(M.deep, 1.3, 3.6, 1.3, s * 5.0, 1.8, -RIN + 1.1, { collide: true, bevel: 0.1 });
+      kit.slab(M.deep, 1.0, 2.2, 1.0, s * 9.0, 1.1, -RIN + 1.1, { collide: true, bevel: 0.1 });
+      kit.slab(M.deep, 0.8, 1.4, 0.8, s * 12.4, 0.7, -RIN + 1.1, { collide: true, bevel: 0.1 });
+    }
+    kit.slab(M.deep, 11.4, 0.7, 1.3, 0, 3.95, -RIN + 1.1, { collide: false, bevel: 0.1 });
+  },
+  banner: (kit, M) => {
+    for (let i = -2; i <= 2; i++) kit.slab(M.mark, 1.0, 3.2, 0.05, i * 2.2, DRUM.storey - 2.4, -RIN + 0.9, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
+      kit.slab(M.mark, 0.8, 4.4, 0.05, s * (7.5 + i * 3.0), DRUM.storey - 3.0, RIN - 1.2, { collide: false, bevel: 0 });
+    }
+  },
+  /* Deck 48 — a working deck: paint, pipe, shutters, work lamps. */
+  hazard: (kit, M) => {
+    chevrons(kit, M, 10.0, 0.3, -RIN + 0.35, 9);
+    for (const s of [-1, 1]) {
+      kit.slab(M.status, 0.3, 0.3, 0.3, s * 4.4, 3.4, -RIN + 0.5, { collide: false, bevel: 0.06 });
+      kit.slab(M.status, 1.4, 2.2, 0.1, s * 8.0, 1.4, -RIN + 0.4, { collide: false, bevel: 0, rz: 0.4 });
+    }
+  },
+  conduit: (kit, M) => {
+    for (let i = 0; i < 5; i++) kit.post(M.wing, 0.15, 0.15, 11.5, -3.2 + i * 1.6, DRUM.storey - 1.1, 0, { rx: Math.PI / 2, radial: 6 });
+    /* …and the same bundle turning the corner and running off down the ring. */
+    for (const s of [-1, 1]) for (let i = 0; i < 3; i++) {
+      kit.post(M.wing, 0.15, 0.15, 16, s * 12, DRUM.storey - 1.4 - i * 0.4, RIN - 1.4, { rz: Math.PI / 2, radial: 6 });
+    }
+  },
+  shutter: (kit, M) => {
+    for (let i = 0; i < 7; i++) kit.slab(M.dark, 10.6, 0.28, 0.12, 0, 4.6 + i * 0.34, -RIN + 0.3, { collide: false, bevel: 0 });
+    for (const s of [-1, 1]) kit.slab(M.dark, 3.2, 3.4, 0.4, s * 8.4, 1.7, -RIN + 0.35, { collide: true, bevel: 0 });
+  },
+  lamps: (kit, M) => {
+    for (const s of [-1, 1]) {
+      lampPost(kit, M, s * 4.6, -RIN + 1.4, 3.0);
+      lampPost(kit, M, s * 4.6, RIN - 1.4, 3.0);
+      lampPost(kit, M, s * 11.0, RIN - 1.4, 3.0);
+    }
+  },
+};
+
+/**
+ * One junction, at the mouth of a spine. The structure: a portal you pass
+ * under, a floor inlay you cross, two pylons, a bollard line that splays the
+ * corner open, and the sign that says what is each way. `dressWayfinding`
+ * hangs the words on it.
+ */
+function buildJunction(kit, M, j, y) {
+  const a = j.at * Math.PI / 180;
+  kit.push(DRUM.ringR * Math.sin(a), y, DRUM.ringR * Math.cos(a), a);
+  const hw = DRUM.spineW / 2;
+  /* Its own proportions, off its own row: the height of the portal, how far
+   * the corner is splayed, how many bollards, and which inlay is under you.
+   * Twelve junctions, twelve sets of numbers — which is what stopped
+   * `spine90@32 × spine270@32` from measuring 1.000. */
+  const H = j.h ?? 5.6, splay = j.splay ?? 0.62, nb = j.bollards ?? 3;
+  /* THE PORTAL, over the spine's mouth on the inboard side of the ring. */
+  for (const s of [-1, 1]) {
+    kit.slab(M.hull, 0.8, H, 1.6, s * (hw + 0.6), H / 2, -RIN + 0.8, { collide: true, bevel: 0 });
+    /* …and the splay: the corner is opened out rather than turned. */
+    kit.slab(M.hull, 0.6, H, 2.6, s * (hw + 2.2), H / 2, -RIN + 2.0, { collide: true, bevel: 0, ry: s * splay });
+  }
+  kit.slab(M.hull, DRUM.spineW + 2.8, 0.9, 1.6, 0, H + 0.45, -RIN + 0.8, { collide: false, bevel: 0 });
+  kit.slab(M.strip, DRUM.spineW + 0.6, 0.12, 0.3, 0, H - 0.1, -RIN + 1.5, { collide: false, bevel: 0 });
+  /* THE FLOOR INLAY, right across the ring: you know you are at a crossing
+   * because the ground under you changed — and the three patterns are how a
+   * regular tells one crossing from another with their eyes down. */
+  if (j.inlay === 'disc') {
+    kit.post(M.mark, 4.6, 4.6, 0.08, 0, 0.04, 0, { radial: 16 });
+    kit.post(M.strip, 5.2, 5.0, 0.06, 0, 0.09, 0, { radial: 20, open: true });
+  } else if (j.inlay === 'chevron') {
+    for (let i = -2; i <= 2; i++) {
+      kit.slab(M.mark, 2.6, 0.08, 1.1, i * 1.9, 0.04, i * 0.55, { collide: false, bevel: 0, ry: 0.4 });
+    }
+    kit.slab(M.strip, DRUM.spineW + 3.0, 0.06, 0.2, 0, 0.09, -RIN + 0.5, { collide: false, bevel: 0 });
+  } else {
+    kit.slab(M.mark, DRUM.spineW + 3.0, 0.08, DRUM.ringW - 0.6, 0, 0.04, 0, { collide: false, bevel: 0 });
+    kit.slab(M.strip, DRUM.spineW + 3.0, 0.06, 0.22, 0, 0.09, RIN - 0.5, { collide: false, bevel: 0 });
+    kit.slab(M.strip, DRUM.spineW + 3.0, 0.06, 0.22, 0, 0.09, -RIN + 0.5, { collide: false, bevel: 0 });
+  }
+  /* THE BOLLARDS that keep a crowd off the corner. */
+  for (const s of [-1, 1]) for (let i = 0; i < nb; i++) {
+    kit.post(M.dark, 0.13, 0.11, 0.9, s * (hw + 3.4 + i * 1.3), 0.45, -RIN + 3.0 + i * 0.5, { radial: 6, collide: true });
+  }
+  /* AND, WHERE THERE IS SOMETHING OUTBOARD TO GO TO, a gate through the skin.
+   * On deck 44 every junction is a tram platform (§3.2 #40 and its three) and
+   * a crossing with a train on the far side of it is not the same crossing as
+   * one with a wall. */
+  if (j.outboard) {
+    for (const s of [-1, 1]) kit.slab(M.dark, 0.7, 4.2, 1.2, s * (hw - 0.4), 2.1, RIN - 0.7, { collide: true, bevel: 0 });
+    kit.slab(M.dark, DRUM.spineW + 0.6, 0.8, 1.2, 0, 4.6, RIN - 0.7, { collide: false, bevel: 0 });
+    kit.slab(M.screen, 2.2, 0.7, 0.08, 0, 3.4, RIN - 1.35, { collide: false, bevel: 0 });
+    kit.slab(M.strip, DRUM.spineW + 1.4, 0.07, 0.18, 0, 0.1, RIN - 1.6, { collide: false, bevel: 0 });
+  }
+  /* THE PYLON that carries the sign — the one thing you look for at a
+   * junction, and it stands where it can be seen from both ways round. */
+  kit.post(M.dark, 0.28, 0.24, 4.6, hw + 1.9, 2.3, RIN - 1.6, { radial: 8, collide: true });
+  kit.light(0, 5.0, 0, { intensity: 10, distance: 20 });
+  const look = JUNCTION_LOOK[j.look];
+  if (look) look(kit, M);
+  kit.pop();
+}
+
+/**
+ * ══ EVERY FIXTURE ON A DECK, AND THE FOUR JUNCTIONS ═══════════════════════
+ * Called by `Station.js` with the shell's own kit, so the whole between-space
+ * still merges to one mesh per material — the fixtures cost triangles, not
+ * draw calls, which is what lets there be forty of them under §12.2's 400.
+ */
+export function buildWays(kit, M, deck) {
+  const y = DECK_Y[deck] ?? 0;
+  const built = [];
+  for (const w of waysOn(deck)) {
+    const fn = FIXTURES[w.kind];
+    if (!fn) continue;
+    const a = w.at * Math.PI / 180;
+    /* WHICH WALKWAY. Three bands, three frames, and every one of them puts
+     * local +Z radially outward so a builder never asks where it is:
+     *   ring   on the outer walk at `ringR`
+     *   spine  at radius `r` down a radial corridor
+     *   rim    on the balcony lip at `DRUM.balcony`, the void at local −Z */
+    const r = w.band === 'spine' ? w.r : w.band === 'rim' ? DRUM.balcony : DRUM.ringR;
+    /* Deck 40's +Z spine is the Concourse (§3.2 #9) and is not built as a
+     * corridor, so nothing is hung in it either. */
+    if (w.band === 'spine' && deck === 40 && w.at === 0) continue;
+    kit.push(r * Math.sin(a), y, r * Math.cos(a), a);
+    fn(kit, M, w);
+    kit.pop();
+    built.push(w);
+  }
+  for (const j of junctionsOn(deck)) buildJunction(kit, M, j, y);
+  return built;
+}
+
+/**
+ * ══ THE WORDS, WHICH ARE REAL GEOMETRY ════════════════════════════════════
+ *
+ * `dressBoards` puts the station's name on the departures board and the four
+ * platforms. This is the same thing for the street: at every junction, what is
+ * ahead and what is each way round the ring, on a panel bolted to that
+ * junction's pylon; and a hanging blade over each gantry. A player who can
+ * read where they are is a player in a place rather than in a corridor.
+ */
+export function dressWayfinding(world, st, M) {
+  const y = st.deckY ?? 0;
+  const made = [];
+  const hang = (a, r, yaw, wide, tall, high, rows, name) => {
+    const panel = signPanel(rows, { name, px: 384, pyx: 192 });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(wide, tall), panel.material);
+    mesh.position.set(r * Math.sin(a), y + high, r * Math.cos(a));
+    mesh.rotation.y = yaw;
+    world.scene.add(mesh);
+    world.statics.push(mesh);
+    made.push({ panel, mesh });
+  };
+  for (const j of junctionsOn(st.deck)) {
+    const a = j.at * Math.PI / 180;
+    /* Both faces, because a sign a player walks past the back of is a sign
+     * that only works if you came the right way round. */
+    hang(a, DRUM.ringR + 2.6, a, 3.2, 1.1, 4.2, [j.name, j.sign[1], j.sign[2]], `way${j.deck}-${j.at}a`);
+    hang(a, DRUM.ringR + 2.6, a + Math.PI, 3.2, 1.1, 4.2, [j.name, j.sign[2], j.sign[1]], `way${j.deck}-${j.at}b`);
+    hang(a, DRUM.roomR + 1.4, a + Math.PI, 4.4, 0.9, 5.9, [j.sign[0]], `way${j.deck}-${j.at}c`);
+  }
+  for (const w of waysOn(st.deck)) {
+    if (w.kind !== 'gantry') continue;
+    const a = w.at * Math.PI / 180;
+    hang(a, DRUM.ringR, a + Math.PI / 2, 3.0, 0.85, 3.7, [w.name], `way${w.deck}-g${w.at}`);
+  }
+  st.wayfinding = made;
+  return made;
 }

@@ -4364,48 +4364,562 @@ export async function run({ check, assert }) {
     } finally { world.unload(); Kn.clear(); }
   });
 
-  check('companion: the pup GROWS off `runs`, and no other kind does', async () => {
+  check('companion: growth reaches BOTH bodies, on every kind that declares it', async () => {
     /**
-     * THE CARD PROMISED IT AND NOBODY WROTE IT. The pup's blurb has said "it
-     * gets visibly bigger across its life" since the kind landed, and
-     * `Kennel.js` argues at length why the scale must be DERIVED from `runs`
-     * and never stored — but a grep of the tree found no line reading
-     * `rec.runs` for a size: a field promised by a surface and written by
-     * nobody. `bodyScaleOf` is the writer now, and this drives it on the two
-     * bodies a companion has — the fielded Enemy through `spawnEnemy` and
-     * the deck figure through the builder — so both are the same size.
+     * ══════════════════════════════════════════════════════════════════════
+     *  THIS CHECK USED TO ASSERT `grown === 1`, AND THAT WAS THE DEFECT
+     * ══════════════════════════════════════════════════════════════════════
+     *
+     * What stood here read: "the pup GROWS off `runs`, and no other kind
+     * does", and it enforced it — `assert(grown === 1, 'the design puts the
+     * growth question on the pup alone')`. It was the right check for the day
+     * it was written. It was pinning the fact that ONE kind had been given a
+     * curve while the other eleven had not, and it was doing the honest thing
+     * with that fact: making it deliberate rather than incidental.
+     *
+     * IT IS NOW PINNING THE ABSENCE OF THE FEATURE. V15 §4 is one sentence —
+     * "a companion that has survived four runs should be visibly bigger and
+     * visibly different, and an inorganic one should have visibly more
+     * hardware" — and `grown === 1` refuses it by construction. That is the
+     * same shape as the two refusals this file has already had to reopen: the
+     * rung ladder's "not one multiplier field", which was settled against the
+     * player's own sentence, and `dressCompanion`'s five-field pin, which was
+     * right and had to grow a SECOND door rather than a sixth field. A check
+     * that asserts a number is one when the design says it should be ten is
+     * not protecting anything; it is a decision from a different round still
+     * being enforced.
+     *
+     * ── WHAT REPLACES IT, AND IT IS STRICTLY HARDER TO SATISFY ────────────
+     *
+     * The old check drove one number on one body: `bodyScaleOf` for twelve
+     * kinds, and `fieldCompanion` twice for the pup. It could not have failed
+     * on a droid, on a shape, on the deck body, or on the wire between the
+     * record and the mesh — which is the entire feature it is now named for.
+     * This holds the SAME driven-on-a-real-body standard and widens what is
+     * driven, in five directions the old one had no reach into:
+     *
+     *   1  EVERY KIND, BOTH WAYS. A kind with a `grow` row must change, and a
+     *      kind without one must be BYTE-FOR-BYTE the same body at the top of
+     *      the ladder as at the bottom. The tooka and the hawk are the two
+     *      that declare nothing, and the absence is a statement — the cute
+     *      useless one is the same kit on its last run as on its first — so
+     *      the check that proves the growers grow is the same loop that proves
+     *      those two do not.
+     *
+     *   2  THE GEOMETRY, NOT THE NUMBER. Silhouette is measured the way
+     *      `grooming.mjs` and the colour check measure it: vertices through
+     *      the real builder, and the world bounding box of the assembled body.
+     *      A `to` of 1.00 on the three droids means SIZE cannot be the thing
+     *      that moved for them, so the vertex count has to be — which is
+     *      exactly the half of the feature a scale curve cannot express and
+     *      the old check had no way to ask about.
+     *
+     *   3  THE FIELD PATH, END TO END. `fieldCompanion` → `spawnEnemy` →
+     *      `Enemy._cmpGrow` → the build options spread → the builder. Three of
+     *      those four are lines that did not exist, and a companion whose
+     *      record said VETERAN and whose body was built fresh would pass every
+     *      table assertion above. So the fielded body's mesh is measured
+     *      against the fielded body's mesh at the other end of the ladder.
+     *
+     *   4  THE DECK PATH, AGAINST THE FIELD PATH. `CompanionDeck.js:9-24`
+     *      names the one thing the two representations may never do, and a
+     *      third thing riding the spawn is a third chance to do it. The deck
+     *      call is made here verbatim and its vertex count has to EQUAL the
+     *      fielded body's at the same maturity — not merely to change.
+     *
+     *   5  NOTHING IS STORED. `companion: the store clamps a hostile save`
+     *      asserts `scale` never survives `readOne`; the same must be true of
+     *      every word this feature could have smuggled a derived number in
+     *      under. A stage on disk is a second source of truth that goes stale
+     *      the first time a gate moves.
+     *
+     * WHAT IS STILL REFUSED, AND THIS CHECK IS WHERE IT IS REFUSED. Growth
+     * buys NOTHING that fights. The archetype's `hp`, `damage` and `speed` are
+     * read off the two fielded bodies and asserted IDENTICAL at both ends of
+     * the ladder: a droid that grew plate and grew tougher would be a fourth
+     * axis arriving through a mesh, which is the one route past
+     * `companion: the rung curve is real` that nobody had closed.
      */
-    const { COMPANION_KINDS, bodyScaleOf } = await import('../../src/game/CompanionKinds.js');
+    const { COMPANION_KINDS, COMPANION_ORDER, GROWTH_STAGES, bodyScaleOf, growthOptsFrom, maturityOf, stageOf }
+      = await import('../../src/game/CompanionKinds.js');
     const { ARCHETYPES } = await import('../../src/game/Enemy.js');
-    const rec = (kind, runs) => ({ id: 'g' + runs, kind, name: 'G', xp: 0, runs, areas: 0, kills: 0,
-      saves: 0, downs: 0, orders: 0, ranged: 0, tempers: [], story: [], scars: [] });
-    let grown = 0;
-    for (const k of Object.keys(COMPANION_KINDS)) {
-      const a = bodyScaleOf(k, rec(k, 0)), b = bodyScaleOf(k, rec(k, 12)), c = bodyScaleOf(k, rec(k, 24)), d = bodyScaleOf(k, rec(k, 99));
-      assert(Math.abs(a - (ARCHETYPES[COMPANION_KINDS[k].archetype].scale ?? 1)) < 1e-9, `${k} at 0 runs is not the archetype's scale`);
-      if (COMPANION_KINDS[k].grow) {
-        grown++;
-        assert(b > a * 1.2 && c > b && Math.abs(c - d) < 1e-9, `${k}: ${a.toFixed(3)} → ${b.toFixed(3)} → ${c.toFixed(3)} → ${d.toFixed(3)} is not a curve that grows and caps`);
-      } else {
-        assert(Math.abs(a - d) < 1e-9, `${k} changes size with runs and has no grow row`);
+    const { companionOptsFrom } = await import('../../src/game/Bodies.js');
+    await import('../../src/game/Levels.js');
+
+    const top = GROWTH_STAGES[GROWTH_STAGES.length - 1];
+    /* THE TWO ENDS OF THE LADDER, AS RECORDS. Built from the STAGE TABLE and
+     * never from typed numbers, so a gate that moves moves this fixture with
+     * it — the same discipline the rung check uses against `RANKS`. */
+    const rec = (kind, ripe) => ({
+      id: ripe ? 'gv' : 'gf', kind, name: 'G', xp: 0,
+      runs: ripe ? top.runs : 0, meals: ripe ? top.care : 0, grooms: 0,
+      areas: 0, kills: 0, saves: 0, downs: 0, orders: 0, ranged: 0,
+      tempers: [], story: [], scars: [],
+    });
+    assert(maturityOf(rec('massiff', false)) === 0 && maturityOf(rec('massiff', true)) === 1,
+      'the fixture does not reach both ends of the stage ladder');
+
+    /* Vertices and the body's own box, off whatever root the builder returns. */
+    const shapeOf = (built) => {
+      const root = built?.rig?.root ?? built?.group;
+      assert(root, 'built neither a rig nor a group');
+      let v = 0;
+      const box = new THREE.Box3();
+      root.updateMatrixWorld(true);
+      root.traverse((o) => {
+        if (!o.isMesh || !o.geometry?.attributes?.position) return;
+        v += o.geometry.attributes.position.count;
+        o.geometry.computeBoundingBox();
+        box.union(o.geometry.boundingBox.clone().applyMatrix4(o.matrixWorld));
+      });
+      const sz = box.getSize(new THREE.Vector3());
+      return { v, w: sz.x, h: sz.y, l: sz.z };
+    };
+
+    let growers = 0, still = 0;
+    const rows = [];
+    for (const id of COMPANION_ORDER) {
+      const K = COMPANION_KINDS[id];
+      const A = ARCHETYPES[K.archetype];
+      assert(A?.build, `${id} names archetype "${K.archetype}" and nothing builds it`);
+      const base = A.scale ?? 1;
+      const fresh = rec(id, false), ripe = rec(id, true);
+      const sFresh = bodyScaleOf(id, fresh), sRipe = bodyScaleOf(id, ripe);
+      assert(Math.abs(sFresh - base) < 1e-9,
+        `${id} at the bottom of the ladder is ${sFresh.toFixed(3)} and its archetype is ${base} — `
+        + 'a fresh animal is the row it was built from');
+      /* THE DECK'S OWN CALL, SPELLED THE WAY `CompanionDeck.callTheCompanion`
+       * spells it — size, colours and growth, all three. */
+      const put = (r) => shapeOf(A.build({
+        scale: bodyScaleOf(id, r), ...companionOptsFrom(null), ...growthOptsFrom(id, r),
+      }));
+      const a = put(fresh), b = put(ripe);
+
+      if (!K.grow) {
+        still++;
+        assert(Math.abs(sRipe - sFresh) < 1e-9,
+          `${id} changes size across the ladder and declares no grow row`);
+        assert(a.v === b.v && Math.abs(a.h - b.h) < 1e-9,
+          `${id} declares no grow row and its body changed anyway (${a.v}→${b.v} vertices, `
+          + `${a.h.toFixed(3)}→${b.h.toFixed(3)} m tall) — growth has leaked into a kind nobody gave it to`);
+        rows.push(`${id} —`);
+        continue;
       }
+      growers++;
+      const to = K.grow.to ?? 1;
+      /* THE SIZE CURVE IS THE ROW'S, EXACTLY, AT THE TOP. */
+      assert(Math.abs(sRipe - base * to) < 1e-9,
+        `${id} tops out at ${sRipe.toFixed(3)} where its row says ${(base * to).toFixed(3)}`);
+      /* AND IT CLIMBS THROUGH THE MIDDLE RATHER THAN SNAPPING AT THE END. */
+      let prev = -1;
+      for (let n = 0; n < GROWTH_STAGES.length; n++) {
+        const g = GROWTH_STAGES[n];
+        const mid = { ...rec(id, false), runs: g.runs, meals: g.care };
+        assert(stageOf(mid) === n, `${id}: a record on ${g.id}'s own gates reads stage ${stageOf(mid)}`);
+        const sz = bodyScaleOf(id, mid);
+        assert(sz >= prev - 1e-9, `${id} shrinks between stages`);
+        prev = sz;
+      }
+      /* THE HARDWARE HALF, WHICH IS WHAT A `to` OF 1.00 LEAVES. */
+      assert(b.v > a.v,
+        `${id} declares marks "${K.grow.marks}" and its body has the same ${a.v} vertices fully grown — `
+        + 'the builder does not read that treatment, so the row is a promise nothing keeps');
+      if (to > 1) {
+        assert(b.h > a.h * 1.02,
+          `${id} grows to ×${to} and stands ${a.h.toFixed(2)} m either way`);
+      } else {
+        assert(Math.abs(sRipe - sFresh) < 1e-9,
+          `${id} declares to ${to} and changed size anyway — a machine does not grow, it is fitted`);
+      }
+      rows.push(`${id} ${K.grow.marks} ${a.v}→${b.v}v ×${(sRipe / sFresh).toFixed(2)}`);
     }
-    assert(grown === 1, `${grown} kinds grow; the design puts the growth question on the pup alone`);
-    /* And the body: the same kind fielded at 0 and at 24 runs is two sizes. */
-    const { bootWorld } = await import('./_coop.mjs');
+    /**
+     * MORE THAN ONE, AND NOT ALL OF THEM. Both halves are the point: the old
+     * `grown === 1` is gone, and what replaces it is not "any number will do".
+     * A tree in which every kind grew would have lost the statement the tooka
+     * and the hawk make by not growing, and a tree in which one did would be
+     * the old defect back.
+     */
+    assert(growers >= 2, `${growers} kinds grow — V15 §4 is about companions, not about one pup`);
+    assert(still >= 1, 'every kind grows — the two that stay the same say something by staying the same');
+
+    /* ── AND NOW ON THE BODY THE PLAYER ACTUALLY OWNS ────────────────────
+     * Table assertions prove a curve. Only a spawn proves the wire: three of
+     * the four links between the record and the mesh are new lines, and a
+     * companion whose record said VETERAN and whose body was built fresh would
+     * have passed everything above. */
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
     const { fieldCompanion } = await import('../../src/game/Companions.js');
-    const sizes = [];
-    for (const runs of [0, 24]) {
-      const { world } = await bootWorld({ level: 'colosseum',
-        settings: { mode: 'waves', level: 'colosseum', allies: 0, quality: 'low' }, runSeed: 7 });
+    const said = [];
+    for (const id of ['massiff', 'astro', 'wook']) {
+      const K = COMPANION_KINDS[id];
+      const { world } = await bootWorld({
+        level: 'colosseum',
+        settings: { mode: 'waves', level: 'colosseum', allies: 0, quality: 'low' },
+        runSeed: 7,
+      });
       try {
-        const e = fieldCompanion(world, world.player, 'pup', { rec: rec('pup', runs) });
-        assert(e, 'no pup fielded');
-        sizes.push(e.bodyScale);
+        const input = idleInput();
+        for (let i = 0; i < 20; i++) world.update(STEP, input);
+        const put = (r) => {
+          const e = fieldCompanion(world, world.player, id, { rec: r });
+          assert(e, `${id} would not field`);
+          return { e, s: shapeOf({ rig: e.rig, group: e.group }) };
+        };
+        const lo = put(rec(id, false)), hi = put(rec(id, true));
+        assert(hi.s.v > lo.s.v,
+          `a fielded ${id} has ${lo.s.v} vertices fresh and ${hi.s.v} fully grown — the growth never `
+          + 'reaches Enemy._build, so the whole feature is a table');
+        if ((K.grow.to ?? 1) > 1) {
+          assert(hi.e.bodyScale > lo.e.bodyScale,
+            `a fielded ${id} is the same size at both ends of the ladder`);
+        }
+        /**
+         * AND THE DECK ANIMAL GROWS BY EXACTLY WHAT THE FIELD ANIMAL GROWS BY.
+         *
+         * THE FIRST VERSION ASSERTED THE TWO BODIES WERE IDENTICAL, AND IT WAS
+         * A WRONG CLAIM THAT FOUND A REAL DEFECT — which is worth keeping the
+         * note for. Driven, the massiff and the astromech matched to the
+         * vertex and the wookiee came back 9 958 on the deck against 10 430 on
+         * the field. That gap is NOT growth: `Enemy._build` spreads
+         * `bodyOptsFor(this.type)` — the archetype's own kit — and
+         * `CompanionDeck.callTheCompanion` does not, so the deck wookiee is
+         * standing there without the bowcaster its field body carries. It is a
+         * real difference between the two representations and it predates this
+         * lane by every commit; it is reported rather than fixed here, because
+         * a lane about growth quietly changing what the hangar wookiee is
+         * holding is exactly the kind of edit that should be argued on its own.
+         *
+         * SO THE CLAIM IS NARROWED TO THE ONE THIS LANE IS ANSWERABLE FOR, and
+         * narrowing it makes it SHARPER rather than weaker: what growth adds to
+         * the deck body must be what growth adds to the field body, to the
+         * vertex, measured as a difference so that whatever else the two builds
+         * disagree about cancels out of both sides. A third thing riding the
+         * spawn that reached one representation and not the other is still
+         * caught, which is the only failure this clause exists to catch.
+         */
+        const A = ARCHETYPES[K.archetype];
+        const deckOf = (r) => shapeOf(A.build({
+          scale: bodyScaleOf(id, r), ...companionOptsFrom(null), ...growthOptsFrom(id, r),
+        }));
+        const deckLo = deckOf(rec(id, false)), deckHi = deckOf(rec(id, true));
+        assert(deckHi.v - deckLo.v === hi.s.v - lo.s.v,
+          `${id} grows by ${deckHi.v - deckLo.v} vertices on the deck and ${hi.s.v - lo.s.v} on the field — `
+          + 'the deck animal and the field animal disagree about what it has grown, which is the one thing '
+          + 'they must never do');
+        /**
+         * GROWTH BUYS NOTHING THAT FIGHTS, AND IT IS ASKED OF THE ROW RATHER
+         * THAN OF THE BODY.
+         *
+         * The first version of this compared `e.maxHp`, `e.damage` and
+         * `e.speed` between the two bodies and was wrong twice over, in two
+         * ways worth writing down because both are traps this fixture will set
+         * again. `Enemy.damage` is a METHOD — the damage door every hit comes
+         * through — so subtracting one body's from another's is NaN and the
+         * failure message printed three hundred lines of source. And
+         * `this.speed` takes a seeded ±10% draw at construction (Enemy.js:3163),
+         * so two separately spawned bodies of the SAME kind differ by up to a
+         * fifth on it and always would have.
+         *
+         * `e.A` IS THE RIGHT PLACE TO ASK. The pack clones the archetype by
+         * identity and writes the rung's three multipliers onto the clone, so
+         * `e.A.hp`, `e.A.damage` and `e.A.speed` are exactly "what this body
+         * was told it is worth" with no roll on top — and both records here
+         * carry xp 0, so they stand on the same rung and the three numbers must
+         * be identical to the last bit. `maxHp` is asked as well because it is
+         * `A.hp × world.hpScale` and therefore also exact: a droid that grew
+         * plate and grew tougher would move one of the four.
+         */
+        for (const ax of ['hp', 'damage', 'speed']) {
+          const a = lo.e.A?.[ax], b = hi.e.A?.[ax];
+          assert(typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) < 1e-9,
+            `a fully grown ${id} carries A.${ax} ${b} against a fresh one's ${a} — growth has `
+            + 'become a fourth axis, arriving through a mesh');
+        }
+        assert(Math.abs(lo.e.maxHp - hi.e.maxHp) < 1e-9,
+          `a fully grown ${id} has ${hi.e.maxHp} hp against a fresh one's ${lo.e.maxHp}`);
+        said.push(`${id} +${hi.s.v - lo.s.v}v on the field and the deck alike, ${lo.e.maxHp} hp both ends`);
       } finally { world.unload(); }
     }
-    assert(sizes[1] > sizes[0] * 1.5, `a pup at 24 runs is ${sizes[1].toFixed(3)} against ${sizes[0].toFixed(3)} at 0 — it did not grow on the body`);
-    return `pup ${sizes[0].toFixed(2)} → ${sizes[1].toFixed(2)} on the body; ${grown} of ${Object.keys(COMPANION_KINDS).length} kinds grow`;
+
+    /* ── AND NOTHING ABOUT IT IS ON DISK ─────────────────────────────── */
+    const forged = Kn.readOne({
+      id: 'x', kind: 'massiff', runs: 4, meals: 2, grooms: 1,
+      scale: 40, grown: 1, stage: 'veteran', maturity: 1, marks: 'ridge',
+    });
+    for (const f of ['scale', 'grown', 'stage', 'maturity', 'marks']) {
+      assert(forged[f] === undefined,
+        `"${f}" survived readOne — it is DERIVED, and a derived field on disk is a second source of truth`);
+    }
+    return `${growers} kinds grow and ${still} deliberately do not — ${rows.join(', ')}; on the field ${said.join('; ')}`;
+  });
+
+  check('companion: the stage ladder is runs AND care, and care cannot outrun runs', async () => {
+    /**
+     * THE HALF THAT MAKES THE STATION LOAD-BEARING RATHER THAN DECORATIVE.
+     *
+     * V15 §4: "care, feeding, grooming, play, at the habitat, ON the station,
+     * between runs — and for some rungs to need BOTH. That is the whole reason
+     * it makes the station load-bearing rather than decorative."
+     *
+     * FOUR THINGS ARE DRIVEN AND EVERY ONE OF THEM IS A WAY THIS COULD BE A
+     * LIE:
+     *
+     *   a  SOME STAGES NEED BOTH, and it is asserted as a COUNT rather than by
+     *      naming a stage — a table that quietly dropped every `care` gate to
+     *      0 would still be four stages with four labels, and the room would
+     *      still be decorative.
+     *   b  AND SOME DO NOT. The first step up is battle alone, deliberately: a
+     *      growth curve entirely behind a room is one most players never see,
+     *      and a floor that anyone reaches by playing is what keeps the
+     *      habitat a reward rather than a toll gate.
+     *   c  CARE CANNOT BE FARMED. The whole objection to a care system is that
+     *      it becomes a button you press in a quiet room until a number is
+     *      big. So the door is driven a HUNDRED times against a record with no
+     *      runs on it, and the counter has to stop — bounded by the thing that
+     *      is bounded by playing.
+     *   d  AND IT IS NOT A CURRENCY. Nothing subtracts. Driven, not asserted
+     *      about the source: both counters only ever go up, and the six-word
+     *      scan two checks above already covers the files by path.
+     */
+    const { GROWTH_STAGES, stageOf, careOf, nextStage } = await import('../../src/game/CompanionKinds.js');
+    assert(GROWTH_STAGES.length >= 3, 'a growth ladder with two rungs is a boolean');
+    let both = 0, battleOnly = 0;
+    for (let i = 1; i < GROWTH_STAGES.length; i++) {
+      const a = GROWTH_STAGES[i - 1], b = GROWTH_STAGES[i];
+      assert(b.runs > a.runs, `${b.id} costs no more runs than ${a.id}`);
+      assert(b.care >= a.care, `${b.id} asks for LESS care than ${a.id}`);
+      if (b.care > 0) both++; else battleOnly++;
+    }
+    assert(both >= 2,
+      `${both} stages want care as well as runs — the habitat is decoration if the ladder can be `
+      + 'climbed without ever walking to it');
+    assert(battleOnly >= 1,
+      'every stage past the first needs care — a player who never finds the room would never see his '
+      + 'companion change at all');
+
+    Kn.clear();
+    const live = Kn.adopt('massiff', 'Kept');
+    assert(live, 'nothing adopted');
+    assert(stageOf(live) === 0, 'a fresh animal is not on the bottom stage');
+    /* THE HUNDRED PRESSES. */
+    for (let i = 0; i < 100; i++) { Kn.careFor(live.id, 'meals'); Kn.careFor(live.id, 'grooms'); }
+    let rec = Kn.load().live;
+    assert(rec.meals === 1 && rec.grooms === 1,
+      `a hundred presses on a record with no runs left meals ${rec.meals} and grooms ${rec.grooms} — `
+      + 'care is farmable while standing still');
+    assert(careOf(rec) === 2, `careOf reads ${careOf(rec)}`);
+    /* AND IT OPENS AGAIN WHEN THE ANIMAL HAS ACTUALLY BEEN OUT. */
+    const k = Kn.load(); k.live.runs = 5; Kn.save(k);
+    for (let i = 0; i < 100; i++) Kn.careFor(live.id, 'meals');
+    rec = Kn.load().live;
+    assert(rec.meals === 6, `after five runs a hundred presses left meals at ${rec.meals}, not 6`);
+    /* NOTHING SUBTRACTS, AND A BAD ACT NAME IS A NO-OP RATHER THAN A WRITE. */
+    Kn.careFor(live.id, 'xp'); Kn.careFor(live.id, 'runs'); Kn.careFor('not-this-animal', 'meals');
+    const after = Kn.load().live;
+    assert(after.xp === rec.xp && after.runs === rec.runs && after.meals === rec.meals,
+      'the care door wrote a field that is not one of its two');
+    /* AND THE LADDER ACTUALLY MOVES WHEN BOTH HALVES ARRIVE. */
+    const g2 = GROWTH_STAGES[2];
+    const ripe = { ...after, runs: g2.runs, meals: g2.care, grooms: 0 };
+    assert(stageOf(ripe) >= 2, `runs ${g2.runs} and care ${g2.care} does not reach ${g2.id}`);
+    assert(stageOf({ ...ripe, meals: g2.care - 1 }) < 2,
+      `${g2.id} was reached on runs alone — its care gate does nothing`);
+    assert(stageOf({ ...ripe, runs: g2.runs - 1 }) < 2,
+      `${g2.id} was reached on care alone — its runs gate does nothing`);
+    const n = nextStage({ ...ripe });
+    assert(n && n.runs >= 0 && n.care >= 0, 'nextStage says nothing about what is left');
+    assert(nextStage({ runs: 999, meals: 999, grooms: 999 }) === null, 'a fully grown animal still has a next stage');
+    Kn.clear();
+    return `${GROWTH_STAGES.length} stages, ${both} of them needing both halves; a hundred presses on a `
+      + 'fresh animal bought 1 meal and 1 groom, and six runs bought six';
+  });
+
+  check('companion: the care door has its own pin, the way the dressing door has one', async () => {
+    /**
+     * `companion: neither new file has grown a currency` greps the BODY of
+     * `dressCompanion` and fixes what a screen may write at exactly `name` and
+     * `look`. Care is a SECOND write from a screen, and the tempting thing was
+     * to widen that pin by two words.
+     *
+     * WIDENING A PIN TO FIT A NEW FEATURE IS HOW A PIN STOPS MEANING ANYTHING.
+     * The whole value of that grep is that the number is fixed and the next
+     * person has to argue rather than append. So the care write is its own
+     * exported door with its own whitelist and its own pin, and this is that
+     * pin — the same shape, on the same terms, shipped on the same commit.
+     *
+     * IT PINS THE WHITELIST AND THE BODY BOTH. The array alone would be
+     * satisfied by a function that ignored it; the body alone would be
+     * satisfied by an array with `xp` in it.
+     */
+    const kn = strip(await src('game/Kennel.js'));
+    assert(/export const CARE_ACTS = Object\.freeze\(\['meals', 'grooms'\]\)/.test(kn),
+      'CARE_ACTS is not exactly meals and grooms — the care door has grown a third thing to write');
+    const body = /export function careFor\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(kn)?.[1] || '';
+    assert(body, 'Kennel.careFor is gone');
+    /* Every write this function makes to the record, as the field it names. A
+     * literal field name here is a field a screen can edit. */
+    const writes = [...body.matchAll(/k\.live(?:\.(\w+)|\[(\w+)\])\s*(?:=|\+=|-=|\|\|=|\?\?=)/g)]
+      .map((m) => m[1] || `[${m[2]}]`).sort();
+    assert(writes.join(',') === '[act]',
+      `careFor writes ${writes.join(', ') || 'nothing'} — it may increment one of CARE_ACTS and `
+      + 'nothing else; a door that could touch xp, runs, kills or tempers is a cheat panel');
+    assert(/CARE_ACTS\.includes\(act\)/.test(body), 'careFor does not check its own whitelist');
+    assert(/canCare\(/.test(body), 'careFor does not ask the one reader whether the act is allowed');
+    /* AND THE SIX WORDS, ON THE NEW FILE, BY PATH — the same scan, extended
+     * the day the file lands rather than the day somebody notices. */
+    const hab = strip(await src('game/Habitat.js'));
+    for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {
+      assert(!new RegExp(`\\b${word}\\b`, 'i').test(hab),
+        `Habitat.js has grown a "${word}" — the room has become a shop`);
+    }
+    return `CARE_ACTS is meals,grooms; careFor writes exactly k.live[act]; Habitat.js clean of all six words`;
+  });
+
+  check('companion: the growth ladder earns drawbacks, two-sided and priced', async () => {
+    /**
+     * V15 §4 asks for drawbacks in as many words: "a companion that only ever
+     * helps is a stat. A big one is slow and loud; a bonded one panics when it
+     * is hurt."
+     *
+     * THE SHAPE THAT REQUEST HAS TO TAKE WAS ALREADY WRITTEN. A drawback is
+     * not a penalty column on the stage table and it is not a negative
+     * multiplier: it is a TEMPER — two-sided, on the behaviour axes, priced
+     * net <= 0, shed by the same rule — so `companion: every temper costs at
+     * least what it buys` is already holding both of these the day they land,
+     * without one line being added to it. That is the point of this check
+     * being short: it proves the two new rows are EARNED off the growth
+     * ladder and that the earn is driven to a real true and a real false,
+     * which is the only clause the pricing check cannot see.
+     */
+    const { GROWTH_STAGES } = await import('../../src/game/CompanionKinds.js');
+    const base = { kind: 'massiff', xp: 0, runs: 0, meals: 0, grooms: 0, downs: 0, orders: 0, ranged: 0, tempers: [] };
+    const top = GROWTH_STAGES[GROWTH_STAGES.length - 1];
+    const idsOf = (r) => Kn.earnedTempers(r).map((t) => t.id);
+    /* A FRESH ANIMAL HAS EARNED NOTHING OFF THIS LADDER. */
+    const fresh = idsOf({ ...base });
+    /* FULLY GROWN, AND FED. */
+    const grown = idsOf({ ...base, runs: top.runs, meals: top.care });
+    const earned = grown.filter((id) => !fresh.includes(id));
+    assert(earned.length >= 2,
+      `the whole growth ladder earns ${earned.length} temper(s) — a companion that only ever helps is a stat`);
+    for (const id of earned) {
+      const t = Kn.temperById(id);
+      assert(t, `${id} is earned and is not in the table`);
+      assert(Kn.priceTemper(t) <= 1e-9, `${id} nets ${Kn.priceTemper(t).toFixed(3)} — it is a free gift`);
+      assert(t.gain && t.cost, `${id} does not say both halves`);
+      /* THE FALSE SIDE, DRIVEN. A predicate that answered true for everything
+       * would satisfy every clause above it. */
+      assert(!fresh.includes(id), `${id} is earned by an animal that has done nothing`);
+    }
+    /* AND THE PAIR THAT CONTRADICT CANNOT BE WORN AT ONCE — the growth ladder
+     * gets the same treatment the deed ladder gets, driven rather than read. */
+    const rec = { ...base, runs: top.runs, meals: top.care, ranged: 9, tempers: ['ranging'] };
+    Kn.applyTempers(rec);
+    const worn = new Set(rec.tempers);
+    for (const t of Kn.TEMPERS) {
+      if (!t.sheds || !worn.has(t.id)) continue;
+      assert(!worn.has(t.sheds), `${t.id} and ${t.sheds} are worn at once, and they contradict`);
+    }
+    assert(rec.tempers.length <= Kn.TEMPERS_WORN, 'more tempers are worn than the cap allows');
+    assert(Kn.TEMPERS_WORN >= Kn.TEMPERS.length,
+      `the wear cap is ${Kn.TEMPERS_WORN} and the table has ${Kn.TEMPERS.length} rows — a cap under the `
+      + 'table silently drops whichever ones the Set iterated last');
+    return `${earned.length} tempers earned off the growth ladder (${earned.join(', ')}), all priced <= 0, `
+      + `none earned by a fresh animal; ${rec.tempers.length} worn at once under a cap of ${Kn.TEMPERS_WORN}`;
+  });
+
+  check('companion: the habitat writes the six plaques and answers the panel', async () => {
+    /**
+     * `StationKit.js:987` has built six blank slabs on the habitat's back wall
+     * since the room landed, with a comment saying "`Habitat.js` writes the
+     * names on them from the Kennel" — and `Habitat.js` did not exist.
+     * `ctx.habitat` was handed out as `st.habitat` and NOTHING read it. A room
+     * with a wall of blanks in it and a note pointing at a file nobody wrote is
+     * HANDOFF §0.1b exactly: a surface promising a thing nothing writes.
+     *
+     * DRIVEN AGAINST A REAL KENNEL AND A REAL PARENT NODE. The wall is asked
+     * for its rows with an animal alive and with one dead, and the panel is
+     * asked for the two care controls in both the state where they are live
+     * and the state where they are not — because the failure mode that matters
+     * for a management screen is not a crash, it is a control that is offered
+     * and does nothing, which is the dead control `WEARS` was written to
+     * prevent one room across.
+     *
+     * AND THE MISSING HOOK IS DRIVEN AS A REFUSAL RATHER THAN AS A CRASH.
+     * `st.habitat` carries `{deck,x,z,yaw}` and no scene node, so on the tree
+     * as it stands `writePlaques` can only say what it is missing. That is
+     * asserted here — a file that quietly did nothing would be indistinguishable
+     * from one that worked, and the day the hook lands this clause is what
+     * says so.
+     */
+    const H = await import('../../src/game/Habitat.js');
+    Kn.clear();
+    /* WITH NOTHING IN THE KENNEL: six rows, not two and four holes. */
+    let rows = H.plaqueLines();
+    assert(rows.length === H.PLAQUES, `an empty kennel gives ${rows.length} plaques and the wall has ${H.PLAQUES}`);
+    assert(rows.every((r) => Array.isArray(r)), 'a plaque row is not a list of lines');
+    /* WITH AN ANIMAL. */
+    const live = Kn.adopt('massiff', 'Borz');
+    rows = H.plaqueLines();
+    assert(rows[0][0] === 'Borz', `the living animal's plaque says "${rows[0][0]}"`);
+    assert(/FRESH/.test(rows[0][1]), `its plaque says "${rows[0][1]}" and it is on the bottom stage`);
+
+    /* THE PANEL. */
+    let panel = H.habitatPanel();
+    assert(panel.rec && panel.rec.id === live.id, 'the panel does not hold the live record');
+    assert(panel.care.acts.length === Kn.CARE_ACTS.length, 'the panel offers a different number of acts than the door takes');
+    assert(panel.care.acts.every((a) => a.can && !a.why), 'a fresh animal cannot be looked after at all');
+    assert(panel.next && panel.next.runs > 0, 'the panel does not say what the next stage wants');
+    assert(panel.stage.label, 'the panel does not name the stage it is on');
+    /* THE CONTROL AND THE DOOR AGREE, WHICH IS THE WHOLE CLAUSE. */
+    for (const a of panel.care.acts) {
+      const before = Kn.load().live[a.act] | 0;
+      H.careAt(live.id, a.act);
+      assert((Kn.load().live[a.act] | 0) === before + 1,
+        `the panel offered "${a.label}" as live and pressing it changed nothing`);
+    }
+    panel = H.habitatPanel();
+    for (const a of panel.care.acts) {
+      assert(!a.can && a.why, `${a.act} is still offered after it has been done this run, with no reason given`);
+      const before = Kn.load().live[a.act] | 0;
+      H.careAt(live.id, a.act);
+      assert((Kn.load().live[a.act] | 0) === before,
+        `${a.act} was refused on the panel and written by the door — the two disagree`);
+    }
+    /* AND A DROID IS CHARGED RATHER THAN FED — the noun is data, not a switch. */
+    Kn.clear();
+    const droid = Kn.adopt('astro', 'Arfour');
+    const dp = H.habitatPanel();
+    const beast = (() => { Kn.clear(); Kn.adopt('massiff', 'B'); return H.habitatPanel(); })();
+    assert(dp.care.acts[0].label !== beast.care.acts[0].label,
+      `a droid and an animal are both "${dp.care.acts[0].label}" — V16 §2 B5 says a droid charges`);
+    void droid;
+
+    /* THE WALL, AND THE HOOK. */
+    const noStation = H.writePlaques(null);
+    assert(noStation.wrote === 0 && noStation.why, 'writePlaques on no station neither wrote nor said why');
+    assert(noStation.rows.length === H.PLAQUES, 'it did not even produce the words');
+    const half = H.writePlaques({ _station: { habitat: { deck: 0, x: 0, z: 0, yaw: 0 } } });
+    assert(half.wrote === 0 && /group/.test(half.why),
+      `with the shipped st.habitat it says "${half.why}" — it must name what it is missing`);
+    /* AND WITH THE HOOK IT ACTUALLY DRAWS. */
+    const group = new THREE.Group();
+    const world = { _station: { habitat: { deck: 0, x: 0, z: 0, yaw: 0, group, w: 14, d: 12 } } };
+    const done = H.writePlaques(world);
+    assert(done.wrote === H.PLAQUES, `given the hook it wrote ${done.wrote} of ${H.PLAQUES}`);
+    const made = group.children.filter((o) => /^habitat-plaque-/.test(o.name));
+    assert(made.length === H.PLAQUES, `${made.length} plaque meshes reached the room`);
+    const xs = new Set(made.map((m) => m.position.x.toFixed(3)));
+    assert(xs.size === H.PLAQUES, `${xs.size} distinct positions for ${H.PLAQUES} plaques — they are stacked`);
+    /* IDEMPOTENT: a caller that runs it on every entry does not build a second wall. */
+    H.writePlaques(world);
+    assert(group.children.filter((o) => /^habitat-plaque-/.test(o.name)).length === H.PLAQUES,
+      'a second call built a second wall');
+    Kn.clear();
+    return `${H.PLAQUES} plaques written into a parent at ${xs.size} distinct positions and redrawn `
+      + `idempotently; the panel's two controls agree with the door in both directions; with the shipped `
+      + `st.habitat it refuses with "${half.why}"`;
   });
 
 }

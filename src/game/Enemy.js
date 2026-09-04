@@ -3016,6 +3016,12 @@ export class Enemy {
     /* …AND ITS SIZE, for the same reason the look does: the builder runs
      * inside the constructor. `CompanionKinds.bodyScaleOf` is the one writer. */
     this._cmpScale = opts?.companionScale ?? null;
+    /* …AND WHAT HAS GROWN ON IT, which is the third and last thing that can
+     * only arrive on the spawn. A ridge, a dish, a second bandolier: geometry,
+     * decided in the builder, so a companion that earned it after the mesh
+     * existed would be wearing it nowhere. `CompanionKinds.growthOptsFrom` is
+     * the one writer and `CompanionDeck` calls the same function. */
+    this._cmpGrow = opts?.companionGrowth ?? null;
     /* Which chassis's vocabulary his kit is written in — the `Trooper` record
      * has carried `kind` since attributes existed, so the spawn hands it over
      * rather than this file guessing from an archetype name. */
@@ -3458,6 +3464,12 @@ export class Enemy {
        * that door and it is empty for every body that is not one, so this
        * costs a spread of `{}` on every other spawn in the game. */
       ...companionOptsFrom(this._cmpLook),
+      /* …AND WHAT IT HAS GROWN — `{ grown, marks }`, empty for every body in
+       * the game that is not a companion and for a companion on its first run,
+       * so this costs a spread of `{}` on every other spawn exactly as the
+       * line above it does. The builders read `opts.grown` and `opts.marks`;
+       * nothing here knows what either means. */
+      ...(this._cmpGrow || {}),
       /* A grown companion is built grown. `_build` then reads `bodyScale`
        * off the rig it gets back, so anatomy follows; the combat numbers
        * stay on `A.scale`, which is what "the size buys nothing" means. */

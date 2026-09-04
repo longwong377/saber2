@@ -320,6 +320,37 @@ export const COMPANION_LOOK = {
 };
 
 /**
+ * ── WHAT LOOKING AFTER IT IS CALLED ───────────────────────────────────────
+ *
+ * "Droids instead of being fed are 'fed' in their own way by being charged."
+ * (V16 §2 B5.) Same two acts, same two counters, same gates — a different
+ * NOUN, and the noun is data.
+ *
+ * KEYED ON THE `look` ROW, which is not a coincidence and is worth saying so:
+ * that field already names the CHASSIS FAMILY — what the body is made of and
+ * therefore which colour slots its builder reads — and what a body is made of
+ * is exactly what decides whether it eats or charges. A second field spelling
+ * the same partition a second time is a second thing to get out of step.
+ *
+ * AND THERE IS NOTHING TO BUY. V16 §2 B5 shops for food at a counter and V16
+ * §4 is the argument that has to be settled before any counter exists. Until
+ * it is, this is the half that needs no economy at all: the habitat has a
+ * trough and a charging post, the acts are free, and the only thing that
+ * limits them is how many runs the animal has actually been out on.
+ */
+export const CARE_WORDS = Object.freeze({
+  creature: { meals: 'Feed', grooms: 'Groom', fed: 'fed', groomed: 'groomed', at: 'the trough' },
+  mount: { meals: 'Feed', grooms: 'Brush down', fed: 'fed', groomed: 'brushed down', at: 'the trough' },
+  wookiee: { meals: 'Share a meal', grooms: 'Comb out', fed: 'fed', groomed: 'combed out', at: 'the galley hatch' },
+  droid: { meals: 'Charge', grooms: 'Service', fed: 'charged', groomed: 'serviced', at: 'the charging post' },
+});
+
+/** The care vocabulary this kind's chassis uses. Never a switch on a kind. */
+export function careWordsOf(kind) {
+  return CARE_WORDS[COMPANION_KINDS[kind]?.look] || CARE_WORDS.creature;
+}
+
+/**
  * ══════════════════════════════════════════════════════════════════════════
  *  THE TWELVE
  * ══════════════════════════════════════════════════════════════════════════
@@ -354,6 +385,14 @@ export const COMPANION_LOOK = {
  *             prop, nearly free), 'row' (a Hangar humanoid row) or 'walker'
  *             (a stance-driven gait stepper).
  *   look      which COMPANION_LOOK row its builder will actually read.
+ *   grow      { to, marks } — how this kind CHANGES as it lives. `to` is the
+ *             multiple of its archetype scale it reaches fully grown (1.00 for
+ *             a machine, which does not get bigger); `marks` names the row in
+ *             GROWTH_MARKS its own builder reads, which is how a droid gets a
+ *             dish and an animal gets a ridge without one line anywhere asking
+ *             what kind it is. ABSENT on the two kinds that are the same
+ *             animal on their last run as on their first, and the absence is
+ *             the statement — see `GROWTH_STAGES`.
  *   blurb     one sentence, the player's, for the card.
  */
 const KINDS = [
@@ -363,6 +402,7 @@ const KINDS = [
     verb: { id: 'block', label: 'BLOCK', caption: 'Stand between me and the nearest of them' },
     blurb: 'An armoured dog beast. It does not kill things so much as occupy them, '
       + 'and the better it does that the faster you lose it.',
+    grow: { to: 1.22, marks: 'ridge' },
   },
   {
     id: 'tooka', label: 'Tooka kit', archetype: 'tooka',
@@ -381,6 +421,7 @@ const KINDS = [
     verb: { id: 'flush', label: 'FLUSH', caption: 'Knock that one flat for me' },
     blurb: 'The one that outruns you into trouble. Point it at a B2 and you have '
       + 'thrown it away, which is how it teaches the order system.',
+    grow: { to: 1.20, marks: 'plates' },
   },
   {
     id: 'b1c', label: 'Reprogrammed B1', archetype: 'b1c',
@@ -391,6 +432,7 @@ const KINDS = [
     verb: { id: 'relay', label: 'RELAY', caption: 'Carry that order to those men' },
     blurb: 'A bad gun with a running commentary. It dies to two bolts and it will '
       + 'stand in the open, because that is what a B1 does.',
+    grow: { to: 1.00, marks: 'armour' },
   },
   {
     id: 'pup', label: 'Rancor pup', archetype: 'pup',
@@ -405,15 +447,17 @@ const KINDS = [
      * damage so that it stays true either way round. */
     blurb: 'The only companion whose attacks change the LEVEL rather than the enemy. '
       + 'It gets visibly bigger across its life, and the size buys nothing.',
-    /* THE WRITER THE CARD NEVER HAD. The claim above stood for a whole round
-     * with no line anywhere reading `rec.runs` for a size — a field promised
-     * by a surface and written by nobody (HANDOFF §0.1b, the other way
-     * round). `bodyScaleOf` is that line: the pup spawns at the archetype's
-     * 0.55 on its first run and at 0.55 × `to` after `runs` runs, fast at
-     * first and slowing, and NOTHING that fights reads it — the combat
+    /* THE WRITER THE CARD NEVER HAD, AND IT IS NO LONGER THE ONLY ONE. The
+     * claim above stood for a whole round with no line anywhere reading a
+     * record for a size — a field promised by a surface and written by nobody
+     * (HANDOFF §0.1b, the other way round). `bodyScaleOf` is that line: the
+     * pup spawns at the archetype's 0.55 FRESH and at 0.55 × `to` VETERAN,
+     * fast at first and slowing, and NOTHING that fights reads it — the combat
      * numbers stay on `A.scale`, exactly as `Enemy.bodyScale` argues for a
-     * smallfolk Jedi. */
-    grow: { runs: 24, to: 1.75 },
+     * smallfolk Jedi. 1.75 is the biggest number on any row and it is the
+     * pup's by right: a rancor is the one animal in the set a player already
+     * expects to outgrow him. */
+    grow: { to: 1.75, marks: 'plates' },
   },
   {
     id: 'wook', label: 'Wookiee', archetype: 'wook',
@@ -441,6 +485,7 @@ const KINDS = [
      */
     blurb: 'The second soldier rather than a pet: a bowcaster at distance, and a body '
       + 'big enough to block a doorway you are standing in.',
+    grow: { to: 1.06, marks: 'bandolier' },
   },
   {
     id: 'hawk', label: "Vhal'kir hawk", archetype: 'hawk',
@@ -460,6 +505,7 @@ const KINDS = [
     verb: { id: 'slice', label: 'SLICE', caption: 'Turn that door / turret / console' },
     blurb: 'The slowest thing you own, and it gets stuck on terrain you vault. Its '
       + 'death costs you a capability rather than a body.',
+    grow: { to: 1.00, marks: 'dish' },
   },
   {
     id: 'medic', label: '2-1B medical droid', archetype: 'medic',
@@ -467,6 +513,7 @@ const KINDS = [
     verb: { id: 'tend', label: 'TEND', caption: 'Work that man before he goes' },
     blurb: 'The most valuable companion in Command and worthless in a duel. It walks '
       + 'toward the wounded, which is by definition where the shooting just was.',
+    grow: { to: 1.00, marks: 'arm' },
   },
   {
     id: 'taun', label: 'Tauntaun', archetype: 'taun',
@@ -479,6 +526,7 @@ const KINDS = [
     verb: { id: 'bolt', label: 'BOLT', caption: 'Run, and take their eyes with you' },
     blurb: 'Pace on flat ground and nothing else. Ride it into a fight and it panics: '
       + 'above a threshold it bucks you off and bolts.',
+    grow: { to: 1.14, marks: 'plates' },
   },
   {
     id: 'blurrg', label: 'Blurrg', archetype: 'blurrg',
@@ -486,6 +534,7 @@ const KINDS = [
     verb: { id: 'charge', label: 'CHARGE', caption: 'Bite what closes on us' },
     blurb: 'The mount that is also a weapon — and the mount that turns badly. Superb '
       + 'across open ground, useless in a trench.',
+    grow: { to: 1.18, marks: 'ridge' },
   },
   {
     id: 'varac', label: 'Varactyl', archetype: 'varac',
@@ -518,6 +567,7 @@ const KINDS = [
      */
     verb: { id: 'climb', label: 'CLIMB', caption: 'Take that face — with me on your back or without me' },
     blurb: 'It does not make the map faster, it makes the map a different shape.',
+    grow: { to: 1.16, marks: 'plates' },
   },
 ];
 
@@ -544,25 +594,190 @@ export function paceOf(kind) {
 }
 
 /**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  HOW LONG IT HAS BEEN ALIVE — THE FOUR STAGES
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * "A companion that has survived four runs should be visibly bigger and
+ *  visibly different, and an inorganic one should have visibly more hardware"
+ *  … "care, feeding, grooming, play, at the habitat, ON the station, between
+ *  runs — and for some rungs to need BOTH."
+ *
+ * ── WHY THIS IS A SECOND LADDER AND NOT A FIFTH RUNG ──────────────────────
+ *
+ * `COMPANION_RANKS` is what the animal is ALLOWED to do — leash, orders, and
+ * the three combat multipliers that are pinned under the army's. This is what
+ * the animal IS, and it buys nothing that fights: not one number below reaches
+ * hp, damage, pace, armour or ward. Two ladders because they answer two
+ * questions and are earned on two clocks — a rung is xp off deeds inside a
+ * run, a stage is runs survived and time spent on the station between them.
+ * Putting the second on the first would have meant either a fifth rung that
+ * buys a shape (and `companions: the rung curve is real` would have to price
+ * a silhouette against a damage multiplier) or a rung nobody could reach
+ * without leaving the field, which is a licence gate wearing a growth curve.
+ *
+ * ── AND TWO OF THE FOUR NEED BOTH HALVES, WHICH IS THE WHOLE POINT ────────
+ *
+ * SETTLED is battle alone: an animal you take out and bring home three times
+ * settles, whether or not you ever walk to #28. That floor is deliberate — a
+ * player who never finds the habitat still watches his companion change, and a
+ * growth curve gated entirely behind a room is a feature most players would
+ * never see. SEASONED and VETERAN need `care` as well, and that is the station
+ * being load-bearing rather than decorative: the last two thirds of the change
+ * are bought with runs AND with the time between them.
+ *
+ * `care` IS NOT A CURRENCY AND CANNOT BECOME ONE. It is a COUNT OF THINGS
+ * DONE — meals eaten, coats groomed, cells charged — and nothing anywhere
+ * subtracts from it, prices anything in it, or offers a choice of what to
+ * spend it on. There is no stock, no counter, no shelf. `Kennel.careFor`
+ * is its only writer and it refuses more acts than the animal has runs, so it
+ * cannot be farmed while standing still: an animal is fed once a run and
+ * groomed once a run, and the ceiling on care is the ceiling on runs. That is
+ * V16 §4's line held from the other side — the doctrine's substance is "a run
+ * is won by playing, not by having played before", and a shape is not a way
+ * to win a run.
+ *
+ * THE GATES. A long crossing is one run, so SETTLED is three ordinary runs;
+ * SEASONED is eight with six care acts, which is four runs' worth of both
+ * doors used; VETERAN is sixteen and fourteen, which is most of a campaign's
+ * worth of an animal you kept alive and kept looking after. Nothing here can
+ * be reached by editing one number — `readOne` clamps every field it reads.
+ */
+export const GROWTH_STAGES = Object.freeze([
+  { id: 'fresh', label: 'FRESH', runs: 0, care: 0, note: 'as it came' },
+  { id: 'settled', label: 'SETTLED', runs: 3, care: 0, note: 'three runs home' },
+  { id: 'seasoned', label: 'SEASONED', runs: 8, care: 6, note: 'eight runs, and looked after' },
+  { id: 'veteran', label: 'VETERAN', runs: 16, care: 14, note: 'a long life, and a kept one' },
+]);
+
+/**
+ * WHAT HAS BEEN DONE FOR IT, as one number. Meals and grooms are two acts and
+ * one tally, because the stage gates ask "was this animal looked after" and
+ * not "was it fed rather than brushed" — and a droid takes a cell where an
+ * animal takes a meal, which is the same act with the noun the kind's own row
+ * supplies. See `fareOf`.
+ */
+export function careOf(rec) {
+  return Math.max(0, (Number(rec?.meals) || 0) | 0) + Math.max(0, (Number(rec?.grooms) || 0) | 0);
+}
+
+/**
+ * WHICH STAGE A RECORD STANDS ON — the highest one whose BOTH gates it has
+ * passed, walked in order so a stage cannot be skipped. Derived, every time,
+ * from two counts on the record; nothing about a stage is ever stored, for
+ * `Kennel.js`'s stated reason — a derived field on disk is a second source of
+ * truth that goes stale the first time a gate moves.
+ */
+export function stageOf(rec) {
+  let i = 0;
+  const runs = Math.max(0, (Number(rec?.runs) || 0) | 0);
+  const care = careOf(rec);
+  for (let n = 1; n < GROWTH_STAGES.length; n++) {
+    const g = GROWTH_STAGES[n];
+    if (runs >= g.runs && care >= g.care) i = n; else break;
+  }
+  return i;
+}
+
+/** 0 at FRESH, 1 at VETERAN. The one number both representations are built from. */
+export function maturityOf(rec) {
+  return stageOf(rec) / (GROWTH_STAGES.length - 1);
+}
+
+/** What the next stage still wants, or null when it is fully grown. */
+export function nextStage(rec) {
+  const i = stageOf(rec);
+  const g = GROWTH_STAGES[i + 1];
+  if (!g) return null;
+  return {
+    stage: g,
+    runs: Math.max(0, g.runs - Math.max(0, (Number(rec?.runs) || 0) | 0)),
+    care: Math.max(0, g.care - careOf(rec)),
+  };
+}
+
+/**
+ * ── WHAT A KIND GROWS, AS DATA ────────────────────────────────────────────
+ *
+ * Six treatments, and every one of them is a string on a kind's `grow` row
+ * that its own BUILDER reads out of `opts.marks`. Nothing in this tree — not
+ * this file, not the pack, not the deck — ever asks what kind an animal is in
+ * order to decide what grows on it: the row says, the builder answers, and a
+ * thirteenth kind gets its hardware by naming one of these or adding one
+ * beside them.
+ *
+ * The organic three are what an animal that has been alive a while actually
+ * shows: it is bigger, and the bone under the hide has thickened. The
+ * inorganic three are the player's own sentence — "an inorganic one should
+ * have visibly more hardware — plating, a second arm, a bigger dish" — and
+ * each one is bolted where that chassis would really carry it.
+ *
+ * A MACHINE'S `to` IS 1.00 AND THAT IS NOT AN OMISSION. An astromech does not
+ * grow; it gets fitted. The size curve and the hardware curve are the same
+ * `grown` number read by two different halves of a builder, so a row can take
+ * either, both, or (the tooka and the hawk) neither.
+ */
+export const GROWTH_MARKS = Object.freeze({
+  ridge: 'a heavier dorsal ridge, grown out of the back it sits on',
+  plates: 'bony plates thickening along the flank',
+  armour: 'salvaged plate bolted over the chest and shoulders',
+  dish: 'a comm dish and a second whip on the dome',
+  arm: 'a second instrument arm and a full pod rack',
+  bandolier: 'a second bandolier, and the cases on it filled',
+});
+
+/**
  * THE SIZE A COMPANION'S BODY IS BUILT AT, off the record it is built from.
  *
  * The archetype's `scale` for every kind, times the kind's `grow` curve where
- * it has one — read off `rec.runs`, which is the one number in the record
- * that says how long the animal has been alive. Derived, never stored:
- * `Kennel.js` says why a scale on disk is a pup filling the screen. Both
- * bodies read it — `fieldCompanion` hands it through `spawnEnemy`, the deck
- * figure hands it to the builder — so the animal that follows you on the
- * deck is the same size as the one that fights.
+ * it has one — read off `maturityOf`, which is the stage ladder above and
+ * therefore off runs AND care together. Derived, never stored: `Kennel.js`
+ * says why a scale on disk is a pup filling the screen. Both bodies read it —
+ * `fieldCompanion` hands it through `spawnEnemy`, the deck figure hands it to
+ * the builder — so the animal that follows you on the deck is the same size
+ * as the one that fights.
+ *
+ * IT USED TO READ `rec.runs` DIRECTLY through a `grow.runs` denominator, and
+ * that was the whole growth question answered on one kind with one input. The
+ * curve is the stage ladder's now, so the pup's size and the astromech's dish
+ * and the plaque on the habitat wall are three readings of one number and
+ * cannot disagree.
  */
 export function bodyScaleOf(kind, rec) {
   const K = COMPANION_KINDS[kind];
   const base = ARCHETYPES[K?.archetype]?.scale ?? 1;
   const g = K?.grow;
   if (!g) return base;
-  const runs = Math.max(0, Number(rec?.runs) || 0);
-  const k = Math.min(1, runs / Math.max(1, g.runs));
+  const m = maturityOf(rec);
   /* Fast early, slowing: most of the growing happens while it is still a pup. */
-  return base * (1 + (g.to - 1) * (1 - (1 - k) * (1 - k)));
+  return base * (1 + ((g.to ?? 1) - 1) * (1 - (1 - m) * (1 - m)));
+}
+
+/**
+ * ── THE THIRD THING THAT RIDES A SPAWN ────────────────────────────────────
+ *
+ * Two things reached a companion's body before this: its colours and its size.
+ * A shape is the third, and it has to arrive the same way and for the same
+ * reason — the builder runs inside `Enemy`'s constructor, so anything that is
+ * GEOMETRY is decided there or never.
+ *
+ * ONE OBJECT, TWO READERS, AND THEY MUST NOT DISAGREE. `Companions.fieldCompanion`
+ * hands this to `spawnEnemy` (which stores it on `Enemy._cmpGrow` and spreads
+ * it into the build options) and `CompanionDeck.callTheCompanion` hands the
+ * same call's answer to the same builder. `CompanionDeck.js`'s own header names
+ * the one thing the two representations may never do, and a companion that
+ * grew a dish on the field and not in the hangar would be exactly that.
+ *
+ * `grown` IS THE MATURITY AND `marks` IS THE VOCABULARY. A builder that has
+ * never heard of a treatment simply does not draw it, which is why the check
+ * drives every kind's geometry rather than trusting this table.
+ */
+export function growthOptsFrom(kind, rec) {
+  const g = COMPANION_KINDS[kind]?.grow;
+  if (!g) return {};
+  const grown = maturityOf(rec);
+  if (!(grown > 0)) return {};
+  return { grown, marks: g.marks || null };
 }
 
 /** Does this kind own this duty at all? Separate from whether the RUNG allows it. */

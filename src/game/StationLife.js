@@ -41,7 +41,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { PLACES, PLACE, DECK_Y, DRUM, placesOn, floorOf } from './StationPlan.js';
+import { PLACES, PLACE, DECK_Y, DRUM, placesOn, floorOf, waysOn, junctionsOn } from './StationPlan.js';
 import {
   SPECIES_KEYS, SPECIES_BY, RHYTHMS, ROLE_BY, resident, speciesFor, roleFor,
   residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
@@ -153,6 +153,91 @@ function slotIn(place, i, out) {
   return out;
 }
 
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PEOPLE ON THE WALKWAYS                                                */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ NOBODY WAS EVER IN THE CORRIDOR ═══════════════════════════════════════
+ *
+ * `reseat` walked `st.places` and nothing else, and `dressStation` skips the
+ * ring band entirely — so the pool only ever seated bodies INSIDE rooms. Every
+ * walkway in the drum, on every deck, at every hour, held exactly zero people.
+ * The player's word for the result was *"a series of connected rooms"*, and on
+ * this one point the code agreed with him literally.
+ *
+ * A walkway is not a room, so it does not get a `PLACES` row; what it gets is
+ * a derived one. Each junction, each fixture on `WAYS`, and each open stretch
+ * between them becomes a pseudo-place with a footprint, a headcount and a
+ * peak, and from there the existing pool machinery does the rest — the same
+ * census, the same species, the same stable seed, the same live radius.
+ *
+ * Their `band` is `'ring'`, which is not decoration: `fullness` already gives
+ * the ring a 0.55 flood at each of the three shift changes against 0.18
+ * elsewhere, because §3.4 says a shift change floods the ring. Now there is
+ * something for it to flood.
+ *
+ * ── AND THEY STAND ────────────────────────────────────────────────────────
+ *
+ * They are seated along the walk line, facing along it, at the places a person
+ * stops: at a counter, on a bench, under a gantry, at the rail of an overlook,
+ * waiting at a crossing. They do not yet WALK — locomotion belongs to `Enemy`'s
+ * brain and there is no route hook on it to drive; a body here has
+ * `stationWay` set so the hook, when it exists, knows which bodies are the
+ * ones in transit. What this fixes is the corridor being empty, not the
+ * corridor being still.
+ */
+
+/** How many people are found at each kind of fixture at its busy hour. */
+const WAY_HEADS = {
+  market: 8, shopfront: 5, kiosk: 3, planter: 3, bench: 4, alcove: 3,
+  stair: 3, bay: 3, gantry: 2, service: 1,
+  niche: 2, ducts: 1, portal: 1, overlook: 4, stairhead: 2, shrine: 2,
+};
+
+const _ways = new Map();
+
+/**
+ * The walkways of a deck, as pseudo-places. Cached, because the derivation is
+ * pure and `reseat` runs twice a second.
+ *
+ * Ids run from 9000 up and are NOT gazetteer ids: nothing else may address one
+ * (§3.2's rule is that a place not in the table is not built, and these are not
+ * places — they are where the people between places are).
+ */
+export function wayPlacesOn(deck) {
+  const hit = _ways.get(deck);
+  if (hit) return hit;
+  const out = [];
+  let id = 9000 + deck * 10;
+  const put = (r, deg, w, d, heads, peak, what) => {
+    const a = deg * Math.PI / 180;
+    out.push({
+      id: id++, deck, band: 'ring', way: what,
+      x: r * Math.sin(a), z: r * Math.cos(a), yaw: a, w, d,
+      heads, peak,
+    });
+  };
+  /* THE CROSSINGS, which is where a person waits for somebody. */
+  for (const j of junctionsOn(deck)) put(DRUM.ringR, j.at, 11, 7, 6, 14, 'junction');
+  /* EVERY FIXTURE — at the counter, on the bench, at the rail. */
+  for (const w of waysOn(deck)) {
+    const r = w.band === 'spine' ? w.r : w.band === 'rim' ? DRUM.balcony + 2 : DRUM.ringR;
+    if (w.band === 'spine' && deck === 40 && w.at === 0) continue;
+    put(r, w.at, 6, 5, WAY_HEADS[w.kind] ?? 2, w.band === 'rim' ? 18 : 13, w.kind);
+  }
+  /* AND THE OPEN WALK ITSELF, between them: eight stretches of ring and the
+   * middle of every spine, so the deck has people in transit and not only
+   * people stopped. */
+  for (let i = 0; i < 8; i++) put(DRUM.ringR, 22.5 + i * 45, 14, 6, 4, 14, 'walk');
+  for (const deg of DRUM.spines) {
+    if (deck === 40 && deg === 0) continue;
+    put((DRUM.balcony + DRUM.roomR) / 2, deg, 5, 16, 4, 14, 'walk');
+  }
+  _ways.set(deck, out);
+  return out;
+}
+
 /**
  * Who stands in slot `i` of a place at all — species, name, job and rhythm.
  *
@@ -252,6 +337,9 @@ export function dressStationLife(world, st) {
     /** slot key → the live Enemy standing in it. */
     live: new Map(),
     budget: POOL[quality] ?? POOL.high,
+    /** The walkways of this deck, as pseudo-places the pool can seat into.
+     * See `wayPlacesOn`: before this the corridors held nobody at all. */
+    ways: wayPlacesOn(st.deck),
     reseatIn: 0,
     /** True until the first re-seat has run — see `dressStationLife`. */
     priming: true,
@@ -333,11 +421,9 @@ function reseat(world, st, life, px, pz) {
   const hour = st.hour;
   const want = _want;
   want.length = 0;
-  for (const rec of st.places.values()) {
-    const p = rec.place;
-    if (!rec.group.visible) continue;
+  const consider = (p) => {
     const n = headcount(p, hour);
-    if (n <= 0) continue;
+    if (n <= 0) return;
     for (let i = 0; i < n; i++) {
       slotIn(p, i, _v);
       const dx = _v.x - px, dz = _v.z - pz;
@@ -345,7 +431,14 @@ function reseat(world, st, life, px, pz) {
       if (d2 > DROP_RADIUS * DROP_RADIUS) continue;
       want.push({ key: `${p.id}:${i}`, place: p, i, d2 });
     }
+  };
+  for (const rec of st.places.values()) {
+    if (!rec.group.visible) continue;
+    consider(rec.place);
   }
+  /* AND THE WALKWAYS. A pseudo-place has no group to cull by, so it is culled
+   * by distance alone — which is what `DROP_RADIUS` above already does. */
+  for (const p of life.ways) consider(p);
   want.sort(byNear);
 
   /* Spawn the nearest up to the budget. */
@@ -448,6 +541,10 @@ function spawnResident(world, st, place, i) {
   body.stationSpecies = r.species;
   body.stationFaction = r.faction;
   body.stationPlace = place.id;
+  /* A body on a walkway rather than in a room. The hook a route would drive.
+   * See `wayPlacesOn`: it is set so the corridors can be told apart from the
+   * rooms by anything that later learns to move them. */
+  if (place.way) { body.stationWay = place.way; body.rotation && (body.rotation.y = place.yaw); }
   /* A resident stands where they are put and does not hunt. There is no
    * enemy on this station and no objective for one to be given. */
   if (body.brain) body.brain.idle = true;

@@ -700,3 +700,236 @@ export function footprint(p, out = { x0: 0, z0: 0, x1: 0, z1: 0 }) {
   out.z0 = p.z - hz; out.z1 = p.z + hz;
   return out;
 }
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE BETWEEN-SPACE — the walkways get a gazetteer too                      */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ WHY THIS TABLE EXISTS, MEASURED ═══════════════════════════════════════
+ *
+ * The player: *"the station really should not read as a series of connected
+ * rooms … it should feel like a place at large, the in-between places, the
+ * walkways … Every single inch of the station needs to be thought out."*
+ *
+ * He was right, and the instrument agrees. `tools/_walkprobe.mjs` stood forty
+ * points on the walkways of each deck and ran rule 4's own raster down them:
+ *
+ *   deck 40 ring, shell only:  worst pair **1.000**, 60 of 780 pairs over 0.85
+ *   deck 44 ring, shell only:  worst pair **1.000**, 57 of 780
+ *   deck 48 spines, shell only: worst pair **1.000**, 27 of 276
+ *
+ * 1.000 is not "similar". The view along the ring at bearing 0 and the view
+ * along it at bearing 90 were the SAME PICTURE, cell for cell, because
+ * `buildRing` was a `for (i < 72)` loop whose only variation was `i % 2` and
+ * the ring's own rotational symmetry landed the two samples on the same phase.
+ * All four spines were one corridor built four times. Nothing in the whole
+ * between-space took a bearing as an input.
+ *
+ * This is the fix, and it is the same fix `PLACES` is: an ADDRESS TABLE. A
+ * fixture is at a bearing on a deck, it is of a kind, and it has a name — so
+ * the ring is a street with addresses on it rather than an extrusion, and
+ * `station.mjs`'s walkway rule holds it there.
+ *
+ * ── HOW A BEARING WAS CHOSEN ──────────────────────────────────────────────
+ *
+ * Every one sits in a GAP between the door arcs of that deck's places, which
+ * are printed by `tools/_bearings.mjs`. A fixture in front of a door is a
+ * fixture in a doorway; `station.mjs` checks the clearance rather than
+ * trusting the arithmetic here.
+ *
+ * kind   one of `FIXTURES` in `StationKit.js` — each its own builder, on the
+ *        same rule 4 basis as `SHAPES`: two fixtures may share a part, never
+ *        a plan
+ * at     bearing in degrees, zero down +Z, positive toward +X
+ * name   what a person would call it, and what the wayfinding says
+ * span   how many degrees of ring it occupies (for the clearance check)
+ */
+export const WAYS = [
+  /* ── DECK 40, THE CONCOURSE RING. A market street: stalls, planters,
+   *    awnings, and the noise spilling out of the Concourse mouth. ─────── */
+  { deck: 40, at: 16, kind: 'market', name: 'Ring stalls — the overflow', span: 10 },
+  { deck: 40, at: 26, kind: 'planter', name: 'The brass planters', span: 6 },
+  { deck: 40, at: 35, kind: 'bench', name: 'Concourse-side seating', span: 6 },
+  { deck: 40, at: 66, kind: 'service', name: 'Dock hatch 66', span: 4 },
+  { deck: 40, at: 100, kind: 'shopfront', name: 'Chandler & lamps', span: 8 },
+  { deck: 40, at: 110, kind: 'alcove', name: 'The letter alcove', span: 6 },
+  { deck: 40, at: 120, kind: 'stair', name: 'The eight steps', span: 9 },
+  { deck: 40, at: 132, kind: 'kiosk', name: 'Way-kiosk 132', span: 4 },
+  { deck: 40, at: 142, kind: 'shopfront', name: 'Tea and noodles', span: 8 },
+  { deck: 40, at: 151, kind: 'gantry', name: 'Arrivals gantry', span: 4 },
+  { deck: 40, at: 224, kind: 'service', name: 'Chapel service hatch', span: 3 },
+  { deck: 40, at: 271, kind: 'kiosk', name: 'The arena kiosk', span: 3 },
+  { deck: 40, at: 298, kind: 'service', name: 'Food-court service hatch', span: 2 },
+  { deck: 40, at: 322, kind: 'shopfront', name: 'Ironmonger', span: 8 },
+  { deck: 40, at: 341, kind: 'bay', name: 'The long window', span: 5 },
+  { deck: 40, at: 333, kind: 'bench', name: 'Forge-side seating', span: 5 },
+  { deck: 40, at: 9, kind: 'kiosk', name: 'Way-kiosk 9', span: 3 },
+  { deck: 40, at: 350, kind: 'gantry', name: 'Concourse gantry', span: 4 },
+
+  /* ── DECK 44, THE PROMENADE. The window wall is the street's one side, so
+   *    what stands on it faces the glass: benches, bays, hanging planting. ─ */
+  { deck: 44, at: 20, kind: 'bay', name: 'The star bay', span: 6 },
+  { deck: 44, at: 54, kind: 'bench', name: "Officers' bench", span: 6 },
+  { deck: 44, at: 118, kind: 'planter', name: 'The hanging garden', span: 6 },
+  { deck: 44, at: 126, kind: 'alcove', name: 'The Narn shrine niche', span: 6 },
+  { deck: 44, at: 154, kind: 'shopfront', name: 'Tailor and cloth', span: 8 },
+  { deck: 44, at: 161, kind: 'kiosk', name: 'Way-kiosk 161', span: 3 },
+  { deck: 44, at: 169, kind: 'stair', name: 'The promenade step', span: 9 },
+  { deck: 44, at: 204, kind: 'service', name: 'Airlock hatch 204', span: 4 },
+  { deck: 44, at: 236, kind: 'bench', name: 'Drazi benches', span: 6 },
+  { deck: 44, at: 288, kind: 'gantry', name: 'The Vorlon gantry', span: 4 },
+  { deck: 44, at: 318, kind: 'planter', name: 'Hostel planters', span: 6 },
+  { deck: 44, at: 348, kind: 'market', name: 'Night market', span: 8 },
+
+  /* ── DECK 48, THE SERVICE WAY. Nothing here is for a visitor: hatches,
+   *    conduit, a swap table, and one window nobody meant to be beautiful. ─ */
+  { deck: 48, at: 20, kind: 'service', name: 'Reactor hatch 20', span: 4 },
+  { deck: 48, at: 48, kind: 'kiosk', name: 'Plant control kiosk', span: 4 },
+  { deck: 48, at: 77, kind: 'bench', name: 'The fab bench', span: 5 },
+  { deck: 48, at: 122, kind: 'service', name: 'Cargo hatch 122', span: 4 },
+  { deck: 48, at: 150, kind: 'stair', name: 'The grating step', span: 9 },
+  { deck: 48, at: 159, kind: 'alcove', name: 'Smoke alcove', span: 6 },
+  { deck: 48, at: 168, kind: 'gantry', name: 'Command gantry', span: 4 },
+  { deck: 48, at: 190, kind: 'planter', name: 'The CIC planter', span: 5 },
+  { deck: 48, at: 238.5, kind: 'service', name: 'Medbay service hatch', span: 3 },
+  { deck: 48, at: 275.5, kind: 'bay', name: 'The morgue window', span: 4 },
+  { deck: 48, at: 306, kind: 'shopfront', name: 'Parts window', span: 8 },
+  { deck: 48, at: 338, kind: 'market', name: 'Swap stalls', span: 10 },
+
+  /* ── THE FOUR SPINES, WHICH WERE ONE CORRIDOR BUILT FOUR TIMES ─────────
+   *
+   * `spine0@32 × spine180@32` measured 1.000 — the same picture. A spine is
+   * 55 m of walk between the void and the ring and it is the second-most
+   * walked surface in the drum, so each of the twelve now carries its own
+   * arrangement of three or four things at its own radii. `r` is the radius
+   * along the spine; `at` is which spine.
+   */
+  { deck: 40, at: 90, r: 34, band: 'spine', kind: 'niche', name: 'The east niche' },
+  { deck: 40, at: 90, r: 46, band: 'spine', kind: 'portal', name: 'East bulkhead 46' },
+  { deck: 40, at: 90, r: 62, band: 'spine', kind: 'ducts', name: 'East riser' },
+  { deck: 40, at: 180, r: 38, band: 'spine', kind: 'ducts', name: 'Arrivals riser' },
+  { deck: 40, at: 180, r: 52, band: 'spine', kind: 'portal', name: 'Customs bulkhead' },
+  { deck: 40, at: 180, r: 68, band: 'spine', kind: 'niche', name: 'The waiting niche' },
+  { deck: 40, at: 270, r: 36, band: 'spine', kind: 'portal', name: 'West bulkhead 36' },
+  { deck: 40, at: 270, r: 48, band: 'spine', kind: 'niche', name: 'The arena niche' },
+  { deck: 40, at: 270, r: 58, band: 'spine', kind: 'ducts', name: 'West riser' },
+  { deck: 40, at: 270, r: 72, band: 'spine', kind: 'portal', name: 'West bulkhead 72' },
+  { deck: 44, at: 0, r: 40, band: 'spine', kind: 'portal', name: 'Quarters bulkhead' },
+  { deck: 44, at: 0, r: 58, band: 'spine', kind: 'niche', name: 'The cabin niche' },
+  { deck: 44, at: 90, r: 34, band: 'spine', kind: 'ducts', name: 'Barracks riser' },
+  { deck: 44, at: 90, r: 50, band: 'spine', kind: 'niche', name: 'The Narn niche' },
+  { deck: 44, at: 90, r: 66, band: 'spine', kind: 'portal', name: 'East bulkhead 66' },
+  { deck: 44, at: 180, r: 44, band: 'spine', kind: 'niche', name: 'The Minbari niche' },
+  { deck: 44, at: 180, r: 60, band: 'spine', kind: 'ducts', name: 'Arrivals riser 44' },
+  { deck: 44, at: 180, r: 72, band: 'spine', kind: 'portal', name: 'Platform bulkhead' },
+  { deck: 44, at: 270, r: 38, band: 'spine', kind: 'portal', name: 'Kennel bulkhead' },
+  { deck: 44, at: 270, r: 54, band: 'spine', kind: 'ducts', name: 'West riser 44' },
+  { deck: 44, at: 270, r: 70, band: 'spine', kind: 'niche', name: 'The Vorlon niche' },
+  { deck: 48, at: 0, r: 36, band: 'spine', kind: 'ducts', name: 'Reactor riser' },
+  { deck: 48, at: 0, r: 50, band: 'spine', kind: 'portal', name: 'Containment bulkhead' },
+  { deck: 48, at: 0, r: 64, band: 'spine', kind: 'ducts', name: 'Reactor riser 64' },
+  { deck: 48, at: 90, r: 42, band: 'spine', kind: 'niche', name: 'The droid niche' },
+  { deck: 48, at: 90, r: 56, band: 'spine', kind: 'ducts', name: 'Cargo riser' },
+  { deck: 48, at: 90, r: 70, band: 'spine', kind: 'portal', name: 'Fab bulkhead' },
+  { deck: 48, at: 180, r: 40, band: 'spine', kind: 'portal', name: 'CIC bulkhead' },
+  { deck: 48, at: 180, r: 54, band: 'spine', kind: 'niche', name: 'The comms niche' },
+  { deck: 48, at: 180, r: 68, band: 'spine', kind: 'ducts', name: 'Command riser' },
+  { deck: 48, at: 270, r: 34, band: 'spine', kind: 'ducts', name: 'Medical riser' },
+  { deck: 48, at: 270, r: 46, band: 'spine', kind: 'portal', name: 'Ward bulkhead' },
+  { deck: 48, at: 270, r: 60, band: 'spine', kind: 'niche', name: 'The mourners\' niche' },
+  { deck: 48, at: 270, r: 74, band: 'spine', kind: 'ducts', name: 'Morgue riser' },
+
+  /* ── THE ATRIUM RIM, which was a rail 64 slabs long and nothing else ────
+   *
+   * `rim@0 × rim@180` measured 1.000. §3.1 rule 1 says the void is the
+   * station's landmark and that "from anywhere near the middle you see two
+   * other decks and the people on them" — which is exactly why the lip has to
+   * be somewhere you STOP, and now is: an overlook bulges out over it, a
+   * stairhead breaks the rail, a shrine faces the drop.
+   */
+  { deck: 40, at: 20, band: 'rim', kind: 'overlook', name: 'The east overlook' },
+  { deck: 40, at: 34, band: 'rim', kind: 'shrine', name: 'The Forge shrine' },
+  { deck: 40, at: 200, band: 'rim', kind: 'stairhead', name: 'Arboretum stairhead' },
+  { deck: 40, at: 222, band: 'rim', kind: 'overlook', name: 'The chapel overlook' },
+  { deck: 40, at: 300, band: 'rim', kind: 'shrine', name: 'The lamp of the lost' },
+  { deck: 40, at: 320, band: 'rim', kind: 'stairhead', name: 'Forge stairhead' },
+  { deck: 40, at: 340, band: 'rim', kind: 'overlook', name: 'The north overlook' },
+  { deck: 44, at: 110, band: 'rim', kind: 'overlook', name: 'The Narn overlook' },
+  { deck: 44, at: 130, band: 'rim', kind: 'shrine', name: 'The Centauri shrine' },
+  { deck: 44, at: 150, band: 'rim', kind: 'stairhead', name: 'Centauri stairhead' },
+  { deck: 44, at: 210, band: 'rim', kind: 'overlook', name: 'The Minbari overlook' },
+  { deck: 44, at: 232, band: 'rim', kind: 'shrine', name: 'The Drazi standing-stone' },
+  { deck: 44, at: 252, band: 'rim', kind: 'stairhead', name: 'Drazi stairhead' },
+  { deck: 44, at: 290, band: 'rim', kind: 'overlook', name: 'The methane overlook' },
+  { deck: 44, at: 342, band: 'rim', kind: 'shrine', name: 'The laundry lamp' },
+  { deck: 48, at: 30, band: 'rim', kind: 'stairhead', name: 'Coolant stairhead' },
+  { deck: 48, at: 60, band: 'rim', kind: 'overlook', name: 'The fab overlook' },
+  { deck: 48, at: 110, band: 'rim', kind: 'shrine', name: 'The cargo lamp' },
+  { deck: 48, at: 140, band: 'rim', kind: 'stairhead', name: 'Waste stairhead' },
+  { deck: 48, at: 200, band: 'rim', kind: 'overlook', name: 'The comms overlook' },
+  { deck: 48, at: 240, band: 'rim', kind: 'shrine', name: 'The memorial lamp' },
+  { deck: 48, at: 290, band: 'rim', kind: 'stairhead', name: 'Armoury stairhead' },
+  { deck: 48, at: 320, band: 'rim', kind: 'overlook', name: 'The brig overlook' },
+];
+
+/**
+ * ══ WHERE A SPINE MEETS THE RING ══════════════════════════════════════════
+ *
+ * There was nothing here at all. `buildSpines` stopped its two walls at
+ * `roomR` and `buildRing` ran past on the other side of the line, so the one
+ * decision a person makes on a walk — *which way now* — happened at a corner
+ * with no threshold, no sign and no change of anything. It measured as one of
+ * the 1.000 pairs: the mouth of the +X spine and the mouth of the −X spine
+ * were the same picture.
+ *
+ * A junction is now a PLACE, in the sense that matters: a portal you pass
+ * under, a floor inlay you cross, a sign you read, and a pair of pylons that
+ * are that junction's and no other's. `look` is the character — what the
+ * junction is made of, so no two of the twelve are built the same — and
+ * `sign` is the three directions, which is real geometry on a real board.
+ */
+export const JUNCTIONS = [
+  { deck: 40, at: 0, name: 'Concourse mouth', look: 'brass', sign: ['THE CONCOURSE', 'ARRIVALS', 'CANTINA'], h: 6.4, splay: 0.86, bollards: 4, inlay: 'disc', outboard: false, sector: { rib: 2, channel: 'centre', coffer: 1, pilaster: 4 } },
+  { deck: 40, at: 90, name: 'East gate', look: 'awning', sign: ['ATRIUM EAST', 'THE PIT', 'GALLEY'], h: 5.2, splay: 0.48, bollards: 2, inlay: 'bar', outboard: false, sector: { rib: 3, channel: 'outer', coffer: 0, pilaster: 3 } },
+  { deck: 40, at: 180, name: 'Arrivals crossing', look: 'customs', sign: ['ARRIVALS HALL', 'ARBORETUM', 'CHAPEL'], h: 6.0, splay: 0.70, bollards: 3, inlay: 'chevron', outboard: true, sector: { rib: 4, channel: 'both', coffer: 2, pilaster: 6 } },
+  { deck: 40, at: 270, name: 'West gate', look: 'lantern', sign: ['ATRIUM WEST', 'THE ARENA', 'HOLO-THEATRE'], h: 5.6, splay: 0.58, bollards: 2, inlay: 'disc', outboard: false, sector: { rib: 2, channel: 'inner', coffer: 0, pilaster: 5 } },
+  { deck: 44, at: 0, name: 'Quarters landing', look: 'timber', sign: ['TRAM — QUARTERS', 'LAUNDRY', "OFFICERS'"], h: 5.4, splay: 0.52, bollards: 3, inlay: 'bar', outboard: true, sector: { rib: 2, channel: 'outer', coffer: 1, pilaster: 3 } },
+  { deck: 44, at: 90, name: 'East platform', look: 'glass', sign: ['TRAM — CONCOURSE EAST', 'NARN QUARTER', 'HUMAN RESIDENTIAL'], h: 6.2, splay: 0.80, bollards: 4, inlay: 'disc', outboard: true, sector: { rib: 4, channel: 'centre', coffer: 2, pilaster: 6 } },
+  { deck: 44, at: 180, name: 'Arrivals platform', look: 'stone', sign: ['TRAM — ARRIVALS', 'MINBARI QUARTER', 'CENTAURI QUARTER'], h: 5.0, splay: 0.44, bollards: 2, inlay: 'chevron', outboard: true, sector: { rib: 3, channel: 'inner', coffer: 0, pilaster: 4 } },
+  { deck: 44, at: 270, name: 'Command platform', look: 'banner', sign: ['TRAM — COMMAND', "THE VORLON'S DOOR", 'METHANE QUARTER'], h: 5.8, splay: 0.66, bollards: 3, inlay: 'bar', outboard: true, sector: { rib: 5, channel: 'both', coffer: 1, pilaster: 5 } },
+  { deck: 48, at: 0, name: 'Reactor crossing', look: 'hazard', sign: ['REACTOR HALL', 'BRIG', 'COOLANT PLANT'], h: 5.1, splay: 0.62, bollards: 4, inlay: 'chevron', outboard: false, sector: { rib: 3, channel: 'both', coffer: 2, pilaster: 5 } },
+  { deck: 48, at: 90, name: 'Fab crossing', look: 'conduit', sign: ['ATRIUM EAST', 'CARGO HOLD', 'FABRICATION'], h: 6.3, splay: 0.44, bollards: 2, inlay: 'bar', outboard: false, sector: { rib: 2, channel: 'inner', coffer: 0, pilaster: 4 } },
+  { deck: 48, at: 180, name: 'Command crossing', look: 'shutter', sign: ['COMMAND / CIC', 'COMMS', 'WASTE & RECYCLING'], h: 5.5, splay: 0.88, bollards: 3, inlay: 'disc', outboard: false, sector: { rib: 5, channel: 'outer', coffer: 1, pilaster: 6 } },
+  { deck: 48, at: 270, name: 'Medical crossing', look: 'lamps', sign: ['ATRIUM WEST', 'BACTA WARD', 'MORGUE'], h: 6.0, splay: 0.56, bollards: 4, inlay: 'chevron', outboard: false, sector: { rib: 4, channel: 'centre', coffer: 2, pilaster: 3 } },
+];
+
+/** The fixtures on one deck's walkways, in bearing order. */
+export function waysOn(deck) { return WAYS.filter((w) => w.deck === deck); }
+/** The four junctions of one deck. */
+export function junctionsOn(deck) { return JUNCTIONS.filter((j) => j.deck === deck); }
+
+/**
+ * ══ THE FOUR SECTORS OF A RING ════════════════════════════════════════════
+ *
+ * The junctions cut the ring into four arcs, and an arc is the natural unit a
+ * person reads a circular building in — "the stretch between the east gate and
+ * arrivals". Each junction row carries the treatment of the arc that STARTS at
+ * it, and `Station.js`'s `buildRing` asks this which one a bay is in.
+ *
+ * That is what stopped the last of the 1.000s. A ring built by one loop has
+ * the drum's own rotational symmetry, so a sample at bearing β and one at
+ * β + 180° are the same picture by construction, whatever is standing in
+ * front of them. Four sectors with four rhythms have no such symmetry.
+ */
+export function sectorAt(deck, deg) {
+  const js = junctionsOn(deck);
+  if (!js.length) return null;
+  const a = ((deg % 360) + 360) % 360;
+  let best = js[js.length - 1];
+  for (const j of js) if (j.at <= a) best = j;
+  /* Before the first junction's bearing is the last junction's arc, which is
+   * the one that wraps through zero. */
+  if (a < js[0].at) best = js[js.length - 1];
+  return best.sector || null;
+}

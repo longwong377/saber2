@@ -106,7 +106,7 @@
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES, Enemy } from './Enemy.js';
 import { BipedAnimator } from './Rig.js';
-import { COMPANION_KINDS, bodyScaleOf } from './CompanionKinds.js';
+import { COMPANION_KINDS, bodyScaleOf, growthOptsFrom } from './CompanionKinds.js';
 import { load as loadKennel } from './Kennel.js';
 import { companionOptsFrom } from './Bodies.js';
 /* The idle-and-reaction layer, shared verbatim with the field body — see
@@ -374,7 +374,14 @@ export function callTheCompanion(world) {
   const A = ARCHETYPES[K.archetype];
   if (!A?.build) return null;
 
-  const built = A.build({ scale: bodyScaleOf(rec.kind, rec), ...companionOptsFrom(rec.look) });
+  /* THE FIELD BODY'S OWN CALL, SPELLED THE SAME WAY. Size, colours and growth
+   * all three, from the same two functions `fieldCompanion` calls — see the
+   * header on the one thing these two representations may never do. */
+  const built = A.build({
+    scale: bodyScaleOf(rec.kind, rec),
+    ...companionOptsFrom(rec.look),
+    ...growthOptsFrom(rec.kind, rec),
+  });
   const root = built?.rig?.root || built?.group;
   if (!root) return null;
 

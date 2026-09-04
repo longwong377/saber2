@@ -258,65 +258,39 @@ export async function run({ check, assert, THREE }) {
        * words, and raising this number is the one response that is not
        * available.
        */
-      const W = 64, H = 40;
+      /* THE RASTER ITSELF LIVES IN `_raster.mjs`, because the walkway rule
+       * below measures the SAME question about different geometry and two
+       * rasters would be two answers — a threshold tuned on one instrument
+       * says nothing about a number read off the other. What stays here is
+       * where a place's camera stands, which is what rule 4 actually
+       * specifies: in its own door, looking at its centre.
+       *
+       * ── WHY IT STANDS BACK, AND THROUGH A WIDE LENS ────────────────────
+       *
+       * Both numbers were found by the instrument reporting seven rooms as
+       * empty that are not. A camera exactly ON the doorway of a room that is
+       * wide and shallow — the quartermaster's cage is 13 m across and 9 deep
+       * — has half the room behind its own eye and the rest past 36° off
+       * axis, so a 60° lens sees nothing at all. That is a fact about the
+       * lens, not about the room, and an instrument that reports it as a fact
+       * about the room is worse than none: it is §2.3b's check that cannot
+       * fail, inverted into one that cannot pass.
+       *
+       * The stand-off is the distance at which the width subtends the frame,
+       * which is what a person does before looking into a room. The DIRECTION
+       * is still the door's. */
+      const { rasterView, iou, W, H } = await import('./_raster.mjs');
       const raster = (rec) => {
         const p = rec.place;
-        const bits = new Uint8Array(W * H);
-        /**
-         * Stand in the door and look at the room's centre — but a metre and a
-         * half BACK from the threshold, and through a wide lens.
-         *
-         * Both numbers were found by the instrument reporting seven rooms as
-         * empty that are not. A camera exactly ON the doorway of a room that
-         * is wide and shallow — the quartermaster's cage is 13 m across and 9
-         * deep — has half the room behind its own eye and the rest past 36°
-         * off axis, so a 60° lens sees nothing at all. That is a fact about
-         * the lens, not about the room, and an instrument that reports it as a
-         * fact about the room is worse than none: it is §2.3b's check that
-         * cannot fail, inverted into one that cannot pass.
-         *
-         * 90° horizontal and 60° vertical is a doorway's worth of view, and
-         * standing back is what a person does before looking into a room.
-         */
         const fx0 = p.x - p.door[0], fz0 = p.z - p.door[1];
         const flen = Math.hypot(fx0, fz0) || 1;
         const dx = fx0 / flen, dz = fz0 / flen;
-        /**
-         * …and back far enough that the room is IN the shot. A place is as
-         * wide as `w` and as deep as `d`, and the outer band's rooms are
-         * entered through the middle of their long side — the food court is
-         * 22 m across and 9 deep — so a camera one step back sees two
-         * counters and a wall. The stand-off is the distance at which the
-         * width subtends the frame, which is what a person does before
-         * looking into a room and what a contact sheet needs to be a contact
-         * sheet. The DIRECTION is still the door's, which is what rule 4
-         * actually specifies.
-         */
         const back = Math.max(1.5, p.w / 2 / Math.tan(Math.PI / 4) - p.d / 2);
-        const ex = p.door[0] - dx * back, ez = p.door[1] - dz * back;
-        const fx = p.x - ex, fz = p.z - ez;
-        const rx = -dz, rz = dx;               // the camera's right
-        const v = new THREE.Vector3();
-        rec.group.traverse((o) => {
-          if (!o.isMesh || !o.geometry?.attributes?.position) return;
-          o.updateMatrixWorld(true);
-          const pos = o.geometry.attributes.position;
-          /* Every eighth vertex: a silhouette is a shape, and 8× the samples
-           * moves the IoU by under a percent while costing eight times as
-           * much on fifty rooms. */
-          for (let i = 0; i < pos.count; i += 8) {
-            v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
-            const ox = v.x - ex, oz = v.z - ez, oy = v.y - (rec.__y + 1.7);
-            const fwd = ox * dx + oz * dz;
-            if (fwd < 0.4) continue;
-            const side = ox * rx + oz * rz;
-            const u = (side / fwd) / Math.tan(Math.PI / 4) * 0.5 + 0.5;
-            const t = (oy / fwd) / Math.tan(Math.PI / 6) * 0.5 + 0.5;
-            if (u < 0 || u >= 1 || t < 0 || t >= 1) continue;
-            bits[(H - 1 - Math.floor(t * H)) * W + Math.floor(u * W)] = 1;
-          }
-        });
-        return bits;
+        return rasterView(THREE, {
+          objects: rec.group,
+          eye: { x: p.door[0] - dx * back, y: rec.__y + 1.7, z: p.door[1] - dz * back },
+          dir: { x: dx, z: dz },
+        }).bits;
       };
 
       const { DECK_Y } = await import('../../src/game/StationPlan.js');
@@ -341,15 +315,9 @@ export async function run({ check, assert, THREE }) {
       const over = [];
       for (let i = 0; i < recs.length; i++) {
         for (let j = i + 1; j < recs.length; j++) {
-          const a = recs[i].bits, b = recs[j].bits;
-          let inter = 0, uni = 0;
-          for (let k = 0; k < a.length; k++) {
-            if (a[k] & b[k]) inter++;
-            if (a[k] | b[k]) uni++;
-          }
-          const iou = uni ? inter / uni : 0;
-          if (iou > worst) { worst = iou; worstPair = `#${recs[i].place.id} ${recs[i].place.name} × #${recs[j].place.id} ${recs[j].place.name}`; }
-          if (iou > 0.85) over.push(`${iou.toFixed(3)}  #${recs[i].place.id} ${recs[i].place.name} × #${recs[j].place.id} ${recs[j].place.name}`);
+          const v = iou(recs[i].bits, recs[j].bits);
+          if (v > worst) { worst = v; worstPair = `#${recs[i].place.id} ${recs[i].place.name} × #${recs[j].place.id} ${recs[j].place.name}`; }
+          if (v > 0.85) over.push(`${v.toFixed(3)}  #${recs[i].place.id} ${recs[i].place.name} × #${recs[j].place.id} ${recs[j].place.name}`);
         }
       }
       assert(over.length === 0,
@@ -360,6 +328,180 @@ export async function run({ check, assert, THREE }) {
        * merely satisfied. */
       console.log(`      rule 4: ${recs.length} places on deck 40, worst pair ${worst.toFixed(3)} (${worstPair})`);
     } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ THE WALKWAYS, HELD TO RULE 4'S OWN NUMBER ═══════════════════════════
+   *
+   * Rule 4 measures the twenty places on a deck and says nothing whatever
+   * about the space between them — which is most of the station and all of
+   * the walking. The player's whole criticism was about that space:
+   *
+   *   *"the station really should not read as a series of connected rooms …
+   *    it should feel like a place at large, the in-between places, the
+   *    walkways, the transports … it can't just be an elevator selecting a
+   *    level and that's the room."*
+   *
+   * `tools/_walkprobe.mjs` stood forty points on each deck's walkways — twenty
+   * on the ring, three up each of the four spines, eight on the atrium rim,
+   * one at each tram platform — and ran RULE 4'S OWN RASTER down them in both
+   * directions. He was right, and by a distance:
+   *
+   *      deck 40 ring    worst pair 1.000    60 of 780 pairs over 0.85
+   *      deck 44 ring    worst pair 1.000    57 of 780
+   *      deck 40 spines  worst pair 1.000    26 of 276
+   *      deck 40 rim     worst pair 1.000     9 of 120
+   *
+   * 1.000 is the same picture, cell for cell. `buildRing` was a 72-step loop
+   * whose only variation was `i % 2`, `buildSpines` built one corridor four
+   * times, the balcony rail was 64 identical slabs, and NOTHING in the whole
+   * between-space took a bearing as an input — so the drum's own rotational
+   * symmetry landed samples 90° and 180° apart on identical geometry.
+   *
+   * The fix is `StationPlan.WAYS`, `JUNCTIONS` and their sectors, built by
+   * `StationKit.FIXTURES`. This is what holds it: the SHELL ALONE — no crowd,
+   * no rooms behind it, just the corridor a person is standing in — measured
+   * against 0.85, which is rule 4's number and not a softer one invented for
+   * the easier case. Measured after the fix: 0.766 / 0.793 / 0.745.
+   *
+   * THE CROWD IS EXCLUDED ON PURPOSE. Sixty bodies seeded at random seats
+   * decorrelate any two views on their own; with them in, the corridor scored
+   * 0.674 while it was still literally copy-pasted. A check that measures the
+   * people cannot see the architecture.
+   */
+  check('station: rule 4 on the WALKWAYS — no two stretches of the between-space read the same', async () => {
+    const { rasterView, iou, walkPoints, W, H } = await import('./_raster.mjs');
+    const { DRUM, DECK_Y, PLACES, waysOn, junctionsOn } = await import('../../src/game/StationPlan.js');
+    const { FIXTURES } = await import('../../src/game/StationKit.js');
+
+    /* First, the same anti-generic rule `SHAPES` is held to: ten named kinds
+     * must be ten distinct function objects, or the table is one builder with
+     * a parameter and the variety is a lie the loop above cannot see. */
+    const kinds = Object.keys(FIXTURES);
+    const fns = new Set(kinds.map((k) => FIXTURES[k]));
+    assert(fns.size === kinds.length,
+      `${kinds.length} fixture kinds share only ${fns.size} distinct builders`);
+
+    const lines = [];
+    for (const deck of [40, 44, 48]) {
+      const { world } = await station(deck);
+      try {
+        const st = world._station;
+        const y = DECK_Y[deck];
+        /* THE SHELL IS THE BETWEEN-SPACE. `dressStation` keeps its merged
+         * meshes on `st.shell` for exactly this: a traverse of the scene
+         * cannot tell the drum from a crate, both being children of the root. */
+        assert(st.shell?.length, `deck ${deck} kept no shell meshes to measure`);
+        const pts = walkPoints(deck, DRUM, PLACES);
+        assert(pts.length >= 36, `only ${pts.length} standing points on deck ${deck}`);
+
+        const views = [];
+        for (const p of pts) {
+          for (const sgn of [1, -1]) {
+            const r = rasterView(THREE, {
+              objects: st.shell,
+              eye: { x: p.x, y: y + 1.7, z: p.z },
+              dir: { x: p.dx * sgn, z: p.dz * sgn },
+              /* Beyond the cull radius (§12.3) nothing is drawn anyway. */
+              far: 70,
+            });
+            views.push({ tag: `${p.tag}${sgn > 0 ? '+' : '-'}`, ...r });
+          }
+        }
+
+        /* A view of NOTHING is how a silent build failure looks, and it would
+         * also score 0 against everything and pass the pairwise test. */
+        const empty = views.filter((v) => v.on < 30);
+        assert(empty.length === 0,
+          `deck ${deck}: ${empty.length} walkway views are empty — ${empty.slice(0, 4).map((v) => v.tag).join(', ')}`);
+
+        let worst = 0, worstPair = '';
+        const over = [];
+        for (let i = 0; i < views.length; i++) {
+          for (let j = i + 1; j < views.length; j++) {
+            const v = iou(views[i].bits, views[j].bits);
+            if (v > worst) { worst = v; worstPair = `${views[i].tag} × ${views[j].tag}`; }
+            if (v > 0.85) over.push(`${v.toFixed(3)}  ${views[i].tag} × ${views[j].tag}`);
+          }
+        }
+        assert(over.length === 0,
+          `deck ${deck}: ${over.length} stretches of walkway read the same (over 0.85):\n      `
+          + over.slice(0, 6).join('\n      '));
+
+        /* AND IT HAS SOMETHING IN IT. A corridor can be un-repetitive and
+         * still be four bare surfaces; before the fix every one of deck 40's
+         * eighty views showed four materials or fewer, because the whole
+         * between-space was four merged meshes. */
+        const mats = views.map((v) => v.mats).sort((a, b) => a - b);
+        const median = mats[mats.length >> 1];
+        assert(median >= 6,
+          `deck ${deck}: the median walkway view shows only ${median} materials — a tube with the lights on`);
+
+        /* AND IT IS ADDRESSED. The fixtures and the junctions are the data
+         * that makes the ring a street; a deck that lost them would still
+         * pass the pairwise test on its rooms alone. */
+        const ways = waysOn(deck), js = junctionsOn(deck);
+        assert(ways.length >= 12, `deck ${deck} has only ${ways.length} walkway fixtures`);
+        assert(js.length === 4, `deck ${deck} has ${js.length} junctions, not 4`);
+        assert(st.ways?.length >= 12, `deck ${deck} built only ${st.ways?.length} of them`);
+        assert(st.wayfinding?.length >= 12,
+          `deck ${deck} hung only ${st.wayfinding?.length || 0} wayfinding panels — a junction with no sign is a corner`);
+
+        /* AND NOTHING STANDS IN A DOORWAY. A fixture placed by bearing can be
+         * put in front of a place's door by a typo, and the walk would still
+         * pass every other check in this file. */
+        const clash = [];
+        for (const w of ways) {
+          if (w.band === 'spine' || w.band === 'rim') continue;
+          for (const p of PLACES) {
+            if (p.deck !== deck || p.external || !p.door || p.band === 'ring') continue;
+            /* The Promenade IS the ring (§3.2 #26): it has no door arc to block. */
+            const dr = Math.hypot(p.door[0], p.door[1]);
+            if (dr < 79) continue;                       // does not open on the ring
+            const pa = Math.atan2(p.door[0], p.door[1]) * 180 / Math.PI;
+            let gap = Math.abs(((w.at - pa + 540) % 360) - 180);
+            const half = Math.atan2(p.w / 2, Math.hypot(p.x, p.z) || 1) * 180 / Math.PI;
+            if (gap < half + (w.span || 4) / 2) clash.push(`${w.name} at ${w.at}° is in the door of #${p.id} ${p.name}`);
+          }
+        }
+        assert(clash.length === 0, `${clash.length} fixtures block a door:\n      ${clash.slice(0, 5).join('\n      ')}`);
+
+        lines.push(`      walkways: deck ${deck}, ${views.length} views, worst pair `
+          + `${worst.toFixed(3)} (${worstPair}), median ${median} materials`);
+      } finally { world.dispose?.(); }
+    }
+    /* Printed, for the same reason rule 4's is: §13.3 wants the number looked
+     * at rather than merely satisfied. */
+    for (const l of lines) console.log(l);
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the walkways carry people, not just the rooms', async () => {
+    /**
+     * `reseat` walked `st.places` and nothing else, and `dressStation` skips
+     * the ring band — so before `wayPlacesOn` the corridors of this station
+     * held zero people at every hour of every day on every deck, which is the
+     * literal form of *"a series of connected rooms"*.
+     */
+    const { wayPlacesOn, headcount } = await import('../../src/game/StationLife.js');
+    for (const deck of [40, 44, 48]) {
+      const ways = wayPlacesOn(deck);
+      assert(ways.length >= 30, `deck ${deck} has only ${ways.length} walkway stations`);
+      /* At the deck's busiest, and at its quietest. A corridor that is full at
+       * noon and dead at 03:00 is right; one that is dead at noon is not. */
+      let busy = 0, quiet = 0;
+      for (const p of ways) { busy += headcount(p, 13); quiet += headcount(p, 3); }
+      assert(busy >= 40, `deck ${deck}: only ${busy} people on the walkways at 13:00`);
+      assert(quiet >= 5, `deck ${deck}: ${quiet} people on the walkways at 03:00 — a dead station`);
+      assert(quiet < busy, `deck ${deck}: the walkways are as full at 03:00 as at 13:00`);
+      /* And they are not the gazetteer's. §3.2's rule is that a place not in
+       * the table is not built, and these are not places. */
+      const { PLACE } = await import('../../src/game/StationPlan.js');
+      for (const p of ways) assert(!PLACE.has(p.id), `way station ${p.id} collides with a gazetteer id`);
+    }
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */

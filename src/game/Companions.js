@@ -87,7 +87,7 @@
 import { TAU } from '../engine/MathUtil.js';
 import * as THREE from '../../vendor/three/three.module.js';
 import { ARCHETYPES } from './Enemy.js';
-import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf, bodyScaleOf } from './CompanionKinds.js';
+import { COMPANION_KINDS, COMPANION_RANKS, holdsCompanion, kindHasDuty, paceOf, rungOf, bodyScaleOf, growthOptsFrom } from './CompanionKinds.js';
 import { spawnClear } from './Spawn.js';
 import { award, RANGED_MARK, rangedRun, readOne, temperSwing } from './Kennel.js';
 /* The cruise/stoop model, for the one kind that never lands — see `adopt`. */
@@ -3393,6 +3393,12 @@ export function fieldCompanion(world, owner, kind, opts = {}) {
   const e = world.spawnEnemy(K.archetype, _v2, {
     companionLook: opts.rec?.look || null,
     companionScale: bodyScaleOf(kind, opts.rec),
+    /* AND THE THIRD THING THAT RIDES A SPAWN: what has GROWN on it. Colours,
+     * size and shape are all decided inside the builder, which runs inside
+     * `Enemy`'s constructor, so all three arrive here or never. The same call
+     * is made by `CompanionDeck.callTheCompanion` — the deck animal and the
+     * field animal are the one thing that must never disagree. */
+    companionGrowth: growthOptsFrom(kind, opts.rec),
   });
   if (!e) return null;
   /* THE TEAM IS THE WHOLE OF "IT IS ON YOUR SIDE" — Command.js's own header

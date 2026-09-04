@@ -54,7 +54,7 @@ import { paintById } from './Bodies.js';
  * cleaner in the tree — HANDOFF §2.4 — so it is imported and never copied,
  * even though this is the only thing this file takes from Company.js. */
 import { cleanCallsign } from './Company.js';
-import { COMPANION_KINDS, rungOf } from './CompanionKinds.js';
+import { COMPANION_KINDS, rungOf, stageOf, careOf, GROWTH_STAGES } from './CompanionKinds.js';
 
 const KEY = 'saber.kennel.v1';
 
@@ -80,6 +80,18 @@ export const STORY_KEEP = 8;
 
 /** How many epitaphs are kept. Short on purpose: a wall, not a ledger. */
 export const FALLEN_KEEP = 6;
+
+/**
+ * HOW MANY TEMPERS ONE ANIMAL MAY WEAR AT ONCE, and it is the size of the
+ * table rather than a number under it. It used to be 4 while the table had 4
+ * rows, so it read as a cap and was in fact a no-op; the growth ladder's two
+ * made it a real cap overnight, silently dropping whichever two the `Set`
+ * happened to iterate last. A cap that only bites when somebody adds a row is
+ * the worst kind, so it is stated: an animal may wear everything it has
+ * genuinely earned, and the two pairs that contradict each other are kept
+ * apart by `sheds` and not by a slice.
+ */
+export const TEMPERS_WORN = 6;
 
 /**
  * ── THE TEMPERS ───────────────────────────────────────────────────────────
@@ -132,6 +144,49 @@ export const TEMPERS = [
     up: { reach: 4.0 }, down: { exposure: 4.0 }, sheds: null,
     gain: 'acts sooner and takes a target a quarter further out',
     cost: 'which is exactly how it gets killed',
+  },
+  /**
+   * ── THE TWO THE GROWTH LADDER EARNS, AND THEY ARE THE DRAWBACKS ─────────
+   *
+   * V15 §4 asks for drawbacks in as many words — "a companion that only ever
+   * helps is a stat. A big one is slow and loud; a bonded one panics when it
+   * is hurt" — and the shape that request has to take in this file is already
+   * written above it. A drawback is not a fourth field and it is not a
+   * negative multiplier: it is a TEMPER, two-sided, on the behaviour axes,
+   * priced net <= 0 by the same formula, and shed by the same rule. So the
+   * growth ladder does not get a penalty column; it earns tempers, exactly as
+   * the deeds do, and every clause `companions: every temper costs at least
+   * what it buys` already holds is holding these two the day they land.
+   *
+   * WHY THEY ARE NOT ON THE STAGE ROWS. `GROWTH_STAGES` is a gate table and
+   * nothing else — two counts and a label — because a stage that carried its
+   * own swing would be a second place that prices behaviour, unpriced against
+   * this one and earned on a different clock. `earnedTempers` reads the stage
+   * the way it reads `runs` and `downs`: as a fact about the record.
+   */
+  {
+    id: 'heavy', label: 'HEAVY', earn: 'grown to its full size',
+    /* THE PLAYER'S OWN SENTENCE — "a big one is slow and loud". A grown animal
+     * plants itself and stays planted, which is worth 2 s of hold; what it
+     * costs is 5.5 m of recall, because the thing that has stopped being true
+     * about it is that it turns round quickly. Priced on two different axes at
+     * two magnitudes and it still nets negative: a companion that has finished
+     * growing is not a better companion, it is a heavier one. */
+    up: { hold: 2.0 }, down: { recall: 5.5 }, sheds: null,
+    gain: 'holds a spot longer once you have given it one',
+    cost: 'and is slower to come back off it when you call',
+  },
+  {
+    id: 'kept', label: 'KEPT', earn: 'looked after between runs',
+    /* THE BONDED ONE. It has been fed and groomed at the habitat and it would
+     * rather be near you than out on a ring — 4 m of recall bought with 4.5 m
+     * off the ward, which is the honest price for an animal whose attachment
+     * has become the thing it does instead of the job. SHEDS RANGING for
+     * exactly the reason HEELED does: a record wearing "it has learned to
+     * stay" and "it has learned to go" at once describes nothing. */
+    up: { recall: 4.0 }, down: { ward: 4.5 }, sheds: 'ranging',
+    gain: 'comes home from further, and faster, than it used to',
+    cost: 'and will not stand a ward as wide as it once did',
   },
   {
     id: 'ranging', label: 'RANGING', earn: 'five runs spent beyond twelve metres',
@@ -282,9 +337,24 @@ export function readOne(r) {
     downs: Math.max(0, num(r.downs, 0) | 0),
     orders: Math.max(0, num(r.orders, 0) | 0),
     ranged: Math.max(0, num(r.ranged, 0) | 0),
+    /**
+     * WHAT WAS DONE FOR IT AT THE HABITAT — two counts of acts, and NOT a
+     * quantity of anything.
+     *
+     * Clamped to `runs + 1` on the way in as well as on the way out, which is
+     * the clamp that matters here: the gate `careFor` enforces is "an animal
+     * is fed once a run and groomed once a run", and a hand-edited save is
+     * exactly where that has to stop rather than where it has to be trusted.
+     * Edit a 5000 in here and it comes back as one more than the runs the
+     * animal actually survived — the same discipline `xp` gets, and for the
+     * same reason: the whole growth ladder is two numbers, so two numbers are
+     * what a save file would forge.
+     */
+    meals: Math.max(0, Math.min(Math.max(0, num(r.runs, 0) | 0) + 1, num(r.meals, 0) | 0)),
+    grooms: Math.max(0, Math.min(Math.max(0, num(r.runs, 0) | 0) + 1, num(r.grooms, 0) | 0)),
     since: typeof r.since === 'string' ? r.since : null,
     tempers: Array.isArray(r.tempers)
-      ? [...new Set(r.tempers.filter((t) => typeof t === 'string' && TEMPER_BY_ID[t]))].slice(0, 4)
+      ? [...new Set(r.tempers.filter((t) => typeof t === 'string' && TEMPER_BY_ID[t]))].slice(0, TEMPERS_WORN)
       : [],
     story: Array.isArray(r.story)
       ? r.story.filter((s) => typeof s === 'string').slice(-STORY_KEEP) : [],
@@ -336,7 +406,8 @@ function saneLook(look) {
  * truth that goes stale the first time the formula changes.
  */
 const COMPANION_FIELDS = ['id', 'kind', 'name', 'look', 'xp', 'runs', 'areas',
-  'kills', 'saves', 'downs', 'orders', 'ranged', 'since', 'tempers', 'story', 'scars'];
+  'kills', 'saves', 'downs', 'orders', 'ranged', 'meals', 'grooms', 'since',
+  'tempers', 'story', 'scars'];
 
 /** One epitaph off disk, made safe — the `saneFallen` pattern (Company.js:317). */
 function saneEpitaph(f) {
@@ -477,6 +548,14 @@ export function earnedTempers(rec) {
     scarred: (r) => (r.downs || 0) >= 2,
     keen: (r) => (r.orders || 0) >= 12,
     ranging: (r) => (r.ranged || 0) >= 5,
+    /* THE TWO OFF THE GROWTH LADDER. `stageOf` and `careOf` are asked rather
+     * than restated, so a gate that moves in `GROWTH_STAGES` moves here in the
+     * same commit — HANDOFF §2.4, call the rule rather than copy it. HEAVY is
+     * the last stage, so an animal that is fully grown is a heavy one; KEPT is
+     * the care half of the middle stage on its own, so a player who feeds and
+     * grooms gets the bond whether or not the runs have caught up yet. */
+    heavy: (r) => stageOf(r) >= GROWTH_STAGES.length - 1,
+    kept: (r) => careOf(r) >= GROWTH_STAGES[2].care,
   };
   for (const t of TEMPERS) {
     if (has.has(t.id)) continue;
@@ -500,7 +579,7 @@ export function applyTempers(rec) {
     set.add(t.id);
     if (t.sheds) set.delete(t.sheds);
   }
-  rec.tempers = [...set].slice(0, 4);
+  rec.tempers = [...set].slice(0, TEMPERS_WORN);
   return rec;
 }
 
@@ -556,6 +635,76 @@ export function dressCompanion(id, look = {}) {
    * `saneLook` drops any slot this kind's builder would not read, so a control
    * that cannot be offered cannot be stored either. */
   if ('look' in look) k.live.look = saneLook(look.look);
+  return save(k);
+}
+
+/* ── the write door for care ─────────────────────────────────────────── */
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  LOOKING AFTER IT — AND WHY THIS IS NOT A SHOP
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * "care, feeding, grooming, play, at the habitat, ON the station, between
+ *  runs — and for some rungs to need BOTH."
+ *
+ * TWO ACTS, TWO COUNTS, AND NOTHING IN BETWEEN THEM. There is no stock, no
+ * shelf, no counter, no thing to choose between and no number that goes DOWN.
+ * `meals` and `grooms` only ever increment, by one, at a door the player walks
+ * to. That is the whole of it, and it is deliberate: V16 §2 B5 wants food
+ * bought at a market and V16 §4 is the argument that has to be settled in
+ * `Progress.js`'s header before any market exists. This lane does not settle
+ * it and does not lean on it — the habitat's trough and charging post are free
+ * and always have been, so nothing here is waiting on that decision, and
+ * nothing here would have to be unwound if it went the other way.
+ *
+ * ── THE ONE RULE THAT KEEPS IT FROM BEING A GRIND ─────────────────────────
+ *
+ * An animal may be fed once per run it has been out on, and groomed once per
+ * run, with one of each in hand before it has ever deployed. So care can never
+ * outrun runs, the whole ladder is bounded by the thing that is bounded by
+ * playing, and standing in the habitat pressing a control a hundred times does
+ * exactly nothing after the second press. The alternative — a cooldown in
+ * seconds — would have made the growth curve a function of how long the game
+ * was left running, which is the worst version of this feature.
+ *
+ * ── ITS OWN DOOR AND ITS OWN PIN, FOR `dressCompanion`'S REASON ───────────
+ *
+ * `companions: neither new file has grown a currency` greps the BODY of
+ * `dressCompanion` and fixes what it may write at exactly `name` and `look`,
+ * so a screen cannot become a cheat panel. Care is a SECOND write from a
+ * screen and it may not ride that door — widening a pin to fit a new feature
+ * is how a pin stops meaning anything. So: a separate exported function, whose
+ * whitelist is a frozen array this file exports, with its own equivalent
+ * grep-pin written on the same commit. It may increment two counters and it
+ * may do nothing else — xp, runs, kills, downs, tempers and scars are written
+ * by the game, from a run, and are not reachable from a room.
+ */
+export const CARE_ACTS = Object.freeze(['meals', 'grooms']);
+
+/**
+ * MAY THIS ANIMAL BE LOOKED AFTER AGAIN YET? One reader, so the habitat's
+ * control and the write door cannot disagree about whether the control is
+ * live — a button that is offered and then silently does nothing is the dead
+ * control `WEARS` was written to prevent, one room across.
+ */
+export function canCare(rec, act) {
+  if (!rec || !CARE_ACTS.includes(act)) return false;
+  return ((Number(rec[act]) || 0) | 0) < ((Number(rec.runs) || 0) | 0) + 1;
+}
+
+/** The care door. It increments one of two counters by one, or does nothing. */
+export function careFor(id, act) {
+  const k = load();
+  if (!k.live || k.live.id !== id) return k;
+  if (!CARE_ACTS.includes(act)) return k;
+  if (!canCare(k.live, act)) return k;
+  k.live[act] = ((Number(k.live[act]) || 0) | 0) + 1;
+  /* AND WHAT THAT MAY HAVE EARNED. Care is one of the two inputs to the stage
+   * ladder and the stage ladder earns tempers, so the record is offered them
+   * here for the same reason the fold offers them there: a temper the player
+   * has earned and is not wearing is a growth curve that stopped halfway. */
+  applyTempers(k.live);
   return save(k);
 }
 
