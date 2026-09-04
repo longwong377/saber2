@@ -59,6 +59,7 @@ import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle
 import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
+import { countersAt } from './Vendors.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -1258,6 +1259,25 @@ export function stationKey(world) {
    * While a jump is running the plot table says so rather than reopening: an
    * order taken twice is the one thing a bridge does not do.
    */
+  /**
+   * ── A COUNTER, IF ONE STANDS HERE — V16 Lane B ──────────────────────────
+   *
+   * `Vendors.countersAt` answers the shops in this room, so a place gets a
+   * shop by being named in that table and nothing here changes. Raised before
+   * the kiosk branch because a room may have both — `#10 The Forge` has a
+   * kiosk for the hilt AND an armourer behind the counter, and the one you are
+   * standing at is the one that answers.
+   */
+  const shops = countersAt(place.id);
+  if (shops.length && world.onCounter) {
+    return world.onCounter(shops[0].id) !== false;
+  }
+  /* ── THE BENCH, at #42 and #50 — V16 Lane A3. You make the thing at
+   * Fabrication and you tune the call at Comms, which is where a fire mission
+   * is called from and which has had no job at all until now. */
+  if ((place.id === 42 || place.id === 50) && world.onBench) {
+    return world.onBench(place.id === 50 ? 'make' : 'tune') !== false;
+  }
   if (place.id === 41 && world._warp && !world._warp.done) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;

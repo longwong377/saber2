@@ -29,6 +29,11 @@ import { deployCard, runReport } from './game/Session.js';
 // No `FORMATIONS` import any more: the orders reach this file as ordinary
 // bindings through `ORDER_ACTIONS` below, which is the point of the seam.
 import { recordRun, loadProgress } from './game/Progress.js';
+/* V16 Lane B's purse and Lane A3's bench. `Progress.js`'s own header carries
+ * the amendment that lets a currency exist at all; these are the two doors it
+ * is spent and earned through. */
+import { payForRun, purse } from './game/Credits.js';
+import { clearTuning } from './game/Bench.js';
 /* THE COMPANY. Loaded here and folded here, for the same split `Progress.js`
  * keeps: this file owns localStorage and the game owns the game. `World` is
  * handed a plain list of records on its settings blob and hands back a
@@ -49,6 +54,13 @@ import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
+/* V16 Lane B's counters and Lane A3's bench — the two rooms that spend. */
+import { offerFrom } from './game/Counter.js';
+import { counterById } from './game/Vendors.js';
+import { spend } from './game/Credits.js';
+import { benchFor } from './game/Bench.js';
+import { STRATAGEMS } from './game/Stratagems.js';
+import { loadStation, standing } from './game/StationSave.js';
 import { clamp } from './engine/MathUtil.js';
 import { Screens } from './ui/Screens.js';
 import { SkillTree } from './ui/SkillTree.js';
@@ -1149,6 +1161,9 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onKiosk = (panelId) => openKiosk(panelId);
     /* #28's own page — see `openHabitat`. */
     world.onHabitat = () => openHabitat();
+    /* The shops and the bench — see `openCounter` and `openBench`. */
+    world.onCounter = (id) => openCounter(id);
+    world.onBench = (which) => openBench(which);
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -1881,6 +1896,96 @@ function openHabitat() {
 }
 screens.card('habitat', () => closeHabitat());
 
+/**
+ * ══ A COUNTER, AND THE BENCH — V16 Lanes B and A3 ═════════════════════════
+ *
+ * Both on `openMeditation`'s shape and not `openKiosk`'s, for the reason the
+ * habitat's note gives: a card whose hide cannot be told from "hide the menu"
+ * took the front screen down on every boot once. These hide their own roots.
+ */
+function paneRoot(id) {
+  let el = document.getElementById(id);
+  if (!el) {
+    el = document.createElement('div');
+    el.id = id;
+    el.className = 'screen hidden';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showCounter(counterId) {
+  const el = paneRoot('counter');
+  const c = counterById(counterId);
+  const day = Math.floor((world?._station?.hour ?? 0) / 24) + (loadStation().seen?.length | 0);
+  const offer = offerFrom(c, { day, order: sessionOr('order'), standing: standing() });
+  let html = `<div class="pane"><h2>${esc(c?.name || 'A counter')}</h2>`;
+  html += `<p class="sub">${purse()} credits</p>`;
+  if (!offer.open) {
+    html += `<p class="sub">${esc(offer.why || 'shut')}</p>`;
+  } else if (!offer.rows.length) {
+    html += '<p class="sub">Nothing out today.</p>';
+  } else {
+    html += '<div class="rows">' + offer.rows.map((r) => {
+      const can = purse() >= r.price;
+      return `<div class="row"><b>${esc(r.name)}</b>`
+        + `<span>${esc(r.blurb || '')} <i>${esc(r.note)}</i></span>`
+        + `<button class="buy" data-id="${esc(r.id)}" data-price="${r.price}"`
+        + `${can ? '' : ' disabled'}>${r.price}</button></div>`;
+    }).join('') + '</div>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll('button.buy')) {
+    b.addEventListener('click', () => {
+      const row = offer.rows.find((r) => r.id === b.dataset.id);
+      const paid = spend(Number(b.dataset.price), row?.id);
+      /* THE REFUSAL SAYS HOW SHORT. A shop that says no without saying "you
+       * are forty short" is the shape this tree keeps removing. */
+      if (!paid.ok) { world?.notify?.(c.name.toUpperCase(), paid.short ? `${paid.short} credits short` : paid.why); return; }
+      world?.notify?.(c.name.toUpperCase(), `${row?.name} — ${paid.left} left`);
+      showCounter(counterId);
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function closePane(id) {
+  const el = document.getElementById(id);
+  if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+}
+
+function openCounter(counterId) {
+  if (!counterById(counterId)) return false;
+  audio.ui('good');
+  screens.take('counter', () => showCounter(counterId));
+  return true;
+}
+screens.card('counter', () => closePane('counter'));
+
+function showBench(which) {
+  const el = paneRoot('bench');
+  const rows = STRATAGEMS.map((s) => ({ s, bench: benchFor(s.id) })).filter((r) => r.bench.length);
+  let html = `<div class="pane"><h2>${which === 'make' ? 'Fabrication' : 'Comms &amp; sensor'}</h2>`;
+  html += `<p class="sub">${which === 'make'
+    ? 'A variant is a shell with different innards. Use opens them; none of them is stronger.'
+    : 'Three dials against a drifting mark. What you land holds for one run.'}</p>`;
+  html += '<div class="rows">' + rows.map((r) => r.bench.map((v) =>
+    `<div class="row"><b>${esc(r.s.name)} — ${esc(v.name)}</b>`
+    + `<span>${esc(v.gain)}, <i>${esc(v.cost)}</i></span>`
+    + `<span>${v.open ? 'open' : `${v.calls}/${v.at} calls`}</span></div>`).join('')).join('')
+    + '</div></div>';
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
+
+function openBench(which) {
+  audio.ui('good');
+  screens.take('bench', () => showBench(which));
+  return true;
+}
+screens.card('bench', () => closePane('bench'));
+
 function openMeditation() {
   audio.ui('good');
   if (world) {
@@ -2463,6 +2568,28 @@ function record(stats = null) {
     seed: world.runSeed ?? null,
     rules: world.director?.rules ? [...world.director.rules] : [],
   });
+  /**
+   * ══ AND THE RUN PAYS — V16 Lane B ═════════════════════════════════════
+   *
+   * *"credits that you get for doing differnt stuff in the game and playing
+   * the game."* Off the same summary the record is written from, so a run
+   * cannot pay for something it did not do, and CAPPED — see
+   * `Credits.PER_RUN_CAP` and the amendment at the top of `Progress.js`. The
+   * cap is the whole mechanism by which a purse is patience rather than power.
+   *
+   * And the bench's tuning goes with the run, because a firing solution is a
+   * provision in everything but name. The CALL COUNT survives: a record of
+   * what you have done is the one thing the doctrine has always allowed.
+   */
+  try {
+    payForRun({
+      depth: stats?.wave ?? world.director?.wave ?? 0,
+      won: stats?.won === true,
+      kills: stats?.kills ?? world.players.reduce((a, p) => a + (p.kills || 0), 0),
+      saves: stats?.saves ?? 0,
+    });
+    clearTuning();
+  } catch (e) { console.warn('the run did not pay', e); }
 }
 
 function gameOver(stats) {
