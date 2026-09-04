@@ -51,6 +51,7 @@ import { loadRoom, materialKeyFor } from './StationMesh.js';
 import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf } from './StationPlan.js';
 import { buildPlace, SHAPES } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
+import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -669,6 +670,12 @@ export function dressStation(world) {
 
   lightStation(world, deck);
 
+  /* ── AND THE PEOPLE (§11). The pool re-seats itself round the player on the
+   * first frame, so a player who arrives at the Concourse at 13:00 walks into
+   * a market rather than into an empty hall. */
+  dressStationLife(world, st);
+  if (deck === 44) dressTram(world, st, M);
+
   /* ── AND SOMETHING TO THROW, from the first frame (§6 step 1). The station
    * is a sandbox and the cheapest proof of it is a crate in your hands. */
   const y = DECK_Y[deck];
@@ -749,12 +756,17 @@ export class StationDirector {
 
   dispose() {
     try { undressDeckLift(this.world); } catch {}
+    try { undressStationLife(this.world); } catch {}
     undressStation(this.world);
   }
 
   update(dt, ctx = null) {
     this.world._deckInput = ctx?.input || null;
     stepStation(this.world, dt);
+    /* AFTER the places have been culled, because the pool only offers bodies
+     * out of places that are drawn — and before the lift, which is the one
+     * thing on the station that moves the player. */
+    stepStationLife(this.world, dt);
     stepDeckLift(this.world, dt);
   }
 }

@@ -798,6 +798,12 @@ for (const S of SPECIES) {
     toughness: TOUGHNESS.flesh,
     melee: false,
     damage: 0,
+    /* THE SPACING BAND, and it is not a weapon range. `Enemy._think` reads
+     * `A.preferred` unguarded to decide how close a body stands to what it is
+     * looking at, so an archetype without one throws on its first frame. A
+     * resident's is conversational distance: this is what stops fifteen people
+     * in a market standing in each other. */
+    preferred: [1.4, 2.8],
     hipHeight: 0.95 * (stature / HUMAN_STATURE),
     /* THE FENCE. See the note above. */
     resident: true, score: 0, threat: 0, unlockAt: 99,
