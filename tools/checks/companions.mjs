@@ -343,7 +343,16 @@ export async function run({ check, assert }) {
        * a balance — `Credits.js` does, and it is exempt BY NAME because it is
        * the one file the doctrine's amendment allows to. Everything around it
        * is held to the same six words as the kennel. */
-      'game/Counter.js', 'game/Vendors.js'];
+      'game/Counter.js', 'game/Vendors.js',
+      /* AND `Pits.js`, V16 Lane G's pit room, on the commit that made it. It
+       * pays a PURSE and settles a WAGER — the same pull toward a stored
+       * balance the betting engine has, one step closer to the record,
+       * because it is also the only writer the kennel's `scars` field has
+       * ever had and therefore already holds the pen. It keeps no balance: a
+       * purse is a number handed back to a caller and a wager goes out
+       * through `Spectacle.settle`. Added here rather than left invisible,
+       * for the reason stated above. */
+      'game/Pits.js'];
     for (const f of SCANNED) {
       const code = strip(await src(f));
       for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {

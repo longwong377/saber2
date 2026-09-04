@@ -596,11 +596,21 @@ export async function run({ check, assert, near }) {
     const live = Company.load('republic').men.map((m) => back.enlistRecord(m)).filter(Boolean);
     for (const t of live) t.body = hurtBody(0.3);
     const home = live.slice(0, 2);
-    Company.keep(home, { army: 'republic', deployed: live, left: live.slice(2), ground: 'kashyyyk' });
+    const lost = live.slice(2);
+    /* THE MAN WHO WAS LEFT, BY NAME. This used to say `admitted[2]` — the
+     * third name `checkIn` handed back — on the assumption that the ward fills
+     * in roll order. It does not: `wounded` sorts worst first and breaks ties
+     * on DESIGNATION, and the roll is in rank-and-service order, so the two
+     * agree only when the muster happens to deal designations in rank order.
+     * A suite that ran before this one and moved the stream was enough to pull
+     * them apart, and the clause then asserted a live man's tank was dark. */
+    const gone = lost[0].designation;
+    assert(admitted.includes(gone), `${gone} was left behind but was never in a tank`);
+    Company.keep(home, { army: 'republic', deployed: live, left: lost, ground: 'kashyyyk' });
     const roll = Company.load('republic');
     assert(roll.men.length === 2, `${roll.men.length} men survived a fold that lost one`);
-    assert(!Medbay.wardOf(roll).tanks.includes(admitted[2]),
-      `${admitted[2]} died on the run and his tank is still lit`);
+    assert(!Medbay.wardOf(roll).tanks.includes(gone),
+      `${gone} died on the run and his tank is still lit`);
     assert(Medbay.occupied(roll) === 2, `${Medbay.occupied(roll)} tanks lit for two survivors`);
 
     /* AND THE READ REFUSES A NAME THAT WAS NEVER ON THE ROLL. */

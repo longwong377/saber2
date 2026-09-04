@@ -32,7 +32,7 @@ import { recordRun, loadProgress } from './game/Progress.js';
 /* V16 Lane B's purse and Lane A3's bench. `Progress.js`'s own header carries
  * the amendment that lets a currency exist at all; these are the two doors it
  * is spent and earned through. */
-import { payForRun, purse } from './game/Credits.js';
+import { payForRun, purse, pay } from './game/Credits.js';
 import { clearTuning } from './game/Bench.js';
 /* THE COMPANY. Loaded here and folded here, for the same split `Progress.js`
  * keeps: this file owns localStorage and the game owns the game. `World` is
@@ -55,6 +55,11 @@ import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
+import {
+  pitAtPlace, venueOpen, handlersOn, offerBout, openBout, beginRound, callOrder,
+  runRound, cornerAct, pitState, settleBout, foldPit, pitCall,
+  PIT_ORDERS, ORDER_WINDOW, READ_WINDOW, CORNER_ACTS, ORDERS_PER_ROUND,
+} from './game/Pits.js';
 /* V16 Lane B's counters and Lane A3's bench — the two rooms that spend. */
 import { offerFrom } from './game/Counter.js';
 import { counterById } from './game/Vendors.js';
@@ -1167,6 +1172,8 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onBench = (which) => openBench(which);
     /* #43 and #44 — see `openMedbay`. */
     world.onMedbay = (id) => openMedbay(id);
+    /* #20 and #61 — see `openPit`. */
+    world.onPit = (id) => openPit(id);
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -1916,6 +1923,214 @@ function openHabitat() {
 screens.card('habitat', () => closeHabitat());
 
 /**
+ * WHICH DAY IT IS ON THE STATION. The shelves, the job board and the pit's
+ * card are all seeded off it, so there is one answer and they cannot disagree
+ * about what day it is in the same room.
+ */
+function stationDay() {
+  return Math.floor((world?._station?.hour ?? 0) / 24) + (loadStation().seen?.length | 0);
+}
+
+/**
+ * ══ #20 AND #61, THE COMPANION PITS — V16 Lane G ══════════════════════════
+ *
+ * *"there could be an area of the ship where you can duel with your companions
+ *  … either sanctioned or illegal … and there are real and sometimes permanent
+ *  consequences."*
+ *
+ * ── WHAT THE PLAYER ACTUALLY DOES, AND IT IS NOT A BUTTON ─────────────────
+ *
+ * The design question the list left to me was how much control the player has,
+ * and the answer this surface implements is: YOU ARE THE CORNER, NOT THE
+ * ANIMAL. You do not swing. Each round the other handler's body says what he
+ * is about to do, for about a second; you give an order, and WHEN you give it
+ * matters as much as which — `Pits.scoreOrder` prices the timing against the
+ * moment that corner actually commits. Then the round is handed to the sim and
+ * you watch it.
+ *
+ * SO THE CLOCK IN THIS FILE IS LOAD-BEARING. `at` is real seconds since the
+ * bell, off `performance.now()`, and the window closes itself — `runRound` is
+ * fired by a timer rather than by a button, because a round you can sit on
+ * until you are sure is a quiz and not a fight. One handle, cancelled by every
+ * exit, on `cancelDeathCard`'s precedent and for its exact reason.
+ */
+let pit = null;
+let pitTimer = null;
+function clearPitTimer() {
+  if (pitTimer !== null) { clearTimeout(pitTimer); pitTimer = null; }
+}
+
+function pitRoot() { return paneRoot('pit'); }
+
+/** The bout that is on tonight at this place, or the reason there is not one. */
+function pitOffer(placeId) {
+  const venue = pitAtPlace(placeId);
+  if (!venue) return { why: 'there is no pit here' };
+  const hour = world?._station?.hour ?? 0;
+  const day = stationDay();
+  const state = venueOpen(venue, hour, { standing: standing(), day });
+  if (!state.open) return { venue, why: state.why };
+  const rec = loadKennel().live;
+  if (!rec) return { venue, why: 'you have nothing to put in there' };
+  /* WHO IS ACROSS THE PIT. Drawn from the people who were actually on the
+   * station this morning — `handlersOn` walks the resident roster — so the man
+   * at the rail is somebody who lives here, and the same one all night. */
+  const on = handlersOn();
+  if (!on.length) return { venue, why: 'nobody down here is carrying tonight' };
+  const handler = on[(Math.abs(day * 2654435761) >>> 0) % on.length];
+  return { venue, offer: offerBout({ venue, rec, handler, hour, day, standing: standing() }) };
+}
+
+function showPit(placeId) {
+  const el = pitRoot();
+  clearPitTimer();
+  /* THE THREE SCREENS ARE THE THREE PHASES and there is no fourth: what is on
+   * the glass is `bout.phase`, so a surface that got out of step with the sim
+   * would have to invent a state the sim does not have. */
+  if (!pit) {
+    const got = pitOffer(placeId);
+    if (!got.offer) {
+      el.innerHTML = `<div class="pane"><h2>${esc(got.venue?.name || 'The pit')}</h2>`
+        + `<p class="sub">${esc(got.why)}</p></div>`;
+      el.classList.remove('hidden');
+      return;
+    }
+    pit = { placeId, offer: got.offer, bout: null, last: null, t0: 0 };
+  }
+  const { offer, bout } = pit;
+  let html = `<div class="pane"><h2>${esc(offer.venue.name)}</h2>`;
+
+  if (!bout) {
+    html += `<p class="sub">${esc(offer.handler.who || 'A handler')} and ${esc(offer.theirs.name)}`
+      + ` — ${esc(offer.venue.rounds)} rounds.</p>`;
+    html += `<p class="sub">${esc(offer.stake.words)}</p>`;
+    /* THE BOARD, WHICH IS PUBLIC AND IS NOT A PROMISE. `Spectacle`'s prices
+     * are built from public form and the sim runs forward from them, so a
+     * short price is an opinion and nothing more. */
+    html += '<div class="rows">' + offer.board.map((r) =>
+      `<div class="row"><b>${esc(r.name)}</b><span>${esc(r.odds || `${r.price}`)}</span></div>`).join('')
+      + '</div>';
+    html += '<div class="acts">';
+    /* TWO DOORS AND THEY ARE NOT A YES AND A CANCEL. Declining the stake still
+     * fights — for the smaller purse, with no doctor — which is what makes the
+     * refusal a decision rather than a way out. */
+    if (offer.stake.mortal) {
+      html += '<button class="care" data-do="mortal">Take the stake</button>'
+        + '<button class="care" data-do="safe">Fight for the smaller purse</button>';
+    } else {
+      html += '<button class="care" data-do="safe">Fight</button>';
+    }
+    html += '<button class="care" data-do="leave">Walk away</button></div>';
+  } else if (bout.over) {
+    const O = bout.outcome;
+    html += `<p class="sub">${O.won ? 'Won' : 'Lost'} in ${O.rounds} — ${esc(O.how)}.`
+      + (O.purse ? ` ${O.purse} credits.` : '') + '</p>';
+    if (pit.fold?.scar) html += `<p class="sub">${esc(pit.fold.scar)}</p>`;
+    if (pit.fold?.died) html += '<p class="warn">It did not come back.</p>';
+    if (pit.fold && !pit.fold.kept && !pit.fold.died) {
+      html += '<p class="sub">That is not the animal that fought.</p>';
+    }
+    html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div>';
+  } else {
+    const st = pitState(bout);
+    html += `<p class="sub">Round ${st.round} of ${st.of} — yours ${Math.round(st.condition)}`
+      + `, his ${Math.round(st.theirCondition)}${st.bleed ? `, ${st.bleed} open` : ''}.</p>`;
+    if (bout.phase === 'read') {
+      html += `<p class="sub"><b>${esc(bout.read.tell)}</b></p>`;
+      html += '<div class="acts">' + PIT_ORDERS.map((o) =>
+        `<button class="care" data-order="${esc(o.id)}" title="${esc(o.caption)}">${esc(o.label)}</button>`)
+        .join('') + '</div>';
+      html += `<p class="sub">${bout.orders.length} of ${ORDERS_PER_ROUND} given`
+        + (bout.orders.length ? ` · ${bout.orders.map((x) => esc(x.id)).join(', ')}` : '')
+        + '</p>';
+    } else if (bout.phase === 'corner') {
+      /* WHAT JUST HAPPENED, IN THE ANNOUNCER'S WORDS. `pitCall` is the pit's
+       * own voice and it is the same reader the crowd hears — one line per
+       * event, so the round reads back rather than being a number. */
+      const said = (pit.last?.events || []).map((ev) => pitCall(ev, bout.card)).filter(Boolean);
+      if (said.length) html += '<div class="rows">' + said.slice(-4).map((line) =>
+        `<div class="row"><span>${esc(line)}</span></div>`).join('') + '</div>';
+      html += '<div class="acts">' + CORNER_ACTS.map((a) =>
+        `<button class="care" data-corner="${esc(a.id)}"${bout.corner ? ' disabled' : ''}`
+        + `${a.note ? ` title="${esc(a.note)}"` : ''}>${esc(a.label || a.id)}</button>`).join('')
+        + '<button class="care" data-do="next">Send it back out</button></div>';
+    }
+  }
+  el.innerHTML = html + '</div>';
+
+  for (const b of el.querySelectorAll('button[data-do]')) {
+    b.addEventListener('click', () => {
+      const act = b.dataset.do;
+      if (act === 'leave') { closePit(); return; }
+      if (act === 'mortal' || act === 'safe') {
+        pit.bout = openBout(pit.offer, { accept: act === 'mortal' ? pit.offer.stake.token : null });
+        pitBell();
+        return;
+      }
+      if (act === 'next') pitBell();
+    });
+  }
+  for (const b of el.querySelectorAll('button[data-order]')) {
+    b.addEventListener('click', () => {
+      /* REAL SECONDS SINCE THE BELL. This is the input the whole minigame is
+       * scored on — see `Pits.scoreOrder`. */
+      const at = (performance.now() - pit.t0) / 1000;
+      const r = callOrder(pit.bout, b.dataset.order, at, loadKennel().live);
+      if (r.refused) world?.notify?.(offer.venue.name.toUpperCase(), r.refused);
+      showPit(placeId);
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+/**
+ * THE BELL. Opens a round, starts the clock, and sets the window closing on a
+ * timer — the round runs whether you gave an order or not, which is the whole
+ * difference between this and a menu.
+ */
+function pitBell() {
+  if (!pit?.bout || pit.bout.over) return;
+  beginRound(pit.bout);
+  pit.t0 = performance.now();
+  showPit(pit.placeId);
+  clearPitTimer();
+  pitTimer = setTimeout(() => {
+    pitTimer = null;
+    if (!pit?.bout || pit.bout.over) return;
+    pit.last = runRound(pit.bout);
+    if (pit.bout.over) {
+      /* THE ONE WRITE. `foldPit` re-reads the disk and refuses a record that is
+       * not the one that fought, so a player who released the animal mid-bout
+       * does not get it written back over the top. */
+      pit.fold = foldPit(pit.bout);
+      const paid = settleBout(pit.bout);
+      const won = pit.bout.outcome.purse | 0;
+      if (won) pay(won, 'pit');
+      if (paid?.lines?.length) world?.notify?.('THE PIT', `${paid.lines.length} settled at the rail`);
+    }
+    showPit(pit.placeId);
+  }, ORDER_WINDOW * 1000);
+}
+
+function closePit() {
+  clearPitTimer();
+  pit = null;
+  closePane('pit');
+  screens.clear();
+  input.enabled = true;
+  input.requestLock();
+  screens.set('playing');
+}
+
+function openPit(placeId) {
+  if (!pitAtPlace(placeId)) return false;
+  audio.ui('good');
+  screens.take('pit', () => showPit(placeId));
+  return true;
+}
+screens.card('pit', () => { clearPitTimer(); pit = null; closePane('pit'); });
+
+/**
  * ══ #43 AND #44, THE MEDBAY — V16 Lane B3 ═════════════════════════════════
  *
  * *"you should have a med bay that actually does something."*
@@ -2033,7 +2248,7 @@ function paneRoot(id) {
 function showCounter(counterId) {
   const el = paneRoot('counter');
   const c = counterById(counterId);
-  const day = Math.floor((world?._station?.hour ?? 0) / 24) + (loadStation().seen?.length | 0);
+  const day = stationDay();
   const offer = offerFrom(c, { day, order: sessionOr('order'), standing: standing() });
   let html = `<div class="pane"><h2>${esc(c?.name || 'A counter')}</h2>`;
   html += `<p class="sub">${purse()} credits</p>`;

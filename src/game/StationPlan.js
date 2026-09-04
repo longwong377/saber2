@@ -410,6 +410,33 @@ export const PLACES = [
     who: '6', idle: 'cycles', verb: 'take a beat',
     band: 'outer', at: -26, w: 18, d: 10, h: 3.0, peak: 17, heads: 6,
   },
+  /**
+   * ── #61 THE UNDERLIFT PIT (V16 §G5) ───────────────────────────────────
+   *
+   * The illegal one. `#20 The Arena` up on deck 40 is licensed, refereed and
+   * has a doctor at the rail; this is a cut in the deck plate in a SERVICE
+   * GAP off the ring — the length of walkway between the laundry and the
+   * officers' doors where the plating is up and nobody has a reason to be.
+   *
+   * ITS HOUR IS 02:00, WHICH IS THE ONLY PLACE ON DECK 44 WITH ONE. Every
+   * other row on this deck peaks in the day or the evening; a `peak` in the
+   * small hours is what makes "not always available or offered" a fact about
+   * the station's day rather than a flag in a file, because `headcount` reads
+   * `peak` and the gap is genuinely empty at noon.
+   *
+   * `heads` is 16 standing at the lip — no benches, no tiers, and nowhere to
+   * sit is half of what makes it read as the wrong kind of room.
+   */
+  {
+    id: 61, deck: 44, name: 'The Underlift Pit', shape: 'chainpit',
+    look: 'a service gap with the deck plate up: a rectangular cut two and a half metres down, '
+      + 'chain-link stretched over it on a bent frame, one hanging lamp, a spool of cable, '
+      + 'and sixteen people standing on the grating at the lip',
+    who: '16 at the lip, two handlers, a man taking the book',
+    idle: 'a card runs from 22:00 on the nights it runs at all; money changes hands at the rail',
+    verb: 'fight a bout — no referee',
+    band: 'outer', at: 6, w: 16, d: 14, h: 4.4, peak: 2, heads: 16,
+  },
   /* #40 is FOUR platforms and they are four DIFFERENT rooms (§3.2). They keep
    * one id because the gazetteer gives them one; `station.mjs` measures rule 4
    * across all four as separate silhouettes, which is the point of them. */

@@ -61,6 +61,7 @@ import { TERRAIN_PRESETS } from '../world/Terrain.js';
 import { Warp, canJump } from './Warp.js';
 import { countersAt } from './Vendors.js';
 import { stepMedbay } from './Medbay.js';
+import { pitAtPlace } from './Pits.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -1296,6 +1297,18 @@ export function stationKey(world) {
   if ((place.id === 43 || place.id === 44) && world.onMedbay) {
     return world.onMedbay(place.id) !== false;
   }
+  /**
+   * ── #20 AND #61, THE PITS — V16 Lane G ─────────────────────────────────
+   *
+   * *"there could be an area of the ship where you can duel with your
+   * companions … either sanctioned or illegal."* Both, and they are the same
+   * door: `#20 The Arena` has a marshal and a doctor, `#61 The Underlift Pit`
+   * has neither and is not on every night.
+   *
+   * AFTER the counter branch, matching #42 and #50: a room that sells
+   * something sells it first, and neither of these two rooms does.
+   */
+  if (pitAtPlace(place.id) && world.onPit) return world.onPit(place.id) !== false;
   if (place.id === 41 && world._warp && !world._warp.done) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;

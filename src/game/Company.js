@@ -198,6 +198,25 @@ const MAN_FIELDS = [
    * would have to be decided in the one frame it crossed the line, and the
    * roster screen could never show a pair three grounds short of one. */
   'bonds',
+  /* AND WHAT THE RUN DID TO HIM AND HAS NOT FINISHED DOING. `hp` is the
+   * fraction of his health he came off the ramp with, and it is the ONLY
+   * thing this file stores about an injury: `Medbay.js` derives how long he
+   * has left, whether he can walk, and whether anybody has to carry him from
+   * that one number, and mends it back up over station hours until he is fit
+   * and the field is deleted again. Absent means a man on all of his health,
+   * which is what most of the roll is most of the time — `save` drops it, so
+   * a healthy company costs nothing it did not already cost.
+   *
+   * THE LINE BETWEEN A SCRATCH AND A CASUALTY IS NOT HERE. `Medbay.FIT` is
+   * where a man stops being a patient and it is that file's number to move;
+   * this one stores the fact and clamps it to a fraction, which is all a
+   * store owes a reader.
+   *
+   * WHY A NUMBER AND NOT A RECORD: two stored fields about one wound is two
+   * facts a hand edit, a migration or a half-finished write can make
+   * disagree, and no reader could say which was lying. See Medbay.js's
+   * header. */
+  'hp',
   /* AND WHAT THE PLAYER CHOSE TO DO WITH HIM. See `look` for the paint and the
    * kit; `post` is the other decision — the squad's seat, given by hand. It is
    * a boolean and it buys no number: what it does is put one named man in
@@ -277,7 +296,34 @@ export const blank = (army = ARMY_IDS[0]) => ({
    * dead get the memorial, not a bulletin.
    */
   honours: [],
+  /**
+   * ── THE BACTA WARD'S REGISTER — V16 §C1 ───────────────────────────────
+   *
+   * `tanks` is one slot per tank in `#44`, each holding the designation of the
+   * man behind that glass or nothing; `at` is the station hour the ward was
+   * last brought up to date, so `Medbay.settle` can tell how many hours the
+   * tanks are owed. `Medbay.js` owns every rule about both — how many tanks
+   * there are, how fast a man mends, what counts as hurt at all — and this
+   * file owns only the fact that they persist.
+   *
+   * ON THE COMPANY AND NOT ON THE MAN, because a tank is a place and a place
+   * can hold exactly one person. A `care: 'tank'` flag on each record would
+   * let two men claim one tank and one man claim two, and the glass in `#44`
+   * is the state the player reads — it may not be able to lie.
+   */
+  ward: { at: null, tanks: [] },
 });
+
+/**
+ * HOW MANY SLOTS A STORED WARD MAY HAVE.
+ *
+ * A CEILING AND NOT A COUNT: `Medbay.TANKS` is how many tanks `StationKit`
+ * actually builds and that number is the medbay's to change. This is the line
+ * a hand-edited save may not cross, set well above the built row so raising it
+ * there never needs a change here, and low enough that a save cannot hand the
+ * ward sixty men and a screen sixty rows to render.
+ */
+const WARD_MAX = 8;
 
 /** How many names the casualty list keeps. A list, not an archive. */
 export const FALLEN_KEEP = 40;
@@ -407,7 +453,38 @@ function readMan(m, army) {
     story: Array.isArray(m.story) ? m.story.filter((s) => typeof s === 'string').slice(-STORY_KEEP) : [],
     bonds: saneBonds(m.bonds, m.designation),
     look: saneLook(m.look, m.kind === 'steel' ? 'steel' : 'flesh'),
+    /* HIS INJURY, CLAMPED LIKE EVERY OTHER STORED NUMBER. A fraction and
+     * nothing else: a save that hands a man 9e9 is a save that hands the
+     * medbay a patient it can never discharge, and a save that hands him a
+     * negative is a corpse on the roll.
+     *
+     * SPREAD RATHER THAN ASSIGNED, and that is not a style choice. `hp:
+     * undefined` still puts the KEY on the record — `'hp' in m` is true — and
+     * `barracks: a pattern issues across both stores` reads exactly that to
+     * prove issuing a look wrote no number. A healthy man must not carry an
+     * empty wound around; absent is the answer, not present-and-empty. */
+    ...(hurtOf(m.hp) === undefined ? {} : { hp: hurtOf(m.hp) }),
   };
+}
+
+/**
+ * A STORED INJURY, MADE SAFE — or `undefined` for a man who is fine.
+ *
+ * The THRESHOLD is not here and must not be: `Medbay.FIT` is the line between
+ * a man and a patient and it is that file's to move. This only guarantees the
+ * range, which is the one thing a store owes a reader. A stored 1 is dropped
+ * because "he has all his health" is what an absent field already says, and
+ * two spellings of the same fact is the drift this file spends its whole
+ * `readMan` refusing.
+ */
+function hurtOf(v) {
+  /* `Number(null)` IS 0, and 0 is a man at death's door. An absent field and
+   * an explicit `null` both mean "nothing wrong with him" and neither may be
+   * allowed to arrive as the worst possible answer. */
+  if (v === null || v === undefined || v === '') return undefined;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n >= 1) return undefined;
+  return Math.max(0, n);
 }
 
 /** How many lines of a man's own history the record keeps. */
@@ -551,7 +628,32 @@ export function load(army = ARMY_IDS[0]) {
         }))
         .slice(0, HONOURS_KEEP)
       : [],
+    /* THE WARD, AND THE ONE RULE IT HAS TO OBEY: every name in a tank is a
+     * name on the roll. A designation that is not is a man who died on the run
+     * that put him there, or a hand edit, and either way the glass in `#44`
+     * would be showing somebody who does not exist. Deduplicated for the same
+     * reason a tank holds one person, and the hour is a time of day. */
+    ward: saneWard(v.ward, men),
   };
+}
+
+/** A stored ward, made safe against the roll it belongs to. See `blank`. */
+function saneWard(w, men) {
+  const live = new Set(men.map((m) => m.designation));
+  const seen = new Set();
+  const tanks = [];
+  for (const name of (Array.isArray(w?.tanks) ? w.tanks : [])) {
+    if (tanks.length >= WARD_MAX) break;
+    if (typeof name !== 'string' || !live.has(name) || seen.has(name)) { tanks.push(null); continue; }
+    seen.add(name);
+    tanks.push(name);
+  }
+  /* `Number(null)` IS 0 AND 0 IS A REAL HOUR — midnight. So the absent case
+   * is tested before the numeric one, or a ward that has never been settled
+   * comes back stamped at 00:00 and the first reader at 23:00 hands it
+   * twenty-three hours of bacta nobody spent. */
+  const at = w?.at === null || w?.at === undefined ? null : Number(w.at);
+  return { at: Number.isFinite(at) ? ((at % 24) + 24) % 24 : null, tanks };
 }
 
 /** Write one army's company back, leaving the other armies' rolls alone. */
@@ -571,6 +673,16 @@ export function save(company) {
     founded: company.founded ?? null,
     squads: (company.squads || []).slice(0, SQUADS_MAX),
     honours: (company.honours || []).slice(0, HONOURS_KEEP),
+    /* Written through the same door and no other: `Medbay.js` mutates
+     * `company.ward` and calls this, so `saber.company.v1` keeps exactly one
+     * writer and the medbay adds no fourth durable key to the tree. See
+     * `session.mjs`'s count and `Kennel.js`'s note on what a scan's silence
+     * about a new file is worth. */
+    ward: {
+      at: Number.isFinite(company.ward?.at) ? company.ward.at : null,
+      tanks: (Array.isArray(company.ward?.tanks) ? company.ward.tanks : [])
+        .slice(0, WARD_MAX).map((n) => (typeof n === 'string' ? n : null)),
+    },
   };
   writeAll(all);
   return company;
@@ -631,7 +743,47 @@ export function manOf(t, meta = {}) {
      * tally forward off the record that was already on the roll. */
     bonds: saneBonds(t.bonds, t.designation),
     look: t.look ?? null,
+    /**
+     * WHAT HE CAME OFF THE RAMP WITH — the one number the medbay works from.
+     *
+     * Read off the LIVE BODY, because `Trooper` has no health of its own: the
+     * hit points are on the `Enemy` the roster spawned for him, `bank()` calls
+     * `keep` while the manifest's bodies are still standing, and this is the
+     * last moment in the whole tree at which "how badly was he hurt" is a
+     * question anything can answer. It used to be thrown away here, which is
+     * why a man could walk off a transport on a tenth of his health and the
+     * roll would say nothing about it the next morning.
+     *
+     * `undefined` for a man with no body — the muster benched him, or the run
+     * ended after the bodies were disposed — and `keep` carries his existing
+     * injury forward in that case rather than curing him for being absent.
+     */
+    hp: bodyHurt(t),
   };
+}
+
+/**
+ * THE FRACTION OF HIS HEALTH A LIVE BODY IS CARRYING, or `undefined`.
+ *
+ * A DEAD body answers `undefined` and not 0, and the difference is the whole
+ * point: a man at zero is a patient and a man who is dead is on the memorial.
+ * `keep` decides which of those he is from the manifest, not from a number.
+ */
+function bodyHurt(t) {
+  const e = t?.body;
+  /**
+   * THREE ANSWERS AND NOT TWO, and the third is the one that took a check to
+   * find. `undefined` is "I cannot see him" — no body, or one already disposed
+   * — and `keep` carries his old injury forward on it. `null` is "I can see
+   * him and he is WHOLE", which is a different sentence and has to be, or a
+   * man who went out hurt and came home fine would keep the wound for ever:
+   * the fold would read his full-health body as silence and fall back on the
+   * record it was trying to replace. A number is the wound itself.
+   */
+  if (!e || e.dead) return undefined;
+  const max = Number(e.maxHp), hp = Number(e.hp);
+  if (!Number.isFinite(max) || max <= 0 || !Number.isFinite(hp)) return undefined;
+  return hurtOf(hp / max) ?? null;
 }
 
 /**
@@ -730,6 +882,16 @@ export function keep(manifest, opts = {}) {
     m.runs = (had ? had.runs | 0 : 0) + 1;
     m.since = had?.since ?? opts.ground ?? null;
     m.look = t.look ?? had?.look ?? null;
+    /* A BENCHED MAN IS NOT A HEALED MAN, AND A HEALED MAN IS NOT A BENCHED
+     * ONE. `bodyHurt` answers `undefined` for a trooper with no body and
+     * `null` for one whose body was whole; without the first clause every man
+     * the muster left behind would come off the fold cured — the roll would be
+     * a way to mend people by not taking them — and without the second, a man
+     * who went out hurt and fought his way home fine would carry the wound for
+     * ever. It is right in both directions: he can come home worse, and he can
+     * come home better. */
+    if (m.hp === undefined) m.hp = had?.hp;
+    else if (m.hp === null) m.hp = undefined;
     const line = storyLine(t, opts);
     m.story = [...(had?.story || []), ...(line ? [line] : [])].slice(-STORY_KEEP);
     kept.push(m);
@@ -790,6 +952,18 @@ export function keep(manifest, opts = {}) {
   }
 
   c.men = settleBonds(kept.slice(0, CAP));
+  /* AND HE IS OUT OF HIS TANK. A man can be struck off while his designation
+   * is still in the ward's register — he mended, mustered, and did not come
+   * back — and a slot holding a dead name is a lit tank in `#44` with nobody
+   * in it. `load` refuses such a name on the way back off disk anyway; this is
+   * the same rule applied to the company this call RETURNS, so a caller
+   * reading the fold in memory sees the same ward the next `load` will. */
+  const alive = new Set(c.men.map((m) => m.designation));
+  c.ward = {
+    at: Number.isFinite(c.ward?.at) ? c.ward.at : null,
+    tanks: (Array.isArray(c.ward?.tanks) ? c.ward.tanks : [])
+      .map((n) => (typeof n === 'string' && alive.has(n) ? n : null)),
+  };
   c.lost = (c.lost | 0) + gone.length;
   /**
    * THE EPITAPH FIELDS. A fallen record used to drop the callsign at exactly

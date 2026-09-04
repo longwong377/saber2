@@ -1314,6 +1314,84 @@ export const SHAPES = {
     }
   },
 
+  /**
+   * #61 The Underlift Pit: A CHAIN OVER A SLOT (V16 §G5).
+   *
+   * The illegal one, and every line of it is the opposite of `sunkenring`'s
+   * — which matters, because rule 4 measures the two of them and a second
+   * round pit with tiers round it would be the Arena with the lights off.
+   *
+   *   the Arena is ROUND;         this is a rectangular SLOT, long axis across
+   *   the Arena has TIERS;        this has nowhere to sit at all — you stand
+   *   the Arena has a GANTRY;     this has a chain-link LID at head height
+   *   the Arena is LIT from above;this has one lamp on a cable over the middle
+   *
+   * The lid is the silhouette: a dense low lattice filling the top half of the
+   * frame from the door, which nothing else on the station has. It is also the
+   * room's whole argument — the thing in the slot cannot get out of it, and
+   * neither can the thing it is fighting.
+   *
+   * NOTHING IN HERE IS A BENCH AND NOTHING IN HERE IS A RAIL. The crowd stands
+   * on the grating at the lip with a two-and-a-half metre drop in front of it
+   * and nothing between, which is the room saying what kind of room it is
+   * without a word of signage.
+   */
+  chainpit(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    /* The grating you stand on, and it is `dark` rather than the deck's own
+     * plate: this is the floor with its covering taken up. */
+    floor(kit, M, w, d, 0, M.dark);
+    walls(kit, M, w, d, h, { doorW: 3.0 });
+    ceiling(kit, M, w, d, h, { ribs: 3, strips: false });
+
+    /* THE CUT. Rectangular, across the room, 2.5 m down, with the lifted deck
+     * plate leaning against the far wall where it was dragged. */
+    const cw = w - 4.4, cd = d - 5.0, depth = 2.5;
+    sink(kit, M, cw, cd, depth, ctx);
+    kit.slab(M.wing, cw * 0.8, 0.24, depth + 0.9, 0, (depth + 0.9) / 2 - 0.4, d / 2 - 0.9,
+      { rx: 0.28, collide: true, bevel: 0 });
+
+    /* THE CHAIN. Two crossed sets of thin bars at 2.2 m over the cut, on a
+     * frame bent out of conduit — stretched over, not built in. */
+    const lid = 2.2;
+    for (let i = 0; i <= 9; i++) {
+      const x = -cw / 2 + (cw * i) / 9;
+      kit.slab(M.wing, 0.05, 0.05, cd + 0.6, x, lid, 0, { collide: false, bevel: 0 });
+    }
+    for (let i = 0; i <= 7; i++) {
+      const z = -cd / 2 + (cd * i) / 7;
+      kit.slab(M.wing, cw + 0.6, 0.05, 0.05, 0, lid - 0.06, z, { collide: false, bevel: 0 });
+    }
+    for (const s of [-1, 1]) {
+      for (const t of [-1, 1]) {
+        kit.post(M.hull, 0.11, 0.11, lid, s * (cw / 2 + 0.3), lid / 2, t * (cd / 2 + 0.3), { radial: 6, collide: true });
+      }
+      /* The frame is BENT — one side higher than the other, because nobody
+       * squared it up. */
+      kit.slab(M.hull, 0.12, 0.12, cd + 0.6, s * (cw / 2 + 0.3), lid + (s > 0 ? 0.22 : 0), 0, { rx: s * 0.05, collide: false, bevel: 0 });
+    }
+
+    /* THE ONE LIGHT: a lamp on a cable, hung low over the middle of the cut,
+     * so the slot is bright and the people at the lip are not. */
+    kit.slab(M.dark, 0.05, h - lid - 0.5, 0.05, 0, lid + (h - lid) / 2 + 0.2, 0, { collide: false, bevel: 0 });
+    kit.post(M.dark, 0.42, 0.42, 0.26, 0, lid + 0.5, 0, { radial: 8 });
+    kit.post(M.strip, 0.3, 0.3, 0.1, 0, lid + 0.36, 0, { radial: 8 });
+
+    /* The book, and the cable spool it is written on. Two loose things and a
+     * spool you can pick up — §11, the same as every other room. */
+    kit.post(M.deep, 1.05, 1.05, 0.9, -w / 2 + 1.6, 0.45, -d / 2 + 1.9, { radial: 12, collide: true });
+    kit.post(M.dark, 0.34, 0.34, 0.95, -w / 2 + 1.6, 0.48, -d / 2 + 1.9, { radial: 8 });
+    for (let i = 0; i < 4; i++) {
+      loose(kit, w / 2 - 1.5, 0, -d / 2 + 1.6 + i * 1.1, (world, q) => makeCrate(world, q));
+    }
+    /* And a coil of cable slung on the wall by the door, which is the only
+     * thing in the room anybody has bothered to hang up. */
+    for (let i = 0; i < 3; i++) {
+      kit.post(M.mark, 0.5 - i * 0.06, 0.5 - i * 0.06, 0.1, w / 2 - 0.6, 1.9 - i * 0.34, -d / 2 + 1.0,
+        { rz: Math.PI / 2, radial: 10 });
+    }
+  },
+
   /* ── THE FOUR TRAM PLATFORMS: #40 and its three, and rule 4 says they are
    * four DIFFERENT rooms, not one built four times. Each is named for its
    * material because that is what §3.2 names them by. ─────────────────────── */

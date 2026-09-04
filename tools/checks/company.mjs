@@ -1133,8 +1133,29 @@ export async function run({ check, assert }) {
     assert(rFields.join(',') === 'band,callsign,kit,mark,paint',
       `Muster.dressRecruit writes ${rFields.join(', ') || 'nothing'} — a recruit may be named, `
       + 'painted and kitted, nothing else');
+    /**
+     * ── AND THE MEDBAY, ADDED ON THE COMMIT THAT CREATED IT ──────────────
+     *
+     * This scan has always run BY PATH on two named files, so a file that did
+     * not exist when it was written is invisible to it and therefore legal by
+     * default. `Kennel.js`'s header states the rule for exactly that silence:
+     * *"that silence is a hazard, not a permission."*
+     *
+     * `Medbay.js` is the third file that writes to a man's record — it mends
+     * `m.hp` over station hours and moves designations in and out of the ward
+     * — and it is the obvious place for the thing this whole clause forbids:
+     * a bacta charge you buy, a tank you unlock, a treatment you upgrade. A
+     * wound in this game costs TIME on the station clock and nothing else, and
+     * the day somebody puts a price on it this goes red instead of nobody
+     * noticing for a year.
+     */
+    const med = strip(await src('game/Medbay.js'));
+    for (const word of ['points', 'currency', 'purchase', 'upgrade', 'unlock', 'buy']) {
+      assert(!new RegExp(`\\b${word}\\b`, 'i').test(med),
+        `Medbay.js has grown a "${word}" — a wound has become a price`);
+    }
     return `dress and dressRecruit write ${fields.join(' + ')} and nothing else; `
-      + 'no currency word in Company.js or Muster.js';
+      + 'no currency word in Company.js, Muster.js or Medbay.js';
   });
 
   check('company: the roll says which of them you are taking out next run', () => withCleanStore(() => {
