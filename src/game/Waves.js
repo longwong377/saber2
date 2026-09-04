@@ -66,6 +66,11 @@ import { makeRng, moduleSeed, clamp, lerp, TAU } from '../engine/MathUtil.js';
  * reaches back here, so this edge is a leaf edge and costs no cycle. */
 import { RETURN_CONE, TOUGHNESS } from './Combat.js';
 import { UNBOUND, UNLEASH_TOLL, unboundId } from './Powers.js';
+/* V15's melee branch. The four cards below multiply `boonMods`; what each one
+ * is WORTH lives beside the moves it multiplies, in Melee.FACETS, so the branch
+ * has one table and not two that drift. */
+import { FACETS as MELEE_FACETS } from './Melee.js';
+const MELEE_FACET = new Map(MELEE_FACETS.map((f) => [f.id, f]));
 
 /**
  * THE WAVE STREAM, AND IT WAS THE ONE MODULE RNG LEFT OUT OF THE PIN.
@@ -6438,6 +6443,71 @@ export const BOONS = [
     rarity: 'common', axes: ['body'], stack: 3,
     text: 'You move 20% faster.',
     apply(p, s = 1) { p.boonMods.moveSpeed *= grow(1.2, s); },
+  },
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE OPEN HAND — V15's melee branch, as four cards on the body axis
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * V15: *"perhaps it would be worth updating the holocron and incorporating
+   * melee in some way, that would make the most sense right?"* — and *"can be
+   * upgraded to actually be very effective if the player wanted to."*
+   *
+   * A facet is a CARD. `LivingForce.FACETS` is the boon table arranged into a
+   * lattice and nothing else, which is the property `living-force.mjs`'s first
+   * check exists to hold: a facet with no card behind it grants nothing, and a
+   * card with no facet is draftable but invisible on the one screen that
+   * claims to show the whole system. So the four nodes of the branch are four
+   * rows here, and the tree in `LivingForce.js` only says how they join up.
+   *
+   * WHAT EACH ONE BUYS IS `Melee.FACETS`, not a number typed twice. The rows
+   * below multiply `boonMods`; `Melee.meleeMods` reads `boonMods` and hands
+   * the result to the strike. One number, one place, and a rank of the same
+   * card multiplies again through `grow` exactly as every other card does.
+   *
+   * They are `common` and `uncommon` rather than rare because the branch has
+   * to be affordable to be a build: V15's ask is a player who CHOOSES fists
+   * over the blade, and a build you can only assemble by wave 20 is a
+   * curiosity. What stops it becoming a blade is the ceiling — the whole
+   * branch fully bought is 34 damage on the finisher against a saber cut that
+   * severs, which `melee.mjs` holds at under 45.
+   */
+  {
+    id: 'melee-form', icon: '✊', name: 'Broken Gate', tag: 'Open Hand',
+    rarity: 'common', axes: ['body'], stack: 2,
+    text: 'Your fists and feet open faster, and the chain between strikes holds half again as long.',
+    apply(p, s = 1) {
+      const f = MELEE_FACET.get('melee-form');
+      p.boonMods.meleeSpeed *= grow(f.speed, s);
+      p.boonMods.meleeChain *= grow(f.chain, s);
+    },
+  },
+  {
+    id: 'melee-weight', icon: '🪨', name: 'Falling Stone', tag: 'Open Hand',
+    rarity: 'uncommon', axes: ['body'], stack: 2,
+    text: 'Every strike lands 55% harder, and shoves them 40% further.',
+    apply(p, s = 1) {
+      const f = MELEE_FACET.get('melee-weight');
+      p.boonMods.meleeDamage *= grow(f.damage, s);
+      p.boonMods.meleeImpulse *= grow(f.impulse, s);
+    },
+  },
+  {
+    id: 'melee-wind', icon: '🌬', name: 'Long Breath', tag: 'Open Hand',
+    rarity: 'uncommon', axes: ['body'], stack: 2,
+    text: 'Striking costs a third less stamina.',
+    apply(p, s = 1) {
+      p.boonMods.meleeStamina *= grow(MELEE_FACET.get('melee-wind').stamina, s);
+    },
+  },
+  {
+    id: 'melee-reach', icon: '🖐', name: 'Open Hand', tag: 'Open Hand',
+    rarity: 'rare', axes: ['body'],
+    text: 'You reach a quarter further, and what you hit stays down almost twice as long.',
+    apply(p, s = 1) {
+      const f = MELEE_FACET.get('melee-reach');
+      p.boonMods.meleeReach *= grow(f.reach, s);
+      p.boonMods.meleeStagger *= grow(f.stagger, s);
+    },
   },
   {
     id: 'longblade', icon: '📏', name: 'Extended Blade', tag: 'Crystal',

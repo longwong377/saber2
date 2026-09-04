@@ -384,8 +384,36 @@ export const FACETS = [
     jedi: 'Mastery — Tempest', sith: 'Mastery — The Storm' },
 
   /* ── The Body ──────────────────────────────────────────────────────── */
-  { id: 'attune-body', axis: 'body', to: ['vitality', 'celerity', 'meditation'],
+  { id: 'attune-body', axis: 'body', to: ['vitality', 'celerity', 'meditation', 'melee-form'],
     jedi: 'Attunement of the Body', sith: 'Attunement of the Flesh' },
+  /**
+   * ══ THE OPEN HAND — V15's melee branch, and why it is on THIS axis ══════
+   *
+   * V15 asks for a melee set that *"can be upgraded to actually be very
+   * effective"* and asks for it here: *"perhaps it would be worth updating the
+   * holocron and incorporating melee in some way, that would make the most
+   * sense right?"* — right, because this tree is where every other piece of
+   * the player's power already comes from, and a second progression beside it
+   * would be a second thing to explain and a second thing to balance.
+   *
+   * On `body` rather than `blade`, and the axis's own line is the argument:
+   * *"Vitality, speed, stamina — and staying on your feet."* Melee is paid for
+   * in stamina and is what you have when the blade is down; it belongs with
+   * the things that are true of you rather than with the things that are true
+   * of the weapon.
+   *
+   * `Melee.FACETS` carries what each one BUYS — the multipliers — because the
+   * numbers belong beside the table they multiply. This is only the shape of
+   * the tree, which is what this file is.
+   */
+  { id: 'melee-form', axis: 'body', to: ['melee-weight', 'melee-wind'],
+    jedi: 'Broken Gate', sith: 'The Closing Fist' },
+  { id: 'melee-weight', axis: 'body', to: ['melee-reach'],
+    jedi: 'Falling Stone', sith: 'The Weight of Anger' },
+  { id: 'melee-wind', axis: 'body', to: ['melee-reach'],
+    jedi: 'Long Breath', sith: 'Breath Without End' },
+  { id: 'melee-reach', axis: 'body', to: [],
+    jedi: 'Open Hand', sith: 'The Hand That Takes' },
   { id: 'vitality', axis: 'body', to: ['secondwind'],
     jedi: 'Vitality', sith: 'Spite' },
   { id: 'celerity', axis: 'body', to: ['momentum'],
@@ -465,7 +493,19 @@ export const FACETS = [
    * throw done with the hand holding the sword, and the throw done with the
    * hand that is not. A paired-blades player who has learned to loose a blade
    * has learned to loose either of them. See Powers.UNBOUND. */
-  { id: 'saberthrow', axis: 'blade', to: ['unbound-throw', 'unbound-throwOff'],
+  /**
+   * AND IT IS THE ONE BLADE FACET THAT LEADS OUT OF THE BLADE, which is why
+   * V15's melee branch hangs off it as well as off `attune-body`.
+   *
+   * A thrown blade is the one moment a swordsman's hands are empty on purpose,
+   * and V15 asks for the set precisely for *"players who lost their saber or
+   * just want to use melee and the force"*. A fighter who has learned to loose
+   * the blade has the best reason in the tree to learn what to do next. It is
+   * the same shape `attune-body`'s own edge already has — one facet reached
+   * from two places — and it is what stops the branch being a body-current
+   * cul-de-sac a blade run can only ever be dealt at random.
+   */
+  { id: 'saberthrow', axis: 'blade', to: ['unbound-throw', 'unbound-throwOff', 'melee-form'],
     jedi: 'Cleaving Throw', sith: 'The Loosed Blade' },
 
   /* ── the unbound tier: one leaf per power, past its current's mastery ──

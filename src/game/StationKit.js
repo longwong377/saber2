@@ -373,6 +373,134 @@ export function signPanel(lines, opts = {}) {
  */
 export const SHAPES = {
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  THE THREE ROOMS THAT ARE NORMALLY IMPORTED, BUILT FROM THE KIT
+   * ══════════════════════════════════════════════════════════════════════
+   *
+   * `#9 The Concourse`, `#41 Command / CIC` and `#54 Observation dome` carry a
+   * `room:` in the gazetteer, so `dressStation` normally stands the decoded
+   * `.smesh` there instead of calling a builder. These three are what it uses
+   * when that mesh is NOT there.
+   *
+   * ── WHY THAT CASE HAS TO EXIST ────────────────────────────────────────
+   *
+   * It threw. `placeRoom` answered a missing room with `throw new Error(...)`,
+   * which is right for a typo in the gazetteer and catastrophic for the only
+   * way it actually happens: an asset that did not arrive. The three rooms are
+   * 1.5 MB of `.smesh` fetched at the door, and a 404, a truncated download or
+   * a cold cache took the whole world down with a stack trace — on the biggest
+   * space in the station, the one every visit starts in. A hall you can walk
+   * through with the wrong ceiling is a bad frame; a black screen is not a
+   * game. `living-force.mjs` boots every mode the game has and hit exactly
+   * this, which is how it was found.
+   *
+   * They are deliberately PLAIN — a shell, the room's own furniture, and the
+   * things §3.1 rule 5 requires (no sealed room, a door where the plan says a
+   * door). They are not trying to be the imported art and they never draw when
+   * it is present.
+   */
+
+  /** #9 The Concourse — a 22 × 67 m barrel hall, open at BOTH ends: the atrium
+   * at one, the ring at the other. Two colonnades and a mezzanine down one
+   * side, which is the shape the Zocalo mesh has and the least of it. */
+  vault(kit, M, p) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['front', 'back'], doorW: 8 });
+    ceiling(kit, M, w, d, h, { ribs: 16 });
+    /* The colonnades, which are what make a hall a hall rather than a corridor
+     * with a high ceiling. */
+    for (const sx of [-1, 1]) {
+      for (let i = 0; i * 6.2 < d - 6; i++) {
+        const z = -d / 2 + 4 + i * 6.2;
+        kit.post(M.hull, 0.9, 0.9, h, sx * (w / 2 - 3.2), h / 2, z, { radial: 8, collide: true });
+        kit.slab(M.strip, 0.5, 0.06, 0.5, sx * (w / 2 - 3.2), h - 0.4, z, { collide: false, bevel: 0 });
+      }
+    }
+    /* The upper walk down ONE LONG SIDE, built here rather than through
+     * `mezzanine`: that helper lays its deck across the room's width, and this
+     * one runs the length of it. Rail toward the hall, stairs at both ends. */
+    const walkD = d - 9, walkW = 4.2, walkX = w / 2 - walkW / 2 - 0.4, walkY = 3.9;
+    kit.slab(M.dark, walkW, 0.34, walkD, walkX, walkY, 0, { collide: true, bevel: 0 });
+    kit.slab(M.wing, 0.12, 0.1, walkD, walkX - walkW / 2, walkY + 1.05, 0, { collide: true, bevel: 0 });
+    for (let i = 0; i * 1.8 < walkD; i++) {
+      kit.slab(M.dark, 0.08, 1.0, 0.08, walkX - walkW / 2, walkY + 0.55, -walkD / 2 + i * 1.8, { collide: false, bevel: 0 });
+    }
+    for (const sz of [-1, 1]) stair(kit, M, 2.4, walkY, walkX, sz * (walkD / 2 - 0.4) + (sz > 0 ? 0 : 3.4));
+    /* Shopfronts down both walls and benches down the middle. */
+    for (const sx of [-1, 1]) {
+      for (let i = 0; i * 9 < d - 10; i++) {
+        const z = -d / 2 + 6 + i * 9;
+        counter(kit, M, 3.4, 0.9, sx * (w / 2 - 1.6), z, sx > 0 ? -Math.PI / 2 : Math.PI / 2);
+        board(kit, M, 2.2, 0.9, sx * (w / 2 - 0.7), 3.0, z, sx > 0 ? -Math.PI / 2 : Math.PI / 2);
+      }
+    }
+    for (let i = -3; i <= 3; i++) {
+      loose(kit, 0, 0, i * 8, (world, q) => boxBody(world, q, M, 3.0, 0.46, 0.8, M.wing, 34, 'bench'));
+    }
+    scatter(kit, 10, w * 0.5, d * 0.8, 31, (x, z) => loose(kit, x, 0, z, (world, q) => makeCrate(world, q, 0.6)));
+  },
+
+  /** #41 Command / CIC — a sunken pit under a rail, screens all round it and a
+   * gallery you brief from. Small, dark and busy. */
+  daispit(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d);
+    walls(kit, M, w, d, h, { open: ['back'], doorW: 3.2, mat: M.dark });
+    ceiling(kit, M, w, d, h, { ribs: 6 });
+    /* The pit, and the rail round it — the rail is the reason you can brief
+     * from the floor and look down at the plot. */
+    sink(kit, M, w - 5.0, d - 5.0, 1.2, ctx);
+    for (const s of [-1, 1]) {
+      kit.slab(M.wing, w - 5.0, 0.1, 0.12, 0, 1.05, s * ((d - 5.0) / 2 + 0.3), { collide: true, bevel: 0 });
+      kit.slab(M.wing, 0.12, 0.1, d - 5.0, s * ((w - 5.0) / 2 + 0.3), 1.05, 0, { collide: true, bevel: 0 });
+    }
+    stair(kit, M, 2.0, 1.2, 0, -(d - 5.0) / 2 + 0.4);
+    /* The plot table in the well, and the consoles round it. */
+    kit.post(M.dark, 2.2, 2.0, 0.5, 0, -0.95, 0, { radial: 10, collide: true });
+    kit.post(M.screen, 3.0, 3.0, 0.16, 0, -0.62, 0, { radial: 14 });
+    /* The consoles stand on the FLOOR at the rail, not in the well: `counter`
+     * builds up from y = 0 and the pit is 1.2 m down, so a console in the well
+     * would be a console buried to its top. You lean on the rail and look
+     * down at the plot, which is what the rail is for. */
+    for (let i = 0; i < 6; i++) {
+      const a = TAU * (i / 6) + 0.3, r = Math.min(w, d) / 2 - 1.4;
+      counter(kit, M, 1.8, 0.8, r * Math.sin(a), r * Math.cos(a), a + Math.PI);
+    }
+    /* The screen wall, which is what a CIC is: everybody looking at the same
+     * thing at the same time. */
+    for (let i = -1; i <= 1; i++) board(kit, M, 3.4, 2.0, i * 3.8, h - 2.6, d / 2 - 0.55, Math.PI);
+    for (let i = 0; i < 4; i++) loose(kit, (i - 1.5) * 2.0, 0, -d / 2 + 1.8, (world, q) => chairBody(world, q, M));
+  },
+
+  /** #54 Observation dome — the hub of the top deck: a round room with the
+   * glass over you and nothing between you and the battle. */
+  glassdome(kit, M, p) {
+    const { w, d, h } = p;
+    const r = Math.min(w, d) / 2;
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 12);
+      kit.slab(M.deep, 2 * r * Math.tan(Math.PI / 12) * 1.06, 0.4, r,
+        r / 2 * Math.sin(a), -0.2, r / 2 * Math.cos(a), { ry: a, collide: true, bevel: 0 });
+    }
+    /* Waist-high wall, then glass: you stand at the edge and look out. */
+    arcWall(kit, M.hull, r, 1.1, 0.5, TAU - 0.5, 20);
+    arcWall(kit, M.glass, r, h - 1.4, 0.5, TAU - 0.5, 20, 1.1, 0.18, false);
+    /* The dome ribs, meeting at a lit boss. */
+    for (let i = 0; i < 12; i++) {
+      const a = TAU * (i / 12);
+      kit.slab(M.hull, 0.22, 0.22, r * 1.15, r / 2 * Math.sin(a), h * 0.75, r / 2 * Math.cos(a),
+        { ry: a, rx: 0.5, collide: false, bevel: 0 });
+    }
+    kit.post(M.strip, 0.7, 0.7, 0.3, 0, h + 0.4, 0, { radial: 10 });
+    /* Seats round the rim, facing out, and a lit table in the middle. */
+    for (let i = 0; i < 8; i++) {
+      const a = TAU * (i / 8) + 0.4;
+      loose(kit, (r - 1.9) * Math.sin(a), 0, (r - 1.9) * Math.cos(a), (world, q) => chairBody(world, q, M));
+    }
+    loose(kit, 0, 0, 0, (world, q) => tableBody(world, q, M, 1.6, 1.6));
+  },
+
   /* ── DECK 40 ──────────────────────────────────────────────────────────── */
 
   /** #7 Arrivals: CURVED. A long shallow crescent, glazed on its outer face,

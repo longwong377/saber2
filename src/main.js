@@ -927,7 +927,10 @@ async function enterHangar(arrival = null, opts = {}) {
      * `deploy` uses, so a mode that owns its ground (Command declares Geonosis)
      * puts Geonosis outside — which is the planet the next run is fought on. */
     const outside = theatreFor(sessionOr('mode'), sessionOr('level'), null);
-    await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label), null,
+    /* The ride back off the station holds the car's own last frame too — the
+     * seam is the same seam and it is one argument (V15 §1.5). */
+    const shot = opts.still ? { still: opts.still } : null;
+    await buildWorld('hangar', (frac, label) => screens.loading?.(frac, label, shot), null,
       { mode: 'hangar', level: 'hangar', allies: 0 },
       /* THE RECORD, not the key: `Hangar.js` imports no levels — see
        * `outsideLevel` — so the world carries what its window is looking at.
@@ -999,6 +1002,25 @@ async function enterHangar(arrival = null, opts = {}) {
      * `level`, and this can never fire.
      */
     world.onDeckLift = (floorRow) => {
+      /**
+       * ══ NO LOADING PLATE BETWEEN THE DECK AND THE STATION (V15 §1.5) ═══
+       *
+       * *"seamlessly should be able to go from our star wars hangar to the
+       * station through just the elevator with no loading screens … should
+       * feel like just going to a different place, not two separate games."*
+       *
+       * The mechanism already exists and was built for the same complaint
+       * about the deploy — "the transition is kind of janky like it isn't
+       * seamless". `captureStill` takes the last rendered frame and
+       * `Screens.loading` shows THAT with a thin bar along the bottom instead
+       * of the menu plate. Here the last rendered frame is the inside of the
+       * car with its doors shut, which is exactly where the player is and
+       * exactly where they will be when the doors open again.
+       *
+       * Captured BEFORE `leaveHangar`, because that disposes the world and
+       * the renderer's last frame with it.
+       */
+      const still = captureStill();
       leaveHangar({ toMenu: false });
       /* `enterStation` reports its own failure — it has a real try/catch round
        * the build and `sayOnTheMenu` is called from inside it. A second report
@@ -1008,7 +1030,7 @@ async function enterHangar(arrival = null, opts = {}) {
        * is lexically inside one. It is a good rule — a writer reachable on an
        * unconditional path is a permanent line under the title of the game —
        * and this is one report, in the place that knows what went wrong. */
-      enterStation(floorRow).catch((e) => console.error('the station failed', e));
+      enterStation(floorRow, { still }).catch((e) => console.error('the station failed', e));
     };
     world.onDeckDeploy = () => {
       /* The seam: a still of the sealed bay for the load, and the player's
@@ -1071,14 +1093,17 @@ async function enterHangar(arrival = null, opts = {}) {
  * and what the place is for: every resident is a real body, every prop is a
  * real prop, and the Force works on all of it.
  */
-async function enterStation(floorRow = null) {
+async function enterStation(floorRow = null, opts = {}) {
   const deck = floorRow?.deck ?? 40;
+  /* The ride's own last frame, so the build happens behind the car rather than
+   * behind the menu plate. See `onDeckLift`. */
+  const shot = opts.still ? { still: opts.still } : null;
   try {
     /* The rooms, before the world. See the note above. */
     const { prepareStation } = await import('./game/Station.js');
-    screens.loading?.(0.05, 'reading the station');
+    screens.loading?.(0.05, 'reading the station', shot);
     await prepareStation();
-    await buildWorld('station', (frac, label) => screens.loading?.(frac, label), null,
+    await buildWorld('station', (frac, label) => screens.loading?.(frac, label, shot), null,
       { mode: 'station', level: 'station', allies: 0 },
       { onWorld: (w) => {
         w._stationFloor = deck;
@@ -1103,9 +1128,12 @@ async function enterStation(floorRow = null) {
     /* The way off it is the same lift, and the same two answers. */
     world.onDeckLeave = () => { leaveStation(); };
     world.onDeckLift = (row) => {
+      /* The same still, the other way and between decks — see `onDeckLift` on
+       * the flight deck's world. */
+      const still = captureStill();
       leaveStation({ toMenu: false });
-      if (row?.level === 'station') enterStation(row).catch((e) => console.error('deck change failed', e));
-      else enterHangar(null).catch((e) => console.error('back to the deck failed', e));
+      if (row?.level === 'station') enterStation(row, { still }).catch((e) => console.error('deck change failed', e));
+      else enterHangar(null, { still }).catch((e) => console.error('back to the deck failed', e));
     };
     /**
      * ══ A KIOSK OPENS A REAL MENU (SHARK §5.2) ════════════════════════════

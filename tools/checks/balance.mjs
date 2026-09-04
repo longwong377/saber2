@@ -352,6 +352,28 @@ export async function run({ check, assert }) {
       'unbound-throw',
       'unbound-throwOff',
       'unbound-unleash',
+      /* ── THE OPEN HAND, AND THIS IS THE CLEANEST BLIND SPOT IN THE LIST ──
+       *
+       * V15's melee branch buys damage, reach, stamina and knockback for a
+       * fighter WITH THE BLADE DOWN. `Melee.strike` refuses outright while
+       * `saber.lit` is true — that is the whole seam, one key meaning two
+       * things — and every fighter in this model duels with a lit blade from
+       * the first pass to the last. So the model does not score these four
+       * badly; it never reaches the branch of the code they multiply, not
+       * once, at any depth or on any seed.
+       *
+       * A channel for them would not be a term this harness is missing. It
+       * would be a second model: an unarmed fighter, a stamina economy that
+       * gates attacks rather than guards, and knockback deciding distance —
+       * none of which this one has, and all of which are what `melee.mjs`
+       * measures directly instead. It holds the numbers this would want: the
+       * chain costs more the further you commit, the finisher fully built does
+       * under 45 against a saber cut that severs, and a strike resolves once
+       * regardless of frame rate. */
+      'melee-form',
+      'melee-weight',
+      'melee-wind',
+      'melee-reach',
     ]);
     const missed = [];
     for (const b of BOONS) {

@@ -267,7 +267,8 @@ async function defaultLevel() {
  * gets and what every one of those streams already treats as "nobody has stated
  * a number".
  */
-export async function bootWorld({ level = null, settings = {}, spawn = true, runSeed = null, run = null } = {}) {
+export async function bootWorld({ level = null, settings = {}, spawn = true, runSeed = null, run = null,
+  onWorld = null } = {}) {
   level = level || await defaultLevel();
   const { World } = await import('../../src/game/World.js');
   const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
@@ -298,6 +299,13 @@ export async function bootWorld({ level = null, settings = {}, spawn = true, run
   if (runSeed !== null && runSeed !== undefined && Number.isFinite(Number(runSeed))) {
     world.runSeed = (Number(runSeed) | 0) >>> 0;
   }
+  /* THE SAME DOOR `main.js` HAS. `buildWorld` hands the fresh World to an
+   * `onWorld` before the level is built, because a few things the DRESSING
+   * reads are properties of this world rather than preferences — the picked
+   * level, and the station's deck. A check needs the same door: putting them
+   * on `settings` instead makes them keys `Settings.js` never defaults, which
+   * `controls.mjs` refuses and is right to. */
+  onWorld?.(world);
   await world.loadLevel(level);
   if (spawn) world.spawnPlayer({ name: s.playerName || 'Jedi', isLocal: true });
   return { world, engine, settings: s };

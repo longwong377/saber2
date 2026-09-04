@@ -76,6 +76,25 @@ const HOLOCRON_PURSE = (() => {
   while (left.size) {
     let best = null, bp = Infinity;
     for (const id of left) { const p = c.costOf(id, taken); if (p < bp) { bp = p; best = id; } }
+    /**
+     * ── AND IT STOPS IF NOTHING IS PRICEABLE ──────────────────────────────
+     *
+     * `costOf` answers `Infinity` for a facet with no card behind it, and
+     * `Infinity < Infinity` is false — so `best` stays null, `left` never
+     * shrinks and this loop spins forever AT MODULE SCOPE. That is not a bug
+     * that shows up as a bad number: it is the game failing to boot, in the
+     * one place where nothing can print, because World.js has not finished
+     * evaluating. It cost an hour and it was invisible in a browser.
+     *
+     * `living-force.mjs` already fails a facet with no card ("facets with no
+     * card behind them"), which is the real guard. This is only so the failure
+     * arrives as a red suite rather than a hang that stops the suite running.
+     */
+    if (best === null) {
+      console.warn('Holocron: no price for', [...left].join(', '),
+        '— these facets have no card in Waves.BOONS. See living-force.mjs.');
+      break;
+    }
     total += bp; taken.add(best); c.bought.push(best); left.delete(best);
   }
   return Math.ceil(total * 1.5 / 100) * 100;

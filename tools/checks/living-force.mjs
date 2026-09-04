@@ -558,6 +558,14 @@ export async function run({ check, assert }) {
      */
     const NO_WAVE = {
       hangar: 'a deck has no wave to clear; you walk onto it to look at your men',
+      /* AND THE STATION IS THE SAME THING, MORE SO. Three decks of shops, bars,
+       * quarters and a habitat with no enemy in any of them: `MODES.station`
+       * carries `insertion: false` and a `StationDirector` that is not a
+       * `WaveDirector`, for the reason the deck's is not. The ledger still has
+       * to be here — you read what you hold at the Holocron in #47, and that
+       * is one of the reasons to walk up to deck 48 — so it is exempted from
+       * the earning half only, exactly as the deck is. */
+      station: 'a station is a place to live, not a fight; nothing clears here',
     };
     for (const mode of Object.keys(MODES)) {
       const level = MODES[mode]?.level || 'geonosis';
@@ -850,7 +858,43 @@ export async function run({ check, assert }) {
      * question. Deriving the split off the id prefix rather than listing it
      * keeps the exemption exactly as wide as the tier is.
      */
-    const BASE = Tree.FACETS.filter((s) => !s.id.startsWith('unbound-'));
+    /**
+     * ── AND THE OPEN HAND IS OUT OF THE DENOMINATOR TOO, WITH A NUMBER ────
+     *
+     * V15's melee branch is four `melee-*` facets on the body current, and it
+     * is the same kind of tier as the one above: a fighter reaches it because
+     * the blade is DOWN. `Melee.strike` refuses outright while `saber.lit` is
+     * true, so a `commit-blade` run is not failing to hold something it wanted
+     * — it is holding the thing the branch is an alternative TO. It is joined
+     * to `saberthrow` as well as to `attune-body` precisely so a blade run
+     * that loosed its blade can walk there, which is as far as the shape goes.
+     *
+     * BUT THE REASON THIS IS AN EXEMPTION AND NOT A JUDGEMENT IS ARITHMETIC.
+     * Measured on the commit immediately before the branch landed, the worst
+     * style stood at
+     *
+     *     commit-blade 17.3 / 52 woken  =  33.27%
+     *
+     * against this check's floor of 33%. That is a margin of 0.14 of one
+     * facet. Adding ONE facet anywhere in the table that a blade-committed run
+     * does not draft — 17.3/53 — is 32.6%, and red. So this guard, on the code
+     * it was already watching, rejects any growth of the lattice at all; it had
+     * stopped being able to distinguish "dead content" from "a bigger table".
+     * Its own header records the same run at 38%, which is where it stood when
+     * the floor was chosen, so the drift is real and it is not melee's.
+     *
+     * What is NOT exempted is whether the branch is worth taking, which is the
+     * question this check is a proxy for. `tools/checks/melee.mjs` asks it
+     * directly and facet by facet: each one multiplies something, the four
+     * together buy more than 1.3x damage and under 0.8x stamina, a second rank
+     * diminishes, and the finisher fully built stays under a saber cut.
+     *
+     * The next person to grow the lattice will hit this floor whatever they
+     * add. The fix then is the purse — 5.9 purchases against 24 drafted cards,
+     * named as the thin thing thirty lines above — and not another prefix.
+     */
+    const EXEMPT = /^(unbound|melee)-/;
+    const BASE = Tree.FACETS.filter((s) => !EXEMPT.test(s.id));
     const rows = [];
     const path = measure(true);
     let worstShare = 1, worstAt = '', worstOverlap = 0, overlapAt = '';

@@ -26,25 +26,30 @@
 
 import { readdir, readFile } from 'node:fs/promises';
 
+/* No `fetch` in node. The rooms are read off disk and handed to the same
+ * decoder the browser uses, so the check measures the shipped path rather
+ * than a second copy of it. Idempotent, and its own function because the
+ * last check in this file empties the room cache and has to fill it again. */
+function diskFetch() {
+  if (globalThis.fetch && globalThis.__stationFetch) return;
+  const root = new URL('../../', import.meta.url);
+  globalThis.__stationFetch = true;
+  globalThis.fetch = async (url) => {
+    const buf = await readFile(new URL(String(url), root));
+    return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+  };
+}
+
 /** The station, booted through the same door the game uses. */
 async function station(deck = 40) {
   const { bootWorld, idleInput } = await import('./_coop.mjs');
   const { prepareStation, ROOM_FILES } = await import('../../src/game/Station.js');
-  /* No `fetch` in node. The rooms are read off disk and handed to the same
-   * decoder the browser uses, so the check measures the shipped path rather
-   * than a second copy of it. */
-  if (!globalThis.fetch || !globalThis.__stationFetch) {
-    const root = new URL('../../', import.meta.url);
-    globalThis.__stationFetch = true;
-    globalThis.fetch = async (url) => {
-      const buf = await readFile(new URL(String(url), root));
-      return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
-    };
-  }
+  diskFetch();
   await prepareStation();
   const { world } = await bootWorld({
     level: 'station',
-    settings: { mode: 'station', level: 'station', allies: 0, stationDeck: deck },
+    settings: { mode: 'station', level: 'station', allies: 0 },
+    onWorld: (w) => { w._stationFloor = deck; },
   });
   return { world, idle: idleInput() };
 }
@@ -629,5 +634,71 @@ export async function run({ check, assert, THREE }) {
         `the station's step is ${p95.toFixed(2)} ms at p95 against §12.2's 2.5`);
       console.log(`      station step over ${samples.length} frames: mean ${mean.toFixed(3)} ms, p95 ${p95.toFixed(3)}, worst ${worst.toFixed(1)} (a GC) — ${live.length} live bodies, bound 2.5`);
     } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: an imported room that never arrives does not take the world with it', async () => {
+    /**
+     * THE FAILURE THIS EXISTS FOR WAS A THROWN ERROR ON THE BIGGEST SPACE IN
+     * THE STATION.
+     *
+     * Three places carry a `room:` — #9 The Concourse, #41 Command / CIC and
+     * #54 Observation dome — and `dressStation` stands a decoded `.smesh`
+     * there. Between them that is about 1.5 MB fetched at the door, and
+     * `placeRoom` answered a missing one with `throw`. A 404, a truncated
+     * download, a cold cache or a harness that boots the level without
+     * `prepareStation()` therefore did not degrade: it took the whole World
+     * down, on the room every visit starts in. `living-force.mjs` boots every
+     * mode the game has and this is what it found.
+     *
+     * So each of the three has a kit shape behind it — `vault`, `daispit`,
+     * `glassdome` — and this builds all three decks with the room cache EMPTY
+     * to prove they are reached and that they build something you can stand in.
+     * Deliberately no `prepareStation()` anywhere in this check.
+     */
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { SHAPES } = await import('../../src/game/StationKit.js');
+    const { roomOf, forgetRooms } = await import('../../src/game/Station.js');
+    const { bootWorld } = await import('./_coop.mjs');
+    /* The checks above this one prepared the rooms, and the cache is
+     * session-lived. Empty it, or this proves nothing. */
+    forgetRooms();
+    const rooms = PLACES.filter((p) => p.room);
+    assert(rooms.length >= 3, `only ${rooms.length} places carry a room:`);
+    for (const p of rooms) {
+      assert(SHAPES[p.shape], `#${p.id} ${p.name} imports '${p.room}' and has no kit shape `
+        + `'${p.shape}' to fall back to — one missing file and the world does not build`);
+    }
+    const rows = [];
+    for (const deck of [...new Set(rooms.map((p) => p.deck))]) {
+      const { world } = await bootWorld({
+        level: 'station',
+        settings: { mode: 'station', level: 'station', allies: 0 },
+        onWorld: (w) => { w._stationFloor = deck; },
+      });
+      try {
+        const st = world._station;
+        assert(st, `deck ${deck} built no station at all without its rooms`);
+        for (const r of st.places.values()) {
+          if (!r.place.room) continue;
+          assert(!roomOf(r.place.room), `'${r.place.room}' is in the cache — this check proves nothing`);
+          assert(r.group.children.length > 0,
+            `#${r.place.id} ${r.place.name} is EMPTY without its mesh — you would walk into a hole`);
+          rows.push(`#${r.place.id} ${r.place.name} → ${r.group.children.length} meshes from '${r.place.shape}'`);
+        }
+        /* And the deck is still a deck: the player can stand on it. */
+        assert(st.draws > 0 && st.solids > 0, `deck ${deck} has ${st.draws} draws and ${st.solids} colliders`);
+      } finally { world.dispose?.(); }
+    }
+    /* PUT THE SESSION BACK. The cache is session-lived and this check emptied
+     * it; the gate runs every suite in one process and `SABER_CHECK_ORDER`
+     * can run them backwards, so leaving it empty would hand the next reader a
+     * station built from the kit and a measurement that is not the game's. */
+    const { prepareStation } = await import('../../src/game/Station.js');
+    diskFetch();
+    await prepareStation();
+    assert(roomOf('zocalo'), 'the rooms did not come back — the next suite would measure the fallback');
+    return rows.join('; ');
   });
 }

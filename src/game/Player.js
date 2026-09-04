@@ -44,6 +44,10 @@ import { shakeNerve } from './Nerve.js';
  * nothing from this file, so the edge is one-way, the same shape the DeckEdit
  * import below has. */
 import { stationKey, namingStation } from './Station.js';
+/* V15 §3's melee set. A leaf: it reads a Player and writes damage through the
+ * doors that already exist (`Enemy.damage` with kind 'melee', `addShove`), and
+ * imports nothing from this file. */
+import { strike as meleeStrike, stepMelee, poseMelee } from './Melee.js';
 import { focusKey as deckFocus, wheelEdit as deckWheel,
          naming as deckNaming, beginNaming as deckBeginNaming,
          commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
@@ -3065,6 +3069,17 @@ export function defaultBoonMods() {
     repulse: false, throwPierce: false, doubleJump: false, lifesteal: 0,
     /** Swings per second, as a multiplier on OVERHEAD.cooldown. See Cadence. */
     attackRate: 1,
+    /**
+     * ── THE OPEN HAND, V15's melee branch ─────────────────────────────────
+     *
+     * Seven multipliers, identity 1, all read in exactly one place —
+     * `Melee.meleeMods`, which turns them into the numbers a strike is dealt
+     * with. They are declared HERE rather than kept on the instance for the
+     * reason this table's header gives: a boon that writes a key Player never
+     * declares is a key the next reader gets `undefined` from.
+     */
+    meleeSpeed: 1, meleeChain: 1, meleeDamage: 1, meleeImpulse: 1,
+    meleeStamina: 1, meleeReach: 1, meleeStagger: 1,
     /** Set by the conditional cards; each has a reader in the technique layer. */
     riposteWindow: 1, riposteCut: 1, forceRegen: 1, encircle: 0, ferocity: 0,
     conduit: 0, secondWind: 0, fury: 0, steadfast: 0, sunderShock: 0,
@@ -4760,7 +4775,21 @@ export class Player {
      * the air" is already an unambiguous input and a key nobody can find is a
      * feature nobody has. The controller runs its thrust envelope on the same
      * press, which is right: the blade leads the fall. */
-    if (input.actHit('thrust')) this._tryDive(ctx);
+    /**
+     * ══ AND WITH THE BLADE DOWN, `thrust` IS A FIST (V15 §3) ═════════════
+     *
+     * One key, one meaning at a time — the pattern this file's own note names
+     * `swap`, `drive`, `hurl` and `throw` already using four times over, and
+     * the only pattern available: `controls.mjs` has refused three attempts to
+     * add a row to `Bindings.js`, and a key nobody can find is a feature
+     * nobody has.
+     *
+     * It also says the right thing about the fantasy. You do not press a melee
+     * button; you put the saber away and your hands come up.
+     */
+    if (!this.saber?.lit && !this.gripBody && !this.gripEnemy) {
+      if (input.actHit('thrust')) { meleeStrike(this); return; }
+    } else if (input.actHit('thrust')) this._tryDive(ctx);
     this._stratagemInput(input, ctx);
   }
 
@@ -6320,6 +6349,22 @@ export class Player {
       accelForward: clamp(speed / 8, 0, 1),
       accelStrafe: 0,
     });
+    /**
+     * ══ AND THE STRIKE OVERRIDES ONE LIMB OF IT (V15 §3) ═════════════════
+     *
+     * After the animator, which is the same order `Parade.applySalute` uses
+     * and for its reason: the gait puts the body where it is, and one limb is
+     * then taken off it and IK'd to the strike. Before it, the gait would
+     * overwrite the punch on the frame it was thrown.
+     *
+     * `stepMelee` advances the strike and resolves its live moment; `poseMelee`
+     * is what you see. Both early-out on a fighter with no strike running,
+     * which is every frame of every other mode.
+     */
+    if (this._melee) {
+      stepMelee(this, dt, ctx);
+      poseMelee(this);
+    }
     this.camera.advanceEye(dt, this.animator.pelvis);
     this._spinBody(dt);
   }

@@ -238,6 +238,18 @@ export async function prepareStation() {
 /** A decoded room, or null if `prepareStation` has not run. */
 export function roomOf(name) { return _rooms.get(name) || null; }
 
+/**
+ * Forget the decoded rooms.
+ *
+ * The cache is session-lived on purpose — `StationMesh.loadRoom` keeps the
+ * decoded geometry so a second visit to the station is not a second 1.5 MB
+ * decode — and nothing in normal play drops it. This exists so a check can
+ * build the station as it looks when the meshes DID NOT ARRIVE, which is the
+ * case `SHAPES.vault`, `.daispit` and `.glassdome` are there for and the only
+ * way to reach it without breaking the network.
+ */
+export function forgetRooms() { _rooms.clear(); }
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE DRUM                                                                  */
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -423,8 +435,13 @@ function buildLobbies(kit, M, deck) {
  * hall opens onto the atrium at one end and onto the ring at the other, and
  * a sealed room would break §3.1 rule 5.
  */
+/** Which rooms have already reported themselves missing. See `dressStation`. */
+const _warnedRoom = new Set();
+
 function placeRoom(world, group, place, opts = {}) {
   const room = roomOf(place.room);
+  /* The caller checks `roomOf` first and builds from the kit when it is empty;
+   * reaching here with no room means somebody called this directly. */
   if (!room) throw new Error(`Station: room '${place.room}' was not prepared — call prepareStation() first`);
   const M = stationMats(place.deck);
   const drop = new Set(opts.drop || []);
@@ -606,12 +623,22 @@ function activeFloorAt(world, x, z) {
  * door and the rooms are decoded.
  */
 export function dressStation(world) {
-  /* WHICH DECK. `main.js` writes `_stationFloor` through `buildWorld`'s
+  /**
+   * WHICH DECK. `main.js` writes `_stationFloor` through `buildWorld`'s
    * `onWorld` before the level is built — the same door the deck's own
    * `_pickedLevel` comes through, and for the same reason: it is read by the
-   * dressing, which runs after. A check with no `onWorld` says it in the
-   * settings instead. */
-  const deck = world._stationFloor ?? world.settings?.stationDeck ?? 40;
+   * dressing, which runs after.
+   *
+   * ── AND IT IS NOT A SETTING ───────────────────────────────────────────
+   *
+   * It was `settings.stationDeck` for one commit, so that a check could pick a
+   * deck without an `onWorld`. `controls.mjs` is right to refuse that: a key on
+   * `settings` that `Settings.js` does not default is invisible to every guard
+   * in that file — no control, no reader declaration, and nothing complains.
+   * A deck is a property of THIS world, like `_pickedLevel`, so it lives where
+   * `_pickedLevel` lives and a check writes it the same way.
+   */
+  const deck = world._stationFloor ?? 40;
   const M = stationMats(deck);
   const st = {
     deck,
@@ -661,7 +688,7 @@ export function dressStation(world) {
     group.name = `station-place-${place.id}`;
     world.scene.add(group);
     st.places.set(place.id, { place, group, lit: true });
-    if (place.room) {
+    if (place.room && roomOf(place.room)) {
       st.tris += placeRoom(world, group, place, {
         /* The Zocalo's end bulkheads come off: the hall opens onto the atrium
          * at its inner end and onto the ring at its outer, and §3.1 rule 5
@@ -670,6 +697,31 @@ export function dressStation(world) {
       });
       st.solids += roomColliders(world, place, { openEnds: place.room === 'zocalo' });
       st.draws += group.children.length;
+    } else if (place.room) {
+      /**
+       * ── THE MESH DID NOT ARRIVE, AND THE STATION STILL STANDS ───────────
+       *
+       * The three imported rooms are 1.5 MB of `.smesh` fetched at the door.
+       * This branch used to be a `throw` inside `placeRoom` — correct for a
+       * typo in the gazetteer, catastrophic for the way it actually happens: a
+       * 404, a truncated download, a cold cache, a harness that boots the
+       * level without `prepareStation()`. One missing file took the whole
+       * world down, on the biggest space in the station.
+       *
+       * So the kit builds it instead (`SHAPES.vault`, `.daispit`, `.glassdome`),
+       * and the player walks through a plainer room rather than into a stack
+       * trace. Said ONCE per room per session, because a warning per place per
+       * visit is a warning nobody reads.
+       */
+      if (!_warnedRoom.has(place.room)) {
+        _warnedRoom.add(place.room);
+        console.warn(`Station: room '${place.room}' did not load — #${place.id} `
+          + `${place.name} is built from the kit instead.`);
+      }
+      const built = buildPlace(world, group, place, M, st);
+      st.draws += built.draws;
+      st.tris += built.triangles;
+      st.solids += built.boxes;
     } else {
       const built = buildPlace(world, group, place, M, st);
       st.draws += built.draws;
