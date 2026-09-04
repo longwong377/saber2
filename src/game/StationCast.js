@@ -52,6 +52,11 @@
 /* ARCHETYPES lives in Enemy.js and TOUGHNESS in Combat.js — the same two
  * edges `CompanionKinds.js` has, and for its reason: `spawnEnemy` indexes
  * that table, so a body that is not in it cannot be spawned. */
+/* CompanionKinds assigns four of the bodies this file's Borz rows point at —
+ * the reprogrammed B1 and the tooka among them — so it has to have run before
+ *  can resolve one. Imported for the side effect, which is the
+ * same edge Levels.js has on Hangar.js and for the same reason. */
+import './CompanionKinds.js';
 import { ARCHETYPES } from './Enemy.js';
 import { TOUGHNESS } from './Combat.js';
 import { buildJedi } from './Bodies.js';
@@ -825,21 +830,74 @@ for (const S of SPECIES) {
  * in the cantina.
  */
 export const BORZ_RESIDENTS = [
-  { archetype: 'trooper', kind: 'Clone crew', home: 29, job: 'dockworker', haunt: 14, why: 'off duty and unarmed' },
-  { archetype: 'medic', kind: 'Medic', home: 29, job: 'medical', haunt: 43 },
-  { archetype: 'jedi', kind: 'Jedi', home: 30, job: 'diplomat', haunt: 22 },
-  { archetype: 'acolyte', kind: 'Sith acolyte', home: 38, job: 'visitor', haunt: 14, why: 'drinking alone — §3.2 #14 says so by name' },
-  { archetype: 'wookiee', kind: 'Wookiee', home: 38, job: 'merchant', haunt: 10, why: 'the Forge\'s smith' },
-  { archetype: 'astromech', kind: 'Astromech', home: 51, job: 'engineer', haunt: 51 },
-  { archetype: 'b1c', kind: 'Reprogrammed B1', home: 51, job: 'service', haunt: 25 },
-  { archetype: 'bodyguard', kind: 'Bodyguard', home: 30, job: 'security', haunt: 24 },
-  { archetype: 'geonosian', kind: 'Geonosian', home: 38, job: 'industrial', haunt: 50 },
-  /* THE ONES THAT DECLINE, and each says why (§3.3: "`resident: false` with a
-   * reason"). A body that cannot be off duty is not a resident. */
-  { archetype: 'droideka', resident: false, why: 'a droideka does not drink in the cantina — it has no off-duty state at all' },
-  { archetype: 'b2', resident: false, why: 'a battle droid with no reprogrammed row is a weapon, and §3.3\'s filter is "unarmed"' },
-  { archetype: 'walker', resident: false, why: 'it does not fit the doors, which is body.py\'s own test for a resident' },
+  /**
+   * ══ OFF DUTY IS A COSTUME, NOT A NEW BODY ═══════════════════════════════
+   *
+   * V15: *"all the cute droids and stuff we have in our hangar mixed in with
+   * the species … not in jedi clothes obviously, they would have to have
+   * unique non-jedi clothing."*
+   *
+   * So a row says which BODY it uses and, if it is a humanoid, what it is
+   * wearing when it is not working. A clone off duty is not in plastoid — he
+   * is a man in fatigues, which is `buildJedi` on the human row with a
+   * different palette and nothing else. That is the whole cost of the ask.
+   *
+   * Four rows keep their own builder, because for those four the BODY IS THE
+   * IDENTITY: a Wookiee off duty is still a Wookiee, an astromech is a droid
+   * whatever it is doing, and a Geonosian is not a man in different clothes.
+   * `own: true` marks them.
+   */
+  { id: 'crew', label: 'Clone crew', species: 'human', home: 29, job: 'dockworker', haunt: 14,
+    robe: { outer: 0x54604a, inner: 0x8a967c, trim: 0x2e352a },
+    why: 'off duty and unarmed — fatigues, not plastoid' },
+  { id: 'medic', label: 'Medic', species: 'human', home: 29, job: 'medical', haunt: 43,
+    robe: { outer: 0xe0e4e6, inner: 0xf2f4f5, trim: 0xb03434 } },
+  { id: 'pilot', label: 'Pilot', species: 'human', home: 30, job: 'traffic', haunt: 3,
+    robe: { outer: 0xd06a2a, inner: 0xe8974e, trim: 0x3a2a1c },
+    why: 'the ready room’s orange, which is a flight suit and reads as one' },
+  { id: 'jedi', label: 'Jedi', species: 'human', home: 30, job: 'diplomat', haunt: 22,
+    robe: { outer: 0x9d8567, inner: 0xd8c9a8, trim: 0x5d4b34 },
+    why: 'robes ARE a Jedi’s civilian dress — this row is the one exception and says so' },
+  { id: 'acolyte', label: 'Sith acolyte', species: 'human', home: 38, job: 'visitor', haunt: 14,
+    robe: { outer: 0x1a1b20, inner: 0x2e3038, trim: 0x0c0d10 },
+    why: 'drinking alone — §3.2 #14 names them' },
+  { id: 'officer', label: 'Officer', species: 'human', home: 30, job: 'command', haunt: 41,
+    robe: { outer: 0x2c3340, inner: 0x4e5768, trim: 0x8a7038 } },
+  { id: 'guard', label: 'Station guard', species: 'human', home: 29, job: 'security', haunt: 24,
+    robe: { outer: 0x33383f, inner: 0x585f68, trim: 0x1a1d21 } },
+  { id: 'engineer', label: 'Engineer', species: 'human', home: 29, job: 'engineer', haunt: 48,
+    robe: { outer: 0x6a5a2e, inner: 0x9c8848, trim: 0x39301a } },
+  /* ── AND THE FOUR WHOSE BODY IS THE IDENTITY. */
+  { id: 'wookiee', label: 'Wookiee', own: 'wook', home: 38, job: 'merchant', haunt: 10,
+    why: 'the Forge’s smith — §3.2 #10 names them' },
+  { id: 'astro', label: 'Astromech', own: 'astro', home: 51, job: 'engineer', haunt: 51 },
+  { id: 'b1c', label: 'Reprogrammed B1', own: 'b1c', home: 51, job: 'service', haunt: 25 },
+  { id: 'geo', label: 'Geonosian worker', own: 'tuk', home: 38, job: 'industrial', haunt: 50 },
+  /* ── THE ONES THAT DECLINE, and each says why (§3.3: "`resident: false` with
+   * a reason"). A body that cannot be off duty is not a resident. */
+  { id: 'droideka', resident: false, why: 'a droideka does not drink in the cantina — it has no off-duty state at all' },
+  { id: 'b2', resident: false, why: 'a battle droid with no reprogrammed row is a weapon, and §3.3’s filter is "unarmed"' },
+  { id: 'walker', resident: false, why: 'it does not fit the doors, which is body.py’s own test for a resident' },
 ];
+
+/**
+ * The archetype a Borz row builds through. The eight humanoid rows get one
+ * each — same body, different clothes — and the four `own` rows point at the
+ * archetype they already have.
+ */
+export function borzArchetype(row) { return row.own || `res_borz_${row.id}`; }
+
+/** Every Borz row that actually lives here, by the place it is found in. */
+export const BORZ_BY_PLACE = new Map();
+for (const r of BORZ_RESIDENTS) {
+  if (r.resident === false) continue;
+  for (const where of [r.home, r.haunt]) {
+    if (!where) continue;
+    if (!BORZ_BY_PLACE.has(where)) BORZ_BY_PLACE.set(where, []);
+    const list = BORZ_BY_PLACE.get(where);
+    if (!list.includes(r)) list.push(r);
+  }
+}
 
 /**
  * ══ THE MODE CONTRACT (§10) ═══════════════════════════════════════════════
@@ -869,12 +927,34 @@ export function residents() {
   for (const r of BORZ_RESIDENTS) {
     if (r.resident === false) continue;
     out.push({
-      builder: r.archetype, species: 'borz', names: 'human',
+      builder: borzArchetype(r), species: r.species || 'borz', names: 'human',
       job: r.job, home: r.home, haunt: r.haunt, rhythm: 'human',
     });
   }
   for (const rows of MANIFESTS.values()) for (const r of rows) out.push(r);
   return out;
+}
+
+/**
+ * ══ AND THE BORZ CAST'S OWN EIGHT ═════════════════════════════════════════
+ *
+ * One archetype per humanoid Borz row: the same `buildJedi` chassis on the
+ * human species row, with that row's off-duty palette. Not a new body, not a
+ * new builder, and fenced exactly as the fifteen species are — a clone in
+ * fatigues must be no more composable by a wave than a Narn is.
+ */
+for (const R of BORZ_RESIDENTS) {
+  if (R.resident === false || R.own) continue;
+  const sp = SPECIES_BY.get(R.species || 'human');
+  STATION_UNITS[`res_borz_${R.id}`] = {
+    label: R.label,
+    build: (o = {}) => buildJedi({ ...o, species: sp.row, robe: R.robe, hood: false }),
+    scale: 1.0, hp: 60, mass: 72, speed: 3.0,
+    toughness: TOUGHNESS.flesh, melee: false, damage: 0,
+    preferred: [1.4, 2.8],
+    hipHeight: 0.95,
+    resident: true, score: 0, threat: 0, unlockAt: 99,
+  };
 }
 
 /**

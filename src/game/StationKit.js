@@ -291,6 +291,76 @@ function scatter(kit, n, w, d, seed, make) {
   }
 }
 
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  TEXT ON A SURFACE — §14's boards, signs and rolls                         */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ A PANEL WITH WORDS ON IT ══════════════════════════════════════════════
+ *
+ * §14: *"Names from `names.py` on a nameplate when you look at someone"*, and
+ * V15 wants the station's own name on every board that names it. Both need
+ * text on geometry, and this engine already has exactly one way to do that —
+ * `DeckLift.makeReadout`'s canvas texture — so this is that, generalised.
+ *
+ * TWO DIFFERENCES FROM THE LIFT'S, and both are §9.1:
+ *
+ *   The lift's readout carries `saberNoInk`, because it is a bright screen in
+ *   a dark car and the ink pass would ring it. §9.1 forbids that inside a
+ *   room, so these are INKED, which is right: a departures board is a panel
+ *   with a frame and the frame should be drawn.
+ *
+ *   It is NAMED `station-sign-*`. `station.mjs` asserts every material in a
+ *   place matches the engine's own naming, and an unnamed material is how a
+ *   loader's would arrive.
+ *
+ * Headless-safe: with no `document` there is no canvas, and the material falls
+ * back to a flat panel. Every check in this tree runs that way.
+ */
+export function signPanel(lines, opts = {}) {
+  const W = opts.px || 512, H = opts.pyx || 256;
+  const canvas = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+  if (canvas) { canvas.width = W; canvas.height = H; }
+  const ctx = canvas?.getContext?.('2d') || null;
+  const tex = canvas ? new THREE.CanvasTexture(canvas) : null;
+  if (tex) { tex.colorSpace = THREE.SRGBColorSpace; tex.minFilter = THREE.LinearFilter; }
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex, color: tex ? 0xffffff : (opts.ink || 0xffd9a0), toneMapped: false,
+  });
+  mat.name = `station-sign-${opts.name || 'panel'}`;
+  mat.userData.key = 'sign';
+  const panel = {
+    material: mat, texture: tex,
+    /** Redraw. Cheap and idempotent: it early-outs on identical text. */
+    draw(rows) {
+      const key = rows.join('\u0001');
+      /* The rows are KEPT, so a caller that changes one line — the station's
+       * name, on every board at once — does not have to know how the rest of
+       * the panel was laid out. */
+      panel._rows = rows;
+      if (key === panel._key || !ctx) { panel._key = key; return panel; }
+      panel._key = key;
+      ctx.fillStyle = opts.bg || '#0d0a07';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = opts.align || 'center';
+      ctx.textBaseline = 'middle';
+      const x = opts.align === 'left' ? 24 : W / 2;
+      const n = rows.length || 1;
+      for (let i = 0; i < rows.length; i++) {
+        const big = i === 0 && opts.head !== false;
+        ctx.fillStyle = big ? (opts.head1 || '#ffd9a0') : (opts.ink2 || '#c9a06a');
+        ctx.font = `bold ${big ? Math.round(H / 3.4) : Math.round(H / (n + 2.2))}px "Courier New", monospace`;
+        ctx.fillText(String(rows[i]).toUpperCase(), x, (H * (i + 0.85)) / (n + 0.7));
+      }
+      if (tex) tex.needsUpdate = true;
+      return panel;
+    },
+  };
+  panel.draw(lines || ['']);
+  return panel;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE PLANS — one per shape, and no two alike                               */
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -708,6 +778,40 @@ export const SHAPES = {
     }
     kit.slab(M.strip, w - 1.4, 0.08, 0.14, 0, 3.5, d / 2 - 0.5, { collide: false, bevel: 0 });
     counter(kit, M, 1.4, 0.7, w / 2 - 1.1, -d / 2 + 1.0, 0, 1.0);
+  },
+
+  /** #56 The Standing: an OBELISK. A tall narrow hall with one object in it,
+   * three decks high, running up through a cut in the soffit — so you see the
+   * top of it from the Living deck's balcony and the whole of it from the
+   * Concourse floor. Four cut faces, and it turns. */
+  obelisk(kit, M, p, ctx) {
+    const { w, d, h } = p;
+    floor(kit, M, w, d, 0, M.dark);
+    /* Three walls and a doorway; NO ceiling — the cut is what makes the
+     * obelisk visible from two other decks, and §3.1 rule 5 wants the window
+     * onto another place to be real rather than described. */
+    walls(kit, M, w, d, 7.4, { doorW: w - 3.4, mat: M.hull });
+    for (const s of [-1, 1]) {
+      kit.slab(M.dark, w + 0.8, 0.5, 1.6, 0, 7.6, s * (d / 2 - 0.8), { collide: true, bevel: 0 });
+    }
+    /* The shaft the obelisk stands in, up through decks 44 and 48: four
+     * corner piers so the cut reads as structure rather than as a hole
+     * somebody forgot to close. */
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        kit.slab(M.hull, 0.9, h - 7.4, 0.9, sx * (w / 2 - 0.5), 7.4 + (h - 7.4) / 2, sz * (d / 2 - 0.5), { collide: true, bevel: 0 });
+      }
+    }
+    /* A ring of light at each deck the cut passes, so the height is READ. */
+    for (let i = 0; i < 2; i++) {
+      const y = 12.5 * (i + 1);
+      for (const sx of [-1, 1]) kit.slab(M.strip, 0.12, 0.12, d - 1.4, sx * (w / 2 - 0.9), y, 0, { collide: false, bevel: 0 });
+    }
+    /* THE OBELISK. A tapering four-sided column on a plinth, with a lit
+     * face-plate on each side that `StationLife` writes the rolls onto. */
+    kit.slab(M.dark, 4.2, 0.6, 4.2, 0, 0.3, 0, { collide: true, bevel: 0 });
+    kit.slab(M.strip, 4.6, 0.08, 4.6, 0, 0.02, 0, { collide: false, bevel: 0 });
+    ctx.obelisk = { x: p.x, z: p.z, y: floorOf(p), yaw: p.yaw, h: h - 3 };
   },
 
   /* ── DECK 44 ──────────────────────────────────────────────────────────── */
@@ -1492,6 +1596,8 @@ export function buildPlace(world, group, place, M, st) {
      * their room without a second table of coordinates (§2.3). */
     home: null,
     habitat: null,
+    /** #56's column, handed back so `StationLife` can write the rolls on it. */
+    obelisk: null,
   };
   fn(kit, M, place, ctx, world);
   const y = floorOf(place);
@@ -1507,6 +1613,7 @@ export function buildPlace(world, group, place, M, st) {
     st.sunk.push({ x0: place.x - hx, x1: place.x + hx, z0: place.z - hz, z1: place.z + hz, dy: -s.depth });
   }
   if (ctx.home) st.home = ctx.home;
+  if (ctx.obelisk) st.obelisk = { ...ctx.obelisk, group };
   if (ctx.habitat) st.habitat = ctx.habitat;
   if (ctx.trees.length) (st.trees ||= []).push({ place, spec: ctx.trees[0] });
   return { draws: out.meshes.length, triangles: out.triangles, boxes: out.boxes?.length || 0 };

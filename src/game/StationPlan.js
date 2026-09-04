@@ -303,6 +303,23 @@ export const PLACES = [
     band: 'concourse', side: -1, along: 52, w: 11, d: 6, h: 3.4, peak: 10, heads: 2,
   },
 
+  {
+    /**
+     * ══ #56, ADDED BY V15 ═══════════════════════════════════════════════
+     *
+     * The player asked for a leaderboard that persists between runs and said
+     * it should be a PLACE you visit rather than a screen. `V15.md` §1.2 and
+     * `SHARK.md` §16 carry the argument; the short of it is that a screen is
+     * a menu with a wall behind it, and a thing you walk round that is taller
+     * than the room it is in and visible from two other decks is a landmark —
+     * which is what §3.1 rule 1 says this station needs more of.
+     */
+    id: 56, deck: 40, name: 'The Standing', shape: 'obelisk',
+    look: 'a tall narrow hall off the Concourse’s east gallery with a black obelisk three decks high running up through a cut in the soffit; four cut faces, turning slowly; your own row lit and everyone else’s engraved',
+    who: 'a few reading it at any hour, a crowd after a run files',
+    idle: 'rows change as runs file', verb: 'read the rolls — find your own row',
+    band: 'concourse', side: 1, along: 52, w: 12, d: 11, h: 26, peak: 15, heads: 6,
+  },
   /* ══ DECK 44 — THE LIVING DECK. Cool: white, timber, blue-white. ═════ */
   {
     id: 26, deck: 44, name: 'The Promenade', shape: 'windowring',

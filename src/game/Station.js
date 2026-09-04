@@ -52,6 +52,8 @@ import { PLACES, PLACE, DECK_Y, DRUM, CORRIDOR, SHAFTS, placesOn, floorOf } from
 import { buildPlace, SHAPES } from './StationKit.js';
 import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLift.js';
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
+import { dressObelisk, dressBoards, stepBoards } from './StationBoards.js';
+import { stationHour, setStationHour, stationName, setStationName, standing, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -622,8 +624,17 @@ export function dressStation(world) {
     promptedAt: undefined,
     tris: 0,
     solids: 0,
-    /** The station clock (§3.4). One game hour per two real minutes. */
-    hour: world.run?.stationHour ?? 9,
+    /**
+     * The station clock (§3.4). One game hour per two real minutes, and it
+     * comes out of the station's own fold rather than the run's — §14: "a
+     * return visit is the same station later in the day", and a run's bag
+     * does not survive one.
+     */
+    hour: world.run?.stationHour ?? stationHour(),
+    /** What the player calls this place (V15 §1.1). Read by every board. */
+    name: stationName(),
+    /** The height of this deck, for anything placing itself against it. */
+    deckY: DECK_Y[deck] ?? 0,
   };
   world._station = st;
   world._deckFaction = factionOf(world);
@@ -698,6 +709,12 @@ export function dressStation(world) {
    * a market rather than into an empty hall. */
   dressStationLife(world, st);
   if (deck === 44) dressTram(world, st, M);
+
+  /* ── AND THE THINGS WITH WORDS ON THEM (V15 §1.1, §1.2). The obelisk is a
+   * landmark before it is a leaderboard, so it is dressed with the room; the
+   * boards are what make the station's name worth having. */
+  dressObelisk(world, st, M);
+  dressBoards(world, st, M);
 
   /* ── AND SOMETHING TO THROW, from the first frame (§6 step 1). The station
    * is a sandbox and the cheapest proof of it is a crate in your hands. */
@@ -807,6 +824,93 @@ export class StationDirector {
  * deck file already keeps (§12.3), and what makes this affordable at all.
  */
 
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  NAMING IT (V15 §1.1)                                                      */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ YOU TYPE IT STANDING IN FRONT OF THE OBELISK ══════════════════════════
+ *
+ * V15: *"you should be able to name your station."* Where you do it is the
+ * decision, and it is at #56 — the thing that carries your standing is the
+ * thing you put your name on. Not a menu field: the whole argument for the
+ * obelisk being a place rather than a screen applies to this too.
+ *
+ * The mechanism is `DeckEdit`'s, which is this game's own idiom for typing a
+ * name in the world — a document keydown listener, a text buffer, the banner
+ * as the field, Enter to commit and Escape to drop it. It is written again
+ * here rather than generalised out of that file because `DeckEdit`'s is bound
+ * to a HELD MAN at every line (`st.held.rec.designation`, `applyEdit`), and
+ * pulling a shared naming widget out of it would be a refactor of the deck's
+ * editor to buy sixty lines — which is the trade §2.4 warns about in the
+ * other direction.
+ *
+ * THE SUPPRESSION IS THE SAME `return` DeckEdit uses, and for its reason: the
+ * letters a player is typing into a station name are also W, A, S and D.
+ */
+export function namingStation(world) { return !!world?._station?.naming; }
+
+export function beginStationName(world) {
+  const st = world?._station;
+  if (!st) return false;
+  if (st.naming) { endStationName(world); return false; }
+  st.naming = { text: st.name === DEFAULT_NAME ? '' : st.name };
+  const d = globalThis.document;
+  if (d?.addEventListener) {
+    st._keys = (e) => {
+      if (!st.naming) return;
+      e.preventDefault?.();
+      typeStationName(world, e.key);
+    };
+    d.addEventListener('keydown', st._keys);
+  }
+  world.notify?.('NAME THE STATION', `${st.naming.text}_  —  enter to set, escape to leave it`);
+  return true;
+}
+
+/** One keystroke. Published so a check can drive it with no DOM. */
+export function typeStationName(world, key) {
+  const st = world?._station;
+  if (!st?.naming) return false;
+  if (key === 'Enter') { commitStationName(world); return true; }
+  if (key === 'Escape') { endStationName(world); return true; }
+  if (key === 'Backspace') st.naming.text = st.naming.text.slice(0, -1);
+  /* One printable character at a time. `key` is 'Shift', 'ArrowLeft' and forty
+   * other words for a keystroke that is not a letter, and a length test is the
+   * whole filter — the same one `DeckEdit.typeName` uses. */
+  else if (key && key.length === 1 && st.naming.text.length < NAME_MAX) st.naming.text += key;
+  else return false;
+  world.notify?.('NAME THE STATION', `${st.naming.text}_  —  enter to set, escape to leave it`);
+  return true;
+}
+
+export function commitStationName(world) {
+  const st = world?._station;
+  if (!st?.naming) return null;
+  const text = st.naming.text;
+  endStationName(world);
+  st.name = setStationName(text);
+  /* Every board reads the name at dress, so they are re-cut here rather than
+   * polled — a sign that changes once a session does not want a per-frame
+   * comparison against a string. */
+  for (const b of st.boards || []) {
+    const rows = b.panel._rows;
+    if (rows) b.panel.draw([st.name, ...rows.slice(1)]);
+  }
+  world.notify?.(st.name.toUpperCase(), 'the boards say so now');
+  return st.name;
+}
+
+function endStationName(world) {
+  const st = world?._station;
+  if (!st) return;
+  st.naming = null;
+  const d = globalThis.document;
+  if (st._keys && d?.removeEventListener) d.removeEventListener('keydown', st._keys);
+  st._keys = null;
+}
+
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE ONE KEY — §14's interact prompt, and §3.2's verb column               */
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -851,6 +955,9 @@ export function placeUnder(world, x, z) {
  * the lobby doors cannot both call the car and open a shop.
  */
 export function stationKey(world) {
+  /* Typing a name eats every key until it is committed or dropped — see the
+   * suppression note over `beginStationName`. */
+  if (namingStation(world)) return true;
   if (liftKey(world)) return true;
   const p = world.player?.position;
   if (!p) return false;
@@ -859,6 +966,8 @@ export function stationKey(world) {
   /* A counter opens the panel it names; everything else answers with its own
    * verb, which is the prompt and, until its system lands, the whole of it. */
   if (place.kiosk && world.onKiosk) { world.onKiosk(place.kiosk); return true; }
+  /* #56 is the one place whose verb writes something. */
+  if (place.id === 56) return beginStationName(world);
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
 }
@@ -889,6 +998,10 @@ export function stepStation(world, dt) {
   st.hour += dt / 120;
   while (st.hour >= 24) st.hour -= 24;
   if (world.run) world.run.stationHour = st.hour;
+  /* Persisted on the hour rather than every frame: §14 wants a return visit to
+   * be later in the same day, not a localStorage write sixty times a second. */
+  if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }
+  stepBoards(world, st, dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

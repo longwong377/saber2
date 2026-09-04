@@ -44,7 +44,7 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { PLACES, PLACE, DECK_Y, DRUM, placesOn, floorOf } from './StationPlan.js';
 import {
   SPECIES_KEYS, SPECIES_BY, RHYTHMS, ROLE_BY, resident, speciesFor, roleFor,
-  residents, frictionBetween,
+  residents, frictionBetween, BORZ_BY_PLACE, borzArchetype, nameFor,
 } from './StationCast.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
@@ -177,6 +177,32 @@ export function occupant(place, i) {
    * THE HOSTEL is the tail (§3.2 #38): the species with no quarter of their
    * own live there, so it cycles them rather than drawing.
    */
+  /**
+   * ══ THE BORZ CAST GETS THE FIRST SLOTS (V15 §1.4) ═══════════════════════
+   *
+   * *"all the cute droids and stuff we have in our hangar mixed in with the
+   * species."* A Borz row names a home and a haunt, and those are the two
+   * places it is found in — so it takes a slot there rather than competing
+   * with a census that would round a single Wookiee smith out of existence.
+   *
+   * FIRST, not scattered, because a slot index is what makes a resident
+   * stable across a despawn: the Forge's smith has to be the same Wookiee
+   * every time you look at the Forge.
+   */
+  const borz = BORZ_BY_PLACE.get(place.id);
+  if (borz && i < borz.length) {
+    const R = borz[i];
+    return {
+      seed, borz: R, archetype: borzArchetype(R),
+      species: R.species || 'borz',
+      name: nameFor(R.species || 'human', seed),
+      role: R.job || 'visitor',
+      stature: 1.75, scale: 1,
+      rhythm: RHYTHMS.human,
+      faction: 'merchants',
+      home: R.home,
+    };
+  }
   const bias = QUARTER_OF[place.id];
   if (bias) return resident(seed, { species: bias });
   if (place.id === 9 && i < RARE.length * 5) {
@@ -292,8 +318,8 @@ export function dressStationLife(world, st) {
   return life;
 }
 
-/** Which archetype builds a given resident row. */
-function archetypeOf(r) { return `res_${r.species}`; }
+/** Which archetype builds a given resident row — a species, or a Borz row. */
+function archetypeOf(r) { return r.archetype || `res_${r.species}`; }
 
 /**
  * ══ RE-SEAT THE POOL ══════════════════════════════════════════════════════
@@ -659,14 +685,19 @@ export function undressStationLife(world) {
 export function census(hour) {
   const byPlace = new Map();
   const bySpecies = new Map(SPECIES_KEYS.map((k) => [k, 0]));
+  /* The Borz cast is counted separately: §3.3 asks for both — every humanoid
+   * kind in Borz AND all fifteen species — and one tally of "residents" would
+   * let either hide the other's absence. */
+  const byBorz = new Map();
   for (const p of PLACES) {
     if (p.external || !p.heads) continue;
     const n = headcount(p, hour);
     byPlace.set(p.id, n);
     for (let i = 0; i < n; i++) {
       const r = p.id === 36 ? { species: METHANE[i % 2] } : occupant(p, i);
+      if (r.borz) { byBorz.set(r.borz.id, (byBorz.get(r.borz.id) || 0) + 1); continue; }
       bySpecies.set(r.species, (bySpecies.get(r.species) || 0) + 1);
     }
   }
-  return { byPlace, bySpecies };
+  return { byPlace, bySpecies, byBorz };
 }

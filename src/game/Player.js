@@ -43,7 +43,7 @@ import { shakeNerve } from './Nerve.js';
 /* The station's interact key — SHARK §14. `Station.js` imports no levels and
  * nothing from this file, so the edge is one-way, the same shape the DeckEdit
  * import below has. */
-import { stationKey } from './Station.js';
+import { stationKey, namingStation } from './Station.js';
 import { focusKey as deckFocus, wheelEdit as deckWheel,
          naming as deckNaming, beginNaming as deckBeginNaming,
          commitName as deckCommitName, holding as deckHolding } from './DeckEdit.js';
@@ -4505,7 +4505,18 @@ export class Player {
      * `STATION_ENABLED` off no world ever has one and this is one property
      * read a frame.
      */
-    if (this.world?._station && input.actHit('focus')) stationKey(this.world);
+    /**
+     * ══ AND WHILE A NAME IS BEING TYPED, NOTHING ELSE READS THE KEYBOARD ══
+     *
+     * The same `return` `DeckEdit`'s naming uses and for its reason: the
+     * letters a player types into a station's name are also W, A, S and D.
+     * `attachKeys` listens on the document and calls `preventDefault`, which
+     * stops the browser scrolling and does nothing about this file's reader.
+     */
+    if (this.world?._station) {
+      if (namingStation(this.world)) return;
+      if (input.actHit('focus')) stationKey(this.world);
+    }
 
     // ── the wheel belongs to whatever is actually being held.
     // SaberController spends it on wrist roll (`rollInput += mouse.wheel*0.55`)
