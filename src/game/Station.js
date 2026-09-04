@@ -58,6 +58,7 @@ import { outsideLevel } from './Hangar.js';
 import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
 import { dressHome, stepHome, leaveHome, undressHome, homeKey } from './Home.js';
 import { TERRAIN_PRESETS } from '../world/Terrain.js';
+import { Warp, canJump } from './Warp.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -259,6 +260,8 @@ export function forgetRooms() { _rooms.clear(); }
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 const TAU = Math.PI * 2;
+/* Scratch for the jump's transit-amber lerp — see `orderJump`. */
+const _warpC = new THREE.Color(), _warpA = new THREE.Color();
 
 /** A ring of slabs approximating an annulus: `n` segments, each a box. */
 function annulus(kit, mat, y, h, r0, r1, n, opts = {}) {
@@ -689,6 +692,10 @@ export function dressStation(world) {
   const M = stationMats(deck);
   const st = {
     deck,
+    /* The deck's nine materials, published so anything that needs to TINT the
+     * station has the same nine and cannot make a tenth — §9.1's whole rule.
+     * `orderJump`'s transit amber is the first reader. */
+    mats: M,
     /** Per-place groups, so §12.3's "places are drawn by their doors" is a
      * `.visible` flag and not a rebuild. */
     places: new Map(),
@@ -889,6 +896,77 @@ export function dressStation(world) {
     makeCrate(world, new THREE.Vector3(x, y + 0.5, z), 0.85);
   }
   return st;
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  ORDER THE JUMP — V16 Lane A1's other half
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `Warp` is a clock and a state machine that imports nothing; this is the
+ * three things it drives, wired to the station that owns them. Keeping the
+ * sequence ignorant of all of this is what makes it drivable in a check with
+ * no world at all, and what makes "there should absolutely not be a loading
+ * screen" a property a check can hold rather than a claim.
+ */
+export function orderJump(world, to) {
+  const gate = canJump(world, to);
+  if (!gate.ok) { world?.notify?.('COMMAND / CIC', gate.why); return false; }
+  const st = world._station;
+  world._warp = new Warp(to, {
+    /* THE SHADER WINDOW. The same call `dressStation` makes, with the new
+     * record — and `outsideLevel` answers it on the far side because
+     * `arrived` below is what moves `_pickedLevel`. */
+    orbit: (level) => {
+      world.engine?.skyDome?.configureOrbit?.({
+        level,
+        terrain: TERRAIN_PRESETS[level?.terrain],
+        faction: world._deckFaction,
+        forward: [0, 0, 1],
+        rise: 0.10,
+      });
+    },
+    /* THE FLEET, struck and re-dressed. `dressDeckBattle` returns early on a
+     * group that is already parented, so the undress is what makes the second
+     * call build the new theatre's ships rather than keeping the old ones. */
+    fleet: (on) => {
+      if (!on) { try { undressDeckBattle(world); } catch {} return; }
+      try { dressDeckBattle(world); } catch {}
+    },
+    /* TRANSIT AMBER, on every deck at once, and it is the deck palette's own
+     * `strip` and `screen` rather than a new material — §9.1 holds during a
+     * jump exactly as it holds standing still. */
+    lights: (k) => {
+      if (!st?.mats) return;
+      const amber = 0xff9a30;
+      for (const key of ['strip', 'screen']) {
+        const m = st.mats[key];
+        if (!m?.color) continue;
+        if (!m.userData.warp0) m.userData.warp0 = m.color.getHex();
+        _warpC.setHex(m.userData.warp0).lerp(_warpA.setHex(amber), k);
+        m.color.copy(_warpC);
+      }
+    },
+    /* THE STARFIELD: how far it is drawn into lines, and how far round the
+     * bearing has swung. Both are uniforms the dome already carries. */
+    stars: (k, swing) => {
+      const u = world.engine?.skyDome?.mat?.uniforms;
+      if (!u) return;
+      if (u.uWarp) u.uWarp.value = k;
+      if (u.uOrbitSpin) u.uOrbitSpin.value = swing;
+    },
+    /* THE DRUM GOES QUIET. `StationAudio` owns the bed; this is how far it is
+     * ducked, and a station at transit stations has stopped talking. */
+    quiet: (k) => { if (st) st.duck = k; },
+    say: (line) => world.notify?.('COMMAND / CIC', line),
+    arrived: (level) => {
+      world._pickedLevel = level;
+      /* AND THE BOARDS SAY IT. The departures board and the four platforms
+       * name the station; where the station IS belongs beside that. */
+      if (st) st.stamp = -1;
+    },
+  });
+  return true;
 }
 
 /** Everything the station made, put down. `StationDirector.dispose` calls it. */
@@ -1163,6 +1241,27 @@ export function stationKey(world) {
    * against `Screens.clear()` running every card's hide on every clear.
    */
   if (place.id === 28 && world.onHabitat) return world.onHabitat() !== false;
+  /**
+   * ── #41 COMMAND / CIC — V16 Lane A1 ─────────────────────────────────────
+   *
+   * *"maybe the command deck or somewhere like that … so you've chosen a
+   * different map for the next mission, before starting a game you have to fly
+   * there."* The plot table is where an order is given, so it is where the
+   * theatre is chosen and where the jump is ordered.
+   *
+   * A KIOSK STILL, and deliberately: #41 already carries `kiosk: 'campaign'`
+   * and the campaign page is the right page — what changes is that choosing a
+   * theatre there now has a consequence in the room. `main.js` answers the
+   * kiosk and hangs the jump off what the player picked, which keeps the
+   * decision on the panel that already presents it and the CONSEQUENCE here.
+   *
+   * While a jump is running the plot table says so rather than reopening: an
+   * order taken twice is the one thing a bridge does not do.
+   */
+  if (place.id === 41 && world._warp && !world._warp.done) {
+    world.notify?.('COMMAND / CIC', 'the jump is under way');
+    return true;
+  }
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
 }
@@ -1204,6 +1303,9 @@ export function stepStation(world, dt) {
    * dressed, so this is unconditional and costs one call on a station whose
    * theatre could not be resolved. */
   stepDeckBattle(world, dt);
+  /* THE JUMP, if one is running. It drives a shader and a fleet and nothing
+   * else, which is why it can run while the player walks about — see Warp.js. */
+  if (world._warp && !world._warp.done) world._warp.step(dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

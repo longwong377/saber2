@@ -1748,7 +1748,36 @@ function showKioskPanel(panelId) {
   if (tab) tab.click();
 }
 
+/**
+ * ══ THE PLOT TABLE, AND WHAT CLOSING IT MEANS — V16 Lane A1 ═══════════════
+ *
+ * *"so you've chosen a different map for the next mission, before starting a
+ * game you have to fly there … you give the order to the captain who then
+ * orders the pilot to fly there."*
+ *
+ * The CHOICE stays on the campaign page, which is the panel that already
+ * presents every theatre and knows which are legal for the mode. What is new
+ * is the CONSEQUENCE: closing the plot table on a station, having picked a
+ * theatre the station is not orbiting, is the order. Nothing else in the game
+ * changes and no page is duplicated.
+ *
+ * WHY ON CLOSE RATHER THAN ON PICK. A player scrolling the campaign list has
+ * not decided anything; a player who scrolled to a theatre and walked away
+ * from the table has. It is also the only moment the station is on screen
+ * again, which is where the sequence has to be watched from.
+ */
+function jumpIfOrdered() {
+  if (!world?._station) return;
+  const want = LEVELS[theatreFor(sessionOr('mode'), sessionOr('level'), null)] || null;
+  if (!want || want === world._pickedLevel) return;
+  import('./game/Station.js').then((S) => S.orderJump?.(world, want)).catch(() => {});
+}
+
 function closeKiosk() {
+  /* THE ORDER, if one was given at the plot table — see `jumpIfOrdered`. Read
+   * BEFORE the flag is cleared, because "was a counter open" is what tells a
+   * deliberate close from `Screens.clear()` sweeping through on a teardown. */
+  if (kioskOpen) jumpIfOrdered();
   kioskOpen = false;
   if (!world) { menu.hideMenu(); return; }
   menu.hideMenu();
