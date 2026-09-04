@@ -62,6 +62,8 @@ import { Warp, canJump } from './Warp.js';
 import { countersAt } from './Vendors.js';
 import { stepMedbay } from './Medbay.js';
 import { pitAtPlace } from './Pits.js';
+import { venueAtPlace, ticketFor, settleTickets } from './Tote.js';
+import { pay, spend } from './Credits.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -1309,12 +1311,64 @@ export function stationKey(world) {
    * something sells it first, and neither of these two rooms does.
    */
   if (pitAtPlace(place.id) && world.onPit) return world.onPit(place.id) !== false;
+  /**
+   * ── #18, #19 AND #20, THE TOTE — V16 Lane D2 ───────────────────────────
+   *
+   * A room with a card on it. AFTER the pits, so `#20`'s own verb — "fight a
+   * bout" — still reaches Lane G's door when one is wired; the Arena's card is
+   * a reading that panel can ask for by name. `#18 The Pit`'s gazetteer verb
+   * has said "watch and bet" since the plan was written, and `#19` is where
+   * the podracing feed plays.
+   *
+   * ONE CALL AND NO STAKE IN IT. Whatever opens is a room you can stand in for
+   * nothing — `Tote.watch` takes a place, a day and an hour and has no
+   * parameter a ticket could hide in.
+   */
+  const tote = venueAtPlace(place.id);
+  if (tote && world.onTote) return world.onTote(tote.id) !== false;
   if (place.id === 41 && world._warp && !world._warp.done) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;
   }
   world.notify?.(place.name.toUpperCase(), place.verb);
   return true;
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+ *  THE WINDOW — the eight lines where the credits actually move
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * `Tote.js` prices a bet and says what a ticket is worth; it holds no balance
+ * and names no wallet word, which is what lets its suite settle a hundred
+ * thousand tickets without a store. The money moves HERE, in the file that
+ * already knows the player is standing at the window, through the one spend
+ * door and the one pay door `Credits.js` exposes.
+ *
+ * ── AND THE CAP IS THE WALLET'S, NOT THE TOTE'S ──────────────────────────
+ *
+ * `Credits.pay` clamps a single payment to `PER_RUN_CAP`. A long-priced winner
+ * is worth more than that, and it is NOT paid — the window returns both what
+ * it owed and what it handed over, so a screen can say so. That is deliberate:
+ * `Progress.js`'s amendment bounds the economy at a run's earnings, and a
+ * betting room that paid round it would be the one place in the game where a
+ * player buys their way past the doctrine. A tote is a thing to do with
+ * credits, not a way to make them.
+ */
+
+/** Strike a ticket and take the money for it. Refuses the way the shop does. */
+export function stakeAtTote(race, bet) {
+  const quote = ticketFor(race, bet);
+  if (!quote.ok) return quote;
+  const paid = spend(quote.ticket.stake, 'tote');
+  if (!paid.ok) return { ok: false, why: paid.why, short: paid.short, ticket: null };
+  return { ok: true, why: null, ticket: quote.ticket, left: paid.left };
+}
+
+/** Settle what is on the record against a result, and hand back the winnings. */
+export function payAtTote(tickets, result) {
+  const ledger = settleTickets(tickets, result);
+  const paid = ledger.returned > 0 ? pay(ledger.returned, 'tote') : 0;
+  return { ...ledger, paid, capped: paid < ledger.returned };
 }
 
 /**
