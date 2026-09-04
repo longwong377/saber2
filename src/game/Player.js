@@ -3641,6 +3641,10 @@ export class Player {
     this.comboTimer = 0;
     this.score = 0;
     this.kills = 0;
+    /* Men pulled off the floor. `World.runStats` sums it and `Credits.EARN`
+     * prices it; declared here so it is a number from the first frame rather
+     * than an `undefined` the first mend creates. */
+    this.saves = 0;
     this.deflects = 0;
     /**
      * STAMINA AND FORCE THIS BLADE HAS SPENT ANSWERING BOLTS, cumulative and
@@ -11189,7 +11193,23 @@ export class Player {
        * one door for that — `_tickGetUp` is the other caller — and it is what
        * `Command.reviveNear` reaches for too, so a mend and a support pod put
        * a body back on its feet the same way. */
-      if (T.actor?.ragdolled) T.recover?.();
+      /**
+       * ── AND A MAN STOOD BACK UP IS A SAVE, WHICH NOTHING COUNTED ───────
+       *
+       * `Credits.EARN.saves` prices this at 14 credits under a header saying
+       * every earn row is *"a number some system already keeps"* — and this one
+       * was not kept by anybody. `payForRun` read `stats?.saves ?? 0` and
+       * `runStats` had no such field, so the row paid zero on every run ever
+       * played and the sentence beside it ("pulling a man out, because the roll
+       * is the point") was describing something the game did not measure.
+       *
+       * A SAVE IS A MAN WHO WAS DOWN AND IS NOW UP, and it is counted here
+       * rather than on the heal because a completed mend on a man who was
+       * merely hurt is a heal. `ragdolled` is the same test `recover` is gated
+       * on, read before the call, so the two cannot disagree about what a save
+       * was.
+       */
+      if (T.actor?.ragdolled) { this.saves = (this.saves | 0) + 1; T.recover?.(); }
       this.world?.notify?.('MENDED', T.trooper?.name || T.A?.label || 'an ally');
     }
   }

@@ -54,40 +54,127 @@ export async function run({ check, assert, near }) {
     }
     assert(JSON.stringify(p) === before, 'buying every keepsake in the game moved a number');
 
-    /* AND EVERY SLOT IT NAMES IS ONE THAT ALREADY EXISTS. A keepsake that
-     * invents a customisation system is a keepsake nothing wears. */
-    const C = await import('../../src/game/Cloth.js');
-    const B = await import('../../src/game/Bodies.js');
     /**
-     * ── THE KNOWN SLOTS ARE READ, NOT TYPED ─────────────────────────────
+     * ══ AND EVERY ROW NAMES A SLOT *AND A VALUE* THE GAME CAN WEAR ═══════
      *
-     * The first cut of this line was a hand-typed set and it refused four
-     * slots that are real — `kama`, `brace`, `helm`, `scorch` — because I had
-     * not thought of them. A list in a check is exactly the thing a check
-     * exists to refuse everywhere else: it goes stale the day somebody adds a
-     * slot, and it fails work that is right.
+     * The clause here used to test the SLOT only, against a set unioned out of
+     * the wardrobe's keys, the trooper kits, both paint vocabularies and the
+     * home catalogue. It was green, and it was green over 23 of the 41 keepsake
+     * rows in the tree, none of which could have been worn by anybody:
      *
-     * So the set is built out of the tables the game actually dresses bodies
-     * from: the wardrobe's own keys, the trooper kit's field names, both paint
-     * vocabularies, and the home catalogue. A keepsake naming a slot outside
-     * ALL of those buys nothing, and that is now a fact rather than my memory.
+     *   three of the four `slot:'home'` rows named furniture that is not one
+     *     of `Home.CATALOGUE`'s ten ids — `cloth`, `banner`, `trophy-skull`;
+     *   `cut-sith` named cape cut `'wrap'`, and `CAPE_CUTS` is cloak/none/
+     *     mantle/travel/court;
+     *   every armourer paint carried a raw hex where `wardrobe.armour` stores
+     *     a `PAINTS` id, so `Cloth.armourSheet` would drop all of them;
+     *   `pauldron`/`crest`/`brace`/`kama`/`gear`/`under`/`scorch` are TROOPER
+     *     KIT fields — real names, on a table the PLAYER's wardrobe has no
+     *     field for, so the union above accepted them and nothing could store
+     *     one;
+     *   `hilt-scav` and `hilt-old` named emitters against ten real
+     *     `HILT_STYLES`.
+     *
+     * A slot with no value vocabulary behind it is half a test. So the union
+     * is replaced by the one table that actually writes — `Keepsakes.WEARERS`,
+     * whose `of()` reads `Cloth`, `Bodies`, `Saber`, `Home` and `Kennel`'s own
+     * tables at import — and the assertion is `wearable()`, which is the
+     * function the shop itself calls. Still read and not typed; now it covers
+     * the half that shipped broken.
      */
-    const known = new Set([
-      ...Object.keys(C.WARDROBE),
-      ...Object.keys(B.TROOPER_KITS?.commander || {}),
-      ...Object.values(B.TROOPER_KITS || {}).flatMap((k) => Object.keys(k)),
-      ...Object.values(B.KIT_FIELDS || {}).flatMap((g) => Object.keys(g)),
-      ...Object.values(B.PAINT_SLOTS || {}).flatMap((rows) => rows.map((r) => r[0])),
-      ...Object.keys(B.buildTrooper?.({})?.palette || {}),
-      /* The three the body has that no table names: whether the helmet is on,
-       * the emitter on the hilt, and a piece of furniture at home. */
-      'helm', 'hilt', 'home',
-    ]);
-    const orphan = keeps.filter((r) => !known.has(r.slot));
+    const KS = await import('../../src/game/Keepsakes.js');
+    const orphan = keeps.filter((r) => !KS.wearable(r));
     assert(!orphan.length,
-      `keepsakes naming a slot nothing wears: ${orphan.map((r) => r.id + '→' + r.slot).join(', ')}`);
+      'keepsakes the game cannot put on anybody: '
+      + orphan.map((r) => `${r.id} (${KS.whyNotWearable(r)})`).join('; '));
+    /* AND THE TABLE ITSELF IS LIVE. A `WEARERS` row whose vocabulary came back
+     * empty would accept nothing and refuse everything, which reads as a clean
+     * suite and is a dead table. */
+    for (const [slot, w] of Object.entries(KS.WEARERS)) {
+      if (w.tone || w.bool || w.patch) continue;
+      assert(w.of().length >= 2, `WEARERS.${slot} offers ${w.of().length} values — that is not a vocabulary`);
+    }
     return `${keeps.length} keepsakes bought against a live boonMods, ${Object.keys(JSON.parse(before)).length} `
-      + `fields unmoved; every slot one the body already has`;
+      + `fields unmoved; every slot AND value one ${Object.keys(KS.WEARERS).length} wearers can write`;
+  });
+
+  check('counter: a keepsake you pay for is kept — and it is not a fourth durable key', async () => {
+    /**
+     * ══ THE DEFECT THIS IS THE PIN FOR, AND IT WAS THE WHOLE SHOP ═════════
+     *
+     * Driven in a real browser: 9000 credits, the clothier at #9, one click on
+     * *Oiled leather* (`gloveTone`, 38 cr), all of `localStorage` snapshotted
+     * either side. EXACTLY ONE KEY MOVED — `saber.credits.v1` `{purse:9000}` →
+     * `{purse:8962, spent:38}`. `settings.wardrobe.gloveTone` was −1 before and
+     * −1 after. There was no keepsake store anywhere in the tree: the `slot`
+     * and `value` fields on every row were read by nobody, and `showCounter`'s
+     * handler called `spend()`, raised a banner and re-rendered. You could
+     * spend 3200 credits on Beskar plate and own nothing.
+     *
+     * So this buys one of each KIND of keepsake and asserts the record moved.
+     * It fails on the tree as it was, at the first assertion, for every row.
+     */
+    const V = await import('../../src/game/Vendors.js');
+    const KS = await import('../../src/game/Keepsakes.js');
+    const C = await import('../../src/game/Cloth.js');
+    const { DEFAULT_SETTINGS } = await import('../../src/ui/Menu.js');
+
+    const s = JSON.parse(JSON.stringify(DEFAULT_SETTINGS));
+    assert(Array.isArray(s.keepsakes) && !s.keepsakes.length,
+      'a fresh profile does not start with an empty keepsake ledger');
+
+    /* A TONE. The exact row the browser was driven on. */
+    const glove = V.CLOTHIER.stock.find((r) => r.id === 'tone-glove');
+    assert(s.wardrobe.gloveTone === -1, `gloves start at ${s.wardrobe.gloveTone}, not -1`);
+    const got = KS.takeKeepsake(s, glove);
+    assert(got.ok, `the clothier could not sell his own row: ${got.why}`);
+    assert(s.wardrobe.gloveTone === glove.value,
+      `bought gloveTone ${glove.value} and the wardrobe says ${s.wardrobe.gloveTone}`);
+    assert(s.keepsakes.includes('tone-glove'), 'the ledger does not say it was sold');
+
+    /* A CUT, A HILT, AND A KIT — three different records reached by one door. */
+    KS.takeKeepsake(s, V.CLOTHIER.stock.find((r) => r.id === 'cut-mantle'));
+    assert(s.wardrobe.cape === 'mantle', `the cape is ${s.wardrobe.cape}`);
+    KS.takeKeepsake(s, V.UNDERLIFT.stock.find((r) => r.id === 'hilt-old'));
+    assert(s.hiltStyle === 'Archaic', `the hilt is ${s.hiltStyle}`);
+    KS.takeKeepsake(s, V.ARMOURER.stock.find((r) => r.id === 'beskar'));
+    assert(s.wardrobe.armour.plate === 'ice', `the plate is ${s.wardrobe.armour.plate}`);
+    /* …AND A PAINT ON NO ARMOUR PUTS YOU IN ARMOUR, because otherwise 3200
+     * credits of beskar goes onto a robe and shows nothing at all. */
+    assert(s.wardrobe.armour.id !== 'none',
+      'beskar was painted onto a figure wearing no plate — the player sees no change');
+
+    /* EVERYTHING SURVIVES THE LAUNDERER, which is what "permanent" means: the
+     * blob goes to disk and comes back through `wardrobeOf`. */
+    const back = C.wardrobeOf(JSON.parse(JSON.stringify(s.wardrobe)));
+    assert(back.gloveTone === glove.value && back.cape === 'mantle' && back.armour.plate === 'ice',
+      'the wardrobe did not survive its own normaliser — the keepsake is not permanent');
+
+    /* AND `owns` IS THE LEDGER'S READER, so a shelf can say what is yours. */
+    assert(KS.owns(s, 'tone-glove') && !KS.owns(s, 'tone-vorlon'), 'the ledger does not read back');
+
+    /* ══ AND IT IS NOT A FOURTH DURABLE KEY ═══════════════════════════════
+     *
+     * `session.mjs` counts `localStorage.setItem` writers across five named
+     * files and refuses a fourth. A keepsake store of its own would have been
+     * the easiest thing to write and would have been that fourth key.
+     * `Progress.lessons` is the precedent this follows: a new durable FACT in
+     * a record that already exists. So the file that owns keepsakes must not
+     * touch storage at all — every write goes through a door somebody else
+     * already opened.
+     */
+    const { readFile } = await import('node:fs/promises');
+    /* COMMENTS STRIPPED FIRST. The file's own header ARGUES about localStorage
+     * at length — which is the point of it — and a grep over the raw text would
+     * fail on the paragraph explaining why the call is not there. Same `strip`
+     * every other source-reading clause in this tree uses. */
+    const raw = await readFile(new URL('../../src/game/Keepsakes.js', import.meta.url), 'utf8');
+    const code = raw.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    assert(!/localStorage/.test(code),
+      'Keepsakes.js reaches localStorage — that is the fourth durable key session.mjs refuses');
+    assert(!/makeStore/.test(code), 'Keepsakes.js opens a store of its own');
+    return `gloveTone -1 → ${glove.value}, cape → mantle, hilt → Archaic, plate → ice, `
+      + `${s.keepsakes.length} in the ledger; no store of its own`;
   });
 
   check('counter: a provision dies with the run, and says so or is refused', async () => {
@@ -116,6 +203,72 @@ export async function run({ check, assert, near }) {
     assert(!K.saneRow({ ...keep, kind: 'upgrade' }), 'a third kind was accepted');
     return `${provs.length} provisions, all run-only; the door refuses a missing flag, a false one, `
       + 'a keepsake with an effect and a third kind';
+  });
+
+  check('counter: every row in the earn table is a number the game actually keeps', async () => {
+    /**
+     * `Credits.EARN`'s own header: *"every row is a number some system already
+     * keeps, which is what stops this becoming a second scoring system beside
+     * the real one."* One of them was not kept by anybody.
+     *
+     * `saves` is priced at 14 under the sentence "pulling a man out, because
+     * the roll is the point". `payForRun` read `stats?.saves ?? 0`, and
+     * `World.runStats` — the one assembler every ending goes through — had no
+     * such field. So the row paid ZERO on every run ever played, and the
+     * sentence beside it described something the game did not measure.
+     *
+     * ── AND IT IS DRIVEN THROUGH A REAL MEND, NOT ASSERTED OFF A FIELD ───
+     *
+     * A clause that only checked `'saves' in runStats()` would pass the day
+     * somebody wrote `saves: 0` there. So a real player mends a real ragdolled
+     * ally in a real world, and the number this file prices is read off the
+     * same `runStats` an ending hands to `payForRun`.
+     */
+    const C = await import('../../src/game/Credits.js');
+    const { bootWorld, idleInput } = await import('./_coop.mjs');
+    const { world } = await bootWorld({ level: 'colosseum', settings: { mode: 'waves' } });
+    try {
+      /* EVERY ROW OF THE TABLE REACHES THE ASSEMBLER. The two that are paid
+       * from outside a run — a quest's fee and a pit purse — are named as such
+       * in the header and are handed in by their own doors, so they are exempt
+       * and the exemption is spelled out rather than assumed. */
+      const OUTSIDE = new Set(['quest', 'bout']);
+      const stats = world.runStats({ won: false });
+      const missing = Object.keys(C.EARN).filter((k) => !OUTSIDE.has(k)
+        && k !== 'depth' && k !== 'won' && !(k in stats));
+      assert(!missing.length,
+        `${missing.join(', ')} is priced in EARN and World.runStats does not report it — `
+        + 'the row pays zero on every run ever played');
+
+      /* NOW EARN ONE. A downed ally, stood up by the shipped mend. */
+      const me = world.player;
+      const mate = world.spawnEnemy?.('conscript', me.position.clone().add({ x: 2, y: 0, z: 2 }),
+        { team: me.team });
+      assert(mate, 'no ally could be spawned to save');
+      const before = me.saves | 0;
+      /* Down him the way the game downs a man, then complete the channel the
+       * way `_endHeal` completes it — the one door `Command.reviveNear` uses
+       * too, so a mend and a support pod count the same thing. */
+      /* THE EXISTING ACTOR IS KEPT AND FLAGGED, never replaced: a stand-in
+       * object loses `dispose`, and `world.unload()` calls it on the way out. */
+      mate.actor = mate.actor || { dispose() {} };
+      mate.actor.ragdolled = true;
+      mate.recover = () => { mate.actor.ragdolled = false; };
+      me.healTarget = mate;
+      me._endHeal(true);
+      assert((me.saves | 0) === before + 1,
+        `standing a downed ally up moved saves ${before} → ${me.saves | 0}`);
+      assert(world.runStats({}).saves >= 1, 'the save reached the player and not the run');
+
+      /* AND IT IS WORTH WHAT THE TABLE SAYS. */
+      const none = C.payForRun({ depth: 1, won: false, kills: 0, saves: 0 });
+      const one = C.payForRun({ depth: 1, won: false, kills: 0, saves: 1 });
+      assert(one.paid - none.paid === C.EARN.saves,
+        `a save paid ${one.paid - none.paid} against a table that prices it at ${C.EARN.saves}`);
+      return `${Object.keys(C.EARN).length} earn rows, ${OUTSIDE.size} paid by their own door; `
+        + `a real mend on a downed ally moved saves ${before} → ${me.saves | 0} and paid `
+        + `${one.paid - none.paid}`;
+    } finally { world.unload(); }
   });
 
   check('counter: the economy is bounded — the dearest thing is several runs, not sixty', async () => {
@@ -369,5 +522,198 @@ export async function run({ check, assert, near }) {
     }
     return `the amendment is in Progress.js; Credits.js is ${lines} lines and the only wallet; `
       + 'nothing in the shop reaches takenBoons';
+  });
+
+  check('counter: the shop and the kiosk are two doors, and both open', async () => {
+    /**
+     * ══ THE DEFECT: TWO COUNTERS THAT NO PRESS COULD EVER RAISE ══════════
+     *
+     * `stationKey` raised the KIOSK branch before the counter branch, and the
+     * counter branch took `countersAt(place.id)[0]` with no standing-at test
+     * at all — while the comment over it claimed the opposite of both. Held
+     * for 45 s per deck-40 room on the real key:
+     *
+     *     #10 The Forge            → onKiosk:hilt   the armourer never reached
+     *     #11 Quartermaster's cage → onKiosk:kit    the QM never reached
+     *
+     * The Quartermaster is the only counter in the game carrying stims and
+     * stratagem charges, so the whole of `Progress.js`'s second amended
+     * category was behind a branch that never ran.
+     *
+     * This is the headless half: the branch order, and that the reach test
+     * exists and discriminates. The other half is a body walking to the desk
+     * and pressing the key — `tools/_shopprobe.mjs`, on `_casinoprobe`'s
+     * shape, because a hook call cannot see a branch that never runs.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const st = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
+    const iCounter = st.indexOf('const shop = counterHere(world, place);');
+    const iKiosk = st.indexOf('if (place.kiosk && world.onKiosk)');
+    assert(iCounter > 0, 'the counter branch no longer asks which counter you are standing at');
+    assert(iKiosk > 0, 'the kiosk branch is gone');
+    assert(iCounter < iKiosk,
+      'the kiosk branch still runs before the counter branch — that is the shape that made the '
+      + 'armourer and the quartermaster unreachable, and the comment over it claimed otherwise');
+
+    /**
+     * AND THE TEST DISCRIMINATES, IN THE DESK'S OWN FRAME.
+     *
+     * A `counterHere` that answered the ROOM would be the old bug wearing a
+     * function name, and a `counterHere` that answered a CIRCLE round the desk
+     * is the bug a browser found in the first cut of this fix — #10's desk
+     * sits 0.4 m off the middle of its room, so a radius made the whole room
+     * the shop and the hilt bench unreachable. So the dressing is fabricated
+     * with the three world points `StationKit.counter` really records, and the
+     * player is stood at four places round it.
+     */
+    const S = await import('../../src/game/Station.js');
+    const V = await import('../../src/game/Vendors.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const forge = PLACE.get(10);
+    /* A 10 m desk across the middle of the Forge, its face toward −Z. */
+    const desk = {
+      at: { x: forge.x, y: 0, z: forge.z }, front: { x: forge.x, y: 0, z: forge.z - 1 },
+      behind: { x: forge.x, y: 0, z: forge.z + 1 }, w: 10, d: 0.9,
+    };
+    const world = {
+      player: { position: { x: forge.x, y: 0, z: forge.z } },
+      _station: { counters: new Map([[10, [desk]]]) },
+    };
+    const at = (dx, dz) => {
+      world.player.position.x = forge.x + dx;
+      world.player.position.z = forge.z + dz;
+      return S.counterHere(world, forge)?.id || null;
+    };
+    assert(at(0, -1.2) === 'armourer', 'standing at the Forge\'s counter does not raise the armourer');
+    assert(at(4.5, -1.2) === 'armourer', 'standing at the far end of the counter does not raise it');
+    /* BEHIND IT IS THE WORKSHOP, and that is the half the hilt bench is in. */
+    assert(at(0, 1.2) === null,
+      'standing behind the counter still raises the shop — the Forge\'s hilt bench is unreachable '
+      + 'behind it, which is the same defect one branch over');
+    /* PAST THE END OF IT IS THE ROOM. */
+    assert(at(7, -1.2) === null, 'three metres past the end of the desk still raises the shop');
+    /* AND TOO FAR BACK IS THE ROOM TOO. */
+    assert(at(0, -4) === null, 'four metres back from the counter still raises the shop');
+
+    /* AND IT IS DECK-WIDE, NOT ROOM-SCOPED. #11's hatch is in its front wall,
+     * so the customer stands OUTSIDE the cage — where `placeUnder` answers #9
+     * — and a room-scoped test offered the CLOTHIER at the quartermaster's
+     * hatch. Measured in a browser before this line existed. */
+    const cage = PLACE.get(11);
+    const hatch = {
+      at: { x: cage.x, y: 0, z: cage.z - cage.d / 2 + 0.4 },
+      front: { x: cage.x, y: 0, z: cage.z - cage.d / 2 - 0.6 },
+      behind: null, w: 2.2, d: 0.8,
+    };
+    const outside = {
+      player: { position: { x: cage.x, y: 0, z: cage.z - cage.d / 2 - 1.2 } },
+      _station: { counters: new Map([[11, [hatch]]]) },
+    };
+    assert(S.counterHere(outside, PLACE.get(9))?.id === 'quarter',
+      'standing at the cage\'s hatch while the room under you is the Concourse does not raise the '
+      + 'quartermaster — which is the only counter carrying stims and stratagem charges');
+
+    /* AND THE ROOMS THAT BUILD NO DESK STILL SELL. `#9` is an imported mesh,
+     * `#32` is a stone floor and `#58` sells over a plank across a container —
+     * its own shape says so in as many words. None carries a kiosk, so the
+     * room being the counter shadows nothing. */
+    const bare = { player: { position: { x: 0, y: 0, z: 0 } }, _station: { counters: new Map() } };
+    for (const id of [9, 32, 58]) {
+      const p = PLACE.get(id);
+      assert(S.counterHere(bare, p), `#${id} builds no desk and now sells nothing at all`);
+      assert(!p.kiosk, `#${id} has grown a kiosk — it needs a desk before it can have one`);
+    }
+    /* …and every room that DOES carry both is one where a desk gets built. */
+    const both = V.COUNTERS.filter((c) => PLACE.get(c.place)?.kiosk);
+    assert(both.length >= 2, `only ${both.length} counters share a room with a kiosk — the case is untested`);
+    return `the counter branch is ${iKiosk - iCounter} chars ahead of the kiosk branch; `
+      + 'at the face and at its end raise the armourer, behind it and past its ends do not; '
+      + `the cage's hatch raises the quartermaster from inside #9; ${both.length} rooms carry both`;
+  });
+
+  check('counter: every counter has a keeper, and the Forge\'s is a Mandalorian', async () => {
+    /**
+     * `keeper` was declared on all seven counters, returned by `offerFrom`, and
+     * READ BY NOBODY. `ARMOURER.keeper` said `{role:'smith', species:'human',
+     * helm:true}` — V16 §A4's *"maybe a mandalorian"* — and no body was built,
+     * no species, no helmet; #10's gazetteer row still said *"a Wookiee
+     * smith"*, so the one thing the room promised contradicted the one thing
+     * the table said.
+     */
+    const S = await import('../../src/game/Station.js');
+    const V = await import('../../src/game/Vendors.js');
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    for (const c of V.COUNTERS) {
+      const k = S.keeperOf(c.id);
+      assert(k && k.name, `${c.id} has nobody behind it`);
+      assert(k.role, `${c.id}'s keeper has no job`);
+    }
+    const smith = S.keeperOf('armourer');
+    assert(smith.mando && smith.helm,
+      `the Forge's smith is ${JSON.stringify(smith)} — §A4 asks for a Mandalorian, and a `
+      + 'Mandalorian keeps the bucket on');
+    assert(smith.role === 'smith', `the Forge's keeper is a ${smith.role}`);
+    /* AND THE ROOM SAYS THE SAME THING THE TABLE DOES. */
+    const who = PLACE.get(10).who;
+    assert(/mandalorian/i.test(who) && !/wookiee/i.test(who),
+      `#10's gazetteer says "${who}" — the room and the table disagree about who is in it`);
+    /* THE KEEPER REROLLS AND THE ROLE DOES NOT. Same `(counter, day)` shape the
+     * shelf uses: a different trader tomorrow, the same trade. */
+    const days = new Set();
+    for (let d = 0; d < 14; d++) days.add(S.keeperOf('clothier', null, d)?.name);
+    return `${V.COUNTERS.length} keepers, all named; the Forge's is a helmed Mandalorian smith; `
+      + `#10 reads "${who}"`;
+  });
+
+  check('counter: standing has a writer now, in both directions', async () => {
+    /**
+     * `StationSave.setStanding` had ZERO CALLERS. `markupFor` works — 0 pays
+     * 38 for the oiled leather, −20 pays 45, −35 is refused — but the number
+     * it reads was 0 for every player for ever, so the vendor-remembers-you
+     * half of the shop never fired once.
+     *
+     * The fall was already being computed and thrown away:
+     * `StationLife.witness` does `life.standing -= hurt * 2` into a
+     * SESSION-scoped object, and the durable fold beside it never moved.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const src = async (f) => readFile(new URL(`../../src/game/${f}`, import.meta.url), 'utf8');
+    const strip = (s) => s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+    const files = ['Station.js', 'StationSave.js', 'Home.js', 'Counter.js', 'Menu.js'];
+    let callers = 0;
+    for (const f of files) {
+      let code = '';
+      try { code = strip(await src(f)); } catch { continue; }
+      callers += (code.match(/\bsetStanding\s*\(/g) || []).length;
+    }
+    /* The declaration in StationSave.js is not a call. */
+    const decl = strip(await src('StationSave.js'));
+    callers -= (decl.match(/export function setStanding/g) || []).length;
+    assert(callers >= 2,
+      `setStanding has ${callers} callers — a number the game maintains and never spends is the `
+      + 'defect this tree keeps finding under a different name');
+
+    /* BOTH DIRECTIONS, AND BOTH ARE ABOUT RESIDENTS. Down when you cut one
+     * (`persistStanding` mirrors StationLife's own fall onto the fold); up
+     * when you collect on one's job (`payForJob`). Not shopping: standing that
+     * rose when you spent would be a loyalty ladder, which is a number that
+     * grows by having played. */
+    const stn = strip(await src('Station.js'));
+    assert(/function persistStanding/.test(stn) && /_lifeStanding/.test(stn),
+      'nothing carries StationLife\'s fall onto the durable fold');
+    assert(/setStanding\(standing\(\) \+ 2\)/.test(stn),
+      'nothing raises standing — markupFor\'s +40 rung is a dead branch');
+    assert(!/setStanding[^;]*spend|spend[^;]*setStanding/.test(stn),
+      'standing moves on a purchase — that is a loyalty ladder, not a reputation');
+
+    /* AND THE PRICE REALLY MOVES WITH IT. */
+    const K = await import('../../src/game/Counter.js');
+    const V = await import('../../src/game/Vendors.js');
+    const row = V.CLOTHIER.stock.find((r) => r.id === 'tone-glove');
+    const at = (n) => K.askingPrice(row, n).price;
+    assert(at(40) < at(0) && at(0) < at(-20) && !K.askingPrice(row, -40).open,
+      `standing does not price: +40 ${at(40)}, 0 ${at(0)}, -20 ${at(-20)}`);
+    return `${callers} callers of setStanding; the oiled leather is ${at(40)} at +40, `
+      + `${at(0)} at evens, ${at(-20)} at -20, refused at -40`;
   });
 }

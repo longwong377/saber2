@@ -3050,6 +3050,12 @@ export class World {
       deflects: sum('deflects'),
       perfects: sum('perfects'),
       limbs: sum('limbsRemoved'),
+      /* PULLING A MAN OUT. `Credits.EARN.saves` has priced this at 14 since the
+       * economy landed and nothing reported it — `payForRun` read
+       * `stats?.saves ?? 0` against a `runStats` that had no such field, so the
+       * row paid zero on every run ever played. Summed over the players like
+       * every other tally here, so a co-op session counts both hands. */
+      saves: sum('saves'),
       taken: this._taken(),
       /* The roll, not a tally kept beside it: `CommandRoster.fallen` is a
        * getter over the records themselves. Null where there is no army, so

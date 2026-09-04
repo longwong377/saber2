@@ -160,6 +160,23 @@ for (const [hook, id, arg, label, what] of SWEPT) {
        *
        * `seen` is the other half of the day and it is a durable list, so the
        * calendar moves by writing it and the clock stays a clock. */
+      /**
+       * ── AND THIS DIAL DOES NOT TURN, WHICH IS WORTH SAYING OUT LOUD ────
+       *
+       * `stationDay()` is `floor(hour/24) + seen.length`, and writing `seen`
+       * here is the only half of it a probe can reach without breaking the
+       * clock's invariant. It does not work: `StationSave` caches the fold in
+       * `_cache` on its FIRST read, and `loadStation()` has already run by the
+       * time the station is up, so the write is never seen. A hostile pass
+       * caught this instrument sweeping 168 hours of ONE day, seven times, and
+       * printing it as a fortnight.
+       *
+       * The write is kept because it costs nothing and starts working the day
+       * the fold learns to invalidate. What is NOT kept is the claim: the
+       * summary below says HOURS, not days, and the day axis belongs to the
+       * suites, which can hand a day in as an argument instead of trying to
+       * convince a running game that time has passed.
+       */
       try {
         const save = JSON.parse(wasSave || '{}');
         save.seen = Array.from({ length: day }, (_, i) => 900 + i);
@@ -191,7 +208,7 @@ for (const [hook, id, arg, label, what] of SWEPT) {
   }, { hook, id, arg });
   const ok = r.opens > 0;
   if (!ok) bad2++;
-  console.log(`  ${ok ? '✓' : '✗'} ${label.padEnd(26)} ${what} up on ${r.opens}/${r.tried} hours swept`
+  console.log(`  ${ok ? '✓' : '✗'} ${label.padEnd(26)} ${what} up on ${r.opens}/${r.tried} readings`
     + (r.bestAt ? `, fullest ${r.best} chars at ${r.bestAt}` : '')
     + (ok ? '' : '   << NEVER OPENS'));
 }
@@ -210,6 +227,7 @@ for (const r of rows) {
 }
 console.log(errs.length ? `\nPAGE ERRORS:\n${errs.slice(0, 8).join('\n')}` : '\nno page errors');
 console.log(`\n${rows.length - bad}/${rows.length} doors open, say something and close clean; `
-  + `${SWEPT.length - bad2}/${SWEPT.length} scheduled rooms open somewhere in a fortnight`);
+  + `${SWEPT.length - bad2}/${SWEPT.length} scheduled rooms open somewhere in a DAY `
+  + '(the calendar is held by a cached fold — see the sweep\'s note; days are the suites\')');
 await browser.close();
 process.exit(bad || bad2 || errs.length ? 1 : 0);
