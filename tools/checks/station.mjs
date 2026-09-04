@@ -638,6 +638,93 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('station: the ride between the deck and the station shows no loading plate', async () => {
+    /**
+     * V15 §1.5: *"seemlessly should be able to go from our star wars hangar to
+     * the station through just the elevator with no loading screens."*
+     *
+     * The world IS rebuilt — `World._loadSteps` is synchronous and nothing in
+     * this feature may add a stage to it (§9.2) — so "no loading screen" is
+     * not "no load". It is: what the player looks at while it happens is the
+     * last frame he was looking at, which is the inside of the lift car with
+     * its doors shut, and not the menu plate with the game's logo on it.
+     *
+     * `captureStill()` takes that frame and `Screens.loading` shows THAT with
+     * a thin bar along the bottom. The mechanism already existed for the
+     * deploy, built for the same complaint ("the transition is kind of janky
+     * like it isn't seamless"); this asserts it is on BOTH directions of the
+     * lift and that the plate is genuinely gone while it is.
+     *
+     * ── WHY A SOURCE READ AND NOT A DRIVEN RIDE ───────────────────────────
+     *
+     * A browser probe does drive it — `tools/_dbgride.mjs`, and it read
+     * `class="screen still"` on the way in, which is the still and not the
+     * plate. But it costs forty minutes on a software rasteriser rendering
+     * 1.7 M triangles a frame, so it is a probe and not a gate. What can be
+     * held cheaply and forever is the two things that actually break: a hand-
+     * off that forgets to capture, and a `loading` call that ignores the
+     * still it was handed.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const code = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+    /* BOTH DIRECTIONS. There are two `onDeckLift` handlers — the flight deck's
+     * and the station's — and each must capture before it tears the world
+     * down, because the teardown disposes the renderer's last frame with it. */
+    const handlers = [...code.matchAll(/onDeckLift\s*=\s*\(([^)]*)\)\s*=>\s*\{/g)];
+    assert(handlers.length === 2,
+      `${handlers.length} onDeckLift handlers in main.js; the deck has one and the station has one`);
+    for (const h of handlers) {
+      const body = code.slice(h.index, h.index + 1400);
+      const cap = body.indexOf('captureStill()');
+      const leave = body.search(/leave(Hangar|Station)\(/);
+      assert(cap > 0, 'a lift handler rebuilds the world without capturing the frame first — '
+        + 'the player gets the menu plate in the middle of a lift ride');
+      assert(leave > 0 && cap < leave,
+        'a lift handler captures AFTER the teardown, which disposes the renderer and the frame with it');
+      assert(/\{\s*still\s*\}/.test(body) || /still\s*[,}]/.test(body),
+        'a lift handler captures a still and does not hand it on');
+    }
+    /* AND THE FAR SIDE USES IT. `enterStation`/`enterHangar` take `opts.still`
+     * and turn it into the `{ still }` bag `Screens.loading` reads. */
+    assert((code.match(/opts\.still\s*\?\s*\{\s*still:\s*opts\.still\s*\}/g) || []).length >= 2,
+      'a door takes a still and never builds the bag Screens.loading reads');
+
+    /**
+     * ── AND THE SCREEN ITSELF, DRIVEN ─────────────────────────────────────
+     *
+     * The half above proves the still is handed along. This proves what the
+     * screen does with one: the still goes on, the plate comes off, and
+     * `hideLoading` puts it back — because a `still` class left on the
+     * element is the menu wearing a screenshot of a lift for the rest of the
+     * session.
+     */
+    const { Screens } = await import('../../src/ui/Screens.js');
+    /* `tools/dom-shim.mjs` answers every `getElementById` with null, on
+     * purpose — a headless suite has no page. The element is the subject here,
+     * so it is lent to the lookup for the length of this one check and taken
+     * back in the `finally`. Nothing else in the process sees it. */
+    const el = document.createElement('div');
+    el.className = 'screen hidden';
+    const was = document.getElementById;
+    document.getElementById = (id) => (id === 'loading' ? el : null);
+    try {
+      const sc = new Screens();
+      sc.loading(0.3, 'the station', { still: 'data:image/png;base64,AA' });
+      assert(el.classList.contains('still'),
+        'a loading screen handed a still did not wear it — the player gets the plate mid-ride');
+      assert(!el.classList.contains('hidden'), 'the loading screen stayed hidden');
+      assert(/data:image/.test(el.style.backgroundImage || ''), 'the still was not painted');
+      sc.hideLoading();
+      assert(!el.classList.contains('still') && !el.style.backgroundImage,
+        'the still outlived the load — the menu now wears a photograph of a lift');
+    } finally { document.getElementById = was; }
+    return 'both lift handlers capture before teardown and hand it on; the screen wears it and gives it back';
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('station: the window shows the same battle the flight deck sees', async () => {
     /**
      * V15 §1.3 asks for *"windows that look out on the same space battle the

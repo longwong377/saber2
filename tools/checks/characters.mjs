@@ -540,12 +540,32 @@ export async function run({ check, assert, near, THREE: T }) {
     // archetypes went a whole session without a body of their own.
     const { ARCHETYPES } = await import('../../src/game/Enemy.js');
     await import('../../src/game/Levels.js');       // the Command units and the IG general
-    const missing = [], unknown = [];
+    const missing = [], unknown = [], selfDressed = [];
     for (const [key, A] of Object.entries(ARCHETYPES)) {
       // Enemy._build's own rule for what is a humanoid, not a copy of it.
       const humanoid = !A.custom || A.custom === 'humanoid';
       if (!humanoid) continue;
-      if (!B.bodyOptsFor(key)) missing.push(key);
+      if (B.bodyOptsFor(key)) continue;
+      /**
+       * ── AND AN ARCHETYPE MAY DRESS ITSELF, IF IT SAYS SO AND PROVES IT ───
+       *
+       * `BODY_KITS` answers "which row of a shared outfit table does this
+       * archetype wear", and for eighteen troopers, acolytes and guards that
+       * is the right question. The station's fifteen species and eight
+       * off-duty Borz kinds are the case it does not fit: a resident's
+       * appearance is drawn per BODY from a seed — species row, robe palette,
+       * girth, all decided inside its own `build` — so a fixed kit row for one
+       * would be a dead row that every instance overrode, which is a worse lie
+       * than no row at all.
+       *
+       * The property this check actually holds is unchanged and is the one in
+       * the note above: NO HUMANOID GOES OUT WEARING NOTHING BY SILENCE. So a
+       * self-dressing archetype is not exempted, it is held to the same thing
+       * by measurement instead of by table — `A.resident` is the declaration,
+       * and the loop below builds each one and counts what it has on.
+       */
+      if (A.resident) { selfDressed.push(key); continue; }
+      missing.push(key);
     }
     for (const key of Object.keys(B.BODY_KITS)) if (!ARCHETYPES[key]) unknown.push(key);
     assert(!missing.length, `${missing.join(', ')} on the roster with no row in BODY_KITS`);
@@ -561,7 +581,25 @@ export async function run({ check, assert, near, THREE: T }) {
           `${key} asks for ${field} '${o[field]}' and no table has one`);
       }
     }
-    return `${Object.keys(B.BODY_KITS).length} humanoid archetypes outfitted, every kit resolves`;
+    /* THE MEASUREMENT THAT REPLACES THE TABLE, for the ones that dress
+     * themselves. A body wearing nothing is not a body with no meshes — it is
+     * a body with only the ones `dressHumanoid` makes for skin — so the floor
+     * is set well above a bare frame and under the 76-mesh cap the check two
+     * below holds every archetype to. */
+    const worn = [];
+    for (const key of selfDressed) {
+      const built = ARCHETYPES[key].build({});
+      let meshes = 0;
+      built?.rig?.root?.traverse?.((o) => { if (o.isMesh) meshes++; });
+      assert(meshes >= 40,
+        `${key} dresses itself and came out in ${meshes} meshes — that is a body with nothing on, `
+        + 'which is the exact silence BODY_KITS exists to break');
+      assert(meshes < 76, `${key} is ${meshes} meshes, which is ${meshes * 2} draw calls with shadows`);
+      worn.push(meshes);
+    }
+    const lo = Math.min(...worn), hi = Math.max(...worn);
+    return `${Object.keys(B.BODY_KITS).length} humanoid archetypes outfitted from the kit table, `
+      + `${selfDressed.length} dressing themselves (${lo}–${hi} meshes, measured), every kit resolves`;
   });
 
   check('characters: a humanoid is more than nineteen tubes past thirty metres', () => {

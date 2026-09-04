@@ -50,13 +50,48 @@ class Canvas {
 }
 
 class Elem {
-  constructor(tag) { this.tagName = tag; this.style = {}; this.children = []; this.dataset = {}; }
+  constructor(tag) { this.tagName = tag; this.style = {}; this.children = []; this.dataset = {}; this.className = ''; }
   appendChild(c) { this.children.push(c); return c; }
   removeChild(c) { const i = this.children.indexOf(c); if (i >= 0) this.children.splice(i, 1); }
   setAttribute() {} getAttribute() { return null; }
   addEventListener() {} removeEventListener() {}
   querySelector() { return null; } querySelectorAll() { return []; }
-  get classList() { return { add() {}, remove() {}, toggle() {}, contains() { return false; } }; }
+  /**
+   * ── A REAL classList, BECAUSE AN INERT ONE CANNOT BE WRONG ──────────────
+   *
+   * This answered `contains()` with `false` forever and threw every `add` on
+   * the floor. That is not a small gap: it means NO check in the tree can see
+   * a class, so every screen, overlay and card in `src/ui` is untestable by
+   * construction — and worse, code under test that branches on `contains`
+   * takes the false branch in the suite and the true one in the browser.
+   *
+   * Found while pinning V15 §1.5's seamless lift: `Screens.loading` adds the
+   * `still` class and paints the frame, and a headless check could see the
+   * paint and not the class. The paint was the only half that could fail.
+   *
+   * It keeps `className` in step both ways, because that is the property the
+   * rest of the shim and most reading code actually looks at.
+   */
+  get classList() {
+    const own = (this._cls ||= new Set(String(this.className || '').split(/\s+/).filter(Boolean)));
+    /* `className` may have been assigned since the last access — the browser's
+     * two views of the same state stay in step, so these do too. */
+    const fromAttr = String(this.className || '').split(/\s+/).filter(Boolean);
+    if (fromAttr.join(' ') !== [...own].join(' ')) { own.clear(); for (const c of fromAttr) own.add(c); }
+    const sync = () => { this.className = [...own].join(' '); };
+    return {
+      add: (...cs) => { for (const c of cs) if (c) own.add(c); sync(); },
+      remove: (...cs) => { for (const c of cs) own.delete(c); sync(); },
+      toggle: (c, force) => {
+        const on = force === undefined ? !own.has(c) : !!force;
+        if (on) own.add(c); else own.delete(c);
+        sync(); return on;
+      },
+      contains: (c) => own.has(c),
+      get length() { return own.size; },
+      [Symbol.iterator]: () => own[Symbol.iterator](),
+    };
+  }
 }
 
 if (typeof globalThis.document === 'undefined') {
