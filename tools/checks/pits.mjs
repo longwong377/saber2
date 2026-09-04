@@ -832,6 +832,119 @@ export async function run({ check, assert }) {
       + `the Underlift fields ${mean.toFixed(1)} ± ${sd.toFixed(1)} against your ${mine.form.rating}`;
   });
 
+  /* ══════════════════════════════════════════════════════════════════════
+   *  6. A ROOM WITH TWO DOORS, AND THE ONE THAT ATE THE PRESS
+   * ══════════════════════════════════════════════════════════════════════ */
+
+  check('pits: #20 is a pit AND a book, and the pit only keeps a press it took', async () => {
+    /**
+     * ══ THE DEFECT, DRIVEN ══════════════════════════════════════════════
+     *
+     * `Station.stationKey` raised the pit before the tote and RETURNED on
+     * whatever the pit answered. `#20 The Arena` has both, so on a profile
+     * with no animal the room was one line — "you have nothing to put in
+     * there" — at every hour of every day, and the Arena's betting card could
+     * not be opened by a player at all. Measured before the fix:
+     *
+     *     #18 at 22:00 → [tote]    #19 at 14:45 → [tote]
+     *     #20 at 18:15 → [pit]     "THE ARENA / you have nothing to put in there"
+     *
+     * The fix is that the pit keeps the press only when it took it — `main.js`
+     * `openPit` hands it on when there is no bout for you and a book shares
+     * the room. This check stands at #20's door and drives the real key with
+     * both answers out of the pit, which is the shape the panel has.
+     */
+    const { stationKey } = await import('../../src/game/Station.js');
+    const { PLACE, floorOf } = await import('../../src/game/StationPlan.js');
+    const { world } = await station(40);
+    try {
+      const arenaPlace = PLACE.get(20);
+      world.player.position.set(arenaPlace.x, floorOf(arenaPlace) + 1, arenaPlace.z);
+      const raised = [];
+      world.notify = () => {};
+      world.onTote = (id) => { raised.push(`tote:${id}`); return true; };
+
+      /* THE PLAYER WITH NOTHING TO PUT IN. The pit refuses the press — which
+       * is what `openPit` does at a room with a book in it — and the key must
+       * reach the card. Without the `Station.js` fall-through this is [pit]
+       * and the assert below is the failure the audit reported. */
+      world.onPit = () => { raised.push('pit'); return false; };
+      assert(stationKey(world) === true, '#20 did not answer the key at all');
+      assert(raised.join(',') === 'pit,tote:the-arena',
+        `the key at #20 raised [${raised.join(', ')}] — a pit that refuses must hand the press to the book`);
+
+      /* AND THE PLAYER WHO DOES KEEP ONE still gets the sand, first, and the
+       * book is not raised behind it. The Arena's own verb is "fight a bout"
+       * and that has to keep winning the press when there is a bout. */
+      raised.length = 0;
+      world.onPit = () => { raised.push('pit'); return true; };
+      assert(stationKey(world) === true, '#20 did not answer the key with a bout on');
+      assert(raised.join(',') === 'pit',
+        `the key raised [${raised.join(', ')}] — a bout you can take must not open a second panel behind it`);
+
+      /* #61 HAS NO BOOK, so nothing about the Underlift moved: its refusal is
+       * still the only answer in the room and still spends the press. */
+      const under61 = PLACE.get(61);
+      world._stationFloor = 44;
+      const w44 = (await station(44)).world;
+      try {
+        w44.player.position.set(under61.x, floorOf(under61) + 1, under61.z);
+        const said = [];
+        w44.notify = (a, b) => said.push(`${a}: ${b}`);
+        w44.onTote = () => { said.push('TOTE RAISED'); return true; };
+        w44.onPit = () => { said.push('pit'); return false; };
+        assert(stationKey(w44) === true, '#61 did not answer the key');
+        assert(!said.includes('TOTE RAISED'),
+          'the Underlift raised a betting window — #61 is deliberately not on the tote\'s list');
+      } finally { w44.dispose?.(); }
+      return 'no animal → [pit, tote:the-arena]; a bout on → [pit] only; #61 raises no book';
+    } finally { world.dispose?.(); }
+  });
+
+  check('pits: the card of people who live here is on a screen, and every exit cancels the clock', async () => {
+    /**
+     * ══ WHY A SOURCE READ ══════════════════════════════════════════════
+     *
+     * `pitCard()` and `runPitCard()` are the two functions that build a card
+     * of station residents who are not you — *"you should be able to bet on
+     * other people's companion battles too even if you're not involved"* —
+     * and both were green in this file with NO CALLER ANYWHERE IN `src/`.
+     * Only this suite reached them, so the one thing that sentence asked for
+     * was a tested function no player could see. A data check cannot catch
+     * that; the thing missing is a caller.
+     *
+     * The same read holds the tote panel's clock, which is the other half of
+     * the same lane: a timer with no cancel on an exit raises its last frame
+     * over whatever the player walked into next, and `cancelDeathCard` and
+     * `clearPitTimer` are the two precedents for the handle.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const code2 = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+    assert(/\bpitCard\b/.test(code2), 'nothing in main.js calls pitCard — the residents\' card has no screen');
+    assert(/from '\.\/game\/Pits\.js'/.test(main), 'main.js does not import from Pits.js at all');
+
+    /* THE PRESS IS HANDED ON. `openPit` must refuse when a book shares the
+     * room and there is no bout for you — without this line `stationKey`'s
+     * fall-through never fires and #20 is a refusal again. */
+    const openPit = /function openPit\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(code2)?.[1] || '';
+    assert(openPit, 'openPit is gone from main.js');
+    assert(/venueAtPlace\([^)]*\)\s*&&\s*!\s*pitOffer\([^)]*\)\.offer/.test(openPit),
+      'openPit keeps the press at a room that is both a pit and a book — the Arena\'s card is unreachable');
+
+    /* THE CLOCK, AND ITS HANDLE. One timer variable, and every exit clears it. */
+    assert(/tickStationClock/.test(code2),
+      'the tote panel does not wind the station clock — a race watched with the panel up is a photograph');
+    assert(/function clearToteTimer/.test(code2), 'the tote\'s timer has no cancel');
+    const cancels = (code2.match(/clearToteTimer\(\)/g) || []).length;
+    assert(cancels >= 3,
+      `clearToteTimer is called ${cancels} time(s) — the bell, the card's hide and the leave door are three`);
+    assert(/screens\.card\('tote',[\s\S]{0,120}?clearToteTimer/.test(code2),
+      "the tote's `screens.card` hide does not cancel the timer — it outlives its screen");
+    return `pitCard has a caller in main.js; openPit hands the press on; clearToteTimer called ${cancels}×`;
+  });
+
   check('pits: the file holds no balance and names no mode', () => {
     /* `Kennel.js`:22 — "that silence is a hazard, not a permission". The
      * six-word scan lives in `companions.mjs` and this file is added to it on

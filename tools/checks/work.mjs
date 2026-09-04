@@ -131,4 +131,83 @@ export async function run({ check, assert, near }) {
     return `a board of ${W.OPEN_MAX}, refusing a fourth with a reason and the same job twice; `
       + 'nothing in it reaches the run\'s own ledger';
   });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('work: the job board is IN THE BUILD, and a room actually opens it', async () => {
+    /**
+     * ══ THE DEFECT THIS CHECK IS NAMED AFTER ═════════════════════════════
+     *
+     * Every check above this one was green for the whole life of `Quests.js`
+     * while NOTHING UNDER `src/` IMPORTED IT. `tools/pack.mjs` walks the
+     * module graph from `index.play.html`'s entry, so the packed build simply
+     * did not contain the file: a finished quest system, 3/3 green, that no
+     * player could ever meet a giver for. `Games.js` had the identical defect
+     * next door. A suite that reaches its module with `import()` is making a
+     * statement about the file system, not about the game, and green over an
+     * orphan is worse than red because nobody investigates green.
+     *
+     * So this asks the shipping question on the same walk `pack.mjs` does,
+     * and then asks the harder half: that a PLACE raises it.
+     */
+    const { assertShipped, shippedGraph } = await import('./_shipped.mjs');
+    const by = await assertShipped(assert, 'src/game/Quests.js',
+      'a quest system with no giver in it is a system no player can meet');
+
+    /* THE DOOR IS `Station.stationKey`'s LAST BRANCH, and it has to be the
+     * real one: the file that imports `offersAt` must be the file that owns
+     * the interact key, or the import is paperwork. */
+    const { readFile } = await import('node:fs/promises');
+    const src = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
+    assert(by.includes('src/game/Station.js'),
+      `Quests.js is imported by ${by.join(', ')} — the door is the interact key and that lives in Station.js`);
+    assert(/from '\.\/Quests\.js'/.test(src), 'Station.js does not import Quests.js');
+    const key = src.slice(src.indexOf('export function stationKey('));
+    const end = key.indexOf('\n}');
+    const body = key.slice(0, end);
+    assert(/offersAt\(/.test(body) && /onQuest/.test(body),
+      'stationKey does not reach offersAt — the board is imported and never opened');
+    /* AND IT IS LAST, so it cannot shadow a counter, a ward, a pit or a card.
+     * The pit branch three above it once returned on its own refusal and made
+     * #20's betting card unreachable; that is the failure mode this measures
+     * rather than trusts. */
+    assert(body.indexOf('offersAt(') > body.indexOf('venueAtPlace(')
+      && body.indexOf('offersAt(') > body.indexOf('countersAt(')
+      && body.indexOf('offersAt(') > body.indexOf('onPit')
+      && body.indexOf('offersAt(') > body.indexOf('onMedbay'),
+      'the job board is raised BEFORE a counter, a pit, a card or the ward — it will eat their press');
+
+    /* AND THE ROOMS IT LANDS IN ARE THE ONES THE PLAYER ASKED FOR: not one
+     * new room, but every room with nobody behind a counter in it. */
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { countersAt } = await import('../../src/game/Vendors.js');
+    const { venueAtPlace } = await import('../../src/game/Tote.js');
+    const { pitAtPlace } = await import('../../src/game/Pits.js');
+    const W = await import('../../src/game/Quests.js');
+    const claimed = new Set([13, 28, 41, 42, 43, 44, 50, 56, 57, 60, 2, 3, 4, 5, 6]);
+    const open = PLACES.filter((p) => !p.external && p.verb && !claimed.has(p.id)
+      && !p.kiosk && !countersAt(p.id).length && !pitAtPlace(p.id) && !venueAtPlace(p.id));
+    assert(open.length >= 20, `only ${open.length} rooms reach the job board — the givers have nowhere to be`);
+    assert(open.some((p) => p.id === 14), '#14 The Long Night does not reach the board, and a bar is where a job is offered');
+
+    let jobs = 0, worstFull = 0;
+    for (let day = 0; day < 14; day++) {
+      let full = 0;
+      for (const p of open) { const n = W.offersAt(p.id, day).length; jobs += n; if (n) full++; }
+      if (full > worstFull) worstFull = full;
+    }
+    assert(jobs / 14 > 8, `only ${(jobs / 14).toFixed(1)} jobs a day across the whole station`);
+    /* NOT ALWAYS THERE, measured PER DAY and not over a fortnight: over enough
+     * days every room offers something eventually, and asserting otherwise
+     * would be a check that only passes while the sample is small. What has to
+     * be true is that on any GIVEN day you walk into rooms with nobody in them
+     * — which is the player's *"it's a chance thing"*. */
+    assert(worstFull < open.length,
+      `on the fullest of 14 days all ${open.length} rooms had a job going — walking in is not a chance any more`);
+
+    const { files } = await shippedGraph();
+    return `Quests.js ships, imported by ${by.join(' and ')}; ${open.length} rooms reach the board, `
+      + `${(jobs / 14).toFixed(1)} jobs a day; ${files.size} modules in the build`;
+  });
+
 }

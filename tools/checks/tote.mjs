@@ -848,6 +848,55 @@ export async function run({ check, assert }) {
     return `${struck.size} of 9 venue-markets strikeable: ${[...struck].sort().join(', ')}`;
   });
 
+  check('tote: the room the race is watched in re-reads itself, and it keeps no clock of its own', async () => {
+    /**
+     * ══ "YOU SHOULD BE ABLE TO WATCH THE ENTIRE BATTLE" ═════════════════
+     *
+     * Everything below this file's own line was already true — `watch()` is a
+     * pure function of a place, a day and an hour, and it moves gate by gate.
+     * What was not true is that anybody could SEE it move. `showTote` was
+     * called from `openTote` and two click handlers and from nowhere else, so
+     * with the panel up the page was a photograph; and `Screens.take` pauses
+     * the world, so the hour it reads was frozen as well. Either alone is
+     * enough. A race is `runs: 0.3` h — 36 real seconds — and the player got
+     * two stills with a walk between them.
+     *
+     * This is a source read because the defect is a MISSING CALLER, which no
+     * amount of driving `watch()` can see: the reading was always right.
+     *
+     * `tools/_toteprobe.mjs` drives the fixed version in a real browser and
+     * reports the panel text and the gate number before and after.
+     */
+    const { readFile } = await import('node:fs/promises');
+    const main = await readFile(new URL('../../src/main.js', import.meta.url), 'utf8');
+    const code2 = main.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+    /* THE PANEL RE-RENDERS ON A TIMER, and the timer is the pit's shape —
+     * `setTimeout` off `performance.now()`, independent of the frame loop,
+     * which is why a bout was watchable with the panel up and a race was not. */
+    const bell = /function toteBell\([^)]*\)\s*\{([\s\S]*?)\n\}/.exec(code2)?.[1] || '';
+    assert(bell, 'there is no toteBell in main.js — nothing re-renders the tote panel');
+    assert(/setTimeout\(/.test(bell), 'the tote panel has no timer, so it is a photograph');
+    assert(/showTote\(/.test(bell), 'the tote\'s timer does not re-render the panel');
+    assert(/performance\.now\(\)/.test(bell),
+      'the tote\'s timer measures no real time — a throttled tab would run the card in the dark');
+    assert(/openTote[\s\S]{0,240}?toteBell\(/.test(code2), 'opening the tote does not start its clock');
+
+    /* AND IT KEEPS NO HOUR OF ITS OWN. The one risk of a panel with a clock is
+     * that the panel and the station disagree about the time — which is the
+     * exact failure `watch()`'s signature was written to rule out. The panel
+     * winds the STATION's clock and reads it straight back, so there is one
+     * number. A second copy of §3.4's rate in main.js would be the drift. */
+    assert(/tickStationClock\(/.test(bell),
+      'the tote panel advances something other than the station clock — two clocks, and they will disagree');
+    assert(!/\/\s*120\b/.test(code2),
+      'main.js has grown its own copy of the station clock rate — §3.4 lives in Station.js');
+    assert(/toteWatch\(venueId, day, toteHour\(\)\)/.test(code2),
+      'showTote no longer reads the station hour — a panel with a private hour is a panel showing another race');
+    return 'the panel re-renders on its own setTimeout off performance.now(), winds Station.tickStationClock '
+      + 'and reads the hour back off the station — one clock';
+  });
+
   check('tote: a card runs whether or not anybody is in the room', () => {
     /**
      * The engine's guarantee, re-driven at the room's door. `runSpectacle`

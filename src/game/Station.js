@@ -65,7 +65,11 @@ import { stepMedbay } from './Medbay.js';
 import { pitAtPlace } from './Pits.js';
 import { venueAtPlace, ticketFor, settleTickets } from './Tote.js';
 import { openWheelhouse, wheelhouseLine, drumQuote, WHEELHOUSE } from './Casino.js';
-import { offersAt, openJobs, owedJobs, takeJob, collect } from './Quests.js';
+/* THE JOB BOARD'S DOOR. `takeJob` is NOT here: a panel takes a job straight
+ * off `Quests.js`, and a pass-through in this file would be a second name for
+ * the same call and one more thing to keep true. What this file owns is the
+ * two things `Quests.js` must not — where a giver is standing, and the purse. */
+import { offersAt, openJobs, owedJobs, collect } from './Quests.js';
 import { pay, spend } from './Credits.js';
 import {
   boardAt, traffic, inboundLine, walkGantry, signCert, certified, readiness,
@@ -1648,7 +1652,10 @@ export function stationKey(world) {
    * true even when nothing has opened a panel.
    */
   if (place.id === WHEELHOUSE) {
-    const room = openWheelhouse(st.hour, stationDay(), place.id);
+    /* THE STATION'S OWN CLOCK, off the world and not a second one — the Drum
+     * is the same hour the medbay heals on and the shops reroll on, which is
+     * the whole of why a spin cannot be re-taken by walking out. */
+    const room = openWheelhouse(world._station?.hour ?? 0, stationDay(), place.id);
     if (world.onCasino && world.onCasino(room) !== false) return true;
     /* NO PANEL YET AND THE ROOM STILL WORKS. `main.js` owns the overlay; a
      * build without it gets the real spin and the real dealer off the same
@@ -1752,8 +1759,6 @@ export function payForJob(jobId) {
   return { ...got, paid, capped: paid < got.pay };
 }
 
-/** Take one. Refuses at three, and refuses the same job twice. */
-export function takeJobAt(offer) { return takeJob(offer); }
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  THE WINDOW — the dozen lines where the credits actually move

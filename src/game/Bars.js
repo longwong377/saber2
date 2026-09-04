@@ -18,6 +18,22 @@
  *   #18 The Pit  *"a lower room off the cantina: sabacc tables, a dice cage, a
  *       cashier behind bars, one exit"* — which is the CASINO, and `Games.js`
  *       finished the three games you play in it.
+ *
+ *       ── AMENDED, AND THE SENTENCE ABOVE WAS FALSE ────────────────────
+ *
+ *       "the three games you play in it" was the ONLY occurrence of the string
+ *       "Games.js" anywhere under `src/`, and it was a sentence in a comment.
+ *       No file imported the module, so `pack.mjs` never put it in a build and
+ *       the three games were unplayable in every shipped copy of this game.
+ *       Standing in #18 and pressing the key raises the TOTE — `stationKey`
+ *       has no card-table branch and #18's own gazetteer verb is "watch and
+ *       bet", which is a book and not a seat.
+ *
+ *       So the fourth room WAS the fix, for the games and only for the games:
+ *       `#60 The Wheelhouse` (V16 §D1), deck 40 outer at 89.85°, with
+ *       `Casino.js` between the room and the rules. Everything below this
+ *       about LEAVE stands unchanged — that half never needed a room and
+ *       still does not.
  *   #54 Observation dome  *"a glass dome onto the planet and the battle, a
  *       bar, benches, a telescope"*, `who: '20 off duty'` — the quiet one.
  *

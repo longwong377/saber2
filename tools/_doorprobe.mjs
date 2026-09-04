@@ -47,7 +47,14 @@ const DOORS = [
   ['onCounter', 'counter', ['underlift'], '#58 the black market'],
   ['onBench', 'bench', ['make'], '#50 Fabrication'],
   ['onMedbay', 'medbay', [43], '#43 Medbay'],
-  ['onPit', 'pit', [20], '#20 The Arena'],
+  /* #61 AND NOT #20, AND THE SWAP IS THE FIX AND NOT A DODGE. `#20 The Arena`
+   * is a pit AND a book, and on a profile with no animal — which is what this
+   * probe boots — the pit now HANDS THE PRESS ON rather than answering with
+   * "you have nothing to put in there": `openPit` returns false and
+   * `stationKey` falls through to the tote, which is the row three below.
+   * `#61 The Underlift Pit` has no book, so its refusal is still the only
+   * answer in the room and this is where a pit panel can be opened cold. */
+  ['onPit', 'pit', [61], '#61 The Underlift Pit'],
   ['onTote', 'tote', ['holo-theatre'], '#19 Holo-theatre'],
   ['onTote', 'tote', ['the-pit'], '#18 The Pit'],
   ['onTote', 'tote', ['the-arena'], '#20 The Arena tote'],

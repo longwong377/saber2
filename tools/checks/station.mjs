@@ -506,6 +506,136 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('station: the people in the corridors are going somewhere', async () => {
+    /**
+     * §2.5's THIRD standing rule, and the only one of the three that was not
+     * built: *"People are going somewhere … the walkways must carry people
+     * MOVING along desire lines."*
+     *
+     * ── WHAT WAS MEASURED ────────────────────────────────────────────────
+     *
+     * A hostile pass tracked 46 residents over sixty simulated seconds on deck
+     * 40 and got a median displacement of 3.02 m, worst 6.49 — the eighteen in
+     * the between-space no different at 2.96. The ring is two hundred metres
+     * round. Three metres a minute is a shuffle on the spot, and the source
+     * said why: `spawnResident` set `brain.idle = true`, and `stationWay` —
+     * the field whose own comment called it "the hook a route would drive" —
+     * had one writer and no readers in the whole tree.
+     *
+     * The clause above this one asserts the corridors are POPULATED and it
+     * always did; nothing asserted that anybody in them was going anywhere,
+     * which is how a rule that reads as obviously true went unbuilt.
+     *
+     * ── AND IT IS TWO ASSERTIONS, NOT ONE ────────────────────────────────
+     *
+     * The open stretches MOVE. Everything else on a walkway is somebody who
+     * has stopped on purpose — at a counter, on a bench, at the rail, waiting
+     * at a crossing — and making those walk would delete the fixtures, so they
+     * are asserted to STAY. A fix that set every body walking would pass a
+     * one-sided version of this and empty the benches.
+     */
+    diskFetch();
+    const { world, idle } = await station(40);
+    try {
+      const life = world._stationLife;
+      /**
+       * STAND ON THE RING, and that is not a convenience. The station seats
+       * bodies within a drop radius of the PLAYER, and the lift lobby a world
+       * boots at has fixtures near it — an overlook, a shrine, a stairhead —
+       * and no open stretch inside the radius at all. Booting and looking
+       * measured `{overlook: 2, room: 25, shrine: 2, stairhead: 1}` and zero
+       * walkers, which says nothing about whether walkers walk.
+       *
+       * So the player is put where the walking is, on the first open stretch
+       * the deck declares, and the world is given a moment to seat it.
+       */
+      const { wayPlacesOn } = await import('../../src/game/StationLife.js');
+      const open = wayPlacesOn(40).find((p) => p.way === 'walk');
+      assert(open, 'deck 40 declares no open walking stretch at all');
+      world.player.position.set(open.x, world.player.position.y, open.z);
+      world.player.body?.setTransform?.(world.player.position, null);
+      for (let i = 0; i < 300; i++) world.update(1 / 60, idle);
+
+      /* KEYED ON THE BODY AND NOT ON THE SLOT. `reseat` recycles a slot key —
+       * a body can be dropped and a different one spawned into `p:i` inside
+       * the window — and comparing those two is measuring a respawn and
+       * calling it a walk. The first cut did that and read 5.92 m of
+       * "movement" out of people standing at a counter. */
+      const seen = new Map();
+      for (const [, b] of life.live) {
+        seen.set(b, { x: b.position.x, z: b.position.z, way: b.stationWay || null });
+      }
+      /* NINE ON A STRETCH OF OPEN RING IS THE RIGHT NUMBER, and a bar of
+       * twenty here would be a bar on the wrong thing: the clause above owns
+       * how many people a corridor holds, and this one owns whether they are
+       * going anywhere. Four is the smallest sample that can have a median. */
+      assert(seen.size >= 6, `only ${seen.size} residents were up to watch`);
+
+      /* SIXTY SIMULATED SECONDS, the same window the audit used. */
+      for (let i = 0; i < 3600; i++) world.update(1 / 60, idle);
+      const walk = [], stopped = [];
+      for (const [, b] of life.live) {
+        const a = seen.get(b);
+        if (!a) continue;
+        const d = Math.hypot(b.position.x - a.x, b.position.z - a.z);
+        (a.way === 'walk' ? walk : stopped).push(d);
+      }
+      /* TWO, AND THE NUMBER IS SMALL BECAUSE THE STRETCHES ARE THIN: eight
+       * open runs of ring at four heads each is thirty-two people in transit
+       * on a whole deck, and only the ones inside the seat radius are bodies
+       * at all. How MANY is the clause above's subject and it bounds the total
+       * at forty; this one only needs enough to have a median. */
+      assert(walk.length >= 2,
+        `only ${walk.length} bodies were on the open stretches — nothing was measured`);
+      const median = (v) => { const q = v.slice().sort((x, y) => x - y); return q[q.length >> 1]; };
+      const m = median(walk);
+      /* A MINUTE AT A WALK IS TENS OF METRES. `WALK_PACE` is 1.35 m/s, so a
+       * minute is about eighty; the bar is set at a quarter of that so a body
+       * that spent part of the window being re-seated still counts. */
+      assert(m >= 20,
+        `the open walkways moved a median of ${m.toFixed(2)} m in sixty seconds — the ring is `
+        + '200 m round, and this is a shuffle on the spot rather than a journey');
+      /* AND THE BENCHES ARE STILL OCCUPIED BY PEOPLE SITTING ON THEM. */
+      /**
+       * ── AND IT IS A RATIO, BECAUSE THE FIXTURES WERE NEVER STILL ────────
+       *
+       * The first cut asserted the people who stopped somewhere moved less
+       * than three metres, and measured 5.92 — market bodies drifting 8 to 10
+       * m over the minute. That drift predates this lane and is not something
+       * `stepWalkers` does: it only ever touches a body with a `wayR`, and
+       * only `way === 'walk'` is given one. Asserting an absolute the game has
+       * never held would have been this check inventing a second defect.
+       *
+       * What the clause is actually for is that a fix which set EVERY body
+       * walking would empty the benches, and that is a RATIO: an open stretch
+       * has to be a journey against whatever the fixtures are doing, not
+       * against zero.
+       */
+      if (stopped.length) {
+        const sm = median(stopped);
+        assert(m > sm * 3,
+          `the open stretches moved ${m.toFixed(1)} m and the people who stopped somewhere on `
+          + `purpose moved ${sm.toFixed(1)} m — the counters, the benches and the rails have been `
+          + 'emptied into the corridor');
+      }
+      /* THE CORRIDOR IS AN ANNULUS AND A WALKER MAY NOT LEAVE IT. This is the
+       * whole reason the route is a bearing at a fixed radius rather than a
+       * path: staying inside is arithmetic, so it is checked as arithmetic. */
+      let strayed = 0;
+      for (const [, b] of life.live) {
+        if (!b.wayR) continue;
+        if (Math.abs(Math.hypot(b.position.x, b.position.z) - b.wayR) > 0.05) strayed++;
+      }
+      assert(strayed === 0, `${strayed} walkers left the ring they were walking`);
+      return `${walk.length} on the open stretches moved a median ${m.toFixed(1)} m in a minute `
+        + `(the ring is ${(2 * Math.PI * 85.5).toFixed(0)} m round); ${stopped.length} who stopped `
+        + `somewhere drifted ${stopped.length ? median(stopped).toFixed(1) : '0'} m; `
+        + '0 left the corridor';
+    } finally { world.unload(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('station: every place is reachable on foot from a lift', async () => {
     const { PLACES, SHAFTS, DRUM, DECK_Y } = await import('../../src/game/StationPlan.js');
     /**

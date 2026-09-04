@@ -57,14 +57,19 @@ import { emptyLarder, stowFood, takeFood } from './game/Home.js';
 import { noteApartment, larderAt } from './game/Coop.js';
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
 import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
-import { watch as toteWatch, resultOf as toteResult, MAX_STAKE } from './game/Tote.js';
+import { watch as toteWatch, resultOf as toteResult, venueAtPlace, MAX_STAKE } from './game/Tote.js';
 import * as Food from './game/Food.js';
+import {
+  openWheelhouse, sabaccTable, nextHand, dejarikTable, dejarikTurn,
+  drumTable, drumBets, drumQuote, WHEELHOUSE,
+} from './game/Casino.js';
+import { takeJob, openJobs } from './game/Quests.js';
 import { programById, programSettings, rack, rackLines, Cycle } from './game/Holodeck.js';
 import { LESSONS } from './game/Dojo.js';
-import { stakeAtTote, payAtTote } from './game/Station.js';
+import { stakeAtTote, payAtTote, tickStationClock, stakeAtDrum, payAtDrum, payForJob } from './game/Station.js';
 import {
   pitAtPlace, venueOpen, handlersOn, ROSTER_HOUR, offerBout, openBout, beginRound, callOrder,
-  runRound, cornerAct, pitState, settleBout, foldPit, pitCall,
+  runRound, cornerAct, pitState, settleBout, foldPit, pitCall, pitCard,
   PIT_ORDERS, ORDER_WINDOW, READ_WINDOW, CORNER_ACTS, ORDERS_PER_ROUND,
 } from './game/Pits.js';
 /* V16 Lane B's counters and Lane A3's bench — the two rooms that spend. */
@@ -1181,6 +1186,10 @@ async function enterStation(floorRow = null, opts = {}) {
     world.onMedbay = (id) => openMedbay(id);
     /* #20 and #61 — see `openPit`. */
     world.onPit = (id) => openPit(id);
+    /* #60 — see `openCasino`. */
+    world.onCasino = (room) => openCasino(room);
+    /* Anybody in any room with a job on it — see `openWork`. */
+    world.onQuest = (board) => openWork(board);
     /* #18, #19 and #20 — see `openTote`. */
     world.onTote = (id) => openTote(id);
     /* The cupboard at #27 — see `openLarder`. */
@@ -2015,6 +2024,8 @@ function showPit(placeId) {
     pit = { placeId, offer: got.offer, bout: null, last: null, t0: 0 };
   }
   const { offer, bout } = pit;
+  /* The book in the same room, if there is one. #20 has one, #61 does not. */
+  const book = venueAtPlace(placeId);
   let html = `<div class="pane"><h2>${esc(offer.venue.name)}</h2>`;
 
   if (!bout) {
@@ -2037,6 +2048,11 @@ function showPit(placeId) {
     } else {
       html += '<button class="care" data-do="safe">Fight</button>';
     }
+    /* THE ROOM'S OTHER DOOR. #20 is a pit AND a book, and a player standing
+     * in it must be able to reach both — see `openPit` and `Station.
+     * stationKey`, which is where the press was being eaten. #61 has no book
+     * and this line does not appear there. */
+    if (book) html += `<button class="care" data-do="book">The card at ${esc(book.name)}</button>`;
     html += '<button class="care" data-do="leave">Walk away</button></div>';
   } else if (bout.over) {
     const O = bout.outcome;
@@ -2047,7 +2063,9 @@ function showPit(placeId) {
     if (pit.fold && !pit.fold.kept && !pit.fold.died) {
       html += '<p class="sub">That is not the animal that fought.</p>';
     }
-    html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div>';
+    html += '<div class="acts">'
+      + (book ? `<button class="care" data-do="book">The card at ${esc(book.name)}</button>` : '')
+      + '<button class="care" data-do="leave">Leave</button></div>';
   } else {
     const st = pitState(bout);
     html += `<p class="sub">Round ${st.round} of ${st.of} — yours ${Math.round(st.condition)}`
@@ -2079,6 +2097,7 @@ function showPit(placeId) {
     b.addEventListener('click', () => {
       const act = b.dataset.do;
       if (act === 'leave') { closePit(); return; }
+      if (act === 'book') { closePit(); if (book) openTote(book.id); return; }
       if (act === 'mortal' || act === 'safe') {
         pit.bout = openBout(pit.offer, { accept: act === 'mortal' ? pit.offer.stake.token : null });
         pitBell();
@@ -2139,13 +2158,316 @@ function closePit() {
   screens.set('playing');
 }
 
+/**
+ * ══ #20 HAS TWO DOORS AND THE PIT USED TO EAT THE PRESS ══════════════════
+ *
+ * `Station.stationKey` raises the pit before the tote, so at `#20 The Arena` —
+ * which is a pit AND a book — the pit answered every press and the tote branch
+ * below it was unreachable. Driven on a profile with no animal: #18 at 22:00
+ * raised [tote], #19 at 14:45 raised [tote], #20 at 18:15 raised [pit] and the
+ * whole room was one line, "you have nothing to put in there", at every hour
+ * of every day. The Arena's betting card could not be opened by a player at
+ * all, which is the exact sentence Lane D2 exists for.
+ *
+ * THE PIT KEEPS THE PRESS ONLY WHEN IT TOOK IT. There is no bout here for a
+ * man with nothing to put in — that is not a room, it is a refusal — so when
+ * a book shares the room the press is handed on and `stationKey` falls through
+ * to the tote. `#61 The Underlift Pit` has no book, so its refusal still has
+ * to be somebody's answer and it stays exactly as it was.
+ *
+ * The way BACK is `showPit`'s window button and `showTote`'s sand button, so
+ * either half of the room reaches the other from wherever the press landed.
+ */
 function openPit(placeId) {
   if (!pitAtPlace(placeId)) return false;
+  if (venueAtPlace(placeId) && !pitOffer(placeId).offer) return false;
   audio.ui('good');
   screens.take('pit', () => showPit(placeId));
   return true;
 }
 screens.card('pit', () => { clearPitTimer(); pit = null; closePane('pit'); });
+
+/**
+ * ══ #60 THE WHEELHOUSE — V16 Lane D1 ══════════════════════════════════════
+ *
+ * *"you should be able to play some of the casino games these should be actual
+ * games within games really put time in and make sure these alien casino games
+ * are innovative and can sink time into them … in certain games you play
+ * against actual npcs like it could be anyone on the ship on any day."*
+ *
+ * THREE TABLES ON ONE CARD, and you PLAY them: a sabacc hand you decide three
+ * times, a dejarik board you move a piece on, and the Drum, which you cannot
+ * decide anything about at all because it runs on the station clock.
+ *
+ * ── WHY THE STATE IN THIS FILE IS `{seed, acts}` AND NOTHING ELSE ─────────
+ *
+ * `Casino.sabaccTable` re-runs the whole hand from its seed every time you
+ * decide. The panel therefore holds a list of the verbs you have said and no
+ * cards at all — so nothing on this screen can drift out of step with the
+ * rules the way a hand-kept board would, and shutting the card and opening it
+ * again is the same hand rather than a new deal. The dejarik board is the
+ * opposite and for the honest reason: it is perfect information, so the board
+ * IS the state and there is nothing to replay.
+ *
+ * ── AND THE MONEY MOVES IN `Station.js`, NOT HERE ────────────────────────
+ *
+ * `Station.stakeAtDrum` and `payAtDrum` are the two lines where the purse
+ * moves, beside `stakeAtTote` and `payAtTote`, under the same `PER_RUN_CAP`.
+ * A ticket lives as long as the screen and the hour it is on, which is what a
+ * chip on a table does.
+ *
+ * ── ITS OWN ROOT, WHICH IS THE ONLY SHAPE SAFE AGAINST `Screens.clear()` ──
+ *
+ * `paneRoot('casino')`, exactly as the pit, the tote and the counter do, and
+ * `screens.card('casino', …)` to take it down. A card that hid the MENU
+ * instead could not be told from "hide the menu" — see `showKioskPanel`'s
+ * note, and the unreachable-game defect it records.
+ */
+let casino = null;
+
+function casinoRoot() { return paneRoot('casino'); }
+
+function casinoHour() { return world?._station?.hour ?? 0; }
+
+/** The pips on a sabacc card, signed. `−13` reads as a card, `-13` does not. */
+function cardOf(v) { return `${v < 0 ? '−' : ''}${Math.abs(v)}`; }
+
+function showCasino() {
+  const el = casinoRoot();
+  const day = stationDay();
+  const hour = casinoHour();
+  if (!casino) casino = { tab: 'sabacc', index: 0, acts: [], board: null, ticket: null, said: null };
+
+  const room = openWheelhouse(hour, day, WHEELHOUSE);
+  let html = `<div class="pane"><h2>${esc(room.name)}</h2>`;
+  html += `<p class="sub">${clockOf(hour)} · ${purse()} credits</p>`;
+  html += '<div class="rows">' + room.tables.map((t) => `<div class="row">`
+    + `<button class="tab-t" data-tab="${t.id}"${casino.tab === t.id ? ' disabled' : ''}>${esc(t.name)}</button>`
+    + `<span>${esc(t.line)}</span></div>`).join('') + '</div>';
+
+  /* ── SABACC. Your hand, what everyone else is holding, and three verbs. */
+  if (casino.tab === 'sabacc') {
+    const t = sabaccTable(WHEELHOUSE, day, casino.index, casino.acts);
+    html += `<p class="sub">Nearest ${t.target} on either side. Over is a bomb-out.</p>`;
+    html += `<div class="rows"><div class="row"><b>Your hand</b>`
+      + `<span>${t.hand.map(cardOf).join('  ')} <i>= ${cardOf(t.score.sum)}, `
+      + `${t.score.bomb ? 'bombed out' : `${t.score.off} off`}</i></span></div>`;
+    t.seats.forEach((s, i) => {
+      const held = t.others[i + 1];
+      html += `<div class="row"><b>${esc(s.name)}</b><span>the ${esc(s.species)}, ${esc(s.role)} `
+        + `<i>${held === 0 ? 'folded' : `${held} cards`}</i></span></div>`;
+    });
+    html += '</div>';
+    if (!t.done) {
+      html += `<p class="sub">Round ${t.round + 1} of ${t.rounds}. `
+        + `Every card may shift before the next one.</p><div class="rows">`
+        + t.can.map((v) => `<div class="row"><button class="act" data-act="${v}">${v}</button>`
+          + `<span>${v === 'hold' ? 'stand on it and let the shift come'
+            : v === 'draw' ? 'take another card' : 'throw the hand in'}</span></div>`).join('')
+        + '</div>';
+    } else {
+      html += `<p class="sub"><b>${esc(t.result.line)}</b>`
+        + (t.shifts ? ` — ${t.shifts} of your cards shifted under you.` : '') + '</p>';
+      html += '<div class="rows">' + t.result.hands.map((h, i) => {
+        const who = i === 0 ? 'you' : (t.seats[i - 1]?.name || 'the house');
+        const s = t.result.scores[i];
+        return `<div class="row"><b>${esc(who)}</b><span>${h.map(cardOf).join('  ')} `
+          + `<i>${s.out ? 'folded' : s.bomb ? 'bomb-out' : cardOf(s.sum)}</i></span></div>`;
+      }).join('') + '</div>';
+      html += '<div class="rows"><div class="row"><button class="deal">deal again</button>'
+        + '<span>a new hand at the same table</span></div></div>';
+    }
+  }
+
+  /* ── THE DEJARIK COLUMN. Twenty squares round a ring, and it shrinks. */
+  if (casino.tab === 'dejarik') {
+    if (!casino.board) casino.board = dejarikTable(WHEELHOUSE, day);
+    const g = casino.board;
+    html += `<p class="sub">Against ${esc(g.against?.name || 'the house')}`
+      + `${g.against ? `, the ${esc(g.against.species)}` : ''}. `
+      + `The ring loses a square every ${g.shrink} turns. Turn ${g.board.turn}.</p>`;
+    /* THE RING AS A ROW, because twenty squares in a line is legible and a
+     * drawn circle in an HTML pane is not. A removed square is a gap. */
+    html += '<div class="rows"><div class="row"><b>the ring</b><span>'
+      + g.board.ring.map((p, i) => {
+        if (g.board.gone[i]) return '<i>·</i>';
+        if (!p) return `<i>${i}</i>`;
+        return `<b>${p.side === 0 ? p.id[0].toUpperCase() : p.id[0]}</b>`;
+      }).join(' ') + '</span></div></div>';
+    if (g.winner === null && g.moves.length) {
+      html += `<p class="sub">${g.last ? `They played ${g.last.theirs.from}→${g.last.theirs.to}. ` : ''}`
+        + 'Your move — capitals are yours.</p><div class="rows">'
+        + g.moves.slice(0, 14).map((m) => `<div class="row">`
+          + `<button class="mv" data-from="${m.from}" data-to="${m.to}">${m.from}→${m.to}</button>`
+          + `<span>${esc(g.board.ring[m.from].id)}${m.takes ? ' <i>takes</i>' : ''}</span></div>`).join('')
+        + '</div>';
+    } else {
+      html += `<p class="sub"><b>${esc(g.line || 'the column is done')}</b></p>`
+        + '<div class="rows"><div class="row"><button class="rack">rack them up</button>'
+        + '<span>a fresh column</span></div></div>';
+    }
+  }
+
+  /* ── THE DRUM. The one you cannot re-take: it is the station's own hour. */
+  if (casino.tab === 'drum') {
+    const d = room.drum;
+    html += `<p class="sub">The wheel turns on the hour whether you are here or not. `
+      + `It stands on <b>${d.house ? 'the house' : `deck ${d.deck}`}</b> at ${clockOf(hour)}.</p>`;
+    html += '<div class="rows"><div class="row"><b>the last six hours</b><span>'
+      + d.prev.map((p) => `${String(p.hour).padStart(2, '0')}:00 ${p.deck === null ? 'house' : p.deck}`).join(' · ')
+      + '</span></div></div>';
+    /* ── A TICKET RIDES ON A LATER HOUR AND IS SETTLED WHEN THE CLOCK GETS
+     * THERE. `casino.ticket.on` is the hour it was struck FOR; while the
+     * station's hour is still that one the bet is live and unanswerable, and
+     * the moment the clock passes it the stop is read once and paid. A window
+     * that settled against the hour it sold into would be selling a result
+     * `drumAt` had already published, which is the one thing this game is
+     * written not to be. */
+    if (casino.ticket && d.hour !== casino.ticket.on) {
+      const paid = payAtDrum(casino.ticket, drumTable(casino.ticket.on, casino.ticket.day).at);
+      html += `<p class="sub"><b>${paid.won ? `the ${String(casino.ticket.on).padStart(2, '0')}:00 turn paid ${paid.paid}` : `the ${String(casino.ticket.on).padStart(2, '0')}:00 turn took it`}</b>`
+        + (paid.capped ? ` — the wallet capped it at ${paid.paid} of ${paid.owed}` : '') + '</p>';
+      casino.ticket = null;
+    } else if (casino.ticket) {
+      html += `<p class="sub">${casino.ticket.stake} on ${esc(casino.ticket.label)}, `
+        + `riding on the ${String(casino.ticket.on).padStart(2, '0')}:00 turn. `
+        + 'You cannot take it back and you cannot be here twice for it.</p>';
+    }
+    html += '<div class="rows">' + drumBets().map((b, i) => {
+      const stake = 25;
+      /* WHAT IT WOULD HAVE DONE ON THE TURN JUST GONE — the form, not a
+       * forecast. Nothing here knows the next stop and nothing may. */
+      const was = drumQuote({ ...b, stake }, d.at);
+      return `<div class="row"><b>${esc(b.label)}</b>`
+        + `<span>pays ${b.pays}× <i>${was ? `this hour it paid ${was}` : 'this hour it paid nothing'}</i></span>`
+        + `<button class="stake" data-i="${i}" data-stake="${stake}"`
+        + `${(purse() >= stake && !casino.ticket) ? '' : ' disabled'}>${stake}</button></div>`;
+    }).join('') + '</div>';
+    if (casino.said) html += `<p class="sub">${esc(casino.said)}</p>`;
+  }
+
+  html += '</div>';
+  el.innerHTML = html;
+
+  for (const b of el.querySelectorAll('button.tab-t')) {
+    b.addEventListener('click', () => { casino.tab = b.dataset.tab; casino.said = null; showCasino(); });
+  }
+  for (const b of el.querySelectorAll('button.act')) {
+    b.addEventListener('click', () => { casino.acts = [...casino.acts, b.dataset.act]; audio.ui('click'); showCasino(); });
+  }
+  for (const b of el.querySelectorAll('button.deal')) {
+    b.addEventListener('click', () => {
+      const n = nextHand({ index: casino.index });
+      casino.index = n.index; casino.acts = n.acts; audio.ui('good'); showCasino();
+    });
+  }
+  for (const b of el.querySelectorAll('button.mv')) {
+    b.addEventListener('click', () => {
+      casino.board = dejarikTurn(casino.board, { from: +b.dataset.from, to: +b.dataset.to });
+      audio.ui('click'); showCasino();
+    });
+  }
+  for (const b of el.querySelectorAll('button.rack')) {
+    b.addEventListener('click', () => { casino.board = dejarikTable(WHEELHOUSE, stationDay()); showCasino(); });
+  }
+  for (const b of el.querySelectorAll('button.stake')) {
+    b.addEventListener('click', () => {
+      const bet = { ...drumBets()[+b.dataset.i], stake: +b.dataset.stake };
+      const struck = stakeAtDrum(bet);
+      if (!struck.ok) { casino.said = struck.short ? `${struck.short} credits short` : struck.why; showCasino(); return; }
+      /* THE STAKE IS ON THE NEXT HOUR, NEVER THIS ONE. The wheel this hour has
+       * already stopped and `drumAt` will tell anybody who asks where — a
+       * window still open on a known result is the one thing this game must
+       * not be. */
+      const hour = casinoHour();
+      casino.ticket = { ...struck.ticket, on: (Math.floor(hour) + 1) % 24, day: stationDay() };
+      casino.said = null;
+      audio.ui('good');
+      showCasino();
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+/**
+ * The door. `stationKey` hands the whole room over — the tables are dealt
+ * before this file sees them — so a panel that failed to open would leave the
+ * branch's own `notify` line to answer, which is what it does today.
+ */
+function openCasino(room) {
+  if (!room) return false;
+  audio.ui('good');
+  screens.take('casino', () => showCasino());
+  return true;
+}
+screens.card('casino', () => { casino = null; closePane('casino'); });
+
+
+/* ═══════════ 4. THE JOB BOARD — the same shape, one room smaller ═══════ */
+
+/**
+ * ══ SOMEBODY IN HERE HAS A JOB — V16 Lane C3 ══════════════════════════════
+ *
+ * *"the npcs aren't always in the same place either so it's a chance thing …
+ * when you complete a certain quest it is recorded and you go back to that npc
+ * who will be there since you compelted the quest."*
+ *
+ * `Station.stationKey`'s LAST branch raises this, in any of the thirty-two
+ * rooms that have nobody behind a counter, and only when `Quests.offersAt`
+ * actually put somebody there today or there is money owed here. So the room
+ * is a bar most days and a bar with a man in it on some of them.
+ *
+ * THE PAY BUTTON IS THE POINT. `Station.payForJob` is the one line that moves
+ * the purse for a finished job, under the same cap everything else is under.
+ */
+let work = null;
+
+function showWork(board) {
+  const el = paneRoot('work');
+  let html = `<div class="pane"><h2>${esc(board.name)}</h2>`;
+  html += `<p class="sub">${purse()} credits · carrying ${openJobs().length} of 3</p>`;
+  if (work?.said) html += `<p class="sub">${esc(work.said)}</p>`;
+  if (board.owed.length) {
+    html += '<div class="rows">' + board.owed.map((j) => `<div class="row">`
+      + `<b>owed</b><span>${esc(j.line)}</span>`
+      + `<button class="collect" data-id="${esc(j.id)}">${j.pay}</button></div>`).join('') + '</div>';
+  }
+  html += '<div class="rows">' + (board.offers.length
+    ? board.offers.map((o) => `<div class="row"><b>${esc(o.shape)}</b>`
+      + `<span>${esc(o.line)}</span>`
+      + `<button class="take" data-id="${esc(o.id)}">${o.pay}</button></div>`).join('')
+    : '<div class="row"><span>nobody here is asking for anything today.</span></div>') + '</div>';
+  html += '</div>';
+  el.innerHTML = html;
+  for (const b of el.querySelectorAll('button.take')) {
+    b.addEventListener('click', () => {
+      const offer = board.offers.find((o) => o.id === b.dataset.id);
+      const got = takeJob(offer);
+      work = { said: got.ok ? `taken — you are carrying ${got.carrying}` : got.why };
+      audio.ui(got.ok ? 'good' : 'click');
+      showWork(board);
+    });
+  }
+  for (const b of el.querySelectorAll('button.collect')) {
+    b.addEventListener('click', () => {
+      const got = payForJob(b.dataset.id);
+      work = { said: got.ok ? `${got.paid} credits${got.capped ? ` (the wallet capped it at ${got.paid} of ${got.pay})` : ''}` : got.why };
+      audio.ui(got.ok ? 'good' : 'click');
+      showWork({ ...board, owed: board.owed.filter((j) => j.id !== b.dataset.id) });
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function openWork(board) {
+  if (!board || (!board.offers.length && !board.owed.length)) return false;
+  work = null;
+  audio.ui('good');
+  screens.take('work', () => showWork(board));
+  return true;
+}
+screens.card('work', () => { work = null; closePane('work'); });
+
 
 /**
  * ══ #18, #19 AND #20 — THE TOTE, V16 Lane D2 ══════════════════════════════
@@ -2172,7 +2494,95 @@ let tote = null;
 
 function toteHour() { return world?._station?.hour ?? 0; }
 
-function showTote(venueId) {
+/** A station hour as a clock face. `19.46` is 19:28, not "19.46:00". */
+function clockOf(hour) {
+  const h = Math.floor(hour) % 24;
+  const m = Math.round((hour - Math.floor(hour)) * 60) % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+/**
+ * ══ THE BELL. WHY THIS ROOM HAS A CLOCK OF ITS OWN ═══════════════════════
+ *
+ * *"you should be able to watch the entire battle."* You could not. Two bugs,
+ * stacked, either one sufficient:
+ *
+ *   1. `Screens.take` sets `world.paused`, and `frame()` calls `world.update`
+ *      only while the state is 'playing' or 'dead'. So with this panel up
+ *      `StationDirector.update` → `stepStation` → `st.hour += dt / 120` never
+ *      ran. Driven at #19 at 15:15 with a race live: 5400 × `world.update
+ *      (1/60)` — ninety simulated seconds — left `runningHour` at 15.25 both
+ *      sides, `panelChanged false`, the text byte-identical.
+ *   2. `showTote` was called from `openTote` and two click handlers and from
+ *      nowhere else. Even against a running clock the page was a photograph.
+ *
+ * A race is `runs: 0.3` h — 36 real seconds — so what the player got was two
+ * stills with a walk between them.
+ *
+ * ── WHY THE PANEL DRIVES THE CLOCK AND NOT THE FRAME LOOP ────────────────
+ *
+ * The other honest route was to let the WORLD keep running behind an open
+ * panel, and it was rejected on what else moves. `world.update` is not a
+ * clock: it is the physics, the enemies, the sabre and the player's own body,
+ * and `Screens.take` sets `input.enabled = false` in the same breath as
+ * `paused` — so a player reading a board could be walked into and hit with no
+ * key that answers. Every card in this file was written on that promise.
+ * Narrowing it to `stepStation` is no better in kind: that heals the ward,
+ * rerolls `stepBoards`, moves the piece in your hands and steps the fleet
+ * outside the glass, all of it out of sight, and the shops reroll on the same
+ * number. What a watched race needs out of all of that is the HOUR.
+ *
+ * So this is the pit's shape — `pitBell` off `setTimeout` and
+ * `performance.now()`, independent of the game loop, which is why a bout is
+ * watchable with the panel up and a race was not — and the answer to the risk
+ * that shape carries is that THE PANEL KEEPS NO HOUR OF ITS OWN. It advances
+ * the station's, through `Station.tickStationClock`, the same eight lines
+ * `stepStation` runs and at the same rate; `showTote` still reads `toteHour()`
+ * off `world._station.hour`. There is one clock in the building and this is a
+ * second thing that winds it, so the disagreement `Tote.watch`'s signature was
+ * written to make impossible — a place, a day and an hour and nothing else —
+ * cannot appear here either. When the panel goes down the frame loop takes the
+ * winding back, and it cannot double-count, because the loop does not step a
+ * paused world at all.
+ *
+ * FOUR TIMES A SECOND. A gate on the widest ground is about two and a half
+ * real seconds, so 250 ms is well inside the smallest thing the reading can
+ * say and is a rebuild of one small panel, not a frame.
+ */
+const TOTE_TICK = 250;
+let toteTimer = null;
+
+/** One handle, cancelled by every exit — `cancelDeathCard` and `clearPitTimer`
+ *  are the precedent and the reason: a timer that outlives its screen raises
+ *  its last frame over whatever the player walked into next. */
+function clearToteTimer() {
+  if (toteTimer !== null) { clearTimeout(toteTimer); toteTimer = null; }
+}
+
+function toteBell(venueId) {
+  clearToteTimer();
+  let at = performance.now();
+  const beat = () => {
+    toteTimer = null;
+    /* THE GUARD, AND IT IS THE POINT OF THE HANDLE. `screens.state` is 'tote'
+     * exactly while this card owns the screen; anything else — a pause, a
+     * clear, another door, the lift — means this beat is writing into a room
+     * the player has left. */
+    if (!tote || tote.venue !== venueId || screens.state !== 'tote') return;
+    const now = performance.now();
+    /* REAL SECONDS, clamped the way `frame()` clamps `dt`: a backgrounded tab
+     * hands back a gap of minutes, and a station that jumped a card's worth of
+     * hours because somebody alt-tabbed would have run the race in the dark. */
+    const dt = Math.min(0.1, (now - at) / 1000);
+    at = now;
+    tickStationClock(world, dt);
+    showTote(venueId, { keep: true });
+    toteTimer = setTimeout(beat, TOTE_TICK);
+  };
+  toteTimer = setTimeout(beat, TOTE_TICK);
+}
+
+function showTote(venueId, { keep = false } = {}) {
   const el = paneRoot('tote');
   const day = stationDay();
   const r = toteWatch(venueId, day, toteHour());
@@ -2192,12 +2602,25 @@ function showTote(venueId) {
     }
   }
 
+  /* WHAT IS ACTUALLY ON THE GLASS, AS A STRING, AND A BEAT THAT WOULD PRINT
+   * THE SAME PAGE DOES NOT PRINT. `innerHTML =` throws away `#tote-stake` —
+   * the field the player may be halfway through typing a number into — and at
+   * four beats a second that is a stake nobody can enter. Everything the page
+   * can say is in this line, so a reading that moved always redraws. */
+  const sig = [r.day, r.phase, r.segment, r.calls?.length | 0, r.winner || '',
+    r.next?.hour ?? '', tote.tickets.length, tote.last?.paid ?? '', purse()].join('|');
+  if (keep && tote.sig === sig && el.innerHTML) { el.classList.remove('hidden'); return; }
+  tote.sig = sig;
+
   let html = `<div class="pane"><h2>${esc(r.name)}</h2>`;
   html += `<p class="sub">${esc(r.word)} · ${purse()} credits</p>`;
   if (r.dark) {
     html += '<p class="sub">Dark tonight. Nothing on the board.</p>';
   } else if (r.phase === 'closed' || r.phase === 'over') {
-    html += `<p class="sub">${r.next ? `Nothing until ${String(r.next.hour).padStart(2, '0')}:00 — ${esc(r.next.ground)}.`
+    /* A RACE HOUR IS A FRACTION — `programmeAt` rounds to a fiftieth of an
+     * hour, so 18.46 was being printed as "18.46:00". A timetable that says a
+     * time nobody can read is a timetable nobody uses. */
+    html += `<p class="sub">${r.next ? `Nothing until ${clockOf(r.next.hour)} — ${esc(r.next.ground)}.`
       : 'The card is done for the day.'}</p>`;
   } else {
     const board = r.board;
@@ -2244,6 +2667,49 @@ function showTote(venueId) {
       }
     }
   }
+  /**
+   * ══ AND AT #20 THE OTHER HALF OF THE ROOM IS ON THE SAME PAGE ══════════
+   *
+   * *"you should be able to bet on other people's companion battles too even
+   * if you're not involved."*
+   *
+   * `Pits.pitCard()` builds exactly that — a card of station RESIDENTS who
+   * are not you, drawn off `handlersOn`, the same morning roster the player's
+   * own opponent comes out of — and it had no caller anywhere in `src/`. Only
+   * `tools/checks/pits.mjs` reached it, so the one thing the sentence asked
+   * for was a tested function nobody could see. The board above is the
+   * venue's own programme and stays what the window sells; this is who out of
+   * the people who live here is in the sand tonight, with the price the pit's
+   * own rail puts on them and the name of the man holding the lead.
+   *
+   * FREE, and it has to be — `Pits.js` §7 is "watching is free" and `pitCard`
+   * takes no record and no stake. It is a reading, and the door beside it is
+   * the only thing that costs anything.
+   */
+  const sand = pitAtPlace(r.place);
+  if (sand) {
+    const night = pitCard(sand, { day });
+    if (night.card) {
+      const price = new Map(night.board.map((row) => [row.id, row.price]));
+      const by = new Map(night.handlers.map((h) => [h.id, h]));
+      html += `<p class="sub">${esc(sand.name)} — in the sand tonight:</p>`;
+      html += '<div class="rows">' + night.card.entrants.map((e) => {
+        const h = by.get(e.id);
+        return `<div class="row"><b>${esc(e.name)}</b><span>`
+          + `${h ? esc(`${h.who}, ${h.place}`) : 'a stranger'} · ${Number(price.get(e.id) || 0).toFixed(2)}`
+          + '</span></div>';
+      }).join('') + '</div>';
+    } else {
+      html += `<p class="sub">${esc(sand.name)} — ${esc(night.why)}</p>`;
+    }
+    /* AND THE DOOR BACK INTO IT, when there is a bout in there for you. The
+     * press at #20 lands here now (see `openPit`), so without this line a
+     * player who DOES keep an animal could reach the book and never the sand
+     * from the same key. */
+    if (pitOffer(r.place).offer) {
+      html += `<div class="acts"><button class="care" data-do="sand">Fight at ${esc(sand.name)}</button></div>`;
+    }
+  }
   html += '<div class="acts"><button class="care" data-do="leave">Leave</button></div>';
   el.innerHTML = html + '</div>';
 
@@ -2258,24 +2724,38 @@ function showTote(venueId) {
       showTote(venueId);
     });
   }
-  for (const b of el.querySelectorAll('button[data-do="leave"]')) {
+  for (const b of el.querySelectorAll('button[data-do]')) {
     b.addEventListener('click', () => {
-      closePane('tote');
-      screens.clear();
-      input.enabled = true;
-      input.requestLock();
-      screens.set('playing');
+      const act = b.dataset.do;
+      closeTote();
+      /* THE ROOM'S OTHER DOOR, and it is a hand-off rather than a second key:
+       * `openPit` takes the screen back off `Screens` the moment this one has
+       * given it up, which is the same order `closePit` → `openTote` uses on
+       * the other side. */
+      if (act === 'sand') openPit(r.place);
     });
   }
   el.classList.remove('hidden');
 }
 
+function closeTote() {
+  clearToteTimer();
+  closePane('tote');
+  screens.clear();
+  input.enabled = true;
+  input.requestLock();
+  screens.set('playing');
+}
+
 function openTote(venueId) {
   audio.ui('good');
   screens.take('tote', () => showTote(venueId));
+  /* AFTER `take`, because `take` is what sets `screens.state` to 'tote' and
+   * that is the flag every beat checks before it writes to the glass. */
+  toteBell(venueId);
   return true;
 }
-screens.card('tote', () => closePane('tote'));
+screens.card('tote', () => { clearToteTimer(); closePane('tote'); });
 
 /**
  * ══ #43 AND #44, THE MEDBAY — V16 Lane B3 ═════════════════════════════════

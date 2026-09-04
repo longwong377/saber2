@@ -174,4 +174,112 @@ export async function run({ check, assert, near }) {
       'Games.js calls Math.random — a table nobody can seed is a table nobody can measure');
     return `one import (${imports[0]}), no world, no wallet, no Math.random`;
   });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('games: the three games are IN THE BUILD, and not only in this file', async () => {
+    /**
+     * ══ THE DEFECT THIS CHECK IS NAMED AFTER ═════════════════════════════
+     *
+     * Every check above was green for the whole life of `Games.js` while the
+     * file was IN NO SHIPPED BUILD. The only occurrence of the string
+     * "Games.js" anywhere under `src/` was a sentence inside a comment in
+     * `Bars.js`; `tools/pack.mjs` walks the module graph from
+     * `index.play.html`'s entry, so the packed manifest held 96 `src/game`
+     * modules and this was not one of them. Twenty-one kilobytes of sabacc,
+     * holochess and a house wheel that no player could reach, behind four
+     * green checks — because a suite that reaches a module with `import()` is
+     * making a statement about the file system and not about the game.
+     *
+     * So this asks the shipping question, on the same walk `pack.mjs` does.
+     * It is the ONE check in this file that would have caught it, and if it
+     * ever goes red the answer is never to delete it.
+     */
+    const { assertShipped, shippedGraph } = await import('./_shipped.mjs');
+    const by = await assertShipped(assert, 'src/game/Games.js',
+      'three finished games nobody can play is the worst defect this tree has had');
+
+    /* AND THE IMPORTER IS A ROOM, not a stray re-export. `#60 The Wheelhouse`
+     * is the door: `StationKit.wheelhall` draws one spoke per segment off
+     * `DRUM.SEGMENTS`, and `Casino.js` deals the hands the key raises. An
+     * importer that named the file and used nothing from it would satisfy the
+     * graph and still leave the games unreachable. */
+    const { readFile } = await import('node:fs/promises');
+    const used = [];
+    for (const f of by) {
+      const src = await readFile(new URL(`../../${f}`, import.meta.url), 'utf8');
+      const m = src.match(/import\s*\{([^}]*)\}\s*from\s*'\.\/Games\.js'/);
+      if (m) used.push(...m[1].split(',').map((x) => x.trim().split(/\s+as\s+/)[0]).filter(Boolean));
+    }
+    assert(used.length >= 4,
+      `Games.js is imported by ${by.join(', ')} but only ${used.length} names are taken from it — `
+      + 'an import that uses nothing is an orphan with a line of paperwork');
+
+    /* AND THE ROOM IT IS PLAYED IN EXISTS. §3.2's rule is that a place not in
+     * the gazetteer is not built, and #60 is where §D1 puts the tables. */
+    const { PLACE } = await import('../../src/game/StationPlan.js');
+    const { SHAPES } = await import('../../src/game/StationKit.js');
+    const room = PLACE.get(60);
+    assert(!!room, '#60 The Wheelhouse is not in the gazetteer — the games have no room');
+    assert(typeof SHAPES[room.shape] === 'function', `#60 declares shape '${room.shape}', which has no builder`);
+
+    const { files } = await shippedGraph();
+    return `Games.js ships, imported by ${by.join(' and ')}, ${used.length} names used; `
+      + `#60 ${room.name} at ${room.at}° on deck ${room.deck}; ${files.size} modules in the build`;
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('games: the table has a named resident across it, not a bot', async () => {
+    /**
+     * *"in certain games you play against actual npcs like it could be anyone
+     * on the ship on any day."* `Casino.js` draws the opponent out of
+     * `StationLife.occupant`, which is the same roster that seats real bodies
+     * in the room — so the face across the table is somebody you can also
+     * walk up to, with a name and a species out of the fifteen.
+     */
+    const C = await import('../../src/game/Casino.js');
+    const { SPECIES_KEYS } = await import('../../src/game/StationCast.js');
+
+    const seen = new Set(), species = new Set();
+    for (let day = 0; day < 30; day++) {
+      for (let seat = 1; seat <= 3; seat++) {
+        const who = C.opponentAt(C.WHEELHOUSE, day, seat);
+        assert(who && who.name && who.name.length > 1, `no opponent at seat ${seat} on day ${day}`);
+        assert(SPECIES_KEYS.includes(who.species), `${who.name} is a ${who.species}, which is not a species`);
+        seen.add(who.name); species.add(who.species);
+      }
+    }
+    /* SEEDED ON (place, day, seat), so the three seats differ TODAY even
+     * though `occupant` does not yet reroll by the day — see the note over
+     * `opponentAt`. A table of one person three times is not a table. */
+    const today = [1, 2, 3].map((s) => C.opponentAt(C.WHEELHOUSE, 0, s).slot);
+    assert(new Set(today).size >= 2, `all three seats drew slot ${today[0]} — the seat seed is not doing anything`);
+    assert(seen.size >= 3, `only ${seen.size} distinct people across 90 seatings`);
+
+    /* AND THEIR PLAY COMES FROM THE SPECIES AND THE TEMPER (§D1), which means
+     * the dials genuinely differ across the roster rather than being a
+     * flavour string on one bot. */
+    let lo = Infinity, hi = -Infinity;
+    for (let day = 0; day < 40; day++) {
+      for (let seat = 1; seat <= 3; seat++) {
+        const w = C.opponentAt(C.WHEELHOUSE, day, seat);
+        if (w.push < lo) lo = w.push;
+        if (w.push > hi) hi = w.push;
+      }
+    }
+    assert(hi - lo > 1.5, `every opponent plays at push ${lo.toFixed(1)}..${hi.toFixed(1)} — that is one bot in hats`);
+
+    /* AND A HAND IS A REPLAY: the same seed and the same verbs are the same
+     * cards, which is what lets the panel hold `{seed, acts}` and nothing. */
+    const a = C.sabaccTable(60, 7, 2, ['draw', 'hold', 'hold']);
+    const b = C.sabaccTable(60, 7, 2, ['draw', 'hold', 'hold']);
+    assert(JSON.stringify(a.hand) === JSON.stringify(b.hand) && a.result.winner === b.result.winner,
+      'the same hand played the same way came out differently');
+    assert(a.done && a.result, 'three verbs did not finish a three-round hand');
+    const half = C.sabaccTable(60, 7, 2, ['draw']);
+    assert(!half.done && half.result === null && half.can.length === 3,
+      'a hand with one verb in it is showing a showdown it has not played to');
+    return `${seen.size} people, ${species.size} species over 90 seatings; push ${lo.toFixed(1)}..${hi.toFixed(1)}`;
+  });
 }

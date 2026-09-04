@@ -632,10 +632,34 @@ function spawnResident(world, st, place, i) {
   body.stationSpecies = r.species;
   body.stationFaction = r.faction;
   body.stationPlace = place.id;
-  /* A body on a walkway rather than in a room. The hook a route would drive.
-   * See `wayPlacesOn`: it is set so the corridors can be told apart from the
-   * rooms by anything that later learns to move them. */
-  if (place.way) { body.stationWay = place.way; body.rotation && (body.rotation.y = place.yaw); }
+  /* A body on a walkway rather than in a room. `stepWalkers` below is the
+   * route this was set for; `wayPlacesOn` says why the corridors have to be
+   * tellable from the rooms in the first place. */
+  if (place.way) {
+    body.stationWay = place.way;
+    body.rotation && (body.rotation.y = place.yaw);
+    /**
+     * ── AND THE OPEN STRETCHES ARE THE ONES THAT GO SOMEWHERE ───────────
+     *
+     * `walk` is the eight stretches of ring and the middle of every spine —
+     * the pseudo-places `wayPlacesOn` calls "people in transit and not only
+     * people stopped". Everything else on a walkway is somebody who has
+     * STOPPED there on purpose: at a counter, on a bench, at the rail, waiting
+     * at a crossing. Making those walk would delete the fixtures.
+     *
+     * The bearing is the ring's own angle and the radius never changes, so a
+     * walker cannot leave the corridor by construction — no pathfinding, no
+     * collision query, and nothing to get stuck on. The direction is seeded on
+     * the slot so half the ring walks each way and it is the same half every
+     * time you look.
+     */
+    if (place.way === 'walk') {
+      body.wayAngle = Math.atan2(_v.x, _v.z);
+      body.wayR = Math.hypot(_v.x, _v.z);
+      body.wayDir = ((place.id + i) % 2) ? 1 : -1;
+      body.wayPace = WALK_PACE * (0.86 + ((place.id * 7 + i * 13) % 29) / 100);
+    }
+  }
   /* A resident stands where they are put and does not hunt. There is no
    * enemy on this station and no objective for one to be given. */
   if (body.brain) body.brain.idle = true;
@@ -807,6 +831,58 @@ function stepEvents(world, st, life, dt) {
  * candidate list and the keep-set are module scratch, the vectors are reused,
  * and the only `new` in the whole step is a spawn.
  */
+/**
+ * ══ THE PEOPLE IN THE CORRIDORS ARE GOING SOMEWHERE ═══════════════════════
+ *
+ * §2.5's third standing rule: *"People are going somewhere … the walkways must
+ * carry people MOVING along desire lines."*
+ *
+ * ── WHAT WAS MEASURED, AND IT IS WHY THIS EXISTS ─────────────────────────
+ *
+ * A hostile pass tracked 46 residents over sixty simulated seconds on deck 40:
+ * median displacement 3.02 m, worst 6.49 m, and the eighteen in the
+ * between-space no different at 2.96 m. The ring is two hundred metres round.
+ * Three metres a minute is a shuffle on the spot, and the source said why —
+ * `spawnResident` set `brain.idle = true` under a note reading "a resident
+ * stands where they are put and does not hunt", and `stationWay`, the field
+ * whose own comment called it "the hook a route would drive", had one writer
+ * and no readers anywhere in the tree.
+ *
+ * ── AND THE ROUTE IS THE RING, WHICH IS THE WHOLE TRICK ──────────────────
+ *
+ * A walker advances its BEARING at a fixed radius. The corridor is an annulus,
+ * so staying on it is arithmetic rather than navigation: no path to solve, no
+ * collision to query, nothing to get stuck on, and a body that walks for a
+ * minute is exactly as safe as one that walks for an hour.
+ *
+ * IT COSTS ONE TRIG PAIR PER WALKING BODY and the population is small — the
+ * eight ring stretches carry four heads each — so this is well inside the
+ * 2.5 ms §12.2 gives the whole file. The velocity is set as well as the
+ * position because that is what the body's own animator reads: a body moved by
+ * assignment alone would slide along the deck in its idle pose.
+ */
+const WALK_PACE = 1.35;
+
+function stepWalkers(world, life, dt) {
+  for (const body of life.live.values()) {
+    const R = body?.wayR;
+    if (!R) continue;
+    const was = body.position ? { x: body.position.x, z: body.position.z } : null;
+    body.wayAngle += (body.wayPace / R) * body.wayDir * dt;
+    const x = R * Math.sin(body.wayAngle), z = R * Math.cos(body.wayAngle);
+    if (body.position) {
+      body.position.x = x; body.position.z = z;
+      body.body?.setTransform?.(body.position, null);
+    }
+    /* FACING ALONG THE WALK, which is the tangent — a person walking the ring
+     * backwards is the thing this is here to avoid. */
+    body.facing = body.wayAngle + (body.wayDir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    if (was && body.velocity && dt > 0) {
+      body.velocity.set((x - was.x) / dt, 0, (z - was.z) / dt);
+    }
+  }
+}
+
 export function stepStationLife(world, dt) {
   const st = world._station;
   const life = world._stationLife;
@@ -824,6 +900,7 @@ export function stepStationLife(world, dt) {
     life.priming = false;
   }
   witness(world, st, life, dt);
+  stepWalkers(world, life, dt);
   stepTram(world, st, life, dt);
   stepEvents(world, st, life, dt);
   /* The reactor's dip, decaying — one number the lights read. */
