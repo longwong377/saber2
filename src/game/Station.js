@@ -1279,6 +1279,23 @@ export function stationKey(world) {
   if ((place.id === 42 || place.id === 50) && world.onBench) {
     return world.onBench(place.id === 50 ? 'make' : 'tune') !== false;
   }
+  /**
+   * ── #43 AND #44, THE MEDBAY — V16 Lane B3 ───────────────────────────────
+   *
+   * *"you should have a med bay that actually does something."* The ward
+   * heals on the station's clock whether you come or not (`stepMedbay`, in
+   * `stepStation` above), so what the DOOR is for is the thing the clock
+   * cannot decide: which five of your wounded are in the tanks.
+   *
+   * TWO ROOMS, ONE PAGE, and that is the honest shape rather than a tidy one:
+   * #43 is where the wounded are triaged and #44 is the glass they are behind,
+   * and a player standing at either is asking the same question. `Medbay.js`
+   * gives the page its rows; `main.js` owns the overlay, on `openMeditation`'s
+   * own-root shape for `Screens.clear()`'s reason.
+   */
+  if ((place.id === 43 || place.id === 44) && world.onMedbay) {
+    return world.onMedbay(place.id) !== false;
+  }
   if (place.id === 41 && world._warp && !world._warp.done) {
     world.notify?.('COMMAND / CIC', 'the jump is under way');
     return true;

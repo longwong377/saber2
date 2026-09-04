@@ -49,11 +49,12 @@ import { COMPANION_KINDS } from './game/CompanionKinds.js';
  * run will field. Same split — this file owns the store boundary, the game is
  * handed plain records. See src/game/Muster.js for the whole argument. */
 import * as Muster from './game/Muster.js';
-import { musterPlan } from './game/Command.js';
+import { musterPlan, ARMY_IDS } from './game/Command.js';
 import { keyLabel, ORDER_ACTIONS, codesFor } from './engine/Bindings.js';
 import { guardZoneOf } from './game/Bolts.js';
 /* #28's page — V15 §4's "only reachable at the habitat". See `openHabitat`. */
 import { habitatPanel, careAt, writePlaques } from './game/Habitat.js';
+import { wardRows, wakePlan, arrivalNotice, checkIn, discharge, tanksFree, wounded, TANKS, soonestOut } from './game/Medbay.js';
 /* V16 Lane B's counters and Lane A3's bench — the two rooms that spend. */
 import { offerFrom } from './game/Counter.js';
 import { counterById } from './game/Vendors.js';
@@ -1164,6 +1165,8 @@ async function enterStation(floorRow = null, opts = {}) {
     /* The shops and the bench — see `openCounter` and `openBench`. */
     world.onCounter = (id) => openCounter(id);
     world.onBench = (which) => openBench(which);
+    /* #43 and #44 — see `openMedbay`. */
+    world.onMedbay = (id) => openMedbay(id);
   }
   cancelDeathCard();
   menu.hideMenu();
@@ -1174,6 +1177,22 @@ async function enterStation(floorRow = null, opts = {}) {
   input.enabled = true;
   input.requestLock();
   screens.set('playing');
+  /**
+   * ── WHO CAME HOME HURT — V16 Lane B3 ──────────────────────────────────
+   *
+   * A STATEMENT AND NOT A PROMPT, which is the whole of §C1's fifth clause:
+   * it says how many are wounded and how they are getting aft, and it does not
+   * ask you to go. Nothing on this station forces the walk to the medbay, and
+   * a man left untended still mends — slower.
+   *
+   * Raised after the lock rather than before it because it goes through
+   * `world.notify`, which is the banner every other verb here speaks through;
+   * the station adds no interface of its own (§14).
+   */
+  for (const army of ARMY_IDS) {
+    const note = arrivalNotice(Company.load(army));
+    if (note) world?.notify?.(note.title, note.body);
+  }
 }
 
 /** `leaveHangar` for the station: the same teardown, none of the deck's. */
@@ -1895,6 +1914,103 @@ function openHabitat() {
   return true;
 }
 screens.card('habitat', () => closeHabitat());
+
+/**
+ * ══ #43 AND #44, THE MEDBAY — V16 Lane B3 ═════════════════════════════════
+ *
+ * *"you should have a med bay that actually does something."*
+ *
+ * The ward mends on the station's own clock — `stepMedbay`, in `stepStation`,
+ * every ten seconds whether anybody is standing here or not. So this page is
+ * NOT where healing happens and must not read as though it were. It is where
+ * the one thing the clock cannot decide gets decided: THERE ARE FIVE TANKS AND
+ * THERE ARE USUALLY MORE THAN FIVE WOUNDED, and which five are behind the glass
+ * is yours.
+ *
+ * BOTH ROLLS ON ONE PAGE. A droid company and a clone company are two rolls and
+ * always have been (`Company.load` takes an army), the station does not know
+ * which one you came home with, and `stepMedbay` settles both — so a page that
+ * showed one of them would be a page that lied on the run you did not pick.
+ *
+ * Its own root, hidden by its own hide, for the reason `habitatRoot` gives.
+ */
+function medbayRoot() {
+  let el = document.getElementById('medbay');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'medbay';
+    el.className = 'screen hidden';
+    document.body.appendChild(el);
+  }
+  return el;
+}
+
+function showMedbay(placeId = 43) {
+  const el = medbayRoot();
+  /* WHOSE WARD. Every roll with somebody hurt on it, and a roll with nobody
+   * hurt is left off rather than drawn as an empty table — five empty tanks
+   * under a heading is a room reporting a problem it does not have. */
+  const rolls = [];
+  for (const army of ARMY_IDS) {
+    const c = Company.load(army);
+    const hurt = wounded(c);
+    if (!hurt.length && !wardRows(c).some((r) => r.designation)) continue;
+    rolls.push({ army, c, rows: wardRows(c), free: tanksFree(c), soon: soonestOut(c) });
+  }
+  let html = `<div class="pane"><h2>${placeId === 44 ? 'Bacta ward' : 'Medbay'}</h2>`;
+  if (!rolls.length) {
+    html += '<p class="sub">Nobody is hurt. The tanks are drained and the medics are '
+      + 'reading.</p>';
+  }
+  for (const r of rolls) {
+    const name = String(r.army).toUpperCase();
+    html += `<p class="sub">${esc(name)} — ${r.free} of ${TANKS} tanks free`
+      + (r.soon ? ` · ${esc(r.soon.designation)} out in ${r.soon.hours.toFixed(1)} h` : '') + '</p>';
+    html += '<div class="rows">' + r.rows.map((row) => {
+      if (!row.designation) return `<div class="row"><b>Tank ${row.tank + 1}</b><span>empty</span></div>`;
+      /* THE HOURS ARE THE STATION'S HOURS and the row says so, because a
+       * number with no unit on a page about waiting is the number that gets
+       * read as minutes. */
+      const where = row.tank === null ? 'waiting' : `tank ${row.tank + 1}`;
+      return `<div class="row"><b>${esc(row.designation)}</b>`
+        + `<span>${esc(where)} · ${esc(row.state)} · ${row.hours.toFixed(1)} h</span></div>`;
+    }).join('') + '</div>';
+    /* THE TWO VERBS, and the second is the one the player asked for: *"you
+     * have to release them"*. A man pulled early keeps what he has mended to
+     * and the tank goes to somebody worse — see `Medbay.discharge`. */
+    html += '<div class="acts">'
+      + `<button class="care" data-do="in" data-army="${esc(r.army)}"`
+      + `${r.free && wounded(r.c).length > r.rows.filter((x) => x.tank !== null && x.designation).length ? '' : ' disabled'}`
+      + '>Check the worst in</button>'
+      + `<button class="care" data-do="out" data-army="${esc(r.army)}"`
+      + `${r.rows.some((x) => x.tank !== null && x.designation) ? '' : ' disabled'}`
+      + '>Empty the tanks</button></div>';
+  }
+  el.innerHTML = html + '</div>';
+  for (const b of el.querySelectorAll('button.care')) {
+    b.addEventListener('click', () => {
+      const army = b.dataset.army;
+      if (b.dataset.do === 'in') {
+        const r = checkIn(army);
+        if (r.turned.length) world?.notify?.('MEDICAL BAY', `${r.turned.length} with no tank to put them in`);
+      } else discharge(army);
+      showMedbay(placeId);
+    });
+  }
+  el.classList.remove('hidden');
+}
+
+function closeMedbay() {
+  const el = document.getElementById('medbay');
+  if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
+}
+
+function openMedbay(placeId = 43) {
+  audio.ui('good');
+  screens.take('medbay', () => showMedbay(placeId));
+  return true;
+}
+screens.card('medbay', () => closeMedbay());
 
 /**
  * ══ A COUNTER, AND THE BENCH — V16 Lanes B and A3 ═════════════════════════
