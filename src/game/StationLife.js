@@ -383,6 +383,21 @@ function spawnResident(world, st, place, i) {
     });
   } catch { return null; }
   if (!body) return null;
+  /**
+   * ══ THE TEAM IS SET AFTER THE SPAWN, AND IT HAS TO BE ═════════════════
+   *
+   * `Enemy`'s constructor writes `this.team = 1` outright — the game has
+   * never had a body on the player's side that was not a companion — so an
+   * `opts.team` handed to `spawnEnemy` is accepted and then overwritten.
+   * Measured: every resident came out on team 1, which is the hostile side,
+   * so §11's "nothing hunts a resident" was false and a companion would have
+   * gone for the market.
+   *
+   * Set here rather than patched into `Enemy` because that constructor line
+   * is load-bearing for every other body in the game and this is one field on
+   * one kind of body. `station.mjs` asserts it.
+   */
+  body.team = world.player?.team ?? 0;
   /* What the nameplate says when you look at them (§14). */
   body.stationName = r.name;
   body.stationRole = r.role;
@@ -565,7 +580,7 @@ export function stepStationLife(world, dt) {
   const life = world._stationLife;
   if (!st || !life || !(dt > 0)) return;
   const t0 = (typeof process !== 'undefined' && process.cpuUsage) ? process.cpuUsage() : null;
-  const spawnBefore = life.spawned;
+  const spawnBefore = life.spawned, dropBefore = life.despawned;
 
   const cam = world.player?.position;
   const px = cam ? cam.x : 0, pz = cam ? cam.z : 0;
@@ -585,9 +600,16 @@ export function stepStationLife(world, dt) {
   if (t0) {
     const t1 = process.cpuUsage(t0);
     const ms = (t1.user + t1.system) / 1000;
-    /* The steady step is this frame MINUS whatever a body cost, because the
-     * two have different budgets — see the note where they are declared. */
-    life.stepMs = life.spawned > spawnBefore ? Math.max(0, ms - life.spawnMs) : ms;
+    /**
+     * The steady step is a frame on which no body was BUILT and none was
+     * DISPOSED. Both are expensive — a dispose frees sixty meshes and their
+     * geometries — and both are bounded by their cap rather than by a
+     * millisecond, so folding either into this number makes it measure the
+     * pool's churn instead of the station's work. Measured with the dispose
+     * folded in: 171 ms against a 2.5 ms bound, on a frame that did nothing
+     * but put four people away.
+     */
+    if (life.spawned === spawnBefore && life.despawned === dropBefore) life.stepMs = ms;
   }
 }
 

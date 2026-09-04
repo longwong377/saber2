@@ -449,10 +449,30 @@ function placeRoom(world, group, place, opts = {}) {
     mesh.name = `station-room-${place.room}-${mat.userData.key}`;
     mesh.castShadow = true;
     mesh.receiveShadow = true;
-    /* The room's own frame: its floor is at local y = 0 and its length runs
-     * +z, so the place's yaw and centre put it down. `d` is the room's own
-     * length, so the centre is half a length along from the door end. */
-    mesh.position.set(place.x, y, place.z);
+    /**
+     * ══ A ROOM'S ORIGIN IS NOT ITS CENTRE ═══════════════════════════════
+     *
+     * The plan gives every place the CENTRE of its floor, because that is
+     * what a footprint, an overlap test and a cull radius are all about. An
+     * imported room's origin is wherever its exporter left it — the Zocalo's
+     * is 2.19 m off one end of a 67.4 m hall — so setting the mesh's position
+     * to the place's centre stands the room a half-length out of position.
+     *
+     * Measured before this line existed: the Concourse ran from z = 50.5 to
+     * 117.9 against a drum whose skin is at 90, so a third of the hall was
+     * outside the station and its door was thirty metres from where the plan
+     * said it was. Nothing went red — the room stood up, the materials bound,
+     * the colliders were built. It was `station.mjs`'s bounding boxes that
+     * said so.
+     */
+    const b = room.bounds;
+    const lcx = (b.min[0] + b.max[0]) / 2, lcz = (b.min[2] + b.max[2]) / 2;
+    const cy = Math.cos(place.yaw), sy = Math.sin(place.yaw);
+    mesh.position.set(
+      place.x - (lcx * cy + lcz * sy),
+      y,
+      place.z - (-lcx * sy + lcz * cy),
+    );
     mesh.rotation.y = place.yaw;
     mesh.updateMatrix();
     group.add(mesh);
@@ -498,7 +518,10 @@ function roomColliders(world, place, opts = {}) {
     P.addStaticBox(c, new THREE.Vector3(hx, hy, hz), q, { friction: 0.7 });
   };
   const hw = (b.max[0] - b.min[0]) / 2, hd = (b.max[2] - b.min[2]) / 2;
-  const cx = (b.max[0] + b.min[0]) / 2, cz = (b.max[2] + b.min[2]) / 2;
+  /* The room is now CENTRED on the place — see `placeRoom` — so the collider
+   * shell is too, and this used to add the room's own origin offset on top of
+   * the place's position and put the walls a half-length away from the room. */
+  const cx = 0, cz = 0;
   const h = b.max[1] - b.min[1];
   let n = 0;
   /* The floor, flat and one box. */

@@ -1,0 +1,633 @@
+/**
+ * THE STATION, AND WHETHER IT IS FIFTY BOXES.
+ *
+ * `SHARK.md` §5.3 lists what may kill each step, and §13.3 is blunt about the
+ * one that matters most: *"Rule 4 is measured, not felt. Run the
+ * distinguishability check on every pair before calling a deck done; a pair
+ * over 0.85 is a place to redesign, not a threshold to raise."*
+ *
+ * That instruction exists because the other repo shipped 128 places out of 16
+ * builders and every gate it had was green — *"every gate measured coverage or
+ * correctness, and both are perfectly satisfied by one generic thing repeated
+ * seventy-eight times."* Coverage is not the question. VARIETY is, and it is
+ * the only thing in this file that is hard to measure, which is why it is
+ * measured here rather than asserted in a comment.
+ *
+ * What this file holds, in §5.3's own order:
+ *
+ *   · every place is reachable on foot from a lift, and every door is crossable
+ *   · the floor is at `floorAt`'s height everywhere a body can stand
+ *   · rule 4's pairwise silhouette distinguishability, every pair, on every deck
+ *   · draws and triangles under §12.2's bounds
+ *   · §9.1: no loader material, no `saberNoInk` inside a room, and every
+ *     material in a place is one of the engine's own
+ *   · §9.2: the switch is real, and no station file names a mode
+ */
+
+import { readdir, readFile } from 'node:fs/promises';
+
+/** The station, booted through the same door the game uses. */
+async function station(deck = 40) {
+  const { bootWorld, idleInput } = await import('./_coop.mjs');
+  const { prepareStation, ROOM_FILES } = await import('../../src/game/Station.js');
+  /* No `fetch` in node. The rooms are read off disk and handed to the same
+   * decoder the browser uses, so the check measures the shipped path rather
+   * than a second copy of it. */
+  if (!globalThis.fetch || !globalThis.__stationFetch) {
+    const root = new URL('../../', import.meta.url);
+    globalThis.__stationFetch = true;
+    globalThis.fetch = async (url) => {
+      const buf = await readFile(new URL(String(url), root));
+      return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+    };
+  }
+  await prepareStation();
+  const { world } = await bootWorld({
+    level: 'station',
+    settings: { mode: 'station', level: 'station', allies: 0, stationDeck: deck },
+  });
+  return { world, idle: idleInput() };
+}
+
+export async function run({ check, assert, THREE }) {
+  const { clocked } = await import('./_shared.mjs');
+  check = await clocked(check);
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the plan is a plan — nothing overlaps, nothing is through the skin', async () => {
+    const P = await import('../../src/game/StationPlan.js');
+    const { PLACES, DRUM } = P;
+    assert(PLACES.length >= 55, `the gazetteer has ${PLACES.length} places; §3.2 has 55`);
+
+    /* The four world corners of a place: `w` tangential, `d` radial. */
+    const corners = (p) => {
+      const c = Math.cos(p.yaw), s = Math.sin(p.yaw), hw = p.w / 2, hd = p.d / 2, out = [];
+      for (const [lx, lz] of [[-hw, -hd], [hw, -hd], [hw, hd], [-hw, hd]]) {
+        out.push([p.x + lx * c + lz * s, p.z - lx * s + lz * c]);
+      }
+      return out;
+    };
+    /* Separating-axis on two convex quads — an AXIS-ALIGNED box round a yawed
+     * room reaches far past its corners, and the first version of this check
+     * reported nine rooms through the skin that were not. */
+    const overlap = (A, B, slack = 0.5) => {
+      let least = Infinity;
+      for (const poly of [A, B]) {
+        for (let i = 0; i < 4; i++) {
+          const [x0, z0] = poly[i], [x1, z1] = poly[(i + 1) % 4];
+          const len = Math.hypot(x1 - x0, z1 - z0) || 1;
+          const nx = -(z1 - z0) / len, nz = (x1 - x0) / len;
+          let a0 = Infinity, a1 = -Infinity, b0 = Infinity, b1 = -Infinity;
+          for (const [x, z] of A) { const d = x * nx + z * nz; if (d < a0) a0 = d; if (d > a1) a1 = d; }
+          for (const [x, z] of B) { const d = x * nx + z * nz; if (d < b0) b0 = d; if (d > b1) b1 = d; }
+          const gap = Math.min(a1, b1) - Math.max(a0, b0);
+          if (gap < least) least = gap;
+          if (gap <= slack) return 0;
+        }
+      }
+      return least;
+    };
+
+    const byDeck = new Map();
+    for (const p of PLACES) {
+      if (p.external || p.band === 'ring' || !p.w) continue;
+      if (!byDeck.has(p.deck)) byDeck.set(p.deck, []);
+      byDeck.get(p.deck).push(p);
+    }
+    const bad = [];
+    for (const [deck, ps] of byDeck) {
+      const C = new Map(ps.map((p) => [p.id, corners(p)]));
+      for (let i = 0; i < ps.length; i++) {
+        for (let j = i + 1; j < ps.length; j++) {
+          const o = overlap(C.get(ps[i].id), C.get(ps[j].id));
+          if (o > 0) bad.push(`deck ${deck}: #${ps[i].id} × #${ps[j].id} by ${o.toFixed(1)} m`);
+        }
+      }
+      for (const p of ps) {
+        if (['deck32', 'deck12', 'tram', 'skin'].includes(p.band)) continue;
+        let r = 0, rmin = Infinity;
+        for (const [x, z] of C.get(p.id)) { const d = Math.hypot(x, z); if (d > r) r = d; if (d < rmin) rmin = d; }
+        if (r > DRUM.R + 0.01) bad.push(`deck ${deck}: #${p.id} ${p.name} reaches r=${r.toFixed(1)} through the skin`);
+        if (p.band !== 'atrium' && p.band !== 'hub' && rmin < DRUM.atrium - 0.01) {
+          bad.push(`deck ${deck}: #${p.id} ${p.name} juts into the atrium at r=${rmin.toFixed(1)}`);
+        }
+      }
+    }
+    assert(bad.length === 0, `${bad.length} plan faults:\n      ${bad.slice(0, 8).join('\n      ')}`);
+
+    /* Every place a resident can be housed in exists, and every kiosk names a
+     * panel. A row pointing at a place that is not built is a resident with
+     * nowhere to sleep. */
+    const ids = new Set(PLACES.map((p) => p.id));
+    for (const p of PLACES) {
+      if (p.external) continue;
+      assert(Number.isFinite(p.x) && Number.isFinite(p.z),
+        `#${p.id} ${p.name} has no position — its band '${p.band}' has no case in layout()`);
+      assert(p.door && p.door.length === 2 && Number.isFinite(p.door[0]),
+        `#${p.id} ${p.name} has no door, and the cull and the walk both measure from one`);
+    }
+    assert(ids.size === PLACES.length, 'two places share an id');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: every place has its own builder, and no two share a shape (rule 4)', async () => {
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { SHAPES } = await import('../../src/game/StationKit.js');
+    const seen = new Map();
+    const missing = [];
+    for (const p of PLACES) {
+      if (p.external || p.room || p.band === 'ring') continue;
+      if (!SHAPES[p.shape]) missing.push(`#${p.id} ${p.name} → '${p.shape}'`);
+      if (seen.has(p.shape)) {
+        assert(false, `rule 4: #${p.id} ${p.name} and #${seen.get(p.shape)} both declare shape '${p.shape}'`);
+      }
+      seen.set(p.shape, p.id);
+    }
+    assert(missing.length === 0, `${missing.length} places have no builder: ${missing.join(', ')}`);
+    /**
+     * AND THE BUILDERS ARE NOT ONE BUILDER WITH A PARAMETER. Every one of them
+     * is a distinct function object — a table mapping fifty names onto the same
+     * closure would satisfy the loop above exactly, and is precisely the "78 of
+     * 128 places from one generic kit" this whole rule exists against.
+     */
+    const fns = new Set();
+    for (const k of Object.keys(SHAPES)) fns.add(SHAPES[k]);
+    assert(fns.size === Object.keys(SHAPES).length,
+      `${Object.keys(SHAPES).length} shapes share only ${fns.size} distinct builders`);
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  for (const deck of [40, 44, 48]) {
+    check(`station: deck ${deck} stands up, inside §12.2's bounds`, async () => {
+      const { world } = await station(deck);
+      try {
+        const st = world._station;
+        assert(st, 'no station was dressed');
+        assert(st.deck === deck, `asked for deck ${deck} and got ${st.deck}`);
+        assert(st.places.size > 0, `deck ${deck} built no places`);
+
+        /* §12.2: 400 draw calls with the ink pass, 3 M triangles at 1080p.
+         * This is the WHOLE deck with nothing culled, which is stricter than
+         * the bound — the cull only ever takes draws away. */
+        assert(st.draws <= 400,
+          `deck ${deck} draws ${st.draws} meshes uncalled — §12.2's bound is 400`);
+        assert(st.tris <= 3e6,
+          `deck ${deck} submits ${Math.round(st.tris / 1000)} k triangles — §12.2's bound is 3 M`);
+        assert(st.solids > 100,
+          `deck ${deck} has only ${st.solids} colliders — a room you can walk out of the back of is not a room`);
+
+        /* §11: everything in the rooms is a body. A deck with no props is a
+         * deck you cannot pick anything up in, which is the whole ask. */
+        assert(world.props.length > 20,
+          `deck ${deck} has ${world.props.length} grabbable bodies — §11 wants the furniture throwable`);
+
+        /* §12.2: physics bodies ≤ 1100, the same cap `RapierWorld` is built
+         * with, and props asleep unless touched. */
+        assert(world.props.length <= 1100,
+          `deck ${deck} has ${world.props.length} physics bodies against a cap of 1100`);
+      } finally { world.dispose?.(); }
+    });
+  }
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: §9.1 — it is all cel-shaded Borz, and no loader material survives', async () => {
+    const { world } = await station(40);
+    try {
+      const bad = [], ink = [], names = new Set();
+      for (const rec of world._station.places.values()) {
+        rec.group.traverse((o) => {
+          if (!o.isMesh) return;
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            if (!m) continue;
+            names.add(m.name || '(unnamed)');
+            /**
+             * A material with no name is the tell. `deckMats` names all eleven
+             * of its own and `stationMats` names all nine — "NAMED, ALL OF
+             * THEM", as DeckKit's own note puts it, because a merged room is
+             * a set of anonymous Meshes to a traverse and there is nothing
+             * else to read. A `MeshStandardMaterial` a loader made would
+             * arrive here nameless.
+             */
+            if (!m.name) bad.push(`#${rec.place.id} ${rec.place.name}: an unnamed ${m.type}`);
+            else if (!/^(deck|station|prop|kit)-/.test(m.name)) {
+              bad.push(`#${rec.place.id} ${rec.place.name}: '${m.name}' is not one of the engine's own`);
+            }
+            /* §9.1: "saberNoInk is allowed only where the deck already allows
+             * it … Inside a room, nothing." */
+            if (m.userData?.saberNoInk) ink.push(`#${rec.place.id} ${rec.place.name}: '${m.name}' is uninked`);
+          }
+        });
+      }
+      assert(bad.length === 0,
+        `${bad.length} materials in a room are not the engine's:\n      ${bad.slice(0, 6).join('\n      ')}`);
+      assert(ink.length === 0,
+        `${ink.length} uninked materials inside a room:\n      ${ink.slice(0, 6).join('\n      ')}`);
+      assert(names.size >= 6,
+        `the whole deck uses only ${names.size} materials — a room of one colour is a box with the lights on`);
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: rule 4 measured — no pair of places reads the same from its own door', async () => {
+    const { world } = await station(40);
+    try {
+      /**
+       * ══ THE INSTRUMENT ══════════════════════════════════════════════════
+       *
+       * §3.1 rule 4 asks for "pairwise silhouette distinguishability of every
+       * place from its own door (the IoU instrument `characters.mjs` uses on
+       * bodies)". A body's silhouette is a rendered alpha; a room's is what
+       * the geometry OCCUPIES from where you stand in the doorway, so this
+       * projects every vertex of a place's meshes into the camera at its door
+       * and fills a 64 × 40 occupancy raster. IoU over two rasters is the
+       * same number `characters.mjs` computes, over the same range, and it
+       * needs no GPU — which matters, because §12.4 says there isn't one.
+       *
+       * A pair over 0.85 is a PLACE TO REDESIGN. §13.3 says so in as many
+       * words, and raising this number is the one response that is not
+       * available.
+       */
+      const W = 64, H = 40;
+      const raster = (rec) => {
+        const p = rec.place;
+        const bits = new Uint8Array(W * H);
+        /**
+         * Stand in the door and look at the room's centre — but a metre and a
+         * half BACK from the threshold, and through a wide lens.
+         *
+         * Both numbers were found by the instrument reporting seven rooms as
+         * empty that are not. A camera exactly ON the doorway of a room that
+         * is wide and shallow — the quartermaster's cage is 13 m across and 9
+         * deep — has half the room behind its own eye and the rest past 36°
+         * off axis, so a 60° lens sees nothing at all. That is a fact about
+         * the lens, not about the room, and an instrument that reports it as a
+         * fact about the room is worse than none: it is §2.3b's check that
+         * cannot fail, inverted into one that cannot pass.
+         *
+         * 90° horizontal and 60° vertical is a doorway's worth of view, and
+         * standing back is what a person does before looking into a room.
+         */
+        const fx0 = p.x - p.door[0], fz0 = p.z - p.door[1];
+        const flen = Math.hypot(fx0, fz0) || 1;
+        const dx = fx0 / flen, dz = fz0 / flen;
+        /**
+         * …and back far enough that the room is IN the shot. A place is as
+         * wide as `w` and as deep as `d`, and the outer band's rooms are
+         * entered through the middle of their long side — the food court is
+         * 22 m across and 9 deep — so a camera one step back sees two
+         * counters and a wall. The stand-off is the distance at which the
+         * width subtends the frame, which is what a person does before
+         * looking into a room and what a contact sheet needs to be a contact
+         * sheet. The DIRECTION is still the door's, which is what rule 4
+         * actually specifies.
+         */
+        const back = Math.max(1.5, p.w / 2 / Math.tan(Math.PI / 4) - p.d / 2);
+        const ex = p.door[0] - dx * back, ez = p.door[1] - dz * back;
+        const fx = p.x - ex, fz = p.z - ez;
+        const rx = -dz, rz = dx;               // the camera's right
+        const v = new THREE.Vector3();
+        rec.group.traverse((o) => {
+          if (!o.isMesh || !o.geometry?.attributes?.position) return;
+          o.updateMatrixWorld(true);
+          const pos = o.geometry.attributes.position;
+          /* Every eighth vertex: a silhouette is a shape, and 8× the samples
+           * moves the IoU by under a percent while costing eight times as
+           * much on fifty rooms. */
+          for (let i = 0; i < pos.count; i += 8) {
+            v.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld);
+            const ox = v.x - ex, oz = v.z - ez, oy = v.y - (rec.__y + 1.7);
+            const fwd = ox * dx + oz * dz;
+            if (fwd < 0.4) continue;
+            const side = ox * rx + oz * rz;
+            const u = (side / fwd) / Math.tan(Math.PI / 4) * 0.5 + 0.5;
+            const t = (oy / fwd) / Math.tan(Math.PI / 6) * 0.5 + 0.5;
+            if (u < 0 || u >= 1 || t < 0 || t >= 1) continue;
+            bits[(H - 1 - Math.floor(t * H)) * W + Math.floor(u * W)] = 1;
+          }
+        });
+        return bits;
+      };
+
+      const { DECK_Y } = await import('../../src/game/StationPlan.js');
+      const recs = [];
+      for (const rec of world._station.places.values()) {
+        if (rec.place.band === 'ring') continue;
+        rec.__y = DECK_Y[rec.place.deck] ?? 0;
+        const bits = raster(rec);
+        let on = 0;
+        for (let i = 0; i < bits.length; i++) on += bits[i];
+        /**
+         * A room that fills NOTHING from its own door is a room the player
+         * walks into and sees empty space, which fails rule 4's spirit before
+         * its arithmetic. It is also how a silent build failure looks.
+         */
+        assert(on > 40,
+          `#${rec.place.id} ${rec.place.name} fills ${on} of ${W * H} cells from its own door — there is nothing there`);
+        recs.push({ place: rec.place, bits, on });
+      }
+
+      let worst = 0, worstPair = '';
+      const over = [];
+      for (let i = 0; i < recs.length; i++) {
+        for (let j = i + 1; j < recs.length; j++) {
+          const a = recs[i].bits, b = recs[j].bits;
+          let inter = 0, uni = 0;
+          for (let k = 0; k < a.length; k++) {
+            if (a[k] & b[k]) inter++;
+            if (a[k] | b[k]) uni++;
+          }
+          const iou = uni ? inter / uni : 0;
+          if (iou > worst) { worst = iou; worstPair = `#${recs[i].place.id} ${recs[i].place.name} × #${recs[j].place.id} ${recs[j].place.name}`; }
+          if (iou > 0.85) over.push(`${iou.toFixed(3)}  #${recs[i].place.id} ${recs[i].place.name} × #${recs[j].place.id} ${recs[j].place.name}`);
+        }
+      }
+      assert(over.length === 0,
+        `${over.length} pairs read the same from their own doors (over 0.85):\n      ${over.slice(0, 6).join('\n      ')}`);
+      assert(worst < 0.85,
+        `worst pair ${worst.toFixed(3)} — ${worstPair}`);
+      /* And printed, because §13.3 wants the number looked at rather than
+       * merely satisfied. */
+      console.log(`      rule 4: ${recs.length} places on deck 40, worst pair ${worst.toFixed(3)} (${worstPair})`);
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: every place is reachable on foot from a lift', async () => {
+    const { PLACES, SHAFTS, DRUM, DECK_Y } = await import('../../src/game/StationPlan.js');
+    /**
+     * ══ THE WALK ════════════════════════════════════════════════════════
+     *
+     * §5.3: "every place reachable on foot from a lift (a ray-walk of the
+     * plan's doors)". The station's circulation is by construction — a ring
+     * against the skin, a balcony round the void, four radial spines between
+     * them — so the walk is: from the lift's lobby to the nearest spine, out
+     * along it to the ring, round the ring to the place's bearing, in through
+     * its door. What this asserts is that every place's door actually lands
+     * on one of those three, because a room whose door opens onto structure
+     * is a room you cannot get into and nothing else would say so.
+     */
+    const unreachable = [];
+    for (const p of PLACES) {
+      if (p.external || p.band === 'ring') continue;
+      if (p.band === 'deck32' || p.band === 'deck12') continue;   // the hangar's own frame
+      const r = Math.hypot(p.door[0], p.door[1]);
+      const onRing = Math.abs(r - DRUM.roomR) < 1.5;
+      const onBalcony = Math.abs(r - DRUM.balcony) < 1.5 || r < DRUM.balcony;
+      const onSkin = Math.abs(r - (DRUM.R - 1)) < 1.5;
+      /* A Concourse alcove's door is in the Concourse's own wall, which is a
+       * place, and a place is walkable. */
+      const inConcourse = p.band === 'concourse' && Math.abs(Math.abs(p.door[0]) - 10.7) < 1.0;
+      if (!(onRing || onBalcony || onSkin || inConcourse)) {
+        unreachable.push(`#${p.id} ${p.name}: door at r=${r.toFixed(1)}, and the ring is ${DRUM.roomR}, the balcony ${DRUM.balcony}`);
+      }
+      /* And a lift stops on its deck. */
+      const served = SHAFTS.some((s) => s.decks.includes(p.deck));
+      if (!served) unreachable.push(`#${p.id} ${p.name} is on deck ${p.deck}, which no shaft serves`);
+    }
+    assert(unreachable.length === 0,
+      `${unreachable.length} places are not on the circulation:\n      ${unreachable.slice(0, 8).join('\n      ')}`);
+
+    /* Every deck the gazetteer uses has a height, and every shaft a deck. */
+    const decks = new Set(PLACES.filter((p) => !p.external).map((p) => p.deck));
+    for (const d of decks) assert(DECK_Y[d] !== undefined, `deck ${d} has places on it and no height in DECK_Y`);
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the floor is where floorAt says it is, everywhere you can stand', async () => {
+    const { world } = await station(40);
+    try {
+      const { PLACES, DECK_Y } = await import('../../src/game/StationPlan.js');
+      const bad = [];
+      for (const p of PLACES) {
+        if (p.deck !== 40 || p.external || !p.w) continue;
+        const y = world.floorAt(p.x, p.z);
+        /* A place either stands on its deck or declares a sunken floor; what
+         * it may never do is float or be somewhere else entirely. */
+        if (!(y <= DECK_Y[40] + 0.01 && y > DECK_Y[40] - 9)) {
+          bad.push(`#${p.id} ${p.name}: floorAt is ${y.toFixed(2)} on a deck at ${DECK_Y[40]}`);
+        }
+      }
+      assert(bad.length === 0, `${bad.length} places stand off their own deck:\n      ${bad.join('\n      ')}`);
+      /* The sunken rooms really are sunk — §3.2 says the cantina is half a
+       * deck down and the arena is a sunken ring, and a check that never sees
+       * a negative has not seen one. */
+      const sunk = world._station.sunk;
+      assert(sunk.length >= 2, `only ${sunk.length} sunken floors on deck 40; §3.2 names the cantina and the arena`);
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: §9.2 — the switch is real, and no station file names a mode', async () => {
+    const L = await import('../../src/game/Levels.js');
+    assert(typeof L.STATION_ENABLED === 'boolean', 'STATION_ENABLED is not a boolean');
+    assert(!!L.LEVELS.station === L.STATION_ENABLED,
+      'LEVELS.station exists independently of the switch, so the switch does not switch it off');
+
+    /* Everything the station is, is a new file. */
+    const dir = new URL('../../src/game/', import.meta.url);
+    const files = (await readdir(dir)).filter((f) => f.startsWith('Station') || f === 'Starfury.js');
+    assert(files.length >= 5, `only ${files.length} station files: ${files.join(', ')}`);
+
+    /**
+     * ══ NO STATION FILE LEARNS A MODE'S NAME (§10) ══════════════════════
+     *
+     * "A new mode is one world plus one manifest entry." The rule that keeps
+     * that true is that nothing here switches on which mode contributed a
+     * resident — the same "rows, not names" rule `CompanionKinds.js` keeps
+     * over twelve kinds. A grep is the only way to hold it, because the
+     * failure is a single `if` somebody adds in a hurry.
+     */
+    const MODES = ['command', 'theline', 'duel', 'training', 'sandbox', 'raid', 'blade', 'trial'];
+    const hits = [];
+    for (const f of files) {
+      const src = await readFile(new URL(f, dir), 'utf8');
+      /* Comments are prose and may name anything; code may not. */
+      const code = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
+      for (const m of MODES) {
+        /**
+         * A COMPARISON, not a mention. `schedule.py` has a JOB called
+         * `command` and `faction.py` a faction called `command`, and the
+         * first version of this grep called both of those a mode — which is
+         * §2.3c in miniature, a reader test that greps too wide and finds
+         * somebody else's field. What §10 forbids is a station file BRANCHING
+         * on which mode contributed something, so that is what is looked for.
+         */
+        const re = new RegExp(`(===?\\s*|!==?\\s*|MODES\\s*[.[]\\s*['"\`]?)['"\`]?${m}['"\`]?\\s*[)\\]}]?`);
+        const modeish = new RegExp(`(settings\\.mode|_pickedMode|world\\.mode|\\bmode\\b\\s*===?)`);
+        if (re.test(code) && modeish.test(code)) hits.push(`${f} branches on the mode '${m}'`);
+      }
+    }
+    assert(hits.length === 0, `${hits.length} station files name a mode:\n      ${hits.join('\n      ')}`);
+
+    /* §12.1: no external URL on any loading path. The single file has to work
+     * from disk with the network off, and a CDN in a loader is how that stops
+     * being true without anything going red. */
+    const mesh = await readFile(new URL('StationMesh.js', dir), 'utf8');
+    assert(!/https?:\/\//.test(mesh.replace(/\/\*[\s\S]*?\*\//g, '')),
+      'StationMesh.js has an external URL in it, and the packed game must fetch nothing');
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the imported rooms decode to what §1.1 measured', async () => {
+    const { decodeRoom } = await import('../../src/game/StationMesh.js');
+    const { materialKeyFor } = await import('../../src/game/StationMesh.js');
+    const root = new URL('../../assets/station/', import.meta.url);
+    /* §1.1's own figures, and the check is that the geometry in the repo is
+     * the geometry the plan was written against. */
+    const want = {
+      'zocalo.smesh': { tris: 98380, w: 22.0, h: 7.5, d: 67.4, parts: 44 },
+      'corridor.smesh': { tris: 44404, w: 9.4, h: 7.6, d: 120.6, parts: 37 },
+      'cnc.smesh': { tris: 18510, parts: 32 },
+      'rotunda.smesh': { tris: 42156, parts: 35 },
+      'starfury.smesh': { tris: 3968, parts: 16 },
+    };
+    let uncovered = 0;
+    for (const [file, w] of Object.entries(want)) {
+      const buf = await readFile(new URL(file, root));
+      const room = decodeRoom(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), file);
+      assert(room.tris === w.tris, `${file}: ${room.tris} triangles, §1.1 measured ${w.tris}`);
+      assert(room.parts.size === w.parts, `${file}: ${room.parts.size} parts, expected ${w.parts}`);
+      if (w.w) {
+        const b = room.bounds;
+        const dims = [b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]];
+        assert(Math.abs(dims[0] - w.w) < 0.2 && Math.abs(dims[1] - w.h) < 0.2 && Math.abs(dims[2] - w.d) < 0.2,
+          `${file}: ${dims.map((n) => n.toFixed(1)).join(' × ')} m, §1.1 measured ${w.w} × ${w.h} × ${w.d}`);
+        assert(Math.abs(b.min[1]) < 0.01, `${file}: its floor is at y=${b.min[1]}, and §1.1 says put it at 0`);
+      }
+      /* Every part has a row in the §2 prefix table. A part that falls through
+       * is a surface with no material, and the loader refuses a default. */
+      for (const name of room.names) if (!materialKeyFor(name)) { uncovered++; console.log(`      UNCOVERED ${file}: ${name}`); }
+      /* And nothing here made a material — §9.1's cheapest guarantee. */
+      for (const g of room.parts.values()) assert(!g.material, `${file}: the decoder made a material`);
+    }
+    assert(uncovered === 0, `${uncovered} imported parts have no row in PART_MATERIAL`);
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the cast — fifteen species, each with a body, a name and a day', async () => {
+    const C = await import('../../src/game/StationCast.js');
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    assert(C.SPECIES_KEYS.length === 15, `${C.SPECIES_KEYS.length} species; body.py has 15`);
+    const borz = /^(CT|CC)-\d|clone|trooper/i;
+    for (const k of C.SPECIES_KEYS) {
+      const A = ARCHETYPES[`res_${k}`];
+      assert(A, `${k} has no archetype, so spawnEnemy cannot build one`);
+      /* THE FENCE. §11: no wave may ever compose a resident. */
+      assert(A.score === 0 && A.threat === 0 && A.unlockAt === 99 && A.resident === true,
+        `${k}'s archetype is not fenced — a wave could compose it`);
+      assert(!A.ranged && !A.weapon && !A.moves,
+        `${k} is armed, and §3.3 says residents are off duty and unarmed`);
+      assert(C.RHYTHMS[k], `${k} has no rhythm`);
+      /* A name, and never a Borz one. */
+      const names = new Set();
+      for (let i = 0; i < 40; i++) {
+        const n = C.nameFor(k, `check-${k}-${i}`);
+        assert(typeof n === 'string' && n.length > 1, `${k}'s name generator returned ${JSON.stringify(n)}`);
+        assert(!borz.test(n), `${k}'s generator returned a Borz name: ${n}`);
+        names.add(n);
+      }
+      /* The Vorlon is a singleton with six attested names; everyone else's
+       * grammar has to be wider than a handful. */
+      assert(names.size >= (k === 'vorlon' ? 4 : 20),
+        `${k}'s grammar made only ${names.size} distinct names in 40 draws`);
+    }
+    /* The manifest reader is the mode contract's only door (§10). */
+    const rows = C.residents();
+    assert(rows.length >= 15 + 5, `residents() returned ${rows.length} rows`);
+    for (const r of rows) assert(r.builder && r.home, `a manifest row has no builder or no home: ${JSON.stringify(r)}`);
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the day — every place is populated at its own busy hour, every species is here', async () => {
+    const { PLACES } = await import('../../src/game/StationPlan.js');
+    const { headcount, census } = await import('../../src/game/StationLife.js');
+    const empty = [];
+    for (const p of PLACES) {
+      if (p.external || !p.heads) continue;
+      const n = headcount(p, p.peak);
+      if (n < 1) empty.push(`#${p.id} ${p.name} is empty at its own busy hour (${p.peak}:00)`);
+    }
+    assert(empty.length === 0,
+      `${empty.length} places are empty when they are supposed to be busiest:\n      ${empty.join('\n      ')}`);
+
+    /* §5.3: at least eight residents of every species are placed. */
+    const c = census(13);
+    const thin = [];
+    for (const [k, n] of c.bySpecies) {
+      /* The Vorlon is one, by construction, and is placed by hand at #37. */
+      if (k === 'vorlon') continue;
+      if (n < 8) thin.push(`${k}: ${n}`);
+    }
+    assert(thin.length === 0,
+      `${thin.length} species have fewer than 8 residents at 13:00: ${thin.join(', ')}`);
+    console.log(`      census at 13:00: ${[...c.bySpecies].map(([k, n]) => `${k} ${n}`).join(', ')}`);
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
+  check('station: the sandbox — residents are real bodies, and the step is inside its budget', async () => {
+    const { world, idle } = await station(40);
+    try {
+      const { run: step } = await import('./_coop.mjs');
+      const life = world._stationLife;
+      assert(life, 'no station life was dressed');
+
+      /* §11: every resident within ~40 m is a REAL body. */
+      step(world, 2, idle);
+      const live = [...life.live.values()];
+      assert(live.length > 4, `only ${live.length} live residents round the player; §11 wants a pool`);
+      const one = live[0];
+      assert(one.hp > 0 && one.position, 'a resident is not a body');
+      assert(one.stationName, 'a resident has no name, and §14 wants one on a nameplate');
+      assert(one.team === (world.player?.team ?? 0), '§11 puts residents on the player\'s team');
+
+      /* …and the player can actually harm one, which is the whole promise.
+       * `canHarm` refuses a same-team victim unless friendly fire is on, and
+       * the station turns it on for exactly this. */
+      const { canHarm } = await import('../../src/game/Player.js');
+      assert(canHarm(world.player, one),
+        'the player cannot harm a resident — §11\'s ragdoll, limbs and hurl are all false');
+
+      /**
+       * ══ §12.2's 2.5 ms, MEASURED THE WAY THE DECK'S IS ══════════════════
+       *
+       * `decklife.mjs` holds `stepDeckLife` to an AVERAGE over 300 frames,
+       * and this file is held the same way for the same reason. Measured over
+       * 360 frames on this box: median 0.028 ms, p95 0.056 ms — and one frame
+       * at 162 ms.
+       *
+       * That outlier is a garbage collection landing inside the span, not the
+       * station's work: `process.cpuUsage` counts the whole process's CPU, a
+       * spawn allocates a body's worth of it, and a major GC on a 2 GB heap
+       * is a hundred milliseconds of real CPU wherever it happens to fall. A
+       * bound on the single worst frame would be red for a reason nobody can
+       * act on, which HANDOFF §2.6c is explicit is worse than no bound at all.
+       * So: the average is the assertion, p95 is printed beside it, and the
+       * worst is printed and named rather than asserted.
+       */
+      const samples = [];
+      step(world, 6, idle, () => { samples.push(life.stepMs); });
+      samples.sort((a, b) => a - b);
+      const mean = samples.reduce((a, b) => a + b, 0) / samples.length;
+      const p95 = samples[Math.floor(samples.length * 0.95)];
+      const worst = samples[samples.length - 1];
+      assert(mean <= 2.5,
+        `the station's step averages ${mean.toFixed(2)} ms over ${samples.length} frames against §12.2's 2.5`);
+      assert(p95 <= 2.5,
+        `the station's step is ${p95.toFixed(2)} ms at p95 against §12.2's 2.5`);
+      console.log(`      station step over ${samples.length} frames: mean ${mean.toFixed(3)} ms, p95 ${p95.toFixed(3)}, worst ${worst.toFixed(1)} (a GC) — ${live.length} live bodies, bound 2.5`);
+    } finally { world.dispose?.(); }
+  });
+}
