@@ -4300,6 +4300,56 @@ function beardParts(s, hg, B) {
  *           heavy rolled rim, a peak gathered at the back and a drape across
  *           the shoulders.
  */
+/**
+ * ══ WHAT IS ON THE TORSO, AND THE TWO WAYS OF WEARING LESS ═════════════════
+ *
+ * V15 §2 asks for *"women's outfits"* and for *"men able to go shirtless"*.
+ * Both of them are here, both of them cost NOTHING, and that is the whole
+ * design: the Jedi's torso is three lathes and three wrapped panels that the
+ * builder already makes, so taking a shirt off is choosing a different
+ * MATERIAL for two bones and not drawing three panels. There is no new
+ * geometry in this table and there is none in the code that reads it.
+ *
+ * `skin` names the bones that come out of the cloth material and into the
+ * skin one — `dressHumanoid`'s `mats` bag takes a bone name with its L/R
+ * suffix dropped, which is why `arm` covers both arms. `tabard: false` drops
+ * the two front panels, the back panel and the crossed V between them, which
+ * are the only garments on the ribcage; `collar: false` drops the two rings at
+ * the throat, because a collar with no shirt under it is a bow tie.
+ *
+ * ── AND `bare` IS SFW BY CONSTRUCTION, NOT BY HOPE ────────────────────────
+ *
+ * V15's own words are *"men able to go shirtless"* and, two lines above it,
+ * *"attractive and SFW"*. Those two are in tension for exactly one row of this
+ * table and exactly one value of one slider, and the resolution is written
+ * into the row rather than left to a player's judgement: `chestFrom` is the
+ * sex above which the CHEST bone keeps its cloth whatever else comes off. At
+ * sex 0 `bare` is a bare chest; above it, it is a bare midriff and bare arms
+ * over a fitted top, which is the same garment every reference for this look
+ * actually wears. One number, stated, rather than a row a screen has to hide.
+ */
+export const TOP_CUTS = [
+  {
+    id: 'tunic', name: 'Jedi Tunic',
+    blurb: 'The crossed tunic, the over-panels and the collar. What the order issues, and what every figure in this game wore until now.',
+  },
+  {
+    id: 'wrap', name: 'Sleeveless Wrap',
+    blurb: 'Bare arms, a close wrap over the ribs and nothing hanging off the shoulders. It shows the whole arm, which is most of what a saber form is read by.',
+    skin: ['arm', 'fore'], tabard: false,
+  },
+  {
+    id: 'bare', name: 'Bare',
+    blurb: 'Shirtless — the arms and the torso, over the belt and the skirt. Above the middle of the sex slider it is a bare midriff and a fitted top instead.',
+    skin: ['arm', 'fore', 'spine', 'chest', 'clav'], tabard: false, collar: false,
+    /* See the header. Above this the chest keeps its cloth. */
+    chestFrom: 0.001,
+  },
+];
+const TOP_BY_ID = new Map(TOP_CUTS.map((t) => [t.id, t]));
+/** The torso cut with this id, or null. Same contract as `hoodCut`. */
+export function topCut(id) { return TOP_BY_ID.get(id) || null; }
+
 export const HOOD_CUTS = [
   {
     id: 'none', name: 'No hood',
@@ -5017,435 +5067,34 @@ export function attachHood(built, id) {
 /* ── Jedi ────────────────────────────────────────────────────────────── */
 
 /**
- * FOUR JEDI, ONE BUILDER, ONE DRAW — and therefore one Jedi.
+ * ── THE FLESH HEAD, LIFTED OUT OF `buildJedi` SO A HELMET CAN BE OPTIONAL ──
  *
- * `Enemy.ARCHETYPES` gives the Knight, the Sentinel, the Guardian and the
- * Master four declared fighting forms, four blades and four hilts, and then
- * builds all four from `buildJedi({ ...o, ...jediLook() })` — the same pool of
- * species, robe, hair, age and build rolled for every one of them. Measured at
- * LOD 1 in `tools/_roster.mjs`: sentinel/master 0.939 flank IoU, guardian/
- * master 0.889, jedi/sentinel 0.883, and 0.000 apart in visible colour. The
- * player cannot learn "that one is a Guardian, it fights Djem So and cannot be
- * parried" from a body that is a Knight with three centimetres more hilt.
+ * Every line below was inside `buildJedi`'s own `dressHumanoid` call and is
+ * moved here BYTE FOR BYTE, spread back in at the one call site. It is lifted
+ * for exactly one reason: V15 §2 asks that a player wear clone armour "with or
+ * without helmet", and a trooper without a helmet needs a head — a face, a
+ * species, ears, hair and a beard. That head is this one. Copying two hundred
+ * lines into `buildTrooper` would have been a second statement of what a Jedi's
+ * skull is, and the first thing that would have happened to the copy is that it
+ * would have stopped matching.
  *
- * A rank is worn, and each of these is the piece the source material is most
- * consistent about — chosen so no two change the same part of the outline:
+ * The contract is the pair `dressHumanoid` reads — `headGeo(S)` and
+ * `buildHead(headObj, S, hg)` — so a caller spreads it into the style object
+ * and nothing else changes. `creator: the neutral choice is the figure that
+ * shipped, to the last float` is what proves the move was faithful: it digests
+ * the whole default Jedi and it did not move.
  *
- *   knight    nothing added, and the robe cut SHORT. Ataru is the acrobatic
- *             form; a knight fighting it has taken the long robe off. The most
- *             compact of the four and the only one whose leg line is bare.
- *   sentinel  the hood, up, and the robe at full length. Soresu waits, and a
- *             sentinel is read head-first: the cowl is 14 cm of outline in the
- *             one place a Jedi has none.
- *   guardian  the Temple Guard's masked helm with its vertical crest, and a
- *             pauldron. The tallest head on the roster and the widest shoulder
- *             — which is what Djem So's 34 damage ought to look like.
- *   master    the shoulder mantle and the longest robe. Width at the top of
- *             the figure and cloth to the ankle, where the knight has neither.
- *
- * Every field defaults to the identity, so `buildJedi()` with no rank emits the
- * geometry it always did — which the player, the menu preview and Net depend
- * on and which `preview`, `grooming` and `garments` pin.
+ * @param P.sp   the species row       @param P.skin  the skin material
+ * @param P.G    the character sheet   @param P.brow  the brow material
+ * @param P.F    the eight face axes   @param P.hair  the hair material
+ * @param P.S    the BODY scale        @param P.HS    the HEAD scale (see buildJedi)
+ * @param P.speciesMeshes  the array a severed head's furniture is collected into
  */
-export const JEDI_RANKS = {
-  knight:   { hem: 0.74 },
-  /* `hood` names a row of HOOD_CUTS rather than being a boolean, and `'cowl'`
-   * IS the cowl this rank has always worn — every number of it moved into that
-   * row unchanged when hoods became a thing a player can pick. See the note
-   * over HOOD_CUTS: the geometry is identical, and what is new is the dark
-   * lining inside the shell and the fact that the whole thing is now one
-   * merged mesh instead of two. */
-  sentinel: { hood: 'cowl', hem: 1.32 },
-  guardian: { helm: true, pauldron: true, hem: 1.06 },
-  /* The Master is WIDE AT THE TOP and ordinary below, which is the opposite of
-   * the Sentinel — hooded, narrow, and cloth to the ankle. Two robed figures
-   * that are both long and both hooded are one figure, and the pair measured
-   * 0.939 before these two numbers were pushed apart. */
-  master:   { mantle: true, hem: 0.98 },
-};
-
-export function buildJedi(opts = {}) {
-  /** The rank's kit, if this body is wearing one. See JEDI_RANKS. */
-  const RANK = { hem: 1, ...(JEDI_RANKS[opts.rank] || null) };
-  /**
-   * The creator's axes. `sp` is a row of SPECIES, `G` the character sheet (cut,
-   * beard, years, muscle — see SHEET_KEYS), `F` the eight face numbers with the
-   * species' bias and the years folded in, `k` the signed frame parameter (-1
-   * slight to +1 heavy) and `mu` the signed muscle parameter (-1 wiry to +1
-   * powerful).
-   *
-   * ALL OF THEM ARE WRITTEN SO THAT THE DEFAULT IS THE IDENTITY: species human
-   * carries no face bias, an absent face preset is eight zeros, an absent build
-   * is exactly 0.5 and therefore k exactly 0, an absent sheet is the temple cut
-   * with no beard at age 0 and muscle 0.5 — therefore a exactly 0 and mu
-   * exactly 0 — and every use below has the shape `x * (1 + gain*k)` or
-   * `x + gain*k`. `x * 1` and `x + 0` are exact in IEEE float, so buildJedi()
-   * with no arguments emits byte-for-byte the geometry it emitted before any of
-   * this existed — which Player, Enemy, Net and the menu preview all depend on,
-   * and which is asserted against the previous build rather than assumed.
-   */
-  const sp = speciesOf(opts.species);
-  /* The species is resolved BEFORE the sheet, so the sheet can fall back to
-   * the species' own default hairstyle rather than to HAIR_STYLES[0] — see the
-   * note over the hairstyle pick. Folded into `opts` rather than passed as a
-   * second argument so the call below stays the one expression the grooming
-   * suite scans for: a source check that names a mechanism goes red for a
-   * rewrite that changes nothing, and this file has been bitten by that. */
-  if (sp.defaultHair && opts.__speciesHair === undefined) {
-    opts = { ...opts, __speciesHair: sp.defaultHair };
-  }
-  const G = sheetOf(opts);
-  /**
-   * A SPECIES MAY BE A DIFFERENT SIZE, and its head a different fraction of it.
-   *
-   * `sp.frame` multiplies the rig's own scale, the arm and leg lengths the
-   * skeleton is laid out at, and — separately — the size everything on the HEAD
-   * is authored at. Separately is the whole point: a small figure built by
-   * turning one scale down is a scaled-down human, which is exactly the thing
-   * the small-folk row exists not to be. Its body is 0.40 of a human's and its
-   * head 0.62, so the head is 1.55 times the size the body would have given it
-   * and the figure is three and a half heads tall instead of seven.
-   *
-   * The animator needs no telling. BipedAnimator measures the legs it is handed
-   * (`standHip = min(hipHeight, ankleY + legLen * 0.965)`), so a rig with 34 cm
-   * legs stands 37 cm at the hip with the same knee extension as an adult, on
-   * the same `hipHeight: 0.95` every caller passes.
-   */
-  const FR = sp.frame || null;
-  const S = (opts.scale ?? 1) * (FR ? FR.scale : 1);
-  // `frame.head` is the head's scale against the CALLER's, not against the
-  // body's — 0.40 body and 0.62 head means the head is 1.55 times the size a
-  // uniform shrink would have given it, which is the entire point of the row.
-  // Written the other way round (S * FR.head) it compounds to 0.248 and the
-  // figure comes out with a head SMALLER than its body's share: measured at
-  // 10.5 heads tall, which is a stick insect.
-  const HS = (opts.scale ?? 1) * (FR ? FR.head : 1);
-  /**
-   * A ROBE MAY BE HANDED IN WHOLE, and the default is the identity.
-   *
-   * `robeIndex` picks one of six authored palettes, which is right for a Jedi
-   * and useless for the fifteen station species (SHARK §3.3): a Drazi dock
-   * gang and a Centauri court cannot both be Sand or Ash. `opts.robe` takes
-   * the same three fields — outer, inner, trim — so a caller with its own
-   * palette does not need a row added to a table it has nothing else in.
-   *
-   * An absent `robe` is exactly today's expression, so `buildJedi()` emits
-   * byte-for-byte what it emitted before this line, which is what Player,
-   * Enemy, Net and the menu preview all depend on.
-   */
-  const robe = (opts.robe && opts.robe.outer !== undefined)
-    ? opts.robe : (ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0]);
-  const rig = new Rig(humanoidSkeleton(S, FR ? { armLen: FR.armLen, legLen: FR.legLen } : {}), { scale: S });
-  const F = faceFor(sp, opts.face, G.a, G.f);
-  const { k } = buildOf(opts.build);
-  const mu = G.m;
-  /**
-   * ── THE SEX AXIS, AND EXACTLY WHAT IT MOVES ───────────────────────────
-   *
-   * `f` ∈ [0, 1], 0 being the figure this file has always shipped. Every term
-   * it appears in below is `x * (1 + g*f)`, so f = 0 is the identity to the
-   * float and `creator.mjs`'s digest of the neutral Jedi does not move.
-   *
-   * WHAT IT DRIVES is the pair of measurements `BUILD_RANGE`'s own header
-   * names as the dimorphic ones — shoulder-to-hip and waist-to-hip — plus the
-   * limb and neck girths that follow them. Nothing here adds geometry: the
-   * torso is three lathes and this changes their radii, and `fleshSections`
-   * changes their profile. The whole workstream has seventy-six triangles and
-   * ten meshes of headroom (`creator.mjs`'s 13,000/76 against the Jedi's
-   * measured 12,924/66) and it spends none of them.
-   *
-   *   shoulder 0.138 → 0.121   (−12%)      hip 0.138 → 0.155   (+12%)
-   *   waist    0.122 → 0.107   (−13%)      so shoulder:hip falls 1.00 → 0.78
-   *                                        and  waist:hip     falls 0.88 → 0.69
-   *
-   * Those are real anthropometric spreads and they are the two ratios that
-   * survive being seen from thirty metres in a robe, which is the bar that
-   * header sets and the reason no other term is worth moving.
-   */
-  const f = G.f;
-
-  /**
-   * Five cloth tones off a two-tone palette, not two.
-   *
-   * The figure had exactly one garment colour on the body and one on the arms,
-   * and at any range past three metres that reads as a single painted
-   * surface — a cone with tubes coming out of it. What sells layered cloth is
-   * a TONAL ladder between the layers: the over-robe darker than the body, the
-   * body darker than the sleeve, and the trim darker than all of them. Each
-   * step is derived from the palette the player picked rather than typed, so
-   * every robe colour in ROBE_COLORS gets the same reading.
-   *
-   * Each layer also gets its own weave pitch. A tabard woven at the same
-   * threads-per-metre as the shirt under it is the same cloth, and the eye
-   * knows it.
-   */
-  const mix = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
-  const W = { vc: true };
-  const tunic = clothMat(robe.inner, 0.90, { ...W, repeat: 3.6 });
-  const outer = clothMat(robe.outer, 0.93, { ...W, repeat: 2.4 });
-  const over = clothMat(mix(robe.outer, robe.trim, 0.46), 0.95,
-    { ...W, repeat: 1.6 });
-  const sleeve = clothMat(mix(robe.outer, robe.inner, 0.44), 0.90, { ...W, repeat: 3.2 });
-  const trim = clothMat(robe.trim, 0.84, { ...W, repeat: 4.6 });
-  // Was bare: the player's gloves, boots, bracers, belt pouches and obi clasp
-  // — everything on the figure that is not cloth or skin — rendered as one
-  // flat brown vinyl, and gloves are 20% of the first-person frame. Tighter
-  // tiling than the default 4.5: leather grain is finer than plate scuffing.
-  const leather = leatherMat(0x53412f, 0.58, { vc: true, repeat: 5.4 });
-  // The species' own default tone when nothing is chosen, so
-  // `buildJedi({ species: 'twilek' })` is already green rather than beige; the
-  // human row's default is 0xc79a76, which is what this line always said.
-  const skin = skinMat(opts.skinColor ?? sp.skin ?? 0xc79a76, 3.0, { vc: true });
-  // The cap is an open shell, so it has to be lit from the inside too. On the
-  // cloth bake rather than bare: hair with no normal detail at all is a
-  // moulded plastic wig, and it is 20cm from the camera in every menu shot.
-  // Tiled hard so the weave reads as strands rather than as burlap.
-  /**
-   * AND IT GOES GREY, which is the other half of the years.
-   *
-   * `mix(chosen, GREY, 0.88 * age)` and not a separate white swatch, because
-   * the two are not alternatives: a black-haired sixty-year-old is iron grey
-   * and a sand-haired one is nearly white, and a player who picked Auburn and
-   * dragged the years across should watch that auburn go. At age 0 the factor
-   * is 0 and `Color.lerp(x, 0)` returns the colour untouched, so the neutral
-   * material is the one this line always built.
-   */
-  // Guarded rather than relying on `lerp(c, 0)` being the identity: mix()
-  // round-trips through Color.getHex(), which quantises to 8 bits per channel,
-  // and the neutral figure has to come out on the same integer it always did.
-  const base = opts.hairColor ?? 0x2a1d14;
-  const hairHex = G.a > 0 ? mix(base, GREY, 0.88 * G.a) : base;
-  const browHex = G.a > 0 ? mix(mix(base, GREY, 0.62 * G.a), 0x000000, 0.32) : mix(base, 0x000000, 0.32);
-  const hair = clothMat(hairHex, 0.72, { vc: true, repeat: 8.0 });
-  hair.side = THREE.DoubleSide;
-  // Brows and lashes are two square centimetres of nearly-flat plate facing
-  // the sun, and back when the hair material still carried a sheen lobe they
-  // rendered BRIGHTER than the forehead behind them — a pale bar across the
-  // face, which is the opposite of what a brow is for. The lobe is gone with
-  // the rest of the specular (see clothMat); they stay a third darker than the
-  // hair because that is what a brow looks like, not because of a shader.
-  // Brows grey too, and later than the hair does — 0.62 against 0.88.
-  const brow = clothMat(browHex, 0.86, { vc: true, repeat: 9.0 });
-
-  /* The torso lathe is circular and the mesh is squashed on Z, so a garment
-   * revolved about the same axis follows the body EXACTLY when it is stretched
-   * on X by the inverse of that squash — the two ellipses are then concentric
-   * and similar. This one number is why the tabards can wrap instead of
-   * standing off the flanks like a sandwich board. */
-  // A heavier frame is a DEEPER torso as well as a wider one. Everything that
-  // wraps the body — the tabards, the obi, the skirt — is derived from this one
-  // number, so it has to be computed before any of them and not typed twice.
-  const DEPTH = 0.76 * (1 + 0.055 * k), XK = 1 / DEPTH;
-  /**
-   * GARMENTS FOLLOW THE BODY UNDER THEM.
-   *
-   * The tabards are raycast onto the ribcage and look after themselves, but the
-   * collar, the obi, the belt, both skirts, the boot shafts and the whole
-   * sleeve-and-bracer stack are lathes at typed radii — and a typed radius on a
-   * body that just grew 15% is a bracer inside its own forearm. Each of these
-   * is the multiplier that was applied to the limb it is worn on, so the
-   * relationship the numbers were tuned against holds all the way across the
-   * slider. There is a check that walks every band on every build and measures
-   * whether the limb is still inside it.
-   */
-  /**
-   * MUSCLE RIDES THE SAME NUMBERS, and that is why it is safe to add.
-   *
-   * The frame slider is GIRTH: everything gets wider together, which is what a
-   * heavy build is. Muscle is DISTRIBUTION — a shoulder and a chest that grow
-   * while the waist comes IN — and that is the difference a viewer actually
-   * reads as strength rather than as size. So the waist term below is negative
-   * and the shoulder term is the largest positive one on the figure: across the
-   * muscle slider the shoulder-to-waist ratio runs 1.02 → 1.29, which is more
-   * than the frame slider moves it.
-   *
-   * Every garment scalar takes its muscle term from the SAME expression as the
-   * limb it is worn on, exactly as the frame terms do, so a bracer stays outside
-   * its own forearm and an obi stays on a waist that just came in by 5%. The
-   * garment-fit sweep in tools/checks/grooming.mjs walks both sliders at once
-   * rather than one at a time, because the corner that fails is the corner.
-   */
-  const KTOR = 1 + 0.105 * k + 0.055 * mu;  // ribcage: tabard caps, the V of the tunic
-  const KHIP = 1 + 0.030 * k - 0.010 * mu;  // pelvis: both skirts and the front panels
-  // The obi is a WAIST band, not a hip band, and the waist carries five times
-  // the hip's gain — so scaling the belt group with the pelvis buried 15% more
-  // of the obi at the heavy end than at the middle. Halfway between the two is
-  // what actually keeps a belt on a waist while its skirt still covers a hip.
-  const KBELT = 1 + 0.080 * k - 0.028 * mu; // obi, belt, buckle, pouches, hanging ends
-  const KARM = 1 + 0.150 * k + 0.105 * mu;  // humerus and forearm: mantle, hem, cuff, bracer
-  // The boot shaft is a circular lathe over a shin whose section carries a calf
-  // lobe behind it, so its muscle term has to track the CALF and not the shaft
-  // radius. At 0.055 against a calf swell of 0.42 the gastrocnemius came out
-  // 22 mm outside its own boot at the powerful end — measured per height on the
-  // built mesh, which is the only place that shows up.
-  const KLEG = 1 + 0.120 * k + 0.105 * mu; // shin: boot shaft, cuff, ankle strap
-  const KNECK = 1 + 0.135 * k + 0.090 * mu; // collar
-
-  /**
-   * The outer layer of the robe below the belt — the over-skirt and the two
-   * front over-panels — collected as it is built so the runtime can swap it for
-   * simulated cloth. See attachSkirt() in Cloth.js and the note at the lathe.
-   */
-  const outerLayer = [];
-  /**
-   * Whatever the species hangs on its head, so a runtime that simulates one of
-   * them can hide the rigid version. Empty for a human.
-   */
-  const speciesMeshes = [];
-
-  dressHumanoid(rig, {
-    scale: S,
-    body: outer, arm: sleeve, leg: outer, hand: leather, boot: leather,
-    head: skin, skin,
-    // The arm, measured over a sleeve rather than on bare skin: 5.2cm at the
-    // shoulder joint, 3.9 at the elbow, 4.4 just below it where the flexor
-    // mass sits, 3.0 at the wrist where the bracer closes on it. It used to
-    // run one near-constant sweep at 4.5→3.5, which is a length of pipe.
-    // THE FRAME, as eleven radii off one slider.
-    //
-    // The gains are not uniform, and which ones are large is the whole content
-    // of the body-type feature. Shoulder and chest carry the most because the
-    // shoulder-to-hip ratio is what a frame IS in silhouette; the hip goes the
-    // OTHER WAY, so a slight build is 10.5% narrower in the shoulder and 5%
-    // wider in the hip at once, which turns a 6% radius change into a 16%
-    // change in the ratio a viewer actually reads. Waist tracks the chest, so
-    // the slight end also gets the narrow-waisted profile and the heavy end a
-    // waist 2% wider than its own hips.
-    //
-    // The pelvis barely moves and the WAIST carries the difference instead
-    // (gain 0.135 against the hip's 0.025), for a reason that is structural
-    // rather than anatomical: the belt, the obi and both skirts are lathes hung
-    // off the pelvis at typed radii, and a pelvis that grows while they do not
-    // stands outside its own robe. Waist-to-hip does the same work — it runs
-    // 0.86 → 1.09 across the slider — and everything below the belt can then
-    // follow one monotone factor.
-    //
-    // Measured across the range at the 8 m sampling density in
-    // tools/checks/body-parts.mjs.
-    parts: { chestR: 0.162 * (1 + 0.105 * k + 0.055 * mu - 0.045 * f), shoulderR: 0.138 * (1 + 0.115 * k + 0.125 * mu - 0.120 * f),
-             hipR: 0.138 * (1 + 0.025 * k - 0.010 * mu + 0.120 * f), waistR: 0.122 * (1 + 0.135 * k - 0.028 * mu - 0.125 * f),
-             armR: 0.045 * (1 + 0.150 * k + 0.105 * mu - 0.090 * f), armR0: 0.052 * (1 + 0.165 * k + 0.115 * mu - 0.095 * f),
-             armR1: 0.039 * (1 + 0.130 * k + 0.060 * mu - 0.080 * f), foreR0: 0.044 * (1 + 0.150 * k + 0.105 * mu - 0.090 * f),
-             foreR1: 0.030 * (1 + 0.110 * k + 0.035 * mu - 0.075 * f),
-             clavR: 0.062 * (1 + 0.100 * k + 0.085 * mu - 0.105 * f), thighR: 0.090 * (1 + 0.120 * k + 0.075 * mu + 0.055 * f),
-             neckR: 0.058 * (1 + 0.135 * k + 0.090 * mu - 0.110 * f), torsoDepth: DEPTH },
-    /* The profile, front and back — see `fleshSections`. Identical object to
-     * `FLESH_SECTIONS` at f = 0, not a copy of it. */
-    sections: fleshSections(f, G.bust, G.seat),
-    // [amp, at, width]: the deltoid peaks 15% down the humerus and is spent by
-    // 40%, which is where a deltoid inserts. Folded into the arm's own lathe
-    // instead of bolted on as a ball — see dressHumanoid. Its amplitude is the
-    // strongest single frame cue on a limb: a shoulder cap is either there or
-    // it is not, and unlike a radius it changes the SHAPE of the outline.
-    // Muscle moves the deltoid harder than the frame does — 0.62 against 0.36 —
-    // and deliberately: a shoulder cap is either there or it is not, and unlike
-    // a radius it changes the SHAPE of the outline rather than its width.
-    deltoid: [0.34 * (1 + 0.36 * k + 0.62 * mu - 0.34 * f), 0.15, 0.155],
-    seg: { torso: 14, arm: 14, leg: 12, neck: 12, clav: 8 },
-    limbOpts: {
-      // The thigh carries the quadriceps high and the condyles at the knee;
-      // the shin carries the calf a THIRD of the way down (not a fifth, which
-      // put the belly of it inside the knee joint) over a scooped popliteal
-      // fossa. Both are what stop a leg being two cones with a ring between.
-      thigh: { rings: 6, swells: [[0.26, 0.105, 0.24], [0.90, 0.055, 0.10]] },
-      // Tuned, not chosen. Swept against the deepest knee the gait solver
-      // actually produces (125° at a crouch-walk, measured) and against the
-      // three shin tests in tools/checks: this lands the worst calf-into-
-      // hamstring penetration at 16mm where the shipped shaping gave 31mm,
-      // while carrying MORE calf (mass 0.36 against 0.28) rather than less.
-      // The calf's own belly follows the muscle slider; its position and width
-      // do not, because where a gastrocnemius sits is anatomy and not training.
-      shin: { rings: 8, swells: [[0.33, 0.22 * (1 + 0.20 * mu), 0.16]],
-              section: calfSection({ flat: 0.11, mass: 0.36, at: 0.33,
-                                     hollow: 0.28, hollowAt: 0.03, hollowW: 0.25 }) },
-    },
-    // The boot is one merged geometry on one material, so a sole cannot be a
-    // second colour without a second draw call — but it CAN be a second value.
-    // Beware the foot bone's frame (see buildFoot): local +Z points DOWN, so
-    // the sole plane is at +0.062·S and the instep is at negative z. Dropping
-    // the tread to 0.42 and the welt to 0.66 is what turns a rounded pillow
-    // into a boot with a sole under it.
-    footGeo: (sc) => shadeAO(buildFoot(sc, { w: 0.092, len: 0.205, h: 0.104 }), ao(
-      (x, y, z) => 1 - 0.58 * clamp((z / sc - 0.030) / 0.020, 0, 1),
-      // and the crease where the toe box breaks over the ball of the foot.
-      // 0.092, not the 0.135 this was authored at: the boot moved back under
-      // the ankle (see buildFoot's ankleAt) and a crease that stays put is a
-      // crease across the wrong part of the shoe.
-      creaseAt(0, 0.092 * sc, 0.010 * sc, 0.028 * sc, 0.60, 0.4),
-      // the heel breast — the step down off the back of the heel block, which
-      // is the only thing at this range that says the sole is a separate piece
-      creaseAt(0, -0.028 * sc, 0.026 * sc, 0.020 * sc, 0.62, 0.45),
-    ), { floor: 0.34 }),
-    // The glove is the largest single object in a first-person frame and it
-    // was one flat value: a mitten. Hand-bone frame is +Y wrist→knuckles and
-    // +Z the way the palm faces, so the shading below is the shadow the curled
-    // fingers throw back onto the palm and the dark between each digit.
-    //
-    // Two builds, one geometry. The hand ships CLOSED — that is what it does
-    // for all but a second at a time, and it is the pose the colliders, the cut
-    // path and the bounding sphere are all read off — with the open pose
-    // carried as morph target 0 (`open`). Player.js drives the influence off
-    // GESTURES[].palm, which until now reached a quaternion and nothing else:
-    // a Force push turned the wrist to face the target and presented a fist.
-    //
-    // The AO is baked TWICE, once per pose, because it is a positional field
-    // and it travels with the vertex. The finger-shadow crease below has
-    // nothing casting it once the fingers straighten; measured on the built
-    // hand, carrying the closed bake onto the open pose leaves 272 of 364
-    // digit vertices darker than 0.90 and a mean of 0.775 where the open hand
-    // wants 0.976 — a fifth of the light missing off an extended hand. Only
-    // the two terms that are true of any hand are shared.
-    handGeo: (side, sc, o) => {
-      const anyPose = [
-        // the dark forward of the palm plane and between the digits
-        (x, y, z) => 1 - 0.34 * clamp((z / sc - 0.016) / 0.026, 0, 1) * clamp((y / sc - 0.030) / 0.030, 0, 1),
-        // the web at the base of the thumb
-        creaseAt((side === 'L' ? 1 : -1) * 0.030 * sc, 0.028 * sc, 0.016 * sc, 0.024 * sc, 0.58, 0.4),
-      ];
-      return addShapeMorph(
-        shadeAO(buildHand(side, sc, o), ao(
-          // the shadow the curled fingers throw back onto the palm — a fist only
-          creaseAt(0, 0.058 * sc, 0.030 * sc, 0.034 * sc, 0.52, 0.5), ...anyPose), { floor: 0.38 }),
-        // Open: fingers all but straight and fanned nearly twice as wide, which
-        // is a flat splayed palm rather than a plank.
-        shadeAO(buildHand(side, sc, { ...o, curl: 0.08, splay: 1.9 }),
-          ao(...anyPose), { floor: 0.38 }),
-        'open');
-    },
-    hands: { curl: 0.95 },
-    headRadius: 0.098 * (HS / S),
-    // The trapezius, and it is where MUSCLE reads loudest on a clothed figure.
-    // A heavy frame carries the shoulder line higher and further out from the
-    // neck; a slight one has a longer, thinner neck showing above the collar,
-    // which is the cue the collar itself frames. Muscle is a bigger term than
-    // frame on `rise` for the reason a trapezius is: it is the one muscle on the
-    // body whose whole job is to lift the shoulder girdle, and it is the only
-    // one visible through a robe from behind.
-    yoke: { reach: 0.62 * (1 + 0.055 * k + 0.070 * mu), rise: 0.031 * (1 + 0.30 * k + 0.46 * mu),
-            depth: 0.064 * (1 + 0.14 * k + 0.16 * mu),
-            at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
-    yokeMat: outer,
-    // The skull.
-    //
-    // What was here was a sphere of x-radius 9.9cm with a jaw ellipsoid inside
-    // it: a head 22.6cm across and 28.2cm tall on a 1.69m body, which is 6.1
-    // heads to the figure. An adult is seven and a half, and head breadth is
-    // 15.5cm, not 22.6 — that single number is most of why the player read as
-    // a toy. This is 15.1 × 21.0 × 19.6, which is a head.
-    //
-    // It is also one assembled shell rather than a loose pile of meshes, for
-    // the reason every other archetype already is: `surfacePoint` can only
-    // answer "where does the face actually end" if there is one thing to ask.
-    // `HS` and not `s`, and the two are the same number for everything but the
-    // small-folk row: the head is authored at its own scale so a species can be
-    // three and a half heads tall rather than a human shrunk.
-    //
-    // `covered` is the cut, and it is not decoration. The shell's occlusion bake
-    // drives everything above the ear line down to 0.28 SO THAT a hair
-    // poke-through reads as a dark root instead of as bare bone — and painted
-    // on a SHAVED head that is a black skullcap, which is the exact defect
-    // `creator: a bald species is bald` was written for. A shaved human is as
-    // bald as a Twi'lek and now takes the same bake.
+function fleshHead(P) {
+  const { sp, G, F, S, HS, skin, brow, hair, speciesMeshes } = P;
+  /* The braid and the warrior's tail, for the solver — see the push below. */
+  P.strands = P.strands || []; P.strandMeshes = P.strandMeshes || [];
+  return {
     headGeo: () => skullGeo(HS, F, sp, sp.hair && G.hair.crown !== false),
     buildHead(headObj, _s, hg) {
       const s = HS;
@@ -5619,7 +5268,16 @@ export function buildJedi(opts = {}) {
       // The positioning group's transform is composed into the mesh's own
       // rather than deleted, so a strand lands on exactly the matrix it would
       // have had inside one.
+      /* THE HAIR'S STRANDS AND THE BEARD'S ARE NOT THE SAME THING to whatever
+       * simulates them: a braid is 20 cm off the back of a moving skull and a
+       * plaited beard is 5.8 cm hanging off a chin that barely travels. Only
+       * the first `nHair` of these are published for the solver — see the
+       * push below — and the beard's plaits stay rigid, which is what a
+       * plaited beard does in every reference anyway. */
+      const nHair = cut.strands.length;
+      let stI = -1;
       for (const st of [...cut.strands, ...beard.strands]) {
+        stI++;
         /**
          * A STRAND'S LENGTH IS A BODY MEASUREMENT, not a head one.
          *
@@ -5637,11 +5295,493 @@ export function buildJedi(opts = {}) {
         const rot = new THREE.Euler(st.rot[0], st.rot[1], st.rot[2]);
         const pos = new THREE.Vector3(0, -L, 0).applyEuler(rot)
           .add(new THREE.Vector3(st.at[0] * s, st.at[1] * s, st.at[2] * s));
-        mesh(limbGeo(L, st.r0 * s, st.r1 * s, st.seg, true,
+        const sm = mesh(limbGeo(L, st.r0 * s, st.r1 * s, st.seg, true,
           { rings: st.rings, bulge: 0.34, bulgeAt: 0.5, capN: 2 }),
           hair, headObj, [pos.x, pos.y, pos.z], [rot.x, rot.y, rot.z]);
+        /**
+         * ── AND EVERY STRAND IS PUBLISHED, so it can be SIMULATED ─────────
+         *
+         * V15 §2 asks for *"hair with real physics"*. A braid and a warrior's
+         * tail are the only two pieces of hair on this figure whose silhouette
+         * is a LINE rather than a mass, and they are the only two worth a
+         * solver — the rest is a cap welded to a skull and correctly so.
+         *
+         * What goes out is the same pair `lekku` and `speciesMeshes` go out
+         * as: a spec the solver can build a tube from, and the rigid mesh it
+         * replaces. The root is the strand's ATTACHMENT point (`st.at`) and
+         * not the mesh's centre, because a hanging tube is anchored at its top
+         * and `pos` above is the centre of a tube that has already been swung
+         * out along its rest euler. Lengths are in the FIGURE's metres — `S`
+         * and not `s` — for the reason `L` two lines up is: how far a strand
+         * falls is a body measurement. See `attachHairTail` in Cloth.js.
+         */
+        if (stI < nHair) {
+          P.strands.push({ at: [st.at[0] * s, st.at[1] * s, st.at[2] * s],
+            r: st.r0 * s, r1: st.r1 * s, len: L, seg: st.seg });
+          P.strandMeshes.push(sm);
+        }
       }
     },
+  };
+}
+
+/**
+ * FOUR JEDI, ONE BUILDER, ONE DRAW — and therefore one Jedi.
+ *
+ * `Enemy.ARCHETYPES` gives the Knight, the Sentinel, the Guardian and the
+ * Master four declared fighting forms, four blades and four hilts, and then
+ * builds all four from `buildJedi({ ...o, ...jediLook() })` — the same pool of
+ * species, robe, hair, age and build rolled for every one of them. Measured at
+ * LOD 1 in `tools/_roster.mjs`: sentinel/master 0.939 flank IoU, guardian/
+ * master 0.889, jedi/sentinel 0.883, and 0.000 apart in visible colour. The
+ * player cannot learn "that one is a Guardian, it fights Djem So and cannot be
+ * parried" from a body that is a Knight with three centimetres more hilt.
+ *
+ * A rank is worn, and each of these is the piece the source material is most
+ * consistent about — chosen so no two change the same part of the outline:
+ *
+ *   knight    nothing added, and the robe cut SHORT. Ataru is the acrobatic
+ *             form; a knight fighting it has taken the long robe off. The most
+ *             compact of the four and the only one whose leg line is bare.
+ *   sentinel  the hood, up, and the robe at full length. Soresu waits, and a
+ *             sentinel is read head-first: the cowl is 14 cm of outline in the
+ *             one place a Jedi has none.
+ *   guardian  the Temple Guard's masked helm with its vertical crest, and a
+ *             pauldron. The tallest head on the roster and the widest shoulder
+ *             — which is what Djem So's 34 damage ought to look like.
+ *   master    the shoulder mantle and the longest robe. Width at the top of
+ *             the figure and cloth to the ankle, where the knight has neither.
+ *
+ * Every field defaults to the identity, so `buildJedi()` with no rank emits the
+ * geometry it always did — which the player, the menu preview and Net depend
+ * on and which `preview`, `grooming` and `garments` pin.
+ */
+export const JEDI_RANKS = {
+  knight:   { hem: 0.74 },
+  /* `hood` names a row of HOOD_CUTS rather than being a boolean, and `'cowl'`
+   * IS the cowl this rank has always worn — every number of it moved into that
+   * row unchanged when hoods became a thing a player can pick. See the note
+   * over HOOD_CUTS: the geometry is identical, and what is new is the dark
+   * lining inside the shell and the fact that the whole thing is now one
+   * merged mesh instead of two. */
+  sentinel: { hood: 'cowl', hem: 1.32 },
+  guardian: { helm: true, pauldron: true, hem: 1.06 },
+  /* The Master is WIDE AT THE TOP and ordinary below, which is the opposite of
+   * the Sentinel — hooded, narrow, and cloth to the ankle. Two robed figures
+   * that are both long and both hooded are one figure, and the pair measured
+   * 0.939 before these two numbers were pushed apart. */
+  master:   { mantle: true, hem: 0.98 },
+};
+
+export function buildJedi(opts = {}) {
+  /** The rank's kit, if this body is wearing one. See JEDI_RANKS. */
+  const RANK = { hem: 1, ...(JEDI_RANKS[opts.rank] || null) };
+  /**
+   * The creator's axes. `sp` is a row of SPECIES, `G` the character sheet (cut,
+   * beard, years, muscle — see SHEET_KEYS), `F` the eight face numbers with the
+   * species' bias and the years folded in, `k` the signed frame parameter (-1
+   * slight to +1 heavy) and `mu` the signed muscle parameter (-1 wiry to +1
+   * powerful).
+   *
+   * ALL OF THEM ARE WRITTEN SO THAT THE DEFAULT IS THE IDENTITY: species human
+   * carries no face bias, an absent face preset is eight zeros, an absent build
+   * is exactly 0.5 and therefore k exactly 0, an absent sheet is the temple cut
+   * with no beard at age 0 and muscle 0.5 — therefore a exactly 0 and mu
+   * exactly 0 — and every use below has the shape `x * (1 + gain*k)` or
+   * `x + gain*k`. `x * 1` and `x + 0` are exact in IEEE float, so buildJedi()
+   * with no arguments emits byte-for-byte the geometry it emitted before any of
+   * this existed — which Player, Enemy, Net and the menu preview all depend on,
+   * and which is asserted against the previous build rather than assumed.
+   */
+  const sp = speciesOf(opts.species);
+  /* The species is resolved BEFORE the sheet, so the sheet can fall back to
+   * the species' own default hairstyle rather than to HAIR_STYLES[0] — see the
+   * note over the hairstyle pick. Folded into `opts` rather than passed as a
+   * second argument so the call below stays the one expression the grooming
+   * suite scans for: a source check that names a mechanism goes red for a
+   * rewrite that changes nothing, and this file has been bitten by that. */
+  if (sp.defaultHair && opts.__speciesHair === undefined) {
+    opts = { ...opts, __speciesHair: sp.defaultHair };
+  }
+  const G = sheetOf(opts);
+  /**
+   * A SPECIES MAY BE A DIFFERENT SIZE, and its head a different fraction of it.
+   *
+   * `sp.frame` multiplies the rig's own scale, the arm and leg lengths the
+   * skeleton is laid out at, and — separately — the size everything on the HEAD
+   * is authored at. Separately is the whole point: a small figure built by
+   * turning one scale down is a scaled-down human, which is exactly the thing
+   * the small-folk row exists not to be. Its body is 0.40 of a human's and its
+   * head 0.62, so the head is 1.55 times the size the body would have given it
+   * and the figure is three and a half heads tall instead of seven.
+   *
+   * The animator needs no telling. BipedAnimator measures the legs it is handed
+   * (`standHip = min(hipHeight, ankleY + legLen * 0.965)`), so a rig with 34 cm
+   * legs stands 37 cm at the hip with the same knee extension as an adult, on
+   * the same `hipHeight: 0.95` every caller passes.
+   */
+  const FR = sp.frame || null;
+  const S = (opts.scale ?? 1) * (FR ? FR.scale : 1);
+  // `frame.head` is the head's scale against the CALLER's, not against the
+  // body's — 0.40 body and 0.62 head means the head is 1.55 times the size a
+  // uniform shrink would have given it, which is the entire point of the row.
+  // Written the other way round (S * FR.head) it compounds to 0.248 and the
+  // figure comes out with a head SMALLER than its body's share: measured at
+  // 10.5 heads tall, which is a stick insect.
+  const HS = (opts.scale ?? 1) * (FR ? FR.head : 1);
+  /**
+   * A ROBE MAY BE HANDED IN WHOLE, and the default is the identity.
+   *
+   * `robeIndex` picks one of six authored palettes, which is right for a Jedi
+   * and useless for the fifteen station species (SHARK §3.3): a Drazi dock
+   * gang and a Centauri court cannot both be Sand or Ash. `opts.robe` takes
+   * the same three fields — outer, inner, trim — so a caller with its own
+   * palette does not need a row added to a table it has nothing else in.
+   *
+   * An absent `robe` is exactly today's expression, so `buildJedi()` emits
+   * byte-for-byte what it emitted before this line, which is what Player,
+   * Enemy, Net and the menu preview all depend on.
+   */
+  const robe = (opts.robe && opts.robe.outer !== undefined)
+    ? opts.robe : (ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0]);
+  const rig = new Rig(humanoidSkeleton(S, FR ? { armLen: FR.armLen, legLen: FR.legLen } : {}), { scale: S });
+  const F = faceFor(sp, opts.face, G.a, G.f);
+  const { k } = buildOf(opts.build);
+  const mu = G.m;
+  /**
+   * ── THE SEX AXIS, AND EXACTLY WHAT IT MOVES ───────────────────────────
+   *
+   * `f` ∈ [0, 1], 0 being the figure this file has always shipped. Every term
+   * it appears in below is `x * (1 + g*f)`, so f = 0 is the identity to the
+   * float and `creator.mjs`'s digest of the neutral Jedi does not move.
+   *
+   * WHAT IT DRIVES is the pair of measurements `BUILD_RANGE`'s own header
+   * names as the dimorphic ones — shoulder-to-hip and waist-to-hip — plus the
+   * limb and neck girths that follow them. Nothing here adds geometry: the
+   * torso is three lathes and this changes their radii, and `fleshSections`
+   * changes their profile. The whole workstream has seventy-six triangles and
+   * ten meshes of headroom (`creator.mjs`'s 13,000/76 against the Jedi's
+   * measured 12,924/66) and it spends none of them.
+   *
+   *   shoulder 0.138 → 0.121   (−12%)      hip 0.138 → 0.155   (+12%)
+   *   waist    0.122 → 0.107   (−13%)      so shoulder:hip falls 1.00 → 0.78
+   *                                        and  waist:hip     falls 0.88 → 0.69
+   *
+   * Those are real anthropometric spreads and they are the two ratios that
+   * survive being seen from thirty metres in a robe, which is the bar that
+   * header sets and the reason no other term is worth moving.
+   */
+  const f = G.f;
+
+  /**
+   * ── WHAT IS ON THE TORSO. See TOP_CUTS. ────────────────────────────────
+   *
+   * `TOP_CUTS[0]` is the tunic and carries no `skin`, no `tabard: false` and
+   * no `collar: false`, so every expression below reads exactly as it read
+   * before this row existed and `buildJedi()` with no `top` is the figure that
+   * shipped. `chestFrom` is the SFW line the table's own header states.
+   */
+  const TOP = TOP_BY_ID.get(opts.top) || TOP_CUTS[0];
+  const bareBones = new Set(TOP.skin || []);
+  if (TOP.chestFrom != null && f > TOP.chestFrom) bareBones.delete('chest');
+
+  /**
+   * Five cloth tones off a two-tone palette, not two.
+   *
+   * The figure had exactly one garment colour on the body and one on the arms,
+   * and at any range past three metres that reads as a single painted
+   * surface — a cone with tubes coming out of it. What sells layered cloth is
+   * a TONAL ladder between the layers: the over-robe darker than the body, the
+   * body darker than the sleeve, and the trim darker than all of them. Each
+   * step is derived from the palette the player picked rather than typed, so
+   * every robe colour in ROBE_COLORS gets the same reading.
+   *
+   * Each layer also gets its own weave pitch. A tabard woven at the same
+   * threads-per-metre as the shirt under it is the same cloth, and the eye
+   * knows it.
+   */
+  const mix = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
+  const W = { vc: true };
+  const tunic = clothMat(robe.inner, 0.90, { ...W, repeat: 3.6 });
+  const outer = clothMat(robe.outer, 0.93, { ...W, repeat: 2.4 });
+  const over = clothMat(mix(robe.outer, robe.trim, 0.46), 0.95,
+    { ...W, repeat: 1.6 });
+  const sleeve = clothMat(mix(robe.outer, robe.inner, 0.44), 0.90, { ...W, repeat: 3.2 });
+  const trim = clothMat(robe.trim, 0.84, { ...W, repeat: 4.6 });
+  // Was bare: the player's gloves, boots, bracers, belt pouches and obi clasp
+  // — everything on the figure that is not cloth or skin — rendered as one
+  // flat brown vinyl, and gloves are 20% of the first-person frame. Tighter
+  // tiling than the default 4.5: leather grain is finer than plate scuffing.
+  const leather = leatherMat(0x53412f, 0.58, { vc: true, repeat: 5.4 });
+  // The species' own default tone when nothing is chosen, so
+  // `buildJedi({ species: 'twilek' })` is already green rather than beige; the
+  // human row's default is 0xc79a76, which is what this line always said.
+  const skin = skinMat(opts.skinColor ?? sp.skin ?? 0xc79a76, 3.0, { vc: true });
+  // The cap is an open shell, so it has to be lit from the inside too. On the
+  // cloth bake rather than bare: hair with no normal detail at all is a
+  // moulded plastic wig, and it is 20cm from the camera in every menu shot.
+  // Tiled hard so the weave reads as strands rather than as burlap.
+  /**
+   * AND IT GOES GREY, which is the other half of the years.
+   *
+   * `mix(chosen, GREY, 0.88 * age)` and not a separate white swatch, because
+   * the two are not alternatives: a black-haired sixty-year-old is iron grey
+   * and a sand-haired one is nearly white, and a player who picked Auburn and
+   * dragged the years across should watch that auburn go. At age 0 the factor
+   * is 0 and `Color.lerp(x, 0)` returns the colour untouched, so the neutral
+   * material is the one this line always built.
+   */
+  // Guarded rather than relying on `lerp(c, 0)` being the identity: mix()
+  // round-trips through Color.getHex(), which quantises to 8 bits per channel,
+  // and the neutral figure has to come out on the same integer it always did.
+  const base = opts.hairColor ?? 0x2a1d14;
+  const hairHex = G.a > 0 ? mix(base, GREY, 0.88 * G.a) : base;
+  const browHex = G.a > 0 ? mix(mix(base, GREY, 0.62 * G.a), 0x000000, 0.32) : mix(base, 0x000000, 0.32);
+  const hair = clothMat(hairHex, 0.72, { vc: true, repeat: 8.0 });
+  hair.side = THREE.DoubleSide;
+  // Brows and lashes are two square centimetres of nearly-flat plate facing
+  // the sun, and back when the hair material still carried a sheen lobe they
+  // rendered BRIGHTER than the forehead behind them — a pale bar across the
+  // face, which is the opposite of what a brow is for. The lobe is gone with
+  // the rest of the specular (see clothMat); they stay a third darker than the
+  // hair because that is what a brow looks like, not because of a shader.
+  // Brows grey too, and later than the hair does — 0.62 against 0.88.
+  const brow = clothMat(browHex, 0.86, { vc: true, repeat: 9.0 });
+
+  /* The torso lathe is circular and the mesh is squashed on Z, so a garment
+   * revolved about the same axis follows the body EXACTLY when it is stretched
+   * on X by the inverse of that squash — the two ellipses are then concentric
+   * and similar. This one number is why the tabards can wrap instead of
+   * standing off the flanks like a sandwich board. */
+  // A heavier frame is a DEEPER torso as well as a wider one. Everything that
+  // wraps the body — the tabards, the obi, the skirt — is derived from this one
+  // number, so it has to be computed before any of them and not typed twice.
+  const DEPTH = 0.76 * (1 + 0.055 * k), XK = 1 / DEPTH;
+  /**
+   * GARMENTS FOLLOW THE BODY UNDER THEM.
+   *
+   * The tabards are raycast onto the ribcage and look after themselves, but the
+   * collar, the obi, the belt, both skirts, the boot shafts and the whole
+   * sleeve-and-bracer stack are lathes at typed radii — and a typed radius on a
+   * body that just grew 15% is a bracer inside its own forearm. Each of these
+   * is the multiplier that was applied to the limb it is worn on, so the
+   * relationship the numbers were tuned against holds all the way across the
+   * slider. There is a check that walks every band on every build and measures
+   * whether the limb is still inside it.
+   */
+  /**
+   * MUSCLE RIDES THE SAME NUMBERS, and that is why it is safe to add.
+   *
+   * The frame slider is GIRTH: everything gets wider together, which is what a
+   * heavy build is. Muscle is DISTRIBUTION — a shoulder and a chest that grow
+   * while the waist comes IN — and that is the difference a viewer actually
+   * reads as strength rather than as size. So the waist term below is negative
+   * and the shoulder term is the largest positive one on the figure: across the
+   * muscle slider the shoulder-to-waist ratio runs 1.02 → 1.29, which is more
+   * than the frame slider moves it.
+   *
+   * Every garment scalar takes its muscle term from the SAME expression as the
+   * limb it is worn on, exactly as the frame terms do, so a bracer stays outside
+   * its own forearm and an obi stays on a waist that just came in by 5%. The
+   * garment-fit sweep in tools/checks/grooming.mjs walks both sliders at once
+   * rather than one at a time, because the corner that fails is the corner.
+   */
+  const KTOR = 1 + 0.105 * k + 0.055 * mu;  // ribcage: tabard caps, the V of the tunic
+  const KHIP = 1 + 0.030 * k - 0.010 * mu;  // pelvis: both skirts and the front panels
+  // The obi is a WAIST band, not a hip band, and the waist carries five times
+  // the hip's gain — so scaling the belt group with the pelvis buried 15% more
+  // of the obi at the heavy end than at the middle. Halfway between the two is
+  // what actually keeps a belt on a waist while its skirt still covers a hip.
+  const KBELT = 1 + 0.080 * k - 0.028 * mu; // obi, belt, buckle, pouches, hanging ends
+  const KARM = 1 + 0.150 * k + 0.105 * mu;  // humerus and forearm: mantle, hem, cuff, bracer
+  // The boot shaft is a circular lathe over a shin whose section carries a calf
+  // lobe behind it, so its muscle term has to track the CALF and not the shaft
+  // radius. At 0.055 against a calf swell of 0.42 the gastrocnemius came out
+  // 22 mm outside its own boot at the powerful end — measured per height on the
+  // built mesh, which is the only place that shows up.
+  const KLEG = 1 + 0.120 * k + 0.105 * mu; // shin: boot shaft, cuff, ankle strap
+  const KNECK = 1 + 0.135 * k + 0.090 * mu; // collar
+
+  /**
+   * The outer layer of the robe below the belt — the over-skirt and the two
+   * front over-panels — collected as it is built so the runtime can swap it for
+   * simulated cloth. See attachSkirt() in Cloth.js and the note at the lathe.
+   */
+  const outerLayer = [];
+  /**
+   * Whatever the species hangs on its head, so a runtime that simulates one of
+   * them can hide the rigid version. Empty for a human.
+   */
+  const speciesMeshes = [];
+  /* THE STRANDS A SOLVER CAN TAKE OVER — see the push in `fleshHead`. Empty
+   * for every cut that has none, which a caller tests instead of testing the
+   * hairstyle id, exactly as it tests `lekku` instead of testing the species. */
+  const hairStrands = [], hairStrandMeshes = [];
+
+  dressHumanoid(rig, {
+    scale: S,
+    body: outer, arm: sleeve, leg: outer, hand: leather, boot: leather,
+    head: skin, skin,
+    /* THE SHIRT, OR NOT — see TOP_CUTS. A per-bone material override and
+     * nothing else: the tunic's own row names no bones, so this is an empty
+     * object and `matFor` falls straight through to the slot material it
+     * always used. Zero geometry either way. */
+    mats: Object.fromEntries([...bareBones].map((b) => [b, skin])),
+    // The arm, measured over a sleeve rather than on bare skin: 5.2cm at the
+    // shoulder joint, 3.9 at the elbow, 4.4 just below it where the flexor
+    // mass sits, 3.0 at the wrist where the bracer closes on it. It used to
+    // run one near-constant sweep at 4.5→3.5, which is a length of pipe.
+    // THE FRAME, as eleven radii off one slider.
+    //
+    // The gains are not uniform, and which ones are large is the whole content
+    // of the body-type feature. Shoulder and chest carry the most because the
+    // shoulder-to-hip ratio is what a frame IS in silhouette; the hip goes the
+    // OTHER WAY, so a slight build is 10.5% narrower in the shoulder and 5%
+    // wider in the hip at once, which turns a 6% radius change into a 16%
+    // change in the ratio a viewer actually reads. Waist tracks the chest, so
+    // the slight end also gets the narrow-waisted profile and the heavy end a
+    // waist 2% wider than its own hips.
+    //
+    // The pelvis barely moves and the WAIST carries the difference instead
+    // (gain 0.135 against the hip's 0.025), for a reason that is structural
+    // rather than anatomical: the belt, the obi and both skirts are lathes hung
+    // off the pelvis at typed radii, and a pelvis that grows while they do not
+    // stands outside its own robe. Waist-to-hip does the same work — it runs
+    // 0.86 → 1.09 across the slider — and everything below the belt can then
+    // follow one monotone factor.
+    //
+    // Measured across the range at the 8 m sampling density in
+    // tools/checks/body-parts.mjs.
+    parts: { chestR: 0.162 * (1 + 0.105 * k + 0.055 * mu - 0.045 * f), shoulderR: 0.138 * (1 + 0.115 * k + 0.125 * mu - 0.120 * f),
+             hipR: 0.138 * (1 + 0.025 * k - 0.010 * mu + 0.120 * f), waistR: 0.122 * (1 + 0.135 * k - 0.028 * mu - 0.125 * f),
+             armR: 0.045 * (1 + 0.150 * k + 0.105 * mu - 0.090 * f), armR0: 0.052 * (1 + 0.165 * k + 0.115 * mu - 0.095 * f),
+             armR1: 0.039 * (1 + 0.130 * k + 0.060 * mu - 0.080 * f), foreR0: 0.044 * (1 + 0.150 * k + 0.105 * mu - 0.090 * f),
+             foreR1: 0.030 * (1 + 0.110 * k + 0.035 * mu - 0.075 * f),
+             clavR: 0.062 * (1 + 0.100 * k + 0.085 * mu - 0.105 * f), thighR: 0.090 * (1 + 0.120 * k + 0.075 * mu + 0.055 * f),
+             neckR: 0.058 * (1 + 0.135 * k + 0.090 * mu - 0.110 * f), torsoDepth: DEPTH },
+    /* The profile, front and back — see `fleshSections`. Identical object to
+     * `FLESH_SECTIONS` at f = 0, not a copy of it. */
+    sections: fleshSections(f, G.bust, G.seat),
+    // [amp, at, width]: the deltoid peaks 15% down the humerus and is spent by
+    // 40%, which is where a deltoid inserts. Folded into the arm's own lathe
+    // instead of bolted on as a ball — see dressHumanoid. Its amplitude is the
+    // strongest single frame cue on a limb: a shoulder cap is either there or
+    // it is not, and unlike a radius it changes the SHAPE of the outline.
+    // Muscle moves the deltoid harder than the frame does — 0.62 against 0.36 —
+    // and deliberately: a shoulder cap is either there or it is not, and unlike
+    // a radius it changes the SHAPE of the outline rather than its width.
+    deltoid: [0.34 * (1 + 0.36 * k + 0.62 * mu - 0.34 * f), 0.15, 0.155],
+    seg: { torso: 14, arm: 14, leg: 12, neck: 12, clav: 8 },
+    limbOpts: {
+      // The thigh carries the quadriceps high and the condyles at the knee;
+      // the shin carries the calf a THIRD of the way down (not a fifth, which
+      // put the belly of it inside the knee joint) over a scooped popliteal
+      // fossa. Both are what stop a leg being two cones with a ring between.
+      thigh: { rings: 6, swells: [[0.26, 0.105, 0.24], [0.90, 0.055, 0.10]] },
+      // Tuned, not chosen. Swept against the deepest knee the gait solver
+      // actually produces (125° at a crouch-walk, measured) and against the
+      // three shin tests in tools/checks: this lands the worst calf-into-
+      // hamstring penetration at 16mm where the shipped shaping gave 31mm,
+      // while carrying MORE calf (mass 0.36 against 0.28) rather than less.
+      // The calf's own belly follows the muscle slider; its position and width
+      // do not, because where a gastrocnemius sits is anatomy and not training.
+      shin: { rings: 8, swells: [[0.33, 0.22 * (1 + 0.20 * mu), 0.16]],
+              section: calfSection({ flat: 0.11, mass: 0.36, at: 0.33,
+                                     hollow: 0.28, hollowAt: 0.03, hollowW: 0.25 }) },
+    },
+    // The boot is one merged geometry on one material, so a sole cannot be a
+    // second colour without a second draw call — but it CAN be a second value.
+    // Beware the foot bone's frame (see buildFoot): local +Z points DOWN, so
+    // the sole plane is at +0.062·S and the instep is at negative z. Dropping
+    // the tread to 0.42 and the welt to 0.66 is what turns a rounded pillow
+    // into a boot with a sole under it.
+    footGeo: (sc) => shadeAO(buildFoot(sc, { w: 0.092, len: 0.205, h: 0.104 }), ao(
+      (x, y, z) => 1 - 0.58 * clamp((z / sc - 0.030) / 0.020, 0, 1),
+      // and the crease where the toe box breaks over the ball of the foot.
+      // 0.092, not the 0.135 this was authored at: the boot moved back under
+      // the ankle (see buildFoot's ankleAt) and a crease that stays put is a
+      // crease across the wrong part of the shoe.
+      creaseAt(0, 0.092 * sc, 0.010 * sc, 0.028 * sc, 0.60, 0.4),
+      // the heel breast — the step down off the back of the heel block, which
+      // is the only thing at this range that says the sole is a separate piece
+      creaseAt(0, -0.028 * sc, 0.026 * sc, 0.020 * sc, 0.62, 0.45),
+    ), { floor: 0.34 }),
+    // The glove is the largest single object in a first-person frame and it
+    // was one flat value: a mitten. Hand-bone frame is +Y wrist→knuckles and
+    // +Z the way the palm faces, so the shading below is the shadow the curled
+    // fingers throw back onto the palm and the dark between each digit.
+    //
+    // Two builds, one geometry. The hand ships CLOSED — that is what it does
+    // for all but a second at a time, and it is the pose the colliders, the cut
+    // path and the bounding sphere are all read off — with the open pose
+    // carried as morph target 0 (`open`). Player.js drives the influence off
+    // GESTURES[].palm, which until now reached a quaternion and nothing else:
+    // a Force push turned the wrist to face the target and presented a fist.
+    //
+    // The AO is baked TWICE, once per pose, because it is a positional field
+    // and it travels with the vertex. The finger-shadow crease below has
+    // nothing casting it once the fingers straighten; measured on the built
+    // hand, carrying the closed bake onto the open pose leaves 272 of 364
+    // digit vertices darker than 0.90 and a mean of 0.775 where the open hand
+    // wants 0.976 — a fifth of the light missing off an extended hand. Only
+    // the two terms that are true of any hand are shared.
+    handGeo: (side, sc, o) => {
+      const anyPose = [
+        // the dark forward of the palm plane and between the digits
+        (x, y, z) => 1 - 0.34 * clamp((z / sc - 0.016) / 0.026, 0, 1) * clamp((y / sc - 0.030) / 0.030, 0, 1),
+        // the web at the base of the thumb
+        creaseAt((side === 'L' ? 1 : -1) * 0.030 * sc, 0.028 * sc, 0.016 * sc, 0.024 * sc, 0.58, 0.4),
+      ];
+      return addShapeMorph(
+        shadeAO(buildHand(side, sc, o), ao(
+          // the shadow the curled fingers throw back onto the palm — a fist only
+          creaseAt(0, 0.058 * sc, 0.030 * sc, 0.034 * sc, 0.52, 0.5), ...anyPose), { floor: 0.38 }),
+        // Open: fingers all but straight and fanned nearly twice as wide, which
+        // is a flat splayed palm rather than a plank.
+        shadeAO(buildHand(side, sc, { ...o, curl: 0.08, splay: 1.9 }),
+          ao(...anyPose), { floor: 0.38 }),
+        'open');
+    },
+    hands: { curl: 0.95 },
+    headRadius: 0.098 * (HS / S),
+    // The trapezius, and it is where MUSCLE reads loudest on a clothed figure.
+    // A heavy frame carries the shoulder line higher and further out from the
+    // neck; a slight one has a longer, thinner neck showing above the collar,
+    // which is the cue the collar itself frames. Muscle is a bigger term than
+    // frame on `rise` for the reason a trapezius is: it is the one muscle on the
+    // body whose whole job is to lift the shoulder girdle, and it is the only
+    // one visible through a robe from behind.
+    yoke: { reach: 0.62 * (1 + 0.055 * k + 0.070 * mu), rise: 0.031 * (1 + 0.30 * k + 0.46 * mu),
+            depth: 0.064 * (1 + 0.14 * k + 0.16 * mu),
+            at: 0.50, drop: 0.014, z: -0.016, slope: 0.22 },
+    yokeMat: outer,
+    // The skull.
+    //
+    // What was here was a sphere of x-radius 9.9cm with a jaw ellipsoid inside
+    // it: a head 22.6cm across and 28.2cm tall on a 1.69m body, which is 6.1
+    // heads to the figure. An adult is seven and a half, and head breadth is
+    // 15.5cm, not 22.6 — that single number is most of why the player read as
+    // a toy. This is 15.1 × 21.0 × 19.6, which is a head.
+    //
+    // It is also one assembled shell rather than a loose pile of meshes, for
+    // the reason every other archetype already is: `surfacePoint` can only
+    // answer "where does the face actually end" if there is one thing to ask.
+    // `HS` and not `s`, and the two are the same number for everything but the
+    // small-folk row: the head is authored at its own scale so a species can be
+    // three and a half heads tall rather than a human shrunk.
+    //
+    // `covered` is the cut, and it is not decoration. The shell's occlusion bake
+    // drives everything above the ear line down to 0.28 SO THAT a hair
+    // poke-through reads as a dark root instead of as bare bone — and painted
+    // on a SHAVED head that is a black skullcap, which is the exact defect
+    // `creator: a bald species is bald` was written for. A shaved human is as
+    // bald as a Twi'lek and now takes the same bake.
+    /* THE HEAD — every line of it in `fleshHead`, which `buildTrooper` also
+     * uses when the helmet is off. Spread, so `dressHumanoid` sees exactly
+     * the same two keys in the same place it always did. */
+    ...fleshHead({ sp, G, F, S, HS, skin, brow, hair, speciesMeshes,
+      /* The braid and the tail, out to whoever simulates them. */
+      strands: hairStrands, strandMeshes: hairStrandMeshes }),
 
     /**
      * WHAT A RANK PUTS ON A HEAD. Runs after the hair and the species' own
@@ -5766,14 +5906,19 @@ export function buildJedi(opts = {}) {
        * what a Jedi was past thirty metres, which is where a player decides
        * whether the thing walking at them has a blade. Three panels, three
        * draw calls, against four archetypes that shared 0.94 of a figure. */
-      for (const sx of [-1, 1]) {
-        const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108 * KBELT);
-        shadeAO(m.geometry, tabAO, { floor: 0.45 });
-        markSilhouette(m);
+      /* …unless there is no over-robe on this body at all. `TOP.tabard` is
+       * undefined on the tunic row, so `!== false` is the expression that
+       * shipped — three panels, exactly as before. See TOP_CUTS. */
+      if (TOP.tabard !== false) {
+        for (const sx of [-1, 1]) {
+          const m = wrap(over, chestB, tabBot, tabTop, sx * 0.315, 0.255, 0.013, 0.017, 0.108 * KBELT);
+          shadeAO(m.geometry, tabAO, { floor: 0.45 });
+          markSilhouette(m);
+        }
+        const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104 * KBELT);
+        shadeAO(back.geometry, tabAO, { floor: 0.45 });
+        markSilhouette(back);
       }
-      const back = wrap(over, chestB, tabBot, tabTop, Math.PI, 0.42, 0.012, 0.015, 0.104 * KBELT);
-      shadeAO(back.geometry, tabAO, { floor: 0.45 });
-      markSilhouette(back);
 
       /* ── what a rank wears on the shoulders ──
        *
@@ -5810,7 +5955,10 @@ export function buildJedi(opts = {}) {
       // heaviest frame with the radius alone: 65% of the panel was inside the
       // chest against 22% on the lightest, which is a garment that quietly
       // disappears at one end of a slider.
-      for (const sx of [-1, 1]) {
+      /* The V is the tunic showing BETWEEN the two front panels, so it goes
+       * with them: on a body with no over-robe it would be two loose flaps
+       * hanging off a bare chest. */
+      if (TOP.tabard !== false) for (const sx of [-1, 1]) {
         mesh(plateGeo(0.115 * s, 0.215 * s, 0.018 * s, 0.009 * s), tunic, chest,
           [sx * 0.036 * s, 0.098 * s, 0.112 * KTOR * (DEPTH / 0.76) * s], [0.10, 0, sx * 0.42]);
       }
@@ -5820,7 +5968,7 @@ export function buildJedi(opts = {}) {
       // it reads as a funnel round the throat, not a folded collar. Two bands
       // now — the tunic's own standing collar inside the robe's fold-over,
       // because a single ring round a neck is a napkin holder.
-      if (neck) {
+      if (neck && TOP.collar !== false) {
         // The pale liner is 3cm tall, not 5: at 5 it stood a full 2.4cm proud
         // of the dark fold-over and the whole collar read as one cream ring —
         // a neck brace. The dark layer is the collar; the tunic is a hint of
@@ -6195,6 +6343,14 @@ export function buildJedi(opts = {}) {
              r: sp.lekku.r * S / (opts.scale ?? 1), len: sp.lekku.len * S / (opts.scale ?? 1),
              taper: sp.lekku.taper }] : null,
            speciesMeshes,
+           /**
+            * THE BRAID AND THE WARRIOR'S TAIL, as a spec plus the rigid tubes
+            * that stand in for them — V15 §2's *"hair with real physics"*.
+            * Null and not an empty array when there are none, so a caller
+            * writes `if (built.strands)` the way it writes `if (built.lekku)`.
+            */
+           strands: hairStrands.length ? hairStrands : null,
+           strandMeshes: hairStrandMeshes,
            /**
             * WHAT THIS FIGURE WAS ACTUALLY BUILT WITH.
             *
@@ -7274,7 +7430,50 @@ export const TROOPER_KITS = {
  */
 export function buildTrooper(opts = {}) {
   const K = { ...(TROOPER_KITS[opts.kit] || TROOPER_KITS.line), ...opts };
-  const S = opts.scale ?? 1.0;
+  /**
+   * ── THE MAN INSIDE THE ARMOUR ──────────────────────────────────────────
+   *
+   * V15 §2 asks that *"a player of either sex should be able to wear all kinds
+   * of clone armour head to toe, capes, waist capes, with or without helmet"*.
+   * This builder took three arguments — scale, colour, accent — and had no
+   * idea who was in the suit. That is exactly right for a clone army, which is
+   * one man ten thousand times, and useless for a player.
+   *
+   * So it now reads the SAME character sheet `buildJedi` reads, through the
+   * same three readers: `speciesOf`, `sheetOf` and `buildOf`. Every one of
+   * them is written so the absent case is the identity — no species is human
+   * with no frame, an absent sheet is sex 0 / muscle 0.5 / age 0, an absent
+   * build is exactly 0.5, and `fleshSections(0, …)` returns `FLESH_SECTIONS`
+   * ITSELF rather than a copy — so `buildTrooper()` and all six archetype
+   * calls in Enemy.js emit byte-for-byte the trooper this file always emitted.
+   *
+   * The armour is NOT re-authored per body. Every limb plate is
+   * `limbPlate(bone, …)`, which raycasts the bone's own tube, so arms,
+   * forearms, thighs and shins refit whatever is under them; the torso arcs
+   * are typed against the trooper's own radii and stay typed, because a
+   * cuirass is a rigid shell and a shell that followed a bust would be a
+   * breastplate from a different genre. The BODY under it narrows and the
+   * PLATE does not, which is what a woman in issue armour looks like.
+   */
+  const sp = speciesOf(opts.species);
+  const SHEET = sheetOf(sp.defaultHair && opts.__speciesHair === undefined
+    ? { ...opts, __speciesHair: sp.defaultHair } : opts);
+  const FR = sp.frame || null;
+  const S = (opts.scale ?? 1.0) * (FR ? FR.scale : 1);
+  /** The head's own scale, separate from the body's — see `HS` in buildJedi. */
+  const HS = (opts.scale ?? 1.0) * (FR ? FR.head : 1);
+  const F = faceFor(sp, opts.face, SHEET.a, SHEET.f);
+  /** The sex axis, the frame slider and the muscle slider. All 0 by default. */
+  const f = SHEET.f, kb = buildOf(opts.build).k, mu = SHEET.m;
+  /**
+   * HELMET OFF IS A HEAD, NOT A MISSING MESH. `fleshHead` is the two hundred
+   * lines `buildJedi` builds a face out of, lifted out for this one caller —
+   * see its own header. `K.helmet === false` and not `!K.helmet`, so every
+   * existing call, which passes nothing, keeps its bucket.
+   */
+  const BARE = K.helmet === false;
+  /** A severed head takes its species with it — see `speciesMeshes` in buildJedi. */
+  const speciesMeshes = [];
   /**
    * GIRTH, AND WHY IT IS A KIT FIELD RATHER THAN A SCALE.
    *
@@ -7293,7 +7492,7 @@ export function buildTrooper(opts = {}) {
    */
   const G = K.frame ?? 1;
   const g = (v) => v * G;
-  const rig = new Rig(humanoidSkeleton(S), { scale: S });
+  const rig = new Rig(humanoidSkeleton(S, FR ? { armLen: FR.armLen, legLen: FR.legLen } : {}), { scale: S });
   /** The half-cape's rigid stand-in and the shoulder it hangs from, or null — see K.cape below. */
   let cape = null;
   const plate = armorMat(opts.color ?? 0xe8e9ec, 0.08, 0.34, 3.0);
@@ -7307,6 +7506,33 @@ export function buildTrooper(opts = {}) {
   const visor = glassMat(opts.visor ?? 0x0a0d12, 0.13);
   const gear = leatherMat(0x25282e, 0.62);
   const scorch = scorchMat();
+  /**
+   * SKIN, HAIR AND BROWS, AND ONLY WHEN THE HELMET IS OFF.
+   *
+   * Three materials nothing on a helmeted trooper would ever bind, so they are
+   * not built for one: `barracks: a kit and a paint are geometry and colour`
+   * counts what a body carries, and an unbound material is a thing to explain
+   * rather than a thing to ship. The expressions are `buildJedi`'s own,
+   * including the grey — a fifty-year-old veteran out of his bucket is grey.
+   */
+  const skin = BARE ? skinMat(opts.skinColor ?? sp.skin ?? 0xc79a76, 3.0, { vc: true }) : null;
+  let hair = null, brow = null;
+  if (BARE) {
+    const mix = (a, b, t) => new THREE.Color(a).lerp(new THREE.Color(b), t).getHex();
+    const base = opts.hairColor ?? 0x2a1d14;
+    hair = clothMat(SHEET.a > 0 ? mix(base, GREY, 0.88 * SHEET.a) : base, 0.72, { vc: true, repeat: 8.0 });
+    hair.side = THREE.DoubleSide;
+    brow = clothMat(SHEET.a > 0 ? mix(mix(base, GREY, 0.62 * SHEET.a), 0x000000, 0.32)
+      : mix(base, 0x000000, 0.32), 0.86, { vc: true, repeat: 9.0 });
+  }
+  /** The face, or the bucket. See BARE. */
+  /* The braid and the tail on a bare-headed trooper are the same two pieces
+   * the Jedi's are, and they go out on the same two fields. */
+  const hairStrands = [], hairStrandMeshes = [];
+  const HEAD = BARE
+    ? fleshHead({ sp, G: SHEET, F, S, HS, skin, brow, hair, speciesMeshes,
+      strands: hairStrands, strandMeshes: hairStrandMeshes })
+    : null;
 
   const riv = rivet(0.005 * S);
 
@@ -7345,7 +7571,12 @@ export function buildTrooper(opts = {}) {
 
   dressHumanoid(rig, {
     scale: S,
-    body: under, arm: under, leg: under, hand: plate, boot: gear, head: plate,
+    body: under, arm: under, leg: under, hand: plate, boot: gear,
+    /* Out of the bucket the head is a head. The NECK stays the undersuit's —
+     * `dressHumanoid` runs it off `style.skin || style.body` and a clone's
+     * collar is black bodysuit whether or not there is a helmet on it, so
+     * `skin` is deliberately NOT handed over as the slot default. */
+    head: BARE ? skin : plate,
     /* THE UNIT COLOUR, ON A MESH THE LOD CANNOT TAKE AWAY.
      *
      * The clavicle primary runs from the sternum out to the point of the
@@ -7362,15 +7593,31 @@ export function buildTrooper(opts = {}) {
     // same height, same width, same everything but the colour. So the bulk is
     // real — a deeper ribcage, heavier arms and legs, a wider collarbone and a
     // shoulder bell 23% bigger — rather than a paint difference.
-    parts: { chestR: g(0.140), shoulderR: g(0.124), hipR: g(0.122), waistR: g(0.108),
-             armR: g(0.057), clavR: g(0.074), thighR: g(0.100), neckR: 0.062, torsoDepth: 0.88 },
+    /* THE SAME ELEVEN RADII, TIMES THE SAME THREE AXES buildJedi applies, with
+     * the same gains — so the sex axis reads identically in plate and in a
+     * robe, and a player who drags the slider watches ONE figure change rather
+     * than two figures disagree. Every factor is `(1 + a*k + b*mu + c*f)` and
+     * all three are exactly 0 by default, so this line is the line that
+     * shipped, to the float. */
+    parts: { chestR: g(0.140) * (1 + 0.105 * kb + 0.055 * mu - 0.045 * f),
+             shoulderR: g(0.124) * (1 + 0.115 * kb + 0.125 * mu - 0.120 * f),
+             hipR: g(0.122) * (1 + 0.025 * kb - 0.010 * mu + 0.120 * f),
+             waistR: g(0.108) * (1 + 0.135 * kb - 0.028 * mu - 0.125 * f),
+             armR: g(0.057) * (1 + 0.150 * kb + 0.105 * mu - 0.090 * f),
+             clavR: g(0.074) * (1 + 0.100 * kb + 0.085 * mu - 0.105 * f),
+             thighR: g(0.100) * (1 + 0.120 * kb + 0.075 * mu + 0.055 * f),
+             neckR: 0.062 * (1 + 0.135 * kb + 0.090 * mu - 0.110 * f), torsoDepth: 0.88 },
+    /* The forward and rear profile of the three torso lathes. `FLESH_SECTIONS`
+     * itself at sex 0 — not a copy — which is what this call has always been
+     * handed by omitting the key. */
+    sections: fleshSections(f, SHEET.bust, SHEET.seat),
     seg: { torso: 16, arm: 12, leg: 12, clav: 10, neck: 10 },
     limbOpts: {
       hips: { capN: 3 }, spine: { capN: 3 }, chest: { capN: 3 },
       neck: { capN: 2 }, clav: { capN: 2 },
       arm: { capN: 3 }, fore: { capN: 3 }, thigh: { capN: 3 }, shin: { capN: 3 },
     },
-    headGeo: headShell,
+    headGeo: BARE ? HEAD.headGeo : headShell,
     yoke: { reach: 0.66, rise: 0.034, depth: 0.070, at: 0.50, drop: 0.012, z: -0.014, slope: 0.20 },
     yokeMat: under,
     // gauntlets: a little bulkier than bare hands, and firmly closed
@@ -7378,6 +7625,11 @@ export function buildTrooper(opts = {}) {
     feet: { w: 0.104, len: 0.215, h: 0.118 },
 
     buildHead(headObj, s, hg) {
+      /* NO BUCKET, NO VISOR. `fleshHead` builds the eyes, the lids, the brows,
+       * the ears, the lips, the hair, the beard and whatever the species hangs
+       * on a head — and the crest, the stripes and the rangefinder below are
+       * all painted ON a helmet, so there is nothing here to keep. */
+      if (BARE) return HEAD.buildHead(headObj, s, hg);
       const k = new Kit();
       // A point inside the FACE BLOCK and in front of the cranium's front wall
       // (z = 0.070). Probing from the head's centre instead would find the
@@ -7906,7 +8158,40 @@ export function buildTrooper(opts = {}) {
   });
   /* `cape` is null on every trooper that does not wear one, so a caller can
    * test it the way `Enemy._build` tests `robeSkirt`: no field, no cloth. */
-  return { rig, palette: { plate, under, accent, visor, gear, scorch }, cape };
+  return {
+    rig,
+    /**
+     * THE PALETTE, PLUS THE THREE NAMES EVERY WEARER OF CLOTH ASKS FOR.
+     *
+     * `Player._makeCloak` clones `palette.outer` for the cape, `palette.over`
+     * for the waist cape and the hood's fall, and `palette.trim` for the
+     * belt's ends; `applyLekku` (ui/Menu.js) clones `palette.skin`. None of
+     * those four exist on a trooper, and all four are the reason V15's
+     * *"capes, waist capes"* over armour would otherwise have thrown on the
+     * first frame. They are ALIASES of plate, accent and gear rather than new
+     * materials — a clone's cape is cut in the unit's own colours — so this
+     * costs nothing and reads right: the cape comes out the colour of the
+     * armour it hangs on.
+     */
+    palette: { plate, under, accent, visor, gear, scorch,
+               outer: plate, over: accent, trim: gear, skin: skin || under },
+    cape,
+    /* The head furniture a severed head takes with it, and the head-tails a
+     * Twi'lek trooper wears under the bucket — both empty on a helmeted
+     * human, which is every call that existed before this. */
+    speciesMeshes,
+    lekku: (BARE && sp.lekku) ? [{ at: sp.lekku.at.map((v) => v * S / (opts.scale ?? 1)),
+      r: sp.lekku.r * S / (opts.scale ?? 1), len: sp.lekku.len * S / (opts.scale ?? 1),
+      taper: sp.lekku.taper }] : null,
+    /** The head's own scale — `attachHoodDrape` pins its fall to this. */
+    headScale: HS,
+    /* …and the braid, if the bucket is off and the cut has one. */
+    strands: hairStrands.length ? hairStrands : null,
+    strandMeshes: hairStrandMeshes,
+    /** THIS BODY IS WEARING PLATE. One boolean, so a caller does not have to
+     *  infer it from the absence of `robeSkirt`. */
+    armour: true,
+  };
 }
 
 /* ── sith acolyte (saber duelist) ────────────────────────────────────── */
@@ -14755,4 +15040,157 @@ export function postureOf(type) { return POSTURES[type] || NO_POSTURE; }
 
 export function bodyOptsFor(type) {
   return BODY_KITS[type] || null;
+}
+
+/* ── the armour a PLAYER wears ───────────────────────────────────────── */
+
+/**
+ * ══ CLONE ARMOUR, HEAD TO TOE, FOR A PLAYER ════════════════════════════════
+ *
+ * V15 §2: *"a player of either sex should be able to wear all kinds of clone
+ * armour head to toe, capes, waist capes, with or without helmet."* And V15's
+ * own note on how: *"The clone kit already exists as parts with slots. What is
+ * missing is letting the PLAYER wear the set the company wears, which is a
+ * slot list and a menu page, not new geometry."*
+ *
+ * That is exactly what this is. `buildTrooper` has built all of it since the
+ * day it was written — dome, T-visor, frown, grille, ear vents, crest,
+ * cuirass, collar, pack, abdomen bands, belt, codpiece, pouches, tassets,
+ * kama, bells, arm and leg plate — and `TROOPER_KITS` has held the six sets it
+ * comes in. Nothing here is new geometry. What is new is that the builder now
+ * reads the creator's sheet (see "THE MAN INSIDE THE ARMOUR"), so the body in
+ * the suit is the body the player made, and that these seven rows exist to be
+ * put on a page.
+ *
+ * ── WHY `frame` IS DROPPED HERE, AND ONLY HERE ────────────────────────────
+ *
+ * Every row below names a `kit`, and four of the six `TROOPER_KITS` rows carry
+ * a `frame` — the Heavy is 1.15 and the Marksman 0.88. `frame` is radial girth
+ * and `KIT_FIELDS`'s own header explains at length why a player may not set it
+ * on a MAN: it is the one axis six archetypes are held apart on, and a player
+ * who could turn it would be resizing a Marksman into a Heavy.
+ *
+ * On the PLAYER'S OWN BODY the argument runs the other way and lands in the
+ * same place. The player already has a girth control — the frame slider, which
+ * `buildOf` turns into `k` and which moves the same eleven radii — and a kit
+ * that carried its own `frame` would silently override it, so picking the
+ * Heavy's pack would make you fifteen per cent wider and picking the
+ * Marksman's scope would make you twelve per cent narrower. The set of plates
+ * is a costume; how big you are is a character. So `frame: 1` is passed
+ * explicitly below and the slider keeps the axis.
+ */
+export const ARMOUR_KITS = [
+  {
+    id: 'none', name: 'No armour', none: true,
+    blurb: 'Robes. Whatever the wardrobe says you are wearing.',
+  },
+  {
+    id: 'line', name: 'Clone Trooper', kit: 'line',
+    blurb: 'Phase-I plate as issued: cuirass, belt, tassets, bells and boots. The baseline every other set is read against.',
+  },
+  {
+    id: 'marksman', name: 'Clone Marksman', kit: 'marksman',
+    blurb: 'The scope along the temple, a bracer on the forearm and a scout pack. No shoulder bells, so the outline is narrow.',
+  },
+  {
+    id: 'heavy', name: 'Heavy Gunner', kit: 'heavy',
+    blurb: 'The ammunition box, its power feed and the barrel bundle slung across it. The mass on your back is the whole read.',
+  },
+  {
+    id: 'jet', name: 'Jet Trooper', kit: 'jet',
+    blurb: 'Two nozzles on a spine block between the bells. Nothing on the arms — the pack is all of it.',
+  },
+  {
+    id: 'arc', name: 'ARC Trooper', kit: 'arc',
+    blurb: 'A mantle over both shoulders, a long kama, twin holsters on the belt and a rangefinder off the temple.',
+  },
+  {
+    id: 'commander', name: 'Clone Commander', kit: 'commander',
+    blurb: 'Everything the ARC has plus the comms pack, the raised crest and the half-cape off the shoulder.',
+  },
+];
+const ARMOUR_BY_ID = new Map(ARMOUR_KITS.map((a) => [a.id, a]));
+/** One armour row by id, or null. Same contract as `capeCut`. */
+export function armourKit(id) { return ARMOUR_BY_ID.get(id) || null; }
+
+/**
+ * WHAT A STORED ARMOUR CHOICE MEANS, sanitised.
+ *
+ * Same job and same rules as `wardrobeOf` in Cloth.js: a blob off disk is not
+ * to be trusted, an id nothing recognises falls back rather than throwing, and
+ * a paint that is not on `PAINTS` is dropped instead of corrected. Returns
+ * `null` for "no armour", which is what every caller tests — the same shape
+ * `capeCut('none')` and `buildTrooper`'s own `cape` field use, so a caller
+ * writes `if (A)` and not a string comparison.
+ *
+ * A bare string is accepted as well as an object, because that is what the
+ * setting is before a player ever opens a paint rack.
+ */
+export function armourOf(a) {
+  const src = (typeof a === 'string') ? { id: a } : ((a && typeof a === 'object') ? a : null);
+  if (!src) return null;
+  const row = ARMOUR_BY_ID.get(src.id);
+  if (!row || row.none) return null;
+  const paint = (v, d) => (paintById(v)?.color ?? d);
+  return {
+    id: row.id,
+    kit: row.kit,
+    /* HELMET ON UNLESS THE PLAYER TOOK IT OFF — `=== false` and not `!x`, so
+     * an absent key is a bucket. V15 says "with or without helmet"; without it
+     * you get your own face, your own species and your own hair, because
+     * `buildTrooper` builds the same head `buildJedi` does. */
+    helmet: src.helmet !== false,
+    /**
+     * THE SHOULDER CAPE — three states, because the kit already has an
+     * opinion. `true` and `false` are the player overruling it; anything else
+     * (an absent key, a stored `null`) leaves the row's own answer alone, so
+     * a Commander arrives with the half-cape he is defined by and a line
+     * trooper arrives without one. `buildTrooper` merges `opts` OVER the kit
+     * row, so an `undefined` handed down would delete the row's `true` — which
+     * is why `buildPlayerBody` passes this only when it is a boolean.
+     */
+    cape: (src.cape === true || src.cape === false) ? src.cape : null,
+    plate: paint(src.plate, 0xe8e9ec),
+    accent: paint(src.accent, 0x2f6fbe),
+    visor: paint(src.visor, 0x0a0d12),
+  };
+}
+
+/**
+ * THE PLAYER'S BODY, WHICHEVER OF THE TWO IT IS.
+ *
+ * `buildJedi` is what Player, World, Net and the menu's preview all call, and
+ * a player in clone armour has to reach every one of those five call sites or
+ * it is a preview toy. This is the one seam that lets it: same arguments, same
+ * return shape, and the choice of builder is made HERE rather than five times.
+ *
+ * The alternative was an `armour` option on `buildJedi` that hung plate over a
+ * robe. It was rejected: the plates are typed against the trooper's own torso
+ * radii and would have sunk into a Jedi's wider one, the robe skirt and the
+ * tassets occupy the same 30 cm of thigh, and `buildJedi` would have grown a
+ * branch through the whole of its two hundred lines of garment. Two builders
+ * and one chooser is the smaller thing.
+ *
+ * Both returns already answer `rig`, `palette.outer`, `palette.over`,
+ * `palette.trim`, `palette.skin`, `speciesMeshes`, `lekku` and `headScale`, so
+ * `Player._makeCloak`, `applyLekku` and `assemblePreview` need no branch of
+ * their own — which is the property that makes this a seam and not a fork.
+ */
+export function buildPlayerBody(opts = {}) {
+  const A = armourOf(opts.armour);
+  /* `opts.top` rides straight through to `buildJedi` and is deliberately NOT
+   * forwarded to `buildTrooper`: a body in a cuirass has no shirt choice, and
+   * a row that quietly did nothing is worse than a row that is not offered. */
+  if (!A) return buildJedi(opts);
+  return buildTrooper({
+    kit: A.kit, helmet: A.helmet,
+    color: A.plate, accent: A.accent, visor: A.visor,
+    /* See the header above: the kit's own girth is the roster's, not yours. */
+    frame: 1,
+    /* Only when the player actually said something — see `cape` in armourOf. */
+    ...(A.cape === null ? {} : { cape: A.cape }),
+    scale: opts.scale ?? 1,
+    species: opts.species, face: opts.face, build: opts.build,
+    skinColor: opts.skinColor, hairColor: opts.hairColor,
+  });
 }

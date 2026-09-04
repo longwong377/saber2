@@ -286,9 +286,28 @@ export async function run({ check, assert, near }) {
   /*  the contract                                                      */
   /* ══════════════════════════════════════════════════════════════════ */
 
-  check('grooming: the sheet is exported in the shape the menu builds against', () => {
-    assert(SHEET_KEYS.join(',') === 'hair,beard,age,muscle',
-      `the sheet is ${SHEET_KEYS.join(',')} — the menu writes exactly these four`);
+  check('grooming: the sheet is exported in the shape the menu builds against', async () => {
+    /**
+     * EVERY KEY ON THE SHEET IS WRITTEN BY THE MENU, DERIVED RATHER THAN TYPED.
+     *
+     * This used to be a typed list of four, which is a shape that goes wrong in
+     * exactly one direction and did: the sheet grew `sex`, `bust` and `seat`,
+     * every one of them wired to a real control, and the clause went red for
+     * the sheet being CORRECT. What it is actually protecting is that the two
+     * halves agree — a key on the sheet with no control is a field the player
+     * can never set, which is the failure worth catching, and it is now caught
+     * for the seventh key as well as the fourth.
+     */
+    const menuSrc = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
+    for (const k of SHEET_KEYS) {
+      assert(menuSrc.includes(`, '${k}',`) || menuSrc.includes(`, '${k}'`),
+        `the sheet carries ${k} and nothing in the menu writes it — a field the player cannot set`);
+    }
+    /* AND THE FOUR THE NEUTRAL-IDENTITY CONTRACT IS WRITTEN ON ARE STILL THE
+     * FIRST FOUR, in order: the clause below digests the shipped figure against
+     * them by name, and a reordering would silently change what it compares. */
+    assert(SHEET_KEYS.slice(0, 4).join(',') === 'hair,beard,age,muscle',
+      `the sheet opens ${SHEET_KEYS.slice(0, 4).join(',')} — the identity clause names these four`);
     for (const [name, list] of [['hair', HAIR_STYLES], ['beard', BEARD_STYLES]]) {
       assert(list.length >= 6, `${name} offers only ${list.length} choices`);
       const ids = new Set();

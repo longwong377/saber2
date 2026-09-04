@@ -773,6 +773,47 @@
              with it. They write into `settings.wardrobe` and are applied to a
              live body by applyWardrobe, so a piece picked here — or from the
              pause card — lands without a redeploy. -->
+        <!-- ══ CLONE ARMOUR ═══════════════════════════════════════════════
+             V15 §2: "a player of either sex should be able to wear all kinds
+             of clone armour head to toe, capes, waist capes, with or without
+             helmet." Seven rows off Bodies.ARMOUR_KITS, two toggles and three
+             paint racks off Bodies.PAINTS, all built by Menu._armourRows —
+             typed here they would be a second copy of two tables in
+             src/game/Bodies.js waiting to disagree with them.
+
+             It sits ABOVE the cape rather than below the gloves because it is
+             the one row on this column that decides which BUILDER makes the
+             body: pick a kit and the eleven cloth rows under it stop applying,
+             and a player should meet that fact before they spend ten minutes
+             dyeing a tunic nobody will see. -->
+        <!-- WHAT IS ON THE TORSO. Built by Menu._buildSaber off
+             Bodies.TOP_CUTS — V15 §2's "women's outfits" and "men able to go
+             shirtless", which are a material on two bones and three panels not
+             drawn, so every row here is CHEAPER than the tunic it replaces. -->
+        <!-- WHETHER THE BRAID SWINGS. Two rows off Cloth.HAIR_TAILS; the
+             solver is the capes', the anchor is the head bone, and it is
+             OFF by default because the shipped figure's garment cost is
+             pinned as an equality in tools/checks/cloth-cost.mjs. -->
+        <h3 id="h-hairmotion" style="margin-top:22px">Hair</h3>
+        <div id="hairmotion-list" class="cards small"></div>
+        <h3 id="h-top" style="margin-top:22px">Torso</h3>
+        <div id="top-list" class="cards small"></div>
+        <h3 id="h-armour" style="margin-top:22px">Clone armour</h3>
+        <div id="armour-list" class="cards small"></div>
+        <p class="hint">Full Phase-I plate over the body you built — your species, your
+          face, your frame. The robe rows below stop applying while you are in it;
+          the <b>waist cape</b> row above still does.</p>
+        <h3 id="h-armour-helmet" style="margin-top:18px">Helmet</h3>
+        <div id="armour-helmet-list" class="cards small"></div>
+        <h3 id="h-armour-cape" style="margin-top:18px">Shoulder cape</h3>
+        <div id="armour-cape-list" class="cards small"></div>
+        <h3 id="h-armour-paint" style="margin-top:18px">Armour paint</h3>
+        <div class="kit-row"><span class="kit-name">Plate</span>
+          <div id="armour-plate-list" class="swatches"></div></div>
+        <div class="kit-row"><span class="kit-name">Unit flash</span>
+          <div id="armour-accent-list" class="swatches"></div></div>
+        <div class="kit-row"><span class="kit-name">Visor</span>
+          <div id="armour-visor-list" class="swatches"></div></div>
         <h3 id="h-cape" style="margin-top:22px">Cape</h3>
         <div id="cape-list" class="cards small"></div>
         <div id="cape-tone-list" class="swatches tone"></div>

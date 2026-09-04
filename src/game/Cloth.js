@@ -39,7 +39,7 @@ import { limbScale } from './Rig.js';
  * and it does not close a cycle: Bodies.js imports Rig, Textures and MathUtil
  * and has never imported this file.
  */
-import { HOOD_CUTS } from './Bodies.js';
+import { HOOD_CUTS, TOP_CUTS, armourKit, paintById } from './Bodies.js';
 
 /**
  * THE SCALE A GARMENT'S *LENGTH* TAKES, WHICH IS NOT THE ONE ITS WIDTH TAKES.
@@ -1581,6 +1581,25 @@ export function sashCut(id) { return SASH_BY_ID.get(id) || null; }
  * the same reason the four tables above are: `wardrobeOf` must be able to
  * refuse an id nothing recognises. */
 const HOOD_BY_ID = new Map(HOOD_CUTS.map((c) => [c.id, c]));
+/* …and the torso cuts, for the same reason and out of the same file. */
+const TOP_BY_ID = new Map(TOP_CUTS.map((c) => [c.id, c]));
+
+/**
+ * WHETHER THE BRAID IS WELDED TO THE SKULL OR SWINGS OFF IT.
+ *
+ * Two rows and not a checkbox, for the reason `TOP_CUTS` and `CAPE_CUTS` are
+ * tables: this column is built by one renderer off one shape, and a boolean
+ * would need its own control, its own label and its own row in three checks to
+ * say a thing two cards say better. The blurbs also have somewhere to put the
+ * one fact a player needs — that it does nothing on a cut with no braid in it.
+ */
+export const HAIR_TAILS = [
+  { id: 'rigid', name: 'Held', blurb: 'The braid and the tail stay where the head puts them. What every figure in this game wore until now, and it costs nothing.' },
+  { id: 'live', name: 'Loose', blurb: 'The braid swings on the solver that runs the capes — it lags a turn and settles when you stop. Only cuts that HAVE one (Temple, Padawan, Warrior tail) have anything to swing.' },
+];
+const HAIR_TAIL_BY_ID = new Map(HAIR_TAILS.map((c) => [c.id, c]));
+/** The hair-motion row with this id, or null. Same contract as `capeCut`. */
+export function hairTail(id) { return HAIR_TAIL_BY_ID.get(id) || null; }
 
 /**
  * THE TONES A PIECE MAY BE DYED, and why they are not ROBE_COLORS.
@@ -1625,6 +1644,29 @@ export const GARMENT_TONES = [
  */
 export const WARDROBE = {
   cape: 'cloak',
+  /**
+   * WHAT IS ON THE TORSO — V15 §2's *"women's outfits"* and *"men able to go
+   * shirtless"*, and the default is the tunic that shipped.
+   *
+   * An id like `cape` and `hood` are, because that is what it is: one row of
+   * `Bodies.TOP_CUTS`. It is a BUILD argument rather than cloth — it decides a
+   * material on two bones and whether three rigid panels are drawn — so it
+   * lives in Bodies.js beside `HOOD_CUTS` for the reason stated there, and
+   * this key is the id of the row a player picked.
+   */
+  top: 'tunic',
+  /**
+   * WHETHER THE BRAID SWINGS — V15 §2's *"hair with real physics"*, and the
+   * default is the figure that shipped.
+   *
+   * `'rigid'` for the reason the hood's and the waist cape's notes give and
+   * one this table has now said twice: `cloth-cost.mjs` pins the player at 287
+   * particles and 1466 links as an EQUALITY, and a garment that defaulted on
+   * would change the shipped figure's cost and every saved profile's costume
+   * at once. A player who turns it on pays 24 particles and 100 links, once,
+   * and only if the cut they are wearing HAS a braid — see `HAIR_TAILS`.
+   */
+  hair: 'rigid',
   tabard: 'temple',
   sash: 'obi',
   /**
@@ -1653,6 +1695,24 @@ export const WARDROBE = {
    * at once. A player who puts one on pays 42 particles for it.
    */
   waist: 'none',
+  /**
+   * THE CLONE ARMOUR, AND LIKE THE HOOD AND THE WAIST CAPE THE DEFAULT IS NOT
+   * WEARING ANY.
+   *
+   * V15 §2 asks for *"all kinds of clone armour head to toe … with or without
+   * helmet"*. It rides here rather than as a top-level setting for the reason
+   * this object's own header gives — one choice a player makes on one screen —
+   * and because it is the same KIND of fact as the hood: a thing the body is
+   * wearing that changes what the BUILDER emits rather than what the cloth
+   * solver hangs on it.
+   *
+   * It is an OBJECT and not an id, alone in this table, because armour has
+   * four parts to it — which set, whether the bucket is on, and the three
+   * paint slots — and `armourOf` in Bodies.js is what normalises it. `'none'`
+   * is the shipped figure: a player who never opens the row is in robes, and
+   * `buildPlayerBody` returns `buildJedi` untouched for them.
+   */
+  armour: { id: 'none', helmet: true, cape: null, plate: 'bone', accent: 'sky', visor: null },
   capeTone: -1,
   tunicTone: -1,
   tabardTone: -1,
@@ -1671,16 +1731,45 @@ const TONE_MAX = GARMENT_TONES.length - 1;
  * tone index out of range must clamp rather than index past the end of the
  * table. Pure, so the checks can drive it without a DOM.
  */
+/**
+ * The armour half of a wardrobe, sanitised into the four strings that go back
+ * to disk. `armourOf` (Bodies.js) is the reader that turns these into colours
+ * and a kit name; this is the writer's side of the same table, and it is here
+ * rather than there because a wardrobe blob is this file's shape.
+ */
+function armourSheet(a) {
+  const src = (typeof a === 'string') ? { id: a } : ((a && typeof a === 'object') ? a : {});
+  const row = armourKit(src.id);
+  const paint = (v, d) => (paintById(v) ? v : d);
+  return {
+    id: row ? row.id : WARDROBE.armour.id,
+    helmet: src.helmet !== false,
+    /* null is "whatever the kit says" — see `cape` in armourOf. */
+    cape: (src.cape === true || src.cape === false) ? src.cape : null,
+    plate: paint(src.plate, WARDROBE.armour.plate),
+    accent: paint(src.accent, WARDROBE.armour.accent),
+    visor: paintById(src.visor) ? src.visor : null,
+  };
+}
+
 export function wardrobeOf(w) {
   const src = (w && typeof w === 'object') ? w : {};
   const id = (map, v, d) => (map.has(v) ? v : d);
   const tone = (v) => (Number.isFinite(v) ? Math.max(-1, Math.min(TONE_MAX, Math.round(v))) : -1);
   return {
     cape: id(CAPE_BY_ID, src.cape, WARDROBE.cape),
+    top: id(TOP_BY_ID, src.top, WARDROBE.top),
+    hair: id(HAIR_TAIL_BY_ID, src.hair, WARDROBE.hair),
     tabard: id(TABARD_BY_ID, src.tabard, WARDROBE.tabard),
     sash: id(SASH_BY_ID, src.sash, WARDROBE.sash),
     hood: id(HOOD_BY_ID, src.hood, WARDROBE.hood),
     waist: id(WAIST_BY_ID, src.waist, WARDROBE.waist),
+    /* The armour, laundered by its own table in Bodies.js — an id that no
+     * longer exists comes back as the 'none' row's shape rather than as a
+     * missing costume, and a paint that is not on PAINTS is dropped. Kept as
+     * the four stored strings and not as `armourOf`'s resolved colours,
+     * because this object is what goes back to disk. */
+    armour: armourSheet(src.armour),
     capeTone: tone(src.capeTone),
     tunicTone: tone(src.tunicTone),
     tabardTone: tone(src.tabardTone),
@@ -3452,6 +3541,161 @@ export function attachSash(scene, rig, opts = {}) {
 /* ══════════════════════════════════════════════════════════════════════ */
 /*  LEKKU — the head-tails, simulated                                     */
 /* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ HAIR WITH REAL PHYSICS — V15 §2 ════════════════════════════════════════
+ *
+ * *"hair with real physics"*. Not all of it: a Jedi's hair is a CAP welded to
+ * a skull and a cap is right to be welded, because it does not move relative
+ * to the head it grows on and simulating it would buy nothing but cost. What
+ * moves is the piece whose silhouette is a LINE — the padawan's braid, the
+ * warrior's tail — and those are exactly the two `HAIR_CUTS` already emits as
+ * `strands`, as rigid tapered tubes hung off the head bone. `buildJedi`
+ * publishes them now (`built.strands`, `built.strandMeshes`); this takes them
+ * over, and hides the rigid pair exactly as `attachLekku` hides the rigid
+ * head-tails and `attachSkirt` hides the rigid robe.
+ *
+ * IT IS THE LEKKU SOLVER WITH DIFFERENT NUMBERS, and deliberately: a lek and a
+ * braid are both a closed tapered tube rooted on a bone that yaws under the
+ * player's own glance, and the lek's own header is the argument for every
+ * parameter here. What differs is what they are made of.
+ *
+ *   `stiffness` 0.97 against 0.94. A braid is plaited — it is the stiffest
+ *   thing a head carries, and a braid that stretched would read as elastic.
+ *   `bendDown` 0.86 against 0.92. It is thinner than a lek and bends more
+ *   readily along its length, which is the whole of what "hair" looks like.
+ *   `damping` 0.945 against 0.955, and `gravity` -15 against -13: it is
+ *   lighter, so it settles faster and hangs harder — a slow-swinging braid
+ *   reads as rope. `lift` and `drift` are HALVED, because hair this tightly
+ *   bound catches almost no air; the loose cap above it catches all of it and
+ *   is not simulated at all.
+ *
+ * ── THE BUDGET, WRITTEN DOWN ─────────────────────────────────────────────
+ *
+ * `tools/checks/cloth-cost.mjs` pins the default player at 287 particles and
+ * 1466 links AS AN EQUALITY, and that number is Engine.js's tier sizing. So
+ * this is OPT-IN — `WARDROBE.hair` is `'rigid'` and the figure that ships is
+ * the figure that shipped — for exactly the reason the hood's and the waist
+ * cape's own notes give.
+ *
+ * MEASURED, a player who turns it on pays 24 particles, 100 links and 3
+ * colliders — 4 columns x 6 rows, once, because no cut in `HAIR_CUTS` has more
+ * than one strand of hair in it. Against the shipped set's 287 / 1466 that is
+ * +8.4% of the particles and +6.8% of the links, and it is the cheapest
+ * garment on the figure: the waist cape is 42 particles and the Jedi cloak 99.
+ * `tools/checks/cloth-cost.mjs` holds those three numbers.
+ *
+ * 4 columns and not the lek's 5: a braid is 16 mm across against a lek's 60,
+ * so a fifth column buys a quarter of a millimetre of round and costs the
+ * whole ring. The row count is the lek's, because the two are the same length.
+ */
+export function attachHairTail(scene, rig, opts = {}) {
+  const S = opts.scale ?? 1;
+  const headB = rig.get('head');
+  if (!headB || !opts.roots || !opts.roots.length) return null;
+  const cols = opts.cols ?? 4;
+  const rows = opts.rows ?? 6;
+  const parts = [];
+
+  for (const root of opts.roots) {
+    const at = new THREE.Vector3(root.at[0], root.at[1], root.at[2]);
+    const r0 = root.r, len = root.len;
+    /* THE TAPER IS THE CUT'S OWN, not a constant. `HAIR_CUTS` states both ends
+     * of every strand (`r0`, `r1`) and a braid's taper is not a lek's — the
+     * warrior tail runs 15 mm to 5.5 (0.37) and the padawan braid 7.2 to 3.6
+     * (0.50). Read rather than typed, so a ninth hairstyle needs no line here. */
+    const taper = root.r1 != null && root.r > 0 ? Math.max(0.12, root.r1 / root.r) : 0.30;
+    const tail = new Cloak(scene, {
+      closed: true,
+      cols, rows,
+      length: len,
+      profile: opts.profile ?? ((t) => 1 - (1 - taper) * t * t * (3 - 2 * t)),
+      material: opts.material,
+      color: opts.color ?? 0x2a1d14,
+      fullness: 1, pleat: 0,
+      stiffness: opts.stiffness ?? 0.97,
+      shear: opts.shear ?? 0.60,
+      bend: opts.bend ?? 0.26,
+      bendDown: opts.bendDown ?? 0.86,
+      bendStretchOnly: true,
+      damping: opts.damping ?? 0.945,
+      lift: opts.lift ?? 0.12,
+      drift: opts.drift ?? 0.10,
+      gravity: opts.gravity ?? -15,
+      iterations: opts.iterations ?? 4,
+      jitter: opts.jitter ?? 0,
+      seed: opts.seed,
+      foldAO: opts.foldAO ?? 0.30,
+      /* The root ring, in the head bone's frame. A circle and not the lek's
+       * flattened ellipse: a braid is round. `at` is already in the head's own
+       * authored metres — see the push in `fleshHead` — so `S` multiplies the
+       * ring's RADIUS only, which is the figure's own scale on a measurement
+       * the cut states at scale 1. */
+      anchorFn: (c, n, out) => {
+        const th = (c / n) * Math.PI * 2;
+        _m.copy(headB.obj.matrixWorld);
+        out.set(at.x + Math.sin(th) * r0, at.y + Math.cos(th) * r0 * 0.5,
+          at.z + Math.cos(th) * r0);
+        out.applyMatrix4(_m);
+      },
+    });
+    tail._sharedMat = !!opts.material;
+    parts.push(tail);
+  }
+
+  /**
+   * WHAT A BRAID CAN HIT. Three, against the lek's five.
+   *
+   * The head it roots on, the neck under it and the ribcage it falls against.
+   * NOT the shoulders: a lek lies OVER a shoulder and needs one, and a braid
+   * hangs behind or beside the neck and reaches a clavicle only at the end of
+   * a hard yaw — where the chest sphere already covers it. The cost gate is
+   * particles x colliders / area, and a 24-particle garment paying for five
+   * spheres would be the most expensive cloth per square metre on the figure.
+   */
+  const bones = ['head', 'neck', 'chest'];
+  const radii = [0.086, 0.058, 0.165];
+  for (const tail of parts) {
+    tail.refreshColliders = () => {
+      const out = tail.colliders;
+      out.length = 0;
+      for (let i = 0; i < bones.length; i++) {
+        const b = rig.get(bones[i]);
+        if (!b || b.severed) continue;
+        b.obj.updateMatrixWorld(false);
+        _v3.set(0, b.length * (i === 2 ? 0.55 : 0.45), 0).applyMatrix4(b.obj.matrixWorld);
+        out.push({ c: _v3.clone(), r: radii[i] * S });
+      }
+      return out;
+    };
+  }
+
+  const rigid = opts.rigid || [];
+  /* One object to update, hide and dispose — the same contract `attachLekku`
+   * hands back, for the same reason: the caller is a seam in the menu. */
+  const group = {
+    parts,
+    get initialised() { return parts.every((l) => l.initialised); },
+    update(dt, wind) {
+      for (const l of parts) if (l.enabled) l.update(dt, l.refreshColliders(), wind);
+    },
+    carry(quat, pivot) {
+      this._carried = true;
+      for (const l of parts) if (l.enabled && l.initialised) l.carry(quat, pivot);
+    },
+    setVisible(v) {
+      for (const l of parts) l.setVisible(v);
+      for (let i = 0; i < rigid.length; i++) rigid[i].visible = !v;
+    },
+    dispose() {
+      for (let i = 0; i < rigid.length; i++) rigid[i].visible = true;
+      for (const l of parts) l.dispose();
+      parts.length = 0;
+    },
+  };
+  group.setVisible(true);
+  return group;
+}
 
 /**
  * A Twi'lek's lekku, as two closed tubes of cloth on the head.

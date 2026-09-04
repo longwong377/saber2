@@ -31,10 +31,14 @@ import * as THREE from 'three';
 import { initPhysics } from '../../src/physics/Rapier.js';
 import {
   buildJedi, SPECIES, FACE_PRESETS, BODY_TYPES, BUILD_RANGE, tubeGeo, surfacePoint,
+  buildTrooper, buildPlayerBody, armourOf, ARMOUR_KITS, TOP_CUTS,
 } from '../../src/game/Bodies.js';
+import { wardrobeOf } from '../../src/game/Cloth.js';
+import { readFile } from 'node:fs/promises';
 import { BipedAnimator } from '../../src/game/Rig.js';
 import { Actor } from '../../src/game/Ragdoll.js';
 import { RapierWorld } from '../../src/physics/RapierWorld.js';
+import { functionBody } from './_source.mjs';
 
 /* ── the figure, standing ────────────────────────────────────────────── */
 
@@ -303,6 +307,345 @@ export async function run({ check, assert, near }) {
    * the check passed or threw depending on what came before it in a directory
    * listing. Same class as the seeded RNG in held.mjs. */
   await initPhysics();
+
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('creator: clone armour is the body you built, in either sex, bucket on or off', () => {
+    /**
+     * V15 §2: *"a player of either sex should be able to wear all kinds of
+     * clone armour head to toe, capes, waist capes, with or without helmet."*
+     *
+     * V15 also says how it is meant to be done — *"a slot list and a menu
+     * page, not new geometry"* — and that is the property this measures. Every
+     * plate on the figure was already in `buildTrooper`; what is new is that
+     * the man inside it is the man the creator made. So:
+     *
+     * 1. THE ARMY DID NOT MOVE. `buildTrooper()` with no sheet is the trooper
+     *    this file has shipped since the day it was written, to the vertex —
+     *    six archetypes in Enemy.js call it and none of them passes a sheet.
+     * 2. THE SEX AXIS IS INSIDE THE ARMOUR. Shoulder-to-hip on the body under
+     *    the plate falls by the same measurement `a woman is the same figure`
+     *    takes on the robed one, off the same three lathes. A body that
+     *    narrowed in a robe and stayed a barrel in plate would be two figures.
+     * 3. THE BUCKET COMES OFF AND A FACE IS UNDER IT — not a bare sphere. The
+     *    features `fleshHead` tags (eyes, lids, ears, lips) are the evidence,
+     *    and a helmeted trooper must have NONE of them or the helmet is a hat
+     *    over a face nobody can see and 300 triangles nobody draws.
+     * 4. IT ALL FITS. `characters.mjs` caps an archetype at 13,000 triangles
+     *    and 76 meshes. The most expensive thing this offers is a bare-headed
+     *    Commander with a full head of hair, and it is measured, not assumed.
+     */
+    const feats = (built) => {
+      const n = new Set();
+      built.rig.root.traverse((o) => { if (o.userData?.feature) n.add(o.userData.feature); });
+      return n;
+    };
+    const lathe = (built, bone) => built.rig.get(bone)?.primary?.userData?.limb;
+
+    /**
+     * 1. THE ARMY DID NOT MOVE — and this is measured on the DECLARED RADII
+     *    and the mesh census, not on a vertex digest, because `buildTrooper`
+     *    has never been deterministic: two calls with identical arguments
+     *    differ, and they differed before this pass touched the file (the
+     *    scorching and the plate jitter draw from a live stream). A digest
+     *    would go red for no reason and could never be trusted again, so what
+     *    is pinned is what a kit row actually decides — the eleven lathe radii
+     *    that ARE the figure's proportions, plus its cost.
+     *
+     *    `buildPlayerBody` with no armour IS `buildJedi`, and THAT one is a
+     *    vertex digest, because the Jedi is deterministic and the seam being
+     *    transparent to the shipped figure is the whole reason it is safe.
+     */
+    const BONES = ['hips', 'spine', 'chest', 'neck', 'armL', 'foreL', 'thighL', 'shinL', 'clavL'];
+    const radii = (b) => BONES.map((n) => {
+      const l = b.rig.get(n)?.primary?.userData?.limb;
+      return l ? `${n}:${l.r0.toFixed(9)}/${l.r1.toFixed(9)}` : `${n}:-`;
+    }).join(' ');
+    const shipped = radii(buildTrooper());
+    assert(radii(buildTrooper({ face: { sex: 0 }, build: 0.5, species: 'human' })) === shipped,
+      'a neutral sheet moved the trooper — every clone in the game just changed shape');
+    assert(radii(buildTrooper({ face: { sex: 1 } })) !== shipped, 'the sex axis moves nothing in armour');
+    for (const k of ['line', 'marksman', 'heavy', 'jet', 'arc', 'commander']) {
+      const c0 = cost(buildTrooper({ kit: k }).rig.root);
+      const c1 = cost(buildTrooper({ kit: k, face: { sex: 0 } }).rig.root);
+      assert(c0.tris === c1.tris && c0.meshes === c1.meshes,
+        `${k} costs ${c1.tris}/${c1.meshes} with a neutral sheet against ${c0.tris}/${c0.meshes} without one`);
+    }
+    assert(digest(buildPlayerBody({})) === digest(buildJedi({})),
+      'buildPlayerBody with no armour is not buildJedi — the seam is not transparent');
+
+    /* 2, 3 and 4, over every row the page offers */
+    let worst = { tris: 0, meshes: 0, what: '' };
+    for (const row of ARMOUR_KITS) {
+      if (row.none) {
+        assert(armourOf(row.id) === null, `${row.id} does not resolve to "no armour"`);
+        continue;
+      }
+      for (const helmet of [true, false]) {
+        for (const sex of [0, 1]) {
+          const what = `${row.id}/${helmet ? 'bucket' : 'bare'}/sex${sex}`;
+          const b = buildPlayerBody({ armour: { id: row.id, helmet }, face: { sex, bust: 1, seat: 1 } });
+          assert(b.armour === true, `${what} did not come back wearing plate`);
+          assert(!b.robeSkirt, `${what} came back wearing a robe under its armour`);
+          /* the four names Player._makeCloak and applyLekku dereference */
+          for (const k of ['outer', 'over', 'trim', 'skin']) {
+            assert(b.palette[k], `${what} has no palette.${k} — a cape over it would throw`);
+          }
+          const f = feats(b);
+          if (helmet) {
+            assert(f.size === 0, `${what} has a face inside the bucket: ${[...f].join(', ')}`);
+          } else {
+            for (const need of ['eyeL', 'eyeR', 'lips', 'earL']) {
+              assert(f.has(need), `${what} has no ${need} — the bucket came off and left a blank`);
+            }
+          }
+          const c = cost(b.rig.root);
+          assert(c.tris < 13000 && c.meshes < 76,
+            `${what} is ${c.tris}/${c.meshes} of the 13000/76 an archetype may cost`);
+          if (c.tris > worst.tris) worst = { ...c, what };
+        }
+      }
+    }
+
+    /* 2. the ratio, off the lathes, exactly as the robed figure is measured */
+    const man = buildPlayerBody({ armour: { id: 'line' }, face: { sex: 0 } });
+    const woman = buildPlayerBody({ armour: { id: 'line' }, face: { sex: 1 } });
+    const r = (b) => lathe(b, 'chest').r1 / lathe(b, 'hips').r0;
+    const rS = r(woman) / r(man);
+    assert(rS < 0.85,
+      `shoulder-to-hip inside the armour only fell to ${(rS * 100).toFixed(0)}% of the man's — the `
+      + 'sex axis stops at the undersuit, so a woman in plate is a man in plate');
+
+    /* AND A KIT'S OWN GIRTH IS NOT SMUGGLED IN. `TROOPER_KITS.heavy` carries
+     * frame 1.15 and `marksman` 0.88; on the player's body the frame slider
+     * owns that axis and the kit may not touch it. See ARMOUR_KITS' header. */
+    const heavy = buildPlayerBody({ armour: { id: 'heavy' } });
+    const line = buildPlayerBody({ armour: { id: 'line' } });
+    assert(Math.abs(lathe(heavy, 'chest').r0 - lathe(line, 'chest').r0) < 1e-9,
+      'picking the Heavy\'s pack made the player 15% wider — the kit row\'s `frame` reached the body');
+
+    /* AND A STORED BLOB CANNOT MAKE ONE. Junk in every field, twice. */
+    const junk = wardrobeOf({ armour: { id: 'zzz', helmet: 'yes', plate: 'octarine' } }).armour;
+    assert(junk.id === 'none' && armourOf(junk) === null,
+      `a forged armour id survived normalisation: ${JSON.stringify(junk)}`);
+    const good = armourOf(wardrobeOf({ armour: { id: 'arc', plate: 'blood', visor: 'sun' } }).armour);
+    assert(good.plate === 0xb4382c && good.visor === 0xe8b028 && good.kit === 'arc',
+      `a legal armour sheet did not resolve: ${JSON.stringify(good)}`);
+
+    return `${ARMOUR_KITS.length - 1} sets x 2 buckets x 2 sexes all build; the army is untouched to the `
+      + `radius; shoulder:hip ${(rS * 100).toFixed(0)}% of the man's inside the plate; worst is `
+      + `${worst.what} at ${worst.tris}/${worst.meshes} of 13000/76`;
+  });
+
+  check('creator: a shirt can come off, and taking one off is cheaper than wearing it', () => {
+    /**
+     * V15 §2 asks for *"women's outfits"* and for *"men able to go
+     * shirtless"*, two lines under *"attractive and SFW"*. Three properties,
+     * and the third is the one that keeps the second honest.
+     *
+     * 1. IT COSTS NOTHING, and in fact it refunds. A cut that takes a shirt
+     *    off must not be MORE geometry than the shirt — `creator: a species
+     *    pays for itself` measures how little room there is (12,920 of 13,000
+     *    and 62 of 76), and a wardrobe that spent it on undressing would be
+     *    absurd. Every row here is measured against the tunic it replaces.
+     * 2. IT REACHES THE FIGURE. The tunic row is the identity to the vertex —
+     *    every saved profile predates this table — and every other row moves
+     *    the materials on the bones its own row names, and no others.
+     * 3. `bare` IS SFW ABOVE THE SEX SLIDER'S FLOOR. `TOP_CUTS`'s own header
+     *    states the rule as a number (`chestFrom`); this is the measurement of
+     *    it. At sex 0 the chest is skin; anywhere above it the chest keeps
+     *    exactly the material the tunic gave it, and the arms and midriff
+     *    still come bare — which is a different outfit, not a refused row.
+     */
+    /* BY COLOUR AND NOT BY IDENTITY: each build makes its own material
+     * objects, so `===` across two figures is always false and the check
+     * would have passed for the wrong reason on every row. */
+    const matOf = (built, bone) => built.rig.get(bone)?.primary?.material?.color?.getHexString();
+    const tunic = buildJedi({});
+    const base = cost(tunic.rig.root);
+    assert(digest(buildJedi({ top: 'tunic' })) === digest(tunic),
+      'the tunic row is not the figure that shipped — every saved profile just changed clothes');
+    assert(digest(buildJedi({ top: 'nonesuch' })) === digest(tunic),
+      'an unknown torso cut does not fall back to the tunic, so a stale save undresses');
+
+    const skinMat = matOf(tunic, 'head');
+    const said = [];
+    for (const cut of TOP_CUTS) {
+      if (cut.id === 'tunic') continue;
+      const b = buildJedi({ top: cut.id });
+      const c = cost(b.rig.root);
+      assert(c.tris <= base.tris && c.meshes <= base.meshes,
+        `"${cut.name}" costs ${c.tris}/${c.meshes} against the tunic's ${base.tris}/${base.meshes} — `
+        + 'taking a garment off is meant to refund it, not to add geometry');
+      assert(c.meshes < base.meshes || c.tris < base.tris,
+        `"${cut.name}" costs exactly what the tunic costs — it changed nothing at all`);
+      /* the bones it names, and only those */
+      const want = new Set(cut.skin || []);
+      for (const bone of ['spine', 'chest', 'clavL', 'armL', 'foreL', 'thighL', 'hips']) {
+        const bare = matOf(b, bone) === skinMat;
+        const meant = want.has(bone.replace(/[LR]$/, ''));
+        assert(bare === meant,
+          `"${cut.name}" left ${bone} ${bare ? 'bare' : 'clothed'} and its row says ${meant ? 'bare' : 'clothed'}`);
+      }
+      said.push(`${cut.id} ${c.tris}/${c.meshes}`);
+    }
+
+    /* 3. the SFW line, measured */
+    const man = buildJedi({ top: 'bare', face: { sex: 0 } });
+    const woman = buildJedi({ top: 'bare', face: { sex: 1, bust: 1 } });
+    assert(matOf(man, 'chest') === skinMat, 'shirtless is not shirtless on the figure it is for');
+    assert(matOf(woman, 'chest') === matOf(tunic, 'chest'),
+      'the bare cut took the chest off a figure above the sex slider\'s floor — TOP_CUTS states a '
+      + 'number for exactly this and the number is not being read');
+    assert(matOf(woman, 'spine') === skinMat && matOf(woman, 'armL') === skinMat,
+      'the SFW rule swallowed the whole cut — the midriff and the arms are meant to stay bare, or the '
+      + 'row does nothing for half the figures in the game');
+
+    return `${TOP_CUTS.length} cuts, tunic ${base.tris}/${base.meshes} and every other one cheaper `
+      + `(${said.join(', ')}); bare is a chest at sex 0 and a midriff above it`;
+  });
+
+  check('creator: hair with real physics is opt-in, and this is what it costs', async () => {
+    /**
+     * V15 §2 asks for *"hair with real physics"*. Not all of it — see
+     * `attachHairTail` in Cloth.js for why a cap is right to be welded to a
+     * skull and a braid is not — and NOT BY DEFAULT, because
+     * `tools/checks/cloth-cost.mjs` pins the shipped player at 287 particles
+     * and 1466 links AS AN EQUALITY and that number is Engine.js's tier
+     * sizing. The hood did this and the waist cape did this; this is the third.
+     *
+     * IT IS MEASURED HERE AND NOT THERE, deliberately. Building six figures
+     * and six garments in `cloth-cost`'s process moved its CPU clock by 0.3 ms
+     * of cache pressure on a bound that sits at 7.0 — measured, twice. So the
+     * POLICY (it must not default on) is asserted there, beside the equality
+     * it protects, and the PRICE is measured here, where building figures is
+     * already what the file does.
+     *
+     * Two properties, and the second is what makes the first mean something:
+     * the shipped wardrobe must not build it AT ALL, and when a player asks
+     * for it the price has to be written down rather than discovered on
+     * somebody else's machine.
+     */
+    const { attachHairTail, WARDROBE, wardrobeOf, HAIR_TAILS } = await import('../../src/game/Cloth.js');
+    assert(WARDROBE.hair === 'rigid',
+      `the shipped wardrobe braid is "${WARDROBE.hair}" — a garment that defaults ON changes the `
+      + '287/1466 the check above pins and re-dresses every saved profile at once');
+    assert(wardrobeOf({}).hair === 'rigid' && wardrobeOf({ hair: 'nope' }).hair === 'rigid',
+      'an unknown hair id does not fall back to the rigid braid');
+    assert(HAIR_TAILS.some((h) => h.id === 'live'), 'there is no way to turn it on');
+
+    const scene = new THREE.Scene();
+    let worst = { particles: 0, links: 0, colliders: 0, cut: '' };
+    let cuts = 0;
+    for (const cut of ['temple', 'padawan', 'tail', 'crop', 'long', 'shorn']) {
+      const b = buildJedi({ face: { hair: cut } });
+      scene.add(b.rig.root);
+      b.rig.root.updateMatrixWorld(true);
+      const t = attachHairTail(scene, b.rig, { roots: b.strands, rigid: b.strandMeshes, scale: 1 });
+      if (!b.strands) {
+        assert(!t, `"${cut}" has no braid and built one anyway`);
+        continue;
+      }
+      cuts++;
+      assert(t, `"${cut}" has a braid and nothing took it over`);
+      let particles = 0, links = 0, colliders = 0;
+      for (const x of t.parts) {
+        particles += x.pos.length / 3;
+        links += x.links.length;
+        colliders += (x.refreshColliders() || []).length;
+      }
+      /* THE RIGID STRAND IS HIDDEN, not left inside the simulated one — the
+       * same swap `attachSkirt` and `attachLekku` make, and the reason a
+       * garment can be a refund rather than a surcharge. */
+      for (const m of b.strandMeshes) assert(!m.visible, `"${cut}" is wearing both braids at once`);
+      if (particles > worst.particles) worst = { particles, links, colliders, cut };
+      t.dispose();
+      for (const m of b.strandMeshes) assert(m.visible, `"${cut}" lost its braid when the solver let go`);
+    }
+    assert(cuts >= 3, `only ${cuts} cuts have a braid to simulate`);
+    /**
+     * THE PRICE, PINNED. 24 particles and 100 links is 8.4% of the shipped
+     * set's particles and 6.8% of its links — the cheapest garment on the
+     * figure, against the waist cape's 42 and the Jedi cloak's 99. Three
+     * colliders and not the lek's five: `attachHairTail`'s own header argues
+     * why, and the cost gate is particles x colliders / area, so a braid
+     * carrying a shoulder sphere it never touches would be the most expensive
+     * cloth per square metre anywhere on the body.
+     */
+    assert(worst.particles === 24 && worst.links === 100 && worst.colliders === 3,
+      `a braid is now ${worst.particles} particles / ${worst.links} links / ${worst.colliders} `
+      + 'colliders, not 24 / 100 / 3. Both this line and the paragraph over `attachHairTail` in '
+      + 'Cloth.js quote those numbers as what a player pays to turn it on; move them together');
+    assert(worst.particles < 42,
+      'the braid costs more than the waist cape, which is 42 particles of skirt');
+
+    return `off by default; ${cuts} cuts have one, and it is ${worst.particles} particles / `
+      + `${worst.links} links / ${worst.colliders} colliders — 8.4% of the shipped 287, and the `
+      + 'rigid strand is hidden rather than kept';
+  });
+
+  check('creator: the armour reaches the body on every path a body is built on', async () => {
+    /**
+     * A COSTUME THAT ONLY EXISTS IN THE PREVIEW IS A SCREENSHOT.
+     *
+     * `buildJedi` was called from five places — the Player's constructor, the
+     * Player's `respawn` (which is what a co-op revive runs), the menu's
+     * preview, the remote body in Net.js, and through `World.spawnPlayer`
+     * composing the options for the first of those. A body-changing choice
+     * that reaches four of the five is a player who takes their armour off by
+     * dying, or who is drawn in robes on everybody else's screen.
+     *
+     * So all of them go through `buildPlayerBody`, and this is the check that
+     * says so. Source-level and unapologetic about it: it is the same standard
+     * `appearance: the choice survives the trip` holds the skin tone to, and
+     * for the same reason — the bugs in this chain have all been a value that
+     * was never passed rather than a builder that was wrong.
+     */
+    const read = async (f) => readFile(new URL(f, import.meta.url), 'utf8');
+    const player = await read('../../src/game/Player.js');
+    const net = await read('../../src/net/Net.js');
+    const menu = await read('../../src/ui/Menu.js');
+
+    assert(!/\bbuildJedi\(/.test(player.replace(/\/\*[\s\S]*?\*\//g, '')),
+      'Player still calls buildJedi directly, so one of its two bodies cannot wear armour');
+    const calls = player.match(/buildPlayerBody\(/g) || [];
+    assert(calls.length === 2,
+      `Player builds a body ${calls.length} times through the seam — the constructor and respawn are two`);
+    /* BOTH OF THEM HAVE TO PASS THE ARMOUR, not merely use the seam — and the
+     * body of each is read to its real closing brace rather than guessed at by
+     * a character count. A window is correct only until somebody adds a line
+     * and it fails silently in both directions; `determinism` forbids one and
+     * is right to. */
+    for (const [name, sig] of [['constructor', '  constructor(world, opts = {}) {'],
+      ['respawn', '  respawn(pos) {']]) {
+      const body = functionBody(player, sig);
+      assert(/buildPlayerBody\(/.test(body), `Player's ${name} does not build through the seam`);
+      assert(/armour:\s*(opts\.armour \?\?\s*)?(this\.)?world\.settings/.test(body),
+        `Player's ${name} builds a body without asking the wardrobe what it is wearing`);
+    }
+    assert(/buildPlayerBody\(/.test(net) && /armour:\s*look\.wardrobe/.test(net),
+      'a remote player is built without their armour — everyone else sees them in robes');
+    assert(/'wardrobe'\]/.test(net) || /,\s*'wardrobe'/.test(net),
+      'the wardrobe is not on LOOK_KEYS, so the armour never crosses the wire');
+    assert(/buildPlayerBody\(/.test(menu), 'the menu preview does not build through the seam');
+    /* and the page exists: seven sets, a bucket row, a cape row, three racks */
+    for (const id of ['armour-list', 'armour-helmet-list', 'armour-cape-list',
+      'armour-plate-list', 'armour-accent-list', 'armour-visor-list']) {
+      assert(menu.includes(id), `the armoury page has no ${id} row`);
+    }
+    const page = await read('../../index.play.html');
+    for (const id of ['armour-list', 'armour-helmet-list', 'armour-cape-list',
+      'armour-plate-list', 'armour-accent-list', 'armour-visor-list']) {
+      assert(page.includes(`id="${id}"`), `${id} is built by the menu and is not on the page`);
+    }
+    /* THE CAPE OVER PLATE IS THE TROOPER'S, NOT THE ORDER'S — V15 asks for
+     * "capes, waist capes" over armour, and a Jedi cloak pinned at a
+     * collarbone under a pauldron is the wrong garment on the wrong surface. */
+    assert(/built\?\.armour/.test(player) && /attachTrooperCape\(/.test(player),
+      'an armoured player is given the Jedi cloak instead of the trooper half-cape');
+    return `2 Player calls, Net + LOOK_KEYS, the preview and 6 rows on the page — `
+      + `${ARMOUR_KITS.length} sets offered`;
+  });
 
   /* ══════════════════════════════════════════════════════════════════ */
   /*  the contract                                                      */

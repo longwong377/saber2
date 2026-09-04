@@ -672,4 +672,37 @@ export async function run({ check, assert, THREE }) {
       world.unload(); world.dispose?.();
     }
   });
+  /**
+   * THE BRAID THAT SWINGS IS OFF BY DEFAULT — V15 §2's *"hair with real
+   * physics"*, held to this file's own law.
+   *
+   * A TABLE READ AND NOTHING ELSE, and that is the whole design of this check.
+   * The place to MEASURE what a braid costs is `creator: hair with real
+   * physics is opt-in`, which builds six figures and six garments to do it —
+   * and doing that in THIS process moved the CPU clock two checks up by 0.3 ms
+   * of cache pressure, measured, on a bound that sits at 7.0. So the number
+   * lives where figures are built and the POLICY lives here, where the 287 /
+   * 1466 equality it protects is written down.
+   *
+   * The policy is the one the hood and the waist cape are both under: a
+   * garment on the player may not default ON, because the equality above is
+   * Engine.js's tier sizing and a new default would change it AND re-dress
+   * every saved profile at once.
+   */
+  check('cloth: the braid that swings does not default on', async () => {
+    const { WARDROBE, wardrobeOf, HAIR_TAILS } = await import('../../src/game/Cloth.js');
+    assert(WARDROBE.hair === 'rigid',
+      `the shipped wardrobe braid is "${WARDROBE.hair}" — a garment that defaults ON changes the `
+      + '287/1466 this file pins and re-dresses every saved profile at once');
+    assert(wardrobeOf({}).hair === 'rigid' && wardrobeOf({ hair: 'nope' }).hair === 'rigid',
+      'an unknown hair id does not fall back to the rigid braid, so a stale save pays for cloth');
+    assert(HAIR_TAILS.some((h) => h.id === 'live'), 'there is no way to turn it on');
+    /* …and the same law, restated for the two rows that came before it, so
+     * this is one check and not three that will drift apart. */
+    assert(WARDROBE.hood === 'none' && WARDROBE.waist === 'none',
+      'a hood or a waist cape now defaults on — see their notes in Cloth.js');
+    return `hair rigid, hood none, waist none — 3 opt-in garments, 0 of them in the 287 / 1466`;
+  });
+
+
 }

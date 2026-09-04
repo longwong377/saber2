@@ -11,14 +11,14 @@ import * as THREE from '../../vendor/three/three.module.js';
 import { Saber, SABER_COLORS } from './Saber.js';
 import { SaberController, THRUST_STANDING_SPEED, SPIN, GUARD } from './SaberController.js';
 import { Sidearm, setById, paceOf, ORBIT } from './SaberSet.js';
-import { buildJedi, buildShieldBubble } from './Bodies.js';
+import { buildPlayerBody, buildShieldBubble } from './Bodies.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
 import { speciesOf, hoodCut } from './Bodies.js';
 import { Rig, BipedAnimator, aimY, limbScale, poseMeditation } from './Rig.js';
 import { dropSaber, hiltWithinReach, hiltDistanceSq, igniteHilt, hiltBlade,
          ageDropped } from './Dropped.js';
 import { Crew, drivableNear, whyNotDrive, crewOf } from './Driving.js';
-import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell, attachWaistCape, WAIST_CUTS } from './Cloth.js';
+import { attachCloak, attachSkirt, attachHoodDrape, attachHoodShell, attachWaistCape, attachTrooperCape, WAIST_CUTS } from './Cloth.js';
 /** The waist-cape cut a player is wearing, or null for none. V15 §2. */
 const waistCut = (id) => WAIST_CUTS.find((c) => c.id === id) || null;
 import { armKinetic, KINETIC_BODY } from './Impact.js';
@@ -3243,7 +3243,7 @@ export class Player {
     // skinColor and hairColor have been parameters of buildJedi since it was
     // written and nothing ever passed them, so every Jedi in the game wore the
     // one default face. The builder needed no change; this line was the feature.
-    const built = buildJedi({
+    const built = buildPlayerBody({
       robeIndex: opts.robeIndex ?? 0, scale: 1,
       skinColor: skinHex(opts.species, opts.skinIndex),
       hairColor: HAIR_COLORS[opts.hairIndex ?? 1]?.hex,
@@ -3267,6 +3267,21 @@ export class Player {
        * has never opened the row gets exactly the head they always had.
        */
       hood: opts.hood ?? world.settings?.wardrobe?.hood,
+      /**
+       * ── AND THE CLONE ARMOUR, ON THE SAME SEAM AND FOR THE SAME REASON ──
+       *
+       * V15 §2 asks that a player be able to wear all kinds of clone armour
+       * head to toe, with or without helmet. `buildPlayerBody` is the chooser:
+       * with a kit on this key it builds `buildTrooper` with the creator's own
+       * species, face, sex and frame, and without one it is `buildJedi` and
+       * this line is inert. Read off the wardrobe exactly as `hood` above is,
+       * so a mid-run rebuild by `respawn()` and a co-op revive both come back
+       * wearing the plate the player chose. */
+      armour: opts.armour ?? world.settings?.wardrobe?.armour,
+      /* …and what is on the torso — V15 §2's shirtless men and the outfits
+       * that are not the robe. Same seam, same reason, same default: an
+       * absent key is `TOP_CUTS[0]`, which is the tunic that shipped. */
+      top: opts.top ?? world.settings?.wardrobe?.top,
     });
     /* What this body is actually wearing on its head, so the wardrobe seam can
      * tell whether a pick changed anything. See applyWardrobe in ui/Menu.js. */
@@ -3815,7 +3830,9 @@ export class Player {
   }
 
   _makeCloak() {
-    this.cloak?.dispose();
+    /* Nulled and not merely disposed: an armoured body without a cape has no
+     * cloak at all, and every reader below and in `update` tests the field. */
+    this.cloak?.dispose(); this.cloak = null;
     this.waistCape?.dispose(); this.waistCape = null;
     this.skirt?.dispose(); this.skirt = null;
     this.hoodDrape?.dispose(); this.hoodDrape = null;
@@ -3832,7 +3849,27 @@ export class Player {
      * into the figure's own size here rather than restated per species.
      */
     const S = this.rig.scale ?? 1;
-    this.cloak = attachCloak(this.world.scene, this.rig, {
+    /**
+     * ── A CAPE OVER PLATE IS THE TROOPER'S CAPE, NOT THE ORDER'S ──────────
+     *
+     * V15 §2 asks for *"capes, waist capes"* over clone armour. A Jedi cloak
+     * is 99 particles pinned at the collarbone of a body wearing robes, and
+     * over a cuirass and a pair of shoulder bells it hangs off the wrong
+     * surface — which is the whole reason `attachTrooperCape` exists and pins
+     * its arc round the collar plate instead. So an armoured body wears that
+     * one, exactly as Enemy._build does, and `built.cape` is the descriptor
+     * `buildTrooper` has handed out since it was written: null on every kit
+     * that has no cape, so this is one branch and not a table.
+     *
+     * The WAIST cape below is unchanged and needs no branch at all — it hangs
+     * off the hips bone, which is the same bone under plate or under cloth.
+     */
+    if (this.built?.armour) {
+      if (this.built.cape) {
+        this.cloak = attachTrooperCape(this.world.scene, this.rig,
+          { scale: S, ...this.built.cape });
+      }
+    } else this.cloak = attachCloak(this.world.scene, this.rig, {
       // narrow at the collar, flared at the hem, and stopping above the knee so
       // the legs still read — a floor-length sack hides the whole silhouette.
       scale: S,
@@ -3862,7 +3899,7 @@ export class Player {
       // The cape used to avoid the skirt via a fixed table of spheres sampled
       // off a standing figure. Now the skirt can move, so the cape follows the
       // real thing: live proxy in, table out.
-      this.cloak.outer = this.skirt;
+      if (this.cloak) this.cloak.outer = this.skirt;
     }
     /**
      * AND THE WAIST CAPE — V15 §2's *"capes, waist capes"*.
@@ -12148,7 +12185,7 @@ export class Player {
      * runs it once per death for the whole session.
      */
     if (this.rig) { this.world.scene.remove(this.rig.root); this.rig.dispose(); }
-    const built = buildJedi({
+    const built = buildPlayerBody({
       robeIndex: this.world.settings.robeIndex ?? 0,
       skinColor: skinHex(this.world.settings.species, this.world.settings.skinIndex),
       hairColor: HAIR_COLORS[this.world.settings.hairIndex ?? 1]?.hex,
@@ -12158,6 +12195,10 @@ export class Player {
       // this call: a body rebuilt by a revive has to come back wearing what
       // the player chose, and this is the only line that can say so.
       hood: this.world.settings.wardrobe?.hood,
+      /* …and the armour, for the same reason as the hood one line up: a body
+       * rebuilt by a revive has to come back in the plate the player chose. */
+      armour: this.world.settings.wardrobe?.armour,
+      top: this.world.settings.wardrobe?.top,
     });
     this.hood = this.world.settings.wardrobe?.hood ?? 'none';
     this.rig = built.rig;

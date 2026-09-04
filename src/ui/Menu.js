@@ -10,9 +10,9 @@ import * as THREE from '../../vendor/three/three.module.js';
  * why it must be a press and never a frame-loop decision. */
 import { canFullscreen, toggleFullscreen } from '../engine/Wholescreen.js';
 import { SABER_COLORS, HILT_STYLES, HILT_SPECS, Saber } from '../game/Saber.js';
-import { ROBE_COLORS, buildJedi, SPECIES, FACE_PRESETS, speciesOf,
+import { ROBE_COLORS, buildPlayerBody, SPECIES, FACE_PRESETS, speciesOf,
          HAIR_STYLES, BEARD_STYLES, HOOD_CUTS, attachHood, bodyOptsFor, wearableFor,
-         KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom } from '../game/Bodies.js';
+         KIT_FIELDS, PAINT_SLOTS, PAINTS, paintById, kitOptsFrom, ARMOUR_KITS, TOP_CUTS } from '../game/Bodies.js';
 import { BipedAnimator, limbScale, MEDITATION_POSES, poseMeditation } from '../game/Rig.js';
 // Player.js imports SKIN_TONES and HAIR_COLORS from this file, so this edge
 // closes a cycle. It is safe and it is checked: nothing here reads a Player
@@ -23,7 +23,8 @@ import { handPoseOnHilt, GRIP_AT, UNLEASH, SHIELD, ALLY_WARD, RESTORE } from '..
 import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from '../game/Order.js';
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
-         garmentTone, WAIST_CUTS } from '../game/Cloth.js';
+         garmentTone, WAIST_CUTS, attachTrooperCape, attachHairTail,
+         HAIR_TAILS } from '../game/Cloth.js';
 /* The three sets the Jedi tab offers — one table, and the card row below reads
  * its rows straight through so a fourth set is a row there and nothing here. */
 import { SABER_SETS } from '../game/SaberSet.js';
@@ -1320,6 +1321,8 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   // applyInjury() for why the funnel and not the frame.
   applyInjury(world, s);
   applyLekku(world);
+  /* …and the braid, which unlike the head-tails is a choice — see its note. */
+  applyHairTail(world, s);
   applyWardrobe(world, s);
   applyGait(world);
   tapFrame(world);
@@ -1416,6 +1419,24 @@ export function applyWardrobe(world, s = DEFAULT_SETTINGS) {
       p._wardrobeKey = JSON.stringify([WARDROBE.cape, WARDROBE.tabard, WARDROBE.sash,
         p.hood ?? WARDROBE.hood, p.robeCut ?? s.robeCut]);
     }
+    /**
+     * A BODY IN CLONE ARMOUR IS NOT WEARING ANY OF THIS.
+     *
+     * Nine of the eleven rows below name a piece of the Jedi robe — the cape,
+     * the over-panels, the obi's ends, the hood, and the six tones they are
+     * dyed in — and a body in plate is wearing none of them. Run anyway, this
+     * seam would pin a 99-particle Jedi cloak to a collarbone under a pauldron
+     * the moment a player touched any wardrobe row mid-run, and then dye the
+     * armour cream. `Player._makeCloak` makes the same branch on the same
+     * field for the same reason; this is the LIVE half of it.
+     *
+     * The armour itself is not re-dressed here at all, and cannot be: which
+     * kit and whether the bucket is on decide which BUILDER made the body, so
+     * they land on the next `respawn` the way the hood's own note says a
+     * mid-run rebuild is the one case this seam cannot cover. The wardrobe
+     * page is a menu page.
+     */
+    if (p.built.armour) continue;
     if (p._wardrobeKey !== key) {
       p._wardrobeKey = key;
       const S = p.rig.scale ?? 1;
@@ -1635,6 +1656,72 @@ export function applyLekku(world) {
     // the same call rather than polled for.
     const die = p.die.bind(p);
     p.die = (src) => { p.lekku?.dispose(); p.lekku = null; die(src); };
+    n++;
+  }
+  return n > 0;
+}
+
+/**
+ * SIMULATE THE BRAID, on the same seam, for the same reason, and OPT-IN.
+ *
+ * V15 §2: *"hair with real physics"*. `applyLekku` twenty lines up is the
+ * whole argument for where this lives and why it wraps `p.update` rather than
+ * running its own rAF — "the only way it can be stepped on the right clock,
+ * with the world's wind, inside the same frame the head it hangs from was
+ * posed in. A separate rAF would be a frame behind the skull every frame." A
+ * braid hangs off the same bone as a lek and that sentence is about the bone.
+ *
+ * THE ONE DIFFERENCE IS THE GATE. A lek is a SPECIES — a Twi'lek has two and
+ * cannot not have them, so `applyLekku` simulates them for everybody who has
+ * them. A braid is a CHOICE, and `cloth-cost.mjs` pins the default player at
+ * 287 particles as an equality, so this runs only for a player whose wardrobe
+ * says `hair: 'live'`. Off, nothing is built and the rigid strand stays
+ * exactly where it has always been.
+ *
+ * Idempotent, and it also has to be able to take one AWAY: `hair` is a live
+ * setting on the pause card like every other wardrobe row, so a player who
+ * turns it off mid-run gets the rigid braid back on the next frame rather than
+ * at the next death.
+ */
+export function applyHairTail(world, s = {}) {
+  if (!world) return false;
+  const want = wardrobeOf(s.wardrobe ?? world.settings?.wardrobe).hair === 'live';
+  let n = 0;
+  for (const p of world.players || []) {
+    if (!p || !p.rig) continue;
+    if (!want) {
+      /* Taken off: the garment goes and the rigid strand comes back, which is
+       * `dispose`'s own contract. The update wrapper below outlives it and
+       * tests the field, exactly as `applyLekku`'s does across a death. */
+      if (p.hairTail) { p.hairTail.dispose(); p.hairTail = null; }
+      continue;
+    }
+    /**
+     * A NEW BODY IS A NEW BRAID. `Player.respawn` builds a whole new rig and
+     * a whole new `built`, and a co-op REVIVE reaches it without ever going
+     * through `die()` — so a garment kept across one is anchored to a head
+     * bone that is no longer in the scene. The rig it was built on is
+     * remembered and compared rather than assumed, which is the same reason
+     * `respawn` re-derives `limbs` beside the rig instead of keeping it.
+     */
+    if (p.hairTail && p._hairRig !== p.rig) { p.hairTail.dispose(); p.hairTail = null; }
+    if (p.hairTail || !p.built?.strands) continue;
+    const mat = p.built.palette?.hair?.clone() || p.built.strandMeshes?.[0]?.material?.clone();
+    if (mat) mat.side = THREE.DoubleSide;
+    const tail = attachHairTail(world.scene, p.rig, {
+      roots: p.built.strands, rigid: p.built.strandMeshes, material: mat,
+      scale: p.rig.scale ?? 1,
+    });
+    if (!tail) continue;
+    p.hairTail = tail;
+    p._hairRig = p.rig;
+    const update = p.update.bind(p);
+    p.update = (dt, ctx) => {
+      update(dt, ctx);
+      p.hairTail?.update(dt, world.wind || undefined);
+    };
+    const die = p.die.bind(p);
+    p.die = (src) => { p.hairTail?.dispose(); p.hairTail = null; die(src); };
     n++;
   }
   return n > 0;
@@ -3279,11 +3366,18 @@ export function dressPreviewFigure(host, built, cut, wardrobe) {
   mat.side = THREE.DoubleSide;
   const tmat = (built.palette.over || built.palette.outer).clone();
   tmat.side = THREE.DoubleSide;
-  const cloak = attachCloak(host, rig, {
-    scale: S,
-    material: mat, cut, cape: w.cape, tabard: w.tabard, tabardMaterial: tmat,
-    seed: PREVIEW_SEED.cloak,
-  });
+  /* PLATE WEARS THE TROOPER'S CAPE — the same branch, the same reason and the
+   * same two lines as Player._makeCloak, which this function is a copy of by
+   * design. `built.cape` is `buildTrooper`'s own descriptor and is null on
+   * every kit that has none, so a line trooper gets no cloth at all. */
+  const cloak = built.armour
+    ? (built.cape ? attachTrooperCape(host, rig,
+        { scale: S, seed: PREVIEW_SEED.cloak, ...built.cape }) : null)
+    : attachCloak(host, rig, {
+      scale: S,
+      material: mat, cut, cape: w.cape, tabard: w.tabard, tabardMaterial: tmat,
+      seed: PREVIEW_SEED.cloak,
+    });
   let skirt = null;
   if (built.robeSkirt) {
     const smat = (built.palette.over || built.palette.outer).clone();
@@ -3295,7 +3389,26 @@ export function dressPreviewFigure(host, built, cut, wardrobe) {
   // The tones, on the figure and on the garments at once — the skirt's cloth
   // and the cape's are clones the builder never sees, so a palette-only tint
   // would leave the two largest surfaces on the character unchanged.
-  tintWardrobe(built, w, { skirt, cape: cloak });
+  /* NOT ON PLATE. The tones are `GARMENT_TONES` — cream, sand, umber — and the
+   * pieces they name (tunic, tabard, boots, gloves) are cloth this body is not
+   * wearing; armour is painted from `PAINTS` on its own row instead. */
+  if (!built.armour) tintWardrobe(built, w, { skirt, cape: cloak });
+  /**
+   * AND THE BRAID, if the player asked for it to swing — V15 §2's *"hair with
+   * real physics"*. Off by default, exactly as the live figure's is, so the
+   * shot this box has always taken is the shot it still takes; a player who
+   * turns it on watches the braid settle in the preview before they deploy.
+   */
+  let hairTail = null;
+  if (w.hair === 'live' && built.strands) {
+    const hm = built.palette?.hair?.clone() || built.strandMeshes?.[0]?.material?.clone();
+    if (hm) hm.side = THREE.DoubleSide;
+    hairTail = attachHairTail(host, rig, {
+      roots: built.strands, rigid: built.strandMeshes, material: hm, scale: S,
+      seed: PREVIEW_SEED.skirt,
+    });
+  }
+
   /**
    * THE HEAD-TAILS, if this species has any.
    *
@@ -3318,7 +3431,7 @@ export function dressPreviewFigure(host, built, cut, wardrobe) {
     if (cloak) cloak.update(1 / 60, cloak.refreshColliders(), wind);
     if (lekku) lekku.update(1 / 60, wind);
   }
-  return { cloak, skirt, lekku };
+  return { cloak, skirt, lekku, hairTail };
 }
 
 /**
@@ -3369,13 +3482,16 @@ export function assemblePreview(host, built, saber, s = {}) {
    * The hilt stays in the right hand: the saber root is parented to the hand
    * bone by `poseSaberArm`, so it goes where the hand goes. */
   if (s.pose) poseMeditation(rig, s.pose, 1, { position: new THREE.Vector3(0, 0, 0), facing: 0 });
-  const { cloak, skirt, lekku } = dressPreviewFigure(host, built, s.robeCut, s.wardrobe);
+  const { cloak, skirt, lekku, hairTail } = dressPreviewFigure(host, built, s.robeCut, s.wardrobe);
   const pts = [];
   clothPoints(cloak, pts);
   clothPoints(skirt, pts);
   // A lek reaches 34 cm below the jaw and swings; leaving it out of the shot
   // would crop the one feature the species is chosen FOR.
   if (lekku) for (const l of lekku.parts) clothPoints(l, pts);
+  /* A braid that swings reaches past the shoulder blade; leaving it out of the
+   * shot would crop the one thing the player just turned on. */
+  if (hairTail) for (const l of hairTail.parts) clothPoints(l, pts);
   if (saber) {
     /*
      * The blade counts toward the shot, CLAMPED at the training cap.
@@ -3427,7 +3543,7 @@ export function assemblePreview(host, built, saber, s = {}) {
      * toward the middle of it. It is 1 for every full-sized wielder. */
     pts.push(saber.root.localToWorld(new THREE.Vector3(0, -0.16 * (saber.gripScale ?? 1), 0)));
   }
-  return { cloak, skirt, lekku, content: previewContent([rig.root], pts) };
+  return { cloak, skirt, lekku, hairTail, content: previewContent([rig.root], pts) };
 }
 
 const _RING = 16;
@@ -5235,6 +5351,19 @@ export class Menu {
      * cape is. Same table-driven row as every other cut, so a fifth waist cape
      * is a row in `Cloth.WAIST_CUTS` and nothing here. */
     this._wardrobeCards('waist-list', 'h-waist', 'waist', WAIST_CUTS);
+    /* WHAT IS ON THE TORSO — V15 §2's shirtless men and the outfits that are
+     * not the robe. Same table-driven row as every other cut, off
+     * `Bodies.TOP_CUTS`, so a fourth is a row there and nothing here. */
+    this._wardrobeCards('top-list', 'h-top', 'top', TOP_CUTS);
+    /* WHETHER THE BRAID SWINGS — V15 §2's *"hair with real physics"*, opt-in
+     * because the default player's garment cost is pinned as an equality. It
+     * sits beside the hairstyle row for the obvious reason. */
+    this._wardrobeCards('hairmotion-list', 'h-hairmotion', 'hair', HAIR_TAILS);
+    /* ── CLONE ARMOUR, the row this half of V15 §2 was asked for. See
+     * `_armourRows`. It writes into `settings.wardrobe.armour` like every
+     * other row on this column and reaches the body through
+     * `buildPlayerBody`. */
+    this._armourRows();
     this._wardrobeCards('sash-list', 'h-sash', 'sash', SASH_CUTS);
     this._wardrobeTones('sash-tone-list', 'sashTone', 'trim');
     this._wardrobeTones('boot-tone-list', 'bootTone', 'leather');
@@ -6278,6 +6407,129 @@ export class Menu {
     this._refreshPreview(true);
   }
 
+  /**
+   * ══ THE ARMOURY PAGE ═══════════════════════════════════════════════════
+   *
+   * V15 §2 asks for clone armour *"head to toe … with or without helmet"* and
+   * says how in the same breath: *"What is missing is letting the PLAYER wear
+   * the set the company wears, which is a slot list and a menu page, not new
+   * geometry."* This is that page, and it is thirty lines because every one of
+   * the choices on it is read out of a table that already existed —
+   * `ARMOUR_KITS` for the seven sets, `PAINTS` for the fifteen colours — and
+   * `buildTrooper` has built every plate on the figure since the day it was
+   * written.
+   *
+   * ── WHY FIVE ROWS AND NOT TWELVE ──────────────────────────────────────
+   *
+   * `KIT_FIELDS` offers a trooper's nine slots — pauldron, kama, pack,
+   * rangefinder, crest, holsters, brace, bells — and the barracks page draws
+   * all nine for a man on the roll. This page does not, and the difference is
+   * deliberate. On the barracks page the nine slots are how you make one
+   * company look like one company; here the choice is *which soldier am I*,
+   * and the six `TROOPER_KITS` rows already answer it in the game's own
+   * vocabulary. A player who wants a Commander's crest on a Marksman's scope
+   * can have it — the fields are all still live on `buildTrooper` — but
+   * offering nine chips before offering the six sets would be offering the
+   * parts before the thing.
+   *
+   * ── AND WHY THE DEPENDENT ROWS EMPTY THEMSELVES ───────────────────────
+   *
+   * A helmet toggle and three paint racks on a body wearing robes are four
+   * dead controls, which is the exact defect `_dressingHtml`'s own header
+   * records being caught by twice ("a promise followed by nothing"). So the
+   * four rows are cleared and their headings hidden while the kit is `none`,
+   * and rebuilt the moment one is picked. `_trustInTheForce` walks rows by
+   * class and skips any with fewer than two children, so an emptied row is
+   * also a row its button cannot randomise — which is the behaviour you want:
+   * pressing it while in robes must not silently pick a visor colour.
+   */
+  _armourRows() {
+    const A = wardrobeOf(this.s.wardrobe).armour;
+    const on = A.id !== 'none';
+    /* The set. Always drawn — this is the row that turns the rest on. */
+    this._armourCards('armour-list', 'h-armour', 'id', ARMOUR_KITS.map((a) => a));
+    /* THE BUCKET. Two cards rather than a checkbox, because "without helmet"
+     * is not the absence of a piece of kit — it is your own face, your own
+     * species and your own hair, on the body `fleshHead` builds, and that is
+     * worth a sentence a checkbox has nowhere to put. */
+    this._armourCards('armour-helmet-list', 'h-armour-helmet', 'helmet', on ? [
+      { id: true, name: 'Bucket on', blurb: 'The dome, the T-visor and the grille. Nobody can tell who you are, which is the point of it.' },
+      { id: false, name: 'Bucket off', blurb: 'Your own head — your species, your face, your hair — over the plate. Held under one arm, in spirit.' },
+    ] : []);
+    this._armourCards('armour-cape-list', 'h-armour-cape', 'cape', on ? [
+      { id: null, name: 'As the set', blurb: 'Whatever this kit is issued. Only the Commander is issued one.' },
+      { id: true, name: 'Half-cape', blurb: 'The short military cape off one shoulder, pinned round the collar plate.' },
+      { id: false, name: 'None', blurb: 'Nothing behind the shoulders. Nothing to catch on a bulkhead.' },
+    ] : []);
+    /* Three racks off one table. `null` — the leading dashed swatch — is the
+     * armour's own colour, which is the same "as issued" the barracks page
+     * offers and for the same reason: a player has to be able to see what
+     * leaving a slot alone gets them. */
+    this._armourSwatches('armour-plate-list', 'plate', on);
+    this._armourSwatches('armour-accent-list', 'accent', on);
+    this._armourSwatches('armour-visor-list', 'visor', on);
+    const ph = document.getElementById('h-armour-paint');
+    if (ph) ph.style.display = on ? '' : 'none';
+  }
+
+  /** One row of the armoury, writing a single field of `wardrobe.armour`. */
+  _armourCards(hostId, headId, field, list) {
+    const host = document.getElementById(hostId), head = headId && document.getElementById(headId);
+    if (!host) return;
+    host.innerHTML = '';
+    const A = wardrobeOf(this.s.wardrobe).armour;
+    for (const it of list) {
+      const d = document.createElement('div');
+      d.className = 'diff' + (A[field] === it.id ? ' sel' : '');
+      d.innerHTML = `<i class="dot"></i><div class="txt"><b>${it.name}</b><span>${it.blurb || ''}</span></div>`;
+      this._activate(d, () => {
+        audio.ui('click');
+        this._wearArmour(field, it.id);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === d));
+        /* Picking a SET turns the other four rows on or off, so they are
+         * redrawn — the same redraw the species row does to the hair row. */
+        if (field === 'id') this._armourRows();
+      });
+      host.appendChild(d);
+    }
+    if (head) head.style.display = list.length ? '' : 'none';
+  }
+
+  /** One paint rack of the armoury. `PAINTS`, with "as issued" first. */
+  _armourSwatches(hostId, field, on) {
+    const host = document.getElementById(hostId);
+    if (!host) return;
+    host.innerHTML = '';
+    if (!on) return;
+    const A = wardrobeOf(this.s.wardrobe).armour;
+    const rack = [{ id: null, name: 'As issued', hex: null }, ...PAINTS.map((p) => ({ id: p.id, name: p.name, hex: p.color }))];
+    for (const c of rack) {
+      const sw = document.createElement('div');
+      sw.className = 'sw' + ((A[field] ?? null) === c.id ? ' sel' : '');
+      if (c.hex == null) sw.style.borderStyle = 'dashed';
+      else sw.style.background = '#' + c.hex.toString(16).padStart(6, '0');
+      sw.title = c.name;
+      this._activate(sw, () => {
+        audio.ui('click');
+        this._wearArmour(field, c.id);
+        [...host.children].forEach(x => x.classList.toggle('sel', x === sw));
+      });
+      host.appendChild(sw);
+    }
+  }
+
+  /**
+   * Write one field of the armour sheet, through `wardrobeOf` like `_wear`.
+   *
+   * Separate from `_wear` because the armour is the one key in the wardrobe
+   * that is an OBJECT — see its note in `Cloth.WARDROBE` — so a write is a
+   * merge into it rather than a replacement of it.
+   */
+  _wearArmour(field, value) {
+    const A = { ...wardrobeOf(this.s.wardrobe).armour, [field]: value };
+    this._wear('armour', A);
+  }
+
   /** A card row bound to a key of the wardrobe rather than to a setting. */
   _wardrobeCards(hostId, headId, key, list) {
     const host = document.getElementById(hostId), head = headId && document.getElementById(headId);
@@ -6411,7 +6663,7 @@ export class Menu {
       // was choosing blind — and skin and hair were not choices at all. A
       // character creator you cannot see is a settings screen.
       try {
-        const built = buildJedi({
+        const built = buildPlayerBody({
           robeIndex: this.s.robeIndex ?? 1,
           skinColor: (this._skinRack()[this.s.skinIndex] || this._skinRack()[0]).hex,
           hairColor: (HAIR_COLORS[this.s.hairIndex] || HAIR_COLORS[1]).hex,
@@ -6425,6 +6677,14 @@ export class Menu {
            * live bodies in a running world are re-hooded by `applyWardrobe`
            * instead, which does not have the luxury of rebuilding the figure. */
           hood: wardrobeOf(this.s.wardrobe).hood,
+          /* THE CLONE ARMOUR, and it is a BUILD argument for the same reason
+           * the hood on the line above is: it decides which builder makes the
+           * body (see `buildPlayerBody`), so it cannot be hung on afterwards.
+           * `_wear` calls `_refreshPreview(true)`, which is a full rebuild, so
+           * picking a kit or taking the bucket off shows immediately. */
+          armour: wardrobeOf(this.s.wardrobe).armour,
+          /* …and the torso cut, a build argument for the same reason. */
+          top: wardrobeOf(this.s.wardrobe).top,
           scale: 1,
         });
         p.figure = built;
@@ -6451,6 +6711,7 @@ export class Menu {
         if (a.cloak) p.cloth.push(a.cloak);
         if (a.skirt) p.cloth.push(a.skirt);
         if (a.lekku) for (const l of a.lekku.parts) p.cloth.push(l);
+        if (a.hairTail) for (const l of a.hairTail.parts) p.cloth.push(l);
         p.content = a.content;
         // the drag turns about the middle of the shot — see the pivot
         p.pivot.position.y = -(p.content.y0 + p.content.y1) / 2;

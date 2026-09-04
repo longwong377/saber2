@@ -11,7 +11,7 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
-import { buildJedi, speciesOf } from '../game/Bodies.js';
+import { buildPlayerBody, speciesOf } from '../game/Bodies.js';
 import { Rig, BipedAnimator } from '../game/Rig.js';
 import { Saber } from '../game/Saber.js';
 import { SKIN_TONES, HAIR_COLORS } from '../ui/Menu.js';
@@ -102,8 +102,13 @@ export const PEER_TIMEOUT = 8;
  * established is the correlation, the size of it, and that the avatar packet
  * is the wrong place to fix it blind.
  */
+/* `wardrobe` rides here as of V15 §2's clone armour. It is one object like
+ * `face` is, and it is the key that decides WHICH BUILDER makes the body — see
+ * `buildPlayerBody` in Bodies.js. Without it a player in full plate is drawn on
+ * every other machine in robes, which is not a cosmetic desync of the kind the
+ * note above weighs: it is a different person. */
 export const LOOK_KEYS = ['colorIndex', 'bladeLength', 'coreWidth', 'hiltStyle', 'robeIndex',
-  'skinIndex', 'hairIndex', 'build', 'species', 'face'];
+  'skinIndex', 'hairIndex', 'build', 'species', 'face', 'wardrobe'];
 
 export function packLook(settings = {}) {
   const out = {};
@@ -881,11 +886,15 @@ export class RemoteAvatar {
      * the choice, it substituted a different one.
      */
     const look = opts.look || opts;
-    const built = buildJedi({
+    const built = buildPlayerBody({
       robeIndex: look.robeIndex ?? 0, scale: 1,
       skinColor: skinHex(look.species, look.skinIndex),
       hairColor: HAIR_COLORS[look.hairIndex ?? 1]?.hex,
       build: look.build, species: look.species, face: look.face,
+      /* Plate or robes, and the wire says which — see LOOK_KEYS. An older peer
+       * that sends no wardrobe sends no armour, and `buildPlayerBody` answers
+       * `buildJedi` for that, which is exactly the body this line always made. */
+      armour: look.wardrobe?.armour, hood: look.wardrobe?.hood, top: look.wardrobe?.top,
     });
     this.look = look;
     this.rig = built.rig;

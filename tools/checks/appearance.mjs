@@ -120,7 +120,14 @@ export async function run({ check, assert }) {
     const menu = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
     assert(menu.includes('_refreshPreview(rebuild'), '_refreshPreview is gone');
     const body = functionBody(menu, '_refreshPreview(rebuild');
-    assert(/buildJedi\(/.test(body), 'the preview builds no figure');
+    /* `buildPlayerBody` and no longer `buildJedi`: V15 §2's clone armour made
+     * the player's body a CHOICE between two builders, and the preview has to
+     * make the same choice the game does or it is showing you somebody else.
+     * `buildPlayerBody` is the seam — it answers `buildJedi` for a body in
+     * robes, which is every figure this check measured before it existed. */
+    assert(/buildPlayerBody\(/.test(body), 'the preview builds no figure');
+    assert(/armour/.test(body),
+      'the preview ignores the armour, so picking a kit would show robes');
     assert(/skinColor/.test(body) && /hairColor/.test(body) && /robeIndex/.test(body),
       'the preview figure ignores at least one of the three appearance choices');
     // and picking any of them has to rebuild it, or the preview lies
