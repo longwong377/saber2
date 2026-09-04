@@ -1143,6 +1143,86 @@ export async function run({ check, assert }) {
     } finally { world.unload(); }
   });
 
+  check('companion: every kind is visibly bigger and visibly different after four runs', async () => {
+    /**
+     * *"A companion that has survived four runs should be visibly bigger and
+     * visibly different."*
+     *
+     * ── AND TWO OF TWELVE WERE BYTE-IDENTICAL ────────────────────────────
+     *
+     * A hostile pass built every kind at `{runs: 0}` and at `{runs: 16, care:
+     * 14}` and read the geometry back. Ten changed. The tooka and the hawk did
+     * not — no `grow` block at all, so `bodyScaleOf` returned the archetype's
+     * scale unchanged and no mark was ever asked for. Two rows nobody filled
+     * in, and nothing in this suite asked, because every growth clause here
+     * named a kind that has one.
+     *
+     * SO IT IS DRIVEN ACROSS `COMPANION_ORDER` AND NOT A LIST, on the shipped
+     * build call, and the two halves are asserted separately because they are
+     * two different promises: BIGGER is `bodyScaleOf`, which is one number and
+     * cheap; DIFFERENT is geometry, and is read as a vertex count off the real
+     * body — a mark that is merged into an existing mesh moves no mesh count
+     * and no bounding box, which is how the astromech's dish and the B1's
+     * plate looked like nothing happening.
+     */
+    const { ARCHETYPES } = await import('../../src/game/Enemy.js');
+    await import('../../src/game/Levels.js');
+    const FRESH = { runs: 0, meals: 0, grooms: 0 };
+    const VETERAN = { runs: 16, meals: 14, grooms: 14 };
+    const verts = (root) => {
+      let n = 0;
+      root.traverse((o) => { if (o.isMesh && o.geometry?.attributes?.position) n += o.geometry.attributes.position.count; });
+      return n;
+    };
+    const flat = [], rows = [];
+    for (const id of K.COMPANION_ORDER) {
+      const kind = K.COMPANION_KINDS[id];
+      const A = ARCHETYPES[kind.archetype ?? id];
+      const s0 = K.bodyScaleOf(id, FRESH), s1 = K.bodyScaleOf(id, VETERAN);
+      /* THE MARK RIDES THE BUILD THE WAY `fieldCompanion` SENDS IT: `grown` is
+       * the maturity and `marks` is the kind's own id. Spelled here the way
+       * CompanionDeck spells it, so a build that stopped reading either would
+       * fail rather than be quietly ignored. */
+      const g = kind.grow || null;
+      const a = A.build({ scale: s0, grown: 0, marks: null });
+      const b = A.build({ scale: s1, grown: K.maturityOf(VETERAN), marks: g?.marks || null });
+      const grew = s1 / s0;
+      const va = verts(a.rig?.root || a.root || a), vb = verts(b.rig?.root || b.root || b);
+      rows.push(`${id} ×${grew.toFixed(2)} ${va}→${vb}v`);
+      /**
+       * TWO WAYS TO CHANGE AND A KIND MUST DO ONE, and which one is the row's
+       * own declaration rather than this file's opinion. An ORGANIC grows —
+       * `to > 1`, and the size is the visible half. A MACHINE is FITTED —
+       * `to === 1`, and a droid that got taller with age would be a droid
+       * nobody built; what an astromech gains is a dish, and a B1 gains plate,
+       * merged into the meshes they already have. So the machine half is read
+       * as VERTICES, which is the only place a merged mark shows: the mesh
+       * count and the bounding box do not move for either of them, which is
+       * exactly how they looked like nothing happening.
+       */
+      if (!g) { flat.push(`${id} declares no growth at all`); continue; }
+      if ((g.to ?? 1) > 1) {
+        if (grew < 1.05) flat.push(`${id} declares ×${g.to} and measured ×${grew.toFixed(2)}`);
+      } else if (vb <= va) {
+        flat.push(`${id} is fitted rather than grown and gained no geometry — `
+          + `${va} vertices either way, so the "${g.marks}" it declares is a promise nothing keeps`);
+      }
+    }
+    assert(!flat.length,
+      `${flat.length} of ${K.COMPANION_ORDER.length} kinds do not change:\n      ${flat.join('\n      ')}`);
+    /* AND EVERY DECLARED MARK IS A MARK THE TABLE KNOWS, so a typo in a `grow`
+     * row is a red rather than a silently absent feature. */
+    for (const id of K.COMPANION_ORDER) {
+      const g = K.COMPANION_KINDS[id].grow;
+      if (!g?.marks) continue;
+      assert(K.GROWTH_MARKS[g.marks],
+        `${id} grows "${g.marks}" and GROWTH_MARKS has no such mark — the player is told nothing`);
+    }
+    const fitted = K.COMPANION_ORDER.filter((id) => (K.COMPANION_KINDS[id].grow?.to ?? 1) === 1);
+    return `${K.COMPANION_ORDER.length} kinds all change: ${K.COMPANION_ORDER.length - fitted.length} `
+      + `grow, ${fitted.length} are fitted (${fitted.join(', ')}) — ${rows.join(', ')}`;
+  });
+
   check('companion: the colours you pick reach the geometry — every kind, every slot', async () => {
     /**
      * "you can customize their appearance to a degree"
@@ -4571,7 +4651,27 @@ export async function run({ check, assert }) {
      * the old defect back.
      */
     assert(growers >= 2, `${growers} kinds grow — V15 §4 is about companions, not about one pup`);
-    assert(still >= 1, 'every kind grows — the two that stay the same say something by staying the same');
+    /**
+     * ── AND THIS CLAUSE USED TO DOCUMENT THE DEFECT AS A DECISION ────────
+     *
+     * It asserted `still >= 1` — "the two that stay the same say something by
+     * staying the same". They were not saying anything. The tooka and the hawk
+     * had no `grow` row at all, so `bodyScaleOf` returned the archetype's
+     * scale and no mark was ever asked for, and a hostile pass measured them
+     * BYTE-IDENTICAL after sixteen runs and fourteen care acts — against the
+     * player's *"a companion that has survived four runs should be visibly
+     * bigger and visibly different."* Two rows nobody filled in, read back as
+     * restraint by the check that should have caught them.
+     *
+     * What is actually true, and is asserted now: EVERY kind declares a row.
+     * An organic grows (`to > 1`); a machine is FITTED (`to === 1`, marks
+     * only) — that distinction is real and the two branches above already
+     * hold it. What is not a design is an absent row.
+     */
+    const rowless = K.COMPANION_ORDER.filter((id) => !K.COMPANION_KINDS[id].grow);
+    assert(!rowless.length,
+      `${rowless.join(', ')} declare no growth at all — a kind with no row does not "stay the same" `
+      + 'on purpose, it was never filled in, and four runs leave it byte-identical');
 
     /* ── AND NOW ON THE BODY THE PLAYER ACTUALLY OWNS ────────────────────
      * Table assertions prove a curve. Only a spawn proves the wire: three of

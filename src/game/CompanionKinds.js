@@ -412,6 +412,23 @@ const KINDS = [
     verb: { id: 'cry', label: 'CRY', caption: 'Make every one of them look at you' },
     blurb: 'Useless, and that is the entire point. You can pick it up, which spends '
       + 'a hand; its one use is being bait it will probably not survive.',
+    /* ── AND IT IS THE ONE THAT GROWS MOST, BECAUSE IT STARTS AS A KIT ─────
+     *
+     * A hostile pass built every kind at `{runs:0}` and at `{runs:16,
+     * care:14}` and read the vertex and mesh counts back. Ten of twelve
+     * changed. The tooka and the hawk were BYTE-IDENTICAL after sixteen runs
+     * and fourteen care acts — they had no `grow` block at all — against the
+     * player's *"a companion that has survived four runs should be visibly
+     * bigger and visibly different."* Two kinds that never change is not a
+     * design decision anybody wrote down; it is two rows nobody filled in.
+     *
+     * 1.42 is the largest curve on the table and it is the honest one: the
+     * label says KIT, and the thing a kitten does is stop being a kitten.
+     * `ridge` is the mark because it is the one treatment that lengthens the
+     * animal's line rather than armouring it — a bait animal that grew plate
+     * would be a different animal, and the row above says what this one is
+     * for. */
+    grow: { to: 1.42, marks: 'ridge' },
   },
   {
     id: 'tuk', label: "Tuk'ata whelp", archetype: 'tuk',
@@ -496,6 +513,15 @@ const KINDS = [
     verb: { id: 'spot', label: 'SPOT', caption: 'Climb, and show me all of them' },
     blurb: 'It never lands. Its whole contribution is sight, and you trade exposure '
       + 'for it: excellent in the open, suicidal in a crossfire.',
+    /* THE OTHER ONE THAT NEVER CHANGED. 1.26 rather than the tooka's 1.42
+     * because a thing that has to stay in the air cannot double its mass and
+     * keep the flight plan honest — `float` and the leash ladder are measured
+     * against this body. `plates` sits on the FLANK and stays out of the
+     * primary hull (see `buildQuadruped`'s own note on why the two marks are
+     * opposite), which is what a keel hardening looks like from below and is
+     * the only place on a flyer a feature can be added without touching the
+     * silhouette a blade has to miss. */
+    grow: { to: 1.26, marks: 'plates' },
   },
   {
     id: 'astro', label: 'Astromech', archetype: 'astro',

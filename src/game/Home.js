@@ -582,7 +582,7 @@ export function dressHome(world, st, M, opts = {}) {
      * owner to fight over.
      */
     edits: 0,
-    surfaces: null, mirror: null, galley: null, sign: null, wheel: null, draws: 0,
+    surfaces: null, mirror: null, galley: null, panel: null, sign: null, wheel: null, draws: 0,
     /** Every mesh this dressing put in the room's group — see `undressOne`. */
     built: [],
   };
@@ -596,6 +596,7 @@ export function dressHome(world, st, M, opts = {}) {
   dressSurfaces(world, h);
   dressMirror(world, h);
   dressGalley(world, h);
+  dressPanel(world, h);
   dressSign(world, h);
   for (const p of state.pieces) spawnPiece(world, h, p);
   /* ONE WHEEL LISTENER PER WORLD, NOT PER ROOM. The wheel turns the piece in
@@ -754,6 +755,78 @@ function dressGalley(world, h) {
     h.draws++;
   }
   h.galley = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: bm };
+}
+
+/**
+ * ══ THE SWATCH PANEL — V15 §1.3.2's *"wall, floor, trim and light colour"* ══
+ *
+ * ── A VERB WITH NO KEY IS NOT A VERB, AND THAT IS WHAT THIS WAS ───────────
+ *
+ * `cycleSurface` has existed since the home landed, under a note calling it
+ * "what a fixture's verb does" — and there was no fixture and no verb.
+ * `grep -rn "cycleSurface" src/` found ZERO callers. A hostile pass drove it
+ * the way a player would, twelve wheel notches and twelve presses inside a
+ * real cabin, and read the wall back: `hull` before, `hull` after. The suite
+ * was green because `home.mjs` calls `setSurface(world, slot, key)` directly —
+ * a check reading a function the player has no key for, which is exactly the
+ * dead control this tree keeps deleting.
+ *
+ * ── THE GRAMMAR IS THE ONE THE ROOM ALREADY SPEAKS ────────────────────────
+ *
+ * Standing at the panel, THE KEY STEPS THE SLOT and THE WHEEL STEPS THE
+ * COLOUR — floor, then wall, then trim, and the wheel runs that row. That is
+ * `homeWheel`'s own sentence one screen down ("the wheel says WHAT and the key
+ * says WHERE") turned ninety degrees, and it means the room needs no second
+ * interface to paint itself: §14's "the station adds no interface" holds.
+ *
+ * A FIXTURE AND NOT A PIECE, for the galley's reason: a swatch panel you could
+ * pick up, rotate and drop behind the bunk is a control a player can lose.
+ */
+const PANEL_REACH = 2.4;
+
+function dressPanel(world, h) {
+  const { w, d } = h.spot;
+  const lx = -w / 2 + 0.22, lz = -d / 2 + 1.1;
+  const plate = slabGeo(0.10, 1.0, 0.72, { bevel: 0.02 }); plate.translate(0, 1.35, 0);
+  const pm = new THREE.Mesh(plate, h.M.wing);
+  pm.name = 'home-swatch';
+  pm.position.copy(toWorld(h, lx, lz));
+  pm.quaternion.setFromAxisAngle(UP, h.spot.yaw);
+  h.group.add(pm);
+  h.draws++;
+  /* THREE CHIPS, ONE PER SLOT, and they are the live materials — so the panel
+   * is the room's own answer to what colour it is rather than a picture of
+   * one. `repaintPanel` swaps them when a slot changes. */
+  const chips = [];
+  for (let i = 0; i < SURFACE_SLOTS.length; i++) {
+    const g = slabGeo(0.04, 0.2, 0.56, { bevel: 0 });
+    g.translate(0, 1.68 - i * 0.3, 0);
+    const cm = new THREE.Mesh(g, h.M[h.state.surfaces[SURFACE_SLOTS[i]]] || h.M.hull);
+    cm.name = `home-swatch-${SURFACE_SLOTS[i]}`;
+    cm.position.copy(toWorld(h, lx + 0.06, lz));
+    cm.quaternion.setFromAxisAngle(UP, h.spot.yaw);
+    h.group.add(cm);
+    h.draws++;
+    chips.push(cm);
+  }
+  h.panel = { lx, lz, at: toWorld(h, lx, lz).clone(), mesh: pm, chips, slot: 0 };
+}
+
+/** The chips say what the room says. Called on every surface change. */
+function repaintPanel(h) {
+  const P = h?.panel;
+  if (!P) return;
+  for (let i = 0; i < SURFACE_SLOTS.length; i++) {
+    const m = h.M[h.state.surfaces[SURFACE_SLOTS[i]]];
+    if (m && P.chips[i]) P.chips[i].material = m;
+  }
+}
+
+/** Is the player standing at the swatch panel? */
+export function atPanel(world) {
+  const h = world?._home;
+  const p = world?.player?.position;
+  return !!(h?.panel && p && p.distanceTo(h.panel.at) < PANEL_REACH);
 }
 
 /**
@@ -961,6 +1034,7 @@ export function setSurface(world, slot, key) {
   h.state.surfaces[slot] = key;
   const mesh = h.surfaces?.[slot];
   if (mesh) mesh.material = h.M[key];
+  repaintPanel(h);
   h.dirty = true; h.edits++;
   return key;
 }
@@ -1070,6 +1144,16 @@ export function homeKey(world, opts = {}) {
     return true;
   }
 
+  /* AND THE SWATCH PANEL. The key steps WHICH surface you are painting; the
+   * wheel runs its colours. See `dressPanel` for why it is that way round. */
+  if (atPanel(world)) {
+    const P = h.panel;
+    P.slot = (P.slot + 1) % SURFACE_SLOTS.length;
+    const slot = SURFACE_SLOTS[P.slot];
+    world.notify?.(slot.toUpperCase(), `${h.state.surfaces[slot]} — wheel to change it`);
+    return true;
+  }
+
   const aim = aimOnFloor(world, h, opts);
   if (!aim) return false;
 
@@ -1107,6 +1191,9 @@ export function homeWheel(world, notches) {
   if (!h || !notches) return false;
   if (h.held) { rotatePiece(world, notches); return true; }
   if (!inHome(world)) return false;
+  /* AT THE PANEL THE WHEEL PAINTS. Ahead of the catalogue, because a player
+   * standing at the swatches is not shopping for furniture. */
+  if (atPanel(world)) { cycleSurface(world, SURFACE_SLOTS[h.panel.slot], Math.sign(notches)); return true; }
   h.dial = ((h.dial + Math.sign(notches)) % CATALOGUE.length + CATALOGUE.length) % CATALOGUE.length;
   const c = CATALOGUE[h.dial];
   world.notify?.(c.name.toUpperCase(), `${c.w} × ${c.d} m — press to put one down`);

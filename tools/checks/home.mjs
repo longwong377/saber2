@@ -324,6 +324,80 @@ export async function run({ check, assert, near, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('home: the surfaces are painted with the key and the wheel, not with a function', async () => {
+    /**
+     * ── THE DEFECT THIS IS THE PIN FOR, AND THE CHECK WAS PART OF IT ──────
+     *
+     * `cycleSurface` shipped under a note calling it "what a fixture's verb
+     * does" and there was no fixture and no verb: zero callers in `src/`. A
+     * hostile pass drove it the way a player would — twelve wheel notches and
+     * twelve presses inside a real cabin — and read the wall back as `hull`
+     * before and `hull` after.
+     *
+     * The clause that was supposed to cover this called `setSurface(world,
+     * slot, key)` DIRECTLY. A check reading a function the player has no key
+     * for is a check that cannot see the only failure that matters, so this
+     * one goes through `stationKey` and `homeWheel` and touches neither
+     * `setSurface` nor `cycleSurface` by name.
+     */
+    const H = await import('../../src/game/Home.js');
+    const { clearStation } = await import('../../src/game/StationSave.js');
+    const { stationKey } = await import('../../src/game/Station.js');
+    clearStation();
+    const { world } = await station(44);
+    try {
+      const h = world._home;
+      /* AT THE PANEL, which is a fixture and has to be stood at. */
+      world.player.position.set(h.panel.at.x, h.y + 1.6, h.panel.at.z);
+      assert(H.atPanel(world), 'standing on the swatch panel does not read as being at it');
+      const before = { ...h.state.surfaces };
+
+      /* THE WHEEL PAINTS THE SLOT THE KEY IS ON. Nothing else is touched —
+       * a wheel at the panel that also dialled the catalogue would be the
+       * same press meaning two things, which is what the room forbids. */
+      const dial0 = h.dial;
+      H.homeWheel(world, 1);
+      assert(h.state.surfaces.floor !== before.floor,
+        `a wheel notch at the panel left the floor on ${h.state.surfaces.floor}`);
+      assert(h.dial === dial0, 'the wheel at the panel also dialled the furniture catalogue');
+
+      /* THE KEY STEPS THE SLOT, and it is the SAME key the room is entered
+       * with — `stationKey`, which is what `Player._readInput` calls. */
+      stationKey(world);
+      H.homeWheel(world, 1);
+      assert(h.state.surfaces.wall !== before.wall,
+        `the key did not move on to the wall — it is still ${h.state.surfaces.wall}`);
+      stationKey(world);
+      H.homeWheel(world, 1);
+      assert(h.state.surfaces.trim !== before.trim,
+        `the key did not reach the trim — it is still ${h.state.surfaces.trim}`);
+
+      /* THE ROOM ACTUALLY WEARS IT: the wall mesh's material is the one the
+       * record now names, not the one it was built with. */
+      const wallMat = h.surfaces?.wall?.material;
+      assert(wallMat === h.M[h.state.surfaces.wall],
+        'the record says one wall colour and the mesh is wearing another');
+      /* AND THE PANEL SAYS SO. A swatch that does not change is a swatch. */
+      const chip = h.panel.chips[1];
+      assert(chip.material === h.M[h.state.surfaces.wall],
+        'the panel is still showing the old wall colour');
+
+      /* IT IS DURABLE. A colour that does not survive the walk out is a
+       * colour the player chose and the station forgot. */
+      const painted = { ...h.state.surfaces };
+      H.leaveHome(world);
+      const { homeState } = await import('../../src/game/StationSave.js');
+      const kept = homeState()?.surfaces || null;
+      assert(kept && kept.wall === painted.wall && kept.floor === painted.floor
+        && kept.trim === painted.trim,
+        `the room was painted ${JSON.stringify(painted)} and the fold kept ${JSON.stringify(kept)}`);
+      return `three slots painted through the key and the wheel: `
+        + `${before.floor}/${before.wall}/${before.trim} → `
+        + `${painted.floor}/${painted.wall}/${painted.trim}, `
+        + 'the meshes and the panel wearing it, and it survived the walk out';
+    } finally { world.unload(); clearStation(); }
+  });
+
   check('home: the wheel means two things, and the key means four', async () => {
     const H = await import('../../src/game/Home.js');
     const { clearStation } = await import('../../src/game/StationSave.js');
