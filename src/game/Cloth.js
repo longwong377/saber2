@@ -26,6 +26,37 @@
  */
 
 import * as THREE from '../../vendor/three/three.module.js';
+
+/**
+ * ══ A COLLIDER LIST THAT DOES NOT ALLOCATE ════════════════════════════════
+ *
+ * Every `refreshColliders` in this file emptied its array and pushed a fresh
+ * `{ c: new Vector3(), r }` for every sphere, every garment, every frame.
+ * Twenty enemies in a cape is about three hundred and twenty objects a frame
+ * thrown straight at the collector, and `cloth-cost.mjs` measured the result:
+ * 7.11 to 7.26 ms of CPU against a 7.0 bound on a QUIET box — consistently
+ * over, and swinging half a millisecond run to run, which is the shape of GC
+ * and not of work.
+ *
+ * The list is consumed inside the same frame by `update()` and nothing retains
+ * it, so the objects can be written in place. `sphereInto` grows the owner's
+ * pool on demand and hands back the slot; a caller that pushes somebody else's
+ * sphere — `cloak.outer.proxy` is another garment's live particles — pushes it
+ * by reference exactly as before, which is why the pool is indexed by how many
+ * spheres THIS function has written rather than by the array's length.
+ */
+function sphereInto(owner, out, x, y, z, r) {
+  const pool = owner._spheres || (owner._spheres = []);
+  const n = owner._sphereN | 0;
+  let s = pool[n];
+  if (!s) { s = pool[n] = { c: new THREE.Vector3(), r: 0 }; }
+  s.c.set(x, y, z);
+  s.r = r;
+  owner._sphereN = n + 1;
+  out.push(s);
+  return s;
+}
+
 import { clamp, lerp, makeRng } from '../engine/MathUtil.js';
 import { limbScale } from './Rig.js';
 /**
@@ -2329,6 +2360,7 @@ export function attachCloak(scene, rig, opts = {}) {
   cloak.refreshColliders = () => {
     const out = cloak.colliders;
     out.length = 0;
+    cloak._sphereN = 0;
     for (let i = 0; i < bones.length; i++) {
       const b = rig.get(bones[i]);
       if (!b || b.severed) continue;
@@ -2336,7 +2368,7 @@ export function attachCloak(scene, rig, opts = {}) {
       // two spheres per bone so a thigh is a limb, not a marble
       for (const t of [0.25, 0.8]) {
         _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
-        out.push({ c: _v3.clone(), r: radii[i] * S });
+        sphereInto(cloak, out, _v3.x, _v3.y, _v3.z, radii[i] * S);
       }
     }
     /*
@@ -2358,7 +2390,7 @@ export function attachCloak(scene, rig, opts = {}) {
       hipsB.obj.updateMatrixWorld(false);
       for (let i = 0; i < skirt.length; i++) {
         _v3.set(0, skirt[i][0] * S, 0).applyMatrix4(hipsB.obj.matrixWorld);
-        out.push({ c: _v3.clone(), r: skirt[i][1] * S });
+        sphereInto(cloak, out, _v3.x, _v3.y, _v3.z, skirt[i][1] * S);
       }
     }
     return out;
@@ -2476,18 +2508,19 @@ export function attachTrooperCape(scene, rig, opts = {}) {
   cloak.refreshColliders = () => {
     const out = cloak.colliders;
     out.length = 0;
+    cloak._sphereN = 0;
     for (let i = 0; i < bones.length; i++) {
       const b = rig.get(bones[i]);
       if (!b || b.severed) continue;
       b.obj.updateMatrixWorld(false);
       for (const t of [0.25, 0.8]) {
         _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
-        out.push({ c: _v3.clone(), r: radii[i] * S });
+        sphereInto(cloak, out, _v3.x, _v3.y, _v3.z, radii[i] * S);
       }
     }
     chest.obj.updateMatrixWorld(false);
     back.set(0, 0.02 * S, -0.09 * S).applyMatrix4(chest.obj.matrixWorld);
-    out.push({ c: back.clone(), r: 0.17 * S });
+    sphereInto(cloak, out, back.x, back.y, back.z, 0.17 * S);
     return out;
   };
 
@@ -2863,13 +2896,14 @@ export function attachWaistCape(scene, rig, opts = {}) {
   cloak.refreshColliders = () => {
     const out = cloak.colliders;
     out.length = 0;
+    cloak._sphereN = 0;
     for (let i = 0; i < bones.length; i++) {
       const b = rig.get(bones[i]);
       if (!b || b.severed) continue;
       b.obj.updateMatrixWorld(false);
       for (const t of [0.3, 0.85]) {
         _v3.set(0, b.length * t, 0).applyMatrix4(b.obj.matrixWorld);
-        out.push({ c: _v3.clone(), r: radii[i] * S });
+        sphereInto(cloak, out, _v3.x, _v3.y, _v3.z, radii[i] * S);
       }
     }
     return out;
