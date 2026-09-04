@@ -638,6 +638,56 @@ export async function run({ check, assert, THREE }) {
 
   /* ════════════════════════════════════════════════════════════════════════ */
 
+  check('station: the window shows the same battle the flight deck sees', async () => {
+    /**
+     * V15 §1.3 asks for *"windows that look out on the same space battle the
+     * hangar sees"*, and §1.6 asks for it again from a Starfury. It is one
+     * thing, not two, and the way to keep it one thing is that both sides read
+     * `outsideLevel(world)` — the resolver `main.js` feeds by stashing
+     * `_pickedLevel` on the way in.
+     *
+     * ── AND THIS ASSERTS THE WIRING, BECAUSE THE WIRING IS WHAT BROKE ──────
+     *
+     * `hangar.mjs`'s own version of this check exists because `dressHangar`
+     * called `engine.sky.configureOrbit(...)` — `sky` is three's Preetham mesh
+     * and has no such method, the optional call swallowed it in silence, and
+     * every bullet of the spec's PLANET and BATTLE sections described a shader
+     * that had never run. `_coop.stubEngine` carries a real `SkyDome` now
+     * precisely so a suite can see that. Same call, same hazard, same test.
+     */
+    const { world, idle } = await station(40);
+    const { run: step } = await import('./_coop.mjs');
+    try {
+      const dome = world.engine?.skyDome;
+      assert(dome, 'the stub engine has no skyDome, so this check cannot see the bug it exists for');
+      assert(dome._orbit,
+        'dressing the station left no orbit on engine.skyDome — the glazed walls look at a '
+        + 'background colour, and #27\'s window onto the battle is a promise the code never keeps');
+      assert(dome.mat?.uniforms?.uOrbit?.value === 1,
+        'the orbit uniform is off, so nothing outside the glass is drawn whatever _orbit says');
+      /* THE SAME RECORD ON BOTH SIDES OF THE LIFT. Not "an orbit" — the one
+       * the deck would have shown, which is the whole of the ask. */
+      const { outsideLevel } = await import('../../src/game/Hangar.js');
+      assert(dome._orbit.level === outsideLevel(world),
+        'the station published a different theatre than outsideLevel resolves — two skies that '
+        + 'agree by coincidence do not stay agreeing');
+      /* AND THE FLEET IN REAL GEOMETRY, not just the shader. */
+      assert(world._deckBattle?.group?.parent,
+        'no fleet action outside the station — the shader window is there and dressDeckBattle is not');
+      const draws = world._deckBattle.group.children.length;
+      assert(draws > 0 && draws <= 24,
+        `the fleet outside is ${draws} draws; the deck's costs fourteen and the budget is §12.2's`);
+      /* IT STEPS. A fleet that never moves is a painting. */
+      const before = world._deckBattle.t;
+      step(world, 0.5, idle);
+      assert(world._deckBattle.t > before,
+        'stepStation does not step the battle, so the ships outside are frozen');
+      return `orbit on "${dome._orbit.level?.name || '?'}" · ${draws} instanced draws outside`;
+    } finally { world.dispose?.(); }
+  });
+
+  /* ════════════════════════════════════════════════════════════════════════ */
+
   check('station: an imported room that never arrives does not take the world with it', async () => {
     /**
      * THE FAILURE THIS EXISTS FOR WAS A THROWN ERROR ON THE BIGGEST SPACE IN

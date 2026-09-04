@@ -54,6 +54,9 @@ import { dressDeckLift, stepDeckLift, undressDeckLift, liftKey } from './DeckLif
 import { dressStationLife, stepStationLife, undressStationLife, dressTram } from './StationLife.js';
 import { dressObelisk, dressBoards, stepBoards } from './StationBoards.js';
 import { stationHour, setStationHour, stationName, setStationName, standing, DEFAULT_NAME, NAME_MAX } from './StationSave.js';
+import { outsideLevel } from './Hangar.js';
+import { dressDeckBattle, stepDeckBattle, undressDeckBattle } from './DeckBattle.js';
+import { TERRAIN_PRESETS } from '../world/Terrain.js';
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE THREE DECKS' PALETTES — §3.1 rule 2                                   */
@@ -768,6 +771,44 @@ export function dressStation(world) {
   dressObelisk(world, st, M);
   dressBoards(world, st, M);
 
+  /* ── AND WHAT IS OUTSIDE THE GLASS ─────────────────────────────────────
+   *
+   * V15 §1.3: the home's *"windows that look out on the same space battle the
+   * hangar sees."* §1.6 asks for the same thing from a Starfury. It is not two
+   * features and it is not new art: it is the two calls the flight deck
+   * already makes, made from here.
+   *
+   * `main.js` ALREADY resolves the theatre onto the station's world — it sets
+   * `_pickedLevel` on the way in, through the same resolver the deck uses — so
+   * `outsideLevel` answers the same record on both sides of the lift and the
+   * planet outside deck 32's aperture is the planet outside #27's window. That
+   * is the whole point of doing it this way rather than giving the station a
+   * sky of its own: two skies that agree by coincidence do not stay agreeing.
+   *
+   * TWO LAYERS, BOTH THE DECK'S:
+   *   `configureOrbit` is the shader window — planet, star, limb, starfield,
+   *     at no draw calls at all.
+   *   `dressDeckBattle` is the fleet action in real geometry: fourteen
+   *     instanced draws, `fog:false`, stepped by `stepStation`.
+   *
+   * `forward` is +Z because that is the axis every glazed wall in the drum
+   * faces: `walls(..., {glaze:true})` puts its glass on +Z in the place's own
+   * frame, and a place's frame faces out of the drum. So the disc sits in the
+   * window from inside the room, which is where somebody is standing.
+   */
+  const shown = outsideLevel(world);
+  world.engine?.skyDome?.configureOrbit?.({
+    level: shown,
+    terrain: TERRAIN_PRESETS[shown?.terrain],
+    faction: world._deckFaction,
+    forward: [0, 0, 1],
+    /* Lower than the deck's 0.22: the drum's windows are tall and start at
+     * waist height, so the disc wants to sit ON the horizon of the glass
+     * rather than 13° up where the soffit would cut it. */
+    rise: 0.10,
+  });
+  if (shown) dressDeckBattle(world);
+
   /* ── AND SOMETHING TO THROW, from the first frame (§6 step 1). The station
    * is a sandbox and the cheapest proof of it is a crate in your hands. */
   const y = DECK_Y[deck];
@@ -786,6 +827,13 @@ export function undressStation(world) {
     rec.group.traverse((o) => { if (o.isMesh) o.geometry?.dispose?.(); });
   }
   st.places.clear();
+  /* WHAT IS OUTSIDE GOES DOWN TOO, and the shader window is CLEARED rather
+   * than left set: `configureOrbit(null)` is what stops a ground deployed
+   * after a station visit finding a planet still published on the broker and
+   * lighting itself off it. `SkyDome.configureOrbit` says so in as many words
+   * at its own null branch, and the deck learned it the hard way. */
+  undressDeckBattle(world);
+  world.engine?.skyDome?.configureOrbit?.(null);
   world._station = null;
   world.floorAt = null;
 }
@@ -1054,6 +1102,10 @@ export function stepStation(world, dt) {
    * be later in the same day, not a localStorage write sixty times a second. */
   if ((st.hour | 0) !== st._savedHour) { st._savedHour = st.hour | 0; setStationHour(st.hour); }
   stepBoards(world, st, dt);
+  /* The fleet outside the glass. Its own step is a no-op when nothing was
+   * dressed, so this is unconditional and costs one call on a station whose
+   * theatre could not be resolved. */
+  stepDeckBattle(world, dt);
 
   const cam = world.player?.camera?.obj || world.player;
   if (!cam) return;

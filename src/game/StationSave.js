@@ -26,7 +26,32 @@
  * from a run's ending, and `clearStation()` exists only for a check.
  */
 
+import { makeStore } from './Store.js';
+
 const KEY = 'saber.station.v1';
+
+/**
+ * ── ONE STORAGE POLICY, AND THIS FOLD IS UNDER IT NOW ─────────────────────
+ *
+ * This file did its own `try { localStorage.setItem(...) } catch {}`, which is
+ * exactly the shape `Store.js` was written to end: a refused write — private
+ * browsing, a full quota — was swallowed and nothing anywhere knew. The name
+ * on the board and the clock survive that badly enough; V15 §1.3 then puts the
+ * PLAYER'S HOME in this same fold, with *"the option of saving it so you don't
+ * lose all the work if you die"* as its whole point. A home that silently
+ * stops saving is the failure `Store.js`'s header calls the worst this tree
+ * can have.
+ *
+ * `makeStore` distinguishes the three cases this file could not: an absent key
+ * on a working store is an EMPTY record, a refused write is remembered in
+ * memory AND flagged, and a `drop()` is a real delete rather than something
+ * the mirror undoes.
+ */
+const store = makeStore(KEY);
+
+/** True once a write has been refused. A screen's cue to say the fold is not
+ * reaching the disk — see `Store.js`. */
+export function stationBroken() { return store.broken; }
 
 /**
  * The default station, and it has a NAME rather than a blank.
@@ -61,11 +86,7 @@ let _cache = null;
 
 function read() {
   if (_cache) return _cache;
-  let v = null;
-  try {
-    const raw = globalThis.localStorage?.getItem(KEY);
-    if (raw) v = JSON.parse(raw);
-  } catch { v = null; }
+  const v = store.read();
   /* A missing or unreadable fold is a NEW station, not an error and not a
    * half-populated object: every field is defaulted from `blank()` and only
    * the ones actually stored are laid over it, so a fold written by an older
@@ -78,7 +99,7 @@ function read() {
 
 function write(v) {
   _cache = v;
-  try { globalThis.localStorage?.setItem(KEY, JSON.stringify(v)); } catch {}
+  store.write(v);
   return v;
 }
 
@@ -129,4 +150,4 @@ export function homeState() { return read().home; }
 export function setHomeState(v) { const s = read(); s.home = v; return write(s).home; }
 
 /** Start again. Only a check calls this. */
-export function clearStation() { _cache = null; write(blank()); return read(); }
+export function clearStation() { store.drop(); _cache = null; return read(); }
