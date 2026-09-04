@@ -403,6 +403,126 @@ export async function run({ check, assert, near }) {
   });
 
   /* ══════════════════════════════════════════════════════════════════ */
+  /*  the sex axis — V15 §2                                             */
+  /* ══════════════════════════════════════════════════════════════════ */
+
+  check('creator: a woman is the same figure at a different ratio, and costs nothing', () => {
+    /**
+     * V15 §2: *"you should also be able to play as a woman of any star wars
+     * species obviously feminine … breast and glute sliders."*
+     *
+     * ── THREE THINGS, AND THE THIRD IS THE ONE A SUITE USUALLY MISSES ────
+     *
+     * 1. `sex: 0` IS THE IDENTITY, to the vertex. Everything the game has
+     *    ever built goes through `buildJedi`, and a settings blob written
+     *    before this axis existed must produce the same body it always did.
+     * 2. IT COSTS NOTHING. The Jedi stands at 12,924 triangles of a 13,000 cap
+     *    and 66 meshes of 76 — the check below this one is the record of how
+     *    little room there is. A lathe's radius is a FUNCTION, so a different
+     *    figure is a different function of the same vertices, and the whole of
+     *    this workstream spends none of that headroom.
+     * 3. IT REACHES THE GEOMETRY. A slider that clamps, saves, redraws its
+     *    label and moves nothing would pass 1 and 2 perfectly. So the two
+     *    measurements `Bodies.BUILD_RANGE`'s own header names as the
+     *    dimorphic ones — shoulder-to-hip and waist-to-hip — are measured off
+     *    the three torso lathes, and the two sliders are measured where they
+     *    are supposed to act and nowhere else.
+     */
+    const W = { face: { sex: 1, bust: 0.5, seat: 0.5 } };
+
+    /* 1. the identity, and it is the vertex digest and not a mesh count */
+    const base = digest(unit({}));
+    assert(digest(unit({ face: { sex: 0 } })) === base,
+      'sex: 0 is not the figure the game shipped — every saved character just changed shape');
+    assert(digest(unit({ face: { sex: 0, bust: 1, seat: 1 } })) === base,
+      'the shape sliders act at sex 0, so they are not multiplied by the axis and a masculine '
+      + 'figure moves when a slider nobody showed him is dragged');
+    assert(digest(unit(W)) !== base, 'the axis moves nothing at all');
+
+    /* 2. the cost, at both ends and across every species */
+    const human = cost(unit({}).rig.root);
+    for (const sp of SPECIES) {
+      const m = cost(unit({ species: sp.id }).rig.root);
+      const w = cost(unit({ species: sp.id, face: { sex: 1, bust: 1, seat: 1 } }).rig.root);
+      assert(w.meshes === m.meshes,
+        `a ${sp.id} woman is ${w.meshes - m.meshes} meshes more than the man — the axis is meant to `
+        + 'be a different function of the same vertices, and there are ten meshes of headroom in total');
+      assert(w.tris === m.tris, `a ${sp.id} woman is ${w.tris - m.tris} triangles more than the man`);
+      assert(w.tris < 13000 && w.meshes < 76, `${sp.id} at sex 1 is ${w.tris}/${w.meshes} of 13000/76`);
+    }
+
+    /**
+     * 3. THE RATIOS, OFF THE LATHES' OWN DECLARED RADII.
+     *
+     * `addLimb` records `userData.limb = { r0, r1 }` on every mesh it makes —
+     * what the lathe was actually built with — and the three torso segments
+     * run hipR→waistR, waistR→chestR and chestR→shoulderR. So the three
+     * measurements are read from the geometry that exists rather than from
+     * the parts bag that made it, and without sampling vertices at all.
+     *
+     * Sampling was the first cut and it was wrong twice: a lathe is DOMED at
+     * its ends (`capY1`), and the cap's rings are part of the same mesh — so
+     * "the topmost ring" was a 5 cm cap apex rather than the 14 cm shoulder
+     * line, and the ratio read as going UP.
+     */
+    const lathe = (built, bone) => {
+      const m = built.rig.get(bone)?.primary;
+      assert(m?.userData?.limb, `no ${bone} lathe on the figure`);
+      return m.userData.limb;
+    };
+    const man = unit({}), woman = unit(W);
+    const shoulder = (b) => lathe(b, 'chest').r1;
+    const hip = (b) => lathe(b, 'hips').r0;
+    const waist = (b) => lathe(b, 'hips').r1;
+    const rS = (shoulder(woman) / hip(woman)) / (shoulder(man) / hip(man));
+    const rW = (waist(woman) / hip(woman)) / (waist(man) / hip(man));
+    assert(rS < 0.85,
+      `shoulder-to-hip only fell to ${(rS * 100).toFixed(0)}% of the man's — that is the first of the `
+      + 'two measurements BUILD_RANGE names as the dimorphic ones, and it has to move');
+    assert(rW < 0.90, `waist-to-hip only fell to ${(rW * 100).toFixed(0)}% of the man's`);
+
+    /**
+     * THE TWO SLIDERS, each measured on the vertices where it acts and nowhere
+     * else. The bust is a swell on the FRONT of the ribcage, so front must
+     * gain while the back loses; the seat is a swell on the BACK of the
+     * pelvis, so the reverse. A term that scaled the whole section would
+     * satisfy neither, which is the point — this is what tells a shape from a
+     * size. Interior rings only, for the cap reason above.
+     */
+    const v = new THREE.Vector3();
+    const station = (built, bone) => {
+      const m = built.rig.get(bone).primary;
+      const pos = m.geometry.attributes.position;
+      const rows = new Map();
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        const y = Math.round(v.y * 200) / 200;
+        let r = rows.get(y); if (!r) rows.set(y, r = { front: 0, back: 0, half: 0 });
+        r.front = Math.max(r.front, v.z * (m.scale?.z ?? 1));
+        r.back = Math.max(r.back, -v.z * (m.scale?.z ?? 1));
+        r.half = Math.max(r.half, Math.abs(v.x));
+      }
+      const ys = [...rows.keys()].sort((a, b) => a - b).slice(2, -2);
+      return rows.get(ys[0]);
+    };
+    const cm = station(man, 'chest'), cw = station(unit({ face: { sex: 1, bust: 1, seat: 0.5 } }), 'chest');
+    assert(cw.front > cm.front * 1.05,
+      `the bust slider at full moved the front of the ribcage by ${((cw.front / cm.front - 1) * 100).toFixed(0)}%`);
+    assert(cw.back < cm.back,
+      'the bust widened the BACK of the ribcage too — that is a bigger barrel, not a bust');
+    const hm = station(man, 'hips'), hw = station(unit({ face: { sex: 1, bust: 0.5, seat: 1 } }), 'hips');
+    assert(hw.back > hm.back * 1.15,
+      `the glute slider at full moved the back of the pelvis by ${((hw.back / hm.back - 1) * 100).toFixed(0)}%`);
+    assert(hw.back / hw.front > hm.back / hm.front,
+      'the seat grew forward as much as back — that is a wider pelvis, not a seat');
+
+    return `sex 0 is the shipped figure to the vertex; ${SPECIES.length} species cost the same at both ends `
+      + `(${human.tris}/${human.meshes}); shoulder:hip ${(rS * 100).toFixed(0)}% and waist:hip `
+      + `${(rW * 100).toFixed(0)}% of the man's; bust +${((cw.front / cm.front - 1) * 100).toFixed(0)}% front, `
+      + `seat +${((hw.back / hm.back - 1) * 100).toFixed(0)}% back`;
+  });
+
+  /* ══════════════════════════════════════════════════════════════════ */
   /*  species                                                           */
   /* ══════════════════════════════════════════════════════════════════ */
 

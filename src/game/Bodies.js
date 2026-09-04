@@ -286,6 +286,30 @@ function bodySection(o = {}) {
   const n0 = o.n0 ?? 2.2, n1 = o.n1 ?? 3.0;
   const back = o.back ?? 0.05, keel = o.keel ?? 0.02;
   const waist = o.waist ?? 0;              // flank pinch, peaking mid-shaft
+  /**
+   * ── A SWELL AT ONE STATION, FRONT OR BACK ─────────────────────────────
+   *
+   * `keel` and `back` bias the whole shaft; these two bias ONE HEIGHT of it,
+   * which is the difference between a barrel and a body. Same idiom
+   * `calfSection` already uses for the calf — a Gaussian in `t` times a
+   * directional term in `th` — and for the same reason: mass sits somewhere
+   * on a limb, not everywhere along it.
+   *
+   * They are the mechanism V15 §2's *"breast and glute sliders"* run through,
+   * and the reason that ask costs NO GEOMETRY AT ALL: a lathe's radius is a
+   * function, so a figure is a different function of the same vertices. The
+   * budget it would otherwise have come out of is `creator.mjs`'s, where the
+   * Jedi already stands at 12,924 triangles of a 13,000 cap and 66 meshes of
+   * 76 — seventy-six triangles and ten meshes of headroom for the whole of
+   * this workstream. Nothing here spends any of it.
+   *
+   *   bust  forward swell, `bustAt` up the shaft, `bustW` wide
+   *   seat  rearward swell, `seatAt`, `seatW`
+   *
+   * Both default to zero, and zero is exact.
+   */
+  const bust = o.bust ?? 0, bustAt = o.bustAt ?? 0.18, bustW = o.bustW ?? 0.24;
+  const seat = o.seat ?? 0, seatAt = o.seatAt ?? 0.16, seatW = o.seatW ?? 0.26;
   return (th, t) => {
     const n = lerp(n0, n1, t);
     const si = Math.abs(Math.sin(th)), co = Math.abs(Math.cos(th));
@@ -294,6 +318,8 @@ function bodySection(o = {}) {
     if (back) r *= 1 - back * Math.max(0, -c) ** 1.6;
     if (keel) r *= 1 + keel * Math.max(0, c) ** 3;
     if (waist) r *= 1 - waist * si ** 2 * Math.sin(clamp(t, 0, 1) * Math.PI);
+    if (bust) { const u = (clamp(t, 0, 1) - bustAt) / bustW; r *= 1 + bust * Math.max(0, c) ** 1.5 * Math.exp(-(u * u)); }
+    if (seat) { const u = (clamp(t, 0, 1) - seatAt) / seatW; r *= 1 + seat * Math.max(0, -c) ** 1.3 * Math.exp(-(u * u)); }
     return r;
   };
 }
@@ -1962,6 +1988,62 @@ const FLESH_SECTIONS = {
   shin:  calfSection({ flat: 0.10, mass: 0.28, at: 0.28 }),
 };
 
+/**
+ * ══ THE SAME SIX SECTIONS, FOR A FEMININE FRAME ═══════════════════════════
+ *
+ * V15 §2: *"you should also be able to play as a woman of any star wars
+ * species obviously feminine … breast and glute sliders."*
+ *
+ * ── WHY THIS IS SECTIONS AND NOT A SECOND BODY ────────────────────────────
+ *
+ * `BUILD_RANGE`'s own header argues, correctly, that the frame slider is one
+ * axis rather than a gender switch, and names the reason: *"the shoulder-to-
+ * hip and waist-to-hip ratios are the sexually dimorphic measurements, and
+ * they are also the only ones that survive being seen from thirty metres in a
+ * robe."* That is not an argument against this — it is the specification for
+ * it. Those two ratios are exactly what `f` drives in `parts` below, and this
+ * function adds the two things a ratio cannot say: where on the torso the mass
+ * sits, front and back.
+ *
+ * A second hard-coded body would have given the player one woman. An axis
+ * gives them every point between, on all seven species, at no cost — and it
+ * composes with `build` and `muscle` instead of replacing them, so a heavy
+ * muscular woman and a slight one are both reachable and neither is a preset.
+ *
+ * `f` is 0 for the figure this file has always shipped, and every term below
+ * is `x * f` or `x * (1 + g*0)`, so f = 0 is the identity to the float.
+ */
+function fleshSections(f = 0, bust = 0.5, seat = 0.5) {
+  if (!(f > 0)) return FLESH_SECTIONS;
+  /* The sliders are 0..1 with 0.5 neutral, and they scale WITH `f` rather than
+   * beside it: a figure at f = 0 has no bust term to slide. */
+  const b = f * (0.14 + 0.20 * clamp(bust, 0, 1));
+  const g = f * (0.11 + 0.16 * clamp(seat, 0, 1));
+  return {
+    ...FLESH_SECTIONS,
+    /* The pelvis carries the seat; the flank pinch above it is `waist` on the
+     * spine, which `f` deepens in the same place the ratio narrows. */
+    hips: bodySection({ n0: 2.7 - 0.25 * f, n1: 2.4 - 0.2 * f, back: 0.05, keel: 0, seat: g }),
+    spine: bodySection({ n0: 2.4 - 0.2 * f, n1: 2.8 - 0.2 * f, back: 0.07, keel: 0.02,
+      waist: 0.055 + 0.075 * f }),
+    /**
+     * The ribcage carries the bust, LOW on this shaft — `addLimb('chest', …)`
+     * runs chestR at its base UP to shoulderR at its top, so the station a
+     * bust sits at is just above the join with the spine and not, as the
+     * default 0.62 would have put it, in the armpit. Measured: at 0.62 the
+     * swell landed on the shoulder line and the profile read as a uniform
+     * narrowing, which is what sent me looking.
+     *
+     * The exponent on the forward term (1.5) is softer than `keel`'s cube so
+     * the swell is a curve rather than a ridge down the sternum.
+     */
+    chest: bodySection({ n0: 2.8 - 0.3 * f, n1: 3.3 - 0.35 * f, back: 0.085, keel: 0.035 - 0.02 * f,
+      bust: b }),
+    arm: ovalSection(0.93 + 0.03 * f, 2.3 - 0.15 * f),
+    fore: ovalSection(0.86 + 0.04 * f, 2.4 - 0.15 * f),
+  };
+}
+
 /** The same idea for a machine: squarer plate, a flatter back, no muscle. */
 const CHASSIS_SECTIONS = {
   hips:  bodySection({ n0: 3.2, n1: 3.0, back: 0.04, keel: 0 }),
@@ -2343,7 +2425,7 @@ function buildOf(build) {
  * THE NEUTRAL SHEET IS THE IDENTITY, to the float: hair `temple`, beard `none`,
  * age 0, muscle 0.5 — and every use below is `x * (1 + g*0)` or `x + g*0`.
  */
-export const SHEET_KEYS = ['hair', 'beard', 'age', 'muscle'];
+export const SHEET_KEYS = ['hair', 'beard', 'age', 'muscle', 'sex', 'bust', 'seat'];
 
 /**
  * THE CUTS.
@@ -2446,8 +2528,40 @@ function sheetOf(opts = {}) {
   const beard = BEARD_BY_ID.get(pick('beard')) || BEARD_STYLES[0];
   const age = num(pick('age'), 0);
   const muscle = num(pick('muscle'), 0.5);
-  return { hair, beard, age, muscle, a: age, m: (muscle - 0.5) * 2 };
+  /**
+   * ── AND THE SEX AXIS RIDES HERE, FOR THE REASON THE HEADER ABOVE GIVES ──
+   *
+   * V15 §2 asks to *"play as a woman of any star wars species"* with *"breast
+   * and glute sliders"*. Three numbers, and they come in through `face` like
+   * `age` and `muscle` do, because the alternative is three more parameters
+   * through `Menu.DEFAULT_SETTINGS`, `SETTING_READERS`, `World.spawnPlayer`,
+   * `Player`'s two `buildJedi` calls and the menu's preview — five files this
+   * workstream does not own, to say one thing. The header ten lines up is the
+   * argument and it was written for exactly this case.
+   *
+   * `sex` is 0 for the figure this file has always shipped, so a settings blob
+   * written before this existed builds the same body it always did, to the
+   * float. `bust` and `seat` are 0..1 with 0.5 neutral and are multiplied by
+   * `sex` in `fleshSections`, so at sex 0 they are inert rather than merely
+   * small.
+   */
+  const sex = num(pick('sex'), 0);
+  const bust = num(pick('bust'), 0.5);
+  const seat = num(pick('seat'), 0.5);
+  return { hair, beard, age, muscle, sex, bust, seat, a: age, m: (muscle - 0.5) * 2, f: sex };
 }
+
+/**
+ * WHAT THE AXIS DOES TO A FACE, as a bias on the same eight numbers `AGE_FACE`
+ * biases — softer brow ridge, a smaller and rounder jaw, a shorter nose, a
+ * fuller cheek and larger-reading eyes. Orthogonal to both the preset and the
+ * years, for the reason `AGE_FACE`'s own note gives: a preset cannot express
+ * the product of two lists, let alone three.
+ *
+ * Deliberately restrained. At 8.55 mm a pixel the only face terms that survive
+ * are the ones that change an OUTLINE, and a jaw is the strongest of them.
+ */
+const SEX_FACE = { jaw: -0.62, brow: -0.45, chin: -0.30, nose: -0.28, cheek: 0.22, eyes: 0.30, skull: -0.12 };
 
 /**
  * WHAT THE YEARS DO TO A FACE, as a bias on the eight numbers.
@@ -3235,13 +3349,15 @@ function lipGeo(s, F, hg) {
  *
  * `age` at 0 adds exactly nothing and the no-species path still returns
  * `faceOf(face)` itself, so the neutral figure is unchanged object for object.
+ * `sex` is the same: 0 adds nothing and takes the same early return.
  */
-function faceFor(sp, face, age = 0) {
+function faceFor(sp, face, age = 0, sex = 0) {
   const chosen = faceOf(face);
-  if (!sp.face && !age) return chosen;
+  if (!sp.face && !age && !sex) return chosen;
   const out = {};
   for (const k of FACE_KEYS) {
-    out[k] = clamp(chosen[k] + (sp.face ? sp.face[k] || 0 : 0) + (AGE_FACE[k] || 0) * age, -1.2, 1.2);
+    out[k] = clamp(chosen[k] + (sp.face ? sp.face[k] || 0 : 0)
+      + (AGE_FACE[k] || 0) * age + (SEX_FACE[k] || 0) * sex, -1.2, 1.2);
   }
   return out;
 }
@@ -5020,9 +5136,33 @@ export function buildJedi(opts = {}) {
   const robe = (opts.robe && opts.robe.outer !== undefined)
     ? opts.robe : (ROBE_COLORS[opts.robeIndex ?? 0] || ROBE_COLORS[0]);
   const rig = new Rig(humanoidSkeleton(S, FR ? { armLen: FR.armLen, legLen: FR.legLen } : {}), { scale: S });
-  const F = faceFor(sp, opts.face, G.a);
+  const F = faceFor(sp, opts.face, G.a, G.f);
   const { k } = buildOf(opts.build);
   const mu = G.m;
+  /**
+   * ── THE SEX AXIS, AND EXACTLY WHAT IT MOVES ───────────────────────────
+   *
+   * `f` ∈ [0, 1], 0 being the figure this file has always shipped. Every term
+   * it appears in below is `x * (1 + g*f)`, so f = 0 is the identity to the
+   * float and `creator.mjs`'s digest of the neutral Jedi does not move.
+   *
+   * WHAT IT DRIVES is the pair of measurements `BUILD_RANGE`'s own header
+   * names as the dimorphic ones — shoulder-to-hip and waist-to-hip — plus the
+   * limb and neck girths that follow them. Nothing here adds geometry: the
+   * torso is three lathes and this changes their radii, and `fleshSections`
+   * changes their profile. The whole workstream has seventy-six triangles and
+   * ten meshes of headroom (`creator.mjs`'s 13,000/76 against the Jedi's
+   * measured 12,924/66) and it spends none of them.
+   *
+   *   shoulder 0.138 → 0.121   (−12%)      hip 0.138 → 0.155   (+12%)
+   *   waist    0.122 → 0.107   (−13%)      so shoulder:hip falls 1.00 → 0.78
+   *                                        and  waist:hip     falls 0.88 → 0.69
+   *
+   * Those are real anthropometric spreads and they are the two ratios that
+   * survive being seen from thirty metres in a robe, which is the bar that
+   * header sets and the reason no other term is worth moving.
+   */
+  const f = G.f;
 
   /**
    * Five cloth tones off a two-tone palette, not two.
@@ -5182,13 +5322,16 @@ export function buildJedi(opts = {}) {
     //
     // Measured across the range at the 8 m sampling density in
     // tools/checks/body-parts.mjs.
-    parts: { chestR: 0.162 * (1 + 0.105 * k + 0.055 * mu), shoulderR: 0.138 * (1 + 0.115 * k + 0.125 * mu),
-             hipR: 0.138 * (1 + 0.025 * k - 0.010 * mu), waistR: 0.122 * (1 + 0.135 * k - 0.028 * mu),
-             armR: 0.045 * (1 + 0.150 * k + 0.105 * mu), armR0: 0.052 * (1 + 0.165 * k + 0.115 * mu),
-             armR1: 0.039 * (1 + 0.130 * k + 0.060 * mu), foreR0: 0.044 * (1 + 0.150 * k + 0.105 * mu),
-             foreR1: 0.030 * (1 + 0.110 * k + 0.035 * mu),
-             clavR: 0.062 * (1 + 0.100 * k + 0.085 * mu), thighR: 0.090 * (1 + 0.120 * k + 0.075 * mu),
-             neckR: 0.058 * (1 + 0.135 * k + 0.090 * mu), torsoDepth: DEPTH },
+    parts: { chestR: 0.162 * (1 + 0.105 * k + 0.055 * mu - 0.045 * f), shoulderR: 0.138 * (1 + 0.115 * k + 0.125 * mu - 0.120 * f),
+             hipR: 0.138 * (1 + 0.025 * k - 0.010 * mu + 0.120 * f), waistR: 0.122 * (1 + 0.135 * k - 0.028 * mu - 0.125 * f),
+             armR: 0.045 * (1 + 0.150 * k + 0.105 * mu - 0.090 * f), armR0: 0.052 * (1 + 0.165 * k + 0.115 * mu - 0.095 * f),
+             armR1: 0.039 * (1 + 0.130 * k + 0.060 * mu - 0.080 * f), foreR0: 0.044 * (1 + 0.150 * k + 0.105 * mu - 0.090 * f),
+             foreR1: 0.030 * (1 + 0.110 * k + 0.035 * mu - 0.075 * f),
+             clavR: 0.062 * (1 + 0.100 * k + 0.085 * mu - 0.105 * f), thighR: 0.090 * (1 + 0.120 * k + 0.075 * mu + 0.055 * f),
+             neckR: 0.058 * (1 + 0.135 * k + 0.090 * mu - 0.110 * f), torsoDepth: DEPTH },
+    /* The profile, front and back — see `fleshSections`. Identical object to
+     * `FLESH_SECTIONS` at f = 0, not a copy of it. */
+    sections: fleshSections(f, G.bust, G.seat),
     // [amp, at, width]: the deltoid peaks 15% down the humerus and is spent by
     // 40%, which is where a deltoid inserts. Folded into the arm's own lathe
     // instead of bolted on as a ball — see dressHumanoid. Its amplitude is the
@@ -5197,7 +5340,7 @@ export function buildJedi(opts = {}) {
     // Muscle moves the deltoid harder than the frame does — 0.62 against 0.36 —
     // and deliberately: a shoulder cap is either there or it is not, and unlike
     // a radius it changes the SHAPE of the outline rather than its width.
-    deltoid: [0.34 * (1 + 0.36 * k + 0.62 * mu), 0.15, 0.155],
+    deltoid: [0.34 * (1 + 0.36 * k + 0.62 * mu - 0.34 * f), 0.15, 0.155],
     seg: { torso: 14, arm: 14, leg: 12, neck: 12, clav: 8 },
     limbOpts: {
       // The thigh carries the quadriceps high and the condyles at the knee;
@@ -6324,6 +6467,30 @@ export function buildB1(opts = {}) {
           onLimb(r.get('chest'), 0.110 * s, [sx * 0.9, 0, 0.44], 0.004 * s), [0, sx * 0.5, sx * 0.06]);
       });
       k.add(mark, plateGeo(0.080 * s, 0.012 * s, 0.064 * s, 0.003 * s, 1), [0, 0.196 * s, -0.096 * s]);
+      /**
+       * ── SALVAGE, BOLTED ON ────────────────────────────────────────────
+       *
+       * "an inorganic one should have visibly more hardware — plating". A B1
+       * is a stick figure and the whole card is that it dies to two bolts, so
+       * what a reprogrammed one that has survived a while shows is the plate
+       * somebody bolted onto it between runs: a slab over the sternum and a
+       * pauldron on each shoulder, standing PROUD of the chest panel rather
+       * than replacing it, because salvage does not fit.
+       *
+       * IT BUYS NOTHING. The archetype's 40 hp is untouched and always will
+       * be — `companions: the rung curve is real` prices what fights and this
+       * is not on that table. A droid that grew armour and grew tougher would
+       * be a fourth axis arriving through a mesh, which is the one way past
+       * that check nobody had closed.
+       */
+      const grown = clamp(Number(opts.grown) || 0, 0, 1);
+      if (grown > 0 && opts.marks === 'armour') {
+        k.add(shell, plateGeo(0.150 * s * (0.6 + 0.4 * grown), 0.145 * s * (0.6 + 0.4 * grown),
+          0.020 * s, 0.008 * s, 2), [0, 0.075 * s, 0.070 * s]);
+        k.add(mark, plateGeo(0.120 * s, 0.010 * s, 0.016 * s, 0.003 * s, 1), [0, 0.128 * s, 0.074 * s]);
+        k.pair((sx) => k.add(shell, plateGeo(0.070 * s, 0.086 * s * grown, 0.056 * s, 0.010 * s, 2),
+          [sx * 0.086 * s, 0.190 * s, 0.010 * s], [0, 0, sx * -0.30]));
+      }
       k.bake(chest);
 
       /* ── the backpack: the other half of the B1 silhouette, and it was
@@ -10371,6 +10538,26 @@ export function buildQuadruped(opts = {}) {
    */
   const pupil = hideMat(0x140f0b, 0.30);
 
+  /**
+   * ── WHAT AN ANIMAL THAT HAS BEEN ALIVE A WHILE SHOWS ─────────────────
+   *
+   * `grown` is 0 for every body in the game and for a companion on its first
+   * run — `CompanionKinds.growthOptsFrom` returns an EMPTY OBJECT below the
+   * first stage — so this builder is byte-identical for every reek, nexu,
+   * acklay and massiff that is not somebody's, and the whole feature costs a
+   * `?? 0` on a spawn. `marks` names which treatment, out of the kind's own
+   * row; this builder answers to two of the six and silently ignores the rest,
+   * which is what lets a droid and a dog share one option channel.
+   *
+   * SIZE IS NOT HERE. The animal being bigger arrives as `opts.scale` through
+   * `bodyScaleOf`, which is the same door the archetype's own scale comes
+   * through, so every proportion, the gait, the platform measurement and the
+   * LOD ladder follow it for free. What is here is the part scale cannot do:
+   * an old animal is not a young one photographed closer.
+   */
+  const GROWN = clamp(Number(opts.grown) || 0, 0, 1);
+  const MARKS = GROWN > 0 ? (opts.marks || null) : null;
+
   /* ── the trunk ──
    * ONE lathe, laid along the animal's spine and reshaped by a superellipse
    * section, with the shoulder and haunch masses as gaussian swells on the
@@ -10513,6 +10700,35 @@ export function buildQuadruped(opts = {}) {
         nodes.push([p[0], p[1], p[2], r]);
       }
       trunkParts.push([tubeGeo(nodes, 6, { tip: 0.1 }), [0, 0, 0]]);
+    }
+  }
+  /**
+   * ── THE RIDGE THICKENS ───────────────────────────────────────────────
+   *
+   * Two rows of spines flanking the spine at phi ±0.34, growing out of the
+   * back at `hull`'s own seat exactly as the shipped ridge does. They flank
+   * rather than repeat it because a second row ON the crest is the same nine
+   * spines drawn twice: what an animal that has been alive four years actually
+   * shows is a ridge that has got WIDER, so the outline thickens from the side
+   * and gains a second and third line from behind.
+   *
+   * IN THE PRIMARY, and that is not a detail. `_measurePlatform` takes a
+   * rideable animal's deck off the primary hull and `standing.mjs` asserts
+   * nothing stands above it, so a blurrg that grew a ridge into a separate
+   * mesh would be a blurrg with a saddle 8 cm inside its own back. The shipped
+   * `ridge` treatment is in the primary for exactly this reason and this one
+   * follows it.
+   */
+  if (MARKS === 'ridge') {
+    const n = 7;
+    for (let i = 0; i < n; i++) {
+      const t = i / (n - 1);
+      const h = (0.24 - Math.abs(t - 0.5) * 0.20) * S * 0.62 * GROWN;
+      if (!(h > 0)) continue;
+      for (const sx of [1, -1]) {
+        trunkParts.push([clawGeo(h, 0.058 * S, 0.010 * S, -0.42, 5, 3),
+          hull(0.12 + t * 0.76, sx * 0.34, h * 0.30), [0.50 - t * 0.85 - P.pitch, 0, sx * 0.28]]);
+      }
     }
   }
   const bm = mesh(assemble(trunkParts, 'trunk'), hide, body.obj);
@@ -10963,6 +11179,31 @@ export function buildQuadruped(opts = {}) {
       rows2.push(r); norms.push(n);
     }
     ks.add(cloth, drapeGeo(rows2, norms, 0.014 * S), [0, 0, 0]);
+  }
+  /**
+   * ── BONE THICKENING ALONG THE FLANK ──────────────────────────────────
+   *
+   * Five plates a side, seated on the hull at phi ±1.02 — the widest part of
+   * the barrel, where a heavy animal's armour actually lies — aimed down the
+   * surface's own normal and sunk 45% of their own depth into the hide, which
+   * is the shipped `scutes` treatment's seat and for the same reason: a plate
+   * that meets the skin along one edge and lifts off it along the other is a
+   * card glued on.
+   *
+   * OUT of the primary, unlike the ridge above, and the two are opposite for
+   * one reason each. A dorsal feature has to be in the hull a saddle is
+   * measured against; a FLANK feature must not be, because `_measurePlatform`
+   * takes the highest vertex in the middle 60% and a plate at the waterline
+   * cannot raise it. `chitinMat` and not `hideMat`, so it reads as bone
+   * growing out of the animal rather than as more animal.
+   */
+  if (MARKS === 'plates') {
+    ks.row(5, (i, t) => ks.pair((sx) => {
+      const w = (0.20 - Math.abs(t - 0.55) * 0.13) * S * GROWN;
+      const at = 0.16 + t * 0.66;
+      ks.aim(plate, new THREE.SphereGeometry(1, 8, 6), hull(at, sx * 1.02, 0.030 * S), hullN(sx * 1.02),
+        [w, 0.070 * S * GROWN, 0.100 * S]);
+    }));
   }
   markSilhouette(ks.bake(body.obj));
 
@@ -13315,6 +13556,35 @@ export function buildAstromech(opts = {}) {
     head.primary = hm; head.parts.push(hm); head.radius = 0.28 * S;
     const k = new Kit();
     domeKit(k, hg, S, M, { r: 0.28, panelCount: 5 });
+    /**
+     * ── AND WHAT A UNIT THAT HAS BEEN IN SERVICE A WHILE CARRIES ───────
+     *
+     * "an inorganic one should have visibly more hardware — plating, a second
+     * arm, a bigger dish." This is the dish, and it goes where a dish goes: a
+     * shallow cap on the shoulder of the dome, tilted out and back, with the
+     * stub of a second whip beside it. Both are seated with `aim` off a
+     * direction rather than typed as a rotation, so they sit on the dome's
+     * curve whatever `squash` is.
+     *
+     * IT SCALES FROM NOTHING. `grown` is 0 for a fresh unit and for every
+     * astromech in the game that is not somebody's, and the dish's radius is
+     * a straight multiple of it — so an R-unit does not sprout hardware, it
+     * gets fitted with it a little at a time. THE MESH COUNT DOES NOT MOVE:
+     * both parts go into the dome's own Kit and bake into the merged meshes
+     * that were being assembled anyway.
+     */
+    const grown = clamp(Number(opts.grown) || 0, 0, 1);
+    if (grown > 0 && opts.marks === 'dish') {
+      const R = 0.28 * S;
+      const d = [0.62, 0.72, -0.32];
+      const cap = new THREE.SphereGeometry(0.085 * S * grown, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.42);
+      cap.scale(1, 0.55, 1);
+      k.aim(M.panels, cap, [d[0] * R * 0.92, 0.13 * S + d[1] * R * 0.52, d[2] * R * 0.92], d);
+      k.aim(M.trim, new THREE.CylinderGeometry(0.010 * S, 0.010 * S, 0.075 * S * grown, 6),
+        [d[0] * R * 0.86, 0.11 * S + d[1] * R * 0.48, d[2] * R * 0.86], d);
+      k.aim(M.panels, limbGeo(0.20 * S * grown, 0.007 * S, 0.003 * S, 5, true, { rings: 2, capN: 1 }),
+        [-0.09 * S, 0.20 * S, -0.05 * S], [-0.16, 0.98, -0.08]);
+    }
     /* The eye and the panels are what this body is READ by at range — a can
      * with a smooth dome on it is a bin — so unlike a trooper's rivets these
      * are kept past thirty metres. Three extra meshes on a body carrying nine. */
@@ -13625,6 +13895,41 @@ export function buildMedic(opts = {}) {
         k.add(photo, plateGeo(0.032 * s, 0.014 * s, 0.010 * s, 0.003 * s, 1), [0.048 * s, 0.062 * s, 0.136 * s]);
         k.pair((sx) => k.add(panels, bandGeo(0.052 * s, 0.072 * s, 0.052 * s, 0.072 * s, 0.048 * s, 12),
           [sx * 0.100 * s, 0.185 * s, 0], [0, 0, Math.PI / 2]));
+        /**
+         * ── THE SECOND ARM, AND THE RACK IT COMES OUT OF ──────────────
+         *
+         * "a second arm" is the player's own word for what a medical droid
+         * that has done a lot of work has got, and it is the one bolt-on this
+         * chassis obviously wants: a 2-1B's rotator rings already say the arms
+         * are bolted ON, so a third housing on the same rings is the reference
+         * picture rather than an invention.
+         *
+         * IT IS GEOMETRY AND NOT A BONE. A fourth limb would be a fourth thing
+         * `Rig`, `Ragdoll`, `severance` and the biped animator each have to
+         * have an opinion about, on a body that is otherwise a shipped
+         * humanoid — and the reason for it is that the droid should LOOK like
+         * it has done a lot of work, which geometry does completely. A limb
+         * that moved would be a different feature with a different check.
+         */
+        const grown = clamp(Number(opts.grown) || 0, 0, 1);
+        if (grown > 0 && opts.marks === 'arm') {
+          const arm = new Kit();
+          arm.add(panels, new THREE.CylinderGeometry(0.030 * s, 0.034 * s, 0.075 * s, 9),
+            [0, 0.205 * s, -0.070 * s], [0.35, 0, 0]);
+          arm.add(shell, limbGeo(0.30 * s * grown, 0.024 * s, 0.015 * s, 8, true, { rings: 2, capN: 2 }),
+            [0, 0.215 * s, -0.082 * s], [1.05, 0, 0]);
+          arm.add(panels, plateGeo(0.030 * s, 0.048 * s, 0.020 * s, 0.004 * s, 1),
+            [0, 0.100 * s + 0.24 * s * grown, -0.230 * s * grown - 0.082 * s], [0.9, 0, 0]);
+          /* The pod rack: instrument canisters down the flank, one more of
+           * them the longer it has been kept — four at full growth, none at
+           * all on a droid on its first run. */
+          arm.row(4, (i, t) => arm.pair((sx) => {
+            if (t > grown + 1e-6) return;
+            arm.add(shell, new THREE.CylinderGeometry(0.016 * s, 0.016 * s, 0.058 * s, 7),
+              [sx * 0.088 * s, (0.055 + t * 0.075) * s, -0.055 * s]);
+          }));
+          for (const m of arm.bake(chest.obj)) markSilhouette(m);
+        }
         for (const m of k.bake(chest.obj)) if (m.material === shell) markSilhouette(m);
       }
       /* THE HIP BLOCK. A pelvis on this body is a machined box, and it is what
@@ -14162,6 +14467,35 @@ export function buildWookiee(opts = {}) {
           [(0.170 - t * 0.33) * s, L * (0.13 + t * 0.62), R * 1.06], [0.06, 0, 0.62]));
         b.add(steel, plateGeo(0.074 * s, 0.074 * s, 0.024 * s, 0.008 * s, 1),
           [-0.135 * s, L * 0.10, R * 0.98], [0.10, 0, 0.62]);
+        /**
+         * ── THE SECOND BANDOLIER ──────────────────────────────────────
+         *
+         * The wookiee is the one companion that is a person, so what it shows
+         * for having been alive is not bone or plate — it is what it has
+         * gathered. A second strap the other way across the chest, and cases
+         * on it, is the whole treatment: the same two materials, the same
+         * geometry mirrored in the roll, and the case COUNT reads off `grown`
+         * so a fresh wookiee carries one strap and a kept one carries a full
+         * X across the chest.
+         *
+         * Its own Kit for the reason the first one has its own: leather and
+         * steel bake to two merged meshes either way, so the draw count does
+         * not move.
+         */
+        const grown = clamp(Number(opts.grown) || 0, 0, 1);
+        if (grown > 0 && opts.marks === 'bandolier') {
+          const b2 = new Kit();
+          b2.add(leather, plateGeo(0.054 * s, 0.66 * s, 0.026 * s, 0.010 * s, 1),
+            [-0.020 * s, L * 0.44, R * 1.02], [0.06, 0, -0.62]);
+          b2.add(leather, plateGeo(0.054 * s, 0.64 * s, 0.026 * s, 0.010 * s, 1),
+            [-0.020 * s, L * 0.44, -R * 1.02], [-0.06, 0, -0.62]);
+          b2.row(6, (i, t) => {
+            if (t > grown + 1e-6) return;
+            b2.add(steel, plateGeo(0.050 * s, 0.062 * s, 0.026 * s, 0.006 * s, 1),
+              [(-0.170 + t * 0.33) * s, L * (0.13 + t * 0.62), R * 1.06], [0.06, 0, -0.62]);
+          });
+          markSilhouette(b2.bake(chest.obj));
+        }
         markSilhouette(b.bake(chest.obj));
       }
       const hips = r.get('hips');

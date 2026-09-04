@@ -442,7 +442,11 @@ export const DEFAULT_SETTINGS = {
    * silently change a saved character. `preset` is kept beside them only so the
    * card row knows which card to light.
    */
-  face: { preset: FACE_PRESETS[0]?.id ?? 'even', hair: 'temple', beard: 'none', age: 0, muscle: 0.5 },
+  /* `sex` 0 is the figure the game has always shipped, and `bust`/`seat` are
+   * inert at 0 rather than merely small — see `Bodies.fleshSections`. So a
+   * settings blob written before V15 §2 existed builds the same body it did. */
+  face: { preset: FACE_PRESETS[0]?.id ?? 'even', hair: 'temple', beard: 'none', age: 0, muscle: 0.5,
+    sex: 0, bust: 0.5, seat: 0.5 },
   robeCut: 'temple',
   /**
    * HOW THE BODY SITS WHEN IT COMMUNES — a MEDITATION_POSES id.
@@ -2818,6 +2822,14 @@ export function characterSheet(face) {
     beard: has(BEARD_STYLES, src.beard, D.beard),
     age: num(src.age, D.age),
     muscle: num(src.muscle, D.muscle),
+    /* V15 §2's sex axis and its two sliders. They ride in the sheet for the
+     * reason `Bodies.sheetOf` gives: `face` is the one appearance argument on
+     * the path to `buildJedi` that is allowed to be an object, and three more
+     * top-level settings would mean three more parameters through five files
+     * to say one thing. `sex` 0 is the figure the game has always shipped. */
+    sex: num(src.sex, D.sex),
+    bust: num(src.bust, D.bust),
+    seat: num(src.seat, D.seat),
   };
 }
 
@@ -5049,6 +5061,30 @@ export class Menu {
     // Years, shown as years. A slider labelled 0.62 is a number; a slider
     // labelled 62 is a person, and the range is what a Jedi's career is.
     this._sheetSlider('sheet-age', 'age', (v) => `${Math.round(18 + v * 62)}`);
+    /**
+     * ══ THE SEX AXIS, AND ITS TWO SLIDERS ═══════════════════════════════
+     *
+     * V15 §2: *"you should also be able to play as a woman of any star wars
+     * species obviously feminine … breast and glute sliders."*
+     *
+     * ONE AXIS RATHER THAN TWO CARDS, for the same reason `build` is one axis
+     * rather than five body types — `Bodies.BUILD_RANGE`'s header makes the
+     * argument and it holds here: two hard-coded figures give the player two
+     * figures, and a slider gives them every point between, on all seven
+     * species, at no cost in geometry at all. The label names the ends so it
+     * still reads as a choice rather than as a number.
+     *
+     * The two shape sliders only mean anything above 0 on the axis — they are
+     * multiplied by it in `Bodies.fleshSections` — so they are shown only when
+     * there is something for them to shape.
+     */
+    this._sheetSlider('sheet-sex', 'sex',
+      (v) => (v < 0.15 ? 'masculine' : v > 0.85 ? 'feminine' : v < 0.5 ? 'androgynous' : 'soft'));
+    this._sheetSlider('sheet-bust', 'bust', (v) => (v < 0.34 ? 'small' : v > 0.66 ? 'full' : 'even'));
+    this._sheetSlider('sheet-seat', 'seat', (v) => (v < 0.34 ? 'slim' : v > 0.66 ? 'full' : 'even'));
+    for (const id of ['bust-row', 'seat-row']) {
+      document.getElementById(id)?.classList.toggle('hidden', !((this.s.face.sex ?? 0) > 0.02));
+    }
     /*
      * THE CUT, WHICH USED TO BE THE ONE DEAD CARD IN THE CREATOR.
      *
