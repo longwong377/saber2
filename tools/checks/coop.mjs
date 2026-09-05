@@ -85,6 +85,33 @@ async function session(names = ['HOST', 'ALPHA', 'BRAVO'], looks = []) {
 const avatarAt = (x) => ({ t: 'avatar', p: [x, 0, 0], f: 0, h: 100, a: 1,
   hp0: [x, 1.2, 0], hq: [0, 0, 0, 1], lit: 1 });
 
+/* No `fetch` in node — the same shim `coop-home.mjs` and `home.mjs` carry, and
+ * copied for their reason: the check then decodes the imported rooms through
+ * the shipped path rather than a second copy of it. */
+function diskFetch() {
+  if (globalThis.fetch && globalThis.__stationFetch) return;
+  const root = new URL('../../', import.meta.url);
+  globalThis.__stationFetch = true;
+  globalThis.fetch = async (url) => {
+    const buf = await readFile(new URL(String(url), root));
+    return { ok: true, arrayBuffer: async () => buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) };
+  };
+}
+
+/** Two players standing on the same deck of the same station, both real. */
+async function coopStation(n = 2, deck = 40) {
+  const { bootSession } = await import('./_coop.mjs');
+  const { prepareStation } = await import('../../src/game/Station.js');
+  diskFetch();
+  await prepareStation();
+  return bootSession({
+    n,
+    level: 'station',
+    settings: { mode: 'station', level: 'station', allies: 0 },
+    onWorld: (w) => { w._stationFloor = deck; },
+  });
+}
+
 export async function run({ check, assert }) {
   /* Every check in this file is wrapped, so the shared module state goes back
    * before each body as well as after it. What that state IS lives in
@@ -3426,5 +3453,113 @@ export async function run({ check, assert }) {
     assert(writers === 1, `World writes netMode in ${writers} places — the premise of this check`);
     return 'buildWorld reads no netMode; one reader (netModeNow) answers attachNet and the '
       + 'companion fence; World writes netMode in exactly one place';
+  });
+
+  check('co-op: a guest\'s station runs, and holds each resident once', async () => {
+    /**
+     * ══ WHAT A JOINING PLAYER GOT, MEASURED ═══════════════════════════════
+     *
+     * `World.update` runs `director.update` only when `netMode !== 'client'`,
+     * and `StationDirector.update` was the ONLY caller of `stepStation`,
+     * `stepStationLife` and `stepDeckLift`. That gate is right for a wave
+     * director — one machine owns the horde — and on the station it froze
+     * everything: the clock, the ward, the boards, the notices, the tram, the
+     * fleet outside the glass, a jump, a sortie, and the lift, which is the
+     * one thing on the station that carries you anywhere.
+     *
+     * Measured before the fix, two real Worlds and two real `Net` endpoints on
+     * deck 40, thirty simulated seconds:
+     *
+     *     clock        host 9.000 → 9.247      guest 9.000 → 9.000
+     *     bodies       host 37                 guest 72
+     *
+     * The guest's 72 was its own 35 residents PLUS 37 net-driven ghosts of the
+     * host's, nine of them within 0.6 m of the local resident they duplicated
+     * and the closest pair 0.16 m apart. Half the people in the room were
+     * statues, because a `netDriven` body returns out of `Enemy.update` before
+     * any brain runs.
+     *
+     * ── WHAT IT IS NOW, AND WHY IT IS THAT ────────────────────────────────
+     *
+     * The residents are not on the wire at all. `occupant(place, i, {hour,
+     * day})` and `slotIn` are pure, so two machines that agree about the clock
+     * seat the same people in the same chairs for nothing — and the clock is
+     * the one thing that has to cross, because `st.hour` is seeded from each
+     * machine's own save fold. So: a guest runs the whole station
+     * (`StationDirector.guest`), the host sends no station body
+     * (`packSnapshot`), and the hour comes down as `sh`.
+     *
+     * THIS DRIVES ALL FOUR CLAUSES AT ONCE and every one of them is red
+     * against the old build: the clock moved on one machine, the counts
+     * differed by the whole population, thirty-seven ghosts were standing in
+     * the drum, and 2836 bytes a snapshot at 18 Hz were being spent to put
+     * them there.
+     */
+    const s = await coopStation(2, 40);
+    try {
+      const H = s.host.world, C = s.clients[0].world;
+      const alive = (w) => (w.enemies || []).filter((e) => e && !e.dead);
+      const ghosts = (w) => alive(w).filter((e) => e.netDriven);
+      assert(H._station && C._station, 'one of the two machines has no station at all');
+      const h0 = H._station.hour, c0 = C._station.hour;
+
+      s.pump(6);
+
+      const h1 = H._station.hour, c1 = C._station.hour;
+      /* THE CLOCK RUNS ON BOTH. One game hour per two real minutes, so six
+       * simulated seconds is 0.05 h — small, and it was exactly zero. */
+      assert(h1 - h0 > 0.04, `the host's own clock only moved ${(h1 - h0).toFixed(4)} h in six seconds`);
+      assert(c1 - c0 > 0.04,
+        `the guest's station clock moved ${(c1 - c0).toFixed(4)} h against the host's `
+        + `${(h1 - h0).toFixed(4)} — a joining player's station is frozen`);
+      /* …AND THEY AGREE, which is what makes it one station: everything in a
+       * room is seeded off this number, so a tenth of an hour apart is two
+       * different censuses, two different shelves and two different boards. */
+      assert(Math.abs(h1 - c1) < 0.002,
+        `the two clocks read ${h1.toFixed(4)} and ${c1.toFixed(4)} — ${((h1 - c1) * 60).toFixed(1)} `
+        + 'station-minutes apart, which is two stations in one hull');
+      assert(C._station.day === H._station.day,
+        `the guest thinks it is day ${C._station.day} and the host day ${H._station.day}`);
+
+      /**
+       * ── AND THE LIFT IS RUNNING, WHICH IS THE ONE THAT CANNOT BE FAKED ──
+       *
+       * The clock above can be right on a guest that steps nothing, because
+       * `applySnapshot` writes it — which is exactly the shape of hole this
+       * whole finding is about. `_deckLift.t` is `stepDeckLift`'s own
+       * accumulator, nothing on the wire touches it, and it is the one thing
+       * on the station that carries a player anywhere: a guest whose lift
+       * clock is zero is a guest standing on the deck they arrived on for the
+       * rest of the session.
+       */
+      assert(H._deckLift && C._deckLift, 'one of the two machines has no lift on deck 40');
+      assert(H._deckLift.t > 0, "the host's own lift is not being stepped");
+      assert(C._deckLift.t > 0,
+        `the guest's lift clock is ${C._deckLift.t} after six seconds against the host's `
+        + `${H._deckLift.t.toFixed(2)} — nothing on the guest's station is stepping`);
+
+      /* EACH RESIDENT ONCE. Not "about the same number" — no ghost at all. */
+      const g = ghosts(C);
+      assert(g.length === 0,
+        `${g.length} net-driven bodies in the guest's station on top of its own ${alive(C).length - g.length} `
+        + 'residents — every one of them is a second copy of somebody already standing there');
+      const nh = alive(H).length, nc = alive(C).length;
+      assert(nh > 20, `only ${nh} bodies on the host's deck 40 — this check is measuring an empty station`);
+      assert(nh === nc,
+        `the host's station holds ${nh} people and the guest's ${nc}`);
+
+      /* AND NOT ONE OF THEM IS ON THE WIRE. */
+      const { packSnapshot } = await import('../../src/net/Net.js');
+      const snap = packSnapshot(H);
+      assert(snap.e.length === 0,
+        `the host still puts ${snap.e.length} station bodies in every snapshot — ` +
+        `${JSON.stringify(snap).length} bytes, eighteen times a second, of people the guest already has`);
+      assert(typeof snap.sh === 'number' && Math.abs(snap.sh - H._station.hour) < 0.002,
+        'the snapshot does not carry the station hour — then the two censuses cannot agree');
+
+      return `clock host ${h0.toFixed(3)} → ${h1.toFixed(3)}, guest ${c0.toFixed(3)} → ${c1.toFixed(3)} `
+        + `(${((h1 - c1) * 3600).toFixed(1)} station-seconds apart); ${nh} bodies each, 0 ghosts; `
+        + `snapshot ${JSON.stringify(snap).length} bytes with 0 enemy rows`;
+    } finally { s.close(); }
   });
 }

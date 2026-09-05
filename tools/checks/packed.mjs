@@ -107,6 +107,48 @@ export async function run({ check, assert }) {
     return `${files} modules under src/, ${good} of them naming three by path, 0 bare specifiers`;
   });
 
+  check('packed: every file under src/ is reachable from a page somebody can open', async () => {
+    /**
+     * ══ THE ORPHAN QUESTION, ASKED OF THE WHOLE TREE ══════════════════════
+     *
+     * `tools/checks/_shipped.mjs` was written for exactly this and was then
+     * called with THREE HAND-WRITTEN FILENAMES. A list of the orphans somebody
+     * already found cannot find the next one, and there was a next one:
+     * `src/game/Starfury.js` — 325 lines, `SHARK.md` §4's *"the one new
+     * system"*, 264 lines of green check over it — with a single importer in
+     * the entire tree, which was its own check. 96 of the 97 `src/game/*.js`
+     * files were in the packed manifest and that was the one that was not.
+     *
+     * WHY A CHECK COULD NOT SEE IT. Every suite reaches its module with
+     * `await import`, which is a statement about the file system. `pack.mjs`
+     * walks the module graph from `index.play.html`'s entry, so a module
+     * nothing on that graph imports is simply absent from the manifest: green,
+     * finished, commented, and in nobody's browser. Green over an orphan is
+     * worse than red, because nobody investigates green.
+     *
+     * SO THE BAR IS A PAGE AND NOT A CHECK. `unshipped()` walks every `*.html`
+     * in the repository, not just the shipped one, because two of them are
+     * shading labs and the three files under `src/toon/` are theirs — that is
+     * unshipped and it is not dead, and a bar that could not tell those apart
+     * would either fail on work that is exactly where it belongs or pass on
+     * work nobody can run. What is asserted is the third bucket: a file no
+     * page in the repository reaches by any path.
+     *
+     * It names the files. A count is unactionable and this is a defect whose
+     * whole difficulty is finding out WHICH file.
+     */
+    const { unshipped } = await import('./_shipped.mjs');
+    const { shipped, lab, dead } = await unshipped();
+    assert(shipped.length > 100,
+      `only ${shipped.length} modules reachable from the shipped entry — this check is measuring nothing`);
+    assert(dead.length === 0,
+      `${dead.length} module(s) under src/ are in NO page's import graph — not the game, not a lab, `
+      + 'nothing: no player and no developer can reach a line of them, however green their own '
+      + `suite is. ${dead.join(', ')}`);
+    const labs = lab.map((l) => `${l.file} (${l.pages.join('+')})`).join(', ');
+    return `${shipped.length} shipped, ${lab.length} lab-only [${labs}], 0 unreachable`;
+  });
+
   /**
    * BOTH BUILDS, because only one of them was ever driven and the other is the
    * one people are handed.

@@ -568,14 +568,14 @@ function reseatMine(world) {
  * and put up anything that has arrived. It costs ONE property read when there
  * is no session, which is every solo game.
  *
- * IT IS CALLED FROM THE NET TICK AND NOT FROM `stepStation`, WHICH IS WHERE IT
- * BELONGS, and the reason is in `World._netTick` beside the call: a joining
- * player's `StationDirector` is gated off, so `stepStation` never runs on a
- * guest at all. That gate is `V16.md` Lane F's own *"the larger work is the
- * station in co-op at all"* and it is not this lane; what cannot wait for it is
- * the apartments, which are the feature. The cadence is the wire's — 18 Hz on
- * the host, 24 on a client — which is the right one anyway for work whose whole
- * argument is that it must not happen every frame.
+ * IT IS CALLED FROM THE NET TICK AND NOT FROM `stepStation`, and what used to
+ * force that is gone: a joining player's `StationDirector` was gated off
+ * wholesale, so `stepStation` never ran on a guest at all and an apartment
+ * stepped from it would have been an apartment only the host had. That gate is
+ * lifted — see `StationDirector.guest` — and this stays on the net tick anyway,
+ * on its own merits. The cadence is the wire's, 18 Hz on the host and 24 on a
+ * client, which is the right one for work whose whole argument is that it must
+ * not happen every frame.
  */
 export function stepCoop(world) {
   if (!world?.net?.connected) return;

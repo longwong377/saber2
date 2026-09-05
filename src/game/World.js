@@ -480,6 +480,27 @@ export class World {
     this.time = 0;
     this.score = 0;
     /**
+     * ── WHAT THIS RUN KILLED, BY KIND — one counter, one writer ───────────
+     *
+     * `{ b1: 214, trooper: 9 }`, keyed on the archetype name `Enemy.type`
+     * carries, written in `onEnemyKilled` and reported by `runStats`.
+     *
+     * IT EXISTS BECAUSE A JOB ASKS IT A QUESTION. `Quests.SHAPES`' mercy —
+     * *"there will be b1 down there, leave them be"* — tested
+     * `!((run.killedKinds || {})[kind] > 0)` against a summary that has never
+     * carried the field, which is TRUE for a run that killed three hundred of
+     * them. A shape reading a field nothing reports is the same class of defect
+     * as a field written and never read, and the honest repair for a question
+     * worth asking is the counter rather than the deletion of the question.
+     *
+     * ON THE WORLD AND NOT ON THE PLAYER, unlike `kills`: a mercy is about what
+     * happened on the ground, one hand or four, and `onEnemyKilled` is the one
+     * place a death is visible centrally. It survives a rotation because
+     * nothing in `loadLevel` resets it — a campaign's four missions are one
+     * run, and the job was taken for the run.
+     */
+    this.killedKinds = {};
+    /**
      * HOW MANY BODIES THIS RUN HAD TO BE PUT BACK ON SCREEN. See
      * `Enemy._auditVisible`, which is the only writer.
      *
@@ -1962,6 +1983,12 @@ export class World {
       tally: p ? {
         kills: p.kills | 0, deflects: p.deflects | 0, perfects: p.perfects | 0,
         limbsRemoved: p.limbsRemoved | 0, score: p.score | 0,
+        /* AND THE TWO THAT WERE LEFT OFF. `saves` is paid for by
+         * `Credits.EARN` and `forceCasts` is asked about by a job; both live on
+         * the Player, and the Player does not survive `unload`, so a campaign's
+         * second mission used to reset each of them to zero mid-run. A tally
+         * that a crossing halves is a tally the player cannot act on. */
+        saves: p.saves | 0, forceCasts: p.forceCasts | 0,
       } : null,
       /**
        * …AND THE LINE, WHICH IS THE ONE THING A CROSSING WAS THROWING AWAY.
@@ -2092,6 +2119,7 @@ export class World {
     if (t && p) {
       p.kills = t.kills; p.deflects = t.deflects; p.perfects = t.perfects;
       p.limbsRemoved = t.limbsRemoved; p.score = t.score;
+      p.saves = t.saves | 0; p.forceCasts = t.forceCasts | 0;
     }
     const v = carry.vitals;
     if (v && p) {
@@ -3119,6 +3147,26 @@ export class World {
        * row paid zero on every run ever played. Summed over the players like
        * every other tally here, so a co-op session counts both hands. */
       saves: sum('saves'),
+      /**
+       * POWERS CAST, and it is a COUNT rather than a pool reading.
+       *
+       * `Player._spend` is the one door every power in the game pays through,
+       * so this is "how many times you reached for it" and 0 is "you did not".
+       * Deliberately NOT fed by deflection: turning a bolt aside spends Force
+       * (`guardForceSpent` is the counter for that) and is blade work, so a job
+       * asking you to fight *"without touching the Force"* must not be failed
+       * by standing your ground.
+       *
+       * Reported here for the same reason `saves` is: `Quests.SHAPES`' manner
+       * asks the question and the summary was silent, which reads as zero and
+       * finishes the job for a run that levitated everything on the ground.
+       */
+      forceCasts: sum('forceCasts'),
+      /* WHAT THIS RUN KILLED, BY KIND — see the field's note in the
+       * constructor. Copied rather than handed out, because a summary is a
+       * statement about a run that has ended and a reader that mutated it
+       * would be editing the run. */
+      killedKinds: { ...(this.killedKinds || {}) },
       taken: this._taken(),
       /* The roll, not a tally kept beside it: `CommandRoster.fallen` is a
        * getter over the records themselves. Null where there is no army, so
@@ -4175,6 +4223,27 @@ export class World {
      * is inside the ring the level itself spawns at. See that method. */
     if (this.netMode !== 'client' && !this.over
       && !this.extraction?.holdsHorde(this.level?.spawnRadius?.[1])) this.director.update(dt, ctx);
+    /**
+     * ══ …AND A GUEST STILL RUNS THE STATION ═══════════════════════════════
+     *
+     * The gate above is about a HORDE: one machine owns the spawn queue, and a
+     * second director composing its own wave beside it is two games. Nothing
+     * on the station is a horde. `StationDirector.update` is nevertheless the
+     * only caller of `stepStation`, `stepStationLife` and `stepDeckLift`, so
+     * this one line froze a joining player's entire station: measured over
+     * thirty simulated seconds on deck 40, the host's clock ran 9.000 → 9.247
+     * and the guest's sat at 9.000 — and with it the ward never healed, the
+     * boards never rerolled, the notices never turned, the tram never left,
+     * nothing in the player's own hands moved, the fleet outside the glass
+     * stood still, a jump could not finish, a sortie could not fly, and the
+     * lift — the one thing on the station that carries you anywhere — did not
+     * move a millimetre.
+     *
+     * `guest` exists only on `StationDirector` and the optional call is what
+     * keeps every other director out of this branch. Its argument, and the
+     * list of what is host truth and what is yours, is on the method.
+     */
+    else if (this.netMode === 'client') this.director.guest?.(dt, ctx);
     /* The meeting's clock, and it is outside the director because it is not the
      * director's: `DuelMatch` is driven by facts about the WHOLE field — who
      * has anybody left standing — and the host owns it whether or not there is
@@ -5959,6 +6028,22 @@ export class World {
      * still a death on the field; and `_killFelt`, because a body hitting the
      * ground three metres away has to make the sound whatever it was worth.
      */
+    /**
+     * WHAT KIND IT WAS, AND ONLY WHEN A PLAYER'S HAND DID IT.
+     *
+     * ABOVE the conscript return, because a conscript that went down went down
+     * — the return below withholds a REWARD and this is a record, which is the
+     * distinction that line's own note draws about `kills`.
+     *
+     * A player's hand and not the field's: a mercy is *"leave them be"* said to
+     * YOU, and a trooper of yours shooting one is not you breaking your word.
+     * Same test `kills` is credited on one line down, so the two counters
+     * cannot come to mean different things.
+     */
+    if (source instanceof Player || source?.isRemote) {
+      const kind = enemy.type;
+      if (kind) this.killedKinds[kind] = (this.killedKinds[kind] | 0) + 1;
+    }
     if (!paysOut(A)) { if (source instanceof Player || source?.isRemote) source.kills++; return; }
     this.score += A.score;
     /* AND THE FLEET NOTICES. War support is what stratagems cost now, and it
@@ -6384,15 +6469,17 @@ export class World {
      * moves a chair and stringifying forty rows sixty times a second to find
      * out that nothing has is the cost this whole design refuses.
      *
-     * IT IS HERE AND NOT IN `stepStation`, WHICH IS WHERE IT BELONGS, and the
-     * reason is one line up in this file: `director.update` is gated off on a
-     * client, so a joining player's `StationDirector` never runs and every
-     * station system with it. That is `V16.md` Lane F's own "the larger work is
-     * the station in co-op at all" and it is not this lane. What cannot wait
-     * for it is the apartments themselves — a guest who never steps the station
-     * never receives a door, never publishes their own room, and never dresses
-     * anybody else's, which is the whole feature. `stepCoop` returns on
-     * `net.connected` before it does anything, so solo play never reaches it.
+     * IT IS HERE AND NOT IN `stepStation`, and the reason it was here is now
+     * GONE: a guest's `StationDirector` used to be gated off entirely, so
+     * `stepStation` never ran on a joining player and the apartments could not
+     * live in it. `StationDirector.guest` runs the whole station on a guest
+     * now, so this could move. It does not, and the remaining reason is the
+     * one this block opened with rather than the one it settled for: a home
+     * changes when somebody moves a chair, and stringifying forty rows sixty
+     * times a second to find out that nothing has is the cost this design
+     * refuses. The wire's cadence is the right one for wire work. `stepCoop`
+     * returns on `net.connected` before it does anything, so solo play never
+     * reaches it.
      */
     stepCoop(this);
   }
@@ -7375,6 +7462,30 @@ export class World {
      * meeting is reading would sit at the middle of the field for the whole
      * battle on every machine but one. */
     if (msg.fr !== undefined && this.command) this.command.front = msg.fr;
+    /**
+     * ══ THE STATION'S CLOCK IS THE HOST'S ═════════════════════════════════
+     *
+     * A guest runs the whole station itself now (see `StationDirector.guest`)
+     * and that includes `tickStationClock`, so the hour moves between packets
+     * rather than stepping 18 times a second. What it cannot do is START in
+     * the right place: `st.hour` is seeded from `StationSave.stationHour()`,
+     * which is this machine's own fold, so two players who last visited on
+     * different evenings dress two different stations out of the same plan —
+     * a different census in every room, a different shelf in every shop, a
+     * different card in the pit.
+     *
+     * So the host's reading wins and the local tick is dead reckoning
+     * between corrections. Assigned rather than eased: at 18 Hz the guest has
+     * reckoned 0.00046 h since the last packet and the wire carries three
+     * decimal places, so the correction is below the resolution of anything
+     * that reads it. `day` comes with it because `stationDay()` reads the
+     * LOCAL fold and would otherwise put the host's hour on the guest's day.
+     */
+    if (msg.sh !== undefined && this._station) {
+      this._station.hour = msg.sh;
+      this._station.day = msg.sd | 0;
+      if (this.run) this.run.stationHour = msg.sh;
+    }
     this.score = msg.sc;
     this._netWaveEdge(msg);
   }
