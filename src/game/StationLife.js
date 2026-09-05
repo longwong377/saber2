@@ -667,12 +667,42 @@ function destsOn(deck) {
     const dr = Math.hypot(p.door[0], p.door[1]);
     const on = dr > DRUM.roomR - 2 ? 'ring' : dr < DRUM.balcony + 2 ? 'balcony' : null;
     if (!on) continue;
-    out.push({
-      p, id: p.id, on,
-      a: Math.atan2(p.door[0], p.door[1]),
-      r: STAND_R[on],
-      w: 0,
-    });
+    out.push({ p, id: p.id, on, a: Math.atan2(p.door[0], p.door[1]), r: STAND_R[on], w: 0 });
+  }
+  /**
+   * ── AND THE WALKWAY'S OWN FIXTURES, WHICH ARE THE OTHER HALF OF IT ────
+   *
+   * MEASURED WITHOUT THEM. Deck 40's gazetteer gives about thirty doors over
+   * 537 m of ring, which is one every eighteen metres ON AVERAGE and nothing
+   * at all across some arcs — so a walker standing at bearing 15° had no room
+   * inside the trip cap, fell through to "the nearest thing there is", and
+   * drew a route of 52 to 73 m to the far side of the balcony. Eight of eight
+   * tracked walkers were on one of those, and not one of them ever arrived.
+   *
+   * A CONCOURSE IS NOT ONLY DOORS. `wayPlacesOn` already declares the stalls,
+   * the kiosks, the benches, the planters, the shopfronts, the overlooks and
+   * the crossings — the places its own comment calls *"where a person has
+   * STOPPED on purpose"* — and those are exactly what somebody crossing a
+   * concourse is crossing it TO. Adding them roughly triples the density of
+   * places to go on the ring, which is what makes a short crossing possible at
+   * all.
+   *
+   * `walk` STRETCHES ARE NOT DESTINATIONS: they are the corridor, not a place
+   * in it, and a walker whose errand was "a patch of open floor" is the pace
+   * this whole section replaced. SPINE fixtures are left out too — reaching
+   * one means stopping part-way along a radial, and whether that part is on
+   * the clear span is a second question `spineSpansOn` would have to be asked
+   * per fixture; the ring and the rim are the two surfaces this needs.
+   */
+  for (const p of wayPlacesOn(deck)) {
+    if (p.way === 'walk') continue;
+    const r = Math.hypot(p.x, p.z);
+    const on = Math.abs(r - RING_WALK) < 3 ? 'ring'
+      : Math.abs(r - BALC_WALK) < 3 ? 'balcony' : null;
+    if (!on) continue;
+    /* STOPPED AT THE FIXTURE and not at a door: the stand radius is the
+     * fixture's own, which is on the corridor by construction. */
+    out.push({ p, id: p.id, on, a: Math.atan2(p.x, p.z), r, w: 0 });
   }
   _dests.set(deck, out);
   return out;
@@ -701,7 +731,7 @@ function destsOn(deck) {
  * else: two or three journeys inside the window a player is looking at it,
  * rather than one third of one.
  */
-const TRIP = { near: 8, far: 30 };
+const TRIP = { near: 8, far: 35 };
 
 /**
  * WHICH PLACE, AND THE WEIGHT IS THE DESIRE LINE.
@@ -1318,13 +1348,35 @@ function reseat(world, st, life, px, pz) {
       const dx = _v.x - px, dz = _v.z - pz;
       const d2 = dx * dx + dz * dz;
       if (d2 > DROP_RADIUS * DROP_RADIUS) continue;
-      /* A ROOM WITH AN ANIMAL IN IT IS SEATED AS THOUGH IT WERE NEARER. The
-       * sort below is nearest-first and the budget is spent down it, so this
-       * is the whole of the promotion: `handlerRooms` moves a place up the
-       * queue and `LIVE_RADIUS` below still decides whether anybody in it is
-       * built at all. Sixteen metres, so it beats a room across a hall and
-       * never a body the player is standing next to. */
-      const near = life.handlerRooms.has(p.id) ? Math.max(0, Math.sqrt(d2) - 16) ** 2 : d2;
+      /**
+       * ── WHAT THE POOL BUYS FIRST, WHEN IT CANNOT BUY EVERYTHING ────────
+       *
+       * The sort below is nearest-first and the budget is spent down it, and
+       * on a busy deck there are more candidates inside the live radius than
+       * the pool can pay for — so what is at the top of that queue IS the
+       * station the player sees. Two things are moved up it, and both are
+       * measured rather than felt:
+       *
+       * THE OPEN WALK. §2.5 asks for the between-space to read busy, and the
+       * between-space is the one part of the station the player is always
+       * standing IN. Measured without this, on deck 40 at 13:00 with the pool
+       * full at sixty: 42 bodies in rooms, 14 at fixtures and **4 of the 9
+       * declared walk slots inside the radius**. A room's people are behind a
+       * door and read as a room being occupied; a corridor's people ARE the
+       * corridor.
+       *
+       * A ROOM WITH AN ANIMAL IN IT. `handlerRooms` is `handlersOn().where`,
+       * and one handler in twenty-nine residents means the room with a dog in
+       * it is usually the one just outside the radius. See `handlerRooms`.
+       *
+       * BOTH ARE METRES OFF A DISTANCE and neither is a free pass: they move
+       * a place up the queue and `LIVE_RADIUS` below still decides whether
+       * anybody in it is built at all, so nothing is ever seated further away
+       * than the pool would otherwise reach.
+       */
+      const lift = (p.way === 'walk' ? SEAT_LIFT.walk : 0)
+        + (life.handlerRooms.has(p.id) ? SEAT_LIFT.handler : 0);
+      const near = lift ? Math.max(0, Math.sqrt(d2) - lift) ** 2 : d2;
       want.push({ key: `${p.id}:${i}`, place: p, i, d2, near });
     }
   };
@@ -1436,6 +1488,11 @@ function reseat(world, st, life, px, pz) {
     life.despawned++;
   }
 }
+/** How many metres nearer than it is a candidate is treated as being. See
+ *  `consider`. Both are smaller than the live radius by a wide margin, so
+ *  neither can pull in a body from outside it. */
+const SEAT_LIFT = { walk: 12, handler: 16 };
+
 const _want = [];
 const _keep = new Set();
 const byNear = (a, b) => a.near - b.near;

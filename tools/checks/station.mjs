@@ -733,12 +733,21 @@ export async function run({ check, assert, THREE }) {
        * in the table is not a place, so the id is checked against the table.
        */
       const { PLACE: TABLE } = await import('../../src/game/StationPlan.js');
+      /* A DESTINATION IS A PLACE THAT EXISTS, and there are two tables it can
+       * be in: the gazetteer, and this deck's own walkway — the stalls, the
+       * kiosks, the benches and the crossings `wayPlacesOn` declares, which is
+       * where somebody crossing a concourse is usually crossing it to. An
+       * OPEN STRETCH is not one of them: that is the corridor itself, and a
+       * walker whose errand was a patch of floor is the pace this clause
+       * exists to catch. */
+      const stops = new Set();
+      for (const p of ways) if (p.way !== 'walk') stops.add(p.id);
       const lost = [];
       let onFoot = 0;
       for (const [, b] of life.live) {
         if (b.stationWay !== 'walk' || !b.wayR) continue;
         onFoot++;
-        if (!b.wayTo || !TABLE.has(b.wayTo)) lost.push(b.stationName || '?');
+        if (!b.wayTo || !(TABLE.has(b.wayTo) || stops.has(b.wayTo))) lost.push(b.stationName || '?');
       }
       assert(lost.length === 0,
         `${lost.length} of ${onFoot} people on the open stretches are not going anywhere `
