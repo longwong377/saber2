@@ -75,6 +75,7 @@ import {
 import { load as loadKennel, save as saveKennel, STORY_KEEP, FALLEN_KEEP } from './Kennel.js';
 import { headcount, occupant } from './StationLife.js';
 import { PLACES } from './StationPlan.js';
+import { markupFor } from './Counter.js';
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  SEEDS — a pit is reproducible from one, and a stranger from their own
@@ -222,8 +223,55 @@ export function handlersOn(hour = ROSTER_HOUR, day = 0) {
  *             Arena, so the opt-in cannot be reached there at all.
  *   `rounds`  the Arena is refereed and short, so it goes the distance and is
  *             decided on condition. The Underlift is long and is not.
- *   `shut`    the standing above which the wrong people stop trusting you.
+ *   `shut`    WHO IS TURNED AWAY AT THE DOOR — and it is a DIRECTION, not a
+ *             level, because the two rooms read one number opposite ways.
+ *
+ * ── AND THE NUMBER IS §11's STANDING, ON §11's SCALE ─────────────────────
+ *
+ * `StationSave.standing()` is an INTEGER CLAMPED TO [-40, +40]. It rises +2
+ * when you collect on a job for a resident (`Station.payForJob`) and falls −2
+ * for every body you cut in this hull (`Station.persistStanding`), so POSITIVE
+ * is "the people who live here speak well of you" and NEGATIVE is "they have
+ * heard what you did".
+ *
+ * This field used to be 1.01 and 0.62 — a 0..1 fraction — and `venueOpen` shut
+ * the door at `standing >= venue.shut`. One job collected put standing on 2
+ * and BOTH pits were shut for the rest of the save, for a player whose only
+ * crime was work. Everything Lane G builds sat behind that door: the odds
+ * board, the announcer, the corner, the tote. Measured before the mend, over
+ * forty days and every half hour: the Arena open 960/1920 at standing 1 and
+ * 0/1920 at standing 2; the Underlift 324/1920 at 0 and 0/1920 at 1.
+ *
+ * So a row names the SIDE it refuses:
+ *
+ *   `{ below: n }`  #20 THE ARENA is licensed. It refuses a man with a
+ *                   reputation for violence and nobody else — a card posted a
+ *                   day ahead cannot be a surprise to a law-abiding player.
+ *   `{ above: n }`  #61 THE UNDERLIFT is the illegal one, and §G5's own
+ *                   sentence is that it is *"closed entirely if your standing
+ *                   is high enough that the wrong people trust you"*. A model
+ *                   citizen is somebody who talks to marshals.
+ *
+ * The rung is `SHUT_RUNG` and it is READ OFF LANE B rather than typed here.
  */
+
+/**
+ * THE RUNG THE STATION ALREADY TURNS PEOPLE AWAY AT.
+ *
+ * `Counter.markupFor` is the file that owns what standing means (V16 §B4) and
+ * it stops opening a shutter somewhere below zero — *"−40 → shut"*. Whatever
+ * that number turns out to be, it is the same number a licence board would
+ * refuse a fighter at and the same distance from neutral the underworld would
+ * stop trusting one at, so it is ASKED FOR rather than restated: change the
+ * shop's rung and both pit doors move with it, which is the one way the three
+ * readers of standing cannot drift apart.
+ */
+const STANDING_CLAMP = 40;   // `StationSave.setStanding`'s own bound, and the end of the walk
+export const SHUT_RUNG = (() => {
+  for (let n = 0; n <= STANDING_CLAMP; n++) if (!markupFor(-n).open) return n;
+  return STANDING_CLAMP;
+})();
+
 export const PITS = Object.freeze([
   Object.freeze({
     id: 'arena', place: 20, deck: 40, name: 'The Arena',
@@ -232,7 +280,14 @@ export const PITS = Object.freeze([
     rounds: 3, perRound: 9,
     /* A card posted a day ahead — the Arena is open through the station's own
      * waking hours and never a surprise. */
-    hours: [10, 22], always: true, shut: 1.01,
+    hours: [10, 22], always: true,
+    /* Licensed, so the only person it turns away is the one the station's own
+     * counters will not serve either. A player who has never cut anybody in
+     * this hull can walk in at any hour the card is up. */
+    shut: Object.freeze({
+      below: -SHUT_RUNG,
+      why: 'the marshal knows what you did in this hull — the licence board will not card you',
+    }),
     purse: 40, hazardPurse: 0,
     words: 'A marshal at the rail and a doctor behind it. Whatever it takes in there, '
       + 'it walks out with you.',
@@ -245,7 +300,14 @@ export const PITS = Object.freeze([
     /* The small hours only, and NOT EVERY NIGHT — "not always available or
      * offered". `venueOpen` rolls the day, so a player who walks down there
      * on the wrong night finds a service gap with nobody in it. */
-    hours: [22, 4], always: false, shut: 0.62,
+    hours: [22, 4], always: false,
+    /* THE OTHER WAY UP. §G5: closed entirely once your standing is high enough
+     * that the wrong people trust you — the same rung, mirrored, so the two
+     * rooms are the same rule facing opposite directions. */
+    shut: Object.freeze({
+      above: SHUT_RUNG,
+      why: 'the wrong people have stopped trusting you — the door does not open',
+    }),
     purse: 140, hazardPurse: 340,
     words: 'No referee, no doctor, and nobody stops it. If it goes past saving down '
       + 'there it does not come back.',
@@ -262,6 +324,11 @@ export const pitAtPlace = (place) => PITS.find((v) => v.place === place) || null
  * `standing` is the caller's number and this file neither reads nor stores it:
  * Lane B owns what standing is. Passed as 0 by anything that has none, which
  * is the honest default — nobody trusts a stranger and nobody distrusts one.
+ *
+ * IT IS ROUNDED TO AN INTEGER ON THE WAY IN, because that is the only thing
+ * `StationSave.standing()` can ever hand over — and rounding here is what
+ * stops a caller inventing a 0..1 scale for it a second time. The row says
+ * which SIDE of the rung it refuses; see `shut` in the table above.
  */
 export function venueOpen(venue, hour = 0, { standing = 0, day = 0 } = {}) {
   if (!venue) return { open: false, why: 'no such place' };
@@ -269,8 +336,11 @@ export function venueOpen(venue, hour = 0, { standing = 0, day = 0 } = {}) {
   const h = ((Number(hour) || 0) % 24 + 24) % 24;
   const within = a <= b ? (h >= a && h < b) : (h >= a || h < b);
   if (!within) return { open: false, why: `nothing here until ${String(a).padStart(2, '0')}:00` };
-  if (standing >= venue.shut) {
-    return { open: false, why: 'the wrong people have stopped trusting you — the door does not open' };
+  const s = Math.round(Number(standing) || 0);
+  const gate = venue.shut;
+  if (gate && ((Number.isFinite(gate.below) && s <= gate.below)
+    || (Number.isFinite(gate.above) && s >= gate.above))) {
+    return { open: false, why: gate.why };
   }
   if (!venue.always && streamOf('night', venue.id, String(day | 0))() < 0.34) {
     return { open: false, why: 'not tonight — the gap is dark and the grating is down' };

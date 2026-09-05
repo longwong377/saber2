@@ -683,11 +683,94 @@ export async function run({ check, assert }) {
     assert(on > 40 && on < 190, `the Underlift is open ${on} nights in 200 — "not always available or offered"`);
     let day = 0; while (!venueOpen(under, 23, { day }).open) day++;
     assert(!venueOpen(under, 13, { day }).open, 'the Underlift is open at one in the afternoon');
-    assert(!venueOpen(under, 23, { day, standing: 0.9 }).open,
-      'a player the wrong people trust can still walk into the Underlift');
-    assert(venueOpen(arena, 13, { standing: 0.9 }).open, 'the Arena shut on standing — it is licensed');
-    return `#20 '${a.shape}' deck ${a.deck}, refereed, purse ${arena.purse}; #61 '${u.shape}' deck ${u.deck}, `
-      + `no doctor, purse ${under.hazardPurse}, open ${on}/200 nights and shut above standing ${under.shut}`;
+    /**
+     * ══ THE DOOR IS DRIVEN ON THE UNITS THE GAME ACTUALLY SUPPLIES ═══════
+     *
+     * This clause used to hand `venueOpen` `standing: 0.9` — A NUMBER NO
+     * PLAYER CAN EVER HOLD. `main.js` passes `StationSave.standing()`, which
+     * is an INTEGER clamped to [-40, +40] and moves +2 a job collected and −2
+     * a body cut, and `venue.shut` was 1.01 and 0.62 on a 0..1 scale. So the
+     * assertion below the fraction — "the Arena shut on standing, it is
+     * licensed" — was green while ONE COLLECTED JOB shut both pits for the
+     * rest of the save and every room, board, corner and tote in Lane G sat
+     * behind a door no player could open again.
+     *
+     * THE RANGE IS ASKED FOR, NOT TYPED. `setStanding` is the only writer and
+     * it owns the clamp, so the sweep's ends come out of it live: retype 40
+     * here and the check would keep passing over a scale that had moved.
+     *
+     * THE STEP TOO. `Station.payForJob`'s one line is the riser, and the value
+     * one job produces from neutral is the exact number the old fraction died
+     * on, so it is read off that file rather than restated as "2".
+     */
+    const SS = await import('../../src/game/StationSave.js');
+    const keep = SS.standing();
+    let LO, HI;
+    try {
+      LO = SS.setStanding(-1e6);
+      HI = SS.setStanding(1e6);
+    } finally { SS.setStanding(keep); }
+    assert(Number.isInteger(LO) && Number.isInteger(HI) && LO < 0 && HI > 0,
+      `StationSave.standing() no longer runs on integers over [${LO}, ${HI}]`);
+    const paySrc = await readFile(new URL('../../src/game/Station.js', import.meta.url), 'utf8');
+    const riser = /setStanding\(\s*standing\(\)\s*\+\s*(\d+)\s*\)/.exec(paySrc);
+    assert(riser, 'Station.js no longer raises standing for a job collected — the riser moved');
+    const STEP = Number(riser[1]);
+
+    /* NO ROW MAY CARRY A BARE NUMBER AGAIN. A `shut` that is not a side is the
+     * defect itself: the fraction compared clean against an integer scale and
+     * said nothing. */
+    for (const v of PITS) {
+      const g = v.shut;
+      assert(g && typeof g === 'object' && (Number.isFinite(g.above) !== Number.isFinite(g.below)),
+        `#${v.place} ${v.name}'s \`shut\` is ${JSON.stringify(g)} — a door has to name the side it refuses`);
+      const rung = Number.isFinite(g.above) ? g.above : g.below;
+      assert(Number.isInteger(rung) && rung >= LO && rung <= HI,
+        `#${v.place} ${v.name} shuts at ${rung}, which is off standing's own [${LO}, ${HI}] scale`);
+      assert(typeof g.why === 'string' && g.why.length > 12,
+        `#${v.place} ${v.name} shuts without saying why`);
+    }
+
+    /* ── THE FULL SWEEP, EVERY INTEGER THE GAME CAN PRODUCE ───────────── */
+    const sweep = (venue, hour, days) => {
+      const out = [];
+      for (let s = LO; s <= HI; s++) {
+        let open = 0;
+        for (let d = 0; d < days; d++) if (venueOpen(venue, hour, { standing: s, day: d }).open) open++;
+        out.push(open);
+      }
+      return out;
+    };
+    const A = sweep(arena, 13, 20), U = sweep(under, 23, 20);
+    const atA = (s) => A[s - LO], atU = (s) => U[s - LO];
+
+    /* #20 IS LICENSED, so a player who has hurt nobody is never turned away —
+     * at neutral, after one job, and at every rung work can reach. */
+    const shutOnWork = [];
+    for (let s = 0; s <= HI; s += STEP) if (!atA(s)) shutOnWork.push(s);
+    assert(!shutOnWork.length,
+      `#20 The Arena is shut to a law-abiding player at standing ${shutOnWork.join(', ')} — `
+      + `${STEP} of those is ONE job collected, and §G5 calls this the sanctioned one`);
+    assert(atA(STEP) === A[0 - LO] && atA(STEP) > 0,
+      `collecting one job (standing ${STEP}) changed the Arena from ${A[0 - LO]}/20 open days to ${atA(STEP)}`);
+    /* And it is not a door that never shuts: the bottom of the scale is a man
+     * the station's own counters will not serve. */
+    assert(!atA(LO), `#20 The Arena cards a man at standing ${LO} — the licence means nothing`);
+
+    /* #61 HAS THE OPPOSITE RULE, and it must be the opposite one rather than a
+     * second copy of the same one. */
+    assert(atU(HI) === 0, `#61 is open at standing ${HI} — §G5 shuts it once the wrong people trust you`);
+    assert(atU(LO) > 0, `#61 is shut at standing ${LO} — the illegal pit turns away the very people it is for`);
+    assert(atU(0) > 0 && atU(STEP) > 0,
+      'one job collected shuts the Underlift — that is the fraction bug facing the other way');
+    const flip = (arr, want) => { for (let s = LO; s <= HI; s++) if ((arr[s - LO] > 0) === want) return s; return null; };
+    assert(flip(A, true) < flip(U, false), 'both pits turn away the same side of the scale');
+    const arenaShut = A.filter((n) => n === 0).length, underShut = U.filter((n) => n === 0).length;
+
+    return `#20 '${a.shape}' deck ${a.deck}, refereed, purse ${arena.purse}, open to ${HI - LO + 1 - arenaShut} `
+      + `of standing's ${HI - LO + 1} rungs and shut below ${arena.shut.below}; #61 '${u.shape}' deck ${u.deck}, `
+      + `no doctor, purse ${under.hazardPurse}, open ${on}/200 nights, shut at ${underShut} rungs from `
+      + `${under.shut.above} up; one job is +${STEP} and both doors stay open at it`;
   });
 
   check('pits: rule 4 on DECK 44 — the Underlift Pit does not read like anything else there', async () => {
