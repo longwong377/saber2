@@ -621,12 +621,79 @@ export async function run({ check, assert, THREE }) {
       /* THE CORRIDOR IS AN ANNULUS AND A WALKER MAY NOT LEAVE IT. This is the
        * whole reason the route is a bearing at a fixed radius rather than a
        * path: staying inside is arithmetic, so it is checked as arithmetic. */
+      /**
+       * ── AND THE OLD GUARD HERE ASSERTED THE DEFECT ──────────────────────
+       *
+       * It asserted `|hypot(x, z) - wayR| <= 0.05` — "0 walkers left the ring
+       * they were walking" — and staying exactly on that circle is PRECISELY
+       * what carried them through the rooms. The eight ring stretches sit on
+       * a clear annulus, but the four spine stretches sat mid-band, and a
+       * fifth of that circle is inside a room footprint. Measured live over
+       * 240 samples: a walker was inside #13 The Databank on 53 of them, #9 on
+       * 42, the Cantina on 15. #13 walls all but 0.42 rad of itself, so that
+       * was a body walking through a wall.
+       *
+       * So the property is not "on its own curve". It is THE ONE THE PLAYER
+       * WOULD SEE: nobody is ever inside a room they did not walk into. Tested
+       * against the same yawed rectangles `the plan is a plan` uses, over the
+       * whole minute rather than at the end of it.
+       */
+      const { PLACES: ALL, DRUM: D } = await import('../../src/game/StationPlan.js');
+      /**
+       * A ROOM THE RING PASSES THROUGH IS NOT A ROOM YOU WALKED INTO.
+       *
+       * `#9 The Concourse` is 67.4 m deep and reaches r = 86.4 — it CROSSES
+       * the ring corridor at 85.5, which is what makes it the hall the station
+       * opens into rather than a room off it. A body on the ring walk at that
+       * bearing is inside its footprint by construction and is standing in the
+       * Concourse, which is where the Concourse is.
+       *
+       * So the rooms tested are the ones the ring does NOT run through, which
+       * is derived off `rIn`/`rOut` — the radial extent `layout()` itself
+       * assigns — rather than named. #13, #14 and #17 all fail that test and
+       * are still caught; the day another hall is dug out to the skin it drops
+       * out of the list on its own arithmetic.
+       */
+      const rooms = ALL.filter((p) => p.deck === 40 && !p.external && p.band !== 'ring' && p.w
+        && !(p.rIn <= D.ringR && p.rOut >= D.ringR));
+      /* THE INVERSE OF `corners()`'s OWN TRANSFORM, and it has to be exactly
+       * that: `corners` places a local point at `(x + lx*c + lz*s, z - lx*s +
+       * lz*c)`, so recovering the local one is `lx = dx*c - dz*s`, `lz = dx*s
+       * + dz*c`. A sign wrong here reports a body in a room it is nowhere
+       * near, which is the first thing this clause did. */
+      const inside = (p, x, z) => {
+        const dx = x - p.x, dz = z - p.z;
+        const c = Math.cos(p.yaw), sn = Math.sin(p.yaw);
+        return Math.abs(dx * c - dz * sn) <= p.w / 2 && Math.abs(dx * sn + dz * c) <= p.d / 2;
+      };
+      const trespass = new Map();
+      for (let f = 0; f < 600; f++) {
+        world.update(1 / 60, idle);
+        for (const [, b] of life.live) {
+          if (!b.wayR) continue;
+          for (const p of rooms) {
+            if (!inside(p, b.position.x, b.position.z)) continue;
+            trespass.set(p.id, (trespass.get(p.id) | 0) + 1);
+          }
+        }
+      }
+      assert(trespass.size === 0,
+        `a corridor walker was inside ${[...trespass].map(([id, n]) => `#${id} on ${n} samples`).join(', ')}`
+        + ' — the between-space walks through the rooms');
+      /* AND EACH IS STILL ON THE CORRIDOR IT WAS PUT ON, which is the cheap
+       * half and still worth holding: a ring walker keeps its radius, a spine
+       * walker keeps its bearing. */
       let strayed = 0;
       for (const [, b] of life.live) {
         if (!b.wayR) continue;
-        if (Math.abs(Math.hypot(b.position.x, b.position.z) - b.wayR) > 0.05) strayed++;
+        const r = Math.hypot(b.position.x, b.position.z);
+        const a = Math.atan2(b.position.x, b.position.z);
+        const off = b.wayAxis === 'spine'
+          ? Math.abs(((a - b.wayAngle + Math.PI * 3) % (Math.PI * 2)) - Math.PI)
+          : Math.abs(r - b.wayR);
+        if (off > 0.05) strayed++;
       }
-      assert(strayed === 0, `${strayed} walkers left the ring they were walking`);
+      assert(strayed === 0, `${strayed} walkers left the corridor they were walking`);
       return `${walk.length} on the open stretches moved a median ${m.toFixed(1)} m in a minute `
         + `(the ring is ${(2 * Math.PI * 85.5).toFixed(0)} m round); ${stopped.length} who stopped `
         + `somewhere drifted ${stopped.length ? median(stopped).toFixed(1) : '0'} m; `

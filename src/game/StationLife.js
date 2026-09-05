@@ -658,6 +658,30 @@ function spawnResident(world, st, place, i) {
       body.wayR = Math.hypot(_v.x, _v.z);
       body.wayDir = ((place.id + i) % 2) ? 1 : -1;
       body.wayPace = WALK_PACE * (0.86 + ((place.id * 7 + i * 13) % 29) / 100);
+      /**
+       * ── WHICH CORRIDOR HE IS IN, BECAUSE THEY ARE NOT THE SAME SHAPE ────
+       *
+       * The first cut walked every `walk` slot round a circle at its own
+       * radius, and that is only safe on the RING. The eight ring stretches
+       * sit at `ringR`, which is a clear annulus all the way round — but the
+       * four SPINE stretches sit at `(balcony + roomR) / 2`, mid-band, and a
+       * fifth of that circle is inside a room footprint. Measured live over
+       * 240 samples on deck 40: a walker was inside #13 The Databank on 53 of
+       * them, #9 The Concourse on 42, the Cantina on 15. #13 walls all but
+       * 0.42 rad of itself, so that is a body walking through a wall; #14 is
+       * sunk half a deck, so that is a body in mid-air over it.
+       *
+       * A SPINE IS RADIAL, so a spine walker travels along its own bearing
+       * between the balcony and the rooms' inner face and turns round at the
+       * ends. The property that made the ring version safe — you cannot leave
+       * a corridor you are travelling the length of — is the same one, applied
+       * to the axis the corridor actually runs on.
+       */
+      body.wayAxis = Math.abs(body.wayR - DRUM.ringR) < 2 ? 'ring' : 'spine';
+      if (body.wayAxis === 'spine') {
+        body.wayIn = DRUM.balcony + 2.5;
+        body.wayOut = DRUM.roomR - 2.5;
+      }
     }
   }
   /* A resident stands where they are put and does not hunt. There is no
@@ -868,15 +892,30 @@ function stepWalkers(world, life, dt) {
     const R = body?.wayR;
     if (!R) continue;
     const was = body.position ? { x: body.position.x, z: body.position.z } : null;
-    body.wayAngle += (body.wayPace / R) * body.wayDir * dt;
-    const x = R * Math.sin(body.wayAngle), z = R * Math.cos(body.wayAngle);
+    let x, z;
+    if (body.wayAxis === 'spine') {
+      /* ALONG THE SPINE AND BACK. The bearing is fixed; the RADIUS is what
+       * moves, and it turns round at each end rather than running out into
+       * the atrium at one and through the skin at the other. */
+      body.wayR = R + body.wayPace * body.wayDir * dt;
+      if (body.wayR >= body.wayOut) { body.wayR = body.wayOut; body.wayDir = -1; }
+      else if (body.wayR <= body.wayIn) { body.wayR = body.wayIn; body.wayDir = 1; }
+      x = body.wayR * Math.sin(body.wayAngle);
+      z = body.wayR * Math.cos(body.wayAngle);
+      /* Facing along the radius — outward when walking out, inward coming back. */
+      body.facing = body.wayDir > 0 ? body.wayAngle : body.wayAngle + Math.PI;
+    } else {
+      body.wayAngle += (body.wayPace / R) * body.wayDir * dt;
+      x = R * Math.sin(body.wayAngle);
+      z = R * Math.cos(body.wayAngle);
+      /* FACING ALONG THE WALK, which is the tangent — a person walking the
+       * ring backwards is the thing this is here to avoid. */
+      body.facing = body.wayAngle + (body.wayDir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    }
     if (body.position) {
       body.position.x = x; body.position.z = z;
       body.body?.setTransform?.(body.position, null);
     }
-    /* FACING ALONG THE WALK, which is the tangent — a person walking the ring
-     * backwards is the thing this is here to avoid. */
-    body.facing = body.wayAngle + (body.wayDir > 0 ? Math.PI / 2 : -Math.PI / 2);
     if (was && body.velocity && dt > 0) {
       body.velocity.set((x - was.x) / dt, 0, (z - was.z) / dt);
     }
