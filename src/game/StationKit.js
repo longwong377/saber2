@@ -3427,6 +3427,12 @@ export class CookSet {
    */
   step(dt) {
     if (this.done) return false;
+    /* THE ROOM CAN GO AWAY UNDER IT. A lift, a launch or a rotation disposes
+     * `world.statics` and takes the group off the scene; a set that went on
+     * placing meshes into a scene nobody is drawing would be a cook running
+     * for the rest of the session. `parent` is the honest test — it is what
+     * the teardown actually clears. */
+    if (!this.world?._station || !this.group?.parent) { this.dispose(); return false; }
     const cook = this.cook;
     /* THE ONE CLOCK. The banner's lines and the geometry come out of the same
      * `Cook.step`, so a stall cannot be tossing a pan while the line on screen

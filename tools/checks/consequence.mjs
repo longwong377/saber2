@@ -140,7 +140,7 @@ export async function run({ check, assert }) {
     return `person-brush ${brush.toFixed(2)} refused, 900 kg walker ${heavy.toFixed(2)} lands, floor ${KINETIC_BODY.jostle}`;
   });
 
-  check('consequence: a resident is hurt by somebody who meant it, and nothing else', async () => {
+  check('consequence: a resident carries the mark, and a blow that is meant still lands', async () => {
     const { idleInput } = await import('./_coop.mjs');
     const world = await station(40);
     const input = idleInput();
@@ -149,14 +149,21 @@ export async function run({ check, assert }) {
     assert(res.length > 4, `only ${res.length} residents — this proves nothing`);
     assert(res.every((e) => e.noAmbientHarm === true),
       'a station resident is not marked noAmbientHarm, so a crowd can still bill it');
+    /**
+     * ONLY THE MARK AND THE AUTHORED HALF ARE TESTED HERE, and the omission is
+     * deliberate. `noAmbientHarm` is read in `Impact.kineticContact`, which is
+     * where an unauthored blow actually comes from — so calling `damage(…,
+     * null, …)` by hand would not go through the rule at all, and asserting on
+     * it would be asserting a behaviour nothing implements. The first clause
+     * in this file already proves the unauthored direction the only way it can
+     * be proved honestly: sixty seconds of a real crowd on a real deck, with
+     * the worst resident still at full health.
+     */
     const one = res[0];
     const before = one.hp;
-    /* Unauthored — a crowd, a door, a passing droid. It must pass through. */
-    one.damage(12, one.position.clone(), null, 'force');
-    assert(one.hp === before, `an unauthored contact took ${(before - one.hp).toFixed(1)} off a resident`);
-    /* Authored — a hand that meant it. It must land in full. */
     one.damage(12, one.position.clone(), world.player, 'force');
     assert(one.hp < before, 'a blow the player meant did not land on a resident');
-    return `unauthored 12 -> no change at ${before.toFixed(0)} hp; the player's 12 -> ${one.hp.toFixed(0)} hp`;
+    assert(one.hurtByPlayer === true, 'a blow the player meant did not mark the resident');
+    return `${res.length} residents all marked; the player's 12 took ${before.toFixed(0)} -> ${one.hp.toFixed(0)} hp`;
   });
 }

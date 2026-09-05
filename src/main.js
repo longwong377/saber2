@@ -3900,12 +3900,20 @@ screens.card('counter', () => closePane('counter'));
  * banner over the top of it.
  */
 let cookTimer = null;
+let cooking = null;
 function cancelCook() {
   if (cookTimer !== null) { clearTimeout(cookTimer); cookTimer = null; }
   /* THE GEOMETRY GOES WITH IT. A set left standing on a counter after the
    * screen it belongs to is gone is the same defect as the timer above, in
    * meshes: eight of them, on a desk in a room the player has left. */
   if (world?._cook) { world._cook.dispose(); world._cook = null; }
+  /* …AND THE THING YOU PAID FOR STILL ARRIVES. `Cook.finish` exists for
+   * exactly this — it says the lines it has not said and hands the dish over
+   * — and nothing called it: ordering a second bowl while the first was still
+   * in the pan cancelled the first cook where it stood, so the credits were
+   * gone and the larder never saw it. */
+  if (cooking && !cooking.done) cooking.finish();
+  cooking = null;
 }
 
 function cookAtCounter(counter, row) {
@@ -3946,9 +3954,14 @@ function cookAtCounter(counter, row) {
    * station, a dish with no prep — because a player who has paid for a bowl
    * must be told about it whatever the surface can draw.
    */
+  cooking = cook;
   const prep = Food.prepOf(row)?.id || null;
   import('./game/StationKit.js').then(({ CookSet }) => {
-    if (cook.done) return;
+    /* THE ORDER MAY ALREADY BE OVER by the time this resolves — a second
+     * order, a door, a teardown. `cooking` is what says which cook is the
+     * live one, and a set built for a cancelled one would stand on the
+     * counter for ever. */
+    if (cook.done || cooking !== cook) return;
     const set = new CookSet(world, counter, cook, prep);
     if (set.done) { set.dispose(); cookBeat(cook); return; }
     world._cook = set;
