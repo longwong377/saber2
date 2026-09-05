@@ -281,21 +281,27 @@ export class CircuitPilot {
 }
 
 /**
- * ══ WHERE ON THE TRACK A POINT IS ═════════════════════════════════════════
+ * WHERE THE CRAFT IS ON THE TRACK — and it is `advanceOn` below, not a
+ * function of its own.
  *
- * A local search rather than a solve: forty samples at 3 m, from a little
- * behind to 120 m ahead, which is wider than anything a 1/60 s step can cover
- * and narrow enough that the far side of the loop cannot win. The window is
- * one-sided on purpose — a craft cannot go round backwards, and a symmetric
- * search on a track that passes near itself at the mouth can.
+ * There WAS an `export function projectOnto(position, from)` here, wrapping
+ * `scan(position, from, -8, 40, 3).u`, and its note argued the right thing
+ * for the wrong shape: *"a function and not a method, because two pilots ask
+ * it now ... two copies of a search that has this many opinions in it is how
+ * the two would come to disagree about which lap they were on."* The
+ * argument holds. The function did not: it had no caller anywhere, not even
+ * inside this file, because `advanceOn` is already the one place both
+ * `CircuitPilot` and `PlayerPilot` project through — and `advanceOn` needs
+ * `scan`'s `.d` as well as its `.u`, to decide whether the craft has come far
+ * enough off the line to be worth re-acquiring. A wrapper that throws the
+ * distance away could never have served it.
  *
- * A FUNCTION AND NOT A METHOD, because two pilots ask it now: `CircuitPilot`
- * and the seat below. Two copies of a search that has this many opinions in it
- * is how the two would come to disagree about which lap they were on.
+ * So the single door the note asked for exists and is `advanceOn`. This is
+ * recorded rather than silently deleted because the next person to want "just
+ * the track position" will reach for exactly that wrapper again, and the
+ * reason not to add it is that the caller almost always needs the distance
+ * too. `tools/checks/reachable.mjs` found it.
  */
-export function projectOnto(position, from) {
-  return scan(position, from, -8, 40, 3).u;
-}
 
 /**
  * ══ AND A CRAFT THAT IS NOWHERE NEAR THE LINE FINDS IT AGAIN ══════════════
