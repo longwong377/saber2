@@ -345,12 +345,6 @@ export const GEAR = {
   charge: { vessel: 'post', tool: 'cable', lid: false, fire: 'ring' },
 };
 
-/** The fit-out for a dish, or null if nobody has said how it is made. */
-export function gearFor(dish) {
-  const p = prepOf(dish);
-  return p ? GEAR[p.id] || null : null;
-}
-
 /**
  * WHICH DISH IS MADE WHICH WAY — one word each, and there is no default.
  *
@@ -526,8 +520,8 @@ export const MOVES = [
  * over the near half of the top, and the one thing that crosses the middle is
  * the dish — which is the whole point of the last move.
  */
-export const WORK = { x: -0.10, z: -0.16 };
-export const PLATE = { x: 0.20, z: 0.26 };
+const WORK = { x: -0.10, z: -0.16 };
+const PLATE = { x: 0.20, z: 0.26 };
 /** Where the vessel comes up from, and where a lid is set aside. */
 const UNDER = -0.62;
 

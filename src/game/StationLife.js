@@ -470,16 +470,31 @@ function boxHas(p, x, z) {
  * `Companions.js` from in there asks for a module that is still being
  * evaluated — so the promise rejects and the `catch` swallowed it silently.
  *
- * Asked from the STEP instead, every module in the graph is finished and it
- * resolves. A failure is retried rather than latched, on a slow clock, because
- * the one thing worse than an animal that arrives a second late is a station
- * that decided on frame one it would never have any.
+ * Asked from module scope instead, every module in the graph finishes on its
+ * own time and this one picks the answer up whenever it lands. A failure is
+ * retried rather than latched, on a slow clock, because the one thing worse
+ * than an animal that arrives a second late is a station that decided on frame
+ * one it would never have any.
  */
-function wantCompanions(life) {
-  if (life.cmp || life.cmpIn > 0) { life.cmpIn--; return; }
-  life.cmpIn = 120;
-  import('./Companions.js').then((m) => { life.cmp = m; }).catch(() => {});
+let _cmp = null;
+let _cmpIn = 0;
+function companionsNow() {
+  if (_cmp) return _cmp;
+  if (_cmpIn > 0) { _cmpIn--; return null; }
+  _cmpIn = 60;
+  import('./Companions.js').then((m) => { _cmp = m; }).catch(() => {});
+  return null;
 }
+/* STARTED AT MODULE SCOPE, which is the earliest moment there is and the one
+ * that matters. A promise only settles at an `await`, and `stepStationLife` is
+ * called from a SYNCHRONOUS frame loop — so a fetch begun on the first frame
+ * cannot possibly have landed by the second, and in a headless check that
+ * drives ten thousand frames in a row without awaiting anything it never lands
+ * at all. Measured with the fetch begun from the step: `cmp: false` after
+ * 1 800 frames, four bodies waiting for an animal, none built. Begun here, it
+ * has the whole of the station's build — every room file read, every await in
+ * `loadLevel` — to finish in. */
+companionsNow();
 
 /** A stub shorter than this is not a corridor anybody walks. */
 const SPAN_MIN = 8;
@@ -1113,7 +1128,7 @@ export function dressStationLife(world, st) {
      * already caps itself at one of those a frame for the reason written on
      * the cap. Draining one animal a frame puts the two under the same rule.
      */
-    cmp: null, cmpIn: 0, wantPets: [],
+    wantPets: [],
     reseatIn: 0,
     /** True until the first re-seat has run — see `dressStationLife`. */
     priming: true,
@@ -1863,8 +1878,8 @@ const WALK_DROP = DROP_RADIUS;
  */
 function stepHandlers(world, life) {
   if (!life.wantPets.length) return false;
-  const m = life.cmp;
-  if (!m) { wantCompanions(life); return false; }
+  const m = companionsNow();
+  if (!m) return false;
   /* ONE A FRAME. See `wantPets`. */
   const body = life.wantPets.shift();
   if (!body || body.disposed || body._stationAnimal || !life.live.has(`${body.stationPlace}:${body.stationSlot}`)) return false;
@@ -1884,6 +1899,12 @@ function stepHandlers(world, life) {
     /* WHAT THE NAMEPLATE SAYS (§14). `handlerOf` names the animal off the
      * handler's own seed, so it is the same name in the corridor and on the
      * pit's card. */
+    /* THE SAME EXEMPTION ITS HANDLER HAS. `Impact.kineticContact`'s
+     * `noAmbientHarm` is the station's rule that an unauthored contact — a
+     * crowd, a door, a passing droid — does not hurt anybody; an animal at
+     * heel in that crowd is in exactly the position the rule was written for.
+     * Without it a dog walked through a market is worn down by the market. */
+    pet.noAmbientHarm = true;
     pet.stationName = H.animal;
     /* An animal at heel is a resident too. */
     pet.noAmbientHarm = true;
