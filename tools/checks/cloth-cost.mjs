@@ -728,5 +728,70 @@ export async function run({ check, assert, THREE }) {
     return `hair rigid, hood none, waist none — 3 opt-in garments, 0 of them in the 287 / 1466`;
   });
 
+  /**
+   * ══ THE CHEST AND THE SEAT MOVE, AND THEY ARE NOT CLOTH ═══════════════════
+   *
+   * V15 §2's *"sliders for chest and glutes with real bounce"*. Same policy as
+   * the three rows above — it may not default on, because the equality this
+   * file pins is Engine.js's tier sizing — and one thing the three rows above
+   * cannot claim, which is the reason it gets its own clause:
+   *
+   * IT ADDS NO PARTICLES AND NO LINKS AT ALL, ON OR OFF. `attachSoftBody` is a
+   * spring-damper writing into a lathe's vertex buffer, not a `Cloak`, so the
+   * walk at the top of this file — "a body is a body if it has `pos` and
+   * `links`" — finds nothing to count. That is a strong claim and a claim of
+   * that shape is exactly how a cost gets in round the side, so it is asserted
+   * on a REAL FIGURE with the thing turned on rather than argued from the
+   * source: build it, walk it the way `worn()` walks the player, and require
+   * the walk to come back empty.
+   *
+   * The PRICE it does carry — 90 vertices of a possible 360 — is measured in
+   * `creator: the chest and the seat move, and this is what it costs`, where
+   * building figures is already what the file does. Same split, same reason:
+   * building six figures in THIS process moved the CPU clock two checks up by
+   * 0.3 ms of cache pressure on a bound that sits at 7.0.
+   */
+  check('cloth: the soft tissue does not default on, and it is not cloth', async () => {
+    const { WARDROBE, wardrobeOf, FLESH_MOTION, attachSoftBody } = await import('../../src/game/Cloth.js');
+    const { buildJedi } = await import('../../src/game/Bodies.js');
+    assert(WARDROBE.flesh === 'rigid',
+      `the shipped wardrobe's soft tissue is "${WARDROBE.flesh}" — a body that defaults to moving `
+      + 're-dresses every saved profile at once, exactly as a garment that defaulted on would');
+    assert(wardrobeOf({}).flesh === 'rigid' && wardrobeOf({ flesh: 'nope' }).flesh === 'rigid',
+      'an unknown soft-tissue id does not fall back to the rigid body');
+    assert(FLESH_MOTION.some((r) => r.id === 'live'), 'there is no way to turn it on');
+
+    /* THE SHIPPED FIGURE HAS NO FIELD TO DRIVE, which is the second and
+     * stronger reason nothing moves: it is arithmetic, not a switch. */
+    const plain = buildJedi({});
+    assert((plain.rig.soft || []).length === 0,
+      `the shipped figure carries ${plain.rig.soft.length} soft-tissue site(s); at sex 0 there is `
+      + 'no swell for one to move and `fleshSections` returns FLESH_SECTIONS, which has no `noSwell`');
+    assert(attachSoftBody(plain.rig, {}) === null,
+      'the shipped figure built a solver anyway — `attachSoftBody` must answer null with no field');
+
+    /* AND ON A FIGURE THAT DOES HAVE ONE, THE WALK COMES BACK EMPTY. This is
+     * the claim: `soft` is not in the 287 / 1466 because there is nothing in
+     * it for the counter to find, not because the counter was told to skip it. */
+    const her = buildJedi({ sex: 1, bust: 1, seat: 1 });
+    const soft = attachSoftBody(her.rig, {});
+    assert(soft && soft.sites === 2, `a figure at sex 1 got ${soft ? soft.sites : 0} sites, not 2`);
+    const found = [];
+    const walk = (c, name, depth = 0) => {
+      if (!c || typeof c !== 'object' || depth > 4) return;
+      if (c.pos && c.links) found.push(name);
+      for (const k of ['sash', 'outer', 'inner']) if (c[k] && c[k] !== c) walk(c[k], `${name}.${k}`, depth + 1);
+      for (const a of ['parts', 'panels']) if (Array.isArray(c[a])) c[a].forEach((x, i) => walk(x, `${name}.${a}[${i}]`, depth + 1));
+    };
+    walk(soft, 'soft');
+    assert(found.length === 0,
+      `the soft tissue now carries ${found.length} cloth bod(y/ies) — ${found.join(', ')}. It is a `
+      + 'spring on a vertex buffer; the moment it holds particles it is in the 287 / 1466 and '
+      + "Engine.js's tier sizing has to be re-derived");
+    soft.dispose();
+    return `flesh rigid, hair rigid, hood none, waist none — 4 opt-in rows, 0 of them in the `
+      + `287 / 1466; the shipped figure has 0 sites and a figure at sex 1 has 2 carrying 0 particles`;
+  });
+
 
 }

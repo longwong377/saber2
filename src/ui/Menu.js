@@ -24,7 +24,7 @@ import { ORDERS, getOrder, crystalPalette, crystalForOrder, hiltsForOrder } from
 import { ROBE_CUTS, attachCloak, attachSkirt, attachLekku,
          CAPE_CUTS, TABARD_CUTS, SASH_CUTS, GARMENT_TONES, WARDROBE, wardrobeOf, tintWardrobe,
          garmentTone, WAIST_CUTS, attachTrooperCape, attachHairTail,
-         HAIR_TAILS } from '../game/Cloth.js';
+         HAIR_TAILS, FLESH_MOTION, attachSoftBody } from '../game/Cloth.js';
 /* The three sets the Jedi tab offers — one table, and the card row below reads
  * its rows straight through so a fourth set is a row there and nothing here. */
 import { SABER_SETS } from '../game/SaberSet.js';
@@ -1364,6 +1364,9 @@ export function applyFeelSettings(world, s = DEFAULT_SETTINGS) {
   applyLekku(world);
   /* …and the braid, which unlike the head-tails is a choice — see its note. */
   applyHairTail(world, s);
+  /* …and the chest and the seat, which are a choice for the same reason and
+   * are NOT cloth — see `applySoftBody`. */
+  applySoftBody(world, s);
   applyWardrobe(world, s);
   applyGait(world);
   tapFrame(world);
@@ -1763,6 +1766,72 @@ export function applyHairTail(world, s = {}) {
     };
     const die = p.die.bind(p);
     p.die = (src) => { p.hairTail?.dispose(); p.hairTail = null; die(src); };
+    n++;
+  }
+  return n > 0;
+}
+
+/**
+ * SIMULATE THE SOFT TISSUE, on the same seam, for the same reason, and OPT-IN.
+ *
+ * V15 §2: *"sliders for chest and glutes with real bounce"*. `applyLekku`
+ * forty lines up is the whole argument for where this lives — "the only way it
+ * can be stepped on the right clock, inside the same frame the bone it hangs
+ * from was posed in. A separate rAF would be a frame behind the skull every
+ * frame." A chest hangs off the ribcage bone and that sentence is about the
+ * bone; here it is stronger, because the drive is the bone's own ACCELERATION
+ * and an acceleration read a frame late is not a lag, it is a different
+ * number.
+ *
+ * THE GATE IS THE BRAID'S, doubled. `wardrobe.flesh === 'live'` is the choice,
+ * and `rig.soft` — the field `Bodies.softSites` builds — is empty on every
+ * figure at sex 0, so a player who turns the switch on with the axis at zero
+ * gets `attachSoftBody` returning null and nothing built. Two independent
+ * reasons for nothing to happen, and the second one is arithmetic.
+ *
+ * NOT ON THE PREVIEW, and that is a decision rather than an omission:
+ * `assemblePreview` settles its garments and takes a still. A spring whose
+ * only input is acceleration is at rest in a still frame, so attaching one
+ * there would cost a build and change not one pixel. The place this reads is
+ * the game.
+ *
+ * Idempotent, and it can take it away again: `flesh` is a live wardrobe row on
+ * the pause card, so turning it off puts the vertices back where the builder
+ * left them on the next frame rather than at the next death — which is
+ * `attachSoftBody.dispose`'s own contract and the reason it has one.
+ */
+export function applySoftBody(world, s = {}) {
+  if (!world) return false;
+  const want = wardrobeOf(s.wardrobe ?? world.settings?.wardrobe).flesh === 'live';
+  let n = 0;
+  for (const p of world.players || []) {
+    if (!p || !p.rig) continue;
+    if (!want) {
+      if (p.softBody) { p.softBody.dispose(); p.softBody = null; }
+      continue;
+    }
+    /* A NEW BODY IS A NEW FIELD, and here it is not merely stale but
+     * dangerous: the field is INDICES INTO A VERTEX BUFFER, so one kept across
+     * a respawn writes into geometry that belongs to a body that is gone. The
+     * rig it was built on is remembered and compared, exactly as
+     * `applyHairTail` does and for a sharper version of the same reason. */
+    if (p.softBody && p._softRig !== p.rig) { p.softBody.dispose(); p.softBody = null; }
+    if (p.softBody) continue;
+    const soft = attachSoftBody(p.rig, { gain: 1 });
+    if (!soft) continue;
+    p.softBody = soft;
+    p._softRig = p.rig;
+    const update = p.update.bind(p);
+    p.update = (dt, ctx) => {
+      update(dt, ctx);
+      /* AFTER the animator has posed the bone, because the acceleration this
+       * reads is that bone's — see the header. No wind: soft tissue under a
+       * tunic does not catch any, which is the one place this differs from
+       * every other secondary motion in the game. */
+      p.softBody?.update(dt);
+    };
+    const die = p.die.bind(p);
+    p.die = (src) => { p.softBody?.dispose(); p.softBody = null; die(src); };
     n++;
   }
   return n > 0;
@@ -5252,7 +5321,11 @@ export class Menu {
       (v) => (v < 0.15 ? 'masculine' : v > 0.85 ? 'feminine' : v < 0.5 ? 'androgynous' : 'soft'));
     this._sheetSlider('sheet-bust', 'bust', (v) => (v < 0.34 ? 'small' : v > 0.66 ? 'full' : 'even'));
     this._sheetSlider('sheet-seat', 'seat', (v) => (v < 0.34 ? 'slim' : v > 0.66 ? 'full' : 'even'));
-    for (const id of ['bust-row', 'seat-row']) {
+    /* …and so is the MOTION row, for exactly the same reason and by exactly
+     * the same test: `Bodies.softSites` builds no field at sex 0, so at sex 0
+     * "Soft" is a card that promises something it cannot do. One list, one
+     * condition — a second copy of that threshold is how the two would drift. */
+    for (const id of ['bust-row', 'seat-row', 'h-flesh', 'flesh-list']) {
       document.getElementById(id)?.classList.toggle('hidden', !((this.s.face.sex ?? 0) > 0.02));
     }
     /*
@@ -5400,6 +5473,11 @@ export class Menu {
      * because the default player's garment cost is pinned as an equality. It
      * sits beside the hairstyle row for the obvious reason. */
     this._wardrobeCards('hairmotion-list', 'h-hairmotion', 'hair', HAIR_TAILS);
+    /* WHETHER THE CHEST AND THE SEAT MOVE — V15 §2's *"real bounce"*, opt-in
+     * for the braid's reason and hidden below sex 0.02 for `softSites`'s: at
+     * zero there is no swell to move. Same table-driven row as every other
+     * cut, off `Cloth.FLESH_MOTION`, so a third mode is a row there. */
+    this._wardrobeCards('flesh-list', 'h-flesh', 'flesh', FLESH_MOTION);
     /* ── CLONE ARMOUR, the row this half of V15 §2 was asked for. See
      * `_armourRows`. It writes into `settings.wardrobe.armour` like every
      * other row on this column and reaches the body through

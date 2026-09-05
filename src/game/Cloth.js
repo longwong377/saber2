@@ -1633,6 +1633,28 @@ const HAIR_TAIL_BY_ID = new Map(HAIR_TAILS.map((c) => [c.id, c]));
 export function hairTail(id) { return HAIR_TAIL_BY_ID.get(id) || null; }
 
 /**
+ * WHETHER THE SOFT TISSUE IS WELDED TO THE RIBCAGE OR HANGS OFF IT.
+ *
+ * V15 §2: *"sliders for chest and glutes with real bounce"*. Two rows and the
+ * same vocabulary the braid uses one table up — `rigid` / `live` — because it
+ * is the same question about a different part of the body, and a player who
+ * has learnt what "Held" means on the hair should not have to learn a second
+ * word for it. See `attachSoftBody` for what a `live` figure pays and for why
+ * `rigid` is the default.
+ *
+ * The blurb carries the one fact a player needs and cannot see from the card:
+ * it does nothing at all on a figure whose sex slider is at zero, because at
+ * zero there is no swell for it to move.
+ */
+export const FLESH_MOTION = [
+  { id: 'rigid', name: 'Held', blurb: 'The chest and the seat are part of the ribcage and the pelvis, and go exactly where the bones go. What every figure in this game has worn until now, and it costs nothing.' },
+  { id: 'live', name: 'Soft', blurb: 'The mass the Bust and Hips sliders added lags the body and settles when you stop — a third of the swell, damped, and nothing at all if the sex slider is at zero. It is not cloth: no particles, no links.' },
+];
+const FLESH_MOTION_BY_ID = new Map(FLESH_MOTION.map((c) => [c.id, c]));
+/** The flesh-motion row with this id, or null. Same contract as `hairTail`. */
+export function fleshMotion(id) { return FLESH_MOTION_BY_ID.get(id) || null; }
+
+/**
  * THE TONES A PIECE MAY BE DYED, and why they are not ROBE_COLORS.
  *
  * `ROBE_COLORS` (Bodies.js) is a PALETTE — three related tones, outer, inner
@@ -1698,6 +1720,18 @@ export const WARDROBE = {
    * and only if the cut they are wearing HAS a braid — see `HAIR_TAILS`.
    */
   hair: 'rigid',
+  /**
+   * WHETHER THE CHEST AND THE SEAT MOVE — V15 §2's *"sliders for chest and
+   * glutes with real bounce"*, and the default is the figure that shipped.
+   *
+   * `'rigid'`, and for a reason this table has now given four times: a body
+   * choice that defaults ON re-dresses every saved profile at once. It is also
+   * the FOURTH row here that is off by default and the first that is not
+   * cloth — a player who turns it on pays 90 vertex writes a frame and zero
+   * particles, zero links and zero colliders (see `attachSoftBody`), so the
+   * 287 / 1466 `cloth-cost.mjs` pins is untouched either way.
+   */
+  flesh: 'rigid',
   tabard: 'temple',
   sash: 'obi',
   /**
@@ -1791,6 +1825,7 @@ export function wardrobeOf(w) {
     cape: id(CAPE_BY_ID, src.cape, WARDROBE.cape),
     top: id(TOP_BY_ID, src.top, WARDROBE.top),
     hair: id(HAIR_TAIL_BY_ID, src.hair, WARDROBE.hair),
+    flesh: id(FLESH_MOTION_BY_ID, src.flesh, WARDROBE.flesh),
     tabard: id(TABARD_BY_ID, src.tabard, WARDROBE.tabard),
     sash: id(SASH_BY_ID, src.sash, WARDROBE.sash),
     hood: id(HOOD_BY_ID, src.hood, WARDROBE.hood),
@@ -3906,4 +3941,280 @@ export function attachLekku(scene, rig, opts = {}) {
   };
   group.setVisible(true);
   return group;
+}
+
+/* ══════════════════════════════════════════════════════════════════════ */
+/*  SOFT TISSUE — the chest and the seat, moving on their own              */
+/* ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══ V15 §2: *"sliders for chest and glutes with real bounce"* ═════════════
+ *
+ * The sliders shipped and the SHAPE was real — `Bodies.fleshSections` puts the
+ * bust into the ribcage lathe and the seat into the pelvis. The BOUNCE did not
+ * exist: nothing in this file, `Rig.js`, `MergedSkin.js` or `Player.js` read
+ * `bust` or `seat` at runtime, so the mass the slider added was welded to a
+ * rigid bone and moved not one micron relative to it. That is the same
+ * complaint `attachLekku`'s header opens with, one body part down.
+ *
+ * ── AND IT IS NOT THE CAPE SOLVER, WHICH IS THE WHOLE DESIGN ──────────────
+ *
+ * V15 §2 says *"hair and soft-body bounce are the same solver with different
+ * anchors and stiffness"*, and for the braid that was exactly right. It is
+ * wrong here, and the reason is worth stating because it is what stopped this
+ * being a cape: A TORSO IS A LATHE ON A BONE, not a strip of cloth. There are
+ * no particles to anchor — there is one merged vertex buffer, rigid-parented,
+ * baked at build time. Wrapping the chest in a `Cloak` would be a second
+ * surface hovering over the first, which is a garment, and the ask is that the
+ * BODY move.
+ *
+ * So the shape gets a DISPLACEMENT CHANNEL (`Bodies.softSites`, and see its
+ * header for how the field is derived from the section functions rather than
+ * authored) and this drives it with one spring-damper per site. Two sites,
+ * three degrees of freedom each.
+ *
+ * ── WHAT IT COSTS, AND WHY IT IS NOT IN THE 287 / 1466 ────────────────────
+ *
+ * `tools/checks/cloth-cost.mjs` pins the shipped player at 287 particles and
+ * 1466 links AS AN EQUALITY, and that number is Engine.js's tier sizing. This
+ * adds **0 particles, 0 links and 0 colliders** — the check walks for objects
+ * carrying `pos` and `links` and there is neither, because this is not a cloth
+ * body and pretending it was would have bought a solver it does not need.
+ * What it does cost, measured on a figure at sex 1:
+ *
+ *     48 of the chest lathe's 180 vertices and 42 of the pelvis lathe's 180
+ *     — 90 vertex writes and two 180-vertex attribute uploads a frame
+ *     24 floats of state (displacement, velocity, last point, last velocity)
+ *
+ * against the braid's 24 particles × 100 links × 4 iterations = 400 link
+ * solves a frame. It is the cheapest secondary motion on the figure and it is
+ * still OPT-IN (`WARDROBE.flesh` is `'rigid'`), for the reason the hood, the
+ * waist cape and the braid all give: a default that changed would re-dress
+ * every saved profile at once. At sex 0 there are no sites AT ALL, so the
+ * figure that ships cannot move whether the switch is on or off.
+ *
+ * ── THE DRIVE IS THE FRAME'S ACCELERATION, AND NOT GRAVITY ────────────────
+ *
+ * The state `x` is the displacement of the tissue relative to the bone, in the
+ * bone's own frame, and it rests at ZERO — which is the authored figure, to
+ * the float. So the integrator is the classic accelerated-frame one,
+ *
+ *     ẍ = −ω²x − 2ζω ẋ − a            (a = the site's acceleration, in-frame)
+ *
+ * with NO gravity term, and that omission is the point rather than an
+ * oversight: a constant field produces a constant offset, and a constant
+ * offset is a different figure standing still. The sag a body has under
+ * gravity is already in the lathe `Bodies.js` authored. What is missing from a
+ * rigid one is only the LAG, and lag is what `−a` is.
+ *
+ * `a` is probed at the field's own weighted CENTROID rather than at the bone's
+ * origin (`Bodies.softSites` publishes it), because the centroid is off the
+ * bone axis — so a yaw of the hips arrives as centripetal and Euler terms in
+ * that point's acceleration for free, instead of needing a second angular
+ * integrator and a lever arm typed in twice.
+ *
+ * ── THE NUMBERS, AND THE HEADROOM THEY WERE CHOSEN INSIDE ─────────────────
+ *
+ * `f0` 3.2 Hz on the chest and 4.6 Hz on the seat; `zeta` 0.30 and 0.38. Soft
+ * tissue on a running body measures 2–4 Hz and settles inside half a second,
+ * which is what those two pairs are: three visible swings on the chest and
+ * about two on the seat, both dead by 0.5 s after you stop. The seat is
+ * stiffer and damped harder because a gluteal mass is bound against the pelvis
+ * on three sides and a breast is bound on one.
+ *
+ * AMPLITUDE IS A FRACTION OF THE SWELL ITSELF — 0.35 of the peak on the chest
+ * and 0.25 on the seat — so it scales with the slider with nothing to wire:
+ * the field's peak IS `f · (0.14 + 0.20·bust)` of a radius. A figure at sex 0
+ * has no swell and therefore no amplitude, which is the third place the same
+ * guarantee is made and the only one that is arithmetic.
+ *
+ * THAT IT CLEARS THE CLOTHES IS MEASURED, NOT ASSUMED. Raycast along every
+ * field vertex's own normal on a dressed figure at sex 1, the tightest
+ * garment over the chest allows 141 mm of peak displacement and over the seat
+ * 554 mm — the latter with the rigid robe skirt hidden, which is the state the
+ * game is actually in because `attachSkirt` takes it over. Against 12.0 mm and
+ * 6.8 mm at the top of both sliders that is 11.8× and 82× of headroom.
+ * `tools/checks/creator.mjs` re-measures both and fails if either closes.
+ *
+ * SFW BY CONSTRUCTION, which is the bar V15 §2 sets beside "attractive": the
+ * motion can only move mass the slider itself added, along the axis it added
+ * it on, by a third of it, and `TOP_CUTS`'s `chestFrom` keeps the chest
+ * clothed on every figure that has any. There is no value of any input that
+ * reaches a shape the sliders cannot already stand still in.
+ */
+/**
+ * `drive` IS THE FRACTION OF THE FRAME'S ACCELERATION THE TISSUE ACTUALLY
+ * FEELS, and it is the one number here that had to be swept rather than read
+ * off a reference.
+ *
+ * `−a` alone is the pseudo-force on a mass FLOATING in the accelerating frame.
+ * This mass is not floating: it is bound to the ribcage across the whole
+ * footprint of the field and only the part of it the attachment does not carry
+ * is free to lag. Driven at 1.0 the spring pinned itself against its own
+ * amplitude cap at every speed above a walk — measured, peak state 82 mm
+ * against an 8.5 mm cap at 5.5 m/s — which is not a bounce, it is an offset
+ * with a wobble on it.
+ *
+ * Swept on a real `BipedAnimator` at three gaits, the figure at sex 1 and both
+ * sliders neutral (cap 8.47 mm on the chest, 4.78 mm on the seat):
+ *
+ *     drive   1.6 m/s     3.2 m/s     5.5 m/s
+ *      1.00    30.1 mm     78.3 mm     82.3 mm      pinned from a jog up
+ *      0.30     9.0         23.5        24.7        pinned from a jog up
+ *      0.12     3.6          9.4         9.9        0.42 / 1.11 / 1.17 of cap
+ *
+ * 0.12, because that is the value at which the cap is a limit the sprint
+ * APPROACHES rather than a wall the spring lives against: a walk is four
+ * tenths of it and only a hard run reaches into the `tanh`.
+ */
+const SOFT_TUNE = {
+  chest: { f0: 3.2, zeta: 0.30, amp: 0.35, drive: 0.12 },
+  hips: { f0: 4.6, zeta: 0.38, amp: 0.25, drive: 0.12 },
+};
+
+/** Six g. A respawn, a warp or a dropped frame is a teleport, not a landing. */
+const SOFT_ACCEL_CAP = 60;
+/** The solver's own step. A 15 fps frame is four of these, not one big one. */
+const SOFT_STEP = 1 / 120;
+
+const _sq = new THREE.Quaternion();
+const _sv = new THREE.Vector3(), _sv2 = new THREE.Vector3(), _sv3 = new THREE.Vector3();
+const _sa = new THREE.Vector3();
+
+/**
+ * Take over the soft tissue on a built figure.
+ *
+ * `rig.soft` is the field (`Bodies.softSites`) and is empty on every figure
+ * this game has ever shipped, so this returns null for all of them — the same
+ * contract `attachLekku` keeps for a species with no head-tails.
+ *
+ * @param opts.gain  0..1, the player's own amplitude trim. 1 by default.
+ * @returns `{ update(dt), setVisible(v), dispose() }` — `attachHairTail`'s
+ *          shape, because the caller is the same seam in the menu.
+ */
+export function attachSoftBody(rig, opts = {}) {
+  const sites = rig && rig.soft;
+  if (!sites || !sites.length) return null;
+  const gain = clamp(opts.gain ?? 1, 0, 1);
+  const live = [];
+  for (const s of sites) {
+    const bone = rig.get(s.bone);
+    const tune = SOFT_TUNE[s.bone];
+    if (!bone || !tune || !s.mesh || !s.mesh.geometry || !s.idx.length) continue;
+    const w0 = (opts.f0 ?? tune.f0) * Math.PI * 2;
+    live.push({
+      s, bone, w0, zeta: opts.zeta ?? tune.zeta, drive: opts.drive ?? tune.drive,
+      /* In the LATHE's frame, which is the frame `base` is in — the mesh's own
+       * `squash` on Z then scales the motion exactly as it scales the shape. */
+      amp: s.peak * tune.amp * gain,
+      attr: s.mesh.geometry.attributes.position,
+      centre: new THREE.Vector3(s.centre[0], s.centre[1], s.centre[2]),
+      x: new THREE.Vector3(), v: new THREE.Vector3(),
+      p0: new THREE.Vector3(), v0: new THREE.Vector3(),
+      /* Two frames of history before anything is driven: a first-frame
+       * difference of an unknown position is a teleport, and the cap alone
+       * would turn it into a flinch on the frame a body is spawned. */
+      warm: 0,
+    });
+  }
+  if (!live.length) return null;
+
+  /** Put every field vertex back where the builder left it. */
+  const rest = (L) => {
+    const { idx, base } = L.s;
+    const a = L.attr;
+    for (let i = 0; i < idx.length; i++) {
+      a.setXYZ(idx[i], base[i * 3], base[i * 3 + 1], base[i * 3 + 2]);
+    }
+    a.needsUpdate = true;
+  };
+
+  let on = true;
+  return {
+    parts: live,
+    get sites() { return live.length; },
+    /** How far the tissue is off its rest pose right now, in metres. */
+    displacement(bone) {
+      const L = live.find((q) => q.s.bone === bone);
+      return L ? L.x.length() : 0;
+    },
+    update(dt) {
+      if (!on || !(dt > 0)) return;
+      const h = Math.min(dt, 0.1);
+      for (const L of live) {
+        /**
+         * THE GEOMETRY THIS FIELD INDEXES MUST STILL BE THE GEOMETRY IT WAS
+         * BUILT ON. `Ragdoll` rebuilds a severed stub by calling straight back
+         * into `limbGeo`, which swaps the attribute out from under us — and a
+         * cut torso writing 48 stale indices into a 60-vertex buffer is an
+         * out-of-range write every frame, for ever. One identity compare.
+         */
+        if (L.attr !== L.s.mesh.geometry.attributes.position) { L.dead = true; continue; }
+        if (L.dead) continue;
+        L.bone.obj.updateMatrixWorld(false);
+        _sv.copy(L.centre).applyMatrix4(L.bone.obj.matrixWorld);
+        if (L.warm < 2) {
+          L.warm++;
+          L.p0.copy(_sv);
+          L.v0.set(0, 0, 0);
+          continue;
+        }
+        /* Velocity and acceleration of the field's own centroid, in the world,
+         * then rotated into the bone's frame — which is the frame `x` lives
+         * in, because that is the frame the vertices are written in. Three
+         * lines and two remembered vectors: a first difference for the
+         * velocity, a second for the acceleration. */
+        _sv2.copy(_sv).sub(L.p0).divideScalar(h);          // this frame's velocity
+        _sa.copy(_sv2).sub(L.v0).divideScalar(h);          // …and its acceleration
+        L.p0.copy(_sv);
+        L.v0.copy(_sv2);
+        if (_sa.lengthSq() > SOFT_ACCEL_CAP * SOFT_ACCEL_CAP) _sa.setLength(SOFT_ACCEL_CAP);
+        L.bone.obj.matrixWorld.decompose(_sv3, _sq, _sv2);
+        _sa.applyQuaternion(_sq.invert()).multiplyScalar(L.drive);
+        /* Sub-stepped, so a 15 fps frame is four stable steps of an oscillator
+         * at 4.6 Hz rather than one explicit step past its stability bound. */
+        const n = Math.max(1, Math.ceil(h / SOFT_STEP));
+        const dtS = h / n;
+        const k = L.w0 * L.w0, c = 2 * L.zeta * L.w0;
+        for (let i = 0; i < n; i++) {
+          L.v.x += (-k * L.x.x - c * L.v.x - _sa.x) * dtS;
+          L.v.y += (-k * L.x.y - c * L.v.y - _sa.y) * dtS;
+          L.v.z += (-k * L.x.z - c * L.v.z - _sa.z) * dtS;
+          L.x.addScaledVector(L.v, dtS);
+        }
+        /* HARD BOUND ON THE STATE so a pathological drive cannot run away, and
+         * a SOFT one on what is written — `tanh` compresses towards the cap
+         * instead of stopping dead at it, because a clamp that bites is a
+         * collision the player can see and there is nothing there to hit. */
+        const len = L.x.length();
+        if (len > L.amp * 4) { L.x.setLength(L.amp * 4); L.v.multiplyScalar(0.5); }
+        const put = len > 1e-9 ? (L.amp * Math.tanh(len / L.amp)) / len : 0;
+        const dx = L.x.x * put, dy = L.x.y * put, dz = L.x.z * put;
+        const { idx, w, base } = L.s;
+        const a = L.attr;
+        for (let i = 0; i < idx.length; i++) {
+          const g = w[i];
+          a.setXYZ(idx[i], base[i * 3] + dx * g, base[i * 3 + 1] + dy * g, base[i * 3 + 2] + dz * g);
+        }
+        a.needsUpdate = true;
+      }
+    },
+    /**
+     * OFF PUTS THE BODY BACK, which is not the same contract the garments
+     * keep. `attachSkirt.setVisible(false)` swaps a simulated piece for a
+     * rigid one at LOD range; there is no second copy of a torso, so the LOD
+     * answer here is to stop solving and stand the vertices in the place the
+     * builder put them — which is the shipped figure exactly.
+     */
+    setVisible(v) {
+      if (on === !!v) return;
+      on = !!v;
+      if (!on) for (const L of live) { L.x.set(0, 0, 0); L.v.set(0, 0, 0); L.warm = 0; if (!L.dead) rest(L); }
+    },
+    dispose() {
+      on = false;
+      for (const L of live) if (!L.dead && L.attr === L.s.mesh.geometry.attributes.position) rest(L);
+      live.length = 0;
+    },
+  };
 }

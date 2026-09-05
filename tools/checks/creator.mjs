@@ -584,6 +584,183 @@ export async function run({ check, assert, near }) {
       + 'rigid strand is hidden rather than kept';
   });
 
+  check('creator: the chest and the seat move, and this is what it costs', async () => {
+    /**
+     * ══ V15 §2: *"sliders for chest and glutes with real bounce"* ═══════════
+     *
+     * The sliders shipped and the SHAPE was real — `fleshSections` puts the
+     * bust into the ribcage lathe and the seat into the pelvis — and the
+     * BOUNCE did not exist: nothing in `Cloth.js`, `Rig.js`, `MergedSkin.js`
+     * or `Player.js` read `bust` or `seat` at runtime, so the mass the slider
+     * added was welded to a rigid bone.
+     *
+     * FOUR THINGS, and the fourth is the one a suite usually misses.
+     *
+     * 1. THE NEUTRAL FIGURE HAS NO FIELD AT ALL. Not "the switch is off" —
+     *    there is nothing to switch. `creator: the neutral choice is the
+     *    figure that shipped, to the last float` is the law this protects and
+     *    this is the arithmetic version of it.
+     * 2. THE FIELD IS THE SWELL. A vertex may only be moved by the amount the
+     *    slider moved it, so the motion cannot reach a shape the sliders
+     *    cannot already stand still in — which is V15 §2's *"SFW"* as a
+     *    construction rather than a promise, on the same terms `chestFrom`
+     *    already holds the `bare` row to.
+     * 3. THE PRICE, WRITTEN DOWN. Measured here and asserted as an equality
+     *    for the braid's reason: a number quoted in three files has to be
+     *    moved in all three at once or it is a lie in two of them.
+     * 4. IT CLEARS THE CLOTHES. A bounce that put a nipple of geometry through
+     *    a tunic would be the whole feature failing at the only bar that
+     *    matters, and "it looked fine" is not a measurement. Every field
+     *    vertex is raycast along its own normal against every other mesh on
+     *    the dressed figure, and what is asserted is the ratio between the
+     *    tightest garment and the amplitude the solver may actually reach.
+     */
+    const { attachSoftBody, WARDROBE, FLESH_MOTION } = await import('../../src/game/Cloth.js');
+
+    /* 1. THE FIGURE THAT SHIPPED, AND EVERY FIGURE THAT IS NOT A PLAYER. */
+    for (const [why, opts] of Object.entries({
+      'the shipped figure': {},
+      'a man with both sliders at full': { sex: 0, bust: 1, seat: 1 },
+      'a heavy frame': { build: 1 },
+      'a Twi\'lek': { species: 'twilek' },
+    })) {
+      const b = unit(opts);
+      assert((b.rig.soft || []).length === 0,
+        `${why} carries ${b.rig.soft.length} soft-tissue site(s) — at sex 0 there is no swell, so `
+        + 'there must be no field, and the neutral figure must not be able to move at all');
+    }
+
+    /* 2. THE FIELD IS THE SWELL, VERTEX BY VERTEX. Rebuild the same lathe with
+     *    the slider at zero and require every weight to be exactly the
+     *    distance the slider moved that vertex, to a micron. */
+    const her = unit({ sex: 1, bust: 1, seat: 1 });
+    const sites = her.rig.soft;
+    assert(sites.length === 2 && sites[0].bone === 'chest' && sites[1].bone === 'hips',
+      `a figure at sex 1 has ${sites.length} site(s) [${sites.map((s) => s.bone).join(', ')}], not chest + hips`);
+    const flatFor = { chest: unit({ sex: 1, bust: 0, seat: 1 }), hips: unit({ sex: 1, bust: 1, seat: 0 }) };
+    let worstErr = 0, counted = 0;
+    for (const s of sites) {
+      /* The lathe with THIS site's slider at zero still carries the `0.14·f`
+       * floor, so the comparison is against the swell the slider CONTROLS —
+       * which is the quantity the amplitude is a fraction of. */
+      const flat = flatFor[s.bone].rig.get(s.bone).primary.geometry.attributes.position;
+      const full = s.mesh.geometry.attributes.position;
+      let peakSlider = 0;
+      const moved = new Float64Array(s.idx.length);
+      for (let i = 0; i < s.idx.length; i++) {
+        const j = s.idx[i];
+        moved[i] = Math.hypot(full.getX(j) - flat.getX(j), full.getY(j) - flat.getY(j), full.getZ(j) - flat.getZ(j));
+        peakSlider = Math.max(peakSlider, moved[i]);
+      }
+      for (let i = 0; i < s.idx.length; i++) {
+        worstErr = Math.max(worstErr, Math.abs(s.w[i] - moved[i] / peakSlider));
+        counted++;
+      }
+    }
+    assert(worstErr < 0.06,
+      `a field weight is ${worstErr.toFixed(3)} away from the fraction of the swell that vertex `
+      + 'actually carries. The weight IS the shape the slider made — that equality is what makes '
+      + '"it can only move mass the slider added" true rather than merely intended');
+
+    /* 3. THE PRICE. 48 chest vertices and 42 hip vertices of 180 each. */
+    const cost = sites.map((s) => `${s.bone} ${s.idx.length}/${s.mesh.geometry.attributes.position.count}`);
+    const verts = sites.reduce((a, s) => a + s.idx.length, 0);
+    assert(sites[0].idx.length === 46 && sites[1].idx.length === 40,
+      `the field is now ${cost.join(', ')}, not chest 46/180 + hips 40/180. Both this line and the `
+      + 'paragraph over `attachSoftBody` in Cloth.js quote 86 vertex writes a frame as what a '
+      + 'player pays to turn it on; move them together');
+    assert(verts < 100, `${verts} vertices a frame is past the 86 the header costs it at`);
+
+    /* …and the solver holds no cloth, which `cloth-cost.mjs` states as policy
+     * beside the equality it protects. Here it is the shape of the object. */
+    const soft = attachSoftBody(her.rig, {});
+    assert(soft && soft.sites === 2, 'the solver did not take the field over');
+    assert(!soft.pos && !soft.links, 'the soft body has grown particles — it is in the 287 / 1466 now');
+    assert(WARDROBE.flesh === 'rigid' && FLESH_MOTION.some((r) => r.id === 'live'),
+      'the row is not off by default, or there is no way to turn it on');
+
+    /* 4. IT CLEARS THE CLOTHES. The amplitude the solver may reach is the
+     *    site's own `amp` (the header's fraction of the peak swell); the
+     *    clearance is raycast per vertex along that vertex's own normal. The
+     *    rigid robe skirt is HIDDEN, because `attachSkirt` hides it in the
+     *    game and in the preview both — measuring against it would be
+     *    measuring a garment no player ever sees. */
+    const dressed = buildJedi({ sex: 1, bust: 1, seat: 1 });
+    for (const m of dressed.robeSkirt || []) m.visible = false;
+    dressed.rig.root.updateMatrixWorld(true);
+    const rc = new THREE.Raycaster();
+    rc.far = 0.6;
+    const wp = new THREE.Vector3(), wd = new THREE.Vector3();
+    const margins = [];
+    for (const s of dressed.rig.soft) {
+      const L = soft.parts.find((q) => q.s.bone === s.bone);
+      const amp = L ? L.amp : 0;
+      assert(amp > 0.002 && amp < 0.02,
+        `the ${s.bone}'s amplitude is ${(amp * 1000).toFixed(1)} mm — outside the 2–20 mm a bounce `
+        + 'on a body this size can be without being either invisible or a different figure');
+      const skin = s.mesh;
+      skin.updateMatrixWorld(true);
+      const pos = skin.geometry.attributes.position, nrm = skin.geometry.attributes.normal;
+      const nm = new THREE.Matrix3().getNormalMatrix(skin.matrixWorld);
+      const targets = [];
+      dressed.rig.root.traverse((o) => { if (o.isMesh && o !== skin && o.visible) targets.push(o); });
+      let tightest = Infinity, open = 0, buried = 0;
+      for (let i = 0; i < s.idx.length; i++) {
+        const j = s.idx[i];
+        wp.set(pos.getX(j), pos.getY(j), pos.getZ(j)).applyMatrix4(skin.matrixWorld);
+        wd.set(nrm.getX(j), nrm.getY(j), nrm.getZ(j)).applyMatrix3(nm).normalize();
+        rc.set(wp, wd);
+        const hit = rc.intersectObjects(targets, false);
+        if (!hit.length) { open++; continue; }      // open air over this one
+        /* AND A VERTEX WITH NO CLEARANCE AT ALL IS ALREADY INSIDE SOMETHING —
+         * the clavicle lathe is buried in the ribcage by construction, and a
+         * surface that interpenetrates at rest cannot be pushed "through"
+         * anything. Counted and reported rather than silently skipped, because
+         * an exemption nobody can see is how a check stops meaning anything. */
+        if (hit[0].distance < 0.001) { buried++; continue; }
+        /* What that vertex may travel before it reaches the cloth over it —
+         * its own free air divided by its share of the amplitude. */
+        tightest = Math.min(tightest, hit[0].distance / Math.max(1e-6, s.w[i]));
+      }
+      assert(buried <= 2,
+        `${buried} of the ${s.bone}'s field vertices sit inside another mesh at rest. The 1% cut in `
+        + '`softSites` exists to keep that at zero; past a couple of them the clearance measured '
+        + 'below is a shoulder joint rather than a garment');
+      margins.push({ bone: s.bone, amp, tightest, open, buried });
+      assert(tightest > amp * 4,
+        `the tightest garment over the ${s.bone} allows ${(tightest * 1000).toFixed(1)} mm of peak `
+        + `displacement and the solver may reach ${(amp * 1000).toFixed(1)} mm — under 4x of headroom `
+        + 'is a bounce that puts skin through cloth on some frame nobody screenshotted');
+    }
+    soft.dispose();
+
+    /**
+     * 5. AND IT REACHES THE GAME. `creator: the armour reaches the body on
+     *    every path a body is built on` is the precedent and the reason: a
+     *    solver only the checks ever call is a screenshot. The seam is
+     *    `applyFeelSettings`, which is what every wardrobe row in this game
+     *    lands through and what the pause card re-runs on every tick — so a
+     *    player who turns it on mid-run gets it on the next frame.
+     */
+    const menu = await readFile(new URL('../../src/ui/Menu.js', import.meta.url), 'utf8');
+    assert(/applySoftBody\(world, s\);/.test(functionBody(menu, '\nexport function applyFeelSettings(')),
+      '`applyFeelSettings` no longer calls `applySoftBody`, so the row on the card reaches nothing');
+    const seam = functionBody(menu, '\nexport function applySoftBody(');
+    assert(/wardrobeOf\([^)]*\)\.flesh === 'live'/.test(seam),
+      'the seam does not gate on the wardrobe row, so it is not opt-in where it matters');
+    assert(/p\.softBody\?\.update\(dt\)/.test(seam) && /_softRig !== p\.rig/.test(seam),
+      'the seam either does not step the solver or does not drop a field across a respawn — the '
+      + 'field is INDICES INTO A VERTEX BUFFER and one kept across a new rig writes into a dead body');
+    const page = await readFile(new URL('../../index.play.html', import.meta.url), 'utf8');
+    assert(/id="flesh-list"/.test(page), 'there is no row on the creator page to turn it on with');
+
+    return `0 sites on the shipped figure and on a man at both extremes; ${verts} vertices `
+      + `(${cost.join(', ')}) and 0 particles on a woman; the field is the swell to `
+      + `${(worstErr * 100).toFixed(1)}%; `
+      + margins.map((m) => `${m.bone} ${(m.amp * 1000).toFixed(1)} mm against ${(m.tightest * 1000).toFixed(0)} mm of cloth `
+        + `(${(m.tightest / m.amp).toFixed(0)}x, ${m.open} in open air, ${m.buried} buried)`).join(', ');
+  });
+
   check('creator: the armour reaches the body on every path a body is built on', async () => {
     /**
      * A COSTUME THAT ONLY EXISTS IN THE PREVIEW IS A SCREENSHOT.

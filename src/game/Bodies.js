@@ -2019,29 +2019,179 @@ function fleshSections(f = 0, bust = 0.5, seat = 0.5) {
    * beside it: a figure at f = 0 has no bust term to slide. */
   const b = f * (0.14 + 0.20 * clamp(bust, 0, 1));
   const g = f * (0.11 + 0.16 * clamp(seat, 0, 1));
+  /**
+   * ── THE TWO SHAFTS THAT CARRY A SWELL, WRITTEN ONCE ────────────────────
+   *
+   * The pelvis carries the seat and the ribcage carries the bust, and each is
+   * now stated as a table of everything that is NOT the swell, plus the swell.
+   * That is not tidying: `noSwell` below has to be the same shaft with one
+   * term removed, and the only way to guarantee that is for there to be one
+   * statement of the shaft. Two hand-kept copies of `n0: 2.8 - 0.3 * f` are
+   * `HANDOFF` §2.3's twin, and the day they disagreed the secondary motion
+   * would displace mass the shape never had.
+   *
+   * The ribcage carries the bust LOW — `addLimb('chest', …)` runs chestR at
+   * its base UP to shoulderR at its top, so the station a bust sits at is just
+   * above the join with the spine and not, as the default 0.62 would have put
+   * it, in the armpit. Measured: at 0.62 the swell landed on the shoulder line
+   * and the profile read as a uniform narrowing, which is what sent me
+   * looking. The exponent on the forward term (1.5) is softer than `keel`'s
+   * cube so the swell is a curve rather than a ridge down the sternum.
+   */
+  const hipShaft = { n0: 2.7 - 0.25 * f, n1: 2.4 - 0.2 * f, back: 0.05, keel: 0 };
+  const chestShaft = { n0: 2.8 - 0.3 * f, n1: 3.3 - 0.35 * f, back: 0.085, keel: 0.035 - 0.02 * f };
   return {
     ...FLESH_SECTIONS,
-    /* The pelvis carries the seat; the flank pinch above it is `waist` on the
-     * spine, which `f` deepens in the same place the ratio narrows. */
-    hips: bodySection({ n0: 2.7 - 0.25 * f, n1: 2.4 - 0.2 * f, back: 0.05, keel: 0, seat: g }),
+    /* The flank pinch above the pelvis is `waist` on the spine, which `f`
+     * deepens in the same place the ratio narrows. */
+    hips: bodySection({ ...hipShaft, seat: g }),
     spine: bodySection({ n0: 2.4 - 0.2 * f, n1: 2.8 - 0.2 * f, back: 0.07, keel: 0.02,
       waist: 0.055 + 0.075 * f }),
-    /**
-     * The ribcage carries the bust, LOW on this shaft — `addLimb('chest', …)`
-     * runs chestR at its base UP to shoulderR at its top, so the station a
-     * bust sits at is just above the join with the spine and not, as the
-     * default 0.62 would have put it, in the armpit. Measured: at 0.62 the
-     * swell landed on the shoulder line and the profile read as a uniform
-     * narrowing, which is what sent me looking.
-     *
-     * The exponent on the forward term (1.5) is softer than `keel`'s cube so
-     * the swell is a curve rather than a ridge down the sternum.
-     */
-    chest: bodySection({ n0: 2.8 - 0.3 * f, n1: 3.3 - 0.35 * f, back: 0.085, keel: 0.035 - 0.02 * f,
-      bust: b }),
+    chest: bodySection({ ...chestShaft, bust: b }),
     arm: ovalSection(0.93 + 0.03 * f, 2.3 - 0.15 * f),
     fore: ovalSection(0.86 + 0.04 * f, 2.4 - 0.15 * f),
+    /**
+     * ══ THE SAME TWO SHAFTS WITH THE SWELL TAKEN OUT ═══════════════════════
+     *
+     * V15 §2 asks for the sliders to have *"real bounce"*, and a lathe on a
+     * bone has no channel a solver can drive: the shape is baked into the
+     * vertex buffer at build time and the bone under it is rigid. THIS is the
+     * channel. `bodySection` returns a radial multiplier, so for any vertex
+     * the swell it is carrying is exactly `1 - noSwell(θ,t) / withSwell(θ,t)`
+     * of its own radius — a per-vertex weight that needs no second geometry,
+     * no rebuild and no authoring, and that is **identically zero at f = 0**
+     * because at f = 0 this whole function returns `FLESH_SECTIONS` and there
+     * is no `noSwell` on it at all. `softSites` below turns that into the
+     * displacement field and `Cloth.attachSoftBody` drives it.
+     *
+     * Two rows and not six: a bounce is soft tissue hung off a bone, and the
+     * arms, the shins and the spine carry none of the swell the sliders add.
+     */
+    noSwell: { hips: bodySection(hipShaft), chest: bodySection(chestShaft) },
   };
+}
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  THE DISPLACEMENT CHANNEL — V15 §2's *"sliders … with real bounce"*
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHAT WAS ACTUALLY MISSING, AND IT WAS NOT A SOLVER ────────────────────
+ *
+ * `Cloth.js` already solves a cape, a skirt, a lek and a braid, and V15 §2
+ * says so itself: *"hair and soft-body bounce are the same solver with
+ * different anchors and stiffness."* That is true of a braid, which is a
+ * strip of cloth on a bone. It is NOT true of a chest: a torso is a LATHE ON A
+ * BONE — one merged vertex buffer, rigid-parented, baked at build time — so
+ * there was nowhere for a solver to push. The audit's own sentence for it was
+ * "a displacement channel on the chest/hip lathes a solver can drive", and
+ * this function is that channel and nothing else. The solver is one file over.
+ *
+ * ── THE FIELD, AND WHY IT IS DERIVED RATHER THAN AUTHORED ─────────────────
+ *
+ * `reshape` scales every lathe vertex radially by `section(θ, t)`. So a vertex
+ * that came out at radius R is standing at `R = R₀ · s₁` where `s₁` is the
+ * section WITH the swell, and where it would have stood without one is
+ * `R₀ · s₀`. The swell it is carrying is therefore
+ *
+ *     w = 1 − s₀(θ, t) / s₁(θ, t)          of its own radius,
+ *
+ * evaluated from the two section functions `fleshSections` already returns.
+ * Nothing is authored, nothing is measured off a second geometry, and nothing
+ * can drift: the weight IS the shape the slider made, so the motion can only
+ * ever move mass the slider itself put there, along the axis it put it on.
+ *
+ * That is also the SFW argument, and it is a construction rather than a hope —
+ * the same standard `chestFrom` is held to two hundred lines down (the chest
+ * keeps its cloth above sex 0, so the figure this can move at all is a
+ * clothed one). At `f = 0` there is no `noSwell` table, so there are no sites;
+ * measured on the shipped figure, **0 of the 180 chest vertices and 0 of the
+ * 180 hip vertices carry any weight at all**, and the neutral body cannot move
+ * by a float whether or not the solver is running.
+ *
+ * ── WHAT IT COSTS, MEASURED ───────────────────────────────────────────────
+ *
+ * At sex 1 the chest lathe has 46 of its 180 vertices in the field and the hip
+ * lathe 40 of 180 — 86 vertices, which is what a frame writes. Against the
+ * braid's 24 particles / 100 links / 4 solver iterations (400 link-solves a
+ * frame) this is 86 multiply-adds and two spring integrations, and it adds
+ * **0 particles, 0 links and 0 colliders**: `tools/checks/cloth-cost.mjs`
+ * walks for objects with `pos` and `links` and there is neither, because this
+ * is not cloth. The 287 / 1466 equality it pins does not move, on or off.
+ *
+ * `centre` is the weighted centroid of the field in the BONE's frame. The
+ * solver probes the acceleration of that point rather than of the bone's
+ * origin, which is what makes a turn of the hips register at all: the centroid
+ * is offset from the axis, so the centripetal and Euler terms of a yaw arrive
+ * in its acceleration for free instead of needing a second angular integrator.
+ *
+ * @returns `[{ bone, mesh, idx, w, base, peak, centre }]`, or `[]`.
+ */
+function softSites(rig, sections, style) {
+  const table = sections && sections.noSwell;
+  if (!table) return [];
+  const out = [];
+  for (const name of ['chest', 'hips']) {
+    const plain = table[name], swelled = sections[name];
+    const b = rig.get(name);
+    const mesh = b && b.primary;
+    if (!plain || !swelled || !mesh || !mesh.geometry) continue;
+    const pos = mesh.geometry.attributes.position;
+    const len = b.length;
+    const idx = [], w = [], base = [];
+    let peak = 0, cx = 0, cy = 0, cz = 0, sum = 0;
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+      const r = Math.hypot(x, z);
+      if (r < 1e-9) continue;                       // the cap poles stay on the axis
+      const th = Math.atan2(x, z);
+      const t = len > 1e-9 ? clamp(y / len, 0, 1) : 0;
+      const s1 = swelled(th, t);
+      if (!(s1 > 1e-9)) continue;
+      /* metres of radius this vertex owes to the slider, in the lathe's own
+       * frame — the mesh's `squash` on Z scales the motion exactly as it
+       * scales the shape, which is the point of measuring it here. */
+      const d = r * (1 - plain(th, t) / s1);
+      if (!(d > 1e-6)) continue;
+      idx.push(i); w.push(d); base.push(x, y, z);
+      if (d > peak) peak = d;
+      cx += x * d; cy += y * d; cz += z * d; sum += d;
+    }
+    if (!idx.length || !(peak > 1e-6)) continue;
+    /**
+     * ── AND A VERTEX CARRYING A HUNDREDTH OF THE SWELL IS NOT CARRYING IT ──
+     *
+     * The Gaussian never reaches zero, so a 1-micron cut keeps the whole ring
+     * at the top of the ribcage — where the clavicle lathe is BURIED INSIDE
+     * the chest and the two surfaces interpenetrate by construction. Those
+     * vertices contribute nothing anybody can see (0.24 mm at the full
+     * amplitude, inside another body part) and they are the only ones on the
+     * figure with no clearance to spend, so keeping them would mean the
+     * clearance check in `creator.mjs` measured a shoulder joint rather than a
+     * garment. One per cent of the peak: 48 chest and 42 hip vertices become
+     * 46 and 40, and the four it drops are the four that were buried.
+     */
+    const cut = peak * 0.01;
+    for (let i = w.length - 1; i >= 0; i--) {
+      if (w[i] >= cut) continue;
+      w.splice(i, 1); idx.splice(i, 1); base.splice(i * 3, 3);
+    }
+    if (!idx.length) continue;
+    /* NORMALISED to a peak of 1, so the solver's amplitude is one number in
+     * metres and the field says only WHERE the mass is, never how much. */
+    for (let i = 0; i < w.length; i++) w[i] /= peak;
+    out.push({
+      bone: name, mesh, peak,
+      idx: new Int32Array(idx),
+      w: new Float32Array(w),
+      base: new Float32Array(base),
+      centre: [cx / sum, cy / sum, cz / sum],
+      /* The figure's own scale, so a solver clamping a displacement in metres
+       * is clamping it on the body it is standing on and not on a human. */
+      scale: style.scale ?? 1,
+    });
+  }
+  return out;
 }
 
 /** The same idea for a machine: squarer plate, a flatter back, no muscle. */
@@ -2119,6 +2269,23 @@ export function dressHumanoid(rig, style) {
     { seg: torsoSeg, rings: 4, bulge: 0.04, bulgeAt: 0.35, squash: depth, capY1: P.shoulderDome ?? 0.16 });
   addLimb('neck', P.neckR ?? 0.062, (P.neckR ?? 0.062) * 0.84, style.skin || style.body,
     { seg: SEG.neck ?? 12, rings: 3, bulge: 0 });
+  /**
+   * ══ AND WHERE THE SOFT TISSUE IS, FOR ANYTHING THAT WANTS TO MOVE IT ═════
+   *
+   * V15 §2's *"real bounce"* needs the field `softSites` derives, and it is
+   * hung ON THE RIG rather than returned in `built` for one reason: it is a
+   * set of INDICES INTO THESE MESHES. A copy of it beside a rig it does not
+   * index would be a second answer to where the chest is, and `Player.respawn`
+   * and a co-op revive both build a whole new rig — the field has to die with
+   * the meshes it points at, which is what putting it on the rig makes
+   * automatic. `Cloth.attachSoftBody(rig, …)` is handed the rig exactly as
+   * `attachHairTail` and `attachLekku` are.
+   *
+   * `[]` for everything the game has ever built: `SECT.noSwell` exists only on
+   * the table `fleshSections` returns above f = 0, so an enemy, a trooper, a
+   * droid and the shipped player all take one property read and stop.
+   */
+  rig.soft = softSites(rig, SECT, style);
 
   // Head. `headR` exists because the droids replace the skull with their own
   // shell: a B2's head is a box 17cm across, and the default 12cm ball was

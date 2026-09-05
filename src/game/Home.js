@@ -13,8 +13,15 @@
  *   2. SURFACES. Wall, floor and trim, chosen per home, and every one of them
  *      is a material `stationMats` already made.
  *   3. ROOMS. The partition `SHAPES.twinroom` builds is a blocker the grid
- *      knows about, so a piece cannot be put down inside a wall.
- *   4. AN ADDRESS. `44-C-27`, derived and not stored, printed on the door.
+ *      knows about, so a piece cannot be put down inside a wall — AND IT
+ *      MOVES. §1.3.3: *"make the partition movable and let a third be
+ *      unlocked — the address is what pays for it."* Standing at a partition
+ *      the wheel slides it and the key puts the second one up or takes it
+ *      down; see the partition chapter for how the shape's own slab is taken
+ *      over without editing the shape, and for the reading of "the address is
+ *      what pays for it" that keeps a room out of the shop.
+ *   4. AN ADDRESS. `44-C-27`, derived and not stored, printed on the door —
+ *      and, once there are three rooms behind it, how many.
  *   5. THE MIRROR. A fixture that raises the creator — see `homeKey`.
  *
  * ── WHY THE FURNITURE IS NOT BUILT BY THE SHAPE ───────────────────────────
@@ -91,6 +98,36 @@ export const MAX_PIECES = 40;
 
 /** How near the glass you stand for it to be a mirror rather than a wall. */
 const MIRROR_REACH = 2.4;
+
+/**
+ * ══ HOW MANY PARTITIONS A CABIN MAY HAVE, AND HOW SMALL A ROOM MAY BE ═════
+ *
+ * V15 §1.3.3: *"The cabin is two rooms now. Make the partition movable and let
+ * a third be unlocked."* Two partitions is three rooms and that is the whole
+ * of the ask; a fourth would be corridors.
+ *
+ * `MIN_ROOM` is measured rather than chosen: the deepest piece in `CATALOGUE`
+ * is the map table at 1.4 m, and `fits` keeps every piece 0.5 m inside the
+ * walls, so 2.0 m is the shallowest bay a player can still put the biggest
+ * thing they own into and walk round. Below it a room is a cupboard, and the
+ * cabin is 11 m deep — two partitions 0.3 m thick leave 10.4 m of floor, so
+ * three rooms of 2.0 m is reachable with 4.4 m to spare.
+ */
+export const MAX_WALLS = 2;
+export const MIN_ROOM = 2.0;
+/**
+ * How near a partition you stand for the wheel and the key to be its.
+ *
+ * 0.9 m from the LEAF's face, not from its centre, and tighter than the
+ * mirror's and the panel's 2.4 because those are against the room's own walls
+ * and a partition runs across the middle of the floor: at 2.4 the band in
+ * which the wheel is not the catalogue's would be 5.1 m of an 11 m room. At
+ * 0.9 it is 2.1 m, which is the same 19% the shape's four blockers already
+ * cover, and it means "standing at it" is within arm's reach of it.
+ */
+const WALL_REACH = 0.9;
+/** Float slop for reading a slab back out of a merged mesh. A millimetre. */
+const WALL_EPS = 1e-3;
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE CATALOGUE                                                             */
@@ -302,6 +339,28 @@ function clean(v) {
     store: { food: [], parcels: [] },
     /** V15 §1.3 — the one small companion who lives here. An id or null. */
     pad: typeof raw.pad === 'string' ? raw.pad.slice(0, 32) : null,
+    /**
+     * ══ WHERE THE PARTITIONS STAND — V15 §1.3.3 ═════════════════════════════
+     *
+     * One number per partition, in the room's own frame, and the LENGTH of the
+     * array is how many rooms there are: none means "as the shape built it",
+     * one means the shape's partition has been moved, two means there is a
+     * third room. That is one field saying both things, which is right,
+     * because they are one fact — a wall is somewhere or it is not there.
+     *
+     * EMPTY IS NOT "NO PARTITION". `SHAPES.twinroom` builds one and hands its
+     * rectangle over on `ctx.home.blockers[0]`; an empty array means the
+     * record has no opinion and `dressWalls` reads the position off that
+     * rectangle. Storing the shape's own 0.6 here on a fresh save would be
+     * `HANDOFF` §2.3's twin — the day StationKit moved the partition, every
+     * existing home would have pinned it to where it used to be.
+     *
+     * Clamped for LENGTH and snapped to the grid here, and clamped for
+     * POSITION at dress time — the same split the pieces are under, and for
+     * the same reason: `clean` does not know how deep the room is, `fits`
+     * does. See `wallFits`.
+     */
+    walls: [],
   };
   const s = (raw.surfaces && typeof raw.surfaces === 'object') ? raw.surfaces : {};
   for (const slot of SURFACE_SLOTS) {
@@ -319,6 +378,11 @@ function clean(v) {
       z: snap(Number(p.z) || 0),
       r: ((Math.round(Number(p.r) || 0) % NOTCHES) + NOTCHES) % NOTCHES,
     });
+  }
+  const wl = Array.isArray(raw.walls) ? raw.walls : [];
+  for (const z of wl.slice(0, MAX_WALLS)) {
+    if (!Number.isFinite(Number(z))) continue;
+    out.walls.push(snap(Number(z)));
   }
   const st = (raw.store && typeof raw.store === 'object') ? raw.store : {};
   for (const bin of ['food', 'parcels']) {
@@ -693,8 +757,18 @@ export function dressHome(world, st, M, opts = {}) {
     y: spot.y,
     /** Half-extents of the placeable floor, inside the walls. */
     hx: spot.w / 2 - 0.5, hz: spot.d / 2 - 0.5,
-    /** What the grid may not be put into: the partition, from the shape. */
-    blockers: spot.blockers || [],
+    /**
+     * What the grid may not be put into. REBUILT by `syncWalls` from the
+     * walls plus the shape's other three, and never the shape's own array —
+     * see `dressWalls` for why aliasing it would move `st.home`'s declaration.
+     */
+    blockers: [...(spot.blockers || [])],
+    /** V15 §1.3.3 — the partitions, one per entry. `dressWalls` fills it. */
+    walls: [],
+    /** Why the shape's partition could not be taken over, or null. */
+    wallWhy: null,
+    /** The shape's own slab, as the vertices of it inside the room's mesh. */
+    kitWall: null,
     /** Live bodies, one per row of `state.pieces`. */
     props: [],
     /** The piece in your hands: `{ c, r, x, z, from, ghost }` or null. */
@@ -725,11 +799,18 @@ export function dressHome(world, st, M, opts = {}) {
    * pointing into a disposed world. */
   (world._homes || (world._homes = [])).push(h);
 
+  /* THE SHAPE'S PARTITION FIRST, before this file has put a single mesh in
+   * the group — see `takeKitPartition` for the measurement that says why the
+   * order is load-bearing and not a preference. */
+  h.kitWall = takeKitPartition(h);
   dressSurfaces(world, h);
   dressMirror(world, h);
   dressGalley(world, h);
   dressPanel(world, h);
   dressSign(world, h);
+  /* …and the partitions, AFTER the sign, because putting the third room up
+   * redraws the sign and there has to be one to redraw. */
+  dressWalls(world, h);
   /* WHAT THE SHOP SENT, BEFORE THE BODIES ARE MADE — a parcel unpacked after
    * the loop below would be a row in the record with no `Prop` beside it, and
    * `leaveHome` walks the two lists in step. See `unpackParcels`. */
@@ -825,6 +906,491 @@ function dressSurfaces(world, h) {
     wall: mk(wall, h.state.surfaces.wall, 'wall'),
     trim: mk(trim, h.state.surfaces.trim, 'trim'),
   };
+}
+
+/* ══════════════════════════════════════════════════════════════════════════ */
+/*  THE PARTITIONS — V15 §1.3.3, AND THE THIRD ROOM                           */
+/* ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * ══════════════════════════════════════════════════════════════════════════
+ *  *"Make the partition movable and let a third be unlocked — the address is
+ *   what pays for it."*
+ * ══════════════════════════════════════════════════════════════════════════
+ *
+ * ── WHAT WAS THERE, MEASURED ──────────────────────────────────────────────
+ *
+ * A STATIC BLOCKER AND NOTHING ELSE. `SHAPES.twinroom` lays one slab —
+ * `kit.slab(M.hull, w - 3.2, h, 0.3, -1.6, h/2, 0.6, { collide: true })` — and
+ * hands its rectangle over on `ctx.home.blockers[0]`, and the only line in
+ * this file that had ever read it was `fits`, to REFUSE a piece with the words
+ * "in the partition". Nothing moved it, there was no second one, and
+ * `grep -rn "third\|unlock" src/` found the blocker and this file's own
+ * header note. The four blockers cover 19% of the 30 × 22 grid.
+ *
+ * ══ "THE ADDRESS IS WHAT PAYS FOR IT", AND IT IS NOT A CURRENCY ═══════════
+ *
+ * The player's sentence is the mechanism, so it has to be read rather than
+ * paraphrased into a price. Three readings were on the table:
+ *
+ *   A PRICE IN CREDITS. `Progress.js`'s AMENDMENT — CREDITS allows exactly two
+ *     kinds of purchase, and a room would have to be a KEEPSAKE: cosmetic,
+ *     permanent, carrying no number. A room passes that test. It is still the
+ *     wrong answer, and the reason is one line further up the same file:
+ *     *"no unlocks — every crystal, cut, species and order is available from
+ *     the first run. A creator you have to earn is a creator you cannot use."*
+ *     A ROOM YOU HAVE TO EARN IS A ROOM YOU CANNOT USE. It would also be the
+ *     first keepsake in the tree that is not a thing you look at but a thing
+ *     you live in, and the shop's own contract (`Keepsakes.js`) is that a
+ *     purchase DYES something rather than granting it.
+ *
+ *   A TIMER — so many station days at the address. That is a currency wearing
+ *     a clock: something accumulates and then buys, which is the shape the
+ *     doctrine refuses, and it makes the room a thing that happens TO you.
+ *
+ *   THE ADDRESS ITSELF, WHICH IS WHAT HE SAID. §1.3.4: the address is *"what
+ *     makes a home a place rather than a menu"*, derived from the deck, the
+ *     sector and the door number, printed on the door and on the notice board.
+ *     It is a DEED. And a deed does not buy floor — IT ALREADY COVERS THE
+ *     FLOOR. The cabin is 15 × 11 m whether it is one room or three; a third
+ *     room adds not one square metre. What it adds is a WALL, and the thing
+ *     that entitles you to put a wall up inside a room is that the room is
+ *     yours.
+ *
+ * SO THE THIRD ROOM COSTS NOTHING AND IS REFUSED IN EXACTLY ONE PLACE: an
+ * apartment whose address is not yours. Every verb below starts at
+ * `world._home`, which `dressHome` assigns only under `mine` — so "you may
+ * divide your own cabin and not your friend's" is not a permission test that
+ * can be forgotten, it is the absence of a way to say it, which is the same
+ * construction `Coop.js` §WHO MAY MOVE THE FURNITURE already relies on. And
+ * the payment is VISIBLE rather than asserted: the door sign is redrawn when
+ * the count changes, so the address on the door is the thing that says how
+ * many rooms are behind it.
+ *
+ * ══ THE GRAMMAR IS THE ROOM'S OWN, TURNED NINETY DEGREES AGAIN ════════════
+ *
+ * `dressPanel` states it: *"the wheel says WHAT and the key says WHERE"*, and
+ * the swatch panel turns that into "the key steps the slot, the wheel runs the
+ * colours". Standing at a partition:
+ *
+ *   THE WHEEL SLIDES THE WALL YOU ARE STANDING AT — half a metre a notch,
+ *     which is `CELL`, so a wall lands on the same grid the furniture does.
+ *   THE KEY PUTS THE SECOND WALL UP, OR TAKES IT DOWN. One press, one meaning,
+ *     at either wall, and never a dead branch: it is the toggle for whether
+ *     there is a third room.
+ *
+ * §14's "the station adds no interface" holds — no new binding, no new screen.
+ *
+ * ══ AND A WALL IS HELD TO THE RULE THE FURNITURE IS HELD TO ═══════════════
+ *
+ * `fits` refuses a piece that would stand in a partition. `wallFits` is the
+ * same test with the mover and the obstacle swapped: a wall may not be slid
+ * into a chair, into the bunk, into the trophy rack or into the saber stand,
+ * and it may not leave a bay shallower than `MIN_ROOM`. A refusal names what
+ * is in the way, exactly as `dropPiece`'s does, because the alternative is
+ * furniture silently deleted by a wall — and the one thing this file will not
+ * do is destroy something the player put down. Move the chair, then the wall.
+ */
+
+/**
+ * ══ TAKING THE SHAPE'S PARTITION OVER, WITHOUT EDITING THE SHAPE ══════════
+ *
+ * The slab is MERGED. `Kit.emit` bins by material and hands back one mesh per
+ * material, so the partition is 96 vertices inside the room's 864-vertex
+ * `hull` mesh with no handle of its own, and its collider is a static box in
+ * `physics.staticBoxes` that `buildPlace` counts and then drops. There is no
+ * API that says "the partition"; there is a rectangle the SHAPE DECLARED.
+ *
+ * So the selection is driven by that declaration and never by a second copy of
+ * it: every vertex inside `blockers[0]`, between the floor and the ceiling, is
+ * the partition. If StationKit moves the slab the blocker moves with it
+ * (`home.mjs` already checks they agree) and this follows. That is the
+ * difference between reading a thing back out of the kit — `HANDOFF` §2.3's
+ * hand-maintained twin, which this file's own header warns about — and reading
+ * the kit against the statement it published.
+ *
+ * TWO THINGS MAKE IT SAFE TO DO AT ALL:
+ *
+ *   IT RUNS BEFORE THIS FILE HAS PUT ANYTHING IN THE GROUP. `dressMirror` and
+ *   `dressPanel` add meshes whose geometry is in their OWN frame, near the
+ *   origin, and four of their vertices land inside the partition's rectangle
+ *   when read as room coordinates — measured, 32 of the mirror frame's 96 and
+ *   32 of the glass's. Taking the partition first means "what is in the group"
+ *   is a fact about the ROOM rather than a filter over this file's own work.
+ *
+ *   THE SELECTION IS CHECKED AGAINST ITS OWN BOUNDS. One mesh, and the union
+ *   of what was picked has to BE the declared rectangle to the millimetre. A
+ *   partial or a scattered match returns null and the feature is inert, with
+ *   the reason on `h.wallWhy` for `home.mjs` to read — because a wall that
+ *   moved half of itself would be worse than a wall that does not move.
+ */
+function takeKitPartition(h) {
+  const b = (h.spot.blockers || [])[0];
+  if (!b) { h.wallWhy = 'the shape declares no partition'; return null; }
+  const H = h.spot.h;
+  const hit = [];
+  for (const m of h.group.children) {
+    if (!m.isMesh || !m.geometry || !m.geometry.attributes || !m.geometry.attributes.position) continue;
+    const p = m.geometry.attributes.position;
+    const idx = [];
+    for (let i = 0; i < p.count; i++) {
+      const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+      if (Math.abs(x - b.x) > b.w / 2 + WALL_EPS) continue;
+      if (Math.abs(z - b.z) > b.d / 2 + WALL_EPS) continue;
+      if (y < -WALL_EPS || y > H + WALL_EPS) continue;
+      idx.push(i);
+    }
+    if (idx.length) hit.push({ mesh: m, idx });
+  }
+  if (hit.length !== 1) {
+    h.wallWhy = `${hit.length} meshes carry geometry inside the partition's rectangle`;
+    return null;
+  }
+  const { mesh, idx } = hit[0];
+  const p = mesh.geometry.attributes.position;
+  let x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+  const baseZ = new Float32Array(idx.length);
+  for (let i = 0; i < idx.length; i++) {
+    const j = idx[i];
+    const x = p.getX(j), y = p.getY(j), z = p.getZ(j);
+    baseZ[i] = z;
+    if (x < x0) x0 = x; if (x > x1) x1 = x;
+    if (y < y0) y0 = y; if (y > y1) y1 = y;
+    if (z < z0) z0 = z; if (z > z1) z1 = z;
+  }
+  const want = [b.x - b.w / 2, b.x + b.w / 2, 0, H, b.z - b.d / 2, b.z + b.d / 2];
+  const got = [x0, x1, y0, y1, z0, z1];
+  for (let i = 0; i < 6; i++) {
+    if (Math.abs(want[i] - got[i]) <= 2 * WALL_EPS) continue;
+    h.wallWhy = `what was picked out of the room measures ${got.map((v) => v.toFixed(2)).join('/')} `
+      + `against the declared ${want.map((v) => v.toFixed(2)).join('/')}`;
+    return null;
+  }
+  h.wallWhy = null;
+  return { mesh, idx: new Int32Array(idx), baseZ, at: b.z };
+}
+
+/** Slide the shape's own slab, in its own merged mesh, to `z`. */
+function slideKitPartition(kit, z) {
+  const p = kit.mesh.geometry.attributes.position;
+  const dz = z - kit.at;
+  for (let i = 0; i < kit.idx.length; i++) p.setZ(kit.idx[i], kit.baseZ[i] + dz);
+  p.needsUpdate = true;
+  /* The room's bounding sphere was computed with the slab where the kit left
+   * it. Culling is per-MESH and the mesh is the whole room, so a stale sphere
+   * would cull a wall that had been slid towards the camera. 864 vertices,
+   * once per notch. */
+  kit.mesh.geometry.computeBoundingSphere();
+}
+
+/**
+ * The static box a partition is, put where the record says.
+ *
+ * REMOVE AND RE-ADD RATHER THAN MOVE, which is `RapierWorld.addStaticBox`'s
+ * own sentence for exactly this case: *"a `removeStaticBox` and an
+ * `addStaticBox` in one frame — a door that swings, a wall that…"*. Writing
+ * `collider.setTranslation` would leave `physics.boxVersion` and therefore
+ * `BoxIndex`'s spatial buckets stale, so the six hand-rolled sweeps that read
+ * `staticBoxes` directly — `Support.supportHeight`, `Player._collide` and both
+ * of `Enemy`'s — would go on finding the wall where it used to be. The pair
+ * bumps the version between them and there is no third opinion to keep.
+ */
+function setWallBox(world, h, W) {
+  const phys = world && world.physics;
+  if (!phys || !phys.addStaticBox) return;
+  if (W.box) { phys.removeStaticBox(W.box); W.box = null; }
+  const c = toWorld(h, W.rect.x, W.rect.z, new THREE.Vector3());
+  c.y = h.y + h.spot.h / 2;
+  W.box = phys.addStaticBox(c,
+    new THREE.Vector3(W.rect.w / 2, h.spot.h / 2, W.rect.d / 2),
+    new THREE.Quaternion().setFromAxisAngle(UP, h.spot.yaw), { friction: 0.8 }) || null;
+}
+
+/**
+ * Find the static box `Kit.emit` made for the shape's own partition.
+ *
+ * FAILING TO FIND IT IS THE ONE OUTCOME THAT MUST NOT HAPPEN QUIETLY, because
+ * `setWallBox` removes what it is given and adds a new one: handed null it
+ * would leave the kit's original standing at 0.6 and put a second box wherever
+ * the wall went, and the cabin would be solid in two places with nothing on
+ * screen at one of them. So both search paths are covered. `nearBoxes` is *"the
+ * one place `staticBoxes` is meant to be searched from"* and is the fast one;
+ * `Physics.js` — the older sphere solver, which `RapierWorld` shares the array
+ * with — has no such index, and its own note says sweeping the array by hand
+ * "still works and still gives the same answer; it costs O(every box in the
+ * level) PER BODY PER FRAME". This runs once per dressing.
+ */
+function findKitBox(world, h, rect) {
+  const phys = world && world.physics;
+  if (!phys || !Array.isArray(phys.staticBoxes)) return null;
+  const c = toWorld(h, rect.x, rect.z, new THREE.Vector3());
+  let near = phys.staticBoxes;
+  if (phys.nearBoxes) { near = []; phys.nearBoxes(c.x, c.z, 2, near); }
+  for (const r of near) {
+    if (Math.hypot(r.center.x - c.x, r.center.z - c.z) > 0.05) continue;
+    if (Math.abs(r.halfExtents.x - rect.w / 2) > 0.02) continue;
+    if (Math.abs(r.halfExtents.z - rect.d / 2) > 0.02) continue;
+    return r;
+  }
+  return null;
+}
+
+/** The second partition's leaf, as a real mesh in the room's own group. */
+function buildWallMesh(h, W) {
+  const g = slabGeo(W.rect.w, h.spot.h, W.rect.d, { bevel: 0 });
+  g.translate(0, h.spot.h / 2, 0);
+  const m = new THREE.Mesh(g, h.M.hull);
+  m.name = 'home-partition';
+  m.castShadow = true;
+  m.receiveShadow = true;
+  h.group.add(m);
+  h.built.push(m);
+  h.draws++;
+  return m;
+}
+
+/** Stand a wall's mesh and its collider where `W.rect` now says. */
+function poseWall(world, h, W) {
+  if (W.kit) slideKitPartition(W.kit, W.rect.z);
+  else if (W.mesh) {
+    W.mesh.position.copy(toWorld(h, W.rect.x, W.rect.z));
+    W.mesh.quaternion.setFromAxisAngle(UP, h.spot.yaw);
+  }
+  setWallBox(world, h, W);
+}
+
+/**
+ * ══ THE WALLS, PUT UP ═════════════════════════════════════════════════════
+ *
+ * The shape's partition first, wherever the record says it stands, then the
+ * second one if the record has two. `h.blockers` is REBUILT from the walls
+ * plus the three obstacles the shape declared that are not the partition —
+ * and it is rebuilt rather than edited, because `spot.blockers` is
+ * `st.home`'s own array and this room is dressed and re-dressed while the
+ * station stands (`Coop.js` re-dresses a guest's on every change). Mutating it
+ * would move the shape's declaration and the second dressing would read a
+ * rectangle the first one had walked.
+ */
+function dressWalls(world, h) {
+  h.walls = [];
+  const kitRect = (h.spot.blockers || [])[0];
+  if (h.kitWall && kitRect) {
+    const W = { i: 0, kit: h.kitWall, mesh: null, box: findKitBox(world, h, kitRect),
+      rect: { x: kitRect.x, z: kitRect.z, w: kitRect.w, d: kitRect.d } };
+    h.walls.push(W);
+    /**
+     * WHERE THE RECORD SAYS, CLAMPED AGAINST THE REAL ROOM — which `clean`
+     * could not do, because it does not know how deep the room is. Same split
+     * the pieces are under.
+     *
+     * AND AN EMPTY RECORD KEEPS THE SHAPE'S OWN NUMBER UNTOUCHED, off the
+     * grid if that is where the shape put it (it is: `twinroom` builds at
+     * z = 0.6 and `CELL` is 0.5). A fresh home is the cabin §3.2 describes to
+     * the centimetre; the grid is what a wall lands on once a PLAYER has moved
+     * it, which is the same rule `DEFAULT_LAYOUT` is under one screen up.
+     */
+    const want = h.state.walls[0];
+    if (Number.isFinite(want) && !wallFits(h, 0, snap(want))) W.rect.z = snap(want);
+    poseWall(world, h, W);
+  }
+  if (h.walls.length && Number.isFinite(h.state.walls[1])) {
+    const W = secondWall(h, snap(h.state.walls[1]));
+    if (W) {
+      W.mesh = buildWallMesh(h, W);
+      poseWall(world, h, W);
+    }
+  }
+  syncWalls(h);
+  /* The door was drawn before the walls went up — see the order in
+   * `dressHome` — so it is told the count now. Idempotent: `signPanel.draw`
+   * early-outs on identical text, which is what a two-room cabin gets. */
+  redrawSign(h);
+}
+
+/**
+ * The second partition's rectangle: the shape's own span and thickness, at the
+ * OTHER end of the room.
+ *
+ * `twinroom` leaves its way through at +x (the slab runs from −7.5 to +4.3 in
+ * a 15 m room). Mirroring the second one puts its gap at −x, so the route
+ * through a three-room cabin zig-zags instead of being a corridor you can see
+ * the back wall down — which is §3.1 rule 1's own argument about what makes a
+ * place rather than a hall, applied inside one room.
+ *
+ * Returns null, and never a wall that would not stand: `wallFits` is the same
+ * gate the wheel is under, so a wall put up by the key can never be somewhere
+ * the wheel could not have slid it.
+ */
+function secondWall(h, z) {
+  const b = (h.spot.blockers || [])[0];
+  if (!b) return null;
+  const W = { i: 1, kit: null, mesh: null, box: null,
+    rect: { x: -b.x, z, w: b.w, d: b.d } };
+  h.walls.push(W);
+  if (wallFits(h, 1, z)) { h.walls.pop(); return null; }
+  return W;
+}
+
+/**
+ * The blocker list the grid reads: the walls, then the shape's other three.
+ *
+ * THE RECORD IS ONLY WRITTEN WHERE THERE IS A PARTITION TO DESCRIBE, and that
+ * is not a nicety. `Coop.reseatMine` re-dresses YOUR OWN home behind a
+ * RESIDENCE (`#31`, `#33`, `#38`) when an apartment assignment arrives after
+ * the level was built, and no residence's shape declares a partition — see
+ * `spotOf`, which hands back an empty `blockers`. Writing `walls: []` there
+ * would take a player's third room off their disk because they joined a
+ * friend's session, which is the same class of defect `leaveHome` already
+ * guards against by taking `store` and `pad` off the fold rather than from
+ * memory. A room that cannot show the walls does not get to forget them.
+ */
+function syncWalls(h) {
+  h.blockers = [...h.walls.map((W) => W.rect), ...(h.spot.blockers || []).slice(1)];
+  if (h.kitWall) h.state.walls = h.walls.map((W) => W.rect.z);
+}
+
+/**
+ * Will a partition stand at `z`? Returns a REASON, or null.
+ *
+ * The furniture's own rule with the mover and the obstacle swapped — see the
+ * chapter header for why a wall may not simply delete what is in its way.
+ */
+function wallFits(h, i, z) {
+  const W = h.walls[i];
+  if (!W) return 'there is no wall there';
+  const half = W.rect.d / 2;
+  if (Math.abs(z) + half > h.spot.d / 2 - MIN_ROOM) return `it would leave less than ${MIN_ROOM} m behind it`;
+  for (let k = 0; k < h.walls.length; k++) {
+    if (k === i) continue;
+    if (Math.abs(z - h.walls[k].rect.z) < MIN_ROOM + half + h.walls[k].rect.d / 2) {
+      return 'it would meet the other partition';
+    }
+  }
+  /* The three obstacles the shape declared that are not a partition, and then
+   * everything the player has put down. Both tested as rectangles against this
+   * wall's own footprint, which is what `fits` does one way round. */
+  const near = (ox, oz, ow, od) =>
+    Math.abs(W.rect.x - ox) < W.rect.w / 2 + ow / 2 && Math.abs(z - oz) < half + od / 2;
+  for (const b of (h.spot.blockers || []).slice(1)) {
+    if (near(b.x, b.z, b.w, b.d)) return 'through the fittings';
+  }
+  for (const p of h.state.pieces) {
+    const c = BY_ID.get(p.k);
+    if (!c || c.flat) continue;
+    const [ox, oz] = extentsAt(c, p.r);
+    if (near(p.x, p.z, ox * 2, oz * 2)) return `through the ${c.name.toLowerCase()}`;
+  }
+  return null;
+}
+
+/** Which partition the player is standing at, or −1. A fixture, like the panel. */
+export function wallAt(world) {
+  const h = world && world._home;
+  const p = world && world.player && world.player.position;
+  if (!h || !p || !h.walls || !h.walls.length) return -1;
+  const l = toLocal(h, p.x, p.z);
+  let best = -1, bd = WALL_REACH;
+  for (let i = 0; i < h.walls.length; i++) {
+    const r = h.walls[i].rect;
+    /* Perpendicular distance to the LEAF, not to its centre: a partition is
+     * twelve metres wide and standing at one end of it is standing at it. */
+    if (Math.abs(l.x - r.x) > r.w / 2 + 0.6) continue;
+    const d = Math.abs(l.z - r.z) - r.d / 2;
+    if (d < bd) { bd = d; best = i; }
+  }
+  return best;
+}
+
+/**
+ * Slide a partition by `n` notches of the wheel. One notch is one `CELL`, so a
+ * wall lands on the same half-metre grid the furniture does.
+ */
+export function moveWall(world, i, n) {
+  const h = world && world._home;
+  const W = h && h.walls && h.walls[i];
+  if (!W || !n) return null;
+  const z = snap(W.rect.z + Math.sign(n) * CELL);
+  const why = wallFits(h, i, z);
+  if (why) {
+    world.notify?.('THE PARTITION', `it will not go there — ${why}`);
+    return null;
+  }
+  W.rect.z = z;
+  poseWall(world, h, W);
+  syncWalls(h);
+  h.dirty = true; h.edits++;
+  world.notify?.('THE PARTITION', roomLine(h));
+  return z;
+}
+
+/**
+ * ══ THE THIRD ROOM, PUT UP OR TAKEN DOWN ══════════════════════════════════
+ *
+ * The key's whole meaning at a partition, and it is the same press at either
+ * one — see the chapter header for why the address is what allows it and why
+ * nothing is charged for it.
+ *
+ * WHERE IT GOES is derived and deterministic: the middle of the DEEPER of the
+ * two bays, walked outwards a cell at a time until `wallFits` agrees. Outwards
+ * from the middle for `freeCell`'s reason — a wall that appeared against the
+ * back of the room would read as a mistake — and deterministic because there
+ * is no `Math.random` in `src/` and two machines dressing one record in co-op
+ * have to build the same cabin.
+ */
+export function toggleWall(world) {
+  const h = world && world._home;
+  if (!h || !h.walls || !h.walls.length) return null;
+  if (h.walls.length > 1) {
+    const W = h.walls.pop();
+    if (W.box) { world.physics?.removeStaticBox?.(W.box); W.box = null; }
+    if (W.mesh) {
+      h.group.remove(W.mesh);
+      const at = h.built.indexOf(W.mesh);
+      if (at >= 0) h.built.splice(at, 1);
+      W.mesh.geometry.dispose();
+      h.draws--;
+    }
+    syncWalls(h);
+    redrawSign(h);
+    h.dirty = true; h.edits++;
+    world.notify?.(h.address, `two rooms again — ${roomLine(h)}`);
+    return h.walls.length;
+  }
+  if (h.walls.length >= MAX_WALLS) return null;
+  const first = h.walls[0].rect.z;
+  const front = -h.spot.d / 2, back = h.spot.d / 2;
+  /* The deeper of the two bays, and its middle. */
+  const deepFront = first - front > back - first;
+  const mid = snap(deepFront ? (front + first) / 2 : (first + back) / 2);
+  let put = null, why = 'there is no room for another wall';
+  for (let step = 0; step <= Math.ceil(h.spot.d / CELL); step++) {
+    for (const s of step === 0 ? [0] : [-1, 1]) {
+      const z = snap(mid + s * step * CELL);
+      const W = secondWall(h, z);
+      if (!W) { why = 'there is no room for another wall'; continue; }
+      put = W;
+      break;
+    }
+    if (put) break;
+  }
+  if (!put) { world.notify?.('THE PARTITION', why); return null; }
+  put.mesh = buildWallMesh(h, put);
+  poseWall(world, h, put);
+  syncWalls(h);
+  h.dirty = true; h.edits++;
+  /* THE ADDRESS IS WHAT PAID FOR IT, so the address is what says so — and the
+   * door says so too, which is the visible half of the argument in the header. */
+  redrawSign(h);
+  world.notify?.(h.address, `three rooms — ${roomLine(h)}`);
+  return h.walls.length;
+}
+
+/** The bays, front to back, as a sentence. What a notify says. */
+function roomLine(h) {
+  const edges = [-h.spot.d / 2, ...h.walls.map((W) => W.rect.z).sort((a, b) => a - b), h.spot.d / 2];
+  const bays = [];
+  for (let i = 1; i < edges.length; i++) bays.push((edges[i] - edges[i - 1]).toFixed(1));
+  return `${bays.join(' m / ')} m`;
 }
 
 /**
@@ -929,6 +1495,18 @@ function dressPanel(world, h) {
   pm.position.copy(toWorld(h, lx, lz));
   pm.quaternion.setFromAxisAngle(UP, h.spot.yaw);
   h.group.add(pm);
+  /**
+   * REMEMBERED, LIKE EVERY OTHER FIXTURE. This and its three chips were the
+   * only things this file put in the room's group without pushing onto
+   * `h.built`, so `undressOne` left four meshes standing in a group it had
+   * otherwise emptied — and `Coop.reseatMine` undresses and re-dresses YOUR
+   * OWN home when an apartment assignment arrives late, so they accumulated
+   * four at a time. It surfaced through V15 §1.3.3: `takeKitPartition` reads
+   * the room's own meshes out of the group and requires exactly one to carry
+   * the partition's rectangle, and an orphaned swatch plate sits inside that
+   * rectangle when its local geometry is read as room coordinates.
+   */
+  h.built.push(pm);
   h.draws++;
   /* THREE CHIPS, ONE PER SLOT, and they are the live materials — so the panel
    * is the room's own answer to what colour it is rather than a picture of
@@ -942,6 +1520,7 @@ function dressPanel(world, h) {
     cm.position.copy(toWorld(h, lx + 0.06, lz));
     cm.quaternion.setFromAxisAngle(UP, h.spot.yaw);
     h.group.add(cm);
+    h.built.push(cm);
     h.draws++;
     chips.push(cm);
   }
@@ -975,7 +1554,7 @@ function dressSign(world, h) {
    * to visit your friend's apartment"*, and a visit needs a door you can tell
    * from the twelve beside it — which is the argument §1.3.4 already makes for
    * having an address at all, one player further on. */
-  const panel = signPanel([h.address, h.owner ? `${String(h.owner.name || 'RESIDENT').toUpperCase()}'S CABIN` : 'PRIVATE RESIDENCE'], {
+  const panel = signPanel(signRows(h), {
     name: `home${h.place.id}`, w: 1.4, h: 0.5,
   });
   const mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.5, 0.62), panel.material);
@@ -989,6 +1568,27 @@ function dressSign(world, h) {
   h.draws++;
   h.sign = panel;
 }
+
+/**
+ * ══ WHAT THE DOOR SAYS ════════════════════════════════════════════════════
+ *
+ * The address, and then who lives here — and for your own, HOW MANY ROOMS.
+ * That last word is the visible half of §1.3.3's *"the address is what pays
+ * for it"*: the thing the third room is charged against is the address, so the
+ * address is where it shows. A friend's door keeps saying whose it is, because
+ * at somebody else's front door the question a visitor has is not how many
+ * rooms are behind it.
+ */
+const ROOMS = ['NO ROOMS', 'ONE ROOM', 'TWO ROOMS', 'THREE ROOMS'];
+
+function signRows(h) {
+  if (h.owner) return [h.address, `${String(h.owner.name || 'RESIDENT').toUpperCase()}'S CABIN`];
+  const n = (h.walls ? h.walls.length : 0) + 1;
+  return [h.address, `${ROOMS[Math.min(n, 3)]} · PRIVATE RESIDENCE`];
+}
+
+/** The door, told the count changed. `signPanel.draw` early-outs on same text. */
+function redrawSign(h) { h.sign?.draw?.(signRows(h)); }
 
 /* ══════════════════════════════════════════════════════════════════════════ */
 /*  THE PIECES                                                                */
@@ -1280,6 +1880,16 @@ export function homeKey(world, opts = {}) {
     return true;
   }
 
+  /**
+   * AND A PARTITION. §1.3.3's *"let a third be unlocked"* — the key is the
+   * toggle for whether there is a third room and the wheel slides the wall you
+   * are standing at. Ahead of the floor because a partition is a fixture you
+   * stand at, exactly as the panel and the galley are; after them because they
+   * are against the room's own walls and it is in the middle of the floor, so
+   * the two can never both be true.
+   */
+  if (wallAt(world) >= 0) { toggleWall(world); return true; }
+
   /* AND THE SWATCH PANEL. The key steps WHICH surface you are painting; the
    * wheel runs its colours. See `dressPanel` for why it is that way round. */
   if (atPanel(world)) {
@@ -1330,6 +1940,11 @@ export function homeWheel(world, notches) {
   /* AT THE PANEL THE WHEEL PAINTS. Ahead of the catalogue, because a player
    * standing at the swatches is not shopping for furniture. */
   if (atPanel(world)) { cycleSurface(world, SURFACE_SLOTS[h.panel.slot], Math.sign(notches)); return true; }
+  /* AT A PARTITION THE WHEEL SLIDES IT — half a metre a notch, on the same
+   * grid the furniture lands on. Ahead of the catalogue for the panel's
+   * reason: a player standing at a wall is not shopping for furniture. */
+  const wi = wallAt(world);
+  if (wi >= 0) { moveWall(world, wi, Math.sign(notches)); return true; }
   h.dial = ((h.dial + Math.sign(notches)) % CATALOGUE.length + CATALOGUE.length) % CATALOGUE.length;
   const c = CATALOGUE[h.dial];
   world.notify?.(c.name.toUpperCase(), `${c.w} × ${c.d} m — press to put one down`);
@@ -1466,6 +2081,23 @@ function undressOne(world, h) {
    * the paint off every room on it — `Prop.destroy`'s note, one file over. */
   h.sign?.material?.map?.dispose?.();
   h.sign?.material?.dispose?.();
+  /**
+   * THE PARTITIONS. The second one's mesh is in `h.built` and is freed with
+   * the rest below; what is NOT in `h.built` is the shape's own slab, which
+   * this file MOVED inside somebody else's merged mesh, and the two static
+   * boxes, which are in the physics world rather than in the scene.
+   *
+   * The slab is put back where the kit left it for `attachSoftBody.dispose`'s
+   * reason exactly: this file borrowed geometry it does not own, and the
+   * contract for borrowing is that it goes back. `Coop.js` re-dresses a
+   * guest's apartment while the world stands, so this path runs far more than
+   * once a session and a slab left slid would walk across the room.
+   */
+  for (const W of h.walls || []) {
+    if (W.box) { world?.physics?.removeStaticBox?.(W.box); W.box = null; }
+  }
+  if (h.kitWall) { slideKitPartition(h.kitWall, h.kitWall.at); h.kitWall = null; }
+  if (h.walls) h.walls.length = 0;
   for (const p of h.props) { if (p && !p.dead) p.destroy(); }
   h.props.length = 0;
   /* And the fixtures and surfaces this dressing added to the room's group.
@@ -1480,7 +2112,7 @@ function undressOne(world, h) {
     m.geometry?.dispose?.();
   }
   if (h.built) h.built.length = 0;
-  h.surfaces = h.mirror = h.galley = h.sign = null;
+  h.surfaces = h.mirror = h.galley = h.sign = h.panel = null;
   const at = (world?._homes || []).indexOf(h);
   if (at >= 0) world._homes.splice(at, 1);
   if (world && world._home === h) world._home = null;
@@ -1501,5 +2133,7 @@ export function homeRecord(world) {
     address: h.address, place: h.place.id, deck: h.place.deck,
     surfaces: { ...h.state.surfaces }, pieces: h.state.pieces.length,
     store: h.state.store, pad: h.state.pad,
+    /** V15 §1.3.3 — how many rooms are behind the address. One more than walls. */
+    rooms: (h.walls ? h.walls.length : 0) + 1,
   };
 }

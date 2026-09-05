@@ -406,9 +406,22 @@ export async function run({ check, assert, near, THREE }) {
     const { world } = await station(44);
     try {
       const h = world._home;
-      /* Stand in the middle of the cabin, looking down at the floor. */
+      /**
+       * Stand in the middle of the OUTER ROOM, looking down at the floor.
+       *
+       * Not the middle of the CABIN, which is where this stood: the shape's
+       * partition is at z = 0.6 in the room's own frame, so the room's centre
+       * is 45 cm from the face of a wall and V15 §1.3.3's wheel — which slides
+       * the partition you are standing at — correctly claimed the notch. A
+       * check about the catalogue has to stand somewhere the catalogue is the
+       * only thing the wheel can mean. 3.5 m back from the middle, which is
+       * `toWorld(h, 0, -3.5)` written out because that function is the room's
+       * and not this file's.
+       */
       const at = h.place;
-      world.player.position.set(at.x, h.y + 1.6, at.z);
+      const lz = -3.5;
+      world.player.position.set(at.x + lz * Math.sin(h.spot.yaw), h.y + 1.6,
+        at.z + lz * Math.cos(h.spot.yaw));
 
       /* THE WHEEL, HOLDING NOTHING, dials the catalogue. */
       const d0 = h.dial;
@@ -465,6 +478,259 @@ export async function run({ check, assert, near, THREE }) {
   });
 
   /* ════════════════════════════════════════════════════════════════════════ */
+
+  /**
+   * ══ V15 §1.3.3, BOTH HALVES, THROUGH THE KEY AND THE WHEEL ══════════════
+   *
+   * *"Make the partition movable and let a third be unlocked — the address is
+   * what pays for it."*
+   *
+   * WHAT WAS THERE: a static blocker. `SHAPES.twinroom` lays one slab and
+   * hands its rectangle over, and the only line in `Home.js` that had ever
+   * read it was `fits`, to REFUSE a piece. Nothing moved it and there was no
+   * second one.
+   *
+   * DRIVEN THE WAY A PLAYER DRIVES IT, and that is not a preference — the
+   * clause above (`the surfaces are painted with the key and the wheel, not
+   * with a function`) exists because a check that called `setSurface` directly
+   * shipped a dead control for four weeks. So this touches neither `moveWall`
+   * nor `toggleWall` by name: it stands the player at the wall and spends
+   * `homeWheel` and `stationKey`, which is what `Player._readInput` calls.
+   */
+  check('home: the partition MOVES, and it moves the wall, the collider and the rule together', async () => {
+    const H = await import('../../src/game/Home.js');
+    const { clearStation, homeState } = await import('../../src/game/StationSave.js');
+    clearStation();
+    const { world } = await station(44);
+    try {
+      const h = world._home;
+      assert(h.wallWhy === null && h.walls.length === 1,
+        `the shape's partition was not taken over: ${h.wallWhy || `${h.walls.length} walls`}. `
+        + 'Everything below is inert without it and the room is a static blocker again');
+
+      /* Where the room's own frame puts a point, written out because `toWorld`
+       * belongs to Home.js and a second copy of it here would be the twin. */
+      const stand = (lx, lz) => world.player.position.set(
+        h.place.x + lx * Math.cos(h.spot.yaw) + lz * Math.sin(h.spot.yaw), h.y + 1.6,
+        h.place.z - lx * Math.sin(h.spot.yaw) + lz * Math.cos(h.spot.yaw));
+
+      const was = h.walls[0].rect.z;
+      const kitZ = h.spot.blockers[0].z;
+      assert(was === kitZ, `a fresh cabin's partition stands at ${was} and the shape built it at ${kitZ}`);
+
+      /* WHERE THE SLAB'S OWN VERTICES ARE, read out of the room's merged mesh
+       * — the thing that actually has to move, and the thing a blocker-only
+       * implementation would leave standing while the rule walked away. */
+      const slabZ = () => {
+        const p = h.kitWall.mesh.geometry.attributes.position;
+        let lo = Infinity, hi = -Infinity;
+        for (const j of h.kitWall.idx) { const z = p.getZ(j); lo = Math.min(lo, z); hi = Math.max(hi, z); }
+        return (lo + hi) / 2;
+      };
+      const slab0 = slabZ();
+      const box0 = h.walls[0].box;
+      assert(box0, 'the shape\'s partition has no collider — the wall would be scenery');
+      const boxZ0 = box0.center.z;
+
+      /* THE WHEEL, STANDING AT IT. Four notches is two metres. */
+      stand(0, was + 0.7);
+      assert(H.wallAt(world) === 0, 'standing beside the partition does not read as being at it');
+      for (let i = 0; i < 4; i++) assert(H.homeWheel(world, 1), 'a notch at the partition was not spent');
+      /**
+       * FOUR CELLS FROM THE GRID LINE UNDER IT, not four cells from where it
+       * was. `twinroom` builds the partition at 0.6 and `CELL` is 0.5, so the
+       * shape's own position is OFF the grid — deliberately, see `dressWalls`
+       * — and the first notch is what puts it on. A wall a player has touched
+       * lands where the furniture lands and nowhere else.
+       */
+      const now = h.walls[0].rect.z;
+      near(now, Math.round(was / H.CELL) * H.CELL + 4 * H.CELL, 1e-9,
+        'four notches did not take the wall four cells past the grid line under it');
+      assert(Math.abs(now / H.CELL - Math.round(now / H.CELL)) < 1e-9,
+        `the wall came to rest at ${now}, which is not on the ${H.CELL} m grid the furniture is on`);
+
+      /* …AND ALL THREE THINGS MOVED WITH IT. */
+      near(slabZ() - slab0, now - was, 1e-4, 'the slab in the room\'s mesh did not follow the record');
+      assert(h.walls[0].box !== box0,
+        'the collider was edited in place rather than removed and re-added — `physics.boxVersion` and '
+        + 'BoxIndex\'s buckets would be stale and six hand-rolled sweeps would find the old wall');
+      near(Math.abs(h.walls[0].box.center.z - boxZ0), Math.abs(now - was), 1e-4,
+        'the static box did not move with the wall');
+      assert(!world.physics.staticBoxes.includes(box0),
+        'the shape\'s original collider is still standing where the wall used to be — the cabin is '
+        + 'solid in two places and only one of them has a wall drawn at it');
+      assert(world.physics.staticBoxes.filter((b) =>
+        Math.abs(b.halfExtents.x - h.walls[0].rect.w / 2) < 1e-6
+        && Math.abs(b.halfExtents.z - h.walls[0].rect.d / 2) < 1e-6).length === 1,
+        'there is more than one partition-shaped collider in the room');
+      assert(H.pieceKind('chair') && H.fits(h, H.pieceKind('chair'), 0, now, 0) === 'in the partition',
+        'the grid still lets a chair stand where the partition now is');
+      assert(H.fits(h, H.pieceKind('chair'), 0, was, 0) === null,
+        'the grid still refuses a chair where the partition used to be');
+
+      /* THE SHAPE'S OWN DECLARATION IS UNTOUCHED. `spot.blockers` is
+       * `st.home`'s array and this room is re-dressed while the station
+       * stands; a wall that walked it would move the room for everybody. */
+      near(h.spot.blockers[0].z, kitZ, 1e-9, 'sliding the wall edited the shape\'s own blocker');
+
+      /* IT WILL NOT GO THROUGH THE FURNITURE, which is the rule the furniture
+       * is under, applied to the wall. The map table is at z = −1.5. */
+      const before = h.walls[0].rect.z;
+      stand(0, before + 0.7);
+      for (let i = 0; i < 12; i++) H.homeWheel(world, -1);
+      const stopped = h.walls[0].rect.z;
+      assert(stopped > -1.5, `the wall slid to ${stopped} and the map table is at −1.5 — it went through it`);
+
+      /* AND IT IS DURABLE. */
+      const kept = h.walls[0].rect.z;
+      H.leaveHome(world);
+      const saved = homeState();
+      assert(Array.isArray(saved.walls) && saved.walls.length === 1,
+        `the fold stored ${JSON.stringify(saved.walls)} for one partition`);
+      near(saved.walls[0], kept, 1e-9, 'the wall came off the record somewhere else');
+      return `the shape built it at ${kitZ}; four notches took it to ${now} — slab, collider and `
+        + `\`fits\` all moved together, the shape's own blocker stayed at ${kitZ}, the wheel stopped `
+        + `at ${stopped} rather than crossing the map table, and ${saved.walls[0]} survived the walk out`;
+    } finally { world.unload(); clearStation(); }
+  });
+
+  /**
+   * ══ THE THIRD ROOM, AND THAT NOTHING IS CHARGED FOR IT ══════════════════
+   *
+   * *"…let a third be unlocked — the address is what pays for it."*
+   *
+   * The argument is in `Home.js`'s partition chapter: an address is a DEED and
+   * a deed already covers the floor, so a third room adds not one square metre
+   * and costs nothing — what it adds is a wall, and what entitles you to put a
+   * wall up in a room is that the room is yours. `Progress.js`'s own doctrine
+   * is the reason a price was refused: *"a creator you have to earn is a
+   * creator you cannot use"*, and a room is worse.
+   *
+   * SO THE ASSERTION IS THAT NOTHING MOVES BUT THE ROOM. Credits and the run
+   * record are read either side of the press and have to be identical — the
+   * same standard `counter.mjs` holds a keepsake to, run the other way round.
+   */
+  check('home: a third room is unlocked by the address, and nothing is charged for it', async () => {
+    const H = await import('../../src/game/Home.js');
+    const { clearStation, homeState } = await import('../../src/game/StationSave.js');
+    const { stationKey } = await import('../../src/game/Station.js');
+    const Credits = await import('../../src/game/Credits.js');
+    const Progress = await import('../../src/game/Progress.js');
+    clearStation();
+    const { world } = await station(44);
+    let rooms = 0, bays = '';
+    try {
+      const h = world._home;
+      assert(h.walls.length === 1, 'the cabin did not start as two rooms');
+      const stand = (lx, lz) => world.player.position.set(
+        h.place.x + lx * Math.cos(h.spot.yaw) + lz * Math.sin(h.spot.yaw), h.y + 1.6,
+        h.place.z - lx * Math.sin(h.spot.yaw) + lz * Math.cos(h.spot.yaw));
+
+      const purse0 = Credits.purse();
+      const rec0 = JSON.stringify(Progress.loadProgress());
+      const door0 = h.sign._rows.map(String).join('|');
+
+      /* THE KEY, STANDING AT THE PARTITION — `stationKey`, which is the one
+       * key the station has and what `Player._readInput` spends. */
+      stand(0, h.walls[0].rect.z + 0.7);
+      assert(stationKey(world) === true, 'the key at the partition was not spent');
+      assert(h.walls.length === 2,
+        `the key at the partition left ${h.walls.length} wall(s) — there is no third room`);
+      rooms = h.walls.length + 1;
+
+      /* A REAL WALL: a mesh in the room's group and a collider in the world. */
+      const W = h.walls[1];
+      assert(W.mesh && h.group.children.includes(W.mesh),
+        'the third room is a rectangle in a list with nothing standing there');
+      assert(W.box && world.physics.staticBoxes.includes(W.box),
+        'the second partition has no collider — you would walk through the wall');
+      assert(H.fits(h, H.pieceKind('chair'), W.rect.x, W.rect.z, 0) === 'in the partition',
+        'the grid does not know about the second partition');
+      assert(h.blockers.length === h.spot.blockers.length + 1,
+        `the grid reads ${h.blockers.length} blockers for ${h.walls.length} walls + `
+        + `${h.spot.blockers.length - 1} fittings`);
+
+      /* THREE BAYS, all of them a room you can stand in. */
+      const edges = [-h.spot.d / 2, ...h.walls.map((q) => q.rect.z).sort((a, b) => a - b), h.spot.d / 2];
+      const depths = [];
+      for (let i = 1; i < edges.length; i++) depths.push(edges[i] - edges[i - 1]);
+      assert(depths.length === 3 && depths.every((d) => d >= H.MIN_ROOM),
+        `the three bays measure ${depths.map((d) => d.toFixed(1)).join(' / ')} m against a `
+        + `${H.MIN_ROOM} m minimum`);
+      bays = depths.map((d) => d.toFixed(1)).join(' / ');
+
+      /* THE ADDRESS IS WHAT PAID FOR IT, SO THE ADDRESS IS WHAT SAYS SO. */
+      const door1 = h.sign._rows.map(String).join('|');
+      assert(door1 !== door0 && /THREE/i.test(door1),
+        `the door still reads ${JSON.stringify(door1)} — the visible half of "the address is what `
+        + 'pays for it" is that the door says how many rooms are behind it');
+      assert(door1.includes(h.address), 'the door stopped printing the address');
+
+      /* AND NOTHING WAS CHARGED. */
+      assert(Credits.purse() === purse0,
+        `the purse went ${purse0} → ${Credits.purse()}. A room is not a keepsake you buy — see the `
+        + 'partition chapter in Home.js and the AMENDMENT — CREDITS in Progress.js');
+      assert(JSON.stringify(Progress.loadProgress()) === rec0, 'putting a wall up wrote to the run record');
+
+      /* AND THE KEY TAKES IT DOWN AGAIN, which is what makes it one press with
+       * one meaning rather than a one-way door. */
+      stand(0, W.rect.z + 0.7);
+      assert(stationKey(world) === true, 'the key at the second partition was not spent');
+      assert(h.walls.length === 1, 'the second partition would not come down');
+      assert(!h.group.children.includes(W.mesh), 'the wall came out of the record and stayed in the room');
+      assert(!world.physics.staticBoxes.includes(W.box), 'the wall came down and left its collider standing');
+      assert(h.sign._rows.map(String).join('|') === door0, 'the door still claims a third room');
+
+      /* Put it back up and walk out. */
+      stand(0, h.walls[0].rect.z + 0.7);
+      stationKey(world);
+      assert(h.walls.length === 2, 'the third room would not go back up');
+      H.leaveHome(world);
+      const saved = homeState();
+      assert(saved.walls.length === 2, `the fold stored ${JSON.stringify(saved.walls)} for three rooms`);
+    } finally { world.unload(); }
+
+    /* IT COMES BACK. A room that has to be re-made every visit is a menu. */
+    const two = await station(44);
+    try {
+      const h = two.world._home;
+      assert(h.walls.length === 2, `a second visit dressed ${h.walls.length + 1} rooms`);
+      assert(h.walls[1].mesh && h.walls[1].box, 'the third room came back as a number with no wall in it');
+      assert(/THREE/i.test(h.sign._rows.map(String).join('|')), 'the door forgot the third room');
+    } finally { two.world.unload(); clearStation(); }
+
+    /**
+     * ══ AND IT IS REFUSED WHERE THE ADDRESS IS NOT YOURS ══════════════════
+     *
+     * That is the whole of "the address is what pays for it" as an
+     * enforcement: every verb starts at `world._home`, which `dressHome`
+     * assigns only under `mine`, so "you may divide your own cabin and not
+     * your friend's" is not a permission test that can be forgotten — it is
+     * the absence of a way to say it, exactly as `Coop.js` §WHO MAY MOVE THE
+     * FURNITURE relies on for the placement verbs.
+     *
+     * An ABSENCE is checked by grep and not by driving, because driving can
+     * only ever show that the ways you thought of are shut. `world._homes` is
+     * the list of EVERY dressed apartment; a wall verb that reached it would
+     * be a way to name somebody else's room.
+     */
+    const src = await readFile(new URL('../../src/game/Home.js', import.meta.url), 'utf8');
+    for (const fn of ['wallAt', 'moveWall', 'toggleWall']) {
+      const at = src.indexOf(`export function ${fn}(`);
+      assert(at > 0, `Home.js exports no ${fn}`);
+      const body = src.slice(at, src.indexOf('\n}\n', at));
+      assert(/world\s*&&\s*world\._home/.test(body),
+        `${fn} does not start at \`world._home\` — a wall verb that found a room any other way `
+        + "could divide a friend's cabin");
+      assert(!/_homes|homeUnder/.test(body),
+        `${fn} reaches every dressed apartment. The one home the verbs may name is yours`);
+    }
+
+    return `the key at the partition made ${rooms} rooms of ${bays} m, with a mesh, a collider and a `
+      + 'blocker each; the door reads THREE ROOMS; the purse and the run record did not move; '
+      + 'the same key took it down and put it back, and it came back on the next visit; '
+      + '3 wall verbs, all of them fenced by `world._home` and none of them able to name another';
+  });
 
   check('home: a parcel bought at a counter is standing in the cabin when you walk in', async () => {
     /**

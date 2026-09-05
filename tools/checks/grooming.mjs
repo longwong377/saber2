@@ -40,7 +40,7 @@ import {
   AGE_RANGE, MUSCLE_RANGE, speciesOf,
 } from '../../src/game/Bodies.js';
 import { BipedAnimator } from '../../src/game/Rig.js';
-import { attachCloak, attachLekku } from '../../src/game/Cloth.js';
+import { attachCloak, attachLekku, attachSoftBody } from '../../src/game/Cloth.js';
 import { Injury, applyInjury, INJURY_COLORS } from '../../src/game/Injury.js';
 import { weave, weaveLine } from './_weave.mjs';
 import { clocked } from './_shared.mjs';
@@ -936,6 +936,104 @@ export async function run({ check, assert, near }) {
     assert(built.speciesMeshes.every(m => m.visible), 'disposing the lekku left the head bald');
     return `tip travels ${(travel * 1000).toFixed(0)} mm in the head's frame over 4 s, excursion ${(span * 1000).toFixed(0)} mm; `
       + 'rigid pair swaps back at range';
+  });
+
+  check('soft tissue: the chest MOVES relative to the ribcage, and stops when you stop', () => {
+    /**
+     * ══ V15 §2's *"real bounce"*, held to the lekku clause's own standard ═══
+     *
+     * The complaint one check up is the complaint here, on a different bone: a
+     * rigid chest is welded to the ribcage and travels ZERO millimetres in the
+     * ribcage's own frame however hard the body runs. The sliders shipped and
+     * the shape was real; nothing read them at runtime. So this drives a REAL
+     * `BipedAnimator` at a real sprint and measures the travel in the frame in
+     * which the rigid answer is identically zero, which is what leaves a wrong
+     * answer nowhere to hide.
+     *
+     * AND THE SECOND HALF IS THE ONE THAT MATTERS FOR A SPRING: *"damped, and
+     * it stops when you stop"* is V15 §2's own sentence. A bounce that kept
+     * ringing would be a worse defect than no bounce, so the body is stopped
+     * dead and the tissue has to be back on its rest pose inside a second —
+     * and back EXACTLY, because the rest pose is the figure that shipped.
+     */
+    const built = buildJedi({ sex: 1, bust: 0.5, seat: 0.5 });
+    assert((built.rig.soft || []).length === 2, 'a figure at sex 1 has no soft tissue to drive');
+    const soft = attachSoftBody(built.rig, {});
+    assert(soft && soft.sites === 2, 'the solver did not take the two sites over');
+
+    const site = built.rig.soft[0];
+    const attr = site.mesh.geometry.attributes.position;
+    /* Where the builder left the peak vertex. Everything below is measured
+     * against this one number, in the LATHE's own frame — the frame a rigid
+     * chest never leaves. */
+    let peakAt = 0;
+    for (let i = 1; i < site.w.length; i++) if (site.w[i] > site.w[peakAt]) peakAt = i;
+    const j = site.idx[peakAt];
+    const rest = new THREE.Vector3(site.base[peakAt * 3], site.base[peakAt * 3 + 1], site.base[peakAt * 3 + 2]);
+    const now = new THREE.Vector3();
+    const off = () => now.set(attr.getX(j), attr.getY(j), attr.getZ(j)).distanceTo(rest);
+
+    const anim = new BipedAnimator(built.rig, { scale: 1, hipHeight: 0.95 });
+    anim.setFacing(0);
+    const p = new THREE.Vector3(), v = new THREE.Vector3(0, 0, -5.5);
+    const step = (frames) => {
+      let travel = 0, top = 0, last = -1;
+      for (let f = 0; f < frames; f++) {
+        p.addScaledVector(v, 1 / 60);
+        anim.update(1 / 60, { position: p, facing: 0, velocity: v, grounded: true,
+          groundAt: () => 0, crouch: 0, accelForward: 0, accelStrafe: 0 });
+        built.rig.updateMatrices();
+        built.rig.root.updateMatrixWorld(true);
+        soft.update(1 / 60);
+        const d = off();
+        assert(Number.isFinite(d), 'the spring produced a non-finite vertex');
+        if (last >= 0) travel += Math.abs(d - last);
+        last = d;
+        top = Math.max(top, d);
+      }
+      return { travel, top };
+    };
+    /* Two seconds of a hard run. */
+    const run = step(120);
+    assert(run.top > 0.002,
+      `the chest's peak vertex reached ${(run.top * 1000).toFixed(2)} mm off its rest pose at a `
+      + 'sprint — under 2 mm is a bounce no player can see, and a rigid chest reaches 0');
+    assert(run.top < 0.020,
+      `the chest reached ${(run.top * 1000).toFixed(1)} mm, which is past the cap `
+      + '`attachSoftBody` says it holds — the tanh limiter is not biting');
+    assert(run.travel > 0.030,
+      `the vertex accumulated ${(run.travel * 1000).toFixed(0)} mm of travel over two seconds; a `
+      + 'displacement that reaches an amplitude and sits there is an offset, not a bounce');
+
+    /* AND IT SETTLES. Stop dead; it has one second. */
+    v.set(0, 0, 0);
+    const stop = step(60);
+    assert(off() < 2e-4,
+      `a second after the body stopped the tissue is still ${(off() * 1e6).toFixed(0)} µm off its `
+      + 'rest pose. V15 §2 asks for "damped … and it stops when you stop"');
+    assert(stop.top < run.top,
+      'the tissue moved further after the body stopped than it did while it was running');
+
+    /* OFF PUTS THE BODY BACK EXACTLY — the LOD contract, and the reason it is
+     * not the garments' `setVisible` swap: there is no second copy of a torso,
+     * so "off" has to mean the vertices the builder wrote. */
+    soft.setVisible(false);
+    let worst = 0;
+    for (const s of built.rig.soft) {
+      const a = s.mesh.geometry.attributes.position;
+      for (let i = 0; i < s.idx.length; i++) {
+        worst = Math.max(worst, Math.abs(a.getX(s.idx[i]) - s.base[i * 3]),
+          Math.abs(a.getY(s.idx[i]) - s.base[i * 3 + 1]),
+          Math.abs(a.getZ(s.idx[i]) - s.base[i * 3 + 2]));
+      }
+    }
+    assert(worst === 0,
+      `switching the solver off left a vertex ${worst} from where the builder put it. The rest pose `
+      + 'IS the shipped figure, so it has to come back to the float and not to a tolerance');
+    soft.dispose();
+    return `${(run.top * 1000).toFixed(1)} mm peak and ${(run.travel * 1000).toFixed(0)} mm of travel `
+      + `over two seconds at 5.5 m/s, in the ribcage's own frame where a rigid chest gives 0; `
+      + `back to ${(off() * 1e6).toFixed(0)} µm one second after stopping and to 0 exactly when off`;
   });
 
   check('lekku: the pair costs less than the one cape the same figure already wears', () => {

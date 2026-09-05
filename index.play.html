@@ -798,6 +798,17 @@
              pinned as an equality in tools/checks/cloth-cost.mjs. -->
         <h3 id="h-hairmotion" style="margin-top:22px">Hair</h3>
         <div id="hairmotion-list" class="cards small"></div>
+        <!-- WHETHER THE CHEST AND THE SEAT MOVE. Two rows off
+             Cloth.FLESH_MOTION - V15 SS2's "sliders for chest and glutes with
+             real bounce". It is NOT the cape solver: a torso is a lathe on a
+             bone, so the shape carries a displacement field (Bodies.softSites)
+             and one spring-damper per site drives it. Zero particles, zero
+             links, and OFF by default for the same reason the braid is - the
+             shipped figure's garment cost is pinned as an equality in
+             tools/checks/cloth-cost.mjs. Menu hides both this heading and its
+             list below sex 0.02, where there is no swell to move. -->
+        <h3 id="h-flesh" class="hidden" style="margin-top:22px">Soft tissue</h3>
+        <div id="flesh-list" class="cards small hidden"></div>
         <h3 id="h-top" style="margin-top:22px">Torso</h3>
         <div id="top-list" class="cards small"></div>
         <h3 id="h-armour" style="margin-top:22px">Clone armour</h3>
