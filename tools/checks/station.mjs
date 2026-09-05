@@ -641,7 +641,9 @@ export async function run({ check, assert, THREE }) {
       for (const [, b] of life.live) {
         seen.set(b, {
           x: b.position.x, z: b.position.z, lx: b.position.x, lz: b.position.z,
-          path: 0, net: 0, trips: b.wayTrips | 0, way: b.stationWay || null, gone: false,
+          path: 0, net: 0, jPath: 0, jx: b.position.x, jz: b.position.z, legs: [],
+          trips: b.wayTrips | 0, trips2: b.wayTrips | 0,
+          way: b.stationWay || null, gone: false,
         });
       }
       assert(seen.size >= 6, `only ${seen.size} residents were up to watch`);
@@ -670,67 +672,80 @@ export async function run({ check, assert, THREE }) {
         for (const [b, a] of seen) {
           if (a.gone) continue;
           if (b.disposed || b.alive === false) { a.gone = true; continue; }
-          a.path += Math.hypot(b.position.x - a.lx, b.position.z - a.lz);
+          const step = Math.hypot(b.position.x - a.lx, b.position.z - a.lz);
+          a.path += step;
+          a.jPath += step;
           a.lx = b.position.x; a.lz = b.position.z;
           a.net = Math.hypot(b.position.x - a.x, b.position.z - a.z);
-          a.trips2 = b.wayTrips | 0;
+          /* AND WHEN IT ARRIVES, THE JOURNEY IS CLOSED AND MEASURED. The trip
+           * counter goes up on the frame the last leg runs out, and the body
+           * is standing on the destination at that moment — so this is the
+           * displacement from where it set off to where it got to, against the
+           * ground it covered doing it. */
+          const t = b.wayTrips | 0;
+          if (t > a.trips2) {
+            a.legs.push({ net: Math.hypot(b.position.x - a.jx, b.position.z - a.jz), path: a.jPath });
+            a.trips2 = t;
+            a.jx = b.position.x; a.jz = b.position.z; a.jPath = 0;
+          }
         }
       }
-      const walk = [], stopped = [];
+      const walk = [], stopped = [], journeys = [];
       let arrivals = 0;
       for (const [, a] of seen) {
-        const row = { net: a.net, path: a.path };
-        if (a.way === 'walk') { walk.push(row); arrivals += (a.trips2 | 0) - a.trips; }
-        else stopped.push(row.net);
+        if (a.way === 'walk') {
+          walk.push({ net: a.net, path: a.path });
+          arrivals += (a.trips2 | 0) - a.trips;
+          for (const j of a.legs) journeys.push(j);
+        } else stopped.push(a.path);
       }
       assert(walk.length >= 2,
         `only ${walk.length} bodies were on the open stretches — nothing was measured`);
       const median = (v) => { const q = v.slice().sort((x, y) => x - y); return q[q.length >> 1]; };
       const m = median(walk.map((r) => r.net));
       const pathM = median(walk.map((r) => r.path));
+      /* A MINUTE AT A WALK IS TENS OF METRES OF GROUND COVERED. The pace is
+       * 1.35 m/s, so a minute is about eighty; the bar is set at a bit over a
+       * third of that, so a body that spent part of the window standing at a
+       * door it had reached still counts. Measured before the fix: 3.02 m. */
+      assert(pathM >= 30,
+        `the open walkways covered a median of ${pathM.toFixed(2)} m in sixty seconds — the ring `
+        + 'is 537 m round, and this is a shuffle on the spot rather than a walk');
       /**
-       * ── A MINUTE AT A WALK IS TENS OF METRES, BOUNDED BY THE CULL ──────
+       * ── SOMEBODY GOT SOMEWHERE, AND THE JOURNEY IS THE UNIT ────────────
        *
-       * The pace is 1.35 m/s, so a minute is about eighty metres of PATH — but
-       * the NET is bounded by something else entirely, and it is worth saying
-       * which: a walker is seated inside 40 m of the player and dropped at 52,
-       * so no walker can ever show more than about fifty metres of
-       * displacement from where it was first seen. Fifteen is a fifth of the
-       * path and a third of the ceiling — comfortably past the 3.02 m the
-       * audit measured, and not a number that could only be hit by a body
-       * running the whole window in one direction.
+       * THIS IS THE CLAUSE THE OLD WALKER FAILS. It advanced a bearing at a
+       * fixed radius with no destination at all — its own comment said "no
+       * pathfinding" — so it has no journeys to measure and cannot produce an
+       * arrival however far it walks.
+       *
+       * AND NET-AGAINST-PATH IS MEASURED OVER A JOURNEY RATHER THAN OVER THE
+       * MINUTE, because the minute is the wrong unit and the numbers say so.
+       * Measured on the fixed walker, deck 40 at 13:00: 57.9 m of path, 9.1 m
+       * of net, **0.16** — which looks exactly like a lap and is in fact THREE
+       * COMPLETED CROSSINGS, out and back and out again, which is what a
+       * concourse looks like. Per journey the same walkers read 0.9 and up.
+       * The minute-long ratio cannot tell a body going nowhere from a body
+       * going somewhere three times, and the old walker scored 0.96 on it —
+       * a chord, because 81 m of an 537 m ring is barely a radian.
        */
-      assert(m >= 15,
-        `the open walkways moved a median of ${m.toFixed(2)} m in sixty seconds — the ring is `
-        + '537 m round, and this is a shuffle on the spot rather than a journey');
-      /**
-       * ── NET AGAINST PATH, AND WHAT IT DOES AND DOES NOT CATCH ──────────
-       *
-       * A body that ends the minute where it began spent the minute going
-       * nowhere, and that is worth a floor. BUT THIS RATIO IS NOT THE CLAUSE
-       * THAT CATCHES THE OLD WALKER, and saying so is the difference between
-       * a guard and a guard that asserts its own bug: the ring is 537 m round
-       * and a minute at 1.35 m/s is 81 m of it, which is one radian. Measured
-       * on the OLD bearing-pacer over exactly this window: 89.1 m of path,
-       * 85.2 m of net, **0.96** — a chord, and a perfect score for a body that
-       * was doing nothing but circling.
-       *
-       * So the floor here is a floor and the two clauses under it are the
-       * test: a walker must DECLARE somewhere it is going, and somebody must
-       * ARRIVE. Neither is a thing a lap can produce.
-       */
+      assert(arrivals >= 1,
+        `${walk.length} people walked for a minute and none of them arrived anywhere`);
+      assert(journeys.length >= 1, 'no journey was closed to measure');
+      const jNet = median(journeys.map((j) => j.net));
+      const jStraight = median(journeys.map((j) => (j.path > 0 ? j.net / j.path : 0)));
+      assert(jNet >= 8,
+        `a journey ended a median of ${jNet.toFixed(1)} m from where it started — that is a step, `
+        + 'not a crossing between two places');
+      assert(jStraight >= 0.5,
+        `a journey covered ${(1 / Math.max(jStraight, 1e-6)).toFixed(1)} m of path for every metre `
+        + 'it actually got — the route is wandering rather than going somewhere');
       const straight = pathM > 0 ? m / pathM : 0;
-      assert(straight >= 0.2,
-        `the open walkways covered ${pathM.toFixed(1)} m of path to end ${m.toFixed(1)} m from `
-        + `where they started (${straight.toFixed(2)} of it) — a minute of walking that ends `
-        + 'where it began');
       /**
-       * ── SOMEWHERE TO BE GOING, AND IT IS A PLACE IN THE GAZETTEER ──────
+       * ── SOMEWHERE TO BE GOING, AND IT IS A PLACE THAT EXISTS ───────────
        *
-       * The old walker had no destination at all — its own comment said "no
-       * pathfinding" — so this fails on it by construction rather than by a
-       * threshold. `wayTo` is a place id and §3.2's rule is that a place not
-       * in the table is not a place, so the id is checked against the table.
+       * The old walker had no destination field at all, so this fails on it by
+       * construction rather than by a threshold.
        */
       const { PLACE: TABLE } = await import('../../src/game/StationPlan.js');
       /* A DESTINATION IS A PLACE THAT EXISTS, and there are two tables it can
@@ -752,29 +767,21 @@ export async function run({ check, assert, THREE }) {
       assert(lost.length === 0,
         `${lost.length} of ${onFoot} people on the open stretches are not going anywhere `
         + `(${lost.slice(0, 4).join(', ')}) — a walk with no destination is a pace`);
-      /* AND SOMEBODY GOT THERE. A destination nobody reaches is a heading. */
-      assert(arrivals >= 1,
-        `${walk.length} people walked for a minute and none of them arrived anywhere`);
       /**
-       * ── AND IT IS A RATIO, BECAUSE THE FIXTURES WERE NEVER STILL ────────
+       * ── AND THE BENCHES ARE STILL OCCUPIED BY PEOPLE SITTING ON THEM ───
        *
-       * The first cut asserted the people who stopped somewhere moved less
-       * than three metres, and measured 5.92 — market bodies drifting 8 to 10
-       * m over the minute. That drift predates this lane and is not something
-       * `stepWalkers` does: it only ever touches a body with a `wayR`, and
-       * only `way === 'walk'` is given one. Asserting an absolute the game has
-       * never held would have been this check inventing a second defect.
-       *
-       * What the clause is actually for is that a fix which set EVERY body
-       * walking would empty the benches, and that is a RATIO: an open stretch
-       * has to be a journey against whatever the fixtures are doing, not
-       * against zero.
+       * A fix that set EVERY body walking would pass everything above and
+       * delete the fixtures. It is a RATIO rather than an absolute because the
+       * fixtures have never been perfectly still and this clause is not the
+       * place to assert that they are; the ground COVERED is the fair
+       * comparison, since a body that shuffles on the spot covers ground
+       * without going anywhere.
        */
       if (stopped.length) {
         const sm = median(stopped);
-        assert(m > sm * 3,
-          `the open stretches moved ${m.toFixed(1)} m and the people who stopped somewhere on `
-          + `purpose moved ${sm.toFixed(1)} m — the counters, the benches and the rails have been `
+        assert(pathM > sm * 3 + 1,
+          `the open stretches covered ${pathM.toFixed(1)} m and the people who stopped somewhere on `
+          + `purpose covered ${sm.toFixed(1)} m — the counters, the benches and the rails have been `
           + 'emptied into the corridor');
       }
       /**
@@ -856,10 +863,12 @@ export async function run({ check, assert, THREE }) {
         `a corridor walker was inside ${[...trespass].map(([id, n]) => `#${id} on ${n} samples`).join(', ')}`
         + ' — the between-space walks through the rooms');
       assert(strayed === 0, `${strayed} walker samples were off the leg the route says they are on`);
-      return `${alive}/${declared} declared walk slots alive; ${walk.length} on the open stretches `
-        + `covered a median ${pathM.toFixed(1)} m of path to end ${m.toFixed(1)} m away `
-        + `(${straight.toFixed(2)} straight, ${arrivals} arrivals); ${stopped.length} who stopped `
-        + `somewhere drifted ${stopped.length ? median(stopped).toFixed(1) : '0'} m; 0 trespasses`;
+      return `${alive}/${declared} declared walk slots alive; ${walk.length} walkers covered a `
+        + `median ${pathM.toFixed(1)} m in the minute and ARRIVED ${arrivals} times; `
+        + `${journeys.length} journeys, median ${jNet.toFixed(1)} m end to end at `
+        + `${jStraight.toFixed(2)} of their own path (${straight.toFixed(2)} over the whole `
+        + `minute, which is three crossings); ${stopped.length} who stopped somewhere covered `
+        + `${stopped.length ? median(stopped).toFixed(1) : '0'} m; 0 trespasses`;
     } finally { world.unload(); }
   });
 

@@ -455,6 +455,13 @@ export async function run({ check, assert }) {
       assert(lift < 0.001, `its feet are ${(lift * 1000).toFixed(1)} mm off the basket`);
       assert(plan < 0.001, `it stands ${(plan * 1000).toFixed(1)} mm away from the basket in plan`);
 
+      /* READ OFF THE LIVE DRESSING AND KEPT, because the last section of this
+       * check re-dresses the room and `undressOne` empties `h.pad` — so this
+       * `h` is a room that has been taken down by the time the sentence below
+       * is written. */
+      const seated = { at: theirs.address, fixture: theirs.pad.id,
+        kind: theirs.pad.body.rec.kind, stage: theirs.pad.body.rec.stage };
+
       /* AND IT IS IN THE ROOM'S OWN GROUP, so the cull switches it off with
        * the door and `undressApartment` frees it with the dressing. */
       assert(root.parent === theirs.group,
@@ -503,8 +510,8 @@ export async function run({ check, assert }) {
       return `the host chose a basket and a SEASONED tooka; ${full} B on the wire against ${bare} B `
         + `without it (+${full - bare}, ceiling ${ceiling}) and the 18 Hz snapshot unmoved — `
         + `${snapBefore} B of shape before and ${snapAfter} B after, ${snapRaw0} B raw; `
-        + `with this process's only Kennel emptied the guest still dresses ${theirs.address} with a `
-        + `${theirs.pad.id} and a ${theirs.pad.body.rec.kind} at stage ${theirs.pad.body.rec.stage} `
+        + `with this process's only Kennel emptied the guest still dresses ${seated.at} with a `
+        + `${seated.fixture} and a ${seated.kind} at stage ${seated.stage} `
         + `standing on it — ${meshes} meshes, feet ${(lift * 1000).toFixed(2)} mm off the fixture and `
         + `${(plan * 1000).toFixed(2)} mm off it in plan, scale `
         + `${CK.bodyScaleOf('tooka', row.pet).toFixed(3)} against the owner's `
