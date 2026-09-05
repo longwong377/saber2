@@ -1640,6 +1640,33 @@ function roomLine(h) {
  * So the room is honest about which half it has: the notification says the
  * glass is real and says where the creator's controls land. Nothing on screen
  * claims the other half until the other half exists.
+ *
+ * ── AND NOBODY HAS LOOKED AT IT YET, WHICH IS ALSO SAID HERE ──────────────
+ *
+ * Everything MECHANICAL about this reflection is measured, through the hook
+ * the engine actually calls, against a recording renderer: one render a
+ * stepped frame, into its own target at the tier's own size, from the engine's
+ * camera and no other, with the mask keeping the room and the body and putting
+ * every object back, and nothing at all from 40 m, from behind the glass or
+ * through the ink prepass's clone. `home: the mirror reflects this room and
+ * the body in it` holds all of it.
+ *
+ * WHAT IS NOT MEASURED IS THE PICTURE. A throwaway browser probe was written
+ * to stand in #27 and photograph the glass — `tools/_stationshot.mjs`'s method
+ * in full — and it did not finish: this container runs ANGLE on SwiftShader
+ * with a dozen other lanes on it, and forty minutes of a software rasteriser
+ * at load 50 never got past `enterStation`. So the
+ * geometry of the reflection is three's own `Reflector`, transcribed rather
+ * than invented, and the render discipline is `DeckMirror`'s, which ships —
+ * but the image itself has not been seen by anybody.
+ *
+ * The failure mode if the transcription is wrong is bounded and worth writing
+ * down: the glass shows the wrong picture inside one room. It cannot cost a
+ * frame anywhere else (the render is gated to seven metres of one wall), it
+ * cannot throw (the render is inside a try/finally that restores the renderer
+ * either way), and `uOn = 0` is a flat dark pane, which is what the mirror was
+ * before this lane. FIRST THING TO DO ON A MACHINE WITH A GPU: stand in #27
+ * and look at it.
  */
 
 /** Every number the cabin's glass runs on. */
