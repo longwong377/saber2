@@ -547,120 +547,96 @@ export async function run({ check, assert }) {
     return rows.join(', ');
   });
 
-  check('companion: mutate any temper axis and a number on the field moves', async () => {
+  check('companion: mutate any temper axis and a number moves', () => {
     /**
      * THE OTHER HALF OF THE CHECK ABOVE, AND THE ONE THAT ACTUALLY BITES.
      *
-     * A grep proves a name is mentioned. This fields a real animal in a real
-     * world, writes a swing onto it one axis at a time, and asserts the thing
-     * that axis is supposed to move actually moves — the same mutation the
-     * audit used to prove three of the five did nothing, run now with the
-     * opposite expectation.
+     * A grep proves a name is mentioned. This writes a swing one axis at a
+     * time and asserts the thing that axis is supposed to move actually moves
+     * — the same mutation the audit used to prove three of the five did
+     * nothing (`{ hold: 999, ward: 999, exposure: 999 }` left `leashOf` at
+     * 14.0 and `settledBand` at 0.61), run now with the opposite expectation.
      *
-     * EVERY AXIS IS COVERED AND THE COVERAGE IS DERIVED: the table below is
-     * keyed by axis id and the loop asserts it has a row for every key in
-     * `TEMPER_AXES`, so an axis added without a probe fails here rather than
-     * being quietly skipped.
+     * ── IT BOOTS NO WORLD, AND THAT IS A RULE AND NOT A SAVING ────────────
+     *
+     * `_twosuite.mjs` starts every check in a file CONCURRENTLY, so a world
+     * booted here is a live physics world interleaved with every other check's
+     * frames. Measured: an earlier draft of this check booted four, and
+     * `the eleven verbs do the thing they say` — a sixteen-second race between
+     * a whelp's pounce and its bite — went red without one line of `src/`
+     * changing. A check that reddens another check is a check that has to be
+     * cheaper. All five readers are pure functions of the fields the pack
+     * hangs on a body, so the body is a literal; the one axis whose effect is
+     * SECONDS rather than metres is driven on a real animal in
+     * `the growth ladder earns drawbacks`, which already has a world open.
      */
-    const { world, input, e, p } = await field('massiff');
-    tick(world, input, p, 10);
     const zero = { hold: 0, reach: 0, recall: 0, ward: 0, exposure: 0 };
+    /* THE FIELDS THE PACK HANGS ON A BODY, and nothing else — see
+     * `CompanionPack.adopt`. A literal rather than a spawned body because
+     * every reader below is a pure function of exactly these. */
+    const owner = { position: new THREE.Vector3(0, 0, 0), facing: 0, alive: true, team: 0 };
+    const e = {
+      _cmpKind: 'massiff', _cmpOwner: owner, _cmpSide: 1, _cmpDuty: null,
+      _cmpSwing: { ...zero }, position: new THREE.Vector3(3, 0, 0),
+    };
     const set = (o) => { e._cmpSwing = { ...zero, ...o }; };
     const home = new THREE.Vector3();
+    const foe = { position: new THREE.Vector3(), team: 1, dead: false };
     /* HOW WIDE THE RING THE WARD ORDER ACTUALLY DEFENDS IS, walked out in
-     * quarter metres — measured through `dutyAllows`, which is the filter the
-     * aim wrap runs, rather than through the reader it calls. */
-    e._cmpDuty = { id: 'ward' };
-    const foe = { position: p.position.clone(), team: (p.team ?? 0) + 1, dead: false };
+     * quarter metres through `dutyAllows` — the filter the aim wrap runs —
+     * rather than through the reader it calls. */
     const ringNow = () => {
+      e._cmpDuty = { id: 'ward' };
       C.stationFor(e, home);
       let r = 0;
       for (let d = 0.5; d < 40; d += 0.25) {
-        foe.position.copy(p.position); foe.position.x += d;
+        foe.position.set(owner.position.x + d, 0, owner.position.z);
         if (C.dutyAllows(e, foe, home, 1e9)) r = d; else break;
       }
+      e._cmpDuty = null;
       return r;
     };
-    const PROBES = {
-      /* Two axes on one rope, and the temper table buys them against each
-       * other — so each is moved alone and the rope has to move both ways. */
-      reach: () => { set({ reach: 4 }); return C.leashOf(e); },
-      recall: () => { set({ recall: 4 }); return C.leashOf(e); },
-      /* Metres of ring round YOU. */
-      ward: () => { set({ ward: 4.5 }); return ringNow(); },
-      /* Metres of extra distance-from-you, which is where it heels. */
-      exposure: () => { set({ exposure: -4 }); e._cmpDuty = null; C.stationFor(e, home); const d = home.distanceTo(p.position); e._cmpDuty = { id: 'ward' }; return d; },
-      /* Seconds. Not a distance at all, so it is measured as one: the animal
-       * is put past the end of its rope and the grace is the seconds before
-       * the walk home is allowed to start. */
-      hold: () => { set({ hold: 3 }); return C.holdOf(e); },
+    /* WHERE IT HEELS, which is what `exposure` moves. */
+    const heelGap = () => { e._cmpDuty = null; C.stationFor(e, home); return home.distanceTo(owner.position); };
+    const READS = {
+      reach: () => C.leashOf(e),
+      recall: () => C.leashOf(e),
+      ward: ringNow,
+      exposure: heelGap,
+      hold: () => C.holdOf(e),
     };
+    const SWINGS = {
+      reach: { reach: 4 }, recall: { recall: 4 }, ward: { ward: 4.5 },
+      exposure: { exposure: -4 }, hold: { hold: 3 },
+    };
+    /* THE COVERAGE IS DERIVED: an axis added to the price table with no probe
+     * here fails, rather than being quietly skipped. */
     for (const axis of Object.keys(Kn.TEMPER_AXES)) {
-      assert(PROBES[axis], `${axis} is priced and this check has no probe for it`);
+      assert(READS[axis] && SWINGS[axis], `${axis} is priced and this check has no probe for it`);
     }
     const rows = [];
-    for (const [axis, probe] of Object.entries(PROBES)) {
+    for (const axis of Object.keys(READS)) {
       set({});
-      const before = axis === 'ward' ? ringNow()
-        : axis === 'exposure' ? (() => { e._cmpDuty = null; C.stationFor(e, home); const d = home.distanceTo(p.position); e._cmpDuty = { id: 'ward' }; return d; })()
-          : axis === 'hold' ? C.holdOf(e) : C.leashOf(e);
-      const after = probe();
+      const before = READS[axis]();
+      set(SWINGS[axis]);
+      const after = READS[axis]();
       assert(Math.abs(after - before) > 0.2,
-        `${axis} moved nothing: ${before.toFixed(2)} -> ${after.toFixed(2)} with the axis swung 4 — `
+        `${axis} moved nothing: ${before.toFixed(2)} -> ${after.toFixed(2)} with the axis swung — `
         + 'the habitat prints this temper\'s cost and the field does not charge it');
       rows.push(`${axis} ${before.toFixed(1)}→${after.toFixed(1)}`);
     }
-    set({});
-    /**
-     * AND THE GRACE IS SECONDS ON THE FIELD AND NOT ONLY IN THE READER — the
-     * animal is dragged forty metres past the end of its rope and the frame it
-     * starts the walk home is measured with and without HEAVY's two seconds.
-     *
-     * BOTH RUNS IN THE ONE WORLD THIS CHECK ALREADY BOOTED, and that is not a
-     * saving, it is a correctness rule this suite runs on: `_twosuite.mjs`
-     * starts every check in a file CONCURRENTLY, so a check that boots four
-     * worlds is four more live physics worlds interleaved with everybody
-     * else's frames. Measured: booting three extra worlds here flipped
-     * `the eleven verbs do the thing they say` — a sixteen-second race between
-     * a whelp's pounce and its bite — from green to red without one line of
-     * `src/` changing. A check that reddens another check is a check that has
-     * to be cheaper.
-     *
-     * Between the two runs the player is put back and the animal is let settle
-     * inside its leash, which is what re-arms `_cmpHeld`: the grace counts
-     * seconds PAST the end of the rope and is reset the frame the animal is
-     * back inside it.
-     */
-    const walkStart = (hold) => {
-      e._cmpSwing = { ...zero, hold };
-      e._cmpHeld = 0;
-      e._cmpDuty = null;
-      const home0 = p.position.clone();
-      const at0 = e.position.clone();
-      p.position.x += 40;
-      let out = null;
-      for (let i = 0; i < 240 && out === null; i++) {
-        tick(world, input, p, 1);
-        if (e.position.distanceTo(at0) > 2) out = i * STEP;
-      }
-      /* PUT HIM BACK AND LET IT COME HOME, so the second run starts from the
-       * same standing animal the first one did. */
-      p.position.copy(home0);
-      tick(world, input, p, 300);
-      return out;
-    };
-    const t0 = walkStart(0);
-    const t2 = walkStart(2);
-    assert(t0 !== null && t2 !== null, 'the animal never walked home at all');
-    assert(t2 - t0 > 1.2,
-      `dragged past its leash, an animal with two seconds of hold started home ${(t2 - t0).toFixed(2)}s `
-      + 'later than one with none — HEAVY\'s "holds a spot longer" is printed and not charged');
-    e._cmpSwing = { ...zero };
-    world.unload?.();
-    return `${rows.join(', ')}; the walk home starts at ${t0.toFixed(2)}s plain and ${t2.toFixed(2)}s with hold 2`;
+    /* AND THE SIGN OF THE LIABILITY AXIS, which is the one thing a reader of
+     * `exposure` can get backwards: a temper that COSTS four metres of it must
+     * put the animal further off you, never closer. */
+    set({ exposure: -4 });
+    assert(C.standoffOf(e) > 0, 'a temper that costs exposure moved the animal TOWARD its owner');
+    /* AND A WARD OF ZERO STAYS ZERO — a temper may not hand a kind a tripwire
+     * its own row never gave it. */
+    const tooka = { _cmpKind: 'tooka', _cmpSwing: { ...zero, ward: 9 } };
+    assert(K.wardOf(tooka) === 0 || (K.COMPANION_KINDS.tooka.ward || 0) > 0,
+      'a temper gave a kind with no ward a ring of its own');
+    return rows.join(', ');
   });
-
-  /* ── what it is ───────────────────────────────────────────────────── */
 
   check("companion: a card's band claim is the row's band, both ways round", async () => {
     /**
@@ -5237,10 +5213,51 @@ export async function run({ check, assert }) {
     const plain = await shyRun(plainBody);
     assert(plain.during && plain.shies === 0,
       'an animal wearing no bond panicked at the same wound — the drawback is not the temper\'s');
+    /**
+     * ── AND HEAVY'S OWN HALF OF THE SENTENCE, ON THE FIELD, IN THIS WORLD ──
+     *
+     * "A big one is slow and loud" is `hold` up and `recall` down, and `hold`
+     * is the one axis whose effect is SECONDS: the grace an animal gets on the
+     * moment you drag it past the end of its rope. `mutate any temper axis`
+     * proves the reader; this proves the animal. It runs HERE, on the world
+     * this check already opened, because the suite starts every check
+     * concurrently and an extra world is an extra live simulation interleaved
+     * with everybody else's frames.
+     *
+     * The player is put forty metres off and the frame the animal starts the
+     * walk home is taken, with and without two seconds of hold; between the
+     * two he is put back and it is let settle, which is what re-arms the
+     * grace — `_cmpHeld` counts seconds PAST the end of the rope and is reset
+     * the frame the animal is back inside it.
+     */
+    const zeroSwing = { hold: 0, reach: 0, recall: 0, ward: 0, exposure: 0 };
+    const walkStart = (hold) => {
+      plainBody._cmpDuty = null;
+      plainBody._cmpSwing = { ...zeroSwing, hold };
+      plainBody._cmpHeld = 0;
+      const back = F.p.position.clone();
+      const at0 = plainBody.position.clone();
+      F.p.position.x += 40;
+      let out = null;
+      for (let i = 0; i < 240 && out === null; i++) {
+        tick(F.world, F.input, F.p, 1);
+        if (plainBody.position.distanceTo(at0) > 2) out = i * STEP;
+      }
+      F.p.position.copy(back);
+      tick(F.world, F.input, F.p, 300);
+      return out;
+    };
+    const t0 = walkStart(0);
+    const t2 = walkStart(2);
+    assert(t0 !== null && t2 !== null, 'the animal never walked home at all');
+    assert(t2 - t0 > 1.2,
+      `dragged past its leash, an animal with two seconds of hold started home ${(t2 - t0).toFixed(2)}s `
+      + 'later than one with none — HEAVY\'s "holds a spot longer" is printed and not charged');
     F.world.unload?.();
     return `${earned.length} tempers earned off the growth ladder (${earned.join(', ')}), all priced <= 0, `
       + `none earned by a fresh animal; ${rec.tempers.length} worn at once under a cap of ${Kn.TEMPERS_WORN}; `
-      + `the bonded one stops fighting for ${C.SHY.run}s at a 12 hp wound and an unbonded one does not`;
+      + `the bonded one stops fighting for ${C.SHY.run}s at a 12 hp wound and an unbonded one does not; `
+      + `dragged past its leash the walk home starts at ${t0.toFixed(2)}s plain and ${t2.toFixed(2)}s with hold 2`;
   });
 
   check('companion: the habitat writes the six plaques and answers the panel', async () => {
