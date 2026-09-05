@@ -198,8 +198,25 @@ export function fullness(place, hour) {
  * header. `station.mjs` holds every place to being non-empty at its own busy
  * hour, which is what stops a room from being furniture.
  */
-export function headcount(place, hour) {
+export function headcount(place, hour, ev = _event) {
   const heads = place.heads || 0;
+  /**
+   * ── AND §3.4'S EVENT IS PART OF WHO IS THERE ──────────────────────────
+   *
+   * *"MARKET DAY — the Concourse is at its fullest"* added nobody to the
+   * Concourse: `headcount` took no event, so the row was a banner and the
+   * room held its ordinary eighty. The extra people are ADDED PAST THE CURVE
+   * rather than folded into `heads`, so a row that says "fourteen more in
+   * Arrivals" puts fourteen more in Arrivals at whatever hour it fires and
+   * not fourteen times whatever the cosine happens to be — a shuttle on the
+   * collar at 03:00 is still a shuttle on the collar.
+   *
+   * `ev` DEFAULTS TO THE RUNNING ROW and is not passed by the pool's
+   * re-seat, the walker's desire lines or the pit's roster — see the note
+   * over `_event` for why the now is a default rather than an argument.
+   * `headcount(p, h, null)` is the plain gazetteer number.
+   */
+  const extra = (ev && ev.fill && ev.fill[place.id]) || 0;
   /**
    * ══ A FIXED OCCUPANCY IS A FACT, NOT A RHYTHM ══════════════════════════
    *
@@ -214,13 +231,13 @@ export function headcount(place, hour) {
    * He cannot be on the curve either — it empties a one-head room for nine
    * hours a day, midday among them. `fixed` says the number is the number.
    */
-  if (place.fixed) return heads;
+  if (place.fixed) return heads + extra;
   const n = Math.round(heads * fullness(place, hour));
   /* A place somebody LIVES in is never literally empty while the day is on
    * it. The mortician is one person in a room of drawers and the curve would
    * round him away at every hour but three, which reads as an abandoned
    * station rather than as a quiet one. */
-  return (heads > 0 && n === 0 && fullness(place, hour) > 0.35) ? 1 : n;
+  return extra + ((heads > 0 && n === 0 && fullness(place, hour) > 0.35) ? 1 : n);
 }
 
 /**
@@ -1298,7 +1315,7 @@ export function dressStationLife(world, st) {
     /** True until the first re-seat has run — see `dressStationLife`. */
     priming: true,
     /** The tram: four stops, ninety seconds apart (§3.2 #40). */
-    tram: { t: 0, at: 0, car: null },
+    tram: { t: 0, at: 0, car: null, faulted: false },
     /**
      * THE PLAYER'S OWN ROLL, read ONCE (V16 §C2). `StationBoards.companyOf`
      * is the one authority on which of the armies' manifests is "the"
@@ -1308,8 +1325,20 @@ export function dressStationLife(world, st) {
      * instead; see `Bars.js`'s header.
      */
     company: (() => { try { return companyOf(); } catch { return null; } })(),
-    /** The event table's cursor and what is running (§3.4). */
-    event: null, eventIn: 20,
+    /**
+     * The event table's cursor and what is running (§3.4).
+     *
+     * `event` IS NOT IN THIS LITERAL EITHER — it is hung on this object below
+     * as an accessor onto the module's own `_event`, exactly as `standing` is
+     * hung on the durable fold, and for the same reason: `headcount` has no
+     * world and two copies of one fact drift. `eventFor` is how many real
+     * seconds the row has left to run.
+     */
+    eventIn: 20, eventFor: 0,
+    /** How far the drum's lights are down (§3.4's REACTOR SURGE). `stepDip`
+     *  is the reader; it was never in this literal at all, so the number the
+     *  surge set started life as `undefined`. */
+    dip: 0,
     /**
      * §11's consequence: the guards who come and the arrest they make.
      *
@@ -1350,6 +1379,12 @@ export function dressStationLife(world, st) {
   Object.defineProperty(life, 'standing', {
     get: () => standing(),
     set: (v) => { setStanding(v); },
+    enumerable: true, configurable: true,
+  });
+  /* AND §3.4'S RUNNING ROW IS THE MODULE'S, THROUGH THIS ONE. See `_event`. */
+  Object.defineProperty(life, 'event', {
+    get: () => _event,
+    set: (v) => { _event = v || null; },
     enumerable: true, configurable: true,
   });
   world._stationLife = life;
@@ -2328,11 +2363,44 @@ export function servedHere(world) {
 export const STOPS = [40, 40.2, 40.3, 40.4];
 /** Seconds between stops. §3.2: "trams every 90 s". */
 const TRAM_LEG = 22.5;
+/** How far along a leg a faulted car stands — far enough out of the platform
+ *  it just left that nobody can step onto it. See `stepTram`. */
+const STALL_AT = TRAM_LEG * 0.3;
 
 function stepTram(world, st, life, dt) {
   const t = life.tram;
-  t.t += dt;
-  while (t.t >= TRAM_LEG) { t.t -= TRAM_LEG; t.at = (t.at + 1) % STOPS.length; }
+  /**
+   * ══ §3.4'S TRAM FAULT, AND IT IS THE LOOP THAT STOPS ══════════════════
+   *
+   * *"TRAM FAULT — the loop is down"* stopped nothing: the row set a field
+   * with no reader anywhere in `src/`, and the car went on running its
+   * ninety-second circuit past the promenade glass while the banner said the
+   * loop was down. This is the reader — the clock stops, `at` stops advancing,
+   * and the crowds the row sends walking (`stir`) are walking because there
+   * is no tram.
+   *
+   * TWO THINGS THE FAULT MAY NOT DO, AND BOTH ARE SOMEBODY ELSE'S PROPERTY.
+   *
+   * It may not throw a passenger off between platforms. §3.1 rule 3's *"cars
+   * you can ride"* is a ride that ENDS, and `Station.stepTramRide` sets a
+   * rider down when the car reaches the next stop — so a car stopped mid-leg
+   * with somebody aboard is a player standing on a box 97 m outside the drum
+   * for as long as the fault runs. A car that is carrying somebody finishes
+   * its leg, and the loop goes down behind it.
+   *
+   * And it may not stall INSIDE the window `Station.tramAtStop` counts as
+   * standing at a platform. A car nobody can board is what "the loop is down"
+   * means: what the fault leaves on the guideway is a stalled car a short way
+   * out of the stop it last left, not a car sitting at a platform with its
+   * doors open that never leaves.
+   */
+  const halt = !!life.event?.halt && !world._tramRide;
+  if (!(halt && t.faulted)) {
+    t.t += dt;
+    while (t.t >= TRAM_LEG) { t.t -= TRAM_LEG; t.at = (t.at + 1) % STOPS.length; }
+    if (halt && t.t >= STALL_AT) t.faulted = true;
+  }
+  if (!life.event?.halt) t.faulted = false;
   if (!t.car) return;
   /* The car runs the guideway between two stops — a great-circle arc at the
    * tram radius, so it passes the promenade's glass where §3.1 says it does. */
@@ -2369,27 +2437,312 @@ export function dressTram(world, st, M) {
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 /**
- * Ten events, each with the place it happens in and the sentence it says.
- * One table, exactly as §3.4 asks, and every row is something a player can go
- * and look at rather than a line of text on its own.
+ * ══ TEN ROWS THAT WERE TEN BANNER LINES ═══════════════════════════════════
+ *
+ * §3.4 asks for events "a player can go and look at", and the comment over
+ * this table has claimed since it was written that *"every row is something a
+ * player can go and look at rather than a line of text on its own."* It was
+ * not true of a single one of them. Measured by grep across `src/`:
+ *
+ *     life.event   written by `stepEvents`, READ NOWHERE
+ *     life.dip     written by `stepEvents`, decayed by the step, READ NOWHERE
+ *     headcount(place, hour)   took no event, so MARKET DAY added nobody
+ *
+ * "REACTOR SURGE — the lights dip across the drum" dipped no light, because
+ * the number it set had no reader in any file; "MARKET DAY — the Concourse is
+ * at its fullest" left the Concourse at exactly the headcount it holds on any
+ * other Tuesday; "the crowds are walking" moved nobody. Ten `world.notify`
+ * calls and a table of prose.
+ *
+ * ── WHAT A ROW IS NOW ────────────────────────────────────────────────────
+ *
+ * The row IS the effect. Four fields, and each is read by a system that was
+ * already in this file rather than by a parallel one built for the table:
+ *
+ *   `mins`  how long it runs, in STATION minutes. The clock is one game hour
+ *           per two real minutes (`Station.tickStationClock`), so a station
+ *           minute is `MINUTE` real seconds and "ten minutes" in a row means
+ *           ten minutes of the station's day.
+ *   `fill`  place id → how many extra people are IN that place while it runs.
+ *           `headcount` adds it, so the re-seat that spends the pool and the
+ *           desire lines a walker picks a destination on BOTH see it — see
+ *           `runningEvent` for why it is read there rather than passed.
+ *   `stir`  how many people who are standing get up and walk, and `stirIn`
+ *           says out of where. It is `setOut` — the walker this file already
+ *           has — handed a body that was standing; `stepWalkers` then drives
+ *           it exactly as it drives a body that spawned on an open stretch.
+ *   `dim`   how far the drum's lights go down, 0..1. `stepDip` is the reader
+ *           and it drives the deck's OWN three-light rig and the deck's own
+ *           emissive materials (§9.1: no eleventh material for an event).
+ *   `halt`  the tram loop stops. `stepTram` is the reader.
+ *
+ * ── AND THREE ROWS PROMISED SOMETHING THE STATION CANNOT DO ──────────────
+ *
+ * A table that lies is worse than a shorter table, so those three say what
+ * they deliver now:
+ *
+ *   CRASH CART. It said *"running for the flight deck"*. The flight deck is
+ *   #1/#5 on decks 32 and 12; the Medbay is #43 on deck 48. A walker's route
+ *   is `planRoute`, which is arcs and radials on ONE deck's annuli — there is
+ *   no route between decks for anybody but the player and his lift. The ward
+ *   getting up and going is real; the destination was not.
+ *
+ *   THE BRAWL. It said *"the guards are already moving"*. The only guards on
+ *   this station are §11's arrest patrol, and `dispatch`/`stepGuards` march
+ *   them at the PLAYER and put him in the cell block when they reach him.
+ *   Sending them to a bar fight would either arrest a bystander for it or be
+ *   a second guard system beside the one that means something. The cantina
+ *   coming off its stools is real; the guards were not.
+ *
+ *   THE MEMORIAL. It said *"is being read"*. Nothing on this station reads
+ *   anything aloud — there is no speech for a resident anywhere in the file.
+ *   The chapel filling is real; the reading was not.
+ *
+ *   THE LAUNCH CYCLE. It said the three flight rooms *"all move at once"*, and
+ *   this one was measured rather than reasoned about: on deck 12, standing at
+ *   the Cobra bay at 11:00 with the pool full, **45 bodies, 38 of them seated
+ *   on the deck's own walk slots, and 0 with a planned route**; deck 32 reads
+ *   23 of 37 and the same nought. `destsOn`/`planRoute` are the drum's ring,
+ *   balcony and spines, and the two flight decks have none of the three — so
+ *   NOBODY WALKS ON A FLIGHT DECK, event or no event. That is the walkway
+ *   lane's to answer and not this table's; what this row may honestly say is
+ *   that the three rooms are crewed, which is what the fill does.
  */
 export const EVENTS = [
-  { id: 'shuttle', at: 8, place: 8, say: ['ARRIVALS', 'a shuttle is on the collar — the hall fills'] },
-  { id: 'crashcart', at: null, place: 43, say: ['MEDBAY', 'a crash cart is running for the flight deck'] },
-  { id: 'brawl', at: 21, place: 14, say: ['THE LONG NIGHT', 'a brawl, and the guards are already moving'] },
-  { id: 'market', at: 10, place: 9, say: ['MARKET DAY', 'the Concourse is at its fullest'] },
-  { id: 'memorial', at: 17, place: 22, say: ['THE CHAPEL', 'a memorial is being read'] },
-  { id: 'drill', at: 11, place: null, say: ['FIRE DRILL', 'every deck, ten minutes'] },
-  { id: 'surge', at: null, place: 48, say: ['REACTOR SURGE', 'the lights dip across the drum'] },
-  { id: 'tramfault', at: null, place: 40.2, say: ['TRAM FAULT', 'the loop is down — the crowds are walking'] },
-  { id: 'drazifight', at: 15, place: 35, say: ['THE DRAZI QUARTER', 'green and purple, again'] },
-  { id: 'launch', at: 9, place: 5, say: ['LAUNCH CYCLE', 'the Cobra bay, the tower and the ready room all move at once'] },
+  {
+    id: 'shuttle', at: 8, place: 8, mins: 25,
+    /* #7 Arrivals hall (24 heads) is the hall that fills; #8 is the collar it
+     * comes off. Both, because the row names the collar and the say names the
+     * hall, and a player standing in either should see it. */
+    fill: { 7: 14, 8: 6 },
+    say: ['ARRIVALS', 'a shuttle is on the collar — the hall fills'],
+  },
+  {
+    id: 'crashcart', at: null, place: 43, mins: 12,
+    fill: { 43: 4 }, stir: 4, stirIn: [43, 44],
+    say: ['MEDBAY', 'a crash cart is out — the ward is up and moving'],
+  },
+  {
+    id: 'brawl', at: 21, place: 14, mins: 15,
+    fill: { 14: 8 }, stir: 5, stirIn: [14],
+    say: ['THE LONG NIGHT', 'a brawl — the cantina is off its stools'],
+  },
+  {
+    id: 'market', at: 10, place: 9, mins: 55,
+    /* §3.2 #9 declares 80 heads and §3.3 calls it *"where the game's whole
+     * cast is seen at once"*. Twenty-six more is a third again on the fullest
+     * room on the station, and the ring outside it fills with the walk to it
+     * through `pickDest`, which weights a destination by its headcount. */
+    fill: { 9: 26, 7: 6 }, stir: 4, stirIn: 'deck',
+    say: ['MARKET DAY', 'the Concourse is at its fullest'],
+  },
+  {
+    id: 'memorial', at: 17, place: 22, mins: 45,
+    fill: { 22: 10 },
+    say: ['THE CHAPEL', 'a memorial — the mats are filling'],
+  },
+  {
+    id: 'drill', at: 11, place: null, mins: 10,
+    /* Place null: it is *"every deck"*, so the stir is the whole deck the
+     * player is on rather than one room's doorway. */
+    stir: 14, stirIn: 'deck',
+    say: ['FIRE DRILL', 'every deck, ten minutes — the halls empty into the corridors'],
+  },
+  {
+    id: 'surge', at: null, place: 48, mins: 6,
+    dim: 0.55,
+    say: ['REACTOR SURGE', 'the lights dip across the drum'],
+  },
+  {
+    id: 'tramfault', at: null, place: 40.2, mins: 30,
+    halt: true, stir: 10, stirIn: 'deck', fill: { 40.2: 8 },
+    say: ['TRAM FAULT', 'the loop is down — the crowds are walking'],
+  },
+  {
+    id: 'drazifight', at: 15, place: 35, mins: 20,
+    fill: { 35: 8 }, stir: 4, stirIn: [35],
+    say: ['THE DRAZI QUARTER', 'green and purple, again — the quarter is out watching'],
+  },
+  {
+    id: 'launch', at: 9, place: 5, mins: 40,
+    /* #5 Cobra bay, #2 Deck control tower, #3 Pilots' ready room — the three
+     * rooms the say names, and they are on two DIFFERENT decks, which is
+     * exactly why the fill is a place table and not a place.
+     *
+     * AND NO STIR. See the fourth entry in the note above: nobody walks on
+     * decks 12 or 32 at all, so a row promising movement there would be a row
+     * promising a thing the deck cannot do. */
+    fill: { 5: 4, 2: 4, 3: 6 },
+    say: ['LAUNCH CYCLE', 'the Cobra bay, the tower and the ready room are all crewed at once'],
+  },
 ];
 
+/**
+ * ══ WHAT IS HAPPENING ON THE STATION RIGHT NOW ════════════════════════════
+ *
+ * The running row, held at module scope, and `life.event` is an ACCESSOR onto
+ * it — the same shape `life.standing` has, and for the same reason: two copies
+ * of one fact is how the two `standing`s got out of step.
+ *
+ * IT IS MODULE STATE BECAUSE `headcount` HAS NO WORLD. The row's `fill` has to
+ * reach the pool's re-seat (which seats bodies), the walker's `pickDest`
+ * (which weights a destination by how busy it is) and the pit's roster — three
+ * callers in two files, none of which is handed a `life`, and one of which is
+ * a loop over the whole gazetteer. Growing an argument on forty call sites to
+ * carry one fact about the station's clock is how a table like this ends up
+ * with a parallel copy of the census. `hour` is passed because a caller may
+ * legitimately ask about a different hour; nobody may legitimately ask about a
+ * different NOW, so the now is a default and never a parameter a caller has to
+ * remember. `headcount(p, h, null)` is the plain gazetteer number for anything
+ * that wants it — `census` is one, and `stationlife.mjs` reads both.
+ */
+let _event = null;
+
+/** The event row running this minute, or null. Exported for the check. */
+export function runningEvent() { return _event; }
+
+/** One station minute, in real seconds: the clock is one game hour per two
+ *  real minutes (§3.4, `Station.tickStationClock`). */
+const MINUTE = 2;
+
+/** The gap between one event ending and the next beginning, in real seconds.
+ *  `stationlife.mjs` reads it and holds the table to the rate it implies. */
+export const EVENT_GAP = { min: 45, span: 60 };
+
+/**
+ * ══ THE LIGHTS, AND THE ONE NUMBER THAT MOVES THEM ════════════════════════
+ *
+ * `life.dip` had no reader in any file. This is it, and what it drives is the
+ * rig `Station.lightStation` already built — the deck's key, its ambient and
+ * its hemisphere fill — plus the three EMISSIVE materials out of `st.mats`,
+ * because on a station lit largely by its own strip lighting a dip that left
+ * every strip at full brightness would not read as a dip at all.
+ *
+ * §9.1 HOLDS DURING A SURGE. Nothing here makes a material or a light; it
+ * scales the ones the deck was built with and puts them back, which is the
+ * same argument `orderJump`'s transit amber makes one function along.
+ *
+ * ONE COMPARE A FRAME when nothing is dipping, which is nearly always.
+ */
+const DIP_MATS = ['strip', 'status', 'screen'];
+function stepDip(st, life) {
+  const rig = st.rig;
+  if (!rig) return;
+  const k = 1 - Math.max(0, Math.min(1, life.dip));
+  if (rig.lit === k) return;
+  rig.lit = k;
+  rig.key.intensity = rig.base[0] * k;
+  /* The ambient and the fill keep a floor: a drum at a dead stop with no
+   * ambient at all is a black screen, and §3.4 asks for a dip. */
+  rig.amb.intensity = rig.base[1] * (0.3 + 0.7 * k);
+  rig.fill.intensity = rig.base[2] * (0.3 + 0.7 * k);
+  const M = st.mats;
+  if (!M) return;
+  for (let i = 0; i < DIP_MATS.length; i++) {
+    const m = M[DIP_MATS[i]];
+    if (!m) continue;
+    if (m.userData.dip0 === undefined) m.userData.dip0 = m.emissiveIntensity;
+    m.emissiveIntensity = m.userData.dip0 * (0.2 + 0.8 * k);
+  }
+}
+
+/** Does this row move the people standing in `id`? */
+function stirsIn(e, id) {
+  const where = e.stirIn;
+  if (!where || where === 'deck') return true;
+  for (let i = 0; i < where.length; i++) if (where[i] === id) return true;
+  return false;
+}
+
+/**
+ * ══ PEOPLE GET UP AND GO ══════════════════════════════════════════════════
+ *
+ * *"the crowds are walking"*, *"the halls empty into the corridors"*, *"the
+ * ward is up and moving"*. All three are ONE thing: a body that was standing
+ * at a counter becomes a body with somewhere to be.
+ *
+ * AND IT IS `setOut`, NOT A SECOND WALKER. The fields written here are the
+ * eight `spawnResident` writes on a body seated on an open stretch, and the
+ * last line is the same `setOut` call it makes. From the next frame the body
+ * is driven by `stepWalkers`, culled by `WALK_DROP` and re-planned by
+ * `pickDest` like every other walker in the drum — there is no second step, no
+ * second route and no second cull.
+ *
+ * ONE PASS OVER THE POOL, ONCE, on the frame the event fires. Sixty bodies and
+ * a `setOut` each for at most `stir` of them; it is not a per-frame cost and
+ * it is not in the steady step the budget is measured on.
+ */
+function stir(st, life, e) {
+  const n = e.stir | 0;
+  if (!n) return 0;
+  let done = 0;
+  for (const body of life.live.values()) {
+    if (done >= n) break;
+    /* Already walking, never walks (§3.3's Vorlon), or not a body that is
+     * standing at all — a ragdoll, a corpse or a witness the player made. */
+    if (!body || body.wayR || body.standX === undefined || body.standStill) continue;
+    if (body.__stationTouched || body.alive === false || body.dead) continue;
+    if (!stirsIn(e, body.stationPlace)) continue;
+    const x = body.position?.x ?? 0, z = body.position?.z ?? 0;
+    const r = Math.hypot(x, z);
+    if (!(r > 1)) continue;
+    body.wayAngle = Math.atan2(x, z);
+    body.wayR = r;
+    body.wayPace = 0.86 + ((body.stationPlace * 7 + body.stationSlot * 13) % 29) / 100;
+    body.waySeedA = Math.round((body.stationPlace | 0) * 10);
+    body.waySeedB = (body.stationSlot | 0) * 7 + 3;
+    body.wayLegs = null;
+    body.wayAt = 0; body.wayT = 0; body.wayTo = 0; body.wayTrips = 0; body.wayDwell = 0;
+    if (setOut(life.deck, st.hour, body)) { body.stationStir = true; done++; }
+    else { body.wayR = 0; body.wayLegs = null; }
+  }
+  return done;
+}
+
+/**
+ * The event is over: the row is put down, and everybody it moved goes back to
+ * standing where the gazetteer says they stand. `standHere` is the same
+ * function `spawnResident` seats a resident with — what is overridden after it
+ * is only where the body IS, so a man who walked forty metres walks back
+ * rather than snapping to his slot on the frame the drill ends.
+ */
+function calm(life) {
+  const was = _event;
+  life.event = null;
+  life.eventFor = 0;
+  if (!was?.stir) return;
+  for (const body of life.live.values()) {
+    if (!body?.stationStir) continue;
+    body.stationStir = false;
+    if (body.__stationTouched || body.alive === false || body.dead) continue;
+    const p = PLACE.get(body.stationPlace);
+    if (!p) continue;
+    body.wayR = 0; body.wayLegs = null; body.wayDwell = 0;
+    /* `standHere` reads x and z off this and nothing else — a body's height is
+     * the deck's and a walker never changed it. */
+    slotIn(p, body.stationSlot | 0, _v);
+    standHere(body, p, _v);
+    /* Where he actually is, so the walk home is a walk. */
+    if (body.position) { body.standCx = body.position.x; body.standCz = body.position.z; }
+  }
+}
+
 function stepEvents(world, st, life, dt) {
+  /* ── THE ONE THAT IS RUNNING, AND THE MINUTE IT STOPS ─────────────────── */
+  if (life.eventFor > 0) {
+    life.eventFor -= dt;
+    /* A surge is not a level: the drum browns out and comes back and goes
+     * again. Seeded on the event's own clock rather than on `Math.random`,
+     * which `determinism.mjs` forbids in `src/` and which would put two
+     * machines in a co-op session in two different rooms. */
+    const dim = _event?.dim;
+    if (dim) life.dip = dim * (0.72 + 0.28 * Math.sin(life.eventFor * 7.3));
+    if (life.eventFor <= 0) calm(life);
+    return;
+  }
   life.eventIn -= dt;
   if (life.eventIn > 0) return;
-  life.eventIn = 45 + h2(Math.floor(st.hour * 4), 11) * 60;
+  life.eventIn = EVENT_GAP.min + h2(Math.floor(st.hour * 4), 11) * EVENT_GAP.span;
   const hour = Math.floor(st.hour);
   /* An event whose hour has come, else one of the hourless ones. */
   const timed = EVENTS.filter((e) => e.at === hour);
@@ -2397,9 +2750,9 @@ function stepEvents(world, st, life, dt) {
   if (!pool.length) return;
   const e = pool[Math.floor(h2(hour, life.spawned) * pool.length) % pool.length];
   life.event = e;
-  /* The reactor surge dips every light on the deck, which is the one event
-   * that is a picture rather than a sentence. */
-  if (e.id === 'surge') life.dip = 1.4;
+  life.eventFor = (e.mins || 20) * MINUTE;
+  if (e.dim) life.dip = e.dim;
+  stir(st, life, e);
   world.notify?.(e.say[0], e.say[1]);
 }
 
@@ -2856,8 +3209,10 @@ export function stepStationLife(world, dt) {
   stepWalkers(world, life, dt);
   stepTram(world, st, life, dt);
   stepEvents(world, st, life, dt);
-  /* The reactor's dip, decaying — one number the lights read. */
-  if (life.dip > 0) life.dip = Math.max(0, life.dip - dt * 0.6);
+  /* The reactor's dip, decaying once the surge is over — one number, and
+   * `stepDip` below is the reader it did not have. */
+  if (!life.event && life.dip > 0) life.dip = Math.max(0, life.dip - dt * 0.9);
+  stepDip(st, life);
 
   if (t0) {
     const t1 = process.cpuUsage(t0);
@@ -2888,6 +3243,13 @@ export function stepStationLife(world, dt) {
 export function undressStationLife(world) {
   const life = world?._stationLife;
   if (!life) return;
+  /* THE MODULE'S ROW GOES DOWN WITH THE WORLD. It is what `headcount`
+   * defaults to, and a station left running an event nobody is standing in
+   * would go on adding fourteen people to Arrivals for the rest of the
+   * process — including inside the next world a check boots. */
+  life.event = null;
+  life.eventFor = 0;
+  life.dip = 0;
   for (const b of life.live.values()) removeBody(world, b);
   for (const g of life.guards) removeBody(world, g);
   life.live.clear();
