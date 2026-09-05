@@ -927,11 +927,41 @@ function removeBody(world, body) {
  * again. The station has no army and does not gain one.
  */
 function witness(world, st, life, dt) {
-  /* Anything that has been hurt this frame is the trigger. `world.enemies` is
-   * the only list a resident is in and the flag is set by the damage path. */
+  /**
+   * ══ WHO DID IT — AND THIS CLAUSE IS THE WHOLE RULE ════════════════════
+   *
+   * §11 says *"CUT OR THROW ONE and the nearest guards come"*. What this
+   * asked was whether a resident was hurt AT ALL, which is a different
+   * question with a different answer, and on a crowded deck the answer is
+   * yes within two seconds of arrival — because a crowd bills itself.
+   * `Impact.kineticContact` priced a shoulder brush at 0.21 damage (see
+   * `KINETIC_BODY.jostle`, which now refuses it), residents never heal, and
+   * `hp < maxHp` is a latch that only ever grows.
+   *
+   * Measured on deck 40, player standing still, no input, before either
+   * half of the fix:
+   *
+   *     t= 5s  hurt  3   standing  -6   guards 2
+   *     t=20s  hurt 26   standing -52   SHOPS SHUT
+   *     t=40s  hurt 31   standing -62   IG BODYGUARD DROID: it has come for you
+   *
+   * and on decks 44 and 48 the two guards killed the player outright inside
+   * a minute. The hub was punishing you for walking into it, durably, on a
+   * number `persistStanding` mirrors to disk. Two decks never fired at all,
+   * which is the tell: it scaled with population, not with anything anyone
+   * did.
+   *
+   * `hurtByPlayer` is set at the one line in `Enemy.damage` where hit points
+   * are actually lost, on the same test `World.onEnemyKilled` credits a kill
+   * with — so "you hurt them" and "you killed them" cannot drift apart. The
+   * ambient half is fixed at its own source rather than papered over here,
+   * because a crowd wearing itself down to nothing over an evening was wrong
+   * whether or not anybody was blamed for it.
+   */
   let hurt = 0;
   for (const e of world.enemies) {
     if (!e.stationName) continue;
+    if (!e.hurtByPlayer) continue;
     if (e.hp < e.maxHp || e.alive === false) {
       if (!e.__stationTouched) {
         e.__stationTouched = true;

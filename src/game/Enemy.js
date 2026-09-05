@@ -4366,6 +4366,31 @@ export class Enemy {
      * somebody rather than by the floor.
      */
     if (this.downed && !source && amount > 0) return false;
+    /**
+     * WHO DID IT, WHERE THAT IS THE WHOLE QUESTION.
+     *
+     * `StationLife.witness` — §11's "cut or throw one and the nearest guards
+     * come" — had no way to ask, so it asked whether a resident was hurt AT
+     * ALL and blamed the player for the answer. Measured on deck 40 with the
+     * player standing still and pressing nothing: 31 of 35 residents visibly
+     * hurt inside 45 s, standing 0 -> -60, every shop shut for good, and two
+     * armed bodyguards dispatched to kill somebody who had not moved.
+     *
+     * One boolean, written at the one line where hit points are actually
+     * lost, on the same `source instanceof Player || source?.isRemote` test
+     * `World.onEnemyKilled` uses to credit a kill — so "you hurt them" and
+     * "you killed them" cannot come to mean different things. Set only when
+     * damage is really taken: a blade event that resolves to 0 is not a
+     * wound, and 159 of those land on a station crowd every 45 s from a
+     * sheathed saber.
+     */
+    if (amount > 0) {
+      const w = this.world;
+      const hand = source?.owner || source;
+      if (hand && (hand === w?.player || hand.isRemote || w?.players?.includes(hand))) {
+        this.hurtByPlayer = true;
+      }
+    }
     this.hp -= amount;
     /**
      * NOT `if (this.A.boss)`. The winded window — "the only safe time to go for

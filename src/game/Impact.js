@@ -169,7 +169,32 @@ export const KINETIC_THROWN = { k: 0.0006, floor: 8, cap: 140 };
  * and that is the correct read — being run down by either should be somewhere
  * between very bad and fatal rather than a number that scales forever.
  */
-export const KINETIC_BODY = { k: 0.0006, floor: 0, cap: 140, hurtsProps: false };
+/**
+ * `jostle` — THE THING THE PARAGRAPH ABOVE `KINETIC_MIN_APPROACH` CLAIMED AND
+ * DID NOT HAVE.
+ *
+ * That note says the approach gate's whole job is "to stop two droids brushing
+ * shoulders in a crowd from being an event", and reasons that "the curve is
+ * already doing the gating" because it fades in smoothly. It fades — it never
+ * reaches zero. At 1.5 m/s a walker reads 1.2 and the gate lets it through,
+ * so a shoulder brush IS an event, worth a fifth of a point.
+ *
+ * That is nothing in a fight, which lasts a minute and is between people
+ * trying to kill each other. It is not nothing on a STATION, where thirty-five
+ * residents mill about in a concourse for hours and never heal. Measured on
+ * deck 40 with the player standing still and pressing nothing: 479 contacts in
+ * 45 s, 0.21 damage each, 102 damage spread over the crowd — 31 of 35
+ * residents visibly hurt, none of them by anybody. `StationLife.witness` then
+ * read that as an assault and shut every shop on the station (see its note).
+ *
+ * So a body-on-body contact under `jostle` damage is a JOSTLE and buys
+ * nothing. It is on `KINETIC_BODY` alone: a crate is not a shoulder, and a
+ * thrown thing has `KINETIC_THROWN`'s floor of 8 precisely because you meant
+ * it. 1.5 sits above the 1.2 a walker reads at the approach gate and far under
+ * the 8.6 it reads at 4 m/s, so being run down still lands in full and the
+ * only thing removed is the bill for standing in a crowd.
+ */
+export const KINETIC_BODY = { k: 0.0006, floor: 0, cap: 140, hurtsProps: false, jostle: 1.5 };
 
 /**
  * Arm a body so that what it hits knows about it.
@@ -268,6 +293,9 @@ export function kineticContact(other, c) {
    */
   let dmg = tune.price ? tune.price(c, self) : impactDamage(c.mass, c.speed, tune);
   if (!(dmg > 0)) return;
+  /* A brush is not a blow. See `jostle` on KINETIC_BODY — the only tune that
+   * carries one, because it is the only tune whose striker is a person. */
+  if (tune.jostle && dmg < tune.jostle) return;
 
   /* A thrown thing carries its thrower, so a droid crushed by a crate you put
    * in the air is your kill and pays out as one. Anything else — a collapse, a
