@@ -611,29 +611,51 @@ export async function run({ check, assert }) {
       rows.push(`${axis} ${before.toFixed(1)}→${after.toFixed(1)}`);
     }
     set({});
-    /* AND THE GRACE IS SECONDS ON THE FIELD AND NOT ONLY IN THE READER — the
+    /**
+     * AND THE GRACE IS SECONDS ON THE FIELD AND NOT ONLY IN THE READER — the
      * animal is dragged forty metres past the end of its rope and the frame it
-     * starts the walk home is measured with and without HEAVY's two seconds. */
-    const walkStart = async (hold) => {
-      const F = await field('massiff');
-      tick(F.world, F.input, F.p, 20);
-      F.e._cmpSwing = { ...zero, hold };
-      F.e._cmpHeld = 0;
-      const at0 = F.e.position.clone();
-      F.p.position.x += 40;
-      for (let i = 0; i < 240; i++) {
-        tick(F.world, F.input, F.p, 1);
-        if (F.e.position.distanceTo(at0) > 2) { F.world.unload?.(); return i * STEP; }
+     * starts the walk home is measured with and without HEAVY's two seconds.
+     *
+     * BOTH RUNS IN THE ONE WORLD THIS CHECK ALREADY BOOTED, and that is not a
+     * saving, it is a correctness rule this suite runs on: `_twosuite.mjs`
+     * starts every check in a file CONCURRENTLY, so a check that boots four
+     * worlds is four more live physics worlds interleaved with everybody
+     * else's frames. Measured: booting three extra worlds here flipped
+     * `the eleven verbs do the thing they say` — a sixteen-second race between
+     * a whelp's pounce and its bite — from green to red without one line of
+     * `src/` changing. A check that reddens another check is a check that has
+     * to be cheaper.
+     *
+     * Between the two runs the player is put back and the animal is let settle
+     * inside its leash, which is what re-arms `_cmpHeld`: the grace counts
+     * seconds PAST the end of the rope and is reset the frame the animal is
+     * back inside it.
+     */
+    const walkStart = (hold) => {
+      e._cmpSwing = { ...zero, hold };
+      e._cmpHeld = 0;
+      e._cmpDuty = null;
+      const home0 = p.position.clone();
+      const at0 = e.position.clone();
+      p.position.x += 40;
+      let out = null;
+      for (let i = 0; i < 240 && out === null; i++) {
+        tick(world, input, p, 1);
+        if (e.position.distanceTo(at0) > 2) out = i * STEP;
       }
-      F.world.unload?.();
-      return null;
+      /* PUT HIM BACK AND LET IT COME HOME, so the second run starts from the
+       * same standing animal the first one did. */
+      p.position.copy(home0);
+      tick(world, input, p, 300);
+      return out;
     };
-    const t0 = await walkStart(0);
-    const t2 = await walkStart(2);
+    const t0 = walkStart(0);
+    const t2 = walkStart(2);
     assert(t0 !== null && t2 !== null, 'the animal never walked home at all');
     assert(t2 - t0 > 1.2,
       `dragged past its leash, an animal with two seconds of hold started home ${(t2 - t0).toFixed(2)}s `
       + 'later than one with none — HEAVY\'s "holds a spot longer" is printed and not charged');
+    e._cmpSwing = { ...zero };
     world.unload?.();
     return `${rows.join(', ')}; the walk home starts at ${t0.toFixed(2)}s plain and ${t2.toFixed(2)}s with hold 2`;
   });
@@ -5174,33 +5196,44 @@ export async function run({ check, assert }) {
     assert(Kn.shyTemper(shyRec), 'the bonded animal does not carry the temper that panics');
     assert(!Kn.shyTemper({ tempers: ['heeled', 'keen', 'heavy'] }),
       'an animal wearing no bond still panics — the flag is not doing the deciding');
-    const shyRun = async (rec) => {
-      const F = await field('massiff', rec);
-      tick(F.world, F.input, F.p, 10);
-      F.e._cmpDuty = { id: 'ward' };
+    /* ONE WORLD AND TWO ANIMALS IN IT, for the reason `mutate any temper axis`
+     * gives at length: the suite starts every check in a file concurrently, so
+     * a world booted here is a world interleaved with everybody else's frames.
+     * The pack takes both bodies, the wound is dealt to one at a time, and the
+     * false side is the same frame of the same run rather than a second one. */
+    const F = await field('massiff', shyRec);
+    tick(F.world, F.input, F.p, 10);
+    const plainBody = C.fieldCompanion(F.world, F.p, 'massiff',
+      { rec: Kn.readOne({ id: 'plain1', kind: 'massiff', xp: 0, runs: 0 }) });
+    tick(F.world, F.input, F.p, 5);
+    const shyRun = async (body) => {
+      body._cmpDuty = { id: 'ward' };
       const home = new THREE.Vector3();
-      const foe = { position: F.e.position.clone(), team: (F.p.team ?? 0) + 1, dead: false };
+      const foe = { position: body.position.clone(), team: (F.p.team ?? 0) + 1, dead: false };
       foe.position.x += 1;
-      const takes = () => { C.stationFor(F.e, home); return C.dutyAllows(F.e, foe, home, 1e9); };
+      const takes = () => { C.stationFor(body, home); return C.dutyAllows(body, foe, home, 1e9); };
       const before = takes();
-      F.e.hp = (F.e.hp ?? F.e.maxHp) - 12;
+      body.hp = (body.hp ?? body.maxHp) - 12;
       tick(F.world, F.input, F.p, 1);
+      foe.position.copy(body.position); foe.position.x += 1;
       const during = takes();
       const station = home.distanceTo(F.p.position);
       tick(F.world, F.input, F.p, Math.ceil((C.SHY.run + 0.3) / STEP));
+      foe.position.copy(body.position); foe.position.x += 1;
       const after = takes();
-      F.world.unload?.();
-      return { before, during, after, station, shies: F.e._cmpShies | 0 };
+      return { before, during, after, station, shies: body._cmpShies | 0 };
     };
-    const bonded = await shyRun(shyRec);
+    const bonded = await shyRun(F.e);
     assert(bonded.before, 'the bonded animal would not take a target even before it was hurt');
     assert(!bonded.during, 'the bonded animal took a target on the frame after it lost 12 hp — it does not panic');
     assert(bonded.station < 6,
       `its station while panicking is ${bonded.station.toFixed(1)} m from the player — it does not come to you`);
     assert(bonded.after, 'the panic never ends — a drawback that does not stop is a deleted companion');
-    const plain = await shyRun(Kn.readOne({ id: 'plain1', kind: 'massiff', xp: 0, runs: 0 }));
+    assert(plainBody, 'the second animal was never fielded');
+    const plain = await shyRun(plainBody);
     assert(plain.during && plain.shies === 0,
       'an animal wearing no bond panicked at the same wound — the drawback is not the temper\'s');
+    F.world.unload?.();
     return `${earned.length} tempers earned off the growth ladder (${earned.join(', ')}), all priced <= 0, `
       + `none earned by a fresh animal; ${rec.tempers.length} worn at once under a cap of ${Kn.TEMPERS_WORN}; `
       + `the bonded one stops fighting for ${C.SHY.run}s at a 12 hp wound and an unbonded one does not`;
