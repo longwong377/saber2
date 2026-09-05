@@ -256,25 +256,29 @@ export async function run({ check, assert }) {
         + `(${packedFull} B) — something is publishing on a timer`);
 
       /**
-       * AND NO LARDER AND NO PERCH ON THE WIRE, and the two are off it for
-       * different reasons now.
+       * AND NO LARDER ON THE WIRE — WHICH IS NOW THE ONLY THING OFF IT.
        *
        * `store` is off it because nothing at the far end could read it:
-       * `larder()` reads the LOCAL fold and a guest's food is their own.
+       * `larder()` reads the LOCAL fold and a guest's food is their own. That
+       * was once the same paragraph as the perch, and it is not any more.
        *
-       * `pad` HAS a reader since V15 §1.3 landed — `Home.dressPad` builds the
-       * fixture and stands the small companion on it — but the reader is fed
-       * from the record the apartment is dressed with, and a guest's record
-       * crosses `packHome`, which is `Coop.js`'s codec and another lane's
-       * file. So a friend's cabin gets their furniture and not their perch,
-       * and the missing metre of wire is stated here rather than left as a
-       * blank room: `Home.homeCompanion` says the ANIMAL can never cross at
-       * all (there is one Kennel per machine and it is yours), so what is
-       * absent from a visit is one fixture and not an animal.
+       * `pad` IS ON IT NOW, as `p`, and the argument for putting it there is
+       * the ask itself: V16 Lane F is *"visit your friend's apartment / see
+       * their companion"*, and a fixture that stayed home meant a guest's
+       * basket did not exist on anybody else's machine — so neither did the
+       * animal, because `seatCompanion` is only ever reached through
+       * `dressPad`. It is a validated `Home.PADS` id, it is already a row of
+       * the home record, and it changes when somebody chooses one at the
+       * habitat, which is the cadence this packet is FOR. The animal follows
+       * as `c` — two facts, not a body — and the check below drives it.
+       *
+       * WHAT WOULD PUT IT BACK OFF THE WIRE: nothing reading it. That is the
+       * standing rule, so the reader is asserted at the far end rather than
+       * here, on a machine whose own Kennel has been emptied.
        */
       const msg = C.packHome(host.world._home.state, 1);
-      assert(!('store' in msg) && !('pad' in msg) && !JSON.stringify(msg).includes('store'),
-        'the home packet carries the larder or the companion — nothing reads either');
+      assert(!('store' in msg) && !JSON.stringify(msg).includes('store'),
+        'the home packet carries the larder — nothing at the far end reads it');
 
       return `a plant placed on the host is ${want.split(' | ').length} pieces on all 3 machines, `
         + `piece for piece; ${sent} packet for the placement and ${st.sends} in the whole session `
