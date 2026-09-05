@@ -4641,8 +4641,37 @@ export class WaveDirector {
        * being under the terrain or outside the heightfield is acceptable, and
        * `_stuckT` cannot see either — a body falling through the world is
        * moving, so the local handling reads it as healthy right up until it is
-       * at y = -400 and the wave has stopped. */
-      if (!positionIsValid(this.world, e)) {
+       * at y = -400 and the wave has stopped.
+       *
+       * ── BUT IT IS STILL ONLY THE WAVE'S BUSINESS ────────────────────────
+       *
+       * `blocksWaveEnd`, and it is the SAME guard the stall clause below
+       * already applies, in the same words its comment uses: one of your own
+       * troops never holds a wave open, so there is nothing here for it to be
+       * rescued from. This branch simply never asked.
+       *
+       * What that cost, measured (tools/checks/levers.mjs, second clause): a
+       * man DOWNED in The Line is ragdolled, and `Enemy._move` copies his
+       * ragdoll's CHEST into `position` — a body lying in the dirt therefore
+       * reads a metre or two below `terrain.height`, which is not a foot
+       * position and was never meant to be compared with one. So every downed
+       * trooper failed this test within a second of going down, and then:
+       *
+       *   `arrivals.relocate` CANNOT MOVE A RAGDOLLED BODY. It sets
+       *   `e.position`, and the very next frame `_move` copies the ragdoll's
+       *   chest straight back over it. Driven: the rescue reported ok=true and
+       *   put him at (-21.7, -3.6, -123.0); one frame later he was at
+       *   (0.1, -0.7, 0.2), exactly where he fell.
+       *
+       * So both rescues were guaranteed no-ops that only burned the budget,
+       * and the third frame retired him — dead at 0.7 s with 19 s of bleed-out
+       * still on his clock. Three of five survivors of a barrage died that way
+       * with nothing whatever on the field, and §4.9's window — "to advance you
+       * must physically recover your wounded" — had no seconds in it to spend.
+       *
+       * A hostile under the terrain is still rescued and still retired: that is
+       * the wave-hang this branch exists for, and it is untouched. */
+      if (!positionIsValid(this.world, e) && this.blocksWaveEnd(e)) {
         /* …AND THE RESCUE CAN FAIL, WHICH THE FIRST DRAFT OF THIS DID NOT
          * ALLOW FOR. `tools/checks/command.mjs` caught it end to end: the site
          * picker gives up onto the ring when twenty tries all miss, and on a
