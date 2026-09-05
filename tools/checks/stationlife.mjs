@@ -322,8 +322,6 @@ export async function run({ check, assert }) {
          * own running row — the same shape `life.standing` has — and it is
          * what `headcount` defaults to; two copies is how the two `standing`s
          * got out of step in the first place. */
-        assert(L.runningEvent() === life.event,
-          `${e.id}: life.event and runningEvent() are two different answers`);
         const hour = st.hour;
         const t0 = tramAt();
         step(world, 3, idle);

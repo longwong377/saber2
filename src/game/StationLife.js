@@ -2599,7 +2599,13 @@ export const EVENTS = [
 let _event = null;
 
 /** The event row running this minute, or null. Exported for the check. */
-export function runningEvent() { return _event; }
+/* NO `runningEvent()` EXPORT. There was one, returning `_event`, and
+ * `reachable.mjs` found it with no caller in `src/` — because the module's
+ * own readers take `_event` directly (`headcount`'s default argument and the
+ * `life.event` accessor above), and a caller outside the module has the
+ * accessor. The only thing that ever used it was a check asserting
+ * `runningEvent() === life.event`, which is a tautology: both read this
+ * variable. A second door onto one field is how the two come to disagree. */
 
 /** One station minute, in real seconds: the clock is one game hour per two
  *  real minutes (§3.4, `Station.tickStationClock`). */
